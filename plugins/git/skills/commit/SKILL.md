@@ -82,12 +82,14 @@ Extract the project key from whichever format is found.
 
 1. If a Jira project key is configured:
    a. Call `getAccessibleAtlassianResources` to get the cloudId
-   b. Call `searchJiraIssuesUsingJql` with:
-   - `jql`: `project = "<PROJECT_KEY>" AND statusCategory != Done ORDER BY statusCategory DESC, updated DESC`
-   - `maxResults`: 15
-   - `fields`: `["summary", "status", "issuetype", "priority", "assignee"]`
-     c. Present the issues to the user with AskUserQuestion, showing format: `PROJ-123: Issue summary (Status) — Assignee`
-     d. Include a "No ticket" option and a "Type manually" option
+   b. Call `searchJiraIssuesUsingJql` **twice in parallel**:
+   - **Mine first** — `project = "<PROJECT_KEY>" AND statusCategory != Done AND assignee = currentUser() ORDER BY updated DESC` / `maxResults`: 5
+   - **Others** — `project = "<PROJECT_KEY>" AND statusCategory != Done AND assignee != currentUser() ORDER BY statusCategory DESC, updated DESC` / `maxResults`: 10
+   - Both calls use `fields`: `["summary", "status", "issuetype", "priority", "assignee"]`
+     c. Merge the two result lists (mine first, then others), deduplicating by issue key, capped at 15 total
+     d. Present the issues to the user with AskUserQuestion, showing format: `PROJ-123: Issue summary (Status) — Assignee`. Show up to 10 issues, but prioritize the user's assigned issues at the top. Use the issue key as the value.
+   - Prefix issues from the first query with `★` to indicate they are assigned to the current user
+     e. Include a "No ticket" option and a "Type manually" option
 2. If NO Jira project is configured in README.md, ask the user:
    - Whether they want to add a Jira project key (and which one - then add it to README.md for future use)
    - Or proceed without a ticket scope
