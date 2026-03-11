@@ -1,0 +1,22 @@
+{
+    "name": "stg-plugins",
+    "metadata": {
+        "description": "STG Coding plugins",
+        "version": "1.0.0"
+    },
+    "owner": {
+        "name": "STG Software Engineering Team",
+        "email": "stg@scripps.com"
+    },
+    "plugins": [
+        {
+            "name": "git",
+            "source": "./plugins/git",
+            "description": "Git plugin for STG Coding standards.",
+            "version": "1.0.0",
+            "skills": [
+                "./skills/commit"
+            ]
+        }
+    ]
+}
