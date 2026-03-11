@@ -2,7 +2,7 @@
     "name": "stg-plugins",
     "metadata": {
         "description": "STG Coding plugins",
-        "version": "1.0.1"
+        "version": "1.0.2"
     },
     "owner": {
         "name": "STG Software Engineering Team",
