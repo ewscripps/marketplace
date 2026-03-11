@@ -83,10 +83,10 @@ Extract the project key from whichever format is found.
 1. If a Jira project key is configured:
    a. Call `getAccessibleAtlassianResources` to get the cloudId
    b. Call `searchJiraIssuesUsingJql` with:
-   - `jql`: `project = "<PROJECT_KEY>" AND assignee = currentUser() AND status IN ("Dev In Progress", "Dev To Do", "Dev Review", "QA In Progress", "QA To Do") ORDER BY status ASC, updated DESC`
-   - `maxResults`: 10
-   - `fields`: `["summary", "status", "issuetype", "priority"]`
-     c. Present the issues to the user with AskUserQuestion, showing format: `PROJ-123: Issue summary (Status)`
+   - `jql`: `project = "<PROJECT_KEY>" AND statusCategory != Done ORDER BY statusCategory DESC, updated DESC`
+   - `maxResults`: 15
+   - `fields`: `["summary", "status", "issuetype", "priority", "assignee"]`
+     c. Present the issues to the user with AskUserQuestion, showing format: `PROJ-123: Issue summary (Status) — Assignee`
      d. Include a "No ticket" option and a "Type manually" option
 2. If NO Jira project is configured in README.md, ask the user:
    - Whether they want to add a Jira project key (and which one - then add it to README.md for future use)
