@@ -1,1 +1,22 @@
-/Users/122999/developer/marketplace/.github/plugin/marketplace.json
+{
+    "name": "stg-plugins",
+    "metadata": {
+        "description": "STG Coding plugins",
+        "version": "1.0.1"
+    },
+    "owner": {
+        "name": "STG Software Engineering Team",
+        "email": "stg@scripps.com"
+    },
+    "plugins": [
+        {
+            "name": "git",
+            "source": "./plugins/git",
+            "description": "Git plugin for STG Coding standards.",
+            "version": "1.0.1",
+            "skills": [
+                "./skills/commit"
+            ]
+        }
+    ]
+}
