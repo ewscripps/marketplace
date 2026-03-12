@@ -1,8 +1,9 @@
 {
-    "name": "stg-plugins",
+    "name": "stg-marketplace",
     "metadata": {
         "description": "STG Coding plugins",
-        "version": "1.0.2"
+        "version": "1.0.2",
+        "pluginRoot": "./plugins"
     },
     "owner": {
         "name": "STG Software Engineering Team",
@@ -11,7 +12,7 @@
     "plugins": [
         {
             "name": "git",
-            "source": "./plugins/git",
+            "source": "git",
             "description": "Git plugin for STG Coding standards.",
             "version": "1.0.1",
             "skills": [
