@@ -24,11 +24,13 @@ The scope is always a Jira ticket key (e.g., `SA-42`) unless no ticket applies.
 
 ## Step 1: Gather Context
 
-Run these in parallel:
+Run these as separate, parallel Bash tool calls (do NOT chain commands with `&&` or `echo` separators — each must be its own Bash invocation):
 
 - `git status` (never use `-uall`)
-- `git diff --cached --stat` and `git diff --stat`
-- `git diff --cached` and `git diff`
+- `git diff --cached --stat`
+- `git diff --stat`
+- `git diff --cached`
+- `git diff`
 - `git diff --staged`
 - `git log --oneline -5`
 - `git branch --show-current`
