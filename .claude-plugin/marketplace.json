@@ -2,7 +2,7 @@
     "name": "stg-marketplace",
     "metadata": {
         "description": "STG Coding plugins",
-        "version": "1.0.2",
+        "version": "1.0.3",
         "pluginRoot": "./plugins"
     },
     "owner": {
