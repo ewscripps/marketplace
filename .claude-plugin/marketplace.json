@@ -2,7 +2,7 @@
     "name": "stg-marketplace",
     "metadata": {
         "description": "STG Coding plugins",
-        "version": "1.0.5"
+        "version": "1.0.6"
     },
     "owner": {
         "name": "STG Software Engineering Team",
@@ -13,7 +13,7 @@
             "name": "git",
             "source": "./plugins/git",
             "description": "Git plugin for STG Coding standards.",
-            "version": "1.0.4",
+            "version": "1.0.6",
             "skills": [
                 "./skills/commit"
             ]

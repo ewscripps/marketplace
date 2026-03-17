@@ -199,3 +199,7 @@ EOF
 ```
 
 After committing, run `git status` to verify success and show the result.
+
+## Important: No AI Attribution
+
+NEVER add `Co-Authored-By`, `Generated-By`, or any other trailer, footer, or metadata referencing an AI assistant (e.g., "Claude", "Opus", "GPT", "Copilot") to the commit message. The commit message must contain only the conventional commit content described above.
