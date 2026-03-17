@@ -2,7 +2,7 @@
 name: commit
 description: Create a conventional commit with Jira ticket scope and gitmoji
 user-invocable: true
-argument-hint: '[optional type override: feat|fix|docs|refactor|test|perf|chore|style|ci|build]'
+argument-hint: '[--all|-a] [optional type override: feat|fix|docs|refactor|test|perf|chore|style|ci|build]'
 allowed-tools: Bash(git *), AskUserQuestion, Read, Grep, Glob
 ---
 
@@ -35,7 +35,24 @@ Run these as separate, parallel Bash tool calls (do NOT chain commands with `&&`
 - `git log --oneline -5`
 - `git branch --show-current`
 
+## Step 1.5: Parse Arguments
+
+Check `$ARGUMENTS` for flags and type overrides:
+
+- If `--all` or `-a` is present, set **include-all mode** to true and remove the flag from arguments before checking for a type override.
+- Any remaining argument is treated as a type override (e.g., `feat`, `fix`).
+
 ## Step 2: Stage Changes if Needed
+
+### If include-all mode is enabled (`--all` or `-a`):
+
+Stage ALL unstaged and untracked files automatically by listing each file explicitly with `git add`. Skip the interactive prompt entirely.
+
+IMPORTANT: NEVER use `git add -A` or `git add .`. Always stage specific files by name, even in include-all mode.
+
+If there are no changes at all, inform the user and stop.
+
+### Otherwise (default behavior):
 
 If there are NO staged changes but there ARE unstaged/untracked changes:
 
@@ -43,6 +60,15 @@ If there are NO staged changes but there ARE unstaged/untracked changes:
 2. Use AskUserQuestion to ask what to stage:
    - "Stage all changes" — stage everything with `git add` listing specific files
    - "Let me pick files" — let the user specify which files
+   - "Abort" — stop the commit process
+
+If there ARE staged changes but also additional unstaged/untracked changes:
+
+1. Show the user what is currently staged and what is not
+2. Use AskUserQuestion to ask:
+   - "Commit staged only" — proceed with only the currently staged changes
+   - "Include all changes" — also stage all remaining unstaged/untracked files before committing
+   - "Let me pick files" — let the user specify additional files to stage
    - "Abort" — stop the commit process
 
 IMPORTANT: NEVER use `git add -A` or `git add .`. Always stage specific files by name.
