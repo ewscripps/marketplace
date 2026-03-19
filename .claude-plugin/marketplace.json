@@ -13,7 +13,7 @@
             "name": "git",
             "source": "./plugins/git",
             "description": "Git plugin for STG Coding standards.",
-            "version": "1.0.7",
+            "version": "1.0.8",
             "skills": [
                 "./skills/commit"
             ]
