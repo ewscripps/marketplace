@@ -13,7 +13,7 @@ Generate a git commit for all staged and unstaged changes using **Conventional C
 ## Commit Message Format
 
 ```
-<type>(<TICKET-KEY>):<gitmoji shortcode> <description>
+<type>(<TICKET-KEY>): <gitmoji shortcode> <description>
 
 [optional body]
 
@@ -146,7 +146,7 @@ If the user passed a type as `$ARGUMENTS`, use that type instead of inferring.
 
 ## Step 5: Write Commit Message
 
-Format: `<type>(<TICKET>):<gitmoji shortcode> <short description>`
+Format: `<type>(<TICKET>): <gitmoji shortcode> <short description>`
 
 IMPORTANT: Always use gitmoji shortcodes (e.g., `:sparkles:`, `:bug:`) — NEVER use Unicode emoji characters (e.g., ✨, 🐛). Unicode emoji break GitLab and Jira integrations.
 
@@ -164,7 +164,7 @@ Always prefer the Jira ticket key as scope. Only use a module name (e.g., `api`,
 With ticket:
 
 ```
-feat(PROJ-123)::sparkles: add user login functionality
+feat(PROJ-123): :sparkles: add user login functionality
 
 - Implement OAuth2 flow with token refresh
 - Add login form with email validation
@@ -174,13 +174,13 @@ feat(PROJ-123)::sparkles: add user login functionality
 Without ticket:
 
 ```
-fix::bug: resolve null pointer in user service
+fix: :bug: resolve null pointer in user service
 ```
 
 Simple change (no body needed):
 
 ```
-chore(PROJ-45)::wrench: update eslint config
+chore(PROJ-45): :wrench: update eslint config
 ```
 
 ## Step 6: Confirm and Commit
