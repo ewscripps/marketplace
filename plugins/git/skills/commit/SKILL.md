@@ -8,12 +8,12 @@ allowed-tools: Bash(git *), AskUserQuestion, Read, Grep, Glob
 
 # Conventional Commit with Jira Scope
 
-Generate a git commit for all staged and unstaged changes using **Conventional Commits** with **gitmoji**, linked to a Jira ticket.
+Generate a git commit for all staged and unstaged changes using **Conventional Commits** with **gitmoji shortcodes** (e.g., `:sparkles:` not ✨), linked to a Jira ticket. Use shortcode format to avoid breaking GitLab/Jira integrations.
 
 ## Commit Message Format
 
 ```
-<gitmoji> <type>(<TICKET-KEY>): <description>
+<type>(<TICKET-KEY>):<gitmoji shortcode> <description>
 
 [optional body]
 
@@ -126,27 +126,29 @@ Extract the project key from whichever format is found.
 
 Analyze the staged diff to determine the most appropriate conventional commit type:
 
-| Type       | Gitmoji | When to use                                             |
-| ---------- | ------- | ------------------------------------------------------- |
-| `feat`     | ✨      | A new feature (MINOR version bump)                      |
-| `fix`      | 🐛      | A bug fix (PATCH version bump)                          |
-| `docs`     | 📚      | Documentation only changes                              |
-| `style`    | 🧼      | Code style (formatting, whitespace, semicolons)         |
-| `refactor` | ♻️      | Code change that neither fixes a bug nor adds a feature |
-| `perf`     | 🚀      | Performance improvement                                 |
-| `test`     | ✅      | Adding or updating tests                                |
-| `build`    | 📦      | Build system or external dependencies                   |
-| `ci`       | 🏗️      | CI configuration and scripts                            |
-| `chore`    | 🧑‍💻      | Other changes that don't modify src or test             |
-| `revert`   | 🔁      | Reverting a previous commit                             |
+| Type       | Gitmoji              | When to use                                             |
+| ---------- | -------------------- | ------------------------------------------------------- |
+| `feat`     | `:sparkles:`         | A new feature (MINOR version bump)                      |
+| `fix`      | `:bug:`              | A bug fix (PATCH version bump)                          |
+| `docs`     | `:books:`            | Documentation only changes                              |
+| `style`    | `:soap:`             | Code style (formatting, whitespace, semicolons)         |
+| `refactor` | `:recycle:`          | Code change that neither fixes a bug nor adds a feature |
+| `perf`     | `:rocket:`           | Performance improvement                                 |
+| `test`     | `:white_check_mark:` | Adding or updating tests                                |
+| `build`    | `:package:`          | Build system or external dependencies                   |
+| `ci`       | `:construction:`     | CI configuration and scripts                            |
+| `chore`    | `:technologist:`     | Other changes that don't modify src or test             |
+| `revert`   | `:repeat:`           | Reverting a previous commit                             |
 
-For **breaking changes**, add `!` after the scope AND use 💥 instead of the type's default gitmoji.
+For **breaking changes**, add `!` after the scope AND use `:boom:` instead of the type's default gitmoji.
 
 If the user passed a type as `$ARGUMENTS`, use that type instead of inferring.
 
 ## Step 5: Write Commit Message
 
-Format: `<type>(<TICKET>):<emoji> <short description>`
+Format: `<type>(<TICKET>):<gitmoji shortcode> <short description>`
+
+IMPORTANT: Always use gitmoji shortcodes (e.g., `:sparkles:`, `:bug:`) — NEVER use Unicode emoji characters (e.g., ✨, 🐛). Unicode emoji break GitLab and Jira integrations.
 
 Rules:
 
@@ -162,7 +164,7 @@ Always prefer the Jira ticket key as scope. Only use a module name (e.g., `api`,
 With ticket:
 
 ```
-feat(PROJ-123):✨ add user login functionality
+feat(PROJ-123)::sparkles: add user login functionality
 
 - Implement OAuth2 flow with token refresh
 - Add login form with email validation
@@ -172,20 +174,20 @@ feat(PROJ-123):✨ add user login functionality
 Without ticket:
 
 ```
-fix:🐛 resolve null pointer in user service
+fix::bug: resolve null pointer in user service
 ```
 
 Simple change (no body needed):
 
 ```
-chore(PROJ-45):🔧 update eslint config
+chore(PROJ-45)::wrench: update eslint config
 ```
 
 ## Step 6: Confirm and Commit
 
-Present the complete commit message to the user. Use AskUserQuestion with options:
+Use AskUserQuestion to confirm the commit. Display the complete commit message inside the **Commit** option's `preview` field so the user can see it in the side panel without it scrolling out of view. The options should be:
 
-- **Commit** — execute the commit as-is
+- **Commit** — with `preview` set to the full commit message (rendered as a code block in the preview pane)
 - **Edit** — let the user modify the message
 - **Abort** — cancel
 

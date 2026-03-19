@@ -37,6 +37,22 @@ marketplace/
 
 Install a plugin by pointing your AI tool's configuration at this repository. Plugins are defined in the [marketplace manifest](./.github/plugin/marketplace.json) and can be consumed by any compatible AI coding assistant.
 
+## Contributing
+
+We encourage teams and individuals to contribute plugins to the marketplace. The best plugins package up a set of related skills targeting a specific **team** or **technology**:
+
+- **Team-focused plugins** — Target a specific dev team's workflows and conventions (e.g., `mobile-team`, `frontend`, `backend`, `data-engineering`)
+- **Technology-focused plugins** — Target a specific technology stack (e.g., `react`, `roku`, `php`, `swift`, `android`)
+
+A good plugin bundles everything a developer on that team or stack needs: skills for common tasks, MCP server configs for relevant tooling, and conventions that enforce team standards. For example, a `roku` plugin might include skills for SceneGraph component scaffolding and BrightScript linting conventions, while a `mobile-team` plugin might bundle iOS and Android build skills with team-specific release workflows.
+
+To contribute a plugin:
+
+1. Create a new directory under `plugins/` with your plugin name
+2. Add skills (as `SKILL.md` files), MCP configs (`.mcp.json`), and conventions as needed
+3. Register your plugin in the [marketplace manifest](./.github/plugin/marketplace.json)
+4. Open a pull request
+
 ## Project
 
 Jira Project: [ELI](https://ewscripps.atlassian.net/browse/ELI)
