@@ -17,6 +17,21 @@
             "skills": [
                 "./skills/commit"
             ]
+        },
+        {
+            "name": "jira",
+            "source": "./plugins/jira",
+            "description": "Jira workflow plugin for card execution and intake workflows.",
+            "version": "1.0.7",
+            "skills": [
+                "./skills/bug-card",
+                "./skills/task-card",
+                "./skills/epic-card",
+                "./skills/requirements-intake",
+                "./skills/issue-intake",
+                "./skills/code-review-setup",
+                "./skills/code-review-exec"
+            ]
         }
     ]
 }
