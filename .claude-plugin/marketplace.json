@@ -1,5 +1,6 @@
 {
-    "name": "stg-marketplace",
+    "name": "stg-marketplace-dev",
+    "_TODO": "Change name back to 'stg-marketplace' before publishing",
     "metadata": {
         "description": "STG Coding plugins",
         "version": "1.0.7"
@@ -23,9 +24,6 @@
             "source": "./plugins/jira",
             "description": "Jira workflow plugin for card execution and intake workflows.",
             "version": "1.0.0",
-            "requires": {
-                "mcp": ["atlassian"]
-            },
             "skills": [
                 "./skills/bug-card",
                 "./skills/task-card",
