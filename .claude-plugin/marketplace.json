@@ -1,6 +1,5 @@
 {
-    "name": "stg-marketplace-dev",
-    "_TODO": "Change name back to 'stg-marketplace' before publishing",
+    "name": "stg-marketplace",
     "metadata": {
         "description": "STG Coding plugins",
         "version": "1.0.7"
