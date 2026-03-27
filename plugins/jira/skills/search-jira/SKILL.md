@@ -40,15 +40,13 @@ Using tools provided from the Atlassian MCP Server:
    - Both calls use `fields`: `["summary", "status", "issuetype", "priority", "assignee"]`
 3. Merge the two result lists (mine first, then others), deduplicating by issue key, capped at 15 total
 
-## Step 3: Present Results
+## Step 3: Return Results
 
-Use AskUserQuestion to present the issues. Format each option as:
+Return the merged issue list to the caller. Format each issue as:
 
 `PROJ-123: Issue summary (Status) — Assignee`
 
 - Prefix issues assigned to the current user with `★`
 - Show up to 10 issues, prioritizing the user's assigned issues at the top
-- Use the issue key as the value
-- Include a "None of these" option
 
-Return the selected issue key to the user.
+Do NOT prompt the user to select an issue — the calling skill is responsible for presenting choices. Simply output the formatted list so the caller can incorporate it into its own UI.

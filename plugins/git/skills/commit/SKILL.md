@@ -108,16 +108,15 @@ Extract the project key from whichever format is found.
 
 ### If NO ticket is found in the branch name, search Jira for existing tickets:
 
-> **Requires the `jira` plugin.** The Jira search and ticket creation features below depend on the `jira` plugin being enabled. If a Skill tool call fails because the skill is not found, inform the user: _"The jira plugin is not enabled. Enable it in your marketplace settings for Jira search and ticket creation. For now, you can type a ticket key manually or skip."_ Then fall back to the manual options only (step 2b below).
+> **Requires the `jira` plugin.** The Jira search and ticket creation features below depend on the `jira` plugin being enabled. If a Skill tool call fails because the skill is not found, inform the user: _"The jira plugin is not enabled. Enable it in your marketplace settings for Jira search and ticket creation. For now, you can type a ticket key manually or skip."_ Then fall back to the manual-only options (step 2b below).
 
 1. If a Jira project key is configured (from README.md or user input above):
    - Invoke the `search-jira` skill using the Skill tool: `skill: "search-jira", args: "<PROJECT_KEY>"`
-   - The skill will present the user with a list of open issues to choose from
-   - If the user selects a ticket, use that issue key as the commit scope
-   - If the user selects "None of these", proceed to the options below
+   - The skill returns a formatted list of open issues (it does NOT prompt the user)
 
-2. After the search (or if no Jira project is configured), use AskUserQuestion to offer:
-   a. If the `jira` plugin is available:
+2. Present the user with a **single unified selection** using AskUserQuestion. Combine the search results with action options:
+   a. If the `jira` plugin is available and returned issues:
+      - List each issue as an option (use the issue key as the value, e.g., `PROJ-123`)
       - **"Create new ticket"** — invoke the `create-jira-card` skill using the Skill tool (`skill: "create-jira-card", args: "<PROJECT_KEY>"`). Use the returned issue key as the commit scope.
       - **"Type manually"** — let the user type a ticket key
       - **"No ticket"** — proceed without a ticket scope
