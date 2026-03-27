@@ -126,19 +126,19 @@ Extract the project key from whichever format is found.
 
 Analyze the staged diff to determine the most appropriate conventional commit type:
 
-| Type       | Gitmoji              | When to use                                             |
-| ---------- | -------------------- | ------------------------------------------------------- |
-| `feat`     | `:sparkles:`         | A new feature (MINOR version bump)                      |
-| `fix`      | `:bug:`              | A bug fix (PATCH version bump)                          |
-| `docs`     | `:books:`            | Documentation only changes                              |
-| `style`    | `:soap:`             | Code style (formatting, whitespace, semicolons)         |
-| `refactor` | `:recycle:`          | Code change that neither fixes a bug nor adds a feature |
-| `perf`     | `:rocket:`           | Performance improvement                                 |
-| `test`     | `:white_check_mark:` | Adding or updating tests                                |
-| `build`    | `:package:`          | Build system or external dependencies                   |
-| `ci`       | `:construction:`     | CI configuration and scripts                            |
-| `chore`    | `:technologist:`     | Other changes that don't modify src or test             |
-| `revert`   | `:repeat:`           | Reverting a previous commit                             |
+| Type       | Gitmoji                   | When to use                                             |
+| ---------- | ------------------------- | ------------------------------------------------------- |
+| `feat`     | `:sparkles:`              | A new feature (MINOR version bump)                      |
+| `fix`      | `:bug:`                   | A bug fix (PATCH version bump)                          |
+| `docs`     | `:books:`                 | Documentation only changes                              |
+| `style`    | `:art:`                   | Code style (formatting, whitespace, semicolons)         |
+| `refactor` | `:technologist:`          | Code change that neither fixes a bug nor adds a feature |
+| `perf`     | `:rocket:`                | Performance improvement                                 |
+| `test`     | `:white_check_mark:`      | Adding or updating tests                                |
+| `build`    | `:package:`               | Build system or external dependencies                   |
+| `ci`       | `:building_construction:` | CI configuration and scripts                            |
+| `chore`    | `:wrench:`                | Other changes that don't modify src or test             |
+| `revert`   | `:repeat:`                | Reverting a previous commit                             |
 
 For **breaking changes**, add `!` after the scope AND use `:boom:` instead of the type's default gitmoji.
 
