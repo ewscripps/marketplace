@@ -37,11 +37,10 @@ Call `getAccessibleAtlassianResources` from the Atlassian MCP Server to get the 
 
 Use AskUserQuestion to ask the user for the issue type:
 
-- **Story** — A user story or feature
+- **Dev Task** — A dev task or feature
 - **Bug** — A defect or issue
-- **Task** — A task or action item
-- **Subtask** — A subtask of an existing issue
-- **Epic** — A large body of work
+- **Support Task** — A development task related to support work
+- **Task** — A general task that doesn't fit the other categories
 
 Then ask the user for:
 
@@ -56,9 +55,12 @@ Call `createJiraIssueUsingApi` from the Atlassian MCP Server with:
 
 - `cloudId`: from Step 2
 - `projectKey`: from Step 1
-- `issueType`: from Step 3 (use the Jira issue type name: "Story", "Bug", "Task", "Sub-task", "Epic")
+- `issueType`: from Step 3 (use the Jira issue type name: "Dev Task", "Bug", "Support Task", "Task")
 - `summary`: from Step 3
 - `description`: from Step 3 (if provided)
+- `assignToMe`: `true` — always set this to assign the newly created issue to the authenticated user
+
+If `createJiraIssueUsingApi` does not accept `assignToMe` or returns an error related to it, retry the call without it and skip assignment silently.
 
 ## Step 5: Transition to In Progress
 

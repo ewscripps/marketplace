@@ -113,16 +113,19 @@ Extract the project key from whichever format is found.
 1. If a Jira project key is configured (from README.md or user input above):
    - Invoke the `search-jira` skill using the Skill tool: `skill: "search-jira", args: "<PROJECT_KEY>"`
    - The skill returns a formatted list of open issues (it does NOT prompt the user)
+   - Display **all** search results to the user as a numbered list (issue key + title) so they can reference them. If there are more than 2 results, note that the remaining issues not shown as quick-pick options can be entered via the free-text "Other" choice in the next step.
 
-2. Present the user with a **single unified selection** using AskUserQuestion. Combine the search results with action options:
-   a. If the `jira` plugin is available and returned issues:
-      - List each issue as an option (use the issue key as the value, e.g., `PROJ-123`)
-      - **"Create new ticket"** — invoke the `create-jira-card` skill using the Skill tool (`skill: "create-jira-card", args: "<PROJECT_KEY>"`). Use the returned issue key as the commit scope.
-      - **"Type manually"** — let the user type a ticket key
-      - **"No ticket"** — proceed without a ticket scope
-   b. If the `jira` plugin is NOT available (Skill tool calls failed above):
-      - **"Type manually"** — let the user type a ticket key
-      - **"No ticket"** — proceed without a ticket scope
+2. Present the user with a **single unified selection** using AskUserQuestion. The call MUST have **exactly 4 options** in this exact order — no more, no fewer, no reordering, no omissions:
+
+   | # | label | description | When chosen |
+   |---|-------|-------------|-------------|
+   | 1 | `<ISSUE-1_KEY>: <title>` | `Assign this issue to the commit` | Use `ISSUE-1_KEY` as scope |
+   | 2 | `<ISSUE-2_KEY>: <title>` | `Assign this issue to the commit` | Use `ISSUE-2_KEY` as scope |
+   | 3 | `Create new ticket` | `Create a new Jira issue for this commit` | Invoke `skill: "create-jira-card", args: "<PROJECT_KEY>"`. Use the returned issue key as scope. |
+   | 4 | `No ticket` | `Proceed without a Jira ticket scope` | Omit the scope from the commit |
+
+   - Options 1-2: Use the **first 2 issues** from the `search-jira` results. If search returned fewer than 2 issues, fill remaining slots by shifting later options up (minimum 2 options total).
+   - The built-in "Other" option already allows the user to type a ticket key manually — do NOT add a separate "Type manually" option.
 
 ## Step 3.5: Offer to Create a Ticket Branch
 
