@@ -3,7 +3,7 @@ name: commit
 description: Create a conventional commit with Jira ticket scope and gitmoji
 user-invocable: true
 argument-hint: '[--all|-a] [optional type override: feat|fix|docs|refactor|test|perf|chore|style|ci|build]'
-allowed-tools: Bash(git *), AskUserQuestion, Read, Grep, Glob
+allowed-tools: Bash(git *), AskUserQuestion, Read, Grep, Glob, Skill
 ---
 
 # Conventional Commit with Jira Scope
@@ -106,21 +106,46 @@ Extract the project key from whichever format is found.
     ```
     Append it under a `## Project` heading (create the heading if needed).
 
-### If NO ticket is found in the branch name follow this process, using tools provided from the Atlassian MCP Server:
+### If NO ticket is found in the branch name, search Jira for existing tickets:
 
-1. If a Jira project key is configured:
-   a. Call `getAccessibleAtlassianResources` to get the cloudId
-   b. Call `searchJiraIssuesUsingJql` **twice in parallel**:
-   - **Mine first** — `project = "<PROJECT_KEY>" AND statusCategory != Done AND assignee = currentUser() ORDER BY updated DESC` / `maxResults`: 5
-   - **Others** — `project = "<PROJECT_KEY>" AND statusCategory != Done AND assignee != currentUser() ORDER BY statusCategory DESC, updated DESC` / `maxResults`: 10
-   - Both calls use `fields`: `["summary", "status", "issuetype", "priority", "assignee"]`
-     c. Merge the two result lists (mine first, then others), deduplicating by issue key, capped at 15 total
-     d. Present the issues to the user with AskUserQuestion, showing format: `PROJ-123: Issue summary (Status) — Assignee`. Show up to 10 issues, but prioritize the user's assigned issues at the top. Use the issue key as the value.
-   - Prefix issues from the first query with `★` to indicate they are assigned to the current user
-     e. Include a "No ticket" option and a "Type manually" option
-2. If NO Jira project is configured in README.md, ask the user:
-   - Whether they want to add a Jira project key (and which one - then add it to README.md for future use)
-   - Or proceed without a ticket scope
+> **Requires the `jira` plugin.** The Jira search and ticket creation features below depend on the `jira` plugin being enabled. If a Skill tool call fails because the skill is not found, inform the user: _"The jira plugin is not enabled. Enable it in your marketplace settings for Jira search and ticket creation. For now, you can type a ticket key manually or skip."_ Then fall back to the manual options only (step 2b below).
+
+1. If a Jira project key is configured (from README.md or user input above):
+   - Invoke the `search-jira` skill using the Skill tool: `skill: "search-jira", args: "<PROJECT_KEY>"`
+   - The skill will present the user with a list of open issues to choose from
+   - If the user selects a ticket, use that issue key as the commit scope
+   - If the user selects "None of these", proceed to the options below
+
+2. After the search (or if no Jira project is configured), use AskUserQuestion to offer:
+   a. If the `jira` plugin is available:
+      - **"Create new ticket"** — invoke the `create-jira-card` skill using the Skill tool (`skill: "create-jira-card", args: "<PROJECT_KEY>"`). Use the returned issue key as the commit scope.
+      - **"Type manually"** — let the user type a ticket key
+      - **"No ticket"** — proceed without a ticket scope
+   b. If the `jira` plugin is NOT available (Skill tool calls failed above):
+      - **"Type manually"** — let the user type a ticket key
+      - **"No ticket"** — proceed without a ticket scope
+
+## Step 3.5: Offer to Create a Ticket Branch
+
+**Skip this step entirely** if the ticket was resolved from the branch name in Step 3 (i.e., the branch already contains the ticket key).
+
+If a ticket key was resolved via Jira search, ticket creation, or manual entry, and the current branch does NOT contain that ticket key:
+
+1. Run `git branch --list "*<TICKET_KEY>*"` to check if a local branch already exists for this ticket.
+
+2. **If a matching branch already exists:**
+   Use AskUserQuestion to offer:
+   - **"Switch to `<existing-branch-name>`"** — run `git checkout <existing-branch-name>` (staged changes carry over)
+   - **"Stay on current branch"** — proceed without switching
+
+3. **If no matching branch exists:**
+   Generate a branch name using the pattern `<TICKET_KEY>-<short-description>`:
+   - If the Jira issue summary is available (from search or creation), slugify it: lowercase, replace spaces with hyphens, strip special characters, truncate to ~50 chars (e.g., `PROJ-123-add-user-login`)
+   - If no summary is available (manual entry), use just the ticket key: `<TICKET_KEY>`
+
+   Use AskUserQuestion to offer:
+   - **"Create branch `<generated-branch-name>`"** — run `git checkout -b <generated-branch-name>` (staged changes carry over to the new branch)
+   - **"Stay on current branch"** — proceed without switching
 
 ## Step 4: Determine Commit Type
 

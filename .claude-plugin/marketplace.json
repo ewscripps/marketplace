@@ -17,6 +17,16 @@
             "skills": [
                 "./skills/commit"
             ]
+        },
+        {
+            "name": "jira",
+            "source": "./plugins/jira",
+            "description": "Jira integration plugin for issue management.",
+            "version": "1.0.0",
+            "skills": [
+                "./skills/create-jira-card",
+                "./skills/search-jira"
+            ]
         }
     ]
 }
