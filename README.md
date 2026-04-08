@@ -22,7 +22,7 @@ AI coding assistants are powerful out of the box, but teams need consistent beha
 
 ```
 marketplace/
-├── .github/plugin/
+├── .claude-plugin/
 │   └── marketplace.json      # Marketplace manifest (plugin registry)
 ├── plugins/
 │   └── <plugin-name>/
@@ -50,7 +50,7 @@ To contribute a plugin:
 
 1. Create a new directory under `plugins/` with your plugin name
 2. Add skills (as `SKILL.md` files), MCP configs (`.mcp.json`), and conventions as needed
-3. Register your plugin in the [marketplace manifest](./.github/plugin/marketplace.json)
+3. Register your plugin in the [marketplace manifest](./.claude-plugin/marketplace.json)
 4. Open a pull request
 
 ## Project

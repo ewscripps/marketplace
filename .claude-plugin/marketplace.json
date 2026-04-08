@@ -27,6 +27,21 @@
                 "./skills/create-jira-card",
                 "./skills/search-jira"
             ]
+        },
+        {
+            "name": "ai-development-methodology",
+            "source": "./plugins/ai-development-methodology",
+            "description": "A structured, language-agnostic methodology for AI-assisted software development from concept to shipped code.",
+            "version": "0.1.0",
+            "skills": [
+                "./skills/edm-orchestrator",
+                "./skills/edm-planning",
+                "./skills/edm-srd-create",
+                "./skills/edm-srd-audit",
+                "./skills/edm-ticket-pack",
+                "./skills/edm-ticket-audit",
+                "./skills/edm-implement"
+            ]
         }
     ]
 }
