@@ -2,7 +2,7 @@
 name: preflight
 description: Pre-flight check for ada-tablo skills — clones workspace repo, pulls latest, inspects history.
 user-invocable: false
-allowed-tools: Bash(git *), Bash(ls *), Bash(cp *), Bash(grep *), AskUserQuestion, Read
+allowed-tools: Bash(git *), Bash(ls *), Bash(cp *), AskUserQuestion, Read, Grep
 ---
 
 # Ada-Tablo Pre-Flight
@@ -51,11 +51,11 @@ Wait for confirmation before proceeding.
 
 **If `.env` exists, verify it has a real token:**
 
-```bash
-grep "ADA_API_TOKEN=" ~/repos/ada-tablo-ops/.env
-```
+Use the Grep tool to check the `.env` file for the token value. If it still contains `your-token-here`, ask the user to update it.
 
-If it still contains `your-token-here`, ask the user to update it.
+**MCP Token Note:** The Ada MCP server reads `ADA_API_TOKEN` from the environment. For the token to resolve automatically, the user should either:
+- Launch Claude Code from `~/repos/ada-tablo-ops` (Claude Code loads `.env` files from the working directory)
+- OR set `export ADA_API_TOKEN=...` in their shell profile (`~/.zshrc` or `~/.bashrc`)
 
 ## Step 3: Pull Latest
 
@@ -81,6 +81,12 @@ Summarize relevant findings for the calling skill:
 - Are there recent output files that overlap with what we're about to do?
 
 Report this context to the user before the parent skill continues.
+
+## Step 5: Verify MCP Connectivity (Coaching Review Only)
+
+If this preflight was invoked by the coaching-review skill, the skill will need Ada MCP tools (`search_coaching`, `get_ada_metric`). Inform the user:
+
+"This skill uses the Ada MCP server. If you haven't used it before, you may be prompted to approve MCP tool access when the skill calls Ada. Make sure your `ADA_API_TOKEN` is set (see Step 2)."
 
 ## Notes
 

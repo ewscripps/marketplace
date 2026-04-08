@@ -2,7 +2,7 @@
 name: weekly-playbook-analysis
 description: Run weekly playbook analysis for Ada-Tablo. Guides CSV export, runs analysis script, compares to baselines.
 user-invocable: true
-allowed-tools: Bash, Read, Grep, Glob, AskUserQuestion, Skill
+allowed-tools: Bash(python3 *), Bash(mkdir *), Bash(cp *), Bash(ls *), Read, Grep, Glob, AskUserQuestion, Skill
 ---
 
 # Weekly Playbook Analysis

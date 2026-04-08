@@ -2,7 +2,7 @@
 name: coaching-review
 description: Run monthly coaching inventory review. Syncs with Ada MCP, tracks coaching effectiveness, guides new coaching implementation.
 user-invocable: true
-allowed-tools: Bash, Read, Grep, Glob, AskUserQuestion, Skill
+allowed-tools: Bash(python3 *), Bash(mkdir *), Bash(cp *), Bash(ls *), Read, Grep, Glob, AskUserQuestion, Skill
 ---
 
 # Coaching Management Review
