@@ -42,6 +42,19 @@
                 "./skills/edm-ticket-audit",
                 "./skills/edm-implement"
             ]
+        },
+        {
+            "name": "ada-tablo",
+            "source": "./plugins/ada-tablo",
+            "description": "Ada chatbot analysis skills for Tablo support — playbook review, topics review, coaching inventory.",
+            "version": "1.0.0",
+            "skills": [
+                "./skills/weekly-playbook-analysis",
+                "./skills/weekly-topics-review",
+                "./skills/coaching-review",
+                "./skills/preflight",
+                "./skills/commit-results"
+            ]
         }
     ]
 }

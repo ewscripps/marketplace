@@ -1,0 +1,13 @@
+{
+    "mcpServers": {
+        "ada-tablo": {
+            "command": "npx",
+            "args": [
+                "mcp-remote",
+                "https://nuvyyo-gr.ada.support/api/mcp",
+                "--header",
+                "Authorization: Bearer ${env:ADA_API_TOKEN}"
+            ]
+        }
+    }
+}
