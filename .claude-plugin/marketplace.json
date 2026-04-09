@@ -55,6 +55,34 @@
                 "./skills/preflight",
                 "./skills/commit-results"
             ]
+        },
+        {
+            "name": "web-cms",
+            "source": "./plugins/web-cms",
+            "description": "Skills and agents for creating and implementing Jira cards for Web & CMS development workflows.",
+            "version": "1.0.0",
+            "skills": [
+                "./skills/requirements-intake",
+                "./skills/issue-intake",
+                "./skills/code-review-intake",
+                "./skills/epic-card",
+                "./skills/task-card",
+                "./skills/bug-card",
+                "./skills/document-card",
+                "./skills/code-review",
+                "./skills/manual-qa-plan",
+                "./skills/test-doc-review",
+                "./skills/pr-mr-creation"
+            ],
+            "agents": [
+                "./agents/codebase-explorer",
+                "./agents/documentation-reviewer",
+                "./agents/implementation-reviewer",
+                "./agents/manual-qa-reviewer",
+                "./agents/plan-reviewer",
+                "./agents/review-analyst",
+                "./agents/test-reviewer"
+            ]
         }
     ]
 }
