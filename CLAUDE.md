@@ -49,6 +49,7 @@ Skills can call other skills via the `Skill` tool (e.g., `skill: "create-jira-ca
 
 - **git** (v1.0.8) — `/commit` skill for conventional commits with Jira scope and gitmoji shortcodes. Delegates Jira operations to the jira plugin.
 - **jira** (v1.0.0) — `/search-jira` and `/create-jira-card` skills. Uses Atlassian MCP server at `https://mcp.atlassian.com/v1/mcp`.
+- **ada-tablo** (v1.0.0) — `/weekly-playbook-analysis`, `/weekly-topics-review`, `/coaching-review` skills for Ada chatbot performance analysis. Uses Ada MCP server. Shared workspace at `DavidG91/ada-tablo-ops` (GitHub).
 
 ## Key Conventions
 
