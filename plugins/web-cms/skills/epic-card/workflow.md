@@ -18,6 +18,8 @@
 
 **GIT AND FILESYSTEM TOOL PREFERENCE:** Prefer MCP tools over Bash for git and filesystem operations. For git: use `git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, and `git_reset` instead of running the equivalent `git` commands via Bash. For filesystem: use `read_file`, `read_multiple_files`, `write_file`, `edit_file`, `list_directory`, `directory_tree`, `search_files`, `create_directory`, `move_file`, and `get_file_info` instead of Bash filesystem commands. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
 
+**WORKTREE DISCIPLINE:** When creating a git worktree, always check out the **real branch name** — do not create a worktree-prefixed or renamed branch (e.g. never `worktree-PROJ-123`). Use `git worktree add <path> <branch-name>` to check out the existing branch in the worktree. All commits must be made on the real branch. Push using `git push origin <branch-name>` — never use refspecs that map a different local branch name to the remote (e.g. never `git push origin worktree-branch:real-branch`). After removing a worktree and returning to the main working directory, run `git fetch origin` and update the local ref with `git branch -f <branch-name> origin/<branch-name>` before checking it out, to ensure the local branch matches the remote.
+
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create tasks for the following logical groups at the start of the workflow, mark each `in_progress` when starting and `completed` when done:
 
 - **Setup** (E0–E1): Transition to In Progress, understand the epic
@@ -202,9 +204,9 @@ Parent epic: {{EPIC-KEY}} — {{EPIC-SUMMARY}}
 Example: `PROJ-900-user-authentication-overhaul`
 
 - This branch is the integration target for the entire epic. All child task branches will be created from and merged back into this branch.
-- Create a git worktree named after the epic branch. This worktree is used for child task implementation before manual testing begins.
-- Remove this worktree before E9 so the integration branch can be checked out locally for manual testing. If E9 feedback requires additional fixes, recreate the worktree for that follow-up task work and remove it again before returning to E9.
-- Push the integration branch to the remote.
+- Create a worktree that checks out the integration branch by its real name: `git worktree add <path> <branch-name>`. Do not create a worktree-prefixed branch. This worktree is used for child task implementation before manual testing begins.
+- Remove this worktree before E9 so the integration branch can be checked out locally for manual testing. After removing the worktree, sync the local branch: `git fetch origin` followed by `git branch -f <branch-name> origin/<branch-name>`. If E9 feedback requires additional fixes, recreate the worktree for that follow-up task work and remove it again (with the same sync step) before returning to E9.
+- Push the integration branch to the remote using `git push origin <branch-name>`. Do not use refspecs.
 
 > **USE KNOWLEDGE GRAPH:** Write a `branch` node with properties: `name` (the integration branch name), `type: integration`, and link it to the epic node. This allows E8 to read the integration branch name from the graph rather than re-deriving it.
 

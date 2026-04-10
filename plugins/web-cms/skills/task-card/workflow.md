@@ -32,6 +32,8 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 > - **T11:** Skip User Testing -- user testing for the epic is handled at the epic level (E9). Proceed directly to T12.
 > - **T13:** Do not remove the shared epic worktree in epic child-task mode. Final worktree cleanup for the integration branch is handled at the epic level (E11).
 
+**WORKTREE DISCIPLINE:** When creating a git worktree, always check out the **real branch name** — do not create a worktree-prefixed or renamed branch (e.g. never `worktree-PROJ-123`). Use `git worktree add <path> <branch-name>` to check out the existing branch in the worktree. All commits must be made on the real branch. Push using `git push origin <branch-name>` — never use refspecs that map a different local branch name to the remote (e.g. never `git push origin worktree-branch:real-branch`). After removing a worktree and returning to the main working directory, run `git fetch origin` and update the local ref with `git branch -f <branch-name> origin/<branch-name>` before checking it out, to ensure the local branch matches the remote.
+
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create tasks for the following logical groups at the start of the workflow, mark each `in_progress` when starting and `completed` when done:
 
 - **Setup** (T0–T1): Transition to In Progress, understand the task
@@ -144,8 +146,8 @@ The sub-agent will return a structured findings report with an overall verdict o
 
 Example: `PROJ-1234-add-retry-logic-to-payment-service`
 
-- **Standard mode:** Branch from the user-specified base branch and create a git worktree.
-- **Epic child task mode:** Branch from the **Epic Integration Branch** specified in Task Details, within the epic's existing worktree. Do not ask for a base branch in this mode — the integration branch is already defined.
+- **Standard mode:** Create the branch from the user-specified base branch, then create a worktree that checks out that branch by its real name: `git worktree add <path> <branch-name>`. Do not create a worktree-prefixed branch.
+- **Epic child task mode:** Create the branch from the **Epic Integration Branch** specified in Task Details, within the epic's existing worktree. Do not ask for a base branch in this mode — the integration branch is already defined.
 
 ### T7 — Baseline Verification
 
@@ -244,8 +246,8 @@ Do not proceed to T9 until `implementation-reviewer`, `test-reviewer`, and `docu
 Example: `PROJ-1234: Add retry logic with exponential backoff to payment service`
 
 - Use imperative mood for the description.
-- Push the branch to the remote.
-- **Standard mode:** Exit the worktree and return to the main working directory.
+- Push the branch to the remote using `git push origin <branch-name>`. Do not use refspecs.
+- **Standard mode:** Exit the worktree, remove it, then sync the local branch: `git fetch origin` followed by `git branch -f <branch-name> origin/<branch-name>`. Return to the main working directory.
 - **Epic child task mode:** After committing, merge the task branch into the Epic Integration Branch. Run the full build, all tests, and all linters on the integration branch to confirm no merge conflicts or regressions. Then exit the worktree.
 
 ### T11 — User Testing

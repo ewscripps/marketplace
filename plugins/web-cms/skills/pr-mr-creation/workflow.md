@@ -109,14 +109,9 @@
 
 ---
 
-### M4 — PR/MR Metadata
+### M4 — Pre-Creation Confirmation
 
-**Ask the following questions:**
-
-1. Who should be added as **reviewers**?
-2. Who should be the **assignee**? _(defaults to the author if left blank)_
-3. Should any **labels** be applied? _(Agent should suggest relevant labels based on context, e.g. `release`, `bug`, `feature`, `tech-debt`, `epic`)_
-4. Should this be created as a **draft** PR/MR? _(Recommended for releases, epics, or work still in progress)_
+**Agent confirms automatically:** Verify that all context from M1–M3 (branches, Jira items, diff summary) is complete and ready for description generation. If anything is missing, stop and resolve before proceeding.
 
 ---
 
@@ -160,6 +155,8 @@ e.g. impacted services, risky refactors, migrations, or configuration changes]
 - Testing Notes identify genuinely risky or complex areas
 - No placeholder text remains in any field
 
+**DESCRIPTION FORMATTING:** The description must be clean, renderable markdown with real line breaks. Do not use escaped newline sequences (`\n`, `\\n`) anywhere in the description string. When the description is passed to the PR/MR creation tool in M6, it must contain actual newlines — not escape sequences that render as literal `\n` in the PR/MR body. If the creation tool accepts a string parameter, ensure the string contains real newline characters, not the two-character literal `\n`.
+
 If the review reveals issues, resolve them before presenting. Do not present an unreviewed description.
 
 ---
@@ -170,13 +167,9 @@ Present the full PR/MR preview in the chat:
 
 ```
 PLATFORM:      GitHub / GitLab
-TITLE:         [source branch name or release name]
+TITLE:         [PROJ-123: Short description — per title convention in Notes]
 SOURCE:        [source branch]
 DESTINATION:   [destination branch]
-DRAFT:         Yes / No
-REVIEWERS:     [list]
-ASSIGNEE:      [name]
-LABELS:        [list]
 
 DESCRIPTION:
 [full generated description]
@@ -191,11 +184,10 @@ DESCRIPTION:
 
 Once the user confirms:
 
-1. Create the PR (GitHub) or MR (GitLab) using the confirmed metadata and description.
+1. Create the PR (GitHub) or MR (GitLab) using the confirmed title and description. **Critical: pass the description with real newlines, not escaped `\n` sequences.** If using an MCP tool that accepts a description/body string parameter, the string must contain actual newline characters so the markdown renders correctly in the PR/MR. Double-check the tool call does not serialize newlines as literal `\n` or `\\n` text. If the tool does not handle multiline strings correctly, fall back to the `gh` CLI (GitHub) or `glab` CLI (GitLab) with a heredoc to preserve formatting. Do not set reviewers, assignees, labels, or draft status — these are not reliably supported via the API and should be set manually after creation.
 2. Report back in the chat with:
     - The PR/MR URL
     - The PR/MR number/ID
-    - Confirmation that reviewers and assignee were set successfully
 3. If any step fails (e.g. branch protection rules, missing permissions), stop immediately, report the specific error in the chat, and suggest corrective action. Do not silently retry or proceed past a failure.
 
 ---
@@ -208,10 +200,9 @@ Once the user confirms:
 
 ## Notes
 
-- **Title convention:** Use the source branch name as the PR/MR title. For releases, use the release name or Fix Version (e.g. `Release 2.4.0`). For Jira-linked work, prefer `[PROJ-123] Short description of work`.
+- **Title convention:** For Jira-linked work, use the format `PROJ-123: Short description of work` (Jira key, colon, space, imperative-mood description). Do not use brackets around the Jira key. For releases, use `Release x.x.x` or the Fix Version name (e.g. `Release 2.4.0`). Do not fall back to the raw branch name as the title.
 - **Branch naming:** Source branches should follow `type/PROJ-key-short-description` or `release/x.x.x`. Flag deviations but do not block on them.
 - **Missing Jira items:** Always report missing items but allow the user to override and proceed.
-- **Draft PRs/MRs:** Recommend draft mode for releases, epics, or any work flagged as in-progress.
 - **Release context:** In Jira, releases are usually tracked by **Fix Version** rather than a standalone Jira issue. Capture a release-tracking issue only if the team also maintains one.
 
 ---

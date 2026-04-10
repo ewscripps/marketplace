@@ -18,6 +18,8 @@
 
 **GIT AND FILESYSTEM TOOL PREFERENCE:** Prefer MCP tools over Bash for git and filesystem operations. For git: use `git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, and `git_reset` instead of running the equivalent `git` commands via Bash. For filesystem: use `read_file`, `read_multiple_files`, `write_file`, `edit_file`, `list_directory`, `directory_tree`, `search_files`, `create_directory`, `move_file`, and `get_file_info` instead of Bash filesystem commands. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
 
+**WORKTREE DISCIPLINE:** When creating a git worktree, always check out the **real branch name** — do not create a worktree-prefixed or renamed branch (e.g. never `worktree-PROJ-123`). Use `git worktree add <path> <branch-name>` to check out the existing branch in the worktree. All commits must be made on the real branch. Push using `git push origin <branch-name>` — never use refspecs that map a different local branch name to the remote (e.g. never `git push origin worktree-branch:real-branch`). After removing a worktree and returning to the main working directory, run `git fetch origin` and update the local ref with `git branch -f <branch-name> origin/<branch-name>` before checking it out, to ensure the local branch matches the remote.
+
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create tasks for the following logical groups at the start of the workflow, mark each `in_progress` when starting and `completed` when done:
 
 - **Setup** (B0–B1): Transition to In Progress, understand the bug
@@ -146,7 +148,7 @@ The sub-agent will return a structured findings report with an overall verdict o
 
 Example: `PROJ-5678-fix-null-pointer-in-user-lookup`
 
-- Create a git worktree for the new branch.
+- Create a worktree that checks out the branch by its real name: `git worktree add <path> <branch-name>`. Do not create a worktree-prefixed branch.
 
 ### B8 — Baseline Verification
 
@@ -256,8 +258,8 @@ Do not proceed to B11 until `implementation-reviewer`, `test-reviewer`, and `doc
 Example: `PROJ-5678: Fix null pointer when looking up user with missing profile`
 
 - Use imperative mood for the description.
-- Push the branch to the remote.
-- Exit the worktree and return to the main working directory.
+- Push the branch to the remote using `git push origin <branch-name>`. Do not use refspecs.
+- Exit the worktree, remove it, then sync the local branch: `git fetch origin` followed by `git branch -f <branch-name> origin/<branch-name>`. Return to the main working directory.
 
 ### B13 — User Testing
 
