@@ -366,6 +366,8 @@ Add new review section at TOP of file (newest first):
 
 ## Step 8: Commit Results
 
+**IMPORTANT: Only commit at the end of the session, after findings have been confirmed and all actions are complete.** Do not commit mid-session while analysis is still in progress or before the user has reviewed the findings.
+
 Invoke the commit-results skill to save output and reference updates:
 
 ```
