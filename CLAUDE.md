@@ -12,15 +12,17 @@ Jira Project: [ELI](https://ewscripps.atlassian.net/browse/ELI)
 
 ### Plugin Registry
 
-`.claude-plugin/marketplace.json` is the central manifest. Each plugin entry has a `name`, `source` path, `version`, and list of `skills` (relative paths from the plugin root).
+`.claude-plugin/marketplace.json` is the central manifest. Each plugin entry has a `name`, `source` path, `version`, a list of `skills`, and an optional list of `agents` (all relative paths from the plugin root).
 
 ### Plugin Structure
 
 ```
 plugins/<plugin-name>/
 ├── .mcp.json                    # MCP server config (can be empty)
-└── skills/<skill-name>/
-    └── SKILL.md                 # Skill definition with YAML frontmatter
+├── skills/<skill-name>/
+│   └── SKILL.md                 # Skill definition with YAML frontmatter
+└── agents/<agent-name>/
+    └── AGENT.md                 # Agent definition with YAML frontmatter
 ```
 
 ### SKILL.md Frontmatter
@@ -50,6 +52,7 @@ Skills can call other skills via the `Skill` tool (e.g., `skill: "create-jira-ca
 - **git** (v1.0.8) — `/commit` skill for conventional commits with Jira scope and gitmoji shortcodes. Delegates Jira operations to the jira plugin.
 - **jira** (v1.0.0) — `/search-jira` and `/create-jira-card` skills. Uses Atlassian MCP server at `https://mcp.atlassian.com/v1/mcp`.
 - **ada-tablo** (v1.0.0) — `/weekly-playbook-analysis`, `/weekly-topics-review`, `/coaching-review` skills for Ada chatbot performance analysis. Uses Ada MCP server. Shared workspace at `DavidG91/ada-tablo-ops` (GitHub).
+- **web-cms** (v1.0.0) — Intake and execution skills for web CMS Jira workflows, plus 7 specialist review agents (codebase-explorer, documentation-reviewer, implementation-reviewer, manual-qa-reviewer, plan-reviewer, review-analyst, test-reviewer).
 
 ## Key Conventions
 
