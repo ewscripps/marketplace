@@ -73,15 +73,6 @@
                 "./skills/manual-qa-plan",
                 "./skills/test-doc-review",
                 "./skills/pr-mr-creation"
-            ],
-            "agents": [
-                "./agents/codebase-explorer",
-                "./agents/documentation-reviewer",
-                "./agents/implementation-reviewer",
-                "./agents/manual-qa-reviewer",
-                "./agents/plan-reviewer",
-                "./agents/review-analyst",
-                "./agents/test-reviewer"
             ]
         }
     ]
