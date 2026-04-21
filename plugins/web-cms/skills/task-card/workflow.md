@@ -240,10 +240,10 @@ Do not proceed to T9 until `implementation-reviewer`, `test-reviewer`, and `docu
 - Stage all changes and commit with this message format:
 
 ```
-{PROJECTKEY}-{ISSUENUMBER}: <concise description of what was done>
+[{PROJECTKEY}-{ISSUENUMBER}] <concise description of what was done>
 ```
 
-Example: `PROJ-1234: Add retry logic with exponential backoff to payment service`
+Example: `[PROJ-1234] Add retry logic with exponential backoff to payment service`
 
 - Use imperative mood for the description.
 - Push the branch to the remote using `git push origin <branch-name>`. Do not use refspecs.

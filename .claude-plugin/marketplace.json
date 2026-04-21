@@ -72,7 +72,7 @@
                 "./skills/code-review",
                 "./skills/manual-qa-plan",
                 "./skills/test-doc-review",
-                "./skills/pr-mr-creation"
+                "./skills/mr-creation"
             ]
         }
     ]

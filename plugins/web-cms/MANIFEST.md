@@ -18,8 +18,8 @@ INTAKE (creates Jira cards)          EXECUTION (works Jira cards)
 /code-review-intake (CI0-CI5) --->   /code-review PROJ-123 (CR0-CR10)
   Creates Code Review card
 
-                                       /pr-mr-creation (M0-M6)
-                                         Standalone -- creates PR/MR
+                                       /mr-creation (M0-M6)
+                                         Standalone -- creates GitLab MR
 
                                        /test-doc-review [PROJ-123] (TD0-TD5)
                                          Standalone -- independently runs test-reviewer and documentation-reviewer; skips TD0 when no Jira key is provided
@@ -59,7 +59,7 @@ The Jira card description is the interface between intake and execution:
 | **bug-card** | `/bug-card PROJ-123` | B0-B14 | Bug card description | codebase-explorer, plan-reviewer, implementation-reviewer, test-reviewer, documentation-reviewer |
 | **epic-card** | `/epic-card PROJ-123` | E0-E10 | Epic card description | codebase-explorer |
 | **code-review** | `/code-review PROJ-123` | CR0-CR10 | Code Review card description | review-analyst (4 or 5 parallel, depending on review type) |
-| **pr-mr-creation** | `/pr-mr-creation` | M0-M6 | User input + repo state | None |
+| **mr-creation** | `/mr-creation` | M0-M6 | User input + repo state | None |
 | **test-doc-review** | `/test-doc-review [PROJ-123]` | TD0-TD5 | Optional Task/Bug Jira context + current repo state | test-reviewer, documentation-reviewer |
 | **manual-qa-plan** | `/manual-qa-plan PROJ-123` | Q0-Q4 | Task/Bug/Epic Jira context + related branch diff | manual-qa-reviewer |
 | **document-card** | `/document-card PROJ-123` | D0-D8 | Completed Task/Epic/Bug card | None |
@@ -114,8 +114,8 @@ The Jira card description is the interface between intake and execution:
    E9: User testing (end-to-end, after epic worktree cleanup)
    E10: Epic summary
 
-3. User invokes /pr-mr-creation
-   M0-M6: Create PR/MR for the integration branch
+3. User invokes /mr-creation
+   M0-M6: Create GitLab MR for the integration branch
 
 4. User invokes /manual-qa-plan PROJ-123
    Q0-Q4: Read Jira context and related branch diff, then generate tester-friendly manual QA verification steps
@@ -177,7 +177,7 @@ Most intake and execution workflows use a session-scoped knowledge graph to accu
 - **Graph-backed intake workflows:** Graph content must be fully materialized into the Jira card description before the session ends
 - **Graph-backed execution workflows:** Graph is used within the session for state tracking; if resumed in a new session with an empty graph, reconstruct state from the Jira issue description and comment history before continuing
 - **Epic workflow:** Graph is the authoritative execution state map tracking child task completion; critical for resumability
-- **Cleanup required:** If a workflow uses a session-scoped knowledge graph, add a dedicated final cleanup phase after the last durable artifact has been created (for example: Jira description, Jira summary comment, review findings comment, or PR/MR description). Perform graph cleanup there, not inline in an earlier phase.
+- **Cleanup required:** If a workflow uses a session-scoped knowledge graph, add a dedicated final cleanup phase after the last durable artifact has been created (for example: Jira description, Jira summary comment, review findings comment, or MR description). Perform graph cleanup there, not inline in an earlier phase.
 - **Worktree cleanup:** For workflows that create worktrees, the dedicated final cleanup phase should verify no workflow-owned worktree remains before the workflow is considered complete. If a worktree must be removed earlier for user testing, the cleanup phase should still verify that removal at the end.
 
 ## Deployment
@@ -195,7 +195,7 @@ your-project/
       task-card/
       epic-card/
       code-review/
-      pr-mr-creation/
+      mr-creation/
       test-doc-review/
       manual-qa-plan/
       document-card/
@@ -212,5 +212,29 @@ your-project/
 Agent invocations in the workflows assume the runtime can resolve agent names directly from the copied `.claude/agents/` directory. If your target environment requires an explicit agent registry or routing configuration, add that registration as part of deployment so references such as `codebase-explorer`, `plan-reviewer`, `test-reviewer`, and `documentation-reviewer` resolve correctly at runtime.
 
 **MCP tool name prefix:** The `allowed-tools` field in each SKILL.md references MCP tools using the `mcp__MCP_DOCKER__` prefix (e.g., `mcp__MCP_DOCKER__sequentialthinking`). This prefix is specific to the Docker MCP Toolkit setup. If you deploy these skills to a project with a different MCP server configuration, update the prefix in every SKILL.md to match the target environment's MCP server name.
+
+## MCP Server Configuration
+
+The plugin's `.mcp.json` ships with `${VAR:-default}` env-var expansion so the same file works in both dev-container and host-machine projects. Set these env vars (shell profile, direnv, or project `.env`) before launching Claude Code if the defaults don't match your environment:
+
+| Variable | Default | When to override |
+|----------|---------|------------------|
+| `MCP_GATEWAY_URL` | `http://localhost:8811/mcp` | Dev container with a compose service named `mcp-gateway` -- set to `http://mcp-gateway:8811/mcp`. Leave unset when the Docker MCP Toolkit runs on the host. |
+| `SERENA_PROJECT` | `${PWD}` (project root at launch) | Dev container where the repo is mounted at a fixed path -- set to the in-container path (e.g., `/brightspot`). Leave unset when launching Claude Code from the project root on your host. |
+| `UV_NATIVE_TLS` | `false` | Set to `true` only if you also set the two cert-bundle vars below (typical for Linux dev containers behind a corporate TLS-inspecting proxy). |
+| `SSL_CERT_FILE` | *(empty)* | Linux dev containers with a custom CA bundle -- set to the bundle path (e.g., `/etc/ssl/certs/ca-certificates.crt`). Leave unset on macOS hosts. |
+| `REQUESTS_CA_BUNDLE` | *(empty)* | Same as `SSL_CERT_FILE`. |
+
+**Dev container (Brightspot) example `.env`:**
+
+```bash
+MCP_GATEWAY_URL=http://mcp-gateway:8811/mcp
+SERENA_PROJECT=/brightspot
+UV_NATIVE_TLS=true
+SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+```
+
+**Host-machine project:** no env vars required -- the defaults work as long as the Docker MCP Toolkit is reachable at `localhost:8811` and Claude Code is launched from the project root.
 
 **MCP git and filesystem servers:** All skills and agents include MCP git tools (`git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, `git_reset`) and MCP filesystem tools (`read_file`, `read_multiple_files`, `write_file`, `edit_file`, `list_directory`, `directory_tree`, `search_files`, `create_directory`, `move_file`, `get_file_info`). These require the `git` and `filesystem` MCP servers to be added and configured in the Docker MCP Toolkit with appropriate path access. Workflows prefer these MCP tools over Bash for git and filesystem operations, using Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for build/test/lint commands.

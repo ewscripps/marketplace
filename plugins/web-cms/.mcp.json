@@ -1,27 +1,8 @@
-{
-  "mcpServers": {
-    "MCP_DOCKER": {
-      "type": "http",
-      "url": "http://mcp-gateway:8811/mcp"
-    },
-    "oraios/serena": {
-      "type": "stdio",
-      "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/oraios/serena",
-        "serena",
-        "start-mcp-server",
-        "--context",
-        "ide",
-        "--project",
-        "/brightspot"
-      ],
-      "env": {
-        "UV_NATIVE_TLS": "true",
-        "SSL_CERT_FILE": "/etc/ssl/certs/ca-certificates.crt",
-        "REQUESTS_CA_BUNDLE": "/etc/ssl/certs/ca-certificates.crt"
-      }
-    }
-  }
-}
+{                                                                                
+  "mcpServers": {                                                                                                                                                                    
+    "MCP_DOCKER": {                         
+      "type": "http",                                                                                                                                                                
+      "url": "http://mcp-gateway.lvh.me:8811/mcp"                                
+    }                                                                                                                                                                                
+  }                                                                                             
+}  
