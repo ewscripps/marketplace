@@ -252,10 +252,10 @@ Do not proceed to B11 until `implementation-reviewer`, `test-reviewer`, and `doc
 - Stage all changes and commit with this message format:
 
 ```
-{PROJECTKEY}-{ISSUENUMBER}: <concise description of what was fixed>
+[{PROJECTKEY}-{ISSUENUMBER}] <concise description of what was fixed>
 ```
 
-Example: `PROJ-5678: Fix null pointer when looking up user with missing profile`
+Example: `[PROJ-5678] Fix null pointer when looking up user with missing profile`
 
 - Use imperative mood for the description.
 - Push the branch to the remote using `git push origin <branch-name>`. Do not use refspecs.
