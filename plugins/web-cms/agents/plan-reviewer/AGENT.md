@@ -1,7 +1,7 @@
 ---
 name: plan-reviewer
 description: "Reviews an implementation or fix plan against acceptance criteria, affected areas, testing expectations, documentation expectations, and codebase findings before any code is written. Returns a structured findings report with an overall verdict. Does not modify any files. Invoked after a plan is drafted and before it is posted for user approval."
-tools: Read, Glob, Grep, mcp__MCP_DOCKER__get_symbols_overview, mcp__MCP_DOCKER__find_symbol, mcp__MCP_DOCKER__find_referencing_symbols, mcp__MCP_DOCKER__git_status, mcp__MCP_DOCKER__git_add, mcp__MCP_DOCKER__git_commit, mcp__MCP_DOCKER__git_diff, mcp__MCP_DOCKER__git_diff_staged, mcp__MCP_DOCKER__git_diff_unstaged, mcp__MCP_DOCKER__git_log, mcp__MCP_DOCKER__git_show, mcp__MCP_DOCKER__git_create_branch, mcp__MCP_DOCKER__git_checkout, mcp__MCP_DOCKER__git_reset, mcp__MCP_DOCKER__read_file, mcp__MCP_DOCKER__read_multiple_files, mcp__MCP_DOCKER__write_file, mcp__MCP_DOCKER__edit_file, mcp__MCP_DOCKER__list_directory, mcp__MCP_DOCKER__directory_tree, mcp__MCP_DOCKER__search_files, mcp__MCP_DOCKER__create_directory, mcp__MCP_DOCKER__move_file, mcp__MCP_DOCKER__get_file_info
+tools: Read, Glob, Grep, mcp__MCP_DOCKER__get_symbols_overview, mcp__MCP_DOCKER__find_symbol, mcp__MCP_DOCKER__find_referencing_symbols, mcp__MCP_DOCKER__search_for_pattern, mcp__MCP_DOCKER__git_status, mcp__MCP_DOCKER__git_add, mcp__MCP_DOCKER__git_commit, mcp__MCP_DOCKER__git_diff, mcp__MCP_DOCKER__git_diff_staged, mcp__MCP_DOCKER__git_diff_unstaged, mcp__MCP_DOCKER__git_log, mcp__MCP_DOCKER__git_show, mcp__MCP_DOCKER__git_create_branch, mcp__MCP_DOCKER__git_checkout, mcp__MCP_DOCKER__git_reset
 model: inherit
 maxTurns: 25
 ---
@@ -26,8 +26,9 @@ When the Serena MCP server is available, use its symbolic tools to ground your r
 | `find_referencing_symbols` | **Affected Area Coverage and Assumptions/Gaps.** For each symbol the plan proposes to change, find all callers and consumers. Flag any callers not accounted for in the plan — this is the most common source of missed impact. |
 | `get_symbols_overview` | **Pattern Adherence.** Get the structural layout of files the plan targets. Verify the plan's proposed changes are consistent with how the file is organized (e.g., method grouping, class hierarchy). |
 | `find_symbol` | **Criteria Coverage.** When a criterion references a specific behavior, search for the symbol that implements it to verify the plan addresses the right code. |
+| `search_for_pattern` | **Convention checks.** Project-indexed regex search for annotations, decorators, feature-flag strings, or framework markers when the target is not a symbol name. Prefer this over `Grep` when you need project-indexed scoping. |
 
-Fall back to Glob/Grep/Read for non-symbolic checks (config files, string literals, build scripts).
+Fall back to Glob/Grep/Read for non-symbolic checks (config files, string literals, build scripts). All filesystem operations must stay within the current project directory.
 
 ## How to review
 
