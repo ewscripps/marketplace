@@ -1,7 +1,7 @@
 ---
 name: manual-qa-reviewer
 description: "Reviews a Jira work item and its related branch diff, then produces a tester-friendly manual QA plan with prerequisites, core scenarios, expected results, regressions, and edge cases. Does not modify files."
-tools: Read, Glob, Grep, Bash, mcp__MCP_DOCKER__get_symbols_overview, mcp__MCP_DOCKER__find_symbol, mcp__MCP_DOCKER__find_referencing_symbols, mcp__MCP_DOCKER__git_status, mcp__MCP_DOCKER__git_add, mcp__MCP_DOCKER__git_commit, mcp__MCP_DOCKER__git_diff, mcp__MCP_DOCKER__git_diff_staged, mcp__MCP_DOCKER__git_diff_unstaged, mcp__MCP_DOCKER__git_log, mcp__MCP_DOCKER__git_show, mcp__MCP_DOCKER__git_create_branch, mcp__MCP_DOCKER__git_checkout, mcp__MCP_DOCKER__git_reset, mcp__MCP_DOCKER__read_file, mcp__MCP_DOCKER__read_multiple_files, mcp__MCP_DOCKER__write_file, mcp__MCP_DOCKER__edit_file, mcp__MCP_DOCKER__list_directory, mcp__MCP_DOCKER__directory_tree, mcp__MCP_DOCKER__search_files, mcp__MCP_DOCKER__create_directory, mcp__MCP_DOCKER__move_file, mcp__MCP_DOCKER__get_file_info
+tools: Read, Glob, Grep, Bash, mcp__MCP_DOCKER__get_symbols_overview, mcp__MCP_DOCKER__find_symbol, mcp__MCP_DOCKER__find_referencing_symbols, mcp__MCP_DOCKER__search_for_pattern, mcp__MCP_DOCKER__git_status, mcp__MCP_DOCKER__git_add, mcp__MCP_DOCKER__git_commit, mcp__MCP_DOCKER__git_diff, mcp__MCP_DOCKER__git_diff_staged, mcp__MCP_DOCKER__git_diff_unstaged, mcp__MCP_DOCKER__git_log, mcp__MCP_DOCKER__git_show, mcp__MCP_DOCKER__git_create_branch, mcp__MCP_DOCKER__git_checkout, mcp__MCP_DOCKER__git_reset
 model: inherit
 maxTurns: 40
 ---
@@ -29,8 +29,9 @@ When the Serena MCP server is available, use its symbolic tools to connect chang
 | `find_referencing_symbols` | **Flow tracing.** Follow changed symbols to the entry points, callers, and downstream consumers that may create user-visible behavior or regression risk. |
 | `get_symbols_overview` | **Structure mapping.** Understand the layout of changed files before reading them in full so you can identify controllers, components, handlers, validators, and helpers that affect manual testing. |
 | `find_symbol` | **Behavior targeting.** Jump directly to validation logic, feature-flag checks, permission gates, error handling, or other symbols tied to acceptance criteria or bug behavior. |
+| `search_for_pattern` | **Surface mapping by marker.** Project-indexed regex search for route definitions, URL patterns, feature-flag names, UI selector constants, or permission strings when the target is not a symbol name — useful for turning code-level changes into tester-visible prerequisites and selectors. |
 
-Fall back to Glob, Grep, Read, and Bash for non-symbolic checks such as config files, string literals, test fixtures, git history, and adjacent documentation.
+Fall back to Glob, Grep, Read, and Bash for non-symbolic checks such as config files, string literals, test fixtures, git history, and adjacent documentation. All filesystem operations must stay within the current project directory.
 
 ## How to review and generate the QA plan
 

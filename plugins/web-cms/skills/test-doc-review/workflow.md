@@ -15,7 +15,13 @@
 
 **CONTEXT FALLBACK RULE:** When TD0 is skipped, gather the missing plan, criteria, and work-type context from the repository state and the user conversation before invoking either reviewer. In no-Jira mode, pass `No Jira issue provided` as the issue-key context to the sub-agents.
 
-**GIT AND FILESYSTEM TOOL PREFERENCE:** Prefer MCP tools over Bash for git and filesystem operations. For git: use `git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, and `git_reset` instead of running the equivalent `git` commands via Bash. For filesystem: use `read_file`, `read_multiple_files`, `write_file`, `edit_file`, `list_directory`, `directory_tree`, `search_files`, `create_directory`, `move_file`, and `get_file_info` instead of Bash filesystem commands. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
+**TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
+
+- **File I/O (read, write, edit a known file):** Use native `Read`, `Write`, `Edit`.
+- **File discovery (find files by name or pattern):** Use native `Glob`.
+- **Content search (find text inside files):** Use native `Grep`. For symbolic code search (finding classes, methods, or callers), delegate to the `codebase-explorer` agent, which uses the Serena MCP server.
+- **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
+- **Git:** Prefer MCP git tools (`git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, `git_reset`) over running `git` via Bash. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create tasks for the following logical groups at the start of the workflow, mark each `in_progress` when starting and `completed` when done:
 

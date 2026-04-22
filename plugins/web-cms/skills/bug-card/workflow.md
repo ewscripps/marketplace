@@ -16,7 +16,16 @@
 
 **RESUMPTION CHECK:** If this workflow resumes after prior work has already been performed, inspect the issue status and previously posted Jira comments first to identify the first incomplete phase. If the issue is already **In Progress**, do not repeat B0. If the knowledge graph is empty, rebuild the investigation state from the latest reproduction notes, investigation comments, and approved plan before continuing.
 
-**GIT AND FILESYSTEM TOOL PREFERENCE:** Prefer MCP tools over Bash for git and filesystem operations. For git: use `git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, and `git_reset` instead of running the equivalent `git` commands via Bash. For filesystem: use `read_file`, `read_multiple_files`, `write_file`, `edit_file`, `list_directory`, `directory_tree`, `search_files`, `create_directory`, `move_file`, and `get_file_info` instead of Bash filesystem commands. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
+**SERENA PROJECT ACTIVATION:** Before B0, call `check_onboarding_performed`. If it reports that onboarding has not been performed for this project, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`, and the symbol-aware write tools) will not function correctly without this. Do this once at the start of the workflow; do not repeat it between phases.
+
+**TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
+
+- **File I/O (read files, write new files, edit non-symbol regions):** Use native `Read`, `Write`, `Edit`.
+- **Symbol-aware code edits (methods, classes, functions in existing source files):** Prefer Serena's `replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol`, `rename_symbol`, and `safe_delete_symbol` over native `Edit` when the target is a named code symbol. See the Serena-first editing rule in B10 for the full decision rubric.
+- **File discovery (find files by name or pattern):** Use native `Glob`.
+- **Content search (find text inside files):** Use native `Grep`. For symbolic code navigation during the fix (locating a method, class, or caller before editing), use Serena's `find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, and `search_for_pattern` directly. For broader codebase analysis that informs the investigation (architectural patterns, cross-area impact), delegate to the `codebase-explorer` agent.
+- **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
+- **Git:** Prefer MCP git tools (`git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, `git_reset`) over running `git` via Bash. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
 
 **WORKTREE DISCIPLINE:** When creating a git worktree, always check out the **real branch name** — do not create a worktree-prefixed or renamed branch (e.g. never `worktree-PROJ-123`). Use `git worktree add <path> <branch-name>` to check out the existing branch in the worktree. All commits must be made on the real branch. Push using `git push origin <branch-name>` — never use refspecs that map a different local branch name to the remote (e.g. never `git push origin worktree-branch:real-branch`). After removing a worktree and returning to the main working directory, run `git fetch origin` and update the local ref with `git branch -f <branch-name> origin/<branch-name>` before checking it out, to ensure the local branch matches the remote.
 
@@ -60,8 +69,8 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 > **USE KNOWLEDGE GRAPH:** As you investigate, use the memory tools to record your work. Create a node for each hypothesis with properties: `hypothesis` (description), `status` (`active` / `eliminated`), and `evidence` (what supports or refutes it). When a hypothesis is eliminated, update its status with a `reason` property. Create a node for affected files and services linked to the bug. This graph becomes the authoritative investigation record and feeds directly into the fix plan in B5.
 
-- Identify all distinct areas of the codebase likely involved based on the **Affected Areas**, reproduction steps, and any logs or stack traces.
-- Invoke a `codebase-explorer` sub-agent in **parallel** for each distinct hypothesis area, providing:
+- Identify all distinct areas of the codebase likely involved based on the **Affected Areas**, reproduction steps, and any logs or stack traces. Limit the scope of this exploration to the current project directory.
+- Invoke a `codebase-explorer` sub-agent in **parallel** for each distinct hypothesis area in this project, providing:
     - The target area to explore
     - The question: "Does the code path for [observed behavior] exist here, and is there evidence of why it might be producing [incorrect behavior]? Look for recent changes, error handling gaps, and related tests."
     - The bug description, reproduction steps, and any logs for context
@@ -171,6 +180,22 @@ Example: `PROJ-5678-fix-null-pointer-in-user-lookup`
 - **Testing handoff:** Keep the implementation and the B9 regression test in a state that the dedicated `test-reviewer` sub-agent can extend and run deterministically. Note any commands, fixtures, or setup that sub-agent will need.
 - **Documentation handoff:** Identify the public APIs, configuration surfaces, and repository docs the dedicated `documentation-reviewer` sub-agent must cover.
 - Follow existing code style, conventions, and architectural patterns observed in B3.
+
+> **SERENA-FIRST EDITING RULE:** When modifying existing source code to apply the fix, prefer Serena's symbol-aware tools over native `Edit`. Symbol-aware edits produce cleaner diffs, are robust against whitespace or context drift, and — for rename and delete — update references atomically. This matters especially for bug fixes, where the change must be surgical and must not introduce new regressions in adjacent callers.
+>
+> 1. **Map first.** Use `get_symbols_overview` on the target file to understand its structure before editing.
+> 2. **Locate the target.** Use `find_symbol` to jump to the exact symbol implicated by the root cause. Use scoped paths (`ClassName/methodName`) when multiple symbols share a name.
+> 3. **Check blast radius.** Run `find_referencing_symbols` on any symbol whose signature or semantics you are changing. A fix that breaks a caller is a new bug.
+> 4. **Apply the edit with the right tool:**
+>     - **Replacing the body of an existing method, function, or field initializer:** use `replace_symbol_body`.
+>     - **Adding a guard clause, helper, or new method next to an existing symbol:** use `insert_after_symbol` or `insert_before_symbol`.
+>     - **Renaming a symbol:** use `rename_symbol` — it rewrites the declaration and every reference in one operation.
+>     - **Removing a symbol:** use `safe_delete_symbol` — it refuses the delete when callers still exist, preventing broken references.
+> 5. **Reserve native `Edit` for:**
+>     - Comments, imports, or annotations outside any symbol body
+>     - Non-code files (YAML, JSON, markdown, properties, gradle, build scripts)
+>     - Multi-symbol or cross-file text edits that the symbol tools cannot express
+>     - New files authored from scratch (use `Write` for those)
 
 **REQUIRED: Review the implementation before proceeding.** Verify:
 

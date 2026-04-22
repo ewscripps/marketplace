@@ -12,7 +12,16 @@
 
 **CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and ask the user for clarification before proceeding.
 
-**GIT AND FILESYSTEM TOOL PREFERENCE:** Prefer MCP tools over Bash for git and filesystem operations. For git: use `git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, and `git_reset` instead of running the equivalent `git` commands via Bash. For filesystem: use `read_file`, `read_multiple_files`, `write_file`, `edit_file`, `list_directory`, `directory_tree`, `search_files`, `create_directory`, `move_file`, and `get_file_info` instead of Bash filesystem commands. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
+**SERENA PROJECT ACTIVATION:** Before T0, call `check_onboarding_performed`. If it reports that onboarding has not been performed for this project, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`, and the symbol-aware write tools) will not function correctly without this. Do this once at the start of the workflow; do not repeat it between phases.
+
+**TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
+
+- **File I/O (read files, write new files, edit non-symbol regions):** Use native `Read`, `Write`, `Edit`.
+- **Symbol-aware code edits (methods, classes, functions in existing source files):** Prefer Serena's `replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol`, `rename_symbol`, and `safe_delete_symbol` over native `Edit` when the target is a named code symbol. See the Serena-first editing rule in T8 for the full decision rubric.
+- **File discovery (find files by name or pattern):** Use native `Glob`.
+- **Content search (find text inside files):** Use native `Grep`. For symbolic code navigation during implementation (locating a method, class, or caller before editing), use Serena's `find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, and `search_for_pattern` directly. For broader codebase analysis that informs planning (architectural patterns, convention discovery, cross-area impact), delegate to the `codebase-explorer` agent.
+- **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
+- **Git:** Prefer MCP git tools (`git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, `git_reset`) over running `git` via Bash. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
 
 **JIRA COMMENT CONTRACT:** Keep Jira comments minimal, structured, and durable. Do not narrate every phase. Routine Jira comments are required only at:
 
@@ -61,8 +70,8 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 ### T2 — Review the Codebase
 
-- Identify all distinct areas of the codebase to explore based on the **Affected Areas** section and the task goals.
-- For each distinct area, invoke a `codebase-explorer` sub-agent in **parallel**, providing:
+- Identify all distinct areas of the codebase to explore based on the **Affected Areas** section and the task goals. Limit the scope of this exploration to the current project directory.
+- For each distinct area in this project, invoke a `codebase-explorer` sub-agent in **parallel**, providing:
     - The target area to explore
     - The question: "What patterns, abstractions, utilities, and testing conventions are in use in this area, and what architectural considerations affect how this task's goals can be implemented here?"
     - The task description and acceptance criteria for context
@@ -162,6 +171,22 @@ Example: `PROJ-1234-add-retry-logic-to-payment-service`
 - **Testing handoff:** Leave the implementation in a state that the dedicated `test-reviewer` sub-agent can exercise deterministically. Note any commands, fixtures, or setup that sub-agent will need.
 - **Documentation handoff:** Identify the public APIs, configuration surfaces, and repository docs the dedicated `documentation-reviewer` sub-agent must cover.
 - Follow existing code style, conventions, and architectural patterns observed in T2.
+
+> **SERENA-FIRST EDITING RULE:** When modifying existing source code, prefer Serena's symbol-aware tools over native `Edit`. Symbol-aware edits produce cleaner diffs, are robust against whitespace or context drift, and — for rename and delete — update references atomically.
+>
+> 1. **Map first.** Use `get_symbols_overview` on the target file to understand its structure before editing.
+> 2. **Locate the target.** Use `find_symbol` to jump to the exact symbol you intend to change. Use scoped paths (`ClassName/methodName`) when multiple symbols share a name.
+> 3. **Check blast radius.** Before changing the signature or semantics of a public symbol, run `find_referencing_symbols` so every caller is accounted for in the change.
+> 4. **Apply the edit with the right tool:**
+>     - **Replacing the body of an existing method, function, or field initializer:** use `replace_symbol_body`.
+>     - **Adding a new method, field, or inner class next to an existing symbol:** use `insert_after_symbol` or `insert_before_symbol`.
+>     - **Renaming a symbol:** use `rename_symbol` — it rewrites the declaration and every reference in one operation.
+>     - **Removing a symbol:** use `safe_delete_symbol` — it refuses the delete when callers still exist, preventing broken references.
+> 5. **Reserve native `Edit` for:**
+>     - Comments, imports, or annotations outside any symbol body
+>     - Non-code files (YAML, JSON, markdown, properties, gradle, build scripts)
+>     - Multi-symbol or cross-file text edits that the symbol tools cannot express
+>     - New files authored from scratch (use `Write` for those)
 
 **REQUIRED: Self-review the implementation before invoking the reviewer.** Verify:
 

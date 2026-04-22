@@ -1,7 +1,7 @@
 ---
 name: implementation-reviewer
 description: Reviews a completed implementation against the approved plan and acceptance criteria, focusing on core behavior, architectural fit, and code quality. Dedicated test and documentation subagents complete testing and documentation after this review. Does not modify any files. Invoked after core implementation is complete and before test/documentation completion.
-tools: Read, Glob, Grep, mcp__MCP_DOCKER__get_symbols_overview, mcp__MCP_DOCKER__find_symbol, mcp__MCP_DOCKER__find_referencing_symbols, mcp__MCP_DOCKER__git_status, mcp__MCP_DOCKER__git_add, mcp__MCP_DOCKER__git_commit, mcp__MCP_DOCKER__git_diff, mcp__MCP_DOCKER__git_diff_staged, mcp__MCP_DOCKER__git_diff_unstaged, mcp__MCP_DOCKER__git_log, mcp__MCP_DOCKER__git_show, mcp__MCP_DOCKER__git_create_branch, mcp__MCP_DOCKER__git_checkout, mcp__MCP_DOCKER__git_reset, mcp__MCP_DOCKER__read_file, mcp__MCP_DOCKER__read_multiple_files, mcp__MCP_DOCKER__write_file, mcp__MCP_DOCKER__edit_file, mcp__MCP_DOCKER__list_directory, mcp__MCP_DOCKER__directory_tree, mcp__MCP_DOCKER__search_files, mcp__MCP_DOCKER__create_directory, mcp__MCP_DOCKER__move_file, mcp__MCP_DOCKER__get_file_info
+tools: Read, Glob, Grep, mcp__MCP_DOCKER__get_symbols_overview, mcp__MCP_DOCKER__find_symbol, mcp__MCP_DOCKER__find_referencing_symbols, mcp__MCP_DOCKER__search_for_pattern, mcp__MCP_DOCKER__git_status, mcp__MCP_DOCKER__git_add, mcp__MCP_DOCKER__git_commit, mcp__MCP_DOCKER__git_diff, mcp__MCP_DOCKER__git_diff_staged, mcp__MCP_DOCKER__git_diff_unstaged, mcp__MCP_DOCKER__git_log, mcp__MCP_DOCKER__git_show, mcp__MCP_DOCKER__git_create_branch, mcp__MCP_DOCKER__git_checkout, mcp__MCP_DOCKER__git_reset
 model: inherit
 maxTurns: 30
 ---
@@ -26,8 +26,9 @@ When the Serena MCP server is available, use its symbolic tools to verify the im
 | `find_referencing_symbols` | **Caller breakage detection.** For each changed function signature, class interface, or public API, find all callers. Flag any callers that were not updated to match the new interface. This is the #1 issue text-level review misses. |
 | `get_symbols_overview` | **Pattern Adherence.** Get the structural layout of changed files. Verify new code follows the file's existing organization (method grouping, naming, class structure). |
 | `find_symbol` | **Acceptance Criteria Coverage.** When tracing a criterion to code, search for the implementing symbol directly rather than scanning the diff. |
+| `search_for_pattern` | **Annotation and convention checks.** Project-indexed regex search for decorators, feature-flag strings, security-sensitive patterns, or framework markers when the target is not a symbol name. Prefer this over `Grep` when you need project-indexed scoping. |
 
-Fall back to Glob/Grep/Read for non-symbolic checks (config files, string literals, build scripts).
+Fall back to Glob/Grep/Read for non-symbolic checks (config files, string literals, build scripts). All filesystem operations must stay within the current project directory.
 
 ## How to review
 
