@@ -17,11 +17,7 @@
     "gitlab": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-gitlab"],
-      "env": {
-        "GITLAB_PERSONAL_ACCESS_TOKEN": "${GITLAB_PERSONAL_ACCESS_TOKEN}",
-        "GITLAB_API_URL": "${GITLAB_API_URL:-https://gitlab.com/api/v4}"
-      }
+      "args": ["-y", "gitlab-mcp"]
     },
     "memory": {
       "type": "stdio",
