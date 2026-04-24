@@ -181,7 +181,7 @@ DESCRIPTION:
 Once the user confirms:
 
 1. Create the MR on GitLab using the confirmed title and description. **Critical: pass the description with real newlines, not escaped `\n` sequences.**
-   - **Preferred:** Use the `mcp__plugin_web-cms_gitlab__create_merge_request` tool. Pass the source branch, destination branch, title, and description. The description string must contain actual newline characters so the markdown renders correctly in the MR — verify the tool call does not serialize newlines as literal `\n` or `\\n` text.
+   - **Preferred:** Use the `mcp__plugin_web-cms_gitlab__gitlab_create_merge_request` tool. Pass the source branch, destination branch, title, and description. The description string must contain actual newline characters so the markdown renders correctly in the MR — verify the tool call does not serialize newlines as literal `\n` or `\\n` text.
    - **Fallback:** If the MCP tool is unavailable or fails, use the `glab` CLI with a heredoc to preserve formatting (e.g. `glab mr create --source-branch ... --target-branch ... --title "..." --description "$(cat <<'EOF' ... EOF)"`).
    - Do not set reviewers, assignees, labels, or draft status — these are not reliably supported via the API and should be set manually after creation.
 2. Report back in the chat with:
