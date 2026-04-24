@@ -1,7 +1,7 @@
 ---
 name: plan-reviewer
 description: "Reviews an implementation or fix plan against acceptance criteria, affected areas, testing expectations, documentation expectations, and codebase findings before any code is written. Returns a structured findings report with an overall verdict. Does not modify any files. Invoked after a plan is drafted and before it is posted for user approval."
-tools: Read, Glob, Grep, mcp__MCP_DOCKER__get_symbols_overview, mcp__MCP_DOCKER__find_symbol, mcp__MCP_DOCKER__find_referencing_symbols, mcp__MCP_DOCKER__search_for_pattern, mcp__MCP_DOCKER__git_status, mcp__MCP_DOCKER__git_add, mcp__MCP_DOCKER__git_commit, mcp__MCP_DOCKER__git_diff, mcp__MCP_DOCKER__git_diff_staged, mcp__MCP_DOCKER__git_diff_unstaged, mcp__MCP_DOCKER__git_log, mcp__MCP_DOCKER__git_show, mcp__MCP_DOCKER__git_create_branch, mcp__MCP_DOCKER__git_checkout, mcp__MCP_DOCKER__git_reset
+tools: Bash, Read, Glob, Grep, mcp__plugin_web-cms_serena__get_symbols_overview, mcp__plugin_web-cms_serena__find_symbol, mcp__plugin_web-cms_serena__find_referencing_symbols, mcp__plugin_web-cms_serena__search_for_pattern
 model: inherit
 maxTurns: 25
 ---

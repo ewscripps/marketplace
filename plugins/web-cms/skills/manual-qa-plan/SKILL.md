@@ -3,7 +3,7 @@ name: manual-qa-plan
 description: Generate a manual QA verification plan for a Jira task, bug, or epic by reviewing the work item context and the related branch diff. Use when implementation already exists and you want tester-friendly verification steps covering prerequisites, expected results, regressions, and edge cases, then append the final QA plan to the Jira issue description.
 argument-hint: "[PROJ-123]"
 disable-model-invocation: false
-allowed-tools: Bash, Read, Glob, Grep, mcp__MCP_DOCKER__jira_get_issue, mcp__MCP_DOCKER__jira_search, mcp__MCP_DOCKER__jira_update_issue, mcp__MCP_DOCKER__git_status, mcp__MCP_DOCKER__git_diff, mcp__MCP_DOCKER__git_diff_staged, mcp__MCP_DOCKER__git_diff_unstaged, mcp__MCP_DOCKER__git_log, mcp__MCP_DOCKER__git_show
+allowed-tools: Bash, Read, Glob, Grep, mcp__claude_ai_Atlassian__getJiraIssue, mcp__claude_ai_Atlassian__searchJiraIssuesUsingJql, mcp__claude_ai_Atlassian__editJiraIssue
 ---
 
 Read `./workflow.md` in this skill directory for the full execution contract, then follow it exactly.

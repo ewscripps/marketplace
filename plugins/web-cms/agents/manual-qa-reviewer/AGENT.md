@@ -1,8 +1,7 @@
 ---
 name: manual-qa-reviewer
 description: "Reviews a Jira work item and its related branch diff, then produces a tester-friendly manual QA plan with prerequisites, core scenarios, expected results, regressions, and edge cases. Does not modify files."
-tools: Read, Glob, Grep, Bash, mcp__MCP_DOCKER__get_symbols_overview, mcp__MCP_DOCKER__find_symbol, mcp__MCP_DOCKER__find_referencing_symbols, mcp__MCP_DOCKER__search_for_pattern, mcp__MCP_DOCKER__git_status, mcp__MCP_DOCKER__git_add, mcp__MCP_DOCKER__git_commit, mcp__MCP_DOCKER__git_diff, mcp__MCP_DOCKER__git_diff_staged, mcp__MCP_DOCKER__git_diff_unstaged, mcp__MCP_DOCKER__git_log, mcp__MCP_DOCKER__git_show, mcp__MCP_DOCKER__git_create_branch, mcp__MCP_DOCKER__git_checkout, mcp__MCP_DOCKER__git_reset
-model: inherit
+tools: Read, Glob, Grep, Bash, mcp__plugin_web-cms_serena__get_symbols_overview, mcp__plugin_web-cms_serena__find_symbol, mcp__plugin_web-cms_serena__find_referencing_symbols, mcp__plugin_web-cms_serena__search_for_patternmodel: inherit
 maxTurns: 40
 ---
 

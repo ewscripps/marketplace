@@ -170,7 +170,7 @@ After reviewing the final QA plan, append it to the Jira issue description:
 - Append the QA plan as a new terminal markdown section with the heading `## Final QA Plan`.
 - The appended section must contain the final QA plan content from this phase: branch context, change summary, prerequisites, core manual QA scenarios, edge cases and negative scenarios, regression watch list, assumptions / open questions, and workflow limitations.
 - Insert the new section only at the bottom of the description. If the original description is non-empty, separate it from the appended section with exactly two newline characters.
-- Call `jira_update_issue` with the full updated description.
+- Call `editJiraIssue` with the full updated description.
 - Do not modify any text that existed before the appended `## Final QA Plan` section.
 
 If branch review had to be broadened or the user approved Jira-only planning, explicitly warn that confidence is reduced and explain why.

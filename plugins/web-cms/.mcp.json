@@ -1,8 +1,42 @@
-{                                                                                
-  "mcpServers": {                                                                                                                                                                    
-    "MCP_DOCKER": {                         
-      "type": "http",                                                                                                                                                                
-      "url": "http://mcp-gateway.lvh.me:8811/mcp"                                
-    }                                                                                                                                                                                
-  }                                                                                             
-}  
+{
+  "mcpServers": {
+    "MCP_DOCKER": {
+      "type": "http",
+      "url": "http://mcp-gateway.lvh.me:8811/mcp"
+    },
+    "serena": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from", "git+https://github.com/oraios/serena",
+        "serena", "start-mcp-server",
+        "--context", "ide",
+        "--project-from-cwd"
+      ]
+    },
+    "gitlab": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-gitlab"],
+      "env": {
+        "GITLAB_PERSONAL_ACCESS_TOKEN": "${GITLAB_PERSONAL_ACCESS_TOKEN}",
+        "GITLAB_API_URL": "${GITLAB_API_URL:-https://gitlab.com/api/v4}"
+      }
+    },
+    "memory": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"]
+    },
+    "sequentialthinking": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    },
+    "playwright": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp"]
+    }
+  }
+}

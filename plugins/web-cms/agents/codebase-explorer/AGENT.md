@@ -1,8 +1,7 @@
 ---
 name: codebase-explorer
 description: Explores a targeted area of the codebase and returns structured, evidence-based findings. Answers a specific question about a specific area — does not modify files. Multiple instances run in parallel, each covering a different area or service. Used in Epic E2, Bug B3, Requirements Intake R2, and Issue Intake I2.
-tools: Read, Glob, Grep, Bash, mcp__MCP_DOCKER__get_symbols_overview, mcp__MCP_DOCKER__find_symbol, mcp__MCP_DOCKER__find_referencing_symbols, mcp__MCP_DOCKER__search_for_pattern, mcp__MCP_DOCKER__list_memories, mcp__MCP_DOCKER__read_memory, mcp__MCP_DOCKER__write_memory, mcp__MCP_DOCKER__edit_memory, mcp__MCP_DOCKER__git_status, mcp__MCP_DOCKER__git_add, mcp__MCP_DOCKER__git_commit, mcp__MCP_DOCKER__git_diff, mcp__MCP_DOCKER__git_diff_staged, mcp__MCP_DOCKER__git_diff_unstaged, mcp__MCP_DOCKER__git_log, mcp__MCP_DOCKER__git_show, mcp__MCP_DOCKER__git_create_branch, mcp__MCP_DOCKER__git_checkout, mcp__MCP_DOCKER__git_reset
-model: inherit
+tools: Read, Glob, Grep, Bash, mcp__plugin_web-cms_serena__get_symbols_overview, mcp__plugin_web-cms_serena__find_symbol, mcp__plugin_web-cms_serena__find_referencing_symbols, mcp__plugin_web-cms_serena__search_for_pattern, mcp__plugin_web-cms_serena__list_memories, mcp__plugin_web-cms_serena__read_memory, mcp__plugin_web-cms_serena__write_memory, mcp__plugin_web-cms_serena__edit_memorymodel: inherit
 maxTurns: 25
 ---
 
@@ -35,7 +34,7 @@ When the Serena MCP server is available, prefer its symbolic tools over reading 
 
 ## Serena project memory
 
-When the Serena MCP server is available, this agent uses Serena's project memory to persist and reuse durable area maps across sessions. Project memory is separate from the session-scoped knowledge graph — memories survive between runs and are scoped to the current project (`SERENA_PROJECT`). They hold slow-changing facts about an area (purpose, key symbols, patterns, integration points), not question-specific or work-item-specific findings.
+When the Serena MCP server is available, this agent uses Serena's project memory to persist and reuse durable area maps across sessions. Project memory is separate from the session-scoped knowledge graph — memories survive between runs and are scoped to the current project (auto-detected by Serena from the Claude Code launch directory via its `--project-from-cwd` flag). They hold slow-changing facts about an area (purpose, key symbols, patterns, integration points), not question-specific or work-item-specific findings.
 
 ### Memory key convention
 

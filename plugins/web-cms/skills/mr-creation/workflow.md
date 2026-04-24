@@ -23,7 +23,7 @@
 - **File discovery (find files by name or pattern):** Use native `Glob`.
 - **Content search (find text inside files):** Use native `Grep`. For symbolic code search (finding classes, methods, or callers), delegate to the `codebase-explorer` agent, which uses the Serena MCP server.
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
-- **Git:** Prefer MCP git tools (`git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, `git_reset`) over running `git` via Bash. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
+- **Git:** Use `Bash` for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, etc.) and for running build, test, and lint commands.
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create tasks for the following logical groups at the start of the workflow, mark each `in_progress` when starting and `completed` when done:
 
@@ -180,7 +180,10 @@ DESCRIPTION:
 
 Once the user confirms:
 
-1. Create the MR on GitLab using the confirmed title and description. **Critical: pass the description with real newlines, not escaped `\n` sequences.** If using an MCP tool that accepts a description/body string parameter, the string must contain actual newline characters so the markdown renders correctly in the MR. Double-check the tool call does not serialize newlines as literal `\n` or `\\n` text. If the tool does not handle multiline strings correctly, fall back to the `glab` CLI with a heredoc to preserve formatting. Do not set reviewers, assignees, labels, or draft status — these are not reliably supported via the API and should be set manually after creation.
+1. Create the MR on GitLab using the confirmed title and description. **Critical: pass the description with real newlines, not escaped `\n` sequences.**
+   - **Preferred:** Use the `mcp__plugin_web-cms_gitlab__create_merge_request` tool. Pass the source branch, destination branch, title, and description. The description string must contain actual newline characters so the markdown renders correctly in the MR — verify the tool call does not serialize newlines as literal `\n` or `\\n` text.
+   - **Fallback:** If the MCP tool is unavailable or fails, use the `glab` CLI with a heredoc to preserve formatting (e.g. `glab mr create --source-branch ... --target-branch ... --title "..." --description "$(cat <<'EOF' ... EOF)"`).
+   - Do not set reviewers, assignees, labels, or draft status — these are not reliably supported via the API and should be set manually after creation.
 2. Report back in the chat with:
     - The MR URL
     - The MR ID

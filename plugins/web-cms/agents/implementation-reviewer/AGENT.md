@@ -1,7 +1,7 @@
 ---
 name: implementation-reviewer
 description: Reviews a completed implementation against the approved plan and acceptance criteria, focusing on core behavior, architectural fit, and code quality. Dedicated test and documentation subagents complete testing and documentation after this review. Does not modify any files. Invoked after core implementation is complete and before test/documentation completion.
-tools: Read, Glob, Grep, mcp__MCP_DOCKER__get_symbols_overview, mcp__MCP_DOCKER__find_symbol, mcp__MCP_DOCKER__find_referencing_symbols, mcp__MCP_DOCKER__search_for_pattern, mcp__MCP_DOCKER__git_status, mcp__MCP_DOCKER__git_add, mcp__MCP_DOCKER__git_commit, mcp__MCP_DOCKER__git_diff, mcp__MCP_DOCKER__git_diff_staged, mcp__MCP_DOCKER__git_diff_unstaged, mcp__MCP_DOCKER__git_log, mcp__MCP_DOCKER__git_show, mcp__MCP_DOCKER__git_create_branch, mcp__MCP_DOCKER__git_checkout, mcp__MCP_DOCKER__git_reset
+tools: Bash, Read, Glob, Grep, mcp__plugin_web-cms_serena__get_symbols_overview, mcp__plugin_web-cms_serena__find_symbol, mcp__plugin_web-cms_serena__find_referencing_symbols, mcp__plugin_web-cms_serena__search_for_pattern
 model: inherit
 maxTurns: 30
 ---
