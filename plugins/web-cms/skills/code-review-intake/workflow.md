@@ -318,14 +318,14 @@ Omit this field for Task and Bug reviews.]
 
     **API notes for non-standard fields:**
     - **Priority:** Set via `additional_fields`: `{"priority": {"name": "Medium"}}` (substituting the confirmed priority name: Critical, High, Medium, or Low).
-    - **Epic Link:** Set via `additional_fields`: `{"epicKey": "EPIC-KEY"}` on `jira_create_issue`. Do not use `jira_create_issue_link` for epic links — that creates a lateral link, not an epic association. Only include this field if the user confirmed an epic.
-    - **Labels:** Set via `additional_fields`: `{"labels": ["code-review", "reviewtype"]}` on `jira_create_issue`.
+    - **Epic Link:** Set via `additional_fields`: `{"epicKey": "EPIC-KEY"}` on `createJiraIssue`. Do not use `createIssueLink` for epic links — that creates a lateral link, not an epic association. Only include this field if the user confirmed an epic.
+    - **Labels:** Set via `additional_fields`: `{"labels": ["code-review", "reviewtype"]}` on `createJiraIssue`.
 
 3. **Update-or-create decision:**
-    - **If an existing Jira card was provided in CI0:** Update that card's description using `jira_update_issue` with the approved Review Details. Do not create a new issue.
-    - **If no existing card was provided:** Create a new Jira issue using `jira_create_issue` with the approved Review Details. Do not perform a follow-up description update solely to add execution instructions.
+    - **If an existing Jira card was provided in CI0:** Update that card's description using `editJiraIssue` with the approved Review Details. Do not create a new issue.
+    - **If no existing card was provided:** Create a new Jira issue using `createJiraIssue` with the approved Review Details. Do not perform a follow-up description update solely to add execution instructions.
 
-4. **Post-creation linking (Epic / Task / Bug only):** After the issue is created, link it to the Jira issue being reviewed by calling `jira_create_issue_link` with `link_type: "Relates to"`, `inward_issue_key` set to the new review issue's key, and `outward_issue_key` set to the reviewed issue's key. Do not attempt to set linked issues during `jira_create_issue` — that tool does not support it.
+4. **Post-creation linking (Epic / Task / Bug only):** After the issue is created, link it to the Jira issue being reviewed by calling `createIssueLink` with `link_type: "Relates to"`, `inward_issue_key` set to the new review issue's key, and `outward_issue_key` set to the reviewed issue's key. Do not attempt to set linked issues during `createJiraIssue` — that tool does not support it.
 
 > **REQUIRED: Review the full issue description before presenting.** Verify Review Details section exactly matches CI4 output verbatim, no workflow instructions or skill-invocation text were embedded, the summary follows the specified format, the issue type is set to Task, and the linked issue is correct (Epic / Task / Bug only).
 
@@ -333,7 +333,7 @@ Omit this field for Task and Bug reviews.]
 
 **Post-creation: Additional Linking** After the Jira issue has been created or updated, ask: "Is there any additional Jira issue this review should be linked to? If yes, provide the issue key."
 
-If the user provides a key, call `jira_get_issue` to confirm it exists, then call `jira_create_issue_link` with `link_type: "Relates to"` to create the link. Confirm success. If the user provides no key, skip this step.
+If the user provides a key, call `getJiraIssue` to confirm it exists, then call `createIssueLink` with `link_type: "Relates to"` to create the link. Confirm success. If the user provides no key, skip this step.
 
 ---
 

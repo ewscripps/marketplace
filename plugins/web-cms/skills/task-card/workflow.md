@@ -56,8 +56,8 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 
 **This phase requires TWO separate tool calls. Do not move to T1 until both are complete.**
 
-1. **Tool call 1:** Call `jira_get_transitions` with this issue's key. From the response, find the transition whose target status is **In Progress** and note its **ID**.
-2. **Tool call 2:** Call `jira_transition_issue` with this issue's key and that transition ID. This is the call that actually moves the issue. Retrieving transitions alone does nothing -- you MUST call `jira_transition_issue` to complete this phase.
+1. **Tool call 1:** Call `getTransitionsForJiraIssue` with this issue's key. From the response, find the transition whose target status is **In Progress** and note its **ID**.
+2. **Tool call 2:** Call `transitionJiraIssue` with this issue's key and that transition ID. This is the call that actually moves the issue. Retrieving transitions alone does nothing -- you MUST call `transitionJiraIssue` to complete this phase.
 
 Do not guess transition IDs. Always retrieve them first via tool call 1.
 

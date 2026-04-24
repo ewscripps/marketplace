@@ -186,7 +186,7 @@ Most intake and execution workflows use a session-scoped knowledge graph to accu
 
 ## Serena Project Memory
 
-Distinct from the session-scoped knowledge graph, Serena's project memory (`write_memory`, `read_memory`, `edit_memory`, `list_memories`) persists durable repo-scoped knowledge across sessions. Memories live in Serena's project store (scoped to `SERENA_PROJECT`) and survive between runs. This surface is wired into four agents:
+Distinct from the session-scoped knowledge graph, Serena's project memory (`write_memory`, `read_memory`, `edit_memory`, `list_memories`) persists durable repo-scoped knowledge across sessions. Memories live in Serena's project store (the project's `.serena/memories/` directory, scoped to whichever project Serena auto-activated from the Claude Code launch directory) and survive between runs. This surface is wired into four agents:
 
 | Agent | Memory key | Purpose |
 |-------|-----------|---------|
@@ -239,52 +239,46 @@ your-project/
 
 Agent invocations in the workflows assume the runtime can resolve agent names directly from the copied `.claude/agents/` directory. If your target environment requires an explicit agent registry or routing configuration, add that registration as part of deployment so references such as `codebase-explorer`, `plan-reviewer`, `test-reviewer`, and `documentation-reviewer` resolve correctly at runtime.
 
-**MCP tool name prefix:** The `allowed-tools` field in each SKILL.md references MCP tools using the `mcp__MCP_DOCKER__` prefix (e.g., `mcp__MCP_DOCKER__sequentialthinking`). This prefix is specific to the Docker MCP Toolkit setup. If you deploy these skills to a project with a different MCP server configuration, update the prefix in every SKILL.md to match the target environment's MCP server name.
+**MCP tool names:** Each skill and agent declares its MCP tool dependencies in its `allowed-tools` / `tools` frontmatter using the plugin-declared server names: `mcp__plugin_web-cms_serena__<tool>`, `mcp__plugin_web-cms_gitlab__<tool>`, `mcp__plugin_web-cms_memory__<tool>`, `mcp__plugin_web-cms_sequentialthinking__<tool>`, `mcp__plugin_web-cms_playwright__<tool>`. Atlassian (Jira / Confluence) tool references point at a separately installed company plugin under `mcp__claude_ai_Atlassian__<tool>` — this plugin does not declare an Atlassian MCP server of its own. All git operations use `Bash` directly.
 
 ## MCP Server Configuration
 
-The plugin is designed around a **per-project MCP gateway** model. Each consuming project (Brightspot, Shadowstream, etc.) runs its own Docker MCP Gateway with Serena pre-scoped to that project, so concurrent Claude Code sessions on different projects never race on Serena's active-project state. A shared gateway remains available for ad-hoc, non-project Claude Code work.
+The plugin declares its own stdio MCP servers in `.mcp.json` and relies on Claude Code launching them per-session. There is no gateway container to manage; each MCP server is a subprocess Claude Code spawns on demand.
 
-### Per-project gateway pattern
+### Declared servers
 
-Each project provides three things:
+`.mcp.json` at the plugin root declares six servers — all stdio, all launched locally by the MCP client:
 
-1. **`mcp-gateway` service** in its own `docker-compose.yml`. The service mounts the shared catalog + registry from `~/.docker/mcp/` and its own `config.yaml` override that sets `serena.project_path` to the project's absolute host path.
-2. **`.docker-mcp/config.yaml`** (gitignored; `.docker-mcp/config.example.yaml` is the committed template). Contains the project-specific Serena scoping plus other config the gateway needs.
-3. **`.mcp.json`** at the repo root pointing Claude Code at the project's gateway:
+| Server | Purpose | Launcher |
+|---|---|---|
+| `serena` | Symbolic code navigation (find_symbol, find_referencing_symbols, get_symbols_overview, search_for_pattern, replace_content, insert_after/before_symbol, rename_symbol, replace_symbol_body, safe_delete_symbol, read/write/list/edit/delete_memory, check_onboarding_performed, onboarding) | `uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide --project-from-cwd` |
+| `git` | git operations (status, log, show, diff, diff_staged, diff_unstaged, add, commit, create_branch, checkout, reset) | `uvx mcp-server-git` |
+| `gitlab` | GitLab repo operations (create_branch, create_issue, create_merge_request, create_or_update_file, create_repository, fork_repository, get_file_contents, push_files, search_repositories) | `npx -y @modelcontextprotocol/server-gitlab` |
+| `memory` | Knowledge-graph memory (add_observations, create_entities, create_relations, read_graph, etc.) | `npx -y @modelcontextprotocol/server-memory` |
+| `sequentialthinking` | Sequential thinking helper | `npx -y @modelcontextprotocol/server-sequential-thinking` |
+| `playwright` | Browser automation (browser_click, browser_navigate, etc.) | `npx -y @playwright/mcp` |
 
-```json
-{
-  "mcpServers": {
-    "MCP_DOCKER": {
-      "type": "http",
-      "url": "http://<project>-mcp.lvh.me/mcp"
-    }
-  }
-}
-```
+### Serena project scoping
 
-The server name stays `MCP_DOCKER` for every project — this is what keeps the plugin's skill `allowed-tools` prefixes (`mcp__MCP_DOCKER__<tool>`) stable. Only the URL differs per project. The shared gateway at `http://mcp-gateway.lvh.me:8811/mcp` is used by Claude Code sessions opened outside a project.
+The `serena` server is launched with `--project-from-cwd`, which auto-detects the project by searching the MCP subprocess's current working directory (and its parents) for a `.serena/project.yml` or `.git` marker. Because Claude Code launches MCP subprocesses with CWD set to the directory where Claude Code was started (the project root), each Claude Code session gets its own Serena subprocess scoped to that project. Concurrent sessions on different projects never share Serena state.
 
-### How Serena scoping works
+This replaces the earlier per-project Docker gateway pattern that was required when Serena was containerized.
 
-The Serena catalog entry in `web-cms-mcp.yaml` sets `env: SERENA_PROJECT = {{serena.project_path}}`. Each gateway resolves that template against its own `config.yaml`:
+### Atlassian coverage
 
-- **Per-project gateway:** `serena.project_path` is set → spawned Serena starts with `--project <path>`, auto-activates that project, and does not expose `activate_project` or `get_current_config` (project switching is impossible once scoped).
-- **Shared gateway:** `serena.project_path` is unset → spawned Serena starts unscoped, exposes all 21 tools, and requires `activate_project` at runtime.
-
-The Serena image itself is built from `webcms-local-infrastructure/docker-mcp-toolkit-configuration/Dockerfile`. Its entrypoint reads `$SERENA_PROJECT`, creates a `/workspace/<basename>` symlink pointing at the project (so dev-container paths like `/workspace/brightspot/...` resolve transparently), and launches `serena start-mcp-server --context ide --project "$SERENA_PROJECT"`.
+Jira and Confluence tools are provided by a separately installed company plugin (`claude_ai_Atlassian`). This plugin's skills reference those tools directly — see workflow files for the specific tool names used. Three operations the previous gateway-based plugin had access to are **not** available in the replacement: Confluence attachment upload, Confluence attachment batch upload, and Confluence label management. The `document-card` skill's D8 phase hands those off to the user as a manual Confluence-UI step instead.
 
 ### Deployment prerequisites
 
-Before this plugin's tool references will resolve, the consuming project must:
+Each machine that runs Claude Code against a project using this plugin needs:
 
-- Have `webcms-local-infrastructure` running (Traefik + shared gateway + `webcms-shared` network).
-- Bring up the project's own `mcp-gateway` service (typically via the project's `start.sh` or `docker compose up -d`).
-- Have a populated `<project>/.docker-mcp/config.yaml` (copy `config.example.yaml` and fill in per-user values).
+- `uv` installed (provides `uvx`; used by `serena` and `git` servers). Install with `curl -LsSf https://astral.sh/uv/install.sh | sh`.
+- Node 20+ installed (provides `npx`; used by `gitlab`, `memory`, `sequentialthinking`, `playwright` servers).
+- A GitLab personal access token exported in the shell as `GITLAB_PERSONAL_ACCESS_TOKEN`. Optionally override `GITLAB_API_URL` (defaults to `https://gitlab.com/api/v4`).
+- Java 17+ on PATH (Serena's bundled Eclipse JDTLS is Java-based; required for Java projects).
 
-See `webcms-local-infrastructure/docker-mcp-toolkit-configuration/README.md` (section: "Per-project gateway configuration") for the full setup.
+Projects do not need any local MCP configuration — no per-project `.mcp.json`, no Docker MCP gateway, no catalog files. The plugin's `.mcp.json` is the single source of truth and travels with the plugin installation.
 
 ### MCP git server
 
-All skills and agents include MCP git tools (`git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, `git_reset`). These require the `git` MCP server to be present in the catalog. Workflows prefer these MCP tools over Bash for git operations, using Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for build/test/lint commands. Filesystem operations use native `Read`/`Write`/`Edit`/`Glob`/`Grep` and Bash — the plugin does not require a filesystem MCP server.
+All skills and agents include MCP git tools (`git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, `git_reset`). Workflows prefer these MCP tools over Bash for git operations, using Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for build/test/lint commands. Filesystem operations use native `Read` / `Write` / `Edit` / `Glob` / `Grep` and Bash — the plugin does not require a filesystem MCP server.

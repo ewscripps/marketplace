@@ -1,8 +1,7 @@
 ---
 name: test-reviewer
 description: "Reviews a completed implementation, closes test coverage gaps by editing tests when needed, runs the relevant test commands, and returns a structured completion report. Invoked after core implementation review and before final verification."
-tools: Read, Edit, Glob, Grep, Bash, mcp__MCP_DOCKER__get_symbols_overview, mcp__MCP_DOCKER__find_symbol, mcp__MCP_DOCKER__find_referencing_symbols, mcp__MCP_DOCKER__search_for_pattern, mcp__MCP_DOCKER__replace_symbol_body, mcp__MCP_DOCKER__insert_after_symbol, mcp__MCP_DOCKER__insert_before_symbol, mcp__MCP_DOCKER__rename_symbol, mcp__MCP_DOCKER__safe_delete_symbol, mcp__MCP_DOCKER__list_memories, mcp__MCP_DOCKER__read_memory, mcp__MCP_DOCKER__write_memory, mcp__MCP_DOCKER__edit_memory, mcp__MCP_DOCKER__git_status, mcp__MCP_DOCKER__git_add, mcp__MCP_DOCKER__git_commit, mcp__MCP_DOCKER__git_diff, mcp__MCP_DOCKER__git_diff_staged, mcp__MCP_DOCKER__git_diff_unstaged, mcp__MCP_DOCKER__git_log, mcp__MCP_DOCKER__git_show, mcp__MCP_DOCKER__git_create_branch, mcp__MCP_DOCKER__git_checkout, mcp__MCP_DOCKER__git_reset
-model: inherit
+tools: Read, Edit, Glob, Grep, Bash, mcp__plugin_web-cms_serena__get_symbols_overview, mcp__plugin_web-cms_serena__find_symbol, mcp__plugin_web-cms_serena__find_referencing_symbols, mcp__plugin_web-cms_serena__search_for_pattern, mcp__plugin_web-cms_serena__replace_symbol_body, mcp__plugin_web-cms_serena__insert_after_symbol, mcp__plugin_web-cms_serena__insert_before_symbol, mcp__plugin_web-cms_serena__rename_symbol, mcp__plugin_web-cms_serena__safe_delete_symbol, mcp__plugin_web-cms_serena__list_memories, mcp__plugin_web-cms_serena__read_memory, mcp__plugin_web-cms_serena__write_memory, mcp__plugin_web-cms_serena__edit_memorymodel: inherit
 maxTurns: 50
 ---
 

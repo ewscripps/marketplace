@@ -270,12 +270,12 @@ Follow the path matching the confirmed classification from I4.
 
     **API notes for non-standard fields:**
     - **Priority:** Set via `additional_fields`: `{"priority": {"name": "High"}}` (substituting the actual priority name: Critical, High, Medium, or Low).
-    - **Labels:** Set via `additional_fields`: `{"labels": ["label1", "label2"]}` on `jira_create_issue`.
-    - **Epic Link:** Set via `additional_fields`: `{"epicKey": "EPIC-KEY"}` on `jira_create_issue`. Do not use `jira_create_issue_link` for epic links — that creates a lateral link, not an epic association. Only include this field if the user confirmed an epic.
+    - **Labels:** Set via `additional_fields`: `{"labels": ["label1", "label2"]}` on `createJiraIssue`.
+    - **Epic Link:** Set via `additional_fields`: `{"epicKey": "EPIC-KEY"}` on `createJiraIssue`. Do not use `createIssueLink` for epic links — that creates a lateral link, not an epic association. Only include this field if the user confirmed an epic.
 
 4. **Update-or-create decision:**
-    - **If an existing Jira card was provided in I0:** Update the card's description using `jira_update_issue` with the approved bug description. Do not create a new issue.
-    - **If no existing card was provided:** Create a new Jira Bug issue using `jira_create_issue` with the approved bug description. Do not perform a follow-up description update solely to add execution instructions.
+    - **If an existing Jira card was provided in I0:** Update the card's description using `editJiraIssue` with the approved bug description. Do not create a new issue.
+    - **If no existing card was provided:** Create a new Jira Bug issue using `createJiraIssue` with the approved bug description. Do not perform a follow-up description update solely to add execution instructions.
 
 **Bug Description Structure:**
 
@@ -337,9 +337,9 @@ file/module/service path, brief description of relevance, and risk level.]
 
 **Post-creation:**
 
-1. **Link related issues from I1:** For each related issue identified in I1, call `jira_create_issue_link` with `link_type: "Relates to"`, `inward_issue_key` set to the new bug's key, and `outward_issue_key` set to the related issue's key. Do not attempt to set linked issues during `jira_create_issue` — that tool does not support it.
+1. **Link related issues from I1:** For each related issue identified in I1, call `createIssueLink` with `link_type: "Relates to"`, `inward_issue_key` set to the new bug's key, and `outward_issue_key` set to the related issue's key. Do not attempt to set linked issues during `createJiraIssue` — that tool does not support it.
 
-2. **Ask for additional links:** Ask: "Is there an existing Jira issue this bug should be linked to beyond the ones already linked? If yes, provide the issue key." If the user provides a key, call `jira_get_issue` to confirm it exists, then call `jira_create_issue_link` with `link_type: "Relates to"` to create the link. Confirm success. If the user provides no key, skip this step.
+2. **Ask for additional links:** Ask: "Is there an existing Jira issue this bug should be linked to beyond the ones already linked? If yes, provide the issue key." If the user provides a key, call `getJiraIssue` to confirm it exists, then call `createIssueLink` with `link_type: "Relates to"` to create the link. Confirm success. If the user provides no key, skip this step.
 
 3. The bug path cleanup happens in I6 after the durable Jira record is complete. Do not clear the session-scoped graph before that cleanup phase.
 
@@ -369,7 +369,7 @@ file/module/service path, brief description of relevance, and risk level.]
 5. Present the pre-populated R0 summary to the user and confirm it before proceeding — this serves as the R0 approval gate.
 6. After the user confirms the pre-populated R0 summary, perform the Requirements Intake R0 post-approval action by writing the `work_item` node to the knowledge graph using the confirmed work type and context. This completes the R0 graph initialization before continuing.
 7. Resume the Requirements Workflow from **R1**, following all phases (R1 through R6) exactly as written. All R1–R6 execution rules, approval gates, and self-review requirements apply in full.
-8. After the Jira issue has been created or updated at the end of R5, ask: "Is there an existing Jira issue this should be linked to? If yes, provide the issue key." If the user provides a key, call `jira_get_issue` to confirm it exists, then call `jira_create_issue_link` with `link_type: "Relates to"` to create the link. Confirm success.
+8. After the Jira issue has been created or updated at the end of R5, ask: "Is there an existing Jira issue this should be linked to? If yes, provide the issue key." If the user provides a key, call `getJiraIssue` to confirm it exists, then call `createIssueLink` with `link_type: "Relates to"` to create the link. Confirm success.
 9. The missing-requirement path cleanup happens in I6 after the carried-over requirements workflow is complete. The Requirements Intake workflow clears the shared session-scoped graph at its cleanup phase; do not finish this path with any issue-intake state left in the graph.
 
 > **APPROVAL GATE — FULL STOP.** Present the pre-populated R0 context summary. User must confirm all fields are accurate and Work Type is correct. Only proceed to R1 after this confirmation.

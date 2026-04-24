@@ -42,8 +42,8 @@
 
 **This phase requires TWO separate tool calls. Do not move to E1 until both are complete.**
 
-1. **Tool call 1:** Call `jira_get_transitions` with this issue's key. From the response, find the transition whose target status is **In Progress** and note its **ID**.
-2. **Tool call 2:** Call `jira_transition_issue` with this issue's key and that transition ID. This is the call that actually moves the issue. Retrieving transitions alone does nothing -- you MUST call `jira_transition_issue` to complete this phase.
+1. **Tool call 1:** Call `getTransitionsForJiraIssue` with this issue's key. From the response, find the transition whose target status is **In Progress** and note its **ID**.
+2. **Tool call 2:** Call `transitionJiraIssue` with this issue's key and that transition ID. This is the call that actually moves the issue. Retrieving transitions alone does nothing -- you MUST call `transitionJiraIssue` to complete this phase.
 
 Do not guess transition IDs. Always retrieve them first via tool call 1.
 
@@ -133,14 +133,14 @@ Post a single combined Jira comment with the exact heading `**E4/E5 — Breakdow
 
 **IMPORTANT:** Each task must be created as a **Child Work Item** of this epic (parent-child relationship). Do NOT create tasks as Linked Work Items. The parent field of each new task must be set to this epic's issue key.
 
-**DO NOT call `jira_create_issue_link` at any point during this phase. Setting the `parent` field in `additional_fields` is the ONLY action needed to establish the parent-child relationship. Any call to `jira_create_issue_link` creates a separate lateral "Related" link that should not exist. Per child task, use one `jira_create_issue` call to create the task with its final description and the parent field already set. No lateral linking calls or follow-up description update calls are allowed.**
+**DO NOT call `createIssueLink` at any point during this phase. Setting the `parent` field in `additional_fields` is the ONLY action needed to establish the parent-child relationship. Any call to `createIssueLink` creates a separate lateral "Related" link that should not exist. Per child task, use one `createJiraIssue` call to create the task with its final description and the parent field already set. No lateral linking calls or follow-up description update calls are allowed.**
 
 For each task identified in E4:
 
 1. Derive the epic integration branch name now using the E7 naming convention: `{PROJECTKEY}-{ISSUENUMBER}-{epic-summary-in-kebab-case}` (e.g. `PROJ-900-user-authentication-overhaul`). This value is written into each child task's `Epic Integration Branch` field so T6 can detect epic child-task mode.
 2. Populate the task description using the **Standard Task Template** below. Preserve the section structure exactly, but replace every `{{...}}` token with task-specific content before creating the issue. No unresolved placeholder text may be stored in Jira.
 3. **Recommend a priority** for the child task based on its risk level, dependency position, and impact on the epic's acceptance criteria. Use Jira priority values: Critical, High, Medium, or Low. Present the recommended priority to the user for confirmation before creating the issue.
-4. Create a new task by calling `jira_create_issue` with `additional_fields` set to `{"parent": "EPIC-KEY", "priority": {"name": "High"}}` (substituting this epic's actual issue key and the confirmed priority name) and the assembled task description. This create call establishes the child work item relationship.
+4. Create a new task by calling `createJiraIssue` with `additional_fields` set to `{"parent": "EPIC-KEY", "priority": {"name": "High"}}` (substituting this epic's actual issue key and the confirmed priority name) and the assembled task description. This create call establishes the child work item relationship.
 
 > **USE KNOWLEDGE GRAPH:** After each child task is created in Jira, update its node in the knowledge graph. Add the `jira_key` property to the task node (e.g. `PROJ-124`) so E8 can reference it directly without searching Jira. If the breakdown plan changes during creation (e.g. a task is split), update the graph to reflect the current state before proceeding.
 

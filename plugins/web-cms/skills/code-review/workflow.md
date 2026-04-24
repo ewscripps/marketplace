@@ -37,8 +37,8 @@
 
 **This phase requires TWO separate tool calls. Do not move to CR1 until both are complete.**
 
-1. **Tool call 1:** Call `jira_get_transitions` with this issue's key. From the response, find the transition whose target status is **In Progress** and note its **ID**.
-2. **Tool call 2:** Call `jira_transition_issue` with this issue's key and that transition ID. This is the call that actually moves the issue. Retrieving transitions alone does nothing -- you MUST call `jira_transition_issue` to complete this phase.
+1. **Tool call 1:** Call `getTransitionsForJiraIssue` with this issue's key. From the response, find the transition whose target status is **In Progress** and note its **ID**.
+2. **Tool call 2:** Call `transitionJiraIssue` with this issue's key and that transition ID. This is the call that actually moves the issue. Retrieving transitions alone does nothing -- you MUST call `transitionJiraIssue` to complete this phase.
 
 Do not guess transition IDs. Always retrieve them first via tool call 1.
 
@@ -224,8 +224,8 @@ Post a single consolidated comment on this Jira issue containing ALL of the foll
     1. Derive the project key from this review issue's key (the prefix before the hyphen, e.g., `PROJ` from `PROJ-123`).
     2. **Recommend a priority** for the remediation task based on the severity of the findings (Critical findings = High or Critical priority; Major findings only = Medium; Minor findings only = Low). Present the recommended priority to the user for confirmation before creating the issue.
     3. **Recommend an epic** for the remediation task. Search Jira for open epics in the same project that relate to the code areas covered by the review findings. If the reviewed issue is already linked to an epic, suggest that epic. Present the recommendation and ask the user to: (a) accept the suggested epic, (b) provide a different epic key, or (c) leave blank for no epic. Only set the Epic Link if the user accepts or provides a key.
-    4. Create a new Task by calling `jira_create_issue` with the derived `project_key`, `issue_type: "Task"`, `summary` set to `{PROJECTKEY} [Review Type] Code Review Remediation`, and `additional_fields` set to `{"priority": {"name": "High"}}` (substituting the confirmed priority name; also include `"epicKey": "EPIC-KEY"` if the user confirmed an epic). Populate the `description` with ALL findings that require action, organized by severity (Critical first, then Major, then Minor). For each finding include: the file, description, severity, and the review category it came from.
-    5. After the task is created, link it to this review issue by calling `jira_create_issue_link` with `link_type: "Relates to"`, `inward_issue_key` set to the new task's key, and `outward_issue_key` set to this review issue's key.
+    4. Create a new Task by calling `createJiraIssue` with the derived `project_key`, `issue_type: "Task"`, `summary` set to `{PROJECTKEY} [Review Type] Code Review Remediation`, and `additional_fields` set to `{"priority": {"name": "High"}}` (substituting the confirmed priority name; also include `"epicKey": "EPIC-KEY"` if the user confirmed an epic). Populate the `description` with ALL findings that require action, organized by severity (Critical first, then Major, then Minor). For each finding include: the file, description, severity, and the review category it came from.
+    5. After the task is created, link it to this review issue by calling `createIssueLink` with `link_type: "Relates to"`, `inward_issue_key` set to the new task's key, and `outward_issue_key` set to this review issue's key.
 - If the overall assessment is **Approved:** post a comment stating "No remediation task required — review approved with no actionable findings."
     
 

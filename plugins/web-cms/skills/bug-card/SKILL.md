@@ -1,13 +1,13 @@
 ---
 name: bug-card
-description: Execute the Bug Card workflow for a Jira bug issue. Use when beginning work on a bug fix. Handles the complete B0-B14 lifecycle including reproduction, root cause investigation, fix planning, core implementation, dedicated test/documentation completion, user testing, and summary of changes.
+description: Execute the Bug Card workflow for a Jira bug issue. Use when beginning work on a bug fix. Handles the complete B0-B15 lifecycle including reproduction, root cause investigation, fix planning, core implementation, dedicated test/documentation completion, user testing, and summary of changes.
 argument-hint: "[PROJ-123]"
 disable-model-invocation: false
-allowed-tools: Bash, Read, Edit, Glob, Grep, mcp__MCP_DOCKER__sequentialthinking, mcp__MCP_DOCKER__jira_get_issue, mcp__MCP_DOCKER__jira_get_transitions, mcp__MCP_DOCKER__jira_transition_issue, mcp__MCP_DOCKER__jira_add_comment, mcp__MCP_DOCKER__check_onboarding_performed, mcp__MCP_DOCKER__onboarding, mcp__MCP_DOCKER__read_graph, mcp__MCP_DOCKER__create_entities, mcp__MCP_DOCKER__create_relations, mcp__MCP_DOCKER__add_observations, mcp__MCP_DOCKER__get_symbols_overview, mcp__MCP_DOCKER__find_symbol, mcp__MCP_DOCKER__find_referencing_symbols, mcp__MCP_DOCKER__search_for_pattern, mcp__MCP_DOCKER__replace_symbol_body, mcp__MCP_DOCKER__insert_after_symbol, mcp__MCP_DOCKER__insert_before_symbol, mcp__MCP_DOCKER__rename_symbol, mcp__MCP_DOCKER__safe_delete_symbol, mcp__MCP_DOCKER__git_status, mcp__MCP_DOCKER__git_add, mcp__MCP_DOCKER__git_commit, mcp__MCP_DOCKER__git_diff, mcp__MCP_DOCKER__git_diff_staged, mcp__MCP_DOCKER__git_diff_unstaged, mcp__MCP_DOCKER__git_log, mcp__MCP_DOCKER__git_show, mcp__MCP_DOCKER__git_create_branch, mcp__MCP_DOCKER__git_checkout, mcp__MCP_DOCKER__git_reset
+allowed-tools: Bash, Read, Edit, Glob, Grep, mcp__plugin_web-cms_sequentialthinking__sequentialthinking, mcp__claude_ai_Atlassian__getJiraIssue, mcp__claude_ai_Atlassian__getTransitionsForJiraIssue, mcp__claude_ai_Atlassian__transitionJiraIssue, mcp__claude_ai_Atlassian__addCommentToJiraIssue, mcp__plugin_web-cms_serena__check_onboarding_performed, mcp__plugin_web-cms_serena__onboarding, mcp__plugin_web-cms_memory__read_graph, mcp__plugin_web-cms_memory__create_entities, mcp__plugin_web-cms_memory__create_relations, mcp__plugin_web-cms_memory__add_observations, mcp__plugin_web-cms_serena__get_symbols_overview, mcp__plugin_web-cms_serena__find_symbol, mcp__plugin_web-cms_serena__find_referencing_symbols, mcp__plugin_web-cms_serena__search_for_pattern, mcp__plugin_web-cms_serena__replace_symbol_body, mcp__plugin_web-cms_serena__insert_after_symbol, mcp__plugin_web-cms_serena__insert_before_symbol, mcp__plugin_web-cms_serena__rename_symbol, mcp__plugin_web-cms_serena__safe_delete_symbol
 ---
 
 Read `./workflow.md` in this skill directory for the full execution contract, then follow it exactly.
 
 The Jira issue key for this bug is: $ARGUMENTS
 
-Execute all phases in strict sequential order (B0-B14). Do not skip, reorder, or combine any phases. All approval gates require explicit confirmation before proceeding.
+Execute all phases in strict sequential order (B0-B15). Do not skip, reorder, or combine any phases. All approval gates require explicit confirmation before proceeding.
