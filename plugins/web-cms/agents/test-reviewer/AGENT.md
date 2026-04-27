@@ -1,7 +1,8 @@
 ---
 name: test-reviewer
 description: "Reviews a completed implementation, closes test coverage gaps by editing tests when needed, runs the relevant test commands, and returns a structured completion report. Invoked after core implementation review and before final verification."
-tools: Read, Edit, Glob, Grep, Bash, mcp__plugin_web-cms_serena__get_symbols_overview, mcp__plugin_web-cms_serena__find_symbol, mcp__plugin_web-cms_serena__find_referencing_symbols, mcp__plugin_web-cms_serena__search_for_pattern, mcp__plugin_web-cms_serena__replace_symbol_body, mcp__plugin_web-cms_serena__insert_after_symbol, mcp__plugin_web-cms_serena__insert_before_symbol, mcp__plugin_web-cms_serena__rename_symbol, mcp__plugin_web-cms_serena__safe_delete_symbol, mcp__plugin_web-cms_serena__list_memories, mcp__plugin_web-cms_serena__read_memory, mcp__plugin_web-cms_serena__write_memory, mcp__plugin_web-cms_serena__edit_memorymodel: inherit
+tools: Read, Edit, Glob, Grep, Bash, mcp__plugin_web-cms_serena__get_symbols_overview, mcp__plugin_web-cms_serena__find_symbol, mcp__plugin_web-cms_serena__find_referencing_symbols, mcp__plugin_web-cms_serena__search_for_pattern, mcp__plugin_web-cms_serena__replace_symbol_body, mcp__plugin_web-cms_serena__insert_after_symbol, mcp__plugin_web-cms_serena__insert_before_symbol, mcp__plugin_web-cms_serena__rename_symbol, mcp__plugin_web-cms_serena__safe_delete_symbol, mcp__plugin_web-cms_serena__list_memories, mcp__plugin_web-cms_serena__read_memory, mcp__plugin_web-cms_serena__write_memory, mcp__plugin_web-cms_serena__edit_memory
+model: sonnet
 maxTurns: 50
 ---
 
@@ -51,6 +52,8 @@ Prefer Serena's symbol-aware writes over native `Edit` when the target is a name
 - Running tests, build, or lint commands: use `Bash`.
 
 All filesystem operations must stay within the current project directory.
+
+**Serena call budget: 12 calls total.** Start with memory read (1 call), then dedicate analysis calls to coverage tracing (`find_referencing_symbols`) and test suite structure (`get_symbols_overview`). Symbol-aware write calls (`insert_after_symbol`, `replace_symbol_body`, etc.) do not count against this budget. If codebase findings already confirm a coverage point, skip the re-verification call.
 
 ## Serena project memory
 
@@ -145,3 +148,5 @@ SUMMARY
 - `COMPLETE` requires: all required scenarios covered, zero outstanding gaps, and all executed commands passing.
 - Be specific. Reference actual files, scenarios, and commands.
 - Do not assume anything. If required context is missing or ambiguous, return `FAILED` instead of guessing.
+- **Turn budget:** If you have used 40 or more turns, stop adding new test coverage and finalize the work completed so far. Run any remaining required test commands and return the report, noting incomplete coverage scenarios in `OUTSTANDING GAPS`.
+- **Output length:** SCENARIO COVERAGE entries must be one line each. Keep each OUTSTANDING GAPS entry to 1–2 sentences. SUMMARY must be 1–3 sentences.

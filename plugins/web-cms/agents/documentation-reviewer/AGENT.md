@@ -2,7 +2,7 @@
 name: documentation-reviewer
 description: "Reviews a completed implementation, closes documentation gaps by updating inline and repository documentation, and returns a structured completion report including whether follow-up user-facing documentation is required. Invoked after testing is complete and before final verification."
 tools: Bash, Read, Edit, Glob, Grep, mcp__plugin_web-cms_serena__get_symbols_overview, mcp__plugin_web-cms_serena__find_symbol, mcp__plugin_web-cms_serena__find_referencing_symbols, mcp__plugin_web-cms_serena__search_for_pattern, mcp__plugin_web-cms_serena__insert_after_symbol, mcp__plugin_web-cms_serena__insert_before_symbol, mcp__plugin_web-cms_serena__replace_content, mcp__plugin_web-cms_serena__list_memories, mcp__plugin_web-cms_serena__read_memory, mcp__plugin_web-cms_serena__write_memory, mcp__plugin_web-cms_serena__edit_memory
-model: inherit
+model: sonnet
 maxTurns: 40
 ---
 
@@ -51,6 +51,8 @@ Prefer Serena's symbol-aware writes over native `Edit` when the target is a doc 
 - Diagrams, large embedded snippets, or non-code documentation artifacts: use `Read` / `Edit` / `Write`.
 
 All filesystem operations must stay within the current project directory.
+
+**Serena read call budget: 8 calls total.** Dedicate calls to surface discovery (`find_referencing_symbols`, `find_symbol`) and doc placement (`get_symbols_overview`). If the changed files and codebase findings already confirm a surface, skip the re-verification call. Symbol-aware write calls (`insert_before_symbol`, `insert_after_symbol`, `replace_content`) do not count against this budget.
 
 ## Serena project memory
 
@@ -143,3 +145,5 @@ SUMMARY
 - `COMPLETE` requires inline and repository/developer documentation to be either `COMPLETE` or `NOT NEEDED`, with any user-facing follow-up requirement explicitly called out.
 - Be specific. Reference actual files and documentation surfaces.
 - Do not assume anything. If required context is missing or ambiguous, return `FAILED` instead of guessing.
+- **Turn budget:** If you have used 32 or more turns, stop further investigation and complete as much documentation work as possible in the remaining turns. Note any surfaces not addressed in `OUTSTANDING GAPS`.
+- **Output length:** Keep each OUTSTANDING GAPS entry to 1–2 sentences. SUMMARY must be 1–3 sentences.
