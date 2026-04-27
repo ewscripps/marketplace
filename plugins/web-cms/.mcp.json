@@ -4,6 +4,15 @@
       "type": "http",
       "url": "http://mcp-gateway.lvh.me:8811/mcp"
     },
+    "atlassian": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["mcp-atlassian"],
+      "env": {
+        "JIRA_URL": "https://ewscripps.atlassian.net",
+        "CONFLUENCE_URL": "https://ewscripps.atlassian.net/wiki"
+      }
+    },
     "serena": {
       "type": "stdio",
       "command": "uvx",

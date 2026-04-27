@@ -311,43 +311,28 @@ For each endpoint in the documentation plan, in the order defined in D2:
 
 ### D8 -- Publish to Confluence
 
-**Objective:** Create the Confluence page, hand off attachment upload and label management to the user (the available Atlassian MCP tools do not expose those operations), and link the documentation to the Jira issue.
+**Objective:** Create the Confluence page, upload all screenshots, apply labels, and link the documentation to the Jira issue.
 
 **Agent Actions:**
 
-1. **Look up the parent page.** Use `searchConfluenceUsingCql` or `getConfluencePage` to find the parent page specified in D1 and retrieve its ID.
+1. **Look up the parent page.** Use `confluence_search` or `confluence_get_page` to find the parent page specified in D1 and retrieve its ID.
 
-2. **Create the Confluence page.** Call `createConfluencePage` with:
+2. **Create the Confluence page.** Call `confluence_create_page` with:
     - The Confluence space key from D1
     - The page title (derived from the work item title, e.g., "How to [Feature Name]" or "[Feature Name] Documentation")
     - The parent page ID
     - The page body in Confluence storage format from D6
 
-3. **Verify the page.** Call `getConfluencePage` to confirm the page was created successfully. Record the page URL for the user handoff and the Jira comment.
+3. **Verify the page.** Call `confluence_get_page` to confirm the page was created successfully. Record the page ID and URL for subsequent steps.
 
-4. **Hand off attachments and labels to the user.** The available Atlassian MCP tools do not expose attachment upload or label management, so these steps must be completed by the user in the Confluence UI. Present this checklist in the chat and wait for confirmation before continuing:
+4. **Upload screenshots.** Call `confluence_upload_attachments` with the page ID and the list of all screenshot files captured in D4 and D5, in the order they appear in the page. After uploading, call `confluence_get_attachments` to verify all files are present. The `<ri:attachment ri:filename="..." />` image references in the page body from D6 will resolve automatically once the attachments are in place.
 
-    ```
-    The Confluence page has been created at [URL]. Two steps must be
-    completed manually in the Confluence UI before publishing is finished:
+5. **Apply labels.** Call `confluence_add_label` to add the following labels to the page:
+    - The Jira project key in lowercase (e.g., `eli`)
+    - `documentation`
+    - The work type label: `feature` for tasks/epics, `bug-fix` for bugs
 
-    Attachments to upload (open the page in edit mode and drag-and-drop,
-    or use the Insert > Files menu):
-      - [list each screenshot filename captured in D4 and D5]
-
-    Labels to add (page options ... Edit Labels):
-      - [Jira project key, e.g. PROJ]
-      - documentation
-      - [work type label, e.g. feature, bug-fix]
-
-    Once attachments are uploaded, the `<ri:attachment ri:filename="..." />`
-    image tags in the page body from D6 will resolve automatically. Verify
-    the embedded images render correctly before confirming.
-
-    Reply "attachments and labels applied" when both are complete.
-    ```
-
-5. **Link to Jira.** After the user confirms the manual steps are done, post a comment on the Jira issue using `addCommentToJiraIssue` with a link to the newly created Confluence page. Format:
+6. **Link to Jira.** Post a comment on the Jira issue using `jira_add_comment` with a link to the newly created Confluence page. Format:
 
     ```
     Documentation published: [Page Title]
@@ -356,12 +341,13 @@ For each endpoint in the documentation plan, in the order defined in D2:
     This page documents the user-facing changes implemented in this work item.
     ```
 
-6. **Close the browser.** Call `browser_close` to clean up the browser session.
+7. **Close the browser.** Call `browser_close` to clean up the browser session.
 
 > **REQUIRED:** Present all of the following in the chat:
 >
 > - Confluence page URL
-> - User confirmation that attachments were uploaded and labels applied
+> - List of screenshots uploaded and confirmation all attachments are present
+> - Labels applied to the page
 > - Confirmation that the Jira issue was updated with the documentation link
 > - Any issues encountered during publishing
 
@@ -374,6 +360,7 @@ This workflow is complete when **all** of the following are true:
 - All phases executed in sequence (D0-D8)
 - All approval gates explicitly confirmed in the chat
 - Confluence page created with all text content
-- User confirmed manual upload of screenshots and application of labels in the Confluence UI
+- All screenshots uploaded to Confluence page via MCP and confirmed present
+- Labels applied to Confluence page via MCP
 - Jira issue updated with a link to the documentation
 - Browser session closed
