@@ -70,17 +70,20 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 ### T2 — Review the Codebase
 
+> **USE KNOWLEDGE GRAPH:** Before spawning explorers, ensure a `work_item-<JIRA_KEY>` entity exists for this task. Call `read_graph`; if missing (typical at the start of a fresh session), create it with observations: `work_type: task`, `jira_key`, `title`, `phase: review`. **Record the entity name** as the `work_item_id` for T2 and pass it to every explorer. Explorer findings stream into the graph as `affected_file`, `evidence`, `pattern`, `integration_point`, and `risk` entities linked to this `work_item` node, and the orchestrator reads them after the explorers return.
+
 - Identify all distinct areas of the codebase to explore based on the **Affected Areas** section and the task goals. Limit the scope of this exploration to the current project directory.
 - For each distinct area in this project, invoke a `codebase-explorer` sub-agent in **parallel**, providing:
     - The target area to explore
     - The question: "What patterns, abstractions, utilities, and testing conventions are in use in this area, and what architectural considerations affect how this task's goals can be implemented here?"
+    - The `work_item_id` (`work_item-<JIRA_KEY>`). All findings the explorer streams to the graph will be linked to this node.
     - The task description and acceptance criteria for context
-- Wait for all explorers to return their findings reports.
-- Review each explorer's OPEN QUESTIONS section. If any open question identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` for that area before proceeding.
-- Synthesize the findings across all reports. Note:
-    - Relevant patterns, abstractions, and utilities in use
-    - Existing test coverage and testing patterns
-    - High-risk areas or architectural considerations that could affect the implementation
+- Wait for all explorers to return their `EXPLORATION COMPLETE` (or `EXPLORATION FAILED`) pointers.
+- Call `read_graph` and walk the subgraph rooted at each `exploration` entity for this `work_item_id`. Surface any `open_question` entities. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
+- Synthesize the findings from the graph. Read across all `exploration` entities linked to this `work_item_id` and aggregate:
+    - **Patterns, abstractions, and utilities in use** — from `pattern` entities; cite the `evidence_files` observation when present.
+    - **Existing test coverage and testing patterns** — from `pattern` entities tagged with test concerns and from `evidence` entities with `evidence_type: convention` covering tests.
+    - **High-risk areas or architectural considerations** — from `risk` entities (ordered by severity) and `integration_point` entities flagging cross-area coupling.
 
 ### T3 — Ask Clarifying Questions
 
@@ -331,6 +334,8 @@ Post a comment on this Jira issue with the exact heading `**T12 — Summary of C
 
 - **Standard mode:** Confirm the task worktree created in T6 has been removed and you have returned to the main working directory. If a follow-up worktree was created during T11, remove it before finishing.
 - **Epic child task mode:** Confirm the child task worktree has been exited and no task-specific temporary worktree remains. Do not remove the shared epic integration worktree here.
+- **Standard mode:** Clear the session-scoped knowledge graph nodes created during this task — the `work_item-<JIRA_KEY>` entity and every entity linked to it (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`, and any `affected_area` rolled up from them). Use `read_graph` to enumerate, then `delete_entities`. The graph is session-scoped; finishing without cleanup leaves stale state for the next workflow.
+- **Epic child task mode:** Do not delete the `work_item-<JIRA_KEY>` entity for this child task or its linked nodes here — the epic-level cleanup at E11 owns wholesale graph teardown after all child tasks complete.
 
 ## Completion Criteria
 

@@ -67,18 +67,19 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 > **USE SEQUENTIAL THINKING:** Before dispatching explorers or concluding on root cause, invoke the `sequentialthinking` tool. Use it to identify the likely affected areas to investigate in parallel, form initial hypotheses, evaluate the evidence returned by the explorer agents, and revise if needed. Root cause analysis is non-linear — backtrack and explore alternative causes before committing to a conclusion. Do not proceed to B4 until the reasoning is complete.
 
-> **USE KNOWLEDGE GRAPH:** As you investigate, use the memory tools to record your work. Create a node for each hypothesis with properties: `hypothesis` (description), `status` (`active` / `eliminated`), and `evidence` (what supports or refutes it). When a hypothesis is eliminated, update its status with a `reason` property. Create a node for affected files and services linked to the bug. This graph becomes the authoritative investigation record and feeds directly into the fix plan in B5.
+> **USE KNOWLEDGE GRAPH:** Before spawning explorers, ensure a `work_item-<JIRA_KEY>` entity exists for this bug. Call `read_graph`; if the entity is missing (typical at the start of a fresh session), create it with observations: `work_type: bug`, `jira_key`, `title`, `observed_behavior`, `expected_behavior`. **Record the entity name** as the `work_item_id` for this run. As you investigate, also create a node for each hypothesis with properties: `hypothesis` (description), `status` (`active` / `eliminated`), and `evidence` (what supports or refutes it). When a hypothesis is eliminated, update its status with a `reason` property. The explorer-written `affected_file`, `evidence`, `pattern`, and `risk` entities they stream to the graph are reachable via the `work_item-<JIRA_KEY>` node and feed directly into the fix plan in B5.
 
 - Identify all distinct areas of the codebase likely involved based on the **Affected Areas**, reproduction steps, and any logs or stack traces. Limit the scope of this exploration to the current project directory.
 - Invoke a `codebase-explorer` sub-agent in **parallel** for each distinct hypothesis area in this project, providing:
     - The target area to explore
     - The question: "Does the code path for [observed behavior] exist here, and is there evidence of why it might be producing [incorrect behavior]? Look for recent changes, error handling gaps, and related tests."
+    - The `work_item_id` (`work_item-<JIRA_KEY>`). All findings the explorer streams to the graph will be linked to this node.
     - The bug description, reproduction steps, and any logs for context
-- Wait for all explorers to return their findings reports.
-- Review each explorer's OPEN QUESTIONS section. If any open question identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` for that area before proceeding.
-- Synthesize the findings. Evaluate which areas show evidence of the root cause and which can be ruled out. Update the knowledge graph accordingly.
-- Review git history for recent changes to affected areas that may have introduced a regression.
-- Review related tests to understand why existing coverage did not catch this bug.
+- Wait for all explorers to return their `EXPLORATION COMPLETE` (or `EXPLORATION FAILED`) pointers.
+- Call `read_graph` and walk the subgraph rooted at each `exploration` entity for this `work_item_id`. Surface any `open_question` entities. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
+- Synthesize the findings from the graph. Evaluate which areas show evidence of the root cause (cite the relevant `evidence` entities by `file` and `line_range`) and which hypotheses can be ruled out. Update each hypothesis node's `status` and `evidence` observations to reflect what the graph now contains.
+- Review git history for recent changes to affected areas (cross-reference the `affected_file` paths from the graph) that may have introduced a regression.
+- Review related tests to understand why existing coverage did not catch this bug — look for `pattern` entities tagged with test concerns and `risk` entities flagging coverage gaps.
 
 ### B4 — Ask Clarifying Questions
 
@@ -338,4 +339,4 @@ Post a comment on this Jira issue containing ALL of the following:
 ### B15 — Cleanup
 
 - Confirm the bug-fix worktree has been removed and you have returned to the main working directory. If a follow-up worktree was created during B13, remove it before finishing.
-- Clear the session-scoped knowledge graph before finishing the workflow. Do not retain hypotheses, affected-area nodes, root-cause state, or fix-plan state after that information has been materialized into Jira comments.
+- Clear the session-scoped knowledge graph before finishing the workflow. This includes the `work_item-<JIRA_KEY>` entity and every entity linked to it: hypothesis nodes, `affected_area`, `root_cause`, `fix_plan`, plus the explorer-written subgraph (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`). Use `read_graph` to enumerate, then `delete_entities`. Do not retain investigation state once it has been materialized into Jira comments.

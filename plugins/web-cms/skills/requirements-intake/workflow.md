@@ -37,6 +37,11 @@
 
 ### R0 — Intake
 
+**DISCOVERY PRE-CHECK:** Before greeting the user, call `read_graph` to check the knowledge graph for a `discovery_summary` entity. If one is present:
+1. Acknowledge it immediately: "I found a prior implementation discovery session for: **[topic]**. I'll use those findings as a head start — the codebase areas have already been explored. If this isn't the right context, just say so and I'll start fresh."
+2. If the user confirms: add an observation `discovery_confirmed: true` to the `discovery_summary` entity. When asking intake questions in step 3 below, skip the "areas of the codebase you already know are involved" question — the discovery already covers it. Note that R2 (Codebase Analysis) will use the discovery findings and skip spawning new codebase-explorer agents.
+3. If the user rejects: proceed with normal intake and do not reference the discovery summary again.
+
 **Objective:** Greet the user and gather all context needed to begin the requirements workflow through natural conversation.
 
 **Agent Actions:**
@@ -93,7 +98,7 @@
 4. After all questions are answered, summarize the gathered context back to the user in a clear, structured format.
     
 
-> **USE KNOWLEDGE GRAPH:** After the R0 approval gate is confirmed, write the core work item to the knowledge graph. Create a `work_item` node with properties: `work_type` (feature / tech_debt / research / upkeep), `title`, `description`, `requested_by`, `existing_jira_key` (if provided). This is the root node — all subsequent phases will add linked nodes to it. R5 reads the full graph to assemble the Jira issue description.
+> **USE KNOWLEDGE GRAPH:** After the R0 approval gate is confirmed, write the core work item to the knowledge graph. Create a `work_item` entity with name `work_item-<key>` where `<key>` is the existing Jira issue key (if provided) or a normalized slug of the title (lowercase, whitespace/punctuation → `-`, trimmed) prefixed with `intake-` (e.g. `work_item-intake-add-retry-logic`). Observations: `work_type` (feature / tech_debt / research / upkeep), `title`, `description`, `requested_by`, `existing_jira_key` (if provided). This is the root node — all subsequent phases will add linked nodes to it. R5 reads the full graph to assemble the Jira issue description. **Record the entity name** — it is the `work_item_id` passed to every `codebase-explorer` call in R2.
 
 > **REQUIRED:** The following context must be confirmed before proceeding:
 > 
@@ -139,6 +144,13 @@
 
 ### R2 — Codebase Analysis
 
+**DISCOVERY PRE-CHECK:** Before spawning codebase-explorer agents, call `read_graph`. If a `discovery_summary` entity with the observation `discovery_confirmed: true` is present, codebase analysis is already complete:
+1. Announce: "Codebase analysis is already complete from the prior discovery session. Using [N] affected areas identified in discovery."
+2. Re-link the prior discovery's `exploration` entities to this work item: for each `exploration` linked to the discovery's `work_item-discovery-<slug>` node, create an additional `for` relation pointing at the new `work_item-<key>` node. This makes the explorer findings reachable from R4A's normal traversal without copying them.
+3. Create an `affected_area` node for each area in the `affected_areas` observation of the `discovery_summary` entity. For each: set `name` = area path, `type` = module (default), `risk` = medium (default). Link each node to the `work_item` node. If the D2 synthesis text includes explicit risk levels for an area, use those instead of the default.
+4. Use the `synthesis` observation from the `discovery_summary` entity as the codebase analysis content.
+5. Skip Agent Actions steps 1–6 entirely. Present the synthesis as the codebase analysis and proceed directly to the approval gate.
+
 **Objective:** Identify the code surfaces this work item will touch to ground scope and acceptance criteria in reality.
 
 **Agent Actions:**
@@ -151,16 +163,19 @@
         - **Tech Debt:** "What is the current state of [problem area] — what exists today, why is it problematic, and what does the code look like?"
         - **Research:** "What existing code, architecture, or patterns in this area are relevant to the research question: [question]?"
         - **Upkeep:** "What components, dependencies, or configuration in this area will be touched by [upkeep work], and are there known compatibility constraints or rollback considerations?"
+    - The `work_item_id` recorded at R0 (the entity name of the `work_item` node, e.g. `work_item-PROJ-123` or `work_item-intake-<slug>`). All findings the explorer streams to the graph will be linked to this node.
     - The work item description for context
-3. Wait for all explorers to return their findings reports.
-4. Review each explorer's OPEN QUESTIONS section. If any open question identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` for that area before proceeding.
-5. Synthesize the findings across all reports into a unified codebase analysis. Note:
-    - Relevant existing patterns or conventions to follow
-    - High-risk areas with explicit reasoning
-    - Work-type-specific findings (current state for Tech Debt, known areas for Research, compatibility notes for Upkeep)
-6. Label any items not directly confirmed in the explorer reports as `[INFERRED]`.
+3. Wait for all explorers to return their `EXPLORATION COMPLETE` (or `EXPLORATION FAILED`) pointers. The pointer reports counts of entities written; the findings themselves live in the graph.
+4. Call `read_graph` and walk the subgraph rooted at each `exploration` entity for this `work_item_id`. Surface any `open_question` entities. If any open question identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` for that area (passing the same `work_item_id`) before proceeding.
+5. Synthesize the findings from the graph into a unified codebase analysis. Read across all `exploration` entities linked to this `work_item_id` and aggregate:
+    - **Affected files** — collected from `affected_file` entities. Group by module / service for the user-facing analysis.
+    - **Patterns and conventions** — from `pattern` entities; cite the `evidence_files` observation when present.
+    - **Integration points** — from `integration_point` entities.
+    - **Risks** — from `risk` entities, ordered by severity.
+    - **Work-type-specific findings** — current state for Tech Debt, known areas for Research, compatibility notes for Upkeep — from the relevant `evidence` and `pattern` entities.
+6. Label any items derived from `evidence` or `affected_file` observations marked `inferred: true` as `[INFERRED]` in the user-facing analysis.
 
-> **USE KNOWLEDGE GRAPH:** Write each affected area to the graph. Create an `affected_area` node for each file, module, or service with properties: `name`, `type` (file / module / service / schema / component), `risk` (high / medium / low), and any relevant notes. Mark speculative entries with `inferred: true`. Link each node to the `work_item` node. R4A reads these nodes to ensure acceptance criteria cover the real code surfaces.
+> **USE KNOWLEDGE GRAPH:** After synthesizing, roll up the explorer-written `affected_file` entities into `affected_area` summary nodes that downstream phases (R4A) read. For each distinct file / module / service / schema / component, create an `affected_area` entity with observations: `name`, `type` (file / module / service / schema / component), `risk` (high / medium / low — taken from the highest-severity `risk` entity that links to any of its `affected_file`s, defaulting to `medium`), and any relevant notes. Mark entries derived only from `inferred: true` observations with `inferred: true`. Link each `affected_area` to the `work_item` node. The granular `affected_file` and `evidence` entities remain in the graph alongside — R4A may walk into them for fine-grained checks.
 
 > **REQUIRED:** Present all of the following in the chat before proceeding:
 > 
@@ -536,7 +551,7 @@ file/module/service path, brief description of relevance, and risk level.]
 
 ### R6 — Cleanup
 
-- Clear the session-scoped knowledge graph before finishing the workflow. Do not leave requirements state in the graph after it has been fully materialized into the Jira issue.
+- Clear the session-scoped knowledge graph before finishing the workflow. This includes the `work_item` entity and every entity linked to it: `affected_area`, `exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`, plus any `discovery_summary` consumed at R2 and any `classification_signal` / `code_evidence` carried over from issue-intake. Use `read_graph` to enumerate, then `delete_entities`. Do not leave requirements state in the graph after it has been fully materialized into the Jira issue.
 
 ---
 

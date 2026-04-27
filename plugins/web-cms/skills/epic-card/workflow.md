@@ -57,17 +57,20 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 ### E2 — Review the Codebase
 
+> **USE KNOWLEDGE GRAPH:** Before spawning explorers, ensure a `work_item-<JIRA_KEY>` entity exists for this epic. Call `read_graph`; if missing, create it with observations: `work_type: epic`, `jira_key`, `title`, `summary`, `phase: review`. **Record the entity name** as the `work_item_id` for E2 and pass it to every explorer. The richer `epic` node referenced in E4 is created later for breakdown tracking; the `work_item` node here is the canonical root the explorers attach their findings to.
+
 - Identify all distinct areas of the codebase to explore based on the **Affected Areas** section and the epic goals.
 - For each distinct area (service, module, or component), invoke a `codebase-explorer` sub-agent in **parallel**, providing:
     - The target area to explore
     - The question: "What patterns, abstractions, and utilities are in use here, and what architectural considerations affect how this epic's goals can be implemented in this area?"
+    - The `work_item_id` (`work_item-<JIRA_KEY>`). All findings the explorer streams to the graph will be linked to this node.
     - The epic description for context
-- Wait for all explorers to return their findings reports.
-- Review each explorer's OPEN QUESTIONS section. If any open question identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` for that area before proceeding.
-- Synthesize the findings across all reports. Note:
-    - Relevant patterns, abstractions, and utilities in use
-    - Technical debt, risks, or architectural considerations that could affect the breakdown
-    - How the existing code relates to the goals of this epic
+- Wait for all explorers to return their `EXPLORATION COMPLETE` (or `EXPLORATION FAILED`) pointers.
+- Call `read_graph` and walk the subgraph rooted at each `exploration` entity for this `work_item_id`. Surface any `open_question` entities. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
+- Synthesize the findings from the graph. Read across all `exploration` entities linked to this `work_item_id` and aggregate:
+    - **Patterns, abstractions, and utilities in use** — from `pattern` entities; cite the `evidence_files` observation when present.
+    - **Technical debt, risks, or architectural considerations** — from `risk` entities, ordered by severity, plus any `integration_point` entities that flag cross-area coupling relevant to the breakdown.
+    - **How the existing code relates to the goals of this epic** — from `evidence` entities and aggregated `affected_file` entities.
 
 ### E3 — Ask Clarifying Questions
 
@@ -281,4 +284,4 @@ After all child tasks are complete and user testing has passed, post a comment c
 ### E11 — Cleanup
 
 - Confirm no epic integration-branch worktree remains. Under the normal path it may already have been removed before E9; if one was recreated during E9 follow-up work, remove it before finishing.
-- Clear the session-scoped knowledge graph before finishing the workflow. Do not retain epic, task, dependency, or branch state in the graph once the final Jira record is complete.
+- Clear the session-scoped knowledge graph before finishing the workflow. This includes the `work_item-<JIRA_KEY>` entity for the epic, the separate `epic` / `task` / `branch` nodes used for breakdown tracking, and the explorer-written subgraph from E2 (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`) along with any per-child-task subgraphs that were not deleted by the child task workflows in epic child-task mode. Use `read_graph` to enumerate, then `delete_entities`. Do not retain epic, task, dependency, or branch state in the graph once the final Jira record is complete.
