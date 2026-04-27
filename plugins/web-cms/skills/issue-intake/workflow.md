@@ -117,6 +117,8 @@
 
 > **APPROVAL GATE — FULL STOP.** Present the Jira context summary. User must confirm the existing card (if any) is correct, no duplicate exists, and the related Epic (if any) is correct. Do not proceed to I2 until confirmed.
 
+> **USE KNOWLEDGE GRAPH:** After the I1 approval gate is confirmed, write the issue under investigation to the knowledge graph as a `work_item` entity with name `work_item-<key>` where `<key>` is the existing Jira issue key (if provided in I0) or a normalized slug of the issue title prefixed with `issue-` (e.g. `work_item-issue-checkout-button-disabled`). Observations: `title`, `observed_behavior`, `expected_behavior`, `existing_jira_key` (if provided), `phase: investigation`. **Record the entity name** — it is the `work_item_id` passed to every `codebase-explorer` call in I2.
+
 ---
 
 ### I2 — Codebase Analysis
@@ -125,7 +127,7 @@
 
 > **USE SEQUENTIAL THINKING:** Before presenting the codebase analysis, invoke the `sequentialthinking` tool. Based on the explorer findings, systematically evaluate the evidence of whether code exists for the expected behavior. A false negative here — concluding code doesn't exist because it wasn't found quickly — is the most common source of misclassification in I4. Work through the evidence, identify any gaps that need further investigation, and resolve them before concluding. Do not present the analysis until the reasoning is complete.
 
-> **USE KNOWLEDGE GRAPH:** After synthesizing the explorer findings, write investigation conclusions to the graph. Create an `affected_area` node for each file, module, or service identified. Create a `code_evidence` node with properties: `code_exists_for_behavior` (true / false / uncertain), `evidence` (specific file names, function names, or confirmed absence), and `inferred` (true / false). Link both to the issue being investigated. I4A reads these nodes as primary classification signals — they must be accurate and grounded.
+> **USE KNOWLEDGE GRAPH:** After synthesizing the explorer findings, write investigation conclusions to the graph. Roll up the explorer-written `affected_file` entities into `affected_area` summary nodes for each file, module, or service identified. Create a `code_evidence` node with properties: `code_exists_for_behavior` (true / false / uncertain), `evidence` (specific file names, function names, or confirmed absence — pulled from the explorer-written `evidence` entities), and `inferred` (true / false). Link both to the `work_item` node. I4A reads these nodes as primary classification signals — they must be accurate and grounded.
 
 **Agent Actions:**
 
@@ -133,13 +135,14 @@
 2. Invoke a `codebase-explorer` sub-agent in **parallel** for each distinct area in this project, providing:
     - The target area to explore
     - The question: "Does code exist in this area that is intended to produce [expected behavior]? If it exists, is there evidence it is behaving incorrectly? If it does not exist, confirm its absence clearly."
+    - The `work_item_id` recorded after I1 (e.g. `work_item-PROJ-123` or `work_item-issue-<slug>`). All findings the explorer streams to the graph will be linked to this node.
     - The bug description, observed behavior, expected behavior, reproduction steps, and any logs for context
-3. Wait for all explorers to return their findings reports.
-4. Review each explorer's OPEN QUESTIONS section. If any open question identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` for that area before proceeding.
-5. Synthesize the findings. For each area, record whether code exists for the expected behavior with specific evidence.
+3. Wait for all explorers to return their `EXPLORATION COMPLETE` (or `EXPLORATION FAILED`) pointers.
+4. Call `read_graph` and walk the subgraph rooted at each `exploration` entity for this `work_item_id`. Surface any `open_question` entities. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
+5. Synthesize the findings from the graph. For each area, record whether code exists for the expected behavior with specific evidence (cite `evidence` entities by their `file` and `line_range` observations).
 6. Look for any recent changes (commits, deployments, config changes) in the affected areas that may have introduced a regression.
-7. Identify relevant error handling paths, edge cases, or known fragile areas.
-8. Flag any areas of uncertainty with explicit reasoning. Label inferred items as `[INFERRED]`.
+7. Identify relevant error handling paths, edge cases, or known fragile areas — these surface from `risk` entities and from `evidence` entities with `evidence_type: behavior`.
+8. Flag any areas of uncertainty with explicit reasoning. Label items derived from observations marked `inferred: true` as `[INFERRED]`.
 
 > **REQUIRED:** Present all of the following in the chat before proceeding:
 > 
@@ -378,7 +381,7 @@ file/module/service path, brief description of relevance, and risk level.]
 
 ### I6 — Cleanup
 
-- **Bug path:** After the Jira bug card is finalized and all requested links are created, clear the session-scoped knowledge graph before finishing this path. Do not retain classification, evidence, or affected-area state after the durable Jira record is complete.
+- **Bug path:** After the Jira bug card is finalized and all requested links are created, clear the session-scoped knowledge graph before finishing this path. This includes the `work_item` entity and every entity linked to it: `classification_signal`, `code_evidence`, `affected_area`, plus the explorer-written subgraph from I2 (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`). Use `read_graph` to enumerate, then `delete_entities`. Do not retain classification, evidence, or affected-area state after the durable Jira record is complete.
 - **Missing Requirement path:** Confirm the carried-over Requirements Intake workflow completed its cleanup phase and that no issue-intake state remains in the shared session-scoped graph before finishing the overall intake flow.
 
 ---

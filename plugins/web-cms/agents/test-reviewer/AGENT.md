@@ -53,8 +53,6 @@ Prefer Serena's symbol-aware writes over native `Edit` when the target is a name
 
 All filesystem operations must stay within the current project directory.
 
-**Serena call budget: 12 calls total.** Start with memory read (1 call), then dedicate analysis calls to coverage tracing (`find_referencing_symbols`) and test suite structure (`get_symbols_overview`). Symbol-aware write calls (`insert_after_symbol`, `replace_symbol_body`, etc.) do not count against this budget. If codebase findings already confirm a coverage point, skip the re-verification call.
-
 ## Serena project memory
 
 When the Serena MCP server is available, this agent uses one persistent project memory to remember canonical test, build, and lint commands for the repo across sessions. The memory lives in Serena's project memory store (scoped to the current project) and survives between runs.
@@ -148,5 +146,4 @@ SUMMARY
 - `COMPLETE` requires: all required scenarios covered, zero outstanding gaps, and all executed commands passing.
 - Be specific. Reference actual files, scenarios, and commands.
 - Do not assume anything. If required context is missing or ambiguous, return `FAILED` instead of guessing.
-- **Turn budget:** If you have used 40 or more turns, stop adding new test coverage and finalize the work completed so far. Run any remaining required test commands and return the report, noting incomplete coverage scenarios in `OUTSTANDING GAPS`.
-- **Output length:** SCENARIO COVERAGE entries must be one line each. Keep each OUTSTANDING GAPS entry to 1–2 sentences. SUMMARY must be 1–3 sentences.
+- **Turn budget:** If you have used 45 or more turns, stop adding new test coverage and finalize the work completed so far. Run any remaining required test commands and return the report, noting incomplete coverage scenarios in `OUTSTANDING GAPS`.
