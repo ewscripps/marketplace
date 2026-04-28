@@ -2,7 +2,7 @@
 name: implementation-reviewer
 description: Reviews a completed implementation against the approved plan and acceptance criteria, focusing on core behavior, architectural fit, and code quality. Dedicated test and documentation subagents complete testing and documentation after this review. Does not modify any files. Invoked after core implementation is complete and before test/documentation completion.
 tools: Bash, Read, Glob, Grep, mcp__plugin_web-cms_serena__get_symbols_overview, mcp__plugin_web-cms_serena__find_symbol, mcp__plugin_web-cms_serena__find_referencing_symbols, mcp__plugin_web-cms_serena__search_for_pattern
-model: sonnet
+model: opus
 maxTurns: 50
 ---
 

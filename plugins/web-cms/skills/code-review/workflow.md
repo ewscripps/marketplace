@@ -24,12 +24,20 @@
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
 - **Git:** Prefer MCP git tools (`git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, `git_reset`) over running `git` via Bash. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
 
-**TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create tasks for the following logical groups at the start of the workflow, mark each `in_progress` when starting and `completed` when done:
+**TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
-- **Setup** (CR0–CR1): Transition to In Progress, understand the review target
-- **Verification** (CR2–CR3): Branch state verification, baseline verification
-- **Review** (CR4–CR6): Code review, full file context (Diff Review only), criteria verification
-- **Findings & Completion** (CR7–CR11): Clarifying questions, compile findings, remediation task, notify, cleanup
+- CR0 — Transition to In Progress
+- CR1 — Understand the Review Target
+- CR2 — Verify Branch State
+- CR3 — Baseline Verification
+- CR4 — Review the Code
+- CR5 — Review Full Changed Files for Context
+- CR6 — Verify Criteria
+- CR7 — Ask Clarifying Questions
+- CR8 — Compile Review Findings
+- CR9 — Create Remediation Task
+- CR10 — Notify
+- CR11 — Cleanup
 
 ---
 

@@ -27,20 +27,25 @@
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
 - **Git:** Prefer MCP git tools (`git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, `git_reset`) over running `git` via Bash. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
 
-**TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create tasks for the following logical groups at the start of the workflow, mark each `in_progress` when starting and `completed` when done:
+**TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
-- **Intake** (R0–R1): Gather context, Jira context review
-- **Research** (R2–R3): Codebase analysis, clarifying questions
-- **Synthesis & Creation** (R4–R6): Requirement synthesis, Jira issue creation/update, completion
+- R0 — Intake
+- R1 — Jira Context Review
+- R2 — Codebase Analysis
+- R3 — Stakeholder Q&A
+- R4 — Requirements Synthesis
+- R5 — Jira Issue Creation or Update
+- R6 — Cleanup
 
 ---
 
 ### R0 — Intake
 
-**DISCOVERY PRE-CHECK:** Before greeting the user, call `read_graph` to check the knowledge graph for a `discovery_summary` entity. If one is present:
-1. Acknowledge it immediately: "I found a prior implementation discovery session for: **[topic]**. I'll use those findings as a head start — the codebase areas have already been explored. If this isn't the right context, just say so and I'll start fresh."
-2. If the user confirms: add an observation `discovery_confirmed: true` to the `discovery_summary` entity. When asking intake questions in step 3 below, skip the "areas of the codebase you already know are involved" question — the discovery already covers it. Note that R2 (Codebase Analysis) will use the discovery findings and skip spawning new codebase-explorer agents.
-3. If the user rejects: proceed with normal intake and do not reference the discovery summary again.
+**DISCOVERY PRE-CHECK:** Before greeting the user, call `read_graph` to check the knowledge graph for any entity whose name starts with `discovery_summary-` (the implementation-discovery skill names them `discovery_summary-<topic-slug>` so multiple discoveries in one session do not collide).
+1. **If exactly one is present:** acknowledge it immediately: "I found a prior implementation discovery session for: **[topic]** (chosen approach: **[chosen_approach]**, verification: **[verification_status]**). I'll use those findings as a head start — the codebase areas have already been explored and verified. If this isn't the right context, just say so and I'll start fresh."
+2. **If multiple are present** (the user ran more than one discovery in this session): list them by `topic` and `chosen_approach` and ask the user which one this requirements run is for. Treat the user's pick as the selected `discovery_summary-<slug>`; ignore the others for this run.
+3. **If the user confirms a discovery summary:** add an observation `discovery_confirmed: true` to that specific `discovery_summary-<slug>` entity (not to any other). When asking intake questions in step 3 below, skip the "areas of the codebase you already know are involved" question — the discovery already covers it. Note that R2 (Codebase Analysis) will use the discovery findings and skip spawning new codebase-explorer agents.
+4. **If the user rejects** (or no discovery summary exists): proceed with normal intake and do not reference the discovery summary again.
 
 **Objective:** Greet the user and gather all context needed to begin the requirements workflow through natural conversation.
 
@@ -144,12 +149,13 @@
 
 ### R2 — Codebase Analysis
 
-**DISCOVERY PRE-CHECK:** Before spawning codebase-explorer agents, call `read_graph`. If a `discovery_summary` entity with the observation `discovery_confirmed: true` is present, codebase analysis is already complete:
-1. Announce: "Codebase analysis is already complete from the prior discovery session. Using [N] affected areas identified in discovery."
-2. Re-link the prior discovery's `exploration` entities to this work item: for each `exploration` linked to the discovery's `work_item-discovery-<slug>` node, create an additional `for` relation pointing at the new `work_item-<key>` node. This makes the explorer findings reachable from R4A's normal traversal without copying them.
-3. Create an `affected_area` node for each area in the `affected_areas` observation of the `discovery_summary` entity. For each: set `name` = area path, `type` = module (default), `risk` = medium (default). Link each node to the `work_item` node. If the D2 synthesis text includes explicit risk levels for an area, use those instead of the default.
-4. Use the `synthesis` observation from the `discovery_summary` entity as the codebase analysis content.
-5. Skip Agent Actions steps 1–6 entirely. Present the synthesis as the codebase analysis and proceed directly to the approval gate.
+**DISCOVERY PRE-CHECK:** Before spawning codebase-explorer agents, call `read_graph`. If a `discovery_summary-<slug>` entity with the observation `discovery_confirmed: true` is present (set during R0), codebase analysis is already complete:
+1. **Announce:** "Codebase analysis is already complete from the prior discovery session for `[chosen_approach]` (verification status: [verification_status]). Using [N] affected areas identified in discovery." If `verification_status` is `accepted_with_open_questions`, also surface a one-line note that open questions from verification are carried into this intake.
+2. **Re-link explorations to this work item, filtering superseded entities.** For each `exploration` entity linked to the discovery's `work_item-discovery-<slug>` node (both first-round and verification-round, distinguished by the `round` observation), create an additional `for` relation pointing at the new `work_item-<key>` node so explorer findings are reachable from R4A's normal traversal. **Do not** re-link any individual finding entity (`evidence`, `pattern`, `integration_point`, `risk`, `affected_file`, `open_question`) that carries the observation `superseded: true` — those were contradicted at D4 and the verification round wrote replacement entities. R4A traversal must walk the linked subgraph and skip every entity tagged `superseded: true` before consuming evidence.
+3. **Create `affected_area` nodes from the discovery_summary.** For each area in the `affected_areas` observation: set `name` = area path, `type` = module (default), `risk` = medium (default). Link each node to the new `work_item` node. If the `synthesis_chosen` text includes explicit risk levels for an area, use those instead of the default. (Recall that `affected_areas` was pruned at D5 to the chosen approach; do not pull in unchosen-option areas from `synthesis_full`.)
+4. **Use `synthesis_chosen` as the codebase analysis content** — NOT `synthesis_full`. The `synthesis_full` observation carries unchosen options for a `multiple_options` run and is retained for record only; using it would leak rejected-option evidence into requirements. `synthesis_chosen` is the canonical human-readable analysis for this intake and reflects any D4 revisions.
+5. **Surface open questions as structured input to R3 / R4.** Walk the discovery subgraph for `open_question` entities linked (via `contains`) to `work_item-discovery-<slug>`. Each one — both D3-origin (`source: d3_discussion`) and D4-origin (`source: d4_verification`) — should be carried into this intake as a candidate clarifying question for R3 and as a candidate risk for R4. The `open_questions` string observation on `discovery_summary-<slug>` is a human-readable index of the same set; the entities are canonical and should be preferred.
+6. Skip Agent Actions steps 1–6 entirely. Present the `synthesis_chosen` as the codebase analysis and proceed directly to the approval gate.
 
 **Objective:** Identify the code surfaces this work item will touch to ground scope and acceptance criteria in reality.
 
@@ -165,7 +171,9 @@
         - **Upkeep:** "What components, dependencies, or configuration in this area will be touched by [upkeep work], and are there known compatibility constraints or rollback considerations?"
     - The `work_item_id` recorded at R0 (the entity name of the `work_item` node, e.g. `work_item-PROJ-123` or `work_item-intake-<slug>`). All findings the explorer streams to the graph will be linked to this node.
     - The work item description for context
-3. Wait for all explorers to return their `EXPLORATION COMPLETE` (or `EXPLORATION FAILED`) pointers. The pointer reports counts of entities written; the findings themselves live in the graph.
+3. Wait for all explorers to return one of `EXPLORATION COMPLETE`, `EXPLORATION INCOMPLETE`, or `EXPLORATION FAILED`. Each non-failed return includes a structured findings block in the text (affected files, evidence, patterns, integration points, risks, open questions) — use it as the resilient source of record alongside the graph. Treat `INCOMPLETE` as partial: findings are present but the run did not finish; consider re-spawning for the same area if coverage matters. Treat `FAILED` as no findings written.
+
+> **POST-EXPLORATION ENRICHMENT:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `work_item_id`. The mapper crystallizes durable area knowledge from this run's graph into Serena project memory so future explorations of the same areas start with hot context. Do not wait for it — proceed immediately to step 4.
 4. Call `read_graph` and walk the subgraph rooted at each `exploration` entity for this `work_item_id`. Surface any `open_question` entities. If any open question identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` for that area (passing the same `work_item_id`) before proceeding.
 5. Synthesize the findings from the graph into a unified codebase analysis. Read across all `exploration` entities linked to this `work_item_id` and aggregate:
     - **Affected files** — collected from `affected_file` entities. Group by module / service for the user-facing analysis.
@@ -551,7 +559,48 @@ file/module/service path, brief description of relevance, and risk level.]
 
 ### R6 — Cleanup
 
-- Clear the session-scoped knowledge graph before finishing the workflow. This includes the `work_item` entity and every entity linked to it: `affected_area`, `exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`, plus any `discovery_summary` consumed at R2 and any `classification_signal` / `code_evidence` carried over from issue-intake. Use `read_graph` to enumerate, then `delete_entities`. Do not leave requirements state in the graph after it has been fully materialized into the Jira issue.
+**Objective:** Clear the session-scoped knowledge graph before finishing the workflow, including any upstream implementation-discovery state, after explicit user confirmation.
+
+**Agent Actions:**
+
+1. **Enumerate.** Call `read_graph`. Identify every entity that should be deleted in this cleanup:
+   - The intake `work_item` entity for this issue and every entity linked to it: `affected_area`, `exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`.
+   - Any `classification_signal` / `code_evidence` carried over from issue-intake (Missing Requirement path).
+   - Any upstream **implementation-discovery** state still in the graph: the `discovery_summary-<slug>` entity, the `work_item-discovery-<slug>` work item, the verification-round and first-round `exploration` subgraph linked to it (including any finding entities marked `superseded: true`, which must still be deleted — supersession marks them as non-canonical, not as already-removed), and any structured `open_question` entities reified at D5 (sources `d3_discussion` and `d4_verification`). These persist intentionally from a prior `/implementation-discovery` run and R6 owns reaping them. Note that they are reachable both through the `summarizes` relation from `discovery_summary-<slug>` and through the `for` re-link added at R2 step 2.
+   - Any other intake-scoped entities created during R0–R5 that link back to the work item.
+
+2. **Present the cleanup plan to the user.** Build a short, structured summary in the chat:
+
+   ```
+   ## R6 Cleanup Plan
+
+   The following session-scoped knowledge-graph entities will be deleted now that the Jira issue is finalized:
+
+   ### From this Requirements Intake
+   - work_item: <name>
+   - affected_area: <count>
+   - exploration: <count>
+   - affected_file / evidence / pattern / integration_point / risk / open_question: <total count>
+   - <any other intake-scoped entities, listed by type and count>
+
+   ### From upstream Implementation Discovery (if present)
+   - discovery_summary-<slug>: <name, or "none">
+   - work_item-discovery-<slug>: <name, or "none">
+   - verification-round explorations: <count, or "none">
+
+   ### From upstream Issue Intake (Missing Requirement path only)
+   - classification_signal / code_evidence: <total count, or "none">
+
+   Total entities to delete: <N>
+   ```
+
+   If the upstream-discovery section reports "none" across the board, state explicitly that no implementation-discovery state was found in the graph for this run.
+
+3. > **APPROVAL GATE — FULL STOP.** Ask the user: **"Proceed with cleanup of these entities?"** Do not run `delete_entities` until the user explicitly confirms (e.g., "yes", "proceed", "go ahead"). On any negative or ambiguous response, do NOT delete. Instead, leave the graph untouched, note in the chat that cleanup was skipped at the user's request, and end the workflow — the entities will remain in the graph until the Claude Code session ends.
+
+4. **Execute deletion.** On explicit confirmation, call `delete_entities` with the full list enumerated in step 1. After deletion, report a one-line confirmation in the chat: "Cleanup complete: <N> entities deleted."
+
+5. Do not leave requirements state in the graph after it has been fully materialized into the Jira issue, except when the user explicitly declined cleanup at step 3.
 
 ---
 
@@ -560,8 +609,8 @@ file/module/service path, brief description of relevance, and risk level.]
 This workflow is complete when **all** of the following are true:
 
 - All 7 phases executed in sequence (R0-R6)
-- All 6 approval gates explicitly confirmed in the chat
+- All 7 approval gates explicitly confirmed in the chat (R0–R6 inclusive; R6 is the cleanup confirmation)
 - All self-review checks passed before presenting output
 - Jira issue updated (existing card) or created (new card) with all requirements populated, no unresolved placeholder text, and no embedded workflow or skill-invocation instructions
 - Task Details section includes a structured Affected Areas field populated from R2 codebase analysis
-- R6 cleanup cleared the session-scoped knowledge graph after the Jira record was finalized
+- R6 cleanup either cleared the session-scoped knowledge graph (including any upstream implementation-discovery and issue-intake entities) after the Jira record was finalized, or the user explicitly declined cleanup at the R6 approval gate

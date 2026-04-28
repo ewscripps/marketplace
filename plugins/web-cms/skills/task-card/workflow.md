@@ -10,6 +10,8 @@
 
 **APPROVAL GATE BEHAVIOR:** Approval gates are chat-scoped. If explicit approval is not captured before the session ends or context is lost, stop at the gate. On resume, re-present the latest plan or testing handoff and ask for confirmation again. Never assume a pending approval was granted.
 
+**KNOWLEDGE GRAPH SCOPE:** The knowledge graph in this workflow is session-scoped and used to track work-item state (affected areas, exploration findings, plan, implementation progress). If this workflow is resumed in a new session and the graph is empty, reconstruct state by reading the Jira issue description and all comments posted in prior phases before continuing.
+
 **CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and ask the user for clarification before proceeding.
 
 **SERENA PROJECT ACTIVATION:** Before T0, call `check_onboarding_performed`. If it reports that onboarding has not been performed for this project, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`, and the symbol-aware write tools) will not function correctly without this. Do this once at the start of the workflow; do not repeat it between phases.
@@ -43,12 +45,22 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 
 **WORKTREE DISCIPLINE:** When creating a git worktree, always check out the **real branch name** — do not create a worktree-prefixed or renamed branch (e.g. never `worktree-PROJ-123`). Use `git worktree add <path> <branch-name>` to check out the existing branch in the worktree. All commits must be made on the real branch. Push using `git push origin <branch-name>` — never use refspecs that map a different local branch name to the remote (e.g. never `git push origin worktree-branch:real-branch`). After removing a worktree and returning to the main working directory, run `git fetch origin` and update the local ref with `git branch -f <branch-name> origin/<branch-name>` before checking it out, to ensure the local branch matches the remote.
 
-**TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create tasks for the following logical groups at the start of the workflow, mark each `in_progress` when starting and `completed` when done:
+**TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
-- **Setup** (T0–T1): Transition to In Progress, understand the task
-- **Research & Planning** (T2–T5): Codebase review, clarifying questions, implementation plan, approval
-- **Implementation** (T6–T10): Branch/worktree, baseline verification, implementation, post-implementation verification, commit/push
-- **Testing & Completion** (T11–T13): User testing, summary of changes, cleanup
+- T0 — Transition to In Progress
+- T1 — Understand the Task
+- T2 — Review the Codebase
+- T3 — Ask Clarifying Questions
+- T4 — Create Implementation Plan
+- T5 — Await Plan Approval
+- T6 — Create Branch and Worktree
+- T7 — Baseline Verification
+- T8 — Implementation
+- T9 — Post-Implementation Verification
+- T10 — Commit, Push, and Exit Worktree
+- T11 — User Testing
+- T12 — Summary of Changes
+- T13 — Cleanup
 
 ---
 
@@ -78,7 +90,8 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
     - The question: "What patterns, abstractions, utilities, and testing conventions are in use in this area, and what architectural considerations affect how this task's goals can be implemented here?"
     - The `work_item_id` (`work_item-<JIRA_KEY>`). All findings the explorer streams to the graph will be linked to this node.
     - The task description and acceptance criteria for context
-- Wait for all explorers to return their `EXPLORATION COMPLETE` (or `EXPLORATION FAILED`) pointers.
+- Wait for all explorers to return one of `EXPLORATION COMPLETE`, `EXPLORATION INCOMPLETE`, or `EXPLORATION FAILED`. Each non-failed return includes a structured findings block in the text — use it as the resilient source of record alongside the graph. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters.
+- **Post-exploration enrichment:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `work_item_id`. It crystallizes durable area knowledge from this run's graph into Serena project memory for future explorations. Do not wait for it.
 - Call `read_graph` and walk the subgraph rooted at each `exploration` entity for this `work_item_id`. Surface any `open_question` entities. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
 - Synthesize the findings from the graph. Read across all `exploration` entities linked to this `work_item_id` and aggregate:
     - **Patterns, abstractions, and utilities in use** — from `pattern` entities; cite the `evidence_files` observation when present.

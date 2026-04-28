@@ -20,12 +20,17 @@
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
 - **Git:** Prefer MCP git tools (`git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, `git_reset`) over running `git` via Bash. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
 
-**TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create tasks for the following logical groups at the start of the workflow, mark each `in_progress` when starting and `completed` when done:
+**TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
-- **Setup** (D0–D1): Understand completed work, identify documentation scope
-- **Planning** (D2–D3): Documentation plan, approval
-- **Drafting** (D4–D6): Write drafts, review, revise
-- **Completion** (D7–D8): Publish, summary
+- D0 — Understand the Completed Work
+- D1 — Gather Documentation Context
+- D2 — Plan Documentation
+- D3 — Set Up Environment & Authenticate
+- D4 — Capture UI Documentation
+- D5 — Capture API Documentation
+- D6 — Assemble Confluence Page
+- D7 — Review Documentation
+- D8 — Publish to Confluence
 
 ---
 

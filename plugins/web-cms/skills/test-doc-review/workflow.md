@@ -23,11 +23,14 @@
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
 - **Git:** Prefer MCP git tools (`git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, `git_reset`) over running `git` via Bash. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
 
-**TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create tasks for the following logical groups at the start of the workflow, mark each `in_progress` when starting and `completed` when done:
+**TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
-- **Setup** (TD0–TD1): Understand the review target, gather diff scope
-- **Execution** (TD2–TD4): Test review, documentation review, results
-- **Completion** (TD5): Summary
+- TD0 — Understand the Review Target
+- TD1 — Determine Repository State and Diff Scope
+- TD2 — Gather Reviewer Context
+- TD3 — Invoke `test-reviewer`
+- TD4 — Invoke `documentation-reviewer`
+- TD5 — Final Summary and Follow-up
 
 ---
 

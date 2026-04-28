@@ -25,11 +25,14 @@
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
 - **Git:** Prefer MCP git tools (`git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, `git_reset`) over running `git` via Bash. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
 
-**TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create tasks for the following logical groups at the start of the workflow, mark each `in_progress` when starting and `completed` when done:
+**TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
-- **Intake** (CI0–CI1): Gather review context, Jira context review
-- **Verification** (CI2–CI3): Branch verification, clarifying questions
-- **Creation** (CI4–CI5): Assemble Review Details, Jira issue creation/update
+- CI0 — Intake
+- CI1 — Jira Context Review
+- CI2 — Branch Verification
+- CI3 — Clarifying Questions
+- CI4 — Review Setup
+- CI5 — Jira Issue Creation or Update
 
 ---
 
