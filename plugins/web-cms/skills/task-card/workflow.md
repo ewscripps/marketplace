@@ -23,7 +23,7 @@
 - **File discovery (find files by name or pattern):** Use native `Glob`.
 - **Content search (find text inside files):** Use native `Grep`. For symbolic code navigation during implementation (locating a method, class, or caller before editing), use Serena's `find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, and `search_for_pattern` directly. For broader codebase analysis that informs planning (architectural patterns, convention discovery, cross-area impact), delegate to the `codebase-explorer` agent.
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
-- **Git:** Prefer MCP git tools (`git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, `git_reset`) over running `git` via Bash. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
+- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
 
 **JIRA COMMENT CONTRACT:** Keep Jira comments minimal, structured, and durable. Do not narrate every phase. Routine Jira comments are required only at:
 
@@ -32,7 +32,7 @@
 - **T11** -- user testing handoff in standard mode only
 - **T12** -- final structured summary
 
-Additional Jira comments are allowed only for blocking failures, reposting a revised plan after requested changes, or explicit user-requested status updates. Do not post separate narration comments for T0, T1, T2, T6, T7, T8, T9, or T10.
+Additional Jira comments are allowed only for blocking failures, reposting a revised plan after requested changes, or explicit user-requested status updates. Do not post separate narration comments for T0, T1, T2, T6, T7, T8, T9, T10, or T13.
 
 When a Jira comment heading references workflow phases, use the exact phase label defined here. Do not invent synthetic phase ranges such as `T2-T5` or `T6-T10`. The only routine combined phase heading allowed is `T4/T5` because one comment serves both phases.
 
@@ -43,7 +43,7 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 > - **T11:** Skip User Testing -- user testing for the epic is handled at the epic level (E9). Proceed directly to T12.
 > - **T13:** Do not remove the shared epic worktree in epic child-task mode. Final worktree cleanup for the integration branch is handled at the epic level (E11).
 
-**WORKTREE DISCIPLINE:** When creating a git worktree, always check out the **real branch name** — do not create a worktree-prefixed or renamed branch (e.g. never `worktree-PROJ-123`). Use `git worktree add <path> <branch-name>` to check out the existing branch in the worktree. All commits must be made on the real branch. Push using `git push origin <branch-name>` — never use refspecs that map a different local branch name to the remote (e.g. never `git push origin worktree-branch:real-branch`). After removing a worktree and returning to the main working directory, run `git fetch origin` and update the local ref with `git branch -f <branch-name> origin/<branch-name>` before checking it out, to ensure the local branch matches the remote.
+**WORKTREE DISCIPLINE:** Always create worktrees under `.worktrees/<branch-name>` in the project root, using the exact branch name as the directory name. Create the directory first if it does not exist: `mkdir -p .worktrees`. The full creation command is `git worktree add .worktrees/<branch-name> <branch-name>`. Never use a worktree-prefixed or renamed branch (e.g. never `worktree-PROJ-123`). All commits must be made on the real branch. Push using `git push origin <branch-name>` — never use refspecs that map a different local branch name to the remote (e.g. never `git push origin worktree-branch:real-branch`). After removing a worktree and returning to the main working directory, run `git fetch origin` and update the local ref with `git branch -f <branch-name> origin/<branch-name>` before checking it out, to ensure the local branch matches the remote.
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
@@ -100,9 +100,20 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 ### T3 — Ask Clarifying Questions
 
-- Identify any ambiguities, gaps, or risks in the task details.
-- If there are clarifying questions: post a comment on this Jira issue with the exact heading `**T3 — Clarifying Questions**`, then ask the same questions **in the chat** and wait for answers before proceeding. Do not poll Jira for answers.
-- If there are no clarifying questions: post a comment on this Jira issue with the exact heading `**T3 — Clarifying Questions**` and the body `Status: No clarifying questions -- proceeding to T4.`
+**Objective:** Resolve any ambiguities, gaps, or risks in the task details before planning the implementation.
+
+**Agent Actions:**
+
+1. Review all output from T0, T1, and T2.
+2. Identify clarifying questions. Mark each as `[BLOCKING]` or `[NICE TO HAVE]`.
+3. Present all questions in a **single batch** — do not ask one at a time.
+4. If there are clarifying questions: post a comment on this Jira issue with the exact heading `**T3 — Clarifying Questions**` listing all questions, then ask the same questions **in the chat** and wait for answers before proceeding. Do not poll Jira for answers.
+5. If there are no clarifying questions: post a comment on this Jira issue with the exact heading `**T3 — Clarifying Questions**` and the body `Status: No clarifying questions -- proceeding to T4.`
+6. Record all answers verbatim. Do not infer or invent answers.
+
+> **REQUIRED:** All BLOCKING questions answered and answers recorded. Remaining unanswered questions listed as open items.
+
+> **APPROVAL GATE — FULL STOP.** Present all questions and recorded answers. User must confirm all blocking answers are accurate. Do not proceed to T4 until confirmed.
 
 ### T4 — Create Implementation Plan
 
@@ -171,7 +182,7 @@ The sub-agent will return a structured findings report with an overall verdict o
 
 Example: `PROJ-1234-add-retry-logic-to-payment-service`
 
-- **Standard mode:** Create the branch from the user-specified base branch, then create a worktree that checks out that branch by its real name: `git worktree add <path> <branch-name>`. Do not create a worktree-prefixed branch.
+- **Standard mode:** Create the branch from the user-specified base branch, then create the worktree: `mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`. Do not create a worktree-prefixed branch.
 - **Epic child task mode:** Create the branch from the **Epic Integration Branch** specified in Task Details, within the epic's existing worktree. Do not ask for a base branch in this mode — the integration branch is already defined.
 
 ### T7 — Baseline Verification
@@ -288,7 +299,7 @@ Example: `[PROJ-1234] Add retry logic with exponential backoff to payment servic
 
 - Use imperative mood for the description.
 - Push the branch to the remote using `git push origin <branch-name>`. Do not use refspecs.
-- **Standard mode:** Exit the worktree, remove it, then sync the local branch: `git fetch origin` followed by `git branch -f <branch-name> origin/<branch-name>`. Return to the main working directory.
+- **Standard mode:** Exit the worktree and remove it: `git worktree remove .worktrees/<branch-name>`. Then sync the local branch: `git fetch origin` followed by `git branch -f <branch-name> origin/<branch-name>`. Return to the main working directory.
 - **Epic child task mode:** After committing, merge the task branch into the Epic Integration Branch. Run the full build, all tests, and all linters on the integration branch to confirm no merge conflicts or regressions. Then exit the worktree.
 
 ### T11 — User Testing
@@ -306,7 +317,7 @@ Example: `[PROJ-1234] Add retry logic with exponential backoff to payment servic
     - Step-by-step instructions for verifying the new behavior (derived from the acceptance criteria and the implementation plan)
 - Do not proceed until the user has completed testing and explicitly approved the implementation in the chat.
 
-- If the user identifies issues: create a new worktree for the branch, return to T8, resolve them, re-run T9 and T10, and return to this step before proceeding.
+- If the user identifies issues: recreate the worktree (`mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`), return to T8, resolve them, re-run T9 and T10 (which removes the worktree again), and return to this step before proceeding.
 
 ---
 
@@ -345,7 +356,7 @@ Post a comment on this Jira issue with the exact heading `**T12 — Summary of C
 
 ### T13 — Cleanup
 
-- **Standard mode:** Confirm the task worktree created in T6 has been removed and you have returned to the main working directory. If a follow-up worktree was created during T11, remove it before finishing.
+- **Standard mode:** Confirm `.worktrees/<branch-name>` has been removed. If it still exists (e.g. a follow-up worktree was created during T11 and not yet removed by T10), run `git worktree remove .worktrees/<branch-name>` now. Confirm you have returned to the main working directory.
 - **Epic child task mode:** Confirm the child task worktree has been exited and no task-specific temporary worktree remains. Do not remove the shared epic integration worktree here.
 - **Standard mode:** Clear the session-scoped knowledge graph nodes created during this task — the `work_item-<JIRA_KEY>` entity and every entity linked to it (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`, and any `affected_area` rolled up from them). Use `read_graph` to enumerate, then `delete_entities`. The graph is session-scoped; finishing without cleanup leaves stale state for the next workflow.
 - **Epic child task mode:** Do not delete the `work_item-<JIRA_KEY>` entity for this child task or its linked nodes here — the epic-level cleanup at E11 owns wholesale graph teardown after all child tasks complete.

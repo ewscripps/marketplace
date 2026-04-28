@@ -8,15 +8,19 @@ This project defines Claude Code skills and agents for creating and implementing
 INTAKE (creates Jira cards)          EXECUTION (works Jira cards)
 =============================        =============================
 
-/requirements-intake (R0-R5)  --->   /task-card PROJ-123 (T0-T12)
-  Creates Epic or Task card          /epic-card PROJ-123 (E0-E10)
+/requirements-intake (R0-R6)  --->   /task-card PROJ-123 (T0-T13)
+  Creates Epic or Task card          /epic-card PROJ-123 (E0-E11)
 
-/issue-intake (I0-I5)         --->   /bug-card PROJ-123 (B0-B14)
+/issue-intake (I0-I6)         --->   /bug-card PROJ-123 (B0-B15)
   Bug? Creates Bug card                OR
-  Missing requirement?        --->   /requirements-intake (R0-R5)
+  Missing requirement?        --->   /requirements-intake (R0-R6)
 
 /code-review-intake (CI0-CI5) --->   /code-review PROJ-123 (CR0-CR11)
   Creates Code Review card
+
+                                       /implementation-discovery (D0-D5)
+                                         Pre-intake -- explores how to build or
+                                         change something before requirements
 
                                        /mr-creation (M0-M6)
                                          Standalone -- creates GitLab MR
@@ -27,7 +31,7 @@ INTAKE (creates Jira cards)          EXECUTION (works Jira cards)
                                        /manual-qa-plan PROJ-123 (Q0-Q4)
                                          Standalone -- reviews Jira context plus related branch diff, generates manual QA steps, and appends the plan to the issue description
 
-                                       /document-card PROJ-123 (D0-D8)
+                                       /document-card PROJ-123 (DC0-DC8)
                                          Standalone -- documents completed work
 ```
 
@@ -47,35 +51,36 @@ The Jira card description is the interface between intake and execution:
 
 | Skill | Invocation | Phases | Output |
 |-------|-----------|--------|--------|
-| **requirements-intake** | `/requirements-intake` | R0-R5 | Epic or Task card in Jira |
-| **issue-intake** | `/issue-intake` | I0-I5 | Bug card in Jira, or transitions to requirements-intake |
+| **requirements-intake** | `/requirements-intake` | R0-R6 | Epic or Task card in Jira |
+| **issue-intake** | `/issue-intake` | I0-I6 | Bug card in Jira, or transitions to requirements-intake |
 | **code-review-intake** | `/code-review-intake` | CI0-CI5 | Code Review (Task) card in Jira |
 
 ### Execution Skills
 
 | Skill | Invocation | Phases | Input | Sub-agents Used |
 |-------|-----------|--------|-------|-----------------|
-| **task-card** | `/task-card PROJ-123` | T0-T12 | Task card description | codebase-explorer, plan-reviewer, implementation-reviewer, test-reviewer, documentation-reviewer |
-| **bug-card** | `/bug-card PROJ-123` | B0-B14 | Bug card description | codebase-explorer, plan-reviewer, implementation-reviewer, test-reviewer, documentation-reviewer |
-| **epic-card** | `/epic-card PROJ-123` | E0-E10 | Epic card description | codebase-explorer |
+| **task-card** | `/task-card PROJ-123` | T0-T13 | Task card description | codebase-explorer, plan-reviewer, implementation-reviewer, test-reviewer, documentation-reviewer |
+| **bug-card** | `/bug-card PROJ-123` | B0-B15 | Bug card description | codebase-explorer, plan-reviewer, implementation-reviewer, test-reviewer, documentation-reviewer |
+| **epic-card** | `/epic-card PROJ-123` | E0-E11 | Epic card description | codebase-explorer |
 | **code-review** | `/code-review PROJ-123` | CR0-CR11 | Code Review card description | review-analyst (4 or 5 parallel, depending on review type) |
+| **implementation-discovery** | `/implementation-discovery` | D0-D5 | User's build/change goal | codebase-explorer, area-mapper |
 | **mr-creation** | `/mr-creation` | M0-M6 | User input + repo state | None |
 | **test-doc-review** | `/test-doc-review [PROJ-123]` | TD0-TD5 | Optional Task/Bug Jira context + current repo state | test-reviewer, documentation-reviewer |
 | **manual-qa-plan** | `/manual-qa-plan PROJ-123` | Q0-Q4 | Task/Bug/Epic Jira context + related branch diff | manual-qa-reviewer |
-| **document-card** | `/document-card PROJ-123` | D0-D8 | Completed Task/Epic/Bug card | None |
+| **document-card** | `/document-card PROJ-123` | DC0-DC8 | Completed Task/Epic/Bug card | None |
 
 ## Agents
 
 | Agent | Purpose | Tool Access | Used By |
 |-------|---------|-------------|---------|
-| **codebase-explorer** | Read-only codebase investigation. Reads Serena project memory as starting hints; does not write memory and does not modify project files | Read, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena project memory read (`list_memories`, `read_memory`), MCP git tools | requirements-intake R2, issue-intake I2, task-card T2, bug-card B3, epic-card E2, implementation-discovery D1 |
+| **codebase-explorer** | Read-only codebase investigation. Reads Serena project memory as starting hints; does not write memory and does not modify project files | Read, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena project memory read (`list_memories`, `read_memory`) | requirements-intake R2, issue-intake I2, task-card T2, bug-card B3, epic-card E2, implementation-discovery D1 |
 | **area-mapper** | Crystallizes durable area knowledge from a session's exploration findings into Serena project memory. Does not re-explore code, does not modify project files. Spawned in the background after each codebase-analysis phase to accumulate memory over time | Bash, knowledge-graph reads (`read_graph`, `search_nodes`, `open_nodes`), Serena project memory (`list_memories`, `read_memory`, `write_memory`, `edit_memory`) | requirements-intake R2, issue-intake I2, task-card T2, bug-card B3, epic-card E2, implementation-discovery D1 |
-| **implementation-reviewer** | Adversarial review of core implementation against plan/criteria before test/doc completion | Read, Glob, Grep, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), MCP git tools | task-card T8, bug-card B10 |
-| **test-reviewer** | Completes automated test coverage and runs relevant test commands after implementation review | Read, Edit, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena symbol-aware writes (`replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol`, `rename_symbol`, `safe_delete_symbol`), Serena project memory (`test-commands.md`), MCP git tools | task-card T8, bug-card B10 |
-| **documentation-reviewer** | Completes inline and repository documentation and flags `/document-card` follow-up when needed | Read, Edit, Glob, Grep, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena symbol-aware writes (`insert_after_symbol`, `insert_before_symbol`, `replace_content`), Serena project memory (`documentation-conventions.md`), MCP git tools | task-card T8, bug-card B10 |
-| **plan-reviewer** | Reviews plan before implementation, including testing and documentation strategy | Read, Glob, Grep, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), MCP git tools | task-card T4, bug-card B5 |
-| **review-analyst** | Specialist review for one category (4 or 5 parallel, depending on review type) | Read, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena project memory (`review-checklist-<category>.md`), MCP git tools | code-review CR4 |
-| **manual-qa-reviewer** | Translates Jira context and branch diffs into tester-friendly manual QA scenarios, prerequisites, expected results, regressions, and edge cases | Read, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), MCP git tools | manual-qa-plan Q3 |
+| **implementation-reviewer** | Adversarial review of core implementation against plan/criteria before test/doc completion | Read, Glob, Grep, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`) | task-card T8, bug-card B10 |
+| **test-reviewer** | Completes automated test coverage and runs relevant test commands after implementation review | Read, Edit, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena symbol-aware writes (`replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol`, `rename_symbol`, `safe_delete_symbol`), Serena project memory (`test-commands.md`) | task-card T8, bug-card B10 |
+| **documentation-reviewer** | Completes inline and repository documentation and flags `/document-card` follow-up when needed | Read, Edit, Glob, Grep, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena symbol-aware writes (`insert_after_symbol`, `insert_before_symbol`, `replace_content`), Serena project memory (`documentation-conventions.md`) | task-card T8, bug-card B10 |
+| **plan-reviewer** | Reviews plan before implementation, including testing and documentation strategy | Read, Glob, Grep, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`) | task-card T4, bug-card B5 |
+| **review-analyst** | Specialist review for one category (4 or 5 parallel, depending on review type) | Read, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena project memory (`review-checklist-<category>.md`) | code-review CR4 |
+| **manual-qa-reviewer** | Translates Jira context and branch diffs into tester-friendly manual QA scenarios, prerequisites, expected results, regressions, and edge cases | Read, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`) | manual-qa-plan Q3 |
 
 **Execution skill direct Serena access:** `task-card` (T8), `bug-card` (B10), and `code-review` (CR5/CR6) declare Serena read tools and, for `task-card` and `bug-card`, symbol-aware write tools. This lets the orchestrator use `replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol`, `rename_symbol`, and `safe_delete_symbol` directly during implementation phases rather than falling back to text-level `Edit` for every code change. See the Serena-first editing rule in each workflow's implementation phase.
 
@@ -101,8 +106,8 @@ The Jira card description is the interface between intake and execution:
    E5: Await approval (in chat)
    E6: Create child tasks in Jira (Standard Task Template)
    E7: Create integration branch + worktree
-   E8: Execute child tasks sequentially inline (T0-T12 per task), then remove the epic worktree
-       Each child task runs T0-T12:
+   E8: Execute child tasks sequentially inline (T0-T13 per task), then remove the epic worktree
+       Each child task runs T0-T13:
          T0: Transition to In Progress
          T1: Read task description
          T2: Codebase review
@@ -116,8 +121,10 @@ The Jira card description is the interface between intake and execution:
          T10: Commit + merge to integration branch
          T11: User testing (skipped in epic mode -- handled at E9)
          T12: Summary of changes
+         T13: Cleanup (worktree + knowledge graph)
    E9: User testing (end-to-end, after epic worktree cleanup)
    E10: Epic summary
+   E11: Cleanup (worktree + knowledge graph)
 
 3. User invokes /mr-creation
    M0-M6: Create GitLab MR for the integration branch
@@ -217,6 +224,7 @@ To use these skills and agents in a target project, copy the `skills/` and `agen
 your-project/
   .claude/
     skills/
+      implementation-discovery/
       requirements-intake/
       issue-intake/
       code-review-intake/
@@ -229,6 +237,7 @@ your-project/
       manual-qa-plan/
       document-card/
     agents/
+      area-mapper/
       codebase-explorer/
       documentation-reviewer/
       implementation-reviewer/
@@ -240,7 +249,7 @@ your-project/
 
 Agent invocations in the workflows assume the runtime can resolve agent names directly from the copied `.claude/agents/` directory. If your target environment requires an explicit agent registry or routing configuration, add that registration as part of deployment so references such as `codebase-explorer`, `plan-reviewer`, `test-reviewer`, and `documentation-reviewer` resolve correctly at runtime.
 
-**MCP tool names:** Each skill and agent declares its MCP tool dependencies in its `allowed-tools` / `tools` frontmatter using the plugin-declared server names: `mcp__plugin_web-cms_serena__<tool>`, `mcp__plugin_web-cms_gitlab__<tool>`, `mcp__plugin_web-cms_memory__<tool>`, `mcp__plugin_web-cms_sequentialthinking__<tool>`, `mcp__plugin_web-cms_playwright__<tool>`. Atlassian (Jira / Confluence) tool references point at a separately installed company plugin under `mcp__claude_ai_Atlassian__<tool>` — this plugin does not declare an Atlassian MCP server of its own. All git operations use `Bash` directly.
+**MCP tool names:** Each skill and agent declares its MCP tool dependencies in its `allowed-tools` / `tools` frontmatter using the plugin-declared server names: `mcp__plugin_web-cms_atlassian__<tool>`, `mcp__plugin_web-cms_serena__<tool>`, `mcp__plugin_web-cms_gitlab__<tool>`, `mcp__plugin_web-cms_memory__<tool>`, `mcp__plugin_web-cms_sequentialthinking__<tool>`, `mcp__plugin_web-cms_playwright__<tool>`. All git operations use `Bash` directly.
 
 ## MCP Server Configuration
 
@@ -248,16 +257,17 @@ The plugin declares its own stdio MCP servers in `.mcp.json` and relies on Claud
 
 ### Declared servers
 
-`.mcp.json` at the plugin root declares six servers — all stdio, all launched locally by the MCP client:
+`.mcp.json` at the plugin root declares six stdio servers plus one HTTP gateway:
 
 | Server | Purpose | Launcher |
 |---|---|---|
+| `atlassian` | Jira and Confluence operations (get/create/update issues, search, comments, page management, attachments, labels) | `uvx mcp-atlassian` |
 | `serena` | Symbolic code navigation (find_symbol, find_referencing_symbols, get_symbols_overview, search_for_pattern, replace_content, insert_after/before_symbol, rename_symbol, replace_symbol_body, safe_delete_symbol, read/write/list/edit/delete_memory, check_onboarding_performed, onboarding) | `uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide --project-from-cwd` |
-| `git` | git operations (status, log, show, diff, diff_staged, diff_unstaged, add, commit, create_branch, checkout, reset) | `uvx mcp-server-git` |
-| `gitlab` | GitLab repo operations (create_branch, create_issue, create_merge_request, create_or_update_file, create_repository, fork_repository, get_file_contents, push_files, search_repositories) | `npx -y @modelcontextprotocol/server-gitlab` |
+| `gitlab` | GitLab repo operations (create_branch, create_issue, create_merge_request, create_or_update_file, create_repository, fork_repository, get_file_contents, push_files, search_repositories) | `npx -y gitlab-mcp` |
 | `memory` | Knowledge-graph memory (add_observations, create_entities, create_relations, read_graph, etc.) | `npx -y @modelcontextprotocol/server-memory` |
 | `sequentialthinking` | Sequential thinking helper | `npx -y @modelcontextprotocol/server-sequential-thinking` |
 | `playwright` | Browser automation (browser_click, browser_navigate, etc.) | `npx -y @playwright/mcp` |
+| `MCP_DOCKER` | HTTP gateway providing additional Jira, Confluence, and other tool coverage | `http://mcp-gateway.lvh.me:8811/mcp` |
 
 ### Serena project scoping
 
@@ -267,7 +277,7 @@ This replaces the earlier per-project Docker gateway pattern that was required w
 
 ### Atlassian coverage
 
-Jira and Confluence tools are provided by a separately installed company plugin (`claude_ai_Atlassian`). This plugin's skills reference those tools directly — see workflow files for the specific tool names used. Three operations the previous gateway-based plugin had access to are **not** available in the replacement: Confluence attachment upload, Confluence attachment batch upload, and Confluence label management. The `document-card` skill's D8 phase hands those off to the user as a manual Confluence-UI step instead.
+Jira and Confluence tools are provided by the plugin's own `atlassian` MCP server (`uvx mcp-atlassian`), declared in `.mcp.json`. Skills reference these tools as `mcp__plugin_web-cms_atlassian__<tool>`. This includes full Confluence support: page create/update, attachment upload (`confluence_upload_attachment`, `confluence_upload_attachments`), label management (`confluence_add_label`), and all Jira operations. The `document-card` DC8 phase handles attachment uploads and label application directly via these tools.
 
 ### Deployment prerequisites
 
@@ -280,6 +290,6 @@ Each machine that runs Claude Code against a project using this plugin needs:
 
 Projects do not need any local MCP configuration — no per-project `.mcp.json`, no Docker MCP gateway, no catalog files. The plugin's `.mcp.json` is the single source of truth and travels with the plugin installation.
 
-### MCP git server
+### Git operations
 
-All skills and agents include MCP git tools (`git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, `git_reset`). Workflows prefer these MCP tools over Bash for git operations, using Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for build/test/lint commands. Filesystem operations use native `Read` / `Write` / `Edit` / `Glob` / `Grep` and Bash — the plugin does not require a filesystem MCP server.
+All git operations in skills and agents use `Bash` directly — there is no MCP git server in this plugin. Filesystem operations use native `Read` / `Write` / `Edit` / `Glob` / `Grep` tools and Bash.

@@ -25,9 +25,20 @@
 - **File discovery (find files by name or pattern):** Use native `Glob`.
 - **Content search (find text inside files):** Use native `Grep`. For symbolic code navigation during the fix (locating a method, class, or caller before editing), use Serena's `find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, and `search_for_pattern` directly. For broader codebase analysis that informs the investigation (architectural patterns, cross-area impact), delegate to the `codebase-explorer` agent.
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
-- **Git:** Prefer MCP git tools (`git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, `git_reset`) over running `git` via Bash. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
+- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
 
-**WORKTREE DISCIPLINE:** When creating a git worktree, always check out the **real branch name** — do not create a worktree-prefixed or renamed branch (e.g. never `worktree-PROJ-123`). Use `git worktree add <path> <branch-name>` to check out the existing branch in the worktree. All commits must be made on the real branch. Push using `git push origin <branch-name>` — never use refspecs that map a different local branch name to the remote (e.g. never `git push origin worktree-branch:real-branch`). After removing a worktree and returning to the main working directory, run `git fetch origin` and update the local ref with `git branch -f <branch-name> origin/<branch-name>` before checking it out, to ensure the local branch matches the remote.
+**JIRA COMMENT CONTRACT:** Keep Jira comments minimal, structured, and durable. Do not narrate every phase. Routine Jira comments are required only at:
+
+- **B4** — clarification status (questions, or explicit no-question note)
+- **B5/B6** — one combined comment containing the reviewed fix plan and the approval request
+- **B13** — user testing handoff
+- **B14** — final structured summary
+
+Additional Jira comments are allowed only for blocking failures, reposting a revised plan after requested changes, or explicit user-requested status updates. Do not post separate narration comments for B0, B1, B2, B3, B7, B8, B9, B10, B11, B12, or B15.
+
+When a Jira comment heading references workflow phases, use the exact phase label defined here. Do not invent synthetic phase ranges. The only routine combined phase heading allowed is `B5/B6` because one comment serves both phases.
+
+**WORKTREE DISCIPLINE:** Always create worktrees under `.worktrees/<branch-name>` in the project root, using the exact branch name as the directory name. Create the directory first if it does not exist: `mkdir -p .worktrees`. The full creation command is `git worktree add .worktrees/<branch-name> <branch-name>`. Never use a worktree-prefixed or renamed branch (e.g. never `worktree-PROJ-123`). All commits must be made on the real branch. Push using `git push origin <branch-name>` — never use refspecs that map a different local branch name to the remote (e.g. never `git push origin worktree-branch:real-branch`). After removing a worktree and returning to the main working directory, run `git fetch origin` and update the local ref with `git branch -f <branch-name> origin/<branch-name>` before checking it out, to ensure the local branch matches the remote.
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
@@ -95,9 +106,20 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 ### B4 — Ask Clarifying Questions
 
-- Identify any ambiguities, gaps, or risks before planning the fix.
-- If there are clarifying questions: post them as a comment on this Jira issue, then ask the same questions **in the chat** and wait for answers before proceeding. Do not poll Jira for answers.
-- If there are no clarifying questions: post a comment on this Jira issue explicitly stating "No clarifying questions -- proceeding to B5."
+**Objective:** Resolve any ambiguities, gaps, or risks before planning the fix.
+
+**Agent Actions:**
+
+1. Review all output from B0, B1, B2, and B3.
+2. Identify clarifying questions. Mark each as `[BLOCKING]` or `[NICE TO HAVE]`.
+3. Present all questions in a **single batch** — do not ask one at a time.
+4. If there are clarifying questions: post a comment on this Jira issue with the exact heading `**B4 — Clarifying Questions**` listing all questions, then ask the same questions **in the chat** and wait for answers before proceeding. Do not poll Jira for answers.
+5. If there are no clarifying questions: post a comment on this Jira issue with the exact heading `**B4 — Clarifying Questions**` and the body `Status: No clarifying questions -- proceeding to B5.`
+6. Record all answers verbatim. Do not infer or invent answers.
+
+> **REQUIRED:** All BLOCKING questions answered and answers recorded. Remaining unanswered questions listed as open items.
+
+> **APPROVAL GATE — FULL STOP.** Present all questions and recorded answers. User must confirm all blocking answers are accurate. Do not proceed to B5 until confirmed.
 
 ### B5 — Create Fix Plan
 
@@ -170,7 +192,7 @@ The sub-agent will return a structured findings report with an overall verdict o
 
 Example: `PROJ-5678-fix-null-pointer-in-user-lookup`
 
-- Create a worktree that checks out the branch by its real name: `git worktree add <path> <branch-name>`. Do not create a worktree-prefixed branch.
+- Create the worktree: `mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`. Do not create a worktree-prefixed branch.
 
 ### B8 — Baseline Verification
 
@@ -297,7 +319,7 @@ Example: `[PROJ-5678] Fix null pointer when looking up user with missing profile
 
 - Use imperative mood for the description.
 - Push the branch to the remote using `git push origin <branch-name>`. Do not use refspecs.
-- Exit the worktree, remove it, then sync the local branch: `git fetch origin` followed by `git branch -f <branch-name> origin/<branch-name>`. Return to the main working directory.
+- Exit the worktree and remove it: `git worktree remove .worktrees/<branch-name>`. Then sync the local branch: `git fetch origin` followed by `git branch -f <branch-name> origin/<branch-name>`. Return to the main working directory.
 
 ### B13 — User Testing
 
@@ -312,7 +334,7 @@ Example: `[PROJ-5678] Fix null pointer when looking up user with missing profile
     - Step-by-step instructions for verifying the fix (derived from the Steps to Reproduce and the fix plan)
 - Do not proceed until the user has completed testing and explicitly approved the fix in the chat.
 
-- If the user identifies issues: create a new worktree for the branch, return to B10, resolve them, re-run B11 and B12, and return to this step before proceeding.
+- If the user identifies issues: recreate the worktree (`mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`), return to B10, resolve them, re-run B11 and B12 (which removes the worktree again), and return to this step before proceeding.
 
 
 ---
@@ -350,5 +372,22 @@ Post a comment on this Jira issue containing ALL of the following:
 
 ### B15 — Cleanup
 
-- Confirm the bug-fix worktree has been removed and you have returned to the main working directory. If a follow-up worktree was created during B13, remove it before finishing.
+- Confirm `.worktrees/<branch-name>` has been removed. If it still exists (e.g. a follow-up worktree was created during B13 and not yet removed by B12), run `git worktree remove .worktrees/<branch-name>` now. Confirm you have returned to the main working directory.
 - Clear the session-scoped knowledge graph before finishing the workflow. This includes the `work_item-<JIRA_KEY>` entity and every entity linked to it: hypothesis nodes, `affected_area`, `root_cause`, `fix_plan`, plus the explorer-written subgraph (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`). Use `read_graph` to enumerate, then `delete_entities`. Do not retain investigation state once it has been materialized into Jira comments.
+
+---
+
+## Completion Criteria
+
+This workflow is complete when **all** of the following are true:
+
+- All phases executed in sequence (B0 through B15)
+- All approval gates explicitly confirmed in the chat
+- Fix plan reviewed and approved (B5/B6)
+- Branch created, all fix commits pushed (B7–B10)
+- Build, tests, and linters passing on the fix branch (B11)
+- Regression test written and passing (B9)
+- User testing completed and approved (B13)
+- B14 summary comment posted to Jira with all required fields populated
+- Bug-fix worktree removed and main working directory restored (B15)
+- Session-scoped knowledge graph cleared (B15)
