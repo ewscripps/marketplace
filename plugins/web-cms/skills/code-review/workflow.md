@@ -22,7 +22,7 @@
 - **File discovery (find files by name or pattern):** Use native `Glob`.
 - **Content search (find text inside files):** Use native `Grep`. For symbolic code navigation during the review (locating a changed symbol, finding callers of a modified interface, or mapping file structure before reading), use Serena's `find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, and `search_for_pattern` directly — see the `USE SERENA` callouts in CR5 and CR6.
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
-- **Git:** Prefer MCP git tools (`git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, `git_reset`) over running `git` via Bash. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
+- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
@@ -194,9 +194,20 @@ When all reports are received, write every finding from all reports to the knowl
 
 ### CR7 — Ask Clarifying Questions
 
-- Identify any ambiguities, gaps, or risks discovered during the review.
-- If there are clarifying questions: post them as a comment on this Jira issue, then ask the same questions **in the chat** and wait for answers before proceeding. Do not poll Jira for answers.
-- If there are no clarifying questions: post a comment explicitly stating "No clarifying questions -- proceeding to CR8."
+**Objective:** Resolve any ambiguities, gaps, or risks discovered during the review before compiling findings.
+
+**Agent Actions:**
+
+1. Review all output from CR0 through CR6.
+2. Identify clarifying questions. Mark each as `[BLOCKING]` or `[NICE TO HAVE]`.
+3. Present all questions in a **single batch** — do not ask one at a time.
+4. If there are clarifying questions: post a comment on this Jira issue with the exact heading `**CR7 — Clarifying Questions**` listing all questions, then ask the same questions **in the chat** and wait for answers before proceeding. Do not poll Jira for answers.
+5. If there are no clarifying questions: post a comment on this Jira issue with the exact heading `**CR7 — Clarifying Questions**` and the body `Status: No clarifying questions -- proceeding to CR8.`
+6. Record all answers verbatim. Do not infer or invent answers.
+
+> **REQUIRED:** All BLOCKING questions answered and answers recorded. Remaining unanswered questions listed as open items.
+
+> **APPROVAL GATE — FULL STOP.** Present all questions and recorded answers. User must confirm all blocking answers are accurate. Do not proceed to CR8 until confirmed.
 
 ### CR8 — Compile Review Findings
 
@@ -245,3 +256,19 @@ Post a single consolidated comment on this Jira issue containing ALL of the foll
 ### CR11 — Cleanup
 
 - Clear the session-scoped knowledge graph before finishing the workflow. Do not retain review findings or criteria verdict nodes after the consolidated Jira comments exist.
+
+---
+
+## Completion Criteria
+
+This workflow is complete when **all** of the following are true:
+
+- All phases executed in sequence (CR0 through CR11)
+- All approval gates explicitly confirmed in the chat
+- Issue transitioned to In Progress (CR0)
+- Code reviewed across all applicable categories (CR4–CR6)
+- CR7 clarifying questions resolved (or no-questions comment posted)
+- CR8 consolidated findings comment posted to Jira with all required fields populated and overall assessment verdict included
+- Remediation task created and linked if findings required action (CR9), or no-remediation comment posted if approved
+- Assignee or reporter notified with verdict and links (CR10)
+- Session-scoped knowledge graph cleared (CR11)

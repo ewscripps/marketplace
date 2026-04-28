@@ -2,7 +2,7 @@
 
 **STRICT EXECUTION RULES -- NO EXCEPTIONS:**
 
-1. Execute phases in strict sequential order (D0 through D8).
+1. Execute phases in strict sequential order (DC0 through DC8).
 2. Do not skip, reorder, or combine phases.
 3. Each phase must be fully completed before starting the next.
 4. If any phase fails, stop immediately and report the failure in the chat. Do not continue.
@@ -18,23 +18,23 @@
 - **File discovery (find files by name or pattern):** Use native `Glob`.
 - **Content search (find text inside files):** Use native `Grep`. For symbolic code search (finding classes, methods, or callers), delegate to the `codebase-explorer` agent, which uses the Serena MCP server.
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
-- **Git:** Prefer MCP git tools (`git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, `git_reset`) over running `git` via Bash. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
+- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
-- D0 — Understand the Completed Work
-- D1 — Gather Documentation Context
-- D2 — Plan Documentation
-- D3 — Set Up Environment & Authenticate
-- D4 — Capture UI Documentation
-- D5 — Capture API Documentation
-- D6 — Assemble Confluence Page
-- D7 — Review Documentation
-- D8 — Publish to Confluence
+- DC0 — Understand the Completed Work
+- DC1 — Gather Documentation Context
+- DC2 — Plan Documentation
+- DC3 — Set Up Environment & Authenticate
+- DC4 — Capture UI Documentation
+- DC5 — Capture API Documentation
+- DC6 — Assemble Confluence Page
+- DC7 — Review Documentation
+- DC8 — Publish to Confluence
 
 ---
 
-### D0 -- Understand the Completed Work
+### DC0 -- Understand the Completed Work
 
 **Objective:** Read the completed Jira work item and extract everything needed to write user-facing documentation.
 
@@ -63,7 +63,7 @@
 
 ---
 
-### D1 -- Gather Documentation Context
+### DC1 -- Gather Documentation Context
 
 **Objective:** Collect all environment details and access prerequisites needed to capture documentation without exposing credentials in chat.
 
@@ -74,13 +74,13 @@
 1. What is the **staging environment URL** where the changes can be tested?
 2. Does the staging environment require **authentication**?
     - If yes: What type -- **Okta**, **basic auth**, or **other**?
-    - Is a secure authenticated session already available to the agent, or will you pre-authenticate before D3? **Do not provide passwords, tokens, or secrets in chat.**
+    - Is a secure authenticated session already available to the agent, or will you pre-authenticate before DC3? **Do not provide passwords, tokens, or secrets in chat.**
 3. After authentication is available, are there any additional navigation steps to reach the area where the changes are visible (e.g., specific menu path, feature flag to enable, test account to use)?
 
 **API documentation (if scope includes API changes):**
 
 4. What is the **Postman workspace URL** (e.g., `app.getpostman.com/workspace/...`)?
-5. Does Postman require separate authentication? If yes, is a secure authenticated session already available, or will you pre-authenticate before D3? **Do not provide passwords, tokens, or secrets in chat.**
+5. Does Postman require separate authentication? If yes, is a secure authenticated session already available, or will you pre-authenticate before DC3? **Do not provide passwords, tokens, or secrets in chat.**
 6. Is there an existing **Postman collection** this should be added to, or should a new collection be created?
 
 **Confluence target:**
@@ -103,13 +103,13 @@
 > - Priority scenarios (or "document all user-facing changes")
 > - Target audience
 
-> **APPROVAL GATE -- FULL STOP.** Present the gathered context as a structured summary. User must confirm all fields are accurate. Do not proceed to D2 until confirmed.
+> **APPROVAL GATE -- FULL STOP.** Present the gathered context as a structured summary. User must confirm all fields are accurate. Do not proceed to DC2 until confirmed.
 
 ---
 
-### D2 -- Plan Documentation
+### DC2 -- Plan Documentation
 
-> **USE SEQUENTIAL THINKING:** Before producing the plan, invoke the `sequentialthinking` tool. Work through each user-facing change identified in D0, determine which ones warrant step-by-step documentation, identify the optimal order for capturing screenshots (to minimize navigation), and verify that every change is accounted for in the plan.
+> **USE SEQUENTIAL THINKING:** Before producing the plan, invoke the `sequentialthinking` tool. Work through each user-facing change identified in DC0, determine which ones warrant step-by-step documentation, identify the optimal order for capturing screenshots (to minimize navigation), and verify that every change is accounted for in the plan.
 
 **Objective:** Create a documentation plan that defines exactly what will be captured and how the Confluence page will be structured.
 
@@ -171,11 +171,11 @@
 > - Confluence page outline
 > - Estimated number of screenshots
 
-> **APPROVAL GATE -- FULL STOP.** Present the documentation plan. User must confirm the flows, endpoints, and page structure are correct. Do not proceed to D3 until confirmed.
+> **APPROVAL GATE -- FULL STOP.** Present the documentation plan. User must confirm the flows, endpoints, and page structure are correct. Do not proceed to DC3 until confirmed.
 
 ---
 
-### D3 -- Set Up Environment & Authenticate
+### DC3 -- Set Up Environment & Authenticate
 
 **Objective:** Open the browser, navigate to the staging environment, authenticate, and verify access.
 
@@ -183,35 +183,35 @@
 
 **UI setup (if scope includes UI changes):**
 
-1. Navigate to the staging URL provided in D1 using `browser_navigate`.
+1. Navigate to the staging URL provided in DC1 using `browser_navigate`.
 2. If authentication is required:
     - Reuse an existing authenticated browser session or environment-provided secret if one is securely available to the runtime.
     - Never ask the user to paste usernames, passwords, tokens, or other secrets into chat.
     - If authentication is required but no secure session or environment-provided secret is available, stop and ask the user to complete authentication out of band before proceeding.
 3. Use `browser_snapshot` to confirm the application has loaded successfully after authentication.
-4. If additional navigation is needed to reach the feature area (as noted in D1), navigate there now.
+4. If additional navigation is needed to reach the feature area (as noted in DC1), navigate there now.
 5. Take a baseline screenshot using `browser_take_screenshot` to confirm the environment is ready. Save it as `00-baseline.png`.
 
 **API setup (if scope includes API changes):**
 
-6. Open a new tab or navigate to the Postman workspace URL provided in D1.
+6. Open a new tab or navigate to the Postman workspace URL provided in DC1.
 7. Reuse an existing authenticated Postman session or environment-provided secret if required. If secure access is not available, stop and ask the user to authenticate out of band before proceeding.
-8. Navigate to the target collection (or create a new one if specified in D1).
+8. Navigate to the target collection (or create a new one if specified in DC1).
 9. Use `browser_snapshot` to confirm Postman is ready.
 
 > **REQUIRED:** Confirm in the chat that the environment is accessible and authenticated. If authentication fails, stop and report the specific failure. Do not proceed with incorrect or missing access.
 
 ---
 
-### D4 -- Capture UI Documentation
+### DC4 -- Capture UI Documentation
 
 > **Skip this phase entirely if the documentation scope is API-only.**
 
-**Objective:** Walk through each user flow from the D2 plan, take screenshots at each step, and record the step descriptions.
+**Objective:** Walk through each user flow from the DC2 plan, take screenshots at each step, and record the step descriptions.
 
 **Agent Actions:**
 
-For each flow in the documentation plan, in the order defined in D2:
+For each flow in the documentation plan, in the order defined in DC2:
 
 1. Navigate to the starting point of the flow.
 2. Use `browser_snapshot` to confirm you are on the correct page.
@@ -232,7 +232,7 @@ For each flow in the documentation plan, in the order defined in D2:
 
 ---
 
-### D5 -- Capture API Documentation
+### DC5 -- Capture API Documentation
 
 > **Skip this phase entirely if the documentation scope is UI-only.**
 
@@ -240,7 +240,7 @@ For each flow in the documentation plan, in the order defined in D2:
 
 **Agent Actions:**
 
-For each endpoint in the documentation plan, in the order defined in D2:
+For each endpoint in the documentation plan, in the order defined in DC2:
 
 1. In Postman, create a new request in the target collection (or navigate to an existing one if updating).
 2. Set the request method, URL, headers, and body as defined in the plan.
@@ -265,17 +265,17 @@ For each endpoint in the documentation plan, in the order defined in D2:
 
 ---
 
-### D6 -- Assemble Confluence Page
+### DC6 -- Assemble Confluence Page
 
-> **USE SEQUENTIAL THINKING:** Before generating the page content, invoke the `sequentialthinking` tool. Verify that every flow and endpoint from the D2 plan is represented, that screenshots are referenced in the correct order, and that the page reads coherently from a user's perspective.
+> **USE SEQUENTIAL THINKING:** Before generating the page content, invoke the `sequentialthinking` tool. Verify that every flow and endpoint from the DC2 plan is represented, that screenshots are referenced in the correct order, and that the page reads coherently from a user's perspective.
 
 **Objective:** Assemble the full Confluence page content from the captured documentation.
 
 **Agent Actions:**
 
-1. Build the page content using the outline from D2, populated with:
+1. Build the page content using the outline from DC2, populated with:
 
-    - **Overview:** Derived from the Jira issue description and summary comment. Written for the target audience identified in D1 -- not developer jargon unless the audience is developers.
+    - **Overview:** Derived from the Jira issue description and summary comment. Written for the target audience identified in DC1 -- not developer jargon unless the audience is developers.
     - **Prerequisites:** Permissions, configuration, or setup the user needs. Derived from the Jira card context and any authentication requirements observed during capture.
     - **UI flow sections:** For each flow, convert the captured steps into clear, numbered instructions. Reference the screenshot filename for each step -- these will be embedded after upload.
     - **API reference section:** For each endpoint, include: method, path, description, request example (formatted as a code block), response example (formatted as a code block), and a reference to the Postman screenshots.
@@ -301,36 +301,36 @@ For each endpoint in the documentation plan, in the order defined in D2:
 
 ---
 
-### D7 -- Review Documentation
+### DC7 -- Review Documentation
 
----
+> **REQUIRED:** Present the full documentation draft assembled in DC6 before requesting approval. Include the complete page content, the ordered list of screenshots to be attached, and the target Confluence space and parent page.
 
-**APPROVAL GATE -- FULL STOP.**
+> **APPROVAL GATE -- FULL STOP.**
 
-- Present the full documentation draft assembled in D6.
+- Present the full documentation draft assembled in DC6.
 - The user must review and confirm the content is accurate, complete, and appropriate for the target audience.
 - If the user requests changes, revise the content and re-present. Do not proceed until explicit approval.
-- If the user identifies missing flows or screenshots, return to D4 or D5 to capture the additional content, then reassemble in D6 and re-present here.
+- If the user identifies missing flows or screenshots, return to DC4 or DC5 to capture the additional content, then reassemble in DC6 and re-present here.
 
 ---
 
-### D8 -- Publish to Confluence
+### DC8 -- Publish to Confluence
 
 **Objective:** Create the Confluence page, upload all screenshots, apply labels, and link the documentation to the Jira issue.
 
 **Agent Actions:**
 
-1. **Look up the parent page.** Use `confluence_search` or `confluence_get_page` to find the parent page specified in D1 and retrieve its ID.
+1. **Look up the parent page.** Use `confluence_search` or `confluence_get_page` to find the parent page specified in DC1 and retrieve its ID.
 
 2. **Create the Confluence page.** Call `confluence_create_page` with:
-    - The Confluence space key from D1
+    - The Confluence space key from DC1
     - The page title (derived from the work item title, e.g., "How to [Feature Name]" or "[Feature Name] Documentation")
     - The parent page ID
-    - The page body in Confluence storage format from D6
+    - The page body in Confluence storage format from DC6
 
 3. **Verify the page.** Call `confluence_get_page` to confirm the page was created successfully. Record the page ID and URL for subsequent steps.
 
-4. **Upload screenshots.** Call `confluence_upload_attachments` with the page ID and the list of all screenshot files captured in D4 and D5, in the order they appear in the page. After uploading, call `confluence_get_attachments` to verify all files are present. The `<ri:attachment ri:filename="..." />` image references in the page body from D6 will resolve automatically once the attachments are in place.
+4. **Upload screenshots.** Call `confluence_upload_attachments` with the page ID and the list of all screenshot files captured in DC4 and DC5, in the order they appear in the page. After uploading, call `confluence_get_attachments` to verify all files are present. The `<ri:attachment ri:filename="..." />` image references in the page body from DC6 will resolve automatically once the attachments are in place.
 
 5. **Apply labels.** Call `confluence_add_label` to add the following labels to the page:
     - The Jira project key in lowercase (e.g., `eli`)
@@ -362,7 +362,7 @@ For each endpoint in the documentation plan, in the order defined in D2:
 
 This workflow is complete when **all** of the following are true:
 
-- All phases executed in sequence (D0-D8)
+- All phases executed in sequence (DC0-DC8)
 - All approval gates explicitly confirmed in the chat
 - Confluence page created with all text content
 - All screenshots uploaded to Confluence page via MCP and confirmed present

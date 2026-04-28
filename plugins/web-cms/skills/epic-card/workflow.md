@@ -24,9 +24,20 @@
 - **File discovery (find files by name or pattern):** Use native `Glob`.
 - **Content search (find text inside files):** Use native `Grep`. For symbolic code search (finding classes, methods, or callers), delegate to the `codebase-explorer` agent, which uses the Serena MCP server.
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
-- **Git:** Prefer MCP git tools (`git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, `git_reset`) over running `git` via Bash. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
+- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
 
-**WORKTREE DISCIPLINE:** When creating a git worktree, always check out the **real branch name** — do not create a worktree-prefixed or renamed branch (e.g. never `worktree-PROJ-123`). Use `git worktree add <path> <branch-name>` to check out the existing branch in the worktree. All commits must be made on the real branch. Push using `git push origin <branch-name>` — never use refspecs that map a different local branch name to the remote (e.g. never `git push origin worktree-branch:real-branch`). After removing a worktree and returning to the main working directory, run `git fetch origin` and update the local ref with `git branch -f <branch-name> origin/<branch-name>` before checking it out, to ensure the local branch matches the remote.
+**JIRA COMMENT CONTRACT:** Keep Jira comments minimal, structured, and durable. Do not narrate every phase. Routine Jira comments are required only at:
+
+- **E3** — clarification status (questions, or explicit no-question note)
+- **E4/E5** — one combined comment containing the reviewed breakdown plan and the approval request
+- **E9** — user testing handoff
+- **E10** — final epic summary
+
+Additional Jira comments are allowed only for blocking failures, reposting a revised plan after requested changes, or explicit user-requested status updates. Do not post separate narration comments for E0, E1, E2, E6, E7, E8, or E11.
+
+When a Jira comment heading references workflow phases, use the exact phase label defined here. Do not invent synthetic phase ranges. The only routine combined phase heading allowed is `E4/E5` because one comment serves both phases.
+
+**WORKTREE DISCIPLINE:** Always create worktrees under `.worktrees/<branch-name>` in the project root, using the exact branch name as the directory name. Create the directory first if it does not exist: `mkdir -p .worktrees`. The full creation command is `git worktree add .worktrees/<branch-name> <branch-name>`. Never use a worktree-prefixed or renamed branch (e.g. never `worktree-PROJ-123`). All commits must be made on the real branch. Push using `git push origin <branch-name>` — never use refspecs that map a different local branch name to the remote (e.g. never `git push origin worktree-branch:real-branch`). After removing a worktree and returning to the main working directory, run `git fetch origin` and update the local ref with `git branch -f <branch-name> origin/<branch-name>` before checking it out, to ensure the local branch matches the remote.
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
@@ -82,9 +93,20 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 ### E3 — Ask Clarifying Questions
 
-- Identify any ambiguities, gaps, or risks about the epic's scope or goals.
-- If there are clarifying questions: post them as a comment on this Jira issue, then ask the same questions **in the chat** and wait for answers before proceeding. Do not poll Jira for answers.
-- If there are no clarifying questions: post a comment explicitly stating "No clarifying questions -- proceeding to E4."
+**Objective:** Resolve any ambiguities, gaps, or risks about the epic's scope or goals before planning the breakdown.
+
+**Agent Actions:**
+
+1. Review all output from E0, E1, and E2.
+2. Identify clarifying questions. Mark each as `[BLOCKING]` or `[NICE TO HAVE]`.
+3. Present all questions in a **single batch** — do not ask one at a time.
+4. If there are clarifying questions: post a comment on this Jira issue with the exact heading `**E3 — Clarifying Questions**` listing all questions, then ask the same questions **in the chat** and wait for answers before proceeding. Do not poll Jira for answers.
+5. If there are no clarifying questions: post a comment on this Jira issue with the exact heading `**E3 — Clarifying Questions**` and the body `Status: No clarifying questions -- proceeding to E4.`
+6. Record all answers verbatim. Do not infer or invent answers.
+
+> **REQUIRED:** All BLOCKING questions answered and answers recorded. Remaining unanswered questions listed as open items.
+
+> **APPROVAL GATE — FULL STOP.** Present all questions and recorded answers. User must confirm all blocking answers are accurate. Do not proceed to E4 until confirmed.
 
 ### E4 — Create Breakdown Plan
 
@@ -223,8 +245,8 @@ Parent epic: {{EPIC-KEY}} — {{EPIC-SUMMARY}}
 Example: `PROJ-900-user-authentication-overhaul`
 
 - This branch is the integration target for the entire epic. All child task branches will be created from and merged back into this branch.
-- Create a worktree that checks out the integration branch by its real name: `git worktree add <path> <branch-name>`. Do not create a worktree-prefixed branch. This worktree is used for child task implementation before manual testing begins.
-- Remove this worktree before E9 so the integration branch can be checked out locally for manual testing. After removing the worktree, sync the local branch: `git fetch origin` followed by `git branch -f <branch-name> origin/<branch-name>`. If E9 feedback requires additional fixes, recreate the worktree for that follow-up task work and remove it again (with the same sync step) before returning to E9.
+- Create the worktree: `mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`. Do not create a worktree-prefixed branch. This worktree is used for child task implementation before manual testing begins.
+- Remove this worktree before E9 so the integration branch can be checked out locally for manual testing: `git worktree remove .worktrees/<branch-name>`. Then sync the local branch: `git fetch origin` followed by `git branch -f <branch-name> origin/<branch-name>`. If E9 feedback requires additional fixes, recreate the worktree (`mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`) for that follow-up task work, then remove it again (`git worktree remove .worktrees/<branch-name>`, then sync) before returning to E9.
 - Push the integration branch to the remote using `git push origin <branch-name>`. Do not use refspecs.
 
 > **USE KNOWLEDGE GRAPH:** Write a `branch` node with properties: `name` (the integration branch name), `type: integration`, and link it to the epic node. This allows E8 to read the integration branch name from the graph rather than re-deriving it.
@@ -244,7 +266,7 @@ Work through each child task **in the order defined in E4**, executing the T0-T1
     - If failed: stop and report the failure to the user. Do not begin the next child task until the failure is resolved.
 6. **Pause between tasks:** After completing each child task, confirm with the user in the chat before starting the next one.
 7. Do not begin the next child task until the current one is confirmed complete and the integration branch is clean.
-8. After the final child task is complete, exit the epic worktree created in E7 and return to the main working directory before proceeding to E9. The worktree may be removed now or in E11, but it must not remain active for manual testing.
+8. After the final child task is complete, remove the epic worktree: `git worktree remove .worktrees/<branch-name>`. Sync the local branch: `git fetch origin` followed by `git branch -f <branch-name> origin/<branch-name>`. Return to the main working directory before proceeding to E9.
 
 ### E9 — User Testing
 
@@ -259,7 +281,7 @@ Work through each child task **in the order defined in E4**, executing the T0-T1
     - Step-by-step instructions for verifying the epic's functionality end-to-end (derived from the acceptance criteria and breakdown plan)
 - Do not proceed until the user has completed testing and explicitly approved the implementation in the chat.
     
-- If the user identifies issues, recreate a worktree for the epic integration branch, create a new child task following the E6 child-task creation rules, and add that task to the knowledge graph before execution. Then invoke the `task-card` skill directly with the new child task's Jira key; epic child-task mode will be detected from the `Epic Integration Branch` field, so T11 user testing is skipped automatically. After that follow-up task's T13 completes, update its knowledge graph node to `status: done`, record its merge completion, remove the recreated epic worktree again, and then return to this step.
+- If the user identifies issues, recreate the worktree (`mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`), create a new child task following the E6 child-task creation rules, and add that task to the knowledge graph before execution. Then invoke the `task-card` skill directly with the new child task's Jira key; epic child-task mode will be detected from the `Epic Integration Branch` field, so T11 user testing is skipped automatically. After that follow-up task's T13 completes, update its knowledge graph node to `status: done`, record its merge completion, then remove the worktree again (`git worktree remove .worktrees/<branch-name>`, then sync), and return to this step.
     
 
 ---
@@ -291,5 +313,21 @@ After all child tasks are complete and user testing has passed, post a comment c
 
 ### E11 — Cleanup
 
-- Confirm no epic integration-branch worktree remains. Under the normal path it may already have been removed before E9; if one was recreated during E9 follow-up work, remove it before finishing.
+- Confirm `.worktrees/<branch-name>` has been removed. Under the normal path it was removed in E8. If one was recreated during E9 follow-up work and not yet removed, run `git worktree remove .worktrees/<branch-name>` now.
 - Clear the session-scoped knowledge graph before finishing the workflow. This includes the `work_item-<JIRA_KEY>` entity for the epic, the separate `epic` / `task` / `branch` nodes used for breakdown tracking, and the explorer-written subgraph from E2 (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`) along with any per-child-task subgraphs that were not deleted by the child task workflows in epic child-task mode. Use `read_graph` to enumerate, then `delete_entities`. Do not retain epic, task, dependency, or branch state in the graph once the final Jira record is complete.
+
+---
+
+## Completion Criteria
+
+This workflow is complete when **all** of the following are true:
+
+- All phases executed in sequence (E0 through E11)
+- All approval gates explicitly confirmed in the chat
+- Breakdown plan reviewed and approved (E4/E5)
+- All child task Jira issues created and linked to the epic (E6–E8)
+- All child tasks completed and verified
+- User testing completed and approved (E9)
+- E10 epic summary comment posted to Jira with all required fields populated
+- Epic integration-branch worktree removed (E11)
+- Session-scoped knowledge graph cleared (E11)
