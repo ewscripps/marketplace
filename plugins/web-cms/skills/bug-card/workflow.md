@@ -29,13 +29,24 @@
 
 **WORKTREE DISCIPLINE:** When creating a git worktree, always check out the **real branch name** — do not create a worktree-prefixed or renamed branch (e.g. never `worktree-PROJ-123`). Use `git worktree add <path> <branch-name>` to check out the existing branch in the worktree. All commits must be made on the real branch. Push using `git push origin <branch-name>` — never use refspecs that map a different local branch name to the remote (e.g. never `git push origin worktree-branch:real-branch`). After removing a worktree and returning to the main working directory, run `git fetch origin` and update the local ref with `git branch -f <branch-name> origin/<branch-name>` before checking it out, to ensure the local branch matches the remote.
 
-**TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create tasks for the following logical groups at the start of the workflow, mark each `in_progress` when starting and `completed` when done:
+**TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
-- **Setup** (B0–B1): Transition to In Progress, understand the bug
-- **Investigation** (B2–B4): Reproduce, root cause analysis, clarifying questions
-- **Planning** (B5–B6): Fix plan, approval
-- **Implementation** (B7–B12): Branch/worktree, baseline, failing test, fix, post-fix verification, commit/push
-- **Testing & Completion** (B13–B15): User testing, summary of changes, cleanup
+- B0 — Transition to In Progress
+- B1 — Understand the Bug
+- B2 — Reproduce the Bug
+- B3 — Investigate Root Cause
+- B4 — Ask Clarifying Questions
+- B5 — Create Fix Plan
+- B6 — Await Plan Approval
+- B7 — Create Branch and Worktree
+- B8 — Baseline Verification
+- B9 — Write a Failing Test
+- B10 — Implement the Fix
+- B11 — Post-Fix Verification
+- B12 — Commit, Push, and Exit Worktree
+- B13 — User Testing
+- B14 — Summary of Changes
+- B15 — Cleanup
 
 ---
 
@@ -75,7 +86,8 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
     - The question: "Does the code path for [observed behavior] exist here, and is there evidence of why it might be producing [incorrect behavior]? Look for recent changes, error handling gaps, and related tests."
     - The `work_item_id` (`work_item-<JIRA_KEY>`). All findings the explorer streams to the graph will be linked to this node.
     - The bug description, reproduction steps, and any logs for context
-- Wait for all explorers to return their `EXPLORATION COMPLETE` (or `EXPLORATION FAILED`) pointers.
+- Wait for all explorers to return one of `EXPLORATION COMPLETE`, `EXPLORATION INCOMPLETE`, or `EXPLORATION FAILED`. Each non-failed return includes a structured findings block in the text — use it as the resilient source of record alongside the graph. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters.
+- **Post-exploration enrichment:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `work_item_id`. It crystallizes durable area knowledge from this run's graph into Serena project memory for future explorations. Do not wait for it.
 - Call `read_graph` and walk the subgraph rooted at each `exploration` entity for this `work_item_id`. Surface any `open_question` entities. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
 - Synthesize the findings from the graph. Evaluate which areas show evidence of the root cause (cite the relevant `evidence` entities by `file` and `line_range`) and which hypotheses can be ruled out. Update each hypothesis node's `status` and `evidence` observations to reflect what the graph now contains.
 - Review git history for recent changes to affected areas (cross-reference the `affected_file` paths from the graph) that may have introduced a regression.

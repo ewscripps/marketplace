@@ -25,11 +25,15 @@
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
 - **Git:** Use `Bash` for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, etc.) and for running build, test, and lint commands.
 
-**TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create tasks for the following logical groups at the start of the workflow, mark each `in_progress` when starting and `completed` when done:
+**TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
-- **Setup** (M0): Branch collection and pre-flight
-- **Research** (M1–M2): Jira context, diff analysis
-- **Creation** (M3–M6): Assemble description, approval, create MR, completion
+- M0 — Branch Collection & Pre-flight
+- M1 — Context Classification
+- M2 — Diff & Commit Review
+- M3 — Pre-Creation Confirmation
+- M4 — Description Generation & Review Gate
+- M5 — MR Creation
+- M6 — Cleanup
 
 ---
 

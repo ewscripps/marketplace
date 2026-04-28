@@ -15,7 +15,7 @@ INTAKE (creates Jira cards)          EXECUTION (works Jira cards)
   Bug? Creates Bug card                OR
   Missing requirement?        --->   /requirements-intake (R0-R5)
 
-/code-review-intake (CI0-CI5) --->   /code-review PROJ-123 (CR0-CR10)
+/code-review-intake (CI0-CI5) --->   /code-review PROJ-123 (CR0-CR11)
   Creates Code Review card
 
                                        /mr-creation (M0-M6)
@@ -58,7 +58,7 @@ The Jira card description is the interface between intake and execution:
 | **task-card** | `/task-card PROJ-123` | T0-T12 | Task card description | codebase-explorer, plan-reviewer, implementation-reviewer, test-reviewer, documentation-reviewer |
 | **bug-card** | `/bug-card PROJ-123` | B0-B14 | Bug card description | codebase-explorer, plan-reviewer, implementation-reviewer, test-reviewer, documentation-reviewer |
 | **epic-card** | `/epic-card PROJ-123` | E0-E10 | Epic card description | codebase-explorer |
-| **code-review** | `/code-review PROJ-123` | CR0-CR10 | Code Review card description | review-analyst (4 or 5 parallel, depending on review type) |
+| **code-review** | `/code-review PROJ-123` | CR0-CR11 | Code Review card description | review-analyst (4 or 5 parallel, depending on review type) |
 | **mr-creation** | `/mr-creation` | M0-M6 | User input + repo state | None |
 | **test-doc-review** | `/test-doc-review [PROJ-123]` | TD0-TD5 | Optional Task/Bug Jira context + current repo state | test-reviewer, documentation-reviewer |
 | **manual-qa-plan** | `/manual-qa-plan PROJ-123` | Q0-Q4 | Task/Bug/Epic Jira context + related branch diff | manual-qa-reviewer |
@@ -68,7 +68,8 @@ The Jira card description is the interface between intake and execution:
 
 | Agent | Purpose | Tool Access | Used By |
 |-------|---------|-------------|---------|
-| **codebase-explorer** | Read-only codebase investigation (may write durable area maps to Serena project memory; does not modify project files) | Read, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena project memory (`codebase-map-<area>.md`), MCP git tools | requirements-intake R2, issue-intake I2, task-card T2, bug-card B3, epic-card E2 |
+| **codebase-explorer** | Read-only codebase investigation. Reads Serena project memory as starting hints; does not write memory and does not modify project files | Read, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena project memory read (`list_memories`, `read_memory`), MCP git tools | requirements-intake R2, issue-intake I2, task-card T2, bug-card B3, epic-card E2, implementation-discovery D1 |
+| **area-mapper** | Crystallizes durable area knowledge from a session's exploration findings into Serena project memory. Does not re-explore code, does not modify project files. Spawned in the background after each codebase-analysis phase to accumulate memory over time | Bash, knowledge-graph reads (`read_graph`, `search_nodes`, `open_nodes`), Serena project memory (`list_memories`, `read_memory`, `write_memory`, `edit_memory`) | requirements-intake R2, issue-intake I2, task-card T2, bug-card B3, epic-card E2, implementation-discovery D1 |
 | **implementation-reviewer** | Adversarial review of core implementation against plan/criteria before test/doc completion | Read, Glob, Grep, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), MCP git tools | task-card T8, bug-card B10 |
 | **test-reviewer** | Completes automated test coverage and runs relevant test commands after implementation review | Read, Edit, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena symbol-aware writes (`replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol`, `rename_symbol`, `safe_delete_symbol`), Serena project memory (`test-commands.md`), MCP git tools | task-card T8, bug-card B10 |
 | **documentation-reviewer** | Completes inline and repository documentation and flags `/document-card` follow-up when needed | Read, Edit, Glob, Grep, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena symbol-aware writes (`insert_after_symbol`, `insert_before_symbol`, `replace_content`), Serena project memory (`documentation-conventions.md`), MCP git tools | task-card T8, bug-card B10 |

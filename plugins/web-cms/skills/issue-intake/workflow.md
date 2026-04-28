@@ -27,11 +27,15 @@
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
 - **Git:** Prefer MCP git tools (`git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, `git_reset`) over running `git` via Bash. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
 
-**TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create tasks for the following logical groups at the start of the workflow, mark each `in_progress` when starting and `completed` when done:
+**TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
-- **Intake** (I0–I1): Gather context, Jira context review
-- **Investigation** (I2–I3): Codebase analysis, clarifying questions
-- **Classification & Creation** (I4–I5): Bug vs. requirement classification, Jira issue creation/update
+- I0 — Intake
+- I1 — Jira Context Review
+- I2 — Codebase Analysis
+- I3 — Clarifying Questions
+- I4 — Classification & Triage
+- I5 — Resolution
+- I6 — Cleanup
 
 ---
 
@@ -137,7 +141,9 @@
     - The question: "Does code exist in this area that is intended to produce [expected behavior]? If it exists, is there evidence it is behaving incorrectly? If it does not exist, confirm its absence clearly."
     - The `work_item_id` recorded after I1 (e.g. `work_item-PROJ-123` or `work_item-issue-<slug>`). All findings the explorer streams to the graph will be linked to this node.
     - The bug description, observed behavior, expected behavior, reproduction steps, and any logs for context
-3. Wait for all explorers to return their `EXPLORATION COMPLETE` (or `EXPLORATION FAILED`) pointers.
+3. Wait for all explorers to return one of `EXPLORATION COMPLETE`, `EXPLORATION INCOMPLETE`, or `EXPLORATION FAILED`. Each non-failed return includes a structured findings block in the text — use it as the resilient source of record alongside the graph. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters.
+
+> **POST-EXPLORATION ENRICHMENT:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `work_item_id`. The mapper crystallizes durable area knowledge from this run's graph into Serena project memory for future explorations. Do not wait for it — proceed immediately to step 4.
 4. Call `read_graph` and walk the subgraph rooted at each `exploration` entity for this `work_item_id`. Surface any `open_question` entities. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
 5. Synthesize the findings from the graph. For each area, record whether code exists for the expected behavior with specific evidence (cite `evidence` entities by their `file` and `line_range` observations).
 6. Look for any recent changes (commits, deployments, config changes) in the affected areas that may have introduced a regression.
@@ -381,8 +387,54 @@ file/module/service path, brief description of relevance, and risk level.]
 
 ### I6 — Cleanup
 
-- **Bug path:** After the Jira bug card is finalized and all requested links are created, clear the session-scoped knowledge graph before finishing this path. This includes the `work_item` entity and every entity linked to it: `classification_signal`, `code_evidence`, `affected_area`, plus the explorer-written subgraph from I2 (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`). Use `read_graph` to enumerate, then `delete_entities`. Do not retain classification, evidence, or affected-area state after the durable Jira record is complete.
-- **Missing Requirement path:** Confirm the carried-over Requirements Intake workflow completed its cleanup phase and that no issue-intake state remains in the shared session-scoped graph before finishing the overall intake flow.
+**Objective:** Clear the session-scoped knowledge graph for the path that was actually taken, after explicit user confirmation. The bug path owns its own cleanup; the missing-requirement path delegates to Requirements Intake R6.
+
+#### Bug path
+
+1. **Enumerate.** Call `read_graph`. Identify every entity that should be deleted in this cleanup:
+   - The intake `work_item` entity for this issue and every entity linked to it: `classification_signal`, `code_evidence`, `affected_area`, plus the explorer-written subgraph from I2 (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`).
+   - Any upstream **implementation-discovery** state still in the graph: the `discovery_summary-<slug>` entity, the `work_item-discovery-<slug>` work item, the verification-round and first-round `exploration` subgraph linked to it (including any finding entities marked `superseded: true`, which must still be deleted — supersession marks them as non-canonical, not as already-removed), and any structured `open_question` entities reified at D5 (sources `d3_discussion` and `d4_verification`). These persist intentionally from a prior `/implementation-discovery` run; if discovery happened earlier in this session and the user opened a bug instead of running requirements-intake, I6 owns reaping the discovery state too.
+   - Any other intake-scoped entities created during I0–I5 that link back to the work item.
+
+2. **Present the cleanup plan to the user.** Build a short, structured summary in the chat:
+
+   ```
+   ## I6 Cleanup Plan (Bug path)
+
+   The following session-scoped knowledge-graph entities will be deleted now that the Jira bug card is finalized:
+
+   ### From this Issue Intake
+   - work_item: <name>
+   - classification_signal / code_evidence: <total count>
+   - affected_area: <count>
+   - exploration: <count>
+   - affected_file / evidence / pattern / integration_point / risk / open_question: <total count>
+   - <any other intake-scoped entities, listed by type and count>
+
+   ### From upstream Implementation Discovery (if present)
+   - discovery_summary-<slug>: <name, or "none">
+   - work_item-discovery-<slug>: <name, or "none">
+   - verification-round explorations: <count, or "none">
+
+   Total entities to delete: <N>
+   ```
+
+   If the upstream-discovery section reports "none" across the board, state explicitly that no implementation-discovery state was found in the graph for this run.
+
+3. > **APPROVAL GATE — FULL STOP.** Ask the user: **"Proceed with cleanup of these entities?"** Do not run `delete_entities` until the user explicitly confirms (e.g., "yes", "proceed", "go ahead"). On any negative or ambiguous response, do NOT delete. Instead, leave the graph untouched, note in the chat that cleanup was skipped at the user's request, and end this path — the entities will remain in the graph until the Claude Code session ends.
+
+4. **Execute deletion.** On explicit confirmation, call `delete_entities` with the full list enumerated in step 1. After deletion, report a one-line confirmation in the chat: "Cleanup complete: <N> entities deleted."
+
+5. Do not retain classification, evidence, affected-area, or upstream-discovery state after the durable Jira record is complete, except when the user explicitly declined cleanup at step 3.
+
+#### Missing Requirement path
+
+This path delegates cleanup to the carried-over Requirements Intake workflow's gated R6 cleanup, which sweeps both issue-intake state (`classification_signal`, `code_evidence`) and any upstream implementation-discovery state along with the requirements work item.
+
+1. Confirm Requirements Intake completed through its R6 (gated) cleanup phase.
+2. If R6 ran and the user confirmed cleanup, no further action is required from this path.
+3. If R6 ran and the user declined cleanup at the R6 gate, surface that decision in the chat as the final state of this path so the user knows discovery and issue-intake entities remain in the graph until the Claude Code session ends. Do not call `delete_entities` from this path; the gate decision belongs to R6.
+4. If R6 did not run for any reason (Requirements Intake aborted before R6), call `read_graph`, enumerate the issue-intake-scoped entities (`work_item`, `classification_signal`, `code_evidence`, plus any I2 exploration subgraph still linked), and apply the same gated cleanup pattern as the Bug path above to those entities only — do not touch implementation-discovery or requirements work-item entities, since those remain owned by Requirements Intake R6.
 
 ---
 
@@ -395,4 +447,4 @@ This workflow is complete when **all** of the following are true:
 - All self-review checks passed before presenting output
 - **Bug path:** Jira Bug updated or created, issue linking offered, and no workflow or skill-invocation instructions were embedded in the description
 - **Missing Requirement path:** R0 context confirmed, R0 knowledge-graph initialization completed, Requirements Workflow completed through R5, issue linking offered
-- I6 cleanup completed for the selected path
+- I6 cleanup completed for the selected path: either the user confirmed cleanup at the I6 gate (Bug path) or the carried-over Requirements Intake R6 gate (Missing Requirement path) and the listed entities — including any upstream implementation-discovery state — were deleted, or the user explicitly declined cleanup at the gate

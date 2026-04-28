@@ -75,6 +75,8 @@ verified_against: <git SHA>
 
 Update the memory only when (a) you discovered a repo-specific rule or anti-pattern during this review that future analysts should know about, or (b) there is no stored memory yet and you established a working checklist during this run. Use `write_memory` (new) or `edit_memory` (update). Always include the current git SHA in `verified_against`.
 
+**Parallel-run collision avoidance.** Up to five review-analyst instances run concurrently in CR4, each with a distinct assigned category. Distinct categories mean distinct memory keys, so cross-instance collisions on a single key are not expected. Defend against the edge case anyway: immediately before writing, call `read_memory` on `review-checklist-<category>.md` again. If the on-disk content has changed since your initial read at the start of the run, merge the peer's additions into your draft (additive — never clobber) and then `edit_memory`. If the file did not exist on initial read but exists now, switch from `write_memory` to `edit_memory` and merge. Stay within your own category key; never write to another category's memory.
+
 Do **not** write individual findings, work-item-specific context, or ephemeral diff observations into this memory — it is for durable, reusable review standards only.
 
 ## Category-specific review instructions

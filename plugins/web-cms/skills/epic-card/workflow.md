@@ -28,13 +28,20 @@
 
 **WORKTREE DISCIPLINE:** When creating a git worktree, always check out the **real branch name** — do not create a worktree-prefixed or renamed branch (e.g. never `worktree-PROJ-123`). Use `git worktree add <path> <branch-name>` to check out the existing branch in the worktree. All commits must be made on the real branch. Push using `git push origin <branch-name>` — never use refspecs that map a different local branch name to the remote (e.g. never `git push origin worktree-branch:real-branch`). After removing a worktree and returning to the main working directory, run `git fetch origin` and update the local ref with `git branch -f <branch-name> origin/<branch-name>` before checking it out, to ensure the local branch matches the remote.
 
-**TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create tasks for the following logical groups at the start of the workflow, mark each `in_progress` when starting and `completed` when done:
+**TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
-- **Setup** (E0–E1): Transition to In Progress, understand the epic
-- **Research & Planning** (E2–E5): Codebase review, clarifying questions, breakdown plan, approval
-- **Execution Setup** (E6–E7): Create child tasks in Jira, create integration branch/worktree
-- **Child Task Execution** (E8): Execute all child tasks (each child task tracks its own progress via the task-card workflow)
-- **Testing & Completion** (E9–E11): User testing, epic summary, cleanup
+- E0 — Transition Epic to In Progress
+- E1 — Understand the Epic
+- E2 — Review the Codebase
+- E3 — Ask Clarifying Questions
+- E4 — Create Breakdown Plan
+- E5 — Await Breakdown Plan Approval
+- E6 — Create Child Tasks in Jira
+- E7 — Create Epic Integration Branch and Worktree
+- E8 — Execute Child Tasks
+- E9 — User Testing
+- E10 — Epic Summary
+- E11 — Cleanup
 
 ---
 
@@ -65,7 +72,8 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
     - The question: "What patterns, abstractions, and utilities are in use here, and what architectural considerations affect how this epic's goals can be implemented in this area?"
     - The `work_item_id` (`work_item-<JIRA_KEY>`). All findings the explorer streams to the graph will be linked to this node.
     - The epic description for context
-- Wait for all explorers to return their `EXPLORATION COMPLETE` (or `EXPLORATION FAILED`) pointers.
+- Wait for all explorers to return one of `EXPLORATION COMPLETE`, `EXPLORATION INCOMPLETE`, or `EXPLORATION FAILED`. Each non-failed return includes a structured findings block in the text — use it as the resilient source of record alongside the graph. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters.
+- **Post-exploration enrichment:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `work_item_id`. It crystallizes durable area knowledge from this run's graph into Serena project memory for future explorations. Do not wait for it.
 - Call `read_graph` and walk the subgraph rooted at each `exploration` entity for this `work_item_id`. Surface any `open_question` entities. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
 - Synthesize the findings from the graph. Read across all `exploration` entities linked to this `work_item_id` and aggregate:
     - **Patterns, abstractions, and utilities in use** — from `pattern` entities; cite the `evidence_files` observation when present.
