@@ -1,9 +1,5 @@
 {
   "mcpServers": {
-    "MCP_DOCKER": {
-      "type": "http",
-      "url": "http://mcp-gateway.lvh.me:8811/mcp"
-    },
     "atlassian": {
       "type": "stdio",
       "command": "uvx",

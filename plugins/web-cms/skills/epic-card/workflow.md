@@ -48,7 +48,7 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 - E5 — Await Breakdown Plan Approval
 - E6 — Create Child Tasks in Jira
 - E7 — Create Epic Integration Branch and Worktree
-- E8 — Execute Child Tasks
+- E8 — Execute [JIRA-KEY]: [task title] (one task per child, created in E6 with status `pending`)
 - E9 — User Testing
 - E10 — Epic Summary
 - E11 — Cleanup
@@ -154,6 +154,7 @@ Post a single combined Jira comment with the exact heading `**E4/E5 — Breakdow
 **APPROVAL GATE -- FULL STOP.**
 
 - The approval request Jira record is the combined `E4/E5` comment already posted in E4. Do not post a second Jira comment here unless the plan changed.
+- **Present the full breakdown plan in the chat output.** The user should not have to open Jira to review it — display it here before asking for approval.
 - Then ask for approval **in the chat**. Do not proceed until the user confirms in the chat. Do not poll Jira for approval.
 - If the reviewer requests changes, revise the plan, repost the full combined `E4/E5` comment to Jira, and ask for approval in the chat again.
 - Only proceed to E6 after explicit approval has been given in the chat.
@@ -174,6 +175,8 @@ For each task identified in E4:
 4. Create a new task by calling `createJiraIssue` with `additional_fields` set to `{"parent": "EPIC-KEY", "priority": {"name": "High"}}` (substituting this epic's actual issue key and the confirmed priority name) and the assembled task description. This create call establishes the child work item relationship.
 
 > **USE KNOWLEDGE GRAPH:** After each child task is created in Jira, update its node in the knowledge graph. Add the `jira_key` property to the task node (e.g. `PROJ-124`) so E8 can reference it directly without searching Jira. If the breakdown plan changes during creation (e.g. a task is split), update the graph to reflect the current state before proceeding.
+
+> **TASK TRACKING:** After each child task is created in Jira, create a tracking task named `E8 — Execute [JIRA-KEY]: [task title]` (substituting the real key and title) with status `pending`. These tasks represent the E8 execution slots for each child and will be progressed in E8.
 
 ---
 
@@ -256,15 +259,16 @@ Example: `PROJ-900-user-authentication-overhaul`
 Work through each child task **in the order defined in E4**, executing the T0-T13 workflow inline for each one:
 
 1. Read the knowledge graph to confirm all prerequisite tasks for the next task have `status: done`.
-2. Retrieve the child task's full description from Jira and confirm that the `Task Details` section includes the expected **Epic Integration Branch** value from E7.
-3. Invoke the `task-card` skill directly with the child task's Jira key (e.g., `/task-card PROJ-124`). The skill detects epic child-task mode from the `Epic Integration Branch` field in the task description and adjusts T6 (branch from integration branch), T10 (merge to integration branch), T11 (skip user testing), and T13 (do not remove the shared epic integration worktree). T0 is performed by the skill itself.
-4. Follow the full T0-T13 workflow for this child task. Pause at every approval gate and wait for explicit chat confirmation before proceeding. Jira comments should follow the reduced `task-card` comment contract (T4/T5, T12, and failure comments only) rather than phase-by-phase narration.
-5. When the child task's T13 is complete, verify its status:
-    - If successful: update the task's knowledge graph node to `status: done`. Verify the integration branch passes the full build, all tests, and all linters before proceeding to the next task.
+2. Mark the tracking task `E8 — Execute [JIRA-KEY]: [task title]` for this child as `in_progress`.
+3. Retrieve the child task's full description from Jira and confirm that the `Task Details` section includes the expected **Epic Integration Branch** value from E7.
+4. Invoke the `task-card` skill directly with the child task's Jira key (e.g., `/task-card PROJ-124`). The skill detects epic child-task mode from the `Epic Integration Branch` field in the task description and adjusts T6 (branch from integration branch), T10 (merge to integration branch), T11 (skip user testing), and T13 (do not remove the shared epic integration worktree). T0 is performed by the skill itself.
+5. Follow the full T0-T13 workflow for this child task. Pause at every approval gate and wait for explicit chat confirmation before proceeding. Jira comments should follow the reduced `task-card` comment contract (T4/T5, T12, and failure comments only) rather than phase-by-phase narration.
+6. When the child task's T13 is complete, verify its status:
+    - If successful: update the task's knowledge graph node to `status: done`. Mark the tracking task `E8 — Execute [JIRA-KEY]: [task title]` as `completed`. Verify the integration branch passes the full build, all tests, and all linters before proceeding to the next task.
     - If failed: stop and report the failure to the user. Do not begin the next child task until the failure is resolved.
-6. **Pause between tasks:** After completing each child task, confirm with the user in the chat before starting the next one.
-7. Do not begin the next child task until the current one is confirmed complete and the integration branch is clean.
-8. After the final child task is complete, remove the epic worktree: `git worktree remove .worktrees/<branch-name>`. Sync the local branch: `git fetch origin` followed by `git branch -f <branch-name> origin/<branch-name>`. Return to the main working directory before proceeding to E9.
+7. **Pause between tasks:** After completing each child task, confirm with the user in the chat before starting the next one.
+8. Do not begin the next child task until the current one is confirmed complete and the integration branch is clean.
+9. After the final child task is complete, remove the epic worktree: `git worktree remove .worktrees/<branch-name>`. Sync the local branch: `git fetch origin` followed by `git branch -f <branch-name> origin/<branch-name>`. Return to the main working directory before proceeding to E9.
 
 ### E9 — User Testing
 
@@ -279,7 +283,7 @@ Work through each child task **in the order defined in E4**, executing the T0-T1
     - Step-by-step instructions for verifying the epic's functionality end-to-end (derived from the acceptance criteria and breakdown plan)
 - Do not proceed until the user has completed testing and explicitly approved the implementation in the chat.
     
-- If the user identifies issues, recreate the worktree (`mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`), create a new child task following the E6 child-task creation rules, and add that task to the knowledge graph before execution. Then invoke the `task-card` skill directly with the new child task's Jira key; epic child-task mode will be detected from the `Epic Integration Branch` field, so T11 user testing is skipped automatically. After that follow-up task's T13 completes, update its knowledge graph node to `status: done`, record its merge completion, then remove the worktree again (`git worktree remove .worktrees/<branch-name>`, then sync), and return to this step.
+- If the user identifies issues: for each distinct issue, invoke the `issue-intake` skill (via the `Skill` tool), passing a brief description of the observed behavior, expected behavior, and this epic's Jira key as args (e.g. `"Testing found: [description]. Related to: [PROJ-KEY]"`). Work through the issue-intake I0–I6 process with the user to document and triage each issue — it will create a Jira card (Bug or Missing Requirement) for each one. After all issues are documented and their Jira cards are created, recreate the worktree (`mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`). For each issue card created by issue-intake, create a new child Task following E6 child-task creation rules (set the `parent` field to the epic key — do not call `createIssueLink`), and add it to the knowledge graph. Invoke the `task-card` skill with each child task's Jira key; epic child-task mode will be detected from the `Epic Integration Branch` field, so T11 user testing is skipped automatically. After each follow-up task's T13 completes, update its knowledge graph node to `status: done` and record its merge completion. Once all follow-up tasks are done, remove the worktree again (`git worktree remove .worktrees/<branch-name>`, then sync), and return to this step.
     
 
 ---
@@ -323,7 +327,7 @@ This workflow is complete when **all** of the following are true:
 - All phases executed in sequence (E0 through E11)
 - All approval gates explicitly confirmed in the chat
 - Breakdown plan reviewed and approved (E4/E5)
-- All child task Jira issues created and linked to the epic (E6–E8)
+- All child task Jira issues created as child work items of the epic (E6–E8)
 - All child tasks completed and verified
 - User testing completed and approved (E9)
 - E10 epic summary comment posted to Jira with all required fields populated
