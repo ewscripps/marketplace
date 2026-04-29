@@ -43,7 +43,7 @@ The Jira card description is the interface between intake and execution:
 - **Execution skills** read the card description and consume those sections by name
 - **Workflows are NOT embedded** in card descriptions -- each card contains only the structured work context needed by the downstream execution skill. Persisted Jira descriptions must not include workflow instructions, skill-invocation text, or temporary placeholders.
 - The execution workflow lives in the skill's `workflow.md` file and is loaded when the user invokes the appropriate skill
-- Jira comments are part of the durable execution record only when a workflow explicitly requires them. For `task-card`, use the minimal structured comment set defined in that workflow (T3 clarification status, one combined T4/T5 plan-and-approval comment, T11 user testing handoff when applicable, T12 summary, and failure comments) rather than phase-by-phase narration.
+- Jira comments are part of the durable execution record only when a workflow explicitly requires them. For `task-card`, use the minimal structured comment set defined in that workflow (one combined T4/T5 plan-and-approval comment, T11 user testing handoff when applicable, T12 summary, and failure comments) rather than phase-by-phase narration.
 
 ## Skills
 

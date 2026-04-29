@@ -27,12 +27,11 @@
 
 **JIRA COMMENT CONTRACT:** Keep Jira comments minimal, structured, and durable. Do not narrate every phase. Routine Jira comments are required only at:
 
-- **T3** -- clarification status (questions, or explicit no-question note)
 - **T4/T5** -- one combined comment containing the reviewed implementation plan and the approval request
 - **T11** -- user testing handoff in standard mode only
 - **T12** -- final structured summary
 
-Additional Jira comments are allowed only for blocking failures, reposting a revised plan after requested changes, or explicit user-requested status updates. Do not post separate narration comments for T0, T1, T2, T6, T7, T8, T9, T10, or T13.
+Additional Jira comments are allowed only for blocking failures, reposting a revised plan after requested changes, or explicit user-requested status updates. Do not post separate narration comments for T0, T1, T2, T3, T6, T7, T8, T9, T10, or T13.
 
 When a Jira comment heading references workflow phases, use the exact phase label defined here. Do not invent synthetic phase ranges such as `T2-T5` or `T6-T10`. The only routine combined phase heading allowed is `T4/T5` because one comment serves both phases.
 
@@ -107,9 +106,8 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 1. Review all output from T0, T1, and T2.
 2. Identify clarifying questions. Mark each as `[BLOCKING]` or `[NICE TO HAVE]`.
 3. Present all questions in a **single batch** — do not ask one at a time.
-4. If there are clarifying questions: post a comment on this Jira issue with the exact heading `**T3 — Clarifying Questions**` listing all questions, then ask the same questions **in the chat** and wait for answers before proceeding. Do not poll Jira for answers.
-5. If there are no clarifying questions: post a comment on this Jira issue with the exact heading `**T3 — Clarifying Questions**` and the body `Status: No clarifying questions -- proceeding to T4.`
-6. Record all answers verbatim. Do not infer or invent answers.
+4. Ask all questions **in the chat** and wait for answers before proceeding. If there are no clarifying questions, state this in the chat and proceed.
+5. Record all answers verbatim. Do not infer or invent answers.
 
 > **REQUIRED:** All BLOCKING questions answered and answers recorded. Remaining unanswered questions listed as open items.
 
