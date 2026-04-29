@@ -1,2 +1,7 @@
 .claude/
 .serena/
+.DS_Store
+plugins/.DS_Store
+plugins/jira/.DS_Store
+plugins/web-cms/.DS_Store
+plugins/web-cms/skills/.DS_Store
