@@ -43,9 +43,11 @@
 
 **Objective:** Greet the user and gather all information about the unexpected or missing behavior through natural conversation. Do not assume or imply whether this is a bug or a missing requirement — remain neutral until I4.
 
+**If called with pre-populated context (non-empty $ARGUMENTS):** Skip the cold-start introduction. Present the pre-populated fields (observed behavior, expected behavior, related Jira key) as a structured summary and ask the user to confirm or correct them before proceeding to the remaining I0 questions. Only ask about fields that were not pre-populated.
+
 **Agent Actions:**
 
-1. Introduce yourself and briefly explain what this workflow will do and what to expect (phases, classification, end result).
+1. Introduce yourself and briefly explain what this workflow will do and what to expect (phases, classification, end result). Skip this step if called with pre-populated context — the user is already in context from the parent workflow.
     
 2. Ask the following questions **conversationally, one topic at a time.** Do not present them as a form or list. Wait for each response before asking the next.
     

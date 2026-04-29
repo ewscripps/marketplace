@@ -163,6 +163,7 @@ The sub-agent will return a structured findings report with an overall verdict o
 **APPROVAL GATE -- FULL STOP.**
 
 - The approval request Jira record is the combined `T4/T5` comment already posted in T4. Do not post a second Jira comment here unless the plan changed.
+- **Present the full implementation plan in the chat output.** The user should not have to open Jira to review it — display it here before asking for approval.
 - Then ask for approval **in the chat**. Do not proceed until the user confirms in the chat. Do not poll Jira for approval.
 - If the reviewer requests changes, revise the plan, repost the full combined `T4/T5` comment to Jira, and ask for approval in the chat again.
 - Only proceed to T6 after explicit approval has been given in the chat.
@@ -315,7 +316,7 @@ Example: `[PROJ-1234] Add retry logic with exponential backoff to payment servic
     - Step-by-step instructions for verifying the new behavior (derived from the acceptance criteria and the implementation plan)
 - Do not proceed until the user has completed testing and explicitly approved the implementation in the chat.
 
-- If the user identifies issues: recreate the worktree (`mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`), return to T8, resolve them, re-run T9 and T10 (which removes the worktree again), and return to this step before proceeding.
+- If the user identifies issues: for each distinct issue, invoke the `issue-intake` skill (via the `Skill` tool), passing a brief description of the observed behavior, expected behavior, and this task's Jira key as args (e.g. `"Testing found: [description]. Related to: [PROJ-KEY]"`). Work through the issue-intake I0–I6 process with the user to document and triage each issue — it will create a Jira card (Bug or Missing Requirement) for each one. After all issues are documented and their Jira cards are created, recreate the worktree (`mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`), return to T8, resolve each issue, re-run T9 and T10 (which removes the worktree again), and return to this step before proceeding.
 
 ---
 
