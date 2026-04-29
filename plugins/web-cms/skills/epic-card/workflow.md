@@ -28,12 +28,11 @@
 
 **JIRA COMMENT CONTRACT:** Keep Jira comments minimal, structured, and durable. Do not narrate every phase. Routine Jira comments are required only at:
 
-- **E3** — clarification status (questions, or explicit no-question note)
 - **E4/E5** — one combined comment containing the reviewed breakdown plan and the approval request
 - **E9** — user testing handoff
 - **E10** — final epic summary
 
-Additional Jira comments are allowed only for blocking failures, reposting a revised plan after requested changes, or explicit user-requested status updates. Do not post separate narration comments for E0, E1, E2, E6, E7, E8, or E11.
+Additional Jira comments are allowed only for blocking failures, reposting a revised plan after requested changes, or explicit user-requested status updates. Do not post separate narration comments for E0, E1, E2, E3, E6, E7, E8, or E11.
 
 When a Jira comment heading references workflow phases, use the exact phase label defined here. Do not invent synthetic phase ranges. The only routine combined phase heading allowed is `E4/E5` because one comment serves both phases.
 
@@ -100,9 +99,8 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 1. Review all output from E0, E1, and E2.
 2. Identify clarifying questions. Mark each as `[BLOCKING]` or `[NICE TO HAVE]`.
 3. Present all questions in a **single batch** — do not ask one at a time.
-4. If there are clarifying questions: post a comment on this Jira issue with the exact heading `**E3 — Clarifying Questions**` listing all questions, then ask the same questions **in the chat** and wait for answers before proceeding. Do not poll Jira for answers.
-5. If there are no clarifying questions: post a comment on this Jira issue with the exact heading `**E3 — Clarifying Questions**` and the body `Status: No clarifying questions -- proceeding to E4.`
-6. Record all answers verbatim. Do not infer or invent answers.
+4. Ask all questions **in the chat** and wait for answers before proceeding. If there are no clarifying questions, state this in the chat and proceed.
+5. Record all answers verbatim. Do not infer or invent answers.
 
 > **REQUIRED:** All BLOCKING questions answered and answers recorded. Remaining unanswered questions listed as open items.
 
@@ -260,7 +258,7 @@ Work through each child task **in the order defined in E4**, executing the T0-T1
 1. Read the knowledge graph to confirm all prerequisite tasks for the next task have `status: done`.
 2. Retrieve the child task's full description from Jira and confirm that the `Task Details` section includes the expected **Epic Integration Branch** value from E7.
 3. Invoke the `task-card` skill directly with the child task's Jira key (e.g., `/task-card PROJ-124`). The skill detects epic child-task mode from the `Epic Integration Branch` field in the task description and adjusts T6 (branch from integration branch), T10 (merge to integration branch), T11 (skip user testing), and T13 (do not remove the shared epic integration worktree). T0 is performed by the skill itself.
-4. Follow the full T0-T13 workflow for this child task. Pause at every approval gate and wait for explicit chat confirmation before proceeding. Jira comments should follow the reduced `task-card` comment contract (T3, T4/T5, T12, and failure comments only) rather than phase-by-phase narration.
+4. Follow the full T0-T13 workflow for this child task. Pause at every approval gate and wait for explicit chat confirmation before proceeding. Jira comments should follow the reduced `task-card` comment contract (T4/T5, T12, and failure comments only) rather than phase-by-phase narration.
 5. When the child task's T13 is complete, verify its status:
     - If successful: update the task's knowledge graph node to `status: done`. Verify the integration branch passes the full build, all tests, and all linters before proceeding to the next task.
     - If failed: stop and report the failure to the user. Do not begin the next child task until the failure is resolved.

@@ -201,9 +201,8 @@ When all reports are received, write every finding from all reports to the knowl
 1. Review all output from CR0 through CR6.
 2. Identify clarifying questions. Mark each as `[BLOCKING]` or `[NICE TO HAVE]`.
 3. Present all questions in a **single batch** — do not ask one at a time.
-4. If there are clarifying questions: post a comment on this Jira issue with the exact heading `**CR7 — Clarifying Questions**` listing all questions, then ask the same questions **in the chat** and wait for answers before proceeding. Do not poll Jira for answers.
-5. If there are no clarifying questions: post a comment on this Jira issue with the exact heading `**CR7 — Clarifying Questions**` and the body `Status: No clarifying questions -- proceeding to CR8.`
-6. Record all answers verbatim. Do not infer or invent answers.
+4. Ask all questions **in the chat** and wait for answers before proceeding. If there are no clarifying questions, state this in the chat and proceed.
+5. Record all answers verbatim. Do not infer or invent answers.
 
 > **REQUIRED:** All BLOCKING questions answered and answers recorded. Remaining unanswered questions listed as open items.
 
@@ -245,7 +244,7 @@ Post a single consolidated comment on this Jira issue containing ALL of the foll
     3. **Recommend an epic** for the remediation task. Search Jira for open epics in the same project that relate to the code areas covered by the review findings. If the reviewed issue is already linked to an epic, suggest that epic. Present the recommendation and ask the user to: (a) accept the suggested epic, (b) provide a different epic key, or (c) leave blank for no epic. Only set the Epic Link if the user accepts or provides a key.
     4. Create a new Task by calling `createJiraIssue` with the derived `project_key`, `issue_type: "Task"`, `summary` set to `{PROJECTKEY} [Review Type] Code Review Remediation`, and `additional_fields` set to `{"priority": {"name": "High"}}` (substituting the confirmed priority name; also include `"epicKey": "EPIC-KEY"` if the user confirmed an epic). Populate the `description` with ALL findings that require action, organized by severity (Critical first, then Major, then Minor). For each finding include: the file, description, severity, and the review category it came from.
     5. After the task is created, link it to this review issue by calling `createIssueLink` with `link_type: "Relates to"`, `inward_issue_key` set to the new task's key, and `outward_issue_key` set to this review issue's key.
-- If the overall assessment is **Approved:** post a comment stating "No remediation task required — review approved with no actionable findings."
+- If the overall assessment is **Approved:** skip task creation. No further action is required at this phase.
     
 
 ### CR10 — Notify
@@ -267,7 +266,7 @@ This workflow is complete when **all** of the following are true:
 - All approval gates explicitly confirmed in the chat
 - Issue transitioned to In Progress (CR0)
 - Code reviewed across all applicable categories (CR4–CR6)
-- CR7 clarifying questions resolved (or no-questions comment posted)
+- CR7 clarifying questions resolved (or confirmed none needed)
 - CR8 consolidated findings comment posted to Jira with all required fields populated and overall assessment verdict included
 - Remediation task created and linked if findings required action (CR9), or no-remediation comment posted if approved
 - Assignee or reporter notified with verdict and links (CR10)

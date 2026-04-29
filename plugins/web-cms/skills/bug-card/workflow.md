@@ -29,12 +29,11 @@
 
 **JIRA COMMENT CONTRACT:** Keep Jira comments minimal, structured, and durable. Do not narrate every phase. Routine Jira comments are required only at:
 
-- **B4** — clarification status (questions, or explicit no-question note)
 - **B5/B6** — one combined comment containing the reviewed fix plan and the approval request
 - **B13** — user testing handoff
 - **B14** — final structured summary
 
-Additional Jira comments are allowed only for blocking failures, reposting a revised plan after requested changes, or explicit user-requested status updates. Do not post separate narration comments for B0, B1, B2, B3, B7, B8, B9, B10, B11, B12, or B15.
+Additional Jira comments are allowed only for blocking failures, reposting a revised plan after requested changes, or explicit user-requested status updates. Do not post separate narration comments for B0, B1, B2, B3, B4, B7, B8, B9, B10, B11, B12, or B15.
 
 When a Jira comment heading references workflow phases, use the exact phase label defined here. Do not invent synthetic phase ranges. The only routine combined phase heading allowed is `B5/B6` because one comment serves both phases.
 
@@ -82,7 +81,7 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 - Follow the **Steps to Reproduce** exactly as described.
 - Confirm whether the bug is reproducible and document the results.
 - If the bug **cannot be reproduced:** Stop. Post a comment on this Jira issue describing what was tried, the environment used, and the actual results observed. **Do not continue until the reporter provides additional reproduction guidance.**
-- If the bug **requires manual UI interaction, browser-specific conditions, or environment-specific setup that cannot be automated:** Post a comment noting that automated reproduction is not possible and why. Proceed to B3 with investigation based on code analysis only. Note this limitation -- it will affect B9 (the failing test may need to target the underlying logic rather than the exact user-facing scenario).
+- If the bug **requires manual UI interaction, browser-specific conditions, or environment-specific setup that cannot be automated:** Proceed to B3 with investigation based on code analysis only. Note this limitation — it will affect B9 (the failing test may need to target the underlying logic rather than the exact user-facing scenario) and must be documented in the B14 summary.
 - If the bug **is reproduced:** Note any additional observations (e.g., intermittent behavior, specific conditions required, related error logs or stack traces).
 
 ### B3 — Investigate Root Cause
@@ -113,9 +112,8 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 1. Review all output from B0, B1, B2, and B3.
 2. Identify clarifying questions. Mark each as `[BLOCKING]` or `[NICE TO HAVE]`.
 3. Present all questions in a **single batch** — do not ask one at a time.
-4. If there are clarifying questions: post a comment on this Jira issue with the exact heading `**B4 — Clarifying Questions**` listing all questions, then ask the same questions **in the chat** and wait for answers before proceeding. Do not poll Jira for answers.
-5. If there are no clarifying questions: post a comment on this Jira issue with the exact heading `**B4 — Clarifying Questions**` and the body `Status: No clarifying questions -- proceeding to B5.`
-6. Record all answers verbatim. Do not infer or invent answers.
+4. Ask all questions **in the chat** and wait for answers before proceeding. If there are no clarifying questions, state this in the chat and proceed.
+5. Record all answers verbatim. Do not infer or invent answers.
 
 > **REQUIRED:** All BLOCKING questions answered and answers recorded. Remaining unanswered questions listed as open items.
 
@@ -205,7 +203,7 @@ Example: `PROJ-5678-fix-null-pointer-in-user-lookup`
 - Run the new test and confirm it **fails for the expected reason.**
 - This test serves as both proof of the bug and a permanent regression guard.
 - This phase establishes the minimum regression proof. The dedicated `test-reviewer` sub-agent in B10 will expand the coverage after the fix is implemented.
-- If the bug cannot be directly reproduced in an automated test (e.g., UI-only behavior, timing-dependent race condition), write a test that targets the underlying logic flaw identified in B3 as closely as possible. Post a comment on the Jira issue noting what the test covers and what it does not, and why a more direct reproduction test was not feasible.
+- If the bug cannot be directly reproduced in an automated test (e.g., UI-only behavior, timing-dependent race condition), write a test that targets the underlying logic flaw identified in B3 as closely as possible. Document the test limitation in the B14 summary (Tests added/updated field) — note what the test covers, what it does not, and why a more direct reproduction test was not feasible.
 
 ### B10 — Implement the Fix
 
