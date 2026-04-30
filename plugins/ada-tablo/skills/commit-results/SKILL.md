@@ -1,7 +1,7 @@
 ---
 name: commit-results
 description: Commit and push ada-tablo analysis results to the shared GitHub workspace.
-user-invocable: false
+user-invocable: true
 allowed-tools: Bash(git *), AskUserQuestion, Read, Glob
 ---
 
