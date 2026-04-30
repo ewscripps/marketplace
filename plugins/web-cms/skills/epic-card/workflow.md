@@ -280,7 +280,10 @@ Work through each child task **in the order defined in E4**, executing the T0-T1
 - Post a comment notifying the user that all child tasks are complete and the epic is ready for manual testing. The comment must include:
     
     - A summary of everything that was implemented across all child tasks
-    - Step-by-step instructions for verifying the epic's functionality end-to-end (derived from the acceptance criteria and breakdown plan)
+    - **Acceptance Criteria & Testing Steps:** For each acceptance criterion from the Epic's Acceptance Criteria section (read in E1), a numbered section with:
+        - The criterion restated clearly
+        - Step-by-step end-to-end instructions to verify that criterion is met across all child tasks
+- Present the same testing handoff in the chat — the user should not have to open Jira to see what to test.
 - Do not proceed until the user has completed testing and explicitly approved the implementation in the chat.
     
 - If the user identifies issues: for each distinct issue, invoke the `issue-intake` skill (via the `Skill` tool), passing a brief description of the observed behavior, expected behavior, and this epic's Jira key as args (e.g. `"Testing found: [description]. Related to: [PROJ-KEY]"`). Work through the issue-intake I0–I6 process with the user to document and triage each issue — it will create a Jira card (Bug or Missing Requirement) for each one. After all issues are documented and their Jira cards are created, recreate the worktree (`mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`). For each issue card created by issue-intake, create a new child Task following E6 child-task creation rules (set the `parent` field to the epic key — do not call `createIssueLink`), and add it to the knowledge graph. Invoke the `task-card` skill with each child task's Jira key; epic child-task mode will be detected from the `Epic Integration Branch` field, so T11 user testing is skipped automatically. After each follow-up task's T13 completes, update its knowledge graph node to `status: done` and record its merge completion. Once all follow-up tasks are done, remove the worktree again (`git worktree remove .worktrees/<branch-name>`, then sync), and return to this step.

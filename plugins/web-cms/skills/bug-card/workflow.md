@@ -330,7 +330,10 @@ Example: `[PROJ-5678] Fix null pointer when looking up user with missing profile
 
     - The branch name
     - A summary of what was fixed
-    - Step-by-step instructions for verifying the fix (derived from the Steps to Reproduce and the fix plan)
+    - **Fix Criteria & Testing Steps:** For each expected behavior item from the Bug Details and fix plan, a numbered section with:
+        - The criterion/expected behavior restated clearly
+        - Step-by-step instructions to verify it now works correctly
+- Present the same testing handoff in the chat — the user should not have to open Jira to see what to test.
 - Do not proceed until the user has completed testing and explicitly approved the fix in the chat.
 
 - If the user identifies issues: for each distinct issue, invoke the `issue-intake` skill (via the `Skill` tool), passing a brief description of the observed behavior, expected behavior, and this bug's Jira key as args (e.g. `"Testing found: [description]. Related to: [PROJ-KEY]"`). Work through the issue-intake I0–I6 process with the user to document and triage each issue — it will create a Jira card (Bug or Missing Requirement) for each one. After all issues are documented and their Jira cards are created, recreate the worktree (`mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`), return to B10, resolve each issue, re-run B11 and B12 (which removes the worktree again), and return to this step before proceeding.
