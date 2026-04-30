@@ -313,7 +313,10 @@ Example: `[PROJ-1234] Add retry logic with exponential backoff to payment servic
 
     - The branch name
     - A summary of what was implemented
-    - Step-by-step instructions for verifying the new behavior (derived from the acceptance criteria and the implementation plan)
+    - **Acceptance Criteria & Testing Steps:** For each acceptance criterion listed in the Task Details, a numbered section with:
+        - The criterion restated clearly
+        - Step-by-step instructions to verify that criterion is met
+- Present the same testing handoff in the chat — the user should not have to open Jira to see what to test.
 - Do not proceed until the user has completed testing and explicitly approved the implementation in the chat.
 
 - If the user identifies issues: for each distinct issue, invoke the `issue-intake` skill (via the `Skill` tool), passing a brief description of the observed behavior, expected behavior, and this task's Jira key as args (e.g. `"Testing found: [description]. Related to: [PROJ-KEY]"`). Work through the issue-intake I0–I6 process with the user to document and triage each issue — it will create a Jira card (Bug or Missing Requirement) for each one. After all issues are documented and their Jira cards are created, recreate the worktree (`mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`), return to T8, resolve each issue, re-run T9 and T10 (which removes the worktree again), and return to this step before proceeding.
