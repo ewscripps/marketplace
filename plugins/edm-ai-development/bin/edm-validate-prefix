@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# edm-validate-prefix — verify a proposed prefix is valid and unique within SRD/.
+# Usage: edm-validate-prefix <PREFIX>
+# Exit codes:
+#   0 = valid and unique (safe to use)
+#   1 = invalid format
+#   2 = collision (already exists in SRD/)
+set -euo pipefail
+
+SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
+PREFIX="${1:-}"
+
+die() { echo "edm-validate-prefix: $*" >&2; exit "${2:-1}"; }
+
+[[ -n "$PREFIX" ]] || die "usage: edm-validate-prefix <PREFIX>" 1
+
+if [[ ! "$PREFIX" =~ ^[A-Z][A-Z0-9_-]{1,7}$ ]]; then
+  die "invalid format: prefix must be 2-8 chars, uppercase, starting with a letter (got '$PREFIX')" 1
+fi
+
+if [[ -d "${SRD_ROOT}/${PREFIX}" ]]; then
+  die "collision: ${SRD_ROOT}/${PREFIX} already exists" 2
+fi
+
+# Also check archived initiatives — repeating an old prefix is allowed but worth a warning.
+if [[ -d "${SRD_ROOT}/.archived/${PREFIX}" ]]; then
+  echo "edm-validate-prefix: NOTE: $PREFIX exists in ${SRD_ROOT}/.archived/ (previously used and archived)" >&2
+fi
+
+echo "ok: $PREFIX is valid and not in use"
+exit 0

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# edm-init — scaffold a new SRD/{PREFIX}/ initiative directory.
+# Usage: edm-init <PREFIX>
+set -euo pipefail
+
+SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
+PREFIX="${1:-}"
+
+die() { echo "edm-init: $*" >&2; exit 1; }
+
+[[ -n "$PREFIX" ]] || die "usage: edm-init <PREFIX>"
+[[ "$PREFIX" =~ ^[A-Z][A-Z0-9_-]{1,7}$ ]] || die "prefix must be 2-8 chars, uppercase, starting with a letter"
+
+DIR="${SRD_ROOT}/${PREFIX}"
+if [[ -d "$DIR" ]]; then
+  die "initiative directory already exists at $DIR (run 'edm-state get $PREFIX' to inspect)"
+fi
+
+mkdir -p "$DIR/code-audit"
+edm-state init "$PREFIX" >/dev/null
+
+# .gitignore behavior: by default the state file is committed.
+# Honor commit_state_file=false by writing a local .gitignore that excludes it.
+COMMIT_STATE="${CLAUDE_PLUGIN_OPTION_COMMIT_STATE_FILE:-true}"
+if [[ "$COMMIT_STATE" != "true" ]]; then
+  echo ".edm-state.json" > "$DIR/.gitignore"
+fi
+
+cat <<EOF
+Initiative scaffold created:
+  $DIR/
+  ├── .edm-state.json
+  └── code-audit/
+
+Next: run /edm:plan $PREFIX <description> to begin Phase 1.
+EOF

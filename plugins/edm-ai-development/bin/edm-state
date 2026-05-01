@@ -1,0 +1,632 @@
+#!/usr/bin/env bash
+# edm-state — read/write SRD/{PREFIX}/.edm-state.json files for the EDM plugin.
+# Usage:
+#   edm-state get <PREFIX>                              # print state JSON
+#   edm-state set <PREFIX> <key> <value>                # set a top-level field
+#   edm-state list                                      # list in-progress initiatives
+#   edm-state init <PREFIX>                             # write a fresh state file
+#   edm-state approve-gate <PREFIX> <gate-num>          # record a gate approval
+#   edm-state phase-start <PREFIX> <phase-num>          # record phase start timestamp
+#   edm-state phase-complete <PREFIX> <phase-num>       # record phase completion + duration
+#   edm-state checkpoint-if-active                      # called by Stop/PreCompact hooks
+#   edm-state record-task-duration                      # called by TaskCompleted hook
+#   edm-state record-test-coverage <PREFIX> <layer> <pct>   # record coverage % for a test layer
+#   edm-state record-tests-added <PREFIX> <phase> <layer> <count>  # record test count by layer
+#   edm-state get-coverage <PREFIX>                     # print coverage summary for all layers
+#   edm-state archive <PREFIX>                          # mark initiative complete
+#   edm-state watch-impl                                # tail git log for ticket commits (called by monitor)
+#   edm-state metrics-report <PREFIX|--all|--calibrate>
+set -euo pipefail
+
+SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
+SRD_FILENAME="${EDM_SRD_FILENAME:-${CLAUDE_PLUGIN_OPTION_SRD_FILENAME:-srd.md}}"
+TICKET_PACK_DIRNAME="${EDM_TICKET_PACK_DIRNAME:-${CLAUDE_PLUGIN_OPTION_TICKET_PACK_DIRNAME:-tickets}}"
+HUMAN_HOURLY_RATE_USD="${EDM_HUMAN_HOURLY_RATE_USD:-${CLAUDE_PLUGIN_OPTION_HUMAN_HOURLY_RATE_USD:-150}}"
+
+die() { echo "edm-state: $*" >&2; exit 1; }
+
+require_jq() {
+  command -v jq >/dev/null 2>&1 || die "jq is required (install: brew install jq / apt install jq)"
+}
+
+# Compute a stable hash of a file. Returns "absent" if the file doesn't exist.
+# Tries sha256sum (Linux), then shasum -a 256 (macOS), then md5sum/md5 as last resort.
+artifact_hash() {
+  local file="$1"
+  [[ -f "$file" ]] || { echo "absent"; return 0; }
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | cut -d' ' -f1
+  elif command -v md5sum >/dev/null 2>&1; then
+    md5sum "$file" | cut -d' ' -f1
+  else
+    md5 -q "$file" 2>/dev/null || echo "unhashable"
+  fi
+}
+
+# Record the current hash of a named artifact into .edm-state.json.
+# artifact_name: a stable key like "srd" or "tickets"
+# file_path: the actual file to hash
+record_artifact_hash() {
+  local prefix="$1" artifact_name="$2" file_path="$3"
+  require_jq
+  local hash t current new
+  hash="$(artifact_hash "$file_path")"
+  t="$(now_utc)"
+  current="$(read_state "$prefix")"
+  new="$(echo "$current" | jq \
+    --arg name "$artifact_name" \
+    --arg hash "$hash" \
+    --arg path "$file_path" \
+    --arg t "$t" '
+    .artifact_hashes[$name] = {hash: $hash, path: $path, recorded_at: $t}
+    | .last_updated = $t
+  ')"
+  write_state "$prefix" "$new"
+}
+
+state_file_for() {
+  local prefix="$1"
+  echo "${SRD_ROOT}/${prefix}/.edm-state.json"
+}
+
+# ---- Cost tracking ---------------------------------------------------------
+# Token usage is read from Claude Code session JSONL files at:
+#   ~/.claude/projects/<encoded-cwd>/<session-id>.jsonl
+# Each assistant message has .message.usage with input/output/cache token counts
+# and .message.model identifying the model used.
+
+session_dir_for_cwd() {
+  local cwd
+  cwd="$(pwd)"
+  # Claude Code encodes the cwd by replacing both '/' and '.' with '-'
+  echo "${HOME}/.claude/projects/$(echo "$cwd" | tr '/.' '-')"
+}
+
+# Sum cumulative tokens across all assistant messages in this project's sessions
+# whose timestamp >= the given ISO 8601 time. Outputs JSON:
+#   {input, output, cache_read, cache_write_5m, cache_write_1h, model}
+# Cache writes are split by TTL because 5-min and 1-hour writes have different
+# per-million-token rates.
+get_session_tokens_since() {
+  local since="$1"
+  local sessions_dir
+  sessions_dir="$(session_dir_for_cwd)"
+  if [[ ! -d "$sessions_dir" ]] || ! ls "$sessions_dir"/*.jsonl >/dev/null 2>&1; then
+    echo '{"input":0,"output":0,"cache_read":0,"cache_write_5m":0,"cache_write_1h":0,"model":"unknown"}'
+    return 0
+  fi
+  cat "$sessions_dir"/*.jsonl 2>/dev/null | jq -s --arg since "$since" '
+    [.[] | select(.type == "assistant" and (.timestamp // "") >= $since)] as $msgs |
+    {
+      input: ([$msgs[].message.usage.input_tokens // 0] | add // 0),
+      output: ([$msgs[].message.usage.output_tokens // 0] | add // 0),
+      cache_read: ([$msgs[].message.usage.cache_read_input_tokens // 0] | add // 0),
+      cache_write_5m: ([$msgs[].message.usage.cache_creation.ephemeral_5m_input_tokens // 0] | add // 0),
+      cache_write_1h: ([$msgs[].message.usage.cache_creation.ephemeral_1h_input_tokens // 0] | add // 0),
+      model: ($msgs[-1].message.model // "unknown")
+    }
+  ' 2>/dev/null || echo '{"input":0,"output":0,"cache_read":0,"cache_write_5m":0,"cache_write_1h":0,"model":"unknown"}'
+}
+
+# Anthropic pricing per million tokens (USD), verified May 2026.
+# https://docs.anthropic.com/en/docs/about-claude/pricing
+# Override via env vars to track rate changes without modifying this script.
+#   EDM_OPUS_INPUT_RATE, EDM_OPUS_OUTPUT_RATE,
+#   EDM_OPUS_CACHE_READ_RATE, EDM_OPUS_CACHE_WRITE_5M_RATE, EDM_OPUS_CACHE_WRITE_1H_RATE
+#   (likewise for SONNET, HAIKU)
+compute_cost_usd() {
+  local model="$1" input="$2" output="$3" cache_read="$4" cw5m="$5" cw1h="$6"
+  local in_rate out_rate cr_rate cw5m_rate cw1h_rate
+  case "$model" in
+    *opus*)
+      in_rate="${EDM_OPUS_INPUT_RATE:-5}"
+      out_rate="${EDM_OPUS_OUTPUT_RATE:-25}"
+      cr_rate="${EDM_OPUS_CACHE_READ_RATE:-0.50}"
+      cw5m_rate="${EDM_OPUS_CACHE_WRITE_5M_RATE:-6.25}"
+      cw1h_rate="${EDM_OPUS_CACHE_WRITE_1H_RATE:-10.00}"
+      ;;
+    *haiku*)
+      in_rate="${EDM_HAIKU_INPUT_RATE:-1}"
+      out_rate="${EDM_HAIKU_OUTPUT_RATE:-5}"
+      cr_rate="${EDM_HAIKU_CACHE_READ_RATE:-0.10}"
+      cw5m_rate="${EDM_HAIKU_CACHE_WRITE_5M_RATE:-1.25}"
+      cw1h_rate="${EDM_HAIKU_CACHE_WRITE_1H_RATE:-2.00}"
+      ;;
+    *sonnet*|*)
+      in_rate="${EDM_SONNET_INPUT_RATE:-3}"
+      out_rate="${EDM_SONNET_OUTPUT_RATE:-15}"
+      cr_rate="${EDM_SONNET_CACHE_READ_RATE:-0.30}"
+      cw5m_rate="${EDM_SONNET_CACHE_WRITE_5M_RATE:-3.75}"
+      cw1h_rate="${EDM_SONNET_CACHE_WRITE_1H_RATE:-6.00}"
+      ;;
+  esac
+  awk -v i="$input" -v o="$output" -v cr="$cache_read" -v c5="$cw5m" -v c1="$cw1h" \
+      -v ir="$in_rate" -v or="$out_rate" -v crr="$cr_rate" -v c5r="$cw5m_rate" -v c1r="$cw1h_rate" \
+      'BEGIN { printf "%.4f", (i*ir + o*or + cr*crr + c5*c5r + c1*c1r) / 1000000 }'
+}
+
+# Estimate human cost (USD) for a phase given:
+#   - phase number (1-6)
+#   - initiative size (Small / Medium / Large)
+# Uses the Phase Timing Guidelines hours × HUMAN_HOURLY_RATE_USD.
+human_cost_for_phase() {
+  local phase="$1" size="$2"
+  local hours
+  case "${size}-${phase}" in
+    "Small-1")  hours=0.5  ;; "Small-2")  hours=2  ;; "Small-3")  hours=1   ;;
+    "Small-4")  hours=1    ;; "Small-5")  hours=0.5;; "Small-6")  hours=6   ;;
+    "Medium-1") hours=1    ;; "Medium-2") hours=4  ;; "Medium-3") hours=2   ;;
+    "Medium-4") hours=3    ;; "Medium-5") hours=1  ;; "Medium-6") hours=18  ;;
+    "Large-1")  hours=2    ;; "Large-2")  hours=8  ;; "Large-3")  hours=4   ;;
+    "Large-4")  hours=6    ;; "Large-5")  hours=2  ;; "Large-6")  hours=36  ;;
+    *)          hours=0    ;;
+  esac
+  awk -v h="$hours" -v r="$HUMAN_HOURLY_RATE_USD" 'BEGIN { printf "%.2f", h*r }'
+}
+
+read_state() {
+  local prefix="$1"
+  local f
+  f="$(state_file_for "$prefix")"
+  [[ -f "$f" ]] || die "no state file for $prefix at $f"
+  cat "$f"
+}
+
+write_state() {
+  local prefix="$1"
+  local content="$2"
+  local f
+  f="$(state_file_for "$prefix")"
+  mkdir -p "$(dirname "$f")"
+  printf '%s\n' "$content" > "$f"
+}
+
+now_utc() {
+  date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+cmd_get() {
+  [[ $# -eq 1 ]] || die "usage: edm-state get <PREFIX>"
+  read_state "$1"
+}
+
+cmd_set() {
+  [[ $# -eq 3 ]] || die "usage: edm-state set <PREFIX> <key> <value>"
+  require_jq
+  local prefix="$1" key="$2" value="$3"
+  local current new
+  current="$(read_state "$prefix")"
+  new="$(echo "$current" | jq --arg k "$key" --arg v "$value" '.[$k] = $v | .last_updated = (now | todate)')"
+  write_state "$prefix" "$new"
+}
+
+cmd_init() {
+  [[ $# -eq 1 ]] || die "usage: edm-state init <PREFIX>"
+  require_jq
+  local prefix="$1"
+  local f
+  f="$(state_file_for "$prefix")"
+  if [[ -f "$f" ]]; then
+    echo "edm-state: state file already exists at $f" >&2
+    return 0
+  fi
+  mkdir -p "$(dirname "$f")"
+  jq -n --arg p "$prefix" --arg t "$(now_utc)" '{
+    prefix: $p,
+    current_phase: 0,
+    gates_approved: [],
+    artifacts: {},
+    artifact_hashes: {},
+    srd_version: "0.0.0",
+    estimated_size: "Unknown",
+    phase_durations: {},
+    test_frameworks_detected: {},
+    coverage_by_layer: {},
+    last_updated: $t
+  }' > "$f"
+  echo "initialized $f"
+}
+
+cmd_list() {
+  [[ -d "$SRD_ROOT" ]] || { echo "no SRD/ directory yet"; return 0; }
+  local found=0
+  for state in "$SRD_ROOT"/*/.edm-state.json; do
+    [[ -f "$state" ]] || continue
+    found=1
+    local prefix phase gates last
+    prefix="$(jq -r '.prefix' "$state" 2>/dev/null || echo unknown)"
+    phase="$(jq -r '.current_phase' "$state" 2>/dev/null || echo 0)"
+    gates="$(jq -r '.gates_approved | length' "$state" 2>/dev/null || echo 0)"
+    last="$(jq -r '.last_updated' "$state" 2>/dev/null || echo unknown)"
+    printf "  %-12s  phase=%d  gates_approved=%d  last_updated=%s\n" "$prefix" "$phase" "$gates" "$last"
+  done
+  [[ $found -eq 1 ]] || echo "  (no in-progress initiatives)"
+}
+
+cmd_approve_gate() {
+  [[ $# -eq 2 ]] || die "usage: edm-state approve-gate <PREFIX> <gate-num>"
+  require_jq
+  local prefix="$1" gate="$2"
+  local current new approver
+  current="$(read_state "$prefix")"
+  approver="${USER:-unknown}"
+  new="$(echo "$current" | jq --argjson g "$gate" --arg t "$(now_utc)" --arg a "$approver" '
+    .gates_approved += [{gate: $g, approved_at: $t, approver: $a}]
+    | .last_updated = $t
+  ')"
+  write_state "$prefix" "$new"
+  echo "approved gate $gate for $prefix at $(now_utc)"
+}
+
+cmd_phase_start() {
+  [[ $# -eq 2 ]] || die "usage: edm-state phase-start <PREFIX> <phase-num>"
+  require_jq
+  local prefix="$1" phase="$2"
+  local current new key
+  current="$(read_state "$prefix")"
+  key="${phase}_phase"
+  new="$(echo "$current" | jq --arg k "$key" --argjson p "$phase" --arg t "$(now_utc)" '
+    .current_phase = $p
+    | .phase_durations[$k] = ((.phase_durations[$k] // {}) + {started_at: $t})
+    | .last_updated = $t
+  ')"
+  write_state "$prefix" "$new"
+}
+
+cmd_phase_complete() {
+  [[ $# -eq 2 ]] || die "usage: edm-state phase-complete <PREFIX> <phase-num>"
+  require_jq
+  local prefix="$1" phase="$2"
+  local current key started_at
+  current="$(read_state "$prefix")"
+  key="${phase}_phase"
+  started_at="$(echo "$current" | jq -r --arg k "$key" '.phase_durations[$k].started_at // empty')"
+
+  # Read token usage since phase start (if started_at is known)
+  local tokens="" input=0 output=0 cache_read=0 cw5m=0 cw1h=0 model="unknown" cost="0.0000"
+  if [[ -n "$started_at" ]]; then
+    tokens="$(get_session_tokens_since "$started_at")"
+    input="$(echo "$tokens" | jq -r '.input // 0')"
+    output="$(echo "$tokens" | jq -r '.output // 0')"
+    cache_read="$(echo "$tokens" | jq -r '.cache_read // 0')"
+    cw5m="$(echo "$tokens" | jq -r '.cache_write_5m // 0')"
+    cw1h="$(echo "$tokens" | jq -r '.cache_write_1h // 0')"
+    model="$(echo "$tokens" | jq -r '.model // "unknown"')"
+    cost="$(compute_cost_usd "$model" "$input" "$output" "$cache_read" "$cw5m" "$cw1h")"
+  fi
+
+  # Estimate human baseline cost for comparison
+  local size human_cost
+  size="$(echo "$current" | jq -r '.estimated_size // "Medium"')"
+  human_cost="$(human_cost_for_phase "$phase" "$size")"
+
+  local new
+  new="$(echo "$current" | jq --arg k "$key" --arg t "$(now_utc)" \
+            --argjson i "$input" --argjson o "$output" \
+            --argjson cr "$cache_read" --argjson c5 "$cw5m" --argjson c1 "$cw1h" \
+            --arg model "$model" --arg cost "$cost" --arg human_cost "$human_cost" '
+    .phase_durations[$k] = (
+      (.phase_durations[$k] // {})
+      | . + {completed_at: $t}
+      | . + {duration_seconds: (
+          if .started_at then ((($t | fromdateiso8601) - (.started_at | fromdateiso8601))) else 0 end
+        )}
+      | . + {tokens: {input: $i, output: $o, cache_read: $cr, cache_write_5m: $c5, cache_write_1h: $c1}}
+      | . + {model_used: $model}
+      | . + {estimated_cost_usd: ($cost | tonumber)}
+      | . + {human_baseline_usd: ($human_cost | tonumber)}
+    )
+    | .last_updated = $t
+  ')"
+  write_state "$prefix" "$new"
+
+  # Record artifact hashes for phases that produce or revise gate-critical files.
+  # Drift is detected in checkpoint-if-active by comparing these stored hashes to
+  # what's currently on disk.
+  case "$phase" in
+    2|3)
+      local srd_path="${SRD_ROOT}/${prefix}/${SRD_FILENAME}"
+      [[ -f "$srd_path" ]] && record_artifact_hash "$prefix" "srd" "$srd_path" ;;
+    4|5)
+      local tickets_path="${SRD_ROOT}/${prefix}/${TICKET_PACK_DIRNAME}/README.md"
+      [[ -f "$tickets_path" ]] && record_artifact_hash "$prefix" "tickets" "$tickets_path" ;;
+  esac
+}
+
+cmd_checkpoint() {
+  # Called by Stop/PreCompact hooks. Touches last_updated and checks whether any
+  # gate-critical artifacts (SRD, ticket pack) have changed since their last
+  # recorded hash. Warnings are printed to stdout so Claude surfaces them.
+  [[ -d "$SRD_ROOT" ]] || return 0
+  require_jq
+  for state in "$SRD_ROOT"/*/.edm-state.json; do
+    [[ -f "$state" ]] || continue
+    local current new prefix
+    prefix="$(jq -r '.prefix' "$state" 2>/dev/null || echo unknown)"
+    current="$(cat "$state")"
+    new="$(echo "$current" | jq --arg t "$(now_utc)" '.last_updated = $t')"
+    printf '%s\n' "$new" > "$state"
+
+    # Drift detection — compare current file hashes to last recorded hashes.
+    local hashes
+    hashes="$(echo "$current" | jq -r '.artifact_hashes // {} | to_entries[] | "\(.key) \(.value.hash) \(.value.path) \(.value.recorded_at)"' 2>/dev/null || true)"
+    local drift_found=0
+    while IFS=' ' read -r artifact_name stored_hash file_path recorded_at; do
+      [[ -n "$artifact_name" ]] || continue
+      local current_hash
+      current_hash="$(artifact_hash "$file_path")"
+      if [[ "$current_hash" != "$stored_hash" && "$current_hash" != "absent" && "$current_hash" != "unhashable" ]]; then
+        if [[ $drift_found -eq 0 ]]; then
+          echo ""
+          echo "⚠ EDM drift detected — ${prefix}:"
+          drift_found=1
+        fi
+        case "$artifact_name" in
+          srd)
+            local gate_status
+            gate_status="$(echo "$current" | jq -r '
+              (.gates_approved // []) | map(select(.gate == 2)) |
+              if length > 0 then "Gate 2 was approved at \(.[0].approved_at)" else "Gate 2 not yet approved" end
+            ' 2>/dev/null || echo "unknown gate status")"
+            echo "  ${SRD_FILENAME} modified since last recorded at phase-complete (${recorded_at})."
+            echo "  ${gate_status}."
+            echo "  → Re-run /edm:audit-srd ${prefix} and re-approve Gate 2 before creating tickets."
+            ;;
+          tickets)
+            local gate_status
+            gate_status="$(echo "$current" | jq -r '
+              (.gates_approved // []) | map(select(.gate == 3)) |
+              if length > 0 then "Gate 3 was approved at \(.[0].approved_at)" else "Gate 3 not yet approved" end
+            ' 2>/dev/null || echo "unknown gate status")"
+            echo "  Ticket pack README modified since last recorded at phase-complete (${recorded_at})."
+            echo "  ${gate_status}."
+            echo "  → Re-run /edm:audit-tickets ${prefix} and re-approve Gate 3 before implementation."
+            ;;
+          *)
+            echo "  ${artifact_name} (${file_path}) modified since last recorded at ${recorded_at}."
+            ;;
+        esac
+      fi
+    done <<< "$hashes"
+    [[ $drift_found -eq 0 ]] || echo ""
+  done
+}
+
+cmd_record_task_duration() {
+  # Called by TaskCompleted hook. Reads task info from environment if available.
+  # Best-effort: if we can't determine the active initiative, no-op.
+  [[ -d "$SRD_ROOT" ]] || return 0
+  require_jq
+  # The hook context isn't formally parsed here — this is a placeholder for
+  # accumulating per-task durations. Future work: parse stdin JSON from hook.
+  return 0
+}
+
+cmd_record_test_coverage() {
+  [[ $# -eq 3 ]] || die "usage: edm-state record-test-coverage <PREFIX> <layer> <pct>"
+  require_jq
+  local prefix="$1" layer="$2" pct="$3"
+  local current new
+  current="$(read_state "$prefix")"
+  new="$(echo "$current" | jq --arg l "$layer" --argjson p "$pct" --arg t "$(now_utc)" '
+    .coverage_by_layer[$l] = {pct: $p, measured_at: $t}
+    | .last_updated = $t
+  ')"
+  write_state "$prefix" "$new"
+  echo "recorded coverage: $layer = ${pct}% for $prefix"
+}
+
+cmd_record_tests_added() {
+  [[ $# -eq 4 ]] || die "usage: edm-state record-tests-added <PREFIX> <phase> <layer> <count>"
+  require_jq
+  local prefix="$1" phase="$2" layer="$3" count="$4"
+  local current new key
+  current="$(read_state "$prefix")"
+  key="${phase}_phase"
+  new="$(echo "$current" | jq --arg k "$key" --arg l "$layer" --argjson c "$count" --arg t "$(now_utc)" '
+    .phase_durations[$k] = ((.phase_durations[$k] // {})
+      | .tests_by_layer[$l] = ((.tests_by_layer[$l] // 0) + $c)
+      | .tests_added = ((.tests_by_layer | to_entries | map(.value) | add) // 0))
+    | .last_updated = $t
+  ')"
+  write_state "$prefix" "$new"
+  echo "recorded: +${count} ${layer} tests in phase ${phase} for $prefix"
+}
+
+cmd_get_coverage() {
+  [[ $# -eq 1 ]] || die "usage: edm-state get-coverage <PREFIX>"
+  require_jq
+  local prefix="$1"
+  local state
+  state="$(state_file_for "$prefix")"
+  [[ -f "$state" ]] || die "no state for $prefix"
+  echo "# Test Coverage — $prefix"
+  echo
+  jq -r '
+    (.coverage_by_layer // {}) | to_entries |
+    if length == 0 then "  (no coverage recorded yet — run /edm:test first)"
+    else
+      "  Layer          Coverage  Measured At",
+      "  ----------     --------  -----------",
+      (.[] | "  \(.key | . + (" " * (14 - length)))  \(.value.pct)%\(if .value.pct < 10 then "        " elif .value.pct < 100 then "       " else "      " end)  \(.value.measured_at // "?")") |
+    .[] // .
+    end
+  ' "$state" 2>/dev/null || echo "  (no coverage data)"
+  echo
+  jq -r '
+    [.phase_durations | to_entries[] | {phase: .key, tests: .value.tests_added, by_layer: .value.tests_by_layer}] |
+    map(select(.tests != null and .tests > 0)) |
+    if length == 0 then ""
+    else
+      "# Tests Added by Phase\n",
+      (.[] | "  \(.phase): \(.tests) total  \(.by_layer // {} | to_entries | map("\(.key)=\(.value)") | join(", "))")
+    end |
+    .[] // .
+  ' "$state" 2>/dev/null
+}
+
+cmd_archive() {
+  [[ $# -eq 1 ]] || die "usage: edm-state archive <PREFIX>"
+  local prefix="$1"
+  local src dst
+  src="${SRD_ROOT}/${prefix}"
+  dst="${SRD_ROOT}/.archived/${prefix}"
+  [[ -d "$src" ]] || die "no initiative directory at $src"
+  mkdir -p "${SRD_ROOT}/.archived"
+  mv "$src" "$dst"
+  echo "archived $prefix → $dst"
+}
+
+cmd_watch_impl() {
+  # Called by the monitor during /edm:implement. Tails git log for new commits
+  # referencing any {PREFIX}-T{NN} ticket ID. Emits one line per new commit so
+  # the monitor delivers it as a notification.
+  command -v git >/dev/null 2>&1 || { echo "git not available"; return 0; }
+  local last_sha
+  last_sha="$(git rev-parse HEAD 2>/dev/null || echo '')"
+  while true; do
+    sleep 5
+    local new_commits
+    new_commits="$(git log --pretty=format:'%h %s' "${last_sha}..HEAD" 2>/dev/null | grep -E '[A-Z]+-T[0-9]+' || true)"
+    if [[ -n "$new_commits" ]]; then
+      echo "$new_commits"
+      last_sha="$(git rev-parse HEAD 2>/dev/null || echo "$last_sha")"
+    fi
+  done
+}
+
+cmd_metrics_report() {
+  require_jq
+  local arg="${1:-}"
+  case "$arg" in
+    --all)
+      [[ -d "$SRD_ROOT" ]] || { echo "no SRD/ directory"; return 0; }
+      echo "# EDM Metrics — Aggregate"
+      echo
+      printf "  %-12s  %-8s  %-10s  %-12s  %-12s  %-12s\n" "Initiative" "Size" "Total Time" "Claude Cost" "Human Cost" "Cost Ratio"
+      printf "  %-12s  %-8s  %-10s  %-12s  %-12s  %-12s\n" "----------" "----" "----------" "-----------" "----------" "----------"
+      for state in "$SRD_ROOT"/*/.edm-state.json "$SRD_ROOT"/.archived/*/.edm-state.json; do
+        [[ -f "$state" ]] || continue
+        jq -r '
+          [.phase_durations | to_entries[] | .value] as $phases |
+          {
+            prefix: .prefix,
+            size: (.estimated_size // "?"),
+            total_seconds: ([$phases[].duration_seconds // 0] | add),
+            total_claude: ([$phases[].estimated_cost_usd // 0] | add),
+            total_human: ([$phases[].human_baseline_usd // 0] | add)
+          }
+          | "  \(.prefix | tostring | .[0:12])  \(.size | tostring | .[0:8])  \(.total_seconds)s\(if .total_seconds < 100 then "         " else "       " end)  $\(.total_claude)\(if .total_claude < 10 then "        " else "      " end)  $\(.total_human)\(if .total_human < 100 then "       " else "     " end)  \(if .total_claude > 0 then ((.total_human / .total_claude) | tostring | .[0:6]) + "x" else "n/a" end)"
+        ' "$state" 2>/dev/null
+      done
+      echo
+      echo "Cost Ratio = human_cost / claude_cost (higher = more savings vs. human team baseline)"
+      ;;
+    --calibrate)
+      [[ -d "$SRD_ROOT" ]] || { echo "no SRD/ directory"; return 0; }
+      echo "# EDM Calibration — suggested updates to Phase Timing Guidelines"
+      echo
+      echo "Computed from completed initiatives (active + archived). Median values per (size, phase)."
+      echo
+      jq -s -r '
+        [.[] | select(.estimated_size != null) | . as $i |
+          (.phase_durations | to_entries[] | {
+            size: $i.estimated_size,
+            phase: (.key | sub("_phase$"; "")),
+            duration: (.value.duration_seconds // 0),
+            cost: (.value.estimated_cost_usd // 0)
+          })
+        ]
+        | group_by(.size + "_" + .phase)
+        | map({
+            key: .[0].size + "_phase_" + .[0].phase,
+            count: length,
+            median_duration_s: ((sort_by(.duration) | .[length / 2 | floor].duration)),
+            median_cost_usd: ((sort_by(.cost) | .[length / 2 | floor].cost))
+          })
+        | .[]
+        | "  \(.key): n=\(.count), median_duration=\(.median_duration_s)s, median_cost=$\(.median_cost_usd)"
+      ' "$SRD_ROOT"/*/.edm-state.json "$SRD_ROOT"/.archived/*/.edm-state.json 2>/dev/null || \
+        echo "  (insufficient data — need at least one completed initiative)"
+      ;;
+    "")
+      die "usage: edm-state metrics-report <PREFIX|--all|--calibrate>"
+      ;;
+    *)
+      local prefix="$arg"
+      local state
+      state="$(state_file_for "$prefix")"
+      [[ -f "$state" ]] || die "no state for $prefix"
+      echo "# EDM Metrics — $prefix"
+      echo
+      jq -r '"Initiative: \(.prefix)  |  size: \(.estimated_size // "Unknown")  |  current phase: \(.current_phase)  |  human hourly rate: $'"$HUMAN_HOURLY_RATE_USD"'"' "$state"
+      echo
+      printf "  %-10s  %-10s  %-12s  %-12s  %-10s  %-12s  %-10s\n" "Phase" "Duration" "Claude Cost" "Human Cost" "Savings" "Tokens (i/o)" "Model"
+      printf "  %-10s  %-10s  %-12s  %-12s  %-10s  %-12s  %-10s\n" "-----" "--------" "-----------" "----------" "-------" "------------" "-----"
+      jq -r '
+        .phase_durations
+        | to_entries
+        | sort_by(.key)
+        | .[]
+        | .key as $k
+        | .value as $v
+        | "  \($k | sub("_phase$"; "Phase ") | .[0:10])  \(($v.duration_seconds // 0))s\(if ($v.duration_seconds // 0) < 100 then "       " else "     " end)  $\(($v.estimated_cost_usd // 0))\(if ($v.estimated_cost_usd // 0) < 10 then "        " else "      " end)  $\(($v.human_baseline_usd // 0))\(if ($v.human_baseline_usd // 0) < 100 then "        " else "      " end)  \(if ($v.estimated_cost_usd // 0) > 0 then ((($v.human_baseline_usd // 0) / ($v.estimated_cost_usd // 1)) | tostring | .[0:5]) + "x" else "n/a" end)\(if ($v.estimated_cost_usd // 0) > 0 then "    " else "        " end)  \(($v.tokens.input // 0))/\(($v.tokens.output // 0))\(if (($v.tokens.input // 0) + ($v.tokens.output // 0)) < 1000 then "        " else "     " end)  \($v.model_used // "?")"
+      ' "$state"
+      echo
+      jq -r '
+        [.phase_durations[] | .estimated_cost_usd // 0] as $costs |
+        [.phase_durations[] | .human_baseline_usd // 0] as $humans |
+        [.phase_durations[] | .duration_seconds // 0] as $secs |
+        ($costs | add) as $tc |
+        ($humans | add) as $th |
+        ($secs | add) as $ts |
+        "  Total: \($ts)s  |  Claude: $\($tc)  |  Human baseline: $\($th)  |  Savings: " +
+          (if $tc > 0 then "\(($th / $tc) | tostring | .[0:6])x cheaper" else "n/a" end)
+      ' "$state"
+      echo
+      # Test coverage summary (if any recorded)
+      local has_coverage
+      has_coverage="$(jq -r '(.coverage_by_layer // {}) | length' "$state" 2>/dev/null || echo 0)"
+      if [[ "$has_coverage" -gt 0 ]]; then
+        echo "## Test Coverage"
+        echo
+        printf "  %-14s  %-10s  %-20s\n" "Layer" "Coverage" "Measured At"
+        printf "  %-14s  %-10s  %-20s\n" "-----" "--------" "-----------"
+        jq -r '
+          (.coverage_by_layer // {}) | to_entries[] |
+          "  \(.key | . + (" " * (14 - length | if . < 0 then 0 else . end)))  \(.value.pct)%\(if .value.pct < 10 then "         " elif .value.pct < 100 then "        " else "       " end)  \(.value.measured_at // "?")"
+        ' "$state" 2>/dev/null
+        echo
+      fi
+      ;;
+  esac
+}
+
+# ---- dispatch ---------------------------------------------------------------
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  get)                cmd_get "$@" ;;
+  set)                cmd_set "$@" ;;
+  init)               cmd_init "$@" ;;
+  list)               cmd_list "$@" ;;
+  approve-gate)       cmd_approve_gate "$@" ;;
+  phase-start)        cmd_phase_start "$@" ;;
+  phase-complete)     cmd_phase_complete "$@" ;;
+  checkpoint-if-active) cmd_checkpoint "$@" ;;
+  record-task-duration) cmd_record_task_duration "$@" ;;
+  record-test-coverage) cmd_record_test_coverage "$@" ;;
+  record-tests-added) cmd_record_tests_added "$@" ;;
+  get-coverage)       cmd_get_coverage "$@" ;;
+  archive)            cmd_archive "$@" ;;
+  watch-impl)         cmd_watch_impl "$@" ;;
+  metrics-report)     cmd_metrics_report "$@" ;;
+  ""|-h|--help|help)
+    sed -n '2,21p' "$0"
+    ;;
+  *)
+    die "unknown subcommand: $cmd (try --help)"
+    ;;
+esac
