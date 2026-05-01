@@ -21,14 +21,6 @@ description: |
   </commentary>
   </example>
 
-  <example>
-  Context: User wants generic input validation review.
-  user: "make sure my form validates all inputs"
-  assistant: "Form validation is structural — I'll review it directly rather than spawn edm-audit-edge-cases, which focuses on runtime concurrency and partial-failure scenarios."
-  <commentary>
-  L3 is for runtime edge cases, not user-input validation patterns.
-  </commentary>
-  </example>
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

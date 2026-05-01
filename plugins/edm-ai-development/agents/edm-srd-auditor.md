@@ -21,14 +21,6 @@ description: |
   </commentary>
   </example>
 
-  <example>
-  Context: User wants to fix the SRD findings, not just audit them.
-  user: "fix the P1 issues in the SRD audit report"
-  assistant: "edm-srd-auditor is read-only and won't fix issues. I'll apply the fixes directly to the SRD myself, referencing each finding."
-  <commentary>
-  edm-srd-auditor has disallowedTools: Write, Edit. Remediation is the orchestrating skill's job, not the auditor's.
-  </commentary>
-  </example>
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

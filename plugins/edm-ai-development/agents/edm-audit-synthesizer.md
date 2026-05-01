@@ -21,14 +21,6 @@ description: |
   </commentary>
   </example>
 
-  <example>
-  Context: User has only one lens report (e.g., L1 only) and wants a plan from it.
-  user: "I only ran L1 — make a plan from that"
-  assistant: "edm-audit-synthesizer is designed to deduplicate and cross-reference 11 lenses. For a single-lens report, the lens-L1.md content IS the plan; just read it directly."
-  <commentary>
-  Synthesizer's value is multi-lens deduplication. With one lens, there's nothing to deduplicate.
-  </commentary>
-  </example>
 tools: Read, Write, Edit, Glob, Grep, LS, NotebookRead, WebFetch, TodoWrite, WebSearch
 model: opus
 effort: max

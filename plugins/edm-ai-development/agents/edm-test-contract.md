@@ -20,12 +20,6 @@ description: |
   <commentary>For GraphQL, contract tests use introspection to verify the schema matches the documented types.</commentary>
   </example>
 
-  <example>
-  Context: CLI tool with no API.
-  user: "Write contract tests for CLITOOL"
-  assistant: "CLITOOL exposes no HTTP API or GraphQL schema — contract testing is N/A. Unit and integration tests cover its behavior."
-  <commentary>Contract tests only apply when there's an API contract to verify against. Mark N/A for CLI/library projects.</commentary>
-  </example>
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

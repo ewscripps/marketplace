@@ -20,12 +20,6 @@ description: |
   <commentary>Vue composables use a minimal wrapper component as the host — testing-utils mounts it and provides access to the composable's return values.</commentary>
   </example>
 
-  <example>
-  Context: Backend-only Python project.
-  user: "Write composable tests for PYAPI"
-  assistant: "PYAPI has no React hooks or Vue composables — it's a Python API. This layer is N/A. Unit tests (edm-test-unit) cover the equivalent pure-function logic."
-  <commentary>Composable testing only applies to React hooks and Vue composables. Mark N/A for other stacks.</commentary>
-  </example>
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

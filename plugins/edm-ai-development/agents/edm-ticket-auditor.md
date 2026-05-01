@@ -21,14 +21,6 @@ description: |
   </commentary>
   </example>
 
-  <example>
-  Context: User wants a quick visual check, not a formal audit.
-  user: "do these tickets look right at a glance?"
-  assistant: "I'll skim them directly — edm-ticket-auditor produces a formal 8-dimension report, which is heavier than 'looks right at a glance'."
-  <commentary>
-  edm-ticket-auditor is for formal Phase 5 audit, not casual review.
-  </commentary>
-  </example>
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

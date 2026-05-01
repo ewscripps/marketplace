@@ -21,14 +21,6 @@ description: |
   </commentary>
   </example>
 
-  <example>
-  Context: User wants generic code-writing assistance without an EDM ticket.
-  user: "add a helper function to format dates"
-  assistant: "I'll write the helper directly — edm-implementer is for tickets in an EDM ticket pack, not ad-hoc code additions."
-  <commentary>
-  edm-implementer expects to read a ticket file with AC. Use it only inside Phase 6.
-  </commentary>
-  </example>
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: sonnet
 effort: high

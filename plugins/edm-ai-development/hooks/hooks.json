@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "edm-state list 2>/dev/null"
+            "command": "command -v edm-state >/dev/null 2>&1 && edm-state list 2>/dev/null || true"
           }
         ]
       }

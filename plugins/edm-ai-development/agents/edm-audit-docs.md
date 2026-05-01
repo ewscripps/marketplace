@@ -21,14 +21,6 @@ description: |
   </commentary>
   </example>
 
-  <example>
-  Context: User wants to write new documentation.
-  user: "write API documentation for the new endpoints"
-  assistant: "I'll draft the docs directly — edm-audit-docs audits existing docs, it doesn't generate new ones."
-  <commentary>
-  L6 is read-only.
-  </commentary>
-  </example>
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

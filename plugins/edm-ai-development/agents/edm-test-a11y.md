@@ -20,12 +20,6 @@ description: |
   <commentary>A11y tests only make sense for HTML-rendering frontends. Mark N/A cleanly for backend projects.</commentary>
   </example>
 
-  <example>
-  Context: User wants WCAG AAA compliance.
-  user: "Make it WCAG AAA compliant"
-  assistant: "edm-test-a11y targets WCAG 2.1 AA — the standard required by most accessibility laws and a practical bar for most products. AAA is significantly stricter and not achievable for all content types. I'll test to AA and note specific AAA criteria that apply to this UI if relevant."
-  <commentary>AA is the default target. AAA is opted into explicitly. Don't silently downgrade.</commentary>
-  </example>
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

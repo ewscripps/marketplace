@@ -21,14 +21,6 @@ description: |
   </commentary>
   </example>
 
-  <example>
-  Context: User wants free-form requirements documentation.
-  user: "write a requirements doc for my side project"
-  assistant: "edm-srd-writer follows EDM's strict SRD format with {PREFIX}-NN IDs, priorities, and acceptance criteria. For a free-form doc, I'll draft it directly without spawning the agent."
-  <commentary>
-  edm-srd-writer enforces EDM conventions; use it only when those conventions apply.
-  </commentary>
-  </example>
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, Write, Edit, TodoWrite, WebSearch
 model: opus
 effort: high

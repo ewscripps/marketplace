@@ -21,14 +21,6 @@ description: |
   </commentary>
   </example>
 
-  <example>
-  Context: User wants to remove genuinely unused code (orphan files, unused imports).
-  user: "find unused imports and dead files"
-  assistant: "I'll use grep/glob directly — edm-audit-dead-code is for unreachable paths, not import-level dead code analysis. Most languages have native tools for that."
-  <commentary>
-  L2 is about runtime-unreachable paths, not static-analysis dead code. Different problem.
-  </commentary>
-  </example>
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

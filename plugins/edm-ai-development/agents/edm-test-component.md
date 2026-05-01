@@ -21,12 +21,6 @@ description: |
   <commentary>Vue Test Utils is the correct framework for Vue components. Component tests render and interact, not inspect internal state.</commentary>
   </example>
 
-  <example>
-  Context: User asks component agent to test a REST API endpoint.
-  user: "edm-test-component, test the /api/auth/login endpoint"
-  assistant: "API endpoints are integration-level, not component-level. I'll flag this for edm-test-integration. Component tests cover UI components — HTML-rendering code with props, slots, and events."
-  <commentary>Don't conflate component tests (UI) with integration tests (API). Redirect accordingly.</commentary>
-  </example>
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

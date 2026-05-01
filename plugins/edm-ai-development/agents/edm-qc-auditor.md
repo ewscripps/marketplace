@@ -21,14 +21,6 @@ description: |
   </commentary>
   </example>
 
-  <example>
-  Context: User wants the auditor to fix the issues it finds.
-  user: "find and fix all QC issues"
-  assistant: "edm-qc-auditor is read-only. It will report PASS/PARTIAL/FAIL and the orchestrating skill will spawn edm-implementer to fix the findings."
-  <commentary>
-  Auditor and remediator are separate roles. edm-qc-auditor has disallowedTools: Write, Edit.
-  </commentary>
-  </example>
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

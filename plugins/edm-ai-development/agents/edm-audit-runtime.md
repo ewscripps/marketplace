@@ -21,14 +21,6 @@ description: |
   </commentary>
   </example>
 
-  <example>
-  Context: User wants to find unused source files in the repo.
-  user: "are there any files in src/ that aren't imported anywhere?"
-  assistant: "Static unused-file detection isn't L5's mandate — that's about runtime-created files. Use grep/IDE tooling for static analysis."
-  <commentary>
-  L5 = files created at runtime, not orphan source files.
-  </commentary>
-  </example>
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

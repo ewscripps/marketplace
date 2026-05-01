@@ -21,14 +21,6 @@ description: |
   </commentary>
   </example>
 
-  <example>
-  Context: User wants to enforce a specific pattern.
-  user: "I want every service to use the shared retry helper — find ones that don't"
-  assistant: "I'll grep for direct retry implementations bypassing the helper — that's a single-pattern check, not L7's full sibling-comparison mandate."
-  <commentary>
-  L7 is comparative across siblings, not single-pattern enforcement.
-  </commentary>
-  </example>
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

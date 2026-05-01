@@ -21,14 +21,6 @@ description: |
   </commentary>
   </example>
 
-  <example>
-  Context: User wants line-level deduplication within a single function.
-  user: "this function has repeated code blocks — refactor them"
-  assistant: "Within-function refactoring is structural code review — I'll handle it directly. edm-audit-dry focuses on cross-file duplication, not in-function repetition."
-  <commentary>
-  L10 is cross-file, not within-function.
-  </commentary>
-  </example>
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

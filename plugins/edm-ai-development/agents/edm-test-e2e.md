@@ -20,12 +20,6 @@ description: |
   <commentary>E2E agent is browser-only. For native mobile or CLI, mark N/A and note the alternative.</commentary>
   </example>
 
-  <example>
-  Context: User wants E2E tests for every ticket in a 60-ticket initiative.
-  user: "Write E2E tests for all 60 tickets"
-  assistant: "E2E tests for every ticket would create a suite that's slow, brittle, and expensive to maintain. Instead, I'll cover the critical paths identified in the test plan — the journeys that, if broken, would block users from completing their primary goal. Individual ticket AC are better covered by unit and integration tests."
-  <commentary>E2E tests should cover critical paths, not exhaustively re-test every AC that's already covered at lower layers.</commentary>
-  </example>
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

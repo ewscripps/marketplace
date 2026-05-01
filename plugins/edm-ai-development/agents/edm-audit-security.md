@@ -21,14 +21,6 @@ description: |
   </commentary>
   </example>
 
-  <example>
-  Context: User wants application-layer security review (auth flows, OWASP).
-  user: "review my OAuth flow for security issues"
-  assistant: "Application security review is broader than L8's scope (which targets shell/systemd/path/env-var traps). For OAuth flow review, I'll do a direct audit covering OWASP-class issues."
-  <commentary>
-  L8 specifically targets infrastructure/portability traps, not application-layer auth flows.
-  </commentary>
-  </example>
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

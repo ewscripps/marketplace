@@ -21,14 +21,6 @@ description: |
   </commentary>
   </example>
 
-  <example>
-  Context: User wants a generic code review covering style, performance, and architecture.
-  user: "review my pull request"
-  assistant: "I'll do a general review without spawning edm-audit-logic — it's a single-lens agent for L1 only. For full-spectrum review, use /edm:code-audit which spawns all 11 lens agents."
-  <commentary>
-  edm-audit-logic has an exclusive mandate. Don't use it for broad reviews; use the orchestrator skill or general code-reviewer.
-  </commentary>
-  </example>
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

@@ -20,12 +20,6 @@ description: |
   <commentary>edm-test-unit covers plain TypeScript/JavaScript functions; React hooks go to edm-test-composable.</commentary>
   </example>
 
-  <example>
-  Context: User asks unit test agent to test a database migration.
-  user: "edm-test-unit, write tests for the migration script"
-  assistant: "Migration scripts are integration-level concerns — they require a real database to test meaningfully. I'll flag this for edm-test-integration instead of writing shallow mocked unit tests for it."
-  <commentary>Don't write meaningless unit tests for code that only makes sense with real external dependencies. Escalate to integration.</commentary>
-  </example>
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

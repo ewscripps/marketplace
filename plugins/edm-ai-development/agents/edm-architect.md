@@ -21,14 +21,6 @@ description: |
   </commentary>
   </example>
 
-  <example>
-  Context: User wants a quick whiteboard-style sketch.
-  user: "give me a rough mental model of how requests flow through the system"
-  assistant: "I'll describe the flow in conversation rather than spawning edm-architect — that agent produces formal SRD Section 5 with rendered diagrams, which is heavyweight for a quick mental model."
-  <commentary>
-  edm-architect produces SRD-quality output. For informal explanations, answer directly.
-  </commentary>
-  </example>
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, Write, Edit, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

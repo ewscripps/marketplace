@@ -21,14 +21,6 @@ description: |
   </commentary>
   </example>
 
-  <example>
-  Context: User asks a casual question about how a feature works (not an EDM initiative).
-  user: "can you walk me through how authentication works in this project?"
-  assistant: "I'll trace the auth flow directly without spawning edm-explorer — that agent produces a structured EDM planning artifact, which is overkill for a walkthrough."
-  <commentary>
-  edm-explorer's output is tailored for EDM Phase 1. Generic codebase tours don't benefit from it.
-  </commentary>
-  </example>
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

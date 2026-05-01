@@ -21,14 +21,6 @@ description: |
   </commentary>
   </example>
 
-  <example>
-  Context: User wants a code audit but has no SRD or ticket pack.
-  user: "audit my codebase"
-  assistant: "L9 (edm-audit-spec) needs an SRD and ticket pack to compare against — without those inputs, I'll skip L9 and run the other 10 lenses."
-  <commentary>
-  L9 gracefully skips when its required inputs are absent rather than producing useless findings.
-  </commentary>
-  </example>
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

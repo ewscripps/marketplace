@@ -20,12 +20,6 @@ description: |
   <commentary>Each install is proposed with the exact command. User must confirm before execution.</commentary>
   </example>
 
-  <example>
-  Context: All test frameworks are already installed.
-  user: "Run /edm:test AUTH"
-  assistant: "edm-test-scaffold reports: no scaffolding needed — all active test layers are already configured. Proceeding directly to test writers."
-  <commentary>Scaffold is a no-op when everything is in place. It should exit immediately in that case.</commentary>
-  </example>
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

@@ -21,14 +21,6 @@ description: |
   </commentary>
   </example>
 
-  <example>
-  Context: User is auditing pure backend code with no frontend.
-  user: "audit my CLI tool"
-  assistant: "L11 is essential for frontend↔backend integration. For a pure CLI tool I'd skip L11 in favor of the other 10 lenses."
-  <commentary>
-  L11 has limited value in pure backend / pure CLI projects without integration boundaries.
-  </commentary>
-  </example>
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

@@ -21,14 +21,6 @@ description: |
   </commentary>
   </example>
 
-  <example>
-  Context: User wants to add new test coverage.
-  user: "write tests for the new payment flow"
-  assistant: "I'll write the tests directly — edm-audit-test-quality audits existing tests; it doesn't generate new ones."
-  <commentary>
-  L4 is read-only audit, not test generation.
-  </commentary>
-  </example>
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

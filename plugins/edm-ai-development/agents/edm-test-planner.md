@@ -21,12 +21,6 @@ description: |
   <commentary>The planner adapts to the stack — it will not propose UI test layers for a CLI-only project.</commentary>
   </example>
 
-  <example>
-  Context: User asks to skip planning and just write tests.
-  user: "Just write the unit tests directly without a test plan"
-  assistant: "I need to run edm-test-planner first — without it, the test writers don't know which files to target, which AC to cover, or which framework the project uses. The plan takes a few minutes and produces a much better result than writing tests blindly."
-  <commentary>Do not skip the planner. Test writers consume its output as their task list.</commentary>
-  </example>
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: opus
 effort: high

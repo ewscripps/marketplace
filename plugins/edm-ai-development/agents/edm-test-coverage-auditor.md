@@ -20,12 +20,6 @@ description: |
   <commentary>The AC↔test mapping is one of the auditor's primary outputs — it answers exactly this question.</commentary>
   </example>
 
-  <example>
-  Context: User asks the auditor to write tests for uncovered code.
-  user: "edm-test-coverage-auditor, please write the missing tests you found"
-  assistant: "The coverage auditor is read-only — it reports gaps but does not write code. To fill the gaps, run /edm:test {PREFIX} --fill-gaps or spawn the specific test-writer agent for the layer that's below target."
-  <commentary>This agent has disallowedTools that prevent it from writing. Redirect to a writer agent.</commentary>
-  </example>
 tools: Read, Bash, Glob, Grep, TodoWrite
 disallowedTools: Write, Edit, NotebookEdit
 model: opus

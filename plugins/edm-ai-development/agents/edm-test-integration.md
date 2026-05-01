@@ -20,12 +20,6 @@ description: |
   <commentary>Integration tests use real or near-real infrastructure — SQLite for a Postgres-using project is acceptable if schema is compatible.</commentary>
   </example>
 
-  <example>
-  Context: User wants integration tests for a pure utility library with no I/O.
-  user: "Write integration tests for the string-utils module"
-  assistant: "String utilities with no external I/O are best tested with unit tests, not integration tests. edm-test-unit will cover these. Integration tests are reserved for code that crosses a meaningful boundary (DB, HTTP, filesystem, queue)."
-  <commentary>Don't write integration tests for code that has no external dependencies. Keep layer separation clean.</commentary>
-  </example>
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

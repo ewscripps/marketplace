@@ -21,14 +21,6 @@ description: |
   </commentary>
   </example>
 
-  <example>
-  Context: User wants generic backlog tickets, not EDM ticket pack.
-  user: "create some Jira tickets for the new features"
-  assistant: "edm-ticket-writer follows the EDM ticket pack format with {PREFIX}-T{NN} IDs and SRD-cross-referenced AC. For Jira tickets I'll use a freeform format instead."
-  <commentary>
-  edm-ticket-writer enforces EDM conventions; not appropriate for ad-hoc Jira creation.
-  </commentary>
-  </example>
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, Write, Edit, TodoWrite, WebSearch
 model: opus
 effort: high
