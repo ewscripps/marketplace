@@ -3,24 +3,6 @@ name: edm-audit-test-quality
 description: |
   Use this agent for EDM Code Audit Lens L4 (Test Quality). It hunts for `2>/dev/null || true` masking test failures, incomplete assertions, mocks that hide the code under test, false-positive-prone stubs, and missing tests for newly added code paths. Examples:
 
-  <example>
-  Context: The /edm:code-audit skill is launching its 11-lens parallel audit.
-  user: "/edm:code-audit TIPS"
-  assistant: "Spawning edm-audit-test-quality as one of the 11 lens agents."
-  <commentary>
-  L4 always runs in the full audit and frequently surfaces silent test failures other lenses miss.
-  </commentary>
-  </example>
-
-  <example>
-  Context: User reports tests pass locally but production has a regression.
-  user: "tests are green but a bug shipped — were the tests actually testing what they claim?"
-  assistant: "I'll spawn edm-audit-test-quality to hunt for suppressed errors, mock abuse, and assertion gaps in the relevant test files."
-  <commentary>
-  L4's mandate is exactly this: tests that pass without exercising real behavior.
-  </commentary>
-  </example>
-
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

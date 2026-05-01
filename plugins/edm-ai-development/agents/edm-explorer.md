@@ -3,24 +3,6 @@ name: edm-explorer
 description: |
   Use this agent during EDM Phase 1 (Planning & Discovery) when the user wants to map the codebase, identify scope boundaries, uncover dependencies, and produce the raw material for a planning document. Examples:
 
-  <example>
-  Context: User invoked /edm:plan or /edm:orchestrator for a new initiative.
-  user: "/edm:plan AUTH I want to overhaul authentication"
-  assistant: "Spawning edm-explorer to map the current auth surface area, components, dependencies, and complexity for the AUTH initiative."
-  <commentary>
-  edm-explorer is the standard agent for /edm:plan's discovery work. It produces the structured Component Inventory and Dependency Map artifacts the planning document requires.
-  </commentary>
-  </example>
-
-  <example>
-  Context: A large initiative spans multiple codebase areas; one explorer per area in parallel.
-  user: "/edm:plan PERF — performance improvements across API and database layers"
-  assistant: "I'll spawn two edm-explorer agents in parallel — one for the API layer, one for the database layer — and merge their reports into the planning document."
-  <commentary>
-  When scope spans multiple areas, parallel edm-explorers reduce time and improve coverage.
-  </commentary>
-  </example>
-
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

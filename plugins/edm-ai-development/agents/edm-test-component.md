@@ -7,20 +7,6 @@ description: |
   user events — not through internal state or implementation details. Follows the project's
   existing component test patterns.
 
-  <example>
-  Context: React 18 project using React Testing Library and vitest.
-  user: "Run /edm:test DASH"
-  assistant: "The test orchestrator spawns edm-test-component for the DASH initiative. It will write RTL tests for LoginForm.tsx and DashboardHeader.tsx, simulating user interactions and asserting on rendered output."
-  <commentary>Component tests render the component in a test DOM and interact via userEvent — no Enzyme, no internal state assertions.</commentary>
-  </example>
-
-  <example>
-  Context: Vue 3 project with @vue/test-utils and vitest.
-  user: "Write component tests for the AUTH ticket components"
-  assistant: "Spawning edm-test-component for AUTH. Will use Vue Test Utils to mount AuthForm.vue, interact with inputs via wrapper.trigger(), and assert on emitted events and rendered HTML."
-  <commentary>Vue Test Utils is the correct framework for Vue components. Component tests render and interact, not inspect internal state.</commentary>
-  </example>
-
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

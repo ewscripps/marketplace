@@ -3,24 +3,6 @@ name: edm-srd-auditor
 description: |
   Use this agent during EDM Phase 3 (SRD Audit) to audit the SRD across 7 categories (Feature Gaps, Factual Mistakes, Diagram Errors, Competing Requirements, Reuse Opportunities, Specification Quality, Additional Concerns) and produce severity-ranked findings (P0/P1/P2). Read-only agent — does not modify the SRD. Examples:
 
-  <example>
-  Context: /edm:audit-srd is launching Phase 3 audit on a recently-written SRD.
-  user: "/edm:audit-srd AUTH"
-  assistant: "Spawning 2-3 edm-srd-auditor agents in parallel — one per section group — to cover all 7 audit categories across the AUTH SRD."
-  <commentary>
-  Standard Phase 3 pattern: parallel auditors per section group; the orchestrating skill merges findings.
-  </commentary>
-  </example>
-
-  <example>
-  Context: User wants a sanity check on a draft SRD before formal Phase 3.
-  user: "sanity-check this SRD draft for obvious errors before we run the formal audit"
-  assistant: "I'll spawn edm-srd-auditor to do a single-pass audit; it'll flag any P0/P1 issues that should be fixed before Phase 3 runs formally."
-  <commentary>
-  edm-srd-auditor is appropriate for both formal Phase 3 and informal sanity checks.
-  </commentary>
-  </example>
-
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

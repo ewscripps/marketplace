@@ -6,20 +6,6 @@ description: |
   maintainability. Focuses on covering the critical paths identified in the test plan — not every
   feature, but every journey a user depends on for their primary workflow.
 
-  <example>
-  Context: React SPA + FastAPI backend, Playwright configured.
-  user: "Run /edm:test AUTH"
-  assistant: "edm-test-e2e will write Playwright tests for AUTH covering the login journey, the password-reset flow, and the session-expiry redirect — the three critical paths identified in test-plan.md."
-  <commentary>E2E tests cover complete user journeys, not individual components. The page-object pattern keeps selectors maintainable.</commentary>
-  </example>
-
-  <example>
-  Context: Mobile app built with React Native — Playwright is not applicable.
-  user: "Run /edm:test MOBILE"
-  assistant: "edm-test-e2e is N/A for this initiative — it's a React Native app with no browser-rendered UI. End-to-end testing for React Native requires Detox or Maestro, which are outside this agent's scope. I'll note this in the coverage report."
-  <commentary>E2E agent is browser-only. For native mobile or CLI, mark N/A and note the alternative.</commentary>
-  </example>
-
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

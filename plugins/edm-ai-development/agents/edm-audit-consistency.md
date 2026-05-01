@@ -3,24 +3,6 @@ name: edm-audit-consistency
 description: |
   Use this agent for EDM Code Audit Lens L7 (Cross-File Consistency). It hunts for sibling components doing similar things differently: timeout values that diverge without explanation, error-handling patterns present in one service but missing from another, security hardening applied to some systemd units but not their siblings. Examples:
 
-  <example>
-  Context: The /edm:code-audit skill is launching its 11-lens parallel audit.
-  user: "/edm:code-audit AUTH"
-  assistant: "Spawning edm-audit-consistency as one of the 11 lens agents."
-  <commentary>
-  L7 runs in every audit — sibling-divergence bugs are invisible from inside any single file.
-  </commentary>
-  </example>
-
-  <example>
-  Context: User has multiple similar services and wonders if they were configured consistently.
-  user: "we have three microservices that all call the same external API — verify they handle errors and timeouts the same way"
-  assistant: "I'll spawn edm-audit-consistency to compare error handling, timeouts, and retry strategies across the three sibling services."
-  <commentary>
-  Sibling-comparison is exactly L7's mandate.
-  </commentary>
-  </example>
-
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

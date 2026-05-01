@@ -6,20 +6,6 @@ description: |
   (Vue) to exercise the hook/composable lifecycle, state transitions, and side effects in
   isolation. Follows the project's existing hook/composable test patterns.
 
-  <example>
-  Context: React app using custom hooks for auth state management.
-  user: "Run /edm:test AUTH"
-  assistant: "edm-test-composable will write renderHook tests for useAuthSession and useLoginForm covering the state-machine transitions: unauthenticated → authenticating → authenticated and the error states."
-  <commentary>Hooks have state transitions that are best tested through renderHook, not by rendering a full component around them.</commentary>
-  </example>
-
-  <example>
-  Context: Vue 3 app with composables for data fetching.
-  user: "Write tests for the DASH composables"
-  assistant: "Spawning edm-test-composable for DASH. Will test useDashboardData and useFilters composables by mounting them in a minimal host component and asserting on reactive state changes."
-  <commentary>Vue composables use a minimal wrapper component as the host — testing-utils mounts it and provides access to the composable's return values.</commentary>
-  </example>
-
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

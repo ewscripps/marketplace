@@ -3,24 +3,6 @@ name: edm-audit-wiring
 description: |
   Use this agent for EDM Code Audit Lens L11 (Integration Wiring). It traces UI actions, data displays, and backend endpoints end-to-end to find disconnected pieces: frontend rendering from `MOCK_DATA` instead of calling the real API, backend endpoints registered but never called, event handlers subscribed but never triggered, feature flags gating code that was never written, config values loaded but never consumed. Examples:
 
-  <example>
-  Context: The /edm:code-audit skill is launching its 11-lens parallel audit on a frontend+backend project.
-  user: "/edm:code-audit DCXT"
-  assistant: "Spawning edm-audit-wiring as one of the 11 lens agents — essential for frontend/backend split projects."
-  <commentary>
-  L11 is the highest-value lens for projects with a UI; it surfaces "everything works in isolation but nothing is connected" bugs.
-  </commentary>
-  </example>
-
-  <example>
-  Context: User shipped a feature that looks complete but doesn't actually call the backend.
-  user: "the dashboard renders fine but data isn't updating — is the API actually wired up?"
-  assistant: "I'll spawn edm-audit-wiring to trace each UI element back to its data source and flag anything still on mock data."
-  <commentary>
-  Mock-data-in-production-code is L11's signature finding.
-  </commentary>
-  </example>
-
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

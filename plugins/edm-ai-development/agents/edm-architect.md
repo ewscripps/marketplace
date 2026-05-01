@@ -3,24 +3,6 @@ name: edm-architect
 description: |
   Use this agent during EDM Phase 2 (SRD Creation) to write Section 5 (Target Architecture) directly into the SRD: Mermaid diagrams (system context + sequence), component boundaries with file paths, data flow descriptions, integration patterns, and architectural risk analysis — all grounded in the existing codebase. Examples:
 
-  <example>
-  Context: /edm:srd skill is creating Phase 2 artifacts and needs the Target Architecture section.
-  user: "/edm:srd AUTH"
-  assistant: "Spawning edm-srd-writer for the main SRD content and edm-architect in parallel for Section 5 (Target Architecture)."
-  <commentary>
-  edm-architect always runs alongside edm-srd-writer in Phase 2 because architecture deserves dedicated focus and Mermaid diagram quality matters.
-  </commentary>
-  </example>
-
-  <example>
-  Context: User wants a Mermaid system diagram for an existing SRD.
-  user: "the AUTH SRD is missing diagrams in section 5 — generate them"
-  assistant: "I'll spawn edm-architect to write Section 5 with system context and sequence diagrams grounded in the actual auth codebase."
-  <commentary>
-  edm-architect has Write tool and writes diagrams directly to the SRD file at the configured path.
-  </commentary>
-  </example>
-
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, Write, Edit, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

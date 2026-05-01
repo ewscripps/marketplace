@@ -3,24 +3,6 @@ name: edm-ticket-writer
 description: |
   Use this agent during EDM Phase 4 (Ticket Pack Creation) to transform an audited SRD into a developer ticket pack: README.md (with legend, ticket index, critical path Mermaid, SRD coverage map, and `Generated From: srd.md vX.Y.Z` header for version linkage) plus epic files containing tickets with `{PREFIX}-T{NN}` IDs and 6-12 testable acceptance criteria each. Examples:
 
-  <example>
-  Context: /edm:tickets is launching Phase 4 with an audited SRD.
-  user: "/edm:tickets AUTH"
-  assistant: "Spawning edm-ticket-writer to build the ticket pack at SRD/AUTH/tickets/ from the audited SRD."
-  <commentary>
-  Standard Phase 4 invocation. The agent writes README.md + epics/.
-  </commentary>
-  </example>
-
-  <example>
-  Context: Large SRD requires parallel ticket writing per epic.
-  user: "/edm:tickets MIGR — this is a Large initiative spanning 8 epics"
-  assistant: "I'll spawn 4 edm-ticket-writer agents in parallel, each owning 2 epics, then merge their epic files into the README index."
-  <commentary>
-  For large initiatives, parallel writers per epic group are faster than serial.
-  </commentary>
-  </example>
-
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, Write, Edit, TodoWrite, WebSearch
 model: opus
 effort: high

@@ -3,24 +3,6 @@ name: edm-audit-edge-cases
 description: |
   Use this agent for EDM Code Audit Lens L3 (Edge Cases & Concurrency). It hunts for race conditions, TOCTOU bugs, empty/null/default input crashes, timeout interactions where outer timeouts are ignored, and partial-failure states without rollback. Examples:
 
-  <example>
-  Context: The /edm:code-audit skill is launching its 11-lens parallel audit.
-  user: "/edm:code-audit PERF"
-  assistant: "Spawning edm-audit-edge-cases as one of the 11 lens agents."
-  <commentary>
-  L3 runs in every full code audit.
-  </commentary>
-  </example>
-
-  <example>
-  Context: User added retry logic with timeouts and wants edge-case verification.
-  user: "I added a retry loop calling an external API. Are there race conditions or timeout issues?"
-  assistant: "I'll spawn edm-audit-edge-cases to check for outer/inner timeout interactions, retry idempotency, and concurrent-execution hazards."
-  <commentary>
-  Retry/timeout/concurrency code is exactly L3's mandate.
-  </commentary>
-  </example>
-
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

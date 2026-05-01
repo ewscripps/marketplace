@@ -6,20 +6,6 @@ description: |
   Writes `SRD/{PREFIX}/test-coverage.md` with a P0/P1/P2 finding list and AC↔test cross-reference.
   Records results in `.edm-state.json` via `edm-state record-test-coverage`.
 
-  <example>
-  Context: All test writers have finished writing for the AUTH initiative.
-  user: "Audit the test coverage for AUTH"
-  assistant: "Spawning edm-test-coverage-auditor for AUTH to parse the coverage report, map each AC to a test location, and identify gaps against the configured 80% unit / 70% component / 60% integration targets."
-  <commentary>This agent runs after test writers complete, not before. It needs actual tests to measure.</commentary>
-  </example>
-
-  <example>
-  Context: Coverage report is available; user wants a cross-reference of AC to tests.
-  user: "Show me which acceptance criteria don't have tests yet"
-  assistant: "Running edm-test-coverage-auditor on TIPS to cross-reference every ticket AC against the test suite and produce a gap report."
-  <commentary>The AC↔test mapping is one of the auditor's primary outputs — it answers exactly this question.</commentary>
-  </example>
-
 tools: Read, Bash, Glob, Grep, TodoWrite
 disallowedTools: Write, Edit, NotebookEdit
 model: opus

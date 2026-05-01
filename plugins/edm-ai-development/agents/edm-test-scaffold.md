@@ -6,20 +6,6 @@ description: |
   Asks the user before installing any packages. After scaffolding, runs a smoke-test
   ("does an empty test pass?") to verify the framework is working.
 
-  <example>
-  Context: Playwright not installed, E2E tests needed for AUTH initiative.
-  user: "Run /edm:test AUTH"
-  assistant: "edm-test-scaffold detected Playwright is missing for E2E tests. It will ask permission to install @playwright/test and Playwright browsers, then write a minimal playwright.config.ts, then run a smoke test to confirm the setup works."
-  <commentary>Scaffold always asks before installing. Never silently install packages.</commentary>
-  </example>
-
-  <example>
-  Context: jest-axe missing for accessibility tests.
-  user: "Run /edm:test DASH"
-  assistant: "edm-test-scaffold needs to install jest-axe for accessibility testing. Proposing: npm install -D jest-axe @types/jest-axe. Do you approve?"
-  <commentary>Each install is proposed with the exact command. User must confirm before execution.</commentary>
-  </example>
-
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

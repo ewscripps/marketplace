@@ -3,24 +3,6 @@ name: edm-audit-spec
 description: |
   Use this agent for EDM Code Audit Lens L9 (Spec & Ticket Compliance). It cross-references EVERY requirement in the SRD and EVERY acceptance criterion in the ticket pack against the implemented code, flagging missing implementations, partial AC coverage, and scope creep (code that implements something not specified). Requires the SRD and ticket pack as explicit inputs. Examples:
 
-  <example>
-  Context: The /edm:code-audit skill is launching its 11-lens parallel audit with a known initiative prefix.
-  user: "/edm:code-audit AUTH"
-  assistant: "Spawning edm-audit-spec with the SRD path SRD/AUTH/srd.md and ticket pack path SRD/AUTH/tickets/."
-  <commentary>
-  L9 always runs in the full code audit when an initiative prefix is provided. It cannot do its job without ticket pack/SRD inputs.
-  </commentary>
-  </example>
-
-  <example>
-  Context: User finished implementation and wants to verify nothing in the spec was missed.
-  user: "did I implement everything in the AUTH ticket pack?"
-  assistant: "I'll spawn edm-audit-spec with SRD/AUTH/srd.md and SRD/AUTH/tickets/ to verify every requirement and AC has corresponding code."
-  <commentary>
-  Spec compliance check is exactly L9's mandate.
-  </commentary>
-  </example>
-
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

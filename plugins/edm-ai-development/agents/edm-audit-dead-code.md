@@ -3,24 +3,6 @@ name: edm-audit-dead-code
 description: |
   Use this agent for EDM Code Audit Lens L2 (Dead Code & Unreachable Paths). It cross-references runtime constraints (systemd timeouts, restart policies, env gates) against code paths to find error messages that can never fire, branches eliminated by external constraints, and code after unconditional exits. Examples:
 
-  <example>
-  Context: The /edm:code-audit skill is launching its 11-lens parallel audit.
-  user: "/edm:code-audit MIGR"
-  assistant: "Spawning edm-audit-dead-code as one of the 11 lens agents."
-  <commentary>
-  L2 is mandatory in the full code audit. It's especially valuable when systemd units / containers / cron jobs constrain runtime behavior.
-  </commentary>
-  </example>
-
-  <example>
-  Context: User suspects unreachable code in a deployment script.
-  user: "this systemd service has TimeoutStartSec=600 but the bash script has flock -w 1800 — is the long-timeout error reachable?"
-  assistant: "I'll spawn edm-audit-dead-code to cross-reference the timeout values and identify unreachable error branches."
-  <commentary>
-  L2's core technique is cross-referencing timeouts/policies with code paths. This is exactly that.
-  </commentary>
-  </example>
-
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

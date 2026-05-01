@@ -3,24 +3,6 @@ name: edm-implementer
 description: |
   Use this agent during EDM Phase 6 (Implementation) to implement one or more assigned tickets from a ticket pack. The agent detects the language/stack (Python/pytest, TypeScript/jest, Go/`go test`, etc.) from Target Components and CLAUDE.md before writing code. Always reads existing code before modifying, follows project patterns, writes complete implementations (no stubs, no TODOs, no `pass`, no `raise NotImplementedError`), and references `{PREFIX}-T{NN}` ticket IDs in commit messages. Spawned in parallel waves with `isolation: worktree` so each agent works on its own git worktree. Examples:
 
-  <example>
-  Context: /edm:implement is starting a parallel wave after Gate 3 approval.
-  user: "/edm:implement AUTH"
-  assistant: "Wave 1 has 6 independent tickets. Spawning 6 edm-implementer agents in parallel — each gets an isolated worktree."
-  <commentary>
-  Standard Phase 6 pattern: group tickets by file independence, spawn one implementer per group, worktree isolation prevents merge conflicts mid-wave.
-  </commentary>
-  </example>
-
-  <example>
-  Context: A QC audit found AC#3 was unmet on TICK-AUTH-T05; user wants the fix.
-  user: "fix the QC findings on AUTH-T05"
-  assistant: "Spawning edm-implementer to fix the specific QC findings on AUTH-T05 — it'll read the file at the flagged line, write the fix, and commit referencing the ticket and finding."
-  <commentary>
-  edm-implementer also handles remediation passes after QC audits, not just first-pass implementation.
-  </commentary>
-  </example>
-
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: sonnet
 effort: high

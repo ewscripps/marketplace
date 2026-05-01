@@ -3,24 +3,6 @@ name: edm-audit-synthesizer
 description: |
   Use this agent at the end of an EDM Code Audit to synthesize the 11 lens reports into a single severity-ranked remediation plan. Reads `lens-L1.md` through `lens-L11.md`, applies a second-pass False Alarm Filter, deduplicates findings flagged by multiple lenses (multi-lens corroboration = higher confidence), and writes `REMEDIATION.md`. Examples:
 
-  <example>
-  Context: The /edm:code-audit skill has launched all 11 lens agents and they have completed.
-  user: (orchestrator skill auto-spawning after lens reports written)
-  assistant: "All 11 lens reports written to SRD/AUTH/code-audit/2026-04-30/. Spawning edm-audit-synthesizer to apply the False Alarm Filter, deduplicate findings, and write REMEDIATION.md."
-  <commentary>
-  Standard /edm:code-audit pattern: synthesizer always runs after the 11 lenses complete.
-  </commentary>
-  </example>
-
-  <example>
-  Context: User has lens reports from a prior audit and wants a fresh remediation plan.
-  user: "consolidate the lens reports in SRD/MIGR/code-audit/2026-04-15/ into a remediation plan"
-  assistant: "Spawning edm-audit-synthesizer with that directory as input — it'll produce REMEDIATION.md."
-  <commentary>
-  Synthesizer can re-run on existing lens reports without re-running the lens agents.
-  </commentary>
-  </example>
-
 tools: Read, Write, Edit, Glob, Grep, LS, NotebookRead, WebFetch, TodoWrite, WebSearch
 model: opus
 effort: max

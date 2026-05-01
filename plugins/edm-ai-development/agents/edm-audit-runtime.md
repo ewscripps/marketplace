@@ -3,24 +3,6 @@ name: edm-audit-runtime
 description: |
   Use this agent for EDM Code Audit Lens L5 (Runtime Hygiene). It traces every file the code creates at runtime (lock files, temp files, PID files, logs, caches, generated configs) and verifies each is in `.gitignore`, won't accumulate indefinitely, and won't appear as untracked in `git status` on the deployment host. Examples:
 
-  <example>
-  Context: The /edm:code-audit skill is launching its 11-lens parallel audit.
-  user: "/edm:code-audit DEPLOY"
-  assistant: "Spawning edm-audit-runtime as one of the 11 lens agents."
-  <commentary>
-  L5 runs in every code audit — runtime hygiene issues are nearly invisible to other lenses.
-  </commentary>
-  </example>
-
-  <example>
-  Context: User notices `git status` showing untracked files on a production host.
-  user: "production keeps showing untracked files after each cron run — what's making them?"
-  assistant: "I'll spawn edm-audit-runtime to trace every file the relevant code creates and verify .gitignore coverage."
-  <commentary>
-  Untracked-file accumulation is the textbook L5 problem.
-  </commentary>
-  </example>
-
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

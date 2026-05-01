@@ -3,24 +3,6 @@ name: edm-qc-auditor
 description: |
   Use this agent during EDM Phase 6 QC (after each `edm-implementer` finishes) to compare every acceptance criterion against the implemented code and produce PASS/PARTIAL/FAIL verdicts per ticket with file:line evidence. Read-only. Auto-spawned by the SubagentStop hook configured in hooks/hooks.json. Examples:
 
-  <example>
-  Context: An edm-implementer agent just completed work on tickets AUTH-T03 and AUTH-T04. The SubagentStop hook fires.
-  user: (automatic — no user prompt)
-  assistant: "SubagentStop hook auto-spawning edm-qc-auditor to verify AUTH-T03 and AUTH-T04 acceptance criteria against the just-committed code."
-  <commentary>
-  Automatic QC pattern: every implementer completion triggers an immediate audit, so QC findings surface within the same session as the implementation.
-  </commentary>
-  </example>
-
-  <example>
-  Context: User wants to audit all tickets in an already-implemented epic.
-  user: "verify all tickets in epic 02 of the AUTH initiative pass QC"
-  assistant: "Spawning edm-qc-auditor with the epic file path and Target Components for each ticket in epic 02."
-  <commentary>
-  edm-qc-auditor can also be invoked manually for whole-epic verification, not just per-ticket.
-  </commentary>
-  </example>
-
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

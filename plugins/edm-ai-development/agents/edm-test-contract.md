@@ -6,20 +6,6 @@ description: |
   validation rejects malformed input with the documented error codes, and successful responses
   conform to the documented response schema. Uses the project's existing HTTP test client.
 
-  <example>
-  Context: FastAPI project with auto-generated OpenAPI spec at /openapi.json.
-  user: "Run /edm:test AUTH"
-  assistant: "edm-test-contract will read AUTH's OpenAPI spec and write contract tests verifying that POST /auth/login accepts the documented request body schema and returns the documented 200 or 401 response shapes."
-  <commentary>Contract tests are schema-driven — they read the spec and assert conformance, not business logic.</commentary>
-  </example>
-
-  <example>
-  Context: GraphQL API with a schema.graphql file.
-  user: "Write contract tests for GRAPH"
-  assistant: "Spawning edm-test-contract for GRAPH. Will parse schema.graphql and write tests that introspect the running schema matches the file, and that each mutation returns the documented return type."
-  <commentary>For GraphQL, contract tests use introspection to verify the schema matches the documented types.</commentary>
-  </example>
-
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

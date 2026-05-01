@@ -3,24 +3,6 @@ name: edm-audit-logic
 description: |
   Use this agent for EDM Code Audit Lens L1 (Logic, Correctness & Completeness). It hunts for logic bugs, wrong values, incorrect conditionals, off-by-one errors, stub functions returning placeholders, unresolved TODO/FIXME/HACK comments, `raise NotImplementedError`, empty catch blocks, and any function that always returns the same hardcoded value. Examples:
 
-  <example>
-  Context: The /edm:code-audit skill is launching its 11-lens parallel audit on a feature branch.
-  user: "/edm:code-audit AUTH"
-  assistant: "Spawning all 11 lens agents in parallel including edm-audit-logic for L1."
-  <commentary>
-  L1 is one of the eleven mandatory lenses in /edm:code-audit. It runs alongside the others on the same scope.
-  </commentary>
-  </example>
-
-  <example>
-  Context: User wants to find stub functions and unresolved TODOs in newly written code before merging.
-  user: "find any placeholder code or unfinished implementations in src/auth/"
-  assistant: "I'll spawn edm-audit-logic to hunt for stubs, TODOs, NotImplementedError, and empty catch blocks in src/auth/."
-  <commentary>
-  Even outside a full code audit, edm-audit-logic is the right tool for the L1 mandate when the focus is correctness/completeness.
-  </commentary>
-  </example>
-
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

@@ -6,20 +6,6 @@ description: |
   project's existing test patterns (discovered by reading current test files). Runs the unit
   test command after each batch and fixes failures before continuing.
 
-  <example>
-  Context: AUTH initiative, edm-test-planner identified src/auth/login.py needs 5 unit tests.
-  user: "Write unit tests for the AUTH initiative"
-  assistant: "Spawning edm-test-unit for AUTH. It will read the test plan, find the unit test framework (pytest), read existing tests for patterns, then write isolated tests for src/auth/login.py covering AC1–AC3 with mocked database calls."
-  <commentary>Unit tests mock at boundaries. DB calls, HTTP requests, and file I/O are always mocked in unit tests.</commentary>
-  </example>
-
-  <example>
-  Context: TypeScript/React project, vitest already configured.
-  user: "Run /edm:test DASH"
-  assistant: "The test orchestrator will spawn edm-test-unit for DASH to write vitest tests for the pure utility functions in src/utils/ and src/hooks/ (excluding React hooks, which go to edm-test-composable)."
-  <commentary>edm-test-unit covers plain TypeScript/JavaScript functions; React hooks go to edm-test-composable.</commentary>
-  </example>
-
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

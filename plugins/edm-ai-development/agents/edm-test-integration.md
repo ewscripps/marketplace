@@ -6,20 +6,6 @@ description: |
   cross-service HTTP calls with a live test server. Uses the project's existing integration test
   framework and fixtures. Runs tests after each batch to verify nothing is broken.
 
-  <example>
-  Context: FastAPI project with PostgreSQL, pytest and httpx for integration testing.
-  user: "Run /edm:test AUTH"
-  assistant: "edm-test-integration will write pytest integration tests for the AUTH initiative using httpx against a real test database. It will cover the login endpoint AC that require a real DB (rate limiting, audit log persistence)."
-  <commentary>Integration tests hit a real database or an in-memory substitute — they do not mock the persistence layer.</commentary>
-  </example>
-
-  <example>
-  Context: Node.js/Express API with SQLite for tests, jest-supertest.
-  user: "Write integration tests for TIPS"
-  assistant: "Spawning edm-test-integration for TIPS. Will use supertest to fire HTTP requests against the Express app with a SQLite test database, covering the API contract AC that can't be tested with mocks."
-  <commentary>Integration tests use real or near-real infrastructure — SQLite for a Postgres-using project is acceptable if schema is compatible.</commentary>
-  </example>
-
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

@@ -3,24 +3,6 @@ name: edm-ticket-auditor
 description: |
   Use this agent during EDM Phase 5 (Ticket Pack Audit) to validate the ticket pack against the SRD across 8 dimensions: Coverage, Sizing, Dependencies, Critical Path, AC Quality, Diagrams, Consistency, and Version Alignment (Generated From header matches current SRD version). Read-only — produces findings, doesn't modify the ticket pack. Examples:
 
-  <example>
-  Context: /edm:audit-tickets is launching Phase 5 audit on a fresh ticket pack.
-  user: "/edm:audit-tickets AUTH"
-  assistant: "Spawning 2 edm-ticket-auditor agents in parallel — one for structural dimensions (coverage, sizing, dependencies, version), one for content quality (AC, diagrams, consistency)."
-  <commentary>
-  Standard Phase 5 pattern: split audit work across two parallel auditors with non-overlapping dimension ownership.
-  </commentary>
-  </example>
-
-  <example>
-  Context: User suspects the ticket pack drifted from the latest SRD revision.
-  user: "the SRD got updated to v1.2 but the ticket pack was generated against v1.0 — verify it's still accurate"
-  assistant: "I'll spawn edm-ticket-auditor with focus on Dimension 8 (Version Alignment) — it'll cross-reference the Generated From header against the current SRD version and flag any drift."
-  <commentary>
-  Version-alignment audit is exactly Dimension 8's purpose.
-  </commentary>
-  </example>
-
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

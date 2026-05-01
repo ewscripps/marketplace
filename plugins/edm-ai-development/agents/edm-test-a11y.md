@@ -6,20 +6,6 @@ description: |
   modals, navigation, data tables — and ensures keyboard navigation, screen-reader labels, and
   focus management are correct. Runs after component tests are established.
 
-  <example>
-  Context: React app with forms and modals, jest-axe installed.
-  user: "Run /edm:test AUTH"
-  assistant: "edm-test-a11y will add axe-core assertions to the existing component tests for LoginForm and PasswordResetModal, then write additional keyboard-navigation tests to verify focus management and ARIA attributes."
-  <commentary>A11y tests run axe-core against rendered components and also test keyboard navigation specifically — tab order, focus trapping in modals, skip links.</commentary>
-  </example>
-
-  <example>
-  Context: Backend API with no HTML output.
-  user: "Write a11y tests for PYAPI"
-  assistant: "PYAPI is a backend API with no HTML rendering — accessibility testing is N/A. Accessibility applies to user-facing UI components only."
-  <commentary>A11y tests only make sense for HTML-rendering frontends. Mark N/A cleanly for backend projects.</commentary>
-  </example>
-
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

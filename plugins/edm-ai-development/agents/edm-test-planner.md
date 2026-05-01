@@ -7,20 +7,6 @@ description: |
   test files and layers. Writes `SRD/{PREFIX}/test-plan.md` and sets
   `test_frameworks_detected` in `.edm-state.json`.
 
-  <example>
-  Context: A Vue 3 + FastAPI initiative completed Phase 6 implementation.
-  user: "Plan the test coverage for DASH"
-  assistant: "Spawning edm-test-planner for the DASH initiative to detect the Vue/FastAPI stack and map each ticket's components to unit, composable, integration, and E2E test layers."
-  <commentary>Planner runs first so subsequent test-writer agents have a concrete scope. Do not skip it.</commentary>
-  </example>
-
-  <example>
-  Context: A pure Python CLI tool initiative, no UI components.
-  user: "Run /edm:test for PYCTL"
-  assistant: "Spawning edm-test-planner for PYCTL. The planner will detect pytest and mark component/E2E layers as N/A since there are no UI components."
-  <commentary>The planner adapts to the stack — it will not propose UI test layers for a CLI-only project.</commentary>
-  </example>
-
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: opus
 effort: high

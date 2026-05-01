@@ -3,24 +3,6 @@ name: edm-audit-docs
 description: |
   Use this agent for EDM Code Audit Lens L6 (Documentation Accuracy). It cross-references every comment, docstring, and operator-facing message against the actual code: stale claims, mismatched parameter docs, error messages that misstate what happened, missing "why" explanations for non-obvious choices. Examples:
 
-  <example>
-  Context: The /edm:code-audit skill is launching its 11-lens parallel audit.
-  user: "/edm:code-audit RBT"
-  assistant: "Spawning edm-audit-docs as one of the 11 lens agents."
-  <commentary>
-  L6 runs in every audit — comment rot is silently dangerous.
-  </commentary>
-  </example>
-
-  <example>
-  Context: User refactored a function but is unsure the docstring is still accurate.
-  user: "I changed the auth handler — does the docstring still match what it does?"
-  assistant: "I'll spawn edm-audit-docs to cross-reference every claim in the docstring against the current code."
-  <commentary>
-  L6's core technique: claim-by-claim verification against current implementation.
-  </commentary>
-  </example>
-
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

@@ -3,24 +3,6 @@ name: edm-audit-security
 description: |
   Use this agent for EDM Code Audit Lens L8 (Security & Portability). It hunts for bash file-descriptor conflicts, hardcoded absolute paths that won't exist on every host, env var propagation gaps, privilege assumptions, missing systemd hardening (`ProtectSystem`, `NoNewPrivileges`, `ReadWritePaths`), and SQL/command/path injection. Examples:
 
-  <example>
-  Context: The /edm:code-audit skill is launching its 11-lens parallel audit.
-  user: "/edm:code-audit DEPLOY"
-  assistant: "Spawning edm-audit-security as one of the 11 lens agents."
-  <commentary>
-  L8 runs in every audit. For deployment-related code it's especially load-bearing.
-  </commentary>
-  </example>
-
-  <example>
-  Context: User added a new systemd unit and wants security review.
-  user: "review the security hardening on my new systemd unit"
-  assistant: "I'll spawn edm-audit-security to check ProtectSystem coverage, NoNewPrivileges, ReadWritePaths, and capability bounds."
-  <commentary>
-  Systemd hardening is core L8.
-  </commentary>
-  </example>
-
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max
