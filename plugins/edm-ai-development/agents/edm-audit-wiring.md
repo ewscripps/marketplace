@@ -1,8 +1,10 @@
 ---
 name: edm-audit-wiring
 description: |
-  Use this agent for EDM Code Audit Lens L11 (Integration Wiring). It traces UI actions, data displays, and backend endpoints end-to-end to find disconnected pieces: frontend rendering from `MOCK_DATA` instead of calling the real API, backend endpoints registered but never called, event handlers subscribed but never triggered, feature flags gating code that was never written, config values loaded but never consumed. Examples:
-
+  EDM Code Audit Lens L11: Integration Wiring. Traces UI actions, data displays, and
+  backend endpoints end-to-end to find disconnected pieces: frontend using `MOCK_DATA`
+  instead of live API calls, backend endpoints never called, event handlers never
+  triggered, feature flags gating unwritten code, config values never consumed.
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

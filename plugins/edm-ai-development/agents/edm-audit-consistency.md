@@ -1,8 +1,7 @@
 ---
 name: edm-audit-consistency
 description: |
-  Use this agent for EDM Code Audit Lens L7 (Cross-File Consistency). It hunts for sibling components doing similar things differently: timeout values that diverge without explanation, error-handling patterns present in one service but missing from another, security hardening applied to some systemd units but not their siblings. Examples:
-
+  Use this agent for EDM Code Audit Lens L7 (Cross-File Consistency). It hunts for sibling components doing similar things differently: timeout values that diverge without explanation, error-handling patterns present in one service but missing from another, security hardening applied to some systemd units but not their siblings.
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

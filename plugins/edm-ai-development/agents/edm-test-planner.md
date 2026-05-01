@@ -1,12 +1,10 @@
 ---
 name: edm-test-planner
 description: |
-  Reads an EDM ticket pack and the project source code, detects the technology stack, and
-  produces a structured test-plan.md covering all applicable test layers (unit, component,
-  composable, integration, contract, E2E, a11y). Maps each ticket's Target Components to
-  test files and layers. Writes `SRD/{PREFIX}/test-plan.md` and sets
-  `test_frameworks_detected` in `.edm-state.json`.
-
+  Reads an EDM ticket pack and the project source code, detects the technology stack,
+  and produces `SRD/{PREFIX}/test-plan.md` covering all applicable test layers (unit,
+  component, composable, integration, contract, E2E, a11y). Maps each ticket's Target
+  Components to test files and layers. Sets `test_frameworks_detected` in state.
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: opus
 effort: high

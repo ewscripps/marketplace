@@ -1,8 +1,7 @@
 ---
 name: edm-srd-auditor
 description: |
-  Use this agent during EDM Phase 3 (SRD Audit) to audit the SRD across 7 categories (Feature Gaps, Factual Mistakes, Diagram Errors, Competing Requirements, Reuse Opportunities, Specification Quality, Additional Concerns) and produce severity-ranked findings (P0/P1/P2). Read-only agent — does not modify the SRD. Examples:
-
+  Use this agent during EDM Phase 3 (SRD Audit) to audit the SRD across 7 categories (Feature Gaps, Factual Mistakes, Diagram Errors, Competing Requirements, Reuse Opportunities, Specification Quality, Additional Concerns) and produce severity-ranked findings (P0/P1/P2). Read-only agent — does not modify the SRD.
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

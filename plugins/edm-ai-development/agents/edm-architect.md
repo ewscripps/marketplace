@@ -1,8 +1,7 @@
 ---
 name: edm-architect
 description: |
-  Use this agent during EDM Phase 2 (SRD Creation) to write Section 5 (Target Architecture) directly into the SRD: Mermaid diagrams (system context + sequence), component boundaries with file paths, data flow descriptions, integration patterns, and architectural risk analysis — all grounded in the existing codebase. Examples:
-
+  Use this agent during EDM Phase 2 (SRD Creation) to write Section 5 (Target Architecture) directly into the SRD: Mermaid diagrams (system context + sequence), component boundaries with file paths, data flow descriptions, integration patterns, and architectural risk analysis — all grounded in the existing codebase.
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, Write, Edit, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

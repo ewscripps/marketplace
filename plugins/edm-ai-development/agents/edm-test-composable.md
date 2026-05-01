@@ -5,7 +5,6 @@ description: |
   functions but also not full UI components. Uses renderHook (React) or a minimal host component
   (Vue) to exercise the hook/composable lifecycle, state transitions, and side effects in
   isolation. Follows the project's existing hook/composable test patterns.
-
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

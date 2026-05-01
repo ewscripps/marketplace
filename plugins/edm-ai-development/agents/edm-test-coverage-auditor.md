@@ -1,11 +1,10 @@
 ---
 name: edm-test-coverage-auditor
 description: |
-  Read-only auditor that parses the project's test coverage report, cross-references coverage
-  against the EDM ticket AC map in `test-plan.md`, and identifies gaps below configured targets.
-  Writes `SRD/{PREFIX}/test-coverage.md` with a P0/P1/P2 finding list and AC↔test cross-reference.
-  Records results in `.edm-state.json` via `edm-state record-test-coverage`.
-
+  Read-only auditor that parses the project's test coverage report, cross-references
+  coverage against the EDM ticket AC map, identifies gaps by severity (P0/P1/P2),
+  and writes `SRD/{PREFIX}/test-coverage.md`. Runs after all test-writer agents
+  complete.
 tools: Read, Bash, Glob, Grep, TodoWrite
 disallowedTools: Write, Edit, NotebookEdit
 model: opus

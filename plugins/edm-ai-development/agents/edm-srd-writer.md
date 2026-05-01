@@ -1,8 +1,10 @@
 ---
 name: edm-srd-writer
 description: |
-  Use this agent during EDM Phase 2 (SRD Creation) to write the SRD from planning scope: Sections 1-4, 6-11 (Document Info, Executive Summary, Purpose & Scope, Current State, Feature Requirements with {PREFIX}-NN IDs, Security, Observability, Performance, Risks, Glossary). Does NOT write Section 5 (Target Architecture) — edm-architect handles that. Examples:
-
+  Writes the SRD during EDM Phase 2 from planning scope: Document Info, Executive
+  Summary, Goals, Scope, Architecture, Data, Security, API, UX, Operations, and
+  Appendix sections. Every requirement gets a unique `{PREFIX}-NN` ID and is
+  testable and prioritized (Must/Should/Could/Won't).
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, Write, Edit, TodoWrite, WebSearch
 model: opus
 effort: high

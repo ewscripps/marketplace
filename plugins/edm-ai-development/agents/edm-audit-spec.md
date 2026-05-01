@@ -1,8 +1,10 @@
 ---
 name: edm-audit-spec
 description: |
-  Use this agent for EDM Code Audit Lens L9 (Spec & Ticket Compliance). It cross-references EVERY requirement in the SRD and EVERY acceptance criterion in the ticket pack against the implemented code, flagging missing implementations, partial AC coverage, and scope creep (code that implements something not specified). Requires the SRD and ticket pack as explicit inputs. Examples:
-
+  EDM Code Audit Lens L9: Spec & Ticket Compliance. Cross-references every SRD
+  requirement and ticket AC against the implemented code, flagging missing
+  implementations, partial AC coverage, and scope creep. Requires SRD and ticket
+  pack as explicit inputs.
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

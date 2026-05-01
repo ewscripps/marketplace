@@ -5,7 +5,6 @@ description: |
   at module boundaries: external I/O (databases, HTTP, filesystem) is mocked. Follows the
   project's existing test patterns (discovered by reading current test files). Runs the unit
   test command after each batch and fixes failures before continuing.
-
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

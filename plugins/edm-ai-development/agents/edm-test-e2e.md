@@ -1,11 +1,10 @@
 ---
 name: edm-test-e2e
 description: |
-  Writes end-to-end tests for critical user journeys using Playwright or Cypress. Tests run
-  against the full application stack in a test environment. Follows the page-object pattern for
-  maintainability. Focuses on covering the critical paths identified in the test plan — not every
-  feature, but every journey a user depends on for their primary workflow.
-
+  Writes end-to-end tests for critical user journeys using Playwright or Cypress.
+  Follows the page-object pattern for maintainability. Covers critical paths from the
+  test plan — every journey a user depends on for their primary workflow, not every
+  feature.
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

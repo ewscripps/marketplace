@@ -1,8 +1,7 @@
 ---
 name: edm-audit-edge-cases
 description: |
-  Use this agent for EDM Code Audit Lens L3 (Edge Cases & Concurrency). It hunts for race conditions, TOCTOU bugs, empty/null/default input crashes, timeout interactions where outer timeouts are ignored, and partial-failure states without rollback. Examples:
-
+  Use this agent for EDM Code Audit Lens L3 (Edge Cases & Concurrency). It hunts for race conditions, TOCTOU bugs, empty/null/default input crashes, timeout interactions where outer timeouts are ignored, and partial-failure states without rollback.
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

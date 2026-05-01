@@ -1,8 +1,10 @@
 ---
 name: edm-audit-dry
 description: |
-  Use this agent for EDM Code Audit Lens L10 (DRY & Redundancy). It hunts for duplicate functions doing the same thing in different files, the same feature implemented twice (two date formatters, two retry helpers, two auth flows), copy-pasted blocks that should be shared utilities, and — highest priority — parallel implementations that have diverged so only one is correct. Examples:
-
+  EDM Code Audit Lens L10: DRY & Redundancy. Hunts for duplicate functions across
+  files, features implemented twice (two date formatters, two retry helpers, two auth
+  flows), copy-pasted blocks that should be utilities, and parallel implementations
+  that have diverged.
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

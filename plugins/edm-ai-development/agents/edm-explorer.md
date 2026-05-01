@@ -1,8 +1,7 @@
 ---
 name: edm-explorer
 description: |
-  Use this agent during EDM Phase 1 (Planning & Discovery) when the user wants to map the codebase, identify scope boundaries, uncover dependencies, and produce the raw material for a planning document. Examples:
-
+  Use this agent during EDM Phase 1 (Planning & Discovery) when the user wants to map the codebase, identify scope boundaries, uncover dependencies, and produce the raw material for a planning document.
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

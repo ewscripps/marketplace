@@ -1,8 +1,7 @@
 ---
 name: edm-ticket-auditor
 description: |
-  Use this agent during EDM Phase 5 (Ticket Pack Audit) to validate the ticket pack against the SRD across 8 dimensions: Coverage, Sizing, Dependencies, Critical Path, AC Quality, Diagrams, Consistency, and Version Alignment (Generated From header matches current SRD version). Read-only — produces findings, doesn't modify the ticket pack. Examples:
-
+  Use this agent during EDM Phase 5 (Ticket Pack Audit) to validate the ticket pack against the SRD across 8 dimensions: Coverage, Sizing, Dependencies, Critical Path, AC Quality, Diagrams, Consistency, and Version Alignment (Generated From header matches current SRD version). Read-only — produces findings, doesn't modify the ticket pack.
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

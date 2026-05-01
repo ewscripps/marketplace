@@ -1,8 +1,7 @@
 ---
 name: edm-audit-synthesizer
 description: |
-  Use this agent at the end of an EDM Code Audit to synthesize the 11 lens reports into a single severity-ranked remediation plan. Reads `lens-L1.md` through `lens-L11.md`, applies a second-pass False Alarm Filter, deduplicates findings flagged by multiple lenses (multi-lens corroboration = higher confidence), and writes `REMEDIATION.md`. Examples:
-
+  Use this agent at the end of an EDM Code Audit to synthesize the 11 lens reports into a single severity-ranked remediation plan. Reads `lens-L1.md` through `lens-L11.md`, applies a second-pass False Alarm Filter, deduplicates findings flagged by multiple lenses (multi-lens corroboration = higher confidence), and writes `REMEDIATION.md`.
 tools: Read, Write, Edit, Glob, Grep, LS, NotebookRead, WebFetch, TodoWrite, WebSearch
 model: opus
 effort: max

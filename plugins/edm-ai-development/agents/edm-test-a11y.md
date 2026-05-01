@@ -5,7 +5,6 @@ description: |
   cypress-axe). Targets WCAG 2.1 AA compliance. Tests focus on interactive components — forms,
   modals, navigation, data tables — and ensures keyboard navigation, screen-reader labels, and
   focus management are correct. Runs after component tests are established.
-
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

@@ -1,11 +1,10 @@
 ---
 name: edm-test-integration
 description: |
-  Writes integration tests that cross module or service boundaries: API routes with a real (or
-  in-memory) database, multi-module workflows, message queue producers and consumers, and
-  cross-service HTTP calls with a live test server. Uses the project's existing integration test
-  framework and fixtures. Runs tests after each batch to verify nothing is broken.
-
+  Writes integration tests that cross module or service boundaries: API routes with a
+  real or in-memory database, multi-module workflows, and cross-service HTTP calls.
+  Uses the project's existing integration framework and fixtures. Runs tests after each
+  batch to verify nothing is broken.
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

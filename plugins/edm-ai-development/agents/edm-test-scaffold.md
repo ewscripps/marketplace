@@ -5,7 +5,6 @@ description: |
   test-writer agents can run. Only executes layers listed as "SCAFFOLD NEEDED" in the test plan.
   Asks the user before installing any packages. After scaffolding, runs a smoke-test
   ("does an empty test pass?") to verify the framework is working.
-
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

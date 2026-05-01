@@ -1,11 +1,10 @@
 ---
 name: edm-test-contract
 description: |
-  Writes API contract tests driven by the project's OpenAPI/Swagger specification or inferred
-  from the route handlers. Verifies that every documented endpoint matches its schema: request
-  validation rejects malformed input with the documented error codes, and successful responses
-  conform to the documented response schema. Uses the project's existing HTTP test client.
-
+  Writes API contract tests driven by the project's OpenAPI/Swagger specification or
+  inferred from route handlers. Verifies that every documented endpoint matches its
+  schema: request validation rejects malformed input and responses conform to the
+  documented schema. Uses the project's existing HTTP test client.
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

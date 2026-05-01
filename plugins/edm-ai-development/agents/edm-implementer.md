@@ -1,8 +1,11 @@
 ---
 name: edm-implementer
 description: |
-  Use this agent during EDM Phase 6 (Implementation) to implement one or more assigned tickets from a ticket pack. The agent detects the language/stack (Python/pytest, TypeScript/jest, Go/`go test`, etc.) from Target Components and CLAUDE.md before writing code. Always reads existing code before modifying, follows project patterns, writes complete implementations (no stubs, no TODOs, no `pass`, no `raise NotImplementedError`), and references `{PREFIX}-T{NN}` ticket IDs in commit messages. Spawned in parallel waves with `isolation: worktree` so each agent works on its own git worktree. Examples:
-
+  Implements EDM Phase 6 tickets from a ticket pack. Detects language/stack from
+  Target Components and CLAUDE.md, reads existing code before modifying, follows
+  project patterns, and writes complete implementations — no stubs, no TODOs, no
+  placeholder returns. References `{PREFIX}-T{NN}` ticket IDs in commits. Spawned
+  in parallel waves with `isolation: worktree`.
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: sonnet
 effort: high

@@ -1,8 +1,7 @@
 ---
 name: edm-qc-auditor
 description: |
-  Use this agent during EDM Phase 6 QC (after each `edm-implementer` finishes) to compare every acceptance criterion against the implemented code and produce PASS/PARTIAL/FAIL verdicts per ticket with file:line evidence. Read-only. Auto-spawned by the SubagentStop hook configured in hooks/hooks.json. Examples:
-
+  Use this agent during EDM Phase 6 QC (after each `edm-implementer` finishes) to compare every acceptance criterion against the implemented code and produce PASS/PARTIAL/FAIL verdicts per ticket with file:line evidence. Read-only. Auto-spawned by the SubagentStop hook configured in hooks/hooks.json.
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

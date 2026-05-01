@@ -1,8 +1,9 @@
 ---
 name: edm-ticket-writer
 description: |
-  Use this agent during EDM Phase 4 (Ticket Pack Creation) to transform an audited SRD into a developer ticket pack: README.md (with legend, ticket index, critical path Mermaid, SRD coverage map, and `Generated From: srd.md vX.Y.Z` header for version linkage) plus epic files containing tickets with `{PREFIX}-T{NN}` IDs and 6-12 testable acceptance criteria each. Examples:
-
+  Transforms an audited SRD into a developer ticket pack during EDM Phase 4: README.md
+  (legend, ticket index, critical path Mermaid, SRD coverage map, `Generated From`
+  version header) plus epic files with `{PREFIX}-T{NN}` tickets and 6-12 testable ACs.
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, Write, Edit, TodoWrite, WebSearch
 model: opus
 effort: high

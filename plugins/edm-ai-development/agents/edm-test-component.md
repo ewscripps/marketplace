@@ -1,12 +1,10 @@
 ---
 name: edm-test-component
 description: |
-  Writes UI component tests for React, Vue, Svelte, or Angular components using the project's
-  configured component testing framework (React Testing Library, Vue Test Utils, Angular Testing
-  Library, etc.). Tests interact with the component as a user would — through rendered output and
-  user events — not through internal state or implementation details. Follows the project's
-  existing component test patterns.
-
+  Writes UI component tests using the project's configured framework (React Testing
+  Library, Vue Test Utils, Angular Testing Library, etc.). Tests interact through
+  rendered output and user events, not internal state. Follows the project's existing
+  component test patterns.
 tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
 model: sonnet
 effort: high

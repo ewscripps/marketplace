@@ -1,8 +1,10 @@
 ---
 name: edm-audit-logic
 description: |
-  Use this agent for EDM Code Audit Lens L1 (Logic, Correctness & Completeness). It hunts for logic bugs, wrong values, incorrect conditionals, off-by-one errors, stub functions returning placeholders, unresolved TODO/FIXME/HACK comments, `raise NotImplementedError`, empty catch blocks, and any function that always returns the same hardcoded value. Examples:
-
+  EDM Code Audit Lens L1: Logic, Correctness & Completeness. Hunts for logic bugs,
+  wrong values, incorrect conditionals, off-by-one errors, stub functions, unresolved
+  TODO/FIXME/HACK comments, `raise NotImplementedError`, empty catch blocks, and
+  functions that always return the same hardcoded value.
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max

@@ -1,8 +1,7 @@
 ---
 name: edm-audit-test-quality
 description: |
-  Use this agent for EDM Code Audit Lens L4 (Test Quality). It hunts for `2>/dev/null || true` masking test failures, incomplete assertions, mocks that hide the code under test, false-positive-prone stubs, and missing tests for newly added code paths. Examples:
-
+  Use this agent for EDM Code Audit Lens L4 (Test Quality). It hunts for `2>/dev/null || true` masking test failures, incomplete assertions, mocks that hide the code under test, false-positive-prone stubs, and missing tests for newly added code paths.
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max
