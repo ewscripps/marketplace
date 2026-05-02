@@ -1,33 +1,38 @@
 ---
 name: orchestrator
-description: Run the full Enterprise Development Methodology (EDM) — all 6 phases with 3 HITL gates. Invoked explicitly via /edm:orchestrator <initiative description>. Use when starting a new feature, refactor, or service that touches 10+ files.
+description: Run the full Enterprise Development Methodology (EDM) — all 6 phases with 3 HITL gates. Invoked explicitly via /edm:orchestrator <initiative>. The initiative can be plain text, a file path, or a Jira ticket key. Use when starting a new feature, refactor, or service that touches 10+ files.
 disable-model-invocation: true
 model: opus
 effort: max
-argument-hint: <initiative description>
+argument-hint: '<initiative description | /path/to/file | PROJ-123>'
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Task, TodoWrite
 ---
 
 # EDM Orchestrator
 
-You are orchestrating a complete Enterprise Development Methodology (EDM) initiative. The user invoked `/edm:orchestrator` with:
+You are orchestrating a complete Enterprise Development Methodology (EDM) initiative. The user invoked
+`/edm:orchestrator` with:
 
-**Initiative**: $ARGUMENTS
+**Raw input**: $ARGUMENTS
+
+The input may be plain text, a file path, or a Jira ticket key — Step 1a resolves it into a concrete initiative
+description before any planning begins.
 
 ## Overview
 
-EDM is a six-phase process for shipping complex software with high confidence. The core insight: **the cost of planning is always lower than the cost of rework**.
+EDM is a six-phase process for shipping complex software with high confidence. The core insight: **the cost of planning
+is always lower than the cost of rework**.
 
 ## When to Use
 
-| Scenario | Use EDM? |
-|---|---|
-| New feature touching 10+ files | Yes — full six phases |
-| Large refactor or migration | Yes |
-| New service or module | Yes |
-| Bug fix (1-3 files) | No — just fix it |
-| Config/dependency update | No — just do it |
-| Exploratory prototype | Partial — Phase 1-2 only |
+| Scenario                       | Use EDM?                 |
+|--------------------------------|--------------------------|
+| New feature touching 10+ files | Yes — full six phases    |
+| Large refactor or migration    | Yes                      |
+| New service or module          | Yes                      |
+| Bug fix (1-3 files)            | No — just fix it         |
+| Config/dependency update       | No — just do it          |
+| Exploratory prototype          | Partial — Phase 1-2 only |
 
 ## The Six Phases + HITL Gates
 
@@ -37,10 +42,10 @@ Planning --> GATE --> SRD     -->  Audit   --> GATE --> Tickets --> Audit    -->
              #1      Creation     (SRD)        #2      Creation    (Tickets)    #3       + QC + Remediation
 ```
 
-| Gate | After | Approves |
-|------|-------|---------|
-| Gate 1 | Phase 1 Planning | Scope, constraints, go/no-go |
-| Gate 2 | Phase 3 SRD Audit | Remediated SRD is correct |
+| Gate   | After                | Approves                            |
+|--------|----------------------|-------------------------------------|
+| Gate 1 | Phase 1 Planning     | Scope, constraints, go/no-go        |
+| Gate 2 | Phase 3 SRD Audit    | Remediated SRD is correct           |
 | Gate 3 | Phase 5 Ticket Audit | Ticket pack is implementation-ready |
 
 ## Operational Orchestration
@@ -49,19 +54,46 @@ Execute the following steps. Use `bin/edm-state` (on PATH while plugin enabled) 
 
 ### Step 1 — Initial assessment
 
-1. If `$ARGUMENTS` is empty, ask: *"What are we building? Describe the initiative."*
-2. Assess whether this qualifies for full EDM (10+ files, new module, major refactor). If not, say so and suggest just doing it directly without EDM.
-3. Ask the user for the **initiative prefix** (e.g., `AUTH`, `MIGR`, `FEAT`). Hint format: `${user_config.prefix_format_hint}`.
-4. Run `edm-validate-prefix <PREFIX>` — if a SRD/{PREFIX}/ already exists, ask whether to resume or pick a different prefix.
-5. If new: `edm-init <PREFIX>` to scaffold the initiative directory at `${user_config.srd_root}/{PREFIX}/`.
+**Step 1a — Resolve the initiative description from `$ARGUMENTS`**
+
+Determine the input type and extract the initiative description before proceeding:
+
+- **Empty**: If `$ARGUMENTS` is empty or blank, ask: *"What are we building? Describe the initiative, provide a file
+  path, or give a Jira ticket key (e.g., PROJ-123)."* Use the answer as the initiative description.
+
+- **Jira ticket key** (`$ARGUMENTS` matches `[A-Z][A-Z0-9]+-\d+`, e.g., `ELI-42`):
+  1. Call `getAccessibleAtlassianResources` to get the cloudId.
+  2. Call `getJiraIssue` with the ticket key.
+  3. Compose the initiative description from the issue summary, description, and any acceptance criteria in the body.
+  4. Show the user the resolved description and confirm: *"Using Jira ticket {KEY}: '{summary}'. Proceed?"*
+
+- **File path** (`$ARGUMENTS` starts with `/`, `./`, `~/`, or ends with a known extension like `.md`, `.txt`, `.rst`):
+  1. Read the file with the `Read` tool.
+  2. Use the full file contents as the initiative description.
+  3. Tell the user: *"Using contents of {path} as the initiative description."*
+
+- **Plain text** (everything else): use `$ARGUMENTS` directly as the initiative description.
+
+Call the resolved value **`INITIATIVE`** — all subsequent steps use `INITIATIVE`, not `$ARGUMENTS`.
+
+**Step 1b — EDM qualification and prefix**
+
+1. Assess whether `INITIATIVE` qualifies for full EDM (10+ files, new module, major refactor). If not, say so and
+   suggest doing it directly without EDM.
+2. Ask the user for the **initiative prefix** (e.g., `AUTH`, `MIGR`, `FEAT`). Hint format:
+   `${user_config.prefix_format_hint}`.
+3. Run `edm-validate-prefix <PREFIX>` — if a SRD/{PREFIX}/ already exists, ask whether to resume or pick a different
+   prefix.
+4. If new: `edm-init <PREFIX>` to scaffold the initiative directory at `${user_config.srd_root}/{PREFIX}/`.
 
 ### Step 2 — Execute Phase 1 (Planning)
 
 1. `edm-state phase-start <PREFIX> 1`
-2. Spawn `edm-explorer` agent(s) — parallel if scope spans multiple codebase areas.
+2. Spawn `edm-explorer` agent(s) with `INITIATIVE` as the initiative context — parallel if scope spans multiple codebase areas.
 3. Synthesize agent output into `${user_config.srd_root}/{PREFIX}/planning.md` using the planning template.
 4. `edm-state phase-complete <PREFIX> 1`
-5. **HITL Gate 1**: present scope, components affected, constraints, estimated size, go/no-go recommendation. Ask: *"Do you approve this scope and want to proceed to SRD creation?"*
+5. **HITL Gate 1**: present scope, components affected, constraints, estimated size, go/no-go recommendation. Ask: *"Do
+   you approve this scope and want to proceed to SRD creation?"*
 6. **STOP and WAIT for explicit sign-off.**
 7. On approval: `edm-state approve-gate <PREFIX> 1`
 
@@ -80,7 +112,8 @@ Execute the following steps. Use `bin/edm-state` (on PATH while plugin enabled) 
 3. Compile findings; remediate all P0/P1 directly in the SRD; update revision history.
 4. Write audit report to `${user_config.srd_root}/{PREFIX}/audit-srd.md`.
 5. `edm-state phase-complete <PREFIX> 3`
-6. **HITL Gate 2**: present requirement count by priority, key architecture decisions, risks, audit findings resolved (P0: N, P1: N, P2: N deferred). Ask: *"Do you approve this SRD and want to proceed to ticket creation?"*
+6. **HITL Gate 2**: present requirement count by priority, key architecture decisions, risks, audit findings resolved (
+   P0: N, P1: N, P2: N deferred). Ask: *"Do you approve this SRD and want to proceed to ticket creation?"*
 7. **STOP and WAIT for explicit sign-off.**
 8. On approval: `edm-state approve-gate <PREFIX> 2`
 
@@ -89,8 +122,8 @@ Execute the following steps. Use `bin/edm-state` (on PATH while plugin enabled) 
 1. `edm-state phase-start <PREFIX> 4`
 2. Spawn `edm-ticket-writer` (per epic in parallel for large initiatives).
 3. Output to `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/` (default `tickets/`):
-   - `README.md` (index, legend, critical path, SRD coverage map, `Generated From: srd.md vX.Y.Z` header)
-   - `epics/01-*.md` through `NN-*.md`
+    - `README.md` (index, legend, critical path, SRD coverage map, `Generated From: srd.md vX.Y.Z` header)
+    - `epics/01-*.md` through `NN-*.md`
 4. `edm-state phase-complete <PREFIX> 4`
 5. Proceed automatically to Phase 5.
 
@@ -101,7 +134,8 @@ Execute the following steps. Use `bin/edm-state` (on PATH while plugin enabled) 
 3. Compile findings; remediate all gaps in the ticket pack.
 4. Write audit report to `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/audit.md`.
 5. `edm-state phase-complete <PREFIX> 5`
-6. **HITL Gate 3**: present ticket count by epic, size distribution, critical path, estimated effort, SRD coverage (N/N requirements). Ask: *"Do you approve this ticket pack and want to proceed to implementation?"*
+6. **HITL Gate 3**: present ticket count by epic, size distribution, critical path, estimated effort, SRD coverage (N/N
+   requirements). Ask: *"Do you approve this ticket pack and want to proceed to implementation?"*
 7. **STOP and WAIT for explicit sign-off.**
 8. On approval: `edm-state approve-gate <PREFIX> 3`
 
@@ -119,9 +153,9 @@ Execute the following steps. Use `bin/edm-state` (on PATH while plugin enabled) 
 After all tickets have an initial PASS verdict, suggest:
 
 > *"All {N} tickets pass QC. Recommended: run `/edm:test {PREFIX}` to build thorough,
->  layered test coverage (unit, component, integration, E2E, a11y) before declaring Phase 6
->  complete. Implementer agents write basic smoke tests per ticket — `/edm:test` builds the
->  full suite that gives you confidence to ship."*
+> layered test coverage (unit, component, integration, E2E, a11y) before declaring Phase 6
+> complete. Implementer agents write basic smoke tests per ticket — `/edm:test` builds the
+> full suite that gives you confidence to ship."*
 
 This step is recommended but not mandatory. For very small initiatives (< 5 tickets, all tested
 thoroughly by the implementers), the user may choose to proceed without it.
@@ -139,11 +173,11 @@ thoroughly by the implementers), the user may choose to proceed without it.
 
 ## Phase Timing Guidelines
 
-| Initiative Size | Planning | SRD | Audit | Tickets | Audit | Impl | Total |
-|---|---|---|---|---|---|---|---|
-| Small (10-20 tickets) | 30m | 2h | 1h | 1h | 30m | 4-8h | 1-2 days |
-| Medium (30-50 tickets) | 1h | 4h | 2h | 3h | 1h | 12-24h | 3-5 days |
-| Large (50-85 tickets) | 2h | 8h | 4h | 6h | 2h | 24-48h | 5-10 days |
+| Initiative Size        | Planning | SRD | Audit | Tickets | Audit | Impl   | Total     |
+|------------------------|----------|-----|-------|---------|-------|--------|-----------|
+| Small (10-20 tickets)  | 30m      | 2h  | 1h    | 1h      | 30m   | 4-8h   | 1-2 days  |
+| Medium (30-50 tickets) | 1h       | 4h  | 2h    | 3h      | 1h    | 12-24h | 3-5 days  |
+| Large (50-85 tickets)  | 2h       | 8h  | 4h    | 6h      | 2h    | 24-48h | 5-10 days |
 
 Run `/edm:metrics --calibrate` periodically to update these from your team's actual data.
 
@@ -171,7 +205,8 @@ ${user_config.srd_root}/{PREFIX}/
 
 - **Skip the SRD** — scope creeps, contradictions emerge, tickets lack context.
 - **Skip an audit** — errors propagate to every ticket and every line of code.
-- **Auto-approve HITL gates** — defeats the purpose; human misalignment is 10x cheaper to fix now than after implementation.
+- **Auto-approve HITL gates** — defeats the purpose; human misalignment is 10x cheaper to fix now than after
+  implementation.
 - **One monolithic implementation pass** — context exhaustion, no parallelism.
 - **XL tickets** — must be decomposed before starting.
 
