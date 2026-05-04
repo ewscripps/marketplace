@@ -82,9 +82,16 @@ Call the resolved value **`INITIATIVE`** — all subsequent steps use `INITIATIV
    suggest doing it directly without EDM.
 2. Ask the user for the **initiative prefix** (e.g., `AUTH`, `MIGR`, `FEAT`). Hint format:
    `${user_config.prefix_format_hint}`.
-3. Run `edm-validate-prefix <PREFIX>` — if a SRD/{PREFIX}/ already exists, ask whether to resume or pick a different
-   prefix.
+3. Run `edm-validate-prefix <PREFIX>` — if `SRD/{PREFIX}/` already exists:
+   - Read `SRD/{PREFIX}/HANDOFF.md` if present and display it verbatim so the user sees exactly where the
+     initiative stands (phase, last gate, next action, artifact checklist, decisions made).
+   - Then use `AskUserQuestion` with header `"Resume?"` and options:
+     - **Resume** — continue from where the handoff shows
+     - **Start over** — pick a different prefix
+   - On Resume: skip `edm-init`, proceed to the phase indicated in `.edm-state.json`.
+   - On Start over: ask for a new prefix and loop back to step 2.
 4. If new: `edm-init <PREFIX>` to scaffold the initiative directory at `${user_config.srd_root}/{PREFIX}/`.
+   Then immediately run `edm-state write-handoff <PREFIX>` to create the initial HANDOFF.md.
 
 ### Step 2 — Execute Phase 1 (Planning)
 
@@ -299,6 +306,7 @@ ${user_config.srd_root}/{PREFIX}/
 │   └── {YYYY-MM-DD}/
 │       ├── lens-L1.md … lens-L11.md
 │       └── REMEDIATION.md
+├── HANDOFF.md                 ← auto-generated cross-user resume doc (refreshed at every phase/gate/stop)
 └── .edm-state.json            ← gate approvals, phase timestamps, coverage_by_layer
 ```
 

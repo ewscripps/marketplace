@@ -14,6 +14,7 @@
 #   edm-state record-tests-added <PREFIX> <phase> <layer> <count>  # record test count by layer
 #   edm-state get-coverage <PREFIX>                     # print coverage summary for all layers
 #   edm-state archive <PREFIX>                          # mark initiative complete
+#   edm-state write-handoff <PREFIX>                    # write/refresh HANDOFF.md for cross-user resumption
 #   edm-state watch-impl                                # tail git log for ticket commits (called by monitor)
 #   edm-state metrics-report <PREFIX|--all|--calibrate>
 set -euo pipefail
@@ -258,6 +259,7 @@ cmd_approve_gate() {
   ')"
   write_state "$prefix" "$new"
   echo "approved gate $gate for $prefix at $(now_utc)"
+  write_handoff_internal "$prefix"
 }
 
 cmd_phase_start() {
@@ -333,6 +335,8 @@ cmd_phase_complete() {
       local tickets_path="${SRD_ROOT}/${prefix}/${TICKET_PACK_DIRNAME}/README.md"
       [[ -f "$tickets_path" ]] && record_artifact_hash "$prefix" "tickets" "$tickets_path" ;;
   esac
+
+  write_handoff_internal "$prefix"
 }
 
 cmd_checkpoint() {
@@ -391,6 +395,7 @@ cmd_checkpoint() {
       fi
     done <<< "$hashes"
     [[ $drift_found -eq 0 ]] || echo ""
+    write_handoff_internal "$prefix"
   done
 }
 
@@ -604,6 +609,152 @@ cmd_metrics_report() {
   esac
 }
 
+# ---- HANDOFF.md generation --------------------------------------------------
+# Writes SRD/{PREFIX}/HANDOFF.md — a version-controlled snapshot that any team
+# member can read to understand current status and resume the initiative.
+# Called automatically from phase-complete, approve-gate, and checkpoint-if-active.
+# Preserves the user-editable ## Notes section across re-writes.
+
+write_handoff_internal() {
+  local prefix="$1"
+  require_jq
+  local state_file
+  state_file="$(state_file_for "$prefix")"
+  [[ -f "$state_file" ]] || return 0
+
+  local state
+  state="$(cat "$state_file")"
+
+  local phase
+  phase="$(echo "$state" | jq -r '.current_phase // 0')"
+
+  local phase_name
+  case "$phase" in
+    0) phase_name="Not started" ;;
+    1) phase_name="Phase 1 — Planning" ;;
+    2) phase_name="Phase 2 — SRD Creation" ;;
+    3) phase_name="Phase 3 — SRD Audit" ;;
+    4) phase_name="Phase 4 — Ticket Creation" ;;
+    5) phase_name="Phase 5 — Ticket Audit" ;;
+    6) phase_name="Phase 6 — Implementation" ;;
+    *) phase_name="Phase ${phase}" ;;
+  esac
+
+  local gates_count last_gate
+  gates_count="$(echo "$state" | jq -r '(.gates_approved // []) | length')"
+  last_gate="$(echo "$state" | jq -r '
+    (.gates_approved // []) | .[-1] // null |
+    if . then "Gate \(.gate) — approved \(.approved_at) by \(.approver // "unknown")"
+    else "none yet"
+    end
+  ')"
+
+  # Derive what to do next from current phase + gates approved
+  local gate_nums next_action
+  gate_nums="$(echo "$state" | jq -r '[(.gates_approved // []) | .[].gate] | sort | .[]' 2>/dev/null | tr '\n' ' ')"
+  case "$phase" in
+    0|1)
+      if echo " $gate_nums " | grep -qw 1; then
+        next_action="Proceed to Phase 2 — SRD creation (\`/edm:orchestrator ${prefix}\`)"
+      else
+        next_action="HITL Gate 1 pending — run \`/edm:orchestrator ${prefix}\` to present scope for team approval"
+      fi
+      ;;
+    2|3)
+      if echo " $gate_nums " | grep -qw 2; then
+        next_action="Proceed to Phase 4 — ticket creation (\`/edm:orchestrator ${prefix}\`)"
+      else
+        next_action="HITL Gate 2 pending — run \`/edm:orchestrator ${prefix}\` to present SRD for team approval"
+      fi
+      ;;
+    4|5)
+      if echo " $gate_nums " | grep -qw 3; then
+        next_action="Proceed to Phase 6 — implementation (\`/edm:orchestrator ${prefix}\`)"
+      else
+        next_action="HITL Gate 3 pending — run \`/edm:orchestrator ${prefix}\` to present ticket pack for team approval"
+      fi
+      ;;
+    6) next_action="Phase 6 in progress — run \`/edm:orchestrator ${prefix}\` to continue, then \`/edm:test ${prefix}\` when all tickets pass QC" ;;
+    *) next_action="Run \`/edm:orchestrator ${prefix}\` to check status" ;;
+  esac
+
+  # Gate list
+  local gate_list
+  gate_list="$(echo "$state" | jq -r '
+    (.gates_approved // []) |
+    if length == 0 then "_(none yet)_"
+    else map("- Gate \(.gate) — approved \(.approved_at) by \(.approver // "unknown")") | join("\n")
+    end
+  ')"
+
+  # Artifact presence
+  local planning_path="${SRD_ROOT}/${prefix}/planning.md"
+  local srd_path="${SRD_ROOT}/${prefix}/${SRD_FILENAME}"
+  local audit_srd_path="${SRD_ROOT}/${prefix}/audit-srd.md"
+  local tickets_path="${SRD_ROOT}/${prefix}/${TICKET_PACK_DIRNAME}/README.md"
+  local audit_tickets_path="${SRD_ROOT}/${prefix}/${TICKET_PACK_DIRNAME}/audit.md"
+
+  local s_planning s_srd s_audit_srd s_tickets s_audit_tickets
+  s_planning="$([[ -f "$planning_path" ]] && echo '✓ present' || echo '✗ not yet')"
+  s_srd="$([[ -f "$srd_path" ]] && echo '✓ present' || echo '✗ not yet')"
+  s_audit_srd="$([[ -f "$audit_srd_path" ]] && echo '✓ present' || echo '✗ not yet')"
+  s_tickets="$([[ -f "$tickets_path" ]] && echo '✓ present' || echo '✗ not yet')"
+  s_audit_tickets="$([[ -f "$audit_tickets_path" ]] && echo '✓ present' || echo '✗ not yet')"
+
+  # Decisions Made section from planning.md
+  local decisions=""
+  if [[ -f "$planning_path" ]]; then
+    decisions="$(awk '/^## Decisions Made/{p=1;next} p && /^## /{p=0} p{print}' "$planning_path" 2>/dev/null \
+      | grep -v '^[[:space:]]*$' || true)"
+  fi
+  [[ -n "$decisions" ]] || decisions="_(none recorded yet — decisions are captured at Gate 1)_"
+
+  # Preserve user-edited Notes section across re-writes
+  local handoff_path="${SRD_ROOT}/${prefix}/HANDOFF.md"
+  local notes=""
+  if [[ -f "$handoff_path" ]]; then
+    notes="$(awk '/^## Notes/{p=1;next} p && /^## /{p=0} p{print}' "$handoff_path" 2>/dev/null \
+      | grep -v '^[[:space:]]*$' || true)"
+  fi
+  [[ -n "$notes" ]] || notes="_(Add anything a teammate should know before resuming — context, blockers, preferences)_"
+
+  local updated_at
+  updated_at="$(now_utc)"
+
+  {
+    printf '# %s — Session Handoff\n\n' "$prefix"
+    printf '> **Last updated**: %s by %s  \n' "$updated_at" "${USER:-unknown}"
+    printf '> **To resume**: `/edm:orchestrator %s`\n\n' "$prefix"
+    printf '## Current Status\n\n'
+    printf '- **Phase**: %s\n' "$phase_name"
+    printf '- **Gates approved**: %s of 3\n' "$gates_count"
+    printf '- **Last gate**: %s\n' "$last_gate"
+    printf '- **Next action**: %s\n\n' "$next_action"
+    printf '## Gates\n\n%s\n\n' "$gate_list"
+    printf '## Artifact Checklist\n\n'
+    printf '| Artifact | Status |\n'
+    printf '|----------|--------|\n'
+    printf '| `SRD/%s/planning.md` | %s |\n' "$prefix" "$s_planning"
+    printf '| `SRD/%s/%s` | %s |\n' "$prefix" "$SRD_FILENAME" "$s_srd"
+    printf '| `SRD/%s/audit-srd.md` | %s |\n' "$prefix" "$s_audit_srd"
+    printf '| `SRD/%s/%s/README.md` | %s |\n' "$prefix" "$TICKET_PACK_DIRNAME" "$s_tickets"
+    printf '| `SRD/%s/%s/audit.md` | %s |\n\n' "$prefix" "$TICKET_PACK_DIRNAME" "$s_audit_tickets"
+    printf '## Key Decisions Made\n\n%s\n\n' "$decisions"
+    printf '## How to Resume\n\n'
+    printf '1. Pull the latest branch — all EDM artifacts are committed\n'
+    printf '2. Open Claude Code in the project root\n'
+    printf '3. Run: `/edm:orchestrator %s`\n' "$prefix"
+    printf '4. The orchestrator detects the existing initiative and resumes from **%s**\n\n' "$phase_name"
+    printf '## Notes\n\n%s\n' "$notes"
+  } > "$handoff_path"
+}
+
+cmd_write_handoff() {
+  [[ $# -eq 1 ]] || die "usage: edm-state write-handoff <PREFIX>"
+  write_handoff_internal "$1"
+  echo "wrote ${SRD_ROOT}/${1}/HANDOFF.md"
+}
+
 # ---- dispatch ---------------------------------------------------------------
 
 cmd="${1:-}"; shift || true
@@ -621,6 +772,7 @@ case "$cmd" in
   record-tests-added) cmd_record_tests_added "$@" ;;
   get-coverage)       cmd_get_coverage "$@" ;;
   archive)            cmd_archive "$@" ;;
+  write-handoff)      cmd_write_handoff "$@" ;;
   watch-impl)         cmd_watch_impl "$@" ;;
   metrics-report)     cmd_metrics_report "$@" ;;
   ""|-h|--help|help)

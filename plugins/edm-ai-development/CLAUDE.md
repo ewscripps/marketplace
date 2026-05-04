@@ -59,6 +59,7 @@ SRD/                              ← project root, committed to git
 │   │   └── {YYYY-MM-DD}/
 │   │       ├── lens-L1.md … lens-L11.md
 │   │       └── REMEDIATION.md
+│   ├── HANDOFF.md                ← auto-generated cross-user resume doc (updated at every phase/gate/stop)
 │   └── .edm-state.json           ← gate approvals, phase timestamps (committed by default)
 ```
 
@@ -286,11 +287,11 @@ These are part of the methodology — do not disable them in normal operation.
 
 Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call them by bare name.
 
-| Script                | Purpose                                                                                                                                                                                                           |
-|-----------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `edm-state`           | Read/write `.edm-state.json` files; subcommands: `get`, `set`, `list`, `approve-gate`, `checkpoint-if-active`, `archive`, `phase-start`, `phase-complete`, `record-task-duration`, `watch-impl`, `metrics-report` |
-| `edm-init`            | Scaffold a new `SRD/{PREFIX}/` directory with empty state file                                                                                                                                                    |
-| `edm-validate-prefix` | Verify a proposed prefix doesn't collide with existing initiatives                                                                                                                                                |
+| Script                | Purpose                                                                                                                                                                                                                                     |
+|-----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `edm-state`           | Read/write `.edm-state.json` files; subcommands: `get`, `set`, `list`, `approve-gate`, `checkpoint-if-active`, `archive`, `phase-start`, `phase-complete`, `record-task-duration`, `write-handoff`, `watch-impl`, `metrics-report` |
+| `edm-init`            | Scaffold a new `SRD/{PREFIX}/` directory with empty state file                                                                                                                                                                              |
+| `edm-validate-prefix` | Verify a proposed prefix doesn't collide with existing initiatives                                                                                                                                                                          |
 
 Operates against the project's working directory (no plugin-relative paths). All scripts must be POSIX-compatible bash (
 `#!/bin/bash` or `#!/usr/bin/env bash`).
