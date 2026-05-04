@@ -13,6 +13,7 @@
 #   edm-state record-test-coverage <PREFIX> <layer> <pct>   # record coverage % for a test layer
 #   edm-state record-tests-added <PREFIX> <phase> <layer> <count>  # record test count by layer
 #   edm-state get-coverage <PREFIX>                     # print coverage summary for all layers
+#   edm-state srd-version <PREFIX> <version>            # set the SRD version (e.g. 1.0.0, 1.1.0)
 #   edm-state archive <PREFIX>                          # mark initiative complete
 #   edm-state write-handoff <PREFIX>                    # write/refresh HANDOFF.md for cross-user resumption
 #   edm-state watch-impl                                # tail git log for ticket commits (called by monitor)
@@ -472,6 +473,18 @@ cmd_get_coverage() {
   ' "$state" 2>/dev/null
 }
 
+cmd_srd_version() {
+  [[ $# -eq 2 ]] || die "usage: edm-state srd-version <PREFIX> <version>"
+  local prefix="$1" version="$2"
+  require_jq
+  local current new
+  current="$(read_state "$prefix")"
+  new="$(echo "$current" | jq --arg v "$version" --arg t "$(now_utc)" '.srd_version = $v | .last_updated = $t')"
+  write_state "$prefix" "$new"
+  echo "set srd_version = $version for $prefix"
+  write_handoff_internal "$prefix"
+}
+
 cmd_archive() {
   [[ $# -eq 1 ]] || die "usage: edm-state archive <PREFIX>"
   local prefix="$1"
@@ -771,6 +784,7 @@ case "$cmd" in
   record-test-coverage) cmd_record_test_coverage "$@" ;;
   record-tests-added) cmd_record_tests_added "$@" ;;
   get-coverage)       cmd_get_coverage "$@" ;;
+  srd-version)        cmd_srd_version "$@" ;;
   archive)            cmd_archive "$@" ;;
   write-handoff)      cmd_write_handoff "$@" ;;
   watch-impl)         cmd_watch_impl "$@" ;;
