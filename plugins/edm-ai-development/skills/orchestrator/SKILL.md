@@ -5,7 +5,7 @@ disable-model-invocation: true
 model: opus
 effort: max
 argument-hint: '<initiative description | /path/to/file | PROJ-123>'
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Task, TodoWrite
+allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Task, TodoWrite, AskUserQuestion
 ---
 
 # EDM Orchestrator
@@ -90,12 +90,86 @@ Call the resolved value **`INITIATIVE`** — all subsequent steps use `INITIATIV
 
 1. `edm-state phase-start <PREFIX> 1`
 2. Spawn `edm-explorer` agent(s) with `INITIATIVE` as the initiative context — parallel if scope spans multiple codebase areas.
-3. Synthesize agent output into `${user_config.srd_root}/{PREFIX}/planning.md` using the planning template.
+3. Synthesize agent output into `${user_config.srd_root}/{PREFIX}/planning.md`. The file must include these sections
+   in order:
+
+   ```
+   # {PREFIX} Planning
+
+   ## Initiative
+   {one-paragraph description}
+
+   ## Current State
+   {what exists today}
+
+   ## Gap Analysis
+   {delta between current and desired state}
+
+   ## Component Inventory
+   | Component | Path | Status | Notes |
+   |-----------|------|--------|-------|
+
+   ## Constraints
+   {licensing, team boundaries, platform limits, regulatory}
+
+   ## Dependency Map
+   {what blocks what}
+
+   ## Complexity Estimate
+   - Files affected: ~N
+   - New modules: N
+   - Integration points: N
+   - Estimated size: Small (10-20 tickets) / Medium (30-50) / Large (50-85)
+
+   ## Open Questions
+   {Each question on its own line, tagged as one of:}
+   - [DECISION: Option A | Option B | Option C] Question text
+   - [OPEN] Question text
+
+   ## Decisions Made
+   {populated interactively at Gate 1 — leave empty initially}
+   ```
+
+   Tag questions `[DECISION: ...]` when there are 2–4 bounded options the team must choose between.
+   Tag `[OPEN]` for questions that need free-form clarification (expected traffic, team ownership, etc.).
+
 4. `edm-state phase-complete <PREFIX> 1`
-5. **HITL Gate 1**: present scope, components affected, constraints, estimated size, go/no-go recommendation. Ask: *"Do
-   you approve this scope and want to proceed to SRD creation?"*
-6. **STOP and WAIT for explicit sign-off.**
-7. On approval: `edm-state approve-gate <PREFIX> 1`
+
+5. **Resolve Open Questions interactively** before presenting the gate:
+
+   a. Read the `## Open Questions` section of `planning.md`.
+
+   b. Collect all `[DECISION: ...]` questions. Batch them into `AskUserQuestion` calls (up to 4 per call).
+      - Use a ≤12-char header that names the decision (e.g., `"Auth method"`, `"DB approach"`).
+      - Parse the options from the tag brackets — those become the selectable choices.
+      - Always append an `"Defer to SRD"` option so the user can skip without blocking.
+
+   c. If any `[OPEN]` questions remain, output them as a numbered list and wait for the user's typed
+      response before continuing.
+
+   d. Write all answers into the `## Decisions Made` section of `planning.md` (one `- Question: Answer`
+      line each). Strike or remove resolved items from `## Open Questions`.
+
+6. **HITL Gate 1** — present a structured summary then ask for sign-off via `AskUserQuestion`:
+
+   Summary to show first:
+   - **Scope**: components affected, file count
+   - **Constraints**: key constraints surfaced
+   - **Complexity**: Small/Medium/Large with estimated ticket count
+   - **Decisions resolved**: N of N open questions answered
+   - **Deferred to SRD**: any questions answered "Defer to SRD"
+   - **Recommendation**: Go / No-Go with one-line rationale
+
+   Then call `AskUserQuestion` with header `"Gate 1"` and options:
+   - **Approve** — scope is correct, proceed to SRD creation
+   - **Revise** — re-run planning with additional context (user will type what's missing)
+   - **No-Go** — initiative is not ready to proceed
+
+7. **STOP and WAIT for the `AskUserQuestion` response.**
+8. On **Approve**: `edm-state approve-gate <PREFIX> 1` and proceed to Phase 2.
+   On **Revise**: ask what context is missing, then loop back to step 2 with that additional context appended to
+   `INITIATIVE`.
+   On **No-Go**: summarize the blockers and stop. Do not archive — leave state for the user to revisit.
 
 ### Step 3 — Execute Phase 2 (SRD)
 
@@ -112,10 +186,23 @@ Call the resolved value **`INITIATIVE`** — all subsequent steps use `INITIATIV
 3. Compile findings; remediate all P0/P1 directly in the SRD; update revision history.
 4. Write audit report to `${user_config.srd_root}/{PREFIX}/audit-srd.md`.
 5. `edm-state phase-complete <PREFIX> 3`
-6. **HITL Gate 2**: present requirement count by priority, key architecture decisions, risks, audit findings resolved (
-   P0: N, P1: N, P2: N deferred). Ask: *"Do you approve this SRD and want to proceed to ticket creation?"*
-7. **STOP and WAIT for explicit sign-off.**
-8. On approval: `edm-state approve-gate <PREFIX> 2`
+6. **HITL Gate 2** — present summary then call `AskUserQuestion` with header `"Gate 2"`:
+
+   Summary to show first:
+   - **Requirements**: count by priority (P0/P1/P2)
+   - **Architecture decisions**: key choices made
+   - **Risks**: top 3 from audit
+   - **Audit findings resolved**: P0: N, P1: N, P2: N deferred
+
+   Options:
+   - **Approve** — SRD is correct, proceed to ticket creation
+   - **Revise** — specific SRD sections need rework (user will describe)
+   - **No-Go** — initiative scope or approach needs rethinking
+
+7. **STOP and WAIT for the `AskUserQuestion` response.**
+8. On **Approve**: `edm-state approve-gate <PREFIX> 2` and proceed to Phase 4.
+   On **Revise**: ask which sections need rework, remediate, then re-run Phase 3 audit and re-present Gate 2.
+   On **No-Go**: summarize blockers and stop.
 
 ### Step 5 — Execute Phase 4 (Ticket Pack)
 
@@ -134,10 +221,24 @@ Call the resolved value **`INITIATIVE`** — all subsequent steps use `INITIATIV
 3. Compile findings; remediate all gaps in the ticket pack.
 4. Write audit report to `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/audit.md`.
 5. `edm-state phase-complete <PREFIX> 5`
-6. **HITL Gate 3**: present ticket count by epic, size distribution, critical path, estimated effort, SRD coverage (N/N
-   requirements). Ask: *"Do you approve this ticket pack and want to proceed to implementation?"*
-7. **STOP and WAIT for explicit sign-off.**
-8. On approval: `edm-state approve-gate <PREFIX> 3`
+6. **HITL Gate 3** — present summary then call `AskUserQuestion` with header `"Gate 3"`:
+
+   Summary to show first:
+   - **Tickets**: count by epic
+   - **Size distribution**: XS/S/M/L breakdown
+   - **Critical path**: sequence of blocking tickets
+   - **Estimated effort**: from size distribution
+   - **SRD coverage**: N/N requirements covered
+
+   Options:
+   - **Approve** — ticket pack is implementation-ready, proceed
+   - **Revise** — specific tickets or epics need rework (user will describe)
+   - **No-Go** — scope has shifted enough to warrant re-planning
+
+7. **STOP and WAIT for the `AskUserQuestion` response.**
+8. On **Approve**: `edm-state approve-gate <PREFIX> 3` and proceed to Phase 6.
+   On **Revise**: ask which tickets need rework, remediate, then re-run Phase 5 audit and re-present Gate 3.
+   On **No-Go**: summarize blockers and stop.
 
 ### Step 7 — Execute Phase 6 (Implementation + QC)
 
