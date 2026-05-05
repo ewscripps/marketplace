@@ -735,30 +735,33 @@ write_handoff_internal() {
   updated_at="$(now_utc)"
 
   {
-    printf '# %s — Session Handoff\n\n' "$prefix"
-    printf '> **Last updated**: %s by %s  \n' "$updated_at" "${USER:-unknown}"
-    printf '> **To resume**: `/edm:orchestrator %s`\n\n' "$prefix"
-    printf '## Current Status\n\n'
-    printf '- **Phase**: %s\n' "$phase_name"
-    printf '- **Gates approved**: %s of 3\n' "$gates_count"
-    printf '- **Last gate**: %s\n' "$last_gate"
-    printf '- **Next action**: %s\n\n' "$next_action"
-    printf '## Gates\n\n%s\n\n' "$gate_list"
-    printf '## Artifact Checklist\n\n'
-    printf '| Artifact | Status |\n'
-    printf '|----------|--------|\n'
-    printf '| `SRD/%s/planning.md` | %s |\n' "$prefix" "$s_planning"
-    printf '| `SRD/%s/%s` | %s |\n' "$prefix" "$SRD_FILENAME" "$s_srd"
-    printf '| `SRD/%s/audit-srd.md` | %s |\n' "$prefix" "$s_audit_srd"
-    printf '| `SRD/%s/%s/README.md` | %s |\n' "$prefix" "$TICKET_PACK_DIRNAME" "$s_tickets"
-    printf '| `SRD/%s/%s/audit.md` | %s |\n\n' "$prefix" "$TICKET_PACK_DIRNAME" "$s_audit_tickets"
-    printf '## Key Decisions Made\n\n%s\n\n' "$decisions"
-    printf '## How to Resume\n\n'
-    printf '1. Pull the latest branch — all EDM artifacts are committed\n'
-    printf '2. Open Claude Code in the project root\n'
-    printf '3. Run: `/edm:orchestrator %s`\n' "$prefix"
-    printf '4. The orchestrator detects the existing initiative and resumes from **%s**\n\n' "$phase_name"
-    printf '## Notes\n\n%s\n' "$notes"
+    printf '%s\n\n' "# ${prefix} — Session Handoff"
+    printf '%s  \n' "> **Last updated**: ${updated_at} by ${USER:-unknown}"
+    printf '%s\n\n' "> **To resume**: \`/edm:orchestrator ${prefix}\`"
+    printf '%s\n\n' "## Current Status"
+    printf '%s\n' "- **Phase**: ${phase_name}"
+    printf '%s\n' "- **Gates approved**: ${gates_count} of 3"
+    printf '%s\n' "- **Last gate**: ${last_gate}"
+    printf '%s\n\n' "- **Next action**: ${next_action}"
+    printf '%s\n\n' "## Gates"
+    printf '%s\n\n' "${gate_list}"
+    printf '%s\n\n' "## Artifact Checklist"
+    printf '%s\n' "| Artifact | Status |"
+    printf '%s\n' "|----------|--------|"
+    printf '%s\n' "| \`SRD/${prefix}/planning.md\` | ${s_planning} |"
+    printf '%s\n' "| \`SRD/${prefix}/${SRD_FILENAME}\` | ${s_srd} |"
+    printf '%s\n' "| \`SRD/${prefix}/audit-srd.md\` | ${s_audit_srd} |"
+    printf '%s\n' "| \`SRD/${prefix}/${TICKET_PACK_DIRNAME}/README.md\` | ${s_tickets} |"
+    printf '%s\n\n' "| \`SRD/${prefix}/${TICKET_PACK_DIRNAME}/audit.md\` | ${s_audit_tickets} |"
+    printf '%s\n\n' "## Key Decisions Made"
+    printf '%s\n\n' "${decisions}"
+    printf '%s\n\n' "## How to Resume"
+    printf '%s\n' "1. Pull the latest branch — all EDM artifacts are committed"
+    printf '%s\n' "2. Open Claude Code in the project root"
+    printf '%s\n' "3. Run: \`/edm:orchestrator ${prefix}\`"
+    printf '%s\n\n' "4. The orchestrator detects the existing initiative and resumes from **${phase_name}**"
+    printf '%s\n\n' "## Notes"
+    printf '%s\n' "${notes}"
   } > "$handoff_path"
 }
 
