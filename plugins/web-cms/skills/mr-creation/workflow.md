@@ -2,16 +2,16 @@
 
 **STRICT EXECUTION RULES — NO EXCEPTIONS:**
 
-1. Execute phases in strict sequential order (M0 through M6).
+1. Execute phases in strict sequential order (M0 through M7).
 2. Do not skip, reorder, or combine phases.
 3. Each phase must be fully completed before starting the next.
 4. If any phase fails, stop immediately and report the failure in the chat. Do not continue.
 5. Every required output must be presented in the chat before the phase is considered complete.
-6. Do not create the MR until M4 is reached and explicitly approved.
+6. Do not create the MR until M5 is reached and explicitly approved.
 
 **SCOPE:** This workflow only targets GitLab merge requests. If the repository's remote URL does not point to GitLab, stop immediately and report the mismatch in the chat. Do not attempt to create a pull request on any other platform.
 
-**KNOWLEDGE GRAPH SCOPE:** The knowledge graph in this workflow accumulates Jira context (M1), commit and diff data (M2) so that M4 can assemble a grounded MR description. The graph is session-scoped -- do not rely on it persisting to a future session.
+**KNOWLEDGE GRAPH SCOPE:** The knowledge graph in this workflow accumulates Jira context (M2), commit and diff data (M3) so that M5 can assemble a grounded MR description. The graph is session-scoped -- do not rely on it persisting to a future session.
 
 **APPROVAL GATE BEHAVIOR:** Approval gates are chat-scoped. If explicit approval is not captured before the session ends or context is lost, stop at the gate. On resume, re-present the latest MR preview and ask for confirmation again. Never assume a pending approval was granted.
 
@@ -28,12 +28,13 @@
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
 - M0 — Branch Collection & Pre-flight
-- M1 — Context Classification
-- M2 — Diff & Commit Review
-- M3 — Pre-Creation Confirmation
-- M4 — Description Generation & Review Gate
-- M5 — MR Creation
-- M6 — Cleanup
+- M1 — Branch Sync
+- M2 — Context Classification
+- M3 — Diff & Commit Review
+- M4 — Pre-Creation Confirmation
+- M5 — Description Generation & Review Gate
+- M6 — MR Creation
+- M7 — Cleanup
 
 ---
 
@@ -58,7 +59,38 @@
 
 ---
 
-### M1 — Context Classification
+### M1 — Branch Sync
+
+**Agent performs automatically:**
+
+- Check whether the destination branch has commits not yet present in the source branch:
+  ```
+  git log <source>..<destination> --oneline
+  ```
+- If this returns no output, the source branch is fully up to date — report this in the chat and proceed to M2.
+- If this returns commits, the source branch is behind the destination branch. Attempt to merge the destination into source:
+  1. Check out the source branch: `git checkout <source>`.
+  2. Run `git merge <destination>`.
+  3. If the merge completes cleanly, report success in the chat (e.g. "Source branch updated with N commits from destination — no conflicts.") and proceed to M2.
+  4. If there are merge conflicts:
+     - Stop immediately.
+     - Collect the full list of conflicted files: `git diff --name-only --diff-filter=U`.
+     - Present the conflicted files in the chat.
+     - Ask the user: **"There are merge conflicts in the files listed above. Would you like me to resolve them?"**
+     - If the user says **yes**: Work through each conflicted file in order:
+       - Read the file and locate every conflict marker (`<<<<<<<`, `=======`, `>>>>>>>`).
+       - Determine the correct resolution based on the intent of each side (incoming vs. current), keeping both sets of changes where appropriate.
+       - Apply the resolution with `Edit`, removing all conflict markers.
+       - Stage the resolved file: `git add <file>`.
+       - After all files are resolved, complete the merge commit: `git commit --no-edit`.
+       - Report each resolved file and the final merge commit hash in the chat.
+     - If the user says **no**: Abort the merge (`git merge --abort`), stop, and inform the user they must resolve conflicts manually before the MR can be created.
+
+> **REQUIRED:** Confirm in the chat whether the source branch was already up to date or was updated (cleanly merged or conflicts resolved) before proceeding to M2. If the sync fails and is not resolved, stop and do not proceed.
+
+---
+
+### M2 — Context Classification
 
 **Ask:** Is this MR for a **release** or a **non-release** (feature, bug fix, tech debt, etc.)?
 
@@ -81,7 +113,7 @@
     - If the card is a **Task or Bug**: review the commits and confirm the work aligns with the card's summary and description. Flag any significant discrepancies.
 2. Confirm the source branch name includes the Jira card key (e.g. `feature/PROJ-123-short-description`). Flag if it does not.
 
-> **USE KNOWLEDGE GRAPH:** Write each retrieved Jira item to the knowledge graph. For releases, create a `release` node with properties: `name`, `fix_version`, and `tracking_issue_key` (optional). For non-releases, create a `jira_item` node with properties: `jira_key`, `type`, `summary`, `status`. Link items to an `mr` root node representing this MR. M4 reads these nodes to populate the Related Jira Items section of the description.
+> **USE KNOWLEDGE GRAPH:** Write each retrieved Jira item to the knowledge graph. For releases, create a `release` node with properties: `name`, `fix_version`, and `tracking_issue_key` (optional). For non-releases, create a `jira_item` node with properties: `jira_key`, `type`, `summary`, `status`. Link items to an `mr` root node representing this MR. M5 reads these nodes to populate the Related Jira Items section of the description.
 
 > **REQUIRED:** Present all of the following in the chat before proceeding:
 > 
@@ -92,7 +124,7 @@
 
 ---
 
-### M2 — Diff & Commit Review
+### M3 — Diff & Commit Review
 
 **Agent performs automatically:**
 
@@ -100,7 +132,7 @@
 - Retrieve a summary of file changes (files added, modified, deleted).
 - Identify the scope of changes (services, modules, or areas of the codebase affected).
 
-> **USE KNOWLEDGE GRAPH:** Write the diff data to the knowledge graph. Create a `commit` node for each commit with properties: `hash`, `message`, `affected_area`. Create a `diff_summary` node with properties: `files_added`, `files_modified`, `files_deleted`, `affected_areas` (list). Link all nodes to the `mr` root node. M4 reads commit and diff nodes to build the Summary and Changes sections of the description — this ensures every change is accounted for and nothing is invented.
+> **USE KNOWLEDGE GRAPH:** Write the diff data to the knowledge graph. Create a `commit` node for each commit with properties: `hash`, `message`, `affected_area`. Create a `diff_summary` node with properties: `files_added`, `files_modified`, `files_deleted`, `affected_areas` (list). Link all nodes to the `mr` root node. M5 reads commit and diff nodes to build the Summary and Changes sections of the description — this ensures every change is accounted for and nothing is invented.
 
 > **REQUIRED:** Present a structured diff summary in the chat before proceeding:
 > 
@@ -110,15 +142,15 @@
 
 ---
 
-### M3 — Pre-Creation Confirmation
+### M4 — Pre-Creation Confirmation
 
-**Agent confirms automatically:** Verify that all context from M0–M2 (branches, Jira items, diff summary) is complete and ready for description generation. If anything is missing, stop and resolve before proceeding.
+**Agent confirms automatically:** Verify that all context from M0–M3 (branches, sync status, Jira items, diff summary) is complete and ready for description generation. If anything is missing, stop and resolve before proceeding.
 
 ---
 
-### M4 — Description Generation & Review Gate
+### M5 — Description Generation & Review Gate
 
-> **USE SEQUENTIAL THINKING:** Before generating the description, invoke the `sequentialthinking` tool. Use it to trace each commit to a purpose, reconcile the diff summary (M2) with the Jira context (M1), determine what belongs in the Summary vs. Changes sections, and verify that no invented or assumed items are included. Build the description bottom-up from evidence, not top-down from assumption. Do not begin writing the description until the reasoning is complete.
+> **USE SEQUENTIAL THINKING:** Before generating the description, invoke the `sequentialthinking` tool. Use it to trace each commit to a purpose, reconcile the diff summary (M3) with the Jira context (M2), determine what belongs in the Summary vs. Changes sections, and verify that no invented or assumed items are included. Build the description bottom-up from evidence, not top-down from assumption. Do not begin writing the description until the reasoning is complete.
 
 > **USE KNOWLEDGE GRAPH:** Read all nodes from the graph — `commit`, `diff_summary`, `jira_item` / `release`, and `mr` — to assemble the description. The Summary section should synthesize the diff and Jira context. The Changes list should be derived from commit nodes. The Related Jira Items section should be read directly from Jira item nodes. This ensures the description is fully grounded in structured evidence and not reconstructed from memory.
 
@@ -150,13 +182,13 @@ e.g. impacted services, risky refactors, migrations, or configuration changes]
 
 **REQUIRED: Review the description before presenting.** Verify:
 
-- Summary accurately reflects the diff and Jira context from M2 and M1
+- Summary accurately reflects the diff and Jira context from M3 and M2
 - Changes list is grounded in actual commits — no invented or assumed items
-- Related Jira items match exactly what was retrieved in M1
+- Related Jira items match exactly what was retrieved in M2
 - Testing Notes identify genuinely risky or complex areas
 - No placeholder text remains in any field
 
-**DESCRIPTION FORMATTING:** The description must be clean, renderable markdown with real line breaks. Do not use escaped newline sequences (`\n`, `\\n`) anywhere in the description string. When the description is passed to the MR creation tool in M5, it must contain actual newlines — not escape sequences that render as literal `\n` in the MR body. If the creation tool accepts a string parameter, ensure the string contains real newline characters, not the two-character literal `\n`.
+**DESCRIPTION FORMATTING:** The description must be clean, renderable markdown with real line breaks. Do not use escaped newline sequences (`\n`, `\\n`) anywhere in the description string. When the description is passed to the MR creation tool in M6, it must contain actual newlines — not escape sequences that render as literal `\n` in the MR body. If the creation tool accepts a string parameter, ensure the string contains real newline characters, not the two-character literal `\n`.
 
 If the review reveals issues, resolve them before presenting. Do not present an unreviewed description.
 
@@ -180,7 +212,7 @@ DESCRIPTION:
 
 ---
 
-### M5 — MR Creation
+### M6 — MR Creation
 
 Once the user confirms:
 
@@ -195,7 +227,7 @@ Once the user confirms:
 
 ---
 
-### M6 — Cleanup
+### M7 — Cleanup
 
 - Clear the session-scoped knowledge graph before finishing the workflow. Do not retain Jira-context, commit, or diff-summary nodes after the MR description has been created.
 
@@ -214,11 +246,12 @@ Once the user confirms:
 
 This workflow is complete when **all** of the following are true:
 
-- All 7 phases executed in sequence (M0 through M6)
+- All 8 phases executed in sequence (M0 through M7)
 - Repository confirmed as GitLab-hosted
 - Pre-flight checks passed, or failures resolved with explicit user input
+- Source branch confirmed up to date with destination branch (merged if needed, conflicts resolved or workflow stopped)
 - Jira context retrieved and verified, or explicitly confirmed as none
 - Diff summary presented and acknowledged before description generation
 - Full MR preview explicitly confirmed in the chat
 - MR created successfully and URL reported in the chat
-- M6 cleanup cleared the session-scoped knowledge graph after successful MR creation
+- M7 cleanup cleared the session-scoped knowledge graph after successful MR creation
