@@ -1,7 +1,7 @@
 ---
 name: preflight
 description: Pre-flight check for ada-tablo skills — clones workspace repo, pulls latest, inspects history.
-user-invocable: true
+user-invocable: false
 allowed-tools: Bash(git *), Bash(ls *), Bash(cp *), AskUserQuestion, Read, Grep
 ---
 
