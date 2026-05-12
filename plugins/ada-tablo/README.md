@@ -55,6 +55,26 @@ When skills are updated in the marketplace:
 
 Or set `GITLAB_TOKEN` in your environment for automatic updates at startup.
 
+## Known Limitations and Security Posture
+
+### Workspace repo (H1 — supply chain)
+
+The Python scripts this plugin invokes live in `DavidG91/ada-tablo-ops`, a personal GitHub account. Scripts are pulled from `main` with no commit pinning and no Scripps org review gate. A compromise of that account would allow arbitrary code execution on any analyst's machine the next time `preflight` runs.
+
+**Current status:** Accepted risk, tracked as a follow-up. Only analysts who trust the repo owner should install this plugin.
+
+**Future mitigation:** Migrate `ada-tablo-ops` to a Scripps GitHub org and add commit-hash pinning in `preflight`. No ETA yet.
+
+### PII and credential handling (M3 — confirmation pending)
+
+Before adding analysts beyond the initial two users, confirm:
+
+- [ ] `DavidG91/ada-tablo-ops` is set to **private** on GitHub
+- [ ] `.gitignore` in the workspace repo excludes `.env` (which holds `ADA_API_TOKEN`)
+- [ ] GitHub-hosted storage of Tablo customer support data is acceptable under Scripps' data-handling policy
+
+**Owner:** David Gauthier — confirm with security/legal before broader rollout.
+
 ## Owned By
 
 David Gauthier and Lauren — Customer Support, Tablo
