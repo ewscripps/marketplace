@@ -2,7 +2,7 @@
 name: weekly-topics-review
 description: Run weekly Ada Topics review for catch-all reduction. Guides CSV export, analyzes catch-all %, proposes topic improvements.
 user-invocable: true
-allowed-tools: Bash(python3 *), Bash(mkdir *), Bash(cp *), Bash(ls *), Read, Grep, Glob, AskUserQuestion, Skill
+allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/scripts/analyze_topics_report.py *), Bash(python3 ~/repos/ada-tablo-ops/scripts/analyze_catchall_conversations.py *), Bash(mkdir *), Bash(cp *), Bash(ls *), Read, Grep, Glob, AskUserQuestion, Skill
 ---
 
 # Weekly Topics Review
