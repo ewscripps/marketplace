@@ -95,6 +95,8 @@ Every claim must trace to a graph entity. If you cannot cite at least one file f
 
 ### Step 5 — Merge or write
 
+> **THINK HARD:** Before merging or writing, think hard about whether this run's coverage is strictly broader than the existing memory — or only partially overlapping. Merging in a way that silently narrows the existing memory's scope (removing valid old claims because this run happened to not re-encounter them) corrupts durable knowledge that future explorations rely on. When in doubt, preserve the old claim and annotate rather than replace.
+
 **No existing memory:** Call `write_memory` with the new body.
 
 **Existing memory:** Merge additively, then call `edit_memory`:

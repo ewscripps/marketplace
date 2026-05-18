@@ -16,7 +16,7 @@
 
 **GRAPH-AUTHORITATIVE CONTRACT FOR FINDINGS:** Within the discovery output, the knowledge-graph entities (explorations, evidence, patterns, integration points, risks, open questions) are the canonical record of *what was found*. The `synthesis_chosen` text written at D5 is the human-readable summary of the canonical record at the time of persistence; it is intended for direct insertion into the Jira issue description by downstream consumers. When D4 changes a finding (revises, contradicts, marks an item superseded), it MUST update the underlying graph entities at the same time it updates the synthesis text — the two views must agree at the moment of D5 persistence. Downstream consumers (notably `requirements-intake` R2) treat the graph as the structured truth: they must filter `superseded: true` entities when traversing, and prefer graph evidence over synthesis text if a conflict ever surfaces.
 
-**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, or underspecified, stop and ask the user for clarification before proceeding.
+**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
 **TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
 
@@ -44,12 +44,12 @@
 
 1. Briefly explain what this workflow does (parallel codebase exploration, approach surfacing, focused verification round, persistence to the knowledge graph) and what to expect. Mention that requirements-intake is a separate next step the user runs after `/clear` — this workflow does not chain into it.
 
-2. Ask the following questions **conversationally, one at a time.** Wait for each response before asking the next.
+2. Ask the following questions using `AskUserQuestion`, one call per question in sequence. Wait for each response before asking the next.
 
-   - **"What are you trying to build, change, or investigate?"** — Accept any level of specificity. The user does not need to know what it's called or where it lives in the codebase.
-   - **"Do you know any specific areas of the codebase that are involved — services, modules, repos, or file paths?"** — Used to seed the exploration. Accept "none" or "not sure."
-   - **"Would you like a single recommended approach, or would you like to see multiple options to compare?"** — Determines the D2 output format. If the user is unsure, recommend multiple options.
-   - **"Are large rewrites or significant additions to the codebase acceptable, or should I focus on targeted, minimal changes?"** — Determines how aggressive the D2 approaches can be. If "yes" / "large changes acceptable," D2 may surface options that involve substantial refactors, new modules, or replacement of existing patterns. If "no" / "targeted only," D2 must bias toward minimal-footprint approaches that extend or adapt what already exists. If the user is unsure, default to "targeted only."
+   - **What to build:** Use `AskUserQuestion` (Header: `Discovery Goal`, Question: `What are you trying to build, change, or investigate?`, Options: `Build something new` — a new feature or capability the codebase doesn't currently support, `Change existing behavior` — modifying, improving, or fixing something that already exists, `Investigate / research` — exploring options or understanding the codebase before deciding). Accept any level of specificity — the user can type a specific description using the Other input.
+   - **Codebase areas:** Use `AskUserQuestion` (Header: `Codebase Hints`, Question: `Do you know any specific areas of the codebase that are involved — services, modules, repos, or file paths?`, Options: `Yes, I'll name them` — type the areas using the Other input field, `No / Not sure` — proceed without hints; the agent will infer areas from the topic). Accept "none" or "not sure."
+   - **Output preference:** Use `AskUserQuestion` (Header: `Output Format`, Question: `Would you like a single recommended approach, or multiple options to compare?`, Options: `Multiple options (Recommended)` — see 2–4 distinct approaches with trade-offs and a recommendation signal, `Single recommendation` — see one recommended approach with rationale). If the user is unsure, the Recommended option applies.
+   - **Change scope:** Use `AskUserQuestion` (Header: `Change Scope`, Question: `Are large rewrites or significant additions to the codebase acceptable, or should I focus on targeted, minimal changes?`, Options: `Targeted only (Recommended)` — bias toward minimal-footprint approaches that extend or adapt what already exists, `Large changes acceptable` — the option space is open; significant refactors, new modules, or pattern replacement may be considered). If the user is unsure, the Recommended option applies.
 
 3. Summarize the gathered context back to the user in a structured format.
 
@@ -59,7 +59,7 @@
 > - **Output Preference** — "single recommendation" or "multiple options"
 > - **Change Scope** — "large changes acceptable" or "targeted only"
 
-> **APPROVAL GATE — FULL STOP.** Present the gathered context as a structured summary. User must confirm all fields are accurate. Do not proceed to D1 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Present the gathered context as a structured summary. Use `AskUserQuestion` (Header: `D0 Approval`, Question: `Does the context summary above accurately capture what you want to explore?`, Options: `Approve and proceed (Recommended)` — all fields are accurate, `Request changes` — some fields need correction). Do not proceed to D1 until the user approves.
 
 ---
 
@@ -170,7 +170,7 @@
 
 4. > **REQUIRED: Review the synthesis before presenting.** Verify every claim is grounded in D1 evidence. Remove or revise any that are not. Label remaining inferences explicitly. Do not present an unreviewed synthesis.
 
-> **APPROVAL GATE — FULL STOP.** Present the full D2 synthesis. User must confirm it accurately reflects what they want to explore and that the affected areas and approach(es) look correct. Do not proceed to D3 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Present the full D2 synthesis. Use `AskUserQuestion` (Header: `D2 Approval`, Question: `Does this synthesis accurately reflect what you want to explore? Are the affected areas and approach(es) correct?`, Options: `Approve and proceed (Recommended)` — the synthesis looks correct, `Request changes` — something needs revision). Do not proceed to D3 until the user approves.
 
 ---
 
@@ -191,9 +191,9 @@
 3. Continue the conversation for as many turns as the user needs. Do not rush toward the next phase.
 
 4. **Capture the chosen approach before exiting.** When the user signals they are done (e.g., "no, I'm good", "let's continue", "that answers it"), the next phase (D4) re-explores the codebase against one specific approach, so a choice is required.
-   - **Single-recommendation runs:** the recommended approach is the chosen approach unless the user said otherwise. Confirm: "We'll verify the recommended approach next — does that match what you want to move forward with?"
-   - **Multiple-options runs:** ask explicitly if not yet stated: "Which option would you like to move forward with?" Do not infer a choice; record what the user says.
-   - Then confirm the full exit state: "Got it — I'll verify [chosen approach] and note [preference / concern / open question] when I save the discovery output. Ready to move on?"
+   - **Single-recommendation runs:** the recommended approach is the chosen approach unless the user said otherwise. Use `AskUserQuestion` (Header: `Chosen Approach`, Question: `We'll verify the recommended approach next — does that match what you want to move forward with?`, Options: `Yes, verify the recommended approach (Recommended)`, `No, I want something different`).
+   - **Multiple-options runs:** if the user has not yet stated a choice, use `AskUserQuestion` (Header: `Chosen Approach`, Question: `Which option would you like to move forward with?`, Options: one option per presented approach, labeled with its name from D2). Do not infer a choice; record what the user selects.
+   - Then confirm the full exit state using `AskUserQuestion` (Header: `Ready to Verify`, Question: `Got it — I'll verify [chosen approach] and note [preference / concern / open question] when I save the discovery output. Ready to move on?`, Options: `Yes, move on to verification (Recommended)`, `Wait — I have more questions`).
 
 > **There is no approval gate for this phase.** The user exits by signaling readiness. Do not proceed to D4 until the user has explicitly indicated they are done with discussion **and** the chosen approach is recorded.
 
@@ -227,6 +227,10 @@
 
 3. Wait for all verification explorers to return one of `EXPLORATION COMPLETE`, `EXPLORATION INCOMPLETE`, or `EXPLORATION FAILED`. If any return `INCOMPLETE` and the gap is on a high-priority verification claim, re-spawn for that area before reconciling.
 
+> **USE SEQUENTIAL THINKING:** Before reconciling, invoke the `sequentialthinking` tool. Use it to classify each verification claim (Confirmed / Enriched / Contradicted / New blocker) before writing any conclusion to the graph, reason through whether any "Contradicted" finding changes the feasibility of the chosen approach or only adjusts its scope, and decide whether any "New blocker" should trigger a re-open of the synthesis (D3 re-entry) versus being accepted as an open question. This is the most consequential decision point in D4 — a shallow reconciliation that marks everything "Confirmed" because the verification explorer did not find an explicit contradiction is a false clean result that misleads requirements-intake. Do not begin the reconciliation step until the reasoning is complete.
+
+> **THINK HARD:** Before deciding the outcome of the reconciliation, think hard about whether a "material change" threshold is met — specifically, whether any Contradicted or New Blocker finding changes the viability or effort of the chosen approach, or only adds nuance. A false "clean" verdict here causes requirements-intake to inherit a plan whose key assumptions have not been verified.
+
 4. **Reconcile.** Call `read_graph` and walk the verification subgraph (filter `exploration` entities by `round: verification`). For each verification claim, classify the outcome:
    - **Confirmed** — verification evidence supports the claim. No action needed.
    - **Enriched** — the claim is correct but the verification round added new evidence (additional callers, edge-case handling, related files). Note for the synthesis update.
@@ -243,7 +247,7 @@
 
 5. **Decide the outcome.**
    - **Clean (only Confirmed and Enriched):** present a short verification report — "Verification complete. Confirmed: …. New context: …." — then proceed to D5. Update the synthesis text with the enriched evidence before persistence.
-   - **Material change (any Contradicted or New blocker):** present the finding to the user with the supporting evidence. Ask: **"This changes the picture for `[approach]`. Would you like to (a) revise this approach with the new evidence and continue, (b) re-open synthesis to consider another option, or (c) accept the change and proceed to save anyway?"**
+   - **Material change (any Contradicted or New blocker):** present the finding to the user with the supporting evidence. Use `AskUserQuestion` (Header: `Material Change`, Question: `This changes the picture for [approach]. How would you like to proceed?`, Options: `Revise this approach and continue (Recommended)` — update the synthesis with the new evidence and proceed, `Re-open synthesis` — loop back to D2 to consider another option with the new evidence in scope, `Accept and proceed` — record the contradiction or blocker as an open question and proceed without revising the synthesis).
      - **(a) Revise:** update the D2 synthesis text inline to reflect the new evidence (revised affected areas, risks, effort, or constraints). The verification-round explorer entities written in step 2 already carry the corrected evidence in the graph; the contradicted D1 entities have already been marked `superseded: true` in step 4. The synthesis text update is the human-readable view that brings the synthesis back into sync with the graph. Present the revised synthesis to the user for confirmation, then proceed.
      - **(b) Re-open synthesis:** loop back to D2 with the verification findings as additional input. Re-run D2 → D3 → D4 with the new evidence in scope. The original `work_item_id` and explorer subgraph stay; this is iteration on the same discovery. (Contradicted entities remain `superseded: true` from step 4 — this carries forward through the re-opened synthesis.)
      - **(c) Accept and proceed:** record the contradiction or blocker as an open question and proceed without revising the synthesis. Specifically:
@@ -253,7 +257,7 @@
 
 6. **Refresh durable memory.** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) one more time with the same `work_item_id` so its Serena memory crystallization reflects the verified picture. Do not wait for it.
 
-> **APPROVAL GATE — FULL STOP.** Present the verification report (and the revised synthesis, if revision happened in step 5). User must confirm before proceeding to D5. The confirmation explicitly covers both the verification outcome and any revisions made.
+> **APPROVAL GATE — FULL STOP.** Present the verification report (and the revised synthesis, if revision happened in step 5). Use `AskUserQuestion` (Header: `D4 Approval`, Question: `Does the verification report (and any revisions) look correct? Ready to save the discovery output?`, Options: `Approve and proceed (Recommended)` — the verification outcome and any revisions are correct, `Request changes` — something needs revision). Do not proceed to D5 until the user approves.
 
 > **REQUIRED before proceeding:**
 > - Chosen approach is recorded

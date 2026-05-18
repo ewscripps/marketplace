@@ -12,7 +12,7 @@
 
 **APPROVAL GATE BEHAVIOR:** Approval gates are chat-scoped. If explicit approval is not captured before the session ends or context is lost, stop at the gate. On resume, re-present the latest fix plan or testing handoff and ask for confirmation again. Never assume a pending approval was granted.
 
-**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and ask the user for clarification before proceeding.
+**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
 **RESUMPTION CHECK:** If this workflow resumes after prior work has already been performed, inspect the issue status and previously posted Jira comments first to identify the first incomplete phase. If the issue is already **In Progress**, do not repeat B0. If the knowledge graph is empty, rebuild the investigation state from the latest reproduction notes, investigation comments, and approved plan before continuing.
 
@@ -88,6 +88,8 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 > **USE SEQUENTIAL THINKING:** Before dispatching explorers or concluding on root cause, invoke the `sequentialthinking` tool. Use it to identify the likely affected areas to investigate in parallel, form initial hypotheses, evaluate the evidence returned by the explorer agents, and revise if needed. Root cause analysis is non-linear — backtrack and explore alternative causes before committing to a conclusion. Do not proceed to B4 until the reasoning is complete.
 
+> **THINK HARD:** Before concluding on root cause, think hard about whether the identified cause is necessary and sufficient to explain the observed behavior — could a different cause produce the same symptoms? A misdiagnosed root cause produces a fix that masks the symptom without resolving the underlying issue.
+
 > **USE KNOWLEDGE GRAPH:** Before spawning explorers, ensure a `work_item-<JIRA_KEY>` entity exists for this bug. Call `read_graph`; if the entity is missing (typical at the start of a fresh session), create it with observations: `work_type: bug`, `jira_key`, `title`, `observed_behavior`, `expected_behavior`. **Record the entity name** as the `work_item_id` for this run. As you investigate, also create a node for each hypothesis with properties: `hypothesis` (description), `status` (`active` / `eliminated`), and `evidence` (what supports or refutes it). When a hypothesis is eliminated, update its status with a `reason` property. The explorer-written `affected_file`, `evidence`, `pattern`, and `risk` entities they stream to the graph are reachable via the `work_item-<JIRA_KEY>` node and feed directly into the fix plan in B5.
 
 - Identify all distinct areas of the codebase likely involved based on the **Affected Areas**, reproduction steps, and any logs or stack traces. Limit the scope of this exploration to the current project directory.
@@ -111,15 +113,18 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 1. Review all output from B0, B1, B2, and B3.
 2. Identify clarifying questions. Mark each as `[BLOCKING]` or `[NICE TO HAVE]`.
-3. Present all questions in a **single batch** — do not ask one at a time.
-4. Ask all questions **in the chat** and wait for answers before proceeding. If there are no clarifying questions, state this in the chat and proceed.
-5. Record all answers verbatim. Do not infer or invent answers.
+3. Ask each question one at a time using `AskUserQuestion`. Include the `[BLOCKING]` or `[NICE TO HAVE]` tag in the question text. For open-ended questions, offer `Provide answer` / `Skip — non-blocking` (non-blocking only) and rely on the auto-injected "Other" for the typed answer. If there are no clarifying questions, state this in the chat and proceed.
+4. Record all answers verbatim. Do not infer or invent answers.
 
 > **REQUIRED:** All BLOCKING questions answered and answers recorded. Remaining unanswered questions listed as open items.
 
-> **APPROVAL GATE — FULL STOP.** Present all questions and recorded answers. User must confirm all blocking answers are accurate. Do not proceed to B5 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `B4 Approval`, options: `Approve and proceed (Recommended)` (description: "All blocking answers are accurate and recorded") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to B5 until approved.
 
 ### B5 — Create Fix Plan
+
+> **USE SEQUENTIAL THINKING:** Before drafting the fix plan, invoke the `sequentialthinking` tool. Use it to confirm the root cause conclusion from B3 still holds under scrutiny (could a different cause produce the same observable behavior?), reason through the minimal change that addresses the root cause without introducing new bugs or side effects, consider whether the fix interacts with callers or dependents not directly implicated in B3, and evaluate the regression test strategy. Over-engineering and under-scoping are equally risky here — a fix that patches a symptom rather than the cause leaves the bug latent. Do not draft the plan until the reasoning is complete.
+
+> **THINK HARD:** Before writing the fix plan, think hard about the blast radius of the proposed change — which callers, dependents, or edge-case paths might break if the fix is applied as drafted? A fix that is correct at the point of change but wrong at a caller is a new bug, not a resolved one.
 
 > **USE KNOWLEDGE GRAPH:** Read the hypothesis and affected area nodes written in B3. Write a `root_cause` node with properties: `description`, `affected_files` (linked nodes), and `confirmed_by` (the evidence that settled the conclusion). Write a `fix_plan` node linked to the `root_cause` node. Later phases (B10, B14) should read these nodes rather than re-parsing the plan comment.
 
@@ -174,15 +179,15 @@ The sub-agent will return a structured findings report with an overall verdict o
 
 - The approval request Jira record is the combined `B5/B6` comment already posted in B5. Do not post a second Jira comment here unless the plan changed.
 - **Present the full fix plan in the chat output.** The user should not have to open Jira to review it — display it here before asking for approval.
-- Then ask for approval **in the chat**. Do not proceed until the user confirms in the chat. Do not poll Jira for approval.
-- If the reviewer requests changes, revise the plan, repost the full combined `B5/B6` comment to Jira, and ask for approval in the chat again.
-- Only proceed to B7 after explicit approval has been given in the chat.
+- Then use `AskUserQuestion` with header `B6 Approval`, options: `Approve and proceed (Recommended)` (description: "Fix plan is accurate — begin implementation") / `Request changes` (description: "Revise the plan before proceeding"). Do not poll Jira for approval.
+- If the user selects "Request changes", revise the plan, repost the full combined `B5/B6` comment to Jira, and use `AskUserQuestion` again.
+- Only proceed to B7 after "Approve and proceed" is selected.
 
 ---
 
 ### B7 — Create Branch and Worktree
 
-- **Ask which branch to branch from:** Before creating the branch, ask the user in the chat which branch to use as the base. Most codebases use a `stage` or `develop` branch as the integration target — suggest these as the default. **Do not branch from `main` unless the user explicitly specifies it.** If the user names a branch, verify it exists on the remote before proceeding.
+- **Ask which branch to branch from:** Before creating the branch, run `git rev-parse --abbrev-ref HEAD` to determine the current branch. Use `AskUserQuestion` with header `Base Branch`, options: `<current branch name> (Recommended)` (description: "Use the currently checked-out branch as the base") / `develop` (description: "Branch from the develop integration branch"). The user can type a specific branch name via the auto-injected "Other" option. **Do not branch from `main` unless the user explicitly specifies it — warn the user if they select or type `main`.** Verify any user-specified branch exists on the remote before proceeding.
 - Create a new branch from the user-specified base branch using this naming convention:
 
 ```
@@ -260,7 +265,7 @@ The sub-agent will return a structured findings report with an overall verdict o
 
 - If **APPROVED**: continue with the dedicated testing and documentation completion loops below.
 - If **CHANGES REQUIRED**: address every Critical and Major finding, then invoke the `implementation-reviewer` sub-agent again with the updated diff. Repeat until the verdict is APPROVED.
-- **Max 3 review iterations.** If the implementation-reviewer returns CHANGES REQUIRED after 3 iterations, stop and escalate to the user in the chat. Present the remaining findings and ask for guidance on how to proceed.
+- **Max 3 review iterations.** If the implementation-reviewer returns CHANGES REQUIRED after 3 iterations, use `AskUserQuestion` with header `Reviewer Escalation`, options: `Apply the changes manually and continue` (description: "I'll address the remaining findings — continue after I confirm") / `Skip and continue anyway` (description: "Accept the outstanding findings and proceed to testing") / `Abort` (description: "Stop the workflow here"). Present the outstanding findings before the question so the user can make an informed decision.
 
 Do not proceed to the dedicated completion loops until the implementation-reviewer returns an APPROVED verdict.
 
@@ -279,7 +284,7 @@ Invoke the `test-reviewer` sub-agent, providing:
 The sub-agent will add or update tests as needed, run the relevant test commands, and return a structured report with a status of either **COMPLETE** or **FAILED**.
 
 - If **COMPLETE**: review the report. If it changed any non-test files, invoke the `implementation-reviewer` again with the updated diff before continuing.
-- If **FAILED**: stop and escalate to the user in the chat. Present the report and ask how to proceed.
+- If **FAILED**: use `AskUserQuestion` with header `Test Reviewer Failed`, options: `Apply a manual fix and retry` (description: "I'll address the test failures — continue after I confirm") / `Skip and continue` (description: "Proceed to documentation with the current test state") / `Abort` (description: "Stop the workflow here"). Present the failure report before the question.
 
 **Dedicated documentation completion loop:**
 
@@ -294,7 +299,7 @@ Invoke the `documentation-reviewer` sub-agent, providing:
 The sub-agent will update inline and repository documentation as needed and return a structured report with a status of either **COMPLETE** or **FAILED**.
 
 - If **COMPLETE**: proceed to B11.
-- If **FAILED**: stop and escalate to the user in the chat. Present the report and ask how to proceed.
+- If **FAILED**: use `AskUserQuestion` with header `Doc Reviewer Failed`, options: `Apply a manual fix and retry` (description: "I'll address the documentation gaps — continue after I confirm") / `Skip and continue` (description: "Proceed to B11 with the current documentation state") / `Abort` (description: "Stop the workflow here"). Present the failure report before the question.
 - If the report says user-facing documentation follow-up is `REQUIRED`, record that in B14 and recommend running `/document-card` after this workflow completes.
 
 Do not proceed to B11 until `implementation-reviewer`, `test-reviewer`, and `documentation-reviewer` have all completed successfully.
@@ -334,7 +339,7 @@ Example: `[PROJ-5678] Fix null pointer when looking up user with missing profile
         - The criterion/expected behavior restated clearly
         - Step-by-step instructions to verify it now works correctly
 - Present the same testing handoff in the chat — the user should not have to open Jira to see what to test.
-- Do not proceed until the user has completed testing and explicitly approved the fix in the chat.
+- Then use `AskUserQuestion` with header `B13 Testing`, options: `Approve — the fix works as expected (Recommended)` (description: "Testing passed — proceed to the summary") / `Issues found` (description: "One or more problems were found during testing"). Do not proceed until the user selects an option.
 
 - If the user identifies issues: for each distinct issue, invoke the `issue-intake` skill (via the `Skill` tool), passing a brief description of the observed behavior, expected behavior, and this bug's Jira key as args (e.g. `"Testing found: [description]. Related to: [PROJ-KEY]"`). Work through the issue-intake I0–I6 process with the user to document and triage each issue — it will create a Jira card (Bug or Missing Requirement) for each one. After all issues are documented and their Jira cards are created, recreate the worktree (`mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`), return to B10, resolve each issue, re-run B11 and B12 (which removes the worktree again), and return to this step before proceeding.
 

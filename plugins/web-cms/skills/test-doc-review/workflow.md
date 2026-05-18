@@ -9,7 +9,7 @@
 5. Every required output must be presented in the chat before the phase is considered complete.
 6. This workflow is standalone. Do not mutate Jira status, create branches, commit changes, or post Jira comments unless the user explicitly asks for that outside this workflow.
 
-**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and ask the user for clarification before proceeding.
+**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
 **SCOPE RULE:** This workflow is only for independently running the `test-reviewer` and `documentation-reviewer` sub-agents against an in-progress or completed implementation. It does not replace the full task or bug workflow lifecycle.
 
@@ -48,7 +48,12 @@
 - Read the Jira issue comments and recover the latest approved implementation context:
     - **Task:** The latest approved `T4/T5 — Implementation Plan & Approval Request` comment, if present
     - **Bug:** The latest approved `B5/B6 — Fix Plan & Approval Request` comment, if present
-- If the approved plan or fix plan cannot be recovered, stop and ask the user to provide the plan or explicitly confirm that review should proceed without it.
+- If the approved plan or fix plan cannot be recovered, stop and use `AskUserQuestion` to ask the user how to proceed:
+    - Header: `Missing Plan`
+    - Question: `The approved implementation or fix plan could not be recovered from the Jira issue comments. How would you like to proceed?`
+    - Options:
+        - `Provide the plan` — You will paste or share the approved plan. Recommended for best review accuracy.
+        - `Proceed without plan` — Continue the review without the plan. Findings will have reduced confidence.
 
 > **REQUIRED:** Present a structured target summary in the chat before proceeding:
 >
@@ -91,7 +96,7 @@
     - The behaviors that should be tested
     - The documentation surfaces likely to need updates
     - Any assumptions or ambiguities that require user confirmation
-- If TD0 was skipped and the change intent, acceptance expectations, or validation priorities are not clear enough to guide the reviewers, ask the user in the chat for the missing context before proceeding.
+- If TD0 was skipped and the change intent, acceptance expectations, or validation priorities are not clear enough to guide the reviewers, use `AskUserQuestion` to ask the user for each piece of missing context (one `AskUserQuestion` call per unknown), before proceeding. For example: `What is the main goal of these changes?` (Header: `Change Intent`), `What behaviors should tests focus on?` (Header: `Test Focus`), or `Which documentation surfaces are affected?` (Header: `Doc Surfaces`).
 - Read all changed production files in full.
 - Read nearby tests and nearby documentation relevant to those changed areas.
 - Summarize the existing **testing conventions** in use, including:

@@ -12,7 +12,7 @@
 
 **KNOWLEDGE GRAPH SCOPE:** The knowledge graph in this workflow is session-scoped and used to track work-item state (affected areas, exploration findings, plan, implementation progress). If this workflow is resumed in a new session and the graph is empty, reconstruct state by reading the Jira issue description and all comments posted in prior phases before continuing.
 
-**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and ask the user for clarification before proceeding.
+**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
 **SERENA PROJECT ACTIVATION:** Before T0, call `check_onboarding_performed`. If it reports that onboarding has not been performed for this project, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`, and the symbol-aware write tools) will not function correctly without this. Do this once at the start of the workflow; do not repeat it between phases.
 
@@ -92,6 +92,9 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 - Wait for all explorers to return one of `EXPLORATION COMPLETE`, `EXPLORATION INCOMPLETE`, or `EXPLORATION FAILED`. Each non-failed return includes a structured findings block in the text — use it as the resilient source of record alongside the graph. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters.
 - **Post-exploration enrichment:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `work_item_id`. It crystallizes durable area knowledge from this run's graph into Serena project memory for future explorations. Do not wait for it.
 - Call `read_graph` and walk the subgraph rooted at each `exploration` entity for this `work_item_id`. Surface any `open_question` entities. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
+
+> **USE SEQUENTIAL THINKING:** Before synthesizing the explorer findings, invoke the `sequentialthinking` tool. Use it to integrate the evidence across all explorer reports, reconcile any conflicting signals between areas, identify the patterns and constraints most relevant to this task's implementation, and build a coherent mental model of the affected codebase. Synthesis that skips this step tends to miss cross-area coupling and architectural constraints that only appear when findings are read together. Do not proceed to the synthesis bullets until the reasoning is complete.
+
 - Synthesize the findings from the graph. Read across all `exploration` entities linked to this `work_item_id` and aggregate:
     - **Patterns, abstractions, and utilities in use** — from `pattern` entities; cite the `evidence_files` observation when present.
     - **Existing test coverage and testing patterns** — from `pattern` entities tagged with test concerns and from `evidence` entities with `evidence_type: convention` covering tests.
@@ -105,15 +108,18 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 1. Review all output from T0, T1, and T2.
 2. Identify clarifying questions. Mark each as `[BLOCKING]` or `[NICE TO HAVE]`.
-3. Present all questions in a **single batch** — do not ask one at a time.
-4. Ask all questions **in the chat** and wait for answers before proceeding. If there are no clarifying questions, state this in the chat and proceed.
-5. Record all answers verbatim. Do not infer or invent answers.
+3. Ask each question one at a time using `AskUserQuestion`. Include the `[BLOCKING]` or `[NICE TO HAVE]` tag in the question text. For open-ended questions, offer `Provide answer` / `Skip — non-blocking` (non-blocking only) and rely on the auto-injected "Other" for the typed answer. If there are no clarifying questions, state this in the chat and proceed.
+4. Record all answers verbatim. Do not infer or invent answers.
 
 > **REQUIRED:** All BLOCKING questions answered and answers recorded. Remaining unanswered questions listed as open items.
 
-> **APPROVAL GATE — FULL STOP.** Present all questions and recorded answers. User must confirm all blocking answers are accurate. Do not proceed to T4 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `T3 Approval`, options: `Approve and proceed (Recommended)` (description: "All blocking answers are accurate and recorded") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to T4 until approved.
 
 ### T4 — Create Implementation Plan
+
+> **USE SEQUENTIAL THINKING:** Before drafting the plan, invoke the `sequentialthinking` tool. Use it to map the task's acceptance criteria to specific files and code paths identified in T2, identify any gaps or ambiguities that would leave a criterion unaddressed, reason through the ordering of changes (which must be done first to leave the codebase stable?), and weigh alternative approaches against the patterns and constraints observed in T2. Plan quality at this step determines the trajectory of T5–T12 — a plan with an unexamined assumption produces implementation debt that compounds. Do not draft the plan until the reasoning is complete.
+
+> **THINK HARD:** Before finalizing the plan, think hard about whether every acceptance criterion maps to a specific, concrete code change, and whether the ordering and scope of those changes is minimal and safe. This is the highest-leverage decision point in the workflow — a vague or over-scoped plan produces an implementation that cannot be cleanly reviewed or verified.
 
 **REQUIRED:** The plan must include ALL of the following:
 
@@ -164,15 +170,15 @@ The sub-agent will return a structured findings report with an overall verdict o
 
 - The approval request Jira record is the combined `T4/T5` comment already posted in T4. Do not post a second Jira comment here unless the plan changed.
 - **Present the full implementation plan in the chat output.** The user should not have to open Jira to review it — display it here before asking for approval.
-- Then ask for approval **in the chat**. Do not proceed until the user confirms in the chat. Do not poll Jira for approval.
-- If the reviewer requests changes, revise the plan, repost the full combined `T4/T5` comment to Jira, and ask for approval in the chat again.
-- Only proceed to T6 after explicit approval has been given in the chat.
+- Then use `AskUserQuestion` with header `T5 Approval`, options: `Approve and proceed (Recommended)` (description: "Implementation plan is accurate — begin work") / `Request changes` (description: "Revise the plan before proceeding"). Do not poll Jira for approval.
+- If the user selects "Request changes", revise the plan, repost the full combined `T4/T5` comment to Jira, and use `AskUserQuestion` again.
+- Only proceed to T6 after "Approve and proceed" is selected.
 
 ---
 
 ### T6 — Create Branch and Worktree
 
-- **Standard mode — ask which branch to branch from:** Before creating the branch, ask the user in the chat which branch to use as the base. Most codebases use a `stage` or `develop` branch as the integration target — suggest these as the default. **Do not branch from `main` unless the user explicitly specifies it.** If the user names a branch, verify it exists on the remote before proceeding.
+- **Standard mode — ask which branch to branch from:** Before creating the branch, run `git rev-parse --abbrev-ref HEAD` to determine the current branch. Use `AskUserQuestion` with header `Base Branch`, options: `<current branch name> (Recommended)` (description: "Use the currently checked-out branch as the base") / `develop` (description: "Branch from the develop integration branch"). The user can type a specific branch name via the auto-injected "Other" option. **Do not branch from `main` unless the user explicitly specifies it — warn the user if they select or type `main`.** Verify any user-specified branch exists on the remote before proceeding.
 - Create a new branch using this naming convention:
 
 ```
@@ -197,6 +203,8 @@ Example: `PROJ-1234-add-retry-logic-to-payment-service`
 - **Testing handoff:** Leave the implementation in a state that the dedicated `test-reviewer` sub-agent can exercise deterministically. Note any commands, fixtures, or setup that sub-agent will need.
 - **Documentation handoff:** Identify the public APIs, configuration surfaces, and repository docs the dedicated `documentation-reviewer` sub-agent must cover.
 - Follow existing code style, conventions, and architectural patterns observed in T2.
+
+> **USE SEQUENTIAL THINKING:** Before the self-review, invoke the `sequentialthinking` tool. Use it to walk each acceptance criterion against the implementation, verify the changes follow the patterns observed in T2, identify any caller or integration point that may have been affected but not updated, and check whether the testing and documentation handoffs are complete enough for the sub-agents to proceed without redesigning. Do not begin the self-review checklist until the reasoning is complete.
 
 > **SERENA-FIRST EDITING RULE:** When modifying existing source code, prefer Serena's symbol-aware tools over native `Edit`. Symbol-aware edits produce cleaner diffs, are robust against whitespace or context drift, and — for rename and delete — update references atomically.
 >
@@ -241,7 +249,7 @@ The sub-agent will return a structured findings report with an overall verdict o
 
 - If **APPROVED**: continue with the dedicated testing and documentation completion loops below.
 - If **CHANGES REQUIRED**: address every Critical and Major finding, then invoke the `implementation-reviewer` sub-agent again with the updated diff. Repeat until the verdict is APPROVED.
-- **Max 3 review iterations.** If the implementation-reviewer returns CHANGES REQUIRED after 3 iterations, stop and escalate to the user in the chat. Present the remaining findings and ask for guidance on how to proceed.
+- **Max 3 review iterations.** If the implementation-reviewer returns CHANGES REQUIRED after 3 iterations, use `AskUserQuestion` with header `Reviewer Escalation`, options: `Apply the changes manually and continue` (description: "I'll address the remaining findings — continue after I confirm") / `Skip and continue anyway` (description: "Accept the outstanding findings and proceed to testing") / `Abort` (description: "Stop the workflow here"). Present the outstanding findings before the question.
 
 Do not proceed to the dedicated completion loops until the implementation-reviewer returns an APPROVED verdict.
 
@@ -259,7 +267,7 @@ Invoke the `test-reviewer` sub-agent, providing:
 The sub-agent will add or update tests as needed, run the relevant test commands, and return a structured report with a status of either **COMPLETE** or **FAILED**.
 
 - If **COMPLETE**: review the report. If it changed any non-test files, invoke the `implementation-reviewer` again with the updated diff before continuing.
-- If **FAILED**: stop and escalate to the user in the chat. Present the report and ask how to proceed.
+- If **FAILED**: use `AskUserQuestion` with header `Test Reviewer Failed`, options: `Apply a manual fix and retry` (description: "I'll address the test failures — continue after I confirm") / `Skip and continue` (description: "Proceed to documentation with the current test state") / `Abort` (description: "Stop the workflow here"). Present the failure report before the question.
 
 **Dedicated documentation completion loop:**
 
@@ -274,7 +282,7 @@ Invoke the `documentation-reviewer` sub-agent, providing:
 The sub-agent will update inline and repository documentation as needed and return a structured report with a status of either **COMPLETE** or **FAILED**.
 
 - If **COMPLETE**: proceed to T9.
-- If **FAILED**: stop and escalate to the user in the chat. Present the report and ask how to proceed.
+- If **FAILED**: use `AskUserQuestion` with header `Doc Reviewer Failed`, options: `Apply a manual fix and retry` (description: "I'll address the documentation gaps — continue after I confirm") / `Skip and continue` (description: "Proceed to T9 with the current documentation state") / `Abort` (description: "Stop the workflow here"). Present the failure report before the question.
 - If the report says user-facing documentation follow-up is `REQUIRED`, record that in T12 and recommend running `/document-card` after this workflow completes.
 
 Do not proceed to T9 until `implementation-reviewer`, `test-reviewer`, and `documentation-reviewer` have all completed successfully.
@@ -317,7 +325,7 @@ Example: `[PROJ-1234] Add retry logic with exponential backoff to payment servic
         - The criterion restated clearly
         - Step-by-step instructions to verify that criterion is met
 - Present the same testing handoff in the chat — the user should not have to open Jira to see what to test.
-- Do not proceed until the user has completed testing and explicitly approved the implementation in the chat.
+- Then use `AskUserQuestion` with header `T11 Testing`, options: `Approve — implementation works as expected (Recommended)` (description: "Testing passed — proceed to the summary") / `Issues found` (description: "One or more problems were found during testing"). Do not proceed until the user selects an option.
 
 - If the user identifies issues: for each distinct issue, invoke the `issue-intake` skill (via the `Skill` tool), passing a brief description of the observed behavior, expected behavior, and this task's Jira key as args (e.g. `"Testing found: [description]. Related to: [PROJ-KEY]"`). Work through the issue-intake I0–I6 process with the user to document and triage each issue — it will create a Jira card (Bug or Missing Requirement) for each one. After all issues are documented and their Jira cards are created, recreate the worktree (`mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`), return to T8, resolve each issue, re-run T9 and T10 (which removes the worktree again), and return to this step before proceeding.
 

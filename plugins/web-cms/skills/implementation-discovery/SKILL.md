@@ -4,7 +4,7 @@ description: Run implementation discovery to surface and iterate over approaches
 user-invocable: true
 argument-hint: '[what you want to build or investigate]'
 disable-model-invocation: true
-allowed-tools: Bash, Read, Glob, Grep, mcp__plugin_web-cms_sequentialthinking__sequentialthinking, mcp__plugin_web-cms_memory__read_graph, mcp__plugin_web-cms_memory__create_entities, mcp__plugin_web-cms_memory__create_relations, mcp__plugin_web-cms_memory__add_observations
+allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion, mcp__plugin_web-cms_sequentialthinking__sequentialthinking, mcp__plugin_web-cms_memory__read_graph, mcp__plugin_web-cms_memory__create_entities, mcp__plugin_web-cms_memory__create_relations, mcp__plugin_web-cms_memory__add_observations
 model: opus
 effort: high
 ---

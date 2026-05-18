@@ -15,7 +15,7 @@
 
 **APPROVAL GATE BEHAVIOR:** Approval gates are chat-scoped. If explicit approval is not captured before the session ends or context is lost, stop at the gate. On resume, re-present the latest classification, draft, or summary and ask for confirmation again. Never assume a pending approval was granted.
 
-**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and ask the user for clarification before proceeding.
+**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
 **KNOWLEDGE GRAPH SCOPE:** The knowledge graph in this workflow is session-scoped. It accumulates structured context across I0-I4 so that I5 can assemble a complete, grounded Jira issue description. All graph content must be fully materialized into the Jira card description before the session ends -- do not rely on the graph persisting to a future session.
 
@@ -43,43 +43,43 @@
 
 **Objective:** Greet the user and gather all information about the unexpected or missing behavior through natural conversation. Do not assume or imply whether this is a bug or a missing requirement — remain neutral until I4.
 
-**If called with pre-populated context (non-empty $ARGUMENTS):** Skip the cold-start introduction. Present the pre-populated fields (observed behavior, expected behavior, related Jira key) as a structured summary and ask the user to confirm or correct them before proceeding to the remaining I0 questions. Only ask about fields that were not pre-populated.
+**If called with pre-populated context (non-empty $ARGUMENTS):** Skip the cold-start introduction. Present the pre-populated fields (observed behavior, expected behavior, related Jira key) as a structured summary. Use `AskUserQuestion` (Header: `Pre-filled Data`, Question: `I've pre-populated these fields from the parent workflow. Are they accurate?`, Options: `Confirmed — continue with these details (Recommended)`, `Needs correction — I'll provide the right details`) before proceeding to the remaining I0 questions. Only ask about fields that were not pre-populated.
 
 **Agent Actions:**
 
 1. Introduce yourself and briefly explain what this workflow will do and what to expect (phases, classification, end result). Skip this step if called with pre-populated context — the user is already in context from the parent workflow.
     
-2. Ask the following questions **conversationally, one topic at a time.** Do not present them as a form or list. Wait for each response before asking the next.
+2. Ask the following questions using `AskUserQuestion`, one call per question in sequence. Wait for each response before asking the next. For closed-enum questions, use the specific options below. For open-ended free-text questions, provide 2–3 reasonable options covering common answers (Other is always available for typed input).
     
     **Behavior description:**
     
-    - What is a short title or summary for this issue?
-    - What were you doing when you encountered it? Walk me through what happened.
-    - What did you expect to happen instead?
-    - Has this ever worked correctly before, to your knowledge?
+    - Issue title — open-ended; accept any level of specificity
+    - What happened — open-ended walkthrough of the observed behavior
+    - What should have happened — open-ended expected behavior
+    - Has this ever worked — use `AskUserQuestion` (Header: `Prior Behavior`, Question: `Has this ever worked correctly before, to your knowledge?`, Options: `Yes — it used to work`, `No — it has never worked`, `Unknown`)
     
     **Reproduction:**
     
-    - Can you reliably reproduce this? If yes, what are the exact steps?
-    - Does it happen every time, or intermittently? If intermittently, how often approximately?
-    - Is there anything that makes it more or less likely to occur?
-    - Are there any relevant logs, error messages, exceptions, or stack traces available? If yes, please share them.
+    - Can it be reproduced — `AskUserQuestion` (Header: `Reproducible?`, Question: `Can you reliably reproduce this issue?`, Options: `Yes — I can reproduce it consistently`, `Intermittent — it happens sometimes`, `No — I cannot reproduce it`)
+    - Reproduction rate — `AskUserQuestion` (Header: `Rate`, Question: `How often does it occur?`, Options: `Every time (Recommended for consistent bugs)`, `Intermittently — roughly [frequency]`, `Unknown`) — only ask if intermittent
+    - Conditions — open-ended: what makes it more or less likely
+    - Logs available — `AskUserQuestion` (Header: `Logs`, Question: `Are there relevant logs, error messages, exceptions, or stack traces available?`, Options: `Yes — I'll share them`, `No logs available`)
     
     **Environment:**
     
-    - What environment did this occur in? (Production / Staging / Development / Other)
-    - What operating system and version?
-    - What browser and version, if applicable?
-    - What application version or build number, if known?
-    - Any other relevant environment details — region, account type, feature flags, etc.?
+    - Environment tier — `AskUserQuestion` (Header: `Environment`, Question: `What environment did this occur in?`, Options: `Production`, `Staging`, `Development`, `Other`)
+    - OS and version — open-ended
+    - Browser and version — `AskUserQuestion` (Header: `Browser`, Question: `Is this browser-related?`, Options: `Yes — I'll specify the browser and version`, `Not applicable — no browser involved`)
+    - App version / build — open-ended
+    - Other environment details — open-ended (region, account type, feature flags, etc.)
     
     **Impact & context:**
     
-    - How many users or systems are affected, if known?
-    - Is there a workaround available? If yes, what is it?
-    - Who reported this — name and team?
-    - Is there a related Jira Epic or issue this should be linked to? If so, what's the key?
-    - Has a Jira card already been created for this issue? If so, what's the issue key?
+    - User / system impact — open-ended
+    - Workaround — `AskUserQuestion` (Header: `Workaround`, Question: `Is there a workaround available?`, Options: `Yes — I'll describe it`, `No — there is no workaround`, `Unknown`)
+    - Reported by — open-ended: name and team
+    - Related issue / epic — `AskUserQuestion` (Header: `Related Jira`, Question: `Is there a related Jira Epic or issue this should be linked to?`, Options: `Yes — I'll provide the key`, `No`)
+    - Existing card — `AskUserQuestion` (Header: `Existing Card`, Question: `Has a Jira card already been created for this issue?`, Options: `Yes — I'll provide the key`, `No`)
 3. After all questions are answered, summarize the gathered context back to the user in a clear, structured format.
     
 
@@ -99,7 +99,7 @@
 > - Related Issue or Epic (Jira key, or explicitly "none")
 > - Existing Jira Card (issue key, or explicitly "none")
 
-> **APPROVAL GATE — FULL STOP.** Present the gathered context as a structured summary. User must confirm all fields are accurate and nothing is missing. Do not proceed to I1 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Present the gathered context as a structured summary. Use `AskUserQuestion` (Header: `I0 Approval`, Question: `Are all fields accurate and nothing is missing?`, Options: `Approve and proceed (Recommended)`, `Request changes`). Do not proceed to I1 until the user approves.
 
 ---
 
@@ -121,7 +121,7 @@
 > - Explicit confirmation that no duplicate issue is already open
 > - Summary of related Epic or issue (if applicable)
 
-> **APPROVAL GATE — FULL STOP.** Present the Jira context summary. User must confirm the existing card (if any) is correct, no duplicate exists, and the related Epic (if any) is correct. Do not proceed to I2 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Present the Jira context summary. Use `AskUserQuestion` (Header: `I1 Approval`, Question: `Is the Jira context correct? Is the existing card (if any) right, is there no duplicate, and is the related Epic (if any) correct?`, Options: `Approve and proceed (Recommended)`, `Request changes`). Do not proceed to I2 until the user approves.
 
 > **USE KNOWLEDGE GRAPH:** After the I1 approval gate is confirmed, write the issue under investigation to the knowledge graph as a `work_item` entity with name `work_item-<key>` where `<key>` is the existing Jira issue key (if provided in I0) or a normalized slug of the issue title prefixed with `issue-` (e.g. `work_item-issue-checkout-button-disabled`). Observations: `title`, `observed_behavior`, `expected_behavior`, `existing_jira_key` (if provided), `phase: investigation`. **Record the entity name** — it is the `work_item_id` passed to every `codebase-explorer` call in I2.
 
@@ -163,7 +163,7 @@
 
 > **REQUIRED: Review the codebase analysis before presenting.** Verify every item is grounded in actual evidence. Label speculative entries as `[INFERRED]`. Do not present an unreviewed analysis.
 
-> **APPROVAL GATE — FULL STOP.** Present the codebase analysis. User must confirm affected areas are correct and complete, and the finding on whether code exists is accurate. Do not proceed to I3 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Present the codebase analysis. Use `AskUserQuestion` (Header: `I2 Approval`, Question: `Are the affected areas correct and complete, and is the finding on whether code exists accurate?`, Options: `Approve and proceed (Recommended)`, `Request changes`). Do not proceed to I3 until the user approves.
 
 ---
 
@@ -181,14 +181,14 @@
     - **Intent** — Is the expected behavior something that was explicitly designed and specified, or is it something the user believes should exist?
     - **Logs / Evidence** — Are there additional error logs, stack traces, or monitoring alerts?
 3. Mark each question as `[BLOCKING]` or `[NICE TO HAVE]`.
-4. Present all questions in a **single batch** — do not ask one at a time.
+4. Ask each question using a separate `AskUserQuestion` call in sequence — one question per call. Include the `[BLOCKING]` or `[NICE TO HAVE]` tag in the question text. For open-ended questions, use two options: `Provide answer` (description: "Type your response using the Other input field") and, for non-blocking questions only, `Skip` (description: "Skip this non-blocking question"). For closed-enum questions, use specific options.
 5. Record all answers verbatim. Do not infer or invent answers.
 
 > **USE KNOWLEDGE GRAPH:** After answers are confirmed, write each classification signal to the graph. Create a `classification_signal` node for each answered question with properties: `category` (history / scope / regression / intent / logs_evidence), `answer` (verbatim), and `points_to` (bug / missing_requirement / ambiguous). Link each node to the issue. I4A reads all `classification_signal` and `code_evidence` nodes to produce its verdict.
 
 > **REQUIRED:** Present all BLOCKING questions answered and answers recorded, and remaining unanswered questions listed as open items.
 
-> **APPROVAL GATE — FULL STOP.** Present all questions and recorded answers. User must confirm all blocking answers are accurate. Do not proceed to I4 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Present all questions and recorded answers. Use `AskUserQuestion` (Header: `I3 Approval`, Question: `Are all blocking answers accurate?`, Options: `Approve and proceed (Recommended)`, `Request changes`). Do not proceed to I4 until the user approves.
 
 ---
 
@@ -201,6 +201,8 @@
 #### I4A — Classification
 
 > **USE SEQUENTIAL THINKING:** Before producing the classification, invoke the `sequentialthinking` tool. Work through each signal in the table below explicitly — note what each signal points to, identify any contradictory signals, and stress-test the conclusion against the strongest counter-evidence. This is the most consequential decision in this workflow — a wrong answer here sends all subsequent work down the wrong path. Do not present the classification until every signal has been evaluated.
+
+> **THINK HARD:** Before committing to the classification verdict, think hard about the strongest piece of counter-evidence — the signal that most strongly contradicts your tentative conclusion. If you cannot articulate why that counter-signal is outweighed, the classification is not ready. A Bug sent down the Missing Requirement path loses its regression test; a Missing Requirement sent down the Bug path creates a broken fix that cannot reproduce.
 
 > **USE KNOWLEDGE GRAPH:** Read all `classification_signal` and `code_evidence` nodes. For each signal in the table below, find the corresponding node and record what it points to. Tally the signals, weight the strongest evidence (code_evidence is typically the most reliable signal), and produce the verdict. After the verdict is confirmed, write a `classification` node with properties: `verdict` (bug / missing_requirement / ambiguous) and `rationale`. This node is read by I5 to determine the resolution path.
 
@@ -221,7 +223,7 @@ Using all output from I0–I3, classify the issue against the following criteria
 - **Missing Requirement** — The expected behavior was never implemented. The software is behaving as designed; the design is incomplete.
 - **Ambiguous** — Insufficient evidence to classify confidently. List the specific signals that are unclear and what additional information is needed.
 
-> **If Ambiguous:** Present the ambiguous signals and missing information to the user. Ask the user to provide the missing information or to make a judgment call on the classification. Once the user provides additional input, re-evaluate the classification using the same signal table. Do not proceed to I5 until the classification resolves to Bug or Missing Requirement.
+> **If Ambiguous:** Present the ambiguous signals and missing information. Use `AskUserQuestion` to ask for missing information or a judgment call — one question per call. For classification judgment calls, use (Header: `Classification`, Question: `Based on the available evidence, which classification best fits?`, Options: `Bug — existing code is broken`, `Missing Requirement — the behavior was never implemented`). Once additional input is provided, re-evaluate the classification using the same signal table. Do not proceed to I5 until the classification resolves to Bug or Missing Requirement.
 
 > **REQUIRED output:**
 >
@@ -248,7 +250,7 @@ Assign a severity level:
 
 ---
 
-> **APPROVAL GATE — FULL STOP.** Present the full I4 classification (and severity if Bug). User must confirm classification is correct, rationale accurately reflects the evidence, and severity is accurate (if Bug). Do not proceed to I5 until confirmed. The confirmed classification determines which I5 path is followed — do not deviate.
+> **APPROVAL GATE — FULL STOP.** Present the full I4 classification (and severity if Bug). Use `AskUserQuestion` (Header: `I4 Approval`, Question: `Is the classification correct, does the rationale accurately reflect the evidence, and is the severity accurate (if Bug)?`, Options: `Approve and proceed (Recommended)`, `Request changes`). Do not proceed to I5 until the user approves. The confirmed classification determines which I5 path is followed — do not deviate.
 
 ---
 
@@ -277,7 +279,7 @@ Follow the path matching the confirmed classification from I4.
 |Labels|Derived from affected area + "bug"|
 |Epic Link|Recommended epic (see below)|
 
-    **Epic recommendation:** If an epic was already confirmed in I1, present it as the recommendation. If no epic was confirmed, search Jira for open epics in the same project that relate to the affected areas or the component where the bug was found. Recommend the most relevant epic to the user. Present the recommendation and ask the user to: (a) accept the suggested epic, (b) provide a different epic key, or (c) leave blank for no epic. Only set the Epic Link if the user accepts or provides a key. If the user leaves it blank, do not set an Epic Link.
+    **Epic recommendation:** If an epic was already confirmed in I1, present it as the recommendation. If no epic was confirmed, search Jira for open epics in the same project that relate to the affected areas or the component where the bug was found. Use `AskUserQuestion` to confirm the epic (Header: `Epic Link`, Question: `Which epic should this bug be linked to?`, Options: `Use suggested epic: <KEY> (Recommended)` — link to the suggested epic, `Provide a different epic key` — type your preferred key using the Other input, `No epic` — leave this bug unlinked to an epic). Only set the Epic Link if the user selects the suggested epic or provides a different key via Other.
 
     **API notes for non-standard fields:**
     - **Priority:** Set via `additional_fields`: `{"priority": {"name": "High"}}` (substituting the actual priority name: Critical, High, Medium, or Low).
@@ -344,13 +346,13 @@ file/module/service path, brief description of relevance, and risk level.]
 
 > **REQUIRED: Review the full issue description before presenting.** Verify all fields are populated, observed and expected behavior are precise, reproduction steps are exact or marked as intermittent, severity matches I4B, and fix criteria are independently verifiable.
 
-> **APPROVAL GATE — FULL STOP.** Present the fully assembled Bug description. User must confirm content is accurate and ready before creating or updating the Jira issue.
+> **APPROVAL GATE — FULL STOP.** Present the fully assembled Bug description. Use `AskUserQuestion` (Header: `I5A Approval`, Question: `Is the bug description accurate and ready to be created or updated in Jira?`, Options: `Approve and create / update (Recommended)`, `Request changes`). Do not create or update the Jira issue until the user approves.
 
 **Post-creation:**
 
 1. **Link related issues from I1:** For each related issue identified in I1, call `createIssueLink` with `link_type: "Relates to"`, `inward_issue_key` set to the new bug's key, and `outward_issue_key` set to the related issue's key. Do not attempt to set linked issues during `createJiraIssue` — that tool does not support it.
 
-2. **Ask for additional links:** Ask: "Is there an existing Jira issue this bug should be linked to beyond the ones already linked? If yes, provide the issue key." If the user provides a key, call `getJiraIssue` to confirm it exists, then call `createIssueLink` with `link_type: "Relates to"` to create the link. Confirm success. If the user provides no key, skip this step.
+2. **Ask for additional links:** Use `AskUserQuestion` (Header: `Additional Links`, Question: `Is there an existing Jira issue this bug should be linked to beyond the ones already linked?`, Options: `Yes — I'll provide the issue key` — type the key using the Other input, `No — no additional links needed`). If the user provides a key, call `getJiraIssue` to confirm it exists, then call `createIssueLink` with `link_type: "Relates to"` to create the link. Confirm success.
 
 3. The bug path cleanup happens in I6 after the durable Jira record is complete. Do not clear the session-scoped graph before that cleanup phase.
 
@@ -369,7 +371,7 @@ file/module/service path, brief description of relevance, and risk level.]
 
 |R0 Field|Source|
 |---|---|
-|Work Type|Feature (default) — confirm with user if Tech Debt, Research, or Upkeep is more appropriate|
+|Work Type|Feature (default) — use `AskUserQuestion` (Header: `Work Type`, Question: `What type of work is this? Feature is the default for missing requirements.`, Options: `Feature (Recommended)` — new capability or user-facing behavior, `Tech Debt` — improving existing code, `Research` — investigating a question, `Upkeep` — maintenance or compliance work)|
 |Title or Name|Issue title from I0|
 |Description / Problem Statement|Observed behavior + expected behavior from I0|
 |Requested By / Identified By|Reported By from I0|
@@ -380,10 +382,10 @@ file/module/service path, brief description of relevance, and risk level.]
 5. Present the pre-populated R0 summary to the user and confirm it before proceeding — this serves as the R0 approval gate.
 6. After the user confirms the pre-populated R0 summary, perform the Requirements Intake R0 post-approval action by writing the `work_item` node to the knowledge graph using the confirmed work type and context. This completes the R0 graph initialization before continuing.
 7. Resume the Requirements Workflow from **R1**, following all phases (R1 through R6) exactly as written. All R1–R6 execution rules, approval gates, and self-review requirements apply in full.
-8. After the Jira issue has been created or updated at the end of R5, ask: "Is there an existing Jira issue this should be linked to? If yes, provide the issue key." If the user provides a key, call `getJiraIssue` to confirm it exists, then call `createIssueLink` with `link_type: "Relates to"` to create the link. Confirm success.
+8. After the Jira issue has been created or updated at the end of R5, use `AskUserQuestion` (Header: `Additional Links`, Question: `Is there an existing Jira issue this should be linked to?`, Options: `Yes — I'll provide the issue key` — type the key using the Other input, `No — no additional links needed`). If the user provides a key, call `getJiraIssue` to confirm it exists, then call `createIssueLink` with `link_type: "Relates to"` to create the link. Confirm success.
 9. The missing-requirement path cleanup happens in I6 after the carried-over requirements workflow is complete. The Requirements Intake workflow clears the shared session-scoped graph at its cleanup phase; do not finish this path with any issue-intake state left in the graph.
 
-> **APPROVAL GATE — FULL STOP.** Present the pre-populated R0 context summary. User must confirm all fields are accurate and Work Type is correct. Only proceed to R1 after this confirmation.
+> **APPROVAL GATE — FULL STOP.** Present the pre-populated R0 context summary. Use `AskUserQuestion` (Header: `I5B Approval`, Question: `Are all fields accurate and is the Work Type correct?`, Options: `Approve and proceed (Recommended)`, `Request changes`). Only proceed to R1 after the user approves.
 
 ---
 
@@ -423,7 +425,7 @@ file/module/service path, brief description of relevance, and risk level.]
 
    If the upstream-discovery section reports "none" across the board, state explicitly that no implementation-discovery state was found in the graph for this run.
 
-3. > **APPROVAL GATE — FULL STOP.** Ask the user: **"Proceed with cleanup of these entities?"** Do not run `delete_entities` until the user explicitly confirms (e.g., "yes", "proceed", "go ahead"). On any negative or ambiguous response, do NOT delete. Instead, leave the graph untouched, note in the chat that cleanup was skipped at the user's request, and end this path — the entities will remain in the graph until the Claude Code session ends.
+3. > **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` (Header: `I6 Cleanup`, Question: `Proceed with cleanup of these entities?`, Options: `Proceed with cleanup (Recommended)` — delete all listed knowledge-graph entities, `Skip cleanup` — leave the graph untouched; entities will remain until the Claude Code session ends). Do not run `delete_entities` until the user selects Proceed.
 
 4. **Execute deletion.** On explicit confirmation, call `delete_entities` with the full list enumerated in step 1. After deletion, report a one-line confirmation in the chat: "Cleanup complete: <N> entities deleted."
 

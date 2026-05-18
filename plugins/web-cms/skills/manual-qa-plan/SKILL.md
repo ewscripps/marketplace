@@ -4,7 +4,7 @@ description: Generate a manual QA verification plan for a Jira task, bug, or epi
 user-invocable: true
 argument-hint: "[PROJ-123]"
 disable-model-invocation: true
-allowed-tools: Bash, Read, Glob, Grep, mcp__plugin_web-cms_atlassian__jira_get_issue, mcp__plugin_web-cms_atlassian__jira_search, mcp__plugin_web-cms_atlassian__jira_update_issue
+allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion, mcp__plugin_web-cms_atlassian__jira_get_issue, mcp__plugin_web-cms_atlassian__jira_search, mcp__plugin_web-cms_atlassian__jira_update_issue
 model: sonnet
 effort: high
 ---

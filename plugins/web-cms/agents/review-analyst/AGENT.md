@@ -91,9 +91,13 @@ Verify every code change has corresponding test coverage. Use `find_referencing_
 Verify all new or modified public APIs, classes, and functions have inline documentation. Check that documentation accurately describes the current behavior (not outdated behavior). Identify missing or incomplete documentation.
 
 **security_performance**
+> **THINK HARD:** Before reporting your findings, think hard about data-flow paths through the changed symbols — specifically, whether untrusted input can reach a security-sensitive sink (query, shell command, serializer, renderer, auth check, log statement) without validation. Surface-level scans miss injection and privilege-escalation risks that only appear when the full call graph is traced. Use `find_referencing_symbols` to walk the full downstream path, not just the changed lines.
+
 Identify security vulnerabilities (injection risks, exposed secrets, improper auth checks, insecure data handling). Use `find_referencing_symbols` to trace data flow through changed symbols — follow input from entry points through processing to output to identify injection risks, unvalidated data paths, or sensitive data exposure. Flag performance risks (N+1 queries, unnecessary allocations, blocking operations, missing caching). Check input validation and output encoding. Verify sensitive data handling.
 
 **cross_item_integration** (Release and Epic only)
+> **THINK HARD:** Before reporting your findings, think hard about shared interfaces and utilities touched by multiple work items — not just the ones that obviously conflict, but the ones where two changes are each individually correct but together produce an inconsistency (different callers now receiving different behavior from the same symbol, migration ordering dependencies, feature-flag interactions). These integration bugs are invisible to per-item reviewers and this category's entire value comes from catching them.
+
 Review changes across all work items for conflicts, duplication, or inconsistencies. Use `find_referencing_symbols` on symbols modified by multiple work items to detect conflicting changes to the same interface or shared utility. Verify changes from different items integrate cleanly. Check that shared utilities or services are not modified in conflicting ways across items. Identify any ordering dependencies between changes that could cause issues during deployment.
 
 ## Severity definitions

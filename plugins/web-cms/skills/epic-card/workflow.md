@@ -8,11 +8,11 @@
 4. If any phase fails, stop immediately and report the failure as a comment on this Jira issue. Do not continue.
 5. Every required output (comments, plans, summaries) must be posted before the phase is considered complete.
 
-**KNOWLEDGE GRAPH SCOPE:** The knowledge graph in this workflow is the authoritative execution state map for the entire epic. It tracks the epic node, all child task nodes (with Jira keys, execution order, and completion status), the integration branch, and dependencies. If context is lost mid-epic (long session, reconnection, new session), read the graph first to reconstruct exact state. If the graph is empty in a new session, reconstruct state by reading this Jira epic's description and all comments, then querying each child task's status in Jira before continuing.
+**KNOWLEDGE GRAPH SCOPE:** The knowledge graph in this workflow is the authoritative execution state map for the entire epic. It tracks the epic node, all child task nodes (with Jira keys, execution order, and completion status), the integration branch, and dependencies. Existing children present at workflow start are also represented as `task` nodes, distinguished by an `existing: true` observation. If context is lost mid-epic (long session, reconnection, new session), read the graph first to reconstruct exact state. If the graph is empty in a new session, reconstruct state by reading this Jira epic's description and all comments, then querying each child task's status in Jira before continuing.
 
 **APPROVAL GATE BEHAVIOR:** Approval gates are chat-scoped. If explicit approval is not captured before the session ends or context is lost, stop at the gate. On resume, re-present the latest breakdown plan or testing handoff and ask for confirmation again. Never assume a pending approval was granted.
 
-**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and ask the user for clarification before proceeding.
+**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
 **RESUMPTION CHECK:** If this workflow resumes after prior work has already been performed, inspect the epic status, the existing Jira comments, and current child task states first to identify the first incomplete phase. If the epic is already **In Progress**, do not repeat E0. If the knowledge graph is empty, rebuild the epic, task, dependency, and branch nodes from the latest approved breakdown, child task descriptions, and Jira task statuses before continuing.
 
@@ -72,6 +72,15 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 - Note all items in the **Affected Areas** section and any dependencies listed.
 - Understand what "done" looks like for this epic as a whole.
 
+**Inventory existing child tasks.** Call `jira_search` with JQL `parent = "<EPIC-KEY>"`. If that returns no results, also try `"Epic Link" = <EPIC-KEY>` (legacy epic-link field used by some Jira projects). For each child found:
+- Call `jira_get_issue` to read the child's full description.
+- Capture: `key`, `summary`, `status`, AC items present in the description, Affected Areas items present in the description, whether the `Epic Integration Branch` field appears in the description's Task Details section, and whether the child's stated scope looks in-scope for this epic's goals.
+- Write each existing child to the knowledge graph as a `task` node with observations: `existing: true`, `jira_key`, `status` (from Jira), any AC items it covers, any Affected Areas it covers, and `integration_branch_present: true/false`.
+
+If zero children are found, add an observation `existing_children: 0` on the epic node and proceed. The rest of the workflow runs unchanged from the blank-slate path.
+
+If one or more children are found, record `existing_children: N` on the epic node. The E3, E4, E6, E8, E9, and E10 phases have branching behavior for this case, described in each respective phase.
+
 ### E2 — Review the Codebase
 
 > **USE KNOWLEDGE GRAPH:** Before spawning explorers, ensure a `work_item-<JIRA_KEY>` entity exists for this epic. Call `read_graph`; if missing, create it with observations: `work_type: epic`, `jira_key`, `title`, `summary`, `phase: review`. **Record the entity name** as the `work_item_id` for E2 and pass it to every explorer. The richer `epic` node referenced in E4 is created later for breakdown tracking; the `work_item` node here is the canonical root the explorers attach their findings to.
@@ -85,6 +94,9 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 - Wait for all explorers to return one of `EXPLORATION COMPLETE`, `EXPLORATION INCOMPLETE`, or `EXPLORATION FAILED`. Each non-failed return includes a structured findings block in the text — use it as the resilient source of record alongside the graph. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters.
 - **Post-exploration enrichment:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `work_item_id`. It crystallizes durable area knowledge from this run's graph into Serena project memory for future explorations. Do not wait for it.
 - Call `read_graph` and walk the subgraph rooted at each `exploration` entity for this `work_item_id`. Surface any `open_question` entities. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
+
+> **USE SEQUENTIAL THINKING:** Before synthesizing the explorer findings, invoke the `sequentialthinking` tool. Use it to integrate the evidence across all explorer reports, identify the patterns and abstractions that the epic's tasks must respect or extend, surface cross-area coupling that would constrain the breakdown plan in E4, and note any technical debt or risks that should be assigned to specific tasks rather than left implicit. The E4 breakdown is only as strong as the synthesis feeding it — missing cross-area constraints at this step causes task ordering and independence errors downstream. Do not proceed to the synthesis bullets until the reasoning is complete.
+
 - Synthesize the findings from the graph. Read across all `exploration` entities linked to this `work_item_id` and aggregate:
     - **Patterns, abstractions, and utilities in use** — from `pattern` entities; cite the `evidence_files` observation when present.
     - **Technical debt, risks, or architectural considerations** — from `risk` entities, ordered by severity, plus any `integration_point` entities that flag cross-area coupling relevant to the breakdown.
@@ -98,53 +110,71 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 1. Review all output from E0, E1, and E2.
 2. Identify clarifying questions. Mark each as `[BLOCKING]` or `[NICE TO HAVE]`.
-3. Present all questions in a **single batch** — do not ask one at a time.
-4. Ask all questions **in the chat** and wait for answers before proceeding. If there are no clarifying questions, state this in the chat and proceed.
-5. Record all answers verbatim. Do not infer or invent answers.
+3. Ask each question one at a time using `AskUserQuestion`. Include the `[BLOCKING]` or `[NICE TO HAVE]` tag in the question text. For open-ended questions, offer `Provide answer` / `Skip — non-blocking` (non-blocking only) and rely on the auto-injected "Other" for the typed answer. If there are no clarifying questions, state this in the chat and proceed.
+4. Record all answers verbatim. Do not infer or invent answers.
+5. **If existing children were found in E1:** For each child that was flagged as potentially out-of-scope, ask the user how to handle it using `AskUserQuestion` with header `Child Disposition`, question `How should [JIRA-KEY] — "[child summary]" be handled?`, options: `Keep and execute as part of this epic` (description: "Include it in the E8 execution sequence") / `Keep but skip execution` (description: "Leave the issue in Jira but do not execute it in E8") / `Exclude from coverage analysis` (description: "Treat it as unrelated to this epic's scope — it stays in Jira but is not factored into coverage or execution"). Record the disposition on each existing child's graph node as a `disposition` observation.
 
 > **REQUIRED:** All BLOCKING questions answered and answers recorded. Remaining unanswered questions listed as open items.
 
-> **APPROVAL GATE — FULL STOP.** Present all questions and recorded answers. User must confirm all blocking answers are accurate. Do not proceed to E4 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `E3 Approval`, options: `Approve and proceed (Recommended)` (description: "All blocking answers are accurate and recorded") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to E4 until approved.
 
 ### E4 — Create Breakdown Plan
 
-> **USE SEQUENTIAL THINKING:** Before producing the breakdown, invoke the `sequentialthinking` tool. Use it to draft the task list, check each task for independence (can it be completed without leaving the codebase unstable?), trace the dependency chain between tasks, identify any gaps in coverage against the epic's acceptance criteria, and verify the execution order is correct. Revise iteratively before committing. Do not post the breakdown until the reasoning is complete.
+> **USE SEQUENTIAL THINKING:** Before producing the breakdown, invoke the `sequentialthinking` tool. Use it to draft the task list, check each task for independence (can it be completed without leaving the codebase unstable?), trace the dependency chain between tasks, identify any gaps in coverage against the epic's acceptance criteria, and verify the execution order is correct. If existing children are present, map them against the epic's AC first before identifying gaps. Revise iteratively before committing. Do not post the breakdown until the reasoning is complete.
 
-> **USE KNOWLEDGE GRAPH:** After the breakdown is finalized, write the epic and all child tasks to the knowledge graph. Create an `epic` node with properties: `jira_key`, `summary`, `status: in_progress`. For each child task, create a `task` node with properties: `title`, `order` (execution sequence number), `status: pending`, and link it to the epic node. Write `depends_on` relationships between tasks that have dependencies. This graph is the authoritative execution state map for the entire epic — E6, E7, E8, E10, and E11 all read from and write back to it.
+> **THINK HARD:** Before finalizing the breakdown, think hard about whether any task completion would leave the codebase in an unstable or inconsistent state that blocks the next task. Dependency-chain errors and false independence assumptions are the most common source of mid-epic blockers — they are far cheaper to catch here than at E8.
 
-Decompose the epic into individual tasks. Each task must be:
+> **USE KNOWLEDGE GRAPH:** After the breakdown is finalized, write the epic and all child tasks to the knowledge graph. Create an `epic` node with properties: `jira_key`, `summary`, `status: in_progress`. For existing children (already written as `task` nodes in E1), add a `coverage_status` observation: `covered` (AC fully addressed), `partial` (AC addressed but description is missing required fields), or `gap_filled_by_<new-task-title>` (AC partially addressed; a new task fills the remainder). For new gap-filler tasks, create a `task` node with properties: `title`, `order` (execution sequence number), `status: pending`, `existing: false`, and link it to the epic node. Write `depends_on` relationships between tasks. This graph is the authoritative execution state map for the entire epic — E6, E7, E8, E10, and E11 all read from and write back to it.
+
+**If existing children were found in E1 (existing_children > 0):** Produce the breakdown in three parts:
+
+**Part 1 — Coverage matrix.** For each AC item and each Affected Area in the epic, identify which existing children address it (and their current Jira status). Classify each existing child as one of:
+- **Covered** — the child's description addresses the AC and Affected Areas it claims, and its `Epic Integration Branch` field is present (or not yet needed).
+- **Partial** — the child addresses the AC but its description is missing required fields (e.g. no `Epic Integration Branch` in Task Details, missing Affected Areas section). Record the specific additive edits needed.
+- **Out-of-scope** — the child's disposition was set to `Exclude from coverage analysis` in E3; exclude from the coverage matrix entirely.
+
+**Part 2 — Backfill list.** For each child marked Partial, list the exact additive edits that E6 will perform: which fields will be inserted, what the inserted text will look like, and which section they go into. Never plan a full description rewrite — only additive insertions.
+
+**Part 3 — New tasks (gaps).** For every AC item or Affected Area not addressed by any `Covered` or `Partial` child (accounting for E6's planned backfills), decompose into new gap-filler tasks following the standard rules below. Also add new tasks for any AC that existing children only partially satisfy after backfilling.
+
+**If no existing children were found (existing_children = 0):** Decompose the epic into individual tasks directly. Each task must be:
 
 - **Independent:** Completable on its own without leaving the codebase in an unstable state.
 - **Ordered:** Sequenced so that dependencies between tasks are respected.
 - **Small and focused:** One logical unit of work per task.
 - **Testable:** Clear acceptance criteria that can be verified independently.
 
+These same rules apply to new gap-filler tasks in the existing-children path.
+
 **REQUIRED:** The breakdown must include ALL of the following:
 
-- Task title and summary for each task
-- Execution order and rationale
-- Dependencies between tasks
-- How the tasks collectively satisfy the epic's acceptance criteria
+- (If existing children) Inventory table: each existing child with status, disposition, and coverage classification.
+- (If existing children) Backfill list: each Partial child with the exact additive edits planned for E6.
+- Task title and summary for each new task
+- Execution order across both existing children and new tasks, with rationale
+- Dependencies between tasks (including any new task that depends on a `To Do` existing child)
+- How the combined set of existing children and new tasks collectively satisfies the epic's acceptance criteria
 
 **REQUIRED: Review the breakdown plan before posting.** Verify:
 
-- Do the tasks collectively satisfy every acceptance criterion listed in the Acceptance Criteria section?
-- Is every item in the Affected Areas section accounted for across the tasks?
-- Is each task truly independent and completable without leaving the codebase unstable?
-- Is the execution order correct — are all inter-task dependencies respected?
-- Is each task small and focused on a single logical unit of work?
-- Are the acceptance criteria for each task specific and testable?
-- Are there any gaps where work falls between tasks and would not be covered?
+- Does every epic AC appear in the coverage matrix as either covered, partial-with-backfill, or gap-filler-assigned?
+- Are the backfill edits additive only — no wholesale rewrites?
+- Does the execution order respect the status of existing children (skip `Done`, wait on `To Do`)?
+- Is every item in the Affected Areas section accounted for across existing children plus new tasks?
+- Is each new task truly independent and completable without leaving the codebase unstable?
+- Is each new task small and focused on a single logical unit of work?
+- Are the acceptance criteria for each new task specific and testable?
 - Is the plan consistent with the codebase patterns observed in E2?
 
 If the review reveals issues, revise the plan before posting. Do not post an unreviewed plan.
 
 Post a single combined Jira comment with the exact heading `**E4/E5 — Breakdown Plan & Approval Request**` before proceeding. This comment must include:
 
-- The reviewed breakdown plan
-- Execution order and rationale
-- Dependencies between tasks
-- How the tasks collectively satisfy the epic's acceptance criteria
+- (If existing children) Inventory table of existing children with status, disposition, and coverage classification.
+- (If existing children) Backfill list detailing additive edits planned for Partial children.
+- New task list (breakdown plan) for gap-filler tasks, with execution order, dependencies, and rationale. If there are no gaps, state explicitly: "All AC is addressed by existing child tasks. No new tasks will be created."
+- Execution order across the full set (existing + new), including where `Done` children are skipped.
+- How the combined set satisfies the epic's acceptance criteria.
 - `Approval requested: Please approve this breakdown plan before work begins.`
 
 ### E5 — Await Breakdown Plan Approval
@@ -155,9 +185,9 @@ Post a single combined Jira comment with the exact heading `**E4/E5 — Breakdow
 
 - The approval request Jira record is the combined `E4/E5` comment already posted in E4. Do not post a second Jira comment here unless the plan changed.
 - **Present the full breakdown plan in the chat output.** The user should not have to open Jira to review it — display it here before asking for approval.
-- Then ask for approval **in the chat**. Do not proceed until the user confirms in the chat. Do not poll Jira for approval.
-- If the reviewer requests changes, revise the plan, repost the full combined `E4/E5` comment to Jira, and ask for approval in the chat again.
-- Only proceed to E6 after explicit approval has been given in the chat.
+- Then use `AskUserQuestion` with header `E5 Approval`, options: `Approve and proceed (Recommended)` (description: "Breakdown plan is accurate — begin child task creation") / `Request changes` (description: "Revise the plan before proceeding"). Do not poll Jira for approval.
+- If the user selects "Request changes", revise the plan, repost the full combined `E4/E5` comment to Jira, and use `AskUserQuestion` again.
+- Only proceed to E6 after "Approve and proceed" is selected.
 
 ---
 
@@ -167,16 +197,21 @@ Post a single combined Jira comment with the exact heading `**E4/E5 — Breakdow
 
 **DO NOT call `createIssueLink` at any point during this phase. Setting the `parent` field in `additional_fields` is the ONLY action needed to establish the parent-child relationship. Any call to `createIssueLink` creates a separate lateral "Related" link that should not exist. Per child task, use one `createJiraIssue` call to create the task with its final description and the parent field already set. No lateral linking calls or follow-up description update calls are allowed.**
 
-For each task identified in E4:
+**Step 0 — Backfill existing children (only when existing_children > 0).** Before creating any new tasks, perform the backfill edits recorded in E4 for each existing child marked Partial. For each such child:
+1. Derive the epic integration branch name using the E7 naming convention: `{PROJECTKEY}-{ISSUENUMBER}-{epic-summary-in-kebab-case}`. This value is needed even before E7 runs so that backfilled children have the correct field set.
+2. Call `jira_update_issue` with the additive edits only — insert the missing fields into the existing description without disturbing other content. The most critical edit is adding `**Epic Integration Branch:** <branch-name>` to the `Task Details` section so that `task-card` detects epic child-task mode during E8. If the child is also missing structural sections (e.g. Affected Areas, Scope), insert those sections after the existing `Task Details` block.
+3. Update that child's graph node: add a `backfilled: true` observation and record `integration_branch_present: true`.
+
+For each task identified in E4 (new gap-filler tasks only):
 
 1. Derive the epic integration branch name now using the E7 naming convention: `{PROJECTKEY}-{ISSUENUMBER}-{epic-summary-in-kebab-case}` (e.g. `PROJ-900-user-authentication-overhaul`). This value is written into each child task's `Epic Integration Branch` field so T6 can detect epic child-task mode.
 2. Populate the task description using the **Standard Task Template** below. Preserve the section structure exactly, but replace every `{{...}}` token with task-specific content before creating the issue. No unresolved placeholder text may be stored in Jira.
-3. **Recommend a priority** for the child task based on its risk level, dependency position, and impact on the epic's acceptance criteria. Use Jira priority values: Critical, High, Medium, or Low. Present the recommended priority to the user for confirmation before creating the issue.
+3. **Recommend a priority** for the child task based on its risk level, dependency position, and impact on the epic's acceptance criteria. Use `AskUserQuestion` with header `Task Priority` to confirm before creating the issue. Put the recommended priority first with `(Recommended)` appended. Options: one of `Critical (Recommended)` / `High (Recommended)` / `Medium (Recommended)` / `Low (Recommended)` as the first option (only the recommended one gets the label), then the remaining three priorities as subsequent options.
 4. Create a new task by calling `createJiraIssue` with `additional_fields` set to `{"parent": "EPIC-KEY", "priority": {"name": "High"}}` (substituting this epic's actual issue key and the confirmed priority name) and the assembled task description. This create call establishes the child work item relationship.
 
 > **USE KNOWLEDGE GRAPH:** After each child task is created in Jira, update its node in the knowledge graph. Add the `jira_key` property to the task node (e.g. `PROJ-124`) so E8 can reference it directly without searching Jira. If the breakdown plan changes during creation (e.g. a task is split), update the graph to reflect the current state before proceeding.
 
-> **TASK TRACKING:** After each child task is created in Jira, create a tracking task named `E8 — Execute [JIRA-KEY]: [task title]` (substituting the real key and title) with status `pending`. These tasks represent the E8 execution slots for each child and will be progressed in E8.
+> **TASK TRACKING:** After each new child task is created in Jira, create a tracking task named `E8 — Execute [JIRA-KEY]: [task title]` (substituting the real key and title) with status `pending`. Also create tracking tasks for any existing children that will be executed in E8 (i.e. those whose disposition is not `Keep but skip execution` and whose current Jira status is not already closed). These tasks represent the E8 execution slots for each child and will be progressed in E8.
 
 ---
 
@@ -236,7 +271,7 @@ Parent epic: {{EPIC-KEY}} — {{EPIC-SUMMARY}}
 
 ### E7 — Create Epic Integration Branch and Worktree
 
-- **Ask which branch to branch from:** Before creating the integration branch, ask the user in the chat which branch to use as the base. Most codebases use a `stage` or `develop` branch as the integration target — suggest these as the default. **Do not branch from `main` unless the user explicitly specifies it.** If the user names a branch, verify it exists on the remote before proceeding.
+- **Ask which branch to branch from:** Before creating the integration branch, run `git rev-parse --abbrev-ref HEAD` to determine the current branch. Use `AskUserQuestion` with header `Base Branch`, options: `<current branch name> (Recommended)` (description: "Use the currently checked-out branch as the base") / `develop` (description: "Branch from the develop integration branch"). The user can type a specific branch name via the auto-injected "Other" option. **Do not branch from `main` unless the user explicitly specifies it — warn the user if they select or type `main`.** Verify any user-specified branch exists on the remote before proceeding.
 - Create a branch from the user-specified base branch using this naming convention:
 
 ```
@@ -256,17 +291,22 @@ Example: `PROJ-900-user-authentication-overhaul`
 
 > **USE KNOWLEDGE GRAPH:** Before starting each child task, read the task nodes from the graph to confirm the correct execution order and that all prerequisite tasks have `status: done`. After each child task completes, update its node to `status: done` and add a `merged_at` timestamp. If context is lost mid-epic (long session, reconnection) and the graph is empty, rebuild the graph first from the epic description, the approved breakdown comment, the child task descriptions, and Jira child task statuses before continuing — do not guess from memory.
 
-Work through each child task **in the order defined in E4**, executing the T0-T13 workflow inline for each one:
+**Pre-step — classify each child before beginning execution.** Read all `task` nodes from the graph in execution order. For each node:
+- If the node has `disposition: Keep but skip execution`, record `status: skipped` on the graph node, mark its tracking task `completed`, and move to the next task without invoking `task-card`.
+- If the node has `existing: true` and its current Jira status is already closed (e.g. `Done`, `Closed`, `Resolved`), record `status: done` on the graph node, mark its tracking task `completed`, and move to the next task without invoking `task-card`. These children are counted as covered but are not re-executed.
+- All remaining nodes (new gap-filler tasks and existing children that are still open and not skipped) enter the execution loop below.
 
-1. Read the knowledge graph to confirm all prerequisite tasks for the next task have `status: done`.
+Work through each executable child task **in the order defined in E4**, executing the T0-T13 workflow inline for each one:
+
+1. Read the knowledge graph to confirm all prerequisite tasks for the next task have `status: done` or `status: skipped` (skipped predecessors do not block execution).
 2. Mark the tracking task `E8 — Execute [JIRA-KEY]: [task title]` for this child as `in_progress`.
-3. Retrieve the child task's full description from Jira and confirm that the `Task Details` section includes the expected **Epic Integration Branch** value from E7.
+3. Retrieve the child task's full description from Jira and confirm that the `Task Details` section includes the expected **Epic Integration Branch** value from E7. For existing children, this field was backfilled in E6 Step 0; verify it is present before proceeding.
 4. Invoke the `task-card` skill directly with the child task's Jira key (e.g., `/task-card PROJ-124`). The skill detects epic child-task mode from the `Epic Integration Branch` field in the task description and adjusts T6 (branch from integration branch), T10 (merge to integration branch), T11 (skip user testing), and T13 (do not remove the shared epic integration worktree). T0 is performed by the skill itself.
 5. Follow the full T0-T13 workflow for this child task. Pause at every approval gate and wait for explicit chat confirmation before proceeding. Jira comments should follow the reduced `task-card` comment contract (T4/T5, T12, and failure comments only) rather than phase-by-phase narration.
 6. When the child task's T13 is complete, verify its status:
     - If successful: update the task's knowledge graph node to `status: done`. Mark the tracking task `E8 — Execute [JIRA-KEY]: [task title]` as `completed`. Verify the integration branch passes the full build, all tests, and all linters before proceeding to the next task.
     - If failed: stop and report the failure to the user. Do not begin the next child task until the failure is resolved.
-7. **Pause between tasks:** After completing each child task, confirm with the user in the chat before starting the next one.
+7. **Pause between tasks:** After completing each child task, use `AskUserQuestion` with header `Next Task`, options: `Continue with next task (Recommended)` (description: "Start the next child task in the breakdown order") / `Stop` (description: "Pause the epic here — I'll resume it later"). Do not begin the next child task until "Continue" is selected.
 8. Do not begin the next child task until the current one is confirmed complete and the integration branch is clean.
 9. After the final child task is complete, remove the epic worktree: `git worktree remove .worktrees/<branch-name>`. Sync the local branch: `git fetch origin` followed by `git branch -f <branch-name> origin/<branch-name>`. Return to the main working directory before proceeding to E9.
 
@@ -279,12 +319,12 @@ Work through each child task **in the order defined in E4**, executing the T0-T1
 - Before notifying the user, confirm the epic worktree from E7 has been removed and the integration branch is no longer checked out there. Manual testing should happen with the branch checked out normally outside the removed worktree.
 - Post a comment notifying the user that all child tasks are complete and the epic is ready for manual testing. The comment must include:
     
-    - A summary of everything that was implemented across all child tasks
+    - A summary of everything that was implemented across all child tasks (including which children were pre-existing and already done at workflow start)
     - **Acceptance Criteria & Testing Steps:** For each acceptance criterion from the Epic's Acceptance Criteria section (read in E1), a numbered section with:
         - The criterion restated clearly
-        - Step-by-step end-to-end instructions to verify that criterion is met across all child tasks
+        - Step-by-step end-to-end instructions to verify that criterion is met. Include AC covered by existing children that were already `Done` at workflow start — do not assume those AC were previously verified end-to-end. The user is testing the epic as a whole, after all new and edited work has landed on the integration branch.
 - Present the same testing handoff in the chat — the user should not have to open Jira to see what to test.
-- Do not proceed until the user has completed testing and explicitly approved the implementation in the chat.
+- Then use `AskUserQuestion` with header `E9 Testing`, options: `Approve — everything works as expected (Recommended)` (description: "All acceptance criteria passed — proceed to the epic summary") / `Issues found` (description: "One or more problems were found during testing"). Do not proceed until the user selects an option.
     
 - If the user identifies issues: for each distinct issue, invoke the `issue-intake` skill (via the `Skill` tool), passing a brief description of the observed behavior, expected behavior, and this epic's Jira key as args (e.g. `"Testing found: [description]. Related to: [PROJ-KEY]"`). Work through the issue-intake I0–I6 process with the user to document and triage each issue — it will create a Jira card (Bug or Missing Requirement) for each one. After all issues are documented and their Jira cards are created, recreate the worktree (`mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`). For each issue card created by issue-intake, create a new child Task following E6 child-task creation rules (set the `parent` field to the epic key — do not call `createIssueLink`), and add it to the knowledge graph. Invoke the `task-card` skill with each child task's Jira key; epic child-task mode will be detected from the `Epic Integration Branch` field, so T11 user testing is skipped automatically. After each follow-up task's T13 completes, update its knowledge graph node to `status: done` and record its merge completion. Once all follow-up tasks are done, remove the worktree again (`git worktree remove .worktrees/<branch-name>`, then sync), and return to this step.
     
@@ -299,9 +339,13 @@ After all child tasks are complete and user testing has passed, post a comment c
 
 - **Overview:** What was accomplished across all child tasks.
     
-- **Child tasks completed:** List each child task key and title with its status.
+- **Child tasks completed:** Three subsections:
+    - **Pre-existing children (executed in E8):** Key, title, status at workflow start, status at completion.
+    - **Pre-existing children (skipped — already done or excluded):** Key, title, and reason (already `Done` at workflow start, or `Keep but skip execution` disposition).
+    - **Newly created children:** Key, title, status at completion.
+    - (If applicable) **Follow-up children created in E9:** Key, title, status.
     
-- **Deviations from breakdown plan:** Any tasks that were added, removed, split, or significantly changed, with reasons.
+- **Deviations from breakdown plan:** Any tasks that were added, removed, split, or significantly changed, with reasons. Include any backfill edits made to existing children in E6 (e.g. "Added missing Affected Areas section and Epic Integration Branch field to PROJ-201").
     
 - **Cumulative release notes:** Consolidated, user-facing release note for the entire epic. If purely internal, state "N/A — internal changes only."
     

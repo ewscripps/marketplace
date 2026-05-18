@@ -12,7 +12,7 @@
 
 **RESUMPTION CHECK:** If this workflow resumes after prior work has already been performed, inspect the issue status and previously posted review comments first to identify the first incomplete phase. If the issue is already **In Progress**, do not repeat CR0.
 
-**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and ask the user for clarification before proceeding.
+**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
 **SERENA PROJECT ACTIVATION:** Before CR0, call `check_onboarding_performed`. If it reports that onboarding has not been performed for this project, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`) invoked directly in CR5/CR6 and used by the parallel `review-analyst` sub-agents depend on this being done. Do this once at the start of the workflow; do not repeat it between phases.
 
@@ -94,9 +94,9 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
     
 - Based on the Review Type:
     
-    **Release:** Using the branch names recovered in CR1 (and any explicitly provided in Review Details), confirm all work item branches have been merged into the branch to review. If any required branch name is missing, stop and ask the user to provide it before continuing. If any recovered branch is missing, stop and post a comment listing the missing branches. Do not continue.
+    **Release:** Using the branch names recovered in CR1 (and any explicitly provided in Review Details), confirm all work item branches have been merged into the branch to review. If any required branch name is missing, stop and use `AskUserQuestion` (Header: `Missing Branch`, Question: `The branch name for [work item key] could not be recovered. Please provide the branch name to continue.`, Options: `Provide branch name` — type it using the Other option, `Stop review` — abort the review) before continuing. If any recovered branch is missing, stop and post a comment listing the missing branches. Do not continue.
     
-    **Epic:** Using the branch names recovered in CR1 (and any explicitly provided in Review Details), confirm all child task branches have been merged into the integration branch. If any required branch name is missing, stop and ask the user to provide it before continuing. If any recovered branch is missing, stop and post a comment. Do not continue.
+    **Epic:** Using the branch names recovered in CR1 (and any explicitly provided in Review Details), confirm all child task branches have been merged into the integration branch. If any required branch name is missing, stop and use `AskUserQuestion` (Header: `Missing Branch`, Question: `The branch name for [child task key] could not be recovered. Please provide the branch name to continue.`, Options: `Provide branch name` — type it using the Other option, `Stop review` — abort the review) before continuing. If any recovered branch is missing, stop and post a comment. Do not continue.
     
     **Task:** Confirm the task branch exists and is based on the correct default branch (or epic integration branch if this is a child task).
     
@@ -169,6 +169,8 @@ When all reports are received, write every finding from all reports to the knowl
 
 ### CR6 — Verify Criteria
 
+> **USE SEQUENTIAL THINKING:** Before verifying criteria, invoke the `sequentialthinking` tool. Use it to map each criterion to the specific code change(s) that implement it, reason through whether the implementation is wired into the expected call paths (not just that the code was written, but that it runs), and identify any criterion where the implementation appears partial or where the evidence for a pass is weaker than expected. A superficial pass/fail without tracing the code paths is the most common failure mode in criteria verification — it produces false-positive "pass" verdicts that let unmet criteria through to production. Do not begin verification until the reasoning is complete.
+
 > **USE SERENA:** When the Serena MCP server is available, use `find_symbol` to locate the code that implements each criterion, and `find_referencing_symbols` to trace that the implementation is actually invoked in the expected code paths. This provides stronger evidence for pass/fail verdicts than reading diffs alone.
 
 > **USE KNOWLEDGE GRAPH:** For each work item or criterion verified, write a `criteria_verdict` node with properties: `item_key` (Jira key or criterion text), `verdict` (pass / fail / partial), and `rationale`. Link it to the relevant work item node. CR8 reads these nodes to populate the Criteria Verification section of the findings report.
@@ -200,15 +202,18 @@ When all reports are received, write every finding from all reports to the knowl
 
 1. Review all output from CR0 through CR6.
 2. Identify clarifying questions. Mark each as `[BLOCKING]` or `[NICE TO HAVE]`.
-3. Present all questions in a **single batch** — do not ask one at a time.
-4. Ask all questions **in the chat** and wait for answers before proceeding. If there are no clarifying questions, state this in the chat and proceed.
-5. Record all answers verbatim. Do not infer or invent answers.
+3. For each clarifying question, use a separate `AskUserQuestion` call in sequence — one question per call. Do not batch multiple questions into one call. Include the `[BLOCKING]` or `[NICE TO HAVE]` tag in the question text. For open-ended questions, use two options: `Provide answer` (description: "Type your response using the Other input field") and, for non-blocking questions only, `Skip` (description: "Skip this non-blocking question"). For closed-enum questions, use the specific enum options. If there are no clarifying questions, state this in the chat and proceed.
+4. Record all answers verbatim. Do not infer or invent answers.
 
 > **REQUIRED:** All BLOCKING questions answered and answers recorded. Remaining unanswered questions listed as open items.
 
-> **APPROVAL GATE — FULL STOP.** Present all questions and recorded answers. User must confirm all blocking answers are accurate. Do not proceed to CR8 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` (Header: `CR7 Approval`, Question: `All clarifying questions have been answered and answers recorded above. Can we proceed to compiling the findings?`, Options: `Approve and proceed (Recommended)` — all blocking answers are accurate, `Request changes` — some answers need revision) to get explicit confirmation. Do not proceed to CR8 until the user approves.
 
 ### CR8 — Compile Review Findings
+
+> **USE SEQUENTIAL THINKING:** Before assembling the report, invoke the `sequentialthinking` tool. Use it to read across all `finding` and `criteria_verdict` nodes and determine whether the Overall Assessment is consistent with the evidence — a single Critical finding that the criteria verdicts show is unmitigated must produce a "Changes Required" verdict regardless of other categories. Also reason through whether any findings in different categories are actually symptoms of the same root cause (they should be reported together, not as separate items that inflate the count). A report that lists findings accurately but assigns the wrong verdict — or misses a pattern across categories — is more dangerous than no review at all. Do not assemble the report until the reasoning is complete.
+
+> **THINK HARD:** Before assigning the Overall Assessment verdict, think hard about whether the verdict is consistent with the most severe finding — not the average finding. A verdict of "Approved with Minor Findings" when a Critical finding is present but mislabeled, or when two Major findings together constitute a Critical risk, is the most consequential mistake this phase can make.
 
 > **USE KNOWLEDGE GRAPH:** Read all `finding` nodes and `criteria_verdict` nodes from the graph to assemble the findings report. Query nodes by `category` to populate each section. Count nodes by `severity` for the Consolidated Findings Count. This is the primary benefit of the knowledge graph in this workflow — assembling a complete, accurate report across 5 review categories without relying on working memory after a long review session.
 
@@ -240,8 +245,18 @@ Post a single consolidated comment on this Jira issue containing ALL of the foll
 - If the overall assessment is **Approved with Minor Findings** or **Changes Required:**
 
     1. Derive the project key from this review issue's key (the prefix before the hyphen, e.g., `PROJ` from `PROJ-123`).
-    2. **Recommend a priority** for the remediation task based on the severity of the findings (Critical findings = High or Critical priority; Major findings only = Medium; Minor findings only = Low). Present the recommended priority to the user for confirmation before creating the issue.
-    3. **Recommend an epic** for the remediation task. Search Jira for open epics in the same project that relate to the code areas covered by the review findings. If the reviewed issue is already linked to an epic, suggest that epic. Present the recommendation and ask the user to: (a) accept the suggested epic, (b) provide a different epic key, or (c) leave blank for no epic. Only set the Epic Link if the user accepts or provides a key.
+    2. **Recommend a priority** for the remediation task based on the severity of the findings (Critical findings = High or Critical priority; Major findings only = Medium; Minor findings only = Low). Use `AskUserQuestion` to confirm the priority before creating the issue:
+        - Header: `Task Priority`
+        - Question: `What priority should the remediation task be set to?`
+        - Options (put the recommended one first with `(Recommended)`): `Critical`, `High`, `Medium`, `Low` — derive the recommendation from finding severity.
+    3. **Recommend an epic** for the remediation task. Search Jira for open epics in the same project that relate to the code areas covered by the review findings. If the reviewed issue is already linked to an epic, suggest that epic. Use `AskUserQuestion` to confirm the epic:
+        - Header: `Epic Link`
+        - Question: `Which epic should the remediation task be linked to?`
+        - Options:
+            - `Use suggested epic: <KEY> (Recommended)` — Link to the suggested epic.
+            - `Provide a different epic key` — Type your preferred epic key using the Other input field.
+            - `No epic` — Leave the remediation task unlinked to an epic.
+        - Only set the Epic Link if the user selects the suggested epic or provides a different key via Other.
     4. Create a new Task by calling `createJiraIssue` with the derived `project_key`, `issue_type: "Task"`, `summary` set to `{PROJECTKEY} [Review Type] Code Review Remediation`, and `additional_fields` set to `{"priority": {"name": "High"}}` (substituting the confirmed priority name; also include `"epicKey": "EPIC-KEY"` if the user confirmed an epic). Populate the `description` with ALL findings that require action, organized by severity (Critical first, then Major, then Minor). For each finding include: the file, description, severity, and the review category it came from.
     5. After the task is created, link it to this review issue by calling `createIssueLink` with `link_type: "Relates to"`, `inward_issue_key` set to the new task's key, and `outward_issue_key` set to this review issue's key.
 - If the overall assessment is **Approved:** skip task creation. No further action is required at this phase.

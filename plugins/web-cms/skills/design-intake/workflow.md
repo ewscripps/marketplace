@@ -15,7 +15,7 @@
 
 **APPROVAL GATE BEHAVIOR:** Approval gates are chat-scoped. If explicit approval is not captured before the session ends or context is lost, stop at the gate. On resume, re-present the latest plan, draft, or summary and ask for confirmation again. Never assume a pending approval was granted.
 
-**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and ask the user for clarification before proceeding.
+**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
 **KNOWLEDGE GRAPH SCOPE:** The knowledge graph in this workflow is session-scoped. It accumulates structured context across R0-R4 so that R5 can assemble a complete, grounded Jira issue description. All graph content must be fully materialized into the Jira card description before the session ends -- do not rely on the graph persisting to a future session.
 
@@ -47,29 +47,29 @@
 
 1. Introduce yourself and briefly explain what this workflow will do and what to expect (phases, approvals, end result).
     
-2. Ask the following questions **conversationally, one topic at a time.** Do not present questions as a form or list. Wait for each response before asking the next.
+2. Ask the following questions one at a time using `AskUserQuestion`. Wait for each response before asking the next. For closed-enum questions provide the specific options listed below. For open-ended questions, offer `Provide answer` as the first option (with the typed response coming from the auto-injected Other field) and `Skip for now` as the second option if the question is non-blocking.
 
-    - What is the name of the project that you're creating?
-    - Is it a module, a component, a page, or something else?
-    - Can you describe what you're trying to build in a few sentences?
-    - Is this a new project, or an update on an existing one?
+    - **Project name** (open-ended, blocking): `AskUserQuestion` header `Project Name`, options: `Provide the name` / `I don't have a name yet`.
+    - **What kind of thing is it?** (closed-enum, blocking): `AskUserQuestion` header `Project Type`, options: `Module` / `Component` / `Page` / `Something else`.
+    - **Description** (open-ended, blocking): `AskUserQuestion` header `Description`, options: `Provide a description` / `I'll describe it differently`.
+    - **New or update?** (closed-enum, blocking): `AskUserQuestion` header `New or Update`, options: `New project` / `Update on existing project`.
 
-    **If the user indicates this is a new project**
-    - Has the design already been fully defined, or is the design itself within the scope of this project?
-    - Who is requesting this?
-    - Is there an existing Jira Epic or Ticket this should fall under? If so, what's the key?
-    - Are there any areas of the codebase you already know are involved — repos, services, modules, or file paths?
-    - Do you have a Claude Design project for this? If so, an HTML export gives the most precise design specs — exact colors, spacing, and typography directly from the CSS. If not, do you have mockup images, screenshots, or other design documents?
-    - Is there an existing design system, component library, or brand guidelines this should conform to?
+    **If the user indicates this is a new project**, continue with:
+    - **Design scope** (closed-enum, blocking): `AskUserQuestion` header `Design Scope`, options: `Design is fully defined` / `Design is within scope of this project`.
+    - **Requested by** (open-ended, blocking): `AskUserQuestion` header `Requested By`, options: `Provide name or team` / `Unknown`.
+    - **Existing Jira Epic or Ticket** (open-ended, non-blocking): `AskUserQuestion` header `Existing Jira`, options: `Yes — I'll provide the key` / `No existing card`.
+    - **Codebase areas** (open-ended, non-blocking): `AskUserQuestion` header `Codebase Hints`, options: `Yes — I'll name the areas` / `No / Not sure`.
+    - **Design assets** (open-ended, non-blocking): `AskUserQuestion` header `Design Assets`, options: `Yes — I'll share them` / `No design assets yet`. Add note: "An HTML export from Claude Design gives the most precise specs — exact colors, spacing, and typography from the CSS. Screenshots or mockups also work."
+    - **Design system** (open-ended, non-blocking): `AskUserQuestion` header `Design System`, options: `Yes — I'll name it` / `None / Not applicable`.
 
-    **If the user indicates this is an update on an existing project**
-    - Have the changes to the design already been fully defined, or is the design itself within the scope of this project?
-    - Does the design change include changes to functionality?
-    - Who is requesting this?
-    - Is there an existing Jira Epic or Ticket this should fall under? If so, what's the key?
-    - Are there any areas of the codebase you already know are involved — repos, services, modules, or file paths?
-    - Do you have a Claude Design project for this? If so, an HTML export gives the most precise design specs — exact colors, spacing, and typography directly from the CSS. If not, do you have mockup images, screenshots, or other design documents?
-    - Is there an existing design system, component library, or brand guidelines this should conform to?
+    **If the user indicates this is an update on an existing project**, continue with:
+    - **Design scope** (closed-enum, blocking): `AskUserQuestion` header `Design Scope`, options: `Design changes are fully defined` / `Design changes are within scope of this project`.
+    - **Functional changes** (closed-enum, blocking): `AskUserQuestion` header `Functional Changes`, options: `Yes — functionality changes too` / `No — visual changes only` / `Partially`.
+    - **Requested by** (open-ended, blocking): `AskUserQuestion` header `Requested By`, options: `Provide name or team` / `Unknown`.
+    - **Existing Jira Epic or Ticket** (open-ended, non-blocking): `AskUserQuestion` header `Existing Jira`, options: `Yes — I'll provide the key` / `No existing card`.
+    - **Codebase areas** (open-ended, non-blocking): `AskUserQuestion` header `Codebase Hints`, options: `Yes — I'll name the areas` / `No / Not sure`.
+    - **Design assets** (open-ended, non-blocking): `AskUserQuestion` header `Design Assets`, options: `Yes — I'll share them` / `No design assets yet`. Add note: "An HTML export from Claude Design gives the most precise specs. Screenshots or mockups also work."
+    - **Design system** (open-ended, non-blocking): `AskUserQuestion` header `Design System`, options: `Yes — I'll name it` / `None / Not applicable`.
 
 3. After all questions are answered, summarize the gathered context back to the user in a clear, structured format.
     
@@ -87,7 +87,7 @@
 > - Additional Context (links, notes, constraints, or explicitly "none provided")
 > - Existing Jira Card (issue key, or explicitly "none")
 
-> **APPROVAL GATE — FULL STOP.** Present the gathered context as a structured summary in the chat. User must confirm all fields are accurate and nothing is missing. Do not proceed to R1 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Present the gathered context as a structured summary in the chat. Then use `AskUserQuestion` with header `R0 Approval`, options: `Approve and proceed (Recommended)` (description: "All fields are accurate and nothing is missing") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to R1 until approved.
 
 ---
 
@@ -111,7 +111,7 @@
 > - List of potentially overlapping issues: key, summary, status
 > - Explicit confirmation that no duplicate issue already exists
 
-> **APPROVAL GATE — FULL STOP.** Present the Jira context summary. User must confirm the existing card (if any) is correct, no duplicate exists, and the related Epic (if any) is correct. Do not proceed to R2 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Present the Jira context summary. Then use `AskUserQuestion` with header `R1 Approval`, options: `Approve and proceed (Recommended)` (description: "Existing card and epic are correct, no duplicate exists") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to R2 until approved.
 
 ---
 
@@ -160,7 +160,7 @@
     - Responsive or breakpoint indicators (if multiple mockups provided)
 
     **If a Figma link or other external URL was provided:**
-    Note `[EXTERNAL DESIGN TOOL — CANNOT FETCH]`. Ask the user to share one of: (a) a Claude Design HTML export, (b) screenshots of each relevant screen and state, or (c) a manual spec summary. Do not proceed with an empty design analysis — flag this as a gap at the approval gate.
+    Note `[EXTERNAL DESIGN TOOL — CANNOT FETCH]`. Use `AskUserQuestion` with header `Design Asset Fallback`, options: `Share a Claude Design HTML export` (description: "Provides the most precise specs — exact colors, spacing, and typography from the CSS") / `Share screenshots or mockup images` (description: "Upload images of each relevant screen and state") / `Provide a manual spec summary` (description: "Type key colors, typography, spacing, and component details in the Other field"). Do not proceed with an empty design analysis — flag this as a gap at the approval gate.
 
     **If no design artifacts were provided:**
     Note `[NO DESIGN ARTIFACTS PROVIDED]` and flag this in the approval gate summary as a gap.
@@ -176,7 +176,7 @@
 
 > **REQUIRED: Review the codebase analysis before presenting.** Verify every item is grounded in actual evidence. Label speculative entries as `[INFERRED]`. Do not present an unreviewed analysis.
 
-> **APPROVAL GATE — FULL STOP.** Present the codebase and design analysis. User must confirm scope areas are correct and complete. Do not proceed to R3 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Present the codebase and design analysis. Then use `AskUserQuestion` with header `R2 Approval`, options: `Approve and proceed (Recommended)` (description: "Scope areas and design analysis are correct and complete") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to R3 until approved.
 
 ---
 
@@ -220,7 +220,7 @@
     
     **Accessibility:**
     
-    - **WCAG Target** — What conformance level is required (A, AA, AAA)?
+    - **WCAG Target** — What conformance level is required? `AskUserQuestion` header `WCAG Level`, options: `AA (Recommended)` / `A` / `AAA`.
     - **Color Contrast** — Have contrast ratios been verified for all text and interactive elements?
     - **Keyboard & Screen Reader** — Are there specific focus order, ARIA role, or label requirements?
     
@@ -231,17 +231,16 @@
     - **Dependencies** — Does this work depend on or block other features, services, or teams?
 
 4. Mark each question as `[BLOCKING]` or `[NICE TO HAVE]`.
-    
-5. Present all questions in a **single batch** — do not ask one at a time.
-    
+
+5. Ask each question one at a time using `AskUserQuestion`. For the WCAG level question, use the closed-enum options noted above. For all other questions, offer `Provide answer` / `Skip — non-blocking` (non-blocking only) and rely on the auto-injected "Other" for the typed answer. Include the `[BLOCKING]` or `[NICE TO HAVE]` tag in the question text. Do not ask the next question until the current one is answered.
+
 6. Record all answers verbatim. Do not infer or invent answers.
-    
 
 > **USE KNOWLEDGE GRAPH:** After answers are confirmed, write each Q&A pair to the graph. Create a `qa_item` node with properties: `question`, `answer`, `priority` (blocking / nice_to_have), `category` (scope_boundary / functional / visual_specs / component_states / responsive / accessibility / design_system / etc.). Link each node to the `work_item` node. R4A reads these nodes to derive traceable acceptance criteria.
 
 > **REQUIRED:** Present all BLOCKING questions answered and answers recorded, and remaining unanswered questions listed as open items with owner and target resolution date.
 
-> **APPROVAL GATE — FULL STOP.** Present all questions and recorded answers. User must confirm all blocking answers are accurate and open items are correctly captured. Do not proceed to R4 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `R3 Approval`, options: `Approve and proceed (Recommended)` (description: "All blocking answers are accurate and open items are correctly captured") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to R4 until approved.
 
 ---
 
@@ -313,7 +312,7 @@ Evaluate the work item against these criteria:
 
 > **REQUIRED: Review the full R4 synthesis before presenting.** Verify every acceptance criterion is unambiguous, testable, and traceable. Remove or revise any that fail this check. Do not present an unreviewed synthesis.
 
-> **APPROVAL GATE — FULL STOP.** Present the full R4 synthesis (acceptance criteria, risk register, Epic vs. Task recommendation). User must confirm all three sections before proceeding. Do not create a Jira issue of the wrong type.
+> **APPROVAL GATE — FULL STOP.** Present the full R4 synthesis (acceptance criteria, risk register, Epic vs. Task recommendation). Then use `AskUserQuestion` with header `R4 Approval`, options: `Approve and proceed (Recommended)` (description: "All three sections are accurate — ready to create the Jira issue") / `Request changes` (description: "Something needs correction before continuing"). Do not create a Jira issue of the wrong type.
 
 ---
 
@@ -338,9 +337,9 @@ Evaluate the work item against these criteria:
 |Labels|Work type in lowercase + codebase area|
 |Epic Link|Recommended epic (Task only — see below)|
 
-    **Priority recommendation:** Before creating the issue, recommend a priority based on the risk register from R4B and the overall impact of the work item. Consider: user-facing impact, number of affected areas, dependency urgency, and whether this unblocks other work. Use Jira priority values: Critical, High, Medium, or Low. Present the recommended priority to the user for confirmation.
+    **Priority recommendation:** Before creating the issue, determine the recommended priority based on the risk register from R4B and the overall impact of the work item. Consider: user-facing impact, number of affected areas, dependency urgency, and whether this unblocks other work. Use `AskUserQuestion` with header `Task Priority` to confirm. Put the recommended priority first with `(Recommended)` appended. Options: one of `Critical (Recommended)` / `High (Recommended)` / `Medium (Recommended)` / `Low (Recommended)` as the first option (only the recommended one gets the label), then the remaining three priorities as subsequent options.
 
-    **Epic recommendation (Task issue type only — skip for Epics):** If an epic was already confirmed in R1, present it as the recommendation. If no epic was confirmed, search Jira for open epics in the same project that relate to the affected areas, work type, or goals identified in R0-R4. Recommend the most relevant epic to the user. Present the recommendation and ask the user to: (a) accept the suggested epic, (b) provide a different epic key, or (c) leave blank for no epic. Only set the Epic Link if the user accepts or provides a key. If the user leaves it blank, do not set an Epic Link.
+    **Epic recommendation (Task issue type only — skip for Epics):** If an epic was already confirmed in R1, present it as the recommendation. If no epic was confirmed, search Jira for open epics in the same project that relate to the affected areas, work type, or goals identified in R0–R4. Use `AskUserQuestion` with header `Epic Link`, options: `Use suggested epic: <KEY> (Recommended)` (description: "Link to the identified epic") / `Provide a different epic key` (description: "Type a different epic key in the Other field") / `No epic` (description: "Create the issue without an epic link"). Only set the Epic Link if the user selects the suggested epic or provides a key via Other.
 
     **API notes for non-standard fields:**
     - **Priority:** Set via `additional_fields`: `{"priority": {"name": "Medium"}}` (substituting the confirmed priority name: Critical, High, Medium, or Low).
@@ -450,7 +449,7 @@ file/module/service path, brief description of relevance, and risk level.]
 
 > **REQUIRED: Review the full issue description before presenting.** Verify: (1) all fields are populated with no placeholder text, (2) acceptance criteria match R4A output verbatim, (3) the Affected Areas field is populated from R2 codebase analysis, (4) all defined Visual Specifications are populated from the R2 `design_spec` node, (5) Component States covers all states defined in R3, (6) Accessibility Requirements reflect R3 answers, (7) no workflow instructions or skill-invocation text were embedded, and (8) the issue type matches the R4C recommendation. For any section where no specs were defined, write "Not defined." — do not leave placeholder text.
 
-> **APPROVAL GATE — FULL STOP.** Present the fully assembled issue description in the chat for final review. User must confirm content is accurate and ready before creating or updating the Jira issue.
+> **APPROVAL GATE — FULL STOP.** Present the fully assembled issue description in the chat. Then use `AskUserQuestion` with header `R5 Approval`, options: `Approve and proceed (Recommended)` (description: "Content is accurate — create or update the Jira issue") / `Request changes` (description: "Something needs correction before creating"). Do not create or update the Jira issue until approved.
 
 ---
 
@@ -483,7 +482,7 @@ file/module/service path, brief description of relevance, and risk level.]
    Total entities to delete: <N>
    ```
 
-3. > **APPROVAL GATE — FULL STOP.** Ask the user: **"Proceed with cleanup of these entities?"** Do not run `delete_entities` until the user explicitly confirms (e.g., "yes", "proceed", "go ahead"). On any negative or ambiguous response, do NOT delete. Instead, leave the graph untouched, note in the chat that cleanup was skipped at the user's request, and end the workflow — the entities will remain in the graph until the Claude Code session ends.
+3. > **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `R6 Cleanup`, options: `Proceed with cleanup (Recommended)` (description: "Delete all session-scoped entities listed above") / `Skip cleanup` (description: "Leave the graph untouched — entities remain until the session ends"). Do not run `delete_entities` until the user selects "Proceed with cleanup". On "Skip cleanup", leave the graph untouched, note in the chat that cleanup was skipped at the user's request, and end the workflow.
 
 4. **Execute deletion.** On explicit confirmation, call `delete_entities` with the full list enumerated in step 1. After deletion, report a one-line confirmation in the chat: "Cleanup complete: <N> entities deleted."
 

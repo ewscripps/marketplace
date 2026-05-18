@@ -4,7 +4,7 @@ description: Execute an independent test and documentation review for a Jira tas
 user-invocable: true
 argument-hint: "[PROJ-123]"
 disable-model-invocation: true
-allowed-tools: Bash, Read, Glob, Grep, mcp__plugin_web-cms_atlassian__jira_get_issue
+allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion, mcp__plugin_web-cms_atlassian__jira_get_issue
 model: sonnet
 effort: high
 ---

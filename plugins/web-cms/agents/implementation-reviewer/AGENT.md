@@ -32,6 +32,8 @@ Fall back to Glob/Grep/Read for non-symbolic checks (config files, string litera
 
 ## How to review
 
+> **THINK HARD:** Before producing your verdict, think hard about **Dimension 2 (Plan Adherence)** and **Dimension 3 (Pattern Adherence)**. For Plan Adherence: a deviation that makes the plan better is fine; a deviation that ignores a constraint in the plan because it was inconvenient is a defect. For Pattern Adherence: technically-correct code that is structurally inconsistent with the rest of the codebase is a maintenance problem that compounds over time. These two dimensions are where "looks fine on first read" most often hides the real issue.
+
 Read every changed file in full -- not just the diff. Diffs hide context. Use `get_symbols_overview` on changed files to understand their full structure before diving into the diff. Assess the implementation against each of the following dimensions in sequence:
 
 **1. Acceptance Criteria Coverage**
