@@ -15,7 +15,7 @@
 
 **APPROVAL GATE BEHAVIOR:** Approval gates are chat-scoped. If explicit approval is not captured before the session ends or context is lost, stop at the gate. On resume, re-present the latest MR preview and ask for confirmation again. Never assume a pending approval was granted.
 
-**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and ask the user for clarification before proceeding.
+**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
 **TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
 
@@ -44,10 +44,10 @@
 
 - Inspect the repository's remote URL and confirm it points to GitLab (either `gitlab.com` or a known GitLab self-hosted domain). If the remote URL does not point to GitLab, stop and report the mismatch in the chat.
 
-**Ask the following questions:**
+**Ask the following questions one at a time using `AskUserQuestion`:**
 
-1. What is the **source branch** (the branch containing your changes)?
-2. What is the **destination branch** (the branch you are merging into, e.g. `main`, `develop`)?
+1. **Source branch:** Run `git rev-parse --abbrev-ref HEAD` to read the current branch. Use `AskUserQuestion` with header `Source Branch`, options: `<current branch name> (Recommended)` (description: "Use the currently checked-out branch as the source") / `Provide a different branch` (description: "Type the source branch name in the Other field").
+2. **Destination branch:** Use `AskUserQuestion` with header `Destination Branch`, options: `main` (description: "Merge into the main branch") / `develop` (description: "Merge into the develop integration branch"). The user can type a specific branch name via the auto-injected "Other" option.
 
 **Agent performs automatically after branches are provided:**
 
@@ -76,15 +76,15 @@
      - Stop immediately.
      - Collect the full list of conflicted files: `git diff --name-only --diff-filter=U`.
      - Present the conflicted files in the chat.
-     - Ask the user: **"There are merge conflicts in the files listed above. Would you like me to resolve them?"**
-     - If the user says **yes**: Work through each conflicted file in order:
+     - Use `AskUserQuestion` with header `Merge Conflicts`, options: `Resolve conflicts (Recommended)` (description: "Let the agent work through each conflict and complete the merge") / `Abort` (description: "Run git merge --abort and stop here — resolve manually before retrying").
+     - If the user selects **Resolve conflicts**: Work through each conflicted file in order:
        - Read the file and locate every conflict marker (`<<<<<<<`, `=======`, `>>>>>>>`).
        - Determine the correct resolution based on the intent of each side (incoming vs. current), keeping both sets of changes where appropriate.
        - Apply the resolution with `Edit`, removing all conflict markers.
        - Stage the resolved file: `git add <file>`.
        - After all files are resolved, complete the merge commit: `git commit --no-edit`.
        - Report each resolved file and the final merge commit hash in the chat.
-     - If the user says **no**: Abort the merge (`git merge --abort`), stop, and inform the user they must resolve conflicts manually before the MR can be created.
+     - If the user selects **Abort**: Run `git merge --abort`, stop, and inform the user they must resolve conflicts manually before the MR can be created.
 
 > **REQUIRED:** Confirm in the chat whether the source branch was already up to date or was updated (cleanly merged or conflicts resolved) before proceeding to M2. If the sync fails and is not resolved, stop and do not proceed.
 
@@ -92,24 +92,22 @@
 
 ### M2 — Context Classification
 
-**Ask:** Is this MR for a **release** or a **non-release** (feature, bug fix, tech debt, etc.)?
+Use `AskUserQuestion` with header `MR Type`, options: `Release` (description: "This MR packages a versioned release") / `Non-release` (description: "Feature, bug fix, tech debt, or other incremental change").
 
 #### If RELEASE:
 
-1. Ask: Is there a related **release tracked in Jira**?
-    - If yes: Ask for the Jira **Fix Version** name used to track the release.
-    - If the team also uses a release-tracking Epic or Task, ask for that Jira key separately as optional context.
-    - Fetch all child work items (Stories, Tasks, Bugs) associated with that Fix Version in Jira.
+1. Use `AskUserQuestion` with header `Release in Jira`, options: `Yes — I'll provide the Fix Version name` (description: "Type the Jira Fix Version in the Other field") / `No Jira release tracking` (description: "No Fix Version exists for this release").
+    - If yes: Use `AskUserQuestion` with header `Release Epic / Task`, options: `Yes — I'll provide the Jira key` (description: "Type the optional release-tracking Epic or Task key in the Other field") / `No separate tracking issue` (description: "Only the Fix Version tracks this release").
+    - Fetch all child work items associated with that Fix Version in Jira.
     - Review the commits in the source branch and verify that all work items from the release are represented.
-    - Report any Jira items that appear missing from the branch and ask the user how to proceed before continuing.
+    - Report any Jira items that appear missing from the branch. Use `AskUserQuestion` with header `Missing Items`, options: `Proceed anyway` (description: "The missing items are intentionally excluded or tracked elsewhere") / `Stop` (description: "Do not create the MR until missing items are resolved").
 2. Confirm the source branch name follows the release naming convention (e.g. `release/x.x.x`). Flag if it does not.
 
 #### If NON-RELEASE:
 
-1. Ask: Is there a related **Jira card**?
-    - If yes: Ask for the Jira card key (e.g. `PROJ-123`).
-    - Fetch the Jira card details (type, summary, description, status).
-    - If the card is an **Epic**: fetch all child items and verify they are reflected in the branch commits. Report any that appear missing.
+1. Use `AskUserQuestion` with header `Related Jira Card`, options: `Yes — I'll provide the key` (description: "Type the Jira card key in the Other field, e.g. PROJ-123") / `No related Jira card` (description: "This MR is not linked to a Jira issue").
+    - If yes: Fetch the Jira card details (type, summary, description, status).
+    - If the card is an **Epic**: fetch all child items and verify they are reflected in the branch commits. Report any that appear missing. Use `AskUserQuestion` with header `Missing Epic Items`, options: `Proceed anyway` / `Stop`.
     - If the card is a **Task or Bug**: review the commits and confirm the work aligns with the card's summary and description. Flag any significant discrepancies.
 2. Confirm the source branch name includes the Jira card key (e.g. `feature/PROJ-123-short-description`). Flag if it does not.
 
@@ -207,8 +205,7 @@ DESCRIPTION:
 <full generated description>
 ```
 
-- Do not create the MR until the user explicitly confirms.
-- If the user requests changes, update the relevant fields and re-present the full preview before proceeding.
+Then use `AskUserQuestion` with header `M5 Approval`, options: `Approve and create MR (Recommended)` (description: "The title and description are accurate — create the MR") / `Request changes` (description: "Update the title or description before creating"). Do not create the MR until "Approve and create MR" is selected. If the user selects "Request changes", apply the changes and re-present the full preview before asking again.
 
 ---
 

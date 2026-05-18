@@ -32,6 +32,8 @@ Fall back to Glob/Grep/Read for non-symbolic checks (config files, string litera
 
 ## How to review
 
+> **THINK HARD:** Before producing your verdict, think hard about **Dimension 6 (Assumptions and Gaps)** and **Dimension 2 (Affected Area Coverage)**. These are the dimensions most likely to contain the failure mode that expensive downstream rework will trace back to. Dimension 6 in particular requires active reasoning against the plan — it cannot be completed by reading the plan for what it says; it requires reasoning about what it does not say. A plan that omits a critical assumption or misses an affected area passes visual inspection but produces a broken implementation.
+
 Evaluate the plan against each of the following dimensions in sequence:
 
 **1. Criteria Coverage**

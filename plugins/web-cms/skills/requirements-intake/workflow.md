@@ -1,6 +1,6 @@
 # REQUIREMENTS INTAKE WORKFLOW — EXECUTION CONTRACT
 
-> **How this works:** The user invokes this workflow by asking the agent to begin defining a new requirement. The agent drives the entire process interactively — starting by asking the user questions to gather context, then working through research and synthesis phases, and finally creating a fully populated Jira Epic or Task with a pointer to the appropriate execution skill.
+> **How this works:** This workflow operates in two modes. In **define mode** (no Jira key argument), the agent drives an interactive process — gathering context, researching, synthesizing, and creating a new fully populated Jira Epic or Task. In **fill-out mode** (a Jira key was passed as `$ARGUMENTS`), the agent fleshes out the description of an existing card. If that card is an Epic with child tasks, it iterates each child interactively after updating the parent. In both modes the same R0-R6 phase sequence applies.
 
 **STRICT EXECUTION RULES — NO EXCEPTIONS:**
 
@@ -9,13 +9,13 @@
 3. Each phase must be fully completed before starting the next.
 4. If any phase fails, stop immediately and report the failure in the chat. Do not continue.
 5. Every required output must be presented in the chat before the phase is considered complete.
-6. Do not create any Jira issue until R5 is reached and approved.
+6. Do not create or update any Jira issue until R5 is reached and approved.
 
-**Note:** Approval gates in this workflow are confirmed in the chat -- no Jira issue exists yet.
+**Note:** Approval gates in this workflow are confirmed in the chat. In define mode, no Jira issue exists until R5 creates it. In fill-out mode, the existing issue is not updated until R5 approval.
 
 **APPROVAL GATE BEHAVIOR:** Approval gates are chat-scoped. If explicit approval is not captured before the session ends or context is lost, stop at the gate. On resume, re-present the latest plan, draft, or summary and ask for confirmation again. Never assume a pending approval was granted.
 
-**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and ask the user for clarification before proceeding.
+**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
 **KNOWLEDGE GRAPH SCOPE:** The knowledge graph in this workflow is session-scoped. It accumulates structured context across R0-R4 so that R5 can assemble a complete, grounded Jira issue description. All graph content must be fully materialized into the Jira card description before the session ends -- do not rely on the graph persisting to a future session.
 
@@ -41,9 +41,16 @@
 
 ### R0 — Intake
 
-**DISCOVERY PRE-CHECK:** Before greeting the user, call `read_graph` to check the knowledge graph for any entity whose name starts with `discovery_summary-` (the implementation-discovery skill names them `discovery_summary-<topic-slug>` so multiple discoveries in one session do not collide).
+**MODE DETECTION:** Before anything else, inspect `$ARGUMENTS`. If it contains a value matching the pattern `[A-Z][A-Z0-9_]+-\d+` (a Jira issue key), enter **fill-out mode**:
+- Record the key as the target for this run. Skip the discovery pre-check (moot when we already know which card to update). Skip step 2 (work type) and step 3 below if the work type can be inferred from the existing card's issue type and description shape — you will confirm it in R1 instead.
+- Skip the "Has a Jira card already been created for this?" question in step 3 entirely — the answer is already known.
+- Questions whose answers can be read from the existing card (e.g. title, summary, requestor) should be pre-filled from the card's content and confirmed with the user rather than re-asked from scratch.
+
+If `$ARGUMENTS` is empty or absent, enter **define mode** and run R0 exactly as written below.
+
+**DISCOVERY PRE-CHECK:** Before greeting the user (or, in fill-out mode, before presenting the fill-out context summary), call `read_graph` to check the knowledge graph for any entity whose name starts with `discovery_summary-` (the implementation-discovery skill names them `discovery_summary-<topic-slug>` so multiple discoveries in one session do not collide).
 1. **If exactly one is present:** acknowledge it immediately: "I found a prior implementation discovery session for: **[topic]** (chosen approach: **[chosen_approach]**, verification: **[verification_status]**). I'll use those findings as a head start — the codebase areas have already been explored and verified. If this isn't the right context, just say so and I'll start fresh."
-2. **If multiple are present** (the user ran more than one discovery in this session): list them by `topic` and `chosen_approach` and ask the user which one this requirements run is for. Treat the user's pick as the selected `discovery_summary-<slug>`; ignore the others for this run.
+2. **If multiple are present** (the user ran more than one discovery in this session): list them by `topic` and `chosen_approach`, then use `AskUserQuestion` (Header: `Discovery Pick`, Question: `Multiple discovery sessions were found. Which one is this requirements run for?`, Options: one option per discovery summary labeled `[topic] — [chosen_approach]`, plus `Start fresh — ignore all discoveries`) to ask the user which one to use. Treat the user's pick as the selected `discovery_summary-<slug>`; ignore the others for this run.
 3. **If the user confirms a discovery summary:** add an observation `discovery_confirmed: true` to that specific `discovery_summary-<slug>` entity (not to any other). When asking intake questions in step 3 below, skip the "areas of the codebase you already know are involved" question — the discovery already covers it. Note that R2 (Codebase Analysis) will use the discovery findings and skip spawning new codebase-explorer agents.
 4. **If the user rejects** (or no discovery summary exists): proceed with normal intake and do not reference the discovery summary again.
 
@@ -53,9 +60,9 @@
 
 1. Introduce yourself and briefly explain what this workflow will do and what to expect (phases, approvals, end result).
     
-2. Ask the user: **"What type of work is this? Feature, Tech Debt, Research, or Upkeep?"** Wait for the answer before continuing. This determines which question set to use below.
+2. Use `AskUserQuestion` to ask the work type (Header: `Work Type`, Question: `What type of work is this?`, Options: `Feature` — a new capability or user-facing behavior, `Tech Debt` — improving or replacing something that already exists, `Research` — investigating a question or approach before deciding, `Upkeep` — maintenance, dependency update, or compliance work). Wait for the answer before continuing. This determines which question set to use below.
 
-3. Ask the following questions **conversationally, one topic at a time.** Do not present questions as a form or list. Wait for each response before asking the next.
+3. Ask the following questions using `AskUserQuestion`, one call per question in sequence. For each question: use a short, descriptive Header (≤12 chars) based on the question topic; for yes/no questions (e.g., "Is there an existing Jira Epic?", "Has a Jira card already been created?"), use `Yes, I'll provide it` / `No` options; for open-ended free-text questions, use 2–3 reasonable options that cover common answers (with Other always available for typed input).
 
     **If Feature:**
     
@@ -103,7 +110,7 @@
 4. After all questions are answered, summarize the gathered context back to the user in a clear, structured format.
     
 
-> **USE KNOWLEDGE GRAPH:** After the R0 approval gate is confirmed, write the core work item to the knowledge graph. Create a `work_item` entity with name `work_item-<key>` where `<key>` is the existing Jira issue key (if provided) or a normalized slug of the title (lowercase, whitespace/punctuation → `-`, trimmed) prefixed with `intake-` (e.g. `work_item-intake-add-retry-logic`). Observations: `work_type` (feature / tech_debt / research / upkeep), `title`, `description`, `requested_by`, `existing_jira_key` (if provided). This is the root node — all subsequent phases will add linked nodes to it. R5 reads the full graph to assemble the Jira issue description. **Record the entity name** — it is the `work_item_id` passed to every `codebase-explorer` call in R2.
+> **USE KNOWLEDGE GRAPH:** After the R0 approval gate is confirmed, write the core work item to the knowledge graph. Create a `work_item` entity with name `work_item-<key>` where `<key>` is the existing Jira issue key (if provided via `$ARGUMENTS` or step 3) or a normalized slug of the title (lowercase, whitespace/punctuation → `-`, trimmed) prefixed with `intake-` (e.g. `work_item-intake-add-retry-logic`). Observations: `work_type` (feature / tech_debt / research / upkeep), `title`, `description`, `requested_by`, `existing_jira_key` (if provided), `mode` (define / fill_out), `existing_issue_type` (Epic / Task — fill-out mode only, populated after R1 retrieves the card). This is the root node — all subsequent phases will add linked nodes to it. R5 reads the full graph to assemble the Jira issue description. **Record the entity name** — it is the `work_item_id` passed to every `codebase-explorer` call in R2.
 
 > **REQUIRED:** The following context must be confirmed before proceeding:
 > 
@@ -114,12 +121,12 @@
 > - Related Epic (Jira key, or explicitly "none")
 > - Codebase Hints (specific areas, or explicitly "none provided" — N/A for Research)
 > - Additional Context (links, notes, constraints, or explicitly "none provided")
-> - Existing Jira Card (issue key, or explicitly "none")
+> - Existing Jira Card (issue key from `$ARGUMENTS` or step 3, or explicitly "none" for define mode)
 > - For Tech Debt only: Impact of not addressing
 > - For Research only: Expected deliverable and timebox
 > - For Upkeep only: Driver (what is triggering this work)
 
-> **APPROVAL GATE — FULL STOP.** Present the gathered context as a structured summary in the chat. User must confirm all fields are accurate and nothing is missing. Do not proceed to R1 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Present the gathered context as a structured summary. Use `AskUserQuestion` (Header: `R0 Approval`, Question: `Does the context summary above accurately capture what you want to define? Are all fields correct and complete?`, Options: `Approve and proceed (Recommended)` — all fields are accurate and nothing is missing, `Request changes` — some fields need correction). Do not proceed to R1 until the user approves.
 
 ---
 
@@ -129,21 +136,25 @@
 
 **Agent Actions:**
 
-1. If an Existing Jira Card key was provided in R0, retrieve that issue immediately. Read its full description, any context already captured in the card (summary, acceptance criteria, labels, epic link, linked issues, and comment history). Surface all of this content in the context summary below.
-2. If a Related Epic was provided in R0, retrieve its description, status, and all child issues.
-3. Search Jira for existing issues that overlap with the work item using keyword and label search.
-4. Identify any sibling Epics or themes that appear contextually related.
+1. If an Existing Jira Card key was provided in R0 (or via `$ARGUMENTS`), retrieve that issue immediately using `jira_get_issue`. Read its full description, any context already captured in the card (summary, acceptance criteria, labels, epic link, linked issues, and comment history). Surface all of this content in the context summary below. Determine the issue type: Epic or Task. Update the `existing_issue_type` observation on the `work_item` node.
 
-> **USE KNOWLEDGE GRAPH:** Write Jira context to the graph as linked nodes. If a related Epic exists, create an `epic` node with properties: `jira_key`, `title`, `status`, and link it to the `work_item` node with a `belongs_to` relationship. For each overlapping issue found, create a `related_issue` node with properties: `jira_key`, `title`, `status`, and link it. If an existing card was provided, add its captured context as properties on the `work_item` node.
+2. **Fill-out mode — Epic with children.** If the existing card is an Epic, also enumerate its child tasks: call `jira_search` with JQL `parent = "<EPIC-KEY>"`. If that returns no results, also try `"Epic Link" = <EPIC-KEY>`. For each child found, call `jira_get_issue` to read the full description and capture: `key`, `summary`, `status`, and which work-type-template sections (Overview, Acceptance Criteria, Affected Areas, Scope, etc.) are already present. Write each child as a `child_work_item-<KEY>` entity in the graph with observations: `parent_epic`, `jira_key`, `summary`, `status`, `existing_sections_present` (comma-separated list of section headings found), `existing_sections_missing` (sections in the appropriate work-type template that are absent or stub-only). These nodes drive the per-child loop at R5B.
+
+3. If a Related Epic was provided in R0 (define mode, or as context for a Task fill-out), retrieve its description, status, and all child issues.
+4. Search Jira for existing issues that overlap with the work item using keyword and label search.
+5. Identify any sibling Epics or themes that appear contextually related.
+
+> **USE KNOWLEDGE GRAPH:** Write Jira context to the graph as linked nodes. If a related Epic exists, create an `epic` node with properties: `jira_key`, `title`, `status`, and link it to the `work_item` node with a `belongs_to` relationship. For each overlapping issue found, create a `related_issue` node with properties: `jira_key`, `title`, `status`, and link it. If an existing card was provided, add its captured context as properties on the `work_item` node. For fill-out + Epic: the `child_work_item-<KEY>` entities created in step 2 are already linked to the `work_item` node.
 
 > **REQUIRED:** Present all of the following in the chat before proceeding:
 > 
-> - If an existing card was provided: its full summary, description, and any context already captured
+> - If an existing card was provided: its full summary, description, issue type, and any context already captured.
+> - If an existing Epic with children (fill-out mode): a table of existing child issues — key, summary, status, and a note on which template sections are already present vs. missing.
 > - Summary of related Epic: title, status, stated goal (if applicable)
 > - List of potentially overlapping issues: key, summary, status
 > - Explicit confirmation that no duplicate issue already exists
 
-> **APPROVAL GATE — FULL STOP.** Present the Jira context summary. User must confirm the existing card (if any) is correct, no duplicate exists, and the related Epic (if any) is correct. Do not proceed to R2 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Present the Jira context summary. Use `AskUserQuestion` (Header: `R1 Approval`, Question: `Does the Jira context look correct? Is the existing card (if any) right, is there no duplicate, and is the related Epic (if any) correct?`, Options: `Approve and proceed (Recommended)` — Jira context is correct, `Request changes` — something needs correction). Do not proceed to R2 until the user approves.
 
 ---
 
@@ -194,7 +205,7 @@
 
 > **REQUIRED: Review the codebase analysis before presenting.** Verify every item is grounded in actual evidence. Label speculative entries as `[INFERRED]`. Do not present an unreviewed analysis.
 
-> **APPROVAL GATE — FULL STOP.** Present the codebase analysis. User must confirm scope areas are correct and complete. Do not proceed to R3 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Present the codebase analysis. Use `AskUserQuestion` (Header: `R2 Approval`, Question: `Are the scope areas correct and complete? Does the codebase analysis look accurate?`, Options: `Approve and proceed (Recommended)` — scope areas are correct and complete, `Request changes` — something needs revision). Do not proceed to R3 until the user approves.
 
 ---
 
@@ -242,7 +253,7 @@
     - **Scheduling** — Is there a required maintenance window or deadline?
 4. Mark each question as `[BLOCKING]` or `[NICE TO HAVE]`.
     
-5. Present all questions in a **single batch** — do not ask one at a time.
+5. Ask each question using a separate `AskUserQuestion` call in sequence — one question per call. Include the `[BLOCKING]` or `[NICE TO HAVE]` tag in the question text. For open-ended questions, use two options: `Provide answer` (description: "Type your response using the Other input field") and, for non-blocking questions only, `Skip` (description: "Skip this non-blocking question"). For closed-enum questions, use specific options.
     
 6. Record all answers verbatim. Do not infer or invent answers.
     
@@ -251,7 +262,7 @@
 
 > **REQUIRED:** Present all BLOCKING questions answered and answers recorded, and remaining unanswered questions listed as open items with owner and target resolution date.
 
-> **APPROVAL GATE — FULL STOP.** Present all questions and recorded answers. User must confirm all blocking answers are accurate and open items are correctly captured. Do not proceed to R4 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Present all questions and recorded answers. Use `AskUserQuestion` (Header: `R3 Approval`, Question: `Are all blocking answers accurate and open items correctly captured?`, Options: `Approve and proceed (Recommended)` — all blocking answers are correct, `Request changes` — some answers need revision). Do not proceed to R4 until the user approves.
 
 ---
 
@@ -264,6 +275,8 @@
 #### R4A — Acceptance Criteria
 
 > **USE SEQUENTIAL THINKING:** Before writing acceptance criteria, invoke the `sequentialthinking` tool. For each candidate criterion, verify it is: (1) **unambiguous** — only one possible interpretation, (2) **testable** — can be verified without further clarification, and (3) **traceable** — directly derived from an R3 answer or R2 finding. Work through each criterion in sequence and revise any that fail before presenting.
+
+> **THINK HARD:** Before finalizing the criteria, think hard about traceability and testability specifically — criteria that sound reasonable but cannot be independently verified without additional clarification are design defects, not just gaps. Poor criteria quality is the single most consistent source of scope creep and rework in downstream execution.
 
 > **USE KNOWLEDGE GRAPH:** After criteria are finalized, write each one to the graph. Create a `criterion` node with properties: `text`, `format` (gherkin / outcome_based / deliverable_based), and `traceable_to` (the `qa_item` or `affected_area` node key it was derived from). Link each node to the `work_item` node. R5 reads these nodes to populate the Acceptance Criteria section verbatim.
 
@@ -322,11 +335,13 @@ Evaluate the work item against these criteria:
 > - If Epic: proposed child story breakdown (titles only, 3–6 stories)
 > - If Task: confirmation that a single card is sufficient to contain all scope
 
+> **Fill-out mode note:** In fill-out mode the issue type is already fixed by the existing Jira card. Do not recommend switching types — that is a Jira admin action outside the scope of this workflow. If the synthesized requirements suggest the existing type is wrong, surface it as an open item with a note, but proceed with the existing type. Record the confirmed type on the `work_item` node as `confirmed_issue_type`.
+
 ---
 
 > **REQUIRED: Review the full R4 synthesis before presenting.** Verify every acceptance criterion is unambiguous, testable, and traceable. Remove or revise any that fail this check. Do not present an unreviewed synthesis.
 
-> **APPROVAL GATE — FULL STOP.** Present the full R4 synthesis (acceptance criteria, risk register, Epic vs. Task recommendation). User must confirm all three sections before proceeding. Do not create a Jira issue of the wrong type.
+> **APPROVAL GATE — FULL STOP.** Present the full R4 synthesis (acceptance criteria, risk register, Epic vs. Task recommendation). Use `AskUserQuestion` (Header: `R4 Approval`, Question: `Are all three sections correct — acceptance criteria, risk register, and the Epic vs. Task recommendation?`, Options: `Approve and proceed (Recommended)` — all three sections are correct, `Request changes` — something needs revision). Do not create a Jira issue of the wrong type. Do not proceed until the user approves.
 
 ---
 
@@ -351,20 +366,50 @@ Evaluate the work item against these criteria:
 |Labels|Work type in lowercase + codebase area|
 |Epic Link|Recommended epic (Task only — see below)|
 
-    **Priority recommendation:** Before creating the issue, recommend a priority based on the risk register from R4B and the overall impact of the work item. Consider: user-facing impact, number of affected areas, dependency urgency, and whether this unblocks other work. Use Jira priority values: Critical, High, Medium, or Low. Present the recommended priority to the user for confirmation.
+    **Priority recommendation:** Before creating the issue, recommend a priority based on the risk register from R4B and the overall impact of the work item. Consider: user-facing impact, number of affected areas, dependency urgency, and whether this unblocks other work. Use `AskUserQuestion` to confirm the priority (Header: `Priority`, Question: `What priority should this issue be set to?`, Options: one of `Critical`, `High`, `Medium`, `Low` — put the recommended one first with `(Recommended)` based on the risk and impact assessment).
 
-    **Epic recommendation (Task issue type only — skip for Epics):** If an epic was already confirmed in R1, present it as the recommendation. If no epic was confirmed, search Jira for open epics in the same project that relate to the affected areas, work type, or goals identified in R0-R4. Recommend the most relevant epic to the user. Present the recommendation and ask the user to: (a) accept the suggested epic, (b) provide a different epic key, or (c) leave blank for no epic. Only set the Epic Link if the user accepts or provides a key. If the user leaves it blank, do not set an Epic Link.
+    **Epic recommendation (Task issue type only — skip for Epics):** If an epic was already confirmed in R1, present it as the recommendation. If no epic was confirmed, search Jira for open epics in the same project that relate to the affected areas, work type, or goals identified in R0-R4. Use `AskUserQuestion` to confirm the epic (Header: `Epic Link`, Question: `Which epic should this task be linked to?`, Options: `Use suggested epic: <KEY> (Recommended)` — link to the suggested epic, `Provide a different epic key` — type your preferred key using the Other input, `No epic` — leave this task unlinked to an epic). Only set the Epic Link if the user selects the suggested epic or provides a different key via Other.
 
     **API notes for non-standard fields:**
     - **Priority:** Set via `additional_fields`: `{"priority": {"name": "Medium"}}` (substituting the confirmed priority name: Critical, High, Medium, or Low).
     - **Labels:** Set via `additional_fields`: `{"labels": ["label1", "label2"]}` on `createJiraIssue`.
     - **Epic Link:** Set via `additional_fields`: `{"epicKey": "EPIC-KEY"}` on `createJiraIssue`. Do not use `createIssueLink` for epic links — that creates a lateral link, not an epic association. Only include this field if the user confirmed an epic.
 
-4. **Update-or-create decision:**
-    - **If an existing Jira card was provided in R0:** Update that card's description using `editJiraIssue` with the approved description. Do not create a new issue.
-    - **If no existing card was provided:** Create a new Jira issue using `createJiraIssue` with the approved description. Do not perform a follow-up description update solely to add execution instructions.
+4. **Create or update decision — three-way branch:**
 
-5. **Post-creation linking:** After the issue is created or updated, link hard dependencies from R4B by calling `createIssueLink` for each one. Use `link_type: "Blocks"` for hard dependencies. Do not attempt to set linked issues during `createJiraIssue` — that tool does not support it.
+    - **Define mode (no existing card):** Create a new Jira issue using `createJiraIssue` with the approved description. Do not perform a follow-up description update solely to add execution instructions. This is today's default path.
+
+    - **Fill-out mode — existing card is a Task:** Update the card's description using `jira_update_issue` with the freshly assembled description (full overwrite — existing content from R1 informed the synthesis but does not constrain the R5 output). Present the assembled description in the chat before calling the tool. The approval gate at the end of this phase is scoped to: "This description will overwrite the existing description on `<JIRA-KEY>`."
+
+    - **Fill-out mode — existing card is an Epic:** Update the parent Epic's description using `jira_update_issue` with the freshly assembled description (same overwrite rule as above). After the parent is updated and the approval gate below is passed, proceed to **R5B — Per-Child Iteration** defined below.
+
+5. **Post-creation/update linking:** After the issue is created or updated, link hard dependencies from R4B by calling `createIssueLink` for each one. Use `link_type: "Blocks"` for hard dependencies. Do not attempt to set linked issues during `createJiraIssue` — that tool does not support it.
+
+---
+
+#### R5B — Per-Child Iteration (fill-out mode + Epic only)
+
+Execute this sub-phase only when the existing card is an Epic and child tasks were enumerated in R1. Skip entirely for define mode and for fill-out mode on a Task.
+
+For each `child_work_item-<KEY>` node in the graph, in stable order (by Jira key):
+
+1. **R5B.1 — Per-child Q&A.** Use `AskUserQuestion` to confirm: the child's work type (Feature / Tech Debt / Research / Upkeep — inferred from its description shape and pre-filled for confirmation), and any blocking gap flagged by `existing_sections_missing` from R1. Keep it to at most 3 questions per child; defer anything `[NICE TO HAVE]`. Allow the user to skip any question by selecting `Skip — non-blocking`.
+
+2. **R5B.2 — Per-child synthesis.** Use `sequentialthinking` to draft a description for this child using the appropriate work-type template (from the Description Structure section above). Inputs: the parent epic's freshly written AC (from R5A), this child's existing description, R2 codebase findings relevant to this child's scope, and the per-child Q&A answers from R5B.1. The synthesized description must:
+   - Be fully populated with no placeholder text.
+   - Include a Context section that references the parent epic key and summary.
+   - Use the correct AC format for the work type (Gherkin / outcome-based / deliverable-based / outcome-based).
+   - Not perform a coverage check across siblings — that is `epic-card`'s job.
+
+3. **R5B.3 — Per-child approval.** Present the synthesized description in the chat. Use `AskUserQuestion` with header `R5B: <KEY>`, question `Review the synthesized description for <KEY> — [child summary]. How do you want to proceed?`, options: `Approve and update Jira` (description: "Overwrite this child's Jira description with the synthesized version") / `Skip this child` (description: "Leave this child's description unchanged and move to the next") / `Request changes` (description: "Revise the description before updating"). On `Request changes`, revise and re-present. On `Skip this child`, add `skipped: true` to the child node and continue to the next child.
+
+4. **R5B.4 — Update child.** On approval, call `jira_update_issue` with the approved description for this child. Add `updated_at: <timestamp>` to the child node.
+
+After the loop completes, present a summary in the chat: "Updated parent epic `<KEY>` and `N` of `M` child tasks." (where M is total children enumerated and N is how many were updated, not skipped).
+
+> **USE KNOWLEDGE GRAPH:** After each child update, mark the `child_work_item-<KEY>` node with `updated_at` or `skipped: true`. If context is lost mid-loop (session ends), read the graph on resume to identify the next un-actioned child and continue from there. Do not re-present children already marked `updated_at` or `skipped: true`.
+
+---
 
 ### Description Structure
 
@@ -553,7 +598,7 @@ file/module/service path, brief description of relevance, and risk level.]
 
 > **REQUIRED: Review the full issue description before presenting.** Verify the correct description template was used, all fields are populated with no placeholder text, acceptance criteria match R4A output verbatim, the Affected Areas field is populated from R2 codebase analysis, no workflow instructions or skill-invocation text were embedded, and the issue type matches the R4C recommendation.
 
-> **APPROVAL GATE — FULL STOP.** Present the fully assembled issue description in the chat for final review. User must confirm content is accurate and ready before creating or updating the Jira issue.
+> **APPROVAL GATE — FULL STOP.** Present the fully assembled issue description for final review. Use `AskUserQuestion` (Header: `R5 Approval`, Question: `Is the issue description accurate and ready to be created or updated in Jira?`, Options: `Approve and create / update (Recommended)` — content is accurate and ready, `Request changes` — something needs revision). Do not create or update the Jira issue until the user approves.
 
 ---
 
@@ -565,6 +610,7 @@ file/module/service path, brief description of relevance, and risk level.]
 
 1. **Enumerate.** Call `read_graph`. Identify every entity that should be deleted in this cleanup:
    - The intake `work_item` entity for this issue and every entity linked to it: `affected_area`, `exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`.
+   - Any `child_work_item-<KEY>` entities created during R1 (fill-out mode + Epic path) — including those marked `skipped: true` and those with `updated_at` recorded.
    - Any `classification_signal` / `code_evidence` carried over from issue-intake (Missing Requirement path).
    - Any upstream **implementation-discovery** state still in the graph: the `discovery_summary-<slug>` entity, the `work_item-discovery-<slug>` work item, the verification-round and first-round `exploration` subgraph linked to it (including any finding entities marked `superseded: true`, which must still be deleted — supersession marks them as non-canonical, not as already-removed), and any structured `open_question` entities reified at D5 (sources `d3_discussion` and `d4_verification`). These persist intentionally from a prior `/implementation-discovery` run and R6 owns reaping them. Note that they are reachable both through the `summarizes` relation from `discovery_summary-<slug>` and through the `for` re-link added at R2 step 2.
    - Any other intake-scoped entities created during R0–R5 that link back to the work item.
@@ -583,6 +629,9 @@ file/module/service path, brief description of relevance, and risk level.]
    - affected_file / evidence / pattern / integration_point / risk / open_question: <total count>
    - <any other intake-scoped entities, listed by type and count>
 
+   ### From fill-out mode child iteration (fill-out + Epic only)
+   - child_work_item-<KEY>: <count, or "none — define mode or Task fill-out">
+
    ### From upstream Implementation Discovery (if present)
    - discovery_summary-<slug>: <name, or "none">
    - work_item-discovery-<slug>: <name, or "none">
@@ -596,7 +645,7 @@ file/module/service path, brief description of relevance, and risk level.]
 
    If the upstream-discovery section reports "none" across the board, state explicitly that no implementation-discovery state was found in the graph for this run.
 
-3. > **APPROVAL GATE — FULL STOP.** Ask the user: **"Proceed with cleanup of these entities?"** Do not run `delete_entities` until the user explicitly confirms (e.g., "yes", "proceed", "go ahead"). On any negative or ambiguous response, do NOT delete. Instead, leave the graph untouched, note in the chat that cleanup was skipped at the user's request, and end the workflow — the entities will remain in the graph until the Claude Code session ends.
+3. > **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` (Header: `R6 Cleanup`, Question: `Proceed with cleanup of these entities?`, Options: `Proceed with cleanup (Recommended)` — delete all listed knowledge-graph entities, `Skip cleanup` — leave the graph untouched; entities will remain until the Claude Code session ends). Do not run `delete_entities` until the user selects Proceed. On any other response, do NOT delete.
 
 4. **Execute deletion.** On explicit confirmation, call `delete_entities` with the full list enumerated in step 1. After deletion, report a one-line confirmation in the chat: "Cleanup complete: <N> entities deleted."
 
@@ -613,4 +662,5 @@ This workflow is complete when **all** of the following are true:
 - All self-review checks passed before presenting output
 - Jira issue updated (existing card) or created (new card) with all requirements populated, no unresolved placeholder text, and no embedded workflow or skill-invocation instructions
 - Task Details section includes a structured Affected Areas field populated from R2 codebase analysis
-- R6 cleanup either cleared the session-scoped knowledge graph (including any upstream implementation-discovery and issue-intake entities) after the Jira record was finalized, or the user explicitly declined cleanup at the R6 approval gate
+- **Fill-out mode + Epic:** Every `child_work_item-<KEY>` node is marked either `updated_at` (description written to Jira) or `skipped: true` (user elected to skip)
+- R6 cleanup either cleared the session-scoped knowledge graph (including `child_work_item` entities, and any upstream implementation-discovery and issue-intake entities) after the Jira record is finalized, or the user explicitly declined cleanup at the R6 approval gate

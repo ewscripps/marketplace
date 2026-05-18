@@ -38,7 +38,9 @@ Fall back to Glob, Grep, Read, and Bash for non-symbolic checks such as config f
 1. Read the changed production files and the nearby tests, documentation, and config in full.
 2. Identify what a tester can actually observe or trigger manually. Focus on screens, forms, navigation, data states, roles, APIs, background effects, and error conditions rather than implementation details.
 3. Build a manual-testing scenario list from the criteria, the diff, the supporting Jira context, and any bug reproduction steps or epic integration notes.
-4. Cover the highest-value manual scenarios first:
+4. > **THINK HARD:** Before writing the scenario list, think hard about regression risk — specifically, which existing flows adjacent to the changed code could break in a way that looks unrelated to this work item. These regressions are the scenarios most likely to be caught in manual QA and missed in automated tests (which typically only cover the new behavior). A scenario list that only covers the happy path of the new feature provides little QA value.
+
+   Cover the highest-value manual scenarios first:
     - Primary happy-path behavior
     - Role or permission differences
     - Validation and error handling

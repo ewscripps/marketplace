@@ -15,7 +15,7 @@
 
 **APPROVAL GATE BEHAVIOR:** Approval gates are chat-scoped. If explicit approval is not captured before the session ends or context is lost, stop at the gate. On resume, re-present the latest review setup or draft and ask for confirmation again. Never assume a pending approval was granted.
 
-**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and ask the user for clarification before proceeding.
+**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
 **TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
 
@@ -44,11 +44,11 @@
 
 1. Introduce yourself and briefly explain what this workflow will do and what to expect (phases, approvals, end result).
     
-2. Ask the following **first two questions** and wait for the responses before continuing:
+2. Use `AskUserQuestion` for the first question, then the second question, each as a separate call:
     
-    - What type of work is being reviewed? _(Release / Epic / Task / Bug)_
-    - Is this a **diff review** (reviewing changes between branches) or an **implementation review** (deep dive into an existing implementation without diffing branches)?
-3. Based on the answers, continue gathering context **conversationally, one topic at a time.**
+    - Review type: `AskUserQuestion` (Header: `Review Type`, Question: `What type of work is being reviewed?`, Options: `Release` — a versioned release across multiple work items, `Epic` — all tasks under an epic, `Task` — a single task or feature, `Bug` — a bug fix)
+    - Review mode: `AskUserQuestion` (Header: `Review Mode`, Question: `What kind of review is this?`, Options: `Diff review (Recommended)` — reviewing changes between branches, `Implementation review` — deep dive into an existing implementation without diffing branches)
+3. Based on the answers, continue gathering context using `AskUserQuestion`, one question per call in sequence.
     
     **All review types:**
     
@@ -82,7 +82,7 @@
 > - Known Risks or Areas of Concern (description, or explicitly "none identified")
 > - Existing Jira Card for this review (issue key, or explicitly "none")
 
-> **APPROVAL GATE — FULL STOP.** Present the gathered context as a structured summary. User must confirm all fields are accurate. Do not proceed to CI1 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Present the gathered context as a structured summary. Use `AskUserQuestion` (Header: `CI0 Approval`, Question: `Are all fields accurate and nothing is missing?`, Options: `Approve and proceed (Recommended)`, `Request changes`). Do not proceed to CI1 until the user approves.
 
 ---
 
@@ -132,7 +132,7 @@
 > - Summary of the target: title or name, status, key details relevant to the review
 > - Any concerns about issue state that the user should be aware of
 
-> **APPROVAL GATE — FULL STOP.** Present the Jira context summary. User must confirm the retrieved issue or release is correct, the work item list (Release/Epic) is complete and accurate, and no concerns block the review from proceeding. Do not proceed to CI2 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Present the Jira context summary. Use `AskUserQuestion` (Header: `CI1 Approval`, Question: `Is the retrieved issue or release correct, is the work item list (Release/Epic) complete and accurate, and do no concerns block the review?`, Options: `Approve and proceed (Recommended)`, `Request changes`). Do not proceed to CI2 until the user approves.
 
 ---
 
@@ -147,7 +147,7 @@
 1. Confirm the branch provided in CI0 exists in the repository.
 2. Confirm the default branch provided in CI0 exists.
 3. Confirm the branch to review has commits beyond the default branch.
-4. **Release and Epic only:** Using the branch names recovered in CI1 (plus any explicitly provided by the user), confirm that all work item branches are merged into the branch to review. If any required branch name is missing, stop and ask the user to provide it before continuing. List any recovered branches that are missing.
+4. **Release and Epic only:** Using the branch names recovered in CI1 (plus any explicitly provided by the user), confirm that all work item branches are merged into the branch to review. If any required branch name is missing, stop and use `AskUserQuestion` (Header: `Missing Branch`, Question: `The branch name for [work item key] could not be recovered. Please provide it to continue.`, Options: `Provide branch name` — type it using the Other input, `Stop review` — abort the review) before continuing. List any recovered branches that are missing.
 5. If any check fails, stop and report the specific failure. Do not proceed until the user resolves the issue.
 
 **Implementation Review:**
@@ -168,7 +168,7 @@
 > - Confirmation the branch to review exists
 > - Confirmation that all scoped files/modules/services exist on the branch, or list of missing items
 
-> **APPROVAL GATE — FULL STOP.** Present the branch verification summary. User must confirm branch state is correct and ready for review, and any missing branches or scoped items (if applicable) are resolved or intentionally excluded. Do not proceed to CI3 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Present the branch verification summary. Use `AskUserQuestion` (Header: `CI2 Approval`, Question: `Is the branch state correct and ready for review? Are any missing branches or scoped items resolved or intentionally excluded?`, Options: `Approve and proceed (Recommended)`, `Request changes`). Do not proceed to CI3 until the user approves.
 
 ---
 
@@ -207,15 +207,14 @@
     - **Regression Risk** — Are there related behaviors or code paths beyond the direct fix that should be verified?
     - **Test Coverage** — Was a regression test written? If not, is one expected as part of this review?
 3. Mark each question as `[BLOCKING]` or `[NICE TO HAVE]`.
-    
-4. Present all questions in a **single batch** — do not ask one at a time.
-    
+
+4. Ask each question one at a time using `AskUserQuestion`. For closed-enum questions provide specific options; for open-ended questions offer `Provide answer` / `Skip — non-blocking` (non-blocking only) and rely on the auto-injected "Other" for the typed answer. Include the `[BLOCKING]` or `[NICE TO HAVE]` tag in the question text. Do not ask the next question until the current one is answered.
+
 5. Record all answers verbatim. Do not infer or invent answers.
-    
 
 > **REQUIRED:** Present all BLOCKING questions answered and answers recorded, and remaining unanswered questions listed as open items.
 
-> **APPROVAL GATE — FULL STOP.** Present all questions and recorded answers. User must confirm all blocking answers are accurate. Do not proceed to CI4 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `CI3 Approval`, options: `Approve and proceed (Recommended)` (description: "All blocking answers are accurate and recorded") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to CI4 until approved.
 
 ---
 
@@ -288,7 +287,7 @@ Omit this field for Task and Bug reviews.]
 
 > **REQUIRED: Review the assembled Review Details before presenting.** Verify all fields are populated, the work items are complete and match CI1 output, and known risks consolidate all concerns surfaced across CI0–CI3.
 
-> **APPROVAL GATE — FULL STOP.** Present the fully assembled Review Details. User must confirm all fields are accurate and nothing is missing. Do not proceed to CI5 until confirmed.
+> **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `CI4 Approval`, options: `Approve and proceed (Recommended)` (description: "Review Details are accurate and complete") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to CI5 until approved.
 
 ---
 
@@ -315,9 +314,9 @@ Omit this field for Task and Bug reviews.]
 |Labels|`code-review` + review type in lowercase|
 |Epic Link|Recommended epic (see below)|
 
-    **Priority recommendation:** Before creating the issue, recommend a priority based on the review scope and risk: Release reviews default to High, Epic reviews default to Medium, Task/Bug reviews default to the priority of the reviewed issue (or Medium if unknown). Present the recommended priority to the user for confirmation.
+    **Priority recommendation:** Before creating the issue, determine the recommended priority based on the review scope and risk: Release reviews default to High, Epic reviews default to Medium, Task/Bug reviews default to the priority of the reviewed issue (or Medium if unknown). Use `AskUserQuestion` with header `Task Priority` to confirm. Put the recommended priority first with `(Recommended)` appended. Options: one of `Critical (Recommended)` / `High (Recommended)` / `Medium (Recommended)` / `Low (Recommended)` as the first option (only the recommended one gets the label), then the remaining three priorities as subsequent options.
 
-    **Epic recommendation:** Search Jira for open epics in the same project that relate to the code areas or issues being reviewed. If the reviewed issue is already linked to an epic, suggest that epic. Present the recommendation and ask the user to: (a) accept the suggested epic, (b) provide a different epic key, or (c) leave blank for no epic. Only set the Epic Link if the user accepts or provides a key.
+    **Epic recommendation:** Search Jira for open epics in the same project that relate to the code areas or issues being reviewed. If the reviewed issue is already linked to an epic, suggest that epic. Use `AskUserQuestion` with header `Epic Link`, options: `Use suggested epic: <KEY> (Recommended)` (description: "Link to the identified epic") / `Provide a different epic key` (description: "Type a different epic key in the Other field") / `No epic` (description: "Create the issue without an epic link"). Only set the Epic Link if the user selects the suggested epic or provides a key via Other.
 
     **API notes for non-standard fields:**
     - **Priority:** Set via `additional_fields`: `{"priority": {"name": "Medium"}}` (substituting the confirmed priority name: Critical, High, Medium, or Low).
@@ -332,11 +331,9 @@ Omit this field for Task and Bug reviews.]
 
 > **REQUIRED: Review the full issue description before presenting.** Verify Review Details section exactly matches CI4 output verbatim, no workflow instructions or skill-invocation text were embedded, the summary follows the specified format, the issue type is set to Task, and the linked issue is correct (Epic / Task / Bug only).
 
-> **APPROVAL GATE — FULL STOP.** Present the fully assembled issue description. User must confirm content is accurate before creating or updating the Jira issue.
+> **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `CI5 Approval`, options: `Approve and proceed (Recommended)` (description: "Content is accurate — create or update the Jira issue") / `Request changes` (description: "Something needs correction before creating"). Do not create or update the Jira issue until approved.
 
-**Post-creation: Additional Linking** After the Jira issue has been created or updated, ask: "Is there any additional Jira issue this review should be linked to? If yes, provide the issue key."
-
-If the user provides a key, call `getJiraIssue` to confirm it exists, then call `createIssueLink` with `link_type: "Relates to"` to create the link. Confirm success. If the user provides no key, skip this step.
+**Post-creation: Additional Linking** After the Jira issue has been created or updated, use `AskUserQuestion` with header `Additional Links`, options: `Yes — I'll provide an issue key` (description: "Link this review to another Jira issue via Other") / `No additional links` (description: "Skip this step"). If the user provides a key, call `getJiraIssue` to confirm it exists, then call `createIssueLink` with `link_type: "Relates to"` to create the link. Confirm success.
 
 ---
 

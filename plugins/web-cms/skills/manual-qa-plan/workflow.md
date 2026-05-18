@@ -9,11 +9,16 @@
 5. Every required output must be presented in the chat before the phase is considered complete.
 6. This workflow does not change Jira status, post Jira comments, create branches, commit changes, push, or use destructive git commands. The only allowed Jira mutation is appending the final QA plan to the bottom of the issue description in Q4.
 
-**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and ask the user for clarification before proceeding.
+**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
 **TESTER AUDIENCE RULE:** All final QA instructions must be written for a QA tester who understands the application but is not familiar with the codebase. Prefer product and workflow language over implementation language. Only mention file names, symbols, or other internal details when they are necessary for setup or to explain a testing risk.
 
-**BRANCH CONTEXT RULE:** Review the actual branch diff whenever possible. If the target branch cannot be resolved from Jira context or repository state, stop and ask the user to provide the branch name or explicitly approve Jira-only QA planning with reduced confidence.
+**BRANCH CONTEXT RULE:** Review the actual branch diff whenever possible. If the target branch cannot be resolved from Jira context or repository state, stop and use `AskUserQuestion` to ask the user how to proceed:
+- Header: `Branch Context`
+- Question: `The target branch could not be resolved from Jira context or repository state. How would you like to proceed?`
+- Options:
+    - `Provide the branch name (Recommended)` — Specify the branch to use for diff analysis. Best QA plan accuracy.
+    - `Approve Jira-only QA planning` — Continue without a branch diff. QA plan will have reduced confidence.
 
 **TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
 
@@ -69,7 +74,7 @@
     - **Epic child task context:** If the Task Details include an `Epic Integration Branch` field and the target branch resolves to a task branch, use the `Epic Integration Branch` as the diff base.
 - Determine the target branch using this order:
     1. An explicit branch name recovered from the latest testing handoff or summary comment
-    2. For epic child tasks only, an explicitly named integration branch if the task branch is unavailable and the user confirms that broader scope is acceptable
+    2. For epic child tasks only, an explicitly named integration branch if the task branch is unavailable — first use `AskUserQuestion` (Header: `Branch Scope`, Question: `The task branch is unavailable. Would you like to use the integration branch instead? This broadens the QA scope beyond this single task.`) with options: `Use integration branch` (description: "Broaden scope to the epic integration branch — covers more changes") and `Stop` (description: "Abort and report that the target branch could not be resolved")
     3. The standard branch naming convention `{PROJECTKEY}-{ISSUENUMBER}-{issue-summary-in-kebab-case}`. For epics, this is the integration-branch convention from the epic workflow.
 - Confirm the base branch and target branch exist locally or as remote tracking refs.
 - Gather the cumulative review scope:
@@ -78,7 +83,13 @@
 - Produce:
     - The full diff of all changed files
     - A changed-file list grouped into production files, test files, documentation files, and configuration files where possible
-- If the target branch cannot be resolved, the diff cannot be produced, or the only available branch context would broaden the scope beyond the requested issue, stop and ask the user how to proceed.
+- If the target branch cannot be resolved, the diff cannot be produced, or the only available branch context would broaden the scope beyond the requested issue, stop and use `AskUserQuestion` to ask the user how to proceed:
+    - Header: `Branch Failure`
+    - Question: `The target branch could not be resolved or the diff could not be produced. How would you like to proceed?`
+    - Options:
+        - `Provide a branch or commit reference (Recommended)` — Specify an alternative branch or commit for diff analysis.
+        - `Approve Jira-only QA planning` — Continue without a diff. QA plan will have reduced confidence.
+        - `Stop` — Abort the workflow.
 
 > **REQUIRED:** Present a structured repository summary in the chat before proceeding:
 >

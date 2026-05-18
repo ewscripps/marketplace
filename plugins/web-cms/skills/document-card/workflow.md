@@ -10,7 +10,7 @@
 
 **APPROVAL GATE BEHAVIOR:** Approval gates are chat-scoped. If explicit approval is not captured before the session ends or context is lost, stop at the gate. On resume, re-present the latest documentation plan or draft and ask for confirmation again. Never assume a pending approval was granted.
 
-**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and ask the user for clarification before proceeding.
+**CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
 **TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
 
@@ -51,7 +51,7 @@
     - **UI changes** -- New or modified screens, forms, buttons, workflows, navigation, or visual elements that users interact with.
     - **API changes** -- New or modified HTTP endpoints, request/response formats, authentication, or integration points.
     - **Both** -- Changes that span UI and API.
-    - **Neither** -- Purely internal changes with no user-facing impact. If this is the case, inform the user and ask whether to proceed with internal/developer documentation or stop.
+    - **Neither** -- Purely internal changes with no user-facing impact. If this is the case, inform the user and use `AskUserQuestion` with header `Doc Scope`, options: `Proceed with internal / developer documentation` (description: "Document the changes for an internal or developer audience instead") / `Stop` (description: "No user-facing changes — end the workflow here").
 
 > **REQUIRED:** Present all of the following in the chat before proceeding:
 >
@@ -67,31 +67,29 @@
 
 **Objective:** Collect all environment details and access prerequisites needed to capture documentation without exposing credentials in chat.
 
-**Ask the following questions conversationally, one topic at a time. Wait for each response before asking the next.**
+Ask the following questions one at a time using `AskUserQuestion`. Wait for each response before asking the next. For closed-enum questions provide the specific options listed. For open-ended questions, offer `Provide answer` / `Skip for now` (if non-blocking) and rely on the auto-injected "Other" for typed input.
 
 **Environment:**
 
-1. What is the **staging environment URL** where the changes can be tested?
-2. Does the staging environment require **authentication**?
-    - If yes: What type -- **Okta**, **basic auth**, or **other**?
-    - Is a secure authenticated session already available to the agent, or will you pre-authenticate before DC3? **Do not provide passwords, tokens, or secrets in chat.**
-3. After authentication is available, are there any additional navigation steps to reach the area where the changes are visible (e.g., specific menu path, feature flag to enable, test account to use)?
+1. **Staging URL** (open-ended, blocking): `AskUserQuestion` header `Staging URL`, options: `Provide the URL` / `I'll provide it later`.
+2. **Authentication required?** (closed-enum, blocking): `AskUserQuestion` header `Auth Required`, options: `No authentication needed` / `Okta` / `Basic auth` / `Other — I'll describe it`. If auth is needed, follow up with: header `Auth Access`, options: `A secure session is already available` / `I'll pre-authenticate before DC3`.
+3. **Navigation steps** (open-ended, non-blocking): `AskUserQuestion` header `Navigation`, options: `Yes — I'll describe the steps` / `No — changes are immediately visible`.
 
-**API documentation (if scope includes API changes):**
+**API documentation (ask only if scope includes API changes):**
 
-4. What is the **Postman workspace URL** (e.g., `app.getpostman.com/workspace/...`)?
-5. Does Postman require separate authentication? If yes, is a secure authenticated session already available, or will you pre-authenticate before DC3? **Do not provide passwords, tokens, or secrets in chat.**
-6. Is there an existing **Postman collection** this should be added to, or should a new collection be created?
+4. **Postman workspace URL** (open-ended, blocking for API scope): `AskUserQuestion` header `Postman Workspace`, options: `Provide the URL` / `Skip — no Postman documentation needed`.
+5. **Postman authentication** (closed-enum, if Postman URL provided): `AskUserQuestion` header `Postman Auth`, options: `A secure session is already available` / `I'll pre-authenticate before DC3` / `No authentication needed`.
+6. **Postman collection** (closed-enum, if Postman URL provided): `AskUserQuestion` header `Postman Collection`, options: `Add to an existing collection — I'll name it` / `Create a new collection`.
 
 **Confluence target:**
 
-7. What **Confluence space** should the documentation be published to?
-8. Is there a **parent page** the documentation should be nested under? If yes, what is the page title or URL?
+7. **Confluence space** (open-ended, blocking): `AskUserQuestion` header `Confluence Space`, options: `Provide the space name or key` / `I'll decide later`.
+8. **Parent page** (open-ended, non-blocking): `AskUserQuestion` header `Parent Page`, options: `Yes — I'll provide the page title or URL` / `No parent page — publish at the space root`.
 
 **Scope refinement:**
 
-9. Are there **specific user flows or scenarios** you want prioritized in the documentation?
-10. Is there a **target audience** for this documentation (end users, internal staff, developers, QA)?
+9. **Priority scenarios** (open-ended, non-blocking): `AskUserQuestion` header `Priority Scenarios`, options: `Yes — I'll describe them` / `Document all user-facing changes`.
+10. **Target audience** (closed-enum, blocking): `AskUserQuestion` header `Audience`, options: `End users` / `Internal staff` / `Developers` / `QA engineers`.
 
 > **REQUIRED:** The following context must be confirmed before proceeding:
 >
@@ -103,7 +101,7 @@
 > - Priority scenarios (or "document all user-facing changes")
 > - Target audience
 
-> **APPROVAL GATE -- FULL STOP.** Present the gathered context as a structured summary. User must confirm all fields are accurate. Do not proceed to DC2 until confirmed.
+> **APPROVAL GATE -- FULL STOP.** Present the gathered context as a structured summary. Then use `AskUserQuestion` with header `DC1 Approval`, options: `Approve and proceed (Recommended)` (description: "All fields are accurate and complete") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to DC2 until approved.
 
 ---
 
@@ -171,7 +169,7 @@
 > - Confluence page outline
 > - Estimated number of screenshots
 
-> **APPROVAL GATE -- FULL STOP.** Present the documentation plan. User must confirm the flows, endpoints, and page structure are correct. Do not proceed to DC3 until confirmed.
+> **APPROVAL GATE -- FULL STOP.** Present the documentation plan. Then use `AskUserQuestion` with header `DC2 Approval`, options: `Approve and proceed (Recommended)` (description: "Flows, endpoints, and page structure are correct") / `Request changes` (description: "Something needs adjustment before capturing documentation"). Do not proceed to DC3 until approved.
 
 ---
 
@@ -222,7 +220,7 @@ For each flow in the documentation plan, in the order defined in DC2:
     d. **Take an "after" screenshot** showing the result of the action. Save with a descriptive filename.
     e. **Record the step description**: what the user does, what they see, and any important details about the result.
 4. After completing all steps in a flow, confirm the flow was captured successfully.
-5. If a step fails (element not found, unexpected page state), stop the current flow, take a screenshot of the current state, and report the failure in the chat. Ask the user whether to retry, skip the flow, or stop.
+5. If a step fails (element not found, unexpected page state), stop the current flow, take a screenshot of the current state, and report the failure in the chat. Then use `AskUserQuestion` with header `DC4 Flow Failure`, options: `Retry` (description: "Try the failed step again") / `Skip this flow` (description: "Move on to the next flow in the plan") / `Stop` (description: "Abort the workflow here").
 
 > **REQUIRED:** After all flows are captured, present a summary in the chat:
 >
@@ -250,7 +248,7 @@ For each endpoint in the documentation plan, in the order defined in DC2:
 6. Wait for the response to appear.
 7. Take a screenshot of the response using `browser_take_screenshot`. Save as `api-{endpoint-number}-response-{short-name}.png`.
 8. Record the endpoint documentation: method, path, description, request example, response example, status code, and any notes.
-9. If the request fails unexpectedly, take a screenshot of the error response, report it in the chat, and ask the user whether to retry, skip, or stop.
+9. If the request fails unexpectedly, take a screenshot of the error response, report it in the chat. Then use `AskUserQuestion` with header `DC5 Endpoint Failure`, options: `Retry` (description: "Try the request again") / `Skip this endpoint` (description: "Move on to the next endpoint in the plan") / `Stop` (description: "Abort the workflow here").
 
 **Save the collection:**
 
@@ -309,8 +307,8 @@ For each endpoint in the documentation plan, in the order defined in DC2:
 
 - Present the full documentation draft assembled in DC6.
 - The user must review and confirm the content is accurate, complete, and appropriate for the target audience.
-- If the user requests changes, revise the content and re-present. Do not proceed until explicit approval.
-- If the user identifies missing flows or screenshots, return to DC4 or DC5 to capture the additional content, then reassemble in DC6 and re-present here.
+- Use `AskUserQuestion` with header `DC7 Approval`, options: `Approve and publish (Recommended)` (description: "Content is accurate and ready to publish to Confluence") / `Request changes` (description: "Revise the content before publishing"). Do not proceed until approved.
+- If the user selects "Request changes", revise the content and re-present. If the user identifies missing flows or screenshots, return to DC4 or DC5 to capture the additional content, then reassemble in DC6 and re-present here.
 
 ---
 
