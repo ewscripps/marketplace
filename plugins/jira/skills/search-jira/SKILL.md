@@ -3,12 +3,12 @@ name: search-jira
 description: Search Jira issues by project key using JQL
 user-invocable: true
 argument-hint: '[PROJECT_KEY]'
-allowed-tools: Bash(git *), AskUserQuestion, Read, Grep, Glob
+allowed-tools: Bash(git *), Bash(command *), Bash(twg *), AskUserQuestion, Read, Grep, Glob, Skill
 ---
 
 # Search Jira Issues
 
-Search for Jira issues in a project using the Atlassian MCP Server. Returns a list of open issues prioritized by the current user's assignments.
+Search for Jira issues in a project using the TWG CLI (preferred) or the Atlassian MCP Server (fallback). Returns a list of open issues prioritized by the current user's assignments.
 
 ## Step 1: Resolve the Jira Project Key
 
@@ -30,6 +30,20 @@ Extract the project key from whichever format is found.
     Append it under a `## Project` heading (create the heading if needed toward the top of the README).
 
 ## Step 2: Search for Issues
+
+Run `command -v twg` to check if the TWG CLI is installed.
+
+### TWG Path (if installed)
+
+Load the `twg` skill via the Skill tool, then:
+
+1. Run `twg help describe jira workitem query` to confirm the exact flags for JQL queries.
+2. Run the following **in parallel**:
+   - **My tickets** — query `project = "<PROJECT_KEY>" AND statusCategory != Done AND assignee = currentUser() ORDER BY updated DESC`, max 5 results
+   - **Others' tickets** — query `project = "<PROJECT_KEY>" AND statusCategory != Done AND assignee != currentUser() ORDER BY statusCategory DESC, updated DESC`, max 10 results
+3. Merge the two result lists (mine first), deduplicating by issue key, capped at 15 total.
+
+### MCP Fallback (if TWG not installed)
 
 Using tools provided from the Atlassian MCP Server:
 

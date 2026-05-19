@@ -3,12 +3,12 @@ name: create-jira-card
 description: Create a new Jira issue (story, bug, task, etc.) in a project
 user-invocable: true
 argument-hint: '[PROJECT_KEY]'
-allowed-tools: Bash(git *), AskUserQuestion, Read, Grep, Glob
+allowed-tools: Bash(git *), Bash(command *), Bash(twg *), AskUserQuestion, Read, Grep, Glob, Skill
 ---
 
 # Create a Jira Card
 
-Create a new Jira issue using the Atlassian MCP Server. Walks the user through selecting a project, issue type, and providing details, then creates the issue and returns the key.
+Create a new Jira issue using the TWG CLI (preferred) or the Atlassian MCP Server (fallback). Walks the user through selecting a project, issue type, and providing details, then creates the issue and returns the key.
 
 ## Step 1: Resolve the Jira Project Key
 
@@ -29,11 +29,7 @@ Extract the project key from whichever format is found.
     ```
     Append it under a `## Project` heading (create the heading if needed).
 
-## Step 2: Get Atlassian Cloud ID
-
-Call `getAccessibleAtlassianResources` from the Atlassian MCP Server to get the cloudId for the authenticated Atlassian instance.
-
-## Step 3: Gather Issue Details
+## Step 2: Gather Issue Details
 
 Use AskUserQuestion to ask the user for the issue type:
 
@@ -49,29 +45,46 @@ Then ask the user for:
 
 If the user is in the middle of a commit workflow and there are staged changes, suggest a summary based on the diff context (let the user confirm or edit).
 
-## Step 4: Create the Issue
+## Step 3: Create and Transition the Issue
 
-Call `createJiraIssueUsingApi` from the Atlassian MCP Server with:
+Run `command -v twg` to check if the TWG CLI is installed.
 
-- `cloudId`: from Step 2
-- `projectKey`: from Step 1
-- `issueType`: from Step 3 (use the Jira issue type name: "Dev Task", "Bug", "Support Task", "Task")
-- `summary`: from Step 3
-- `description`: from Step 3 (if provided)
-- `assignToMe`: `true` — always set this to assign the newly created issue to the authenticated user
+### TWG Path (if installed)
 
-If `createJiraIssueUsingApi` does not accept `assignToMe` or returns an error related to it, retry the call without it and skip assignment silently.
+Load the `twg` skill via the Skill tool, then:
 
-## Step 5: Transition to In Progress
+1. Run `twg help describe jira workitem create` to confirm the exact flags and required fields.
+2. Run `twg jira workitem field create-metadata --project-key "<PROJECT_KEY>"` to discover any required custom fields for the selected issue type.
+3. Create the issue using `twg jira workitem create` with:
+   - `--project-key`: from Step 1
+   - `--issue-type`: the selected type (e.g., "Dev Task", "Bug", "Support Task", "Task")
+   - `--summary`: from Step 2
+   - `--description`: from Step 2 (if provided)
+   - An assign-to-me flag if advertised by the help output
+4. Transition the new issue to In Progress:
+   - Run `twg help describe jira workitem transition` to confirm transition command syntax.
+   - List available transitions for the new issue key.
+   - Look for **"Dev In Progress"** (case-insensitive). If not found, look for **"In Progress"**.
+   - If found, apply the transition. If neither is available, skip silently.
 
-After creating the issue, transition it to an active status:
+### MCP Fallback (if TWG not installed)
 
-1. Call `getJiraIssueTransitions` with the `cloudId` and the new issue's key to get available transitions.
-2. Look for a transition named **"Dev In Progress"** (case-insensitive match). If not found, look for **"In Progress"**.
-3. If a matching transition is found, call `transitionJiraIssue` with the `cloudId`, issue key, and the transition's `id`.
-4. If neither transition is available, skip silently — do not error or prompt the user.
+1. Call `getAccessibleAtlassianResources` from the Atlassian MCP Server to get the `cloudId`.
+2. Call `createJiraIssueUsingApi` with:
+   - `cloudId`: from above
+   - `projectKey`: from Step 1
+   - `issueType`: from Step 2 (use the Jira issue type name: "Dev Task", "Bug", "Support Task", "Task")
+   - `summary`: from Step 2
+   - `description`: from Step 2 (if provided)
+   - `assignToMe`: `true` — always assign the new issue to the authenticated user
+   - If `assignToMe` is not accepted or returns an error, retry without it and skip assignment silently.
+3. Transition the created issue to In Progress:
+   - Call `getJiraIssueTransitions` with the `cloudId` and new issue key.
+   - Look for **"Dev In Progress"** (case-insensitive). If not found, look for **"In Progress"**.
+   - If found, call `transitionJiraIssue` with the `cloudId`, issue key, and transition `id`.
+   - If neither transition is available, skip silently.
 
-## Step 6: Confirm Creation
+## Step 4: Confirm Creation
 
 Display the created issue to the user:
 
