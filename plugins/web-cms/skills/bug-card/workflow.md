@@ -58,6 +58,20 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 - B14 — Summary of Changes
 - B15 — Cleanup
 
+**PHASE COMPACTION HANDOFF CONTRACT:** At designated compaction gates in this workflow, the agent writes a durable `phase_handoff` entity to the knowledge graph and prompts the user to run `/compact`. This prevents auto-compaction from firing mid-phase and discarding phase position.
+
+**Steps at each gate — execute before instructing `/compact`:**
+
+1. Wait for any background `area-mapper` sub-agent to complete.
+2. Create a `phase_handoff` entity in the knowledge graph:
+   - **Name:** `phase-handoff-<JIRA-KEY>-<phase-id>` (e.g. `phase-handoff-ELI-5678-B6`)
+   - **Observations:** `phase: <id>`, `skill: bug-card`, `jira_key: <key>`, `branch: <name or "none">`, `worktree: <path or "none">`, `head_sha: <sha or "n/a">`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. At B10 only: `reviewer_iterations: impl=N test=N doc=N`.
+   - **Relations:** `BELONGS_TO` → `work_item-<JIRA-KEY>`; `SUPERSEDES` → prior `phase_handoff` for this work item (if any); `REFERENCES` → relevant `exploration`, `hypothesis`, `root_cause`, `fix_plan`, and `finding` entity names.
+3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
+4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, Jira key + branch + worktree + head SHA anchors, reviewer iteration counters (B10 only), one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → `git status` + `git worktree list` → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, verify git state (`git status` + `git worktree list` if branch/worktree are set), and resume at `next_phase`. If the user types a different message instead, handle it normally.
+
+**Cleanup:** Include all `phase_handoff` entities for this work item (prefix `phase-handoff-<JIRA-KEY>-`) in the B15 cleanup enumeration alongside other session-scoped entities.
+
 ---
 
 ### B0 — Transition to In Progress
@@ -90,7 +104,7 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 > **THINK HARD:** Before concluding on root cause, think hard about whether the identified cause is necessary and sufficient to explain the observed behavior — could a different cause produce the same symptoms? A misdiagnosed root cause produces a fix that masks the symptom without resolving the underlying issue.
 
-> **USE KNOWLEDGE GRAPH:** Before spawning explorers, ensure a `work_item-<JIRA_KEY>` entity exists for this bug. Call `read_graph`; if the entity is missing (typical at the start of a fresh session), create it with observations: `work_type: bug`, `jira_key`, `title`, `observed_behavior`, `expected_behavior`. **Record the entity name** as the `work_item_id` for this run. As you investigate, also create a node for each hypothesis with properties: `hypothesis` (description), `status` (`active` / `eliminated`), and `evidence` (what supports or refutes it). When a hypothesis is eliminated, update its status with a `reason` property. The explorer-written `affected_file`, `evidence`, `pattern`, and `risk` entities they stream to the graph are reachable via the `work_item-<JIRA_KEY>` node and feed directly into the fix plan in B5.
+> **USE KNOWLEDGE GRAPH:** Before spawning explorers, ensure a `work_item-<JIRA_KEY>` entity exists for this bug. Call `search_nodes` with the work item key (e.g. `work_item-ELI-1234`); if no entity is returned, create it with observations: `work_type: bug`, `jira_key`, `title`, `observed_behavior`, `expected_behavior`. **Record the entity name** as the `work_item_id` for this run. As you investigate, also create a node for each hypothesis with properties: `hypothesis` (description), `status` (`active` / `eliminated`), and `evidence` (what supports or refutes it). When a hypothesis is eliminated, update its status with a `reason` property. The explorer-written `affected_file`, `evidence`, `pattern`, and `risk` entities they stream to the graph are reachable via the `work_item-<JIRA_KEY>` node and feed directly into the fix plan in B5.
 
 - Identify all distinct areas of the codebase likely involved based on the **Affected Areas**, reproduction steps, and any logs or stack traces. Limit the scope of this exploration to the current project directory.
 - Invoke a `codebase-explorer` sub-agent in **parallel** for each distinct hypothesis area in this project, providing:
@@ -98,9 +112,9 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
     - The question: "Does the code path for [observed behavior] exist here, and is there evidence of why it might be producing [incorrect behavior]? Look for recent changes, error handling gaps, and related tests."
     - The `work_item_id` (`work_item-<JIRA_KEY>`). All findings the explorer streams to the graph will be linked to this node.
     - The bug description, reproduction steps, and any logs for context
-- Wait for all explorers to return one of `EXPLORATION COMPLETE`, `EXPLORATION INCOMPLETE`, or `EXPLORATION FAILED`. Each non-failed return includes a structured findings block in the text — use it as the resilient source of record alongside the graph. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters.
+- Wait for all explorers to return. Each non-failed return contains an `Entity:` line with the exploration entity name. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters. `FAILED` means no graph data was written — re-spawn that explorer before proceeding.
 - **Post-exploration enrichment:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `work_item_id`. It crystallizes durable area knowledge from this run's graph into Serena project memory for future explorations. Do not wait for it.
-- Call `read_graph` and walk the subgraph rooted at each `exploration` entity for this `work_item_id`. Surface any `open_question` entities. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
+- Call `open_nodes` on each `exploration` entity name from the returns. If any entity comes back empty, re-spawn that explorer rather than treating missing data as confirmed. Surface any `open_question` entities in the responses. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
 - Synthesize the findings from the graph. Evaluate which areas show evidence of the root cause (cite the relevant `evidence` entities by `file` and `line_range`) and which hypotheses can be ruled out. Update each hypothesis node's `status` and `evidence` observations to reflect what the graph now contains.
 - Review git history for recent changes to affected areas (cross-reference the `affected_file` paths from the graph) that may have introduced a regression.
 - Review related tests to understand why existing coverage did not catch this bug — look for `pattern` entities tagged with test concerns and `risk` entities flagging coverage gaps.
@@ -119,6 +133,8 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 > **REQUIRED:** All BLOCKING questions answered and answers recorded. Remaining unanswered questions listed as open items.
 
 > **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `B4 Approval`, options: `Approve and proceed (Recommended)` (description: "All blocking answers are accurate and recorded") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to B5 until approved.
+
+> **COMPACTION GATE — B4:** Once B4 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-B4`; `next_phase: B5`; decisions: clarifying answers, confirmed root cause hypothesis; branch + worktree + head SHA: "n/a" (not yet created). REFERENCES: exploration entities from B3, hypothesis and root_cause graph nodes. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to B5.
 
 ### B5 — Create Fix Plan
 
@@ -182,6 +198,8 @@ The sub-agent will return a structured findings report with an overall verdict o
 - Then use `AskUserQuestion` with header `B6 Approval`, options: `Approve and proceed (Recommended)` (description: "Fix plan is accurate — begin implementation") / `Request changes` (description: "Revise the plan before proceeding"). Do not poll Jira for approval.
 - If the user selects "Request changes", revise the plan, repost the full combined `B5/B6` comment to Jira, and use `AskUserQuestion` again.
 - Only proceed to B7 after "Approve and proceed" is selected.
+
+> **COMPACTION GATE — B6:** Once B6 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-B6`; `next_phase: B7`; decisions: approved fix plan (one-line summary, fix_plan entity name for REFERENCES); branch + worktree + head SHA: "n/a" (not yet created). REFERENCES: fix_plan and root_cause entities from B5 and exploration entities from B3. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to B7.
 
 ---
 
@@ -273,7 +291,7 @@ Do not proceed to the dedicated completion loops until the implementation-review
 
 Invoke the `test-reviewer` sub-agent, providing:
 
-- The full diff of all changed files
+- The worktree path (`.worktrees/<branch-name>`), branch name, and base branch — the reviewer fetches the diff itself via `git diff <base-branch>..HEAD` in the worktree. Do not paste the full diff inline.
 - The approved fix plan from B5, especially the regression-test strategy
 - The fix criteria from the Bug Details
 - The codebase findings from B3, especially testing conventions and nearby test structure
@@ -290,7 +308,7 @@ The sub-agent will add or update tests as needed, run the relevant test commands
 
 Invoke the `documentation-reviewer` sub-agent, providing:
 
-- The full diff of all changed files after test completion
+- The worktree path (`.worktrees/<branch-name>`), branch name, and base branch — the reviewer fetches the diff itself via `git diff <base-branch>..HEAD` in the worktree. Do not paste the full diff inline.
 - The approved fix plan from B5, especially the documentation expectations
 - The fix criteria from the Bug Details
 - The codebase findings from B3, especially documentation conventions and nearby docs
@@ -303,6 +321,8 @@ The sub-agent will update inline and repository documentation as needed and retu
 - If the report says user-facing documentation follow-up is `REQUIRED`, record that in B14 and recommend running `/document-card` after this workflow completes.
 
 Do not proceed to B11 until `implementation-reviewer`, `test-reviewer`, and `documentation-reviewer` have all completed successfully.
+
+> **COMPACTION GATE — B10:** Once all three reviewers are complete, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-B10`; `next_phase: B11`; include `reviewer_iterations: impl=N test=N doc=N`; decisions: fix implementation summary and any plan deviations; approval_condition: reviewer verdict. REFERENCES: fix_plan entity from B5 and exploration entities from B3. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to B11.
 
 ### B11 — Post-Fix Verification
 
@@ -380,7 +400,7 @@ Post a comment on this Jira issue containing ALL of the following:
 ### B15 — Cleanup
 
 - Confirm `.worktrees/<branch-name>` has been removed. If it still exists (e.g. a follow-up worktree was created during B13 and not yet removed by B12), run `git worktree remove .worktrees/<branch-name>` now. Confirm you have returned to the main working directory.
-- Clear the session-scoped knowledge graph before finishing the workflow. This includes the `work_item-<JIRA_KEY>` entity and every entity linked to it: hypothesis nodes, `affected_area`, `root_cause`, `fix_plan`, plus the explorer-written subgraph (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`). Use `read_graph` to enumerate, then `delete_entities`. Do not retain investigation state once it has been materialized into Jira comments.
+- Clear the session-scoped knowledge graph before finishing the workflow. This includes the `work_item-<JIRA_KEY>` entity and every entity linked to it: hypothesis nodes, `affected_area`, `root_cause`, `fix_plan`, `phase_handoff`, plus the explorer-written subgraph (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`). Use `read_graph` to enumerate, then `delete_entities`. Do not retain investigation state once it has been materialized into Jira comments.
 
 ---
 

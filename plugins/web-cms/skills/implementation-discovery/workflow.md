@@ -23,7 +23,10 @@
 - **File I/O (read, write, edit a known file):** Use native `Read`, `Write`, `Edit`.
 - **File discovery (find files by name or pattern):** Use native `Glob`.
 - **Content search (find text inside files):** Use native `Grep`. For symbolic code search, delegate to the `codebase-explorer` agent.
-- **Directory operations (list, metadata, move, mkdir):** Use Bash.
+- **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
+- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
+
+**SERENA PROJECT ACTIVATION:** Before D0, call `check_onboarding_performed`. If it reports that onboarding has not been performed for this project, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`) and any symbol-aware operations invoked by the `codebase-explorer` agent depend on this being done. Do this once at the start of the workflow; do not repeat it between phases.
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
@@ -33,6 +36,20 @@
 - D3 — Discussion
 - D4 — Verification Round
 - D5 — Persist and Handoff
+
+**PHASE COMPACTION HANDOFF CONTRACT:** At designated compaction gates in this workflow, the agent writes a durable `phase_handoff` entity to the knowledge graph and prompts the user to run `/compact`. This prevents auto-compaction from discarding phase position mid-discovery.
+
+**Steps at each gate — execute before instructing `/compact`:**
+
+1. Wait for any background `area-mapper` sub-agent to complete.
+2. Create a `phase_handoff` entity in the knowledge graph:
+   - **Name:** `phase-handoff-discovery-<topic-slug>-<phase-id>` (e.g. `phase-handoff-discovery-add-retry-logic-D2`); use the same `<topic-slug>` derived in D1.
+   - **Observations:** `phase: <id>`, `skill: implementation-discovery`, `topic_slug: <slug>`, `work_item_id: <work_item-discovery-<slug>>`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item.
+   - **Relations:** `BELONGS_TO` → `work_item-discovery-<topic-slug>`; `SUPERSEDES` → prior `phase_handoff` for this topic (if any); `REFERENCES` → relevant `exploration` entity names.
+3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
+4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, topic slug, work_item_id, one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, and resume at `next_phase`. If the user types a different message instead, handle it normally.
+
+**Note on cleanup:** This workflow intentionally leaves the knowledge graph intact for requirements-intake to consume. The `phase_handoff` entities created here are reaped by requirements-intake R6 (which sweeps all upstream implementation-discovery state) or by issue-intake I6 (bug path). If neither follow-on workflow runs, these entities persist until the Claude Code session ends.
 
 ---
 
@@ -79,11 +96,11 @@
    - The `work_item_id` (`work_item-discovery-<topic-slug>`). All findings the explorer streams to the graph will be linked to this node.
    - The topic description for context
 
-3. Wait for all explorers to return one of `EXPLORATION COMPLETE`, `EXPLORATION INCOMPLETE`, or `EXPLORATION FAILED`. Each non-failed return includes a structured findings block in the text — use it as the resilient source of record alongside the graph. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters.
+3. Wait for all explorers to return. Each non-failed return contains an `Entity:` line with the exploration entity name. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters. `FAILED` means no graph data was written — re-spawn that explorer before proceeding.
 
 > **POST-EXPLORATION ENRICHMENT:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `work_item_id`. The mapper crystallizes durable area knowledge from this run's graph into Serena project memory for future explorations. Do not wait for it — proceed immediately to step 4.
 
-4. Call `read_graph` and walk the subgraph rooted at each `exploration` entity for this `work_item_id`. Surface any `open_question` entities. If any identifies a connection to another area not yet explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
+4. Call `open_nodes` on each `exploration` entity name from the returns. If any entity comes back empty, re-spawn that explorer rather than treating missing data as confirmed. Surface any `open_question` entities in the responses. If any identifies a connection to another area not yet explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
 
 5. Review the assembled subgraph for consistency. Note any conflicting signals across areas before moving to synthesis — for example, two explorers writing `pattern` entities that contradict each other, or `risk` entities that flag the same area at different severities.
 
@@ -172,6 +189,8 @@
 
 > **APPROVAL GATE — FULL STOP.** Present the full D2 synthesis. Use `AskUserQuestion` (Header: `D2 Approval`, Question: `Does this synthesis accurately reflect what you want to explore? Are the affected areas and approach(es) correct?`, Options: `Approve and proceed (Recommended)` — the synthesis looks correct, `Request changes` — something needs revision). Do not proceed to D3 until the user approves.
 
+> **COMPACTION GATE — D2:** Once D2 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-discovery-<topic-slug>-D2`; `next_phase: D3`; decisions: synthesis approach count and recommended option (if any); output_preference and chosen approach (once selected in D3 — if not yet selected, record "pending D3"). REFERENCES: exploration entities from D1. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to D3.
+
 ---
 
 ### D3 — Discussion
@@ -225,13 +244,13 @@
    - An instruction to add `round: verification` and `verifies_approach: [approach name]` observations to the new `exploration` entity it creates, so D5 can distinguish first-round and verification-round findings in the persisted graph.
    - **An explicit name-suffix override for entity uniqueness.** D1 explorations on the same area already exist in the graph with names of the form `exploration-<work_item_key>-<area_slug>` and `<finding-type>-<work_item_key>-<area_slug>-<…>`. Tell the explorer to append the literal suffix `-verification` to every entity name it creates this run (`exploration-<work_item_key>-<area_slug>-verification`, `file-<work_item_key>-<area_slug>-<path-slug>-verification`, `evidence-<work_item_key>-<area_slug>-<short-claim-slug>-verification`, etc.) so the verification-round subgraph never collides with the first-round subgraph on `create_entities`. Without this suffix, every D4 explorer that re-targets a D1 area fails on duplicate-name.
 
-3. Wait for all verification explorers to return one of `EXPLORATION COMPLETE`, `EXPLORATION INCOMPLETE`, or `EXPLORATION FAILED`. If any return `INCOMPLETE` and the gap is on a high-priority verification claim, re-spawn for that area before reconciling.
+3. Wait for all verification explorers to return. Each non-failed return contains an `Entity:` line with the exploration entity name. If any return `INCOMPLETE` and the gap is on a high-priority verification claim, re-spawn for that area before reconciling. `FAILED` means no graph data was written — re-spawn before reconciling.
 
 > **USE SEQUENTIAL THINKING:** Before reconciling, invoke the `sequentialthinking` tool. Use it to classify each verification claim (Confirmed / Enriched / Contradicted / New blocker) before writing any conclusion to the graph, reason through whether any "Contradicted" finding changes the feasibility of the chosen approach or only adjusts its scope, and decide whether any "New blocker" should trigger a re-open of the synthesis (D3 re-entry) versus being accepted as an open question. This is the most consequential decision point in D4 — a shallow reconciliation that marks everything "Confirmed" because the verification explorer did not find an explicit contradiction is a false clean result that misleads requirements-intake. Do not begin the reconciliation step until the reasoning is complete.
 
 > **THINK HARD:** Before deciding the outcome of the reconciliation, think hard about whether a "material change" threshold is met — specifically, whether any Contradicted or New Blocker finding changes the viability or effort of the chosen approach, or only adds nuance. A false "clean" verdict here causes requirements-intake to inherit a plan whose key assumptions have not been verified.
 
-4. **Reconcile.** Call `read_graph` and walk the verification subgraph (filter `exploration` entities by `round: verification`). For each verification claim, classify the outcome:
+4. **Reconcile.** Call `open_nodes` on each verification `exploration` entity name from the returns (those with the `-verification` suffix). For each verification claim, classify the outcome:
    - **Confirmed** — verification evidence supports the claim. No action needed.
    - **Enriched** — the claim is correct but the verification round added new evidence (additional callers, edge-case handling, related files). Note for the synthesis update.
    - **Contradicted** — verification evidence shows the claim is wrong. Identify what specifically was wrong and why.
@@ -258,6 +277,8 @@
 6. **Refresh durable memory.** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) one more time with the same `work_item_id` so its Serena memory crystallization reflects the verified picture. Do not wait for it.
 
 > **APPROVAL GATE — FULL STOP.** Present the verification report (and the revised synthesis, if revision happened in step 5). Use `AskUserQuestion` (Header: `D4 Approval`, Question: `Does the verification report (and any revisions) look correct? Ready to save the discovery output?`, Options: `Approve and proceed (Recommended)` — the verification outcome and any revisions are correct, `Request changes` — something needs revision). Do not proceed to D5 until the user approves.
+
+> **COMPACTION GATE — D4:** Once D4 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-discovery-<topic-slug>-D4`; `next_phase: D5`; decisions: verification outcome (clean / revised / accepted-with-open-questions), approach confirmed or revised. REFERENCES: verification exploration entities from D4 (those with the `-verification` suffix).
 
 > **REQUIRED before proceeding:**
 > - Chosen approach is recorded

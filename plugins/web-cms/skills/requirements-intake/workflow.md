@@ -27,6 +27,8 @@
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
 - **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
 
+**SERENA PROJECT ACTIVATION:** Before R0, call `check_onboarding_performed`. If it reports that onboarding has not been performed for this project, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`) and any symbol-aware operations invoked by the `codebase-explorer` agent depend on this being done. Do this once at the start of the workflow; do not repeat it between phases.
+
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
 - R0 — Intake
@@ -36,6 +38,20 @@
 - R4 — Requirements Synthesis
 - R5 — Jira Issue Creation or Update
 - R6 — Cleanup
+
+**PHASE COMPACTION HANDOFF CONTRACT:** At designated compaction gates in this workflow, the agent writes a durable `phase_handoff` entity to the knowledge graph and prompts the user to run `/compact`. This prevents auto-compaction from discarding phase position, particularly in long fill-out + Epic runs with per-child loops.
+
+**Steps at each gate — execute before instructing `/compact`:**
+
+1. Wait for any background `area-mapper` sub-agent to complete.
+2. Create a `phase_handoff` entity in the knowledge graph:
+   - **Name:** `phase-handoff-<work-item-key>-<phase-id>` (e.g. `phase-handoff-PROJ-123-R4`); use the `work_item_id` recorded at R0. For R5B per-child gates: `phase-handoff-<work-item-key>-R5B-<child-JIRA-KEY>`.
+   - **Observations:** `phase: <id>`, `skill: requirements-intake`, `jira_key: <key or slug>`, `mode: <define or fill_out>`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. For R5B per-child gates only: `child_completed: <JIRA-KEY>`, `next_child: <JIRA-KEY or "none">`.
+   - **Relations:** `BELONGS_TO` → the `work_item` entity for this run; `SUPERSEDES` → prior `phase_handoff` for this work item (if any); `REFERENCES` → relevant `affected_area`, `exploration`, `criterion`, and `qa_item` entity names.
+3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
+4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, work item key, mode, one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → continue at `<next-phase>`"). For R5B gates: include child completion status. End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, and resume at `next_phase`. If the user types a different message instead, handle it normally.
+
+**Cleanup:** Include all `phase_handoff` entities for this work item (prefix `phase-handoff-<work-item-key>-`) in the R6 cleanup enumeration alongside other session-scoped entities.
 
 ---
 
@@ -182,10 +198,10 @@ If `$ARGUMENTS` is empty or absent, enter **define mode** and run R0 exactly as 
         - **Upkeep:** "What components, dependencies, or configuration in this area will be touched by [upkeep work], and are there known compatibility constraints or rollback considerations?"
     - The `work_item_id` recorded at R0 (the entity name of the `work_item` node, e.g. `work_item-PROJ-123` or `work_item-intake-<slug>`). All findings the explorer streams to the graph will be linked to this node.
     - The work item description for context
-3. Wait for all explorers to return one of `EXPLORATION COMPLETE`, `EXPLORATION INCOMPLETE`, or `EXPLORATION FAILED`. Each non-failed return includes a structured findings block in the text (affected files, evidence, patterns, integration points, risks, open questions) — use it as the resilient source of record alongside the graph. Treat `INCOMPLETE` as partial: findings are present but the run did not finish; consider re-spawning for the same area if coverage matters. Treat `FAILED` as no findings written.
+3. Wait for all explorers to return. Each non-failed return contains an `Entity:` line with the exploration entity name. Treat `INCOMPLETE` as partial: findings are present but the run did not finish; consider re-spawning for the same area if coverage matters. Treat `FAILED` as no findings written — re-spawn that explorer before proceeding.
 
 > **POST-EXPLORATION ENRICHMENT:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `work_item_id`. The mapper crystallizes durable area knowledge from this run's graph into Serena project memory so future explorations of the same areas start with hot context. Do not wait for it — proceed immediately to step 4.
-4. Call `read_graph` and walk the subgraph rooted at each `exploration` entity for this `work_item_id`. Surface any `open_question` entities. If any open question identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` for that area (passing the same `work_item_id`) before proceeding.
+4. Call `open_nodes` on each `exploration` entity name from the returns. If any entity comes back empty, re-spawn that explorer rather than treating missing data as confirmed. Surface any `open_question` entities in the responses. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` for that area (passing the same `work_item_id`) before proceeding.
 5. Synthesize the findings from the graph into a unified codebase analysis. Read across all `exploration` entities linked to this `work_item_id` and aggregate:
     - **Affected files** — collected from `affected_file` entities. Group by module / service for the user-facing analysis.
     - **Patterns and conventions** — from `pattern` entities; cite the `evidence_files` observation when present.
@@ -206,6 +222,8 @@ If `$ARGUMENTS` is empty or absent, enter **define mode** and run R0 exactly as 
 > **REQUIRED: Review the codebase analysis before presenting.** Verify every item is grounded in actual evidence. Label speculative entries as `[INFERRED]`. Do not present an unreviewed analysis.
 
 > **APPROVAL GATE — FULL STOP.** Present the codebase analysis. Use `AskUserQuestion` (Header: `R2 Approval`, Question: `Are the scope areas correct and complete? Does the codebase analysis look accurate?`, Options: `Approve and proceed (Recommended)` — scope areas are correct and complete, `Request changes` — something needs revision). Do not proceed to R3 until the user approves.
+
+> **COMPACTION GATE — R2:** Once R2 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<work-item-key>-R2`; `next_phase: R3`; decisions: confirmed scope areas and work type; mode. REFERENCES: exploration entities and affected_area nodes from R2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to R3.
 
 ---
 
@@ -343,6 +361,8 @@ Evaluate the work item against these criteria:
 
 > **APPROVAL GATE — FULL STOP.** Present the full R4 synthesis (acceptance criteria, risk register, Epic vs. Task recommendation). Use `AskUserQuestion` (Header: `R4 Approval`, Question: `Are all three sections correct — acceptance criteria, risk register, and the Epic vs. Task recommendation?`, Options: `Approve and proceed (Recommended)` — all three sections are correct, `Request changes` — something needs revision). Do not create a Jira issue of the wrong type. Do not proceed until the user approves.
 
+> **COMPACTION GATE — R4:** Once R4 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<work-item-key>-R4`; `next_phase: R5`; decisions: issue type recommendation (Epic or Task), criterion count, key risks; approval_condition: verbatim user phrasing if any conditional approval was given. REFERENCES: criterion nodes, qa_item nodes, affected_area nodes. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to R5.
+
 ---
 
 ### R5 — Jira Issue Creation or Update
@@ -404,6 +424,8 @@ For each `child_work_item-<KEY>` node in the graph, in stable order (by Jira key
 3. **R5B.3 — Per-child approval.** Present the synthesized description in the chat. Use `AskUserQuestion` with header `R5B: <KEY>`, question `Review the synthesized description for <KEY> — [child summary]. How do you want to proceed?`, options: `Approve and update Jira` (description: "Overwrite this child's Jira description with the synthesized version") / `Skip this child` (description: "Leave this child's description unchanged and move to the next") / `Request changes` (description: "Revise the description before updating"). On `Request changes`, revise and re-present. On `Skip this child`, add `skipped: true` to the child node and continue to the next child.
 
 4. **R5B.4 — Update child.** On approval, call `jira_update_issue` with the approved description for this child. Add `updated_at: <timestamp>` to the child node.
+
+5. **R5B.5 — Compaction gate (between children).** After updating this child in Jira, follow the Phase Compaction Handoff Contract above before starting the next child. Entity name: `phase-handoff-<work-item-key>-R5B-<child-JIRA-KEY>`; `next_phase: R5B-<next-child-JIRA-KEY>` (or `R6` if this was the last child); decisions: this child updated (or skipped); include `child_completed: <JIRA-KEY>` and `next_child: <next-JIRA-KEY or "none">` observations. REFERENCES: the `child_work_item-<KEY>` node for this child. Emit the Phase Summary block and instruct the user to run `/compact` before continuing to the next child.
 
 After the loop completes, present a summary in the chat: "Updated parent epic `<KEY>` and `N` of `M` child tasks." (where M is total children enumerated and N is how many were updated, not skipped).
 
@@ -609,10 +631,10 @@ file/module/service path, brief description of relevance, and risk level.]
 **Agent Actions:**
 
 1. **Enumerate.** Call `read_graph`. Identify every entity that should be deleted in this cleanup:
-   - The intake `work_item` entity for this issue and every entity linked to it: `affected_area`, `exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`.
+   - The intake `work_item` entity for this issue and every entity linked to it: `affected_area`, `exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`, `phase_handoff` (all entities with prefix `phase-handoff-<work-item-key>-`).
    - Any `child_work_item-<KEY>` entities created during R1 (fill-out mode + Epic path) — including those marked `skipped: true` and those with `updated_at` recorded.
    - Any `classification_signal` / `code_evidence` carried over from issue-intake (Missing Requirement path).
-   - Any upstream **implementation-discovery** state still in the graph: the `discovery_summary-<slug>` entity, the `work_item-discovery-<slug>` work item, the verification-round and first-round `exploration` subgraph linked to it (including any finding entities marked `superseded: true`, which must still be deleted — supersession marks them as non-canonical, not as already-removed), and any structured `open_question` entities reified at D5 (sources `d3_discussion` and `d4_verification`). These persist intentionally from a prior `/implementation-discovery` run and R6 owns reaping them. Note that they are reachable both through the `summarizes` relation from `discovery_summary-<slug>` and through the `for` re-link added at R2 step 2.
+   - Any upstream **implementation-discovery** state still in the graph, including any `phase_handoff` entities created by the discovery workflow (prefix `phase-handoff-discovery-<slug>-`): the `discovery_summary-<slug>` entity, the `work_item-discovery-<slug>` work item, the verification-round and first-round `exploration` subgraph linked to it (including any finding entities marked `superseded: true`, which must still be deleted — supersession marks them as non-canonical, not as already-removed), and any structured `open_question` entities reified at D5 (sources `d3_discussion` and `d4_verification`). These persist intentionally from a prior `/implementation-discovery` run and R6 owns reaping them. Note that they are reachable both through the `summarizes` relation from `discovery_summary-<slug>` and through the `for` re-link added at R2 step 2.
    - Any other intake-scoped entities created during R0–R5 that link back to the work item.
 
 2. **Present the cleanup plan to the user.** Build a short, structured summary in the chat:

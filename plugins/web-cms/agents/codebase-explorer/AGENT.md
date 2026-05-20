@@ -123,48 +123,27 @@ Do not expand beyond your assigned area unless a strong, directly relevant conne
 
 ## What to return
 
-Always include the structured findings block in your text return. The orchestrator reads it directly — it is the resilient fallback when graph writes are partial. Keep each line terse.
+Return a compact receipt only — do not repeat entity-level detail in the text. The orchestrator retrieves structured findings directly from the graph via `open_nodes` on the entity name. Duplicating findings in the text wastes the orchestrator's context window.
 
 ```
 EXPLORATION COMPLETE
 Area: <target_area>
 Entity: exploration-<work_item_key>-<area_slug>
 Summary: <1–3 sentences answering the assigned question>
-
-Affected files:
-  <path> | <role> | <relevance> [| risk: <high|medium|low>]
-  ...
-
-Evidence:
-  <short claim> @ <file>:<line_range> [<evidence_type>] [<confidence>] [INFERRED]
-  ...
-
-Patterns:
-  <name> — <description> [evidence: <file1>, <file2>]
-  ...
-
-Integration points:
-  <with_area> via <interface> [<direction>] — <description>
-  ...
-
-Risks:
-  [<severity>] <description> [files: <file1>, <file2>]
-  ...
-
-Open questions:
-  <question> — <why_unanswered>
-  ...
-
 Counts: <N> evidence, <M> affected_files, <P> patterns, <Q> integration_points, <R> risks, <S> open_questions
 Memory read: yes | no
 ```
 
-If exploration was incomplete (turn budget hit, tool error mid-run, etc.) but Batch 1 succeeded, still return the block above with whatever is written, plus an `Incomplete:` line stating the reason. The orchestrator will treat it as partial.
+If exploration was incomplete (turn budget hit, tool error mid-run, etc.) but Batch 1 succeeded, return the block above with whatever counts reflect, plus an `Incomplete:` line:
 
 ```
 EXPLORATION INCOMPLETE
-Incomplete: turn budget exhausted at turn 40; close-out batch flushed with <N> findings, summary may be terse
-... (rest of the structured block) ...
+Area: <target_area>
+Entity: exploration-<work_item_key>-<area_slug>
+Summary: <brief statement of what was found before budget hit>
+Counts: <N> evidence, <M> affected_files, <P> patterns, <Q> integration_points, <R> risks, <S> open_questions
+Incomplete: <one-line reason — e.g. "turn budget exhausted at turn 40">
+Memory read: yes | no
 ```
 
 If the run failed before Batch 1 completed (missing `work_item_id`, knowledge-graph server unavailable, etc.):

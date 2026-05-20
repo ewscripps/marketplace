@@ -25,7 +25,9 @@
 - **File discovery (find files by name or pattern):** Use native `Glob`.
 - **Content search (find text inside files):** Use native `Grep`. For symbolic code search (finding classes, methods, or callers), delegate to the `codebase-explorer` agent, which uses the Serena MCP server.
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
-- **Git:** Prefer MCP git tools (`git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_staged`, `git_diff_unstaged`, `git_log`, `git_show`, `git_create_branch`, `git_checkout`, `git_reset`) over running `git` via Bash. Use Bash only for git operations with no MCP equivalent (`git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`) and for running build, test, and lint commands.
+- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
+
+**SERENA PROJECT ACTIVATION:** Before R0, call `check_onboarding_performed`. If it reports that onboarding has not been performed for this project, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`) and any symbol-aware operations invoked by the `codebase-explorer` agent depend on this being done. Do this once at the start of the workflow; do not repeat it between phases.
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
@@ -36,6 +38,20 @@
 - R4 — Requirements Synthesis
 - R5 — Jira Issue Creation or Update
 - R6 — Cleanup
+
+**PHASE COMPACTION HANDOFF CONTRACT:** At designated compaction gates in this workflow, the agent writes a durable `phase_handoff` entity to the knowledge graph and prompts the user to run `/compact`. This prevents auto-compaction from discarding phase position, particularly after the large codebase and design analysis at R2.
+
+**Steps at each gate — execute before instructing `/compact`:**
+
+1. Wait for any background `area-mapper` sub-agent to complete.
+2. Create a `phase_handoff` entity in the knowledge graph:
+   - **Name:** `phase-handoff-<work-item-key>-<phase-id>` (e.g. `phase-handoff-intake-new-hero-component-R2`); use the `work_item_id` recorded at R0.
+   - **Observations:** `phase: <id>`, `skill: design-intake`, `jira_key: <key or slug>`, `mode: <new or update>`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item.
+   - **Relations:** `BELONGS_TO` → the `work_item` entity for this run; `SUPERSEDES` → prior `phase_handoff` for this work item (if any); `REFERENCES` → relevant `affected_area`, `design_spec`, `exploration`, `criterion`, and `qa_item` entity names.
+3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
+4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, work item key, mode, one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, and resume at `next_phase`. If the user types a different message instead, handle it normally.
+
+**Cleanup:** Include all `phase_handoff` entities for this work item (prefix `phase-handoff-<work-item-key>-`) in the R6 cleanup enumeration alongside other session-scoped entities.
 
 ---
 
@@ -73,7 +89,7 @@
 
 3. After all questions are answered, summarize the gathered context back to the user in a clear, structured format.
     
-> **USE KNOWLEDGE GRAPH:** After the R0 approval gate is confirmed, write the core work item to the knowledge graph. Create a `work_item` entity with name `work_item-<key>` where `<key>` is the existing Jira issue key (if provided) or a normalized slug of the title (lowercase, whitespace/punctuation → `-`, trimmed) prefixed with `intake-` (e.g. `work_item-intake-new-hero-component`). Observations: `work_type` (always `feature` for this workflow), `title`, `description`, `requested_by`, `design_system` (if provided), `design_assets` (links or file paths, if provided), `existing_jira_key` (if provided). This is the root node — all subsequent phases will add linked nodes to it. R5 reads the full graph to assemble the Jira issue description. **Record the entity name** — it is the `work_item_id` passed to every `codebase-explorer` call in R2.
+> **USE KNOWLEDGE GRAPH:** After the R0 approval gate is confirmed, write the core work item to the knowledge graph. Create a `work_item` entity with name `work_item-<key>` where `<key>` is the existing Jira issue key (if provided) or a normalized slug of the title (lowercase, whitespace/punctuation → `-`, trimmed) prefixed with `intake-` (e.g. `work_item-intake-new-hero-component`). Observations: `work_type` (always `feature` for this workflow), `title`, `description`, `requested_by`, `design_system` (if provided), `design_assets` (links or file paths, if provided), `existing_jira_key` (if provided). This is the root node — all subsequent phases will add linked nodes to it. R5 reads the graph entities via `open_nodes` to assemble the Jira issue description. **Record the entity name** — it is the `work_item_id` passed to every `codebase-explorer` call in R2.
 
 > **REQUIRED:** The following context must be confirmed before proceeding:
 > 
@@ -127,10 +143,10 @@
     - A question: "What code, patterns, and conventions are relevant to implementing [product description] in this area?"
     - The `work_item_id` recorded at R0 (the entity name of the `work_item` node). All findings the explorer streams to the graph will be linked to this node.
     - The work item description for context
-3. Wait for all explorers to return one of `EXPLORATION COMPLETE`, `EXPLORATION INCOMPLETE`, or `EXPLORATION FAILED`. Each non-failed return includes a structured findings block — use it as the resilient source of record alongside the graph. Treat `INCOMPLETE` as partial: findings are present but the run did not finish; consider re-spawning for the same area if coverage matters. Treat `FAILED` as no findings written.
+3. Wait for all explorers to return. Each non-failed return contains an `Entity:` line with the exploration entity name. Treat `INCOMPLETE` as partial: findings are present but the run did not finish; consider re-spawning for the same area if coverage matters. Treat `FAILED` as no findings written — re-spawn that explorer before proceeding.
 
 > **POST-EXPLORATION ENRICHMENT:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `work_item_id`. The mapper crystallizes durable area knowledge from this run's graph into Serena project memory so future explorations of the same areas start with hot context. Do not wait for it — proceed immediately to step 4.
-4. Call `read_graph` and walk the subgraph rooted at each `exploration` entity for this `work_item_id`. Surface any `open_question` entities. If any open question identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` for that area (passing the same `work_item_id`) before proceeding.
+4. Call `open_nodes` on each `exploration` entity name from the returns. If any entity comes back empty, re-spawn that explorer rather than treating missing data as confirmed. Surface any `open_question` entities in the responses. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` for that area (passing the same `work_item_id`) before proceeding.
 5. Synthesize the findings from the graph into a unified codebase analysis. Read across all `exploration` entities linked to this `work_item_id` and aggregate:
     - **Affected files** — from `affected_file` entities. Group by module / service.
     - **Patterns and conventions** — from `pattern` entities; including CSS variables, theme tokens, component patterns, and style conventions relevant to the design.
@@ -177,6 +193,8 @@
 > **REQUIRED: Review the codebase analysis before presenting.** Verify every item is grounded in actual evidence. Label speculative entries as `[INFERRED]`. Do not present an unreviewed analysis.
 
 > **APPROVAL GATE — FULL STOP.** Present the codebase and design analysis. Then use `AskUserQuestion` with header `R2 Approval`, options: `Approve and proceed (Recommended)` (description: "Scope areas and design analysis are correct and complete") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to R3 until approved.
+
+> **COMPACTION GATE — R2:** Once R2 approval is confirmed and any background `area-mapper` has completed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<work-item-key>-R2`; `next_phase: R3`; decisions: codebase scope confirmed, design artifact analysis status (complete / gap noted). REFERENCES: all `exploration` entities from R2, the `design_spec` node, and all `affected_area` nodes written to the graph.
 
 ---
 
@@ -314,6 +332,8 @@ Evaluate the work item against these criteria:
 
 > **APPROVAL GATE — FULL STOP.** Present the full R4 synthesis (acceptance criteria, risk register, Epic vs. Task recommendation). Then use `AskUserQuestion` with header `R4 Approval`, options: `Approve and proceed (Recommended)` (description: "All three sections are accurate — ready to create the Jira issue") / `Request changes` (description: "Something needs correction before continuing"). Do not create a Jira issue of the wrong type.
 
+> **COMPACTION GATE — R4:** Once R4 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<work-item-key>-R4`; `next_phase: R5`; decisions: Epic vs Task recommendation (state which), acceptance criteria count, key risks. REFERENCES: all `criterion` nodes, all `qa_item` nodes, the `design_spec` node, and all `affected_area` nodes.
+
 ---
 
 ### R5 — Jira Issue Creation or Update
@@ -322,7 +342,7 @@ Evaluate the work item against these criteria:
 
 **Agent Actions:**
 
-1. > **USE KNOWLEDGE GRAPH:** Read the full graph — `work_item`, `affected_area`, `design_spec`, `qa_item`, `criterion`, `related_issue`, and `epic` nodes — to assemble the Jira issue description. Each section of the description maps directly to a node type. This ensures nothing is missed or invented and the description is fully grounded in the structured context built across R0–R4.
+1. > **USE KNOWLEDGE GRAPH:** Retrieve the work-item subgraph using `open_nodes` on the `work_item` entity name and each entity name recorded in the R4 `phase_handoff` REFERENCES — `affected_area`, `design_spec`, `qa_item`, `criterion`, `related_issue`, and `epic` nodes — to assemble the Jira issue description. Each section of the description maps directly to a node type. This ensures nothing is missed or invented and the description is fully grounded in the structured context built across R0–R4.
     
 2. Assemble the Jira issue description using the description structure below. The description must contain only the structured delivery context for the work item. Do not append workflow instructions, skill-invocation text, or placeholder tokens.
     
@@ -460,7 +480,7 @@ file/module/service path, brief description of relevance, and risk level.]
 **Agent Actions:**
 
 1. **Enumerate.** Call `read_graph`. Identify every entity that should be deleted in this cleanup:
-   - The intake `work_item` entity for this issue and every entity linked to it: `affected_area`, `design_spec`, `exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`, `qa_item`, `criterion`, `related_issue`, `epic`.
+   - The intake `work_item` entity for this issue and every entity linked to it: `affected_area`, `design_spec`, `exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`, `qa_item`, `criterion`, `related_issue`, `epic`, `phase_handoff`.
    - Any other intake-scoped entities created during R0–R5 that link back to the work item.
 
 2. **Present the cleanup plan to the user.** Build a short, structured summary in the chat:
@@ -477,6 +497,7 @@ file/module/service path, brief description of relevance, and risk level.]
    - affected_file / evidence / pattern / integration_point / risk / open_question: <total count>
    - qa_item / criterion: <total count>
    - related_issue / epic: <total count>
+   - phase_handoff: <count>
    - <any other intake-scoped entities, listed by type and count>
 
    Total entities to delete: <N>
