@@ -61,6 +61,20 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 - T12 — Summary of Changes
 - T13 — Cleanup
 
+**PHASE COMPACTION HANDOFF CONTRACT:** At designated compaction gates in this workflow, the agent writes a durable `phase_handoff` entity to the knowledge graph and prompts the user to run `/compact`. This prevents auto-compaction from firing mid-phase and discarding phase position.
+
+**Steps at each gate — execute before instructing `/compact`:**
+
+1. Wait for any background `area-mapper` sub-agent to complete.
+2. Create a `phase_handoff` entity in the knowledge graph:
+   - **Name:** `phase-handoff-<JIRA-KEY>-<phase-id>` (e.g. `phase-handoff-ELI-1234-T5`)
+   - **Observations:** `phase: <id>`, `skill: task-card`, `jira_key: <key>`, `branch: <name or "none">`, `worktree: <path or "none">`, `head_sha: <sha or "n/a">`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. At T8 only: `reviewer_iterations: impl=N test=N doc=N`.
+   - **Relations:** `BELONGS_TO` → `work_item-<JIRA-KEY>`; `SUPERSEDES` → prior `phase_handoff` for this work item (if any); `REFERENCES` → relevant `exploration`, `plan`, and `finding` entity names.
+3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
+4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, Jira key + branch + worktree + head SHA anchors, reviewer iteration counters (T8 only), one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → `git status` + `git worktree list` → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, verify git state (`git status` + `git worktree list` if branch/worktree are set), and resume at `next_phase`. If the user types a different message instead, handle it normally.
+
+**Cleanup:** Include all `phase_handoff` entities for this work item (prefix `phase-handoff-<JIRA-KEY>-`) in the T13 cleanup enumeration alongside other session-scoped entities.
+
 ---
 
 ### T0 — Transition to In Progress
@@ -81,7 +95,7 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 ### T2 — Review the Codebase
 
-> **USE KNOWLEDGE GRAPH:** Before spawning explorers, ensure a `work_item-<JIRA_KEY>` entity exists for this task. Call `read_graph`; if missing (typical at the start of a fresh session), create it with observations: `work_type: task`, `jira_key`, `title`, `phase: review`. **Record the entity name** as the `work_item_id` for T2 and pass it to every explorer. Explorer findings stream into the graph as `affected_file`, `evidence`, `pattern`, `integration_point`, and `risk` entities linked to this `work_item` node, and the orchestrator reads them after the explorers return.
+> **USE KNOWLEDGE GRAPH:** Before spawning explorers, ensure a `work_item-<JIRA_KEY>` entity exists for this task. Call `search_nodes` with the work item key (e.g. `work_item-ELI-1234`); if no entity is returned, create it with observations: `work_type: task`, `jira_key`, `title`, `phase: review`. **Record the entity name** as the `work_item_id` for T2 and pass it to every explorer. Explorer findings stream into the graph as `affected_file`, `evidence`, `pattern`, `integration_point`, and `risk` entities linked to this `work_item` node, and the orchestrator retrieves them via `open_nodes` after the explorers return.
 
 - Identify all distinct areas of the codebase to explore based on the **Affected Areas** section and the task goals. Limit the scope of this exploration to the current project directory.
 - For each distinct area in this project, invoke a `codebase-explorer` sub-agent in **parallel**, providing:
@@ -89,9 +103,9 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
     - The question: "What patterns, abstractions, utilities, and testing conventions are in use in this area, and what architectural considerations affect how this task's goals can be implemented here?"
     - The `work_item_id` (`work_item-<JIRA_KEY>`). All findings the explorer streams to the graph will be linked to this node.
     - The task description and acceptance criteria for context
-- Wait for all explorers to return one of `EXPLORATION COMPLETE`, `EXPLORATION INCOMPLETE`, or `EXPLORATION FAILED`. Each non-failed return includes a structured findings block in the text — use it as the resilient source of record alongside the graph. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters.
+- Wait for all explorers to return. Each non-failed return contains an `Entity:` line with the exploration entity name. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters. `FAILED` means no graph data was written — re-spawn that explorer before proceeding.
 - **Post-exploration enrichment:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `work_item_id`. It crystallizes durable area knowledge from this run's graph into Serena project memory for future explorations. Do not wait for it.
-- Call `read_graph` and walk the subgraph rooted at each `exploration` entity for this `work_item_id`. Surface any `open_question` entities. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
+- Call `open_nodes` on each `exploration` entity name from the returns. If any entity comes back empty, re-spawn that explorer rather than treating missing data as confirmed. Surface any `open_question` entities in the responses. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
 
 > **USE SEQUENTIAL THINKING:** Before synthesizing the explorer findings, invoke the `sequentialthinking` tool. Use it to integrate the evidence across all explorer reports, reconcile any conflicting signals between areas, identify the patterns and constraints most relevant to this task's implementation, and build a coherent mental model of the affected codebase. Synthesis that skips this step tends to miss cross-area coupling and architectural constraints that only appear when findings are read together. Do not proceed to the synthesis bullets until the reasoning is complete.
 
@@ -114,6 +128,8 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 > **REQUIRED:** All BLOCKING questions answered and answers recorded. Remaining unanswered questions listed as open items.
 
 > **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `T3 Approval`, options: `Approve and proceed (Recommended)` (description: "All blocking answers are accurate and recorded") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to T4 until approved.
+
+> **COMPACTION GATE — T3:** Once T3 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-T3`; `next_phase: T4`; decisions: clarifying answers and any blocking constraints; branch + worktree + head SHA: "n/a" (not yet created). REFERENCES: exploration entities from T2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T4.
 
 ### T4 — Create Implementation Plan
 
@@ -173,6 +189,8 @@ The sub-agent will return a structured findings report with an overall verdict o
 - Then use `AskUserQuestion` with header `T5 Approval`, options: `Approve and proceed (Recommended)` (description: "Implementation plan is accurate — begin work") / `Request changes` (description: "Revise the plan before proceeding"). Do not poll Jira for approval.
 - If the user selects "Request changes", revise the plan, repost the full combined `T4/T5` comment to Jira, and use `AskUserQuestion` again.
 - Only proceed to T6 after "Approve and proceed" is selected.
+
+> **COMPACTION GATE — T5:** Once T5 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-T5`; `next_phase: T6`; decisions: approved implementation plan (one-line summary, plan entity name for REFERENCES); branch + worktree + head SHA: "n/a" (not yet created). REFERENCES: plan entity and exploration entities from T2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T6.
 
 ---
 
@@ -257,7 +275,7 @@ Do not proceed to the dedicated completion loops until the implementation-review
 
 Invoke the `test-reviewer` sub-agent, providing:
 
-- The full diff of all changed files
+- The worktree path (`.worktrees/<branch-name>`), branch name, and base branch — the reviewer fetches the diff itself via `git diff <base-branch>..HEAD` in the worktree. Do not paste the full diff inline.
 - The approved implementation plan from T4, especially the testing expectations
 - The acceptance criteria from the Task Details
 - The codebase findings from T2, especially testing conventions and nearby test structure
@@ -273,7 +291,7 @@ The sub-agent will add or update tests as needed, run the relevant test commands
 
 Invoke the `documentation-reviewer` sub-agent, providing:
 
-- The full diff of all changed files after test completion
+- The worktree path (`.worktrees/<branch-name>`), branch name, and base branch — the reviewer fetches the diff itself via `git diff <base-branch>..HEAD` in the worktree. Do not paste the full diff inline.
 - The approved implementation plan from T4, especially the documentation expectations
 - The acceptance criteria from the Task Details
 - The codebase findings from T2, especially documentation conventions and nearby docs
@@ -286,6 +304,8 @@ The sub-agent will update inline and repository documentation as needed and retu
 - If the report says user-facing documentation follow-up is `REQUIRED`, record that in T12 and recommend running `/document-card` after this workflow completes.
 
 Do not proceed to T9 until `implementation-reviewer`, `test-reviewer`, and `documentation-reviewer` have all completed successfully.
+
+> **COMPACTION GATE — T8:** Once all three reviewers are complete, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-T8`; `next_phase: T9`; include `reviewer_iterations: impl=N test=N doc=N`; decisions: implementation approach summary and any plan deviations; approval_condition: reviewer verdict. REFERENCES: plan entity from T4 and exploration entities from T2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T9.
 
 ### T9 — Post-Implementation Verification
 
@@ -368,7 +388,7 @@ Post a comment on this Jira issue with the exact heading `**T12 — Summary of C
 
 - **Standard mode:** Confirm `.worktrees/<branch-name>` has been removed. If it still exists (e.g. a follow-up worktree was created during T11 and not yet removed by T10), run `git worktree remove .worktrees/<branch-name>` now. Confirm you have returned to the main working directory.
 - **Epic child task mode:** Confirm the child task worktree has been exited and no task-specific temporary worktree remains. Do not remove the shared epic integration worktree here.
-- **Standard mode:** Clear the session-scoped knowledge graph nodes created during this task — the `work_item-<JIRA_KEY>` entity and every entity linked to it (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`, and any `affected_area` rolled up from them). Use `read_graph` to enumerate, then `delete_entities`. The graph is session-scoped; finishing without cleanup leaves stale state for the next workflow.
+- **Standard mode:** Clear the session-scoped knowledge graph nodes created during this task — the `work_item-<JIRA_KEY>` entity and every entity linked to it (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`, `phase_handoff`, and any `affected_area` rolled up from them). Use `read_graph` to enumerate, then `delete_entities`. The graph is session-scoped; finishing without cleanup leaves stale state for the next workflow.
 - **Epic child task mode:** Do not delete the `work_item-<JIRA_KEY>` entity for this child task or its linked nodes here — the epic-level cleanup at E11 owns wholesale graph teardown after all child tasks complete.
 
 ## Completion Criteria

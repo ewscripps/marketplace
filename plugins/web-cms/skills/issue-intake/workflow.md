@@ -27,6 +27,8 @@
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
 - **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
 
+**SERENA PROJECT ACTIVATION:** Before I0, call `check_onboarding_performed`. If it reports that onboarding has not been performed for this project, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`) and any symbol-aware operations invoked by the `codebase-explorer` agent depend on this being done. Do this once at the start of the workflow; do not repeat it between phases.
+
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
 - I0 — Intake
@@ -36,6 +38,20 @@
 - I4 — Classification & Triage
 - I5 — Resolution
 - I6 — Cleanup
+
+**PHASE COMPACTION HANDOFF CONTRACT:** At designated compaction gates in this workflow, the agent writes a durable `phase_handoff` entity to the knowledge graph and prompts the user to run `/compact`. This prevents auto-compaction from discarding classification state mid-workflow.
+
+**Steps at each gate — execute before instructing `/compact`:**
+
+1. Wait for any background `area-mapper` sub-agent to complete.
+2. Create a `phase_handoff` entity in the knowledge graph:
+   - **Name:** `phase-handoff-<work-item-key>-<phase-id>` (e.g. `phase-handoff-issue-checkout-disabled-I4`); use the `work_item_id` recorded after I1.
+   - **Observations:** `phase: <id>`, `skill: issue-intake`, `jira_key: <key or slug>`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. At the I4 gate only: `classification: <Bug or Missing Requirement>`, `severity: <level>` (Bug path only).
+   - **Relations:** `BELONGS_TO` → the `work_item` entity for this issue; `SUPERSEDES` → prior `phase_handoff` for this work item (if any); `REFERENCES` → `classification` node, `code_evidence` node, and `classification_signal` nodes from I3.
+3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
+4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, work item key, one-line decision summary including classification verdict, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, and resume at `next_phase`. If the user types a different message instead, handle it normally.
+
+**Cleanup:** Include all `phase_handoff` entities for this work item (prefix `phase-handoff-<work-item-key>-`) in the I6 cleanup enumeration alongside other session-scoped entities.
 
 ---
 
@@ -143,10 +159,10 @@
     - The question: "Does code exist in this area that is intended to produce [expected behavior]? If it exists, is there evidence it is behaving incorrectly? If it does not exist, confirm its absence clearly."
     - The `work_item_id` recorded after I1 (e.g. `work_item-PROJ-123` or `work_item-issue-<slug>`). All findings the explorer streams to the graph will be linked to this node.
     - The bug description, observed behavior, expected behavior, reproduction steps, and any logs for context
-3. Wait for all explorers to return one of `EXPLORATION COMPLETE`, `EXPLORATION INCOMPLETE`, or `EXPLORATION FAILED`. Each non-failed return includes a structured findings block in the text — use it as the resilient source of record alongside the graph. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters.
+3. Wait for all explorers to return. Each non-failed return contains an `Entity:` line with the exploration entity name. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters. `FAILED` means no graph data was written — re-spawn that explorer before proceeding.
 
 > **POST-EXPLORATION ENRICHMENT:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `work_item_id`. The mapper crystallizes durable area knowledge from this run's graph into Serena project memory for future explorations. Do not wait for it — proceed immediately to step 4.
-4. Call `read_graph` and walk the subgraph rooted at each `exploration` entity for this `work_item_id`. Surface any `open_question` entities. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
+4. Call `open_nodes` on each `exploration` entity name from the returns. If any entity comes back empty, re-spawn that explorer rather than treating missing data as confirmed. Surface any `open_question` entities in the responses. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
 5. Synthesize the findings from the graph. For each area, record whether code exists for the expected behavior with specific evidence (cite `evidence` entities by their `file` and `line_range` observations).
 6. Look for any recent changes (commits, deployments, config changes) in the affected areas that may have introduced a regression.
 7. Identify relevant error handling paths, edge cases, or known fragile areas — these surface from `risk` entities and from `evidence` entities with `evidence_type: behavior`.
@@ -251,6 +267,8 @@ Assign a severity level:
 ---
 
 > **APPROVAL GATE — FULL STOP.** Present the full I4 classification (and severity if Bug). Use `AskUserQuestion` (Header: `I4 Approval`, Question: `Is the classification correct, does the rationale accurately reflect the evidence, and is the severity accurate (if Bug)?`, Options: `Approve and proceed (Recommended)`, `Request changes`). Do not proceed to I5 until the user approves. The confirmed classification determines which I5 path is followed — do not deviate.
+
+> **COMPACTION GATE — I4:** Once I4 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<work-item-key>-I4`; `next_phase: I5`; decisions: classification verdict (Bug or Missing Requirement) and severity (Bug only); approval_condition: verbatim user phrasing. REFERENCES: classification node, code_evidence node, classification_signal nodes. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to I5.
 
 ---
 
@@ -396,8 +414,8 @@ file/module/service path, brief description of relevance, and risk level.]
 #### Bug path
 
 1. **Enumerate.** Call `read_graph`. Identify every entity that should be deleted in this cleanup:
-   - The intake `work_item` entity for this issue and every entity linked to it: `classification_signal`, `code_evidence`, `affected_area`, plus the explorer-written subgraph from I2 (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`).
-   - Any upstream **implementation-discovery** state still in the graph: the `discovery_summary-<slug>` entity, the `work_item-discovery-<slug>` work item, the verification-round and first-round `exploration` subgraph linked to it (including any finding entities marked `superseded: true`, which must still be deleted — supersession marks them as non-canonical, not as already-removed), and any structured `open_question` entities reified at D5 (sources `d3_discussion` and `d4_verification`). These persist intentionally from a prior `/implementation-discovery` run; if discovery happened earlier in this session and the user opened a bug instead of running requirements-intake, I6 owns reaping the discovery state too.
+   - The intake `work_item` entity for this issue and every entity linked to it: `classification_signal`, `code_evidence`, `affected_area`, `phase_handoff` (prefix `phase-handoff-<work-item-key>-`), plus the explorer-written subgraph from I2 (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`).
+   - Any upstream **implementation-discovery** state still in the graph, including any discovery `phase_handoff` entities (prefix `phase-handoff-discovery-<slug>-`): the `discovery_summary-<slug>` entity, the `work_item-discovery-<slug>` work item, the verification-round and first-round `exploration` subgraph linked to it (including any finding entities marked `superseded: true`, which must still be deleted — supersession marks them as non-canonical, not as already-removed), and any structured `open_question` entities reified at D5 (sources `d3_discussion` and `d4_verification`). These persist intentionally from a prior `/implementation-discovery` run; if discovery happened earlier in this session and the user opened a bug instead of running requirements-intake, I6 owns reaping the discovery state too.
    - Any other intake-scoped entities created during I0–I5 that link back to the work item.
 
 2. **Present the cleanup plan to the user.** Build a short, structured summary in the chat:

@@ -53,6 +53,20 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 - E10 — Epic Summary
 - E11 — Cleanup
 
+**PHASE COMPACTION HANDOFF CONTRACT:** At designated compaction gates in this workflow, the agent writes a durable `phase_handoff` entity to the knowledge graph and prompts the user to run `/compact`. This prevents auto-compaction from firing mid-phase and discarding phase position — particularly important for long-running epics with multiple child tasks.
+
+**Steps at each gate — execute before instructing `/compact`:**
+
+1. Wait for any background `area-mapper` sub-agent to complete.
+2. Create a `phase_handoff` entity in the knowledge graph:
+   - **Name:** `phase-handoff-<EPIC-KEY>-<phase-id>` (e.g. `phase-handoff-ELI-900-E5`); for per-child E8 gates use `phase-handoff-<EPIC-KEY>-E8-<child-JIRA-KEY>`.
+   - **Observations:** `phase: <id>`, `skill: epic-card`, `jira_key: <epic-key>`, `branch: <integration-branch or "none">`, `worktree: <path or "none">`, `head_sha: <sha or "n/a">`, one `decisions: <text>` observation per key decision, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. For E8 per-child gates only: `epic_key: <EPIC-KEY>`, `integration_branch: <name>`, `child_completed: <JIRA-KEY> (N of M)`, `next_child: <JIRA-KEY or "none — all complete">`.
+   - **Relations:** `BELONGS_TO` → `work_item-<EPIC-KEY>`; `SUPERSEDES` → prior `phase_handoff` for this epic (if any); `REFERENCES` → relevant `exploration`, `epic`, `task`, `branch`, and `plan` entity names.
+3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
+4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, epic key + integration branch + worktree + head SHA anchors, child completion status (E8 gates), one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → `git status` + `git worktree list` → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user types `continue`, call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, verify git state, and resume at `next_phase`. Exception: the E8 per-child gate uses its own merged pause defined in that step — follow those instructions instead of this paragraph.
+
+**Cleanup:** Include all `phase_handoff` entities for this epic (prefix `phase-handoff-<EPIC-KEY>-`) in the E11 cleanup enumeration alongside other session-scoped entities.
+
 ---
 
 ### E0 — Transition Epic to In Progress
@@ -83,7 +97,7 @@ If one or more children are found, record `existing_children: N` on the epic nod
 
 ### E2 — Review the Codebase
 
-> **USE KNOWLEDGE GRAPH:** Before spawning explorers, ensure a `work_item-<JIRA_KEY>` entity exists for this epic. Call `read_graph`; if missing, create it with observations: `work_type: epic`, `jira_key`, `title`, `summary`, `phase: review`. **Record the entity name** as the `work_item_id` for E2 and pass it to every explorer. The richer `epic` node referenced in E4 is created later for breakdown tracking; the `work_item` node here is the canonical root the explorers attach their findings to.
+> **USE KNOWLEDGE GRAPH:** Before spawning explorers, ensure a `work_item-<JIRA_KEY>` entity exists for this epic. Call `search_nodes` with the work item key (e.g. `work_item-ELI-900`); if no entity is returned, create it with observations: `work_type: epic`, `jira_key`, `title`, `summary`, `phase: review`. **Record the entity name** as the `work_item_id` for E2 and pass it to every explorer. The richer `epic` node referenced in E4 is created later for breakdown tracking; the `work_item` node here is the canonical root the explorers attach their findings to.
 
 - Identify all distinct areas of the codebase to explore based on the **Affected Areas** section and the epic goals.
 - For each distinct area (service, module, or component), invoke a `codebase-explorer` sub-agent in **parallel**, providing:
@@ -91,9 +105,9 @@ If one or more children are found, record `existing_children: N` on the epic nod
     - The question: "What patterns, abstractions, and utilities are in use here, and what architectural considerations affect how this epic's goals can be implemented in this area?"
     - The `work_item_id` (`work_item-<JIRA_KEY>`). All findings the explorer streams to the graph will be linked to this node.
     - The epic description for context
-- Wait for all explorers to return one of `EXPLORATION COMPLETE`, `EXPLORATION INCOMPLETE`, or `EXPLORATION FAILED`. Each non-failed return includes a structured findings block in the text — use it as the resilient source of record alongside the graph. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters.
+- Wait for all explorers to return. Each non-failed return contains an `Entity:` line with the exploration entity name. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters. `FAILED` means no graph data was written — re-spawn that explorer before proceeding.
 - **Post-exploration enrichment:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `work_item_id`. It crystallizes durable area knowledge from this run's graph into Serena project memory for future explorations. Do not wait for it.
-- Call `read_graph` and walk the subgraph rooted at each `exploration` entity for this `work_item_id`. Surface any `open_question` entities. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
+- Call `open_nodes` on each `exploration` entity name from the returns. If any entity comes back empty, re-spawn that explorer rather than treating missing data as confirmed. Surface any `open_question` entities in the responses. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
 
 > **USE SEQUENTIAL THINKING:** Before synthesizing the explorer findings, invoke the `sequentialthinking` tool. Use it to integrate the evidence across all explorer reports, identify the patterns and abstractions that the epic's tasks must respect or extend, surface cross-area coupling that would constrain the breakdown plan in E4, and note any technical debt or risks that should be assigned to specific tasks rather than left implicit. The E4 breakdown is only as strong as the synthesis feeding it — missing cross-area constraints at this step causes task ordering and independence errors downstream. Do not proceed to the synthesis bullets until the reasoning is complete.
 
@@ -117,6 +131,8 @@ If one or more children are found, record `existing_children: N` on the epic nod
 > **REQUIRED:** All BLOCKING questions answered and answers recorded. Remaining unanswered questions listed as open items.
 
 > **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `E3 Approval`, options: `Approve and proceed (Recommended)` (description: "All blocking answers are accurate and recorded") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to E4 until approved.
+
+> **COMPACTION GATE — E3:** Once E3 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<EPIC-KEY>-E3`; `next_phase: E4`; decisions: clarifying answers and child-disposition decisions; branch + worktree + head SHA: "n/a" (not yet created). REFERENCES: exploration entities from E2 and existing child task nodes from E1. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to E4.
 
 ### E4 — Create Breakdown Plan
 
@@ -188,6 +204,8 @@ Post a single combined Jira comment with the exact heading `**E4/E5 — Breakdow
 - Then use `AskUserQuestion` with header `E5 Approval`, options: `Approve and proceed (Recommended)` (description: "Breakdown plan is accurate — begin child task creation") / `Request changes` (description: "Revise the plan before proceeding"). Do not poll Jira for approval.
 - If the user selects "Request changes", revise the plan, repost the full combined `E4/E5` comment to Jira, and use `AskUserQuestion` again.
 - Only proceed to E6 after "Approve and proceed" is selected.
+
+> **COMPACTION GATE — E5:** Once E5 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<EPIC-KEY>-E5`; `next_phase: E6`; decisions: approved breakdown plan (task count, execution order summary, epic and task node names for REFERENCES); branch + worktree + head SHA: "n/a" (not yet created). REFERENCES: epic node and all task nodes from E4. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to E6.
 
 ---
 
@@ -306,7 +324,7 @@ Work through each executable child task **in the order defined in E4**, executin
 6. When the child task's T13 is complete, verify its status:
     - If successful: update the task's knowledge graph node to `status: done`. Mark the tracking task `E8 — Execute [JIRA-KEY]: [task title]` as `completed`. Verify the integration branch passes the full build, all tests, and all linters before proceeding to the next task.
     - If failed: stop and report the failure to the user. Do not begin the next child task until the failure is resolved.
-7. **Pause between tasks:** After completing each child task, use `AskUserQuestion` with header `Next Task`, options: `Continue with next task (Recommended)` (description: "Start the next child task in the breakdown order") / `Stop` (description: "Pause the epic here — I'll resume it later"). Do not begin the next child task until "Continue" is selected.
+7. **Compaction gate and pause between tasks:** After the child task completes successfully, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<EPIC-KEY>-E8-<child-JIRA-KEY>`; `next_phase: E8-<next-child-JIRA-KEY>` (or `E9` if this was the final child); include epic anchors: `epic_key: <EPIC-KEY>`, `integration_branch: <name>`, `child_completed: <JIRA-KEY> (N of M)`, `next_child: <next-JIRA-KEY or "none — proceed to E9">`; decisions: child completion summary. REFERENCES: the epic node, the completed child's task node, and the branch node. After emitting the Phase Summary block, end your turn with the following prompt and nothing else: **"Run `/compact` now. After compacting, type `continue` to start the next task, or `stop` to pause the epic here."** Do not begin the next child task until the user types `continue`.
 8. Do not begin the next child task until the current one is confirmed complete and the integration branch is clean.
 9. After the final child task is complete, remove the epic worktree: `git worktree remove .worktrees/<branch-name>`. Sync the local branch: `git fetch origin` followed by `git branch -f <branch-name> origin/<branch-name>`. Return to the main working directory before proceeding to E9.
 
@@ -360,10 +378,12 @@ After all child tasks are complete and user testing has passed, post a comment c
 
 **REQUIRED: Review the summary before posting.** Verify every field is present, "Child tasks completed" lists every task, and QA Verification Steps cover end-to-end verification. If the review reveals gaps, revise before posting.
 
+> **COMPACTION GATE — E10:** Once the E10 summary comment is posted, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<EPIC-KEY>-E10`; `next_phase: E11`; decisions: epic completion confirmed, all children done; branch: integration branch name. REFERENCES: epic node, branch node. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to E11.
+
 ### E11 — Cleanup
 
 - Confirm `.worktrees/<branch-name>` has been removed. Under the normal path it was removed in E8. If one was recreated during E9 follow-up work and not yet removed, run `git worktree remove .worktrees/<branch-name>` now.
-- Clear the session-scoped knowledge graph before finishing the workflow. This includes the `work_item-<JIRA_KEY>` entity for the epic, the separate `epic` / `task` / `branch` nodes used for breakdown tracking, and the explorer-written subgraph from E2 (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`) along with any per-child-task subgraphs that were not deleted by the child task workflows in epic child-task mode. Use `read_graph` to enumerate, then `delete_entities`. Do not retain epic, task, dependency, or branch state in the graph once the final Jira record is complete.
+- Clear the session-scoped knowledge graph before finishing the workflow. This includes the `work_item-<JIRA_KEY>` entity for the epic, the separate `epic` / `task` / `branch` / `phase_handoff` nodes used for breakdown tracking and compaction state, and the explorer-written subgraph from E2 (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`) along with any per-child-task subgraphs that were not deleted by the child task workflows in epic child-task mode. Use `read_graph` to enumerate, then `delete_entities`. Do not retain epic, task, dependency, branch, or handoff state in the graph once the final Jira record is complete.
 
 ---
 
