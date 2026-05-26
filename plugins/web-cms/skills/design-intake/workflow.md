@@ -57,6 +57,12 @@
 
 ### R0 — Intake
 
+**DISCOVERY PRE-CHECK:** Before greeting the user, call `read_graph` to check the knowledge graph for any entity whose name starts with `discovery_summary-` (the implementation-discovery skill names them `discovery_summary-<topic-slug>` so multiple discoveries in one session do not collide).
+1. **If exactly one is present:** acknowledge it immediately: "I found a prior implementation discovery session for: **[topic]** (chosen approach: **[chosen_approach]**, verification: **[verification_status]**). I'll use those findings as a head start — the codebase areas have already been explored and verified. If this isn't the right context, just say so and I'll start fresh."
+2. **If multiple are present** (the user ran more than one discovery in this session): list them by `topic` and `chosen_approach`, then use `AskUserQuestion` (Header: `Discovery Pick`, Question: `Multiple discovery sessions were found. Which one is this design run for?`, Options: one option per discovery summary labeled `[topic] — [chosen_approach]`, plus `Start fresh — ignore all discoveries`). Treat the user's pick as the selected `discovery_summary-<slug>`; ignore the others for this run.
+3. **If the user confirms a discovery summary:** add an observation `discovery_confirmed: true` to that specific `discovery_summary-<slug>` entity (not to any other). When asking intake questions below, skip the **Codebase areas** question — the discovery already covers it. Note that R2 will use the discovery findings and skip spawning new codebase-explorer agents (the design artifact analysis in R2 still runs — discovery does not cover visual specs).
+4. **If the user rejects** (or no discovery summary exists): proceed with normal intake and do not reference the discovery summary again.
+
 **Objective:** Greet the user and gather all context needed to begin the requirements workflow through natural conversation.
 
 **Agent Actions:**
@@ -134,6 +140,14 @@
 ### R2 — Codebase and Design Analysis
 
 **Objective:** Identify the code surfaces this work item will touch and extract visual specifications from any provided design artifacts.
+
+**DISCOVERY PRE-CHECK:** Before spawning codebase-explorer agents, call `read_graph`. If a `discovery_summary-<slug>` entity with the observation `discovery_confirmed: true` is present (set during R0), the codebase-exploration portion of this phase is already complete:
+1. **Announce:** "Codebase analysis is already complete from the prior discovery session for `[chosen_approach]` (verification status: [verification_status]). Using [N] affected areas identified in discovery." If `verification_status` is `accepted_with_open_questions`, also surface a one-line note that open questions from verification are carried into this intake.
+2. **Re-link explorations to this work item, filtering superseded entities.** For each `exploration` entity linked to the discovery's `work_item-discovery-<slug>` node (both first-round and verification-round), create an additional `for` relation pointing at the new `work_item-<key>` node so explorer findings are reachable from R4A's normal traversal. **Do not** re-link any individual finding entity (`evidence`, `pattern`, `integration_point`, `risk`, `affected_file`, `open_question`) that carries `superseded: true` — those were contradicted at D4 and the verification round wrote replacements. R4A traversal must skip every entity tagged `superseded: true` before consuming evidence.
+3. **Create `affected_area` nodes from the discovery_summary.** For each area in the `affected_areas` observation: `name` = area path, `type` = module (default), `risk` = medium (default). Link each to the new `work_item` node. If `synthesis_chosen` includes explicit risk levels for an area, use those instead.
+4. **Use `synthesis_chosen` as the codebase analysis content** — NOT `synthesis_full` (which retains unchosen options for record only).
+5. **Surface open questions as structured input to R3 / R4.** Walk the discovery subgraph for `open_question` entities linked (via `contains`) to `work_item-discovery-<slug>` and carry each into this intake as a candidate clarifying question (R3) and candidate risk (R4).
+6. **Skip Agent Actions steps 1–6 (codebase exploration) entirely. Still perform step 7 (Design artifact analysis)** — discovery does not extract visual specs. Present `synthesis_chosen` plus the design artifact analysis as the combined R2 analysis, then proceed to the approval gate.
 
 **Agent Actions:**
 
@@ -328,6 +342,17 @@ Evaluate the work item against these criteria:
 
 ---
 
+#### R4D — UI Flow Flowgraph (best-effort)
+
+> **GENERATE A FLOWGRAPH (best-effort):** Produce a Mermaid `flowchart` that visualizes the UI navigation and component-state flow — nodes are screens, components, or states; edges are user interactions or transitions (e.g. button click → modal open, form submit → loading → success/error). Ground nodes in the component names and states identified in R2 and R3.
+>
+> - **Skip it** for single-component, single-state changes where a diagram adds no clarity. If skipped, state in one line why.
+> - **Render it in the chat** as part of the R4 synthesis presentation at the approval gate.
+> - **The diagram will be embedded in the Jira description under `## Architecture`** by R5 when it assembles the description from the template below. No additional action needed here beyond persistence.
+> - **Persist it to the knowledge graph:** add a `diagram` observation (the raw Mermaid source) to the `work_item` entity so R5 and downstream execution skills can read it.
+
+---
+
 > **REQUIRED: Review the full R4 synthesis before presenting.** Verify every acceptance criterion is unambiguous, testable, and traceable. Remove or revise any that fail this check. Do not present an unreviewed synthesis.
 
 > **APPROVAL GATE — FULL STOP.** Present the full R4 synthesis (acceptance criteria, risk register, Epic vs. Task recommendation). Then use `AskUserQuestion` with header `R4 Approval`, options: `Approve and proceed (Recommended)` (description: "All three sections are accurate — ready to create the Jira issue") / `Request changes` (description: "Something needs correction before continuing"). Do not create a Jira issue of the wrong type.
@@ -363,14 +388,14 @@ Evaluate the work item against these criteria:
 
     **API notes for non-standard fields:**
     - **Priority:** Set via `additional_fields`: `{"priority": {"name": "Medium"}}` (substituting the confirmed priority name: Critical, High, Medium, or Low).
-    - **Labels:** Set via `additional_fields`: `{"labels": ["label1", "label2"]}` on `createJiraIssue`.
-    - **Epic Link:** Set via `additional_fields`: `{"epicKey": "EPIC-KEY"}` on `createJiraIssue`. Do not use `createIssueLink` for epic links — that creates a lateral link, not an epic association. Only include this field if the user confirmed an epic.
+    - **Labels:** Set via `additional_fields`: `{"labels": ["label1", "label2"]}` on `jira_create_issue`.
+    - **Epic Link:** Set via `additional_fields`: `{"epicKey": "EPIC-KEY"}` on `jira_create_issue`. Do not use `jira_create_issue_link` for epic links — that creates a lateral link, not an epic association. Only include this field if the user confirmed an epic.
 
 4. **Update-or-create decision:**
-    - **If an existing Jira card was provided in R0:** Update that card's description using `editJiraIssue` with the approved description. Do not create a new issue.
-    - **If no existing card was provided:** Create a new Jira issue using `createJiraIssue` with the approved description. Do not perform a follow-up description update solely to add execution instructions.
+    - **If an existing Jira card was provided in R0:** Update that card's description using `jira_update_issue` with the approved description. Do not create a new issue.
+    - **If no existing card was provided:** Create a new Jira issue using `jira_create_issue` with the approved description. Do not perform a follow-up description update solely to add execution instructions.
 
-5. **Post-creation linking:** After the issue is created or updated, link hard dependencies from R4B by calling `createIssueLink` for each one. Use `link_type: "Blocks"` for hard dependencies. Do not attempt to set linked issues during `createJiraIssue` — that tool does not support it.
+5. **Post-creation linking:** After the issue is created or updated, link hard dependencies from R4B by calling `jira_create_issue_link` for each one. Use `link_type: "Blocks"` for hard dependencies. Do not attempt to set linked issues during `jira_create_issue` — that tool does not support it.
 
 ### Description Structure
 
@@ -396,6 +421,10 @@ already captured in the existing Jira card retrieved in R1, if applicable.]
 [Structured list from R2 codebase analysis affected_area nodes. For each area:
 file/module/service path, brief description of relevance, and risk level.]
 - `[path]` -- [description] ([high/medium/low] risk)
+
+## Architecture
+[UI navigation and component-state flowchart from R4D — paste the Mermaid source here as a ```mermaid block.
+If the flowgraph was skipped in R4D, write: "None — no diagram for this change."]
 
 ## Visual Specifications
 [Extracted from R2 design artifact analysis and R3 Q&A. Cover each sub-section where defined:]
@@ -475,12 +504,13 @@ file/module/service path, brief description of relevance, and risk level.]
 
 ### R6 — Cleanup
 
-**Objective:** Clear the session-scoped knowledge graph before finishing the workflow, after explicit user confirmation.
+**Objective:** Clear the session-scoped knowledge graph before finishing the workflow, including any upstream implementation-discovery state, after explicit user confirmation.
 
 **Agent Actions:**
 
 1. **Enumerate.** Call `read_graph`. Identify every entity that should be deleted in this cleanup:
-   - The intake `work_item` entity for this issue and every entity linked to it: `affected_area`, `design_spec`, `exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`, `qa_item`, `criterion`, `related_issue`, `epic`, `phase_handoff`.
+   - The intake `work_item` entity for this issue and every entity linked to it: `affected_area`, `design_spec`, `exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`, `qa_item`, `criterion`, `related_issue`, `epic`, `phase_handoff` (all entities with prefix `phase-handoff-<work-item-key>-`).
+   - Any upstream **implementation-discovery** state still in the graph, including any `phase_handoff` entities created by the discovery workflow (prefix `phase-handoff-discovery-<slug>-`): the `discovery_summary-<slug>` entity, the `work_item-discovery-<slug>` work item, the verification-round and first-round `exploration` subgraph linked to it (including any finding entities marked `superseded: true`, which must still be deleted — supersession marks them as non-canonical, not as already-removed), and any structured `open_question` entities reified at D5 (sources `d3_discussion` and `d4_verification`). These persist intentionally from a prior `/implementation-discovery` run; if discovery was reused at R0/R2, design-intake R6 owns reaping it. They are reachable through the `summarizes` relation from `discovery_summary-<slug>` and through the `for` re-link added at R2.
    - Any other intake-scoped entities created during R0–R5 that link back to the work item.
 
 2. **Present the cleanup plan to the user.** Build a short, structured summary in the chat:
@@ -500,8 +530,15 @@ file/module/service path, brief description of relevance, and risk level.]
    - phase_handoff: <count>
    - <any other intake-scoped entities, listed by type and count>
 
+   ### From upstream Implementation Discovery (if present)
+   - discovery_summary-<slug>: <name, or "none">
+   - work_item-discovery-<slug>: <name, or "none">
+   - verification-round explorations: <count, or "none">
+
    Total entities to delete: <N>
    ```
+
+   If the upstream-discovery section reports "none" across the board, state explicitly that no implementation-discovery state was found in the graph for this run.
 
 3. > **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `R6 Cleanup`, options: `Proceed with cleanup (Recommended)` (description: "Delete all session-scoped entities listed above") / `Skip cleanup` (description: "Leave the graph untouched — entities remain until the session ends"). Do not run `delete_entities` until the user selects "Proceed with cleanup". On "Skip cleanup", leave the graph untouched, note in the chat that cleanup was skipped at the user's request, and end the workflow.
 

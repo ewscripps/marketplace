@@ -72,8 +72,8 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 
 **This phase requires TWO separate tool calls. Do not move to E1 until both are complete.**
 
-1. **Tool call 1:** Call `getTransitionsForJiraIssue` with this issue's key. From the response, find the transition whose target status is **In Progress** and note its **ID**.
-2. **Tool call 2:** Call `transitionJiraIssue` with this issue's key and that transition ID. This is the call that actually moves the issue. Retrieving transitions alone does nothing -- you MUST call `transitionJiraIssue` to complete this phase.
+1. **Tool call 1:** Call `jira_get_transitions` with this issue's key. From the response, find the transition whose target status is **In Progress** and note its **ID**.
+2. **Tool call 2:** Call `jira_transition_issue` with this issue's key and that transition ID. This is the call that actually moves the issue. Retrieving transitions alone does nothing -- you MUST call `jira_transition_issue` to complete this phase.
 
 Do not guess transition IDs. Always retrieve them first via tool call 1.
 
@@ -161,6 +161,13 @@ If one or more children are found, record `existing_children: N` on the epic nod
 
 These same rules apply to new gap-filler tasks in the existing-children path.
 
+> **GENERATE A FLOWGRAPH (best-effort):** Produce a Mermaid `flowchart` showing the child task dependency graph — nodes are child tasks (labelled with their title and execution order number), directed edges represent `depends_on` relationships, and the layout runs left-to-right in execution order. Existing children that will be skipped should be shown with a distinct style (e.g. dashed border). This diagram makes the sequencing reviewable at a glance.
+>
+> - **Skip it** for epics with a single task or where all tasks are truly independent (no edges). If skipped, state in one line why.
+> - **Render it in the chat** as part of the breakdown plan presentation at E5.
+> - **Embed it in the Jira description under `## Architecture`** as a ` ```mermaid ` fenced block, immediately after `## Affected Areas`. If the description lacks an `## Architecture` section, add one using `jira_update_issue` (additive edit — update only that section). (Jira Cloud does not render Mermaid natively; it will display as a code block, which is acceptable.) If skipped, set the Architecture section to "None — no diagram for this change."
+> - **Persist it to the knowledge graph:** add a `diagram` observation (the raw Mermaid source) to the `epic` entity so E8 and downstream phases can read it.
+
 **REQUIRED:** The breakdown must include ALL of the following:
 
 - (If existing children) Inventory table: each existing child with status, disposition, and coverage classification.
@@ -190,6 +197,7 @@ Post a single combined Jira comment with the exact heading `**E4/E5 — Breakdow
 - New task list (breakdown plan) for gap-filler tasks, with execution order, dependencies, and rationale. If there are no gaps, state explicitly: "All AC is addressed by existing child tasks. No new tasks will be created."
 - Execution order across the full set (existing + new), including where `Done` children are skipped.
 - How the combined set satisfies the epic's acceptance criteria.
+- Architecture diagram (under `### Architecture` — the Mermaid dependency graph, or a note if skipped)
 - `Approval requested: Please approve this breakdown plan before work begins.`
 
 ### E5 — Await Breakdown Plan Approval
@@ -212,7 +220,7 @@ Post a single combined Jira comment with the exact heading `**E4/E5 — Breakdow
 
 **IMPORTANT:** Each task must be created as a **Child Work Item** of this epic (parent-child relationship). Do NOT create tasks as Linked Work Items. The parent field of each new task must be set to this epic's issue key.
 
-**DO NOT call `createIssueLink` at any point during this phase. Setting the `parent` field in `additional_fields` is the ONLY action needed to establish the parent-child relationship. Any call to `createIssueLink` creates a separate lateral "Related" link that should not exist. Per child task, use one `createJiraIssue` call to create the task with its final description and the parent field already set. No lateral linking calls or follow-up description update calls are allowed.**
+**DO NOT call `jira_create_issue_link` at any point during this phase. Setting the `parent` field in `additional_fields` is the ONLY action needed to establish the parent-child relationship. Any call to `jira_create_issue_link` creates a separate lateral "Related" link that should not exist. Per child task, use one `jira_create_issue` call to create the task with its final description and the parent field already set. No lateral linking calls or follow-up description update calls are allowed.**
 
 **Step 0 — Backfill existing children (only when existing_children > 0).** Before creating any new tasks, perform the backfill edits recorded in E4 for each existing child marked Partial. For each such child:
 1. Derive the epic integration branch name using the E7 naming convention: `{PROJECTKEY}-{ISSUENUMBER}-{epic-summary-in-kebab-case}`. This value is needed even before E7 runs so that backfilled children have the correct field set.
@@ -224,7 +232,7 @@ For each task identified in E4 (new gap-filler tasks only):
 1. Derive the epic integration branch name now using the E7 naming convention: `{PROJECTKEY}-{ISSUENUMBER}-{epic-summary-in-kebab-case}` (e.g. `PROJ-900-user-authentication-overhaul`). This value is written into each child task's `Epic Integration Branch` field so T6 can detect epic child-task mode.
 2. Populate the task description using the **Standard Task Template** below. Preserve the section structure exactly, but replace every `{{...}}` token with task-specific content before creating the issue. No unresolved placeholder text may be stored in Jira.
 3. **Recommend a priority** for the child task based on its risk level, dependency position, and impact on the epic's acceptance criteria. Use `AskUserQuestion` with header `Task Priority` to confirm before creating the issue. Put the recommended priority first with `(Recommended)` appended. Options: one of `Critical (Recommended)` / `High (Recommended)` / `Medium (Recommended)` / `Low (Recommended)` as the first option (only the recommended one gets the label), then the remaining three priorities as subsequent options.
-4. Create a new task by calling `createJiraIssue` with `additional_fields` set to `{"parent": "EPIC-KEY", "priority": {"name": "High"}}` (substituting this epic's actual issue key and the confirmed priority name) and the assembled task description. This create call establishes the child work item relationship.
+4. Create a new task by calling `jira_create_issue` with `additional_fields` set to `{"parent": "EPIC-KEY", "priority": {"name": "High"}}` (substituting this epic's actual issue key and the confirmed priority name) and the assembled task description. This create call establishes the child work item relationship.
 
 > **USE KNOWLEDGE GRAPH:** After each child task is created in Jira, update its node in the knowledge graph. Add the `jira_key` property to the task node (e.g. `PROJ-124`) so E8 can reference it directly without searching Jira. If the breakdown plan changes during creation (e.g. a task is split), update the graph to reflect the current state before proceeding.
 
@@ -306,6 +314,8 @@ Example: `PROJ-900-user-authentication-overhaul`
 
 > **USE KNOWLEDGE GRAPH:** Before starting each child task, read the task nodes from the graph to confirm the correct execution order and that all prerequisite tasks have `status: done`. After each child task completes, update its node to `status: done` and add a `merged_at` timestamp. If context is lost mid-epic (long session, reconnection) and the graph is empty, rebuild the graph first from the epic description, the approved breakdown comment, the child task descriptions, and Jira child task statuses before continuing — do not guess from memory.
 
+> **USE DEPENDENCY DIAGRAM:** Call `open_nodes` on the `epic` entity and read the `diagram` observation. Use the dependency flowchart as a sequencing reference when determining which tasks are unblocked and ready to execute. If a task's predecessors are not yet `status: done`, hold that task regardless of Jira status. If no diagram was persisted (skipped in E4), rely on the `depends_on` graph relationships instead.
+
 **Pre-step — classify each child before beginning execution.** Read all `task` nodes from the graph in execution order. For each node:
 - If the node has `disposition: Keep but skip execution`, record `status: skipped` on the graph node, mark its tracking task `completed`, and move to the next task without invoking `task-card`.
 - If the node has `existing: true` and its current Jira status is already closed (e.g. `Done`, `Closed`, `Resolved`), record `status: done` on the graph node, mark its tracking task `completed`, and move to the next task without invoking `task-card`. These children are counted as covered but are not re-executed.
@@ -339,7 +349,7 @@ Work through each executable child task **in the order defined in E4**, executin
 - Present the same testing handoff in the chat — the user should not have to open Jira to see what to test.
 - Then use `AskUserQuestion` with header `E9 Testing`, options: `Approve — everything works as expected (Recommended)` (description: "All acceptance criteria passed — proceed to the epic summary") / `Issues found` (description: "One or more problems were found during testing"). Do not proceed until the user selects an option.
     
-- If the user identifies issues: for each distinct issue, invoke the `issue-intake` skill (via the `Skill` tool), passing a brief description of the observed behavior, expected behavior, and this epic's Jira key as args (e.g. `"Testing found: [description]. Related to: [PROJ-KEY]"`). Work through the issue-intake I0–I6 process with the user to document and triage each issue — it will create a Jira card (Bug or Missing Requirement) for each one. After all issues are documented and their Jira cards are created, create a new child Task for each issue card following E6 child-task creation rules (set the `parent` field to the epic key — do not call `createIssueLink`), and add it to the knowledge graph. Invoke the `task-card` skill with each child task's Jira key; epic child-task mode will be detected from the `Epic Integration Branch` field, so T10 user testing is skipped automatically. After each follow-up task's T13 completes, update its knowledge graph node to `status: done` and record its merge completion. Once all follow-up tasks are done, return to this step.
+- If the user identifies issues: for each distinct issue, invoke the `issue-intake` skill (via the `Skill` tool), passing a brief description of the observed behavior, expected behavior, and this epic's Jira key as args (e.g. `"Testing found: [description]. Related to: [PROJ-KEY]"`). Work through the issue-intake I0–I6 process with the user to document and triage each issue — it will create a Jira card (Bug or Missing Requirement) for each one. After all issues are documented and their Jira cards are created, create a new child Task for each issue card following E6 child-task creation rules (set the `parent` field to the epic key — do not call `jira_create_issue_link`), and add it to the knowledge graph. Invoke the `task-card` skill with each child task's Jira key; epic child-task mode will be detected from the `Epic Integration Branch` field, so T10 user testing is skipped automatically. After each follow-up task's T13 completes, update its knowledge graph node to `status: done` and record its merge completion. Once all follow-up tasks are done, return to this step.
     
 
 ---

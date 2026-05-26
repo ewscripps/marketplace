@@ -88,8 +88,8 @@ These actions must not be chained. Run each one at a time, reporting the result 
 
 **This phase requires TWO separate tool calls. Do not move to B1 until both are complete.**
 
-1. **Tool call 1:** Call `getTransitionsForJiraIssue` with this issue's key. From the response, find the transition whose target status is **In Progress** and note its **ID**.
-2. **Tool call 2:** Call `transitionJiraIssue` with this issue's key and that transition ID. This is the call that actually moves the issue. Retrieving transitions alone does nothing -- you MUST call `transitionJiraIssue` to complete this phase.
+1. **Tool call 1:** Call `jira_get_transitions` with this issue's key. From the response, find the transition whose target status is **In Progress** and note its **ID**.
+2. **Tool call 2:** Call `jira_transition_issue` with this issue's key and that transition ID. This is the call that actually moves the issue. Retrieving transitions alone does nothing -- you MUST call `jira_transition_issue` to complete this phase.
 
 Do not guess transition IDs. Always retrieve them first via tool call 1.
 
@@ -154,6 +154,13 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 > **USE KNOWLEDGE GRAPH:** Read the hypothesis and affected area nodes written in B3. Write a `root_cause` node with properties: `description`, `affected_files` (linked nodes), and `confirmed_by` (the evidence that settled the conclusion). Write a `fix_plan` node linked to the `root_cause` node. Later phases (B10, B14) should read these nodes rather than re-parsing the plan comment.
 
+> **GENERATE A FLOWGRAPH (best-effort):** Produce a Mermaid `flowchart` that contrasts the buggy path with the fixed path — show the root-cause flow (how the bug is triggered) alongside the corrected flow (how the fix intercepts it). Keep it focused on the specific files/functions implicated by the root cause analysis.
+>
+> - **Skip it** for trivial single-line fixes where a diagram adds no clarity. If skipped, state in one line why.
+> - **Render it in the chat** as part of the fix plan presentation at B6.
+> - **Embed it in the Jira description under `## Architecture`** as a ` ```mermaid ` fenced block, immediately after `## Affected Areas`. If the description lacks an `## Architecture` section, add one using `jira_update_issue` (additive edit — update only that section). (Jira Cloud does not render Mermaid natively; it will display as a code block, which is acceptable.) If skipped, set the Architecture section to "None — no diagram for this change."
+> - **Persist it to the knowledge graph:** add a `diagram` observation (the raw Mermaid source) to the `fix_plan` entity so B10 and downstream phases can read it.
+
 **REQUIRED:** The plan must include ALL of the following:
 
 - **Root cause analysis** — a clear explanation of why the bug occurs
@@ -190,6 +197,7 @@ The sub-agent will return a structured findings report with an overall verdict o
 - If **APPROVED**: post a single combined Jira comment with the exact heading `**B5/B6 — Fix Plan & Approval Request**`, then proceed to B6. This comment must include:
 
     - The reviewed fix plan
+    - Architecture diagram (under `### Architecture` — the Mermaid source showing buggy vs. fixed path, or a note if skipped)
     - Regression test strategy for B9 and follow-up test expectations for the `test-reviewer` sub-agent
     - Documentation expectations for the `documentation-reviewer` sub-agent
     - Risks, dependencies, or open items that affect execution
@@ -235,6 +243,7 @@ The sub-agent will return a structured findings report with an overall verdict o
 
 **ALL of the following are REQUIRED. Do not skip any category.**
 
+- **Architecture diagram:** Call `open_nodes` on the `fix_plan` entity and read the `diagram` observation. Use the buggy-path vs. fixed-path flowchart as a surgical guide — apply the fix exactly where the diagram shows the flow deviating, and verify the corrected path after each change. If no diagram was persisted (skipped in B5), proceed without it.
 - **Code:** Apply the fix according to the plan from B5.
 - **Testing handoff:** Keep the implementation and the B9 regression test in a state that the dedicated `test-reviewer` sub-agent can extend and run deterministically. Note any commands, fixtures, or setup that sub-agent will need.
 - **Documentation handoff:** Identify the public APIs, configuration surfaces, and repository docs the dedicated `documentation-reviewer` sub-agent must cover.

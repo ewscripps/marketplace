@@ -99,8 +99,8 @@ These actions must not be chained. Run each one at a time, reporting the result 
 
 **This phase requires TWO separate tool calls. Do not move to T1 until both are complete.**
 
-1. **Tool call 1:** Call `getTransitionsForJiraIssue` with this issue's key. From the response, find the transition whose target status is **In Progress** and note its **ID**.
-2. **Tool call 2:** Call `transitionJiraIssue` with this issue's key and that transition ID. This is the call that actually moves the issue. Retrieving transitions alone does nothing -- you MUST call `transitionJiraIssue` to complete this phase.
+1. **Tool call 1:** Call `jira_get_transitions` with this issue's key. From the response, find the transition whose target status is **In Progress** and note its **ID**.
+2. **Tool call 2:** Call `jira_transition_issue` with this issue's key and that transition ID. This is the call that actually moves the issue. Retrieving transitions alone does nothing -- you MUST call `jira_transition_issue` to complete this phase.
 
 Do not guess transition IDs. Always retrieve them first via tool call 1.
 
@@ -155,6 +155,15 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 > **THINK HARD:** Before finalizing the plan, think hard about whether every acceptance criterion maps to a specific, concrete code change, and whether the ordering and scope of those changes is minimal and safe. This is the highest-leverage decision point in the workflow — a vague or over-scoped plan produces an implementation that cannot be cleanly reviewed or verified.
 
+> **REUSE EXISTING DIAGRAM:** Before generating a flowgraph, call `open_nodes` on the `work_item-<KEY>` entity and check for an existing `diagram` observation (written by `/requirements-intake` or `/implementation-discovery` if those ran first). If one exists, use it as the starting point and refine it to reflect implementation-level detail — do not start from scratch.
+
+> **GENERATE A FLOWGRAPH (best-effort):** Produce a Mermaid `flowchart` that visualizes the changed control/data flow across the affected files/components. Keep it focused — nodes should map to the concrete elements in this plan (files, components, functions), not abstract boxes.
+>
+> - **Skip it** for trivial changes where a diagram adds no clarity (e.g. a single-file edit with no branching logic). If skipped, state in one line why.
+> - **Render it in the chat** as part of the plan presentation at T5.
+> - **Embed it in the Jira description under `## Architecture`** as a ` ```mermaid ` fenced block, immediately after `## Affected Areas`. If the description lacks an `## Architecture` section, add one using `jira_update_issue` (additive edit — update only that section). (Jira Cloud does not render Mermaid natively; it will display as a code block, which is acceptable.) If skipped, set the Architecture section to "None — no diagram for this change."
+> - **Persist it to the knowledge graph:** add a `diagram` observation (the raw Mermaid source) to the `plan` entity for this work item so T8 and downstream phases can read it.
+
 **REQUIRED:** The plan must include ALL of the following:
 
 - Files to create or modify
@@ -189,6 +198,7 @@ The sub-agent will return a structured findings report with an overall verdict o
 - If **APPROVED**: post a single combined Jira comment with the exact heading `**T4/T5 — Implementation Plan & Approval Request**`, then proceed to T5. This comment must include:
 
     - The reviewed implementation plan
+    - Architecture diagram (under `### Architecture` — the Mermaid source, or a note if skipped)
     - Testing expectations for the `test-reviewer` sub-agent
     - Documentation expectations for the `documentation-reviewer` sub-agent
     - Risks, dependencies, or open items that affect execution
@@ -227,6 +237,7 @@ The sub-agent will return a structured findings report with an overall verdict o
 
 **ALL of the following are REQUIRED. Do not skip any category.**
 
+- **Architecture diagram:** Call `open_nodes` on the `plan` entity and read the `diagram` observation. Use the control/data flow diagram as a map for sequencing your code changes — write code in the order the flow implies and verify each completed step advances the flow correctly. If no diagram was persisted (skipped in T4), proceed without it.
 - **Code:** Write or modify source code according to the implementation plan from T4.
 - **Testing handoff:** Leave the implementation in a state that the dedicated `test-reviewer` sub-agent can exercise deterministically. Note any commands, fixtures, or setup that sub-agent will need.
 - **Documentation handoff:** Identify the public APIs, configuration surfaces, and repository docs the dedicated `documentation-reviewer` sub-agent must cover.

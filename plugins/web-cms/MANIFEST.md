@@ -11,6 +11,10 @@ INTAKE (creates Jira cards)          EXECUTION (works Jira cards)
 /requirements-intake (R0-R6)  --->   /task-card PROJ-123 (T0-T13)
   Creates Epic or Task card          /epic-card PROJ-123 (E0-E11)
 
+/design-intake (R0-R6)        --->   /task-card PROJ-123 (T0-T13)
+  Creates Epic or Task card          /epic-card PROJ-123 (E0-E11)
+  (design-focused feature)
+
 /issue-intake (I0-I6)         --->   /bug-card PROJ-123 (B0-B15)
   Bug? Creates Bug card                OR
   Missing requirement?        --->   /requirements-intake (R0-R6)
@@ -52,6 +56,7 @@ The Jira card description is the interface between intake and execution:
 | Skill | Invocation | Phases | Output |
 |-------|-----------|--------|--------|
 | **requirements-intake** | `/requirements-intake` | R0-R6 | Epic or Task card in Jira |
+| **design-intake** | `/design-intake` | R0-R6 | Epic or Task card in Jira with design specifications (colors, typography, component states, accessibility) |
 | **issue-intake** | `/issue-intake` | I0-I6 | Bug card in Jira, or transitions to requirements-intake |
 | **code-review-intake** | `/code-review-intake` | CI0-CI5 | Code Review (Task) card in Jira |
 
@@ -59,9 +64,9 @@ The Jira card description is the interface between intake and execution:
 
 | Skill | Invocation | Phases | Input | Sub-agents Used |
 |-------|-----------|--------|-------|-----------------|
-| **task-card** | `/task-card PROJ-123` | T0-T13 | Task card description | codebase-explorer, plan-reviewer, implementation-reviewer, test-reviewer, documentation-reviewer |
-| **bug-card** | `/bug-card PROJ-123` | B0-B15 | Bug card description | codebase-explorer, plan-reviewer, implementation-reviewer, test-reviewer, documentation-reviewer |
-| **epic-card** | `/epic-card PROJ-123` | E0-E11 | Epic card description | codebase-explorer |
+| **task-card** | `/task-card PROJ-123` | T0-T13 | Task card description | codebase-explorer, area-mapper, plan-reviewer, implementation-reviewer, test-reviewer, documentation-reviewer |
+| **bug-card** | `/bug-card PROJ-123` | B0-B15 | Bug card description | codebase-explorer, area-mapper, plan-reviewer, implementation-reviewer, test-reviewer, documentation-reviewer |
+| **epic-card** | `/epic-card PROJ-123` | E0-E11 | Epic card description | codebase-explorer, area-mapper |
 | **code-review** | `/code-review PROJ-123` | CR0-CR11 | Code Review card description | review-analyst (4 or 5 parallel, depending on review type) |
 | **implementation-discovery** | `/implementation-discovery` | D0-D5 | User's build/change goal | codebase-explorer, area-mapper |
 | **mr-creation** | `/mr-creation` | M0-M6 | User input + repo state | None |
@@ -105,8 +110,8 @@ The Jira card description is the interface between intake and execution:
    E4: Breakdown plan (decompose into ordered child tasks)
    E5: Await approval (in chat)
    E6: Create child tasks in Jira (Standard Task Template)
-   E7: Create integration branch + worktree
-   E8: Execute child tasks sequentially inline (T0-T13 per task), then remove the epic worktree
+   E7: Verify epic integration branch (the user supplies/creates the branch; no worktree)
+   E8: Execute child tasks sequentially inline (T0-T13 per task)
        Each child task runs T0-T13:
          T0: Transition to In Progress
          T1: Read task description
@@ -114,17 +119,17 @@ The Jira card description is the interface between intake and execution:
          T3: Clarifying questions
          T4: Implementation plan + plan-reviewer agent review
          T5: Await approval
-         T6: Create branch (from integration branch)
+         T6: Verify working branch (in epic mode, created from the integration branch)
          T7: Baseline verification
          T8: Core implementation + implementation-reviewer, test-reviewer, and documentation-reviewer loops
          T9: Post-implementation verification
-         T10: Commit + merge to integration branch
-         T11: User testing (skipped in epic mode -- handled at E9)
+         T10: User testing (skipped in epic mode -- handled at E9)
+         T11: Commit + push (in epic mode, also merge to the integration branch)
          T12: Summary of changes
-         T13: Cleanup (worktree + knowledge graph)
-   E9: User testing (end-to-end, after epic worktree cleanup)
+         T13: Cleanup (knowledge graph)
+   E9: User testing (end-to-end)
    E10: Epic summary
-   E11: Cleanup (worktree + knowledge graph)
+   E11: Cleanup (knowledge graph)
 
 3. User invokes /mr-creation
    M0-M6: Create GitLab MR for the integration branch
@@ -163,6 +168,22 @@ Execution skills consume these sections by name. Intake skills must produce the 
 - `## Risks` -- task-specific risks or `N/A — managed in parent epic`
 - `## Open Items` -- unresolved questions
 
+### Design Cards (from design-intake)
+
+A design card uses the standalone Task-card section set above, plus design-specific
+sections inserted before `## Scope`:
+
+- `## Design Assets` -- links to Figma, screenshots, or HTML exports, or "None provided"
+- `## Design System` -- name/version of the component library, or "None / not applicable"
+- `## Visual Specifications` -- colors, typography, spacing, borders/shadows, iconography
+- `## Component States` -- per-component default/hover/active/focus/disabled/loading/error/empty
+- `## Responsive Behavior` -- breakpoint-by-breakpoint layout changes
+- `## Animation & Transitions` -- motion specs, or "No animation defined"
+- `## Accessibility Requirements` -- WCAG level, contrast, keyboard, screen-reader needs
+
+Execution skills consume these the same way as a standalone Task card; the extra
+sections are additive context for frontend implementation.
+
 ### Bug Cards (from issue-intake)
 
 - `## Bug Details` -- wrapper with **Summary** field
@@ -190,7 +211,6 @@ Most intake and execution workflows use a session-scoped knowledge graph to accu
 - **Graph-backed execution workflows:** Graph is used within the session for state tracking; if resumed in a new session with an empty graph, reconstruct state from the Jira issue description and comment history before continuing
 - **Epic workflow:** Graph is the authoritative execution state map tracking child task completion; critical for resumability
 - **Cleanup required:** If a workflow uses a session-scoped knowledge graph, add a dedicated final cleanup phase after the last durable artifact has been created (for example: Jira description, Jira summary comment, review findings comment, or MR description). Perform graph cleanup there, not inline in an earlier phase.
-- **Worktree cleanup:** For workflows that create worktrees, the dedicated final cleanup phase should verify no workflow-owned worktree remains before the workflow is considered complete. If a worktree must be removed earlier for user testing, the cleanup phase should still verify that removal at the end.
 
 ## Serena Project Memory
 
@@ -226,6 +246,7 @@ your-project/
     skills/
       implementation-discovery/
       requirements-intake/
+      design-intake/
       issue-intake/
       code-review-intake/
       bug-card/

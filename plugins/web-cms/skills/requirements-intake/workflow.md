@@ -357,6 +357,19 @@ Evaluate the work item against these criteria:
 
 ---
 
+#### R4D — Behavior Flowgraph (best-effort)
+
+> **REUSE EXISTING DIAGRAM:** Before generating a flowgraph, call `open_nodes` on the `discovery_summary` entity for this work item (if one exists) and check for a `diagram` observation written by `/implementation-discovery`. If one exists, use it as the starting point and refine it to reflect the requirements-level behavior — do not start from scratch.
+
+> **GENERATE A FLOWGRAPH (best-effort):** Produce a Mermaid `flowchart` that visualizes the intended feature behavior — map the user-facing flow or system behavior through the acceptance criteria. Nodes should represent meaningful states, actions, or decision points (e.g. form submitted → validation → success/error), not abstract phases.
+>
+> - **Skip it** for single-criterion or trivially linear changes where a diagram adds no clarity. If skipped, state in one line why.
+> - **Render it in the chat** as part of the R4 synthesis presentation at the approval gate.
+> - **The diagram will be embedded in the Jira description under `## Architecture`** by R5 when it assembles the description from the templates below. No additional action needed here beyond persistence.
+> - **Persist it to the knowledge graph:** add a `diagram` observation (the raw Mermaid source) to the `work_item` entity so R5 and downstream execution skills can read it.
+
+---
+
 > **REQUIRED: Review the full R4 synthesis before presenting.** Verify every acceptance criterion is unambiguous, testable, and traceable. Remove or revise any that fail this check. Do not present an unreviewed synthesis.
 
 > **APPROVAL GATE — FULL STOP.** Present the full R4 synthesis (acceptance criteria, risk register, Epic vs. Task recommendation). Use `AskUserQuestion` (Header: `R4 Approval`, Question: `Are all three sections correct — acceptance criteria, risk register, and the Epic vs. Task recommendation?`, Options: `Approve and proceed (Recommended)` — all three sections are correct, `Request changes` — something needs revision). Do not create a Jira issue of the wrong type. Do not proceed until the user approves.
@@ -392,18 +405,18 @@ Evaluate the work item against these criteria:
 
     **API notes for non-standard fields:**
     - **Priority:** Set via `additional_fields`: `{"priority": {"name": "Medium"}}` (substituting the confirmed priority name: Critical, High, Medium, or Low).
-    - **Labels:** Set via `additional_fields`: `{"labels": ["label1", "label2"]}` on `createJiraIssue`.
-    - **Epic Link:** Set via `additional_fields`: `{"epicKey": "EPIC-KEY"}` on `createJiraIssue`. Do not use `createIssueLink` for epic links — that creates a lateral link, not an epic association. Only include this field if the user confirmed an epic.
+    - **Labels:** Set via `additional_fields`: `{"labels": ["label1", "label2"]}` on `jira_create_issue`.
+    - **Epic Link:** Set via `additional_fields`: `{"epicKey": "EPIC-KEY"}` on `jira_create_issue`. Do not use `jira_create_issue_link` for epic links — that creates a lateral link, not an epic association. Only include this field if the user confirmed an epic.
 
 4. **Create or update decision — three-way branch:**
 
-    - **Define mode (no existing card):** Create a new Jira issue using `createJiraIssue` with the approved description. Do not perform a follow-up description update solely to add execution instructions. This is today's default path.
+    - **Define mode (no existing card):** Create a new Jira issue using `jira_create_issue` with the approved description. Do not perform a follow-up description update solely to add execution instructions. This is today's default path.
 
     - **Fill-out mode — existing card is a Task:** Update the card's description using `jira_update_issue` with the freshly assembled description (full overwrite — existing content from R1 informed the synthesis but does not constrain the R5 output). Present the assembled description in the chat before calling the tool. The approval gate at the end of this phase is scoped to: "This description will overwrite the existing description on `<JIRA-KEY>`."
 
     - **Fill-out mode — existing card is an Epic:** Update the parent Epic's description using `jira_update_issue` with the freshly assembled description (same overwrite rule as above). After the parent is updated and the approval gate below is passed, proceed to **R5B — Per-Child Iteration** defined below.
 
-5. **Post-creation/update linking:** After the issue is created or updated, link hard dependencies from R4B by calling `createIssueLink` for each one. Use `link_type: "Blocks"` for hard dependencies. Do not attempt to set linked issues during `createJiraIssue` — that tool does not support it.
+5. **Post-creation/update linking:** After the issue is created or updated, link hard dependencies from R4B by calling `jira_create_issue_link` for each one. Use `link_type: "Blocks"` for hard dependencies. Do not attempt to set linked issues during `jira_create_issue` — that tool does not support it.
 
 ---
 
@@ -457,6 +470,10 @@ already captured in the existing Jira card retrieved in R1, if applicable.]
 file/module/service path, brief description of relevance, and risk level.]
 - `[path]` -- [description] ([high/medium/low] risk)
 
+## Architecture
+[Behavior flowchart from R4D — paste the Mermaid source here as a ```mermaid block.
+If the flowgraph was skipped in R4D, write: "None — no diagram for this change."]
+
 ## Scope
 **In Scope:**
 - [...]
@@ -505,6 +522,10 @@ behaviors that are problematic.]
 [Structured list from R2 codebase analysis affected_area nodes. For each area:
 file/module/service path, brief description of relevance, and risk level.]
 - `[path]` -- [description] ([high/medium/low] risk)
+
+## Architecture
+[Behavior flowchart from R4D — paste the Mermaid source here as a ```mermaid block.
+If the flowgraph was skipped in R4D, write: "None — no diagram for this change."]
 
 ## Scope
 **In Scope:** - [...]
@@ -556,6 +577,10 @@ file/module/service path, brief description of relevance, and risk level.]
 [Structured list from R2 codebase analysis affected_area nodes, or
 "N/A -- research task, no code areas directly affected."]
 
+## Architecture
+[Behavior flowchart from R4D — paste the Mermaid source here as a ```mermaid block.
+If the flowgraph was skipped in R4D, write: "None — no diagram for this change."]
+
 ## Scope
 **In Scope:** - [...]
 **Out of Scope:** - [...]
@@ -594,6 +619,10 @@ file/module/service path, brief description of relevance, and risk level.]
 [Structured list from R2 codebase analysis affected_area nodes. For each area:
 file/module/service path, brief description of relevance, and risk level.]
 - `[path]` -- [description] ([high/medium/low] risk)
+
+## Architecture
+[Behavior flowchart from R4D — paste the Mermaid source here as a ```mermaid block.
+If the flowgraph was skipped in R4D, write: "None — no diagram for this change."]
 
 ## Compatibility & Rollback
 [Known breaking changes, compatibility constraints, and rollback plan]

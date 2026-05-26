@@ -185,7 +185,13 @@
 
 3. Label any items not directly evidenced in the D1 findings as `[INFERRED]`.
 
-4. > **REQUIRED: Review the synthesis before presenting.** Verify every claim is grounded in D1 evidence. Remove or revise any that are not. Label remaining inferences explicitly. Do not present an unreviewed synthesis.
+4. > **GENERATE A FLOWGRAPH (best-effort):** For each approach in the synthesis, produce a Mermaid `flowchart` that shows how that approach works — data/control flow through the affected components, with nodes mapped to real files/functions from the D1 findings. For a single-recommendation run, produce one diagram. For a multiple-options run, produce one per presented approach.
+   >
+   > - **Skip it** for trivial single-component changes or when the approach is purely procedural with no meaningful branching. If skipped, state in one line why.
+   > - **Render each diagram in the chat** inline with the corresponding approach block in the synthesis presentation.
+   > - **There is no Jira description to update at this phase.** The diagram is persisted to the knowledge graph here and will flow into the Jira description once requirements-intake runs. Add a `diagram` observation (the raw Mermaid source for the chosen approach, or for a multiple-options run, a JSON object keyed by option name) to the `discovery_summary` entity in D5 so requirements-intake's R4D step can read and reuse it.
+
+5. > **REQUIRED: Review the synthesis before presenting.** Verify every claim is grounded in D1 evidence. Remove or revise any that are not. Label remaining inferences explicitly. Do not present an unreviewed synthesis.
 
 > **APPROVAL GATE — FULL STOP.** Present the full D2 synthesis. Use `AskUserQuestion` (Header: `D2 Approval`, Question: `Does this synthesis accurately reflect what you want to explore? Are the affected areas and approach(es) correct?`, Options: `Approve and proceed (Recommended)` — the synthesis looks correct, `Request changes` — something needs revision). Do not proceed to D3 until the user approves.
 
@@ -306,6 +312,7 @@
    - `synthesis_full: [the complete confirmed synthesis text including all options for a multiple_options run, retained for record only — downstream consumers should NOT use this as the analysis content because it carries unchosen-option evidence.]`
    - `approach_count: [1 for single recommendation, or the number of options presented]`
    - `chosen_approach: [name of the approach the user selected in D3]`
+   - `diagram: [Mermaid source for the chosen approach's flowchart from D2, or for a multiple-options run the JSON object keyed by approach name. Omit this observation (do not write it as "none") if the flowgraph was skipped in D2 — requirements-intake will generate its own in that case.]`
    - `user_preference: [any preference or lean expressed by the user in D3, or "none stated"]`
    - `verification_status: [clean | revised | accepted_with_open_questions]`
    - `verification_findings: [one-line-per-claim summary: confirmed / enriched / contradicted / new-blocker, with file references for non-confirmed items. Contradicted items reference the `superseded: true` D1 entity by name.]`
