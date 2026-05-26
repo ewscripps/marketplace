@@ -288,7 +288,19 @@
 
 > **USE KNOWLEDGE GRAPH:** After criteria are finalized, write each one to the graph. Create a `criterion` node with properties: `text`, `format` (always `gherkin` for this workflow), and `traceable_to` (the `qa_item`, `affected_area`, or `design_spec` node key it was derived from). Link each node to the `work_item` node. R5 reads these nodes to populate the Acceptance Criteria section verbatim.
 
-Write acceptance criteria in **Gherkin format** (`Given / When / Then`) — one criterion per discrete behavior. Apply the following coverage requirements:
+Write acceptance criteria in **Gherkin format**. This is a hard requirement. Render the **entire** acceptance-criteria set as a single fenced ` ```gherkin ` code block headed by one `Feature:` line, with one `Scenario:` per discrete behavior and `Given`/`When`/`Then` (+ `And`) steps. **Every** criterion must be a `Scenario` — do not mix plain outcome bullets into the AC. Canonical shape:
+
+```gherkin
+Feature: <component or capability>
+
+  Scenario: <behavior or state>
+    Given <precondition>
+    When <action>
+    Then <expected outcome>
+    And <additional expectation>
+```
+
+Apply the following coverage requirements:
 
 - **Functional behavior:** At least one criterion per core user interaction or visible state.
 - **Component states:** At least one criterion per interactive state (hover, focus, disabled) and async state (loading, error, empty) where specs were defined in R3.
@@ -353,9 +365,23 @@ Evaluate the work item against these criteria:
 
 ---
 
+#### R4E — Patterns & Code References
+
+> **USE KNOWLEDGE GRAPH:** Traverse the exploration subgraph for this work item — from `work_item` follow incoming `for` relations to each `exploration`, then its `contains` findings — and collect `pattern` (name, description, evidence_files), `evidence` (claim, file, line_range, confidence), and `integration_point` entities, plus relevant `design_spec` conventions. Skip any entity marked `superseded: true`. When discovery was reused (R2 pre-check), include the re-linked discovery subgraph and `synthesis_chosen`.
+
+1. Select the established **component-reuse, design-token, and style conventions** this work must follow, and the concrete code anchors that demonstrate them (existing components to reuse vs. extend, token files, style modules). Prefer high-`confidence`, code-grounded evidence.
+2. For the **1–3 most important** patterns, use `Read` to open the referenced `file` at its `line_range` and extract a short (≤ ~15-line) snippet, prefixed with a `// <path>:<line_range>` comment. Keep snippets minimal — the file is source of truth.
+3. List integration points the work must respect. If no established pattern applies, record "None — no established pattern to follow."
+
+> **USE KNOWLEDGE GRAPH:** Persist a `pattern_ref` rollup node linked to the `work_item` with observations: `patterns`, `code_references`, `snippets`, `integration_points`. R5 reads this node to populate the `## Patterns & Code References` section.
+
+> **REQUIRED:** Present the Patterns & Code References list as part of the R4 synthesis at the approval gate below.
+
+---
+
 > **REQUIRED: Review the full R4 synthesis before presenting.** Verify every acceptance criterion is unambiguous, testable, and traceable. Remove or revise any that fail this check. Do not present an unreviewed synthesis.
 
-> **APPROVAL GATE — FULL STOP.** Present the full R4 synthesis (acceptance criteria, risk register, Epic vs. Task recommendation). Then use `AskUserQuestion` with header `R4 Approval`, options: `Approve and proceed (Recommended)` (description: "All three sections are accurate — ready to create the Jira issue") / `Request changes` (description: "Something needs correction before continuing"). Do not create a Jira issue of the wrong type.
+> **APPROVAL GATE — FULL STOP.** Present the full R4 synthesis (acceptance criteria, risk register, Epic vs. Task recommendation, and Patterns & Code References). Then use `AskUserQuestion` with header `R4 Approval`, options: `Approve and proceed (Recommended)` (description: "The synthesis is accurate — ready to create the Jira issue") / `Request changes` (description: "Something needs correction before continuing"). Do not create a Jira issue of the wrong type.
 
 > **COMPACTION GATE — R4:** Once R4 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<work-item-key>-R4`; `next_phase: R5`; decisions: Epic vs Task recommendation (state which), acceptance criteria count, key risks. REFERENCES: all `criterion` nodes, all `qa_item` nodes, the `design_spec` node, and all `affected_area` nodes.
 
@@ -367,7 +393,7 @@ Evaluate the work item against these criteria:
 
 **Agent Actions:**
 
-1. > **USE KNOWLEDGE GRAPH:** Retrieve the work-item subgraph using `open_nodes` on the `work_item` entity name and each entity name recorded in the R4 `phase_handoff` REFERENCES — `affected_area`, `design_spec`, `qa_item`, `criterion`, `related_issue`, and `epic` nodes — to assemble the Jira issue description. Each section of the description maps directly to a node type. This ensures nothing is missed or invented and the description is fully grounded in the structured context built across R0–R4.
+1. > **USE KNOWLEDGE GRAPH:** Retrieve the work-item subgraph using `open_nodes` on the `work_item` entity name and each entity name recorded in the R4 `phase_handoff` REFERENCES — `affected_area`, `design_spec`, `qa_item`, `criterion`, `pattern_ref`, `related_issue`, and `epic` nodes — to assemble the Jira issue description. Each section maps to a node type: `## Patterns & Code References` comes from the `pattern_ref` rollup (R4E); `## Non-Functional Requirements` is populated from any performance/compliance items raised in R3 (accessibility stays in its own dedicated section). This ensures nothing is missed or invented and the description is fully grounded in the structured context built across R0–R4.
     
 2. Assemble the Jira issue description using the description structure below. The description must contain only the structured delivery context for the work item. Do not append workflow instructions, skill-invocation text, or placeholder tokens.
     
@@ -426,6 +452,25 @@ file/module/service path, brief description of relevance, and risk level.]
 [UI navigation and component-state flowchart from R4D — paste the Mermaid source here as a ```mermaid block.
 If the flowgraph was skipped in R4D, write: "None — no diagram for this change."]
 
+## Patterns & Code References
+[From the R4E pattern_ref rollup — component-reuse, design-token, and style conventions to
+follow. References are durable; snippets are illustrative and may drift — the referenced file
+is source of truth. "None — no established pattern to follow." if greenfield.]
+**Patterns to follow:**
+- **[name]** — [description]. Canonical example: `[path:line]`.
+**Code references:**
+- `[path:line_range]` — [what to mirror]
+**Illustrative snippets (1–3 most important only):** each in a fenced code block, prefixed
+with a `// [path:line_range]` comment, ≤ ~15 lines, read from the referenced range.
+**Integration points:**
+- [with_area] via [interface] — [description] ([direction]), or "None identified."
+
+## Non-Functional Requirements
+[Performance and compliance expectations raised in R3 (accessibility is captured in its own
+section below). Verifiable target where possible; "None specified" per line if N/A.]
+- **Performance:** [budget/target, e.g. LCP, bundle size, or N/A]
+- **Compliance:** [requirement, or N/A]
+
 ## Visual Specifications
 [Extracted from R2 design artifact analysis and R3 Q&A. Cover each sub-section where defined:]
 
@@ -480,7 +525,15 @@ If the flowgraph was skipped in R4D, write: "None — no diagram for this change
 - [...]
 
 ## Acceptance Criteria
-[Gherkin format from R4A -- copy verbatim]
+[Gherkin from R4A — copy verbatim. Render as a single fenced gherkin code block headed by
+`Feature:`, with one `Scenario:` per behavior (Given/When/Then/And). Every criterion is a
+Scenario — no plain outcome bullets. Example shape:
+  Feature: <component/capability>
+    Scenario: <behavior or state>
+      Given <precondition>
+      When <action>
+      Then <expected outcome>
+      And <additional expectation>]
 
 ## Dependencies
 **Hard:** - [PROJ-XXX] -- [description]
@@ -496,7 +549,7 @@ If the flowgraph was skipped in R4D, write: "None — no diagram for this change
 
 ---
 
-> **REQUIRED: Review the full issue description before presenting.** Verify: (1) all fields are populated with no placeholder text, (2) acceptance criteria match R4A output verbatim, (3) the Affected Areas field is populated from R2 codebase analysis, (4) all defined Visual Specifications are populated from the R2 `design_spec` node, (5) Component States covers all states defined in R3, (6) Accessibility Requirements reflect R3 answers, (7) no workflow instructions or skill-invocation text were embedded, and (8) the issue type matches the R4C recommendation. For any section where no specs were defined, write "Not defined." — do not leave placeholder text.
+> **REQUIRED: Review the full issue description before presenting.** Verify: (1) all fields are populated with no placeholder text, (2) the Acceptance Criteria is a single fenced ` ```gherkin ` block headed by `Feature:` where every criterion is a `Scenario` (Given/When/Then) with no plain outcome bullets mixed in — rewrite any that are not, (3) the Affected Areas field is populated from R2 codebase analysis, (4) Patterns & Code References is populated from the R4E `pattern_ref` rollup (or explicit "None"), with any snippet carrying its `// path:line_range` header, (5) all defined Visual Specifications are populated from the R2 `design_spec` node, (6) Component States covers all states defined in R3, (7) Non-Functional Requirements and Accessibility Requirements reflect R3 answers, (8) no workflow instructions or skill-invocation text were embedded, and (9) the issue type matches the R4C recommendation. For any section where no specs were defined, write "Not defined." — do not leave placeholder text.
 
 > **APPROVAL GATE — FULL STOP.** Present the fully assembled issue description in the chat. Then use `AskUserQuestion` with header `R5 Approval`, options: `Approve and proceed (Recommended)` (description: "Content is accurate — create or update the Jira issue") / `Request changes` (description: "Something needs correction before creating"). Do not create or update the Jira issue until approved.
 
@@ -509,7 +562,7 @@ If the flowgraph was skipped in R4D, write: "None — no diagram for this change
 **Agent Actions:**
 
 1. **Enumerate.** Call `read_graph`. Identify every entity that should be deleted in this cleanup:
-   - The intake `work_item` entity for this issue and every entity linked to it: `affected_area`, `design_spec`, `exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`, `qa_item`, `criterion`, `related_issue`, `epic`, `phase_handoff` (all entities with prefix `phase-handoff-<work-item-key>-`).
+   - The intake `work_item` entity for this issue and every entity linked to it: `affected_area`, `design_spec`, `pattern_ref`, `exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`, `qa_item`, `criterion`, `related_issue`, `epic`, `phase_handoff` (all entities with prefix `phase-handoff-<work-item-key>-`).
    - Any upstream **implementation-discovery** state still in the graph, including any `phase_handoff` entities created by the discovery workflow (prefix `phase-handoff-discovery-<slug>-`): the `discovery_summary-<slug>` entity, the `work_item-discovery-<slug>` work item, the verification-round and first-round `exploration` subgraph linked to it (including any finding entities marked `superseded: true`, which must still be deleted — supersession marks them as non-canonical, not as already-removed), and any structured `open_question` entities reified at D5 (sources `d3_discussion` and `d4_verification`). These persist intentionally from a prior `/implementation-discovery` run; if discovery was reused at R0/R2, design-intake R6 owns reaping it. They are reachable through the `summarizes` relation from `discovery_summary-<slug>` and through the `for` re-link added at R2.
    - Any other intake-scoped entities created during R0–R5 that link back to the work item.
 

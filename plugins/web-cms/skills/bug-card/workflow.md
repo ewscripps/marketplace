@@ -99,6 +99,7 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 - Read the **Bug Details** section of the Jira issue description thoroughly.
 - Identify the reported behavior (Observed Behavior), expected behavior (Expected Behavior), and reproduction steps (Steps to Reproduce).
 - Note the severity, the structured **Affected Areas** list, and any environmental conditions from the Environment section.
+- Read the **Patterns & Code References** section if present — the code paths and conventions the fix should follow.
 
 ### B2 — Reproduce the Bug
 
@@ -189,6 +190,7 @@ Once the self-review is clean, invoke the `plan-reviewer` sub-agent, providing:
 - The proposed fix plan
 - The fix criteria from the Bug Details
 - The affected areas from the Bug Details and B3 investigation
+- The Patterns & Code References section from the card (the conventions the fix should follow)
 - The codebase findings from B3 (patterns, conventions, and architectural context)
 - The Jira issue key and work type (bug)
 
@@ -270,7 +272,7 @@ The sub-agent will return a structured findings report with an overall verdict o
 - Does the fix directly and completely address the root cause identified in B3?
 - Does the implementation follow the approved fix plan from B5?
 - Does the fix avoid introducing new bugs, side effects, or regressions?
-- Does every code change follow the project's established code style and architectural patterns?
+- Does every code change follow the project's established code style and architectural patterns, including the **Patterns & Code References** named on the card?
 - Is error handling comprehensive?
 - Are there any code smells, dead code, or hardcoded values that should be configurable?
 - Does the regression test from B9 accurately reproduce the original bug?

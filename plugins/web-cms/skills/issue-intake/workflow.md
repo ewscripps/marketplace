@@ -290,8 +290,9 @@ Follow the path matching the confirmed classification from I4.
 **Agent Actions:**
 
 1. Write the fix criteria: outcome-based acceptance criteria describing the state that must be true after the bug is fixed -- one criterion per discrete behavior to restore.
-2. Construct the full issue description using the Bug Description Structure below. The description must contain only the structured bug context. Do not embed workflow instructions, skill-invocation text, or placeholder tokens.
-3. Populate the following fields:
+2. **Assemble the Patterns & Code References section** from the I2 exploration subgraph: collect the `pattern`, `evidence` (file/line_range/claim), and `integration_point` entities relevant to the fix (skip `superseded: true`). For the 1–3 most important, use `Read` to extract a ≤ ~15-line snippet from the referenced range, each prefixed with a `// path:line_range` comment. If nothing beyond the Affected Areas applies, write "None — none beyond the affected areas above."
+3. Construct the full issue description using the Bug Description Structure below. The description must contain only the structured bug context. Do not embed workflow instructions, skill-invocation text, or placeholder tokens.
+4. Populate the following fields:
 
 |Field|Source|
 |---|---|
@@ -309,7 +310,7 @@ Follow the path matching the confirmed classification from I4.
     - **Labels:** Set via `additional_fields`: `{"labels": ["label1", "label2"]}` on `jira_create_issue`.
     - **Epic Link:** Set via `additional_fields`: `{"epicKey": "EPIC-KEY"}` on `jira_create_issue`. Do not use `jira_create_issue_link` for epic links — that creates a lateral link, not an epic association. Only include this field if the user confirmed an epic.
 
-4. **Update-or-create decision:**
+5. **Update-or-create decision:**
     - **If an existing Jira card was provided in I0:** Update the card's description using `jira_update_issue` with the approved bug description. Do not create a new issue.
     - **If no existing card was provided:** Create a new Jira Bug issue using `jira_create_issue` with the approved bug description. Do not perform a follow-up description update solely to add execution instructions.
 
@@ -359,6 +360,19 @@ file/module/service path, brief description of relevance, and risk level.]
 ## Root Cause (if known)
 [Known or suspected root cause from I2 and I3. If unknown: "Unknown -- investigation required."]
 
+## Patterns & Code References
+[Relevant code paths and conventions for the fix, from the I2 `pattern`/`evidence`/
+`integration_point` entities. References are durable; snippets are illustrative and may
+drift — the referenced file is source of truth. "None — none beyond the affected areas above." if N/A.]
+**Patterns to follow:**
+- **[name]** — [description]. Canonical example: `[path:line]`.
+**Code references:**
+- `[path:line_range]` — [what to mirror / where the buggy path lives]
+**Illustrative snippets (1–3 most important only):** each in a fenced code block, prefixed
+with a `// [path:line_range]` comment, ≤ ~15 lines, read from the referenced range.
+**Integration points:**
+- [with_area] via [interface] — [description] ([direction]), or "None identified."
+
 ## Fix Criteria
 [Outcome-based criteria -- copy verbatim]
 
@@ -394,7 +408,7 @@ file/module/service path, brief description of relevance, and risk level.]
 
 |R0 Field|Source|
 |---|---|
-|Work Type|Feature (default) — use `AskUserQuestion` (Header: `Work Type`, Question: `What type of work is this? Feature is the default for missing requirements.`, Options: `Feature (Recommended)` — new capability or user-facing behavior, `Tech Debt` — improving existing code, `Research` — investigating a question, `Upkeep` — maintenance or compliance work)|
+|Work Type|Feature (default) — use `AskUserQuestion` (Header: `Work Type`, Question: `What type of work is this? Feature is the default for missing requirements.`, Options: `Feature (Recommended)` — new capability or user-facing behavior, `Maintenance` — improving, fixing, updating, or maintaining existing code (tech debt, refactors, dependency updates, compliance, upkeep))|
 |Title or Name|Issue title from I0|
 |Description / Problem Statement|Observed behavior + expected behavior from I0|
 |Requested By / Identified By|Reported By from I0|

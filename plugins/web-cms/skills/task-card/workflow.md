@@ -110,6 +110,7 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 - Read the **Task Details** section of the Jira issue description thoroughly.
 - Identify the goal, acceptance criteria (Acceptance Criteria section), and any constraints.
 - Note all items in the **Affected Areas** section and any dependencies listed.
+- Read the **Patterns & Code References**, **Non-Functional Requirements**, **Data & Interface Changes**, and **Observability & Telemetry** sections if present. These are the implementation guardrails: the patterns/code anchors to mirror, the NFR targets to meet, the data/interface contracts to build, and the instrumentation to add.
 
 ### T2 — Review the Codebase
 
@@ -168,6 +169,7 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 - Files to create or modify
 - Logic changes and new functionality
+- How the plan **follows the Patterns & Code References** from the card (reuse/mirror the referenced code rather than inventing new patterns), **satisfies the Non-Functional Requirements**, **implements the Data & Interface Changes** as specified, and **adds the Observability & Telemetry** called for. For any of these sections marked "None"/"N/A", note that explicitly.
 - Testing expectations for the dedicated `test-reviewer` sub-agent (scenarios, regressions, edge cases, commands, and any required fixtures or setup)
 - Documentation expectations for the dedicated `documentation-reviewer` sub-agent (inline docs, repository docs, and whether separate `/document-card` follow-up is likely needed)
 
@@ -179,6 +181,7 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 - Are the testing expectations comprehensive enough to cover the changes, including edge cases and error scenarios?
 - Do the documentation expectations cover all likely affected surfaces?
 - Is the plan consistent with the codebase patterns and architecture observed in T2?
+- Does the plan follow the **Patterns & Code References** and satisfy the **Non-Functional Requirements**, **Data & Interface Changes**, and **Observability & Telemetry** sections of the card?
 - Are there any risks or dependencies not addressed?
 
 If the review reveals issues, revise the plan before posting. Do not post an unreviewed plan.
@@ -190,6 +193,7 @@ Once the self-review is clean, invoke the `plan-reviewer` sub-agent, providing:
 - The proposed implementation plan
 - The acceptance criteria from the Task Details
 - The affected areas from the Task Details
+- The Patterns & Code References, Non-Functional Requirements, Data & Interface Changes, and Observability & Telemetry sections from the card
 - The codebase findings from T2 (patterns, conventions, and architectural context)
 - The Jira issue key and work type
 
@@ -266,6 +270,7 @@ The sub-agent will return a structured findings report with an overall verdict o
 - Does the implementation fully satisfy every acceptance criterion listed in the Acceptance Criteria section?
 - Does the implementation follow the approved plan from T4? If any deviations were made, are they justified?
 - Does every code change follow the project's established code style and architectural patterns?
+- Does the implementation follow the **Patterns & Code References** from the card, and cover the **Non-Functional Requirements**, **Data & Interface Changes**, and **Observability & Telemetry** the card specified?
 - Is error handling comprehensive?
 - Are there any code smells, dead code, or hardcoded values that should be configurable?
 - Would the dedicated `test-reviewer` sub-agent be able to add comprehensive coverage without redesigning the implementation?

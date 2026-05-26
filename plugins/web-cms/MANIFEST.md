@@ -150,7 +150,11 @@ Execution skills consume these sections by name. Intake skills must produce the 
 - `## Overview` -- what and why
 - `## Context` -- background
 - `## Affected Areas` -- structured list: path, description, risk level
-- `## Acceptance Criteria` -- Gherkin (features) or outcome-based (tech debt/upkeep)
+- `## Patterns & Code References` -- patterns to follow, `path:line` code references, short snippets, integration points (or "None")
+- `## Non-Functional Requirements` -- performance, security/privacy, accessibility, compliance targets (or "None specified")
+- `## Data & Interface Changes` -- data model/migrations, API shapes, events/config (or "None")
+- `## Observability & Telemetry` -- logs/metrics/traces, alerts, prod success signal (or "None")
+- `## Acceptance Criteria` -- Gherkin for features (single fenced ` ```gherkin ` block, `Feature:`/`Scenario:`, every criterion a Scenario), outcome-based for maintenance
 - `## Dependencies` -- hard and soft
 - `## Scope` -- in scope / out of scope
 - `## Risks` -- risk register table
@@ -162,7 +166,11 @@ Execution skills consume these sections by name. Intake skills must produce the 
 - `## Overview` -- child-task specific what/why
 - `## Context` -- parent epic relationship plus child-task context
 - `## Affected Areas` -- structured list: path, description, risk level
-- `## Acceptance Criteria` -- task-specific criteria
+- `## Patterns & Code References` -- patterns/code references for this child (or "None")
+- `## Non-Functional Requirements` -- per-child NFR targets (or "N/A")
+- `## Data & Interface Changes` -- per-child data/interface contracts (or "None")
+- `## Observability & Telemetry` -- per-child instrumentation (or "None")
+- `## Acceptance Criteria` -- Gherkin for feature/behavioral children (fenced `Feature:`/`Scenario:`), outcome-based otherwise
 - `## Dependencies` -- hard and soft
 - `## Scope` -- child-task scope boundaries
 - `## Risks` -- task-specific risks or `N/A — managed in parent epic`
@@ -173,6 +181,8 @@ Execution skills consume these sections by name. Intake skills must produce the 
 A design card uses the standalone Task-card section set above, plus design-specific
 sections inserted before `## Scope`:
 
+- `## Patterns & Code References` -- component-reuse/token/style conventions, `path:line` references, snippets (or "None")
+- `## Non-Functional Requirements` -- performance budget and compliance (accessibility has its own section), or "None specified"
 - `## Design Assets` -- links to Figma, screenshots, or HTML exports, or "None provided"
 - `## Design System` -- name/version of the component library, or "None / not applicable"
 - `## Visual Specifications` -- colors, typography, spacing, borders/shadows, iconography
@@ -196,6 +206,7 @@ sections are additive context for frontend implementation.
 - `## Severity` -- Critical/High/Medium/Low
 - `## Affected Areas` -- structured list from codebase analysis
 - `## Root Cause (if known)` -- from investigation or "Unknown"
+- `## Patterns & Code References` -- code paths/conventions for the fix, `path:line` references, snippets (or "None")
 - `## Fix Criteria` -- outcome-based acceptance criteria
 - `## Open Items` -- unresolved questions
 

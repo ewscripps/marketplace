@@ -1,6 +1,6 @@
 ---
 name: task-card
-description: Execute the Task Card workflow for a Jira task issue. Use when beginning work on a task — invoke with the Jira task key whenever the user says "work on this task", "implement PROJ-123", or starts a development session for a feature, tech debt, research, or upkeep task. Handles the complete T0-T13 lifecycle including planning, core implementation, dedicated test/documentation completion, user testing, and summary of changes.
+description: Execute the Task Card workflow for a Jira task issue. Use when beginning work on a task — invoke with the Jira task key whenever the user says "work on this task", "implement PROJ-123", or starts a development session for a feature or maintenance task. Handles the complete T0-T13 lifecycle including planning, core implementation, dedicated test/documentation completion, user testing, and summary of changes.
 user-invocable: true
 argument-hint: "[PROJ-123]"
 disable-model-invocation: false

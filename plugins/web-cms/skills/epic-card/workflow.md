@@ -176,6 +176,7 @@ These same rules apply to new gap-filler tasks in the existing-children path.
 - Execution order across both existing children and new tasks, with rationale
 - Dependencies between tasks (including any new task that depends on a `To Do` existing child)
 - How the combined set of existing children and new tasks collectively satisfies the epic's acceptance criteria
+- **Per child:** its work type and therefore its AC format (Gherkin for feature/behavioral children, outcome-based for maintenance children), plus the relevant **patterns & code references** (from the E2 `pattern`/`evidence`/`integration_point` findings — `path:line` anchors), and any **non-functional**, **data & interface**, or **observability** notes that apply to that child. These feed the E6 token fills; mark "N/A" where a child has none.
 
 **REQUIRED: Review the breakdown plan before posting.** Verify:
 
@@ -230,7 +231,10 @@ Post a single combined Jira comment with the exact heading `**E4/E5 — Breakdow
 For each task identified in E4 (new gap-filler tasks only):
 
 1. Derive the epic integration branch name now using the E7 naming convention: `{PROJECTKEY}-{ISSUENUMBER}-{epic-summary-in-kebab-case}` (e.g. `PROJ-900-user-authentication-overhaul`). This value is written into each child task's `Epic Integration Branch` field so T6 can detect epic child-task mode.
-2. Populate the task description using the **Standard Task Template** below. Preserve the section structure exactly, but replace every `{{...}}` token with task-specific content before creating the issue. No unresolved placeholder text may be stored in Jira.
+2. Populate the task description using the **Standard Task Template** below. Preserve the section structure exactly, but replace every `{{...}}` token with task-specific content before creating the issue. No unresolved placeholder text may be stored in Jira. Specifically:
+   - **Acceptance Criteria:** use the AC format decided for this child in E4. For feature/behavioral children this MUST be the canonical fenced ```gherkin block (`Feature:` + `Scenario:` per behavior; every criterion a Scenario; no plain outcome bullets). Maintenance children use outcome-based bullets.
+   - **Patterns & Code References:** fill from the E4 per-child assignment (E2 `pattern`/`evidence`/`integration_point` findings). For the 1–3 most important patterns, use `Read` to extract a ≤ ~15-line snippet from the referenced `path:line_range`, prefixed with a `// path:line_range` comment. Write "None — no established pattern to follow." if none.
+   - **Non-Functional Requirements / Data & Interface Changes / Observability & Telemetry:** fill from the E4 per-child notes, or the explicit "None …"/"N/A" line when the child has none.
 3. **Recommend a priority** for the child task based on its risk level, dependency position, and impact on the epic's acceptance criteria. Use `AskUserQuestion` with header `Task Priority` to confirm before creating the issue. Put the recommended priority first with `(Recommended)` appended. Options: one of `Critical (Recommended)` / `High (Recommended)` / `Medium (Recommended)` / `Low (Recommended)` as the first option (only the recommended one gets the label), then the remaining three priorities as subsequent options.
 4. Create a new task by calling `jira_create_issue` with `additional_fields` set to `{"parent": "EPIC-KEY", "priority": {"name": "High"}}` (substituting this epic's actual issue key and the confirmed priority name) and the assembled task description. This create call establishes the child work item relationship.
 
@@ -266,11 +270,34 @@ Parent epic: {{EPIC-KEY}} — {{EPIC-SUMMARY}}
 
 ## Acceptance Criteria
 
-- {{TASK-ACCEPTANCE-CRITERION}}
+[Format per the child's work type, decided in E4. For **feature/behavioral** children, AC
+MUST be Gherkin: a single fenced ```gherkin code block headed by `Feature:` with one
+`Scenario:` per behavior (Given/When/Then/And); every criterion is a Scenario — no plain
+outcome bullets. For **maintenance** children, use outcome-based bullets instead.
+Gherkin example shape:
+  Feature: <capability>
+    Scenario: <behavior>
+      Given <precondition>
+      When <action>
+      Then <expected outcome>
+      And <additional expectation>]
+{{TASK-ACCEPTANCE-CRITERION}}
 
 ## Affected Areas
 
 - `{{AFFECTED-PATH}}` -- {{AFFECTED-AREA-DESCRIPTION}} ({{RISK-LEVEL}} risk)
+
+## Patterns & Code References
+{{PATTERNS-AND-CODE-REFERENCES-OR-NONE}}
+
+## Non-Functional Requirements
+{{NON-FUNCTIONAL-REQUIREMENTS-OR-NA}}
+
+## Data & Interface Changes
+{{DATA-AND-INTERFACE-CHANGES-OR-NONE}}
+
+## Observability & Telemetry
+{{OBSERVABILITY-AND-TELEMETRY-OR-NONE}}
 
 ## Dependencies
 
