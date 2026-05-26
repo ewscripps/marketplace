@@ -26,7 +26,7 @@
 - **File discovery (find files by name or pattern):** Use native `Glob`.
 - **Content search (find text inside files):** Use native `Grep`. For symbolic code search (finding classes, methods, or callers), delegate to the `codebase-explorer` agent, which uses the Serena MCP server.
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
-- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
+- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
 
 **DESCRIPTION APPEND RULE:** Preserve the original Jira description exactly as retrieved in Q0. In Q4, append the final QA plan as a new terminal section at the bottom of that description. Do not edit, delete, reorder, reformat, or normalize any pre-existing description content. If an earlier QA plan section already exists, leave it untouched and append the new one after all existing content.
 

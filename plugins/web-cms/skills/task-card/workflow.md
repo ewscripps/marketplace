@@ -23,26 +23,44 @@
 - **File discovery (find files by name or pattern):** Use native `Glob`.
 - **Content search (find text inside files):** Use native `Grep`. For symbolic code navigation during implementation (locating a method, class, or caller before editing), use Serena's `find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, and `search_for_pattern` directly. For broader codebase analysis that informs planning (architectural patterns, convention discovery, cross-area impact), delegate to the `codebase-explorer` agent.
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
-- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
+- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
 
 **JIRA COMMENT CONTRACT:** Keep Jira comments minimal, structured, and durable. Do not narrate every phase. Routine Jira comments are required only at:
 
 - **T4/T5** -- one combined comment containing the reviewed implementation plan and the approval request
-- **T11** -- user testing handoff in standard mode only
+- **T10** — user testing handoff in standard mode only
 - **T12** -- final structured summary
 
-Additional Jira comments are allowed only for blocking failures, reposting a revised plan after requested changes, or explicit user-requested status updates. Do not post separate narration comments for T0, T1, T2, T3, T6, T7, T8, T9, T10, or T13.
+Additional Jira comments are allowed only for blocking failures, reposting a revised plan after requested changes, or explicit user-requested status updates. Do not post separate narration comments for T0, T1, T2, T3, T6, T7, T8, T9, T11, or T13.
 
 When a Jira comment heading references workflow phases, use the exact phase label defined here. Do not invent synthetic phase ranges such as `T2-T5` or `T6-T10`. The only routine combined phase heading allowed is `T4/T5` because one comment serves both phases.
 
-> **EPIC CHILD TASK MODE:** If the Task Details include an **Epic Integration Branch** field, this is a child task within a larger epic. Three phases behave differently in epic mode:
->
-> - **T6:** Branch from the Epic Integration Branch instead of the default branch.
-> - **T10:** After committing, merge the task branch into the Epic Integration Branch. Run the full build, all tests, and all linters on the integration branch to confirm no regressions before exiting the worktree.
-> - **T11:** Skip User Testing -- user testing for the epic is handled at the epic level (E9). Proceed directly to T12.
-> - **T13:** Do not remove the shared epic worktree in epic child-task mode. Final worktree cleanup for the integration branch is handled at the epic level (E11).
+**COMMIT, PUSH, MERGE & TRANSITION DISCIPLINE — HARD RULE:** Every one of the following is an irreversible action that affects shared state. None may run until the user has explicitly selected the "Approve" option at the T10 User Testing gate **in this same session**:
 
-**WORKTREE DISCIPLINE:** Always create worktrees under `.worktrees/<branch-name>` in the project root, using the exact branch name as the directory name. Create the directory first if it does not exist: `mkdir -p .worktrees`. The full creation command is `git worktree add .worktrees/<branch-name> <branch-name>`. Never use a worktree-prefixed or renamed branch (e.g. never `worktree-PROJ-123`). All commits must be made on the real branch. Push using `git push origin <branch-name>` — never use refspecs that map a different local branch name to the remote (e.g. never `git push origin worktree-branch:real-branch`). After removing a worktree and returning to the main working directory, run `git fetch origin` and update the local ref with `git branch -f <branch-name> origin/<branch-name>` before checking it out, to ensure the local branch matches the remote.
+- `git add` / `git commit` on the working branch
+- `git push` of the working branch
+- `git merge` into any integration or shared branch
+- `git push` of an integration branch
+- Any Jira transition that moves the issue out of "In Progress" (e.g. to "In Review", "Done", "Closed")
+
+A passing build, passing tests, clean self-review, or successful reviewer sub-agent do NOT substitute for user testing approval. **Auto Mode does not lift this rule.** Auto Mode's "bias toward working without stopping" applies to implementation decisions and tool usage — not to workflow approval gates or irreversible shared-state actions. If you cannot quote the user's verbatim T10 approval selection from earlier in this same conversation, STOP and return to T10.
+
+These actions must not be chained. Run each one at a time, reporting the result in the chat before starting the next. Do not pre-batch commit + push + merge + push + transition in a single tool sequence.
+
+> **EPIC CHILD TASK MODE — DETECTION IS EXPLICIT, NOT INFERRED.** This mode is active *only* when the Jira Task Details contain a populated **Epic Integration Branch** field. Do not infer epic child mode from the current git branch name, from a parent-link relationship in Jira, from sibling tasks, or from any other signal. Before treating a task as an epic child:
+>
+> 1. Show the user the exact `Epic Integration Branch` value you read from Task Details.
+> 2. Use `AskUserQuestion` with header `Epic Child Mode`, options: `Confirm — run as epic child task (Recommended)` (description: "T6 will verify the integration branch, T10 user testing is deferred to E9, T11 merges into the integration branch") / `No — run as standard task` (description: "Full T10 user testing gate applies before any commit").
+> 3. Only after the user selects "Confirm" do the epic mode behaviors below take effect.
+>
+> If the field is absent but you suspect this is an epic child task, ask the user — do not act on the suspicion. Skipping T10 user testing without an explicit, in-session confirmation that epic child mode is in effect is a workflow violation regardless of Auto Mode.
+>
+> Three phases behave differently once epic child mode is confirmed:
+>
+> - **T6:** Verify you are on a branch created from the Epic Integration Branch, rather than asking which base branch to use.
+> - **T10:** Skip User Testing — user testing for the epic is handled at the epic level (E9). Proceed directly to T11.
+> - **T11:** After committing and pushing the working branch, merge it into the Epic Integration Branch. Run the full build, all tests, and all linters on the integration branch before pushing the integration branch.
+
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
@@ -52,12 +70,12 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 - T3 — Ask Clarifying Questions
 - T4 — Create Implementation Plan
 - T5 — Await Plan Approval
-- T6 — Create Branch and Worktree
+- T6 — Verify Working Branch
 - T7 — Baseline Verification
 - T8 — Implementation
 - T9 — Post-Implementation Verification
-- T10 — Commit, Push, and Exit Worktree
-- T11 — User Testing
+- T10 — User Testing
+- T11 — Commit and Push
 - T12 — Summary of Changes
 - T13 — Cleanup
 
@@ -68,10 +86,10 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 1. Wait for any background `area-mapper` sub-agent to complete.
 2. Create a `phase_handoff` entity in the knowledge graph:
    - **Name:** `phase-handoff-<JIRA-KEY>-<phase-id>` (e.g. `phase-handoff-ELI-1234-T5`)
-   - **Observations:** `phase: <id>`, `skill: task-card`, `jira_key: <key>`, `branch: <name or "none">`, `worktree: <path or "none">`, `head_sha: <sha or "n/a">`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. At T8 only: `reviewer_iterations: impl=N test=N doc=N`.
+   - **Observations:** `phase: <id>`, `skill: task-card`, `jira_key: <key>`, `branch: <name or "none">`, `head_sha: <sha or "n/a">`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. At T8 only: `reviewer_iterations: impl=N test=N doc=N`.
    - **Relations:** `BELONGS_TO` → `work_item-<JIRA-KEY>`; `SUPERSEDES` → prior `phase_handoff` for this work item (if any); `REFERENCES` → relevant `exploration`, `plan`, and `finding` entity names.
 3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
-4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, Jira key + branch + worktree + head SHA anchors, reviewer iteration counters (T8 only), one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → `git status` + `git worktree list` → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, verify git state (`git status` + `git worktree list` if branch/worktree are set), and resume at `next_phase`. If the user types a different message instead, handle it normally.
+4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, Jira key + branch + head SHA anchors, reviewer iteration counters (T8 only), one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → `git status` → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, verify git state (`git status`), and resume at `next_phase`. If the user types a different message instead, handle it normally.
 
 **Cleanup:** Include all `phase_handoff` entities for this work item (prefix `phase-handoff-<JIRA-KEY>-`) in the T13 cleanup enumeration alongside other session-scoped entities.
 
@@ -129,7 +147,7 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 > **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `T3 Approval`, options: `Approve and proceed (Recommended)` (description: "All blocking answers are accurate and recorded") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to T4 until approved.
 
-> **COMPACTION GATE — T3:** Once T3 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-T3`; `next_phase: T4`; decisions: clarifying answers and any blocking constraints; branch + worktree + head SHA: "n/a" (not yet created). REFERENCES: exploration entities from T2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T4.
+> **COMPACTION GATE — T3:** Once T3 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-T3`; `next_phase: T4`; decisions: clarifying answers and any blocking constraints; branch + head SHA: "n/a" (not yet created). REFERENCES: exploration entities from T2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T4.
 
 ### T4 — Create Implementation Plan
 
@@ -190,23 +208,15 @@ The sub-agent will return a structured findings report with an overall verdict o
 - If the user selects "Request changes", revise the plan, repost the full combined `T4/T5` comment to Jira, and use `AskUserQuestion` again.
 - Only proceed to T6 after "Approve and proceed" is selected.
 
-> **COMPACTION GATE — T5:** Once T5 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-T5`; `next_phase: T6`; decisions: approved implementation plan (one-line summary, plan entity name for REFERENCES); branch + worktree + head SHA: "n/a" (not yet created). REFERENCES: plan entity and exploration entities from T2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T6.
+> **COMPACTION GATE — T5:** Once T5 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-T5`; `next_phase: T6`; decisions: approved implementation plan (one-line summary, plan entity name for REFERENCES); branch + head SHA: "n/a" (not yet created). REFERENCES: plan entity and exploration entities from T2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T6.
 
 ---
 
-### T6 — Create Branch and Worktree
+### T6 — Verify Working Branch
 
-- **Standard mode — ask which branch to branch from:** Before creating the branch, run `git rev-parse --abbrev-ref HEAD` to determine the current branch. Use `AskUserQuestion` with header `Base Branch`, options: `<current branch name> (Recommended)` (description: "Use the currently checked-out branch as the base") / `develop` (description: "Branch from the develop integration branch"). The user can type a specific branch name via the auto-injected "Other" option. **Do not branch from `main` unless the user explicitly specifies it — warn the user if they select or type `main`.** Verify any user-specified branch exists on the remote before proceeding.
-- Create a new branch using this naming convention:
-
-```
-{PROJECTKEY}-{ISSUENUMBER}-{issue-summary-in-kebab-case}
-```
-
-Example: `PROJ-1234-add-retry-logic-to-payment-service`
-
-- **Standard mode:** Create the branch from the user-specified base branch, then create the worktree: `mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`. Do not create a worktree-prefixed branch.
-- **Epic child task mode:** Create the branch from the **Epic Integration Branch** specified in Task Details, within the epic's existing worktree. Do not ask for a base branch in this mode — the integration branch is already defined.
+- Run `git branch --show-current` and report the current branch to the user.
+- **Standard mode:** Use `AskUserQuestion` with header `Working Branch`, options: `Confirm — this is the correct branch (Recommended)` (description: "Proceed with implementation on this branch") / `Wrong branch — switching now` (description: "I need to switch to the correct branch before continuing"). If the user selects "Wrong branch", halt and wait for them to switch manually, then verify again.
+- **Epic child task mode:** Confirm the current branch was created from the Epic Integration Branch specified in Task Details. If it was not, halt and ask the user to switch to the correct branch before continuing.
 
 ### T7 — Baseline Verification
 
@@ -275,7 +285,7 @@ Do not proceed to the dedicated completion loops until the implementation-review
 
 Invoke the `test-reviewer` sub-agent, providing:
 
-- The worktree path (`.worktrees/<branch-name>`), branch name, and base branch — the reviewer fetches the diff itself via `git diff <base-branch>..HEAD` in the worktree. Do not paste the full diff inline.
+- The branch name and base branch — the reviewer fetches the diff itself via `git diff <base-branch>..HEAD`. Do not paste the full diff inline.
 - The approved implementation plan from T4, especially the testing expectations
 - The acceptance criteria from the Task Details
 - The codebase findings from T2, especially testing conventions and nearby test structure
@@ -291,7 +301,7 @@ The sub-agent will add or update tests as needed, run the relevant test commands
 
 Invoke the `documentation-reviewer` sub-agent, providing:
 
-- The worktree path (`.worktrees/<branch-name>`), branch name, and base branch — the reviewer fetches the diff itself via `git diff <base-branch>..HEAD` in the worktree. Do not paste the full diff inline.
+- The branch name and base branch — the reviewer fetches the diff itself via `git diff <base-branch>..HEAD`. Do not paste the full diff inline.
 - The approved implementation plan from T4, especially the documentation expectations
 - The acceptance criteria from the Task Details
 - The codebase findings from T2, especially documentation conventions and nearby docs
@@ -314,30 +324,15 @@ Do not proceed to T9 until `implementation-reviewer`, `test-reviewer`, and `docu
 - **All checks must pass.** If anything fails, fix and re-run this phase.
 - If a failure cannot be resolved after reasonable effort, stop and post a comment describing the failure and what was attempted. Do not continue.
 
-### T10 — Commit, Push, and Exit Worktree
+### T10 — User Testing
 
-- Stage all changes and commit with this message format:
-
-```
-[{PROJECTKEY}-{ISSUENUMBER}] <concise description of what was done>
-```
-
-Example: `[PROJ-1234] Add retry logic with exponential backoff to payment service`
-
-- Use imperative mood for the description.
-- Push the branch to the remote using `git push origin <branch-name>`. Do not use refspecs.
-- **Standard mode:** Exit the worktree and remove it: `git worktree remove .worktrees/<branch-name>`. Then sync the local branch: `git fetch origin` followed by `git branch -f <branch-name> origin/<branch-name>`. Return to the main working directory.
-- **Epic child task mode:** After committing, merge the task branch into the Epic Integration Branch. Run the full build, all tests, and all linters on the integration branch to confirm no merge conflicts or regressions. Then exit the worktree.
-
-### T11 — User Testing
-
-> **Skip in Epic Child Task Mode -- proceed directly to T12.**
+> **Skip in Epic Child Task Mode (confirmed via the Epic Child Mode question at the start) — proceed directly to T11.**
 
 ---
 
-**APPROVAL GATE — USER TESTING REQUIRED.**
+**APPROVAL GATE — USER MUST MANUALLY TEST BEFORE PROCEEDING. AUTO MODE DOES NOT BYPASS THIS GATE.**
 
-- Post a comment on this Jira issue with the exact heading `**T11 — User Testing Handoff**`. The comment must include:
+- Post a comment on this Jira issue with the exact heading `**T10 — User Testing Handoff**`. The comment must include:
 
     - The branch name
     - A summary of what was implemented
@@ -345,11 +340,41 @@ Example: `[PROJ-1234] Add retry logic with exponential backoff to payment servic
         - The criterion restated clearly
         - Step-by-step instructions to verify that criterion is met
 - Present the same testing handoff in the chat — the user should not have to open Jira to see what to test.
-- Then use `AskUserQuestion` with header `T11 Testing`, options: `Approve — implementation works as expected (Recommended)` (description: "Testing passed — proceed to the summary") / `Issues found` (description: "One or more problems were found during testing"). Do not proceed until the user selects an option.
+- Pause the workflow here and wait. Do not call any tool other than `AskUserQuestion` until the user reports back with an explicit selection. Do not infer approval from silence, from a `continue` keyword, from prior phase success, or from Auto Mode.
+- Use `AskUserQuestion` with header `T10 Testing`, options: `Approve — I ran through every step above and every criterion passed (Recommended)` (description: "I have manually tested the implementation and it works as expected") / `Issues found` (description: "One or more problems were found during testing"). Do not proceed until the user selects an option.
+- If the user's message accompanying the approval suggests they have NOT actually run through the steps (e.g. "looks good", "go ahead", "skip", "sure", "proceed"), re-ask the question once and require an explicit testing-was-done confirmation. Treat ambiguous approval as the "Issues found" branch until confirmed otherwise.
 
-- If the user identifies issues: for each distinct issue, invoke the `issue-intake` skill (via the `Skill` tool), passing a brief description of the observed behavior, expected behavior, and this task's Jira key as args (e.g. `"Testing found: [description]. Related to: [PROJ-KEY]"`). Work through the issue-intake I0–I6 process with the user to document and triage each issue — it will create a Jira card (Bug or Missing Requirement) for each one. After all issues are documented and their Jira cards are created, recreate the worktree (`mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`), return to T8, resolve each issue, re-run T9 and T10 (which removes the worktree again), and return to this step before proceeding.
+- If the user identifies issues: for each distinct issue, invoke the `issue-intake` skill (via the `Skill` tool), passing a brief description of the observed behavior, expected behavior, and this task's Jira key as args (e.g. `"Testing found: [description]. Related to: [PROJ-KEY]"`). Work through the issue-intake I0–I6 process with the user to document and triage each issue — it will create a Jira card (Bug or Missing Requirement) for each one. After all issues are documented and their Jira cards are created, return to T8, resolve each issue, re-run T9, and return to this step before proceeding.
 
 ---
+
+### T11 — Commit and Push
+
+**PRECONDITION — verify in the chat before running any git command.** State each check and its result before staging anything. If any check fails, STOP and return to T10.
+
+1. The user explicitly selected the "Approve" option at T10 in this conversation. Quote their selection verbatim.
+2. No issues were reported by the user after that selection that have not since been addressed and re-approved.
+3. The current branch matches the branch confirmed at T6.
+
+Execute the following steps **one at a time, in order**. Report the outcome of each step in the chat before starting the next. Do not pre-batch these into a single tool call sequence — the user must be able to interrupt between any two steps:
+
+**Step 1 — Stage and commit.** Stage all changes and commit with this message format:
+
+```
+[{PROJECTKEY}-{ISSUENUMBER}] <concise description of what was done>
+```
+
+Example: `[PROJ-1234] Add retry logic with exponential backoff to payment service`
+
+Use imperative mood. Report the commit hash in the chat before proceeding.
+
+**Step 2 — Push the working branch.** Push using `git push origin <branch-name>`. Do not use refspecs. Report the push result before proceeding.
+
+**Step 3 — (Epic child task mode only) Merge and verify.** Switch to the Epic Integration Branch and merge the working branch. Run the full build, all tests, and all linters. Report all results before pushing. If anything fails, fix and re-run before pushing.
+
+**Step 4 — (Epic child task mode only) Push the integration branch.** Push the Epic Integration Branch only after Step 3 passes cleanly. Report the push result before proceeding.
+
+**Step 5 — No Jira transitions here.** Any Jira status transition is part of T12, not T11. Do not transition the issue status from this phase.
 
 ### T12 — Summary of Changes
 
@@ -371,7 +396,7 @@ Post a comment on this Jira issue with the exact heading `**T12 — Summary of C
      
 - **Release note:** If the change is user-facing, include a 1–2 sentence plain-language release note. If purely internal, state "N/A — internal change."
 
-- **User testing status:** For standard mode, note that T11 user testing passed. For epic child mode, state `Skipped in epic child mode -- handled at epic E9.`
+- **User testing status:** For standard mode, note that T10 user testing passed. For epic child mode, state `Skipped in epic child mode -- handled at epic E9.`
      
 - **QA Verification Steps:** Step-by-step manual testing instructions for a QA engineer, including:
     
@@ -386,8 +411,6 @@ Post a comment on this Jira issue with the exact heading `**T12 — Summary of C
 
 ### T13 — Cleanup
 
-- **Standard mode:** Confirm `.worktrees/<branch-name>` has been removed. If it still exists (e.g. a follow-up worktree was created during T11 and not yet removed by T10), run `git worktree remove .worktrees/<branch-name>` now. Confirm you have returned to the main working directory.
-- **Epic child task mode:** Confirm the child task worktree has been exited and no task-specific temporary worktree remains. Do not remove the shared epic integration worktree here.
 - **Standard mode:** Clear the session-scoped knowledge graph nodes created during this task — the `work_item-<JIRA_KEY>` entity and every entity linked to it (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`, `phase_handoff`, and any `affected_area` rolled up from them). Use `read_graph` to enumerate, then `delete_entities`. The graph is session-scoped; finishing without cleanup leaves stale state for the next workflow.
 - **Epic child task mode:** Do not delete the `work_item-<JIRA_KEY>` entity for this child task or its linked nodes here — the epic-level cleanup at E11 owns wholesale graph teardown after all child tasks complete.
 
@@ -400,6 +423,8 @@ This workflow is complete when **all** of the following are true:
 - All required Jira comments were posted using the defined comment contract
 - Branch changes were committed and pushed successfully
 - `implementation-reviewer`, `test-reviewer`, and `documentation-reviewer` all completed successfully
-- Standard mode: user testing completed and approved at T11
+- Standard mode: user testing completed and approved at T10; the T10 approval was captured before any commit or push was made
+- Epic child task mode (if used): confirmed via the explicit `Epic Child Mode` AskUserQuestion — never inferred from branch name or other signals
+- Commit, push, integration merge, integration push, and any Jira transition each ran as discrete user-visible steps, not as a single chained sequence
 - T12 summary comment posted successfully
-- T13 cleanup verified the workflow ended with no lingering task-specific worktree
+- T13 session-scoped knowledge graph cleared

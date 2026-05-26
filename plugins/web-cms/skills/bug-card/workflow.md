@@ -25,19 +25,29 @@
 - **File discovery (find files by name or pattern):** Use native `Glob`.
 - **Content search (find text inside files):** Use native `Grep`. For symbolic code navigation during the fix (locating a method, class, or caller before editing), use Serena's `find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, and `search_for_pattern` directly. For broader codebase analysis that informs the investigation (architectural patterns, cross-area impact), delegate to the `codebase-explorer` agent.
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
-- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
+- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
 
 **JIRA COMMENT CONTRACT:** Keep Jira comments minimal, structured, and durable. Do not narrate every phase. Routine Jira comments are required only at:
 
 - **B5/B6** — one combined comment containing the reviewed fix plan and the approval request
-- **B13** — user testing handoff
+- **B12** — user testing handoff
 - **B14** — final structured summary
 
-Additional Jira comments are allowed only for blocking failures, reposting a revised plan after requested changes, or explicit user-requested status updates. Do not post separate narration comments for B0, B1, B2, B3, B4, B7, B8, B9, B10, B11, B12, or B15.
+Additional Jira comments are allowed only for blocking failures, reposting a revised plan after requested changes, or explicit user-requested status updates. Do not post separate narration comments for B0, B1, B2, B3, B4, B7, B8, B9, B10, B11, B13, or B15.
 
 When a Jira comment heading references workflow phases, use the exact phase label defined here. Do not invent synthetic phase ranges. The only routine combined phase heading allowed is `B5/B6` because one comment serves both phases.
 
-**WORKTREE DISCIPLINE:** Always create worktrees under `.worktrees/<branch-name>` in the project root, using the exact branch name as the directory name. Create the directory first if it does not exist: `mkdir -p .worktrees`. The full creation command is `git worktree add .worktrees/<branch-name> <branch-name>`. Never use a worktree-prefixed or renamed branch (e.g. never `worktree-PROJ-123`). All commits must be made on the real branch. Push using `git push origin <branch-name>` — never use refspecs that map a different local branch name to the remote (e.g. never `git push origin worktree-branch:real-branch`). After removing a worktree and returning to the main working directory, run `git fetch origin` and update the local ref with `git branch -f <branch-name> origin/<branch-name>` before checking it out, to ensure the local branch matches the remote.
+**COMMIT, PUSH, MERGE & TRANSITION DISCIPLINE — HARD RULE:** Every one of the following is an irreversible action that affects shared state. None may run until the user has explicitly selected the "Approve" option at the B12 User Testing gate **in this same session**:
+
+- `git add` / `git commit` on the working branch
+- `git push` of the working branch
+- `git merge` into any integration or shared branch
+- `git push` of an integration branch
+- Any Jira transition that moves the issue out of "In Progress" (e.g. to "In Review", "Done", "Closed")
+
+A passing build, passing tests, clean self-review, or successful reviewer sub-agent do NOT substitute for user testing approval. **Auto Mode does not lift this rule.** Auto Mode's "bias toward working without stopping" applies to implementation decisions and tool usage — not to workflow approval gates or irreversible shared-state actions. If you cannot quote the user's verbatim B12 approval selection from earlier in this same conversation, STOP and return to B12.
+
+These actions must not be chained. Run each one at a time, reporting the result in the chat before starting the next. Do not pre-batch commit + push + Jira transition in a single tool sequence.
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
@@ -48,13 +58,13 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 - B4 — Ask Clarifying Questions
 - B5 — Create Fix Plan
 - B6 — Await Plan Approval
-- B7 — Create Branch and Worktree
+- B7 — Verify Working Branch
 - B8 — Baseline Verification
 - B9 — Write a Failing Test
 - B10 — Implement the Fix
 - B11 — Post-Fix Verification
-- B12 — Commit, Push, and Exit Worktree
-- B13 — User Testing
+- B12 — User Testing
+- B13 — Commit and Push
 - B14 — Summary of Changes
 - B15 — Cleanup
 
@@ -65,10 +75,10 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 1. Wait for any background `area-mapper` sub-agent to complete.
 2. Create a `phase_handoff` entity in the knowledge graph:
    - **Name:** `phase-handoff-<JIRA-KEY>-<phase-id>` (e.g. `phase-handoff-ELI-5678-B6`)
-   - **Observations:** `phase: <id>`, `skill: bug-card`, `jira_key: <key>`, `branch: <name or "none">`, `worktree: <path or "none">`, `head_sha: <sha or "n/a">`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. At B10 only: `reviewer_iterations: impl=N test=N doc=N`.
+   - **Observations:** `phase: <id>`, `skill: bug-card`, `jira_key: <key>`, `branch: <name or "none">`, `head_sha: <sha or "n/a">`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. At B10 only: `reviewer_iterations: impl=N test=N doc=N`.
    - **Relations:** `BELONGS_TO` → `work_item-<JIRA-KEY>`; `SUPERSEDES` → prior `phase_handoff` for this work item (if any); `REFERENCES` → relevant `exploration`, `hypothesis`, `root_cause`, `fix_plan`, and `finding` entity names.
 3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
-4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, Jira key + branch + worktree + head SHA anchors, reviewer iteration counters (B10 only), one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → `git status` + `git worktree list` → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, verify git state (`git status` + `git worktree list` if branch/worktree are set), and resume at `next_phase`. If the user types a different message instead, handle it normally.
+4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, Jira key + branch + head SHA anchors, reviewer iteration counters (B10 only), one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → `git status` → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, verify git state (`git status`), and resume at `next_phase`. If the user types a different message instead, handle it normally.
 
 **Cleanup:** Include all `phase_handoff` entities for this work item (prefix `phase-handoff-<JIRA-KEY>-`) in the B15 cleanup enumeration alongside other session-scoped entities.
 
@@ -134,7 +144,7 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 > **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `B4 Approval`, options: `Approve and proceed (Recommended)` (description: "All blocking answers are accurate and recorded") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to B5 until approved.
 
-> **COMPACTION GATE — B4:** Once B4 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-B4`; `next_phase: B5`; decisions: clarifying answers, confirmed root cause hypothesis; branch + worktree + head SHA: "n/a" (not yet created). REFERENCES: exploration entities from B3, hypothesis and root_cause graph nodes. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to B5.
+> **COMPACTION GATE — B4:** Once B4 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-B4`; `next_phase: B5`; decisions: clarifying answers, confirmed root cause hypothesis; branch + head SHA: "n/a" (not yet created). REFERENCES: exploration entities from B3, hypothesis and root_cause graph nodes. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to B5.
 
 ### B5 — Create Fix Plan
 
@@ -199,22 +209,14 @@ The sub-agent will return a structured findings report with an overall verdict o
 - If the user selects "Request changes", revise the plan, repost the full combined `B5/B6` comment to Jira, and use `AskUserQuestion` again.
 - Only proceed to B7 after "Approve and proceed" is selected.
 
-> **COMPACTION GATE — B6:** Once B6 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-B6`; `next_phase: B7`; decisions: approved fix plan (one-line summary, fix_plan entity name for REFERENCES); branch + worktree + head SHA: "n/a" (not yet created). REFERENCES: fix_plan and root_cause entities from B5 and exploration entities from B3. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to B7.
+> **COMPACTION GATE — B6:** Once B6 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-B6`; `next_phase: B7`; decisions: approved fix plan (one-line summary, fix_plan entity name for REFERENCES); branch + head SHA: "n/a" (not yet created). REFERENCES: fix_plan and root_cause entities from B5 and exploration entities from B3. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to B7.
 
 ---
 
-### B7 — Create Branch and Worktree
+### B7 — Verify Working Branch
 
-- **Ask which branch to branch from:** Before creating the branch, run `git rev-parse --abbrev-ref HEAD` to determine the current branch. Use `AskUserQuestion` with header `Base Branch`, options: `<current branch name> (Recommended)` (description: "Use the currently checked-out branch as the base") / `develop` (description: "Branch from the develop integration branch"). The user can type a specific branch name via the auto-injected "Other" option. **Do not branch from `main` unless the user explicitly specifies it — warn the user if they select or type `main`.** Verify any user-specified branch exists on the remote before proceeding.
-- Create a new branch from the user-specified base branch using this naming convention:
-
-```
-{PROJECTKEY}-{ISSUENUMBER}-{issue-summary-in-kebab-case}
-```
-
-Example: `PROJ-5678-fix-null-pointer-in-user-lookup`
-
-- Create the worktree: `mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`. Do not create a worktree-prefixed branch.
+- Run `git branch --show-current` and report the current branch to the user.
+- Use `AskUserQuestion` with header `Working Branch`, options: `Confirm — this is the correct branch (Recommended)` (description: "Proceed with the fix on this branch") / `Wrong branch — switching now` (description: "I need to switch to the correct branch before continuing"). If the user selects "Wrong branch", halt and wait for them to switch manually, then verify again.
 
 ### B8 — Baseline Verification
 
@@ -291,7 +293,7 @@ Do not proceed to the dedicated completion loops until the implementation-review
 
 Invoke the `test-reviewer` sub-agent, providing:
 
-- The worktree path (`.worktrees/<branch-name>`), branch name, and base branch — the reviewer fetches the diff itself via `git diff <base-branch>..HEAD` in the worktree. Do not paste the full diff inline.
+- The branch name and base branch — the reviewer fetches the diff itself via `git diff <base-branch>..HEAD`. Do not paste the full diff inline.
 - The approved fix plan from B5, especially the regression-test strategy
 - The fix criteria from the Bug Details
 - The codebase findings from B3, especially testing conventions and nearby test structure
@@ -308,7 +310,7 @@ The sub-agent will add or update tests as needed, run the relevant test commands
 
 Invoke the `documentation-reviewer` sub-agent, providing:
 
-- The worktree path (`.worktrees/<branch-name>`), branch name, and base branch — the reviewer fetches the diff itself via `git diff <base-branch>..HEAD` in the worktree. Do not paste the full diff inline.
+- The branch name and base branch — the reviewer fetches the diff itself via `git diff <base-branch>..HEAD`. Do not paste the full diff inline.
 - The approved fix plan from B5, especially the documentation expectations
 - The fix criteria from the Bug Details
 - The codebase findings from B3, especially documentation conventions and nearby docs
@@ -331,27 +333,13 @@ Do not proceed to B11 until `implementation-reviewer`, `test-reviewer`, and `doc
 - Re-run the original **Steps to Reproduce** and confirm the bug no longer occurs.
 - **All checks must pass.** If anything fails, fix and re-run this phase.
 
-### B12 — Commit, Push, and Exit Worktree
-
-- Stage all changes and commit with this message format:
-
-```
-[{PROJECTKEY}-{ISSUENUMBER}] <concise description of what was fixed>
-```
-
-Example: `[PROJ-5678] Fix null pointer when looking up user with missing profile`
-
-- Use imperative mood for the description.
-- Push the branch to the remote using `git push origin <branch-name>`. Do not use refspecs.
-- Exit the worktree and remove it: `git worktree remove .worktrees/<branch-name>`. Then sync the local branch: `git fetch origin` followed by `git branch -f <branch-name> origin/<branch-name>`. Return to the main working directory.
-
-### B13 — User Testing
+### B12 — User Testing
 
 ---
 
-**APPROVAL GATE — USER TESTING REQUIRED.**
+**APPROVAL GATE — USER MUST MANUALLY TEST BEFORE PROCEEDING. AUTO MODE DOES NOT BYPASS THIS GATE.**
 
-- Post a comment on this Jira issue notifying the user that the fix is committed and pushed to the branch. The comment must include:
+- Post a comment on this Jira issue notifying the user that the fix is ready for testing. The comment must include:
 
     - The branch name
     - A summary of what was fixed
@@ -359,12 +347,37 @@ Example: `[PROJ-5678] Fix null pointer when looking up user with missing profile
         - The criterion/expected behavior restated clearly
         - Step-by-step instructions to verify it now works correctly
 - Present the same testing handoff in the chat — the user should not have to open Jira to see what to test.
-- Then use `AskUserQuestion` with header `B13 Testing`, options: `Approve — the fix works as expected (Recommended)` (description: "Testing passed — proceed to the summary") / `Issues found` (description: "One or more problems were found during testing"). Do not proceed until the user selects an option.
+- Pause the workflow here and wait. Do not call any tool other than `AskUserQuestion` until the user reports back with an explicit selection. Do not infer approval from silence, from a `continue` keyword, from prior phase success, or from Auto Mode.
+- Use `AskUserQuestion` with header `B12 Testing`, options: `Approve — I ran through every step above and the fix works as expected (Recommended)` (description: "I have manually tested the fix and it works correctly") / `Issues found` (description: "One or more problems were found during testing"). Do not proceed until the user selects an option.
+- If the user's message accompanying the approval suggests they have NOT actually run through the steps (e.g. "looks good", "go ahead", "skip", "sure", "proceed"), re-ask the question once and require an explicit testing-was-done confirmation. Treat ambiguous approval as the "Issues found" branch until confirmed otherwise.
 
-- If the user identifies issues: for each distinct issue, invoke the `issue-intake` skill (via the `Skill` tool), passing a brief description of the observed behavior, expected behavior, and this bug's Jira key as args (e.g. `"Testing found: [description]. Related to: [PROJ-KEY]"`). Work through the issue-intake I0–I6 process with the user to document and triage each issue — it will create a Jira card (Bug or Missing Requirement) for each one. After all issues are documented and their Jira cards are created, recreate the worktree (`mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`), return to B10, resolve each issue, re-run B11 and B12 (which removes the worktree again), and return to this step before proceeding.
-
+- If the user identifies issues: for each distinct issue, invoke the `issue-intake` skill (via the `Skill` tool), passing a brief description of the observed behavior, expected behavior, and this bug's Jira key as args (e.g. `"Testing found: [description]. Related to: [PROJ-KEY]"`). Work through the issue-intake I0–I6 process with the user to document and triage each issue — it will create a Jira card (Bug or Missing Requirement) for each one. After all issues are documented and their Jira cards are created, return to B10, resolve each issue, re-run B11, and return to this step before proceeding.
 
 ---
+
+### B13 — Commit and Push
+
+**PRECONDITION — verify in the chat before running any git command.** State each check and its result before staging anything. If any check fails, STOP and return to B12.
+
+1. The user explicitly selected the "Approve" option at B12 in this conversation. Quote their selection verbatim.
+2. No issues were reported by the user after that selection that have not since been addressed and re-approved.
+3. The current branch matches the branch confirmed at B7.
+
+Execute the following steps **one at a time, in order**. Report the outcome of each step in the chat before starting the next. Do not pre-batch these into a single tool call sequence — the user must be able to interrupt between any two steps:
+
+**Step 1 — Stage and commit.** Stage all changes and commit with this message format:
+
+```
+[{PROJECTKEY}-{ISSUENUMBER}] <concise description of what was fixed>
+```
+
+Example: `[PROJ-5678] Fix null pointer when looking up user with missing profile`
+
+Use imperative mood. Report the commit hash in the chat before proceeding.
+
+**Step 2 — Push the working branch.** Push using `git push origin <branch-name>`. Do not use refspecs. Report the push result before proceeding.
+
+**Step 3 — No Jira transitions here.** Any Jira status transition is part of B14, not B13. Do not transition the issue status from this phase.
 
 ### B14 — Summary of Changes
 
@@ -399,7 +412,6 @@ Post a comment on this Jira issue containing ALL of the following:
 
 ### B15 — Cleanup
 
-- Confirm `.worktrees/<branch-name>` has been removed. If it still exists (e.g. a follow-up worktree was created during B13 and not yet removed by B12), run `git worktree remove .worktrees/<branch-name>` now. Confirm you have returned to the main working directory.
 - Clear the session-scoped knowledge graph before finishing the workflow. This includes the `work_item-<JIRA_KEY>` entity and every entity linked to it: hypothesis nodes, `affected_area`, `root_cause`, `fix_plan`, `phase_handoff`, plus the explorer-written subgraph (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`). Use `read_graph` to enumerate, then `delete_entities`. Do not retain investigation state once it has been materialized into Jira comments.
 
 ---
@@ -411,10 +423,10 @@ This workflow is complete when **all** of the following are true:
 - All phases executed in sequence (B0 through B15)
 - All approval gates explicitly confirmed in the chat
 - Fix plan reviewed and approved (B5/B6)
-- Branch created, all fix commits pushed (B7–B10)
+- All fix commits pushed (B13)
 - Build, tests, and linters passing on the fix branch (B11)
 - Regression test written and passing (B9)
-- User testing completed and approved (B13)
+- User testing completed and approved at B12; the B12 approval was captured before any commit or push was made
+- Commit, push, and any Jira transition each ran as discrete user-visible steps, not as a single chained sequence
 - B14 summary comment posted to Jira with all required fields populated
-- Bug-fix worktree removed and main working directory restored (B15)
 - Session-scoped knowledge graph cleared (B15)

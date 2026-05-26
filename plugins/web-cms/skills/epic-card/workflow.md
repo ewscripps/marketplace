@@ -24,7 +24,7 @@
 - **File discovery (find files by name or pattern):** Use native `Glob`.
 - **Content search (find text inside files):** Use native `Grep`. For symbolic code search (finding classes, methods, or callers), delegate to the `codebase-explorer` agent, which uses the Serena MCP server.
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
-- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
+- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
 
 **JIRA COMMENT CONTRACT:** Keep Jira comments minimal, structured, and durable. Do not narrate every phase. Routine Jira comments are required only at:
 
@@ -36,7 +36,6 @@ Additional Jira comments are allowed only for blocking failures, reposting a rev
 
 When a Jira comment heading references workflow phases, use the exact phase label defined here. Do not invent synthetic phase ranges. The only routine combined phase heading allowed is `E4/E5` because one comment serves both phases.
 
-**WORKTREE DISCIPLINE:** Always create worktrees under `.worktrees/<branch-name>` in the project root, using the exact branch name as the directory name. Create the directory first if it does not exist: `mkdir -p .worktrees`. The full creation command is `git worktree add .worktrees/<branch-name> <branch-name>`. Never use a worktree-prefixed or renamed branch (e.g. never `worktree-PROJ-123`). All commits must be made on the real branch. Push using `git push origin <branch-name>` — never use refspecs that map a different local branch name to the remote (e.g. never `git push origin worktree-branch:real-branch`). After removing a worktree and returning to the main working directory, run `git fetch origin` and update the local ref with `git branch -f <branch-name> origin/<branch-name>` before checking it out, to ensure the local branch matches the remote.
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
@@ -47,7 +46,7 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 - E4 — Create Breakdown Plan
 - E5 — Await Breakdown Plan Approval
 - E6 — Create Child Tasks in Jira
-- E7 — Create Epic Integration Branch and Worktree
+- E7 — Verify Epic Integration Branch
 - E8 — Execute [JIRA-KEY]: [task title] (one task per child, created in E6 with status `pending`)
 - E9 — User Testing
 - E10 — Epic Summary
@@ -60,10 +59,10 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 1. Wait for any background `area-mapper` sub-agent to complete.
 2. Create a `phase_handoff` entity in the knowledge graph:
    - **Name:** `phase-handoff-<EPIC-KEY>-<phase-id>` (e.g. `phase-handoff-ELI-900-E5`); for per-child E8 gates use `phase-handoff-<EPIC-KEY>-E8-<child-JIRA-KEY>`.
-   - **Observations:** `phase: <id>`, `skill: epic-card`, `jira_key: <epic-key>`, `branch: <integration-branch or "none">`, `worktree: <path or "none">`, `head_sha: <sha or "n/a">`, one `decisions: <text>` observation per key decision, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. For E8 per-child gates only: `epic_key: <EPIC-KEY>`, `integration_branch: <name>`, `child_completed: <JIRA-KEY> (N of M)`, `next_child: <JIRA-KEY or "none — all complete">`.
+   - **Observations:** `phase: <id>`, `skill: epic-card`, `jira_key: <epic-key>`, `branch: <integration-branch or "none">`, `head_sha: <sha or "n/a">`, one `decisions: <text>` observation per key decision, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. For E8 per-child gates only: `epic_key: <EPIC-KEY>`, `integration_branch: <name>`, `child_completed: <JIRA-KEY> (N of M)`, `next_child: <JIRA-KEY or "none — all complete">`.
    - **Relations:** `BELONGS_TO` → `work_item-<EPIC-KEY>`; `SUPERSEDES` → prior `phase_handoff` for this epic (if any); `REFERENCES` → relevant `exploration`, `epic`, `task`, `branch`, and `plan` entity names.
 3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
-4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, epic key + integration branch + worktree + head SHA anchors, child completion status (E8 gates), one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → `git status` + `git worktree list` → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user types `continue`, call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, verify git state, and resume at `next_phase`. Exception: the E8 per-child gate uses its own merged pause defined in that step — follow those instructions instead of this paragraph.
+4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, epic key + integration branch + head SHA anchors, child completion status (E8 gates), one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → `git status` → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user types `continue`, call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, verify git state, and resume at `next_phase`. Exception: the E8 per-child gate uses its own merged pause defined in that step — follow those instructions instead of this paragraph.
 
 **Cleanup:** Include all `phase_handoff` entities for this epic (prefix `phase-handoff-<EPIC-KEY>-`) in the E11 cleanup enumeration alongside other session-scoped entities.
 
@@ -132,7 +131,7 @@ If one or more children are found, record `existing_children: N` on the epic nod
 
 > **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `E3 Approval`, options: `Approve and proceed (Recommended)` (description: "All blocking answers are accurate and recorded") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to E4 until approved.
 
-> **COMPACTION GATE — E3:** Once E3 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<EPIC-KEY>-E3`; `next_phase: E4`; decisions: clarifying answers and child-disposition decisions; branch + worktree + head SHA: "n/a" (not yet created). REFERENCES: exploration entities from E2 and existing child task nodes from E1. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to E4.
+> **COMPACTION GATE — E3:** Once E3 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<EPIC-KEY>-E3`; `next_phase: E4`; decisions: clarifying answers and child-disposition decisions; branch + head SHA: "n/a" (not yet created). REFERENCES: exploration entities from E2 and existing child task nodes from E1. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to E4.
 
 ### E4 — Create Breakdown Plan
 
@@ -205,7 +204,7 @@ Post a single combined Jira comment with the exact heading `**E4/E5 — Breakdow
 - If the user selects "Request changes", revise the plan, repost the full combined `E4/E5` comment to Jira, and use `AskUserQuestion` again.
 - Only proceed to E6 after "Approve and proceed" is selected.
 
-> **COMPACTION GATE — E5:** Once E5 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<EPIC-KEY>-E5`; `next_phase: E6`; decisions: approved breakdown plan (task count, execution order summary, epic and task node names for REFERENCES); branch + worktree + head SHA: "n/a" (not yet created). REFERENCES: epic node and all task nodes from E4. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to E6.
+> **COMPACTION GATE — E5:** Once E5 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<EPIC-KEY>-E5`; `next_phase: E6`; decisions: approved breakdown plan (task count, execution order summary, epic and task node names for REFERENCES); branch + head SHA: "n/a" (not yet created). REFERENCES: epic node and all task nodes from E4. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to E6.
 
 ---
 
@@ -287,10 +286,11 @@ Parent epic: {{EPIC-KEY}} — {{EPIC-SUMMARY}}
 
 ---
 
-### E7 — Create Epic Integration Branch and Worktree
+### E7 — Verify Epic Integration Branch
 
-- **Ask which branch to branch from:** Before creating the integration branch, run `git rev-parse --abbrev-ref HEAD` to determine the current branch. Use `AskUserQuestion` with header `Base Branch`, options: `<current branch name> (Recommended)` (description: "Use the currently checked-out branch as the base") / `develop` (description: "Branch from the develop integration branch"). The user can type a specific branch name via the auto-injected "Other" option. **Do not branch from `main` unless the user explicitly specifies it — warn the user if they select or type `main`.** Verify any user-specified branch exists on the remote before proceeding.
-- Create a branch from the user-specified base branch using this naming convention:
+- Run `git branch --show-current` and report the current branch to the user.
+- Use `AskUserQuestion` with header `Integration Branch`, options: `Confirm — this is the epic integration branch (Recommended)` (description: "Proceed with child task execution on this branch") / `Wrong branch — switching now` (description: "I need to switch to the correct integration branch before continuing"). If the user selects "Wrong branch", halt and wait for them to switch manually, then verify again.
+- The expected integration branch naming convention is:
 
 ```
 {PROJECTKEY}-{ISSUENUMBER}-{epic-summary-in-kebab-case}
@@ -299,9 +299,6 @@ Parent epic: {{EPIC-KEY}} — {{EPIC-SUMMARY}}
 Example: `PROJ-900-user-authentication-overhaul`
 
 - This branch is the integration target for the entire epic. All child task branches will be created from and merged back into this branch.
-- Create the worktree: `mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`. Do not create a worktree-prefixed branch. This worktree is used for child task implementation before manual testing begins.
-- Remove this worktree before E9 so the integration branch can be checked out locally for manual testing: `git worktree remove .worktrees/<branch-name>`. Then sync the local branch: `git fetch origin` followed by `git branch -f <branch-name> origin/<branch-name>`. If E9 feedback requires additional fixes, recreate the worktree (`mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`) for that follow-up task work, then remove it again (`git worktree remove .worktrees/<branch-name>`, then sync) before returning to E9.
-- Push the integration branch to the remote using `git push origin <branch-name>`. Do not use refspecs.
 
 > **USE KNOWLEDGE GRAPH:** Write a `branch` node with properties: `name` (the integration branch name), `type: integration`, and link it to the epic node. This allows E8 to read the integration branch name from the graph rather than re-deriving it.
 
@@ -319,14 +316,13 @@ Work through each executable child task **in the order defined in E4**, executin
 1. Read the knowledge graph to confirm all prerequisite tasks for the next task have `status: done` or `status: skipped` (skipped predecessors do not block execution).
 2. Mark the tracking task `E8 — Execute [JIRA-KEY]: [task title]` for this child as `in_progress`.
 3. Retrieve the child task's full description from Jira and confirm that the `Task Details` section includes the expected **Epic Integration Branch** value from E7. For existing children, this field was backfilled in E6 Step 0; verify it is present before proceeding.
-4. Invoke the `task-card` skill directly with the child task's Jira key (e.g., `/task-card PROJ-124`). The skill detects epic child-task mode from the `Epic Integration Branch` field in the task description and adjusts T6 (branch from integration branch), T10 (merge to integration branch), T11 (skip user testing), and T13 (do not remove the shared epic integration worktree). T0 is performed by the skill itself.
+4. Invoke the `task-card` skill directly with the child task's Jira key (e.g., `/task-card PROJ-124`). The skill detects epic child-task mode from the `Epic Integration Branch` field in the task description and adjusts T6 (verify epic integration branch), T10 (skip user testing), and T11 (merge to integration branch after committing). T0 is performed by the skill itself.
 5. Follow the full T0-T13 workflow for this child task. Pause at every approval gate and wait for explicit chat confirmation before proceeding. Jira comments should follow the reduced `task-card` comment contract (T4/T5, T12, and failure comments only) rather than phase-by-phase narration.
 6. When the child task's T13 is complete, verify its status:
     - If successful: update the task's knowledge graph node to `status: done`. Mark the tracking task `E8 — Execute [JIRA-KEY]: [task title]` as `completed`. Verify the integration branch passes the full build, all tests, and all linters before proceeding to the next task.
     - If failed: stop and report the failure to the user. Do not begin the next child task until the failure is resolved.
 7. **Compaction gate and pause between tasks:** After the child task completes successfully, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<EPIC-KEY>-E8-<child-JIRA-KEY>`; `next_phase: E8-<next-child-JIRA-KEY>` (or `E9` if this was the final child); include epic anchors: `epic_key: <EPIC-KEY>`, `integration_branch: <name>`, `child_completed: <JIRA-KEY> (N of M)`, `next_child: <next-JIRA-KEY or "none — proceed to E9">`; decisions: child completion summary. REFERENCES: the epic node, the completed child's task node, and the branch node. After emitting the Phase Summary block, end your turn with the following prompt and nothing else: **"Run `/compact` now. After compacting, type `continue` to start the next task, or `stop` to pause the epic here."** Do not begin the next child task until the user types `continue`.
 8. Do not begin the next child task until the current one is confirmed complete and the integration branch is clean.
-9. After the final child task is complete, remove the epic worktree: `git worktree remove .worktrees/<branch-name>`. Sync the local branch: `git fetch origin` followed by `git branch -f <branch-name> origin/<branch-name>`. Return to the main working directory before proceeding to E9.
 
 ### E9 — User Testing
 
@@ -334,7 +330,6 @@ Work through each executable child task **in the order defined in E4**, executin
 
 **APPROVAL GATE — USER TESTING REQUIRED.**
 
-- Before notifying the user, confirm the epic worktree from E7 has been removed and the integration branch is no longer checked out there. Manual testing should happen with the branch checked out normally outside the removed worktree.
 - Post a comment notifying the user that all child tasks are complete and the epic is ready for manual testing. The comment must include:
     
     - A summary of everything that was implemented across all child tasks (including which children were pre-existing and already done at workflow start)
@@ -344,7 +339,7 @@ Work through each executable child task **in the order defined in E4**, executin
 - Present the same testing handoff in the chat — the user should not have to open Jira to see what to test.
 - Then use `AskUserQuestion` with header `E9 Testing`, options: `Approve — everything works as expected (Recommended)` (description: "All acceptance criteria passed — proceed to the epic summary") / `Issues found` (description: "One or more problems were found during testing"). Do not proceed until the user selects an option.
     
-- If the user identifies issues: for each distinct issue, invoke the `issue-intake` skill (via the `Skill` tool), passing a brief description of the observed behavior, expected behavior, and this epic's Jira key as args (e.g. `"Testing found: [description]. Related to: [PROJ-KEY]"`). Work through the issue-intake I0–I6 process with the user to document and triage each issue — it will create a Jira card (Bug or Missing Requirement) for each one. After all issues are documented and their Jira cards are created, recreate the worktree (`mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`). For each issue card created by issue-intake, create a new child Task following E6 child-task creation rules (set the `parent` field to the epic key — do not call `createIssueLink`), and add it to the knowledge graph. Invoke the `task-card` skill with each child task's Jira key; epic child-task mode will be detected from the `Epic Integration Branch` field, so T11 user testing is skipped automatically. After each follow-up task's T13 completes, update its knowledge graph node to `status: done` and record its merge completion. Once all follow-up tasks are done, remove the worktree again (`git worktree remove .worktrees/<branch-name>`, then sync), and return to this step.
+- If the user identifies issues: for each distinct issue, invoke the `issue-intake` skill (via the `Skill` tool), passing a brief description of the observed behavior, expected behavior, and this epic's Jira key as args (e.g. `"Testing found: [description]. Related to: [PROJ-KEY]"`). Work through the issue-intake I0–I6 process with the user to document and triage each issue — it will create a Jira card (Bug or Missing Requirement) for each one. After all issues are documented and their Jira cards are created, create a new child Task for each issue card following E6 child-task creation rules (set the `parent` field to the epic key — do not call `createIssueLink`), and add it to the knowledge graph. Invoke the `task-card` skill with each child task's Jira key; epic child-task mode will be detected from the `Epic Integration Branch` field, so T10 user testing is skipped automatically. After each follow-up task's T13 completes, update its knowledge graph node to `status: done` and record its merge completion. Once all follow-up tasks are done, return to this step.
     
 
 ---
@@ -382,7 +377,6 @@ After all child tasks are complete and user testing has passed, post a comment c
 
 ### E11 — Cleanup
 
-- Confirm `.worktrees/<branch-name>` has been removed. Under the normal path it was removed in E8. If one was recreated during E9 follow-up work and not yet removed, run `git worktree remove .worktrees/<branch-name>` now.
 - Clear the session-scoped knowledge graph before finishing the workflow. This includes the `work_item-<JIRA_KEY>` entity for the epic, the separate `epic` / `task` / `branch` / `phase_handoff` nodes used for breakdown tracking and compaction state, and the explorer-written subgraph from E2 (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`) along with any per-child-task subgraphs that were not deleted by the child task workflows in epic child-task mode. Use `read_graph` to enumerate, then `delete_entities`. Do not retain epic, task, dependency, branch, or handoff state in the graph once the final Jira record is complete.
 
 ---
@@ -398,5 +392,4 @@ This workflow is complete when **all** of the following are true:
 - All child tasks completed and verified
 - User testing completed and approved (E9)
 - E10 epic summary comment posted to Jira with all required fields populated
-- Epic integration-branch worktree removed (E11)
 - Session-scoped knowledge graph cleared (E11)
