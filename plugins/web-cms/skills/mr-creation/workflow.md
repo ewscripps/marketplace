@@ -105,7 +105,9 @@ Use `AskUserQuestion` with header `MR Type`, options: `Release` (description: "T
 
 #### If NON-RELEASE:
 
-1. Use `AskUserQuestion` with header `Related Jira Card`, options: `Yes — I'll provide the key` (description: "Type the Jira card key in the Other field, e.g. PROJ-123") / `No related Jira card` (description: "This MR is not linked to a Jira issue").
+1. **Before asking**, attempt to extract the Jira card key from the source branch name determined in M0. Branch names typically follow patterns like `PROJ-123-short-description` or `type/PROJ-123-short-description`. Apply a regex match for `[A-Z]+-[0-9]+` against the branch name to find a candidate key.
+    - **If a candidate key is found:** Use `AskUserQuestion` with header `Related Jira Card`, options: `Yes, <extracted key> is correct` (description: "Use <extracted key> as the related Jira card for this MR") / `Use a different key` (description: "Type the correct Jira card key in the Other field") / `No related Jira card` (description: "This MR is not linked to a Jira issue").
+    - **If no candidate key is found:** Use `AskUserQuestion` with header `Related Jira Card`, options: `Yes — I'll provide the key` (description: "Type the Jira card key in the Other field, e.g. PROJ-123") / `No related Jira card` (description: "This MR is not linked to a Jira issue").
     - If yes: Fetch the Jira card details (type, summary, description, status).
     - If the card is an **Epic**: fetch all child items and verify they are reflected in the branch commits. Report any that appear missing. Use `AskUserQuestion` with header `Missing Epic Items`, options: `Proceed anyway` / `Stop`.
     - If the card is a **Task or Bug**: review the commits and confirm the work aligns with the card's summary and description. Flag any significant discrepancies.

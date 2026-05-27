@@ -101,7 +101,7 @@
     - Workaround — `AskUserQuestion` (Header: `Workaround`, Question: `Is there a workaround available?`, Options: `Yes — I'll describe it`, `No — there is no workaround`, `Unknown`)
     - Reported by — open-ended: name and team
     - Related issue / epic — `AskUserQuestion` (Header: `Related Jira`, Question: `Is there a related Jira Epic or issue this should be linked to?`, Options: `Yes — I'll provide the key`, `No`)
-    - Existing card — `AskUserQuestion` (Header: `Existing Card`, Question: `Has a Jira card already been created for this issue?`, Options: `Yes — I'll provide the key`, `No`)
+    - Existing card — **Before asking**, run `git rev-parse --abbrev-ref HEAD` and apply a regex match for `[A-Z]+-[0-9]+` against the branch name. If a candidate key is found: `AskUserQuestion` (Header: `Existing Card`, Question: `Has a Jira card already been created for this issue?`, Options: `Yes, <extracted key>` (description: "Use <extracted key> as the existing Jira card for this issue") / `Use a different key` (description: "Type the correct issue key in the Other field") / `No`). If no candidate is found: `AskUserQuestion` (Header: `Existing Card`, Question: `Has a Jira card already been created for this issue?`, Options: `Yes — I'll provide the key`, `No`).
 3. After all questions are answered, summarize the gathered context back to the user in a clear, structured format.
     
 

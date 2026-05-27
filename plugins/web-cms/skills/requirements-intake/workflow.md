@@ -96,19 +96,19 @@ If `$ARGUMENTS` is empty or absent, enter **define mode** and run R0 exactly as 
 
    **If Feature:**
    - Who is requesting this, and what team are they on?
-   - Is there an existing Jira Epic this should fall under? If so, what's the key?
+   - Existing Jira card — **Before asking**, run `git rev-parse --abbrev-ref HEAD` and apply a regex match for `[A-Z]+-[0-9]+` against the branch name. If a candidate key is found: `AskUserQuestion` (Header: `Existing Card`, options: `Yes, <extracted key>` (description: "Use <extracted key> as the existing Jira card for this work") / `Use a different key` (description: "Type the correct issue key in the Other field") / `No existing card`). If no candidate is found: `AskUserQuestion` (Header: `Existing Card`, options: `Yes — I'll provide the key` (description: "Type the issue key in the Other field") / `No existing card`).
+   - Existing Jira Epic — Ask only if the existing card confirmed above is not itself an Epic. If an existing card was confirmed: `AskUserQuestion` (Header: `Related Epic`, Question: `Is there a Jira Epic this should fall under?`, options: `Already linked via the card` (description: "The card is already linked to its Epic — no separate input needed") / `Yes — I'll provide the key` (description: "Type the Epic key in the Other field") / `No`). If no existing card was provided: `AskUserQuestion` (Header: `Related Epic`, Question: `Is there a Jira Epic this should fall under?`, options: `Yes — I'll provide the key` (description: "Type the Epic key in the Other field") / `No`).
    - Are there any areas of the codebase you already know are involved — repos, services, modules, or file paths?
    - Is there any additional context that would help define this requirement?
-   - Has a Jira card already been created for this? If so, what's the issue key?
 
    **If Maintenance:**
    - What is driving this work — tech-debt cleanup, refactor, scheduled maintenance, dependency constraint, compliance requirement, alert, or something else?
    - What is the impact of leaving this unaddressed?
    - Who identified or is requesting this, and what team owns the affected area?
    - Are there any areas of the codebase you already know are involved?
-   - Is there an existing Jira Epic this should be tracked under?
+   - Existing Jira card — **Before asking**, run `git rev-parse --abbrev-ref HEAD` and apply a regex match for `[A-Z]+-[0-9]+` against the branch name. If a candidate key is found: `AskUserQuestion` (Header: `Existing Card`, options: `Yes, <extracted key>` (description: "Use <extracted key> as the existing Jira card for this work") / `Use a different key` (description: "Type the correct issue key in the Other field") / `No existing card`). If no candidate is found: `AskUserQuestion` (Header: `Existing Card`, options: `Yes — I'll provide the key` (description: "Type the issue key in the Other field") / `No existing card`).
+   - Existing Jira Epic — Ask only if the existing card confirmed above is not itself an Epic. If an existing card was confirmed: `AskUserQuestion` (Header: `Related Epic`, Question: `Is there a Jira Epic this should be tracked under?`, options: `Already linked via the card` (description: "The card is already linked to its Epic — no separate input needed") / `Yes — I'll provide the key` (description: "Type the Epic key in the Other field") / `No`). If no existing card was provided: `AskUserQuestion` (Header: `Related Epic`, Question: `Is there a Jira Epic this should be tracked under?`, options: `Yes — I'll provide the key` (description: "Type the Epic key in the Other field") / `No`).
    - Is there any additional context that would help define this work?
-   - Has a Jira card already been created for this? If so, what's the issue key?
 
 4. After all questions are answered, summarize the gathered context back to the user in a clear, structured format.
     
