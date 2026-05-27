@@ -35,6 +35,8 @@ Additional Jira comments are allowed only for blocking failures, reposting a rev
 
 When a Jira comment heading references workflow phases, use the exact phase label defined here. Do not invent synthetic phase ranges such as `T2-T5` or `T6-T10`. The only routine combined phase heading allowed is `T4/T5` because one comment serves both phases.
 
+**Comment formatting:** Pass clean GitHub-flavored markdown to `jira_add_comment`. Never backslash-escape markdown characters — bold is literal `**text**`, never `\*\*text\*\*`. Ensure every bold span has matching `**` delimiters on both sides.
+
 **COMMIT, PUSH, MERGE & TRANSITION DISCIPLINE — HARD RULE:** Every one of the following is an irreversible action that affects shared state. None may run until the user has explicitly selected the "Approve" option at the T10 User Testing gate **in this same session**:
 
 - `git add` / `git commit` on the working branch
@@ -211,6 +213,8 @@ The sub-agent will return a structured findings report with an overall verdict o
     - Documentation expectations for the `documentation-reviewer` sub-agent
     - Risks, dependencies, or open items that affect execution
     - `Approval requested: Please approve this implementation plan before work begins.`
+
+    Before calling `jira_add_comment`, invoke the `comment-reviewer` sub-agent with the drafted comment body, the phase label `T4/T5 — Implementation Plan & Approval Request`, and the acceptance criteria and plan details as source context. If CHANGES REQUIRED, revise the draft and re-invoke (max 3 iterations). Post the comment only once APPROVED; after 3 iterations, post with remaining minor findings noted inline.
 - If **CHANGES REQUIRED**: address every Critical and Major finding, revise the plan, then invoke the `plan-reviewer` sub-agent again. Repeat until the verdict is APPROVED.
 - **Max 3 review iterations.** If the plan-reviewer returns CHANGES REQUIRED after 3 iterations, create the `plan-<JIRA_KEY>` entity (same as the APPROVED path above, using the current plan text and noting `review_escalated: true`), post the same combined `T4/T5` comment with the outstanding findings noted, and let the user decide in T5.
 
@@ -238,8 +242,8 @@ The sub-agent will return a structured findings report with an overall verdict o
 
 ### T7 — Baseline Verification
 
-- Run the full build, all tests, and all linters/static analysis.
-- **All checks must pass before continuing.** If anything fails, investigate and resolve it first. Do not begin implementation on a broken baseline.
+- Invoke the `verification-runner` sub-agent with phase context `baseline` and the build/test/lint commands if already known. It returns a `VERIFICATION REPORT` with a per-category verdict and, for any failures, the failing targets and excerpts.
+- **All checks must pass before continuing.** If the report returns `FAILURES`, investigate and resolve them using the failing targets and excerpts from the report. Re-invoke `verification-runner` after fixing. Do not begin implementation until it returns `ALL GREEN`.
 
 ### T8 — Implementation
 
@@ -339,9 +343,8 @@ Do not proceed to T9 until `implementation-reviewer`, `test-reviewer`, and `docu
 
 ### T9 — Post-Implementation Verification
 
-- Run the full build, all tests, and all linters/static analysis.
-- Confirm the new or updated tests written by `test-reviewer` pass under the final verification run.
-- **All checks must pass.** If anything fails, fix and re-run this phase.
+- Invoke the `verification-runner` sub-agent with phase context `post-implementation`, the build/test/lint commands from T7, and a specific assertion for each new or updated test written by `test-reviewer`.
+- **All checks must pass.** If the report returns `FAILURES`, fix the failures and re-invoke `verification-runner`. Repeat until it returns `ALL GREEN`.
 - If a failure cannot be resolved after reasonable effort, stop and post a comment describing the failure and what was attempted. Do not continue.
 
 ### T10 — User Testing
@@ -352,13 +355,15 @@ Do not proceed to T9 until `implementation-reviewer`, `test-reviewer`, and `docu
 
 **APPROVAL GATE — USER MUST MANUALLY TEST BEFORE PROCEEDING. AUTO MODE DOES NOT BYPASS THIS GATE.**
 
-- Post a comment on this Jira issue with the exact heading `**T10 — User Testing Handoff**`. The comment must include:
+- Post a comment on this Jira issue with the exact heading `**T10 — User Testing Handoff**` as the verbatim first line of the comment body — character-for-character, using `**bold**` (not a `##` markdown heading), and never a descriptive substitute such as "Testing ready" or "Fix complete". The comment must include, in this exact order with these exact labels:
 
     - The branch name
     - A summary of what was implemented
     - **Acceptance Criteria & Testing Steps:** For each acceptance criterion listed in the Task Details, a numbered section with:
         - The criterion restated clearly
         - Step-by-step instructions to verify that criterion is met
+
+    Before posting, confirm: (1) the first line is exactly `**T10 — User Testing Handoff**`, and (2) all required sections are present in order. If either check fails, rewrite before posting.
 - Present the same testing handoff in the chat — the user should not have to open Jira to see what to test.
 - Pause the workflow here and wait. Do not call any tool other than `AskUserQuestion` until the user reports back with an explicit selection. Do not infer approval from silence, from a `continue` keyword, from prior phase success, or from Auto Mode.
 - Use `AskUserQuestion` with header `T10 Testing`, options: `Approve — I ran through every step above and every criterion passed (Recommended)` (description: "I have manually tested the implementation and it works as expected") / `Issues found` (description: "One or more problems were found during testing"). Do not proceed until the user selects an option.
@@ -390,7 +395,7 @@ Use imperative mood. Report the commit hash in the chat before proceeding.
 
 **Step 2 — Push the working branch.** Push using `git push origin <branch-name>`. Do not use refspecs. Report the push result before proceeding.
 
-**Step 3 — (Epic child task mode only) Merge and verify.** Switch to the Epic Integration Branch and merge the working branch. Run the full build, all tests, and all linters. Report all results before pushing. If anything fails, fix and re-run before pushing.
+**Step 3 — (Epic child task mode only) Merge and verify.** Switch to the Epic Integration Branch and merge the working branch. Invoke the `verification-runner` sub-agent with phase context `post-implementation` to confirm the integration branch passes the full build, all tests, and all linters. If it returns `FAILURES`, fix them and re-invoke before pushing. Report the final `VERIFICATION REPORT` verdict before proceeding.
 
 **Step 4 — (Epic child task mode only) Push the integration branch.** Push the Epic Integration Branch only after Step 3 passes cleanly. Report the push result before proceeding.
 
@@ -400,7 +405,11 @@ Use imperative mood. Report the commit hash in the chat before proceeding.
 
 **ALL fields below are REQUIRED. Do not skip any field. If a field does not apply, explicitly state "N/A" with a brief reason.**
 
-Post a comment on this Jira issue with the exact heading `**T12 — Summary of Changes**` containing ALL of the following:
+Post a comment on this Jira issue with the exact heading `**T12 — Summary of Changes**` as the verbatim first line of the comment body — character-for-character, using `**bold**` (not a `##` markdown heading), and never a descriptive substitute such as "Implementation complete" or "Done".
+
+Begin the comment body with a metadata block: `**Branch:** <branch-name>` and `**Commit:** <commit-hash>`, followed by a `----` horizontal rule.
+
+Then render **every** field below as a bold-labeled section (`**Field name:**`), in this exact order, using these exact field names. Do not rename, merge, reorder, drop, or add fields.
 
 - **What was done:** Concise overview of the changes made.
     
@@ -417,17 +426,13 @@ Post a comment on this Jira issue with the exact heading `**T12 — Summary of C
 - **Release note:** If the change is user-facing, include a 1–2 sentence plain-language release note. If purely internal, state "N/A — internal change."
 
 - **User testing status:** For standard mode, note that T10 user testing passed. For epic child mode, state `Skipped in epic child mode -- handled at epic E9.`
-     
-- **QA Verification Steps:** Step-by-step manual testing instructions for a QA engineer, including:
-    
-    - Prerequisites (environment, test data, configuration)
-    - Exact steps to test the new behavior
-    - Expected results for each step
-    - Edge cases or negative scenarios to verify
+
 - **Open items:** Follow-up work, known limitations, or unresolved questions.
     
 
-**REQUIRED: Review the summary before posting.** Verify every field is present and populated (or explicitly marked "N/A"), and that QA Verification Steps are detailed enough for a QA engineer to follow without additional context. If the review reveals gaps, revise before posting.
+**REQUIRED: Review the summary before posting.** Confirm (1) the first line is exactly `**T12 — Summary of Changes**` in `**bold**` format, (2) the metadata block (`**Branch:**` / `**Commit:**`) is present before the `----` rule, and (3) every mandated field appears as a `**Label:**` section in the specified order with none renamed, dropped, or substituted. If any check fails, rewrite before posting.
+
+Before calling `jira_add_comment`, invoke the `comment-reviewer` sub-agent with the drafted comment body, the phase label `T12 — Summary of Changes`, and the branch name, commit hash, and files-changed list as source context for fact-checking. If CHANGES REQUIRED, revise and re-invoke (max 3 iterations). Post the comment only once APPROVED; after 3 iterations, post with remaining minor findings noted inline.
 
 ### T13 — Cleanup
 
@@ -446,5 +451,6 @@ This workflow is complete when **all** of the following are true:
 - Standard mode: user testing completed and approved at T10; the T10 approval was captured before any commit or push was made
 - Epic child task mode (if used): confirmed via the explicit `Epic Child Mode` AskUserQuestion — never inferred from branch name or other signals
 - Commit, push, integration merge, integration push, and any Jira transition each ran as discrete user-visible steps, not as a single chained sequence
-- T12 summary comment posted successfully
+- T12 summary comment posted successfully, using the exact `**T12 — Summary of Changes**` heading and the full mandated field set in order (verified by `comment-reviewer`, not improvised)
+- T10 handoff comment used the exact `**T10 — User Testing Handoff**` heading
 - T13 session-scoped knowledge graph cleared

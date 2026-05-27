@@ -37,6 +37,8 @@ Additional Jira comments are allowed only for blocking failures, reposting a rev
 
 When a Jira comment heading references workflow phases, use the exact phase label defined here. Do not invent synthetic phase ranges. The only routine combined phase heading allowed is `B5/B6` because one comment serves both phases.
 
+**Comment formatting:** Pass clean GitHub-flavored markdown to `jira_add_comment`. Never backslash-escape markdown characters — bold is literal `**text**`, never `\*\*text\*\*`. Ensure every bold span has matching `**` delimiters on both sides.
+
 **COMMIT, PUSH, MERGE & TRANSITION DISCIPLINE — HARD RULE:** Every one of the following is an irreversible action that affects shared state. None may run until the user has explicitly selected the "Approve" option at the B12 User Testing gate **in this same session**:
 
 - `git add` / `git commit` on the working branch
@@ -208,6 +210,8 @@ The sub-agent will return a structured findings report with an overall verdict o
     - Documentation expectations for the `documentation-reviewer` sub-agent
     - Risks, dependencies, or open items that affect execution
     - `Approval requested: Please approve this fix plan before work begins.`
+
+    Before calling `jira_add_comment`, invoke the `comment-reviewer` sub-agent with the drafted comment body, the phase label `B5/B6 — Fix Plan & Approval Request`, and the acceptance criteria and plan details as source context. If CHANGES REQUIRED, revise the draft and re-invoke (max 3 iterations). Post the comment only once APPROVED; after 3 iterations, post with remaining minor findings noted inline.
 - If **CHANGES REQUIRED**: address every Critical and Major finding, revise the plan, then invoke the `plan-reviewer` sub-agent again. Repeat until the verdict is APPROVED.
 - **Max 3 review iterations.** If the plan-reviewer returns CHANGES REQUIRED after 3 iterations, create the `fix_plan-<JIRA_KEY>` entity (same as the APPROVED path above, using the current plan text and noting `review_escalated: true`), post the same combined `B5/B6` comment with the outstanding findings noted, and let the user decide in B6.
 
@@ -234,8 +238,8 @@ The sub-agent will return a structured findings report with an overall verdict o
 
 ### B8 — Baseline Verification
 
-- Run the full build, all tests, and all linters/static analysis.
-- **All checks must pass before continuing.** If anything fails, investigate and resolve it first. Do not begin the fix on a broken baseline.
+- Invoke the `verification-runner` sub-agent with phase context `baseline` and the build/test/lint commands if already known. It returns a `VERIFICATION REPORT` with a per-category verdict and, for any failures, the failing targets and excerpts.
+- **All checks must pass before continuing.** If the report returns `FAILURES`, investigate and resolve them using the failing targets and excerpts from the report. Re-invoke `verification-runner` after fixing. Do not begin the fix until it returns `ALL GREEN`.
 
 ### B9 — Write a Failing Test
 
@@ -343,10 +347,9 @@ Do not proceed to B11 until `implementation-reviewer`, `test-reviewer`, and `doc
 
 ### B11 — Post-Fix Verification
 
-- Run the full build, all tests, and all linters/static analysis.
-- Confirm the failing test from B9 and any additional tests written by `test-reviewer` now **pass**.
-- Re-run the original **Steps to Reproduce** and confirm the bug no longer occurs.
-- **All checks must pass.** If anything fails, fix and re-run this phase.
+- Invoke the `verification-runner` sub-agent with phase context `post-implementation`, the build/test/lint commands from B8, and specific assertions: the failing test from B9 must now pass, and any additional tests written by `test-reviewer` must pass.
+- **All checks must pass.** If the report returns `FAILURES`, fix the failures and re-invoke `verification-runner`. Repeat until it returns `ALL GREEN`.
+- Re-run the original **Steps to Reproduce** and confirm the bug no longer occurs. (If the Steps to Reproduce are manual-only, perform them yourself or ask the user — this step is not delegated to `verification-runner`.)
 
 ### B12 — User Testing
 
@@ -354,13 +357,15 @@ Do not proceed to B11 until `implementation-reviewer`, `test-reviewer`, and `doc
 
 **APPROVAL GATE — USER MUST MANUALLY TEST BEFORE PROCEEDING. AUTO MODE DOES NOT BYPASS THIS GATE.**
 
-- Post a comment on this Jira issue notifying the user that the fix is ready for testing. The comment must include:
+- Post a comment on this Jira issue with the exact heading `**B12 — User Testing Handoff**` as the verbatim first line of the comment body — character-for-character, using `**bold**` (not a `##` markdown heading), and never a descriptive substitute such as "Fix complete" or "Ready for QA". The comment must include, in this exact order with these exact labels:
 
     - The branch name
     - A summary of what was fixed
     - **Fix Criteria & Testing Steps:** For each expected behavior item from the Bug Details and fix plan, a numbered section with:
         - The criterion/expected behavior restated clearly
         - Step-by-step instructions to verify it now works correctly
+
+    Before posting, confirm: (1) the first line is exactly `**B12 — User Testing Handoff**`, and (2) all required sections are present in order. If either check fails, rewrite before posting.
 - Present the same testing handoff in the chat — the user should not have to open Jira to see what to test.
 - Pause the workflow here and wait. Do not call any tool other than `AskUserQuestion` until the user reports back with an explicit selection. Do not infer approval from silence, from a `continue` keyword, from prior phase success, or from Auto Mode.
 - Use `AskUserQuestion` with header `B12 Testing`, options: `Approve — I ran through every step above and the fix works as expected (Recommended)` (description: "I have manually tested the fix and it works correctly") / `Issues found` (description: "One or more problems were found during testing"). Do not proceed until the user selects an option.
@@ -398,7 +403,11 @@ Use imperative mood. Report the commit hash in the chat before proceeding.
 
 **ALL fields below are REQUIRED. Do not skip any field. If a field does not apply, explicitly state "N/A" with a brief reason.**
 
-Post a comment on this Jira issue containing ALL of the following:
+Post a comment on this Jira issue with the exact heading `**B14 — Summary of Changes**` as the verbatim first line of the comment body — character-for-character, using `**bold**` (not a `##` markdown heading), and never a descriptive substitute such as "Implementation complete" or "Fix summary".
+
+Begin the comment body with a metadata block: `**Branch:** <branch-name>` and `**Commit:** <commit-hash>`, followed by a `----` horizontal rule.
+
+Then render **every** field below as a bold-labeled section (`**Field name:**`), in this exact order, using these exact field names. Do not rename, merge, reorder, drop, or add fields.
 
 - **Root cause:** Clear, concise explanation of what caused the bug.
     
@@ -413,17 +422,13 @@ Post a comment on this Jira issue containing ALL of the following:
 - **Deviations from plan:** Any differences between the B5 fix plan and what was actually implemented, with reasons.
     
 - **Release note:** If the fix is user-facing, include a 1–2 sentence plain-language release note. If purely internal, state "N/A — internal change."
-    
-- **QA Verification Steps:** Step-by-step manual testing instructions for a QA engineer, including:
-    
-    - Prerequisites (environment, test data, configuration)
-    - Steps to confirm the bug no longer occurs
-    - Steps to verify the correct/expected behavior
-    - Edge cases or related scenarios to verify no regressions
+
 - **Open items:** Follow-up work, known limitations, or unresolved questions.
     
 
-**REQUIRED: Review the summary before posting.** Verify every field is present and populated (or explicitly marked "N/A"), and that QA Verification Steps are detailed enough for a QA engineer to follow without additional context. If the review reveals gaps, revise before posting.
+**REQUIRED: Review the summary before posting.** Confirm (1) the first line is exactly `**B14 — Summary of Changes**` in `**bold**` format, (2) the metadata block (`**Branch:**` / `**Commit:**`) is present before the `----` rule, and (3) every mandated field appears as a `**Label:**` section in the specified order with none renamed, dropped, or substituted. If any check fails, rewrite before posting.
+
+Before calling `jira_add_comment`, invoke the `comment-reviewer` sub-agent with the drafted comment body, the phase label `B14 — Summary of Changes`, and the branch name, commit hash, and files-changed list as source context for fact-checking. If CHANGES REQUIRED, revise and re-invoke (max 3 iterations). Post the comment only once APPROVED; after 3 iterations, post with remaining minor findings noted inline.
 
 ### B15 — Cleanup
 
@@ -443,5 +448,6 @@ This workflow is complete when **all** of the following are true:
 - Regression test written and passing (B9)
 - User testing completed and approved at B12; the B12 approval was captured before any commit or push was made
 - Commit, push, and any Jira transition each ran as discrete user-visible steps, not as a single chained sequence
-- B14 summary comment posted to Jira with all required fields populated
+- B14 summary comment posted to Jira using the exact `**B14 — Summary of Changes**` heading and the full mandated field set in order (verified by `comment-reviewer`, not improvised)
+- B12 handoff comment used the exact `**B12 — User Testing Handoff**` heading
 - Session-scoped knowledge graph cleared (B15)

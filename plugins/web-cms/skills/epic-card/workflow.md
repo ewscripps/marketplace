@@ -36,6 +36,8 @@ Additional Jira comments are allowed only for blocking failures, reposting a rev
 
 When a Jira comment heading references workflow phases, use the exact phase label defined here. Do not invent synthetic phase ranges. The only routine combined phase heading allowed is `E4/E5` because one comment serves both phases.
 
+**Comment formatting:** Pass clean GitHub-flavored markdown to `jira_add_comment`. Never backslash-escape markdown characters — bold is literal `**text**`, never `\*\*text\*\*`. Ensure every bold span has matching `**` delimiters on both sides.
+
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
@@ -191,6 +193,23 @@ These same rules apply to new gap-filler tasks in the existing-children path.
 
 If the review reveals issues, revise the plan before posting. Do not post an unreviewed plan.
 
+**Independent plan review:**
+
+Once the self-review is clean, invoke the `plan-reviewer` sub-agent, providing:
+
+- The breakdown plan (full text)
+- The epic's acceptance criteria
+- The affected areas from the Epic Details
+- The existing-children inventory with dispositions (Covered/Partial/Out-of-scope)
+- The E2 codebase findings (patterns, conventions, and architectural context)
+- The epic's Jira key and work type **Epic**
+
+The sub-agent will return a structured findings report with an overall verdict of either **APPROVED** or **CHANGES REQUIRED**.
+
+- If **APPROVED**: proceed to post the E4/E5 comment below.
+- If **CHANGES REQUIRED**: address every Critical and Major finding, revise the breakdown plan, then invoke `plan-reviewer` again. Repeat until the verdict is APPROVED.
+- **Max 3 review iterations.** If `plan-reviewer` returns CHANGES REQUIRED after 3 iterations, proceed to post the E4/E5 comment with the outstanding findings noted inline so the user can decide at E5.
+
 Post a single combined Jira comment with the exact heading `**E4/E5 — Breakdown Plan & Approval Request**` before proceeding. This comment must include:
 
 - (If existing children) Inventory table of existing children with status, disposition, and coverage classification.
@@ -200,6 +219,8 @@ Post a single combined Jira comment with the exact heading `**E4/E5 — Breakdow
 - How the combined set satisfies the epic's acceptance criteria.
 - Architecture diagram (under `### Architecture` — the Mermaid dependency graph, or a note if skipped)
 - `Approval requested: Please approve this breakdown plan before work begins.`
+
+Before calling `jira_add_comment`, invoke the `comment-reviewer` sub-agent with the drafted comment body, the phase label `E4/E5 — Breakdown Plan & Approval Request`, and the epic's acceptance criteria and breakdown plan as source context. If CHANGES REQUIRED, revise the draft and re-invoke (max 3 iterations). Post the comment only once APPROVED; after 3 iterations, post with remaining minor findings noted inline.
 
 ### E5 — Await Breakdown Plan Approval
 
@@ -357,7 +378,7 @@ Work through each executable child task **in the order defined in E4**, executin
 4. Invoke the `task-card` skill directly with the child task's Jira key (e.g., `/task-card PROJ-124`). The skill detects epic child-task mode from the `Epic Integration Branch` field in the task description and adjusts T6 (verify epic integration branch), T10 (skip user testing), and T11 (merge to integration branch after committing). T0 is performed by the skill itself.
 5. Follow the full T0-T13 workflow for this child task. Pause at every approval gate and wait for explicit chat confirmation before proceeding. Jira comments should follow the reduced `task-card` comment contract (T4/T5, T12, and failure comments only) rather than phase-by-phase narration.
 6. When the child task's T13 is complete, verify its status:
-    - If successful: update the task's knowledge graph node to `status: done`. Mark the tracking task `E8 — Execute [JIRA-KEY]: [task title]` as `completed`. Verify the integration branch passes the full build, all tests, and all linters before proceeding to the next task.
+    - If successful: update the task's knowledge graph node to `status: done`. Mark the tracking task `E8 — Execute [JIRA-KEY]: [task title]` as `completed`. Invoke the `verification-runner` sub-agent with phase context `post-implementation` to confirm the integration branch passes the full build, all tests, and all linters. If it returns `FAILURES`, fix them and re-invoke before proceeding to the next task.
     - If failed: stop and report the failure to the user. Do not begin the next child task until the failure is resolved.
 7. **Compaction gate and pause between tasks:** After the child task completes successfully, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<EPIC-KEY>-E8-<child-JIRA-KEY>`; `next_phase: E8-<next-child-JIRA-KEY>` (or `E9` if this was the final child); include epic anchors: `epic_key: <EPIC-KEY>`, `integration_branch: <name>`, `child_completed: <JIRA-KEY> (N of M)`, `next_child: <next-JIRA-KEY or "none — proceed to E9">`; decisions: child completion summary. REFERENCES: the epic node, the completed child's task node, and the branch node. After emitting the Phase Summary block, end your turn with the following prompt and nothing else: **"Run `/compact` now. After compacting, type `continue` to start the next task, or `stop` to pause the epic here."** Do not begin the next child task until the user types `continue`.
 8. Do not begin the next child task until the current one is confirmed complete and the integration branch is clean.
@@ -368,12 +389,14 @@ Work through each executable child task **in the order defined in E4**, executin
 
 **APPROVAL GATE — USER TESTING REQUIRED.**
 
-- Post a comment notifying the user that all child tasks are complete and the epic is ready for manual testing. The comment must include:
+- Post a comment with the exact heading `**E9 — User Testing Handoff**` as the verbatim first line of the comment body — character-for-character, using `**bold**` (not a `##` markdown heading), and never a descriptive substitute such as "Epic complete" or "Ready for QA". The comment must include, in this exact order with these exact labels:
     
     - A summary of everything that was implemented across all child tasks (including which children were pre-existing and already done at workflow start)
     - **Acceptance Criteria & Testing Steps:** For each acceptance criterion from the Epic's Acceptance Criteria section (read in E1), a numbered section with:
         - The criterion restated clearly
         - Step-by-step end-to-end instructions to verify that criterion is met. Include AC covered by existing children that were already `Done` at workflow start — do not assume those AC were previously verified end-to-end. The user is testing the epic as a whole, after all new and edited work has landed on the integration branch.
+
+    Before posting, confirm: (1) the first line is exactly `**E9 — User Testing Handoff**`, and (2) all required sections are present in order. If either check fails, rewrite before posting.
 - Present the same testing handoff in the chat — the user should not have to open Jira to see what to test.
 - Then use `AskUserQuestion` with header `E9 Testing`, options: `Approve — everything works as expected (Recommended)` (description: "All acceptance criteria passed — proceed to the epic summary") / `Issues found` (description: "One or more problems were found during testing"). Do not proceed until the user selects an option.
     
@@ -386,7 +409,11 @@ Work through each executable child task **in the order defined in E4**, executin
 
 **ALL fields below are REQUIRED. Do not skip any field. If a field does not apply, explicitly state "N/A" with a brief reason.**
 
-After all child tasks are complete and user testing has passed, post a comment containing ALL of the following:
+After all child tasks are complete and user testing has passed, post a comment with the exact heading `**E10 — Summary of Changes**` as the verbatim first line of the comment body — character-for-character, using `**bold**` (not a `##` markdown heading), and never a descriptive substitute such as "Epic complete" or "Implementation summary".
+
+Begin the comment body with `**Integration branch:** <branch-name>`, followed by a `----` horizontal rule.
+
+Then render **every** field below as a bold-labeled section (`**Field name:**`), in this exact order, using these exact field names. Do not rename, merge, reorder, drop, or add fields.
 
 - **Overview:** What was accomplished across all child tasks.
     
@@ -399,17 +426,13 @@ After all child tasks are complete and user testing has passed, post a comment c
 - **Deviations from breakdown plan:** Any tasks that were added, removed, split, or significantly changed, with reasons. Include any backfill edits made to existing children in E6 (e.g. "Added missing Affected Areas section and Epic Integration Branch field to PROJ-201").
     
 - **Cumulative release notes:** Consolidated, user-facing release note for the entire epic. If purely internal, state "N/A — internal changes only."
-    
-- **QA Verification Steps:** End-to-end manual testing instructions for a QA engineer, including:
-    
-    - Integration testing between changes across child tasks
-    - Full user workflows or scenarios enabled by the epic
-    - Expected results for each verification step
-    - Edge cases that span multiple tasks
+
 - **Open items:** Follow-up work, known limitations, tech debt introduced, or unresolved questions.
     
 
-**REQUIRED: Review the summary before posting.** Verify every field is present, "Child tasks completed" lists every task, and QA Verification Steps cover end-to-end verification. If the review reveals gaps, revise before posting.
+**REQUIRED: Review the summary before posting.** Confirm (1) the first line is exactly `**E10 — Summary of Changes**` in `**bold**` format, (2) the `**Integration branch:**` metadata is present before the `----` rule, and (3) every mandated field appears as a `**Label:**` section in the specified order with none renamed, dropped, or substituted, and that "Child tasks completed" lists every task. If any check fails, rewrite before posting.
+
+Before calling `jira_add_comment`, invoke the `comment-reviewer` sub-agent with the drafted comment body, the phase label `E10 — Summary of Changes`, and the integration branch name and child task list as source context for fact-checking. If CHANGES REQUIRED, revise and re-invoke (max 3 iterations). Post the comment only once APPROVED; after 3 iterations, post with remaining minor findings noted inline.
 
 > **COMPACTION GATE — E10:** Once the E10 summary comment is posted, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<EPIC-KEY>-E10`; `next_phase: E11`; decisions: epic completion confirmed, all children done; branch: integration branch name. REFERENCES: epic node, branch node. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to E11.
 
@@ -429,5 +452,6 @@ This workflow is complete when **all** of the following are true:
 - All child task Jira issues created as child work items of the epic (E6–E8)
 - All child tasks completed and verified
 - User testing completed and approved (E9)
-- E10 epic summary comment posted to Jira with all required fields populated
+- E10 summary comment posted to Jira using the exact `**E10 — Summary of Changes**` heading and the full mandated field set in order (verified by `comment-reviewer`, not improvised)
+- E9 handoff comment used the exact `**E9 — User Testing Handoff**` heading
 - Session-scoped knowledge graph cleared (E11)
