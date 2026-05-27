@@ -70,6 +70,7 @@ ACCEPTANCE CRITERIA VERDICTS
 [For each criterion:]
 - [Criterion text]: PASS | FAIL | PARTIAL
   Evidence: [specific file:line reference]
+  Justification: [required when PARTIAL — what is implemented and what remains incomplete]
 
 FINDINGS
 [For each finding:]

@@ -27,7 +27,7 @@
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
 - **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
 
-**SERENA PROJECT ACTIVATION:** Before R0, call `check_onboarding_performed`. If it reports that onboarding has not been performed for this project, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`) and any symbol-aware operations invoked by the `codebase-explorer` agent depend on this being done. Do this once at the start of the workflow; do not repeat it between phases.
+**SERENA PROJECT ACTIVATION:** Before R0, check Serena's project-activation message (emitted on connect via `--project-from-cwd`); if it reports that onboarding has not been performed, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`) and any symbol-aware operations invoked by the `codebase-explorer` agent depend on this being done. Do this once at the start of the workflow; do not repeat it between phases.
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
@@ -49,7 +49,7 @@
    - **Observations:** `phase: <id>`, `skill: requirements-intake`, `jira_key: <key or slug>`, `mode: <define or fill_out>`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. For R5B per-child gates only: `child_completed: <JIRA-KEY>`, `next_child: <JIRA-KEY or "none">`.
    - **Relations:** `BELONGS_TO` → the `work_item` entity for this run; `SUPERSEDES` → prior `phase_handoff` for this work item (if any); `REFERENCES` → relevant `affected_area`, `exploration`, `criterion`, and `qa_item` entity names.
 3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
-4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, work item key, mode, one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → continue at `<next-phase>`"). For R5B gates: include child completion status. End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, and resume at `next_phase`. If the user types a different message instead, handle it normally.
+4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, work item key, mode, one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → continue at `<next-phase>`"). For R5B gates: include child completion status. End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, and resume at `next_phase`. Before executing the resumed phase, **re-read that phase's section in this skill's `workflow.md`** so its full instructions survive compaction — in particular, any phase that asks the user clarifying or structured questions MUST use `AskUserQuestion` (per the Clarification Rule), never plain text. If the user types a different message instead, handle it normally.
 
 **Cleanup:** Include all `phase_handoff` entities for this work item (prefix `phase-handoff-<work-item-key>-`) in the R6 cleanup enumeration alongside other session-scoped entities.
 
@@ -78,29 +78,38 @@ If `$ARGUMENTS` is empty or absent, enter **define mode** and run R0 exactly as 
     
 2. Use `AskUserQuestion` to ask the work type (Header: `Work Type`, Question: `What type of work is this?`, Options: `Feature` — a new capability or user-facing behavior (acceptance criteria will be written in Gherkin), `Maintenance` — improving, fixing, updating, replacing, or maintaining something that already exists: tech debt, refactors, dependency updates, compliance, or scheduled upkeep (outcome-based acceptance criteria)). Wait for the answer before continuing. This determines which question set to use below. (For open-ended *investigation* before a build decision, that is `/implementation-discovery`, not an intake work type.)
 
-3. Ask the following questions using `AskUserQuestion`, one call per question in sequence. For each question: use a short, descriptive Header (≤12 chars) based on the question topic; for yes/no questions (e.g., "Is there an existing Jira Epic?", "Has a Jira card already been created?"), use `Yes, I'll provide it` / `No` options; for open-ended free-text questions, use 2–3 reasonable options that cover common answers (with Other always available for typed input).
+3. Gather the feature or maintenance details in this order:
 
-    **If Feature:**
-    
-    - What is the name of this feature?
-    - Can you describe what you're trying to build or solve in a few sentences?
-    - Who is requesting this, and what team are they on?
-    - Is there an existing Jira Epic this should fall under? If so, what's the key?
-    - Are there any areas of the codebase you already know are involved — repos, services, modules, or file paths?
-    - Is there any additional context that would help define this requirement?
-    - Has a Jira card already been created for this? If so, what's the issue key?
-    
-    **If Maintenance:**
-    
-    - What is a short name or title for this maintenance item?
-    - What needs to be done — what exists today that should be improved, fixed, replaced, updated, or maintained?
-    - What is driving this work — tech-debt cleanup, refactor, scheduled maintenance, dependency constraint, compliance requirement, alert, or something else?
-    - What is the impact of leaving this unaddressed?
-    - Who identified or is requesting this, and what team owns the affected area?
-    - Are there any areas of the codebase you already know are involved?
-    - Is there an existing Jira Epic this should be tracked under?
-    - Is there any additional context that would help define this work?
-    - Has a Jira card already been created for this? If so, what's the issue key?
+   **a. Name (via `AskUserQuestion`).**  
+   - Feature: `AskUserQuestion` (Header: `Feature Name`, Question: `What is the name of this feature?`)  
+   - Maintenance: `AskUserQuestion` (Header: `Item Name`, Question: `What is a short name or title for this maintenance item?`)
+
+   **b. Primary description — ask conversationally, not via `AskUserQuestion`.**  
+   The `AskUserQuestion` free-text field is cramped and discourages detail; a conversational prompt gives the user the full prompt input to write as much as they need. Send the appropriate message below, then **end your turn and wait** for the user's reply before continuing.
+
+   - Feature: *"Now describe what you're trying to build or solve. Include as much detail as you have — the goal or problem being addressed, who benefits, the expected outcome, scope, constraints, dependencies, and any relevant context. The more you share, the better the requirements will be defined."*
+   - Maintenance: *"Now describe what needs to be done. Include what currently exists and its problems, the expected end state, what specific changes or work are required, and any constraints or dependencies. The more detail you provide, the more precisely the work can be scoped."*
+
+   **c. Sufficiency check.** Before continuing, assess whether the description is detailed enough to define the work clearly — it should cover the goal or problem, the expected outcome, and at least some scope. If it's thin (a single short sentence, missing the "why," or no expected outcome), ask 1–3 targeted follow-up questions to fill the specific gaps. Do not pad a thin description yourself; draw the missing detail out of the user. If the description is already sufficient, proceed immediately.
+
+   **d. Remaining structured questions (via `AskUserQuestion`, one call per question).** Use a short descriptive Header (≤12 chars); for yes/no questions use `Yes, I'll provide it` / `No`; for open-ended free-text questions use 2–3 reasonable options (Other always available).
+
+   **If Feature:**
+   - Who is requesting this, and what team are they on?
+   - Is there an existing Jira Epic this should fall under? If so, what's the key?
+   - Are there any areas of the codebase you already know are involved — repos, services, modules, or file paths?
+   - Is there any additional context that would help define this requirement?
+   - Has a Jira card already been created for this? If so, what's the issue key?
+
+   **If Maintenance:**
+   - What is driving this work — tech-debt cleanup, refactor, scheduled maintenance, dependency constraint, compliance requirement, alert, or something else?
+   - What is the impact of leaving this unaddressed?
+   - Who identified or is requesting this, and what team owns the affected area?
+   - Are there any areas of the codebase you already know are involved?
+   - Is there an existing Jira Epic this should be tracked under?
+   - Is there any additional context that would help define this work?
+   - Has a Jira card already been created for this? If so, what's the issue key?
+
 4. After all questions are answered, summarize the gathered context back to the user in a clear, structured format.
     
 
@@ -110,7 +119,7 @@ If `$ARGUMENTS` is empty or absent, enter **define mode** and run R0 exactly as 
 > 
 > - Work Type (Feature / Maintenance)
 > - Title or Name
-> - Description or Problem Statement (2–4 sentences)
+> - Description or Problem Statement (capture in full — do not summarize or truncate the user's input)
 > - Requested By / Identified By (name / team)
 > - Related Epic (Jira key, or explicitly "none")
 > - Codebase Hints (specific areas, or explicitly "none provided")

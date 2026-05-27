@@ -89,7 +89,7 @@ The Jira card description is the interface between intake and execution:
 
 **Execution skill direct Serena access:** `task-card` (T8), `bug-card` (B10), and `code-review` (CR5/CR6) declare Serena read tools and, for `task-card` and `bug-card`, symbol-aware write tools. This lets the orchestrator use `replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol`, `rename_symbol`, and `safe_delete_symbol` directly during implementation phases rather than falling back to text-level `Edit` for every code change. See the Serena-first editing rule in each workflow's implementation phase.
 
-**Serena project activation:** `task-card`, `bug-card`, `epic-card`, and `code-review` call `check_onboarding_performed` at the start of the workflow and `onboarding` if the project has not yet been activated. Serena's symbol and memory tools require this activation to be scoped to the current project directory.
+**Serena project activation:** `task-card`, `bug-card`, `epic-card`, and `code-review` check Serena's project-activation message at the start of the workflow and call `onboarding` if the project has not yet been activated. Serena's symbol and memory tools require this activation to be scoped to the current project directory.
 
 ## Detailed Flow: Feature Development (Happy Path)
 
@@ -294,7 +294,7 @@ The plugin declares its own stdio MCP servers in `.mcp.json` and relies on Claud
 | Server | Purpose | Launcher |
 |---|---|---|
 | `atlassian` | Jira and Confluence operations (get/create/update issues, search, comments, page management, attachments, labels) | `uvx mcp-atlassian` |
-| `serena` | Symbolic code navigation (find_symbol, find_referencing_symbols, get_symbols_overview, search_for_pattern, replace_content, insert_after/before_symbol, rename_symbol, replace_symbol_body, safe_delete_symbol, read/write/list/edit/delete_memory, check_onboarding_performed, onboarding) | `uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide --project-from-cwd` |
+| `serena` | Symbolic code navigation (find_symbol, find_referencing_symbols, get_symbols_overview, search_for_pattern, replace_content, insert_after/before_symbol, rename_symbol, replace_symbol_body, safe_delete_symbol, read/write/list/edit/delete_memory, onboarding, initial_instructions) | `uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide --project-from-cwd` |
 | `gitlab` | GitLab repo operations (create_branch, create_issue, create_merge_request, create_or_update_file, create_repository, fork_repository, get_file_contents, push_files, search_repositories) | `npx -y gitlab-mcp` |
 | `memory` | Knowledge-graph memory (add_observations, create_entities, create_relations, read_graph, etc.) | `npx -y @modelcontextprotocol/server-memory` |
 | `sequentialthinking` | Sequential thinking helper | `npx -y @modelcontextprotocol/server-sequential-thinking` |

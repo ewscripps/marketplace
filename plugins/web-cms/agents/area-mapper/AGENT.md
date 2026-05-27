@@ -64,13 +64,24 @@ Use today's date for `verified_at` and the current git SHA (from `git rev-parse 
 
 ### Step 1 — Find this run's explorations
 
-Call `read_graph` once. From the result, collect every `exploration` entity that has a `for` relation to the supplied `work_item_id`. For each, extract:
+Derive the `work_item_key` by stripping the `work_item-` prefix from `work_item_id` (e.g. `work_item-PROJ-123` → `PROJ-123`).
 
-- The entity name (which encodes the `area_slug` after the trailing `-<area_slug>` segment).
+**Preferred (scoped) retrieval:**
+
+1. Call `search_nodes` with the query `exploration-<work_item_key>` to enumerate the exploration entities for this work item.
+2. Collect each matching entity name. For each, call `open_nodes` with that entity name to retrieve its observations and all entities reachable via `contains` relations.
+
+This scoped approach avoids loading the entire knowledge graph.
+
+**Fallback:** If `search_nodes` returns no results (server quirk, empty graph, or the naming pattern changed), call `read_graph` once and filter manually for `exploration` entities that have a `for` relation to the supplied `work_item_id`.
+
+For each exploration entity, extract:
+
+- The `area_slug`: strip the prefix `exploration-<work_item_key>-` from the entity name; everything after that is the `area_slug` (e.g. `exploration-PROJ-123-notification-pipeline-publisher` → `notification-pipeline-publisher`).
 - Its `area`, `question`, `summary` observations.
-- Every entity reachable via `contains` from it (`affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`).
+- Every entity linked via `contains` (`affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`).
 
-If `read_graph` returns nothing for this work item, return `AREA-MAPPER COMPLETE` with `Areas processed: 0` and exit.
+If both scoped and fallback retrieval return nothing for this work item, return `AREA-MAPPER COMPLETE` with `Areas processed: 0` and exit.
 
 ### Step 2 — For each exploration, apply the quality bar
 

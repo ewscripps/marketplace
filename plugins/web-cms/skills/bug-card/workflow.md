@@ -16,7 +16,7 @@
 
 **RESUMPTION CHECK:** If this workflow resumes after prior work has already been performed, inspect the issue status and previously posted Jira comments first to identify the first incomplete phase. If the issue is already **In Progress**, do not repeat B0. If the knowledge graph is empty, rebuild the investigation state from the latest reproduction notes, investigation comments, and approved plan before continuing.
 
-**SERENA PROJECT ACTIVATION:** Before B0, call `check_onboarding_performed`. If it reports that onboarding has not been performed for this project, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`, and the symbol-aware write tools) will not function correctly without this. Do this once at the start of the workflow; do not repeat it between phases.
+**SERENA PROJECT ACTIVATION:** Before B0, check Serena's project-activation message (emitted on connect via `--project-from-cwd`); if it reports that onboarding has not been performed, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`, and the symbol-aware write tools) will not function correctly without this. Do this once at the start of the workflow; do not repeat it between phases.
 
 **TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
 
@@ -78,7 +78,7 @@ These actions must not be chained. Run each one at a time, reporting the result 
    - **Observations:** `phase: <id>`, `skill: bug-card`, `jira_key: <key>`, `branch: <name or "none">`, `head_sha: <sha or "n/a">`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. At B10 only: `reviewer_iterations: impl=N test=N doc=N`.
    - **Relations:** `BELONGS_TO` → `work_item-<JIRA-KEY>`; `SUPERSEDES` → prior `phase_handoff` for this work item (if any); `REFERENCES` → relevant `exploration`, `hypothesis`, `root_cause`, `fix_plan`, and `finding` entity names.
 3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
-4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, Jira key + branch + head SHA anchors, reviewer iteration counters (B10 only), one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → `git status` → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, verify git state (`git status`), and resume at `next_phase`. If the user types a different message instead, handle it normally.
+4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, Jira key + branch + head SHA anchors, reviewer iteration counters (B10 only), one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → `git status` → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, verify git state (`git status`), and resume at `next_phase`. Before executing the resumed phase, **re-read that phase's section in this skill's `workflow.md`** so its full instructions survive compaction — in particular, any phase that asks the user clarifying or structured questions MUST use `AskUserQuestion` (per the Clarification Rule), never plain text. If the user types a different message instead, handle it normally.
 
 **Cleanup:** Include all `phase_handoff` entities for this work item (prefix `phase-handoff-<JIRA-KEY>-`) in the B15 cleanup enumeration alongside other session-scoped entities.
 
@@ -153,14 +153,14 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 > **THINK HARD:** Before writing the fix plan, think hard about the blast radius of the proposed change — which callers, dependents, or edge-case paths might break if the fix is applied as drafted? A fix that is correct at the point of change but wrong at a caller is a new bug, not a resolved one.
 
-> **USE KNOWLEDGE GRAPH:** Read the hypothesis and affected area nodes written in B3. Write a `root_cause` node with properties: `description`, `affected_files` (linked nodes), and `confirmed_by` (the evidence that settled the conclusion). Write a `fix_plan` node linked to the `root_cause` node. Later phases (B10, B14) should read these nodes rather than re-parsing the plan comment.
+> **USE KNOWLEDGE GRAPH:** Read the hypothesis and affected area nodes written in B3. Write a `root_cause` entity named `root_cause-<JIRA_KEY>` with observations: `description` (the root cause analysis text, verbatim), `affected_files` (comma-separated list of implicated file paths), and `confirmed_by` (the entity name of the primary `evidence` node that settled the conclusion). Link with `BELONGS_TO` → `work_item-<JIRA_KEY>`. Call `open_nodes` on the new entity to confirm the write landed. The `fix_plan-<JIRA_KEY>` entity is created after plan-reviewer approval below, once the plan is finalized.
 
 > **GENERATE A FLOWGRAPH (best-effort):** Produce a Mermaid `flowchart` that contrasts the buggy path with the fixed path — show the root-cause flow (how the bug is triggered) alongside the corrected flow (how the fix intercepts it). Keep it focused on the specific files/functions implicated by the root cause analysis.
 >
 > - **Skip it** for trivial single-line fixes where a diagram adds no clarity. If skipped, state in one line why.
 > - **Render it in the chat** as part of the fix plan presentation at B6.
 > - **Embed it in the Jira description under `## Architecture`** as a ` ```mermaid ` fenced block, immediately after `## Affected Areas`. If the description lacks an `## Architecture` section, add one using `jira_update_issue` (additive edit — update only that section). (Jira Cloud does not render Mermaid natively; it will display as a code block, which is acceptable.) If skipped, set the Architecture section to "None — no diagram for this change."
-> - **Persist it to the knowledge graph:** add a `diagram` observation (the raw Mermaid source) to the `fix_plan` entity so B10 and downstream phases can read it.
+> - **Record the Mermaid source** for inclusion in the `fix_plan-<JIRA_KEY>` entity created after plan-reviewer approval below. B10 reads the `diagram` observation from that entity as a surgical guide.
 
 **REQUIRED:** The plan must include ALL of the following:
 
@@ -196,7 +196,11 @@ Once the self-review is clean, invoke the `plan-reviewer` sub-agent, providing:
 
 The sub-agent will return a structured findings report with an overall verdict of either **APPROVED** or **CHANGES REQUIRED**.
 
-- If **APPROVED**: post a single combined Jira comment with the exact heading `**B5/B6 — Fix Plan & Approval Request**`, then proceed to B6. This comment must include:
+- If **APPROVED**:
+
+    > **USE KNOWLEDGE GRAPH:** Create a `fix_plan` entity named `fix_plan-<JIRA_KEY>` with observations: `description` (the full reviewed fix plan text, verbatim — do not summarize or truncate), `files_to_change` (comma-separated list of all files to create or modify), `regression_test_strategy` (the regression test strategy text, verbatim), `documentation_expectations` (verbatim), and `diagram` (the raw Mermaid source recorded from the flowgraph step, or omit this observation entirely if the flowgraph was skipped). Link with `BELONGS_TO` → `work_item-<JIRA_KEY>` and `IMPLEMENTS` → `root_cause-<JIRA_KEY>`. Call `open_nodes` on the new entity to confirm the write landed. This entity is the canonical persistence surface for the fix — B6 and B10 compaction gates reference it by name, and B10 reads the `diagram` observation from it as a surgical guide. If the plan was revised during the review loop, ensure the entity contains the **final approved** plan text.
+
+    Post a single combined Jira comment with the exact heading `**B5/B6 — Fix Plan & Approval Request**`, then proceed to B6. This comment must include:
 
     - The reviewed fix plan
     - Architecture diagram (under `### Architecture` — the Mermaid source showing buggy vs. fixed path, or a note if skipped)
@@ -205,7 +209,7 @@ The sub-agent will return a structured findings report with an overall verdict o
     - Risks, dependencies, or open items that affect execution
     - `Approval requested: Please approve this fix plan before work begins.`
 - If **CHANGES REQUIRED**: address every Critical and Major finding, revise the plan, then invoke the `plan-reviewer` sub-agent again. Repeat until the verdict is APPROVED.
-- **Max 3 review iterations.** If the plan-reviewer returns CHANGES REQUIRED after 3 iterations, post the same combined `B5/B6` comment with the outstanding findings noted, and let the user decide in B6.
+- **Max 3 review iterations.** If the plan-reviewer returns CHANGES REQUIRED after 3 iterations, create the `fix_plan-<JIRA_KEY>` entity (same as the APPROVED path above, using the current plan text and noting `review_escalated: true`), post the same combined `B5/B6` comment with the outstanding findings noted, and let the user decide in B6.
 
 ### B6 — Await Plan Approval
 
@@ -216,10 +220,10 @@ The sub-agent will return a structured findings report with an overall verdict o
 - The approval request Jira record is the combined `B5/B6` comment already posted in B5. Do not post a second Jira comment here unless the plan changed.
 - **Present the full fix plan in the chat output.** The user should not have to open Jira to review it — display it here before asking for approval.
 - Then use `AskUserQuestion` with header `B6 Approval`, options: `Approve and proceed (Recommended)` (description: "Fix plan is accurate — begin implementation") / `Request changes` (description: "Revise the plan before proceeding"). Do not poll Jira for approval.
-- If the user selects "Request changes", revise the plan, repost the full combined `B5/B6` comment to Jira, and use `AskUserQuestion` again.
+- If the user selects "Request changes", revise the plan, repost the full combined `B5/B6` comment to Jira, and update the `fix_plan-<JIRA_KEY>` entity in the knowledge graph: add a revised `description` observation with the updated plan text (use `add_observations`). Then use `AskUserQuestion` again.
 - Only proceed to B7 after "Approve and proceed" is selected.
 
-> **COMPACTION GATE — B6:** Once B6 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-B6`; `next_phase: B7`; decisions: approved fix plan (one-line summary, fix_plan entity name for REFERENCES); branch + head SHA: "n/a" (not yet created). REFERENCES: fix_plan and root_cause entities from B5 and exploration entities from B3. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to B7.
+> **COMPACTION GATE — B6:** Once B6 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-B6`; `next_phase: B7`; decisions: approved fix plan (one-line summary); branch + head SHA: "n/a" (not yet created). REFERENCES: `fix_plan-<KEY>` and `root_cause-<KEY>` from B5 and exploration entities from B3. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to B7.
 
 ---
 
@@ -245,7 +249,7 @@ The sub-agent will return a structured findings report with an overall verdict o
 
 **ALL of the following are REQUIRED. Do not skip any category.**
 
-- **Architecture diagram:** Call `open_nodes` on the `fix_plan` entity and read the `diagram` observation. Use the buggy-path vs. fixed-path flowchart as a surgical guide — apply the fix exactly where the diagram shows the flow deviating, and verify the corrected path after each change. If no diagram was persisted (skipped in B5), proceed without it.
+- **Architecture diagram:** Call `open_nodes` on the `fix_plan-<JIRA_KEY>` entity (created in B5) and read the `diagram` observation. Use the buggy-path vs. fixed-path flowchart as a surgical guide — apply the fix exactly where the diagram shows the flow deviating, and verify the corrected path after each change. If no diagram was persisted (skipped in B5), proceed without it.
 - **Code:** Apply the fix according to the plan from B5.
 - **Testing handoff:** Keep the implementation and the B9 regression test in a state that the dedicated `test-reviewer` sub-agent can extend and run deterministically. Note any commands, fixtures, or setup that sub-agent will need.
 - **Documentation handoff:** Identify the public APIs, configuration surfaces, and repository docs the dedicated `documentation-reviewer` sub-agent must cover.
@@ -335,7 +339,7 @@ The sub-agent will update inline and repository documentation as needed and retu
 
 Do not proceed to B11 until `implementation-reviewer`, `test-reviewer`, and `documentation-reviewer` have all completed successfully.
 
-> **COMPACTION GATE — B10:** Once all three reviewers are complete, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-B10`; `next_phase: B11`; include `reviewer_iterations: impl=N test=N doc=N`; decisions: fix implementation summary and any plan deviations; approval_condition: reviewer verdict. REFERENCES: fix_plan entity from B5 and exploration entities from B3. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to B11.
+> **COMPACTION GATE — B10:** Once all three reviewers are complete, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-B10`; `next_phase: B11`; include `reviewer_iterations: impl=N test=N doc=N`; decisions: fix implementation summary and any plan deviations; approval_condition: reviewer verdict. REFERENCES: `fix_plan-<KEY>` from B5 and exploration entities from B3. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to B11.
 
 ### B11 — Post-Fix Verification
 
@@ -423,7 +427,7 @@ Post a comment on this Jira issue containing ALL of the following:
 
 ### B15 — Cleanup
 
-- Clear the session-scoped knowledge graph before finishing the workflow. This includes the `work_item-<JIRA_KEY>` entity and every entity linked to it: hypothesis nodes, `affected_area`, `root_cause`, `fix_plan`, `phase_handoff`, plus the explorer-written subgraph (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`). Use `read_graph` to enumerate, then `delete_entities`. Do not retain investigation state once it has been materialized into Jira comments.
+- Clear the session-scoped knowledge graph before finishing the workflow. This includes the `work_item-<JIRA_KEY>` entity and every entity linked to it: hypothesis nodes, `affected_area`, `root_cause-<JIRA_KEY>`, `fix_plan-<JIRA_KEY>`, `phase_handoff`, plus the explorer-written subgraph (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`). Use `read_graph` to enumerate, then `delete_entities`. Do not retain investigation state once it has been materialized into Jira comments.
 
 ---
 

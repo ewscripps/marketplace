@@ -14,7 +14,7 @@
 
 **CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
-**SERENA PROJECT ACTIVATION:** Before T0, call `check_onboarding_performed`. If it reports that onboarding has not been performed for this project, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`, and the symbol-aware write tools) will not function correctly without this. Do this once at the start of the workflow; do not repeat it between phases.
+**SERENA PROJECT ACTIVATION:** Before T0, check Serena's project-activation message (emitted on connect via `--project-from-cwd`); if it reports that onboarding has not been performed, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`, and the symbol-aware write tools) will not function correctly without this. Do this once at the start of the workflow; do not repeat it between phases.
 
 **TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
 
@@ -89,7 +89,7 @@ These actions must not be chained. Run each one at a time, reporting the result 
    - **Observations:** `phase: <id>`, `skill: task-card`, `jira_key: <key>`, `branch: <name or "none">`, `head_sha: <sha or "n/a">`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. At T8 only: `reviewer_iterations: impl=N test=N doc=N`.
    - **Relations:** `BELONGS_TO` → `work_item-<JIRA-KEY>`; `SUPERSEDES` → prior `phase_handoff` for this work item (if any); `REFERENCES` → relevant `exploration`, `plan`, and `finding` entity names.
 3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
-4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, Jira key + branch + head SHA anchors, reviewer iteration counters (T8 only), one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → `git status` → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, verify git state (`git status`), and resume at `next_phase`. If the user types a different message instead, handle it normally.
+4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, Jira key + branch + head SHA anchors, reviewer iteration counters (T8 only), one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → `git status` → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, verify git state (`git status`), and resume at `next_phase`. Before executing the resumed phase, **re-read that phase's section in this skill's `workflow.md`** so its full instructions survive compaction — in particular, any phase that asks the user clarifying or structured questions MUST use `AskUserQuestion` (per the Clarification Rule), never plain text. If the user types a different message instead, handle it normally.
 
 **Cleanup:** Include all `phase_handoff` entities for this work item (prefix `phase-handoff-<JIRA-KEY>-`) in the T13 cleanup enumeration alongside other session-scoped entities.
 
@@ -163,7 +163,7 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 > - **Skip it** for trivial changes where a diagram adds no clarity (e.g. a single-file edit with no branching logic). If skipped, state in one line why.
 > - **Render it in the chat** as part of the plan presentation at T5.
 > - **Embed it in the Jira description under `## Architecture`** as a ` ```mermaid ` fenced block, immediately after `## Affected Areas`. If the description lacks an `## Architecture` section, add one using `jira_update_issue` (additive edit — update only that section). (Jira Cloud does not render Mermaid natively; it will display as a code block, which is acceptable.) If skipped, set the Architecture section to "None — no diagram for this change."
-> - **Persist it to the knowledge graph:** add a `diagram` observation (the raw Mermaid source) to the `plan` entity for this work item so T8 and downstream phases can read it.
+> - **Record the Mermaid source** for inclusion in the `plan-<JIRA_KEY>` entity created after plan-reviewer approval below. T8 reads the `diagram` observation from that entity as an implementation map.
 
 **REQUIRED:** The plan must include ALL of the following:
 
@@ -199,7 +199,11 @@ Once the self-review is clean, invoke the `plan-reviewer` sub-agent, providing:
 
 The sub-agent will return a structured findings report with an overall verdict of either **APPROVED** or **CHANGES REQUIRED**.
 
-- If **APPROVED**: post a single combined Jira comment with the exact heading `**T4/T5 — Implementation Plan & Approval Request**`, then proceed to T5. This comment must include:
+- If **APPROVED**:
+
+    > **USE KNOWLEDGE GRAPH:** Create a `plan` entity named `plan-<JIRA_KEY>` with observations: `description` (the full reviewed plan text, verbatim — do not summarize or truncate), `files_to_change` (comma-separated list of all files to create or modify), `testing_expectations` (the testing expectations section verbatim), `documentation_expectations` (the documentation expectations section verbatim), and `diagram` (the raw Mermaid source from the flowgraph, or omit this observation entirely if the flowgraph was skipped). Link with a `BELONGS_TO` relation → `work_item-<JIRA_KEY>`. Call `open_nodes` on the new entity to confirm the write landed. This entity is the structured persistence surface for the T5 and T8 compaction gates — their REFERENCES point to `plan-<JIRA_KEY>`, and T8 reads the `diagram` observation from it as an implementation map. If the plan was revised during the review loop, ensure the entity contains the **final approved** plan text.
+
+    Post a single combined Jira comment with the exact heading `**T4/T5 — Implementation Plan & Approval Request**`, then proceed to T5. This comment must include:
 
     - The reviewed implementation plan
     - Architecture diagram (under `### Architecture` — the Mermaid source, or a note if skipped)
@@ -208,7 +212,7 @@ The sub-agent will return a structured findings report with an overall verdict o
     - Risks, dependencies, or open items that affect execution
     - `Approval requested: Please approve this implementation plan before work begins.`
 - If **CHANGES REQUIRED**: address every Critical and Major finding, revise the plan, then invoke the `plan-reviewer` sub-agent again. Repeat until the verdict is APPROVED.
-- **Max 3 review iterations.** If the plan-reviewer returns CHANGES REQUIRED after 3 iterations, post the same combined `T4/T5` comment with the outstanding findings noted, and let the user decide in T5.
+- **Max 3 review iterations.** If the plan-reviewer returns CHANGES REQUIRED after 3 iterations, create the `plan-<JIRA_KEY>` entity (same as the APPROVED path above, using the current plan text and noting `review_escalated: true`), post the same combined `T4/T5` comment with the outstanding findings noted, and let the user decide in T5.
 
 ### T5 — Await Plan Approval
 
@@ -219,10 +223,10 @@ The sub-agent will return a structured findings report with an overall verdict o
 - The approval request Jira record is the combined `T4/T5` comment already posted in T4. Do not post a second Jira comment here unless the plan changed.
 - **Present the full implementation plan in the chat output.** The user should not have to open Jira to review it — display it here before asking for approval.
 - Then use `AskUserQuestion` with header `T5 Approval`, options: `Approve and proceed (Recommended)` (description: "Implementation plan is accurate — begin work") / `Request changes` (description: "Revise the plan before proceeding"). Do not poll Jira for approval.
-- If the user selects "Request changes", revise the plan, repost the full combined `T4/T5` comment to Jira, and use `AskUserQuestion` again.
+- If the user selects "Request changes", revise the plan, repost the full combined `T4/T5` comment to Jira, and update the `plan-<JIRA_KEY>` entity in the knowledge graph: add a revised `description` observation with the updated plan text (use `add_observations`). Then use `AskUserQuestion` again.
 - Only proceed to T6 after "Approve and proceed" is selected.
 
-> **COMPACTION GATE — T5:** Once T5 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-T5`; `next_phase: T6`; decisions: approved implementation plan (one-line summary, plan entity name for REFERENCES); branch + head SHA: "n/a" (not yet created). REFERENCES: plan entity and exploration entities from T2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T6.
+> **COMPACTION GATE — T5:** Once T5 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-T5`; `next_phase: T6`; decisions: approved implementation plan (one-line summary); branch + head SHA: "n/a" (not yet created). REFERENCES: `plan-<KEY>` (the plan entity created in T4) and exploration entities from T2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T6.
 
 ---
 
@@ -241,7 +245,7 @@ The sub-agent will return a structured findings report with an overall verdict o
 
 **ALL of the following are REQUIRED. Do not skip any category.**
 
-- **Architecture diagram:** Call `open_nodes` on the `plan` entity and read the `diagram` observation. Use the control/data flow diagram as a map for sequencing your code changes — write code in the order the flow implies and verify each completed step advances the flow correctly. If no diagram was persisted (skipped in T4), proceed without it.
+- **Architecture diagram:** Call `open_nodes` on the `plan-<JIRA_KEY>` entity (created in T4) and read the `diagram` observation. Use the control/data flow diagram as a map for sequencing your code changes — write code in the order the flow implies and verify each completed step advances the flow correctly. If no diagram was persisted (skipped in T4), proceed without it.
 - **Code:** Write or modify source code according to the implementation plan from T4.
 - **Testing handoff:** Leave the implementation in a state that the dedicated `test-reviewer` sub-agent can exercise deterministically. Note any commands, fixtures, or setup that sub-agent will need.
 - **Documentation handoff:** Identify the public APIs, configuration surfaces, and repository docs the dedicated `documentation-reviewer` sub-agent must cover.
@@ -331,7 +335,7 @@ The sub-agent will update inline and repository documentation as needed and retu
 
 Do not proceed to T9 until `implementation-reviewer`, `test-reviewer`, and `documentation-reviewer` have all completed successfully.
 
-> **COMPACTION GATE — T8:** Once all three reviewers are complete, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-T8`; `next_phase: T9`; include `reviewer_iterations: impl=N test=N doc=N`; decisions: implementation approach summary and any plan deviations; approval_condition: reviewer verdict. REFERENCES: plan entity from T4 and exploration entities from T2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T9.
+> **COMPACTION GATE — T8:** Once all three reviewers are complete, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-T8`; `next_phase: T9`; include `reviewer_iterations: impl=N test=N doc=N`; decisions: implementation approach summary and any plan deviations; approval_condition: reviewer verdict. REFERENCES: `plan-<KEY>` from T4 and exploration entities from T2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T9.
 
 ### T9 — Post-Implementation Verification
 
@@ -427,7 +431,7 @@ Post a comment on this Jira issue with the exact heading `**T12 — Summary of C
 
 ### T13 — Cleanup
 
-- **Standard mode:** Clear the session-scoped knowledge graph nodes created during this task — the `work_item-<JIRA_KEY>` entity and every entity linked to it (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`, `phase_handoff`, and any `affected_area` rolled up from them). Use `read_graph` to enumerate, then `delete_entities`. The graph is session-scoped; finishing without cleanup leaves stale state for the next workflow.
+- **Standard mode:** Clear the session-scoped knowledge graph nodes created during this task — the `work_item-<JIRA_KEY>` entity and every entity linked to it (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`, `phase_handoff`, `plan-<JIRA_KEY>`, and any `affected_area` rolled up from them). Use `read_graph` to enumerate, then `delete_entities`. The graph is session-scoped; finishing without cleanup leaves stale state for the next workflow.
 - **Epic child task mode:** Do not delete the `work_item-<JIRA_KEY>` entity for this child task or its linked nodes here — the epic-level cleanup at E11 owns wholesale graph teardown after all child tasks complete.
 
 ## Completion Criteria

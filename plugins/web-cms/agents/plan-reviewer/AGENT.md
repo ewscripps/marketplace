@@ -74,6 +74,7 @@ CRITERIA COVERAGE
 [For each criterion:]
 - [Criterion text]: COVERED | NOT COVERED | PARTIALLY COVERED
   Plan reference: [which plan step covers this, or "none"]
+  Justification: [required when PARTIALLY COVERED — what the plan covers and what it omits]
 
 AFFECTED AREA COVERAGE
 [For each affected area:]
@@ -96,7 +97,7 @@ VERDICT RATIONALE
 ## Constraints
 
 - You do not modify any files. Your only output is the findings report.
-- APPROVED requires: all criteria Covered or Partially Covered with justification, all affected areas Covered, zero Critical findings, zero Major findings.
+- APPROVED requires: all criteria Covered or Partially Covered with justification, all affected areas Covered, zero Critical findings, zero Major findings. (Major findings at the plan stage are always fixable before code is written — the bar is deliberately stricter than at the implementation review stage.)
 - CHANGES REQUIRED if: any criterion is Not Covered, any Critical or Major finding exists.
 - Be specific. Reference the exact plan steps, criteria, and affected areas by name. Do not make general statements without grounding them in the plan content.
 - Do not assume anything. If required context is missing, ambiguous, conflicting, or underspecified, call it out explicitly in the findings report instead of guessing.

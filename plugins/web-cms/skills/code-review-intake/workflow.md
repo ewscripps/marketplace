@@ -44,30 +44,36 @@
 
 1. Introduce yourself and briefly explain what this workflow will do and what to expect (phases, approvals, end result).
     
-2. Use `AskUserQuestion` for the first question, then the second question, each as a separate call:
-    
+2. Gather context in this order:
+
+   **a. Review type and mode (via `AskUserQuestion`, one call each):**
     - Review type: `AskUserQuestion` (Header: `Review Type`, Question: `What type of work is being reviewed?`, Options: `Release` — a versioned release across multiple work items, `Epic` — all tasks under an epic, `Task` — a single task or feature, `Bug` — a bug fix)
     - Review mode: `AskUserQuestion` (Header: `Review Mode`, Question: `What kind of review is this?`, Options: `Diff review (Recommended)` — reviewing changes between branches, `Implementation review` — deep dive into an existing implementation without diffing branches)
-3. Based on the answers, continue gathering context using `AskUserQuestion`, one question per call in sequence.
-    
-    **All review types:**
-    
+
+   **b. Review goals — ask conversationally, not via `AskUserQuestion`.**  
+   The `AskUserQuestion` free-text field is cramped and discourages detail; a conversational prompt gives the user the full prompt input to write as much as they need. Send this message, then **end your turn and wait** for the user's reply:
+
+   *"Describe the goals of this review. What should the reviewer verify or pay close attention to? Include any background on the change — what it does, why it was made, and what you're most concerned about. Known risks, tricky areas, or non-obvious behavior are especially useful. The more context you provide, the more targeted the review will be."*
+
+   **c. Sufficiency check.** Before continuing, assess whether the review goals give the reviewer enough to work with. If the goals are too vague (e.g., "just review the code" with no context), ask 1–2 targeted follow-up questions to surface the most important verification targets or concerns. If the goals are already clear, proceed immediately.
+
+   **d. Remaining structured questions (via `AskUserQuestion`, one call per question):**
+
+   **All review types:**
     - What branch contains the work to be reviewed?
     - **Diff Review only:** What is the default branch to diff against? (e.g., main, master, develop)
     - **Implementation Review only:** What is the implementation scope? (List the files, modules, or services to review.)
-    - What are the goals of this review — what should the reviewer verify or pay particular attention to?
     - Are there any known risks or areas of concern the reviewer should focus on?
     - Has a Jira card already been created for this code review? If so, what's the issue key?
     
-    **Release only (ask instead of Jira issue key):**
-    
+   **Release only (ask instead of Jira issue key):**
     - What is the name of the release? (e.g., v2.4.0, Q2 Release, Sprint 42)
     - What Jira project does this release belong to? (e.g., PROJ)
-    
-    **Epic, Task, and Bug only:**
-    
+
+   **Epic, Task, and Bug only:**
     - What is the Jira issue key for the item being reviewed? (e.g., PROJ-123)
-4. After all questions are answered, summarize the gathered context back to the user.
+
+3. After all questions are answered, summarize the gathered context back to the user.
     
 
 > **REQUIRED:** The following context must be confirmed before proceeding:
@@ -78,7 +84,7 @@
 > - Branch to Review
 > - Default Branch (Diff Review only)
 > - Implementation Scope (Implementation Review only)
-> - Review Goals
+> - Review Goals (capture in full — do not summarize or truncate the user's input)
 > - Known Risks or Areas of Concern (description, or explicitly "none identified")
 > - Existing Jira Card for this review (issue key, or explicitly "none")
 

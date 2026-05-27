@@ -27,7 +27,7 @@
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
 - **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
 
-**SERENA PROJECT ACTIVATION:** Before I0, call `check_onboarding_performed`. If it reports that onboarding has not been performed for this project, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`) and any symbol-aware operations invoked by the `codebase-explorer` agent depend on this being done. Do this once at the start of the workflow; do not repeat it between phases.
+**SERENA PROJECT ACTIVATION:** Before I0, check Serena's project-activation message (emitted on connect via `--project-from-cwd`); if it reports that onboarding has not been performed, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`) and any symbol-aware operations invoked by the `codebase-explorer` agent depend on this being done. Do this once at the start of the workflow; do not repeat it between phases.
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
@@ -49,7 +49,7 @@
    - **Observations:** `phase: <id>`, `skill: issue-intake`, `jira_key: <key or slug>`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. At the I4 gate only: `classification: <Bug or Missing Requirement>`, `severity: <level>` (Bug path only).
    - **Relations:** `BELONGS_TO` → the `work_item` entity for this issue; `SUPERSEDES` → prior `phase_handoff` for this work item (if any); `REFERENCES` → `classification` node, `code_evidence` node, and `classification_signal` nodes from I3.
 3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
-4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, work item key, one-line decision summary including classification verdict, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, and resume at `next_phase`. If the user types a different message instead, handle it normally.
+4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, work item key, one-line decision summary including classification verdict, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, and resume at `next_phase`. Before executing the resumed phase, **re-read that phase's section in this skill's `workflow.md`** so its full instructions survive compaction — in particular, any phase that asks the user clarifying or structured questions MUST use `AskUserQuestion` (per the Clarification Rule), never plain text. If the user types a different message instead, handle it normally.
 
 **Cleanup:** Include all `phase_handoff` entities for this work item (prefix `phase-handoff-<work-item-key>-`) in the I6 cleanup enumeration alongside other session-scoped entities.
 
@@ -65,16 +65,22 @@
 
 1. Introduce yourself and briefly explain what this workflow will do and what to expect (phases, classification, end result). Skip this step if called with pre-populated context — the user is already in context from the parent workflow.
     
-2. Ask the following questions using `AskUserQuestion`, one call per question in sequence. Wait for each response before asking the next. For closed-enum questions, use the specific options below. For open-ended free-text questions, provide 2–3 reasonable options covering common answers (Other is always available for typed input).
-    
-    **Behavior description:**
-    
-    - Issue title — open-ended; accept any level of specificity
-    - What happened — open-ended walkthrough of the observed behavior
-    - What should have happened — open-ended expected behavior
-    - Has this ever worked — use `AskUserQuestion` (Header: `Prior Behavior`, Question: `Has this ever worked correctly before, to your knowledge?`, Options: `Yes — it used to work`, `No — it has never worked`, `Unknown`)
-    
-    **Reproduction:**
+2. Gather context in this order. For closed-enum questions, use the specific options below. For remaining open-ended questions, provide 2–3 reasonable options (Other is always available for typed input).
+
+   **a. Issue title (via `AskUserQuestion`, open-ended):** accept any level of specificity.
+
+   **b. Observed and expected behavior — ask conversationally, not via `AskUserQuestion`.**  
+   The `AskUserQuestion` free-text field is cramped and discourages detail; a conversational prompt gives the user the full prompt input to write as much as they need. Send this message, then **end your turn and wait** for the user's reply:
+
+   *"Describe what happened and what you expected instead. Walk me through the full picture — what you were doing, what the system did, what it should have done, and any other context that would help explain the difference. The more detail you include, the better the investigation will go."*
+
+   **c. Sufficiency check.** Before continuing, assess whether the observed/expected gap is clearly described. A useful description identifies a specific behavior that occurred, a specific expectation that wasn't met, and at least some context. If the observed or expected behavior is absent or too vague to investigate (e.g., "it's broken" with no detail), ask 1–2 targeted follow-up questions to close the gap. If the description is already sufficient, proceed immediately.
+
+   **d. Has this ever worked (via `AskUserQuestion`):** `AskUserQuestion` (Header: `Prior Behavior`, Question: `Has this ever worked correctly before, to your knowledge?`, Options: `Yes — it used to work`, `No — it has never worked`, `Unknown`)
+
+   **e. Remaining structured questions (via `AskUserQuestion`, one call per question):**
+
+   **Reproduction:**
     
     - Can it be reproduced — `AskUserQuestion` (Header: `Reproducible?`, Question: `Can you reliably reproduce this issue?`, Options: `Yes — I can reproduce it consistently`, `Intermittent — it happens sometimes`, `No — I cannot reproduce it`)
     - Reproduction rate — `AskUserQuestion` (Header: `Rate`, Question: `How often does it occur?`, Options: `Every time (Recommended for consistent bugs)`, `Intermittently — roughly [frequency]`, `Unknown`) — only ask if intermittent
@@ -102,8 +108,8 @@
 > **REQUIRED:** The following context must be confirmed before proceeding:
 > 
 > - Issue Title
-> - Observed Behavior (what happened)
-> - Expected Behavior (what should happen)
+> - Observed Behavior (capture in full — do not summarize or truncate the user's input)
+> - Expected Behavior (capture in full — do not summarize or truncate the user's input)
 > - Previously Worked (yes / no / unknown)
 > - Reproduction Steps (or "intermittent — no consistent repro steps")
 > - Reproduction Rate (always / intermittent / unknown)
