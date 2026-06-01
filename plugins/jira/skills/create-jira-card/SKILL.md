@@ -54,13 +54,13 @@ Run `command -v twg` to check if the TWG CLI is installed.
 Load the `twg` skill via the Skill tool, then:
 
 1. Run `twg help describe jira workitem create` to confirm the exact flags and required fields.
-2. Run `twg jira workitem field create-metadata --project-key "<PROJECT_KEY>"` to discover any required custom fields for the selected issue type.
+2. Run `twg jira workitem field create-metadata --space "<PROJECT_KEY>" --type "<ISSUE_TYPE>"` to discover any required custom fields for the selected issue type.
 3. Create the issue using `twg jira workitem create` with:
-   - `--project-key`: from Step 1
-   - `--issue-type`: the selected type (e.g., "Dev Task", "Bug", "Support Task", "Task")
+   - `--space`: from Step 1
+   - `--type`: the selected type (e.g., "Dev Task", "Bug", "Support Task", "Task")
    - `--summary`: from Step 2
-   - `--description`: from Step 2 (if provided)
-   - An assign-to-me flag if advertised by the help output
+   - `--description`: from Step 2 (if provided) — **must use `$'...'` ANSI-C quoting** so `\n` is interpreted as real newlines, not literal backslash-n (e.g., `--description $'line1\nline2'`)
+   - `--assignee me` to assign to the authenticated user
 4. Transition the new issue to In Progress:
    - Run `twg help describe jira workitem transition` to confirm transition command syntax.
    - List available transitions for the new issue key.
