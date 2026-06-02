@@ -33,6 +33,74 @@ Required content (all must be present):
 - Risks, dependencies, or open items
 - `Approval requested:` line
 
+### User Testing Handoff comments
+
+**`T10 — User Testing Handoff`**
+
+Required heading: `**T10 — User Testing Handoff**` as verbatim first line, `**bold**`, not `##`
+
+Required content (all must be present, in this order):
+- Branch name
+- Summary of what was implemented
+- `**Acceptance Criteria & Testing Steps:**` section — one numbered entry per acceptance criterion, each containing the criterion restated clearly and step-by-step verification instructions
+
+---
+
+**`B12 — User Testing Handoff`**
+
+Required heading: `**B12 — User Testing Handoff**` as verbatim first line, `**bold**`, not `##`
+
+Required content (all must be present, in this order):
+- Branch name
+- Summary of what was fixed
+- `**Fix Criteria & Testing Steps:**` section — one numbered entry per expected behavior item, each containing the criterion/expected behavior restated clearly and step-by-step verification instructions
+
+---
+
+**`E9 — User Testing Handoff`**
+
+Required heading: `**E9 — User Testing Handoff**` as verbatim first line, `**bold**`, not `##`
+
+Required content (all must be present, in this order):
+- Summary of everything implemented across all child tasks (including pre-existing children already done at workflow start)
+- `**Acceptance Criteria & Testing Steps:**` section — one numbered entry per epic-level acceptance criterion, each containing the criterion restated clearly and step-by-step end-to-end verification instructions
+
+---
+
+### Code Review Findings comments
+
+**`CR8 — Code Review Findings`**
+
+Required heading: `**CR8 — Code Review Findings**` as verbatim first line, `**bold**`, not `##`
+
+Required fields in this exact order with these exact labels:
+1. `**Review Summary:**`
+2. `**Criteria Verification:**`
+3. `**Code Quality Findings:**`
+4. `**Test Coverage Findings:**`
+5. `**Documentation Findings:**`
+6. `**Security and Performance Findings:**`
+7. `**Cross-Item Integration Findings:**`
+8. `**Contextual Findings:**`
+9. `**Overall Assessment:**`
+10. `**Consolidated Findings Count:**`
+
+---
+
+### Documentation Published comments
+
+**`DC8 — Documentation Published`**
+
+Required heading: `**DC8 — Documentation Published**` as verbatim first line, `**bold**`, not `##`
+
+Required fields in this exact order with these exact labels:
+1. `**Confluence page:**`
+2. `**Labels applied:**`
+3. `**Screenshots:**`
+4. `**Summary:**`
+
+---
+
 ### Summary / Completion comments
 
 **`T12 — Summary of Changes`**

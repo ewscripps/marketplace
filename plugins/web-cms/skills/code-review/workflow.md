@@ -24,6 +24,12 @@
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
 - **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
 
+**JIRA COMMENT CONTRACT:** Keep Jira comments minimal, structured, and durable. The only routine Jira comment in this workflow is the **CR8** consolidated findings comment. CR10 posts a brief notification comment. Additional comments are allowed only for blocking failures or explicit user-requested status updates.
+
+**Comment formatting:** Pass clean GitHub-flavored markdown to `jira_add_comment`. Never backslash-escape markdown characters — bold is literal `**text**`, never `\*\*text\*\*`. Ensure every bold span has matching `**` delimiters on both sides.
+
+**Comment reviewer gate:** Every `jira_add_comment` call in this workflow is gated by an `**Independent comment review:**` block, following the same pattern as `plan-reviewer` and `implementation-reviewer`. The `comment-reviewer` sub-agent must return APPROVED (or the 3-iteration cap must be reached) before `jira_add_comment` is called. There are no exceptions.
+
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
 - CR0 — Transition to In Progress
@@ -219,7 +225,7 @@ When all reports are received, write every finding from all reports to the knowl
 
 **ALL fields below are REQUIRED. Do not skip any field. If a field does not apply, explicitly state "N/A" with a brief reason.**
 
-Post a single consolidated comment on this Jira issue containing ALL of the following:
+Draft a single consolidated comment on this Jira issue with the exact heading `**CR8 — Code Review Findings**` as the verbatim first line, then containing ALL of the following:
 
 - **Review Summary:** Concise overview of what was reviewed, the review type, and the total scope of changes.
 - **Criteria Verification:** List each work item (Release/Epic) or the single item (Task/Bug) with its criteria verification result:
@@ -239,6 +245,23 @@ Post a single consolidated comment on this Jira issue containing ALL of the foll
 - **Consolidated Findings Count:** Total number of findings by severity (Critical / Major / Minor / Suggestion).
 
 **REQUIRED: Review the findings before posting.** Verify every field is populated, every verdict is accurate and justified, all findings are captured, and the Overall Assessment is consistent with the findings. If the review reveals gaps, revise before posting.
+
+**Independent comment review:**
+
+Once the comment body is drafted, invoke the `comment-reviewer` sub-agent, providing:
+
+- The drafted comment body verbatim, exactly as it will be passed to `jira_add_comment`
+- The phase label `CR8 — Code Review Findings`
+- The overall assessment verdict and the list of work items reviewed
+- The Jira issue key
+
+The sub-agent will return a structured report with an overall verdict of either **APPROVED** or **CHANGES REQUIRED**.
+
+- If **APPROVED**: call `jira_add_comment` with the reviewed body.
+- If **CHANGES REQUIRED**: address every Critical and Major finding, revise the draft, then invoke `comment-reviewer` again with the updated body. Repeat until the verdict is APPROVED.
+- **Max 3 review iterations.** If `comment-reviewer` returns CHANGES REQUIRED after 3 iterations, post the comment as-is with the remaining minor findings noted inline at the bottom of the comment body, and continue.
+
+Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the 3-iteration cap is reached). A clean self-check or memory of having run `comment-reviewer` earlier in the workflow does not substitute.
 
 ### CR9 — Create Remediation Task (If Applicable)
 
@@ -282,7 +305,7 @@ This workflow is complete when **all** of the following are true:
 - Issue transitioned to In Progress (CR0)
 - Code reviewed across all applicable categories (CR4–CR6)
 - CR7 clarifying questions resolved (or confirmed none needed)
-- CR8 consolidated findings comment posted to Jira with all required fields populated and overall assessment verdict included
+- CR8 consolidated findings comment reviewed by `comment-reviewer` (APPROVED or 3-iteration cap reached) before `jira_add_comment` ran, with all required fields populated and overall assessment verdict included
 - Remediation task created and linked if findings required action (CR9), or no-remediation comment posted if approved
 - Assignee or reporter notified with verdict and links (CR10)
 - Session-scoped knowledge graph cleared (CR11)

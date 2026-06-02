@@ -20,6 +20,12 @@
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
 - **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
 
+**JIRA COMMENT CONTRACT:** The only routine Jira comment in this workflow is the **DC8** documentation-published notification. Additional comments are allowed only for blocking failures or explicit user-requested status updates.
+
+**Comment formatting:** Pass clean GitHub-flavored markdown to `jira_add_comment`. Never backslash-escape markdown characters — bold is literal `**text**`, never `\*\*text\*\*`. Ensure every bold span has matching `**` delimiters on both sides.
+
+**Comment reviewer gate:** Every `jira_add_comment` call in this workflow is gated by an `**Independent comment review:**` block, following the same pattern as `plan-reviewer` and `implementation-reviewer`. The `comment-reviewer` sub-agent must return APPROVED (or the 3-iteration cap must be reached) before `jira_add_comment` is called. There are no exceptions.
+
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
 - DC0 — Understand the Completed Work
@@ -335,14 +341,29 @@ For each endpoint in the documentation plan, in the order defined in DC2:
     - `documentation`
     - The work type label: `feature` for tasks/epics, `bug-fix` for bugs
 
-6. **Link to Jira.** Post a comment on the Jira issue using `jira_add_comment` with a link to the newly created Confluence page. Format:
+6. **Link to Jira.** Draft a comment on the Jira issue with the exact heading `**DC8 — Documentation Published**` as the verbatim first line, then the following labelled fields in this exact order:
 
-    ```
-    Documentation published: [Page Title]
-    Confluence page: [URL]
+    - `**Confluence page:**` [Page Title] — [URL]
+    - `**Labels applied:**` comma-separated list of labels added to the page
+    - `**Screenshots:**` count of screenshots uploaded and confirmation all attachments are present
+    - `**Summary:**` one sentence describing what the page documents
 
-    This page documents the user-facing changes implemented in this work item.
-    ```
+    **Independent comment review:**
+
+    Once the comment body is drafted, invoke the `comment-reviewer` sub-agent, providing:
+
+    - The drafted comment body verbatim, exactly as it will be passed to `jira_add_comment`
+    - The phase label `DC8 — Documentation Published`
+    - The Confluence page URL and title
+    - The Jira issue key
+
+    The sub-agent will return a structured report with an overall verdict of either **APPROVED** or **CHANGES REQUIRED**.
+
+    - If **APPROVED**: call `jira_add_comment` with the reviewed body.
+    - If **CHANGES REQUIRED**: address every Critical and Major finding, revise the draft, then invoke `comment-reviewer` again with the updated body. Repeat until the verdict is APPROVED.
+    - **Max 3 review iterations.** If `comment-reviewer` returns CHANGES REQUIRED after 3 iterations, post the comment as-is with the remaining minor findings noted inline at the bottom of the comment body, and continue.
+
+    Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the 3-iteration cap is reached). A clean self-check or memory of having run `comment-reviewer` earlier in the workflow does not substitute.
 
 7. **Close the browser.** Call `browser_close` to clean up the browser session.
 
@@ -365,5 +386,6 @@ This workflow is complete when **all** of the following are true:
 - Confluence page created with all text content
 - All screenshots uploaded to Confluence page via MCP and confirmed present
 - Labels applied to Confluence page via MCP
+- DC8 documentation-published comment reviewed by `comment-reviewer` (APPROVED or 3-iteration cap reached) before `jira_add_comment` ran
 - Jira issue updated with a link to the documentation
 - Browser session closed

@@ -38,6 +38,7 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 
 **Comment formatting:** Pass clean GitHub-flavored markdown to `jira_add_comment`. Never backslash-escape markdown characters — bold is literal `**text**`, never `\*\*text\*\*`. Ensure every bold span has matching `**` delimiters on both sides.
 
+**Comment reviewer gate:** Every `jira_add_comment` call in this workflow (E4/E5, E9, E10) is gated by an `**Independent comment review:**` block, following the same pattern as `plan-reviewer` and `implementation-reviewer`. The `comment-reviewer` sub-agent must return APPROVED (or the 3-iteration cap must be reached) before `jira_add_comment` is called. There are no exceptions.
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
@@ -210,7 +211,7 @@ The sub-agent will return a structured findings report with an overall verdict o
 - If **CHANGES REQUIRED**: address every Critical and Major finding, revise the breakdown plan, then invoke `plan-reviewer` again. Repeat until the verdict is APPROVED.
 - **Max 3 review iterations.** If `plan-reviewer` returns CHANGES REQUIRED after 3 iterations, proceed to post the E4/E5 comment with the outstanding findings noted inline so the user can decide at E5.
 
-Post a single combined Jira comment with the exact heading `**E4/E5 — Breakdown Plan & Approval Request**` before proceeding. This comment must include:
+Draft a single combined Jira comment with the exact heading `**E4/E5 — Breakdown Plan & Approval Request**` for the comment review below. This comment must include:
 
 - (If existing children) Inventory table of existing children with status, disposition, and coverage classification.
 - (If existing children) Backfill list detailing additive edits planned for Partial children.
@@ -220,7 +221,22 @@ Post a single combined Jira comment with the exact heading `**E4/E5 — Breakdow
 - Architecture diagram (under `### Architecture` — the Mermaid dependency graph, or a note if skipped)
 - `Approval requested: Please approve this breakdown plan before work begins.`
 
-Before calling `jira_add_comment`, invoke the `comment-reviewer` sub-agent with the drafted comment body, the phase label `E4/E5 — Breakdown Plan & Approval Request`, and the epic's acceptance criteria and breakdown plan as source context. If CHANGES REQUIRED, revise the draft and re-invoke (max 3 iterations). Post the comment only once APPROVED; after 3 iterations, post with remaining minor findings noted inline.
+**Independent comment review:**
+
+Once the comment body is drafted, invoke the `comment-reviewer` sub-agent, providing:
+
+- The drafted comment body verbatim, exactly as it will be passed to `jira_add_comment`
+- The phase label `E4/E5 — Breakdown Plan & Approval Request`
+- The epic's acceptance criteria and breakdown plan
+- The Jira issue key
+
+The sub-agent will return a structured report with an overall verdict of either **APPROVED** or **CHANGES REQUIRED**.
+
+- If **APPROVED**: call `jira_add_comment` with the reviewed body, then proceed to E5.
+- If **CHANGES REQUIRED**: address every Critical and Major finding, revise the draft, then invoke `comment-reviewer` again with the updated body. Repeat until the verdict is APPROVED.
+- **Max 3 review iterations.** If `comment-reviewer` returns CHANGES REQUIRED after 3 iterations, post the comment as-is with the remaining minor findings noted inline at the bottom of the comment body, and continue to E5.
+
+Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the 3-iteration cap is reached). A passing plan-reviewer verdict, a clean self-check, or memory of having run `comment-reviewer` earlier in the workflow does not substitute.
 
 ### E5 — Await Breakdown Plan Approval
 
@@ -389,14 +405,30 @@ Work through each executable child task **in the order defined in E4**, executin
 
 **APPROVAL GATE — USER TESTING REQUIRED.**
 
-- Post a comment with the exact heading `**E9 — User Testing Handoff**` as the verbatim first line of the comment body — character-for-character, using `**bold**` (not a `##` markdown heading), and never a descriptive substitute such as "Epic complete" or "Ready for QA". The comment must include, in this exact order with these exact labels:
+- Draft a Jira comment with the exact heading `**E9 — User Testing Handoff**` as the verbatim first line — character-for-character, using `**bold**` (not a `##` markdown heading), and never a descriptive substitute such as "Epic complete" or "Ready for QA". The comment must include, in this exact order with these exact labels:
     
     - A summary of everything that was implemented across all child tasks (including which children were pre-existing and already done at workflow start)
     - **Acceptance Criteria & Testing Steps:** For each acceptance criterion from the Epic's Acceptance Criteria section (read in E1), a numbered section with:
         - The criterion restated clearly
         - Step-by-step end-to-end instructions to verify that criterion is met. Include AC covered by existing children that were already `Done` at workflow start — do not assume those AC were previously verified end-to-end. The user is testing the epic as a whole, after all new and edited work has landed on the integration branch.
 
-    Before posting, confirm: (1) the first line is exactly `**E9 — User Testing Handoff**`, and (2) all required sections are present in order. If either check fails, rewrite before posting.
+**Independent comment review:**
+
+Once the comment body is drafted, invoke the `comment-reviewer` sub-agent, providing:
+
+- The drafted comment body verbatim, exactly as it will be passed to `jira_add_comment`
+- The phase label `E9 — User Testing Handoff`
+- The integration branch name and epic acceptance criteria
+- The Jira issue key
+
+The sub-agent will return a structured report with an overall verdict of either **APPROVED** or **CHANGES REQUIRED**.
+
+- If **APPROVED**: call `jira_add_comment` with the reviewed body.
+- If **CHANGES REQUIRED**: address every Critical and Major finding, revise the draft, then invoke `comment-reviewer` again with the updated body. Repeat until the verdict is APPROVED.
+- **Max 3 review iterations.** If `comment-reviewer` returns CHANGES REQUIRED after 3 iterations, post the comment as-is with the remaining minor findings noted inline at the bottom of the comment body, and continue.
+
+Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the 3-iteration cap is reached). A clean self-check or memory of having run `comment-reviewer` earlier in the workflow does not substitute.
+
 - Present the same testing handoff in the chat — the user should not have to open Jira to see what to test.
 - Then use `AskUserQuestion` with header `E9 Testing`, options: `Approve — everything works as expected (Recommended)` (description: "All acceptance criteria passed — proceed to the epic summary") / `Issues found` (description: "One or more problems were found during testing"). Do not proceed until the user selects an option.
     
@@ -432,7 +464,22 @@ Then render **every** field below as a bold-labeled section (`**Field name:**`),
 
 **REQUIRED: Review the summary before posting.** Confirm (1) the first line is exactly `**E10 — Summary of Changes**` in `**bold**` format, (2) the `**Integration branch:**` metadata is present before the `----` rule, and (3) every mandated field appears as a `**Label:**` section in the specified order with none renamed, dropped, or substituted, and that "Child tasks completed" lists every task. If any check fails, rewrite before posting.
 
-Before calling `jira_add_comment`, invoke the `comment-reviewer` sub-agent with the drafted comment body, the phase label `E10 — Summary of Changes`, and the integration branch name and child task list as source context for fact-checking. If CHANGES REQUIRED, revise and re-invoke (max 3 iterations). Post the comment only once APPROVED; after 3 iterations, post with remaining minor findings noted inline.
+**Independent comment review:**
+
+Once the summary body is drafted, invoke the `comment-reviewer` sub-agent, providing:
+
+- The drafted comment body verbatim, exactly as it will be passed to `jira_add_comment`
+- The phase label `E10 — Summary of Changes`
+- The integration branch name and child task list
+- The Jira issue key
+
+The sub-agent will return a structured report with an overall verdict of either **APPROVED** or **CHANGES REQUIRED**.
+
+- If **APPROVED**: call `jira_add_comment` with the reviewed body.
+- If **CHANGES REQUIRED**: address every Critical and Major finding, revise the draft, then invoke `comment-reviewer` again with the updated body. Repeat until the verdict is APPROVED.
+- **Max 3 review iterations.** If `comment-reviewer` returns CHANGES REQUIRED after 3 iterations, post the comment as-is with the remaining minor findings noted inline at the bottom of the comment body, and continue.
+
+Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the 3-iteration cap is reached). A clean self-check or memory of having run `comment-reviewer` earlier in the workflow does not substitute.
 
 > **COMPACTION GATE — E10:** Once the E10 summary comment is posted, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<EPIC-KEY>-E10`; `next_phase: E11`; decisions: epic completion confirmed, all children done; branch: integration branch name. REFERENCES: epic node, branch node. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to E11.
 
@@ -452,6 +499,7 @@ This workflow is complete when **all** of the following are true:
 - All child task Jira issues created as child work items of the epic (E6–E8)
 - All child tasks completed and verified
 - User testing completed and approved (E9)
-- E10 summary comment posted to Jira using the exact `**E10 — Summary of Changes**` heading and the full mandated field set in order (verified by `comment-reviewer`, not improvised)
-- E9 handoff comment used the exact `**E9 — User Testing Handoff**` heading
+- All Jira comments posted by this workflow (E4/E5, E9, E10) were reviewed by `comment-reviewer` and returned APPROVED (or reached the 3-iteration cap) before `jira_add_comment` ran
+- E10 summary comment posted using the exact `**E10 — Summary of Changes**` heading and the full mandated field set in order
+- E9 handoff comment posted using the exact `**E9 — User Testing Handoff**` heading
 - Session-scoped knowledge graph cleared (E11)

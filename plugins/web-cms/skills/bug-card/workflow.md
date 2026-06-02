@@ -39,6 +39,8 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 
 **Comment formatting:** Pass clean GitHub-flavored markdown to `jira_add_comment`. Never backslash-escape markdown characters — bold is literal `**text**`, never `\*\*text\*\*`. Ensure every bold span has matching `**` delimiters on both sides.
 
+**Comment reviewer gate:** Every `jira_add_comment` call in this workflow (B5/B6, B12, B14) is gated by an `**Independent comment review:**` block, following the same pattern as `plan-reviewer` and `implementation-reviewer`. The `comment-reviewer` sub-agent must return APPROVED (or the 3-iteration cap must be reached) before `jira_add_comment` is called. There are no exceptions.
+
 **COMMIT, PUSH, MERGE & TRANSITION DISCIPLINE — HARD RULE:** Every one of the following is an irreversible action that affects shared state. None may run until the user has explicitly selected the "Approve" option at the B12 User Testing gate **in this same session**:
 
 - `git add` / `git commit` on the working branch
@@ -202,7 +204,7 @@ The sub-agent will return a structured findings report with an overall verdict o
 
     > **USE KNOWLEDGE GRAPH:** Create a `fix_plan` entity named `fix_plan-<JIRA_KEY>` with observations: `description` (the full reviewed fix plan text, verbatim — do not summarize or truncate), `files_to_change` (comma-separated list of all files to create or modify), `regression_test_strategy` (the regression test strategy text, verbatim), `documentation_expectations` (verbatim), and `diagram` (the raw Mermaid source recorded from the flowgraph step, or omit this observation entirely if the flowgraph was skipped). Link with `BELONGS_TO` → `work_item-<JIRA_KEY>` and `IMPLEMENTS` → `root_cause-<JIRA_KEY>`. Call `open_nodes` on the new entity to confirm the write landed. This entity is the canonical persistence surface for the fix — B6 and B10 compaction gates reference it by name, and B10 reads the `diagram` observation from it as a surgical guide. If the plan was revised during the review loop, ensure the entity contains the **final approved** plan text.
 
-    Post a single combined Jira comment with the exact heading `**B5/B6 — Fix Plan & Approval Request**`, then proceed to B6. This comment must include:
+    Draft a single combined Jira comment with the exact heading `**B5/B6 — Fix Plan & Approval Request**` for the comment review below. This comment must include:
 
     - The reviewed fix plan
     - Architecture diagram (under `### Architecture` — the Mermaid source showing buggy vs. fixed path, or a note if skipped)
@@ -211,9 +213,25 @@ The sub-agent will return a structured findings report with an overall verdict o
     - Risks, dependencies, or open items that affect execution
     - `Approval requested: Please approve this fix plan before work begins.`
 
-    Before calling `jira_add_comment`, invoke the `comment-reviewer` sub-agent with the drafted comment body, the phase label `B5/B6 — Fix Plan & Approval Request`, and the acceptance criteria and plan details as source context. If CHANGES REQUIRED, revise the draft and re-invoke (max 3 iterations). Post the comment only once APPROVED; after 3 iterations, post with remaining minor findings noted inline.
 - If **CHANGES REQUIRED**: address every Critical and Major finding, revise the plan, then invoke the `plan-reviewer` sub-agent again. Repeat until the verdict is APPROVED.
-- **Max 3 review iterations.** If the plan-reviewer returns CHANGES REQUIRED after 3 iterations, create the `fix_plan-<JIRA_KEY>` entity (same as the APPROVED path above, using the current plan text and noting `review_escalated: true`), post the same combined `B5/B6` comment with the outstanding findings noted, and let the user decide in B6.
+- **Max 3 review iterations.** If the plan-reviewer returns CHANGES REQUIRED after 3 iterations, create the `fix_plan-<JIRA_KEY>` entity (same as the APPROVED path above, using the current plan text and noting `review_escalated: true`), draft the same combined `B5/B6` comment with the outstanding findings noted, and proceed to the comment review below.
+
+**Independent comment review:**
+
+Once the comment body is drafted, invoke the `comment-reviewer` sub-agent, providing:
+
+- The drafted comment body verbatim, exactly as it will be passed to `jira_add_comment`
+- The phase label `B5/B6 — Fix Plan & Approval Request`
+- The reviewed fix plan and fix criteria
+- The Jira issue key
+
+The sub-agent will return a structured report with an overall verdict of either **APPROVED** or **CHANGES REQUIRED**.
+
+- If **APPROVED**: call `jira_add_comment` with the reviewed body, then proceed to B6.
+- If **CHANGES REQUIRED**: address every Critical and Major finding, revise the draft, then invoke `comment-reviewer` again with the updated body. Repeat until the verdict is APPROVED.
+- **Max 3 review iterations.** If `comment-reviewer` returns CHANGES REQUIRED after 3 iterations, post the comment as-is with the remaining minor findings noted inline at the bottom of the comment body, and continue to B6.
+
+Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the 3-iteration cap is reached). A passing plan-reviewer verdict, a clean self-check, or memory of having run `comment-reviewer` earlier in the workflow does not substitute.
 
 ### B6 — Await Plan Approval
 
@@ -357,7 +375,7 @@ Do not proceed to B11 until `implementation-reviewer`, `test-reviewer`, and `doc
 
 **APPROVAL GATE — USER MUST MANUALLY TEST BEFORE PROCEEDING. AUTO MODE DOES NOT BYPASS THIS GATE.**
 
-- Post a comment on this Jira issue with the exact heading `**B12 — User Testing Handoff**` as the verbatim first line of the comment body — character-for-character, using `**bold**` (not a `##` markdown heading), and never a descriptive substitute such as "Fix complete" or "Ready for QA". The comment must include, in this exact order with these exact labels:
+- Draft a Jira comment with the exact heading `**B12 — User Testing Handoff**` as the verbatim first line — character-for-character, using `**bold**` (not a `##` markdown heading), and never a descriptive substitute such as "Fix complete" or "Ready for QA". The comment must include, in this exact order with these exact labels:
 
     - The branch name
     - A summary of what was fixed
@@ -365,7 +383,23 @@ Do not proceed to B11 until `implementation-reviewer`, `test-reviewer`, and `doc
         - The criterion/expected behavior restated clearly
         - Step-by-step instructions to verify it now works correctly
 
-    Before posting, confirm: (1) the first line is exactly `**B12 — User Testing Handoff**`, and (2) all required sections are present in order. If either check fails, rewrite before posting.
+**Independent comment review:**
+
+Once the comment body is drafted, invoke the `comment-reviewer` sub-agent, providing:
+
+- The drafted comment body verbatim, exactly as it will be passed to `jira_add_comment`
+- The phase label `B12 — User Testing Handoff`
+- The branch name and fix criteria
+- The Jira issue key
+
+The sub-agent will return a structured report with an overall verdict of either **APPROVED** or **CHANGES REQUIRED**.
+
+- If **APPROVED**: call `jira_add_comment` with the reviewed body.
+- If **CHANGES REQUIRED**: address every Critical and Major finding, revise the draft, then invoke `comment-reviewer` again with the updated body. Repeat until the verdict is APPROVED.
+- **Max 3 review iterations.** If `comment-reviewer` returns CHANGES REQUIRED after 3 iterations, post the comment as-is with the remaining minor findings noted inline at the bottom of the comment body, and continue.
+
+Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the 3-iteration cap is reached). A clean self-check or memory of having run `comment-reviewer` earlier in the workflow does not substitute.
+
 - Present the same testing handoff in the chat — the user should not have to open Jira to see what to test.
 - Pause the workflow here and wait. Do not call any tool other than `AskUserQuestion` until the user reports back with an explicit selection. Do not infer approval from silence, from a `continue` keyword, from prior phase success, or from Auto Mode.
 - Use `AskUserQuestion` with header `B12 Testing`, options: `Approve — I ran through every step above and the fix works as expected (Recommended)` (description: "I have manually tested the fix and it works correctly") / `Issues found` (description: "One or more problems were found during testing"). Do not proceed until the user selects an option.
@@ -428,7 +462,22 @@ Then render **every** field below as a bold-labeled section (`**Field name:**`),
 
 **REQUIRED: Review the summary before posting.** Confirm (1) the first line is exactly `**B14 — Summary of Changes**` in `**bold**` format, (2) the metadata block (`**Branch:**` / `**Commit:**`) is present before the `----` rule, and (3) every mandated field appears as a `**Label:**` section in the specified order with none renamed, dropped, or substituted. If any check fails, rewrite before posting.
 
-Before calling `jira_add_comment`, invoke the `comment-reviewer` sub-agent with the drafted comment body, the phase label `B14 — Summary of Changes`, and the branch name, commit hash, and files-changed list as source context for fact-checking. If CHANGES REQUIRED, revise and re-invoke (max 3 iterations). Post the comment only once APPROVED; after 3 iterations, post with remaining minor findings noted inline.
+**Independent comment review:**
+
+Once the summary body is drafted, invoke the `comment-reviewer` sub-agent, providing:
+
+- The drafted comment body verbatim, exactly as it will be passed to `jira_add_comment`
+- The phase label `B14 — Summary of Changes`
+- The branch name, commit hash, and files-changed list
+- The Jira issue key
+
+The sub-agent will return a structured report with an overall verdict of either **APPROVED** or **CHANGES REQUIRED**.
+
+- If **APPROVED**: call `jira_add_comment` with the reviewed body.
+- If **CHANGES REQUIRED**: address every Critical and Major finding, revise the draft, then invoke `comment-reviewer` again with the updated body. Repeat until the verdict is APPROVED.
+- **Max 3 review iterations.** If `comment-reviewer` returns CHANGES REQUIRED after 3 iterations, post the comment as-is with the remaining minor findings noted inline at the bottom of the comment body, and continue.
+
+Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the 3-iteration cap is reached). A clean self-check or memory of having run `comment-reviewer` earlier in the workflow does not substitute.
 
 ### B15 — Cleanup
 
@@ -448,6 +497,7 @@ This workflow is complete when **all** of the following are true:
 - Regression test written and passing (B9)
 - User testing completed and approved at B12; the B12 approval was captured before any commit or push was made
 - Commit, push, and any Jira transition each ran as discrete user-visible steps, not as a single chained sequence
-- B14 summary comment posted to Jira using the exact `**B14 — Summary of Changes**` heading and the full mandated field set in order (verified by `comment-reviewer`, not improvised)
-- B12 handoff comment used the exact `**B12 — User Testing Handoff**` heading
+- All Jira comments posted by this workflow (B5/B6, B12, B14) were reviewed by `comment-reviewer` and returned APPROVED (or reached the 3-iteration cap) before `jira_add_comment` ran
+- B14 summary comment posted using the exact `**B14 — Summary of Changes**` heading and the full mandated field set in order
+- B12 handoff comment posted using the exact `**B12 — User Testing Handoff**` heading
 - Session-scoped knowledge graph cleared (B15)
