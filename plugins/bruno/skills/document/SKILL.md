@@ -61,15 +61,19 @@ script:
 
 ## Step 4: Catalog Environments
 
-Run:
+Run the appropriate command based on the detected collection format:
 
+**YAML format:**
 ```
 find <collection-root>/environments -name "*.yml" 2>/dev/null | sort
 ```
 
-For each environment file, read it and extract the `vars` block (key-value pairs). Flag any keys whose values appear masked or empty (likely secrets).
+**Legacy format:**
+```
+find <collection-root>/environments -name "*.bru" 2>/dev/null | sort
+```
 
-For legacy format, look for `.bru` files in `environments/` instead.
+For each environment file found, read it and extract the `vars` block (key-value pairs). Flag any keys whose values appear masked or empty (likely secrets).
 
 ## Step 5: Walk the Collection and Catalog All Requests
 

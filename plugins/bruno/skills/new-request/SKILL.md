@@ -90,10 +90,16 @@ Accept a free-text list (one per line), parse each as `name: value`. Pre-fill `C
 
 ## Step 7: Determine Sequence Number
 
-Count existing request files in the target folder:
+Count existing request files in the target folder using the format detected in Step 1:
 
+**YAML format:**
 ```
 find <target-folder> -maxdepth 1 -name "*.yml" | wc -l
+```
+
+**Legacy format:**
+```
+find <target-folder> -maxdepth 1 -name "*.bru" | wc -l
 ```
 
 Set `seq` to `count + 1`.

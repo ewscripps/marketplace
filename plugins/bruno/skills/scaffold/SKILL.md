@@ -83,17 +83,9 @@ headers:
   - name: Content-Type
     value: application/json
     enabled: true
-
-script:
-  req: |
-    // Global pre-request script
-    // Runs before every request in the collection
-  res: |
-    // Global post-response script
-    // Runs after every request in the collection
 ```
 
-Adjust the `auth` block to match the selected mode. Omit empty auth sections.
+Adjust the `auth` block to match the selected mode. Omit empty auth sections. Omit the `script` block entirely — only include it if the user explicitly requests global scripting in Step 3 (Update Existing Collection → "Add or update a global pre-request script").
 
 ### Write starter environment files
 

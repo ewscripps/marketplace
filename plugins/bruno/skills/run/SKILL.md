@@ -3,7 +3,7 @@ name: run
 description: Run a Bruno collection, folder, or single request using the bru CLI with environment and output format selection
 user-invocable: true
 argument-hint: '[path/to/request.yml | path/to/folder/]'
-allowed-tools: Bash(bru *), Bash(npm *), Bash(npx *), Bash(find *), Read, Glob, Grep, AskUserQuestion
+allowed-tools: Bash(bru *), Bash(find *), Read, Glob, Grep, AskUserQuestion
 ---
 
 # Run a Bruno Collection
@@ -96,13 +96,13 @@ If the collection's pre-request scripts use `require()`, npm packages, or file s
 Assemble the `bru run` command:
 
 ```
-bru run <target> [--env <env-name>] [--output <file> --format <format>] [--tests-only] [--sandbox developer]
+bru run <target> [--env <env-name>] [--output <file> --format <format>] [--tests-only] [--recursive] [--sandbox developer]
 ```
 
-Where `<target>` is:
-- A specific `.yml` file path (single request)
-- A folder path (folder run)
-- The collection root with `--recursive` (full collection)
+Where `<target>` and flags are:
+- **Single request** — specific `.yml` file path; no `--recursive`
+- **Folder** — folder path; no `--recursive`
+- **Entire collection** — collection root path; add `--recursive`
 
 Show the exact command to the user before running, then execute it.
 

@@ -201,4 +201,16 @@ For each diagnosis, propose a concrete fix to the test or to the request. Use As
 
 ### C3. Re-run to Verify
 
-After applying fixes, re-run with `bru run --tests-only` and confirm the tests now pass. If they still fail, repeat the diagnosis cycle up to 2 more times before surfacing the remaining failures for the user to resolve manually.
+After applying fixes, re-run with `bru run --tests-only` and confirm the tests now pass. If they still fail, repeat the diagnosis cycle up to 2 more times.
+
+After the third failure on the same test, stop retrying and output a final failure summary:
+
+```
+STILL FAILING after 3 attempts:
+  Request: <request name>
+  Test:    <test name>
+  Error:   <raw assertion output from bru>
+  File:    <path/to/request.yml>:<line>
+```
+
+Present this summary to the user so they have the exact assertion output and file location needed to fix it manually.
