@@ -1,6 +1,6 @@
 ---
 name: scaffold
-description: Create a new Bruno collection from scratch or update an existing one — add environments, folders, variables, auth defaults, and global scripts using OpenCollection YAML format
+description: Create a new Bruno collection from scratch or update an existing one using the OpenCollection YAML v1.0.0 schema — correct opencollection.yml, environment, and folder file structure.
 user-invocable: true
 argument-hint: '[path/to/collection/ | "new"]'
 allowed-tools: Bash(find *), Read, Write, Edit, Glob, AskUserQuestion
@@ -8,131 +8,177 @@ allowed-tools: Bash(find *), Read, Write, Edit, Glob, AskUserQuestion
 
 # Scaffold or Update a Bruno Collection
 
-Create a brand-new Bruno collection with the OpenCollection YAML structure, or extend and update an existing one — adding environments, folders, collection-level variables, auth defaults, and global scripts.
+Create or update a Bruno collection conforming to the OpenCollection YAML v1.0.0 spec
+(`https://schema.opencollection.com/opencollection/v1.0.0.json`).
 
-## Step 1: New Collection or Update Existing?
+All generated YAML uses the correct spec field names — `info`, `request`, `runtime`, `config` — not the legacy `.bru` block names.
 
-If `$ARGUMENTS` is `"new"`, skip to **Step 2: New Collection**.
+## Step 1: New or Existing?
 
-Otherwise, search for an existing collection from the current directory (run in parallel):
+If `$ARGUMENTS` is `"new"`, skip to **Step 2**.
+
+Otherwise, search from the current directory (run in parallel):
 
 ```
 find . -name "opencollection.yml" -not -path "*/node_modules/*" -maxdepth 6
 find . -name "bruno.json" -not -path "*/node_modules/*" -maxdepth 6
 ```
 
-If a collection is found, use AskUserQuestion to ask:
+If a collection is found, use AskUserQuestion:
 
 - **Update existing collection** — continue to Step 3
 - **Create a new collection** — continue to Step 2
 
-If no collection is found, go directly to Step 2.
+If none found, go directly to Step 2.
 
 ---
 
 ## Step 2: New Collection
 
-Ask the following via AskUserQuestion (gather separately where appropriate):
+Ask via AskUserQuestion:
 
-**Collection name** (free-text):
-_"What's the collection name? (e.g., Payments API, Internal Admin)"_
+**Collection name** (free-text): _"Collection name? (e.g., Payments API)"_
 
-**Base URL** (free-text):
-_"What's the base URL for this API? (e.g., `https://api.example.com/v1`) — you can use a variable like `{{base_url}}`"_
+**Base URL** (free-text): _"Base URL? (e.g., `https://api.example.com/v1` — can use `{{base_url}}`)"_
 
-**Default authentication** (single-select):
-- None
-- Bearer token — prompt for the token variable name (default: `{{token}}`)
-- Basic — prompt for username/password variable names
-- API Key — prompt for key name, value variable, and placement (header or query)
-- OAuth 2.0 — prompt for grant type, token URL, client ID/secret variable names
+**Default auth** (single-select): None · Bearer · Basic · API Key · OAuth 2.0
 
-**Root directory** (free-text):
-_"Where should the collection be created? (default: `./<collection-slug>/`)"_
+If Bearer: prompt for the token variable name (default: `{{token}}`).
+If Basic: prompt for username/password variable names.
+If API Key: prompt for key name, value variable, and placement (`header` or `query`).
+If OAuth 2.0: prompt for flow (`client_credentials` or `authorization_code`) and token/auth URLs.
+
+**Root directory** (free-text): _"Where to create? (default: `./<collection-slug>/`)"_
 
 ### Create the directory structure
-
-Slugify the collection name (lowercase, spaces to hyphens). Create:
 
 ```
 <collection-slug>/
 ├── opencollection.yml
-├── environments/
-│   ├── local.yml
-│   ├── staging.yml
-│   └── production.yml
+└── environments/
+    ├── local.yml
+    ├── staging.yml
+    └── production.yml
 ```
 
 ### Write `opencollection.yml`
 
+The root collection file uses these top-level keys from the spec: `opencollection` (the spec version string), `info`, `config` (for environments), and `request` (for collection-level defaults shared by all requests).
+
 ```yaml
+opencollection: "1.0.0"
+
 info:
   name: "<Collection Name>"
-  description: ""
+  summary: ""
   version: "1.0.0"
 
-vars:
-  base_url: "https://api.example.com"
-
-auth:
-  mode: <mode>
-  bearer:
+request:
+  auth:
+    type: bearer
     token: "{{token}}"
-
-headers:
-  - name: Content-Type
-    value: application/json
-    enabled: true
+  headers:
+    - name: Content-Type
+      value: application/json
+  variables:
+    - name: base_url
+      value: "<user-supplied base URL>"
 ```
 
-Adjust the `auth` block to match the selected mode. Omit empty auth sections. Omit the `script` block entirely — only include it if the user explicitly requests global scripting in Step 3 (Update Existing Collection → "Add or update a global pre-request script").
+**Auth shapes for `request.auth` (same rules as request files):**
 
-### Write starter environment files
+```yaml
+# Bearer
+auth:
+  type: bearer
+  token: "{{token}}"
+
+# Basic
+auth:
+  type: basic
+  username: "{{username}}"
+  password: "{{password}}"
+
+# API Key
+auth:
+  type: apikey
+  key: X-API-Key
+  value: "{{apiKey}}"
+  placement: header        # enum: header | query
+
+# OAuth2 client credentials
+auth:
+  type: oauth2
+  flow: client_credentials
+  accessTokenUrl: "{{token_url}}"
+  credentials:
+    clientId: "{{client_id}}"
+    clientSecret: "{{client_secret}}"
+    placement: basic_auth_header
+  scope: ""
+
+# None — omit auth block entirely
+```
+
+Omit any block the user did not configure. Do NOT include an empty `auth: {}` or `scripts: []`.
+
+### Write environment files
+
+Environment files are `Environment` objects from the spec. Each requires a `name` field. Variables are an **array** of `{name, value}` objects — NOT a flat key-value map. Secret variables use `{name, secret: true}` and have no `value`.
 
 **`environments/local.yml`:**
 ```yaml
-vars:
-  base_url: "http://localhost:3000"
-  token: ""
+name: local
+variables:
+  - name: base_url
+    value: "http://localhost:3000"
+  - name: token
+    secret: true
 ```
 
 **`environments/staging.yml`:**
 ```yaml
-vars:
-  base_url: "https://staging.api.example.com"
-  token: ""
+name: staging
+variables:
+  - name: base_url
+    value: "https://staging.api.example.com"
+  - name: token
+    secret: true
 ```
 
 **`environments/production.yml`:**
 ```yaml
-vars:
-  base_url: "https://api.example.com"
-  token: ""
+name: production
+variables:
+  - name: base_url
+    value: "<user-supplied base URL>"
+  - name: token
+    secret: true
 ```
 
-Substitute the user's base URL for `https://api.example.com` in all three. Adjust variable names to match the selected auth mode.
+Substitute the user's base URL. Adjust variable names to match the selected auth mode (e.g., use `username`/`password` instead of `token` for Basic auth). Mark sensitive values as `secret: true` with no `value` field.
+
+If the user chose a `.env` file for secrets, add `dotEnvFilePath: ".env"` to the environment(s) where it applies.
 
 ### Offer to create a starter folder
 
-Ask: _"Add an initial request folder? (e.g., `auth/`, `users/`) — or skip to create just the collection structure."_
+Ask: _"Add an initial request folder? (e.g., `auth/`, `users/`)"_
 
-If yes, ask for the folder name and create:
-```
-<collection-slug>/<folder-name>/
-├── folder.yml
-```
+If yes, ask for the folder name and write a `folder.yml`:
 
-**`folder.yml`:**
 ```yaml
-meta:
+info:
   name: "<Folder Name>"
+  type: folder
   seq: 1
 
-auth:
-  mode: inherit
+request:
+  auth: inherit
 ```
 
-After writing all files, summarize what was created:
+`auth: inherit` is the string `"inherit"` — not an object. It tells Bruno to use the parent's auth.
+
+### Summarize what was created
 
 ```
 Created: <collection-slug>/
@@ -143,42 +189,41 @@ Created: <collection-slug>/
   [<folder-name>/folder.yml]
 ```
 
-Offer to run the `/new-request` skill to add the first request.
+Offer to invoke the `new-request` skill to add the first request.
 
 ---
 
 ## Step 3: Update Existing Collection
 
-Read `opencollection.yml` (or `collection.bru` for legacy) to understand the current collection configuration.
-
-Use AskUserQuestion to ask what to update (multi-select):
+Read `opencollection.yml` to understand the current state. Use AskUserQuestion (multi-select) to ask what to update:
 
 - **Add a new environment**
 - **Add a new folder**
 - **Add or update a collection variable**
 - **Change the default auth**
-- **Add or update a global pre-request script**
-- **Add or update a global post-response script**
-- **Update collection metadata** (name, description, version)
-
-Handle each selected option:
+- **Add or update a global script**
+- **Update collection metadata** (name, summary, version)
 
 ---
 
 ### Add a New Environment
 
 Ask for:
-- **Environment name** (free-text, e.g., `qa`, `production`)
-- **Base URL for this environment** (free-text)
-- **Additional variables** — offer to copy the variable keys from an existing environment and let the user fill in new values
+- **Name** (free-text)
+- **Base URL** (free-text)
+- **Copy variable keys from existing env?** (offer to mirror the variable names from an existing env file)
+- **Load from `.env` file?** — if yes, ask for the file path
 
-Create `environments/<name>.yml`:
+Write `environments/<name>.yml` as an `Environment` object:
 
 ```yaml
-vars:
-  base_url: "<user-supplied URL>"
-  token: ""
-  # ... additional vars copied from existing env
+name: <env-name>
+variables:
+  - name: base_url
+    value: "<URL>"
+  - name: token
+    secret: true
+  # ... additional vars with names mirrored from existing env
 ```
 
 ---
@@ -187,55 +232,83 @@ vars:
 
 Ask for:
 - **Folder name** (free-text)
-- **Folder auth** (single-select): Inherit from collection · Override with specific mode
-- **Folder sequence number** — default to `(existing folder count + 1)`
+- **Auth**: Inherit · Override (same auth type options as Step 2)
+- **Sequence number** — default to `(existing folder count + 1)`
 
-Create `<folder-name>/folder.yml`:
+Write `<folder-name>/folder.yml`:
 
 ```yaml
-meta:
+info:
   name: "<Folder Name>"
+  type: folder
   seq: <N>
 
-auth:
-  mode: inherit
+request:
+  auth: inherit
 ```
 
-Adjust auth block if the user chose to override.
+If overriding auth, write the appropriate auth object under `request.auth` instead of `inherit`.
 
 ---
 
 ### Add or Update a Collection Variable
 
-Read the current `vars` block from `opencollection.yml`.
+Read the current `request.variables` array from `opencollection.yml`.
 
 Ask:
 - **Variable name** (free-text)
-- **Default value** (free-text, can be empty for secrets)
+- **Value** (free-text — leave empty for secrets)
+- **Secret?** — if yes, write `{name, secret: true}` with no `value`
 
-Update the `vars` block in `opencollection.yml` using Edit. Preserve all existing variables.
+Use Edit to update the `request.variables` array in `opencollection.yml`. Preserve existing entries.
+
+Variables are an **array**, not a flat map:
+
+```yaml
+request:
+  variables:
+    - name: base_url
+      value: "https://api.example.com"
+    - name: api_version
+      value: "v1"
+    - name: api_secret
+      secret: true
+```
 
 ---
 
 ### Change the Default Auth
 
-Ask for the new auth mode (same options as Step 2) and update the `auth` block in `opencollection.yml`.
-
-Show the user the current auth config before overwriting it.
+Show the current `request.auth` block. Ask for the new auth mode (same options as Step 2). Update `request.auth` in `opencollection.yml` with the correct flat-type object.
 
 ---
 
 ### Add or Update a Global Script
 
-Show the existing script content (if any).
+Global scripts live in `request.scripts` — an **array** of `{type, code}` objects. Valid `type` values: `before-request`, `after-response`, `tests`, `hooks`.
 
-Ask the user to provide the new script body (free-text, JavaScript). Replace the `script.req` or `script.res` block in `opencollection.yml` accordingly.
+Show the existing scripts array (if any). Ask the user which type to add/update and for the script body. Update the `request.scripts` array in `opencollection.yml`:
+
+```yaml
+request:
+  scripts:
+    - type: before-request
+      code: |
+        // Runs before every request in the collection
+        bru.setVar("requestTime", new Date().toISOString());
+    - type: after-response
+      code: |
+        // Runs after every request in the collection
+        if (res.getStatus() === 401) {
+          console.log("Auth expired");
+        }
+```
 
 ---
 
 ### Update Collection Metadata
 
-Ask for new name, description, and/or version. Update the `info` block in `opencollection.yml`.
+Ask for new name, summary, and/or version. Update the `info` block in `opencollection.yml`.
 
 ---
 

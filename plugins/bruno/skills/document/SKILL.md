@@ -1,6 +1,6 @@
 ---
 name: document
-description: Document a Bruno collection — catalog all endpoints, methods, auth, environments, and variables as formatted markdown. Supports OpenCollection YAML and legacy .bru format.
+description: Document a Bruno collection — catalog all endpoints, methods, auth, environments, and variables as formatted markdown. Reads OpenCollection YAML v1.0.0 schema (info/http/runtime) and legacy .bru format.
 user-invocable: true
 argument-hint: '[path/to/collection/]'
 allowed-tools: Bash(find *), Read, Glob, Grep, AskUserQuestion
@@ -8,177 +8,198 @@ allowed-tools: Bash(find *), Read, Glob, Grep, AskUserQuestion
 
 # Document a Bruno Collection
 
-Analyze a Bruno collection and produce a comprehensive markdown reference covering all endpoints, authentication patterns, environments, variables, and scripting conventions. Prefers OpenCollection YAML format (`.yml`) but reads legacy `.bru` collections transparently.
+Analyze a Bruno collection and produce a comprehensive markdown reference. Reads the OpenCollection YAML v1.0.0 spec (`https://schema.opencollection.com/opencollection/v1.0.0.json`) by default, with transparent fallback to legacy `.bru` format.
 
 ## Step 1: Locate the Collection Root
 
 Check `$ARGUMENTS` — if a directory path is provided, use it directly.
 
-Otherwise, search for a collection root from the current directory (run in parallel):
+Otherwise (run in parallel):
 
 ```
 find . -name "opencollection.yml" -not -path "*/node_modules/*" -maxdepth 6
 find . -name "bruno.json" -not -path "*/node_modules/*" -maxdepth 6
 ```
 
-Prefer `opencollection.yml`. Fall back to `bruno.json`. Use the parent directory as the collection root.
-
-- One result → use it.
-- Multiple → use AskUserQuestion to let the user pick.
-- None → inform the user no Bruno collection was found and stop.
+Prefer `opencollection.yml`. Fall back to `bruno.json`. One result → use it. Multiple → AskUserQuestion to pick. None → stop.
 
 ## Step 2: Detect Collection Format
 
-If `opencollection.yml` was found → **YAML format** (preferred). Read `opencollection.yml`.
+**YAML format** — `opencollection.yml` found. Read it.
 
-If only `bruno.json` was found → **legacy format**. Read `bruno.json` and `collection.bru` (if present).
+**Legacy format** — only `bruno.json` found. Read `bruno.json` and `collection.bru` if present.
 
-Note the format in the final output header.
+Note the format in the output header.
 
 ## Step 3: Read Collection Metadata
 
 **YAML format** — extract from `opencollection.yml`:
 
-```yaml
-info:
-  name:         # collection name
-  description:  # description
-  version:      # version
-
-vars:           # collection-level variables (key: value)
-auth:
-  mode:         # default auth mode
-headers:        # collection-level headers (list)
-script:
-  req:          # global pre-request script (JS)
-  res:          # global post-response script (JS)
-```
+| Key | Path | Notes |
+|---|---|---|
+| Spec version | `opencollection` | e.g., `"1.0.0"` |
+| Name | `info.name` | |
+| Summary | `info.summary` | |
+| Version | `info.version` | |
+| Authors | `info.authors[].name` | |
+| Collection variables | `request.variables[]` | array of `{name, value}` objects |
+| Default auth type | `request.auth.type` | or `"inherit"` string |
+| Default headers | `request.headers[].name` | list of active (non-disabled) headers |
+| Global scripts | `request.scripts[]` | array of `{type, code}` entries |
 
 **Legacy format** — extract from `collection.bru`:
-- `vars` block — key-value pairs
-- `auth` block — mode and config
+- `vars` block (key-value pairs)
+- `auth` block (mode and config)
 - `script:pre-request` / `script:pre-response` blocks
 
 ## Step 4: Catalog Environments
 
-Run the appropriate command based on the detected collection format:
+**YAML format** — environments may be defined inline in `opencollection.yml` under `config.environments[]`, OR as separate files in `environments/`:
 
-**YAML format:**
+- If `config.environments[]` is present in `opencollection.yml` (already read in Step 3), extract environments from that array directly — no additional file read needed.
+- If not present inline, find separate environment files:
+
 ```
 find <collection-root>/environments -name "*.yml" 2>/dev/null | sort
 ```
+
+For each environment, extract from the `Environment` object:
+- `name` — environment name (required field in spec)
+- `variables[]` — array of `Variable` (`{name, value}`) or `SecretVariable` (`{name, secret: true}`) objects
+- `extends` — parent environment name if this env inherits from another
+- `dotEnvFilePath` — path to a `.env` file if external secrets are loaded
 
 **Legacy format:**
 ```
 find <collection-root>/environments -name "*.bru" 2>/dev/null | sort
 ```
 
-For each environment file found, read it and extract the `vars` block (key-value pairs). Flag any keys whose values appear masked or empty (likely secrets).
-
 ## Step 5: Walk the Collection and Catalog All Requests
 
-**YAML format** — find all request files:
-
+**YAML format:**
 ```
 find <collection-root> -name "*.yml" -not -path "*/environments/*" -not -name "opencollection.yml" -not -name "folder.yml" | sort
 ```
 
-**Legacy format**:
-
+**Legacy format:**
 ```
 find <collection-root> -name "*.bru" -not -path "*/environments/*" -not -name "collection.bru" | sort
 ```
 
-For each request file, read it and extract the following. Use the YAML path `http.<field>` for YAML format, or the corresponding `.bru` block for legacy:
+For each request file, read and extract. **YAML schema paths** (`HttpRequest` object):
 
 | Field | YAML path | Notes |
 |---|---|---|
-| Request name | `meta.name` | |
-| Type | `meta.type` | http, graphql, grpc, ws |
-| Sequence | `meta.seq` | |
+| Request name | `info.name` | |
+| Type | `info.type` | const `"http"` for HTTP requests |
+| Sequence | `info.seq` | number |
+| Tags | `info.tags[]` | string array |
 | Method | `http.method` | |
 | URL | `http.url` | |
-| Auth mode | `http.auth.mode` | none, basic, bearer, oauth2, api-key, digest, aws-signature |
-| Headers | `http.headers[].name` | list of enabled headers |
-| Query params | `http.params[].name` | list of enabled params |
-| Body mode | `http.body.mode` | json, form-urlencoded, multipart/form-data, xml, text |
-| Has pre-request script | `http.script.req` present? | |
-| Has post-response script | `http.script.res` present? | |
-| Has test script | `http.script.tests` present? | |
-| Has declarative assertions | `http.tests` present? | |
-| Docs | top-level `docs` block | |
+| Auth type | `http.auth.type` | or string `"inherit"` |
+| Headers | `http.headers[]` | skip entries where `disabled: true` |
+| Query params | `http.params[]` where `type == "query"` | `type` is required per spec |
+| Path params | `http.params[]` where `type == "path"` | |
+| Body type | `http.body.type` | `json`, `xml`, `text`, `sparql`, `form-urlencoded`, `multipart-form`, `file` |
+| Pre-request script | `runtime.scripts[]` entry with `type == "before-request"` | |
+| Post-response script | `runtime.scripts[]` entry with `type == "after-response"` | |
+| Test script | `runtime.scripts[]` entry with `type == "tests"` | |
+| Assertions | `runtime.assertions[]` | array of `{expression, operator, value?}` |
+| Request variables | `runtime.variables[]` | array of `{name, value}` |
+| Docs | `docs` | top-level string |
 
-Sort requests by folder path, then by `meta.seq` within each folder.
+Sort requests by folder path, then by `info.seq` within each folder.
 
 ## Step 6: Identify Folder-Level Config
 
-For each subdirectory, check for `folder.yml` (YAML) or `bruno.bru` / `folder.bru` (legacy):
+For each subdirectory, check for `folder.yml` (YAML) or `bruno.bru`/`folder.bru` (legacy).
 
-- Extract `auth`, `headers`, `vars`, and `script` overrides
-- Note which folders inherit the collection default vs. override it
+**YAML `folder.yml`** — a `Folder` object:
+
+| Key | Notes |
+|---|---|
+| `info.name` | Folder name |
+| `info.seq` | Folder sequence |
+| `request.auth` | Auth override (`type:` object or `"inherit"`) |
+| `request.headers[]` | Additional headers |
+| `request.variables[]` | Folder-level variables |
+| `request.scripts[]` | Folder-level scripts |
+
+Note which folders override auth vs. inherit from the collection default.
 
 ## Step 7: Compile Variable Inventory
 
-Scan all request URLs, headers, body content, and scripts for `{{variable_name}}` references. Deduplicate and cross-reference with environment and collection vars to identify:
+Scan all request URLs, header values, body `data` fields, and script `code` fields for `{{variable_name}}` references.
 
+Cross-reference with:
+- `request.variables[]` in `opencollection.yml` (collection-level)
+- `variables[]` in each environment file
+- `bru.setVar(...)` calls in script `code` fields (set dynamically at runtime)
+
+Report:
 - Variables defined at collection level
-- Variables defined per environment
-- Variables set dynamically in scripts (`bru.setVar(...)`)
-- Variables used but not defined anywhere (flag these as potentially missing)
+- Variables defined per environment (note which envs define each)
+- Variables set dynamically in scripts
+- Variables used but not defined anywhere (flag as ⚠ missing)
+- Secret variables (defined with `secret: true`, no stored value)
 
 ## Step 8: Produce the Documentation
 
-Output a structured markdown document:
+Output as structured markdown:
 
 ---
 
 # `<Collection Name>` — API Reference
 
-> Bruno `<YAML|legacy>` collection · v`<version>` · `<N>` requests · `<N>` folders
+> OpenCollection YAML v`<opencollection>` · v`<info.version>` · `<N>` requests · `<N>` folders *(for legacy .bru collections, omit the OpenCollection version and label as "Bruno legacy .bru")*
 
 ## Environments
 
-| Environment | Variables |
-|---|---|
-| `development` | `BASE_URL`, `API_KEY`, `TOKEN` (+N more) |
-| `staging` | … |
-| `production` | … |
+| Environment | Variables | Extends | .env |
+|---|---|---|---|
+| `local` | `base_url`, ~~`token`~~ (secret) | — | `.env.local` |
+| `staging` | `base_url`, ~~`token`~~ (secret) | — | — |
+
+*(Strike through secret variable names to indicate they have no stored value)*
 
 ## Collection Defaults
 
-**Auth:** `<mode>` — `<token/username field or "none">`
+**Auth:** `bearer` — `token: {{token}}`
 
 **Global Headers:**
 
 | Header | Value |
 |---|---|
-| `X-API-Key` | `{{api_key}}` |
+| `Content-Type` | `application/json` |
 
-**Global Pre-request Script:** yes / no
+**Global Scripts:** before-request, after-response (or "none")
 
 ## Collection Variables
 
 | Variable | Value |
 |---|---|
 | `base_url` | `https://api.example.com` |
+| `api_version` | `v1` |
 
 ## Endpoints
 
 ### `<Folder Name>` (or Root)
 
-> Folder auth: `<mode>` (overrides collection default) — or "Inherits collection auth"
+> Folder auth: `inherit` (uses collection bearer) — or describe the override
 
-| # | Method | Endpoint | Auth | Body | Tests |
-|---|---|---|---|---|---|
-| 1 | `GET` | `/users/{{userId}}` | bearer | — | yes |
-| 2 | `POST` | `/users` | bearer | json | — |
+| # | Method | Endpoint | Auth | Body | Assertions | Tests |
+|---|---|---|---|---|---|---|
+| 1 | `GET` | `/users/{{userId}}` | bearer | — | 2 | yes |
+| 2 | `POST` | `/users` | inherit | json | 1 | — |
 
 **`GET /users/{{userId}}`** — _Get User by ID_
 
-- Auth: bearer
-- Params: `userId` (path variable)
+- Auth: `bearer`
+- Path params: `userId`
 - Pre-request script: yes
-- Assertions: yes
+- Post-response script: no
+- Assertions: `response.status equals 200`, `response.body.id isDefined`
+- Test script: yes
 
 *(repeat for each request)*
 
@@ -187,16 +208,16 @@ Output a structured markdown document:
 | Variable | Defined In | Used In |
 |---|---|---|
 | `{{base_url}}` | collection, all envs | All request URLs |
-| `{{token}}` | env | Auth headers (N requests) |
-| `{{userId}}` | script (`bru.setVar`) | `/users/{{userId}}` |
-| `{{unknownVar}}` | **⚠ not defined** | `POST /orders` header |
+| `{{token}}` | env (secret) | Bearer auth (N requests) |
+| `{{userId}}` | runtime (`bru.setVar`) | `/users/{{userId}}` |
+| `{{unknownVar}}` | **⚠ not defined** | `POST /orders` body |
 
 ## Scripting Summary
 
-| Request | Pre-request | Post-response | Tests |
-|---|---|---|---|
-| `Login` | Sets `access_token` | — | Checks 200 + token field |
+| Request | Before-request | After-response | Tests | Assertions |
+|---|---|---|---|---|
+| `Login` | Sets `access_token` | — | Checks 200 + token | 1 |
 
 ---
 
-If the collection has more than 50 requests, use AskUserQuestion to ask whether the user wants full per-request detail or a condensed table-only view.
+If the collection has more than 50 requests, use AskUserQuestion to ask: full per-request detail or condensed table-only view.
