@@ -14,7 +14,7 @@
 
 **CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
-**SERENA PROJECT ACTIVATION:** Before T0, call `check_onboarding_performed`. If it reports that onboarding has not been performed for this project, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`, and the symbol-aware write tools) will not function correctly without this. Do this once at the start of the workflow; do not repeat it between phases.
+**SERENA PROJECT ACTIVATION:** Before T0, check Serena's project-activation message (emitted on connect via `--project-from-cwd`); if it reports that onboarding has not been performed, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`, and the symbol-aware write tools) will not function correctly without this. Do this once at the start of the workflow; do not repeat it between phases.
 
 **TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
 
@@ -23,26 +23,46 @@
 - **File discovery (find files by name or pattern):** Use native `Glob`.
 - **Content search (find text inside files):** Use native `Grep`. For symbolic code navigation during implementation (locating a method, class, or caller before editing), use Serena's `find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, and `search_for_pattern` directly. For broader codebase analysis that informs planning (architectural patterns, convention discovery, cross-area impact), delegate to the `codebase-explorer` agent.
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
-- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
+- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
 
 **JIRA COMMENT CONTRACT:** Keep Jira comments minimal, structured, and durable. Do not narrate every phase. Routine Jira comments are required only at:
 
 - **T4/T5** -- one combined comment containing the reviewed implementation plan and the approval request
-- **T11** -- user testing handoff in standard mode only
+- **T10** — user testing handoff in standard mode only
 - **T12** -- final structured summary
 
-Additional Jira comments are allowed only for blocking failures, reposting a revised plan after requested changes, or explicit user-requested status updates. Do not post separate narration comments for T0, T1, T2, T3, T6, T7, T8, T9, T10, or T13.
+Additional Jira comments are allowed only for blocking failures, reposting a revised plan after requested changes, or explicit user-requested status updates. Do not post separate narration comments for T0, T1, T2, T3, T6, T7, T8, T9, T11, or T13.
 
 When a Jira comment heading references workflow phases, use the exact phase label defined here. Do not invent synthetic phase ranges such as `T2-T5` or `T6-T10`. The only routine combined phase heading allowed is `T4/T5` because one comment serves both phases.
 
-> **EPIC CHILD TASK MODE:** If the Task Details include an **Epic Integration Branch** field, this is a child task within a larger epic. Three phases behave differently in epic mode:
->
-> - **T6:** Branch from the Epic Integration Branch instead of the default branch.
-> - **T10:** After committing, merge the task branch into the Epic Integration Branch. Run the full build, all tests, and all linters on the integration branch to confirm no regressions before exiting the worktree.
-> - **T11:** Skip User Testing -- user testing for the epic is handled at the epic level (E9). Proceed directly to T12.
-> - **T13:** Do not remove the shared epic worktree in epic child-task mode. Final worktree cleanup for the integration branch is handled at the epic level (E11).
+**Comment formatting:** Pass clean GitHub-flavored markdown to `jira_add_comment`. Never backslash-escape markdown characters — bold is literal `**text**`, never `\*\*text\*\*`. Ensure every bold span has matching `**` delimiters on both sides.
 
-**WORKTREE DISCIPLINE:** Always create worktrees under `.worktrees/<branch-name>` in the project root, using the exact branch name as the directory name. Create the directory first if it does not exist: `mkdir -p .worktrees`. The full creation command is `git worktree add .worktrees/<branch-name> <branch-name>`. Never use a worktree-prefixed or renamed branch (e.g. never `worktree-PROJ-123`). All commits must be made on the real branch. Push using `git push origin <branch-name>` — never use refspecs that map a different local branch name to the remote (e.g. never `git push origin worktree-branch:real-branch`). After removing a worktree and returning to the main working directory, run `git fetch origin` and update the local ref with `git branch -f <branch-name> origin/<branch-name>` before checking it out, to ensure the local branch matches the remote.
+**COMMIT, PUSH, MERGE & TRANSITION DISCIPLINE — HARD RULE:** Every one of the following is an irreversible action that affects shared state. None may run until the user has explicitly selected the "Approve" option at the T10 User Testing gate **in this same session**:
+
+- `git add` / `git commit` on the working branch
+- `git push` of the working branch
+- `git merge` into any integration or shared branch
+- `git push` of an integration branch
+- Any Jira transition that moves the issue out of "In Progress" (e.g. to "In Review", "Done", "Closed")
+
+A passing build, passing tests, clean self-review, or successful reviewer sub-agent do NOT substitute for user testing approval. **Auto Mode does not lift this rule.** Auto Mode's "bias toward working without stopping" applies to implementation decisions and tool usage — not to workflow approval gates or irreversible shared-state actions. If you cannot quote the user's verbatim T10 approval selection from earlier in this same conversation, STOP and return to T10.
+
+These actions must not be chained. Run each one at a time, reporting the result in the chat before starting the next. Do not pre-batch commit + push + merge + push + transition in a single tool sequence.
+
+> **EPIC CHILD TASK MODE — DETECTION IS EXPLICIT, NOT INFERRED.** This mode is active *only* when the Jira Task Details contain a populated **Epic Integration Branch** field. Do not infer epic child mode from the current git branch name, from a parent-link relationship in Jira, from sibling tasks, or from any other signal. Before treating a task as an epic child:
+>
+> 1. Show the user the exact `Epic Integration Branch` value you read from Task Details.
+> 2. Use `AskUserQuestion` with header `Epic Child Mode`, options: `Confirm — run as epic child task (Recommended)` (description: "T6 will verify the integration branch, T10 user testing is deferred to E9, T11 merges into the integration branch") / `No — run as standard task` (description: "Full T10 user testing gate applies before any commit").
+> 3. Only after the user selects "Confirm" do the epic mode behaviors below take effect.
+>
+> If the field is absent but you suspect this is an epic child task, ask the user — do not act on the suspicion. Skipping T10 user testing without an explicit, in-session confirmation that epic child mode is in effect is a workflow violation regardless of Auto Mode.
+>
+> Three phases behave differently once epic child mode is confirmed:
+>
+> - **T6:** Verify you are on a branch created from the Epic Integration Branch, rather than asking which base branch to use.
+> - **T10:** Skip User Testing — user testing for the epic is handled at the epic level (E9). Proceed directly to T11.
+> - **T11:** After committing and pushing the working branch, merge it into the Epic Integration Branch. Run the full build, all tests, and all linters on the integration branch before pushing the integration branch.
+
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
@@ -52,12 +72,12 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 - T3 — Ask Clarifying Questions
 - T4 — Create Implementation Plan
 - T5 — Await Plan Approval
-- T6 — Create Branch and Worktree
+- T6 — Verify Working Branch
 - T7 — Baseline Verification
 - T8 — Implementation
 - T9 — Post-Implementation Verification
-- T10 — Commit, Push, and Exit Worktree
-- T11 — User Testing
+- T10 — User Testing
+- T11 — Commit and Push
 - T12 — Summary of Changes
 - T13 — Cleanup
 
@@ -68,10 +88,10 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 1. Wait for any background `area-mapper` sub-agent to complete.
 2. Create a `phase_handoff` entity in the knowledge graph:
    - **Name:** `phase-handoff-<JIRA-KEY>-<phase-id>` (e.g. `phase-handoff-ELI-1234-T5`)
-   - **Observations:** `phase: <id>`, `skill: task-card`, `jira_key: <key>`, `branch: <name or "none">`, `worktree: <path or "none">`, `head_sha: <sha or "n/a">`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. At T8 only: `reviewer_iterations: impl=N test=N doc=N`.
+   - **Observations:** `phase: <id>`, `skill: task-card`, `jira_key: <key>`, `branch: <name or "none">`, `head_sha: <sha or "n/a">`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. At T8 only: `reviewer_iterations: impl=N test=N doc=N`.
    - **Relations:** `BELONGS_TO` → `work_item-<JIRA-KEY>`; `SUPERSEDES` → prior `phase_handoff` for this work item (if any); `REFERENCES` → relevant `exploration`, `plan`, and `finding` entity names.
 3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
-4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, Jira key + branch + worktree + head SHA anchors, reviewer iteration counters (T8 only), one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → `git status` + `git worktree list` → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, verify git state (`git status` + `git worktree list` if branch/worktree are set), and resume at `next_phase`. If the user types a different message instead, handle it normally.
+4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, Jira key + branch + head SHA anchors, reviewer iteration counters (T8 only), one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → `git status` → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, verify git state (`git status`), and resume at `next_phase`. Before executing the resumed phase, **re-read that phase's section in this skill's `workflow.md`** so its full instructions survive compaction — in particular, any phase that asks the user clarifying or structured questions MUST use `AskUserQuestion` (per the Clarification Rule), never plain text. If the user types a different message instead, handle it normally.
 
 **Cleanup:** Include all `phase_handoff` entities for this work item (prefix `phase-handoff-<JIRA-KEY>-`) in the T13 cleanup enumeration alongside other session-scoped entities.
 
@@ -81,8 +101,8 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 
 **This phase requires TWO separate tool calls. Do not move to T1 until both are complete.**
 
-1. **Tool call 1:** Call `getTransitionsForJiraIssue` with this issue's key. From the response, find the transition whose target status is **In Progress** and note its **ID**.
-2. **Tool call 2:** Call `transitionJiraIssue` with this issue's key and that transition ID. This is the call that actually moves the issue. Retrieving transitions alone does nothing -- you MUST call `transitionJiraIssue` to complete this phase.
+1. **Tool call 1:** Call `jira_get_transitions` with this issue's key. From the response, find the transition whose target status is **In Progress** and note its **ID**.
+2. **Tool call 2:** Call `jira_transition_issue` with this issue's key and that transition ID. This is the call that actually moves the issue. Retrieving transitions alone does nothing -- you MUST call `jira_transition_issue` to complete this phase.
 
 Do not guess transition IDs. Always retrieve them first via tool call 1.
 
@@ -92,6 +112,7 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 - Read the **Task Details** section of the Jira issue description thoroughly.
 - Identify the goal, acceptance criteria (Acceptance Criteria section), and any constraints.
 - Note all items in the **Affected Areas** section and any dependencies listed.
+- Read the **Patterns & Code References**, **Non-Functional Requirements**, **Data & Interface Changes**, and **Observability & Telemetry** sections if present. These are the implementation guardrails: the patterns/code anchors to mirror, the NFR targets to meet, the data/interface contracts to build, and the instrumentation to add.
 
 ### T2 — Review the Codebase
 
@@ -129,7 +150,7 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 > **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `T3 Approval`, options: `Approve and proceed (Recommended)` (description: "All blocking answers are accurate and recorded") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to T4 until approved.
 
-> **COMPACTION GATE — T3:** Once T3 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-T3`; `next_phase: T4`; decisions: clarifying answers and any blocking constraints; branch + worktree + head SHA: "n/a" (not yet created). REFERENCES: exploration entities from T2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T4.
+> **COMPACTION GATE — T3:** Once T3 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-T3`; `next_phase: T4`; decisions: clarifying answers and any blocking constraints; branch + head SHA: "n/a" (not yet created). REFERENCES: exploration entities from T2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T4.
 
 ### T4 — Create Implementation Plan
 
@@ -137,10 +158,20 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 > **THINK HARD:** Before finalizing the plan, think hard about whether every acceptance criterion maps to a specific, concrete code change, and whether the ordering and scope of those changes is minimal and safe. This is the highest-leverage decision point in the workflow — a vague or over-scoped plan produces an implementation that cannot be cleanly reviewed or verified.
 
+> **REUSE EXISTING DIAGRAM:** Before generating a flowgraph, call `open_nodes` on the `work_item-<KEY>` entity and check for an existing `diagram` observation (written by `/requirements-intake` or `/implementation-discovery` if those ran first). If one exists, use it as the starting point and refine it to reflect implementation-level detail — do not start from scratch.
+
+> **GENERATE A FLOWGRAPH (best-effort):** Produce a Mermaid `flowchart` that visualizes the changed control/data flow across the affected files/components. Keep it focused — nodes should map to the concrete elements in this plan (files, components, functions), not abstract boxes.
+>
+> - **Skip it** for trivial changes where a diagram adds no clarity (e.g. a single-file edit with no branching logic). If skipped, state in one line why.
+> - **Render it in the chat** as part of the plan presentation at T5.
+> - **Embed it in the Jira description under `## Architecture`** as a ` ```mermaid ` fenced block, immediately after `## Affected Areas`. If the description lacks an `## Architecture` section, add one using `jira_update_issue` (additive edit — update only that section). (Jira Cloud does not render Mermaid natively; it will display as a code block, which is acceptable.) If skipped, set the Architecture section to "None — no diagram for this change."
+> - **Record the Mermaid source** for inclusion in the `plan-<JIRA_KEY>` entity created after plan-reviewer approval below. T8 reads the `diagram` observation from that entity as an implementation map.
+
 **REQUIRED:** The plan must include ALL of the following:
 
 - Files to create or modify
 - Logic changes and new functionality
+- How the plan **follows the Patterns & Code References** from the card (reuse/mirror the referenced code rather than inventing new patterns), **satisfies the Non-Functional Requirements**, **implements the Data & Interface Changes** as specified, and **adds the Observability & Telemetry** called for. For any of these sections marked "None"/"N/A", note that explicitly.
 - Testing expectations for the dedicated `test-reviewer` sub-agent (scenarios, regressions, edge cases, commands, and any required fixtures or setup)
 - Documentation expectations for the dedicated `documentation-reviewer` sub-agent (inline docs, repository docs, and whether separate `/document-card` follow-up is likely needed)
 
@@ -152,6 +183,7 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 - Are the testing expectations comprehensive enough to cover the changes, including edge cases and error scenarios?
 - Do the documentation expectations cover all likely affected surfaces?
 - Is the plan consistent with the codebase patterns and architecture observed in T2?
+- Does the plan follow the **Patterns & Code References** and satisfy the **Non-Functional Requirements**, **Data & Interface Changes**, and **Observability & Telemetry** sections of the card?
 - Are there any risks or dependencies not addressed?
 
 If the review reveals issues, revise the plan before posting. Do not post an unreviewed plan.
@@ -163,20 +195,28 @@ Once the self-review is clean, invoke the `plan-reviewer` sub-agent, providing:
 - The proposed implementation plan
 - The acceptance criteria from the Task Details
 - The affected areas from the Task Details
+- The Patterns & Code References, Non-Functional Requirements, Data & Interface Changes, and Observability & Telemetry sections from the card
 - The codebase findings from T2 (patterns, conventions, and architectural context)
 - The Jira issue key and work type
 
 The sub-agent will return a structured findings report with an overall verdict of either **APPROVED** or **CHANGES REQUIRED**.
 
-- If **APPROVED**: post a single combined Jira comment with the exact heading `**T4/T5 — Implementation Plan & Approval Request**`, then proceed to T5. This comment must include:
+- If **APPROVED**:
+
+    > **USE KNOWLEDGE GRAPH:** Create a `plan` entity named `plan-<JIRA_KEY>` with observations: `description` (the full reviewed plan text, verbatim — do not summarize or truncate), `files_to_change` (comma-separated list of all files to create or modify), `testing_expectations` (the testing expectations section verbatim), `documentation_expectations` (the documentation expectations section verbatim), and `diagram` (the raw Mermaid source from the flowgraph, or omit this observation entirely if the flowgraph was skipped). Link with a `BELONGS_TO` relation → `work_item-<JIRA_KEY>`. Call `open_nodes` on the new entity to confirm the write landed. This entity is the structured persistence surface for the T5 and T8 compaction gates — their REFERENCES point to `plan-<JIRA_KEY>`, and T8 reads the `diagram` observation from it as an implementation map. If the plan was revised during the review loop, ensure the entity contains the **final approved** plan text.
+
+    Post a single combined Jira comment with the exact heading `**T4/T5 — Implementation Plan & Approval Request**`, then proceed to T5. This comment must include:
 
     - The reviewed implementation plan
+    - Architecture diagram (under `### Architecture` — the Mermaid source, or a note if skipped)
     - Testing expectations for the `test-reviewer` sub-agent
     - Documentation expectations for the `documentation-reviewer` sub-agent
     - Risks, dependencies, or open items that affect execution
     - `Approval requested: Please approve this implementation plan before work begins.`
+
+    Before calling `jira_add_comment`, invoke the `comment-reviewer` sub-agent with the drafted comment body, the phase label `T4/T5 — Implementation Plan & Approval Request`, and the acceptance criteria and plan details as source context. If CHANGES REQUIRED, revise the draft and re-invoke (max 3 iterations). Post the comment only once APPROVED; after 3 iterations, post with remaining minor findings noted inline.
 - If **CHANGES REQUIRED**: address every Critical and Major finding, revise the plan, then invoke the `plan-reviewer` sub-agent again. Repeat until the verdict is APPROVED.
-- **Max 3 review iterations.** If the plan-reviewer returns CHANGES REQUIRED after 3 iterations, post the same combined `T4/T5` comment with the outstanding findings noted, and let the user decide in T5.
+- **Max 3 review iterations.** If the plan-reviewer returns CHANGES REQUIRED after 3 iterations, create the `plan-<JIRA_KEY>` entity (same as the APPROVED path above, using the current plan text and noting `review_escalated: true`), post the same combined `T4/T5` comment with the outstanding findings noted, and let the user decide in T5.
 
 ### T5 — Await Plan Approval
 
@@ -187,36 +227,29 @@ The sub-agent will return a structured findings report with an overall verdict o
 - The approval request Jira record is the combined `T4/T5` comment already posted in T4. Do not post a second Jira comment here unless the plan changed.
 - **Present the full implementation plan in the chat output.** The user should not have to open Jira to review it — display it here before asking for approval.
 - Then use `AskUserQuestion` with header `T5 Approval`, options: `Approve and proceed (Recommended)` (description: "Implementation plan is accurate — begin work") / `Request changes` (description: "Revise the plan before proceeding"). Do not poll Jira for approval.
-- If the user selects "Request changes", revise the plan, repost the full combined `T4/T5` comment to Jira, and use `AskUserQuestion` again.
+- If the user selects "Request changes", revise the plan, repost the full combined `T4/T5` comment to Jira, and update the `plan-<JIRA_KEY>` entity in the knowledge graph: add a revised `description` observation with the updated plan text (use `add_observations`). Then use `AskUserQuestion` again.
 - Only proceed to T6 after "Approve and proceed" is selected.
 
-> **COMPACTION GATE — T5:** Once T5 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-T5`; `next_phase: T6`; decisions: approved implementation plan (one-line summary, plan entity name for REFERENCES); branch + worktree + head SHA: "n/a" (not yet created). REFERENCES: plan entity and exploration entities from T2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T6.
+> **COMPACTION GATE — T5:** Once T5 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-T5`; `next_phase: T6`; decisions: approved implementation plan (one-line summary); branch + head SHA: "n/a" (not yet created). REFERENCES: `plan-<KEY>` (the plan entity created in T4) and exploration entities from T2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T6.
 
 ---
 
-### T6 — Create Branch and Worktree
+### T6 — Verify Working Branch
 
-- **Standard mode — ask which branch to branch from:** Before creating the branch, run `git rev-parse --abbrev-ref HEAD` to determine the current branch. Use `AskUserQuestion` with header `Base Branch`, options: `<current branch name> (Recommended)` (description: "Use the currently checked-out branch as the base") / `develop` (description: "Branch from the develop integration branch"). The user can type a specific branch name via the auto-injected "Other" option. **Do not branch from `main` unless the user explicitly specifies it — warn the user if they select or type `main`.** Verify any user-specified branch exists on the remote before proceeding.
-- Create a new branch using this naming convention:
-
-```
-{PROJECTKEY}-{ISSUENUMBER}-{issue-summary-in-kebab-case}
-```
-
-Example: `PROJ-1234-add-retry-logic-to-payment-service`
-
-- **Standard mode:** Create the branch from the user-specified base branch, then create the worktree: `mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`. Do not create a worktree-prefixed branch.
-- **Epic child task mode:** Create the branch from the **Epic Integration Branch** specified in Task Details, within the epic's existing worktree. Do not ask for a base branch in this mode — the integration branch is already defined.
+- Run `git branch --show-current` and report the current branch to the user.
+- **Standard mode:** Use `AskUserQuestion` with header `Working Branch`, options: `Confirm — this is the correct branch (Recommended)` (description: "Proceed with implementation on this branch") / `Wrong branch — switching now` (description: "I need to switch to the correct branch before continuing"). If the user selects "Wrong branch", halt and wait for them to switch manually, then verify again.
+- **Epic child task mode:** Confirm the current branch was created from the Epic Integration Branch specified in Task Details. If it was not, halt and ask the user to switch to the correct branch before continuing.
 
 ### T7 — Baseline Verification
 
-- Run the full build, all tests, and all linters/static analysis.
-- **All checks must pass before continuing.** If anything fails, investigate and resolve it first. Do not begin implementation on a broken baseline.
+- Invoke the `verification-runner` sub-agent with phase context `baseline` and the build/test/lint commands if already known. It returns a `VERIFICATION REPORT` with a per-category verdict and, for any failures, the failing targets and excerpts.
+- **All checks must pass before continuing.** If the report returns `FAILURES`, investigate and resolve them using the failing targets and excerpts from the report. Re-invoke `verification-runner` after fixing. Do not begin implementation until it returns `ALL GREEN`.
 
 ### T8 — Implementation
 
 **ALL of the following are REQUIRED. Do not skip any category.**
 
+- **Architecture diagram:** Call `open_nodes` on the `plan-<JIRA_KEY>` entity (created in T4) and read the `diagram` observation. Use the control/data flow diagram as a map for sequencing your code changes — write code in the order the flow implies and verify each completed step advances the flow correctly. If no diagram was persisted (skipped in T4), proceed without it.
 - **Code:** Write or modify source code according to the implementation plan from T4.
 - **Testing handoff:** Leave the implementation in a state that the dedicated `test-reviewer` sub-agent can exercise deterministically. Note any commands, fixtures, or setup that sub-agent will need.
 - **Documentation handoff:** Identify the public APIs, configuration surfaces, and repository docs the dedicated `documentation-reviewer` sub-agent must cover.
@@ -245,6 +278,7 @@ Example: `PROJ-1234-add-retry-logic-to-payment-service`
 - Does the implementation fully satisfy every acceptance criterion listed in the Acceptance Criteria section?
 - Does the implementation follow the approved plan from T4? If any deviations were made, are they justified?
 - Does every code change follow the project's established code style and architectural patterns?
+- Does the implementation follow the **Patterns & Code References** from the card, and cover the **Non-Functional Requirements**, **Data & Interface Changes**, and **Observability & Telemetry** the card specified?
 - Is error handling comprehensive?
 - Are there any code smells, dead code, or hardcoded values that should be configurable?
 - Would the dedicated `test-reviewer` sub-agent be able to add comprehensive coverage without redesigning the implementation?
@@ -275,7 +309,7 @@ Do not proceed to the dedicated completion loops until the implementation-review
 
 Invoke the `test-reviewer` sub-agent, providing:
 
-- The worktree path (`.worktrees/<branch-name>`), branch name, and base branch — the reviewer fetches the diff itself via `git diff <base-branch>..HEAD` in the worktree. Do not paste the full diff inline.
+- The branch name and base branch — the reviewer fetches the diff itself via `git diff <base-branch>..HEAD`. Do not paste the full diff inline.
 - The approved implementation plan from T4, especially the testing expectations
 - The acceptance criteria from the Task Details
 - The codebase findings from T2, especially testing conventions and nearby test structure
@@ -291,7 +325,7 @@ The sub-agent will add or update tests as needed, run the relevant test commands
 
 Invoke the `documentation-reviewer` sub-agent, providing:
 
-- The worktree path (`.worktrees/<branch-name>`), branch name, and base branch — the reviewer fetches the diff itself via `git diff <base-branch>..HEAD` in the worktree. Do not paste the full diff inline.
+- The branch name and base branch — the reviewer fetches the diff itself via `git diff <base-branch>..HEAD`. Do not paste the full diff inline.
 - The approved implementation plan from T4, especially the documentation expectations
 - The acceptance criteria from the Task Details
 - The codebase findings from T2, especially documentation conventions and nearby docs
@@ -305,18 +339,51 @@ The sub-agent will update inline and repository documentation as needed and retu
 
 Do not proceed to T9 until `implementation-reviewer`, `test-reviewer`, and `documentation-reviewer` have all completed successfully.
 
-> **COMPACTION GATE — T8:** Once all three reviewers are complete, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-T8`; `next_phase: T9`; include `reviewer_iterations: impl=N test=N doc=N`; decisions: implementation approach summary and any plan deviations; approval_condition: reviewer verdict. REFERENCES: plan entity from T4 and exploration entities from T2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T9.
+> **COMPACTION GATE — T8:** Once all three reviewers are complete, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-T8`; `next_phase: T9`; include `reviewer_iterations: impl=N test=N doc=N`; decisions: implementation approach summary and any plan deviations; approval_condition: reviewer verdict. REFERENCES: `plan-<KEY>` from T4 and exploration entities from T2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T9.
 
 ### T9 — Post-Implementation Verification
 
-- Run the full build, all tests, and all linters/static analysis.
-- Confirm the new or updated tests written by `test-reviewer` pass under the final verification run.
-- **All checks must pass.** If anything fails, fix and re-run this phase.
+- Invoke the `verification-runner` sub-agent with phase context `post-implementation`, the build/test/lint commands from T7, and a specific assertion for each new or updated test written by `test-reviewer`.
+- **All checks must pass.** If the report returns `FAILURES`, fix the failures and re-invoke `verification-runner`. Repeat until it returns `ALL GREEN`.
 - If a failure cannot be resolved after reasonable effort, stop and post a comment describing the failure and what was attempted. Do not continue.
 
-### T10 — Commit, Push, and Exit Worktree
+### T10 — User Testing
 
-- Stage all changes and commit with this message format:
+> **Skip in Epic Child Task Mode (confirmed via the Epic Child Mode question at the start) — proceed directly to T11.**
+
+---
+
+**APPROVAL GATE — USER MUST MANUALLY TEST BEFORE PROCEEDING. AUTO MODE DOES NOT BYPASS THIS GATE.**
+
+- Post a comment on this Jira issue with the exact heading `**T10 — User Testing Handoff**` as the verbatim first line of the comment body — character-for-character, using `**bold**` (not a `##` markdown heading), and never a descriptive substitute such as "Testing ready" or "Fix complete". The comment must include, in this exact order with these exact labels:
+
+    - The branch name
+    - A summary of what was implemented
+    - **Acceptance Criteria & Testing Steps:** For each acceptance criterion listed in the Task Details, a numbered section with:
+        - The criterion restated clearly
+        - Step-by-step instructions to verify that criterion is met
+
+    Before posting, confirm: (1) the first line is exactly `**T10 — User Testing Handoff**`, and (2) all required sections are present in order. If either check fails, rewrite before posting.
+- Present the same testing handoff in the chat — the user should not have to open Jira to see what to test.
+- Pause the workflow here and wait. Do not call any tool other than `AskUserQuestion` until the user reports back with an explicit selection. Do not infer approval from silence, from a `continue` keyword, from prior phase success, or from Auto Mode.
+- Use `AskUserQuestion` with header `T10 Testing`, options: `Approve — I ran through every step above and every criterion passed (Recommended)` (description: "I have manually tested the implementation and it works as expected") / `Issues found` (description: "One or more problems were found during testing"). Do not proceed until the user selects an option.
+- If the user's message accompanying the approval suggests they have NOT actually run through the steps (e.g. "looks good", "go ahead", "skip", "sure", "proceed"), re-ask the question once and require an explicit testing-was-done confirmation. Treat ambiguous approval as the "Issues found" branch until confirmed otherwise.
+
+- If the user identifies issues: for each distinct issue, invoke the `issue-intake` skill (via the `Skill` tool), passing a brief description of the observed behavior, expected behavior, and this task's Jira key as args (e.g. `"Testing found: [description]. Related to: [PROJ-KEY]"`). Work through the issue-intake I0–I6 process with the user to document and triage each issue — it will create a Jira card (Bug or Missing Requirement) for each one. After all issues are documented and their Jira cards are created, return to T8, resolve each issue, re-run T9, and return to this step before proceeding.
+
+---
+
+### T11 — Commit and Push
+
+**PRECONDITION — verify in the chat before running any git command.** State each check and its result before staging anything. If any check fails, STOP and return to T10.
+
+1. The user explicitly selected the "Approve" option at T10 in this conversation. Quote their selection verbatim.
+2. No issues were reported by the user after that selection that have not since been addressed and re-approved.
+3. The current branch matches the branch confirmed at T6.
+
+Execute the following steps **one at a time, in order**. Report the outcome of each step in the chat before starting the next. Do not pre-batch these into a single tool call sequence — the user must be able to interrupt between any two steps:
+
+**Step 1 — Stage and commit.** Stage all changes and commit with this message format:
 
 ```
 [{PROJECTKEY}-{ISSUENUMBER}] <concise description of what was done>
@@ -324,38 +391,25 @@ Do not proceed to T9 until `implementation-reviewer`, `test-reviewer`, and `docu
 
 Example: `[PROJ-1234] Add retry logic with exponential backoff to payment service`
 
-- Use imperative mood for the description.
-- Push the branch to the remote using `git push origin <branch-name>`. Do not use refspecs.
-- **Standard mode:** Exit the worktree and remove it: `git worktree remove .worktrees/<branch-name>`. Then sync the local branch: `git fetch origin` followed by `git branch -f <branch-name> origin/<branch-name>`. Return to the main working directory.
-- **Epic child task mode:** After committing, merge the task branch into the Epic Integration Branch. Run the full build, all tests, and all linters on the integration branch to confirm no merge conflicts or regressions. Then exit the worktree.
+Use imperative mood. Report the commit hash in the chat before proceeding.
 
-### T11 — User Testing
+**Step 2 — Push the working branch.** Push using `git push origin <branch-name>`. Do not use refspecs. Report the push result before proceeding.
 
-> **Skip in Epic Child Task Mode -- proceed directly to T12.**
+**Step 3 — (Epic child task mode only) Merge and verify.** Switch to the Epic Integration Branch and merge the working branch. Invoke the `verification-runner` sub-agent with phase context `post-implementation` to confirm the integration branch passes the full build, all tests, and all linters. If it returns `FAILURES`, fix them and re-invoke before pushing. Report the final `VERIFICATION REPORT` verdict before proceeding.
 
----
+**Step 4 — (Epic child task mode only) Push the integration branch.** Push the Epic Integration Branch only after Step 3 passes cleanly. Report the push result before proceeding.
 
-**APPROVAL GATE — USER TESTING REQUIRED.**
-
-- Post a comment on this Jira issue with the exact heading `**T11 — User Testing Handoff**`. The comment must include:
-
-    - The branch name
-    - A summary of what was implemented
-    - **Acceptance Criteria & Testing Steps:** For each acceptance criterion listed in the Task Details, a numbered section with:
-        - The criterion restated clearly
-        - Step-by-step instructions to verify that criterion is met
-- Present the same testing handoff in the chat — the user should not have to open Jira to see what to test.
-- Then use `AskUserQuestion` with header `T11 Testing`, options: `Approve — implementation works as expected (Recommended)` (description: "Testing passed — proceed to the summary") / `Issues found` (description: "One or more problems were found during testing"). Do not proceed until the user selects an option.
-
-- If the user identifies issues: for each distinct issue, invoke the `issue-intake` skill (via the `Skill` tool), passing a brief description of the observed behavior, expected behavior, and this task's Jira key as args (e.g. `"Testing found: [description]. Related to: [PROJ-KEY]"`). Work through the issue-intake I0–I6 process with the user to document and triage each issue — it will create a Jira card (Bug or Missing Requirement) for each one. After all issues are documented and their Jira cards are created, recreate the worktree (`mkdir -p .worktrees && git worktree add .worktrees/<branch-name> <branch-name>`), return to T8, resolve each issue, re-run T9 and T10 (which removes the worktree again), and return to this step before proceeding.
-
----
+**Step 5 — No Jira transitions here.** Any Jira status transition is part of T12, not T11. Do not transition the issue status from this phase.
 
 ### T12 — Summary of Changes
 
 **ALL fields below are REQUIRED. Do not skip any field. If a field does not apply, explicitly state "N/A" with a brief reason.**
 
-Post a comment on this Jira issue with the exact heading `**T12 — Summary of Changes**` containing ALL of the following:
+Post a comment on this Jira issue with the exact heading `**T12 — Summary of Changes**` as the verbatim first line of the comment body — character-for-character, using `**bold**` (not a `##` markdown heading), and never a descriptive substitute such as "Implementation complete" or "Done".
+
+Begin the comment body with a metadata block: `**Branch:** <branch-name>` and `**Commit:** <commit-hash>`, followed by a `----` horizontal rule.
+
+Then render **every** field below as a bold-labeled section (`**Field name:**`), in this exact order, using these exact field names. Do not rename, merge, reorder, drop, or add fields.
 
 - **What was done:** Concise overview of the changes made.
     
@@ -371,24 +425,18 @@ Post a comment on this Jira issue with the exact heading `**T12 — Summary of C
      
 - **Release note:** If the change is user-facing, include a 1–2 sentence plain-language release note. If purely internal, state "N/A — internal change."
 
-- **User testing status:** For standard mode, note that T11 user testing passed. For epic child mode, state `Skipped in epic child mode -- handled at epic E9.`
-     
-- **QA Verification Steps:** Step-by-step manual testing instructions for a QA engineer, including:
-    
-    - Prerequisites (environment, test data, configuration)
-    - Exact steps to test the new behavior
-    - Expected results for each step
-    - Edge cases or negative scenarios to verify
+- **User testing status:** For standard mode, note that T10 user testing passed. For epic child mode, state `Skipped in epic child mode -- handled at epic E9.`
+
 - **Open items:** Follow-up work, known limitations, or unresolved questions.
     
 
-**REQUIRED: Review the summary before posting.** Verify every field is present and populated (or explicitly marked "N/A"), and that QA Verification Steps are detailed enough for a QA engineer to follow without additional context. If the review reveals gaps, revise before posting.
+**REQUIRED: Review the summary before posting.** Confirm (1) the first line is exactly `**T12 — Summary of Changes**` in `**bold**` format, (2) the metadata block (`**Branch:**` / `**Commit:**`) is present before the `----` rule, and (3) every mandated field appears as a `**Label:**` section in the specified order with none renamed, dropped, or substituted. If any check fails, rewrite before posting.
+
+Before calling `jira_add_comment`, invoke the `comment-reviewer` sub-agent with the drafted comment body, the phase label `T12 — Summary of Changes`, and the branch name, commit hash, and files-changed list as source context for fact-checking. If CHANGES REQUIRED, revise and re-invoke (max 3 iterations). Post the comment only once APPROVED; after 3 iterations, post with remaining minor findings noted inline.
 
 ### T13 — Cleanup
 
-- **Standard mode:** Confirm `.worktrees/<branch-name>` has been removed. If it still exists (e.g. a follow-up worktree was created during T11 and not yet removed by T10), run `git worktree remove .worktrees/<branch-name>` now. Confirm you have returned to the main working directory.
-- **Epic child task mode:** Confirm the child task worktree has been exited and no task-specific temporary worktree remains. Do not remove the shared epic integration worktree here.
-- **Standard mode:** Clear the session-scoped knowledge graph nodes created during this task — the `work_item-<JIRA_KEY>` entity and every entity linked to it (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`, `phase_handoff`, and any `affected_area` rolled up from them). Use `read_graph` to enumerate, then `delete_entities`. The graph is session-scoped; finishing without cleanup leaves stale state for the next workflow.
+- **Standard mode:** Clear the session-scoped knowledge graph nodes created during this task — the `work_item-<JIRA_KEY>` entity and every entity linked to it (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`, `phase_handoff`, `plan-<JIRA_KEY>`, and any `affected_area` rolled up from them). Use `read_graph` to enumerate, then `delete_entities`. The graph is session-scoped; finishing without cleanup leaves stale state for the next workflow.
 - **Epic child task mode:** Do not delete the `work_item-<JIRA_KEY>` entity for this child task or its linked nodes here — the epic-level cleanup at E11 owns wholesale graph teardown after all child tasks complete.
 
 ## Completion Criteria
@@ -400,6 +448,9 @@ This workflow is complete when **all** of the following are true:
 - All required Jira comments were posted using the defined comment contract
 - Branch changes were committed and pushed successfully
 - `implementation-reviewer`, `test-reviewer`, and `documentation-reviewer` all completed successfully
-- Standard mode: user testing completed and approved at T11
-- T12 summary comment posted successfully
-- T13 cleanup verified the workflow ended with no lingering task-specific worktree
+- Standard mode: user testing completed and approved at T10; the T10 approval was captured before any commit or push was made
+- Epic child task mode (if used): confirmed via the explicit `Epic Child Mode` AskUserQuestion — never inferred from branch name or other signals
+- Commit, push, integration merge, integration push, and any Jira transition each ran as discrete user-visible steps, not as a single chained sequence
+- T12 summary comment posted successfully, using the exact `**T12 — Summary of Changes**` heading and the full mandated field set in order (verified by `comment-reviewer`, not improvised)
+- T10 handoff comment used the exact `**T10 — User Testing Handoff**` heading
+- T13 session-scoped knowledge graph cleared

@@ -24,9 +24,9 @@
 - **File discovery (find files by name or pattern):** Use native `Glob`.
 - **Content search (find text inside files):** Use native `Grep`. For symbolic code search, delegate to the `codebase-explorer` agent.
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
-- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
+- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
 
-**SERENA PROJECT ACTIVATION:** Before D0, call `check_onboarding_performed`. If it reports that onboarding has not been performed for this project, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`) and any symbol-aware operations invoked by the `codebase-explorer` agent depend on this being done. Do this once at the start of the workflow; do not repeat it between phases.
+**SERENA PROJECT ACTIVATION:** Before D0, check Serena's project-activation message (emitted on connect via `--project-from-cwd`); if it reports that onboarding has not been performed, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`) and any symbol-aware operations invoked by the `codebase-explorer` agent depend on this being done. Do this once at the start of the workflow; do not repeat it between phases.
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
@@ -47,7 +47,7 @@
    - **Observations:** `phase: <id>`, `skill: implementation-discovery`, `topic_slug: <slug>`, `work_item_id: <work_item-discovery-<slug>>`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item.
    - **Relations:** `BELONGS_TO` → `work_item-discovery-<topic-slug>`; `SUPERSEDES` → prior `phase_handoff` for this topic (if any); `REFERENCES` → relevant `exploration` entity names.
 3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
-4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, topic slug, work_item_id, one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, and resume at `next_phase`. If the user types a different message instead, handle it normally.
+4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, topic slug, work_item_id, one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, and resume at `next_phase`. Before executing the resumed phase, **re-read that phase's section in this skill's `workflow.md`** so its full instructions survive compaction — in particular, any phase that asks the user clarifying or structured questions MUST use `AskUserQuestion` (per the Clarification Rule), never plain text. If the user types a different message instead, handle it normally.
 
 **Note on cleanup:** This workflow intentionally leaves the knowledge graph intact for requirements-intake to consume. The `phase_handoff` entities created here are reaped by requirements-intake R6 (which sweeps all upstream implementation-discovery state) or by issue-intake I6 (bug path). If neither follow-on workflow runs, these entities persist until the Claude Code session ends.
 
@@ -61,9 +61,18 @@
 
 1. Briefly explain what this workflow does (parallel codebase exploration, approach surfacing, focused verification round, persistence to the knowledge graph) and what to expect. Mention that requirements-intake is a separate next step the user runs after `/clear` — this workflow does not chain into it.
 
-2. Ask the following questions using `AskUserQuestion`, one call per question in sequence. Wait for each response before asking the next.
+2. Gather context in this order:
 
-   - **What to build:** Use `AskUserQuestion` (Header: `Discovery Goal`, Question: `What are you trying to build, change, or investigate?`, Options: `Build something new` — a new feature or capability the codebase doesn't currently support, `Change existing behavior` — modifying, improving, or fixing something that already exists, `Investigate / research` — exploring options or understanding the codebase before deciding). Accept any level of specificity — the user can type a specific description using the Other input.
+   **a. Goal category (via `AskUserQuestion`):** Use `AskUserQuestion` (Header: `Discovery Goal`, Question: `What are you trying to build, change, or investigate?`, Options: `Build something new` — a new feature or capability the codebase doesn't currently support, `Change existing behavior` — modifying, improving, or fixing something that already exists, `Investigate / research` — exploring options or understanding the codebase before deciding).
+
+   **b. Topic elaboration — ask conversationally, not via `AskUserQuestion`.**  
+   The `AskUserQuestion` free-text field is cramped; a conversational prompt gives the user the full prompt input to write as much as they need. Send this message, then **end your turn and wait** for the user's reply:
+
+   *"Now tell me more about what you want to explore. Share as much or as little as you know — the goal, the problem being solved, any specific behavior or code you have in mind, and any constraints or context that would help scope the investigation. It's fine if you're not sure of the details yet; the exploration phase will fill in the gaps."*
+
+   **c. Soft sufficiency check.** If the topic is so vague that no useful exploration area can be inferred (e.g., a single word with no context), ask one clarifying question to get enough signal to scope the exploration. If the topic is deliberately open-ended or exploratory, proceed — discovery is designed to work with incomplete information.
+
+   **d. Remaining structured questions (via `AskUserQuestion`, one call each):**
    - **Codebase areas:** Use `AskUserQuestion` (Header: `Codebase Hints`, Question: `Do you know any specific areas of the codebase that are involved — services, modules, repos, or file paths?`, Options: `Yes, I'll name them` — type the areas using the Other input field, `No / Not sure` — proceed without hints; the agent will infer areas from the topic). Accept "none" or "not sure."
    - **Output preference:** Use `AskUserQuestion` (Header: `Output Format`, Question: `Would you like a single recommended approach, or multiple options to compare?`, Options: `Multiple options (Recommended)` — see 2–4 distinct approaches with trade-offs and a recommendation signal, `Single recommendation` — see one recommended approach with rationale). If the user is unsure, the Recommended option applies.
    - **Change scope:** Use `AskUserQuestion` (Header: `Change Scope`, Question: `Are large rewrites or significant additions to the codebase acceptable, or should I focus on targeted, minimal changes?`, Options: `Targeted only (Recommended)` — bias toward minimal-footprint approaches that extend or adapt what already exists, `Large changes acceptable` — the option space is open; significant refactors, new modules, or pattern replacement may be considered). If the user is unsure, the Recommended option applies.
@@ -71,7 +80,7 @@
 3. Summarize the gathered context back to the user in a structured format.
 
 > **REQUIRED context before proceeding:**
-> - **Topic** — what the user wants to build, change, or investigate (2–4 sentences)
+> - **Topic** — what the user wants to build, change, or investigate (capture in full — do not summarize or truncate the user's input)
 > - **Codebase Hints** — specific areas, or "none provided"
 > - **Output Preference** — "single recommendation" or "multiple options"
 > - **Change Scope** — "large changes acceptable" or "targeted only"
@@ -185,7 +194,13 @@
 
 3. Label any items not directly evidenced in the D1 findings as `[INFERRED]`.
 
-4. > **REQUIRED: Review the synthesis before presenting.** Verify every claim is grounded in D1 evidence. Remove or revise any that are not. Label remaining inferences explicitly. Do not present an unreviewed synthesis.
+4. > **GENERATE A FLOWGRAPH (best-effort):** For each approach in the synthesis, produce a Mermaid `flowchart` that shows how that approach works — data/control flow through the affected components, with nodes mapped to real files/functions from the D1 findings. For a single-recommendation run, produce one diagram. For a multiple-options run, produce one per presented approach.
+   >
+   > - **Skip it** for trivial single-component changes or when the approach is purely procedural with no meaningful branching. If skipped, state in one line why.
+   > - **Render each diagram in the chat** inline with the corresponding approach block in the synthesis presentation.
+   > - **There is no Jira description to update at this phase.** The diagram is persisted to the knowledge graph here and will flow into the Jira description once requirements-intake runs. Add a `diagram` observation (the raw Mermaid source for the chosen approach, or for a multiple-options run, a JSON object keyed by option name) to the `discovery_summary` entity in D5 so requirements-intake's R4D step can read and reuse it.
+
+5. > **REQUIRED: Review the synthesis before presenting.** Verify every claim is grounded in D1 evidence. Remove or revise any that are not. Label remaining inferences explicitly. Do not present an unreviewed synthesis.
 
 > **APPROVAL GATE — FULL STOP.** Present the full D2 synthesis. Use `AskUserQuestion` (Header: `D2 Approval`, Question: `Does this synthesis accurately reflect what you want to explore? Are the affected areas and approach(es) correct?`, Options: `Approve and proceed (Recommended)` — the synthesis looks correct, `Request changes` — something needs revision). Do not proceed to D3 until the user approves.
 
@@ -306,6 +321,7 @@
    - `synthesis_full: [the complete confirmed synthesis text including all options for a multiple_options run, retained for record only — downstream consumers should NOT use this as the analysis content because it carries unchosen-option evidence.]`
    - `approach_count: [1 for single recommendation, or the number of options presented]`
    - `chosen_approach: [name of the approach the user selected in D3]`
+   - `diagram: [Mermaid source for the chosen approach's flowchart from D2, or for a multiple-options run the JSON object keyed by approach name. Omit this observation (do not write it as "none") if the flowgraph was skipped in D2 — requirements-intake will generate its own in that case.]`
    - `user_preference: [any preference or lean expressed by the user in D3, or "none stated"]`
    - `verification_status: [clean | revised | accepted_with_open_questions]`
    - `verification_findings: [one-line-per-claim summary: confirmed / enriched / contradicted / new-blocker, with file references for non-confirmed items. Contradicted items reference the `superseded: true` D1 entity by name.]`

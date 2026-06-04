@@ -39,7 +39,7 @@ Prefer Serena's symbol-aware writes over native `Edit` when the target is a doc 
 |------|-------------|
 | `insert_before_symbol` | **Primary tool for Javadoc / KDoc / JSDoc / TSDoc style docs.** These doc blocks sit *before* the declaration. Insert the new doc block before the symbol, and use `Edit` to remove any stale block that remains. |
 | `insert_after_symbol` | Less common; use when an annotation, example snippet, or footnote block must follow a symbol. |
-| `replace_content` | **Repo-wide text replacements** for cross-file doc updates — e.g., propagating a renamed API, updated example URL, or changed default value through every documentation file at once. Use carefully; scope with a specific enough pattern that it does not touch code. |
+| `replace_content` | **Repo-wide text replacements** for cross-file doc updates — e.g., propagating a renamed API, updated example URL, or changed default value through every documentation file at once. Before running: first use `Grep` or `search_for_pattern` to confirm the pattern matches only documentation files (`.md`, doc blocks, config examples) and not runtime code. Never run a repo-wide replacement without this dry-scan step. |
 
 > **Intentionally excluded:** `replace_symbol_body` is deliberately not in this agent's toolset. It rewrites the entire symbol body, which can cross from documentation into runtime code — especially in Python-style languages where docstrings live inside the body. If a docstring is embedded inside a symbol body (Python, etc.), use native `Edit` to replace only the docstring, and leave the surrounding code untouched.
 
@@ -143,4 +143,4 @@ SUMMARY
 - `COMPLETE` requires inline and repository/developer documentation to be either `COMPLETE` or `NOT NEEDED`, with any user-facing follow-up requirement explicitly called out.
 - Be specific. Reference actual files and documentation surfaces.
 - Do not assume anything. If required context is missing or ambiguous, return `FAILED` instead of guessing.
-- **Turn budget:** If you have used 40 or more turns, stop further investigation and complete as much documentation work as possible in the remaining turns. Note any surfaces not addressed in `OUTSTANDING GAPS`.
+- **Turn budget:** If you have used 45 or more turns, stop further investigation and complete as much documentation work as possible in the remaining turns. Note any surfaces not addressed in `OUTSTANDING GAPS`.

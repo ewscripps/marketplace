@@ -26,7 +26,7 @@
 - **File discovery (find files by name or pattern):** Use native `Glob`.
 - **Content search (find text inside files):** Use native `Grep`. For symbolic code search (finding classes, methods, or callers), delegate to the `codebase-explorer` agent, which uses the Serena MCP server.
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
-- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
+- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
 
 **DESCRIPTION APPEND RULE:** Preserve the original Jira description exactly as retrieved in Q0. In Q4, append the final QA plan as a new terminal section at the bottom of that description. Do not edit, delete, reorder, reformat, or normalize any pre-existing description content. If an earlier QA plan section already exists, leave it untouched and append the new one after all existing content.
 
@@ -183,7 +183,7 @@ After reviewing the final QA plan, append it to the Jira issue description:
 - Append the QA plan as a new terminal markdown section with the heading `## Final QA Plan`.
 - The appended section must contain the final QA plan content from this phase: branch context, change summary, prerequisites, core manual QA scenarios, edge cases and negative scenarios, regression watch list, assumptions / open questions, and workflow limitations.
 - Insert the new section only at the bottom of the description. If the original description is non-empty, separate it from the appended section with exactly two newline characters.
-- Call `editJiraIssue` with the full updated description.
+- Call `jira_update_issue` with the full updated description.
 - Do not modify any text that existed before the appended `## Final QA Plan` section.
 
 If branch review had to be broadened or the user approved Jira-only planning, explicitly warn that confidence is reduced and explain why.

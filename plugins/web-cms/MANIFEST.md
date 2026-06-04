@@ -11,6 +11,10 @@ INTAKE (creates Jira cards)          EXECUTION (works Jira cards)
 /requirements-intake (R0-R6)  --->   /task-card PROJ-123 (T0-T13)
   Creates Epic or Task card          /epic-card PROJ-123 (E0-E11)
 
+/design-intake (R0-R6)        --->   /task-card PROJ-123 (T0-T13)
+  Creates Epic or Task card          /epic-card PROJ-123 (E0-E11)
+  (design-focused feature)
+
 /issue-intake (I0-I6)         --->   /bug-card PROJ-123 (B0-B15)
   Bug? Creates Bug card                OR
   Missing requirement?        --->   /requirements-intake (R0-R6)
@@ -52,6 +56,7 @@ The Jira card description is the interface between intake and execution:
 | Skill | Invocation | Phases | Output |
 |-------|-----------|--------|--------|
 | **requirements-intake** | `/requirements-intake` | R0-R6 | Epic or Task card in Jira |
+| **design-intake** | `/design-intake` | R0-R6 | Epic or Task card in Jira with design specifications (colors, typography, component states, accessibility) |
 | **issue-intake** | `/issue-intake` | I0-I6 | Bug card in Jira, or transitions to requirements-intake |
 | **code-review-intake** | `/code-review-intake` | CI0-CI5 | Code Review (Task) card in Jira |
 
@@ -59,9 +64,9 @@ The Jira card description is the interface between intake and execution:
 
 | Skill | Invocation | Phases | Input | Sub-agents Used |
 |-------|-----------|--------|-------|-----------------|
-| **task-card** | `/task-card PROJ-123` | T0-T13 | Task card description | codebase-explorer, plan-reviewer, implementation-reviewer, test-reviewer, documentation-reviewer |
-| **bug-card** | `/bug-card PROJ-123` | B0-B15 | Bug card description | codebase-explorer, plan-reviewer, implementation-reviewer, test-reviewer, documentation-reviewer |
-| **epic-card** | `/epic-card PROJ-123` | E0-E11 | Epic card description | codebase-explorer |
+| **task-card** | `/task-card PROJ-123` | T0-T13 | Task card description | codebase-explorer, area-mapper, plan-reviewer, implementation-reviewer, test-reviewer, documentation-reviewer |
+| **bug-card** | `/bug-card PROJ-123` | B0-B15 | Bug card description | codebase-explorer, area-mapper, plan-reviewer, implementation-reviewer, test-reviewer, documentation-reviewer |
+| **epic-card** | `/epic-card PROJ-123` | E0-E11 | Epic card description | codebase-explorer, area-mapper |
 | **code-review** | `/code-review PROJ-123` | CR0-CR11 | Code Review card description | review-analyst (4 or 5 parallel, depending on review type) |
 | **implementation-discovery** | `/implementation-discovery` | D0-D5 | User's build/change goal | codebase-explorer, area-mapper |
 | **mr-creation** | `/mr-creation` | M0-M6 | User input + repo state | None |
@@ -84,7 +89,7 @@ The Jira card description is the interface between intake and execution:
 
 **Execution skill direct Serena access:** `task-card` (T8), `bug-card` (B10), and `code-review` (CR5/CR6) declare Serena read tools and, for `task-card` and `bug-card`, symbol-aware write tools. This lets the orchestrator use `replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol`, `rename_symbol`, and `safe_delete_symbol` directly during implementation phases rather than falling back to text-level `Edit` for every code change. See the Serena-first editing rule in each workflow's implementation phase.
 
-**Serena project activation:** `task-card`, `bug-card`, `epic-card`, and `code-review` call `check_onboarding_performed` at the start of the workflow and `onboarding` if the project has not yet been activated. Serena's symbol and memory tools require this activation to be scoped to the current project directory.
+**Serena project activation:** `task-card`, `bug-card`, `epic-card`, and `code-review` check Serena's project-activation message at the start of the workflow and call `onboarding` if the project has not yet been activated. Serena's symbol and memory tools require this activation to be scoped to the current project directory.
 
 ## Detailed Flow: Feature Development (Happy Path)
 
@@ -105,8 +110,8 @@ The Jira card description is the interface between intake and execution:
    E4: Breakdown plan (decompose into ordered child tasks)
    E5: Await approval (in chat)
    E6: Create child tasks in Jira (Standard Task Template)
-   E7: Create integration branch + worktree
-   E8: Execute child tasks sequentially inline (T0-T13 per task), then remove the epic worktree
+   E7: Verify epic integration branch (the user supplies/creates the branch; no worktree)
+   E8: Execute child tasks sequentially inline (T0-T13 per task)
        Each child task runs T0-T13:
          T0: Transition to In Progress
          T1: Read task description
@@ -114,17 +119,17 @@ The Jira card description is the interface between intake and execution:
          T3: Clarifying questions
          T4: Implementation plan + plan-reviewer agent review
          T5: Await approval
-         T6: Create branch (from integration branch)
+         T6: Verify working branch (in epic mode, created from the integration branch)
          T7: Baseline verification
          T8: Core implementation + implementation-reviewer, test-reviewer, and documentation-reviewer loops
          T9: Post-implementation verification
-         T10: Commit + merge to integration branch
-         T11: User testing (skipped in epic mode -- handled at E9)
+         T10: User testing (skipped in epic mode -- handled at E9)
+         T11: Commit + push (in epic mode, also merge to the integration branch)
          T12: Summary of changes
-         T13: Cleanup (worktree + knowledge graph)
-   E9: User testing (end-to-end, after epic worktree cleanup)
+         T13: Cleanup (knowledge graph)
+   E9: User testing (end-to-end)
    E10: Epic summary
-   E11: Cleanup (worktree + knowledge graph)
+   E11: Cleanup (knowledge graph)
 
 3. User invokes /mr-creation
    M0-M6: Create GitLab MR for the integration branch
@@ -145,7 +150,11 @@ Execution skills consume these sections by name. Intake skills must produce the 
 - `## Overview` -- what and why
 - `## Context` -- background
 - `## Affected Areas` -- structured list: path, description, risk level
-- `## Acceptance Criteria` -- Gherkin (features) or outcome-based (tech debt/upkeep)
+- `## Patterns & Code References` -- patterns to follow, `path:line` code references, short snippets, integration points (or "None")
+- `## Non-Functional Requirements` -- performance, security/privacy, accessibility, compliance targets (or "None specified")
+- `## Data & Interface Changes` -- data model/migrations, API shapes, events/config (or "None")
+- `## Observability & Telemetry` -- logs/metrics/traces, alerts, prod success signal (or "None")
+- `## Acceptance Criteria` -- Gherkin for features (single fenced ` ```gherkin ` block, `Feature:`/`Scenario:`, every criterion a Scenario), outcome-based for maintenance
 - `## Dependencies` -- hard and soft
 - `## Scope` -- in scope / out of scope
 - `## Risks` -- risk register table
@@ -157,11 +166,33 @@ Execution skills consume these sections by name. Intake skills must produce the 
 - `## Overview` -- child-task specific what/why
 - `## Context` -- parent epic relationship plus child-task context
 - `## Affected Areas` -- structured list: path, description, risk level
-- `## Acceptance Criteria` -- task-specific criteria
+- `## Patterns & Code References` -- patterns/code references for this child (or "None")
+- `## Non-Functional Requirements` -- per-child NFR targets (or "N/A")
+- `## Data & Interface Changes` -- per-child data/interface contracts (or "None")
+- `## Observability & Telemetry` -- per-child instrumentation (or "None")
+- `## Acceptance Criteria` -- Gherkin for feature/behavioral children (fenced `Feature:`/`Scenario:`), outcome-based otherwise
 - `## Dependencies` -- hard and soft
 - `## Scope` -- child-task scope boundaries
 - `## Risks` -- task-specific risks or `N/A — managed in parent epic`
 - `## Open Items` -- unresolved questions
+
+### Design Cards (from design-intake)
+
+A design card uses the standalone Task-card section set above, plus design-specific
+sections inserted before `## Scope`:
+
+- `## Patterns & Code References` -- component-reuse/token/style conventions, `path:line` references, snippets (or "None")
+- `## Non-Functional Requirements` -- performance budget and compliance (accessibility has its own section), or "None specified"
+- `## Design Assets` -- links to Figma, screenshots, or HTML exports, or "None provided"
+- `## Design System` -- name/version of the component library, or "None / not applicable"
+- `## Visual Specifications` -- colors, typography, spacing, borders/shadows, iconography
+- `## Component States` -- per-component default/hover/active/focus/disabled/loading/error/empty
+- `## Responsive Behavior` -- breakpoint-by-breakpoint layout changes
+- `## Animation & Transitions` -- motion specs, or "No animation defined"
+- `## Accessibility Requirements` -- WCAG level, contrast, keyboard, screen-reader needs
+
+Execution skills consume these the same way as a standalone Task card; the extra
+sections are additive context for frontend implementation.
 
 ### Bug Cards (from issue-intake)
 
@@ -175,6 +206,7 @@ Execution skills consume these sections by name. Intake skills must produce the 
 - `## Severity` -- Critical/High/Medium/Low
 - `## Affected Areas` -- structured list from codebase analysis
 - `## Root Cause (if known)` -- from investigation or "Unknown"
+- `## Patterns & Code References` -- code paths/conventions for the fix, `path:line` references, snippets (or "None")
 - `## Fix Criteria` -- outcome-based acceptance criteria
 - `## Open Items` -- unresolved questions
 
@@ -190,7 +222,6 @@ Most intake and execution workflows use a session-scoped knowledge graph to accu
 - **Graph-backed execution workflows:** Graph is used within the session for state tracking; if resumed in a new session with an empty graph, reconstruct state from the Jira issue description and comment history before continuing
 - **Epic workflow:** Graph is the authoritative execution state map tracking child task completion; critical for resumability
 - **Cleanup required:** If a workflow uses a session-scoped knowledge graph, add a dedicated final cleanup phase after the last durable artifact has been created (for example: Jira description, Jira summary comment, review findings comment, or MR description). Perform graph cleanup there, not inline in an earlier phase.
-- **Worktree cleanup:** For workflows that create worktrees, the dedicated final cleanup phase should verify no workflow-owned worktree remains before the workflow is considered complete. If a worktree must be removed earlier for user testing, the cleanup phase should still verify that removal at the end.
 
 ## Serena Project Memory
 
@@ -226,6 +257,7 @@ your-project/
     skills/
       implementation-discovery/
       requirements-intake/
+      design-intake/
       issue-intake/
       code-review-intake/
       bug-card/
@@ -262,7 +294,7 @@ The plugin declares its own stdio MCP servers in `.mcp.json` and relies on Claud
 | Server | Purpose | Launcher |
 |---|---|---|
 | `atlassian` | Jira and Confluence operations (get/create/update issues, search, comments, page management, attachments, labels) | `uvx mcp-atlassian` |
-| `serena` | Symbolic code navigation (find_symbol, find_referencing_symbols, get_symbols_overview, search_for_pattern, replace_content, insert_after/before_symbol, rename_symbol, replace_symbol_body, safe_delete_symbol, read/write/list/edit/delete_memory, check_onboarding_performed, onboarding) | `uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide --project-from-cwd` |
+| `serena` | Symbolic code navigation (find_symbol, find_referencing_symbols, get_symbols_overview, search_for_pattern, replace_content, insert_after/before_symbol, rename_symbol, replace_symbol_body, safe_delete_symbol, read/write/list/edit/delete_memory, onboarding, initial_instructions) | `uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide --project-from-cwd` |
 | `gitlab` | GitLab repo operations (create_branch, create_issue, create_merge_request, create_or_update_file, create_repository, fork_repository, get_file_contents, push_files, search_repositories) | `npx -y gitlab-mcp` |
 | `memory` | Knowledge-graph memory (add_observations, create_entities, create_relations, read_graph, etc.) | `npx -y @modelcontextprotocol/server-memory` |
 | `sequentialthinking` | Sequential thinking helper | `npx -y @modelcontextprotocol/server-sequential-thinking` |

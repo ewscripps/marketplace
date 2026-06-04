@@ -23,7 +23,7 @@
 - **File discovery (find files by name or pattern):** Use native `Glob`.
 - **Content search (find text inside files):** Use native `Grep`. For symbolic code search (finding classes, methods, or callers), delegate to the `codebase-explorer` agent, which uses the Serena MCP server.
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
-- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
+- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
@@ -44,30 +44,36 @@
 
 1. Introduce yourself and briefly explain what this workflow will do and what to expect (phases, approvals, end result).
     
-2. Use `AskUserQuestion` for the first question, then the second question, each as a separate call:
-    
+2. Gather context in this order:
+
+   **a. Review type and mode (via `AskUserQuestion`, one call each):**
     - Review type: `AskUserQuestion` (Header: `Review Type`, Question: `What type of work is being reviewed?`, Options: `Release` — a versioned release across multiple work items, `Epic` — all tasks under an epic, `Task` — a single task or feature, `Bug` — a bug fix)
     - Review mode: `AskUserQuestion` (Header: `Review Mode`, Question: `What kind of review is this?`, Options: `Diff review (Recommended)` — reviewing changes between branches, `Implementation review` — deep dive into an existing implementation without diffing branches)
-3. Based on the answers, continue gathering context using `AskUserQuestion`, one question per call in sequence.
-    
-    **All review types:**
-    
+
+   **b. Review goals — ask conversationally, not via `AskUserQuestion`.**  
+   The `AskUserQuestion` free-text field is cramped and discourages detail; a conversational prompt gives the user the full prompt input to write as much as they need. Send this message, then **end your turn and wait** for the user's reply:
+
+   *"Describe the goals of this review. What should the reviewer verify or pay close attention to? Include any background on the change — what it does, why it was made, and what you're most concerned about. Known risks, tricky areas, or non-obvious behavior are especially useful. The more context you provide, the more targeted the review will be."*
+
+   **c. Sufficiency check.** Before continuing, assess whether the review goals give the reviewer enough to work with. If the goals are too vague (e.g., "just review the code" with no context), ask 1–2 targeted follow-up questions to surface the most important verification targets or concerns. If the goals are already clear, proceed immediately.
+
+   **d. Remaining structured questions (via `AskUserQuestion`, one call per question):**
+
+   **All review types:**
     - What branch contains the work to be reviewed?
     - **Diff Review only:** What is the default branch to diff against? (e.g., main, master, develop)
     - **Implementation Review only:** What is the implementation scope? (List the files, modules, or services to review.)
-    - What are the goals of this review — what should the reviewer verify or pay particular attention to?
     - Are there any known risks or areas of concern the reviewer should focus on?
     - Has a Jira card already been created for this code review? If so, what's the issue key?
     
-    **Release only (ask instead of Jira issue key):**
-    
+   **Release only (ask instead of Jira issue key):**
     - What is the name of the release? (e.g., v2.4.0, Q2 Release, Sprint 42)
     - What Jira project does this release belong to? (e.g., PROJ)
-    
-    **Epic, Task, and Bug only:**
-    
+
+   **Epic, Task, and Bug only:**
     - What is the Jira issue key for the item being reviewed? (e.g., PROJ-123)
-4. After all questions are answered, summarize the gathered context back to the user.
+
+3. After all questions are answered, summarize the gathered context back to the user.
     
 
 > **REQUIRED:** The following context must be confirmed before proceeding:
@@ -78,7 +84,7 @@
 > - Branch to Review
 > - Default Branch (Diff Review only)
 > - Implementation Scope (Implementation Review only)
-> - Review Goals
+> - Review Goals (capture in full — do not summarize or truncate the user's input)
 > - Known Risks or Areas of Concern (description, or explicitly "none identified")
 > - Existing Jira Card for this review (issue key, or explicitly "none")
 
@@ -320,20 +326,20 @@ Omit this field for Task and Bug reviews.]
 
     **API notes for non-standard fields:**
     - **Priority:** Set via `additional_fields`: `{"priority": {"name": "Medium"}}` (substituting the confirmed priority name: Critical, High, Medium, or Low).
-    - **Epic Link:** Set via `additional_fields`: `{"epicKey": "EPIC-KEY"}` on `createJiraIssue`. Do not use `createIssueLink` for epic links — that creates a lateral link, not an epic association. Only include this field if the user confirmed an epic.
-    - **Labels:** Set via `additional_fields`: `{"labels": ["code-review", "reviewtype"]}` on `createJiraIssue`.
+    - **Epic Link:** Set via `additional_fields`: `{"epicKey": "EPIC-KEY"}` on `jira_create_issue`. Do not use `jira_create_issue_link` for epic links — that creates a lateral link, not an epic association. Only include this field if the user confirmed an epic.
+    - **Labels:** Set via `additional_fields`: `{"labels": ["code-review", "reviewtype"]}` on `jira_create_issue`.
 
 3. **Update-or-create decision:**
-    - **If an existing Jira card was provided in CI0:** Update that card's description using `editJiraIssue` with the approved Review Details. Do not create a new issue.
-    - **If no existing card was provided:** Create a new Jira issue using `createJiraIssue` with the approved Review Details. Do not perform a follow-up description update solely to add execution instructions.
+    - **If an existing Jira card was provided in CI0:** Update that card's description using `jira_update_issue` with the approved Review Details. Do not create a new issue.
+    - **If no existing card was provided:** Create a new Jira issue using `jira_create_issue` with the approved Review Details. Do not perform a follow-up description update solely to add execution instructions.
 
-4. **Post-creation linking (Epic / Task / Bug only):** After the issue is created, link it to the Jira issue being reviewed by calling `createIssueLink` with `link_type: "Relates to"`, `inward_issue_key` set to the new review issue's key, and `outward_issue_key` set to the reviewed issue's key. Do not attempt to set linked issues during `createJiraIssue` — that tool does not support it.
+4. **Post-creation linking (Epic / Task / Bug only):** After the issue is created, link it to the Jira issue being reviewed by calling `jira_create_issue_link` with `link_type: "Relates to"`, `inward_issue_key` set to the new review issue's key, and `outward_issue_key` set to the reviewed issue's key. Do not attempt to set linked issues during `jira_create_issue` — that tool does not support it.
 
 > **REQUIRED: Review the full issue description before presenting.** Verify Review Details section exactly matches CI4 output verbatim, no workflow instructions or skill-invocation text were embedded, the summary follows the specified format, the issue type is set to Task, and the linked issue is correct (Epic / Task / Bug only).
 
 > **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `CI5 Approval`, options: `Approve and proceed (Recommended)` (description: "Content is accurate — create or update the Jira issue") / `Request changes` (description: "Something needs correction before creating"). Do not create or update the Jira issue until approved.
 
-**Post-creation: Additional Linking** After the Jira issue has been created or updated, use `AskUserQuestion` with header `Additional Links`, options: `Yes — I'll provide an issue key` (description: "Link this review to another Jira issue via Other") / `No additional links` (description: "Skip this step"). If the user provides a key, call `getJiraIssue` to confirm it exists, then call `createIssueLink` with `link_type: "Relates to"` to create the link. Confirm success.
+**Post-creation: Additional Linking** After the Jira issue has been created or updated, use `AskUserQuestion` with header `Additional Links`, options: `Yes — I'll provide an issue key` (description: "Link this review to another Jira issue via Other") / `No additional links` (description: "Skip this step"). If the user provides a key, call `jira_get_issue` to confirm it exists, then call `jira_create_issue_link` with `link_type: "Relates to"` to create the link. Confirm success.
 
 ---
 

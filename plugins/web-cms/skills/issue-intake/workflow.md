@@ -25,9 +25,9 @@
 - **File discovery (find files by name or pattern):** Use native `Glob`.
 - **Content search (find text inside files):** Use native `Grep`. For symbolic code search (finding classes, methods, or callers), delegate to the `codebase-explorer` agent, which uses the Serena MCP server.
 - **Directory operations (list, metadata, move, mkdir):** Use Bash (`ls`, `stat`, `mv`, `mkdir -p`).
-- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git worktree`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
+- **Git:** Use Bash for all git operations (`git status`, `git diff`, `git log`, `git push`, `git pull`, `git merge`, `git remote`, `git stash`, `git rebase`, etc.) and for running build, test, and lint commands.
 
-**SERENA PROJECT ACTIVATION:** Before I0, call `check_onboarding_performed`. If it reports that onboarding has not been performed for this project, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`) and any symbol-aware operations invoked by the `codebase-explorer` agent depend on this being done. Do this once at the start of the workflow; do not repeat it between phases.
+**SERENA PROJECT ACTIVATION:** Before I0, check Serena's project-activation message (emitted on connect via `--project-from-cwd`); if it reports that onboarding has not been performed, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`) and any symbol-aware operations invoked by the `codebase-explorer` agent depend on this being done. Do this once at the start of the workflow; do not repeat it between phases.
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
@@ -49,7 +49,7 @@
    - **Observations:** `phase: <id>`, `skill: issue-intake`, `jira_key: <key or slug>`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. At the I4 gate only: `classification: <Bug or Missing Requirement>`, `severity: <level>` (Bug path only).
    - **Relations:** `BELONGS_TO` → the `work_item` entity for this issue; `SUPERSEDES` → prior `phase_handoff` for this work item (if any); `REFERENCES` → `classification` node, `code_evidence` node, and `classification_signal` nodes from I3.
 3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
-4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, work item key, one-line decision summary including classification verdict, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, and resume at `next_phase`. If the user types a different message instead, handle it normally.
+4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, work item key, one-line decision summary including classification verdict, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, and resume at `next_phase`. Before executing the resumed phase, **re-read that phase's section in this skill's `workflow.md`** so its full instructions survive compaction — in particular, any phase that asks the user clarifying or structured questions MUST use `AskUserQuestion` (per the Clarification Rule), never plain text. If the user types a different message instead, handle it normally.
 
 **Cleanup:** Include all `phase_handoff` entities for this work item (prefix `phase-handoff-<work-item-key>-`) in the I6 cleanup enumeration alongside other session-scoped entities.
 
@@ -65,16 +65,22 @@
 
 1. Introduce yourself and briefly explain what this workflow will do and what to expect (phases, classification, end result). Skip this step if called with pre-populated context — the user is already in context from the parent workflow.
     
-2. Ask the following questions using `AskUserQuestion`, one call per question in sequence. Wait for each response before asking the next. For closed-enum questions, use the specific options below. For open-ended free-text questions, provide 2–3 reasonable options covering common answers (Other is always available for typed input).
-    
-    **Behavior description:**
-    
-    - Issue title — open-ended; accept any level of specificity
-    - What happened — open-ended walkthrough of the observed behavior
-    - What should have happened — open-ended expected behavior
-    - Has this ever worked — use `AskUserQuestion` (Header: `Prior Behavior`, Question: `Has this ever worked correctly before, to your knowledge?`, Options: `Yes — it used to work`, `No — it has never worked`, `Unknown`)
-    
-    **Reproduction:**
+2. Gather context in this order. For closed-enum questions, use the specific options below. For remaining open-ended questions, provide 2–3 reasonable options (Other is always available for typed input).
+
+   **a. Issue title (via `AskUserQuestion`, open-ended):** accept any level of specificity.
+
+   **b. Observed and expected behavior — ask conversationally, not via `AskUserQuestion`.**  
+   The `AskUserQuestion` free-text field is cramped and discourages detail; a conversational prompt gives the user the full prompt input to write as much as they need. Send this message, then **end your turn and wait** for the user's reply:
+
+   *"Describe what happened and what you expected instead. Walk me through the full picture — what you were doing, what the system did, what it should have done, and any other context that would help explain the difference. The more detail you include, the better the investigation will go."*
+
+   **c. Sufficiency check.** Before continuing, assess whether the observed/expected gap is clearly described. A useful description identifies a specific behavior that occurred, a specific expectation that wasn't met, and at least some context. If the observed or expected behavior is absent or too vague to investigate (e.g., "it's broken" with no detail), ask 1–2 targeted follow-up questions to close the gap. If the description is already sufficient, proceed immediately.
+
+   **d. Has this ever worked (via `AskUserQuestion`):** `AskUserQuestion` (Header: `Prior Behavior`, Question: `Has this ever worked correctly before, to your knowledge?`, Options: `Yes — it used to work`, `No — it has never worked`, `Unknown`)
+
+   **e. Remaining structured questions (via `AskUserQuestion`, one call per question):**
+
+   **Reproduction:**
     
     - Can it be reproduced — `AskUserQuestion` (Header: `Reproducible?`, Question: `Can you reliably reproduce this issue?`, Options: `Yes — I can reproduce it consistently`, `Intermittent — it happens sometimes`, `No — I cannot reproduce it`)
     - Reproduction rate — `AskUserQuestion` (Header: `Rate`, Question: `How often does it occur?`, Options: `Every time (Recommended for consistent bugs)`, `Intermittently — roughly [frequency]`, `Unknown`) — only ask if intermittent
@@ -95,15 +101,15 @@
     - Workaround — `AskUserQuestion` (Header: `Workaround`, Question: `Is there a workaround available?`, Options: `Yes — I'll describe it`, `No — there is no workaround`, `Unknown`)
     - Reported by — open-ended: name and team
     - Related issue / epic — `AskUserQuestion` (Header: `Related Jira`, Question: `Is there a related Jira Epic or issue this should be linked to?`, Options: `Yes — I'll provide the key`, `No`)
-    - Existing card — `AskUserQuestion` (Header: `Existing Card`, Question: `Has a Jira card already been created for this issue?`, Options: `Yes — I'll provide the key`, `No`)
+    - Existing card — **Before asking**, run `git rev-parse --abbrev-ref HEAD` and apply a regex match for `[A-Z]+-[0-9]+` against the branch name. If a candidate key is found: `AskUserQuestion` (Header: `Existing Card`, Question: `Has a Jira card already been created for this issue?`, Options: `Yes, <extracted key>` (description: "Use <extracted key> as the existing Jira card for this issue") / `Use a different key` (description: "Type the correct issue key in the Other field") / `No`). If no candidate is found: `AskUserQuestion` (Header: `Existing Card`, Question: `Has a Jira card already been created for this issue?`, Options: `Yes — I'll provide the key`, `No`).
 3. After all questions are answered, summarize the gathered context back to the user in a clear, structured format.
     
 
 > **REQUIRED:** The following context must be confirmed before proceeding:
 > 
 > - Issue Title
-> - Observed Behavior (what happened)
-> - Expected Behavior (what should happen)
+> - Observed Behavior (capture in full — do not summarize or truncate the user's input)
+> - Expected Behavior (capture in full — do not summarize or truncate the user's input)
 > - Previously Worked (yes / no / unknown)
 > - Reproduction Steps (or "intermittent — no consistent repro steps")
 > - Reproduction Rate (always / intermittent / unknown)
@@ -146,6 +152,11 @@
 ### I2 — Codebase Analysis
 
 **Objective:** Determine what the codebase currently does in the affected area — whether logic exists for the expected behavior or not. This is the primary input to classification in I4.
+
+**DISCOVERY PRE-CHECK:** Before spawning codebase-explorer agents, call `read_graph` and check for any entity whose name starts with `discovery_summary-`. A prior `/implementation-discovery` run may already have mapped the area this issue touches.
+1. **If one or more are present:** briefly describe each by `topic` and `chosen_approach`, then use `AskUserQuestion` (Header: `Discovery Reuse`, Question: `A prior implementation-discovery session explored related code. Use its findings to seed this investigation?`, Options: `Yes — reuse the discovery findings`, `No — investigate fresh`). If multiple exist, list them and let the user pick one or decline.
+2. **If the user reuses one:** add `discovery_confirmed: true` to that `discovery_summary-<slug>` entity. Re-link its `exploration` entities to this issue's `work_item-<key>` node with a `for` relation, skipping any finding entity marked `superseded: true`. Seed the `affected_area` rollup and the I4 `code_evidence` input from the discovery's `affected_areas` and `synthesis_chosen` — treat these as a starting map of *where the expected behavior would live*, not a conclusion about the defect. Then run Agent Actions steps 1–8 focused on confirming whether the code discovery described actually exists and behaves correctly, rather than re-exploring from scratch. Discovery is approach-oriented, so still verify live behavior against the observed/expected gap before concluding in I4.
+3. **If the user declines (or none exist):** proceed with normal investigation.
 
 > **USE SEQUENTIAL THINKING:** Before presenting the codebase analysis, invoke the `sequentialthinking` tool. Based on the explorer findings, systematically evaluate the evidence of whether code exists for the expected behavior. A false negative here — concluding code doesn't exist because it wasn't found quickly — is the most common source of misclassification in I4. Work through the evidence, identify any gaps that need further investigation, and resolve them before concluding. Do not present the analysis until the reasoning is complete.
 
@@ -285,8 +296,9 @@ Follow the path matching the confirmed classification from I4.
 **Agent Actions:**
 
 1. Write the fix criteria: outcome-based acceptance criteria describing the state that must be true after the bug is fixed -- one criterion per discrete behavior to restore.
-2. Construct the full issue description using the Bug Description Structure below. The description must contain only the structured bug context. Do not embed workflow instructions, skill-invocation text, or placeholder tokens.
-3. Populate the following fields:
+2. **Assemble the Patterns & Code References section** from the I2 exploration subgraph: collect the `pattern`, `evidence` (file/line_range/claim), and `integration_point` entities relevant to the fix (skip `superseded: true`). For the 1–3 most important, use `Read` to extract a ≤ ~15-line snippet from the referenced range, each prefixed with a `// path:line_range` comment. If nothing beyond the Affected Areas applies, write "None — none beyond the affected areas above."
+3. Construct the full issue description using the Bug Description Structure below. The description must contain only the structured bug context. Do not embed workflow instructions, skill-invocation text, or placeholder tokens.
+4. Populate the following fields:
 
 |Field|Source|
 |---|---|
@@ -301,12 +313,12 @@ Follow the path matching the confirmed classification from I4.
 
     **API notes for non-standard fields:**
     - **Priority:** Set via `additional_fields`: `{"priority": {"name": "High"}}` (substituting the actual priority name: Critical, High, Medium, or Low).
-    - **Labels:** Set via `additional_fields`: `{"labels": ["label1", "label2"]}` on `createJiraIssue`.
-    - **Epic Link:** Set via `additional_fields`: `{"epicKey": "EPIC-KEY"}` on `createJiraIssue`. Do not use `createIssueLink` for epic links — that creates a lateral link, not an epic association. Only include this field if the user confirmed an epic.
+    - **Labels:** Set via `additional_fields`: `{"labels": ["label1", "label2"]}` on `jira_create_issue`.
+    - **Epic Link:** Set via `additional_fields`: `{"epicKey": "EPIC-KEY"}` on `jira_create_issue`. Do not use `jira_create_issue_link` for epic links — that creates a lateral link, not an epic association. Only include this field if the user confirmed an epic.
 
-4. **Update-or-create decision:**
-    - **If an existing Jira card was provided in I0:** Update the card's description using `editJiraIssue` with the approved bug description. Do not create a new issue.
-    - **If no existing card was provided:** Create a new Jira Bug issue using `createJiraIssue` with the approved bug description. Do not perform a follow-up description update solely to add execution instructions.
+5. **Update-or-create decision:**
+    - **If an existing Jira card was provided in I0:** Update the card's description using `jira_update_issue` with the approved bug description. Do not create a new issue.
+    - **If no existing card was provided:** Create a new Jira Bug issue using `jira_create_issue` with the approved bug description. Do not perform a follow-up description update solely to add execution instructions.
 
 **Bug Description Structure:**
 
@@ -354,6 +366,19 @@ file/module/service path, brief description of relevance, and risk level.]
 ## Root Cause (if known)
 [Known or suspected root cause from I2 and I3. If unknown: "Unknown -- investigation required."]
 
+## Patterns & Code References
+[Relevant code paths and conventions for the fix, from the I2 `pattern`/`evidence`/
+`integration_point` entities. References are durable; snippets are illustrative and may
+drift — the referenced file is source of truth. "None — none beyond the affected areas above." if N/A.]
+**Patterns to follow:**
+- **[name]** — [description]. Canonical example: `[path:line]`.
+**Code references:**
+- `[path:line_range]` — [what to mirror / where the buggy path lives]
+**Illustrative snippets (1–3 most important only):** each in a fenced code block, prefixed
+with a `// [path:line_range]` comment, ≤ ~15 lines, read from the referenced range.
+**Integration points:**
+- [with_area] via [interface] — [description] ([direction]), or "None identified."
+
 ## Fix Criteria
 [Outcome-based criteria -- copy verbatim]
 
@@ -368,9 +393,9 @@ file/module/service path, brief description of relevance, and risk level.]
 
 **Post-creation:**
 
-1. **Link related issues from I1:** For each related issue identified in I1, call `createIssueLink` with `link_type: "Relates to"`, `inward_issue_key` set to the new bug's key, and `outward_issue_key` set to the related issue's key. Do not attempt to set linked issues during `createJiraIssue` — that tool does not support it.
+1. **Link related issues from I1:** For each related issue identified in I1, call `jira_create_issue_link` with `link_type: "Relates to"`, `inward_issue_key` set to the new bug's key, and `outward_issue_key` set to the related issue's key. Do not attempt to set linked issues during `jira_create_issue` — that tool does not support it.
 
-2. **Ask for additional links:** Use `AskUserQuestion` (Header: `Additional Links`, Question: `Is there an existing Jira issue this bug should be linked to beyond the ones already linked?`, Options: `Yes — I'll provide the issue key` — type the key using the Other input, `No — no additional links needed`). If the user provides a key, call `getJiraIssue` to confirm it exists, then call `createIssueLink` with `link_type: "Relates to"` to create the link. Confirm success.
+2. **Ask for additional links:** Use `AskUserQuestion` (Header: `Additional Links`, Question: `Is there an existing Jira issue this bug should be linked to beyond the ones already linked?`, Options: `Yes — I'll provide the issue key` — type the key using the Other input, `No — no additional links needed`). If the user provides a key, call `jira_get_issue` to confirm it exists, then call `jira_create_issue_link` with `link_type: "Relates to"` to create the link. Confirm success.
 
 3. The bug path cleanup happens in I6 after the durable Jira record is complete. Do not clear the session-scoped graph before that cleanup phase.
 
@@ -389,7 +414,7 @@ file/module/service path, brief description of relevance, and risk level.]
 
 |R0 Field|Source|
 |---|---|
-|Work Type|Feature (default) — use `AskUserQuestion` (Header: `Work Type`, Question: `What type of work is this? Feature is the default for missing requirements.`, Options: `Feature (Recommended)` — new capability or user-facing behavior, `Tech Debt` — improving existing code, `Research` — investigating a question, `Upkeep` — maintenance or compliance work)|
+|Work Type|Feature (default) — use `AskUserQuestion` (Header: `Work Type`, Question: `What type of work is this? Feature is the default for missing requirements.`, Options: `Feature (Recommended)` — new capability or user-facing behavior, `Maintenance` — improving, fixing, updating, or maintaining existing code (tech debt, refactors, dependency updates, compliance, upkeep))|
 |Title or Name|Issue title from I0|
 |Description / Problem Statement|Observed behavior + expected behavior from I0|
 |Requested By / Identified By|Reported By from I0|
@@ -400,7 +425,7 @@ file/module/service path, brief description of relevance, and risk level.]
 5. Present the pre-populated R0 summary to the user and confirm it before proceeding — this serves as the R0 approval gate.
 6. After the user confirms the pre-populated R0 summary, perform the Requirements Intake R0 post-approval action by writing the `work_item` node to the knowledge graph using the confirmed work type and context. This completes the R0 graph initialization before continuing.
 7. Resume the Requirements Workflow from **R1**, following all phases (R1 through R6) exactly as written. All R1–R6 execution rules, approval gates, and self-review requirements apply in full.
-8. After the Jira issue has been created or updated at the end of R5, use `AskUserQuestion` (Header: `Additional Links`, Question: `Is there an existing Jira issue this should be linked to?`, Options: `Yes — I'll provide the issue key` — type the key using the Other input, `No — no additional links needed`). If the user provides a key, call `getJiraIssue` to confirm it exists, then call `createIssueLink` with `link_type: "Relates to"` to create the link. Confirm success.
+8. After the Jira issue has been created or updated at the end of R5, use `AskUserQuestion` (Header: `Additional Links`, Question: `Is there an existing Jira issue this should be linked to?`, Options: `Yes — I'll provide the issue key` — type the key using the Other input, `No — no additional links needed`). If the user provides a key, call `jira_get_issue` to confirm it exists, then call `jira_create_issue_link` with `link_type: "Relates to"` to create the link. Confirm success.
 9. The missing-requirement path cleanup happens in I6 after the carried-over requirements workflow is complete. The Requirements Intake workflow clears the shared session-scoped graph at its cleanup phase; do not finish this path with any issue-intake state left in the graph.
 
 > **APPROVAL GATE — FULL STOP.** Present the pre-populated R0 context summary. Use `AskUserQuestion` (Header: `I5B Approval`, Question: `Are all fields accurate and is the Work Type correct?`, Options: `Approve and proceed (Recommended)`, `Request changes`). Only proceed to R1 after the user approves.

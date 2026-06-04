@@ -1,6 +1,6 @@
 ---
 name: requirements-intake
-description: Execute the Requirements Intake workflow to define a new feature, tech debt item, research task, or upkeep task. Use when starting a new piece of work that needs to be formally defined, OR when an existing Jira task or epic needs its description fleshed out. Invoke without arguments to create a new card; invoke with a Jira key (e.g. /requirements-intake PROJ-123) to fill out an existing card and, if it's an epic, its child tasks too. Drives the complete R0-R6 process including stakeholder Q&A, codebase analysis, acceptance criteria, and Jira issue creation or update.
+description: Execute the Requirements Intake workflow to define a new feature or maintenance item. Use when starting a new piece of work that needs to be formally defined, OR when an existing Jira task or epic needs its description fleshed out. Invoke without arguments to create a new card; invoke with a Jira key (e.g. /requirements-intake PROJ-123) to fill out an existing card and, if it's an epic, its child tasks too. Drives the complete R0-R6 process including stakeholder Q&A, codebase analysis, acceptance criteria, and Jira issue creation or update.
 user-invocable: true
 argument-hint: "[jira-key]"
 disable-model-invocation: false
