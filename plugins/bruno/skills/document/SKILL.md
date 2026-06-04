@@ -56,6 +56,9 @@ Note the format in the output header.
 
 **YAML format** — environments may be defined inline in `opencollection.yml` under `config.environments[]`, OR as separate files in `environments/`:
 
+- If `config.environments[]` is present in `opencollection.yml` (already read in Step 3), extract environments from that array directly — no additional file read needed.
+- If not present inline, find separate environment files:
+
 ```
 find <collection-root>/environments -name "*.yml" 2>/dev/null | sort
 ```
@@ -148,7 +151,7 @@ Output as structured markdown:
 
 # `<Collection Name>` — API Reference
 
-> OpenCollection YAML v`<opencollection>` · v`<info.version>` · `<N>` requests · `<N>` folders
+> OpenCollection YAML v`<opencollection>` · v`<info.version>` · `<N>` requests · `<N>` folders *(for legacy .bru collections, omit the OpenCollection version and label as "Bruno legacy .bru")*
 
 ## Environments
 

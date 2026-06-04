@@ -24,6 +24,8 @@ find . -name "bruno.json" -not -path "*/node_modules/*" -maxdepth 6
 
 Prefer `opencollection.yml` (OpenCollection YAML). Fall back to `bruno.json` (legacy `.bru` format).
 
+- One result → use it. Multiple → AskUserQuestion to pick. None → inform the user no Bruno collection was found and stop.
+
 Note the detected format — YAML collections use the full spec schema; legacy collections use `.bru` block syntax. The rest of this skill applies to the YAML format. For legacy collections, generate `.bru` syntax instead.
 
 ## Step 2: Select a Target Folder
@@ -129,6 +131,7 @@ Use AskUserQuestion:
 - **SPARQL** — `type: sparql`
 - **Form URL-encoded** — `type: form-urlencoded`
 - **Multipart form** — `type: multipart-form`
+- **GraphQL** — not a body type in the OpenCollection v1.0.0 spec; use the `GraphQLRequest` item type instead (set `info.type: graphql` and use the `graphql:` protocol block rather than an `http:` body)
 
 **Body block shapes — `type` is a discriminator, content goes in `data`:**
 

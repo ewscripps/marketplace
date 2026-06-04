@@ -26,6 +26,8 @@ find . -name "bruno.json" -not -path "*/node_modules/*" -maxdepth 6
 
 Prefer `opencollection.yml`. Fall back to `bruno.json`.
 
+- One result → use it. Multiple → AskUserQuestion to pick. None → inform the user no collection was found and stop.
+
 ## Step 2: Select the Target Scope
 
 Use AskUserQuestion:
