@@ -1,6 +1,6 @@
 ---
 name: test
-description: Add, generate, or run tests for Bruno requests. Scaffolds declarative assertions and Chai test scripts in OpenCollection YAML format, then optionally executes them with bru run.
+description: Add, generate, or run tests for Bruno requests using the OpenCollection YAML v1.0.0 schema — correct runtime.scripts (type:tests) and runtime.assertions (expression/operator/value) structure.
 user-invocable: true
 argument-hint: '[path/to/request.yml | path/to/folder/]'
 allowed-tools: Bash(bru *), Bash(find *), Read, Edit, Glob, Grep, AskUserQuestion
@@ -8,11 +8,14 @@ allowed-tools: Bash(bru *), Bash(find *), Read, Edit, Glob, Grep, AskUserQuestio
 
 # Bruno Testing Assistant
 
-Add tests to existing Bruno requests, generate Chai test suites from request/response context, or run existing tests and interpret failures. Uses OpenCollection YAML format by default.
+Add, generate, or run tests for Bruno requests conforming to the OpenCollection YAML v1.0.0 spec
+(`https://schema.opencollection.com/opencollection/v1.0.0.json`).
+
+Tests and assertions live under the `runtime` top-level key — **not** under `http`. Scripts are typed array entries; assertions are structured objects with `expression`, `operator`, and optional `value`.
 
 ## Step 1: Locate the Collection Root
 
-Check `$ARGUMENTS` — if it points to a specific `.yml` request file, use it directly (skip to Step 3). If it points to a folder, use that folder as the target scope.
+Check `$ARGUMENTS` — if it points to a specific `.yml` request file, use it directly (skip to Step 3). If it points to a folder, use that folder as the scope.
 
 Otherwise, find the collection root (run in parallel):
 
@@ -23,125 +26,134 @@ find . -name "bruno.json" -not -path "*/node_modules/*" -maxdepth 6
 
 Prefer `opencollection.yml`. Fall back to `bruno.json`.
 
-- One result → use its parent as the collection root.
-- Multiple → use AskUserQuestion to pick.
-- None → inform the user no collection was found and stop.
-
 ## Step 2: Select the Target Scope
 
-Ask the user what to work on (single-select via AskUserQuestion):
+Use AskUserQuestion:
 
-- **A single request** — show a numbered list of all `.yml` request files in the collection
+- **A single request** — show a numbered list of all `.yml` request files
 - **All requests in a folder** — show a numbered list of subfolders
 - **The entire collection** — all request files
 
-For single request or folder, present up to 15 options. Note the total count if more exist.
+Present up to 15 options. Note the total count if more exist.
 
 ## Step 3: Choose Testing Mode
 
-Use AskUserQuestion to ask what the user wants to do:
+Use AskUserQuestion:
 
-- **Add tests to a request** — generate and write tests for the selected target
-- **Run existing tests** — execute `bru run` with `--tests-only` for the selected target
-- **Review and fix failing tests** — run tests, interpret failures, and propose fixes
+- **Add tests to requests** — generate and write tests for the selected scope
+- **Run existing tests** — execute `bru run --tests-only`
+- **Review and fix failing tests** — run tests, diagnose failures, apply fixes
 
 ---
 
-## Mode A: Add Tests to a Request
+## Mode A: Add Tests
 
 For each targeted request file:
 
 ### A1. Read the Request
 
-Read the `.yml` file. Extract:
-- `http.method` and `http.url`
-- `http.auth.mode`
-- `http.body.mode` and body content
-- Existing `http.tests` (declarative) and `http.script.tests` (Chai script) — if any
+Read the `.yml` file. Locate:
 
-If tests already exist, show them to the user and use AskUserQuestion to ask:
-- **Extend existing tests** — add new tests while keeping existing ones
-- **Replace existing tests** — start fresh
-- **Skip this request** — leave it unchanged
+- `info.name` — request name
+- `http.method` and `http.url`
+- `http.auth.type` — auth mode
+- `http.body.type` — body type
+- `runtime.scripts` — look for entries with `type: "tests"` (Chai script)
+- `runtime.assertions` — existing declarative assertions
+
+If tests already exist, show them and use AskUserQuestion to ask:
+- **Extend** — keep existing, add new ones
+- **Replace** — start fresh
+- **Skip** — leave unchanged
 
 ### A2. Generate Tests
 
-Analyze the request and propose appropriate tests. Use the method and URL as context:
+Propose tests based on `http.method`:
 
-**Always include:**
-- Status code check (match the expected code for the method — 200 for GET, 201 for POST, 204 for DELETE, etc.)
+**Always:**
+- Status code matches the expected code for the method (200 GET, 201 POST, 204 DELETE, etc.)
 - Response time under 2000ms
 
-**For GET requests:**
-- Response body is defined / not empty
-- Required top-level fields exist in the response
-- Pagination fields (if URL has `page` or `limit` params)
+**GET:** response body defined, required top-level fields exist, pagination fields if params include `page`/`limit`
 
-**For POST/PUT/PATCH requests:**
-- Created/updated resource has an `id` field
-- Returned object includes the submitted fields
-- Response `Content-Type` contains `application/json`
+**POST/PUT/PATCH:** returned resource has `id`, submitted fields are echoed back, `Content-Type` response header contains `application/json`
 
-**For DELETE requests:**
-- Body is empty or returns a success confirmation
-- Status is 200 or 204
+**DELETE:** body empty or success confirmation, status 200 or 204
 
-**For authenticated requests:**
-- Include a note that a 401 test can be run by omitting the token (suggest doing so in a separate "negative test" request)
+**Authenticated requests:** note that a 401 negative test should be a separate request file
 
-**For requests with JSON bodies:**
-- Parse the body and suggest field-level assertions on the response
+**JSON body:** suggest field-level response assertions based on the submitted payload shape
 
-### A3. Choose Test Style
+### A3. Choose Test Format
 
-Use AskUserQuestion to select the test format:
+Use AskUserQuestion:
 
-- **Declarative assertions** — simple `name` + `assert` expression pairs under `http.tests`; best for straightforward status/field checks
-- **Chai test script** — full `test("...", function() { expect(...) })` blocks under `http.script.tests`; best for complex logic, loops, or extraction
+- **Declarative assertions** — entries under `runtime.assertions`; best for simple status/field checks
+- **Chai test script** — `type: tests` entry under `runtime.scripts`; best for complex logic
+- **Both** — use assertions for simple checks, test script for complex ones
 
-**Declarative format:**
+**Declarative assertions — `expression` and `operator` are REQUIRED; `value` is optional:**
+
 ```yaml
-  tests:
-    - name: "Status is 200"
-      assert: "res.status === 200"
-    - name: "Response has id"
-      assert: "res.body.id !== undefined"
-    - name: "Response time under 2s"
-      assert: "res.getResponseTime() < 2000"
+runtime:
+  assertions:
+    - expression: "response.status"
+      operator: "equals"
+      value: "200"
+    - expression: "response.body.id"
+      operator: "isDefined"
+    - expression: "response.body.name"
+      operator: "isString"
+    - expression: "response.time"
+      operator: "lt"
+      value: "2000"
+    - expression: "response.headers.content-type"
+      operator: "contains"
+      value: "application/json"
 ```
 
-**Chai script format:**
+Available operators: `equals`, `notEquals`, `gt`, `gte`, `lt`, `lte`, `contains`, `notContains`, `startsWith`, `endsWith`, `matches`, `notMatches`, `isNull`, `isNotEmpty`, `isEmpty`, `isDefined`, `isUndefined`, `isTruthy`, `isFalsy`, `isNumber`, `isString`, `isBoolean`, `isArray`, `isJson`.
+
+**Chai test script — a `type: tests` entry in `runtime.scripts`:**
+
 ```yaml
-  script:
-    tests: |
-      test("Status is 200", function() {
-        expect(res.getStatus()).to.equal(200);
-      });
+runtime:
+  scripts:
+    - type: tests
+      code: |
+        test("Status is 201", function() {
+          expect(res.getStatus()).to.equal(201);
+        });
 
-      test("Response body has id", function() {
-        const body = res.getJSON();
-        expect(body).to.have.property("id");
-      });
+        test("Response has id", function() {
+          const body = res.getJSON();
+          expect(body).to.have.property("id");
+          expect(body.id).to.be.a("string");
+        });
 
-      test("Response time under 2s", function() {
-        expect(res.getResponseTime()).to.be.below(2000);
-      });
+        test("Response time under 2s", function() {
+          expect(res.getResponseTime()).to.be.below(2000);
+        });
 ```
 
-Both styles can coexist in the same request — `http.tests` for declarative, `http.script.tests` for Chai.
+If the request already has a `before-request` or `after-response` script, append the `tests` entry to the existing `runtime.scripts` array — do NOT overwrite existing entries.
 
 ### A4. Preview and Confirm
 
-Show the user the generated tests using AskUserQuestion with a `preview` block. Options:
-- **Write tests** (preview shows the test YAML block)
-- **Adjust** — ask the user what to change and regenerate
-- **Skip this request** — leave it unchanged
+Show the generated `runtime` block using AskUserQuestion with a `preview`. Options:
+- **Write tests** — update the file
+- **Adjust** — ask what to change, regenerate
+- **Skip** — leave unchanged
 
 ### A5. Write Tests
 
-Use Edit to insert or replace the `tests` and/or `script.tests` block in the `.yml` file. Preserve all other fields.
+Use Edit to insert or update the `runtime` block in the `.yml` file. Rules:
 
-After writing, confirm: `Updated: <relative-path>`
+- Merge with any existing `runtime` content — preserve `variables`, `actions`, and any existing script entries with different `type` values
+- For assertions: replace the entire `runtime.assertions` array if replacing, or append entries if extending
+- For the test script: if a `type: tests` entry already exists, replace only its `code` field; otherwise append a new `{type: tests, code}` entry to `runtime.scripts`
+
+Confirm: `Updated: <relative-path>`
 
 Repeat A1–A5 for each targeted request file.
 
@@ -151,66 +163,59 @@ Repeat A1–A5 for each targeted request file.
 
 ### B1. Select an Environment
 
-List available environments from `<collection-root>/environments/*.yml`. Use AskUserQuestion to select one (or "No environment").
+List environments from `<collection-root>/environments/*.yml`. Use AskUserQuestion to select one (or "No environment").
 
 ### B2. Build and Execute
 
-Run:
-
 ```
-bru run <target> --tests-only [--env <env-name>] [--sandbox developer]
+bru run <target> --tests-only [--env <env-name>] [--recursive] [--sandbox developer]
 ```
 
-`<target>` is the specific request file, folder path, or collection root with `--recursive`.
-
-Show the command to the user before running.
+Add `--recursive` for full-collection runs. Show the command before running.
 
 ### B3. Display Results
 
-After execution, display:
 - **Summary**: total tests, passed, failed, skipped
-- **Failures**: request name, test name, expected vs. actual value
+- **Failures**: request name, test/assertion name, expected vs. actual
 - **Exit code**: 0 = all passed, 1 = test failures
-
-If all tests pass, say so clearly.
 
 ---
 
 ## Mode C: Review and Fix Failing Tests
 
-Run tests as in Mode B. If any fail:
+Run tests as in Mode B. For each failure:
 
-### C1. Diagnose Each Failure
+### C1. Diagnose
 
-For each failing test, read the corresponding request file and the test block. Diagnose the failure:
+Read the request file. Identify the failing `runtime.assertions` entry or `type: tests` script block. Categorize:
 
-- **Wrong expected value** — the assert literal doesn't match the real API response
-- **Missing field** — response body structure changed
-- **Wrong status code expectation** — API now returns a different code
-- **Response time fluke** — if timing-based, note that thresholds can be flaky
-- **Auth error** — 401/403 indicates token or scope issue
-- **Script error** — JavaScript runtime error in the test block itself
+- **Wrong expected value** — `value` in assertion doesn't match actual response
+- **Missing field** — `expression` references a field that no longer exists in the response
+- **Wrong status code** — API now returns a different status
+- **Response time fluke** — timing assertion; note thresholds can be environment-dependent
+- **Auth error** — 401/403 points to token/scope issue, not a test bug
+- **Script runtime error** — JavaScript exception in the `code` field
 
 ### C2. Propose Fixes
 
-For each diagnosis, propose a concrete fix to the test or to the request. Use AskUserQuestion to confirm:
+For each diagnosis, propose a concrete edit to the `runtime.assertions` entry or `runtime.scripts[type=tests].code`. Use AskUserQuestion:
 
-- **Apply fix** — update the test block in the `.yml` file
-- **Skip** — leave the failing test as-is
-- **Remove test** — delete the failing test entry
+- **Apply fix** — update the file
+- **Skip** — leave failing test as-is
+- **Remove** — delete the assertion entry or the specific `test(...)` block from the script
 
 ### C3. Re-run to Verify
 
-After applying fixes, re-run with `bru run --tests-only` and confirm the tests now pass. If they still fail, repeat the diagnosis cycle up to 2 more times.
+Re-run with `bru run --tests-only`. If still failing, repeat up to 2 more times.
 
-After the third failure on the same test, stop retrying and output a final failure summary:
+After the third failure on the same test, stop and output:
 
 ```
 STILL FAILING after 3 attempts:
-  Request: <request name>
-  Test:    <test name>
-  Error:   <raw assertion output from bru>
-  File:    <path/to/request.yml>:<line>
+  Request:    <request name>
+  Test:       <assertion expression or test() name>
+  Error:      <raw output from bru>
+  File:       <path/to/request.yml>
 ```
 
-Present this summary to the user so they have the exact assertion output and file location needed to fix it manually.
+Present this to the user so they have the exact output needed to fix it manually.
