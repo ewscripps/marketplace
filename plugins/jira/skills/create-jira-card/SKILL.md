@@ -53,24 +53,29 @@ Run `command -v twg` to check if the TWG CLI is installed.
 
 Load the `twg` skill via the Skill tool, then:
 
-1. Run `twg help describe jira workitem create` to confirm the exact flags and required fields.
-2. Run `twg jira workitem field create-metadata --space "<PROJECT_KEY>" --type "<ISSUE_TYPE>"` to discover any required custom fields for the selected issue type.
-3. Create the issue using `twg jira workitem create` with:
-   - `--space`: from Step 1
-   - `--type`: the selected type (e.g., "Dev Task", "Bug", "Support Task", "Task")
-   - `--summary`: from Step 2
-   - `--description`: from Step 2 (if provided) — **must use `$'...'` ANSI-C quoting** so `\n` is interpreted as real newlines, not literal backslash-n (e.g., `--description $'line1\nline2'`)
-   - `--assignee me` to assign to the authenticated user
-4. Transition the new issue to In Progress:
-   - Run `twg help describe jira workitem transition` to confirm transition command syntax.
-   - List available transitions for the new issue key.
+1. Run `twg jira workitem field create-metadata --space "<PROJECT_KEY>" --type "<ISSUE_TYPE>"` to discover required custom fields for the selected issue type.
+2. Create the issue:
+   ```
+   twg jira workitem create \
+     --space "<PROJECT_KEY>" \
+     --type "<ISSUE_TYPE>" \
+     --summary "<SUMMARY>" \
+     --description $'<DESCRIPTION>' \
+     --assignee me
+   ```
+   - `--description` **must use `$'...'` ANSI-C quoting** so `\n` becomes a real newline, not a literal backslash-n.
+   - Omit `--description` if the user skipped it.
+   - Add `--field customfield_XXX=<value>` for any required custom fields found in step 1.
+3. Transition the new issue to In Progress:
+   - Run `twg jira workitem transition --id <NEW_KEY>` (omit `--transition-id`) to list available transitions.
    - Look for **"Dev In Progress"** (case-insensitive). If not found, look for **"In Progress"**.
-   - If found, apply the transition. If neither is available, skip silently.
+   - If found: `twg jira workitem transition --id <NEW_KEY> --transition-id "Dev In Progress"`
+   - If neither transition is available, skip silently.
 
 ### MCP Fallback (if TWG not installed)
 
 1. Call `getAccessibleAtlassianResources` from the Atlassian MCP Server to get the `cloudId`.
-2. Call `createJiraIssueUsingApi` with:
+2. Call `createJiraIssue` with:
    - `cloudId`: from above
    - `projectKey`: from Step 1
    - `issueType`: from Step 2 (use the Jira issue type name: "Dev Task", "Bug", "Support Task", "Task")
@@ -79,7 +84,7 @@ Load the `twg` skill via the Skill tool, then:
    - `assignToMe`: `true` — always assign the new issue to the authenticated user
    - If `assignToMe` is not accepted or returns an error, retry without it and skip assignment silently.
 3. Transition the created issue to In Progress:
-   - Call `getJiraIssueTransitions` with the `cloudId` and new issue key.
+   - Call `getTransitionsForJiraIssue` with the `cloudId` and new issue key.
    - Look for **"Dev In Progress"** (case-insensitive). If not found, look for **"In Progress"**.
    - If found, call `transitionJiraIssue` with the `cloudId`, issue key, and transition `id`.
    - If neither transition is available, skip silently.

@@ -35,13 +35,17 @@ Run `command -v twg` to check if the TWG CLI is installed.
 
 ### TWG Path (if installed)
 
-Load the `twg` skill via the Skill tool, then:
+Load the `twg` skill via the Skill tool, then run the following **in parallel**:
 
-1. Run `twg help describe jira workitem query` to confirm the exact flags for JQL queries.
-2. Run the following **in parallel**:
-   - **My tickets** — query `project = "<PROJECT_KEY>" AND statusCategory != Done AND assignee = currentUser() ORDER BY updated DESC`, max 5 results
-   - **Others' tickets** — query `project = "<PROJECT_KEY>" AND statusCategory != Done AND assignee != currentUser() ORDER BY statusCategory DESC, updated DESC`, max 10 results
-3. Merge the two result lists (mine first), deduplicating by issue key, capped at 15 total.
+- **My tickets** — `twg jira workitem query --jql 'project = "<PROJECT_KEY>" AND statusCategory != Done AND assignee = currentUser() ORDER BY updated DESC' --first 5 --output json`
+- **Others' tickets** — `twg jira workitem query --jql 'project = "<PROJECT_KEY>" AND statusCategory != Done AND assignee != currentUser() ORDER BY statusCategory DESC, updated DESC' --first 10 --output json`
+
+Parse results from `.data.issues[]` — each item has `key`, `summary`, `status`, `assignee`, `url`, `updated`. Merge the two lists (mine first), deduplicate by `key`, cap at 15 total.
+
+**JQL notes:**
+- Always use `statusCategory != Done` (not `status != Done`) — statusCategory is workflow-agnostic and works across all project configurations.
+- `currentUser()` requires parentheses — `currentUser` without them is invalid.
+- Quote multi-word values: `project = "MY PROJECT"` not `project = MY PROJECT`.
 
 ### MCP Fallback (if TWG not installed)
 
