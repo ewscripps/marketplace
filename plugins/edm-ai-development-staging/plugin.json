@@ -60,9 +60,15 @@
     "jira_project_key": {
       "type": "string",
       "title": "Jira project key (optional)",
-      "description": "Used by /edm:push-jira when no project key is passed as argument. Leave empty to disable the default — /edm:push-jira will then require an explicit project key argument. Requires the Atlassian MCP server to be connected.",
+      "description": "Used by /edm:push-jira when no project key is passed as argument. Leave empty to disable the default -- /edm:push-jira will then require an explicit project key argument. Requires the Atlassian MCP server to be connected.",
       "default": "",
       "required": false
+    },
+    "jira_mcp_namespace": {
+      "type": "string",
+      "title": "Jira MCP server namespace",
+      "description": "Namespace used to construct Jira MCP tool names: mcp__{jira_mcp_namespace}__{tool}. Default matches the standard Atlassian MCP server plugin name. Change only if you have a custom-named MCP server registration.",
+      "default": "plugin_jira_atlassian-mcp-server"
     },
     "mode": {
       "type": "string",
@@ -123,6 +129,12 @@
       "title": "E2E test framework override",
       "description": "Pin the E2E test framework (e.g., 'playwright', 'cypress'). Leave empty for auto-detection.",
       "default": ""
+    },
+    "implementation_mode": {
+      "type": "string",
+      "title": "Phase 6 implementation mode",
+      "description": "Controls the Phase 6 implementation strategy. 'standard' runs all tickets in parallel waves (default). 'tdd' enforces Red-Green-Refactor per ticket: failing tests must be committed before implementation code.",
+      "default": "standard"
     }
   }
 }
