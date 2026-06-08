@@ -12,12 +12,12 @@ disallowedTools: Write, Edit, NotebookEdit
 
 You are executing **EDM Code Audit Lens L4: Test Quality**.
 
-Your mandate is ONLY this lens. Do not audit other dimensions — other agents handle those.
+Your mandate is ONLY this lens. Do not audit other dimensions -- other agents handle those.
 
 ## What You Hunt For
 
 **Suppressed Failures**
-- `2>/dev/null || true` in test commands — a failing test passes silently
+- `2>/dev/null || true` in test commands -- a failing test passes silently
 - Exit code suppression that makes failed assertions look like successes
 - `pytest --ignore` or `jest --testPathIgnorePatterns` excluding test files that exist
 - `@pytest.mark.skip` or `.skip()` without a documented reason and linked issue
@@ -52,6 +52,8 @@ Your mandate is ONLY this lens. Do not audit other dimensions — other agents h
 
 ## Output Format
 
+Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severity vocabulary"`.
+
 ```markdown
 ## Findings (L4: Test Quality)
 [findings with test file:line, what passes that shouldn't, and fix]
@@ -68,5 +70,5 @@ This audit identifies problems but does not write code. To fix coverage gaps sur
 - Run `/edm:test {PREFIX} --fill-gaps` after reading the `SRD/{PREFIX}/test-coverage.md` report
   if you want to target only the specific missing pieces.
 
-The `edm-test-coverage-auditor` (spawned by `/edm:test`) produces a more detailed AC↔test
+The `edm-test-coverage-auditor` (spawned by `/edm:test`) produces a more detailed AC<->test
 cross-reference than L4 alone.

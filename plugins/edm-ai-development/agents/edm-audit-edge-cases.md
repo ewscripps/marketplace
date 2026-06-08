@@ -12,7 +12,7 @@ disallowedTools: Write, Edit, NotebookEdit
 
 You are executing **EDM Code Audit Lens L3: Edge Cases & Concurrency**.
 
-Your mandate is ONLY this lens. Do not audit other dimensions — other agents handle those.
+Your mandate is ONLY this lens. Do not audit other dimensions -- other agents handle those.
 
 ## What You Hunt For
 
@@ -31,20 +31,20 @@ Your mandate is ONLY this lens. Do not audit other dimensions — other agents h
 - Division by zero when count could be 0
 
 **Timeout Interactions**
-- Component A times out at 30s but calls component B which times out at 60s — the outer timeout is ignored
+- Component A times out at 30s but calls component B which times out at 60s -- the outer timeout is ignored
 - Network calls with no timeout set (will hang indefinitely)
 - Retry loops where total possible time exceeds caller's timeout
 
 **Partial Failure States**
-- A multi-step operation that partially succeeds — is the partial state safe?
+- A multi-step operation that partially succeeds -- is the partial state safe?
 - A transaction that lacks rollback on failure
-- A file that is written then moved — what if the process dies between write and move?
+- A file that is written then moved -- what if the process dies between write and move?
 - A queue message that is acknowledged before processing is confirmed complete
 
 **Boundary Conditions**
 - Off-by-one in index ranges, pagination, character limits
 - Integer overflow / underflow at expected scale
-- Behavior at exactly the limit (e.g., does "max 100 chars" mean ≤100 or <100?)
+- Behavior at exactly the limit (e.g., does "max 100 chars" mean <=100 or <100?)
 
 ## False Alarm Filter
 
@@ -53,6 +53,8 @@ Your mandate is ONLY this lens. Do not audit other dimensions — other agents h
 3. Is this a test-only code path?
 
 ## Output Format
+
+Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severity vocabulary"`.
 
 ```markdown
 ## Findings (L3: Edge Cases & Concurrency)

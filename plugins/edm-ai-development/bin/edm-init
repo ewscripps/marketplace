@@ -1,22 +1,114 @@
 #!/usr/bin/env bash
-# edm-init — scaffold a new SRD/{PREFIX}/ initiative directory.
-# Usage: edm-init <PREFIX>
+# edm-init — scaffold a new SRD/{PREFIX}/ (or product-scoped) initiative directory.
+# Usage: edm-init [--product <name>] [--description <slug>] [--mode standard|mini-srd|prototype] <PREFIX>
 set -euo pipefail
 
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
-PREFIX="${1:-}"
 
 die() { echo "edm-init: $*" >&2; exit 1; }
 
-[[ -n "$PREFIX" ]] || die "usage: edm-init <PREFIX>"
-[[ "$PREFIX" =~ ^[A-Z][A-Z0-9_-]{1,7}$ ]] || die "prefix must be 2-8 chars, uppercase, starting with a letter"
+# --- Flag parsing ---
+PREFIX=""
+PRODUCT=""
+DESCRIPTION=""
+MODE="standard"
 
-DIR="${SRD_ROOT}/${PREFIX}"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --product)    [[ $# -ge 2 ]] || die "--product requires a value"; PRODUCT="$2"; shift 2 ;;
+    --description) [[ $# -ge 2 ]] || die "--description requires a value"; DESCRIPTION="$2"; shift 2 ;;
+    --mode)       [[ $# -ge 2 ]] || die "--mode requires a value"; MODE="$2"; shift 2 ;;
+    --*)          die "unknown flag: $1" ;;
+    *)            [[ -z "$PREFIX" ]] || die "unexpected extra argument: $1"; PREFIX="$1"; shift ;;
+  esac
+done
+
+[[ -n "$PREFIX" ]] || die "usage: edm-init [--product <name>] [--description <slug>] [--mode standard|mini-srd|prototype] <PREFIX>"
+[[ "$PREFIX" =~ ^[A-Z][A-Z0-9]{2,5}$ ]] || die "prefix must be 3-6 uppercase alphanumeric chars, starting with a letter"
+
+# --- Validate mode ---
+case "$MODE" in
+  standard|mini-srd|iac|data-ml|prototype) ;;
+  *) die "unknown mode: $MODE (must be standard, mini-srd, iac, data-ml, or prototype)" ;;
+esac
+
+# --- Validate prefix (global uniqueness check, T41) ---
+# Call edm-validate-prefix before creating any directory. A non-zero exit aborts init.
+if command -v edm-validate-prefix >/dev/null 2>&1; then
+  edm-validate-prefix "$PREFIX" || {
+    ec=$?
+    exit $ec
+  }
+fi
+
+# --- Determine directory layout ---
+# If --product and --description are both given, use product-scoped layout.
+# Otherwise fall back to legacy flat layout (EDMV2-90 backward compat, AC6).
+if [[ -n "$PRODUCT" && -n "$DESCRIPTION" ]]; then
+  # Product-scoped: SRD/{PRODUCT}/{PREFIX}__{DESCRIPTION}/
+  DIR="${SRD_ROOT}/${PRODUCT}/${PREFIX}__${DESCRIPTION}"
+  mkdir -p "${SRD_ROOT}/${PRODUCT}"
+  # Export for edm-state init to compute the correct path via state_file_for.
+  export EDM_PRODUCT="$PRODUCT"
+  export EDM_DESCRIPTION="$DESCRIPTION"
+elif [[ -n "$PRODUCT" && -z "$DESCRIPTION" ]]; then
+  # Product given without description — check if interactive.
+  if [[ -t 0 ]]; then
+    printf "edm-init: enter a short slug for the initiative description (e.g. enhance-edm-plugin): " >&2
+    read -r DESCRIPTION
+    if [[ -n "$DESCRIPTION" ]]; then
+      DIR="${SRD_ROOT}/${PRODUCT}/${PREFIX}__${DESCRIPTION}"
+      mkdir -p "${SRD_ROOT}/${PRODUCT}"
+      export EDM_PRODUCT="$PRODUCT"
+      export EDM_DESCRIPTION="$DESCRIPTION"
+    else
+      DIR="${SRD_ROOT}/${PREFIX}"
+    fi
+  else
+    echo "edm-init: --description missing in non-interactive context; using flat layout" >&2
+    DIR="${SRD_ROOT}/${PREFIX}"
+  fi
+else
+  # Neither flag — legacy flat layout (AC6).
+  DIR="${SRD_ROOT}/${PREFIX}"
+fi
+
 if [[ -d "$DIR" ]]; then
   die "initiative directory already exists at $DIR (run 'edm-state get $PREFIX' to inspect)"
 fi
 
-mkdir -p "$DIR/code-audit"
+# --- Scaffold directory tree based on mode (T45) ---
+mkdir -p "$DIR"
+
+# Always-present WS-D slots (T80/T76): explorers/ for Phase 1 output; decisions.md for key decisions ledger.
+mkdir -p "$DIR/explorers"
+cat > "$DIR/decisions.md" <<'DECISIONS_EOF'
+# Key Decisions
+
+| # | Decision | Chosen | Rationale | Date |
+|---|----------|--------|-----------|------|
+
+## Finding-to-Commit Ledger
+
+| Finding | Source | Decision | Ticket | Status |
+|---------|--------|----------|--------|--------|
+DECISIONS_EOF
+
+case "$MODE" in
+  standard|iac|data-ml)
+    # Full layout: code-audit/ created; tickets/ is created on demand by phase 4.
+    mkdir -p "$DIR/code-audit"
+    ;;
+  mini-srd)
+    # mini-SRD mode: no separate tickets/ directory.
+    # code-audit/ still present for Phase 6 code audit.
+    mkdir -p "$DIR/code-audit"
+    ;;
+  prototype)
+    # Prototype mode: Phase 1-2 only — no tickets/, no code-audit/.
+    ;;
+esac
+
 edm-state init "$PREFIX" >/dev/null
 
 # .gitignore behavior: by default the state file is committed.
@@ -26,11 +118,39 @@ if [[ "$COMMIT_STATE" != "true" ]]; then
   echo ".edm-state.json" > "$DIR/.gitignore"
 fi
 
+# Create and switch to initiative branch when inside a git worktree.
+BRANCH_MSG=""
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  BRANCH="edm/${PREFIX}"
+  if git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
+    git checkout "$BRANCH" 2>/dev/null \
+      && BRANCH_MSG="switched to existing branch $BRANCH" \
+      || BRANCH_MSG="[warn] branch $BRANCH exists but checkout failed; staying on current branch"
+  else
+    git checkout -b "$BRANCH" 2>/dev/null \
+      && BRANCH_MSG="created and switched to branch $BRANCH" \
+      || BRANCH_MSG="[warn] branch creation failed; staying on current branch"
+  fi
+fi
+
+# --- Print scaffold summary ---
 cat <<EOF
 Initiative scaffold created:
   $DIR/
-  ├── .edm-state.json
-  └── code-audit/
-
-Next: run /edm:plan $PREFIX <description> to begin Phase 1.
+$(case "$MODE" in
+  standard|iac|data-ml|mini-srd)
+    echo "  +-- .edm-state.json"
+    echo "  +-- explorers/"
+    echo "  +-- decisions.md"
+    echo "  +-- code-audit/"
+    ;;
+  prototype)
+    echo "  +-- .edm-state.json"
+    echo "  +-- explorers/"
+    echo "  +-- decisions.md"
+    ;;
+esac)
+Mode: $MODE
+${BRANCH_MSG:+Branch: $BRANCH_MSG
+}Next: run /edm:orchestrator $PREFIX to begin Phase 1.
 EOF

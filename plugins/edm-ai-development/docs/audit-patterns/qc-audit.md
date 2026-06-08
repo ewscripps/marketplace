@@ -12,7 +12,7 @@ Frequency: [x/16] = appeared in x of 16 audited initiatives (many pre-EDMV2 init
 
 | # | Pattern | Frequency | Typical severity |
 |---|---------|-----------|-----------------|
-| 1 | AC verified by code inspection only — no runnable assertion | ~8/16 | P1 |
+| 1 | AC verified by code inspection only -- no runnable assertion | ~8/16 | P1 |
 | 2 | AC passes but neighboring regression introduced | ~6/16 | P0 |
 | 3 | PARTIAL verdict left unresolved at phase close | ~5/16 | P1 |
 | 4 | QC artifact written to wrong location / not committed | ~4/16 | P1 |
@@ -42,7 +42,7 @@ Frequency: [x/16] = appeared in x of 16 audited initiatives (many pre-EDMV2 init
 ## Anti-Patterns
 
 ### PASS based on code structure, not behavior
-QC marks PASS because the function signature looks right — it never verifies the function is actually called or produces correct output.
+QC marks PASS because the function signature looks right -- it never verifies the function is actually called or produces correct output.
 **Fix:** Every PASS verdict cites a test command and output snippet, not code structure.
 
 ### Closing tickets with PARTIAL verdicts
@@ -63,7 +63,7 @@ The same agent that implemented the ticket also performs QC. The agent's own fra
 
 Run before declaring a ticket's QC complete:
 
-- [ ] **Every AC has a runnable test command cited** in the QC report — not just "inspected code."
+- [ ] **Every AC has a runnable test command cited** in the QC report -- not just "inspected code."
 - [ ] **Regression check:** The full test suite (not just the ticket's tests) passes. Any new failures in unrelated tests are flagged as regressions before closing the ticket.
 - [ ] **PARTIAL verdicts adjudicated:** Any AC marked PARTIAL has either been verified at runtime (upgraded to PASS) or explicitly documented in the exec-report with a rationale for deferral.
 - [ ] **QC artifact committed:** The `qc/{ticket-id}.md` report is staged and committed to the initiative branch.
@@ -75,6 +75,6 @@ Run before declaring a ticket's QC complete:
 
 - **Every AC verdict (PASS/PARTIAL/FAIL) cites evidence:** a test command + output snippet for PASS; a rationale and runtime-deferred note for PARTIAL; a reproduction path for FAIL.
 - **No regressions:** the test suite passes at the same rate as before the wave.
-- **PARTIAL verdicts are documented** in the exec-report with explicit "will verify at runtime by [condition]" language — they don't disappear silently.
+- **PARTIAL verdicts are documented** in the exec-report with explicit "will verify at runtime by [condition]" language -- they don't disappear silently.
 - **QC artifact is committed** on the initiative branch alongside the implementation artifacts.
 - **TDD compliance verified** (TDD mode only): for each ticket, test file timestamps precede implementation file timestamps and test assertions were not weakened post-implementation.

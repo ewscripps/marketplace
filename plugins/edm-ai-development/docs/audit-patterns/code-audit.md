@@ -12,7 +12,7 @@ Frequency: [x/16] = appeared in x of 16 audited initiatives.
 | # | Pattern | Frequency | Typical severity |
 |---|---------|-----------|-----------------|
 | 1 | Inline privilege checks instead of shared predicates | 9/16 | P0 |
-| 2 | Missing error paths / silent failures | 8/16 | P0–P1 |
+| 2 | Missing error paths / silent failures | 8/16 | P0-P1 |
 | 3 | Silent privilege escalation from stale data | 7/16 | P0 |
 | 4 | Hardcoded constants replicated across files | 6/16 | P1 |
 | 5 | Secrets/credentials in logs or test fixtures | 5/16 | P0 |
@@ -59,7 +59,7 @@ Frequency: [x/16] = appeared in x of 16 audited initiatives.
 ## Anti-Patterns
 
 ### Bare `if (role === "admin")` literal check
-The codebase has ≥2 isAdminRole-like predicates that diverge. A new developer writes `includes("admin")` which unintentionally matches `system_admin`.
+The codebase has >=2 isAdminRole-like predicates that diverge. A new developer writes `includes("admin")` which unintentionally matches `system_admin`.
 **Fix:** Remove all bare literals from main code. Every privilege check calls a single named predicate (`isAdminRole()`, `isStationAdmin()`). Code-audit lint asserts this.
 
 ### Stale docblock with inverted behavior
@@ -67,7 +67,7 @@ Docblock says "returns true if user has admin role" but the code returns `true` 
 **Fix:** Flag any change that inverts a condition and mandate a docblock update as part of the AC.
 
 ### Configuration validated in multiple places
-A value is validated in Pydantic, again in a custom check, again at the server endpoint. One is stricter/different — config passing place A fails place B.
+A value is validated in Pydantic, again in a custom check, again at the server endpoint. One is stricter/different -- config passing place A fails place B.
 **Fix:** "validate once" in a centralized config module; other layers trust it or re-validate only from untrusted sources.
 
 ### Asymmetric error handling on paired operations
@@ -87,18 +87,18 @@ Run before merging code that will undergo a code audit:
 - [ ] **Privilege predicates consolidated:** Search for all inline `role ===`, `includes("admin")`, `includes("system_admin")`. Every one is wrapped in a named predicate function. Exceptions documented in an allowlist.
 - [ ] **Trust hierarchy explicit:** If a request carries multiple role signals (DB, JWT, header), a comment states which is authoritative (e.g., "DB role is authoritative; JWT consulted only if DB role absent").
 - [ ] **Error paths present:** For every HTTP call, DB query, and network operation, there is an explicit error handler. Find all `http.get`/`client.execute`/`fetch` calls; verify each has a `catch` or is wrapped in `try`.
-- [ ] **Secrets never logged:** Grep `log.error(`, `console.log(`, `logger.debug(` — none include request bodies, auth headers, or credential-like fields. If a log site includes `?` or `=`, verify it doesn't leak secrets.
-- [ ] **Test stubs are isolated:** For every `globalThis.`, `jest.mock`, `vi.stubGlobal` — there is a matching restore in `afterAll` or `afterEach`. Run each test file in isolation and confirm it passes.
+- [ ] **Secrets never logged:** Grep `log.error(`, `console.log(`, `logger.debug(` -- none include request bodies, auth headers, or credential-like fields. If a log site includes `?` or `=`, verify it doesn't leak secrets.
+- [ ] **Test stubs are isolated:** For every `globalThis.`, `jest.mock`, `vi.stubGlobal` -- there is a matching restore in `afterAll` or `afterEach`. Run each test file in isolation and confirm it passes.
 - [ ] **Types match across boundaries:** Verify that types for API request/response match between client and server. Run the contract tests or manually check call sites.
-- [ ] **Constants are single-sourced:** Search for role names, magic numbers, URLs, env var names. If any appears ≥2 times in main code, extract to a const/enum and import everywhere.
+- [ ] **Constants are single-sourced:** Search for role names, magic numbers, URLs, env var names. If any appears >=2 times in main code, extract to a const/enum and import everywhere.
 
 ---
 
 ## What Passing Code Looks Like
 
-- All privilege checks use a **named predicate** defined once and imported everywhere — no inline literals.
+- All privilege checks use a **named predicate** defined once and imported everywhere -- no inline literals.
 - **Trust hierarchy is documented** in a comment wherever multiple auth signals are present.
 - **Error paths are explicit:** every network/IO operation has a visible catch block or the caller documents its error-handling contract.
 - **Test setup is self-contained:** each test file runs independently; tests within a file don't leak state to each other.
-- **Secrets never appear in logs:** grepping for `token|password|secret|key` in error-logging call sites returns only safe, allowlisted references (e.g., "API key missing" — not the key value).
+- **Secrets never appear in logs:** grepping for `token|password|secret|key` in error-logging call sites returns only safe, allowlisted references (e.g., "API key missing" -- not the key value).
 - **Constants are single-sourced:** role names, enums, magic numbers each have one definition; all other usages import from that definition.

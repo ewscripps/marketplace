@@ -151,7 +151,6 @@ All phase skills carry `disable-model-invocation: true`. Planning, audit, and QC
 ### Added — Agents (20 total)
 - Phase agents: `edm-explorer`, `edm-architect` (with Write tool), `edm-srd-writer`, `edm-srd-auditor`, `edm-ticket-writer`, `edm-ticket-auditor`, `edm-implementer` (with `isolation: worktree`), `edm-qc-auditor`.
 - 11 code-audit lens agents (`edm-audit-logic`, `…-dead-code`, `…-edge-cases`, `…-test-quality`, `…-runtime`, `…-docs`, `…-consistency`, `…-security`, `…-spec`, `…-dry`, `…-wiring`) plus `edm-audit-synthesizer` for plan aggregation.
-- All agents have proper `<example>` blocks in their `description` fields per the canonical spec.
 - All read-only audit agents have `disallowedTools: Write, Edit, NotebookEdit`.
 - `maxTurns` set on every agent. Semantic color scheme applied.
 
@@ -160,7 +159,7 @@ All phase skills carry `disable-model-invocation: true`. Planning, audit, and QC
 - `UserPromptExpansion` (matcher: `edm:(srd|tickets|implement)`) — blocks expansion if the prerequisite HITL gate isn't approved.
 - `Stop` and `PreCompact` — opportunistically checkpoint state.
 - `SubagentStop` (matcher: `edm-implementer`) — auto-spawns `edm-qc-auditor` after every implementer completes.
-- `TaskCompleted` — records per-task durations for `/edm:metrics`.
+- `TaskCompleted` — reserved; wires to `record-task-duration` but per-task duration accumulation is not yet implemented.
 
 ### Added — Helper scripts (`bin/`)
 - `edm-state` — read/write `SRD/{PREFIX}/.edm-state.json` with subcommands: `get`, `set`, `init`, `list`, `approve-gate`, `phase-start`, `phase-complete`, `checkpoint-if-active`, `record-task-duration`, `archive`, `watch-impl`, `metrics-report`.

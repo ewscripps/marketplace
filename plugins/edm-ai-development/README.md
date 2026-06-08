@@ -7,11 +7,11 @@ The plugin produces source-controlled artifacts in your project's `SRD/` directo
 ## Install
 
 ```bash
-# Local install (this repository):
-claude plugin install /Users/darryl.porter/projects/scripps-mcp/edm-plugin
+# Local install (from the marketplace repo root):
+claude plugin install ./plugins/edm-ai-development
 
 # Or development mode (no install required):
-claude --plugin-dir /Users/darryl.porter/projects/scripps-mcp/edm-plugin
+claude --plugin-dir ./plugins/edm-ai-development
 ```
 
 When installed, Claude Code prompts for a few `userConfig` values (defaults are sensible — accept them unless your team uses different paths).
@@ -127,7 +127,9 @@ Run `/edm:metrics --calibrate` after a few completed initiatives to recalibrate 
 - **State persistence**: `bin/edm-state` tracks each initiative's phase, gate approvals, timing, cost, and test coverage in `SRD/{PREFIX}/.edm-state.json`. Survives across sessions.
 - **Resume**: a teammate cloning the repo can pick up an in-progress initiative — the state is in git.
 - **`userConfig`**: prompts for output paths, conventions, coverage targets, and framework overrides at install time.
-- **Comprehensive testing**: `/edm:test` runs 10 specialist agents (planner, scaffold, 7 writers, coverage auditor) in parallel waves, producing `test-plan.md` and `test-coverage.md` with AC↔test cross-reference. Stack-aware — automatically marks layers N/A for backend-only or CLI projects.
+- **Comprehensive testing**: `/edm:test` runs 10 specialist agents (planner, scaffold, 7 writers, coverage auditor) in parallel waves, producing `test-plan.md` and `test-coverage.md` with AC->test cross-reference. Stack-aware -- automatically marks layers N/A for backend-only or CLI projects.
+- **Multi-stack testing** (v2.0+): for initiatives spanning multiple technology stacks (e.g., a Python backend epic and a Vue frontend epic), the test planner detects the stack per epic and produces `test-plan-{epic}.md` / `test-coverage-{epic}.md` per epic, each scoped to that epic's frameworks and coverage targets. Single-stack initiatives use the same `test-plan.md` / `test-coverage.md` behavior as before.
+- **Product-line linkage** (v2.0+): link related initiatives with `edm-state set-parent <PREFIX> <PARENT>` and `edm-state add-related <PREFIX> <RELATED>`. Linkage fields appear in HANDOFF.md so teams can navigate across child/sibling initiatives without losing context.
 
 ## See also
 

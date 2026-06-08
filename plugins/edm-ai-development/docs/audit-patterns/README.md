@@ -2,6 +2,46 @@
 
 This living reference captures recurring audit findings across EDM initiatives. It is the primary input for writer-agent pre-emption guidance (EDMV2-81/82/83) and the pre-flight checklists embedded in each agent prompt.
 
+## Living-Library Contract
+
+Each document in this library contains exactly four subsection headings (in this order):
+
+1. `## Top Recurring Findings` -- findings with observed frequency and corpus citations
+2. `## Anti-Patterns` -- patterns that reliably produce findings
+3. `## Pre-Flight Checklist` -- self-checks to run before submission
+4. `## What a Passing [X] Looks Like` -- concrete example of a passing artifact
+
+**Structure check** (run as a regression guard):
+```bash
+for doc in srd-audit ticket-audit code-audit test-coverage-audit qc-audit; do
+  echo "=== $doc.md ===" && grep "^## " docs/audit-patterns/$doc.md
+done
+```
+All four headings must be present in every document.
+
+## Append Schema
+
+When appending a new finding (via auto-update or `edm-state update-patterns`), place it under the appropriate subsection heading:
+
+```markdown
+### {Finding title} ({source-prefix}, {date}, {severity})
+
+{One-paragraph description of the finding and how to prevent it.}
+```
+
+De-duplication: if the finding title (lowercased, whitespace-collapsed) already exists in the document, skip the append.
+
+## Consumers
+
+This library is loaded at write time by three agents (EDMV2-81/82/83):
+- `edm-srd-writer` loads `srd-audit.md`
+- `edm-ticket-writer` loads `ticket-audit.md`
+- `edm-implementer` loads `qc-audit.md` + `code-audit.md`
+- `skills/orchestrator` uses `edm-state update-patterns` after each audit phase (EDMV2-80a)
+
+And by the planning template (EDMV2-84):
+- `skills/orchestrator/SKILL.md` and `skills/plan/SKILL.md` planning.md template
+
 ## How This Library Works
 
 - **Seed:** created from analysis of 16 real initiatives in the scripps-mcp/SRD corpus (June 2026). See `SOURCES.md` for the full list.
@@ -29,7 +69,7 @@ SRD says "handle retries" but doesn't say how many times, what backoff, or which
 
 ### 2. Naming/terminology drift (12/16)
 SRD calls it "channel", ticket calls it "stream", code calls it "lane." SRD says "beat type", code says `topic_type`.
-**Prevention:** §11 Glossary is mandatory; every use of a domain term matches the glossary term exactly.
+**Prevention:** Sec.11 Glossary is mandatory; every use of a domain term matches the glossary term exactly.
 
 ### 3. Pre-existing debt surfaced by a new initiative (8/16)
 An old function is suddenly called in a new code path and reveals stale behavior.

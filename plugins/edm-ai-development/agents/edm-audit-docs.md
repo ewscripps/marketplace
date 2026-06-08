@@ -12,7 +12,7 @@ disallowedTools: Write, Edit, NotebookEdit
 
 You are executing **EDM Code Audit Lens L6: Documentation Accuracy**.
 
-Your mandate is ONLY this lens. Do not audit other dimensions — other agents handle those.
+Your mandate is ONLY this lens. Do not audit other dimensions -- other agents handle those.
 
 ## What You Hunt For
 
@@ -53,6 +53,8 @@ For every comment that makes a factual claim:
 3. Is this in auto-generated documentation that has its own update mechanism?
 
 ## Output Format
+
+Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severity vocabulary"`.
 
 ```markdown
 ## Findings (L6: Documentation Accuracy)

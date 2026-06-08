@@ -1,11 +1,11 @@
 ---
 name: plan
-description: EDM Phase 1 (Planning & Discovery) — explore the codebase, define scope, map dependencies, produce a go/no-go decision. Invoked explicitly via /edm:plan.
+description: EDM Phase 1 (Planning & Discovery) -- explore the codebase, define scope, map dependencies, produce a go/no-go decision. Invoked explicitly via /edm:plan.
 disable-model-invocation: true
 model: opus
 effort: max
 argument-hint: <PREFIX> <initiative description>
-allowed-tools: Read, Write, Bash, Glob, Grep, Task, TodoWrite
+allowed-tools: Read, Write, Bash(edm-state *), Bash(edm-init *), Bash(edm-validate-prefix *), Glob, Grep, Task, TodoWrite
 ---
 
 # EDM Phase 1: Planning & Discovery
@@ -13,21 +13,22 @@ allowed-tools: Read, Write, Bash, Glob, Grep, Task, TodoWrite
 **Arguments**: $ARGUMENTS
 
 - **Input**: Business requirement, feature request, or strategic initiative
-- **Output**: `${user_config.srd_root}/{PREFIX}/planning.md` — scope definition, current-state assessment, go/no-go decision
+- **Output**: `${user_config.srd_root}/{PREFIX}/planning.md` -- scope definition, current-state assessment, go/no-go decision
 
 ## Operational Orchestration
 
 1. Parse `$ARGUMENTS` for `{PREFIX}` and the initiative description. If missing, ask the user.
-2. `edm-validate-prefix <PREFIX>` — if SRD/{PREFIX}/ already exists, ask whether to resume or pick another.
+2. `edm-validate-prefix <PREFIX>` -- if SRD/{PREFIX}/ already exists, ask whether to resume or pick another.
 3. `edm-init <PREFIX>` if new.
 4. `edm-state phase-start <PREFIX> 1`
-5. Spawn `edm-explorer` agent(s) — see "AI Execution Pattern" below.
+5. Spawn `edm-explorer` agent(s) -- see "AI Execution Pattern" below.
 6. Synthesize agent output into the planning document at `${user_config.srd_root}/{PREFIX}/planning.md` using the template below.
 7. `edm-state phase-complete <PREFIX> 1`
-8. Present **HITL Gate 1** (see below) and STOP for sign-off.
-9. On approval: `edm-state approve-gate <PREFIX> 1`.
+8. `edm-state write-handoff <PREFIX>` -- create/refresh HANDOFF.md from the just-written planning.md. This is idempotent; re-running regenerates HANDOFF.md without error.
+9. Present **HITL Gate 1** (see below) and STOP for sign-off.
+10. On approval: `edm-state approve-gate <PREFIX> 1`.
 
-## Activities — the agent must cover ALL
+## Activities -- the agent must cover ALL
 
 ### 1. Understand the Existing System
 - Explore the codebase
@@ -55,11 +56,17 @@ Files affected, new modules, integration points, approximate ticket count (S/M/L
 
 ## Planning Document Template
 
+> **Planning authoring guidance** (from `docs/audit-patterns/srd-audit.md`):
+> - **`## Go/No-Go`** -- an explicit GO/NO-GO/CONDITIONAL here prevents "undefined scope boundary" (top SRD P1 finding).
+> - **`## Riskiest Assumptions`** -- pre-empts "requirement assumed but never validated" (top SRD P0/P1 finding).
+> - **`## Open Questions`** -- tag with `[DECISION: A|B|C]` to surface bounded choices at Gate 1; resolves "ambiguous requirement" findings.
+> - **`## Decisions Made`** -- filled at Gate 1; feeds HANDOFF.md and `decisions.md`. Empty section = highest SRD-rewrite rate in the corpus.
+
 ```markdown
-# {Initiative Name} — Planning & Discovery
+# {Initiative Name} -- Planning & Discovery
 
 ## Scope Statement
-[1–2 paragraphs]
+[1-2 paragraphs]
 
 ## Component Inventory
 | Component | Path | Status | Notes |
@@ -76,13 +83,21 @@ Files affected, new modules, integration points, approximate ticket count (S/M/L
 - New modules: N
 - Estimated size: Small (10-20 tickets) / Medium (30-50) / Large (50-85)
 
-## Go/No-Go Decision
+## Go/No-Go
 **Decision**: GO / NO-GO / CONDITIONAL
 **Rationale**: [why]
 **Conditions** (if conditional): [what must be true before proceeding]
 
 ## Riskiest Assumptions
 [What we're assuming that hasn't been validated]
+
+## Open Questions
+{Each question on its own line, tagged as one of:}
+- [DECISION: Option A | Option B | Option C] Question text
+- [OPEN] Question text
+
+## Decisions Made
+{populated interactively at Gate 1 -- leave empty initially}
 ```
 
 ## AI Execution Pattern
@@ -100,7 +115,7 @@ Prompt: "Explore the codebase to understand [area]. Map all components,
 ## HITL Gate 1
 
 After writing the planning document:
-1. Summarize concisely: scope (1–2 sentences), components affected, key constraints, estimated initiative size, go/no-go recommendation.
+1. Summarize concisely: scope (1-2 sentences), components affected, key constraints, estimated initiative size, go/no-go recommendation.
 2. Ask: *"Do you approve this scope and want to proceed to SRD creation, or do you have changes?"*
-3. **STOP and WAIT** — do not proceed to Phase 2 autonomously.
+3. **STOP and WAIT** -- do not proceed to Phase 2 autonomously.
 4. On approval: `edm-state approve-gate <PREFIX> 1`. The next phase is `/edm:srd <PREFIX>` or via `/edm:orchestrator`.

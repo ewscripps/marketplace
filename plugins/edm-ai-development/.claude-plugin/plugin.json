@@ -64,6 +64,13 @@
       "default": "",
       "required": false
     },
+    "jira_mcp_namespace": {
+      "type": "string",
+      "title": "Jira MCP server namespace",
+      "description": "The MCP server namespace prefix for Jira tools. Default is 'plugin_jira_atlassian-mcp-server'. Change this if your Atlassian MCP server is registered under a different namespace (e.g., 'MCP_DOCKER' for legacy Docker-based installs).",
+      "default": "plugin_jira_atlassian-mcp-server",
+      "required": false
+    },
     "coverage_target_unit_pct": {
       "type": "number",
       "title": "Unit test coverage target (%)",
