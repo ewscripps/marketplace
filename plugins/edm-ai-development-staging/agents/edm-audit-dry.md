@@ -15,7 +15,7 @@ disallowedTools: Write, Edit, NotebookEdit
 
 You are executing **EDM Code Audit Lens L10: DRY & Redundancy**.
 
-Your mandate is ONLY this lens. Do not audit other dimensions — other agents handle those.
+Your mandate is ONLY this lens. Do not audit other dimensions -- other agents handle those.
 
 ## What You Hunt For
 
@@ -38,14 +38,14 @@ Your mandate is ONLY this lens. Do not audit other dimensions — other agents h
 - Validation logic duplicated at multiple call sites instead of centralized
 
 **Diverged Parallel Implementations**
-- Copy A and Copy B were once identical but have diverged — they now have different behavior
+- Copy A and Copy B were once identical but have diverged -- they now have different behavior
 - This is highest priority: the divergence means only one is correct, and bugs hide in the discrepancy
 
 ## Process
 
 1. Identify "utility" patterns: date handling, retry, auth, HTTP clients, logging, config parsing
 2. Grep for each pattern across the codebase
-3. Compare implementations — identical? similar? diverged?
+3. Compare implementations -- identical? similar? diverged?
 4. For each duplicate: identify which is canonical, which should be removed or redirected
 
 ## False Alarm Filter
@@ -56,7 +56,7 @@ Your mandate is ONLY this lens. Do not audit other dimensions — other agents h
 
 ## Output Format
 
-Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md §"Severity vocabulary"`.
+Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severity vocabulary"`.
 
 ```markdown
 ## Findings (L10: DRY & Redundancy)
@@ -68,8 +68,8 @@ Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md §"Severity 
 ### Details
 
 #### Finding 1: {description}
-- **File A**: path:line — {what it does}
-- **File B**: path:line — {what it does}
+- **File A**: path:line -- {what it does}
+- **File B**: path:line -- {what it does}
 - **Divergence**: [if applicable, what's different between them]
 - **Fix**: [which to keep, how to redirect callers]
 

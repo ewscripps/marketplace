@@ -1,6 +1,6 @@
 ---
 name: push-jira
-description: Optionally persist an EDM ticket pack to Jira via the Atlassian MCP. Creates one Jira issue per `{PREFIX}-T{NN}` ticket, links dependencies as Issue Links, and writes the resulting Jira keys back into the ticket pack. Idempotent — re-running updates existing issues instead of creating duplicates. Invoked explicitly via /edm:push-jira.
+description: Optionally persist an EDM ticket pack to Jira via the Atlassian MCP. Creates one Jira issue per `{PREFIX}-T{NN}` ticket, links dependencies as Issue Links, and writes the resulting Jira keys back into the ticket pack. Idempotent -- re-running updates existing issues instead of creating duplicates. Invoked explicitly via /edm:push-jira.
 disable-model-invocation: true
 model: sonnet
 effort: high
@@ -12,30 +12,30 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, TodoWrite, mcp_
 
 **Arguments**: $ARGUMENTS
 
-This skill is **optional** — most EDM workflows produce a ticket pack as a markdown artifact and stop there. Use this skill only when your team also tracks work in Jira and wants the EDM ticket pack mirrored as Jira issues for sprint planning, reporting, or stakeholder visibility.
+This skill is **optional** -- most EDM workflows produce a ticket pack as a markdown artifact and stop there. Use this skill only when your team also tracks work in Jira and wants the EDM ticket pack mirrored as Jira issues for sprint planning, reporting, or stakeholder visibility.
 
 ## Prerequisites
 
-- The Atlassian MCP server is connected (`mcp__{jira_mcp_namespace}__*` tools should be available — verify with `/mcp`).
+- The Atlassian MCP server is connected (`mcp__{jira_mcp_namespace}__*` tools should be available -- verify with `/mcp`).
 - The user has a Jira project to push into (project key, e.g., `MCP`, `TIPS`).
 - The ticket pack at `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/` is finalized and Phase 5 audit has passed.
 
-If any prerequisite is missing, the skill prints a clear "skipping — Jira not available" message and exits without making changes.
+If any prerequisite is missing, the skill prints a clear "skipping -- Jira not available" message and exits without making changes.
 
 ## Operational Orchestration
 
-### Step 1 — Verify prerequisites
-1. Parse arguments: `{PREFIX}` (required), `{JIRA_PROJECT_KEY}` (optional — falls back to `${user_config.jira_project_key}`), `--dry-run` (flag, default: off).
+### Step 1 -- Verify prerequisites
+1. Parse arguments: `{PREFIX}` (required), `{JIRA_PROJECT_KEY}` (optional -- falls back to `${user_config.jira_project_key}`), `--dry-run` (flag, default: off).
    - `--dry-run`: when present, the skill produces a plan table of what would be created/updated/linked but makes no mutating MCP calls and does not rewrite ticket-pack files or update `.edm-state.json`.
    - The Jira MCP namespace is read from `${user_config.jira_mcp_namespace}` (default: `plugin_jira_atlassian-mcp-server`). Override this config value if your MCP server is registered under a different namespace (e.g., a legacy Docker-based namespace).
 2. Verify Atlassian MCP is reachable: call `mcp__{jira_mcp_namespace}__atlassianUserInfo`. If it fails, print:
    > "Jira MCP not available (tried {jira_mcp_namespace}__atlassianUserInfo). To enable Jira sync: configure the MCP server with namespace '{jira_mcp_namespace}' (see CLAUDE.md -> 'Atlassian MCP setup'). Skipping."
-   > and exit successfully (this is not an error — the skill is optional). This applies even in `--dry-run` mode.
+   > and exit successfully (this is not an error -- the skill is optional). This applies even in `--dry-run` mode.
 3. Resolve `cloudId` via `mcp__{jira_mcp_namespace}__getAccessibleAtlassianResources`. Use the first one; if multiple, ask the user.
 4. Verify the project key exists via `mcp__{jira_mcp_namespace}__getVisibleJiraProjects` (filter by `query: <JIRA_PROJECT_KEY>`).
 5. Resolve the issue type for tickets: call `mcp__{jira_mcp_namespace}__getJiraProjectIssueTypesMetadata` and pick `Task` (or `Story` if `Task` isn't available).
 
-### Step 2 — Read the ticket pack
+### Step 2 -- Read the ticket pack
 1. Find epic files: `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/epics/*.md`.
 2. For each ticket in each epic, parse:
    - **Ticket ID**: `{PREFIX}-T{NN}` from the section heading
@@ -46,7 +46,7 @@ If any prerequisite is missing, the skill prints a clear "skipping — Jira not 
    - **Technical Notes**: text under "### Technical Notes"
    - **Out of Scope**: text under "### Out of Scope"
 
-### Step 3 — Check for existing Jira issues (idempotency)
+### Step 3 -- Check for existing Jira issues (idempotency)
 For each ticket, search Jira for an existing issue with the EDM ticket ID in its labels or description.
 Use JQL via `mcp__{jira_mcp_namespace}__searchJiraIssuesUsingJql`:
 ```
@@ -57,17 +57,16 @@ project = "<JIRA_PROJECT_KEY>" AND labels = "edm-{prefix}-t{nn}"
 - **If found**: action is UPDATE (existing Jira key noted for step output / dry-run plan).
 - **If not found**: action is CREATE.
 
-In **dry-run mode**: after completing the search, print the plan table (see "Dry-run output" section below) and exit — do not proceed to Steps 4-8.
+In **dry-run mode**: after completing the search, print the plan table (see "Dry-run output" section below) and exit -- do not proceed to Steps 4-8.
 
 In **normal mode**:
 - **If found**: update the existing issue via `mcp__{jira_mcp_namespace}__editJiraIssue`. Preserve the Jira issue's current status, comments, worklog, and any custom fields.
 - **If not found**: create a new issue via `mcp__{jira_mcp_namespace}__createJiraIssue`.
 
-### Step 4 — Format the issue body
+### Step 4 -- Format the issue body
 
 ```
-*Generated by EDM plugin from {ticket pack path}.*
-*Source ticket: `{PREFIX}-T{NN}`*
+Source: EDM ticket pack {ticket pack path}, ticket {PREFIX}-T{NN}
 
 h2. Description
 
@@ -100,7 +99,7 @@ h2. EDM Metadata
 
 (Use Jira's wiki markup: `h2.` for headings, `|| Header ||` and `| cell |` for tables, `(/)` `(x)` for checkboxes.)
 
-### Step 5 — Set Jira fields on the issue
+### Step 5 -- Set Jira fields on the issue
 
 | Jira field | Source |
 |---|---|
@@ -110,7 +109,7 @@ h2. EDM Metadata
 | `priority` | mapping: Must Have -> `High`, Should Have -> `Medium`, Could Have -> `Low` |
 | `labels` | `["edm", "edm-{prefix}", "edm-{prefix}-t{nn}", "edm-epic-{epic_slug}"]` |
 
-### Step 6 — Create dependency links
+### Step 6 -- Create dependency links
 
 After all issues are created, iterate again and for every ticket with a non-empty `Depends On`:
 1. Look up the Jira key for the dependency ticket.
@@ -121,7 +120,7 @@ After all issues are created, iterate again and for every ticket with a non-empt
 
 Cross-reference link types via `mcp__{jira_mcp_namespace}__getIssueLinkTypes` if `Blocks` isn't available; fall back to `Relates`.
 
-### Step 7 — Persist the Jira keys back to the ticket pack
+### Step 7 -- Persist the Jira keys back to the ticket pack
 
 **Normal mode only** (skip entirely in dry-run mode):
 
@@ -155,7 +154,7 @@ Cloud: {cloudId}
 | ... |
 ```
 
-### Step 8 — Update state and report
+### Step 8 -- Update state and report
 
 **Normal mode only** (skip state update in dry-run mode):
 
@@ -199,23 +198,23 @@ If there are no dependency links, omit that table. The output must be clearly la
 ## Anti-patterns
 
 - **Don't push to Jira before HITL Gate 3**. The ticket pack must be approved first; otherwise teammates will see churn in Jira every time you re-audit.
-- **Don't push during active implementation**. Tickets in flight may have a different status in Jira than in the source pack — let the source pack stay authoritative until merge.
+- **Don't push during active implementation**. Tickets in flight may have a different status in Jira than in the source pack -- let the source pack stay authoritative until merge.
 - **Don't synthesize fields Jira doesn't have**. If the project doesn't have a `Story Points` field exposed via the MCP, skip the size mapping rather than failing.
 
 ## When to re-run
 
-- After any Phase 5 audit that adds, removes, or rewrites tickets — re-running picks up changes.
-- After a manual SRD revision triggers Phase 4 + Phase 5 again — re-running propagates the changes.
+- After any Phase 5 audit that adds, removes, or rewrites tickets -- re-running picks up changes.
+- After a manual SRD revision triggers Phase 4 + Phase 5 again -- re-running propagates the changes.
 - Routine drift between the ticket pack and Jira -> consider this a smell; the source pack should be the truth, not Jira state.
 
 ## Optional: human review before push
 
 For first-time use on a ticket pack, use dry-run mode:
-- Add `--dry-run` to args; the skill reads all tickets and existing Jira issues but prints only the plan of what would be created/updated/linked — no `createJiraIssue`, `editJiraIssue`, or `createIssueLink` calls are made, and no ticket-pack files or `.edm-state.json` are written.
+- Add `--dry-run` to args; the skill reads all tickets and existing Jira issues but prints only the plan of what would be created/updated/linked -- no `createJiraIssue`, `editJiraIssue`, or `createIssueLink` calls are made, and no ticket-pack files or `.edm-state.json` are written.
 - Useful for verifying field mapping, label schema, and dependency-link logic before any state hits Jira.
 - If MCP is unavailable, `--dry-run` still skips cleanly with the same message as normal mode.
 
 ## See also
 
 - The Atlassian MCP server: configured per-machine via `claude mcp add` or in `.mcp.json`. Register it under the namespace matching `${user_config.jira_mcp_namespace}` (default: `plugin_jira_atlassian-mcp-server`).
-- `bin/edm-state` — tracks `jira_synced_at` and `jira_project_key` so future runs know what's already been pushed.
+- `bin/edm-state` -- tracks `jira_synced_at` and `jira_project_key` so future runs know what's already been pushed.

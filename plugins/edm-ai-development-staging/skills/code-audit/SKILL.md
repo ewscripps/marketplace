@@ -1,6 +1,6 @@
 ---
 name: code-audit
-description: EDM Code Audit (post-Phase 6) — 11 parallel orthogonal audit agents (logic, dead code, edge cases, tests, hygiene, docs, consistency, security, spec, DRY, wiring) plus a synthesizer that produces a severity-ranked remediation plan. Invoked explicitly via /edm:code-audit. Supports --lenses subset for targeted re-audits.
+description: EDM Code Audit (post-Phase 6) -- 11 parallel orthogonal audit agents (logic, dead code, edge cases, tests, hygiene, docs, consistency, security, spec, DRY, wiring) plus a synthesizer that produces a severity-ranked remediation plan. Invoked explicitly via /edm:code-audit. Supports --lenses subset for targeted re-audits.
 disable-model-invocation: true
 model: opus
 effort: max
@@ -18,7 +18,7 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(mkdir *), Bash(date *)
   - Persistent findings ledger: `<initiative-dir>/code-audit/findings-ledger.md` (spans all rounds)
 
 A single auditor misses things because it gravitates toward familiar patterns. Eleven auditors with **orthogonal
-mandates** — plus a synthesizer — catch what a single pass misses. Multiple rounds use a persistent ledger to
+mandates** -- plus a synthesizer -- catch what a single pass misses. Multiple rounds use a persistent ledger to
 track findings across passes and determine convergence.
 
 ## Operational Orchestration
@@ -44,7 +44,7 @@ track findings across passes and determine convergence.
    Each lens:
    - Writes its raw report to `${OUTPUT_DIR}/lens-L{N}.md`
    - Receives the relevant prior-round open findings from the ledger (filtered to its lens) so it can confirm fixes or re-flag
-8. Write `${OUTPUT_DIR}/lenses-run.txt` — one lens ID per line (e.g., `L1`, `L2`, ... for a full round, or `L1`, `L3` for a partial). Add a `Round type: full` or `Round type: partial` header line.
+8. Write `${OUTPUT_DIR}/lenses-run.txt` -- one lens ID per line (e.g., `L1`, `L2`, ... for a full round, or `L1`, `L3` for a partial). Add a `Round type: full` or `Round type: partial` header line.
 9. **Spawn `edm-audit-synthesizer`**. It:
    - Reads the lens reports in `${OUTPUT_DIR}/`
    - Reads the prior `findings-ledger.md` (if present)
@@ -52,9 +52,9 @@ track findings across passes and determine convergence.
    - Writes the updated `findings-ledger.md` to `${INIT_DIR}/code-audit/findings-ledger.md`
    - Writes `${OUTPUT_DIR}/REMEDIATION.md` for this round
    - Marks the round as `partial` (non-convergent) in REMEDIATION.md if `ROUND_TYPE=partial`
-10. **Convergence check** (full rounds only — partial rounds are never convergent):
+10. **Convergence check** (full rounds only -- partial rounds are never convergent):
     - Read `findings-ledger.md`: count open P0 and P1 findings introduced or surviving in this round
-    - If **zero open P0/P1 findings**: convergence reached → `edm-state set <PREFIX> code_audit_converged true`
+    - If **zero open P0/P1 findings**: convergence reached -> `edm-state set <PREFIX> code_audit_converged true`
     - If any open P0/P1 findings: present the blocking set to the human before looping
 11. Read `REMEDIATION.md`. Present the HITL gate (summary below) and STOP for approval.
 12. On approval, remediate per the rollout order in the plan.
@@ -74,7 +74,7 @@ track findings across passes and determine convergence.
 | `edm-audit-security`     | L8: Security & portability (bash, paths, env vars, systemd)                  |
 | `edm-audit-spec`         | L9: Spec/ticket compliance (REQUIRES ticket pack/SRD paths)                  |
 | `edm-audit-dry`          | L10: DRY violations, duplicate utilities, divergent parallel implementations |
-| `edm-audit-wiring`       | L11: Integration wiring (frontend↔API↔backend, dummy data, unused endpoints) |
+| `edm-audit-wiring`       | L11: Integration wiring (frontend<->API<->backend, dummy data, unused endpoints) |
 
 ## Lens Agent Launch Template
 
@@ -100,7 +100,7 @@ Before reporting any finding, the lens agent applies:
 2. Is there a comment explaining why this looks wrong but is correct?
 3. Is this pattern used consistently everywhere in the file or project?
 
-If yes to any → record as "Noted / Not Actionable" with one-line rationale, do not report as a finding.
+If yes to any -> record as "Noted / Not Actionable" with one-line rationale, do not report as a finding.
 
 ## Synthesizer Phase
 
@@ -118,13 +118,13 @@ Prompt: "Read the lens reports in ${OUTPUT_DIR}/. Read the prior findings ledger
          Write the updated ledger to ${INIT_DIR}/code-audit/findings-ledger.md.
          Write the consolidated remediation plan to ${OUTPUT_DIR}/REMEDIATION.md.
          If this is a partial round (fewer than 11 lenses), note 'Round type: partial'
-         in REMEDIATION.md — this round cannot satisfy the convergence gate."
+         in REMEDIATION.md -- this round cannot satisfy the convergence gate."
 ```
 
 Synthesizer responsibilities:
 
 - Apply second-pass filter (intentional behavior, pre-existing issue, documented trade-off, multi-lens corroboration)
-- Deduplicate (same issue flagged by L1 and L4 → one finding, higher confidence)
+- Deduplicate (same issue flagged by L1 and L4 -> one finding, higher confidence)
 - Severity-rank using canonical P0/P1/P2/NOTED scale (NOT legacy P1/P2/P3)
 - Assign stable CA-NNN IDs and merge with prior-round ledger
 - Suggest rollout order (which fixes first, which can batch)
@@ -133,14 +133,14 @@ Synthesizer responsibilities:
 
 ## Severity Reference
 
-Use the **canonical** severity scale from `CLAUDE.md §"Severity vocabulary"`:
+Use the **canonical** severity scale from `CLAUDE.md Sec."Severity vocabulary"`:
 
 | Severity | Definition                                                                  | Action                       |
 |----------|-----------------------------------------------------------------------------|------------------------------|
-| **P0**   | Critical — blocks implementation, security/legal issue, production failure  | Fix before phase is complete |
-| **P1**   | Significant — material gap, factual error, behavior that must be corrected  | Fix before shipping          |
-| **P2**   | Minor — polish, edge-case, improvement, nice-to-have                        | Fix if low effort            |
-| NOTED    | Looks like a problem but is intentional — documented trade-off              | Document once, never revisit |
+| **P0**   | Critical -- blocks implementation, security/legal issue, production failure  | Fix before phase is complete |
+| **P1**   | Significant -- material gap, factual error, behavior that must be corrected  | Fix before shipping          |
+| **P2**   | Minor -- polish, edge-case, improvement, nice-to-have                        | Fix if low effort            |
+| NOTED    | Looks like a problem but is intentional -- documented trade-off              | Document once, never revisit |
 
 **Convergence blocking set**: open P0 and P1 findings from the ledger. P2 and NOTED findings do not block convergence.
 
@@ -169,7 +169,7 @@ Use the **canonical** severity scale from `CLAUDE.md §"Severity vocabulary"`:
 
 ## Decisions / Non-Findings
 
-[Every false alarm with rationale — prevents re-investigation]
+[Every false alarm with rationale -- prevents re-investigation]
 
 ## Rollout Order
 
@@ -195,10 +195,10 @@ After the synthesizer writes `REMEDIATION.md`:
   lens.
 - **Spec gaps (L9)**: Without the ticket pack, an auditor reading code never knows a `--dry-run` flag was required but
   not built.
-- **DRY (L10)**: Two date formatters in two files both work perfectly — only L10's "count duplicate capabilities"
+- **DRY (L10)**: Two date formatters in two files both work perfectly -- only L10's "count duplicate capabilities"
   mandate finds them.
 - **Frontend wired to dummy data (L11)**: A React component rendering from `const MOCK_DATA = [...]` passes every other
   check.
-- **Dead error messages**: An error in `if ! flock -w 1800` is unreachable if systemd kills the process at 600s — only
+- **Dead error messages**: An error in `if ! flock -w 1800` is unreachable if systemd kills the process at 600s -- only
   L2's cross-reference of timeouts vs. constraints finds it.
 - **Runtime file hygiene**: Lock files created at runtime but missing from `.gitignore` only surface under L5.

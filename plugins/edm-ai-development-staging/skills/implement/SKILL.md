@@ -1,6 +1,6 @@
 ---
 name: implement
-description: EDM Phase 6 (Implementation + QC + Remediation) — parallel implementation waves, automatic QC audit (via SubagentStop hook), and remediation loop until all tickets PASS. Invoked explicitly via /edm:implement.
+description: EDM Phase 6 (Implementation + QC + Remediation) -- parallel implementation waves, automatic QC audit (via SubagentStop hook), and remediation loop until all tickets PASS. Invoked explicitly via /edm:implement.
 disable-model-invocation: true
 model: opus
 effort: max
@@ -42,16 +42,16 @@ Wave 3: [{PREFIX}-T06, {PREFIX}-T07]                  (depend on Wave 2)
 
 ```
 Agent: edm-implementer (6-10 parallel per wave, each in isolated worktree)
-Prompt: "Implement tickets [{PREFIX}-T01, …] from the epic file at [path].
+Prompt: "Implement tickets [{PREFIX}-T01, ...] from the epic file at [path].
          Read the Target Components in each ticket before modifying them.
          Follow CLAUDE.md conventions and existing patterns.
-         Write complete implementations — no stubs, no TODOs, no `pass`, no `raise NotImplementedError`.
+         Write complete implementations -- no stubs, no TODOs, no `pass`, no `raise NotImplementedError`.
          Reference ticket IDs ({PREFIX}-T{NN}) in commit messages."
 ```
 
 ## Step 3: Merge and Launch Next Wave
 
-Resolve merge conflicts → run existing tests → launch next wave.
+Resolve merge conflicts -> run existing tests -> launch next wave.
 
 ## Step 4: QC Audit (automatic via hook + sharding)
 
@@ -62,7 +62,7 @@ Resolve merge conflicts → run existing tests → launch next wave.
 - Single auditor: `<initiative-dir>/qc/qc-summary.md`
 - Shards: `<initiative-dir>/qc/qc-shard-{NN}.md` (zero-padded, e.g., `qc-shard-01.md`)
 
-**Sharding logic** — after all implementer waves complete, if the total ticket count for a wave
+**Sharding logic** -- after all implementer waves complete, if the total ticket count for a wave
 exceeds `user_config.qc_shard_threshold` (default 20), spawn multiple `edm-qc-auditor` agents
 in parallel, each assigned a slice of `ceil(N / threshold)` tickets:
 
@@ -71,18 +71,18 @@ in parallel, each assigned a slice of `ceil(N / threshold)` tickets:
 ticket_count = len(wave_tickets)
 threshold    = user_config.qc_shard_threshold   # default 20
 if ticket_count <= threshold:
-    spawn 1 edm-qc-auditor → writes qc/qc-summary.md
+    spawn 1 edm-qc-auditor -> writes qc/qc-summary.md
 else:
     shard_size = ceil(ticket_count / ceil(ticket_count / threshold))
     for i, range in enumerate(chunks(wave_tickets, shard_size)):
-        spawn edm-qc-auditor(shard=i+1, tickets=range) → writes qc/qc-shard-{i+1:02d}.md
+        spawn edm-qc-auditor(shard=i+1, tickets=range) -> writes qc/qc-shard-{i+1:02d}.md
     merge all qc-shard-*.md files into qc/qc-summary.md
 ```
 
 **Verdict semantics**:
-- **PASS** — AC is statically verifiable AND the code provably satisfies it (evidence at file:line)
-- **PARTIAL** — AC **cannot be verified statically** and requires a live runtime environment (running service, real DB, deployed container); record a `deferred-to-runtime` note
-- **FAIL** — AC is statically verifiable AND the code provably does NOT satisfy it
+- **PASS** -- AC is statically verifiable AND the code provably satisfies it (evidence at file:line)
+- **PARTIAL** -- AC **cannot be verified statically** and requires a live runtime environment (running service, real DB, deployed container); record a `deferred-to-runtime` note
+- **FAIL** -- AC is statically verifiable AND the code provably does NOT satisfy it
 
 Finding format:
 ```
@@ -97,12 +97,12 @@ Finding format:
    ```bash
    edm-state record-partial-verdict <PREFIX> <ticket> PARTIAL '<deferred-to-runtime note>'
    ```
-3. Group FAIL findings by file independence → parallelize.
+3. Group FAIL findings by file independence -> parallelize.
 4. Spawn `edm-implementer` agents to fix: *"Fix these QC findings: [list]. Read the file at the given line before modifying. Write complete implementations."*
 5. Commit referencing ticket IDs and finding numbers.
 6. **Re-audit affected tickets** to prevent fix regressions.
 
-Note: PARTIAL findings do not require remediation — they are deferred to runtime verification.
+Note: PARTIAL findings do not require remediation -- they are deferred to runtime verification.
 The `record-partial-verdict` call persists them in state so HANDOFF.md can surface them.
 
 ## Step 6: Execution Report
@@ -113,13 +113,13 @@ to the initiative directory (resolved via `edm-state resolve-dir <PREFIX>`):
 ```markdown
 # Execution Report: {PREFIX}
 
-mode: {run-mode}   # e.g., live-db, dry-run, staging — NOT the adaptation profile
+mode: {run-mode}   # e.g., live-db, dry-run, staging -- NOT the adaptation profile
 
 ## Summary
 {what was built}
 
 ## Deferred Work
-{items not implemented — e.g., optional AC#, follow-on tickets}
+{items not implemented -- e.g., optional AC#, follow-on tickets}
 
 ## Known Issues
 {post-implementation issues visible but not blocking}
@@ -141,7 +141,7 @@ After all tickets have an initial PASS verdict, the execution report is written,
 Recommend running `/edm:test {PREFIX}` to build out layered, comprehensive coverage:
 > *"All {N} tickets pass QC. Before declaring Phase 6 complete, run `/edm:test {PREFIX}` to add
 >  thorough unit, integration, E2E, and accessibility tests across all layers. Implementer agents
->  write basic smoke tests per ticket — `/edm:test` builds the full coverage suite."*
+>  write basic smoke tests per ticket -- `/edm:test` builds the full coverage suite."*
 
 The user may choose to skip this step for small initiatives or where the implementer tests are
 already comprehensive. If skipped, note it in the state:
@@ -168,7 +168,7 @@ Only when:
   ```
   Pass condition: `tools:` line contains `Write`; `disallowedTools:` line does not contain `Write`.
   Fail condition: if `Write` is absent from `tools:` or present in `disallowedTools:`, the
-  test-coverage-auditor cannot write `SRD/{PREFIX}/test-coverage.md` — the testing layer is
+  test-coverage-auditor cannot write `SRD/{PREFIX}/test-coverage.md` -- the testing layer is
   broken. Fix by editing `agents/edm-test-coverage-auditor.md` before declaring done.
 
 After declaration, recommend the user run `/edm:code-audit <PREFIX>` for the 11-lens exhaustive audit before merging.
@@ -190,28 +190,28 @@ After declaration, recommend the user run `/edm:code-audit <PREFIX>` for the 11-
 
 ## Detailed Findings
 
-### {PREFIX}-T01: {title} — PASS
+### {PREFIX}-T01: {title} -- PASS
 All N acceptance criteria verified.
-- [x] AC1: {criterion} — verified at src/handler.py:42
+- [x] AC1: {criterion} -- verified at src/handler.py:42
 
-### {PREFIX}-T02: {title} — PARTIAL
+### {PREFIX}-T02: {title} -- PARTIAL
 - [x] AC1-AC3: Verified (statically)
-- [ ] AC4: {criterion} — **deferred-to-runtime**: requires a running service to verify the 201 response
+- [ ] AC4: {criterion} -- **deferred-to-runtime**: requires a running service to verify the 201 response
 **Finding**: [PARTIAL] {PREFIX}-T02 | AC#4: deferred-to-runtime: call the endpoint with a live server and assert 201
 
-### {PREFIX}-T03: {title} — FAIL
+### {PREFIX}-T03: {title} -- FAIL
 - [x] AC1-AC2: Verified
-- [ ] AC3: {criterion} — **FAIL**: handler.py:78 returns 200, not 201
-**Finding**: [P1] {PREFIX}-T03 | src/handler.py:78 | AC#3: Wrong status code — returns 200, must be 201
+- [ ] AC3: {criterion} -- **FAIL**: handler.py:78 returns 200, not 201
+**Finding**: [P1] {PREFIX}-T03 | src/handler.py:78 | AC#3: Wrong status code -- returns 200, must be 201
 
 ## Remediation Required
 [Prioritized P0 and P1 FAIL findings with file:line and specific fix.
-PARTIAL findings do not appear here — they are deferred to runtime verification.]
+PARTIAL findings do not appear here -- they are deferred to runtime verification.]
 ```
 
 ## AI Execution Tips
 
-- **Isolation**: `edm-implementer` has `isolation: worktree` — each parallel agent gets its own worktree automatically.
+- **Isolation**: `edm-implementer` has `isolation: worktree` -- each parallel agent gets its own worktree automatically.
 - **Read first**: Every agent reads existing code before modifying.
 - **Complete code**: No stubs.
 - **Test**: Run tests after each wave.

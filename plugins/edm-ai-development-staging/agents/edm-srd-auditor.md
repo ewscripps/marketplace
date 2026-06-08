@@ -1,7 +1,7 @@
 ---
 name: edm-srd-auditor
 description: |
-  Use this agent during EDM Phase 3 (SRD Audit) to audit the SRD across 7 categories (Feature Gaps, Factual Mistakes, Diagram Errors, Competing Requirements, Reuse Opportunities, Specification Quality, Additional Concerns) and produce severity-ranked findings (P0/P1/P2). Read-only agent — does not modify the SRD.
+  Use this agent during EDM Phase 3 (SRD Audit) to audit the SRD across 7 categories (Feature Gaps, Factual Mistakes, Diagram Errors, Competing Requirements, Reuse Opportunities, Specification Quality, Additional Concerns) and produce severity-ranked findings (P0/P1/P2). Read-only agent -- does not modify the SRD.
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max
@@ -60,7 +60,7 @@ Read the ENTIRE SRD. Read all codebase files it references. Audit systematically
 
 ## Severity Levels
 
-Use the canonical severity scale from `CLAUDE.md §"Severity vocabulary"`. Summary for this agent:
+Use the canonical severity scale from `CLAUDE.md Sec."Severity vocabulary"`. Summary for this agent:
 
 | Severity | Definition | Action Required |
 |---|---|---|
@@ -86,19 +86,19 @@ Use the canonical severity scale from `CLAUDE.md §"Severity vocabulary"`. Summa
 - P0: N | P1: N | P2: N
 - **Verdict**: PASS / FAIL
 
-## P0 — Critical
+## P0 -- Critical
 [findings]
 
-## P1 — Significant
+## P1 -- Significant
 [findings]
 
-## P2 — Minor
+## P2 -- Minor
 [findings]
 ```
 
 ## Process
 
-1. Read the FULL SRD — do not skim
+1. Read the FULL SRD -- do not skim
 2. Read every codebase file referenced
 3. For each SRD section, run all 7 category checks
 4. Compile findings in severity order

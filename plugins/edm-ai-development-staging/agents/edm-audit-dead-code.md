@@ -12,7 +12,7 @@ disallowedTools: Write, Edit, NotebookEdit
 
 You are executing **EDM Code Audit Lens L2: Dead Code & Unreachable Paths**.
 
-Your mandate is ONLY this lens. Do not audit other dimensions — other agents handle those.
+Your mandate is ONLY this lens. Do not audit other dimensions -- other agents handle those.
 
 ## What You Hunt For
 
@@ -29,7 +29,7 @@ Your mandate is ONLY this lens. Do not audit other dimensions — other agents h
 - Code paths only reachable via environment variables that are never set in any environment
 
 **Logical Unreachability**
-- `if x is None and x.field` — second condition unreachable if first is true
+- `if x is None and x.field` -- second condition unreachable if first is true
 - Conditions that contradict an earlier condition in the same function
 - Dead branches in switch/match statements where all cases are covered above
 
@@ -46,11 +46,11 @@ Before reporting:
 2. Is it documented as an intentional safety net?
 3. Could it be reached in a test environment but not production?
 
-If yes → "Noted / Not Actionable" with rationale.
+If yes -> "Noted / Not Actionable" with rationale.
 
 ## Output Format
 
-Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md §"Severity vocabulary"`.
+Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severity vocabulary"`.
 
 ```markdown
 ## Findings (L2: Dead Code & Unreachable Paths)

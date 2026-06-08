@@ -8,7 +8,7 @@ argument-hint: <PREFIX>
 allowed-tools: Read, Write, Bash(edm-state *), Glob, Grep, TodoWrite
 ---
 
-# EDM Test Coverage — Re-Audit Existing Tests
+# EDM Test Coverage -- Re-Audit Existing Tests
 
 **Arguments**: $ARGUMENTS
 
@@ -22,14 +22,14 @@ Use this skill when:
 
 ## Operational Orchestration
 
-### Step 1 — Verify prerequisites
+### Step 1 -- Verify prerequisites
 
 1. Parse `{PREFIX}` from `$ARGUMENTS`.
 2. Verify `${user_config.srd_root}/{PREFIX}/test-plan.md` exists. If not, print:
    > *"test-plan.md not found. Run /edm:test-plan {PREFIX} first to generate the coverage map."*
 3. Verify the ticket pack exists.
 
-### Step 2 — Spawn edm-test-coverage-auditor
+### Step 2 -- Spawn edm-test-coverage-auditor
 
 Spawn the `edm-test-coverage-auditor` agent with:
 
@@ -45,21 +45,30 @@ coverage_target_e2e_critical_paths_pct: ${user_config.coverage_target_e2e_critic
 
 Wait for it to complete.
 
-### Step 3 — Present results
+### Step 3 -- Present results
 
 After the auditor completes, present to the user:
-- Updated coverage by layer (target vs. actual).
-- Finding counts (P0, P1, P2).
+- Updated coverage by layer -- or by epic and layer for multi-stack initiatives (target vs. actual).
+- Stale per-epic coverage files removed (if any).
+- Finding counts (P0, P1, P2) overall and per epic.
 - Whether Phase 6 can be declared complete.
-- Location of the report: `${user_config.srd_root}/{PREFIX}/test-coverage.md`.
+- Locations of the updated report(s):
+  - Single-stack: `${user_config.srd_root}/{PREFIX}/test-coverage.md`
+  - Multi-stack: `${user_config.srd_root}/{PREFIX}/test-coverage.md` (summary) plus
+    `${user_config.srd_root}/{PREFIX}/test-coverage-{epic}.md` per epic.
 - If P0 or P1 findings remain: suggest running `/edm:test {PREFIX} --fill-gaps`.
 
-### Artifact produced
+### Artifacts produced
 
-`${user_config.srd_root}/{PREFIX}/test-coverage.md` — overwrites the previous version with fresh measurements.
+- **Single-stack**: `${user_config.srd_root}/{PREFIX}/test-coverage.md`
+- **Multi-stack**: `${user_config.srd_root}/{PREFIX}/test-coverage.md` (summary) plus
+  `${user_config.srd_root}/{PREFIX}/test-coverage-{epic-slug}.md` per epic
+
+All files overwrite the previous version with fresh measurements. Stale per-epic files whose
+epics no longer appear in the current plan are removed before measuring.
 
 ### See also
 
-- `/edm:test <PREFIX>` — full pipeline including test writing
-- `/edm:test-plan <PREFIX>` — re-generate the plan (stack detection + AC mapping)
-- `edm-state get-coverage <PREFIX>` — quick coverage summary from state file
+- `/edm:test <PREFIX>` -- full pipeline including test writing
+- `/edm:test-plan <PREFIX>` -- re-generate the plan (stack detection + AC mapping)
+- `edm-state get-coverage <PREFIX>` -- quick coverage summary from state file

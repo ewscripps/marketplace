@@ -284,7 +284,7 @@ writers are `green` (build code, like `edm-implementer`). Planner is `yellow` (d
 
 ### State schema additions
 
-`.edm-state.json` gains two new top-level fields (added by `edm-state init`, `{}` default):
+`.edm-state.json` gains these top-level fields (added by `edm-state init`, defaults shown):
 
 ```json
 {
@@ -292,9 +292,32 @@ writers are `green` (build code, like `edm-implementer`). Planner is `yellow` (d
   "coverage_by_layer": {
     "unit": { "pct": 82.4, "measured_at": "2026-05-01T..." },
     "integration": { "pct": 65.1, "measured_at": "2026-05-01T..." }
-  }
+  },
+  "coverage_by_epic": {
+    "auth": {
+      "unit": { "pct": 84.1, "measured_at": "2026-05-01T..." }
+    },
+    "dashboard": {
+      "unit": { "pct": 75.0, "measured_at": "2026-05-01T..." }
+    }
+  },
+  "parent_prefix": "",
+  "related_prefixes": []
 }
 ```
+
+`test_frameworks_detected` is keyed by epic slug for multi-stack initiatives (e.g.,
+`{"auth":{"unit":"pytest"},"dashboard":{"unit":"vitest","component":"@testing-library/vue"}}`),
+or flat for single-stack initiatives.
+
+`coverage_by_layer` holds whole-initiative coverage for single-stack initiatives.
+`coverage_by_epic` holds per-epic coverage for multi-stack initiatives (additive; keyed by epic slug).
+
+`parent_prefix` is the bare PREFIX of the parent initiative in a product line (set via
+`edm-state set-parent <PREFIX> <PARENT>`; validated to exist).
+
+`related_prefixes` is an append-only list of related initiative prefixes (set via
+`edm-state add-related <PREFIX> <RELATED>`; idempotent).
 
 `phase_durations[N_phase]` gains `tests_added` (total) and `tests_by_layer` (per layer) counts
 when `edm-state record-tests-added` is called.
@@ -303,27 +326,43 @@ when `edm-state record-tests-added` is called.
 
 | Subcommand | Usage |
 |-----------|-------|
-| `record-test-coverage <PREFIX> <layer> <pct>` | Record coverage % for one layer |
+| `record-test-coverage <PREFIX> <layer> <pct> [<epic>]` | Record coverage % for one layer (with epic = per-epic, without = whole-initiative) |
 | `record-tests-added <PREFIX> <phase> <layer> <count>` | Increment test count for phase+layer |
-| `get-coverage <PREFIX>` | Print coverage summary |
+| `get-coverage <PREFIX>` | Print coverage summary (whole-initiative and per-epic) |
+| `set-parent <PREFIX> <PARENT>` | Set parent_prefix (validates PARENT exists) |
+| `add-related <PREFIX> <RELATED>` | Append to related_prefixes (idempotent) |
 
 `metrics-report <PREFIX>` now includes a test coverage table below the cost/time table if
-coverage data has been recorded.
+coverage data has been recorded -- both whole-initiative and per-epic when available.
 
 ### When to invoke /edm:test
 
 Run it after all Phase 6 implementation waves complete and before declaring the initiative done.
-For `--fill-gaps` mode (fill ALL gaps — P0, P1, and P2 — in an existing coverage report), pass the flag:
+For `--fill-gaps` mode (fill ALL gaps -- P0, P1, and P2 -- in an existing coverage report), pass the flag:
 `/edm:test {PREFIX} --fill-gaps`.
 
-### Layers that are N/A
+### Layers that are N/A and per-epic test plans
 
 Each test-writer agent self-identifies when its layer doesn't apply and exits cleanly:
-- `component`, `composable`, `a11y`, `e2e` are N/A for backend-only or CLI-only projects.
-- `contract` is N/A for projects without an API schema.
-- `composable` is N/A for projects without React hooks or Vue composables.
+- `component`, `composable`, `a11y`, `e2e` are N/A for backend-only or CLI-only epics.
+- `contract` is N/A for epics without an API schema.
+- `composable` is N/A for epics without React hooks or Vue composables.
 
-The planner marks them N/A in `test-plan.md` so writers skip them without being spawned.
+N/A designations are recomputed each run -- never inherited from a previous plan. When a layer
+is N/A, no placeholder file or coverage row is written (absence is authoritative).
+
+**Per-epic test plan filename convention** (multi-stack initiatives):
+- `test-plan-{epic-slug}.md` -- per-epic plan file (e.g., `test-plan-auth.md`, `test-plan-dashboard.md`)
+- `test-plan.md` -- top-level index listing each epic, its stack, and a link to its per-epic plan
+
+**Per-epic coverage filename convention** (multi-stack initiatives):
+- `test-coverage-{epic-slug}.md` -- per-epic coverage report
+- `test-coverage.md` -- top-level summary with cross-epic coverage table
+
+The epic slug is derived from the epic ticket-pack filename: `epics/NN-{slug}.md` -> `{slug}`.
+
+When all epics share the same stack (single-stack initiative), the planner produces only
+`test-plan.md` and the coverage auditor produces only `test-coverage.md` -- v1.x behavior is preserved.
 
 ## Optional: Jira synchronization
 

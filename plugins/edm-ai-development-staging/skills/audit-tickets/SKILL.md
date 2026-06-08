@@ -1,6 +1,6 @@
 ---
 name: audit-tickets
-description: EDM Phase 5 (Ticket Pack Audit) — audit the ticket pack for coverage, sizing, dependencies, AC quality, diagrams, version alignment, and consistency; present HITL Gate 3. Invoked explicitly via /edm:audit-tickets.
+description: EDM Phase 5 (Ticket Pack Audit) -- audit the ticket pack for coverage, sizing, dependencies, AC quality, diagrams, version alignment, and consistency; present HITL Gate 3. Invoked explicitly via /edm:audit-tickets.
 disable-model-invocation: true
 model: opus
 effort: max
@@ -24,15 +24,16 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
    edm-state get <PREFIX> | jq -r '.srd_version // "0.0.0"'
    ```
    Read the `Generated From:` header in the ticket pack `README.md`. If the header version does not
-   match `srd_version`, surface it as a P0 finding immediately — the ticket pack is stale. Example:
+   match `srd_version`, surface it as a P0 finding immediately -- the ticket pack is stale. Example:
    ```
    [VERSION-DRIFT] P0 | README.md | Generated From: srd.md v1.0.0 but current srd_version is 1.2.0
    | Ticket pack was generated from an outdated SRD. Re-run /edm:tickets or accept with rationale.
    ```
-4. Spawn 2 `edm-ticket-auditor` agents in parallel:
-   - One for **structural** issues: coverage, sizing, dependencies, version alignment
-   - One for **content quality**: AC quality, diagrams, consistency
-5. Compile findings into `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/audit.md`
+4. **Two-lane mandatory spawn** -- spawn exactly 2 `edm-ticket-auditor` agents in parallel (never serial, never merged into one agent):
+   - **Lane 1 (structural)** -- dimensions 1-4: coverage, sizing (using shared legend from `docs/templates/ticket-size-legend.md`), dependencies, version alignment
+   - **Lane 2 (content-quality)** -- dimensions 5-8: AC quality, diagram correctness, consistency, version alignment overlap
+5. Compile findings into `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/audit.md`. Tag each finding with its lane (`[structural]` or `[content-quality]`). De-duplicate findings that both lanes surface (deduplicated findings appear once).
+
 6. **Remediate** all coverage gaps, decompose XL tickets, fix dependency declarations, improve vague AC, fix consistency mismatches.
 7. `edm-state phase-complete <PREFIX> 5`
 8. Present **HITL Gate 3** (see below) and STOP for sign-off.
@@ -41,8 +42,8 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 ## 8 Audit Dimensions
 
 ### 1. Coverage
-- Every SRD requirement maps to ≥1 ticket?
-- Every ticket maps to ≥1 SRD requirement?
+- Every SRD requirement maps to >=1 ticket?
+- Every ticket maps to >=1 SRD requirement?
 - SRD Coverage Map matches reality?
 - Orphan requirements or orphan tickets?
 
@@ -81,7 +82,7 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 
 ### 8. Version Alignment (NEW)
 - Does the ticket pack `README.md` header `Generated From: srd.md vX.Y.Z` match the **current** SRD version (`srd_version` in `.edm-state.json`)?
-- If mismatched → P0 finding ("ticket pack is stale relative to current SRD; re-run Phase 4 or accept divergence with explicit rationale").
+- If mismatched -> P0 finding ("ticket pack is stale relative to current SRD; re-run Phase 4 or accept divergence with explicit rationale").
 
 ## Audit Report Format
 
@@ -104,11 +105,19 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 ## AI Execution Pattern
 
 ```
-Agent: edm-ticket-auditor (launch 2 in parallel)
+Agent: edm-ticket-auditor (Lane 1 -- structural)
 Prompt: "Audit the ticket pack at ${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/.
          Cross-reference against SRD at ${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}.
-         Check dimensions [1-4 / 5-8]. Report every gap found.
-         Verify ticket IDs use {PREFIX}-T{NN} format. Verify Generated From header matches current SRD version."
+         You are the STRUCTURAL lane (dimensions 1-4): coverage, sizing, dependencies, version alignment.
+         For sizing checks, read the shared size legend at docs/templates/ticket-size-legend.md.
+         Tag all findings: [structural]. Report every gap found."
+
+Agent: edm-ticket-auditor (Lane 2 -- content-quality)
+Prompt: "Audit the ticket pack at ${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/.
+         Cross-reference against SRD at ${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}.
+         You are the CONTENT-QUALITY lane (dimensions 5-8): AC quality, diagram correctness,
+         consistency, version alignment.
+         Tag all findings: [content-quality]. Report every gap found."
 ```
 
 ## HITL Gate 3
@@ -116,5 +125,5 @@ Prompt: "Audit the ticket pack at ${user_config.srd_root}/{PREFIX}/${user_config
 After resolving all findings:
 1. Summarize: total ticket count by epic, size distribution (XS/S/M/L counts), critical path summary, estimated total effort, SRD coverage (N/N = 100%), version alignment confirmed.
 2. Ask: *"Do you approve this ticket pack and want to proceed to implementation, or do you have changes?"*
-3. **STOP and WAIT** — do not proceed to Phase 6 autonomously.
+3. **STOP and WAIT** -- do not proceed to Phase 6 autonomously.
 4. On approval: `edm-state approve-gate <PREFIX> 3`. Next: `/edm:implement <PREFIX>`.

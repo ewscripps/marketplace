@@ -22,19 +22,19 @@ Steps:
 1. Read all lens reports that exist in the pass directory.
 2. Read the prior `findings-ledger.md` if it exists.
 3. Apply the second-pass False Alarm Filter to each new finding.
-4. Deduplicate findings flagged by multiple lenses — a single underlying issue appears once, with all contributing lenses listed (multi-lens = higher confidence).
+4. Deduplicate findings flagged by multiple lenses -- a single underlying issue appears once, with all contributing lenses listed (multi-lens = higher confidence).
 5. Merge with ledger: assign stable IDs (`CA-001`, `CA-002`, ...) to genuinely new findings; mark prior open findings as `fixed` (record `resolved_round = N`) if they no longer appear in this round; re-open any that reappear under their original ID.
 6. Severity-rank all open findings (P0 / P1 / P2).
 7. Write the updated `findings-ledger.md` to `<initiative-dir>/code-audit/findings-ledger.md`.
 8. Write `REMEDIATION.md` for this round to the pass directory.
-9. If this was a partial round, add a `Round type: partial (lenses: L{N}, ...)` note to REMEDIATION.md — partial rounds cannot satisfy the convergence gate.
+9. If this was a partial round, add a `Round type: partial (lenses: L{N}, ...)` note to REMEDIATION.md -- partial rounds cannot satisfy the convergence gate.
 
 ## Second-Pass False Alarm Filter
 
 A finding is "Not Actionable" if any of these is true:
 
 1. The behavior is documented as intentional in the SRD, ticket pack, or a code comment.
-2. The issue is pre-existing — not introduced by the implementation under audit.
+2. The issue is pre-existing -- not introduced by the implementation under audit.
 3. The issue is a known trade-off explicitly accepted in the project (with documented rationale).
 4. Only one lens flagged it AND the finding doesn't cross-reference other evidence (low corroboration).
 
@@ -52,7 +52,7 @@ If L7 (Consistency) and L10 (DRY) both flag related issues that share a root cau
 
 ## Severity Reference
 
-Use the canonical severity scale defined in `CLAUDE.md §"Severity vocabulary"`. Summary:
+Use the canonical severity scale defined in `CLAUDE.md Sec."Severity vocabulary"`. Summary:
 
 | Severity | Definition | Action |
 |---|---|---|
@@ -105,13 +105,13 @@ Write to `REMEDIATION.md` in the audit directory:
 
 These items were flagged by one or more lenses but determined to be Not Actionable. Future audits should NOT re-investigate them.
 
-1. **L8 flagged hardcoded `/var/log/app.log` path** — Pre-existing; project's deployment standardizes this path across all hosts. Documented in CLAUDE.md.
-2. **L7 flagged different timeout values in service A and B** — Intentional; service A has stricter SLA. Documented in service A's README.
+1. **L8 flagged hardcoded `/var/log/app.log` path** -- Pre-existing; project's deployment standardizes this path across all hosts. Documented in CLAUDE.md.
+2. **L7 flagged different timeout values in service A and B** -- Intentional; service A has stricter SLA. Documented in service A's README.
 3. ...
 
 ## Rollout Order
 
-1. Fix all P0 findings first (G1-G3). Group by file independence — these can be parallelized.
+1. Fix all P0 findings first (G1-G3). Group by file independence -- these can be parallelized.
 2. P1 findings (G4-G7) can be batched into a single follow-up commit.
 3. P2 findings (G8+) deferred to next maintenance window.
 
@@ -145,13 +145,13 @@ Status values: `open`, `fixed`, `deferred`. Matching across rounds uses componen
 2. Read `lenses-run.txt` to determine if this is a full or partial round.
 3. Read the prior `findings-ledger.md` (if present); extract all open findings.
 4. Build a new finding inventory from this round's lens reports.
-5. Apply False Alarm Filter — partition into Actionable and Not Actionable.
+5. Apply False Alarm Filter -- partition into Actionable and Not Actionable.
 6. Group Actionable findings by underlying issue. If two findings reference the same file:line and describe the same root cause, merge them. Note all contributing lenses.
 7. **Ledger merge**:
    a. For each new finding: assign next available `CA-NNN` ID; add as `open`.
    b. For each prior open finding not matched in this round: mark `fixed`, record `resolved_round = N`.
    c. For each prior `fixed` finding that reappears: re-open, clear `resolved_round`, keep original ID.
-8. Sort by severity (P0 → P1 → P2), then by lens count (multi-lens first within tier).
+8. Sort by severity (P0 -> P1 -> P2), then by lens count (multi-lens first within tier).
 9. Write the updated `findings-ledger.md` to `<initiative-dir>/code-audit/findings-ledger.md`.
 10. Write `REMEDIATION.md` per the format above (this round's open findings only).
 11. Print a one-paragraph summary: "{N} P0, {M} P1, {K} P2 open; {F} fixed this round; {D} deferred; {NA} not-actionable filtered. Round type: full/partial. Top 3 most impactful: ..."
@@ -160,6 +160,6 @@ Status values: `open`, `fixed`, `deferred`. Matching across rounds uses componen
 
 - Every Actionable finding has a concrete fix (specific code or config), not vague advice.
 - Every Not-Actionable finding has a one-line rationale (no longer than 80 chars).
-- Multi-lens findings are surfaced prominently — they're the highest-confidence signal.
+- Multi-lens findings are surfaced prominently -- they're the highest-confidence signal.
 - The Rollout Order is sensible: P0s first, parallel where possible, batched P1s.
 - The Verification Plan tells the engineer exactly which commands to run after fixes.

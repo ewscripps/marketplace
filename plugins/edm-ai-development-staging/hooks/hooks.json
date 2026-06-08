@@ -77,6 +77,17 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "git commit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; command -v edm-lint-artifacts >/dev/null 2>&1 || exit 0; p=$(edm-state active-initiatives 2>/dev/null | awk '/^[[:space:]]+[A-Z]/{print $1; exit}'); test -z \"$p\" && exit 0; edm-lint-artifacts \"$p\" 2>&1 || { echo \"[EDM] Fix artifact violations before committing (edm-lint-artifacts $p)\" >&2; exit 1; }"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

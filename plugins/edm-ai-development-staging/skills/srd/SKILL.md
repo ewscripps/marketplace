@@ -1,6 +1,6 @@
 ---
 name: srd
-description: EDM Phase 2 (SRD Creation) — transform planning scope into a comprehensive Software Requirements Document with unique requirement IDs, testable acceptance criteria, architecture diagrams, and prioritized features. Invoked explicitly via /edm:srd.
+description: EDM Phase 2 (SRD Creation) -- transform planning scope into a comprehensive Software Requirements Document with unique requirement IDs, testable acceptance criteria, architecture diagrams, and prioritized features. Invoked explicitly via /edm:srd.
 disable-model-invocation: true
 model: opus
 effort: high
@@ -18,7 +18,7 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 ## Operational Orchestration
 
 1. Parse `$ARGUMENTS` for `{PREFIX}`. If missing, ask the user or read from in-progress initiatives via `edm-state list`.
-2. `edm-state get <PREFIX>` — verify Gate 1 has been approved. (The UserPromptExpansion hook also enforces this.)
+2. `edm-state get <PREFIX>` -- verify Gate 1 has been approved. (The UserPromptExpansion hook also enforces this.)
 3. Read `mode` from state: `edm-state get <PREFIX> | jq -r '.mode // "standard"'`
 4. `edm-state phase-start <PREFIX> 2`
 5. **Standard / IaC / Data-ML modes**: Spawn `edm-srd-writer` for main content + `edm-architect` in
@@ -27,7 +27,7 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
    **mini-SRD mode**: Spawn `edm-srd-writer` with the fused-file structure (see section below).
 6. After both complete, verify the SRD file. `edm-state srd-version <PREFIX> 1.0.0`
 7. `edm-state phase-complete <PREFIX> 2`
-8. Proceed automatically to Phase 3 audit (`/edm:audit-srd <PREFIX>`) — no HITL gate between Phase 2 and Phase 3.
+8. Proceed automatically to Phase 3 audit (`/edm:audit-srd <PREFIX>`) -- no HITL gate between Phase 2 and Phase 3.
 
 ## SRD Sections
 
@@ -48,22 +48,22 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 
 ## Requirement ID Conventions
 
-All requirements get sequential IDs: `{PREFIX}-01`, `{PREFIX}-02`, …
+All requirements get sequential IDs: `{PREFIX}-01`, `{PREFIX}-02`, ...
 
 ## Quality Standards (Mandatory)
 
-1. **Unique IDs** — every requirement has `{PREFIX}-NN`
-2. **Testable** — every requirement has clear pass/fail acceptance criteria
-3. **Illustrated** — architecture shown with Mermaid diagrams (system context + sequence)
-4. **Prioritized** — Must Have / Should Have / Could Have
-5. **No vague language** — "fast" → "< 200ms p95 at 1000 QPS"
-6. **Cross-referenced** — actual file paths, API names, library versions
-7. **Appropriate length** — 800+ lines major, 200+ focused, 50+ small change
+1. **Unique IDs** -- every requirement has `{PREFIX}-NN`
+2. **Testable** -- every requirement has clear pass/fail acceptance criteria
+3. **Illustrated** -- architecture shown with Mermaid diagrams (system context + sequence)
+4. **Prioritized** -- Must Have / Should Have / Could Have
+5. **No vague language** -- "fast" -> "< 200ms p95 at 1000 QPS"
+6. **Cross-referenced** -- actual file paths, API names, library versions
+7. **Appropriate length** -- 800+ lines major, 200+ focused, 50+ small change
 
 ## SRD Template
 
 ```markdown
-# {Initiative Name} — Software Requirements Document
+# {Initiative Name} -- Software Requirements Document
 
 ## 1. Document Information
 | Field | Value |
@@ -104,7 +104,7 @@ The fused file folds Phases 2-5 into one audited document. Section layout (in or
 ## 1. Document Information / Executive Summary / Purpose & Scope / Current State / Architecture Ref
 ## 2. Feature Requirements  (SRD body)
 ## 3. Risks & Mitigations   (SRD body)
-## --- Ticket List ---       (Phase 4 equivalent — numbered tickets with ACs)
+## --- Ticket List ---       (Phase 4 equivalent -- numbered tickets with ACs)
 ### {PREFIX}-T01: {title}
 - **Size**: S/M/L
 - **AC**: [ ] ...
@@ -147,10 +147,10 @@ Prompt: "Write the SRD for {PREFIX} at ${user_config.srd_root}/{PREFIX}/${user_c
 Agent: edm-architect
 Prompt: "Write the Target Architecture document to architecture.md in the initiative directory.
          Include Mermaid diagrams (system context + sequence) and component design grounded in
-         the existing codebase. The SRD Section 5 references this file — do not duplicate content."
+         the existing codebase. The SRD Section 5 references this file -- do not duplicate content."
 ```
 
-For large SRDs, run multiple `edm-srd-writer` agents in parallel (one per section group). Always run `edm-architect` separately — it writes `architecture.md`, not the SRD body.
+For large SRDs, run multiple `edm-srd-writer` agents in parallel (one per section group). Always run `edm-architect` separately -- it writes `architecture.md`, not the SRD body.
 
 ## Related Initiatives Section (when linkage exists)
 

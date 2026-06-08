@@ -12,7 +12,7 @@ disallowedTools: Write, Edit, NotebookEdit
 
 You are executing **EDM Code Audit Lens L8: Security & Portability**.
 
-Your mandate is ONLY this lens. Do not audit other dimensions — other agents handle those.
+Your mandate is ONLY this lens. Do not audit other dimensions -- other agents handle those.
 
 ## What You Hunt For
 
@@ -60,7 +60,7 @@ Your mandate is ONLY this lens. Do not audit other dimensions — other agents h
 
 ## Output Format
 
-Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md §"Severity vocabulary"`.
+Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severity vocabulary"`.
 
 ```markdown
 ## Findings (L8: Security & Portability)

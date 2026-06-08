@@ -11,7 +11,7 @@
 #   edm-state phase-complete <PREFIX> <phase-num>       # record phase completion + duration
 #   edm-state checkpoint-if-active                      # called by Stop/PreCompact hooks
 #   edm-state record-task-duration                      # called by TaskCompleted hook (reserved no-op)
-#   edm-state record-test-coverage <PREFIX> <layer> <pct>   # record coverage % for a test layer
+#   edm-state record-test-coverage <PREFIX> <layer> <pct> [<epic>]  # record coverage % for a layer (optionally per-epic)
 #   edm-state record-tests-added <PREFIX> <phase> <layer> <count>  # record test count by layer
 #   edm-state get-coverage <PREFIX>                     # print coverage summary for all layers
 #   edm-state srd-version <PREFIX> <version>            # set the SRD version (e.g. 1.0.0, 1.1.0)
@@ -32,6 +32,11 @@
 #   edm-state skip-phase <PREFIX> <phase-num> [<rationale>]           # record an intentionally skipped phase
 #   edm-state set-supersedes <PREFIX> <other-prefix>                  # record which initiative this supersedes
 #   edm-state set-forked-from <PREFIX> <other-prefix>                 # record which initiative this forked from
+#   edm-state resolve-dir <PREFIX>                                    # resolve bare prefix to initiative directory (read-only)
+#   edm-state set-parent <PREFIX> <PARENT>                           # set parent_prefix (validates PARENT exists)
+#   edm-state add-related <PREFIX> <RELATED>                         # append to related_prefixes (idempotent)
+#   edm-state update-patterns <PREFIX> <srd|ticket|qc|code>          # append novel audit findings to pattern library (T121)
+#   edm-state lint <PREFIX>                                           # run edm-lint-artifacts over initiative artifacts (T115)
 set -euo pipefail
 
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
@@ -249,6 +254,13 @@ read_state() {
   cat "$f"
 }
 
+# T132: backup + write body — called inside the advisory lock by write_state.
+# Never call directly. $1 = state file path, $2 = content to write.
+_write_state_body() {
+  [[ -f "$1" ]] && cp -p "$1" "${1}.bak"
+  printf '%s\n' "$2" > "$1"
+}
+
 write_state() {
   local prefix="$1"
   local content="$2"
@@ -256,7 +268,7 @@ write_state() {
   f="$(state_file_for "$prefix")"
   lockbase="${f%.json}"
   mkdir -p "$(dirname "$f")"
-  with_state_lock "$lockbase" printf '%s\n' "$content" > "$f"
+  with_state_lock "$lockbase" _write_state_body "$f" "$content"
 }
 
 now_utc() {
@@ -452,6 +464,7 @@ cmd_init() {
     phase_durations: {},
     test_frameworks_detected: {},
     coverage_by_layer: {},
+    coverage_by_epic: {},
     code_audit_converged: false,
     last_cmd: "",
     last_decision: "",
@@ -464,6 +477,8 @@ cmd_init() {
     skipped_phases: [],
     supersedes: "",
     forked_from: "",
+    parent_prefix: "",
+    related_prefixes: [],
     last_updated: $t
   }' > "$f"
   echo "initialized $f"
@@ -674,17 +689,27 @@ cmd_record_task_duration() {
 }
 
 cmd_record_test_coverage() {
-  [[ $# -eq 3 ]] || die "usage: edm-state record-test-coverage <PREFIX> <layer> <pct>"
+  [[ $# -eq 3 ]] || [[ $# -eq 4 ]] \
+    || die "usage: edm-state record-test-coverage <PREFIX> <layer> <pct> [<epic>]"
   require_jq
-  local prefix="$1" layer="$2" pct="$3"
+  local prefix="$1" layer="$2" pct="$3" epic="${4:-}"
   local current new
   current="$(read_state "$prefix")"
-  new="$(echo "$current" | jq --arg l "$layer" --argjson p "$pct" --arg t "$(now_utc)" '
-    .coverage_by_layer[$l] = {pct: $p, measured_at: $t}
-    | .last_updated = $t
-  ')"
-  write_state "$prefix" "$new"
-  echo "recorded coverage: $layer = ${pct}% for $prefix"
+  if [[ -n "$epic" ]]; then
+    new="$(echo "$current" | jq --arg l "$layer" --argjson p "$pct" --arg t "$(now_utc)" --arg e "$epic" '
+      .coverage_by_epic[$e][$l] = {pct: $p, measured_at: $t}
+      | .last_updated = $t
+    ')"
+    write_state "$prefix" "$new"
+    echo "recorded coverage: epic=$epic layer=$layer = ${pct}% for $prefix"
+  else
+    new="$(echo "$current" | jq --arg l "$layer" --argjson p "$pct" --arg t "$(now_utc)" '
+      .coverage_by_layer[$l] = {pct: $p, measured_at: $t}
+      | .last_updated = $t
+    ')"
+    write_state "$prefix" "$new"
+    echo "recorded coverage: $layer = ${pct}% for $prefix"
+  fi
 }
 
 cmd_record_tests_added() {
@@ -713,17 +738,40 @@ cmd_get_coverage() {
   [[ -f "$state" ]] || die "no state for $prefix"
   echo "# Test Coverage - $prefix"
   echo
+  # Whole-initiative coverage (single-stack)
   jq -r '
     (.coverage_by_layer // {}) | to_entries |
-    if length == 0 then "  (no coverage recorded yet - run /edm:test first)"
+    if length == 0 then empty
     else
+      "## Whole-Initiative Coverage",
+      "",
       "  Layer          Coverage  Measured At",
       "  ----------     --------  -----------",
-      (.[] | "  \(.key | . + (" " * (14 - length)))  \(.value.pct)%\(if .value.pct < 10 then "        " elif .value.pct < 100 then "       " else "      " end)  \(.value.measured_at // "?")") |
-    .[] // .
+      (.[] | "  \(.key | . + (" " * (14 - length)))  \(.value.pct)%\(if .value.pct < 10 then "        " elif .value.pct < 100 then "       " else "      " end)  \(.value.measured_at // "?")"),
+      ""
+    end
+  ' "$state" 2>/dev/null
+  # Per-epic coverage (multi-stack)
+  jq -r '
+    (.coverage_by_epic // {}) | to_entries |
+    if length == 0 then empty
+    else
+      "## Per-Epic Coverage",
+      "",
+      "  Epic            Layer          Coverage  Measured At",
+      "  ------          ----------     --------  -----------",
+      (.[] | .key as $epic | .value | to_entries[] |
+        "  \($epic | . + (" " * (15 - length | if . < 0 then 0 else . end)))  \(.key | . + (" " * (14 - length | if . < 0 then 0 else . end)))  \(.value.pct)%\(if .value.pct < 10 then "        " elif .value.pct < 100 then "       " else "      " end)  \(.value.measured_at // "?")"),
+      ""
+    end
+  ' "$state" 2>/dev/null
+  # Fallback message when neither is present
+  jq -r '
+    if ((.coverage_by_layer // {} | length) + (.coverage_by_epic // {} | length)) == 0
+    then "  (no coverage recorded yet - run /edm:test first)"
+    else empty
     end
   ' "$state" 2>/dev/null || echo "  (no coverage data)"
-  echo
   jq -r '
     [.phase_durations | to_entries[] | {phase: .key, tests: .value.tests_added, by_layer: .value.tests_by_layer}] |
     map(select(.tests != null and .tests > 0)) |
@@ -952,8 +1000,9 @@ cmd_metrics_report() {
         echo
       fi
       # Test coverage summary (if any recorded)
-      local has_coverage
+      local has_coverage has_epic_coverage
       has_coverage="$(jq -r '(.coverage_by_layer // {}) | length' "$state" 2>/dev/null || echo 0)"
+      has_epic_coverage="$(jq -r '(.coverage_by_epic // {}) | length' "$state" 2>/dev/null || echo 0)"
       if [[ "$has_coverage" -gt 0 ]]; then
         echo "## Test Coverage"
         echo
@@ -962,6 +1011,18 @@ cmd_metrics_report() {
         jq -r '
           (.coverage_by_layer // {}) | to_entries[] |
           "  \(.key | . + (" " * (14 - length | if . < 0 then 0 else . end)))  \(.value.pct)%\(if .value.pct < 10 then "         " elif .value.pct < 100 then "        " else "       " end)  \(.value.measured_at // "?")"
+        ' "$state" 2>/dev/null
+        echo
+      fi
+      if [[ "$has_epic_coverage" -gt 0 ]]; then
+        echo "## Per-Epic Test Coverage"
+        echo
+        printf "  %-15s  %-14s  %-10s\n" "Epic" "Layer" "Coverage"
+        printf "  %-15s  %-14s  %-10s\n" "----" "-----" "--------"
+        jq -r '
+          (.coverage_by_epic // {}) | to_entries[] |
+          .key as $epic | .value | to_entries[] |
+          "  \($epic | . + (" " * (15 - length | if . < 0 then 0 else . end)))  \(.key | . + (" " * (14 - length | if . < 0 then 0 else . end)))  \(.value.pct)%"
         ' "$state" 2>/dev/null
         echo
       fi
@@ -1389,6 +1450,193 @@ cmd_set_forked_from() {
   echo "set forked_from = $other for $prefix"
 }
 
+# ---- Product-line linkage (T101/T102) ----------------------------------------
+# resolve-dir <PREFIX> — resolve bare prefix to initiative directory (read-only).
+# Returns a non-zero exit and a message when no initiative exists for the prefix.
+
+cmd_resolve_dir() {
+  [[ $# -eq 1 ]] || die "usage: edm-state resolve-dir <PREFIX>"
+  local prefix="$1"
+  local state_file
+  state_file="$(state_file_for "$prefix")"
+  [[ -f "$state_file" ]] || die "no initiative for prefix $prefix"
+  echo "${state_file%/.edm-state.json}"
+}
+
+# set-parent <PREFIX> <PARENT> — set parent_prefix; validates PARENT exists.
+cmd_set_parent() {
+  [[ $# -eq 2 ]] || die "usage: edm-state set-parent <PREFIX> <PARENT>"
+  require_jq
+  local prefix="$1" parent="$2"
+  local parent_state
+  parent_state="$(state_file_for "$parent")"
+  [[ -f "$parent_state" ]] || die "no initiative for prefix $parent"
+  local current new
+  current="$(read_state "$prefix")"
+  new="$(echo "$current" | jq --arg p "$parent" --arg t "$(now_utc)" '.parent_prefix = $p | .last_updated = $t')"
+  write_state "$prefix" "$new"
+  echo "set parent_prefix = $parent for $prefix"
+  write_handoff_internal "$prefix"
+}
+
+# add-related <PREFIX> <RELATED> — append to related_prefixes (idempotent); validates RELATED exists.
+cmd_add_related() {
+  [[ $# -eq 2 ]] || die "usage: edm-state add-related <PREFIX> <RELATED>"
+  require_jq
+  local prefix="$1" related="$2"
+  local related_state
+  related_state="$(state_file_for "$related")"
+  [[ -f "$related_state" ]] || die "no initiative for prefix $related"
+  local current new
+  current="$(read_state "$prefix")"
+  new="$(echo "$current" | jq --arg r "$related" --arg t "$(now_utc)" '
+    if (.related_prefixes // []) | contains([$r]) then
+      .last_updated = $t
+    else
+      .related_prefixes = ((.related_prefixes // []) + [$r])
+      | .last_updated = $t
+    end
+  ')"
+  write_state "$prefix" "$new"
+  echo "added $related to related_prefixes for $prefix"
+  write_handoff_internal "$prefix"
+}
+
+# ---- Artifact lint dispatch (T115) ------------------------------------------
+# lint <PREFIX>
+# Delegates to edm-lint-artifacts and forwards its exit code.
+
+cmd_lint() {
+  [[ $# -eq 1 ]] || die "usage: edm-state lint <PREFIX>"
+  command -v edm-lint-artifacts >/dev/null 2>&1 \
+    || die "edm-lint-artifacts not found on PATH; ensure the EDM plugin bin/ directory is on PATH"
+  edm-lint-artifacts "$1"
+}
+
+# ---- Audit pattern library update (T121) -------------------------------------
+# update-patterns <PREFIX> <srd|ticket|qc|code>
+# Extracts ### headings from the initiative's audit report and appends novel
+# ones to the corresponding docs/audit-patterns/*.md file.
+# Novel = normalized title not already present as a ### heading in the pattern file.
+# Records the action in state (.patterns_updates).
+
+cmd_update_patterns() {
+  [[ $# -eq 2 ]] || die "usage: edm-state update-patterns <PREFIX> <srd|ticket|qc|code>"
+  require_jq
+  local prefix="$1" audit_type="$2"
+
+  case "$audit_type" in
+    srd|ticket|qc|code) ;;
+    *) die "update-patterns: unknown audit type '$audit_type' (expected: srd|ticket|qc|code)" ;;
+  esac
+
+  # Resolve this script's directory so we can find plugin-relative docs/audit-patterns/.
+  # When invoked via PATH (no slash in $0), resolve via command -v first.
+  local _s="$0"
+  if [[ "$_s" != */* ]]; then
+    _s="$(command -v "$_s" 2>/dev/null || true)"
+  fi
+  local script_dir
+  script_dir="$(cd "$(dirname "${_s:-$0}")" 2>/dev/null && pwd || echo ".")"
+  local patterns_dir="${script_dir}/../docs/audit-patterns"
+
+  local pattern_file
+  case "$audit_type" in
+    srd)    pattern_file="${patterns_dir}/srd-audit.md" ;;
+    ticket) pattern_file="${patterns_dir}/ticket-audit.md" ;;
+    qc)     pattern_file="${patterns_dir}/qc-audit.md" ;;
+    code)   pattern_file="${patterns_dir}/code-audit.md" ;;
+  esac
+
+  # Locate the audit report for this initiative.
+  local _dir
+  _dir="$(initiative_dir_for "$prefix")"
+  local audit_report_path=""
+  case "$audit_type" in
+    srd)    audit_report_path="${_dir}/audit-srd.md" ;;
+    ticket) audit_report_path="${_dir}/${TICKET_PACK_DIRNAME}/audit.md" ;;
+    qc)     audit_report_path="${_dir}/qc/qc-summary.md" ;;
+    code)
+      audit_report_path="$(ls -t "${_dir}/code-audit"/pass-*/REMEDIATION.md 2>/dev/null | head -1 || true)"
+      ;;
+  esac
+
+  if [[ ! -f "$pattern_file" ]]; then
+    echo "update-patterns: pattern file not found at ${pattern_file} (skipping)" >&2
+    return 0
+  fi
+
+  if [[ -z "${audit_report_path}" || ! -f "$audit_report_path" ]]; then
+    echo "update-patterns: no audit report found for ${prefix}/${audit_type} (nothing to append)"
+    return 0
+  fi
+
+  # Read existing ### headings from the pattern file for de-duplication.
+  # Normalize: lowercase, collapse whitespace, strip trailing "(source, date, severity)" metadata.
+  local existing_normalized
+  existing_normalized="$(grep '^### ' "$pattern_file" 2>/dev/null \
+    | sed 's/^### //' \
+    | sed 's/ *([^)]*) *$//' \
+    | tr '[:upper:]' '[:lower:]' \
+    | tr -s ' ' \
+    | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+    || true)"
+
+  local new_findings=0 today
+  today="$(date -u +"%Y-%m-%d")"
+
+  while IFS= read -r raw_heading; do
+    local raw_title="${raw_heading#\#\#\# }"
+
+    # Skip structural section headings that are not findings.
+    local lower_title
+    lower_title="$(echo "$raw_title" | tr '[:upper:]' '[:lower:]' | tr -s ' ')"
+    case "$lower_title" in
+      summary*|findings*|recommendations*|overview*|appendix*|legend*) continue ;;
+    esac
+
+    # Normalize for de-duplication: strip metadata parens, lowercase, collapse spaces.
+    local norm
+    norm="$(echo "$raw_title" | sed 's/ *([^)]*) *$//' \
+      | tr '[:upper:]' '[:lower:]' | tr -s ' ' \
+      | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [[ -z "$norm" ]] && continue
+
+    # Skip if this normalized title already exists in the pattern file.
+    if echo "$existing_normalized" | grep -qxF "$norm"; then
+      continue
+    fi
+
+    # Append the novel finding at the end of the pattern file.
+    {
+      printf '\n'
+      printf '### %s (%s, %s, P2)\n\n' "$raw_title" "$prefix" "$today"
+      printf 'Extracted from %s audit for %s. Review and refine: add a one-paragraph description\n' \
+        "$audit_type" "$prefix"
+      printf 'explaining the finding and how to prevent it. Adjust severity from P2 if warranted.\n'
+    } >> "$pattern_file"
+
+    new_findings=$((new_findings + 1))
+  done < <(grep '^### ' "$audit_report_path" 2>/dev/null || true)
+
+  # Record in state (.patterns_updates is a new field; safe to add to any existing state file).
+  local current new
+  current="$(read_state "$prefix")"
+  new="$(echo "$current" | jq \
+    --arg t "$audit_type" --arg ts "$(now_utc)" --argjson n "$new_findings" '
+    .patterns_last_updated = $ts
+    | .patterns_updates = ((.patterns_updates // {}) | .[$t] = {updated_at: $ts, new_findings: $n})
+    | .last_updated = $ts
+  ')"
+  write_state "$prefix" "$new"
+
+  if [[ "$new_findings" -gt 0 ]]; then
+    echo "update-patterns: ${prefix}/${audit_type} -> ${new_findings} new finding(s) appended to ${pattern_file}"
+  else
+    echo "update-patterns: ${prefix}/${audit_type} -> no novel findings to append"
+  fi
+}
+
 # ---- HANDOFF.md generation --------------------------------------------------
 # Writes SRD/{PREFIX}/HANDOFF.md - a version-controlled snapshot that any team
 # member can read to understand current status and resume the initiative.
@@ -1503,12 +1751,23 @@ write_handoff_internal() {
   local tickets_path="${_init_dir}/${TICKET_PACK_DIRNAME}/README.md"
   local audit_tickets_path="${_init_dir}/${TICKET_PACK_DIRNAME}/audit.md"
 
+  # WS-D artifact paths (T81)
+  local arch_path="${_init_dir}/architecture.md"
+  local decisions_path="${_init_dir}/decisions.md"
+  local rollback_path="${_init_dir}/ROLLBACK.md"
+  local exec_report_path="${_init_dir}/exec-report.md"
+
   local s_planning s_srd s_audit_srd s_tickets s_audit_tickets
+  local s_arch s_decisions s_rollback s_exec_report
   s_planning="$([[ -f "$planning_path" ]] && echo '[present]' || echo '[absent]')"
   s_srd="$([[ -f "$srd_path" ]] && echo '[present]' || echo '[absent]')"
   s_audit_srd="$([[ -f "$audit_srd_path" ]] && echo '[present]' || echo '[absent]')"
   s_tickets="$([[ -f "$tickets_path" ]] && echo '[present]' || echo '[absent]')"
   s_audit_tickets="$([[ -f "$audit_tickets_path" ]] && echo '[present]' || echo '[absent]')"
+  s_arch="$([[ -f "$arch_path" ]] && echo '[present]' || echo '[absent]')"
+  s_decisions="$([[ -f "$decisions_path" ]] && echo '[present]' || echo '[absent]')"
+  s_rollback="$([[ -f "$rollback_path" ]] && echo '[present]' || echo '[absent]')"
+  s_exec_report="$([[ -f "$exec_report_path" ]] && echo '[present]' || echo '[absent]')"
 
   # Decisions Made section from planning.md
   local decisions=""
@@ -1615,9 +1874,45 @@ write_handoff_internal() {
     printf '%s\n' "| \`${_init_dir}/${SRD_FILENAME}\` | ${s_srd} |"
     printf '%s\n' "| \`${_init_dir}/audit-srd.md\` | ${s_audit_srd} |"
     printf '%s\n' "| \`${_init_dir}/${TICKET_PACK_DIRNAME}/README.md\` | ${s_tickets} |"
-    printf '%s\n\n' "| \`${_init_dir}/${TICKET_PACK_DIRNAME}/audit.md\` | ${s_audit_tickets} |"
+    printf '%s\n' "| \`${_init_dir}/${TICKET_PACK_DIRNAME}/audit.md\` | ${s_audit_tickets} |"
+    printf '%s\n' "| \`${_init_dir}/architecture.md\` | ${s_arch} |"
+    printf '%s\n' "| \`${_init_dir}/decisions.md\` | ${s_decisions} |"
+    printf '%s\n' "| \`${_init_dir}/ROLLBACK.md\` | ${s_rollback} (on-demand) |"
+    printf '%s\n\n' "| \`${_init_dir}/exec-report.md\` | ${s_exec_report} (on-demand) |"
     printf '%s\n\n' "## Key Decisions Made"
     printf '%s\n\n' "${decisions}"
+    if [[ "$s_decisions" == "[present]" ]]; then
+      printf '%s\n\n' "-> See full decision ledger: \`${_init_dir}/decisions.md\`"
+    fi
+    # Related Initiatives section (T103)
+    local parent_prefix_val related_prefixes_val
+    parent_prefix_val="$(echo "$state" | jq -r '.parent_prefix // ""')"
+    related_prefixes_val="$(echo "$state" | jq -r '(.related_prefixes // []) | join(" ")')"
+    if [[ -n "$parent_prefix_val" || -n "$related_prefixes_val" ]]; then
+      printf '%s\n\n' "## Related Initiatives"
+      if [[ -n "$parent_prefix_val" ]]; then
+        local parent_dir
+        parent_dir="$(state_file_for "$parent_prefix_val" 2>/dev/null || true)"
+        if [[ -n "$parent_dir" && -f "$parent_dir" ]]; then
+          printf '%s\n' "- Parent: ${parent_prefix_val} (${parent_dir%/.edm-state.json})"
+        else
+          printf '%s\n' "- Parent: ${parent_prefix_val} (unresolved)"
+        fi
+      fi
+      if [[ -n "$related_prefixes_val" ]]; then
+        local rp
+        for rp in $related_prefixes_val; do
+          local rp_dir
+          rp_dir="$(state_file_for "$rp" 2>/dev/null || true)"
+          if [[ -n "$rp_dir" && -f "$rp_dir" ]]; then
+            printf '%s\n' "- Related: ${rp} (${rp_dir%/.edm-state.json})"
+          else
+            printf '%s\n' "- Related: ${rp} (unresolved)"
+          fi
+        done
+      fi
+      printf '\n'
+    fi
     printf '%s\n\n' "## How to Resume"
     printf '%s\n' "1. Pull the latest branch - all EDM artifacts are committed"
     printf '%s\n' "2. Open Claude Code in the project root"
@@ -1669,6 +1964,11 @@ case "$cmd" in
   skip-phase)           cmd_skip_phase "$@" ;;
   set-supersedes)       cmd_set_supersedes "$@" ;;
   set-forked-from)      cmd_set_forked_from "$@" ;;
+  resolve-dir)          cmd_resolve_dir "$@" ;;
+  set-parent)           cmd_set_parent "$@" ;;
+  add-related)          cmd_add_related "$@" ;;
+  update-patterns)      cmd_update_patterns "$@" ;;
+  lint)                 cmd_lint "$@" ;;
   ""|-h|--help|help)
     sed -n '2,34p' "$0"
     ;;

@@ -11,7 +11,7 @@ Frequency: [x/16] = appeared in x of 16 audited initiatives.
 
 | # | Pattern | Frequency | Typical severity |
 |---|---------|-----------|-----------------|
-| 1 | AC ↔ test cross-reference incomplete | 7/16 | P1 |
+| 1 | AC <-> test cross-reference incomplete | 7/16 | P1 |
 | 2 | Missing tests for error paths | 6/16 | P1 |
 | 3 | Coverage floor not met on changed surfaces | 6/16 | P1 |
 | 4 | Branch coverage gaps in defensive paths | 5/16 | P1 |
@@ -19,7 +19,7 @@ Frequency: [x/16] = appeared in x of 16 audited initiatives.
 | 6 | Test setup complexity hides the assertions | 3/16 | P2 |
 | 7 | Golden snapshots that drift silently | 3/16 | P2 |
 
-### 1. AC ↔ test cross-reference incomplete (7/16)
+### 1. AC <-> test cross-reference incomplete (7/16)
 - An AC says "assert X" but the named test file doesn't exist or tests the wrong code
 - AC says "unit test" but only an integration test covers it
 - Test file exists but no test exercises the specific AC behavior end-to-end
@@ -33,8 +33,8 @@ Frequency: [x/16] = appeared in x of 16 audited initiatives.
 - File-level coverage measured instead of changed-line coverage
 
 ### 4. Branch coverage gaps in defensive paths (5/16)
-- Line coverage 95% but branch coverage 70% — the `else` path (unexpected values) untested
-- High-confidence "can't happen" branches left uncovered — they fail open silently
+- Line coverage 95% but branch coverage 70% -- the `else` path (unexpected values) untested
+- High-confidence "can't happen" branches left uncovered -- they fail open silently
 
 ### 5. Fragile / flaky integration tests (4/16)
 - Tests call external APIs (Brave, SendGrid, etc.) and pass most of the time but fail intermittently
@@ -46,7 +46,7 @@ Frequency: [x/16] = appeared in x of 16 audited initiatives.
 
 ### 7. Snapshot drift (3/16)
 - A snapshot test regenerates every run because the output includes timestamps, UUIDs, or dynamic values
-- Snapshot passes but represents non-deterministic output — a false green
+- Snapshot passes but represents non-deterministic output -- a false green
 
 ---
 
@@ -62,14 +62,14 @@ All database calls are mocked; the test passes but real DB code would fail becau
 
 ### Test that only checks it doesn't crash
 AC says "assert X" but the test only checks "calling X does not throw."
-**Fix:** Every test has ≥1 assertion on the output or state, not just "no error thrown."
+**Fix:** Every test has >=1 assertion on the output or state, not just "no error thrown."
 
 ### Happy-path-only coverage
 Requirement says "reject on invalid input"; test covers the valid case only.
 **Fix:** AC template includes edge cases: null, empty, invalid, boundary values, duplicates.
 
 ### Misleading test name
-Test named `testAdminCanCreate` only tests "no error on create" — it doesn't verify non-admin gets 403.
+Test named `testAdminCanCreate` only tests "no error on create" -- it doesn't verify non-admin gets 403.
 **Fix:** Test name includes both cases when testing a gate (e.g., `testAdminCanCreateAndUserCannot`).
 
 ---
@@ -78,22 +78,22 @@ Test named `testAdminCanCreate` only tests "no error on create" — it doesn't v
 
 Run before declaring test coverage complete:
 
-- [ ] **Coverage measured correctly:** Measure coverage of *changed lines only* via `git diff main...HEAD`, not file-level %. Target: ≥80% of changed lines covered.
-- [ ] **High-risk paths tested (both directions):** Any changed line that touches auth, permissions, or data integrity has ≥2 tests: one asserting allow, one asserting deny.
-- [ ] **AC ↔ test table complete:** For each ticket, a table lists all ACs and their corresponding test file:line. Spot-check ≥5 entries by running the test and confirming it actually asserts the AC.
+- [ ] **Coverage measured correctly:** Measure coverage of *changed lines only* via `git diff main...HEAD`, not file-level %. Target: >=80% of changed lines covered.
+- [ ] **High-risk paths tested (both directions):** Any changed line that touches auth, permissions, or data integrity has >=2 tests: one asserting allow, one asserting deny.
+- [ ] **AC <-> test table complete:** For each ticket, a table lists all ACs and their corresponding test file:line. Spot-check >=5 entries by running the test and confirming it actually asserts the AC.
 - [ ] **Error paths tested:** For every HTTP call, retry, or async operation, there is a test exercising the error case (timeout, 429, 5xx, exception, empty response).
 - [ ] **Mocking policy clear:** Unit tests mock external services; integration tests use a real or containerized dependency; E2E tests use the real system. Document the policy in the test-coverage report.
-- [ ] **No flaky tests:** Run the full test suite ≥3 times locally; 100% pass rate each time. Any intermittent failure is tagged `@flaky` and tracked.
-- [ ] **Test setup is minimal:** Test code ≤20 lines; setup is in fixtures/helpers; the assertion is the final 1–3 lines.
+- [ ] **No flaky tests:** Run the full test suite >=3 times locally; 100% pass rate each time. Any intermittent failure is tagged `@flaky` and tracked.
+- [ ] **Test setup is minimal:** Test code <=20 lines; setup is in fixtures/helpers; the assertion is the final 1-3 lines.
 - [ ] **Snapshots are deterministic:** Regenerating a snapshot produces byte-identical output. No timestamps, UUIDs, or process-order-dependent values in snapshot fixtures.
 
 ---
 
 ## What Passing Test Coverage Looks Like
 
-- **Changed-line coverage ≥80%,** measured via `git diff` — pre-existing untested code doesn't penalize the new work.
+- **Changed-line coverage >=80%,** measured via `git diff` -- pre-existing untested code doesn't penalize the new work.
 - **Every AC has a corresponding test** listed in a table with file:line citations. Spot-checking confirms each test actually exercises the AC, not just the happy path.
-- **High-risk code has ≥2 tests per operation:** success case and failure/denial case.
+- **High-risk code has >=2 tests per operation:** success case and failure/denial case.
 - **Error paths are tested:** every fallible operation (HTTP, DB, file I/O) has a test mocking the error and asserting the response (log warning, return null, throw, etc.).
 - **Test setup is clean:** no leaking globals; each test file runs independently; setup is in a helper, not repeated inline.
-- **Snapshot tests are deterministic:** regenerating produces the same output — no dynamic values in fixtures.
+- **Snapshot tests are deterministic:** regenerating produces the same output -- no dynamic values in fixtures.
