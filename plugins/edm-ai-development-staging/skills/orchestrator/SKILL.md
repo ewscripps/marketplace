@@ -88,7 +88,21 @@ Call the resolved value **`INITIATIVE`** — all subsequent steps use `INITIATIV
    - Then use `AskUserQuestion` with header `"Resume?"` and options:
      - **Resume** — continue from where the handoff shows
      - **Start over** — pick a different prefix
-   - On Resume: skip `edm-init`, proceed to the phase indicated in `.edm-state.json`.
+   - On Resume:
+     1. Skip `edm-init`.
+     2. Run `edm-state get <PREFIX>` and read **both** `current_phase` AND `current_step`.
+        - `current_phase` tells you which phase the initiative was in.
+        - `current_step` (if non-empty) tells you the specific named step within that phase
+          where work stopped (e.g., `"2c"` = step 2c of Phase 2). Jump directly to that
+          step rather than re-running the phase from the beginning.
+        - If `current_step` is empty or absent, resume from the start of `current_phase`.
+     3. Run `edm-state current-step <PREFIX> <step>` at the start of each major step so
+        that future resume operations can jump precisely. The canonical step IDs are:
+        `1a`, `1b`, `2`, `3`, `4`, `5`, `6` (matching the Step numbering in this skill).
+        Within multi-part steps use dotted sub-steps: `2.srd`, `2.arch`, `4.epic-N`, etc.
+     4. Record `last_cmd` and `last_decision` at decision points:
+        `edm-state set <PREFIX> last_cmd "<command>"` and
+        `edm-state set <PREFIX> last_decision "<decision text>"`.
    - On Start over: ask for a new prefix and loop back to step 2.
 4. If new: `edm-init <PREFIX>` to scaffold the initiative directory at `${user_config.srd_root}/{PREFIX}/`.
    Then immediately run `edm-state write-handoff <PREFIX>` to create the initial HANDOFF.md.

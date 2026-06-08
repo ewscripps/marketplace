@@ -24,6 +24,8 @@
 #   edm-state branch-check <PREFIX>                     # verify current git branch matches initiative_branch
 #   edm-state git-lock-check                            # detect and remediate stale .git/index.lock
 #   edm-state migrate-path --product <n> --description <s> <PREFIX>  # opt-in move to product-scoped layout
+#   edm-state current-step <PREFIX> [<step>]                          # read/write orchestrator step (compaction resume)
+#   edm-state session-start                                           # emit resume points for active initiatives (SessionStart hook)
 set -euo pipefail
 
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
@@ -442,6 +444,8 @@ cmd_init() {
     test_frameworks_detected: {},
     coverage_by_layer: {},
     code_audit_converged: false,
+    last_cmd: "",
+    last_decision: "",
     last_updated: $t
   }' > "$f"
   echo "initialized $f"
@@ -585,6 +589,9 @@ cmd_checkpoint() {
   # Called by Stop/PreCompact hooks. Touches last_updated and checks whether any
   # gate-critical artifacts (SRD, ticket pack) have changed since their last
   # recorded hash. Warnings are printed to stdout so Claude surfaces them.
+  # T53: write_handoff_internal is called at the end of each iteration, so the
+  # PreCompact hook chain (checkpoint-if-active → write_handoff_internal) already
+  # refreshes the Resume Point section on every compaction — no separate hook needed.
   [[ -d "$SRD_ROOT" ]] || return 0
   require_jq
   for state in "$SRD_ROOT"/*/.edm-state.json; do
@@ -1141,6 +1148,87 @@ cmd_git_lock_check() {
   fi
 }
 
+# ---- Current step tracking (T47) --------------------------------------------
+# current-step <PREFIX> [<step>]
+# Without <step>: print current_step (empty when not yet set — lazy init).
+# With <step>: store current_step; typed as number if numeric, otherwise string.
+# current_step is intentionally ABSENT from cmd_init so it is only set when the
+# orchestrator explicitly records progress — never pre-initialised to 0.
+
+cmd_current_step() {
+  [[ $# -ge 1 ]] || die "usage: edm-state current-step <PREFIX> [<step>]"
+  require_jq
+  local prefix="$1"
+  if [[ $# -eq 1 ]]; then
+    # Read mode — current_step // "" gives empty string on missing field (null).
+    read_state "$prefix" | jq -r '.current_step // ""'
+    return 0
+  fi
+  local step="$2"
+  local current new
+  current="$(read_state "$prefix")"
+  if [[ "$step" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
+    new="$(echo "$current" | jq --argjson v "$step" --arg t "$(now_utc)" '.current_step = $v | .last_updated = $t')"
+  else
+    new="$(echo "$current" | jq --arg v "$step" --arg t "$(now_utc)" '.current_step = $v | .last_updated = $t')"
+  fi
+  write_state "$prefix" "$new"
+}
+
+# ---- Session start (T50) ----------------------------------------------------
+# session-start
+# Emits Resume Point for any active initiatives (phase 1–6).
+# Called headlessly from the SessionStart hook at the start of every conversation.
+# Scans both flat (SRD/*/) and product-scoped (SRD/*/*/) layouts and de-duplicates.
+
+cmd_session_start() {
+  [[ -d "$SRD_ROOT" ]] || return 0
+  require_jq
+  local active_count=0
+  local seen_prefixes=()
+  for state in "$SRD_ROOT"/*/.edm-state.json "$SRD_ROOT"/*/*/.edm-state.json; do
+    [[ -f "$state" ]] || continue
+    local prefix phase
+    prefix="$(jq -r '.prefix // "unknown"' "$state" 2>/dev/null || echo unknown)"
+    phase="$(jq -r '.current_phase // 0' "$state" 2>/dev/null || echo 0)"
+    # De-duplicate by prefix (both layouts may resolve to the same initiative).
+    local already=0
+    local seen
+    for seen in "${seen_prefixes[@]+"${seen_prefixes[@]}"}"; do
+      [[ "$seen" == "$prefix" ]] && already=1 && break
+    done
+    [[ $already -eq 1 ]] && continue
+    [[ "$phase" -ge 1 && "$phase" -le 6 ]] || continue
+    seen_prefixes+=("$prefix")
+    active_count=$((active_count + 1))
+    if [[ $active_count -eq 1 ]]; then
+      echo "# EDM Active Initiative(s) — Session Resume"
+      echo
+    fi
+    local current_step last_cmd last_decision last_updated phase_name
+    current_step="$(jq -r '.current_step // ""' "$state" 2>/dev/null || echo '')"
+    last_cmd="$(jq -r '.last_cmd // ""' "$state" 2>/dev/null || echo '')"
+    last_decision="$(jq -r '.last_decision // ""' "$state" 2>/dev/null || echo '')"
+    last_updated="$(jq -r '.last_updated // ""' "$state" 2>/dev/null || echo '')"
+    case "$phase" in
+      1) phase_name="Phase 1 - Planning" ;;
+      2) phase_name="Phase 2 - SRD Creation" ;;
+      3) phase_name="Phase 3 - SRD Audit" ;;
+      4) phase_name="Phase 4 - Ticket Creation" ;;
+      5) phase_name="Phase 5 - Ticket Audit" ;;
+      6) phase_name="Phase 6 - Implementation" ;;
+      *) phase_name="Phase ${phase}" ;;
+    esac
+    printf '## %s — %s\n' "$prefix" "$phase_name"
+    [[ -n "$current_step" ]]   && printf '  Step:          %s\n' "$current_step"
+    [[ -n "$last_cmd" ]]       && printf '  Last command:  %s\n' "$last_cmd"
+    [[ -n "$last_decision" ]]  && printf '  Last decision: %s\n' "$last_decision"
+    [[ -n "$last_updated" ]]   && printf '  Last updated:  %s\n' "$last_updated"
+    printf '  Resume:        /edm:orchestrator %s\n' "$prefix"
+    echo
+  done
+}
+
 # ---- HANDOFF.md generation --------------------------------------------------
 # Writes SRD/{PREFIX}/HANDOFF.md - a version-controlled snapshot that any team
 # member can read to understand current status and resume the initiative.
@@ -1260,6 +1348,32 @@ write_handoff_internal() {
   local updated_at
   updated_at="$(now_utc)"
 
+  # Resume Point fields (T48, T52) — empty-safe; absent on pre-T52 state files.
+  local current_step last_cmd last_decision
+  current_step="$(echo "$state" | jq -r '.current_step // ""')"
+  last_cmd="$(echo "$state" | jq -r '.last_cmd // ""')"
+  last_decision="$(echo "$state" | jq -r '.last_decision // ""')"
+
+  # Pending artifacts for the current phase (absent files only).
+  local pending_artifacts=""
+  case "$phase" in
+    1) [[ -f "$planning_path" ]] || pending_artifacts="- \`${_init_dir}/planning.md\`" ;;
+    2) [[ -f "$srd_path" ]] || pending_artifacts="- \`${_init_dir}/${SRD_FILENAME}\`" ;;
+    3)
+      [[ -f "$srd_path" ]] || pending_artifacts="${pending_artifacts}- \`${_init_dir}/${SRD_FILENAME}\`"$'\n'
+      [[ -f "$audit_srd_path" ]] || pending_artifacts="${pending_artifacts}- \`${_init_dir}/audit-srd.md\`"
+      ;;
+    4) [[ -f "$tickets_path" ]] || pending_artifacts="- \`${_init_dir}/${TICKET_PACK_DIRNAME}/README.md\`" ;;
+    5)
+      [[ -f "$tickets_path" ]] || pending_artifacts="${pending_artifacts}- \`${_init_dir}/${TICKET_PACK_DIRNAME}/README.md\`"$'\n'
+      [[ -f "$audit_tickets_path" ]] || pending_artifacts="${pending_artifacts}- \`${_init_dir}/${TICKET_PACK_DIRNAME}/audit.md\`"
+      ;;
+    6) pending_artifacts="_(implementation in progress — track individual ticket status)_" ;;
+  esac
+  [[ -n "${pending_artifacts:-}" ]] || pending_artifacts="_(all phase artifacts present)_"
+  # Trim trailing newline from multi-line pending_artifacts.
+  pending_artifacts="${pending_artifacts%$'\n'}"
+
   {
     printf '%s\n\n' "# ${prefix} - Session Handoff"
     printf '%s  \n' "> **Last updated**: ${updated_at} by ${USER:-unknown}"
@@ -1271,6 +1385,14 @@ write_handoff_internal() {
     [[ -n "$product_name" ]] && printf '%s\n' "- **Product**: ${product_name}"
     [[ -n "$initiative_description" ]] && printf '%s\n' "- **Description**: ${initiative_description}"
     printf '%s\n\n' "- **Next action**: ${next_action}"
+    printf '%s\n\n' "## Resume Point"
+    printf '%s\n' "- **Phase**: ${phase_name}"
+    [[ -n "$current_step" ]]  && printf '%s\n' "- **Step**: ${current_step}"
+    [[ -n "$last_cmd" ]]      && printf '%s\n' "- **Last command**: \`${last_cmd}\`"
+    [[ -n "$last_decision" ]] && printf '%s\n' "- **Last decision**: ${last_decision}"
+    printf '\n%s\n\n' "**Pending artifacts for ${phase_name}**:"
+    printf '%s\n\n' "${pending_artifacts}"
+    printf '%s\n\n' "> Copy-paste to resume: \`/edm:orchestrator ${prefix}\`"
     printf '%s\n\n' "## Gates"
     printf '%s\n\n' "${gate_list}"
     printf '%s\n\n' "## Artifact Checklist"
@@ -1326,8 +1448,10 @@ case "$cmd" in
   gate-check)           cmd_gate_check "$@" ;;
   branch-check)         cmd_branch_check "$@" ;;
   git-lock-check)       cmd_git_lock_check "$@" ;;
+  current-step)         cmd_current_step "$@" ;;
+  session-start)        cmd_session_start "$@" ;;
   ""|-h|--help|help)
-    sed -n '2,26p' "$0"
+    sed -n '2,28p' "$0"
     ;;
   *)
     die "unknown subcommand: $cmd (try --help)"
