@@ -5,7 +5,7 @@ disable-model-invocation: true
 model: opus
 effort: high
 argument-hint: <PREFIX>
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Task, TodoWrite
+allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 ---
 
 # EDM Phase 2: SRD Creation

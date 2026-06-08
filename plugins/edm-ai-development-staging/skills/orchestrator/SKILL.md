@@ -5,7 +5,7 @@ disable-model-invocation: true
 model: opus
 effort: max
 argument-hint: '<initiative description | /path/to/file | PROJ-123>'
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Task, TodoWrite, AskUserQuestion
+allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(edm-init *), Bash(edm-validate-prefix *), Glob, Grep, Task, TodoWrite, AskUserQuestion
 ---
 
 # EDM Orchestrator
@@ -268,7 +268,19 @@ After all tickets have an initial PASS verdict, suggest:
 This step is recommended but not mandatory. For very small initiatives (< 5 tickets, all tested
 thoroughly by the implementers), the user may choose to proceed without it.
 
-### Step 8 — Verify completion
+### Step 8 — Code Audit (mandatory for standard and tdd modes)
+
+Drive the 11-lens code audit:
+1. Spawn all 11 `edm-audit-*` lens agents in parallel (see `/edm:code-audit` for the full agent list).
+2. Spawn `edm-audit-synthesizer` after lenses complete.
+3. Remediate all P0 and P1 findings before proceeding.
+4. Run a second audit pass if any P0/P1 findings were introduced by remediation changes.
+5. When REMEDIATION.md shows no new P0/P1 findings, record convergence:
+   `edm-state set {PREFIX} code_audit_converged true`
+
+**Exemption**: `prototype` mode initiatives may skip code-audit convergence -- `edm-state archive` proceeds with a warning.
+
+### Step 9 — Verify completion
 
 - [ ] All tickets have a PASS verdict
 - [ ] All P0 QC findings resolved
@@ -276,8 +288,8 @@ thoroughly by the implementers), the user may choose to proceed without it.
 - [ ] `/edm:test {PREFIX}` run and all coverage targets met (or consciously skipped)
 - [ ] Documentation updated
 - [ ] Committed on feature branch
-- Optional: invoke `/edm:code-audit` for the 11-lens exhaustive code audit before merging.
-- Run `edm-state archive <PREFIX>` after the initiative ships.
+- [ ] Code audit converged: `edm-state get {PREFIX} code_audit_converged` shows `true` (or mode is `prototype`)
+- Run `edm-state archive <PREFIX>` after the initiative ships (blocked by code_audit_converged=false for non-prototype v2 initiatives).
 
 ## Phase Timing Guidelines
 

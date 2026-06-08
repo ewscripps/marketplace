@@ -226,6 +226,7 @@ cmd_init() {
     phase_durations: {},
     test_frameworks_detected: {},
     coverage_by_layer: {},
+    code_audit_converged: false,
     last_updated: $t
   }' > "$f"
   echo "initialized $f"
@@ -487,11 +488,32 @@ cmd_srd_version() {
 
 cmd_archive() {
   [[ $# -eq 1 ]] || die "usage: edm-state archive <PREFIX>"
+  require_jq
   local prefix="$1"
   local src dst
   src="${SRD_ROOT}/${prefix}"
   dst="${SRD_ROOT}/.archived/${prefix}"
   [[ -d "$src" ]] || die "no initiative directory at $src"
+
+  # Gate check: read code_audit_converged, product_name, and mode from state file.
+  local state_file
+  state_file="${src}/.edm-state.json"
+  if [[ -f "$state_file" ]]; then
+    local mode converged product_name
+    mode="$(jq -r '.mode // "null"' "$state_file" 2>/dev/null)"
+    converged="$(jq -r 'if has("code_audit_converged") then .code_audit_converged | tostring else "absent" end' "$state_file" 2>/dev/null)"
+    product_name="$(jq -r '.product_name // ""' "$state_file" 2>/dev/null)"
+
+    if [[ "$mode" == "prototype" ]]; then
+      echo "[warn] prototype mode -- skipping code-audit convergence check" >&2
+    elif [[ "$converged" == "absent" ]]; then
+      echo "[warn] legacy initiative -- code_audit_converged not set; proceeding" >&2
+    elif [[ "$converged" == "false" && -n "$product_name" ]]; then
+      die "archive refused: code_audit_converged=false; run /edm:code-audit ${prefix} and ensure REMEDIATION.md convergence before archiving"
+    fi
+    # converged == "true": proceed silently
+  fi
+
   mkdir -p "${SRD_ROOT}/.archived"
   mv "$src" "$dst"
   echo "archived $prefix -> $dst"

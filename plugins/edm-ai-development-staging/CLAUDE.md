@@ -257,7 +257,7 @@ The planner marks them N/A in `test-plan.md` so writers skip them without being 
 
 `skills/push-jira/SKILL.md` (invoked as `/edm:push-jira <PREFIX> [PROJECT_KEY]`) optionally pushes the ticket pack to Jira via the Atlassian MCP. It is **strictly opt-in**:
 
-- The skill checks `mcp__MCP_DOCKER__atlassianUserInfo` first; if unavailable, it skips with a friendly message.
+- The skill checks `mcp__{jira_mcp_namespace}__atlassianUserInfo` first (namespace defaults to `plugin_jira_atlassian-mcp-server`; override via `${user_config.jira_mcp_namespace}`); if unavailable, it skips with a friendly message.
 - Tickets are tracked in Jira via labels (`edm-{prefix}-t{nn}`) — no custom Jira fields required.
 - Re-running is idempotent: existing issues are updated, not duplicated.
 - Status, comments, and worklog on Jira issues are preserved across re-runs.

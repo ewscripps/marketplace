@@ -5,7 +5,7 @@ disable-model-invocation: true
 model: opus
 effort: high
 argument-hint: <PREFIX> [scope]
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
+allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, TodoWrite
 ---
 
 # EDM Test Plan — Stack Detection & Coverage Mapping

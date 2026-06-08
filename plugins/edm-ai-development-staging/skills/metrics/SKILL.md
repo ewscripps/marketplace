@@ -5,7 +5,7 @@ disable-model-invocation: true
 model: sonnet
 effort: high
 argument-hint: <PREFIX|--all|--calibrate>
-allowed-tools: Read, Bash, Glob, Grep
+allowed-tools: Read, Bash(edm-state *), Glob, Grep
 ---
 
 # EDM Metrics & Calibration

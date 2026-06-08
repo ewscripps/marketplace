@@ -5,7 +5,7 @@ disable-model-invocation: true
 model: opus
 effort: max
 argument-hint: <PREFIX> [--fill-gaps | --skip-scaffold]
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
+allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, TodoWrite
 ---
 
 # EDM Test — Comprehensive Testing Pipeline
