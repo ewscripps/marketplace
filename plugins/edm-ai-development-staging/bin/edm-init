@@ -28,8 +28,8 @@ done
 
 # --- Validate mode ---
 case "$MODE" in
-  standard|mini-srd|prototype) ;;
-  *) die "unknown mode: $MODE (must be standard, mini-srd, or prototype)" ;;
+  standard|mini-srd|iac|data-ml|prototype) ;;
+  *) die "unknown mode: $MODE (must be standard, mini-srd, iac, data-ml, or prototype)" ;;
 esac
 
 # --- Validate prefix (global uniqueness check, T41) ---
@@ -80,8 +80,22 @@ fi
 # --- Scaffold directory tree based on mode (T45) ---
 mkdir -p "$DIR"
 
+# Always-present WS-D slots (T80/T76): explorers/ for Phase 1 output; decisions.md for key decisions ledger.
+mkdir -p "$DIR/explorers"
+cat > "$DIR/decisions.md" <<'DECISIONS_EOF'
+# Key Decisions
+
+| # | Decision | Chosen | Rationale | Date |
+|---|----------|--------|-----------|------|
+
+## Finding-to-Commit Ledger
+
+| Finding | Source | Decision | Ticket | Status |
+|---------|--------|----------|--------|--------|
+DECISIONS_EOF
+
 case "$MODE" in
-  standard)
+  standard|iac|data-ml)
     # Full layout: code-audit/ created; tickets/ is created on demand by phase 4.
     mkdir -p "$DIR/code-audit"
     ;;
@@ -120,19 +134,21 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 
 # --- Print scaffold summary ---
-TREE_HEADER="$DIR/"
-case "$MODE" in
-  standard)  TREE_BODY="  ├── .edm-state.json${NL}  └── code-audit/" ;;
-  mini-srd)  TREE_BODY="  ├── .edm-state.json${NL}  └── code-audit/" ;;
-  prototype) TREE_BODY="  └── .edm-state.json" ;;
-esac
-NL=$'\n'
 cat <<EOF
 Initiative scaffold created:
-  $TREE_HEADER
+  $DIR/
 $(case "$MODE" in
-  standard|mini-srd) echo "  ├── .edm-state.json"; echo "  └── code-audit/" ;;
-  prototype)         echo "  └── .edm-state.json" ;;
+  standard|iac|data-ml|mini-srd)
+    echo "  +-- .edm-state.json"
+    echo "  +-- explorers/"
+    echo "  +-- decisions.md"
+    echo "  +-- code-audit/"
+    ;;
+  prototype)
+    echo "  +-- .edm-state.json"
+    echo "  +-- explorers/"
+    echo "  +-- decisions.md"
+    ;;
 esac)
 Mode: $MODE
 ${BRANCH_MSG:+Branch: $BRANCH_MSG

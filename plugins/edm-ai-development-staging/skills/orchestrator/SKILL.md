@@ -263,8 +263,8 @@ The ticket pack tables include regulatory-traceability columns
 ### Step 2 — Execute Phase 1 (Planning)
 
 1. `edm-state phase-start <PREFIX> 1`
-2. Spawn `edm-explorer` agent(s) with `INITIATIVE` as the initiative context — parallel if scope spans multiple codebase areas.
-3. Synthesize agent output into `${user_config.srd_root}/{PREFIX}/planning.md`. The file must include these sections
+2. Spawn `edm-explorer` agent(s) with `INITIATIVE` as the initiative context — parallel if scope spans multiple codebase areas. Each explorer writes its findings to `explorers/{NN}-{slug}.md` in the initiative directory (e.g., `explorers/01-current-state.md`, `explorers/02-dependencies.md`).
+3. **Synthesis sub-step**: read all `explorers/*.md` and fold the consolidated findings into `planning.md` sections (`## Current State`, `## Gap Analysis`, `## Component Inventory`). For a single-explorer initiative this is a no-op merge. `planning.md` must include these sections
    in order:
 
    ```
@@ -355,6 +355,10 @@ The ticket pack tables include regulatory-traceability columns
    - Never infer intent from sentiment — only the explicit AskUserQuestion selection counts.
 
    On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 1` and proceed to Phase 2.
+   Then append Gate 1 scope decisions into `decisions.md` in the initiative directory:
+   ```
+   | Gate 1 | <decision text> | <chosen> | <rationale> | {date} |
+   ```
    On **Revise**: ask what context is missing, then loop back to step 2 with that additional context appended to
    `INITIATIVE`.
    On **No-Go**: summarize the blockers and stop. Do not archive — leave state for the user to revisit.
@@ -395,6 +399,10 @@ The ticket pack tables include regulatory-traceability columns
 
 7. **STOP and WAIT for the `AskUserQuestion` response.**
 8. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 2` and proceed to Phase 4.
+   Then append Gate 2 architecture decisions into `decisions.md` in the initiative directory:
+   ```
+   | Gate 2 | <architecture decision> | <chosen> | <rationale> | {date} |
+   ```
    On **Revise**: ask which sections need rework, remediate, then re-run Phase 3 audit and re-present Gate 2.
    On **No-Go**: summarize blockers and stop.
    (Apply the gate approval rules from Gate 1 — free-text is never approval.)
@@ -452,7 +460,15 @@ The ticket pack tables include regulatory-traceability columns
 5. After each wave, the `SubagentStop` hook automatically spawns `edm-qc-auditor` to verify acceptance criteria.
    - In TDD mode, the QC auditor also runs the TDD compliance pass.
 6. Compile QC findings; remediate; re-audit affected tickets until all PASS.
-7. `edm-state phase-complete <PREFIX> 6`
+   Append any finding-to-commit mappings to `decisions.md`:
+   ```
+   | Finding {ID} | <source> | <resolution> | {ticket-ref} | resolved |
+   ```
+7. Write the execution report to `exec-report.md` in the initiative directory (or `epicN-execution-report.md`
+   for per-epic variants). Minimum content: summary of what was built, deferred work, known issues,
+   outstanding PARTIAL ACs (referencing `qc/qc-summary.md`), and a `mode` field (e.g., `live-db`, `dry-run`).
+   Note: this `mode` field is the **run** mode, distinct from the `mode` adaptation profile in state.
+8. `edm-state phase-complete <PREFIX> 6`
 
 ### Step 7b — Comprehensive Testing (recommended before declaring done)
 
@@ -478,6 +494,13 @@ Drive the 11-lens code audit:
 
 **Exemption**: `prototype` mode initiatives may skip code-audit convergence -- `edm-state archive` proceeds with a warning.
 
+**On-demand artifacts at completion** — write these when applicable, not always:
+- `ROLLBACK.md` — if this initiative changes production behavior or involves an irreversible migration.
+  Minimum content: trigger conditions, ordered revert steps, verification-after-rollback, and owner/contact.
+- `post-deploy/verification.md` — post-deploy smoke-test / verification report (after the deploy, not before).
+- `post-deploy/analysis/` — analysis-input documents (rate-limit-analysis.md, source-triage.md,
+  cost-analysis.md) if relevant. All paths are state-derived; a fresh initiative has none of these.
+
 ### Step 9 — Verify completion
 
 - [ ] All tickets have a PASS verdict
@@ -486,6 +509,9 @@ Drive the 11-lens code audit:
 - [ ] `/edm:test {PREFIX}` run and all coverage targets met (or consciously skipped)
 - [ ] Documentation updated
 - [ ] Committed on feature branch
+- [ ] Execution report written to `exec-report.md` in the initiative directory (Step 7)
+- [ ] `ROLLBACK.md` written if initiative changes production behavior (on-demand; omit for internal tooling)
+- [ ] Post-deploy verification at `post-deploy/verification.md` if already deployed (on-demand)
 - [ ] Code audit converged: `edm-state get {PREFIX} code_audit_converged` shows `true` (or mode is `prototype`)
 - Run `edm-state archive <PREFIX>` after the initiative ships (blocked by code_audit_converged=false for non-prototype v2 initiatives).
 

@@ -105,9 +105,38 @@ Finding format:
 Note: PARTIAL findings do not require remediation — they are deferred to runtime verification.
 The `record-partial-verdict` call persists them in state so HANDOFF.md can surface them.
 
-## Step 6: Comprehensive Testing
+## Step 6: Execution Report
 
-After all tickets have an initial PASS verdict and the code compiles:
+After all PASS verdicts are recorded, write `exec-report.md` (or `epicN-execution-report.md` for per-epic)
+to the initiative directory (resolved via `edm-state resolve-dir <PREFIX>`):
+
+```markdown
+# Execution Report: {PREFIX}
+
+mode: {run-mode}   # e.g., live-db, dry-run, staging — NOT the adaptation profile
+
+## Summary
+{what was built}
+
+## Deferred Work
+{items not implemented — e.g., optional AC#, follow-on tickets}
+
+## Known Issues
+{post-implementation issues visible but not blocking}
+
+## Outstanding PARTIAL ACs
+Cross-reference: see qc/qc-summary.md PARTIAL entries.
+
+| Ticket | AC | Deferred-to-runtime note |
+|--------|-----|--------------------------|
+```
+
+Note: the `mode` field here is the **run** mode (e.g., `live-db`), distinct from the state `mode`
+adaptation profile (standard/iac/data-ml/etc.).
+
+## Step 7: Comprehensive Testing
+
+After all tickets have an initial PASS verdict, the execution report is written, and the code compiles:
 
 Recommend running `/edm:test {PREFIX}` to build out layered, comprehensive coverage:
 > *"All {N} tickets pass QC. Before declaring Phase 6 complete, run `/edm:test {PREFIX}` to add
@@ -120,13 +149,14 @@ already comprehensive. If skipped, note it in the state:
 edm-state set {PREFIX} test_layer_skipped true
 ```
 
-## Step 7: Declare Done
+## Step 8: Declare Done
 
 Only when:
 - [ ] All tickets have PASS verdict
 - [ ] All P0 QC findings resolved
 - [ ] Code compiles, existing tests pass
 - [ ] No TODO or FIXME markers remain
+- [ ] Execution report written to `exec-report.md` (Step 6)
 - [ ] Documentation updated
 - [ ] All files committed on the feature branch
 - [ ] Coverage-auditor write-permission check (EDMV2-02 regression guard): verify that

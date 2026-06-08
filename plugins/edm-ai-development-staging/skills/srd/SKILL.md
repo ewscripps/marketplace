@@ -152,6 +152,30 @@ Prompt: "Write the Target Architecture document to architecture.md in the initia
 
 For large SRDs, run multiple `edm-srd-writer` agents in parallel (one per section group). Always run `edm-architect` separately — it writes `architecture.md`, not the SRD body.
 
+## Related Initiatives Section (when linkage exists)
+
+When `parent_prefix` or `related_prefixes` are non-empty in state, the SRD must include a
+`## Related Initiatives` section (after `## 1. Document Information`):
+
+1. Read linkage from state:
+   ```bash
+   edm-state get <PREFIX> | jq -r '{parent_prefix: (.parent_prefix // ""), related_prefixes: (.related_prefixes // [])}'
+   ```
+2. Resolve each prefix to its initiative directory via `edm-state resolve-dir <RELATED_PREFIX>`.
+3. Emit the section:
+   ```markdown
+   ## Related Initiatives
+
+   | Role | Prefix | Directory |
+   |------|--------|-----------|
+   | Parent | {PARENT_PREFIX} | {parent_dir} |
+   | Sibling | {SIBLING_PREFIX} | {sibling_dir} |
+   ```
+4. If a prefix no longer resolves, show `(unresolved)` in the Directory column.
+5. If neither `parent_prefix` nor `related_prefixes` are set, omit this section entirely.
+
+The rendering must be ASCII-only; do not use Unicode markers.
+
 ## Common Mistakes
 
 - Untestable requirements ("should be user-friendly")

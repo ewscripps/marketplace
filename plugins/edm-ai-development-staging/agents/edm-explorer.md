@@ -58,4 +58,6 @@ Given an initiative description, explore the codebase thoroughly and report:
 
 ## Output
 
-Produce a concise but complete exploration report. Use tables and lists. Include file:line references. A planning author will convert this into a formal planning document — give them everything they need.
+Write your findings to `explorers/{NN}-{slug}.md` inside the initiative directory (e.g., `explorers/01-current-state.md`, `explorers/02-dependencies.md`). Use two-digit numeric prefixes for stable ordering and ASCII-only slugs. The orchestrator reads all `explorers/*.md` and synthesizes them into `planning.md`.
+
+Produce a concise but complete exploration report. Use tables and lists. Include file:line references. A planning author will synthesize this into a formal planning document — give them everything they need.
