@@ -26,11 +26,27 @@ if [[ "$COMMIT_STATE" != "true" ]]; then
   echo ".edm-state.json" > "$DIR/.gitignore"
 fi
 
+# Create and switch to initiative branch when inside a git worktree.
+BRANCH_MSG=""
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  BRANCH="edm/${PREFIX}"
+  if git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
+    git checkout "$BRANCH" 2>/dev/null \
+      && BRANCH_MSG="switched to existing branch $BRANCH" \
+      || BRANCH_MSG="[warn] branch $BRANCH exists but checkout failed; staying on current branch"
+  else
+    git checkout -b "$BRANCH" 2>/dev/null \
+      && BRANCH_MSG="created and switched to branch $BRANCH" \
+      || BRANCH_MSG="[warn] branch creation failed; staying on current branch"
+  fi
+fi
+
 cat <<EOF
 Initiative scaffold created:
   $DIR/
   ├── .edm-state.json
   └── code-audit/
-
+${BRANCH_MSG:+
+Branch: $BRANCH_MSG}
 Next: run /edm:plan $PREFIX <description> to begin Phase 1.
 EOF

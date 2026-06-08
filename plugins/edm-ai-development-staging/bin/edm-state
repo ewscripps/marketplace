@@ -2,22 +2,27 @@
 # edm-state - read/write SRD/{PREFIX}/.edm-state.json files for the EDM plugin.
 # Usage:
 #   edm-state get <PREFIX>                              # print state JSON
-#   edm-state set <PREFIX> <key> <value>                # set a top-level field
+#   edm-state set <PREFIX> <key> <value>                # set a top-level field (typed for known fields)
 #   edm-state list                                      # list in-progress initiatives
+#   edm-state active-initiatives                        # list initiatives with current_phase in 1-6
 #   edm-state init <PREFIX>                             # write a fresh state file
 #   edm-state approve-gate <PREFIX> <gate-num>          # record a gate approval
 #   edm-state phase-start <PREFIX> <phase-num>          # record phase start timestamp
 #   edm-state phase-complete <PREFIX> <phase-num>       # record phase completion + duration
 #   edm-state checkpoint-if-active                      # called by Stop/PreCompact hooks
-#   edm-state record-task-duration                      # called by TaskCompleted hook
+#   edm-state record-task-duration                      # called by TaskCompleted hook (reserved no-op)
 #   edm-state record-test-coverage <PREFIX> <layer> <pct>   # record coverage % for a test layer
 #   edm-state record-tests-added <PREFIX> <phase> <layer> <count>  # record test count by layer
 #   edm-state get-coverage <PREFIX>                     # print coverage summary for all layers
 #   edm-state srd-version <PREFIX> <version>            # set the SRD version (e.g. 1.0.0, 1.1.0)
-#   edm-state archive <PREFIX>                          # mark initiative complete
+#   edm-state archive <PREFIX>                          # mark initiative complete (git-aware)
 #   edm-state write-handoff <PREFIX>                    # write/refresh HANDOFF.md for cross-user resumption
 #   edm-state watch-impl                                # tail git log for ticket commits (called by monitor)
 #   edm-state metrics-report <PREFIX|--all|--calibrate>
+#   edm-state validate <PREFIX>                         # check state file for anomalies (read-only)
+#   edm-state gate-check <PREFIX> <gated-command>       # deterministic gate enforcement (read-only)
+#   edm-state branch-check <PREFIX>                     # verify current git branch matches initiative_branch
+#   edm-state git-lock-check                            # detect and remediate stale .git/index.lock
 set -euo pipefail
 
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
@@ -179,14 +184,137 @@ read_state() {
 write_state() {
   local prefix="$1"
   local content="$2"
-  local f
+  local f lockbase
   f="$(state_file_for "$prefix")"
+  lockbase="${f%.json}"
   mkdir -p "$(dirname "$f")"
-  printf '%s\n' "$content" > "$f"
+  with_state_lock "$lockbase" printf '%s\n' "$content" > "$f"
 }
 
 now_utc() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+# ---- Advisory file locking (T24) -------------------------------------------
+# with_state_lock <lockbase> <command...>
+# Acquires an exclusive advisory lock scoped to <lockbase>, runs the command,
+# then releases the lock. Uses flock(1) on <lockbase>.lock when available;
+# falls back to a mkdir-based spin-lock on <lockbase>.lockd for macOS portability.
+with_state_lock() {
+  local lockbase="$1"; shift
+  local lockfile="${lockbase}.lock"
+  local lockdir="${lockbase}.lockd"
+  local pidfile="${lockdir}/pid"
+
+  if command -v flock >/dev/null 2>&1; then
+    # Fast path: flock-based locking on FD 200
+    (
+      flock -w 10 200 || { echo "edm-state: state lock timeout after 10s on ${lockfile} (another edm-state process may be holding it)" >&2; exit 1; }
+      "$@"
+    ) 200>"${lockfile}"
+  else
+    # Fallback: mkdir-based spin-lock (POSIX-portable, atomic on local filesystems)
+    local tries=0
+    until mkdir "$lockdir" 2>/dev/null; do
+      tries=$(( tries + 1 ))
+      if [[ $tries -ge 50 ]]; then
+        local holder_pid=""
+        [[ -f "$pidfile" ]] && holder_pid="$(cat "$pidfile" 2>/dev/null || true)"
+        die "state lock timeout after 50 tries on ${lockdir}${holder_pid:+ (held by PID ${holder_pid})}"
+      fi
+      sleep 0.1
+    done
+    echo $$ > "$pidfile" 2>/dev/null || true
+    # shellcheck disable=SC2064
+    trap "rm -rf '${lockdir}'" EXIT INT TERM HUP
+    "$@"
+    local ec=$?
+    rm -rf "$lockdir"
+    trap - EXIT INT TERM HUP
+    return $ec
+  fi
+}
+
+# ---- Type coercion helpers (T33) -------------------------------------------
+# read_bool <json-string> <field> [<default>]
+# Returns normalized bash boolean string "true" or "false" regardless of whether
+# the field is stored as a JSON boolean or a JSON string.
+read_bool() {
+  local json="$1" field="$2" default="${3:-false}"
+  echo "$json" | jq -r --arg f "$field" --arg d "$default" '
+    (.[$f] // null) as $v |
+    if $v == null then $d
+    elif ($v | type) == "boolean" then (if $v then "true" else "false" end)
+    elif ($v | type) == "string" then (if $v == "true" then "true" else "false" end)
+    else $d
+    end
+  '
+}
+
+# read_num <json-string> <field> [<default>]
+# Returns normalized number (integer or float) regardless of string vs number storage.
+read_num() {
+  local json="$1" field="$2" default="${3:-0}"
+  echo "$json" | jq -r --arg f "$field" --arg d "$default" '
+    (.[$f] // null) as $v |
+    if $v == null then $d
+    elif ($v | type) == "number" then $v
+    elif ($v | type) == "string" then (($v | tonumber?) // ($d | tonumber))
+    else $d
+    end
+  '
+}
+
+# ---- State anomaly detection (T29) -----------------------------------------
+# state_anomalies <PREFIX>
+# Reads state and emits zero or more anomaly lines. Each line has the form:
+#   <CODE>  <affected-field>  <description>
+# Exits 0 and emits nothing when no anomalies found. Never mutates state.
+state_anomalies() {
+  local prefix="$1"
+  require_jq
+  local state
+  state="$(read_state "$prefix")"
+  local found=0
+  # TIME_ORDER: completed_at earlier than started_at within any phase entry
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    echo "$line"
+    found=1
+  done < <(echo "$state" | jq -r '
+    .phase_durations // {} | to_entries[] |
+    .key as $k | .value as $v |
+    if ($v.started_at != null and $v.started_at != "" and
+        $v.completed_at != null and $v.completed_at != "") then
+      (($v.completed_at | fromdateiso8601?) // 0) as $c |
+      (($v.started_at | fromdateiso8601?) // 0) as $s |
+      if $c > 0 and $s > 0 and $c < $s then
+        "TIME_ORDER  phase_durations.\($k)  completed_at (\($v.completed_at)) is earlier than started_at (\($v.started_at))"
+      else empty end
+    else empty end
+  ' 2>/dev/null)
+  # SIZE_UNKNOWN: estimated_size is "Unknown" and current_phase >= 2
+  local phase size
+  phase="$(echo "$state" | jq -r '.current_phase // 0')"
+  size="$(echo "$state" | jq -r '.estimated_size // "Unknown"')"
+  if [[ "$size" == "Unknown" && "$phase" -ge 2 ]]; then
+    echo "SIZE_UNKNOWN  estimated_size  size is still Unknown at phase ${phase} (set via edm-state set ${prefix} estimated_size Small|Medium|Large)"
+    found=1
+  fi
+  # ZERO_TOKENS: model_used is set but input+output tokens are both 0
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    echo "$line"
+    found=1
+  done < <(echo "$state" | jq -r '
+    .phase_durations // {} | to_entries[] |
+    .key as $k | .value as $v |
+    if ($v.model_used != null and $v.model_used != "" and $v.model_used != "unknown" and
+        ($v.tokens.input // 0) == 0 and ($v.tokens.output // 0) == 0) then
+      "ZERO_TOKENS  phase_durations.\($k).tokens  model_used is \($v.model_used) but both input and output tokens are 0"
+    else empty end
+  ' 2>/dev/null)
+  return 0
 }
 
 cmd_get() {
@@ -200,7 +328,25 @@ cmd_set() {
   local prefix="$1" key="$2" value="$3"
   local current new
   current="$(read_state "$prefix")"
-  new="$(echo "$current" | jq --arg k "$key" --arg v "$value" '.[$k] = $v | .last_updated = (now | todate)')"
+  # Typed-set path: known fields with specific JSON types use --argjson with validation.
+  case "$key" in
+    compliance_enabled|code_audit_converged)
+      # Boolean fields: accept exactly true or false
+      [[ "$value" == "true" || "$value" == "false" ]] \
+        || die "set: field '$key' requires a boolean value (true|false); got: $value"
+      new="$(echo "$current" | jq --argjson v "$value" --arg k "$key" --arg t "$(now_utc)" '.[$k] = $v | .last_updated = $t')"
+      ;;
+    current_phase|qc_shard_threshold)
+      # Number fields: must match numeric pattern
+      [[ "$value" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] \
+        || die "set: field '$key' requires a numeric value; got: $value"
+      new="$(echo "$current" | jq --argjson v "$value" --arg k "$key" --arg t "$(now_utc)" '.[$k] = $v | .last_updated = $t')"
+      ;;
+    *)
+      # Unknown/free-text fields: keep v1.x string behavior for backward compatibility
+      new="$(echo "$current" | jq --arg k "$key" --arg v "$value" --arg t "$(now_utc)" '.[$k] = $v | .last_updated = $t')"
+      ;;
+  esac
   write_state "$prefix" "$new"
 }
 
@@ -215,7 +361,9 @@ cmd_init() {
     return 0
   fi
   mkdir -p "$(dirname "$f")"
-  jq -n --arg p "$prefix" --arg t "$(now_utc)" '{
+  local branch=""
+  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+  jq -n --arg p "$prefix" --arg t "$(now_utc)" --arg b "$branch" '{
     prefix: $p,
     current_phase: 0,
     gates_approved: [],
@@ -223,6 +371,7 @@ cmd_init() {
     artifact_hashes: {},
     srd_version: "0.0.0",
     estimated_size: "Unknown",
+    initiative_branch: $b,
     phase_durations: {},
     test_frameworks_detected: {},
     coverage_by_layer: {},
@@ -277,6 +426,7 @@ cmd_phase_start() {
     | .last_updated = $t
   ')"
   write_state "$prefix" "$new"
+  write_handoff_internal "$prefix"
 }
 
 cmd_phase_complete() {
@@ -496,10 +646,16 @@ cmd_archive() {
   local state_file
   state_file="${src}/.edm-state.json"
   if [[ -f "$state_file" ]]; then
-    local mode converged product_name
-    mode="$(jq -r '.mode // "null"' "$state_file" 2>/dev/null)"
-    converged="$(jq -r 'if has("code_audit_converged") then .code_audit_converged | tostring else "absent" end' "$state_file" 2>/dev/null)"
-    product_name="$(jq -r '.product_name // ""' "$state_file" 2>/dev/null)"
+    local state_json mode converged product_name
+    state_json="$(cat "$state_file" 2>/dev/null || echo '{}')"
+    mode="$(echo "$state_json" | jq -r '.mode // "null"')"
+    product_name="$(echo "$state_json" | jq -r '.product_name // ""')"
+    # Use read_bool to normalize legacy string "false" or missing field correctly.
+    if echo "$state_json" | jq -e 'has("code_audit_converged")' >/dev/null 2>&1; then
+      converged="$(read_bool "$state_json" "code_audit_converged" "false")"
+    else
+      converged="absent"
+    fi
 
     if [[ "$mode" == "prototype" ]]; then
       echo "[warn] prototype mode -- skipping code-audit convergence check" >&2
@@ -512,7 +668,12 @@ cmd_archive() {
   fi
 
   mkdir -p "${SRD_ROOT}/.archived"
-  mv "$src" "$dst"
+  # Use git mv when inside a git worktree so the move is tracked; fall back to plain mv.
+  if git -C "$src" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git mv "$src" "$dst" 2>/dev/null || mv "$src" "$dst"
+  else
+    mv "$src" "$dst"
+  fi
   echo "archived $prefix -> $dst"
 }
 
@@ -691,6 +852,149 @@ cmd_metrics_report() {
   esac
 }
 
+# ---- Active initiatives (T35) -----------------------------------------------
+# active-initiatives: list initiatives with current_phase in 1-6
+
+cmd_active_initiatives() {
+  [[ -d "$SRD_ROOT" ]] || { echo "(no SRD/ directory)"; return 0; }
+  require_jq
+  local found=0
+  for state in "$SRD_ROOT"/*/.edm-state.json; do
+    [[ -f "$state" ]] || continue
+    local phase
+    phase="$(jq -r '.current_phase // 0' "$state" 2>/dev/null || echo 0)"
+    if [[ "$phase" -ge 1 && "$phase" -le 6 ]]; then
+      found=1
+      local prefix last
+      prefix="$(jq -r '.prefix' "$state" 2>/dev/null || echo unknown)"
+      last="$(jq -r '.last_updated' "$state" 2>/dev/null || echo unknown)"
+      printf "  %-12s  phase=%d  last_updated=%s\n" "$prefix" "$phase" "$last"
+    fi
+  done
+  [[ $found -eq 1 ]] || echo "  (no active initiatives)"
+}
+
+# ---- Gate enforcement (T27) --------------------------------------------------
+# gate-check <PREFIX> <gated-command>
+# Exits 0 if the gate prerequisite for <gated-command> is satisfied.
+# Exits 1 with a human-readable error if the gate is not yet approved.
+# Read-only — never mutates state.
+#
+# Gated commands and their required gates:
+#   srd | audit-srd  -> Gate 1 must be approved
+#   tickets          -> Gate 2 must be approved
+#   audit-tickets | implement -> Gate 3 must be approved
+
+cmd_gate_check() {
+  [[ $# -eq 2 ]] || die "usage: edm-state gate-check <PREFIX> <gated-command>"
+  require_jq
+  local prefix="$1" gated_cmd="$2"
+  local state required_gate
+  state="$(read_state "$prefix")"
+
+  case "$gated_cmd" in
+    srd|audit-srd)    required_gate=1 ;;
+    tickets)          required_gate=2 ;;
+    audit-tickets|implement) required_gate=3 ;;
+    *)
+      # Unknown command — no gate enforcement; allow through.
+      return 0
+      ;;
+  esac
+
+  local approved
+  approved="$(echo "$state" | jq -r --argjson g "$required_gate" '
+    (.gates_approved // []) | map(select(.gate == $g)) | length
+  ' 2>/dev/null || echo 0)"
+
+  if [[ "$approved" -eq 0 ]]; then
+    echo "edm-state gate-check: Gate ${required_gate} has not been approved for ${prefix}." >&2
+    echo "Run /edm:orchestrator ${prefix} and approve Gate ${required_gate} before running /${gated_cmd}." >&2
+    return 1
+  fi
+  return 0
+}
+
+# ---- Validate (T32) ----------------------------------------------------------
+# validate <PREFIX>
+# Runs state_anomalies and exits 3 if any anomalies found, 0 if clean.
+
+cmd_validate() {
+  [[ $# -eq 1 ]] || die "usage: edm-state validate <PREFIX>"
+  local prefix="$1"
+  local anomalies
+  anomalies="$(state_anomalies "$prefix")"
+  if [[ -n "$anomalies" ]]; then
+    echo "# State anomalies for $prefix:"
+    echo
+    echo "$anomalies"
+    return 3
+  fi
+  echo "# State OK: no anomalies found for $prefix"
+  return 0
+}
+
+# ---- Branch check (T35) ------------------------------------------------------
+# branch-check <PREFIX>
+# Verifies the current git branch matches the initiative_branch recorded in state.
+# Exits 0 on match or when no initiative_branch is recorded (legacy state).
+# Exits 1 with an advisory on mismatch.
+
+cmd_branch_check() {
+  [[ $# -eq 1 ]] || die "usage: edm-state branch-check <PREFIX>"
+  local prefix="$1"
+  require_jq
+  local state initiative_branch current_branch
+  state="$(read_state "$prefix")"
+  initiative_branch="$(echo "$state" | jq -r '.initiative_branch // ""')"
+  if [[ -z "$initiative_branch" ]]; then
+    # Legacy state without initiative_branch — no enforcement.
+    return 0
+  fi
+  current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+  if [[ -z "$current_branch" ]]; then
+    echo "[warn] could not determine current git branch; skipping branch check" >&2
+    return 0
+  fi
+  if [[ "$current_branch" != "$initiative_branch" ]]; then
+    echo "edm-state branch-check: current branch '${current_branch}' does not match initiative_branch '${initiative_branch}'." >&2
+    echo "Run: git checkout ${initiative_branch}" >&2
+    return 1
+  fi
+  return 0
+}
+
+# ---- Git lock check (T36) ----------------------------------------------------
+# git-lock-check
+# Detects a stale .git/index.lock file and removes it if the holding process is gone.
+
+cmd_git_lock_check() {
+  local git_dir
+  git_dir="$(git rev-parse --git-dir 2>/dev/null || echo '')"
+  if [[ -z "$git_dir" ]]; then
+    echo "not inside a git repository" >&2
+    return 0
+  fi
+  local lock_file="${git_dir}/index.lock"
+  if [[ ! -f "$lock_file" ]]; then
+    echo "no .git/index.lock present"
+    return 0
+  fi
+  # Attempt to identify the holding PID if possible (lock file contents not reliable).
+  # On macOS/Linux: if no git process is running, the lock is stale.
+  local git_pids
+  git_pids="$(pgrep -x git 2>/dev/null | tr '\n' ' ' | xargs || true)"
+  if [[ -z "$git_pids" ]]; then
+    echo "stale .git/index.lock detected (no git process running); removing..."
+    rm -f "$lock_file"
+    echo "removed $lock_file"
+  else
+    echo "WARNING: .git/index.lock exists and git processes are running (PIDs: ${git_pids})" >&2
+    echo "Do not remove the lock while git is active; wait for the process to finish." >&2
+    return 1
+  fi
+}
+
 # ---- HANDOFF.md generation --------------------------------------------------
 # Writes SRD/{PREFIX}/HANDOFF.md - a version-controlled snapshot that any team
 # member can read to understand current status and resume the initiative.
@@ -844,25 +1148,30 @@ cmd_write_handoff() {
 
 cmd="${1:-}"; shift || true
 case "$cmd" in
-  get)                cmd_get "$@" ;;
-  set)                cmd_set "$@" ;;
-  init)               cmd_init "$@" ;;
-  list)               cmd_list "$@" ;;
-  approve-gate)       cmd_approve_gate "$@" ;;
-  phase-start)        cmd_phase_start "$@" ;;
-  phase-complete)     cmd_phase_complete "$@" ;;
+  get)                  cmd_get "$@" ;;
+  set)                  cmd_set "$@" ;;
+  init)                 cmd_init "$@" ;;
+  list)                 cmd_list "$@" ;;
+  active-initiatives)   cmd_active_initiatives "$@" ;;
+  approve-gate)         cmd_approve_gate "$@" ;;
+  phase-start)          cmd_phase_start "$@" ;;
+  phase-complete)       cmd_phase_complete "$@" ;;
   checkpoint-if-active) cmd_checkpoint "$@" ;;
   record-task-duration) cmd_record_task_duration "$@" ;;
   record-test-coverage) cmd_record_test_coverage "$@" ;;
-  record-tests-added) cmd_record_tests_added "$@" ;;
-  get-coverage)       cmd_get_coverage "$@" ;;
-  srd-version)        cmd_srd_version "$@" ;;
-  archive)            cmd_archive "$@" ;;
-  write-handoff)      cmd_write_handoff "$@" ;;
-  watch-impl)         cmd_watch_impl "$@" ;;
-  metrics-report)     cmd_metrics_report "$@" ;;
+  record-tests-added)   cmd_record_tests_added "$@" ;;
+  get-coverage)         cmd_get_coverage "$@" ;;
+  srd-version)          cmd_srd_version "$@" ;;
+  archive)              cmd_archive "$@" ;;
+  write-handoff)        cmd_write_handoff "$@" ;;
+  watch-impl)           cmd_watch_impl "$@" ;;
+  metrics-report)       cmd_metrics_report "$@" ;;
+  validate)             cmd_validate "$@" ;;
+  gate-check)           cmd_gate_check "$@" ;;
+  branch-check)         cmd_branch_check "$@" ;;
+  git-lock-check)       cmd_git_lock_check "$@" ;;
   ""|-h|--help|help)
-    sed -n '2,21p' "$0"
+    sed -n '2,25p' "$0"
     ;;
   *)
     die "unknown subcommand: $cmd (try --help)"

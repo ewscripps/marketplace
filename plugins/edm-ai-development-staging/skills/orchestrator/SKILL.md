@@ -181,7 +181,13 @@ Call the resolved value **`INITIATIVE`** — all subsequent steps use `INITIATIV
    - **No-Go** — initiative is not ready to proceed
 
 7. **STOP and WAIT for the `AskUserQuestion` response.**
-8. On **Approve**: `edm-state approve-gate <PREFIX> 1` and proceed to Phase 2.
+8. **CRITICAL — gate approval rules (apply to ALL gates)**:
+   - `edm-state approve-gate` is called ONLY when the user selects the **exact "Approve" option** from the `AskUserQuestion` dialog.
+   - Free-text responses ("yes", "ok", "looks good", "proceed", "sounds good", "go ahead") are **NOT** approvals.
+   - If the user types free text instead of selecting an option: re-present the `AskUserQuestion` with a brief note: "Please select an option to proceed."
+   - Never infer intent from sentiment — only the explicit AskUserQuestion selection counts.
+
+   On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 1` and proceed to Phase 2.
    On **Revise**: ask what context is missing, then loop back to step 2 with that additional context appended to
    `INITIATIVE`.
    On **No-Go**: summarize the blockers and stop. Do not archive — leave state for the user to revisit.
@@ -215,9 +221,10 @@ Call the resolved value **`INITIATIVE`** — all subsequent steps use `INITIATIV
    - **No-Go** — initiative scope or approach needs rethinking
 
 7. **STOP and WAIT for the `AskUserQuestion` response.**
-8. On **Approve**: `edm-state approve-gate <PREFIX> 2` and proceed to Phase 4.
+8. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 2` and proceed to Phase 4.
    On **Revise**: ask which sections need rework, remediate, then re-run Phase 3 audit and re-present Gate 2.
    On **No-Go**: summarize blockers and stop.
+   (Apply the gate approval rules from Gate 1 — free-text is never approval.)
 
 ### Step 5 — Execute Phase 4 (Ticket Pack)
 
@@ -251,9 +258,10 @@ Call the resolved value **`INITIATIVE`** — all subsequent steps use `INITIATIV
    - **No-Go** — scope has shifted enough to warrant re-planning
 
 7. **STOP and WAIT for the `AskUserQuestion` response.**
-8. On **Approve**: `edm-state approve-gate <PREFIX> 3` and proceed to Phase 6.
+8. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 3` and proceed to Phase 6.
    On **Revise**: ask which tickets need rework, remediate, then re-run Phase 5 audit and re-present Gate 3.
    On **No-Go**: summarize blockers and stop.
+   (Apply the gate approval rules from Gate 1 — free-text is never approval.)
 
 ### Step 7 — Execute Phase 6 (Implementation + QC)
 
