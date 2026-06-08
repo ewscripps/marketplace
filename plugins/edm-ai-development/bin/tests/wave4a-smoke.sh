@@ -2,7 +2,7 @@
 # wave4a-smoke.sh — WS-B/C/E/F bash-code smoke check (T56, T67, T83, T96, T97, T98, T99)
 # Tests: audit-round-start, record-partial-verdict, set-mode, skip-phase,
 #        set-supersedes/set-forked-from, SIZE_UNKNOWN suppression, HANDOFF sections.
-# Run from repo root: bash plugins/edm-ai-development-staging/bin/tests/wave4a-smoke.sh
+# Run from repo root: bash plugins/edm-ai-development/bin/tests/wave4a-smoke.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -205,7 +205,7 @@ check "HANDOFF has Outstanding PARTIAL Verdicts section" "## Outstanding PARTIAL
 check "HANDOFF shows PARTIAL ticket"             "TSMK-T02"              "$(cat "$HANDOFF")"
 check "HANDOFF shows PARTIAL note"               "needs retry logic"     "$(cat "$HANDOFF")"
 check_absent "HANDOFF omits PASS ticket from PARTIAL section" "TSMK-T01" \
-  "$(grep -A5 'Outstanding PARTIAL' "$HANDOFF" || echo '')"
+  "$(sed -n '/## Outstanding PARTIAL Verdicts/,/^## /p' "$HANDOFF" 2>/dev/null || echo '')"
 
 # Section order: Resume Point < Lifecycle & Mode < Outstanding PARTIAL < Gates
 rp_line="$(grep -n '## Resume Point' "$HANDOFF" | head -1 | cut -d: -f1)"

@@ -67,6 +67,7 @@ Use the canonical severity scale from `CLAUDE.md Sec."Severity vocabulary"`. Sum
 | **P0** | Blocks implementation, security/legal issue, architecturally wrong | Must fix before Phase 4 |
 | **P1** | Significant gap, factual error, or missing requirement | Must fix before Phase 4 |
 | **P2** | Polish, edge case, or improvement | Can defer |
+| **NOTED** | Looks like a problem but is intentional or pre-existing | Document once; never re-investigate |
 
 ## Finding Format
 
@@ -94,6 +95,9 @@ Use the canonical severity scale from `CLAUDE.md Sec."Severity vocabulary"`. Sum
 
 ## P2 -- Minor
 [findings]
+
+## NOTED -- Intentional / Pre-existing
+[items that look wrong but are documented as intentional — one line each with rationale]
 ```
 
 ## Process

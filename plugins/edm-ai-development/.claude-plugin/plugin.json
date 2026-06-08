@@ -112,6 +112,30 @@
       "title": "E2E test framework override",
       "description": "Pin the E2E test framework (e.g., 'playwright', 'cypress'). Leave empty for auto-detection.",
       "default": ""
+    },
+    "mode": {
+      "type": "string",
+      "title": "Initiative mode",
+      "description": "Default initiative mode for new initiatives. One of: standard, mini-srd, iac, data-ml, prototype. Standard runs all six phases. mini-srd skips Phase 2 SRD creation. iac and data-ml activate domain-specific agent configurations. prototype skips the code-audit convergence check.",
+      "default": "standard"
+    },
+    "compliance_enabled": {
+      "type": "boolean",
+      "title": "Compliance enforcement",
+      "description": "When true, the orchestrator enforces compliance checkpoints (regulatory, security, audit trail). Raises audit findings to P0 for any compliance gap. Default false — enable only in regulated environments.",
+      "default": false
+    },
+    "qc_shard_threshold": {
+      "type": "number",
+      "title": "QC sharding threshold (ticket count)",
+      "description": "When a Phase 6 wave has more than this many tickets, QC spawns multiple edm-qc-auditor shards (at most 12 tickets each) and writes per-shard reports to {initiative-dir}/qc/. Set to a large value (e.g., 999) to always use single-auditor mode.",
+      "default": 20
+    },
+    "implementation_mode": {
+      "type": "string",
+      "title": "Phase 6 implementation mode",
+      "description": "Controls the Phase 6 implementation strategy. 'standard' runs all tickets in parallel waves (default). 'tdd' enforces Red-Green-Refactor per ticket: failing tests must be committed before implementation code.",
+      "default": "standard"
     }
   }
 }

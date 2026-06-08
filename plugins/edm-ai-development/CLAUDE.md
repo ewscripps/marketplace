@@ -259,7 +259,7 @@ Test code itself lives in the project's existing test directories — `SRD/` art
 | `edm-test-component` | sonnet / high | green | 50 | UI component tests (RTL, Vue Test Utils, etc.) |
 | `edm-test-composable` | sonnet / high | green | 50 | React hooks / Vue composables |
 | `edm-test-integration` | sonnet / high | green | 50 | Multi-module / real DB / HTTP tests |
-| `edm-test-contract` | sonnet / high | green | 50 | API contract tests (OpenAPI/Swagger-driven) |
+| `edm-test-contract` | sonnet / high | green | 50 | API contract tests (OpenAPI/GraphQL-driven) |
 | `edm-test-e2e` | sonnet / high | green | 60 | Playwright/Cypress full user journeys |
 | `edm-test-a11y` | sonnet / high | green | 30 | axe-core + keyboard nav, WCAG 2.1 AA |
 | `edm-test-coverage-auditor` | opus / max | cyan | 25 | Read-only: parse coverage, cross-ref AC, find gaps |
@@ -384,13 +384,14 @@ The `userConfig.jira_project_key` value provides a default; otherwise the user m
 
 `hooks/hooks.json` configures:
 
-| Event                                                          | Effect                                                        |
-|----------------------------------------------------------------|---------------------------------------------------------------|
-| `SessionStart`                                                 | Emit Resume Point for active initiatives via `edm-state session-start` |
-| `UserPromptExpansion` matching `edm:(srd\|tickets\|implement)` | Block expansion if the prerequisite HITL gate isn't approved  |
-| `Stop` and `PreCompact`                                        | Checkpoint state via `edm-state checkpoint-if-active`         |
-| `SubagentStop` matching `edm-implementer`                      | Auto-spawn `edm-qc-auditor`; write verdict to `qc/qc-summary.md`; persist PARTIAL verdicts via `edm-state record-partial-verdict` |
-| `TaskCompleted`                                                | Reserved — per-task duration accumulation not yet implemented |
+| Event                                                                                  | Effect                                                        |
+|----------------------------------------------------------------------------------------|---------------------------------------------------------------|
+| `SessionStart`                                                                         | Emit Resume Point for active initiatives via `edm-state session-start` |
+| `UserPromptExpansion` matching `edm:(srd\|audit-srd\|tickets\|audit-tickets\|implement)` | Block expansion if the prerequisite HITL gate isn't approved  |
+| `PreToolUse` matching `git commit`                                                     | Run `edm-lint-artifacts` — block commit if active-initiative artifacts have violations |
+| `Stop` and `PreCompact`                                                                | Checkpoint state via `edm-state checkpoint-if-active`         |
+| `SubagentStop` matching `edm-implementer`                                              | Auto-spawn `edm-qc-auditor`; write verdict to `qc/qc-summary.md`; persist PARTIAL verdicts via `edm-state record-partial-verdict` |
+| `TaskCompleted`                                                                        | Reserved — per-task duration accumulation not yet implemented |
 
 These are part of the methodology — do not disable them in normal operation.
 
@@ -400,9 +401,10 @@ Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call the
 
 | Script                | Purpose                                                                                                                                                                                                                                     |
 |-----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `edm-state`           | Read/write `.edm-state.json` files; subcommands: `get`, `set`, `list`, `approve-gate`, `checkpoint-if-active`, `archive`, `phase-start`, `phase-complete`, `record-task-duration`, `write-handoff`, `watch-impl`, `metrics-report`, `audit-round-start`, `record-partial-verdict`, `set-mode`, `skip-phase`, `set-supersedes`, `set-forked-from` |
-| `edm-init`            | Scaffold a new `SRD/{PREFIX}/` directory with empty state file                                                                                                                                                                              |
-| `edm-validate-prefix` | Verify a proposed prefix doesn't collide with existing initiatives                                                                                                                                                                          |
+| `edm-state`           | Read/write `.edm-state.json` files; 36 subcommands: `init`, `get`, `set`, `list`, `active-initiatives`, `migrate-path`, `approve-gate`, `phase-start`, `phase-complete`, `checkpoint-if-active`, `record-task-duration`, `record-test-coverage`, `record-tests-added`, `get-coverage`, `srd-version`, `archive`, `write-handoff`, `watch-impl`, `metrics-report`, `validate`, `gate-check`, `branch-check`, `git-lock-check`, `current-step`, `session-start`, `audit-round-start`, `record-partial-verdict`, `set-mode`, `skip-phase`, `set-supersedes`, `set-forked-from`, `resolve-dir`, `set-parent`, `add-related`, `update-patterns`, `lint` |
+| `edm-init`            | Scaffold a new initiative directory (`SRD/{PREFIX}/` or `SRD/{PRODUCT}/{PREFIX}__{desc}/`) with empty state file |
+| `edm-validate-prefix` | Verify a proposed prefix doesn't collide with existing initiatives across all product subdirectories |
+| `edm-lint-artifacts`  | Scan active-initiative artifact files for violations (missing version headers, orphan files, oversized tickets); called by the `PreToolUse` git-commit hook |
 
 ### `.edm-state.json` mode-family fields
 
@@ -429,13 +431,27 @@ Operates against the project's working directory (no plugin-relative paths). All
 
 ## `userConfig` reference
 
-Prompted at install time. See `plugin.json` for the live schema. Keys:
+Prompted at install time. See `.claude-plugin/plugin.json` for the live schema. Keys:
 
 - `srd_root` — output root directory (default `./SRD`)
-- `srd_filename` — SRD file inside `{PREFIX}/` (default `srd.md`)
-- `ticket_pack_dirname` — ticket pack subdir name (default `tickets`)
-- `prefix_format_hint` — hint shown when prompting for prefix (default `UPPERCASE 3-6 chars`)
+- `srd_filename` — SRD file inside the initiative directory (default `srd.md`)
+- `ticket_pack_dirname` — ticket pack subdirectory name (default `tickets`)
+- `prefix_format_hint` — hint shown when prompting for a prefix (default `UPPERCASE 3-6 chars`)
 - `commit_state_file` — whether `.edm-state.json` is git-tracked (default `true`)
+- `human_hourly_rate_usd` — human developer rate for cost comparison in `/edm:metrics` (default `150`)
+- `jira_project_key` — default Jira project key for `/edm:push-jira`; leave empty to require explicit arg (default `""`)
+- `jira_mcp_namespace` — MCP namespace for Atlassian tools (default `plugin_jira_atlassian-mcp-server`)
+- `coverage_target_unit_pct` — minimum unit test coverage % (default `80`)
+- `coverage_target_component_pct` — minimum component test coverage % (default `70`)
+- `coverage_target_integration_pct` — minimum integration test coverage % (default `60`)
+- `coverage_target_e2e_critical_paths_pct` — % of critical paths requiring E2E coverage (default `100`)
+- `test_framework_unit_override` — pin unit test framework, e.g. `jest`, `pytest` (default `""`)
+- `test_framework_component_override` — pin component test framework (default `""`)
+- `test_framework_e2e_override` — pin E2E framework, e.g. `playwright`, `cypress` (default `""`)
+- `mode` — default initiative mode: `standard`, `mini-srd`, `iac`, `data-ml`, `prototype` (default `standard`)
+- `compliance_enabled` — enforce compliance checkpoints when true (default `false`)
+- `qc_shard_threshold` — ticket count above which QC spawns multiple `edm-qc-auditor` shards (default `20`)
+- `implementation_mode` — Phase 6 mode: `standard` or `tdd` Red-Green-Refactor (default `standard`)
 
 Skills reference values as `${user_config.srd_root}` etc.
 

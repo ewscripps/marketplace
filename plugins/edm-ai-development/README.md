@@ -90,22 +90,27 @@ Every artifact lives in your project's `SRD/` directory and is committed to git:
 
 ```
 SRD/
-└── {PREFIX}/
-    ├── planning.md               ← Phase 1
-    ├── srd.md                    ← Phase 2 (filename configurable)
-    ├── audit-srd.md              ← Phase 3
-    ├── tickets/                  ← Phase 4 (dirname configurable)
-    │   ├── README.md             ← index, legend, critical path, coverage map, version-linkage header
-    │   ├── audit.md              ← Phase 5 audit
-    │   └── epics/
-    │       ├── 01-{epic}.md
-    │       └── 02-{epic}.md
-    ├── code-audit/
-    │   └── {YYYY-MM-DD}/
-    │       ├── lens-L1.md … lens-L11.md
-    │       └── REMEDIATION.md
-    └── .edm-state.json           ← gate approvals, phase timestamps (committed by default)
+├── {PRODUCT}/                         ← v2.0 canonical: product subdirectory (e.g. "auth", "billing")
+│   └── {PREFIX}__{description}/       ← initiative directory (double-underscore separator)
+│       ├── planning.md                    ← Phase 1
+│       ├── srd.md                         ← Phase 2 (filename configurable)
+│       ├── audit-srd.md                   ← Phase 3
+│       ├── tickets/                       ← Phase 4 (dirname configurable)
+│       │   ├── README.md                  ← index, legend, critical path, coverage map, version-linkage header
+│       │   ├── audit.md                   ← Phase 5 audit
+│       │   └── epics/
+│       │       ├── 01-{epic}.md
+│       │       └── 02-{epic}.md
+│       ├── code-audit/
+│       │   └── {YYYY-MM-DD}/
+│       │       ├── lens-L1.md … lens-L11.md
+│       │       └── REMEDIATION.md
+│       └── .edm-state.json               ← gate approvals, phase timestamps (committed by default)
+└── {PREFIX}/                          ← legacy flat layout (still supported, auto-detected)
+    └── …
 ```
+
+See `CLAUDE.md` for the full v2.0 artifact inventory including optional on-demand files (`decisions.md`, `ROLLBACK.md`, `exec-report.md`, `post-deploy/`).
 
 Artifacts are reviewed in PRs. Gate approvals show up in git history. Multiple developers see the same in-flight initiative state.
 
@@ -121,7 +126,7 @@ Run `/edm:metrics --calibrate` after a few completed initiatives to recalibrate 
 
 ## Plugin features
 
-- **Hooks** (`hooks/hooks.json`): SessionStart prints in-progress initiatives; UserPromptExpansion enforces gate approval; Stop/PreCompact checkpoint state; SubagentStop auto-fires `edm-qc-auditor` after every implementer; TaskCompleted records per-task durations.
+- **Hooks** (`hooks/hooks.json`): SessionStart prints in-progress initiatives; UserPromptExpansion enforces gate approval; PreToolUse blocks `git commit` on artifact violations; Stop/PreCompact checkpoint state; SubagentStop auto-fires `edm-qc-auditor` after every implementer; TaskCompleted is reserved (per-task accumulation not yet implemented).
 - **Background monitor** (`monitors/monitors.json`): during Phase 6, tails `git log` and reports each ticket commit as a notification.
 - **Worktree isolation**: parallel `edm-implementer` agents each get their own git worktree automatically — no manual setup, no merge conflicts mid-wave.
 - **State persistence**: `bin/edm-state` tracks each initiative's phase, gate approvals, timing, cost, and test coverage in `SRD/{PREFIX}/.edm-state.json`. Survives across sessions.
@@ -136,4 +141,3 @@ Run `/edm:metrics --calibrate` after a few completed initiatives to recalibrate 
 - `CLAUDE.md` — plugin conventions for contributors
 - `CHANGELOG.md` — version history
 - The Claude Code plugin docs: `code.claude.com/docs/en/plugins`
-- The full remediation plan that produced this plugin: `../EDM_PLUGIN_REMEDIATION_PLAN.md`

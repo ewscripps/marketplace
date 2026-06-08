@@ -57,7 +57,10 @@ report_violation() {
 }
 
 # ---- Scan all *.md files, excluding .git/ and .archived/ ----------------------
-mapfile -t MD_FILES < <(
+MD_FILES=()
+while IFS= read -r _md_f; do
+  MD_FILES+=("$_md_f")
+done < <(
   find "$INIT_DIR" \
     -not -path '*/.git/*' \
     -not -path '*/.archived/*' \

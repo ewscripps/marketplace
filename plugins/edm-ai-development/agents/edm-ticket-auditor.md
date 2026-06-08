@@ -111,6 +111,9 @@ Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severit
 ### Consistency
 [findings]
 
+## NOTED -- Intentional / Pre-existing
+[items that look like issues but are documented as intentional — one line each with rationale]
+
 ## Recommendations
 [Prioritized list of fixes needed before implementation]
 ```

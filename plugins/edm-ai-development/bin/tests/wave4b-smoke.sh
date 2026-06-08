@@ -118,7 +118,8 @@ check "mini-SRD fused file" "fused file" "$ORCH"
 check "mini-SRD merged gate" "Gate 2+3" "$ORCH"
 check "mini-SRD skip-phase 4" "skip-phase <PREFIX> 4" "$ORCH"
 check "mini-SRD skip-phase 5" "skip-phase <PREFIX> 5" "$ORCH"
-check_absent "mini-SRD does not spawn ticket-writer" "edm-ticket-writer" "$(echo "$ORCH" | grep -A40 'mini-SRD Sub-Flow')"
+check_absent "mini-SRD does not spawn ticket-writer" "edm-ticket-writer" \
+  "$(echo "$ORCH" | awk '/### mini-SRD Sub-Flow/{f=1} f && /^---$/{exit} f{print}')"
 echo ""
 
 # ---- T91: Gate 3.5 compliance review -----------------------------------------

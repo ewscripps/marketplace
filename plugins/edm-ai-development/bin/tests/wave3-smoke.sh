@@ -2,7 +2,7 @@
 # wave3-smoke.sh — WS-N compaction-resilience smoke check (T54)
 # Tests: current-step read/write, session-start output, last_cmd/last_decision
 # in init payload, Resume Point presence in HANDOFF.md.
-# Run from repo root: bash plugins/edm-ai-development-staging/bin/tests/wave3-smoke.sh
+# Run from repo root: bash plugins/edm-ai-development/bin/tests/wave3-smoke.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
