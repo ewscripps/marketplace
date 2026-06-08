@@ -52,7 +52,7 @@ If yes to any → record as "Noted / Not Actionable" with a one-line rationale.
 ## Output Format
 
 For every finding:
-- **Severity**: P1 (must fix before ship), P2 (should fix), P3 (nice to have)
+- **Severity**: P0 / P1 / P2 — use the canonical scale from `CLAUDE.md §"Severity vocabulary"`
 - **File + line number**
 - **What is wrong** (be precise — what value, what condition, what function)
 - **Concrete fix** (specific code change, not vague advice)

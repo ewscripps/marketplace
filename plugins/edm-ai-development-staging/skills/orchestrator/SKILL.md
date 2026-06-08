@@ -128,6 +128,14 @@ Call the resolved value **`INITIATIVE`** — all subsequent steps use `INITIATIV
    - Integration points: N
    - Estimated size: Small (10-20 tickets) / Medium (30-50) / Large (50-85)
 
+   ## Go/No-Go
+   **Decision**: GO / NO-GO / CONDITIONAL
+   **Rationale**: [why]
+   **Conditions** (if conditional): [what must be true before proceeding]
+
+   ## Riskiest Assumptions
+   [What we're assuming that hasn't been validated]
+
    ## Open Questions
    {Each question on its own line, tagged as one of:}
    - [DECISION: Option A | Option B | Option C] Question text

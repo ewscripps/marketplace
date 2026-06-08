@@ -59,6 +59,8 @@ File types to hunt:
 
 ## Output Format
 
+Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md §"Severity vocabulary"`.
+
 ```markdown
 ## Findings (L5: Runtime Hygiene)
 [file type, where it's created (file:line), whether it's in .gitignore, accumulation risk, fix]

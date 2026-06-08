@@ -24,8 +24,9 @@ allowed-tools: Read, Write, Bash(edm-state *), Bash(edm-init *), Bash(edm-valida
 5. Spawn `edm-explorer` agent(s) — see "AI Execution Pattern" below.
 6. Synthesize agent output into the planning document at `${user_config.srd_root}/{PREFIX}/planning.md` using the template below.
 7. `edm-state phase-complete <PREFIX> 1`
-8. Present **HITL Gate 1** (see below) and STOP for sign-off.
-9. On approval: `edm-state approve-gate <PREFIX> 1`.
+8. `edm-state write-handoff <PREFIX>` — create/refresh HANDOFF.md from the just-written planning.md. This is idempotent; re-running regenerates HANDOFF.md without error.
+9. Present **HITL Gate 1** (see below) and STOP for sign-off.
+10. On approval: `edm-state approve-gate <PREFIX> 1`.
 
 ## Activities — the agent must cover ALL
 
@@ -76,13 +77,21 @@ Files affected, new modules, integration points, approximate ticket count (S/M/L
 - New modules: N
 - Estimated size: Small (10-20 tickets) / Medium (30-50) / Large (50-85)
 
-## Go/No-Go Decision
+## Go/No-Go
 **Decision**: GO / NO-GO / CONDITIONAL
 **Rationale**: [why]
 **Conditions** (if conditional): [what must be true before proceeding]
 
 ## Riskiest Assumptions
 [What we're assuming that hasn't been validated]
+
+## Open Questions
+{Each question on its own line, tagged as one of:}
+- [DECISION: Option A | Option B | Option C] Question text
+- [OPEN] Question text
+
+## Decisions Made
+{populated interactively at Gate 1 — leave empty initially}
 ```
 
 ## AI Execution Pattern

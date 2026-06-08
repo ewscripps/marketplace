@@ -60,6 +60,8 @@ Your mandate is ONLY this lens. Do not audit other dimensions — other agents h
 
 ## Output Format
 
+Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md §"Severity vocabulary"`.
+
 ```markdown
 ## Findings (L8: Security & Portability)
 [file:line, vulnerability class, exploitation scenario, concrete fix]

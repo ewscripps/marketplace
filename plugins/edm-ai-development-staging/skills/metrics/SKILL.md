@@ -30,8 +30,6 @@ Calls `edm-state metrics-report AUTH`. Reads `${user_config.srd_root}/AUTH/.edm-
 - Phase number → wall-clock duration
 - Gate number → review time (seconds between phase-complete and gate-approved)
 - Total initiative time
-- Comparison column against the Phase Timing Guidelines for the recorded `estimated_size`
-- Highlights any phase that ran > 1.5× the expected duration
 
 ### Mode 2: Aggregate across all initiatives
 
@@ -39,10 +37,12 @@ Calls `edm-state metrics-report AUTH`. Reads `${user_config.srd_root}/AUTH/.edm-
 /edm:metrics --all
 ```
 
-Calls `edm-state metrics-report --all`. Aggregates across every initiative in `${user_config.srd_root}/` (active and `.archived/`):
-- Mean / median / p95 per phase
-- Top 3 bottleneck phases (longest median duration relative to the guideline)
-- Initiatives where total gate-review time exceeded total execution time (signal of stakeholder availability problems, not methodology friction)
+Calls `edm-state metrics-report --all`. Aggregates across every initiative in `${user_config.srd_root}/` (active and `.archived/`) and prints one row per initiative:
+- Initiative prefix and recorded size
+- Total wall-clock time across all phases
+- Total Claude API cost
+- Total human baseline cost
+- Cost ratio (human cost / Claude cost)
 
 ### Mode 3: Calibration suggestion
 
@@ -50,12 +50,10 @@ Calls `edm-state metrics-report --all`. Aggregates across every initiative in `$
 /edm:metrics --calibrate
 ```
 
-Calls `edm-state metrics-report --calibrate`. Outputs a suggested updated Phase Timing Guidelines table based on actual data:
-- For each (size, phase), the team's median duration
-- Compared against the current guidelines
-- Recommended new guideline value
+Calls `edm-state metrics-report --calibrate`. Outputs per (size, phase) aggregate rows from all completed initiatives (active and archived):
+- For each (size, phase) combination: sample count, median duration in seconds, median Claude cost
 
-Useful for retrospectives. The team can then update the table in `skills/orchestrator/SKILL.md`.
+Useful for retrospectives. The team can then update the Phase Timing Guidelines table in `skills/orchestrator/SKILL.md` based on the observed medians.
 
 ## Interpretation Notes
 

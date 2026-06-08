@@ -27,7 +27,7 @@ For each ticket in your assigned epic:
 [SEVERITY] {PREFIX}-T{NN} | path/to/file.py:line | AC#{N}: {criterion text} | {what's wrong}
 ```
 
-Severity:
+Severity — use the canonical scale from `CLAUDE.md §"Severity vocabulary"`:
 - **P0** — AC completely unmet, security issue, or broken functionality
 - **P1** — AC partially met, missing edge case, wrong status code / field name / behavior
 - **P2** — Minor quality issue, style concern

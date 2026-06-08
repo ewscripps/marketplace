@@ -60,6 +60,8 @@ Read the ENTIRE SRD. Read all codebase files it references. Audit systematically
 
 ## Severity Levels
 
+Use the canonical severity scale from `CLAUDE.md §"Severity vocabulary"`. Summary for this agent:
+
 | Severity | Definition | Action Required |
 |---|---|---|
 | **P0** | Blocks implementation, security/legal issue, architecturally wrong | Must fix before Phase 4 |

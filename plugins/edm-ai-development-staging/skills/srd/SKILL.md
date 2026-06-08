@@ -21,7 +21,7 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 2. `edm-state get <PREFIX>` — verify Gate 1 has been approved. (The UserPromptExpansion hook also enforces this.)
 3. `edm-state phase-start <PREFIX> 2`
 4. Spawn `edm-srd-writer` for the main content + `edm-architect` in parallel for Section 5 (Target Architecture). Both agents write directly to the SRD file.
-5. After both complete, verify the SRD file. Set `srd_version` in `.edm-state.json` to `1.0.0`.
+5. After both complete, verify the SRD file. `edm-state srd-version <PREFIX> 1.0.0`
 6. `edm-state phase-complete <PREFIX> 2`
 7. Proceed automatically to Phase 3 audit (`/edm:audit-srd <PREFIX>`) — no HITL gate between Phase 2 and Phase 3.
 

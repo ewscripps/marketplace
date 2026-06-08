@@ -118,6 +118,23 @@ this against the current SRD version and flags drift as a P0 finding.
 
 When adding a new agent, choose a color that matches the phase. Lens agents always share `cyan`.
 
+## Severity vocabulary (canonical)
+
+All EDM audit agents use the following four-level scale. No agent may define a divergent local scale.
+
+| Level | Meaning | Required action |
+|---|---|---|
+| **P0** | Critical — blocks implementation, security/legal issue, production failure, or architecturally wrong | Fix before this phase may be called complete |
+| **P1** | Significant — material gap, factual error, missing requirement, or behavior that must be corrected before shipping | Fix before shipping; defer only with explicit written rationale |
+| **P2** | Minor — polish, edge-case, improvement, or nice-to-have | Fix if low-effort; explicitly defer otherwise |
+| **NOTED** | Not actionable — the issue is intentional, pre-existing, or a known accepted trade-off | Document in "Decisions / Non-Findings"; do not re-investigate |
+
+**Backward-compatibility mapping** (from the synthesizer's legacy P1/P2/P3 scale used before v2.0):
+- Legacy P1 (production failure / security) → **P0**
+- Legacy P2 (operational friction / must-fix) → **P1**
+- Legacy P3 (defensive improvement / nice-to-have) → **P2**
+- NOTED → unchanged
+
 ## Model and effort assignments
 
 | Role | Model | Effort | Rationale |
@@ -279,7 +296,7 @@ The `userConfig.jira_project_key` value provides a default; otherwise the user m
 | `UserPromptExpansion` matching `edm:(srd\|tickets\|implement)` | Block expansion if the prerequisite HITL gate isn't approved  |
 | `Stop` and `PreCompact`                                        | Checkpoint state via `edm-state checkpoint-if-active`         |
 | `SubagentStop` matching `edm-implementer`                      | Auto-spawn `edm-qc-auditor` to verify the just-completed work |
-| `TaskCompleted`                                                | Record per-task durations for `/edm:metrics` reporting        |
+| `TaskCompleted`                                                | Reserved — per-task duration accumulation not yet implemented |
 
 These are part of the methodology — do not disable them in normal operation.
 

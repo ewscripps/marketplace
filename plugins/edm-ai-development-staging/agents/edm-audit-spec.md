@@ -60,6 +60,8 @@ Flag as P2 (scope creep doesn't block ship but should be documented or removed)
 
 ## Output Format
 
+Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md §"Severity vocabulary"`.
+
 ```markdown
 ## Findings (L9: Spec & Ticket Compliance)
 

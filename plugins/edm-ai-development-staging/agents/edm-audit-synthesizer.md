@@ -18,7 +18,7 @@ Given a directory containing `lens-L1.md` through `lens-L11.md`:
 1. Read all 11 reports.
 2. Apply the second-pass False Alarm Filter to each finding.
 3. Deduplicate findings flagged by multiple lenses — a single underlying issue should appear once, with all the lenses that caught it listed (multi-lens corroboration is a confidence boost, not duplication).
-4. Severity-rank survivors (P1 / P2 / P3).
+4. Severity-rank survivors (P0 / P1 / P2).
 5. Write `REMEDIATION.md` in the same directory.
 
 ## Second-Pass False Alarm Filter
@@ -44,11 +44,13 @@ If L7 (Consistency) and L10 (DRY) both flag related issues that share a root cau
 
 ## Severity Reference
 
+Use the canonical severity scale defined in `CLAUDE.md §"Severity vocabulary"`. Summary:
+
 | Severity | Definition | Action |
 |---|---|---|
-| P1 | Will cause production failure, security gap, or incorrect behavior the implementation is supposed to provide | Fix before shipping |
-| P2 | Operational friction, misleading messages, incomplete documentation, unresolved TODO in shipped code, test that doesn't test what it claims | Fix before shipping; defer only with rationale |
-| P3 | Defensive improvements, minor comment clarity, optional test coverage | Fix if low effort; explicitly defer otherwise |
+| P0 | Will cause production failure, security gap, or incorrect behavior the implementation is supposed to provide | Fix before shipping |
+| P1 | Operational friction, misleading messages, incomplete documentation, unresolved TODO in shipped code, test that doesn't test what it claims | Fix before shipping; defer only with rationale |
+| P2 | Defensive improvements, minor comment clarity, optional test coverage | Fix if low effort; explicitly defer otherwise |
 | NOTED | Looks like a problem but is intentional or pre-existing | Document; never revisit |
 
 ## Remediation Plan Format
@@ -69,13 +71,13 @@ Write to `REMEDIATION.md` in the audit directory:
 
 | # | Sev | Lens(es) | Component | Issue |
 |---|-----|----------|-----------|-------|
-| G1 | P1 | L1+L4 | src/auth/handler.py:42 | Stub returns hardcoded data |
-| G2 | P1 | L9 | (missing) | AUTH-T07 spec'd --dry-run flag, not implemented |
+| G1 | P0 | L1+L4 | src/auth/handler.py:42 | Stub returns hardcoded data |
+| G2 | P0 | L9 | (missing) | AUTH-T07 spec'd --dry-run flag, not implemented |
 | ... |
 
 ## Detailed Findings
 
-### G1 (P1, lenses L1 + L4): Stub returns hardcoded data
+### G1 (P0, lenses L1 + L4): Stub returns hardcoded data
 **Problem**: The function at `src/auth/handler.py:42` returns `{"status": "ok"}` regardless of input. L1 flagged the stub; L4 flagged a test that asserts `status == "ok"` without exercising real behavior.
 
 **Fix**: [Concrete code change. File path, line numbers, exact replacement.]
@@ -86,7 +88,7 @@ Write to `REMEDIATION.md` in the audit directory:
 
 ---
 
-### G2 (P1, lens L9): Missing --dry-run flag (AUTH-T07)
+### G2 (P0, lens L9): Missing --dry-run flag (AUTH-T07)
 [same structure]
 
 ---
@@ -101,9 +103,9 @@ These items were flagged by one or more lenses but determined to be Not Actionab
 
 ## Rollout Order
 
-1. Fix all P1 findings first (G1-G3). Group by file independence — these can be parallelized.
-2. P2 findings (G4-G7) can be batched into a single follow-up commit.
-3. P3 findings (G8+) deferred to next maintenance window.
+1. Fix all P0 findings first (G1-G3). Group by file independence — these can be parallelized.
+2. P1 findings (G4-G7) can be batched into a single follow-up commit.
+3. P2 findings (G8+) deferred to next maintenance window.
 
 ## Verification Plan
 
@@ -122,12 +124,12 @@ These items were flagged by one or more lenses but determined to be Not Actionab
 5. Group Actionable findings by underlying issue. If two findings reference the same file:line and describe the same root cause, merge them.
 6. Sort merged findings by severity, then by lens count (multi-lens first within each severity).
 7. Write `REMEDIATION.md` per the format above.
-8. Print a one-paragraph summary: "{N} P1, {M} P2, {K} P3 findings; {F} not-actionable items filtered. Top 3 most impactful: ..."
+8. Print a one-paragraph summary: "{N} P0, {M} P1, {K} P2 findings; {F} not-actionable items filtered. Top 3 most impactful: ..."
 
 ## What Makes a Good Synthesis
 
 - Every Actionable finding has a concrete fix (specific code or config), not vague advice.
 - Every Not-Actionable finding has a one-line rationale (no longer than 80 chars).
 - Multi-lens findings are surfaced prominently — they're the highest-confidence signal.
-- The Rollout Order is sensible: P1s first, parallel where possible, batched P2s.
+- The Rollout Order is sensible: P0s first, parallel where possible, batched P1s.
 - The Verification Plan tells the engineer exactly which commands to run after fixes.

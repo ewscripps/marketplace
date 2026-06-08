@@ -69,6 +69,8 @@ For each backend endpoint:
 
 ## Output Format
 
+Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md §"Severity vocabulary"`.
+
 ```markdown
 ## Findings (L11: Integration Wiring)
 

@@ -77,7 +77,7 @@ exercised end-to-end.
 
 ### Step 3 — Check targets and generate findings
 
-Compare actual coverage to targets:
+Compare actual coverage to targets using the canonical scale from `CLAUDE.md §"Severity vocabulary"`:
 
 | Severity | Condition |
 |----------|-----------|

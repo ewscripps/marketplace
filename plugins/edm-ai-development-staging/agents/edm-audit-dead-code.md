@@ -50,6 +50,8 @@ If yes → "Noted / Not Actionable" with rationale.
 
 ## Output Format
 
+Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md §"Severity vocabulary"`.
+
 ```markdown
 ## Findings (L2: Dead Code & Unreachable Paths)
 [findings with file:line, why it's unreachable, and whether to delete or fix]

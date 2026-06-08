@@ -54,6 +54,8 @@ For every comment that makes a factual claim:
 
 ## Output Format
 
+Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md §"Severity vocabulary"`.
+
 ```markdown
 ## Findings (L6: Documentation Accuracy)
 [file:line, what the doc says, what the code actually does, concrete fix]

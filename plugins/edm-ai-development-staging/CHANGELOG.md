@@ -159,7 +159,7 @@ All phase skills carry `disable-model-invocation: true`. Planning, audit, and QC
 - `UserPromptExpansion` (matcher: `edm:(srd|tickets|implement)`) — blocks expansion if the prerequisite HITL gate isn't approved.
 - `Stop` and `PreCompact` — opportunistically checkpoint state.
 - `SubagentStop` (matcher: `edm-implementer`) — auto-spawns `edm-qc-auditor` after every implementer completes.
-- `TaskCompleted` — records per-task durations for `/edm:metrics`.
+- `TaskCompleted` — reserved; wires to `record-task-duration` but per-task duration accumulation is not yet implemented.
 
 ### Added — Helper scripts (`bin/`)
 - `edm-state` — read/write `SRD/{PREFIX}/.edm-state.json` with subcommands: `get`, `set`, `init`, `list`, `approve-gate`, `phase-start`, `phase-complete`, `checkpoint-if-active`, `record-task-duration`, `archive`, `watch-impl`, `metrics-report`.

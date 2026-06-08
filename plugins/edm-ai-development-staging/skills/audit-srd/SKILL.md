@@ -24,7 +24,7 @@ Every error caught here saves 10x the effort of catching it during implementatio
 3. Spawn 2-3 `edm-srd-auditor` agents in parallel — one per section group (e.g., sections 1-4, 5-7, 8-11). Each agent audits its sections across all 7 categories.
 4. Compile findings from all agents into `${user_config.srd_root}/{PREFIX}/audit-srd.md` using the report format below.
 5. **Remediate**: fix every P0 and P1 finding directly in the SRD. Update the Revision History (bump SRD version, e.g., 1.0.0 → 1.1.0).
-6. Update `srd_version` in `.edm-state.json`: `edm-state set <PREFIX> srd_version 1.1.0`
+6. Update `srd_version` in `.edm-state.json`: `edm-state srd-version <PREFIX> 1.1.0`
 7. `edm-state phase-complete <PREFIX> 3`
 8. Present **HITL Gate 2** (see below) and STOP for sign-off.
 9. On approval: `edm-state approve-gate <PREFIX> 2`.

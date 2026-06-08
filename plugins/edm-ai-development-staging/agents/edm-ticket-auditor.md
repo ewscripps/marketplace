@@ -70,6 +70,8 @@ Cross-reference the ticket pack against the SRD. Audit across all **8 dimensions
 
 ## Output
 
+Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md §"Severity vocabulary"`.
+
 ```markdown
 # Ticket Pack Audit Report: {Initiative Name}
 

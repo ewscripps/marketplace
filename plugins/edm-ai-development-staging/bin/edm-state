@@ -402,12 +402,9 @@ cmd_checkpoint() {
 }
 
 cmd_record_task_duration() {
-  # Called by TaskCompleted hook. Reads task info from environment if available.
-  # Best-effort: if we can't determine the active initiative, no-op.
-  [[ -d "$SRD_ROOT" ]] || return 0
-  require_jq
-  # The hook context isn't formally parsed here - this is a placeholder for
-  # accumulating per-task durations. Future work: parse stdin JSON from hook.
+  # Reserved no-op — TaskCompleted hook wires here but accumulation is not yet implemented.
+  # The hook fires correctly and this function runs safely, but no durations are recorded.
+  # Future work: parse stdin JSON from hook and accumulate per-task durations into state.
   return 0
 }
 
@@ -625,7 +622,57 @@ cmd_metrics_report() {
         "  Total: \($ts)s  |  Claude: $\($tc)  |  Human baseline: $\($th)  |  Savings: " +
           (if $tc > 0 then "\(($th / $tc) | tostring | .[0:6])x cheaper" else "n/a" end)
       ' "$state"
-      echo
+      # Gate review time section (only shown when at least one gate is approved)
+      # gate_review_seconds = approved_at(gate_N) - phase_complete_timestamp(gated_phase)
+      # Gated phases: gate 1 -> phase 1, gate 2 -> phase 3, gate 3 -> phase 5
+      local has_gates
+      has_gates="$(jq -r '(.gates_approved // []) | length' "$state" 2>/dev/null || echo 0)"
+      if [[ "$has_gates" -gt 0 ]]; then
+        echo "## Gate Review Times"
+        echo
+        jq -r '
+          # Bind the full state object so it remains accessible after generator iteration.
+          . as $state |
+
+          # gated_phase_key: returns the phase_durations key for the phase preceding each gate.
+          def gated_phase_key(g):
+            if g == 1 then "1_phase"
+            elif g == 2 then "3_phase"
+            elif g == 3 then "5_phase"
+            else null end;
+
+          # phase_complete_epoch: returns epoch seconds for when the gated phase completed.
+          # Falls back to started_at + duration_seconds if completed_at is missing.
+          def phase_complete_epoch($s; key):
+            $s.phase_durations[key] as $pd |
+            if $pd == null then null
+            elif ($pd.completed_at != null and $pd.completed_at != "") then
+              ($pd.completed_at | fromdateiso8601)
+            elif ($pd.started_at != null and $pd.started_at != "" and $pd.duration_seconds != null) then
+              (($pd.started_at | fromdateiso8601) + $pd.duration_seconds)
+            else null end;
+
+          [1, 2, 3] | .[] as $g |
+          (($state.gates_approved // []) | map(select(.gate == $g)) | first) as $approval |
+          (gated_phase_key($g)) as $pk |
+          (phase_complete_epoch($state; $pk)) as $complete_epoch |
+          (if $g == 1 then 1 elif $g == 2 then 3 else 5 end) as $gated_phase_num |
+          if $approval == null then
+            "  Gate \($g) review:  n/a  (not yet approved)"
+          elif $complete_epoch == null then
+            "  Gate \($g) review:  n/a  (phase \($gated_phase_num) completion time unknown)"
+          else
+            ($approval.approved_at | fromdateiso8601) as $approved_epoch |
+            ($approved_epoch - $complete_epoch) as $diff |
+            if $diff < 0 then
+              "  Gate \($g) review:  n/a  (timestamp inconsistency)"
+            else
+              "  Gate \($g) review:  \($diff | floor)s  (approved \($approval.approved_at[:10]), phase \($gated_phase_num) completed \($state.phase_durations[$pk].completed_at // "unknown" | if . != "unknown" then .[:10] else . end))"
+            end
+          end
+        ' "$state" 2>/dev/null || echo "  (gate review data unavailable)"
+        echo
+      fi
       # Test coverage summary (if any recorded)
       local has_coverage
       has_coverage="$(jq -r '(.coverage_by_layer // {}) | length' "$state" 2>/dev/null || echo 0)"
