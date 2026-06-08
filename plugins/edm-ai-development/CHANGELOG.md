@@ -4,6 +4,50 @@ All notable changes to the EDM plugin are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] — 2026-06-08
+
+### Added
+
+#### Per-epic multi-stack testing (WS-H / T106-T109)
+
+The testing layer now detects the technology stack independently per epic, enabling initiatives that span multiple stacks (e.g., a Python backend epic and a Vue frontend epic) to produce the right test frameworks and coverage targets for each.
+
+**Per-epic test plans** (`test-plan-{epic-slug}.md`): The `edm-test-planner` builds a per-epic stack table. When all epics share the same stack, it collapses to single `test-plan.md` (v1.x behavior preserved). For multi-stack initiatives it writes one `test-plan-{epic-slug}.md` per epic plus an index `test-plan.md`.
+
+**Per-epic coverage reports** (`test-coverage-{epic-slug}.md`): The `edm-test-coverage-auditor` measures coverage per epic for multi-stack initiatives and writes `test-coverage-{epic-slug}.md` per epic plus a summary `test-coverage.md`. Single-stack continues to write only `test-coverage.md`.
+
+**Absence-authoritative N/A** (T109): N/A designations are recomputed each run and never inherited. Stale `test-coverage-{slug}.md` files whose epics no longer appear in the current plan are removed on re-run. No placeholder files are written.
+
+#### New `userConfig` keys (T129)
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `mode` | `standard` | Default initiative mode (standard, mini-srd, iac, data-ml, prototype) |
+| `compliance_enabled` | `false` | Enable Gate 3.5 compliance review and regulatory-traceability columns |
+| `qc_shard_threshold` | `20` | Ticket count above which QC spawns multiple shards |
+| `jira_mcp_namespace` | `plugin_jira_atlassian-mcp-server` | Namespace for Jira MCP tool names |
+| `implementation_mode` | `standard` | Phase 6 mode: `standard` or `tdd` (Red-Green-Refactor) |
+
+#### Product-line linkage (T125-T126)
+
+Link related initiatives with `edm-state set-parent <PREFIX> <PARENT>` and `edm-state add-related <PREFIX> <RELATED>`. Linkage fields (`parent_prefix`, `related_prefixes`) appear in HANDOFF.md so teams can navigate across child/sibling initiatives.
+
+#### State enhancements
+
+- **`coverage_by_epic`** field in `.edm-state.json` holds per-epic coverage (keyed by epic slug) alongside existing `coverage_by_layer`
+- **`record-test-coverage`** now accepts optional 4th `<epic>` arg: `edm-state record-test-coverage <PREFIX> <layer> <pct> [<epic>]`
+- **`get-coverage`** prints both whole-initiative and per-epic sections when available
+- **`metrics-report`** includes a per-epic coverage table when `coverage_by_epic` data is present
+- **Auto-backup**: `.edm-state.json` is backed up to `.edm-state.json.bak` before every write
+
+### Changed
+
+- **`edm-test-planner`** fully rewritten for per-epic stack detection with single-stack collapse
+- **`edm-test-coverage-auditor`** fully rewritten for per-epic coverage, stale-file cleanup, and absence-authoritative N/A
+- **Documentation**: `CLAUDE.md` state schema section documents `coverage_by_epic`, `parent_prefix`, `related_prefixes`; `README.md` updated with multi-stack and product-line sections
+
+---
+
 ## [1.3.0] — 2026-04-30
 
 ### Added — Comprehensive Testing Layer (`/edm:test`)
