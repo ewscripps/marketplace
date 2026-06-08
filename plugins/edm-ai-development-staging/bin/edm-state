@@ -26,6 +26,12 @@
 #   edm-state migrate-path --product <n> --description <s> <PREFIX>  # opt-in move to product-scoped layout
 #   edm-state current-step <PREFIX> [<step>]                          # read/write orchestrator step (compaction resume)
 #   edm-state session-start                                           # emit resume points for active initiatives (SessionStart hook)
+#   edm-state audit-round-start <PREFIX> <code|srd|tickets>           # increment audit-round counter, echo new value
+#   edm-state record-partial-verdict <PREFIX> <ticket> <verdict> [note]  # persist per-ticket PASS/PARTIAL/FAIL
+#   edm-state set-mode <PREFIX> <kind> <value>                        # set mode, lifecycle_mode, compliance_enabled, or implementation_mode
+#   edm-state skip-phase <PREFIX> <phase-num> [<rationale>]           # record an intentionally skipped phase
+#   edm-state set-supersedes <PREFIX> <other-prefix>                  # record which initiative this supersedes
+#   edm-state set-forked-from <PREFIX> <other-prefix>                 # record which initiative this forked from
 set -euo pipefail
 
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
@@ -356,10 +362,13 @@ state_anomalies() {
     else empty end
   ' 2>/dev/null)
   # SIZE_UNKNOWN: estimated_size is "Unknown" and current_phase >= 2
-  local phase size
+  # Suppressed for fast-track/fix-pack lifecycle modes where size estimation is N/A.
+  local phase size lifecycle_mode_anom
   phase="$(echo "$state" | jq -r '.current_phase // 0')"
   size="$(echo "$state" | jq -r '.estimated_size // "Unknown"')"
-  if [[ "$size" == "Unknown" && "$phase" -ge 2 ]]; then
+  lifecycle_mode_anom="$(echo "$state" | jq -r '.lifecycle_mode // "standard"')"
+  if [[ "$size" == "Unknown" && "$phase" -ge 2 \
+        && "$lifecycle_mode_anom" != "fast-track" && "$lifecycle_mode_anom" != "fix-pack" ]]; then
     echo "SIZE_UNKNOWN  estimated_size  size is still Unknown at phase ${phase} (set via edm-state set ${prefix} estimated_size Small|Medium|Large)"
     found=1
   fi
@@ -446,6 +455,15 @@ cmd_init() {
     code_audit_converged: false,
     last_cmd: "",
     last_decision: "",
+    audit_rounds: {},
+    partial_verdict_map: {},
+    mode: "standard",
+    lifecycle_mode: "standard",
+    compliance_enabled: false,
+    implementation_mode: "standard",
+    skipped_phases: [],
+    supersedes: "",
+    forked_from: "",
     last_updated: $t
   }' > "$f"
   echo "initialized $f"
@@ -1229,6 +1247,148 @@ cmd_session_start() {
   done
 }
 
+# ---- Audit round tracking (T56) ---------------------------------------------
+# audit-round-start <PREFIX> <code|srd|tickets>
+# Increments the round counter for the given audit type and echoes the new value.
+
+cmd_audit_round_start() {
+  [[ $# -eq 2 ]] || die "usage: edm-state audit-round-start <PREFIX> <code|srd|tickets>"
+  require_jq
+  local prefix="$1" audit_type="$2"
+  case "$audit_type" in
+    code|srd|tickets) ;;
+    *) die "audit-round-start: unknown audit type '$audit_type' (expected: code|srd|tickets)" ;;
+  esac
+  local current new round
+  current="$(read_state "$prefix")"
+  new="$(echo "$current" | jq --arg t "$audit_type" --arg ts "$(now_utc)" '
+    .audit_rounds[$t] = ((.audit_rounds[$t] // 0) + 1)
+    | .last_updated = $ts
+  ')"
+  write_state "$prefix" "$new"
+  echo "$new" | jq -r --arg t "$audit_type" '.audit_rounds[$t]'
+}
+
+# ---- Partial verdict tracking (T67) -----------------------------------------
+# record-partial-verdict <PREFIX> <ticket> <PASS|PARTIAL|FAIL> [<note>]
+# Persists a per-ticket verdict into partial_verdict_map.
+
+cmd_record_partial_verdict() {
+  [[ $# -ge 3 ]] || die "usage: edm-state record-partial-verdict <PREFIX> <ticket> <PASS|PARTIAL|FAIL> [<note>]"
+  require_jq
+  local prefix="$1" ticket="$2" verdict="$3" note="${4:-}"
+  case "$verdict" in
+    PASS|PARTIAL|FAIL) ;;
+    *) die "record-partial-verdict: unknown verdict '$verdict' (expected: PASS|PARTIAL|FAIL)" ;;
+  esac
+  local current new
+  current="$(read_state "$prefix")"
+  new="$(echo "$current" | jq --arg tk "$ticket" --arg v "$verdict" --arg n "$note" --arg ts "$(now_utc)" '
+    .partial_verdict_map[$tk] = {verdict: $v, note: $n, recorded_at: $ts}
+    | .last_updated = $ts
+  ')"
+  write_state "$prefix" "$new"
+  echo "recorded verdict: $ticket = $verdict for $prefix"
+}
+
+# ---- Mode management (T83) ---------------------------------------------------
+# set-mode <PREFIX> <kind> <value>
+# Kinds: mode (standard|mini-srd|iac|data-ml|prototype)
+#        lifecycle_mode (standard|partial|fast-track|fix-pack)
+#        compliance_enabled (true|false)
+#        implementation_mode (standard|tdd)
+
+cmd_set_mode() {
+  [[ $# -eq 3 ]] || die "usage: edm-state set-mode <PREFIX> <kind> <value>"
+  require_jq
+  local prefix="$1" kind="$2" value="$3"
+  local current new
+  current="$(read_state "$prefix")"
+  case "$kind" in
+    mode)
+      case "$value" in
+        standard|mini-srd|iac|data-ml|prototype) ;;
+        *) die "set-mode: invalid mode '$value' (expected: standard|mini-srd|iac|data-ml|prototype)" ;;
+      esac
+      new="$(echo "$current" | jq --arg v "$value" --arg ts "$(now_utc)" '.mode = $v | .last_updated = $ts')"
+      ;;
+    lifecycle_mode)
+      case "$value" in
+        standard|partial|fast-track|fix-pack) ;;
+        *) die "set-mode: invalid lifecycle_mode '$value' (expected: standard|partial|fast-track|fix-pack)" ;;
+      esac
+      new="$(echo "$current" | jq --arg v "$value" --arg ts "$(now_utc)" '.lifecycle_mode = $v | .last_updated = $ts')"
+      ;;
+    compliance_enabled)
+      [[ "$value" == "true" || "$value" == "false" ]] \
+        || die "set-mode: compliance_enabled requires true|false; got: $value"
+      new="$(echo "$current" | jq --argjson v "$value" --arg ts "$(now_utc)" '.compliance_enabled = $v | .last_updated = $ts')"
+      ;;
+    implementation_mode)
+      case "$value" in
+        standard|tdd) ;;
+        *) die "set-mode: invalid implementation_mode '$value' (expected: standard|tdd)" ;;
+      esac
+      new="$(echo "$current" | jq --arg v "$value" --arg ts "$(now_utc)" '.implementation_mode = $v | .last_updated = $ts')"
+      ;;
+    *)
+      die "set-mode: unknown kind '$kind' (expected: mode|lifecycle_mode|compliance_enabled|implementation_mode)"
+      ;;
+  esac
+  write_state "$prefix" "$new"
+  echo "set $kind = $value for $prefix"
+}
+
+# ---- Phase skip tracking (T96) -----------------------------------------------
+# skip-phase <PREFIX> <phase-num> [<rationale>]
+# Records an intentionally skipped phase. Replaces any existing entry for the same phase.
+
+cmd_skip_phase() {
+  [[ $# -ge 2 ]] || die "usage: edm-state skip-phase <PREFIX> <phase-num> [<rationale>]"
+  require_jq
+  local prefix="$1" phase_num="$2" rationale="${3:-}"
+  [[ "$phase_num" =~ ^[1-6]$ ]] || die "skip-phase: phase-num must be 1-6; got: $phase_num"
+  local current new
+  current="$(read_state "$prefix")"
+  new="$(echo "$current" | jq --argjson p "$phase_num" --arg r "$rationale" --arg ts "$(now_utc)" '
+    .skipped_phases = (
+      [(.skipped_phases // []) | .[] | select(.phase != $p)]
+      + [{phase: $p, rationale: $r, skipped_at: $ts}]
+    )
+    | .last_updated = $ts
+  ')"
+  write_state "$prefix" "$new"
+  echo "recorded phase $phase_num as skipped for $prefix"
+}
+
+# ---- Provenance tracking (T98) -----------------------------------------------
+# set-supersedes <PREFIX> <other-prefix>
+# set-forked-from <PREFIX> <other-prefix>
+
+cmd_set_supersedes() {
+  [[ $# -eq 2 ]] || die "usage: edm-state set-supersedes <PREFIX> <other-prefix>"
+  require_jq
+  local prefix="$1" other="$2"
+  [[ -n "$other" ]] || die "set-supersedes: other-prefix must be non-empty"
+  local current new
+  current="$(read_state "$prefix")"
+  new="$(echo "$current" | jq --arg v "$other" --arg ts "$(now_utc)" '.supersedes = $v | .last_updated = $ts')"
+  write_state "$prefix" "$new"
+  echo "set supersedes = $other for $prefix"
+}
+
+cmd_set_forked_from() {
+  [[ $# -eq 2 ]] || die "usage: edm-state set-forked-from <PREFIX> <other-prefix>"
+  require_jq
+  local prefix="$1" other="$2"
+  [[ -n "$other" ]] || die "set-forked-from: other-prefix must be non-empty"
+  local current new
+  current="$(read_state "$prefix")"
+  new="$(echo "$current" | jq --arg v "$other" --arg ts "$(now_utc)" '.forked_from = $v | .last_updated = $ts')"
+  write_state "$prefix" "$new"
+  echo "set forked_from = $other for $prefix"
+}
+
 # ---- HANDOFF.md generation --------------------------------------------------
 # Writes SRD/{PREFIX}/HANDOFF.md - a version-controlled snapshot that any team
 # member can read to understand current status and resume the initiative.
@@ -1269,6 +1429,27 @@ write_handoff_internal() {
     end
   ')"
 
+  # Lifecycle & Mode fields (T83, T96, T98, T99) — empty-safe defaults for pre-T83 state files.
+  local mode lifecycle_mode compliance_enabled implementation_mode supersedes forked_from skipped_phases_json
+  mode="$(echo "$state" | jq -r '.mode // "standard"')"
+  lifecycle_mode="$(echo "$state" | jq -r '.lifecycle_mode // "standard"')"
+  compliance_enabled="$(read_bool "$state" "compliance_enabled" "false")"
+  implementation_mode="$(echo "$state" | jq -r '.implementation_mode // "standard"')"
+  supersedes="$(echo "$state" | jq -r '.supersedes // ""')"
+  forked_from="$(echo "$state" | jq -r '.forked_from // ""')"
+  skipped_phases_json="$(echo "$state" | jq -r '
+    (.skipped_phases // []) |
+    if length == 0 then ""
+    else map("- Phase \(.phase)\(if .rationale != "" then ": \(.rationale)" else "" end)") | join("\n")
+    end
+  ')"
+
+  # Gate-skip flags (T96): true when the phase feeding a gate is in skipped_phases.
+  local gate1_skipped gate2_skipped gate3_skipped
+  gate1_skipped="$(echo "$state" | jq -r '[(.skipped_phases // []) | .[].phase] | contains([1])')"
+  gate2_skipped="$(echo "$state" | jq -r '[(.skipped_phases // []) | .[].phase] | contains([3])')"
+  gate3_skipped="$(echo "$state" | jq -r '[(.skipped_phases // []) | .[].phase] | contains([5])')"
+
   # Derive what to do next from current phase + gates approved
   local gate_nums next_action
   gate_nums="$(echo "$state" | jq -r '[(.gates_approved // []) | .[].gate] | sort | .[]' 2>/dev/null | tr '\n' ' ')"
@@ -1276,6 +1457,8 @@ write_handoff_internal() {
     0|1)
       if echo " $gate_nums " | grep -qw 1; then
         next_action="Proceed to Phase 2 - SRD creation (\`/edm:orchestrator ${prefix}\`)"
+      elif [[ "$gate1_skipped" == "true" ]]; then
+        next_action="Phase 1 skipped — run \`/edm:orchestrator ${prefix}\` to continue"
       else
         next_action="HITL Gate 1 pending - run \`/edm:orchestrator ${prefix}\` to present scope for team approval"
       fi
@@ -1283,6 +1466,8 @@ write_handoff_internal() {
     2|3)
       if echo " $gate_nums " | grep -qw 2; then
         next_action="Proceed to Phase 4 - ticket creation (\`/edm:orchestrator ${prefix}\`)"
+      elif [[ "$gate2_skipped" == "true" ]]; then
+        next_action="Phase 3 skipped — run \`/edm:orchestrator ${prefix}\` to continue"
       else
         next_action="HITL Gate 2 pending - run \`/edm:orchestrator ${prefix}\` to present SRD for team approval"
       fi
@@ -1290,6 +1475,8 @@ write_handoff_internal() {
     4|5)
       if echo " $gate_nums " | grep -qw 3; then
         next_action="Proceed to Phase 6 - implementation (\`/edm:orchestrator ${prefix}\`)"
+      elif [[ "$gate3_skipped" == "true" ]]; then
+        next_action="Phase 5 skipped — run \`/edm:orchestrator ${prefix}\` to continue"
       else
         next_action="HITL Gate 3 pending - run \`/edm:orchestrator ${prefix}\` to present ticket pack for team approval"
       fi
@@ -1374,6 +1561,16 @@ write_handoff_internal() {
   # Trim trailing newline from multi-line pending_artifacts.
   pending_artifacts="${pending_artifacts%$'\n'}"
 
+  # Outstanding PARTIAL verdicts (T67).
+  local partial_verdicts_text
+  partial_verdicts_text="$(echo "$state" | jq -r '
+    (.partial_verdict_map // {}) | to_entries |
+    map(select(.value.verdict == "PARTIAL")) |
+    if length == 0 then ""
+    else map("- **\(.key)**: \(.value.note // "(no note)")  _(recorded \(.value.recorded_at // "?"))_") | join("\n")
+    end
+  ')"
+
   {
     printf '%s\n\n' "# ${prefix} - Session Handoff"
     printf '%s  \n' "> **Last updated**: ${updated_at} by ${USER:-unknown}"
@@ -1393,6 +1590,22 @@ write_handoff_internal() {
     printf '\n%s\n\n' "**Pending artifacts for ${phase_name}**:"
     printf '%s\n\n' "${pending_artifacts}"
     printf '%s\n\n' "> Copy-paste to resume: \`/edm:orchestrator ${prefix}\`"
+    printf '%s\n\n' "## Lifecycle & Mode"
+    printf '%s\n' "- **Mode**: ${mode}"
+    printf '%s\n' "- **Lifecycle mode**: ${lifecycle_mode}"
+    printf '%s\n' "- **Compliance**: ${compliance_enabled}"
+    printf '%s\n' "- **Implementation mode**: ${implementation_mode}"
+    [[ -n "$supersedes" ]]  && printf '%s\n' "- **Supersedes**: ${supersedes}"
+    [[ -n "$forked_from" ]] && printf '%s\n' "- **Forked from**: ${forked_from}"
+    if [[ -n "$skipped_phases_json" ]]; then
+      printf '\n%s\n' "**Skipped phases:**"
+      printf '%s\n' "${skipped_phases_json}"
+    fi
+    printf '\n'
+    if [[ -n "$partial_verdicts_text" ]]; then
+      printf '%s\n\n' "## Outstanding PARTIAL Verdicts"
+      printf '%s\n\n' "${partial_verdicts_text}"
+    fi
     printf '%s\n\n' "## Gates"
     printf '%s\n\n' "${gate_list}"
     printf '%s\n\n' "## Artifact Checklist"
@@ -1450,8 +1663,14 @@ case "$cmd" in
   git-lock-check)       cmd_git_lock_check "$@" ;;
   current-step)         cmd_current_step "$@" ;;
   session-start)        cmd_session_start "$@" ;;
+  audit-round-start)    cmd_audit_round_start "$@" ;;
+  record-partial-verdict) cmd_record_partial_verdict "$@" ;;
+  set-mode)             cmd_set_mode "$@" ;;
+  skip-phase)           cmd_skip_phase "$@" ;;
+  set-supersedes)       cmd_set_supersedes "$@" ;;
+  set-forked-from)      cmd_set_forked_from "$@" ;;
   ""|-h|--help|help)
-    sed -n '2,28p' "$0"
+    sed -n '2,34p' "$0"
     ;;
   *)
     die "unknown subcommand: $cmd (try --help)"
