@@ -21,13 +21,21 @@ Every error caught here saves 10x the effort of catching it during implementatio
 
 1. Parse `{PREFIX}` from `$ARGUMENTS`.
 2. `edm-state phase-start <PREFIX> 3`
-3. Spawn 2-3 `edm-srd-auditor` agents in parallel — one per section group (e.g., sections 1-4, 5-7, 8-11). Each agent audits its sections across all 7 categories.
-4. Compile findings from all agents into `${user_config.srd_root}/{PREFIX}/audit-srd.md` using the report format below.
-5. **Remediate**: fix every P0 and P1 finding directly in the SRD. Update the Revision History (bump SRD version, e.g., 1.0.0 → 1.1.0).
-6. Update `srd_version` in `.edm-state.json`: `edm-state srd-version <PREFIX> 1.1.0`
-7. `edm-state phase-complete <PREFIX> 3`
-8. Present **HITL Gate 2** (see below) and STOP for sign-off.
-9. On approval: `edm-state approve-gate <PREFIX> 2`.
+3. **Version-drift check**: Read the SRD's Document Info section (or first Revision History entry) to
+   extract the embedded version (e.g., `1.0.0`). Read `srd_version` from state:
+   ```bash
+   edm-state get <PREFIX> | jq -r '.srd_version // "0.0.0"'
+   ```
+   If the embedded SRD version differs from the state value, sync state to match the file version
+   before proceeding (`edm-state srd-version <PREFIX> <embedded-version>`). A divergence here means
+   the SRD was edited out-of-band; note it in the audit report intro.
+4. Spawn 2-3 `edm-srd-auditor` agents in parallel — one per section group (e.g., sections 1-4, 5-7, 8-11). Each agent audits its sections across all 7 categories.
+5. Compile findings from all agents into `${user_config.srd_root}/{PREFIX}/audit-srd.md` using the report format below.
+6. **Remediate**: fix every P0 and P1 finding directly in the SRD. Update the Revision History (bump SRD version, e.g., 1.0.0 → 1.1.0).
+7. Update `srd_version` in `.edm-state.json`: `edm-state srd-version <PREFIX> 1.1.0`
+8. `edm-state phase-complete <PREFIX> 3`
+9. Present **HITL Gate 2** (see below) and STOP for sign-off.
+10. On approval: `edm-state approve-gate <PREFIX> 2`.
 
 ## 7 Audit Categories
 

@@ -19,14 +19,24 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 
 1. Parse `{PREFIX}` from `$ARGUMENTS`.
 2. `edm-state phase-start <PREFIX> 5`
-3. Spawn 2 `edm-ticket-auditor` agents in parallel:
+3. **Version-drift check**: Read `srd_version` from state:
+   ```bash
+   edm-state get <PREFIX> | jq -r '.srd_version // "0.0.0"'
+   ```
+   Read the `Generated From:` header in the ticket pack `README.md`. If the header version does not
+   match `srd_version`, surface it as a P0 finding immediately — the ticket pack is stale. Example:
+   ```
+   [VERSION-DRIFT] P0 | README.md | Generated From: srd.md v1.0.0 but current srd_version is 1.2.0
+   | Ticket pack was generated from an outdated SRD. Re-run /edm:tickets or accept with rationale.
+   ```
+4. Spawn 2 `edm-ticket-auditor` agents in parallel:
    - One for **structural** issues: coverage, sizing, dependencies, version alignment
    - One for **content quality**: AC quality, diagrams, consistency
-4. Compile findings into `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/audit.md`
-5. **Remediate** all coverage gaps, decompose XL tickets, fix dependency declarations, improve vague AC, fix consistency mismatches.
-6. `edm-state phase-complete <PREFIX> 5`
-7. Present **HITL Gate 3** (see below) and STOP for sign-off.
-8. On approval: `edm-state approve-gate <PREFIX> 3`.
+5. Compile findings into `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/audit.md`
+6. **Remediate** all coverage gaps, decompose XL tickets, fix dependency declarations, improve vague AC, fix consistency mismatches.
+7. `edm-state phase-complete <PREFIX> 5`
+8. Present **HITL Gate 3** (see below) and STOP for sign-off.
+9. On approval: `edm-state approve-gate <PREFIX> 3`.
 
 ## 8 Audit Dimensions
 

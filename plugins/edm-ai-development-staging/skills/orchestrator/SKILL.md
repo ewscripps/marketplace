@@ -96,16 +96,169 @@ Call the resolved value **`INITIATIVE`** — all subsequent steps use `INITIATIV
           where work stopped (e.g., `"2c"` = step 2c of Phase 2). Jump directly to that
           step rather than re-running the phase from the beginning.
         - If `current_step` is empty or absent, resume from the start of `current_phase`.
-     3. Run `edm-state current-step <PREFIX> <step>` at the start of each major step so
+     3. **Read all four mode-family fields** from state and set your working variables before
+        dispatching to any sub-flow:
+        ```bash
+        edm-state get <PREFIX> | jq -r '{
+          mode: (.mode // "standard"),
+          lifecycle_mode: (.lifecycle_mode // "standard"),
+          compliance_enabled: (.compliance_enabled // false),
+          implementation_mode: (.implementation_mode // "standard")
+        }'
+        ```
+        State which mode/lifecycle the initiative is in (e.g., "Resuming in iac mode,
+        fast-track lifecycle") before continuing so the user sees which sub-flow applies.
+        Skip Step 1c (mode selection) — the mode is already recorded.
+     4. Run `edm-state current-step <PREFIX> <step>` at the start of each major step so
         that future resume operations can jump precisely. The canonical step IDs are:
-        `1a`, `1b`, `2`, `3`, `4`, `5`, `6` (matching the Step numbering in this skill).
+        `1a`, `1b`, `1c`, `2`, `3`, `4`, `5`, `6` (matching the Step numbering in this skill).
         Within multi-part steps use dotted sub-steps: `2.srd`, `2.arch`, `4.epic-N`, etc.
-     4. Record `last_cmd` and `last_decision` at decision points:
+     5. Record `last_cmd` and `last_decision` at decision points:
         `edm-state set <PREFIX> last_cmd "<command>"` and
         `edm-state set <PREFIX> last_decision "<decision text>"`.
    - On Start over: ask for a new prefix and loop back to step 2.
 4. If new: `edm-init <PREFIX>` to scaffold the initiative directory at `${user_config.srd_root}/{PREFIX}/`.
    Then immediately run `edm-state write-handoff <PREFIX>` to create the initial HANDOFF.md.
+
+### Step 1c — Mode and profile selection
+
+After prefix resolution and before Phase 1, ask the user to select an adaptation profile and
+lifecycle mode. This step is **skipped on resume** when a non-default `mode` is already recorded
+in state (see Step 1b resume instructions).
+
+1. Present a mode selection via `AskUserQuestion` (header `"EDM mode"`, ≤12 chars):
+   - **Standard** — full six-phase flow, file-path vocabulary, standard QC (Recommended)
+   - **mini-SRD** — fused Phases 2-5 into one audited file; no separate ticket pack
+   - **IaC** — resource-path vocabulary; QC verifies `terraform plan` / drift
+   - **Data/ML** — requires Data Requirements SRD section; QC validates model metrics
+   - **Prototype** — Phases 1-2 only; clean stop after SRD
+
+2. Present a compliance toggle via a second `AskUserQuestion` (header `"Compliance"`):
+   - **Off** — standard gates only (Recommended)
+   - **On** — adds Gate 3.5 compliance review with regulatory-traceability columns
+
+3. Record choices:
+   ```bash
+   edm-state set-mode <PREFIX> mode <value>
+   edm-state set-mode <PREFIX> compliance_enabled true   # only if On was selected
+   ```
+
+4. Mode dispatch — follow the matching sub-flow:
+
+| `mode` | Sub-flow |
+|---|---|
+| `standard` | Continue Steps 2-9 as written (current six-phase flow) |
+| `mini-srd` | See **mini-SRD Sub-Flow** section below |
+| `iac` | Steps 2-9 with IaC vocabulary (resource paths in SRD/tickets; terraform-plan QC) |
+| `data-ml` | Steps 2-9 with Data Requirements SRD section; model-metric QC |
+| `prototype` | See **Prototype Sub-Flow** section below |
+
+When `compliance_enabled=true`: insert **Gate 3.5** between Step 6 (Gate 3) and Step 7 (Phase 6).
+See **Gate 3.5 — Compliance Review** section below.
+
+---
+
+### mini-SRD Sub-Flow (mode=mini-srd)
+
+When `mode=mini-srd`, run this compressed lifecycle instead of Steps 3-6:
+
+1. **Phase 1** (Step 2) — execute normally.
+2. **Produce fused file** — spawn `edm-srd-writer` to produce a single fused file (see
+   `skills/srd/SKILL.md` for mini-SRD section layout). No separate ticket pack is created.
+   ```bash
+   edm-state phase-start <PREFIX> 2
+   # spawn edm-srd-writer with mini-SRD instructions
+   edm-state phase-complete <PREFIX> 2
+   ```
+3. **Audit fused file** — spawn `edm-srd-auditor` agents against the fused file:
+   ```bash
+   edm-state phase-start <PREFIX> 3
+   # spawn 2-3 edm-srd-auditor agents
+   edm-state phase-complete <PREFIX> 3
+   ```
+4. **Merged Gate 2/3** — present a single pre-implementation gate:
+   ```
+   AskUserQuestion header: "Gate 2+3"
+   Options: Approve / Revise / No-Go
+   ```
+   On Approve: `edm-state approve-gate <PREFIX> 2` (records the merged gate).
+   Apply the gate approval rules from Gate 1 — free-text is never approval.
+5. Record skipped phases:
+   ```bash
+   edm-state skip-phase <PREFIX> 4 "mini-SRD: ticket pack fused into SRD file"
+   edm-state skip-phase <PREFIX> 5 "mini-SRD: ticket audit fused into SRD audit"
+   ```
+6. **Phase 6** — proceed to Step 7 (Implementation) reading tickets from the fused file's ticket
+   section, not a separate ticket pack directory.
+
+On resume of a `mode=mini-srd` initiative past the merged gate, enter Phase 6 directly.
+
+---
+
+### Prototype Sub-Flow (mode=prototype)
+
+When `mode=prototype`, stop after Phase 2 (SRD):
+
+1. Run Step 2 (Phase 1) normally.
+2. Run Step 3 (Phase 2 SRD) normally.
+3. Stop with a clean message:
+   > "Prototype complete. SRD is at `{path}`. Phases 3-6 are skipped. To graduate this
+   > prototype to a full initiative, run `edm-state set-mode <PREFIX> mode standard` then
+   > resume with `/edm:orchestrator <PREFIX>`."
+4. Record skipped phases:
+   ```bash
+   edm-state skip-phase <PREFIX> 3 "prototype: SRD audit skipped"
+   edm-state skip-phase <PREFIX> 4 "prototype: ticket creation skipped"
+   edm-state skip-phase <PREFIX> 5 "prototype: ticket audit skipped"
+   edm-state skip-phase <PREFIX> 6 "prototype: implementation skipped"
+   ```
+5. Do NOT spawn ticket writers, implementers, or QC agents.
+
+`edm-state archive` proceeds with a warning when `mode=prototype` (no convergence gate required).
+
+---
+
+### Fast-Track / Fix-Pack Sub-Flow (lifecycle_mode=fast-track or fix-pack)
+
+When `lifecycle_mode` is `fast-track` or `fix-pack`, generate tickets directly from an analysis
+document without the full SRD/ticket-audit sequence:
+
+1. Read the analysis document provided by the user.
+2. Produce a minimal `.edm-state.json` with `lifecycle_mode` set.
+3. Spawn `edm-ticket-writer` directly from the analysis document.
+4. Record skipped phases:
+   ```bash
+   edm-state skip-phase <PREFIX> 2 "fast-track: SRD skipped — tickets from analysis doc"
+   edm-state skip-phase <PREFIX> 3 "fast-track: SRD audit skipped"
+   edm-state skip-phase <PREFIX> 5 "fast-track: ticket audit skipped"
+   ```
+5. Proceed to Phase 6 after ticket production and a single human review gate.
+
+The state file is valid and recognized as fast-track — `validate` does not flag it as incomplete.
+
+---
+
+### Gate 3.5 — Compliance Review (when compliance_enabled=true)
+
+Insert this gate between Gate 3 (end of Step 6) and Phase 6 (Step 7), only when
+`compliance_enabled=true`:
+
+1. Present a compliance review gate via `AskUserQuestion` (header `"Gate 3.5"`):
+   - **Approve** — regulatory traceability is verified, proceed to Phase 6
+   - **Revise** — specific tickets need compliance coverage rework (user will describe)
+   - **No-Go** — compliance gap is too large; re-plan
+
+2. Record the gate:
+   ```bash
+   edm-state approve-gate <PREFIX> 3.5   # only on explicit Approve
+   ```
+
+3. Apply the gate approval rules from Gate 1 — free-text is never approval.
+
+The ticket pack tables include regulatory-traceability columns
+(`Regulation | Control | Evidence`) when `compliance_enabled=true` (see `skills/tickets/SKILL.md`).
+
+---
 
 ### Step 2 — Execute Phase 1 (Planning)
 
@@ -209,10 +362,16 @@ Call the resolved value **`INITIATIVE`** — all subsequent steps use `INITIATIV
 ### Step 3 — Execute Phase 2 (SRD)
 
 1. `edm-state phase-start <PREFIX> 2`
-2. Spawn `edm-srd-writer` for content sections; spawn `edm-architect` in parallel for Section 5 (Target Architecture).
-3. Both agents write directly to `${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}` (default `srd.md`).
-4. `edm-state phase-complete <PREFIX> 2`
-5. Proceed automatically to Phase 3 (no gate between Phase 2 and Phase 3).
+2. Spawn `edm-srd-writer` for content sections; spawn `edm-architect` in parallel for the Target Architecture.
+3. **`edm-srd-writer`** writes directly to `${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}` (default `srd.md`).
+4. **`edm-architect`** writes to `architecture.md` in the initiative directory (canonical home for diagrams
+   and decisions). The SRD's `## 5. Target Architecture` section references `architecture.md` rather
+   than duplicating content. Record the decision:
+   ```bash
+   edm-state set <PREFIX> last_decision "architecture.md written by edm-architect"
+   ```
+5. `edm-state phase-complete <PREFIX> 2`
+6. Proceed automatically to Phase 3 (no gate between Phase 2 and Phase 3).
 
 ### Step 4 — Execute Phase 3 (SRD Audit)
 
@@ -280,11 +439,20 @@ Call the resolved value **`INITIATIVE`** — all subsequent steps use `INITIATIV
 ### Step 7 — Execute Phase 6 (Implementation + QC)
 
 1. `edm-state phase-start <PREFIX> 6`
-2. Group tickets by file/component independence into parallel waves.
-3. Spawn `edm-implementer` agents per wave (each gets a worktree via `isolation: worktree`).
-4. After each wave, the `SubagentStop` hook automatically spawns `edm-qc-auditor` to verify acceptance criteria.
-5. Compile QC findings; remediate; re-audit affected tickets until all PASS.
-6. `edm-state phase-complete <PREFIX> 6`
+2. **TDD mode selection** — if `implementation_mode` is not already set in state, ask the user:
+   ```
+   AskUserQuestion header: "Impl mode"
+   Options: Standard — basic smoke tests per ticket (Recommended) | TDD — Red-Green-Refactor per ticket
+   ```
+   Record the choice: `edm-state set-mode <PREFIX> implementation_mode <value>`
+   On resume, read `implementation_mode` from state and skip this prompt.
+3. Group tickets by file/component independence into parallel waves.
+4. Spawn `edm-implementer` agents per wave (each gets a worktree via `isolation: worktree`).
+   - In TDD mode, pass `implementation_mode=tdd` instruction to each implementer (Red-Green-Refactor per ticket).
+5. After each wave, the `SubagentStop` hook automatically spawns `edm-qc-auditor` to verify acceptance criteria.
+   - In TDD mode, the QC auditor also runs the TDD compliance pass.
+6. Compile QC findings; remediate; re-audit affected tickets until all PASS.
+7. `edm-state phase-complete <PREFIX> 6`
 
 ### Step 7b — Comprehensive Testing (recommended before declaring done)
 
@@ -333,24 +501,46 @@ Run `/edm:metrics --calibrate` periodically to update these from your team's act
 
 ## Artifact Layout (committed to git)
 
+All paths are state-derived (product-scoped or flat layout, never hardcoded).
+
 ```
-${user_config.srd_root}/{PREFIX}/
-├── planning.md                ← Phase 1
-├── ${user_config.srd_filename} ← Phase 2 (default: srd.md)
-├── audit-srd.md               ← Phase 3
-├── ${user_config.ticket_pack_dirname}/
-│   ├── README.md              ← index
-│   ├── audit.md               ← Phase 5 audit
-│   └── epics/01-*.md, 02-*.md, …
-├── test-plan.md               ← /edm:test (stack + AC coverage map)
-├── test-coverage.md           ← /edm:test (coverage by layer + AC↔test cross-ref)
-├── code-audit/
-│   └── {YYYY-MM-DD}/
-│       ├── lens-L1.md … lens-L11.md
-│       └── REMEDIATION.md
-├── HANDOFF.md                 ← auto-generated cross-user resume doc (refreshed at every phase/gate/stop)
-└── .edm-state.json            ← gate approvals, phase timestamps, coverage_by_layer
+${user_config.srd_root}/{PRODUCT}/{PREFIX}__{DESCRIPTION}/   (or flat {PREFIX}/ for legacy)
+|
++-- planning.md                ← Phase 1 (always-present)
++-- srd.md                     ← Phase 2 (always-present; default srd_filename)
++-- architecture.md            ← Phase 2: edm-architect diagrams and decisions (Must/always-present)
++-- explorers/                 ← Phase 1: parallel explorer findings, one file per focus area (Must/always-present)
+|   +-- 01-{slug}.md, 02-{slug}.md, ...
++-- decisions.md               ← Running key-decisions and finding-to-commit ledger (Must/always-present)
++-- audit-srd.md               ← Phase 3
++-- {ticket_pack_dirname}/     ← default: tickets/
+|   +-- README.md              ← index, SRD coverage map, Generated From header
+|   +-- audit.md               ← Phase 5 audit
+|   +-- epics/01-*.md, 02-*.md, ...
++-- test-plan.md               ← /edm:test (stack + AC coverage map)
++-- test-coverage.md           ← /edm:test (coverage by layer + AC<->test cross-ref)
++-- qc/                        ← Phase 6 QC reports (always-present after first wave)
+|   +-- qc-summary.md          ← merged QC report (single auditor or merged shards)
+|   +-- qc-shard-{NN}.md       ← shard reports before merge
++-- code-audit/                ← /edm:code-audit output
+|   +-- findings-ledger.md     ← persistent cross-round findings ledger (stable CA-NNN IDs)
+|   +-- pass-{N}_{YYYY-MM-DD}/ ← one directory per audit round
+|       +-- lens-L1.md ... lens-L11.md
+|       +-- lenses-run.txt
+|       +-- REMEDIATION.md
++-- ROLLBACK.md                ← rollback runbook (Should/on-demand — only when initiative changes prod)
++-- exec-report.md             ← post-Phase-6 execution report, includes mode field (Should/on-demand)
++-- post-deploy/               ← post-deploy verification and analysis-input docs (Could/on-demand)
+|   +-- verification.md        ← smoke-test / deploy verification report
+|   +-- analysis/              ← rate-limit-analysis.md, source-triage.md, cost-analysis.md
++-- HANDOFF.md                 ← auto-generated cross-user resume doc (refreshed at every phase/gate/stop)
++-- .edm-state.json            ← gate approvals, phase timestamps, mode fields, coverage_by_layer
 ```
+
+**Slot annotations**:
+- `always-present` — scaffolded by `edm-init` or written early in the phase flow
+- `on-demand` — created by its owning phase/agent only when the initiative needs it
+- `Must/Should/Could` — priority per SRD EDMV2-38..43
 
 ## Anti-Patterns
 

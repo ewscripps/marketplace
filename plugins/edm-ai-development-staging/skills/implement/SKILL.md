@@ -53,31 +53,57 @@ Prompt: "Implement tickets [{PREFIX}-T01, …] from the epic file at [path].
 
 Resolve merge conflicts → run existing tests → launch next wave.
 
-## Step 4: QC Audit (automatic via hook)
+## Step 4: QC Audit (automatic via hook + sharding)
 
-`SubagentStop` hook fires after each `edm-implementer` finishes:
+`SubagentStop` hook fires after each `edm-implementer` finishes. The hook spawns an
+`edm-qc-auditor` which writes its report to the canonical qc/ home under the initiative directory.
+
+**QC output paths** (resolved via `edm-state get <PREFIX>`):
+- Single auditor: `<initiative-dir>/qc/qc-summary.md`
+- Shards: `<initiative-dir>/qc/qc-shard-{NN}.md` (zero-padded, e.g., `qc-shard-01.md`)
+
+**Sharding logic** — after all implementer waves complete, if the total ticket count for a wave
+exceeds `user_config.qc_shard_threshold` (default 20), spawn multiple `edm-qc-auditor` agents
+in parallel, each assigned a slice of `ceil(N / threshold)` tickets:
 
 ```
-Agent: edm-qc-auditor
-Prompt: "Verify acceptance criteria for the tickets just implemented.
-         Read the epic file. Read the implemented code at the Target Components.
-         For every AC, determine PASS/PARTIAL/FAIL with file:line evidence."
+# pseudo-code for the orchestrating skill
+ticket_count = len(wave_tickets)
+threshold    = user_config.qc_shard_threshold   # default 20
+if ticket_count <= threshold:
+    spawn 1 edm-qc-auditor → writes qc/qc-summary.md
+else:
+    shard_size = ceil(ticket_count / ceil(ticket_count / threshold))
+    for i, range in enumerate(chunks(wave_tickets, shard_size)):
+        spawn edm-qc-auditor(shard=i+1, tickets=range) → writes qc/qc-shard-{i+1:02d}.md
+    merge all qc-shard-*.md files into qc/qc-summary.md
 ```
+
+**Verdict semantics**:
+- **PASS** — AC is statically verifiable AND the code provably satisfies it (evidence at file:line)
+- **PARTIAL** — AC **cannot be verified statically** and requires a live runtime environment (running service, real DB, deployed container); record a `deferred-to-runtime` note
+- **FAIL** — AC is statically verifiable AND the code provably does NOT satisfy it
 
 Finding format:
 ```
 [SEVERITY] {PREFIX}-T{NN} | path/to/file.py:line | AC#{N}: {criterion} | {what's wrong}
+[PARTIAL]  {PREFIX}-T{NN} | AC#{N}: {criterion}  | deferred-to-runtime: {what runtime check resolves this}
 ```
-
-Verdicts: **PASS** (all AC satisfied) / **PARTIAL** (some gaps listed) / **FAIL** (critical AC unmet)
 
 ## Step 5: Remediate
 
-1. Compile all P0/P1 findings.
-2. Group by file independence → parallelize.
-3. Spawn `edm-implementer` agents to fix: *"Fix these QC findings: [list]. Read the file at the given line before modifying. Write complete implementations."*
-4. Commit referencing ticket IDs and finding numbers.
-5. **Re-audit affected tickets** to prevent fix regressions.
+1. Compile all P0/P1 FAIL findings from `qc/qc-summary.md`.
+2. For each ticket with a PARTIAL verdict, persist it:
+   ```bash
+   edm-state record-partial-verdict <PREFIX> <ticket> PARTIAL '<deferred-to-runtime note>'
+   ```
+3. Group FAIL findings by file independence → parallelize.
+4. Spawn `edm-implementer` agents to fix: *"Fix these QC findings: [list]. Read the file at the given line before modifying. Write complete implementations."*
+5. Commit referencing ticket IDs and finding numbers.
+6. **Re-audit affected tickets** to prevent fix regressions.
+
+Note: PARTIAL findings do not require remediation — they are deferred to runtime verification.
+The `record-partial-verdict` call persists them in state so HANDOFF.md can surface them.
 
 ## Step 6: Comprehensive Testing
 
@@ -120,25 +146,37 @@ After declaration, recommend the user run `/edm:code-audit <PREFIX>` for the 11-
 ## QC Audit Report Format
 
 ```markdown
-# QC Audit Report: {Initiative Name}
+# QC Audit Report: {Initiative Name} [Shard {N}/{M} | Single]
 
-**Branch**: {branch} | **Date**: {date}
+**Date**: {date}
+**Tickets audited**: {PREFIX}-T{first} through {PREFIX}-T{last}
 
 ## Summary
-| Epic | Tickets | PASS | PARTIAL | FAIL |
+| Ticket | Title | Verdict |
+|---|---|---|
+| {PREFIX}-T01 | {title} | PASS |
+| {PREFIX}-T02 | {title} | PARTIAL |
+| {PREFIX}-T03 | {title} | FAIL |
 
 ## Detailed Findings
-### Epic 1
-#### {PREFIX}-T01: {title} — PASS
-All N acceptance criteria verified.
 
-#### {PREFIX}-T02: {title} — PARTIAL
+### {PREFIX}-T01: {title} — PASS
+All N acceptance criteria verified.
+- [x] AC1: {criterion} — verified at src/handler.py:42
+
+### {PREFIX}-T02: {title} — PARTIAL
+- [x] AC1-AC3: Verified (statically)
+- [ ] AC4: {criterion} — **deferred-to-runtime**: requires a running service to verify the 201 response
+**Finding**: [PARTIAL] {PREFIX}-T02 | AC#4: deferred-to-runtime: call the endpoint with a live server and assert 201
+
+### {PREFIX}-T03: {title} — FAIL
 - [x] AC1-AC2: Verified
-- [ ] AC3: [what's wrong]
-**Finding**: [P1] {PREFIX}-T02 | src/api.py:45 | AC#3: Wrong status code
+- [ ] AC3: {criterion} — **FAIL**: handler.py:78 returns 200, not 201
+**Finding**: [P1] {PREFIX}-T03 | src/handler.py:78 | AC#3: Wrong status code — returns 200, must be 201
 
 ## Remediation Required
-[Prioritized P0 and P1 findings]
+[Prioritized P0 and P1 FAIL findings with file:line and specific fix.
+PARTIAL findings do not appear here — they are deferred to runtime verification.]
 ```
 
 ## AI Execution Tips

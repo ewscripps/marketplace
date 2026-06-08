@@ -47,25 +47,56 @@ is committed by default. Teams that want per-developer state can add it to `.git
 The **canonical layout** (v2.0+) places each initiative inside a product subdirectory:
 
 ```
-SRD/                              ← project root, committed to git
-├── {PRODUCT}/                    ← one directory per product area (e.g. "edm", "auth", "billing")
-│   └── {PREFIX}__{DESCRIPTION}/  ← initiative directory (double-underscore separator)
-│       ├── planning.md               ← Phase 1 output
-│       ├── srd.md                    ← Phase 2 output (filename configurable)
-│       ├── audit-srd.md              ← Phase 3 audit findings
-│       ├── tickets/                  ← Phase 4 (dirname configurable)
-│       │   ├── README.md             ← index, legend, critical path, coverage map, version-linkage header
-│       │   ├── audit.md              ← Phase 5 ticket-pack audit
-│       │   └── epics/
-│       │       ├── 01-{epic}.md
-│       │       └── 02-{epic}.md
-│       ├── code-audit/
-│       │   └── {YYYY-MM-DD}/
-│       │       ├── lens-L1.md … lens-L11.md
-│       │       └── REMEDIATION.md
-│       ├── HANDOFF.md                ← auto-generated cross-user resume doc (updated at every phase/gate/stop)
-│       └── .edm-state.json           ← gate approvals, phase timestamps (committed by default)
+SRD/                              <- project root, committed to git
++-- {PRODUCT}/                    <- one directory per product area (e.g. "edm", "auth", "billing")
+    +-- {PREFIX}__{DESCRIPTION}/  <- initiative directory (double-underscore separator)
+        |
+        +-- planning.md               <- Phase 1 (Must/always-present)
+        +-- srd.md                    <- Phase 2 output (filename configurable) (Must/always-present)
+        +-- architecture.md           <- Phase 2: edm-architect diagrams and decisions (Must/always-present)
+        +-- explorers/                <- Phase 1: parallel explorer findings, one file per focus area (Must/always-present)
+        |   +-- 01-{slug}.md, 02-{slug}.md, ...
+        +-- decisions.md              <- running key-decisions and finding-to-commit ledger (Must/always-present)
+        +-- audit-srd.md              <- Phase 3 audit findings
+        +-- tickets/                  <- Phase 4 (dirname configurable)
+        |   +-- README.md             <- index, legend, critical path, coverage map, version-linkage header
+        |   +-- audit.md              <- Phase 5 ticket-pack audit
+        |   +-- epics/
+        |       +-- 01-{epic}.md
+        |       +-- 02-{epic}.md
+        +-- test-plan.md              <- /edm:test (stack + AC coverage map)
+        +-- test-coverage.md          <- /edm:test (coverage by layer + AC<->test cross-ref)
+        +-- qc/                       <- Phase 6 QC reports (always-present after first wave)
+        |   +-- qc-summary.md         <- merged QC verdict table (single auditor or merged shards)
+        |   +-- qc-shard-{NN}.md      <- per-shard reports when ticket count > qc_shard_threshold
+        +-- code-audit/               <- /edm:code-audit output
+        |   +-- findings-ledger.md    <- persistent cross-round findings ledger (stable CA-NNN IDs)
+        |   +-- pass-{N}_{YYYY-MM-DD}/ <- one directory per audit round (N = monotonic counter)
+        |       +-- lens-L1.md ... lens-L11.md
+        |       +-- lenses-run.txt    <- lens set for this round (full vs. partial)
+        |       +-- REMEDIATION.md
+        +-- ROLLBACK.md               <- rollback runbook (Should/on-demand; structure: trigger, revert steps, verify, owner)
+        +-- exec-report.md            <- post-Phase-6 execution report with mode field (Should/on-demand)
+        |   (per-epic variant: epicN-execution-report.md)
+        +-- post-deploy/              <- post-deploy verification + analysis-input docs (Could/on-demand)
+        |   +-- verification.md       <- smoke-test / deploy verification report
+        |   +-- analysis/             <- rate-limit-analysis.md, source-triage.md, cost-analysis.md
+        +-- HANDOFF.md                <- auto-generated cross-user resume doc (updated at every phase/gate/stop)
+        +-- .edm-state.json           <- gate approvals, phase timestamps, mode fields (committed by default)
 ```
+
+**Slot annotations**:
+- `always-present` — scaffolded by `edm-init` or written early in the phase flow
+- `on-demand` — created by its owning phase/agent only when the initiative needs it
+- `Must/Should/Could` — priority per SRD EDMV2-38..43
+
+**Canonical artifact homes** (all paths derived from state via `initiative_dir_for()`, never hardcoded):
+- `architecture.md` — canonical home for `edm-architect` diagrams and architecture decisions (EDMV2-38)
+- `explorers/` — canonical home for parallel explorer reports; synthesized into `planning.md` (EDMV2-39)
+- `decisions.md` — initiative-wide key-decisions + finding-to-commit ledger; distinct from `code-audit/findings-ledger.md` which is the code-audit cross-round ledger (EDMV2-40)
+- `ROLLBACK.md` — on-demand rollback runbook; template: trigger conditions, ordered revert steps, verification-after-rollback, owner/contact (EDMV2-41)
+- `exec-report.md` — post-Phase-6 execution report; `mode` field = run mode (e.g., `live-db`, not the adaptation profile) (EDMV2-42)
+- `post-deploy/` — post-deploy verification and analysis-input documents (EDMV2-43)
 
 **Concrete example**: `SRD/edm/EDMV2__enhance-edm-plugin/`
 
@@ -316,10 +347,10 @@ The `userConfig.jira_project_key` value provides a default; otherwise the user m
 
 | Event                                                          | Effect                                                        |
 |----------------------------------------------------------------|---------------------------------------------------------------|
-| `SessionStart`                                                 | Print in-progress initiatives via `edm-state list`            |
+| `SessionStart`                                                 | Emit Resume Point for active initiatives via `edm-state session-start` |
 | `UserPromptExpansion` matching `edm:(srd\|tickets\|implement)` | Block expansion if the prerequisite HITL gate isn't approved  |
 | `Stop` and `PreCompact`                                        | Checkpoint state via `edm-state checkpoint-if-active`         |
-| `SubagentStop` matching `edm-implementer`                      | Auto-spawn `edm-qc-auditor` to verify the just-completed work |
+| `SubagentStop` matching `edm-implementer`                      | Auto-spawn `edm-qc-auditor`; write verdict to `qc/qc-summary.md`; persist PARTIAL verdicts via `edm-state record-partial-verdict` |
 | `TaskCompleted`                                                | Reserved — per-task duration accumulation not yet implemented |
 
 These are part of the methodology — do not disable them in normal operation.
@@ -330,9 +361,29 @@ Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call the
 
 | Script                | Purpose                                                                                                                                                                                                                                     |
 |-----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `edm-state`           | Read/write `.edm-state.json` files; subcommands: `get`, `set`, `list`, `approve-gate`, `checkpoint-if-active`, `archive`, `phase-start`, `phase-complete`, `record-task-duration`, `write-handoff`, `watch-impl`, `metrics-report` |
+| `edm-state`           | Read/write `.edm-state.json` files; subcommands: `get`, `set`, `list`, `approve-gate`, `checkpoint-if-active`, `archive`, `phase-start`, `phase-complete`, `record-task-duration`, `write-handoff`, `watch-impl`, `metrics-report`, `audit-round-start`, `record-partial-verdict`, `set-mode`, `skip-phase`, `set-supersedes`, `set-forked-from` |
 | `edm-init`            | Scaffold a new `SRD/{PREFIX}/` directory with empty state file                                                                                                                                                                              |
 | `edm-validate-prefix` | Verify a proposed prefix doesn't collide with existing initiatives                                                                                                                                                                          |
+
+### `.edm-state.json` mode-family fields
+
+| Field | Type | Default | Purpose |
+|---|---|---|---|
+| `mode` | string enum | `standard` | Adaptation profile: `standard`, `mini-srd`, `iac`, `data-ml`, `prototype` |
+| `lifecycle_mode` | string enum | `standard` | Lifecycle variant: `standard`, `partial`, `fast-track`, `fix-pack` |
+| `compliance_enabled` | boolean | `false` | When true, adds Gate 3.5 compliance review and regulatory-traceability columns |
+| `implementation_mode` | string enum | `standard` | Phase 6 mode: `standard` or `tdd` (Red-Green-Refactor per ticket) |
+| `skipped_phases` | array of objects | `[]` | Intentionally skipped phases; each: `{phase: N, rationale: "..."}` |
+| `supersedes` | string | `""` | Prefix of the initiative this supersedes (provenance link) |
+| `forked_from` | string | `""` | Prefix of the initiative this forked from (provenance link) |
+
+All fields default safely so v1.x state files without them work unchanged (C-4 backward compatibility).
+
+**`mode` vs `lifecycle_mode`** — orthogonal: an initiative can be `mode=iac` AND `lifecycle_mode=fast-track` simultaneously. Set independently via `edm-state set-mode <PREFIX> mode|lifecycle_mode <value>`.
+
+**`decisions.md` vs `code-audit/findings-ledger.md`** — distinct files with distinct scopes:
+- `decisions.md` = initiative-wide key decisions and finding-to-commit ledger (written by orchestrator at gates and Phase 6)
+- `code-audit/findings-ledger.md` = cross-round code audit findings ledger with stable CA-NNN IDs (written by `edm-audit-synthesizer`)
 
 Operates against the project's working directory (no plugin-relative paths). All scripts must be POSIX-compatible bash (
 `#!/bin/bash` or `#!/usr/bin/env bash`).

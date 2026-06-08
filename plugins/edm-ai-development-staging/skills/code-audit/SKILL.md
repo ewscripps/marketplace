@@ -1,41 +1,64 @@
 ---
 name: code-audit
-description: EDM Code Audit (post-Phase 6) — 11 parallel orthogonal audit agents (logic, dead code, edge cases, tests, hygiene, docs, consistency, security, spec, DRY, wiring) plus a synthesizer that produces a severity-ranked remediation plan. Invoked explicitly via /edm:code-audit.
+description: EDM Code Audit (post-Phase 6) — 11 parallel orthogonal audit agents (logic, dead code, edge cases, tests, hygiene, docs, consistency, security, spec, DRY, wiring) plus a synthesizer that produces a severity-ranked remediation plan. Invoked explicitly via /edm:code-audit. Supports --lenses subset for targeted re-audits.
 disable-model-invocation: true
 model: opus
 effort: max
-argument-hint: <PREFIX> [files-or-branch-scope]
-allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(mkdir *), Glob, Grep, Task, TodoWrite
+argument-hint: <PREFIX> [files-or-branch-scope] [--lenses L1,L3]
+allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(mkdir *), Bash(date *), Glob, Grep, Task, TodoWrite
 ---
 
-# EDM Code Audit: Exhaustive QA in One Pass
+# EDM Code Audit: Exhaustive Multi-Round QA
 
 **Arguments**: $ARGUMENTS
 
 - **Input**: An implementation (files, commits, branch) plus the initiative's ticket pack and SRD
-- **Output**: Severity-ranked remediation plan at
-  `${user_config.srd_root}/{PREFIX}/code-audit/{YYYY-MM-DD}/REMEDIATION.md`
+- **Output**:
+  - Per-round report: `<initiative-dir>/code-audit/pass-{N}_{YYYY-MM-DD}/REMEDIATION.md`
+  - Persistent findings ledger: `<initiative-dir>/code-audit/findings-ledger.md` (spans all rounds)
 
 A single auditor misses things because it gravitates toward familiar patterns. Eleven auditors with **orthogonal
-mandates** — plus a synthesizer — catch what a single pass misses.
+mandates** — plus a synthesizer — catch what a single pass misses. Multiple rounds use a persistent ledger to
+track findings across passes and determine convergence.
 
 ## Operational Orchestration
 
-1. Parse `{PREFIX}` and optional scope from `$ARGUMENTS`.
+1. Parse `{PREFIX}`, optional scope, and optional `--lenses` subset from `$ARGUMENTS`.
+   - `--lenses L1,L3` runs only those lens agents (comma-separated, with or without spaces).
+   - Validate lens tokens against L1-L11; reject unknown tokens with a clear message.
+   - If `--lenses` is omitted, run all 11 (full round).
+   - Set `LENS_SET` = the list to run; set `ROUND_TYPE` = `full` (11 lenses) or `partial` (subset).
 2. Determine scope: files / commits / branch. Read critical files yourself first to write sharp agent prompts.
-3. Resolve paths:
-    - SRD: `${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}`
-    - Ticket pack: `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/`
-    - Output dir: `${user_config.srd_root}/{PREFIX}/code-audit/$(date +%Y-%m-%d)/`
-4. `mkdir -p "${OUTPUT_DIR}"`
-5. `edm-state set <PREFIX> last_code_audit_at $(date -u +%Y-%m-%dT%H:%M:%SZ)`
-6. **Launch 11 lens agents in parallel** (single message, multiple Task calls). Each writes its raw report to
-   `${OUTPUT_DIR}/lens-L{N}.md`.
-7. After all 11 complete, **spawn `edm-audit-synthesizer`**. It reads the 11 raw reports, applies the False Alarm
-   Filter, deduplicates findings flagged by multiple lenses, and writes `${OUTPUT_DIR}/REMEDIATION.md`.
-8. Read `REMEDIATION.md`. Present the HITL gate (summary below) and STOP for approval.
-9. On approval, remediate per the rollout order in the plan.
-10. After remediation, re-run only the lens agents whose lenses were touched. Loop until clean.
+3. Resolve the initiative directory from state (handles both flat and product-scoped layouts):
+   ```bash
+   INIT_DIR="$(edm-state get <PREFIX> | jq -r 'if .product_name != "" and .initiative_description != "" then "\(.product_name)/\(.prefix)__\(.initiative_description)" else .prefix end')"
+   INIT_DIR="${user_config.srd_root}/${INIT_DIR}"
+   ```
+   - SRD: `${INIT_DIR}/${user_config.srd_filename}`
+   - Ticket pack: `${INIT_DIR}/${user_config.ticket_pack_dirname}/`
+   - Ledger: `${INIT_DIR}/code-audit/findings-ledger.md`  (canonical cross-round path)
+4. Obtain the pass number: `N=$(edm-state audit-round-start <PREFIX> code)`
+5. Set `OUTPUT_DIR="${INIT_DIR}/code-audit/pass-${N}_$(date +%Y-%m-%d)/"` and `mkdir -p "${OUTPUT_DIR}"`
+6. Read the prior `findings-ledger.md` if it exists (prior round context for the synthesizer).
+7. **Launch lens agents in parallel** for every lens in `LENS_SET` (single message, multiple Task calls).
+   Each lens:
+   - Writes its raw report to `${OUTPUT_DIR}/lens-L{N}.md`
+   - Receives the relevant prior-round open findings from the ledger (filtered to its lens) so it can confirm fixes or re-flag
+8. Write `${OUTPUT_DIR}/lenses-run.txt` — one lens ID per line (e.g., `L1`, `L2`, ... for a full round, or `L1`, `L3` for a partial). Add a `Round type: full` or `Round type: partial` header line.
+9. **Spawn `edm-audit-synthesizer`**. It:
+   - Reads the lens reports in `${OUTPUT_DIR}/`
+   - Reads the prior `findings-ledger.md` (if present)
+   - Merges findings: assigns stable IDs to new findings, marks prior-round findings as `fixed` if absent, re-opens any that reappear
+   - Writes the updated `findings-ledger.md` to `${INIT_DIR}/code-audit/findings-ledger.md`
+   - Writes `${OUTPUT_DIR}/REMEDIATION.md` for this round
+   - Marks the round as `partial` (non-convergent) in REMEDIATION.md if `ROUND_TYPE=partial`
+10. **Convergence check** (full rounds only — partial rounds are never convergent):
+    - Read `findings-ledger.md`: count open P0 and P1 findings introduced or surviving in this round
+    - If **zero open P0/P1 findings**: convergence reached → `edm-state set <PREFIX> code_audit_converged true`
+    - If any open P0/P1 findings: present the blocking set to the human before looping
+11. Read `REMEDIATION.md`. Present the HITL gate (summary below) and STOP for approval.
+12. On approval, remediate per the rollout order in the plan.
+13. After remediation, re-run affected lenses (use `--lenses` for targeted re-audit, or full round for convergence). Loop until convergence.
 
 ## The 11 Audit Lenses
 
@@ -81,33 +104,45 @@ If yes to any → record as "Noted / Not Actionable" with one-line rationale, do
 
 ## Synthesizer Phase
 
-After all 11 lens reports are written:
+After all lens reports are written, spawn `edm-audit-synthesizer` with:
 
 ```
 Agent: edm-audit-synthesizer
-Prompt: "Read the 11 lens reports in ${OUTPUT_DIR}/lens-L1.md through lens-L11.md.
+Prompt: "Read the lens reports in ${OUTPUT_DIR}/. Read the prior findings ledger at
+         ${INIT_DIR}/code-audit/findings-ledger.md (if it exists).
          Apply the second-pass False Alarm Filter. Deduplicate findings flagged by
-         multiple lenses (count multi-lens findings as higher confidence).
-         Write the consolidated remediation plan to ${OUTPUT_DIR}/REMEDIATION.md
-         using the standard plan format."
+         multiple lenses (multi-lens = higher confidence).
+         Merge findings with the ledger: assign stable IDs (CA-001, CA-002, ...) to new
+         findings; mark prior open findings as 'fixed' (resolved_round = N) if they no
+         longer appear; re-open any that reappear under their original ID.
+         Write the updated ledger to ${INIT_DIR}/code-audit/findings-ledger.md.
+         Write the consolidated remediation plan to ${OUTPUT_DIR}/REMEDIATION.md.
+         If this is a partial round (fewer than 11 lenses), note 'Round type: partial'
+         in REMEDIATION.md — this round cannot satisfy the convergence gate."
 ```
 
 Synthesizer responsibilities:
 
 - Apply second-pass filter (intentional behavior, pre-existing issue, documented trade-off, multi-lens corroboration)
 - Deduplicate (same issue flagged by L1 and L4 → one finding, higher confidence)
-- Severity-rank (P1 / P2 / P3 / NOTED)
+- Severity-rank using canonical P0/P1/P2/NOTED scale (NOT legacy P1/P2/P3)
+- Assign stable CA-NNN IDs and merge with prior-round ledger
 - Suggest rollout order (which fixes first, which can batch)
-- Write to `${OUTPUT_DIR}/REMEDIATION.md`
+- Write ledger to `${INIT_DIR}/code-audit/findings-ledger.md`
+- Write round report to `${OUTPUT_DIR}/REMEDIATION.md`
 
 ## Severity Reference
 
+Use the **canonical** severity scale from `CLAUDE.md §"Severity vocabulary"`:
+
 | Severity | Definition                                                                  | Action                       |
 |----------|-----------------------------------------------------------------------------|------------------------------|
-| P1       | Will cause production failure, security gap, or incorrect behavior          | Fix before shipping          |
-| P2       | Operational friction, misleading messages, incomplete docs, unresolved TODO | Fix before shipping          |
-| P3       | Nice-to-have improvements                                                   | Fix if low effort            |
-| NOTED    | Looks like a problem but is intentional                                     | Document once, never revisit |
+| **P0**   | Critical — blocks implementation, security/legal issue, production failure  | Fix before phase is complete |
+| **P1**   | Significant — material gap, factual error, behavior that must be corrected  | Fix before shipping          |
+| **P2**   | Minor — polish, edge-case, improvement, nice-to-have                        | Fix if low effort            |
+| NOTED    | Looks like a problem but is intentional — documented trade-off              | Document once, never revisit |
+
+**Convergence blocking set**: open P0 and P1 findings from the ledger. P2 and NOTED findings do not block convergence.
 
 ## Remediation Plan Format
 

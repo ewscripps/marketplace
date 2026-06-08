@@ -19,14 +19,20 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 
 1. Parse `{PREFIX}` from `$ARGUMENTS`.
 2. `edm-state get <PREFIX>` — verify Gate 2 approved (UserPromptExpansion hook also enforces).
-3. `edm-state phase-start <PREFIX> 4`
-4. Read the SRD; identify the SRD version. The ticket pack README must include `Generated From: {srd_filename} v{srd_version}` for version linkage.
-5. Spawn `edm-ticket-writer` (per epic in parallel for large initiatives).
-6. Output structure:
+3. Read `mode` and `compliance_enabled` from state:
+   ```bash
+   edm-state get <PREFIX> | jq -r '{mode: (.mode // "standard"), compliance_enabled: (.compliance_enabled // false)}'
+   ```
+4. `edm-state phase-start <PREFIX> 4`
+5. Read the SRD; identify the SRD version. The ticket pack README must include `Generated From: {srd_filename} v{srd_version}` for version linkage.
+6. Spawn `edm-ticket-writer` (per epic in parallel for large initiatives).
+   - **IaC mode** (`mode=iac`): use resource paths in Target Components instead of source-file paths.
+   - **Compliance** (`compliance_enabled=true`): add regulatory-traceability columns to all AC tables.
+7. Output structure:
    - `README.md` — index, legend, critical path, SRD coverage map, version header
    - `epics/01-{epic}.md` through `NN-{epic}.md`
-7. `edm-state phase-complete <PREFIX> 4`
-8. Proceed automatically to Phase 5 audit (`/edm:audit-tickets <PREFIX>`).
+8. `edm-state phase-complete <PREFIX> 4`
+9. Proceed automatically to Phase 5 audit (`/edm:audit-tickets <PREFIX>`).
 
 ## README.md Must Contain
 
@@ -51,7 +57,7 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 | Size | XS / S / M / L |
 | SRD Refs | {PREFIX}-01, {PREFIX}-02 |
 | Depends On | {PREFIX}-T{MM} (if any) |
-| Target Components | path/to/file.py |
+| Target Components | path/to/file.py  (or aws_resource.name for IaC mode) |
 
 ### Description
 [2-3 paragraphs: what and why]
@@ -67,6 +73,17 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 ### Out of Scope
 [What this ticket does NOT cover]
 ```
+
+**When `compliance_enabled=true`**, append a regulatory-traceability table to each ticket's AC list:
+
+```markdown
+### Regulatory Traceability
+| Regulation | Control | Evidence |
+|---|---|---|
+| HIPAA §164.312 | Access control | AC3 verifies role-based token validation |
+```
+
+Empty traceability rows are a P0 finding in the ticket audit when `compliance_enabled=true`.
 
 ## Good Acceptance Criteria
 

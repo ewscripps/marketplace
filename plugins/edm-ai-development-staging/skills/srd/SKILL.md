@@ -19,11 +19,15 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 
 1. Parse `$ARGUMENTS` for `{PREFIX}`. If missing, ask the user or read from in-progress initiatives via `edm-state list`.
 2. `edm-state get <PREFIX>` — verify Gate 1 has been approved. (The UserPromptExpansion hook also enforces this.)
-3. `edm-state phase-start <PREFIX> 2`
-4. Spawn `edm-srd-writer` for the main content + `edm-architect` in parallel for Section 5 (Target Architecture). Both agents write directly to the SRD file.
-5. After both complete, verify the SRD file. `edm-state srd-version <PREFIX> 1.0.0`
-6. `edm-state phase-complete <PREFIX> 2`
-7. Proceed automatically to Phase 3 audit (`/edm:audit-srd <PREFIX>`) — no HITL gate between Phase 2 and Phase 3.
+3. Read `mode` from state: `edm-state get <PREFIX> | jq -r '.mode // "standard"'`
+4. `edm-state phase-start <PREFIX> 2`
+5. **Standard / IaC / Data-ML modes**: Spawn `edm-srd-writer` for main content + `edm-architect` in
+   parallel. `edm-srd-writer` writes to `${user_config.srd_filename}` (default `srd.md`).
+   `edm-architect` writes to `architecture.md` (not into the SRD body).
+   **mini-SRD mode**: Spawn `edm-srd-writer` with the fused-file structure (see section below).
+6. After both complete, verify the SRD file. `edm-state srd-version <PREFIX> 1.0.0`
+7. `edm-state phase-complete <PREFIX> 2`
+8. Proceed automatically to Phase 3 audit (`/edm:audit-srd <PREFIX>`) — no HITL gate between Phase 2 and Phase 3.
 
 ## SRD Sections
 
@@ -90,20 +94,63 @@ All requirements get sequential IDs: `{PREFIX}-01`, `{PREFIX}-02`, …
 ## 11. Glossary
 ```
 
+## Mode-Specific SRD Requirements
+
+### mini-SRD mode (mode=mini-srd)
+
+The fused file folds Phases 2-5 into one audited document. Section layout (in order):
+
+```markdown
+## 1. Document Information / Executive Summary / Purpose & Scope / Current State / Architecture Ref
+## 2. Feature Requirements  (SRD body)
+## 3. Risks & Mitigations   (SRD body)
+## --- Ticket List ---       (Phase 4 equivalent — numbered tickets with ACs)
+### {PREFIX}-T01: {title}
+- **Size**: S/M/L
+- **AC**: [ ] ...
+```
+
+- The fused file still has a version (`Generated From: srd.md vX.Y.Z`) and a defined audit target.
+- `edm-state skip-phase` records that Phases 4-5 are fused/omitted.
+- The SRD audit in Phase 3 reads the fused file; no separate ticket pack is created.
+
+### IaC mode (mode=iac)
+
+- Requirement targets are stated as **resource paths** (e.g., `aws_s3_bucket.logs`,
+  `azurerm_virtual_network.main`) rather than source-file paths.
+- Example: "Target Components: `aws_lambda_function.processor` (new), `aws_iam_role.processor_role` (modified)"
+- The SRD's `## 5. Target Architecture` should reference the Terraform module layout and drift expectations.
+
+### Data/ML mode (mode=data-ml)
+
+The SRD **MUST** include a `## Data Requirements` section (exactly that heading so auditors can
+detect presence/absence) covering:
+
+- **Data sources**: where data comes from (databases, streams, APIs, files)
+- **Schema**: field names, types, nullable constraints for each source
+- **Volume**: expected row counts, data rates, storage estimates
+- **Quality & labeling**: null-rate thresholds, labeling approach, holdout/train split
+
+If this section is absent from an SRD produced under `mode=data-ml`, the SRD audit flags it as a P0 gap.
+
 ## AI Execution Pattern
 
 ```
 Agent: edm-srd-writer
 Prompt: "Write the SRD for {PREFIX} at ${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}.
          Read the planning doc and existing referenced files. Cover all applicable sections.
-         Use requirement IDs {PREFIX}-01 through {PREFIX}-NNN. Every requirement must be testable."
+         Use requirement IDs {PREFIX}-01 through {PREFIX}-NNN. Every requirement must be testable.
+         [mode=data-ml: include ## Data Requirements section]
+         [mode=iac: use resource paths in Target Components]
+         [mode=mini-srd: produce fused file with embedded ticket list section]"
 
 Agent: edm-architect
-Prompt: "Write Section 5 (Target Architecture) of the SRD at the same path. Include Mermaid
-         diagrams (system context + sequence) and component design grounded in the existing codebase."
+Prompt: "Write the Target Architecture document to architecture.md in the initiative directory.
+         Include Mermaid diagrams (system context + sequence) and component design grounded in
+         the existing codebase. The SRD Section 5 references this file — do not duplicate content."
 ```
 
-For large SRDs, run multiple `edm-srd-writer` agents in parallel (one per section group). Always run `edm-architect` separately for Section 5.
+For large SRDs, run multiple `edm-srd-writer` agents in parallel (one per section group). Always run `edm-architect` separately — it writes `architecture.md`, not the SRD body.
 
 ## Common Mistakes
 

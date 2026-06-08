@@ -79,11 +79,36 @@ After implementation, self-review against every AC checkbox:
 | Test that exercises the actual code path | Test that mocks everything including the function under test |
 | Comment explaining a non-obvious invariant | `# TODO: add validation later` |
 
+## TDD Mode (when `implementation_mode=tdd`)
+
+When the orchestrator instructs TDD mode, follow this **Red-Green-Refactor** cycle for each ticket:
+
+1. **Red** — Write the failing test(s) for this ticket's ACs FIRST, before any implementation code.
+   Run the test suite and confirm the new tests fail (red). State explicitly in your output: "Tests
+   written, suite is RED."
+2. **Green** — Write the minimum implementation code to make the failing tests pass. Run the suite
+   and confirm green. State: "Implementation written, suite is GREEN."
+3. **Refactor** — Clean up the implementation while keeping the suite green. State: "Refactor
+   complete, suite still GREEN."
+4. Move to the next ticket only after green+refactor.
+
+**TDD constraints (strict)**:
+- Write tests BEFORE implementation. Never write implementation then tests.
+- Never modify a ticket's test file after implementation begins to make a test pass — only
+  implementation code may change. If you cannot satisfy the tests without modifying them,
+  **escalate** rather than retrofit.
+- "Minimum implementation" means just enough code to pass the failing tests — no gold-plating
+  in the red->green step.
+- Tests are written ticket-by-ticket as implementation proceeds, not all tickets' tests upfront.
+
+**Standard mode** is unchanged: write basic smoke tests alongside implementation code.
+
 ## Escalate When
 
 - You discover an architectural conflict not captured in the SRD
 - A dependency ticket is not yet merged and you can't proceed
 - An AC is untestable or contradicts existing behavior
+- (TDD mode) Tests cannot be satisfied without modification
 
 Report blockers immediately rather than working around them silently.
 
