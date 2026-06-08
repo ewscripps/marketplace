@@ -38,32 +38,54 @@ does NOT hold initiative artifacts or initiative state.
 
 ### 4. State is in the project, not the plugin
 
-`SRD/{PREFIX}/.edm-state.json` is committed by default. Teams that want per-developer state can add it to `.gitignore` (
-controlled by the `commit_state_file` user-config option).
+`SRD/{PRODUCT}/{PREFIX}__{DESCRIPTION}/.edm-state.json` (or `SRD/{PREFIX}/.edm-state.json` for legacy flat initiatives)
+is committed by default. Teams that want per-developer state can add it to `.gitignore` (controlled by the
+`commit_state_file` user-config option).
 
 ## Project artifact layout
 
+The **canonical layout** (v2.0+) places each initiative inside a product subdirectory:
+
 ```
 SRD/                              ← project root, committed to git
-├── {PREFIX}/                     ← one directory per initiative
-│   ├── planning.md               ← Phase 1 output
-│   ├── srd.md                    ← Phase 2 output (filename configurable)
-│   ├── audit-srd.md              ← Phase 3 audit findings
-│   ├── tickets/                  ← Phase 4 (dirname configurable)
-│   │   ├── README.md             ← index, legend, critical path, coverage map, version-linkage header
-│   │   ├── audit.md              ← Phase 5 ticket-pack audit
-│   │   └── epics/
-│   │       ├── 01-{epic}.md
-│   │       └── 02-{epic}.md
-│   ├── code-audit/
-│   │   └── {YYYY-MM-DD}/
-│   │       ├── lens-L1.md … lens-L11.md
-│   │       └── REMEDIATION.md
-│   ├── HANDOFF.md                ← auto-generated cross-user resume doc (updated at every phase/gate/stop)
-│   └── .edm-state.json           ← gate approvals, phase timestamps (committed by default)
+├── {PRODUCT}/                    ← one directory per product area (e.g. "edm", "auth", "billing")
+│   └── {PREFIX}__{DESCRIPTION}/  ← initiative directory (double-underscore separator)
+│       ├── planning.md               ← Phase 1 output
+│       ├── srd.md                    ← Phase 2 output (filename configurable)
+│       ├── audit-srd.md              ← Phase 3 audit findings
+│       ├── tickets/                  ← Phase 4 (dirname configurable)
+│       │   ├── README.md             ← index, legend, critical path, coverage map, version-linkage header
+│       │   ├── audit.md              ← Phase 5 ticket-pack audit
+│       │   └── epics/
+│       │       ├── 01-{epic}.md
+│       │       └── 02-{epic}.md
+│       ├── code-audit/
+│       │   └── {YYYY-MM-DD}/
+│       │       ├── lens-L1.md … lens-L11.md
+│       │       └── REMEDIATION.md
+│       ├── HANDOFF.md                ← auto-generated cross-user resume doc (updated at every phase/gate/stop)
+│       └── .edm-state.json           ← gate approvals, phase timestamps (committed by default)
 ```
 
-The plugin reads paths from `userConfig`, so teams can relocate the entire tree:
+**Concrete example**: `SRD/edm/EDMV2__enhance-edm-plugin/`
+
+- The **double-underscore** (`__`) separates the PREFIX from the description slug — never use a single underscore.
+- The description slug is lowercase-hyphenated (e.g. `enhance-edm-plugin`, `user-auth-rewrite`).
+- PREFIX is **globally unique** across ALL product subdirectories — two products may not share a PREFIX (see Naming conventions below).
+
+**Existing flat initiatives (`SRD/{PREFIX}/`) continue to work unchanged** (EDMV2-90 backward compat). The resolver
+(`state_file_for` in `bin/edm-state`) detects the layout automatically and prefers an existing on-disk path so
+in-flight initiatives are never relocated without explicit `edm-state migrate-path` invocation.
+
+Migration from flat to product-scoped is **opt-in** per initiative:
+
+```bash
+edm-state migrate-path --product edm --description enhance-edm-plugin EDMV2
+```
+
+This uses `git mv` when the initiative is git-tracked, then updates `product_name` and `initiative_description` in state.
+
+The plugin reads root paths from `userConfig`, so teams can relocate the entire tree:
 
 - `${user_config.srd_root}` (default `./SRD`)
 - `${user_config.srd_filename}` (default `srd.md`)
@@ -72,15 +94,17 @@ The plugin reads paths from `userConfig`, so teams can relocate the entire tree:
 ### Existing repository conventions (informational)
 
 The project may contain an `/SRD/` directory with initiatives that pre-date the plugin and use older patterns. The
-plugin does NOT migrate these — they keep their current format. New initiatives created via the plugin use the cleaner
-directory-per-initiative layout above.
+plugin does NOT migrate these — they keep their current format. New initiatives created via the plugin use the
+product-scoped canonical layout above (or flat layout when `--product`/`--description` are omitted).
 
 ## Naming conventions
 
 ### Initiative prefix
 
-3–6 uppercase characters, e.g., `AUTH`, `MIGR`, `TIPS`, `PERF`. Validated by `bin/edm-validate-prefix` for uniqueness
-within `SRD/`. Configurable hint: `${user_config.prefix_format_hint}`.
+3–6 uppercase characters, e.g., `AUTH`, `MIGR`, `TIPS`, `PERF`. Validated by `bin/edm-validate-prefix` for
+**global uniqueness** across ALL product subdirectories in `SRD/` (not just one product). This ensures the PREFIX
+is unambiguous in commit scopes, ticket IDs, HANDOFF references, and Jira scopes — two products sharing a PREFIX
+would make all of these ambiguous. Configurable hint: `${user_config.prefix_format_hint}`.
 
 ### Requirement IDs (in SRDs)
 

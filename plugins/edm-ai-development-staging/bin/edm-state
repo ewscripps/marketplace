@@ -23,6 +23,7 @@
 #   edm-state gate-check <PREFIX> <gated-command>       # deterministic gate enforcement (read-only)
 #   edm-state branch-check <PREFIX>                     # verify current git branch matches initiative_branch
 #   edm-state git-lock-check                            # detect and remediate stale .git/index.lock
+#   edm-state migrate-path --product <n> --description <s> <PREFIX>  # opt-in move to product-scoped layout
 set -euo pipefail
 
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
@@ -73,9 +74,68 @@ record_artifact_hash() {
   write_state "$prefix" "$new"
 }
 
+# initiative_dir_for <PREFIX>
+# Returns the initiative directory path (without /.edm-state.json).
+# Delegates to state_file_for for layout resolution.
+initiative_dir_for() {
+  local state_file
+  state_file="$(state_file_for "$1")"
+  echo "${state_file%/.edm-state.json}"
+}
+
+# state_file_for <PREFIX>
+# Single source of layout truth (SRD section 5.4). Resolves the .edm-state.json
+# path for a given PREFIX under both the legacy flat layout and the new
+# product-scoped layout (SRD/{PRODUCT}/{PREFIX}__{DESCRIPTION}/).
+#
+# Resolution order (first match wins):
+#   1. Existing flat file   SRD/{PREFIX}/.edm-state.json          (AC2 backward compat)
+#   2. Existing product dir SRD/*/{PREFIX}__*/.edm-state.json     (AC1 on-disk discovery)
+#   3. Env vars EDM_PRODUCT + EDM_DESCRIPTION                     (AC1 pre-init compute)
+#   4. Env var  EDM_PRODUCT only (glob within product)            (AC6)
+#   5. Flat default (safe fallback for pre-init / legacy)         (AC5)
 state_file_for() {
   local prefix="$1"
-  echo "${SRD_ROOT}/${prefix}/.edm-state.json"
+  local flat_path="${SRD_ROOT}/${prefix}/.edm-state.json"
+
+  # AC2: Legacy flat state file already exists — keep its path unchanged.
+  [[ -f "$flat_path" ]] && echo "$flat_path" && return 0
+
+  # AC1/AC6: Product-scoped directory already exists on disk.
+  local matches=()
+  local dir
+  for dir in "${SRD_ROOT}"/*/"${prefix}"__*/; do
+    # Strip trailing slash from glob expansion
+    dir="${dir%/}"
+    [[ -d "$dir" ]] && [[ -f "${dir}/.edm-state.json" ]] && matches+=("${dir}/.edm-state.json")
+  done
+  if [[ ${#matches[@]} -eq 1 ]]; then
+    echo "${matches[0]}"
+    return 0
+  elif [[ ${#matches[@]} -gt 1 ]]; then
+    echo "edm-state: WARNING: multiple product-scoped directories for ${prefix}; using first match" >&2
+    echo "${matches[0]}"
+    return 0
+  fi
+
+  # AC1: Compute product-scoped path from env vars when no on-disk match found.
+  local product="${EDM_PRODUCT:-}"
+  local description="${EDM_DESCRIPTION:-}"
+  if [[ -n "$product" && -n "$description" ]]; then
+    echo "${SRD_ROOT}/${product}/${prefix}__${description}/.edm-state.json"
+    return 0
+  fi
+
+  # AC6: Product known but description unknown — glob within product directory.
+  if [[ -n "$product" ]]; then
+    for dir in "${SRD_ROOT}/${product}/${prefix}__"*/; do
+      dir="${dir%/}"
+      [[ -d "$dir" ]] && echo "${dir}/.edm-state.json" && return 0
+    done
+  fi
+
+  # AC5: Default flat path (pre-init or legacy initiative with no existing file).
+  echo "$flat_path"
 }
 
 # ---- Cost tracking ---------------------------------------------------------
@@ -361,9 +421,13 @@ cmd_init() {
     return 0
   fi
   mkdir -p "$(dirname "$f")"
-  local branch=""
+  local branch product description
   branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
-  jq -n --arg p "$prefix" --arg t "$(now_utc)" --arg b "$branch" '{
+  # Accept product/description from env so edm-init --product/--description can pre-seed them.
+  product="${EDM_PRODUCT:-}"
+  description="${EDM_DESCRIPTION:-}"
+  jq -n --arg p "$prefix" --arg t "$(now_utc)" --arg b "$branch" \
+        --arg prod "$product" --arg desc "$description" '{
     prefix: $p,
     current_phase: 0,
     gates_approved: [],
@@ -372,6 +436,8 @@ cmd_init() {
     srd_version: "0.0.0",
     estimated_size: "Unknown",
     initiative_branch: $b,
+    product_name: $prod,
+    initiative_description: $desc,
     phase_durations: {},
     test_frameworks_detected: {},
     coverage_by_layer: {},
@@ -383,16 +449,38 @@ cmd_init() {
 
 cmd_list() {
   [[ -d "$SRD_ROOT" ]] || { echo "no SRD/ directory yet"; return 0; }
+  require_jq
   local found=0
-  for state in "$SRD_ROOT"/*/.edm-state.json; do
+  # Collect state files from both flat (SRD/{PREFIX}/) and product-scoped
+  # (SRD/{PRODUCT}/{PREFIX}__*/) layouts; de-duplicate by canonical path.
+  local seen_paths=()
+  local state
+  for state in \
+      "$SRD_ROOT"/*/.edm-state.json \
+      "$SRD_ROOT"/*/*/.edm-state.json; do
     [[ -f "$state" ]] || continue
+    # De-duplicate: skip if this path was already emitted.
+    local already=0
+    local seen
+    for seen in "${seen_paths[@]+"${seen_paths[@]}"}"; do
+      [[ "$seen" == "$state" ]] && already=1 && break
+    done
+    [[ $already -eq 1 ]] && continue
+    seen_paths+=("$state")
     found=1
-    local prefix phase gates last
-    prefix="$(jq -r '.prefix' "$state" 2>/dev/null || echo unknown)"
-    phase="$(jq -r '.current_phase' "$state" 2>/dev/null || echo 0)"
+    local prefix phase gates last product description
+    prefix="$(jq -r '.prefix // "unknown"' "$state" 2>/dev/null || echo unknown)"
+    phase="$(jq -r '.current_phase // 0' "$state" 2>/dev/null || echo 0)"
     gates="$(jq -r '.gates_approved | length' "$state" 2>/dev/null || echo 0)"
-    last="$(jq -r '.last_updated' "$state" 2>/dev/null || echo unknown)"
-    printf "  %-12s  phase=%d  gates_approved=%d  last_updated=%s\n" "$prefix" "$phase" "$gates" "$last"
+    last="$(jq -r '.last_updated // "unknown"' "$state" 2>/dev/null || echo unknown)"
+    product="$(jq -r '.product_name // ""' "$state" 2>/dev/null || true)"
+    description="$(jq -r '.initiative_description // ""' "$state" 2>/dev/null || true)"
+    if [[ -n "$product" || -n "$description" ]]; then
+      printf "  %-12s  phase=%d  gates_approved=%d  last_updated=%s  product=%s  description=%s\n" \
+        "$prefix" "$phase" "$gates" "$last" "${product:-(none)}" "${description:-(none)}"
+    else
+      printf "  %-12s  phase=%d  gates_approved=%d  last_updated=%s\n" "$prefix" "$phase" "$gates" "$last"
+    fi
   done
   [[ $found -eq 1 ]] || echo "  (no in-progress initiatives)"
 }
@@ -479,12 +567,14 @@ cmd_phase_complete() {
   # Record artifact hashes for phases that produce or revise gate-critical files.
   # Drift is detected in checkpoint-if-active by comparing these stored hashes to
   # what's currently on disk.
+  local _dir
+  _dir="$(initiative_dir_for "$prefix")"
   case "$phase" in
     2|3)
-      local srd_path="${SRD_ROOT}/${prefix}/${SRD_FILENAME}"
+      local srd_path="${_dir}/${SRD_FILENAME}"
       [[ -f "$srd_path" ]] && record_artifact_hash "$prefix" "srd" "$srd_path" ;;
     4|5)
-      local tickets_path="${SRD_ROOT}/${prefix}/${TICKET_PACK_DIRNAME}/README.md"
+      local tickets_path="${_dir}/${TICKET_PACK_DIRNAME}/README.md"
       [[ -f "$tickets_path" ]] && record_artifact_hash "$prefix" "tickets" "$tickets_path" ;;
   esac
 
@@ -638,7 +728,8 @@ cmd_archive() {
   require_jq
   local prefix="$1"
   local src dst
-  src="${SRD_ROOT}/${prefix}"
+  src="$(initiative_dir_for "$prefix")"
+  # Archived initiatives go under .archived/{PREFIX} regardless of source layout.
   dst="${SRD_ROOT}/.archived/${prefix}"
   [[ -d "$src" ]] || die "no initiative directory at $src"
 
@@ -760,6 +851,7 @@ cmd_metrics_report() {
       echo "# EDM Metrics - $prefix"
       echo
       jq -r '"Initiative: \(.prefix)  |  size: \(.estimated_size // "Unknown")  |  current phase: \(.current_phase)  |  human hourly rate: $'"$HUMAN_HOURLY_RATE_USD"'"' "$state"
+      jq -r 'if (.product_name // "") != "" or (.initiative_description // "") != "" then "Product: \(.product_name // "(none)")  |  Description: \(.initiative_description // "(none)")" else empty end' "$state" 2>/dev/null || true
       echo
       printf "  %-10s  %-10s  %-12s  %-12s  %-10s  %-12s  %-10s\n" "Phase" "Duration" "Claude Cost" "Human Cost" "Savings" "Tokens (i/o)" "Model"
       printf "  %-10s  %-10s  %-12s  %-12s  %-10s  %-12s  %-10s\n" "-----" "--------" "-----------" "----------" "-------" "------------" "-----"
@@ -850,6 +942,60 @@ cmd_metrics_report() {
       fi
       ;;
   esac
+}
+
+# ---- Migrate path (T42) ------------------------------------------------------
+# migrate-path --product <name> --description <slug> <PREFIX>
+# Relocates a flat initiative SRD/{PREFIX}/ to SRD/{PRODUCT}/{PREFIX}__{DESCRIPTION}/
+# and updates product_name + initiative_description in state. Git-aware when tracked.
+
+cmd_migrate_path() {
+  require_jq
+  local prefix="" product="" description=""
+  # Flag parsing: accept --product/--description in any order with PREFIX positional.
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --product)    [[ $# -ge 2 ]] || die "migrate-path: --product requires a value"; product="$2"; shift 2 ;;
+      --description) [[ $# -ge 2 ]] || die "migrate-path: --description requires a value"; description="$2"; shift 2 ;;
+      --*)          die "migrate-path: unknown flag $1" ;;
+      *)            [[ -z "$prefix" ]] || die "migrate-path: unexpected extra argument: $1"; prefix="$1"; shift ;;
+    esac
+  done
+  [[ -n "$prefix" ]] || die "usage: edm-state migrate-path --product <name> --description <slug> <PREFIX>"
+  [[ -n "$product" ]] || die "migrate-path: --product is required"
+  [[ -n "$description" ]] || die "migrate-path: --description is required"
+
+  # Resolve current (flat) source directory.
+  local src dst
+  src="${SRD_ROOT}/${prefix}"
+  [[ -d "$src" ]] || die "migrate-path: source directory not found: $src"
+
+  dst="${SRD_ROOT}/${product}/${prefix}__${description}"
+  [[ ! -d "$dst" ]] || die "migrate-path: target directory already exists: $dst"
+
+  # Create product subdirectory.
+  mkdir -p "${SRD_ROOT}/${product}"
+
+  # Move the initiative directory — git-aware when inside a worktree.
+  if git -C "$src" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git mv "$src" "$dst" 2>/dev/null || mv "$src" "$dst"
+  else
+    mv "$src" "$dst"
+  fi
+
+  # Update state: write product_name and initiative_description via the typed path.
+  local new_state_file="${dst}/.edm-state.json"
+  [[ -f "$new_state_file" ]] || die "migrate-path: state file not found after move: $new_state_file"
+  local current new
+  current="$(cat "$new_state_file")"
+  new="$(echo "$current" | jq --arg p "$product" --arg d "$description" --arg t "$(now_utc)" '
+    .product_name = $p | .initiative_description = $d | .last_updated = $t
+  ')"
+  # Write directly to the new path (state_file_for will now resolve it correctly).
+  printf '%s\n' "$new" > "$new_state_file"
+
+  echo "migrated ${prefix}: ${src} -> ${dst}"
+  echo "set product_name=${product}, initiative_description=${description}"
 }
 
 # ---- Active initiatives (T35) -----------------------------------------------
@@ -1073,12 +1219,14 @@ write_handoff_internal() {
     end
   ')"
 
-  # Artifact presence
-  local planning_path="${SRD_ROOT}/${prefix}/planning.md"
-  local srd_path="${SRD_ROOT}/${prefix}/${SRD_FILENAME}"
-  local audit_srd_path="${SRD_ROOT}/${prefix}/audit-srd.md"
-  local tickets_path="${SRD_ROOT}/${prefix}/${TICKET_PACK_DIRNAME}/README.md"
-  local audit_tickets_path="${SRD_ROOT}/${prefix}/${TICKET_PACK_DIRNAME}/audit.md"
+  # Artifact presence — derive paths from the layout resolver (T44).
+  local _init_dir
+  _init_dir="$(initiative_dir_for "$prefix")"
+  local planning_path="${_init_dir}/planning.md"
+  local srd_path="${_init_dir}/${SRD_FILENAME}"
+  local audit_srd_path="${_init_dir}/audit-srd.md"
+  local tickets_path="${_init_dir}/${TICKET_PACK_DIRNAME}/README.md"
+  local audit_tickets_path="${_init_dir}/${TICKET_PACK_DIRNAME}/audit.md"
 
   local s_planning s_srd s_audit_srd s_tickets s_audit_tickets
   s_planning="$([[ -f "$planning_path" ]] && echo '[present]' || echo '[absent]')"
@@ -1096,13 +1244,18 @@ write_handoff_internal() {
   [[ -n "$decisions" ]] || decisions="_(none recorded yet - decisions are captured at Gate 1)_"
 
   # Preserve user-edited Notes section across re-writes
-  local handoff_path="${SRD_ROOT}/${prefix}/HANDOFF.md"
+  local handoff_path="${_init_dir}/HANDOFF.md"
   local notes=""
   if [[ -f "$handoff_path" ]]; then
     notes="$(awk '/^## Notes/{p=1;next} p && /^## /{p=0} p{print}' "$handoff_path" 2>/dev/null \
       | grep -v '^[[:space:]]*$' || true)"
   fi
   [[ -n "$notes" ]] || notes="_(Add anything a teammate should know before resuming - context, blockers, preferences)_"
+
+  # Surface product and description when present (T43)
+  local product_name initiative_description
+  product_name="$(echo "$state" | jq -r '.product_name // ""')"
+  initiative_description="$(echo "$state" | jq -r '.initiative_description // ""')"
 
   local updated_at
   updated_at="$(now_utc)"
@@ -1115,17 +1268,19 @@ write_handoff_internal() {
     printf '%s\n' "- **Phase**: ${phase_name}"
     printf '%s\n' "- **Gates approved**: ${gates_count} of 3"
     printf '%s\n' "- **Last gate**: ${last_gate}"
+    [[ -n "$product_name" ]] && printf '%s\n' "- **Product**: ${product_name}"
+    [[ -n "$initiative_description" ]] && printf '%s\n' "- **Description**: ${initiative_description}"
     printf '%s\n\n' "- **Next action**: ${next_action}"
     printf '%s\n\n' "## Gates"
     printf '%s\n\n' "${gate_list}"
     printf '%s\n\n' "## Artifact Checklist"
     printf '%s\n' "| Artifact | Status |"
     printf '%s\n' "|----------|--------|"
-    printf '%s\n' "| \`SRD/${prefix}/planning.md\` | ${s_planning} |"
-    printf '%s\n' "| \`SRD/${prefix}/${SRD_FILENAME}\` | ${s_srd} |"
-    printf '%s\n' "| \`SRD/${prefix}/audit-srd.md\` | ${s_audit_srd} |"
-    printf '%s\n' "| \`SRD/${prefix}/${TICKET_PACK_DIRNAME}/README.md\` | ${s_tickets} |"
-    printf '%s\n\n' "| \`SRD/${prefix}/${TICKET_PACK_DIRNAME}/audit.md\` | ${s_audit_tickets} |"
+    printf '%s\n' "| \`${_init_dir}/planning.md\` | ${s_planning} |"
+    printf '%s\n' "| \`${_init_dir}/${SRD_FILENAME}\` | ${s_srd} |"
+    printf '%s\n' "| \`${_init_dir}/audit-srd.md\` | ${s_audit_srd} |"
+    printf '%s\n' "| \`${_init_dir}/${TICKET_PACK_DIRNAME}/README.md\` | ${s_tickets} |"
+    printf '%s\n\n' "| \`${_init_dir}/${TICKET_PACK_DIRNAME}/audit.md\` | ${s_audit_tickets} |"
     printf '%s\n\n' "## Key Decisions Made"
     printf '%s\n\n' "${decisions}"
     printf '%s\n\n' "## How to Resume"
@@ -1141,7 +1296,7 @@ write_handoff_internal() {
 cmd_write_handoff() {
   [[ $# -eq 1 ]] || die "usage: edm-state write-handoff <PREFIX>"
   write_handoff_internal "$1"
-  echo "wrote ${SRD_ROOT}/${1}/HANDOFF.md"
+  echo "wrote $(initiative_dir_for "$1")/HANDOFF.md"
 }
 
 # ---- dispatch ---------------------------------------------------------------
@@ -1153,6 +1308,7 @@ case "$cmd" in
   init)                 cmd_init "$@" ;;
   list)                 cmd_list "$@" ;;
   active-initiatives)   cmd_active_initiatives "$@" ;;
+  migrate-path)         cmd_migrate_path "$@" ;;
   approve-gate)         cmd_approve_gate "$@" ;;
   phase-start)          cmd_phase_start "$@" ;;
   phase-complete)       cmd_phase_complete "$@" ;;
@@ -1171,7 +1327,7 @@ case "$cmd" in
   branch-check)         cmd_branch_check "$@" ;;
   git-lock-check)       cmd_git_lock_check "$@" ;;
   ""|-h|--help|help)
-    sed -n '2,25p' "$0"
+    sed -n '2,26p' "$0"
     ;;
   *)
     die "unknown subcommand: $cmd (try --help)"
