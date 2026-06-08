@@ -1,0 +1,8 @@
+[
+  {
+    "name": "edm-impl-progress",
+    "command": "edm-state watch-impl",
+    "description": "Reports ticket completion as edm-implementer agents commit during /edm:implement",
+    "when": "on-skill-invoke:implement"
+  }
+]

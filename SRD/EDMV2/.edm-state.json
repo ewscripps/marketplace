@@ -1,0 +1,121 @@
+{
+  "prefix": "EDMV2",
+  "current_phase": 6,
+  "gates_approved": [
+    {
+      "gate": 1,
+      "approved_at": "2026-06-08T02:07:28Z",
+      "approver": "darryl.porter"
+    },
+    {
+      "gate": 2,
+      "approved_at": "2026-06-08T07:05:23Z",
+      "approver": "darryl.porter"
+    },
+    {
+      "gate": 3,
+      "approved_at": "2026-06-08T08:49:44Z",
+      "approver": "darryl.porter"
+    }
+  ],
+  "artifacts": {},
+  "artifact_hashes": {
+    "srd": {
+      "hash": "6c03511eb46e2eca8bf59315a8b1f105262a0f69434d330a8e9844df2028f952",
+      "path": "/Users/darryl.porter/projects/marketplace/SRD/EDMV2/srd.md",
+      "recorded_at": "2026-06-08T02:40:02Z"
+    },
+    "tickets": {
+      "hash": "4dfb3f4dd0348a7603dac123962d1546823fe6ba0720628cf3b9f800f6999f44",
+      "path": "./SRD/EDMV2/tickets/README.md",
+      "recorded_at": "2026-06-08T07:36:04Z"
+    }
+  },
+  "srd_version": "0.0.0",
+  "estimated_size": "Unknown",
+  "phase_durations": {
+    "1_phase": {
+      "started_at": "2026-06-08T00:06:32Z",
+      "completed_at": "2026-06-08T01:19:23Z",
+      "duration_seconds": 4371,
+      "tokens": {
+        "input": 78309,
+        "output": 218379,
+        "cache_read": 2391690,
+        "cache_write_5m": 0,
+        "cache_write_1h": 1299036
+      },
+      "model_used": "claude-opus-4-8",
+      "estimated_cost_usd": 20.0372,
+      "human_baseline_usd": 0.00
+    },
+    "2_phase": {
+      "started_at": "2026-06-08T02:07:48Z",
+      "completed_at": "2026-06-08T02:21:32Z",
+      "duration_seconds": 824,
+      "tokens": {
+        "input": 15,
+        "output": 26079,
+        "cache_read": 757281,
+        "cache_write_5m": 0,
+        "cache_write_1h": 55338
+      },
+      "model_used": "claude-sonnet-4-6",
+      "estimated_cost_usd": 0.9504,
+      "human_baseline_usd": 0.00
+    },
+    "3_phase": {
+      "started_at": "2026-06-08T02:21:53Z",
+      "completed_at": "2026-06-08T02:40:02Z",
+      "duration_seconds": 1089,
+      "tokens": {
+        "input": 54,
+        "output": 59194,
+        "cache_read": 3375453,
+        "cache_write_5m": 0,
+        "cache_write_1h": 127269
+      },
+      "model_used": "claude-sonnet-4-6",
+      "estimated_cost_usd": 2.6643,
+      "human_baseline_usd": 0.00
+    },
+    "4_phase": {
+      "started_at": "2026-06-08T07:05:33Z",
+      "completed_at": "2026-06-08T07:20:43Z",
+      "duration_seconds": 910,
+      "tokens": {
+        "input": 25,
+        "output": 122119,
+        "cache_read": 1628668,
+        "cache_write_5m": 0,
+        "cache_write_1h": 83492
+      },
+      "model_used": "claude-sonnet-4-6",
+      "estimated_cost_usd": 2.8214,
+      "human_baseline_usd": 0.00
+    },
+    "5_phase": {
+      "started_at": "2026-06-08T07:20:43Z",
+      "completed_at": "2026-06-08T07:36:04Z",
+      "duration_seconds": 921,
+      "tokens": {
+        "input": 21,
+        "output": 112376,
+        "cache_read": 1745461,
+        "cache_write_5m": 0,
+        "cache_write_1h": 294814
+      },
+      "model_used": "claude-sonnet-4-6",
+      "estimated_cost_usd": 3.9782,
+      "human_baseline_usd": 0.00
+    },
+    "6_phase": {
+      "started_at": "2026-06-08T08:49:54Z"
+    }
+  },
+  "test_frameworks_detected": {},
+  "coverage_by_layer": {},
+  "last_updated": "2026-06-08T08:53:52Z",
+  "gate1_decision": "No-Go (2026-06-08) — Phase 1 complete, scope not approved; parked for user revisit",
+  "implementation_mode": "standard"
+}
