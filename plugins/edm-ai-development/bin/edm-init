@@ -133,23 +133,20 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   fi
 fi
 
+# --- Build tree string before heredoc (bash 3.2: case with | inside $() inside heredoc fails) ---
+TREE_LINES="  +-- .edm-state.json
+  +-- explorers/
+  +-- decisions.md"
+if [[ "$MODE" != "prototype" ]]; then
+  TREE_LINES="${TREE_LINES}
+  +-- code-audit/"
+fi
+
 # --- Print scaffold summary ---
 cat <<EOF
 Initiative scaffold created:
   $DIR/
-$(case "$MODE" in
-  standard|iac|data-ml|mini-srd)
-    echo "  +-- .edm-state.json"
-    echo "  +-- explorers/"
-    echo "  +-- decisions.md"
-    echo "  +-- code-audit/"
-    ;;
-  prototype)
-    echo "  +-- .edm-state.json"
-    echo "  +-- explorers/"
-    echo "  +-- decisions.md"
-    ;;
-esac)
+$TREE_LINES
 Mode: $MODE
 ${BRANCH_MSG:+Branch: $BRANCH_MSG
 }Next: run /edm:orchestrator $PREFIX to begin Phase 1.
