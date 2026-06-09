@@ -81,7 +81,15 @@ Call the resolved value **`INITIATIVE`** -- all subsequent steps use `INITIATIVE
 1. Assess whether `INITIATIVE` qualifies for full EDM (10+ files, new module, major refactor). If not, say so and
    suggest doing it directly without EDM.
 2. Ask the user for the **initiative prefix** (e.g., `AUTH`, `MIGR`, `FEAT`). Hint format:
-   `${user_config.prefix_format_hint}`.
+   `${user_config.prefix_format_hint}`. In the same prompt or immediately after, determine the
+   **product name** (short lowercase identifier for the product area, e.g. `web`, `auth`, `billing`,
+   `edm`) and **description slug** (lowercase-hyphenated summary, e.g. `web-navigation-feature`).
+   - Derive the description slug from `INITIATIVE` — no need to prompt the user.
+   - For the product name: infer from `INITIATIVE` context when clear (e.g., "web navigation
+     feature" → `web`). If the product area is ambiguous, ask the user in the same `AskUserQuestion`
+     call alongside the prefix question (header `"Product"`, options based on context, or free-text
+     via Other).
+   - Both values must match `^[a-z][a-z0-9-]*$` — lowercase letters, digits, hyphens only.
 3. Run `edm-validate-prefix <PREFIX>` -- if `SRD/{PREFIX}/` already exists:
    - Read `SRD/{PREFIX}/HANDOFF.md` if present and display it verbatim so the user sees exactly where the
      initiative stands (phase, last gate, next action, artifact checklist, decisions made).
@@ -117,8 +125,19 @@ Call the resolved value **`INITIATIVE`** -- all subsequent steps use `INITIATIVE
         `edm-state set <PREFIX> last_cmd "<command>"` and
         `edm-state set <PREFIX> last_decision "<decision text>"`.
    - On Start over: ask for a new prefix and loop back to step 2.
-4. If new: `edm-init <PREFIX>` to scaffold the initiative directory at `${user_config.srd_root}/{PREFIX}/`.
+4. If new: scaffold the initiative directory using the **product-scoped layout** (v2.0 canonical):
+   ```bash
+   edm-init --product <product> --description <slug> <PREFIX>
+   ```
+   This creates `${user_config.srd_root}/<product>/<PREFIX>__<slug>/`. Export `EDM_PRODUCT` and
+   `EDM_DESCRIPTION` before any subsequent `edm-state` calls so they resolve the correct path:
+   ```bash
+   export EDM_PRODUCT=<product>; export EDM_DESCRIPTION=<slug>
+   ```
    Then immediately run `edm-state write-handoff <PREFIX>` to create the initial HANDOFF.md.
+
+   Flat fallback (legacy or per-user preference only): `edm-init <PREFIX>` — creates
+   `${user_config.srd_root}/<PREFIX>/`. Use this only when the user explicitly requests it.
 
 ### Step 1c -- Mode and profile selection
 
