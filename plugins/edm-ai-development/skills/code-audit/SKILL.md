@@ -53,7 +53,18 @@ track findings across passes and determine convergence.
    - Marks the round as `partial` (non-convergent) in REMEDIATION.md if `ROUND_TYPE=partial`
 10. **Convergence check** (full rounds only -- partial rounds are never convergent):
     - Read `findings-ledger.md`: count open P0 and P1 findings introduced or surviving in this round
-    - If **zero open P0/P1 findings**: convergence reached -> `edm-state set <PREFIX> code_audit_converged true`
+    - If **zero open P0/P1 findings**: convergence reached ->
+      1. `edm-state set <PREFIX> code_audit_converged true`
+      2. **Add a closure note** to the top of `${OUTPUT_DIR}/REMEDIATION.md` (the current round's file):
+         ```markdown
+         ## Post-Remediation Closure ({YYYY-MM-DD})
+         All findings in this round resolved. Convergence reached {YYYY-MM-DD}.
+         The cross-round ledger at `code-audit/findings-ledger.md` is the authoritative record.
+         The original audit snapshot is preserved below.
+         ---
+         ```
+         This prevents a reviewer reading the round directory in isolation from seeing
+         "Convergence NOT reached" after all work is done.
     - If any open P0/P1 findings: present the blocking set to the human before looping
 11. Read `REMEDIATION.md`. Present the HITL gate (summary below) and STOP for approval.
 12. On approval, remediate per the rollout order in the plan.
