@@ -1,10 +1,10 @@
 ---
 name: compact-context
-description: Manually trigger a context compaction checkpoint during any active web-cms workflow session. Reads the current knowledge graph state, writes a phase_handoff entity to capture the current phase position, and prompts the user to run /compact. Use at any point mid-workflow when context is growing full and the workflow is between designated compaction gates.
+description: Manually trigger a context compaction checkpoint during any active web-cms workflow session. Reads the active work item's current checkpoint, overwrites its checkpoint.md to capture the current phase position, and prompts the user to run /compact. Use at any point mid-workflow when context is growing full and the workflow is between designated compaction gates.
 user-invocable: true
 argument-hint: ""
 disable-model-invocation: false
-allowed-tools: Bash, Read, AskUserQuestion, mcp__plugin_web-cms_memory__read_graph, mcp__plugin_web-cms_memory__open_nodes, mcp__plugin_web-cms_memory__create_entities, mcp__plugin_web-cms_memory__create_relations, mcp__plugin_web-cms_memory__add_observations
+allowed-tools: Bash, Read, Write, Glob, Grep, AskUserQuestion
 model: sonnet
 effort: low
 ---

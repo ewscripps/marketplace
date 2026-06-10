@@ -8,13 +8,13 @@
 4. If any phase fails, stop immediately and report the failure as a comment on this Jira issue. Do not continue.
 5. Every required output (comments, plans, summaries) must be posted before the phase is considered complete.
 
-**KNOWLEDGE GRAPH SCOPE:** The knowledge graph in this workflow is session-scoped and used to track investigation state (hypotheses, affected areas, root cause, fix plan). If this workflow is resumed in a new session and the graph is empty, reconstruct state by reading the Jira issue description and all comments posted in prior phases before continuing.
+**FILE MEMORY SCOPE:** This workflow stores investigation state in a per-work-item file-memory directory (`work-item.md`, `checkpoint.md`, `plan.md`, `explorations/*.md`, …). Compute its path once with the shared recipe in `file-memory-protocol.md` §1 (`MEM=<…>/web-cms-memory/<JIRA-KEY>`) and reuse that exact path for every read/write. If the workflow is resumed and `$MEM` is absent, reconstruct state by reading the Jira issue description and all comments posted in prior phases before continuing. See `file-memory-protocol.md` for all file schemas, the checkpoint/compaction contract, and the full-context-load rule.
 
 **APPROVAL GATE BEHAVIOR:** Approval gates are chat-scoped. If explicit approval is not captured before the session ends or context is lost, stop at the gate. On resume, re-present the latest fix plan or testing handoff and ask for confirmation again. Never assume a pending approval was granted.
 
 **CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
-**RESUMPTION CHECK:** If this workflow resumes after prior work has already been performed, inspect the issue status and previously posted Jira comments first to identify the first incomplete phase. If the issue is already **In Progress**, do not repeat B0. If the knowledge graph is empty, rebuild the investigation state from the latest reproduction notes, investigation comments, and approved plan before continuing.
+**RESUMPTION CHECK:** If this workflow resumes after prior work has already been performed, follow the universal resume rule (read `$MEM/checkpoint.md` and its `references`) to identify the first incomplete phase. If the issue is already **In Progress**, do not repeat B0. If `$MEM` is absent, rebuild the investigation state from the latest reproduction notes, investigation comments, and approved plan in Jira before continuing.
 
 **SERENA PROJECT ACTIVATION:** Before B0, check Serena's project-activation message (emitted on connect via `--project-from-cwd`); if it reports that onboarding has not been performed, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`, and the symbol-aware write tools) will not function correctly without this. Do this once at the start of the workflow; do not repeat it between phases.
 
@@ -72,19 +72,13 @@ These actions must not be chained. Run each one at a time, reporting the result 
 - B14 — Summary of Changes
 - B15 — Cleanup
 
-**PHASE COMPACTION HANDOFF CONTRACT:** At designated compaction gates in this workflow, the agent writes a durable `phase_handoff` entity to the knowledge graph and prompts the user to run `/compact`. This prevents auto-compaction from firing mid-phase and discarding phase position.
+**CHECKPOINT & COMPACTION CONTRACT:** This workflow records position in a single `$MEM/checkpoint.md` file (full schema and contract in `file-memory-protocol.md` §4). Two mechanisms:
 
-**Steps at each gate — execute before instructing `/compact`:**
+**Per-phase checkpoint — after EVERY phase (B0–B14), automatically, with no chat output and no `/compact` prompt.** Run `git branch --show-current` and `git log --oneline -1` (separate Bash calls), then **atomically overwrite** `$MEM/checkpoint.md`: `Write` the content to `checkpoint.md.tmp`, then `mv "$MEM/checkpoint.md.tmp" "$MEM/checkpoint.md"`. Set `checkpoint_type: phase`, the just-completed `phase`, the upcoming `next_phase`, the `references` list, `## Decisions`, and `## Open items`. At B10 also set `reviewer_iterations: { impl, test, doc }`. This keeps the recall point current even if auto-compaction or an interruption fires between gates.
 
-1. Wait for any background `area-mapper` sub-agent to complete.
-2. Create a `phase_handoff` entity in the knowledge graph:
-   - **Name:** `phase-handoff-<JIRA-KEY>-<phase-id>` (e.g. `phase-handoff-ELI-5678-B6`)
-   - **Observations:** `phase: <id>`, `skill: bug-card`, `jira_key: <key>`, `branch: <name or "none">`, `head_sha: <sha or "n/a">`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. At B10 only: `reviewer_iterations: impl=N test=N doc=N`.
-   - **Relations:** `BELONGS_TO` → `work_item-<JIRA-KEY>`; `SUPERSEDES` → prior `phase_handoff` for this work item (if any); `REFERENCES` → relevant `exploration`, `hypothesis`, `root_cause`, `fix_plan`, and `finding` entity names.
-3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
-4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, Jira key + branch + head SHA anchors, reviewer iteration counters (B10 only), one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → `git status` → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, verify git state (`git status`), and resume at `next_phase`. Before executing the resumed phase, **re-read that phase's section in this skill's `workflow.md`** so its full instructions survive compaction — in particular, any phase that asks the user clarifying or structured questions MUST use `AskUserQuestion` (per the Clarification Rule), never plain text. If the user types a different message instead, handle it normally.
+**Compaction gates (B4, B6, B10) — additionally prompt the user to `/compact`.** Do the per-phase write but with `checkpoint_type: gate`, then: (1) wait for any background `area-mapper` to finish; (2) emit the Phase Summary block (§4(b)) — phase + skill, Jira key, branch @ head_sha, one-line decisions, verbatim approval condition, reviewer iterations (B10 only), `next_phase`, the checkpoint file path, and the resume contract; (3) end the turn with the literal line **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` at a gate — the user's input must stay free for `/compact`.
 
-**Cleanup:** Include all `phase_handoff` entities for this work item (prefix `phase-handoff-<JIRA-KEY>-`) in the B15 cleanup enumeration alongside other session-scoped entities.
+**Universal resume rule — on ANY resume (a `continue` after `/compact`, an auto-compaction summary, or a fresh re-invocation), before doing anything else:** `Read $MEM/checkpoint.md` → `Read` every file in its `references` → verify git (`git status`, branch, HEAD) against the recorded values and surface drift → **re-read the `next_phase` section of this `workflow.md`** so its full instructions survive compaction (any phase asking clarifying/structured questions MUST use `AskUserQuestion`, never plain text) → continue at `next_phase`. If `$MEM` is absent, reconstruct from Jira (see File Memory Scope). Approval gates stay chat-scoped — never assume a pending approval was granted.
 
 ---
 
@@ -119,20 +113,20 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 > **THINK HARD:** Before concluding on root cause, think hard about whether the identified cause is necessary and sufficient to explain the observed behavior — could a different cause produce the same symptoms? A misdiagnosed root cause produces a fix that masks the symptom without resolving the underlying issue.
 
-> **USE KNOWLEDGE GRAPH:** Before spawning explorers, ensure a `work_item-<JIRA_KEY>` entity exists for this bug. Call `search_nodes` with the work item key (e.g. `work_item-ELI-1234`); if no entity is returned, create it with observations: `work_type: bug`, `jira_key`, `title`, `observed_behavior`, `expected_behavior`. **Record the entity name** as the `work_item_id` for this run. As you investigate, also create a node for each hypothesis with properties: `hypothesis` (description), `status` (`active` / `eliminated`), and `evidence` (what supports or refutes it). When a hypothesis is eliminated, update its status with a `reason` property. The explorer-written `affected_file`, `evidence`, `pattern`, and `risk` entities they stream to the graph are reachable via the `work_item-<JIRA_KEY>` node and feed directly into the fix plan in B5.
+> **BOOTSTRAP FILE MEMORY:** Compute `MEM` via the recipe in `file-memory-protocol.md` §1 and `mkdir -p "$MEM/explorations"`. If `$MEM/work-item.md` does not exist, `Write` it (schema §3.1) with `work_type: bug`, `jira_key`, `title`, `status: in_progress`, `phase: B3`, `skill: bug-card`, and the bug's observed/expected behavior under `## Description`. Pass the absolute `MEM` path (as `memory_dir`) and a normalized `area_slug` to every explorer — each writes its own `$MEM/explorations/<area_slug>.md`. Track competing root-cause hypotheses in your `sequentialthinking` reasoning; the explorations capture the supporting/refuting `evidence`, and the confirmed root cause is recorded in the fix plan at B5.
 
 - Identify all distinct areas of the codebase likely involved based on the **Affected Areas**, reproduction steps, and any logs or stack traces. Limit the scope of this exploration to the current project directory.
 - Invoke a `codebase-explorer` sub-agent in **parallel** for each distinct hypothesis area in this project, providing:
     - The target area to explore
     - The question: "Does the code path for [observed behavior] exist here, and is there evidence of why it might be producing [incorrect behavior]? Look for recent changes, error handling gaps, and related tests."
-    - The `work_item_id` (`work_item-<JIRA_KEY>`). All findings the explorer streams to the graph will be linked to this node.
+    - The `memory_dir` (`$MEM`) and a normalized `area_slug` for the area. The explorer writes its findings to `$MEM/explorations/<area_slug>.md`.
     - The bug description, reproduction steps, and any logs for context
-- Wait for all explorers to return. Each non-failed return contains an `Entity:` line with the exploration entity name. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters. `FAILED` means no graph data was written — re-spawn that explorer before proceeding.
-- **Post-exploration enrichment:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `work_item_id`. It crystallizes durable area knowledge from this run's graph into Serena project memory for future explorations. Do not wait for it.
-- Call `open_nodes` on each `exploration` entity name from the returns. If any entity comes back empty, re-spawn that explorer rather than treating missing data as confirmed. Surface any `open_question` entities in the responses. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
-- Synthesize the findings from the graph. Evaluate which areas show evidence of the root cause (cite the relevant `evidence` entities by `file` and `line_range`) and which hypotheses can be ruled out. Update each hypothesis node's `status` and `evidence` observations to reflect what the graph now contains.
-- Review git history for recent changes to affected areas (cross-reference the `affected_file` paths from the graph) that may have introduced a regression.
-- Review related tests to understand why existing coverage did not catch this bug — look for `pattern` entities tagged with test concerns and `risk` entities flagging coverage gaps.
+- Wait for all explorers to return. Each non-failed return contains a `File:` line with the exploration file name. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters. `FAILED` means no file was written — re-spawn that explorer before proceeding.
+- **Post-exploration enrichment:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `memory_dir` (`$MEM`). It crystallizes durable area knowledge from this run's exploration files into Serena project memory for future explorations. Do not wait for it.
+- `Read` each `$MEM/explorations/<area_slug>.md` from the returns. If any file is missing or empty, re-spawn that explorer rather than treating missing data as confirmed. Surface any `open_questions` entries. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `memory_dir`) before proceeding.
+- Synthesize the findings from the exploration files. Evaluate which areas show evidence of the root cause (cite the relevant `evidence` entries by `file` and `line_range`) and which hypotheses can be ruled out.
+- Review git history for recent changes to affected areas (cross-reference the `affected_files` paths) that may have introduced a regression.
+- Review related tests to understand why existing coverage did not catch this bug — look for `patterns` tagged with test concerns and `risks` flagging coverage gaps.
 
 ### B4 — Ask Clarifying Questions
 
@@ -149,7 +143,7 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 > **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `B4 Approval`, options: `Approve and proceed (Recommended)` (description: "All blocking answers are accurate and recorded") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to B5 until approved.
 
-> **COMPACTION GATE — B4:** Once B4 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-B4`; `next_phase: B5`; decisions: clarifying answers, confirmed root cause hypothesis; branch + head SHA: "n/a" (not yet created). REFERENCES: exploration entities from B3, hypothesis and root_cause graph nodes. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to B5.
+> **COMPACTION GATE — B4:** Once B4 approval is confirmed, follow the Checkpoint & Compaction Contract above (gate path). Write `checkpoint.md` with `phase: B4`, `next_phase: B5`, `checkpoint_type: gate`, `references: [work-item.md, explorations/*.md]`; `## Decisions`: clarifying answers and the confirmed root-cause hypothesis; branch/head_sha: "none"/"n/a". Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to B5.
 
 ### B5 — Create Fix Plan
 
@@ -157,14 +151,14 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 > **THINK HARD:** Before writing the fix plan, think hard about the blast radius of the proposed change — which callers, dependents, or edge-case paths might break if the fix is applied as drafted? A fix that is correct at the point of change but wrong at a caller is a new bug, not a resolved one.
 
-> **USE KNOWLEDGE GRAPH:** Read the hypothesis and affected area nodes written in B3. Write a `root_cause` entity named `root_cause-<JIRA_KEY>` with observations: `description` (the root cause analysis text, verbatim), `affected_files` (comma-separated list of implicated file paths), and `confirmed_by` (the entity name of the primary `evidence` node that settled the conclusion). Link with `BELONGS_TO` → `work_item-<JIRA_KEY>`. Call `open_nodes` on the new entity to confirm the write landed. The `fix_plan-<JIRA_KEY>` entity is created after plan-reviewer approval below, once the plan is finalized.
+> **FULL CONTEXT LOAD:** Before drafting the fix plan, `Glob $MEM` and `Read` every present input file — `work-item.md`, every `explorations/*.md`, `clarifications.md` and `related-cards.md` if present, and `summary.md` if this work came from `/implementation-discovery` (per `file-memory-protocol.md` §5). The confirmed root-cause analysis is captured as the **Root cause analysis** section of the fix plan written below (and persisted in `plan.md`'s `## Plan`); there is no separate root-cause file.
 
 > **GENERATE A FLOWGRAPH (best-effort):** Produce a Mermaid `flowchart` that contrasts the buggy path with the fixed path — show the root-cause flow (how the bug is triggered) alongside the corrected flow (how the fix intercepts it). Keep it focused on the specific files/functions implicated by the root cause analysis.
 >
 > - **Skip it** for trivial single-line fixes where a diagram adds no clarity. If skipped, state in one line why.
 > - **Render it in the chat** as part of the fix plan presentation at B6.
 > - **Embed it in the Jira description under `## Architecture`** as a ` ```mermaid ` fenced block, immediately after `## Affected Areas`. If the description lacks an `## Architecture` section, add one using `jira_update_issue` (additive edit — update only that section). (Jira Cloud does not render Mermaid natively; it will display as a code block, which is acceptable.) If skipped, set the Architecture section to "None — no diagram for this change."
-> - **Record the Mermaid source** for inclusion in the `fix_plan-<JIRA_KEY>` entity created after plan-reviewer approval below. B10 reads the `diagram` observation from that entity as a surgical guide.
+> - **Record the Mermaid source** for the `## Flowchart` section of `plan.md`, written after plan-reviewer approval below. B10 reads `plan.md ## Flowchart` as a surgical guide.
 
 **REQUIRED:** The plan must include ALL of the following:
 
@@ -202,7 +196,7 @@ The sub-agent will return a structured findings report with an overall verdict o
 
 - If **APPROVED**:
 
-    > **USE KNOWLEDGE GRAPH:** Create a `fix_plan` entity named `fix_plan-<JIRA_KEY>` with observations: `description` (the full reviewed fix plan text, verbatim — do not summarize or truncate), `files_to_change` (comma-separated list of all files to create or modify), `regression_test_strategy` (the regression test strategy text, verbatim), `documentation_expectations` (verbatim), and `diagram` (the raw Mermaid source recorded from the flowgraph step, or omit this observation entirely if the flowgraph was skipped). Link with `BELONGS_TO` → `work_item-<JIRA_KEY>` and `IMPLEMENTS` → `root_cause-<JIRA_KEY>`. Call `open_nodes` on the new entity to confirm the write landed. This entity is the canonical persistence surface for the fix — B6 and B10 compaction gates reference it by name, and B10 reads the `diagram` observation from it as a surgical guide. If the plan was revised during the review loop, ensure the entity contains the **final approved** plan text.
+    > **WRITE plan.md:** `Write $MEM/plan.md` (schema §3.3) with frontmatter `plan_type: fix_plan`, `status: approved`, and `files_to_change` (all files to create or modify), and body sections `## Plan` (the full reviewed fix plan text including the root-cause analysis, verbatim — do not summarize or truncate), `## Flowchart` (the raw Mermaid source showing buggy vs. fixed path, or omit the section if skipped), `## Testing expectations` (the regression-test strategy + follow-up coverage, verbatim), and `## Documentation expectations` (verbatim). This file is what the B6 and B10 checkpoints reference, and B10 reads `## Flowchart` as a surgical guide. If the plan was revised during the review loop, write the **final approved** plan text.
 
     Draft a single combined Jira comment with the exact heading `**B5/B6 — Fix Plan & Approval Request**` for the comment review below. This comment must include:
 
@@ -214,7 +208,7 @@ The sub-agent will return a structured findings report with an overall verdict o
     - `Approval requested: Please approve this fix plan before work begins.`
 
 - If **CHANGES REQUIRED**: address every Critical and Major finding, revise the plan, then invoke the `plan-reviewer` sub-agent again. Repeat until the verdict is APPROVED.
-- **Max 3 review iterations.** If the plan-reviewer returns CHANGES REQUIRED after 3 iterations, create the `fix_plan-<JIRA_KEY>` entity (same as the APPROVED path above, using the current plan text and noting `review_escalated: true`), draft the same combined `B5/B6` comment with the outstanding findings noted, and proceed to the comment review below.
+- **Max 3 review iterations.** If the plan-reviewer returns CHANGES REQUIRED after 3 iterations, write `plan.md` (same as the APPROVED path above, using the current plan text with frontmatter `status: review_escalated`), draft the same combined `B5/B6` comment with the outstanding findings noted, and proceed to the comment review below.
 
 **Independent comment review:**
 
@@ -242,10 +236,12 @@ Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the
 - The approval request Jira record is the combined `B5/B6` comment already posted in B5. Do not post a second Jira comment here unless the plan changed.
 - **Present the full fix plan in the chat output.** The user should not have to open Jira to review it — display it here before asking for approval.
 - Then use `AskUserQuestion` with header `B6 Approval`, options: `Approve and proceed (Recommended)` (description: "Fix plan is accurate — begin implementation") / `Request changes` (description: "Revise the plan before proceeding"). Do not poll Jira for approval.
-- If the user selects "Request changes", revise the plan, repost the full combined `B5/B6` comment to Jira, and update the `fix_plan-<JIRA_KEY>` entity in the knowledge graph: add a revised `description` observation with the updated plan text (use `add_observations`). Then use `AskUserQuestion` again.
+- If the user selects "Request changes", revise the plan, repost the full combined `B5/B6` comment to Jira, and re-`Write $MEM/plan.md` with the updated plan text (whole-file overwrite). Then use `AskUserQuestion` again.
 - Only proceed to B7 after "Approve and proceed" is selected.
 
-> **COMPACTION GATE — B6:** Once B6 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-B6`; `next_phase: B7`; decisions: approved fix plan (one-line summary); branch + head SHA: "n/a" (not yet created). REFERENCES: `fix_plan-<KEY>` and `root_cause-<KEY>` from B5 and exploration entities from B3. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to B7.
+> **REGENERATE DASHBOARD:** After approval, regenerate `$MEM/work-item.html` from the current memory files (per `file-memory-protocol.md` §8) so the user has an up-to-date rendered view of the approved fix plan and flowchart.
+>
+> **COMPACTION GATE — B6:** Once B6 approval is confirmed, follow the Checkpoint & Compaction Contract above (gate path). Write `checkpoint.md` with `phase: B6`, `next_phase: B7`, `checkpoint_type: gate`, `references: [plan.md, work-item.md, explorations/*.md]`; `## Decisions`: approved fix plan (one-line summary); `approval_condition`: verbatim user selection; branch/head_sha: "none"/"n/a". Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to B7.
 
 ---
 
@@ -271,7 +267,7 @@ Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the
 
 **ALL of the following are REQUIRED. Do not skip any category.**
 
-- **Architecture diagram:** Call `open_nodes` on the `fix_plan-<JIRA_KEY>` entity (created in B5) and read the `diagram` observation. Use the buggy-path vs. fixed-path flowchart as a surgical guide — apply the fix exactly where the diagram shows the flow deviating, and verify the corrected path after each change. If no diagram was persisted (skipped in B5), proceed without it.
+- **Full context load:** Before applying the fix, `Glob $MEM` and `Read` `plan.md` (full — `## Plan`, `## Flowchart`, `files_to_change`, testing/doc expectations), every `explorations/*.md`, `work-item.md`, and any `clarifications.md`/`related-cards.md` present (per `file-memory-protocol.md` §5). Use `plan.md ## Flowchart` (buggy-path vs. fixed-path) as a surgical guide — apply the fix exactly where the flow deviates, and verify the corrected path after each change. If no flowchart was persisted (skipped in B5), proceed without it.
 - **Code:** Apply the fix according to the plan from B5.
 - **Testing handoff:** Keep the implementation and the B9 regression test in a state that the dedicated `test-reviewer` sub-agent can extend and run deterministically. Note any commands, fixtures, or setup that sub-agent will need.
 - **Documentation handoff:** Identify the public APIs, configuration surfaces, and repository docs the dedicated `documentation-reviewer` sub-agent must cover.
@@ -361,7 +357,7 @@ The sub-agent will update inline and repository documentation as needed and retu
 
 Do not proceed to B11 until `implementation-reviewer`, `test-reviewer`, and `documentation-reviewer` have all completed successfully.
 
-> **COMPACTION GATE — B10:** Once all three reviewers are complete, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-B10`; `next_phase: B11`; include `reviewer_iterations: impl=N test=N doc=N`; decisions: fix implementation summary and any plan deviations; approval_condition: reviewer verdict. REFERENCES: `fix_plan-<KEY>` from B5 and exploration entities from B3. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to B11.
+> **COMPACTION GATE — B10:** Once all three reviewers are complete, follow the Checkpoint & Compaction Contract above (gate path). Write `checkpoint.md` with `phase: B10`, `next_phase: B11`, `checkpoint_type: gate`, `reviewer_iterations: { impl: N, test: N, doc: N }`, `references: [plan.md, explorations/*.md, work-item.md]`; `## Decisions`: fix implementation summary and any plan deviations; `approval_condition`: reviewer verdict. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to B11.
 
 ### B11 — Post-Fix Verification
 
@@ -479,9 +475,11 @@ The sub-agent will return a structured report with an overall verdict of either 
 
 Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the 3-iteration cap is reached). A clean self-check or memory of having run `comment-reviewer` earlier in the workflow does not substitute.
 
+> **REGENERATE DASHBOARD (B14):** After the B14 summary comment is posted, regenerate `$MEM/work-item.html` (per `file-memory-protocol.md` §8) so the user has a final rendered view. Optionally `Write $MEM/summary.md` (`summary_type: changes`) with the summary body first so the dashboard's Summary section is populated.
+
 ### B15 — Cleanup
 
-- Clear the session-scoped knowledge graph before finishing the workflow. This includes the `work_item-<JIRA_KEY>` entity and every entity linked to it: hypothesis nodes, `affected_area`, `root_cause-<JIRA_KEY>`, `fix_plan-<JIRA_KEY>`, `phase_handoff`, plus the explorer-written subgraph (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`). Use `read_graph` to enumerate, then `delete_entities`. Do not retain investigation state once it has been materialized into Jira comments.
+- Remove the work item's file-memory directory in one atomic operation: `rm -rf "$MEM"` (Bash). This deletes `work-item.md`, `checkpoint.md`, `plan.md`, all `explorations/*.md`, `work-item.html`, and anything else under it — nothing to enumerate, nothing missed. Do not retain investigation state once it has been materialized into Jira comments.
 
 ---
 
@@ -500,4 +498,4 @@ This workflow is complete when **all** of the following are true:
 - All Jira comments posted by this workflow (B5/B6, B12, B14) were reviewed by `comment-reviewer` and returned APPROVED (or reached the 3-iteration cap) before `jira_add_comment` ran
 - B14 summary comment posted using the exact `**B14 — Summary of Changes**` heading and the full mandated field set in order
 - B12 handoff comment posted using the exact `**B12 — User Testing Handoff**` heading
-- Session-scoped knowledge graph cleared (B15)
+- File-memory directory removed (`rm -rf "$MEM"`) (B15)

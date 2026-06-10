@@ -78,8 +78,8 @@ The Jira card description is the interface between intake and execution:
 
 | Agent | Purpose | Tool Access | Used By |
 |-------|---------|-------------|---------|
-| **codebase-explorer** | Read-only codebase investigation. Reads Serena project memory as starting hints; does not write memory and does not modify project files | Read, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena project memory read (`list_memories`, `read_memory`) | requirements-intake R2, issue-intake I2, task-card T2, bug-card B3, epic-card E2, implementation-discovery D1 |
-| **area-mapper** | Crystallizes durable area knowledge from a session's exploration findings into Serena project memory. Does not re-explore code, does not modify project files. Spawned in the background after each codebase-analysis phase to accumulate memory over time | Bash, knowledge-graph reads (`read_graph`, `search_nodes`, `open_nodes`), Serena project memory (`list_memories`, `read_memory`, `write_memory`, `edit_memory`) | requirements-intake R2, issue-intake I2, task-card T2, bug-card B3, epic-card E2, implementation-discovery D1 |
+| **codebase-explorer** | Codebase investigation. Reads Serena project memory as starting hints; writes its findings to one `explorations/<area>.md` file in the work item's memory directory; does not modify project files | Read, Write, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena project memory read (`list_memories`, `read_memory`) | requirements-intake R2, issue-intake I2, task-card T2, bug-card B3, epic-card E2, implementation-discovery D1 |
+| **area-mapper** | Crystallizes durable area knowledge from a session's exploration files into Serena project memory. Does not re-explore code, does not modify project files. Spawned in the background after each codebase-analysis phase to accumulate memory over time | Bash, `Glob`, `Read` (reads the work item's `explorations/*.md`), Serena project memory (`list_memories`, `read_memory`, `write_memory`, `edit_memory`) | requirements-intake R2, issue-intake I2, task-card T2, bug-card B3, epic-card E2, implementation-discovery D1 |
 | **implementation-reviewer** | Adversarial review of core implementation against plan/criteria before test/doc completion | Read, Glob, Grep, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`) | task-card T8, bug-card B10 |
 | **test-reviewer** | Completes automated test coverage and runs relevant test commands after implementation review | Read, Edit, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena symbol-aware writes (`replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol`, `rename_symbol`, `safe_delete_symbol`), Serena project memory (`test-commands.md`) | task-card T8, bug-card B10 |
 | **documentation-reviewer** | Completes inline and repository documentation and flags `/document-card` follow-up when needed | Read, Edit, Glob, Grep, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena symbol-aware writes (`insert_after_symbol`, `insert_before_symbol`, `replace_content`), Serena project memory (`documentation-conventions.md`) | task-card T8, bug-card B10 |
@@ -126,10 +126,10 @@ The Jira card description is the interface between intake and execution:
          T10: User testing (skipped in epic mode -- handled at E9)
          T11: Commit + push (in epic mode, also merge to the integration branch)
          T12: Summary of changes
-         T13: Cleanup (knowledge graph)
+         T13: Cleanup (file memory)
    E9: User testing (end-to-end)
    E10: Epic summary
-   E11: Cleanup (knowledge graph)
+   E11: Cleanup (file memory)
 
 3. User invokes /mr-creation
    M0-M6: Create GitLab MR for the integration branch
@@ -214,18 +214,21 @@ sections are additive context for frontend implementation.
 
 - `## Review Details` -- review type, branch, goals, work items, risks
 
-## Knowledge Graph
+## File-Based Memory
 
-Most intake and execution workflows use a session-scoped knowledge graph to accumulate structured state across phases. Key rules:
+Most intake and execution workflows accumulate structured state across phases in a **per-work-item file-memory directory** at `<project-root>/.claude/web-cms-memory/<WORK-ITEM-KEY>/` (the git worktree root's `.claude/` folder, git-ignored) (markdown + YAML frontmatter). This replaces the former knowledge-graph MCP server. The full specification — path-resolution recipe, file schemas, the checkpoint/compaction contract, the full-context-load rule, the codebase-explorer → area-mapper file flow, and the generated `work-item.html` dashboard — lives in **`file-memory-protocol.md`** at the plugin root. Key rules:
 
-- **Graph-backed intake workflows:** Graph content must be fully materialized into the Jira card description before the session ends
-- **Graph-backed execution workflows:** Graph is used within the session for state tracking; if resumed in a new session with an empty graph, reconstruct state from the Jira issue description and comment history before continuing
-- **Epic workflow:** Graph is the authoritative execution state map tracking child task completion; critical for resumability
-- **Cleanup required:** If a workflow uses a session-scoped knowledge graph, add a dedicated final cleanup phase after the last durable artifact has been created (for example: Jira description, Jira summary comment, review findings comment, or MR description). Perform graph cleanup there, not inline in an earlier phase.
+- **Intake workflows:** file content must be fully materialized into the Jira card description before cleanup
+- **Execution workflows:** the directory tracks state within and across sessions; if resumed and the directory is absent, reconstruct state from the Jira issue description and comment history before continuing
+- **Epic workflow:** `children.md` is the authoritative execution-state map tracking child task completion; critical for resumability
+- **Checkpoint & recall:** a single `checkpoint.md` is overwritten after *every* phase (so recall survives auto-compaction and interruptions); `/compact` is prompted only at designated gates; on any resume the agent reads `checkpoint.md` and its `references`, then continues
+- **Cleanup is atomic:** the final cleanup phase removes the whole directory with `rm -rf <work-item-dir>` after the last durable artifact has been created — nothing to enumerate, nothing missed. `implementation-discovery` intentionally skips cleanup (its `discovery-<slug>/` directory is reaped by the follow-on requirements-intake R6 or issue-intake I6)
+- **Human dashboard:** a `work-item.html` is generated from the markdown (rendered client-side via CDN marked.js + mermaid.js) for browser review; the agent never reads it back
+- **Related-card context (intake):** R1/I1 capture relevant related Jira cards' excerpts into `related-cards.md`, which R4 distills into the new card
 
 ## Serena Project Memory
 
-Distinct from the session-scoped knowledge graph, Serena's project memory (`write_memory`, `read_memory`, `edit_memory`, `list_memories`) persists durable repo-scoped knowledge across sessions. Memories live in Serena's project store (the project's `.serena/memories/` directory, scoped to whichever project Serena auto-activated from the Claude Code launch directory) and survive between runs. This surface is wired into four agents:
+Distinct from the per-work-item file memory, Serena's project memory (`write_memory`, `read_memory`, `edit_memory`, `list_memories`) persists durable repo-scoped knowledge across sessions. Memories live in Serena's project store (the project's `.serena/memories/` directory, scoped to whichever project Serena auto-activated from the Claude Code launch directory) and survive between runs. This surface is wired into four agents:
 
 | Agent | Memory key | Purpose |
 |-------|-----------|---------|
@@ -236,7 +239,7 @@ Distinct from the session-scoped knowledge graph, Serena's project memory (`writ
 
 **Discipline rules (apply to every memory-using agent):**
 
-- **Durable knowledge only.** Memories encode slow-changing repo facts — build commands, doc conventions, review standards, area maps. Do not write work-item-specific findings, session state, or ephemeral observations. Those belong in the session-scoped knowledge graph or nowhere.
+- **Durable knowledge only.** Memories encode slow-changing repo facts — build commands, doc conventions, review standards, area maps. Do not write work-item-specific findings, session state, or ephemeral observations. Those belong in the per-work-item file memory or nowhere.
 - **Read before work.** At the start of every run, `list_memories` and `read_memory` for the relevant key. Treat contents as starting context, not ground truth.
 - **Verify before relying.** Before citing a memory claim in a finding, decision, or report, confirm it still holds against the current worktree. Memory staleness is worse than no memory because it gives false confidence.
 - **Write with provenance.** Every memory file starts with a frontmatter block carrying `verified_at` (date) and `verified_against` (git SHA) so the next consumer can detect staleness.
@@ -281,7 +284,7 @@ your-project/
 
 Agent invocations in the workflows assume the runtime can resolve agent names directly from the copied `.claude/agents/` directory. If your target environment requires an explicit agent registry or routing configuration, add that registration as part of deployment so references such as `codebase-explorer`, `plan-reviewer`, `test-reviewer`, and `documentation-reviewer` resolve correctly at runtime.
 
-**MCP tool names:** Each skill and agent declares its MCP tool dependencies in its `allowed-tools` / `tools` frontmatter using the plugin-declared server names: `mcp__plugin_web-cms_atlassian__<tool>`, `mcp__plugin_web-cms_serena__<tool>`, `mcp__plugin_web-cms_gitlab__<tool>`, `mcp__plugin_web-cms_memory__<tool>`, `mcp__plugin_web-cms_sequentialthinking__<tool>`, `mcp__plugin_web-cms_playwright__<tool>`. All git operations use `Bash` directly.
+**MCP tool names:** Each skill and agent declares its MCP tool dependencies in its `allowed-tools` / `tools` frontmatter using the plugin-declared server names: `mcp__plugin_web-cms_atlassian__<tool>`, `mcp__plugin_web-cms_serena__<tool>`, `mcp__plugin_web-cms_gitlab__<tool>`, `mcp__plugin_web-cms_sequentialthinking__<tool>`, `mcp__plugin_web-cms_playwright__<tool>`. File memory uses the native `Read`/`Write`/`Edit`/`Glob`/`Grep` tools — no MCP server. All git operations use `Bash` directly.
 
 ## MCP Server Configuration
 
@@ -289,14 +292,13 @@ The plugin declares its own stdio MCP servers in `.mcp.json` and relies on Claud
 
 ### Declared servers
 
-`.mcp.json` at the plugin root declares six stdio servers plus one HTTP gateway:
+`.mcp.json` at the plugin root declares five stdio servers plus one HTTP gateway:
 
 | Server | Purpose | Launcher |
 |---|---|---|
 | `atlassian` | Jira and Confluence operations (get/create/update issues, search, comments, page management, attachments, labels) | `uvx mcp-atlassian` |
 | `serena` | Symbolic code navigation (find_symbol, find_referencing_symbols, get_symbols_overview, search_for_pattern, replace_content, insert_after/before_symbol, rename_symbol, replace_symbol_body, safe_delete_symbol, read/write/list/edit/delete_memory, onboarding, initial_instructions) | `uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide --project-from-cwd` |
 | `gitlab` | GitLab repo operations (create_branch, create_issue, create_merge_request, create_or_update_file, create_repository, fork_repository, get_file_contents, push_files, search_repositories) | `npx -y gitlab-mcp` |
-| `memory` | Knowledge-graph memory (add_observations, create_entities, create_relations, read_graph, etc.) | `npx -y @modelcontextprotocol/server-memory` |
 | `sequentialthinking` | Sequential thinking helper | `npx -y @modelcontextprotocol/server-sequential-thinking` |
 | `playwright` | Browser automation (browser_click, browser_navigate, etc.) | `npx -y @playwright/mcp` |
 | `MCP_DOCKER` | HTTP gateway providing additional Jira, Confluence, and other tool coverage | `http://mcp-gateway.lvh.me:8811/mcp` |
@@ -316,7 +318,7 @@ Jira and Confluence tools are provided by the plugin's own `atlassian` MCP serve
 Each machine that runs Claude Code against a project using this plugin needs:
 
 - `uv` installed (provides `uvx`; used by `serena` and `git` servers). Install with `curl -LsSf https://astral.sh/uv/install.sh | sh`.
-- Node 20+ installed (provides `npx`; used by `gitlab`, `memory`, `sequentialthinking`, `playwright` servers).
+- Node 20+ installed (provides `npx`; used by `gitlab`, `sequentialthinking`, `playwright` servers).
 - A GitLab personal access token exported in the shell as `GITLAB_PERSONAL_ACCESS_TOKEN`. Optionally override `GITLAB_API_URL` (defaults to `https://gitlab.com/api/v4`).
 - Java 17+ on PATH (Serena's bundled Eclipse JDTLS is Java-based; required for Java projects).
 

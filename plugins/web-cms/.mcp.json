@@ -24,11 +24,6 @@
       "command": "npx",
       "args": ["-y", "gitlab-mcp"]
     },
-    "memory": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-memory"]
-    },
     "sequentialthinking": {
       "type": "stdio",
       "command": "npx",

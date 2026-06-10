@@ -1,75 +1,64 @@
 # COMPACT-CONTEXT WORKFLOW — EXECUTION CONTRACT
 
-This skill creates a manual compaction checkpoint. It snapshots the active web-cms workflow session into the knowledge graph and instructs the user to run `/compact`. Invoke at any time when context is growing full mid-workflow, between or during any phase.
+This skill creates a manual compaction checkpoint. It snapshots the active web-cms workflow's position into the work item's `checkpoint.md` and instructs the user to run `/compact`. Invoke at any time when context is growing full mid-workflow, between or during any phase. See `file-memory-protocol.md` for the file-memory layout, the path-resolution recipe (§1), and the `checkpoint.md` schema (§3.2).
 
 **STRICT EXECUTION RULES:**
 
 1. Execute phases C0 through C3 in strict sequential order.
-2. If no active session is found in C0, stop immediately — do not attempt to create any entity.
+2. If no active work item is found in C0, stop immediately — do not write any file.
 3. Do not call `AskUserQuestion` in C3 — the user must be free to run `/compact` without an open question consuming their input.
 
 ---
 
-### C0 — Discover Active Session
+### C0 — Discover Active Work Item
 
-Call `read_graph` to enumerate all entities in the current knowledge graph.
+Compute `$MEMROOT` with the recipe in `file-memory-protocol.md` §1 (`ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"`, `MEMROOT="$ROOT/.claude/web-cms-memory"`). Then `Glob "$MEMROOT/*/work-item.md"` to enumerate active work items. `Read` each `work-item.md` frontmatter for its `work_item_key`, `skill`, `status`, and `phase`.
 
-Look for:
-- **`work_item-<KEY>`** entities (name starts with `work_item-`) — identifies the active Jira key(s)
-- **`phase_handoff`** entities (name starts with `phase-handoff-`) — identifies previous compaction gates
-- **Context entities:** `plan-<KEY>`, `fix_plan-<KEY>`, `exploration-*`, `root_cause-*`, `affected_area-*`
+**If no `work-item.md` is found:** There is no active web-cms workflow session. Output exactly: "No active workflow session found. Run `/compact` directly — no checkpoint is needed." Stop.
 
-**If no `work_item-*` entity exists:** The knowledge graph has no active web-cms workflow session. Output exactly: "No active workflow session found in the knowledge graph. Run `/compact` directly — no handoff entity is needed." Stop.
+**If multiple are found:** Use `AskUserQuestion` to ask the user which work item to checkpoint (list each found `work_item_key` — with its `skill` and `status` — as options).
 
-**If multiple `work_item-*` entities exist:** Use `AskUserQuestion` to ask the user which Jira key to checkpoint (list all found keys as options).
-
-Proceed with the identified work item key.
+Proceed with the identified work item. Its directory is `$MEM = $MEMROOT/<work_item_key>`.
 
 ---
 
 ### C1 — Determine Current State
 
-1. **Find the most recent `phase_handoff` entity** for this work item. If multiple exist (e.g., `phase-handoff-ELI-123-T3`, `phase-handoff-ELI-123-T5`), identify the latest by phase ordering. Call `open_nodes` on it to read its observations:
+1. **Read the existing checkpoint.** If `$MEM/checkpoint.md` exists, `Read` it for:
    - `skill` — which workflow is running (task-card, bug-card, epic-card, etc.)
-   - `next_phase` — the phase that was queued to execute when the last gate fired (i.e., the phase currently in progress)
+   - `next_phase` — the phase queued to execute when the last checkpoint was written (i.e., the phase currently in progress)
    - `branch`, `head_sha` — last recorded git context
+   - `references` — the files the resuming skill should reopen
 
-2. **Collect entity names for REFERENCES.** From the `read_graph` results, collect names of all context entities linked to this work item: `plan-<KEY>` or `fix_plan-<KEY>`, any `exploration-*` entities, `root_cause-<KEY>`, `affected_area-*`, etc. These will be forwarded as REFERENCES so the resuming skill can reconstruct state.
+   If `checkpoint.md` is absent, fall back to `work-item.md`'s `skill` and `phase`; use `next_phase: unknown` and note this in the Phase Summary.
+
+2. **Collect the reference file list.** `Glob "$MEM"` (and `"$MEM/explorations"`) to list the present memory files — `plan.md`, `criteria.md`, `clarifications.md`, `children.md`, `summary.md`, `explorations/*.md`, etc. These become the `references` list so the resuming skill reloads full context.
 
 3. **Run git state checks** (two separate Bash calls, do not chain with `&&`):
    - `git branch --show-current`
    - `git log --oneline -1`
 
-   Use these results for `branch` and `head_sha` in C2. If the working tree has no commits yet, use `"none"` and `"n/a"`.
-
-**If no `phase_handoff` entity exists:** The workflow is before its first compaction gate. Use `skill: unknown` and `next_phase: unknown` in C2, and note this in the Phase Summary.
+   Use these for `branch` and `head_sha` in C2. If the working tree has no commits yet, use `"none"` and `"n/a"`.
 
 ---
 
-### C2 — Write Phase Handoff Entity
+### C2 — Write the Manual Checkpoint
 
-Create a `phase_handoff` entity to capture the current checkpoint:
+**Atomically overwrite** `$MEM/checkpoint.md` (`Write` the content to `$MEM/checkpoint.md.tmp`, then `mv "$MEM/checkpoint.md.tmp" "$MEM/checkpoint.md"` via Bash) per the schema in `file-memory-protocol.md` §3.2:
 
-- **Name:** `phase-handoff-<KEY>-manual`
-- **Entity type:** `phase_handoff`
-- **Observations:**
-  - `phase: manual-checkpoint`
-  - `skill: <skill-name from C1, or "unknown">`
-  - `jira_key: <KEY>`
-  - `branch: <branch from C1 git check>`
-  - `head_sha: <HEAD SHA from C1 git check>`
-  - `next_phase: <next_phase from the prior phase_handoff — the phase currently in progress, or "unknown" if no prior handoff>`
-  - `checkpoint_type: manual`
-  - `decisions: Manual checkpoint — resume workflow at next_phase`
+- `work_item_key: <key>`, `jira_key: <key or null>`
+- `skill: <skill from C1, or "unknown">`
+- `phase: manual-checkpoint`
+- `next_phase: <next_phase from the prior checkpoint — the phase currently in progress, or "unknown">`
+- `checkpoint_type: manual`
+- `branch: <branch from C1>`, `head_sha: <head_sha from C1>`
+- `references: <the file list collected in C1>`
+- `## Decisions`: "Manual checkpoint — resume workflow at next_phase."
+- `## Open items`: carry forward any from the prior checkpoint, or empty.
 
-**Relations to create:**
-  - `BELONGS_TO` → `work_item-<KEY>`
-  - `SUPERSEDES` → prior `phase_handoff` entity for this work item (if any — use the most recent gate entity name from C1)
-  - `REFERENCES` → each context entity name collected in C1 (one `REFERENCES` relation per entity)
+Overwriting in place IS the supersession — there is no separate handoff entity and nothing to enumerate. `Read` `$MEM/checkpoint.md` once after the write to confirm it landed; if it comes back empty, include a warning line in the C3 Phase Summary but continue.
 
-Call `open_nodes` on `phase-handoff-<KEY>-manual` immediately after creation to confirm the write landed. If the entity comes back empty, include a warning line in the Phase Summary block in C3 but continue.
-
-> **Note on repeated calls:** If the user runs `/compact-context` more than once in the same session, the second call will find `phase-handoff-<KEY>-manual` already present from the first call. Treat it as the prior handoff for SUPERSEDES purposes and create a fresh entity with updated observations. The graph's create call will overwrite the existing entity.
+> **Note on repeated calls:** Running `/compact-context` more than once just overwrites `checkpoint.md` again with fresh git state and `next_phase` — the file always reflects the latest checkpoint.
 
 ---
 
@@ -81,16 +70,15 @@ Emit the following Phase Summary block (fill in placeholders):
 ---
 **MANUAL COMPACTION CHECKPOINT**
 
-- **Workflow:** <skill-name>
-- **Jira key:** <KEY>
-- **Branch:** <branch>
-- **HEAD SHA:** <sha>
+- **Workflow:** <skill>
+- **Work item:** <key>
+- **Branch:** <branch> @ <head_sha>
 - **Resume at:** <next_phase>
-- **Handoff entity:** `phase-handoff-<KEY>-manual`
-- **Resume contract:** After compaction, invoke `/<skill-name> <KEY>` and type `continue`. The skill will call `open_nodes` on `phase-handoff-<KEY>-manual`, traverse its REFERENCES, verify git state, and resume at `<next_phase>`.
+- **Checkpoint file:** web-cms-memory/<key>/checkpoint.md
+- **Resume contract:** After compaction, invoke `/<skill> <key>` and type `continue`. The skill will read `checkpoint.md`, reopen its `references` files, verify git state, and resume at `<next_phase>`.
 ---
 ```
 
-End your turn immediately after this block with this literal line: **"Run `/compact` now, then re-invoke `/<skill-name> <KEY>` and type `continue` to resume."**
+End your turn immediately after this block with this literal line: **"Run `/compact` now, then re-invoke `/<skill> <key>` and type `continue` to resume."**
 
 Do NOT call `AskUserQuestion` here. Do not add any content after this line.

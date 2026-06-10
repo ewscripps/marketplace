@@ -8,9 +8,9 @@
 4. If any phase fails, stop immediately and report the failure as a comment on this Jira issue. Do not continue.
 5. Every required output (comments, findings, summaries) must be posted before the phase is considered complete.
 
-**KNOWLEDGE GRAPH SCOPE:** The knowledge graph in this workflow accumulates review target context from CR1, findings from parallel review-analyst sub-agents (CR4), contextual findings from CR5 (Diff Review only), and criteria verdicts (CR6) so that CR8 can assemble a complete, accurate report. The graph is session-scoped. If this workflow is resumed in a new session and the graph is empty, reconstruct state by reading this Jira issue's description and all comments posted in prior phases, then rebuild the `work_item`, finding, and criteria nodes before continuing.
+**FILE MEMORY SCOPE:** This workflow stores review state in a per-review file-memory directory keyed by the review card's Jira key. `$MEM/work-item.md` is the root (review type, mode, scope, and the list of reviewed work items from CR1); `$MEM/findings.md` accumulates the review-analyst findings (CR4), contextual findings (CR5, Diff Review only), and criteria verdicts (CR6) so CR8 can assemble a complete, accurate report. Compute `MEM` with the recipe in `file-memory-protocol.md` §1. **Per-phase checkpoint:** after each phase, atomically overwrite `$MEM/checkpoint.md` (`Write` to `checkpoint.md.tmp`, then `mv` over it) with the just-completed `phase`, `next_phase`, and `references` (`[work-item.md, findings.md]`); this workflow has no `/compact` gates, but the checkpoint keeps resume cheap. See `file-memory-protocol.md` for schemas.
 
-**RESUMPTION CHECK:** If this workflow resumes after prior work has already been performed, inspect the issue status and previously posted review comments first to identify the first incomplete phase. If the issue is already **In Progress**, do not repeat CR0.
+**RESUMPTION CHECK:** If this workflow resumes after prior work has already been performed, read `$MEM/checkpoint.md` (and its `references`) to identify the first incomplete phase. If `$MEM` is absent (new session), reconstruct state by reading this Jira issue's description and all comments posted in prior phases, then rebuild `work-item.md` and `findings.md` before continuing. If the issue is already **In Progress**, do not repeat CR0.
 
 **CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
@@ -90,7 +90,7 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
     - Review the approved fix plan from the bug's Jira comment history.
     - Note any regression tests that were required to be written as part of the fix.
 
-> **USE KNOWLEDGE GRAPH:** After the review target and included work items are identified, write them to the knowledge graph as `work_item` nodes before proceeding. For Release and Epic reviews, create one `work_item` node per included item with properties `item_key`, `item_type`, `summary`, and `status`. For Task and Bug reviews, create a single `work_item` node for the reviewed issue with the same properties. CR6 links `criteria_verdict` nodes to these `work_item` nodes.
+> **WRITE work-item.md:** After the review target and included work items are identified, bootstrap file memory: compute `MEM` (recipe §1), `mkdir -p "$MEM"`, and `Write $MEM/work-item.md` (schema §3.1) with `work_type: code-review`, `jira_key`, `title`, `status: in_progress`, `phase: CR1`, `skill: code-review`, plus a `reviewed_items` frontmatter list — one entry per included item with `item_key`, `item_type`, `summary`, `status` (Task/Bug reviews have a single entry). CR6 records `criteria_verdicts` against these `item_key`s in `findings.md`.
 
 ### CR2 — Verify Branch State
 
@@ -124,7 +124,7 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 > **USE SEQUENTIAL THINKING:** Before dispatching the review analysts, invoke the `sequentialthinking` tool. Confirm that all required context is available and complete. For Diff Review: confirm the diff, work item details, accepted criteria, and approved plan are ready. For Implementation Review: confirm the full source files from the Implementation Scope are read and the work item context is complete. Identify whether this is a Release/Epic review (requires `cross_item_integration`) or a Task/Bug review (skip that category). Resolve any ambiguities before spawning agents.
 
-> **USE KNOWLEDGE GRAPH:** After all review-analyst sub-agents return their findings, write each finding to the knowledge graph as a `finding` node before proceeding. For each finding: `category`, `file`, `description`, `severity`. This ensures CR8 can assemble the complete report from the graph rather than reconstructing it from multiple sub-agent outputs.
+> **WRITE findings.md:** After all review-analyst sub-agents return their findings, `Write $MEM/findings.md` with a `findings[]` frontmatter array — one entry per finding with `category`, `file`, `description`, `severity` (append rather than overwrite if `findings.md` already exists). This ensures CR8 can assemble the complete report from one file rather than reconstructing it from multiple sub-agent outputs.
 
 **Diff Review:**
 
@@ -154,7 +154,7 @@ Read the full source files for every file, module, or service listed in the **Im
 
 Wait for all sub-agents to return their findings reports before proceeding.
 
-When all reports are received, write every finding from all reports to the knowledge graph as `finding` nodes (see USE KNOWLEDGE GRAPH above), then proceed to CR5 (Diff Review) or CR6 (Implementation Review — skip CR5).
+When all reports are received, write every finding from all reports into `$MEM/findings.md` (see WRITE findings.md above), then proceed to CR5 (Diff Review) or CR6 (Implementation Review — skip CR5).
 
 ### CR5 — Review Full Changed Files for Context
 
@@ -164,7 +164,7 @@ When all reports are received, write every finding from all reports to the knowl
 
 > **USE SERENA:** When the Serena MCP server is available, use `get_symbols_overview` (with `depth`) on each changed file to get a structural map of all symbols before reading the full file. This lets you understand how the changed code fits into the file's class/method hierarchy without scanning the entire file linearly. Use `find_referencing_symbols` on any symbol that was added or modified to verify that all downstream consumers are consistent with the change.
 
-> **USE KNOWLEDGE GRAPH:** Write contextual findings discovered here using the same `finding` node structure as CR4, with `category: contextual` and a `source: full_file_context` property to distinguish them from diff findings.
+> **APPEND to findings.md:** Append contextual findings discovered here to `$MEM/findings.md` `findings[]` using the same entry shape as CR4, with `category: contextual` and `source: full_file_context` to distinguish them from diff findings.
 
 - For each file modified in the diff, use `get_symbols_overview` to understand the file's full structure, then read the full file to understand the change in its complete context.
 - Identify any issues not visible in the diff alone, such as:
@@ -179,7 +179,7 @@ When all reports are received, write every finding from all reports to the knowl
 
 > **USE SERENA:** When the Serena MCP server is available, use `find_symbol` to locate the code that implements each criterion, and `find_referencing_symbols` to trace that the implementation is actually invoked in the expected code paths. This provides stronger evidence for pass/fail verdicts than reading diffs alone.
 
-> **USE KNOWLEDGE GRAPH:** For each work item or criterion verified, write a `criteria_verdict` node with properties: `item_key` (Jira key or criterion text), `verdict` (pass / fail / partial), and `rationale`. Link it to the relevant work item node. CR8 reads these nodes to populate the Criteria Verification section of the findings report.
+> **APPEND to findings.md:** For each work item or criterion verified, append a `criteria_verdicts[]` entry to `$MEM/findings.md` with `item_key` (Jira key or criterion text), `verdict` (pass / fail / partial), and `rationale`. CR8 reads these to populate the Criteria Verification section of the findings report.
 
 **REQUIRED:** Verify the criteria for the review target. Do not skip any item.
 
@@ -221,7 +221,7 @@ When all reports are received, write every finding from all reports to the knowl
 
 > **THINK HARD:** Before assigning the Overall Assessment verdict, think hard about whether the verdict is consistent with the most severe finding — not the average finding. A verdict of "Approved with Minor Findings" when a Critical finding is present but mislabeled, or when two Major findings together constitute a Critical risk, is the most consequential mistake this phase can make.
 
-> **USE KNOWLEDGE GRAPH:** Read all `finding` nodes and `criteria_verdict` nodes from the graph to assemble the findings report. Query nodes by `category` to populate each section. Count nodes by `severity` for the Consolidated Findings Count. This is the primary benefit of the knowledge graph in this workflow — assembling a complete, accurate report across 5 review categories without relying on working memory after a long review session.
+> **READ findings.md:** `Read $MEM/findings.md` — all `findings[]` and `criteria_verdicts[]` — to assemble the findings report. Filter `findings[]` by `category` to populate each section; count by `severity` for the Consolidated Findings Count. This is the primary benefit of file memory in this workflow — assembling a complete, accurate report across 5 review categories without relying on working memory after a long review session.
 
 **ALL fields below are REQUIRED. Do not skip any field. If a field does not apply, explicitly state "N/A" with a brief reason.**
 
@@ -292,7 +292,7 @@ Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the
 
 ### CR11 — Cleanup
 
-- Clear the session-scoped knowledge graph before finishing the workflow. Do not retain review findings or criteria verdict nodes after the consolidated Jira comments exist.
+- Remove the review's file-memory directory: `rm -rf "$MEM"` (Bash). Do not retain review findings or criteria verdicts on disk after the consolidated Jira comments exist.
 
 ---
 
@@ -308,4 +308,4 @@ This workflow is complete when **all** of the following are true:
 - CR8 consolidated findings comment reviewed by `comment-reviewer` (APPROVED or 3-iteration cap reached) before `jira_add_comment` ran, with all required fields populated and overall assessment verdict included
 - Remediation task created and linked if findings required action (CR9), or no-remediation comment posted if approved
 - Assignee or reporter notified with verdict and links (CR10)
-- Session-scoped knowledge graph cleared (CR11)
+- File-memory directory removed (`rm -rf "$MEM"`) (CR11)
