@@ -175,6 +175,16 @@ check_absent "metrics-report no '1Phase' mangled label (G20)" "1Phase" "$MR_OUT"
 check "metrics-report savings n/a for zero-cost initiative (G8)" "n/a" "$MR_OUT"
 check_absent "metrics-report no '0x cheaper' for zero-cost initiative (G8)" "0x cheaper" "$MR_OUT"
 
+# ---- metrics-report --all: G1 both-layout enumeration (product-scoped + flat) ------
+# Guards against the G1 regression where --all only walked the flat SRD_ROOT and missed
+# product-scoped initiatives. MIGR1 was migrated to testprod/MIGR1__my-feature earlier;
+# MTRX is flat. Both must appear in --all output.
+echo
+echo "metrics-report --all -- G1 product-scoped enumeration"
+MR_ALL_OUT="$("$EDM_STATE" metrics-report --all 2>&1)"
+check "metrics-report --all includes flat initiative (MTRX)" "MTRX" "$MR_ALL_OUT"
+check "metrics-report --all includes product-scoped initiative (MIGR1)" "MIGR1" "$MR_ALL_OUT"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
