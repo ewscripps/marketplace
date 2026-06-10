@@ -540,6 +540,7 @@ cmd_init() {
     coverage_by_layer: {},
     coverage_by_epic: {},
     code_audit_converged: false,
+    compliance_gate_approved: false,
     last_cmd: "",
     last_decision: "",
     audit_rounds: {},
@@ -590,8 +591,16 @@ cmd_approve_gate() {
   [[ $# -eq 2 ]] || die "usage: edm-state approve-gate <PREFIX> <gate-num>"
   require_jq
   local prefix="$1" gate="$2"
-  [[ "$gate" =~ ^[0-9]+$ ]] || die "approve-gate: gate-num must be numeric; got: $gate"
   local approver="${USER:-unknown}"
+  # Gate 3.5 (compliance review) is stored as a dedicated boolean field rather than
+  # appended to gates_approved (which expects integers) — avoids overloading numeric gate IDs.
+  if [[ "$gate" == "3.5" ]]; then
+    rmw_state "$prefix" '.compliance_gate_approved = true | .last_updated = $t' --arg t "$(now_utc)"
+    echo "approved compliance gate 3.5 for $prefix at $(now_utc)"
+    write_handoff_internal "$prefix"
+    return 0
+  fi
+  [[ "$gate" =~ ^[0-9]+$ ]] || die "approve-gate: gate-num must be numeric; got: $gate"
   rmw_state "$prefix" \
     '.gates_approved += [{gate: ($g|tonumber), approved_at: $t, approver: $a}] | .last_updated = $t' \
     --arg g "$gate" --arg t "$(now_utc)" --arg a "$approver"
@@ -1209,6 +1218,21 @@ cmd_gate_check() {
     echo "Run /edm:orchestrator ${prefix} and approve Gate ${required_gate} before running /${gated_cmd}." >&2
     return 1
   fi
+
+  # For implement: also enforce compliance_gate_approved when compliance_enabled=true.
+  if [[ "$gated_cmd" == "implement" ]]; then
+    local ce cga
+    ce="$(echo "$state" | jq -r '.compliance_enabled // false')"
+    if [[ "$ce" == "true" ]]; then
+      cga="$(echo "$state" | jq -r '.compliance_gate_approved // false')"
+      if [[ "$cga" != "true" ]]; then
+        echo "edm-state gate-check: Gate 3.5 (compliance review) has not been approved for ${prefix}." >&2
+        echo "Run /edm:orchestrator ${prefix} and approve Gate 3.5 before running /implement." >&2
+        return 1
+      fi
+    fi
+  fi
+
   return 0
 }
 

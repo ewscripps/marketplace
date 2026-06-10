@@ -12,6 +12,12 @@
 # Output format: path:line: <class>: <snippet>
 # Exit code: 0 = clean; 1 = one or more violations found.
 #
+# Ignore markers (place in .md files to suppress false positives on policy docs):
+#   <!-- edm-lint-ignore -->           -- ignores the NEXT line only
+#   <!-- edm-lint-ignore-start -->     -- begins an ignored block
+#   <!-- edm-lint-ignore-end -->       -- ends an ignored block
+#   Lines inside ``` code fences are also ignored automatically.
+#
 # Honors EDM_SRD_ROOT and CLAUDE_PLUGIN_OPTION_TICKET_PACK_DIRNAME environment vars
 # so relocated trees are linted correctly (AC9).
 set -euo pipefail
@@ -22,7 +28,7 @@ TICKET_PACK_DIRNAME="${EDM_TICKET_PACK_DIRNAME:-${CLAUDE_PLUGIN_OPTION_TICKET_PA
 die() { echo "edm-lint-artifacts: $*" >&2; exit 1; }
 
 usage() {
-  sed -n '2,12p' "$0"
+  sed -n '2,19p' "$0"
   exit 0
 }
 
@@ -56,6 +62,58 @@ report_violation() {
   violations=$((violations + 1))
 }
 
+# ---- Helper: build ignore set for a file --------------------------------------
+# Emits newline-separated line numbers that should be skipped by all lint checks.
+# Skips: lines inside ``` code fences, lines following <!-- edm-lint-ignore -->,
+# and lines inside <!-- edm-lint-ignore-start --> ... <!-- edm-lint-ignore-end --> blocks.
+build_ignore_set() {
+  local file="$1"
+  local in_fence=0 in_ignore_block=0 ignore_next=0 lineno=0
+  while IFS= read -r linetext; do
+    lineno=$((lineno + 1))
+
+    # Apply single-line ignore to current line (set by previous line's marker).
+    if [[ "$ignore_next" -eq 1 ]]; then
+      echo "$lineno"
+      ignore_next=0
+      continue
+    fi
+
+    # Code fence delimiter: toggle fence state; the delimiter line itself is not content.
+    if [[ "$linetext" =~ ^\`\`\` ]]; then
+      in_fence=$((1 - in_fence))
+      continue
+    fi
+
+    # Block-ignore end marker.
+    if [[ "$linetext" == *'<!-- edm-lint-ignore-end -->'* ]]; then
+      in_ignore_block=0
+      continue
+    fi
+
+    # Emit as ignored if inside a code fence or ignore block.
+    if [[ "$in_fence" -eq 1 || "$in_ignore_block" -eq 1 ]]; then
+      echo "$lineno"
+    fi
+
+    # Block-ignore start marker (set AFTER emitting, so the marker line itself is not ignored).
+    if [[ "$linetext" == *'<!-- edm-lint-ignore-start -->'* ]]; then
+      in_ignore_block=1
+    fi
+
+    # Single-line marker: flag next line.
+    if [[ "$linetext" == *'<!-- edm-lint-ignore -->'* ]]; then
+      ignore_next=1
+    fi
+  done < "$file"
+}
+
+# ---- Helper: is a line number in the ignore set? ------------------------------
+is_ignored_line() {
+  local lineno="$1" ignoreset="$2"
+  [[ -n "$ignoreset" ]] && echo "$ignoreset" | grep -qxF "$lineno"
+}
+
 # ---- Scan all *.md files, excluding .git/ and .archived/ ----------------------
 MD_FILES=()
 while IFS= read -r _md_f; do
@@ -86,9 +144,11 @@ _ATTR_PHRASES=(
 )
 
 for file in "${MD_FILES[@]}"; do
+  ignore_set="$(build_ignore_set "$file")"
   lineno=0
   while IFS= read -r linetext; do
     lineno=$((lineno + 1))
+    is_ignored_line "$lineno" "$ignore_set" && continue
     lower="$(echo "$linetext" | tr '[:upper:]' '[:lower:]')"
     for phrase in "${_ATTR_PHRASES[@]}"; do
       if [[ "$lower" == *"$phrase"* ]]; then
@@ -103,7 +163,9 @@ done
 # ---- Class 2: Non-ASCII (Unicode) bytes ---------------------------------------
 if [[ "$_has_pcre_grep" -eq 1 ]]; then
   for file in "${MD_FILES[@]}"; do
+    ignore_set="$(build_ignore_set "$file")"
     while IFS=: read -r _f lineno _rest; do
+      is_ignored_line "$lineno" "$ignore_set" && continue
       snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | cut -c1-120 || true)"
       report_violation "unicode" "$file" "$lineno" "$snippet"
     done < <(grep -nP '[^\x00-\x7F]' "$file" 2>/dev/null || true)
@@ -111,7 +173,9 @@ if [[ "$_has_pcre_grep" -eq 1 ]]; then
 else
   # Fallback: LC_ALL=C grep for bytes > 0x7F
   for file in "${MD_FILES[@]}"; do
+    ignore_set="$(build_ignore_set "$file")"
     while IFS=: read -r lineno _rest; do
+      is_ignored_line "$lineno" "$ignore_set" && continue
       snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | cut -c1-120 || true)"
       report_violation "unicode" "$file" "$lineno" "$snippet"
     done < <(LC_ALL=C grep -nv '^[[:print:][:space:]]*$' "$file" 2>/dev/null || true)
@@ -125,7 +189,9 @@ fi
 _TAG_PATTERN='</?[[:space:]]*(function_calls|invoke|parameter|antml:|use_mcp_tool|result)[^>]*>'
 
 for file in "${MD_FILES[@]}"; do
+  ignore_set="$(build_ignore_set "$file")"
   while IFS=: read -r lineno _rest; do
+    is_ignored_line "$lineno" "$ignore_set" && continue
     snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | cut -c1-120 || true)"
     report_violation "leaked-tool-tag" "$file" "$lineno" "$snippet"
   done < <(grep -nE "$_TAG_PATTERN" "$file" 2>/dev/null || true)

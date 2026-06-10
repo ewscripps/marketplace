@@ -233,6 +233,54 @@ sup_init="$(jq -r '.supersedes' "$STATE2")"
 ff_init="$(jq -r '.forked_from' "$STATE2")"
 [[ "$ff_init" == "" ]] && pass "forked_from default = empty string" || fail "forked_from = '$ff_init'"
 
+# ---- EXT-01: Gate 3.5 compliance enforcement --------------------------------
+echo
+echo "EXT-01 -- Gate 3.5 compliance gate recording and enforcement"
+"$EDM_STATE" init COMP >/dev/null
+STATE_COMP="$TMP/SRD/COMP/.edm-state.json"
+
+# Enable compliance; approve gates 1, 2, 3 (but NOT 3.5 yet).
+"$EDM_STATE" set-mode COMP compliance_enabled true >/dev/null
+"$EDM_STATE" approve-gate COMP 1 >/dev/null 2>&1 || true
+"$EDM_STATE" approve-gate COMP 2 >/dev/null 2>&1 || true
+"$EDM_STATE" approve-gate COMP 3 >/dev/null 2>&1 || true
+
+# gate-check implement must FAIL when compliance_enabled=true and no gate 3.5.
+check "gate-check implement blocked without gate 3.5" "Gate 3.5" \
+  "$("$EDM_STATE" gate-check COMP implement 2>&1 || true)"
+
+cga_before="$(jq -r '.compliance_gate_approved' "$STATE_COMP")"
+[[ "$cga_before" == "false" ]] && pass "compliance_gate_approved = false before approve-gate 3.5" \
+  || fail "compliance_gate_approved = '$cga_before' (expected false)"
+
+# approve-gate 3.5 must set compliance_gate_approved=true (not append to gates_approved).
+"$EDM_STATE" approve-gate COMP 3.5 >/dev/null
+cga_after="$(jq -r '.compliance_gate_approved' "$STATE_COMP")"
+[[ "$cga_after" == "true" ]] && pass "compliance_gate_approved = true after approve-gate 3.5" \
+  || fail "compliance_gate_approved = '$cga_after' (expected true)"
+
+# gates_approved array must still contain only integers (3.5 must NOT be appended).
+gates_count="$(jq -r '.gates_approved | length' "$STATE_COMP")"
+has_decimal="$(jq -r '.gates_approved[] | .gate | select(. == "3.5" or (type == "number" and . != floor))' "$STATE_COMP" 2>/dev/null || echo '')"
+[[ -z "$has_decimal" ]] && pass "gates_approved contains no decimal entries after 3.5 approval" \
+  || fail "gates_approved has unexpected decimal entry"
+[[ "$gates_count" == "3" ]] && pass "gates_approved still has exactly 3 integer entries" \
+  || fail "gates_approved length = '$gates_count' (expected 3)"
+
+# gate-check implement must now PASS.
+"$EDM_STATE" gate-check COMP implement >/dev/null 2>&1 \
+  && pass "gate-check implement passes after approve-gate 3.5" \
+  || fail "gate-check implement still blocked after approve-gate 3.5"
+
+# When compliance_enabled=false, gate-check implement must pass WITHOUT gate 3.5.
+"$EDM_STATE" init NOCOMP >/dev/null
+"$EDM_STATE" approve-gate NOCOMP 1 >/dev/null 2>&1 || true
+"$EDM_STATE" approve-gate NOCOMP 2 >/dev/null 2>&1 || true
+"$EDM_STATE" approve-gate NOCOMP 3 >/dev/null 2>&1 || true
+"$EDM_STATE" gate-check NOCOMP implement >/dev/null 2>&1 \
+  && pass "gate-check implement passes without gate 3.5 when compliance_enabled=false" \
+  || fail "gate-check implement wrongly blocked for non-compliance initiative"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
