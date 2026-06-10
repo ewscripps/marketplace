@@ -124,7 +124,7 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 > **USE SEQUENTIAL THINKING:** Before dispatching the review analysts, invoke the `sequentialthinking` tool. Confirm that all required context is available and complete. For Diff Review: confirm the diff, work item details, accepted criteria, and approved plan are ready. For Implementation Review: confirm the full source files from the Implementation Scope are read and the work item context is complete. Identify whether this is a Release/Epic review (requires `cross_item_integration`) or a Task/Bug review (skip that category). Resolve any ambiguities before spawning agents.
 
-> **WRITE findings.md:** After all review-analyst sub-agents return their findings, `Write $MEM/findings.md` with a `findings[]` frontmatter array — one entry per finding with `category`, `file`, `description`, `severity` (append rather than overwrite if `findings.md` already exists). This ensures CR8 can assemble the complete report from one file rather than reconstructing it from multiple sub-agent outputs.
+> **WRITE findings.md:** After all review-analyst sub-agents return their findings, `Write $MEM/findings.md` with a `findings[]` frontmatter array — one entry per finding with `category`, `file`, `description`, `severity`. CR4 always runs before CR5/CR6, so this is always the initial write. This ensures CR8 can assemble the complete report from one file rather than reconstructing it from multiple sub-agent outputs.
 
 **Diff Review:**
 
@@ -164,7 +164,7 @@ When all reports are received, write every finding from all reports into `$MEM/f
 
 > **USE SERENA:** When the Serena MCP server is available, use `get_symbols_overview` (with `depth`) on each changed file to get a structural map of all symbols before reading the full file. This lets you understand how the changed code fits into the file's class/method hierarchy without scanning the entire file linearly. Use `find_referencing_symbols` on any symbol that was added or modified to verify that all downstream consumers are consistent with the change.
 
-> **APPEND to findings.md:** Append contextual findings discovered here to `$MEM/findings.md` `findings[]` using the same entry shape as CR4, with `category: contextual` and `source: full_file_context` to distinguish them from diff findings.
+> **MERGE into findings.md:** `Read $MEM/findings.md`, add the new contextual findings to the existing `findings[]` array (each with `category: contextual` and `source: full_file_context`), then `Write` the complete updated file. Do not overwrite without reading first — CR4's findings must be preserved.
 
 - For each file modified in the diff, use `get_symbols_overview` to understand the file's full structure, then read the full file to understand the change in its complete context.
 - Identify any issues not visible in the diff alone, such as:
@@ -179,7 +179,7 @@ When all reports are received, write every finding from all reports into `$MEM/f
 
 > **USE SERENA:** When the Serena MCP server is available, use `find_symbol` to locate the code that implements each criterion, and `find_referencing_symbols` to trace that the implementation is actually invoked in the expected code paths. This provides stronger evidence for pass/fail verdicts than reading diffs alone.
 
-> **APPEND to findings.md:** For each work item or criterion verified, append a `criteria_verdicts[]` entry to `$MEM/findings.md` with `item_key` (Jira key or criterion text), `verdict` (pass / fail / partial), and `rationale`. CR8 reads these to populate the Criteria Verification section of the findings report.
+> **MERGE into findings.md:** `Read $MEM/findings.md`, add a `criteria_verdicts[]` key (if absent) and append one entry per verified item — `item_key` (Jira key or criterion text), `verdict` (pass / fail / partial), and `rationale` — then `Write` the complete updated file. Do not overwrite without reading first — prior findings must be preserved. CR8 reads `criteria_verdicts[]` to populate the Criteria Verification section.
 
 **REQUIRED:** Verify the criteria for the review target. Do not skip any item.
 
