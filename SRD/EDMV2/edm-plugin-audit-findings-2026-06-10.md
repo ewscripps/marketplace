@@ -10,9 +10,30 @@ Review type: read-only plugin/codebase audit plus targeted runtime probes.
 
 The EDM plugin v2 surface is generally well structured. The marketplace entry points resolve, the helper scripts parse, the bundled smoke suites pass, and `claude plugin validate plugins/edm-ai-development` passes with one warning about root `CLAUDE.md` not being loaded as plugin runtime context.
 
-The biggest issues are not broad architecture failures. They are mismatches between documented v2 behavior, runtime enforcement, and the EDMV2 artifact record. The most important defect is the compliance Gate 3.5 path: it is documented and tested by text-presence checks, but the state script cannot record gate `3.5`, and `gate-check implement` does not enforce it when `compliance_enabled=true`.
+The original audit found mismatches between documented v2 behavior, runtime enforcement, and the EDMV2 artifact record. The most important defect was the compliance Gate 3.5 path: it was documented and tested by text-presence checks, but the state script could not record gate `3.5`, and `gate-check implement` did not enforce it when `compliance_enabled=true`.
 
-## Verification Performed
+## Post-Remediation Update - 2026-06-10
+
+The findings below are retained as the original audit record. A follow-up remediation pass has addressed the actionable items and reconciled the EDMV2 artifacts.
+
+Current status:
+- EXT-01 Gate 3.5 runtime enforcement: fixed. `approve-gate 3.5` now sets `compliance_gate_approved=true`; `gate-check implement` blocks when `compliance_enabled=true` and the compliance gate is not approved; fresh state seeds `compliance_gate_approved: false`.
+- EXT-02 lint-ignore support: fixed. `edm-lint-artifacts` now skips fenced code blocks, supports `<!-- edm-lint-ignore -->`, and supports `<!-- edm-lint-ignore-start/end -->` blocks for legitimate negative examples.
+- EXT-03 multi-initiative pre-commit lint: fixed. The hook now derives affected prefixes from staged `SRD/` paths and lints only those initiatives.
+- EXT-04 EDMV2 state normalization: fixed for the live EDMV2 state. `srd_version` is now `1.0.7`; `audit_rounds` is a JSON object; missing v2 fields were added; `code_audit_converged` is true.
+- EXT-05 ledger reconciliation: fixed. `SRD/EDMV2/code-audit/findings-ledger.md` marks CA-001 through CA-026 fixed and records convergence reached.
+- EXT-06 unicode cleanup: fixed for the cited HANDOFF and audit-SRD artifacts.
+- EXT-07 duplicate manifest risk: fixed by converting `plugins/edm-ai-development/plugin.json` to a symlink to `.claude-plugin/plugin.json`.
+
+Additional spot checks performed after remediation:
+- Full smoke suite passed post-remediation: 206 checks, 0 failures (`wave3`: 18, `wave4a`: 58, `wave4b`: 97, `wave5`: 33).
+- `claude plugin validate plugins/edm-ai-development` passed with the same root `CLAUDE.md` warning.
+- `plugins/edm-ai-development/bin/edm-state` contains the dedicated `compliance_gate_approved` state field and enforces it in `gate-check implement` when compliance is enabled.
+- `plugins/edm-ai-development/bin/tests/wave4a-smoke.sh` contains behavioral checks for Gate 3.5 recording, integer gate-array integrity, enforcement before approval, success after approval, and compliance-off passthrough.
+- `SRD/EDMV2/.edm-state.json` has `srd_version: "1.0.7"`, `audit_rounds: {"code": 2}`, and `code_audit_converged: true`.
+- `SRD/EDMV2/code-audit/findings-ledger.md` records open P0 = 0, open P1 = 0, and convergence reached on 2026-06-10.
+
+## Original Verification Performed
 
 - `bash -n` over EDM helper scripts and smoke tests: clean.
 - Bundled smoke suites: 199 checks passed, 0 failed.
@@ -24,7 +45,7 @@ The biggest issues are not broad architecture failures. They are mismatches betw
 - Direct Gate 3.5 probe: failed to record `3.5`; implementation gate check still passed with `compliance_enabled=true` after only Gate 3.
 - `edm-lint-artifacts EDMV2`: found attribution/unicode violations in EDMV2 artifacts.
 
-## Findings
+## Original Findings
 
 ### P1 - Gate 3.5 Is Documented But Not Runtime-Enforced
 
@@ -145,7 +166,9 @@ Recommendation:
 - Keep root `CLAUDE.md` as contributor documentation.
 - Audit it for any runtime-only expectations that are not duplicated in the relevant skill/agent files.
 
-## Recommended Fix Order
+## Original Recommended Fix Order
+
+The original fix order below is superseded by the post-remediation update above. The only sequencing nuance from follow-up review is that ledger reconciliation was faster than building a general `edm-state normalize` command; the practical short-term fix was to patch the live EDMV2 state and reconcile the ledger directly.
 
 1. Fix Gate 3.5 recording and enforcement, then add a behavioral smoke test.
 2. Normalize `SRD/EDMV2/.edm-state.json` and align `srd_version` with the current SRD/ticket pack.
