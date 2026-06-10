@@ -827,17 +827,15 @@ cmd_archive() {
   [[ $# -eq 1 ]] || die "usage: edm-state archive <PREFIX>"
   require_jq
   local prefix="$1"
-  local src dst
+  local src dst product_name=""
   src="$(initiative_dir_for "$prefix")"
-  # Archived initiatives go under .archived/{PREFIX} regardless of source layout.
-  dst="${SRD_ROOT}/.archived/${prefix}"
   [[ -d "$src" ]] || die "no initiative directory at $src"
 
   # Gate check: read code_audit_converged, product_name, and mode from state file.
   local state_file
   state_file="${src}/.edm-state.json"
   if [[ -f "$state_file" ]]; then
-    local state_json mode converged product_name
+    local state_json mode converged
     state_json="$(cat "$state_file" 2>/dev/null || echo '{}')"
     mode="$(echo "$state_json" | jq -r '.mode // "null"')"
     product_name="$(echo "$state_json" | jq -r '.product_name // ""')"
@@ -858,7 +856,13 @@ cmd_archive() {
     # converged == "true": proceed silently
   fi
 
-  mkdir -p "${SRD_ROOT}/.archived"
+  # Determine archive destination: preserve product-scoped layout when applicable.
+  if [[ -n "$product_name" ]]; then
+    dst="${SRD_ROOT}/.archived/${product_name}/$(basename "$src")"
+  else
+    dst="${SRD_ROOT}/.archived/${prefix}"
+  fi
+  mkdir -p "$(dirname "$dst")"
   # Use git mv when inside a git worktree so the move is tracked; fall back to plain mv.
   if git -C "$src" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     git mv "$src" "$dst" 2>/dev/null || mv "$src" "$dst"

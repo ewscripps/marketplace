@@ -19,7 +19,12 @@ allowed-tools: Read, Write, Bash(edm-state *), Bash(edm-init *), Bash(edm-valida
 
 1. Parse `$ARGUMENTS` for `{PREFIX}` and the initiative description. If missing, ask the user.
 2. `edm-validate-prefix <PREFIX>` -- if SRD/{PREFIX}/ already exists, ask whether to resume or pick another.
-3. `edm-init <PREFIX>` if new.
+3. If new: prompt the user for a one-word **product** name (e.g., `auth`, `payments`) and a short **description slug** (e.g., `user-auth-rewrite`). Then:
+   ```bash
+   edm-init --product <product> --description <slug> <PREFIX>
+   export EDM_PRODUCT=<product>; export EDM_DESCRIPTION=<slug>
+   ```
+   (The exports are required so subsequent `edm-state` calls resolve the product-scoped directory.)
 4. `edm-state phase-start <PREFIX> 1`
 5. Spawn `edm-explorer` agent(s) -- see "AI Execution Pattern" below.
 6. Synthesize agent output into the planning document at `${user_config.srd_root}/{PREFIX}/planning.md` using the template below.

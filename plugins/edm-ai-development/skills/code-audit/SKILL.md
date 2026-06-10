@@ -31,8 +31,7 @@ track findings across passes and determine convergence.
 2. Determine scope: files / commits / branch. Read critical files yourself first to write sharp agent prompts.
 3. Resolve the initiative directory from state (handles both flat and product-scoped layouts):
    ```bash
-   INIT_DIR="$(edm-state get <PREFIX> | jq -r 'if .product_name != "" and .initiative_description != "" then "\(.product_name)/\(.prefix)__\(.initiative_description)" else .prefix end')"
-   INIT_DIR="${user_config.srd_root}/${INIT_DIR}"
+   INIT_DIR="$(edm-state resolve-dir <PREFIX>)"
    ```
    - SRD: `${INIT_DIR}/${user_config.srd_filename}`
    - Ticket pack: `${INIT_DIR}/${user_config.ticket_pack_dirname}/`
