@@ -17,7 +17,7 @@
 
 **CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
-**KNOWLEDGE GRAPH SCOPE:** The knowledge graph in this workflow is session-scoped. It accumulates structured context across I0-I4 so that I5 can assemble a complete, grounded Jira issue description. All graph content must be fully materialized into the Jira card description before the session ends -- do not rely on the graph persisting to a future session.
+**FILE MEMORY SCOPE:** This workflow stores classification state in a per-work-item file-memory directory. `$MEM/work-item.md` is the root (issue title, observed/expected behavior, and the `## Affected Areas` section built in I2); `$MEM/explorations/*.md` hold I2 codebase findings; `$MEM/signals.md` holds the code-evidence, classification signals, and final classification verdict; `$MEM/related-cards.md` holds relevant related Jira cards from I1. Compute `MEM` once with the recipe in `file-memory-protocol.md` §1 (`<work-item-key>` = the Jira key, or `issue-<slug>`); the directory is created after the I1 approval gate. All file content must be fully materialized into the Jira card (Bug path) or carried into requirements-intake (Missing Requirement path) before the session ends. See `file-memory-protocol.md` for schemas and the checkpoint/compaction contract.
 
 **TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
 
@@ -39,19 +39,13 @@
 - I5 — Resolution
 - I6 — Cleanup
 
-**PHASE COMPACTION HANDOFF CONTRACT:** At designated compaction gates in this workflow, the agent writes a durable `phase_handoff` entity to the knowledge graph and prompts the user to run `/compact`. This prevents auto-compaction from discarding classification state mid-workflow.
+**CHECKPOINT & COMPACTION CONTRACT:** This workflow records position in a single `$MEM/checkpoint.md` file (full schema and contract in `file-memory-protocol.md` §4).
 
-**Steps at each gate — execute before instructing `/compact`:**
+**Per-phase checkpoint — after EVERY phase (I0–I5), automatically, with no chat output and no `/compact` prompt.** Atomically overwrite `$MEM/checkpoint.md` (`Write` to `checkpoint.md.tmp`, then `mv` over `checkpoint.md`) with `checkpoint_type: phase`, the just-completed `phase`, the upcoming `next_phase`, the `references` list, `## Decisions`, and `## Open items`. (Before `$MEM` exists — I0 — there is no checkpoint to write; the first checkpoint is written after I1 bootstraps `$MEM`.)
 
-1. Wait for any background `area-mapper` sub-agent to complete.
-2. Create a `phase_handoff` entity in the knowledge graph:
-   - **Name:** `phase-handoff-<work-item-key>-<phase-id>` (e.g. `phase-handoff-issue-checkout-disabled-I4`); use the `work_item_id` recorded after I1.
-   - **Observations:** `phase: <id>`, `skill: issue-intake`, `jira_key: <key or slug>`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. At the I4 gate only: `classification: <Bug or Missing Requirement>`, `severity: <level>` (Bug path only).
-   - **Relations:** `BELONGS_TO` → the `work_item` entity for this issue; `SUPERSEDES` → prior `phase_handoff` for this work item (if any); `REFERENCES` → `classification` node, `code_evidence` node, and `classification_signal` nodes from I3.
-3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
-4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, work item key, one-line decision summary including classification verdict, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, and resume at `next_phase`. Before executing the resumed phase, **re-read that phase's section in this skill's `workflow.md`** so its full instructions survive compaction — in particular, any phase that asks the user clarifying or structured questions MUST use `AskUserQuestion` (per the Clarification Rule), never plain text. If the user types a different message instead, handle it normally.
+**Compaction gate (I4) — additionally prompts the user to `/compact`.** Do the per-phase write but with `checkpoint_type: gate`, recording the `classification` verdict (Bug / Missing Requirement) and `severity` (Bug only) in `## Decisions`, then: (1) wait for any background `area-mapper` to finish; (2) emit the Phase Summary block (§4(b)) — phase + skill, work item key, classification verdict, one-line decisions, verbatim approval condition, `next_phase`, the checkpoint file path, and the resume contract; (3) end the turn with the literal line **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` at a gate.
 
-**Cleanup:** Include all `phase_handoff` entities for this work item (prefix `phase-handoff-<work-item-key>-`) in the I6 cleanup enumeration alongside other session-scoped entities.
+**Universal resume rule — on ANY resume, before doing anything else:** `Read $MEM/checkpoint.md` → `Read` every file in its `references` (`signals.md`, `work-item.md`, `explorations/*.md`) → **re-read the `next_phase` section of this `workflow.md`** (any phase asking clarifying/structured questions MUST use `AskUserQuestion`) → continue at `next_phase`. If `$MEM` is absent, restart the affected phase from prior chat. Approval gates stay chat-scoped — never assume a pending approval was granted.
 
 ---
 
@@ -99,7 +93,6 @@
     
     - User / system impact — open-ended
     - Workaround — `AskUserQuestion` (Header: `Workaround`, Question: `Is there a workaround available?`, Options: `Yes — I'll describe it`, `No — there is no workaround`, `Unknown`)
-    - Reported by — open-ended: name and team
     - Related issue / epic — `AskUserQuestion` (Header: `Related Jira`, Question: `Is there a related Jira Epic or issue this should be linked to?`, Options: `Yes — I'll provide the key`, `No`)
     - Existing card — **Before asking**, run `git rev-parse --abbrev-ref HEAD` and apply a regex match for `[A-Z]+-[0-9]+` against the branch name. If a candidate key is found: `AskUserQuestion` (Header: `Existing Card`, Question: `Has a Jira card already been created for this issue?`, Options: `Yes, <extracted key>` (description: "Use <extracted key> as the existing Jira card for this issue") / `Use a different key` (description: "Type the correct issue key in the Other field") / `No`). If no candidate is found: `AskUserQuestion` (Header: `Existing Card`, Question: `Has a Jira card already been created for this issue?`, Options: `Yes — I'll provide the key`, `No`).
 3. After all questions are answered, summarize the gathered context back to the user in a clear, structured format.
@@ -117,7 +110,6 @@
 > - Environment: env tier, OS + version, browser + version (if applicable), app version (if known)
 > - User / System Impact
 > - Workaround (description, or explicitly "none")
-> - Reported By (name / team)
 > - Related Issue or Epic (Jira key, or explicitly "none")
 > - Existing Jira Card (issue key, or explicitly "none")
 
@@ -132,8 +124,8 @@
 **Agent Actions:**
 
 1. If an Existing Jira Card key was provided in I0, retrieve that issue immediately. Read its full description, summary, any context already captured (labels, epic link, linked issues, severity, reproduction steps, environment details, and comment history). Surface all of this content — it will be used to enrich the final Bug description in I5 Path A.
-2. Search Jira for existing bugs, tasks, or issues that match or closely overlap with the observed behavior.
-3. Search for any known issues, incidents, or investigations already open in the same area.
+2. Search Jira for existing bugs, tasks, or issues that match or closely overlap with the observed behavior. **Related-card capture:** for each candidate that passes the relevance bar (materially informs the investigation, root cause, or fix — not merely a possible duplicate to flag), call `jira_get_issue` to read its description and append it to `$MEM/related-cards.md` (schema §3.7) with `key`, `title`, `status`, `relationship` (overlaps | prior-art | same-area | superseded-by), a one-line `why_relevant`, and a concise excerpt of the pertinent section. Log candidates that fail the bar in the chat rather than storing them. (Create `$MEM` first per the bootstrap step below if it does not yet exist.)
+3. Search for any known issues, incidents, or investigations already open in the same area; capture any materially relevant one into `related-cards.md` the same way.
 4. If a Related Issue or Epic was provided in I0, retrieve its description and status.
 
 > **REQUIRED:** Present all of the following in the chat before proceeding:
@@ -145,7 +137,7 @@
 
 > **APPROVAL GATE — FULL STOP.** Present the Jira context summary. Use `AskUserQuestion` (Header: `I1 Approval`, Question: `Is the Jira context correct? Is the existing card (if any) right, is there no duplicate, and is the related Epic (if any) correct?`, Options: `Approve and proceed (Recommended)`, `Request changes`). Do not proceed to I2 until the user approves.
 
-> **USE KNOWLEDGE GRAPH:** After the I1 approval gate is confirmed, write the issue under investigation to the knowledge graph as a `work_item` entity with name `work_item-<key>` where `<key>` is the existing Jira issue key (if provided in I0) or a normalized slug of the issue title prefixed with `issue-` (e.g. `work_item-issue-checkout-button-disabled`). Observations: `title`, `observed_behavior`, `expected_behavior`, `existing_jira_key` (if provided), `phase: investigation`. **Record the entity name** — it is the `work_item_id` passed to every `codebase-explorer` call in I2.
+> **BOOTSTRAP FILE MEMORY:** After the I1 approval gate is confirmed, compute `MEM` (recipe §1) where `<work-item-key>` is the existing Jira issue key (if provided in I0) or a normalized slug of the issue title prefixed with `issue-` (e.g. `issue-checkout-button-disabled`). `mkdir -p "$MEM/explorations"` and `Write $MEM/work-item.md` (schema §3.1) with `work_type: bug` (provisional — confirmed at I4), `jira_key` (or null), `title`, `status: in_progress`, `phase: I1`, `skill: issue-intake`, and the observed/expected behavior under `## Description`. (If `related-cards.md` was already written during I1 steps 2–3, it lives under this same `$MEM`.) The `MEM` path (as `memory_dir`) is passed to every `codebase-explorer` call in I2.
 
 ---
 
@@ -153,14 +145,14 @@
 
 **Objective:** Determine what the codebase currently does in the affected area — whether logic exists for the expected behavior or not. This is the primary input to classification in I4.
 
-**DISCOVERY PRE-CHECK:** Before spawning codebase-explorer agents, call `read_graph` and check for any entity whose name starts with `discovery_summary-`. A prior `/implementation-discovery` run may already have mapped the area this issue touches.
-1. **If one or more are present:** briefly describe each by `topic` and `chosen_approach`, then use `AskUserQuestion` (Header: `Discovery Reuse`, Question: `A prior implementation-discovery session explored related code. Use its findings to seed this investigation?`, Options: `Yes — reuse the discovery findings`, `No — investigate fresh`). If multiple exist, list them and let the user pick one or decline.
-2. **If the user reuses one:** add `discovery_confirmed: true` to that `discovery_summary-<slug>` entity. Re-link its `exploration` entities to this issue's `work_item-<key>` node with a `for` relation, skipping any finding entity marked `superseded: true`. Seed the `affected_area` rollup and the I4 `code_evidence` input from the discovery's `affected_areas` and `synthesis_chosen` — treat these as a starting map of *where the expected behavior would live*, not a conclusion about the defect. Then run Agent Actions steps 1–8 focused on confirming whether the code discovery described actually exists and behaves correctly, rather than re-exploring from scratch. Discovery is approach-oriented, so still verify live behavior against the observed/expected gap before concluding in I4.
+**DISCOVERY PRE-CHECK:** Before spawning codebase-explorer agents, `Glob $MEMROOT/discovery-*/summary.md` (compute `$MEMROOT` via the recipe in `file-memory-protocol.md` §1) and `Read` each `summary.md` frontmatter. A prior `/implementation-discovery` run may already have mapped the area this issue touches.
+1. **If one or more are present:** briefly describe each by `topic_slug` and `chosen_approach`, then use `AskUserQuestion` (Header: `Discovery Reuse`, Question: `A prior implementation-discovery session explored related code. Use its findings to seed this investigation?`, Options: `Yes — reuse the discovery findings`, `No — investigate fresh`). If multiple exist, list them and let the user pick one or decline.
+2. **If the user reuses one:** set `discovery_confirmed: true` in that `discovery-<slug>/summary.md` frontmatter. Copy its `discovery-<slug>/explorations/*.md` into `$MEM/explorations/` (Bash `cp`), skipping any file/finding marked superseded. Seed the `## Affected Areas` (in `work-item.md`) and the I4 code-evidence input from the discovery's `affected_areas` and `## Synthesis (chosen)` — treat these as a starting map of *where the expected behavior would live*, not a conclusion about the defect. Then run Agent Actions steps 1–8 focused on confirming whether the described code actually exists and behaves correctly, rather than re-exploring from scratch. Discovery is approach-oriented, so still verify live behavior against the observed/expected gap before concluding in I4.
 3. **If the user declines (or none exist):** proceed with normal investigation.
 
 > **USE SEQUENTIAL THINKING:** Before presenting the codebase analysis, invoke the `sequentialthinking` tool. Based on the explorer findings, systematically evaluate the evidence of whether code exists for the expected behavior. A false negative here — concluding code doesn't exist because it wasn't found quickly — is the most common source of misclassification in I4. Work through the evidence, identify any gaps that need further investigation, and resolve them before concluding. Do not present the analysis until the reasoning is complete.
 
-> **USE KNOWLEDGE GRAPH:** After synthesizing the explorer findings, write investigation conclusions to the graph. Roll up the explorer-written `affected_file` entities into `affected_area` summary nodes for each file, module, or service identified. Create a `code_evidence` node with properties: `code_exists_for_behavior` (true / false / uncertain), `evidence` (specific file names, function names, or confirmed absence — pulled from the explorer-written `evidence` entities), and `inferred` (true / false). Link both to the `work_item` node. I4A reads these nodes as primary classification signals — they must be accurate and grounded.
+> **WRITE Affected Areas + signals.md:** After synthesizing the explorer findings, write investigation conclusions to files. Roll up the explorations' `affected_files` into a `## Affected Areas` section in `$MEM/work-item.md` (one entry per file / module / service identified, with risk). Then `Write $MEM/signals.md` with a `code_evidence` block in frontmatter: `code_exists_for_behavior` (true / false / uncertain), `evidence` (specific file names, function names, or confirmed absence — pulled from the explorations' `evidence` entries), and `inferred` (true / false). I4A reads `signals.md` as a primary classification signal — it must be accurate and grounded.
 
 **Agent Actions:**
 
@@ -168,16 +160,16 @@
 2. Invoke a `codebase-explorer` sub-agent in **parallel** for each distinct area in this project, providing:
     - The target area to explore
     - The question: "Does code exist in this area that is intended to produce [expected behavior]? If it exists, is there evidence it is behaving incorrectly? If it does not exist, confirm its absence clearly."
-    - The `work_item_id` recorded after I1 (e.g. `work_item-PROJ-123` or `work_item-issue-<slug>`). All findings the explorer streams to the graph will be linked to this node.
+    - The `memory_dir` (`$MEM`) and a normalized `area_slug`. The explorer writes its findings to `$MEM/explorations/<area_slug>.md`.
     - The bug description, observed behavior, expected behavior, reproduction steps, and any logs for context
-3. Wait for all explorers to return. Each non-failed return contains an `Entity:` line with the exploration entity name. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters. `FAILED` means no graph data was written — re-spawn that explorer before proceeding.
+3. Wait for all explorers to return. Each non-failed return contains a `File:` line with the exploration file name. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters. `FAILED` means no file was written — re-spawn that explorer before proceeding.
 
-> **POST-EXPLORATION ENRICHMENT:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `work_item_id`. The mapper crystallizes durable area knowledge from this run's graph into Serena project memory for future explorations. Do not wait for it — proceed immediately to step 4.
-4. Call `open_nodes` on each `exploration` entity name from the returns. If any entity comes back empty, re-spawn that explorer rather than treating missing data as confirmed. Surface any `open_question` entities in the responses. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
-5. Synthesize the findings from the graph. For each area, record whether code exists for the expected behavior with specific evidence (cite `evidence` entities by their `file` and `line_range` observations).
+> **POST-EXPLORATION ENRICHMENT:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `memory_dir` (`$MEM`). The mapper crystallizes durable area knowledge from this run's exploration files into Serena project memory for future explorations. Do not wait for it — proceed immediately to step 4.
+4. `Read` each `$MEM/explorations/<area_slug>.md` from the returns. If any file is missing or empty, re-spawn that explorer rather than treating missing data as confirmed. Surface any `open_questions` entries. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `memory_dir`) before proceeding.
+5. Synthesize the findings from the exploration files. For each area, record whether code exists for the expected behavior with specific evidence (cite `evidence` entries by their `file` and `line_range`).
 6. Look for any recent changes (commits, deployments, config changes) in the affected areas that may have introduced a regression.
-7. Identify relevant error handling paths, edge cases, or known fragile areas — these surface from `risk` entities and from `evidence` entities with `evidence_type: behavior`.
-8. Flag any areas of uncertainty with explicit reasoning. Label items derived from observations marked `inferred: true` as `[INFERRED]`.
+7. Identify relevant error handling paths, edge cases, or known fragile areas — these surface from `risks` and from `evidence` entries with `evidence_type: behavior`.
+8. Flag any areas of uncertainty with explicit reasoning. Label items derived from entries marked `inferred: true` as `[INFERRED]`.
 
 > **REQUIRED:** Present all of the following in the chat before proceeding:
 > 
@@ -211,7 +203,7 @@
 4. Ask each question using a separate `AskUserQuestion` call in sequence — one question per call. Include the `[BLOCKING]` or `[NICE TO HAVE]` tag in the question text. For open-ended questions, use two options: `Provide answer` (description: "Type your response using the Other input field") and, for non-blocking questions only, `Skip` (description: "Skip this non-blocking question"). For closed-enum questions, use specific options.
 5. Record all answers verbatim. Do not infer or invent answers.
 
-> **USE KNOWLEDGE GRAPH:** After answers are confirmed, write each classification signal to the graph. Create a `classification_signal` node for each answered question with properties: `category` (history / scope / regression / intent / logs_evidence), `answer` (verbatim), and `points_to` (bug / missing_requirement / ambiguous). Link each node to the issue. I4A reads all `classification_signal` and `code_evidence` nodes to produce its verdict.
+> **WRITE signals.md:** After answers are confirmed, append each classification signal to `$MEM/signals.md` as a `classification_signals[]` entry with `category` (history / scope / regression / intent / logs_evidence), `answer` (verbatim), and `points_to` (bug / missing_requirement / ambiguous). I4A reads all `classification_signals` plus the `code_evidence` block to produce its verdict.
 
 > **REQUIRED:** Present all BLOCKING questions answered and answers recorded, and remaining unanswered questions listed as open items.
 
@@ -231,7 +223,7 @@
 
 > **THINK HARD:** Before committing to the classification verdict, think hard about the strongest piece of counter-evidence — the signal that most strongly contradicts your tentative conclusion. If you cannot articulate why that counter-signal is outweighed, the classification is not ready. A Bug sent down the Missing Requirement path loses its regression test; a Missing Requirement sent down the Bug path creates a broken fix that cannot reproduce.
 
-> **USE KNOWLEDGE GRAPH:** Read all `classification_signal` and `code_evidence` nodes. For each signal in the table below, find the corresponding node and record what it points to. Tally the signals, weight the strongest evidence (code_evidence is typically the most reliable signal), and produce the verdict. After the verdict is confirmed, write a `classification` node with properties: `verdict` (bug / missing_requirement / ambiguous) and `rationale`. This node is read by I5 to determine the resolution path.
+> **READ + WRITE signals.md:** Read `$MEM/signals.md` — all `classification_signals` and the `code_evidence` block. For each signal in the table below, record what it points to. Tally the signals, weight the strongest evidence (`code_evidence` is typically the most reliable signal), and produce the verdict. After the verdict is confirmed, set `classification: { verdict: bug|missing_requirement|ambiguous, rationale: <text> }` in `signals.md` frontmatter. I5 reads this to determine the resolution path.
 
 Using all output from I0–I3, classify the issue against the following criteria:
 
@@ -279,7 +271,7 @@ Assign a severity level:
 
 > **APPROVAL GATE — FULL STOP.** Present the full I4 classification (and severity if Bug). Use `AskUserQuestion` (Header: `I4 Approval`, Question: `Is the classification correct, does the rationale accurately reflect the evidence, and is the severity accurate (if Bug)?`, Options: `Approve and proceed (Recommended)`, `Request changes`). Do not proceed to I5 until the user approves. The confirmed classification determines which I5 path is followed — do not deviate.
 
-> **COMPACTION GATE — I4:** Once I4 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<work-item-key>-I4`; `next_phase: I5`; decisions: classification verdict (Bug or Missing Requirement) and severity (Bug only); approval_condition: verbatim user phrasing. REFERENCES: classification node, code_evidence node, classification_signal nodes. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to I5.
+> **COMPACTION GATE — I4:** Once I4 approval is confirmed, follow the Checkpoint & Compaction Contract above (gate path). Write `checkpoint.md` with `phase: I4`, `next_phase: I5`, `checkpoint_type: gate`, `references: [signals.md, work-item.md, explorations/*.md]`; `## Decisions`: classification verdict (Bug or Missing Requirement) and severity (Bug only); `approval_condition`: verbatim user phrasing. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to I5.
 
 ---
 
@@ -293,10 +285,12 @@ Follow the path matching the confirmed classification from I4.
 
 **Objective:** Create or update the Jira Bug card with all gathered context and a pointer to the bug card execution skill.
 
+> **FULL CONTEXT LOAD:** `Glob $MEM` and `Read` `work-item.md` (`## Affected Areas`), `signals.md` (classification + code evidence), `related-cards.md`, and every `explorations/*.md` before assembling the Bug card.
+
 **Agent Actions:**
 
 1. Write the fix criteria: outcome-based acceptance criteria describing the state that must be true after the bug is fixed -- one criterion per discrete behavior to restore.
-2. **Assemble the Patterns & Code References section** from the I2 exploration subgraph: collect the `pattern`, `evidence` (file/line_range/claim), and `integration_point` entities relevant to the fix (skip `superseded: true`). For the 1–3 most important, use `Read` to extract a ≤ ~15-line snippet from the referenced range, each prefixed with a `// path:line_range` comment. If nothing beyond the Affected Areas applies, write "None — none beyond the affected areas above."
+2. **Assemble the Patterns & Code References section** by reading `$MEM/explorations/*.md`: collect the `patterns`, `evidence` (file/line_range/claim), and `integration_points` entries relevant to the fix. For the 1–3 most important, use `Read` to extract a ≤ ~15-line snippet from the referenced range, each prefixed with a `// path:line_range` comment. If nothing beyond the Affected Areas applies, write "None — none beyond the affected areas above."
 3. Construct the full issue description using the Bug Description Structure below. The description must contain only the structured bug context. Do not embed workflow instructions, skill-invocation text, or placeholder tokens.
 4. Populate the following fields:
 
@@ -359,7 +353,7 @@ Follow the path matching the confirmed classification from I4.
 [Description, or "None identified"]
 
 ## Affected Areas
-[Structured list from I2 codebase analysis. For each area:
+[Structured list from `work-item.md`'s `## Affected Areas` (built in I2). For each area:
 file/module/service path, brief description of relevance, and risk level.]
 - `[path]` -- [description] ([high/medium/low] risk)
 
@@ -367,9 +361,9 @@ file/module/service path, brief description of relevance, and risk level.]
 [Known or suspected root cause from I2 and I3. If unknown: "Unknown -- investigation required."]
 
 ## Patterns & Code References
-[Relevant code paths and conventions for the fix, from the I2 `pattern`/`evidence`/
-`integration_point` entities. References are durable; snippets are illustrative and may
-drift — the referenced file is source of truth. "None — none beyond the affected areas above." if N/A.]
+[Relevant code paths and conventions for the fix, from the I2 `$MEM/explorations/*.md`
+`patterns`/`evidence`/`integration_points` entries. References are durable; snippets are illustrative
+and may drift — the referenced file is source of truth. "None — none beyond the affected areas above." if N/A.]
 **Patterns to follow:**
 - **[name]** — [description]. Canonical example: `[path:line]`.
 **Code references:**
@@ -397,7 +391,7 @@ with a `// [path:line_range]` comment, ≤ ~15 lines, read from the referenced r
 
 2. **Ask for additional links:** Use `AskUserQuestion` (Header: `Additional Links`, Question: `Is there an existing Jira issue this bug should be linked to beyond the ones already linked?`, Options: `Yes — I'll provide the issue key` — type the key using the Other input, `No — no additional links needed`). If the user provides a key, call `jira_get_issue` to confirm it exists, then call `jira_create_issue_link` with `link_type: "Relates to"` to create the link. Confirm success.
 
-3. The bug path cleanup happens in I6 after the durable Jira record is complete. Do not clear the session-scoped graph before that cleanup phase.
+3. The bug path cleanup happens in I6 after the durable Jira record is complete. Do not remove the file-memory directory before that cleanup phase.
 
 ---
 
@@ -409,7 +403,7 @@ with a `// [path:line_range]` comment, ≤ ~15 lines, read from the referenced r
 
 1. Inform the user that the issue has been classified as a missing requirement and that you will now follow the Requirements Intake workflow to define and create the appropriate work item.
 2. Read the Requirements Intake Workflow from the local skills directory for this project. When invoked from `.claude/skills/issue-intake/`, this is typically the sibling path `../requirements-intake/workflow.md`.
-3. Carry forward the structured evidence already gathered in I0–I4. Reuse the existing `classification_signal`, codebase evidence, affected area, and related-issue context when pre-populating the requirements workflow so the user is not asked to repeat themselves.
+3. Carry forward the structured evidence already gathered in I0–I4 by **reusing issue-intake's existing `$MEM` as the requirements work-item directory** — its `explorations/*.md`, `related-cards.md`, `signals.md`, and `work-item.md` are already in place, so R2/R4 read them directly. Do not bootstrap a second directory and do not re-ask answered questions.
 4. Pre-populate the R0 context using information already gathered in I0–I4. Do not re-ask questions that have already been answered. Map the intake data as follows:
 
 |R0 Field|Source|
@@ -417,16 +411,15 @@ with a `// [path:line_range]` comment, ≤ ~15 lines, read from the referenced r
 |Work Type|Feature (default) — use `AskUserQuestion` (Header: `Work Type`, Question: `What type of work is this? Feature is the default for missing requirements.`, Options: `Feature (Recommended)` — new capability or user-facing behavior, `Maintenance` — improving, fixing, updating, or maintaining existing code (tech debt, refactors, dependency updates, compliance, upkeep))|
 |Title or Name|Issue title from I0|
 |Description / Problem Statement|Observed behavior + expected behavior from I0|
-|Requested By / Identified By|Reported By from I0|
 |Related Epic|Related Epic from I0 / I1|
 |Codebase Hints|Affected areas from I2|
 |Existing Jira Card|Existing card key from I0 (if provided)|
 
 5. Present the pre-populated R0 summary to the user and confirm it before proceeding — this serves as the R0 approval gate.
-6. After the user confirms the pre-populated R0 summary, perform the Requirements Intake R0 post-approval action by writing the `work_item` node to the knowledge graph using the confirmed work type and context. This completes the R0 graph initialization before continuing.
+6. After the user confirms the pre-populated R0 summary, perform the Requirements Intake R0 post-approval action against issue-intake's existing `$MEM`: update `work-item.md` with the confirmed work type and requirements context (do not create a second directory). This completes the R0 initialization before continuing.
 7. Resume the Requirements Workflow from **R1**, following all phases (R1 through R6) exactly as written. All R1–R6 execution rules, approval gates, and self-review requirements apply in full.
 8. After the Jira issue has been created or updated at the end of R5, use `AskUserQuestion` (Header: `Additional Links`, Question: `Is there an existing Jira issue this should be linked to?`, Options: `Yes — I'll provide the issue key` — type the key using the Other input, `No — no additional links needed`). If the user provides a key, call `jira_get_issue` to confirm it exists, then call `jira_create_issue_link` with `link_type: "Relates to"` to create the link. Confirm success.
-9. The missing-requirement path cleanup happens in I6 after the carried-over requirements workflow is complete. The Requirements Intake workflow clears the shared session-scoped graph at its cleanup phase; do not finish this path with any issue-intake state left in the graph.
+9. The missing-requirement path cleanup happens in I6 after the carried-over requirements workflow is complete. The Requirements Intake workflow removes the shared file-memory directory at its cleanup phase; do not finish this path with any issue-intake state left on disk.
 
 > **APPROVAL GATE — FULL STOP.** Present the pre-populated R0 context summary. Use `AskUserQuestion` (Header: `I5B Approval`, Question: `Are all fields accurate and is the Work Type correct?`, Options: `Approve and proceed (Recommended)`, `Request changes`). Only proceed to R1 after the user approves.
 
@@ -434,54 +427,41 @@ with a `// [path:line_range]` comment, ≤ ~15 lines, read from the referenced r
 
 ### I6 — Cleanup
 
-**Objective:** Clear the session-scoped knowledge graph for the path that was actually taken, after explicit user confirmation. The bug path owns its own cleanup; the missing-requirement path delegates to Requirements Intake R6.
+**Objective:** Remove the file-memory directory for the path that was actually taken, after explicit user confirmation. The bug path owns its own cleanup; the missing-requirement path delegates to Requirements Intake R6.
 
 #### Bug path
 
-1. **Enumerate.** Call `read_graph`. Identify every entity that should be deleted in this cleanup:
-   - The intake `work_item` entity for this issue and every entity linked to it: `classification_signal`, `code_evidence`, `affected_area`, `phase_handoff` (prefix `phase-handoff-<work-item-key>-`), plus the explorer-written subgraph from I2 (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`).
-   - Any upstream **implementation-discovery** state still in the graph, including any discovery `phase_handoff` entities (prefix `phase-handoff-discovery-<slug>-`): the `discovery_summary-<slug>` entity, the `work_item-discovery-<slug>` work item, the verification-round and first-round `exploration` subgraph linked to it (including any finding entities marked `superseded: true`, which must still be deleted — supersession marks them as non-canonical, not as already-removed), and any structured `open_question` entities reified at D5 (sources `d3_discussion` and `d4_verification`). These persist intentionally from a prior `/implementation-discovery` run; if discovery happened earlier in this session and the user opened a bug instead of running requirements-intake, I6 owns reaping the discovery state too.
-   - Any other intake-scoped entities created during I0–I5 that link back to the work item.
+1. **Enumerate.** List the directories that will be removed:
+   - `$MEM` — this issue's work-item directory (`work-item.md`, `signals.md`, `related-cards.md`, `explorations/*.md`, `checkpoint.md`).
+   - Any upstream **implementation-discovery** directory reused at I2: `$MEMROOT/discovery-<slug>/`. If discovery happened earlier in this session and the user opened a bug instead of running requirements-intake, I6 owns reaping it.
 
-2. **Present the cleanup plan to the user.** Build a short, structured summary in the chat:
+2. **Present the cleanup plan to the user:**
 
    ```
    ## I6 Cleanup Plan (Bug path)
 
-   The following session-scoped knowledge-graph entities will be deleted now that the Jira bug card is finalized:
+   The following file-memory directories will be removed now that the Jira bug card is finalized:
 
-   ### From this Issue Intake
-   - work_item: <name>
-   - classification_signal / code_evidence: <total count>
-   - affected_area: <count>
-   - exploration: <count>
-   - affected_file / evidence / pattern / integration_point / risk / open_question: <total count>
-   - <any other intake-scoped entities, listed by type and count>
-
-   ### From upstream Implementation Discovery (if present)
-   - discovery_summary-<slug>: <name, or "none">
-   - work_item-discovery-<slug>: <name, or "none">
-   - verification-round explorations: <count, or "none">
-
-   Total entities to delete: <N>
+   - This issue intake: web-cms-memory/<work-item-key>/  (<file count> files)
+   - Upstream implementation discovery (if reused): web-cms-memory/discovery-<slug>/  (or "none — no discovery reused")
    ```
 
-   If the upstream-discovery section reports "none" across the board, state explicitly that no implementation-discovery state was found in the graph for this run.
+   If no implementation-discovery directory was reused, state that explicitly.
 
-3. > **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` (Header: `I6 Cleanup`, Question: `Proceed with cleanup of these entities?`, Options: `Proceed with cleanup (Recommended)` — delete all listed knowledge-graph entities, `Skip cleanup` — leave the graph untouched; entities will remain until the Claude Code session ends). Do not run `delete_entities` until the user selects Proceed.
+3. > **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` (Header: `I6 Cleanup`, Question: `Proceed with cleanup of these directories?`, Options: `Proceed with cleanup (Recommended)` — remove the listed file-memory directories, `Skip cleanup` — leave them on disk until removed). Do not run `rm -rf` until the user selects Proceed.
 
-4. **Execute deletion.** On explicit confirmation, call `delete_entities` with the full list enumerated in step 1. After deletion, report a one-line confirmation in the chat: "Cleanup complete: <N> entities deleted."
+4. **Execute deletion.** On explicit confirmation, `rm -rf "$MEM"` and (if a discovery was reused) `rm -rf "$MEMROOT/discovery-<slug>"` (Bash). Each removal is atomic. Report a one-line confirmation: "Cleanup complete: removed <N> directories."
 
-5. Do not retain classification, evidence, affected-area, or upstream-discovery state after the durable Jira record is complete, except when the user explicitly declined cleanup at step 3.
+5. Do not retain classification, evidence, affected-area, or upstream-discovery state on disk after the durable Jira record is complete, except when the user explicitly declined cleanup at step 3.
 
 #### Missing Requirement path
 
-This path delegates cleanup to the carried-over Requirements Intake workflow's gated R6 cleanup, which sweeps both issue-intake state (`classification_signal`, `code_evidence`) and any upstream implementation-discovery state along with the requirements work item.
+This path delegates cleanup to the carried-over Requirements Intake workflow's gated R6 cleanup. Because Path B **reuses issue-intake's `$MEM`** as the requirements work-item directory, that single directory (holding `signals.md`, `related-cards.md`, `explorations/*.md`, and `work-item.md`) plus any upstream implementation-discovery directory are removed by R6.
 
 1. Confirm Requirements Intake completed through its R6 (gated) cleanup phase.
 2. If R6 ran and the user confirmed cleanup, no further action is required from this path.
-3. If R6 ran and the user declined cleanup at the R6 gate, surface that decision in the chat as the final state of this path so the user knows discovery and issue-intake entities remain in the graph until the Claude Code session ends. Do not call `delete_entities` from this path; the gate decision belongs to R6.
-4. If R6 did not run for any reason (Requirements Intake aborted before R6), call `read_graph`, enumerate the issue-intake-scoped entities (`work_item`, `classification_signal`, `code_evidence`, plus any I2 exploration subgraph still linked), and apply the same gated cleanup pattern as the Bug path above to those entities only — do not touch implementation-discovery or requirements work-item entities, since those remain owned by Requirements Intake R6.
+3. If R6 ran and the user declined cleanup at the R6 gate, surface that decision in the chat as the final state of this path so the user knows the file-memory directories remain on disk until removed. Do not run `rm -rf` from this path; the gate decision belongs to R6.
+4. If R6 did not run for any reason (Requirements Intake aborted before R6), apply the same gated cleanup pattern as the Bug path above to issue-intake's `$MEM` directory only (`rm -rf "$MEM"`) — do not touch any implementation-discovery directory, since that remains owned by Requirements Intake R6.
 
 ---
 
@@ -493,5 +473,5 @@ This workflow is complete when **all** of the following are true:
 - All approval gates explicitly confirmed in the chat
 - All self-review checks passed before presenting output
 - **Bug path:** Jira Bug updated or created, issue linking offered, and no workflow or skill-invocation instructions were embedded in the description
-- **Missing Requirement path:** R0 context confirmed, R0 knowledge-graph initialization completed, Requirements Workflow completed through R5, issue linking offered
-- I6 cleanup completed for the selected path: either the user confirmed cleanup at the I6 gate (Bug path) or the carried-over Requirements Intake R6 gate (Missing Requirement path) and the listed entities — including any upstream implementation-discovery state — were deleted, or the user explicitly declined cleanup at the gate
+- **Missing Requirement path:** R0 context confirmed, R0 file-memory initialization completed, Requirements Workflow completed through R5, issue linking offered
+- I6 cleanup completed for the selected path: either the user confirmed cleanup at the I6 gate (Bug path) or the carried-over Requirements Intake R6 gate (Missing Requirement path) and the listed file-memory directories — including any upstream implementation-discovery directory — were removed, or the user explicitly declined cleanup at the gate

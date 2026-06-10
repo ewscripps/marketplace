@@ -10,7 +10,7 @@
 
 **APPROVAL GATE BEHAVIOR:** Approval gates are chat-scoped. If explicit approval is not captured before the session ends or context is lost, stop at the gate. On resume, re-present the latest plan or testing handoff and ask for confirmation again. Never assume a pending approval was granted.
 
-**KNOWLEDGE GRAPH SCOPE:** The knowledge graph in this workflow is session-scoped and used to track work-item state (affected areas, exploration findings, plan, implementation progress). If this workflow is resumed in a new session and the graph is empty, reconstruct state by reading the Jira issue description and all comments posted in prior phases before continuing.
+**FILE MEMORY SCOPE:** This workflow stores session state in a per-work-item file-memory directory (`work-item.md`, `checkpoint.md`, `plan.md`, `explorations/*.md`, …). Compute its path once with the shared recipe in `file-memory-protocol.md` §1 (`MEM=<…>/web-cms-memory/<JIRA-KEY>`) and reuse that exact path for every read/write. If the workflow is resumed and `$MEM` is absent (new session, or it was deleted), reconstruct state by reading the Jira issue description and all comments posted in prior phases before continuing. See `file-memory-protocol.md` for all file schemas, the checkpoint/compaction contract, and the full-context-load rule.
 
 **CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
@@ -36,6 +36,8 @@ Additional Jira comments are allowed only for blocking failures, reposting a rev
 When a Jira comment heading references workflow phases, use the exact phase label defined here. Do not invent synthetic phase ranges such as `T2-T5` or `T6-T10`. The only routine combined phase heading allowed is `T4/T5` because one comment serves both phases.
 
 **Comment formatting:** Pass clean GitHub-flavored markdown to `jira_add_comment`. Never backslash-escape markdown characters — bold is literal `**text**`, never `\*\*text\*\*`. Ensure every bold span has matching `**` delimiters on both sides.
+
+**Comment reviewer gate:** Every `jira_add_comment` call in this workflow (T4/T5, T10, T12) is gated by an `**Independent comment review:**` block, following the same pattern as `plan-reviewer` and `implementation-reviewer`. The `comment-reviewer` sub-agent must return APPROVED (or the 3-iteration cap must be reached) before `jira_add_comment` is called. There are no exceptions.
 
 **COMMIT, PUSH, MERGE & TRANSITION DISCIPLINE — HARD RULE:** Every one of the following is an irreversible action that affects shared state. None may run until the user has explicitly selected the "Approve" option at the T10 User Testing gate **in this same session**:
 
@@ -81,19 +83,13 @@ These actions must not be chained. Run each one at a time, reporting the result 
 - T12 — Summary of Changes
 - T13 — Cleanup
 
-**PHASE COMPACTION HANDOFF CONTRACT:** At designated compaction gates in this workflow, the agent writes a durable `phase_handoff` entity to the knowledge graph and prompts the user to run `/compact`. This prevents auto-compaction from firing mid-phase and discarding phase position.
+**CHECKPOINT & COMPACTION CONTRACT:** This workflow records position in a single `$MEM/checkpoint.md` file (full schema and contract in `file-memory-protocol.md` §4). Two mechanisms:
 
-**Steps at each gate — execute before instructing `/compact`:**
+**Per-phase checkpoint — after EVERY phase (T0–T12), automatically, with no chat output and no `/compact` prompt.** Run `git branch --show-current` and `git log --oneline -1` (separate Bash calls), then **atomically overwrite** `$MEM/checkpoint.md`: `Write` the content to `checkpoint.md.tmp`, then `mv "$MEM/checkpoint.md.tmp" "$MEM/checkpoint.md"`. Set `checkpoint_type: phase`, the just-completed `phase`, the upcoming `next_phase`, the `references` list (the files the next phase will full-context-load), `## Decisions`, and `## Open items`. At T8 also set `reviewer_iterations: { impl, test, doc }`. This keeps the recall point current even if auto-compaction or an interruption fires between gates.
 
-1. Wait for any background `area-mapper` sub-agent to complete.
-2. Create a `phase_handoff` entity in the knowledge graph:
-   - **Name:** `phase-handoff-<JIRA-KEY>-<phase-id>` (e.g. `phase-handoff-ELI-1234-T5`)
-   - **Observations:** `phase: <id>`, `skill: task-card`, `jira_key: <key>`, `branch: <name or "none">`, `head_sha: <sha or "n/a">`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item. At T8 only: `reviewer_iterations: impl=N test=N doc=N`.
-   - **Relations:** `BELONGS_TO` → `work_item-<JIRA-KEY>`; `SUPERSEDES` → prior `phase_handoff` for this work item (if any); `REFERENCES` → relevant `exploration`, `plan`, and `finding` entity names.
-3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
-4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, Jira key + branch + head SHA anchors, reviewer iteration counters (T8 only), one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → `git status` → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, verify git state (`git status`), and resume at `next_phase`. Before executing the resumed phase, **re-read that phase's section in this skill's `workflow.md`** so its full instructions survive compaction — in particular, any phase that asks the user clarifying or structured questions MUST use `AskUserQuestion` (per the Clarification Rule), never plain text. If the user types a different message instead, handle it normally.
+**Compaction gates (T3, T5, T8) — additionally prompt the user to `/compact`.** Do the per-phase write but with `checkpoint_type: gate`, then: (1) wait for any background `area-mapper` to finish; (2) emit the Phase Summary block (§4(b)) — phase + skill, Jira key, branch @ head_sha, one-line decisions, verbatim approval condition, reviewer iterations (T8 only), `next_phase`, the checkpoint file path, and the resume contract; (3) end the turn with the literal line **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` at a gate — the user's input must stay free for `/compact`.
 
-**Cleanup:** Include all `phase_handoff` entities for this work item (prefix `phase-handoff-<JIRA-KEY>-`) in the T13 cleanup enumeration alongside other session-scoped entities.
+**Universal resume rule — on ANY resume (a `continue` after `/compact`, an auto-compaction summary, or a fresh re-invocation), before doing anything else:** `Read $MEM/checkpoint.md` → `Read` every file in its `references` → verify git (`git status`, branch, HEAD) against the recorded values and surface drift → **re-read the `next_phase` section of this `workflow.md`** so its full instructions survive compaction (any phase asking clarifying/structured questions MUST use `AskUserQuestion`, never plain text) → continue at `next_phase`. If `$MEM` is absent, reconstruct from Jira (see File Memory Scope). Approval gates stay chat-scoped — never assume a pending approval was granted.
 
 ---
 
@@ -116,24 +112,24 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 ### T2 — Review the Codebase
 
-> **USE KNOWLEDGE GRAPH:** Before spawning explorers, ensure a `work_item-<JIRA_KEY>` entity exists for this task. Call `search_nodes` with the work item key (e.g. `work_item-ELI-1234`); if no entity is returned, create it with observations: `work_type: task`, `jira_key`, `title`, `phase: review`. **Record the entity name** as the `work_item_id` for T2 and pass it to every explorer. Explorer findings stream into the graph as `affected_file`, `evidence`, `pattern`, `integration_point`, and `risk` entities linked to this `work_item` node, and the orchestrator retrieves them via `open_nodes` after the explorers return.
+> **BOOTSTRAP FILE MEMORY:** Compute `MEM` via the recipe in `file-memory-protocol.md` §1 and `mkdir -p "$MEM/explorations"`. If `$MEM/work-item.md` does not exist, `Write` it (schema §3.1) with `work_type: task`, `jira_key`, `title`, `status: in_progress`, `phase: T2`, `skill: task-card`, and the task description under `## Description`. Pass the absolute `MEM` path (as `memory_dir`) and a normalized `area_slug` to every explorer — each writes its own `$MEM/explorations/<area_slug>.md`, so concurrent explorers never collide.
 
 - Identify all distinct areas of the codebase to explore based on the **Affected Areas** section and the task goals. Limit the scope of this exploration to the current project directory.
 - For each distinct area in this project, invoke a `codebase-explorer` sub-agent in **parallel**, providing:
     - The target area to explore
     - The question: "What patterns, abstractions, utilities, and testing conventions are in use in this area, and what architectural considerations affect how this task's goals can be implemented here?"
-    - The `work_item_id` (`work_item-<JIRA_KEY>`). All findings the explorer streams to the graph will be linked to this node.
+    - The `memory_dir` (`$MEM`) and a normalized `area_slug` for the area. The explorer writes its findings to `$MEM/explorations/<area_slug>.md`.
     - The task description and acceptance criteria for context
-- Wait for all explorers to return. Each non-failed return contains an `Entity:` line with the exploration entity name. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters. `FAILED` means no graph data was written — re-spawn that explorer before proceeding.
-- **Post-exploration enrichment:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `work_item_id`. It crystallizes durable area knowledge from this run's graph into Serena project memory for future explorations. Do not wait for it.
-- Call `open_nodes` on each `exploration` entity name from the returns. If any entity comes back empty, re-spawn that explorer rather than treating missing data as confirmed. Surface any `open_question` entities in the responses. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
+- Wait for all explorers to return. Each non-failed return contains a `File:` line with the exploration file name. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters. `FAILED` means no file was written — re-spawn that explorer before proceeding.
+- **Post-exploration enrichment:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `memory_dir` (`$MEM`). It crystallizes durable area knowledge from this run's exploration files into Serena project memory for future explorations. Do not wait for it.
+- `Read` each `$MEM/explorations/<area_slug>.md` from the returns. If any file is missing or empty, re-spawn that explorer rather than treating missing data as confirmed. Surface any `open_questions` entries. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` (passing the same `memory_dir`) before proceeding.
 
 > **USE SEQUENTIAL THINKING:** Before synthesizing the explorer findings, invoke the `sequentialthinking` tool. Use it to integrate the evidence across all explorer reports, reconcile any conflicting signals between areas, identify the patterns and constraints most relevant to this task's implementation, and build a coherent mental model of the affected codebase. Synthesis that skips this step tends to miss cross-area coupling and architectural constraints that only appear when findings are read together. Do not proceed to the synthesis bullets until the reasoning is complete.
 
-- Synthesize the findings from the graph. Read across all `exploration` entities linked to this `work_item_id` and aggregate:
-    - **Patterns, abstractions, and utilities in use** — from `pattern` entities; cite the `evidence_files` observation when present.
-    - **Existing test coverage and testing patterns** — from `pattern` entities tagged with test concerns and from `evidence` entities with `evidence_type: convention` covering tests.
-    - **High-risk areas or architectural considerations** — from `risk` entities (ordered by severity) and `integration_point` entities flagging cross-area coupling.
+- Synthesize the findings from the exploration files. Read across all `$MEM/explorations/*.md` and aggregate:
+    - **Patterns, abstractions, and utilities in use** — from each file's `patterns` array; cite `evidence_files` when present.
+    - **Existing test coverage and testing patterns** — from `patterns`/`evidence` entries with `evidence_type: convention` covering tests.
+    - **High-risk areas or architectural considerations** — from `risks` (ordered by severity) and `integration_points` flagging cross-area coupling.
 
 ### T3 — Ask Clarifying Questions
 
@@ -150,22 +146,24 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 > **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `T3 Approval`, options: `Approve and proceed (Recommended)` (description: "All blocking answers are accurate and recorded") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to T4 until approved.
 
-> **COMPACTION GATE — T3:** Once T3 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-T3`; `next_phase: T4`; decisions: clarifying answers and any blocking constraints; branch + head SHA: "n/a" (not yet created). REFERENCES: exploration entities from T2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T4.
+> **COMPACTION GATE — T3:** Once T3 approval is confirmed, follow the Checkpoint & Compaction Contract above (gate path). Write `checkpoint.md` with `phase: T3`, `next_phase: T4`, `checkpoint_type: gate`, `references: [work-item.md, explorations/*.md]`; `## Decisions`: clarifying answers and any blocking constraints; branch/head_sha: "none"/"n/a" (not yet created). Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T4.
 
 ### T4 — Create Implementation Plan
+
+> **FULL CONTEXT LOAD:** Before drafting the plan, `Glob $MEM` and `Read` every present input file — `work-item.md`, every `explorations/*.md`, `clarifications.md` and `related-cards.md` if present, and `summary.md` if this work came from `/implementation-discovery` (per `file-memory-protocol.md` §5). Plan on the full context, never a partial read.
 
 > **USE SEQUENTIAL THINKING:** Before drafting the plan, invoke the `sequentialthinking` tool. Use it to map the task's acceptance criteria to specific files and code paths identified in T2, identify any gaps or ambiguities that would leave a criterion unaddressed, reason through the ordering of changes (which must be done first to leave the codebase stable?), and weigh alternative approaches against the patterns and constraints observed in T2. Plan quality at this step determines the trajectory of T5–T12 — a plan with an unexamined assumption produces implementation debt that compounds. Do not draft the plan until the reasoning is complete.
 
 > **THINK HARD:** Before finalizing the plan, think hard about whether every acceptance criterion maps to a specific, concrete code change, and whether the ordering and scope of those changes is minimal and safe. This is the highest-leverage decision point in the workflow — a vague or over-scoped plan produces an implementation that cannot be cleanly reviewed or verified.
 
-> **REUSE EXISTING DIAGRAM:** Before generating a flowgraph, call `open_nodes` on the `work_item-<KEY>` entity and check for an existing `diagram` observation (written by `/requirements-intake` or `/implementation-discovery` if those ran first). If one exists, use it as the starting point and refine it to reflect implementation-level detail — do not start from scratch.
+> **REUSE EXISTING DIAGRAM:** Before generating a flowgraph, `Read $MEM/work-item.md` and check for a `## Architecture` ` ```mermaid ` block (carried over from `/requirements-intake` or `/implementation-discovery` if those ran first). If one exists, use it as the starting point and refine it to implementation-level detail — do not start from scratch.
 
 > **GENERATE A FLOWGRAPH (best-effort):** Produce a Mermaid `flowchart` that visualizes the changed control/data flow across the affected files/components. Keep it focused — nodes should map to the concrete elements in this plan (files, components, functions), not abstract boxes.
 >
 > - **Skip it** for trivial changes where a diagram adds no clarity (e.g. a single-file edit with no branching logic). If skipped, state in one line why.
 > - **Render it in the chat** as part of the plan presentation at T5.
 > - **Embed it in the Jira description under `## Architecture`** as a ` ```mermaid ` fenced block, immediately after `## Affected Areas`. If the description lacks an `## Architecture` section, add one using `jira_update_issue` (additive edit — update only that section). (Jira Cloud does not render Mermaid natively; it will display as a code block, which is acceptable.) If skipped, set the Architecture section to "None — no diagram for this change."
-> - **Record the Mermaid source** for inclusion in the `plan-<JIRA_KEY>` entity created after plan-reviewer approval below. T8 reads the `diagram` observation from that entity as an implementation map.
+> - **Record the Mermaid source** for the `## Flowchart` section of `plan.md`, written after plan-reviewer approval below. T8 reads `plan.md ## Flowchart` as an implementation map.
 
 **REQUIRED:** The plan must include ALL of the following:
 
@@ -203,9 +201,9 @@ The sub-agent will return a structured findings report with an overall verdict o
 
 - If **APPROVED**:
 
-    > **USE KNOWLEDGE GRAPH:** Create a `plan` entity named `plan-<JIRA_KEY>` with observations: `description` (the full reviewed plan text, verbatim — do not summarize or truncate), `files_to_change` (comma-separated list of all files to create or modify), `testing_expectations` (the testing expectations section verbatim), `documentation_expectations` (the documentation expectations section verbatim), and `diagram` (the raw Mermaid source from the flowgraph, or omit this observation entirely if the flowgraph was skipped). Link with a `BELONGS_TO` relation → `work_item-<JIRA_KEY>`. Call `open_nodes` on the new entity to confirm the write landed. This entity is the structured persistence surface for the T5 and T8 compaction gates — their REFERENCES point to `plan-<JIRA_KEY>`, and T8 reads the `diagram` observation from it as an implementation map. If the plan was revised during the review loop, ensure the entity contains the **final approved** plan text.
+    > **WRITE plan.md:** `Write $MEM/plan.md` (schema §3.3) with frontmatter `plan_type: plan`, `status: approved`, and `files_to_change` (all files to create or modify), and body sections `## Plan` (the full reviewed plan text, verbatim — do not summarize or truncate), `## Flowchart` (the raw Mermaid source, or omit the section if the flowgraph was skipped), `## Testing expectations` (verbatim), and `## Documentation expectations` (verbatim). This file is what the T5 and T8 checkpoints reference, and T8 reads `## Flowchart` as an implementation map. If the plan was revised during the review loop, write the **final approved** plan text.
 
-    Post a single combined Jira comment with the exact heading `**T4/T5 — Implementation Plan & Approval Request**`, then proceed to T5. This comment must include:
+    Draft a single combined Jira comment with the exact heading `**T4/T5 — Implementation Plan & Approval Request**` for the comment review below. This comment must include:
 
     - The reviewed implementation plan
     - Architecture diagram (under `### Architecture` — the Mermaid source, or a note if skipped)
@@ -214,9 +212,25 @@ The sub-agent will return a structured findings report with an overall verdict o
     - Risks, dependencies, or open items that affect execution
     - `Approval requested: Please approve this implementation plan before work begins.`
 
-    Before calling `jira_add_comment`, invoke the `comment-reviewer` sub-agent with the drafted comment body, the phase label `T4/T5 — Implementation Plan & Approval Request`, and the acceptance criteria and plan details as source context. If CHANGES REQUIRED, revise the draft and re-invoke (max 3 iterations). Post the comment only once APPROVED; after 3 iterations, post with remaining minor findings noted inline.
 - If **CHANGES REQUIRED**: address every Critical and Major finding, revise the plan, then invoke the `plan-reviewer` sub-agent again. Repeat until the verdict is APPROVED.
-- **Max 3 review iterations.** If the plan-reviewer returns CHANGES REQUIRED after 3 iterations, create the `plan-<JIRA_KEY>` entity (same as the APPROVED path above, using the current plan text and noting `review_escalated: true`), post the same combined `T4/T5` comment with the outstanding findings noted, and let the user decide in T5.
+- **Max 3 review iterations.** If the plan-reviewer returns CHANGES REQUIRED after 3 iterations, write `plan.md` (same as the APPROVED path above, using the current plan text with frontmatter `status: review_escalated`), draft the same combined `T4/T5` comment with the outstanding findings noted, and proceed to the comment review below.
+
+**Independent comment review:**
+
+Once the comment body is drafted, invoke the `comment-reviewer` sub-agent, providing:
+
+- The drafted comment body verbatim, exactly as it will be passed to `jira_add_comment`
+- The phase label `T4/T5 — Implementation Plan & Approval Request`
+- The reviewed plan and acceptance criteria
+- The Jira issue key
+
+The sub-agent will return a structured report with an overall verdict of either **APPROVED** or **CHANGES REQUIRED**.
+
+- If **APPROVED**: call `jira_add_comment` with the reviewed body, then proceed to T5.
+- If **CHANGES REQUIRED**: address every Critical and Major finding, revise the draft, then invoke `comment-reviewer` again with the updated body. Repeat until the verdict is APPROVED.
+- **Max 3 review iterations.** If `comment-reviewer` returns CHANGES REQUIRED after 3 iterations, post the comment as-is with the remaining minor findings noted inline at the bottom of the comment body, and continue to T5.
+
+Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the 3-iteration cap is reached). A passing plan-reviewer verdict, a clean self-check, or memory of having run `comment-reviewer` earlier in the workflow does not substitute.
 
 ### T5 — Await Plan Approval
 
@@ -227,10 +241,12 @@ The sub-agent will return a structured findings report with an overall verdict o
 - The approval request Jira record is the combined `T4/T5` comment already posted in T4. Do not post a second Jira comment here unless the plan changed.
 - **Present the full implementation plan in the chat output.** The user should not have to open Jira to review it — display it here before asking for approval.
 - Then use `AskUserQuestion` with header `T5 Approval`, options: `Approve and proceed (Recommended)` (description: "Implementation plan is accurate — begin work") / `Request changes` (description: "Revise the plan before proceeding"). Do not poll Jira for approval.
-- If the user selects "Request changes", revise the plan, repost the full combined `T4/T5` comment to Jira, and update the `plan-<JIRA_KEY>` entity in the knowledge graph: add a revised `description` observation with the updated plan text (use `add_observations`). Then use `AskUserQuestion` again.
+- If the user selects "Request changes", revise the plan, repost the full combined `T4/T5` comment to Jira, and re-`Write $MEM/plan.md` with the updated plan text (whole-file overwrite). Then use `AskUserQuestion` again.
 - Only proceed to T6 after "Approve and proceed" is selected.
 
-> **COMPACTION GATE — T5:** Once T5 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-T5`; `next_phase: T6`; decisions: approved implementation plan (one-line summary); branch + head SHA: "n/a" (not yet created). REFERENCES: `plan-<KEY>` (the plan entity created in T4) and exploration entities from T2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T6.
+> **REGENERATE DASHBOARD:** After approval, regenerate `$MEM/work-item.html` from the current memory files (per `file-memory-protocol.md` §8) so the user has an up-to-date rendered view of the approved plan and flowchart.
+>
+> **COMPACTION GATE — T5:** Once T5 approval is confirmed, follow the Checkpoint & Compaction Contract above (gate path). Write `checkpoint.md` with `phase: T5`, `next_phase: T6`, `checkpoint_type: gate`, `references: [plan.md, work-item.md, explorations/*.md]`; `## Decisions`: approved implementation plan (one-line summary); `approval_condition`: verbatim user selection; branch/head_sha: "none"/"n/a". Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T6.
 
 ---
 
@@ -249,7 +265,7 @@ The sub-agent will return a structured findings report with an overall verdict o
 
 **ALL of the following are REQUIRED. Do not skip any category.**
 
-- **Architecture diagram:** Call `open_nodes` on the `plan-<JIRA_KEY>` entity (created in T4) and read the `diagram` observation. Use the control/data flow diagram as a map for sequencing your code changes — write code in the order the flow implies and verify each completed step advances the flow correctly. If no diagram was persisted (skipped in T4), proceed without it.
+- **Full context load:** Before writing code, `Glob $MEM` and `Read` `plan.md` (full — `## Plan`, `## Flowchart`, `files_to_change`, testing/doc expectations), every `explorations/*.md`, `work-item.md`, and any `clarifications.md`/`related-cards.md` present (per `file-memory-protocol.md` §5). Use `plan.md ## Flowchart` as the map for sequencing your code changes — write code in the order the flow implies and verify each completed step advances the flow correctly. If no flowchart was persisted (skipped in T4), proceed without it.
 - **Code:** Write or modify source code according to the implementation plan from T4.
 - **Testing handoff:** Leave the implementation in a state that the dedicated `test-reviewer` sub-agent can exercise deterministically. Note any commands, fixtures, or setup that sub-agent will need.
 - **Documentation handoff:** Identify the public APIs, configuration surfaces, and repository docs the dedicated `documentation-reviewer` sub-agent must cover.
@@ -339,7 +355,7 @@ The sub-agent will update inline and repository documentation as needed and retu
 
 Do not proceed to T9 until `implementation-reviewer`, `test-reviewer`, and `documentation-reviewer` have all completed successfully.
 
-> **COMPACTION GATE — T8:** Once all three reviewers are complete, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<KEY>-T8`; `next_phase: T9`; include `reviewer_iterations: impl=N test=N doc=N`; decisions: implementation approach summary and any plan deviations; approval_condition: reviewer verdict. REFERENCES: `plan-<KEY>` from T4 and exploration entities from T2. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T9.
+> **COMPACTION GATE — T8:** Once all three reviewers are complete, follow the Checkpoint & Compaction Contract above (gate path). Write `checkpoint.md` with `phase: T8`, `next_phase: T9`, `checkpoint_type: gate`, `reviewer_iterations: { impl: N, test: N, doc: N }`, `references: [plan.md, explorations/*.md, work-item.md]`; `## Decisions`: implementation approach summary and any plan deviations; `approval_condition`: reviewer verdict. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to T9.
 
 ### T9 — Post-Implementation Verification
 
@@ -355,7 +371,7 @@ Do not proceed to T9 until `implementation-reviewer`, `test-reviewer`, and `docu
 
 **APPROVAL GATE — USER MUST MANUALLY TEST BEFORE PROCEEDING. AUTO MODE DOES NOT BYPASS THIS GATE.**
 
-- Post a comment on this Jira issue with the exact heading `**T10 — User Testing Handoff**` as the verbatim first line of the comment body — character-for-character, using `**bold**` (not a `##` markdown heading), and never a descriptive substitute such as "Testing ready" or "Fix complete". The comment must include, in this exact order with these exact labels:
+- Draft a Jira comment with the exact heading `**T10 — User Testing Handoff**` as the verbatim first line — character-for-character, using `**bold**` (not a `##` markdown heading), and never a descriptive substitute such as "Testing ready" or "Fix complete". The comment must include, in this exact order with these exact labels:
 
     - The branch name
     - A summary of what was implemented
@@ -363,7 +379,23 @@ Do not proceed to T9 until `implementation-reviewer`, `test-reviewer`, and `docu
         - The criterion restated clearly
         - Step-by-step instructions to verify that criterion is met
 
-    Before posting, confirm: (1) the first line is exactly `**T10 — User Testing Handoff**`, and (2) all required sections are present in order. If either check fails, rewrite before posting.
+**Independent comment review:**
+
+Once the comment body is drafted, invoke the `comment-reviewer` sub-agent, providing:
+
+- The drafted comment body verbatim, exactly as it will be passed to `jira_add_comment`
+- The phase label `T10 — User Testing Handoff`
+- The branch name and acceptance criteria
+- The Jira issue key
+
+The sub-agent will return a structured report with an overall verdict of either **APPROVED** or **CHANGES REQUIRED**.
+
+- If **APPROVED**: call `jira_add_comment` with the reviewed body.
+- If **CHANGES REQUIRED**: address every Critical and Major finding, revise the draft, then invoke `comment-reviewer` again with the updated body. Repeat until the verdict is APPROVED.
+- **Max 3 review iterations.** If `comment-reviewer` returns CHANGES REQUIRED after 3 iterations, post the comment as-is with the remaining minor findings noted inline at the bottom of the comment body, and continue.
+
+Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the 3-iteration cap is reached). A clean self-check or memory of having run `comment-reviewer` earlier in the workflow does not substitute.
+
 - Present the same testing handoff in the chat — the user should not have to open Jira to see what to test.
 - Pause the workflow here and wait. Do not call any tool other than `AskUserQuestion` until the user reports back with an explicit selection. Do not infer approval from silence, from a `continue` keyword, from prior phase success, or from Auto Mode.
 - Use `AskUserQuestion` with header `T10 Testing`, options: `Approve — I ran through every step above and every criterion passed (Recommended)` (description: "I have manually tested the implementation and it works as expected") / `Issues found` (description: "One or more problems were found during testing"). Do not proceed until the user selects an option.
@@ -432,12 +464,29 @@ Then render **every** field below as a bold-labeled section (`**Field name:**`),
 
 **REQUIRED: Review the summary before posting.** Confirm (1) the first line is exactly `**T12 — Summary of Changes**` in `**bold**` format, (2) the metadata block (`**Branch:**` / `**Commit:**`) is present before the `----` rule, and (3) every mandated field appears as a `**Label:**` section in the specified order with none renamed, dropped, or substituted. If any check fails, rewrite before posting.
 
-Before calling `jira_add_comment`, invoke the `comment-reviewer` sub-agent with the drafted comment body, the phase label `T12 — Summary of Changes`, and the branch name, commit hash, and files-changed list as source context for fact-checking. If CHANGES REQUIRED, revise and re-invoke (max 3 iterations). Post the comment only once APPROVED; after 3 iterations, post with remaining minor findings noted inline.
+**Independent comment review:**
+
+Once the summary body is drafted, invoke the `comment-reviewer` sub-agent, providing:
+
+- The drafted comment body verbatim, exactly as it will be passed to `jira_add_comment`
+- The phase label `T12 — Summary of Changes`
+- The branch name, commit hash, and files-changed list
+- The Jira issue key
+
+The sub-agent will return a structured report with an overall verdict of either **APPROVED** or **CHANGES REQUIRED**.
+
+- If **APPROVED**: call `jira_add_comment` with the reviewed body.
+- If **CHANGES REQUIRED**: address every Critical and Major finding, revise the draft, then invoke `comment-reviewer` again with the updated body. Repeat until the verdict is APPROVED.
+- **Max 3 review iterations.** If `comment-reviewer` returns CHANGES REQUIRED after 3 iterations, post the comment as-is with the remaining minor findings noted inline at the bottom of the comment body, and continue.
+
+Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the 3-iteration cap is reached). A clean self-check or memory of having run `comment-reviewer` earlier in the workflow does not substitute.
+
+> **REGENERATE DASHBOARD (T12):** After the T12 summary comment is posted, regenerate `$MEM/work-item.html` (per `file-memory-protocol.md` §8) so the user has a final rendered view. Optionally `Write $MEM/summary.md` (`summary_type: changes`) with the summary body first so the dashboard's Summary section is populated.
 
 ### T13 — Cleanup
 
-- **Standard mode:** Clear the session-scoped knowledge graph nodes created during this task — the `work_item-<JIRA_KEY>` entity and every entity linked to it (`exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`, `phase_handoff`, `plan-<JIRA_KEY>`, and any `affected_area` rolled up from them). Use `read_graph` to enumerate, then `delete_entities`. The graph is session-scoped; finishing without cleanup leaves stale state for the next workflow.
-- **Epic child task mode:** Do not delete the `work_item-<JIRA_KEY>` entity for this child task or its linked nodes here — the epic-level cleanup at E11 owns wholesale graph teardown after all child tasks complete.
+- **Standard mode:** Remove the work item's file-memory directory in one atomic operation: `rm -rf "$MEM"` (Bash). This deletes `work-item.md`, `checkpoint.md`, `plan.md`, all `explorations/*.md`, `work-item.html`, and anything else under it — nothing to enumerate, nothing missed. Finishing without cleanup leaves stale state for the next workflow.
+- **Epic child task mode:** Do NOT `rm -rf "$MEM"` for this child task here — the epic-level cleanup at E11 owns wholesale teardown of the epic dir and every child dir after all child tasks complete.
 
 ## Completion Criteria
 
@@ -451,6 +500,7 @@ This workflow is complete when **all** of the following are true:
 - Standard mode: user testing completed and approved at T10; the T10 approval was captured before any commit or push was made
 - Epic child task mode (if used): confirmed via the explicit `Epic Child Mode` AskUserQuestion — never inferred from branch name or other signals
 - Commit, push, integration merge, integration push, and any Jira transition each ran as discrete user-visible steps, not as a single chained sequence
-- T12 summary comment posted successfully, using the exact `**T12 — Summary of Changes**` heading and the full mandated field set in order (verified by `comment-reviewer`, not improvised)
-- T10 handoff comment used the exact `**T10 — User Testing Handoff**` heading
-- T13 session-scoped knowledge graph cleared
+- All Jira comments posted by this workflow (T4/T5, T10, T12) were reviewed by `comment-reviewer` and returned APPROVED (or reached the 3-iteration cap) before `jira_add_comment` ran
+- T12 summary comment posted using the exact `**T12 — Summary of Changes**` heading and the full mandated field set in order
+- T10 handoff comment posted using the exact `**T10 — User Testing Handoff**` heading
+- T13 file-memory directory removed (`rm -rf "$MEM"`), except in epic child mode where E11 owns teardown

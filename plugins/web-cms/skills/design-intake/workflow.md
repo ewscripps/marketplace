@@ -17,7 +17,7 @@
 
 **CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
-**KNOWLEDGE GRAPH SCOPE:** The knowledge graph in this workflow is session-scoped. It accumulates structured context across R0-R4 so that R5 can assemble a complete, grounded Jira issue description. All graph content must be fully materialized into the Jira card description before the session ends -- do not rely on the graph persisting to a future session.
+**FILE MEMORY SCOPE:** This workflow stores session state in a per-work-item file-memory directory. `$MEM/work-item.md` is the root (title, description, and the `## Affected Areas`, `## Design Spec`, `## Patterns & Code References`, `## Architecture` sections built across R2/R4); `$MEM/clarifications.md` holds R3 Q&A; `$MEM/criteria.md` holds R4A acceptance criteria; `$MEM/related-cards.md` holds relevant related Jira cards from R1; `$MEM/explorations/*.md` hold R2 codebase findings. Compute `MEM` once with the recipe in `file-memory-protocol.md` §1 (`<work-item-key>` = the Jira key, or `intake-<slug>`). All file content must be fully materialized into the Jira card description in R5 before the session ends. See `file-memory-protocol.md` for schemas, the checkpoint/compaction contract, and the full-context-load rule.
 
 **TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
 
@@ -39,28 +39,22 @@
 - R5 — Jira Issue Creation or Update
 - R6 — Cleanup
 
-**PHASE COMPACTION HANDOFF CONTRACT:** At designated compaction gates in this workflow, the agent writes a durable `phase_handoff` entity to the knowledge graph and prompts the user to run `/compact`. This prevents auto-compaction from discarding phase position, particularly after the large codebase and design analysis at R2.
+**CHECKPOINT & COMPACTION CONTRACT:** This workflow records position in a single `$MEM/checkpoint.md` file (full schema and contract in `file-memory-protocol.md` §4) — important after the large codebase and design analysis at R2.
 
-**Steps at each gate — execute before instructing `/compact`:**
+**Per-phase checkpoint — after EVERY phase (R0–R5), automatically, with no chat output and no `/compact` prompt.** Atomically overwrite `$MEM/checkpoint.md` (`Write` to `checkpoint.md.tmp`, then `mv` over `checkpoint.md`) with `checkpoint_type: phase`, the just-completed `phase`, the upcoming `next_phase`, the `references` list, `mode`, `## Decisions`, and `## Open items`.
 
-1. Wait for any background `area-mapper` sub-agent to complete.
-2. Create a `phase_handoff` entity in the knowledge graph:
-   - **Name:** `phase-handoff-<work-item-key>-<phase-id>` (e.g. `phase-handoff-intake-new-hero-component-R2`); use the `work_item_id` recorded at R0.
-   - **Observations:** `phase: <id>`, `skill: design-intake`, `jira_key: <key or slug>`, `mode: <new or update>`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item.
-   - **Relations:** `BELONGS_TO` → the `work_item` entity for this run; `SUPERSEDES` → prior `phase_handoff` for this work item (if any); `REFERENCES` → relevant `affected_area`, `design_spec`, `exploration`, `criterion`, and `qa_item` entity names.
-3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
-4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, work item key, mode, one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, and resume at `next_phase`. Before executing the resumed phase, **re-read that phase's section in this skill's `workflow.md`** so its full instructions survive compaction — in particular, any phase that asks the user clarifying or structured questions MUST use `AskUserQuestion` (per the Clarification Rule), never plain text. If the user types a different message instead, handle it normally.
+**Compaction gates (R2, R4) — additionally prompt the user to `/compact`.** Do the per-phase write but with `checkpoint_type: gate`, then: (1) wait for any background `area-mapper` to finish; (2) emit the Phase Summary block (§4(b)) — phase + skill, work item key, mode, one-line decisions, verbatim approval condition, `next_phase`, the checkpoint file path, and the resume contract; (3) end the turn with the literal line **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` at a gate.
 
-**Cleanup:** Include all `phase_handoff` entities for this work item (prefix `phase-handoff-<work-item-key>-`) in the R6 cleanup enumeration alongside other session-scoped entities.
+**Universal resume rule — on ANY resume, before doing anything else:** `Read $MEM/checkpoint.md` → `Read` every file in its `references` → **re-read the `next_phase` section of this `workflow.md`** (any phase asking clarifying/structured questions MUST use `AskUserQuestion`) → continue at `next_phase`. If `$MEM` is absent, restart the affected phase from the Jira card and prior chat. Approval gates stay chat-scoped — never assume a pending approval was granted.
 
 ---
 
 ### R0 — Intake
 
-**DISCOVERY PRE-CHECK:** Before greeting the user, call `read_graph` to check the knowledge graph for any entity whose name starts with `discovery_summary-` (the implementation-discovery skill names them `discovery_summary-<topic-slug>` so multiple discoveries in one session do not collide).
+**DISCOVERY PRE-CHECK:** Before greeting the user, `Glob $MEMROOT/discovery-*/summary.md` (compute `$MEMROOT` via the recipe in `file-memory-protocol.md` §1) to find any prior `/implementation-discovery` summary (dirs are named `discovery-<topic-slug>` so multiple discoveries in one session do not collide). `Read` each `summary.md` frontmatter (`topic_slug`, `chosen_approach`, `verification_status`, `discovery_confirmed`).
 1. **If exactly one is present:** acknowledge it immediately: "I found a prior implementation discovery session for: **[topic]** (chosen approach: **[chosen_approach]**, verification: **[verification_status]**). I'll use those findings as a head start — the codebase areas have already been explored and verified. If this isn't the right context, just say so and I'll start fresh."
-2. **If multiple are present** (the user ran more than one discovery in this session): list them by `topic` and `chosen_approach`, then use `AskUserQuestion` (Header: `Discovery Pick`, Question: `Multiple discovery sessions were found. Which one is this design run for?`, Options: one option per discovery summary labeled `[topic] — [chosen_approach]`, plus `Start fresh — ignore all discoveries`). Treat the user's pick as the selected `discovery_summary-<slug>`; ignore the others for this run.
-3. **If the user confirms a discovery summary:** add an observation `discovery_confirmed: true` to that specific `discovery_summary-<slug>` entity (not to any other). When asking intake questions below, skip the **Codebase areas** question — the discovery already covers it. Note that R2 will use the discovery findings and skip spawning new codebase-explorer agents (the design artifact analysis in R2 still runs — discovery does not cover visual specs).
+2. **If multiple are present** (the user ran more than one discovery in this session): list them by `topic` and `chosen_approach`, then use `AskUserQuestion` (Header: `Discovery Pick`, Question: `Multiple discovery sessions were found. Which one is this design run for?`, Options: one option per discovery summary labeled `[topic] — [chosen_approach]`, plus `Start fresh — ignore all discoveries`). Treat the user's pick as the selected `discovery-<slug>/summary.md`; ignore the others for this run.
+3. **If the user confirms a discovery summary:** set `discovery_confirmed: true` in that specific `discovery-<slug>/summary.md` frontmatter (`Edit`), not in any other. When asking intake questions below, skip the **Codebase areas** question — the discovery already covers it. Note that R2 will use the discovery findings and skip spawning new codebase-explorer agents (the design artifact analysis in R2 still runs — discovery does not cover visual specs).
 4. **If the user rejects** (or no discovery summary exists): proceed with normal intake and do not reference the discovery summary again.
 
 **Objective:** Greet the user and gather all context needed to begin the requirements workflow through natural conversation.
@@ -87,7 +81,6 @@
 
     **If the user indicates this is a new project**, continue with:
     - **Design scope** (closed-enum, blocking): `AskUserQuestion` header `Design Scope`, options: `Design is fully defined` / `Design is within scope of this project`.
-    - **Requested by** (open-ended, blocking): `AskUserQuestion` header `Requested By`, options: `Provide name or team` / `Unknown`.
     - **Existing Jira card** (open-ended, non-blocking): **Before asking**, run `git rev-parse --abbrev-ref HEAD` and apply a regex match for `[A-Z]+-[0-9]+` against the branch name. If a candidate key is found: `AskUserQuestion` (header `Existing Card`, options: `Yes, <extracted key>` (description: "Use <extracted key> as the existing Jira card") / `Use a different key` (description: "Type the correct key in the Other field") / `No existing card`). If no candidate is found: `AskUserQuestion` (header `Existing Card`, options: `Yes — I'll provide the key` / `No existing card`).
     - **Existing Jira Epic** (open-ended, non-blocking): Ask only if the existing card confirmed above is not itself an Epic. If an existing card was confirmed: `AskUserQuestion` (header `Related Epic`, options: `Already linked via the card` (description: "The card is already linked to its Epic — no separate input needed") / `Yes — I'll provide the key` (description: "Type the Epic key in the Other field") / `No`). If no existing card was provided: `AskUserQuestion` (header `Related Epic`, options: `Yes — I'll provide the key` (description: "Type the Epic key in the Other field") / `No`).
     - **Codebase areas** (open-ended, non-blocking): `AskUserQuestion` header `Codebase Hints`, options: `Yes — I'll name the areas` / `No / Not sure`.
@@ -97,7 +90,6 @@
     **If the user indicates this is an update on an existing project**, continue with:
     - **Design scope** (closed-enum, blocking): `AskUserQuestion` header `Design Scope`, options: `Design changes are fully defined` / `Design changes are within scope of this project`.
     - **Functional changes** (closed-enum, blocking): `AskUserQuestion` header `Functional Changes`, options: `Yes — functionality changes too` / `No — visual changes only` / `Partially`.
-    - **Requested by** (open-ended, blocking): `AskUserQuestion` header `Requested By`, options: `Provide name or team` / `Unknown`.
     - **Existing Jira card** (open-ended, non-blocking): **Before asking**, run `git rev-parse --abbrev-ref HEAD` and apply a regex match for `[A-Z]+-[0-9]+` against the branch name. If a candidate key is found: `AskUserQuestion` (header `Existing Card`, options: `Yes, <extracted key>` (description: "Use <extracted key> as the existing Jira card") / `Use a different key` (description: "Type the correct key in the Other field") / `No existing card`). If no candidate is found: `AskUserQuestion` (header `Existing Card`, options: `Yes — I'll provide the key` / `No existing card`).
     - **Existing Jira Epic** (open-ended, non-blocking): Ask only if the existing card confirmed above is not itself an Epic. If an existing card was confirmed: `AskUserQuestion` (header `Related Epic`, options: `Already linked via the card` (description: "The card is already linked to its Epic — no separate input needed") / `Yes — I'll provide the key` (description: "Type the Epic key in the Other field") / `No`). If no existing card was provided: `AskUserQuestion` (header `Related Epic`, options: `Yes — I'll provide the key` (description: "Type the Epic key in the Other field") / `No`).
     - **Codebase areas** (open-ended, non-blocking): `AskUserQuestion` header `Codebase Hints`, options: `Yes — I'll name the areas` / `No / Not sure`.
@@ -106,13 +98,12 @@
 
 3. After all questions are answered, summarize the gathered context back to the user in a clear, structured format.
     
-> **USE KNOWLEDGE GRAPH:** After the R0 approval gate is confirmed, write the core work item to the knowledge graph. Create a `work_item` entity with name `work_item-<key>` where `<key>` is the existing Jira issue key (if provided) or a normalized slug of the title (lowercase, whitespace/punctuation → `-`, trimmed) prefixed with `intake-` (e.g. `work_item-intake-new-hero-component`). Observations: `work_type` (always `feature` for this workflow), `title`, `description`, `requested_by`, `design_system` (if provided), `design_assets` (links or file paths, if provided), `existing_jira_key` (if provided). This is the root node — all subsequent phases will add linked nodes to it. R5 reads the graph entities via `open_nodes` to assemble the Jira issue description. **Record the entity name** — it is the `work_item_id` passed to every `codebase-explorer` call in R2.
+> **BOOTSTRAP FILE MEMORY:** After the R0 approval gate is confirmed, compute `MEM` (recipe §1) where `<work-item-key>` is the existing Jira issue key (if provided) or a normalized slug of the title prefixed with `intake-` (e.g. `intake-new-hero-component`). `mkdir -p "$MEM/explorations"` and `Write $MEM/work-item.md` (schema §3.1) with `work_type: feature`, `jira_key` (or null), `title`, `status: in_progress`, `phase: R0`, `skill: design-intake`, and the full description under `## Description` (verbatim — do not summarize). Note `design_system` and `design_assets` in `## Description` if provided. This is the root file; subsequent phases add `## Affected Areas`, `## Design Spec`, `## Patterns & Code References`, and `## Architecture` sections plus the sibling files, and R5 reads them all. The `MEM` path (as `memory_dir`) is passed to every `codebase-explorer` call in R2.
 
 > **REQUIRED:** The following context must be confirmed before proceeding:
 > 
 > - Title or Name
 > - Description or Problem Statement (capture in full — do not summarize or truncate the user's input)
-> - Requested By / Identified By (name / team)
 > - Related Epic (Jira key, or explicitly "none")
 > - Codebase Hints (specific areas, or explicitly "none provided")
 > - Design System / Component Library (name and version, or explicitly "none / not applicable")
@@ -132,10 +123,10 @@
 
 1. If an Existing Jira Card key was provided in R0, retrieve that issue immediately. Read its full description, any context already captured in the card (summary, acceptance criteria, labels, epic link, linked issues, and comment history). Surface all of this content in the context summary below.
 2. If a Related Epic was provided in R0, retrieve its description, status, and all child issues.
-3. Search Jira for existing issues that overlap with the work item using keyword and label search.
+3. Search Jira for existing issues that overlap with the work item using keyword and label search. **Related-card capture:** for each candidate that passes the relevance bar (materially informs scope, design, or implementation — not merely a duplicate to flag), call `jira_get_issue` to read its description and append it to `$MEM/related-cards.md` (schema §3.7) with `key`, `title`, `status`, `relationship` (overlaps | depends-on | prior-art | same-area | superseded-by), a one-line `why_relevant`, and a concise excerpt of the pertinent section (never the whole description). Log any candidate that fails the bar in the chat rather than storing it. R4 reads `related-cards.md` and distills material cards into the card; pure duplicates are still surfaced at the R1 gate.
 4. Identify any sibling Epics or themes that appear contextually related.
 
-> **USE KNOWLEDGE GRAPH:** Write Jira context to the graph as linked nodes. If a related Epic exists, create an `epic` node with properties: `jira_key`, `title`, `status`, and link it to the `work_item` node with a `belongs_to` relationship. For each overlapping issue found, create a `related_issue` node with properties: `jira_key`, `title`, `status`, and link it. If an existing card was provided, add its captured context as properties on the `work_item` node.
+> **RECORD JIRA CONTEXT:** If a related Epic exists, set `related_epic: <key>` in `$MEM/work-item.md` frontmatter. Overlapping/related issues are captured in `$MEM/related-cards.md` (step 3 above). If an existing card was provided, fold its captured context into `work-item.md`'s `## Description`.
 
 > **REQUIRED:** Present all of the following in the chat before proceeding:
 > 
@@ -152,13 +143,13 @@
 
 **Objective:** Identify the code surfaces this work item will touch and extract visual specifications from any provided design artifacts.
 
-**DISCOVERY PRE-CHECK:** Before spawning codebase-explorer agents, call `read_graph`. If a `discovery_summary-<slug>` entity with the observation `discovery_confirmed: true` is present (set during R0), the codebase-exploration portion of this phase is already complete:
+**DISCOVERY PRE-CHECK:** Before spawning codebase-explorer agents, `Read` the `discovery-<slug>/summary.md` confirmed in R0 (the one with `discovery_confirmed: true`). If present, the codebase-exploration portion of this phase is already complete:
 1. **Announce:** "Codebase analysis is already complete from the prior discovery session for `[chosen_approach]` (verification status: [verification_status]). Using [N] affected areas identified in discovery." If `verification_status` is `accepted_with_open_questions`, also surface a one-line note that open questions from verification are carried into this intake.
-2. **Re-link explorations to this work item, filtering superseded entities.** For each `exploration` entity linked to the discovery's `work_item-discovery-<slug>` node (both first-round and verification-round), create an additional `for` relation pointing at the new `work_item-<key>` node so explorer findings are reachable from R4A's normal traversal. **Do not** re-link any individual finding entity (`evidence`, `pattern`, `integration_point`, `risk`, `affected_file`, `open_question`) that carries `superseded: true` — those were contradicted at D4 and the verification round wrote replacements. R4A traversal must skip every entity tagged `superseded: true` before consuming evidence.
-3. **Create `affected_area` nodes from the discovery_summary.** For each area in the `affected_areas` observation: `name` = area path, `type` = module (default), `risk` = medium (default). Link each to the new `work_item` node. If `synthesis_chosen` includes explicit risk levels for an area, use those instead.
-4. **Use `synthesis_chosen` as the codebase analysis content** — NOT `synthesis_full` (which retains unchosen options for record only).
-5. **Surface open questions as structured input to R3 / R4.** Walk the discovery subgraph for `open_question` entities linked (via `contains`) to `work_item-discovery-<slug>` and carry each into this intake as a candidate clarifying question (R3) and candidate risk (R4).
-6. **Skip Agent Actions steps 1–6 (codebase exploration) entirely. Still perform step 7 (Design artifact analysis)** — discovery does not extract visual specs. Present `synthesis_chosen` plus the design artifact analysis as the combined R2 analysis, then proceed to the approval gate.
+2. **Copy the discovery explorations into this work item.** Copy each `discovery-<slug>/explorations/*.md` into `$MEM/explorations/` (Bash `cp`) so R4A/R4E read them via the normal `$MEM/explorations/*.md` path. Skip any exploration file (or finding) marked superseded at D4 — the verification round wrote replacements.
+3. **Record affected areas in `work-item.md`.** Write the discovery's affected areas (from `summary.md`'s `affected_areas`) into `$MEM/work-item.md`'s `## Affected Areas` section, with risk from `## Synthesis (chosen)` where given (else medium).
+4. **Use `summary.md`'s `## Synthesis (chosen)` as the codebase analysis content.**
+5. **Surface open questions as structured input to R3 / R4.** Read `summary.md`'s `## Open questions` and carry each into this intake as a candidate clarifying question (R3) and candidate risk (R4).
+6. **Skip Agent Actions steps 1–6 (codebase exploration) entirely. Still perform step 7 (Design artifact analysis)** — discovery does not extract visual specs. Present the synthesis plus the design artifact analysis as the combined R2 analysis, then proceed to the approval gate.
 
 **Agent Actions:**
 
@@ -166,18 +157,18 @@
 2. Invoke a `codebase-explorer` sub-agent in **parallel** for each distinct area in this project, providing:
     - The target area to explore
     - A question: "What code, patterns, and conventions are relevant to implementing [product description] in this area?"
-    - The `work_item_id` recorded at R0 (the entity name of the `work_item` node). All findings the explorer streams to the graph will be linked to this node.
+    - The `memory_dir` (`$MEM`) and a normalized `area_slug`. The explorer writes its findings to `$MEM/explorations/<area_slug>.md`.
     - The work item description for context
-3. Wait for all explorers to return. Each non-failed return contains an `Entity:` line with the exploration entity name. Treat `INCOMPLETE` as partial: findings are present but the run did not finish; consider re-spawning for the same area if coverage matters. Treat `FAILED` as no findings written — re-spawn that explorer before proceeding.
+3. Wait for all explorers to return. Each non-failed return contains a `File:` line with the exploration file name. Treat `INCOMPLETE` as partial: findings are present but the run did not finish; consider re-spawning for the same area if coverage matters. Treat `FAILED` as no file written — re-spawn that explorer before proceeding.
 
-> **POST-EXPLORATION ENRICHMENT:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `work_item_id`. The mapper crystallizes durable area knowledge from this run's graph into Serena project memory so future explorations of the same areas start with hot context. Do not wait for it — proceed immediately to step 4.
-4. Call `open_nodes` on each `exploration` entity name from the returns. If any entity comes back empty, re-spawn that explorer rather than treating missing data as confirmed. Surface any `open_question` entities in the responses. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` for that area (passing the same `work_item_id`) before proceeding.
-5. Synthesize the findings from the graph into a unified codebase analysis. Read across all `exploration` entities linked to this `work_item_id` and aggregate:
-    - **Affected files** — from `affected_file` entities. Group by module / service.
-    - **Patterns and conventions** — from `pattern` entities; including CSS variables, theme tokens, component patterns, and style conventions relevant to the design.
-    - **Integration points** — from `integration_point` entities.
-    - **Risks** — from `risk` entities, ordered by severity.
-6. Label any items derived from observations marked `inferred: true` as `[INFERRED]` in the analysis.
+> **POST-EXPLORATION ENRICHMENT:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `memory_dir` (`$MEM`). The mapper crystallizes durable area knowledge from this run's exploration files into Serena project memory so future explorations of the same areas start with hot context. Do not wait for it — proceed immediately to step 4.
+4. `Read` each `$MEM/explorations/<area_slug>.md` from the returns. If any file is missing or empty, re-spawn that explorer rather than treating missing data as confirmed. Surface any `open_questions` entries. If any identifies a connection to another area not already explored, dispatch a follow-up `codebase-explorer` for that area (passing the same `memory_dir`) before proceeding.
+5. Synthesize the findings from the exploration files into a unified codebase analysis. Read across all `$MEM/explorations/*.md` and aggregate:
+    - **Affected files** — from each file's `affected_files` array. Group by module / service.
+    - **Patterns and conventions** — from `patterns`; including CSS variables, theme tokens, component patterns, and style conventions relevant to the design.
+    - **Integration points** — from `integration_points`.
+    - **Risks** — from `risks`, ordered by severity.
+6. Label any items derived from entries marked `inferred: true` as `[INFERRED]` in the analysis.
 7. **Design artifact analysis.** Analyze design artifacts provided in R0 using the approach appropriate to the artifact type:
 
     **If a Claude Design HTML export was provided:**
@@ -206,7 +197,7 @@
     **If no design artifacts were provided:**
     Note `[NO DESIGN ARTIFACTS PROVIDED]` and flag this in the approval gate summary as a gap.
 
-> **USE KNOWLEDGE GRAPH:** After synthesizing, roll up the explorer-written `affected_file` entities into `affected_area` summary nodes that downstream phases (R4A) read. For each distinct file / module / service / schema / component, create an `affected_area` entity with observations: `name`, `type` (file / module / service / schema / component), `risk` (high / medium / low — taken from the highest-severity `risk` entity linked to any of its `affected_file`s, defaulting to `medium`), and any relevant notes. Mark entries derived only from `inferred: true` observations with `inferred: true`. Link each `affected_area` to the `work_item` node. Also create a `design_spec` node with properties: `colors`, `typography`, `spacing`, `components` (list), `states` (list), `responsive_notes`, and `source` (filename or URL of design artifact, or `[INFERRED]` if derived from codebase analysis). Link it to the `work_item` node. R4A reads these nodes to ensure acceptance criteria cover real visual and interactive surfaces.
+> **WRITE Affected Areas + Design Spec to work-item.md:** After synthesizing, roll up the explorations' `affected_files` into an `## Affected Areas` section in `$MEM/work-item.md` that downstream phases (R4A, R5) read. For each distinct file / module / service / schema / component, write: `name`, `type`, `risk` (high / medium / low — from the highest-severity `risk` linked to any of its files, defaulting to `medium`), and any notes. Mark inferred-only entries `[INFERRED]`. Also write a `## Design Spec` section capturing `colors`, `typography`, `spacing`, `components` (list), `states` (list), `responsive_notes`, and `source` (filename or URL of the design artifact, or `[INFERRED]` if derived from codebase analysis). R4A reads these to ensure acceptance criteria cover real visual and interactive surfaces; R5 reads them to populate the card's Affected Areas, Visual Specifications, and Component States sections.
 
 > **REQUIRED:** Present all of the following in the chat before proceeding:
 > 
@@ -219,7 +210,7 @@
 
 > **APPROVAL GATE — FULL STOP.** Present the codebase and design analysis. Then use `AskUserQuestion` with header `R2 Approval`, options: `Approve and proceed (Recommended)` (description: "Scope areas and design analysis are correct and complete") / `Request changes` (description: "Something needs correction before continuing"). Do not proceed to R3 until approved.
 
-> **COMPACTION GATE — R2:** Once R2 approval is confirmed and any background `area-mapper` has completed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<work-item-key>-R2`; `next_phase: R3`; decisions: codebase scope confirmed, design artifact analysis status (complete / gap noted). REFERENCES: all `exploration` entities from R2, the `design_spec` node, and all `affected_area` nodes written to the graph.
+> **COMPACTION GATE — R2:** Once R2 approval is confirmed and any background `area-mapper` has completed, follow the Checkpoint & Compaction Contract above (gate path). Write `checkpoint.md` with `phase: R2`, `next_phase: R3`, `checkpoint_type: gate`, `mode`, `references: [work-item.md, explorations/*.md, related-cards.md]`; `## Decisions`: codebase scope confirmed, design artifact analysis status (complete / gap noted).
 
 ---
 
@@ -279,7 +270,7 @@
 
 6. Record all answers verbatim. Do not infer or invent answers.
 
-> **USE KNOWLEDGE GRAPH:** After answers are confirmed, write each Q&A pair to the graph. Create a `qa_item` node with properties: `question`, `answer`, `priority` (blocking / nice_to_have), `category` (scope_boundary / functional / visual_specs / component_states / responsive / accessibility / design_system / etc.). Link each node to the `work_item` node. R4A reads these nodes to derive traceable acceptance criteria.
+> **WRITE clarifications.md:** After answers are confirmed, append each Q&A pair to `$MEM/clarifications.md` (schema §3.5) as an `items[]` entry with `question`, `answer`, `priority` (blocking / nice_to_have), and `category` (scope_boundary / functional / visual_specs / component_states / responsive / accessibility / design_system / etc.). R4A reads these to derive traceable acceptance criteria.
 
 > **REQUIRED:** Present all BLOCKING questions answered and answers recorded, and remaining unanswered questions listed as open items with owner and target resolution date.
 
@@ -291,13 +282,15 @@
 
 **Objective:** Translate all gathered context into acceptance criteria, a risk register, and a scoping recommendation.
 
+> **FULL CONTEXT LOAD:** Before synthesizing, `Glob $MEM` and `Read` every present input file — `work-item.md` (description + `## Affected Areas` + `## Design Spec`), every `explorations/*.md`, `clarifications.md`, and `related-cards.md` (per `file-memory-protocol.md` §5). Synthesize on the full context, never a partial read.
+
 ---
 
 #### R4A — Acceptance Criteria
 
 > **USE SEQUENTIAL THINKING:** Before writing acceptance criteria, invoke the `sequentialthinking` tool. For each candidate criterion, verify it is: (1) **unambiguous** — only one possible interpretation, (2) **testable** — can be verified without further clarification, and (3) **traceable** — directly derived from an R3 answer or R2 finding. Work through each criterion in sequence and revise any that fail before presenting.
 
-> **USE KNOWLEDGE GRAPH:** After criteria are finalized, write each one to the graph. Create a `criterion` node with properties: `text`, `format` (always `gherkin` for this workflow), and `traceable_to` (the `qa_item`, `affected_area`, or `design_spec` node key it was derived from). Link each node to the `work_item` node. R5 reads these nodes to populate the Acceptance Criteria section verbatim.
+> **WRITE criteria.md:** After criteria are finalized, `Write $MEM/criteria.md` (schema §3.6) with `format: gherkin` and a `criteria[]` array — each entry `text` + `traceable_to` (the `clarifications.md` item, affected-area, or design-spec element it was derived from) — plus the verbatim gherkin block in the body. R5 reads this to populate the Acceptance Criteria section verbatim.
 
 Write acceptance criteria in **Gherkin format**. This is a hard requirement. Render the **entire** acceptance-criteria set as a single fenced ` ```gherkin ` code block headed by one `Feature:` line, with one `Scenario:` per discrete behavior and `Given`/`When`/`Then` (+ `And`) steps. **Every** criterion must be a `Scenario` — do not mix plain outcome bullets into the AC. Canonical shape:
 
@@ -372,19 +365,19 @@ Evaluate the work item against these criteria:
 > - **Skip it** for single-component, single-state changes where a diagram adds no clarity. If skipped, state in one line why.
 > - **Render it in the chat** as part of the R4 synthesis presentation at the approval gate.
 > - **The diagram will be embedded in the Jira description under `## Architecture`** by R5 when it assembles the description from the template below. No additional action needed here beyond persistence.
-> - **Persist it to the knowledge graph:** add a `diagram` observation (the raw Mermaid source) to the `work_item` entity so R5 and downstream execution skills can read it.
+> - **Persist it** to `$MEM/work-item.md`'s `## Architecture` section (as a ```mermaid block) so R5 and downstream execution skills can read it.
 
 ---
 
 #### R4E — Patterns & Code References
 
-> **USE KNOWLEDGE GRAPH:** Traverse the exploration subgraph for this work item — from `work_item` follow incoming `for` relations to each `exploration`, then its `contains` findings — and collect `pattern` (name, description, evidence_files), `evidence` (claim, file, line_range, confidence), and `integration_point` entities, plus relevant `design_spec` conventions. Skip any entity marked `superseded: true`. When discovery was reused (R2 pre-check), include the re-linked discovery subgraph and `synthesis_chosen`.
+> **READ explorations:** Read all `$MEM/explorations/*.md` and collect `patterns` (name, description, evidence_files), `evidence` (claim, file, line_range, confidence), and `integration_points` entries, plus the `## Design Spec` conventions from `work-item.md`. Skip any marked `inferred: true` unless clearly labelled. When discovery was reused (R2 pre-check), the copied discovery explorations are already under `$MEM/explorations/`.
 
 1. Select the established **component-reuse, design-token, and style conventions** this work must follow, and the concrete code anchors that demonstrate them (existing components to reuse vs. extend, token files, style modules). Prefer high-`confidence`, code-grounded evidence.
 2. For the **1–3 most important** patterns, use `Read` to open the referenced `file` at its `line_range` and extract a short (≤ ~15-line) snippet, prefixed with a `// <path>:<line_range>` comment. Keep snippets minimal — the file is source of truth.
 3. List integration points the work must respect. If no established pattern applies, record "None — no established pattern to follow."
 
-> **USE KNOWLEDGE GRAPH:** Persist a `pattern_ref` rollup node linked to the `work_item` with observations: `patterns`, `code_references`, `snippets`, `integration_points`. R5 reads this node to populate the `## Patterns & Code References` section.
+> **WRITE Patterns & Code References to work-item.md:** Persist the selected patterns into `$MEM/work-item.md`'s `## Patterns & Code References` section: `patterns`, `code_references`, `snippets`, `integration_points`. R5 reads this section to populate the card's `## Patterns & Code References`.
 
 > **REQUIRED:** Present the Patterns & Code References list as part of the R4 synthesis at the approval gate below.
 
@@ -394,7 +387,9 @@ Evaluate the work item against these criteria:
 
 > **APPROVAL GATE — FULL STOP.** Present the full R4 synthesis (acceptance criteria, risk register, Epic vs. Task recommendation, and Patterns & Code References). Then use `AskUserQuestion` with header `R4 Approval`, options: `Approve and proceed (Recommended)` (description: "The synthesis is accurate — ready to create the Jira issue") / `Request changes` (description: "Something needs correction before continuing"). Do not create a Jira issue of the wrong type.
 
-> **COMPACTION GATE — R4:** Once R4 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-<work-item-key>-R4`; `next_phase: R5`; decisions: Epic vs Task recommendation (state which), acceptance criteria count, key risks. REFERENCES: all `criterion` nodes, all `qa_item` nodes, the `design_spec` node, and all `affected_area` nodes.
+> **REGENERATE DASHBOARD:** After approval, regenerate `$MEM/work-item.html` from the current memory files (per `file-memory-protocol.md` §8) so the user has an up-to-date rendered view.
+>
+> **COMPACTION GATE — R4:** Once R4 approval is confirmed, follow the Checkpoint & Compaction Contract above (gate path). Write `checkpoint.md` with `phase: R4`, `next_phase: R5`, `checkpoint_type: gate`, `mode`, `references: [work-item.md, criteria.md, clarifications.md, related-cards.md, explorations/*.md]`; `## Decisions`: Epic vs Task recommendation (state which), acceptance criteria count, key risks.
 
 ---
 
@@ -404,7 +399,7 @@ Evaluate the work item against these criteria:
 
 **Agent Actions:**
 
-1. > **USE KNOWLEDGE GRAPH:** Retrieve the work-item subgraph using `open_nodes` on the `work_item` entity name and each entity name recorded in the R4 `phase_handoff` REFERENCES — `affected_area`, `design_spec`, `qa_item`, `criterion`, `pattern_ref`, `related_issue`, and `epic` nodes — to assemble the Jira issue description. Each section maps to a node type: `## Patterns & Code References` comes from the `pattern_ref` rollup (R4E); `## Non-Functional Requirements` is populated from any performance/compliance items raised in R3 (accessibility stays in its own dedicated section). This ensures nothing is missed or invented and the description is fully grounded in the structured context built across R0–R4.
+1. > **FULL CONTEXT LOAD:** `Glob $MEM` and `Read` the full set to assemble the Jira issue description — `work-item.md` (`## Description`, `## Affected Areas`, `## Design Spec`, `## Patterns & Code References`, `## Architecture`), `clarifications.md` (Visual Specs / Component States / NFR / Accessibility items by category — accessibility stays in its own dedicated section), `criteria.md` (Acceptance Criteria verbatim), and `related-cards.md` (distill material cards into `## Dependencies` / `## Patterns & Code References` / `## Context`). This ensures nothing is missed or invented and the description is fully grounded in the structured context built across R0–R4.
     
 2. Assemble the Jira issue description using the description structure below. The description must contain only the structured delivery context for the work item. Do not append workflow instructions, skill-invocation text, or placeholder tokens.
     
@@ -455,7 +450,7 @@ already captured in the existing Jira card retrieved in R1, if applicable.]
 [Name and version of the design system or component library this conforms to, or "None / not applicable."]
 
 ## Affected Areas
-[Structured list from R2 codebase analysis affected_area nodes. For each area:
+[Structured list from `work-item.md`'s `## Affected Areas` (built in R2). For each area:
 file/module/service path, brief description of relevance, and risk level.]
 - `[path]` -- [description] ([high/medium/low] risk)
 
@@ -464,9 +459,9 @@ file/module/service path, brief description of relevance, and risk level.]
 If the flowgraph was skipped in R4D, write: "None — no diagram for this change."]
 
 ## Patterns & Code References
-[From the R4E pattern_ref rollup — component-reuse, design-token, and style conventions to
-follow. References are durable; snippets are illustrative and may drift — the referenced file
-is source of truth. "None — no established pattern to follow." if greenfield.]
+[From `work-item.md`'s `## Patterns & Code References` (built in R4E) — component-reuse, design-token,
+and style conventions to follow. References are durable; snippets are illustrative and may drift — the
+referenced file is source of truth. "None — no established pattern to follow." if greenfield.]
 **Patterns to follow:**
 - **[name]** — [description]. Canonical example: `[path:line]`.
 **Code references:**
@@ -560,7 +555,7 @@ Scenario — no plain outcome bullets. Example shape:
 
 ---
 
-> **REQUIRED: Review the full issue description before presenting.** Verify: (1) all fields are populated with no placeholder text, (2) the Acceptance Criteria is a single fenced ` ```gherkin ` block headed by `Feature:` where every criterion is a `Scenario` (Given/When/Then) with no plain outcome bullets mixed in — rewrite any that are not, (3) the Affected Areas field is populated from R2 codebase analysis, (4) Patterns & Code References is populated from the R4E `pattern_ref` rollup (or explicit "None"), with any snippet carrying its `// path:line_range` header, (5) all defined Visual Specifications are populated from the R2 `design_spec` node, (6) Component States covers all states defined in R3, (7) Non-Functional Requirements and Accessibility Requirements reflect R3 answers, (8) no workflow instructions or skill-invocation text were embedded, and (9) the issue type matches the R4C recommendation. For any section where no specs were defined, write "Not defined." — do not leave placeholder text.
+> **REQUIRED: Review the full issue description before presenting.** Verify: (1) all fields are populated with no placeholder text, (2) the Acceptance Criteria is a single fenced ` ```gherkin ` block headed by `Feature:` where every criterion is a `Scenario` (Given/When/Then) with no plain outcome bullets mixed in — rewrite any that are not, (3) the Affected Areas field is populated from R2 codebase analysis, (4) Patterns & Code References is populated from `work-item.md`'s `## Patterns & Code References` (built in R4E) (or explicit "None"), with any snippet carrying its `// path:line_range` header, (5) all defined Visual Specifications are populated from `work-item.md`'s `## Design Spec` (built in R2), (6) Component States covers all states defined in R3, (7) Non-Functional Requirements and Accessibility Requirements reflect R3 answers, (8) no workflow instructions or skill-invocation text were embedded, and (9) the issue type matches the R4C recommendation. For any section where no specs were defined, write "Not defined." — do not leave placeholder text.
 
 > **APPROVAL GATE — FULL STOP.** Present the fully assembled issue description in the chat. Then use `AskUserQuestion` with header `R5 Approval`, options: `Approve and proceed (Recommended)` (description: "Content is accurate — create or update the Jira issue") / `Request changes` (description: "Something needs correction before creating"). Do not create or update the Jira issue until approved.
 
@@ -568,47 +563,32 @@ Scenario — no plain outcome bullets. Example shape:
 
 ### R6 — Cleanup
 
-**Objective:** Clear the session-scoped knowledge graph before finishing the workflow, including any upstream implementation-discovery state, after explicit user confirmation.
+**Objective:** Remove the work item's file-memory directory (and any upstream implementation-discovery directory) after explicit user confirmation, now that everything is materialized into the Jira issue.
 
 **Agent Actions:**
 
-1. **Enumerate.** Call `read_graph`. Identify every entity that should be deleted in this cleanup:
-   - The intake `work_item` entity for this issue and every entity linked to it: `affected_area`, `design_spec`, `pattern_ref`, `exploration`, `affected_file`, `evidence`, `pattern`, `integration_point`, `risk`, `open_question`, `qa_item`, `criterion`, `related_issue`, `epic`, `phase_handoff` (all entities with prefix `phase-handoff-<work-item-key>-`).
-   - Any upstream **implementation-discovery** state still in the graph, including any `phase_handoff` entities created by the discovery workflow (prefix `phase-handoff-discovery-<slug>-`): the `discovery_summary-<slug>` entity, the `work_item-discovery-<slug>` work item, the verification-round and first-round `exploration` subgraph linked to it (including any finding entities marked `superseded: true`, which must still be deleted — supersession marks them as non-canonical, not as already-removed), and any structured `open_question` entities reified at D5 (sources `d3_discussion` and `d4_verification`). These persist intentionally from a prior `/implementation-discovery` run; if discovery was reused at R0/R2, design-intake R6 owns reaping it. They are reachable through the `summarizes` relation from `discovery_summary-<slug>` and through the `for` re-link added at R2.
-   - Any other intake-scoped entities created during R0–R5 that link back to the work item.
+1. **Enumerate.** List the directories that will be removed:
+   - `$MEM` — this intake's work-item directory (`work-item.md`, `clarifications.md`, `criteria.md`, `related-cards.md`, `explorations/*.md`, `checkpoint.md`, `work-item.html`).
+   - Any upstream **implementation-discovery** directory reused at R0/R2: `$MEMROOT/discovery-<slug>/`. These persist intentionally from a prior `/implementation-discovery` run; if discovery was reused, design-intake R6 owns reaping it once the card is final.
 
 2. **Present the cleanup plan to the user.** Build a short, structured summary in the chat:
 
    ```
    ## R6 Cleanup Plan
 
-   The following session-scoped knowledge-graph entities will be deleted now that the Jira issue is finalized:
+   The following file-memory directories will be removed now that the Jira issue is finalized:
 
-   - work_item: <name>
-   - affected_area: <count>
-   - design_spec: <count>
-   - exploration: <count>
-   - affected_file / evidence / pattern / integration_point / risk / open_question: <total count>
-   - qa_item / criterion: <total count>
-   - related_issue / epic: <total count>
-   - phase_handoff: <count>
-   - <any other intake-scoped entities, listed by type and count>
-
-   ### From upstream Implementation Discovery (if present)
-   - discovery_summary-<slug>: <name, or "none">
-   - work_item-discovery-<slug>: <name, or "none">
-   - verification-round explorations: <count, or "none">
-
-   Total entities to delete: <N>
+   - This design intake: web-cms-memory/<work-item-key>/  (<file count> files)
+   - Upstream implementation discovery (if reused): web-cms-memory/discovery-<slug>/  (or "none — no discovery reused")
    ```
 
-   If the upstream-discovery section reports "none" across the board, state explicitly that no implementation-discovery state was found in the graph for this run.
+   If no implementation-discovery directory was reused, state that explicitly.
 
-3. > **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `R6 Cleanup`, options: `Proceed with cleanup (Recommended)` (description: "Delete all session-scoped entities listed above") / `Skip cleanup` (description: "Leave the graph untouched — entities remain until the session ends"). Do not run `delete_entities` until the user selects "Proceed with cleanup". On "Skip cleanup", leave the graph untouched, note in the chat that cleanup was skipped at the user's request, and end the workflow.
+3. > **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` with header `R6 Cleanup`, options: `Proceed with cleanup (Recommended)` (description: "Remove the listed file-memory directories") / `Skip cleanup` (description: "Leave them in place; they remain on disk"). Do not run `rm -rf` until the user selects "Proceed with cleanup". On "Skip cleanup", leave the directories in place, note in the chat that cleanup was skipped at the user's request, and end the workflow.
 
-4. **Execute deletion.** On explicit confirmation, call `delete_entities` with the full list enumerated in step 1. After deletion, report a one-line confirmation in the chat: "Cleanup complete: <N> entities deleted."
+4. **Execute deletion.** On explicit confirmation, `rm -rf "$MEM"` and (if a discovery was reused) `rm -rf "$MEMROOT/discovery-<slug>"` (Bash). Each removal is atomic. Report a one-line confirmation: "Cleanup complete: removed <N> directories."
 
-5. Do not leave requirements state in the graph after it has been fully materialized into the Jira issue, except when the user explicitly declined cleanup at step 3.
+5. Do not leave requirements state on disk after it has been fully materialized into the Jira issue, except when the user explicitly declined cleanup at step 3.
 
 ---
 
@@ -622,4 +602,4 @@ This workflow is complete when **all** of the following are true:
 - Jira issue updated (existing card) or created (new card) with all requirements populated, no unresolved placeholder text, and no embedded workflow or skill-invocation instructions
 - Task Details section includes a structured Affected Areas field populated from R2 codebase analysis
 - Visual Specifications, Component States, Responsive Behavior, and Accessibility Requirements sections are all populated (or explicitly state "Not defined." for unspecified areas)
-- R6 cleanup either cleared the session-scoped knowledge graph after the Jira record was finalized, or the user explicitly declined cleanup at the R6 approval gate
+- R6 cleanup either removed the work-item file-memory directory (and any upstream implementation-discovery directory) after the Jira record was finalized, or the user explicitly declined cleanup at the R6 approval gate

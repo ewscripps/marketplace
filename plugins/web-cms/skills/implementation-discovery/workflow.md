@@ -1,6 +1,6 @@
 # IMPLEMENTATION DISCOVERY WORKFLOW — EXECUTION CONTRACT
 
-> **How this works:** The user invokes this workflow when they want to understand how to approach building or changing something before defining formal requirements. The agent drives a short interactive session to understand the topic, explores the relevant codebase areas in parallel, surfaces either a single recommended approach or a ranked comparison of options, then runs a focused verification round against the user's chosen approach to confirm findings hold and surface anything missed. The full discovery output is persisted to the session knowledge graph and the workflow ends. To run requirements-intake on the discovery, the user clears conversation context with `/clear` and then invokes `/requirements-intake` in a fresh conversation — the knowledge graph survives the clear, so requirements-intake's R0 discovery pre-check picks the output up automatically. This workflow does not chain into requirements-intake itself.
+> **How this works:** The user invokes this workflow when they want to understand how to approach building or changing something before defining formal requirements. The agent drives a short interactive session to understand the topic, explores the relevant codebase areas in parallel, surfaces either a single recommended approach or a ranked comparison of options, then runs a focused verification round against the user's chosen approach to confirm findings hold and surface anything missed. The full discovery output is persisted to a per-topic file-memory directory and the workflow ends. To run requirements-intake on the discovery, the user clears conversation context with `/clear` and then invokes `/requirements-intake` in a fresh conversation — the files survive the clear, so requirements-intake's R0 discovery pre-check picks the output up automatically. This workflow does not chain into requirements-intake itself.
 
 **STRICT EXECUTION RULES — NO EXCEPTIONS:**
 
@@ -12,9 +12,9 @@
 
 **APPROVAL GATE BEHAVIOR:** Approval gates are chat-scoped. If explicit approval is not captured before the session ends or context is lost, stop at the gate. On resume, re-present the latest summary and ask for confirmation again. Never assume a pending approval was granted.
 
-**KNOWLEDGE GRAPH SCOPE — INTENTIONAL PERSISTENCE:** Unlike other intake and execution workflows, this workflow does NOT clean up its knowledge graph at the end. The `work_item-discovery-<slug>` entity, the explorer subgraph created at D1, the verification-round explorations created at D4, and the `discovery_summary-<slug>` entity written at D5 are deliberately left in place so that a follow-on `requirements-intake` run can pick them up at R0/R2 without re-exploring the codebase. The graph persists across `/clear` (which only clears conversation context, not the memory MCP server's state), so the recommended handoff is: this workflow finishes, the user runs `/clear`, then the user invokes `/requirements-intake` in a fresh conversation. Cleanup ownership transfers to `requirements-intake`: its terminal R6 cleanup phase is responsible for deleting all discovery entities along with its own. If the user never runs `/requirements-intake`, the entities remain until the Claude Code session itself ends; they are session-scoped and will not survive into a new launch.
+**FILE MEMORY SCOPE — INTENTIONAL PERSISTENCE:** Unlike other workflows, this one does NOT clean up its file memory at the end. The discovery directory `<…>/web-cms-memory/discovery-<topic-slug>/` — `work-item.md` (the discovery root), the explorer files under `explorations/` (D1) and the verification files `explorations/<area-slug>-verification.md` (D4), and `summary.md` written at D5 — is deliberately left in place so a follow-on `requirements-intake` run can pick it up at R0/R2 without re-exploring the codebase. It persists across `/clear` (which only clears conversation context, not files on disk), so the recommended handoff is: this workflow finishes, the user runs `/clear`, then invokes `/requirements-intake` in a fresh conversation. Cleanup ownership transfers to `requirements-intake`: its terminal R6 cleanup removes the `discovery-<slug>/` directory along with its own. If the user never runs `/requirements-intake`, the directory remains on disk until manually removed. Compute the directory path with the recipe in `file-memory-protocol.md` §1 (`<work-item-key> = discovery-<topic-slug>`).
 
-**GRAPH-AUTHORITATIVE CONTRACT FOR FINDINGS:** Within the discovery output, the knowledge-graph entities (explorations, evidence, patterns, integration points, risks, open questions) are the canonical record of *what was found*. The `synthesis_chosen` text written at D5 is the human-readable summary of the canonical record at the time of persistence; it is intended for direct insertion into the Jira issue description by downstream consumers. When D4 changes a finding (revises, contradicts, marks an item superseded), it MUST update the underlying graph entities at the same time it updates the synthesis text — the two views must agree at the moment of D5 persistence. Downstream consumers (notably `requirements-intake` R2) treat the graph as the structured truth: they must filter `superseded: true` entities when traversing, and prefer graph evidence over synthesis text if a conflict ever surfaces.
+**FILE-AUTHORITATIVE CONTRACT FOR FINDINGS:** Within the discovery output, the exploration files (`explorations/*.md` — their `evidence`, `patterns`, `integration_points`, `risks`, `open_questions` entries) are the canonical record of *what was found*. The `## Synthesis (chosen)` text in `summary.md` (written at D5) is the human-readable summary of that record at persistence time; it is intended for direct insertion into the Jira issue description by downstream consumers. When D4 changes a finding (revises, contradicts, marks an entry superseded), it MUST update the underlying exploration entries at the same time it updates the synthesis text — the two views must agree at D5 persistence. Downstream consumers (notably `requirements-intake` R2) treat the exploration files as the structured truth: they skip entries/files marked `superseded: true` when reading, and prefer exploration evidence over synthesis text if a conflict ever surfaces.
 
 **CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
@@ -37,19 +37,15 @@
 - D4 — Verification Round
 - D5 — Persist and Handoff
 
-**PHASE COMPACTION HANDOFF CONTRACT:** At designated compaction gates in this workflow, the agent writes a durable `phase_handoff` entity to the knowledge graph and prompts the user to run `/compact`. This prevents auto-compaction from discarding phase position mid-discovery.
+**CHECKPOINT & COMPACTION CONTRACT:** This workflow records position in a single `$MEM/checkpoint.md` file (full schema and contract in `file-memory-protocol.md` §4), where `$MEM` is the discovery directory.
 
-**Steps at each gate — execute before instructing `/compact`:**
+**Per-phase checkpoint — after EVERY phase (D0–D5), automatically, with no chat output and no `/compact` prompt.** Atomically overwrite `$MEM/checkpoint.md` (`Write` to `checkpoint.md.tmp`, then `mv` over `checkpoint.md`) with `checkpoint_type: phase`, the just-completed `phase`, the upcoming `next_phase`, the `references` list, `## Decisions`, and `## Open items`. (The first checkpoint is written after D1 creates `$MEM`.)
 
-1. Wait for any background `area-mapper` sub-agent to complete.
-2. Create a `phase_handoff` entity in the knowledge graph:
-   - **Name:** `phase-handoff-discovery-<topic-slug>-<phase-id>` (e.g. `phase-handoff-discovery-add-retry-logic-D2`); use the same `<topic-slug>` derived in D1.
-   - **Observations:** `phase: <id>`, `skill: implementation-discovery`, `topic_slug: <slug>`, `work_item_id: <work_item-discovery-<slug>>`, one `decisions: <text>` observation per key decision made this phase, `approval_condition: <verbatim user phrasing or "none">`, `next_phase: <id>`, one `open_items: <text>` per open item.
-   - **Relations:** `BELONGS_TO` → `work_item-discovery-<topic-slug>`; `SUPERSEDES` → prior `phase_handoff` for this topic (if any); `REFERENCES` → relevant `exploration` entity names.
-3. Call `open_nodes` on the new entity and each `REFERENCES` target to confirm writes landed.
-4. Emit the Phase Summary block in the chat. The block must contain: phase ID and skill name, topic slug, work_item_id, one-line decision summary, verbatim approval condition, next phase ID, handoff entity name, and resume contract ("open_nodes on handoff entity → traverse REFERENCES → continue at `<next-phase>`"). End your turn immediately after the Phase Summary block — do not add any further content. The block must end with this literal line: **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` here; the user must be free to run `/compact` in the prompt input without any open question consuming their input. When the user next types `continue` (or any message clearly indicating compaction is done), call `open_nodes` on the `phase_handoff` entity, traverse its `REFERENCES`, and resume at `next_phase`. Before executing the resumed phase, **re-read that phase's section in this skill's `workflow.md`** so its full instructions survive compaction — in particular, any phase that asks the user clarifying or structured questions MUST use `AskUserQuestion` (per the Clarification Rule), never plain text. If the user types a different message instead, handle it normally.
+**Compaction gates (D2, D4) — additionally prompt the user to `/compact`.** Do the per-phase write but with `checkpoint_type: gate`, then: (1) wait for any background `area-mapper` to finish; (2) emit the Phase Summary block (§4(b)) — phase + skill, topic slug, one-line decisions, verbatim approval condition, `next_phase`, the checkpoint file path, and the resume contract; (3) end the turn with the literal line **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` at a gate.
 
-**Note on cleanup:** This workflow intentionally leaves the knowledge graph intact for requirements-intake to consume. The `phase_handoff` entities created here are reaped by requirements-intake R6 (which sweeps all upstream implementation-discovery state) or by issue-intake I6 (bug path). If neither follow-on workflow runs, these entities persist until the Claude Code session ends.
+**Universal resume rule — on ANY resume, before doing anything else:** `Read $MEM/checkpoint.md` → `Read` every file in its `references` (`summary.md`, `explorations/*.md`, `work-item.md`) → **re-read the `next_phase` section of this `workflow.md`** (any phase asking clarifying/structured questions MUST use `AskUserQuestion`) → continue at `next_phase`. If `$MEM` is absent, restart the affected phase from prior chat. Approval gates stay chat-scoped — never assume a pending approval was granted.
+
+**Note on cleanup:** This workflow intentionally leaves its directory intact for requirements-intake to consume. There are no separate handoff entities to reap — the single `checkpoint.md` is removed with the directory by requirements-intake R6 (which sweeps all upstream implementation-discovery state) or by issue-intake I6 (bug path). If neither follow-on workflow runs, the directory persists until manually removed.
 
 ---
 
@@ -59,7 +55,7 @@
 
 **Agent Actions:**
 
-1. Briefly explain what this workflow does (parallel codebase exploration, approach surfacing, focused verification round, persistence to the knowledge graph) and what to expect. Mention that requirements-intake is a separate next step the user runs after `/clear` — this workflow does not chain into it.
+1. Briefly explain what this workflow does (parallel codebase exploration, approach surfacing, focused verification round, persistence to a discovery file-memory directory) and what to expect. Mention that requirements-intake is a separate next step the user runs after `/clear` — this workflow does not chain into it.
 
 2. Gather context in this order:
 
@@ -93,7 +89,7 @@
 
 **Objective:** Explore the relevant codebase areas to ground the D2 synthesis in evidence.
 
-> **USE KNOWLEDGE GRAPH:** Before spawning explorers, create a `work_item` entity with name `work_item-discovery-<topic-slug>` (slug derived from the D0 topic via the same normalization rule used elsewhere: lowercase, whitespace/punctuation/slashes → single `-`, trim, collapse). Observations: `work_type: discovery`, `topic`, `output_preference`, `change_scope`, `phase: discovery`. **Record the entity name** as the `work_item_id` for D1 and pass it to every explorer. The `discovery_summary-<topic-slug>` entity created at D5 will reference the same id so requirements-intake R0/R2 can pick up the explorer subgraph.
+> **BOOTSTRAP FILE MEMORY:** Before spawning explorers, derive `<topic-slug>` from the D0 topic (lowercase, whitespace/punctuation/slashes → single `-`, trim, collapse) and compute `MEM` (recipe §1) with `<work-item-key> = discovery-<topic-slug>`. `mkdir -p "$MEM/explorations"` and `Write $MEM/work-item.md` (schema §3.1) with `work_type: discovery`, `jira_key: null`, `title: <topic>`, `status: in_progress`, `phase: D1`, `skill: implementation-discovery`, and the topic, output preference, and change scope under `## Description`. Pass the `MEM` path (as `memory_dir`) and a normalized `area_slug` to every explorer. The `summary.md` written at D5 lives in this same directory so requirements-intake R0/R2 can pick up the explorations.
 
 **Agent Actions:**
 
@@ -102,16 +98,16 @@
 2. Invoke a `codebase-explorer` sub-agent in **parallel** for each distinct area, providing:
    - The target area to explore
    - A discovery-scoped question: **"What code, patterns, architecture, and constraints in this area are relevant to implementing or changing [topic]? What approaches are already visible in the existing code, and what would be the natural extension points?"**
-   - The `work_item_id` (`work_item-discovery-<topic-slug>`). All findings the explorer streams to the graph will be linked to this node.
+   - The `memory_dir` (`$MEM`) and a normalized `area_slug`. The explorer writes its findings to `$MEM/explorations/<area_slug>.md`.
    - The topic description for context
 
-3. Wait for all explorers to return. Each non-failed return contains an `Entity:` line with the exploration entity name. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters. `FAILED` means no graph data was written — re-spawn that explorer before proceeding.
+3. Wait for all explorers to return. Each non-failed return contains a `File:` line with the exploration file name. `INCOMPLETE` means partial findings are present; consider re-spawning for the same area if coverage matters. `FAILED` means no file was written — re-spawn that explorer before proceeding.
 
-> **POST-EXPLORATION ENRICHMENT:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `work_item_id`. The mapper crystallizes durable area knowledge from this run's graph into Serena project memory for future explorations. Do not wait for it — proceed immediately to step 4.
+> **POST-EXPLORATION ENRICHMENT:** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) with the same `memory_dir` (`$MEM`). The mapper crystallizes durable area knowledge from this run's exploration files into Serena project memory for future explorations. Do not wait for it — proceed immediately to step 4.
 
-4. Call `open_nodes` on each `exploration` entity name from the returns. If any entity comes back empty, re-spawn that explorer rather than treating missing data as confirmed. Surface any `open_question` entities in the responses. If any identifies a connection to another area not yet explored, dispatch a follow-up `codebase-explorer` (passing the same `work_item_id`) before proceeding.
+4. `Read` each `$MEM/explorations/<area_slug>.md` from the returns. If any file is missing or empty, re-spawn that explorer rather than treating missing data as confirmed. Surface any `open_questions` entries. If any identifies a connection to another area not yet explored, dispatch a follow-up `codebase-explorer` (passing the same `memory_dir`) before proceeding.
 
-5. Review the assembled subgraph for consistency. Note any conflicting signals across areas before moving to synthesis — for example, two explorers writing `pattern` entities that contradict each other, or `risk` entities that flag the same area at different severities.
+5. Review the assembled exploration files for consistency. Note any conflicting signals across areas before moving to synthesis — for example, two explorations' `patterns` that contradict each other, or `risks` that flag the same area at different severities.
 
 > **REQUIRED before proceeding:**
 > - All assigned explorer reports received
@@ -198,13 +194,13 @@
    >
    > - **Skip it** for trivial single-component changes or when the approach is purely procedural with no meaningful branching. If skipped, state in one line why.
    > - **Render each diagram in the chat** inline with the corresponding approach block in the synthesis presentation.
-   > - **There is no Jira description to update at this phase.** The diagram is persisted to the knowledge graph here and will flow into the Jira description once requirements-intake runs. Add a `diagram` observation (the raw Mermaid source for the chosen approach, or for a multiple-options run, a JSON object keyed by option name) to the `discovery_summary` entity in D5 so requirements-intake's R4D step can read and reuse it.
+   > - **There is no Jira description to update at this phase.** The diagram is persisted to `summary.md` at D5 (a `diagram` frontmatter field holding the raw Mermaid source for the chosen approach, or for a multiple-options run a JSON object keyed by approach name) so requirements-intake's R4D step can read and reuse it.
 
 5. > **REQUIRED: Review the synthesis before presenting.** Verify every claim is grounded in D1 evidence. Remove or revise any that are not. Label remaining inferences explicitly. Do not present an unreviewed synthesis.
 
 > **APPROVAL GATE — FULL STOP.** Present the full D2 synthesis. Use `AskUserQuestion` (Header: `D2 Approval`, Question: `Does this synthesis accurately reflect what you want to explore? Are the affected areas and approach(es) correct?`, Options: `Approve and proceed (Recommended)` — the synthesis looks correct, `Request changes` — something needs revision). Do not proceed to D3 until the user approves.
 
-> **COMPACTION GATE — D2:** Once D2 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-discovery-<topic-slug>-D2`; `next_phase: D3`; decisions: synthesis approach count and recommended option (if any); output_preference and chosen approach (once selected in D3 — if not yet selected, record "pending D3"). REFERENCES: exploration entities from D1. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to D3.
+> **COMPACTION GATE — D2:** Once D2 approval is confirmed, follow the Checkpoint & Compaction Contract above (gate path). Write `checkpoint.md` with `phase: D2`, `next_phase: D3`, `checkpoint_type: gate`, `references: [work-item.md, explorations/*.md]`; `## Decisions`: synthesis approach count and recommended option (if any); chosen approach (once selected in D3 — record "pending D3" if not yet). Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to D3.
 
 ---
 
@@ -219,7 +215,7 @@
 2. Engage in free-form conversation with the user. This phase has no fixed structure — follow the user's lead. Guidelines:
    - **If the user asks a clarifying question:** answer it using evidence from the D1 findings. Do not speculate beyond what was explored. If a question cannot be answered from D1 evidence, say so explicitly and note it as an open question.
    - **If the user pushes back on an option:** engage honestly. If the pushback reveals a constraint or signal that would change the recommendation, acknowledge it and explain how it affects the analysis.
-   - **If the user states a preference** (e.g., "I'm leaning toward Option 2"): acknowledge it and note it — it will be recorded in the knowledge graph in D5 so requirements-intake has full context, and it scopes the D4 verification round.
+   - **If the user states a preference** (e.g., "I'm leaning toward Option 2"): acknowledge it and note it — it will be recorded in `summary.md` in D5 so requirements-intake has full context, and it scopes the D4 verification round.
    - **If the user asks to see an additional option** not already presented: evaluate whether D1 evidence supports it. If yes, synthesize it using the same format from D2. If no, explain why the evidence doesn't support it.
 
 3. Continue the conversation for as many turns as the user needs. Do not rush toward the next phase.
@@ -253,47 +249,46 @@
    Group the verification claims by area (the same area boundaries used in D1, plus any new areas the chosen approach pulls in that were not explored in D1). Present the verification plan in the chat as a short, structured list before spawning explorers — the user may add an area, drop one, or flag a claim they want investigated more deeply.
 
 2. **Spawn verification explorers in parallel.** For each area covering one or more verification claims, invoke a `codebase-explorer` sub-agent with:
-   - The same `work_item_id` (`work_item-discovery-<topic-slug>`) so verification findings join the same subgraph.
+   - The same `memory_dir` (`$MEM`) so verification files join the same discovery directory.
+   - **A distinct `area_slug` with a `-verification` suffix** (e.g. `payment-core-verification`) so the explorer writes `$MEM/explorations/<area-slug>-verification.md` — a separate file that never overwrites the D1 exploration of the same area. This is how first-round and verification-round findings stay distinguishable on disk; without the suffix a verification explorer would clobber the D1 file.
    - A verification-scoped question: **"For the chosen approach `[approach name]`, verify the following specific claims and surface anything missed: [bulleted claim list for this area]. For each claim, return one of confirmed / contradicted / partially confirmed with the supporting evidence. Then look for missing dependencies, integration points, risks, or blockers that prior exploration did not capture."**
    - The chosen approach name and the relevant excerpt of the D2 synthesis for context.
-   - An instruction to add `round: verification` and `verifies_approach: [approach name]` observations to the new `exploration` entity it creates, so D5 can distinguish first-round and verification-round findings in the persisted graph.
-   - **An explicit name-suffix override for entity uniqueness.** D1 explorations on the same area already exist in the graph with names of the form `exploration-<work_item_key>-<area_slug>` and `<finding-type>-<work_item_key>-<area_slug>-<…>`. Tell the explorer to append the literal suffix `-verification` to every entity name it creates this run (`exploration-<work_item_key>-<area_slug>-verification`, `file-<work_item_key>-<area_slug>-<path-slug>-verification`, `evidence-<work_item_key>-<area_slug>-<short-claim-slug>-verification`, etc.) so the verification-round subgraph never collides with the first-round subgraph on `create_entities`. Without this suffix, every D4 explorer that re-targets a D1 area fails on duplicate-name.
+   - An instruction to set `round: verification` and `verifies_approach: [approach name]` in the new exploration file's frontmatter, so D5 can distinguish first-round and verification-round findings.
 
-3. Wait for all verification explorers to return. Each non-failed return contains an `Entity:` line with the exploration entity name. If any return `INCOMPLETE` and the gap is on a high-priority verification claim, re-spawn for that area before reconciling. `FAILED` means no graph data was written — re-spawn before reconciling.
+3. Wait for all verification explorers to return. Each non-failed return contains a `File:` line with the exploration file name. If any return `INCOMPLETE` and the gap is on a high-priority verification claim, re-spawn for that area before reconciling. `FAILED` means no file was written — re-spawn before reconciling.
 
-> **USE SEQUENTIAL THINKING:** Before reconciling, invoke the `sequentialthinking` tool. Use it to classify each verification claim (Confirmed / Enriched / Contradicted / New blocker) before writing any conclusion to the graph, reason through whether any "Contradicted" finding changes the feasibility of the chosen approach or only adjusts its scope, and decide whether any "New blocker" should trigger a re-open of the synthesis (D3 re-entry) versus being accepted as an open question. This is the most consequential decision point in D4 — a shallow reconciliation that marks everything "Confirmed" because the verification explorer did not find an explicit contradiction is a false clean result that misleads requirements-intake. Do not begin the reconciliation step until the reasoning is complete.
+> **USE SEQUENTIAL THINKING:** Before reconciling, invoke the `sequentialthinking` tool. Use it to classify each verification claim (Confirmed / Enriched / Contradicted / New blocker) before writing any conclusion to the files, reason through whether any "Contradicted" finding changes the feasibility of the chosen approach or only adjusts its scope, and decide whether any "New blocker" should trigger a re-open of the synthesis (D3 re-entry) versus being accepted as an open question. This is the most consequential decision point in D4 — a shallow reconciliation that marks everything "Confirmed" because the verification explorer did not find an explicit contradiction is a false clean result that misleads requirements-intake. Do not begin the reconciliation step until the reasoning is complete.
 
 > **THINK HARD:** Before deciding the outcome of the reconciliation, think hard about whether a "material change" threshold is met — specifically, whether any Contradicted or New Blocker finding changes the viability or effort of the chosen approach, or only adds nuance. A false "clean" verdict here causes requirements-intake to inherit a plan whose key assumptions have not been verified.
 
-4. **Reconcile.** Call `open_nodes` on each verification `exploration` entity name from the returns (those with the `-verification` suffix). For each verification claim, classify the outcome:
+4. **Reconcile.** `Read` each verification exploration file (`$MEM/explorations/*-verification.md`). For each verification claim, classify the outcome:
    - **Confirmed** — verification evidence supports the claim. No action needed.
    - **Enriched** — the claim is correct but the verification round added new evidence (additional callers, edge-case handling, related files). Note for the synthesis update.
    - **Contradicted** — verification evidence shows the claim is wrong. Identify what specifically was wrong and why.
    - **New blocker** — verification surfaced a dependency, risk, or constraint that D1 missed and that materially affects the chosen approach (e.g., the extension point doesn't exist, an integration is owned by another service, a pattern the approach assumed is being deprecated).
 
-   **Mark contradicted entities in the graph as part of reconciliation.** Per the graph-authoritative contract, every D1 finding entity that this verification round contradicts MUST be tagged immediately, before deciding the outcome in step 5. For each contradicted D1 entity (`evidence`, `pattern`, `integration_point`, `risk`, or `affected_file` whose role/relevance is wrong), call `add_observations` to add:
+   **Mark contradicted findings in the D1 exploration files as part of reconciliation.** Per the file-authoritative contract, every D1 finding entry that this verification round contradicts MUST be tagged immediately, before deciding the outcome in step 5. For each contradicted entry in its D1 `$MEM/explorations/<area-slug>.md` (an `evidence`, `patterns`, `integration_points`, `risks`, or `affected_files` entry whose role/relevance is wrong), `Edit` that entry to add:
    - `superseded: true`
    - `superseded_at: D4`
    - `superseded_reason: <one-sentence explanation>`
-   - `superseded_by: <name of the verification-round entity that supplies the corrected evidence, if any — otherwise "see verification_findings">`
+   - `superseded_by: <the verification file / entry that supplies the corrected evidence, if any — otherwise "see verification_findings">`
 
-   This applies regardless of which outcome the user chooses in step 5 — once verification has contradicted a finding, it is no longer canonical, and downstream traversal must be able to filter it out.
+   This applies regardless of which outcome the user chooses in step 5 — once verification has contradicted a finding, it is no longer canonical, and downstream readers must be able to skip it.
 
 5. **Decide the outcome.**
    - **Clean (only Confirmed and Enriched):** present a short verification report — "Verification complete. Confirmed: …. New context: …." — then proceed to D5. Update the synthesis text with the enriched evidence before persistence.
    - **Material change (any Contradicted or New blocker):** present the finding to the user with the supporting evidence. Use `AskUserQuestion` (Header: `Material Change`, Question: `This changes the picture for [approach]. How would you like to proceed?`, Options: `Revise this approach and continue (Recommended)` — update the synthesis with the new evidence and proceed, `Re-open synthesis` — loop back to D2 to consider another option with the new evidence in scope, `Accept and proceed` — record the contradiction or blocker as an open question and proceed without revising the synthesis).
-     - **(a) Revise:** update the D2 synthesis text inline to reflect the new evidence (revised affected areas, risks, effort, or constraints). The verification-round explorer entities written in step 2 already carry the corrected evidence in the graph; the contradicted D1 entities have already been marked `superseded: true` in step 4. The synthesis text update is the human-readable view that brings the synthesis back into sync with the graph. Present the revised synthesis to the user for confirmation, then proceed.
-     - **(b) Re-open synthesis:** loop back to D2 with the verification findings as additional input. Re-run D2 → D3 → D4 with the new evidence in scope. The original `work_item_id` and explorer subgraph stay; this is iteration on the same discovery. (Contradicted entities remain `superseded: true` from step 4 — this carries forward through the re-opened synthesis.)
+     - **(a) Revise:** update the D2 synthesis text inline to reflect the new evidence (revised affected areas, risks, effort, or constraints). The verification-round exploration files written in step 2 already carry the corrected evidence; the contradicted D1 entries have already been marked `superseded: true` in step 4. The synthesis text update is the human-readable view that brings the synthesis back into sync with the files. Present the revised synthesis to the user for confirmation, then proceed.
+     - **(b) Re-open synthesis:** loop back to D2 with the verification findings as additional input. Re-run D2 → D3 → D4 with the new evidence in scope. The original discovery directory and exploration files stay; this is iteration on the same discovery. (Contradicted entries remain `superseded: true` from step 4 — this carries forward through the re-opened synthesis.)
      - **(c) Accept and proceed:** record the contradiction or blocker as an open question and proceed without revising the synthesis. Specifically:
-        - Call `create_entities` to add a structured `open_question` entity for each accepted contradiction or blocker, named `question-<work_item_key>-d4-<short-question-slug>`. Required observations: `question` (the unanswered question or unresolved blocker, phrased as a question), `why_unanswered` (why D4 surfaced it as a blocker), `source: d4_verification`, `severity` (`high` for blockers, `medium` for contradictions, `low` for soft conflicts).
-        - Call `create_relations` to link each new `open_question` to `work_item-discovery-<slug>` via a `contains` relation, so it joins the same subgraph as the explorer-written open questions and is reachable from the same traversal.
-        - Append a one-line summary of each to the `open_questions` observation on `discovery_summary-<slug>` at D5 step 1 (this is the human-readable view; the entities are the canonical record).
+        - Add a structured open question for each accepted contradiction or blocker as an `open_questions` entry in the relevant verification exploration file: `question` (the unresolved blocker, phrased as a question), `why_unanswered` (why D4 surfaced it), `source: d4_verification`, `severity` (`high` for blockers, `medium` for contradictions, `low` for soft conflicts). This keeps it reachable when downstream readers scan `explorations/*.md`.
+        - Append a one-line summary of each to `summary.md`'s `## Open questions` at D5 step 1 (the human-readable index; the exploration-file entries are the canonical record).
 
-6. **Refresh durable memory.** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) one more time with the same `work_item_id` so its Serena memory crystallization reflects the verified picture. Do not wait for it.
+6. **Refresh durable memory.** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) one more time with the same `memory_dir` (`$MEM`) so its Serena memory crystallization reflects the verified picture. Do not wait for it.
 
 > **APPROVAL GATE — FULL STOP.** Present the verification report (and the revised synthesis, if revision happened in step 5). Use `AskUserQuestion` (Header: `D4 Approval`, Question: `Does the verification report (and any revisions) look correct? Ready to save the discovery output?`, Options: `Approve and proceed (Recommended)` — the verification outcome and any revisions are correct, `Request changes` — something needs revision). Do not proceed to D5 until the user approves.
 
-> **COMPACTION GATE — D4:** Once D4 approval is confirmed, follow the Phase Compaction Handoff Contract above. Entity name: `phase-handoff-discovery-<topic-slug>-D4`; `next_phase: D5`; decisions: verification outcome (clean / revised / accepted-with-open-questions), approach confirmed or revised. REFERENCES: verification exploration entities from D4 (those with the `-verification` suffix).
+> **COMPACTION GATE — D4:** Once D4 approval is confirmed, follow the Checkpoint & Compaction Contract above (gate path). Write `checkpoint.md` with `phase: D4`, `next_phase: D5`, `checkpoint_type: gate`, `references: [explorations/*.md, work-item.md]`; `## Decisions`: verification outcome (clean / revised / accepted-with-open-questions), approach confirmed or revised. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to D5.
 
 > **REQUIRED before proceeding:**
 > - Chosen approach is recorded
@@ -306,50 +301,50 @@
 
 ### D5 — Persist and Handoff
 
-**Objective:** Write the confirmed and verified discovery output to the knowledge graph, deliver the standalone synthesis to the user, and instruct them on the clean handoff to requirements-intake. This workflow does not invoke requirements-intake itself.
+**Objective:** Write the confirmed and verified discovery output to `summary.md`, deliver the standalone synthesis to the user, and instruct them on the clean handoff to requirements-intake. This workflow does not invoke requirements-intake itself.
 
 **Agent Actions:**
 
-1. **Write the discovery summary entity.** Create a `discovery_summary` entity named `discovery_summary-<topic-slug>` (use the same `<topic-slug>` derived in D1, so the summary's name pairs deterministically with `work_item-discovery-<topic-slug>`). The explicit slug-bearing name is required so multiple discoveries in the same session do not collide on a single `discovery_summary` key. Observations:
-   - `topic: [the user's topic description from D0]`
-   - `work_item_id: [the work_item-discovery-<slug> entity name created in D1]`
-   - `codebase_hints: [hints from D0, or "none"]`
-   - `output_preference: [single_recommendation | multiple_options]`
-   - `change_scope: [large_changes_acceptable | targeted_only]`
-   - `affected_areas: [comma-separated list of discovered area paths for the chosen approach, updated with any verification additions and pruned of areas that only mattered to non-chosen options]`
-   - `synthesis_chosen: [the synthesis text scoped to the chosen approach — for a single_recommendation run this is the full synthesis; for a multiple_options run this is ONLY the chosen option's block plus any cross-option constraints that still apply, with non-chosen options removed. This is the observation downstream consumers should treat as the human-readable analysis content.]`
-   - `synthesis_full: [the complete confirmed synthesis text including all options for a multiple_options run, retained for record only — downstream consumers should NOT use this as the analysis content because it carries unchosen-option evidence.]`
-   - `approach_count: [1 for single recommendation, or the number of options presented]`
-   - `chosen_approach: [name of the approach the user selected in D3]`
-   - `diagram: [Mermaid source for the chosen approach's flowchart from D2, or for a multiple-options run the JSON object keyed by approach name. Omit this observation (do not write it as "none") if the flowgraph was skipped in D2 — requirements-intake will generate its own in that case.]`
-   - `user_preference: [any preference or lean expressed by the user in D3, or "none stated"]`
-   - `verification_status: [clean | revised | accepted_with_open_questions]`
-   - `verification_findings: [one-line-per-claim summary: confirmed / enriched / contradicted / new-blocker, with file references for non-confirmed items. Contradicted items reference the `superseded: true` D1 entity by name.]`
-   - `open_questions: [one line per open question, mirroring the structured `open_question` entities created in step 2 below — this is the human-readable index; the entities themselves are canonical. Use "none" only if no `open_question` entities exist for this work item.]`
+1. **Write `summary.md`.** `Write $MEM/summary.md` (schema §3.9, `summary_type: discovery`) with frontmatter:
+   - `topic_slug: <slug>` and `topic: <the user's topic description from D0>`
+   - `codebase_hints: <hints from D0, or "none">`
+   - `output_preference: <single_recommendation | multiple_options>`
+   - `change_scope: <large_changes_acceptable | targeted_only>`
+   - `chosen_approach: <name of the approach the user selected in D3>`
+   - `approach_count: <1 for single recommendation, or the number of options presented>`
+   - `affected_areas: [list of discovered area paths for the chosen approach, updated with verification additions and pruned of areas that only mattered to non-chosen options]`
+   - `verification_status: <clean | revised | accepted_with_open_questions>`
+   - `verification_findings: <one-line-per-claim summary: confirmed / enriched / contradicted / new-blocker, with file references for non-confirmed items; contradicted items name the superseded `explorations/*.md` entry>`
+   - `user_preference: <any preference or lean expressed by the user in D3, or "none stated">`
+   - `diagram: <Mermaid source for the chosen approach's flowchart from D2, or for a multiple-options run a JSON object keyed by approach name. Omit if the flowgraph was skipped in D2 — requirements-intake will generate its own.>`
+   - `discovery_confirmed: false` (a follow-on requirements-intake / issue-intake sets this to `true` when the user confirms reuse)
 
-   For a `single_recommendation` run, `synthesis_chosen` and `synthesis_full` will normally be identical and that is fine — write both anyway so downstream consumers do not need to branch on output preference.
+   And body:
+   - `## Synthesis (chosen)` — the synthesis text scoped to the chosen approach. For a single_recommendation run this is the full synthesis; for a multiple_options run this is ONLY the chosen option's block plus any cross-option constraints that still apply, with non-chosen options removed. This is what downstream consumers insert into the Jira description.
+   - `## Synthesis (full, record only)` — the complete confirmed synthesis including all options (multiple_options run), retained for record only. Downstream consumers must NOT use this as the analysis content.
+   - `## Open questions` — one line per open question (see step 2).
 
-2. **Reify open questions as structured entities.** Aggregate every unresolved question that should carry into requirements-intake:
+   For a `single_recommendation` run, the two synthesis sections are normally identical; that is fine.
+
+2. **Record open questions.** Aggregate every unresolved question that should carry into requirements-intake:
    - D3 questions that could not be answered from D1 evidence (those the user signalled as still-open during discussion).
-   - Any contradictions or blockers accepted at D4 step 5(c) — these were already reified in D4 and are listed here only for completeness.
+   - Any contradictions or blockers accepted at D4 step 5(c) — already added to a verification exploration file's `open_questions`, listed here for completeness.
 
-   For each that is not already a graph entity, call `create_entities` to create an `open_question` entity named `question-<work_item_key>-d3-<short-question-slug>` (use `d3` as the source segment for D3-origin questions; D4-origin questions already use `d4`). Required observations: `question`, `why_unanswered`, `source` (`d3_discussion` | `d4_verification`), `severity` (`high` | `medium` | `low`).
+   Ensure each is captured BOTH as an `open_questions` entry in an `explorations/*.md` file (the canonical, structured record that requirements-intake R2/R4 reads) AND as a one-line entry under `summary.md`'s `## Open questions` (the human-readable index). For a D3-origin question with no natural exploration file, add it to the most relevant exploration file's `open_questions` array. Each carries `source` (`d3_discussion` | `d4_verification`) and `severity` (`high` | `medium` | `low`).
 
-   Call `create_relations` to link each `open_question` to `work_item-discovery-<slug>` via a `contains` relation. This is the same shape that explorer-written open questions use, so requirements-intake's R4A traversal picks them up uniformly without needing to parse the `open_questions` string observation.
+3. **No cross-file links are needed.** `summary.md`, `work-item.md`, and `explorations/*.md` all live in the same `discovery-<slug>/` directory, so requirements-intake navigates from the summary to the explorations by listing that directory — there is nothing to wire up.
 
-3. **Create the summary→work_item relation.** Call `create_relations` to add a `summarizes` relation from `discovery_summary-<slug>` to the `work_item-discovery-<slug>` node so requirements-intake can navigate from the summary to the explorer subgraph at R2.
-
-4. **Present the chosen synthesis** once more in the chat as a standalone deliverable so the user has the full output in front of them as the workflow closes. Use the `synthesis_chosen` text — for a multiple_options run, this means the chosen-option block plus any cross-cutting constraints, NOT the full options table.
+4. **Present the chosen synthesis** once more in the chat as a standalone deliverable so the user has the full output in front of them as the workflow closes. Use the `## Synthesis (chosen)` text from `summary.md` — for a multiple_options run, this means the chosen-option block plus any cross-cutting constraints, NOT the full options table.
 
 5. **Deliver the handoff message verbatim:**
 
-   > **Discovery saved.** Your full discovery output is persisted to the knowledge graph for this Claude Code session as `discovery_summary-<slug>`, with `chosen_approach`, the chosen-approach synthesis, affected areas, verification findings, and structured `open_question` entities all reachable from the `work_item-discovery-<slug>` node.
+   > **Discovery saved.** Your full discovery output is persisted to `web-cms-memory/discovery-<slug>/` for this project — `summary.md` (chosen approach, the chosen-approach synthesis, affected areas, verification findings, and open questions) alongside the `work-item.md` root and the `explorations/*.md` files.
    >
    > **Recommended next step — clear context, then run requirements-intake:**
-   > 1. Run `/clear` to clear the conversation context. The knowledge graph survives `/clear`; only the conversation is reset.
-   > 2. Then invoke `/requirements-intake` in the fresh conversation. Its R0 discovery pre-check will detect the `discovery_summary-<slug>` automatically and skip redundant codebase exploration at R2.
+   > 1. Run `/clear` to clear the conversation context. The files survive `/clear`; only the conversation is reset.
+   > 2. Then invoke `/requirements-intake` in the fresh conversation. Its R0 discovery pre-check will detect `discovery-<slug>/summary.md` automatically and skip redundant codebase exploration at R2.
    >
-   > Running requirements-intake without `/clear` will work, but it carries this conversation's context forward and is not the recommended path. The discovery entities also persist if you wait — they live until this Claude Code session ends.
+   > Running requirements-intake without `/clear` will work, but it carries this conversation's context forward and is not the recommended path. The discovery directory also persists if you wait — it lives on disk until requirements-intake's R6 cleanup removes it (or you remove it manually).
 
 6. **Do not invoke `requirements-intake` from this workflow.** Do not ask the user whether to continue into requirements-intake. The handoff is intentionally manual and gated on `/clear` so requirements-intake starts from a clean conversational baseline. End the workflow after the handoff message is delivered.
 
@@ -364,6 +359,6 @@ This workflow is complete when **all** of the following are true:
 - D2 synthesis reviewed before presentation
 - D3 discussion concluded with explicit user signal to continue and a recorded chosen approach
 - D4 verification round executed against the chosen approach, every verification claim classified, and outcome confirmed by the user
-- `discovery_summary` entity written to the knowledge graph with all required observations, including chosen approach, user preference, verification status and findings, and open questions
+- `summary.md` written with all required fields, including chosen approach, user preference, verification status and findings, and open questions
 - D5 handoff message delivered verbatim, instructing the user to `/clear` and then invoke `/requirements-intake` separately
 - Workflow ended without invoking `requirements-intake`

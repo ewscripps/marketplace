@@ -11,7 +11,7 @@
 
 **SCOPE:** This workflow only targets GitLab merge requests. If the repository's remote URL does not point to GitLab, stop immediately and report the mismatch in the chat. Do not attempt to create a pull request on any other platform.
 
-**KNOWLEDGE GRAPH SCOPE:** The knowledge graph in this workflow accumulates Jira context (M2), commit and diff data (M3) so that M5 can assemble a grounded MR description. The graph is session-scoped -- do not rely on it persisting to a future session.
+**FILE MEMORY SCOPE:** This workflow stores MR-assembly state in a per-MR file-memory directory. `$MEM/work-item.md` is the root (MR type and related Jira items from M2); `$MEM/summary.md` holds the commit and diff data from M3 so M5 can assemble a grounded MR description. Compute `MEM` with the recipe in `file-memory-protocol.md` §1, keyed by the related Jira key if one was confirmed in M2, else `mr-<source-branch-slug>`. **Per-phase checkpoint:** after each phase, atomically overwrite `$MEM/checkpoint.md` (`Write` to `checkpoint.md.tmp`, then `mv` over it) with the just-completed `phase`, `next_phase`, and `references` (`[work-item.md, summary.md]`); this fast workflow has no `/compact` gates, but the checkpoint keeps resume cheap. If resumed and `$MEM` is absent, re-derive the M2/M3 context before M5.
 
 **APPROVAL GATE BEHAVIOR:** Approval gates are chat-scoped. If explicit approval is not captured before the session ends or context is lost, stop at the gate. On resume, re-present the latest MR preview and ask for confirmation again. Never assume a pending approval was granted.
 
@@ -113,7 +113,7 @@ Use `AskUserQuestion` with header `MR Type`, options: `Release` (description: "T
     - If the card is a **Task or Bug**: review the commits and confirm the work aligns with the card's summary and description. Flag any significant discrepancies.
 2. Confirm the source branch name includes the Jira card key (e.g. `feature/PROJ-123-short-description`). Flag if it does not.
 
-> **USE KNOWLEDGE GRAPH:** Write each retrieved Jira item to the knowledge graph. For releases, create a `release` node with properties: `name`, `fix_version`, and `tracking_issue_key` (optional). For non-releases, create a `jira_item` node with properties: `jira_key`, `type`, `summary`, `status`. Link items to an `mr` root node representing this MR. M5 reads these nodes to populate the Related Jira Items section of the description.
+> **WRITE work-item.md:** Bootstrap file memory: compute `MEM` (recipe §1, keyed by the confirmed related Jira key or `mr-<source-branch-slug>`), `mkdir -p "$MEM"`, and `Write $MEM/work-item.md` (schema §3.1) with `work_type: mr`, `jira_key` (the related card, or null), `title`, `status: in_progress`, `phase: M2`, `skill: mr-creation`. Record the retrieved Jira context under a `related_items` frontmatter list: for a release, one entry with `name`, `fix_version`, `tracking_issue_key` (optional); for non-releases, one entry per item with `jira_key`, `type`, `summary`, `status`. M5 reads this to populate the Related Jira Items section of the description.
 
 > **REQUIRED:** Present all of the following in the chat before proceeding:
 > 
@@ -132,7 +132,7 @@ Use `AskUserQuestion` with header `MR Type`, options: `Release` (description: "T
 - Retrieve a summary of file changes (files added, modified, deleted).
 - Identify the scope of changes (services, modules, or areas of the codebase affected).
 
-> **USE KNOWLEDGE GRAPH:** Write the diff data to the knowledge graph. Create a `commit` node for each commit with properties: `hash`, `message`, `affected_area`. Create a `diff_summary` node with properties: `files_added`, `files_modified`, `files_deleted`, `affected_areas` (list). Link all nodes to the `mr` root node. M5 reads commit and diff nodes to build the Summary and Changes sections of the description — this ensures every change is accounted for and nothing is invented.
+> **WRITE summary.md:** `Write $MEM/summary.md` (schema §3.9, `summary_type: changes`) capturing the diff data: a `commits` list (each `hash`, `message`, `affected_area`) and a `diff_summary` block (`files_added`, `files_modified`, `files_deleted`, `affected_areas`). M5 reads these to build the Summary and Changes sections of the description — this ensures every change is accounted for and nothing is invented.
 
 > **REQUIRED:** Present a structured diff summary in the chat before proceeding:
 > 
@@ -152,7 +152,7 @@ Use `AskUserQuestion` with header `MR Type`, options: `Release` (description: "T
 
 > **USE SEQUENTIAL THINKING:** Before generating the description, invoke the `sequentialthinking` tool. Use it to trace each commit to a purpose, reconcile the diff summary (M3) with the Jira context (M2), determine what belongs in the Summary vs. Changes sections, and verify that no invented or assumed items are included. Build the description bottom-up from evidence, not top-down from assumption. Do not begin writing the description until the reasoning is complete.
 
-> **USE KNOWLEDGE GRAPH:** Read all nodes from the graph — `commit`, `diff_summary`, `jira_item` / `release`, and `mr` — to assemble the description. The Summary section should synthesize the diff and Jira context. The Changes list should be derived from commit nodes. The Related Jira Items section should be read directly from Jira item nodes. This ensures the description is fully grounded in structured evidence and not reconstructed from memory.
+> **READ work-item.md + summary.md:** `Read $MEM/work-item.md` (`related_items`) and `$MEM/summary.md` (`commits`, `diff_summary`) to assemble the description. The Summary section synthesizes the diff and Jira context; the Changes list is derived from the `commits`; the Related Jira Items section is read directly from `related_items`. This ensures the description is fully grounded in structured evidence and not reconstructed from memory.
 
 **Agent generates the MR description using the following structure:**
 
@@ -228,7 +228,7 @@ Once the user confirms:
 
 ### M7 — Cleanup
 
-- Clear the session-scoped knowledge graph before finishing the workflow. Do not retain Jira-context, commit, or diff-summary nodes after the MR description has been created.
+- Remove the MR's file-memory directory: `rm -rf "$MEM"` (Bash). Do not retain Jira-context, commit, or diff-summary state on disk after the MR description has been created.
 
 ---
 
@@ -253,4 +253,4 @@ This workflow is complete when **all** of the following are true:
 - Diff summary presented and acknowledged before description generation
 - Full MR preview explicitly confirmed in the chat
 - MR created successfully and URL reported in the chat
-- M7 cleanup cleared the session-scoped knowledge graph after successful MR creation
+- M7 cleanup removed the file-memory directory (`rm -rf "$MEM"`) after successful MR creation
