@@ -68,6 +68,7 @@ Every ticket in this pack must satisfy these constraints (SRD section 5.6, const
 
 - **Staging-only (C-5 / EDMV2-109):** all Phase 6 edits land in `plugins/edm-ai-development-staging/`; `git diff plugins/edm-ai-development/` must stay empty until the single cutover (EDMV2-T133).
 - **ASCII-only (C-1 / EDMV2-21, EDMV2-75):** no Unicode glyphs in any emitted/committed artifact; use `[present]`/`[absent]`, `(!)`, `->`, `--`.
+<!-- edm-lint-ignore -->
 - **No AI-attribution (C-1 / EDMV2-74):** no `Co-Authored-By`, `Generated with`, or tool-branded trailers in committed content.
 - **POSIX bash (C-3):** all `bin/` script changes are `#!/usr/bin/env bash`, pass `bash -n`, use `jq` for JSON (and optional `git`); no new external dependency (C-2).
 - **Additive + defaulted (C-4 / EDMV2-90):** state-schema changes are additive with safe defaults; v1.x state files and flat-layout initiatives keep working.

@@ -398,7 +398,8 @@ This is the largest WS-J ticket because it spans `edm-init` (branch creation + s
 - [ ] AC11: A branch-creation failure (e.g. dirty tree, existing branch) produces an actionable message and does not silently proceed on the wrong branch.
 
 ### Technical Notes
-Create the branch with `git switch -c edm/${PREFIX}` (or `git checkout -b`) guarded by `git rev-parse --is-inside-work-tree`. If `edm/{PREFIX}` already exists, `git switch edm/${PREFIX}` instead of failing hard, then warn. The per-gate commits are orchestrator-prompt instructions (the skill emits the exact `git add <path>` then `git commit -m :gitmoji: scope: msg` calls); follow the marketplace `/commit` conventions. Reuse EDMV2-T36's stale-lock check before each commit. The commit body must never include `Co-Authored-By` or `Generated with`.
+Create the branch with `git switch -c edm/${PREFIX}` (or `git checkout -b`) guarded by `git rev-parse --is-inside-work-tree`. If `edm/{PREFIX}` already exists, `git switch edm/${PREFIX}` instead of failing hard, then warn. The per-gate commits are orchestrator-prompt instructions (the skill emits the exact `git add <path>` then `git commit -m :gitmoji: scope: msg` calls); follow the marketplace `/commit` conventions. Reuse EDMV2-T36's stale-lock check before each commit. <!-- edm-lint-ignore -->
+The commit body must never include `Co-Authored-By` or `Generated with`.
 
 ### Out of Scope
 Simultaneous-initiative detection / branch-mismatch blocking (EDMV2-T35). Stale git-lock remediation mechanics (EDMV2-T36). The actual artifact authoring (owned by each phase's agents).

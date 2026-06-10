@@ -526,7 +526,9 @@ Priority legend: Must (required for v2.0.0 release), Should (strongly desired; d
 
 #### EDMV2-74 [WS-K] Strip AI-attribution from generated content
 - Priority: Must
+<!-- edm-lint-ignore -->
 - No artifact, template, or PR-body the plugin generates may contain AI-attribution trailers (e.g., "Generated with", "Co-Authored-By", tool-branded attributions). Any such template content must be removed.
+<!-- edm-lint-ignore -->
 - Verification: `grep -i 'generated with\|co-authored-by\|claude-flow'` over generated templates and outputs returns nothing.
 
 #### EDMV2-75 [WS-K] No Unicode in committed artifacts (plugin-wide)

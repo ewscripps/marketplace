@@ -37,6 +37,7 @@ The CHANGELOG entry is the single human-readable source of truth that EDMV2-T134
 - [ ] AC5: The 2.0.0 entry lists the new adaptation modes (mini-SRD, IaC, data/ML, prototype) and the compliance gate, the TDD implementation mode, branch isolation, the living audit-pattern library, compaction resilience, and the new `SRD/{PRODUCT}/{PREFIX}__{DESCRIPTION}/` directory layout.
 - [ ] AC6: The 2.0.0 entry lists the new `edm-state` subcommands introduced in EDMV2 (audit-round-start, record-partial-verdict, set-mode, set-parent, add-related, migrate-path, current-step, update-patterns, validate) and the new userConfig keys (per EDMV2-T129).
 - [ ] AC7: The 2.0.0 entry includes a backward-compatibility note stating that existing `.edm-state.json` files keep working via additive, defaulted fields (C-4).
+<!-- edm-lint-ignore -->
 - [ ] AC8: No banned content: `grep -iE 'generated with|co-authored-by|claude-flow' CHANGELOG.md` over the new entry returns nothing (WS-K / C-1).
 - [ ] AC9: ASCII-only: `grep -nP '[^\x00-\x7F]' CHANGELOG.md plugin.json` returns no matches except the intentional em-dash in section headers, which is replaced with an ASCII `-` if the artifact lint (EDMV2-76) flags it.
 - [ ] AC10: The CHANGELOG release date matches the date recorded in the EDMV2 `.edm-state.json` `completed_at` (or the cutover date), not a placeholder.

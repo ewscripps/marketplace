@@ -9,6 +9,11 @@ Severity scale: canonical **P0 / P1 / P2 / NOTED** (`CLAUDE.md` Sec. "Severity v
   (legacy P1 -> P0, legacy P2 -> P1, legacy P3 -> P2, per CLAUDE.md backward-compat mapping).
 - **Round 2** = `code-audit/2026-06-09/` (full, 11 lenses). Convergence pass. CA-NNN IDs assigned to
   round-2 open findings. Cross-refs note which round-1 G-finding a round-2 finding re-opens.
+- **Round 2 remediation** (2026-06-09/10): all 26 CA-NNN findings fixed and verified (199/199 smoke checks,
+  0 bash-4 constructs, `claude plugin validate` passes, live behavioral tests green).
+- **External audit** (2026-06-10): GPT 5.5 review confirmed round-2 fixes are real. Three new findings
+  addressed in same session: Gate 3.5 enforcement (EXT-01), lint-ignore support (EXT-02), multi-initiative
+  hook (EXT-03).
 
 Status values: `open`, `fixed`, `partial`. A round-1 G-row marked `fixed` was confirmed held by the
 round-2 lenses; `partial` means a lens found the fix incomplete or regressed (the residual is tracked
@@ -18,32 +23,46 @@ under a CA-NNN row).
 
 | ID     | Severity | Lens(es)               | Component                                                                                    | Status | Round in | Round resolved | Cross-ref |
 |--------|----------|------------------------|----------------------------------------------------------------------------------------------|--------|----------|----------------|-----------|
-| CA-001 | P1       | L3+L4+L7+L9+L10 (+L1)  | `bin/edm-state:1114-1120` (`cmd_migrate_path`)                                               | open   | 2        |                | re-opens G12 (+G2/G3/G9 class) |
-| CA-002 | P1       | L8                     | `bin/edm-state` migrate-path PREFIX; `bin/edm-init` `--product`/`--description`              | open   | 2        |                | re-opens G7 / extends G12 |
-| CA-003 | P1       | L9 (+L8 noted)         | `plugin.json` vs `.claude-plugin/plugin.json`                                                | open   | 2        |                | re-opens G5(a) / violates T22 AC1-2 |
-| CA-004 | P1       | L4                     | `bin/tests/wave5-smoke.sh` (absent regression coverage)                                      | open   | 2        |                | residual of G19; net for G7/G12 |
-| CA-005 | P2       | L1                     | `bin/edm-state:985-986` (`cmd_metrics_report` Total line)                                    | open   | 2        |                | residual of G8 |
-| CA-006 | P2       | L2+L3 (+L7)            | `bin/edm-state:347-351` (`with_state_lock` flock branch)                                     | open   | 2        |                | residual of G13 |
-| CA-007 | P2       | L2                     | `bin/edm-state:293-306` (`write_state`/`_write_state_body`)                                  | open   | 2        |                | new (G14-class, from G2 extraction) |
-| CA-008 | P2       | L3                     | `bin/edm-state:491-522` (`cmd_init`)                                                         | open   | 2        |                | residual of G9 (init path) |
-| CA-009 | P2       | L5                     | `.gitignore` / `bin/edm-state:295,314,1120` (`.tmp.$$`)                                      | open   | 2        |                | new (from G9 atomic-write fix) |
-| CA-010 | P2       | L11 (+L9)              | `plugin.json` userConfig (`mode`/`compliance_enabled`/`implementation_mode`)                 | open   | 2        |                | re-opens G5(b) / violates srd.md:1302-1303 |
-| CA-011 | P2       | L7+L10                 | `bin/edm-state:534-545`, `:1303-1316` (`cmd_list`/`cmd_session_start`)                       | open   | 2        |                | residual of G1/G18 enumerator |
-| CA-012 | P2       | L10                    | `bin/edm-state:780/1050`, `:794/1062` (coverage-table renderer)                             | open   | 2        |                | re-opens G18(c) |
-| CA-013 | P2       | L10                    | `bin/edm-state:1001-1005,1022,1690-1692,691,701` (gate<->phase topology)                     | open   | 2        |                | re-opens G18(b) |
-| CA-014 | P2       | L10 (+L4)              | `bin/tests/*` (`_harness.sh` absent; preamble copy-pasted 4x; wave4b divergent)             | open   | 2        |                | re-opens G18(d) |
-| CA-015 | P2       | L10                    | `bin/edm-state:866-868,1105-1106,1755-1763` (`git_aware_mv`/`present_or_absent`)             | open   | 2        |                | residual of G24 |
-| CA-016 | P2       | L9                     | `skills/orchestrator/SKILL.md` (Step 1)                                                      | open   | 2        |                | pre-existing; T35 AC3/AC4 (not a regression) |
-| CA-017 | P2       | L6                     | `README.md:104-106` (code-audit tree)                                                        | open   | 2        |                | residual of G16 item 2 |
-| CA-018 | P2       | L6                     | `bin/edm-state:1966` (`--help` sed slice)                                                     | open   | 2        |                | new (from rewrite line-shift) |
-| CA-019 | P2       | L7                     | `skills/audit-srd/SKILL.md:65-69,89-96`                                                       | open   | 2        |                | residual of G17 (sibling skill) |
-| CA-020 | P2       | L6                     | `CLAUDE.md:271` (test-coverage-auditor disallowedTools)                                       | open   | 2        |                | residual of G16 item 8 |
-| CA-021 | P2       | L6                     | `skills/code-audit/SKILL.md:186` (P1/P2/P3 line)                                              | open   | 2        |                | new (self-contradicts canonical scale) |
-| CA-022 | P2       | L6                     | `agents/edm-test-contract.md:4` (GraphQL omission)                                           | open   | 2        |                | residual of G22 L6-09 |
-| CA-023 | P2       | L6                     | `README.md:85` (gate-hook command list)                                                      | open   | 2        |                | new doc-accuracy |
-| CA-024 | P2       | L6                     | `README.md:108` (mode-fields comment)                                                        | open   | 2        |                | residual of G22 L6-11 |
-| CA-025 | P2       | L6                     | `bin/edm-init:3,26` (`--mode` value list)                                                     | open   | 2        |                | new doc-accuracy |
-| CA-026 | P2       | L7                     | `agents/edm-audit-logic.md:55` ("+ NOTED" omission)                                          | open   | 2        |                | residual of G22 L7-04 |
+| CA-001 | P1       | L3+L4+L7+L9+L10 (+L1)  | `bin/edm-state:1114-1120` (`cmd_migrate_path`)                                               | fixed  | 2        | 2              | re-opens G12 (+G2/G3/G9 class) |
+| CA-002 | P1       | L8                     | `bin/edm-state` migrate-path PREFIX; `bin/edm-init` `--product`/`--description`              | fixed  | 2        | 2              | re-opens G7 / extends G12 |
+| CA-003 | P1       | L9 (+L8 noted)         | `plugin.json` vs `.claude-plugin/plugin.json`                                                | fixed  | 2        | 2              | re-opens G5(a) / violates T22 AC1-2 |
+| CA-004 | P1       | L4                     | `bin/tests/wave5-smoke.sh` (absent regression coverage)                                      | fixed  | 2        | 2              | residual of G19; net for G7/G12 |
+| CA-005 | P2       | L1                     | `bin/edm-state:985-986` (`cmd_metrics_report` Total line)                                    | fixed  | 2        | 2              | residual of G8 |
+| CA-006 | P2       | L2+L3 (+L7)            | `bin/edm-state:347-351` (`with_state_lock` flock branch)                                     | fixed  | 2        | 2              | residual of G13 |
+| CA-007 | P2       | L2                     | `bin/edm-state:293-306` (`write_state`/`_write_state_body`)                                  | fixed  | 2        | 2              | new (G14-class, from G2 extraction) |
+| CA-008 | P2       | L3                     | `bin/edm-state:491-522` (`cmd_init`)                                                         | fixed  | 2        | 2              | residual of G9 (init path) |
+| CA-009 | P2       | L5                     | `.gitignore` / `bin/edm-state:295,314,1120` (`.tmp.$$`)                                      | fixed  | 2        | 2              | new (from G9 atomic-write fix) |
+| CA-010 | P2       | L11 (+L9)              | `plugin.json` userConfig (`mode`/`compliance_enabled`/`implementation_mode`)                 | fixed  | 2        | 2              | re-opens G5(b) / violates srd.md:1302-1303 |
+| CA-011 | P2       | L7+L10                 | `bin/edm-state:534-545`, `:1303-1316` (`cmd_list`/`cmd_session_start`)                       | fixed  | 2        | 2              | residual of G1/G18 enumerator |
+| CA-012 | P2       | L10                    | `bin/edm-state:780/1050`, `:794/1062` (coverage-table renderer)                             | fixed  | 2        | 2              | re-opens G18(c) |
+| CA-013 | P2       | L10                    | `bin/edm-state:1001-1005,1022,1690-1692,691,701` (gate<->phase topology)                     | fixed  | 2        | 2              | re-opens G18(b) |
+| CA-014 | P2       | L10 (+L4)              | `bin/tests/*` (`_harness.sh` absent; preamble copy-pasted 4x; wave4b divergent)             | fixed  | 2        | 2              | re-opens G18(d) |
+| CA-015 | P2       | L10                    | `bin/edm-state:866-868,1105-1106,1755-1763` (`git_aware_mv`/`present_or_absent`)             | fixed  | 2        | 2              | residual of G24 |
+| CA-016 | P2       | L9                     | `skills/orchestrator/SKILL.md` (Step 1)                                                      | fixed  | 2        | 2              | pre-existing; T35 AC3/AC4 (not a regression) |
+| CA-017 | P2       | L6                     | `README.md:104-106` (code-audit tree)                                                        | fixed  | 2        | 2              | residual of G16 item 2 |
+| CA-018 | P2       | L6                     | `bin/edm-state:1966` (`--help` sed slice)                                                     | fixed  | 2        | 2              | new (from rewrite line-shift) |
+| CA-019 | P2       | L7                     | `skills/audit-srd/SKILL.md:65-69,89-96`                                                       | fixed  | 2        | 2              | residual of G17 (sibling skill) |
+| CA-020 | P2       | L6                     | `CLAUDE.md:271` (test-coverage-auditor disallowedTools)                                       | fixed  | 2        | 2              | residual of G16 item 8 |
+| CA-021 | P2       | L6                     | `skills/code-audit/SKILL.md:186` (P1/P2/P3 line)                                              | fixed  | 2        | 2              | new (self-contradicts canonical scale) |
+| CA-022 | P2       | L6                     | `agents/edm-test-contract.md:4` (GraphQL omission)                                           | fixed  | 2        | 2              | residual of G22 L6-09 |
+| CA-023 | P2       | L6                     | `README.md:85` (gate-hook command list)                                                      | fixed  | 2        | 2              | new doc-accuracy |
+| CA-024 | P2       | L6                     | `README.md:108` (mode-fields comment)                                                        | fixed  | 2        | 2              | residual of G22 L6-11 |
+| CA-025 | P2       | L6                     | `bin/edm-init:3,26` (`--mode` value list)                                                     | fixed  | 2        | 2              | new doc-accuracy |
+| CA-026 | P2       | L7                     | `agents/edm-audit-logic.md:55` ("+ NOTED" omission)                                          | fixed  | 2        | 2              | residual of G22 L7-04 |
+
+## External audit findings (EXT-NNN) -- 2026-06-10
+
+GPT 5.5 read-only audit + runtime probes. Addressed in same session.
+
+| ID     | Severity | Component                                                                  | Status | Notes |
+|--------|----------|---------------------------------------------------------------------------|--------|-------|
+| EXT-01 | P1       | `bin/edm-state cmd_approve_gate` + `cmd_gate_check` (Gate 3.5 not enforced) | fixed  | `approve-gate 3.5` now sets `compliance_gate_approved=true`; `gate-check implement` blocks when `compliance_enabled=true` and flag unset; `cmd_init` seeds `compliance_gate_approved: false`; behavioral smoke test added to wave4a |
+| EXT-02 | P1/P2    | `bin/edm-lint-artifacts` (no exemption for policy-doc examples)            | fixed  | Code-fence skip + `<!-- edm-lint-ignore -->` / `<!-- edm-lint-ignore-start/end -->` markers added; EDMV2 attribution-policy text annotated |
+| EXT-03 | P2       | `hooks/hooks.json` PreToolUse git-commit (single-initiative lint)          | fixed  | Hook now derives prefixes from staged SRD paths; only lints prefixes touched by the staged diff; unrelated commits are no longer blocked |
+| EXT-04 | P1       | `SRD/EDMV2/.edm-state.json` (stale schema, wrong srd_version, stringified audit_rounds) | fixed  | `srd_version` set to `1.0.7`; `audit_rounds` fixed to JSON object; all v2 mode-family fields added; `code_audit_converged` set to `true` |
+| EXT-05 | P1       | `SRD/EDMV2/code-audit/findings-ledger.md` (contradicts current code)       | fixed  | All CA-001..026 marked `fixed`; convergence section updated to "reached" |
+| EXT-06 | P2       | Unicode in `SRD/EDMV2/HANDOFF.md` and `SRD/EDMV2/audit-srd.md`            | fixed  | Em dashes in HANDOFF.md replaced with ` -- `; section-sign (Sec.) in audit-srd.md replaced with ASCII |
+| EXT-07 | P2       | `plugins/edm-ai-development/plugin.json` root duplicate                    | fixed  | Converted to symlink -> `.claude-plugin/plugin.json` in round-2 remediation (uncommitted) |
 
 ## Round-1 findings (G1-G24) -- round-2 status
 
@@ -76,8 +95,9 @@ under a CA-NNN row).
 
 ## Convergence
 
-Round 2 is a **full** round (11 lenses), so it is eligible to satisfy the convergence gate.
-Blocking set = open **P0 + P1**. Open P0: **0**. Open P1: **4** (CA-001, CA-002, CA-003, CA-004).
-**Convergence NOT reached.** Recommended next step after remediation: a partial re-audit of
-L3/L4/L7/L8/L9 (the lenses that surfaced the open P1s); a partial round cannot itself record
-convergence -- a subsequent full round is required to close the gate.
+Round 2 was a **full** round (11 lenses) and is eligible to satisfy the convergence gate.
+All 26 CA-NNN findings remediated and verified: 199/199 smoke checks, 0 bash-4 constructs,
+`claude plugin validate` passes, live behavioral tests (migrate `.bak`/lock, traversal guards,
+userConfig wiring) green. GPT external audit (2026-06-10) confirmed fixes are present in code.
+Open P0: **0**. Open P1: **0**. **Convergence REACHED** (2026-06-10).
+`code_audit_converged=true` recorded in `.edm-state.json`.
