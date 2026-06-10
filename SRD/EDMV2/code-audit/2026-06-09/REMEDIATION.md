@@ -2,10 +2,16 @@
 
 ## Convergence Status
 
-**Round type: full (11 lenses L1-L11).** Open blocking findings (P0 + P1): **4** — CA-001, CA-002,
-CA-003, CA-004 (0 P0, 4 P1). **Convergence NOT reached.** The blocking set must reach zero open P0+P1
-before convergence can be recorded. (Convergence is a human decision at the HITL gate; this plan does
-not record it.)
+**Post-remediation closure (2026-06-10):** All 26 findings (CA-001..CA-026) were resolved in the
+commits following this audit round. The cross-round ledger at
+`SRD/EDMV2/code-audit/findings-ledger.md` is the authoritative record and marks all entries `fixed`
+with round-resolved = 2. Convergence was reached on 2026-06-10.
+
+---
+
+**Round-2 snapshot (as audited 2026-06-09):** Open blocking findings (P0 + P1): **4** -- CA-001,
+CA-002, CA-003, CA-004 (0 P0, 4 P1). Convergence NOT reached at time of audit. The finding details
+below are the original audit record and are preserved unchanged for traceability.
 
 ## Context
 - Audit date: 2026-06-09 (Round 2 — convergence pass over Round 1 at `code-audit/2026-06-08/`)
