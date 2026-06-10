@@ -10,7 +10,7 @@ Every ticket in the pack MUST include these acceptance criteria where applicable
 
 ## Documentation (apply when the ticket changes user-visible behavior or public API)
 
-- [ ] CLAUDE.md or relevant docs updated if conventions change
+- [ ] Project conventions doc (CLAUDE.md, CONTRIBUTING.md, or equivalent) updated if conventions change
 - [ ] Public API changes documented with examples
 - [ ] Changelog entry written if initiative has a CHANGELOG
 

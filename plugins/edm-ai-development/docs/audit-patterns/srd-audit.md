@@ -1,6 +1,6 @@
 # SRD Audit Patterns
 
-**Source:** 16 initiatives from scripps-mcp/SRD corpus, June 2026 (EDMV2 seed).
+**Source:** EDM seed corpus (16 real-world initiatives).
 **Auto-updated** by orchestrator after each SRD audit round (EDMV2-80a).
 
 ---
@@ -20,7 +20,7 @@ Frequency: [x/16] = appeared in x of 16 audited initiatives.
 
 ### 1. Factual/data-model contradictions (12/16)
 - Conflicting default values -- same TTL or column size specified differently in two sections
-- Env var naming inconsistencies (`AIRIA_BASE_URL` vs `AIRIA_API_BASE_URL`; missing `NUXT_` prefix)
+- Env var naming inconsistencies (`SERVICE_URL` vs `API_BASE_URL`; missing framework-required prefix such as `VITE_` or `NEXT_PUBLIC_`)
 - Line-number references off by 5-50 lines from actual source
 
 ### 2. Specification ambiguity (11/16)
@@ -66,7 +66,7 @@ Requirement states "with all flags off, byte-identical to baseline" but introduc
 **Fix:** Explicit AC for every flag-gated requirement: "on `ENABLE_X=false`, this code path is bypassed entirely."
 
 ### Stale migration numbering
-SRD says "migration 031-035" but actual files are 035-040; a companion document uses the old numbers.
+SRD says "migration 012-016" but actual files are 015-019; a companion document uses the old numbers.
 **Fix:** Enumerate migration filenames in Sec.6, not ranges; companion docs link to SRD as canonical.
 
 ### Hidden schema blockers

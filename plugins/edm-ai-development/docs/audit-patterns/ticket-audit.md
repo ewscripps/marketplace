@@ -1,6 +1,6 @@
 # Ticket Pack Audit Patterns
 
-**Source:** 16 initiatives from scripps-mcp/SRD corpus, June 2026 (EDMV2 seed).
+**Source:** EDM seed corpus (16 real-world initiatives).
 **Auto-updated** by orchestrator after each ticket audit round (EDMV2-80a).
 
 ---
@@ -47,7 +47,7 @@ Frequency: [x/16] = appeared in x of 16 audited initiatives.
 - Single ticket covers 2-3 sub-features that should be separate (e.g., DB migration AND API endpoint in one ticket)
 
 ### 7. Stale role/feature references (5/16)
-- A ticket written before a role was removed still says "Editor/admin-facing" or has a docblock mentioning the phantom role
+- A ticket written before a role was removed still says "viewer/editor-facing" or has a docblock mentioning the phantom role
 
 ### 8. Unverified code anchors (4/16)
 - `Target Components` says "modify `server/utils/auth.ts:70-92`" but the function is at lines 50-80 or moved

@@ -44,7 +44,7 @@ And by the planning template (EDMV2-84):
 
 ## How This Library Works
 
-- **Seed:** created from analysis of 16 real initiatives in the scripps-mcp/SRD corpus (June 2026). See `SOURCES.md` for the full list.
+- **Seed:** created from analysis of 16 real-world initiatives (600+ findings). See `SOURCES.md` for details.
 - **Auto-update:** after each audit phase, the orchestrator appends novel findings (EDMV2-80a).
 - **Manual update:** `edm-state update-patterns <PREFIX> <audit-type>` to backfill on demand (EDMV2-80b).
 - **Consumer:** writer agents load the relevant doc at write time so guidance improves without manual prompt edits.
@@ -61,14 +61,14 @@ And by the planning template (EDMV2-84):
 
 ## Cross-Cutting Patterns
 
-Patterns that surface across all audit types, from 16 initiatives (600+ findings):
+Patterns that surface across all audit types, from 16 real-world initiatives (600+ findings):
 
 ### 1. Specification incompleteness, not incorrectness (14/16 initiatives)
 SRD says "handle retries" but doesn't say how many times, what backoff, or which errors. Ticket says "add validation" but doesn't specify the error code or message. Code implements one interpretation; auditor expects another.
 **Prevention:** SRD should be fully specific; ticket ACs must prescribe exact error codes, messages, and thresholds.
 
 ### 2. Naming/terminology drift (12/16)
-SRD calls it "channel", ticket calls it "stream", code calls it "lane." SRD says "beat type", code says `topic_type`.
+SRD calls it "order", ticket calls it "purchase", code calls it "transaction." SRD says "item type", code says `product_type`.
 **Prevention:** Sec.11 Glossary is mandatory; every use of a domain term matches the glossary term exactly.
 
 ### 3. Pre-existing debt surfaced by a new initiative (8/16)
@@ -76,11 +76,11 @@ An old function is suddenly called in a new code path and reveals stale behavior
 **Prevention:** code audits include a "standing debt" section; prioritize which must ship vs. can defer.
 
 ### 4. Migration/schema coordination gaps (7/16)
-SRD says "migration 031" but a parallel initiative already took 031. Two SRDs reference the same file path and disagree on expected state.
+SRD says "migration 012" but a parallel initiative already took 012. Two SRDs reference the same file path and disagree on expected state.
 **Prevention:** central migration/schema registry; SRD auditor scans for conflicts with other in-flight initiatives.
 
 ### 5. Stale references after iteration (8/16)
-SRD v0.3 says "see migration 045" but that migration was removed in v0.4. A ticket says "add field X" but field X was already added by a merged PR.
+SRD v0.3 says "see migration 015" but that migration was removed in v0.4. A ticket says "add field X" but field X was already added by a merged PR.
 **Prevention:** automated SRD consistency checks; find all `migration \d+` / requirement ID references and verify each is real and current.
 
 ## Severity Distribution (600+ findings across 16 initiatives)

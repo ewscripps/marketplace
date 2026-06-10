@@ -1,6 +1,6 @@
 # Test-Coverage Audit Patterns
 
-**Source:** 16 initiatives from scripps-mcp/SRD corpus, June 2026 (EDMV2 seed).
+**Source:** EDM seed corpus (16 real-world initiatives).
 **Auto-updated** by orchestrator after each test-coverage audit round (EDMV2-80a).
 
 ---
@@ -37,7 +37,7 @@ Frequency: [x/16] = appeared in x of 16 audited initiatives.
 - High-confidence "can't happen" branches left uncovered -- they fail open silently
 
 ### 5. Fragile / flaky integration tests (4/16)
-- Tests call external APIs (Brave, SendGrid, etc.) and pass most of the time but fail intermittently
+- Tests call live external APIs (payment processors, email providers, third-party services) and pass most of the time but fail intermittently
 - Tests depend on specific data in a shared environment that can be mutated by other tests
 
 ### 6. Test setup complexity hides assertions (3/16)
