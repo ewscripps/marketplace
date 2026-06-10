@@ -161,6 +161,20 @@ bak_cmd="$(jq -r '.last_cmd' "$BAK_FILE")"
 bak_cmd2="$(jq -r '.last_cmd' "$BAK_FILE")"
 [[ "$bak_cmd2" == "first write" ]] && pass ".bak updated to previous live state on second write" || fail ".bak last_cmd = '$bak_cmd2'"
 
+# ---- metrics-report: G8 (n/a savings) and G20 (Phase 1 label) ---------------
+# Guards against the G8 regression where zero-cost initiatives printed "0x cheaper"
+# instead of "n/a", and G20 where the jq key sub produced "1Phase" instead of "Phase 1".
+echo
+echo "metrics-report -- G8 n/a savings and G20 Phase 1 label"
+"$EDM_STATE" init MTRX >/dev/null
+"$EDM_STATE" phase-start MTRX 1 >/dev/null
+"$EDM_STATE" phase-complete MTRX 1 >/dev/null
+MR_OUT="$("$EDM_STATE" metrics-report MTRX 2>&1)"
+check "metrics-report Phase 1 row label (G20)" "Phase 1" "$MR_OUT"
+check_absent "metrics-report no '1Phase' mangled label (G20)" "1Phase" "$MR_OUT"
+check "metrics-report savings n/a for zero-cost initiative (G8)" "n/a" "$MR_OUT"
+check_absent "metrics-report no '0x cheaper' for zero-cost initiative (G8)" "0x cheaper" "$MR_OUT"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
