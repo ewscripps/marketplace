@@ -137,7 +137,9 @@ If this section is absent from an SRD produced under `mode=data-ml`, the SRD aud
 
 ```
 Agent: edm-srd-writer
-Prompt: "Write the SRD for {PREFIX} at ${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}.
+Prompt: "Write the SRD for {PREFIX}. First resolve the initiative directory:
+         INIT_DIR=$(edm-state resolve-dir <PREFIX>)
+         Write to ${INIT_DIR}/${user_config.srd_filename}.
          Read the planning doc and existing referenced files. Cover all applicable sections.
          Use requirement IDs {PREFIX}-01 through {PREFIX}-NNN. Every requirement must be testable.
          [mode=data-ml: include ## Data Requirements section]
@@ -145,7 +147,9 @@ Prompt: "Write the SRD for {PREFIX} at ${user_config.srd_root}/{PREFIX}/${user_c
          [mode=mini-srd: produce fused file with embedded ticket list section]"
 
 Agent: edm-architect
-Prompt: "Write the Target Architecture document to architecture.md in the initiative directory.
+Prompt: "Write the Target Architecture document for {PREFIX}. First resolve the initiative directory:
+         INIT_DIR=$(edm-state resolve-dir <PREFIX>)
+         Write to ${INIT_DIR}/architecture.md.
          Include Mermaid diagrams (system context + sequence) and component design grounded in
          the existing codebase. The SRD Section 5 references this file -- do not duplicate content."
 ```

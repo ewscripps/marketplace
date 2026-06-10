@@ -391,9 +391,10 @@ The ticket pack tables include regulatory-traceability columns
 ### Step 3 -- Execute Phase 2 (SRD)
 
 1. `edm-state phase-start <PREFIX> 2`
-2. Spawn `edm-srd-writer` for content sections; spawn `edm-architect` in parallel for the Target Architecture.
-3. **`edm-srd-writer`** writes directly to `${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}` (default `srd.md`).
-4. **`edm-architect`** writes to `architecture.md` in the initiative directory (canonical home for diagrams
+2. Resolve the initiative directory: `INIT_DIR=$(edm-state resolve-dir <PREFIX>)`
+3. Spawn `edm-srd-writer` for content sections; spawn `edm-architect` in parallel for the Target Architecture.
+4. **`edm-srd-writer`** writes directly to `${INIT_DIR}/${user_config.srd_filename}` (default `srd.md`).
+5. **`edm-architect`** writes to `${INIT_DIR}/architecture.md` (canonical home for diagrams
    and decisions). The SRD's `## 5. Target Architecture` section references `architecture.md` rather
    than duplicating content. Record the decision:
    ```bash
@@ -405,9 +406,10 @@ The ticket pack tables include regulatory-traceability columns
 ### Step 4 -- Execute Phase 3 (SRD Audit)
 
 1. `edm-state phase-start <PREFIX> 3`
-2. Spawn 2-3 `edm-srd-auditor` agents in parallel (one per section group).
-3. Compile findings; remediate all P0/P1 directly in the SRD; update revision history.
-4. Write audit report to `${user_config.srd_root}/{PREFIX}/audit-srd.md`.
+2. Resolve the initiative directory: `INIT_DIR=$(edm-state resolve-dir <PREFIX>)`
+3. Spawn 2-3 `edm-srd-auditor` agents in parallel (one per section group).
+4. Compile findings; remediate all P0/P1 directly in the SRD; update revision history.
+5. Write audit report to `${INIT_DIR}/audit-srd.md`.
 5. `edm-state phase-complete <PREFIX> 3`
 5a. **Auto-update patterns** -- append novel SRD-audit findings to the pattern library:
     ```bash
@@ -439,19 +441,21 @@ The ticket pack tables include regulatory-traceability columns
 ### Step 5 -- Execute Phase 4 (Ticket Pack)
 
 1. `edm-state phase-start <PREFIX> 4`
-2. Spawn `edm-ticket-writer` (per epic in parallel for large initiatives).
-3. Output to `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/` (default `tickets/`):
+2. Resolve the initiative directory: `INIT_DIR=$(edm-state resolve-dir <PREFIX>)`
+3. Spawn `edm-ticket-writer` (per epic in parallel for large initiatives).
+4. Output to `${INIT_DIR}/${user_config.ticket_pack_dirname}/` (default `tickets/`):
     - `README.md` (index, legend, critical path, SRD coverage map, `Generated From: srd.md vX.Y.Z` header)
     - `epics/01-*.md` through `NN-*.md`
-4. `edm-state phase-complete <PREFIX> 4`
-5. Proceed automatically to Phase 5.
+5. `edm-state phase-complete <PREFIX> 4`
+6. Proceed automatically to Phase 5.
 
 ### Step 6 -- Execute Phase 5 (Ticket Audit)
 
 1. `edm-state phase-start <PREFIX> 5`
-2. Spawn 2 `edm-ticket-auditor` agents in parallel (one structural, one content quality).
-3. Compile findings; remediate all gaps in the ticket pack.
-4. Write audit report to `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/audit.md`.
+2. Resolve the initiative directory: `INIT_DIR=$(edm-state resolve-dir <PREFIX>)`
+3. Spawn 2 `edm-ticket-auditor` agents in parallel (one structural, one content quality).
+4. Compile findings; remediate all gaps in the ticket pack.
+5. Write audit report to `${INIT_DIR}/${user_config.ticket_pack_dirname}/audit.md`.
 5. `edm-state phase-complete <PREFIX> 5`
 5a. **Auto-update patterns** -- append novel ticket-audit findings:
     ```bash

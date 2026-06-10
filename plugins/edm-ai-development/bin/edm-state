@@ -1117,7 +1117,7 @@ cmd_migrate_path() {
     .product_name = $p | .initiative_description = $d | .last_updated = $t
   ')"
   # Write directly to the new path (state_file_for will now resolve it correctly).
-  printf '%s\n' "$new" > "${new_state_file}.tmp.$" && mv -f "${new_state_file}.tmp.$" "$new_state_file"
+  printf '%s\n' "$new" > "${new_state_file}.tmp.$$" && mv -f "${new_state_file}.tmp.$$" "$new_state_file"
 
   echo "migrated ${prefix}: ${src} -> ${dst}"
   echo "set product_name=${product}, initiative_description=${description}"
