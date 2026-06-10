@@ -82,7 +82,7 @@ Planning --> GATE --> SRD     -->  Audit   --> GATE --> Tickets --> Audit    -->
              #1      Creation     (SRD)        #2      Creation    (Tickets)    #3       + QC + Remediation
 ```
 
-Three HITL gates require explicit human sign-off. The plugin enforces them via the `UserPromptExpansion` hook — `/edm:srd`, `/edm:tickets`, and `/edm:implement` will refuse to expand if the prerequisite gate isn't approved.
+Three HITL gates require explicit human sign-off. The plugin enforces them via the `UserPromptExpansion` hook — the SRD, audit, ticket, and implement phase commands (`/edm:srd`, `/edm:audit-srd`, `/edm:tickets`, `/edm:audit-tickets`, `/edm:implement`) will refuse to expand if the prerequisite gate isn't approved.
 
 ## Project artifact layout
 
@@ -102,10 +102,12 @@ SRD/
 │       │       ├── 01-{epic}.md
 │       │       └── 02-{epic}.md
 │       ├── code-audit/
-│       │   └── {YYYY-MM-DD}/
+│       │   ├── findings-ledger.md           ← cross-round findings ledger (stable CA-NNN IDs)
+│       │   └── pass-{N}_{YYYY-MM-DD}/
 │       │       ├── lens-L1.md … lens-L11.md
+│       │       ├── lenses-run.txt
 │       │       └── REMEDIATION.md
-│       └── .edm-state.json               ← gate approvals, phase timestamps (committed by default)
+│       └── .edm-state.json               ← gate approvals, phase timestamps, mode fields (committed by default)
 └── {PREFIX}/                          ← legacy flat layout (still supported, auto-detected)
     └── …
 ```

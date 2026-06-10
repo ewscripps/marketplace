@@ -6,29 +6,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EDM_STATE="${SCRIPT_DIR}/../edm-state"
 
-PASS=0
-FAIL=0
-
-pass() { echo "  PASS: $*"; PASS=$((PASS+1)); }
-fail() { echo "  FAIL: $*" >&2; FAIL=$((FAIL+1)); }
-
-check() {
-  local label="$1" expected="$2" actual="$3"
-  if [[ "$actual" == *"$expected"* ]]; then
-    pass "$label"
-  else
-    fail "$label (expected to contain: '$expected', got: '$actual')"
-  fi
-}
-
-check_absent() {
-  local label="$1" unexpected="$2" actual="$3"
-  if [[ "$actual" == *"$unexpected"* ]]; then
-    fail "$label (expected '$unexpected' to be absent, but it was present)"
-  else
-    pass "$label"
-  fi
-}
+# Shared assertions / counters (CA-014).
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_harness.sh"
 
 # ---- Setup -------------------------------------------------------------------
 TMP="$(mktemp -d)"
@@ -58,6 +37,10 @@ desc="$(jq -r '.initiative_description' "$state_file")"
 [[ "$pname" == "testprod" ]] && pass "product_name = testprod" || fail "product_name = '$pname'"
 [[ "$desc" == "my-feature" ]] && pass "initiative_description = my-feature" || fail "initiative_description = '$desc'"
 
+# CA-001 regression net: migrate-path must go through the locked/atomic/backup writer (rmw_state),
+# so a .bak must exist at the new location after the field update.
+[[ -f "${state_file}.bak" ]] && pass "migrate-path created .bak (locked write, CA-001)" || fail "migrate-path did not create .bak — lock/backup bypass (CA-001)"
+
 # ---- migrate-path: invalid inputs rejected -----------------------------------
 echo
 echo "migrate-path — invalid inputs rejected"
@@ -74,6 +57,10 @@ check "path-traversal description rejected" "must contain only" \
 
 check "empty prefix rejected" "usage:" \
   "$("$EDM_STATE" migrate-path --product ok --description ok 2>&1 || true)"
+
+check "path-traversal PREFIX rejected (CA-002)" "invalid PREFIX" \
+  "$("$EDM_STATE" migrate-path --product ok --description ok '../../evil' 2>&1 || true)"
+[[ ! -e "$TMP/evil" ]] && pass "migrate-path PREFIX traversal moved nothing outside SRD_ROOT (CA-002)" || fail "migrate-path PREFIX traversal escaped SRD_ROOT"
 
 # ---- migrate-path: duplicate target rejected ---------------------------------
 echo
@@ -141,6 +128,17 @@ check "non-existent related rejected" "no initiative" \
 HANDOFF="$TMP/SRD/CHILD/HANDOFF.md"
 [[ -f "$HANDOFF" ]] && check "HANDOFF shows parent_prefix" "PARENT" "$(cat "$HANDOFF")" \
   || fail "HANDOFF.md not written by set-parent/add-related"
+
+# ---- G7 path-traversal guard (PREFIX) — CA-004 regression net for the P1 G7 fix --------------
+echo
+echo "G7 path-traversal — PREFIX guard (init/set)"
+check "init rejects traversal PREFIX" "invalid PREFIX" \
+  "$("$EDM_STATE" init '../escaped/INJ' 2>&1 || true)"
+[[ ! -e "$TMP/escaped" ]] && pass "init wrote nothing outside SRD_ROOT (G7)" || fail "G7: init traversal wrote outside SRD_ROOT"
+check "set rejects PREFIX with slash" "invalid PREFIX" \
+  "$("$EDM_STATE" set 'A/B' last_cmd x 2>&1 || true)"
+check "init rejects PREFIX with dots" "invalid PREFIX" \
+  "$("$EDM_STATE" init '..' 2>&1 || true)"
 
 # ---- .bak mechanism ----------------------------------------------------------
 echo

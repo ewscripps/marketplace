@@ -9,3 +9,4 @@ plugins/web-cms/skills/.DS_Store
 .edm-state.json.bak
 .edm-state.json.lock
 .edm-state.json.lockd/
+.edm-state.json.tmp.*

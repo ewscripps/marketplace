@@ -62,11 +62,14 @@ Licensing, accessibility (WCAG), i18n, backward compatibility, deployment impact
 
 ## Severity Levels
 
+Use the canonical four-level scale from `CLAUDE.md Sec."Severity vocabulary"` — no divergent local scale.
+
 | Severity | Definition | Action |
 |---|---|---|
 | P0 | Blocks implementation, security/legal issue, architecturally wrong | Must fix before Phase 4 |
-| P1 | Significant gap, factual error, missing requirement | Must fix before Phase 4 |
+| P1 | Significant gap, factual error, missing requirement | Must fix before shipping |
 | P2 | Polish, edge case, improvement | Can defer |
+| NOTED | Intentional, pre-existing, or accepted trade-off | Document in Decisions / Non-Findings; do not re-investigate |
 
 ## Finding Format
 
@@ -94,6 +97,9 @@ Licensing, accessibility (WCAG), i18n, backward compatibility, deployment impact
 
 ## P2 -- Minor (Can Defer)
 [findings]
+
+## NOTED -- Intentional / Pre-existing
+[Items that look like findings but are intentional, pre-existing, or accepted trade-offs — documented once, not re-investigated]
 
 ## Remediation
 [List of P0/P1 fixes applied to the SRD]

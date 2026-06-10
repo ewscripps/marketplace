@@ -8,20 +8,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EDM_STATE="${SCRIPT_DIR}/../edm-state"
 
-PASS=0
-FAIL=0
-
-pass() { echo "  PASS: $*"; PASS=$((PASS+1)); }
-fail() { echo "  FAIL: $*" >&2; FAIL=$((FAIL+1)); }
-
-check() {
-  local label="$1" expected="$2" actual="$3"
-  if [[ "$actual" == *"$expected"* ]]; then
-    pass "$label"
-  else
-    fail "$label (expected to contain: '$expected', got: '$actual')"
-  fi
-}
+# Shared assertions / counters (CA-014).
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_harness.sh"
 
 # ---- Setup -------------------------------------------------------------------
 TMP="$(mktemp -d)"

@@ -268,7 +268,7 @@ Test code itself lives in the project's existing test directories — `SRD/` art
 writers are `green` (build code, like `edm-implementer`). Planner is `yellow` (discovery, like
 `edm-explorer`). Scaffold is `blue` (writes infrastructure, like `edm-architect`).
 
-`edm-test-coverage-auditor` has `disallowedTools: Write, Edit, NotebookEdit`.
+`edm-test-coverage-auditor` has `disallowedTools: Edit, NotebookEdit` (Write is required — it writes `test-coverage.md`).
 
 ### Coverage targets (userConfig)
 

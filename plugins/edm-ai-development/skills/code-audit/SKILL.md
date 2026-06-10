@@ -183,7 +183,7 @@ Use the **canonical** severity scale from `CLAUDE.md Sec."Severity vocabulary"`:
 
 After the synthesizer writes `REMEDIATION.md`:
 
-1. Summarize: P1/P2/P3 counts, top 3 most impactful findings (one sentence each), false alarm count (demonstrates the
+1. Summarize: P0/P1/P2 counts (+ NOTED count), top 3 most impactful findings (one sentence each), false alarm count (demonstrates the
    filter worked), estimated remediation effort.
 2. Ask: *"Do you approve this audit plan and want me to remediate, or do you have changes?"*
 3. **STOP and WAIT** for explicit approval.

@@ -115,7 +115,12 @@
   },
   "test_frameworks_detected": {},
   "coverage_by_layer": {},
-  "last_updated": "2026-06-08T08:53:52Z",
+  "last_updated": "2026-06-10T01:59:51Z",
   "gate1_decision": "No-Go (2026-06-08) — Phase 1 complete, scope not approved; parked for user revisit",
-  "implementation_mode": "standard"
+  "implementation_mode": "standard",
+  "last_code_audit_at": "2026-06-08T19:41:43Z",
+  "current_step": 8,
+  "last_cmd": "/edm:orchestrator EDMV2 — round-2 remediation applied (26 findings)",
+  "last_decision": "Round-2 remediation COMPLETE: all 26 findings fixed (4 P1: CA-001..004 + 22 P2). Verified: 199/199 smoke, 0 bash-4 constructs, plugin validate passes, live tests (migrate .bak/lock, traversal guards, userConfig wiring, metrics n/a) green. Convergence NOT yet recorded — pending user decision on re-audit.",
+  "audit_rounds": "{\"code\":2}"
 }

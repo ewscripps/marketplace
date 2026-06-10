@@ -1,30 +1,54 @@
-# EDMV2 — Session Handoff
+# EDMV2 - Session Handoff
 
-> **Last updated**: 2026-06-08T08:49:44Z by darryl.porter  
+> **Last updated**: 2026-06-10T01:59:52Z by darryl.porter  
 > **To resume**: `/edm:orchestrator EDMV2`
 
 ## Current Status
 
-- **Phase**: Phase 5 — Ticket Audit
+- **Phase**: Phase 6 - Implementation
 - **Gates approved**: 3 of 3
-- **Last gate**: Gate 3 — approved 2026-06-08T08:49:44Z by darryl.porter
-- **Next action**: Proceed to Phase 6 — implementation (`/edm:orchestrator EDMV2`)
+- **Last gate**: Gate 3 - approved 2026-06-08T08:49:44Z by darryl.porter
+- **Next action**: Phase 6 in progress - run `/edm:orchestrator EDMV2` to continue, then `/edm:test EDMV2` when all tickets pass QC
+
+## Resume Point
+
+- **Phase**: Phase 6 - Implementation
+- **Step**: 8
+- **Last command**: `/edm:orchestrator EDMV2 — round-2 remediation applied (26 findings)`
+- **Last decision**: Round-2 remediation COMPLETE: all 26 findings fixed (4 P1: CA-001..004 + 22 P2). Verified: 199/199 smoke, 0 bash-4 constructs, plugin validate passes, live tests (migrate .bak/lock, traversal guards, userConfig wiring, metrics n/a) green. Convergence NOT yet recorded — pending user decision on re-audit.
+
+**Pending artifacts for Phase 6 - Implementation**:
+
+_(implementation in progress — track individual ticket status)_
+
+> Copy-paste to resume: `/edm:orchestrator EDMV2`
+
+## Lifecycle & Mode
+
+- **Mode**: standard
+- **Lifecycle mode**: standard
+- **Compliance**: false
+- **Implementation mode**: standard
 
 ## Gates
 
-- Gate 1 — approved 2026-06-08T02:07:28Z by darryl.porter
-- Gate 2 — approved 2026-06-08T07:05:23Z by darryl.porter
-- Gate 3 — approved 2026-06-08T08:49:44Z by darryl.porter
+- Gate 1 - approved 2026-06-08T02:07:28Z by darryl.porter
+- Gate 2 - approved 2026-06-08T07:05:23Z by darryl.porter
+- Gate 3 - approved 2026-06-08T08:49:44Z by darryl.porter
 
 ## Artifact Checklist
 
 | Artifact | Status |
 |----------|--------|
-| `SRD/EDMV2/planning.md` | ✓ present |
-| `SRD/EDMV2/srd.md` | ✓ present |
-| `SRD/EDMV2/audit-srd.md` | ✓ present |
-| `SRD/EDMV2/tickets/README.md` | ✓ present |
-| `SRD/EDMV2/tickets/audit.md` | ✓ present |
+| `./SRD/EDMV2/planning.md` | [present] |
+| `./SRD/EDMV2/srd.md` | [present] |
+| `./SRD/EDMV2/audit-srd.md` | [present] |
+| `./SRD/EDMV2/tickets/README.md` | [present] |
+| `./SRD/EDMV2/tickets/audit.md` | [present] |
+| `./SRD/EDMV2/architecture.md` | [absent] |
+| `./SRD/EDMV2/decisions.md` | [absent] |
+| `./SRD/EDMV2/ROLLBACK.md` | [absent] (on-demand) |
+| `./SRD/EDMV2/exec-report.md` | [absent] (on-demand) |
 
 ## Key Decisions Made
 
@@ -42,10 +66,10 @@
 
 ## How to Resume
 
-1. Pull the latest branch — all EDM artifacts are committed
+1. Pull the latest branch - all EDM artifacts are committed
 2. Open Claude Code in the project root
 3. Run: `/edm:orchestrator EDMV2`
-4. The orchestrator detects the existing initiative and resumes from **Phase 5 — Ticket Audit**
+4. The orchestrator detects the existing initiative and resumes from **Phase 6 - Implementation**
 
 ## Notes
 

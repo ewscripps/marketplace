@@ -4,30 +4,9 @@
 set -euo pipefail
 
 PLUGIN_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-PASS=0
-FAIL=0
-
-check() {
-  local label="$1" pattern="$2" content="$3"
-  if echo "$content" | grep -qF "$pattern"; then
-    echo "  PASS: $label"
-    PASS=$((PASS+1))
-  else
-    echo "  FAIL: $label (expected: $pattern)"
-    FAIL=$((FAIL+1))
-  fi
-}
-
-check_absent() {
-  local label="$1" pattern="$2" content="$3"
-  if ! echo "$content" | grep -qF "$pattern"; then
-    echo "  PASS: $label"
-    PASS=$((PASS+1))
-  else
-    echo "  FAIL: $label (must not contain: $pattern)"
-    FAIL=$((FAIL+1))
-  fi
-}
+# Shared assertions / counters (CA-014). Reconciles wave4b onto the same check contract as the
+# other suites: check <label> <expected-substring> <content> (same arg order as before).
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_harness.sh"
 
 echo "=== Wave 4b Smoke Tests ==="
 echo ""

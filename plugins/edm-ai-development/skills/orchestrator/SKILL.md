@@ -286,6 +286,19 @@ The ticket pack tables include regulatory-traceability columns
 
 ---
 
+### Step 1d -- Concurrency & branch safety check (T35)
+
+Before starting any phase (on a new initiative or a resume), run two read-only safety checks:
+
+1. **Concurrent initiatives** -- `edm-state active-initiatives`. If more than one initiative is
+   listed, warn the user, naming each active prefix and its branch, so simultaneous in-flight work
+   is visible. This is a warning, not a block.
+2. **Branch match** -- `edm-state branch-check <PREFIX>`. If it exits non-zero (the current git
+   branch does not match the initiative's `initiative_branch`), **BLOCK** and surface the
+   `git checkout` instruction it prints; do not proceed with the phase until the branch matches.
+
+---
+
 ### Step 2 -- Execute Phase 1 (Planning)
 
 1. `edm-state phase-start <PREFIX> 1`

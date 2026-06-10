@@ -288,30 +288,22 @@ read_state() {
   cat "$f"
 }
 
-# T132: backup + write body — called inside the advisory lock by write_state.
-# Never call directly. $1 = state file path, $2 = content to write.
-_write_state_body() {
-  [[ -f "$1" ]] && cp -p "$1" "${1}.bak"
-  printf '%s\n' "$2" > "${1}.tmp.$$" && mv -f "${1}.tmp.$$" "$1"
-}
-
-write_state() {
-  local prefix="$1"
-  local content="$2"
-  local f lockbase
-  f="$(state_file_for "$prefix")"
-  lockbase="${f%.json}"
-  mkdir -p "$(dirname "$f")"
-  with_state_lock "$lockbase" _write_state_body "$f" "$content"
-}
-
 # _rmw_state_body <state-file> <jq-filter> [jq-args...]   (runs INSIDE with_state_lock)
-# Reads the file, applies the jq filter atomically, writes back.
+# Reads the file, applies the jq filter atomically, writes back. (write_state/_write_state_body
+# were removed in CA-007 — every mutator goes through rmw_state; this is the sole write body.)
+# On jq failure the temp file is removed and a non-zero status is returned (NOT die) so callers
+# that wrap rmw_state in `if !` (e.g. cmd_migrate_path's rollback) can react; bare callers abort
+# under set -e as before. (CA-009)
 _rmw_state_body() {
   local f="$1"; shift
   local filter="$1"; shift
   [[ -f "$f" ]] && cp -p "$f" "${f}.bak"
-  jq "$@" "$filter" "$f" > "${f}.tmp.$$" && mv -f "${f}.tmp.$$" "$f"
+  if ! jq "$@" "$filter" "$f" > "${f}.tmp.$$"; then
+    rm -f "${f}.tmp.$$"
+    echo "edm-state: state write failed (jq error) for $f" >&2
+    return 1
+  fi
+  mv -f "${f}.tmp.$$" "$f"
 }
 
 # rmw_state <PREFIX> <jq-filter> [jq-args...]
@@ -330,6 +322,35 @@ now_utc() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
 
+# git_aware_mv <src> <dst> — move a directory, using `git mv` when src is inside a git
+# worktree (so the move is tracked), falling back to plain mv otherwise. Single source
+# for the archive + migrate-path move idiom. (CA-015)
+git_aware_mv() {
+  local s="$1" d="$2"
+  if git -C "$s" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git mv "$s" "$d" 2>/dev/null || mv "$s" "$d"
+  else
+    mv "$s" "$d"
+  fi
+}
+
+# present_or_absent <path> — echo '[present]' if the file exists, else '[absent]'. (CA-015)
+present_or_absent() {
+  [[ -f "$1" ]] && echo '[present]' || echo '[absent]'
+}
+
+# gated_phase_for_gate <gate-num> — the phase whose completion feeds the given HITL gate
+# (gate 1 -> phase 1, gate 2 -> phase 3, gate 3 -> phase 5). Single source for this map. (CA-013)
+gated_phase_for_gate() {
+  case "$1" in 1) echo 1 ;; 2) echo 3 ;; 3) echo 5 ;; *) echo "null" ;; esac
+}
+
+# Shared jq def for the whole-initiative coverage layer row — one renderer, one padding scheme
+# (clamped 14-wide layer column; 9/8/7 pct padding), prepended to both get-coverage and
+# metrics-report so the two can never diverge again. Input: a {key,value} coverage entry. (CA-012)
+COVERAGE_LAYER_ROW_JQ_DEF='def coverage_layer_row:
+  "  \(.key | . + (" " * (14 - length | if . < 0 then 0 else . end)))  \(.value.pct)%\(if .value.pct < 10 then "         " elif .value.pct < 100 then "        " else "       " end)  \(.value.measured_at // "?")";'
+
 # ---- Advisory file locking (T24) -------------------------------------------
 # with_state_lock <lockbase> <command...>
 # Acquires an exclusive advisory lock scoped to <lockbase>, runs the command,
@@ -344,9 +365,11 @@ with_state_lock() {
   if command -v flock >/dev/null 2>&1; then
     # Fast path: flock on FD 200 (high enough to avoid collisions with stdin/stdout/stderr
     # and typical script-level pipes; bash 3.2 lacks {fd} auto-assignment so we pick 200 by convention)
-    local _lock_ec
-    ( flock -w 10 200 || exit 99; "$@" ) 200>"${lockfile}"
-    _lock_ec=$?
+    # `|| _lock_ec=$?` keeps the subshell in a tested position so `set -e` does NOT abort here on a
+    # non-zero exit — otherwise the timeout `die` below is unreachable and a flock-host timeout exits
+    # with a bare 99 and no message (CA-006). Success leaves _lock_ec=0.
+    local _lock_ec=0
+    ( flock -w 10 200 || exit 99; "$@" ) 200>"${lockfile}" || _lock_ec=$?
     [[ $_lock_ec -eq 99 ]] && die "state lock timeout after 10s on ${lockfile} (another edm-state process may be holding it)"
     return $_lock_ec
   else
@@ -488,8 +511,20 @@ cmd_init() {
   # Accept product/description from env so edm-init --product/--description can pre-seed them.
   product="${EDM_PRODUCT:-}"
   description="${EDM_DESCRIPTION:-}"
+  # Seed mode-family fields from install-time userConfig defaults when edm-init exported them
+  # (CA-010 / EDMV2-102 middle tier). A bare `edm-state init` (no env) keeps the built-in defaults.
+  # Validate defensively so a stray env value can't write an invalid enum into fresh state.
+  local mode="${EDM_MODE:-standard}"
+  local compliance="${EDM_COMPLIANCE_ENABLED:-false}"
+  local impl_mode="${EDM_IMPLEMENTATION_MODE:-standard}"
+  case "$mode" in standard|mini-srd|iac|data-ml|prototype) ;; *) mode="standard" ;; esac
+  case "$impl_mode" in standard|tdd) ;; *) impl_mode="standard" ;; esac
+  case "$compliance" in true|false) ;; *) compliance="false" ;; esac
+  # Atomic create: write to a temp file then rename, mirroring _rmw_state_body (CA-008). The
+  # existing-file guard above prevents clobbering; this prevents a partial file on crash mid-write.
   jq -n --arg p "$prefix" --arg t "$(now_utc)" --arg b "$branch" \
-        --arg prod "$product" --arg desc "$description" '{
+        --arg prod "$product" --arg desc "$description" \
+        --arg mode "$mode" --arg impl "$impl_mode" --argjson ce "$compliance" '{
     prefix: $p,
     current_phase: 0,
     gates_approved: [],
@@ -509,17 +544,17 @@ cmd_init() {
     last_decision: "",
     audit_rounds: {},
     partial_verdict_map: {},
-    mode: "standard",
+    mode: $mode,
     lifecycle_mode: "standard",
-    compliance_enabled: false,
-    implementation_mode: "standard",
+    compliance_enabled: $ce,
+    implementation_mode: $impl,
     skipped_phases: [],
     supersedes: "",
     forked_from: "",
     parent_prefix: "",
     related_prefixes: [],
     last_updated: $t
-  }' > "$f"
+  }' > "${f}.tmp.$$" && mv -f "${f}.tmp.$$" "$f"
   echo "initialized $f"
 }
 
@@ -529,20 +564,10 @@ cmd_list() {
   local found=0
   # Collect state files from both flat (SRD/{PREFIX}/) and product-scoped
   # (SRD/{PRODUCT}/{PREFIX}__*/) layouts; de-duplicate by canonical path.
-  local seen_paths=()
   local state
-  for state in \
-      "$SRD_ROOT"/*/.edm-state.json \
-      "$SRD_ROOT"/*/*/.edm-state.json; do
+  # Enumerate both layouts via the single shared helper (CA-011); it already dedups by path.
+  while IFS= read -r state; do
     [[ -f "$state" ]] || continue
-    # De-duplicate: skip if this path was already emitted.
-    local already=0
-    local seen
-    for seen in "${seen_paths[@]+"${seen_paths[@]}"}"; do
-      [[ "$seen" == "$state" ]] && already=1 && break
-    done
-    [[ $already -eq 1 ]] && continue
-    seen_paths+=("$state")
     found=1
     local prefix phase gates last product description
     prefix="$(jq -r '.prefix // "unknown"' "$state" 2>/dev/null || echo unknown)"
@@ -557,7 +582,7 @@ cmd_list() {
     else
       printf "  %-12s  phase=%d  gates_approved=%d  last_updated=%s\n" "$prefix" "$phase" "$gates" "$last"
     fi
-  done
+  done < <(list_state_files)
   [[ $found -eq 1 ]] || echo "  (no in-progress initiatives)"
 }
 
@@ -769,15 +794,15 @@ cmd_get_coverage() {
   echo "# Test Coverage - $prefix"
   echo
   # Whole-initiative coverage (single-stack)
-  jq -r '
+  jq -r "${COVERAGE_LAYER_ROW_JQ_DEF}"'
     (.coverage_by_layer // {}) | to_entries |
     if length == 0 then empty
     else
       "## Whole-Initiative Coverage",
       "",
-      "  Layer          Coverage  Measured At",
-      "  ----------     --------  -----------",
-      (.[] | "  \(.key | . + (" " * (14 - length)))  \(.value.pct)%\(if .value.pct < 10 then "        " elif .value.pct < 100 then "       " else "      " end)  \(.value.measured_at // "?")"),
+      "  Layer          Coverage   Measured At",
+      "  ----------     --------   -----------",
+      (.[] | coverage_layer_row),
       ""
     end
   ' "$state" 2>/dev/null
@@ -863,12 +888,8 @@ cmd_archive() {
     dst="${SRD_ROOT}/.archived/${prefix}"
   fi
   mkdir -p "$(dirname "$dst")"
-  # Use git mv when inside a git worktree so the move is tracked; fall back to plain mv.
-  if git -C "$src" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git mv "$src" "$dst" 2>/dev/null || mv "$src" "$dst"
-  else
-    mv "$src" "$dst"
-  fi
+  # Use git mv when inside a git worktree so the move is tracked; fall back to plain mv. (CA-015)
+  git_aware_mv "$src" "$dst"
   echo "archived $prefix -> $dst"
 }
 
@@ -983,7 +1004,7 @@ cmd_metrics_report() {
         ($humans | add) as $th |
         ($secs | add) as $ts |
         "  Total: \($ts)s  |  Claude: $\($tc)  |  Human baseline: $\($th)  |  Savings: " +
-          (if $tc > 0 then "\(($th / $tc) | tostring | .[0:6])x cheaper" else "n/a" end)
+          (if $tc > 0 and $th > 0 then "\(($th / $tc) | tostring | .[0:6])x cheaper" else "n/a" end)
       ' "$state"
       # Gate review time section (only shown when at least one gate is approved)
       # gate_review_seconds = approved_at(gate_N) - phase_complete_timestamp(gated_phase)
@@ -1019,7 +1040,9 @@ cmd_metrics_report() {
           (($state.gates_approved // []) | map(select(.gate == $g)) | first) as $approval |
           (gated_phase_key($g)) as $pk |
           (phase_complete_epoch($state; $pk)) as $complete_epoch |
-          (if $g == 1 then 1 elif $g == 2 then 3 else 5 end) as $gated_phase_num |
+          # Derive the phase number from the single gated_phase_key def above (CA-013) rather than
+          # re-encoding the gate->phase map as a parallel literal.
+          ((gated_phase_key($g)) | sub("_phase$"; "") | tonumber) as $gated_phase_num |
           if $approval == null then
             "  Gate \($g) review:  n/a  (not yet approved)"
           elif $complete_epoch == null then
@@ -1045,9 +1068,8 @@ cmd_metrics_report() {
         echo
         printf "  %-14s  %-10s  %-20s\n" "Layer" "Coverage" "Measured At"
         printf "  %-14s  %-10s  %-20s\n" "-----" "--------" "-----------"
-        jq -r '
-          (.coverage_by_layer // {}) | to_entries[] |
-          "  \(.key | . + (" " * (14 - length | if . < 0 then 0 else . end)))  \(.value.pct)%\(if .value.pct < 10 then "         " elif .value.pct < 100 then "        " else "       " end)  \(.value.measured_at // "?")"
+        jq -r "${COVERAGE_LAYER_ROW_JQ_DEF}"'
+          (.coverage_by_layer // {}) | to_entries[] | coverage_layer_row
         ' "$state" 2>/dev/null
         echo
       fi
@@ -1090,6 +1112,10 @@ cmd_migrate_path() {
   [[ "$product" =~ ^[A-Za-z0-9_-]+$ ]] || die "migrate-path: --product must contain only [A-Za-z0-9_-], got: '$product'"
   [[ "$description" =~ ^[A-Za-z0-9_-]+$ ]] || die "migrate-path: --description must contain only [A-Za-z0-9_-], got: '$description'"
 
+  # Validate PREFIX format before it reaches any filesystem path (path-traversal guard, CA-002).
+  # Matches the central state_file_for guard so legacy and product-scoped prefixes both pass.
+  [[ "$prefix" =~ ^[A-Za-z0-9_-]+$ ]] || die "migrate-path: invalid PREFIX '${prefix}' (only alphanumeric, hyphen, underscore allowed)"
+
   # Resolve current (flat) source directory.
   local src dst
   src="${SRD_ROOT}/${prefix}"
@@ -1101,23 +1127,24 @@ cmd_migrate_path() {
   # Create product subdirectory.
   mkdir -p "${SRD_ROOT}/${product}"
 
-  # Move the initiative directory — git-aware when inside a worktree.
-  if git -C "$src" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git mv "$src" "$dst" 2>/dev/null || mv "$src" "$dst"
-  else
-    mv "$src" "$dst"
-  fi
+  # Move the initiative directory — git-aware when inside a worktree. (CA-015)
+  git_aware_mv "$src" "$dst"
 
-  # Update state: write product_name and initiative_description via the typed path.
+  # Update state through the locked/atomic/backup primitive (CA-001). After the move,
+  # state_file_for "$prefix" glob-resolves the new product-scoped dir, so rmw_state targets it.
+  # Roll the directory move back if the state file is missing or the write fails.
   local new_state_file="${dst}/.edm-state.json"
-  [[ -f "$new_state_file" ]] || die "migrate-path: state file not found after move: $new_state_file"
-  local current new
-  current="$(cat "$new_state_file")"
-  new="$(echo "$current" | jq --arg p "$product" --arg d "$description" --arg t "$(now_utc)" '
-    .product_name = $p | .initiative_description = $d | .last_updated = $t
-  ')"
-  # Write directly to the new path (state_file_for will now resolve it correctly).
-  printf '%s\n' "$new" > "${new_state_file}.tmp.$$" && mv -f "${new_state_file}.tmp.$$" "$new_state_file"
+  if [[ ! -f "$new_state_file" ]]; then
+    git_aware_mv "$dst" "$src"
+    die "migrate-path: state file not found after move (rolled back): $new_state_file"
+  fi
+  rm -f "${new_state_file}.bak"   # drop any stale source-carried backup; rmw_state writes a fresh one
+  if ! rmw_state "$prefix" \
+        '.product_name = $p | .initiative_description = $d | .last_updated = $t' \
+        --arg p "$product" --arg d "$description" --arg t "$(now_utc)"; then
+    git_aware_mv "$dst" "$src"
+    die "migrate-path: state update failed (rolled back move): $prefix"
+  fi
 
   echo "migrated ${prefix}: ${src} -> ${dst}"
   echo "set product_name=${product}, initiative_description=${description}"
@@ -1300,7 +1327,8 @@ cmd_session_start() {
   require_jq
   local active_count=0
   local seen_prefixes=()
-  for state in "$SRD_ROOT"/*/.edm-state.json "$SRD_ROOT"/*/*/.edm-state.json; do
+  # Enumerate both layouts via the single shared helper (CA-011); dedup by prefix below.
+  while IFS= read -r state; do
     [[ -f "$state" ]] || continue
     local prefix phase
     prefix="$(jq -r '.prefix // "unknown"' "$state" 2>/dev/null || echo unknown)"
@@ -1332,7 +1360,7 @@ cmd_session_start() {
     [[ -n "$last_updated" ]]   && printf '  Last updated:  %s\n' "$last_updated"
     printf '  Resume:        /edm:orchestrator %s\n' "$prefix"
     echo
-  done
+  done < <(list_state_files)
 }
 
 # ---- Audit round tracking (T56) ---------------------------------------------
@@ -1687,9 +1715,9 @@ write_handoff_internal() {
 
   # Gate-skip flags (T96): true when the phase feeding a gate is in skipped_phases.
   local gate1_skipped gate2_skipped gate3_skipped
-  gate1_skipped="$(echo "$state" | jq -r '[(.skipped_phases // []) | .[].phase] | contains([1])')"
-  gate2_skipped="$(echo "$state" | jq -r '[(.skipped_phases // []) | .[].phase] | contains([3])')"
-  gate3_skipped="$(echo "$state" | jq -r '[(.skipped_phases // []) | .[].phase] | contains([5])')"
+  gate1_skipped="$(echo "$state" | jq -r --argjson p "$(gated_phase_for_gate 1)" '[(.skipped_phases // []) | .[].phase] | contains([$p])')"
+  gate2_skipped="$(echo "$state" | jq -r --argjson p "$(gated_phase_for_gate 2)" '[(.skipped_phases // []) | .[].phase] | contains([$p])')"
+  gate3_skipped="$(echo "$state" | jq -r --argjson p "$(gated_phase_for_gate 3)" '[(.skipped_phases // []) | .[].phase] | contains([$p])')"
 
   # Derive what to do next from current phase + gates approved
   local gate_nums next_action
@@ -1752,15 +1780,15 @@ write_handoff_internal() {
 
   local s_planning s_srd s_audit_srd s_tickets s_audit_tickets
   local s_arch s_decisions s_rollback s_exec_report
-  s_planning="$([[ -f "$planning_path" ]] && echo '[present]' || echo '[absent]')"
-  s_srd="$([[ -f "$srd_path" ]] && echo '[present]' || echo '[absent]')"
-  s_audit_srd="$([[ -f "$audit_srd_path" ]] && echo '[present]' || echo '[absent]')"
-  s_tickets="$([[ -f "$tickets_path" ]] && echo '[present]' || echo '[absent]')"
-  s_audit_tickets="$([[ -f "$audit_tickets_path" ]] && echo '[present]' || echo '[absent]')"
-  s_arch="$([[ -f "$arch_path" ]] && echo '[present]' || echo '[absent]')"
-  s_decisions="$([[ -f "$decisions_path" ]] && echo '[present]' || echo '[absent]')"
-  s_rollback="$([[ -f "$rollback_path" ]] && echo '[present]' || echo '[absent]')"
-  s_exec_report="$([[ -f "$exec_report_path" ]] && echo '[present]' || echo '[absent]')"
+  s_planning="$(present_or_absent "$planning_path")"
+  s_srd="$(present_or_absent "$srd_path")"
+  s_audit_srd="$(present_or_absent "$audit_srd_path")"
+  s_tickets="$(present_or_absent "$tickets_path")"
+  s_audit_tickets="$(present_or_absent "$audit_tickets_path")"
+  s_arch="$(present_or_absent "$arch_path")"
+  s_decisions="$(present_or_absent "$decisions_path")"
+  s_rollback="$(present_or_absent "$rollback_path")"
+  s_exec_report="$(present_or_absent "$exec_report_path")"
 
   # Decisions Made section from planning.md
   local decisions=""
@@ -1963,7 +1991,7 @@ case "$cmd" in
   update-patterns)      cmd_update_patterns "$@" ;;
   lint)                 cmd_lint "$@" ;;
   ""|-h|--help|help)
-    sed -n '2,34p' "$0"
+    sed -n '2,39p' "$0"
     ;;
   *)
     die "unknown subcommand: $cmd (try --help)"

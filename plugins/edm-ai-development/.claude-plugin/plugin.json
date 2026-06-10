@@ -24,7 +24,7 @@
     "srd_root": {
       "type": "directory",
       "title": "SRD output root directory",
-      "description": "Where EDM artifacts are written. Each initiative gets a subdirectory: {srd_root}/{PREFIX}/. The Scripps default is ./SRD.",
+      "description": "Where EDM artifacts are written. The canonical layout places each initiative under a product subdirectory: {srd_root}/{PRODUCT}/{PREFIX}__{description}/ (legacy flat {srd_root}/{PREFIX}/ still works). The Scripps default is ./SRD.",
       "default": "./SRD"
     },
     "srd_filename": {
