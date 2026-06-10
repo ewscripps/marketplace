@@ -19,8 +19,12 @@ allowed-tools: Read, Write, Bash(edm-state *), Bash(edm-init *), Bash(edm-valida
 
 1. Parse `$ARGUMENTS` for `{PREFIX}` and the initiative description. If missing, ask the user.
 2. `edm-validate-prefix <PREFIX>` -- if SRD/{PREFIX}/ already exists:
-   - Refresh the handoff: `edm-state write-handoff <PREFIX>`
-   - Display the refreshed HANDOFF.md verbatim, then ask whether to resume or pick another prefix.
+   - Refresh and display the handoff:
+     ```bash
+     edm-state write-handoff <PREFIX>
+     INIT_DIR=$(edm-state resolve-dir <PREFIX>)
+     ```
+   - Read `${INIT_DIR}/HANDOFF.md` and display it verbatim, then ask whether to resume or pick another prefix.
 3. If new: prompt the user for a one-word **product** name (e.g., `auth`, `payments`) and a short **description slug** (e.g., `user-auth-rewrite`). Then:
    ```bash
    edm-init --product <product> --description <slug> <PREFIX>

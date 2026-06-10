@@ -91,10 +91,14 @@ Call the resolved value **`INITIATIVE`** -- all subsequent steps use `INITIATIVE
      via Other).
    - Both values must match `^[a-z][a-z0-9-]*$` — lowercase letters, digits, hyphens only.
 3. Run `edm-validate-prefix <PREFIX>` -- if `SRD/{PREFIX}/` already exists:
-   - Refresh the handoff from current state before displaying: `edm-state write-handoff <PREFIX>`
+   - Refresh the handoff from current state before displaying:
+     ```bash
+     edm-state write-handoff <PREFIX>
+     INIT_DIR=$(edm-state resolve-dir <PREFIX>)
+     ```
      (this pulls `current_phase`, gate approvals, and mode fields from `.edm-state.json` so the
      user sees the true current state, not a snapshot from a prior session).
-   - Read the refreshed `SRD/{PREFIX}/HANDOFF.md` and display it verbatim so the user sees exactly
+   - Read the refreshed `${INIT_DIR}/HANDOFF.md` and display it verbatim so the user sees exactly
      where the initiative stands (phase, last gate, next action, artifact checklist, decisions made).
    - Then use `AskUserQuestion` with header `"Resume?"` and options:
      - **Resume** -- continue from where the handoff shows
