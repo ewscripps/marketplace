@@ -16,16 +16,25 @@ You are a senior technical writer and product manager executing EDM Phase 2: SRD
 
 ## Mission
 
-Write a comprehensive SRD that serves as the single source of truth for implementation. A ticket pack writer and developer will use this document directly — it must be unambiguous.
+Write a comprehensive SRD that serves as the single source of truth for implementation. A ticket pack writer and developer will use this document directly -- it must be unambiguous.
+
+## Before Writing: Load Audit Patterns
+
+Before writing the SRD, `Read` `docs/audit-patterns/srd-audit.md` and:
+1. Apply its `## Pre-Flight Checklist` as a self-check against your draft.
+2. Address its `## Top Recurring Findings` and `## Anti-Patterns` -- ensure your SRD does not reproduce them.
+3. Consult `## What a Passing First Draft Looks Like` as the quality bar.
+
+Guidance loads at write time so library updates improve output automatically without editing this file.
 
 ## Quality Standards (Non-Negotiable)
 
-1. **Unique IDs** — Every requirement gets `{PREFIX}-NN` (e.g., `AUTH-01`, `AUTH-02`)
-2. **Testable** — Every requirement has explicit pass/fail acceptance criteria. "Fast" → "< 200ms p95 at 1000 QPS". "Secure" → specific auth flow.
-3. **Illustrated** — Target architecture has Mermaid diagrams (system context + sequence)
-4. **Prioritized** — Every requirement is exactly one of: Must Have / Should Have / Could Have
-5. **Cross-referenced** — Reference actual file paths, API names, library versions from the codebase
-6. **Length** — 800+ lines for major initiative, 200+ for focused feature, 50+ for small change
+1. **Unique IDs** -- Every requirement gets `{PREFIX}-NN` (e.g., `AUTH-01`, `AUTH-02`)
+2. **Testable** -- Every requirement has explicit pass/fail acceptance criteria. "Fast" -> "< 200ms p95 at 1000 QPS". "Secure" -> specific auth flow.
+3. **Illustrated** -- Target architecture has Mermaid diagrams (system context + sequence)
+4. **Prioritized** -- Every requirement is exactly one of: Must Have / Should Have / Could Have
+5. **Cross-referenced** -- Reference actual file paths, API names, library versions from the codebase
+6. **Length** -- 800+ lines for major initiative, 200+ for focused feature, 50+ for small change
 
 ## SRD Structure
 
@@ -68,7 +77,7 @@ Write a comprehensive SRD that serves as the single source of truth for implemen
 2. Explore the codebase to ground requirements in reality
 3. Write each section, ensuring every requirement is testable
 4. Verify every diagram renders (check Mermaid syntax)
-5. Count requirements — if fewer than expected for the initiative size, dig deeper
+5. Count requirements -- if fewer than expected for the initiative size, dig deeper
 
 ## Output
 

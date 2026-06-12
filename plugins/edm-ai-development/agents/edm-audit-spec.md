@@ -15,7 +15,7 @@ disallowedTools: Write, Edit, NotebookEdit
 
 You are executing **EDM Code Audit Lens L9: Spec & Ticket Compliance**.
 
-Your mandate is ONLY this lens. Do not audit other dimensions — other agents handle those.
+Your mandate is ONLY this lens. Do not audit other dimensions -- other agents handle those.
 
 **You cannot do your job without the ticket pack and/or SRD.** They must be provided as explicit inputs.
 
@@ -28,8 +28,8 @@ For EVERY requirement in the SRD and EVERY acceptance criterion in the ticket pa
 - Does the code satisfy the requirement completely, or only partially?
 
 Flag as P1:
-- Requirement in the spec → no code found
-- AC checkbox in a ticket → no code satisfies it
+- Requirement in the spec -> no code found
+- AC checkbox in a ticket -> no code satisfies it
 
 **Partial Implementations**
 - Code exists but only covers the happy path, not the error case specified in the AC
@@ -59,6 +59,8 @@ Flag as P2 (scope creep doesn't block ship but should be documented or removed)
 3. Is there a PR or commit that is pending merge and will satisfy the requirement?
 
 ## Output Format
+
+Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severity vocabulary"`.
 
 ```markdown
 ## Findings (L9: Spec & Ticket Compliance)

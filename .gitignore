@@ -6,3 +6,7 @@ plugins/jira/.DS_Store
 plugins/web-cms/.DS_Store
 plugins/web-cms/skills/.DS_Store
 /.idea/
+.edm-state.json.bak
+.edm-state.json.lock
+.edm-state.json.lockd/
+.edm-state.json.tmp.*

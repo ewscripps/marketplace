@@ -1,14 +1,14 @@
 ---
 name: test-plan
-description: Preview mode for EDM testing — detects the project stack and maps ticket ACs to test layers without writing any tests. Produces SRD/{PREFIX}/test-plan.md. Invoke before /edm:test to review scope, or run it standalone when you need the coverage map but aren't ready to write tests yet.
+description: Preview mode for EDM testing -- detects the project stack and maps ticket ACs to test layers without writing any tests. Produces SRD/{PREFIX}/test-plan.md. Invoke before /edm:test to review scope, or run it standalone when you need the coverage map but aren't ready to write tests yet.
 disable-model-invocation: true
 model: opus
 effort: high
 argument-hint: <PREFIX> [scope]
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep, TodoWrite
+allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, TodoWrite
 ---
 
-# EDM Test Plan — Stack Detection & Coverage Mapping
+# EDM Test Plan -- Stack Detection & Coverage Mapping
 
 **Arguments**: $ARGUMENTS
 
@@ -21,7 +21,7 @@ Use this skill when:
 
 ## Operational Orchestration
 
-### Step 1 — Verify prerequisites
+### Step 1 -- Verify prerequisites
 
 1. Parse `{PREFIX}` from `$ARGUMENTS`. If missing, print usage and exit.
 2. Verify `${user_config.srd_root}/{PREFIX}/` exists. If not, print:
@@ -30,7 +30,7 @@ Use this skill when:
    > *"Ticket pack not found. Run /edm:tickets {PREFIX} and /edm:audit-tickets {PREFIX} first."*
 4. Parse optional `[scope]` argument (default: "all").
 
-### Step 2 — Spawn edm-test-planner
+### Step 2 -- Spawn edm-test-planner
 
 Spawn the `edm-test-planner` agent with:
 
@@ -51,22 +51,30 @@ test_framework_e2e_override: ${user_config.test_framework_e2e_override}
 
 Wait for it to complete.
 
-### Step 3 — Summarize and present
+### Step 3 -- Summarize and present
 
 After the planner completes, present to the user:
-- Stack detected (list of active layers and their frameworks).
+- Stack detected per epic (or single stack if uniform), layers active/N/A.
+- Whether per-epic plans were written (multi-stack) or a single plan (single-stack).
 - Infrastructure gaps (if any) with install commands.
 - Total tickets and AC in scope.
-- Location of the generated plan: `${user_config.srd_root}/{PREFIX}/test-plan.md`.
+- Locations of the generated plan file(s):
+  - Single-stack: `${user_config.srd_root}/{PREFIX}/test-plan.md`
+  - Multi-stack: `${user_config.srd_root}/{PREFIX}/test-plan.md` (index) plus
+    `${user_config.srd_root}/{PREFIX}/test-plan-{epic}.md` for each epic.
 - Suggested next steps:
   - **No gaps**: "Run `/edm:test {PREFIX}` to write tests based on this plan."
-  - **Gaps found**: "Run `/edm:test {PREFIX}` — it will scaffold the missing frameworks first, then write tests. Or run `/edm:test {PREFIX}` with `--skip-scaffold` to write tests for layers that are already set up."
+  - **Gaps found**: "Run `/edm:test {PREFIX}` -- it will scaffold the missing frameworks first, then write tests. Or run `/edm:test {PREFIX}` with `--skip-scaffold` to write tests for layers that are already set up."
 
-### Artifact produced
+### Artifacts produced
 
-`${user_config.srd_root}/{PREFIX}/test-plan.md` — source-controlled alongside other initiative artifacts.
+- **Single-stack**: `${user_config.srd_root}/{PREFIX}/test-plan.md`
+- **Multi-stack**: `${user_config.srd_root}/{PREFIX}/test-plan.md` (index) plus
+  `${user_config.srd_root}/{PREFIX}/test-plan-{epic-slug}.md` per epic
+
+All files are source-controlled alongside other initiative artifacts.
 
 ### See also
 
-- `/edm:test <PREFIX>` — full test orchestration (plan + scaffold + write + audit)
-- `/edm:test-coverage <PREFIX>` — re-run coverage audit against existing tests (no writing)
+- `/edm:test <PREFIX>` -- full test orchestration (plan + scaffold + write + audit)
+- `/edm:test-coverage <PREFIX>` -- re-run coverage audit against existing tests (no writing)

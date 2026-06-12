@@ -7,11 +7,11 @@ The plugin produces source-controlled artifacts in your project's `SRD/` directo
 ## Install
 
 ```bash
-# Local install (this repository):
-claude plugin install /Users/darryl.porter/projects/scripps-mcp/edm-plugin
+# Local install (from the marketplace repo root):
+claude plugin install ./plugins/edm-ai-development
 
 # Or development mode (no install required):
-claude --plugin-dir /Users/darryl.porter/projects/scripps-mcp/edm-plugin
+claude --plugin-dir ./plugins/edm-ai-development
 ```
 
 When installed, Claude Code prompts for a few `userConfig` values (defaults are sensible — accept them unless your team uses different paths).
@@ -82,7 +82,7 @@ Planning --> GATE --> SRD     -->  Audit   --> GATE --> Tickets --> Audit    -->
              #1      Creation     (SRD)        #2      Creation    (Tickets)    #3       + QC + Remediation
 ```
 
-Three HITL gates require explicit human sign-off. The plugin enforces them via the `UserPromptExpansion` hook — `/edm:srd`, `/edm:tickets`, and `/edm:implement` will refuse to expand if the prerequisite gate isn't approved.
+Three HITL gates require explicit human sign-off. The plugin enforces them via the `UserPromptExpansion` hook — the SRD, audit, ticket, and implement phase commands (`/edm:srd`, `/edm:audit-srd`, `/edm:tickets`, `/edm:audit-tickets`, `/edm:implement`) will refuse to expand if the prerequisite gate isn't approved.
 
 ## Project artifact layout
 
@@ -90,22 +90,29 @@ Every artifact lives in your project's `SRD/` directory and is committed to git:
 
 ```
 SRD/
-└── {PREFIX}/
-    ├── planning.md               ← Phase 1
-    ├── srd.md                    ← Phase 2 (filename configurable)
-    ├── audit-srd.md              ← Phase 3
-    ├── tickets/                  ← Phase 4 (dirname configurable)
-    │   ├── README.md             ← index, legend, critical path, coverage map, version-linkage header
-    │   ├── audit.md              ← Phase 5 audit
-    │   └── epics/
-    │       ├── 01-{epic}.md
-    │       └── 02-{epic}.md
-    ├── code-audit/
-    │   └── {YYYY-MM-DD}/
-    │       ├── lens-L1.md … lens-L11.md
-    │       └── REMEDIATION.md
-    └── .edm-state.json           ← gate approvals, phase timestamps (committed by default)
+├── {PRODUCT}/                         ← v2.0 canonical: product subdirectory (e.g. "auth", "billing")
+│   └── {PREFIX}__{description}/       ← initiative directory (double-underscore separator)
+│       ├── planning.md                    ← Phase 1
+│       ├── srd.md                         ← Phase 2 (filename configurable)
+│       ├── audit-srd.md                   ← Phase 3
+│       ├── tickets/                       ← Phase 4 (dirname configurable)
+│       │   ├── README.md                  ← index, legend, critical path, coverage map, version-linkage header
+│       │   ├── audit.md                   ← Phase 5 audit
+│       │   └── epics/
+│       │       ├── 01-{epic}.md
+│       │       └── 02-{epic}.md
+│       ├── code-audit/
+│       │   ├── findings-ledger.md           ← cross-round findings ledger (stable CA-NNN IDs)
+│       │   └── pass-{N}_{YYYY-MM-DD}/
+│       │       ├── lens-L1.md … lens-L11.md
+│       │       ├── lenses-run.txt
+│       │       └── REMEDIATION.md
+│       └── .edm-state.json               ← gate approvals, phase timestamps, mode fields (committed by default)
+└── {PREFIX}/                          ← legacy flat layout (still supported, auto-detected)
+    └── …
 ```
+
+See `CLAUDE.md` for the full v2.0 artifact inventory including optional on-demand files (`decisions.md`, `ROLLBACK.md`, `exec-report.md`, `post-deploy/`).
 
 Artifacts are reviewed in PRs. Gate approvals show up in git history. Multiple developers see the same in-flight initiative state.
 
@@ -121,17 +128,18 @@ Run `/edm:metrics --calibrate` after a few completed initiatives to recalibrate 
 
 ## Plugin features
 
-- **Hooks** (`hooks/hooks.json`): SessionStart prints in-progress initiatives; UserPromptExpansion enforces gate approval; Stop/PreCompact checkpoint state; SubagentStop auto-fires `edm-qc-auditor` after every implementer; TaskCompleted records per-task durations.
+- **Hooks** (`hooks/hooks.json`): SessionStart prints in-progress initiatives; UserPromptExpansion enforces gate approval; PreToolUse blocks `git commit` on artifact violations; Stop/PreCompact checkpoint state; SubagentStop auto-fires `edm-qc-auditor` after every implementer; TaskCompleted is reserved (per-task accumulation not yet implemented).
 - **Background monitor** (`monitors/monitors.json`): during Phase 6, tails `git log` and reports each ticket commit as a notification.
 - **Worktree isolation**: parallel `edm-implementer` agents each get their own git worktree automatically — no manual setup, no merge conflicts mid-wave.
 - **State persistence**: `bin/edm-state` tracks each initiative's phase, gate approvals, timing, cost, and test coverage in `SRD/{PREFIX}/.edm-state.json`. Survives across sessions.
 - **Resume**: a teammate cloning the repo can pick up an in-progress initiative — the state is in git.
 - **`userConfig`**: prompts for output paths, conventions, coverage targets, and framework overrides at install time.
-- **Comprehensive testing**: `/edm:test` runs 10 specialist agents (planner, scaffold, 7 writers, coverage auditor) in parallel waves, producing `test-plan.md` and `test-coverage.md` with AC↔test cross-reference. Stack-aware — automatically marks layers N/A for backend-only or CLI projects.
+- **Comprehensive testing**: `/edm:test` runs 10 specialist agents (planner, scaffold, 7 writers, coverage auditor) in parallel waves, producing `test-plan.md` and `test-coverage.md` with AC->test cross-reference. Stack-aware -- automatically marks layers N/A for backend-only or CLI projects.
+- **Multi-stack testing** (v2.0+): for initiatives spanning multiple technology stacks (e.g., a Python backend epic and a Vue frontend epic), the test planner detects the stack per epic and produces `test-plan-{epic}.md` / `test-coverage-{epic}.md` per epic, each scoped to that epic's frameworks and coverage targets. Single-stack initiatives use the same `test-plan.md` / `test-coverage.md` behavior as before.
+- **Product-line linkage** (v2.0+): link related initiatives with `edm-state set-parent <PREFIX> <PARENT>` and `edm-state add-related <PREFIX> <RELATED>`. Linkage fields appear in HANDOFF.md so teams can navigate across child/sibling initiatives without losing context.
 
 ## See also
 
 - `CLAUDE.md` — plugin conventions for contributors
 - `CHANGELOG.md` — version history
 - The Claude Code plugin docs: `code.claude.com/docs/en/plugins`
-- The full remediation plan that produced this plugin: `../EDM_PLUGIN_REMEDIATION_PLAN.md`

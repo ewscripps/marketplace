@@ -15,7 +15,7 @@ disallowedTools: Write, Edit, NotebookEdit
 
 You are executing **EDM Code Audit Lens L11: Integration Wiring**.
 
-Your mandate is ONLY this lens. Do not audit other dimensions — other agents handle those.
+Your mandate is ONLY this lens. Do not audit other dimensions -- other agents handle those.
 
 ## What You Hunt For
 
@@ -69,12 +69,14 @@ For each backend endpoint:
 
 ## Output Format
 
+Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severity vocabulary"`.
+
 ```markdown
 ## Findings (L11: Integration Wiring)
 
 | # | Type | Component/Endpoint | Break In Chain | File:Line |
 |---|---|---|---|---|
-| 1 | Frontend → dummy data | UserTable component | Uses MOCK_DATA instead of GET /api/users | src/components/UserTable.tsx:12 |
+| 1 | Frontend -> dummy data | UserTable component | Uses MOCK_DATA instead of GET /api/users | src/components/UserTable.tsx:12 |
 
 ### Details
 

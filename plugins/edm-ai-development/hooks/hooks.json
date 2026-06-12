@@ -5,18 +5,85 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 && edm-state list 2>/dev/null || true"
+            "command": "command -v edm-state >/dev/null 2>&1 && edm-state session-start 2>/dev/null || true"
           }
         ]
       }
     ],
     "UserPromptExpansion": [
       {
-        "matcher": "edm:(srd|tickets|implement)",
+        "matcher": "edm:srd",
         "hooks": [
           {
+            "type": "command",
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); [ -n \"$prefix\" ] && edm-state gate-check \"$prefix\" srd 2>&1 || exit 1; exit 0"
+          },
+          {
             "type": "prompt",
-            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array.\n   - For /edm:srd or /edm:audit-srd: requires gate 1 approved\n   - For /edm:tickets or /edm:audit-tickets: requires gate 2 approved\n   - For /edm:implement: requires gate 3 approved\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet — gate {N} for {PREFIX} has not been approved. Run the prior phase first or invoke /edm:orchestrator.'\n5. If approved (or if the state file does not exist — first invocation), allow expansion."
+            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array — /edm:srd requires gate 1 approved.\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet — gate 1 for {PREFIX} has not been approved. Run /edm:orchestrator first.'\n5. If approved (or if the state file does not exist — first invocation), allow expansion."
+          }
+        ]
+      },
+      {
+        "matcher": "edm:audit-srd",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); [ -n \"$prefix\" ] && edm-state gate-check \"$prefix\" srd 2>&1 || exit 1; exit 0"
+          },
+          {
+            "type": "prompt",
+            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array — /edm:audit-srd requires gate 1 approved.\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet — gate 1 for {PREFIX} has not been approved. Run /edm:orchestrator first.'\n5. If approved (or if the state file does not exist — first invocation), allow expansion."
+          }
+        ]
+      },
+      {
+        "matcher": "edm:tickets",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); [ -n \"$prefix\" ] && edm-state gate-check \"$prefix\" tickets 2>&1 || exit 1; exit 0"
+          },
+          {
+            "type": "prompt",
+            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array — /edm:tickets requires gate 2 approved.\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet — gate 2 for {PREFIX} has not been approved. Run /edm:orchestrator first.'\n5. If approved (or if the state file does not exist — first invocation), allow expansion."
+          }
+        ]
+      },
+      {
+        "matcher": "edm:audit-tickets",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); [ -n \"$prefix\" ] && edm-state gate-check \"$prefix\" audit-tickets 2>&1 || exit 1; exit 0"
+          },
+          {
+            "type": "prompt",
+            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array — /edm:audit-tickets requires gate 3 approved.\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet — gate 3 for {PREFIX} has not been approved. Run /edm:orchestrator first.'\n5. If approved (or if the state file does not exist — first invocation), allow expansion."
+          }
+        ]
+      },
+      {
+        "matcher": "edm:implement",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); [ -n \"$prefix\" ] && edm-state gate-check \"$prefix\" implement 2>&1 || exit 1; exit 0"
+          },
+          {
+            "type": "prompt",
+            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array — /edm:implement requires gate 3 approved.\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet — gate 3 for {PREFIX} has not been approved. Run /edm:orchestrator first.'\n5. If approved (or if the state file does not exist — first invocation), allow expansion."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "git commit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; command -v edm-lint-artifacts >/dev/null 2>&1 || exit 0; staged=$(git diff --cached --name-only 2>/dev/null | grep '^SRD/'); test -z \"$staged\" && exit 0; prefixes=$(echo \"$staged\" | awk -F'/' '{ if (NF>=3 && $3 ~ /__/) { p=$3; sub(/__.*/, \"\", p); print p } else if (NF>=2 && $2 ~ /^[A-Z]/) { print $2 } }' | grep -E '^[A-Z][A-Z0-9_-]*$' | sort -u); test -z \"$prefixes\" && exit 0; fail=0; for p in $prefixes; do edm-lint-artifacts \"$p\" 2>&1 || { echo \"[EDM] Fix artifact violations before committing (edm-lint-artifacts $p)\" >&2; fail=1; }; done; exit $fail"
           }
         ]
       }
@@ -47,7 +114,7 @@
         "hooks": [
           {
             "type": "prompt",
-            "prompt": "An edm-implementer subagent just completed. Spawn an edm-qc-auditor agent to verify acceptance criteria for the tickets just implemented in that subagent's work. Read the relevant epic file. Compare every AC against the committed code. Report PASS/PARTIAL/FAIL per ticket with file:line evidence."
+            "prompt": "An edm-implementer subagent just completed. Spawn an edm-qc-auditor agent to verify acceptance criteria for the tickets just implemented in that subagent's work.\n\nInstructions for the spawned edm-qc-auditor:\n1. Read the relevant epic file to get ticket ACs.\n2. For each AC, classify as statically-verifiable or runtime-only before grading.\n3. Assign PASS (statically verified), PARTIAL (runtime-only, with deferred-to-runtime note), or FAIL (statically unmet).\n4. Resolve the initiative directory from state using `edm-state get <PREFIX>`.\n5. Write the QC report to `<initiative-dir>/qc/qc-summary.md` (run `mkdir -p <initiative-dir>/qc` first).\n6. For each PARTIAL verdict, call `edm-state record-partial-verdict <PREFIX> <ticket> PARTIAL '<note>'` to persist it.\n7. Report PASS/PARTIAL/FAIL per ticket with file:line evidence."
           }
         ]
       }

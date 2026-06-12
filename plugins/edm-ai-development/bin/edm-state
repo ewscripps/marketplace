@@ -1,23 +1,42 @@
 #!/usr/bin/env bash
-# edm-state — read/write SRD/{PREFIX}/.edm-state.json files for the EDM plugin.
+# edm-state - read/write SRD/{PREFIX}/.edm-state.json files for the EDM plugin.
 # Usage:
 #   edm-state get <PREFIX>                              # print state JSON
-#   edm-state set <PREFIX> <key> <value>                # set a top-level field
+#   edm-state set <PREFIX> <key> <value>                # set a top-level field (typed for known fields)
 #   edm-state list                                      # list in-progress initiatives
+#   edm-state active-initiatives                        # list initiatives with current_phase in 1-6
 #   edm-state init <PREFIX>                             # write a fresh state file
 #   edm-state approve-gate <PREFIX> <gate-num>          # record a gate approval
 #   edm-state phase-start <PREFIX> <phase-num>          # record phase start timestamp
 #   edm-state phase-complete <PREFIX> <phase-num>       # record phase completion + duration
 #   edm-state checkpoint-if-active                      # called by Stop/PreCompact hooks
-#   edm-state record-task-duration                      # called by TaskCompleted hook
-#   edm-state record-test-coverage <PREFIX> <layer> <pct>   # record coverage % for a test layer
+#   edm-state record-task-duration                      # called by TaskCompleted hook (reserved no-op)
+#   edm-state record-test-coverage <PREFIX> <layer> <pct> [<epic>]  # record coverage % for a layer (optionally per-epic)
 #   edm-state record-tests-added <PREFIX> <phase> <layer> <count>  # record test count by layer
 #   edm-state get-coverage <PREFIX>                     # print coverage summary for all layers
 #   edm-state srd-version <PREFIX> <version>            # set the SRD version (e.g. 1.0.0, 1.1.0)
-#   edm-state archive <PREFIX>                          # mark initiative complete
+#   edm-state archive <PREFIX>                          # mark initiative complete (git-aware)
 #   edm-state write-handoff <PREFIX>                    # write/refresh HANDOFF.md for cross-user resumption
 #   edm-state watch-impl                                # tail git log for ticket commits (called by monitor)
 #   edm-state metrics-report <PREFIX|--all|--calibrate>
+#   edm-state validate <PREFIX>                         # check state file for anomalies (read-only)
+#   edm-state gate-check <PREFIX> <gated-command>       # deterministic gate enforcement (read-only)
+#   edm-state branch-check <PREFIX>                     # verify current git branch matches initiative_branch
+#   edm-state git-lock-check                            # detect and remediate stale .git/index.lock
+#   edm-state migrate-path --product <n> --description <s> <PREFIX>  # opt-in move to product-scoped layout
+#   edm-state current-step <PREFIX> [<step>]                          # read/write orchestrator step (compaction resume)
+#   edm-state session-start                                           # emit resume points for active initiatives (SessionStart hook)
+#   edm-state audit-round-start <PREFIX> <code|srd|tickets>           # increment audit-round counter, echo new value
+#   edm-state record-partial-verdict <PREFIX> <ticket> <verdict> [note]  # persist per-ticket PASS/PARTIAL/FAIL
+#   edm-state set-mode <PREFIX> <kind> <value>                        # set mode, lifecycle_mode, compliance_enabled, or implementation_mode
+#   edm-state skip-phase <PREFIX> <phase-num> [<rationale>]           # record an intentionally skipped phase
+#   edm-state set-supersedes <PREFIX> <other-prefix>                  # record which initiative this supersedes
+#   edm-state set-forked-from <PREFIX> <other-prefix>                 # record which initiative this forked from
+#   edm-state resolve-dir <PREFIX>                                    # resolve bare prefix to initiative directory (read-only)
+#   edm-state set-parent <PREFIX> <PARENT>                           # set parent_prefix (validates PARENT exists)
+#   edm-state add-related <PREFIX> <RELATED>                         # append to related_prefixes (idempotent)
+#   edm-state update-patterns <PREFIX> <srd|ticket|qc|code>          # append novel audit findings to pattern library (T121)
+#   edm-state lint <PREFIX>                                           # run edm-lint-artifacts over initiative artifacts (T115)
 set -euo pipefail
 
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
@@ -26,6 +45,44 @@ TICKET_PACK_DIRNAME="${EDM_TICKET_PACK_DIRNAME:-${CLAUDE_PLUGIN_OPTION_TICKET_PA
 HUMAN_HOURLY_RATE_USD="${EDM_HUMAN_HOURLY_RATE_USD:-${CLAUDE_PLUGIN_OPTION_HUMAN_HOURLY_RATE_USD:-150}}"
 
 die() { echo "edm-state: $*" >&2; exit 1; }
+
+# list_state_files [--archived]
+# Emits each unique .edm-state.json path, one per line, covering both flat (SRD/*/)
+# and product-scoped (SRD/*/*/) layouts. Pass --archived to also include .archived/.
+# De-duplicates using a linear seen-array (bash 3.2 compatible).
+list_state_files() {
+  local include_archived="${1:-}"
+  local _lsf_seen=()
+  local _lsf_f _lsf_already _lsf_s
+  for _lsf_f in \
+      "$SRD_ROOT"/*/.edm-state.json \
+      "$SRD_ROOT"/*/*/.edm-state.json \
+      ${include_archived:+"$SRD_ROOT"/.archived/*/.edm-state.json} \
+      ${include_archived:+"$SRD_ROOT"/.archived/*/*/.edm-state.json}; do
+    [[ -f "$_lsf_f" ]] || continue
+    _lsf_already=0
+    for _lsf_s in "${_lsf_seen[@]+"${_lsf_seen[@]}"}"; do
+      [[ "$_lsf_s" == "$_lsf_f" ]] && _lsf_already=1 && break
+    done
+    [[ $_lsf_already -eq 1 ]] && continue
+    _lsf_seen+=("$_lsf_f")
+    printf '%s\n' "$_lsf_f"
+  done
+}
+
+# phase_name_for <phase-num> — returns human-readable phase name
+phase_name_for() {
+  case "$1" in
+    0) echo "Not started" ;;
+    1) echo "Phase 1 - Planning" ;;
+    2) echo "Phase 2 - SRD Creation" ;;
+    3) echo "Phase 3 - SRD Audit" ;;
+    4) echo "Phase 4 - Ticket Creation" ;;
+    5) echo "Phase 5 - Ticket Audit" ;;
+    6) echo "Phase 6 - Implementation" ;;
+    *) echo "Phase $1" ;;
+  esac
+}
 
 require_jq() {
   command -v jq >/dev/null 2>&1 || die "jq is required (install: brew install jq / apt install jq)"
@@ -53,24 +110,79 @@ artifact_hash() {
 record_artifact_hash() {
   local prefix="$1" artifact_name="$2" file_path="$3"
   require_jq
-  local hash t current new
+  local hash t
   hash="$(artifact_hash "$file_path")"
   t="$(now_utc)"
-  current="$(read_state "$prefix")"
-  new="$(echo "$current" | jq \
-    --arg name "$artifact_name" \
-    --arg hash "$hash" \
-    --arg path "$file_path" \
-    --arg t "$t" '
+  rmw_state "$prefix" '
     .artifact_hashes[$name] = {hash: $hash, path: $path, recorded_at: $t}
     | .last_updated = $t
-  ')"
-  write_state "$prefix" "$new"
+  ' --arg name "$artifact_name" --arg hash "$hash" --arg path "$file_path" --arg t "$t"
 }
 
+# initiative_dir_for <PREFIX>
+# Returns the initiative directory path (without /.edm-state.json).
+# Delegates to state_file_for for layout resolution.
+initiative_dir_for() {
+  local state_file
+  state_file="$(state_file_for "$1")"
+  echo "${state_file%/.edm-state.json}"
+}
+
+# state_file_for <PREFIX>
+# Single source of layout truth (SRD section 5.4). Resolves the .edm-state.json
+# path for a given PREFIX under both the legacy flat layout and the new
+# product-scoped layout (SRD/{PRODUCT}/{PREFIX}__{DESCRIPTION}/).
+#
+# Resolution order (first match wins):
+#   1. Existing flat file   SRD/{PREFIX}/.edm-state.json          (AC2 backward compat)
+#   2. Existing product dir SRD/*/{PREFIX}__*/.edm-state.json     (AC1 on-disk discovery)
+#   3. Env vars EDM_PRODUCT + EDM_DESCRIPTION                     (AC1 pre-init compute)
+#   4. Env var  EDM_PRODUCT only (glob within product)            (AC6)
+#   5. Flat default (safe fallback for pre-init / legacy)         (AC5)
 state_file_for() {
   local prefix="$1"
-  echo "${SRD_ROOT}/${prefix}/.edm-state.json"
+  # Reject any prefix containing path separators or dots to prevent path traversal.
+  [[ "$prefix" =~ ^[A-Za-z0-9_-]+$ ]] || die "state_file_for: invalid PREFIX '${prefix}' (only alphanumeric, hyphen, underscore allowed)"
+  local flat_path="${SRD_ROOT}/${prefix}/.edm-state.json"
+
+  # AC2: Legacy flat state file already exists — keep its path unchanged.
+  [[ -f "$flat_path" ]] && echo "$flat_path" && return 0
+
+  # AC1/AC6: Product-scoped directory already exists on disk.
+  local matches=()
+  local dir
+  for dir in "${SRD_ROOT}"/*/"${prefix}"__*/; do
+    # Strip trailing slash from glob expansion
+    dir="${dir%/}"
+    [[ -d "$dir" ]] && [[ -f "${dir}/.edm-state.json" ]] && matches+=("${dir}/.edm-state.json")
+  done
+  if [[ ${#matches[@]} -eq 1 ]]; then
+    echo "${matches[0]}"
+    return 0
+  elif [[ ${#matches[@]} -gt 1 ]]; then
+    echo "edm-state: WARNING: multiple product-scoped directories for ${prefix}; using first match" >&2
+    echo "${matches[0]}"
+    return 0
+  fi
+
+  # AC1: Compute product-scoped path from env vars when no on-disk match found.
+  local product="${EDM_PRODUCT:-}"
+  local description="${EDM_DESCRIPTION:-}"
+  if [[ -n "$product" && -n "$description" ]]; then
+    echo "${SRD_ROOT}/${product}/${prefix}__${description}/.edm-state.json"
+    return 0
+  fi
+
+  # AC6: Product known but description unknown — glob within product directory.
+  if [[ -n "$product" ]]; then
+    for dir in "${SRD_ROOT}/${product}/${prefix}__"*/; do
+      dir="${dir%/}"
+      [[ -d "$dir" ]] && echo "${dir}/.edm-state.json" && return 0
+    done
+  fi
+
+  # AC5: Default flat path (pre-init or legacy initiative with no existing file).
+  echo "$flat_path"
 }
 
 # ---- Cost tracking ---------------------------------------------------------
@@ -152,7 +264,7 @@ compute_cost_usd() {
 # Estimate human cost (USD) for a phase given:
 #   - phase number (1-6)
 #   - initiative size (Small / Medium / Large)
-# Uses the Phase Timing Guidelines hours × HUMAN_HOURLY_RATE_USD.
+# Uses the Phase Timing Guidelines hours x HUMAN_HOURLY_RATE_USD.
 human_cost_for_phase() {
   local phase="$1" size="$2"
   local hours
@@ -176,17 +288,182 @@ read_state() {
   cat "$f"
 }
 
-write_state() {
-  local prefix="$1"
-  local content="$2"
-  local f
-  f="$(state_file_for "$prefix")"
+# _rmw_state_body <state-file> <jq-filter> [jq-args...]   (runs INSIDE with_state_lock)
+# Reads the file, applies the jq filter atomically, writes back. (write_state/_write_state_body
+# were removed in CA-007 — every mutator goes through rmw_state; this is the sole write body.)
+# On jq failure the temp file is removed and a non-zero status is returned (NOT die) so callers
+# that wrap rmw_state in `if !` (e.g. cmd_migrate_path's rollback) can react; bare callers abort
+# under set -e as before. (CA-009)
+_rmw_state_body() {
+  local f="$1"; shift
+  local filter="$1"; shift
+  [[ -f "$f" ]] && cp -p "$f" "${f}.bak"
+  if ! jq "$@" "$filter" "$f" > "${f}.tmp.$$"; then
+    rm -f "${f}.tmp.$$"
+    echo "edm-state: state write failed (jq error) for $f" >&2
+    return 1
+  fi
+  mv -f "${f}.tmp.$$" "$f"
+}
+
+# rmw_state <PREFIX> <jq-filter> [jq-args...]
+# Acquires the advisory lock, re-reads state from disk, applies filter, writes back.
+# Use instead of read_state/write_state for all mutating commands.
+rmw_state() {
+  local prefix="$1"; shift
+  local filter="$1"; shift
+  local f lockbase
+  f="$(state_file_for "$prefix")"; lockbase="${f%.json}"
   mkdir -p "$(dirname "$f")"
-  printf '%s\n' "$content" > "$f"
+  with_state_lock "$lockbase" _rmw_state_body "$f" "$filter" "$@"
 }
 
 now_utc() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+# git_aware_mv <src> <dst> — move a directory, using `git mv` when src is inside a git
+# worktree (so the move is tracked), falling back to plain mv otherwise. Single source
+# for the archive + migrate-path move idiom. (CA-015)
+git_aware_mv() {
+  local s="$1" d="$2"
+  if git -C "$s" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git mv "$s" "$d" 2>/dev/null || mv "$s" "$d"
+  else
+    mv "$s" "$d"
+  fi
+}
+
+# present_or_absent <path> — echo '[present]' if the file exists, else '[absent]'. (CA-015)
+present_or_absent() {
+  [[ -f "$1" ]] && echo '[present]' || echo '[absent]'
+}
+
+# gated_phase_for_gate <gate-num> — the phase whose completion feeds the given HITL gate
+# (gate 1 -> phase 1, gate 2 -> phase 3, gate 3 -> phase 5). Single source for this map. (CA-013)
+gated_phase_for_gate() {
+  case "$1" in 1) echo 1 ;; 2) echo 3 ;; 3) echo 5 ;; *) echo "null" ;; esac
+}
+
+# Shared jq def for the whole-initiative coverage layer row — one renderer, one padding scheme
+# (clamped 14-wide layer column; 9/8/7 pct padding), prepended to both get-coverage and
+# metrics-report so the two can never diverge again. Input: a {key,value} coverage entry. (CA-012)
+COVERAGE_LAYER_ROW_JQ_DEF='def coverage_layer_row:
+  "  \(.key | . + (" " * (14 - length | if . < 0 then 0 else . end)))  \(.value.pct)%\(if .value.pct < 10 then "         " elif .value.pct < 100 then "        " else "       " end)  \(.value.measured_at // "?")";'
+
+# ---- Advisory file locking (T24) -------------------------------------------
+# with_state_lock <lockbase> <command...>
+# Acquires an exclusive advisory lock scoped to <lockbase>, runs the command,
+# then releases the lock. Uses flock(1) on <lockbase>.lock when available;
+# falls back to a mkdir-based spin-lock on <lockbase>.lockd for macOS portability.
+with_state_lock() {
+  local lockbase="$1"; shift
+  local lockfile="${lockbase}.lock"
+  local lockdir="${lockbase}.lockd"
+  local pidfile="${lockdir}/pid"
+
+  if command -v flock >/dev/null 2>&1; then
+    # Fast path: flock on FD 200 (high enough to avoid collisions with stdin/stdout/stderr
+    # and typical script-level pipes; bash 3.2 lacks {fd} auto-assignment so we pick 200 by convention)
+    # `|| _lock_ec=$?` keeps the subshell in a tested position so `set -e` does NOT abort here on a
+    # non-zero exit — otherwise the timeout `die` below is unreachable and a flock-host timeout exits
+    # with a bare 99 and no message (CA-006). Success leaves _lock_ec=0.
+    local _lock_ec=0
+    ( flock -w 10 200 || exit 99; "$@" ) 200>"${lockfile}" || _lock_ec=$?
+    [[ $_lock_ec -eq 99 ]] && die "state lock timeout after 10s on ${lockfile} (another edm-state process may be holding it)"
+    return $_lock_ec
+  else
+    # Fallback: mkdir-based spin-lock (POSIX-portable, atomic on local filesystems)
+    local tries=0
+    until mkdir "$lockdir" 2>/dev/null; do
+      tries=$(( tries + 1 ))
+      if [[ $tries -ge 50 ]]; then
+        local holder_pid=""
+        [[ -f "$pidfile" ]] && holder_pid="$(cat "$pidfile" 2>/dev/null || true)"
+        die "state lock timeout after 50 tries on ${lockdir}${holder_pid:+ (held by PID ${holder_pid})}"
+      fi
+      sleep 0.1
+    done
+    echo $$ > "$pidfile" 2>/dev/null || true
+    # shellcheck disable=SC2064
+    trap "rm -rf '${lockdir}'" EXIT INT TERM HUP
+    "$@"
+    local ec=$?
+    rm -rf "$lockdir"
+    trap - EXIT INT TERM HUP
+    return $ec
+  fi
+}
+
+# ---- Type coercion helpers (T33) -------------------------------------------
+# read_bool <json-string> <field> [<default>]
+# Returns normalized bash boolean string "true" or "false" regardless of whether
+# the field is stored as a JSON boolean or a JSON string.
+read_bool() {
+  local json="$1" field="$2" default="${3:-false}"
+  echo "$json" | jq -r --arg f "$field" --arg d "$default" '
+    (.[$f] // null) as $v |
+    if $v == null then $d
+    elif ($v | type) == "boolean" then (if $v then "true" else "false" end)
+    elif ($v | type) == "string" then (if $v == "true" then "true" else "false" end)
+    else $d
+    end
+  '
+}
+
+# ---- State anomaly detection (T29) -----------------------------------------
+# state_anomalies <PREFIX>
+# Reads state and emits zero or more anomaly lines. Each line has the form:
+#   <CODE>  <affected-field>  <description>
+# Exits 0 and emits nothing when no anomalies found. Never mutates state.
+state_anomalies() {
+  local prefix="$1"
+  require_jq
+  local state
+  state="$(read_state "$prefix")"
+  local found=0
+  # TIME_ORDER: completed_at earlier than started_at within any phase entry
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    echo "$line"
+    found=1
+  done < <(echo "$state" | jq -r '
+    .phase_durations // {} | to_entries[] |
+    .key as $k | .value as $v |
+    if ($v.started_at != null and $v.started_at != "" and
+        $v.completed_at != null and $v.completed_at != "") then
+      (($v.completed_at | fromdateiso8601?) // 0) as $c |
+      (($v.started_at | fromdateiso8601?) // 0) as $s |
+      if $c > 0 and $s > 0 and $c < $s then
+        "TIME_ORDER  phase_durations.\($k)  completed_at (\($v.completed_at)) is earlier than started_at (\($v.started_at))"
+      else empty end
+    else empty end
+  ' 2>/dev/null)
+  # SIZE_UNKNOWN: estimated_size is "Unknown" and current_phase >= 2
+  # Suppressed for fast-track/fix-pack lifecycle modes where size estimation is N/A.
+  local phase size lifecycle_mode_anom
+  phase="$(echo "$state" | jq -r '.current_phase // 0')"
+  size="$(echo "$state" | jq -r '.estimated_size // "Unknown"')"
+  lifecycle_mode_anom="$(echo "$state" | jq -r '.lifecycle_mode // "standard"')"
+  if [[ "$size" == "Unknown" && "$phase" -ge 2 \
+        && "$lifecycle_mode_anom" != "fast-track" && "$lifecycle_mode_anom" != "fix-pack" ]]; then
+    echo "SIZE_UNKNOWN  estimated_size  size is still Unknown at phase ${phase} (set via edm-state set ${prefix} estimated_size Small|Medium|Large)"
+    found=1
+  fi
+  # ZERO_TOKENS: model_used is set but input+output tokens are both 0
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    echo "$line"
+    found=1
+  done < <(echo "$state" | jq -r '
+    .phase_durations // {} | to_entries[] |
+    .key as $k | .value as $v |
+    if ($v.model_used != null and $v.model_used != "" and $v.model_used != "unknown" and
+        ($v.tokens.input // 0) == 0 and ($v.tokens.output // 0) == 0) then
+      "ZERO_TOKENS  phase_durations.\($k).tokens  model_used is \($v.model_used) but both input and output tokens are 0"
+    else empty end
+  ' 2>/dev/null)
+  return 0
 }
 
 cmd_get() {
@@ -198,10 +475,24 @@ cmd_set() {
   [[ $# -eq 3 ]] || die "usage: edm-state set <PREFIX> <key> <value>"
   require_jq
   local prefix="$1" key="$2" value="$3"
-  local current new
-  current="$(read_state "$prefix")"
-  new="$(echo "$current" | jq --arg k "$key" --arg v "$value" '.[$k] = $v | .last_updated = (now | todate)')"
-  write_state "$prefix" "$new"
+  case "$key" in
+    compliance_enabled|code_audit_converged)
+      [[ "$value" == "true" || "$value" == "false" ]] \
+        || die "set: field '$key' requires a boolean value (true|false); got: $value"
+      rmw_state "$prefix" '.[$k] = ($v == "true") | .last_updated = $t' \
+        --arg v "$value" --arg k "$key" --arg t "$(now_utc)"
+      ;;
+    current_phase|qc_shard_threshold)
+      [[ "$value" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] \
+        || die "set: field '$key' requires a numeric value; got: $value"
+      rmw_state "$prefix" '.[$k] = ($v|tonumber) | .last_updated = $t' \
+        --arg v "$value" --arg k "$key" --arg t "$(now_utc)"
+      ;;
+    *)
+      rmw_state "$prefix" '.[$k] = $v | .last_updated = $t' \
+        --arg k "$key" --arg v "$value" --arg t "$(now_utc)"
+      ;;
+  esac
 }
 
 cmd_init() {
@@ -215,7 +506,25 @@ cmd_init() {
     return 0
   fi
   mkdir -p "$(dirname "$f")"
-  jq -n --arg p "$prefix" --arg t "$(now_utc)" '{
+  local branch product description
+  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+  # Accept product/description from env so edm-init --product/--description can pre-seed them.
+  product="${EDM_PRODUCT:-}"
+  description="${EDM_DESCRIPTION:-}"
+  # Seed mode-family fields from install-time userConfig defaults when edm-init exported them
+  # (CA-010 / EDMV2-102 middle tier). A bare `edm-state init` (no env) keeps the built-in defaults.
+  # Validate defensively so a stray env value can't write an invalid enum into fresh state.
+  local mode="${EDM_MODE:-standard}"
+  local compliance="${EDM_COMPLIANCE_ENABLED:-false}"
+  local impl_mode="${EDM_IMPLEMENTATION_MODE:-standard}"
+  case "$mode" in standard|mini-srd|iac|data-ml|prototype) ;; *) mode="standard" ;; esac
+  case "$impl_mode" in standard|tdd) ;; *) impl_mode="standard" ;; esac
+  case "$compliance" in true|false) ;; *) compliance="false" ;; esac
+  # Atomic create: write to a temp file then rename, mirroring _rmw_state_body (CA-008). The
+  # existing-file guard above prevents clobbering; this prevents a partial file on crash mid-write.
+  jq -n --arg p "$prefix" --arg t "$(now_utc)" --arg b "$branch" \
+        --arg prod "$product" --arg desc "$description" \
+        --arg mode "$mode" --arg impl "$impl_mode" --argjson ce "$compliance" '{
     prefix: $p,
     current_phase: 0,
     gates_approved: [],
@@ -223,27 +532,58 @@ cmd_init() {
     artifact_hashes: {},
     srd_version: "0.0.0",
     estimated_size: "Unknown",
+    initiative_branch: $b,
+    product_name: $prod,
+    initiative_description: $desc,
     phase_durations: {},
     test_frameworks_detected: {},
     coverage_by_layer: {},
+    coverage_by_epic: {},
+    code_audit_converged: false,
+    compliance_gate_approved: false,
+    last_cmd: "",
+    last_decision: "",
+    audit_rounds: {},
+    partial_verdict_map: {},
+    mode: $mode,
+    lifecycle_mode: "standard",
+    compliance_enabled: $ce,
+    implementation_mode: $impl,
+    skipped_phases: [],
+    supersedes: "",
+    forked_from: "",
+    parent_prefix: "",
+    related_prefixes: [],
     last_updated: $t
-  }' > "$f"
+  }' > "${f}.tmp.$$" && mv -f "${f}.tmp.$$" "$f"
   echo "initialized $f"
 }
 
 cmd_list() {
   [[ -d "$SRD_ROOT" ]] || { echo "no SRD/ directory yet"; return 0; }
+  require_jq
   local found=0
-  for state in "$SRD_ROOT"/*/.edm-state.json; do
+  # Collect state files from both flat (SRD/{PREFIX}/) and product-scoped
+  # (SRD/{PRODUCT}/{PREFIX}__*/) layouts; de-duplicate by canonical path.
+  local state
+  # Enumerate both layouts via the single shared helper (CA-011); it already dedups by path.
+  while IFS= read -r state; do
     [[ -f "$state" ]] || continue
     found=1
-    local prefix phase gates last
-    prefix="$(jq -r '.prefix' "$state" 2>/dev/null || echo unknown)"
-    phase="$(jq -r '.current_phase' "$state" 2>/dev/null || echo 0)"
+    local prefix phase gates last product description
+    prefix="$(jq -r '.prefix // "unknown"' "$state" 2>/dev/null || echo unknown)"
+    phase="$(jq -r '.current_phase // 0' "$state" 2>/dev/null || echo 0)"
     gates="$(jq -r '.gates_approved | length' "$state" 2>/dev/null || echo 0)"
-    last="$(jq -r '.last_updated' "$state" 2>/dev/null || echo unknown)"
-    printf "  %-12s  phase=%d  gates_approved=%d  last_updated=%s\n" "$prefix" "$phase" "$gates" "$last"
-  done
+    last="$(jq -r '.last_updated // "unknown"' "$state" 2>/dev/null || echo unknown)"
+    product="$(jq -r '.product_name // ""' "$state" 2>/dev/null || true)"
+    description="$(jq -r '.initiative_description // ""' "$state" 2>/dev/null || true)"
+    if [[ -n "$product" || -n "$description" ]]; then
+      printf "  %-12s  phase=%d  gates_approved=%d  last_updated=%s  product=%s  description=%s\n" \
+        "$prefix" "$phase" "$gates" "$last" "${product:-(none)}" "${description:-(none)}"
+    else
+      printf "  %-12s  phase=%d  gates_approved=%d  last_updated=%s\n" "$prefix" "$phase" "$gates" "$last"
+    fi
+  done < <(list_state_files)
   [[ $found -eq 1 ]] || echo "  (no in-progress initiatives)"
 }
 
@@ -251,14 +591,19 @@ cmd_approve_gate() {
   [[ $# -eq 2 ]] || die "usage: edm-state approve-gate <PREFIX> <gate-num>"
   require_jq
   local prefix="$1" gate="$2"
-  local current new approver
-  current="$(read_state "$prefix")"
-  approver="${USER:-unknown}"
-  new="$(echo "$current" | jq --argjson g "$gate" --arg t "$(now_utc)" --arg a "$approver" '
-    .gates_approved += [{gate: $g, approved_at: $t, approver: $a}]
-    | .last_updated = $t
-  ')"
-  write_state "$prefix" "$new"
+  local approver="${USER:-unknown}"
+  # Gate 3.5 (compliance review) is stored as a dedicated boolean field rather than
+  # appended to gates_approved (which expects integers) — avoids overloading numeric gate IDs.
+  if [[ "$gate" == "3.5" ]]; then
+    rmw_state "$prefix" '.compliance_gate_approved = true | .last_updated = $t' --arg t "$(now_utc)"
+    echo "approved compliance gate 3.5 for $prefix at $(now_utc)"
+    write_handoff_internal "$prefix"
+    return 0
+  fi
+  [[ "$gate" =~ ^[0-9]+$ ]] || die "approve-gate: gate-num must be numeric; got: $gate"
+  rmw_state "$prefix" \
+    '.gates_approved += [{gate: ($g|tonumber), approved_at: $t, approver: $a}] | .last_updated = $t' \
+    --arg g "$gate" --arg t "$(now_utc)" --arg a "$approver"
   echo "approved gate $gate for $prefix at $(now_utc)"
   write_handoff_internal "$prefix"
 }
@@ -267,29 +612,29 @@ cmd_phase_start() {
   [[ $# -eq 2 ]] || die "usage: edm-state phase-start <PREFIX> <phase-num>"
   require_jq
   local prefix="$1" phase="$2"
-  local current new key
-  current="$(read_state "$prefix")"
-  key="${phase}_phase"
-  new="$(echo "$current" | jq --arg k "$key" --argjson p "$phase" --arg t "$(now_utc)" '
-    .current_phase = $p
-    | .phase_durations[$k] = ((.phase_durations[$k] // {}) + {started_at: $t})
-    | .last_updated = $t
-  ')"
-  write_state "$prefix" "$new"
+  local key="${phase}_phase"
+  rmw_state "$prefix" \
+    '.current_phase = ($p|tonumber) | .phase_durations[$k] = ((.phase_durations[$k] // {}) + {started_at: $t}) | .last_updated = $t' \
+    --arg k "$key" --arg p "$phase" --arg t "$(now_utc)"
+  write_handoff_internal "$prefix"
 }
 
 cmd_phase_complete() {
   [[ $# -eq 2 ]] || die "usage: edm-state phase-complete <PREFIX> <phase-num>"
   require_jq
   local prefix="$1" phase="$2"
-  local current key started_at
-  current="$(read_state "$prefix")"
-  key="${phase}_phase"
-  started_at="$(echo "$current" | jq -r --arg k "$key" '.phase_durations[$k].started_at // empty')"
+  local key="${phase}_phase"
 
-  # Read token usage since phase start (if started_at is known)
-  local tokens="" input=0 output=0 cache_read=0 cw5m=0 cw1h=0 model="unknown" cost="0.0000"
+  # Read started_at for token computation (read-only, no lock needed)
+  local state_file started_at
+  state_file="$(state_file_for "$prefix")"
+  [[ -f "$state_file" ]] || die "no state file for $prefix"
+  started_at="$(jq -r --arg k "$key" '.phase_durations[$k].started_at // empty' "$state_file")"
+
+  # Compute tokens + cost outside the lock (read-only)
+  local input=0 output=0 cache_read=0 cw5m=0 cw1h=0 model="unknown" cost="0.0000"
   if [[ -n "$started_at" ]]; then
+    local tokens
     tokens="$(get_session_tokens_since "$started_at")"
     input="$(echo "$tokens" | jq -r '.input // 0')"
     output="$(echo "$tokens" | jq -r '.output // 0')"
@@ -300,40 +645,43 @@ cmd_phase_complete() {
     cost="$(compute_cost_usd "$model" "$input" "$output" "$cache_read" "$cw5m" "$cw1h")"
   fi
 
-  # Estimate human baseline cost for comparison
+  # Compute human baseline outside the lock (read-only)
   local size human_cost
-  size="$(echo "$current" | jq -r '.estimated_size // "Medium"')"
+  size="$(jq -r '.estimated_size // "Unknown"' "$state_file")"
   human_cost="$(human_cost_for_phase "$phase" "$size")"
 
-  local new
-  new="$(echo "$current" | jq --arg k "$key" --arg t "$(now_utc)" \
-            --argjson i "$input" --argjson o "$output" \
-            --argjson cr "$cache_read" --argjson c5 "$cw5m" --argjson c1 "$cw1h" \
-            --arg model "$model" --arg cost "$cost" --arg human_cost "$human_cost" '
+  local now_ts
+  now_ts="$(now_utc)"
+
+  # Atomic RMW under lock
+  rmw_state "$prefix" '
     .phase_durations[$k] = (
       (.phase_durations[$k] // {})
       | . + {completed_at: $t}
       | . + {duration_seconds: (
           if .started_at then ((($t | fromdateiso8601) - (.started_at | fromdateiso8601))) else 0 end
         )}
-      | . + {tokens: {input: $i, output: $o, cache_read: $cr, cache_write_5m: $c5, cache_write_1h: $c1}}
+      | . + {tokens: {input: ($i|tonumber), output: ($o|tonumber), cache_read: ($cr|tonumber), cache_write_5m: ($c5|tonumber), cache_write_1h: ($c1|tonumber)}}
       | . + {model_used: $model}
       | . + {estimated_cost_usd: ($cost | tonumber)}
       | . + {human_baseline_usd: ($human_cost | tonumber)}
     )
     | .last_updated = $t
-  ')"
-  write_state "$prefix" "$new"
+  ' --arg k "$key" --arg t "$now_ts" \
+    --arg i "$input" --arg o "$output" --arg cr "$cache_read" --arg c5 "$cw5m" --arg c1 "$cw1h" \
+    --arg model "$model" --arg cost "$cost" --arg human_cost "$human_cost"
 
   # Record artifact hashes for phases that produce or revise gate-critical files.
   # Drift is detected in checkpoint-if-active by comparing these stored hashes to
   # what's currently on disk.
+  local _dir
+  _dir="$(initiative_dir_for "$prefix")"
   case "$phase" in
     2|3)
-      local srd_path="${SRD_ROOT}/${prefix}/${SRD_FILENAME}"
+      local srd_path="${_dir}/${SRD_FILENAME}"
       [[ -f "$srd_path" ]] && record_artifact_hash "$prefix" "srd" "$srd_path" ;;
     4|5)
-      local tickets_path="${SRD_ROOT}/${prefix}/${TICKET_PACK_DIRNAME}/README.md"
+      local tickets_path="${_dir}/${TICKET_PACK_DIRNAME}/README.md"
       [[ -f "$tickets_path" ]] && record_artifact_hash "$prefix" "tickets" "$tickets_path" ;;
   esac
 
@@ -344,17 +692,19 @@ cmd_checkpoint() {
   # Called by Stop/PreCompact hooks. Touches last_updated and checks whether any
   # gate-critical artifacts (SRD, ticket pack) have changed since their last
   # recorded hash. Warnings are printed to stdout so Claude surfaces them.
+  # T53: write_handoff_internal is called at the end of each iteration, so the
+  # PreCompact hook chain (checkpoint-if-active → write_handoff_internal) already
+  # refreshes the Resume Point section on every compaction — no separate hook needed.
   [[ -d "$SRD_ROOT" ]] || return 0
   require_jq
-  for state in "$SRD_ROOT"/*/.edm-state.json; do
-    [[ -f "$state" ]] || continue
-    local current new prefix
+  while IFS= read -r state; do
+    local current prefix
     prefix="$(jq -r '.prefix' "$state" 2>/dev/null || echo unknown)"
-    current="$(cat "$state")"
-    new="$(echo "$current" | jq --arg t "$(now_utc)" '.last_updated = $t')"
-    printf '%s\n' "$new" > "$state"
+    # G3: route through locked RMW — no more hand-rolled cat/jq/printf
+    rmw_state "$prefix" '.last_updated = $t' --arg t "$(now_utc)"
 
-    # Drift detection — compare current file hashes to last recorded hashes.
+    # Drift detection (read-only)
+    current="$(cat "$state")"   # re-read after the rmw
     local hashes
     hashes="$(echo "$current" | jq -r '.artifact_hashes // {} | to_entries[] | "\(.key) \(.value.hash) \(.value.path) \(.value.recorded_at)"' 2>/dev/null || true)"
     local drift_found=0
@@ -365,7 +715,7 @@ cmd_checkpoint() {
       if [[ "$current_hash" != "$stored_hash" && "$current_hash" != "absent" && "$current_hash" != "unhashable" ]]; then
         if [[ $drift_found -eq 0 ]]; then
           echo ""
-          echo "⚠ EDM drift detected — ${prefix}:"
+          echo "(!) EDM drift detected - ${prefix}:"
           drift_found=1
         fi
         case "$artifact_name" in
@@ -377,7 +727,7 @@ cmd_checkpoint() {
             ' 2>/dev/null || echo "unknown gate status")"
             echo "  ${SRD_FILENAME} modified since last recorded at phase-complete (${recorded_at})."
             echo "  ${gate_status}."
-            echo "  → Re-run /edm:audit-srd ${prefix} and re-approve Gate 2 before creating tickets."
+            echo "  -> Re-run /edm:audit-srd ${prefix} and re-approve Gate 2 before creating tickets."
             ;;
           tickets)
             local gate_status
@@ -387,7 +737,7 @@ cmd_checkpoint() {
             ' 2>/dev/null || echo "unknown gate status")"
             echo "  Ticket pack README modified since last recorded at phase-complete (${recorded_at})."
             echo "  ${gate_status}."
-            echo "  → Re-run /edm:audit-tickets ${prefix} and re-approve Gate 3 before implementation."
+            echo "  -> Re-run /edm:audit-tickets ${prefix} and re-approve Gate 3 before implementation."
             ;;
           *)
             echo "  ${artifact_name} (${file_path}) modified since last recorded at ${recorded_at}."
@@ -397,47 +747,49 @@ cmd_checkpoint() {
     done <<< "$hashes"
     [[ $drift_found -eq 0 ]] || echo ""
     write_handoff_internal "$prefix"
-  done
+  done < <(list_state_files)
 }
 
 cmd_record_task_duration() {
-  # Called by TaskCompleted hook. Reads task info from environment if available.
-  # Best-effort: if we can't determine the active initiative, no-op.
-  [[ -d "$SRD_ROOT" ]] || return 0
-  require_jq
-  # The hook context isn't formally parsed here — this is a placeholder for
-  # accumulating per-task durations. Future work: parse stdin JSON from hook.
+  # Reserved no-op — TaskCompleted hook wires here but accumulation is not yet implemented.
+  # The hook fires correctly and this function runs safely, but no durations are recorded.
+  # Future work: parse stdin JSON from hook and accumulate per-task durations into state.
   return 0
 }
 
 cmd_record_test_coverage() {
-  [[ $# -eq 3 ]] || die "usage: edm-state record-test-coverage <PREFIX> <layer> <pct>"
+  [[ $# -eq 3 ]] || [[ $# -eq 4 ]] \
+    || die "usage: edm-state record-test-coverage <PREFIX> <layer> <pct> [<epic>]"
   require_jq
-  local prefix="$1" layer="$2" pct="$3"
-  local current new
-  current="$(read_state "$prefix")"
-  new="$(echo "$current" | jq --arg l "$layer" --argjson p "$pct" --arg t "$(now_utc)" '
-    .coverage_by_layer[$l] = {pct: $p, measured_at: $t}
-    | .last_updated = $t
-  ')"
-  write_state "$prefix" "$new"
-  echo "recorded coverage: $layer = ${pct}% for $prefix"
+  local prefix="$1" layer="$2" pct="$3" epic="${4:-}"
+  [[ "$pct" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] \
+    || die "record-test-coverage: pct must be numeric; got: $pct"
+  if [[ -n "$epic" ]]; then
+    rmw_state "$prefix" \
+      '.coverage_by_epic[$e][$l] = {pct: ($p|tonumber), measured_at: $t} | .last_updated = $t' \
+      --arg l "$layer" --arg p "$pct" --arg t "$(now_utc)" --arg e "$epic"
+    echo "recorded coverage: epic=$epic layer=$layer = ${pct}% for $prefix"
+  else
+    rmw_state "$prefix" \
+      '.coverage_by_layer[$l] = {pct: ($p|tonumber), measured_at: $t} | .last_updated = $t' \
+      --arg l "$layer" --arg p "$pct" --arg t "$(now_utc)"
+    echo "recorded coverage: $layer = ${pct}% for $prefix"
+  fi
 }
 
 cmd_record_tests_added() {
   [[ $# -eq 4 ]] || die "usage: edm-state record-tests-added <PREFIX> <phase> <layer> <count>"
   require_jq
   local prefix="$1" phase="$2" layer="$3" count="$4"
-  local current new key
-  current="$(read_state "$prefix")"
-  key="${phase}_phase"
-  new="$(echo "$current" | jq --arg k "$key" --arg l "$layer" --argjson c "$count" --arg t "$(now_utc)" '
+  [[ "$count" =~ ^[0-9]+$ ]] \
+    || die "record-tests-added: count must be a non-negative integer; got: $count"
+  local key="${phase}_phase"
+  rmw_state "$prefix" '
     .phase_durations[$k] = ((.phase_durations[$k] // {})
-      | .tests_by_layer[$l] = ((.tests_by_layer[$l] // 0) + $c)
+      | .tests_by_layer[$l] = ((.tests_by_layer[$l] // 0) + ($c|tonumber))
       | .tests_added = ((.tests_by_layer | to_entries | map(.value) | add) // 0))
     | .last_updated = $t
-  ')"
-  write_state "$prefix" "$new"
+  ' --arg k "$key" --arg l "$layer" --arg c "$count" --arg t "$(now_utc)"
   echo "recorded: +${count} ${layer} tests in phase ${phase} for $prefix"
 }
 
@@ -448,53 +800,106 @@ cmd_get_coverage() {
   local state
   state="$(state_file_for "$prefix")"
   [[ -f "$state" ]] || die "no state for $prefix"
-  echo "# Test Coverage — $prefix"
+  echo "# Test Coverage - $prefix"
   echo
-  jq -r '
+  # Whole-initiative coverage (single-stack)
+  jq -r "${COVERAGE_LAYER_ROW_JQ_DEF}"'
     (.coverage_by_layer // {}) | to_entries |
-    if length == 0 then "  (no coverage recorded yet — run /edm:test first)"
+    if length == 0 then empty
     else
-      "  Layer          Coverage  Measured At",
-      "  ----------     --------  -----------",
-      (.[] | "  \(.key | . + (" " * (14 - length)))  \(.value.pct)%\(if .value.pct < 10 then "        " elif .value.pct < 100 then "       " else "      " end)  \(.value.measured_at // "?")") |
-    .[] // .
+      "## Whole-Initiative Coverage",
+      "",
+      "  Layer          Coverage   Measured At",
+      "  ----------     --------   -----------",
+      (.[] | coverage_layer_row),
+      ""
+    end
+  ' "$state" 2>/dev/null
+  # Per-epic coverage (multi-stack)
+  jq -r '
+    (.coverage_by_epic // {}) | to_entries |
+    if length == 0 then empty
+    else
+      "## Per-Epic Coverage",
+      "",
+      "  Epic            Layer          Coverage  Measured At",
+      "  ------          ----------     --------  -----------",
+      (.[] | .key as $epic | .value | to_entries[] |
+        "  \($epic | . + (" " * (15 - length | if . < 0 then 0 else . end)))  \(.key | . + (" " * (14 - length | if . < 0 then 0 else . end)))  \(.value.pct)%\(if .value.pct < 10 then "        " elif .value.pct < 100 then "       " else "      " end)  \(.value.measured_at // "?")"),
+      ""
+    end
+  ' "$state" 2>/dev/null
+  # Fallback message when neither is present
+  jq -r '
+    if ((.coverage_by_layer // {} | length) + (.coverage_by_epic // {} | length)) == 0
+    then "  (no coverage recorded yet - run /edm:test first)"
+    else empty
     end
   ' "$state" 2>/dev/null || echo "  (no coverage data)"
-  echo
   jq -r '
     [.phase_durations | to_entries[] | {phase: .key, tests: .value.tests_added, by_layer: .value.tests_by_layer}] |
     map(select(.tests != null and .tests > 0)) |
-    if length == 0 then ""
+    if length == 0 then empty
     else
-      "# Tests Added by Phase\n",
+      "# Tests Added by Phase",
       (.[] | "  \(.phase): \(.tests) total  \(.by_layer // {} | to_entries | map("\(.key)=\(.value)") | join(", "))")
-    end |
-    .[] // .
-  ' "$state" 2>/dev/null
+    end
+  ' "$state" 2>/dev/null || true
+  return 0
 }
 
 cmd_srd_version() {
   [[ $# -eq 2 ]] || die "usage: edm-state srd-version <PREFIX> <version>"
   local prefix="$1" version="$2"
   require_jq
-  local current new
-  current="$(read_state "$prefix")"
-  new="$(echo "$current" | jq --arg v "$version" --arg t "$(now_utc)" '.srd_version = $v | .last_updated = $t')"
-  write_state "$prefix" "$new"
+  rmw_state "$prefix" '.srd_version = $v | .last_updated = $t' --arg v "$version" --arg t "$(now_utc)"
   echo "set srd_version = $version for $prefix"
   write_handoff_internal "$prefix"
 }
 
 cmd_archive() {
   [[ $# -eq 1 ]] || die "usage: edm-state archive <PREFIX>"
+  require_jq
   local prefix="$1"
-  local src dst
-  src="${SRD_ROOT}/${prefix}"
-  dst="${SRD_ROOT}/.archived/${prefix}"
+  local src dst product_name=""
+  src="$(initiative_dir_for "$prefix")"
   [[ -d "$src" ]] || die "no initiative directory at $src"
-  mkdir -p "${SRD_ROOT}/.archived"
-  mv "$src" "$dst"
-  echo "archived $prefix → $dst"
+
+  # Gate check: read code_audit_converged, product_name, and mode from state file.
+  local state_file
+  state_file="${src}/.edm-state.json"
+  if [[ -f "$state_file" ]]; then
+    local state_json mode converged
+    state_json="$(cat "$state_file" 2>/dev/null || echo '{}')"
+    mode="$(echo "$state_json" | jq -r '.mode // "null"')"
+    product_name="$(echo "$state_json" | jq -r '.product_name // ""')"
+    # Use read_bool to normalize legacy string "false" or missing field correctly.
+    if echo "$state_json" | jq -e 'has("code_audit_converged")' >/dev/null 2>&1; then
+      converged="$(read_bool "$state_json" "code_audit_converged" "false")"
+    else
+      converged="absent"
+    fi
+
+    if [[ "$mode" == "prototype" ]]; then
+      echo "[warn] prototype mode -- skipping code-audit convergence check" >&2
+    elif [[ "$converged" == "absent" ]]; then
+      echo "[warn] legacy initiative -- code_audit_converged not set; proceeding" >&2
+    elif [[ "$converged" == "false" && -n "$product_name" ]]; then
+      die "archive refused: code_audit_converged=false; run /edm:code-audit ${prefix} and ensure REMEDIATION.md convergence before archiving"
+    fi
+    # converged == "true": proceed silently
+  fi
+
+  # Determine archive destination: preserve product-scoped layout when applicable.
+  if [[ -n "$product_name" ]]; then
+    dst="${SRD_ROOT}/.archived/${product_name}/$(basename "$src")"
+  else
+    dst="${SRD_ROOT}/.archived/${prefix}"
+  fi
+  mkdir -p "$(dirname "$dst")"
+  # Use git mv when inside a git worktree so the move is tracked; fall back to plain mv. (CA-015)
+  git_aware_mv "$src" "$dst"
+  echo "archived $prefix -> $dst"
 }
 
 cmd_watch_impl() {
@@ -521,12 +926,11 @@ cmd_metrics_report() {
   case "$arg" in
     --all)
       [[ -d "$SRD_ROOT" ]] || { echo "no SRD/ directory"; return 0; }
-      echo "# EDM Metrics — Aggregate"
+      echo "# EDM Metrics - Aggregate"
       echo
       printf "  %-12s  %-8s  %-10s  %-12s  %-12s  %-12s\n" "Initiative" "Size" "Total Time" "Claude Cost" "Human Cost" "Cost Ratio"
       printf "  %-12s  %-8s  %-10s  %-12s  %-12s  %-12s\n" "----------" "----" "----------" "-----------" "----------" "----------"
-      for state in "$SRD_ROOT"/*/.edm-state.json "$SRD_ROOT"/.archived/*/.edm-state.json; do
-        [[ -f "$state" ]] || continue
+      while IFS= read -r state; do
         jq -r '
           [.phase_durations | to_entries[] | .value] as $phases |
           {
@@ -536,38 +940,44 @@ cmd_metrics_report() {
             total_claude: ([$phases[].estimated_cost_usd // 0] | add),
             total_human: ([$phases[].human_baseline_usd // 0] | add)
           }
-          | "  \(.prefix | tostring | .[0:12])  \(.size | tostring | .[0:8])  \(.total_seconds)s\(if .total_seconds < 100 then "         " else "       " end)  $\(.total_claude)\(if .total_claude < 10 then "        " else "      " end)  $\(.total_human)\(if .total_human < 100 then "       " else "     " end)  \(if .total_claude > 0 then ((.total_human / .total_claude) | tostring | .[0:6]) + "x" else "n/a" end)"
+          | "  \(.prefix | tostring | .[0:12])  \(.size | tostring | .[0:8])  \(.total_seconds)s\(if .total_seconds < 100 then "         " else "       " end)  $\(.total_claude)\(if .total_claude < 10 then "        " else "      " end)  $\(.total_human)\(if .total_human < 100 then "       " else "     " end)  \(if .total_claude > 0 and .total_human > 0 then ((.total_human / .total_claude) | tostring | .[0:6]) + "x" else "n/a" end)"
         ' "$state" 2>/dev/null
-      done
+      done < <(list_state_files --archived)
       echo
       echo "Cost Ratio = human_cost / claude_cost (higher = more savings vs. human team baseline)"
       ;;
     --calibrate)
       [[ -d "$SRD_ROOT" ]] || { echo "no SRD/ directory"; return 0; }
-      echo "# EDM Calibration — suggested updates to Phase Timing Guidelines"
+      echo "# EDM Calibration - suggested updates to Phase Timing Guidelines"
       echo
       echo "Computed from completed initiatives (active + archived). Median values per (size, phase)."
       echo
-      jq -s -r '
-        [.[] | select(.estimated_size != null) | . as $i |
-          (.phase_durations | to_entries[] | {
-            size: $i.estimated_size,
-            phase: (.key | sub("_phase$"; "")),
-            duration: (.value.duration_seconds // 0),
-            cost: (.value.estimated_cost_usd // 0)
-          })
-        ]
-        | group_by(.size + "_" + .phase)
-        | map({
-            key: .[0].size + "_phase_" + .[0].phase,
-            count: length,
-            median_duration_s: ((sort_by(.duration) | .[length / 2 | floor].duration)),
-            median_cost_usd: ((sort_by(.cost) | .[length / 2 | floor].cost))
-          })
-        | .[]
-        | "  \(.key): n=\(.count), median_duration=\(.median_duration_s)s, median_cost=$\(.median_cost_usd)"
-      ' "$SRD_ROOT"/*/.edm-state.json "$SRD_ROOT"/.archived/*/.edm-state.json 2>/dev/null || \
-        echo "  (insufficient data — need at least one completed initiative)"
+      local _calib_files=()
+      while IFS= read -r _f; do _calib_files+=("$_f"); done < <(list_state_files --archived)
+      if [[ ${#_calib_files[@]} -eq 0 ]]; then
+        echo "  (insufficient data - need at least one completed initiative)"
+      else
+        jq -s -r '
+          [.[] | select(.estimated_size != null) | . as $i |
+            (.phase_durations | to_entries[] | {
+              size: $i.estimated_size,
+              phase: (.key | sub("_phase$"; "")),
+              duration: (.value.duration_seconds // 0),
+              cost: (.value.estimated_cost_usd // 0)
+            })
+          ]
+          | group_by(.size + "_" + .phase)
+          | map({
+              key: .[0].size + "_phase_" + .[0].phase,
+              count: length,
+              median_duration_s: ((sort_by(.duration) | .[length / 2 | floor].duration)),
+              median_cost_usd: ((sort_by(.cost) | .[length / 2 | floor].cost))
+            })
+          | .[]
+          | "  \(.key): n=\(.count), median_duration=\(.median_duration_s)s, median_cost=$\(.median_cost_usd)"
+        ' "${_calib_files[@]}" 2>/dev/null || \
+          echo "  (insufficient data - need at least one completed initiative)"
+      fi
       ;;
     "")
       die "usage: edm-state metrics-report <PREFIX|--all|--calibrate>"
@@ -577,9 +987,10 @@ cmd_metrics_report() {
       local state
       state="$(state_file_for "$prefix")"
       [[ -f "$state" ]] || die "no state for $prefix"
-      echo "# EDM Metrics — $prefix"
+      echo "# EDM Metrics - $prefix"
       echo
       jq -r '"Initiative: \(.prefix)  |  size: \(.estimated_size // "Unknown")  |  current phase: \(.current_phase)  |  human hourly rate: $'"$HUMAN_HOURLY_RATE_USD"'"' "$state"
+      jq -r 'if (.product_name // "") != "" or (.initiative_description // "") != "" then "Product: \(.product_name // "(none)")  |  Description: \(.initiative_description // "(none)")" else empty end' "$state" 2>/dev/null || true
       echo
       printf "  %-10s  %-10s  %-12s  %-12s  %-10s  %-12s  %-10s\n" "Phase" "Duration" "Claude Cost" "Human Cost" "Savings" "Tokens (i/o)" "Model"
       printf "  %-10s  %-10s  %-12s  %-12s  %-10s  %-12s  %-10s\n" "-----" "--------" "-----------" "----------" "-------" "------------" "-----"
@@ -590,7 +1001,8 @@ cmd_metrics_report() {
         | .[]
         | .key as $k
         | .value as $v
-        | "  \($k | sub("_phase$"; "Phase ") | .[0:10])  \(($v.duration_seconds // 0))s\(if ($v.duration_seconds // 0) < 100 then "       " else "     " end)  $\(($v.estimated_cost_usd // 0))\(if ($v.estimated_cost_usd // 0) < 10 then "        " else "      " end)  $\(($v.human_baseline_usd // 0))\(if ($v.human_baseline_usd // 0) < 100 then "        " else "      " end)  \(if ($v.estimated_cost_usd // 0) > 0 then ((($v.human_baseline_usd // 0) / ($v.estimated_cost_usd // 1)) | tostring | .[0:5]) + "x" else "n/a" end)\(if ($v.estimated_cost_usd // 0) > 0 then "    " else "        " end)  \(($v.tokens.input // 0))/\(($v.tokens.output // 0))\(if (($v.tokens.input // 0) + ($v.tokens.output // 0)) < 1000 then "        " else "     " end)  \($v.model_used // "?")"
+        | ("Phase " + ($k | sub("_phase$"; ""))) as $phase_label
+        | "  \($phase_label | .[0:10])  \(($v.duration_seconds // 0))s\(if ($v.duration_seconds // 0) < 100 then "       " else "     " end)  $\(($v.estimated_cost_usd // 0))\(if ($v.estimated_cost_usd // 0) < 10 then "        " else "      " end)  $\(($v.human_baseline_usd // 0))\(if ($v.human_baseline_usd // 0) < 100 then "        " else "      " end)  \(if ($v.estimated_cost_usd // 0) > 0 and ($v.human_baseline_usd // 0) > 0 then ((($v.human_baseline_usd // 0) / ($v.estimated_cost_usd // 1)) | tostring | .[0:5]) + "x" else "n/a" end)\(if ($v.estimated_cost_usd // 0) > 0 and ($v.human_baseline_usd // 0) > 0 then "    " else "        " end)  \(($v.tokens.input // 0))/\(($v.tokens.output // 0))\(if (($v.tokens.input // 0) + ($v.tokens.output // 0)) < 1000 then "        " else "     " end)  \($v.model_used // "?")"
       ' "$state"
       echo
       jq -r '
@@ -601,20 +1013,84 @@ cmd_metrics_report() {
         ($humans | add) as $th |
         ($secs | add) as $ts |
         "  Total: \($ts)s  |  Claude: $\($tc)  |  Human baseline: $\($th)  |  Savings: " +
-          (if $tc > 0 then "\(($th / $tc) | tostring | .[0:6])x cheaper" else "n/a" end)
+          (if $tc > 0 and $th > 0 then "\(($th / $tc) | tostring | .[0:6])x cheaper" else "n/a" end)
       ' "$state"
-      echo
+      # Gate review time section (only shown when at least one gate is approved)
+      # gate_review_seconds = approved_at(gate_N) - phase_complete_timestamp(gated_phase)
+      # Gated phases: gate 1 -> phase 1, gate 2 -> phase 3, gate 3 -> phase 5
+      local has_gates
+      has_gates="$(jq -r '(.gates_approved // []) | length' "$state" 2>/dev/null || echo 0)"
+      if [[ "$has_gates" -gt 0 ]]; then
+        echo "## Gate Review Times"
+        echo
+        jq -r '
+          # Bind the full state object so it remains accessible after generator iteration.
+          . as $state |
+
+          # gated_phase_key: returns the phase_durations key for the phase preceding each gate.
+          def gated_phase_key(g):
+            if g == 1 then "1_phase"
+            elif g == 2 then "3_phase"
+            elif g == 3 then "5_phase"
+            else null end;
+
+          # phase_complete_epoch: returns epoch seconds for when the gated phase completed.
+          # Falls back to started_at + duration_seconds if completed_at is missing.
+          def phase_complete_epoch($s; key):
+            $s.phase_durations[key] as $pd |
+            if $pd == null then null
+            elif ($pd.completed_at != null and $pd.completed_at != "") then
+              ($pd.completed_at | fromdateiso8601)
+            elif ($pd.started_at != null and $pd.started_at != "" and $pd.duration_seconds != null) then
+              (($pd.started_at | fromdateiso8601) + $pd.duration_seconds)
+            else null end;
+
+          [1, 2, 3] | .[] as $g |
+          (($state.gates_approved // []) | map(select(.gate == $g)) | first) as $approval |
+          (gated_phase_key($g)) as $pk |
+          (phase_complete_epoch($state; $pk)) as $complete_epoch |
+          # Derive the phase number from the single gated_phase_key def above (CA-013) rather than
+          # re-encoding the gate->phase map as a parallel literal.
+          ((gated_phase_key($g)) | sub("_phase$"; "") | tonumber) as $gated_phase_num |
+          if $approval == null then
+            "  Gate \($g) review:  n/a  (not yet approved)"
+          elif $complete_epoch == null then
+            "  Gate \($g) review:  n/a  (phase \($gated_phase_num) completion time unknown)"
+          else
+            ($approval.approved_at | fromdateiso8601) as $approved_epoch |
+            ($approved_epoch - $complete_epoch) as $diff |
+            if $diff < 0 then
+              "  Gate \($g) review:  n/a  (timestamp inconsistency)"
+            else
+              "  Gate \($g) review:  \($diff | floor)s  (approved \($approval.approved_at[:10]), phase \($gated_phase_num) completed \($state.phase_durations[$pk].completed_at // "unknown" | if . != "unknown" then .[:10] else . end))"
+            end
+          end
+        ' "$state" 2>/dev/null || echo "  (gate review data unavailable)"
+        echo
+      fi
       # Test coverage summary (if any recorded)
-      local has_coverage
+      local has_coverage has_epic_coverage
       has_coverage="$(jq -r '(.coverage_by_layer // {}) | length' "$state" 2>/dev/null || echo 0)"
+      has_epic_coverage="$(jq -r '(.coverage_by_epic // {}) | length' "$state" 2>/dev/null || echo 0)"
       if [[ "$has_coverage" -gt 0 ]]; then
         echo "## Test Coverage"
         echo
         printf "  %-14s  %-10s  %-20s\n" "Layer" "Coverage" "Measured At"
         printf "  %-14s  %-10s  %-20s\n" "-----" "--------" "-----------"
+        jq -r "${COVERAGE_LAYER_ROW_JQ_DEF}"'
+          (.coverage_by_layer // {}) | to_entries[] | coverage_layer_row
+        ' "$state" 2>/dev/null
+        echo
+      fi
+      if [[ "$has_epic_coverage" -gt 0 ]]; then
+        echo "## Per-Epic Test Coverage"
+        echo
+        printf "  %-15s  %-14s  %-10s\n" "Epic" "Layer" "Coverage"
+        printf "  %-15s  %-14s  %-10s\n" "----" "-----" "--------"
         jq -r '
-          (.coverage_by_layer // {}) | to_entries[] |
-          "  \(.key | . + (" " * (14 - length | if . < 0 then 0 else . end)))  \(.value.pct)%\(if .value.pct < 10 then "         " elif .value.pct < 100 then "        " else "       " end)  \(.value.measured_at // "?")"
+          (.coverage_by_epic // {}) | to_entries[] |
+          .key as $epic | .value | to_entries[] |
+          "  \($epic | . + (" " * (15 - length | if . < 0 then 0 else . end)))  \(.key | . + (" " * (14 - length | if . < 0 then 0 else . end)))  \(.value.pct)%"
         ' "$state" 2>/dev/null
         echo
       fi
@@ -622,8 +1098,601 @@ cmd_metrics_report() {
   esac
 }
 
+# ---- Migrate path (T42) ------------------------------------------------------
+# migrate-path --product <name> --description <slug> <PREFIX>
+# Relocates a flat initiative SRD/{PREFIX}/ to SRD/{PRODUCT}/{PREFIX}__{DESCRIPTION}/
+# and updates product_name + initiative_description in state. Git-aware when tracked.
+
+cmd_migrate_path() {
+  require_jq
+  local prefix="" product="" description=""
+  # Flag parsing: accept --product/--description in any order with PREFIX positional.
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --product)    [[ $# -ge 2 ]] || die "migrate-path: --product requires a value"; product="$2"; shift 2 ;;
+      --description) [[ $# -ge 2 ]] || die "migrate-path: --description requires a value"; description="$2"; shift 2 ;;
+      --*)          die "migrate-path: unknown flag $1" ;;
+      *)            [[ -z "$prefix" ]] || die "migrate-path: unexpected extra argument: $1"; prefix="$1"; shift ;;
+    esac
+  done
+  [[ -n "$prefix" ]] || die "usage: edm-state migrate-path --product <name> --description <slug> <PREFIX>"
+  [[ -n "$product" ]] || die "migrate-path: --product is required"
+  [[ -n "$description" ]] || die "migrate-path: --description is required"
+  [[ "$product" =~ ^[A-Za-z0-9_-]+$ ]] || die "migrate-path: --product must contain only [A-Za-z0-9_-], got: '$product'"
+  [[ "$description" =~ ^[A-Za-z0-9_-]+$ ]] || die "migrate-path: --description must contain only [A-Za-z0-9_-], got: '$description'"
+
+  # Validate PREFIX format before it reaches any filesystem path (path-traversal guard, CA-002).
+  # Matches the central state_file_for guard so legacy and product-scoped prefixes both pass.
+  [[ "$prefix" =~ ^[A-Za-z0-9_-]+$ ]] || die "migrate-path: invalid PREFIX '${prefix}' (only alphanumeric, hyphen, underscore allowed)"
+
+  # Resolve current (flat) source directory.
+  local src dst
+  src="${SRD_ROOT}/${prefix}"
+  [[ -d "$src" ]] || die "migrate-path: source directory not found: $src"
+
+  dst="${SRD_ROOT}/${product}/${prefix}__${description}"
+  [[ ! -d "$dst" ]] || die "migrate-path: target directory already exists: $dst"
+
+  # Create product subdirectory.
+  mkdir -p "${SRD_ROOT}/${product}"
+
+  # Move the initiative directory — git-aware when inside a worktree. (CA-015)
+  git_aware_mv "$src" "$dst"
+
+  # Update state through the locked/atomic/backup primitive (CA-001). After the move,
+  # state_file_for "$prefix" glob-resolves the new product-scoped dir, so rmw_state targets it.
+  # Roll the directory move back if the state file is missing or the write fails.
+  local new_state_file="${dst}/.edm-state.json"
+  if [[ ! -f "$new_state_file" ]]; then
+    git_aware_mv "$dst" "$src"
+    die "migrate-path: state file not found after move (rolled back): $new_state_file"
+  fi
+  rm -f "${new_state_file}.bak"   # drop any stale source-carried backup; rmw_state writes a fresh one
+  if ! rmw_state "$prefix" \
+        '.product_name = $p | .initiative_description = $d | .last_updated = $t' \
+        --arg p "$product" --arg d "$description" --arg t "$(now_utc)"; then
+    git_aware_mv "$dst" "$src"
+    die "migrate-path: state update failed (rolled back move): $prefix"
+  fi
+
+  echo "migrated ${prefix}: ${src} -> ${dst}"
+  echo "set product_name=${product}, initiative_description=${description}"
+}
+
+# ---- Active initiatives (T35) -----------------------------------------------
+# active-initiatives: list initiatives with current_phase in 1-6
+
+cmd_active_initiatives() {
+  [[ -d "$SRD_ROOT" ]] || { echo "(no SRD/ directory)"; return 0; }
+  require_jq
+  local found=0
+  while IFS= read -r state; do
+    local phase
+    phase="$(jq -r '.current_phase // 0' "$state" 2>/dev/null || echo 0)"
+    if [[ "$phase" -ge 1 && "$phase" -le 6 ]]; then
+      found=1
+      local prefix last
+      prefix="$(jq -r '.prefix' "$state" 2>/dev/null || echo unknown)"
+      last="$(jq -r '.last_updated' "$state" 2>/dev/null || echo unknown)"
+      printf "  %-12s  phase=%d  last_updated=%s\n" "$prefix" "$phase" "$last"
+    fi
+  done < <(list_state_files)
+  [[ $found -eq 1 ]] || echo "  (no active initiatives)"
+}
+
+# ---- Gate enforcement (T27) --------------------------------------------------
+# gate-check <PREFIX> <gated-command>
+# Exits 0 if the gate prerequisite for <gated-command> is satisfied.
+# Exits 1 with a human-readable error if the gate is not yet approved.
+# Read-only — never mutates state.
+#
+# Gated commands and their required gates:
+#   srd | audit-srd  -> Gate 1 must be approved
+#   tickets          -> Gate 2 must be approved
+#   audit-tickets | implement -> Gate 3 must be approved
+
+cmd_gate_check() {
+  [[ $# -eq 2 ]] || die "usage: edm-state gate-check <PREFIX> <gated-command>"
+  require_jq
+  local prefix="$1" gated_cmd="$2"
+  local state required_gate
+  state="$(read_state "$prefix")"
+
+  case "$gated_cmd" in
+    srd|audit-srd)    required_gate=1 ;;
+    tickets)          required_gate=2 ;;
+    audit-tickets|implement) required_gate=3 ;;
+    *)
+      # Unknown command — no gate enforcement; allow through.
+      return 0
+      ;;
+  esac
+
+  local approved
+  approved="$(echo "$state" | jq -r --argjson g "$required_gate" '
+    (.gates_approved // []) | map(select(.gate == $g)) | length
+  ' 2>/dev/null || echo 0)"
+
+  if [[ "$approved" -eq 0 ]]; then
+    echo "edm-state gate-check: Gate ${required_gate} has not been approved for ${prefix}." >&2
+    echo "Run /edm:orchestrator ${prefix} and approve Gate ${required_gate} before running /${gated_cmd}." >&2
+    return 1
+  fi
+
+  # For implement: also enforce compliance_gate_approved when compliance_enabled=true.
+  if [[ "$gated_cmd" == "implement" ]]; then
+    local ce cga
+    ce="$(echo "$state" | jq -r '.compliance_enabled // false')"
+    if [[ "$ce" == "true" ]]; then
+      cga="$(echo "$state" | jq -r '.compliance_gate_approved // false')"
+      if [[ "$cga" != "true" ]]; then
+        echo "edm-state gate-check: Gate 3.5 (compliance review) has not been approved for ${prefix}." >&2
+        echo "Run /edm:orchestrator ${prefix} and approve Gate 3.5 before running /implement." >&2
+        return 1
+      fi
+    fi
+  fi
+
+  return 0
+}
+
+# ---- Validate (T32) ----------------------------------------------------------
+# validate <PREFIX>
+# Runs state_anomalies and exits 3 if any anomalies found, 0 if clean.
+
+cmd_validate() {
+  [[ $# -eq 1 ]] || die "usage: edm-state validate <PREFIX>"
+  local prefix="$1"
+  local anomalies
+  anomalies="$(state_anomalies "$prefix")"
+  if [[ -n "$anomalies" ]]; then
+    echo "# State anomalies for $prefix:"
+    echo
+    echo "$anomalies"
+    return 3
+  fi
+  echo "# State OK: no anomalies found for $prefix"
+  return 0
+}
+
+# ---- Branch check (T35) ------------------------------------------------------
+# branch-check <PREFIX>
+# Verifies the current git branch matches the initiative_branch recorded in state.
+# Exits 0 on match or when no initiative_branch is recorded (legacy state).
+# Exits 1 with an advisory on mismatch.
+
+cmd_branch_check() {
+  [[ $# -eq 1 ]] || die "usage: edm-state branch-check <PREFIX>"
+  local prefix="$1"
+  require_jq
+  local state initiative_branch current_branch
+  state="$(read_state "$prefix")"
+  initiative_branch="$(echo "$state" | jq -r '.initiative_branch // ""')"
+  if [[ -z "$initiative_branch" ]]; then
+    # Legacy state without initiative_branch — no enforcement.
+    return 0
+  fi
+  current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+  if [[ -z "$current_branch" ]]; then
+    echo "[warn] could not determine current git branch; skipping branch check" >&2
+    return 0
+  fi
+  if [[ "$current_branch" != "$initiative_branch" ]]; then
+    echo "edm-state branch-check: current branch '${current_branch}' does not match initiative_branch '${initiative_branch}'." >&2
+    echo "Run: git checkout ${initiative_branch}" >&2
+    return 1
+  fi
+  return 0
+}
+
+# ---- Git lock check (T36) ----------------------------------------------------
+# git-lock-check
+# Detects a stale .git/index.lock file and removes it if the holding process is gone.
+
+cmd_git_lock_check() {
+  local git_dir
+  git_dir="$(git rev-parse --git-dir 2>/dev/null || echo '')"
+  if [[ -z "$git_dir" ]]; then
+    echo "not inside a git repository" >&2
+    return 0
+  fi
+  local lock_file="${git_dir}/index.lock"
+  if [[ ! -f "$lock_file" ]]; then
+    echo "no .git/index.lock present"
+    return 0
+  fi
+  # Attempt to identify the holding PID if possible (lock file contents not reliable).
+  # On macOS/Linux: if no git process is running, the lock is stale.
+  local git_pids
+  git_pids="$(pgrep -x git 2>/dev/null | paste -sd ' ' - || true)"
+  if [[ -z "$git_pids" ]]; then
+    echo "stale .git/index.lock detected (no git process running); removing..."
+    rm -f "$lock_file"
+    echo "removed $lock_file"
+  else
+    echo "WARNING: .git/index.lock exists and git processes are running (PIDs: ${git_pids})" >&2
+    echo "Do not remove the lock while git is active; wait for the process to finish." >&2
+    return 1
+  fi
+}
+
+# ---- Current step tracking (T47) --------------------------------------------
+# current-step <PREFIX> [<step>]
+# Without <step>: print current_step (empty when not yet set — lazy init).
+# With <step>: store current_step; typed as number if numeric, otherwise string.
+# current_step is intentionally ABSENT from cmd_init so it is only set when the
+# orchestrator explicitly records progress — never pre-initialised to 0.
+
+cmd_current_step() {
+  [[ $# -ge 1 ]] || die "usage: edm-state current-step <PREFIX> [<step>]"
+  require_jq
+  local prefix="$1"
+  if [[ $# -eq 1 ]]; then
+    # Read mode — current_step // "" gives empty string on missing field (null).
+    read_state "$prefix" | jq -r '.current_step // ""'
+    return 0
+  fi
+  local step="$2"
+  if [[ "$step" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
+    rmw_state "$prefix" '.current_step = ($v|tonumber) | .last_updated = $t' --arg v "$step" --arg t "$(now_utc)"
+  else
+    rmw_state "$prefix" '.current_step = $v | .last_updated = $t' --arg v "$step" --arg t "$(now_utc)"
+  fi
+}
+
+# ---- Session start (T50) ----------------------------------------------------
+# session-start
+# Emits Resume Point for any active initiatives (phase 1–6).
+# Called headlessly from the SessionStart hook at the start of every conversation.
+# Scans both flat (SRD/*/) and product-scoped (SRD/*/*/) layouts and de-duplicates.
+
+cmd_session_start() {
+  [[ -d "$SRD_ROOT" ]] || return 0
+  require_jq
+  local active_count=0
+  local seen_prefixes=()
+  # Enumerate both layouts via the single shared helper (CA-011); dedup by prefix below.
+  while IFS= read -r state; do
+    [[ -f "$state" ]] || continue
+    local prefix phase
+    prefix="$(jq -r '.prefix // "unknown"' "$state" 2>/dev/null || echo unknown)"
+    phase="$(jq -r '.current_phase // 0' "$state" 2>/dev/null || echo 0)"
+    # De-duplicate by prefix (both layouts may resolve to the same initiative).
+    local already=0
+    local seen
+    for seen in "${seen_prefixes[@]+"${seen_prefixes[@]}"}"; do
+      [[ "$seen" == "$prefix" ]] && already=1 && break
+    done
+    [[ $already -eq 1 ]] && continue
+    [[ "$phase" -ge 1 && "$phase" -le 6 ]] || continue
+    seen_prefixes+=("$prefix")
+    active_count=$((active_count + 1))
+    if [[ $active_count -eq 1 ]]; then
+      echo "# EDM Active Initiative(s) — Session Resume"
+      echo
+    fi
+    local current_step last_cmd last_decision last_updated phase_name
+    current_step="$(jq -r '.current_step // ""' "$state" 2>/dev/null || echo '')"
+    last_cmd="$(jq -r '.last_cmd // ""' "$state" 2>/dev/null || echo '')"
+    last_decision="$(jq -r '.last_decision // ""' "$state" 2>/dev/null || echo '')"
+    last_updated="$(jq -r '.last_updated // ""' "$state" 2>/dev/null || echo '')"
+    phase_name="$(phase_name_for "$phase")"
+    printf '## %s — %s\n' "$prefix" "$phase_name"
+    [[ -n "$current_step" ]]   && printf '  Step:          %s\n' "$current_step"
+    [[ -n "$last_cmd" ]]       && printf '  Last command:  %s\n' "$last_cmd"
+    [[ -n "$last_decision" ]]  && printf '  Last decision: %s\n' "$last_decision"
+    [[ -n "$last_updated" ]]   && printf '  Last updated:  %s\n' "$last_updated"
+    printf '  Resume:        /edm:orchestrator %s\n' "$prefix"
+    echo
+  done < <(list_state_files)
+}
+
+# ---- Audit round tracking (T56) ---------------------------------------------
+# audit-round-start <PREFIX> <code|srd|tickets>
+# Increments the round counter for the given audit type and echoes the new value.
+
+cmd_audit_round_start() {
+  [[ $# -eq 2 ]] || die "usage: edm-state audit-round-start <PREFIX> <code|srd|tickets>"
+  require_jq
+  local prefix="$1" audit_type="$2"
+  case "$audit_type" in
+    code|srd|tickets) ;;
+    *) die "audit-round-start: unknown audit type '$audit_type' (expected: code|srd|tickets)" ;;
+  esac
+  rmw_state "$prefix" '.audit_rounds[$t] = ((.audit_rounds[$t] // 0) + 1) | .last_updated = $ts' \
+    --arg t "$audit_type" --arg ts "$(now_utc)"
+  # Re-read to echo the new round number
+  read_state "$prefix" | jq -r --arg t "$audit_type" '.audit_rounds[$t]'
+}
+
+# ---- Partial verdict tracking (T67) -----------------------------------------
+# record-partial-verdict <PREFIX> <ticket> <PASS|PARTIAL|FAIL> [<note>]
+# Persists a per-ticket verdict into partial_verdict_map.
+
+cmd_record_partial_verdict() {
+  [[ $# -ge 3 ]] || die "usage: edm-state record-partial-verdict <PREFIX> <ticket> <PASS|PARTIAL|FAIL> [<note>]"
+  require_jq
+  local prefix="$1" ticket="$2" verdict="$3" note="${4:-}"
+  case "$verdict" in
+    PASS|PARTIAL|FAIL) ;;
+    *) die "record-partial-verdict: unknown verdict '$verdict' (expected: PASS|PARTIAL|FAIL)" ;;
+  esac
+  rmw_state "$prefix" \
+    '.partial_verdict_map[$tk] = {verdict: $v, note: $n, recorded_at: $ts} | .last_updated = $ts' \
+    --arg tk "$ticket" --arg v "$verdict" --arg n "$note" --arg ts "$(now_utc)"
+  echo "recorded verdict: $ticket = $verdict for $prefix"
+}
+
+# ---- Mode management (T83) ---------------------------------------------------
+# set-mode <PREFIX> <kind> <value>
+# Kinds: mode (standard|mini-srd|iac|data-ml|prototype)
+#        lifecycle_mode (standard|partial|fast-track|fix-pack)
+#        compliance_enabled (true|false)
+#        implementation_mode (standard|tdd)
+
+cmd_set_mode() {
+  [[ $# -eq 3 ]] || die "usage: edm-state set-mode <PREFIX> <kind> <value>"
+  require_jq
+  local prefix="$1" kind="$2" value="$3"
+  case "$kind" in
+    mode)
+      case "$value" in
+        standard|mini-srd|iac|data-ml|prototype) ;;
+        *) die "set-mode: invalid mode '$value' (expected: standard|mini-srd|iac|data-ml|prototype)" ;;
+      esac
+      rmw_state "$prefix" '.mode = $v | .last_updated = $ts' --arg v "$value" --arg ts "$(now_utc)"
+      ;;
+    lifecycle_mode)
+      case "$value" in
+        standard|partial|fast-track|fix-pack) ;;
+        *) die "set-mode: invalid lifecycle_mode '$value' (expected: standard|partial|fast-track|fix-pack)" ;;
+      esac
+      rmw_state "$prefix" '.lifecycle_mode = $v | .last_updated = $ts' --arg v "$value" --arg ts "$(now_utc)"
+      ;;
+    compliance_enabled)
+      [[ "$value" == "true" || "$value" == "false" ]] \
+        || die "set-mode: compliance_enabled requires true|false; got: $value"
+      rmw_state "$prefix" '.compliance_enabled = ($v == "true") | .last_updated = $ts' --arg v "$value" --arg ts "$(now_utc)"
+      ;;
+    implementation_mode)
+      case "$value" in
+        standard|tdd) ;;
+        *) die "set-mode: invalid implementation_mode '$value' (expected: standard|tdd)" ;;
+      esac
+      rmw_state "$prefix" '.implementation_mode = $v | .last_updated = $ts' --arg v "$value" --arg ts "$(now_utc)"
+      ;;
+    *)
+      die "set-mode: unknown kind '$kind' (expected: mode|lifecycle_mode|compliance_enabled|implementation_mode)"
+      ;;
+  esac
+  echo "set $kind = $value for $prefix"
+}
+
+# ---- Phase skip tracking (T96) -----------------------------------------------
+# skip-phase <PREFIX> <phase-num> [<rationale>]
+# Records an intentionally skipped phase. Replaces any existing entry for the same phase.
+
+cmd_skip_phase() {
+  [[ $# -ge 2 ]] || die "usage: edm-state skip-phase <PREFIX> <phase-num> [<rationale>]"
+  require_jq
+  local prefix="$1" phase_num="$2" rationale="${3:-}"
+  [[ "$phase_num" =~ ^[1-6]$ ]] || die "skip-phase: phase-num must be 1-6; got: $phase_num"
+  rmw_state "$prefix" '
+    .skipped_phases = (
+      [(.skipped_phases // []) | .[] | select(.phase != ($p|tonumber))]
+      + [{phase: ($p|tonumber), rationale: $r, skipped_at: $ts}]
+    )
+    | .last_updated = $ts
+  ' --arg p "$phase_num" --arg r "$rationale" --arg ts "$(now_utc)"
+  echo "recorded phase $phase_num as skipped for $prefix"
+}
+
+# ---- Provenance tracking (T98) -----------------------------------------------
+# set-supersedes <PREFIX> <other-prefix>
+# set-forked-from <PREFIX> <other-prefix>
+
+cmd_set_supersedes() {
+  [[ $# -eq 2 ]] || die "usage: edm-state set-supersedes <PREFIX> <other-prefix>"
+  require_jq
+  local prefix="$1" other="$2"
+  [[ -n "$other" ]] || die "set-supersedes: other-prefix must be non-empty"
+  rmw_state "$prefix" '.supersedes = $v | .last_updated = $ts' --arg v "$other" --arg ts "$(now_utc)"
+  echo "set supersedes = $other for $prefix"
+}
+
+cmd_set_forked_from() {
+  [[ $# -eq 2 ]] || die "usage: edm-state set-forked-from <PREFIX> <other-prefix>"
+  require_jq
+  local prefix="$1" other="$2"
+  [[ -n "$other" ]] || die "set-forked-from: other-prefix must be non-empty"
+  rmw_state "$prefix" '.forked_from = $v | .last_updated = $ts' --arg v "$other" --arg ts "$(now_utc)"
+  echo "set forked_from = $other for $prefix"
+}
+
+# ---- Product-line linkage (T101/T102) ----------------------------------------
+# resolve-dir <PREFIX> — resolve bare prefix to initiative directory (read-only).
+# Returns a non-zero exit and a message when no initiative exists for the prefix.
+
+cmd_resolve_dir() {
+  [[ $# -eq 1 ]] || die "usage: edm-state resolve-dir <PREFIX>"
+  local prefix="$1"
+  local state_file
+  state_file="$(state_file_for "$prefix")"
+  [[ -f "$state_file" ]] || die "no initiative for prefix $prefix"
+  echo "${state_file%/.edm-state.json}"
+}
+
+# set-parent <PREFIX> <PARENT> — set parent_prefix; validates PARENT exists.
+cmd_set_parent() {
+  [[ $# -eq 2 ]] || die "usage: edm-state set-parent <PREFIX> <PARENT>"
+  require_jq
+  local prefix="$1" parent="$2"
+  local parent_state
+  parent_state="$(state_file_for "$parent")"
+  [[ -f "$parent_state" ]] || die "no initiative for prefix $parent"
+  rmw_state "$prefix" '.parent_prefix = $p | .last_updated = $t' --arg p "$parent" --arg t "$(now_utc)"
+  echo "set parent_prefix = $parent for $prefix"
+  write_handoff_internal "$prefix"
+}
+
+# add-related <PREFIX> <RELATED> — append to related_prefixes (idempotent); validates RELATED exists.
+cmd_add_related() {
+  [[ $# -eq 2 ]] || die "usage: edm-state add-related <PREFIX> <RELATED>"
+  require_jq
+  local prefix="$1" related="$2"
+  local related_state
+  related_state="$(state_file_for "$related")"
+  [[ -f "$related_state" ]] || die "no initiative for prefix $related"
+  rmw_state "$prefix" '
+    if (.related_prefixes // []) | contains([$r]) then
+      .last_updated = $t
+    else
+      .related_prefixes = ((.related_prefixes // []) + [$r])
+      | .last_updated = $t
+    end
+  ' --arg r "$related" --arg t "$(now_utc)"
+  echo "added $related to related_prefixes for $prefix"
+  write_handoff_internal "$prefix"
+}
+
+# ---- Artifact lint dispatch (T115) ------------------------------------------
+# lint <PREFIX>
+# Delegates to edm-lint-artifacts and forwards its exit code.
+
+cmd_lint() {
+  [[ $# -eq 1 ]] || die "usage: edm-state lint <PREFIX>"
+  command -v edm-lint-artifacts >/dev/null 2>&1 \
+    || die "edm-lint-artifacts not found on PATH; ensure the EDM plugin bin/ directory is on PATH"
+  edm-lint-artifacts "$1"
+}
+
+# ---- Audit pattern library update (T121) -------------------------------------
+# update-patterns <PREFIX> <srd|ticket|qc|code>
+# Extracts ### headings from the initiative's audit report and appends novel
+# ones to the corresponding docs/audit-patterns/*.md file.
+# Novel = normalized title not already present as a ### heading in the pattern file.
+# Records the action in state (.patterns_updates).
+
+cmd_update_patterns() {
+  [[ $# -eq 2 ]] || die "usage: edm-state update-patterns <PREFIX> <srd|ticket|qc|code>"
+  require_jq
+  local prefix="$1" audit_type="$2"
+
+  case "$audit_type" in
+    srd|ticket|qc|code) ;;
+    *) die "update-patterns: unknown audit type '$audit_type' (expected: srd|ticket|qc|code)" ;;
+  esac
+
+  # Resolve this script's directory so we can find plugin-relative docs/audit-patterns/.
+  # When invoked via PATH (no slash in $0), resolve via command -v first.
+  local _s="$0"
+  if [[ "$_s" != */* ]]; then
+    _s="$(command -v "$_s" 2>/dev/null || true)"
+  fi
+  local script_dir
+  script_dir="$(cd "$(dirname "${_s:-$0}")" 2>/dev/null && pwd || echo ".")"
+  local patterns_dir="${script_dir}/../docs/audit-patterns"
+
+  local pattern_file
+  case "$audit_type" in
+    srd)    pattern_file="${patterns_dir}/srd-audit.md" ;;
+    ticket) pattern_file="${patterns_dir}/ticket-audit.md" ;;
+    qc)     pattern_file="${patterns_dir}/qc-audit.md" ;;
+    code)   pattern_file="${patterns_dir}/code-audit.md" ;;
+  esac
+
+  # Locate the audit report for this initiative.
+  local _dir
+  _dir="$(initiative_dir_for "$prefix")"
+  local audit_report_path=""
+  case "$audit_type" in
+    srd)    audit_report_path="${_dir}/audit-srd.md" ;;
+    ticket) audit_report_path="${_dir}/${TICKET_PACK_DIRNAME}/audit.md" ;;
+    qc)     audit_report_path="${_dir}/qc/qc-summary.md" ;;
+    code)
+      audit_report_path="$(ls -t "${_dir}/code-audit"/pass-*/REMEDIATION.md 2>/dev/null | head -1 || true)"
+      ;;
+  esac
+
+  if [[ ! -f "$pattern_file" ]]; then
+    echo "update-patterns: pattern file not found at ${pattern_file} (skipping)" >&2
+    return 0
+  fi
+
+  if [[ ! -w "$pattern_file" ]]; then
+    echo "update-patterns: pattern file is not writable at ${pattern_file} (plugin may be installed read-only; skipping)" >&2
+    return 0
+  fi
+
+  if [[ -z "${audit_report_path}" || ! -f "$audit_report_path" ]]; then
+    echo "update-patterns: no audit report found for ${prefix}/${audit_type} (nothing to append)"
+    return 0
+  fi
+
+  # Read existing ### headings from the pattern file for de-duplication.
+  # Normalize: lowercase, collapse whitespace, strip trailing "(source, date, severity)" metadata.
+  local existing_normalized
+  existing_normalized="$(grep '^### ' "$pattern_file" 2>/dev/null \
+    | sed 's/^### //' \
+    | sed 's/ *([^)]*) *$//' \
+    | tr '[:upper:]' '[:lower:]' \
+    | tr -s ' ' \
+    | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+    || true)"
+
+  local new_findings=0 today
+  today="$(date -u +"%Y-%m-%d")"
+
+  while IFS= read -r raw_heading; do
+    local raw_title="${raw_heading#\#\#\# }"
+
+    # Skip structural section headings that are not findings.
+    local lower_title
+    lower_title="$(echo "$raw_title" | tr '[:upper:]' '[:lower:]' | tr -s ' ')"
+    case "$lower_title" in
+      "summary"|"findings"|"recommendations"|"overview"|"appendix"|"legend") continue ;;
+    esac
+
+    # Normalize for de-duplication: strip metadata parens, lowercase, collapse spaces.
+    local norm
+    norm="$(echo "$raw_title" | sed 's/ *([^)]*) *$//' \
+      | tr '[:upper:]' '[:lower:]' | tr -s ' ' \
+      | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [[ -z "$norm" ]] && continue
+
+    # Skip if this normalized title already exists in the pattern file.
+    if echo "$existing_normalized" | grep -qxF "$norm"; then
+      continue
+    fi
+
+    # Append the novel finding at the end of the pattern file.
+    {
+      printf '\n'
+      printf '### %s (%s, %s, P2)\n\n' "$raw_title" "$prefix" "$today"
+      printf 'Extracted from %s audit for %s. Review and refine: add a one-paragraph description\n' \
+        "$audit_type" "$prefix"
+      printf 'explaining the finding and how to prevent it. Adjust severity from P2 if warranted.\n'
+    } >> "$pattern_file"
+
+    new_findings=$((new_findings + 1))
+  done < <(grep '^### ' "$audit_report_path" 2>/dev/null || true)
+
+  # Record in state (.patterns_updates is a new field; safe to add to any existing state file).
+  rmw_state "$prefix" '
+    .patterns_last_updated = $ts
+    | .patterns_updates = ((.patterns_updates // {}) | .[$t] = {updated_at: $ts, new_findings: ($n|tonumber)})
+    | .last_updated = $ts
+  ' --arg t "$audit_type" --arg ts "$(now_utc)" --arg n "$new_findings"
+
+  if [[ "$new_findings" -gt 0 ]]; then
+    echo "update-patterns: ${prefix}/${audit_type} -> ${new_findings} new finding(s) appended to ${pattern_file}"
+  else
+    echo "update-patterns: ${prefix}/${audit_type} -> no novel findings to append"
+  fi
+}
+
 # ---- HANDOFF.md generation --------------------------------------------------
-# Writes SRD/{PREFIX}/HANDOFF.md — a version-controlled snapshot that any team
+# Writes SRD/{PREFIX}/HANDOFF.md - a version-controlled snapshot that any team
 # member can read to understand current status and resume the initiative.
 # Called automatically from phase-complete, approve-gate, and checkpoint-if-active.
 # Preserves the user-editable ## Notes section across re-writes.
@@ -642,25 +1711,37 @@ write_handoff_internal() {
   phase="$(echo "$state" | jq -r '.current_phase // 0')"
 
   local phase_name
-  case "$phase" in
-    0) phase_name="Not started" ;;
-    1) phase_name="Phase 1 — Planning" ;;
-    2) phase_name="Phase 2 — SRD Creation" ;;
-    3) phase_name="Phase 3 — SRD Audit" ;;
-    4) phase_name="Phase 4 — Ticket Creation" ;;
-    5) phase_name="Phase 5 — Ticket Audit" ;;
-    6) phase_name="Phase 6 — Implementation" ;;
-    *) phase_name="Phase ${phase}" ;;
-  esac
+  phase_name="$(phase_name_for "$phase")"
 
   local gates_count last_gate
   gates_count="$(echo "$state" | jq -r '(.gates_approved // []) | length')"
   last_gate="$(echo "$state" | jq -r '
     (.gates_approved // []) | .[-1] // null |
-    if . then "Gate \(.gate) — approved \(.approved_at) by \(.approver // "unknown")"
+    if . then "Gate \(.gate) - approved \(.approved_at) by \(.approver // "unknown")"
     else "none yet"
     end
   ')"
+
+  # Lifecycle & Mode fields (T83, T96, T98, T99) — empty-safe defaults for pre-T83 state files.
+  local mode lifecycle_mode compliance_enabled implementation_mode supersedes forked_from skipped_phases_json
+  mode="$(echo "$state" | jq -r '.mode // "standard"')"
+  lifecycle_mode="$(echo "$state" | jq -r '.lifecycle_mode // "standard"')"
+  compliance_enabled="$(read_bool "$state" "compliance_enabled" "false")"
+  implementation_mode="$(echo "$state" | jq -r '.implementation_mode // "standard"')"
+  supersedes="$(echo "$state" | jq -r '.supersedes // ""')"
+  forked_from="$(echo "$state" | jq -r '.forked_from // ""')"
+  skipped_phases_json="$(echo "$state" | jq -r '
+    (.skipped_phases // []) |
+    if length == 0 then ""
+    else map("- Phase \(.phase)\(if .rationale != "" then ": \(.rationale)" else "" end)") | join("\n")
+    end
+  ')"
+
+  # Gate-skip flags (T96): true when the phase feeding a gate is in skipped_phases.
+  local gate1_skipped gate2_skipped gate3_skipped
+  gate1_skipped="$(echo "$state" | jq -r --argjson p "$(gated_phase_for_gate 1)" '[(.skipped_phases // []) | .[].phase] | contains([$p])')"
+  gate2_skipped="$(echo "$state" | jq -r --argjson p "$(gated_phase_for_gate 2)" '[(.skipped_phases // []) | .[].phase] | contains([$p])')"
+  gate3_skipped="$(echo "$state" | jq -r --argjson p "$(gated_phase_for_gate 3)" '[(.skipped_phases // []) | .[].phase] | contains([$p])')"
 
   # Derive what to do next from current phase + gates approved
   local gate_nums next_action
@@ -668,26 +1749,32 @@ write_handoff_internal() {
   case "$phase" in
     0|1)
       if echo " $gate_nums " | grep -qw 1; then
-        next_action="Proceed to Phase 2 — SRD creation (\`/edm:orchestrator ${prefix}\`)"
+        next_action="Proceed to Phase 2 - SRD creation (\`/edm:orchestrator ${prefix}\`)"
+      elif [[ "$gate1_skipped" == "true" ]]; then
+        next_action="Phase 1 skipped — run \`/edm:orchestrator ${prefix}\` to continue"
       else
-        next_action="HITL Gate 1 pending — run \`/edm:orchestrator ${prefix}\` to present scope for team approval"
+        next_action="HITL Gate 1 pending - run \`/edm:orchestrator ${prefix}\` to present scope for team approval"
       fi
       ;;
     2|3)
       if echo " $gate_nums " | grep -qw 2; then
-        next_action="Proceed to Phase 4 — ticket creation (\`/edm:orchestrator ${prefix}\`)"
+        next_action="Proceed to Phase 4 - ticket creation (\`/edm:orchestrator ${prefix}\`)"
+      elif [[ "$gate2_skipped" == "true" ]]; then
+        next_action="Phase 3 skipped — run \`/edm:orchestrator ${prefix}\` to continue"
       else
-        next_action="HITL Gate 2 pending — run \`/edm:orchestrator ${prefix}\` to present SRD for team approval"
+        next_action="HITL Gate 2 pending - run \`/edm:orchestrator ${prefix}\` to present SRD for team approval"
       fi
       ;;
     4|5)
       if echo " $gate_nums " | grep -qw 3; then
-        next_action="Proceed to Phase 6 — implementation (\`/edm:orchestrator ${prefix}\`)"
+        next_action="Proceed to Phase 6 - implementation (\`/edm:orchestrator ${prefix}\`)"
+      elif [[ "$gate3_skipped" == "true" ]]; then
+        next_action="Phase 5 skipped — run \`/edm:orchestrator ${prefix}\` to continue"
       else
-        next_action="HITL Gate 3 pending — run \`/edm:orchestrator ${prefix}\` to present ticket pack for team approval"
+        next_action="HITL Gate 3 pending - run \`/edm:orchestrator ${prefix}\` to present ticket pack for team approval"
       fi
       ;;
-    6) next_action="Phase 6 in progress — run \`/edm:orchestrator ${prefix}\` to continue, then \`/edm:test ${prefix}\` when all tickets pass QC" ;;
+    6) next_action="Phase 6 in progress - run \`/edm:orchestrator ${prefix}\` to continue, then \`/edm:test ${prefix}\` when all tickets pass QC" ;;
     *) next_action="Run \`/edm:orchestrator ${prefix}\` to check status" ;;
   esac
 
@@ -696,23 +1783,36 @@ write_handoff_internal() {
   gate_list="$(echo "$state" | jq -r '
     (.gates_approved // []) |
     if length == 0 then "_(none yet)_"
-    else map("- Gate \(.gate) — approved \(.approved_at) by \(.approver // "unknown")") | join("\n")
+    else map("- Gate \(.gate) - approved \(.approved_at) by \(.approver // "unknown")") | join("\n")
     end
   ')"
 
-  # Artifact presence
-  local planning_path="${SRD_ROOT}/${prefix}/planning.md"
-  local srd_path="${SRD_ROOT}/${prefix}/${SRD_FILENAME}"
-  local audit_srd_path="${SRD_ROOT}/${prefix}/audit-srd.md"
-  local tickets_path="${SRD_ROOT}/${prefix}/${TICKET_PACK_DIRNAME}/README.md"
-  local audit_tickets_path="${SRD_ROOT}/${prefix}/${TICKET_PACK_DIRNAME}/audit.md"
+  # Artifact presence — derive paths from the layout resolver (T44).
+  local _init_dir
+  _init_dir="$(initiative_dir_for "$prefix")"
+  local planning_path="${_init_dir}/planning.md"
+  local srd_path="${_init_dir}/${SRD_FILENAME}"
+  local audit_srd_path="${_init_dir}/audit-srd.md"
+  local tickets_path="${_init_dir}/${TICKET_PACK_DIRNAME}/README.md"
+  local audit_tickets_path="${_init_dir}/${TICKET_PACK_DIRNAME}/audit.md"
+
+  # WS-D artifact paths (T81)
+  local arch_path="${_init_dir}/architecture.md"
+  local decisions_path="${_init_dir}/decisions.md"
+  local rollback_path="${_init_dir}/ROLLBACK.md"
+  local exec_report_path="${_init_dir}/exec-report.md"
 
   local s_planning s_srd s_audit_srd s_tickets s_audit_tickets
-  s_planning="$([[ -f "$planning_path" ]] && echo '✓ present' || echo '✗ not yet')"
-  s_srd="$([[ -f "$srd_path" ]] && echo '✓ present' || echo '✗ not yet')"
-  s_audit_srd="$([[ -f "$audit_srd_path" ]] && echo '✓ present' || echo '✗ not yet')"
-  s_tickets="$([[ -f "$tickets_path" ]] && echo '✓ present' || echo '✗ not yet')"
-  s_audit_tickets="$([[ -f "$audit_tickets_path" ]] && echo '✓ present' || echo '✗ not yet')"
+  local s_arch s_decisions s_rollback s_exec_report
+  s_planning="$(present_or_absent "$planning_path")"
+  s_srd="$(present_or_absent "$srd_path")"
+  s_audit_srd="$(present_or_absent "$audit_srd_path")"
+  s_tickets="$(present_or_absent "$tickets_path")"
+  s_audit_tickets="$(present_or_absent "$audit_tickets_path")"
+  s_arch="$(present_or_absent "$arch_path")"
+  s_decisions="$(present_or_absent "$decisions_path")"
+  s_rollback="$(present_or_absent "$rollback_path")"
+  s_exec_report="$(present_or_absent "$exec_report_path")"
 
   # Decisions Made section from planning.md
   local decisions=""
@@ -720,43 +1820,146 @@ write_handoff_internal() {
     decisions="$(awk '/^## Decisions Made/{p=1;next} p && /^## /{p=0} p{print}' "$planning_path" 2>/dev/null \
       | grep -v '^[[:space:]]*$' || true)"
   fi
-  [[ -n "$decisions" ]] || decisions="_(none recorded yet — decisions are captured at Gate 1)_"
+  [[ -n "$decisions" ]] || decisions="_(none recorded yet - decisions are captured at Gate 1)_"
 
   # Preserve user-edited Notes section across re-writes
-  local handoff_path="${SRD_ROOT}/${prefix}/HANDOFF.md"
+  local handoff_path="${_init_dir}/HANDOFF.md"
   local notes=""
   if [[ -f "$handoff_path" ]]; then
     notes="$(awk '/^## Notes/{p=1;next} p && /^## /{p=0} p{print}' "$handoff_path" 2>/dev/null \
       | grep -v '^[[:space:]]*$' || true)"
   fi
-  [[ -n "$notes" ]] || notes="_(Add anything a teammate should know before resuming — context, blockers, preferences)_"
+  [[ -n "$notes" ]] || notes="_(Add anything a teammate should know before resuming - context, blockers, preferences)_"
+
+  # Surface product and description when present (T43)
+  local product_name initiative_description
+  product_name="$(echo "$state" | jq -r '.product_name // ""')"
+  initiative_description="$(echo "$state" | jq -r '.initiative_description // ""')"
 
   local updated_at
   updated_at="$(now_utc)"
 
+  # Resume Point fields (T48, T52) — empty-safe; absent on pre-T52 state files.
+  local current_step last_cmd last_decision
+  current_step="$(echo "$state" | jq -r '.current_step // ""')"
+  last_cmd="$(echo "$state" | jq -r '.last_cmd // ""')"
+  last_decision="$(echo "$state" | jq -r '.last_decision // ""')"
+
+  # Pending artifacts for the current phase (absent files only).
+  local pending_artifacts=""
+  case "$phase" in
+    1) [[ -f "$planning_path" ]] || pending_artifacts="- \`${_init_dir}/planning.md\`" ;;
+    2) [[ -f "$srd_path" ]] || pending_artifacts="- \`${_init_dir}/${SRD_FILENAME}\`" ;;
+    3)
+      [[ -f "$srd_path" ]] || pending_artifacts="${pending_artifacts}- \`${_init_dir}/${SRD_FILENAME}\`"$'\n'
+      [[ -f "$audit_srd_path" ]] || pending_artifacts="${pending_artifacts}- \`${_init_dir}/audit-srd.md\`"
+      ;;
+    4) [[ -f "$tickets_path" ]] || pending_artifacts="- \`${_init_dir}/${TICKET_PACK_DIRNAME}/README.md\`" ;;
+    5)
+      [[ -f "$tickets_path" ]] || pending_artifacts="${pending_artifacts}- \`${_init_dir}/${TICKET_PACK_DIRNAME}/README.md\`"$'\n'
+      [[ -f "$audit_tickets_path" ]] || pending_artifacts="${pending_artifacts}- \`${_init_dir}/${TICKET_PACK_DIRNAME}/audit.md\`"
+      ;;
+    6) pending_artifacts="_(implementation in progress — track individual ticket status)_" ;;
+  esac
+  [[ -n "${pending_artifacts:-}" ]] || pending_artifacts="_(all phase artifacts present)_"
+  # Trim trailing newline from multi-line pending_artifacts.
+  pending_artifacts="${pending_artifacts%$'\n'}"
+
+  # Outstanding PARTIAL verdicts (T67).
+  local partial_verdicts_text
+  partial_verdicts_text="$(echo "$state" | jq -r '
+    (.partial_verdict_map // {}) | to_entries |
+    map(select(.value.verdict == "PARTIAL")) |
+    if length == 0 then ""
+    else map("- **\(.key)**: \(.value.note // "(no note)")  _(recorded \(.value.recorded_at // "?"))_") | join("\n")
+    end
+  ')"
+
   {
-    printf '%s\n\n' "# ${prefix} — Session Handoff"
+    printf '%s\n\n' "# ${prefix} - Session Handoff"
     printf '%s  \n' "> **Last updated**: ${updated_at} by ${USER:-unknown}"
     printf '%s\n\n' "> **To resume**: \`/edm:orchestrator ${prefix}\`"
     printf '%s\n\n' "## Current Status"
     printf '%s\n' "- **Phase**: ${phase_name}"
     printf '%s\n' "- **Gates approved**: ${gates_count} of 3"
     printf '%s\n' "- **Last gate**: ${last_gate}"
+    [[ -n "$product_name" ]] && printf '%s\n' "- **Product**: ${product_name}"
+    [[ -n "$initiative_description" ]] && printf '%s\n' "- **Description**: ${initiative_description}"
     printf '%s\n\n' "- **Next action**: ${next_action}"
+    printf '%s\n\n' "## Resume Point"
+    printf '%s\n' "- **Phase**: ${phase_name}"
+    [[ -n "$current_step" ]]  && printf '%s\n' "- **Step**: ${current_step}"
+    [[ -n "$last_cmd" ]]      && printf '%s\n' "- **Last command**: \`${last_cmd}\`"
+    [[ -n "$last_decision" ]] && printf '%s\n' "- **Last decision**: ${last_decision}"
+    printf '\n%s\n\n' "**Pending artifacts for ${phase_name}**:"
+    printf '%s\n\n' "${pending_artifacts}"
+    printf '%s\n\n' "> Copy-paste to resume: \`/edm:orchestrator ${prefix}\`"
+    printf '%s\n\n' "## Lifecycle & Mode"
+    printf '%s\n' "- **Mode**: ${mode}"
+    printf '%s\n' "- **Lifecycle mode**: ${lifecycle_mode}"
+    printf '%s\n' "- **Compliance**: ${compliance_enabled}"
+    printf '%s\n' "- **Implementation mode**: ${implementation_mode}"
+    [[ -n "$supersedes" ]]  && printf '%s\n' "- **Supersedes**: ${supersedes}"
+    [[ -n "$forked_from" ]] && printf '%s\n' "- **Forked from**: ${forked_from}"
+    if [[ -n "$skipped_phases_json" ]]; then
+      printf '\n%s\n' "**Skipped phases:**"
+      printf '%s\n' "${skipped_phases_json}"
+    fi
+    printf '\n'
+    if [[ -n "$partial_verdicts_text" ]]; then
+      printf '%s\n\n' "## Outstanding PARTIAL Verdicts"
+      printf '%s\n\n' "${partial_verdicts_text}"
+    fi
     printf '%s\n\n' "## Gates"
     printf '%s\n\n' "${gate_list}"
     printf '%s\n\n' "## Artifact Checklist"
     printf '%s\n' "| Artifact | Status |"
     printf '%s\n' "|----------|--------|"
-    printf '%s\n' "| \`SRD/${prefix}/planning.md\` | ${s_planning} |"
-    printf '%s\n' "| \`SRD/${prefix}/${SRD_FILENAME}\` | ${s_srd} |"
-    printf '%s\n' "| \`SRD/${prefix}/audit-srd.md\` | ${s_audit_srd} |"
-    printf '%s\n' "| \`SRD/${prefix}/${TICKET_PACK_DIRNAME}/README.md\` | ${s_tickets} |"
-    printf '%s\n\n' "| \`SRD/${prefix}/${TICKET_PACK_DIRNAME}/audit.md\` | ${s_audit_tickets} |"
+    printf '%s\n' "| \`${_init_dir}/planning.md\` | ${s_planning} |"
+    printf '%s\n' "| \`${_init_dir}/${SRD_FILENAME}\` | ${s_srd} |"
+    printf '%s\n' "| \`${_init_dir}/audit-srd.md\` | ${s_audit_srd} |"
+    printf '%s\n' "| \`${_init_dir}/${TICKET_PACK_DIRNAME}/README.md\` | ${s_tickets} |"
+    printf '%s\n' "| \`${_init_dir}/${TICKET_PACK_DIRNAME}/audit.md\` | ${s_audit_tickets} |"
+    printf '%s\n' "| \`${_init_dir}/architecture.md\` | ${s_arch} |"
+    printf '%s\n' "| \`${_init_dir}/decisions.md\` | ${s_decisions} |"
+    printf '%s\n' "| \`${_init_dir}/ROLLBACK.md\` | ${s_rollback} (on-demand) |"
+    printf '%s\n\n' "| \`${_init_dir}/exec-report.md\` | ${s_exec_report} (on-demand) |"
     printf '%s\n\n' "## Key Decisions Made"
     printf '%s\n\n' "${decisions}"
+    if [[ "$s_decisions" == "[present]" ]]; then
+      printf '%s\n\n' "-> See full decision ledger: \`${_init_dir}/decisions.md\`"
+    fi
+    # Related Initiatives section (T103)
+    local parent_prefix_val related_prefixes_val
+    parent_prefix_val="$(echo "$state" | jq -r '.parent_prefix // ""')"
+    related_prefixes_val="$(echo "$state" | jq -r '(.related_prefixes // []) | join(" ")')"
+    if [[ -n "$parent_prefix_val" || -n "$related_prefixes_val" ]]; then
+      printf '%s\n\n' "## Related Initiatives"
+      if [[ -n "$parent_prefix_val" ]]; then
+        local parent_dir
+        parent_dir="$(state_file_for "$parent_prefix_val" 2>/dev/null || true)"
+        if [[ -n "$parent_dir" && -f "$parent_dir" ]]; then
+          printf '%s\n' "- Parent: ${parent_prefix_val} (${parent_dir%/.edm-state.json})"
+        else
+          printf '%s\n' "- Parent: ${parent_prefix_val} (unresolved)"
+        fi
+      fi
+      if [[ -n "$related_prefixes_val" ]]; then
+        local rp
+        for rp in $related_prefixes_val; do
+          local rp_dir
+          rp_dir="$(state_file_for "$rp" 2>/dev/null || true)"
+          if [[ -n "$rp_dir" && -f "$rp_dir" ]]; then
+            printf '%s\n' "- Related: ${rp} (${rp_dir%/.edm-state.json})"
+          else
+            printf '%s\n' "- Related: ${rp} (unresolved)"
+          fi
+        done
+      fi
+      printf '\n'
+    fi
     printf '%s\n\n' "## How to Resume"
-    printf '%s\n' "1. Pull the latest branch — all EDM artifacts are committed"
+    printf '%s\n' "1. Pull the latest branch - all EDM artifacts are committed"
     printf '%s\n' "2. Open Claude Code in the project root"
     printf '%s\n' "3. Run: \`/edm:orchestrator ${prefix}\`"
     printf '%s\n\n' "4. The orchestrator detects the existing initiative and resumes from **${phase_name}**"
@@ -768,32 +1971,51 @@ write_handoff_internal() {
 cmd_write_handoff() {
   [[ $# -eq 1 ]] || die "usage: edm-state write-handoff <PREFIX>"
   write_handoff_internal "$1"
-  echo "wrote ${SRD_ROOT}/${1}/HANDOFF.md"
+  echo "wrote $(initiative_dir_for "$1")/HANDOFF.md"
 }
 
 # ---- dispatch ---------------------------------------------------------------
 
 cmd="${1:-}"; shift || true
 case "$cmd" in
-  get)                cmd_get "$@" ;;
-  set)                cmd_set "$@" ;;
-  init)               cmd_init "$@" ;;
-  list)               cmd_list "$@" ;;
-  approve-gate)       cmd_approve_gate "$@" ;;
-  phase-start)        cmd_phase_start "$@" ;;
-  phase-complete)     cmd_phase_complete "$@" ;;
+  get)                  cmd_get "$@" ;;
+  set)                  cmd_set "$@" ;;
+  init)                 cmd_init "$@" ;;
+  list)                 cmd_list "$@" ;;
+  active-initiatives)   cmd_active_initiatives "$@" ;;
+  migrate-path)         cmd_migrate_path "$@" ;;
+  approve-gate)         cmd_approve_gate "$@" ;;
+  phase-start)          cmd_phase_start "$@" ;;
+  phase-complete)       cmd_phase_complete "$@" ;;
   checkpoint-if-active) cmd_checkpoint "$@" ;;
   record-task-duration) cmd_record_task_duration "$@" ;;
   record-test-coverage) cmd_record_test_coverage "$@" ;;
-  record-tests-added) cmd_record_tests_added "$@" ;;
-  get-coverage)       cmd_get_coverage "$@" ;;
-  srd-version)        cmd_srd_version "$@" ;;
-  archive)            cmd_archive "$@" ;;
-  write-handoff)      cmd_write_handoff "$@" ;;
-  watch-impl)         cmd_watch_impl "$@" ;;
-  metrics-report)     cmd_metrics_report "$@" ;;
+  record-tests-added)   cmd_record_tests_added "$@" ;;
+  get-coverage)         cmd_get_coverage "$@" ;;
+  srd-version)          cmd_srd_version "$@" ;;
+  archive)              cmd_archive "$@" ;;
+  write-handoff)        cmd_write_handoff "$@" ;;
+  watch-impl)           cmd_watch_impl "$@" ;;
+  metrics-report)       cmd_metrics_report "$@" ;;
+  validate)             cmd_validate "$@" ;;
+  gate-check)           cmd_gate_check "$@" ;;
+  branch-check)         cmd_branch_check "$@" ;;
+  git-lock-check)       cmd_git_lock_check "$@" ;;
+  current-step)         cmd_current_step "$@" ;;
+  session-start)        cmd_session_start "$@" ;;
+  audit-round-start)    cmd_audit_round_start "$@" ;;
+  record-partial-verdict) cmd_record_partial_verdict "$@" ;;
+  set-mode)             cmd_set_mode "$@" ;;
+  skip-phase)           cmd_skip_phase "$@" ;;
+  set-supersedes)       cmd_set_supersedes "$@" ;;
+  set-forked-from)      cmd_set_forked_from "$@" ;;
+  resolve-dir)          cmd_resolve_dir "$@" ;;
+  set-parent)           cmd_set_parent "$@" ;;
+  add-related)          cmd_add_related "$@" ;;
+  update-patterns)      cmd_update_patterns "$@" ;;
+  lint)                 cmd_lint "$@" ;;
   ""|-h|--help|help)
-    sed -n '2,21p' "$0"
+    sed -n '2,39p' "$0"
     ;;
   *)
     die "unknown subcommand: $cmd (try --help)"

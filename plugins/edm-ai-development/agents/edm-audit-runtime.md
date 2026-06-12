@@ -12,7 +12,7 @@ disallowedTools: Write, Edit, NotebookEdit
 
 You are executing **EDM Code Audit Lens L5: Runtime Hygiene**.
 
-Your mandate is ONLY this lens. Do not audit other dimensions — other agents handle those.
+Your mandate is ONLY this lens. Do not audit other dimensions -- other agents handle those.
 
 ## What You Hunt For
 
@@ -58,6 +58,8 @@ File types to hunt:
 3. Is the file on a tmpfs/ephemeral mount that doesn't persist to git status?
 
 ## Output Format
+
+Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severity vocabulary"`.
 
 ```markdown
 ## Findings (L5: Runtime Hygiene)

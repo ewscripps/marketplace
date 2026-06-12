@@ -1,11 +1,11 @@
 ---
 name: audit-srd
-description: EDM Phase 3 (SRD Audit) — audit the SRD across 7 categories, remediate all P0/P1 findings, present HITL Gate 2. Invoked explicitly via /edm:audit-srd.
+description: EDM Phase 3 (SRD Audit) -- audit the SRD across 7 categories, remediate all P0/P1 findings, present HITL Gate 2. Invoked explicitly via /edm:audit-srd.
 disable-model-invocation: true
 model: opus
 effort: max
 argument-hint: <PREFIX>
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Task, TodoWrite
+allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 ---
 
 # EDM Phase 3: SRD Audit
@@ -21,13 +21,21 @@ Every error caught here saves 10x the effort of catching it during implementatio
 
 1. Parse `{PREFIX}` from `$ARGUMENTS`.
 2. `edm-state phase-start <PREFIX> 3`
-3. Spawn 2-3 `edm-srd-auditor` agents in parallel — one per section group (e.g., sections 1-4, 5-7, 8-11). Each agent audits its sections across all 7 categories.
-4. Compile findings from all agents into `${user_config.srd_root}/{PREFIX}/audit-srd.md` using the report format below.
-5. **Remediate**: fix every P0 and P1 finding directly in the SRD. Update the Revision History (bump SRD version, e.g., 1.0.0 → 1.1.0).
-6. Update `srd_version` in `.edm-state.json`: `edm-state set <PREFIX> srd_version 1.1.0`
-7. `edm-state phase-complete <PREFIX> 3`
-8. Present **HITL Gate 2** (see below) and STOP for sign-off.
-9. On approval: `edm-state approve-gate <PREFIX> 2`.
+3. **Version-drift check**: Read the SRD's Document Info section (or first Revision History entry) to
+   extract the embedded version (e.g., `1.0.0`). Read `srd_version` from state:
+   ```bash
+   edm-state get <PREFIX> | jq -r '.srd_version // "0.0.0"'
+   ```
+   If the embedded SRD version differs from the state value, sync state to match the file version
+   before proceeding (`edm-state srd-version <PREFIX> <embedded-version>`). A divergence here means
+   the SRD was edited out-of-band; note it in the audit report intro.
+4. Spawn 2-3 `edm-srd-auditor` agents in parallel -- one per section group (e.g., sections 1-4, 5-7, 8-11). Each agent audits its sections across all 7 categories.
+5. Compile findings from all agents into `${user_config.srd_root}/{PREFIX}/audit-srd.md` using the report format below.
+6. **Remediate**: fix every P0 and P1 finding directly in the SRD. Update the Revision History (bump SRD version, e.g., 1.0.0 -> 1.1.0).
+7. Update `srd_version` in `.edm-state.json`: `edm-state srd-version <PREFIX> 1.1.0`
+8. `edm-state phase-complete <PREFIX> 3`
+9. Present **HITL Gate 2** (see below) and STOP for sign-off.
+10. On approval: `edm-state approve-gate <PREFIX> 2`.
 
 ## 7 Audit Categories
 
@@ -54,11 +62,14 @@ Licensing, accessibility (WCAG), i18n, backward compatibility, deployment impact
 
 ## Severity Levels
 
+Use the canonical four-level scale from `CLAUDE.md Sec."Severity vocabulary"` — no divergent local scale.
+
 | Severity | Definition | Action |
 |---|---|---|
 | P0 | Blocks implementation, security/legal issue, architecturally wrong | Must fix before Phase 4 |
-| P1 | Significant gap, factual error, missing requirement | Must fix before Phase 4 |
+| P1 | Significant gap, factual error, missing requirement | Must fix before shipping |
 | P2 | Polish, edge case, improvement | Can defer |
+| NOTED | Intentional, pre-existing, or accepted trade-off | Document in Decisions / Non-Findings; do not re-investigate |
 
 ## Finding Format
 
@@ -78,14 +89,17 @@ Licensing, accessibility (WCAG), i18n, backward compatibility, deployment impact
 - P0 findings: N | P1 findings: N | P2 findings: N
 - **Verdict**: PASS / FAIL
 
-## P0 — Critical (Must Fix Now)
+## P0 -- Critical (Must Fix Now)
 [findings]
 
-## P1 — Significant (Must Fix Now)
+## P1 -- Significant (Must Fix Now)
 [findings]
 
-## P2 — Minor (Can Defer)
+## P2 -- Minor (Can Defer)
 [findings]
+
+## NOTED -- Intentional / Pre-existing
+[Items that look like findings but are intentional, pre-existing, or accepted trade-offs — documented once, not re-investigated]
 
 ## Remediation
 [List of P0/P1 fixes applied to the SRD]
@@ -106,5 +120,5 @@ Prompt: "Audit the SRD at ${user_config.srd_root}/{PREFIX}/${user_config.srd_fil
 After remediating all P0/P1:
 1. Summarize: requirement count by priority (Must/Should/Could), key architecture decisions, risks, audit findings resolved (P0: N, P1: N, P2: N deferred).
 2. Ask: *"Do you approve this SRD and want to proceed to ticket creation, or do you have changes?"*
-3. **STOP and WAIT** — do not proceed to Phase 4 autonomously.
+3. **STOP and WAIT** -- do not proceed to Phase 4 autonomously.
 4. On approval: `edm-state approve-gate <PREFIX> 2`. Next: `/edm:tickets <PREFIX>`.
