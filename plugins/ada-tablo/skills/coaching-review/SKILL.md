@@ -79,7 +79,7 @@ Previous concerns: [any flagged items from last review]
 - `COACHINGAPPLIED` filter: Get resolution rates for specific coaching IDs
 - `search_coaching`: Find coaching IDs via semantic search (need IDs for filtering)
 - `get_ada_configuration`: Config snapshot — playbooks summary, web_actions, and custom_instructions (no coaching list)
-- `propose_change(entity_type="coaching")`: Create/update/disable/delete individual coaching (see Steps 3d and 6)
+- `propose_change(entity_type="coaching")`: Create/update/disable/delete individual coaching (create: Step 6; disable/delete: Step 3d)
 
 **What MCP CANNOT do:**
 - `search_coaching` cannot enumerate all coaching — only finds items matching query terms
@@ -319,6 +319,13 @@ Most recommendations stem from a specific conversation. MCP creation requires an
      }
    )
    ```
+
+   Field selection by `coaching_type` (verified live against the field-discovery schema 2026-07-08):
+
+   | coaching_type | Required fields |
+   |---|---|
+   | reply | conversation_id, generative_actions_event_id, intent, text |
+   | action / process / search_knowledge / handoff / playbook | conversation_id, generative_actions_event_id, intent, chosen_id |
 
 4. **Preview, then confirm:** review the staged preview, present Confirm/Cancel to the user, and only re-call with `confirmed=true` after explicit confirmation.
 

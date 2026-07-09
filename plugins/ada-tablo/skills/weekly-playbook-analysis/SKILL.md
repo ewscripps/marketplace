@@ -81,8 +81,8 @@ MCP is the default data path — both `get_ada_metric` and `get_conversations` s
    ```
 
 2. **Escalation %** — two volume calls, then divide:
-   - Playbook volume: `get_ada_metric(metric_type="conversation_volume_engaged", filters=[{"type": "PLAYBOOKID", "operator": "IS", "value": ["<playbook_id>"]}])`
-   - Escalated volume: same call with `{"type": "HANDOFF", "operator": "IS", "value": true}` added to the filters
+   - Playbook volume: `get_ada_metric(metric_type="conversation_volume_engaged", start_date="[from Step 0]", end_date="[from Step 0]", filters=[{"type": "PLAYBOOKID", "operator": "IS", "value": ["<playbook_id>"]}])`
+   - Escalated volume: same call (same dates) with `{"type": "HANDOFF", "operator": "IS", "value": true}` added to the filters
    - Escalation % = escalated volume ÷ playbook volume
 
 ## Step 3: Pull Failure Patterns via MCP
