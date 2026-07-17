@@ -17,6 +17,7 @@ AI coding assistants are powerful out of the box, but teams need consistent beha
 | Plugin | Description |
 | ------ | ----------- |
 | [git](./plugins/git) | Git workflow plugin — conventional commits with Jira ticket scope, gitmoji, and Atlassian MCP integration |
+| [myday](./plugins/myday) | Daily planner — calendar + team Jira briefing, mid-day check-ins, end-of-day reflection, PTO tracking, meeting notes, reminders, and review prep |
 
 ## Project Structure
 

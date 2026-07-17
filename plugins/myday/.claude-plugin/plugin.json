@@ -1,0 +1,8 @@
+{
+  "name": "myday",
+  "version": "1.0.0",
+  "description": "Daily planner skill — calendar + team Jira briefing, mid-day check-ins, end-of-day reflection, team lookups, PTO tracking, meeting notes, reminders, and review prep.",
+  "author": {
+    "name": "STG Software Engineering Team"
+  }
+}

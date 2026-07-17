@@ -126,6 +126,15 @@
                 "./skills/mr-creation",
                 "./skills/compact-context"
             ]
+        },
+        {
+            "name": "myday",
+            "source": "./plugins/myday",
+            "description": "Daily planner skill — calendar + team Jira briefing, mid-day check-ins, end-of-day reflection, team lookups, PTO tracking, meeting notes, reminders, and review prep.",
+            "version": "1.0.0",
+            "skills": [
+                "./skills/myday"
+            ]
         }
     ]
 }
