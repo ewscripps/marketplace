@@ -82,6 +82,30 @@ Flag if:
 - Catch-all increased by >2% (investigate what changed)
 - Catch-all decreased by >3% (confirm which changes worked)
 
+## Step 3b: Mid-Week Catch-All Spot Check (Optional)
+
+Catch-all % can be spot-checked any time via MCP — no CSV export needed. Useful mid-week to verify whether a deployed change is moving the number before Friday's full review.
+
+**Catch-all topic IDs (for TOPIC filters):**
+
+| Topic | ID |
+|-------|-----|
+| Unclear or Incomplete Inquiries | `67f95e779a99fb6bdfe534a8` |
+| Other Inquiries | `67fec3bbac473f6c4a232f93` |
+
+1. **Filtered volume** (both catch-all topics):
+   ```
+   get_ada_metric(
+     metric_type="conversation_volume_engaged",
+     start_date="[start]", end_date="[end]",
+     filters=[{"type": "TOPIC", "operator": "IS", "value": ["67f95e779a99fb6bdfe534a8", "67fec3bbac473f6c4a232f93"]}]
+   )
+   ```
+2. **Total volume:** same call without filters
+3. **Catch-all % = filtered ÷ total**
+
+This is a spot check only — the Friday review still uses the topics report CSV for the full per-topic breakdown.
+
 ## Step 4: Check Active Issues
 
 Review Active Issues table from weekly_review_notes.md. For each tracked item:
@@ -93,13 +117,22 @@ Review Active Issues table from weekly_review_notes.md. For each tracked item:
 
 If catch-all increased OR user wants pattern analysis:
 
-1. **Option A: Use conversation summaries from Ada MCP**
+1. **Option A: Pull catch-all conversation summaries via Ada MCP (default)**
    - Token-efficient: ~100-200 tokens per conversation
-   - Get summaries for catch-all topics via `get_ada_metric(metric_type="conversation_summaries")`
+   - Filter directly to the two catch-all topics (IDs in Step 3b):
+   ```
+   get_conversations(
+     detail_level="SUMMARY",
+     start_date="[start]", end_date="[end]",
+     filters=[{"type": "TOPIC", "operator": "IS", "value": ["67f95e779a99fb6bdfe534a8", "67fec3bbac473f6c4a232f93"]}]
+   )
+   ```
+   - Identify patterns from the Inquiry Summary / Classification fields
 
-2. **Option B: Run catch-all analysis script**
+2. **Option B: Run catch-all analysis script (fallback for large samples)**
    - Requires conversation export (not topics report)
    - Identifies keyword patterns in catch-all conversations
+   - Use when the sample is too large to review via summaries
    ```bash
    python3 ~/repos/ada-tablo-ops/scripts/analyze_catchall_conversations.py [conversations.csv]
    ```

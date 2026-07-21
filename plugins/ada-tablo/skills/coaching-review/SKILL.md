@@ -78,11 +78,12 @@ Previous concerns: [any flagged items from last review]
 **What MCP CAN do:**
 - `COACHINGAPPLIED` filter: Get resolution rates for specific coaching IDs
 - `search_coaching`: Find coaching IDs via semantic search (need IDs for filtering)
+- `get_ada_configuration`: Config snapshot — playbooks summary, web_actions, and custom_instructions (no coaching list)
+- `propose_change(entity_type="coaching")`: Create/update/disable/delete individual coaching (create: Step 6; disable/delete: Step 3d)
 
 **What MCP CANNOT do:**
-- `get_ada_configuration` returns only Custom Instructions (global behavior rules)
 - `search_coaching` cannot enumerate all coaching — only finds items matching query terms
-- No way to list all coaching rules — no API endpoint exists; Ada does not expose a coaching list programmatically
+- No way to list all coaching rules — `list_entities` has no coaching entity type (re-verified 2026-07-08); Ada does not expose a coaching list programmatically
 
 **Coaching ID Source:**
 `coaching_ids.md` is the canonical reference for tracked coaching IDs. Run the refresh script to update all known IDs in one pass:
@@ -117,9 +118,9 @@ If previous export exists, compare to identify:
 
 **Option B: MCP Quick Check (Between full syncs)**
 
-Use `get_ada_configuration` for Custom Instructions only:
+Use `get_ada_configuration` for a config snapshot:
 - Token cost: ~2-5k tokens
-- Returns global behavior rules
+- Returns playbooks summary, web_actions, and custom_instructions (global behavior rules) — but no coaching list
 
 Use `search_coaching` for targeted lookups:
 - "registration setup firmware"
@@ -236,6 +237,12 @@ For coaching with 0 uses/week (see `coaching_ids.md` for current count):
 - **Keep if:** Content accurate (may be relevant for rare scenarios)
 - **Skip monthly:** Focus reviews on high-impact items only
 
+**Executing a deprecation:** can now be done via MCP instead of the UI:
+```
+propose_change(entity_type="coaching", operation="disable", entity_id="<coaching_id>")
+```
+(or `operation="delete"` for permanent removal). Review the preview, present Confirm/Cancel to the user, and only re-call with `confirmed=true` after explicit confirmation.
+
 ## Step 4: Track Month-over-Month Trends
 
 Track month-over-month resolution rates (measured via Step 3a):
@@ -284,7 +291,49 @@ Only after evaluating existing coaching. Review recent analyses for gaps:
 
 **Skip if:** No new coaching to implement from Step 5
 
-For new coaching to implement in Ada:
+For new coaching to implement in Ada, choose the path based on whether the coaching traces to a specific conversation:
+
+### Option A: MCP Creation (when coaching traces to a specific conversation)
+
+Most recommendations stem from a specific conversation. MCP creation requires anchoring to a coachable event in that conversation:
+
+1. **Pull the conversation** — warn the user first: `get_conversation` costs **~11k tokens**:
+   ```
+   get_conversation(conversation_id="<id>")
+   ```
+
+2. **Find the coachable event:** locate the transcript entry with `is_coachable=true` and take its `generative_actions_event_id`.
+
+3. **Stage the creation:**
+   ```
+   propose_change(
+     entity_type="coaching",
+     operation="create",
+     fields={
+       "conversation_id": "<conversation_id>",
+       "generative_actions_event_id": "<event_id>",
+       "intent": "[triggering scenario]",
+       "coaching_type": "reply | action | process | search_knowledge | handoff | playbook",
+       "text": "[the coaching text — reply type only]",
+       "chosen_id": "[required for all types EXCEPT reply — the target playbook/handoff/process/article ID]"
+     }
+   )
+   ```
+
+   Field selection by `coaching_type` (verified live against the field-discovery schema 2026-07-08):
+
+   | coaching_type | Required fields |
+   |---|---|
+   | reply | conversation_id, generative_actions_event_id, intent, text |
+   | action / process / search_knowledge / handoff / playbook | conversation_id, generative_actions_event_id, intent, chosen_id |
+
+4. **Preview, then confirm:** review the staged preview, present Confirm/Cancel to the user, and only re-call with `confirmed=true` after explicit confirmation.
+
+5. The create response **returns the new coaching ID directly** — use it for the coaching_ids.md append below (no fishing it out of the UI).
+
+### Option B: Ada UI (for coaching not anchored to a conversation)
+
+For abstract rules with no source conversation:
 
 **Ada UI Navigation:**
 1. Go to: Settings > AI Agent > Coaching
@@ -307,8 +356,8 @@ For new coaching to implement in Ada:
 - Associate with specific playbook if applicable
 - Associate with topic if applicable
 
-**After Implementation:**
-- Note the coaching ID from Ada
+**After Implementation (both options):**
+- Note the coaching ID (MCP create returns it directly; UI requires reading it from the coaching list)
 - Add to Active Coaching section with all fields
 - Set Status to "Testing"
 - Set Created date
