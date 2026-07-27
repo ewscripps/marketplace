@@ -276,8 +276,10 @@ invoke_claude() {
     --plugin-dir "$EDM_PLUGIN_DIR" \
     --output-format json \
     --no-session-persistence \
-    --max-budget-usd "$PHASE_MAX_BUDGET_USD" \
-    --bare
+    --max-budget-usd "$PHASE_MAX_BUDGET_USD"
+  # NOTE: no --bare. It isolates the CLI from user config INCLUDING stored credentials, which
+  # turns every phase into "Not logged in" on subscription-auth machines (verified live,
+  # claude 2.1.220). --no-session-persistence provides the isolation this driver needs.
   rc=$?
   cd "$prev_dir" || true
   return "$rc"
