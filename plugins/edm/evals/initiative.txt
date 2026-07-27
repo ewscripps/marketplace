@@ -1,0 +1,26 @@
+# EDM eval driver -- frozen Phase 1 input (EDMV3-25)
+#
+# This file is the frozen initiative description plugins/edm/evals/run-eval.sh feeds to
+# /edm:plan on every headless run. It must never be edited without bumping the version
+# line below and recording the change in this header, because run-eval.sh's runs are
+# compared against each other and against the wave-A baseline (EDMV3-T23) -- an edited
+# subject makes those comparisons meaningless.
+#
+# version: 1.0.0
+# history:
+#   1.0.0 (EDMV3-T22) -- initial frozen initiative description for the tiny-svc fixture.
+version: 1.0.0
+prefix: TSVE
+product: eval
+description: tiny-svc-hardening
+
+Harden the tiny-svc webhook relay (plugins/edm/evals/fixtures/tiny-svc/) so it is safe to
+operate in production. Today tiny-svc's webhook endpoint accepts unauthenticated POSTs,
+stores a downstream billing provider's API key in a plaintext config file, retries a
+failed downstream billing call zero times with no dead-letter path, performs no schema
+validation on the incoming payload, emits no logs or metrics on the worker's downstream
+call path, and ships with no automated test suite. Produce a scope, an SRD, and an SRD
+audit that close these gaps without changing tiny-svc's externally observed behavior for
+valid, authenticated traffic. Treat tiny-svc as the entire system under study -- there is
+no other service, database, or external dependency to consider beyond what is in the
+fixture tree.

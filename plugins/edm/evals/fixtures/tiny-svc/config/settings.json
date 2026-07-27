@@ -1,0 +1,8 @@
+{
+  "serviceName": "tiny-svc",
+  "settings": {
+    "queuePollIntervalMs": 500,
+    "billingApiKey": "FIXTURE-HARDCODED-SECRET-DO-NOT-USE",
+    "billingEndpoint": "https://billing.example.invalid/v1/charges"
+  }
+}

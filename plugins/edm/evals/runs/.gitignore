@@ -1,0 +1,7 @@
+# Eval run output (run-eval.sh, EDMV3-T22) lands here. It is never committed: the initiative
+# that ships this harness also removes 708KB of binaries from the shipped plugin directory
+# (EDMV3-80) on the grounds every installer downloads them, and committed run output would undo
+# that. The wave-A committed baseline (EDMV3-T23) is stored outside plugins/edm/ entirely -- see
+# ../baseline/README.md once EDMV3-T23 lands.
+*
+!.gitignore
