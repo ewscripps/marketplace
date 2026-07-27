@@ -54,7 +54,7 @@ track findings across passes and determine convergence.
 10. **Convergence check** (full rounds only -- partial rounds are never convergent):
     - Read `findings-ledger.md`: count open P0 and P1 findings introduced or surviving in this round
     - If **zero open P0/P1 findings**: convergence reached ->
-      1. `edm-state set <PREFIX> code_audit_converged true`
+      1. `edm-state approve-gate <PREFIX> code-audit`
       2. **Add a closure note** to the top of `${OUTPUT_DIR}/REMEDIATION.md` (the current round's file):
          ```markdown
          ## Post-Remediation Closure ({YYYY-MM-DD})

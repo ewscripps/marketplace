@@ -693,6 +693,99 @@ vocab_hits="$(grep -rn "$guard_needle_a" "$PLUGIN_DIR" 2>/dev/null | grep -v '/b
 [[ "$vocab_hits" -eq 0 ]] && pass "no line describes the preflight block with that word" \
   || fail "found $vocab_hits line(s) combining the two guarded terms on one line -- vocabulary guard violated"
 
+# =================================================================================
+# EDMV3-T09: cmd_set becomes a checked contract -- allowlist, gate refusals, schema_version
+# =================================================================================
+echo
+echo "T09 -- cmd_set allowlist, gate-bearing refusals, schema_version"
+
+"$EDM_STATE" init T09GATE >/dev/null
+STATE_T09GATE="$TMP/SRD/T09GATE/.edm-state.json"
+
+# ---- AC1: code_audit_converged refused, naming approve-gate code-audit ---------
+echo
+echo "T09 AC1 -- code_audit_converged refused, naming approve-gate code-audit"
+check_fails "set code_audit_converged refused" \
+  "edm-state approve-gate <PREFIX> code-audit" \
+  "$EDM_STATE" set T09GATE code_audit_converged true
+
+# ---- AC2: refusal precedes mutation, for every supplied value ------------------
+echo
+echo "T09 AC2 -- refusal happens before mutation, for true/false/garbage"
+check_state_unchanged "$STATE_T09GATE" "$EDM_STATE" set T09GATE code_audit_converged true
+check_state_unchanged "$STATE_T09GATE" "$EDM_STATE" set T09GATE code_audit_converged false
+check_state_unchanged "$STATE_T09GATE" "$EDM_STATE" set T09GATE code_audit_converged garbage
+
+# ---- AC3: the whole gate-bearing class refuses, no partial mutation -----------
+echo
+echo "T09 AC3 -- compliance_gate_approved and gates_approved refuse entirely"
+check_fails "set compliance_gate_approved refused" \
+  "edm-state approve-gate <PREFIX> 3.5" \
+  "$EDM_STATE" set T09GATE compliance_gate_approved true
+check_state_unchanged "$STATE_T09GATE" "$EDM_STATE" set T09GATE compliance_gate_approved true
+check_fails "set gates_approved refused" \
+  "edm-state approve-gate <PREFIX> <gate-num>" \
+  "$EDM_STATE" set T09GATE gates_approved true
+check_state_unchanged "$STATE_T09GATE" "$EDM_STATE" set T09GATE gates_approved true
+
+# ---- AC5: a known key still succeeds -------------------------------------------
+echo
+echo "T09 AC5 -- known key succeeds"
+"$EDM_STATE" set T09GATE last_decision "T09 smoke check" >/dev/null \
+  && pass "known key succeeds (last_decision via cmd_set)" \
+  || fail "known key succeeds: last_decision unexpectedly refused"
+ld_out="$(jq -r '.last_decision' "$STATE_T09GATE")"
+[[ "$ld_out" == "T09 smoke check" ]] && pass "last_decision persisted correctly" \
+  || fail "last_decision = '$ld_out', expected 'T09 smoke check'"
+
+# ---- AC6: unknown key refused, lists the full sorted valid-key list -----------
+echo
+echo "T09 AC6 -- unknown key lists valid keys"
+check_fails "unknown key lists valid keys" \
+  "unknown key 'totally_made_up_key'" \
+  "$EDM_STATE" set T09GATE totally_made_up_key 1
+unk_out="$("$EDM_STATE" set T09GATE totally_made_up_key 1 2>&1 || true)"
+check "unknown key error lists compliance_enabled" "compliance_enabled" "$unk_out"
+check "unknown key error lists test_frameworks_detected" "test_frameworks_detected" "$unk_out"
+check_state_unchanged "$STATE_T09GATE" "$EDM_STATE" set T09GATE totally_made_up_key 1
+
+# ---- AC7: existing typed validation and its error strings are unchanged -------
+echo
+echo "T09 AC7 -- existing typed validation preserved verbatim"
+check_fails "compliance_enabled still requires true|false (verbatim message)" \
+  "requires a boolean value (true|false); got: maybe" \
+  "$EDM_STATE" set T09GATE compliance_enabled maybe
+check_fails "current_phase still requires a numeric value (verbatim message)" \
+  "requires a numeric value; got: abc" \
+  "$EDM_STATE" set T09GATE current_phase abc
+
+# ---- AC8: schema_version is an integer, written by cmd_init, readable via get --
+echo
+echo "T09 AC8 -- schema_version is 1 for a wave-A-created initiative, readable via get"
+sv_out="$("$EDM_STATE" get T09GATE | jq -e '.schema_version == 1')"
+[[ "$sv_out" == "true" ]] && pass "schema_version = 1 for a wave-A-created initiative" \
+  || fail "schema_version != 1 (jq -e result: $sv_out)"
+
+# Ticket's literal verify path: edm-init (the wrapper, not cmd_init directly) in a
+# scratch repo, product-scoped, then `edm-state get <PREFIX> | jq -e`.
+t09_ac8_case_edm_init() {
+  edm-init --product demo --description sv TESTV >/dev/null
+  local sv_scratch
+  sv_scratch="$(edm-state get TESTV | jq -e '.schema_version == 1' 2>&1)"
+  [[ "$sv_scratch" == "true" ]] \
+    && pass "T09 AC8 -- edm-init --product/--description scratch-repo path: schema_version == 1" \
+    || fail "T09 AC8 -- edm-init scratch-repo path: jq -e result '$sv_scratch', expected true"
+}
+with_scratch_repo t09_ac8_case_edm_init
+
+# ---- AC9: schema_version is refused via cmd_set, naming migrate-schema --------
+echo
+echo "T09 AC9 -- set schema_version refused naming migrate-schema"
+check_fails "set schema_version refused naming migrate-schema" \
+  "edm-state migrate-schema <PREFIX>" \
+  "$EDM_STATE" set T09GATE schema_version 2
+check_state_unchanged "$STATE_T09GATE" "$EDM_STATE" set T09GATE schema_version 2
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
