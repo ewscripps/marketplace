@@ -786,6 +786,381 @@ check_fails "set schema_version refused naming migrate-schema" \
   "$EDM_STATE" set T09GATE schema_version 2
 check_state_unchanged "$STATE_T09GATE" "$EDM_STATE" set T09GATE schema_version 2
 
+# =================================================================================
+# EDMV3-T06: permission `ask` rule detection, PERM_RULES_MISSING anomaly, enforcement tags
+# =================================================================================
+echo
+echo "T06 -- permission ask-rule detection and honest enforcement tags"
+
+# Isolated scratch cwd + isolated HOME so this suite's outcome never depends on the
+# developer machine's real ~/.claude/settings.json (AC4/AC6 fail-safe requires this to be
+# deterministic, not "whatever happens to be on the box that runs it").
+T06_HOME="$(mktemp -d)"
+T06_CWD="$(mktemp -d)"
+T06_PREV_HOME="${HOME:-}"
+T06_PREV_PWD="$(pwd)"
+mkdir -p "$T06_HOME/.claude" "$T06_CWD/.claude"
+cd "$T06_CWD"
+export HOME="$T06_HOME"
+
+t06_restore_env() {
+  cd "$T06_PREV_PWD"
+  export HOME="$T06_PREV_HOME"
+}
+
+# ---- AC4/AC6 -- no settings files anywhere -> prose-only, fail-safe direction ---
+echo
+echo "T06 AC4/AC6 -- no settings files present -> prose-only (fail-safe default)"
+"$EDM_STATE" init T06NONE >/dev/null
+STATE_T06NONE="$TMP/SRD/T06NONE/.edm-state.json"
+"$EDM_STATE" approve-gate T06NONE 1 >/dev/null
+enf_none="$(jq -r '.gates_approved[0].enforcement' "$STATE_T06NONE")"
+[[ "$enf_none" == "prose-only" ]] && pass "no settings files -> enforcement=prose-only" \
+  || fail "no settings files -> enforcement='$enf_none', expected prose-only"
+
+# ---- AC4 -- detection scans all three files; each alone is sufficient (union) --
+echo
+echo "T06 AC4 -- detection across the three scanned files"
+cat > "$T06_CWD/.claude/settings.local.json" <<'JSON'
+{"permissions": {"ask": ["Bash(edm-state approve-gate*)"]}}
+JSON
+cat > "$T06_CWD/.claude/settings.json" <<'JSON'
+{"permissions": {"ask": ["Bash(edm-state archive*)"]}}
+JSON
+"$EDM_STATE" init T06UNION >/dev/null
+"$EDM_STATE" approve-gate T06UNION 1 >/dev/null
+enf_union="$(jq -r '.gates_approved[0].enforcement' "$TMP/SRD/T06UNION/.edm-state.json")"
+[[ "$enf_union" == "permission-ask" ]] \
+  && pass "AC4 -- one pattern per file (union across settings.local.json + settings.json) -> permission-ask" \
+  || fail "AC4 union case -> enforcement='$enf_union', expected permission-ask"
+rm -f "$T06_CWD/.claude/settings.local.json" "$T06_CWD/.claude/settings.json"
+
+# ---- AC4 -- ~/.claude/settings.json alone is sufficient ------------------------
+cat > "$T06_HOME/.claude/settings.json" <<'JSON'
+{"permissions": {"ask": ["Bash(edm-state approve-gate*)", "Bash(edm-state archive*)"]}}
+JSON
+"$EDM_STATE" init T06HOMESET >/dev/null
+"$EDM_STATE" approve-gate T06HOMESET 1 >/dev/null
+enf_home="$(jq -r '.gates_approved[0].enforcement' "$TMP/SRD/T06HOMESET/.edm-state.json")"
+[[ "$enf_home" == "permission-ask" ]] \
+  && pass "AC4 -- ~/.claude/settings.json alone -> permission-ask" \
+  || fail "AC4 home-settings case -> enforcement='$enf_home', expected permission-ask"
+
+# ---- AC6 -- malformed settings JSON reports missing ----------------------------
+echo
+echo "T06 AC6 -- malformed settings JSON reports missing"
+rm -f "$T06_HOME/.claude/settings.json"
+echo '{not valid json' > "$T06_CWD/.claude/settings.local.json"
+cat > "$T06_CWD/.claude/settings.json" <<'JSON'
+{"permissions": {"ask": ["Bash(edm-state archive*)"]}}
+JSON
+"$EDM_STATE" init T06MALFORMED >/dev/null
+"$EDM_STATE" approve-gate T06MALFORMED 1 >/dev/null
+enf_malformed="$(jq -r '.gates_approved[0].enforcement' "$TMP/SRD/T06MALFORMED/.edm-state.json")"
+[[ "$enf_malformed" == "prose-only" ]] \
+  && pass "AC6 -- malformed settings JSON reports missing (prose-only, not permission-ask)" \
+  || fail "AC6 malformed-JSON case -> enforcement='$enf_malformed', expected prose-only"
+rm -f "$T06_CWD/.claude/settings.local.json" "$T06_CWD/.claude/settings.json"
+
+# ---- AC5 -- PERM_RULES_MISSING appears without rules, disappears with rules ----
+echo
+echo "T06 AC5 -- PERM_RULES_MISSING appears without rules and disappears with rules"
+"$EDM_STATE" init T06PERM >/dev/null
+"$EDM_STATE" set T06PERM estimated_size Small >/dev/null
+perm_missing_out="$("$EDM_STATE" validate T06PERM 2>&1 || true)"
+check "PERM_RULES_MISSING appears without rules" "info  PERM_RULES_MISSING" "$perm_missing_out"
+
+cat > "$T06_CWD/.claude/settings.json" <<'JSON'
+{"permissions": {"ask": ["Bash(edm-state approve-gate*)", "Bash(edm-state archive*)"]}}
+JSON
+perm_present_out="$("$EDM_STATE" validate T06PERM 2>&1 || true)"
+check_absent "PERM_RULES_MISSING disappears with rules" "PERM_RULES_MISSING" "$perm_present_out"
+
+# session-start also surfaces (or omits) the same anomaly (AC5 "surfaces in both").
+ss_missing_out="$(rm -f "$T06_CWD/.claude/settings.json"; "$EDM_STATE" session-start 2>&1 || true)"
+check "session-start surfaces PERM_RULES_MISSING when rules absent" "PERM_RULES_MISSING" "$ss_missing_out"
+cat > "$T06_CWD/.claude/settings.json" <<'JSON'
+{"permissions": {"ask": ["Bash(edm-state approve-gate*)", "Bash(edm-state archive*)"]}}
+JSON
+ss_present_out="$("$EDM_STATE" session-start 2>&1 || true)"
+check_absent "session-start omits PERM_RULES_MISSING when rules present" "PERM_RULES_MISSING" "$ss_present_out"
+rm -f "$T06_CWD/.claude/settings.json"
+
+# ---- AC7 -- warning only: validate exit code stays 0 either way ---------------
+echo
+echo "T06 AC7 -- validate exit code is 0 both with and without the rules present"
+set +e
+"$EDM_STATE" validate T06PERM >/dev/null 2>&1
+ec_no_rules=$?
+set -e
+[[ $ec_no_rules -eq 0 ]] && pass "AC7 -- validate exit 0 without rules present" \
+  || fail "AC7 -- validate exited $ec_no_rules without rules present, expected 0"
+
+cat > "$T06_CWD/.claude/settings.json" <<'JSON'
+{"permissions": {"ask": ["Bash(edm-state approve-gate*)", "Bash(edm-state archive*)"]}}
+JSON
+set +e
+"$EDM_STATE" validate T06PERM >/dev/null 2>&1
+ec_with_rules=$?
+set -e
+[[ $ec_with_rules -eq 0 ]] && pass "AC7 -- validate exit 0 with rules present" \
+  || fail "AC7 -- validate exited $ec_with_rules with rules present, expected 0"
+
+# ---- AC8/AC9 -- enforcement tag, positive and negative -------------------------
+echo
+echo "T06 AC8/AC9 -- approval with/without rules records the correct enforcement tag"
+"$EDM_STATE" init T06ENF >/dev/null
+"$EDM_STATE" approve-gate T06ENF 1 >/dev/null   # rules present from the block above
+enf_with="$(jq -r '.gates_approved[0].enforcement' "$TMP/SRD/T06ENF/.edm-state.json")"
+[[ "$enf_with" == "permission-ask" ]] \
+  && pass "AC8 -- approval with rules records permission-ask" \
+  || fail "AC8 -- enforcement='$enf_with', expected permission-ask"
+
+rm -f "$T06_CWD/.claude/settings.json"
+"$EDM_STATE" approve-gate T06ENF 2 >/dev/null   # rules now absent
+enf_without="$(jq -r '.gates_approved[1].enforcement' "$TMP/SRD/T06ENF/.edm-state.json")"
+[[ "$enf_without" == "prose-only" ]] \
+  && pass "AC9 -- approval without rules records prose-only" \
+  || fail "AC9 -- enforcement='$enf_without', expected prose-only"
+
+# ---- AC10 -- sibling scalar keys; read_bool / booleans unaffected -------------
+echo
+echo "T06 AC10 -- compliance/code-audit sibling scalar keys, read_bool and boolean shape unaffected"
+"$EDM_STATE" init T06SIB >/dev/null
+STATE_T06SIB="$TMP/SRD/T06SIB/.edm-state.json"
+before_rb="$(jq -r '.compliance_gate_approved // false' "$STATE_T06SIB")"
+"$EDM_STATE" approve-gate T06SIB 3.5 >/dev/null
+after_rb="$(jq -r '.compliance_gate_approved' "$STATE_T06SIB")"
+[[ "$before_rb" == "false" && "$after_rb" == "true" ]] \
+  && pass "AC10 -- read_bool-observed compliance_gate_approved unchanged shape before/after sibling keys exist" \
+  || fail "AC10 -- compliance_gate_approved before='$before_rb' after='$after_rb'"
+cga_type="$(jq -r '(.compliance_gate_approved | type)' "$STATE_T06SIB")"
+[[ "$cga_type" == "boolean" ]] && pass "AC10 -- compliance_gate_approved stays type boolean" \
+  || fail "AC10 -- compliance_gate_approved type is '$cga_type', expected boolean"
+check "AC10 -- compliance_gate_approved_at sibling key written" "compliance_gate_approved_at" \
+  "$(jq -c '.' "$STATE_T06SIB")"
+cga_enf="$(jq -r '.compliance_gate_enforcement' "$STATE_T06SIB")"
+[[ "$cga_enf" == "prose-only" || "$cga_enf" == "permission-ask" ]] \
+  && pass "AC10 -- compliance_gate_enforcement recorded a legal enforcement value" \
+  || fail "AC10 -- compliance_gate_enforcement='$cga_enf'"
+
+"$EDM_STATE" approve-gate T06SIB code-audit >/dev/null
+cac_type="$(jq -r '(.code_audit_converged | type)' "$STATE_T06SIB")"
+[[ "$cac_type" == "boolean" ]] && pass "AC10 -- code_audit_converged stays type boolean" \
+  || fail "AC10 -- code_audit_converged type is '$cac_type', expected boolean"
+
+# ---- AC12 -- C-4: legacy state (predating enforcement field) renders without tag
+echo
+echo "T06 AC12 -- legacy state renders HANDOFF without enforcement tag"
+"$EDM_STATE" init T06LEGACY >/dev/null
+STATE_T06LEGACY="$TMP/SRD/T06LEGACY/.edm-state.json"
+# Craft a pre-EDMV3-T06 compliance-gate approval: approved=true with no approved_at/
+# approver/enforcement siblings, exactly what cmd_approve_gate wrote before this ticket.
+jq '.compliance_gate_approved = true' "$STATE_T06LEGACY" > "$STATE_T06LEGACY.tmp" \
+  && mv "$STATE_T06LEGACY.tmp" "$STATE_T06LEGACY"
+"$EDM_STATE" write-handoff T06LEGACY >/dev/null
+legacy_handoff="$TMP/SRD/T06LEGACY/HANDOFF.md"
+check "AC12 -- legacy compliance gate 3.5 row renders" "Gate 3.5" "$(cat "$legacy_handoff")"
+check_absent "AC12 -- legacy compliance gate row omits enforcement tag" "enforcement:" "$(cat "$legacy_handoff")"
+
+t06_restore_env
+rm -rf "$T06_HOME" "$T06_CWD"
+
+# =================================================================================
+# EDMV3-T17: HANDOFF and anomalies surface the new lifecycle facts (wave A)
+# =================================================================================
+echo
+echo "T17 -- HANDOFF gate list, four-state next_action, CONVERGED_NO_APPROVAL, ASCII fix"
+
+# ---- AC1 -- HANDOFF gate list renders code-audit and Gate 3.5 with all 4 fields
+echo
+echo "T17 AC1 -- HANDOFF gate list renders code-audit and Gate 3.5 rows with all four fields"
+"$EDM_STATE" init T17GATES >/dev/null
+"$EDM_STATE" approve-gate T17GATES 3.5 >/dev/null
+"$EDM_STATE" approve-gate T17GATES code-audit >/dev/null
+"$EDM_STATE" write-handoff T17GATES >/dev/null
+handoff_t17gates="$(cat "$TMP/SRD/T17GATES/HANDOFF.md")"
+check "AC1 -- code-audit gate row present" "code-audit" "$handoff_t17gates"
+check "AC1 -- Gate 3.5 row present" "Gate 3.5" "$handoff_t17gates"
+ca_row="$(echo "$handoff_t17gates" | grep 'Gate code-audit' | head -1)"
+check "AC1 -- code-audit row shows approver" "$(id -un 2>/dev/null || echo "${USER:-unknown}")" "$ca_row"
+check "AC1 -- code-audit row shows enforcement tag" "enforcement:" "$ca_row"
+
+# ---- AC1 -- exemption visibility (mode with no code-audit round) --------------
+echo
+echo "T17 AC1 -- code-audit row shows exemption when the mode requires no audit round"
+"$EDM_STATE" init T17EXEMPT >/dev/null
+"$EDM_STATE" set-mode T17EXEMPT mode prototype >/dev/null
+"$EDM_STATE" approve-gate T17EXEMPT code-audit >/dev/null
+"$EDM_STATE" write-handoff T17EXEMPT >/dev/null
+handoff_exempt="$(cat "$TMP/SRD/T17EXEMPT/HANDOFF.md")"
+check "AC1 -- exemption row present" "CONVERGENCE_NOT_REQUIRED" "$handoff_exempt"
+
+# ---- AC2 -- phase-6 next_action distinguishes four states ---------------------
+echo
+echo "T17 AC2 -- phase-6 next_action four states"
+"$EDM_STATE" init T17NEXT >/dev/null
+"$EDM_STATE" approve-gate T17NEXT 1 >/dev/null
+"$EDM_STATE" approve-gate T17NEXT 2 >/dev/null
+"$EDM_STATE" approve-gate T17NEXT 3 >/dev/null
+"$EDM_STATE" phase-start T17NEXT 6 >/dev/null
+"$EDM_STATE" write-handoff T17NEXT >/dev/null
+next_in_progress="$(grep '^- \*\*Next action\*\*' "$TMP/SRD/T17NEXT/HANDOFF.md")"
+
+"$EDM_STATE" record-partial-verdict T17NEXT T17NEXT-T01 PARTIAL "needs runtime check" >/dev/null
+"$EDM_STATE" write-handoff T17NEXT >/dev/null
+next_partial="$(grep '^- \*\*Next action\*\*' "$TMP/SRD/T17NEXT/HANDOFF.md")"
+
+"$EDM_STATE" record-partial-verdict T17NEXT T17NEXT-T01 PASS "runtime verified" >/dev/null
+jq '.phase_durations["6_phase"].completed_at = "2026-07-26T00:00:00Z"' \
+  "$TMP/SRD/T17NEXT/.edm-state.json" > "$TMP/SRD/T17NEXT/.edm-state.json.tmp" \
+  && mv "$TMP/SRD/T17NEXT/.edm-state.json.tmp" "$TMP/SRD/T17NEXT/.edm-state.json"
+"$EDM_STATE" write-handoff T17NEXT >/dev/null
+next_awaiting_gate="$(grep '^- \*\*Next action\*\*' "$TMP/SRD/T17NEXT/HANDOFF.md")"
+
+"$EDM_STATE" approve-gate T17NEXT code-audit >/dev/null
+next_ready="$(grep '^- \*\*Next action\*\*' "$TMP/SRD/T17NEXT/HANDOFF.md")"
+
+check "AC2 -- state 1 (implementation in progress)" "in progress" "$next_in_progress"
+check "AC2 -- state 2 (awaiting runtime verification of open PARTIALs)" "PARTIAL" "$next_partial"
+check "AC2 -- state 3 (awaiting the convergence gate)" "convergence gate" "$next_awaiting_gate"
+check "AC2 -- state 4 (ready to archive)" "Ready to archive" "$next_ready"
+[[ "$next_in_progress" != "$next_partial" && "$next_partial" != "$next_awaiting_gate" \
+   && "$next_awaiting_gate" != "$next_ready" && "$next_in_progress" != "$next_ready" ]] \
+  && pass "AC2 -- all four next_action strings are distinct" \
+  || fail "AC2 -- next_action strings collided: '$next_in_progress' / '$next_partial' / '$next_awaiting_gate' / '$next_ready'"
+
+# ---- AC3 -- CONVERGED_NO_APPROVAL fires on a hand-set flag, and not on legacy --
+echo
+echo "T17 AC3 -- CONVERGED_NO_APPROVAL fires on a hand-set flag with four fields and class blocking"
+"$EDM_STATE" init T17CONV >/dev/null
+STATE_T17CONV="$TMP/SRD/T17CONV/.edm-state.json"
+jq '.code_audit_converged = true' "$STATE_T17CONV" > "$STATE_T17CONV.tmp" && mv "$STATE_T17CONV.tmp" "$STATE_T17CONV"
+set +e
+conv_out="$("$EDM_STATE" validate T17CONV 2>&1)"
+conv_ec=$?
+set -e
+check "AC3 -- CONVERGED_NO_APPROVAL present" "blocking  CONVERGED_NO_APPROVAL  code_audit_converged" "$conv_out"
+[[ $conv_ec -eq 3 ]] && pass "AC3 -- CONVERGED_NO_APPROVAL is class blocking (validate exits 3)" \
+  || fail "AC3 -- validate exited $conv_ec, expected 3"
+
+echo
+echo "T17 AC3 -- does not fire on a legacy file (no schema_version)"
+"$EDM_STATE" init T17LEGACYCONV >/dev/null
+STATE_T17LEGACYCONV="$TMP/SRD/T17LEGACYCONV/.edm-state.json"
+jq 'del(.schema_version) | .code_audit_converged = true' "$STATE_T17LEGACYCONV" \
+  > "$STATE_T17LEGACYCONV.tmp" && mv "$STATE_T17LEGACYCONV.tmp" "$STATE_T17LEGACYCONV"
+legacyconv_out="$("$EDM_STATE" validate T17LEGACYCONV 2>&1 || true)"
+check_absent "AC3 -- CONVERGED_NO_APPROVAL absent for legacy (no schema_version) file" \
+  "CONVERGED_NO_APPROVAL" "$legacyconv_out"
+
+# ---- AC4 -- severity declared, informational anomaly does not flip exit code --
+echo
+echo "T17 AC4 -- an initiative whose only anomaly is informational exits 0"
+"$EDM_STATE" init T17SEV >/dev/null
+set +e
+sev_out="$("$EDM_STATE" validate T17SEV 2>&1)"
+sev_ec=$?
+set -e
+echo "exit=$sev_ec"
+[[ $sev_ec -eq 0 ]] && pass "AC4 -- informational-only anomalies leave validate exit 0" \
+  || fail "AC4 -- validate exited $sev_ec, expected 0"
+
+# ---- AC5 -- Notes section preserved across regeneration -----------------------
+echo
+echo "T17 AC5 -- Notes section preserved across HANDOFF regeneration"
+"$EDM_STATE" init T17NOTES >/dev/null
+"$EDM_STATE" write-handoff T17NOTES >/dev/null
+notes_path="$TMP/SRD/T17NOTES/HANDOFF.md"
+python3 -c "
+import re
+with open('$notes_path') as f:
+    content = f.read()
+content = content.replace('## Notes', '## Notes' + chr(10) + 'A teammate note that must survive regeneration.', 1)
+with open('$notes_path', 'w') as f:
+    f.write(content)
+" 2>/dev/null || {
+  awk '{print} /^## Notes$/{print "A teammate note that must survive regeneration."}' "$notes_path" > "$notes_path.tmp" \
+    && mv "$notes_path.tmp" "$notes_path"
+}
+"$EDM_STATE" write-handoff T17NOTES >/dev/null
+check "AC5 -- Notes content preserved across regeneration" \
+  "A teammate note that must survive regeneration." "$(cat "$notes_path")"
+
+# ---- AC6 -- C-4: legacy HANDOFF omits new sections rather than erroring -------
+echo
+echo "T17 AC6 -- legacy initiative (no mode/schema_version) omits new sections without erroring"
+"$EDM_STATE" init T17OLDINIT >/dev/null
+STATE_T17OLDINIT="$TMP/SRD/T17OLDINIT/.edm-state.json"
+jq 'del(.schema_version, .mode, .code_audit_converged, .compliance_gate_approved)' \
+  "$STATE_T17OLDINIT" > "$STATE_T17OLDINIT.tmp" && mv "$STATE_T17OLDINIT.tmp" "$STATE_T17OLDINIT"
+set +e
+"$EDM_STATE" write-handoff T17OLDINIT >/dev/null 2>&1
+oldinit_ec=$?
+set -e
+[[ $oldinit_ec -eq 0 ]] && pass "AC6 -- write-handoff on a legacy state file does not error" \
+  || fail "AC6 -- write-handoff exited $oldinit_ec on a legacy state file"
+oldinit_handoff="$(cat "$TMP/SRD/T17OLDINIT/HANDOFF.md")"
+check_absent "AC6 -- legacy HANDOFF omits a code-audit gate row" "Gate code-audit" "$oldinit_handoff"
+check_absent "AC6 -- legacy HANDOFF omits a Gate 3.5 row" "Gate 3.5" "$oldinit_handoff"
+
+# ---- AC7/AC8 -- generator's own next_action strings are ASCII-only ------------
+echo
+echo "T17 AC7/AC8 -- next_action strings for skipped phases 1, 3, 5 are ASCII-only"
+"$EDM_STATE" init T17ASCII1 >/dev/null
+"$EDM_STATE" skip-phase T17ASCII1 1 "smoke test" >/dev/null
+"$EDM_STATE" write-handoff T17ASCII1 >/dev/null
+ascii1_next="$(grep '^- \*\*Next action\*\*' "$TMP/SRD/T17ASCII1/HANDOFF.md")"
+check "AC7 -- phase 1 skipped next_action present" "skipped" "$ascii1_next"
+
+"$EDM_STATE" init T17ASCII3 >/dev/null
+"$EDM_STATE" approve-gate T17ASCII3 1 >/dev/null
+"$EDM_STATE" phase-start T17ASCII3 2 >/dev/null
+"$EDM_STATE" skip-phase T17ASCII3 3 "smoke test" >/dev/null
+"$EDM_STATE" write-handoff T17ASCII3 >/dev/null
+ascii3_next="$(grep '^- \*\*Next action\*\*' "$TMP/SRD/T17ASCII3/HANDOFF.md")"
+check "AC7 -- phase 3 skipped next_action present" "skipped" "$ascii3_next"
+
+"$EDM_STATE" init T17ASCII5 >/dev/null
+"$EDM_STATE" approve-gate T17ASCII5 1 >/dev/null
+"$EDM_STATE" approve-gate T17ASCII5 2 >/dev/null
+"$EDM_STATE" phase-start T17ASCII5 4 >/dev/null
+"$EDM_STATE" skip-phase T17ASCII5 5 "smoke test" >/dev/null
+"$EDM_STATE" write-handoff T17ASCII5 >/dev/null
+ascii5_next="$(grep '^- \*\*Next action\*\*' "$TMP/SRD/T17ASCII5/HANDOFF.md")"
+check "AC7 -- phase 5 skipped next_action present" "skipped" "$ascii5_next"
+
+# Portable ASCII check: delete every byte in the ASCII range (octal 000-177, POSIX `tr`
+# range syntax works identically under GNU and BSD `tr`, unlike `grep`'s `\x` hex-escape
+# bracket-expression support, which BSD/macOS grep 2.6.0-FreeBSD does NOT implement --
+# empirically confirmed to false-positive-match plain ASCII text with `[^\x00-\x7F]`. Any
+# bytes surviving the deletion are non-ASCII.
+_t17_nonascii_bytes() {
+  LC_ALL=C tr -d '\000-\177' < "$1" | wc -c | tr -d ' '
+}
+
+ascii_all_clean=true
+for _t17_f in "$TMP/SRD/T17ASCII1/HANDOFF.md" "$TMP/SRD/T17ASCII3/HANDOFF.md" "$TMP/SRD/T17ASCII5/HANDOFF.md"; do
+  [[ "$(_t17_nonascii_bytes "$_t17_f")" -eq 0 ]] || ascii_all_clean=false
+done
+if [[ "$ascii_all_clean" == "true" ]]; then
+  pass "AC7/AC8 -- HANDOFF for an initiative with skipped phases 1, 3 and 5 is ASCII-only"
+else
+  fail "AC7/AC8 -- HANDOFF for skipped phases 1, 3, 5 contains non-ASCII bytes"
+fi
+
+# Bounded on the unique "Derive what to do next" comment through that specific case
+# block's own `esac` -- NOT a bare `case "$phase" in` pattern, which also matches two
+# unrelated case blocks elsewhere in the file (out of AC7's scope, per the ticket's own
+# "next_action block only" scope note).
+case_block_nonascii_count="$(awk '/# Derive what to do next from current phase \+ gates approved/,/^  esac$/' "$EDM_STATE" \
+  | LC_ALL=C tr -d '\000-\177' | wc -c | tr -d ' ')"
+if [[ "$case_block_nonascii_count" -eq 0 ]]; then
+  pass "AC7 -- next_action case block in bin/edm-state is ASCII-only"
+else
+  fail "AC7 -- next_action case block in bin/edm-state still contains non-ASCII bytes"
+fi
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

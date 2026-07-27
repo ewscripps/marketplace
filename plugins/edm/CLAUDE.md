@@ -407,6 +407,26 @@ before it is committed, so the document's meaning is unchanged but its bytes pas
 initiative's artifacts pass. Wrapping an imported document in `edm-lint-ignore` markers instead of normalizing it is
 not an acceptable substitute -- an exempted document in an initiative's own directory is a standing invitation to
 exempt the next one.
+## Required setup: permission `ask` rules (EDMV3-T06)
+
+See `README.md`'s "Required setup: permission ask rules" section for the full rationale, the
+matcher-limitation note, and the wave-A manual-QA record -- not re-explained here. The
+required block, added to `.claude/settings.json` (or `.claude/settings.local.json`):
+
+```json
+{
+  "permissions": {
+    "ask": [
+      "Bash(edm-state approve-gate*)",
+      "Bash(edm-state archive*)"
+    ]
+  }
+}
+```
+
+`check_permission_rules()` in `bin/edm-state` scans for these two patterns and feeds the
+result into the `enforcement` field (`permission-ask` | `prose-only`) recorded on every gate
+approval, and into the informational `PERM_RULES_MISSING` anomaly when absent.
 
 ## `bin/` helper scripts
 
