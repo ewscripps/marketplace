@@ -532,6 +532,14 @@ echo "T08 AC6 -- archive refuses before approval, permits after"
 "$EDM_STATE" init T08ARCH >/dev/null
 "$EDM_STATE" set T08ARCH product_name testprod >/dev/null
 STATE_T08ARCH="$TMP/SRD/T08ARCH/.edm-state.json"
+# EDMV3-T12: archive now also enforces gates/terminal-phase/completed_at (AC1a-AC1c) before
+# reaching the convergence check this test is scoped to -- satisfy those three directly via
+# jq so this test stays about T08's own AC (the code-audit gate), not a full lifecycle replay.
+"$EDM_STATE" approve-gate T08ARCH 1 >/dev/null
+"$EDM_STATE" approve-gate T08ARCH 2 >/dev/null
+"$EDM_STATE" approve-gate T08ARCH 3 >/dev/null
+jq '.current_phase = 6 | .phase_durations["6_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
+  "$STATE_T08ARCH" > "${STATE_T08ARCH}.tmp" && mv "${STATE_T08ARCH}.tmp" "$STATE_T08ARCH"
 check_fails "archive refuses before approval" "archive refused: code_audit_converged=false" \
   "$EDM_STATE" archive T08ARCH
 check_state_unchanged "$STATE_T08ARCH" "$EDM_STATE" archive T08ARCH
@@ -1451,6 +1459,207 @@ echo "T11 AC10 -- comment documents the fixed vs. configurable artifact filename
 ac10_hits="$(sed -n '/^cmd_phase_complete() {/,/^}/p' "$EDM_STATE" | grep -c 'NOT user-configurable')"
 [[ "$ac10_hits" -ge 1 ]] && pass "T11 AC10 -- comment present inside cmd_phase_complete" \
   || fail "T11 AC10 -- comment not found inside cmd_phase_complete"
+
+# =================================================================================
+# EDMV3-T12: archive verifies the whole lifecycle (wave-A sub-checks)
+# =================================================================================
+echo
+echo "T12 -- archive lifecycle verification (gates, terminal phase, completed_at, convergence)"
+
+# ---- AC1 (negative, gates): every gate required_gates_for_mode() returns must be approved --
+echo
+echo "T12 AC1 -- archive refuses on missing gates, naming each"
+"$EDM_STATE" init T12GATE >/dev/null
+STATE_T12GATE="$TMP/SRD/T12GATE/.edm-state.json"
+check_fails "T12 AC1 -- archive refuses naming all three missing gates" \
+  "gate(s) 1, 2, 3 not approved" \
+  "$EDM_STATE" archive T12GATE
+check_state_unchanged "$STATE_T12GATE" "$EDM_STATE" archive T12GATE
+[[ -d "$TMP/SRD/T12GATE" ]] && pass "T12 AC1 -- refusal leaves the initiative directory in place" \
+  || fail "T12 AC1 -- initiative directory moved despite refusal"
+
+"$EDM_STATE" approve-gate T12GATE 1 >/dev/null
+"$EDM_STATE" approve-gate T12GATE 2 >/dev/null
+check_fails "T12 AC1 -- archive with gates 1 and 2 but not 3 refuses naming gate 3" \
+  "gate(s) 3 not approved" \
+  "$EDM_STATE" archive T12GATE
+
+# ---- AC2 (negative, terminal phase): current_phase must equal the derived terminal phase --
+echo
+echo "T12 AC2 -- archive at current_phase 5 refuses (terminal phase is derived, not hardcoded)"
+"$EDM_STATE" init T12PHASE >/dev/null
+STATE_T12PHASE="$TMP/SRD/T12PHASE/.edm-state.json"
+"$EDM_STATE" approve-gate T12PHASE 1 >/dev/null
+"$EDM_STATE" approve-gate T12PHASE 2 >/dev/null
+"$EDM_STATE" approve-gate T12PHASE 3 >/dev/null
+"$EDM_STATE" set T12PHASE current_phase 5 >/dev/null
+check_fails "T12 AC2 -- archive at current_phase 5 refuses" \
+  "has not reached the terminal phase (6)" \
+  "$EDM_STATE" archive T12PHASE
+check_state_unchanged "$STATE_T12PHASE" "$EDM_STATE" archive T12PHASE
+
+# ---- AC3 (negative, completed_at): the terminal phase's completed_at must be recorded -----
+echo
+echo "T12 AC3 -- archive without terminal completed_at refuses"
+"$EDM_STATE" init T12COMPLETED >/dev/null
+STATE_T12COMPLETED="$TMP/SRD/T12COMPLETED/.edm-state.json"
+"$EDM_STATE" approve-gate T12COMPLETED 1 >/dev/null
+"$EDM_STATE" approve-gate T12COMPLETED 2 >/dev/null
+"$EDM_STATE" approve-gate T12COMPLETED 3 >/dev/null
+"$EDM_STATE" set T12COMPLETED current_phase 6 >/dev/null
+check_fails "T12 AC3 -- archive without terminal completed_at refuses" \
+  "has no completed_at recorded" \
+  "$EDM_STATE" archive T12COMPLETED
+check_state_unchanged "$STATE_T12COMPLETED" "$EDM_STATE" archive T12COMPLETED
+
+# ---- AC4/AC5 (negative, convergence, unconditional on product_name): converged=false -------
+echo
+echo "T12 AC4/AC5 -- converged=false refuses naming approve-gate code-audit (flat-layout, no product_name)"
+"$EDM_STATE" init T12CONV >/dev/null
+STATE_T12CONV="$TMP/SRD/T12CONV/.edm-state.json"
+"$EDM_STATE" approve-gate T12CONV 1 >/dev/null
+"$EDM_STATE" approve-gate T12CONV 2 >/dev/null
+"$EDM_STATE" approve-gate T12CONV 3 >/dev/null
+jq '.current_phase = 6 | .phase_durations["6_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
+  "$STATE_T12CONV" > "$STATE_T12CONV.tmp" && mv "$STATE_T12CONV.tmp" "$STATE_T12CONV"
+t12conv_product="$(jq -r '.product_name' "$STATE_T12CONV")"
+[[ -z "$t12conv_product" ]] && pass "T12 AC5 -- fixture is flat-layout (product_name empty)" \
+  || fail "T12 AC5 -- fixture unexpectedly has product_name='$t12conv_product'"
+check_fails "T12 AC4 -- archive with converged=false refuses naming approve-gate code-audit" \
+  "edm-state approve-gate T12CONV code-audit" \
+  "$EDM_STATE" archive T12CONV
+check_state_unchanged "$STATE_T12CONV" "$EDM_STATE" archive T12CONV
+
+# ---- AC6: no wave-A archive refusal names a wave-B command --------------------------------
+echo
+echo "T12 AC6 -- no wave-A refusal names a wave-B command"
+t12conv_out="$("$EDM_STATE" archive T12CONV 2>&1 || true)"
+check_absent "T12 AC6 -- convergence refusal does not name verify-runtime" "verify-runtime" "$t12conv_out"
+check_absent "T12 AC6 -- convergence refusal does not name audit-converged" "audit-converged" "$t12conv_out"
+
+# ---- AC7 (positive, happy path): a fully compliant initiative archives successfully --------
+echo
+echo "T12 AC7 -- fully compliant standard-lifecycle initiative archives successfully"
+"$EDM_STATE" init T12HAPPY >/dev/null
+"$EDM_STATE" set T12HAPPY product_name testprod >/dev/null
+STATE_T12HAPPY="$TMP/SRD/T12HAPPY/.edm-state.json"
+"$EDM_STATE" approve-gate T12HAPPY 1 >/dev/null
+"$EDM_STATE" approve-gate T12HAPPY 2 >/dev/null
+"$EDM_STATE" approve-gate T12HAPPY 3 >/dev/null
+jq '.current_phase = 6 | .phase_durations["6_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
+  "$STATE_T12HAPPY" > "$STATE_T12HAPPY.tmp" && mv "$STATE_T12HAPPY.tmp" "$STATE_T12HAPPY"
+"$EDM_STATE" approve-gate T12HAPPY code-audit >/dev/null
+"$EDM_STATE" archive T12HAPPY >/dev/null \
+  && pass "T12 AC7 -- fully compliant initiative archives successfully" \
+  || fail "T12 AC7 -- compliant initiative was refused"
+[[ -d "$TMP/SRD/.archived/testprod/T12HAPPY" ]] \
+  && pass "T12 AC7 -- archived to the expected product-scoped destination" \
+  || fail "T12 AC7 -- archived directory not found at expected destination"
+
+# ---- AC8: prototype waives convergence only, not gate/phase/completed_at ------------------
+echo
+echo "T12 AC8 -- prototype waives convergence only (not the gate/phase/completed_at checks)"
+export EDM_MODE="prototype"
+"$EDM_STATE" init T12PROTO >/dev/null
+unset EDM_MODE
+STATE_T12PROTO="$TMP/SRD/T12PROTO/.edm-state.json"
+check_fails "T12 AC8 -- prototype without gate 1 still refuses" \
+  "gate(s) 1 not approved" \
+  "$EDM_STATE" archive T12PROTO
+check_state_unchanged "$STATE_T12PROTO" "$EDM_STATE" archive T12PROTO
+
+"$EDM_STATE" approve-gate T12PROTO 1 >/dev/null
+jq '.current_phase = 2 | .phase_durations["2_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
+  "$STATE_T12PROTO" > "$STATE_T12PROTO.tmp" && mv "$STATE_T12PROTO.tmp" "$STATE_T12PROTO"
+proto_out="$("$EDM_STATE" archive T12PROTO 2>&1)"
+check "T12 AC8 -- prototype warning text preserved" \
+  "[warn] prototype mode -- skipping code-audit convergence check" "$proto_out"
+[[ -d "$TMP/SRD/.archived/T12PROTO" ]] \
+  && pass "T12 AC8 -- prototype archives at its own terminal phase (2) once its checks pass" \
+  || fail "T12 AC8 -- prototype archive did not relocate the directory"
+
+# ---- AC9: audit-free lifecycle_modes record CONVERGENCE_NOT_REQUIRED, not silence ---------
+echo
+echo "T12 AC9 -- fast-track archives with CONVERGENCE_NOT_REQUIRED recorded"
+"$EDM_STATE" init T12FAST >/dev/null
+STATE_T12FAST="$TMP/SRD/T12FAST/.edm-state.json"
+"$EDM_STATE" set-mode T12FAST lifecycle_mode fast-track >/dev/null
+"$EDM_STATE" approve-gate T12FAST 1 >/dev/null
+"$EDM_STATE" approve-gate T12FAST 2 >/dev/null
+"$EDM_STATE" approve-gate T12FAST 3 >/dev/null
+jq '.current_phase = 6 | .phase_durations["6_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
+  "$STATE_T12FAST" > "$STATE_T12FAST.tmp" && mv "$STATE_T12FAST.tmp" "$STATE_T12FAST"
+fast_out="$("$EDM_STATE" archive T12FAST 2>&1)"
+check "T12 AC9 -- fast-track archive message names CONVERGENCE_NOT_REQUIRED" \
+  "CONVERGENCE_NOT_REQUIRED" "$fast_out"
+exemption_hit="$(jq -e '.archive_exemptions[]? | select(. == "CONVERGENCE_NOT_REQUIRED")' "$TMP/SRD/.archived/T12FAST/.edm-state.json" 2>&1)"
+[[ "$exemption_hit" == '"CONVERGENCE_NOT_REQUIRED"' ]] \
+  && pass "T12 AC9 -- archive_exemptions records CONVERGENCE_NOT_REQUIRED (not silent)" \
+  || fail "T12 AC9 -- archive_exemptions missing CONVERGENCE_NOT_REQUIRED (got: $exemption_hit)"
+
+# ---- AC10 (negative): a missing state file is reported (warned), not silently permitted ---
+echo
+echo "T12 AC10 -- archive with deleted state file warns MISSING_STATE_FILE"
+"$EDM_STATE" init T12MISSING >/dev/null
+rm -f "$TMP/SRD/T12MISSING/.edm-state.json"
+missing_out="$("$EDM_STATE" archive T12MISSING 2>&1)"
+check "T12 AC10 -- archive with deleted state file warns MISSING_STATE_FILE" \
+  "MISSING_STATE_FILE" "$missing_out"
+[[ -d "$TMP/SRD/.archived/T12MISSING" ]] \
+  && pass "T12 AC10 -- archive still proceeds (unchecked move) despite the missing state file" \
+  || fail "T12 AC10 -- archive did not relocate the directory despite the warning-only path"
+
+# ---- AC11: skipped_phases is respected -- mini-srd archives with its seeded skips ---------
+echo
+echo "T12 AC11 -- mini-srd archives with seeded skips (gate 3 not required)"
+export EDM_MODE="mini-srd"
+"$EDM_STATE" init T12MINI >/dev/null
+unset EDM_MODE
+STATE_T12MINI="$TMP/SRD/T12MINI/.edm-state.json"
+# mini-srd seeds skipped_phases 2, 4, 5 at init (EDMV3-T07 AC4). gated_phase_for_gate maps
+# gate 1->phase1 (not skipped), gate 2->phase3 (not skipped), gate 3->phase5 (skipped) --
+# so only gates 1 and 2 are required.
+"$EDM_STATE" approve-gate T12MINI 1 >/dev/null
+"$EDM_STATE" approve-gate T12MINI 2 >/dev/null
+jq '.current_phase = 6 | .phase_durations["6_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
+  "$STATE_T12MINI" > "$STATE_T12MINI.tmp" && mv "$STATE_T12MINI.tmp" "$STATE_T12MINI"
+"$EDM_STATE" approve-gate T12MINI code-audit >/dev/null
+"$EDM_STATE" archive T12MINI >/dev/null \
+  && pass "T12 AC11 -- mini-srd archives with seeded skips (gate 3 not required)" \
+  || fail "T12 AC11 -- mini-srd archive refused despite seeded skips"
+
+# ---- AC12 (negative, no override flags): --force / --accept-partials are unknown args -----
+echo
+echo "T12 AC12 -- archive --force / --accept-partials are unknown-argument errors"
+check_fails "T12 AC12 -- archive --force is an unknown argument" \
+  "usage: edm-state archive" \
+  "$EDM_STATE" archive T12GATE --force
+check_fails "T12 AC12 -- archive --accept-partials is an unknown argument" \
+  "usage: edm-state archive" \
+  "$EDM_STATE" archive T12GATE --accept-partials
+
+# ---- Regression (batch requirement): the three-command bypass fails at both steps ---------
+echo
+echo "T12 REGRESSION -- three-command bypass (edm-init -> set converged -> archive) fails at step 2 and step 3"
+"$EDM_STATE" init T12BYPASS >/dev/null
+STATE_T12BYPASS="$TMP/SRD/T12BYPASS/.edm-state.json"
+# Step 2: attempt the bypass via `set` -- must fail (EDMV3-T09 AC1).
+check_fails "T12 REGRESSION -- step 2 (set code_audit_converged true) fails" \
+  "edm-state approve-gate <PREFIX> code-audit" \
+  "$EDM_STATE" set T12BYPASS code_audit_converged true
+check_state_unchanged "$STATE_T12BYPASS" "$EDM_STATE" set T12BYPASS code_audit_converged true
+
+# Variant: hand-edit the state file directly (bypassing `set` entirely) to flip the boolean,
+# then attempt step 3 (archive) at phase 0 -- must still be refused, on gate grounds (T12
+# AC1), well before convergence is ever consulted.
+jq '.code_audit_converged = true' "$STATE_T12BYPASS" > "$STATE_T12BYPASS.tmp" && mv "$STATE_T12BYPASS.tmp" "$STATE_T12BYPASS"
+check_fails "T12 REGRESSION -- hand-edited converged=true at phase 0 is still refused (gate grounds)" \
+  "gate(s) 1, 2, 3 not approved" \
+  "$EDM_STATE" archive T12BYPASS
+check_state_unchanged "$STATE_T12BYPASS" "$EDM_STATE" archive T12BYPASS
+[[ -d "$TMP/SRD/T12BYPASS" ]] \
+  && pass "T12 REGRESSION -- three-command bypass fails at both step 2 and step 3; directory never moved" \
+  || fail "T12 REGRESSION -- initiative directory was archived despite the bypass"
 
 # ---- Summary -----------------------------------------------------------------
 echo

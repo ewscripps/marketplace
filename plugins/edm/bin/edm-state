@@ -1486,42 +1486,123 @@ cmd_archive() {
   src="$(initiative_dir_for "$prefix")"
   [[ -d "$src" ]] || die "no initiative directory at $src"
 
-  # Gate check: read code_audit_converged, product_name, and mode from state file.
+  # Lifecycle verification (EDMV3-T12, wave-A sub-checks; EDMV3-17 AC1a-AC1d, AC2-AC9). Checks
+  # run in this order -- gates, terminal phase, completed_at, convergence -- so the refusal a
+  # user sees is the earliest unmet condition, the most actionable one. No override flag of
+  # any kind exists anywhere in this function (AC12); an unrecognized extra argument is
+  # refused by the `[[ $# -eq 1 ]]` usage check above.
+  #
+  # The two non-refusing early exits are exactly: a missing state file (AC10, now reported
+  # rather than silently permitted) and legacy state with no schema_version (below; EDMV3-T14
+  # lands the end-to-end degradation class, this ticket implements its own).
+  #
+  # WAVE-B INSERTION POINT (EDMV3-T18): AC1e (PARTIAL-closure check) and AC1f (computed
+  # convergence via `audit-converged`) are NOT implemented here by design -- their machinery
+  # (EDMV3-T28's ledger wiring) does not exist in wave A. Do not stub them.
   local state_file
   state_file="${src}/.edm-state.json"
-  if [[ -f "$state_file" ]]; then
-    local state_json mode converged
+
+  if [[ ! -f "$state_file" ]]; then
+    # AC10: a missing state file is reported, not silently permitted.
+    echo "edm-state archive: info  MISSING_STATE_FILE  .edm-state.json  no state file found at ${state_file}; proceeding with an unchecked directory move (gates, phase and convergence cannot be verified)" >&2
+  else
+    local state_json mode lifecycle_mode converged schema_version_arch
     state_json="$(cat "$state_file" 2>/dev/null || echo '{}')"
     mode="$(echo "$state_json" | jq -r '.mode // "null"')"
+    lifecycle_mode="$(echo "$state_json" | jq -r '.lifecycle_mode // "standard"')"
     product_name="$(echo "$state_json" | jq -r '.product_name // ""')"
-    # Use read_bool to normalize legacy string "false" or missing field correctly.
-    if echo "$state_json" | jq -e 'has("code_audit_converged")' >/dev/null 2>&1; then
-      converged="$(read_bool "$state_json" "code_audit_converged" "false")"
+    schema_version_arch="$(echo "$state_json" | jq -r '.schema_version // empty')"
+
+    if [[ -z "$schema_version_arch" ]]; then
+      # C-4: legacy state predating schema_version warns and proceeds through every new
+      # wave-A check below (gates, terminal phase, completed_at, convergence) -- it keeps the
+      # pre-T12 convergence behaviour (product_name-gated) since that is the only check that
+      # existed for it before this ticket.
+      echo "edm-state archive: [warn] legacy initiative (no schema_version) -- skipping wave-A lifecycle checks" >&2
+      if echo "$state_json" | jq -e 'has("code_audit_converged")' >/dev/null 2>&1; then
+        converged="$(read_bool "$state_json" "code_audit_converged" "false")"
+      else
+        converged="absent"
+      fi
+      if [[ "$converged" == "false" && -n "$product_name" ]]; then
+        die "archive refused: code_audit_converged=false; run /edm:code-audit ${prefix} and ensure REMEDIATION.md convergence before archiving"
+      fi
+      # converged == "true" or "absent": proceed silently, matching pre-T12 behaviour.
     else
-      converged="absent"
-    fi
+      # ---- AC1a: every gate required_gates_for_mode() returns must be approved ----------
+      if [[ "$mode" != "null" ]]; then
+        local skipped_phases_str_arch required_gates_list_arch missing_gates="" g approved_g
+        skipped_phases_str_arch="$(echo "$state_json" | jq -r '[(.skipped_phases // [])[].phase] | join(" ")')"
+        required_gates_list_arch="$(required_gates_for_mode "$mode" "$lifecycle_mode" "$skipped_phases_str_arch")"
+        for g in $required_gates_list_arch; do
+          approved_g="$(echo "$state_json" | jq -r --argjson gg "$g" '(.gates_approved // []) | map(select(.gate == $gg)) | length')"
+          [[ "$approved_g" -gt 0 ]] || missing_gates="${missing_gates}${missing_gates:+, }${g}"
+        done
+        if [[ -n "$missing_gates" ]]; then
+          die "archive refused: gate(s) ${missing_gates} not approved for ${prefix}; run edm-state approve-gate ${prefix} <gate-num> for each missing gate"
+        fi
 
-    # The convergence exemption is derived from code_audit_required_for_mode()
-    # (EDMV3-T07 AC6) rather than a second special case -- this is the documented
-    # cmd_archive convergence waiver, one of the three legal mode-case sites
-    # counted by EDMV3-T07 AC5's single-derivation grep. mode == "null" is a
-    # legacy state predating the mode field;
-    # it is not passed to the helper (which would die on it) and defaults to
-    # "audit required" so existing legacy behaviour is unchanged.
-    local audit_required="true"
-    [[ "$mode" != "null" ]] && audit_required="$(code_audit_required_for_mode "$mode")"
+        # ---- AC1b: current_phase equals the mode-derived terminal phase, never hardcoded --
+        local terminal_phase_arch current_phase_arch
+        terminal_phase_arch="$(terminal_phase_for_mode "$mode" "$lifecycle_mode")"
+        current_phase_arch="$(echo "$state_json" | jq -r '.current_phase // 0')"
+        [[ "$current_phase_arch" == "$terminal_phase_arch" ]] \
+          || die "archive refused: current_phase (${current_phase_arch}) has not reached the terminal phase (${terminal_phase_arch}) for ${prefix} (mode=${mode})"
 
-    if [[ "$audit_required" == "false" ]]; then
-      case "$mode" in
-        prototype) echo "[warn] prototype mode -- skipping code-audit convergence check" >&2 ;;
-        *)         echo "[warn] ${mode} mode -- skipping code-audit convergence check" >&2 ;;
+        # ---- AC1c: the terminal phase's completed_at is recorded --------------------------
+        local terminal_completed_at_arch
+        terminal_completed_at_arch="$(echo "$state_json" | jq -r --arg k "${terminal_phase_arch}_phase" '.phase_durations[$k].completed_at // empty')"
+        [[ -n "$terminal_completed_at_arch" ]] \
+          || die "archive refused: phase ${terminal_phase_arch} has no completed_at recorded for ${prefix}; run edm-state phase-complete ${prefix} ${terminal_phase_arch}"
+      fi
+
+      # ---- AC1d/AC8/AC9: convergence, with the prototype and fast-track/fix-pack exemptions --
+      # audit_required is derived from code_audit_required_for_mode() (EDMV3-T07 AC6) -- one
+      # of the three legal mode-case sites counted by EDMV3-T07 AC5's single-derivation grep.
+      # mode == "null" is a legacy state predating the mode field and defaults to "audit
+      # required" (existing behaviour preserved) rather than being passed to a helper that
+      # would die on it.
+      local audit_required="true"
+      [[ "$mode" != "null" ]] && audit_required="$(code_audit_required_for_mode "$mode")"
+
+      # fast-track and fix-pack lifecycle_modes never run a code-audit round either (their
+      # phase graph has no audit round at all) -- this is a second, lifecycle_mode-keyed OR
+      # condition alongside the mode-keyed one above, not a rewrite of
+      # code_audit_required_for_mode()'s single-source mode mapping (AC9).
+      local lifecycle_exempt="false"
+      case "$lifecycle_mode" in
+        fast-track|fix-pack) lifecycle_exempt="true" ;;
       esac
-    elif [[ "$converged" == "absent" ]]; then
-      echo "[warn] legacy initiative -- code_audit_converged not set; proceeding" >&2
-    elif [[ "$converged" == "false" && -n "$product_name" ]]; then
-      die "archive refused: code_audit_converged=false; run /edm:code-audit ${prefix} and ensure REMEDIATION.md convergence before archiving"
+
+      if [[ "$audit_required" == "false" || "$lifecycle_exempt" == "true" ]]; then
+        case "$mode" in
+          prototype) echo "[warn] prototype mode -- skipping code-audit convergence check" >&2 ;;
+          *)         echo "[warn] ${mode} mode -- skipping code-audit convergence check" >&2 ;;
+        esac
+        # AC9: record the exemption reason in state rather than skipping silently, and echo it
+        # too so the CLI output itself (not only the state file) documents why no code-audit
+        # gate was demanded of this lifecycle.
+        echo "recorded CONVERGENCE_NOT_REQUIRED for ${prefix} (${lifecycle_mode} lifecycle_mode / ${mode} mode)"
+        rmw_state "$prefix" \
+          '.archive_exemptions = (((.archive_exemptions // []) + ["CONVERGENCE_NOT_REQUIRED"]) | unique) | .last_updated = $t' \
+          --arg t "$(now_utc)"
+      else
+        if echo "$state_json" | jq -e 'has("code_audit_converged")' >/dev/null 2>&1; then
+          converged="$(read_bool "$state_json" "code_audit_converged" "false")"
+        else
+          converged="absent"
+        fi
+        if [[ "$converged" == "absent" ]]; then
+          echo "[warn] legacy initiative -- code_audit_converged not set; proceeding" >&2
+        elif [[ "$converged" == "false" ]]; then
+          # AC5: the refusal is unconditional on product_name -- the `-n "$product_name"`
+          # conjunct that let a flat-layout initiative archive with no refusal at all is
+          # deleted here (CHANGELOG-recorded behaviour change).
+          die "archive refused: code_audit_converged=false; run edm-state approve-gate ${prefix} code-audit before archiving"
+        fi
+        # converged == "true": proceed silently.
+      fi
     fi
-    # converged == "true": proceed silently
   fi
 
   # Determine archive destination: preserve product-scoped layout when applicable.
