@@ -51,24 +51,41 @@ track findings across passes and determine convergence.
    - Writes the updated `findings-ledger.md` to `${INIT_DIR}/code-audit/findings-ledger.md`
    - Writes `${OUTPUT_DIR}/REMEDIATION.md` for this round
    - Marks the round as `partial` (non-convergent) in REMEDIATION.md if `ROUND_TYPE=partial`
-10. **Convergence check** (full rounds only -- partial rounds are never convergent):
-    - Read `findings-ledger.md`: count open P0 and P1 findings introduced or surviving in this round
-    - If **zero open P0/P1 findings**: convergence reached ->
-      1. `edm-state approve-gate <PREFIX> code-audit`
-      2. **Add a closure note** to the top of `${OUTPUT_DIR}/REMEDIATION.md` (the current round's file):
-         ```markdown
-         ## Post-Remediation Closure ({YYYY-MM-DD})
-         All findings in this round resolved. Convergence reached {YYYY-MM-DD}.
-         The cross-round ledger at `code-audit/findings-ledger.md` is the authoritative record.
-         The original audit snapshot is preserved below.
-         ---
-         ```
-         This prevents a reviewer reading the round directory in isolation from seeing
-         "Convergence NOT reached" after all work is done.
-    - If any open P0/P1 findings: present the blocking set to the human before looping
-11. Read `REMEDIATION.md`. Present the HITL gate (summary below) and STOP for approval.
+10. **Convergence gate** (full rounds only -- partial rounds are never convergent). The order is always
+    **compute -> present -> approve -> record** -- the flag is never set as a side effect of computing it:
+    1. **Compute**: read `findings-ledger.md` and count open `P0`, `P1`, `P2`, and `NOTED` findings introduced
+       or surviving in this round (call these `P0_COUNT`, `P1_COUNT`, `P2_COUNT`, `NOTED_COUNT`). A round with
+       zero open P0/P1 findings is clean; any open P0/P1 is the blocking set. (Once `edm-state audit-converged`
+       exists (EDMV3-T28) it becomes the authority for this computation; until then this step reads the ledger
+       directly.)
+    2. **Present** the gate via `AskUserQuestion` -- before any state mutation, regardless of clean or blocked:
+        - Header: `"Convergence"`
+        - Question body states the computed result and pass number, e.g.: *"Pass {N}: {P0_COUNT} P0,
+          {P1_COUNT} P1, {P2_COUNT} P2, {NOTED_COUNT} NOTED findings open. Converge this round?"* -- if any
+          P0/P1 remain open, name the blocking set findings in the body.
+        - Options: **Approve** (record convergence now), **Revise** (address the blocking set and re-run
+          affected lenses before asking again), **No-Go** (stop; do not record convergence)
+        - Per the gate approval rules that apply to every gate in this methodology: a free-text reply
+          ("yes", "looks good", "proceed") is **never** treated as approval -- only the explicit **Approve**
+          option records convergence.
+    3. **Approve** (and only on explicit Approve): run `edm-state approve-gate <PREFIX> code-audit`.
+    4. **Record**: immediately after Approve, add a closure note to the top of `${OUTPUT_DIR}/REMEDIATION.md`
+       (the current round's file):
+       ```markdown
+       ## Post-Remediation Closure ({YYYY-MM-DD})
+       All findings in this round resolved. Convergence reached {YYYY-MM-DD}.
+       The cross-round ledger at `code-audit/findings-ledger.md` is the authoritative record.
+       The original audit snapshot is preserved below.
+       ---
+       ```
+       This prevents a reviewer reading the round directory in isolation from seeing
+       "Convergence NOT reached" after all work is done.
+    - On **Revise**: no state mutation; loop back to the remediation gate (step 11) and step 12.
+    - On **No-Go**: no state mutation; stop and summarize the blockers for the human.
+11. Read `REMEDIATION.md`. Present the remediation gate (see "Remediation Gate (Code Audit)" below) and STOP
+    for approval.
 12. On approval, remediate per the rollout order in the plan.
-13. After remediation, re-run affected lenses (use `--lenses` for targeted re-audit, or full round for convergence). Loop until convergence.
+13. After remediation, re-run affected lenses (use `--lenses` for targeted re-audit, or full round for convergence). Loop until the Convergence gate records Approve.
 
 ## The 11 Audit Lenses
 
@@ -190,13 +207,22 @@ Use the **canonical** severity scale from `CLAUDE.md Sec."Severity vocabulary"`:
 [Syntax checks, tests to run, manual smoke test steps]
 ```
 
-## HITL Gate (Code Audit)
+## Remediation Gate (Code Audit)
+
+This is the remediation gate: distinct from the Convergence gate in Step 10, it approves the *remediation
+plan itself* (whether to start fixing findings) rather than round closure, and it records no state --
+no `edm-state` command runs from this gate.
 
 After the synthesizer writes `REMEDIATION.md`:
 
 1. Summarize: P0/P1/P2 counts (+ NOTED count), top 3 most impactful findings (one sentence each), false alarm count (demonstrates the
    filter worked), estimated remediation effort.
-2. Ask: *"Do you approve this audit plan and want me to remediate, or do you have changes?"*
+2. Present via `AskUserQuestion`:
+   - Header: `"Remediation"`
+   - Question: *"Do you approve this remediation plan?"* -- summarize the counts and top findings in the body.
+   - Options: **Approve** (proceed to remediate per the rollout order), **Revise** (change scope or priority
+     before starting), **No-Go** (stop; do not remediate)
+   - A free-text reply is never treated as approval -- only the explicit **Approve** option proceeds.
 3. **STOP and WAIT** for explicit approval.
 
 ## What Single-Pass Audits Miss (Why 11 Lenses)
