@@ -144,6 +144,89 @@ records that location explicitly, because the initiative that ships this harness
 downloads them, and an unbounded set of committed run artifacts in `plugins/edm/evals/` would undo
 that.
 
+## Scoring a run (`score-artifacts.sh`, EDMV3-T23)
+
+```bash
+bash plugins/edm/evals/score-artifacts.sh <run-dir>
+```
+
+Reads the run directory `run-eval.sh` produced (or any directory shaped like one --
+`planning.md`, `srd.md`, `architecture.md`, `audit-srd.md`, and optionally a `code-audit/`
+round), and writes `<run-dir>/scores.json` (also printed to stdout). No model is in the
+loop -- every dimension is computed by `grep`/`awk`/`jq` over the run's own files, so scoring
+the same run directory twice produces byte-identical output. `score-artifacts.sh` never
+calls `claude`, never reads `ANTHROPIC_API_KEY`, and never touches `bin/edm-state`.
+
+**Exactly five dimensions**, in fixed order, each normalized to an integer 0-100 (higher is
+better; dimension 2 is inverted at normalization time):
+
+1. **requirement-id-coverage** -- every `{PREFIX}-NN` ID in `srd.md` is unique, sequential
+   with no gaps, and appears in `audit-srd.md`'s discussion.
+2. **ac-testability** -- ACs matching `vague-ac-patterns.txt` divided by total AC count,
+   inverted (`100 * (1 - vague/total)`).
+3. **mermaid-parse-success** -- every ` ```mermaid ` block parses (closing fence present, a
+   recognized diagram-type keyword on its first content line) and contains no raw `;` in
+   label text once known HTML entity escapes (`#59;`, `#35;`, `#quot;`, any `#NNN;`) are
+   accounted for (the EDMV3-56 detection rule).
+4. **coverage-map-bidirectionality** -- the ticket phase's own coverage map when the run
+   reached it, falling back to `srd.md` <-> `audit-srd.md` ID bidirectionality (every
+   declared ID is discussed, and nothing discussed is a fabricated ID) when it did not --
+   true of every wave-A eval run today, since `run-eval.sh` stops after `audit-srd`.
+5. **lens-jsonl-prose-agreement** -- per-lens finding counts, `lens-L{N}.md` versus
+   `lens-L{N}.jsonl`, for a run that includes a code-audit round.
+
+A dimension that cannot be computed for the given run (e.g. dimension 5 when the run never
+ran a code-audit round) is emitted `score: null`, named in `dimensions_skipped` with a
+one-line reason, and excluded from both the sum and the denominator. `total` is the
+unweighted arithmetic mean of the dimensions that produced a number, divided by
+`dimensions_scored` (read from the data, never assumed to be 5), rounded to one decimal
+place. `scores.json` also records `scorer_version` and the ordered `dimension_names` list,
+so a later comparison can detect a scorer change before treating two runs as comparable.
+This is the exact expression `scores.json`'s own `total` field satisfies -- there is no
+licence to adapt it (EDMV3-T23 AC3):
+
+```bash
+jq -e '. as $r | ([$r.dimensions[].score | select(. != null)] | add) as $sum
+       | $r.dimensions_scored as $n | (($sum / $n * 10 | round) / 10) == $r.total' \
+  <run-dir>/scores.json
+```
+
+**The scorer emits scores only.** It performs no baseline comparison of any kind and never
+exits non-zero on a low (or entirely null) score -- exit 0 whenever a score was produced,
+exit 2 only on a usage or environment error (missing `jq`, a missing run directory, a
+missing `vague-ac-patterns.txt`). The pass/fail decision belongs to the CI job that consumes
+`scores.json` (EDMV3-T39, srd.md EDMV3-52), not to this script.
+
+### `--describe`
+
+`bash plugins/edm/evals/score-artifacts.sh --describe` prints the five dimension
+definitions above verbatim and exits 0. Useful for confirming the scorer's own
+understanding of what it measures without running it against a run directory.
+
+### `--compare <a.json> <b.json>`
+
+`bash plugins/edm/evals/score-artifacts.sh --compare <a> <b>` is the one piece of
+comparison logic in this file, kept deliberately separate from the default scoring mode
+above (which never compares anything). It refuses (exit 1, naming the mismatch) when the
+two files' `scorer_version` differ, or when their `dimensions_scored` differ -- comparing a
+four-dimension run against a five-dimension run produces a delta with no meaning. When both
+match, it prints a per-dimension and total delta. Wiring this into an automatic CI
+comparison against `baseline/scores.json` is EDMV3-T39's job, not this ticket's.
+
+### Cost and duration
+
+One `run-eval.sh` run costs roughly $2-6 in Claude API spend (three phases, each capped by
+`EDM_EVAL_MAX_BUDGET_USD`, default $2 per phase) and takes 5-15 minutes wall-clock depending
+on model load, well under the default 900-second per-phase timeout. `score-artifacts.sh`
+itself costs nothing -- it makes no network call. **"CI will catch it" is not a valid reason
+to skip running this locally before a prompt change merges**: the eval job is `when: manual`
+on merge requests and only automatic on a scheduled nightly run against the default branch
+(see `plugins/edm/CLAUDE.md`'s CI table), so a prompt regression introduced and merged
+between two nightly runs will not be caught by CI at all until the next scheduled run --
+possibly after several more prompt changes have landed on top of it, at which point
+isolating which change regressed the score is much harder than it would have been the day
+it happened.
+
 ## What this fixture is (and isn't)
 
 `fixtures/tiny-svc/` is a small, frozen, synthetic webhook relay with six known, countable gaps

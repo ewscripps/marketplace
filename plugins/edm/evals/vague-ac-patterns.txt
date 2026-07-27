@@ -1,0 +1,35 @@
+# vague-ac-patterns.txt -- the committed regex set for score-artifacts.sh dimension 2 (AC
+# testability, EDMV3-T23 AC7). One extended-regex (grep -E) pattern per line, matched
+# case-insensitively against the full text of each Acceptance Criteria bullet in srd.md
+# (continuation lines joined). Blank lines and lines starting with # are ignored.
+#
+# This is the single source for the vague-AC pattern set -- it does not live inline in
+# score-artifacts.sh, and architecture.md names this exact path (EDMV3-T23 AC7). Add a
+# pattern here when a new vague phrasing recurs in an SRD audit finding; do not duplicate
+# the set anywhere else.
+should work
+works (properly|correctly|as expected|as intended)
+handles? (errors?|failures?|exceptions?) (gracefully|appropriately|correctly|well)
+(is|are|remains?|stays?) user[- ]friendly
+(is|are) intuitive
+(is|are) fast enough
+(is|are) reasonable
+(is|are) appropriate
+(is|are) robust
+good enough
+as (needed|appropriate|necessary)
+in a timely manner
+improves? (performance|reliability|quality|usability)
+better (performance|error handling|ux|experience)
+various (edge cases|scenarios|inputs|situations)
+some (edge cases|cases|scenarios|inputs)
+(handle|support)s? edge cases
+handles? (all|most) cases
+TBD
+TODO
+etc\.
+where necessary
+if needed
+without issues?
+minimal (impact|disruption)
+acceptable (performance|latency|quality)
