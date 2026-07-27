@@ -4,15 +4,72 @@ All notable changes to the EDM plugin are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.1.0] — 2026-07-27
 
-Individual EDMV3 wave-A behavioural changes are recorded here as they land; EDMV3-T64 (wave-A
-closeout) folds this section into the versioned `## [2.1.0]` entry with the full behavioural,
-breaking-change and required-user-action summary once the whole wave has landed.
+Wave A of EDMV3 (prompt-streamline): the enforcement kernel, the mechanical-fixes epic, the CI
+pipeline and fixture eval harness, and a first tranche of measured model/effort downgrades
+(D16). EDMV3-T64 is the wave-A closeout ticket that folds every individual wave-A change (landed
+incrementally on `edm/edmv3-prompt-streamline` across EDMV3-T01 through EDMV3-T23 and
+EDMV3-T61-EDMV3-T63) into this single versioned entry.
+
+### Added
+
+- **GitLab CI pipeline** (`.gitlab-ci.yml`, EDMV3-T21): four stages -- `lint` (shell syntax,
+  `edm-lint-artifacts --all`, `edm-check-grants`, shellcheck on the unquoted-expansion class),
+  `test` (`run-all.sh` on the pinned image and again under `bash:3.2`, plus
+  `edm-state validate` across every tracked initiative), `validate` (a deterministic
+  manifest-vs-disk check plus a `claude plugin validate` tier-2 job compared against a committed
+  warning-count baseline), and `eval` (the nightly fixture-eval run, `allow_failure: true`).
+- **Fixture eval harness** (EDMV3-T22, EDMV3-T23): a headless eval driver
+  (`plugins/edm/evals/run-eval.sh`) against a committed `tiny-svc` fixture, a five-dimension
+  mechanical scorer (`plugins/edm/evals/score-artifacts.sh`), and a wave-A baseline recorded at
+  `plugins/edm/evals/baseline/`.
+- **Smoke-test harness helpers** (EDMV3-T19): `with_scratch_repo`, `check_fails`, and
+  `check_state_unchanged` in `bin/tests/_harness.sh`, shared by every `*-smoke.sh` suite instead
+  of each suite hand-rolling its own scratch-repo/assertion boilerplate.
+- **`run-all.sh` smoke aggregator** (EDMV3-T20): auto-discovers every `bin/tests/*-smoke.sh`
+  suite by glob (a new suite runs without being added to a hand-kept list), prints a per-suite
+  pass/fail table, and exits non-zero naming the failing suite(s).
+- **`edm-lint-artifacts --all` / `--path`** (EDMV3-T20): scan every initiative under the SRD
+  root (flat and product-scoped layouts, `.archived/` excluded) or an arbitrary directory/file
+  directly, in addition to the existing single-`<PREFIX>` mode. Exit code 2 added for a usage
+  error (mutually-exclusive-argument misuse), alongside the existing 0 (clean) / 1 (violations).
+- **`edm-check-grants`** (EDMV3-T03): a four-source grant/instruction contract checker --
+  cross-references each agent's tool grants against its own prose instructions, the invoking
+  skill's `allowed-tools`, and the skill's own instructions, and flags a grant with no
+  corresponding instruction.
+- **`edm-state migrate-schema`** (EDMV3-T10): backfills `schema_version` on existing initiatives
+  that predate the field, so the three-valued degradation class (EDMV3-T09/EDMV3-T14) has a
+  value to read instead of treating every pre-existing initiative as permanently legacy.
+- **Permission `ask` rules setup and detection** (EDMV3-T06, EDMV3-08): documented required
+  `.claude/settings.json` block (see `CLAUDE.md`/`README.md` "Required setup: permission `ask`
+  rules"), detected at runtime by `check_permission_rules()` and recorded on every gate approval
+  as an `enforcement` tag (`permission-ask` | `prose-only`); its absence surfaces as an
+  informational `PERM_RULES_MISSING` anomaly rather than silently proceeding unenforced.
 
 ### Changed
 
-- **`edm-state` skip-phase refusing an empty rationale (breaking change, EDMV3-T62 AC2):**
+- **Gate enforcement moved into the kernel** (EDMV3-T08, EDMV3-T13): `gate-check` is now a
+  complete, hard-blocking check rather than an advisory one, and `approve-gate` accepts the
+  `code-audit` gate while keeping `gates_approved` integral.
+- **`cmd_set` allowlist and `schema_version` contract** (EDMV3-T09): every key `cmd_set` will
+  write is enumerated once in `SETTABLE_KEYS`; an unknown key is refused before any mutation,
+  naming the full legal list. `schema_version` is refused from `cmd_set` entirely -- it is a
+  single-writer field, advanced only by `edm-state migrate-schema`.
+- **`phase-complete` requires the phase's artifact** (EDMV3-T11): a phase can no longer be
+  marked complete without its artifact file present and non-empty on disk; there is no force
+  path.
+- **`archive` verifies the whole lifecycle** (EDMV3-T12; also see the `product_name` item
+  below): gates, the mode-derived terminal phase, and the terminal phase's recorded
+  `completed_at` are all checked before an initiative may be archived, for any initiative whose
+  `schema_version >= 1`.
+- **`product_name` coupling removed from `cmd_archive`'s convergence check** (EDMV3-17, wave-A
+  half): for any initiative with `schema_version >= 1`, the code-audit convergence check that
+  gates archival now depends only on `mode`/`lifecycle_mode` via `code_audit_required_for_mode()`
+  -- it no longer additionally requires a non-empty `product_name` to fire. The pre-existing
+  `product_name`-gated behavior is preserved verbatim, but only for legacy initiatives with no
+  recorded `schema_version` (C-4).
+- **`edm-state` skip-phase refusing an empty rationale (EDMV3-T62 AC2):**
   `skip-phase <PREFIX> <phase-num> <rationale>` now requires a non-empty third argument.
   Previously `rationale="${3:-}"` accepted an omitted or empty rationale and recorded it as an
   empty string. Every sanctioned skip must now record *why* it was skipped, so a skip with no
@@ -20,9 +77,93 @@ breaking-change and required-user-action summary once the whole wave has landed.
   that already carry a skip recorded with an empty rationale continue to be read without error
   (backward compatible, C-4) and are surfaced by `edm-state validate` as an informational
   `EMPTY_SKIP_RATIONALE` anomaly rather than being migrated or hidden.
-- **Required user action:** any script or automation invoking `edm-state skip-phase` with only
-  two arguments (prefix and phase number) must be updated to supply a third, non-empty rationale
-  argument, or the call now fails.
+- **`prototype` mode waives only the convergence check** (EDMV3-17): the `prototype`/
+  fast-track/fix-pack exemption path (`archive_exemptions: ["CONVERGENCE_NOT_REQUIRED"]`) skips
+  the code-audit convergence check specifically -- it does not waive gate approval,
+  terminal-phase, or `completed_at` checks, which still apply in full.
+- **State anomalies split into `info` and `blocking` classes** (EDMV3-T05): `edm-state validate`
+  now emits a class token (`info` or `blocking`) on every anomaly line; an informational-only
+  anomaly set exits 0, a blocking anomaly set exits 3, exactly as before.
+- **Mode-derivation helpers** (EDMV3-T07): `terminal_phase_for_mode`, `required_gates_for_mode`,
+  and `code_audit_required_for_mode` are the single source every mode-aware check (`gate-check`,
+  `archive`, `phase-complete`) now derives from, rather than three independently hand-maintained
+  mode-to-behavior mappings.
+- **The convergence gate is presented via `AskUserQuestion`, not self-flipped** (EDMV3-T15).
+- **Agent Write grants and output-contract tightening** (EDMV3-T02): Write access granted to the
+  13-agent F3 class that needs it; the synthesizer's over-broad grant closed; blast radius
+  bounded.
+- **Model/effort downgrades, first tranche (D16, EDMV3-T02):** `edm-explorer` and
+  `edm-test-coverage-auditor` move from `opus`/`max` to `sonnet`/`high` (scan/list work);
+  `edm-architect` moves from `max` to `high` effort (writing work, model unchanged). Every other
+  agent (the 11 code-audit lenses, the SRD/ticket auditors, `edm-qc-auditor`, the synthesizer)
+  is unchanged pending the wave-C measured tiering matrix (EDMV3-T70/T71) -- these three are the
+  only downgrades applied without that measurement, because they were assessed as safe by
+  inspection (non-judgment scan/write work) rather than deferred to the matrix.
+- **Sentinel-delimited `--help` output and bash 3.2/macOS CI hardening** (EDMV3-T61): help text
+  in `bin/edm-state` and `bin/edm-lint-artifacts` is extracted between `EDM-HELP-BEGIN`/
+  `EDM-HELP-END` sentinels rather than a hardcoded `sed -n 'A,Bp'` line range, so a new doc line
+  can't silently fall outside the extracted block.
+- **Every exemption leaves an audit trail** (EDMV3-T62): `archive_exemptions` and
+  `degraded_checks` record every waived or degraded check (empty-rationale skips, legacy
+  schema-version skips, prototype-mode convergence waivers) in state, surfaced by
+  `edm-state validate` and `session-start` rather than only logged to the console.
+- **Artifact lint compliance and ASCII import policy** (EDMV3-T63): `edm-lint-artifacts --all`
+  now exits 0 across the whole tracked artifact tree, including this initiative's own directory;
+  imported third-party documents are ASCII-normalized on import (documented in `CLAUDE.md`)
+  rather than wrapped in lint-ignore markers.
+- **`edm-init` branch handshake fix** (EDMV3-T01) and **README/CLAUDE.md stale install-path
+  fixes plus a stated platform constraint** (EDMV3-T04, macOS/Linux only, bash 3.2+).
+
+### Breaking Changes
+
+- `edm-state skip-phase <PREFIX> <phase-num>` invoked with only two arguments now fails (see
+  "Required user action" below). This is the only breaking change in wave A.
+
+### Required User Action
+
+- **Permission `ask` rules (EDMV3-08, Must Have):** add the block documented in `CLAUDE.md` /
+  `README.md` ("Required setup: permission `ask` rules") to `.claude/settings.json` (or
+  `.claude/settings.local.json`):
+  ```json
+  { "permissions": { "ask": [ "Bash(edm-state approve-gate*)", "Bash(edm-state archive*)" ] } }
+  ```
+  Without it, `check_permission_rules()` records `enforcement: "prose-only"` on every gate
+  approval (rather than `"permission-ask"`) and an informational `PERM_RULES_MISSING` anomaly
+  appears on `edm-state validate` / `session-start`. This does not block any command in wave A --
+  it is a "should already be in place" recommendation with an honest enforcement tag, not a new
+  hard gate.
+- Any script or automation invoking `edm-state skip-phase` with only two arguments (prefix and
+  phase number) must be updated to supply a third, non-empty rationale argument, or the call now
+  fails.
+
+### Backward Compatibility
+
+All wave-A changes are backward compatible for existing state files (per EDMV3-107), with the
+following explicit exceptions/notes:
+
+- A state file with a skip already recorded under an empty rationale (pre-2.1.0) continues to be
+  read without error; `edm-state validate` surfaces it as informational `EMPTY_SKIP_RATIONALE`
+  rather than migrating or erroring on it.
+- A legacy state file with no `schema_version` keeps the pre-2.1.0 `product_name`-gated archive
+  convergence behavior verbatim (the new `mode`-derived behavior applies only to
+  `schema_version >= 1` states); this is deliberate C-4 preservation, not a bug.
+- No new field added in wave A is required for an existing 2.0.0-era state file to keep working;
+  every new check reads a missing field as its documented default rather than failing closed.
+
+### Downgrade Path
+
+Wave A introduces no new authoritative on-disk shape that a 2.0.0 install would misread --
+`schema_version`, `archive_exemptions`, and `degraded_checks` are additive fields a 2.0.0-era
+`edm-state` simply ignores if present. There is no wave-A downgrade hazard to document; the
+downgrade story that matters (2.1.0 <- 3.0.0, once the JSONL findings ledger and PARTIAL closure
+representation exist) is EDMV3-T65's (wave B).
+
+### `claude plugin validate` baseline
+
+The v2.0.0 `claude plugin` validate baseline: 1 warning (root `CLAUDE.md` not loaded as project
+context -- expected, since the plugin uses `skills/` for context per its own architectural
+rules). Recorded at `.gitlab/edm-validate-baseline.txt` and unchanged in wave A, so "no new
+warnings" is a measurable comparison in waves B and C.
 
 ## [2.0.0] — 2026-06-08
 
