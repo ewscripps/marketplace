@@ -562,8 +562,10 @@ Drive the 11-lens code audit:
 2. Spawn `edm-audit-synthesizer` after lenses complete.
 3. Remediate all P0 and P1 findings before proceeding.
 4. Run a second audit pass if any P0/P1 findings were introduced by remediation changes.
-5. When REMEDIATION.md shows no new P0/P1 findings, record convergence:
-   `edm-state approve-gate {PREFIX} code-audit`
+5. When REMEDIATION.md shows no new P0/P1 findings, `/edm:code-audit` Step 10 presents the Convergence
+   gate (header `"Convergence"`, options Approve/Revise/No-Go) -- do not restate that protocol here or
+   run `edm-state approve-gate {PREFIX} code-audit` outside it; convergence records only on explicit
+   Approve at that gate.
 
 **Exemption**: `prototype` mode initiatives may skip code-audit convergence -- `edm-state archive` proceeds with a warning.
 
@@ -585,7 +587,8 @@ Drive the 11-lens code audit:
 - [ ] Execution report written to `exec-report.md` in the initiative directory (Step 7)
 - [ ] `ROLLBACK.md` written if initiative changes production behavior (on-demand; omit for internal tooling)
 - [ ] Post-deploy verification at `post-deploy/verification.md` if already deployed (on-demand)
-- [ ] Code audit converged: `edm-state get {PREFIX} code_audit_converged` shows `true` (or mode is `prototype`)
+- [ ] Code audit converged: the Convergence gate (Step 8 point 5) recorded explicit Approve --
+      `edm-state get {PREFIX} code_audit_converged` shows `true` (or mode is `prototype`)
 - Run `edm-state archive <PREFIX>` after the initiative ships (blocked by code_audit_converged=false for non-prototype v2 initiatives).
 
 ## Phase Timing Guidelines

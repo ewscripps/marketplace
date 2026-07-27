@@ -327,37 +327,66 @@ check "run-all.sh references edm-check-grants (AC10 smoke-aggregator half)" "edm
 # =================================================================================
 # EDMV3-T15: prompts present the convergence gate instead of setting the flag
 # =================================================================================
-# Batch scope note (recorded here rather than silently worked around): this batch's file
-# remit is bin/tests/* only -- plugins/edm/skills/code-audit/SKILL.md and
-# plugins/edm/skills/orchestrator/SKILL.md are out of scope for this agent/batch to edit.
-# As of this suite landing, only AC1, AC4 and AC7 are satisfied by the live skill text (AC7 is
-# already covered by the "T03 AC5" block above -- code-audit/SKILL.md grants AskUserQuestion).
-# AC2/AC3/AC5/AC6/AC8/AC9 require prose additions that do not exist anywhere in the tree yet:
-#   - AC2/AC3: Step 10 must present the convergence gate via AskUserQuestion (header
-#     "Convergence", options Approve/Revise/No-Go) AFTER computing the round result and BEFORE
-#     calling `edm-state approve-gate <PREFIX> code-audit` -- today Step 10 calls approve-gate
-#     directly with no gate presented first.
-#   - AC5/AC8: orchestrator/SKILL.md Step 8 point 5 and the Step 9 checklist do not yet
-#     reference the gate protocol by name.
-#   - AC6: the free-prose remediation gate at code-audit/SKILL.md:193-200 is not yet upgraded
-#     to AskUserQuestion or retitled "remediation gate".
-# This is a genuinely missing dependency outside this batch's writable files, reported here
-# rather than papered over with an assertion this suite cannot honestly make pass. Only the
-# two cases below (already-true facts, regression-locked so they cannot silently regress) are
-# added; AC2/AC3/AC5/AC6/AC8/AC9 are NOT asserted until the SKILL.md prose lands.
+# The blocking dependency recorded in the prior version of this block (prose in
+# code-audit/SKILL.md and orchestrator/SKILL.md not yet written) has landed in the same MR as
+# this change. AC1, AC4 and AC7 were already true (AC7 is covered by the "T03 AC5" block above
+# -- code-audit/SKILL.md grants AskUserQuestion); AC2, AC3, AC5, AC6 and AC8 are now asserted
+# for real against the live skill text. AC9 (MR description before/after block) is a review
+# artifact, not a runnable assertion, and is intentionally not covered here.
 echo
 echo "T15 AC1 -- code-audit/SKILL.md no longer instructs the model to set the flag directly"
 CODE_AUDIT_SKILL="${PLUGIN_DIR}/skills/code-audit/SKILL.md"
+ORCH_SKILL="${PLUGIN_DIR}/skills/orchestrator/SKILL.md"
 t15_skills_grep="$(grep -rn 'code_audit_converged true' "${PLUGIN_DIR}/skills/" 2>/dev/null || true)"
 check_absent "no prompt anywhere instructs 'edm-state set <PREFIX> code_audit_converged true'" \
   "code_audit_converged true" "$t15_skills_grep"
 
 echo
+echo "T15 AC2 -- Step 10 presents the Convergence gate via AskUserQuestion and gates approve-gate on Approve"
+CA_CONTENT="$(cat "$CODE_AUDIT_SKILL")"
+check "Convergence header present" '"Convergence"' "$CA_CONTENT"
+check "Convergence gate options Approve/Revise/No-Go present" \
+  "**Approve** (record convergence now), **Revise**" "$CA_CONTENT"
+check "approve-gate code-audit command present" \
+  "edm-state approve-gate <PREFIX> code-audit" "$CA_CONTENT"
+check "free-text-is-never-approval restated at the convergence gate" \
+  "never** treated as approval" "$CA_CONTENT"
+
+echo
+echo "T15 AC3 -- Step 10 states the compute -> present -> approve -> record order explicitly"
+T15_STEP10="$(sed -n '54,69p' "$CODE_AUDIT_SKILL")"
+check "convergence gate ordering text" "compute -> present -> approve -> record" "$T15_STEP10"
+check "Step 10 compute sub-step precedes present" "**Compute**" "$T15_STEP10"
+check "Step 10 present sub-step follows compute" "**Present** the gate via" "$T15_STEP10"
+
+echo
 echo "T15 AC4 -- gate summary states computed P0/P1/P2/NOTED counts"
-check "code-audit/SKILL.md HITL gate names all four severity counts (P0/P1/P2/NOTED)" \
+check "code-audit/SKILL.md gate text names all four severity counts (P0/P1/P2/NOTED)" \
   "P0" "$(grep -o 'P0.*P1.*P2.*NOTED[^.]*' "$CODE_AUDIT_SKILL" || true)"
-# EDMV3-T15 end (AC2/AC3/AC5/AC6/AC8/AC9 intentionally not asserted here -- see the block
-# comment above)
+
+echo
+echo "T15 AC5 -- orchestrator Step 8 point 5 invokes the gate protocol by name, not a restatement"
+T15_STEP8="$(awk '/^### Step 8 --/{f=1} /^### Step 9 --/{f=0} f' "$ORCH_SKILL")"
+check "Step 8 names the Convergence gate by reference to /edm:code-audit Step 10" \
+  "/edm:code-audit\` Step 10 presents the Convergence" "$T15_STEP8"
+check_absent "Step 8 does not restate the gate's own STOP-and-WAIT protocol locally" \
+  "STOP and WAIT" "$T15_STEP8"
+
+echo
+echo "T15 AC6 -- the remediation gate is distinct, uses AskUserQuestion, and records no state"
+check "code-audit/SKILL.md names the remediation gate" "remediation gate" "$CA_CONTENT"
+T15_REMEDIATION_SECTION="$(awk '/^## Remediation Gate \(Code Audit\)/{f=1} /^## /{if(f && $0 !~ /^## Remediation Gate/) exit} f' <<< "$CA_CONTENT")"
+check "remediation gate section present" "## Remediation Gate (Code Audit)" "$CA_CONTENT"
+check "remediation gate uses AskUserQuestion" "AskUserQuestion" "$T15_REMEDIATION_SECTION"
+check_absent "remediation gate records no state (no approve-gate call in its own section)" \
+  "edm-state approve-gate" "$T15_REMEDIATION_SECTION"
+
+echo
+echo "T15 AC8 -- Step 9 checklist names the Convergence gate; Post-Remediation Closure note preserved"
+T15_STEP9="$(awk '/^### Step 9 --/{f=1} /^## Phase Timing/{f=0} f' "$ORCH_SKILL")"
+check "Step 9 checklist names the Convergence gate" "Convergence gate" "$T15_STEP9"
+check "Post-Remediation Closure section still present" "Post-Remediation Closure" "$CA_CONTENT"
+# EDMV3-T15 end
 
 # ---- Summary -----------------------------------------------------------------
 echo
