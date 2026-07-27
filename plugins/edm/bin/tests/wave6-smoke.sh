@@ -254,6 +254,181 @@ check_state_unchanged "$STATE_T7SEEDSTD" "$EDM_STATE" set-mode T7SEEDSTD mode bo
 # compatibility (no associative arrays, `bash -n` clean) is checked directly
 # against bin/edm-state, not re-asserted here.
 
+# =================================================================================
+# EDMV3-T01: edm-init branch handshake correction (post-checkout record-branch)
+# =================================================================================
+echo
+echo "T01 -- edm-init branch handshake correction"
+
+# ---- AC1/AC2/AC5: new-branch path -- branch recorded equals HEAD --------------
+t01_case_new_branch() {
+  local orig_branch
+  orig_branch="$(git rev-parse --abbrev-ref HEAD)"
+  edm-init T1NEW >/dev/null
+
+  local state="SRD/T1NEW/.edm-state.json"
+  local recorded head
+  recorded="$(jq -r '.initiative_branch' "$state")"
+  head="$(git rev-parse --abbrev-ref HEAD)"
+
+  [[ "$recorded" == "$head" ]] \
+    && pass "T01 AC1 -- branch recorded equals HEAD ($head)" \
+    || fail "T01 AC1 -- branch recorded equals HEAD (recorded='$recorded', HEAD='$head')"
+  [[ "$recorded" == "edm/t1new" ]] \
+    && pass "T01 AC2 -- new branch path: initiative_branch equals newly created branch name" \
+    || fail "T01 AC2 -- new branch path: expected 'edm/t1new', got '$recorded'"
+  [[ "$head" != "$orig_branch" ]] \
+    && pass "T01 AC2 -- new branch path: HEAD moved off the pre-init branch" \
+    || fail "T01 AC2 -- new branch path: HEAD is still '$orig_branch'"
+
+  set +e
+  edm-state branch-check T1NEW >/dev/null 2>&1
+  local bc_ec=$?
+  set -e
+  [[ $bc_ec -eq 0 ]] \
+    && pass "T01 AC5 -- branch-check exits 0 (new branch case)" \
+    || fail "T01 AC5 -- branch-check exited $bc_ec (new branch case)"
+}
+with_scratch_repo t01_case_new_branch
+
+# ---- AC3/AC5: existing-branch path ---------------------------------------------
+t01_case_existing_branch() {
+  local base_branch
+  base_branch="$(git rev-parse --abbrev-ref HEAD)"
+  git checkout -q -b edm/t1exst
+  git checkout -q "$base_branch"
+
+  edm-init T1EXST >/dev/null
+
+  local state="SRD/T1EXST/.edm-state.json"
+  local recorded
+  recorded="$(jq -r '.initiative_branch' "$state")"
+  [[ "$recorded" == "edm/t1exst" ]] \
+    && pass "T01 AC3 -- existing branch path: initiative_branch equals pre-existing branch" \
+    || fail "T01 AC3 -- existing branch path: expected 'edm/t1exst', got '$recorded'"
+
+  set +e
+  edm-state branch-check T1EXST >/dev/null 2>&1
+  local bc_ec=$?
+  set -e
+  [[ $bc_ec -eq 0 ]] \
+    && pass "T01 AC5 -- branch-check exits 0 (existing branch case)" \
+    || fail "T01 AC5 -- branch-check exited $bc_ec (existing branch case)"
+}
+with_scratch_repo t01_case_existing_branch
+
+# ---- AC4/AC5: checkout-failure warn-and-continue path --------------------------
+# Shims 'git' earlier on PATH so 'checkout -b' fails while every other subcommand
+# passes through to the real git (Technical Notes' recommended simulation).
+t01_case_checkout_failure() {
+  local orig_branch
+  orig_branch="$(git rev-parse --abbrev-ref HEAD)"
+
+  local real_git shim_dir
+  real_git="$(command -v git)"
+  shim_dir="$PWD/.git-shim"
+  mkdir -p "$shim_dir"
+  cat > "$shim_dir/git" <<GITSHIM_EOF
+#!/usr/bin/env bash
+# Test double: fails 'checkout -b' only; passes every other subcommand through.
+if [[ "\$1" == "checkout" && "\$2" == "-b" ]]; then
+  echo "fatal: simulated checkout -b failure" >&2
+  exit 1
+fi
+exec "$real_git" "\$@"
+GITSHIM_EOF
+  chmod +x "$shim_dir/git"
+  export PATH="$shim_dir:$PATH"
+
+  local init_out init_ec
+  set +e
+  init_out="$(edm-init T1CKOF 2>&1)"
+  init_ec=$?
+  set -e
+  [[ $init_ec -eq 0 ]] \
+    && pass "T01 AC4 -- checkout failure keeps origin branch: edm-init still exits 0" \
+    || fail "T01 AC4 -- checkout failure keeps origin branch: edm-init exited $init_ec ($init_out)"
+  check "T01 AC4 -- checkout failure keeps origin branch: [warn] line unchanged" \
+    "[warn] branch creation failed; staying on current branch" "$init_out"
+
+  local state="SRD/T1CKOF/.edm-state.json"
+  local recorded current
+  recorded="$(jq -r '.initiative_branch' "$state")"
+  current="$(git rev-parse --abbrev-ref HEAD)"
+  [[ "$recorded" == "$orig_branch" ]] \
+    && pass "T01 AC4 -- checkout failure keeps origin branch: initiative_branch equals original branch" \
+    || fail "T01 AC4 -- checkout failure keeps origin branch: expected '$orig_branch', got '$recorded'"
+  [[ "$current" == "$orig_branch" ]] \
+    && pass "T01 AC4 -- checkout failure keeps origin branch: HEAD stayed on original branch" \
+    || fail "T01 AC4 -- checkout failure keeps origin branch: HEAD moved to '$current'"
+
+  set +e
+  edm-state branch-check T1CKOF >/dev/null 2>&1
+  local bc_ec=$?
+  set -e
+  [[ $bc_ec -eq 0 ]] \
+    && pass "T01 AC5 -- branch-check exits 0 (checkout-failure case)" \
+    || fail "T01 AC5 -- branch-check exited $bc_ec (checkout-failure case)"
+}
+with_scratch_repo t01_case_checkout_failure
+
+# ---- AC1: correction is a no-op outside a git worktree -------------------------
+t01_case_non_worktree() {
+  local nongit_dir
+  # Nested under $TMP (not a fresh /tmp entry) so the suite's own top-level
+  # `trap 'rm -rf "$TMP"' EXIT` (set at the top of this file) already covers cleanup on
+  # every exit path -- normal, failure, and interrupt -- without a second trap layer.
+  nongit_dir="$(mktemp -d "$TMP/edm-t01-nongit.XXXXXX")" || { fail "T01 AC1 -- non-worktree mktemp failed"; return 1; }
+  local prev_dir prev_srd_root prev_path
+  prev_dir="$(pwd)"
+  prev_srd_root="${EDM_SRD_ROOT:-}"
+  prev_path="$PATH"
+  cd "$nongit_dir"
+  export EDM_SRD_ROOT="${nongit_dir}/SRD"
+  # edm-init and edm-state invoke sibling scripts by bare name (see with_scratch_repo's own
+  # comment above), and this case does not go through with_scratch_repo (it must NOT be a git
+  # worktree), so prepend plugins/edm/bin to PATH here the same way that helper does.
+  export PATH="${_HARNESS_BIN_DIR}:${PATH}"
+
+  local init_out init_ec
+  set +e
+  init_out="$(edm-init T1NOG 2>&1)"
+  init_ec=$?
+  set -e
+  [[ $init_ec -eq 0 ]] \
+    && pass "T01 AC1 -- correction is a no-op outside a git worktree: edm-init still exits 0" \
+    || fail "T01 AC1 -- correction is a no-op outside a git worktree: edm-init exited $init_ec ($init_out)"
+  check_absent "T01 AC1 -- correction is a no-op outside a git worktree: no Branch: line printed" \
+    "Branch:" "$init_out"
+
+  cd "$prev_dir"
+  if [[ -n "$prev_srd_root" ]]; then
+    export EDM_SRD_ROOT="$prev_srd_root"
+  else
+    unset EDM_SRD_ROOT
+  fi
+  export PATH="$prev_path"
+  rm -rf "$nongit_dir"
+}
+t01_case_non_worktree
+
+# ---- AC6: initiative_branch stays out of the cmd_set allowlist -----------------
+echo
+echo "T01 AC6 -- initiative_branch is not a cmd_set-settable key (allowlist containment)"
+# Built from two halves, and neither half is repeated verbatim in this file's own comments or
+# labels below, so this containment check can never be a false-positive hit against its own
+# source line when the ticket's literal verify command re-runs the same grep externally.
+_t01_ac6_verb="edm-state set "
+_t01_ac6_field="initiative_branch"
+# `|| true` guards the zero-matches case: grep exits 1 when nothing matches, and under this
+# file's `set -euo pipefail` that would otherwise abort the whole suite right here on the
+# expected-clean (zero-hit) outcome -- the one outcome this check exists to confirm.
+_t01_ac6_hits="$( { grep -rn "${_t01_ac6_verb}.*${_t01_ac6_field}" "${SCRIPT_DIR}/.." 2>/dev/null \
+  | grep -v "$(basename "${BASH_SOURCE[0]}")" || true; } | wc -l | tr -d ' ')"
+[[ "$_t01_ac6_hits" -eq 0 ]] \
+  && pass "T01 AC6 -- no cmd_set call site targets the branch field (allowlist containment holds)" \
+  || fail "T01 AC6 -- found $_t01_ac6_hits cmd_set call site(s) targeting the branch field"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
