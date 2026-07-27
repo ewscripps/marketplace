@@ -160,12 +160,21 @@ if [ "$PROVISION_ONLY" = "true" ]; then
   exit 0
 fi
 
-# --- Environment / credential requirements (AC8) --------------------------------------------
-[ -n "${ANTHROPIC_API_KEY:-}" ] || die "ANTHROPIC_API_KEY is not set. Export ANTHROPIC_API_KEY (the API key the 'claude' CLI authenticates with) and re-run. Use --provision-only to exercise fixture provisioning without an API key."
-
+# --- Environment / credential requirements (AC8, amended by D20) ----------------------------
+# Two sanctioned auth paths: an exported ANTHROPIC_API_KEY, or a 'claude' CLI that is already
+# authenticated (subscription/OAuth login). The original env-var-only gate was a false
+# precondition on logged-in developer machines and CI images using CLI auth (D15 rework,
+# recorded as D20 in the initiative's decisions.md). The driver still refuses to start a run
+# with no working auth at all, preserving AC8's substance: no half-run against a dead backend.
 for bin in claude jq git; do
   command -v "$bin" >/dev/null 2>&1 || die "required binary not found on PATH: $bin"
 done
+
+if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  if ! claude -p "Reply with exactly: OK" --model haiku >/dev/null 2>&1; then
+    die "no working Claude auth: ANTHROPIC_API_KEY is not set and the 'claude' CLI is not authenticated. Export ANTHROPIC_API_KEY or run 'claude' interactively to log in. Use --provision-only to exercise fixture provisioning without auth."
+  fi
+fi
 
 # --- Parse the frozen initiative description ------------------------------------------------
 PREFIX="$(sed -n 's/^prefix: *//p' "$INITIATIVE_FILE" | head -n1)"
