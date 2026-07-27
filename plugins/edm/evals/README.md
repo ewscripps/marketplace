@@ -215,8 +215,8 @@ comparison against `baseline/scores.json` is EDMV3-T39's job, not this ticket's.
 
 ### Cost and duration
 
-One `run-eval.sh` run costs roughly $2-6 in Claude API spend (three phases, each capped by
-`EDM_EVAL_MAX_BUDGET_USD`, default $2 per phase) and takes 5-15 minutes wall-clock depending
+One `run-eval.sh` run costs roughly $4-15 in Claude API spend (measured: the srd phase alone exceeded $2.5 at opus; three phases, each capped by
+`EDM_EVAL_MAX_BUDGET_USD`, default $6 per phase) and takes 5-15 minutes wall-clock depending
 on model load, well under the default 900-second per-phase timeout. `score-artifacts.sh`
 itself costs nothing -- it makes no network call. **"CI will catch it" is not a valid reason
 to skip running this locally before a prompt change merges**: the eval job is `when: manual`
