@@ -7,6 +7,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EDM_STATE="${SCRIPT_DIR}/../edm-state"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 
 # Shared assertions / counters (CA-014).
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_harness.sh"
@@ -1660,6 +1661,264 @@ check_state_unchanged "$STATE_T12BYPASS" "$EDM_STATE" archive T12BYPASS
 [[ -d "$TMP/SRD/T12BYPASS" ]] \
   && pass "T12 REGRESSION -- three-command bypass fails at both step 2 and step 3; directory never moved" \
   || fail "T12 REGRESSION -- initiative directory was archived despite the bypass"
+
+# =================================================================================
+# EDMV3-T14: schema_version three-valued degradation wiring, C-4 field-stability
+# contract, legacy read-compat assertions.
+# =================================================================================
+echo
+echo "T14 -- three-valued degradation, C-4 field stability, legacy read-compat"
+
+# ---- AC1/AC2 (class 1, absent schema_version): every new check (T11 artifact, T11 PARTIAL,
+# T12 archive, T13 phase-start) warns and proceeds on a legacy file, and each warning is
+# prefixed "[warn] legacy initiative" and names the check that was skipped. -----------------
+echo
+echo "T14 AC1/AC2 -- every new check degrades to warn-and-proceed on a legacy (no schema_version) file"
+mkdir -p "$TMP/SRD/T14LEGACY"
+STATE_T14LEGACY="$TMP/SRD/T14LEGACY/.edm-state.json"
+jq -n '{
+  prefix: "T14LEGACY",
+  current_phase: 6,
+  gates_approved: [],
+  phase_durations: {"6_phase": {"started_at": "2020-01-01T00:00:00Z"}},
+  partial_verdict_map: {"T14LEGACY-T01": {verdict: "PARTIAL", note: "open", recorded_at: "2020-01-01T00:00:00Z"}},
+  code_audit_converged: true,
+  last_updated: "2020-01-01T00:00:00Z"
+}' > "$STATE_T14LEGACY"
+
+# check 1: phase-complete artifact verification (T11) -- no planning.md on disk, must not die.
+t14leg_pc1_out="$("$EDM_STATE" phase-complete T14LEGACY 1 2>&1)"
+t14leg_pc1_ec=$?
+check "T14 AC2 -- phase-complete artifact check names 'phase 1' when it warns" \
+  "[warn] legacy initiative" "$t14leg_pc1_out"
+check "T14 AC2 -- phase-complete artifact check names the skipped phase" \
+  "phase 1" "$t14leg_pc1_out"
+[[ $t14leg_pc1_ec -eq 0 ]] && pass "T14 AC1 -- phase-complete artifact check (T11) warns and proceeds rather than hard-failing" \
+  || fail "T14 AC1 -- phase-complete artifact check hard-failed on a legacy file (exit $t14leg_pc1_ec)"
+
+# check 2: phase-complete open-PARTIAL check (T11) -- an open PARTIAL exists, must not die.
+t14leg_pc6_out="$("$EDM_STATE" phase-complete T14LEGACY 6 2>&1)"
+t14leg_pc6_ec=$?
+check "T14 AC2 -- phase-complete PARTIAL check names 'phase 6' when it warns" \
+  "phase 6" "$t14leg_pc6_out"
+[[ $t14leg_pc6_ec -eq 0 ]] && pass "T14 AC1 -- phase-complete open-PARTIAL check (T11) warns and proceeds despite an unresolved PARTIAL" \
+  || fail "T14 AC1 -- phase-complete open-PARTIAL check hard-failed on a legacy file (exit $t14leg_pc6_ec)"
+
+# check 3: archive lifecycle checks (T12) -- no gates approved, no completed_at, must not die.
+t14leg_arch_out="$("$EDM_STATE" archive T14LEGACY 2>&1)"
+t14leg_arch_ec=$?
+check "T14 AC2 -- archive names the skipped check class when it warns" \
+  "skipping wave-A lifecycle checks" "$t14leg_arch_out"
+[[ $t14leg_arch_ec -eq 0 ]] && pass "T14 AC1 -- archive lifecycle checks (T12) warn and proceed rather than hard-failing" \
+  || fail "T14 AC1 -- archive hard-failed on a legacy file (exit $t14leg_arch_ec)"
+[[ -d "$TMP/SRD/.archived/T14LEGACY" ]] \
+  && pass "T14 AC1 -- legacy initiative archives successfully despite missing gates/phase/completed_at" \
+  || fail "T14 AC1 -- legacy initiative was not archived"
+
+# check 4: phase-start kernel gate check (T13) -- no mode field, must not die (separate small
+# fixture: phase-start's own C-4 signal is the mode field, not schema_version -- EDMV3-T13's
+# existing degradation, exercised here as one of the "four" this AC counts, not re-implemented).
+mkdir -p "$TMP/SRD/T14LEGSTART"
+STATE_T14LEGSTART="$TMP/SRD/T14LEGSTART/.edm-state.json"
+jq -n '{prefix: "T14LEGSTART", current_phase: 1, gates_approved: [], phase_durations: {}, last_updated: "2020-01-01T00:00:00Z"}' \
+  > "$STATE_T14LEGSTART"
+t14leg_ps_out="$("$EDM_STATE" phase-start T14LEGSTART 2 2>&1)"
+t14leg_ps_ec=$?
+check "T14 AC2 -- phase-start names the skipped check when it warns" \
+  "skipping kernel gate enforcement" "$t14leg_ps_out"
+[[ $t14leg_ps_ec -eq 0 ]] && pass "T14 AC1 -- phase-start kernel gate check (T13) warns and proceeds rather than hard-failing" \
+  || fail "T14 AC1 -- phase-start hard-failed on a legacy file (exit $t14leg_ps_ec)"
+
+# ---- AC3 (D4 grandfathering, positive): code_audit_converged=true set under the old flow
+# archives without being asked to re-approve through the new gate. ------------------------
+echo
+echo "T14 AC3 -- pre-set converged flag (old flow) archives without re-approval through the new gate"
+check_absent "T14 AC3 -- archive does not ask to re-approve the code-audit gate for a legacy converged=true file" \
+  "approve-gate T14LEGACY code-audit" "$t14leg_arch_out"
+
+# ---- AC4 (end-to-end legacy fixture): copy the real v2.0 archived state file into a scratch
+# initiative and run get/validate/phase-complete/archive end to end. ----------------------
+echo
+echo "T14 AC4 -- real archived EDMV2 state file, copied into a scratch initiative, runs end to end"
+REAL_EDMV2_FIXTURE="${REPO_ROOT}/SRD/.archived/EDMV2/.edm-state.json"
+[[ -f "$REAL_EDMV2_FIXTURE" ]] \
+  && pass "T14 AC4 -- source fixture SRD/.archived/EDMV2/.edm-state.json exists" \
+  || fail "T14 AC4 -- source fixture not found at $REAL_EDMV2_FIXTURE"
+mkdir -p "$TMP/SRD/T14EDMV2"
+STATE_T14EDMV2="$TMP/SRD/T14EDMV2/.edm-state.json"
+cp "$REAL_EDMV2_FIXTURE" "$STATE_T14EDMV2"
+jq '.prefix = "T14EDMV2"' "$STATE_T14EDMV2" > "$STATE_T14EDMV2.tmp" && mv "$STATE_T14EDMV2.tmp" "$STATE_T14EDMV2"
+
+t14edmv2_get_out="$("$EDM_STATE" get T14EDMV2 2>&1)"
+t14edmv2_get_ec=$?
+[[ $t14edmv2_get_ec -eq 0 ]] && pass "T14 AC4 -- edm-state get reads the copied EDMV2 fixture without error" \
+  || fail "T14 AC4 -- edm-state get errored on the copied EDMV2 fixture (exit $t14edmv2_get_ec)"
+
+t14edmv2_validate_out="$("$EDM_STATE" validate T14EDMV2 2>&1)"
+t14edmv2_validate_ec=$?
+check "T14 AC4 -- validate flags the missing schema_version informationally" \
+  "SCHEMA_VERSION_MISSING" "$t14edmv2_validate_out"
+[[ $t14edmv2_validate_ec -eq 0 ]] && pass "T14 AC4 -- validate exits 0 (informational, not blocking)" \
+  || fail "T14 AC4 -- validate exited $t14edmv2_validate_ec, expected 0"
+
+t14edmv2_pc_out="$("$EDM_STATE" phase-complete T14EDMV2 6 2>&1)"
+t14edmv2_pc_ec=$?
+check "T14 AC4 -- phase-complete warns and proceeds against the real fixture" \
+  "[warn] legacy initiative" "$t14edmv2_pc_out"
+[[ $t14edmv2_pc_ec -eq 0 ]] && pass "T14 AC4 -- phase-complete succeeds against the real fixture (schema_version absent, mode present)" \
+  || fail "T14 AC4 -- phase-complete hard-failed against the real fixture (exit $t14edmv2_pc_ec)"
+
+t14edmv2_arch_out="$("$EDM_STATE" archive T14EDMV2 2>&1)"
+t14edmv2_arch_ec=$?
+check "T14 AC4 -- archive warns and proceeds against the real fixture" \
+  "[warn] legacy initiative" "$t14edmv2_arch_out"
+[[ $t14edmv2_arch_ec -eq 0 ]] && pass "T14 AC4 -- archive succeeds end-to-end against the real fixture" \
+  || fail "T14 AC4 -- archive hard-failed against the real fixture (exit $t14edmv2_arch_ec)"
+[[ -d "$TMP/SRD/.archived/T14EDMV2" ]] \
+  && pass "T14 AC4 -- real fixture's scratch copy archived successfully end to end" \
+  || fail "T14 AC4 -- scratch copy of the real fixture was not archived"
+
+# ---- AC5 (class 3, negative): a current-schema_version initiative is fully enforced -- no
+# "[warn] legacy" line appears anywhere. ---------------------------------------------------
+echo
+echo "T14 AC5 -- current-version initiative is fully enforced (no legacy warn line anywhere)"
+"$EDM_STATE" init T14CURRENT >/dev/null
+STATE_T14CURRENT="$TMP/SRD/T14CURRENT/.edm-state.json"
+t14cur_sv="$(jq -r '.schema_version' "$STATE_T14CURRENT")"
+[[ "$t14cur_sv" == "1" ]] && pass "T14 AC5 -- fresh initiative is created at schema_version 1 (current wave-A version)" \
+  || fail "T14 AC5 -- fresh initiative schema_version = '$t14cur_sv', expected 1"
+t14cur_pc_out="$("$EDM_STATE" phase-complete T14CURRENT 1 2>&1 || true)"
+check_absent "T14 AC5 -- phase-complete on a current-version initiative shows no legacy warn line" \
+  "[warn] legacy" "$t14cur_pc_out"
+t14cur_arch_out="$("$EDM_STATE" archive T14CURRENT 2>&1 || true)"
+check_absent "T14 AC5 -- archive refusal on a current-version initiative shows no legacy warn line" \
+  "[warn] legacy" "$t14cur_arch_out"
+
+# ---- AC6 (class 2, the middle class): schema_version 1 is fully enforced on version-1
+# checks and warn-and-proceeds, naming each, on version-2 checks. In wave A this asserts the
+# class is reachable; T18 (wave B) adds the version-2 checks this exercises further. ------
+echo
+echo "T14 AC6 -- schema_version 1 is fully enforced at >=1 and warn-and-proceeds at >=2 (middle class)"
+t14cur_ps_out="$("$EDM_STATE" phase-start T14CURRENT 2 2>&1 || true)"
+check_absent "T14 AC6 -- schema_version 1 fully enforces the >=1 gate-check (no legacy warn)" \
+  "[warn] legacy" "$t14cur_ps_out"
+mkdir -p "$TMP/SRD/T14MIDDLE"
+STATE_T14MIDDLE="$TMP/SRD/T14MIDDLE/.edm-state.json"
+jq -n '{
+  prefix: "T14MIDDLE", schema_version: 1, current_phase: 6, gates_approved: [],
+  phase_durations: {"6_phase": {started_at: "2020-01-01T00:00:00Z"}},
+  partial_verdict_map: {"T14MIDDLE-T01": {verdict: "PARTIAL", note: "open", recorded_at: "2020-01-01T00:00:00Z"}},
+  last_updated: "2020-01-01T00:00:00Z"
+}' > "$STATE_T14MIDDLE"
+# schema_version 1 satisfies the >=1 artifact check in full (EDMV3-T09 AC10), so the phase-6
+# artifact must actually be present here -- this fixture is exercising the separate >=2
+# PARTIAL check's degradation, not the >=1 artifact check's.
+mkdir -p "$TMP/SRD/T14MIDDLE/qc"
+echo "# QC summary" > "$TMP/SRD/T14MIDDLE/qc/qc-summary.md"
+t14mid_out="$("$EDM_STATE" phase-complete T14MIDDLE 6 2>&1)"
+t14mid_ec=$?
+check "T14 AC6 -- schema_version 1 (< 2) warn-and-proceeds through the version-2 PARTIAL check, naming it" \
+  "schema_version 1 < 2" "$t14mid_out"
+[[ $t14mid_ec -eq 0 ]] && pass "T14 AC6 -- the middle class (present-but-below) is reachable and does not hard-fail" \
+  || fail "T14 AC6 -- schema_version 1 unexpectedly enforced the version-2 check (exit $t14mid_ec)"
+
+# ---- AC7 (additive fields, no null-propagation on legacy reads): jq reads across the real
+# legacy fixture never propagate null into a field a caller treats as present. -------------
+echo
+echo "T14 AC7 -- jq reads on the legacy fixture produce no nulls for fields C-4 defaults cover"
+# T14EDMV2's scratch copy was already archived by the AC4 block above (git_aware_mv falls
+# back to plain mv outside a git worktree, matching every other archive test in this suite).
+t14nulls="$(jq -e '
+  (.mode // "default-ok") as $mode |
+  (.schema_version // "absent-ok") as $sv |
+  (.skipped_phases // []) as $sp |
+  (.audit_rounds.code // 0) as $ac |
+  (.partial_verdict_map // {}) as $pvm |
+  ($mode != null and $sv != null and $sp != null and $ac != null and $pvm != null)
+' "$TMP/SRD/.archived/T14EDMV2/.edm-state.json" 2>&1)"
+[[ "$t14nulls" == "true" ]] && pass "T14 AC7 -- every C-4-defaulted field reads non-null on the real legacy fixture" \
+  || fail "T14 AC7 -- a jq read produced null on the legacy fixture (result: $t14nulls)"
+
+# ---- AC8 (legacy artifact shapes readable): a markdown-only findings ledger, a
+# partial_verdict_map in the pre-closure shape, and lifecycle_mode: "partial" all read
+# without error. ----------------------------------------------------------------------------
+echo
+echo "T14 AC8 -- legacy artifact/state shapes read without error"
+
+# shape 1: markdown-only findings ledger (no JSONL sibling).
+"$EDM_STATE" init T14MDLEDGER >/dev/null
+mkdir -p "$TMP/SRD/T14MDLEDGER/code-audit"
+echo "# Findings Ledger (markdown-only, pre-JSONL shape)" > "$TMP/SRD/T14MDLEDGER/code-audit/findings-ledger.md"
+t14mdledger_out="$("$EDM_STATE" get T14MDLEDGER 2>&1)"
+t14mdledger_ec=$?
+[[ $t14mdledger_ec -eq 0 ]] && pass "T14 AC8 -- markdown-only findings ledger: edm-state get reads without error" \
+  || fail "T14 AC8 -- edm-state get errored with a markdown-only findings ledger present (exit $t14mdledger_ec)"
+
+# shape 2: partial_verdict_map in the pre-closure shape (verdict/note/recorded_at, no
+# closure/resolution field -- that shape does not exist until EDMV3-T28, wave B).
+"$EDM_STATE" init T14PVMSHAPE >/dev/null
+"$EDM_STATE" record-partial-verdict T14PVMSHAPE T14PVMSHAPE-T01 PARTIAL "pre-closure shape" >/dev/null
+t14pvm_out="$("$EDM_STATE" get T14PVMSHAPE 2>&1)"
+t14pvm_ec=$?
+[[ $t14pvm_ec -eq 0 ]] && pass "T14 AC8 -- pre-closure partial_verdict_map shape: edm-state get reads without error" \
+  || fail "T14 AC8 -- edm-state get errored on the pre-closure partial_verdict_map shape (exit $t14pvm_ec)"
+check "T14 AC8 -- pre-closure partial_verdict_map entry is present as recorded" \
+  '"verdict": "PARTIAL"' "$t14pvm_out"
+
+# shape 3: lifecycle_mode: "partial" state file.
+"$EDM_STATE" init T14LCPARTIAL >/dev/null
+"$EDM_STATE" set-mode T14LCPARTIAL lifecycle_mode partial >/dev/null
+t14lcpartial_out="$("$EDM_STATE" get T14LCPARTIAL 2>&1)"
+t14lcpartial_ec=$?
+[[ $t14lcpartial_ec -eq 0 ]] && pass "T14 AC8 -- lifecycle_mode: partial state file: edm-state get reads without error" \
+  || fail "T14 AC8 -- edm-state get errored on a lifecycle_mode: partial state file (exit $t14lcpartial_ec)"
+check "T14 AC8 -- lifecycle_mode: partial is recorded as set" \
+  '"lifecycle_mode": "partial"' "$t14lcpartial_out"
+
+# ---- AC9 (both layouts): flat and product-scoped layouts continue to resolve; migrate-path
+# continues to work and is not a prerequisite for anything. --------------------------------
+echo
+echo "T14 AC9 -- flat layout resolves for a legacy (no schema_version) initiative"
+t14leg_product="$(jq -r '.product_name // ""' "$STATE_T14LEGSTART")"
+[[ -z "$t14leg_product" ]] && pass "T14 AC9 -- T14LEGSTART is flat-layout (no product_name)" \
+  || fail "T14 AC9 -- T14LEGSTART unexpectedly has product_name='$t14leg_product'"
+[[ -f "$TMP/SRD/T14LEGSTART/.edm-state.json" ]] \
+  && pass "T14 AC9 -- flat-layout path SRD/T14LEGSTART/.edm-state.json resolves and is untouched by relocation" \
+  || fail "T14 AC9 -- flat-layout state file missing at the expected path"
+"$EDM_STATE" migrate-path --product demo --description t14 T14LEGSTART >/dev/null 2>&1 \
+  && pass "T14 AC9 -- migrate-path continues to work on a legacy (no schema_version) initiative" \
+  || fail "T14 AC9 -- migrate-path failed on a legacy initiative"
+[[ -f "$TMP/SRD/demo/T14LEGSTART__t14/.edm-state.json" ]] \
+  && pass "T14 AC9 -- product-scoped layout resolves after migrate-path" \
+  || fail "T14 AC9 -- product-scoped path not found after migrate-path"
+
+# ---- AC10 (bounded, negative): a non-archived initiative with no schema_version keeps
+# raising SCHEMA_VERSION_MISSING on every validate call until migrated -- grandfathering
+# never becomes a permanent exemption. ------------------------------------------------------
+echo
+echo "T14 AC10 -- SCHEMA_VERSION_MISSING persists on every validate call until migrated (not a permanent exemption)"
+"$EDM_STATE" init T14BOUND >/dev/null
+STATE_T14BOUND="$TMP/SRD/T14BOUND/.edm-state.json"
+jq 'del(.schema_version)' "$STATE_T14BOUND" > "$STATE_T14BOUND.tmp" && mv "$STATE_T14BOUND.tmp" "$STATE_T14BOUND"
+t14bound_out1="$("$EDM_STATE" validate T14BOUND 2>&1)"
+check "T14 AC10 -- unmigrated non-archived initiative raises SCHEMA_VERSION_MISSING (call 1)" \
+  "SCHEMA_VERSION_MISSING" "$t14bound_out1"
+t14bound_out2="$("$EDM_STATE" validate T14BOUND 2>&1)"
+check "T14 AC10 -- the anomaly persists on a second validate call (not a one-time notice)" \
+  "SCHEMA_VERSION_MISSING" "$t14bound_out2"
+echo yes | "$EDM_STATE" migrate-schema T14BOUND >/dev/null 2>&1
+t14bound_out3="$("$EDM_STATE" validate T14BOUND 2>&1)"
+check_absent "T14 AC10 -- once migrated, SCHEMA_VERSION_MISSING no longer fires (exemption is bounded, not open-ended)" \
+  "SCHEMA_VERSION_MISSING" "$t14bound_out3"
+
+# ---- AC11 (no archived initiative modified): nothing under SRD/.archived/ (the real
+# project directory, not the scratch TMP tree) is modified by this initiative. --------------
+echo
+echo "T14 AC11 -- nothing under the real SRD/.archived/ is modified by this test run"
+t14archived_status="$(cd "$REPO_ROOT" && git status --porcelain SRD/.archived/ 2>&1)"
+[[ -z "$t14archived_status" ]] \
+  && pass "T14 AC11 -- git status --porcelain SRD/.archived/ is empty (nothing modified)" \
+  || fail "T14 AC11 -- SRD/.archived/ was modified: $t14archived_status"
 
 # ---- Summary -----------------------------------------------------------------
 echo
