@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# EDMV3-T61 AC1: the block between EDM-HELP-BEGIN and EDM-HELP-END below is sentinel-delimited,
+# not a hardcoded `sed -n 'A,Bp'` line range -- `print_help()` (defined below) extracts between
+# the sentinels with awk. A hardcoded range silently stops covering a new subcommand doc line
+# added below its end unless two numbers are bumped in lockstep, which is exactly how
+# `update-patterns` and `lint` fell out of `--help` before this ticket (the old range stopped at
+# line 39). Add new subcommand doc lines anywhere inside the sentinel block; nothing else to
+# update. Mirrored verbatim in edm-lint-artifacts (same fix, same reason).
+# EDM-HELP-BEGIN
 # edm-state - read/write SRD/{PREFIX}/.edm-state.json files for the EDM plugin.
 # Usage:
 #   edm-state get <PREFIX>                              # print state JSON
@@ -39,6 +47,7 @@
 #   edm-state add-related <PREFIX> <RELATED>                         # append to related_prefixes (idempotent)
 #   edm-state update-patterns <PREFIX> <srd|ticket|qc|code>          # append novel audit findings to pattern library (T121)
 #   edm-state lint <PREFIX>                                           # run edm-lint-artifacts over initiative artifacts (T115)
+# EDM-HELP-END
 set -euo pipefail
 
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
@@ -47,6 +56,16 @@ TICKET_PACK_DIRNAME="${EDM_TICKET_PACK_DIRNAME:-${CLAUDE_PLUGIN_OPTION_TICKET_PA
 HUMAN_HOURLY_RATE_USD="${EDM_HUMAN_HOURLY_RATE_USD:-${CLAUDE_PLUGIN_OPTION_HUMAN_HOURLY_RATE_USD:-150}}"
 
 die() { echo "edm-state: $*" >&2; exit 1; }
+
+# print_help <script-path> — prints everything between the EDM-HELP-BEGIN/EDM-HELP-END sentinel
+# comment lines near the top of <script-path> (EDMV3-T61 AC1). awk, not a hardcoded `sed -n
+# 'A,Bp'` line range: a hardcoded range silently stops covering new subcommand doc lines added
+# below its end without the two numbers being bumped in lockstep, which is exactly how
+# `update-patterns` and `lint` fell out of `--help` before this ticket. Mirrored verbatim in
+# edm-lint-artifacts (same fix, same reason, applied to that script's own header block).
+print_help() {
+  awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$1"
+}
 
 # list_state_files [--archived]
 # Emits each unique .edm-state.json path, one per line, covering both flat (SRD/*/)
@@ -543,7 +562,9 @@ with_state_lock() {
 
   if command -v flock >/dev/null 2>&1; then
     # Fast path: flock on FD 200 (high enough to avoid collisions with stdin/stdout/stderr
-    # and typical script-level pipes; bash 3.2 lacks {fd} auto-assignment so we pick 200 by convention)
+    # and typical script-level pipes; bash 3.2 lacks dynamic file-descriptor auto-assignment
+    # (the brace-redirection idiom naming a variable instead of a literal FD number, a bash-4
+    # construct EDMV3-T61 AC9's CI grep bans), so we pick 200 by convention instead)
     # `|| _lock_ec=$?` keeps the subshell in a tested position so `set -e` does NOT abort here on a
     # non-zero exit — otherwise the timeout `die` below is unreachable and a flock-host timeout exits
     # with a bare 99 and no message (CA-006). Success leaves _lock_ec=0.
@@ -2985,7 +3006,7 @@ case "$cmd" in
   update-patterns)      cmd_update_patterns "$@" ;;
   lint)                 cmd_lint "$@" ;;
   ""|-h|--help|help)
-    sed -n '2,39p' "$0"
+    print_help "$0"
     ;;
   *)
     die "unknown subcommand: $cmd (try --help)"

@@ -537,14 +537,30 @@ four stages:
 |---|---|---|---|
 | `lint` | `lint:shell-and-artifacts` | Yes | `bash -n` over every file in `bin/` (incl. `bin/tests/*.sh`), `edm-lint-artifacts --all`, `edm-check-grants` |
 | `lint` | `lint:file-type-ban` | No (`allow_failure: true` until EDMV3-T57) | Scans tracked files under `plugins/` for banned types (`.pptx`, `.docx`, `.DS_Store`) |
-| `test` | `test:smoke` | Yes | `bash plugins/edm/bin/tests/run-all.sh` -- the single aggregator invocation; no suite is enumerated in the pipeline file, so a new `*-smoke.sh` suite runs in CI automatically |
+| `lint` | `lint:shellcheck` (EDMV3-T61) | Yes | `shellcheck` over every file directly in `bin/`, scoped to the unquoted-expansion class of findings (SC2086/SC2046/SC2048/SC2068) -- pre-existing style findings outside that class are out of scope |
+| `test` | `test:smoke` | Yes | `bash plugins/edm/bin/tests/run-all.sh` -- the single aggregator invocation; no suite is enumerated in the pipeline file, so a new `*-smoke.sh` suite runs in CI automatically (this is where `wave7-smoke.sh`'s help-completeness case, EDMV3-T61 AC2/AC13, runs) |
+| `test` | `test:smoke-bash32` (EDMV3-T61) | Yes | The same `run-all.sh` aggregator run a second time under a pinned `bash:3.2` image, proving the bash-3.2 compatibility constraint (EDMV3-91/106) end-to-end rather than only asserting it by grep |
 | `test` | `test:state-validate` | Yes | `edm-state validate` across every tracked, non-archived initiative; informational anomalies are reported, a blocking anomaly fails the job |
 | `validate` | `validate:manifest` | Yes (tier 1) | Deterministic `jq`-only check: every skill/agent on disk is declared in `.claude-plugin/marketplace.json` and vice versa, every `SKILL.md`/agent frontmatter block parses, every declared tool name is well-formed |
 | `validate` | `validate:plugin-cli` | No (`allow_failure: true`, tier 2) | `claude plugin validate plugins/edm/`, compared against the committed warning-count baseline in `.gitlab/edm-validate-baseline.txt`; skips cleanly if the `claude` CLI isn't in the runner image |
 | `eval` | `eval:nightly` | No (`allow_failure: true`) | Runs the headless eval driver (`plugins/edm/evals/run-eval.sh`) against the `tiny-svc` fixture. `when: manual` on a normal pipeline; runs automatically on a scheduled nightly pipeline. Skipped outright (not failed) when `ANTHROPIC_API_KEY` is unset |
 
-All job images are pinned by digest (`@sha256:...`) rather than a floating tag; see the digest
-refresh procedure documented at the top of `.gitlab-ci.yml`.
+All job images are pinned by digest (`@sha256:...`) rather than a floating tag, with one
+documented exception: `test:smoke-bash32`'s `bash:3.2` image (EDMV3-T61) is not yet
+digest-pinned -- no registry-connected environment was available to capture its digest while
+that ticket was implemented. See the digest refresh procedure documented at the top of
+`.gitlab-ci.yml`.
+
+**macOS runner (EDMV3-T61 AC12, named exception taken):** CI does not currently exercise the
+suites on a macOS runner in addition to Linux -- no macOS runner class is confirmed registered
+against this project's GitLab runner fleet, and (unlike a Docker Hub image) a macOS runner is
+real hardware that must already be provisioned and tagged, not something a pipeline-file edit can
+create. The macOS/Linux divergence points this would have caught (`sed -i`, `grep -P` family,
+`stat -c`/`stat -f`, and the `shasum`/`sha256sum` choice) are instead covered by targeted
+assertions: `bin/tests/wave7-smoke.sh`'s "T61 AC11" case greps for every divergence point outside
+its one documented detection branch, and `bin/tests/_harness.sh`'s `_harness_hash_file` already
+branches on `shasum` vs `sha256sum` availability. Revisit adding a macOS runner once one is
+confirmed available in this project's fleet.
 
 ## Related documentation
 

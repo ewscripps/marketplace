@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# EDMV3-T61 AC1: the block between EDM-HELP-BEGIN and EDM-HELP-END below is sentinel-delimited,
+# not a hardcoded `sed -n 'A,Bp'` line range -- `usage()` extracts between the sentinels with
+# awk. A hardcoded range silently stops covering a new doc line added below its end unless two
+# numbers are bumped in lockstep. Mirrored verbatim in bin/edm-state (same fix, same reason).
+# EDM-HELP-BEGIN
 # edm-lint-artifacts - scan EDM initiative artifacts for violations.
 # Usage:
 #   edm-lint-artifacts <PREFIX>            # scan one initiative's artifacts (resolved via edm-state)
@@ -28,6 +33,7 @@
 #
 # Honors EDM_SRD_ROOT and CLAUDE_PLUGIN_OPTION_TICKET_PACK_DIRNAME environment vars
 # so relocated trees are linted correctly (AC9).
+# EDM-HELP-END
 set -euo pipefail
 
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
@@ -40,7 +46,7 @@ die() {
 }
 
 usage() {
-  sed -n '2,30p' "$0"
+  awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$0"
   exit 0
 }
 

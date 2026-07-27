@@ -359,7 +359,213 @@ check "code-audit/SKILL.md HITL gate names all four severity counts (P0/P1/P2/NO
 # EDMV3-T15 end (AC2/AC3/AC5/AC6/AC8/AC9 intentionally not asserted here -- see the block
 # comment above)
 
-# ---- Summary -----------------------------------------------------------------
+# =================================================================================
+# EDMV3-T61: sentinel-delimited help block, bidirectional help-vs-dispatch test, and the
+# generic zero-argument usage guard (wave-A scope: every subcommand present at this wave's
+# dispatch boundary -- migrate-schema included, audit-converged/render-ledger/
+# audit-round-complete land in later waves and are covered when they land, EDMV3-T66 AC3).
+# =================================================================================
+
+# _t61_dispatch_labels <edm-state-path> -- one case-label token per line from the live dispatch
+# table's `case "$cmd" in ... esac` block, pipe-groups split onto separate lines, with the help
+# pseudo-labels ("" / -h / --help / help) and the wildcard (*) filtered out. A label line is
+# identified structurally (the text before its first ")" contains no whitespace) rather than by
+# position, so a `die "...(...)"` message line elsewhere in the block is never mistaken for a
+# label.
+_t61_dispatch_labels() {
+  local f="$1"
+  awk '
+    /^case "\$cmd" in/ {f=1; next}
+    f && /^esac/ {f=0}
+    f {
+      line=$0
+      gsub(/^[ \t]+/, "", line)
+      idx = index(line, ")")
+      if (idx > 0) {
+        label = substr(line, 1, idx-1)
+        if (label !~ / /) print label
+      }
+    }
+  ' "$f" \
+  | tr '|' '\n' \
+  | grep -vxF '""' | grep -vxF -- '-h' | grep -vxF -- '--help' | grep -vxF 'help' | grep -vxF '*' \
+  | sort -u
+}
+
+# _t61_help_subcommands <edm-state-path> -- one subcommand token per line documented inside the
+# EDM-HELP-BEGIN/EDM-HELP-END sentinel block: the word immediately after "edm-state " on any doc
+# line shaped "#   edm-state <name> ...". Filters the lone "-" token the header's own
+# description line ("# edm-state - read/write ...") would otherwise contribute.
+_t61_help_subcommands() {
+  local f="$1"
+  awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$f" \
+    | grep -E '^#[[:space:]]+edm-state [a-zA-Z0-9_-]+' \
+    | sed -E 's/^#[[:space:]]+edm-state ([a-zA-Z0-9_-]+).*/\1/' \
+    | grep -vxF '-' \
+    | sort -u
+}
+
+# _t61_bidirectional_check <edm-state-path> -- prints one "MISSING FROM HELP: <name>" or
+# "MISSING FROM DISPATCH: <name>" line per mismatch; returns 1 iff any mismatch was found.
+_t61_bidirectional_check() {
+  local f="$1"
+  local dispatch_file help_file miss=0 name
+  dispatch_file="$(mktemp /tmp/edm-t61-dispatch.XXXXXX)"
+  help_file="$(mktemp /tmp/edm-t61-help.XXXXXX)"
+  _t61_dispatch_labels "$f" > "$dispatch_file"
+  _t61_help_subcommands "$f" > "$help_file"
+
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    echo "MISSING FROM HELP: $name"
+    miss=1
+  done < <(comm -23 "$dispatch_file" "$help_file")
+
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    echo "MISSING FROM DISPATCH: $name"
+    miss=1
+  done < <(comm -13 "$dispatch_file" "$help_file")
+
+  rm -f "$dispatch_file" "$help_file"
+  return $miss
+}
+
+echo
+echo "T61 AC2/AC3 -- help and dispatch agree in both directions"
+set +e
+t61_bidi_out="$(_t61_bidirectional_check "$EDM_STATE" 2>&1)"
+t61_bidi_ec=$?
+set -e
+[[ $t61_bidi_ec -eq 0 ]] && pass "help and dispatch agree in both directions (zero mismatches)" \
+  || fail "help and dispatch disagree:\n$t61_bidi_out"
+check_absent "no MISSING FROM HELP line against the live tree" "MISSING FROM HELP" "$t61_bidi_out"
+check_absent "no MISSING FROM DISPATCH line against the live tree" "MISSING FROM DISPATCH" "$t61_bidi_out"
+
+echo
+echo "T61 AC3 -- migrate-schema (wave A) and the list --paths flag are documented"
+t61_help_out="$(bash "$EDM_STATE" --help 2>&1)"
+check "help documents migrate-schema" "migrate-schema" "$t61_help_out"
+t61_list_paths_line="$(printf '%s\n' "$t61_help_out" | grep -E 'list.*--paths' || true)"
+[[ -n "$t61_list_paths_line" ]] \
+  && pass "help documents list with the --paths flag on list's own line" \
+  || fail "help output has no line matching 'list.*--paths'"
+
+echo
+echo "T61 AC4 -- help output is ASCII-only"
+t61_help_nonascii="$(printf '%s\n' "$t61_help_out" | LC_ALL=C grep -n '[^ -~]' || true)"
+[[ -z "$t61_help_nonascii" ]] && pass "T61 AC4 -- help output has zero non-ASCII lines" \
+  || fail "T61 AC4 -- non-ASCII line(s) in help output: $t61_help_nonascii"
+
+echo
+echo "T61 AC2 -- negative: a dispatch entry with no matching help line fails, naming it"
+t61_neg_case() {
+  local scratch
+  scratch="$(mktemp /tmp/edm-t61-neg.XXXXXX)" || { fail "T61 AC2 negative -- mktemp failed"; return 1; }
+  # Inject a dispatch-only entry (bogus-new-cmd) with no corresponding help doc line, immediately
+  # above the closing `esac` -- case arm order is irrelevant to bash, so this is always valid.
+  awk '/^esac/{print "  bogus-new-cmd) die \"nope\" ;;"} {print}' "$EDM_STATE" > "$scratch"
+
+  local out ec
+  set +e
+  out="$(_t61_bidirectional_check "$scratch" 2>&1)"
+  ec=$?
+  set -e
+
+  [[ $ec -ne 0 ]] && pass "T61 AC2 negative -- injected dispatch-only entry fails the check" \
+    || fail "T61 AC2 negative -- injecting an undocumented dispatch entry did not fail the check"
+  check "T61 AC2 negative -- failure names the injected subcommand" "bogus-new-cmd" "$out"
+
+  rm -f "$scratch"
+}
+t61_neg_case
+
+echo
+echo "T61 AC5 -- every dispatch entry that requires arguments emits a usage: line on zero arguments"
+# Documented allowlist (not a hardcoded subcommand list the guard itself uses -- the SET under
+# test is still the live dispatch table via _t61_dispatch_labels): these entries are legitimately
+# callable with zero arguments by design, so asserting a usage: line on zero args would be
+# asserting a false contract for them.
+#   - list, active-initiatives, checkpoint-if-active, record-task-duration, git-lock-check,
+#     session-start: every required argument is optional or absent by design.
+#   - metrics-report: dispatches on an optional first arg (<PREFIX>|--all|--calibrate); zero
+#     args is a valid "no scope" invocation path handled inside the command itself.
+#   - watch-impl: an intentional infinite loop (tails git log until interrupted) -- it has no
+#     usage-line concept and invoking it in a test would hang forever, not fail fast.
+T61_ZERO_ARG_SAFE="list active-initiatives checkpoint-if-active record-task-duration git-lock-check session-start metrics-report watch-impl"
+t61_usage_fail=0
+t61_usage_names=""
+while IFS= read -r t61_sub; do
+  [[ -n "$t61_sub" ]] || continue
+  case " $T61_ZERO_ARG_SAFE " in
+    *" $t61_sub "*) continue ;;
+  esac
+  t61_out="$("$EDM_STATE" "$t61_sub" 2>&1)" || true
+  # die() prefixes every message with "edm-state: " (e.g. "edm-state: usage: edm-state get
+  # <PREFIX>"), so the assertion is "contains usage:", not line-anchored -- an anchored
+  # ^usage: (as the ticket's own Verify line literally shows) never matches this codebase's
+  # existing die() format and would falsely report every subcommand as non-compliant.
+  if ! printf '%s\n' "$t61_out" | grep -q 'usage:'; then
+    t61_usage_fail=1
+    t61_usage_names="${t61_usage_names} ${t61_sub}"
+  fi
+done < <(_t61_dispatch_labels "$EDM_STATE")
+[[ $t61_usage_fail -eq 0 ]] && pass "every non-exempt dispatch entry emits a usage: line on zero arguments" \
+  || fail "these subcommand(s) did not emit a usage: line on zero arguments:${t61_usage_names}"
+
+echo
+echo "T61 AC5 -- migrate-schema (wave-A new subcommand) emits usage: on zero arguments"
+t61_ms_out="$("$EDM_STATE" migrate-schema 2>&1)" || true
+check "migrate-schema zero-args emits usage:" "usage: edm-state migrate-schema <PREFIX>" "$t61_ms_out"
+
+echo
+echo "T61 AC5 -- edm-check-grants carries set -euo pipefail"
+# Anywhere in the file, not anchored to the first 5 lines -- every bin/ script here (edm-state,
+# edm-lint-artifacts, edm-check-grants) carries a multi-line header/usage comment block before
+# `set -euo pipefail`, consistent with this codebase's established convention; the ticket's own
+# Verify line's `head -5` would falsely report 0 against that same, pre-existing convention.
+t61_cg_pipefail="$(grep -c '^set -euo pipefail' "$EDM_CHECK_GRANTS" || true)"
+[[ "${t61_cg_pipefail:-0}" -ge 1 ]] && pass "edm-check-grants has set -euo pipefail" \
+  || fail "edm-check-grants set -euo pipefail count: ${t61_cg_pipefail:-0}"
+
+echo
+echo "T61 AC9 -- no bash-4-only construct in any real bin/ script (bin/tests/ excluded -- test-fixture/assertion surface, same convention T09's caller_contract_scan already uses; comment-only mentions excluded -- a prose reference to why a construct is avoided is not a use of it)"
+T61_BASH4_RE='declare -A|mapfile|readarray|\$\{[a-zA-Z_]+\^\^\}|\$\{[a-zA-Z_]+,,\}|\{fd\}'
+t61_bash4_hits=""
+while IFS= read -r t61_bf; do
+  [[ -f "$t61_bf" ]] || continue
+  while IFS= read -r t61_bl; do
+    [[ -n "$t61_bl" ]] || continue
+    t61_bash4_hits="${t61_bash4_hits}${t61_bf}:${t61_bl}"$'\n'
+  done < <(grep -nE "$T61_BASH4_RE" "$t61_bf" 2>/dev/null | grep -vE '^[0-9]+:[[:space:]]*#')
+done < <(find "$PLUGIN_DIR/bin" -maxdepth 1 -type f 2>/dev/null)
+[[ -z "$t61_bash4_hits" ]] && pass "T61 AC9 -- zero bash-4-only constructs found in real bin/ scripts" \
+  || fail "T61 AC9 -- bash-4-only construct(s) found:\n$t61_bash4_hits"
+
+echo
+echo "T61 AC10 -- bash -n passes over every file in plugins/edm/bin/ (incl. bin/tests/*.sh)"
+t61_bashn_fail=0
+for t61_f in "$PLUGIN_DIR"/bin/* "$PLUGIN_DIR"/bin/tests/*.sh; do
+  [[ -f "$t61_f" ]] || continue
+  bash -n "$t61_f" 2>/dev/null || { t61_bashn_fail=1; echo "  bash -n FAILED: $t61_f"; }
+done
+[[ $t61_bashn_fail -eq 0 ]] && pass "T61 AC10 -- bash -n passes over every bin/ and bin/tests/ file" \
+  || fail "T61 AC10 -- bash -n failed on at least one file (see output above)"
+
+echo
+echo "T61 AC11 -- macOS/Linux divergence points (sed -i, grep -P family, stat -c/-f) are all inside a detection branch"
+# -[a-zA-Z]*P (not a literal "grep -P") so this also catches grep -qP / -nP, the actual forms
+# used by edm-lint-artifacts' PCRE-detection-and-fallback branch -- a literal "grep -P" search
+# (as the ticket's own Verify command uses) misses those by one character and would falsely
+# report zero hits, i.e. "nothing to check" rather than "checked and confined".
+t61_divergence_hits="$(grep -rnE 'sed -i|grep -[a-zA-Z]*P|stat -c|stat -f' "$PLUGIN_DIR/bin/" 2>/dev/null | grep -v '/tests/' || true)"
+t61_divergence_outside_branch="$(printf '%s\n' "$t61_divergence_hits" | grep -v 'edm-lint-artifacts:' || true)"
+[[ -z "$t61_divergence_outside_branch" ]] \
+  && pass "T61 AC11 -- every sed -i/grep -P family/stat -c//stat -f hit is inside edm-lint-artifacts' detection branch" \
+  || fail "T61 AC11 -- divergence point(s) found outside the detection branch:\n$t61_divergence_outside_branch"
+check "T61 AC11 -- edm-lint-artifacts' PCRE detection uses the documented grep -qP probe" \
+  "grep -qP" "$t61_divergence_hits"
+# EDMV3-T61 end
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

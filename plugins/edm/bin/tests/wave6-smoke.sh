@@ -2148,6 +2148,30 @@ t14archived_status="$(cd "$REPO_ROOT" && git status --porcelain SRD/.archived/ 2
   && pass "T14 AC11 -- git status --porcelain SRD/.archived/ is empty (nothing modified)" \
   || fail "T14 AC11 -- SRD/.archived/ was modified: $t14archived_status"
 
+# =================================================================================
+# EDMV3-T61 AC6: a prefix argument cannot be used to traverse outside SRD_ROOT
+# =================================================================================
+# The ticket's own Verify line names `edm-state audit-converged '../../etc'` -- audit-converged
+# is a wave-B subcommand (EDMV3-T18) that does not exist yet at this wave-A boundary (srd.md
+# v1.2.0 CR4's wave split, the same one EDMV3-T61 AC3/AC5 document). The mechanism under test --
+# state_file_for()'s character-class guard, which every PREFIX-taking command routes through
+# before any path is constructed -- is wave-A and already covers every wave-A command; this case
+# exercises it via `resolve-dir`, a wave-A read-only command that (like the future
+# audit-converged) takes a bare PREFIX and returns a constructed path, so it is the closest
+# available equivalent. G7/CA-002/CA-004 in wave5-smoke.sh already lock the same guard down for
+# init/set/migrate-path; this case adds resolve-dir to that regression net.
+echo
+echo "T61 AC6 -- path-traversal prefix refused"
+set +e
+t61_trav_out="$("$EDM_STATE" resolve-dir '../../etc' 2>&1)"
+t61_trav_ec=$?
+set -e
+[[ $t61_trav_ec -ne 0 ]] && pass "T61 AC6 -- path-traversal prefix exits non-zero" \
+  || fail "T61 AC6 -- path-traversal prefix exited 0 (expected non-zero)"
+check "T61 AC6 -- path-traversal prefix reports a validation error" "invalid PREFIX" "$t61_trav_out"
+[[ ! -e "$TMP/etc" ]] && pass "T61 AC6 -- path-traversal prefix wrote nothing outside SRD_ROOT" \
+  || fail "T61 AC6 -- path-traversal prefix escaped SRD_ROOT"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
