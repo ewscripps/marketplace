@@ -6,7 +6,7 @@
 #   edm-state list [--paths]                            # list in-progress initiatives (--paths: print resolved initiative directories only, read-only, for edm-lint-artifacts --all)
 #   edm-state active-initiatives                        # list initiatives with current_phase in 1-6
 #   edm-state init <PREFIX>                             # write a fresh state file
-#   edm-state approve-gate <PREFIX> <gate-num>          # record a gate approval
+#   edm-state approve-gate <PREFIX> <gate-num>|3.5|code-audit  # record a gate approval (numeric gate, compliance gate 3.5, or code-audit convergence)
 #   edm-state phase-start <PREFIX> <phase-num>          # record phase start timestamp
 #   edm-state phase-complete <PREFIX> <phase-num>       # record phase completion + duration
 #   edm-state checkpoint-if-active                      # called by Stop/PreCompact hooks
@@ -438,6 +438,15 @@ default_skipped_phases_json_for_mode() {
   fi
 }
 
+# check_permission_rules — computes the "enforcement" tier string recorded alongside the
+# code-audit gate's approval (EDMV3-T08). Interim body: always returns "prose-only" until
+# EDMV3-T06 lands and replaces this body with real permission-rule introspection (grant
+# scanning across skill/agent/hook allowed-tools). The name is the eventual function name so
+# EDMV3-T06 can swap the body in place without touching cmd_approve_gate's call site.
+check_permission_rules() {
+  echo "prose-only"
+}
+
 # Shared jq def for the whole-initiative coverage layer row — one renderer, one padding scheme
 # (clamped 14-wide layer column; 9/8/7 pct padding), prepended to both get-coverage and
 # metrics-report so the two can never diverge again. Input: a {key,value} coverage entry. (CA-012)
@@ -671,6 +680,10 @@ cmd_init() {
     coverage_by_layer: {},
     coverage_by_epic: {},
     code_audit_converged: false,
+    code_audit_gate_approved_at: "",
+    code_audit_gate_approver: "",
+    code_audit_gate_enforcement: "",
+    code_audit_gate_ledger: "",
     compliance_gate_approved: false,
     last_cmd: "",
     last_decision: "",
@@ -739,9 +752,50 @@ cmd_approve_gate() {
   local approver="${USER:-unknown}"
   # Gate 3.5 (compliance review) is stored as a dedicated boolean field rather than
   # appended to gates_approved (which expects integers) — avoids overloading numeric gate IDs.
+  # `code-audit` below (EDMV3-T08) is the second user of this dedicated-boolean pattern: a
+  # fourth gate field added later should inherit the same shape by adding one token here.
   if [[ "$gate" == "3.5" ]]; then
     rmw_state "$prefix" '.compliance_gate_approved = true | .last_updated = $t' --arg t "$(now_utc)"
     echo "approved compliance gate 3.5 for $prefix at $(now_utc)"
+    write_handoff_internal "$prefix"
+    return 0
+  fi
+  # Gate `code-audit` (EDMV3-11/108): code_audit_converged is the dedicated boolean;
+  # approved_at/approver/enforcement/ledger are sibling metadata scalars recorded alongside
+  # it (gates_approved holds integers only -- a non-integer gate id would overload
+  # cmd_gate_check's `select(.gate == $g)` comparison).
+  if [[ "$gate" == "code-audit" ]]; then
+    local mode state_json audit_required="true"
+    state_json="$(read_state "$prefix")"
+    mode="$(echo "$state_json" | jq -r '.mode // "null"')"
+    # mode == "null" is a legacy state predating the mode field; default to "audit required"
+    # so legacy behaviour is unchanged (mirrors cmd_archive's identical guard).
+    [[ "$mode" != "null" ]] && audit_required="$(code_audit_required_for_mode "$mode")"
+
+    if [[ "$audit_required" == "false" ]]; then
+      # AC4 (mode exemption): this mode's phase graph has no code-audit round, so the gate
+      # is not presented -- record the exemption reason rather than an approval. No
+      # approved_at/approver is written and code_audit_converged is left untouched.
+      rmw_state "$prefix" '.code_audit_gate_enforcement = "CONVERGENCE_NOT_REQUIRED" | .last_updated = $t' \
+        --arg t "$(now_utc)"
+      echo "code-audit gate not required for $prefix (${mode} mode) -- recorded CONVERGENCE_NOT_REQUIRED"
+      write_handoff_internal "$prefix"
+      return 0
+    fi
+
+    # Wave-A interim (AC3): records the approval with `enforcement` and `ledger: absent` and
+    # does NOT run a convergence pre-check -- EDMV3-T28 (wave B) adds that pre-check and the
+    # real ledger wiring. check_permission_rules() returns "prose-only" until EDMV3-T06 lands
+    # and replaces its body with real permission-rule introspection.
+    rmw_state "$prefix" '
+      .code_audit_converged = true
+      | .code_audit_gate_approved_at = $t
+      | .code_audit_gate_approver = $a
+      | .code_audit_gate_enforcement = $e
+      | .code_audit_gate_ledger = "absent"
+      | .last_updated = $t
+    ' --arg t "$(now_utc)" --arg a "$approver" --arg e "$(check_permission_rules)"
+    echo "approved code-audit gate for $prefix at $(now_utc)"
     write_handoff_internal "$prefix"
     return 0
   fi
@@ -1176,9 +1230,11 @@ cmd_metrics_report() {
       # Gate review time section (only shown when at least one gate is approved)
       # gate_review_seconds = approved_at(gate_N) - phase_complete_timestamp(gated_phase)
       # Gated phases: gate 1 -> phase 1, gate 2 -> phase 3, gate 3 -> phase 5
-      local has_gates
+      local has_gates has_compliance_gate has_code_audit_gate
       has_gates="$(jq -r '(.gates_approved // []) | length' "$state" 2>/dev/null || echo 0)"
-      if [[ "$has_gates" -gt 0 ]]; then
+      has_compliance_gate="$(jq -r '.compliance_gate_approved // false' "$state" 2>/dev/null || echo false)"
+      has_code_audit_gate="$(jq -r '.code_audit_converged // false' "$state" 2>/dev/null || echo false)"
+      if [[ "$has_gates" -gt 0 || "$has_compliance_gate" == "true" || "$has_code_audit_gate" == "true" ]]; then
         echo "## Gate Review Times"
         echo
         jq -r '
@@ -1203,26 +1259,47 @@ cmd_metrics_report() {
               (($pd.started_at | fromdateiso8601) + $pd.duration_seconds)
             else null end;
 
-          [1, 2, 3] | .[] as $g |
-          (($state.gates_approved // []) | map(select(.gate == $g)) | first) as $approval |
-          (gated_phase_key($g)) as $pk |
-          (phase_complete_epoch($state; $pk)) as $complete_epoch |
-          # Derive the phase number from the single gated_phase_key def above (CA-013) rather than
-          # re-encoding the gate->phase map as a parallel literal.
-          ((gated_phase_key($g)) | sub("_phase$"; "") | tonumber) as $gated_phase_num |
-          if $approval == null then
-            "  Gate \($g) review:  n/a  (not yet approved)"
-          elif $complete_epoch == null then
-            "  Gate \($g) review:  n/a  (phase \($gated_phase_num) completion time unknown)"
-          else
-            ($approval.approved_at | fromdateiso8601) as $approved_epoch |
-            ($approved_epoch - $complete_epoch) as $diff |
-            if $diff < 0 then
-              "  Gate \($g) review:  n/a  (timestamp inconsistency)"
+          # dedicated_gate_row: renders one of the two dedicated-boolean gates (3.5 compliance,
+          # code-audit) as its own row rather than folding it into the [1,2,3] array below --
+          # each is a boolean field with sibling metadata scalars, not a gates_approved integer
+          # entry (EDMV3-T08 AC8).
+          def dedicated_gate_row(gate_label; approved_field; approved_at_field):
+            (($state[approved_field] // false) == true) as $ok |
+            if $ok != true then
+              "  Gate \(gate_label) review:  n/a  (not yet approved)"
             else
-              "  Gate \($g) review:  \($diff | floor)s  (approved \($approval.approved_at[:10]), phase \($gated_phase_num) completed \($state.phase_durations[$pk].completed_at // "unknown" | if . != "unknown" then .[:10] else . end))"
+              ($state[approved_at_field] // "") as $at |
+              if $at == "" then
+                "  Gate \(gate_label) review:  approved  (timestamp unknown)"
+              else
+                "  Gate \(gate_label) review:  approved  (\($at[:10]))"
+              end
+            end;
+
+          (
+            [1, 2, 3] | .[] as $g |
+            (($state.gates_approved // []) | map(select(.gate == $g)) | first) as $approval |
+            (gated_phase_key($g)) as $pk |
+            (phase_complete_epoch($state; $pk)) as $complete_epoch |
+            # Derive the phase number from the single gated_phase_key def above (CA-013)
+            # rather than re-encoding the gate->phase map as a parallel literal.
+            ((gated_phase_key($g)) | sub("_phase$"; "") | tonumber) as $gated_phase_num |
+            if $approval == null then
+              "  Gate \($g) review:  n/a  (not yet approved)"
+            elif $complete_epoch == null then
+              "  Gate \($g) review:  n/a  (phase \($gated_phase_num) completion time unknown)"
+            else
+              ($approval.approved_at | fromdateiso8601) as $approved_epoch |
+              ($approved_epoch - $complete_epoch) as $diff |
+              if $diff < 0 then
+                "  Gate \($g) review:  n/a  (timestamp inconsistency)"
+              else
+                "  Gate \($g) review:  \($diff | floor)s  (approved \($approval.approved_at[:10]), phase \($gated_phase_num) completed \($state.phase_durations[$pk].completed_at // "unknown" | if . != "unknown" then .[:10] else . end))"
+              end
             end
-          end
+          ),
+          dedicated_gate_row("3.5"; "compliance_gate_approved"; "compliance_gate_approved_at"),
+          dedicated_gate_row("code-audit"; "code_audit_converged"; "code_audit_gate_approved_at")
         ' "$state" 2>/dev/null || echo "  (gate review data unavailable)"
         echo
       fi
