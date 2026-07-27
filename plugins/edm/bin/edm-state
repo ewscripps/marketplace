@@ -15,6 +15,7 @@
 #   edm-state record-tests-added <PREFIX> <phase> <layer> <count>  # record test count by layer
 #   edm-state get-coverage <PREFIX>                     # print coverage summary for all layers
 #   edm-state srd-version <PREFIX> <version>            # set the SRD version (e.g. 1.0.0, 1.1.0)
+#   edm-state migrate-schema <PREFIX>                   # backfill schema_version onto an existing initiative
 #   edm-state archive <PREFIX>                          # mark initiative complete (git-aware)
 #   edm-state write-handoff <PREFIX>                    # write/refresh HANDOFF.md for cross-user resumption
 #   edm-state watch-impl                                # tail git log for ticket commits (called by monitor)
@@ -335,9 +336,17 @@ git_aware_mv() {
   fi
 }
 
-# present_or_absent <path> — echo '[present]' if the file exists, else '[absent]'. (CA-015)
+# present_or_absent <path> [nonempty] — echo '[present]' if the file exists, else '[absent]'.
+# (CA-015) The optional second arg "nonempty" (EDMV3-T11 AC1) extends this same idiom into a
+# non-empty variant (`-s` instead of `-f`) for cmd_phase_complete's per-phase artifact check,
+# rather than defining a sixth presence idiom. Existing no-arg callers are unaffected.
 present_or_absent() {
-  [[ -f "$1" ]] && echo '[present]' || echo '[absent]'
+  local f="$1" mode="${2:-}"
+  if [[ "$mode" == "nonempty" ]]; then
+    [[ -s "$f" ]] && echo '[present]' || echo '[absent]'
+  else
+    [[ -f "$f" ]] && echo '[present]' || echo '[absent]'
+  fi
 }
 
 # gated_phase_for_gate <gate-num> — the phase whose completion feeds the given HITL gate
@@ -666,6 +675,19 @@ state_anomalies() {
   cac_approved_at="$(echo "$state" | jq -r '.code_audit_gate_approved_at // empty')"
   if [[ "$cac_val" == "true" && -n "$cac_schema_version" && -z "$cac_approved_at" ]]; then
     echo "blocking  CONVERGED_NO_APPROVAL  code_audit_converged  code_audit_converged is true for ${prefix} but no code_audit_gate_approved_at record exists -- run edm-state approve-gate ${prefix} code-audit, or investigate a hand-edited state file"
+    found=1
+  fi
+  # SCHEMA_VERSION_MISSING (info -- EDMV3-T10 AC6): schema_version is absent for this
+  # (necessarily non-archived -- state_anomalies is only ever reached via a resolvable,
+  # non-archived path) initiative. Informational only: absence is the legacy signal every
+  # wave-A check degrades against (C-4), so it never flips cmd_validate's exit code -- it is
+  # a prompt to backfill, not a defect. Also fires when schema_version was removed by hand
+  # from a previously-migrated state file (EDMV3-T10 AC7), since this check only looks at
+  # the field's current presence, not history.
+  local schema_version_anom
+  schema_version_anom="$(echo "$state" | jq -r '.schema_version // empty')"
+  if [[ -z "$schema_version_anom" ]]; then
+    echo "info  SCHEMA_VERSION_MISSING  schema_version  no schema_version recorded for ${prefix} -- run edm-state migrate-schema ${prefix} to backfill enforcement-kernel compatibility"
     found=1
   fi
   return 0
@@ -1031,6 +1053,84 @@ cmd_phase_complete() {
   [[ -f "$state_file" ]] || die "no state file for $prefix"
   started_at="$(jq -r --arg k "$key" '.phase_durations[$k].started_at // empty' "$state_file")"
 
+  # ---- Artifact verification (EDMV3-T11) -- runs before any timing/token/cost data is
+  # computed or recorded, so a refusal mutates nothing (AC2). No override flag of any kind
+  # exists (AC7); the only exemption is a phase already recorded in skipped_phases (AC5), an
+  # auditable state entry rather than a command-line flag.
+  # requires schema_version >= 1 (EDMV3-16, EDMV3-T09 AC10): absent schema_version is the
+  # legacy signal (C-4, AC8) -- this whole block warns and proceeds rather than hard-failing.
+  local pc_state pc_schema_version
+  pc_state="$(cat "$state_file")"
+  pc_schema_version="$(echo "$pc_state" | jq -r '.schema_version // empty')"
+
+  if [[ -z "$pc_schema_version" ]]; then
+    echo "edm-state phase-complete: [warn] legacy initiative (no schema_version) -- skipping artifact verification for phase ${phase}" >&2
+  else
+    local pc_skipped_str pc_phase_skipped=0
+    pc_skipped_str="$(echo "$pc_state" | jq -r '[(.skipped_phases // [])[].phase] | join(" ")')"
+    case " $pc_skipped_str " in
+      *" $phase "*) pc_phase_skipped=1 ;;
+    esac
+
+    if [[ $pc_phase_skipped -eq 0 ]]; then
+      local pc_dir
+      pc_dir="$(initiative_dir_for "$prefix")"
+      # The three literal filenames below (planning.md, audit-srd.md, and the qc/ paths) are
+      # fixed by the artifact layout documented in CLAUDE.md and are NOT user-configurable,
+      # unlike ${SRD_FILENAME} and ${TICKET_PACK_DIRNAME} which the userConfig can rename
+      # (AC10) -- there is no corresponding env var for these three on purpose.
+      case "$phase" in
+        1)
+          [[ -s "${pc_dir}/planning.md" ]] \
+            || die "phase-complete: phase 1 artifact missing or empty: ${pc_dir}/planning.md"
+          ;;
+        2)
+          [[ -s "${pc_dir}/${SRD_FILENAME}" ]] \
+            || die "phase-complete: phase 2 artifact missing or empty: ${pc_dir}/${SRD_FILENAME}"
+          ;;
+        3)
+          [[ -s "${pc_dir}/audit-srd.md" ]] \
+            || die "phase-complete: phase 3 artifact missing or empty: ${pc_dir}/audit-srd.md"
+          ;;
+        4)
+          [[ -s "${pc_dir}/${TICKET_PACK_DIRNAME}/README.md" ]] \
+            || die "phase-complete: phase 4 artifact missing or empty: ${pc_dir}/${TICKET_PACK_DIRNAME}/README.md"
+          ;;
+        5)
+          [[ -s "${pc_dir}/${TICKET_PACK_DIRNAME}/audit.md" ]] \
+            || die "phase-complete: phase 5 artifact missing or empty: ${pc_dir}/${TICKET_PACK_DIRNAME}/audit.md"
+          ;;
+        6)
+          # AC3: accept qc/qc-summary.md OR any qc/qc-shard-*.md (sharded QC merge).
+          if [[ ! -s "${pc_dir}/qc/qc-summary.md" ]]; then
+            local pc_shard pc_shard_found=0
+            for pc_shard in "${pc_dir}"/qc/qc-shard-*.md; do
+              [[ -s "$pc_shard" ]] && pc_shard_found=1 && break
+            done
+            [[ $pc_shard_found -eq 1 ]] \
+              || die "phase-complete: phase 6 artifact missing or empty: ${pc_dir}/qc/qc-summary.md (or any ${pc_dir}/qc/qc-shard-*.md)"
+          fi
+          ;;
+      esac
+    fi
+
+    # AC4/AC5: phase 6's open-PARTIAL check is never exempted by skipped_phases -- a skipped
+    # phase 6 still refuses on an open PARTIAL. requires schema_version >= 2 (EDMV3-T09
+    # AC10); below that it warns and proceeds rather than hard-failing.
+    if [[ "$phase" == "6" ]]; then
+      if [[ "$pc_schema_version" -ge 2 ]]; then
+        local pc_open_partials
+        pc_open_partials="$(echo "$pc_state" | jq -r '
+          [(.partial_verdict_map // {}) | to_entries[] | select(.value.verdict == "PARTIAL")] | length
+        ' 2>/dev/null || echo 0)"
+        [[ "$pc_open_partials" -eq 0 ]] \
+          || die "phase-complete: phase 6 has ${pc_open_partials} unresolved PARTIAL verdict(s); run /edm:verify-runtime ${prefix} before completing phase 6"
+      else
+        echo "edm-state phase-complete: [warn] schema_version ${pc_schema_version} < 2 -- skipping open-PARTIAL check for phase 6" >&2
+      fi
+    fi
+  fi
+
   # Compute tokens + cost outside the lock (read-only)
   local input=0 output=0 cache_read=0 cw5m=0 cw1h=0 model="unknown" cost="0.0000"
   if [[ -n "$started_at" ]]; then
@@ -1257,6 +1357,127 @@ cmd_srd_version() {
   write_handoff_internal "$prefix"
 }
 
+# ---- Schema migration (EDMV3-T10) -------------------------------------------
+# migrate-schema <PREFIX>
+# Backfills schema_version onto an existing initiative that predates the enforcement kernel
+# (absent schema_version is the legacy signal, EDMV3-T09 AC8). schema_version is otherwise a
+# single-writer field (cmd_set refuses it, EDMV3-T09 AC9) -- this is the only writer.
+#
+# The version written is the highest whose shape requirements the initiative actually
+# satisfies, never higher (AC2): version 1 is always satisfiable (it certifies only the
+# wave-A gate/phase/artifact shape, which every initiative already has by construction).
+# Version 2 (wave B: JSONL findings ledger, closed PARTIAL verdicts) is only reachable when a
+# JSONL findings ledger is actually on disk (code-audit/findings-ledger.jsonl, non-empty) and
+# every partial_verdict_map entry has moved off "PARTIAL". Version 3 does not exist yet
+# (EDMV3-T09 AC8 note: assigned only if a wave-C shape change requires it).
+#
+# Never lowers schema_version and never touches SRD_ROOT/.archived/ (AC4) -- archived
+# initiatives are frozen at whatever version (or absence) they carried when archived.
+cmd_migrate_schema() {
+  [[ $# -eq 1 ]] || die "usage: edm-state migrate-schema <PREFIX>"
+  require_jq
+  local prefix="$1"
+
+  # AC4: never touches an archived initiative. state_file_for()/initiative_dir_for() never
+  # resolve into SRD_ROOT/.archived/ by design (archived initiatives are inert, EDMV3-111) --
+  # so this is checked explicitly, before any other resolution, covering both the flat
+  # (.archived/PREFIX/) and product-scoped (.archived/PRODUCT/PREFIX__desc/) archived shapes.
+  local archived_hit="" _ms_af
+  [[ -f "${SRD_ROOT}/.archived/${prefix}/.edm-state.json" ]] \
+    && archived_hit="${SRD_ROOT}/.archived/${prefix}/.edm-state.json"
+  if [[ -z "$archived_hit" ]]; then
+    for _ms_af in "${SRD_ROOT}"/.archived/*/"${prefix}__"*/.edm-state.json; do
+      [[ -f "$_ms_af" ]] && archived_hit="$_ms_af" && break
+    done
+  fi
+  [[ -z "$archived_hit" ]] \
+    || die "migrate-schema: refused -- ${prefix} is archived (found at ${archived_hit}); archived initiatives are not migrated"
+
+  local dir state_file
+  dir="$(initiative_dir_for "$prefix")"
+  state_file="${dir}/.edm-state.json"
+  [[ -f "$state_file" ]] || die "migrate-schema: no state file for $prefix at $state_file"
+
+  local state current_version
+  state="$(cat "$state_file")"
+  current_version="$(echo "$state" | jq -r '.schema_version // empty')"
+
+  # ---- Diagnostic report, printed before any confirmation is requested (AC1) -------------
+  local current_phase gates_count terminal_phase_ms terminal_completed_at
+  current_phase="$(echo "$state" | jq -r '.current_phase // 0')"
+  gates_count="$(echo "$state" | jq -r '(.gates_approved // []) | length')"
+  # Mode-derived terminal phase when mode is recorded; falls back to current_phase for a
+  # pre-mode-field legacy file so the report still shows something meaningful rather than
+  # erroring on an unrecognized mode.
+  local ms_mode ms_lifecycle_mode
+  ms_mode="$(echo "$state" | jq -r '.mode // "null"')"
+  ms_lifecycle_mode="$(echo "$state" | jq -r '.lifecycle_mode // "standard"')"
+  if [[ "$ms_mode" != "null" ]]; then
+    terminal_phase_ms="$(terminal_phase_for_mode "$ms_mode" "$ms_lifecycle_mode")"
+  else
+    terminal_phase_ms="$current_phase"
+  fi
+  terminal_completed_at="$(echo "$state" | jq -r --arg k "${terminal_phase_ms}_phase" '.phase_durations[$k].completed_at // empty')"
+
+  local ledger_jsonl="${dir}/code-audit/findings-ledger.jsonl"
+  local has_jsonl_ledger=false
+  [[ -s "$ledger_jsonl" ]] && has_jsonl_ledger=true
+  local ledger_format
+  if [[ "$has_jsonl_ledger" == "true" ]]; then
+    ledger_format="JSONL (${ledger_jsonl})"
+  elif [[ -s "${dir}/code-audit/findings-ledger.md" ]]; then
+    ledger_format="markdown (${dir}/code-audit/findings-ledger.md)"
+  else
+    ledger_format="absent"
+  fi
+
+  local open_partials
+  open_partials="$(echo "$state" | jq -r '
+    [(.partial_verdict_map // {}) | to_entries[] | select(.value.verdict == "PARTIAL")] | length
+  ' 2>/dev/null || echo 0)"
+
+  echo "# migrate-schema report for ${prefix}"
+  echo "  current_phase:          ${current_phase}"
+  echo "  gates_approved:         ${gates_count}"
+  echo "  terminal completed_at:  ${terminal_completed_at:-(none)}"
+  echo "  findings ledger:        ${ledger_format}"
+  echo "  unclosed PARTIAL count: ${open_partials}"
+  echo "  recorded schema_version: ${current_version:-(absent)}"
+
+  # ---- AC2: honest version -- the highest shape this initiative actually satisfies -------
+  local target_version=1
+  if [[ "$has_jsonl_ledger" == "true" && "$open_partials" -eq 0 ]]; then
+    target_version=2
+  fi
+
+  # ---- AC3: refuse when already migrated, unless a higher shape is now satisfied --------
+  if [[ -n "$current_version" ]]; then
+    if [[ "$target_version" -le "$current_version" ]]; then
+      die "migrate-schema: ${prefix} already has schema_version=${current_version}; refusing (no higher shape is currently satisfied)"
+    fi
+    # Advance by exactly one -- never skip a version even if the computed target is higher.
+    target_version=$((current_version + 1))
+    echo "  advancing schema_version: ${current_version} -> ${target_version}"
+  else
+    echo "  proposed schema_version: ${target_version}"
+  fi
+  echo
+
+  # Confirmation, read from stdin so a test can pipe "yes" non-interactively (the technical
+  # note requires this): `read` returns non-zero / an empty line at EOF when stdin is closed
+  # and nothing was piped, which the check below refuses rather than proceeds on.
+  printf "Type 'yes' to stamp schema_version=%s onto %s: " "$target_version" "$prefix"
+  local reply=""
+  read -r reply || true
+  [[ "$reply" == "yes" ]] \
+    || die "migrate-schema: confirmation not received (expected 'yes'); no changes made"
+
+  rmw_state "$prefix" '.schema_version = ($v | tonumber) | .last_updated = $t' \
+    --arg v "$target_version" --arg t "$(now_utc)"
+  echo "migrated ${prefix}: schema_version = ${target_version}"
+  write_handoff_internal "$prefix"
+}
+
 cmd_archive() {
   [[ $# -eq 1 ]] || die "usage: edm-state archive <PREFIX>"
   require_jq
@@ -1265,42 +1486,123 @@ cmd_archive() {
   src="$(initiative_dir_for "$prefix")"
   [[ -d "$src" ]] || die "no initiative directory at $src"
 
-  # Gate check: read code_audit_converged, product_name, and mode from state file.
+  # Lifecycle verification (EDMV3-T12, wave-A sub-checks; EDMV3-17 AC1a-AC1d, AC2-AC9). Checks
+  # run in this order -- gates, terminal phase, completed_at, convergence -- so the refusal a
+  # user sees is the earliest unmet condition, the most actionable one. No override flag of
+  # any kind exists anywhere in this function (AC12); an unrecognized extra argument is
+  # refused by the `[[ $# -eq 1 ]]` usage check above.
+  #
+  # The two non-refusing early exits are exactly: a missing state file (AC10, now reported
+  # rather than silently permitted) and legacy state with no schema_version (below; EDMV3-T14
+  # lands the end-to-end degradation class, this ticket implements its own).
+  #
+  # WAVE-B INSERTION POINT (EDMV3-T18): AC1e (PARTIAL-closure check) and AC1f (computed
+  # convergence via `audit-converged`) are NOT implemented here by design -- their machinery
+  # (EDMV3-T28's ledger wiring) does not exist in wave A. Do not stub them.
   local state_file
   state_file="${src}/.edm-state.json"
-  if [[ -f "$state_file" ]]; then
-    local state_json mode converged
+
+  if [[ ! -f "$state_file" ]]; then
+    # AC10: a missing state file is reported, not silently permitted.
+    echo "edm-state archive: info  MISSING_STATE_FILE  .edm-state.json  no state file found at ${state_file}; proceeding with an unchecked directory move (gates, phase and convergence cannot be verified)" >&2
+  else
+    local state_json mode lifecycle_mode converged schema_version_arch
     state_json="$(cat "$state_file" 2>/dev/null || echo '{}')"
     mode="$(echo "$state_json" | jq -r '.mode // "null"')"
+    lifecycle_mode="$(echo "$state_json" | jq -r '.lifecycle_mode // "standard"')"
     product_name="$(echo "$state_json" | jq -r '.product_name // ""')"
-    # Use read_bool to normalize legacy string "false" or missing field correctly.
-    if echo "$state_json" | jq -e 'has("code_audit_converged")' >/dev/null 2>&1; then
-      converged="$(read_bool "$state_json" "code_audit_converged" "false")"
+    schema_version_arch="$(echo "$state_json" | jq -r '.schema_version // empty')"
+
+    if [[ -z "$schema_version_arch" ]]; then
+      # C-4: legacy state predating schema_version warns and proceeds through every new
+      # wave-A check below (gates, terminal phase, completed_at, convergence) -- it keeps the
+      # pre-T12 convergence behaviour (product_name-gated) since that is the only check that
+      # existed for it before this ticket.
+      echo "edm-state archive: [warn] legacy initiative (no schema_version) -- skipping wave-A lifecycle checks" >&2
+      if echo "$state_json" | jq -e 'has("code_audit_converged")' >/dev/null 2>&1; then
+        converged="$(read_bool "$state_json" "code_audit_converged" "false")"
+      else
+        converged="absent"
+      fi
+      if [[ "$converged" == "false" && -n "$product_name" ]]; then
+        die "archive refused: code_audit_converged=false; run /edm:code-audit ${prefix} and ensure REMEDIATION.md convergence before archiving"
+      fi
+      # converged == "true" or "absent": proceed silently, matching pre-T12 behaviour.
     else
-      converged="absent"
-    fi
+      # ---- AC1a: every gate required_gates_for_mode() returns must be approved ----------
+      if [[ "$mode" != "null" ]]; then
+        local skipped_phases_str_arch required_gates_list_arch missing_gates="" g approved_g
+        skipped_phases_str_arch="$(echo "$state_json" | jq -r '[(.skipped_phases // [])[].phase] | join(" ")')"
+        required_gates_list_arch="$(required_gates_for_mode "$mode" "$lifecycle_mode" "$skipped_phases_str_arch")"
+        for g in $required_gates_list_arch; do
+          approved_g="$(echo "$state_json" | jq -r --argjson gg "$g" '(.gates_approved // []) | map(select(.gate == $gg)) | length')"
+          [[ "$approved_g" -gt 0 ]] || missing_gates="${missing_gates}${missing_gates:+, }${g}"
+        done
+        if [[ -n "$missing_gates" ]]; then
+          die "archive refused: gate(s) ${missing_gates} not approved for ${prefix}; run edm-state approve-gate ${prefix} <gate-num> for each missing gate"
+        fi
 
-    # The convergence exemption is derived from code_audit_required_for_mode()
-    # (EDMV3-T07 AC6) rather than a second special case -- this is the documented
-    # cmd_archive convergence waiver, one of the three legal mode-case sites
-    # counted by EDMV3-T07 AC5's single-derivation grep. mode == "null" is a
-    # legacy state predating the mode field;
-    # it is not passed to the helper (which would die on it) and defaults to
-    # "audit required" so existing legacy behaviour is unchanged.
-    local audit_required="true"
-    [[ "$mode" != "null" ]] && audit_required="$(code_audit_required_for_mode "$mode")"
+        # ---- AC1b: current_phase equals the mode-derived terminal phase, never hardcoded --
+        local terminal_phase_arch current_phase_arch
+        terminal_phase_arch="$(terminal_phase_for_mode "$mode" "$lifecycle_mode")"
+        current_phase_arch="$(echo "$state_json" | jq -r '.current_phase // 0')"
+        [[ "$current_phase_arch" == "$terminal_phase_arch" ]] \
+          || die "archive refused: current_phase (${current_phase_arch}) has not reached the terminal phase (${terminal_phase_arch}) for ${prefix} (mode=${mode})"
 
-    if [[ "$audit_required" == "false" ]]; then
-      case "$mode" in
-        prototype) echo "[warn] prototype mode -- skipping code-audit convergence check" >&2 ;;
-        *)         echo "[warn] ${mode} mode -- skipping code-audit convergence check" >&2 ;;
+        # ---- AC1c: the terminal phase's completed_at is recorded --------------------------
+        local terminal_completed_at_arch
+        terminal_completed_at_arch="$(echo "$state_json" | jq -r --arg k "${terminal_phase_arch}_phase" '.phase_durations[$k].completed_at // empty')"
+        [[ -n "$terminal_completed_at_arch" ]] \
+          || die "archive refused: phase ${terminal_phase_arch} has no completed_at recorded for ${prefix}; run edm-state phase-complete ${prefix} ${terminal_phase_arch}"
+      fi
+
+      # ---- AC1d/AC8/AC9: convergence, with the prototype and fast-track/fix-pack exemptions --
+      # audit_required is derived from code_audit_required_for_mode() (EDMV3-T07 AC6) -- one
+      # of the three legal mode-case sites counted by EDMV3-T07 AC5's single-derivation grep.
+      # mode == "null" is a legacy state predating the mode field and defaults to "audit
+      # required" (existing behaviour preserved) rather than being passed to a helper that
+      # would die on it.
+      local audit_required="true"
+      [[ "$mode" != "null" ]] && audit_required="$(code_audit_required_for_mode "$mode")"
+
+      # fast-track and fix-pack lifecycle_modes never run a code-audit round either (their
+      # phase graph has no audit round at all) -- this is a second, lifecycle_mode-keyed OR
+      # condition alongside the mode-keyed one above, not a rewrite of
+      # code_audit_required_for_mode()'s single-source mode mapping (AC9).
+      local lifecycle_exempt="false"
+      case "$lifecycle_mode" in
+        fast-track|fix-pack) lifecycle_exempt="true" ;;
       esac
-    elif [[ "$converged" == "absent" ]]; then
-      echo "[warn] legacy initiative -- code_audit_converged not set; proceeding" >&2
-    elif [[ "$converged" == "false" && -n "$product_name" ]]; then
-      die "archive refused: code_audit_converged=false; run /edm:code-audit ${prefix} and ensure REMEDIATION.md convergence before archiving"
+
+      if [[ "$audit_required" == "false" || "$lifecycle_exempt" == "true" ]]; then
+        case "$mode" in
+          prototype) echo "[warn] prototype mode -- skipping code-audit convergence check" >&2 ;;
+          *)         echo "[warn] ${mode} mode -- skipping code-audit convergence check" >&2 ;;
+        esac
+        # AC9: record the exemption reason in state rather than skipping silently, and echo it
+        # too so the CLI output itself (not only the state file) documents why no code-audit
+        # gate was demanded of this lifecycle.
+        echo "recorded CONVERGENCE_NOT_REQUIRED for ${prefix} (${lifecycle_mode} lifecycle_mode / ${mode} mode)"
+        rmw_state "$prefix" \
+          '.archive_exemptions = (((.archive_exemptions // []) + ["CONVERGENCE_NOT_REQUIRED"]) | unique) | .last_updated = $t' \
+          --arg t "$(now_utc)"
+      else
+        if echo "$state_json" | jq -e 'has("code_audit_converged")' >/dev/null 2>&1; then
+          converged="$(read_bool "$state_json" "code_audit_converged" "false")"
+        else
+          converged="absent"
+        fi
+        if [[ "$converged" == "absent" ]]; then
+          echo "[warn] legacy initiative -- code_audit_converged not set; proceeding" >&2
+        elif [[ "$converged" == "false" ]]; then
+          # AC5: the refusal is unconditional on product_name -- the `-n "$product_name"`
+          # conjunct that let a flat-layout initiative archive with no refusal at all is
+          # deleted here (CHANGELOG-recorded behaviour change).
+          die "archive refused: code_audit_converged=false; run edm-state approve-gate ${prefix} code-audit before archiving"
+        fi
+        # converged == "true": proceed silently.
+      fi
     fi
-    # converged == "true": proceed silently
   fi
 
   # Determine archive destination: preserve product-scoped layout when applicable.
@@ -2260,6 +2562,16 @@ write_handoff_internal() {
   implementation_mode="$(echo "$state" | jq -r '.implementation_mode // "standard"')"
   supersedes="$(echo "$state" | jq -r '.supersedes // ""')"
   forked_from="$(echo "$state" | jq -r '.forked_from // ""')"
+
+  # Migration prompt (EDMV3-T10 AC7): schema_version absent -- whether this initiative
+  # predates the enforcement kernel or the field was removed by hand from a previously
+  # migrated file -- renders here so a silent downgrade is visible, not just in
+  # `edm-state validate`'s SCHEMA_VERSION_MISSING anomaly.
+  local schema_version_note=""
+  if [[ "$(echo "$state" | jq -r '.schema_version // empty')" == "" ]]; then
+    schema_version_note="- **Schema**: schema_version not recorded -- run \`edm-state migrate-schema ${prefix}\` to backfill enforcement-kernel compatibility"
+  fi
+
   skipped_phases_json="$(echo "$state" | jq -r '
     (.skipped_phases // []) |
     if length == 0 then ""
@@ -2484,6 +2796,7 @@ write_handoff_internal() {
     [[ -n "$product_name" ]] && printf '%s\n' "- **Product**: ${product_name}"
     [[ -n "$initiative_description" ]] && printf '%s\n' "- **Description**: ${initiative_description}"
     printf '%s\n\n' "- **Next action**: ${next_action}"
+    [[ -n "$schema_version_note" ]] && printf '%s\n\n' "$schema_version_note"
     printf '%s\n\n' "## Resume Point"
     printf '%s\n' "- **Phase**: ${phase_name}"
     [[ -n "$current_step" ]]  && printf '%s\n' "- **Step**: ${current_step}"
@@ -2597,6 +2910,7 @@ case "$cmd" in
   record-tests-added)   cmd_record_tests_added "$@" ;;
   get-coverage)         cmd_get_coverage "$@" ;;
   srd-version)          cmd_srd_version "$@" ;;
+  migrate-schema)       cmd_migrate_schema "$@" ;;
   archive)              cmd_archive "$@" ;;
   write-handoff)        cmd_write_handoff "$@" ;;
   watch-impl)           cmd_watch_impl "$@" ;;
