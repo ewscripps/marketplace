@@ -327,3 +327,8 @@ eval:nightly:
           bash plugins/edm/evals/score-artifacts.sh "$RUN_DIR"
         fi
       fi
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - plugins/edm/evals/runs/
