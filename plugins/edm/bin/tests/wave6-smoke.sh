@@ -965,6 +965,202 @@ check_absent "AC12 -- legacy compliance gate row omits enforcement tag" "enforce
 
 t06_restore_env
 rm -rf "$T06_HOME" "$T06_CWD"
+
+# =================================================================================
+# EDMV3-T17: HANDOFF and anomalies surface the new lifecycle facts (wave A)
+# =================================================================================
+echo
+echo "T17 -- HANDOFF gate list, four-state next_action, CONVERGED_NO_APPROVAL, ASCII fix"
+
+# ---- AC1 -- HANDOFF gate list renders code-audit and Gate 3.5 with all 4 fields
+echo
+echo "T17 AC1 -- HANDOFF gate list renders code-audit and Gate 3.5 rows with all four fields"
+"$EDM_STATE" init T17GATES >/dev/null
+"$EDM_STATE" approve-gate T17GATES 3.5 >/dev/null
+"$EDM_STATE" approve-gate T17GATES code-audit >/dev/null
+"$EDM_STATE" write-handoff T17GATES >/dev/null
+handoff_t17gates="$(cat "$TMP/SRD/T17GATES/HANDOFF.md")"
+check "AC1 -- code-audit gate row present" "code-audit" "$handoff_t17gates"
+check "AC1 -- Gate 3.5 row present" "Gate 3.5" "$handoff_t17gates"
+ca_row="$(echo "$handoff_t17gates" | grep 'Gate code-audit' | head -1)"
+check "AC1 -- code-audit row shows approver" "$(id -un 2>/dev/null || echo "${USER:-unknown}")" "$ca_row"
+check "AC1 -- code-audit row shows enforcement tag" "enforcement:" "$ca_row"
+
+# ---- AC1 -- exemption visibility (mode with no code-audit round) --------------
+echo
+echo "T17 AC1 -- code-audit row shows exemption when the mode requires no audit round"
+"$EDM_STATE" init T17EXEMPT >/dev/null
+"$EDM_STATE" set-mode T17EXEMPT mode prototype >/dev/null
+"$EDM_STATE" approve-gate T17EXEMPT code-audit >/dev/null
+"$EDM_STATE" write-handoff T17EXEMPT >/dev/null
+handoff_exempt="$(cat "$TMP/SRD/T17EXEMPT/HANDOFF.md")"
+check "AC1 -- exemption row present" "CONVERGENCE_NOT_REQUIRED" "$handoff_exempt"
+
+# ---- AC2 -- phase-6 next_action distinguishes four states ---------------------
+echo
+echo "T17 AC2 -- phase-6 next_action four states"
+"$EDM_STATE" init T17NEXT >/dev/null
+"$EDM_STATE" approve-gate T17NEXT 1 >/dev/null
+"$EDM_STATE" approve-gate T17NEXT 2 >/dev/null
+"$EDM_STATE" approve-gate T17NEXT 3 >/dev/null
+"$EDM_STATE" phase-start T17NEXT 6 >/dev/null
+"$EDM_STATE" write-handoff T17NEXT >/dev/null
+next_in_progress="$(grep '^- \*\*Next action\*\*' "$TMP/SRD/T17NEXT/HANDOFF.md")"
+
+"$EDM_STATE" record-partial-verdict T17NEXT T17NEXT-T01 PARTIAL "needs runtime check" >/dev/null
+"$EDM_STATE" write-handoff T17NEXT >/dev/null
+next_partial="$(grep '^- \*\*Next action\*\*' "$TMP/SRD/T17NEXT/HANDOFF.md")"
+
+"$EDM_STATE" record-partial-verdict T17NEXT T17NEXT-T01 PASS "runtime verified" >/dev/null
+jq '.phase_durations["6_phase"].completed_at = "2026-07-26T00:00:00Z"' \
+  "$TMP/SRD/T17NEXT/.edm-state.json" > "$TMP/SRD/T17NEXT/.edm-state.json.tmp" \
+  && mv "$TMP/SRD/T17NEXT/.edm-state.json.tmp" "$TMP/SRD/T17NEXT/.edm-state.json"
+"$EDM_STATE" write-handoff T17NEXT >/dev/null
+next_awaiting_gate="$(grep '^- \*\*Next action\*\*' "$TMP/SRD/T17NEXT/HANDOFF.md")"
+
+"$EDM_STATE" approve-gate T17NEXT code-audit >/dev/null
+next_ready="$(grep '^- \*\*Next action\*\*' "$TMP/SRD/T17NEXT/HANDOFF.md")"
+
+check "AC2 -- state 1 (implementation in progress)" "in progress" "$next_in_progress"
+check "AC2 -- state 2 (awaiting runtime verification of open PARTIALs)" "PARTIAL" "$next_partial"
+check "AC2 -- state 3 (awaiting the convergence gate)" "convergence gate" "$next_awaiting_gate"
+check "AC2 -- state 4 (ready to archive)" "Ready to archive" "$next_ready"
+[[ "$next_in_progress" != "$next_partial" && "$next_partial" != "$next_awaiting_gate" \
+   && "$next_awaiting_gate" != "$next_ready" && "$next_in_progress" != "$next_ready" ]] \
+  && pass "AC2 -- all four next_action strings are distinct" \
+  || fail "AC2 -- next_action strings collided: '$next_in_progress' / '$next_partial' / '$next_awaiting_gate' / '$next_ready'"
+
+# ---- AC3 -- CONVERGED_NO_APPROVAL fires on a hand-set flag, and not on legacy --
+echo
+echo "T17 AC3 -- CONVERGED_NO_APPROVAL fires on a hand-set flag with four fields and class blocking"
+"$EDM_STATE" init T17CONV >/dev/null
+STATE_T17CONV="$TMP/SRD/T17CONV/.edm-state.json"
+jq '.code_audit_converged = true' "$STATE_T17CONV" > "$STATE_T17CONV.tmp" && mv "$STATE_T17CONV.tmp" "$STATE_T17CONV"
+set +e
+conv_out="$("$EDM_STATE" validate T17CONV 2>&1)"
+conv_ec=$?
+set -e
+check "AC3 -- CONVERGED_NO_APPROVAL present" "blocking  CONVERGED_NO_APPROVAL  code_audit_converged" "$conv_out"
+[[ $conv_ec -eq 3 ]] && pass "AC3 -- CONVERGED_NO_APPROVAL is class blocking (validate exits 3)" \
+  || fail "AC3 -- validate exited $conv_ec, expected 3"
+
+echo
+echo "T17 AC3 -- does not fire on a legacy file (no schema_version)"
+"$EDM_STATE" init T17LEGACYCONV >/dev/null
+STATE_T17LEGACYCONV="$TMP/SRD/T17LEGACYCONV/.edm-state.json"
+jq 'del(.schema_version) | .code_audit_converged = true' "$STATE_T17LEGACYCONV" \
+  > "$STATE_T17LEGACYCONV.tmp" && mv "$STATE_T17LEGACYCONV.tmp" "$STATE_T17LEGACYCONV"
+legacyconv_out="$("$EDM_STATE" validate T17LEGACYCONV 2>&1 || true)"
+check_absent "AC3 -- CONVERGED_NO_APPROVAL absent for legacy (no schema_version) file" \
+  "CONVERGED_NO_APPROVAL" "$legacyconv_out"
+
+# ---- AC4 -- severity declared, informational anomaly does not flip exit code --
+echo
+echo "T17 AC4 -- an initiative whose only anomaly is informational exits 0"
+"$EDM_STATE" init T17SEV >/dev/null
+set +e
+sev_out="$("$EDM_STATE" validate T17SEV 2>&1)"
+sev_ec=$?
+set -e
+echo "exit=$sev_ec"
+[[ $sev_ec -eq 0 ]] && pass "AC4 -- informational-only anomalies leave validate exit 0" \
+  || fail "AC4 -- validate exited $sev_ec, expected 0"
+
+# ---- AC5 -- Notes section preserved across regeneration -----------------------
+echo
+echo "T17 AC5 -- Notes section preserved across HANDOFF regeneration"
+"$EDM_STATE" init T17NOTES >/dev/null
+"$EDM_STATE" write-handoff T17NOTES >/dev/null
+notes_path="$TMP/SRD/T17NOTES/HANDOFF.md"
+python3 -c "
+import re
+with open('$notes_path') as f:
+    content = f.read()
+content = content.replace('## Notes', '## Notes' + chr(10) + 'A teammate note that must survive regeneration.', 1)
+with open('$notes_path', 'w') as f:
+    f.write(content)
+" 2>/dev/null || {
+  awk '{print} /^## Notes$/{print "A teammate note that must survive regeneration."}' "$notes_path" > "$notes_path.tmp" \
+    && mv "$notes_path.tmp" "$notes_path"
+}
+"$EDM_STATE" write-handoff T17NOTES >/dev/null
+check "AC5 -- Notes content preserved across regeneration" \
+  "A teammate note that must survive regeneration." "$(cat "$notes_path")"
+
+# ---- AC6 -- C-4: legacy HANDOFF omits new sections rather than erroring -------
+echo
+echo "T17 AC6 -- legacy initiative (no mode/schema_version) omits new sections without erroring"
+"$EDM_STATE" init T17OLDINIT >/dev/null
+STATE_T17OLDINIT="$TMP/SRD/T17OLDINIT/.edm-state.json"
+jq 'del(.schema_version, .mode, .code_audit_converged, .compliance_gate_approved)' \
+  "$STATE_T17OLDINIT" > "$STATE_T17OLDINIT.tmp" && mv "$STATE_T17OLDINIT.tmp" "$STATE_T17OLDINIT"
+set +e
+"$EDM_STATE" write-handoff T17OLDINIT >/dev/null 2>&1
+oldinit_ec=$?
+set -e
+[[ $oldinit_ec -eq 0 ]] && pass "AC6 -- write-handoff on a legacy state file does not error" \
+  || fail "AC6 -- write-handoff exited $oldinit_ec on a legacy state file"
+oldinit_handoff="$(cat "$TMP/SRD/T17OLDINIT/HANDOFF.md")"
+check_absent "AC6 -- legacy HANDOFF omits a code-audit gate row" "Gate code-audit" "$oldinit_handoff"
+check_absent "AC6 -- legacy HANDOFF omits a Gate 3.5 row" "Gate 3.5" "$oldinit_handoff"
+
+# ---- AC7/AC8 -- generator's own next_action strings are ASCII-only ------------
+echo
+echo "T17 AC7/AC8 -- next_action strings for skipped phases 1, 3, 5 are ASCII-only"
+"$EDM_STATE" init T17ASCII1 >/dev/null
+"$EDM_STATE" skip-phase T17ASCII1 1 "smoke test" >/dev/null
+"$EDM_STATE" write-handoff T17ASCII1 >/dev/null
+ascii1_next="$(grep '^- \*\*Next action\*\*' "$TMP/SRD/T17ASCII1/HANDOFF.md")"
+check "AC7 -- phase 1 skipped next_action present" "skipped" "$ascii1_next"
+
+"$EDM_STATE" init T17ASCII3 >/dev/null
+"$EDM_STATE" approve-gate T17ASCII3 1 >/dev/null
+"$EDM_STATE" phase-start T17ASCII3 2 >/dev/null
+"$EDM_STATE" skip-phase T17ASCII3 3 "smoke test" >/dev/null
+"$EDM_STATE" write-handoff T17ASCII3 >/dev/null
+ascii3_next="$(grep '^- \*\*Next action\*\*' "$TMP/SRD/T17ASCII3/HANDOFF.md")"
+check "AC7 -- phase 3 skipped next_action present" "skipped" "$ascii3_next"
+
+"$EDM_STATE" init T17ASCII5 >/dev/null
+"$EDM_STATE" approve-gate T17ASCII5 1 >/dev/null
+"$EDM_STATE" approve-gate T17ASCII5 2 >/dev/null
+"$EDM_STATE" phase-start T17ASCII5 4 >/dev/null
+"$EDM_STATE" skip-phase T17ASCII5 5 "smoke test" >/dev/null
+"$EDM_STATE" write-handoff T17ASCII5 >/dev/null
+ascii5_next="$(grep '^- \*\*Next action\*\*' "$TMP/SRD/T17ASCII5/HANDOFF.md")"
+check "AC7 -- phase 5 skipped next_action present" "skipped" "$ascii5_next"
+
+# Portable ASCII check: delete every byte in the ASCII range (octal 000-177, POSIX `tr`
+# range syntax works identically under GNU and BSD `tr`, unlike `grep`'s `\x` hex-escape
+# bracket-expression support, which BSD/macOS grep 2.6.0-FreeBSD does NOT implement --
+# empirically confirmed to false-positive-match plain ASCII text with `[^\x00-\x7F]`. Any
+# bytes surviving the deletion are non-ASCII.
+_t17_nonascii_bytes() {
+  LC_ALL=C tr -d '\000-\177' < "$1" | wc -c | tr -d ' '
+}
+
+ascii_all_clean=true
+for _t17_f in "$TMP/SRD/T17ASCII1/HANDOFF.md" "$TMP/SRD/T17ASCII3/HANDOFF.md" "$TMP/SRD/T17ASCII5/HANDOFF.md"; do
+  [[ "$(_t17_nonascii_bytes "$_t17_f")" -eq 0 ]] || ascii_all_clean=false
+done
+if [[ "$ascii_all_clean" == "true" ]]; then
+  pass "AC7/AC8 -- HANDOFF for an initiative with skipped phases 1, 3 and 5 is ASCII-only"
+else
+  fail "AC7/AC8 -- HANDOFF for skipped phases 1, 3, 5 contains non-ASCII bytes"
+fi
+
+# Bounded on the unique "Derive what to do next" comment through that specific case
+# block's own `esac` -- NOT a bare `case "$phase" in` pattern, which also matches two
+# unrelated case blocks elsewhere in the file (out of AC7's scope, per the ticket's own
+# "next_action block only" scope note).
+case_block_nonascii_count="$(awk '/# Derive what to do next from current phase \+ gates approved/,/^  esac$/' "$EDM_STATE" \
+  | LC_ALL=C tr -d '\000-\177' | wc -c | tr -d ' ')"
+if [[ "$case_block_nonascii_count" -eq 0 ]]; then
+  pass "AC7 -- next_action case block in bin/edm-state is ASCII-only"
+else
+  fail "AC7 -- next_action case block in bin/edm-state still contains non-ASCII bytes"
+fi
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

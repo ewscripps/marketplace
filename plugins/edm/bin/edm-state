@@ -2281,7 +2281,9 @@ write_handoff_internal() {
       if echo " $gate_nums " | grep -qw 1; then
         next_action="Proceed to Phase 2 - SRD creation (\`/edm:orchestrator ${prefix}\`)"
       elif [[ "$gate1_skipped" == "true" ]]; then
-        next_action="Phase 1 skipped — run \`/edm:orchestrator ${prefix}\` to continue"
+        # ASCII fix (EDMV3-T17 AC7): was a literal U+2014 em dash; HANDOFF.md is a
+        # git-committed artifact edm-lint-artifacts class 2 scans.
+        next_action="Phase 1 skipped -- run \`/edm:orchestrator ${prefix}\` to continue"
       else
         next_action="HITL Gate 1 pending - run \`/edm:orchestrator ${prefix}\` to present scope for team approval"
       fi
@@ -2290,7 +2292,8 @@ write_handoff_internal() {
       if echo " $gate_nums " | grep -qw 2; then
         next_action="Proceed to Phase 4 - ticket creation (\`/edm:orchestrator ${prefix}\`)"
       elif [[ "$gate2_skipped" == "true" ]]; then
-        next_action="Phase 3 skipped — run \`/edm:orchestrator ${prefix}\` to continue"
+        # ASCII fix (EDMV3-T17 AC7): was a literal U+2014 em dash.
+        next_action="Phase 3 skipped -- run \`/edm:orchestrator ${prefix}\` to continue"
       else
         next_action="HITL Gate 2 pending - run \`/edm:orchestrator ${prefix}\` to present SRD for team approval"
       fi
@@ -2299,23 +2302,88 @@ write_handoff_internal() {
       if echo " $gate_nums " | grep -qw 3; then
         next_action="Proceed to Phase 6 - implementation (\`/edm:orchestrator ${prefix}\`)"
       elif [[ "$gate3_skipped" == "true" ]]; then
-        next_action="Phase 5 skipped — run \`/edm:orchestrator ${prefix}\` to continue"
+        # ASCII fix (EDMV3-T17 AC7): was a literal U+2014 em dash.
+        next_action="Phase 5 skipped -- run \`/edm:orchestrator ${prefix}\` to continue"
       else
         next_action="HITL Gate 3 pending - run \`/edm:orchestrator ${prefix}\` to present ticket pack for team approval"
       fi
       ;;
-    6) next_action="Phase 6 in progress - run \`/edm:orchestrator ${prefix}\` to continue, then \`/edm:test ${prefix}\` when all tickets pass QC" ;;
+    6)
+      # Four distinct phase-6 states (EDMV3-T17 AC2), checked most-advanced-first so they
+      # are mutually exclusive: ready to archive > awaiting runtime verification of open
+      # PARTIALs > awaiting the convergence gate > implementation still in progress.
+      local ca_converged_na ca_enforcement_na open_partials_na phase6_completed_at_na
+      ca_converged_na="$(read_bool "$state" "code_audit_converged" "false")"
+      ca_enforcement_na="$(echo "$state" | jq -r '.code_audit_gate_enforcement // ""')"
+      open_partials_na="$(echo "$state" | jq -r '
+        [(.partial_verdict_map // {}) | to_entries[] | select(.value.verdict == "PARTIAL")] | length
+      ' 2>/dev/null || echo 0)"
+      phase6_completed_at_na="$(echo "$state" | jq -r '.phase_durations["6_phase"].completed_at // ""')"
+      if [[ "$ca_converged_na" == "true" || "$ca_enforcement_na" == "CONVERGENCE_NOT_REQUIRED" ]]; then
+        next_action="Ready to archive - run \`edm-state archive ${prefix}\`"
+      elif [[ "$open_partials_na" -gt 0 ]]; then
+        next_action="Phase 6 in progress - awaiting runtime verification of ${open_partials_na} open PARTIAL verdict(s) (see Outstanding PARTIAL Verdicts below)"
+      elif [[ -n "$phase6_completed_at_na" ]]; then
+        next_action="Awaiting the convergence gate - run \`/edm:code-audit ${prefix}\`, then \`edm-state approve-gate ${prefix} code-audit\`"
+      else
+        next_action="Phase 6 in progress - run \`/edm:orchestrator ${prefix}\` to continue, then \`/edm:test ${prefix}\` when all tickets pass QC"
+      fi
+      ;;
     *) next_action="Run \`/edm:orchestrator ${prefix}\` to check status" ;;
   esac
 
-  # Gate list
-  local gate_list
-  gate_list="$(echo "$state" | jq -r '
+  # Gate list. Numeric gates (gates_approved) render one row each; the two
+  # dedicated-boolean gates (Gate 3.5 compliance, code-audit) render as a separate pass
+  # rather than being synthesized into gates_approved as fake non-integer members
+  # (EDMV3-108 forbids that shape) -- EDMV3-T17 AC1. The `enforcement` tag (EDMV3-T06)
+  # documents whether the permission `ask` rules were configured at approval time (see
+  # check_permission_rules()); it is omitted, not rendered empty, when absent so a legacy
+  # approval predating the field renders cleanly (EDMV3-T06 AC12, C-4).
+  local gate_list_numeric
+  gate_list_numeric="$(echo "$state" | jq -r '
     (.gates_approved // []) |
-    if length == 0 then "_(none yet)_"
-    else map("- Gate \(.gate) - approved \(.approved_at) by \(.approver // "unknown")") | join("\n")
-    end
+    map(
+      "- Gate \(.gate) - approved \(.approved_at) by \(.approver // "unknown")"
+      + (if (.enforcement // "") != "" then " [enforcement: \(.enforcement)]" else "" end)
+    ) | join("\n")
   ')"
+
+  local compliance_gate_row=""
+  if [[ "$(read_bool "$state" "compliance_gate_approved" "false")" == "true" ]]; then
+    local cg_at cg_approver cg_enf
+    cg_at="$(echo "$state" | jq -r '.compliance_gate_approved_at // "unknown"')"
+    cg_approver="$(echo "$state" | jq -r '.compliance_gate_approver // "unknown"')"
+    cg_enf="$(echo "$state" | jq -r '.compliance_gate_enforcement // ""')"
+    compliance_gate_row="- Gate 3.5 (compliance) - approved ${cg_at} by ${cg_approver}"
+    [[ -n "$cg_enf" ]] && compliance_gate_row="${compliance_gate_row} [enforcement: ${cg_enf}]"
+  fi
+
+  local code_audit_gate_row=""
+  local ca_enforcement
+  ca_enforcement="$(echo "$state" | jq -r '.code_audit_gate_enforcement // ""')"
+  if [[ "$ca_enforcement" == "CONVERGENCE_NOT_REQUIRED" ]]; then
+    # Exemption visibility (EDMV3-T17 AC1): this mode's phase graph has no code-audit
+    # round -- render the exemption reason rather than a blank or a fabricated approval.
+    code_audit_gate_row="- Gate code-audit - not required for this mode [CONVERGENCE_NOT_REQUIRED]"
+  elif [[ "$(read_bool "$state" "code_audit_converged" "false")" == "true" ]]; then
+    local ca_at ca_approver
+    ca_at="$(echo "$state" | jq -r '.code_audit_gate_approved_at // "unknown"')"
+    ca_approver="$(echo "$state" | jq -r '.code_audit_gate_approver // "unknown"')"
+    code_audit_gate_row="- Gate code-audit - approved ${ca_at} by ${ca_approver}"
+    [[ -n "$ca_enforcement" ]] && code_audit_gate_row="${code_audit_gate_row} [enforcement: ${ca_enforcement}]"
+  fi
+
+  local gate_list=""
+  [[ -n "$gate_list_numeric" ]] && gate_list="${gate_list_numeric}"
+  if [[ -n "$compliance_gate_row" ]]; then
+    [[ -n "$gate_list" ]] && gate_list="${gate_list}"$'\n'
+    gate_list="${gate_list}${compliance_gate_row}"
+  fi
+  if [[ -n "$code_audit_gate_row" ]]; then
+    [[ -n "$gate_list" ]] && gate_list="${gate_list}"$'\n'
+    gate_list="${gate_list}${code_audit_gate_row}"
+  fi
+  [[ -n "$gate_list" ]] || gate_list="_(none yet)_"
 
   # Artifact presence — derive paths from the layout resolver (T44).
   local _init_dir
