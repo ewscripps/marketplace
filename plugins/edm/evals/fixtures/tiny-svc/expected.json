@@ -1,0 +1,55 @@
+{
+  "fixture": "tiny-svc",
+  "fixture_version": "1.0.0",
+  "description": "Ground truth for the tiny-svc eval fixture (EDMV3-25). These are the known, countable gaps a competent SRD produced against tiny-svc should surface as requirements. This set is intentionally fixed at six -- do not add or remove a gap without a matching source-tree change and a version bump here plus a matching version bump in ../../initiative.txt.",
+  "gaps": [
+    {
+      "id": "GAP-01",
+      "area": "src/api",
+      "file": "src/api/server.js",
+      "category": "security",
+      "description": "The /webhooks/payment endpoint accepts any POST body with no signature, shared-secret, or auth-header check.",
+      "expected_requirement": "An SRD requirement mandating request authentication or signature verification on the inbound webhook endpoint before the payload is enqueued."
+    },
+    {
+      "id": "GAP-02",
+      "area": "config",
+      "file": "config/settings.json",
+      "category": "secrets",
+      "description": "billingApiKey is a hardcoded plaintext credential committed to the config file instead of coming from a secret store.",
+      "expected_requirement": "An SRD requirement that provider credentials are sourced from a secret manager or environment injection, never committed to a config file."
+    },
+    {
+      "id": "GAP-03",
+      "area": "src/worker",
+      "file": "src/worker/processor.js",
+      "category": "reliability",
+      "description": "A failed downstream billing call is dropped: there is no retry, no backoff, and no dead-letter path.",
+      "expected_requirement": "An SRD requirement describing a retry-with-backoff policy and a dead-letter destination for events that exhaust retries."
+    },
+    {
+      "id": "GAP-04",
+      "area": "src/api",
+      "file": "src/api/server.js",
+      "category": "data-integrity",
+      "description": "The webhook payload is forwarded to the queue without validating that required fields (eventType, amount, accountId) are present or correctly typed.",
+      "expected_requirement": "An SRD requirement mandating schema validation of the inbound payload before it is enqueued, with a defined rejection response for invalid shapes."
+    },
+    {
+      "id": "GAP-05",
+      "area": "src/worker",
+      "file": "src/worker/processor.js",
+      "category": "observability",
+      "description": "Neither a successful nor a failed downstream call is logged or counted anywhere, so an operator cannot notice failures happening.",
+      "expected_requirement": "An SRD requirement for structured logging and a failure-rate metric on the worker's downstream call path."
+    },
+    {
+      "id": "GAP-06",
+      "area": "repository-wide",
+      "file": null,
+      "category": "test-coverage",
+      "description": "The fixture ships with no test directory and no test files at all.",
+      "expected_requirement": "An SRD requirement (or explicit, justified deferral) establishing automated test coverage for the API and worker layers before the hardening initiative ships."
+    }
+  ]
+}
