@@ -66,6 +66,8 @@ ld="$("$EDM_STATE" get TSMK | jq -r '.last_decision')"
 # ---- T48: Resume Point in HANDOFF.md ----------------------------------------
 echo
 echo "T48 — Resume Point section in HANDOFF.md"
+# EDMV3-T13: phase-start now kernel-enforces phase 2's prerequisite gate (gate 1).
+"$EDM_STATE" approve-gate TSMK 1 >/dev/null
 "$EDM_STATE" phase-start TSMK 2 >/dev/null
 "$EDM_STATE" write-handoff TSMK >/dev/null
 HANDOFF="$TMP/SRD/TSMK/HANDOFF.md"

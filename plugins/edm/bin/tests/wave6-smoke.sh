@@ -30,6 +30,8 @@ echo "T05 AC1/AC2 -- canonical four-field anomaly format"
 STATE_ANOMFMT="$TMP/SRD/ANOMFMT/.edm-state.json"
 "$EDM_STATE" phase-start ANOMFMT 1 >/dev/null
 "$EDM_STATE" phase-complete ANOMFMT 1 >/dev/null
+# EDMV3-T13: phase-start now kernel-enforces phase 2's prerequisite gate (gate 1).
+"$EDM_STATE" approve-gate ANOMFMT 1 >/dev/null
 "$EDM_STATE" phase-start ANOMFMT 2 >/dev/null
 "$EDM_STATE" phase-complete ANOMFMT 2 >/dev/null
 # estimated_size is still "Unknown" and current_phase (2) >= 2 -> SIZE_UNKNOWN (info) fires.
@@ -85,6 +87,8 @@ echo "T05 AC4 -- both classes present exits 3 and lists both"
 STATE_ANOMBOTH="$TMP/SRD/ANOMBOTH/.edm-state.json"
 "$EDM_STATE" phase-start ANOMBOTH 1 >/dev/null
 "$EDM_STATE" phase-complete ANOMBOTH 1 >/dev/null
+# EDMV3-T13: phase-start now kernel-enforces phase 2's prerequisite gate (gate 1).
+"$EDM_STATE" approve-gate ANOMBOTH 1 >/dev/null
 "$EDM_STATE" phase-start ANOMBOTH 2 >/dev/null
 "$EDM_STATE" phase-complete ANOMBOTH 2 >/dev/null
 # estimated_size stays "Unknown" -> SIZE_UNKNOWN (info). Craft TIME_ORDER (blocking) too.
@@ -384,6 +388,137 @@ mutation_hits="$(sed -n '/^cmd_approve_gate() {/,/^}/p' "$EDM_STATE" | grep -c '
 [[ "$mutation_hits" -ge 3 ]] \
   && pass "cmd_approve_gate has >=3 rmw_state call sites (3.5 / code-audit / numeric)" \
   || fail "expected >=3 rmw_state call sites inside cmd_approve_gate, found $mutation_hits"
+
+# =================================================================================
+# EDMV3-T13: gate enforcement moves into the kernel; gate-check becomes complete
+# =================================================================================
+
+# ---- AC1/AC2: phase-start refuses without the prerequisite gate; mutates nothing ------
+echo
+echo "T13 AC1/AC2 -- phase-start refuses without the prerequisite gate"
+"$EDM_STATE" init T13PS >/dev/null
+STATE_T13PS="$TMP/SRD/T13PS/.edm-state.json"
+pre_phase="$(jq -r '.current_phase' "$STATE_T13PS")"
+[[ "$pre_phase" == "0" ]] && pass "current_phase starts at 0" || fail "current_phase = '$pre_phase', expected 0"
+
+check_fails "phase-start refuses without the prerequisite gate" \
+  "Gate 1 has not been approved for T13PS; phase 2 cannot start" \
+  "$EDM_STATE" phase-start T13PS 2
+check "refusal names the exact approve-gate invocation" "edm-state approve-gate T13PS 1" \
+  "$("$EDM_STATE" phase-start T13PS 2 2>&1 || true)"
+check_state_unchanged "$STATE_T13PS" "$EDM_STATE" phase-start T13PS 2
+
+echo
+echo "T13 AC1 -- phase-start succeeds once the prerequisite gate is approved"
+"$EDM_STATE" approve-gate T13PS 1 >/dev/null
+"$EDM_STATE" phase-start T13PS 2 >/dev/null \
+  && pass "phase-start succeeds once gate 1 is approved" \
+  || fail "phase-start still refused after gate 1 approval"
+post_phase="$(jq -r '.current_phase' "$STATE_T13PS")"
+[[ "$post_phase" == "2" ]] && pass "current_phase advances to 2 after successful phase-start" \
+  || fail "current_phase = '$post_phase', expected 2"
+
+# ---- AC3: all eight phase-skill tokens resolve to a documented gate -------------------
+echo
+echo "T13 AC3 -- each of the eight phase-skill tokens resolves"
+"$EDM_STATE" init T13TOK >/dev/null
+tok_resolved=0
+for tok in plan srd audit-srd tickets audit-tickets implement code-audit verify-runtime; do
+  set +e
+  tok_out="$("$EDM_STATE" gate-check T13TOK "$tok" 2>&1)"
+  tok_ec=$?
+  set -e
+  # A resolved token either passes (plan, no prerequisite) or fails naming a specific numeric
+  # Gate -- neither is the old silent `*) return 0` fall-through this ticket removes.
+  if [[ "$tok" == "plan" ]]; then
+    [[ $tok_ec -eq 0 ]] && tok_resolved=$((tok_resolved + 1)) \
+      || fail "gate-check plan should pass (no prerequisite gate), exited $tok_ec"
+  else
+    if [[ $tok_ec -ne 0 && "$tok_out" == *"Gate "* ]]; then
+      tok_resolved=$((tok_resolved + 1))
+    else
+      fail "gate-check ${tok} did not resolve to a documented gate (exit=$tok_ec, out='$tok_out')"
+    fi
+  fi
+done
+[[ "$tok_resolved" -eq 8 ]] && pass "all eight phase-skill tokens resolve (plan + 7 gated tokens)" \
+  || fail "only $tok_resolved/8 phase-skill tokens resolved"
+
+# ---- AC4: unknown gate-check token is a hard error, not a silent pass-through ---------
+echo
+echo "T13 AC4 -- unknown gate-check token errors (hard-error default branch)"
+check_fails "unknown gate-check token errors" \
+  "unknown gated command 'bogus-token'" \
+  "$EDM_STATE" gate-check T13TOK bogus-token
+check_fails "unknown gate-check token lists the valid tokens" \
+  "plan srd audit-srd tickets audit-tickets implement code-audit verify-runtime" \
+  "$EDM_STATE" gate-check T13TOK bogus-token
+
+# ---- AC5: mode awareness -- fast-track passes gate-check tickets without gate 2 -------
+echo
+echo "T13 AC5 -- fast-track passes gate-check tickets without gate 2"
+"$EDM_STATE" init T13FT >/dev/null
+"$EDM_STATE" skip-phase T13FT 3 "fast-track: SRD audit fused elsewhere" >/dev/null
+# Gate 2's feeding phase (3, audit-srd) is skipped -- required_gates_for_mode() excludes gate 2,
+# so gate-check tickets must pass even though gate 2 was never approved.
+"$EDM_STATE" gate-check T13FT tickets >/dev/null 2>&1 \
+  && pass "gate-check tickets passes when gate 2's origin phase (3) is skipped" \
+  || fail "gate-check tickets wrongly blocked despite phase 3 (gate 2's origin) being skipped"
+
+# ---- AC6 (preserve): cmd_gate_check's numeric comparison logic is unchanged -----------
+echo
+echo "T13 AC6 -- numeric comparison logic (select(.gate == \$g)) preserved verbatim"
+select_hits="$(grep -c '(.gates_approved // \[\]) | map(select(.gate == \$g)) | length' "$EDM_STATE")"
+[[ "$select_hits" -ge 2 ]] \
+  && pass "the original select(.gate == \$g) | length expression still appears (cmd_gate_check + phase-start)" \
+  || fail "expected >=2 occurrences of the unchanged numeric comparison expression, found $select_hits"
+
+# ---- AC7 (C-4): legacy state (no mode field) warns and proceeds through phase-start ---
+echo
+echo "T13 AC7 -- legacy initiative phase-start warns and proceeds"
+STATE_T13LEG_DIR="$TMP/SRD/T13LEG"
+mkdir -p "$STATE_T13LEG_DIR"
+STATE_T13LEG="$STATE_T13LEG_DIR/.edm-state.json"
+jq -n '{prefix: "T13LEG", current_phase: 0, gates_approved: [], phase_durations: {}, last_updated: "2020-01-01T00:00:00Z"}' \
+  > "$STATE_T13LEG"
+check "legacy phase-start (no mode field) warns rather than hard-failing" \
+  "legacy initiative (no mode field)" \
+  "$("$EDM_STATE" phase-start T13LEG 2 2>&1)"
+"$EDM_STATE" phase-start T13LEG 2 >/dev/null 2>&1 \
+  && pass "legacy phase-start proceeds (exit 0) despite the missing mode field" \
+  || fail "legacy phase-start hard-failed instead of warn-and-proceed"
+leg_phase="$(jq -r '.current_phase' "$STATE_T13LEG")"
+[[ "$leg_phase" == "2" ]] && pass "legacy phase-start still advances current_phase" \
+  || fail "current_phase = '$leg_phase', expected 2"
+
+# ---- AC8: UserPromptExpansion hooks are retained unchanged ----------------------------
+echo
+echo "T13 AC8 -- hooks.json UserPromptExpansion gate-check call sites unchanged"
+HOOKS_JSON="$(cd "$(dirname "$EDM_STATE")/.." && pwd)/hooks/hooks.json"
+hook_gate_check_hits="$(grep -c 'gate-check' "$HOOKS_JSON")"
+[[ "$hook_gate_check_hits" -eq 5 ]] \
+  && pass "hooks.json still has exactly 5 gate-check call sites (srd x2, tickets, audit-tickets, implement)" \
+  || fail "hooks.json has $hook_gate_check_hits gate-check call sites, expected 5 (unchanged)"
+check_absent "hooks.json does not reference the new code-audit token" "gate-check \"\$prefix\" code-audit" "$(cat "$HOOKS_JSON")"
+check_absent "hooks.json does not reference the new verify-runtime token" "gate-check \"\$prefix\" verify-runtime" "$(cat "$HOOKS_JSON")"
+check_absent "hooks.json does not reference the new plan token" "gate-check \"\$prefix\" plan" "$(cat "$HOOKS_JSON")"
+
+# ---- AC9: vocabulary guard -- no single line calls the preflight block that word ------
+echo
+echo "T13 AC9 -- vocabulary guard: no line names the preflight block with that word"
+PLUGIN_DIR="$(cd "$(dirname "$EDM_STATE")/.." && pwd)"
+# Mirrors the ticket's literal verify command (line-level co-occurrence, not file-level --
+# edm-state legitimately uses each word separately on unrelated lines, e.g. "deterministic
+# gate enforcement" in the gate-check docblock and "Step 0" in an unrelated hook-typo
+# comment; neither is the violation this guard targets). Excludes bin/tests/ (this
+# suite's own assertion text would otherwise self-match) and builds the two needle words
+# from parts so this line itself can never register as a hit.
+guard_needle_a="Step"; guard_needle_a="${guard_needle_a} 0"
+guard_needle_b="determin"; guard_needle_b="${guard_needle_b}istic"
+vocab_hits="$(grep -rn "$guard_needle_a" "$PLUGIN_DIR" 2>/dev/null | grep -v '/bin/tests/' \
+  | grep -ci "$guard_needle_b" || true)"
+[[ "$vocab_hits" -eq 0 ]] && pass "no line describes the preflight block with that word" \
+  || fail "found $vocab_hits line(s) combining the two guarded terms on one line -- vocabulary guard violated"
 
 # ---- Summary -----------------------------------------------------------------
 echo
