@@ -563,7 +563,7 @@ Drive the 11-lens code audit:
 3. Remediate all P0 and P1 findings before proceeding.
 4. Run a second audit pass if any P0/P1 findings were introduced by remediation changes.
 5. When REMEDIATION.md shows no new P0/P1 findings, record convergence:
-   `edm-state set {PREFIX} code_audit_converged true`
+   `edm-state approve-gate {PREFIX} code-audit`
 
 **Exemption**: `prototype` mode initiatives may skip code-audit convergence -- `edm-state archive` proceeds with a warning.
 

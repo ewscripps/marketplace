@@ -619,12 +619,73 @@ cmd_get() {
   read_state "$1"
 }
 
+# ---- cmd_set contract (EDMV3-T09) -------------------------------------------
+# SETTABLE_KEYS -- the single-source enumeration of every key `cmd_set` will write,
+# consumed by BOTH the allowlist check and the unknown-key error message below
+# (EDMV3-13 AC5/AC9) so the two can never drift apart. bash 3.2 has no associative
+# arrays, so this is a space-separated string constant tested with the word-membership
+# idiom `case " $SETTABLE_KEYS " in *" $key "*)` (mirrors MODE_ENUM_LIST above).
+# Boolean-typed: compliance_enabled. Numeric-typed: current_phase, qc_shard_threshold.
+# Every other entry is a generic (string) key. The enumeration covers every key any
+# live skill/agent/hook/bin call site currently sets (EDMV3-15's caller-contract test,
+# bin/tests/wave7-smoke.sh, greps for drift in either direction): last_cmd/last_decision
+# (skills/orchestrator/SKILL.md), estimated_size (bin/edm-state's own SIZE_UNKNOWN
+# message), product_name (cmd_set smoke coverage), test_layer_skipped
+# (skills/implement/SKILL.md), jira_synced_at/jira_project_key
+# (skills/push-jira/SKILL.md), coverage_by_epic/test_frameworks_detected
+# (agents/edm-test-coverage-auditor.md, agents/edm-test-planner.md).
+SETTABLE_KEYS="compliance_enabled current_phase qc_shard_threshold last_cmd last_decision estimated_size product_name test_layer_skipped jira_synced_at jira_project_key coverage_by_epic test_frameworks_detected"
+
+# GATE_BEARING_KEYS -- the single token list of gate-bearing fields (EDMV3-14): every
+# field named here refuses `set` unconditionally, regardless of the value supplied,
+# rather than falling through to the generic branch (which would write the *string*
+# "true"/"false" where a boolean belongs -- read_bool tolerates that shape, so the
+# corruption would go unnoticed until the gate it guards silently opened). A fourth
+# such field added later inherits this behaviour by adding one token here and one arm
+# to the shared refusal branch in cmd_set below -- not a second mechanism.
+GATE_BEARING_KEYS="code_audit_converged compliance_gate_approved gates_approved"
+
 cmd_set() {
   [[ $# -eq 3 ]] || die "usage: edm-state set <PREFIX> <key> <value>"
   require_jq
   local prefix="$1" key="$2" value="$3"
+
+  # Shared gate-bearing refusal branch (EDMV3-14): runs before any other check, and
+  # before any mutation, so all three fields in GATE_BEARING_KEYS behave identically
+  # for every supplied value (true, false, or garbage). Each refusal names the
+  # specific `approve-gate` invocation that is the legitimate path.
+  case " $GATE_BEARING_KEYS " in
+    *" $key "*)
+      case "$key" in
+        code_audit_converged)
+          die "set: '$key' is refused -- run 'edm-state approve-gate <PREFIX> code-audit' instead" ;;
+        compliance_gate_approved)
+          die "set: '$key' is refused -- run 'edm-state approve-gate <PREFIX> 3.5' instead" ;;
+        gates_approved)
+          die "set: '$key' is refused -- run 'edm-state approve-gate <PREFIX> <gate-num>' instead" ;;
+      esac
+      ;;
+  esac
+
+  # schema_version (EDMV3-13 AC9): a single-writer field, refused here rather than
+  # added to SETTABLE_KEYS. Making it cmd_set-settable would reopen exactly the
+  # hand-flip path the allowlist exists to close. `edm-state migrate-schema` is the
+  # only writer.
+  if [[ "$key" == "schema_version" ]]; then
+    die "set: 'schema_version' is refused -- single-writer field, run 'edm-state migrate-schema <PREFIX>' instead"
+  fi
+
+  # Allowlist (EDMV3-13): an unknown key is refused before any mutation, naming the
+  # full sorted list of legal keys so the caller can self-correct.
+  case " $SETTABLE_KEYS " in
+    *" $key "*) ;;
+    *)
+      die "set: unknown key '$key'. Valid keys: $(printf '%s\n' $SETTABLE_KEYS | sort | tr '\n' ' ' | sed 's/ *$//')"
+      ;;
+  esac
+
   case "$key" in
-    compliance_enabled|code_audit_converged)
+    compliance_enabled)
       [[ "$value" == "true" || "$value" == "false" ]] \
         || die "set: field '$key' requires a boolean value (true|false); got: $value"
       rmw_state "$prefix" '.[$k] = ($v == "true") | .last_updated = $t' \
@@ -683,6 +744,7 @@ cmd_init() {
         --arg mode "$mode" --arg impl "$impl_mode" --argjson ce "$compliance" \
         --argjson skipped "$seeded_skipped" '{
     prefix: $p,
+    schema_version: 1,
     current_phase: 0,
     gates_approved: [],
     artifacts: {},
@@ -1484,6 +1546,11 @@ cmd_active_initiatives() {
 #   code-audit | verify-runtime -> Gate 3 must be approved
 # Any other token is a hard error (EDMV3-T13 AC4) -- a typo in a hook or a Step 0
 # block must not silently disable enforcement, which `*) return 0` did before this ticket.
+#
+# requires schema_version >= 1 (EDMV3-115, EDMV3-T09 AC10): this check's shape (gates,
+# mode-derived terminal phase) is a wave-A guarantee. The three-valued warn-and-proceed
+# degradation for a present-but-lower schema_version is defined by EDMV3-T09 as a
+# contract; it is implemented end-to-end by EDMV3-T14, not here.
 
 cmd_gate_check() {
   [[ $# -eq 2 ]] || die "usage: edm-state gate-check <PREFIX> <gated-command>"

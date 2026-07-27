@@ -422,6 +422,29 @@ All fields default safely so v1.x state files without them work unchanged (C-4 b
 
 **`mode` vs `lifecycle_mode`** — orthogonal: an initiative can be `mode=iac` AND `lifecycle_mode=fast-track` simultaneously. Set independently via `edm-state set-mode <PREFIX> mode|lifecycle_mode <value>`.
 
+### `.edm-state.json` `schema_version` contract (EDMV3-T09)
+
+`schema_version` is an integer, written once by `cmd_init` for the wave the running plugin version
+belongs to, and advanced only by `edm-state migrate-schema` -- never by `cmd_set` (making it
+`cmd_set`-settable would reopen the hand-flip path the `SETTABLE_KEYS` allowlist exists to close).
+Absent `schema_version` is the legacy pre-EDMV3 signal (grandfathered, C-4).
+
+| Version | Wave | Shape it certifies | Minimum version required by |
+|---|---|---|---|
+| `1` | A | gates, mode-derived terminal phase, phase-6 `completed_at`, artifact checks, `cmd_set` allowlist | EDMV3-16, EDMV3-17, EDMV3-115 (`>= 1`) |
+| `2` | B | JSONL findings ledger, PARTIAL closure representation, audit round-type recording, gate `enforcement` tags | EDMV3-18, EDMV3-36, EDMV3-42, EDMV3-120 (`>= 2`) |
+| `3` | C | assigned only if a state shape actually changes in wave C; otherwise wave C leaves the value at `2` rather than bumping it for symmetry | none yet -- decided by EDMV3-T66 only if needed |
+
+**Three-valued degradation.** A present-but-lower `schema_version` is a distinct state from both
+"legacy/absent" (no enforcement at all) and "fully compliant" (every check applies normally): a
+check whose required version is *above* the recorded `schema_version` degrades to warn-and-proceed
+naming the check; a check *at or below* the recorded version applies normally. Each check that
+consults `schema_version` records its own minimum in a `# requires schema_version >= N` comment at
+the check in `bin/edm-state`. EDMV3-T09 defines this contract and lands the one such comment for
+the check that exists as of wave A (EDMV3-115, `cmd_gate_check`); the degradation *behaviour*
+itself is implemented per-check by the ticket that owns that check (e.g. EDMV3-T14 for the wave-B
+checks).
+
 **`decisions.md` vs `code-audit/findings-ledger.md`** — distinct files with distinct scopes:
 - `decisions.md` = initiative-wide key decisions and finding-to-commit ledger (written by orchestrator at gates and Phase 6)
 - `code-audit/findings-ledger.md` = cross-round code audit findings ledger with stable CA-NNN IDs (written by `edm-audit-synthesizer`)
