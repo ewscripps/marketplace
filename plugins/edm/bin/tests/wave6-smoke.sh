@@ -2172,6 +2172,138 @@ check "T61 AC6 -- path-traversal prefix reports a validation error" "invalid PRE
 [[ ! -e "$TMP/etc" ]] && pass "T61 AC6 -- path-traversal prefix wrote nothing outside SRD_ROOT" \
   || fail "T61 AC6 -- path-traversal prefix escaped SRD_ROOT"
 
+# =================================================================================
+# EDMV3-T62: every exemption leaves an audit trail
+# =================================================================================
+
+# ---- AC1 (positive, rationale required): phase/rationale/skipped_at all recorded ----------
+echo
+echo "T62 AC1 -- skip-phase records phase, a non-empty rationale, and skipped_at"
+"$EDM_STATE" init T62AC1 >/dev/null
+"$EDM_STATE" skip-phase T62AC1 2 "mini-srd fuses planning and SRD" >/dev/null
+t62ac1_ok="$("$EDM_STATE" get T62AC1 | jq -e '.skipped_phases[0] | has("phase") and (.rationale | length > 0) and has("skipped_at")' 2>/dev/null || echo false)"
+[[ "$t62ac1_ok" == "true" ]] && pass "T62 AC1 -- skipped_phases[0] has phase, non-empty rationale, and skipped_at" \
+  || fail "T62 AC1 -- skipped_phases[0] missing one of phase/rationale/skipped_at"
+
+# ---- AC2 (negative, breaking change): an empty rationale is refused -----------------------
+echo
+echo "T62 AC2 -- skip-phase with an empty rationale is refused"
+"$EDM_STATE" init T62AC2 >/dev/null
+STATE_T62AC2="$TMP/SRD/T62AC2/.edm-state.json"
+check_fails "T62 AC2 -- skip-phase with an empty rationale is refused" "empty rationale" \
+  "$EDM_STATE" skip-phase T62AC2 2 ""
+check_state_unchanged "$STATE_T62AC2" "$EDM_STATE" skip-phase T62AC2 2 ""
+
+echo
+echo "T62 AC2 -- CHANGELOG.md documents the breaking change"
+T62_CHANGELOG="${PLUGIN_DIR:-$(cd "${SCRIPT_DIR}/../.." && pwd)}/CHANGELOG.md"
+check "T62 AC2 -- CHANGELOG names the skip-phase empty-rationale refusal" \
+  "skip-phase refusing an empty rationale" "$(cat "$T62_CHANGELOG" 2>/dev/null || true)"
+
+# ---- AC3 (C-4, pre-existing empty rationales are read and surfaced) -----------------------
+echo
+echo "T62 AC3 -- legacy empty rationale reads and reports an informational anomaly"
+"$EDM_STATE" init T62AC3 >/dev/null
+STATE_T62AC3="$TMP/SRD/T62AC3/.edm-state.json"
+jq '.skipped_phases = [{phase: 3, rationale: "", skipped_at: "2026-01-01T00:00:00Z"}]' "$STATE_T62AC3" \
+  > "$STATE_T62AC3.tmp" && mv "$STATE_T62AC3.tmp" "$STATE_T62AC3"
+t62ac3_get_ec=0
+"$EDM_STATE" get T62AC3 >/dev/null 2>&1 || t62ac3_get_ec=$?
+[[ $t62ac3_get_ec -eq 0 ]] && pass "T62 AC3 -- legacy empty-rationale entry reads without error" \
+  || fail "T62 AC3 -- edm-state get errored on a legacy empty-rationale entry"
+t62ac3_validate_out="$("$EDM_STATE" validate T62AC3 2>&1)"
+t62ac3_validate_ec=$?
+check "T62 AC3 -- validate reports the canonical four-field EMPTY_SKIP_RATIONALE line" \
+  "info  EMPTY_SKIP_RATIONALE  skipped_phases" "$t62ac3_validate_out"
+check "T62 AC3 -- the anomaly names the phase and the initiative" "phase 3 of T62AC3" "$t62ac3_validate_out"
+[[ $t62ac3_validate_ec -eq 0 ]] && pass "T62 AC3 -- validate exits 0 (info class never blocks)" \
+  || fail "T62 AC3 -- validate exited ${t62ac3_validate_ec}, expected 0 for an info-only anomaly"
+
+# ---- AC4 (seeded entries satisfy the same rule): mode-seeded skips carry a non-empty
+# rationale naming the mode, same as a manual skip-phase call. ------------------------------
+echo
+echo "T62 AC4 -- mode-seeded skipped_phases entries carry a non-empty rationale"
+export EDM_MODE="mini-srd"
+"$EDM_STATE" init T62AC4 >/dev/null
+unset EDM_MODE
+t62ac4_ok="$("$EDM_STATE" get T62AC4 | jq -e '[.skipped_phases[].rationale | length > 0] | all' 2>/dev/null || echo false)"
+[[ "$t62ac4_ok" == "true" ]] && pass "T62 AC4 -- every mini-srd-seeded skipped_phases entry has a non-empty rationale" \
+  || fail "T62 AC4 -- a mini-srd-seeded skipped_phases entry has an empty rationale"
+t62ac4_names_mode="$("$EDM_STATE" get T62AC4 | jq -r '[.skipped_phases[].rationale] | join(" ")')"
+check "T62 AC4 -- the seeded rationale names the mode" "mini-srd" "$t62ac4_names_mode"
+
+# ---- AC5 (legacy degradation is recoverable from state, not just console) -----------------
+echo
+echo "T62 AC5 -- skipped-check record persists in state (degraded_checks)"
+"$EDM_STATE" init T62AC5 >/dev/null
+STATE_T62AC5="$TMP/SRD/T62AC5/.edm-state.json"
+jq 'del(.mode)' "$STATE_T62AC5" > "$STATE_T62AC5.tmp" && mv "$STATE_T62AC5.tmp" "$STATE_T62AC5"
+t62ac5_ps_out="$("$EDM_STATE" phase-start T62AC5 1 2>&1)"
+check "T62 AC5 -- legacy phase-start still prints the [warn] legacy initiative line" \
+  "[warn] legacy initiative" "$t62ac5_ps_out"
+t62ac5_degraded="$(jq -e '.degraded_checks | length > 0' "$STATE_T62AC5" 2>/dev/null || echo false)"
+[[ "$t62ac5_degraded" == "true" ]] && pass "T62 AC5 -- degraded_checks is non-empty after a legacy phase-start" \
+  || fail "T62 AC5 -- degraded_checks is empty or absent after a legacy phase-start"
+check "T62 AC5 -- degraded_checks names the skipped check" "kernel-gate-enforcement" \
+  "$(jq -r '.degraded_checks[0].check' "$STATE_T62AC5" 2>/dev/null || true)"
+
+# ---- AC6 (HANDOFF renders exemptions) ------------------------------------------------------
+echo
+echo "T62 AC6 -- HANDOFF renders skipped phases and their rationales"
+"$EDM_STATE" write-handoff T62AC1 >/dev/null
+T62AC1_HANDOFF="$TMP/SRD/T62AC1/HANDOFF.md"
+check "T62 AC6 -- HANDOFF.md has a Skipped phases section" "Skipped phases" \
+  "$(cat "$T62AC1_HANDOFF" 2>/dev/null || true)"
+check "T62 AC6 -- HANDOFF.md names the skipped phase and its rationale" \
+  "mini-srd fuses planning and SRD" "$(cat "$T62AC1_HANDOFF" 2>/dev/null || true)"
+
+# ---- AC7 (validate reports every active exemption, informationally) -----------------------
+echo
+echo "T62 AC7 -- validate reports every active exemption informationally, exit 0"
+t62ac7_out="$("$EDM_STATE" validate T62AC1 2>&1)"
+t62ac7_ec=$?
+check "T62 AC7 -- validate reports the canonical four-field ACTIVE_EXEMPTION line" \
+  "info  ACTIVE_EXEMPTION  skipped_phases" "$t62ac7_out"
+[[ $t62ac7_ec -eq 0 ]] && pass "T62 AC7 -- validate exits 0 with an active exemption present" \
+  || fail "T62 AC7 -- validate exited ${t62ac7_ec}, expected 0"
+# Cross-check against T62AC5's degraded_checks entry too (the other exemption category).
+t62ac7_degraded_out="$("$EDM_STATE" validate T62AC5 2>&1)"
+check "T62 AC7 -- validate reports a degraded_checks entry as ACTIVE_EXEMPTION too" \
+  "info  ACTIVE_EXEMPTION  degraded_checks" "$t62ac7_degraded_out"
+
+# ---- AC8 (preserve): the prototype archive warning text is unchanged ----------------------
+echo
+echo "T62 AC8 -- prototype archive warning text preserved"
+export EDM_MODE="prototype"
+"$EDM_STATE" init T62AC8 >/dev/null
+unset EDM_MODE
+STATE_T62AC8="$TMP/SRD/T62AC8/.edm-state.json"
+"$EDM_STATE" approve-gate T62AC8 1 >/dev/null
+jq '.current_phase = 2 | .phase_durations["2_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
+  "$STATE_T62AC8" > "$STATE_T62AC8.tmp" && mv "$STATE_T62AC8.tmp" "$STATE_T62AC8"
+t62ac8_out="$("$EDM_STATE" archive T62AC8 2>&1)"
+check "T62 AC8 -- prototype archive warning text preserved" \
+  "[warn] prototype mode -- skipping code-audit convergence check" "$t62ac8_out"
+
+# ---- AC9 (every approval carries its enforcement tag) --------------------------------------
+echo
+echo "T62 AC9 -- every gates_approved entry carries its enforcement tag"
+"$EDM_STATE" init T62AC9 >/dev/null
+"$EDM_STATE" approve-gate T62AC9 1 >/dev/null
+t62ac9_ok="$("$EDM_STATE" get T62AC9 | jq -e '[.gates_approved[] | has("enforcement")] | all' 2>/dev/null || echo false)"
+[[ "$t62ac9_ok" == "true" ]] && pass "T62 AC9 -- every gates_approved entry has an enforcement key" \
+  || fail "T62 AC9 -- a gates_approved entry is missing its enforcement key"
+
+# ---- AC10 (negative, no unrecorded exemption path exists) ----------------------------------
+echo
+echo "T62 AC10 -- no unrecorded exemption path (no override flag/env var/mode shortcut)"
+t62ac10_grep="$(command grep -rn 'EDM_SKIP\|EDM_FORCE\|SKIP_CHECKS' "${SCRIPT_DIR}/.." 2>/dev/null | command grep -v '/tests/' || true)"
+[[ -z "$t62ac10_grep" ]] && pass "T62 AC10 -- no EDM_SKIP/EDM_FORCE/SKIP_CHECKS token anywhere in bin/" \
+  || fail "T62 AC10 -- found an override-flag-shaped token: $t62ac10_grep"
+t62ac10_force="$(command grep -c -- '--force\|--accept-partials' "$EDM_STATE" 2>/dev/null || true)"
+[[ "${t62ac10_force:-0}" -eq 0 ]] && pass "T62 AC10 -- no --force/--accept-partials literal in bin/edm-state" \
+  || fail "T62 AC10 -- found ${t62ac10_force} occurrence(s) of a literal override flag in bin/edm-state"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
