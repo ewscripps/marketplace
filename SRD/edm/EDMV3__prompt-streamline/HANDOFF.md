@@ -1,6 +1,6 @@
 # EDMV3 - Session Handoff
 
-> **Last updated**: 2026-07-27T01:43:51Z by darryl.porter  
+> **Last updated**: 2026-07-27T08:08:24Z by darryl.porter  
 > **To resume**: `/edm:orchestrator EDMV3`
 
 ## Current Status
@@ -15,8 +15,8 @@
 ## Resume Point
 
 - **Phase**: Phase 6 - Implementation
-- **Step**: 6
-- **Last decision**: D16: 3 safe model downgrades in wave A; all contested assignments decided by wave-C tiering matrix (100% P0/P1 + 80% total recall, cheapest wins)
+- **Step**: 6.wave-a-complete
+- **Last decision**: Wave A complete: 26/26 tickets, QC 2 shards, 12 findings remediated (D13), v2.1.0, 709/709; open items are environment/human-dependent (baseline runs, live pipeline, cache refresh, permission-dialog observation)
 
 **Pending artifacts for Phase 6 - Implementation**:
 

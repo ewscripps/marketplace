@@ -122,7 +122,7 @@
   "code_audit_converged": false,
   "compliance_gate_approved": false,
   "last_cmd": "",
-  "last_decision": "D16: 3 safe model downgrades in wave A; all contested assignments decided by wave-C tiering matrix (100% P0/P1 + 80% total recall, cheapest wins)",
+  "last_decision": "Wave A complete: 26/26 tickets, QC 2 shards, 12 findings remediated (D13), v2.1.0, 709/709; open items are environment/human-dependent (baseline runs, live pipeline, cache refresh, permission-dialog observation)",
   "audit_rounds": {},
   "partial_verdict_map": {},
   "mode": "standard",
@@ -134,6 +134,7 @@
   "forked_from": "",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-07-27T01:43:50Z",
-  "current_step": 6
+  "last_updated": "2026-07-27T08:08:24Z",
+  "current_step": "6.wave-a-complete",
+  "schema_version": 1
 }
