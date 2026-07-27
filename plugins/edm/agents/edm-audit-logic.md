@@ -5,12 +5,12 @@ description: |
   wrong values, incorrect conditionals, off-by-one errors, stub functions, unresolved
   TODO/FIXME/HACK comments, `raise NotImplementedError`, empty catch blocks, and
   functions that always return the same hardcoded value.
-tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
+tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput, Write
 model: opus
 effort: max
 maxTurns: 30
 color: cyan
-disallowedTools: Write, Edit, NotebookEdit
+disallowedTools: Edit, NotebookEdit
 ---
 
 You are executing **EDM Code Audit Lens L1: Logic, Correctness & Completeness**.
@@ -48,6 +48,14 @@ Before reporting a finding:
 3. Is this pattern used consistently everywhere in the project?
 
 If yes to any -> record as "Noted / Not Actionable" with a one-line rationale.
+
+## Output
+
+You have exactly two permitted write paths, both inside the current pass directory:
+- `${OUTPUT_DIR}/lens-L1.md` -- your raw findings report (written per the Output Format below)
+- `${OUTPUT_DIR}/lens-L1.jsonl` -- reserved for one JSON object per finding (EDMV3-T24 implements the emission itself; do not write it until that ticket lands)
+
+Writing anywhere else is a contract violation. `skills/code-audit/SKILL.md:40`'s `mkdir -p "${OUTPUT_DIR}"` runs before you are launched -- that is why you are granted `Write` but no `Bash(mkdir *)`: the directory already exists by the time you start.
 
 ## Output Format
 

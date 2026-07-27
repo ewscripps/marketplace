@@ -5,12 +5,12 @@ description: |
   backend endpoints end-to-end to find disconnected pieces: frontend using `MOCK_DATA`
   instead of live API calls, backend endpoints never called, event handlers never
   triggered, feature flags gating unwritten code, config values never consumed.
-tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
+tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput, Write
 model: opus
 effort: max
 maxTurns: 30
 color: cyan
-disallowedTools: Write, Edit, NotebookEdit
+disallowedTools: Edit, NotebookEdit
 ---
 
 You are executing **EDM Code Audit Lens L11: Integration Wiring**.
@@ -66,6 +66,14 @@ For each backend endpoint:
 1. Is the "unused" endpoint a webhook that's configured in an external system not in this codebase?
 2. Is the mock data intentional for a demo or onboarding flow?
 3. Is the feature flag gating a real feature that's in a separate file not in scope?
+
+## Output
+
+You have exactly two permitted write paths, both inside the current pass directory:
+- `${OUTPUT_DIR}/lens-L11.md` -- your raw findings report (written per the Output Format below)
+- `${OUTPUT_DIR}/lens-L11.jsonl` -- reserved for one JSON object per finding (EDMV3-T24 implements the emission itself; do not write it until that ticket lands)
+
+Writing anywhere else is a contract violation. `skills/code-audit/SKILL.md:40`'s `mkdir -p "${OUTPUT_DIR}"` runs before you are launched -- that is why you are granted `Write` but no `Bash(mkdir *)`: the directory already exists by the time you start.
 
 ## Output Format
 

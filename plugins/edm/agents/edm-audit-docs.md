@@ -2,12 +2,12 @@
 name: edm-audit-docs
 description: |
   Use this agent for EDM Code Audit Lens L6 (Documentation Accuracy). It cross-references every comment, docstring, and operator-facing message against the actual code: stale claims, mismatched parameter docs, error messages that misstate what happened, missing "why" explanations for non-obvious choices.
-tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
+tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput, Write
 model: opus
 effort: max
 maxTurns: 30
 color: cyan
-disallowedTools: Write, Edit, NotebookEdit
+disallowedTools: Edit, NotebookEdit
 ---
 
 You are executing **EDM Code Audit Lens L6: Documentation Accuracy**.
@@ -51,6 +51,14 @@ For every comment that makes a factual claim:
 1. Is the comment intentionally approximating (not claiming to be exact)?
 2. Is the "inaccuracy" a deliberate simplification for non-technical readers?
 3. Is this in auto-generated documentation that has its own update mechanism?
+
+## Output
+
+You have exactly two permitted write paths, both inside the current pass directory:
+- `${OUTPUT_DIR}/lens-L6.md` -- your raw findings report (written per the Output Format below)
+- `${OUTPUT_DIR}/lens-L6.jsonl` -- reserved for one JSON object per finding (EDMV3-T24 implements the emission itself; do not write it until that ticket lands)
+
+Writing anywhere else is a contract violation. `skills/code-audit/SKILL.md:40`'s `mkdir -p "${OUTPUT_DIR}"` runs before you are launched -- that is why you are granted `Write` but no `Bash(mkdir *)`: the directory already exists by the time you start.
 
 ## Output Format
 

@@ -4,7 +4,7 @@ description: |
   Use this agent during EDM Phase 2 (SRD Creation) to write the Target Architecture document to `architecture.md` in the state-derived initiative directory: Mermaid diagrams (system context + sequence), component boundaries with file paths, data flow descriptions, integration patterns, and architectural risk analysis -- all grounded in the existing codebase. The SRD's Section 5 references this file rather than duplicating content.
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, Write, Edit, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
-effort: max
+effort: high
 maxTurns: 50
 color: blue
 ---

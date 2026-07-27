@@ -2,12 +2,12 @@
 name: edm-audit-dead-code
 description: |
   Use this agent for EDM Code Audit Lens L2 (Dead Code & Unreachable Paths). It cross-references runtime constraints (systemd timeouts, restart policies, env gates) against code paths to find error messages that can never fire, branches eliminated by external constraints, and code after unconditional exits.
-tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
+tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput, Write
 model: opus
 effort: max
 maxTurns: 30
 color: cyan
-disallowedTools: Write, Edit, NotebookEdit
+disallowedTools: Edit, NotebookEdit
 ---
 
 You are executing **EDM Code Audit Lens L2: Dead Code & Unreachable Paths**.
@@ -47,6 +47,14 @@ Before reporting:
 3. Could it be reached in a test environment but not production?
 
 If yes -> "Noted / Not Actionable" with rationale.
+
+## Output
+
+You have exactly two permitted write paths, both inside the current pass directory:
+- `${OUTPUT_DIR}/lens-L2.md` -- your raw findings report (written per the Output Format below)
+- `${OUTPUT_DIR}/lens-L2.jsonl` -- reserved for one JSON object per finding (EDMV3-T24 implements the emission itself; do not write it until that ticket lands)
+
+Writing anywhere else is a contract violation. `skills/code-audit/SKILL.md:40`'s `mkdir -p "${OUTPUT_DIR}"` runs before you are launched -- that is why you are granted `Write` but no `Bash(mkdir *)`: the directory already exists by the time you start.
 
 ## Output Format
 

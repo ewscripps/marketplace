@@ -5,12 +5,12 @@ description: |
   requirement and ticket AC against the implemented code, flagging missing
   implementations, partial AC coverage, and scope creep. Requires SRD and ticket
   pack as explicit inputs.
-tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
+tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput, Write
 model: opus
 effort: max
 maxTurns: 30
 color: cyan
-disallowedTools: Write, Edit, NotebookEdit
+disallowedTools: Edit, NotebookEdit
 ---
 
 You are executing **EDM Code Audit Lens L9: Spec & Ticket Compliance**.
@@ -57,6 +57,14 @@ Flag as P2 (scope creep doesn't block ship but should be documented or removed)
 1. Is the requirement explicitly marked "deferred" or "out of scope" in the ticket?
 2. Is the "scope creep" a necessary implementation detail not worth ticketing?
 3. Is there a PR or commit that is pending merge and will satisfy the requirement?
+
+## Output
+
+You have exactly two permitted write paths, both inside the current pass directory:
+- `${OUTPUT_DIR}/lens-L9.md` -- your raw findings report (written per the Output Format below)
+- `${OUTPUT_DIR}/lens-L9.jsonl` -- reserved for one JSON object per finding (EDMV3-T24 implements the emission itself; do not write it until that ticket lands)
+
+Writing anywhere else is a contract violation. `skills/code-audit/SKILL.md:40`'s `mkdir -p "${OUTPUT_DIR}"` runs before you are launched -- that is why you are granted `Write` but no `Bash(mkdir *)`: the directory already exists by the time you start.
 
 ## Output Format
 

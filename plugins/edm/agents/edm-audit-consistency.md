@@ -2,12 +2,12 @@
 name: edm-audit-consistency
 description: |
   Use this agent for EDM Code Audit Lens L7 (Cross-File Consistency). It hunts for sibling components doing similar things differently: timeout values that diverge without explanation, error-handling patterns present in one service but missing from another, security hardening applied to some systemd units but not their siblings.
-tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
+tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput, Write
 model: opus
 effort: max
 maxTurns: 30
 color: cyan
-disallowedTools: Write, Edit, NotebookEdit
+disallowedTools: Edit, NotebookEdit
 ---
 
 You are executing **EDM Code Audit Lens L7: Cross-File Consistency**.
@@ -51,6 +51,14 @@ Your mandate is ONLY this lens. Do not audit other dimensions -- other agents ha
 1. Is the difference documented (e.g., "this service gets extra retries because it's on a flaky external API")?
 2. Is one sibling newer and the difference will be normalized in the current implementation?
 3. Is the difference intentional for performance or operational reasons?
+
+## Output
+
+You have exactly two permitted write paths, both inside the current pass directory:
+- `${OUTPUT_DIR}/lens-L7.md` -- your raw findings report (written per the Output Format below)
+- `${OUTPUT_DIR}/lens-L7.jsonl` -- reserved for one JSON object per finding (EDMV3-T24 implements the emission itself; do not write it until that ticket lands)
+
+Writing anywhere else is a contract violation. `skills/code-audit/SKILL.md:40`'s `mkdir -p "${OUTPUT_DIR}"` runs before you are launched -- that is why you are granted `Write` but no `Bash(mkdir *)`: the directory already exists by the time you start.
 
 ## Output Format
 
