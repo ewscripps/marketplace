@@ -252,13 +252,21 @@ document without the full SRD/ticket-audit sequence:
 1. Read the analysis document provided by the user.
 2. Produce a minimal `.edm-state.json` with `lifecycle_mode` set.
 3. Spawn `edm-ticket-writer` directly from the analysis document.
-4. Record skipped phases:
+4. Record skipped phases -- phase 1 is included because fast-track genuinely never runs a formal
+   planning step; the analysis document replaces it:
    ```bash
+   edm-state skip-phase <PREFIX> 1 "fast-track: planning skipped -- tickets from analysis doc"
    edm-state skip-phase <PREFIX> 2 "fast-track: SRD skipped -- tickets from analysis doc"
    edm-state skip-phase <PREFIX> 3 "fast-track: SRD audit skipped"
    edm-state skip-phase <PREFIX> 5 "fast-track: ticket audit skipped"
    ```
-5. Proceed to Phase 6 after ticket production and a single human review gate.
+5. Present the single human review gate over the produced tickets, then proceed to Phase 6:
+   ```
+   AskUserQuestion header: "Gate 3 -- Ticket Review"
+   Options: Approve / Revise / No-Go
+   ```
+   On Approve (explicit selection only): `edm-state approve-gate <PREFIX> 3`.
+   Apply the gate approval rules from Gate 1 -- free-text is never approval.
 
 The state file is valid and recognized as fast-track -- `validate` does not flag it as incomplete.
 

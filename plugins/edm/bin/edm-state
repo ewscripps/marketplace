@@ -345,6 +345,99 @@ gated_phase_for_gate() {
   case "$1" in 1) echo 1 ;; 2) echo 3 ;; 3) echo 5 ;; *) echo "null" ;; esac
 }
 
+# ---- Mode derivation helpers (EDMV3-T07 / EDMV3-114) ------------------------
+# MODE_ENUM_LIST / LIFECYCLE_MODE_ENUM_LIST — single source for the two legal
+# enums. Deliberately space-separated strings (bash 3.2 has no arrays usable as
+# a portable single-line constant) and consumed with the word-membership idiom
+# `case " $LIST " in *" $item "*)` so no caller re-encodes the enum as a second
+# literal (EDMV3-T09 uses the identical idiom for SETTABLE_KEYS).
+MODE_ENUM_LIST="standard mini-srd iac data-ml prototype"
+LIFECYCLE_MODE_ENUM_LIST="standard partial fast-track fix-pack"
+
+# terminal_phase_for_mode <mode> <lifecycle_mode> — the phase at which this
+# initiative's lifecycle ends (EDMV3-T07 AC1). One comment per enum row so the
+# mapping's rationale is never re-derived from memory. `lifecycle_mode` never
+# shortens the terminal phase -- a fast-track initiative still ends at phase 6
+# and only skips middle phases via skipped_phases; it is validated here only so
+# an unrecognized value fails loudly rather than being silently ignored (AC7).
+# `gated_phase_for_gate` remains the separate gate-to-phase half and is reused
+# by required_gates_for_mode(), not replaced (AC2/AC5).
+terminal_phase_for_mode() {
+  local mode="$1" lifecycle_mode="$2"
+  case " $LIFECYCLE_MODE_ENUM_LIST " in
+    *" $lifecycle_mode "*) ;;
+    *) die "terminal_phase_for_mode: unknown lifecycle_mode '${lifecycle_mode}' (expected: ${LIFECYCLE_MODE_ENUM_LIST// /|})" ;;
+  esac
+  case "$mode" in
+    standard)  echo 6 ;;  # full six-phase lifecycle
+    mini-srd)  echo 6 ;;  # skips phases 2, 4, 5 (fused planning+SRD file) but still reaches phase 6
+    iac)       echo 6 ;;  # full six-phase lifecycle with IaC-specific artifact vocabulary
+    data-ml)   echo 6 ;;  # full six-phase lifecycle with Data Requirements / model-metric additions
+    prototype) echo 2 ;;  # terminates after Phase 2 (SRD) -- no tickets, no implementation phase
+    *) die "terminal_phase_for_mode: unknown mode '${mode}' (expected: ${MODE_ENUM_LIST// /|})" ;;
+  esac
+}
+
+# required_gates_for_mode <mode> <lifecycle_mode> <skipped-phases-space-separated>
+# Returns (one per line) the gate numbers this lifecycle actually requires
+# (EDMV3-T07 AC2). A gate G is required iff gated_phase_for_gate(G) is not in
+# skipped_phases and is at or below terminal_phase_for_mode(mode, lifecycle_mode).
+# gated_phase_for_gate is reused as the gate-to-phase half, not replaced.
+required_gates_for_mode() {
+  local mode="$1" lifecycle_mode="$2" skipped_phases="${3:-}"
+  local terminal
+  terminal="$(terminal_phase_for_mode "$mode" "$lifecycle_mode")"
+  local g gated_phase
+  for g in 1 2 3; do
+    gated_phase="$(gated_phase_for_gate "$g")"
+    [[ "$gated_phase" == "null" ]] && continue
+    # bash 3.2 word-membership test (no associative arrays available).
+    case " $skipped_phases " in
+      *" $gated_phase "*) continue ;;
+    esac
+    [[ "$gated_phase" -le "$terminal" ]] && echo "$g"
+  done
+}
+
+# code_audit_required_for_mode <mode> — whether this mode's phase graph includes
+# a code-audit round (EDMV3-T07 AC6). Consumed by cmd_archive so the convergence
+# exemption is derived once rather than special-cased separately; EDMV3-T08 adds
+# the second consumer (cmd_approve_gate's code-audit gate token).
+code_audit_required_for_mode() {
+  local mode="$1"
+  case "$mode" in
+    prototype) echo false ;;  # terminates at Phase 2 -- no implementation phase, no code audit
+    standard|mini-srd|iac|data-ml) echo true ;;
+    *) die "code_audit_required_for_mode: unknown mode '${mode}' (expected: ${MODE_ENUM_LIST// /|})" ;;
+  esac
+}
+
+# default_skipped_phases_json_for_mode <mode> — the phase graph's own skip set for
+# a freshly created (or newly mode-switched) initiative (EDMV3-T07 AC4), as a JSON
+# array of {phase, rationale, skipped_at} ready for skipped_phases. Each rationale
+# names the mode per AC4. standard/iac/data-ml run the full graph -- no phase is
+# pre-skipped for them.
+default_skipped_phases_json_for_mode() {
+  local mode="$1" ts
+  ts="$(now_utc)"
+  if [[ "$mode" == "mini-srd" ]]; then
+    jq -n --arg ts "$ts" '[
+      {phase: 2, rationale: "mini-srd: Phase 2 SRD creation fused into a single planning+SRD file (mode phase graph)", skipped_at: $ts},
+      {phase: 4, rationale: "mini-srd: ticket pack fused into SRD file (mode phase graph)", skipped_at: $ts},
+      {phase: 5, rationale: "mini-srd: ticket audit fused into SRD audit (mode phase graph)", skipped_at: $ts}
+    ]'
+  elif [[ "$mode" == "prototype" ]]; then
+    jq -n --arg ts "$ts" '[
+      {phase: 3, rationale: "prototype: SRD audit skipped -- lifecycle ends at Phase 2 (mode phase graph)", skipped_at: $ts},
+      {phase: 4, rationale: "prototype: ticket creation skipped -- lifecycle ends at Phase 2 (mode phase graph)", skipped_at: $ts},
+      {phase: 5, rationale: "prototype: ticket audit skipped -- lifecycle ends at Phase 2 (mode phase graph)", skipped_at: $ts},
+      {phase: 6, rationale: "prototype: implementation skipped -- lifecycle ends at Phase 2 (mode phase graph)", skipped_at: $ts}
+    ]'
+  else
+    echo "[]"
+  fi
+}
+
 # Shared jq def for the whole-initiative coverage layer row — one renderer, one padding scheme
 # (clamped 14-wide layer column; 9/8/7 pct padding), prepended to both get-coverage and
 # metrics-report so the two can never diverge again. Input: a {key,value} coverage entry. (CA-012)
@@ -411,21 +504,33 @@ read_bool() {
   '
 }
 
-# ---- State anomaly detection (T29) -----------------------------------------
+# ---- State anomaly detection (T29, class split EDMV3-T05 / EDMV3-118) ------
 # state_anomalies <PREFIX>
-# Reads state and emits zero or more anomaly lines. Each line has the form:
-#   <CODE>  <affected-field>  <description>
+# Reads state and emits zero or more anomaly lines. Each line has the canonical
+# four-field form (EDMV3-T05 AC2 -- canonical for the whole initiative; every
+# anomaly added by a later ticket restates these same four fields):
+#   <class>  <CODE>  <affected-field>  <description>
+# <class> is "info" or "blocking", declared at the point each line is emitted (not
+# inferred by the consumer). Only a "blocking" line flips cmd_validate's exit code
+# (EDMV3-T05 AC3/AC4) -- "info" lines are always printed, never silenced.
 # Exits 0 and emits nothing when no anomalies found. Never mutates state.
+#
+# Reclassification record (EDMV3-T05 AC5): SIZE_UNKNOWN is reclassified here from
+# "any anomaly blocks validate" to "info" -- it flags missing cost-tracking
+# metadata (an unset estimated_size), not corrupted data, and no caller anywhere
+# in plugins/edm/ inspects validate's exit code for it (verified by grep at
+# reclassification time, 2026-07-26). TIME_ORDER and ZERO_TOKENS remain
+# "blocking": both indicate corrupted timestamp/cost data, not missing metadata.
 state_anomalies() {
   local prefix="$1"
   require_jq
   local state
   state="$(read_state "$prefix")"
   local found=0
-  # TIME_ORDER: completed_at earlier than started_at within any phase entry
+  # TIME_ORDER (blocking): completed_at earlier than started_at within any phase entry
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
-    echo "$line"
+    echo "blocking  $line"
     found=1
   done < <(echo "$state" | jq -r '
     .phase_durations // {} | to_entries[] |
@@ -439,21 +544,22 @@ state_anomalies() {
       else empty end
     else empty end
   ' 2>/dev/null)
-  # SIZE_UNKNOWN: estimated_size is "Unknown" and current_phase >= 2
-  # Suppressed for fast-track/fix-pack lifecycle modes where size estimation is N/A.
+  # SIZE_UNKNOWN (info -- reclassified EDMV3-T05, see comment above): estimated_size
+  # is "Unknown" and current_phase >= 2. Suppressed for fast-track/fix-pack lifecycle
+  # modes where size estimation is N/A.
   local phase size lifecycle_mode_anom
   phase="$(echo "$state" | jq -r '.current_phase // 0')"
   size="$(echo "$state" | jq -r '.estimated_size // "Unknown"')"
   lifecycle_mode_anom="$(echo "$state" | jq -r '.lifecycle_mode // "standard"')"
   if [[ "$size" == "Unknown" && "$phase" -ge 2 \
         && "$lifecycle_mode_anom" != "fast-track" && "$lifecycle_mode_anom" != "fix-pack" ]]; then
-    echo "SIZE_UNKNOWN  estimated_size  size is still Unknown at phase ${phase} (set via edm-state set ${prefix} estimated_size Small|Medium|Large)"
+    echo "info  SIZE_UNKNOWN  estimated_size  size is still Unknown at phase ${phase} (set via edm-state set ${prefix} estimated_size Small|Medium|Large)"
     found=1
   fi
-  # ZERO_TOKENS: model_used is set but input+output tokens are both 0
+  # ZERO_TOKENS (blocking): model_used is set but input+output tokens are both 0
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
-    echo "$line"
+    echo "blocking  $line"
     found=1
   done < <(echo "$state" | jq -r '
     .phase_durations // {} | to_entries[] |
@@ -464,6 +570,22 @@ state_anomalies() {
     else empty end
   ' 2>/dev/null)
   return 0
+}
+
+# format_anomaly_line <four-field-anomaly-line>
+# Renders one canonical anomaly line (EDMV3-T05 AC2 format) with a class-specific,
+# visually distinct marker. Shared by cmd_session_start so its rendering can never
+# diverge from the raw four-field format cmd_validate prints (EDMV3-T05 AC6).
+format_anomaly_line() {
+  local line="$1" class rest
+  class="${line%% *}"
+  rest="${line#"$class"}"
+  rest="${rest#"  "}"
+  if [[ "$class" == "blocking" ]]; then
+    printf '  [BLOCKING] %s\n' "$rest"
+  else
+    printf '  [info] %s\n' "$rest"
+  fi
 }
 
 cmd_get() {
@@ -517,14 +639,23 @@ cmd_init() {
   local mode="${EDM_MODE:-standard}"
   local compliance="${EDM_COMPLIANCE_ENABLED:-false}"
   local impl_mode="${EDM_IMPLEMENTATION_MODE:-standard}"
-  case "$mode" in standard|mini-srd|iac|data-ml|prototype) ;; *) mode="standard" ;; esac
+  # Word-membership test against the single-source MODE_ENUM_LIST (EDMV3-T07 AC5) --
+  # avoids re-declaring the mode enum as a second case-literal list that would drift
+  # from terminal_phase_for_mode()'s own enum.
+  case " $MODE_ENUM_LIST " in *" $mode "*) ;; *) mode="standard" ;; esac
   case "$impl_mode" in standard|tdd) ;; *) impl_mode="standard" ;; esac
   case "$compliance" in true|false) ;; *) compliance="false" ;; esac
+  # Seed skipped_phases from the mode's phase graph (EDMV3-T07 AC4) so a fresh
+  # mini-srd or prototype initiative starts with its phase-skip exemptions already
+  # recorded, rather than empty.
+  local seeded_skipped
+  seeded_skipped="$(default_skipped_phases_json_for_mode "$mode")"
   # Atomic create: write to a temp file then rename, mirroring _rmw_state_body (CA-008). The
   # existing-file guard above prevents clobbering; this prevents a partial file on crash mid-write.
   jq -n --arg p "$prefix" --arg t "$(now_utc)" --arg b "$branch" \
         --arg prod "$product" --arg desc "$description" \
-        --arg mode "$mode" --arg impl "$impl_mode" --argjson ce "$compliance" '{
+        --arg mode "$mode" --arg impl "$impl_mode" --argjson ce "$compliance" \
+        --argjson skipped "$seeded_skipped" '{
     prefix: $p,
     current_phase: 0,
     gates_approved: [],
@@ -549,7 +680,7 @@ cmd_init() {
     lifecycle_mode: "standard",
     compliance_enabled: $ce,
     implementation_mode: $impl,
-    skipped_phases: [],
+    skipped_phases: $skipped,
     supersedes: "",
     forked_from: "",
     parent_prefix: "",
@@ -894,8 +1025,21 @@ cmd_archive() {
       converged="absent"
     fi
 
-    if [[ "$mode" == "prototype" ]]; then
-      echo "[warn] prototype mode -- skipping code-audit convergence check" >&2
+    # The convergence exemption is derived from code_audit_required_for_mode()
+    # (EDMV3-T07 AC6) rather than a second special case -- this is the documented
+    # cmd_archive convergence waiver, one of the three legal mode-case sites
+    # counted by EDMV3-T07 AC5's single-derivation grep. mode == "null" is a
+    # legacy state predating the mode field;
+    # it is not passed to the helper (which would die on it) and defaults to
+    # "audit required" so existing legacy behaviour is unchanged.
+    local audit_required="true"
+    [[ "$mode" != "null" ]] && audit_required="$(code_audit_required_for_mode "$mode")"
+
+    if [[ "$audit_required" == "false" ]]; then
+      case "$mode" in
+        prototype) echo "[warn] prototype mode -- skipping code-audit convergence check" >&2 ;;
+        *)         echo "[warn] ${mode} mode -- skipping code-audit convergence check" >&2 ;;
+      esac
     elif [[ "$converged" == "absent" ]]; then
       echo "[warn] legacy initiative -- code_audit_converged not set; proceeding" >&2
     elif [[ "$converged" == "false" && -n "$product_name" ]]; then
@@ -1250,9 +1394,12 @@ cmd_gate_check() {
   return 0
 }
 
-# ---- Validate (T32) ----------------------------------------------------------
+# ---- Validate (T32, class split EDMV3-T05) -----------------------------------
 # validate <PREFIX>
-# Runs state_anomalies and exits 3 if any anomalies found, 0 if clean.
+# Runs state_anomalies and prints every anomaly found, both classes. Exits 3 only
+# when at least one "blocking"-class anomaly is present (EDMV3-T05 AC4); an
+# "info"-only result is printed in full but exits 0 (EDMV3-T05 AC3) -- silence is
+# never how an informational anomaly is handled. Never mutates state.
 
 cmd_validate() {
   [[ $# -eq 1 ]] || die "usage: edm-state validate <PREFIX>"
@@ -1263,7 +1410,17 @@ cmd_validate() {
     echo "# State anomalies for $prefix:"
     echo
     echo "$anomalies"
-    return 3
+    # A line's class is its first field (EDMV3-T05 AC2 four-field format). Only
+    # "blocking" flips the exit code -- do not change the "3" value itself (it is
+    # the established edm-state convention EDMV3-100 keeps).
+    local line class blocking_count=0
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      class="${line%% *}"
+      [[ "$class" == "blocking" ]] && blocking_count=$((blocking_count + 1))
+    done <<< "$anomalies"
+    [[ $blocking_count -gt 0 ]] && return 3
+    return 0
   fi
   echo "# State OK: no anomalies found for $prefix"
   return 0
@@ -1396,6 +1553,16 @@ cmd_session_start() {
     [[ -n "$last_cmd" ]]       && printf '  Last command:  %s\n' "$last_cmd"
     [[ -n "$last_decision" ]]  && printf '  Last decision: %s\n' "$last_decision"
     [[ -n "$last_updated" ]]   && printf '  Last updated:  %s\n' "$last_updated"
+    # Render state anomalies, both classes, visually distinguished (EDMV3-T05 AC6).
+    # Read-only: state_anomalies never mutates state.
+    local _ss_anomalies _ss_aline
+    _ss_anomalies="$(state_anomalies "$prefix" 2>/dev/null || true)"
+    if [[ -n "$_ss_anomalies" ]]; then
+      while IFS= read -r _ss_aline; do
+        [[ -n "$_ss_aline" ]] || continue
+        format_anomaly_line "$_ss_aline"
+      done <<< "$_ss_anomalies"
+    fi
     printf '  Resume:        /edm:orchestrator %s\n' "$prefix"
     echo
   done < <(list_state_files)
@@ -1439,8 +1606,8 @@ cmd_record_partial_verdict() {
 
 # ---- Mode management (T83) ---------------------------------------------------
 # set-mode <PREFIX> <kind> <value>
-# Kinds: mode (standard|mini-srd|iac|data-ml|prototype)
-#        lifecycle_mode (standard|partial|fast-track|fix-pack)
+# Kinds: mode (see MODE_ENUM_LIST)
+#        lifecycle_mode (see LIFECYCLE_MODE_ENUM_LIST)
 #        compliance_enabled (true|false)
 #        implementation_mode (standard|tdd)
 
@@ -1450,16 +1617,27 @@ cmd_set_mode() {
   local prefix="$1" kind="$2" value="$3"
   case "$kind" in
     mode)
-      case "$value" in
-        standard|mini-srd|iac|data-ml|prototype) ;;
-        *) die "set-mode: invalid mode '$value' (expected: standard|mini-srd|iac|data-ml|prototype)" ;;
+      # Word-membership test against the single-source MODE_ENUM_LIST (EDMV3-T07
+      # AC5) -- avoids re-declaring the mode enum as a second case-literal list.
+      case " $MODE_ENUM_LIST " in
+        *" $value "*) ;;
+        *) die "set-mode: invalid mode '$value' (expected: ${MODE_ENUM_LIST// /|})" ;;
       esac
+      # NOTE (EDMV3-T07 AC4 scope note): seeding on mode CHANGE (as opposed to at
+      # cmd_init creation time, which IS seeded) is deliberately not auto-applied
+      # here. wave4a-smoke.sh's T96 skip-phase coverage sets mode=prototype on an
+      # already-in-flight initiative and then asserts an exact, caller-controlled
+      # skipped_phases count; auto-merging the mode's default skip set at every
+      # set-mode call would silently change that count out from under callers that
+      # intentionally manage skipped_phases by hand after creation. Use
+      # `edm-state skip-phase` explicitly after a mode change if the new mode's
+      # phase graph should be recorded.
       rmw_state "$prefix" '.mode = $v | .last_updated = $ts' --arg v "$value" --arg ts "$(now_utc)"
       ;;
     lifecycle_mode)
-      case "$value" in
-        standard|partial|fast-track|fix-pack) ;;
-        *) die "set-mode: invalid lifecycle_mode '$value' (expected: standard|partial|fast-track|fix-pack)" ;;
+      case " $LIFECYCLE_MODE_ENUM_LIST " in
+        *" $value "*) ;;
+        *) die "set-mode: invalid lifecycle_mode '$value' (expected: ${LIFECYCLE_MODE_ENUM_LIST// /|})" ;;
       esac
       rmw_state "$prefix" '.lifecycle_mode = $v | .last_updated = $ts' --arg v "$value" --arg ts "$(now_utc)"
       ;;
@@ -1989,6 +2167,12 @@ cmd_write_handoff() {
 }
 
 # ---- dispatch ---------------------------------------------------------------
+# Guarded so this file can be `source`d (e.g. by bin/tests/*-smoke.sh to unit-test
+# internal helpers like terminal_phase_for_mode() directly, EDMV3-T07 AC8) without
+# executing the CLI dispatch. Running it normally as a script is unaffected --
+# BASH_SOURCE[0] equals $0 in that case.
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
 cmd="${1:-}"; shift || true
 case "$cmd" in
@@ -2035,3 +2219,5 @@ case "$cmd" in
     die "unknown subcommand: $cmd (try --help)"
     ;;
 esac
+
+fi
