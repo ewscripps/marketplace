@@ -2,7 +2,7 @@
 # wave4a-smoke.sh — WS-B/C/E/F bash-code smoke check (T56, T67, T83, T96, T97, T98, T99)
 # Tests: audit-round-start, record-partial-verdict, set-mode, skip-phase,
 #        set-supersedes/set-forked-from, SIZE_UNKNOWN suppression, HANDOFF sections.
-# Run from repo root: bash plugins/edm-ai-development/bin/tests/wave4a-smoke.sh
+# Run from repo root: bash plugins/edm/bin/tests/wave4a-smoke.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # wave5-smoke.sh — G19 new coverage: migrate-path, per-epic coverage, set-parent/add-related, .bak
-# Run from repo root: bash plugins/edm-ai-development/bin/tests/wave5-smoke.sh
+# Run from repo root: bash plugins/edm/bin/tests/wave5-smoke.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
