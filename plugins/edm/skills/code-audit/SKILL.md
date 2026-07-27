@@ -78,6 +78,8 @@ track findings across passes and determine convergence.
        The original audit snapshot is preserved below.
        ---
        ```
+       ASCII-only, like every other committed artifact this methodology produces (no em dashes,
+       no arrows, no smart quotes) -- `edm-lint-artifacts` class 2 enforces this at commit time.
        This prevents a reviewer reading the round directory in isolation from seeing
        "Convergence NOT reached" after all work is done.
     - On **Revise**: no state mutation; loop back to the remediation gate (step 11) and step 12.

@@ -1110,15 +1110,23 @@ cmd_phase_start() {
   # skill already calls phase-start, so this applies to every entry path (including the
   # Skill-tool path, which bypasses the UserPromptExpansion hooks). Runs before any timestamp
   # is written so a refusal mutates nothing (AC2).
-  local state mode
+  # requires schema_version >= 1 (EDMV3-T13 AC7 remediation): the real legacy signal is
+  # absent schema_version, not a missing mode field -- a genuine pre-EDMV3 initiative (e.g.
+  # SRD/.archived/EDMV2) already carries mode="standard" and would otherwise get full
+  # enforcement instead of warn-and-proceed. mode == "null" is kept as a secondary guard for
+  # a hand-edited state file missing mode entirely (belt-and-suspenders, not the primary
+  # signal). Uses the shared schema_at_least() three-valued helper (EDMV3-T14) rather than
+  # re-deriving the comparison.
+  local state mode schema_version_ps
   state="$(read_state "$prefix")"
   mode="$(echo "$state" | jq -r '.mode // "null"')"
-  if [[ "$mode" == "null" ]]; then
-    # C-4 (AC7): a legacy state predating the mode field warns and proceeds rather than
+  schema_version_ps="$(echo "$state" | jq -r '.schema_version // empty')"
+  if [[ "$(schema_at_least "$schema_version_ps" 1)" == "0" || "$mode" == "null" ]]; then
+    # C-4 (AC7): a legacy state predating schema_version warns and proceeds rather than
     # hard-failing -- there is no mode-derived prerequisite gate to check against.
-    echo "edm-state phase-start: [warn] legacy initiative (no mode field) -- skipping kernel gate enforcement" >&2
+    echo "edm-state phase-start: [warn] legacy initiative (no schema_version) -- skipping kernel gate enforcement" >&2
     # EDMV3-T62 AC5: persist the skip to state, not just this transient console line.
-    record_degraded_check "$prefix" "phase-start:kernel-gate-enforcement" "no mode field"
+    record_degraded_check "$prefix" "phase-start:kernel-gate-enforcement" "no schema_version"
   else
     # phase_start_prerequisite_gate + required_gates_for_mode are the same derivation
     # cmd_gate_check's AC5 mode filter and cmd_archive's convergence waiver use -- not a
@@ -1194,33 +1202,37 @@ cmd_phase_complete() {
       # fixed by the artifact layout documented in CLAUDE.md and are NOT user-configurable,
       # unlike ${SRD_FILENAME} and ${TICKET_PACK_DIRNAME} which the userConfig can rename
       # (AC10) -- there is no corresponding env var for these three on purpose.
+      # EDMV3-T11 AC1 remediation (shard-1 QC): all six artifact-presence checks below route
+      # through present_or_absent's "nonempty" variant (defined above, `-s` instead of `-f`)
+      # rather than a bare `[[ -s ]]` -- the extended idiom this ticket added is the single
+      # presence check every phase-complete arm uses, not a sixth one defined and left unused.
       case "$phase" in
         1)
-          [[ -s "${pc_dir}/planning.md" ]] \
+          [[ "$(present_or_absent "${pc_dir}/planning.md" nonempty)" == "[present]" ]] \
             || die "phase-complete: phase 1 artifact missing or empty: ${pc_dir}/planning.md"
           ;;
         2)
-          [[ -s "${pc_dir}/${SRD_FILENAME}" ]] \
+          [[ "$(present_or_absent "${pc_dir}/${SRD_FILENAME}" nonempty)" == "[present]" ]] \
             || die "phase-complete: phase 2 artifact missing or empty: ${pc_dir}/${SRD_FILENAME}"
           ;;
         3)
-          [[ -s "${pc_dir}/audit-srd.md" ]] \
+          [[ "$(present_or_absent "${pc_dir}/audit-srd.md" nonempty)" == "[present]" ]] \
             || die "phase-complete: phase 3 artifact missing or empty: ${pc_dir}/audit-srd.md"
           ;;
         4)
-          [[ -s "${pc_dir}/${TICKET_PACK_DIRNAME}/README.md" ]] \
+          [[ "$(present_or_absent "${pc_dir}/${TICKET_PACK_DIRNAME}/README.md" nonempty)" == "[present]" ]] \
             || die "phase-complete: phase 4 artifact missing or empty: ${pc_dir}/${TICKET_PACK_DIRNAME}/README.md"
           ;;
         5)
-          [[ -s "${pc_dir}/${TICKET_PACK_DIRNAME}/audit.md" ]] \
+          [[ "$(present_or_absent "${pc_dir}/${TICKET_PACK_DIRNAME}/audit.md" nonempty)" == "[present]" ]] \
             || die "phase-complete: phase 5 artifact missing or empty: ${pc_dir}/${TICKET_PACK_DIRNAME}/audit.md"
           ;;
         6)
           # AC3: accept qc/qc-summary.md OR any qc/qc-shard-*.md (sharded QC merge).
-          if [[ ! -s "${pc_dir}/qc/qc-summary.md" ]]; then
+          if [[ "$(present_or_absent "${pc_dir}/qc/qc-summary.md" nonempty)" == "[absent]" ]]; then
             local pc_shard pc_shard_found=0
             for pc_shard in "${pc_dir}"/qc/qc-shard-*.md; do
-              [[ -s "$pc_shard" ]] && pc_shard_found=1 && break
+              [[ "$(present_or_absent "$pc_shard" nonempty)" == "[present]" ]] && pc_shard_found=1 && break
             done
             [[ $pc_shard_found -eq 1 ]] \
               || die "phase-complete: phase 6 artifact missing or empty: ${pc_dir}/qc/qc-summary.md (or any ${pc_dir}/qc/qc-shard-*.md)"
@@ -2103,19 +2115,27 @@ cmd_gate_check() {
   # skipped_phases, or beyond this lifecycle's terminal phase, is not required at all -- the
   # check passes without inspecting gates_approved. Uses the same required_gates_for_mode()
   # derivation as cmd_archive's code_audit_required_for_mode() sibling (EDMV3-T07), not a
-  # second one. mode == "null" is a legacy state predating the mode field (C-4); it keeps the
-  # pre-T13 behaviour of always requiring the gate rather than being passed to a helper that
-  # would die on it.
-  local mode
+  # second one.
+  # requires schema_version >= 1 (EDMV3-T13 AC7 remediation): the real legacy signal is
+  # absent schema_version, not a missing mode field -- a genuine pre-EDMV3 initiative (e.g.
+  # SRD/.archived/EDMV2) already carries mode="standard" and would otherwise get full
+  # enforcement instead of warn-and-proceed. mode == "null" is kept as a secondary guard for
+  # a hand-edited state file missing mode entirely. Uses the shared schema_at_least()
+  # three-valued helper (EDMV3-T14) rather than re-deriving the comparison.
+  local mode schema_version_gc
   mode="$(echo "$state" | jq -r '.mode // "null"')"
-  if [[ "$mode" != "null" ]]; then
-    local lifecycle_mode skipped_phases_str required_gates_list
-    lifecycle_mode="$(echo "$state" | jq -r '.lifecycle_mode // "standard"')"
-    skipped_phases_str="$(echo "$state" | jq -r '[(.skipped_phases // [])[].phase] | join(" ")')"
-    required_gates_list="$(required_gates_for_mode "$mode" "$lifecycle_mode" "$skipped_phases_str")"
-    if ! printf '%s\n' "$required_gates_list" | grep -qx "$required_gate"; then
-      return 0
-    fi
+  schema_version_gc="$(echo "$state" | jq -r '.schema_version // empty')"
+  if [[ "$(schema_at_least "$schema_version_gc" 1)" == "0" || "$mode" == "null" ]]; then
+    echo "edm-state gate-check: [warn] legacy initiative (no schema_version) -- skipping kernel gate enforcement" >&2
+    record_degraded_check "$prefix" "gate-check:kernel-gate-enforcement" "no schema_version"
+    return 0
+  fi
+  local lifecycle_mode skipped_phases_str required_gates_list
+  lifecycle_mode="$(echo "$state" | jq -r '.lifecycle_mode // "standard"')"
+  skipped_phases_str="$(echo "$state" | jq -r '[(.skipped_phases // [])[].phase] | join(" ")')"
+  required_gates_list="$(required_gates_for_mode "$mode" "$lifecycle_mode" "$skipped_phases_str")"
+  if ! printf '%s\n' "$required_gates_list" | grep -qx "$required_gate"; then
+    return 0
   fi
 
   local approved
@@ -2399,16 +2419,22 @@ cmd_set_mode() {
         *" $value "*) ;;
         *) die "set-mode: invalid mode '$value' (expected: ${MODE_ENUM_LIST// /|})" ;;
       esac
-      # NOTE (EDMV3-T07 AC4 scope note): seeding on mode CHANGE (as opposed to at
-      # cmd_init creation time, which IS seeded) is deliberately not auto-applied
-      # here. wave4a-smoke.sh's T96 skip-phase coverage sets mode=prototype on an
-      # already-in-flight initiative and then asserts an exact, caller-controlled
-      # skipped_phases count; auto-merging the mode's default skip set at every
-      # set-mode call would silently change that count out from under callers that
-      # intentionally manage skipped_phases by hand after creation. Use
-      # `edm-state skip-phase` explicitly after a mode change if the new mode's
-      # phase graph should be recorded.
-      rmw_state "$prefix" '.mode = $v | .last_updated = $ts' --arg v "$value" --arg ts "$(now_utc)"
+      # EDMV3-T07 AC4 remediation: seed skipped_phases on mode CHANGE too, not only at
+      # cmd_init creation time -- the new mode's phase graph (default_skipped_phases_json_for_mode)
+      # is merged into skipped_phases, deduped by phase. An existing entry for a phase (whether
+      # written by a prior mode change, a manual `edm-state skip-phase`, or the initial seed)
+      # wins over the incoming default for that same phase -- its rationale is preserved
+      # verbatim, never overwritten, so a caller-recorded reason is never silently replaced by a
+      # generic mode-derived one.
+      local seeded_skipped
+      seeded_skipped="$(default_skipped_phases_json_for_mode "$value")"
+      rmw_state "$prefix" '
+        (.skipped_phases // []) as $existing
+        | ($existing | map(.phase)) as $existing_phases
+        | .mode = $v
+        | .skipped_phases = ($existing + [$seeded[] | select((.phase as $p | $existing_phases | index($p)) == null)])
+        | .last_updated = $ts
+      ' --arg v "$value" --argjson seeded "$seeded_skipped" --arg ts "$(now_utc)"
       ;;
     lifecycle_mode)
       case " $LIFECYCLE_MODE_ENUM_LIST " in
@@ -2914,7 +2940,7 @@ write_handoff_internal() {
       [[ -f "$tickets_path" ]] || pending_artifacts="${pending_artifacts}- \`${_init_dir}/${TICKET_PACK_DIRNAME}/README.md\`"$'\n'
       [[ -f "$audit_tickets_path" ]] || pending_artifacts="${pending_artifacts}- \`${_init_dir}/${TICKET_PACK_DIRNAME}/audit.md\`"
       ;;
-    6) pending_artifacts="_(implementation in progress — track individual ticket status)_" ;;
+    6) pending_artifacts="_(implementation in progress -- track individual ticket status)_" ;;
   esac
   [[ -n "${pending_artifacts:-}" ]] || pending_artifacts="_(all phase artifacts present)_"
   # Trim trailing newline from multi-line pending_artifacts.

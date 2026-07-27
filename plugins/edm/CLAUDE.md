@@ -1,11 +1,11 @@
-# EDM Plugin — Conventions for Contributors
+# EDM Plugin -- Conventions for Contributors
 
 This file documents the architectural rules, naming conventions, and configuration model for the EDM Claude Code plugin.
-Read this before making changes — it captures decisions that aren't otherwise visible in the code.
+Read this before making changes -- it captures decisions that aren't otherwise visible in the code.
 
 ## Architectural rules (do not violate)
 
-### 1. `skills/` is the only entry point — there is no `commands/`
+### 1. `skills/` is the only entry point -- there is no `commands/`
 
 Per the Claude Code plugin docs, `commands/` is the legacy location for skills-as-flat-files. New plugins use `skills/`.
 Both invoke the same way (`/edm:name`), so maintaining both is pure duplication. **Do not re-introduce a `commands/`
@@ -19,13 +19,13 @@ Each phase skill (`skills/orchestrator/SKILL.md`, `skills/plan/SKILL.md`, etc.) 
 - Step-by-step operational orchestration
 - The HITL gate prompts
 
-Agents are invoked from skills, not the other way around. Skills don't load other skills — they each contain their own
+Agents are invoked from skills, not the other way around. Skills don't load other skills -- they each contain their own
 orchestration.
 
 ### 3. Artifacts live in the project's `SRD/` directory and are committed to git
 
-Every artifact EDM produces — planning notes, SRDs, ticket packs, audit reports, code-audit remediation plans, *
-*and `.edm-state.json`** — is a project deliverable that lives in the repository's `SRD/` directory. Source control IS
+Every artifact EDM produces -- planning notes, SRDs, ticket packs, audit reports, code-audit remediation plans, *
+*and `.edm-state.json`** -- is a project deliverable that lives in the repository's `SRD/` directory. Source control IS
 the feature:
 
 - A teammate reviews the SRD in a PR before any code is written
@@ -86,23 +86,23 @@ SRD/                              <- project root, committed to git
 ```
 
 **Slot annotations**:
-- `always-present` — scaffolded by `edm-init` or written early in the phase flow
-- `on-demand` — created by its owning phase/agent only when the initiative needs it
-- `Must/Should/Could` — priority per SRD EDMV2-38..43
+- `always-present` -- scaffolded by `edm-init` or written early in the phase flow
+- `on-demand` -- created by its owning phase/agent only when the initiative needs it
+- `Must/Should/Could` -- priority per SRD EDMV2-38..43
 
 **Canonical artifact homes** (all paths derived from state via `initiative_dir_for()`, never hardcoded):
-- `architecture.md` — canonical home for `edm-architect` diagrams and architecture decisions (EDMV2-38)
-- `explorers/` — canonical home for parallel explorer reports; synthesized into `planning.md` (EDMV2-39)
-- `decisions.md` — initiative-wide key-decisions + finding-to-commit ledger; distinct from `code-audit/findings-ledger.md` which is the code-audit cross-round ledger (EDMV2-40)
-- `ROLLBACK.md` — on-demand rollback runbook; template: trigger conditions, ordered revert steps, verification-after-rollback, owner/contact (EDMV2-41)
-- `exec-report.md` — post-Phase-6 execution report; `mode` field = run mode (e.g., `live-db`, not the adaptation profile) (EDMV2-42)
-- `post-deploy/` — post-deploy verification and analysis-input documents (EDMV2-43)
+- `architecture.md` -- canonical home for `edm-architect` diagrams and architecture decisions (EDMV2-38)
+- `explorers/` -- canonical home for parallel explorer reports; synthesized into `planning.md` (EDMV2-39)
+- `decisions.md` -- initiative-wide key-decisions + finding-to-commit ledger; distinct from `code-audit/findings-ledger.md` which is the code-audit cross-round ledger (EDMV2-40)
+- `ROLLBACK.md` -- on-demand rollback runbook; template: trigger conditions, ordered revert steps, verification-after-rollback, owner/contact (EDMV2-41)
+- `exec-report.md` -- post-Phase-6 execution report; `mode` field = run mode (e.g., `live-db`, not the adaptation profile) (EDMV2-42)
+- `post-deploy/` -- post-deploy verification and analysis-input documents (EDMV2-43)
 
 **Concrete example**: `SRD/edm/EDMV2__enhance-edm-plugin/`
 
-- The **double-underscore** (`__`) separates the PREFIX from the description slug — never use a single underscore.
+- The **double-underscore** (`__`) separates the PREFIX from the description slug -- never use a single underscore.
 - The description slug is lowercase-hyphenated (e.g. `enhance-edm-plugin`, `user-auth-rewrite`).
-- PREFIX is **globally unique** across ALL product subdirectories — two products may not share a PREFIX (see Naming conventions below).
+- PREFIX is **globally unique** across ALL product subdirectories -- two products may not share a PREFIX (see Naming conventions below).
 
 **Existing flat initiatives (`SRD/{PREFIX}/`) continue to work unchanged** (EDMV2-90 backward compat). The resolver
 (`state_file_for` in `bin/edm-state`) detects the layout automatically and prefers an existing on-disk path so
@@ -125,25 +125,25 @@ The plugin reads root paths from `userConfig`, so teams can relocate the entire 
 ### Existing repository conventions (informational)
 
 The project may contain an `/SRD/` directory with initiatives that pre-date the plugin and use older patterns. The
-plugin does NOT migrate these — they keep their current format. New initiatives created via the plugin use the
+plugin does NOT migrate these -- they keep their current format. New initiatives created via the plugin use the
 product-scoped canonical layout above (or flat layout when `--product`/`--description` are omitted).
 
 ## Naming conventions
 
 ### Initiative prefix
 
-3–6 uppercase characters, e.g., `AUTH`, `MIGR`, `TIPS`, `PERF`. Validated by `bin/edm-validate-prefix` for
+3-6 uppercase characters, e.g., `AUTH`, `MIGR`, `TIPS`, `PERF`. Validated by `bin/edm-validate-prefix` for
 **global uniqueness** across ALL product subdirectories in `SRD/` (not just one product). This ensures the PREFIX
-is unambiguous in commit scopes, ticket IDs, HANDOFF references, and Jira scopes — two products sharing a PREFIX
+is unambiguous in commit scopes, ticket IDs, HANDOFF references, and Jira scopes -- two products sharing a PREFIX
 would make all of these ambiguous. Configurable hint: `${user_config.prefix_format_hint}`.
 
 ### Requirement IDs (in SRDs)
 
-`{PREFIX}-{NN}` — e.g., `AUTH-01`, `AUTH-02`, …, `AUTH-37`.
+`{PREFIX}-{NN}` -- e.g., `AUTH-01`, `AUTH-02`, ..., `AUTH-37`.
 
 ### Ticket IDs (in ticket packs)
 
-`{PREFIX}-T{NN}` — e.g., `AUTH-T01`, `AUTH-T02`, …, `AUTH-T48`.
+`{PREFIX}-T{NN}` -- e.g., `AUTH-T01`, `AUTH-T02`, ..., `AUTH-T48`.
 
 The `T` prefix distinguishes tickets from SRD requirements and prevents global collision across initiatives. **Never use
 the legacy `TICK-NN` format**; the plan ID disambiguates initiatives in cross-initiative coverage maps.
@@ -156,19 +156,19 @@ Every ticket pack `README.md` body's first line MUST be:
 Generated From: ${user_config.srd_filename} v{srd_version}
 ```
 
-The `srd_version` is read from `.edm-state.json`. The `edm-ticket-auditor` (Dimension 8 — Version Alignment) verifies
+The `srd_version` is read from `.edm-state.json`. The `edm-ticket-auditor` (Dimension 8 -- Version Alignment) verifies
 this against the current SRD version and flags drift as a P0 finding.
 
 ## Agent color scheme (semantic)
 
 | Color     | Agent(s)                                              | Meaning                                 |
 |-----------|-------------------------------------------------------|-----------------------------------------|
-| `yellow`  | `edm-explorer`                                        | Phase 1 — discovery                     |
-| `blue`    | `edm-architect`, `edm-srd-writer`                     | Phase 2 — writing                       |
-| `orange`  | `edm-srd-auditor`, `edm-ticket-auditor`               | Phase 3 & 5 — pre-implementation audits |
-| `magenta` | `edm-ticket-writer`                                   | Phase 4 — writing tickets               |
-| `green`   | `edm-implementer`                                     | Phase 6 — building                      |
-| `red`     | `edm-qc-auditor`                                      | Phase 6 QC — final gate                 |
+| `yellow`  | `edm-explorer`                                        | Phase 1 -- discovery                     |
+| `blue`    | `edm-architect`, `edm-srd-writer`                     | Phase 2 -- writing                       |
+| `orange`  | `edm-srd-auditor`, `edm-ticket-auditor`               | Phase 3 & 5 -- pre-implementation audits |
+| `magenta` | `edm-ticket-writer`                                   | Phase 4 -- writing tickets               |
+| `green`   | `edm-implementer`                                     | Phase 6 -- building                      |
+| `red`     | `edm-qc-auditor`                                      | Phase 6 QC -- final gate                 |
 | `cyan`    | all 11 `edm-audit-*` lenses + `edm-audit-synthesizer` | Code audit (one logical operation)      |
 
 When adding a new agent, choose a color that matches the phase. Lens agents always share `cyan`.
@@ -179,26 +179,26 @@ All EDM audit agents use the following four-level scale. No agent may define a d
 
 | Level | Meaning | Required action |
 |---|---|---|
-| **P0** | Critical — blocks implementation, security/legal issue, production failure, or architecturally wrong | Fix before this phase may be called complete |
-| **P1** | Significant — material gap, factual error, missing requirement, or behavior that must be corrected before shipping | Fix before shipping; defer only with explicit written rationale |
-| **P2** | Minor — polish, edge-case, improvement, or nice-to-have | Fix if low-effort; explicitly defer otherwise |
-| **NOTED** | Not actionable — the issue is intentional, pre-existing, or a known accepted trade-off | Document in "Decisions / Non-Findings"; do not re-investigate |
+| **P0** | Critical -- blocks implementation, security/legal issue, production failure, or architecturally wrong | Fix before this phase may be called complete |
+| **P1** | Significant -- material gap, factual error, missing requirement, or behavior that must be corrected before shipping | Fix before shipping; defer only with explicit written rationale |
+| **P2** | Minor -- polish, edge-case, improvement, or nice-to-have | Fix if low-effort; explicitly defer otherwise |
+| **NOTED** | Not actionable -- the issue is intentional, pre-existing, or a known accepted trade-off | Document in "Decisions / Non-Findings"; do not re-investigate |
 
 **Backward-compatibility mapping** (from the synthesizer's legacy P1/P2/P3 scale used before v2.0):
-- Legacy P1 (production failure / security) → **P0**
-- Legacy P2 (operational friction / must-fix) → **P1**
-- Legacy P3 (defensive improvement / nice-to-have) → **P2**
-- NOTED → unchanged
+- Legacy P1 (production failure / security) -> **P0**
+- Legacy P2 (operational friction / must-fix) -> **P1**
+- Legacy P3 (defensive improvement / nice-to-have) -> **P2**
+- NOTED -> unchanged
 
 ## Model and effort assignments
 
 | Role | Model | Effort | Rationale |
 |---|---|---|---|
-| Planning, audit, QC | `opus` | `max` | Judgment-heavy work — surface subtle issues |
+| Planning, audit, QC | `opus` | `max` | Judgment-heavy work -- surface subtle issues |
 | Writing (SRD, tickets) | `opus` | `high` | High-stakes artifacts the rest of the methodology depends on; opus catches missed requirements and weak ACs that sonnet sometimes misses |
-| Implementation | `sonnet` | `high` | Throughput work — well-specified by tickets |
+| Implementation | `sonnet` | `high` | Throughput work -- well-specified by tickets |
 | Code audit lenses + synthesizer | `opus` | `max` | Each lens hunts for subtle, lens-specific issues |
-| Jira sync (optional) | `sonnet` | `high` | Mechanical mapping — ticket pack already exists; this just translates fields |
+| Jira sync (optional) | `sonnet` | `high` | Mechanical mapping -- ticket pack already exists; this just translates fields |
 
 Skills mirror the split: `skills/orchestrator/`, `skills/plan/`, `skills/srd/`, `skills/audit-srd/`, `skills/tickets/`, `skills/audit-tickets/`, `skills/implement/`, `skills/code-audit/` are all on `opus`. The two writers run at `effort: high`; planning, audits, and QC run at `effort: max`. `skills/push-jira/` and `skills/metrics/` run on `sonnet`/`high`.
 
@@ -208,10 +208,10 @@ Every `phase-complete` invocation captures token usage from the project's sessio
 `~/.claude/projects/<encoded-cwd>/*.jsonl`) and computes Claude API cost using current Anthropic pricing. The state
 schema's `phase_durations[N_phase]` entry includes:
 
-- `tokens.{input, output, cache_read, cache_write}` — raw counts
-- `model_used` — the model that handled most of the phase work (last assistant message)
-- `estimated_cost_usd` — computed from tokens × per-million-token rates
-- `human_baseline_usd` — computed from Phase Timing Guidelines median hours × `${user_config.human_hourly_rate_usd}` (
+- `tokens.{input, output, cache_read, cache_write}` -- raw counts
+- `model_used` -- the model that handled most of the phase work (last assistant message)
+- `estimated_cost_usd` -- computed from tokens x per-million-token rates
+- `human_baseline_usd` -- computed from Phase Timing Guidelines median hours x `${user_config.human_hourly_rate_usd}` (
   default $150/hr)
 
 Pricing constants (per million tokens, USD) are baked in but env-overridable:
@@ -243,17 +243,17 @@ Two new artifacts are added to `SRD/{PREFIX}/`:
 
 | File | Written by | Purpose |
 |------|-----------|---------|
-| `test-plan.md` | `edm-test-planner` | Stack detection, AC↔layer mapping, writer task assignments |
-| `test-coverage.md` | `edm-test-coverage-auditor` | Coverage by layer vs. targets, AC↔test cross-reference, P0/P1/P2 gaps |
+| `test-plan.md` | `edm-test-planner` | Stack detection, AC<->layer mapping, writer task assignments |
+| `test-coverage.md` | `edm-test-coverage-auditor` | Coverage by layer vs. targets, AC<->test cross-reference, P0/P1/P2 gaps |
 
-Test code itself lives in the project's existing test directories — `SRD/` artifacts document
+Test code itself lives in the project's existing test directories -- `SRD/` artifacts document
 *intent and coverage*, not the tests themselves.
 
 ### Testing layer agent inventory
 
 | Agent | Model/Effort | Color | maxTurns | Role |
 |-------|-------------|-------|---------|------|
-| `edm-test-planner` | opus / high | yellow | 30 | Detect stack; map tickets → test layers; write `test-plan.md` |
+| `edm-test-planner` | opus / high | yellow | 30 | Detect stack; map tickets -> test layers; write `test-plan.md` |
 | `edm-test-scaffold` | sonnet / high | blue | 30 | Install missing test deps, write config files |
 | `edm-test-unit` | sonnet / high | green | 50 | Pure-function unit tests, mock-isolated |
 | `edm-test-component` | sonnet / high | green | 50 | UI component tests (RTL, Vue Test Utils, etc.) |
@@ -262,13 +262,13 @@ Test code itself lives in the project's existing test directories — `SRD/` art
 | `edm-test-contract` | sonnet / high | green | 50 | API contract tests (OpenAPI/GraphQL-driven) |
 | `edm-test-e2e` | sonnet / high | green | 60 | Playwright/Cypress full user journeys |
 | `edm-test-a11y` | sonnet / high | green | 30 | axe-core + keyboard nav, WCAG 2.1 AA |
-| `edm-test-coverage-auditor` | opus / max | cyan | 25 | Read-only: parse coverage, cross-ref AC, find gaps |
+| `edm-test-coverage-auditor` | sonnet / high | cyan | 25 | Read-only: parse coverage, cross-ref AC, find gaps |
 
 `edm-test-coverage-auditor` is `cyan` (read-only audit lens, like the code-audit lenses). Test
 writers are `green` (build code, like `edm-implementer`). Planner is `yellow` (discovery, like
 `edm-explorer`). Scaffold is `blue` (writes infrastructure, like `edm-architect`).
 
-`edm-test-coverage-auditor` has `disallowedTools: Edit, NotebookEdit` (Write is required — it writes `test-coverage.md`).
+`edm-test-coverage-auditor` has `disallowedTools: Edit, NotebookEdit` (Write is required -- it writes `test-coverage.md`).
 
 ### Coverage targets (userConfig)
 
@@ -369,14 +369,14 @@ When all epics share the same stack (single-stack initiative), the planner produ
 `skills/push-jira/SKILL.md` (invoked as `/edm:push-jira <PREFIX> [PROJECT_KEY]`) optionally pushes the ticket pack to Jira via the Atlassian MCP. It is **strictly opt-in**:
 
 - The skill checks `mcp__{jira_mcp_namespace}__atlassianUserInfo` first (namespace defaults to `plugin_jira_atlassian-mcp-server`; override via `${user_config.jira_mcp_namespace}`); if unavailable, it skips with a friendly message.
-- Tickets are tracked in Jira via labels (`edm-{prefix}-t{nn}`) — no custom Jira fields required.
+- Tickets are tracked in Jira via labels (`edm-{prefix}-t{nn}`) -- no custom Jira fields required.
 - Re-running is idempotent: existing issues are updated, not duplicated.
 - Status, comments, and worklog on Jira issues are preserved across re-runs.
 - Dependencies become Issue Links of type `Blocks` (or `Relates` if `Blocks` isn't available).
-- Each ticket file gets a Jira link appended after first push: `## AUTH-T01: …  ([MCP-1234](https://….atlassian.net/browse/MCP-1234))`.
+- Each ticket file gets a Jira link appended after first push: `## AUTH-T01: ...  ([MCP-1234](https://....atlassian.net/browse/MCP-1234))`.
 - A summary of all sync actions is written to `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/jira-sync.md`.
 
-The skill does NOT push during active implementation (Phase 6) — let the markdown ticket pack stay authoritative. Re-sync after the initiative completes if desired.
+The skill does NOT push during active implementation (Phase 6) -- let the markdown ticket pack stay authoritative. Re-sync after the initiative completes if desired.
 
 The `userConfig.jira_project_key` value provides a default; otherwise the user must pass `<PROJECT_KEY>` as the second argument.
 
@@ -388,12 +388,12 @@ The `userConfig.jira_project_key` value provides a default; otherwise the user m
 |----------------------------------------------------------------------------------------|---------------------------------------------------------------|
 | `SessionStart`                                                                         | Emit Resume Point for active initiatives via `edm-state session-start` |
 | `UserPromptExpansion` matching `edm:(srd\|audit-srd\|tickets\|audit-tickets\|implement)` | Block expansion if the prerequisite HITL gate isn't approved  |
-| `PreToolUse` matching `git commit`                                                     | Run `edm-lint-artifacts` — block commit if active-initiative artifacts have violations |
+| `PreToolUse` matching `git commit`                                                     | Run `edm-lint-artifacts` -- block commit if active-initiative artifacts have violations |
 | `Stop` and `PreCompact`                                                                | Checkpoint state via `edm-state checkpoint-if-active`         |
 | `SubagentStop` matching `edm-implementer`                                              | Auto-spawn `edm-qc-auditor`; write verdict to `qc/qc-summary.md`; persist PARTIAL verdicts via `edm-state record-partial-verdict` |
-| `TaskCompleted`                                                                        | Reserved — per-task duration accumulation not yet implemented |
+| `TaskCompleted`                                                                        | Reserved -- per-task duration accumulation not yet implemented |
 
-These are part of the methodology — do not disable them in normal operation.
+These are part of the methodology -- do not disable them in normal operation.
 
 ## Artifact content conventions
 
@@ -453,7 +453,7 @@ Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call the
 
 All fields default safely so v1.x state files without them work unchanged (C-4 backward compatibility).
 
-**`mode` vs `lifecycle_mode`** — orthogonal: an initiative can be `mode=iac` AND `lifecycle_mode=fast-track` simultaneously. Set independently via `edm-state set-mode <PREFIX> mode|lifecycle_mode <value>`.
+**`mode` vs `lifecycle_mode`** -- orthogonal: an initiative can be `mode=iac` AND `lifecycle_mode=fast-track` simultaneously. Set independently via `edm-state set-mode <PREFIX> mode|lifecycle_mode <value>`.
 
 ### `.edm-state.json` `schema_version` contract (EDMV3-T09)
 
@@ -480,7 +480,7 @@ itself is implemented per-check by the ticket that owns that check. EDMV3-T14 wi
 the whole class end to end, including the real archived EDMV2 fixture; EDMV3-T18 (wave B) is where
 the version-2 checks themselves are built.
 
-**`decisions.md` vs `code-audit/findings-ledger.md`** — distinct files with distinct scopes:
+**`decisions.md` vs `code-audit/findings-ledger.md`** -- distinct files with distinct scopes:
 - `decisions.md` = initiative-wide key decisions and finding-to-commit ledger (written by orchestrator at gates and Phase 6)
 - `code-audit/findings-ledger.md` = cross-round code audit findings ledger with stable CA-NNN IDs (written by `edm-audit-synthesizer`)
 
@@ -491,25 +491,25 @@ Operates against the project's working directory (no plugin-relative paths). All
 
 Prompted at install time. See `.claude-plugin/plugin.json` for the live schema. Keys:
 
-- `srd_root` — output root directory (default `./SRD`)
-- `srd_filename` — SRD file inside the initiative directory (default `srd.md`)
-- `ticket_pack_dirname` — ticket pack subdirectory name (default `tickets`)
-- `prefix_format_hint` — hint shown when prompting for a prefix (default `UPPERCASE 3-6 chars`)
-- `commit_state_file` — whether `.edm-state.json` is git-tracked (default `true`)
-- `human_hourly_rate_usd` — human developer rate for cost comparison in `/edm:metrics` (default `150`)
-- `jira_project_key` — default Jira project key for `/edm:push-jira`; leave empty to require explicit arg (default `""`)
-- `jira_mcp_namespace` — MCP namespace for Atlassian tools (default `plugin_jira_atlassian-mcp-server`)
-- `coverage_target_unit_pct` — minimum unit test coverage % (default `80`)
-- `coverage_target_component_pct` — minimum component test coverage % (default `70`)
-- `coverage_target_integration_pct` — minimum integration test coverage % (default `60`)
-- `coverage_target_e2e_critical_paths_pct` — % of critical paths requiring E2E coverage (default `100`)
-- `test_framework_unit_override` — pin unit test framework, e.g. `jest`, `pytest` (default `""`)
-- `test_framework_component_override` — pin component test framework (default `""`)
-- `test_framework_e2e_override` — pin E2E framework, e.g. `playwright`, `cypress` (default `""`)
-- `mode` — default initiative mode: `standard`, `mini-srd`, `iac`, `data-ml`, `prototype` (default `standard`)
-- `compliance_enabled` — enforce compliance checkpoints when true (default `false`)
-- `qc_shard_threshold` — ticket count above which QC spawns multiple `edm-qc-auditor` shards (default `20`)
-- `implementation_mode` — Phase 6 mode: `standard` or `tdd` Red-Green-Refactor (default `standard`)
+- `srd_root` -- output root directory (default `./SRD`)
+- `srd_filename` -- SRD file inside the initiative directory (default `srd.md`)
+- `ticket_pack_dirname` -- ticket pack subdirectory name (default `tickets`)
+- `prefix_format_hint` -- hint shown when prompting for a prefix (default `UPPERCASE 3-6 chars`)
+- `commit_state_file` -- whether `.edm-state.json` is git-tracked (default `true`)
+- `human_hourly_rate_usd` -- human developer rate for cost comparison in `/edm:metrics` (default `150`)
+- `jira_project_key` -- default Jira project key for `/edm:push-jira`; leave empty to require explicit arg (default `""`)
+- `jira_mcp_namespace` -- MCP namespace for Atlassian tools (default `plugin_jira_atlassian-mcp-server`)
+- `coverage_target_unit_pct` -- minimum unit test coverage % (default `80`)
+- `coverage_target_component_pct` -- minimum component test coverage % (default `70`)
+- `coverage_target_integration_pct` -- minimum integration test coverage % (default `60`)
+- `coverage_target_e2e_critical_paths_pct` -- % of critical paths requiring E2E coverage (default `100`)
+- `test_framework_unit_override` -- pin unit test framework, e.g. `jest`, `pytest` (default `""`)
+- `test_framework_component_override` -- pin component test framework (default `""`)
+- `test_framework_e2e_override` -- pin E2E framework, e.g. `playwright`, `cypress` (default `""`)
+- `mode` -- default initiative mode: `standard`, `mini-srd`, `iac`, `data-ml`, `prototype` (default `standard`)
+- `compliance_enabled` -- enforce compliance checkpoints when true (default `false`)
+- `qc_shard_threshold` -- ticket count above which QC spawns multiple `edm-qc-auditor` shards (default `20`)
+- `implementation_mode` -- Phase 6 mode: `standard` or `tdd` Red-Green-Refactor (default `standard`)
 
 Skills reference values as `${user_config.srd_root}` etc.
 
@@ -519,7 +519,7 @@ macOS and Linux only (bash 3.2+, `jq`, `git` required). Windows and WSL are unsu
 
 After modifying any plugin component:
 
-1. `claude plugin validate plugins/edm/` — schema and frontmatter check
+1. `claude plugin validate plugins/edm/` -- schema and frontmatter check
 2. Test in a sandbox: `claude --plugin-dir ./plugins/edm`
 3. Run `/reload-plugins` to pick up changes without restarting
 4. Verify agents appear in `/agents`, skills in `/help`
@@ -546,10 +546,13 @@ four stages:
 | `eval` | `eval:nightly` | No (`allow_failure: true`) | Runs the headless eval driver (`plugins/edm/evals/run-eval.sh`) against the `tiny-svc` fixture. `when: manual` on a normal pipeline; runs automatically on a scheduled nightly pipeline. Skipped outright (not failed) when `ANTHROPIC_API_KEY` is unset |
 
 All job images are pinned by digest (`@sha256:...`) rather than a floating tag, with one
-documented exception: `test:smoke-bash32`'s `bash:3.2` image (EDMV3-T61) is not yet
-digest-pinned -- no registry-connected environment was available to capture its digest while
-that ticket was implemented. See the digest refresh procedure documented at the top of
-`.gitlab-ci.yml`.
+documented, explicitly authorized exception: `test:smoke-bash32`'s `bash:3.2` image (EDMV3-T61,
+re-confirmed EDMV3 wave-A QC remediation) is not yet digest-pinned -- no registry-connected
+environment was available to capture its digest while that ticket was implemented (the same
+constraint that left the alpine/node digests as placeholder captures, per the header note at the
+top of `.gitlab-ci.yml`). It MUST be pinned to a real `@sha256:...` digest, using the digest
+refresh procedure documented at the top of `.gitlab-ci.yml`, before this job is first relied on
+against a live GitLab runner fleet.
 
 **macOS runner (EDMV3-T61 AC12, named exception taken):** CI does not currently exercise the
 suites on a macOS runner in addition to Linux -- no macOS runner class is confirmed registered
@@ -564,7 +567,7 @@ confirmed available in this project's fleet.
 
 ## Related documentation
 
-- `README.md` — user-facing install + usage
-- `CHANGELOG.md` — version history
+- `README.md` -- user-facing install + usage
+- `CHANGELOG.md` -- version history
 - The official Claude Code plugin docs: `code.claude.com/docs/en/plugins`, `code.claude.com/docs/en/plugins-reference`
-- Existing initiatives at `/SRD/` — informational reference for the legacy convention
+- Existing initiatives at `/SRD/` -- informational reference for the legacy convention

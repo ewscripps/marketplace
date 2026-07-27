@@ -22,8 +22,8 @@ EDMV3-T61-EDMV3-T63) into this single versioned entry.
   warning-count baseline), and `eval` (the nightly fixture-eval run, `allow_failure: true`).
 - **Fixture eval harness** (EDMV3-T22, EDMV3-T23): a headless eval driver
   (`plugins/edm/evals/run-eval.sh`) against a committed `tiny-svc` fixture, a five-dimension
-  mechanical scorer (`plugins/edm/evals/score-artifacts.sh`), and a wave-A baseline recorded at
-  `plugins/edm/evals/baseline/`.
+  mechanical scorer (`plugins/edm/evals/score-artifacts.sh`), and a wave-A baseline capture
+  pending (see `evals/baseline/README.md`).
 - **Smoke-test harness helpers** (EDMV3-T19): `with_scratch_repo`, `check_fails`, and
   `check_state_unchanged` in `bin/tests/_harness.sh`, shared by every `*-smoke.sh` suite instead
   of each suite hand-rolling its own scratch-repo/assertion boilerplate.

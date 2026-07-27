@@ -114,6 +114,17 @@ lint:file-type-ban:
         exit 1
       fi
       echo "file-type-ban: clean -- no .pptx/.docx/.DS_Store tracked under plugins/"
+      # EDMV3-T22 AC3 (shard-2 QC remediation): plugins/edm/evals/ has a documented 100KB
+      # directory-size ceiling (plugins/edm/evals/fixtures/tiny-svc/README.md), so growth there
+      # (a new fixture, a bloated baseline capture) is caught here rather than silently landing.
+      # Non-blocking for the same reason as the scan above (allow_failure: true until EDMV3-T57).
+      evals_kb="$(du -sk plugins/edm/evals/ 2>/dev/null | awk '{print $1}')"
+      evals_kb="${evals_kb:-0}"
+      if [ "$evals_kb" -gt 100 ]; then
+        echo "file-type-ban: plugins/edm/evals/ is ${evals_kb}KB, exceeds the documented 100KB budget (non-blocking until EDMV3-T57):"
+        exit 1
+      fi
+      echo "file-type-ban: plugins/edm/evals/ size OK (${evals_kb}KB, documented budget is 100KB)"
 
 # ---- test stage -------------------------------------------------------------------------------
 
@@ -128,22 +139,28 @@ test:smoke:
     - apk add --no-cache bash jq git
   script:
     - bash plugins/edm/bin/tests/run-all.sh
-    # EDMV3-T61 AC13: the help-completeness test (wave7-smoke.sh, case "help and dispatch agree
-    # in both directions") runs in CI as part of run-all.sh's auto-discovered suite set above.
-    # Named explicitly here (not only inside run-all.sh) so `grep -n 'wave7-smoke' .gitlab-ci.yml`
-    # finds a durable pointer to where it runs, without hand-listing the whole suite set (which
-    # would drift the way AC5's comment on this job already warns against).
-    - echo "wave7-smoke.sh (help-completeness, EDMV3-T61 AC2/AC13) ran as part of run-all.sh above"
+    # EDMV3-T61 AC13 (amended, D19 in decisions.md): the help-completeness / bidirectional
+    # dispatch-agreement contract-suite case runs in CI as part of run-all.sh's auto-discovered
+    # suite set above -- run-all.sh's own per-suite output already names every discovered suite
+    # (this job's log is the durable pointer to where it runs), so no individual suite is named
+    # again here by its literal filename, which would be a second, silently-stale source of truth
+    # for the suite set (the same drift AC5's comment on this job already warns against).
 
 # EDMV3-T61 AC10: the same suite runs a second time under a pinned bash 3.2 image, not just the
 # default (bash 5.x) runner bash used by test:smoke above -- this codebase targets bash 3.2
 # (macOS's shipped default) as a hard constraint (EDMV3-91/106), and a grep for prohibited
-# constructs (wave7-smoke.sh "T61 AC9") proves the codebase never USES a bash-4-only construct,
-# but only actually running the suite under bash 3.2 proves the constraint holds end-to-end.
-# `bash:3.2` is the official Docker Hub bash image's 3.2 tag (not yet digest-pinned -- unlike
-# the alpine/node images above, no registry-connected environment was available to capture a
-# real sha256 for it while implementing this ticket; refresh it using the same procedure the
-# header note above documents before this job is relied on against a live runner fleet).
+# constructs (the contract-suite's "T61 AC9" case) proves the codebase never USES a bash-4-only
+# construct, but only actually running the suite under bash 3.2 proves the constraint holds
+# end-to-end.
+#
+# Documented exception (AC7, explicitly authorized -- EDMV3 wave-A QC remediation): every other
+# image: line in this file is pinned to a `@sha256:...` digest (see the header note at the top of
+# this file); `bash:3.2` below is the one exception. It is the official Docker Hub bash image's
+# 3.2 tag, a floating tag, not yet digest-pinned -- same reason as the alpine/node placeholder
+# digests the header note documents: no registry-connected environment was available to capture
+# a real sha256 for it while implementing this ticket. This MUST be pinned to a `@sha256:...`
+# digest, using the same refresh procedure the header note documents, before this job is first
+# relied on against a live GitLab runner fleet.
 test:smoke-bash32:
   stage: test
   image: "bash:3.2"
@@ -161,9 +178,9 @@ test:smoke-bash32:
 # non-existent runner class would sit "pending" forever rather than failing fast, which is worse
 # than not adding it. The AC11 divergence points (sed -i, grep -P family, stat -c/-f, and the
 # shasum/sha256sum choice in bin/tests/_harness.sh) are covered by targeted assertions instead
-# (wave7-smoke.sh "T61 AC11", _harness.sh's `_harness_hash_file`), and the gap itself is recorded
-# in plugins/edm/CLAUDE.md's "macOS runner" note. Revisit once a macOS runner is confirmed
-# available in this project's fleet.
+# (the contract-suite's "T61 AC11" case, _harness.sh's `_harness_hash_file`), and the gap itself
+# is recorded in plugins/edm/CLAUDE.md's "macOS runner" note. Revisit once a macOS runner is
+# confirmed available in this project's fleet.
 
 # AC12 (Gate 3 revise): edm-state validate across every tracked, non-archived initiative,
 # enumerated via the same layout-aware `edm-state list --paths` that edm-lint-artifacts --all
