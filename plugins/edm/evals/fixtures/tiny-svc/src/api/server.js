@@ -9,8 +9,9 @@
 //
 // KNOWN GAP (see ../../expected.json GAP-04): the payload is forwarded to
 // the queue without validating that required fields are present or of the
-// expected type. A malformed payload fails later, inside the worker, where
-// the original request context is gone.
+// expected type. An absent or non-object body throws right here in the
+// handler; a well-formed body carrying wrong values fails later, inside
+// the worker, where the original request context is gone.
 
 const { routes } = require('./routes');
 const { enqueue } = require('../worker/queue');
@@ -18,7 +19,7 @@ const { enqueue } = require('../worker/queue');
 function handleWebhook(request) {
   // request: { method, path, body }
   const route = routes.find((r) => r.path === request.path && r.method === request.method);
-  if (!route) {
+  if (!route || route.handler !== 'handleWebhook') {
     return { status: 404, body: 'not found' };
   }
 

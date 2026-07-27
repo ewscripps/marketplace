@@ -20,7 +20,7 @@ A webhook relay service with two areas an explorer can map:
 tiny-svc intentionally contains a fixed, countable set of gaps -- missing
 authentication, a hardcoded secret, no retry/backoff, no input validation,
 no logging, and no test suite. Those gaps are enumerated in `expected.json`
-one directory up so the eval scorer (`score-artifacts.sh`, EDMV3-T23) has
+alongside this README so the eval scorer (`score-artifacts.sh`, EDMV3-T23) has
 ground truth to check a produced SRD against, rather than only a
 self-consistency check.
 

@@ -1,6 +1,6 @@
 {
   "fixture": "tiny-svc",
-  "fixture_version": "1.0.0",
+  "fixture_version": "1.0.1",
   "description": "Ground truth for the tiny-svc eval fixture (EDMV3-25). These are the known, countable gaps a competent SRD produced against tiny-svc should surface as requirements. This set is intentionally fixed at six -- do not add or remove a gap without a matching source-tree change and a version bump here plus a matching version bump in ../../initiative.txt.",
   "gaps": [
     {
