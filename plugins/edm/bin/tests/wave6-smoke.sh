@@ -786,6 +786,185 @@ check_fails "set schema_version refused naming migrate-schema" \
   "$EDM_STATE" set T09GATE schema_version 2
 check_state_unchanged "$STATE_T09GATE" "$EDM_STATE" set T09GATE schema_version 2
 
+# =================================================================================
+# EDMV3-T06: permission `ask` rule detection, PERM_RULES_MISSING anomaly, enforcement tags
+# =================================================================================
+echo
+echo "T06 -- permission ask-rule detection and honest enforcement tags"
+
+# Isolated scratch cwd + isolated HOME so this suite's outcome never depends on the
+# developer machine's real ~/.claude/settings.json (AC4/AC6 fail-safe requires this to be
+# deterministic, not "whatever happens to be on the box that runs it").
+T06_HOME="$(mktemp -d)"
+T06_CWD="$(mktemp -d)"
+T06_PREV_HOME="${HOME:-}"
+T06_PREV_PWD="$(pwd)"
+mkdir -p "$T06_HOME/.claude" "$T06_CWD/.claude"
+cd "$T06_CWD"
+export HOME="$T06_HOME"
+
+t06_restore_env() {
+  cd "$T06_PREV_PWD"
+  export HOME="$T06_PREV_HOME"
+}
+
+# ---- AC4/AC6 -- no settings files anywhere -> prose-only, fail-safe direction ---
+echo
+echo "T06 AC4/AC6 -- no settings files present -> prose-only (fail-safe default)"
+"$EDM_STATE" init T06NONE >/dev/null
+STATE_T06NONE="$TMP/SRD/T06NONE/.edm-state.json"
+"$EDM_STATE" approve-gate T06NONE 1 >/dev/null
+enf_none="$(jq -r '.gates_approved[0].enforcement' "$STATE_T06NONE")"
+[[ "$enf_none" == "prose-only" ]] && pass "no settings files -> enforcement=prose-only" \
+  || fail "no settings files -> enforcement='$enf_none', expected prose-only"
+
+# ---- AC4 -- detection scans all three files; each alone is sufficient (union) --
+echo
+echo "T06 AC4 -- detection across the three scanned files"
+cat > "$T06_CWD/.claude/settings.local.json" <<'JSON'
+{"permissions": {"ask": ["Bash(edm-state approve-gate*)"]}}
+JSON
+cat > "$T06_CWD/.claude/settings.json" <<'JSON'
+{"permissions": {"ask": ["Bash(edm-state archive*)"]}}
+JSON
+"$EDM_STATE" init T06UNION >/dev/null
+"$EDM_STATE" approve-gate T06UNION 1 >/dev/null
+enf_union="$(jq -r '.gates_approved[0].enforcement' "$TMP/SRD/T06UNION/.edm-state.json")"
+[[ "$enf_union" == "permission-ask" ]] \
+  && pass "AC4 -- one pattern per file (union across settings.local.json + settings.json) -> permission-ask" \
+  || fail "AC4 union case -> enforcement='$enf_union', expected permission-ask"
+rm -f "$T06_CWD/.claude/settings.local.json" "$T06_CWD/.claude/settings.json"
+
+# ---- AC4 -- ~/.claude/settings.json alone is sufficient ------------------------
+cat > "$T06_HOME/.claude/settings.json" <<'JSON'
+{"permissions": {"ask": ["Bash(edm-state approve-gate*)", "Bash(edm-state archive*)"]}}
+JSON
+"$EDM_STATE" init T06HOMESET >/dev/null
+"$EDM_STATE" approve-gate T06HOMESET 1 >/dev/null
+enf_home="$(jq -r '.gates_approved[0].enforcement' "$TMP/SRD/T06HOMESET/.edm-state.json")"
+[[ "$enf_home" == "permission-ask" ]] \
+  && pass "AC4 -- ~/.claude/settings.json alone -> permission-ask" \
+  || fail "AC4 home-settings case -> enforcement='$enf_home', expected permission-ask"
+
+# ---- AC6 -- malformed settings JSON reports missing ----------------------------
+echo
+echo "T06 AC6 -- malformed settings JSON reports missing"
+rm -f "$T06_HOME/.claude/settings.json"
+echo '{not valid json' > "$T06_CWD/.claude/settings.local.json"
+cat > "$T06_CWD/.claude/settings.json" <<'JSON'
+{"permissions": {"ask": ["Bash(edm-state archive*)"]}}
+JSON
+"$EDM_STATE" init T06MALFORMED >/dev/null
+"$EDM_STATE" approve-gate T06MALFORMED 1 >/dev/null
+enf_malformed="$(jq -r '.gates_approved[0].enforcement' "$TMP/SRD/T06MALFORMED/.edm-state.json")"
+[[ "$enf_malformed" == "prose-only" ]] \
+  && pass "AC6 -- malformed settings JSON reports missing (prose-only, not permission-ask)" \
+  || fail "AC6 malformed-JSON case -> enforcement='$enf_malformed', expected prose-only"
+rm -f "$T06_CWD/.claude/settings.local.json" "$T06_CWD/.claude/settings.json"
+
+# ---- AC5 -- PERM_RULES_MISSING appears without rules, disappears with rules ----
+echo
+echo "T06 AC5 -- PERM_RULES_MISSING appears without rules and disappears with rules"
+"$EDM_STATE" init T06PERM >/dev/null
+"$EDM_STATE" set T06PERM estimated_size Small >/dev/null
+perm_missing_out="$("$EDM_STATE" validate T06PERM 2>&1 || true)"
+check "PERM_RULES_MISSING appears without rules" "info  PERM_RULES_MISSING" "$perm_missing_out"
+
+cat > "$T06_CWD/.claude/settings.json" <<'JSON'
+{"permissions": {"ask": ["Bash(edm-state approve-gate*)", "Bash(edm-state archive*)"]}}
+JSON
+perm_present_out="$("$EDM_STATE" validate T06PERM 2>&1 || true)"
+check_absent "PERM_RULES_MISSING disappears with rules" "PERM_RULES_MISSING" "$perm_present_out"
+
+# session-start also surfaces (or omits) the same anomaly (AC5 "surfaces in both").
+ss_missing_out="$(rm -f "$T06_CWD/.claude/settings.json"; "$EDM_STATE" session-start 2>&1 || true)"
+check "session-start surfaces PERM_RULES_MISSING when rules absent" "PERM_RULES_MISSING" "$ss_missing_out"
+cat > "$T06_CWD/.claude/settings.json" <<'JSON'
+{"permissions": {"ask": ["Bash(edm-state approve-gate*)", "Bash(edm-state archive*)"]}}
+JSON
+ss_present_out="$("$EDM_STATE" session-start 2>&1 || true)"
+check_absent "session-start omits PERM_RULES_MISSING when rules present" "PERM_RULES_MISSING" "$ss_present_out"
+rm -f "$T06_CWD/.claude/settings.json"
+
+# ---- AC7 -- warning only: validate exit code stays 0 either way ---------------
+echo
+echo "T06 AC7 -- validate exit code is 0 both with and without the rules present"
+set +e
+"$EDM_STATE" validate T06PERM >/dev/null 2>&1
+ec_no_rules=$?
+set -e
+[[ $ec_no_rules -eq 0 ]] && pass "AC7 -- validate exit 0 without rules present" \
+  || fail "AC7 -- validate exited $ec_no_rules without rules present, expected 0"
+
+cat > "$T06_CWD/.claude/settings.json" <<'JSON'
+{"permissions": {"ask": ["Bash(edm-state approve-gate*)", "Bash(edm-state archive*)"]}}
+JSON
+set +e
+"$EDM_STATE" validate T06PERM >/dev/null 2>&1
+ec_with_rules=$?
+set -e
+[[ $ec_with_rules -eq 0 ]] && pass "AC7 -- validate exit 0 with rules present" \
+  || fail "AC7 -- validate exited $ec_with_rules with rules present, expected 0"
+
+# ---- AC8/AC9 -- enforcement tag, positive and negative -------------------------
+echo
+echo "T06 AC8/AC9 -- approval with/without rules records the correct enforcement tag"
+"$EDM_STATE" init T06ENF >/dev/null
+"$EDM_STATE" approve-gate T06ENF 1 >/dev/null   # rules present from the block above
+enf_with="$(jq -r '.gates_approved[0].enforcement' "$TMP/SRD/T06ENF/.edm-state.json")"
+[[ "$enf_with" == "permission-ask" ]] \
+  && pass "AC8 -- approval with rules records permission-ask" \
+  || fail "AC8 -- enforcement='$enf_with', expected permission-ask"
+
+rm -f "$T06_CWD/.claude/settings.json"
+"$EDM_STATE" approve-gate T06ENF 2 >/dev/null   # rules now absent
+enf_without="$(jq -r '.gates_approved[1].enforcement' "$TMP/SRD/T06ENF/.edm-state.json")"
+[[ "$enf_without" == "prose-only" ]] \
+  && pass "AC9 -- approval without rules records prose-only" \
+  || fail "AC9 -- enforcement='$enf_without', expected prose-only"
+
+# ---- AC10 -- sibling scalar keys; read_bool / booleans unaffected -------------
+echo
+echo "T06 AC10 -- compliance/code-audit sibling scalar keys, read_bool and boolean shape unaffected"
+"$EDM_STATE" init T06SIB >/dev/null
+STATE_T06SIB="$TMP/SRD/T06SIB/.edm-state.json"
+before_rb="$(jq -r '.compliance_gate_approved // false' "$STATE_T06SIB")"
+"$EDM_STATE" approve-gate T06SIB 3.5 >/dev/null
+after_rb="$(jq -r '.compliance_gate_approved' "$STATE_T06SIB")"
+[[ "$before_rb" == "false" && "$after_rb" == "true" ]] \
+  && pass "AC10 -- read_bool-observed compliance_gate_approved unchanged shape before/after sibling keys exist" \
+  || fail "AC10 -- compliance_gate_approved before='$before_rb' after='$after_rb'"
+cga_type="$(jq -r '(.compliance_gate_approved | type)' "$STATE_T06SIB")"
+[[ "$cga_type" == "boolean" ]] && pass "AC10 -- compliance_gate_approved stays type boolean" \
+  || fail "AC10 -- compliance_gate_approved type is '$cga_type', expected boolean"
+check "AC10 -- compliance_gate_approved_at sibling key written" "compliance_gate_approved_at" \
+  "$(jq -c '.' "$STATE_T06SIB")"
+cga_enf="$(jq -r '.compliance_gate_enforcement' "$STATE_T06SIB")"
+[[ "$cga_enf" == "prose-only" || "$cga_enf" == "permission-ask" ]] \
+  && pass "AC10 -- compliance_gate_enforcement recorded a legal enforcement value" \
+  || fail "AC10 -- compliance_gate_enforcement='$cga_enf'"
+
+"$EDM_STATE" approve-gate T06SIB code-audit >/dev/null
+cac_type="$(jq -r '(.code_audit_converged | type)' "$STATE_T06SIB")"
+[[ "$cac_type" == "boolean" ]] && pass "AC10 -- code_audit_converged stays type boolean" \
+  || fail "AC10 -- code_audit_converged type is '$cac_type', expected boolean"
+
+# ---- AC12 -- C-4: legacy state (predating enforcement field) renders without tag
+echo
+echo "T06 AC12 -- legacy state renders HANDOFF without enforcement tag"
+"$EDM_STATE" init T06LEGACY >/dev/null
+STATE_T06LEGACY="$TMP/SRD/T06LEGACY/.edm-state.json"
+# Craft a pre-EDMV3-T06 compliance-gate approval: approved=true with no approved_at/
+# approver/enforcement siblings, exactly what cmd_approve_gate wrote before this ticket.
+jq '.compliance_gate_approved = true' "$STATE_T06LEGACY" > "$STATE_T06LEGACY.tmp" \
+  && mv "$STATE_T06LEGACY.tmp" "$STATE_T06LEGACY"
+"$EDM_STATE" write-handoff T06LEGACY >/dev/null
+legacy_handoff="$TMP/SRD/T06LEGACY/HANDOFF.md"
+check "AC12 -- legacy compliance gate 3.5 row renders" "Gate 3.5" "$(cat "$legacy_handoff")"
+check_absent "AC12 -- legacy compliance gate row omits enforcement tag" "enforcement:" "$(cat "$legacy_handoff")"
+
+t06_restore_env
+rm -rf "$T06_HOME" "$T06_CWD"
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

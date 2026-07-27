@@ -395,6 +395,27 @@ The `userConfig.jira_project_key` value provides a default; otherwise the user m
 
 These are part of the methodology — do not disable them in normal operation.
 
+## Required setup: permission `ask` rules (EDMV3-T06)
+
+See `README.md`'s "Required setup: permission ask rules" section for the full rationale, the
+matcher-limitation note, and the wave-A manual-QA record -- not re-explained here. The
+required block, added to `.claude/settings.json` (or `.claude/settings.local.json`):
+
+```json
+{
+  "permissions": {
+    "ask": [
+      "Bash(edm-state approve-gate*)",
+      "Bash(edm-state archive*)"
+    ]
+  }
+}
+```
+
+`check_permission_rules()` in `bin/edm-state` scans for these two patterns and feeds the
+result into the `enforcement` field (`permission-ask` | `prose-only`) recorded on every gate
+approval, and into the informational `PERM_RULES_MISSING` anomaly when absent.
+
 ## `bin/` helper scripts
 
 Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call them by bare name.

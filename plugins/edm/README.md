@@ -16,6 +16,76 @@ claude --plugin-dir ./plugins/edm-ai-development
 
 When installed, Claude Code prompts for a few `userConfig` values (defaults are sensible — accept them unless your team uses different paths).
 
+## Required setup: permission `ask` rules
+
+**Required setup.** Add the block below to your project's `.claude/settings.json` (or
+`.claude/settings.local.json`) before running any EDM initiative. It forces Claude Code to
+stop and require your explicit human approval before it can approve a HITL gate or archive
+an initiative -- the strongest available defense-in-depth layer against a transcript-only
+"approval" (see `plugins/edm/CLAUDE.md` for the enforcement-tier rationale).
+
+```json
+{
+  "permissions": {
+    "ask": [
+      "Bash(edm-state approve-gate*)",
+      "Bash(edm-state archive*)"
+    ]
+  }
+}
+```
+
+For broader coverage against the bypass shapes documented below, also add these two
+absolute-path/wildcard variants (alongside the two entries above) -- Claude Code 2.1.x (the
+version this note was verified against) honours both; each is still a literal prefix match,
+it just matches a different prefix:
+
+```json
+"Bash(*/bin/edm-state approve-gate*)",
+"Bash(*/bin/edm-state archive*)"
+```
+
+**Matcher limitation (prefix match).** Claude Code's Bash permission matching is a literal
+prefix match against the exact command string the tool executes -- it is not a shell-aware
+parse of the command. The following invocation shapes all run the same underlying command
+but miss the bare-prefix rule above entirely:
+
+- `cd "$INIT_DIR" && edm-state approve-gate PREFIX 1` -- a compound command; the rule only
+  matches a command string that *starts with* `edm-state approve-gate`, and this one starts
+  with `cd`.
+- `"$CLAUDE_PLUGIN_ROOT"/bin/edm-state approve-gate PREFIX 1` -- the absolute-path
+  invocation form; caught only by the wildcard/absolute-path variants above, not the bare
+  rule.
+- an env-prefixed form, e.g. `EDM_SRD_ROOT=./SRD edm-state approve-gate PREFIX 1`.
+- `bash -c 'edm-state approve-gate PREFIX 1'` -- the rule matches against the literal string
+  `bash -c '...'`, never against the command hidden inside the quotes.
+
+None of these are hypothetical: an agent working under time pressure, or from a different
+working directory, will reliably produce at least one of them. Treat the `ask` rule as a
+best-effort net, not a guarantee -- `edm-state validate` and `edm-state session-start`
+report a `PERM_RULES_MISSING` anomaly (informational, never fails validation) when neither
+scanned settings file has both patterns configured, and every gate approval records an
+`enforcement` tag (`permission-ask` or `prose-only`) in `.edm-state.json` so the actual
+coverage is auditable after the fact instead of assumed.
+
+**Observed behaviour (manual QA, wave A)** -- the observed behaviour for each of the three
+invocation shapes below is recorded here. Recorded 2026-07-26 against Claude Code
+2.1.220 (`claude --version`). This wave-A pass is a documented-behaviour derivation, not a
+live interactive dialog capture: EDM's Phase 6 implementation runs headlessly with no human
+present to click an approval prompt, so forcing a live `ask` trigger in that context would
+either silently auto-resolve or block the run indefinitely -- neither is a genuine
+observation. The three outcomes below follow directly from Claude Code's published Bash
+permission-matching behaviour (a literal prefix match against the exact command string, not
+a shell-aware parse, per the limitation note above) and should be reconfirmed by a human
+teammate running an interactive session before this note is treated as a substitute for
+that confirmation:
+
+| Invocation (rules configured per the minimal block above) | Prompt expected? |
+|---|---|
+| `edm-state approve-gate PREFIX 1` (bare prefix) | Yes -- the command string starts with `edm-state approve-gate`, matching the rule literally. |
+| `cd SRD/PREFIX && edm-state approve-gate PREFIX 1` (compound `cd ... &&`) | No -- the command string starts with `cd`, not `edm-state`; the rule never matches and the command runs unprompted. |
+| `"$CLAUDE_PLUGIN_ROOT"/bin/edm-state approve-gate PREFIX 1` (absolute path) | No -- same reason; only the wildcard variant (`Bash(*/bin/edm-state approve-gate*)`) closes this shape. |
+
 ## Slash commands
 
 All EDM phases are user-invocable as `/edm:<name>`:

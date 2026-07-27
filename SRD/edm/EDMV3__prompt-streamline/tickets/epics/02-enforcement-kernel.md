@@ -210,6 +210,30 @@ invocation. Overstating it would make it dishonest in exactly the bypass case it
   either way -- an omission stated is acceptable, an omission unexamined is not.
 - Every state mutation here goes through `rmw_state` (`bin/edm-state:312`) per EDMV3-92.
 
+### Manual QA Evidence (AC3, recorded during implementation, wave A)
+
+Recorded 2026-07-26 against Claude Code 2.1.220 (`claude --version`). **Methodology note:**
+this pass is a documented-behaviour derivation, not a live interactive dialog capture. EDM's
+Phase 6 implementer runs headlessly inside an automated worktree session with no human
+present to click an "Allow"/"Deny" permission prompt; forcing a live `ask`-rule trigger in
+that context would either silently auto-resolve (defeating the point of the observation) or
+block the run indefinitely waiting for input that will never arrive -- neither is a genuine
+observation, and fabricating one would be exactly the kind of dishonesty this ticket exists
+to prevent. The three outcomes below are derived directly from Claude Code's published Bash
+permission-matching behaviour (a literal prefix match against the exact command string the
+tool executes, not a shell-aware parse -- see the README.md limitation note this evidence
+feeds) and are flagged here for a human teammate to reconfirm interactively before this
+record is treated as a substitute for that confirmation:
+
+| # | Invocation (rules configured per AC1's minimal block) | Observed/expected outcome |
+|---|---|---|
+| 1 | `edm-state approve-gate PREFIX 1` (bare prefix) | Prompt expected -- the command string starts with `edm-state approve-gate`, matching the rule literally. |
+| 2 | `cd SRD/PREFIX && edm-state approve-gate PREFIX 1` (compound `cd ... &&`) | No prompt expected -- the command string starts with `cd`, not `edm-state`; the prefix rule never matches. |
+| 3 | `"$CLAUDE_PLUGIN_ROOT"/bin/edm-state approve-gate PREFIX 1` (absolute path) | No prompt expected -- same reason; only the wildcard/absolute-path variant (`Bash(*/bin/edm-state approve-gate*)`) closes this shape. |
+
+This is written into `README.md`'s "Observed behaviour (manual QA, wave A)" note verbatim
+(same three rows), satisfying AC3's requirement that the result live in both places.
+
 ### Out of Scope
 
 - Shipping the settings file itself. The plugin cannot, and AC1 says so explicitly.

@@ -455,13 +455,64 @@ default_skipped_phases_json_for_mode() {
   fi
 }
 
-# check_permission_rules -- computes the "enforcement" tier string recorded alongside the
-# code-audit gate's approval (EDMV3-T08). Interim body: always returns "prose-only" until
-# EDMV3-T06 lands and replaces this body with real permission-rule introspection (grant
-# scanning across skill/agent/hook allowed-tools). The name is the eventual function name so
-# EDMV3-T06 can swap the body in place without touching cmd_approve_gate's call site.
+# check_permission_rules -- computes the "enforcement" tier recorded alongside every gate
+# approval (EDMV3-T06, replacing the EDMV3-T08 interim stub that always returned
+# "prose-only"). Scans Claude Code settings files for the two "ask" patterns that gate the
+# mutation commands themselves (Tier 1 in SRD Section 5.1):
+#   Bash(edm-state approve-gate*)
+#   Bash(edm-state archive*)
+# Echoes "permission-ask" when BOTH patterns are found (in any combination across the
+# scanned files -- Claude Code merges permission settings across scopes, so the patterns
+# need not share one file), else "prose-only".
+#
+# This tag records whether the rules were configured in scanned settings at approval time --
+# it does NOT mean a permission prompt actually fired for that specific invocation. Claude
+# Code's Bash permission matcher is a literal prefix match against the exact command string
+# (see README.md's "Matcher limitation" note for the bypass shapes this misses -- compound
+# `cd ... &&`, absolute-path, env-prefixed, and `bash -c '...'` forms). Overstating this tag
+# to mean "a prompt fired" would make it dishonest in exactly the bypass case it exists to
+# expose (EDMV3-T06 AC11).
+#
+# Scanned files, in this order (presence of both patterns in the union is sufficient),
+# verified against Claude Code settings-precedence documentation on 2026-07-26:
+#   1. .claude/settings.local.json  (project-local, typically gitignored)
+#   2. .claude/settings.json        (project-shared, committed)
+#   3. ~/.claude/settings.json      (user-level)
+# Known, examined omission (not missed): enterprise/organization managed-policy settings
+# and CLI `--settings`-supplied files are not scanned -- there is no portable, documented
+# filesystem path for either from a plain bash script, and both are rarer install shapes
+# than the three above. An installation relying solely on one of those reports
+# "prose-only" even though its rules are in fact enforced -- a conservative false-negative,
+# consistent with the fail-safe direction below (AC6).
+#
+# Fail-safe (AC6): any read/parse uncertainty for a given file -- missing, unreadable,
+# malformed JSON, or a `.permissions.ask` field that isn't a JSON array -- is treated as
+# "not found" for that file and the scan moves to the next one. A false "missing"
+# (prose-only) is harmless; a false "present" (permission-ask) is not, since it would
+# overstate the tier that actually enforced the approval.
 check_permission_rules() {
-  echo "prose-only"
+  local pat1='Bash(edm-state approve-gate*)'
+  local pat2='Bash(edm-state archive*)'
+  local found1=false found2=false
+  local f ask_json
+  for f in ".claude/settings.local.json" ".claude/settings.json" "${HOME:-}/.claude/settings.json"; do
+    [[ -n "$f" && -f "$f" && -r "$f" ]] || continue
+    # `jq -e` exits non-zero on a null/false result (missing .permissions.ask) or on a
+    # JSON parse error -- both land us in `continue`, matching the fail-safe direction.
+    ask_json="$(jq -e '.permissions.ask' "$f" 2>/dev/null)" || continue
+    echo "$ask_json" | jq -e 'type == "array"' >/dev/null 2>&1 || continue
+    if echo "$ask_json" | jq -e --arg p "$pat1" 'any(.[]?; . == $p)' >/dev/null 2>&1; then
+      found1=true
+    fi
+    if echo "$ask_json" | jq -e --arg p "$pat2" 'any(.[]?; . == $p)' >/dev/null 2>&1; then
+      found2=true
+    fi
+  done
+  if [[ "$found1" == "true" && "$found2" == "true" ]]; then
+    echo "permission-ask"
+  else
+    echo "prose-only"
+  fi
 }
 
 # Shared jq def for the whole-initiative coverage layer row — one renderer, one padding scheme
@@ -595,6 +646,28 @@ state_anomalies() {
       "ZERO_TOKENS  phase_durations.\($k).tokens  model_used is \($v.model_used) but both input and output tokens are 0"
     else empty end
   ' 2>/dev/null)
+  # PERM_RULES_MISSING (info -- EDMV3-T06 AC5): the two "ask" rules that gate
+  # `edm-state approve-gate` and `edm-state archive` are absent from every settings file
+  # check_permission_rules() scans. Informational only (AC7): the plugin cannot ship these
+  # settings itself (README.md documents the required block), so their absence is a
+  # warning, never a validate-failing condition -- it never flips cmd_validate's exit code.
+  if [[ "$(check_permission_rules)" != "permission-ask" ]]; then
+    echo "info  PERM_RULES_MISSING  permissions.ask  required ask rules Bash(edm-state approve-gate*) and Bash(edm-state archive*) not found in .claude/settings.local.json, .claude/settings.json, or ~/.claude/settings.json -- add {\"permissions\": {\"ask\": [\"Bash(edm-state approve-gate*)\", \"Bash(edm-state archive*)\"]}} to enforce human review at gate-approval and archive time"
+    found=1
+  fi
+  # CONVERGED_NO_APPROVAL (blocking -- EDMV3-T17 AC3): code_audit_converged is true but no
+  # code_audit_gate_approved_at record exists -- e.g. a hand-edited state file, not one
+  # produced by `edm-state approve-gate ... code-audit`. Only fires when schema_version is
+  # present, so a legacy pre-EDMV3 file (which never had a schema_version field and predates
+  # this expectation entirely) is never flagged (C-4).
+  local cac_val cac_schema_version cac_approved_at
+  cac_val="$(read_bool "$state" "code_audit_converged" "false")"
+  cac_schema_version="$(echo "$state" | jq -r '.schema_version // empty')"
+  cac_approved_at="$(echo "$state" | jq -r '.code_audit_gate_approved_at // empty')"
+  if [[ "$cac_val" == "true" && -n "$cac_schema_version" && -z "$cac_approved_at" ]]; then
+    echo "blocking  CONVERGED_NO_APPROVAL  code_audit_converged  code_audit_converged is true for ${prefix} but no code_audit_gate_approved_at record exists -- run edm-state approve-gate ${prefix} code-audit, or investigate a hand-edited state file"
+    found=1
+  fi
   return 0
 }
 
@@ -833,8 +906,18 @@ cmd_approve_gate() {
   # appended to gates_approved (which expects integers) — avoids overloading numeric gate IDs.
   # `code-audit` below (EDMV3-T08) is the second user of this dedicated-boolean pattern: a
   # fourth gate field added later should inherit the same shape by adding one token here.
+  # approved_at/approver/enforcement are sibling scalar keys alongside the boolean, the
+  # identical shape the code-audit branch below uses (EDMV3-T06 AC10) -- converting the
+  # boolean itself into an object is a failing condition metrics-report and HANDOFF both
+  # depend on it staying `boolean`.
   if [[ "$gate" == "3.5" ]]; then
-    rmw_state "$prefix" '.compliance_gate_approved = true | .last_updated = $t' --arg t "$(now_utc)"
+    rmw_state "$prefix" '
+      .compliance_gate_approved = true
+      | .compliance_gate_approved_at = $t
+      | .compliance_gate_approver = $a
+      | .compliance_gate_enforcement = $e
+      | .last_updated = $t
+    ' --arg t "$(now_utc)" --arg a "$approver" --arg e "$(check_permission_rules)"
     echo "approved compliance gate 3.5 for $prefix at $(now_utc)"
     write_handoff_internal "$prefix"
     return 0
@@ -864,8 +947,8 @@ cmd_approve_gate() {
 
     # Wave-A interim (AC3): records the approval with `enforcement` and `ledger: absent` and
     # does NOT run a convergence pre-check -- EDMV3-T28 (wave B) adds that pre-check and the
-    # real ledger wiring. check_permission_rules() returns "prose-only" until EDMV3-T06 lands
-    # and replaces its body with real permission-rule introspection.
+    # real ledger wiring. check_permission_rules() now performs real permission-rule
+    # introspection (EDMV3-T06); the interim stub it replaced always returned "prose-only".
     rmw_state "$prefix" '
       .code_audit_converged = true
       | .code_audit_gate_approved_at = $t
@@ -879,9 +962,11 @@ cmd_approve_gate() {
     return 0
   fi
   [[ "$gate" =~ ^[0-9]+$ ]] || die "approve-gate: gate-num must be numeric; got: $gate"
+  # `enforcement` on every gates_approved entry (EDMV3-T06 AC8/AC9) -- the numeric HITL
+  # gates get the same honesty tag the dedicated-boolean gates above already carry.
   rmw_state "$prefix" \
-    '.gates_approved += [{gate: ($g|tonumber), approved_at: $t, approver: $a}] | .last_updated = $t' \
-    --arg g "$gate" --arg t "$(now_utc)" --arg a "$approver"
+    '.gates_approved += [{gate: ($g|tonumber), approved_at: $t, approver: $a, enforcement: $e}] | .last_updated = $t' \
+    --arg g "$gate" --arg t "$(now_utc)" --arg a "$approver" --arg e "$(check_permission_rules)"
   echo "approved gate $gate for $prefix at $(now_utc)"
   write_handoff_internal "$prefix"
 }
