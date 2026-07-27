@@ -730,6 +730,19 @@ t61_divergence_outside_branch="$(printf '%s\n' "$t61_divergence_hits" | grep -v 
 check "T61 AC11 -- edm-lint-artifacts' PCRE detection uses the documented grep -qP probe" \
   "grep -qP" "$t61_divergence_hits"
 # EDMV3-T61 end
+
+echo
+echo "T64 AC1 -- plugin.json and marketplace.json versions agree"
+REPO_ROOT_T64="$(cd "$PLUGIN_DIR/../.." && pwd)"
+t64_plugin_version="$(jq -r '.version' "$PLUGIN_DIR/.claude-plugin/plugin.json")"
+t64_marketplace_version="$(jq -r '.plugins[] | select(.name=="edm") | .version' "$REPO_ROOT_T64/.claude-plugin/marketplace.json")"
+[[ "$t64_plugin_version" == "$t64_marketplace_version" ]] \
+  && pass "T64 AC1 -- plugin.json and marketplace.json versions agree ($t64_plugin_version)" \
+  || fail "T64 AC1 -- plugin.json version '$t64_plugin_version' != marketplace.json edm entry '$t64_marketplace_version'"
+[[ "$t64_plugin_version" == "2.1.0" ]] \
+  && pass "T64 AC1 -- plugin.json version is 2.1.0" \
+  || fail "T64 AC1 -- plugin.json version is '$t64_plugin_version', expected '2.1.0'"
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

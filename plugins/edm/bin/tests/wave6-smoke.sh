@@ -2304,6 +2304,43 @@ t62ac10_force="$(command grep -c -- '--force\|--accept-partials' "$EDM_STATE" 2>
 [[ "${t62ac10_force:-0}" -eq 0 ]] && pass "T62 AC10 -- no --force/--accept-partials literal in bin/edm-state" \
   || fail "T62 AC10 -- found ${t62ac10_force} occurrence(s) of a literal override flag in bin/edm-state"
 
+# =================================================================================
+# EDMV3-T64: wave-A closeout -- read-only commands and concurrent mutation smoke
+# =================================================================================
+
+# ---- AC7 (EDMV3-92, negative): read-only commands leave the state byte-identical ----------
+echo
+echo "T64 AC7 -- read-only commands leave the state byte-identical"
+"$EDM_STATE" init T64AC7 >/dev/null
+STATE_T64AC7="$TMP/SRD/T64AC7/.edm-state.json"
+check_state_unchanged "$STATE_T64AC7" "$EDM_STATE" validate T64AC7
+check_state_unchanged "$STATE_T64AC7" "$EDM_STATE" get T64AC7
+check_state_unchanged "$STATE_T64AC7" "$EDM_STATE" gate-check T64AC7 plan
+check_state_unchanged "$STATE_T64AC7" "$EDM_STATE" list --paths
+
+# ---- AC8 (EDMV3-92, concurrency): two concurrent mutations both land ----------------------
+echo
+echo "T64 AC8 -- two concurrent mutations both land"
+"$EDM_STATE" init T64AC8 >/dev/null
+STATE_T64AC8="$TMP/SRD/T64AC8/.edm-state.json"
+"$EDM_STATE" set T64AC8 estimated_size Medium >/dev/null &
+t64ac8_pid1=$!
+"$EDM_STATE" set T64AC8 qc_shard_threshold 42 >/dev/null &
+t64ac8_pid2=$!
+wait "$t64ac8_pid1"
+wait "$t64ac8_pid2"
+if jq -e . "$STATE_T64AC8" >/dev/null 2>&1; then
+  pass "T64 AC8 -- state file is valid JSON after two concurrent mutations"
+else
+  fail "T64 AC8 -- state file is not valid JSON after two concurrent mutations"
+fi
+t64ac8_size="$(jq -r '.estimated_size' "$STATE_T64AC8")"
+t64ac8_threshold="$(jq -r '.qc_shard_threshold' "$STATE_T64AC8")"
+[[ "$t64ac8_size" == "Medium" ]] && pass "T64 AC8 -- first concurrent mutation (estimated_size) landed" \
+  || fail "T64 AC8 -- estimated_size is '$t64ac8_size', expected 'Medium'"
+[[ "$t64ac8_threshold" == "42" ]] && pass "T64 AC8 -- second concurrent mutation (qc_shard_threshold) landed" \
+  || fail "T64 AC8 -- qc_shard_threshold is '$t64ac8_threshold', expected '42'"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
