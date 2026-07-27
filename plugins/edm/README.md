@@ -8,13 +8,20 @@ The plugin produces source-controlled artifacts in your project's `SRD/` directo
 
 ```bash
 # Local install (from the marketplace repo root):
-claude plugin install ./plugins/edm-ai-development
+claude plugin install ./plugins/edm
 
 # Or development mode (no install required):
-claude --plugin-dir ./plugins/edm-ai-development
+claude --plugin-dir ./plugins/edm
 ```
 
 When installed, Claude Code prompts for a few `userConfig` values (defaults are sensible — accept them unless your team uses different paths).
+
+## Requirements
+
+- macOS or Linux only. Windows and WSL are unsupported.
+- bash 3.2 or newer
+- `jq` required
+- `git` required
 
 ## Slash commands
 

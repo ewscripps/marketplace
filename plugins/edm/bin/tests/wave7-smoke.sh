@@ -175,6 +175,18 @@ force_count="${force_count:-0}"
 [[ "$force_count" -eq 0 ]] && pass "no literal --force in bin/edm-state" \
   || fail "found $force_count occurrence(s) of literal --force in bin/edm-state"
 
+# =================================================================================
+# EDMV3-T04 -- README install path regression guard (AC6). Do not add unrelated cases
+# to this block; append a new commented block instead if another ticket needs one.
+# =================================================================================
+echo
+echo "T04 AC6 -- README install path regression guard"
+README_MD="${PLUGIN_DIR}/README.md"
+readme_content="$(cat "$README_MD" 2>/dev/null || true)"
+check "README install path present" "./plugins/edm" "$readme_content"
+check_absent "README stale path absent" "edm-ai-development" "$readme_content"
+# EDMV3-T04 end
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
