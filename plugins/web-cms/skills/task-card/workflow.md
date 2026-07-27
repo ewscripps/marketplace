@@ -110,6 +110,13 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 - Note all items in the **Affected Areas** section and any dependencies listed.
 - Read the **Patterns & Code References**, **Non-Functional Requirements**, **Data & Interface Changes**, and **Observability & Telemetry** sections if present. These are the implementation guardrails: the patterns/code anchors to mirror, the NFR targets to meet, the data/interface contracts to build, and the instrumentation to add.
 
+**REPRODUCTION — required when the card describes something behaving incorrectly.** A plan built on an unverified guess about *how* the reported behavior arises can yield a technically correct fix aimed at the wrong mechanism, and the mismatch usually surfaces only during user testing, after review and implementation are already spent.
+
+- Obtain a concrete failing instance: a URL, a record/content ID, or reproduction steps the reporter has confirmed. Ask for one if the card does not supply it.
+- **When a working instance and a failing instance both exist, compare them directly** before reasoning about causes. Fetch both, diff the relevant output, and let the difference identify the mechanism. This is usually faster and far more conclusive than reading code, and it is the highest-value step available for any "behaves wrong in environment X but not Y" report.
+- Separate the **authoring or entry path** (how the data got there) from the **stored shape** (what it looks like now). These are easily conflated and look identical once persisted, yet they imply different fixes. State which one the work targets.
+- If no failing instance can be obtained, say so explicitly in the chat and name the specific claim that remains unverified. That claim must be carried forward verbatim into the T4 plan's preconditions and into the T10 testing steps, so the user is asked to confirm the *mechanism*, not merely that the fix appears to work.
+
 ### T2 — Review the Codebase
 
 > **BOOTSTRAP FILE MEMORY:** Compute `MEM` via the recipe in `file-memory-protocol.md` §1 and `mkdir -p "$MEM/explorations"`. If `$MEM/work-item.md` does not exist, `Write` it (schema §3.1) with `work_type: task`, `jira_key`, `title`, `status: in_progress`, `phase: T2`, `skill: task-card`, and the task description under `## Description`. Pass the absolute `MEM` path (as `memory_dir`) and a normalized `area_slug` to every explorer — each writes its own `$MEM/explorations/<area_slug>.md`, so concurrent explorers never collide.
@@ -195,7 +202,10 @@ Once the self-review is clean, invoke the `plan-reviewer` sub-agent, providing:
 - The affected areas from the Task Details
 - The Patterns & Code References, Non-Functional Requirements, Data & Interface Changes, and Observability & Telemetry sections from the card
 - The codebase findings from T2 (patterns, conventions, and architectural context)
+- The reproduction evidence from T1, or the explicit statement that none could be obtained together with the claim that remains unverified
 - The Jira issue key and work type
+
+Ask the reviewer to check the plan's **diagnosis**, not only its design: is the stated cause of the reported behavior verified or assumed, and where a plan defers verification of an assumed premise to a later phase, does that verification step actually test the premise in question? A plan can pass review while deferring a check that confirms something adjacent to — but not the same as — the assumption the design rests on.
 
 The sub-agent will return a structured findings report with an overall verdict of either **APPROVED** or **CHANGES REQUIRED**.
 
@@ -260,6 +270,13 @@ Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the
 
 - Invoke the `verification-runner` sub-agent with phase context `baseline` and the build/test/lint commands if already known. It returns a `VERIFICATION REPORT` with a per-category verdict and, for any failures, the failing targets and excerpts.
 - **All checks must pass before continuing.** If the report returns `FAILURES`, investigate and resolve them using the failing targets and excerpts from the report. Re-invoke `verification-runner` after fixing. Do not begin implementation until it returns `ALL GREEN`.
+
+**BEHAVIORAL BASELINE — required when the change alters observable output or behavior.** A green build says the code compiles; it says nothing about the behavior being fixed. Without a recorded "before", a later "it works now" cannot be distinguished from an environment that was masking the defect all along.
+
+- Capture the current incorrect behavior as a concrete artifact before writing any code: a rendered output excerpt, a screenshot, a stored-value dump, or a deliberately failing assertion. Save it under `$MEM` and reference it in the checkpoint.
+- Record it from the *same* surface T10 will use to confirm the fix, so the two are directly comparable.
+- Note anything in the capture environment that could mask or accidentally repair the defect — a shared global script, a cached artifact, a co-located feature that happens to load a dependency. Carry that note into the T10 steps as an explicit caution.
+- **Capture baseline metrics before any new code or tests exist.** Test counts, violation counts, and timings recorded mid-implementation are not baselines. When quoting a baseline number later, re-derive it rather than reusing a figure from notes, and prefer per-unit counts over suite totals, which shift for unrelated reasons.
 
 ### T8 — Implementation
 
@@ -332,7 +349,16 @@ Invoke the `test-reviewer` sub-agent, providing:
 - The baseline verification results from T7, if they identify canonical test commands
 - The Jira issue key
 
+- An instruction to confirm the new tests are **discriminating** (below)
+
 The sub-agent will add or update tests as needed, run the relevant test commands, and return a structured report with a status of either **COMPLETE** or **FAILED**.
+
+**Discriminating-power check — required.** A passing test proves nothing about coverage until it has been shown to fail without the change. Tests written against an already-fixed implementation routinely assert behavior that was already true.
+
+- Revert only the production changes, leaving the tests in place, and confirm the new tests fail. Restore afterwards.
+- Expect a compilation obstacle: tests that call newly added symbols cannot build against the reverted code. Temporarily exclude just those, and check the behavioral tests — the ones driving existing public entry points — which are the ones that matter here.
+- Report which new tests fail without the change and which pass regardless. Passing-regardless is correct and expected for guard tests that assert something must *not* change; identify them as such rather than "fixing" them to fail.
+- Never report this check from a stale results file. Delete previous results before re-running, and confirm the run actually executed rather than reporting a cached verdict.
 
 - If **COMPLETE**: review the report. If it changed any non-test files, invoke the `implementation-reviewer` again with the updated diff before continuing.
 - If **FAILED**: use `AskUserQuestion` with header `Test Reviewer Failed`, options: `Apply a manual fix and retry` (description: "I'll address the test failures — continue after I confirm") / `Skip and continue` (description: "Proceed to documentation with the current test state") / `Abort` (description: "Stop the workflow here"). Present the failure report before the question.
@@ -371,6 +397,13 @@ Do not proceed to T9 until `implementation-reviewer`, `test-reviewer`, and `docu
 
 **APPROVAL GATE — USER MUST MANUALLY TEST BEFORE PROCEEDING. AUTO MODE DOES NOT BYPASS THIS GATE.**
 
+**PRECONDITION — prove the artifact under test actually contains the change.** Do this before drafting the handoff comment, and state the evidence in the chat. Asking someone to test a build that predates the change produces confident, entirely misleading results, and those results then contaminate every conclusion drawn from them.
+
+1. Build or deploy the artifact the user will exercise.
+2. Verify the change is present *in that artifact* — not merely in the working tree. Inspect the built output for a marker introduced by this change (a new symbol in a compiled class or bundle, a new string in a generated asset). A passing test suite is not evidence, because it runs against sources rather than the deployed artifact.
+3. Report the artifact's identity and timestamp plus the positive marker result. If the artifact cannot be verified, say so and do not claim it is ready to test.
+4. Include the deploy/refresh step the user must perform in the handoff comment, and note that stale artifacts are a known failure mode here.
+
 - Draft a Jira comment with the exact heading `**T10 — User Testing Handoff**` as the verbatim first line — character-for-character, using `**bold**` (not a `##` markdown heading), and never a descriptive substitute such as "Testing ready" or "Fix complete". The comment must include, in this exact order with these exact labels:
 
     - The branch name
@@ -378,6 +411,13 @@ Do not proceed to T9 until `implementation-reviewer`, `test-reviewer`, and `docu
     - **Acceptance Criteria & Testing Steps:** For each acceptance criterion listed in the Task Details, a numbered section with:
         - The criterion restated clearly
         - Step-by-step instructions to verify that criterion is met
+
+**Make the testing steps differential.** "Does it work now?" cannot distinguish a real fix from an environment that was never broken in the way assumed. For each criterion:
+
+- State the expected result **and** what the incorrect behavior looked like, referencing the T7 behavioral baseline artifact where one exists, so the user can confirm the change rather than just the end state.
+- Include at least one negative or control check — something that must remain unchanged — so an over-broad change is visible rather than silently accepted.
+- Call out anything in the environment that could mask the defect and produce a false pass, and tell the user how to avoid it. Where a co-located feature can incidentally repair the symptom, instruct them to test on a surface where that feature is absent.
+- Distinguish what was verified from what is inferred. If the rendered or runtime result was never observed directly, say so plainly in the comment and state that obtaining that confirmation is the purpose of the handoff.
 
 **Independent comment review:**
 
