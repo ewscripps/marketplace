@@ -24,7 +24,7 @@
 #                                 exit 2 naming this variable.
 #   EDM_EVAL_MODEL                claude -p --model value.               Default: opus
 #   EDM_EVAL_PHASE_TIMEOUT_SECONDS Per-phase wall-clock timeout, seconds. Default: 900
-#   EDM_EVAL_MAX_BUDGET_USD        claude -p --max-budget-usd, per phase. Default: 6
+#   EDM_EVAL_MAX_BUDGET_USD        claude -p --max-budget-usd, per phase. Default: 15
 #
 # Exit codes (the four-value contract, EDMV3-26 / EDMV3-T22 AC10):
 #   0  the run completed (reached the end of the audit-srd phase) and the containment check
@@ -225,7 +225,7 @@ CLAUDE_PERMISSION_MODE="acceptEdits"
 CLAUDE_ALLOWED_TOOLS="Read Write Edit Glob Grep LS TodoWrite Task Bash(edm-state *) Bash(edm-init *) Bash(edm-validate-prefix *) Bash(jq *)"
 CLAUDE_DISALLOWED_TOOLS="WebFetch WebSearch KillShell BashOutput"
 PHASE_TIMEOUT_SECONDS="${EDM_EVAL_PHASE_TIMEOUT_SECONDS:-900}"
-PHASE_MAX_BUDGET_USD="${EDM_EVAL_MAX_BUDGET_USD:-6}"
+PHASE_MAX_BUDGET_USD="${EDM_EVAL_MAX_BUDGET_USD:-15}"
 
 # run_with_timeout <seconds> <outfile> <errfile> <cmd...> -- portable bash-3.2 timeout with no
 # dependency on GNU coreutils' `timeout` (absent by default on macOS). Backgrounds <cmd...>,
