@@ -388,6 +388,141 @@ check "Step 9 checklist names the Convergence gate" "Convergence gate" "$T15_STE
 check "Post-Remediation Closure section still present" "Post-Remediation Closure" "$CA_CONTENT"
 # EDMV3-T15 end
 
+# =================================================================================
+# EDMV3-T23: mechanical scorer, committed baseline, and eval cadence
+# =================================================================================
+# Batch scope note (recorded here rather than silently worked around): this batch's file
+# remit is plugins/edm/evals/* plus this suite's own appends -- .gitlab-ci.yml and
+# bin/edm-state are out of scope for this agent/batch to edit. Concretely:
+#   - AC11 (the eval job's `expire_in: 30 days` scores.json artifact publishing) requires a
+#     .gitlab-ci.yml edit and is NOT asserted here; the eval:nightly job as currently landed
+#     (EDMV3-T21/T22) runs score-artifacts.sh but does not yet publish scores.json as a
+#     retained pipeline artifact. That wiring belongs to whichever ticket/batch owns
+#     .gitlab-ci.yml next.
+#   - AC8, AC9 and AC13 require three REAL baseline runs against wave-A code, each costing
+#     live Anthropic API spend (run-eval.sh's claude -p invocations). This suite does not
+#     spend that budget on its own initiative -- plugins/edm/evals/baseline/scores.json is
+#     therefore intentionally absent (not faked, not stubbed) as of this ticket landing.
+#     plugins/edm/evals/baseline/README.md documents this plainly, gives the exact command
+#     to capture it (`bash plugins/edm/evals/run-eval.sh` x3, then
+#     `bash plugins/edm/evals/score-artifacts.sh <run-dir>` per run), and is exercised below
+#     for its documentation-level content instead.
+# Everything else the scorer itself is responsible for (AC1-AC7, AC10, AC12, and the
+# documentation half of AC8/AC9) is verified below against a synthetic run directory this
+# suite constructs by hand, per score-artifacts.sh's own determinism/no-comparison contract.
+echo
+echo "T23 AC1/AC3/AC6 -- exactly five dimensions, exact total expression, deterministic"
+SCORE_ARTIFACTS="${PLUGIN_DIR}/evals/score-artifacts.sh"
+bash -n "$SCORE_ARTIFACTS" && pass "score-artifacts.sh passes bash -n" \
+  || fail "score-artifacts.sh failed bash -n"
+check_absent "no associative array declarations (declare -A)" "declare -A" \
+  "$(cat "$SCORE_ARTIFACTS")"
+
+t23_score_synthetic_run() {
+  mkdir -p run-dir
+  {
+    echo '#### TSVE-01: sample requirement'
+    echo '- **Acceptance Criteria**:'
+    echo '    - [ ] A concrete, testable behavior with a specific numeric threshold.'
+  } > run-dir/srd.md
+  echo "run-dir/srd.md written, TSVE-01 present" > /dev/null
+
+  bash "$SCORE_ARTIFACTS" run-dir > out-a.json 2> err-a.json
+  local rc_a=$?
+  bash "$SCORE_ARTIFACTS" run-dir > out-b.json 2> err-b.json
+  local rc_b=$?
+
+  [[ "$rc_a" -eq 0 && "$rc_b" -eq 0 ]] \
+    && pass "score-artifacts.sh exits 0 scoring a minimal synthetic run (AC5, never non-zero on a low score)" \
+    || fail "score-artifacts.sh did not exit 0 on both runs (rc_a=$rc_a rc_b=$rc_b)"
+
+  if diff -q out-a.json out-b.json >/dev/null 2>&1; then
+    pass "score-artifacts.sh is deterministic -- byte-identical output across two invocations (AC6)"
+  else
+    fail "score-artifacts.sh output differs across two invocations of the same run directory"
+  fi
+
+  local dim_count
+  dim_count="$(jq -e '.dimensions | length' out-a.json 2>/dev/null || echo "ERR")"
+  [[ "$dim_count" == "5" ]] && pass "scores.json has exactly 5 dimensions (AC1)" \
+    || fail "scores.json has $dim_count dimensions, expected exactly 5"
+
+  jq -e '. as $r | ([$r.dimensions[].score | select(. != null)] | add) as $sum
+         | $r.dimensions_scored as $n | (($sum / $n * 10 | round) / 10) == $r.total' \
+    out-a.json >/dev/null 2>&1 \
+    && pass "scores.json.total satisfies the exact AC3 jq expression" \
+    || fail "scores.json.total does not satisfy the exact AC3 jq expression"
+
+  jq -e '.dimensions_skipped[] | select(.name == "lens-jsonl-prose-agreement")' out-a.json >/dev/null 2>&1 \
+    && pass "dimension 5 (lens-jsonl-prose-agreement) is null/skipped with no code-audit round present (wave-A shape)" \
+    || fail "dimension 5 was not skipped for a run with no code-audit round"
+}
+with_scratch_repo t23_score_synthetic_run
+
+echo
+echo "T23 AC4 -- --compare refuses on scorer_version and dimensions_scored mismatch"
+t23_compare_refusal() {
+  jq -n '{scorer_version:"1.0.0",dimensions_scored:4,dimensions:[{name:"a",score:80},{name:"b",score:90},{name:"c",score:70},{name:"d",score:60},{name:"e",score:null}],total:75.0}' \
+    > base.json
+  jq '.scorer_version = "1.0.1"' base.json > bumped-version.json
+  jq '.dimensions_scored = 5' base.json > bumped-dims.json
+
+  check_fails "--compare refuses on scorer_version mismatch, naming it" "scorer_version mismatch" \
+    bash "$SCORE_ARTIFACTS" --compare base.json bumped-version.json
+  check_fails "--compare refuses on dimensions_scored mismatch, naming it" "dimensions_scored mismatch" \
+    bash "$SCORE_ARTIFACTS" --compare base.json bumped-dims.json
+
+  bash "$SCORE_ARTIFACTS" --compare base.json base.json >/dev/null 2>&1 \
+    && pass "--compare succeeds (exit 0) when scorer_version and dimensions_scored both match" \
+    || fail "--compare unexpectedly refused two identical scores.json files"
+}
+with_scratch_repo t23_compare_refusal
+
+echo
+echo "T23 AC2 -- --describe prints the five dimension definitions verbatim"
+t23_describe_output="$(bash "$SCORE_ARTIFACTS" --describe)"
+check "describe names dimension 1 (requirement-id-coverage)" "requirement-id-coverage" "$t23_describe_output"
+check "describe names dimension 2 (ac-testability)" "ac-testability" "$t23_describe_output"
+check "describe names dimension 3 (mermaid-parse-success)" "mermaid-parse-success" "$t23_describe_output"
+check "describe names dimension 4 (coverage-map-bidirectionality)" "coverage-map-bidirectionality" "$t23_describe_output"
+check "describe names dimension 5 (lens-jsonl-prose-agreement)" "lens-jsonl-prose-agreement" "$t23_describe_output"
+
+echo
+echo "T23 AC7 -- vague-ac-patterns.txt is the single source, named by architecture.md"
+VAGUE_PATTERNS="${PLUGIN_DIR}/evals/vague-ac-patterns.txt"
+[[ -s "$VAGUE_PATTERNS" ]] && pass "vague-ac-patterns.txt exists and is non-empty" \
+  || fail "vague-ac-patterns.txt missing or empty"
+check_absent "no vague-AC regex list is duplicated inline in score-artifacts.sh" \
+  "should work" "$(grep -v '^#' "$SCORE_ARTIFACTS")"
+
+echo
+echo "T23 AC8/AC9/AC10 -- baseline/README.md documents the four-dimension, tripwire framing"
+BASELINE_README="${PLUGIN_DIR}/evals/baseline/README.md"
+[[ -f "$BASELINE_README" ]] && pass "evals/baseline/README.md exists" \
+  || fail "evals/baseline/README.md missing"
+check "baseline/README.md states this is a four-dimension baseline" "four-dimension" \
+  "$(cat "$BASELINE_README" 2>/dev/null)"
+check "baseline/README.md records the max - min variance methodology" "max - min" \
+  "$(cat "$BASELINE_README" 2>/dev/null)"
+check "baseline/README.md states the tripwire framing" "tripwire" \
+  "$(cat "$BASELINE_README" 2>/dev/null)"
+check "baseline/README.md states re-versioning invalidates the baseline" "invalidates the baseline" \
+  "$(cat "$BASELINE_README" 2>/dev/null)"
+check "baseline/README.md records a run-artifact location outside plugins/edm" "outside plugins/edm" \
+  "$(cat "$BASELINE_README" 2>/dev/null)"
+[[ ! -f "${PLUGIN_DIR}/evals/baseline/scores.json" ]] \
+  && pass "baseline/scores.json is intentionally absent pending the 3 live baseline runs (not faked)" \
+  || fail "baseline/scores.json exists -- verify it was captured from real live runs, not fabricated"
+
+echo
+echo "T23 AC12 -- evals/README.md documents cost/duration and rejects 'CI will catch it'"
+EVALS_README="${PLUGIN_DIR}/evals/README.md"
+check "evals/README.md documents approximate cost per run" "cost" \
+  "$(grep -i 'cost' "$EVALS_README" 2>/dev/null || true)"
+check "evals/README.md names 'CI will catch it' as an invalid justification to skip a run" \
+  "CI will catch it" "$(cat "$EVALS_README" 2>/dev/null)"
+# EDMV3-T23 end
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
