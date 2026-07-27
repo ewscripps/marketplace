@@ -336,11 +336,13 @@ directory is a standing invitation to exempt the next one.
       produces artifact text specifies ASCII-only output.
       Verify: `grep -rc 'ASCII-only' plugins/edm/skills/ plugins/edm/agents/` shows a hit in each
       file that templates artifact text, listed in the ticket.
+<!-- edm-lint-ignore-start -->
 - [ ] AC8 (negative, no attribution trailer in any commit): no commit message produced during this
       initiative contains `Co-Authored-By`, `Generated-By`, `Generated with Claude` or any equivalent
       trailer.
       Verify: `git log --format='%B' <wave-A-base>..HEAD | grep -ci 'co-authored-by\|generated-by\|generated with'`
       returns 0.
+<!-- edm-lint-ignore-end -->
 - [ ] AC9 (negative, gitmoji shortcodes only): gitmoji appear as shortcodes (`:sparkles:`, `:bug:`)
       and never as Unicode glyphs, in commit messages and in artifact text alike.
       Verify: `git log --format='%s' <wave-A-base>..HEAD | LC_ALL=C grep -n '[^\x00-\x7F]'` returns
@@ -461,9 +463,11 @@ and something on the preserve-untouched list breaks quietly.
       Verify: `bash plugins/edm/bin/tests/run-all.sh; echo "exit=$?"` prints `exit=0`, the CI
       default-branch pipeline is green, and
       `test -s plugins/edm/evals/baseline/scores.json`.
+<!-- edm-lint-ignore-start -->
 - [ ] AC12 (no gitmoji or attribution violations in the wave): the wave's commits satisfy EDMV3-T63
       AC8 and AC9.
       Verify: `git log --format='%B' <wave-A-base>..HEAD | grep -ci 'co-authored-by'` returns 0.
+<!-- edm-lint-ignore-end -->
 
 ### Technical Notes
 

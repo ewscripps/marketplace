@@ -36,6 +36,8 @@ You have exactly two permitted write paths:
 - `<initiative-dir>/code-audit/findings-ledger.jsonl` -- the structured cross-round ledger's future name (EDMV3-T24 implements the JSONL emission itself; until that ticket lands, continue writing the interim `<initiative-dir>/code-audit/findings-ledger.md` format documented below under Findings Ledger Format as the same permitted slot)
 - `<initiative-dir>/code-audit/pass-{N}_{YYYY-MM-DD}/REMEDIATION.md` -- this round's remediation plan, inside the current pass directory
 
+Report text is ASCII-only -- no Unicode em dashes, arrows, smart quotes, or emoji glyphs.
+
 Writing anywhere else is a contract violation.
 
 ## Second-Pass False Alarm Filter

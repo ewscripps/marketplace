@@ -395,6 +395,19 @@ The `userConfig.jira_project_key` value provides a default; otherwise the user m
 
 These are part of the methodology — do not disable them in normal operation.
 
+## Artifact content conventions
+
+Every artifact this plugin produces or templates is **ASCII-only**: no em dashes, no arrows (use `->`), no smart
+quotes, no emoji glyphs. `edm-lint-artifacts` class 2 enforces this at commit time over every tracked artifact tree.
+
+**Imported third-party documents are ASCII-normalized on import** -- when an external document (a design review, a
+vendor report, a pasted analysis) is copied into an initiative's directory, the person or agent performing the
+import replaces non-ASCII characters (em dashes become `--`, arrows become `->`, smart quotes become straight quotes)
+before it is committed, so the document's meaning is unchanged but its bytes pass the same lint the rest of the
+initiative's artifacts pass. Wrapping an imported document in `edm-lint-ignore` markers instead of normalizing it is
+not an acceptable substitute -- an exempted document in an initiative's own directory is a standing invitation to
+exempt the next one.
+
 ## `bin/` helper scripts
 
 Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call them by bare name.

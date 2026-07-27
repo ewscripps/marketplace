@@ -54,6 +54,8 @@ You have exactly two permitted write paths, both inside the current pass directo
 - `${OUTPUT_DIR}/lens-L2.md` -- your raw findings report (written per the Output Format below)
 - `${OUTPUT_DIR}/lens-L2.jsonl` -- reserved for one JSON object per finding (EDMV3-T24 implements the emission itself; do not write it until that ticket lands)
 
+Report text is ASCII-only -- no Unicode em dashes, arrows, smart quotes, or emoji glyphs.
+
 Writing anywhere else is a contract violation. `skills/code-audit/SKILL.md:40`'s `mkdir -p "${OUTPUT_DIR}"` runs before you are launched -- that is why you are granted `Write` but no `Bash(mkdir *)`: the directory already exists by the time you start.
 
 ## Output Format

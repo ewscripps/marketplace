@@ -4398,8 +4398,10 @@ one fails regardless of its own acceptance criteria.
 - **Acceptance Criteria**:
     - [ ] Every artifact this initiative produces or templates is ASCII-only. `#59;` is ASCII-safe and is the whole
       point of EDMV3-53.
+    <!-- edm-lint-ignore-start -->
     - [ ] No commit message produced during this initiative contains `Co-Authored-By`, `Generated-By`,
       `Generated with Claude`, or any equivalent trailer.
+    <!-- edm-lint-ignore-end -->
     - [ ] Gitmoji appear as shortcodes (`:sparkles:`, `:bug:`) and never as Unicode glyphs, in commit messages and in
       artifact text alike.
     - [ ] `edm-lint-artifacts` classes 1 and 2 pass over every artifact tree touched by this initiative.

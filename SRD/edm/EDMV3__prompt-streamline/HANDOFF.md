@@ -20,7 +20,7 @@
 
 **Pending artifacts for Phase 6 - Implementation**:
 
-_(implementation in progress — track individual ticket status)_
+_(implementation in progress -- track individual ticket status)_
 
 > Copy-paste to resume: `/edm:orchestrator EDMV3`
 
