@@ -411,21 +411,33 @@ read_bool() {
   '
 }
 
-# ---- State anomaly detection (T29) -----------------------------------------
+# ---- State anomaly detection (T29, class split EDMV3-T05 / EDMV3-118) ------
 # state_anomalies <PREFIX>
-# Reads state and emits zero or more anomaly lines. Each line has the form:
-#   <CODE>  <affected-field>  <description>
+# Reads state and emits zero or more anomaly lines. Each line has the canonical
+# four-field form (EDMV3-T05 AC2 -- canonical for the whole initiative; every
+# anomaly added by a later ticket restates these same four fields):
+#   <class>  <CODE>  <affected-field>  <description>
+# <class> is "info" or "blocking", declared at the point each line is emitted (not
+# inferred by the consumer). Only a "blocking" line flips cmd_validate's exit code
+# (EDMV3-T05 AC3/AC4) -- "info" lines are always printed, never silenced.
 # Exits 0 and emits nothing when no anomalies found. Never mutates state.
+#
+# Reclassification record (EDMV3-T05 AC5): SIZE_UNKNOWN is reclassified here from
+# "any anomaly blocks validate" to "info" -- it flags missing cost-tracking
+# metadata (an unset estimated_size), not corrupted data, and no caller anywhere
+# in plugins/edm/ inspects validate's exit code for it (verified by grep at
+# reclassification time, 2026-07-26). TIME_ORDER and ZERO_TOKENS remain
+# "blocking": both indicate corrupted timestamp/cost data, not missing metadata.
 state_anomalies() {
   local prefix="$1"
   require_jq
   local state
   state="$(read_state "$prefix")"
   local found=0
-  # TIME_ORDER: completed_at earlier than started_at within any phase entry
+  # TIME_ORDER (blocking): completed_at earlier than started_at within any phase entry
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
-    echo "$line"
+    echo "blocking  $line"
     found=1
   done < <(echo "$state" | jq -r '
     .phase_durations // {} | to_entries[] |
@@ -439,21 +451,22 @@ state_anomalies() {
       else empty end
     else empty end
   ' 2>/dev/null)
-  # SIZE_UNKNOWN: estimated_size is "Unknown" and current_phase >= 2
-  # Suppressed for fast-track/fix-pack lifecycle modes where size estimation is N/A.
+  # SIZE_UNKNOWN (info -- reclassified EDMV3-T05, see comment above): estimated_size
+  # is "Unknown" and current_phase >= 2. Suppressed for fast-track/fix-pack lifecycle
+  # modes where size estimation is N/A.
   local phase size lifecycle_mode_anom
   phase="$(echo "$state" | jq -r '.current_phase // 0')"
   size="$(echo "$state" | jq -r '.estimated_size // "Unknown"')"
   lifecycle_mode_anom="$(echo "$state" | jq -r '.lifecycle_mode // "standard"')"
   if [[ "$size" == "Unknown" && "$phase" -ge 2 \
         && "$lifecycle_mode_anom" != "fast-track" && "$lifecycle_mode_anom" != "fix-pack" ]]; then
-    echo "SIZE_UNKNOWN  estimated_size  size is still Unknown at phase ${phase} (set via edm-state set ${prefix} estimated_size Small|Medium|Large)"
+    echo "info  SIZE_UNKNOWN  estimated_size  size is still Unknown at phase ${phase} (set via edm-state set ${prefix} estimated_size Small|Medium|Large)"
     found=1
   fi
-  # ZERO_TOKENS: model_used is set but input+output tokens are both 0
+  # ZERO_TOKENS (blocking): model_used is set but input+output tokens are both 0
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
-    echo "$line"
+    echo "blocking  $line"
     found=1
   done < <(echo "$state" | jq -r '
     .phase_durations // {} | to_entries[] |
@@ -464,6 +477,22 @@ state_anomalies() {
     else empty end
   ' 2>/dev/null)
   return 0
+}
+
+# format_anomaly_line <four-field-anomaly-line>
+# Renders one canonical anomaly line (EDMV3-T05 AC2 format) with a class-specific,
+# visually distinct marker. Shared by cmd_session_start so its rendering can never
+# diverge from the raw four-field format cmd_validate prints (EDMV3-T05 AC6).
+format_anomaly_line() {
+  local line="$1" class rest
+  class="${line%% *}"
+  rest="${line#"$class"}"
+  rest="${rest#"  "}"
+  if [[ "$class" == "blocking" ]]; then
+    printf '  [BLOCKING] %s\n' "$rest"
+  else
+    printf '  [info] %s\n' "$rest"
+  fi
 }
 
 cmd_get() {
@@ -1236,9 +1265,12 @@ cmd_gate_check() {
   return 0
 }
 
-# ---- Validate (T32) ----------------------------------------------------------
+# ---- Validate (T32, class split EDMV3-T05) -----------------------------------
 # validate <PREFIX>
-# Runs state_anomalies and exits 3 if any anomalies found, 0 if clean.
+# Runs state_anomalies and prints every anomaly found, both classes. Exits 3 only
+# when at least one "blocking"-class anomaly is present (EDMV3-T05 AC4); an
+# "info"-only result is printed in full but exits 0 (EDMV3-T05 AC3) -- silence is
+# never how an informational anomaly is handled. Never mutates state.
 
 cmd_validate() {
   [[ $# -eq 1 ]] || die "usage: edm-state validate <PREFIX>"
@@ -1249,7 +1281,17 @@ cmd_validate() {
     echo "# State anomalies for $prefix:"
     echo
     echo "$anomalies"
-    return 3
+    # A line's class is its first field (EDMV3-T05 AC2 four-field format). Only
+    # "blocking" flips the exit code -- do not change the "3" value itself (it is
+    # the established edm-state convention EDMV3-100 keeps).
+    local line class blocking_count=0
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      class="${line%% *}"
+      [[ "$class" == "blocking" ]] && blocking_count=$((blocking_count + 1))
+    done <<< "$anomalies"
+    [[ $blocking_count -gt 0 ]] && return 3
+    return 0
   fi
   echo "# State OK: no anomalies found for $prefix"
   return 0
@@ -1382,6 +1424,16 @@ cmd_session_start() {
     [[ -n "$last_cmd" ]]       && printf '  Last command:  %s\n' "$last_cmd"
     [[ -n "$last_decision" ]]  && printf '  Last decision: %s\n' "$last_decision"
     [[ -n "$last_updated" ]]   && printf '  Last updated:  %s\n' "$last_updated"
+    # Render state anomalies, both classes, visually distinguished (EDMV3-T05 AC6).
+    # Read-only: state_anomalies never mutates state.
+    local _ss_anomalies _ss_aline
+    _ss_anomalies="$(state_anomalies "$prefix" 2>/dev/null || true)"
+    if [[ -n "$_ss_anomalies" ]]; then
+      while IFS= read -r _ss_aline; do
+        [[ -n "$_ss_aline" ]] || continue
+        format_anomaly_line "$_ss_aline"
+      done <<< "$_ss_anomalies"
+    fi
     printf '  Resume:        /edm:orchestrator %s\n' "$prefix"
     echo
   done < <(list_state_files)
