@@ -1,0 +1,139 @@
+{
+  "prefix": "EDMV3",
+  "current_phase": 6,
+  "gates_approved": [
+    {
+      "gate": 1,
+      "approved_at": "2026-07-25T20:40:25Z",
+      "approver": "darryl.porter"
+    },
+    {
+      "gate": 2,
+      "approved_at": "2026-07-25T22:30:47Z",
+      "approver": "darryl.porter"
+    },
+    {
+      "gate": 3,
+      "approved_at": "2026-07-27T01:43:50Z",
+      "approver": "darryl.porter"
+    }
+  ],
+  "artifacts": {},
+  "artifact_hashes": {
+    "srd": {
+      "hash": "1f35041cd0f649dc712c6c3c058c846814096a2f96dc1d1e20bb793dc6fbbb30",
+      "path": "./SRD/edm/EDMV3__prompt-streamline/srd.md",
+      "recorded_at": "2026-07-25T22:27:45Z"
+    },
+    "tickets": {
+      "hash": "a50b82684c3bb767fbba718f7e4de57c76f4b42294c4878608b3b52b6e146ee7",
+      "path": "./SRD/edm/EDMV3__prompt-streamline/tickets/README.md",
+      "recorded_at": "2026-07-26T02:01:55Z"
+    }
+  },
+  "srd_version": "1.3.0",
+  "estimated_size": "Unknown",
+  "initiative_branch": "edm/edmv3-prompt-streamline",
+  "product_name": "edm",
+  "initiative_description": "prompt-streamline",
+  "phase_durations": {
+    "1_phase": {
+      "started_at": "2026-07-25T03:23:15Z",
+      "completed_at": "2026-07-25T03:38:39Z",
+      "duration_seconds": 924,
+      "tokens": {
+        "input": 16,
+        "output": 95280,
+        "cache_read": 2806242,
+        "cache_write_5m": 0,
+        "cache_write_1h": 146348
+      },
+      "model_used": "claude-sonnet-5",
+      "estimated_cost_usd": 3.1492,
+      "human_baseline_usd": 0.00
+    },
+    "2_phase": {
+      "started_at": "2026-07-25T20:40:48Z",
+      "completed_at": "2026-07-25T21:18:58Z",
+      "duration_seconds": 2290,
+      "tokens": {
+        "input": 53,
+        "output": 37597,
+        "cache_read": 3442921,
+        "cache_write_5m": 0,
+        "cache_write_1h": 36301
+      },
+      "model_used": "claude-fable-5",
+      "estimated_cost_usd": 1.8148,
+      "human_baseline_usd": 0.00
+    },
+    "3_phase": {
+      "started_at": "2026-07-25T21:18:58Z",
+      "completed_at": "2026-07-25T22:27:45Z",
+      "duration_seconds": 4127,
+      "tokens": {
+        "input": 121,
+        "output": 178880,
+        "cache_read": 14415657,
+        "cache_write_5m": 0,
+        "cache_write_1h": 444141
+      },
+      "model_used": "claude-fable-5",
+      "estimated_cost_usd": 9.6731,
+      "human_baseline_usd": 0.00
+    },
+    "4_phase": {
+      "started_at": "2026-07-25T22:30:47Z",
+      "completed_at": "2026-07-25T23:12:45Z",
+      "duration_seconds": 2518,
+      "tokens": {
+        "input": 8,
+        "output": 6392,
+        "cache_read": 1256725,
+        "cache_write_5m": 0,
+        "cache_write_1h": 3167
+      },
+      "model_used": "claude-fable-5",
+      "estimated_cost_usd": 0.4919,
+      "human_baseline_usd": 0.00
+    },
+    "5_phase": {
+      "started_at": "2026-07-25T23:12:46Z",
+      "completed_at": "2026-07-26T02:01:55Z",
+      "duration_seconds": 10149,
+      "tokens": {
+        "input": 56,
+        "output": 47667,
+        "cache_read": 10128564,
+        "cache_write_5m": 0,
+        "cache_write_1h": 1164369
+      },
+      "model_used": "claude-fable-5",
+      "estimated_cost_usd": 10.7400,
+      "human_baseline_usd": 0.00
+    },
+    "6_phase": {
+      "started_at": "2026-07-27T01:43:50Z"
+    }
+  },
+  "test_frameworks_detected": {},
+  "coverage_by_layer": {},
+  "coverage_by_epic": {},
+  "code_audit_converged": false,
+  "compliance_gate_approved": false,
+  "last_cmd": "",
+  "last_decision": "D16: 3 safe model downgrades in wave A; all contested assignments decided by wave-C tiering matrix (100% P0/P1 + 80% total recall, cheapest wins)",
+  "audit_rounds": {},
+  "partial_verdict_map": {},
+  "mode": "standard",
+  "lifecycle_mode": "standard",
+  "compliance_enabled": false,
+  "implementation_mode": "standard",
+  "skipped_phases": [],
+  "supersedes": "",
+  "forked_from": "",
+  "parent_prefix": "",
+  "related_prefixes": [],
+  "last_updated": "2026-07-27T01:43:50Z",
+  "current_step": 6
+}
