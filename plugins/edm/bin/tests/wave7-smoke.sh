@@ -10,6 +10,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EDM_STATE="${SCRIPT_DIR}/../edm-state"
 PLUGIN_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+GITLAB_CI_YML="$(cd "$PLUGIN_DIR/../.." && pwd)/.gitlab-ci.yml"
 
 # Shared assertions / counters (CA-014).
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_harness.sh"
@@ -392,13 +393,13 @@ check "Post-Remediation Closure section still present" "Post-Remediation Closure
 # EDMV3-T23: mechanical scorer, committed baseline, and eval cadence
 # =================================================================================
 # Batch scope note (recorded here rather than silently worked around): this batch's file
-# remit is plugins/edm/evals/* plus this suite's own appends -- .gitlab-ci.yml and
-# bin/edm-state are out of scope for this agent/batch to edit. Concretely:
-#   - AC11 (the eval job's `expire_in: 30 days` scores.json artifact publishing) requires a
-#     .gitlab-ci.yml edit and is NOT asserted here; the eval:nightly job as currently landed
-#     (EDMV3-T21/T22) runs score-artifacts.sh but does not yet publish scores.json as a
-#     retained pipeline artifact. That wiring belongs to whichever ticket/batch owns
-#     .gitlab-ci.yml next.
+# remit is plugins/edm/evals/* plus this suite's own appends -- bin/edm-state is out of scope
+# for this agent/batch to edit. Concretely:
+#   - AC11 (the eval job's `expire_in: 30 days` scores.json artifact publishing) landed with
+#     EDMV3-T21's `.gitlab-ci.yml`: `eval:nightly`'s `artifacts:` block retains
+#     `plugins/edm/evals/runs/` (where score-artifacts.sh writes each run's `scores.json`) for
+#     30 days. Asserted below (shard-2 QC remediation -- this comment previously said it was
+#     still pending after the pipeline file already landed it).
 #   - AC8, AC9 and AC13 require three REAL baseline runs against wave-A code, each costing
 #     live Anthropic API spend (run-eval.sh's claude -p invocations). This suite does not
 #     spend that budget on its own initiative -- plugins/edm/evals/baseline/scores.json is
@@ -513,6 +514,14 @@ check "baseline/README.md records a run-artifact location outside plugins/edm" "
 [[ ! -f "${PLUGIN_DIR}/evals/baseline/scores.json" ]] \
   && pass "baseline/scores.json is intentionally absent pending the 3 live baseline runs (not faked)" \
   || fail "baseline/scores.json exists -- verify it was captured from real live runs, not fabricated"
+
+echo
+echo "T23 AC11 -- eval:nightly retains scores.json (via plugins/edm/evals/runs/) as a 30-day pipeline artifact"
+t23_eval_job_block="$(awk '/^eval:nightly:/{f=1;next} f && /^[a-zA-Z]/{f=0} f' "$GITLAB_CI_YML")"
+check "T23 AC11 -- eval:nightly job found in .gitlab-ci.yml" "artifacts" "$t23_eval_job_block"
+check "T23 AC11 -- artifacts retained for 30 days" "expire_in: 30 days" "$t23_eval_job_block"
+check "T23 AC11 -- artifacts path covers plugins/edm/evals/runs/ (where scores.json is written)" \
+  "plugins/edm/evals/runs/" "$t23_eval_job_block"
 
 echo
 echo "T23 AC12 -- evals/README.md documents cost/duration and rejects 'CI will catch it'"
@@ -730,6 +739,99 @@ t61_divergence_outside_branch="$(printf '%s\n' "$t61_divergence_hits" | grep -v 
 check "T61 AC11 -- edm-lint-artifacts' PCRE detection uses the documented grep -qP probe" \
   "grep -qP" "$t61_divergence_hits"
 # EDMV3-T61 end
+
+# =================================================================================
+# EDMV3-T20 AC10 (shard-2 QC remediation): edm-lint-artifacts --path mode coverage --
+# directory recursion, a single named file, and the read-only (no edm-state call) contract.
+# The mode itself was already implemented (edm-lint-artifacts:278-307) but had zero assertions.
+# =================================================================================
+EDM_LINT_ARTIFACTS="${SCRIPT_DIR}/../edm-lint-artifacts"
+
+echo
+echo "T20 AC10 -- --path <dir> recurses into subdirectories and finds a nested violation"
+t20_path_dir_case() {
+  local scratch
+  scratch="$(mktemp -d /tmp/edm-t20-path-dir.XXXXXX)" || { fail "T20 --path dir -- mktemp failed"; return 1; }
+  mkdir -p "$scratch/a/b/c"
+  printf '# top-level note\n\nClean ASCII content.\n' > "$scratch/top.md"
+  printf '# nested note\n\nAlso clean ASCII content, three levels deep.\n' > "$scratch/a/b/c/nested.md"
+  # An attribution-trailer violation buried two levels deep -- proves recursion actually reaches
+  # it, not just the top-level file.
+  printf '# violation note\n\nCo-Authored-By: Someone <someone@example.com>\n' > "$scratch/a/b/violation.md"
+
+  local out ec
+  set +e
+  out="$("$EDM_LINT_ARTIFACTS" --path "$scratch" 2>&1)"
+  ec=$?
+  set -e
+
+  [[ $ec -ne 0 ]] && pass "T20 -- --path <dir> recursion finds a violation nested two levels deep" \
+    || fail "T20 -- --path <dir> did not detect the nested violation (exit $ec):\n$out"
+  check "T20 -- --path <dir> names the nested violation file" "a/b/violation.md" "$out"
+
+  rm -rf "$scratch"
+}
+t20_path_dir_case
+
+echo
+echo "T20 AC10 -- --path <file> lints exactly the one named file"
+t20_path_file_out="$("$EDM_LINT_ARTIFACTS" --path "${PLUGIN_DIR}/evals/fixtures/tiny-svc/README.md" 2>&1)"
+t20_path_file_ec=$?
+[[ $t20_path_file_ec -eq 0 ]] && pass "T20 -- --path <file> against a known-clean single file exits 0" \
+  || fail "T20 -- --path <file> unexpectedly reported violations:\n$t20_path_file_out"
+check "T20 -- --path <file> output names the file, not a directory-wide scan" \
+  "tiny-svc/README.md" "$t20_path_file_out"
+
+echo
+echo "T20 AC10 -- --path never calls edm-state (read-only contract holds with edm-state off PATH)"
+t20_path_no_edmstate_case() {
+  local scratch scrub_path
+  scratch="$(mktemp -d /tmp/edm-t20-path-noedm.XXXXXX)" || { fail "T20 --path no-edm-state -- mktemp failed"; return 1; }
+  printf '# clean note\n\nNo violations here.\n' > "$scratch/note.md"
+
+  # A PATH with only /usr/bin and /bin -- enough for find/sort/grep/sed/cut/tr to resolve, but
+  # with every real bin/ directory (where edm-state actually lives) excluded.
+  scrub_path="/usr/bin:/bin"
+  local control ec out
+  control="$(PATH="$scrub_path" command -v edm-state 2>&1 || true)"
+  [[ -z "$control" ]] && pass "T20 -- edm-state is genuinely absent from the scrubbed PATH (control check)" \
+    || fail "T20 -- edm-state still resolves on the scrubbed PATH ($control) -- test setup invalid"
+
+  set +e
+  out="$(PATH="$scrub_path" "$EDM_LINT_ARTIFACTS" --path "$scratch" 2>&1)"
+  ec=$?
+  set -e
+  [[ $ec -eq 0 ]] && pass "T20 -- --path succeeds with edm-state removed from PATH (no edm-state call)" \
+    || fail "T20 -- --path failed with edm-state off PATH (exit $ec):\n$out"
+  check_absent "T20 -- --path output never reports edm-state as missing" "edm-state not found" "$out"
+
+  rm -rf "$scratch"
+}
+t20_path_no_edmstate_case
+# EDMV3-T20 end
+
+# =================================================================================
+# EDMV3-T21 AC3 (shard-2 QC remediation): tripwire for lint:file-type-ban's allow_failure
+# flip -- T57's flip to `false` and T66's cross-check both depend on a passing assertion
+# existing here first (no case previously read this field out of .gitlab-ci.yml at all).
+# =================================================================================
+echo
+echo "T21 AC3 -- lint:file-type-ban currently carries allow_failure: true (T57/T66 tripwire)"
+t21_ban_block="$(awk '/^lint:file-type-ban:/{f=1;next} f && /^[a-zA-Z]/{f=0} f' "$GITLAB_CI_YML")"
+check "T21 AC3 -- lint:file-type-ban block found in .gitlab-ci.yml" "allow_failure" "$t21_ban_block"
+check "T21 AC3 -- lint:file-type-ban carries allow_failure: true (flip to false lands with EDMV3-T57)" \
+  "true" "$(printf '%s\n' "$t21_ban_block" | grep 'allow_failure' || true)"
+# EDMV3-T21 AC3 end
+
+# ---- AC5 (D19 amendment, decisions.md): no literal wave-suite token anywhere in
+# .gitlab-ci.yml -- suites run via run-all.sh auto-discovery and are never hand-named. -------
+echo
+echo "T21 AC5 -- zero literal wave-suite tokens anywhere in .gitlab-ci.yml"
+t21_wave_token_hits="$(grep -cE 'wave(3|4a|4b|5|6|7)-smoke' "$GITLAB_CI_YML" || true)"
+t21_wave_token_hits="${t21_wave_token_hits:-0}"
+[[ "$t21_wave_token_hits" -eq 0 ]] \
+  && pass "T21 AC5 -- .gitlab-ci.yml names zero literal wave-suite tokens (run-all.sh auto-discovery only)" \
+  || fail "T21 AC5 -- found $t21_wave_token_hits literal wave-suite token(s) in .gitlab-ci.yml"
 
 echo
 echo "T64 AC1 -- plugin.json and marketplace.json versions agree"
