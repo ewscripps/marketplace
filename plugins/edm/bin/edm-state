@@ -3,7 +3,7 @@
 # Usage:
 #   edm-state get <PREFIX>                              # print state JSON
 #   edm-state set <PREFIX> <key> <value>                # set a top-level field (typed for known fields)
-#   edm-state list                                      # list in-progress initiatives
+#   edm-state list [--paths]                            # list in-progress initiatives (--paths: print resolved initiative directories only, read-only, for edm-lint-artifacts --all)
 #   edm-state active-initiatives                        # list initiatives with current_phase in 1-6
 #   edm-state init <PREFIX>                             # write a fresh state file
 #   edm-state approve-gate <PREFIX> <gate-num>          # record a gate approval
@@ -560,6 +560,20 @@ cmd_init() {
 }
 
 cmd_list() {
+  # --paths: read-only, no lock, no jq dependency — print each resolved initiative directory
+  # (one per line), covering both flat and product-scoped layouts and excluding .archived/
+  # (list_state_files with no arg already excludes it). Consumed by `edm-lint-artifacts --all`
+  # so there is exactly one implementation of layout resolution (EDMV3-111).
+  if [[ "${1:-}" == "--paths" ]]; then
+    [[ -d "$SRD_ROOT" ]] || return 0
+    local state
+    while IFS= read -r state; do
+      [[ -f "$state" ]] || continue
+      echo "${state%/.edm-state.json}"
+    done < <(list_state_files)
+    return 0
+  fi
+
   [[ -d "$SRD_ROOT" ]] || { echo "no SRD/ directory yet"; return 0; }
   require_jq
   local found=0
