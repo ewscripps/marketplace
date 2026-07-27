@@ -175,6 +175,145 @@ force_count="${force_count:-0}"
 [[ "$force_count" -eq 0 ]] && pass "no literal --force in bin/edm-state" \
   || fail "found $force_count occurrence(s) of literal --force in bin/edm-state"
 
+# =================================================================================
+# EDMV3-T03: bin/edm-check-grants -- four-source grant/instruction contract checker
+# =================================================================================
+EDM_CHECK_GRANTS="${SCRIPT_DIR}/../edm-check-grants"
+
+echo
+echo "T03 AC1 -- --list-sources prints exactly four source labels"
+t03_sources_out="$(bash "$EDM_CHECK_GRANTS" --list-sources 2>&1)"
+t03_sources_ec=$?
+t03_sources_count="$(printf '%s\n' "$t03_sources_out" | grep -c '.')"
+[[ $t03_sources_ec -eq 0 ]] && pass "--list-sources exits 0" || fail "--list-sources exited $t03_sources_ec"
+[[ "$t03_sources_count" -eq 4 ]] && pass "--list-sources prints exactly four lines" \
+  || fail "--list-sources printed $t03_sources_count line(s), expected 4:\n$t03_sources_out"
+check "source label: agent-bodies" "agent-bodies" "$t03_sources_out"
+check "source label: skill-launch-templates" "skill-launch-templates" "$t03_sources_out"
+check "source label: hook-prompt-text" "hook-prompt-text" "$t03_sources_out"
+check "source label: skill-allowed-tools-vs-body" "skill-allowed-tools-vs-body" "$t03_sources_out"
+
+echo
+echo "T03 AC7 -- exit contract: usage error is exit 2"
+set +e
+bash "$EDM_CHECK_GRANTS" --bogus-flag >/tmp/edm-cg-bogus.$$.out 2>&1
+t03_bogus_ec=$?
+set -e
+[[ $t03_bogus_ec -eq 2 ]] && pass "unknown flag exits 2" || fail "unknown flag exited $t03_bogus_ec, expected 2"
+rm -f "/tmp/edm-cg-bogus.$$.out"
+
+echo
+echo "T03 AC2/AC4 -- every agent grant is satisfied against the live (post-EDMV3-T02) tree"
+set +e
+t03_live_out="$(bash "$EDM_CHECK_GRANTS" 2>&1)"
+t03_live_ec=$?
+set -e
+[[ $t03_live_ec -eq 0 ]] && pass "edm-check-grants exits 0 against the live tree" \
+  || fail "edm-check-grants exited $t03_live_ec against the live tree:\n$t03_live_out"
+t03_live_agent_count="$(printf '%s\n' "$t03_live_out" | grep -c '^agent:' || true)"
+[[ "$t03_live_agent_count" -eq 0 ]] && pass "zero unsatisfied agents against the live tree" \
+  || fail "found $t03_live_agent_count unsatisfied agent(s) against the live tree"
+
+echo
+echo "T03 AC3 -- grant-without-instruction warnings are advisory, never block the exit code"
+check "a known over-grant (edm-implementer Edit) is reported as a warning" \
+  "warning: grant-without-instruction: agent: edm-implementer: Edit:" "$t03_live_out"
+[[ $t03_live_ec -eq 0 ]] && pass "warnings present but exit is still 0 (advisory only)" \
+  || fail "a warning-only run should still exit 0"
+
+echo
+echo "T03 AC5 -- AskUserQuestion granted to the four gate-presenting skills (plus orchestrator, unchanged)"
+check "code-audit/SKILL.md grants AskUserQuestion" "AskUserQuestion" \
+  "$(grep 'allowed-tools' "$PLUGIN_DIR/skills/code-audit/SKILL.md")"
+check "plan/SKILL.md grants AskUserQuestion" "AskUserQuestion" \
+  "$(grep 'allowed-tools' "$PLUGIN_DIR/skills/plan/SKILL.md")"
+check "audit-srd/SKILL.md grants AskUserQuestion" "AskUserQuestion" \
+  "$(grep 'allowed-tools' "$PLUGIN_DIR/skills/audit-srd/SKILL.md")"
+check "audit-tickets/SKILL.md grants AskUserQuestion" "AskUserQuestion" \
+  "$(grep 'allowed-tools' "$PLUGIN_DIR/skills/audit-tickets/SKILL.md")"
+check "orchestrator/SKILL.md still grants AskUserQuestion (unchanged)" "AskUserQuestion" \
+  "$(grep 'allowed-tools' "$PLUGIN_DIR/skills/orchestrator/SKILL.md")"
+
+echo
+echo "T03 AC6 -- must-fail: a skill body needing AskUserQuestion without the grant fails the run"
+t03_ac6_case() {
+  local scratch
+  scratch="$(mktemp -d /tmp/edm-cg-ac6.XXXXXX)" || { fail "AC6 -- mktemp failed"; return 1; }
+
+  mkdir -p "$scratch/bin"
+  cp -R "$PLUGIN_DIR/agents" "$scratch/agents"
+  cp -R "$PLUGIN_DIR/skills" "$scratch/skills"
+  cp -R "$PLUGIN_DIR/hooks" "$scratch/hooks"
+  cp "$EDM_CHECK_GRANTS" "$scratch/bin/edm-check-grants"
+  chmod +x "$scratch/bin/edm-check-grants"
+
+  # Strip AskUserQuestion from the scratch copy of plan/SKILL.md's allowed-tools line only.
+  local target="$scratch/skills/plan/SKILL.md"
+  sed -i.bak 's/, AskUserQuestion$//' "$target"
+  rm -f "${target}.bak"
+
+  local out ec
+  set +e
+  out="$(bash "$scratch/bin/edm-check-grants" 2>&1)"
+  ec=$?
+  set -e
+
+  [[ $ec -eq 1 ]] && pass "AC6 -- missing AskUserQuestion on a gate skill fails the run" \
+    || fail "AC6 -- expected exit 1, got $ec"
+  check "AC6 -- failure names skills/plan/SKILL.md" "skills/plan/SKILL.md" "$out"
+  check "AC6 -- failure class is missing-askuserquestion-grant" "missing-askuserquestion-grant" "$out"
+
+  rm -rf "$scratch"
+}
+t03_ac6_case
+
+echo
+echo "T03 AC8 -- mirrors (not re-derives) edm-lint-artifacts's report_violation/build_ignore_set/is_ignored_line"
+t03_mirror_hits="$(grep -c 'report_violation\|build_ignore_set\|is_ignored_line' "$EDM_CHECK_GRANTS" || true)"
+[[ "${t03_mirror_hits:-0}" -gt 0 ]] && pass "AC8 -- mirrored helper names present in edm-check-grants" \
+  || fail "AC8 -- report_violation/build_ignore_set/is_ignored_line not found in edm-check-grants"
+
+echo
+echo "T03 AC9 -- documented agent count matches disk (count-drift guard)"
+t03_disk_count="$(ls "$PLUGIN_DIR"/agents/*.md 2>/dev/null | wc -l | tr -d '[:space:]')"
+# CLAUDE.md documents the 11 edm-audit-* lenses collectively ("all 11 `edm-audit-*` lenses"), not
+# by individual backtick mention (unlike every other agent) -- so the drift guard is two parts:
+# every OTHER agent named individually by backtick token that matches a real agents/*.md file,
+# plus the wildcard-with-explicit-count phrase for the lens class.
+t03_claude_md="$PLUGIN_DIR/CLAUDE.md"
+t03_named_count=0
+t03_agent_base=""
+for _af in "$PLUGIN_DIR"/agents/*.md; do
+  [[ -f "$_af" ]] || continue
+  t03_agent_base="$(basename "$_af" .md)"
+  if grep -qF "\`${t03_agent_base}\`" "$t03_claude_md"; then
+    t03_named_count=$((t03_named_count + 1))
+  fi
+done
+t03_wildcard_count="$(grep -oE 'all [0-9]+ `edm-audit-\*`' "$t03_claude_md" \
+  | grep -oE '[0-9]+' | head -1)"
+t03_wildcard_count="${t03_wildcard_count:-0}"
+t03_documented_total=$((t03_named_count + t03_wildcard_count))
+check "CLAUDE.md documents the lens class as \"all N \`edm-audit-*\`\"" "edm-audit-*\`" \
+  "$(grep -o 'all [0-9]* `edm-audit-\*`[^|]*' "$t03_claude_md" || true)"
+[[ "$t03_documented_total" -eq "$t03_disk_count" ]] \
+  && pass "documented agent count ($t03_documented_total) matches disk ($t03_disk_count)" \
+  || fail "documented agent count ($t03_named_count individually-named + $t03_wildcard_count lens wildcard = $t03_documented_total) does not match disk ($t03_disk_count)"
+[[ "$t03_disk_count" -eq 30 ]] && pass "disk agent count is 30 (baseline)" \
+  || fail "disk agent count is $t03_disk_count, expected 30"
+
+echo
+echo "T03 AC10 -- bash 3.2 compatible (no associative arrays/mapfile) and referenced by run-all.sh"
+bash -n "$EDM_CHECK_GRANTS" && pass "edm-check-grants passes bash -n" \
+  || fail "edm-check-grants failed bash -n"
+check_absent "no associative array declarations (declare -A)" "declare -A" \
+  "$(cat "$EDM_CHECK_GRANTS")"
+t03_mapfile_usage="$(grep -cE '(^|[^a-zA-Z_])(mapfile|readarray)[[:space:]]' "$EDM_CHECK_GRANTS" || true)"
+[[ "${t03_mapfile_usage:-0}" -eq 0 ]] && pass "no mapfile/readarray command usage" \
+  || fail "found mapfile/readarray usage in edm-check-grants"
+check "run-all.sh references edm-check-grants (AC10 smoke-aggregator half)" "edm-check-grants" \
+  "$(cat "${SCRIPT_DIR}/run-all.sh")"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

@@ -1,0 +1,573 @@
+#!/usr/bin/env bash
+# edm-check-grants - four-source grant/instruction contract checker (EDMV3-T03 / EDMV3-07,
+# EDMV3-113).
+#
+# Usage:
+#   edm-check-grants                 # run the full four-source check
+#   edm-check-grants --list-sources  # print the four source labels and exit 0
+#   edm-check-grants -h|--help       # show this help
+#
+# Why four sources, not one: a "grep every agents/*.md" check passes green while eleven
+# code-audit lens agents are still unable to write, because their write instruction lives in
+# `skills/code-audit/SKILL.md:44,99` (a skill launch template), not in their own agent body, and
+# `edm-qc-auditor`'s write+bash instructions live in `hooks/hooks.json` (a hook prompt), not its
+# own body either. This checker therefore scans:
+#   1. agent bodies             -- agents/*.md (the instruction IS the agent's own body text)
+#   2. skill launch templates   -- skills/*/SKILL.md (instructions that name a target agent and a
+#                                  write path, e.g. the "Agent: edm-audit-{lens-name}" template)
+#   3. hook prompt text         -- hooks/hooks.json (JSON-escaped prompt strings that spawn and
+#                                  instruct an agent; parsed with `jq -r`, never grepped raw)
+#   4. skill allowed-tools vs. its own body -- does the skill's body require a tool (currently:
+#                                  AskUserQuestion for HITL gate presentation) that its own
+#                                  `allowed-tools:` frontmatter line does not grant?
+#
+# Two directions are checked, independently, for sources 1-3 (agents only):
+#   - Positive (must-fail): an instruction naming an agent + a write path (or a shell command
+#     token: edm-state, mkdir, jq) asserts that agent's frontmatter grants the matching tool
+#     (Write or Bash) and does not list it in disallowedTools. Unsatisfied -> reported, exit 1.
+#   - Negative (warning only): any agent granting Write, Edit or Bash with ZERO corresponding
+#     instruction found across all three agent-facing sources is a `warning:
+#     grant-without-instruction` line -- informational, never affects the exit code. This is what
+#     would have caught edm-audit-synthesizer's unexplained `Edit` grant, which a one-directional
+#     check (source 1 only, positive direction only) never would have surfaced.
+# Source 4 (skills) only has a positive direction: a skill whose body needs to present a HITL
+# gate (detected via the literal token `AskUserQuestion`, or the `STOP and WAIT` + `HITL Gate`
+# pattern) but whose `allowed-tools:` line lacks `AskUserQuestion` is reported and fails the run.
+#
+# Detection heuristic (conservative and explicit, per the ticket's Technical Notes -- false
+# negatives are the dangerous direction here, so the verb list is biased wide and warnings are
+# cheap):
+#   - write-instruction: a line containing one of a committed verb list (write, writes, writing,
+#     emit, emits, produce, produces), case-insensitive, within a +/-3 line window of a
+#     path-shaped token (a `*.md`/`*.jsonl`/`*.json`/`*.txt` filename, or a directory ending in
+#     `/`).
+#   - shell-command instruction: a line naming one of `edm-state`, `mkdir`, `jq` as a whole word.
+#
+# Output format (EDMV3-100 exit contract): "<kind>: <name>: <class>: <path>:<line>" where <kind>
+# is "agent" for an agent-attributed finding or "skill" for a source-4 finding, one line per
+# distinct unsatisfied actor (an actor unsatisfied via more than one instruction/class is reported
+# once, not once per hit -- AC4 counts unsatisfied AGENTS, not raw instruction occurrences).
+#
+# Exit codes (EDMV3-100): 0 = clean; 1 = one or more unsatisfied grants found; 2 = usage or
+# environment error (missing jq, missing agents/skills/hooks paths, unknown flag).
+#
+# bash 3.2 compatible: no associative arrays, no mapfile/readarray. Per-agent and per-skill
+# frontmatter data is held in flat TSV scratch files (name<TAB>file<TAB>tools<TAB>disallowed for
+# agents; name<TAB>file<TAB>allowed-tools for skills), queried with awk, rather than an
+# associative array.
+set -euo pipefail
+
+die() {
+  local msg="$1" code="${2:-2}"
+  echo "edm-check-grants: $msg" >&2
+  exit "$code"
+}
+
+usage() {
+  sed -n '2,45p' "$0"
+  exit 0
+}
+
+case "${1:-}" in
+  -h|--help|help) usage ;;
+esac
+
+LIST_SOURCES=0
+if [[ $# -gt 0 ]]; then
+  case "$1" in
+    --list-sources)
+      [[ $# -eq 1 ]] || die "usage: --list-sources takes no further arguments" 2
+      LIST_SOURCES=1
+      shift
+      ;;
+    --*)
+      die "unknown flag: $1" 2
+      ;;
+    *)
+      die "usage: edm-check-grants [--list-sources] (no positional arguments accepted)" 2
+      ;;
+  esac
+fi
+[[ $# -eq 0 ]] || die "unexpected extra argument: $1" 2
+
+# ---- Resolve plugin paths (relative to this script, not the caller's cwd) ---------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+AGENTS_DIR="${PLUGIN_ROOT}/agents"
+SKILLS_DIR="${PLUGIN_ROOT}/skills"
+HOOKS_FILE="${PLUGIN_ROOT}/hooks/hooks.json"
+
+SOURCE_LABELS="agent-bodies skill-launch-templates hook-prompt-text skill-allowed-tools-vs-body"
+
+if [[ "$LIST_SOURCES" -eq 1 ]]; then
+  for _s in $SOURCE_LABELS; do
+    echo "$_s"
+  done
+  exit 0
+fi
+
+[[ -d "$AGENTS_DIR" ]] || die "agents directory not found: $AGENTS_DIR"
+[[ -d "$SKILLS_DIR" ]] || die "skills directory not found: $SKILLS_DIR"
+[[ -f "$HOOKS_FILE" ]] || die "hooks file not found: $HOOKS_FILE"
+command -v jq >/dev/null 2>&1 || die "jq not found on PATH (required to parse hooks.json)"
+
+WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/edm-check-grants.XXXXXX")" || die "cannot create scratch directory"
+trap 'rm -rf "$WORKDIR"' EXIT
+
+VIOLATIONS=0
+
+# ---- Mirrored from bin/edm-lint-artifacts (AC8: reuse, don't re-derive) -----------------------
+#
+# report_violation mirrors edm-lint-artifacts's function of the same name and purpose (print one
+# formatted line, increment a shared counter) -- but the line SHAPE is this checker's own AC7
+# contract ("<kind>: <name>: <class>: <path>:<line>"), not edm-lint-artifacts's generic
+# "<path>:<line>: <class>: <snippet>" shape. AC7 mandates an actor-first format so agent/skill
+# grant findings read consistently regardless of which of the four sources produced them; that is
+# a deliberate divergence in output shape, not a re-implementation of the underlying mechanism.
+report_violation() {  # report_violation <kind: agent|skill> <name> <class> <filepath> <lineno>
+  printf '%s: %s: %s: %s:%s\n' "$1" "$2" "$3" "$4" "$5"
+  VIOLATIONS=$((VIOLATIONS + 1))
+}
+
+# build_ignore_set / is_ignored_line are mirrored VERBATIM from bin/edm-lint-artifacts (same
+# ignore-marker + code-fence semantics an author may already rely on in these same markdown
+# files). Applied only to source 1 (agent bodies): every current agent's write instruction is
+# plain prose, never inside a fence, so fence-skipping is safe there. It is deliberately NOT
+# applied to source 2 (skill launch templates), because the lens launch template itself lives
+# inside a ```-fenced code block (skills/code-audit/SKILL.md ~L91-103) -- fence-skipping there
+# would blind the checker to the exact instruction EDMV3-07 exists to catch.
+build_ignore_set() {
+  local file="$1"
+  local in_fence=0 in_ignore_block=0 ignore_next=0 lineno=0
+  while IFS= read -r linetext; do
+    lineno=$((lineno + 1))
+
+    if [[ "$ignore_next" -eq 1 ]]; then
+      echo "$lineno"
+      ignore_next=0
+      continue
+    fi
+
+    if [[ "$linetext" =~ ^\`\`\` ]]; then
+      in_fence=$((1 - in_fence))
+      continue
+    fi
+
+    if [[ "$linetext" == *'<!-- edm-lint-ignore-end -->'* ]]; then
+      in_ignore_block=0
+      continue
+    fi
+
+    if [[ "$in_fence" -eq 1 || "$in_ignore_block" -eq 1 ]]; then
+      echo "$lineno"
+    fi
+
+    if [[ "$linetext" == *'<!-- edm-lint-ignore-start -->'* ]]; then
+      in_ignore_block=1
+    fi
+
+    if [[ "$linetext" == *'<!-- edm-lint-ignore -->'* ]]; then
+      ignore_next=1
+    fi
+  done < "$file"
+}
+
+is_ignored_line() {
+  local lineno="$1" ignoreset="$2"
+  [[ -n "$ignoreset" ]] && echo "$ignoreset" | grep -qxF "$lineno"
+}
+
+# ---- Detection patterns (Technical Notes: conservative, explicit, verb list biased wide) -------
+_WRITE_VERB_RE='(^|[^A-Za-z])([Ww]rite|[Ww]rites|[Ww]riting|[Ee]mit|[Ee]mits|[Pp]roduce|[Pp]roduces)([^A-Za-z]|$)'
+_PATH_TOKEN_RE='[A-Za-z0-9_${}./-]+\.(md|jsonl|json|txt)|[A-Za-z0-9_${}./-]+/'
+# Candidate pre-filter only -- any line naming one of the three shell-command tokens as a whole
+# word. Every candidate is then re-checked by line_has_shell_instruction below before counting as
+# a real instruction: a bare mention is NOT enough (this codebase's own remediation prose in the
+# 13-agent class explicitly says "you are granted Write but no `Bash(mkdir *)`" -- a candidate
+# match on "mkdir" that means the OPPOSITE of an instruction -- and `.edm-state.json` is the state
+# FILE's name, not the CLI command).
+_SHELL_CMD_RE='(^|[^A-Za-z-])(edm-state|mkdir|jq)([^A-Za-z-]|$)'
+
+# line_has_shell_instruction <line> -- true only for a real invocation signal:
+#   (a) the command piped into `jq` on the same line (parsing JSON output requires the agent to
+#       actually run it, e.g. "edm-state get <PREFIX> | jq -r '...'"), or
+#   (b) an explicit action verb (call/calls/run/runs/invoke/invokes) within ~40 chars before the
+#       command token (e.g. hooks.json's "call `edm-state record-partial-verdict ...`" and
+#       "run `mkdir -p ... ` first").
+# Excludes a `Bash(<cmd> ...)` scoped-tool-name mention -- that names a permission STRING (as
+# skills' allowed-tools: convention writes it), not a live invocation.
+line_has_shell_instruction() {
+  local line="$1"
+  printf '%s' "$line" | grep -qE 'Bash\((edm-state|mkdir|jq)' && return 1
+  printf '%s' "$line" | grep -qE '(edm-state|mkdir|jq)[^`]*\|[[:space:]]*jq' && return 0
+  printf '%s' "$line" | grep -qE '\b(call|calls|run|runs|invoke|invokes)\b[^`]{0,40}(edm-state|mkdir|jq)\b' && return 0
+  return 1
+}
+
+# body_start_line <file> -- line number of the first body line after frontmatter (the line after
+# the second "---" delimiter), or empty if the file has no closed frontmatter block. Used to keep
+# the "tools:"/"allowed-tools:" frontmatter lines themselves (which legitimately contain the word
+# "Write") out of the instruction scan.
+body_start_line() {
+  awk '/^---[[:space:]]*$/{c++; if(c==2){print NR+1; exit}}' "$1" 2>/dev/null || true
+}
+
+# frontmatter_field <file> <key> -- prints the value of a single-line "key: value" frontmatter
+# field (first match only), or empty if absent.
+frontmatter_field() {
+  local file="$1" key="$2"
+  awk -v k="^${key}:" 'BEGIN{c=0} /^---[[:space:]]*$/{c++; if(c==2) exit; next} c==1 && $0 ~ k {
+    sub(k, ""); sub(/^[[:space:]]+/, ""); print; exit
+  }' "$file" 2>/dev/null || true
+}
+
+# has_tool <comma-separated-tool-list> <toolname> -- true if <toolname> appears as a bare token
+# (agent tools: convention, D17) or a scoped token "<toolname>(...)" (skill allowed-tools:
+# convention), after trimming whitespace around each comma-separated item.
+has_tool() {
+  local list="$1" tool="$2" item
+  [[ -z "$list" ]] && return 1
+  local old_ifs="$IFS"
+  IFS=','
+  set -- $list
+  IFS="$old_ifs"
+  for item in "$@"; do
+    item="$(printf '%s' "$item" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    if [[ "$item" == "$tool" || "$item" == "${tool}("* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# ---- Build the agent grants table: name<TAB>file<TAB>tools<TAB>disallowedTools -----------------
+AGENT_TSV="${WORKDIR}/agents.tsv"
+: > "$AGENT_TSV"
+for _f in "$AGENTS_DIR"/*.md; do
+  [[ -f "$_f" ]] || continue
+  _name="$(frontmatter_field "$_f" name)"
+  [[ -z "$_name" ]] && continue
+  _tools="$(frontmatter_field "$_f" tools)"
+  _disallowed="$(frontmatter_field "$_f" disallowedTools)"
+  printf '%s\t%s\t%s\t%s\n' "$_name" "$_f" "$_tools" "$_disallowed" >> "$AGENT_TSV"
+done
+
+agent_exists() {
+  awk -F'\t' -v n="$1" '$1==n{f=1} END{exit !f}' "$AGENT_TSV"
+}
+agent_field() {  # agent_field <name> <col: 2=file,3=tools,4=disallowed>
+  awk -F'\t' -v n="$1" -v c="$2" '$1==n{print $c; exit}' "$AGENT_TSV"
+}
+
+# ---- Build the skill table: name<TAB>file<TAB>allowed-tools ------------------------------------
+SKILL_TSV="${WORKDIR}/skills.tsv"
+: > "$SKILL_TSV"
+for _f in "$SKILLS_DIR"/*/SKILL.md; do
+  [[ -f "$_f" ]] || continue
+  _skillname="$(basename "$(dirname "$_f")")"
+  _allowed="$(frontmatter_field "$_f" allowed-tools)"
+  printf '%s\t%s\t%s\n' "$_skillname" "$_f" "$_allowed" >> "$SKILL_TSV"
+done
+
+skill_field() {  # skill_field <name> <col: 2=file,3=allowed-tools>
+  awk -F'\t' -v n="$1" -v c="$2" '$1==n{print $c; exit}' "$SKILL_TSV"
+}
+
+# ---- Per-actor dedup so an actor unsatisfied via >1 instruction/class is reported once (AC4
+# counts unsatisfied AGENTS, a headcount, not raw instruction occurrences) -------------------
+: > "${WORKDIR}/reported_agent.txt"
+: > "${WORKDIR}/reported_skill.txt"
+: > "${WORKDIR}/Write_instructed.txt"
+: > "${WORKDIR}/Bash_instructed.txt"
+
+mark_and_maybe_report() {  # mark_and_maybe_report <kind> <name> <class> <file> <line>
+  local kind="$1" name="$2" class="$3" file="$4" line="$5"
+  local seen_file="${WORKDIR}/reported_${kind}.txt"
+  grep -qxF "$name" "$seen_file" 2>/dev/null && return 0
+  echo "$name" >> "$seen_file"
+  local class_lc
+  class_lc="$(printf '%s' "$class" | tr '[:upper:]' '[:lower:]')"
+  report_violation "$kind" "$name" "missing-${class_lc}-grant" "$file" "$line"
+}
+
+# assert_agent_grant <actor> <class: Write|Bash> <file> <line> -- records that <actor> received a
+# <class> instruction (for the AC3 negative-direction pass below) and, if <actor> is a real agent
+# whose frontmatter does not effectively grant <class>, reports it (deduped per actor).
+assert_agent_grant() {
+  local actor="$1" class="$2" file="$3" line="$4"
+  echo "$actor" >> "${WORKDIR}/${class}_instructed.txt"
+
+  agent_exists "$actor" || return 0
+
+  local tools disallowed satisfied
+  tools="$(agent_field "$actor" 3)"
+  disallowed="$(agent_field "$actor" 4)"
+  satisfied=1
+  has_tool "$tools" "$class" || satisfied=0
+  if [[ -n "$disallowed" ]] && has_tool "$disallowed" "$class"; then
+    satisfied=0
+  fi
+
+  if [[ "$satisfied" -eq 0 ]]; then
+    mark_and_maybe_report agent "$actor" "$class" "$file" "$line"
+  fi
+  return 0
+}
+
+# scan_write_instructions <file> [start-line] -- prints one line number per detected
+# write-instruction anchor (a write-verb line within a +/-3 line window of a path-shaped token).
+scan_write_instructions() {
+  local file="$1" start="${2:-1}"
+  local total_lines
+  total_lines="$(wc -l < "$file" 2>/dev/null | tr -d '[:space:]')"
+  [[ -z "$total_lines" ]] && total_lines=0
+  local ignore_set=""
+  [[ "$start" -le 1 ]] && ignore_set="$(build_ignore_set "$file")"
+
+  local hit_line _rest lo hi window
+  while IFS=: read -r hit_line _rest; do
+    [[ -z "$hit_line" ]] && continue
+    [[ "$hit_line" -lt "$start" ]] && continue
+    [[ -n "$ignore_set" ]] && is_ignored_line "$hit_line" "$ignore_set" && continue
+    lo=$((hit_line - 3)); [[ $lo -lt $start ]] && lo=$start
+    hi=$((hit_line + 3)); [[ $hi -gt $total_lines ]] && hi=$total_lines
+    window="$(sed -n "${lo},${hi}p" "$file" 2>/dev/null || true)"
+    if printf '%s\n' "$window" | grep -Eq "$_PATH_TOKEN_RE"; then
+      echo "$hit_line"
+    fi
+  done < <(grep -nE "$_WRITE_VERB_RE" "$file" 2>/dev/null || true)
+}
+
+# scan_shell_instructions <file> [start-line] -- prints one line number per detected shell-command
+# instruction. Candidate lines (naming edm-state, mkdir or jq as a whole word) are re-checked by
+# line_has_shell_instruction so a bare mention never counts on its own.
+scan_shell_instructions() {
+  local file="$1" start="${2:-1}"
+  local ignore_set=""
+  [[ "$start" -le 1 ]] && ignore_set="$(build_ignore_set "$file")"
+  local hit_line content
+  while IFS=: read -r hit_line content; do
+    [[ -z "$hit_line" ]] && continue
+    [[ "$hit_line" -lt "$start" ]] && continue
+    [[ -n "$ignore_set" ]] && is_ignored_line "$hit_line" "$ignore_set" && continue
+    line_has_shell_instruction "$content" && echo "$hit_line"
+  done < <(grep -nE "$_SHELL_CMD_RE" "$file" 2>/dev/null || true)
+}
+
+# =================================================================================================
+# Source 1: agent bodies -- the instruction IS the agent's own body text (e.g. the "## Output"
+# section every one of the 13-agent F3 class now carries per EDMV3-T02).
+# =================================================================================================
+scan_agent_bodies() {
+  local f name body_start ln
+  for f in "$AGENTS_DIR"/*.md; do
+    [[ -f "$f" ]] || continue
+    name="$(frontmatter_field "$f" name)"
+    [[ -z "$name" ]] && continue
+    body_start="$(body_start_line "$f")"
+    [[ -z "$body_start" ]] && body_start=1
+
+    while IFS= read -r ln; do
+      assert_agent_grant "$name" Write "$f" "$ln"
+    done < <(scan_write_instructions "$f" "$body_start")
+
+    while IFS= read -r ln; do
+      assert_agent_grant "$name" Bash "$f" "$ln"
+    done < <(scan_shell_instructions "$f" "$body_start")
+  done
+}
+
+# =================================================================================================
+# Source 2: skill launch templates -- an instruction that names a target agent explicitly (an
+# "Agent: <name>" launch-template line, e.g. skills/code-audit/SKILL.md:92,120) and a write path
+# or shell command nearby. The lens template's name is a placeholder ("edm-audit-{lens-name}"):
+# expand it to the concrete set of lens agent files. The step-7 bullet at :44 has no "Agent:" line
+# nearby at all -- its target is stated by the word "lens" in the same numbered step instead
+# ("Launch lens agents in parallel for every lens in LENS_SET") -- so the same "lens" keyword
+# trigger is checked as a fallback whenever no explicit "Agent:" line is found in the lookback
+# window. This is a codebase-specific heuristic (not a generic templating engine), documented here
+# because it is the concrete mechanism EDMV3-07's Technical Notes call for.
+# =================================================================================================
+expand_lens_agents() {
+  local f base
+  for f in "$AGENTS_DIR"/edm-audit-*.md; do
+    [[ -f "$f" ]] || continue
+    base="$(basename "$f" .md)"
+    [[ "$base" == "edm-audit-synthesizer" ]] && continue
+    echo "$base"
+  done
+}
+
+nearby_agent_name() {  # nearby_agent_name <file> <line> <lookback>
+  local file="$1" line="$2" lookback="${3:-15}"
+  local lo=$((line - lookback))
+  [[ $lo -lt 1 ]] && lo=1
+  local hit
+  hit="$(sed -n "${lo},${line}p" "$file" 2>/dev/null | grep -E '^Agent:[[:space:]]*' | tail -1 || true)"
+  [[ -z "$hit" ]] && return 0
+  printf '%s\n' "$hit" | sed -E 's/^Agent:[[:space:]]*//; s/[[:space:]]*\(.*\)[[:space:]]*$//'
+}
+
+window_mentions_lens() {  # window_mentions_lens <file> <line> <lookback>
+  local file="$1" line="$2" lookback="${3:-15}"
+  local lo=$((line - lookback))
+  [[ $lo -lt 1 ]] && lo=1
+  sed -n "${lo},${line}p" "$file" 2>/dev/null | grep -qiE '\blens\b'
+}
+
+resolve_targets_for_line() {  # resolve_targets_for_line <file> <line> <lookback>
+  local file="$1" line="$2" lookback="${3:-15}"
+  local literal
+  literal="$(nearby_agent_name "$file" "$line" "$lookback")"
+  if [[ -n "$literal" ]]; then
+    if [[ "$literal" == *"{"* ]]; then
+      expand_lens_agents
+    else
+      echo "$literal"
+    fi
+  elif window_mentions_lens "$file" "$line" "$lookback"; then
+    expand_lens_agents
+  fi
+}
+
+scan_skill_launch_templates() {
+  local f body_start ln t
+  for f in "$SKILLS_DIR"/*/SKILL.md; do
+    [[ -f "$f" ]] || continue
+    body_start="$(body_start_line "$f")"
+    [[ -z "$body_start" ]] && body_start=1
+
+    # Write only. Bash is deliberately NOT cross-referenced here: every current skill's own
+    # `edm-state`/`mkdir`/`jq` mention is the SKILL orchestrating its own step (using the skill's
+    # own Bash(edm-state *) allowed-tools grant), never an instruction telling the spawned agent
+    # to invoke a shell command itself -- attributing those to whichever agent name happens to
+    # appear earlier in the file (e.g. via the lens/Agent: lookback) would be a false positive,
+    # not a real cross-reference. Source 1 (agent bodies) and source 3 (hook prompts) are the two
+    # sources where an agent is genuinely instructed to invoke a shell command itself.
+    while IFS= read -r ln; do
+      while IFS= read -r t; do
+        [[ -z "$t" ]] && continue
+        assert_agent_grant "$t" Write "$f" "$ln"
+      done < <(resolve_targets_for_line "$f" "$ln" 15)
+    done < <(scan_write_instructions "$f" "$body_start")
+  done
+}
+
+# =================================================================================================
+# Source 3: hook prompt text -- hooks/hooks.json prompt strings are JSON-escaped; parsed with
+# `jq -r` (never grepped raw, or the SubagentStop prompt's step 6 would be missed per Technical
+# Notes). Each "prompt" value is stored on one physical line in this file, so the raw line number
+# doubles as the citation (matches the ticket's own "hooks/hooks.json:117" citation).
+# =================================================================================================
+scan_hook_prompts() {
+  local lnum rest frag decoded target scratch ln
+  while IFS=: read -r lnum rest; do
+    [[ -z "$lnum" ]] && continue
+    frag="$(printf '%s' "$rest" | sed 's/,[[:space:]]*$//')"
+    decoded="$(printf '{%s}' "$frag" | jq -r '.prompt' 2>/dev/null || true)"
+    [[ -z "$decoded" ]] && continue
+
+    target="$(printf '%s\n' "$decoded" \
+      | grep -oiE 'spawn(ed)?[a-z]*[[:space:]]+(an?[[:space:]]+)?`?edm-[a-z0-9-]+`?' \
+      | grep -oE 'edm-[a-z0-9-]+' | head -1 || true)"
+    [[ -z "$target" ]] && continue
+
+    scratch="${WORKDIR}/hook-prompt-${lnum}.txt"
+    printf '%s\n' "$decoded" > "$scratch"
+
+    while IFS= read -r ln; do
+      assert_agent_grant "$target" Write "$HOOKS_FILE" "$lnum"
+    done < <(scan_write_instructions "$scratch" 1)
+
+    while IFS= read -r ln; do
+      assert_agent_grant "$target" Bash "$HOOKS_FILE" "$lnum"
+    done < <(scan_shell_instructions "$scratch" 1)
+  done < <(grep -n '"prompt":' "$HOOKS_FILE" 2>/dev/null || true)
+}
+
+# =================================================================================================
+# Source 4: skill allowed-tools vs. its own body. Currently scoped to AskUserQuestion (EDMV3-113):
+# a skill body that literally names the tool, or that presents a HITL gate ("STOP and WAIT" +
+# "HITL Gate", the pattern every gate-presenting skill in this plugin uses) needs the grant.
+# =================================================================================================
+scan_skill_tool_usage() {
+  local f skillname allowed body_start body needs_ask ln
+  for f in "$SKILLS_DIR"/*/SKILL.md; do
+    [[ -f "$f" ]] || continue
+    skillname="$(basename "$(dirname "$f")")"
+    allowed="$(skill_field "$skillname" 3)"
+    body_start="$(body_start_line "$f")"
+    [[ -z "$body_start" ]] && body_start=1
+    body="$(sed -n "${body_start},\$p" "$f" 2>/dev/null || true)"
+
+    needs_ask=0
+    ln=""
+    if printf '%s\n' "$body" | grep -q 'AskUserQuestion'; then
+      needs_ask=1
+      ln="$(grep -n 'AskUserQuestion' "$f" | head -1 | cut -d: -f1)"
+    elif printf '%s\n' "$body" | grep -q 'STOP and WAIT' \
+      && printf '%s\n' "$body" | grep -q 'HITL Gate'; then
+      needs_ask=1
+      ln="$(grep -n 'STOP and WAIT' "$f" | head -1 | cut -d: -f1)"
+    fi
+    [[ -z "$ln" ]] && ln="$body_start"
+
+    if [[ "$needs_ask" -eq 1 ]] && ! has_tool "$allowed" "AskUserQuestion"; then
+      mark_and_maybe_report skill "$skillname" AskUserQuestion "$f" "$ln"
+    fi
+  done
+}
+
+# =================================================================================================
+# Run all four sources (positive direction, AC1/AC2/AC4/AC5/AC6/AC7).
+# =================================================================================================
+scan_agent_bodies
+scan_skill_launch_templates
+scan_hook_prompts
+scan_skill_tool_usage
+
+# =================================================================================================
+# AC3: negative direction -- any agent granting Write, Edit or Bash with zero corresponding
+# instruction found across sources 1-3 is a warning (never affects exit code). Edit has no
+# instruction-detection path at all (the verb list is write-side only, per Technical Notes), so
+# any Edit grant is, by construction, always a candidate for this warning -- that is intentional:
+# it is exactly the class of over-grant this AC exists to surface (edm-audit-synthesizer's
+# unexplained Edit grant, closed by EDMV3-T02, was found this way). Fixing every warning this
+# surfaces outside the known 13-agent class is explicitly out of scope for this ticket (recorded
+# as a finding for its own ticket, per EDMV3-07's Out of Scope section).
+# =================================================================================================
+while IFS=$'\t' read -r _agent_name _agent_file _agent_tools _agent_disallowed; do
+  [[ -z "$_agent_name" ]] && continue
+
+  for _class in Write Edit Bash; do
+    _granted=1
+    has_tool "$_agent_tools" "$_class" || _granted=0
+    if [[ -n "$_agent_disallowed" ]] && has_tool "$_agent_disallowed" "$_class"; then
+      _granted=0
+    fi
+    [[ "$_granted" -eq 0 ]] && continue
+
+    if [[ "$_class" == "Edit" ]]; then
+      _has_instruction=0
+    else
+      _has_instruction=0
+      grep -qxF "$_agent_name" "${WORKDIR}/${_class}_instructed.txt" 2>/dev/null && _has_instruction=1
+    fi
+
+    if [[ "$_has_instruction" -eq 0 ]]; then
+      _tools_lineno="$(grep -n '^tools:' "$_agent_file" | head -1 | cut -d: -f1)"
+      [[ -z "$_tools_lineno" ]] && _tools_lineno=1
+      # Deliberately prefixed "warning:" (not "agent:") so AC4's `grep -c '^agent:'` headcount
+      # of unsatisfied agents never picks up an advisory grant-without-instruction line -- the
+      # two counts (AC3's warnings and AC4's must-fail agents) are independent by construction.
+      echo "warning: grant-without-instruction: agent: ${_agent_name}: ${_class}: ${_agent_file}:${_tools_lineno}"
+    fi
+  done
+done < "$AGENT_TSV"
+
+# ---- Exit contract (EDMV3-100): 0 clean, 1 unsatisfied grant(s) found, 2 usage/env error -------
+if [[ "$VIOLATIONS" -eq 0 ]]; then
+  exit 0
+else
+  exit 1
+fi

@@ -95,6 +95,23 @@ for _suite in "${_run_order[@]+"${_run_order[@]}"}"; do
   _total_fail=$((_total_fail + _s_fail))
 done
 
+# ---- EDMV3-T03 AC10: edm-check-grants runs as part of the aggregator, not just as a suite case
+# it is exercised from (wave7-smoke.sh). Real invocation, not a comment reference: it must
+# actually pass 0/1/2 exit contract against the live tree every time run-all.sh runs. ------------
+echo
+echo "edm-check-grants -- four-source grant/instruction contract check"
+_grants_out="$(bash "${SCRIPT_DIR}/../edm-check-grants" 2>&1)"
+_grants_ec=$?
+if [[ $_grants_ec -eq 0 ]]; then
+  echo "  PASS: edm-check-grants (exit 0)"
+  _total_pass=$((_total_pass + 1))
+else
+  echo "  FAIL: edm-check-grants (exit ${_grants_ec})" >&2
+  printf '%s\n' "$_grants_out" >&2
+  _total_fail=$((_total_fail + 1))
+  _failed_suites+=("edm-check-grants")
+fi
+
 echo
 echo "Total: ${_total_pass} passed, ${_total_fail} failed across ${#_run_order[@]} suite(s)"
 
