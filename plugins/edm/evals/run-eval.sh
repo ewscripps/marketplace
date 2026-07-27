@@ -266,8 +266,16 @@ run_with_timeout() {
 invoke_claude() {
   local phase_key="$1" prompt="$2" rc prev_dir="$PWD"
   cd "$SCRATCH_DIR" || return 1
+  # Scrub parent Claude Code session variables. When this driver itself runs inside a Claude
+  # Code session (an agent driving the eval, or a hook), the child `claude -p` inherits the
+  # parent's session identifiers and attaches to its state -- observed live as an instant
+  # (77ms) budget_exhausted because the child adopted the parent session's cumulative spend.
+  # `env -u` each known session var so every phase is a genuinely fresh headless run.
   run_with_timeout "$PHASE_TIMEOUT_SECONDS" \
     "$RUN_DIR/raw/${phase_key}.json" "$RUN_DIR/raw/${phase_key}.stderr.log" \
+    env -u CLAUDECODE -u CLAUDE_CODE_SSE_PORT -u CLAUDE_CODE_ENTRYPOINT \
+        -u CLAUDE_CODE_BRIDGE_SESSION_ID -u CLAUDE_CODE_SESSION_ID \
+        -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_EXECPATH -u CLAUDE_PID \
     claude -p "$prompt" \
     --model "$CLAUDE_MODEL" \
     --permission-mode "$CLAUDE_PERMISSION_MODE" \
