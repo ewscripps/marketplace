@@ -590,6 +590,37 @@ read_bool() {
   '
 }
 
+# ---- schema_version three-valued degradation (EDMV3-T09 contract, EDMV3-T14 wiring) --------
+# WAVE_A_MERGE_DATE -- the calendar date wave A of the enforcement kernel (EDMV3-T09..T14, T17)
+# merged. Grandfathering is bounded, not open-ended (EDMV3-T14 description): every initiative
+# that predates this date was created before schema_version existed at all, so absent
+# schema_version on such a file is expected, not a defect. Recorded as a real constant (not a
+# placeholder) so a reader of the grandfathering rule sees an actual boundary; it does not gate
+# any runtime check itself -- SCHEMA_VERSION_MISSING (EDMV3-T10 AC6) fires for every
+# non-archived initiative missing schema_version regardless of age (EDMV3-T14 AC10), so the
+# exemption never becomes permanent just because an initiative is old.
+WAVE_A_MERGE_DATE="2026-07-27"
+
+# schema_at_least <schema-version-or-empty> <required-min>
+# The three-valued degradation model every schema_version-consulting check uses, so each check
+# consults one shared helper rather than re-deriving the comparison (EDMV3-T14 Technical Notes):
+#   0 = absent      -- legacy signal (C-4); the caller warn-and-proceeds with no enforcement
+#   1 = below <min>  -- present but this check's minimum is not met; warn-and-proceed for THIS
+#                       check only (other checks at or below the recorded version still apply
+#                       normally -- this is the middle class EDMV3-T09 defines and EDMV3-T14
+#                       wires end-to-end)
+#   2 = at-or-above -- full enforcement, no warning
+schema_at_least() {
+  local sv="$1" min="$2"
+  if [[ -z "$sv" ]]; then
+    echo 0
+  elif [[ "$sv" -ge "$min" ]]; then
+    echo 2
+  else
+    echo 1
+  fi
+}
+
 # ---- State anomaly detection (T29, class split EDMV3-T05 / EDMV3-118) ------
 # state_anomalies <PREFIX>
 # Reads state and emits zero or more anomaly lines. Each line has the canonical
@@ -1059,11 +1090,14 @@ cmd_phase_complete() {
   # auditable state entry rather than a command-line flag.
   # requires schema_version >= 1 (EDMV3-16, EDMV3-T09 AC10): absent schema_version is the
   # legacy signal (C-4, AC8) -- this whole block warns and proceeds rather than hard-failing.
-  local pc_state pc_schema_version
+  # Uses the shared schema_at_least() three-valued helper (EDMV3-T14) rather than re-deriving
+  # the absent/below/at-or-above comparison here.
+  local pc_state pc_schema_version pc_class1
   pc_state="$(cat "$state_file")"
   pc_schema_version="$(echo "$pc_state" | jq -r '.schema_version // empty')"
+  pc_class1="$(schema_at_least "$pc_schema_version" 1)"
 
-  if [[ -z "$pc_schema_version" ]]; then
+  if [[ "$pc_class1" == "0" ]]; then
     echo "edm-state phase-complete: [warn] legacy initiative (no schema_version) -- skipping artifact verification for phase ${phase}" >&2
   else
     local pc_skipped_str pc_phase_skipped=0
@@ -1116,9 +1150,12 @@ cmd_phase_complete() {
 
     # AC4/AC5: phase 6's open-PARTIAL check is never exempted by skipped_phases -- a skipped
     # phase 6 still refuses on an open PARTIAL. requires schema_version >= 2 (EDMV3-T09
-    # AC10); below that it warns and proceeds rather than hard-failing.
+    # AC10); below that it warns and proceeds rather than hard-failing. This is the middle
+    # class of the three-valued model (EDMV3-T14 AC6): a schema_version of 1 is present and
+    # satisfies every wave-A (>=1) check above in full, but still warn-and-proceeds through
+    # this specific wave-B (>=2) check -- schema_at_least() returns 1 for exactly this case.
     if [[ "$phase" == "6" ]]; then
-      if [[ "$pc_schema_version" -ge 2 ]]; then
+      if [[ "$(schema_at_least "$pc_schema_version" 2)" == "2" ]]; then
         local pc_open_partials
         pc_open_partials="$(echo "$pc_state" | jq -r '
           [(.partial_verdict_map // {}) | to_entries[] | select(.value.verdict == "PARTIAL")] | length
@@ -1436,6 +1473,15 @@ cmd_migrate_schema() {
     [(.partial_verdict_map // {}) | to_entries[] | select(.value.verdict == "PARTIAL")] | length
   ' 2>/dev/null || echo 0)"
 
+  # EDMV3-T14: report whether this initiative's last_updated predates WAVE_A_MERGE_DATE, so an
+  # operator running migrate-schema sees the grandfathering boundary as a real date rather than
+  # having to infer it -- purely informational, does not change target_version below.
+  local last_updated_ms predates_wave_a="no"
+  last_updated_ms="$(echo "$state" | jq -r '.last_updated // empty')"
+  if [[ -n "$last_updated_ms" && "${last_updated_ms:0:10}" < "$WAVE_A_MERGE_DATE" ]]; then
+    predates_wave_a="yes"
+  fi
+
   echo "# migrate-schema report for ${prefix}"
   echo "  current_phase:          ${current_phase}"
   echo "  gates_approved:         ${gates_count}"
@@ -1443,6 +1489,7 @@ cmd_migrate_schema() {
   echo "  findings ledger:        ${ledger_format}"
   echo "  unclosed PARTIAL count: ${open_partials}"
   echo "  recorded schema_version: ${current_version:-(absent)}"
+  echo "  predates wave-A merge (${WAVE_A_MERGE_DATE}): ${predates_wave_a}"
 
   # ---- AC2: honest version -- the highest shape this initiative actually satisfies -------
   local target_version=1
@@ -1506,14 +1553,18 @@ cmd_archive() {
     # AC10: a missing state file is reported, not silently permitted.
     echo "edm-state archive: info  MISSING_STATE_FILE  .edm-state.json  no state file found at ${state_file}; proceeding with an unchecked directory move (gates, phase and convergence cannot be verified)" >&2
   else
-    local state_json mode lifecycle_mode converged schema_version_arch
+    local state_json mode lifecycle_mode converged schema_version_arch arch_class1
     state_json="$(cat "$state_file" 2>/dev/null || echo '{}')"
     mode="$(echo "$state_json" | jq -r '.mode // "null"')"
     lifecycle_mode="$(echo "$state_json" | jq -r '.lifecycle_mode // "standard"')"
     product_name="$(echo "$state_json" | jq -r '.product_name // ""')"
     schema_version_arch="$(echo "$state_json" | jq -r '.schema_version // empty')"
+    # requires schema_version >= 1 (EDMV3-17, EDMV3-T09 AC10) -- uses the shared
+    # schema_at_least() three-valued helper (EDMV3-T14) rather than re-deriving the
+    # absent/below/at-or-above comparison here.
+    arch_class1="$(schema_at_least "$schema_version_arch" 1)"
 
-    if [[ -z "$schema_version_arch" ]]; then
+    if [[ "$arch_class1" == "0" ]]; then
       # C-4: legacy state predating schema_version warns and proceeds through every new
       # wave-A check below (gates, terminal phase, completed_at, convergence) -- it keeps the
       # pre-T12 convergence behaviour (product_name-gated) since that is the only check that

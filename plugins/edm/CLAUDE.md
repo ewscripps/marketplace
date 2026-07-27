@@ -475,8 +475,10 @@ naming the check; a check *at or below* the recorded version applies normally. E
 consults `schema_version` records its own minimum in a `# requires schema_version >= N` comment at
 the check in `bin/edm-state`. EDMV3-T09 defines this contract and lands the one such comment for
 the check that exists as of wave A (EDMV3-115, `cmd_gate_check`); the degradation *behaviour*
-itself is implemented per-check by the ticket that owns that check (e.g. EDMV3-T14 for the wave-B
-checks).
+itself is implemented per-check by the ticket that owns that check. EDMV3-T14 wires the shared
+`schema_at_least()` helper into the wave-A checks (`cmd_phase_complete`, `cmd_archive`) and tests
+the whole class end to end, including the real archived EDMV2 fixture; EDMV3-T18 (wave B) is where
+the version-2 checks themselves are built.
 
 **`decisions.md` vs `code-audit/findings-ledger.md`** — distinct files with distinct scopes:
 - `decisions.md` = initiative-wide key decisions and finding-to-commit ledger (written by orchestrator at gates and Phase 6)
