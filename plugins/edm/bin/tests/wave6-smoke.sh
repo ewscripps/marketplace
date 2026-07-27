@@ -1161,6 +1161,132 @@ else
   fail "AC7 -- next_action case block in bin/edm-state still contains non-ASCII bytes"
 fi
 
+# =================================================================================
+# EDMV3-T10: edm-state migrate-schema backfills schema_version on existing initiatives
+# =================================================================================
+echo
+echo "T10 -- migrate-schema backfill, honest versioning, SCHEMA_VERSION_MISSING"
+
+# ---- AC1/AC6: report fields printed; SCHEMA_VERSION_MISSING is informational --------------
+echo
+echo "T10 AC1/AC6 -- migrate-schema report fields; SCHEMA_VERSION_MISSING is informational"
+"$EDM_STATE" init MIGSCH1 >/dev/null
+STATE_MIGSCH1="$TMP/SRD/MIGSCH1/.edm-state.json"
+jq 'del(.schema_version)' "$STATE_MIGSCH1" > "$STATE_MIGSCH1.tmp" && mv "$STATE_MIGSCH1.tmp" "$STATE_MIGSCH1"
+
+set +e
+migsch1_validate_out="$("$EDM_STATE" validate MIGSCH1 2>&1)"
+migsch1_validate_ec=$?
+set -e
+[[ $migsch1_validate_ec -eq 0 ]] && pass "AC6 -- SCHEMA_VERSION_MISSING does not flip validate's exit code" \
+  || fail "AC6 -- validate exited $migsch1_validate_ec, expected 0"
+check "AC6 -- SCHEMA_VERSION_MISSING anomaly text present" "info  SCHEMA_VERSION_MISSING" "$migsch1_validate_out"
+
+_t10_migsch1_migrate() { echo yes | "$EDM_STATE" migrate-schema MIGSCH1; }
+migsch1_report="$(_t10_migsch1_migrate)"
+check "AC1 -- report shows current_phase" "current_phase" "$migsch1_report"
+check "AC1 -- report shows gates_approved" "gates_approved" "$migsch1_report"
+check "AC1 -- report shows terminal-phase completed_at" "completed_at" "$migsch1_report"
+check "AC1 -- report shows findings ledger status" "findings ledger" "$migsch1_report"
+check "AC1 -- report shows unclosed PARTIAL count" "unclosed PARTIAL" "$migsch1_report"
+migsch1_sv="$(jq -r '.schema_version' "$STATE_MIGSCH1")"
+[[ "$migsch1_sv" == "1" ]] && pass "AC1 -- schema_version stamped as 1 on a legacy state file" \
+  || fail "AC1 -- schema_version = '$migsch1_sv', expected 1"
+
+# ---- AC3 (negative): second migration attempt refused, naming the recorded value ----------
+echo
+echo "T10 AC3 -- second migration attempt refused naming the recorded value"
+_t10_migsch1_noconfirm() { "$EDM_STATE" migrate-schema MIGSCH1 < /dev/null; }
+check_fails "second migrate-schema attempt refused" \
+  "already has schema_version=1" _t10_migsch1_noconfirm
+check_state_unchanged "$STATE_MIGSCH1" _t10_migsch1_noconfirm
+
+# ---- AC3 (advance-by-one): once a higher shape is satisfied, advances by exactly one ------
+echo
+echo "T10 AC3 -- advances by exactly one once version-2 shapes are satisfied"
+mkdir -p "$TMP/SRD/MIGSCH1/code-audit"
+echo '{"id":"CA-001"}' > "$TMP/SRD/MIGSCH1/code-audit/findings-ledger.jsonl"
+migsch1_advance_out="$(_t10_migsch1_migrate)"
+check "AC3 -- advance message names 1 -> 2" "1 -> 2" "$migsch1_advance_out"
+migsch1_sv2="$(jq -r '.schema_version' "$STATE_MIGSCH1")"
+[[ "$migsch1_sv2" == "2" ]] && pass "AC3 -- schema_version advances by exactly one (1 -> 2)" \
+  || fail "AC3 -- schema_version = '$migsch1_sv2', expected 2"
+
+# ---- AC2 (honest version, negative): markdown-only ledger + open PARTIAL migrates to 1 ----
+echo
+echo "T10 AC2 -- markdown ledger + open PARTIAL migrates to 1, not 2"
+"$EDM_STATE" init MIGSCH2 >/dev/null
+STATE_MIGSCH2="$TMP/SRD/MIGSCH2/.edm-state.json"
+jq 'del(.schema_version)' "$STATE_MIGSCH2" > "$STATE_MIGSCH2.tmp" && mv "$STATE_MIGSCH2.tmp" "$STATE_MIGSCH2"
+mkdir -p "$TMP/SRD/MIGSCH2/code-audit"
+echo "# Findings Ledger" > "$TMP/SRD/MIGSCH2/code-audit/findings-ledger.md"
+"$EDM_STATE" record-partial-verdict MIGSCH2 MIGSCH2-T01 PARTIAL "needs runtime check" >/dev/null
+echo yes | "$EDM_STATE" migrate-schema MIGSCH2 >/dev/null
+migsch2_sv="$(jq -r '.schema_version' "$STATE_MIGSCH2")"
+[[ "$migsch2_sv" == "1" ]] && pass "AC2 -- markdown ledger + open PARTIAL migrates to 1, not 2" \
+  || fail "AC2 -- schema_version = '$migsch2_sv', expected 1"
+
+# ---- AC2 (honest version, positive): JSONL ledger + closed PARTIALs advances to 2 ---------
+echo
+echo "T10 AC2 -- JSONL ledger with closed PARTIALs advances to 2 on first migration"
+"$EDM_STATE" init MIGSCH3 >/dev/null
+STATE_MIGSCH3="$TMP/SRD/MIGSCH3/.edm-state.json"
+jq 'del(.schema_version)' "$STATE_MIGSCH3" > "$STATE_MIGSCH3.tmp" && mv "$STATE_MIGSCH3.tmp" "$STATE_MIGSCH3"
+mkdir -p "$TMP/SRD/MIGSCH3/code-audit"
+echo '{"id":"CA-001"}' > "$TMP/SRD/MIGSCH3/code-audit/findings-ledger.jsonl"
+"$EDM_STATE" record-partial-verdict MIGSCH3 MIGSCH3-T01 PASS "runtime verified" >/dev/null
+echo yes | "$EDM_STATE" migrate-schema MIGSCH3 >/dev/null
+migsch3_sv="$(jq -r '.schema_version' "$STATE_MIGSCH3")"
+[[ "$migsch3_sv" == "2" ]] && pass "AC2 -- JSONL ledger + zero open PARTIALs migrates directly to 2" \
+  || fail "AC2 -- schema_version = '$migsch3_sv', expected 2"
+
+# ---- AC4 (negative, archived): refuses on an archived initiative; never touches it --------
+echo
+echo "T10 AC4 -- archived initiative refused; state stays byte-identical"
+"$EDM_STATE" init MIGSCH4 >/dev/null
+jq 'del(.schema_version)' "$TMP/SRD/MIGSCH4/.edm-state.json" > "$TMP/SRD/MIGSCH4/.edm-state.json.tmp" \
+  && mv "$TMP/SRD/MIGSCH4/.edm-state.json.tmp" "$TMP/SRD/MIGSCH4/.edm-state.json"
+mkdir -p "$TMP/SRD/.archived"
+mv "$TMP/SRD/MIGSCH4" "$TMP/SRD/.archived/MIGSCH4"
+STATE_MIGSCH4_ARCH="$TMP/SRD/.archived/MIGSCH4/.edm-state.json"
+_t10_migsch4_archived() { "$EDM_STATE" migrate-schema MIGSCH4 < /dev/null; }
+check_fails "archived initiative refused" "is archived" _t10_migsch4_archived
+check_state_unchanged "$STATE_MIGSCH4_ARCH" _t10_migsch4_archived
+
+# ---- AC7 (negative, confirmation required): no input piped refuses, no changes made -------
+echo
+echo "T10 AC7 (confirmation gate) -- refuses without a piped/typed confirmation"
+"$EDM_STATE" init MIGSCH5 >/dev/null
+STATE_MIGSCH5="$TMP/SRD/MIGSCH5/.edm-state.json"
+jq 'del(.schema_version)' "$STATE_MIGSCH5" > "$STATE_MIGSCH5.tmp" && mv "$STATE_MIGSCH5.tmp" "$STATE_MIGSCH5"
+_t10_migsch5_noinput() { "$EDM_STATE" migrate-schema MIGSCH5 < /dev/null; }
+check_fails "migrate-schema refuses without a piped/typed confirmation" \
+  "confirmation not received" _t10_migsch5_noinput
+check_state_unchanged "$STATE_MIGSCH5" _t10_migsch5_noinput
+
+# ---- AC7 (hand-removal detectable): validate + HANDOFF render the migration prompt --------
+echo
+echo "T10 AC7 -- hand-removing schema_version fires the anomaly and HANDOFF renders the prompt"
+echo yes | "$EDM_STATE" migrate-schema MIGSCH5 >/dev/null   # first stamp it, so removal is a real downgrade
+jq 'del(.schema_version)' "$STATE_MIGSCH5" > "$STATE_MIGSCH5.tmp" && mv "$STATE_MIGSCH5.tmp" "$STATE_MIGSCH5"
+migsch5_val_out="$("$EDM_STATE" validate MIGSCH5 2>&1)"
+check "AC7 -- SCHEMA_VERSION_MISSING fires after hand-removal" "SCHEMA_VERSION_MISSING" "$migsch5_val_out"
+"$EDM_STATE" write-handoff MIGSCH5 >/dev/null
+migsch5_handoff="$(cat "$TMP/SRD/MIGSCH5/HANDOFF.md")"
+check "AC7 -- HANDOFF.md renders the migration prompt" "edm-state migrate-schema MIGSCH5" "$migsch5_handoff"
+
+# ---- AC5 (single writer) / AC9 (surfaced in --help, dispatch, CLAUDE.md) ------------------
+echo
+echo "T10 AC5/AC9 -- schema_version stays a single-writer field; surfaced in --help and CLAUDE.md"
+check_fails "AC5 -- cmd_set still refuses schema_version, naming migrate-schema" \
+  "edm-state migrate-schema <PREFIX>" \
+  "$EDM_STATE" set MIGSCH2 schema_version 9
+migsch_help_out="$("$EDM_STATE" --help)"
+check "AC9 -- --help lists migrate-schema" "migrate-schema" "$migsch_help_out"
+claude_md_hits="$(grep -c 'migrate-schema' "${SCRIPT_DIR}/../../CLAUDE.md" 2>/dev/null || echo 0)"
+[[ "${claude_md_hits:-0}" -ge 1 ]] && pass "AC9 -- CLAUDE.md bin/ table lists migrate-schema" \
+  || fail "AC9 -- migrate-schema not found in plugins/edm/CLAUDE.md"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

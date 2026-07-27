@@ -15,6 +15,7 @@
 #   edm-state record-tests-added <PREFIX> <phase> <layer> <count>  # record test count by layer
 #   edm-state get-coverage <PREFIX>                     # print coverage summary for all layers
 #   edm-state srd-version <PREFIX> <version>            # set the SRD version (e.g. 1.0.0, 1.1.0)
+#   edm-state migrate-schema <PREFIX>                   # backfill schema_version onto an existing initiative
 #   edm-state archive <PREFIX>                          # mark initiative complete (git-aware)
 #   edm-state write-handoff <PREFIX>                    # write/refresh HANDOFF.md for cross-user resumption
 #   edm-state watch-impl                                # tail git log for ticket commits (called by monitor)
@@ -668,6 +669,19 @@ state_anomalies() {
     echo "blocking  CONVERGED_NO_APPROVAL  code_audit_converged  code_audit_converged is true for ${prefix} but no code_audit_gate_approved_at record exists -- run edm-state approve-gate ${prefix} code-audit, or investigate a hand-edited state file"
     found=1
   fi
+  # SCHEMA_VERSION_MISSING (info -- EDMV3-T10 AC6): schema_version is absent for this
+  # (necessarily non-archived -- state_anomalies is only ever reached via a resolvable,
+  # non-archived path) initiative. Informational only: absence is the legacy signal every
+  # wave-A check degrades against (C-4), so it never flips cmd_validate's exit code -- it is
+  # a prompt to backfill, not a defect. Also fires when schema_version was removed by hand
+  # from a previously-migrated state file (EDMV3-T10 AC7), since this check only looks at
+  # the field's current presence, not history.
+  local schema_version_anom
+  schema_version_anom="$(echo "$state" | jq -r '.schema_version // empty')"
+  if [[ -z "$schema_version_anom" ]]; then
+    echo "info  SCHEMA_VERSION_MISSING  schema_version  no schema_version recorded for ${prefix} -- run edm-state migrate-schema ${prefix} to backfill enforcement-kernel compatibility"
+    found=1
+  fi
   return 0
 }
 
@@ -1254,6 +1268,127 @@ cmd_srd_version() {
   require_jq
   rmw_state "$prefix" '.srd_version = $v | .last_updated = $t' --arg v "$version" --arg t "$(now_utc)"
   echo "set srd_version = $version for $prefix"
+  write_handoff_internal "$prefix"
+}
+
+# ---- Schema migration (EDMV3-T10) -------------------------------------------
+# migrate-schema <PREFIX>
+# Backfills schema_version onto an existing initiative that predates the enforcement kernel
+# (absent schema_version is the legacy signal, EDMV3-T09 AC8). schema_version is otherwise a
+# single-writer field (cmd_set refuses it, EDMV3-T09 AC9) -- this is the only writer.
+#
+# The version written is the highest whose shape requirements the initiative actually
+# satisfies, never higher (AC2): version 1 is always satisfiable (it certifies only the
+# wave-A gate/phase/artifact shape, which every initiative already has by construction).
+# Version 2 (wave B: JSONL findings ledger, closed PARTIAL verdicts) is only reachable when a
+# JSONL findings ledger is actually on disk (code-audit/findings-ledger.jsonl, non-empty) and
+# every partial_verdict_map entry has moved off "PARTIAL". Version 3 does not exist yet
+# (EDMV3-T09 AC8 note: assigned only if a wave-C shape change requires it).
+#
+# Never lowers schema_version and never touches SRD_ROOT/.archived/ (AC4) -- archived
+# initiatives are frozen at whatever version (or absence) they carried when archived.
+cmd_migrate_schema() {
+  [[ $# -eq 1 ]] || die "usage: edm-state migrate-schema <PREFIX>"
+  require_jq
+  local prefix="$1"
+
+  # AC4: never touches an archived initiative. state_file_for()/initiative_dir_for() never
+  # resolve into SRD_ROOT/.archived/ by design (archived initiatives are inert, EDMV3-111) --
+  # so this is checked explicitly, before any other resolution, covering both the flat
+  # (.archived/PREFIX/) and product-scoped (.archived/PRODUCT/PREFIX__desc/) archived shapes.
+  local archived_hit="" _ms_af
+  [[ -f "${SRD_ROOT}/.archived/${prefix}/.edm-state.json" ]] \
+    && archived_hit="${SRD_ROOT}/.archived/${prefix}/.edm-state.json"
+  if [[ -z "$archived_hit" ]]; then
+    for _ms_af in "${SRD_ROOT}"/.archived/*/"${prefix}__"*/.edm-state.json; do
+      [[ -f "$_ms_af" ]] && archived_hit="$_ms_af" && break
+    done
+  fi
+  [[ -z "$archived_hit" ]] \
+    || die "migrate-schema: refused -- ${prefix} is archived (found at ${archived_hit}); archived initiatives are not migrated"
+
+  local dir state_file
+  dir="$(initiative_dir_for "$prefix")"
+  state_file="${dir}/.edm-state.json"
+  [[ -f "$state_file" ]] || die "migrate-schema: no state file for $prefix at $state_file"
+
+  local state current_version
+  state="$(cat "$state_file")"
+  current_version="$(echo "$state" | jq -r '.schema_version // empty')"
+
+  # ---- Diagnostic report, printed before any confirmation is requested (AC1) -------------
+  local current_phase gates_count terminal_phase_ms terminal_completed_at
+  current_phase="$(echo "$state" | jq -r '.current_phase // 0')"
+  gates_count="$(echo "$state" | jq -r '(.gates_approved // []) | length')"
+  # Mode-derived terminal phase when mode is recorded; falls back to current_phase for a
+  # pre-mode-field legacy file so the report still shows something meaningful rather than
+  # erroring on an unrecognized mode.
+  local ms_mode ms_lifecycle_mode
+  ms_mode="$(echo "$state" | jq -r '.mode // "null"')"
+  ms_lifecycle_mode="$(echo "$state" | jq -r '.lifecycle_mode // "standard"')"
+  if [[ "$ms_mode" != "null" ]]; then
+    terminal_phase_ms="$(terminal_phase_for_mode "$ms_mode" "$ms_lifecycle_mode")"
+  else
+    terminal_phase_ms="$current_phase"
+  fi
+  terminal_completed_at="$(echo "$state" | jq -r --arg k "${terminal_phase_ms}_phase" '.phase_durations[$k].completed_at // empty')"
+
+  local ledger_jsonl="${dir}/code-audit/findings-ledger.jsonl"
+  local has_jsonl_ledger=false
+  [[ -s "$ledger_jsonl" ]] && has_jsonl_ledger=true
+  local ledger_format
+  if [[ "$has_jsonl_ledger" == "true" ]]; then
+    ledger_format="JSONL (${ledger_jsonl})"
+  elif [[ -s "${dir}/code-audit/findings-ledger.md" ]]; then
+    ledger_format="markdown (${dir}/code-audit/findings-ledger.md)"
+  else
+    ledger_format="absent"
+  fi
+
+  local open_partials
+  open_partials="$(echo "$state" | jq -r '
+    [(.partial_verdict_map // {}) | to_entries[] | select(.value.verdict == "PARTIAL")] | length
+  ' 2>/dev/null || echo 0)"
+
+  echo "# migrate-schema report for ${prefix}"
+  echo "  current_phase:          ${current_phase}"
+  echo "  gates_approved:         ${gates_count}"
+  echo "  terminal completed_at:  ${terminal_completed_at:-(none)}"
+  echo "  findings ledger:        ${ledger_format}"
+  echo "  unclosed PARTIAL count: ${open_partials}"
+  echo "  recorded schema_version: ${current_version:-(absent)}"
+
+  # ---- AC2: honest version -- the highest shape this initiative actually satisfies -------
+  local target_version=1
+  if [[ "$has_jsonl_ledger" == "true" && "$open_partials" -eq 0 ]]; then
+    target_version=2
+  fi
+
+  # ---- AC3: refuse when already migrated, unless a higher shape is now satisfied --------
+  if [[ -n "$current_version" ]]; then
+    if [[ "$target_version" -le "$current_version" ]]; then
+      die "migrate-schema: ${prefix} already has schema_version=${current_version}; refusing (no higher shape is currently satisfied)"
+    fi
+    # Advance by exactly one -- never skip a version even if the computed target is higher.
+    target_version=$((current_version + 1))
+    echo "  advancing schema_version: ${current_version} -> ${target_version}"
+  else
+    echo "  proposed schema_version: ${target_version}"
+  fi
+  echo
+
+  # Confirmation, read from stdin so a test can pipe "yes" non-interactively (the technical
+  # note requires this): `read` returns non-zero / an empty line at EOF when stdin is closed
+  # and nothing was piped, which the check below refuses rather than proceeds on.
+  printf "Type 'yes' to stamp schema_version=%s onto %s: " "$target_version" "$prefix"
+  local reply=""
+  read -r reply || true
+  [[ "$reply" == "yes" ]] \
+    || die "migrate-schema: confirmation not received (expected 'yes'); no changes made"
+
+  rmw_state "$prefix" '.schema_version = ($v | tonumber) | .last_updated = $t' \
+    --arg v "$target_version" --arg t "$(now_utc)"
+  echo "migrated ${prefix}: schema_version = ${target_version}"
   write_handoff_internal "$prefix"
 }
 
@@ -2260,6 +2395,16 @@ write_handoff_internal() {
   implementation_mode="$(echo "$state" | jq -r '.implementation_mode // "standard"')"
   supersedes="$(echo "$state" | jq -r '.supersedes // ""')"
   forked_from="$(echo "$state" | jq -r '.forked_from // ""')"
+
+  # Migration prompt (EDMV3-T10 AC7): schema_version absent -- whether this initiative
+  # predates the enforcement kernel or the field was removed by hand from a previously
+  # migrated file -- renders here so a silent downgrade is visible, not just in
+  # `edm-state validate`'s SCHEMA_VERSION_MISSING anomaly.
+  local schema_version_note=""
+  if [[ "$(echo "$state" | jq -r '.schema_version // empty')" == "" ]]; then
+    schema_version_note="- **Schema**: schema_version not recorded -- run \`edm-state migrate-schema ${prefix}\` to backfill enforcement-kernel compatibility"
+  fi
+
   skipped_phases_json="$(echo "$state" | jq -r '
     (.skipped_phases // []) |
     if length == 0 then ""
@@ -2484,6 +2629,7 @@ write_handoff_internal() {
     [[ -n "$product_name" ]] && printf '%s\n' "- **Product**: ${product_name}"
     [[ -n "$initiative_description" ]] && printf '%s\n' "- **Description**: ${initiative_description}"
     printf '%s\n\n' "- **Next action**: ${next_action}"
+    [[ -n "$schema_version_note" ]] && printf '%s\n\n' "$schema_version_note"
     printf '%s\n\n' "## Resume Point"
     printf '%s\n' "- **Phase**: ${phase_name}"
     [[ -n "$current_step" ]]  && printf '%s\n' "- **Step**: ${current_step}"
@@ -2597,6 +2743,7 @@ case "$cmd" in
   record-tests-added)   cmd_record_tests_added "$@" ;;
   get-coverage)         cmd_get_coverage "$@" ;;
   srd-version)          cmd_srd_version "$@" ;;
+  migrate-schema)       cmd_migrate_schema "$@" ;;
   archive)              cmd_archive "$@" ;;
   write-handoff)        cmd_write_handoff "$@" ;;
   watch-impl)           cmd_watch_impl "$@" ;;
