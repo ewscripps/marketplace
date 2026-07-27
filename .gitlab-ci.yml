@@ -1,0 +1,329 @@
+# GitLab CI pipeline for the STG Plugin Marketplace repository.
+#
+# EDMV3-T21. Scoped to the `edm` plugin only (`plugins/edm/**`) -- no other plugin in this
+# repository has a build, test, or lint step, so a repository-wide gate would be a false
+# positive on every unrelated MR. Jobs run on:
+#   - merge requests whose changes touch plugins/edm/**
+#   - every pipeline on the default branch (unconditionally), so the pipeline cannot rot
+#     behind an unrelated merge and go stale without anyone noticing (SRD EDMV3-23).
+#
+# Image digest pinning (AC7). Every `image:` entry below is pinned to a `@sha256:` digest, not
+# a floating tag. The two digests currently pinned (`alpine:3.20`, `node:20-alpine`) were
+# captured on 2026-07-24 and MUST be refreshed against the live registry before this pipeline
+# is first enabled against a real GitLab runner fleet -- pulling a tag and pinning by digest is
+# an operational step that cannot be verified from a sandboxed development environment with no
+# route to a container registry. Refresh procedure (run whenever these images are rotated):
+#   docker pull <image>:<tag>
+#   docker inspect --format='{{index .RepoDigests 0}}' <image>:<tag>
+# then paste the resulting `<image>:<tag>@sha256:...` string into every `image:` line that uses
+# it below.
+
+stages:
+  - lint
+  - test
+  - validate
+  - eval
+
+# ---- Shared rule set (AC2) ------------------------------------------------------------------
+# Merge-request pipelines: only when the MR's changes touch plugins/edm/**.
+# Any pipeline on the default branch: always, regardless of what changed, so a stale smoke
+# assertion is caught even when the triggering merge touched an unrelated plugin.
+.edm_rules: &edm_rules
+  - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    changes:
+      - "plugins/edm/**/*"
+
+# ---- lint stage -------------------------------------------------------------------------------
+
+lint:shell-and-artifacts:
+  stage: lint
+  image: "alpine:3.20@sha256:4117b6e5b09d84c8f03ea45234ee7f8ec9f5c3a9792b80e3c9d54ded36d3735a"
+  rules: *edm_rules
+  before_script:
+    - apk add --no-cache bash jq git
+  script:
+    - |
+      set -e
+      echo "=== bash -n over plugins/edm/bin/ (including bin/tests/*.sh) ==="
+      FAIL=0
+      for f in plugins/edm/bin/* plugins/edm/bin/tests/*.sh; do
+        [ -f "$f" ] || continue
+        if bash -n "$f"; then
+          echo "  OK: $f"
+        else
+          echo "  FAIL: bash -n $f"
+          FAIL=1
+        fi
+      done
+      [ "$FAIL" -eq 0 ] || exit 1
+    - echo "=== edm-lint-artifacts --all (every tracked initiative, both layouts) ==="
+    - bash plugins/edm/bin/edm-lint-artifacts --all
+    - echo "=== edm-check-grants (four-source grant/instruction contract) ==="
+    - bash plugins/edm/bin/edm-check-grants
+
+# AC3: added here non-blocking only. EDMV3-80's file-type ban binds all six marketplace
+# plugins; plugins/edm/ itself currently carries two banned files (a .pptx and a .docx), so
+# this job runs the real scan every pipeline but never blocks a merge until EDMV3-T57 records a
+# clean six-plugin scan and flips `allow_failure` to `false` in the same MR that fixes what it
+# finds. Scans git-tracked files only (never local, untracked OS artifacts like a developer's
+# own uncommitted .DS_Store).
+lint:file-type-ban:
+  stage: lint
+  image: "alpine:3.20@sha256:4117b6e5b09d84c8f03ea45234ee7f8ec9f5c3a9792b80e3c9d54ded36d3735a"
+  rules: *edm_rules
+  allow_failure: true
+  before_script:
+    - apk add --no-cache bash git
+  script:
+    - |
+      set -e
+      banned="$(git ls-files -- plugins | grep -iE '\.(pptx|docx)$|(^|/)\.DS_Store$' || true)"
+      if [ -n "$banned" ]; then
+        echo "file-type-ban: banned file(s) found under plugins/ (non-blocking until EDMV3-T57):"
+        printf '%s\n' "$banned"
+        exit 1
+      fi
+      echo "file-type-ban: clean -- no .pptx/.docx/.DS_Store tracked under plugins/"
+
+# ---- test stage -------------------------------------------------------------------------------
+
+# AC5: this job's script is the aggregator invocation and nothing else. run-all.sh
+# auto-discovers bin/tests/*-smoke.sh (EDMV3-T20 AC3) -- enumerating suite names here would be
+# a second, silently-stale source of truth for the suite set.
+test:smoke:
+  stage: test
+  image: "alpine:3.20@sha256:4117b6e5b09d84c8f03ea45234ee7f8ec9f5c3a9792b80e3c9d54ded36d3735a"
+  rules: *edm_rules
+  before_script:
+    - apk add --no-cache bash jq git
+  script:
+    - bash plugins/edm/bin/tests/run-all.sh
+
+# AC12 (Gate 3 revise): edm-state validate across every tracked, non-archived initiative,
+# enumerated via the same layout-aware `edm-state list --paths` that edm-lint-artifacts --all
+# uses (EDMV3-T20), so there is exactly one implementation of layout resolution. Informational
+# anomalies are printed without failing the job; a blocking anomaly (edm-state validate exit 3)
+# fails it, naming the initiative and the anomaly code.
+test:state-validate:
+  stage: test
+  image: "alpine:3.20@sha256:4117b6e5b09d84c8f03ea45234ee7f8ec9f5c3a9792b80e3c9d54ded36d3735a"
+  rules: *edm_rules
+  before_script:
+    - apk add --no-cache bash jq git
+  script:
+    - |
+      set -u
+      # POSIX /bin/sh -safe on purpose (no process substitution, no arrays): the runner's
+      # shell-selection probe for this image runs before `apk add bash` in before_script has
+      # installed anything, so the script stage itself may still execute under plain sh.
+      export PATH="$(pwd)/plugins/edm/bin:$PATH"
+      FAIL=0
+      COUNT=0
+      LIST_FILE="$(mktemp)"
+      edm-state list --paths > "$LIST_FILE"
+      while IFS= read -r dir; do
+        [ -n "$dir" ] || continue
+        state_file="${dir}/.edm-state.json"
+        [ -f "$state_file" ] || continue
+        prefix="$(jq -r '.prefix // empty' "$state_file")"
+        [ -n "$prefix" ] || { echo "SKIP: $state_file has no .prefix"; continue; }
+        COUNT=$((COUNT + 1))
+        echo "validate: ${prefix} (${dir})"
+        out="$(edm-state validate "$prefix" 2>&1)"
+        ec=$?
+        printf '%s\n' "$out"
+        if [ "$ec" -eq 3 ]; then
+          echo "  BLOCKING anomaly in ${prefix} (edm-state validate exit 3)"
+          FAIL=1
+        elif [ "$ec" -ne 0 ]; then
+          echo "  edm-state validate exited ${ec} for ${prefix} (unexpected, treated as blocking)"
+          FAIL=1
+        fi
+      done < "$LIST_FILE"
+      rm -f "$LIST_FILE"
+      echo "state-validate: ${COUNT} initiative(s) checked"
+      if [ "$FAIL" -ne 0 ]; then
+        echo "state-validate: FAILED (blocking anomaly present)"
+        exit 1
+      fi
+      echo "state-validate: OK"
+
+# ---- validate stage (two-tier, AC6) -------------------------------------------------------
+
+# Tier 1: deterministic jq + shell manifest/frontmatter check. Needs only jq (plus the shell
+# already present in every blocking-job image) -- no `claude` CLI dependency, so it is the one
+# manifest check that survives a runner fleet that never has the CLI installed. Always blocks.
+validate:manifest:
+  stage: validate
+  image: "alpine:3.20@sha256:4117b6e5b09d84c8f03ea45234ee7f8ec9f5c3a9792b80e3c9d54ded36d3735a"
+  rules: *edm_rules
+  before_script:
+    - apk add --no-cache bash jq
+  script:
+    - |
+      set -eu
+      # POSIX /bin/sh -safe on purpose (no process substitution, no arrays, no herestrings):
+      # see the note on the test:state-validate job -- the runner may execute this stage under
+      # plain sh regardless of the `apk add bash` in before_script.
+      MANIFEST=".claude-plugin/marketplace.json"
+      PLUGIN_DIR="plugins/edm"
+      FAIL=0
+      TMP="$(mktemp -d)"
+      trap 'rm -rf "$TMP"' EXIT
+
+      jq -e '.plugins[] | select(.name == "edm")' "$MANIFEST" > "${TMP}/edm_entry.json" \
+        || { echo "FAIL: marketplace.json does not parse, or no plugin named 'edm' is declared"; exit 1; }
+
+      jq -r '.skills[]?' "${TMP}/edm_entry.json" | sed 's#^\./skills/##' | sort > "${TMP}/declared_skills"
+      : > "${TMP}/disk_skills"
+      if [ -d "$PLUGIN_DIR/skills" ]; then
+        for d in "$PLUGIN_DIR"/skills/*/; do
+          [ -f "${d}SKILL.md" ] || continue
+          basename "$d" >> "${TMP}/disk_skills"
+        done
+      fi
+      sort -o "${TMP}/disk_skills" "${TMP}/disk_skills"
+      comm -23 "${TMP}/declared_skills" "${TMP}/disk_skills" > "${TMP}/missing_skills" 2>/dev/null || true
+      comm -13 "${TMP}/declared_skills" "${TMP}/disk_skills" > "${TMP}/undeclared_skills" 2>/dev/null || true
+      if [ -s "${TMP}/missing_skills" ]; then
+        echo "FAIL: skill(s) declared in marketplace.json but missing SKILL.md on disk:"; sed 's/^/  /' "${TMP}/missing_skills"; FAIL=1
+      fi
+      if [ -s "${TMP}/undeclared_skills" ]; then
+        echo "FAIL: skill(s) on disk but not declared in marketplace.json:"; sed 's/^/  /' "${TMP}/undeclared_skills"; FAIL=1
+      fi
+
+      jq -r '.agents[]?' "${TMP}/edm_entry.json" | sed 's#^\./agents/##; s#\.md$##' | sort > "${TMP}/declared_agents"
+      : > "${TMP}/disk_agents"
+      if [ -d "$PLUGIN_DIR/agents" ]; then
+        for f in "$PLUGIN_DIR"/agents/*.md; do
+          [ -f "$f" ] || continue
+          basename "$f" .md >> "${TMP}/disk_agents"
+        done
+      fi
+      sort -o "${TMP}/disk_agents" "${TMP}/disk_agents"
+      comm -23 "${TMP}/declared_agents" "${TMP}/disk_agents" > "${TMP}/missing_agents" 2>/dev/null || true
+      comm -13 "${TMP}/declared_agents" "${TMP}/disk_agents" > "${TMP}/undeclared_agents" 2>/dev/null || true
+      if [ -s "${TMP}/missing_agents" ]; then
+        echo "FAIL: agent(s) declared in marketplace.json but missing on disk:"; sed 's/^/  /' "${TMP}/missing_agents"; FAIL=1
+      fi
+      if [ -s "${TMP}/undeclared_agents" ]; then
+        echo "FAIL: agent(s) on disk but not declared in marketplace.json:"; sed 's/^/  /' "${TMP}/undeclared_agents"; FAIL=1
+      fi
+
+      TOOL_RE='^[A-Za-z][A-Za-z0-9]*(\([^)]*\))?$|^mcp__[A-Za-z0-9_{}]+__[A-Za-z0-9_{}]+$'
+
+      check_frontmatter() {
+        file="$1"
+        line1="$(sed -n '1p' "$file")"
+        if [ "$line1" != "---" ]; then
+          echo "FAIL: $file: does not start with a frontmatter '---' delimiter"; FAIL=1; return
+        fi
+        close_line="$(awk 'NR>1 && $0=="---"{print NR; exit}' "$file")"
+        if [ -z "$close_line" ]; then
+          echo "FAIL: $file: frontmatter has no closing '---' delimiter"; FAIL=1; return
+        fi
+        sed -n "2,$((close_line-1))p" "$file" \
+          | grep -vE '^[A-Za-z][A-Za-z0-9_-]*:.*$|^[[:space:]].*$|^[[:space:]]*$|^#.*$' > "${TMP}/bad_fm" || true
+        if [ -s "${TMP}/bad_fm" ]; then
+          echo "FAIL: $file: frontmatter block contains a line that is not a 'key: value' pair, a comment, or a continuation:"
+          sed 's/^/  /' "${TMP}/bad_fm"; FAIL=1
+        fi
+        for field in allowed-tools tools disallowedTools; do
+          toolline="$(sed -n "2,$((close_line-1))p" "$file" | grep -E "^${field}:" || true)"
+          [ -n "$toolline" ] || continue
+          printf '%s' "$toolline" | sed "s/^${field}: *//" | tr ',' '\n' > "${TMP}/tokens"
+          while IFS= read -r tok; do
+            tok="$(printf '%s' "$tok" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+            [ -n "$tok" ] || continue
+            if ! printf '%s' "$tok" | grep -qE "$TOOL_RE"; then
+              echo "FAIL: $file: malformed tool name in $field: '$tok'"; FAIL=1
+            fi
+          done < "${TMP}/tokens"
+        done
+      }
+
+      for f in "$PLUGIN_DIR"/skills/*/SKILL.md; do
+        [ -f "$f" ] || continue
+        check_frontmatter "$f"
+      done
+      for f in "$PLUGIN_DIR"/agents/*.md; do
+        [ -f "$f" ] || continue
+        check_frontmatter "$f"
+      done
+
+      if [ "$FAIL" -ne 0 ]; then
+        echo "validate:manifest: FAILED"
+        exit 1
+      fi
+      echo "validate:manifest: OK -- manifest and frontmatter consistent"
+
+# Tier 2: runs `claude plugin validate` and compares its warning count against the committed
+# baseline in .gitlab/edm-validate-baseline.txt. `allow_failure: true` unconditionally -- this
+# is the one tier that is never blocking, whether it fails because a new warning was
+# introduced or because the `claude` CLI image is unavailable on a given runner.
+validate:plugin-cli:
+  stage: validate
+  image: "node:20-alpine@sha256:8a1761ffc4f153d49b3c6711271b962620a9cc77ffe7c693469a77907a136ea2"
+  rules: *edm_rules
+  allow_failure: true
+  before_script:
+    - npm install -g @anthropic-ai/claude-code || true
+  script:
+    - |
+      set -u
+      BASELINE_FILE=".gitlab/edm-validate-baseline.txt"
+      if ! command -v claude >/dev/null 2>&1; then
+        echo "validate:plugin-cli: 'claude' CLI not available in this image -- skipping tier 2"
+        exit 0
+      fi
+      OUT="$(claude plugin validate plugins/edm/ 2>&1)"
+      CLI_EC=$?
+      printf '%s\n' "$OUT"
+      if [ "$CLI_EC" -ne 0 ]; then
+        echo "validate:plugin-cli: FAIL -- claude plugin validate exited ${CLI_EC} (structural error)"
+        exit 1
+      fi
+      COUNT="$(printf '%s\n' "$OUT" | grep -oE 'Found [0-9]+ warning' | grep -oE '[0-9]+' | head -1)"
+      COUNT="${COUNT:-0}"
+      BASELINE="$(cat "$BASELINE_FILE" 2>/dev/null || echo 0)"
+      if [ "$COUNT" -gt "$BASELINE" ]; then
+        echo "validate:plugin-cli: FAIL -- ${COUNT} warning(s) found, baseline is ${BASELINE} (new warning introduced)"
+        exit 1
+      fi
+      echo "validate:plugin-cli: OK -- ${COUNT} warning(s) at or under baseline ${BASELINE}"
+
+# ---- eval stage ---------------------------------------------------------------------------
+
+# EDMV3-T22's headless driver (run-eval.sh) run against the tiny-svc fixture. Never blocking,
+# never automatic on a normal MR pipeline -- `when: manual` there. A scheduled nightly pipeline
+# (configured in GitLab CI/CD > Schedules with ANTHROPIC_API_KEY as a protected variable) runs
+# it automatically. Absent ANTHROPIC_API_KEY the job is skipped outright (rules `when: never`),
+# not failed -- a missing secret on a fork or contributor pipeline must not present as broken.
+eval:nightly:
+  stage: eval
+  image: "node:20-alpine@sha256:8a1761ffc4f153d49b3c6711271b962620a9cc77ffe7c693469a77907a136ea2"
+  allow_failure: true
+  rules:
+    - if: '$ANTHROPIC_API_KEY == null'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: on_success
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - "plugins/edm/**/*"
+      when: manual
+    - when: never
+  before_script:
+    - npm install -g @anthropic-ai/claude-code
+  script:
+    - bash plugins/edm/evals/run-eval.sh
+    - |
+      if [ -f plugins/edm/evals/score-artifacts.sh ]; then
+        RUN_DIR="$(ls -td plugins/edm/evals/runs/*/ 2>/dev/null | head -1)"
+        if [ -n "$RUN_DIR" ]; then
+          bash plugins/edm/evals/score-artifacts.sh "$RUN_DIR"
+        fi
+      fi

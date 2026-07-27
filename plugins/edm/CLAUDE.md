@@ -521,6 +521,28 @@ After modifying any plugin component:
 2. Test in a sandbox: `claude --plugin-dir ./plugins/edm`
 3. Run `/reload-plugins` to pick up changes without restarting
 4. Verify agents appear in `/agents`, skills in `/help`
+5. Run `bash plugins/edm/bin/tests/run-all.sh` locally before pushing -- this is the same
+   command CI runs and is the fastest way to catch a regression before opening an MR.
+
+### CI (EDMV3-T21)
+
+A GitLab CI pipeline (`.gitlab-ci.yml`, repository root) runs automatically on every merge
+request whose changes touch `plugins/edm/**`, and on every pipeline on the default branch
+regardless of what changed (so the pipeline cannot go stale behind an unrelated merge). It has
+four stages:
+
+| Stage | Job | Blocking? | What it does |
+|---|---|---|---|
+| `lint` | `lint:shell-and-artifacts` | Yes | `bash -n` over every file in `bin/` (incl. `bin/tests/*.sh`), `edm-lint-artifacts --all`, `edm-check-grants` |
+| `lint` | `lint:file-type-ban` | No (`allow_failure: true` until EDMV3-T57) | Scans tracked files under `plugins/` for banned types (`.pptx`, `.docx`, `.DS_Store`) |
+| `test` | `test:smoke` | Yes | `bash plugins/edm/bin/tests/run-all.sh` -- the single aggregator invocation; no suite is enumerated in the pipeline file, so a new `*-smoke.sh` suite runs in CI automatically |
+| `test` | `test:state-validate` | Yes | `edm-state validate` across every tracked, non-archived initiative; informational anomalies are reported, a blocking anomaly fails the job |
+| `validate` | `validate:manifest` | Yes (tier 1) | Deterministic `jq`-only check: every skill/agent on disk is declared in `.claude-plugin/marketplace.json` and vice versa, every `SKILL.md`/agent frontmatter block parses, every declared tool name is well-formed |
+| `validate` | `validate:plugin-cli` | No (`allow_failure: true`, tier 2) | `claude plugin validate plugins/edm/`, compared against the committed warning-count baseline in `.gitlab/edm-validate-baseline.txt`; skips cleanly if the `claude` CLI isn't in the runner image |
+| `eval` | `eval:nightly` | No (`allow_failure: true`) | Runs the headless eval driver (`plugins/edm/evals/run-eval.sh`) against the `tiny-svc` fixture. `when: manual` on a normal pipeline; runs automatically on a scheduled nightly pipeline. Skipped outright (not failed) when `ANTHROPIC_API_KEY` is unset |
+
+All job images are pinned by digest (`@sha256:...`) rather than a floating tag; see the digest
+refresh procedure documented at the top of `.gitlab-ci.yml`.
 
 ## Related documentation
 
