@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
-# edm-lint-artifacts - scan an EDM initiative's committed artifacts for violations.
+# edm-lint-artifacts - scan EDM initiative artifacts for violations.
 # Usage:
-#   edm-lint-artifacts <PREFIX>        # scan initiative artifacts
-#   edm-lint-artifacts -h|--help       # show this help
+#   edm-lint-artifacts <PREFIX>            # scan one initiative's artifacts (resolved via edm-state)
+#   edm-lint-artifacts --all               # scan every initiative under the SRD root -- flat and
+#                                           # product-scoped layouts, excluding .archived/
+#   edm-lint-artifacts --path <dir|file>   # scan an arbitrary directory or file directly; strictly
+#                                           # read-only, performs no state resolution, never calls
+#                                           # edm-state
+#   edm-lint-artifacts -h|--help           # show this help
+#
+# <PREFIX>, --all and --path are mutually exclusive. Supplying two of the three is a usage
+# error (exit 2), not a silent precedence rule.
 #
 # Violation classes (all cause a non-zero exit):
 #   attribution    -- AI-attribution trailers (co-authored-by, generated with, etc.)
@@ -10,7 +18,7 @@
 #   leaked-tool-tag -- XML/tool-invocation tags leaked into artifact content
 #
 # Output format: path:line: <class>: <snippet>
-# Exit code: 0 = clean; 1 = one or more violations found.
+# Exit code: 0 = clean; 1 = one or more violations found; 2 = usage error.
 #
 # Ignore markers (place in .md files to suppress false positives on policy docs):
 #   <!-- edm-lint-ignore -->           -- ignores the NEXT line only
@@ -25,26 +33,57 @@ set -euo pipefail
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
 TICKET_PACK_DIRNAME="${EDM_TICKET_PACK_DIRNAME:-${CLAUDE_PLUGIN_OPTION_TICKET_PACK_DIRNAME:-tickets}}"
 
-die() { echo "edm-lint-artifacts: $*" >&2; exit 1; }
+die() {
+  local msg="$1" code="${2:-1}"
+  echo "edm-lint-artifacts: $msg" >&2
+  exit "$code"
+}
 
 usage() {
-  sed -n '2,19p' "$0"
+  sed -n '2,30p' "$0"
   exit 0
 }
 
+# ---- Argument parsing: <PREFIX> | --all | --path <dir|file>, mutually exclusive ---------------
 case "${1:-}" in
   -h|--help|help) usage ;;
-  "") die "usage: edm-lint-artifacts <PREFIX>" ;;
 esac
 
-PREFIX="$1"
+MODE="prefix"
+PREFIX=""
+PATH_ARG=""
 
-# Resolve the initiative directory via edm-state (honors product-scoped layout).
-command -v edm-state >/dev/null 2>&1 || die "edm-state not found on PATH"
-INIT_DIR="$(edm-state resolve-dir "$PREFIX" 2>&1)" \
-  || die "no initiative for prefix $PREFIX (run: edm-state init $PREFIX)"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --all)
+      [[ "$MODE" == "prefix" && -z "$PREFIX" ]] \
+        || die "usage: --all is mutually exclusive with --path and a PREFIX" 2
+      MODE="all"
+      shift
+      ;;
+    --path)
+      [[ $# -ge 2 ]] || die "--path requires a directory or file argument" 2
+      [[ "$MODE" == "prefix" && -z "$PREFIX" ]] \
+        || die "usage: --path is mutually exclusive with --all and a PREFIX" 2
+      MODE="path"
+      PATH_ARG="$2"
+      shift 2
+      ;;
+    --*)
+      die "unknown flag: $1" 2
+      ;;
+    *)
+      [[ "$MODE" == "prefix" ]] || die "usage: PREFIX is mutually exclusive with --all/--path" 2
+      [[ -z "$PREFIX" ]] || die "unexpected extra argument: $1" 2
+      PREFIX="$1"
+      shift
+      ;;
+  esac
+done
 
-[[ -d "$INIT_DIR" ]] || die "initiative directory not found: $INIT_DIR"
+if [[ "$MODE" == "prefix" && -z "$PREFIX" ]]; then
+  die "usage: edm-lint-artifacts <PREFIX> | --all | --path <dir|file>"
+fi
 
 # Verify grep supports -P (PCRE) for Unicode detection.
 _has_pcre_grep=0
@@ -114,94 +153,192 @@ is_ignored_line() {
   [[ -n "$ignoreset" ]] && echo "$ignoreset" | grep -qxF "$lineno"
 }
 
-# ---- Scan all *.md files, excluding .git/ and .archived/ ----------------------
-MD_FILES=()
-while IFS= read -r _md_f; do
-  MD_FILES+=("$_md_f")
-done < <(
-  find "$INIT_DIR" \
+# ---- Helper: list *.md files under a directory, excluding .git/ and .archived/ ----------------
+collect_md_files() {
+  local dir="$1"
+  find "$dir" \
     -not -path '*/.git/*' \
     -not -path '*/.archived/*' \
     -name '*.md' \
     2>/dev/null \
   | sort
-)
+}
 
-if [[ ${#MD_FILES[@]} -eq 0 ]]; then
-  echo "edm-lint-artifacts: no .md files found in $INIT_DIR"
-  exit 0
-fi
+# ---- Helper: scan a list of files across all violation classes --------------------------------
+# scan_md_files <file...> — prints 'path:line: <class>: <snippet>' per violation and increments
+# the global `violations`. Shared by prefix mode, --all mode and --path mode so there is exactly
+# one implementation of the scan (EDMV3-111).
+scan_md_files() {
+  [[ $# -eq 0 ]] && return 0
+  local file
 
-# ---- Class 1: Attribution trailers (EDMV2-T113 phrase set) --------------------
-# Matches case-insensitively with fixed strings.
-_ATTR_PHRASES=(
-  "co-authored-by"
-  "co-authored by"
-  "generated with claude"
-  "generated by claude"
-  "claude-flow"
-  "created by claude"
-)
-
-for file in "${MD_FILES[@]}"; do
-  ignore_set="$(build_ignore_set "$file")"
-  lineno=0
-  while IFS= read -r linetext; do
-    lineno=$((lineno + 1))
-    is_ignored_line "$lineno" "$ignore_set" && continue
-    lower="$(echo "$linetext" | tr '[:upper:]' '[:lower:]')"
-    for phrase in "${_ATTR_PHRASES[@]}"; do
-      if [[ "$lower" == *"$phrase"* ]]; then
-        snippet="$(echo "$linetext" | tr -d '\r' | cut -c1-120)"
-        report_violation "attribution" "$file" "$lineno" "$snippet"
-        break
-      fi
-    done
-  done < "$file"
-done
-
-# ---- Class 2: Non-ASCII (Unicode) bytes ---------------------------------------
-if [[ "$_has_pcre_grep" -eq 1 ]]; then
-  for file in "${MD_FILES[@]}"; do
+  # ---- Class 1: Attribution trailers (EDMV2-T113 phrase set) --------------------
+  local _ATTR_PHRASES=(
+    "co-authored-by"
+    "co-authored by"
+    "generated with claude"
+    "generated by claude"
+    "claude-flow"
+    "created by claude"
+  )
+  for file in "$@"; do
+    local ignore_set lineno linetext lower phrase snippet
     ignore_set="$(build_ignore_set "$file")"
-    while IFS=: read -r _f lineno _rest; do
+    lineno=0
+    while IFS= read -r linetext; do
+      lineno=$((lineno + 1))
       is_ignored_line "$lineno" "$ignore_set" && continue
-      snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | cut -c1-120 || true)"
-      report_violation "unicode" "$file" "$lineno" "$snippet"
-    done < <(grep -nP '[^\x00-\x7F]' "$file" 2>/dev/null || true)
+      lower="$(echo "$linetext" | tr '[:upper:]' '[:lower:]')"
+      for phrase in "${_ATTR_PHRASES[@]}"; do
+        if [[ "$lower" == *"$phrase"* ]]; then
+          snippet="$(echo "$linetext" | tr -d '\r' | cut -c1-120)"
+          report_violation "attribution" "$file" "$lineno" "$snippet"
+          break
+        fi
+      done
+    done < "$file"
   done
-else
-  # Fallback: LC_ALL=C grep for bytes > 0x7F
-  for file in "${MD_FILES[@]}"; do
+
+  # ---- Class 2: Non-ASCII (Unicode) bytes ---------------------------------------
+  if [[ "$_has_pcre_grep" -eq 1 ]]; then
+    for file in "$@"; do
+      local ignore_set lineno _rest snippet
+      ignore_set="$(build_ignore_set "$file")"
+      while IFS=: read -r _f lineno _rest; do
+        is_ignored_line "$lineno" "$ignore_set" && continue
+        snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | cut -c1-120 || true)"
+        report_violation "unicode" "$file" "$lineno" "$snippet"
+      done < <(grep -nP '[^\x00-\x7F]' "$file" 2>/dev/null || true)
+    done
+  else
+    # Fallback: LC_ALL=C grep for bytes > 0x7F
+    for file in "$@"; do
+      local ignore_set lineno _rest snippet
+      ignore_set="$(build_ignore_set "$file")"
+      while IFS=: read -r lineno _rest; do
+        is_ignored_line "$lineno" "$ignore_set" && continue
+        snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | cut -c1-120 || true)"
+        report_violation "unicode" "$file" "$lineno" "$snippet"
+      done < <(LC_ALL=C grep -nv '^[[:print:][:space:]]*$' "$file" 2>/dev/null || true)
+    done
+  fi
+
+  # ---- Class 3: Leaked tool/markup tags -----------------------------------------
+  # Matches known Claude tool-invocation tag names. Uses -E (extended regex).
+  # Pattern scoped to known tag names to avoid false positives on legitimate HTML
+  # in code fences or Mermaid diagrams (no bare angle-bracket match).
+  local _TAG_PATTERN='</?[[:space:]]*(function_calls|invoke|parameter|antml:|use_mcp_tool|result)[^>]*>'
+  for file in "$@"; do
+    local ignore_set lineno _rest snippet
     ignore_set="$(build_ignore_set "$file")"
     while IFS=: read -r lineno _rest; do
       is_ignored_line "$lineno" "$ignore_set" && continue
       snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | cut -c1-120 || true)"
-      report_violation "unicode" "$file" "$lineno" "$snippet"
-    done < <(LC_ALL=C grep -nv '^[[:print:][:space:]]*$' "$file" 2>/dev/null || true)
+      report_violation "leaked-tool-tag" "$file" "$lineno" "$snippet"
+    done < <(grep -nE "$_TAG_PATTERN" "$file" 2>/dev/null || true)
   done
-fi
+}
 
-# ---- Class 3: Leaked tool/markup tags -----------------------------------------
-# Matches known Claude tool-invocation tag names. Uses -E (extended regex).
-# Pattern scoped to known tag names to avoid false positives on legitimate HTML
-# in code fences or Mermaid diagrams (no bare angle-bracket match).
-_TAG_PATTERN='</?[[:space:]]*(function_calls|invoke|parameter|antml:|use_mcp_tool|result)[^>]*>'
+# ---- Mode dispatch --------------------------------------------------------------------------
+case "$MODE" in
+  prefix)
+    # Resolve the initiative directory via edm-state (honors product-scoped layout).
+    command -v edm-state >/dev/null 2>&1 || die "edm-state not found on PATH"
+    INIT_DIR="$(edm-state resolve-dir "$PREFIX" 2>&1)" \
+      || die "no initiative for prefix $PREFIX (run: edm-state init $PREFIX)"
+    [[ -d "$INIT_DIR" ]] || die "initiative directory not found: $INIT_DIR"
 
-for file in "${MD_FILES[@]}"; do
-  ignore_set="$(build_ignore_set "$file")"
-  while IFS=: read -r lineno _rest; do
-    is_ignored_line "$lineno" "$ignore_set" && continue
-    snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | cut -c1-120 || true)"
-    report_violation "leaked-tool-tag" "$file" "$lineno" "$snippet"
-  done < <(grep -nE "$_TAG_PATTERN" "$file" 2>/dev/null || true)
-done
+    MD_FILES=()
+    while IFS= read -r _md_f; do
+      MD_FILES+=("$_md_f")
+    done < <(collect_md_files "$INIT_DIR")
 
-# ---- Summary ------------------------------------------------------------------
-if [[ "$violations" -eq 0 ]]; then
-  echo "edm-lint-artifacts: $PREFIX -- CLEAN (no violations found in $INIT_DIR)"
-  exit 0
-else
-  echo "edm-lint-artifacts: $PREFIX -- $violations violation(s) found" >&2
-  exit 1
-fi
+    if [[ ${#MD_FILES[@]} -eq 0 ]]; then
+      echo "edm-lint-artifacts: no .md files found in $INIT_DIR"
+      exit 0
+    fi
+
+    scan_md_files "${MD_FILES[@]}"
+
+    if [[ "$violations" -eq 0 ]]; then
+      echo "edm-lint-artifacts: $PREFIX -- CLEAN (no violations found in $INIT_DIR)"
+      exit 0
+    else
+      echo "edm-lint-artifacts: $PREFIX -- $violations violation(s) found" >&2
+      exit 1
+    fi
+    ;;
+
+  path)
+    # Strictly read-only: no state resolution, edm-state is never invoked in this branch.
+    if [[ -d "$PATH_ARG" ]]; then
+      MD_FILES=()
+      while IFS= read -r _md_f; do
+        MD_FILES+=("$_md_f")
+      done < <(collect_md_files "$PATH_ARG")
+    elif [[ -f "$PATH_ARG" ]]; then
+      # A single named file is linted directly, regardless of extension -- the caller named it
+      # explicitly, unlike directory mode which only considers *.md files.
+      MD_FILES=("$PATH_ARG")
+    else
+      die "--path target not found: $PATH_ARG"
+    fi
+
+    if [[ ${#MD_FILES[@]} -eq 0 ]]; then
+      echo "edm-lint-artifacts: no .md files found under $PATH_ARG"
+      exit 0
+    fi
+
+    scan_md_files "${MD_FILES[@]}"
+
+    if [[ "$violations" -eq 0 ]]; then
+      echo "edm-lint-artifacts: --path $PATH_ARG -- CLEAN (no violations found)"
+      exit 0
+    else
+      echo "edm-lint-artifacts: --path $PATH_ARG -- $violations violation(s) found" >&2
+      exit 1
+    fi
+    ;;
+
+  all)
+    # Consumes the existing layout-aware enumeration rather than re-deriving it (EDMV3-111):
+    # `edm-state list --paths` already covers both flat and product-scoped layouts and already
+    # excludes .archived/ (list_state_files with no --archived arg).
+    command -v edm-state >/dev/null 2>&1 || die "edm-state not found on PATH"
+
+    INIT_DIRS=()
+    while IFS= read -r _init_d; do
+      [[ -n "$_init_d" ]] && INIT_DIRS+=("$_init_d")
+    done < <(edm-state list --paths 2>/dev/null || true)
+
+    if [[ ${#INIT_DIRS[@]} -eq 0 ]]; then
+      echo "edm-lint-artifacts: --all found no initiatives under $SRD_ROOT"
+      exit 0
+    fi
+
+    for init_dir in "${INIT_DIRS[@]}"; do
+      [[ -d "$init_dir" ]] || continue
+      label="${init_dir#"$SRD_ROOT"/}"
+
+      MD_FILES=()
+      while IFS= read -r _md_f; do
+        MD_FILES+=("$_md_f")
+      done < <(collect_md_files "$init_dir")
+      [[ ${#MD_FILES[@]} -eq 0 ]] && continue
+
+      before=$violations
+      echo "=== ${label} (${init_dir}) ==="
+      scan_md_files "${MD_FILES[@]}"
+      this_count=$((violations - before))
+      [[ $this_count -eq 0 ]] && echo "  (clean)"
+    done
+
+    if [[ "$violations" -eq 0 ]]; then
+      echo "edm-lint-artifacts: --all -- CLEAN (no violations found across $SRD_ROOT)"
+      exit 0
+    else
+      echo "edm-lint-artifacts: --all -- $violations violation(s) found across initiatives" >&2
+      exit 1
+    fi
+    ;;
+esac
