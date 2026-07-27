@@ -395,6 +395,13 @@ running edm-state phase-complete ${PREFIX} 3. Do NOT perform step 9 (the HITL Ga
 presentation: no AskUserQuestion, no STOP and WAIT text, no waiting for sign-off) and do NOT
 call edm-state approve-gate yourself.
 
+HEADLESS CONSTRAINT on subagents: do NOT spawn background subagents -- a headless run ends
+the moment you end your turn, and any still-running background auditor dies with it (observed
+live: a run that ended "waiting on the three auditors" produced no audit-srd.md at all). Either
+perform the audit yourself in this context, or spawn auditors strictly synchronously and only
+continue after their results are in your transcript. audit-srd.md must exist on disk, written
+by you, before you end your turn.
+
 When audit-srd.md has been written and all P0/P1 findings have been remediated in srd.md,
 print the single line EVAL_PHASE_COMPLETE: audit-srd and end your turn.
 EOF
