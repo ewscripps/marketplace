@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# EDMV3-T61 AC1: the block between EDM-HELP-BEGIN and EDM-HELP-END below is sentinel-delimited,
+# not a hardcoded `sed -n 'A,Bp'` line range -- `print_help()` (defined below) extracts between
+# the sentinels with awk. A hardcoded range silently stops covering a new subcommand doc line
+# added below its end unless two numbers are bumped in lockstep, which is exactly how
+# `update-patterns` and `lint` fell out of `--help` before this ticket (the old range stopped at
+# line 39). Add new subcommand doc lines anywhere inside the sentinel block; nothing else to
+# update. Mirrored verbatim in edm-lint-artifacts (same fix, same reason).
+# EDM-HELP-BEGIN
 # edm-state - read/write SRD/{PREFIX}/.edm-state.json files for the EDM plugin.
 # Usage:
 #   edm-state get <PREFIX>                              # print state JSON
@@ -31,7 +39,7 @@
 #   edm-state audit-round-start <PREFIX> <code|srd|tickets>           # increment audit-round counter, echo new value
 #   edm-state record-partial-verdict <PREFIX> <ticket> <verdict> [note]  # persist per-ticket PASS/PARTIAL/FAIL
 #   edm-state set-mode <PREFIX> <kind> <value>                        # set mode, lifecycle_mode, compliance_enabled, or implementation_mode
-#   edm-state skip-phase <PREFIX> <phase-num> [<rationale>]           # record an intentionally skipped phase
+#   edm-state skip-phase <PREFIX> <phase-num> <rationale>              # record an intentionally skipped phase (rationale required, EDMV3-94)
 #   edm-state set-supersedes <PREFIX> <other-prefix>                  # record which initiative this supersedes
 #   edm-state set-forked-from <PREFIX> <other-prefix>                 # record which initiative this forked from
 #   edm-state resolve-dir <PREFIX>                                    # resolve bare prefix to initiative directory (read-only)
@@ -39,6 +47,7 @@
 #   edm-state add-related <PREFIX> <RELATED>                         # append to related_prefixes (idempotent)
 #   edm-state update-patterns <PREFIX> <srd|ticket|qc|code>          # append novel audit findings to pattern library (T121)
 #   edm-state lint <PREFIX>                                           # run edm-lint-artifacts over initiative artifacts (T115)
+# EDM-HELP-END
 set -euo pipefail
 
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
@@ -47,6 +56,16 @@ TICKET_PACK_DIRNAME="${EDM_TICKET_PACK_DIRNAME:-${CLAUDE_PLUGIN_OPTION_TICKET_PA
 HUMAN_HOURLY_RATE_USD="${EDM_HUMAN_HOURLY_RATE_USD:-${CLAUDE_PLUGIN_OPTION_HUMAN_HOURLY_RATE_USD:-150}}"
 
 die() { echo "edm-state: $*" >&2; exit 1; }
+
+# print_help <script-path> — prints everything between the EDM-HELP-BEGIN/EDM-HELP-END sentinel
+# comment lines near the top of <script-path> (EDMV3-T61 AC1). awk, not a hardcoded `sed -n
+# 'A,Bp'` line range: a hardcoded range silently stops covering new subcommand doc lines added
+# below its end without the two numbers being bumped in lockstep, which is exactly how
+# `update-patterns` and `lint` fell out of `--help` before this ticket. Mirrored verbatim in
+# edm-lint-artifacts (same fix, same reason, applied to that script's own header block).
+print_help() {
+  awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$1"
+}
 
 # list_state_files [--archived]
 # Emits each unique .edm-state.json path, one per line, covering both flat (SRD/*/)
@@ -543,7 +562,9 @@ with_state_lock() {
 
   if command -v flock >/dev/null 2>&1; then
     # Fast path: flock on FD 200 (high enough to avoid collisions with stdin/stdout/stderr
-    # and typical script-level pipes; bash 3.2 lacks {fd} auto-assignment so we pick 200 by convention)
+    # and typical script-level pipes; bash 3.2 lacks dynamic file-descriptor auto-assignment
+    # (the brace-redirection idiom naming a variable instead of a literal FD number, a bash-4
+    # construct EDMV3-T61 AC9's CI grep bans), so we pick 200 by convention instead)
     # `|| _lock_ec=$?` keeps the subshell in a tested position so `set -e` does NOT abort here on a
     # non-zero exit — otherwise the timeout `die` below is unreachable and a flock-host timeout exits
     # with a bare 99 and no message (CA-006). Success leaves _lock_ec=0.
@@ -721,7 +742,63 @@ state_anomalies() {
     echo "info  SCHEMA_VERSION_MISSING  schema_version  no schema_version recorded for ${prefix} -- run edm-state migrate-schema ${prefix} to backfill enforcement-kernel compatibility"
     found=1
   fi
+  # EMPTY_SKIP_RATIONALE / ACTIVE_EXEMPTION on skipped_phases (info -- EDMV3-T62 AC3/AC7): every
+  # exemption D13(c) leaves in place (skip-phase, legacy degradation) must leave an audit trail
+  # (EDMV3-94). cmd_skip_phase refuses a NEW empty rationale (AC2), but a pre-existing entry
+  # written before this ticket -- or a hand-edited one -- is read without error (C-4) and
+  # surfaced here rather than silently accepted or crashing on. A non-empty rationale is instead
+  # a sanctioned, active exemption and gets its own ACTIVE_EXEMPTION line so a reviewer can see
+  # every invariant that was not enforced without a healthy initiative exiting non-zero.
+  local skip_lines skip_phase skip_rationale
+  skip_lines="$(echo "$state" | jq -r '(.skipped_phases // [])[] | "\(.phase)\t\(.rationale // "")"' 2>/dev/null || true)"
+  if [[ -n "$skip_lines" ]]; then
+    while IFS=$'\t' read -r skip_phase skip_rationale; do
+      [[ -n "$skip_phase" ]] || continue
+      if [[ -z "$skip_rationale" ]]; then
+        echo "info  EMPTY_SKIP_RATIONALE  skipped_phases  phase ${skip_phase} of ${prefix} has an empty rationale -- a pre-existing entry, not migrated by this check (C-4); hand-edit the state file to backfill one if the reason is known"
+      else
+        echo "info  ACTIVE_EXEMPTION  skipped_phases  phase ${skip_phase} of ${prefix} is intentionally skipped: ${skip_rationale}"
+      fi
+      found=1
+    done <<< "$skip_lines"
+  fi
+  # ACTIVE_EXEMPTION on archive_exemptions (info -- EDMV3-T62 AC7): a lifecycle/mode that waived
+  # the code-audit convergence check (cmd_archive's CONVERGENCE_NOT_REQUIRED path) recorded the
+  # exemption in state; surface it here too so it is visible from `validate`, not only from
+  # HANDOFF.md's gate row.
+  local archive_exemption
+  while IFS= read -r archive_exemption; do
+    [[ -n "$archive_exemption" ]] || continue
+    echo "info  ACTIVE_EXEMPTION  archive_exemptions  ${archive_exemption} recorded for ${prefix} (lifecycle/mode waives the code-audit convergence check)"
+    found=1
+  done < <(echo "$state" | jq -r '(.archive_exemptions // [])[]' 2>/dev/null || true)
+  # ACTIVE_EXEMPTION on degraded_checks (info -- EDMV3-T62 AC5/AC7): a legacy warn-and-proceed
+  # skip (recorded by record_degraded_check() below) is the other half of "the only ways a check
+  # does not apply" (EDMV3-94's Description). Surfaced here so it is recoverable from `validate`,
+  # not only from the transient console warning that originally reported it.
+  local degraded_check degraded_reason
+  while IFS=$'\t' read -r degraded_check degraded_reason; do
+    [[ -n "$degraded_check" ]] || continue
+    echo "info  ACTIVE_EXEMPTION  degraded_checks  ${degraded_check} skipped for ${prefix}: ${degraded_reason}"
+    found=1
+  done < <(echo "$state" | jq -r '(.degraded_checks // [])[] | "\(.check)\t\(.reason)"' 2>/dev/null || true)
   return 0
+}
+
+# record_degraded_check <PREFIX> <check-name> <reason>
+# Persists a legacy warn-and-proceed skip into .degraded_checks (additive, `// []` idiom so a
+# legacy read never produces a null -- EDMV3-107) so the fact that a check was skipped is
+# recoverable from the state file, not only from the transient "[warn] legacy initiative" console
+# line that also reports it at the call site (EDMV3-T62 AC5). Uses rmw_state like every other
+# state mutation (EDMV3-92) -- this is its own lock acquisition, separate from whatever mutation
+# the calling command performs next, since not every call site (cmd_archive's legacy branches)
+# has an unconditional trailing rmw_state call to fold this into.
+record_degraded_check() {
+  local prefix="$1" check="$2" reason="$3"
+  rmw_state "$prefix" '
+    .degraded_checks = ((.degraded_checks // []) + [{check: $c, reason: $r, recorded_at: $ts}])
+    | .last_updated = $ts
+  ' --arg c "$check" --arg r "$reason" --arg ts "$(now_utc)"
 }
 
 # format_anomaly_line <four-field-anomaly-line>
@@ -1040,6 +1117,8 @@ cmd_phase_start() {
     # C-4 (AC7): a legacy state predating the mode field warns and proceeds rather than
     # hard-failing -- there is no mode-derived prerequisite gate to check against.
     echo "edm-state phase-start: [warn] legacy initiative (no mode field) -- skipping kernel gate enforcement" >&2
+    # EDMV3-T62 AC5: persist the skip to state, not just this transient console line.
+    record_degraded_check "$prefix" "phase-start:kernel-gate-enforcement" "no mode field"
   else
     # phase_start_prerequisite_gate + required_gates_for_mode are the same derivation
     # cmd_gate_check's AC5 mode filter and cmd_archive's convergence waiver use -- not a
@@ -1099,6 +1178,8 @@ cmd_phase_complete() {
 
   if [[ "$pc_class1" == "0" ]]; then
     echo "edm-state phase-complete: [warn] legacy initiative (no schema_version) -- skipping artifact verification for phase ${phase}" >&2
+    # EDMV3-T62 AC5: persist the skip to state, not just this transient console line.
+    record_degraded_check "$prefix" "phase-complete:artifact-verification" "no schema_version (phase ${phase})"
   else
     local pc_skipped_str pc_phase_skipped=0
     pc_skipped_str="$(echo "$pc_state" | jq -r '[(.skipped_phases // [])[].phase] | join(" ")')"
@@ -1570,6 +1651,8 @@ cmd_archive() {
       # pre-T12 convergence behaviour (product_name-gated) since that is the only check that
       # existed for it before this ticket.
       echo "edm-state archive: [warn] legacy initiative (no schema_version) -- skipping wave-A lifecycle checks" >&2
+      # EDMV3-T62 AC5: persist the skip to state, not just this transient console line.
+      record_degraded_check "$prefix" "archive:wave-a-lifecycle-checks" "no schema_version"
       if echo "$state_json" | jq -e 'has("code_audit_converged")' >/dev/null 2>&1; then
         converged="$(read_bool "$state_json" "code_audit_converged" "false")"
       else
@@ -1645,6 +1728,8 @@ cmd_archive() {
         fi
         if [[ "$converged" == "absent" ]]; then
           echo "[warn] legacy initiative -- code_audit_converged not set; proceeding" >&2
+          # EDMV3-T62 AC5: persist the skip to state, not just this transient console line.
+          record_degraded_check "$prefix" "archive:code-audit-convergence-check" "code_audit_converged not set"
         elif [[ "$converged" == "false" ]]; then
           # AC5: the refusal is unconditional on product_name -- the `-n "$product_name"`
           # conjunct that let a flat-layout initiative archive with no refusal at all is
@@ -2352,14 +2437,23 @@ cmd_set_mode() {
 }
 
 # ---- Phase skip tracking (T96) -----------------------------------------------
-# skip-phase <PREFIX> <phase-num> [<rationale>]
+# skip-phase <PREFIX> <phase-num> <rationale>
 # Records an intentionally skipped phase. Replaces any existing entry for the same phase.
+# rationale is required (EDMV3-T62 AC2) -- an empty rationale is refused, a breaking change.
 
 cmd_skip_phase() {
-  [[ $# -ge 2 ]] || die "usage: edm-state skip-phase <PREFIX> <phase-num> [<rationale>]"
+  # EDMV3-T62 AC2 (breaking change, recorded in CHANGELOG.md): rationale is now a required
+  # third argument, not an optional one -- `cmd_skip_phase` used to accept `rationale="${3:-}"`
+  # and write an empty string. D13(c) removed every override flag; a skip with no rationale was
+  # the one remaining way to bypass a check leaving no auditable trail of *why*. Existing state
+  # files with a pre-existing empty rationale are read without error (C-4) and surfaced as an
+  # EMPTY_SKIP_RATIONALE info anomaly by state_anomalies() below -- this refusal only applies to
+  # a NEW skip-phase invocation, never to a file already on disk.
+  [[ $# -eq 3 ]] || die "usage: edm-state skip-phase <PREFIX> <phase-num> <rationale>"
   require_jq
-  local prefix="$1" phase_num="$2" rationale="${3:-}"
+  local prefix="$1" phase_num="$2" rationale="$3"
   [[ "$phase_num" =~ ^[1-6]$ ]] || die "skip-phase: phase-num must be 1-6; got: $phase_num"
+  [[ -n "$rationale" ]] || die "skip-phase refusing an empty rationale for phase ${phase_num} of ${prefix} -- every skip must record why (EDMV3-94)"
   rmw_state "$prefix" '
     .skipped_phases = (
       [(.skipped_phases // []) | .[] | select(.phase != ($p|tonumber))]
@@ -2985,7 +3079,7 @@ case "$cmd" in
   update-patterns)      cmd_update_patterns "$@" ;;
   lint)                 cmd_lint "$@" ;;
   ""|-h|--help|help)
-    sed -n '2,39p' "$0"
+    print_help "$0"
     ;;
   *)
     die "unknown subcommand: $cmd (try --help)"

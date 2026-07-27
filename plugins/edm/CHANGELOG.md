@@ -4,6 +4,26 @@ All notable changes to the EDM plugin are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Individual EDMV3 wave-A behavioural changes are recorded here as they land; EDMV3-T64 (wave-A
+closeout) folds this section into the versioned `## [2.1.0]` entry with the full behavioural,
+breaking-change and required-user-action summary once the whole wave has landed.
+
+### Changed
+
+- **`edm-state` skip-phase refusing an empty rationale (breaking change, EDMV3-T62 AC2):**
+  `skip-phase <PREFIX> <phase-num> <rationale>` now requires a non-empty third argument.
+  Previously `rationale="${3:-}"` accepted an omitted or empty rationale and recorded it as an
+  empty string. Every sanctioned skip must now record *why* it was skipped, so a skip with no
+  rationale is refused with a non-zero exit rather than silently written. Existing state files
+  that already carry a skip recorded with an empty rationale continue to be read without error
+  (backward compatible, C-4) and are surfaced by `edm-state validate` as an informational
+  `EMPTY_SKIP_RATIONALE` anomaly rather than being migrated or hidden.
+- **Required user action:** any script or automation invoking `edm-state skip-phase` with only
+  two arguments (prefix and phase number) must be updated to supply a third, non-empty rationale
+  argument, or the call now fails.
+
 ## [2.0.0] — 2026-06-08
 
 ### Added

@@ -62,6 +62,35 @@ lint:shell-and-artifacts:
     - echo "=== edm-check-grants (four-source grant/instruction contract) ==="
     - bash plugins/edm/bin/edm-check-grants
 
+# EDMV3-T61 AC8: pinned shellcheck job over the plugin's own bin/ scripts (new/modified code --
+# pre-existing findings in code this initiative did not touch are out of scope per the ticket
+# and get their own follow-up ticket rather than blocking this pipeline). Scoped to the
+# unquoted-expansion class of findings (SC2086/SC2046/SC2048/SC2068) rather than shellcheck's
+# full default severity set: this codebase's existing header/usage comment blocks and
+# intentionally-loose test fixtures trip many stylistic (non-safety) shellcheck findings that
+# are out of scope for "no unquoted-expansion findings in new code" specifically.
+lint:shellcheck:
+  stage: lint
+  image: "alpine:3.20@sha256:4117b6e5b09d84c8f03ea45234ee7f8ec9f5c3a9792b80e3c9d54ded36d3735a"
+  rules: *edm_rules
+  before_script:
+    - apk add --no-cache bash shellcheck
+  script:
+    - |
+      set -e
+      echo "=== shellcheck (SC2086/SC2046/SC2048/SC2068 -- unquoted-expansion class) over plugins/edm/bin/ ==="
+      FAIL=0
+      for f in plugins/edm/bin/*; do
+        [ -f "$f" ] || continue
+        if shellcheck --shell=bash --include=SC2086,SC2046,SC2048,SC2068 "$f"; then
+          echo "  OK: $f"
+        else
+          echo "  FAIL: shellcheck $f"
+          FAIL=1
+        fi
+      done
+      [ "$FAIL" -eq 0 ] || exit 1
+
 # AC3: added here non-blocking only. EDMV3-80's file-type ban binds all six marketplace
 # plugins; plugins/edm/ itself currently carries two banned files (a .pptx and a .docx), so
 # this job runs the real scan every pipeline but never blocks a merge until EDMV3-T57 records a
@@ -99,6 +128,42 @@ test:smoke:
     - apk add --no-cache bash jq git
   script:
     - bash plugins/edm/bin/tests/run-all.sh
+    # EDMV3-T61 AC13: the help-completeness test (wave7-smoke.sh, case "help and dispatch agree
+    # in both directions") runs in CI as part of run-all.sh's auto-discovered suite set above.
+    # Named explicitly here (not only inside run-all.sh) so `grep -n 'wave7-smoke' .gitlab-ci.yml`
+    # finds a durable pointer to where it runs, without hand-listing the whole suite set (which
+    # would drift the way AC5's comment on this job already warns against).
+    - echo "wave7-smoke.sh (help-completeness, EDMV3-T61 AC2/AC13) ran as part of run-all.sh above"
+
+# EDMV3-T61 AC10: the same suite runs a second time under a pinned bash 3.2 image, not just the
+# default (bash 5.x) runner bash used by test:smoke above -- this codebase targets bash 3.2
+# (macOS's shipped default) as a hard constraint (EDMV3-91/106), and a grep for prohibited
+# constructs (wave7-smoke.sh "T61 AC9") proves the codebase never USES a bash-4-only construct,
+# but only actually running the suite under bash 3.2 proves the constraint holds end-to-end.
+# `bash:3.2` is the official Docker Hub bash image's 3.2 tag (not yet digest-pinned -- unlike
+# the alpine/node images above, no registry-connected environment was available to capture a
+# real sha256 for it while implementing this ticket; refresh it using the same procedure the
+# header note above documents before this job is relied on against a live runner fleet).
+test:smoke-bash32:
+  stage: test
+  image: "bash:3.2"
+  rules: *edm_rules
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq jq git >/dev/null
+  script:
+    - bash --version
+    - bash plugins/edm/bin/tests/run-all.sh
+
+# EDMV3-T61 AC12 (named exception taken): no macOS runner class is confirmed registered against
+# this project's runner fleet -- unlike a Docker Hub image (test:smoke-bash32 above), a macOS
+# runner is real hardware that must already be provisioned and tagged in the runner fleet; it
+# cannot be created by editing this file, and a job with a `tags:` selector pointing at a
+# non-existent runner class would sit "pending" forever rather than failing fast, which is worse
+# than not adding it. The AC11 divergence points (sed -i, grep -P family, stat -c/-f, and the
+# shasum/sha256sum choice in bin/tests/_harness.sh) are covered by targeted assertions instead
+# (wave7-smoke.sh "T61 AC11", _harness.sh's `_harness_hash_file`), and the gap itself is recorded
+# in plugins/edm/CLAUDE.md's "macOS runner" note. Revisit once a macOS runner is confirmed
+# available in this project's fleet.
 
 # AC12 (Gate 3 revise): edm-state validate across every tracked, non-archived initiative,
 # enumerated via the same layout-aware `edm-state list --paths` that edm-lint-artifacts --all
