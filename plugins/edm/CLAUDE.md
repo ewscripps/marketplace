@@ -480,10 +480,12 @@ Skills reference values as `${user_config.srd_root}` etc.
 
 ## Testing changes
 
+macOS and Linux only (bash 3.2+, `jq`, `git` required). Windows and WSL are unsupported.
+
 After modifying any plugin component:
 
-1. `claude plugin validate edm-plugin/` — schema and frontmatter check
-2. Test in a sandbox: `claude --plugin-dir ./edm-plugin`
+1. `claude plugin validate plugins/edm/` — schema and frontmatter check
+2. Test in a sandbox: `claude --plugin-dir ./plugins/edm`
 3. Run `/reload-plugins` to pick up changes without restarting
 4. Verify agents appear in `/agents`, skills in `/help`
 
