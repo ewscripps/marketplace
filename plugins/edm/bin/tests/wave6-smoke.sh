@@ -665,19 +665,20 @@ select_hits="$(grep -c '(.gates_approved // \[\]) | map(select(.gate == \$g)) | 
   && pass "the original select(.gate == \$g) | length expression still appears (cmd_gate_check + phase-start)" \
   || fail "expected >=2 occurrences of the unchanged numeric comparison expression, found $select_hits"
 
-# ---- AC7 (C-4): legacy state (no mode field) warns and proceeds through phase-start ---
+# ---- AC7 (C-4): legacy state (mode present, schema_version absent -- the real EDMV2 shape)
+# warns and proceeds through phase-start -----------------------------------------------
 echo
-echo "T13 AC7 -- legacy initiative phase-start warns and proceeds"
+echo "T13 AC7 -- legacy initiative (mode present, schema_version absent) phase-start warns and proceeds"
 STATE_T13LEG_DIR="$TMP/SRD/T13LEG"
 mkdir -p "$STATE_T13LEG_DIR"
 STATE_T13LEG="$STATE_T13LEG_DIR/.edm-state.json"
-jq -n '{prefix: "T13LEG", current_phase: 0, gates_approved: [], phase_durations: {}, last_updated: "2020-01-01T00:00:00Z"}' \
+jq -n '{prefix: "T13LEG", mode: "standard", current_phase: 0, gates_approved: [], phase_durations: {}, last_updated: "2020-01-01T00:00:00Z"}' \
   > "$STATE_T13LEG"
-check "legacy phase-start (no mode field) warns rather than hard-failing" \
-  "legacy initiative (no mode field)" \
+check "legacy phase-start (mode present, schema_version absent) warns rather than hard-failing" \
+  "legacy initiative (no schema_version)" \
   "$("$EDM_STATE" phase-start T13LEG 2 2>&1)"
 "$EDM_STATE" phase-start T13LEG 2 >/dev/null 2>&1 \
-  && pass "legacy phase-start proceeds (exit 0) despite the missing mode field" \
+  && pass "legacy phase-start proceeds (exit 0) despite the missing schema_version" \
   || fail "legacy phase-start hard-failed instead of warn-and-proceed"
 leg_phase="$(jq -r '.current_phase' "$STATE_T13LEG")"
 [[ "$leg_phase" == "2" ]] && pass "legacy phase-start still advances current_phase" \
@@ -1149,6 +1150,23 @@ check "AC7 -- phase 3 skipped next_action present" "skipped" "$ascii3_next"
 ascii5_next="$(grep '^- \*\*Next action\*\*' "$TMP/SRD/T17ASCII5/HANDOFF.md")"
 check "AC7 -- phase 5 skipped next_action present" "skipped" "$ascii5_next"
 
+# current_phase 6 fixture (shard-2 QC remediation): phases 1/3/5 above never reach the
+# phase-6 pending_artifacts branch (bin/edm-state's `case "$phase" in ... 6)` arm), so a
+# non-ASCII regression there (EDMV3-T17 AC8 shard-2 finding) went undetected by this loop
+# until now. Drive current_phase to 6 via the three gate approvals rather than skip-phase.
+"$EDM_STATE" init T17ASCII6 >/dev/null
+"$EDM_STATE" approve-gate T17ASCII6 1 >/dev/null
+"$EDM_STATE" phase-start T17ASCII6 2 >/dev/null
+"$EDM_STATE" phase-start T17ASCII6 3 >/dev/null
+"$EDM_STATE" approve-gate T17ASCII6 2 >/dev/null
+"$EDM_STATE" phase-start T17ASCII6 4 >/dev/null
+"$EDM_STATE" phase-start T17ASCII6 5 >/dev/null
+"$EDM_STATE" approve-gate T17ASCII6 3 >/dev/null
+"$EDM_STATE" phase-start T17ASCII6 6 >/dev/null
+"$EDM_STATE" write-handoff T17ASCII6 >/dev/null
+ascii6_pending="$(grep '^- \*\*Pending artifacts\*\*\|implementation in progress' "$TMP/SRD/T17ASCII6/HANDOFF.md" || true)"
+check "AC8 -- phase 6 pending_artifacts note present" "implementation in progress" "$ascii6_pending"
+
 # Portable ASCII check: delete every byte in the ASCII range (octal 000-177, POSIX `tr`
 # range syntax works identically under GNU and BSD `tr`, unlike `grep`'s `\x` hex-escape
 # bracket-expression support, which BSD/macOS grep 2.6.0-FreeBSD does NOT implement --
@@ -1159,13 +1177,14 @@ _t17_nonascii_bytes() {
 }
 
 ascii_all_clean=true
-for _t17_f in "$TMP/SRD/T17ASCII1/HANDOFF.md" "$TMP/SRD/T17ASCII3/HANDOFF.md" "$TMP/SRD/T17ASCII5/HANDOFF.md"; do
+for _t17_f in "$TMP/SRD/T17ASCII1/HANDOFF.md" "$TMP/SRD/T17ASCII3/HANDOFF.md" "$TMP/SRD/T17ASCII5/HANDOFF.md" \
+              "$TMP/SRD/T17ASCII6/HANDOFF.md"; do
   [[ "$(_t17_nonascii_bytes "$_t17_f")" -eq 0 ]] || ascii_all_clean=false
 done
 if [[ "$ascii_all_clean" == "true" ]]; then
-  pass "AC7/AC8 -- HANDOFF for an initiative with skipped phases 1, 3 and 5 is ASCII-only"
+  pass "AC7/AC8 -- HANDOFF for an initiative with skipped phases 1, 3, 5 and a current_phase-6 initiative is ASCII-only"
 else
-  fail "AC7/AC8 -- HANDOFF for skipped phases 1, 3, 5 contains non-ASCII bytes"
+  fail "AC7/AC8 -- HANDOFF for skipped phases 1, 3, 5, or the current_phase-6 fixture, contains non-ASCII bytes"
 fi
 
 # Bounded on the unique "Derive what to do next" comment through that specific case
@@ -1363,6 +1382,18 @@ echo "# Shard 1" > "$TMP/SRD/T11SHARD/qc/qc-shard-01.md"
 "$EDM_STATE" phase-complete T11SHARD 6 >/dev/null \
   && pass "T11 AC3 -- shard-only phase 6 completes" \
   || fail "T11 AC3 -- shard-only phase 6 still refused"
+
+# ---- AC1 (shard-1 QC remediation): all six artifact-presence checks route through
+# present_or_absent's nonempty variant, not a re-derived bare `[[ -s ]]` ------------------
+echo
+echo "T11 AC1 -- artifact-presence checks route through present_or_absent nonempty, not a bare [[ -s ]]"
+t11_pc_block="$(awk '/^cmd_phase_complete\(\) \{/{f=1} f{print} f && /^\}/{exit}' "$EDM_STATE")"
+t11_helper_hits="$(printf '%s\n' "$t11_pc_block" | grep -c 'present_or_absent "[^"]*" nonempty')"
+[[ "$t11_helper_hits" -ge 6 ]] \
+  && pass "T11 AC1 -- cmd_phase_complete has >=6 present_or_absent ... nonempty call sites" \
+  || fail "T11 AC1 -- expected >=6 present_or_absent ... nonempty call sites in cmd_phase_complete, found $t11_helper_hits"
+check_absent "T11 AC1 -- cmd_phase_complete's artifact case block has no bare [[ -s ]] check" \
+  '[[ -s "' "$t11_pc_block"
 
 # ---- AC4: phase 6 with open PARTIAL refuses naming verify-runtime (requires schema_version >= 2) --
 echo
@@ -1904,8 +1935,11 @@ echo
 echo "T14 AC1/AC2 -- every new check degrades to warn-and-proceed on a legacy (no schema_version) file"
 mkdir -p "$TMP/SRD/T14LEGACY"
 STATE_T14LEGACY="$TMP/SRD/T14LEGACY/.edm-state.json"
+# mode present, schema_version absent -- the real EDMV2 shape (a genuine pre-EDMV3 initiative
+# already carries mode="standard"; schema_version is what's actually missing).
 jq -n '{
   prefix: "T14LEGACY",
+  mode: "standard",
   current_phase: 6,
   gates_approved: [],
   phase_durations: {"6_phase": {"started_at": "2020-01-01T00:00:00Z"}},
@@ -1943,12 +1977,13 @@ check "T14 AC2 -- archive names the skipped check class when it warns" \
   && pass "T14 AC1 -- legacy initiative archives successfully despite missing gates/phase/completed_at" \
   || fail "T14 AC1 -- legacy initiative was not archived"
 
-# check 4: phase-start kernel gate check (T13) -- no mode field, must not die (separate small
-# fixture: phase-start's own C-4 signal is the mode field, not schema_version -- EDMV3-T13's
-# existing degradation, exercised here as one of the "four" this AC counts, not re-implemented).
+# check 4: phase-start kernel gate check (T13) -- mode present, schema_version absent (the
+# real EDMV2 shape), must not die. phase-start's C-4 signal is schema_version (via the shared
+# schema_at_least() helper), same as every other wave-A check -- exercised here as one of the
+# "four" this AC counts, not re-implemented.
 mkdir -p "$TMP/SRD/T14LEGSTART"
 STATE_T14LEGSTART="$TMP/SRD/T14LEGSTART/.edm-state.json"
-jq -n '{prefix: "T14LEGSTART", current_phase: 1, gates_approved: [], phase_durations: {}, last_updated: "2020-01-01T00:00:00Z"}' \
+jq -n '{prefix: "T14LEGSTART", mode: "standard", current_phase: 1, gates_approved: [], phase_durations: {}, last_updated: "2020-01-01T00:00:00Z"}' \
   > "$STATE_T14LEGSTART"
 t14leg_ps_out="$("$EDM_STATE" phase-start T14LEGSTART 2 2>&1)"
 t14leg_ps_ec=$?

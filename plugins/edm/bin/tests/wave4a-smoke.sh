@@ -94,25 +94,41 @@ check "invalid implementation_mode rejected" "invalid implementation_mode" \
 # ---- T96: skip-phase ---------------------------------------------------------
 echo
 echo "T96 — skip-phase"
-# Reset to standard mode for gate-skip tests
+# Reset to standard mode for gate-skip tests. Note: T83 above set mode=prototype, which
+# (EDMV3-T07 AC4 remediation) merged prototype's 4 default-skip entries (phases 3,4,5,6)
+# into skipped_phases; a mode change only ever ADDS entries, it never removes ones a prior
+# mode seeded, so those 4 persist through this reset back to standard (whose own default
+# skip set is empty, so this reset call adds nothing further).
 "$EDM_STATE" set-mode TSMK mode standard >/dev/null
 "$EDM_STATE" set-mode TSMK lifecycle_mode standard >/dev/null
 
+pre_skip_count="$(jq -r '.skipped_phases | length' "$STATE_FILE")"
+[[ "$pre_skip_count" == "4" ]] \
+  && pass "skipped_phases carries the 4 prototype-mode seeds after reset to standard" \
+  || fail "skipped_phases length before skip-phase = '$pre_skip_count', expected 4"
+
 "$EDM_STATE" skip-phase TSMK 1 "fast-track: scope documented elsewhere" >/dev/null
 skipped="$(jq -r '.skipped_phases | length' "$STATE_FILE")"
-[[ "$skipped" == "1" ]] && pass "skipped_phases has 1 entry" || fail "skipped_phases length = '$skipped'"
+[[ "$skipped" == "5" ]] \
+  && pass "skipped_phases has 5 entries (4 prototype-mode seeds + phase 1)" \
+  || fail "skipped_phases length = '$skipped', expected 5"
 
-phase_num="$(jq -r '.skipped_phases[0].phase' "$STATE_FILE")"
-[[ "$phase_num" == "1" ]] && pass "skipped phase = 1" || fail "skipped phase = '$phase_num'"
+phase_num="$(jq -r '.skipped_phases[] | select(.phase == 1) | .phase' "$STATE_FILE")"
+[[ "$phase_num" == "1" ]] && pass "skipped phase 1 entry present" || fail "skipped phase 1 entry missing (got '$phase_num')"
 
-rationale="$(jq -r '.skipped_phases[0].rationale' "$STATE_FILE")"
+rationale="$(jq -r '.skipped_phases[] | select(.phase == 1) | .rationale' "$STATE_FILE")"
 [[ "$rationale" == "fast-track: scope documented elsewhere" ]] \
   && pass "skip rationale preserved" || fail "rationale = '$rationale'"
 
-# Replacing existing entry for same phase (idempotent)
+# Replacing existing entry for same phase (idempotent) -- only phase 1's rationale changes;
+# the 4 mode-seeded entries (3,4,5,6) are untouched, so the length stays 5.
 "$EDM_STATE" skip-phase TSMK 1 "updated rationale" >/dev/null
 skipped2="$(jq -r '.skipped_phases | length' "$STATE_FILE")"
-[[ "$skipped2" == "1" ]] && pass "re-skip phase 1 replaces (no duplicate)" || fail "skipped_phases length = '$skipped2'"
+[[ "$skipped2" == "5" ]] && pass "re-skip phase 1 replaces (no duplicate)" || fail "skipped_phases length = '$skipped2', expected 5"
+
+rationale2="$(jq -r '.skipped_phases[] | select(.phase == 1) | .rationale' "$STATE_FILE")"
+[[ "$rationale2" == "updated rationale" ]] \
+  && pass "re-skip phase 1 rationale updated" || fail "rationale2 = '$rationale2'"
 
 # Phase 1 skip should trigger HANDOFF 'Phase 1 skipped' next_action
 "$EDM_STATE" write-handoff TSMK >/dev/null
