@@ -165,6 +165,15 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
       && BRANCH_MSG="created and switched to branch $BRANCH" \
       || BRANCH_MSG="[warn] branch creation failed; staying on current branch"
   fi
+
+  # Post-checkout correction (F2a, D3): edm-state init (line 139, above) snapshotted
+  # initiative_branch from HEAD *before* this block ran, so it recorded the branch the
+  # user was on beforehand -- not the branch actually occupied now. record-branch
+  # re-reads HEAD itself rather than trusting $BRANCH, so it correctly records the new
+  # branch on the success paths above and the original branch on the warn-and-continue
+  # paths (checkout failed, user stayed put). It is a no-op outside a git worktree, so
+  # this call is safe to leave unconditional inside this guard.
+  edm-state record-branch "$PREFIX"
 fi
 
 # --- Build tree string before heredoc (bash 3.2: case with | inside $() inside heredoc fails) ---

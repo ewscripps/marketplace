@@ -22,6 +22,7 @@
 #   edm-state validate <PREFIX>                         # check state file for anomalies (read-only)
 #   edm-state gate-check <PREFIX> <gated-command>       # deterministic gate enforcement (read-only)
 #   edm-state branch-check <PREFIX>                     # verify current git branch matches initiative_branch
+#   edm-state record-branch <PREFIX>                    # re-derive initiative_branch from HEAD right now (post-checkout correction, T01)
 #   edm-state git-lock-check                            # detect and remediate stale .git/index.lock
 #   edm-state migrate-path --product <n> --description <s> <PREFIX>  # opt-in move to product-scoped layout
 #   edm-state current-step <PREFIX> [<step>]                          # read/write orchestrator step (compaction resume)
@@ -1456,6 +1457,30 @@ cmd_branch_check() {
   return 0
 }
 
+# ---- Record branch (T01) -----------------------------------------------------
+# record-branch <PREFIX>
+# Post-checkout correction for the edm-init branch handshake (F2a). `cmd_init` snapshots
+# initiative_branch from HEAD *before* edm-init's branch-creation block runs, so a fresh
+# initiative records the branch the user was on beforehand rather than the branch it ends
+# up on. This command re-derives the value itself from `git rev-parse --abbrev-ref HEAD` at
+# call time -- it does NOT accept a branch name as an argument -- so it always records the
+# branch actually occupied, including on edm-init's warn-and-continue paths where checkout
+# failed and the user stayed on the original branch. Deliberately NOT added to cmd_set's
+# allowlist (AC6): initiative_branch stays a derived value, never a caller-supplied one.
+# No-op (exit 0, no state write) outside a git worktree or when HEAD can't be resolved,
+# so it is safe to call from edm-init unconditionally after the branch block.
+cmd_record_branch() {
+  [[ $# -eq 1 ]] || die "usage: edm-state record-branch <PREFIX>"
+  local prefix="$1"
+  require_jq
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  local current_branch
+  current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+  [[ -n "$current_branch" ]] || return 0
+  rmw_state "$prefix" '.initiative_branch = $b | .last_updated = $t' \
+    --arg b "$current_branch" --arg t "$(now_utc)"
+}
+
 # ---- Git lock check (T36) ----------------------------------------------------
 # git-lock-check
 # Detects a stale .git/index.lock file and removes it if the holding process is gone.
@@ -2198,6 +2223,7 @@ case "$cmd" in
   validate)             cmd_validate "$@" ;;
   gate-check)           cmd_gate_check "$@" ;;
   branch-check)         cmd_branch_check "$@" ;;
+  record-branch)        cmd_record_branch "$@" ;;
   git-lock-check)       cmd_git_lock_check "$@" ;;
   current-step)         cmd_current_step "$@" ;;
   session-start)        cmd_session_start "$@" ;;
