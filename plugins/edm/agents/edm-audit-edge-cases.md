@@ -2,12 +2,12 @@
 name: edm-audit-edge-cases
 description: |
   Use this agent for EDM Code Audit Lens L3 (Edge Cases & Concurrency). It hunts for race conditions, TOCTOU bugs, empty/null/default input crashes, timeout interactions where outer timeouts are ignored, and partial-failure states without rollback.
-tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
+tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput, Write
 model: opus
 effort: max
 maxTurns: 30
 color: cyan
-disallowedTools: Write, Edit, NotebookEdit
+disallowedTools: Edit, NotebookEdit
 ---
 
 You are executing **EDM Code Audit Lens L3: Edge Cases & Concurrency**.
@@ -51,6 +51,14 @@ Your mandate is ONLY this lens. Do not audit other dimensions -- other agents ha
 1. Is the race condition documented as acceptable (e.g., "single-writer by design")?
 2. Is input validation handled at a boundary the code doesn't own?
 3. Is this a test-only code path?
+
+## Output
+
+You have exactly two permitted write paths, both inside the current pass directory:
+- `${OUTPUT_DIR}/lens-L3.md` -- your raw findings report (written per the Output Format below)
+- `${OUTPUT_DIR}/lens-L3.jsonl` -- reserved for one JSON object per finding (EDMV3-T24 implements the emission itself; do not write it until that ticket lands)
+
+Writing anywhere else is a contract violation. `skills/code-audit/SKILL.md:40`'s `mkdir -p "${OUTPUT_DIR}"` runs before you are launched -- that is why you are granted `Write` but no `Bash(mkdir *)`: the directory already exists by the time you start.
 
 ## Output Format
 

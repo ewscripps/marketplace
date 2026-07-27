@@ -2,12 +2,12 @@
 name: edm-audit-test-quality
 description: |
   Use this agent for EDM Code Audit Lens L4 (Test Quality). It hunts for `2>/dev/null || true` masking test failures, incomplete assertions, mocks that hide the code under test, false-positive-prone stubs, and missing tests for newly added code paths.
-tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
+tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput, Write
 model: opus
 effort: max
 maxTurns: 30
 color: cyan
-disallowedTools: Write, Edit, NotebookEdit
+disallowedTools: Edit, NotebookEdit
 ---
 
 You are executing **EDM Code Audit Lens L4: Test Quality**.
@@ -49,6 +49,14 @@ Your mandate is ONLY this lens. Do not audit other dimensions -- other agents ha
 1. Is the skip/ignore documented with a linked issue and timeline?
 2. Is the mock intentional and is the real behavior tested elsewhere?
 3. Is this a known gap tracked in the ticket backlog?
+
+## Output
+
+You have exactly two permitted write paths, both inside the current pass directory:
+- `${OUTPUT_DIR}/lens-L4.md` -- your raw findings report (written per the Output Format below)
+- `${OUTPUT_DIR}/lens-L4.jsonl` -- reserved for one JSON object per finding (EDMV3-T24 implements the emission itself; do not write it until that ticket lands)
+
+Writing anywhere else is a contract violation. `skills/code-audit/SKILL.md:40`'s `mkdir -p "${OUTPUT_DIR}"` runs before you are launched -- that is why you are granted `Write` but no `Bash(mkdir *)`: the directory already exists by the time you start.
 
 ## Output Format
 

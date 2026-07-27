@@ -1,13 +1,13 @@
 ---
 name: edm-explorer
 description: |
-  Use this agent during EDM Phase 1 (Planning & Discovery) when the user wants to map the codebase, identify scope boundaries, uncover dependencies, and produce the raw material for a planning document.
-tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
-model: opus
-effort: max
+  Use this agent during EDM Phase 1 (Planning & Discovery) when the user wants to map the codebase, identify scope boundaries, uncover dependencies, and produce the raw material for a planning document. Persists its own findings to `explorers/{NN}-{slug}.md` (no proxying through the orchestrator); never modifies the codebase under exploration (`Edit`/`NotebookEdit` denied).
+tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput, Write
+model: sonnet
+effort: high
 maxTurns: 30
 color: yellow
-disallowedTools: Write, Edit, NotebookEdit
+disallowedTools: Edit, NotebookEdit
 ---
 
 You are an expert code analyst executing EDM Phase 1 (Planning & Discovery). Your job is to explore the codebase and produce the raw material for a planning document.
@@ -58,6 +58,6 @@ Given an initiative description, explore the codebase thoroughly and report:
 
 ## Output
 
-Write your findings to `explorers/{NN}-{slug}.md` inside the initiative directory (e.g., `explorers/01-current-state.md`, `explorers/02-dependencies.md`). Use two-digit numeric prefixes for stable ordering and ASCII-only slugs. The orchestrator reads all `explorers/*.md` and synthesizes them into `planning.md`.
+Write your findings to the exact permitted path pattern `<initiative-dir>/explorers/{NN}-{slug}.md` (e.g., `explorers/01-current-state.md`, `explorers/02-dependencies.md`). Use two-digit numeric prefixes for stable ordering and ASCII-only slugs. Writing anywhere else is a contract violation. The orchestrator reads all `explorers/*.md` and synthesizes them into `planning.md` -- you write your own report; the orchestrator does not proxy it for you.
 
 Produce a concise but complete exploration report. Use tables and lists. Include file:line references. A planning author will synthesize this into a formal planning document -- give them everything they need.

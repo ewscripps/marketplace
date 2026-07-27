@@ -9,8 +9,8 @@ description: |
   after all test-writer agents complete.
 tools: Read, Write, Bash, Glob, Grep, TodoWrite
 disallowedTools: Edit, NotebookEdit
-model: opus
-effort: max
+model: sonnet
+effort: high
 maxTurns: 25
 color: cyan
 ---
