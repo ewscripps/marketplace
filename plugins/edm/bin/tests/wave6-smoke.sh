@@ -1661,6 +1661,236 @@ check_state_unchanged "$STATE_T12BYPASS" "$EDM_STATE" archive T12BYPASS
   && pass "T12 REGRESSION -- three-command bypass fails at both step 2 and step 3; directory never moved" \
   || fail "T12 REGRESSION -- initiative directory was archived despite the bypass"
 
+# =================================================================================
+# EDMV3-T16: the three-command bypass becomes a must-fail smoke suite
+# =================================================================================
+# This block is tests-only (T16 Out of Scope: no production-code change -- every refusal it
+# asserts is implemented by EDMV3-T09 through EDMV3-T13, already covered individually above).
+# It adds the ticket's own literal reproduction (--product/--description, edm-init by bare
+# name, per AC8) rather than reusing the T12 REGRESSION fixture above, which predates T16 and
+# uses the flat "$EDM_STATE" init / shared-$TMP style T16 AC8 supersedes for new cases.
+# Every case below uses with_scratch_repo / check_fails / check_state_unchanged (EDMV3-T19) --
+# no hand-rolled `mktemp -d` in this block. 13 "must-fail:"-labeled cases are added across
+# AC1/AC2 (3), AC4 (9) and AC5 (1); AC6 adds two mode-archival positives; AC7's happy path
+# runs last per the ticket's ordering note (a bug that makes everything pass must be caught by
+# the must-fail count, not masked by a green happy path).
+echo
+echo "T16 -- three-command bypass matrix (must-fail cases), mode cases, and the happy path"
+
+# ---- AC1/AC2/AC3: the reviewer's exact reproduction, product-scoped -----------------------
+echo
+echo "T16 AC1/AC2/AC3 -- the three-command bypass: edm-init -> set converged -> archive"
+t16_bypass_case() {
+  edm-init --product demo --description bypass-test TESTX >/dev/null
+  local init_dir state_file
+  init_dir="$(edm-state resolve-dir TESTX)"
+  state_file="${init_dir}/.edm-state.json"
+
+  # Command 2: edm-state set TESTX code_audit_converged true -- must fail naming approve-gate.
+  check_fails "must-fail: T16 AC1 -- bypass command 2 (set code_audit_converged true) refused" \
+    "approve-gate" \
+    edm-state set TESTX code_audit_converged true
+  check_state_unchanged "$state_file" edm-state set TESTX code_audit_converged true
+
+  # Command 3, first attempt: hand-edit the state file directly (bypassing `set` entirely) to
+  # force the flag, then archive at phase 0 -- refused on gate grounds, naming the missing gates.
+  jq '.code_audit_converged = true' "$state_file" > "${state_file}.tmp" && mv "${state_file}.tmp" "$state_file"
+  check_fails "must-fail: T16 AC2 -- bypass command 3 refused after hand-edit (missing gates)" \
+    "gate(s) 1, 2, 3 not approved" \
+    edm-state archive TESTX
+  check_state_unchanged "$state_file" edm-state archive TESTX
+
+  # Command 3, second attempt: approve every gate the bypass forgot -- still refused, this time
+  # naming the wrong current_phase, proving the gate check is not the only thing in the way.
+  edm-state approve-gate TESTX 1 >/dev/null
+  edm-state approve-gate TESTX 2 >/dev/null
+  edm-state approve-gate TESTX 3 >/dev/null
+  check_fails "must-fail: T16 AC2 -- bypass command 3 still refused once gates are approved (wrong current_phase)" \
+    "current_phase (0) has not reached the terminal phase (6)" \
+    edm-state archive TESTX
+
+  # AC3: nothing moved -- the initiative directory still exists at its original path.
+  [[ -d "$init_dir" ]] \
+    && pass "T16 AC3 -- initiative directory unmoved after both refusals" \
+    || fail "T16 AC3 -- initiative directory missing after refusals (was it archived despite the bypass?)"
+}
+with_scratch_repo t16_bypass_case
+
+# ---- AC4: must-fail matrix -----------------------------------------------------------------
+echo
+echo "T16 AC4 -- must-fail matrix: phase-complete/archive/set/phase-start refusals"
+t16_matrix_case() {
+  # 1. phase-complete with the artifact absent (phase 1, no planning.md).
+  edm-init --product demo --description mx1 MX1 >/dev/null
+  edm-state phase-start MX1 1 >/dev/null
+  local mx1_dir; mx1_dir="$(edm-state resolve-dir MX1)"
+  check_fails "must-fail: T16 AC4 -- phase-complete refuses when the phase artifact is absent" \
+    "phase 1 artifact missing or empty" \
+    edm-state phase-complete MX1 1
+  check_state_unchanged "${mx1_dir}/.edm-state.json" edm-state phase-complete MX1 1
+
+  # 2. archive with gates 1 and 2 approved but not 3.
+  edm-init --product demo --description mx2 MX2 >/dev/null
+  edm-state approve-gate MX2 1 >/dev/null
+  edm-state approve-gate MX2 2 >/dev/null
+  check_fails "must-fail: T16 AC4 -- archive with gates 1 and 2 but not 3 refuses naming gate 3" \
+    "gate(s) 3 not approved" \
+    edm-state archive MX2
+
+  # 3. archive at current_phase == 5.
+  edm-init --product demo --description mx3 MX3 >/dev/null
+  edm-state approve-gate MX3 1 >/dev/null
+  edm-state approve-gate MX3 2 >/dev/null
+  edm-state approve-gate MX3 3 >/dev/null
+  edm-state set MX3 current_phase 5 >/dev/null
+  check_fails "must-fail: T16 AC4 -- archive at current_phase 5 refuses" \
+    "current_phase (5) has not reached the terminal phase (6)" \
+    edm-state archive MX3
+
+  # 4. set with an unknown key.
+  edm-init --product demo --description mx4 MX4 >/dev/null
+  local mx4_dir; mx4_dir="$(edm-state resolve-dir MX4)"
+  check_fails "must-fail: T16 AC4 -- set with an unknown key refuses" \
+    "unknown key 'totally_bogus_key'" \
+    edm-state set MX4 totally_bogus_key 1
+  check_state_unchanged "${mx4_dir}/.edm-state.json" edm-state set MX4 totally_bogus_key 1
+
+  # 5-7. set on each of the three gate-bearing fields.
+  check_fails "must-fail: T16 AC4 -- set code_audit_converged refuses (gate-bearing field 1/3)" \
+    "approve-gate <PREFIX> code-audit" \
+    edm-state set MX4 code_audit_converged true
+  check_state_unchanged "${mx4_dir}/.edm-state.json" edm-state set MX4 code_audit_converged true
+  check_fails "must-fail: T16 AC4 -- set compliance_gate_approved refuses (gate-bearing field 2/3)" \
+    "approve-gate <PREFIX> 3.5" \
+    edm-state set MX4 compliance_gate_approved true
+  check_state_unchanged "${mx4_dir}/.edm-state.json" edm-state set MX4 compliance_gate_approved true
+  check_fails "must-fail: T16 AC4 -- set gates_approved refuses (gate-bearing field 3/3)" \
+    "approve-gate <PREFIX> <gate-num>" \
+    edm-state set MX4 gates_approved true
+  check_state_unchanged "${mx4_dir}/.edm-state.json" edm-state set MX4 gates_approved true
+
+  # 8. set schema_version.
+  check_fails "must-fail: T16 AC4 -- set schema_version refuses naming migrate-schema" \
+    "migrate-schema <PREFIX>" \
+    edm-state set MX4 schema_version 2
+  check_state_unchanged "${mx4_dir}/.edm-state.json" edm-state set MX4 schema_version 2
+
+  # 9. phase-start into a phase whose prerequisite gate is unapproved.
+  edm-init --product demo --description mx5 MX5 >/dev/null
+  local mx5_dir; mx5_dir="$(edm-state resolve-dir MX5)"
+  check_fails "must-fail: T16 AC4 -- phase-start refuses into a phase whose prerequisite gate is unapproved" \
+    "Gate 1 has not been approved" \
+    edm-state phase-start MX5 2
+  check_state_unchanged "${mx5_dir}/.edm-state.json" edm-state phase-start MX5 2
+}
+with_scratch_repo t16_matrix_case
+
+# ---- AC5: flat-layout case, the second hole (no --product) --------------------------------
+echo
+echo "T16 AC5 -- flat-layout archive refused (converged=false, no product_name)"
+t16_flat_case() {
+  edm-init FLATX >/dev/null   # no --product/--description -> flat SRD/FLATX/ layout
+  local flat_dir flat_state product_val
+  flat_dir="$(edm-state resolve-dir FLATX)"
+  flat_state="${flat_dir}/.edm-state.json"
+  product_val="$(edm-state get FLATX | jq -r '.product_name')"
+  [[ -z "$product_val" ]] \
+    && pass "T16 AC5 -- fixture is genuinely flat-layout (product_name empty)" \
+    || fail "T16 AC5 -- fixture unexpectedly has product_name='$product_val'"
+
+  edm-state approve-gate FLATX 1 >/dev/null
+  edm-state approve-gate FLATX 2 >/dev/null
+  edm-state approve-gate FLATX 3 >/dev/null
+  jq '.current_phase = 6 | .phase_durations["6_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
+    "$flat_state" > "${flat_state}.tmp" && mv "${flat_state}.tmp" "$flat_state"
+  check_fails "must-fail: T16 AC5 -- flat-layout archive refused (converged=false, no product_name)" \
+    "approve-gate FLATX code-audit" \
+    edm-state archive FLATX
+}
+with_scratch_repo t16_flat_case
+
+# ---- AC6: mode cases -- fast-track and mini-srd each archive with their own skips ----------
+echo
+echo "T16 AC6 -- mode cases: fast-track and mini-srd each archive with their seeded/recorded skips"
+t16_fasttrack_case() {
+  edm-init --product demo --description ft FASTX >/dev/null
+  edm-state set-mode FASTX lifecycle_mode fast-track >/dev/null
+  # Fast-track's sub-flow (orchestrator/SKILL.md) records all four skips explicitly --
+  # skipped_phases is NOT auto-seeded for lifecycle_mode (only `mode` is, EDMV3-T07 AC4).
+  edm-state skip-phase FASTX 1 "fast-track: planning skipped -- tickets from analysis doc" >/dev/null
+  edm-state skip-phase FASTX 2 "fast-track: SRD skipped -- tickets from analysis doc" >/dev/null
+  edm-state skip-phase FASTX 3 "fast-track: SRD audit skipped" >/dev/null
+  edm-state skip-phase FASTX 5 "fast-track: ticket audit skipped" >/dev/null
+  local skipped_count
+  skipped_count="$(edm-state get FASTX | jq '.skipped_phases | length')"
+  [[ "$skipped_count" -eq 4 ]] \
+    && pass "T16 AC6 -- fast-track records all four skipped phases the sub-flow prescribes" \
+    || fail "T16 AC6 -- fast-track skipped_phases length = $skipped_count, expected 4"
+
+  edm-state approve-gate FASTX 3 >/dev/null   # the single ticket-review gate the sub-flow names
+  local fastx_state; fastx_state="$(edm-state resolve-dir FASTX)/.edm-state.json"
+  jq '.current_phase = 6 | .phase_durations["6_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
+    "$fastx_state" > "${fastx_state}.tmp" && mv "${fastx_state}.tmp" "$fastx_state"
+  edm-state archive FASTX >/dev/null \
+    && pass "T16 AC6 -- fast-track archives successfully with its recorded skips" \
+    || fail "T16 AC6 -- fast-track archive was refused despite the recorded skips"
+}
+with_scratch_repo t16_fasttrack_case
+
+t16_minisrd_case() {
+  edm-init --product demo --description mini MINIX --mode mini-srd >/dev/null
+  local skipped_count
+  skipped_count="$(edm-state get MINIX | jq '.skipped_phases | length')"
+  [[ "$skipped_count" -eq 3 ]] \
+    && pass "T16 AC6 -- mini-srd seeds skipped_phases (2, 4, 5) automatically at edm-init" \
+    || fail "T16 AC6 -- mini-srd skipped_phases length = $skipped_count, expected 3"
+
+  edm-state approve-gate MINIX 1 >/dev/null
+  edm-state approve-gate MINIX 2 >/dev/null   # gate 3 (phase 5) is exempt: its origin phase is skipped
+  local minix_state; minix_state="$(edm-state resolve-dir MINIX)/.edm-state.json"
+  jq '.current_phase = 6 | .phase_durations["6_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
+    "$minix_state" > "${minix_state}.tmp" && mv "${minix_state}.tmp" "$minix_state"
+  edm-state approve-gate MINIX code-audit >/dev/null
+  edm-state archive MINIX >/dev/null \
+    && pass "T16 AC6 -- mini-srd archives successfully with only gates 1 and 2 approved" \
+    || fail "T16 AC6 -- mini-srd archive was refused despite the seeded skips"
+}
+with_scratch_repo t16_minisrd_case
+
+# ---- AC7: happy path, run last -- proves refusal is targeted, not blanket -----------------
+echo
+echo "T16 AC7 -- happy path: a fully compliant standard-lifecycle initiative archives"
+t16_happy_case() {
+  edm-init --product demo --description happy HAPX >/dev/null
+  edm-state approve-gate HAPX 1 >/dev/null
+  edm-state approve-gate HAPX 2 >/dev/null
+  edm-state approve-gate HAPX 3 >/dev/null
+  local hapx_dir hapx_state
+  hapx_dir="$(edm-state resolve-dir HAPX)"
+  hapx_state="${hapx_dir}/.edm-state.json"
+  jq '.current_phase = 6 | .phase_durations["6_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
+    "$hapx_state" > "${hapx_state}.tmp" && mv "${hapx_state}.tmp" "$hapx_state"
+  edm-state approve-gate HAPX code-audit >/dev/null
+  edm-state archive HAPX >/dev/null \
+    && pass "T16 AC7 -- fully compliant standard-lifecycle initiative archives successfully" \
+    || fail "T16 AC7 -- compliant initiative was refused"
+
+  local srd_root product_dir_name init_dir_name archived_path
+  init_dir_name="$(basename "$hapx_dir")"
+  product_dir_name="$(basename "$(dirname "$hapx_dir")")"
+  srd_root="$(dirname "$(dirname "$hapx_dir")")"
+  archived_path="${srd_root}/.archived/${product_dir_name}/${init_dir_name}"
+  [[ -d "$archived_path" ]] \
+    && pass "T16 AC7 -- archived to the expected product-scoped destination" \
+    || fail "T16 AC7 -- archived directory not found at expected destination ($archived_path)"
+}
+with_scratch_repo t16_happy_case
+
+# EDMV3-T18 (wave B) placeholder: the bypass matrix's unclosed-PARTIAL case
+# ("bypass matrix: archive with an unclosed PARTIAL", T16 AC4/T18 AC11) is filled in when
+# EDMV3-T18 lands the PARTIAL closure representation and the archive-side closure check.
+# EDMV3-T16 end
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
