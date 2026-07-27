@@ -29,10 +29,13 @@ echo "T05 AC1/AC2 -- canonical four-field anomaly format"
 "$EDM_STATE" init ANOMFMT >/dev/null
 STATE_ANOMFMT="$TMP/SRD/ANOMFMT/.edm-state.json"
 "$EDM_STATE" phase-start ANOMFMT 1 >/dev/null
+# EDMV3-T11: phase-complete now requires each phase's artifact to be present and non-empty.
+echo "planning notes" > "$TMP/SRD/ANOMFMT/planning.md"
 "$EDM_STATE" phase-complete ANOMFMT 1 >/dev/null
 # EDMV3-T13: phase-start now kernel-enforces phase 2's prerequisite gate (gate 1).
 "$EDM_STATE" approve-gate ANOMFMT 1 >/dev/null
 "$EDM_STATE" phase-start ANOMFMT 2 >/dev/null
+echo "srd notes" > "$TMP/SRD/ANOMFMT/srd.md"
 "$EDM_STATE" phase-complete ANOMFMT 2 >/dev/null
 # estimated_size is still "Unknown" and current_phase (2) >= 2 -> SIZE_UNKNOWN (info) fires.
 anom_out="$("$EDM_STATE" validate ANOMFMT 2>&1 || true)"
@@ -65,6 +68,8 @@ echo "T05 AC4 -- one blocking anomaly exits 3"
 STATE_ANOMBLK="$TMP/SRD/ANOMBLK/.edm-state.json"
 "$EDM_STATE" set ANOMBLK estimated_size Small >/dev/null   # suppress SIZE_UNKNOWN
 "$EDM_STATE" phase-start ANOMBLK 1 >/dev/null
+# EDMV3-T11: phase-complete now requires phase 1's artifact (planning.md) present + non-empty.
+echo "planning notes" > "$TMP/SRD/ANOMBLK/planning.md"
 "$EDM_STATE" phase-complete ANOMBLK 1 >/dev/null
 # Craft a TIME_ORDER fixture directly: completed_at earlier than started_at.
 jq '.phase_durations["1_phase"].started_at = "2026-01-02T00:00:00Z"
@@ -86,10 +91,13 @@ echo "T05 AC4 -- both classes present exits 3 and lists both"
 "$EDM_STATE" init ANOMBOTH >/dev/null
 STATE_ANOMBOTH="$TMP/SRD/ANOMBOTH/.edm-state.json"
 "$EDM_STATE" phase-start ANOMBOTH 1 >/dev/null
+# EDMV3-T11: phase-complete now requires each phase's artifact to be present and non-empty.
+echo "planning notes" > "$TMP/SRD/ANOMBOTH/planning.md"
 "$EDM_STATE" phase-complete ANOMBOTH 1 >/dev/null
 # EDMV3-T13: phase-start now kernel-enforces phase 2's prerequisite gate (gate 1).
 "$EDM_STATE" approve-gate ANOMBOTH 1 >/dev/null
 "$EDM_STATE" phase-start ANOMBOTH 2 >/dev/null
+echo "srd notes" > "$TMP/SRD/ANOMBOTH/srd.md"
 "$EDM_STATE" phase-complete ANOMBOTH 2 >/dev/null
 # estimated_size stays "Unknown" -> SIZE_UNKNOWN (info). Craft TIME_ORDER (blocking) too.
 jq '.phase_durations["1_phase"].started_at = "2026-01-02T00:00:00Z"
@@ -111,6 +119,8 @@ echo "T05 AC5 -- ZERO_TOKENS remains blocking (no silent reclassification)"
 STATE_ANOMZT="$TMP/SRD/ANOMZT/.edm-state.json"
 "$EDM_STATE" set ANOMZT estimated_size Small >/dev/null
 "$EDM_STATE" phase-start ANOMZT 1 >/dev/null
+# EDMV3-T11: phase-complete now requires phase 1's artifact (planning.md) present + non-empty.
+echo "planning notes" > "$TMP/SRD/ANOMZT/planning.md"
 "$EDM_STATE" phase-complete ANOMZT 1 >/dev/null
 jq '.phase_durations["1_phase"].model_used = "claude-test"
     | .phase_durations["1_phase"].tokens.input = 0
@@ -1286,6 +1296,161 @@ check "AC9 -- --help lists migrate-schema" "migrate-schema" "$migsch_help_out"
 claude_md_hits="$(grep -c 'migrate-schema' "${SCRIPT_DIR}/../../CLAUDE.md" 2>/dev/null || echo 0)"
 [[ "${claude_md_hits:-0}" -ge 1 ]] && pass "AC9 -- CLAUDE.md bin/ table lists migrate-schema" \
   || fail "AC9 -- migrate-schema not found in plugins/edm/CLAUDE.md"
+
+# =================================================================================
+# EDMV3-T11: phase-complete verifies the phase produced its artifact, with no force path
+# =================================================================================
+echo
+echo "T11 -- phase-complete per-phase artifact verification"
+
+# ---- AC1/AC2: per-phase artifact absent refuses (no mutation); present succeeds ----------
+echo
+echo "T11 AC1/AC2 -- per-phase artifact check (absent refuses, present succeeds)"
+
+_t11_case() {
+  local prefix="$1" phase="$2" artifact_rel="$3"
+  "$EDM_STATE" init "$prefix" >/dev/null
+  local dir="$TMP/SRD/$prefix"
+  local state="${dir}/.edm-state.json"
+
+  check_fails "T11 AC2 -- phase ${phase} artifact absent refuses (${prefix})" \
+    "phase ${phase} artifact missing or empty" \
+    "$EDM_STATE" phase-complete "$prefix" "$phase"
+  check_state_unchanged "$state" "$EDM_STATE" phase-complete "$prefix" "$phase"
+
+  mkdir -p "$(dirname "${dir}/${artifact_rel}")"
+  echo "content" > "${dir}/${artifact_rel}"
+  "$EDM_STATE" phase-complete "$prefix" "$phase" >/dev/null \
+    && pass "T11 AC1 -- phase ${phase} artifact present succeeds (${prefix})" \
+    || fail "T11 AC1 -- phase ${phase} artifact present still refused (${prefix})"
+}
+
+_t11_case T11P1 1 "planning.md"
+_t11_case T11P2 2 "srd.md"
+_t11_case T11P3 3 "audit-srd.md"
+_t11_case T11P4 4 "tickets/README.md"
+_t11_case T11P5 5 "tickets/audit.md"
+
+# Phase 6 gets its own case: qc/qc-summary.md (the base positive/negative pair, distinct
+# from AC3's shard-only variant below).
+"$EDM_STATE" init T11P6 >/dev/null
+STATE_T11P6="$TMP/SRD/T11P6/.edm-state.json"
+check_fails "T11 AC2 -- phase 6 artifact absent refuses (T11P6)" \
+  "phase 6 artifact missing or empty" \
+  "$EDM_STATE" phase-complete T11P6 6
+check_state_unchanged "$STATE_T11P6" "$EDM_STATE" phase-complete T11P6 6
+mkdir -p "$TMP/SRD/T11P6/qc"
+echo "# QC Summary" > "$TMP/SRD/T11P6/qc/qc-summary.md"
+"$EDM_STATE" phase-complete T11P6 6 >/dev/null \
+  && pass "T11 AC1 -- phase 6 artifact (qc-summary.md) present succeeds (T11P6)" \
+  || fail "T11 AC1 -- phase 6 artifact present still refused (T11P6)"
+
+# ---- AC3 (positive, sharded phase 6): qc-shard-01.md only still completes ----------------
+echo
+echo "T11 AC3 -- shard-only phase 6 completes"
+"$EDM_STATE" init T11SHARD >/dev/null
+mkdir -p "$TMP/SRD/T11SHARD/qc"
+echo "# Shard 1" > "$TMP/SRD/T11SHARD/qc/qc-shard-01.md"
+"$EDM_STATE" phase-complete T11SHARD 6 >/dev/null \
+  && pass "T11 AC3 -- shard-only phase 6 completes" \
+  || fail "T11 AC3 -- shard-only phase 6 still refused"
+
+# ---- AC4: phase 6 with open PARTIAL refuses naming verify-runtime (requires schema_version >= 2) --
+echo
+echo "T11 AC4 -- phase 6 with open PARTIAL refuses naming verify-runtime (schema_version >= 2)"
+"$EDM_STATE" init T11PARTIAL >/dev/null
+STATE_T11PARTIAL="$TMP/SRD/T11PARTIAL/.edm-state.json"
+jq '.schema_version = 2' "$STATE_T11PARTIAL" > "$STATE_T11PARTIAL.tmp" && mv "$STATE_T11PARTIAL.tmp" "$STATE_T11PARTIAL"
+mkdir -p "$TMP/SRD/T11PARTIAL/qc"
+echo "# QC Summary" > "$TMP/SRD/T11PARTIAL/qc/qc-summary.md"
+"$EDM_STATE" record-partial-verdict T11PARTIAL T11PARTIAL-T01 PARTIAL "needs runtime check" >/dev/null
+check_fails "T11 AC4 -- phase 6 with open PARTIAL refuses naming verify-runtime" \
+  "verify-runtime" \
+  "$EDM_STATE" phase-complete T11PARTIAL 6
+check_state_unchanged "$STATE_T11PARTIAL" "$EDM_STATE" phase-complete T11PARTIAL 6
+"$EDM_STATE" record-partial-verdict T11PARTIAL T11PARTIAL-T01 PASS "runtime verified" >/dev/null
+"$EDM_STATE" phase-complete T11PARTIAL 6 >/dev/null \
+  && pass "T11 AC4 -- phase 6 completes once the PARTIAL is closed" \
+  || fail "T11 AC4 -- phase 6 still refused after the PARTIAL was closed"
+
+# ---- AC4 (degradation): schema_version < 2 warns and proceeds through the PARTIAL check --
+echo
+echo "T11 AC4 -- schema_version < 2 warns and proceeds through the open-PARTIAL check"
+"$EDM_STATE" init T11PARTIALV1 >/dev/null
+mkdir -p "$TMP/SRD/T11PARTIALV1/qc"
+echo "# QC Summary" > "$TMP/SRD/T11PARTIALV1/qc/qc-summary.md"
+"$EDM_STATE" record-partial-verdict T11PARTIALV1 T11PARTIALV1-T01 PARTIAL "needs runtime check" >/dev/null
+"$EDM_STATE" phase-complete T11PARTIALV1 6 >/dev/null \
+  && pass "T11 AC4 -- schema_version 1 (< 2) does not enforce the open-PARTIAL check" \
+  || fail "T11 AC4 -- schema_version 1 unexpectedly enforced the open-PARTIAL check"
+
+# ---- AC5: skipped-phase exemption for the artifact; phase 6's PARTIAL check is NOT exempted --
+echo
+echo "T11 AC5 -- skipped-phase artifact exemption; phase 6 PARTIAL check has no such exemption"
+"$EDM_STATE" init T11SKIP2 >/dev/null
+"$EDM_STATE" skip-phase T11SKIP2 2 "mini-srd fused SRD" >/dev/null
+"$EDM_STATE" phase-complete T11SKIP2 2 >/dev/null \
+  && pass "T11 AC5 -- skipped phase 2 completes without srd.md" \
+  || fail "T11 AC5 -- skipped phase 2 still refused despite the skip record"
+
+"$EDM_STATE" init T11SKIP6 >/dev/null
+STATE_T11SKIP6="$TMP/SRD/T11SKIP6/.edm-state.json"
+jq '.schema_version = 2' "$STATE_T11SKIP6" > "$STATE_T11SKIP6.tmp" && mv "$STATE_T11SKIP6.tmp" "$STATE_T11SKIP6"
+"$EDM_STATE" skip-phase T11SKIP6 6 "zero-ticket phase 6" >/dev/null
+"$EDM_STATE" record-partial-verdict T11SKIP6 T11SKIP6-T01 PARTIAL "needs runtime check" >/dev/null
+check_fails "T11 AC5 -- skipped phase 6 still refuses on an open PARTIAL" \
+  "verify-runtime" \
+  "$EDM_STATE" phase-complete T11SKIP6 6
+
+# ---- AC6: mode seeding makes the phase-2 exemption reachable on a fresh mini-srd initiative --
+echo
+echo "T11 AC6 -- fresh mini-srd initiative's phase-complete 2 succeeds (mode-seeded skip)"
+export EDM_MODE="mini-srd"
+"$EDM_STATE" init T11MINI >/dev/null
+unset EDM_MODE
+"$EDM_STATE" phase-complete T11MINI 2 >/dev/null \
+  && pass "T11 AC6 -- fresh mini-srd phase-complete 2 succeeds" \
+  || fail "T11 AC6 -- fresh mini-srd phase-complete 2 refused despite mode seeding"
+
+# ---- AC7 (negative, no force path): --force is an unknown-argument error, not a bypass ---
+echo
+echo "T11 AC7 -- phase-complete --force is an unknown argument"
+check_fails "T11 AC7 -- phase-complete --force is an unknown argument" \
+  "usage: edm-state phase-complete" \
+  "$EDM_STATE" phase-complete T11P1 1 --force
+
+# ---- AC8 (C-4): legacy state (no schema_version) warns and proceeds ----------------------
+echo
+echo "T11 AC8 -- legacy phase-complete warns and proceeds"
+"$EDM_STATE" init T11LEGACY >/dev/null
+STATE_T11LEGACY="$TMP/SRD/T11LEGACY/.edm-state.json"
+jq 'del(.schema_version)' "$STATE_T11LEGACY" > "$STATE_T11LEGACY.tmp" && mv "$STATE_T11LEGACY.tmp" "$STATE_T11LEGACY"
+set +e
+legacy_pc_out="$("$EDM_STATE" phase-complete T11LEGACY 1 2>&1)"
+legacy_pc_ec=$?
+set -e
+check "T11 AC8 -- legacy phase-complete warns rather than hard-failing" \
+  "[warn] legacy initiative" "$legacy_pc_out"
+[[ $legacy_pc_ec -eq 0 ]] && pass "T11 AC8 -- legacy phase-complete proceeds (exit 0) despite no planning.md" \
+  || fail "T11 AC8 -- legacy phase-complete exited $legacy_pc_ec, expected 0"
+
+# ---- AC9 (preserve): artifact-hash recording still works for phase 2 ---------------------
+echo
+echo "T11 AC9 -- artifact-hash recording preserved for phase 2"
+"$EDM_STATE" init T11HASH >/dev/null
+echo "# SRD" > "$TMP/SRD/T11HASH/srd.md"
+"$EDM_STATE" phase-complete T11HASH 2 >/dev/null
+hash_check="$("$EDM_STATE" get T11HASH | jq -r '.artifact_hashes.srd.hash // "null"')"
+[[ -n "$hash_check" && "$hash_check" != "null" ]] \
+  && pass "T11 AC9 -- artifact_hashes.srd.hash recorded after phase-complete 2" \
+  || fail "T11 AC9 -- artifact_hashes.srd.hash missing/null after phase-complete 2"
+
+# ---- AC10: comment states the three fixed filenames are not user-configurable -----------
+echo
+echo "T11 AC10 -- comment documents the fixed vs. configurable artifact filenames"
+ac10_hits="$(sed -n '/^cmd_phase_complete() {/,/^}/p' "$EDM_STATE" | grep -c 'NOT user-configurable')"
+[[ "$ac10_hits" -ge 1 ]] && pass "T11 AC10 -- comment present inside cmd_phase_complete" \
+  || fail "T11 AC10 -- comment not found inside cmd_phase_complete"
 
 # ---- Summary -----------------------------------------------------------------
 echo

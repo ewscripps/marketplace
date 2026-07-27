@@ -336,9 +336,17 @@ git_aware_mv() {
   fi
 }
 
-# present_or_absent <path> — echo '[present]' if the file exists, else '[absent]'. (CA-015)
+# present_or_absent <path> [nonempty] — echo '[present]' if the file exists, else '[absent]'.
+# (CA-015) The optional second arg "nonempty" (EDMV3-T11 AC1) extends this same idiom into a
+# non-empty variant (`-s` instead of `-f`) for cmd_phase_complete's per-phase artifact check,
+# rather than defining a sixth presence idiom. Existing no-arg callers are unaffected.
 present_or_absent() {
-  [[ -f "$1" ]] && echo '[present]' || echo '[absent]'
+  local f="$1" mode="${2:-}"
+  if [[ "$mode" == "nonempty" ]]; then
+    [[ -s "$f" ]] && echo '[present]' || echo '[absent]'
+  else
+    [[ -f "$f" ]] && echo '[present]' || echo '[absent]'
+  fi
 }
 
 # gated_phase_for_gate <gate-num> — the phase whose completion feeds the given HITL gate
@@ -1044,6 +1052,84 @@ cmd_phase_complete() {
   state_file="$(state_file_for "$prefix")"
   [[ -f "$state_file" ]] || die "no state file for $prefix"
   started_at="$(jq -r --arg k "$key" '.phase_durations[$k].started_at // empty' "$state_file")"
+
+  # ---- Artifact verification (EDMV3-T11) -- runs before any timing/token/cost data is
+  # computed or recorded, so a refusal mutates nothing (AC2). No override flag of any kind
+  # exists (AC7); the only exemption is a phase already recorded in skipped_phases (AC5), an
+  # auditable state entry rather than a command-line flag.
+  # requires schema_version >= 1 (EDMV3-16, EDMV3-T09 AC10): absent schema_version is the
+  # legacy signal (C-4, AC8) -- this whole block warns and proceeds rather than hard-failing.
+  local pc_state pc_schema_version
+  pc_state="$(cat "$state_file")"
+  pc_schema_version="$(echo "$pc_state" | jq -r '.schema_version // empty')"
+
+  if [[ -z "$pc_schema_version" ]]; then
+    echo "edm-state phase-complete: [warn] legacy initiative (no schema_version) -- skipping artifact verification for phase ${phase}" >&2
+  else
+    local pc_skipped_str pc_phase_skipped=0
+    pc_skipped_str="$(echo "$pc_state" | jq -r '[(.skipped_phases // [])[].phase] | join(" ")')"
+    case " $pc_skipped_str " in
+      *" $phase "*) pc_phase_skipped=1 ;;
+    esac
+
+    if [[ $pc_phase_skipped -eq 0 ]]; then
+      local pc_dir
+      pc_dir="$(initiative_dir_for "$prefix")"
+      # The three literal filenames below (planning.md, audit-srd.md, and the qc/ paths) are
+      # fixed by the artifact layout documented in CLAUDE.md and are NOT user-configurable,
+      # unlike ${SRD_FILENAME} and ${TICKET_PACK_DIRNAME} which the userConfig can rename
+      # (AC10) -- there is no corresponding env var for these three on purpose.
+      case "$phase" in
+        1)
+          [[ -s "${pc_dir}/planning.md" ]] \
+            || die "phase-complete: phase 1 artifact missing or empty: ${pc_dir}/planning.md"
+          ;;
+        2)
+          [[ -s "${pc_dir}/${SRD_FILENAME}" ]] \
+            || die "phase-complete: phase 2 artifact missing or empty: ${pc_dir}/${SRD_FILENAME}"
+          ;;
+        3)
+          [[ -s "${pc_dir}/audit-srd.md" ]] \
+            || die "phase-complete: phase 3 artifact missing or empty: ${pc_dir}/audit-srd.md"
+          ;;
+        4)
+          [[ -s "${pc_dir}/${TICKET_PACK_DIRNAME}/README.md" ]] \
+            || die "phase-complete: phase 4 artifact missing or empty: ${pc_dir}/${TICKET_PACK_DIRNAME}/README.md"
+          ;;
+        5)
+          [[ -s "${pc_dir}/${TICKET_PACK_DIRNAME}/audit.md" ]] \
+            || die "phase-complete: phase 5 artifact missing or empty: ${pc_dir}/${TICKET_PACK_DIRNAME}/audit.md"
+          ;;
+        6)
+          # AC3: accept qc/qc-summary.md OR any qc/qc-shard-*.md (sharded QC merge).
+          if [[ ! -s "${pc_dir}/qc/qc-summary.md" ]]; then
+            local pc_shard pc_shard_found=0
+            for pc_shard in "${pc_dir}"/qc/qc-shard-*.md; do
+              [[ -s "$pc_shard" ]] && pc_shard_found=1 && break
+            done
+            [[ $pc_shard_found -eq 1 ]] \
+              || die "phase-complete: phase 6 artifact missing or empty: ${pc_dir}/qc/qc-summary.md (or any ${pc_dir}/qc/qc-shard-*.md)"
+          fi
+          ;;
+      esac
+    fi
+
+    # AC4/AC5: phase 6's open-PARTIAL check is never exempted by skipped_phases -- a skipped
+    # phase 6 still refuses on an open PARTIAL. requires schema_version >= 2 (EDMV3-T09
+    # AC10); below that it warns and proceeds rather than hard-failing.
+    if [[ "$phase" == "6" ]]; then
+      if [[ "$pc_schema_version" -ge 2 ]]; then
+        local pc_open_partials
+        pc_open_partials="$(echo "$pc_state" | jq -r '
+          [(.partial_verdict_map // {}) | to_entries[] | select(.value.verdict == "PARTIAL")] | length
+        ' 2>/dev/null || echo 0)"
+        [[ "$pc_open_partials" -eq 0 ]] \
+          || die "phase-complete: phase 6 has ${pc_open_partials} unresolved PARTIAL verdict(s); run /edm:verify-runtime ${prefix} before completing phase 6"
+      else
+        echo "edm-state phase-complete: [warn] schema_version ${pc_schema_version} < 2 -- skipping open-PARTIAL check for phase 6" >&2
+      fi
+    fi
+  fi
 
   # Compute tokens + cost outside the lock (read-only)
   local input=0 output=0 cache_read=0 cw5m=0 cw1h=0 model="unknown" cost="0.0000"

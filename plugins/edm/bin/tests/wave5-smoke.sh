@@ -168,6 +168,9 @@ echo
 echo "metrics-report -- G8 n/a savings and G20 Phase 1 label"
 "$EDM_STATE" init MTRX >/dev/null
 "$EDM_STATE" phase-start MTRX 1 >/dev/null
+# EDMV3-T11: phase-complete now requires phase 1's artifact (planning.md) to be present and
+# non-empty before it will record timing/cost data.
+echo "planning notes" > "$TMP/SRD/MTRX/planning.md"
 "$EDM_STATE" phase-complete MTRX 1 >/dev/null
 MR_OUT="$("$EDM_STATE" metrics-report MTRX 2>&1)"
 check "metrics-report Phase 1 row label (G20)" "Phase 1" "$MR_OUT"
