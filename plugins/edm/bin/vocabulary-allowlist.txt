@@ -32,3 +32,10 @@ plugins/edm/bin/tests/|
 # (EDMV3-32 forbids deleting a filter criterion, and editing that file's wording is outside
 # this ticket's file boundary -- EDMV3-T29's agent owns it).
 plugins/edm/agents/edm-audit-spec.md|deferred
+# Class 6 (EDMV3-T18): bin/edm-state's findings-ledger handling names the literal JSON status
+# value "deferred" -- a legacy per-finding enum value written by pre-EDMV3-T25 ledgers, read
+# and coerced to "open" for backward compatibility (EDMV3-T25 AC4 / EDMV3-T28 AC5). This is a
+# data-shape identifier this methodology must recognize on legacy input, not an instance of
+# the abolished deferral-vocabulary policy (which governs how EDM agents talk about findings,
+# not the literal enum strings a ledger file may already contain).
+plugins/edm/bin/edm-state|deferred

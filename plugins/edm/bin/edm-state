@@ -765,6 +765,28 @@ state_anomalies() {
     echo "blocking  CONVERGED_NO_APPROVAL  code_audit_converged  code_audit_converged is true for ${prefix} but no code_audit_gate_approved_at record exists -- run edm-state approve-gate ${prefix} code-audit, or investigate a hand-edited state file"
     found=1
   fi
+  # OPEN_PARTIALS (blocking -- EDMV3-T18 AC7): a partial_verdict_map entry is either still
+  # open (never closed, the original `verdict == "PARTIAL"` shape from T67) or closed FAIL
+  # (a failed runtime verification, which must be remediated -- there is no third closure
+  # verdict). Surfaced here so `edm-state validate` reports it independently of archive's own
+  # refusal, in the canonical four-field format (EDMV3-T05 AC2). Not schema-gated: the
+  # underlying partial_verdict_map has existed since before schema_version was introduced
+  # (T67), so an "open PARTIAL" is real regardless of this initiative's schema_version.
+  local open_partials_anom_lines open_partials_anom_entry open_partials_anom=""
+  open_partials_anom_lines="$(echo "$state" | jq -r '
+    (.partial_verdict_map // {}) | to_entries[] |
+    if (.value.verdict == "PARTIAL") then "\(.key) (open)"
+    elif (.value.closing_verdict == "FAIL") then "\(.key) (FAIL-closed)"
+    else empty end
+  ' 2>/dev/null || true)"
+  if [[ -n "$open_partials_anom_lines" ]]; then
+    while IFS= read -r open_partials_anom_entry; do
+      [[ -n "$open_partials_anom_entry" ]] || continue
+      open_partials_anom="${open_partials_anom}${open_partials_anom:+, }${open_partials_anom_entry}"
+    done <<< "$open_partials_anom_lines"
+    echo "blocking  OPEN_PARTIALS  partial_verdict_map  unclosed or FAIL-closed PARTIAL verdict(s) for ${prefix}: ${open_partials_anom}; run /edm:verify-runtime ${prefix} to close each before archiving"
+    found=1
+  fi
   # SCHEMA_VERSION_MISSING (info -- EDMV3-T10 AC6): schema_version is absent for this
   # (necessarily non-archived -- state_anomalies is only ever reached via a resolvable,
   # non-archived path) initiative. Informational only: absence is the legacy signal every
@@ -1692,9 +1714,13 @@ cmd_archive() {
   # rather than silently permitted) and legacy state with no schema_version (below; EDMV3-T14
   # lands the end-to-end degradation class, this ticket implements its own).
   #
-  # WAVE-B INSERTION POINT (EDMV3-T18): AC1e (PARTIAL-closure check) and AC1f (computed
-  # convergence via `audit-converged`) are NOT implemented here by design -- their machinery
-  # (EDMV3-T28's ledger wiring) does not exist in wave A. Do not stub them.
+  # EDMV3-T18 (wave B): AC1e (PARTIAL-closure check) and AC1f (computed convergence via
+  # `audit-converged`) are implemented below, after the wave-A gates/phase/convergence
+  # checks, gated on their own schema_version >= 2 threshold -- independent of arch_class1
+  # below, which only requires >= 1 -- so a wave-A initiative (schema_version: 1) still
+  # warn-and-proceeds through these two wave-B-only checks by name (EDMV3-T14 AC6
+  # three-valued model). No override flag exists for either check (AC10); an unrecognized
+  # extra CLI argument is already refused by the `[[ $# -eq 1 ]]` usage guard above.
   local state_file
   state_file="${src}/.edm-state.json"
 
@@ -1805,13 +1831,66 @@ cmd_archive() {
           # This branch checks the code_audit_converged boolean set by cmd_approve_gate's
           # code-audit branch, which itself evaluates the shared BLOCKING_FILTER predicate
           # (EDMV3-T28 AC9) -- archive is the third named consumer of that one definition.
-          # Replacing this boolean check with a direct ledger re-query is EDMV3-T18's wave-B
-          # wiring (see the "WAVE-B INSERTION POINT" comment above cmd_archive); not duplicated
-          # here so the two tickets do not race on the same lines.
+          # A direct ledger re-query (via `audit-converged`) runs separately below as
+          # EDMV3-T18's AC1f wave-B sub-check; not duplicated here so the two checks stay
+          # on their own lines and their own schema-gating.
           die "archive refused: code_audit_converged=false; run edm-state approve-gate ${prefix} code-audit before archiving"
         fi
         # converged == "true": proceed silently.
       fi
+    fi
+
+    # ---- EDMV3-T18 AC1e/AC1f: wave-B sub-checks, gated on schema_version >= 2 --------------
+    # Runs regardless of which arch_class1 branch above was taken (legacy no-schema-version,
+    # or schema_version present) -- both degrade identically here (AC6): only schema_version
+    # >= 2 gets full enforcement; absent and schema_version=1 both warn-and-proceed, naming
+    # each of the two checks skipped.
+    local archive_schema_class2
+    archive_schema_class2="$(schema_at_least "$schema_version_arch" 2)"
+
+    if [[ "$archive_schema_class2" != "2" ]]; then
+      echo "edm-state archive: [warn] schema_version ${schema_version_arch:-absent} < 2 -- skipping PARTIAL-closure check for ${prefix}" >&2
+      record_degraded_check "$prefix" "archive:partial-closure-check" "schema_version ${schema_version_arch:-absent} < 2"
+      echo "edm-state archive: [warn] schema_version ${schema_version_arch:-absent} < 2 -- skipping audit-converged re-query for ${prefix}" >&2
+      record_degraded_check "$prefix" "archive:audit-converged-recheck" "schema_version ${schema_version_arch:-absent} < 2"
+    else
+      # ---- AC1e/AC2/AC3/AC4: every partial_verdict_map entry must be closed PASS. An entry
+      # is still open when it carries the original `verdict == "PARTIAL"` shape (never
+      # closed); an entry closed FAIL also blocks (AC3) since a failed runtime verification
+      # is itself a FAIL finding that must be remediated -- there is no third closure
+      # verdict (EDMV3-T32 AC9 already refuses any closing verdict but PASS/FAIL).
+      local open_partials_list
+      open_partials_list="$(echo "$state_json" | jq -r '
+        (.partial_verdict_map // {}) | to_entries[] |
+        if (.value.verdict == "PARTIAL") then
+          "  \(.key): open (recorded \(.value.recorded_at // "?")) -- \(.value.note // "(no note)")"
+        elif (.value.closing_verdict == "FAIL") then
+          "  \(.key): FAIL-closed (\(.value.closed_at // "?")) -- \(.value.verification_ref // "(no ref)")"
+        else empty end
+      ' 2>/dev/null || true)"
+      if [[ -n "$open_partials_list" ]]; then
+        die "archive refused: unclosed or FAIL-closed PARTIAL verdict(s) for ${prefix}; run /edm:verify-runtime ${prefix} to close each before archiving -- no override exists:
+${open_partials_list}"
+      fi
+
+      # ---- AC1f/AC5: re-query convergence from the ledger via the shared audit-converged
+      # command rather than trusting the cached code_audit_converged boolean alone, closing
+      # the time-of-check-to-time-of-use window the same way cmd_approve_gate's code-audit
+      # branch already does. Exit 3 ("no ledger") is not a refusal condition here -- it
+      # degrades to warn-and-proceed (Technical Notes); exit 1 (blocking findings, or an
+      # unknown/partial round) refuses.
+      local ac_recheck_out ac_recheck_ec=0
+      ac_recheck_out="$(cmd_audit_converged "$prefix" 2>&1)" || ac_recheck_ec=$?
+      case "$ac_recheck_ec" in
+        0) : ;;
+        3)
+          echo "edm-state archive: [warn] audit-converged re-query found no findings ledger for ${prefix} -- proceeding (${ac_recheck_out})" >&2
+          record_degraded_check "$prefix" "archive:audit-converged-recheck" "no findings-ledger.jsonl (audit-converged exit 3)"
+          ;;
+        *)
+          die "archive refused: audit-converged re-query failed for ${prefix} (exit ${ac_recheck_ec}): ${ac_recheck_out}; run /edm:code-audit ${prefix} and remediate the blocking findings before archiving"
+          ;;
+      esac
     fi
   fi
 
@@ -3357,6 +3436,23 @@ write_handoff_internal() {
     end
   ')"
 
+  # Open-findings summary (EDMV3-T18 AC8): sourced from findings-ledger.jsonl "when present"
+  # -- absence is authoritative (no section rendered at all) rather than a placeholder,
+  # matching every other on-demand HANDOFF section's convention. Delegates to
+  # cmd_audit_converged rather than re-evaluating the shared blocking-set predicate a second
+  # time here (EDMV3-T28 AC9 fixes that predicate's name-reference count at exactly four
+  # sites; re-deriving it a fifth time here would break that guardrail for no benefit, since
+  # cmd_audit_converged already computes exactly what this section needs to show).
+  # Exit 3 ("no ledger") omits the section entirely; exit 0/1 both render
+  # cmd_audit_converged's own summary text.
+  local open_findings_summary="" of_out of_ec=0
+  of_out="$(cmd_audit_converged "$prefix" 2>&1)" || of_ec=$?
+  case "$of_ec" in
+    0) open_findings_summary="_(${of_out})_" ;;
+    1) open_findings_summary="${of_out}" ;;
+    *) open_findings_summary="" ;;
+  esac
+
   {
     printf '%s\n\n' "# ${prefix} - Session Handoff"
     printf '%s  \n' "> **Last updated**: ${updated_at} by ${USER:-unknown}"
@@ -3392,6 +3488,10 @@ write_handoff_internal() {
     if [[ -n "$partial_verdicts_text" ]]; then
       printf '%s\n\n' "## Outstanding PARTIAL Verdicts"
       printf '%s\n\n' "${partial_verdicts_text}"
+    fi
+    if [[ -n "$open_findings_summary" ]]; then
+      printf '%s\n\n' "## Open Code-Audit Findings"
+      printf '%s\n\n' "${open_findings_summary}"
     fi
     printf '%s\n\n' "## Gates"
     printf '%s\n\n' "${gate_list}"
