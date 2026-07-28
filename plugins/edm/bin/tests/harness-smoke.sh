@@ -38,29 +38,58 @@ fi
 echo
 echo "AC2 — cleanup on failure and on interrupt"
 
-_ac2_fail_fn() { return 1; }
+# Same scoping fix as the SIGINT case below: assert on THIS call's scratch directory, not on
+# the existence of any edm-scratch.* in /tmp (other suites and concurrent agents have their own).
+_ac2_failpath="$(mktemp -t edm-harness-ac2fail.XXXXXX)"
+_ac2_fail_fn() { pwd > "$_ac2_failpath"; return 1; }
 with_scratch_repo _ac2_fail_fn || true
-if ls /tmp 2>/dev/null | grep -q '^edm-scratch\.'; then
-  fail "scratch dir survived a failing test function"
+_ac2_failscratch="$(cat "$_ac2_failpath" 2>/dev/null)"
+if [ -z "$_ac2_failscratch" ]; then
+  fail "failing-function case: function never reported its scratch path"
+elif [ -d "$_ac2_failscratch" ]; then
+  fail "scratch dir survived a failing test function: $_ac2_failscratch"
 else
   pass "scratch dir removed after a failing test function"
 fi
+rm -f "$_ac2_failpath"
 
-_ac2_sleep_fn() { sleep 5; }
+# The child records its own scratch path so this assertion targets exactly that directory.
+# Grepping /tmp for any `edm-scratch.*` was wrong: other suites (and, on this repo, other
+# concurrent worktree agents) legitimately have their own scratch dirs in flight, so the test
+# failed on their existence rather than on a real cleanup miss. Scope the check, and poll for
+# the child to actually reach its sleep instead of assuming a fixed 0.5s is long enough.
+_ac2_pathfile="$(mktemp -t edm-harness-ac2.XXXXXX)"
+_ac2_sleep_fn() { pwd > "$_ac2_pathfile"; sleep 5; }
 (
   source "${SCRIPT_DIR}/_harness.sh"
+  _ac2_pathfile="$_ac2_pathfile"
   with_scratch_repo _ac2_sleep_fn
 ) &
 _child_pid=$!
-sleep 0.5
+# Wait (bounded) for the child to have created its scratch dir and entered the function.
+_waited=0
+while [ ! -s "$_ac2_pathfile" ] && [ "$_waited" -lt 100 ]; do
+  sleep 0.1
+  _waited=$((_waited + 1))
+done
+_ac2_scratch="$(cat "$_ac2_pathfile" 2>/dev/null)"
 kill -INT "$_child_pid" 2>/dev/null || true
 wait "$_child_pid" 2>/dev/null || true
-sleep 0.3
-if ls /tmp 2>/dev/null | grep -q '^edm-scratch\.'; then
-  fail "scratch dir survived SIGINT"
+# Bounded poll for cleanup rather than a fixed sleep -- under concurrent load the trap can take
+# longer than any single hardcoded interval.
+_waited=0
+while [ -n "$_ac2_scratch" ] && [ -d "$_ac2_scratch" ] && [ "$_waited" -lt 50 ]; do
+  sleep 0.1
+  _waited=$((_waited + 1))
+done
+if [ -z "$_ac2_scratch" ]; then
+  fail "SIGINT case: child never reported its scratch path (could not run the assertion)"
+elif [ -d "$_ac2_scratch" ]; then
+  fail "scratch dir survived SIGINT: $_ac2_scratch"
 else
   pass "scratch dir removed after SIGINT"
 fi
+rm -f "$_ac2_pathfile"
 
 # ---- AC4: check_fails -----------------------------------------------------------------------
 echo
