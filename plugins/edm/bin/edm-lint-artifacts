@@ -137,81 +137,46 @@ report_violation() {
 # "mermaid" set so class 4 reports it explicitly rather than silently doing nothing with it.
 build_line_classes() {
   local file="$1"
-  local in_fence=0 in_ignore_block=0 ignore_next=0 lineno=0
-  local in_mermaid_fence=0 mermaid_fence_suppressed=0
-  local linetext info lang_token
-
-  while IFS= read -r linetext; do
-    lineno=$((lineno + 1))
-
-    # Apply single-line ignore to current line (set by previous line's marker).
-    if [[ "$ignore_next" -eq 1 ]]; then
-      printf '%s\tignored\n' "$lineno"
-      printf '%s\tmarker\n' "$lineno"
-      ignore_next=0
-      continue
-    fi
-
-    # Code fence delimiter: toggle fence state; the delimiter line itself is not content.
-    if [[ "$linetext" =~ ^\`\`\` ]]; then
-      if [[ "$in_fence" -eq 0 ]]; then
-        # Opening a fence -- read the info string's first token to detect a mermaid fence.
-        info="${linetext#\`\`\`}"
-        lang_token="$(printf '%s' "$info" | awk '{print $1}')"
-        in_fence=1
-        if [[ "$lang_token" == "mermaid" ]]; then
-          in_mermaid_fence=1
-          mermaid_fence_suppressed=0
-          # Single-line marker on the fence-open line suppresses this whole fence for class 4.
-          if [[ "$linetext" == *'<!-- edm-lint-ignore -->'* ]]; then
-            mermaid_fence_suppressed=1
-          fi
-        else
-          in_mermaid_fence=0
-          mermaid_fence_suppressed=0
-        fi
-      else
-        # Closing a fence.
-        in_fence=0
-        in_mermaid_fence=0
-        mermaid_fence_suppressed=0
-      fi
-      continue
-    fi
-
-    # Block-ignore end marker.
-    if [[ "$linetext" == *'<!-- edm-lint-ignore-end -->'* ]]; then
-      in_ignore_block=0
-      continue
-    fi
-
-    # Emit as ignored if inside a code fence (any language) or an ignore block.
-    if [[ "$in_fence" -eq 1 || "$in_ignore_block" -eq 1 ]]; then
-      printf '%s\tignored\n' "$lineno"
-    fi
-    # Emit "marker" separately whenever the ignore reason is an EXPLICIT edm-lint-ignore-*
-    # marker rather than merely being inside a fence -- class 4 needs to tell these apart, since
-    # "inside a mermaid fence" is exactly the condition it exists to inspect, not to skip.
-    if [[ "$in_ignore_block" -eq 1 ]]; then
-      printf '%s\tmarker\n' "$lineno"
-    fi
-
-    # Emit as mermaid if inside a mermaid fence not suppressed by the fence-open marker.
-    if [[ "$in_mermaid_fence" -eq 1 && "$mermaid_fence_suppressed" -eq 0 ]]; then
-      printf '%s\tmermaid\n' "$lineno"
-    fi
-
-    # Block-ignore start marker (set AFTER emitting, so the marker line itself is not ignored).
-    if [[ "$linetext" == *'<!-- edm-lint-ignore-start -->'* ]]; then
-      in_ignore_block=1
-    fi
-
-    # Single-line marker: flag next line. Inside a mermaid fence this position is unsupported
-    # (class 4 reports it directly from the "mermaid" set above), so it is not consumed here.
-    if [[ "$linetext" == *'<!-- edm-lint-ignore -->'* && "$in_mermaid_fence" -eq 0 ]]; then
-      ignore_next=1
-    fi
-  done < "$file"
+  # Single awk pass per file. This was a bash `while read` loop with an `awk` fork inside it
+  # (one fork per fence line); EDMV3-T67 measured 39,872ms to lint a 30-file initiative against
+  # a 3000ms budget, and this loop was the cause. awk does the same state machine in one fork
+  # per file. Semantics are byte-identical to the bash version -- the three emitted classes,
+  # their ordering per line, and every marker/fence interaction are preserved exactly.
+  awk '
+    BEGIN { in_fence=0; in_ignore_block=0; ignore_next=0; in_mermaid=0; mermaid_suppressed=0 }
+    {
+      lineno = NR
+      if (ignore_next == 1) {
+        print lineno "\tignored"
+        print lineno "\tmarker"
+        ignore_next = 0
+        next
+      }
+      if (substr($0, 1, 3) == "```") {
+        if (in_fence == 0) {
+          info = substr($0, 4)
+          split(info, parts, /[ \t]+/)
+          lang = parts[1]
+          in_fence = 1
+          if (lang == "mermaid") {
+            in_mermaid = 1
+            mermaid_suppressed = (index($0, "<!-- edm-lint-ignore -->") > 0) ? 1 : 0
+          } else {
+            in_mermaid = 0; mermaid_suppressed = 0
+          }
+        } else {
+          in_fence = 0; in_mermaid = 0; mermaid_suppressed = 0
+        }
+        next
+      }
+      if (index($0, "<!-- edm-lint-ignore-end -->") > 0) { in_ignore_block = 0; next }
+      if (in_fence == 1 || in_ignore_block == 1) print lineno "\tignored"
+      if (in_ignore_block == 1) print lineno "\tmarker"
+      if (in_mermaid == 1 && mermaid_suppressed == 0) print lineno "\tmermaid"
+      if (index($0, "<!-- edm-lint-ignore-start -->") > 0) in_ignore_block = 1
+      if (index($0, "<!-- edm-lint-ignore -->") > 0 && in_mermaid == 0) ignore_next = 1
+    }
+  ' "$file"
 }
 
 # ---- Helper: is a line number in a given line-set (generic membership test) --------------------
@@ -304,24 +269,26 @@ scan_md_files() {
     "claude-flow"
     "created by claude"
   )
+  # One case-insensitive fixed-string grep per file, matching how classes 2 and 3 already work.
+  # This was a bash per-line loop that forked `echo | tr` TWICE per line to lowercase it --
+  # ~20,000 forks on a 30-file/10k-line initiative, which is what EDMV3-T67 measured at 39,872ms
+  # against a 3000ms budget. grep does the same case-insensitive fixed-string match in one fork
+  # per file. Phrase list, matching semantics (case-insensitive substring), one-violation-per-line
+  # (grep prints each matching line once), and the 120-char snippet are all unchanged.
+  local _attr_pattern_file
+  _attr_pattern_file="$(mktemp)" || die "mktemp failed"
+  printf '%s\n' "${_ATTR_PHRASES[@]}" > "$_attr_pattern_file"
   for i in "${!FILES[@]}"; do
     file="${FILES[$i]}"
-    local ignore_set lineno linetext lower phrase snippet
+    local ignore_set lineno _rest snippet
     ignore_set="${IGNORE_SETS[$i]}"
-    lineno=0
-    while IFS= read -r linetext; do
-      lineno=$((lineno + 1))
+    while IFS=: read -r lineno _rest; do
       is_ignored_line "$lineno" "$ignore_set" && continue
-      lower="$(echo "$linetext" | tr '[:upper:]' '[:lower:]')"
-      for phrase in "${_ATTR_PHRASES[@]}"; do
-        if [[ "$lower" == *"$phrase"* ]]; then
-          snippet="$(echo "$linetext" | tr -d '\r' | cut -c1-120)"
-          report_violation "attribution" "$file" "$lineno" "$snippet"
-          break
-        fi
-      done
-    done < "$file"
+      snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | tr -d '\r' | cut -c1-120 || true)"
+      report_violation "attribution" "$file" "$lineno" "$snippet"
+    done < <(grep -niF -f "$_attr_pattern_file" "$file" 2>/dev/null || true)
   done
+  rm -f "$_attr_pattern_file"
 
   # ---- Class 2: Non-ASCII (Unicode) bytes ---------------------------------------
   if [[ "$_has_pcre_grep" -eq 1 ]]; then
