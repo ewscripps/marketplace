@@ -84,6 +84,11 @@ lint:artifacts:
   before_script:
     - apk add --no-cache bash jq git
   script:
+    # `--all` enumerates initiatives via `edm-state list --paths` and dies if edm-state is not on
+    # PATH, so bin/ must be exported the same way test:state-validate does it. This was latent in
+    # the pre-split job too -- it never surfaced because this pipeline has not yet run against a
+    # live runner (see the digest-pinning note in the header).
+    - export PATH="$(pwd)/plugins/edm/bin:$PATH"
     - echo "=== edm-lint-artifacts --all (every tracked initiative, both layouts) ==="
     - bash plugins/edm/bin/edm-lint-artifacts --all
 
@@ -91,8 +96,11 @@ lint:grants:
   stage: lint
   <<: *alpine_edm
   needs: []
+  # jq is required, not optional: edm-check-grants dies with exit 2 when it is absent (it parses
+  # hooks.json). The pre-split lint:shell-and-artifacts job installed it for all four checks at
+  # once; keep it on every job that needs it now that they are separate.
   before_script:
-    - apk add --no-cache bash git
+    - apk add --no-cache bash jq git
   script:
     - echo "=== edm-check-grants (four-source grant/instruction contract) ==="
     - bash plugins/edm/bin/edm-check-grants
@@ -101,8 +109,10 @@ lint:vocabulary:
   stage: lint
   <<: *alpine_edm
   needs: []
+  # jq required -- edm-check-vocabulary dies with exit 2 without it (it validates the JSON scope
+  # files). Same reason as lint:grants above.
   before_script:
-    - apk add --no-cache bash git
+    - apk add --no-cache bash jq git
   script:
     - echo "=== edm-check-vocabulary (abolished-vocabulary and override-flag backstop, EDMV3-T30) ==="
     - bash plugins/edm/bin/edm-check-vocabulary
