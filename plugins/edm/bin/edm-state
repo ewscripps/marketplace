@@ -36,8 +36,11 @@
 #   edm-state migrate-path --product <n> --description <s> <PREFIX>  # opt-in move to product-scoped layout
 #   edm-state current-step <PREFIX> [<step>]                          # read/write orchestrator step (compaction resume)
 #   edm-state session-start                                           # emit resume points for active initiatives (SessionStart hook)
-#   edm-state audit-round-start <PREFIX> <code|srd|tickets>           # increment audit-round counter, echo new value
+#   edm-state audit-round-start <PREFIX> <code|srd|tickets> [--lenses L1,L3]  # increment audit-round counter (also records lens set + round_type), echo new value
+#   edm-state render-ledger <PREFIX>                                   # deterministically render findings-ledger.md from findings-ledger.jsonl
+#   edm-state audit-converged <PREFIX>                                 # query code-audit convergence over findings-ledger.jsonl (read-only)
 #   edm-state record-partial-verdict <PREFIX> <ticket> <verdict> [note]  # persist per-ticket PASS/PARTIAL/FAIL
+#   edm-state record-partial-verdict <PREFIX> <ticket> close <PASS|FAIL> <verification_ref>  # close an existing PARTIAL verdict
 #   edm-state set-mode <PREFIX> <kind> <value>                        # set mode, lifecycle_mode, compliance_enabled, or implementation_mode
 #   edm-state skip-phase <PREFIX> <phase-num> <rationale>              # record an intentionally skipped phase (rationale required, EDMV3-94)
 #   edm-state set-supersedes <PREFIX> <other-prefix>                  # record which initiative this supersedes
@@ -642,6 +645,39 @@ schema_at_least() {
   fi
 }
 
+# ---- Audit round shared definitions (EDMV3-T27) -----------------------------
+# ALL_LENS_IDS -- the eleven canonical code-audit lens IDs, single source (EDMV3-T27 Technical
+# Notes: "Hardcode the list once next to the derivation and assert its length is 11"). bash 3.2
+# has no portable array-as-constant idiom usable across functions, so this follows the identical
+# space-separated-string + word-membership pattern MODE_ENUM_LIST/LIFECYCLE_MODE_ENUM_LIST use
+# above, for the same reason.
+ALL_LENS_IDS="L1 L2 L3 L4 L5 L6 L7 L8 L9 L10 L11"
+[[ "$(echo $ALL_LENS_IDS | wc -w | tr -d ' ')" -eq 11 ]] || die "internal: ALL_LENS_IDS must enumerate exactly 11 lenses"
+
+# AUDIT_ROUND_COERCE_JQ_DEF -- the single C-4 coercion for audit_rounds.<type> (EDMV3-T27 AC1a).
+# Every state file written before this ticket (and the archived EDMV2 fixture literally) stores
+# audit_rounds.<type> as a bare integer round COUNT. This ticket widens the shape to
+# {count, rounds: [...]} so a round can carry its lens set and round_type -- but no legacy file
+# is rewritten (AC1a), so every reader of audit_rounds.<type> pipes the raw value through this
+# one jq `def` first: a bare number N reads as {count: N, rounds: []} (no per-round detail
+# available, which is exactly the "unknown round type" case AC6 handles); a value already in the
+# new shape passes through with `rounds` defaulted to `[]` so a partially-written object never
+# crashes a `.rounds[-1]` lookup downstream. Embedded as source text into each jq program that
+# needs it (bash has no way to pass a jq function value directly).
+AUDIT_ROUND_COERCE_JQ_DEF='def coerce_round_entry: if type == "number" then {count: ., rounds: []} elif type == "object" then (. + {rounds: (.rounds // [])}) else {count: 0, rounds: []} end;'
+
+# ---- Convergence blocking-set shared definition (EDMV3-T28) -----------------
+# The single jq boolean predicate for "this finding blocks convergence" (EDMV3-T28 AC9): an
+# open finding -- or a legacy `deferred` line, coerced to open per EDMV3-T25 AC4 / EDMV3-T28 AC5
+# (deferred does not exist as a status going forward, but a line already on disk in that shape
+# is re-opened rather than silently dropped) -- whose severity is P0, P1 or P2. `NOTED` is
+# excluded: it is non-actionable via the False Alarm Filter, not a deferred finding (CLAUDE.md
+# Sec."Severity vocabulary"). Every consumer -- cmd_audit_converged, cmd_approve_gate's
+# code-audit branch, cmd_archive's convergence check, and write_handoff_internal's Phase-6
+# next_action rendering -- references this one definition by name rather than restating the
+# P0/P1/P2 membership test a second time.
+BLOCKING_FILTER='(.status == "open" or .status == "deferred") and (.sev == "P0" or .sev == "P1" or .sev == "P2")'
+
 # ---- State anomaly detection (T29, class split EDMV3-T05 / EDMV3-118) ------
 # state_anomalies <PREFIX>
 # Reads state and emits zero or more anomaly lines. Each line has the canonical
@@ -1075,18 +1111,38 @@ cmd_approve_gate() {
       return 0
     fi
 
-    # Wave-A interim (AC3): records the approval with `enforcement` and `ledger: absent` and
-    # does NOT run a convergence pre-check -- EDMV3-T28 (wave B) adds that pre-check and the
-    # real ledger wiring. check_permission_rules() now performs real permission-rule
-    # introspection (EDMV3-T06); the interim stub it replaced always returned "prose-only".
+    # EDMV3-T28 AC12/AC9: re-run the convergence pre-check here too (not just trust a prior
+    # standalone `audit-converged` call), closing the time-of-check-to-time-of-use window
+    # between that call and this approval (SRD Section 5.3). Evaluates the shared
+    # BLOCKING_FILTER predicate via cmd_audit_converged -- gated by schema_version so a
+    # pre-wave-B initiative keeps the wave-A permissive behaviour (no ledger requirement) rather
+    # than being told to run a fresh eleven-lens round it never opted into (EDMV3-T28 AC7's
+    # caller-side degradation).
+    local ag_schema_version ag_schema_class2
+    ag_schema_version="$(echo "$state_json" | jq -r '.schema_version // empty')"
+    ag_schema_class2="$(schema_at_least "$ag_schema_version" 2)"
+    if [[ "$ag_schema_class2" == "2" ]]; then
+      local conv_out conv_ec=0
+      conv_out="$(cmd_audit_converged "$prefix" 2>&1)" || conv_ec=$?
+      [[ $conv_ec -eq 0 ]] || die "code-audit gate refused for ${prefix}: ${conv_out}"
+    else
+      record_degraded_check "$prefix" "approve-gate:code-audit-convergence-precheck" "schema_version ${ag_schema_version:-absent} < 2"
+    fi
+
+    # Wave-A interim (AC3) shape retained: records the approval with `enforcement` and the
+    # real ledger path (or "absent" pre-wave-B) rather than a hardcoded literal.
+    # check_permission_rules() performs real permission-rule introspection (EDMV3-T06).
+    local ledger_field="absent"
+    [[ -f "$(initiative_dir_for "$prefix")/code-audit/findings-ledger.jsonl" ]] \
+      && ledger_field="$(initiative_dir_for "$prefix")/code-audit/findings-ledger.jsonl"
     rmw_state "$prefix" '
       .code_audit_converged = true
       | .code_audit_gate_approved_at = $t
       | .code_audit_gate_approver = $a
       | .code_audit_gate_enforcement = $e
-      | .code_audit_gate_ledger = "absent"
+      | .code_audit_gate_ledger = $l
       | .last_updated = $t
-    ' --arg t "$(now_utc)" --arg a "$approver" --arg e "$(check_permission_rules)"
+    ' --arg t "$(now_utc)" --arg a "$approver" --arg e "$(check_permission_rules)" --arg l "$ledger_field"
     echo "approved code-audit gate for $prefix at $(now_utc)"
     write_handoff_internal "$prefix"
     return 0
@@ -1746,6 +1802,12 @@ cmd_archive() {
           # AC5: the refusal is unconditional on product_name -- the `-n "$product_name"`
           # conjunct that let a flat-layout initiative archive with no refusal at all is
           # deleted here (CHANGELOG-recorded behaviour change).
+          # This branch checks the code_audit_converged boolean set by cmd_approve_gate's
+          # code-audit branch, which itself evaluates the shared BLOCKING_FILTER predicate
+          # (EDMV3-T28 AC9) -- archive is the third named consumer of that one definition.
+          # Replacing this boolean check with a direct ledger re-query is EDMV3-T18's wave-B
+          # wiring (see the "WAVE-B INSERTION POINT" comment above cmd_archive); not duplicated
+          # here so the two tickets do not race on the same lines.
           die "archive refused: code_audit_converged=false; run edm-state approve-gate ${prefix} code-audit before archiving"
         fi
         # converged == "true": proceed silently.
@@ -2364,32 +2426,367 @@ cmd_session_start() {
   done < <(list_state_files)
 }
 
-# ---- Audit round tracking (T56) ---------------------------------------------
-# audit-round-start <PREFIX> <code|srd|tickets>
-# Increments the round counter for the given audit type and echoes the new value.
+# ---- Findings ledger rendering (EDMV3-T26) ----------------------------------
+# render-ledger <PREFIX>
+# Reads code-audit/findings-ledger.jsonl (the authoritative source, EDMV3-T25) and
+# deterministically renders code-audit/findings-ledger.md. The markdown is a pure projection,
+# rebuilt from scratch on every call -- a hand-edit is silently overwritten on the next render
+# (AC5), which is what proves the JSONL, not the markdown, is the source of truth.
+cmd_render_ledger() {
+  [[ $# -eq 1 ]] || die "usage: edm-state render-ledger <PREFIX>"
+  require_jq
+  local prefix="$1"
+  local init_dir jsonl_path md_path
+  init_dir="$(initiative_dir_for "$prefix")"
+  jsonl_path="${init_dir}/code-audit/findings-ledger.jsonl"
+  md_path="${init_dir}/code-audit/findings-ledger.md"
+
+  # AC10: distinguish "no audit has run" from "the render failed"; writes nothing either way.
+  if [[ ! -f "$jsonl_path" ]]; then
+    die "render-ledger: no code audit has run for ${prefix} (missing findings-ledger.jsonl at ${jsonl_path}); nothing rendered"
+  fi
+
+  # Ordering is total, not just by severity (Technical Notes): sort_by([sev_rank, .id]) so two
+  # P1s with adjacent IDs never swap between runs (AC2, determinism).
+  local body
+  if ! body="$(jq -rs '
+      def coerce_status: if .status == "deferred" then (.status = "open") else . end;
+      def sev_rank: if .sev == "P0" then 0 elif .sev == "P1" then 1 elif .sev == "P2" then 2 else 3 end;
+      (map(coerce_status) | sort_by([sev_rank, .id])) as $sorted
+      | ($sorted | map(select(.sev != "NOTED"))) as $findings
+      | ($sorted | map(select(.sev == "NOTED"))) as $noted
+      | (
+          ["| ID | Severity | Status | Lens(es) | Component | Summary | Raised Round | Resolved Round |",
+           "|----|----------|--------|----------|-----------|---------|--------------|----------------|"]
+          + ($findings | map(
+              "| \(.id) | \(.sev) | \(.status) | \(.lenses | join("+")) | \(.component // "(missing)") | \(.title) | \(.raised_round // "") | \(.resolved_round // "") |"
+            ))
+        ) as $table
+      | (
+          ["", "## Decisions / Non-Findings", "",
+           "Findings demoted to Not Actionable by the False Alarm Filter. Future audits should NOT re-investigate them."]
+          + (if ($noted | length) == 0
+             then ["", "(none)"]
+             else (["" ] + ($noted | to_entries | map(
+                     "\(.key + 1). **\(.value.title)** (\(.value.id), \(.value.lenses | join("+"))) -- \(.value.component // "(missing)")"
+                   )))
+             end)
+        ) as $decisions
+      | ($table + $decisions) | .[]
+    ' "$jsonl_path" 2>/dev/null)"; then
+    die "render-ledger: failed to render ledger for ${prefix} (invalid JSONL at ${jsonl_path}); nothing written"
+  fi
+
+  # AC6: atomic write -- temp file plus rename, matching the discipline used elsewhere in this
+  # script (_rmw_state_body, cmd_init).
+  mkdir -p "${init_dir}/code-audit"
+  local tmp="${md_path}.tmp.$$"
+  {
+    echo "# Code Audit Findings Ledger: ${prefix}"
+    echo ""
+    echo "<!-- GENERATED FILE -- rendered by 'edm-state render-ledger' from findings-ledger.jsonl. Do not hand-edit; edits are overwritten on the next render. -->"
+    echo ""
+    printf '%s\n' "$body"
+  } > "$tmp"
+  mv -f "$tmp" "${init_dir}/code-audit/findings-ledger.md"
+
+  # AC4: reuse record_artifact_hash (bin/edm-state:~131) so cmd_checkpoint's existing drift
+  # loop warns on an out-of-band hand-edit -- the detection machinery is not re-implemented.
+  record_artifact_hash "$prefix" "findings_ledger" "${init_dir}/code-audit/findings-ledger.md"
+  echo "rendered ${init_dir}/code-audit/findings-ledger.md"
+}
+
+# ---- Audit round tracking (T56, widened EDMV3-T27) --------------------------
+# audit-round-start <PREFIX> <code|srd|tickets> [--lenses <comma-list>]
+# Increments the round counter for the given audit type and echoes the new round number
+# (unchanged external contract: `N=$(edm-state audit-round-start <PREFIX> code)`). Additively
+# (EDMV3-T27 AC1) records the round's lens set and derived round_type -- full when all eleven
+# lenses ran (or --lenses was omitted, matching skills/code-audit/SKILL.md's existing "absence
+# of --lenses means run all 11" convention), partial otherwise -- inside audit_rounds.<type>,
+# which this ticket widens from a bare integer to {count, rounds: [...]} (AC1a, the sanctioned
+# C-4 type widening; see AUDIT_ROUND_COERCE_JQ_DEF above). No existing file is rewritten by this
+# widening -- every reader coerces at read time, including this command's own read of a
+# pre-existing bare-integer count on its very first post-upgrade call.
 
 cmd_audit_round_start() {
-  [[ $# -eq 2 ]] || die "usage: edm-state audit-round-start <PREFIX> <code|srd|tickets>"
+  [[ $# -ge 2 ]] || die "usage: edm-state audit-round-start <PREFIX> <code|srd|tickets> [--lenses <comma-list>]"
   require_jq
   local prefix="$1" audit_type="$2"
+  shift 2
   case "$audit_type" in
     code|srd|tickets) ;;
     *) die "audit-round-start: unknown audit type '$audit_type' (expected: code|srd|tickets)" ;;
   esac
-  rmw_state "$prefix" '.audit_rounds[$t] = ((.audit_rounds[$t] // 0) + 1) | .last_updated = $ts' \
-    --arg t "$audit_type" --arg ts "$(now_utc)"
-  # Re-read to echo the new round number
-  read_state "$prefix" | jq -r --arg t "$audit_type" '.audit_rounds[$t]'
+
+  local lenses_arg=""
+  if [[ $# -gt 0 ]]; then
+    case "$1" in
+      --lenses)
+        [[ $# -eq 2 && -n "${2:-}" ]] || die "audit-round-start: --lenses requires a non-empty comma-separated value"
+        lenses_arg="$2"
+        ;;
+      *) die "audit-round-start: unknown argument '$1' (expected: --lenses <comma-list>)" ;;
+    esac
+  fi
+
+  local lenses_json round_type
+  if [[ -z "$lenses_arg" ]]; then
+    # No --lenses given: full round by definition (mirrors skills/code-audit/SKILL.md step 1's
+    # existing "if --lenses is omitted, run all 11" rule). Also the correct default for the
+    # srd/tickets audit types, which have no lens concept at all.
+    lenses_json="[]"
+    round_type="full"
+  else
+    lenses_json="$(printf '%s' "$lenses_arg" | tr ',' '\n' | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//' | grep -v '^$' | jq -R . | jq -s .)"
+    local given_sorted all_sorted
+    given_sorted="$(printf '%s' "$lenses_json" | jq -r 'sort | join(",")')"
+    all_sorted="$(printf '%s\n' $ALL_LENS_IDS | sort | tr '\n' ',' | sed 's/,$//')"
+    if [[ "$given_sorted" == "$all_sorted" ]]; then
+      round_type="full"
+    else
+      round_type="partial"
+    fi
+  fi
+
+  local ts
+  ts="$(now_utc)"
+  rmw_state "$prefix" "
+      ${AUDIT_ROUND_COERCE_JQ_DEF}
+      (.audit_rounds[\$t] // 0 | coerce_round_entry) as \$existing
+      | (\$existing.count + 1) as \$new_count
+      | .audit_rounds[\$t] = {
+          count: \$new_count,
+          rounds: (\$existing.rounds + [{round: \$new_count, lenses: \$lenses, round_type: \$rt, started_at: \$ts}])
+        }
+      | .last_updated = \$ts
+    " --arg t "$audit_type" --argjson lenses "$lenses_json" --arg rt "$round_type" --arg ts "$ts"
+
+  # Re-read to echo the new round number (count), the same external contract as before.
+  read_state "$prefix" | jq -r --arg t "$audit_type" "${AUDIT_ROUND_COERCE_JQ_DEF} (.audit_rounds[\$t] // 0 | coerce_round_entry).count"
 }
 
-# ---- Partial verdict tracking (T67) -----------------------------------------
-# record-partial-verdict <PREFIX> <ticket> <PASS|PARTIAL|FAIL> [<note>]
-# Persists a per-ticket verdict into partial_verdict_map.
+# ---- Convergence query (EDMV3-T28) ------------------------------------------
+# audit-converged <PREFIX>
+# Read-only (EDMV3-92 AC3: takes no lock, mutates nothing). Computes whether the code-audit
+# ledger has converged by querying code-audit/findings-ledger.jsonl against the single shared
+# blocking-set predicate defined above, replacing "a human re-reads the ledger and asserts
+# convergence in prose" with one deterministic jq query.
+# Exit codes (EDMV3-100 -- 2 is never used, reserved for usage/environment errors elsewhere):
+#   0 = converged (or this mode/lifecycle_mode does not require a code audit at all)
+#   1 = blocking findings remain, OR the latest round was partial/unknown, OR a line carries
+#       an out-of-enum status
+#   3 = no findings-ledger.jsonl exists (either no audit has run, or only a legacy markdown
+#       ledger exists)
+cmd_audit_converged() {
+  [[ $# -eq 1 ]] || die "usage: edm-state audit-converged <PREFIX>"
+  require_jq
+  local prefix="$1"
+  local state mode lifecycle_mode schema_version
+  state="$(read_state "$prefix")"
+  mode="$(echo "$state" | jq -r '.mode // "null"')"
+  lifecycle_mode="$(echo "$state" | jq -r '.lifecycle_mode // "standard"')"
+  schema_version="$(echo "$state" | jq -r '.schema_version // empty')"
+
+  # AC8: audit-free modes exit 0 with the exemption wording, checked first -- there is no
+  # ledger to converge when this mode/lifecycle_mode's phase graph never runs a code-audit
+  # round at all (mirrors cmd_archive's identical mode+lifecycle_mode exemption derivation).
+  local audit_required="true"
+  [[ "$mode" != "null" ]] && audit_required="$(code_audit_required_for_mode "$mode")"
+  local lifecycle_exempt="false"
+  case "$lifecycle_mode" in
+    fast-track|fix-pack) lifecycle_exempt="true" ;;
+  esac
+  if [[ "$audit_required" == "false" || "$lifecycle_exempt" == "true" ]]; then
+    echo "no code audit is required for this mode (${mode}/${lifecycle_mode})"
+    return 0
+  fi
+
+  local init_dir jsonl_path md_path schema_class2
+  init_dir="$(initiative_dir_for "$prefix")"
+  jsonl_path="${init_dir}/code-audit/findings-ledger.jsonl"
+  md_path="${init_dir}/code-audit/findings-ledger.md"
+  schema_class2="$(schema_at_least "$schema_version" 2)"
+
+  # AC6/AC7: missing jsonl -- distinguish "no audit has run" from "legacy markdown-only ledger,
+  # not a fresh-audit demand" (a legacy initiative below schema_version 2 degrades per EDMV3-11
+  # rather than being told to run a fresh eleven-lens opus round).
+  if [[ ! -f "$jsonl_path" ]]; then
+    if [[ "$schema_class2" != "2" && -f "$md_path" ]]; then
+      echo "edm-state audit-converged: [warn] legacy initiative (schema_version ${schema_version:-absent}) for ${prefix} -- only a markdown ledger found at ${md_path}; this is not a fresh-audit demand, migrate via a normal code-audit round when convenient" >&2
+      return 3
+    fi
+    echo "edm-state audit-converged: no code audit has run for ${prefix} (missing findings-ledger.jsonl at ${jsonl_path})" >&2
+    return 3
+  fi
+
+  # AC5 (true out-of-enum status is a parse-level refusal; a legacy `deferred` line is NOT an
+  # error here -- it is re-opened below and shows up in the blocking set naturally, per
+  # EDMV3-T25 AC4 / EDMV3-T28 AC5).
+  local invalid_lines
+  if ! invalid_lines="$(jq -r '
+      .[] | select(.status != "open" and .status != "fixed" and .status != "noted" and .status != "deferred") |
+      "\(.id) \(.status)"
+    ' -s "$jsonl_path" 2>/dev/null)"; then
+    echo "edm-state audit-converged: invalid JSONL at ${jsonl_path}" >&2
+    return 1
+  fi
+  if [[ -n "$invalid_lines" ]]; then
+    echo "edm-state audit-converged: invalid status on finding(s) for ${prefix} (expected: open|fixed|noted):" >&2
+    printf '%s\n' "$invalid_lines" | while IFS=' ' read -r bad_id bad_status; do
+      [[ -n "$bad_id" ]] && echo "  ${bad_id}: status '${bad_status}'" >&2
+    done
+    return 1
+  fi
+
+  # AC4/AC6: the latest recorded round for the "code" audit type must be full. "unknown" covers
+  # both a bare-integer legacy count (coerced to rounds: [], AC1a) and a round entry recorded
+  # without a round_type -- gated by schema_version the same way every other wave-B check is.
+  local jq_round_filter round_info latest_round_type latest_lenses_csv
+  jq_round_filter="$AUDIT_ROUND_COERCE_JQ_DEF"'
+    (.audit_rounds.code // 0 | coerce_round_entry) as $e
+    | (($e.rounds[-1].round_type // "unknown") + "|" + (($e.rounds[-1].lenses // []) | join(",")))
+  '
+  round_info="$(echo "$state" | jq -r "$jq_round_filter")"
+  latest_round_type="${round_info%%|*}"
+  latest_lenses_csv="${round_info#*|}"
+
+  if [[ "$latest_round_type" == "unknown" ]]; then
+    if [[ "$schema_class2" == "2" ]]; then
+      echo "edm-state audit-converged: latest code-audit round has an unknown round_type for ${prefix}; run a full (eleven-lens) code-audit round before checking convergence" >&2
+      return 1
+    fi
+    echo "edm-state audit-converged: [warn] latest code-audit round has an unknown round_type for ${prefix} (schema_version ${schema_version:-absent} < 2) -- proceeding without the round-type gate" >&2
+  elif [[ "$latest_round_type" == "partial" ]]; then
+    echo "edm-state audit-converged: last round was partial (lenses: ${latest_lenses_csv}); a full round is required for convergence" >&2
+    return 1
+  fi
+
+  # AC1/AC2/AC9: the blocking-set computation. References the shared predicate constant by name
+  # (defined once above) -- the single definition every consumer (this command,
+  # cmd_approve_gate's code-audit branch, cmd_archive's convergence check, and
+  # write_handoff_internal's Phase-6 rendering) shares.
+  local jq_blocking_filter result_json
+  jq_blocking_filter='
+    def coerce_status: if .status == "deferred" then (.status = "open") else . end;
+    map(coerce_status) as $all
+    | ($all | map(select('"$BLOCKING_FILTER"'))) as $blocking
+    | {
+        total: ($all | length),
+        noted: ([$all[] | select(.sev == "NOTED")] | length),
+        blocking_count: ($blocking | length),
+        p0: ([$blocking[] | select(.sev == "P0")] | length),
+        p1: ([$blocking[] | select(.sev == "P1")] | length),
+        p2: ([$blocking[] | select(.sev == "P2")] | length),
+        blocking_list: ($blocking | map("\(.id) \(.sev) \(.title)"))
+      }
+  '
+  if ! result_json="$(jq -s "$jq_blocking_filter" "$jsonl_path" 2>/dev/null)"; then
+    echo "edm-state audit-converged: invalid JSONL at ${jsonl_path}" >&2
+    return 1
+  fi
+
+  local total blocking_count p0 p1 p2 noted_count
+  total="$(echo "$result_json" | jq -r '.total')"
+  blocking_count="$(echo "$result_json" | jq -r '.blocking_count')"
+  p0="$(echo "$result_json" | jq -r '.p0')"
+  p1="$(echo "$result_json" | jq -r '.p1')"
+  p2="$(echo "$result_json" | jq -r '.p2')"
+  noted_count="$(echo "$result_json" | jq -r '.noted')"
+
+  if [[ "$blocking_count" -eq 0 ]]; then
+    # AC6: distinguish "no findings recorded" from "findings recorded, none blocking".
+    if [[ "$total" -eq 0 ]]; then
+      echo "converged: no findings recorded in the ledger for ${prefix} (0 total, 0 NOTED)"
+    else
+      echo "converged: ${total} finding(s) considered for ${prefix}, 0 blocking (P0/P1/P2 open), ${noted_count} NOTED excluded"
+    fi
+    return 0
+  fi
+
+  echo "not converged: ${blocking_count} blocking finding(s) for ${prefix} (P0=${p0} P1=${p1} P2=${p2}) of ${total} considered, ${noted_count} NOTED excluded:" >&2
+  echo "$result_json" | jq -r '.blocking_list[]' | while IFS= read -r bl; do
+    echo "  ${bl}" >&2
+  done
+  return 1
+}
+
+# ---- Partial verdict tracking (T67, closure support EDMV3-T32) --------------
+# record-partial-verdict <PREFIX> <ticket> <PASS|PARTIAL|FAIL> [<note>]         -- open/record
+# record-partial-verdict <PREFIX> <ticket> close <PASS|FAIL> <verification_ref> -- close
+# The first (existing, unchanged, AC6) form persists a per-ticket verdict into
+# partial_verdict_map. The second (new, EDMV3-T32) form closes an existing PARTIAL entry: the
+# literal third argument "close" disambiguates it from a verdict (never a legal value of the
+# first form), so hooks/hooks.json:117 and skills/implement/SKILL.md:98 -- both single-write
+# callers of the first form -- are unaffected.
 
 cmd_record_partial_verdict() {
-  [[ $# -ge 3 ]] || die "usage: edm-state record-partial-verdict <PREFIX> <ticket> <PASS|PARTIAL|FAIL> [<note>]"
+  [[ $# -ge 3 ]] || die "usage: edm-state record-partial-verdict <PREFIX> <ticket> <PASS|PARTIAL|FAIL> [<note>]  |  edm-state record-partial-verdict <PREFIX> <ticket> close <PASS|FAIL> <verification_ref>"
   require_jq
-  local prefix="$1" ticket="$2" verdict="$3" note="${4:-}"
+  local prefix="$1" ticket="$2" verdict_or_close="$3"
+
+  if [[ "$verdict_or_close" == "close" ]]; then
+    [[ $# -eq 5 ]] || die "usage: edm-state record-partial-verdict <PREFIX> <ticket> close <PASS|FAIL> <verification_ref>"
+    local closing_verdict="$4" verification_ref="$5"
+    # AC9: no third verdict -- only PASS or FAIL are legal closing verdicts.
+    case "$closing_verdict" in
+      PASS|FAIL) ;;
+      *) die "record-partial-verdict close: unknown closing verdict '$closing_verdict' (expected: PASS|FAIL)" ;;
+    esac
+    [[ -n "$verification_ref" ]] || die "record-partial-verdict close: verification_ref must be non-empty"
+
+    # AC5: unknown ticket exits non-zero and mutates nothing (checked before any rmw_state call).
+    local existing already_closed already_closing_verdict already_closed_at
+    existing="$(read_state "$prefix" | jq -c --arg tk "$ticket" '.partial_verdict_map[$tk] // null')"
+    [[ "$existing" != "null" ]] || die "record-partial-verdict close: unknown ticket '${ticket}' for ${prefix} (no entry in partial_verdict_map)"
+
+    already_closed="$(echo "$existing" | jq -r 'has("closing_verdict")')"
+    already_closing_verdict="$(echo "$existing" | jq -r '.closing_verdict // ""')"
+    already_closed_at="$(echo "$existing" | jq -r '.closed_at // "unknown"')"
+
+    if [[ "$already_closed" == "true" ]]; then
+      if [[ "$already_closing_verdict" != "FAIL" ]]; then
+        # AC3: an entry may be closed only once -- refused naming the existing closure. The
+        # sole sanctioned exception (AC4, below) is re-closing an entry whose existing closure
+        # was FAIL.
+        die "record-partial-verdict close: ${ticket} is already closed (${already_closing_verdict} at ${already_closed_at}) for ${prefix}; an entry may be closed only once unless the existing closure was FAIL"
+      fi
+      # AC4: FAIL-closed entries may be re-closed after remediation; the closure this call is
+      # about to make is appended to a closure history array rather than overwriting the prior
+      # closure, so the FAIL record is never lost.
+      rmw_state "$prefix" '
+        .partial_verdict_map[$tk] as $e
+        | .partial_verdict_map[$tk] = (
+            $e
+            | .closure_history = ((.closure_history // [{closing_verdict: .closing_verdict, closed_at: .closed_at, verification_ref: .verification_ref}]) + [{closing_verdict: $cv, closed_at: $ts, verification_ref: $ref}])
+            | .closing_verdict = $cv
+            | .closed_at = $ts
+            | .verification_ref = $ref
+          )
+        | .last_updated = $ts
+      ' --arg tk "$ticket" --arg cv "$closing_verdict" --arg ref "$verification_ref" --arg ts "$(now_utc)"
+      echo "re-closed verdict: $ticket = $closing_verdict (was FAIL) for $prefix; closure history recorded"
+      return 0
+    fi
+
+    # AC1/AC2: first closure -- nest the whole original entry under `prior` (not just the note,
+    # so a future field added to the open shape survives closure automatically) rather than
+    # overwriting it, alongside the new closing_verdict/closed_at/verification_ref.
+    rmw_state "$prefix" '
+      .partial_verdict_map[$tk] as $e
+      | .partial_verdict_map[$tk] = {
+          prior: $e,
+          closing_verdict: $cv,
+          closed_at: $ts,
+          verification_ref: $ref
+        }
+      | .last_updated = $ts
+    ' --arg tk "$ticket" --arg cv "$closing_verdict" --arg ref "$verification_ref" --arg ts "$(now_utc)"
+    echo "closed verdict: $ticket = $closing_verdict (was ${already_closing_verdict:-PARTIAL}) for $prefix"
+    return 0
+  fi
+
+  # ---- Existing open/record path (unchanged, AC6) --------------------------------------------
+  local verdict="$verdict_or_close" note="${4:-}"
   case "$verdict" in
     PASS|PARTIAL|FAIL) ;;
     *) die "record-partial-verdict: unknown verdict '$verdict' (expected: PASS|PARTIAL|FAIL)" ;;
@@ -2795,6 +3192,10 @@ write_handoff_internal() {
       # Four distinct phase-6 states (EDMV3-T17 AC2), checked most-advanced-first so they
       # are mutually exclusive: ready to archive > awaiting runtime verification of open
       # PARTIALs > awaiting the convergence gate > implementation still in progress.
+      # ca_converged_na reads the code_audit_converged boolean set by cmd_approve_gate's
+      # code-audit branch, which itself evaluates the shared BLOCKING_FILTER predicate
+      # (EDMV3-T28 AC9) -- this Phase-6 next_action rendering is the fourth named consumer of
+      # that one definition, not a second re-derivation of the P0/P1/P2 membership test.
       local ca_converged_na ca_enforcement_na open_partials_na phase6_completed_at_na
       ca_converged_na="$(read_bool "$state" "code_audit_converged" "false")"
       ca_enforcement_na="$(echo "$state" | jq -r '.code_audit_gate_enforcement // ""')"
@@ -3094,6 +3495,8 @@ case "$cmd" in
   current-step)         cmd_current_step "$@" ;;
   session-start)        cmd_session_start "$@" ;;
   audit-round-start)    cmd_audit_round_start "$@" ;;
+  render-ledger)        cmd_render_ledger "$@" ;;
+  audit-converged)      cmd_audit_converged "$@" ;;
   record-partial-verdict) cmd_record_partial_verdict "$@" ;;
   set-mode)             cmd_set_mode "$@" ;;
   skip-phase)           cmd_skip_phase "$@" ;;

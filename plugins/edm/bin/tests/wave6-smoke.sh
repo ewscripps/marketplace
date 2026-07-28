@@ -2376,6 +2376,411 @@ t64ac8_threshold="$(jq -r '.qc_shard_threshold' "$STATE_T64AC8")"
 [[ "$t64ac8_threshold" == "42" ]] && pass "T64 AC8 -- second concurrent mutation (qc_shard_threshold) landed" \
   || fail "T64 AC8 -- qc_shard_threshold is '$t64ac8_threshold', expected '42'"
 
+# =================================================================================
+# EDMV3-T26: edm-state render-ledger produces the markdown deterministically
+# =================================================================================
+echo
+echo "T26 -- render-ledger renders findings-ledger.md deterministically from the JSONL"
+
+"$EDM_STATE" init T26LEDGER >/dev/null
+T26_DIR="$TMP/SRD/T26LEDGER"
+mkdir -p "${T26_DIR}/code-audit"
+T26_JSONL="${T26_DIR}/code-audit/findings-ledger.jsonl"
+T26_MD="${T26_DIR}/code-audit/findings-ledger.md"
+cat > "$T26_JSONL" <<'EOF'
+{"schema":1,"id":"CA-001","sev":"P0","status":"fixed","lenses":["L1","L4"],"confidence":"high","component":"src/auth/handler.py","title":"Stub returns hardcoded data","raised_round":1,"resolved_round":1,"round":1,"round_type":"full"}
+{"schema":1,"id":"CA-002","sev":"NOTED","status":"noted","lenses":["L8"],"confidence":"high","component":"src/api/server.js","title":"hardcoded port documented as intentional","raised_round":1,"resolved_round":null,"round":1,"round_type":"full"}
+{"schema":1,"id":"CA-003","sev":"P1","status":"open","lenses":["L9"],"confidence":"medium","component":"(missing)","title":"--dry-run flag not built","raised_round":1,"resolved_round":null,"round":1,"round_type":"full"}
+EOF
+
+# ---- AC1 (positive): the table + Decisions / Non-Findings section --------------------------
+t26_out="$("$EDM_STATE" render-ledger T26LEDGER)"
+[[ -f "$T26_MD" ]] && pass "T26 AC1 -- render-ledger writes findings-ledger.md" \
+  || fail "T26 AC1 -- findings-ledger.md not written"
+check "T26 AC1 -- rendered ledger has the Decisions / Non-Findings section" \
+  "Decisions / Non-Findings" "$(cat "$T26_MD" 2>/dev/null)"
+check "T26 AC1 -- rendered ledger names CA-001" "CA-001" "$(cat "$T26_MD" 2>/dev/null)"
+check "T26 AC1 -- rendered ledger names CA-003 (open P1)" "CA-003" "$(cat "$T26_MD" 2>/dev/null)"
+check "T26 AC1 -- CA-002 (NOTED) appears in the Decisions section, not the findings table" \
+  "hardcoded port documented as intentional" "$(cat "$T26_MD" 2>/dev/null)"
+
+# ---- AC2 (deterministic): running it twice produces byte-identical output ------------------
+cp "$T26_MD" "$TMP/T26_a.md"
+"$EDM_STATE" render-ledger T26LEDGER >/dev/null
+if diff -q "$TMP/T26_a.md" "$T26_MD" >/dev/null 2>&1; then
+  pass "T26 AC2 -- render-ledger is deterministic (byte-identical across two runs)"
+else
+  fail "T26 AC2 -- render-ledger output differs across two runs"
+fi
+
+# ---- AC3 (generated-file header) -----------------------------------------------------------
+t26_head3="$(head -3 "$T26_MD")"
+check "T26 AC3 -- header names the file as generated and not to be hand-edited" \
+  "GENERATED FILE" "$t26_head3"
+
+# ---- AC4/AC5 (hand-edit detected by the drift loop, then overwritten on re-render) ---------
+echo "HAND EDITED CONTENT" >> "$T26_MD"
+t26_checkpoint_out="$("$EDM_STATE" checkpoint-if-active 2>&1 || true)"
+check "T26 AC4 -- checkpoint-if-active's drift loop names findings-ledger.md" \
+  "findings-ledger.md" "$t26_checkpoint_out"
+"$EDM_STATE" render-ledger T26LEDGER >/dev/null
+check_absent "T26 AC5 -- re-running render-ledger overwrites the hand-edit" \
+  "HAND EDITED CONTENT" "$(cat "$T26_MD" 2>/dev/null)"
+
+# ---- AC6 (atomic write, static assertion) --------------------------------------------------
+check "T26 AC6 -- render-ledger writes via a temp-file-plus-rename (mv ... findings-ledger.md)" \
+  "findings-ledger.md" \
+  "$(grep -n 'mv .*findings-ledger.md' "$EDM_STATE" || true)"
+
+# ---- AC8 (lint clean, minus the not-yet-landed Mermaid class from EDMV3-T43) ---------------
+t26_lint_out="$(bash "${SCRIPT_DIR}/../edm-lint-artifacts" --path "$T26_MD" 2>&1)"
+t26_lint_ec=$?
+[[ $t26_lint_ec -eq 0 ]] && pass "T26 AC8 -- edm-lint-artifacts --path exits 0 against the rendered ledger" \
+  || fail "T26 AC8 -- edm-lint-artifacts --path exited ${t26_lint_ec}: ${t26_lint_out}"
+
+# ---- AC9 (surfaced in --help and the dispatch table) ---------------------------------------
+check "T26 AC9 -- render-ledger documented in --help" \
+  "render-ledger" "$("$EDM_STATE" --help 2>&1)"
+check "T26 AC9 -- render-ledger wired in the dispatch table" \
+  "render-ledger)" "$(grep -n 'render-ledger)' "$EDM_STATE" || true)"
+
+# ---- AC10 (negative, no ledger) -------------------------------------------------------------
+"$EDM_STATE" init T26NOLEDGER >/dev/null
+check_fails "T26 AC10 -- render-ledger with no JSONL refuses, naming 'no code audit has run'" \
+  "no code audit has run" "$EDM_STATE" render-ledger T26NOLEDGER
+[[ ! -f "$TMP/SRD/T26NOLEDGER/code-audit/findings-ledger.md" ]] \
+  && pass "T26 AC10 -- no findings-ledger.md written when the JSONL is absent" \
+  || fail "T26 AC10 -- findings-ledger.md was written despite the missing JSONL"
+
+# =================================================================================
+# EDMV3-T27: rounds record their lens set, so a partial round can never compute convergence
+# =================================================================================
+echo
+echo "T27 -- audit-round-start records lens set + round_type; audit_rounds widens to {count, rounds}"
+
+"$EDM_STATE" init T27ROUND >/dev/null
+STATE_T27ROUND="$TMP/SRD/T27ROUND/.edm-state.json"
+
+# ---- AC1 (positive, full round -- no --lenses given) ---------------------------------------
+round_full="$("$EDM_STATE" audit-round-start T27ROUND code)"
+[[ "$round_full" == "1" ]] && pass "T27 AC1 -- audit-round-start still echoes the round number (1)" \
+  || fail "T27 AC1 -- audit-round-start echoed '$round_full', expected 1"
+full_round_type="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$STATE_T27ROUND")"
+[[ "$full_round_type" == "full" ]] && pass "T27 AC1 -- omitting --lenses records round_type=full" \
+  || fail "T27 AC1 -- round_type = '$full_round_type', expected full"
+
+# ---- AC1 (positive, partial round -- --lenses given a strict subset) -----------------------
+round_partial="$("$EDM_STATE" audit-round-start T27ROUND code --lenses L1,L9,L11)"
+[[ "$round_partial" == "2" ]] && pass "T27 AC1 -- second round still echoes 2 (unchanged external contract)" \
+  || fail "T27 AC1 -- audit-round-start echoed '$round_partial', expected 2"
+"$EDM_STATE" get T27ROUND | jq -e '.audit_rounds.code.rounds[-1].round_type == "partial"' >/dev/null \
+  && pass "T27 AC1 -- --lenses L1,L9,L11 records round_type=partial" \
+  || fail "T27 AC1 -- round_type is not 'partial' after a 3-of-11 lens round"
+partial_lenses="$(jq -r '.audit_rounds.code.rounds[-1].lenses | join(",")' "$STATE_T27ROUND")"
+[[ "$partial_lenses" == "L1,L9,L11" ]] && pass "T27 AC1 -- the recorded lens set matches --lenses exactly" \
+  || fail "T27 AC1 -- recorded lenses = '$partial_lenses', expected L1,L9,L11"
+
+# ---- AC1 (full round via an explicit --lenses listing all eleven) --------------------------
+round_all11="$("$EDM_STATE" audit-round-start T27ROUND code --lenses L1,L2,L3,L4,L5,L6,L7,L8,L9,L10,L11)"
+all11_round_type="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$STATE_T27ROUND")"
+[[ "$all11_round_type" == "full" ]] && pass "T27 AC1 -- --lenses listing all eleven records round_type=full" \
+  || fail "T27 AC1 -- round_type = '$all11_round_type', expected full for an explicit all-11 listing"
+
+# ---- srd/tickets audit types: independent counters, always full (no lens concept) ----------
+round_srd27="$("$EDM_STATE" audit-round-start T27ROUND srd)"
+[[ "$round_srd27" == "1" ]] && pass "T27 -- srd round type is independent of code's counter" \
+  || fail "T27 -- srd round = '$round_srd27', expected 1"
+srd_round_type="$(jq -r '.audit_rounds.srd.rounds[-1].round_type' "$STATE_T27ROUND")"
+[[ "$srd_round_type" == "full" ]] && pass "T27 -- srd audit type has no lens concept, records round_type=full" \
+  || fail "T27 -- srd round_type = '$srd_round_type', expected full"
+
+# ---- AC1a (C-4, the sanctioned type widening): a legacy bare-integer audit_rounds.<type> is
+# coerced on the very next write, rather than erroring or losing the existing count -----------
+echo
+echo "T27 AC1a -- legacy bare-integer audit_rounds.code coerces on the next write"
+"$EDM_STATE" init T27LEGACY >/dev/null
+STATE_T27LEGACY="$TMP/SRD/T27LEGACY/.edm-state.json"
+jq '.audit_rounds = {"code": 2}' "$STATE_T27LEGACY" > "$STATE_T27LEGACY.tmp" && mv "$STATE_T27LEGACY.tmp" "$STATE_T27LEGACY"
+pre_legacy_type="$(jq -r '.audit_rounds.code | type' "$STATE_T27LEGACY")"
+[[ "$pre_legacy_type" == "number" ]] && pass "T27 AC1a -- fixture starts with the legacy bare-integer shape" \
+  || fail "T27 AC1a -- fixture audit_rounds.code type = '$pre_legacy_type', expected number"
+"$EDM_STATE" audit-round-start T27LEGACY code >/dev/null
+legacy_count="$(jq -r '.audit_rounds.code.count' "$STATE_T27LEGACY")"
+[[ "$legacy_count" == "3" ]] && pass "T27 AC1a -- coerced count continues from the legacy integer (2 -> 3)" \
+  || fail "T27 AC1a -- audit_rounds.code.count = '$legacy_count', expected 3"
+legacy_rounds_len="$(jq -r '.audit_rounds.code.rounds | length' "$STATE_T27LEGACY")"
+[[ "$legacy_rounds_len" == "1" ]] && pass "T27 AC1a -- only the new round is recorded in detail (no fabricated history)" \
+  || fail "T27 AC1a -- rounds array length = '$legacy_rounds_len', expected 1 (the two legacy rounds have no per-round detail)"
+
+# ---- AC8 (atomicity and bash 3.2): valid JSON after the write, bash -n on the script --------
+echo
+echo "T27 AC8 -- audit-round-start leaves valid JSON; bin/edm-state passes bash -n"
+jq -e . "$STATE_T27ROUND" >/dev/null 2>&1 \
+  && pass "T27 AC8 -- state file is valid JSON after audit-round-start" \
+  || fail "T27 AC8 -- state file is not valid JSON after audit-round-start"
+bash -n "$EDM_STATE" && pass "T27 AC8 -- bin/edm-state passes bash -n" \
+  || fail "T27 AC8 -- bin/edm-state failed bash -n"
+
+# ---- Negative: unknown audit type / malformed --lenses still refused -----------------------
+echo
+check_fails "T27 -- unknown audit type still refused" "unknown audit type" \
+  "$EDM_STATE" audit-round-start T27ROUND bogus
+check_fails "T27 -- --lenses with no value refused" "requires a non-empty" \
+  "$EDM_STATE" audit-round-start T27ROUND code --lenses
+check_fails "T27 -- unknown flag after audit type refused" "unknown argument" \
+  "$EDM_STATE" audit-round-start T27ROUND code --bogus L1
+
+# ---- Surfaced in --help -----------------------------------------------------------------
+t27_help_line="$("$EDM_STATE" --help 2>&1 | grep 'audit-round-start' || true)"
+check "T27 -- --lenses documented on the audit-round-start help line" "--lenses" "$t27_help_line"
+
+# =================================================================================
+# EDMV3-T28: edm-state audit-converged computes convergence over one blocking predicate
+# =================================================================================
+echo
+echo "T28 -- audit-converged computes convergence via the shared BLOCKING_FILTER predicate"
+
+"$EDM_STATE" init T28CONV >/dev/null
+STATE_T28CONV="$TMP/SRD/T28CONV/.edm-state.json"
+jq '.schema_version = 2' "$STATE_T28CONV" > "$STATE_T28CONV.tmp" && mv "$STATE_T28CONV.tmp" "$STATE_T28CONV"
+T28_DIR="$TMP/SRD/T28CONV"
+T28_JSONL="${T28_DIR}/code-audit/findings-ledger.jsonl"
+
+# ---- AC6 (negative, no ledger vs no findings) -- missing jsonl exits 3 ---------------------
+check_fails "T28 AC6 -- audit-converged with no ledger exits 3 naming 'no audit has run'" \
+  "no code audit has run" "$EDM_STATE" audit-converged T28CONV
+set +e
+"$EDM_STATE" audit-converged T28CONV >/dev/null 2>&1
+t28_noledger_ec=$?
+set -e
+[[ $t28_noledger_ec -eq 3 ]] && pass "T28 AC6 -- exit code is 3 for a missing ledger" \
+  || fail "T28 AC6 -- exit code = $t28_noledger_ec, expected 3"
+
+# ---- AC1 (positive, empty ledger -- "no findings" wording) ---------------------------------
+mkdir -p "${T28_DIR}/code-audit"
+: > "$T28_JSONL"
+"$EDM_STATE" audit-round-start T28CONV code >/dev/null   # full round (no --lenses)
+t28_empty_out="$("$EDM_STATE" audit-converged T28CONV)"
+t28_empty_ec=$?
+[[ $t28_empty_ec -eq 0 ]] && pass "T28 AC1/AC6 -- an empty ledger converges (exit 0)" \
+  || fail "T28 AC1/AC6 -- empty ledger exited $t28_empty_ec, expected 0"
+check "T28 AC6 -- empty ledger uses the 'no findings' wording, distinct from 'no ledger'" \
+  "no findings recorded" "$t28_empty_out"
+
+# ---- AC2/AC5 (negative): open P0/P1/P2 plus a re-opened legacy 'deferred' line all block ---
+cat > "$T28_JSONL" <<'EOF'
+{"schema":1,"id":"CA-001","sev":"P0","status":"open","lenses":["L1"],"confidence":"high","component":"a.py","title":"open P0 finding","raised_round":1,"resolved_round":null,"round":1,"round_type":"full"}
+{"schema":1,"id":"CA-002","sev":"P1","status":"open","lenses":["L4"],"confidence":"high","component":"b.py","title":"open P1 finding","raised_round":1,"resolved_round":null,"round":1,"round_type":"full"}
+{"schema":1,"id":"CA-003","sev":"P2","status":"open","lenses":["L10"],"confidence":"medium","component":"c.py","title":"open P2 finding","raised_round":1,"resolved_round":null,"round":1,"round_type":"full"}
+{"schema":1,"id":"CA-004","sev":"NOTED","status":"noted","lenses":["L8"],"confidence":"high","component":"d.py","title":"intentional, not actionable","raised_round":1,"resolved_round":null,"round":1,"round_type":"full"}
+{"schema":1,"id":"CA-005","sev":"P1","status":"fixed","lenses":["L9"],"confidence":"medium","component":"e.py","title":"fixed finding","raised_round":1,"resolved_round":1,"round":1,"round_type":"full"}
+{"schema":1,"id":"CA-006","sev":"P2","status":"deferred","lenses":["L7"],"confidence":"low","component":"f.py","title":"legacy deferred line","raised_round":1,"resolved_round":null,"round":1,"round_type":"full"}
+EOF
+check_fails "T28 AC2 -- open P0/P1/P2 findings fail convergence" \
+  "not converged" "$EDM_STATE" audit-converged T28CONV
+t28_blocking_out="$("$EDM_STATE" audit-converged T28CONV 2>&1 || true)"
+check "T28 AC2 -- blocking output names CA-001 (open P0)" "CA-001" "$t28_blocking_out"
+check "T28 AC2 -- blocking output names CA-002 (open P1)" "CA-002" "$t28_blocking_out"
+check "T28 AC2 -- blocking output names CA-003 (open P2)" "CA-003" "$t28_blocking_out"
+check "T28 AC5 -- legacy 'deferred' line CA-006 is re-opened and named in the blocking set" \
+  "CA-006" "$t28_blocking_out"
+check_absent "T28 -- fixed finding CA-005 is not in the blocking output" "CA-005" "$t28_blocking_out"
+check "T28 AC2 -- per-severity counts printed (P0=1 P1=1 P2=2, deferred counted at its own severity)" \
+  "P0=1 P1=1 P2=2" "$t28_blocking_out"
+set +e
+"$EDM_STATE" audit-converged T28CONV >/dev/null 2>&1
+t28_blocking_ec=$?
+set -e
+[[ $t28_blocking_ec -eq 1 ]] && pass "T28 AC3 -- exit code is 1 when blocking findings remain" \
+  || fail "T28 AC3 -- exit code = $t28_blocking_ec, expected 1"
+
+# ---- AC12 (wiring): approve-gate code-audit refuses on an open P0 --------------------------
+check_fails "T28 AC12 -- approve-gate refuses on an open P0" \
+  "code-audit gate refused" "$EDM_STATE" approve-gate T28CONV code-audit
+check_state_unchanged "$STATE_T28CONV" "$EDM_STATE" approve-gate T28CONV code-audit
+
+# ---- Remediate: close every blocking finding, leaving only the fixed/NOTED entries ---------
+jq -cs '
+  map(if (.id == "CA-001" or .id == "CA-002" or .id == "CA-003" or .id == "CA-006")
+      then .status = "fixed" else . end)
+  | .[]
+' "$T28_JSONL" > "${T28_JSONL}.tmp" && mv "${T28_JSONL}.tmp" "$T28_JSONL"
+
+# ---- AC11 (four consumers agree on one fixture ledger, after remediation) ------------------
+t28_conv_out="$("$EDM_STATE" audit-converged T28CONV)"
+t28_conv_ec=$?
+[[ $t28_conv_ec -eq 0 ]] && pass "T28 AC11 -- consumer 1 (audit-converged) agrees: converged after remediation" \
+  || fail "T28 AC11 -- audit-converged still exits $t28_conv_ec after remediation"
+# Advance to phase 6 first so write_handoff_internal's Phase-6 next_action branch (consumer 4)
+# is actually exercised below -- at phase 0 it would render the generic "Not started" message
+# regardless of code_audit_converged.
+jq '.current_phase = 6' "$STATE_T28CONV" > "$STATE_T28CONV.tmp" && mv "$STATE_T28CONV.tmp" "$STATE_T28CONV"
+"$EDM_STATE" approve-gate T28CONV code-audit >/dev/null \
+  && pass "T28 AC11/AC12 -- consumer 2 (approve-gate code-audit) agrees: approval now succeeds" \
+  || fail "T28 AC11/AC12 -- approve-gate code-audit still refuses after remediation"
+t28_converged_field="$(jq -r '.code_audit_converged' "$STATE_T28CONV")"
+[[ "$t28_converged_field" == "true" ]] \
+  && pass "T28 AC11 -- consumer 3 (cmd_archive's boolean check) agrees: code_audit_converged=true" \
+  || fail "T28 AC11 -- code_audit_converged = '$t28_converged_field', expected true"
+t28_handoff_out="$(cat "${T28_DIR}/HANDOFF.md" 2>/dev/null || true)"
+check "T28 AC11 -- consumer 4 (write_handoff_internal) agrees: HANDOFF reflects the converged state" \
+  "Ready to archive" "$t28_handoff_out"
+
+# ---- AC4 (negative, partial round): a partial round blocks even a clean ledger -------------
+"$EDM_STATE" audit-round-start T28CONV code --lenses L1,L2 >/dev/null
+check_fails "T28 AC4 -- a partial round fails naming the lens list, even with a clean ledger" \
+  "last round was partial" "$EDM_STATE" audit-converged T28CONV
+t28_partial_out="$("$EDM_STATE" audit-converged T28CONV 2>&1 || true)"
+check "T28 AC4 -- the partial round's lens list is named" "L1,L2" "$t28_partial_out"
+# Restore a full round so this fixture doesn't leak a partial state to later tests.
+"$EDM_STATE" audit-round-start T28CONV code >/dev/null
+
+# ---- AC7 (C-4, legacy migration is not a fresh audit) --------------------------------------
+echo
+echo "T28 AC7 -- legacy markdown-only ledger (schema_version < 2) exits 3 with a warning"
+"$EDM_STATE" init T28LEGACYMD >/dev/null
+mkdir -p "$TMP/SRD/T28LEGACYMD/code-audit"
+echo "# Code Audit Findings Ledger" > "$TMP/SRD/T28LEGACYMD/code-audit/findings-ledger.md"
+check_fails "T28 AC7 -- legacy markdown-only ledger exits non-zero with a legacy warning" \
+  "legacy initiative" "$EDM_STATE" audit-converged T28LEGACYMD
+set +e
+"$EDM_STATE" audit-converged T28LEGACYMD >/dev/null 2>&1
+t28_legacymd_ec=$?
+set -e
+[[ $t28_legacymd_ec -eq 3 ]] && pass "T28 AC7 -- legacy markdown-only ledger exits 3 (same code as 'no ledger', distinct wording)" \
+  || fail "T28 AC7 -- exit code = $t28_legacymd_ec, expected 3"
+
+# ---- AC8 (positive, audit-free modes) -------------------------------------------------------
+echo
+echo "T28 AC8 -- audit-free mode exits 0 with the exemption wording"
+export EDM_MODE="prototype"
+"$EDM_STATE" init T28EXEMPT >/dev/null
+unset EDM_MODE
+t28_exempt_out="$("$EDM_STATE" audit-converged T28EXEMPT)"
+t28_exempt_ec=$?
+[[ $t28_exempt_ec -eq 0 ]] && pass "T28 AC8 -- prototype mode exits 0 without a ledger" \
+  || fail "T28 AC8 -- prototype mode exited $t28_exempt_ec, expected 0"
+check "T28 AC8 -- exemption wording names the mode" \
+  "no code audit is required for this mode" "$t28_exempt_out"
+
+# ---- AC3 (exit-2 is never used inside cmd_audit_converged) ----------------------------------
+t28_body="$(awk '/^cmd_audit_converged\(\) \{/{f=1} f{print} f && /^\}/{exit}' "$EDM_STATE")"
+t28_exit2="$(printf '%s\n' "$t28_body" | grep -c 'exit 2' || true)"
+[[ "${t28_exit2:-0}" -eq 0 ]] && pass "T28 AC3 -- cmd_audit_converged never uses exit 2" \
+  || fail "T28 AC3 -- found ${t28_exit2} 'exit 2' occurrence(s) in cmd_audit_converged"
+
+# ---- AC9 (blocking predicate defined once, referenced by name at all four consumers) --------
+echo
+echo "T28 AC9 -- BLOCKING_FILTER defined once, referenced by name at exactly four consumers"
+t28_bf_count="$(grep -c 'BLOCKING_FILTER' "$EDM_STATE")"
+[[ "$t28_bf_count" -eq 5 ]] && pass "T28 AC9 -- BLOCKING_FILTER appears 5 times (1 definition + 4 consumers)" \
+  || fail "T28 AC9 -- BLOCKING_FILTER appears ${t28_bf_count} time(s), expected 5"
+
+# ---- AC13 (surfaced) -------------------------------------------------------------------------
+check "T28 AC13 -- audit-converged documented in --help" \
+  "audit-converged" "$("$EDM_STATE" --help 2>&1)"
+check "T28 AC13 -- audit-converged wired in the dispatch table" \
+  "audit-converged)" "$(grep -n 'audit-converged)' "$EDM_STATE" || true)"
+
+# ---- Read-only guarantee (Technical Notes: takes no lock, mutates nothing) ------------------
+check_state_unchanged "$STATE_T28CONV" "$EDM_STATE" audit-converged T28CONV
+
+# =================================================================================
+# EDMV3-T32: record-partial-verdict supports closure without losing the original note
+# =================================================================================
+echo
+echo "T32 -- record-partial-verdict close preserves the prior note and enforces single closure"
+
+"$EDM_STATE" init T32PV >/dev/null
+STATE_T32PV="$TMP/SRD/T32PV/.edm-state.json"
+
+# ---- AC1/AC2 (positive, note preserved; closed entry shape) --------------------------------
+"$EDM_STATE" record-partial-verdict T32PV T32PV-T01 PARTIAL "needs retry-logic runtime check" >/dev/null
+"$EDM_STATE" record-partial-verdict T32PV T32PV-T01 close PASS "post-deploy/verification.md#t32pv-t01" >/dev/null
+t32_ac1_note="$(jq -r '.partial_verdict_map["T32PV-T01"].prior.note' "$STATE_T32PV")"
+[[ "$t32_ac1_note" == "needs retry-logic runtime check" ]] \
+  && pass "T32 AC1 -- closure preserves the prior note under .prior.note" \
+  || fail "T32 AC1 -- .prior.note = '$t32_ac1_note', expected the original note"
+t32_ac2_shape="$(jq -e '.partial_verdict_map["T32PV-T01"] | has("prior") and has("closing_verdict") and has("closed_at") and has("verification_ref")' "$STATE_T32PV" 2>/dev/null || echo false)"
+[[ "$t32_ac2_shape" == "true" ]] \
+  && pass "T32 AC2 -- closed entry has prior/closing_verdict/closed_at/verification_ref" \
+  || fail "T32 AC2 -- closed entry is missing one or more of the four expected keys"
+t32_ac2_prior_verdict="$(jq -r '.partial_verdict_map["T32PV-T01"].prior.verdict' "$STATE_T32PV")"
+[[ "$t32_ac2_prior_verdict" == "PARTIAL" ]] \
+  && pass "T32 AC2 -- prior.verdict is the original PARTIAL" \
+  || fail "T32 AC2 -- prior.verdict = '$t32_ac2_prior_verdict', expected PARTIAL"
+t32_ac2_closing="$(jq -r '.partial_verdict_map["T32PV-T01"].closing_verdict' "$STATE_T32PV")"
+[[ "$t32_ac2_closing" == "PASS" ]] && pass "T32 AC2 -- closing_verdict = PASS" \
+  || fail "T32 AC2 -- closing_verdict = '$t32_ac2_closing', expected PASS"
+
+# ---- AC3 (negative, single closure) ---------------------------------------------------------
+check_fails "T32 AC3 -- second closure attempt refused, naming the existing closure" \
+  "already closed" "$EDM_STATE" record-partial-verdict T32PV T32PV-T01 close FAIL "some-other-ref"
+check_state_unchanged "$STATE_T32PV" "$EDM_STATE" record-partial-verdict T32PV T32PV-T01 close FAIL "some-other-ref"
+
+# ---- AC4 (positive, the sanctioned exception): FAIL then re-close appends to history --------
+"$EDM_STATE" record-partial-verdict T32PV T32PV-T02 PARTIAL "needs check" >/dev/null
+"$EDM_STATE" record-partial-verdict T32PV T32PV-T02 close FAIL "post-deploy/verification.md#t32pv-t02-fail" >/dev/null
+"$EDM_STATE" record-partial-verdict T32PV T32PV-T02 close PASS "post-deploy/verification.md#t32pv-t02-pass" >/dev/null
+t32_ac4_history_len="$(jq -r '.partial_verdict_map["T32PV-T02"].closure_history | length' "$STATE_T32PV")"
+[[ "$t32_ac4_history_len" == "2" ]] \
+  && pass "T32 AC4 -- FAIL then re-close appends to closure_history (length 2)" \
+  || fail "T32 AC4 -- closure_history length = '$t32_ac4_history_len', expected 2"
+t32_ac4_final="$(jq -r '.partial_verdict_map["T32PV-T02"].closing_verdict' "$STATE_T32PV")"
+[[ "$t32_ac4_final" == "PASS" ]] && pass "T32 AC4 -- the current closing_verdict reflects the re-close (PASS)" \
+  || fail "T32 AC4 -- closing_verdict = '$t32_ac4_final', expected PASS"
+t32_ac4_first_fail="$(jq -r '.partial_verdict_map["T32PV-T02"].closure_history[0].closing_verdict' "$STATE_T32PV")"
+[[ "$t32_ac4_first_fail" == "FAIL" ]] \
+  && pass "T32 AC4 -- the original FAIL closure is preserved in closure_history[0]" \
+  || fail "T32 AC4 -- closure_history[0].closing_verdict = '$t32_ac4_first_fail', expected FAIL"
+
+# ---- AC5 (negative, unknown ticket) ----------------------------------------------------------
+check_fails "T32 AC5 -- closing an unknown ticket is refused" \
+  "unknown ticket" "$EDM_STATE" record-partial-verdict T32PV T32PV-NOSUCHTICKET close PASS "ref"
+check_state_unchanged "$STATE_T32PV" "$EDM_STATE" record-partial-verdict T32PV T32PV-NOSUCHTICKET close PASS "ref"
+
+# ---- AC6 (existing callers unchanged): the open/record form still works exactly as before ----
+"$EDM_STATE" record-partial-verdict T32PV T32PV-T03 PASS >/dev/null
+t32_ac6_verdict="$(jq -r '.partial_verdict_map["T32PV-T03"].verdict' "$STATE_T32PV")"
+[[ "$t32_ac6_verdict" == "PASS" ]] && pass "T32 AC6 -- the unchanged open/record form still writes {verdict, note, recorded_at}" \
+  || fail "T32 AC6 -- open/record form verdict = '$t32_ac6_verdict', expected PASS"
+t32_ac6_no_closure_keys="$(jq -r '.partial_verdict_map["T32PV-T03"] | has("closing_verdict")' "$STATE_T32PV")"
+[[ "$t32_ac6_no_closure_keys" == "false" ]] \
+  && pass "T32 AC6 -- a plain open/record entry carries no closure fields" \
+  || fail "T32 AC6 -- a plain open/record entry unexpectedly has closing_verdict"
+
+# ---- AC7 (C-4, legacy entry shape reads as unclosed) -----------------------------------------
+jq '.partial_verdict_map["T32PV-LEGACY"] = {verdict: "PARTIAL", note: "pre-T32 shape", recorded_at: "2020-01-01T00:00:00Z"}' \
+  "$STATE_T32PV" > "$STATE_T32PV.tmp" && mv "$STATE_T32PV.tmp" "$STATE_T32PV"
+t32_ac7_unclosed="$(jq -r '.partial_verdict_map["T32PV-LEGACY"] | has("closing_verdict")' "$STATE_T32PV")"
+[[ "$t32_ac7_unclosed" == "false" ]] \
+  && pass "T32 AC7 -- a legacy-shape entry (no closure fields) reads as unclosed" \
+  || fail "T32 AC7 -- legacy entry unexpectedly reports has(closing_verdict)=true"
+
+# ---- AC9 (negative, no third verdict): BLOCKED (or any non-PASS/FAIL) closing verdict refused
+"$EDM_STATE" record-partial-verdict T32PV T32PV-T04 PARTIAL "needs check" >/dev/null
+check_fails "T32 AC9 -- a BLOCKED closing verdict is refused, naming the two legal values" \
+  "PASS|FAIL" "$EDM_STATE" record-partial-verdict T32PV T32PV-T04 close BLOCKED "ref"
+check_state_unchanged "$STATE_T32PV" "$EDM_STATE" record-partial-verdict T32PV T32PV-T04 close BLOCKED "ref"
+
+# ---- AC8 (atomicity): every write goes through rmw_state; bin/edm-state passes bash -n -------
+bash -n "$EDM_STATE" && pass "T32 AC8 -- bin/edm-state passes bash -n" \
+  || fail "T32 AC8 -- bin/edm-state failed bash -n"
+jq -e . "$STATE_T32PV" >/dev/null 2>&1 && pass "T32 AC8 -- state file is valid JSON after every T32 write" \
+  || fail "T32 AC8 -- state file is not valid JSON"
+
+# ---- AC6 (existing callers, hooks/skill single-write path stays green) -----------------------
+echo
+echo "T32 AC6 -- wave4b-smoke.sh (existing PARTIAL-recording callers) stays green"
+t32_wave4b_out="$(bash "${SCRIPT_DIR}/wave4b-smoke.sh" 2>&1)"
+t32_wave4b_ec=$?
+[[ $t32_wave4b_ec -eq 0 ]] && pass "T32 AC6 -- wave4b-smoke.sh exits 0 (existing single-write callers unaffected)" \
+  || fail "T32 AC6 -- wave4b-smoke.sh exited ${t32_wave4b_ec}"
+
+# ---- Surfaced in --help -----------------------------------------------------------------
+t32_help_lines="$("$EDM_STATE" --help 2>&1 | grep 'record-partial-verdict' || true)"
+check "T32 -- the 'close' usage form is documented in --help" "close" "$t32_help_lines"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

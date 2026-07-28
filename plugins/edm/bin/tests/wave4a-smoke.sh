@@ -36,8 +36,14 @@ round2="$("$EDM_STATE" audit-round-start TSMK code)"
 round_srd="$("$EDM_STATE" audit-round-start TSMK srd)"
 [[ "$round_srd" == "1" ]] && pass "first srd round = 1 (independent)" || fail "srd round = '$round_srd' (expected 1)"
 
-stored_code="$(jq -r '.audit_rounds.code' "$STATE_FILE")"
-[[ "$stored_code" == "2" ]] && pass "audit_rounds.code stored as 2" || fail "audit_rounds.code = '$stored_code'"
+# EDMV3-T27 AC1a: audit_rounds.<type> widened from a bare integer to {count, rounds: [...]} so
+# a round can carry its lens set and round_type. Re-baselined here (same commit as the T27
+# widening) to read .audit_rounds.code.count instead of the old bare-integer .audit_rounds.code.
+stored_code="$(jq -r '.audit_rounds.code.count' "$STATE_FILE")"
+[[ "$stored_code" == "2" ]] && pass "audit_rounds.code.count stored as 2" || fail "audit_rounds.code.count = '$stored_code'"
+stored_code_type="$(jq -r '.audit_rounds.code | type' "$STATE_FILE")"
+[[ "$stored_code_type" == "object" ]] && pass "audit_rounds.code is an object (EDMV3-T27 AC1a widening)" \
+  || fail "audit_rounds.code type = '$stored_code_type', expected object"
 
 # Invalid type rejected
 check "invalid audit type rejected" "unknown audit type" \

@@ -4,6 +4,71 @@ All notable changes to the EDM plugin are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Individual EDMV3 wave-B (Structured Findings) behavioural changes are recorded here as they land;
+the wave-B closeout ticket (EDMV3-T65) folds this section into a versioned entry with the full
+behavioural, breaking-change and required-user-action summary once the whole wave has landed.
+
+### Added
+
+- **`edm-state render-ledger <PREFIX>`** (EDMV3-T26): deterministically renders
+  `code-audit/findings-ledger.md` from the authoritative `code-audit/findings-ledger.jsonl`,
+  sorted by `(severity, ID)` for byte-identical output across runs. Writes a machine-readable
+  generated-file header, includes a `Decisions / Non-Findings` section for `NOTED` items, writes
+  atomically (temp file plus rename), and records the rendered file's hash via the existing
+  `record_artifact_hash` helper so `edm-state checkpoint-if-active`'s drift loop warns on a
+  hand-edit out of band. Refuses (non-zero exit, writes nothing) with a message distinguishing
+  "no audit has run" from "the render failed" when `findings-ledger.jsonl` is absent or invalid.
+- **`edm-state audit-round-start` records the round's lens set and `round_type`** (EDMV3-T27):
+  a new optional `--lenses <comma-list>` argument records which lenses ran; `round_type` is
+  derived as `full` when all eleven lenses ran (or `--lenses` was omitted) and `partial`
+  otherwise. `audit_rounds.<type>` widens from a bare integer round-count to
+  `{count, rounds: [...]}` to hold this per-round detail (the one sanctioned C-4 type widening
+  in this initiative) -- no existing state file is rewritten; every reader coerces a bare
+  integer to `{count: N, rounds: []}` at read time. The external contract of
+  `N=$(edm-state audit-round-start <PREFIX> code)` is unchanged (still echoes the round number).
+
+- **`edm-state audit-converged <PREFIX>`** (EDMV3-T28): a read-only convergence query over
+  `code-audit/findings-ledger.jsonl`, replacing "a human re-reads the ledger and asserts
+  convergence in prose" with one deterministic `jq` predicate (`BLOCKING_FILTER`, defined once
+  and referenced by name at all four consumers: `audit-converged` itself, `approve-gate`'s
+  code-audit branch, `archive`'s convergence check, and `write-handoff`'s Phase-6 rendering).
+  Exit 0 converged (or the mode/lifecycle_mode is exempt from a code audit entirely); exit 1
+  when open P0/P1/P2 findings remain, the latest round was partial, or a line carries an
+  out-of-enum status; exit 3 when no ledger exists (distinguishing "no audit has run" from a
+  legacy markdown-only ledger, which degrades per `schema_version` rather than demanding a
+  fresh audit). A legacy `deferred` status line is re-opened (counted as open at its recorded
+  severity) rather than skipped or erroring.
+- **`approve-gate <PREFIX> code-audit` re-runs the convergence pre-check** (EDMV3-T28 AC12): at
+  `schema_version >= 2`, the approval now calls `audit-converged` itself and refuses when it
+  fails, closing the time-of-check-to-time-of-use window between a standalone
+  `audit-converged` call and the approval. Below `schema_version` 2, this degrades to the
+  existing wave-A permissive behaviour (recorded via `degraded_checks`), so a pre-wave-B
+  initiative is never told to run a fresh eleven-lens round it never opted into.
+
+### Changed
+
+- **`wave4a-smoke.sh`'s `audit_rounds.code` assertion re-baselined** (EDMV3-T27, same commit as
+  the widening): reads `.audit_rounds.code.count` instead of the old bare-integer
+  `.audit_rounds.code`.
+- **`code_audit_gate_ledger` now records the real ledger path** (EDMV3-T28) instead of the
+  hardcoded wave-A interim literal `"absent"`, when `code-audit/findings-ledger.jsonl` exists at
+  approval time.
+
+### Added (continued)
+
+- **`edm-state record-partial-verdict <PREFIX> <ticket> close <PASS|FAIL> <verification_ref>`**
+  (EDMV3-T32): closes an existing PARTIAL entry in `partial_verdict_map` without losing the
+  original note -- the whole prior entry (verdict, note, recorded_at) nests under a `prior` key
+  alongside the new `closing_verdict`, `closed_at` and `verification_ref`. An entry may be
+  closed only once; the sole exception is re-closing an entry whose existing closure was
+  `FAIL` (after remediation), which appends to a `closure_history` array instead of
+  overwriting. Only `PASS` and `FAIL` are legal closing verdicts. The existing
+  `<PREFIX> <ticket> <PASS|PARTIAL|FAIL> [<note>]` open/record form (used by
+  `hooks/hooks.json`'s `SubagentStop` handler and `skills/implement/SKILL.md`) is unchanged --
+  the literal third argument `close` disambiguates the two forms.
+
 ## [2.1.0] — 2026-07-27
 
 Wave A of EDMV3 (prompt-streamline): the enforcement kernel, the mechanical-fixes epic, the CI
