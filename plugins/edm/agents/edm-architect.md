@@ -28,6 +28,8 @@ Produce the Target Architecture section for an SRD. You receive: the initiative 
    - Sequence diagram for the primary happy path
    - Data flow diagram if data transformation is significant
    - Validate syntax -- diagrams must render without errors
+   - Follow `CLAUDE.md Sec."Mermaid diagram conventions"` for label text -- a raw semicolon in a
+     node, edge or message label is a violation
 
 4. **Data Flow** -- Trace the data from entry point through all transformations to output. Include error paths.
 
@@ -83,4 +85,5 @@ File structure of `architecture.md`:
 ```
 
 Keep all prose markers ASCII-only (no Unicode arrows or glyphs in text). Mermaid fenced blocks are
-permitted -- the ASCII constraint applies to prose, not to standard Mermaid syntax keywords.
+permitted -- the ASCII constraint applies to prose, not to standard Mermaid syntax keywords. Follow
+`CLAUDE.md Sec."Mermaid diagram conventions"` for label escaping inside those fences.

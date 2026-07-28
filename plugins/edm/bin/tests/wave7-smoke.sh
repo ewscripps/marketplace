@@ -1203,6 +1203,151 @@ check "T40 AC10 -- architecture.md references the same heading string" \
   "Mermaid diagram conventions" "$(cat "$ARCHITECTURE_MD" 2>/dev/null)"
 # EDMV3-T40 end
 
+# =================================================================================
+# EDMV3-T42: eleven Mermaid touch points carry a by-name reference (nine prompt-surface
+# files) or a pattern-library ### entry (two docs), and rule presence is asserted.
+# =================================================================================
+MERMAID_REF='Mermaid diagram conventions'
+MERMAID_QUOTED='CLAUDE.md Sec."Mermaid diagram conventions"'
+
+echo
+echo "T42 AC1 -- three authoring agents reference the section"
+for _t42_f in edm-architect.md edm-srd-writer.md edm-ticket-writer.md; do
+  _t42_c="$(grep -c "$MERMAID_REF" "${PLUGIN_DIR}/agents/${_t42_f}" || true)"
+  [[ "${_t42_c:-0}" -gt 0 ]] \
+    && pass "T42 AC1 -- agents/${_t42_f} references the Mermaid section" \
+    || fail "T42 AC1 -- agents/${_t42_f} has no Mermaid section reference"
+done
+
+echo
+echo "T42 AC2 -- two auditing agents reference the section and add an explicit literal-; check"
+check "T42 AC2 -- edm-srd-auditor.md states the literal-semicolon check" \
+  "literal semicolon" "$(cat "${PLUGIN_DIR}/agents/edm-srd-auditor.md")"
+check "T42 AC2 -- edm-ticket-auditor.md states the raw-; check" \
+  'raw `;`' "$(cat "${PLUGIN_DIR}/agents/edm-ticket-auditor.md")"
+for _t42_f in edm-srd-auditor.md edm-ticket-auditor.md; do
+  _t42_c="$(grep -c "$MERMAID_REF" "${PLUGIN_DIR}/agents/${_t42_f}" || true)"
+  [[ "${_t42_c:-0}" -gt 0 ]] \
+    && pass "T42 AC2 -- agents/${_t42_f} references the Mermaid section" \
+    || fail "T42 AC2 -- agents/${_t42_f} has no Mermaid section reference"
+done
+
+echo
+echo "T42 AC3 -- four skills reference the section"
+t42_ac3_missing=""
+for _t42_s in srd tickets audit-srd audit-tickets; do
+  grep -q "$MERMAID_REF" "${PLUGIN_DIR}/skills/${_t42_s}/SKILL.md" \
+    || t42_ac3_missing="${t42_ac3_missing} ${_t42_s}"
+done
+[[ -z "$t42_ac3_missing" ]] \
+  && pass "T42 AC3 -- all four skills (srd, tickets, audit-srd, audit-tickets) reference the section" \
+  || fail "T42 AC3 -- missing skill(s):${t42_ac3_missing}"
+
+echo
+echo "T42 AC4 -- identical quoting style across every by-name reference"
+t42_ac4_forms="$(grep -rho 'CLAUDE.md Sec\."Mermaid diagram conventions"' "${PLUGIN_DIR}/" | sort -u | wc -l | tr -d ' ')"
+[[ "$t42_ac4_forms" == "1" ]] \
+  && pass "T42 AC4 -- exactly one quoting form of the by-name reference is in use" \
+  || fail "T42 AC4 -- found ${t42_ac4_forms} distinct quoting forms, expected 1"
+
+echo
+echo "T42 AC5 -- no touch point restates the rule content (the nine prompt-surface files)"
+t42_ac5_restated=""
+for _t42_f in agents/edm-architect.md agents/edm-srd-writer.md agents/edm-ticket-writer.md \
+              agents/edm-srd-auditor.md agents/edm-ticket-auditor.md \
+              skills/srd/SKILL.md skills/tickets/SKILL.md skills/audit-srd/SKILL.md skills/audit-tickets/SKILL.md; do
+  grep -q '#59' "${PLUGIN_DIR}/${_t42_f}" && t42_ac5_restated="${t42_ac5_restated} ${_t42_f}"
+done
+[[ -z "$t42_ac5_restated" ]] \
+  && pass "T42 AC5 -- none of the nine prompt-surface touch points restate the #59; entity code" \
+  || fail "T42 AC5 -- rule restated in:${t42_ac5_restated}"
+
+echo
+echo "T42 AC6 -- concrete audit check text names sequenceDiagram message semicolons"
+check "T42 AC6 -- edm-ticket-auditor.md names sequenceDiagram message text after ':'" \
+  "sequenceDiagram message" "$(cat "${PLUGIN_DIR}/agents/edm-ticket-auditor.md")"
+
+echo
+echo "T42 AC7/AC8 -- pattern-library entries are ### under the existing ## Anti-Patterns, four-## contract intact"
+[[ -n "$(grep -n '^### ' "${PLUGIN_DIR}/docs/audit-patterns/srd-audit.md" | grep -i mermaid || true)" ]] \
+  && pass "T42 AC7 -- srd-audit.md has a Mermaid ### entry" \
+  || fail "T42 AC7 -- srd-audit.md has no Mermaid ### entry"
+[[ -n "$(grep -n '^### ' "${PLUGIN_DIR}/docs/audit-patterns/ticket-audit.md" | grep -i mermaid || true)" ]] \
+  && pass "T42 AC7 -- ticket-audit.md has a Mermaid ### entry" \
+  || fail "T42 AC7 -- ticket-audit.md has no Mermaid ### entry"
+
+t42_srd_hh_count="$(grep -c '^## ' "${PLUGIN_DIR}/docs/audit-patterns/srd-audit.md")"
+t42_tkt_hh_count="$(grep -c '^## ' "${PLUGIN_DIR}/docs/audit-patterns/ticket-audit.md")"
+[[ "$t42_srd_hh_count" -eq 4 && "$t42_tkt_hh_count" -eq 4 ]] \
+  && pass "T42 AC8 -- both pattern docs still have exactly four ## headings (no new ## added)" \
+  || fail "T42 AC8 -- srd-audit.md has ${t42_srd_hh_count} ## headings, ticket-audit.md has ${t42_tkt_hh_count} (expected 4 each)"
+
+echo
+echo "T42 AC9 -- new entry titles are de-duplication-safe and ASCII-only"
+t42_ac9_case() {
+  local before_hash after_hash out
+  before_hash="$(_harness_hash_file "${PLUGIN_DIR}/docs/audit-patterns/srd-audit.md")"
+
+  edm-init ZMER >/dev/null 2>&1
+  {
+    echo "# Mock SRD Audit"
+    echo
+    echo "### literal semicolon inside a mermaid label"
+    echo "Duplicate-titled finding to prove de-duplication skips it."
+  } > "SRD/ZMER/audit-srd.md"
+
+  out="$(edm-state update-patterns ZMER srd 2>&1)"
+  after_hash="$(_harness_hash_file "${PLUGIN_DIR}/docs/audit-patterns/srd-audit.md")"
+
+  [[ "$out" == *"no novel findings to append"* ]] \
+    && pass "T42 AC9 -- update-patterns recognizes the normalized-duplicate title and appends nothing" \
+    || fail "T42 AC9 -- update-patterns did not report 'no novel findings to append' (got: $out)"
+
+  [[ "$before_hash" == "$after_hash" ]] \
+    && pass "T42 AC9 -- docs/audit-patterns/srd-audit.md is byte-unchanged after the de-dup run" \
+    || fail "T42 AC9 -- docs/audit-patterns/srd-audit.md changed hash (before=$before_hash after=$after_hash)"
+}
+with_scratch_repo t42_ac9_case
+
+t42_ac9_nonascii_srd="$(LC_ALL=C grep -nv '^[[:print:][:space:]]*$' "${PLUGIN_DIR}/docs/audit-patterns/srd-audit.md" || true)"
+t42_ac9_nonascii_tkt="$(LC_ALL=C grep -nv '^[[:print:][:space:]]*$' "${PLUGIN_DIR}/docs/audit-patterns/ticket-audit.md" || true)"
+[[ -z "$t42_ac9_nonascii_srd" && -z "$t42_ac9_nonascii_tkt" ]] \
+  && pass "T42 AC9 -- srd-audit.md and ticket-audit.md are ASCII-only" \
+  || fail "T42 AC9 -- non-ASCII byte(s) found (srd: $t42_ac9_nonascii_srd | ticket: $t42_ac9_nonascii_tkt)"
+
+echo
+echo "T42 AC10 -- rule-presence smoke: canonical heading plus all eleven touch points"
+check "T42 AC10 -- CLAUDE.md carries the canonical heading" \
+  "## Mermaid diagram conventions (canonical)" "$CLAUDE_MD_CONTENT"
+t42_ac10_missing=""
+for _t42_f in agents/edm-architect.md agents/edm-srd-writer.md agents/edm-ticket-writer.md \
+              agents/edm-srd-auditor.md agents/edm-ticket-auditor.md \
+              skills/srd/SKILL.md skills/tickets/SKILL.md skills/audit-srd/SKILL.md skills/audit-tickets/SKILL.md \
+              docs/audit-patterns/srd-audit.md docs/audit-patterns/ticket-audit.md; do
+  grep -qi "$MERMAID_REF" "${PLUGIN_DIR}/${_t42_f}" 2>/dev/null || t42_ac10_missing="${t42_ac10_missing} ${_t42_f}"
+done
+[[ -z "$t42_ac10_missing" ]] \
+  && pass "T42 AC10 -- all eleven touch points carry the reference or pattern-library entry" \
+  || fail "T42 AC10 -- missing touch point(s):${t42_ac10_missing}"
+check "T42 AC10 -- CLAUDE.md's correct example uses the #59; entity code" \
+  '#59;' "$CLAUDE_MD_CONTENT"
+
+echo
+echo "T42 AC11 -- orchestrator carries none of the skill-side references (post-WS5 file set)"
+t42_ac11_orch_count="$(grep -c "$MERMAID_REF" "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" || true)"
+[[ "${t42_ac11_orch_count:-0}" -eq 0 ]] \
+  && pass "T42 AC11 -- orchestrator SKILL.md carries zero Mermaid section references" \
+  || fail "T42 AC11 -- orchestrator SKILL.md unexpectedly references the Mermaid section (count=${t42_ac11_orch_count})"
+
+echo
+echo "T42 AC12 -- rule-presence test runs in CI"
+# .gitlab-ci.yml never names wave7-smoke.sh literally -- test:smoke's script is the run-all.sh
+# aggregator invocation, which auto-discovers every bin/tests/*-smoke.sh suite (EDMV3-T20 AC3),
+# so wave7-smoke.sh (and this T42 case) runs in CI without needing its own pipeline line.
+check "T42 AC12 -- .gitlab-ci.yml's test:smoke job runs the run-all.sh aggregator" \
+  "bin/tests/run-all.sh" "$(cat "$GITLAB_CI_YML" 2>/dev/null)"
+# EDMV3-T42 end
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

@@ -54,6 +54,8 @@ Cross-reference the ticket pack against the SRD. Audit across all **8 dimensions
 - All nodes colored and labeled?
 - No orphan nodes?
 - Flow matches dependency declarations?
+- Follows `CLAUDE.md Sec."Mermaid diagram conventions"`: a raw `;` inside `[...]`, `(...)`,
+  `{...}`, `|...|`, `"..."`, or after the `:` in a sequenceDiagram message is a violation
 
 ### 7. Consistency
 - Ticket IDs in README tables match IDs in epic files?
@@ -123,6 +125,7 @@ Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severit
 1. Read the README.md fully -- build the expected picture
 2. Read each epic file -- compare against README
 3. Read the SRD -- cross-reference every requirement ID
-4. Check every Mermaid block for syntax
+4. Check every Mermaid block for syntax and for `CLAUDE.md Sec."Mermaid diagram conventions"`
+   compliance -- a raw `;` inside a label or after a sequenceDiagram message's `:` is a violation
 5. Trace the dependency chain end-to-end
 6. Check every AC for testability -- would you be able to pass/fail it from code alone?

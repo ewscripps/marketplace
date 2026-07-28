@@ -40,7 +40,7 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 2. **Legend** -- Read `docs/templates/ticket-size-legend.md` and inline it verbatim (single source of truth; never re-author inline)
 3. **Cross-Cutting Requirements** -- Read `docs/templates/cross-cutting-ac.md` and inline it verbatim (single source of truth)
 4. **Ticket Index** -- one table per phase: ID, Title, Epic, Size, Priority, Depends On, SRD Refs
-5. **Critical Path** -- Mermaid diagram, every node colored
+5. **Critical Path** -- Mermaid diagram, every node colored, following `CLAUDE.md Sec."Mermaid diagram conventions"` for label text (a raw semicolon in a label is a violation)
 6. **Epics Summary** -- table mapping epic numbers to ticket counts and file links
 7. **SRD Coverage Map** -- every `{PREFIX}-NN` requirement -> implementing ticket(s); no orphans
 

@@ -62,6 +62,7 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 - Mermaid diagram syntactically valid?
 - Diagram matches declared Depends On values?
 - Every node colored?
+- Follows `CLAUDE.md Sec."Mermaid diagram conventions"` for label text?
 
 ### 5. Acceptance Criteria Quality
 - Every AC specific and testable?
@@ -73,6 +74,8 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 - All Mermaid blocks valid?
 - All nodes colored and labeled?
 - No orphan nodes?
+- Per `CLAUDE.md Sec."Mermaid diagram conventions"`: a raw `;` inside `[...]`, `(...)`, `{...}`,
+  `|...|`, `"..."`, or after the `:` in a sequenceDiagram message is a violation -- flag it.
 
 ### 7. Consistency
 - Ticket IDs in README tables match IDs in epic files?

@@ -46,7 +46,9 @@ Missing requirements, unaddressed edge cases, user flows that dead-end.
 Wrong API names, incorrect library references, impossible claims, version mismatches.
 
 ### 3. Diagram Errors
-Mermaid syntax errors, logical flow errors, missing edges, orphan nodes.
+Mermaid syntax errors, logical flow errors, missing edges, orphan nodes. Follows
+`CLAUDE.md Sec."Mermaid diagram conventions"` -- a raw `;` inside label/edge/message text is a
+violation.
 
 ### 4. Competing Requirements
 Conflicts with current codebase, existing features, other specs, internal contradictions.
