@@ -15,6 +15,11 @@ allowed-tools: Read, Write, Bash(edm-state *), Bash(mkdir *), Glob, Grep, AskUse
 - **Input**: `partial_verdict_map` entries recorded during Phase 6 QC (`edm-state record-partial-verdict`)
 - **Output**: every entry closed to `PASS` or `FAIL` in state, plus `post-deploy/verification.md`
 
+## Step 0 -- Gate and Branch Preflight
+
+Before Step 1, run the preflight per `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`,
+using `<gated-command>` = `verify-runtime`.
+
 This skill is the mandatory Phase 6 closure step. D13 forbids leaving a PARTIAL open at archive
 time, and D15 forbids inventing a third verdict when the runtime check is hard to arrange --
 `/edm:verify-runtime` records exactly two closing verdicts, ever: **PASS** or **FAIL**.

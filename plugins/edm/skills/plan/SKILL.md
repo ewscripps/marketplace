@@ -15,6 +15,33 @@ allowed-tools: Read, Write, Bash(edm-state *), Bash(edm-init *), Bash(edm-valida
 - **Input**: Business requirement, feature request, or strategic initiative
 - **Output**: `${user_config.srd_root}/{PREFIX}/planning.md` -- scope definition, current-state assessment, go/no-go decision
 
+## Step 0 -- Gate and Branch Preflight
+
+Before Step 1 (or any other step, on a fresh invocation or a resume), every phase skill in this
+methodology runs two read-only checks. This text is written once, here -- every other phase
+skill (`srd`, `audit-srd`, `tickets`, `audit-tickets`, `implement`, `code-audit`,
+`verify-runtime`) references it by name --
+`` `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"` `` -- rather than restating it,
+substituting its own `<gated-command>` token.
+
+**This is defence in depth on the Skill-tool path, not the deterministic layer.** Prompt text
+(Tier 3, SRD Section 5.1) "cannot be bypassed by: nothing" -- the requirement that actually
+restores deterministic enforcement when a phase is reached through the Skill tool rather than
+direct user invocation is EDMV3-115 (landed in wave A as EDMV3-T13), inside `cmd_gate_check`
+itself. Step 0 is a second, defence-in-depth line alongside the `UserPromptExpansion` hooks
+(`hooks/hooks.json`), which are retained unchanged and fire only on direct invocation.
+
+1. **Gate check**: run `edm-state gate-check <PREFIX> <gated-command>`, where `<gated-command>`
+   is this skill's own token -- `plan` for this skill. Whether this phase's gate applies at all
+   under the initiative's current mode is computed entirely inside `cmd_gate_check` itself; that
+   mode-suppression logic is not restated here or in any other phase skill.
+   If it exits non-zero, **BLOCK**: do not proceed with the phase, and surface the exact message
+   the command printed.
+2. **Branch check**: run `edm-state branch-check <PREFIX>`. If it exits non-zero, **BLOCK**: do
+   not proceed with the phase, and surface the `git checkout <initiative_branch>` instruction it
+   printed. This is a behaviour change on the standalone-skill path (CHANGELOG.md) -- previously
+   `branch-check` hard-blocked only at the orchestrator's Step 1d.
+
 ## Operational Orchestration
 
 1. Parse `$ARGUMENTS` for `{PREFIX}` and the initiative description. If missing, ask the user.

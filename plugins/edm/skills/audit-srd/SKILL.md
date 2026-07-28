@@ -17,6 +17,11 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 
 Every error caught here saves 10x the effort of catching it during implementation.
 
+## Step 0 -- Gate and Branch Preflight
+
+Before Step 1, run the preflight per `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`,
+using `<gated-command>` = `audit-srd`.
+
 ## Operational Orchestration
 
 1. Parse `{PREFIX}` from `$ARGUMENTS`.

@@ -55,6 +55,19 @@ behavioural, breaking-change and required-user-action summary once the whole wav
 - **`code_audit_gate_ledger` now records the real ledger path** (EDMV3-T28) instead of the
   hardcoded wave-A interim literal `"absent"`, when `code-audit/findings-ledger.jsonl` exists at
   approval time.
+- **branch-check becoming a BLOCK on the standalone-skill path** (EDMV3-T36): every phase
+  skill's new Step 0 preflight runs `edm-state branch-check <PREFIX>` and now hard-blocks the
+  phase on a non-zero exit. Previously `branch-check` hard-blocked only at the orchestrator's
+  Step 1d, so running e.g. `/edm:code-audit PREFIX` directly from `main` worked, and reviewing an
+  initiative from another branch was a common code-audit posture. That posture now requires
+  checking out the initiative's recorded `initiative_branch` first. This is a behaviour change,
+  not a bug fix -- both the `UserPromptExpansion` hooks and the orchestrator's own Step 1d check
+  are retained unchanged; Step 0 is a second, defence-in-depth enforcement point on the
+  Skill-tool path, not a replacement for either.
+- **The gate PROTOCOL restated at five sites collapses to one canonical section**
+  (EDMV3-T35): `skills/orchestrator/SKILL.md`'s `## Gate PROTOCOL (canonical)` is now the single
+  definition every gate site in the plugin cites by name; no behavioural change to gate approval
+  rules themselves (the four preserved rules are verbatim), only to where the rules live.
 
 ### Added (continued)
 
@@ -68,6 +81,27 @@ behavioural, breaking-change and required-user-action summary once the whole wav
   `<PREFIX> <ticket> <PASS|PARTIAL|FAIL> [<note>]` open/record form (used by
   `hooks/hooks.json`'s `SubagentStop` handler and `skills/implement/SKILL.md`) is unchanged --
   the literal third argument `close` disambiguates the two forms.
+- **New skill `/edm:verify-runtime <PREFIX>`** (EDMV3-T33): the mandatory Phase 6 closure step.
+  Reads `partial_verdict_map`, drives each PARTIAL to a closing `PASS` or `FAIL` via
+  `edm-state record-partial-verdict ... close`, and writes `post-deploy/verification.md` (one
+  section per closure, appended not overwritten). Exactly two closing verdicts, ever -- see the
+  new `CLAUDE.md` "Unverifiable acceptance criteria (D15)" policy below.
+- **D15 policy: unverifiable acceptance criteria are a specification defect** (EDMV3-T33):
+  `CLAUDE.md` gains a new section stating that an AC whose runtime environment does not exist is
+  reworked or moved out of scope via gate change control -- never a third verdict
+  (`BLOCKED`/`WAIVED`/`N/A-runtime` do not exist in this methodology).
+- **`current_step` fields and Skill-tool composition documented** (EDMV3-T34): `CLAUDE.md`
+  architectural rule 2 now documents the Skill-tool composition pattern (the orchestrator
+  dispatches; each phase skill owns its phase) in place of the abolished "skills don't load other
+  skills" sentence, which was no longer true of current Claude Code. Decision D21 (GO) records a
+  live two-level skill-composition spike in `SRD/edm/EDMV3__prompt-streamline/decisions.md`.
+- **Step 0 -- Gate and Branch Preflight, all eight phase skills** (EDMV3-T36): every phase skill
+  (`plan`, `srd`, `audit-srd`, `tickets`, `audit-tickets`, `implement`, `code-audit`,
+  `verify-runtime`) now opens with a Step 0 that runs `edm-state gate-check` and
+  `edm-state branch-check` before doing anything else, as defence in depth on the Skill-tool
+  invocation path (Tier 3, prompt text -- the deterministic enforcement is `cmd_gate_check`
+  itself, EDMV3-115/T13). Written once in `skills/plan/SKILL.md`, referenced by name from the
+  other seven.
 
 ## [2.1.0] — 2026-07-27
 

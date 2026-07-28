@@ -21,6 +21,11 @@ A single auditor misses things because it gravitates toward familiar patterns. E
 mandates** -- plus a synthesizer -- catch what a single pass misses. Multiple rounds use a persistent ledger to
 track findings across passes and determine convergence.
 
+## Step 0 -- Gate and Branch Preflight
+
+Before Step 1, run the preflight per `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`,
+using `<gated-command>` = `code-audit`.
+
 ## Operational Orchestration
 
 1. Parse `{PREFIX}`, optional scope, and optional `--lenses` subset from `$ARGUMENTS`.

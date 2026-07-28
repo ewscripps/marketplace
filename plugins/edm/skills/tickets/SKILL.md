@@ -15,6 +15,11 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 - **Input**: Audited SRD at `${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}`
 - **Output**: Ticket pack at `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/`
 
+## Step 0 -- Gate and Branch Preflight
+
+Before Step 1, run the preflight per `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`,
+using `<gated-command>` = `tickets`.
+
 ## Operational Orchestration
 
 1. Parse `{PREFIX}` from `$ARGUMENTS`.

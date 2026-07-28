@@ -1518,6 +1518,114 @@ bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t35_lint_ex
   || fail "T35 -- edm-lint-artifacts --all exited ${t35_lint_exit}"
 # EDMV3-T35 end
 
+
+# ---- EDMV3-T36: every phase skill opens with a Step 0 gate/branch preflight --------------------
+echo
+echo "=== EDMV3-T36: Step 0 -- Gate and Branch Preflight, all eight phase skills ==="
+T36_PHASE_SKILLS="plan srd audit-srd tickets audit-tickets implement code-audit verify-runtime"
+
+echo "T36 AC1 -- all eight phase skills contain the Step 0 reference"
+t36_step0_count=0
+for t36_skill in $T36_PHASE_SKILLS; do
+  if grep -q '^## Step 0 -- Gate and Branch Preflight$' "${PLUGIN_DIR}/skills/${t36_skill}/SKILL.md" 2>/dev/null; then
+    t36_step0_count=$((t36_step0_count + 1))
+  else
+    fail "T36 AC1 -- skills/${t36_skill}/SKILL.md is missing the Step 0 heading"
+  fi
+done
+[[ "$t36_step0_count" -eq 8 ]] && pass "T36 AC1 -- all eight phase skills contain the Step 0 heading" \
+  || fail "T36 AC1 -- only ${t36_step0_count}/8 phase skills contain the Step 0 heading"
+
+echo
+echo "T36 AC2 -- the token each skill passes resolves to a real gate (functional, against a scratch initiative)"
+t36_ac2_case() {
+  with_scratch_repo _t36_ac2_inner
+}
+_t36_ac2_inner() {
+  edm-init T36X >/dev/null 2>&1 || true
+  local t36_tok t36_out t36_ec t36_results=""
+  for t36_tok in $T36_PHASE_SKILLS; do
+    t36_out="$("$EDM_STATE" gate-check T36X "$t36_tok" 2>&1)"
+    t36_ec=$?
+    t36_results="${t36_results}${t36_tok}=${t36_ec} "
+  done
+  # None of the eight tokens is unrecognized (the *) branch's distinctive message).
+  if printf '%s\n' "$t36_results" | grep -q 'unknown gated command' 2>/dev/null; then
+    fail "T36 AC2 -- a phase token fell through to the unknown-gated-command branch: $t36_results"
+  else
+    pass "T36 AC2 -- every one of the eight tokens resolves to a real gate outcome (no silent fall-through): $t36_results"
+  fi
+}
+t36_ac2_case
+
+echo
+echo "T36 AC3 -- Step 0 text instructs a block on non-zero gate-check and surfaces the message"
+PLAN_STEP0_T36="$(sed -n '/^## Step 0 -- Gate and Branch Preflight$/,/^## Operational Orchestration$/p' "${PLUGIN_DIR}/skills/plan/SKILL.md")"
+check "T36 AC3 -- gate-check non-zero BLOCKs" "**BLOCK**: do not proceed with the phase, and surface the exact message" "$PLAN_STEP0_T36"
+
+echo
+echo "T36 AC4 -- Step 0 text instructs a block on non-zero branch-check; CHANGELOG records the behaviour change"
+check "T36 AC4 -- branch-check non-zero BLOCKs, surfacing the git checkout instruction" \
+  'surface the `git checkout <initiative_branch>` instruction it' "$PLAN_STEP0_T36"
+check "T36 AC4 -- CHANGELOG.md records 'branch-check becoming a BLOCK'" \
+  "branch-check becoming a BLOCK" "$(cat "${PLUGIN_DIR}/CHANGELOG.md")"
+
+echo
+echo "T36 AC5 -- written once (full text in one file), referenced by name from the other seven"
+t36_full_text_files=0
+for t36_skill in $T36_PHASE_SKILLS; do
+  t36_hits="$(grep -c 'edm-state branch-check' "${PLUGIN_DIR}/skills/${t36_skill}/SKILL.md" 2>/dev/null || echo 0)"
+  [[ "${t36_hits:-0}" -gt 0 ]] && t36_full_text_files=$((t36_full_text_files + 1))
+done
+[[ "$t36_full_text_files" -eq 1 ]] && pass "T36 AC5 -- exactly one of the eight phase skills (plan) carries the literal edm-state branch-check text" \
+  || fail "T36 AC5 -- ${t36_full_text_files}/8 phase skills carry the literal text, expected exactly 1"
+for t36_skill in srd audit-srd tickets audit-tickets implement code-audit verify-runtime; do
+  check "T36 AC5 -- skills/${t36_skill}/SKILL.md references Step 0 by name" \
+    'skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"' \
+    "$(cat "${PLUGIN_DIR}/skills/${t36_skill}/SKILL.md")"
+done
+
+echo
+echo "T36 AC6 -- UserPromptExpansion hooks retained unchanged"
+t36_hooks_hits="$(grep -c 'UserPromptExpansion' "${PLUGIN_DIR}/hooks/hooks.json" 2>/dev/null || echo 0)"
+[[ "${t36_hooks_hits:-0}" -gt 0 ]] && pass "T36 AC6 -- hooks.json still declares UserPromptExpansion hooks" \
+  || fail "T36 AC6 -- hooks.json no longer declares UserPromptExpansion hooks"
+
+echo
+echo "T36 AC7 -- mode suppression computed, not restated (no 'skipped_phases' token in any of the eight)"
+t36_skipped_phases_hits=0
+for t36_skill in $T36_PHASE_SKILLS; do
+  t36_c="$(grep -c 'skipped_phases' "${PLUGIN_DIR}/skills/${t36_skill}/SKILL.md" 2>/dev/null || echo 0)"
+  t36_skipped_phases_hits=$((t36_skipped_phases_hits + ${t36_c:-0}))
+done
+[[ "$t36_skipped_phases_hits" -eq 0 ]] && pass "T36 AC7 -- zero 'skipped_phases' occurrences across all eight phase skills" \
+  || fail "T36 AC7 -- found ${t36_skipped_phases_hits} 'skipped_phases' occurrence(s) across the eight phase skills"
+
+echo
+echo "T36 AC8 -- vocabulary check: the phase-preflight step is never paired on one line with the D-word for restored certainty"
+# Pattern built from two halves assigned on separate lines, and the grep call itself split across
+# two variables, so no single physical line in this checker ever contains both search terms
+# together -- the real AC8 verify command has no self-exclusion, so this checker's own source
+# must not be a false-positive hit under it.
+t36_needle_a="step"
+t36_needle_a="${t36_needle_a} 0"
+t36_needle_b="determin"
+t36_needle_b="${t36_needle_b}istic"
+t36_step0_deterministic_hits="$(grep -rni "$t36_needle_a" "${PLUGIN_DIR}/" 2>/dev/null | grep -i "$t36_needle_b" || true)"
+[[ -z "$t36_step0_deterministic_hits" ]] && pass "T36 AC8 -- no such pairing found anywhere in plugins/edm/" \
+  || fail "T36 AC8 -- found a disallowed pairing: $t36_step0_deterministic_hits"
+check "T36 AC8 -- defence-in-depth framing used instead" "defence in depth on the Skill-tool path" "$(cat "${PLUGIN_DIR}/skills/plan/SKILL.md")"
+
+echo
+echo "T36 -- full suite and lint stay green with Step 0 in place across all eight phase skills"
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1
+t36_grants_exit=$?
+[[ "$t36_grants_exit" -eq 0 ]] && pass "T36 -- edm-check-grants exits 0" || fail "T36 -- edm-check-grants exited ${t36_grants_exit}"
+t36_lint_exit=0
+bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t36_lint_exit=$?
+[[ "$t36_lint_exit" -eq 0 ]] && pass "T36 -- edm-lint-artifacts --all exits 0" || fail "T36 -- edm-lint-artifacts --all exited ${t36_lint_exit}"
+# EDMV3-T36 end
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

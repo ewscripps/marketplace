@@ -15,6 +15,11 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(grep *), Glob, Grep, T
 - **Input**: Audited ticket pack at `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/`
 - **Output**: Committed code on a feature branch with all tickets PASS-verified
 
+## Step 0 -- Gate and Branch Preflight
+
+Before Step 1, run the preflight per `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`,
+using `<gated-command>` = `implement`.
+
 ## Operational Orchestration
 
 1. Parse `{PREFIX}` from `$ARGUMENTS`.
