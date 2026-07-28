@@ -1137,6 +1137,72 @@ check "T25 -- SKILL.md Synthesizer Phase launch prompt forbids writing findings-
   "Do not write findings-ledger.md yourself" "$CA_CONTENT_T25"
 # EDMV3-T25 end
 
+# =================================================================================
+# EDMV3-T40: canonical Mermaid diagram conventions section in plugins/edm/CLAUDE.md.
+# =================================================================================
+CLAUDE_MD_CONTENT="$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+
+echo
+echo "T40 AC1 -- canonical Mermaid heading string, placed between Severity vocabulary and Model/effort"
+t40_heading_order="$(grep -n '^## ' "${PLUGIN_DIR}/CLAUDE.md" | grep -A2 'Severity vocabulary')"
+check "T40 AC1 -- canonical Mermaid heading string present" \
+  "## Mermaid diagram conventions (canonical)" "$CLAUDE_MD_CONTENT"
+[[ "$(printf '%s\n' "$t40_heading_order" | sed -n '2p')" == *'Mermaid diagram conventions (canonical)'* ]] \
+  && pass "T40 AC1 -- Mermaid section immediately follows Severity vocabulary" \
+  || fail "T40 AC1 -- Mermaid section is not immediately after Severity vocabulary (got: $t40_heading_order)"
+
+echo
+echo "T40 AC2 -- register matches the Severity vocabulary precedent"
+check "T40 AC2 -- 'No agent may define a divergent local rule' present" \
+  "No agent may define a divergent local rule" "$CLAUDE_MD_CONTENT"
+
+echo
+echo "T40 AC3 -- problem stated: ';' is a lexer-level statement separator"
+check "T40 AC3 -- 'statement separator' present" "statement separator" "$CLAUDE_MD_CONTENT"
+
+echo
+echo "T40 AC4 -- rule stated, both entity forms (base-10 code point and entity name)"
+check "T40 AC4 -- '#59;' present" '#59;' "$CLAUDE_MD_CONTENT"
+check "T40 AC4 -- 'entity name' present" "entity name" "$CLAUDE_MD_CONTENT"
+
+echo
+echo "T40 AC5 -- worked examples: at least one incorrect and one correct, both fenced"
+t40_ac5_fence_count="$(sed -n '/Mermaid diagram conventions/,/^## /p' "${PLUGIN_DIR}/CLAUDE.md" | grep -c '```')"
+[[ "${t40_ac5_fence_count:-0}" -ge 2 ]] \
+  && pass "T40 AC5 -- at least two fenced code blocks in the Mermaid section (found ${t40_ac5_fence_count})" \
+  || fail "T40 AC5 -- fewer than two fenced blocks in the Mermaid section (found ${t40_ac5_fence_count:-0})"
+
+echo
+echo "T40 AC6 -- quoting caveat names sequenceDiagram's unquoted message text"
+check "T40 AC6 -- 'sequenceDiagram' present" "sequenceDiagram" "$CLAUDE_MD_CONTENT"
+
+echo
+echo "T40 AC7 -- legal exceptions enumerated (end-of-line, %% comment, classDef/style/linkStyle)"
+check "T40 AC7 -- 'classDef' exception present" "classDef" "$CLAUDE_MD_CONTENT"
+check "T40 AC7 -- 'linkStyle' exception present" "linkStyle" "$CLAUDE_MD_CONTENT"
+check "T40 AC7 -- '%%' comment-line exception present" '%%' "$CLAUDE_MD_CONTENT"
+
+echo
+echo "T40 AC8 -- generalization to other entity codes"
+check "T40 AC8 -- '#quot;' present" '#quot;' "$CLAUDE_MD_CONTENT"
+
+echo
+echo "T40 AC9 -- Mermaid section content is ASCII-only"
+# Uses the portable [:print:]/[:space:] fallback (bin/edm-lint-artifacts's own PCRE-unavailable
+# path, EDMV3-T43/EDMV3-106) rather than a raw '[^\x00-\x7F]' class -- BSD grep on macOS has no -P
+# and treats '\x00'/'\x7F' as literal characters, not hex escapes, which would false-positive on
+# nearly every line.
+t40_ac9_nonascii="$(LC_ALL=C sed -n '/Mermaid diagram conventions/,/^## Model and effort/p' "${PLUGIN_DIR}/CLAUDE.md" | LC_ALL=C grep -nv '^[[:print:][:space:]]*$' || true)"
+[[ -z "$t40_ac9_nonascii" ]] \
+  && pass "T40 AC9 -- Mermaid section is ASCII-only" \
+  || fail "T40 AC9 -- non-ASCII byte(s) found in the Mermaid section: $t40_ac9_nonascii"
+
+echo
+echo "T40 AC10 -- canonical Mermaid heading string, and architecture.md uses the same name"
+check "T40 AC10 -- architecture.md references the same heading string" \
+  "Mermaid diagram conventions" "$(cat "$ARCHITECTURE_MD" 2>/dev/null)"
+# EDMV3-T40 end
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
