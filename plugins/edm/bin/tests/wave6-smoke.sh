@@ -3516,8 +3516,21 @@ check "T52 AC1 -- decisions.md names the token attribution decision" \
 t52_d23_line="$(grep -n 'token attribution' "$DECISIONS_MD_T52" | head -1)"
 check "T52 AC1 -- D23 entry names branch (a)" \
   "Branch (a)" "$t52_d23_line"
+# Extract the comment block by content, not by absolute line range. This assertion used to be
+# `sed -n '226,246p'`, which silently pointed at unrelated lines the moment anything was inserted
+# above it -- it broke when a security guard was added near the top of bin/edm-state, and it could
+# equally have passed against text that happened to contain the needle. Anchor on the function the
+# comment documents and read the contiguous comment block immediately above it.
+t52_ac1_block="$(awk '
+  /^get_session_tokens_since\(\)/ { for (i = 1; i <= n; i++) print buf[i]; exit }
+  /^#/ { buf[++n] = $0; next }
+  { n = 0 }
+' "$EDM_STATE")"
 check "T52 AC1 -- get_session_tokens_since's comment block documents the driving-session mechanism" \
-  "driving session" "$(sed -n '226,246p' "$EDM_STATE")"
+  "driving session" "$t52_ac1_block"
+[[ -n "$t52_ac1_block" ]] \
+  && pass "T52 AC1 -- the comment block was located by anchor (extraction is not vacuous)" \
+  || fail "T52 AC1 -- no comment block found above get_session_tokens_since; the anchor is wrong, so the assertion above proves nothing"
 
 # =================================================================================
 # EDMV3-T53: the human-baseline ROI table leaves default output; metrics reflect tiering

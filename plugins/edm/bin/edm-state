@@ -794,7 +794,18 @@ WAVE_A_MERGE_DATE="2026-07-27"
 #   2 = at-or-above -- full enforcement, no warning
 schema_at_least() {
   local sv="$1" min="$2"
-  if [[ -z "$sv" ]]; then
+  # Coerce before the arithmetic comparison below. `[[ x -ge y ]]` arithmetic-evaluates its
+  # operands and command-substitutes any array subscript inside them, so an uncoerced
+  # `.schema_version` read straight out of a committed state file is a command-injection sink --
+  # the same one `to_int`'s comment documents for `.current_phase`. Ten call sites read this field
+  # with a bare `jq -r '.schema_version // empty'`, so guarding here covers all of them at once
+  # rather than relying on each caller to remember.
+  #
+  # A present-but-non-integer value is treated as legacy/absent (0), not as a version: an
+  # unparseable value tells us nothing about the shape on disk, so the safe reading is "no
+  # enforcement claim", which is exactly what an absent field means.
+  sv="$(to_int "$sv" 0)"
+  if [[ -z "$sv" || "$sv" -eq 0 ]]; then
     echo 0
   elif [[ "$sv" -ge "$min" ]]; then
     echo 2
@@ -1792,6 +1803,13 @@ cmd_migrate_schema() {
   local state current_version
   state="$(cat "$state_file")"
   current_version="$(echo "$state" | jq -r '.schema_version // empty')"
+  # Same arithmetic-context injection guard as schema_at_least: this value reaches `-le` and
+  # `$(( ))` below. An empty value is legitimate (legacy, no field) and must stay empty so the
+  # `[[ -n ... ]]` branch below still distinguishes it; only a present-but-non-integer value is
+  # coerced, to 0, which then fails the `-le` guard and is reported rather than acted on.
+  if [[ -n "$current_version" ]]; then
+    current_version="$(to_int "$current_version" 0)"
+  fi
 
   # ---- Diagnostic report, printed before any confirmation is requested (AC1) -------------
   local current_phase gates_count terminal_phase_ms terminal_completed_at
