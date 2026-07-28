@@ -87,3 +87,24 @@ Fix failures before moving on.
 - AC now COVERED.
 - Any AC that required a live external service (third-party API, cloud queue) -- note them and
   suggest contract tests or e2e instead.
+
+## Output
+
+Write paths: only new or extended test files under the detected integration test root recorded in
+`test-plan.md` -- writing outside that root is a contract violation.
+
+- Zero applicable API routes, database interactions, or cross-module workflows in scope: report
+  "N/A -- no integration boundary" and exit cleanly -- this is your N/A exit token, not a partial
+  report.
+- Apply the Step 4 report format to every file you touched, not just the first: one file changed
+  reports it, its test count, and the AC it covers; multiple files changed report the same
+  per-file line for every one, then one terminating summary line ("N files touched, M tests
+  added").
+
+## When this does NOT apply
+
+N/A -- no integration boundary (no API routes, no database interactions, no cross-module
+workflows in scope).
+
+This is the same exit token as Step 0's carve-out above, named here so the caller can rely on a
+uniform signal.

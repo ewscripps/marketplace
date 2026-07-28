@@ -88,3 +88,22 @@ Rules:
 - Tests added.
 - AC from the plan now COVERED.
 - Schema gaps found (endpoint in spec but not implemented, or implemented but not in spec) -- flag as findings for the coverage auditor.
+
+## Output
+
+Write paths: only new or extended test files under the detected contract test root recorded in
+`test-plan.md` -- writing outside that root is a contract violation.
+
+- Zero applicable HTTP API or schema definition in scope: report "N/A -- no API contract" and
+  exit cleanly -- this is your N/A exit token, not a partial report.
+- Apply the Step 3 report format to every endpoint you touched, not just the first: one endpoint
+  covered reports it, its test count, and the AC it covers; multiple endpoints covered report the
+  same per-endpoint line for every one, then one terminating summary line ("N endpoints covered,
+  M tests added").
+
+## When this does NOT apply
+
+N/A -- no API contract (no HTTP API or schema definition in scope).
+
+This is the same exit token as Step 0's carve-out above, named here so the caller can rely on a
+uniform signal.

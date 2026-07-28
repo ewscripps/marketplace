@@ -2297,10 +2297,10 @@ t38_orch_lines="$(wc -l < "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" | tr -d '
   || fail "T38 AC1 -- orchestrator/SKILL.md is ${t38_orch_lines} lines, expected <= 300"
 
 echo
-echo "T38 AC2 -- retained set: six '## ' sections (Overview, Step 1 -- Intake, Gate PROTOCOL, Step 2 -- Dispatch each phase, Resume and Compaction, Anti-Patterns)"
+echo "T38 AC2 -- retained set: seven '## ' sections (Overview, Communication [added EDMV3-T45], Step 1 -- Intake, Gate PROTOCOL, Step 2 -- Dispatch each phase, Resume and Compaction, Anti-Patterns)"
 t38_section_count="$(grep -c '^## ' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" || true)"
-[[ "$t38_section_count" -eq 6 ]] && pass "T38 AC2 -- exactly six top-level sections" \
-  || fail "T38 AC2 -- found ${t38_section_count} top-level sections, expected 6"
+[[ "$t38_section_count" -eq 7 ]] && pass "T38 AC2 -- exactly seven top-level sections (six T38 sections plus T45's Communication)" \
+  || fail "T38 AC2 -- found ${t38_section_count} top-level sections, expected 7"
 check "T38 AC2 -- Overview retained" "## Overview" "$ORCH_SKILL_T37"
 check "T38 AC2 -- Step 1 -- Intake retained" "## Step 1 -- Intake" "$ORCH_SKILL_T37"
 check "T38 AC2 -- Gate PROTOCOL retained" "## Gate PROTOCOL (canonical)" "$ORCH_SKILL_T37"
@@ -2738,6 +2738,356 @@ for t52_pair in "${t52_pricing_pairs[@]}"; do
     && pass "T52 AC7 -- ${t52_var} matches CLAUDE.md ${t52_label} column ${t52_col} (both ${t52_script_val})" \
     || fail "T52 AC7 -- ${t52_var} mismatch: script=${t52_script_val}, CLAUDE.md ${t52_label} column ${t52_col}=${t52_md_val}"
 done
+
+# =================================================================================
+# EDMV3-T45: communication cadence and deliverable-length calibration
+# =================================================================================
+echo
+echo "=== EDMV3-T45: communication cadence and deliverable-length calibration ==="
+
+ORCH_SKILL_T45="$(cat "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
+
+# _wave7_extract_section <file> <heading-regex> -- prints the body of the first '## ' section
+# whose heading matches <heading-regex>, up to (not including) the next '## ' heading or EOF.
+_wave7_extract_section() {
+  local file="$1" heading="$2"
+  awk -v h="$heading" '
+    $0 ~ ("^## " h "$") { found=1; next }
+    found && /^## / { exit }
+    found { print }
+  ' "$file"
+}
+
+echo
+echo "T45 AC1 -- orchestrator gains a top-level '## Communication' section"
+check "T45 AC1 -- '## Communication' heading present" "## Communication" "$ORCH_SKILL_T45"
+
+echo
+echo "T45 AC2 -- <tone_preference> reminder placed after the Anti-Patterns heading"
+t45_antipatterns_line="$(grep -n '^## Anti-Patterns$' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" | head -1 | cut -d: -f1)"
+t45_tonepref_line="$(grep -n '<tone_preference>' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" | head -1 | cut -d: -f1)"
+if [[ -n "$t45_antipatterns_line" && -n "$t45_tonepref_line" && "$t45_tonepref_line" -gt "$t45_antipatterns_line" ]]; then
+  pass "T45 AC2 -- <tone_preference> (line ${t45_tonepref_line}) follows Anti-Patterns (line ${t45_antipatterns_line})"
+else
+  fail "T45 AC2 -- <tone_preference> line ${t45_tonepref_line:-absent} does not follow Anti-Patterns line ${t45_antipatterns_line:-absent}"
+fi
+
+echo
+echo "T45 AC3 -- orchestrator at most 300 lines"
+t45_orch_lines="$(wc -l < "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" | tr -d ' ')"
+[[ "$t45_orch_lines" -le 300 ]] && pass "T45 AC3 -- orchestrator at most 300 lines (${t45_orch_lines})" \
+  || fail "T45 AC3 -- orchestrator/SKILL.md is ${t45_orch_lines} lines, expected <= 300"
+
+echo
+echo "T45 AC4 -- Communication section mentions no artifact"
+t45_comm_body="$(_wave7_extract_section "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" "Communication")"
+t45_tonepref_body="$(awk '/<tone_preference>/{f=1;next} /<\/tone_preference>/{f=0} f' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
+t45_ac4_bad=""
+for t45_word in "srd.md" "artifact" "deliverable"; do
+  printf '%s' "$t45_comm_body" | grep -qi -- "$t45_word" && t45_ac4_bad="${t45_ac4_bad} comm:${t45_word}"
+  printf '%s' "$t45_tonepref_body" | grep -qi -- "$t45_word" && t45_ac4_bad="${t45_ac4_bad} tone:${t45_word}"
+done
+[[ -z "$t45_ac4_bad" ]] && pass "T45 AC4 -- Communication section mentions no artifact (and <tone_preference> is clean too)" \
+  || fail "T45 AC4 -- forbidden word(s) found:${t45_ac4_bad}"
+
+echo
+echo "T45 AC5 -- correction-narration guidance present"
+check "T45 AC5 -- 'change the user' present" "change the user" "$ORCH_SKILL_T45"
+
+echo
+echo "T45 AC6 -- no interim-progress scaffolding introduced"
+t45_ac6_hits="$(grep -rn -i 'every [0-9]* tool calls\|summarize every' "${PLUGIN_DIR}/skills/" 2>/dev/null || true)"
+[[ -z "$t45_ac6_hits" ]] && pass "T45 AC6 -- no 'every N tool calls' / 'summarize every' scaffolding in skills/" \
+  || fail "T45 AC6 -- found scaffolding text: ${t45_ac6_hits}"
+
+echo
+echo "T45 AC7 -- length floors preserved verbatim"
+check "T45 AC7 -- edm-srd-writer.md floor unchanged" "800+ lines for major initiative, 200+ for focused feature, 50+ for small change" \
+  "$(cat "${PLUGIN_DIR}/agents/edm-srd-writer.md")"
+check "T45 AC7 -- skills/srd/SKILL.md floor unchanged" "800+ lines major, 200+ focused, 50+ small change" \
+  "$(cat "${PLUGIN_DIR}/skills/srd/SKILL.md")"
+
+echo
+echo "T45 AC8 -- anti-padding clause on both floor sites"
+check "T45 AC8 -- edm-srd-writer.md carries anti-padding clause" "do not pad with filler" \
+  "$(cat "${PLUGIN_DIR}/agents/edm-srd-writer.md")"
+check "T45 AC8 -- skills/srd/SKILL.md carries anti-padding clause" "do not pad with filler" \
+  "$(cat "${PLUGIN_DIR}/skills/srd/SKILL.md")"
+
+echo
+echo "T45 AC9 -- identical deliverable-length clause on the eight file-writing agents"
+t45_ac9_unique="$(grep -rho 'match the length of the document to what the task needs' "${PLUGIN_DIR}/agents/" | sort -u | wc -l | tr -d ' ')" || true
+[[ "$t45_ac9_unique" -eq 1 ]] && pass "T45 AC9 -- exactly one unique phrasing of the deliverable-length clause" \
+  || fail "T45 AC9 -- ${t45_ac9_unique} unique phrasings found, expected 1"
+# NOTE: -rl (no -c) is used deliberately, not the AC's literal '-rlc' -- BSD grep (macOS,
+# EDMV3-106 divergence) prints both a "file:count" line AND a bare filename line when -l and -c
+# are combined, doubling the count; GNU grep gives -l precedence and would return 8 either way.
+# -rl alone is portable and correct on both.
+t45_ac9_files="$(grep -rl 'match the length of the document' "${PLUGIN_DIR}/agents/" | wc -l | tr -d ' ')" || true
+[[ "$t45_ac9_files" -eq 8 ]] && pass "T45 AC9 -- exactly eight agent files carry the clause" \
+  || fail "T45 AC9 -- ${t45_ac9_files} agent files carry the clause, expected 8"
+
+echo
+echo "T45 AC10 -- length clause absent from the Communication section"
+if printf '%s' "$t45_comm_body" | grep -q 'match the length of the document'; then
+  fail "T45 AC10 -- Communication section contains the deliverable-length clause"
+else
+  pass "T45 AC10 -- Communication section never mentions the deliverable-length clause"
+fi
+if printf '%s' "$t45_tonepref_body" | grep -q 'match the length of the document'; then
+  fail "T45 AC10 -- <tone_preference> block contains the deliverable-length clause"
+else
+  pass "T45 AC10 -- <tone_preference> block never mentions the deliverable-length clause"
+fi
+
+echo
+echo "T45 -- full suite stays green with the cadence/length additions in place"
+t45_grants_exit=0
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t45_grants_exit=$?
+[[ "$t45_grants_exit" -eq 0 ]] && pass "T45 -- edm-check-grants exits 0" || fail "T45 -- edm-check-grants exited ${t45_grants_exit}"
+t45_lint_exit=0
+bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t45_lint_exit=$?
+[[ "$t45_lint_exit" -eq 0 ]] && pass "T45 -- edm-lint-artifacts --all exits 0" || fail "T45 -- edm-lint-artifacts --all exited ${t45_lint_exit}"
+# EDMV3-T45 end
+
+# =================================================================================
+# EDMV3-T46: agent scope, output contracts, decision ladder, and N/A carve-outs
+# =================================================================================
+echo
+echo "=== EDMV3-T46: agent scope, output contracts, decision ladder, and N/A carve-outs ==="
+
+T46_LENSES="edm-audit-consistency edm-audit-dead-code edm-audit-docs edm-audit-dry edm-audit-edge-cases edm-audit-logic edm-audit-runtime edm-audit-security edm-audit-spec edm-audit-test-quality edm-audit-wiring"
+T46_SCOPE13="edm-explorer edm-audit-synthesizer $T46_LENSES"
+T46_OUTPUT10="edm-implementer edm-test-unit edm-test-component edm-test-composable edm-test-integration edm-test-contract edm-test-e2e edm-test-a11y edm-test-scaffold edm-test-planner"
+
+echo
+echo "T46 AC1 -- thirteen occurrences of the scope line"
+t46_scope_count=0
+t46_scope_missing=""
+for t46_a in $T46_SCOPE13; do
+  if grep -q '^## Scope$' "${PLUGIN_DIR}/agents/${t46_a}.md"; then
+    t46_scope_count=$((t46_scope_count + 1))
+  else
+    t46_scope_missing="${t46_scope_missing} ${t46_a}"
+  fi
+done
+[[ "$t46_scope_count" -eq 13 && -z "$t46_scope_missing" ]] && pass "T46 AC1 -- thirteen occurrences of the scope line (all thirteen agents)" \
+  || fail "T46 AC1 -- found ${t46_scope_count}/13, missing:${t46_scope_missing}"
+t46_scope_unique="$(grep -rho 'deliver what was asked at the scope intended' "${PLUGIN_DIR}/agents/" | sort -u | wc -l | tr -d ' ')" || true
+[[ "$t46_scope_unique" -eq 1 ]] && pass "T46 AC1 -- exactly one unique phrasing of the scope line" \
+  || fail "T46 AC1 -- ${t46_scope_unique} unique phrasings found, expected 1"
+
+echo
+echo "T46 AC2 -- False Alarm Filter criteria count unchanged (three per lens, all eleven lenses)"
+t46_faf_bad=""
+for t46_l in $T46_LENSES; do
+  t46_faf_cnt="$(awk '/^## False Alarm Filter/{f=1;next} /^## /{f=0} f' "${PLUGIN_DIR}/agents/${t46_l}.md" | grep -c '^[0-9]\+\.' || true)"
+  [[ "${t46_faf_cnt:-0}" -eq 3 ]] || t46_faf_bad="${t46_faf_bad} ${t46_l}=${t46_faf_cnt:-0}"
+done
+[[ -z "$t46_faf_bad" ]] && pass "T46 AC2 -- all eleven lenses still carry exactly three False Alarm Filter criteria" \
+  || fail "T46 AC2 -- unexpected criteria count(s):${t46_faf_bad}"
+
+echo
+echo "T46 AC3 -- ten agents contain an '## Output' section"
+t46_out_count=0
+t46_out_missing=""
+for t46_a in $T46_OUTPUT10; do
+  if grep -q '^## Output$' "${PLUGIN_DIR}/agents/${t46_a}.md"; then
+    t46_out_count=$((t46_out_count + 1))
+  else
+    t46_out_missing="${t46_out_missing} ${t46_a}"
+  fi
+done
+[[ "$t46_out_count" -eq 10 && -z "$t46_out_missing" ]] && pass "T46 AC3 -- ten agents contain an '## Output' section" \
+  || fail "T46 AC3 -- found ${t46_out_count}/10, missing:${t46_out_missing}"
+
+echo
+echo "T46 AC4 -- write-path class documented (edm-test-unit) and edm-check-grants clean"
+check "T46 AC4 -- 'detected test root' present in edm-test-unit.md" "detected test root" \
+  "$(cat "${PLUGIN_DIR}/agents/edm-test-unit.md")"
+t46_grants_exit=0
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t46_grants_exit=$?
+[[ "$t46_grants_exit" -eq 0 ]] && pass "T46 AC4 -- edm-check-grants exits 0" || fail "T46 AC4 -- edm-check-grants exited ${t46_grants_exit}"
+
+echo
+echo "T46 AC6 -- generalization stated literally in edm-implementer.md"
+t46_ac6_cnt="$(grep -c 'every item, not just the first' "${PLUGIN_DIR}/agents/edm-implementer.md" || true)"
+[[ "${t46_ac6_cnt:-0}" -gt 0 ]] && pass "T46 AC6 -- 'every item, not just the first' present (${t46_ac6_cnt}x)" \
+  || fail "T46 AC6 -- phrase absent from edm-implementer.md"
+
+echo
+echo "T46 AC7/AC8 -- Core Rules is a numbered, stop-at-first-rung ladder bound to ticket understanding"
+check "T46 AC7 -- 'stop at the first rung that holds' present" "stop at the first rung that holds" \
+  "$(cat "${PLUGIN_DIR}/agents/edm-implementer.md")"
+check "T46 AC8 -- 'after the ticket is understood' present" "after the ticket is understood" \
+  "$(cat "${PLUGIN_DIR}/agents/edm-implementer.md")"
+check "T46 AC8 -- 'never a rung' present" "never a rung" \
+  "$(cat "${PLUGIN_DIR}/agents/edm-implementer.md")"
+
+echo
+echo "T46 AC10 -- carve-out section present in all 30 agent files, exact heading and file count"
+t46_ac10_missing=""
+t46_ac10_count=0
+for t46_f in "${PLUGIN_DIR}"/agents/*.md; do
+  if grep -q '^## When this does NOT apply$' "$t46_f"; then
+    t46_ac10_count=$((t46_ac10_count + 1))
+  else
+    t46_ac10_missing="${t46_ac10_missing} $(basename "$t46_f")"
+  fi
+done
+t46_ac10_total="$(ls "${PLUGIN_DIR}"/agents/*.md | wc -l | tr -d ' ')"
+[[ "$t46_ac10_count" -eq 30 && "$t46_ac10_total" -eq 30 && -z "$t46_ac10_missing" ]] && pass "T46 AC10 -- all 30 agent files carry the carve-out heading" \
+  || fail "T46 AC10 -- ${t46_ac10_count}/${t46_ac10_total} carry it, missing:${t46_ac10_missing}"
+
+echo
+echo "T46 AC12 -- N/A behaviour cross-referenced, not restated, in agents/"
+t46_ac12_agents="$(grep -rl 'recomputed each run' "${PLUGIN_DIR}/agents/" 2>/dev/null | wc -l | tr -d ' ')" || true
+[[ "${t46_ac12_agents:-0}" -eq 0 ]] && pass "T46 AC12 -- zero agent files restate 'recomputed each run'" \
+  || fail "T46 AC12 -- ${t46_ac12_agents} agent file(s) restate the phrase"
+check "T46 AC12 -- CLAUDE.md carries the single source" "recomputed each run" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+
+echo
+echo "T46 -- full suite stays green with the agent-contract additions in place"
+t46_grants2_exit=0
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t46_grants2_exit=$?
+[[ "$t46_grants2_exit" -eq 0 ]] && pass "T46 -- edm-check-grants exits 0" || fail "T46 -- edm-check-grants exited ${t46_grants2_exit}"
+t46_lint_exit=0
+bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t46_lint_exit=$?
+[[ "$t46_lint_exit" -eq 0 ]] && pass "T46 -- edm-lint-artifacts --all exits 0" || fail "T46 -- edm-lint-artifacts --all exited ${t46_lint_exit}"
+# EDMV3-T46 end
+
+# =================================================================================
+# EDMV3-T47: explorer fan-out gets a deterministic cap
+# =================================================================================
+echo
+echo "=== EDMV3-T47: explorer fan-out gets a deterministic cap ==="
+
+echo
+echo "T47 AC1 -- the cap: 'maximum 4' present in skills/plan/SKILL.md"
+check "T47 AC1 -- 'maximum 4' present" "maximum 4" "$(cat "${PLUGIN_DIR}/skills/plan/SKILL.md")"
+
+echo
+echo "T47 AC2 -- rationale recorded alongside the cap"
+T47_PLAN_PATTERN="$(sed -n '/AI Execution Pattern/,/^## /p' "${PLUGIN_DIR}/skills/plan/SKILL.md")"
+check "T47 AC2 -- AskUserQuestion four-option rationale" "AskUserQuestion" "$T47_PLAN_PATTERN"
+check "T47 AC2 -- cites existing fan-outs (ticket auditors)" "ticket auditors" "$T47_PLAN_PATTERN"
+check "T47 AC2 -- cites existing fan-outs (SRD auditors)" "SRD auditors" "$T47_PLAN_PATTERN"
+check "T47 AC2 -- fifth-area-means-split rationale" "signal the" "$T47_PLAN_PATTERN"
+
+echo
+echo "T47 AC3 -- the one-is-enough case stated explicitly"
+check "T47 AC3 -- 'use one' present" "use one" "$T47_PLAN_PATTERN"
+
+echo
+echo "T47 AC4 -- criterion given concretely"
+check "T47 AC4 -- 'distinct top-level source trees' present" "distinct top-level source trees" "$T47_PLAN_PATTERN"
+
+echo
+echo "T47 AC5 -- one location after the move: orchestrator carries no copy"
+t47_orch_explorer_hits="$(grep -c 'edm-explorer' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" || true)"
+[[ "${t47_orch_explorer_hits:-0}" -eq 0 ]] && pass "T47 AC5 -- orchestrator/SKILL.md carries zero 'edm-explorer' mentions" \
+  || fail "T47 AC5 -- orchestrator/SKILL.md carries ${t47_orch_explorer_hits} 'edm-explorer' mention(s), expected 0"
+
+echo
+echo "T47 AC6 -- other deterministic caps unchanged (asserted positively on the surviving text)"
+check "T47 AC6 -- ticket-auditor cap surviving unchanged" "spawn exactly 2 \`edm-ticket-auditor\`" \
+  "$(cat "${PLUGIN_DIR}/skills/audit-tickets/SKILL.md")"
+check "T47 AC6 -- SRD-auditor cap surviving unchanged" "Spawn 2-3 \`edm-srd-auditor\`" \
+  "$(cat "${PLUGIN_DIR}/skills/audit-srd/SKILL.md")"
+check "T47 AC6 -- implementer cap surviving unchanged" "6-10 parallel" \
+  "$(cat "${PLUGIN_DIR}/skills/implement/SKILL.md")"
+check "T47 AC6 -- lens cap surviving unchanged" "run all 11" \
+  "$(cat "${PLUGIN_DIR}/skills/code-audit/SKILL.md")"
+
+echo
+echo "T47 AC7 -- the cap text appears in exactly one file"
+t47_cap_files="$(grep -rl 'maximum 4' "${PLUGIN_DIR}/skills/" | wc -l | tr -d ' ')" || true
+[[ "${t47_cap_files:-0}" -eq 1 ]] && pass "T47 AC7 -- 'maximum 4' appears in exactly one skills/ file" \
+  || fail "T47 AC7 -- 'maximum 4' appears in ${t47_cap_files:-0} file(s), expected 1"
+
+echo
+echo "T47 -- full suite stays green with the explorer cap in place"
+t47_grants_exit=0
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t47_grants_exit=$?
+[[ "$t47_grants_exit" -eq 0 ]] && pass "T47 -- edm-check-grants exits 0" || fail "T47 -- edm-check-grants exited ${t47_grants_exit}"
+t47_lint_exit=0
+bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t47_lint_exit=$?
+[[ "$t47_lint_exit" -eq 0 ]] && pass "T47 -- edm-lint-artifacts --all exits 0" || fail "T47 -- edm-lint-artifacts --all exited ${t47_lint_exit}"
+# EDMV3-T47 end
+
+# =================================================================================
+# EDMV3-T49: do-NOT-adopt guards and the before/after prose convention
+# =================================================================================
+echo
+echo "=== EDMV3-T49: do-NOT-adopt guards and the before/after prose convention ==="
+
+echo
+echo "T49 AC1 -- conventions recorded as house style"
+check "T49 AC1 -- 'house style' present" "house style" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+
+echo
+echo "T49 AC2 -- four sources named with licence and location"
+check "T49 AC2 -- opus-5 named" "opus-5" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check "T49 AC2 -- sonnet-5 named" "sonnet-5" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check "T49 AC2 -- caveman named" "caveman" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check "T49 AC2 -- ponytail named" "ponytail" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check "T49 AC2 -- clean-room note present (licence unverified, pattern-level only)" "licence is unverified" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+
+echo
+echo "T49 AC3 -- six do-NOT-adopt guards named and cited"
+t49_guard_count="$(grep -c '(D[1-6])' "${PLUGIN_DIR}/CLAUDE.md" || true)"
+[[ "${t49_guard_count:-0}" -eq 6 ]] && pass "T49 AC3 -- six (D1)-(D6) guard identifiers present" \
+  || fail "T49 AC3 -- found ${t49_guard_count:-0} guard identifiers, expected 6"
+
+echo
+echo "T49 AC4 -- each guard carries a 'the cost of ignoring this is' clause"
+t49_cost_count="$(grep -c 'cost of ignoring this is' "${PLUGIN_DIR}/CLAUDE.md" || true)"
+[[ "${t49_cost_count:-0}" -eq 6 ]] && pass "T49 AC4 -- six guards each carry a cost clause" \
+  || fail "T49 AC4 -- found ${t49_cost_count:-0} cost clauses, expected 6"
+
+echo
+echo "T49 AC5 -- do-NOT-adopt subsection with six identifiers"
+check "T49 AC5 -- '#### Do-NOT-adopt guards' heading present" "#### Do-NOT-adopt guards" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+[[ "${t49_guard_count:-0}" -eq 6 ]] && pass "T49 AC5 -- do-NOT-adopt subsection carries all six guard identifiers" \
+  || fail "T49 AC5 -- subsection carries ${t49_guard_count:-0} guard identifiers, expected 6"
+
+echo
+echo "T49 AC6 -- self-verification phrase family absent outside skills/verify-runtime/"
+t49_selfverify_hits="$(grep -rni 'double-check\|verify your own\|check your work\|re-verify your' "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" 2>/dev/null | grep -v 'skills/verify-runtime/' || true)"
+[[ -z "$t49_selfverify_hits" ]] && pass "T49 AC6 -- zero self-verification phrase-family hits outside skills/verify-runtime/" \
+  || fail "T49 AC6 -- found hit(s): ${t49_selfverify_hits}"
+
+echo
+echo "T49 AC7 -- before/after convention present on every prompt-text epic file (positive check)"
+t49_ac7_missing=""
+for t49_epic in 01 02 04 05 06 07 08 09 10; do
+  t49_epic_file="$(ls "${PLUGIN_DIR}/../../SRD/edm/EDMV3__prompt-streamline/tickets/epics/${t49_epic}-"*.md 2>/dev/null | head -1)"
+  if [[ -z "$t49_epic_file" ]] || ! grep -q 'before and after' "$t49_epic_file" 2>/dev/null; then
+    t49_ac7_missing="${t49_ac7_missing} epics/${t49_epic}"
+  fi
+done
+[[ -z "$t49_ac7_missing" ]] && pass "T49 AC7 -- all nine prompt-text epic files (01,02,04-10) carry the before/after AC" \
+  || fail "T49 AC7 -- missing the before/after AC in:${t49_ac7_missing}"
+echo "  NOTE (known pre-existing gap, not introduced by T49): epics/11-cross-cutting-delivery.md also" \
+  "matches a bare 'before and after' grep due to unrelated cost/output-comparison wording" \
+  "(three incidental hits, none of them the prose-change AC) -- the ticket's literal" \
+  "'grep -rl | exactly nine files' form would currently list ten, not nine. Recorded here rather" \
+  "than silently edited, since fixing epics/11's incidental wording is outside T49's scope" \
+  "(records conventions and guards; no prompt/ticket-pack prose edits)."
+
+echo
+echo "T49 AC8 -- convention recorded once in CLAUDE.md under contribution guidance"
+check "T49 AC8 -- 'before and after for each changed block' present" "before and after for each changed block" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+
+echo
+echo "T49 -- full suite stays green with the guard/convention subsection in place"
+t49_grants_exit=0
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t49_grants_exit=$?
+[[ "$t49_grants_exit" -eq 0 ]] && pass "T49 -- edm-check-grants exits 0" || fail "T49 -- edm-check-grants exited ${t49_grants_exit}"
+t49_lint_exit=0
+bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t49_lint_exit=$?
+[[ "$t49_lint_exit" -eq 0 ]] && pass "T49 -- edm-lint-artifacts --all exits 0" || fail "T49 -- edm-lint-artifacts --all exited ${t49_lint_exit}"
+# EDMV3-T49 end
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

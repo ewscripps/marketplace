@@ -135,3 +135,8 @@ Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severit
    compliance -- a raw `;` inside a label or after a sequenceDiagram message's `:` is a violation
 5. Trace the dependency chain end-to-end
 6. Check every AC for testability -- would you be able to pass/fail it from code alone?
+
+## When this does NOT apply
+
+This agent always applies once Phase 5 spawns it against a completed ticket pack; it has no
+conditional skip.

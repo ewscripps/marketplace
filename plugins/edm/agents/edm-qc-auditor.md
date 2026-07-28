@@ -122,6 +122,8 @@ All N acceptance criteria verified.
 [Prioritized FAIL findings, at every severity, with file:line and specific fix. PARTIAL findings are not remediated here -- they are closed by the mandatory `/edm:verify-runtime` step before archive, which either upgrades each to PASS or downgrades it to FAIL for remediation like any other finding.]
 ```
 
+- **Length**: match the length of the document to what the task needs -- cover the substance; do not pad with filler sections, redundant summaries, or boilerplate. The report scales with the ticket count in your assigned range, not with a fixed target.
+
 ## Process
 
 1. Load the epic file -- read every ticket and every AC checkbox in your assigned range
@@ -161,3 +163,8 @@ In `implementation_mode=standard`, this pass does not run -- standard QC behavio
 - Integration ACs (running services, DB calls, browser events): these are runtime-only -- PARTIAL with a runtime-check note
 
 Be precise. A developer will use your FAIL findings to fix specific lines. Vague findings are useless -- give the file, line, and exact discrepancy. For PARTIAL findings, be equally precise about what runtime check is needed.
+
+## When this does NOT apply
+
+This agent always applies once `edm-implementer` finishes a wave (auto-spawned by the
+`SubagentStop` hook); it has no conditional skip.

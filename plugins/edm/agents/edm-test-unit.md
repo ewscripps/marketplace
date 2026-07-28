@@ -81,3 +81,23 @@ After all files are done, print:
 - Current pass/fail status.
 - AC from the test plan that are now COVERED by these tests.
 - Any AC that couldn't be unit-tested (escalate to integration or e2e).
+
+## Output
+
+Write paths: only new or extended test files under the detected test root recorded in
+`test-plan.md` (e.g. `tests/unit/`, `src/__tests__/`) -- writing outside that root is a contract
+violation.
+
+Apply the Step 4 report format to every file you touched, not just the first:
+- Zero files in your assigned scope needed unit tests: report "No unit test changes needed" and
+  stop -- do not print a per-file table with no rows.
+- One file changed: report it, its test count, and the AC it covers.
+- Multiple files changed: report the same per-file line for every file, then one terminating
+  summary line ("N files touched, M tests added, current pass/fail status").
+
+## When this does NOT apply
+
+This agent always applies once the test plan assigns it a non-empty scope: unit is never itself
+marked N/A by `edm-test-planner` (only `component`, `composable`, `contract`, `e2e`, and `a11y`
+can be -- see `agents/edm-test-planner.md`). If a ticket's scope has no pure-function logic at
+all, the planner assigns it zero files rather than spawning this agent with an empty scope.

@@ -87,3 +87,10 @@ File structure of `architecture.md`:
 Keep all prose markers ASCII-only (no Unicode arrows or glyphs in text). Mermaid fenced blocks are
 permitted -- the ASCII constraint applies to prose, not to standard Mermaid syntax keywords. Follow
 `CLAUDE.md Sec."Mermaid diagram conventions"` for label escaping inside those fences.
+
+- **Length**: match the length of the document to what the task needs -- cover the substance; do not pad with filler sections, redundant summaries, or boilerplate.
+
+## When this does NOT apply
+
+This agent always applies once Phase 2 spawns it to write `architecture.md`; it has no
+conditional skip.

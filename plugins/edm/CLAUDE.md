@@ -313,6 +313,73 @@ of the bare `CLAUDE.md Sec."..."` form once EDMV3-T42 lands.
 
 Skills mirror the split: `skills/orchestrator/`, `skills/plan/`, `skills/srd/`, `skills/audit-srd/`, `skills/tickets/`, `skills/audit-tickets/`, `skills/implement/`, `skills/code-audit/` are all on `opus`. The two writers run at `effort: high`; planning, audits, and QC run at `effort: max`. `skills/push-jira/` and `skills/metrics/` run on `sonnet`/`high`.
 
+### Prompt conventions (house style)
+
+The prompt-engineering conventions adopted across EDMV3-59 through EDMV3-67 (communication
+cadence, deliverable-length calibration, agent scope statements, output contracts, the
+implementer's decision ladder, N/A carve-outs, and the explorer fan-out cap) are **house style**
+for this plugin: an agent or skill added later inherits them rather than rediscovering them from
+scratch. The adoptions are **structural** (instruction-design patterns -- a shape of section, a
+kind of clause) and never verbatim text lifted from a source.
+
+**Four sources, with licence and location, matching the enumeration this subsection uses**:
+
+- **opus-5** -- the Opus 5 prompting guide:
+  `https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5`
+  (Anthropic documentation; publicly readable; guidance mined for structure, not copied verbatim).
+- **sonnet-5** -- the Sonnet 5 prompting guide:
+  `https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-sonnet-5`
+  (Anthropic documentation; publicly readable; guidance mined for structure, not copied verbatim).
+- **caveman** -- `skills/caveman/SKILL.md` and `CONTRIBUTING.md` in the `caveman` repository (a
+  local sibling repo at exploration time, not yet confirmed to have a stable public URL; licence:
+  unverified as of this writing). Clean-room note: because the licence is unverified, the
+  adoption here is pattern-level only (persistence framing, the before/after PR convention,
+  output-contract shape) -- no text was copied from either file.
+- **ponytail** -- `skills/ponytail/SKILL.md` and `ARCHITECTURE.md` in the `ponytail` repository (a
+  local sibling repo at exploration time, not yet confirmed to have a stable public URL; licence:
+  unverified as of this writing). Clean-room note: because the licence is unverified, the
+  adoption here is pattern-level only (the numbered decision ladder, the "when NOT to" carve-out,
+  the "cost of ignoring this" clause) -- no text was copied from either file.
+
+#### Do-NOT-adopt guards
+
+Explorer 02 Part D is the main regression surface for a prompt-only workstream -- these six
+guards are recorded so a future contributor applying Opus 5 / Sonnet 5 guidance does not regress
+EDM's audit architecture in the name of "improving" it. Each names its cost, in the ponytail
+pattern, so it survives edge cases its author did not anticipate:
+
+- **(D1)** Do not strip the audit or QC architecture in the name of over-verification guidance.
+  EDM contains no *self*-verification -- its independent-agent auditing (writer/verifier
+  separation across `edm-implementer` -> `edm-qc-auditor` -> the 11 code-audit lenses) is exactly
+  the pattern the guide praises, not the anti-pattern it warns against. The cost of ignoring this is
+  silent regression of the initiative's entire quality gate -- FAIL findings ship undetected.
+- **(D2)** Do not reduce the 11-lens or 2-auditor fan-out to keep spawn counts low. Those counts
+  are already deterministic, unlike the explorer's uncapped fan-out that EDMV3-T47 just fixed. The
+  cost of ignoring this is coverage loss disguised as an efficiency gain -- a lens or audit lane
+  silently stops existing and nobody notices until the gap it used to catch ships.
+- **(D3)** Do not import terse register into EDM artifacts. SRDs and tickets are read by humans in
+  merge requests, not consumed as a single agent's scratch context. The cost of ignoring this is
+  reviewer confusion and slower human sign-off -- the opposite of what EDM's gates exist to speed
+  up.
+- **(D4)** Do not add interim-progress scaffolding (e.g. "summarize every N tool calls").
+  The cost of ignoring this is exactly the padding EDMV3-T45 spent effort removing from the
+  other direction -- a narrated tool-call log nobody asked for.
+- **(D5)** Do not add "think step by step" or anti-thinking instructions -- raise `effort` instead.
+  The cost of ignoring this is a prompt that fights the model's own extended-thinking budget
+  instead of using the `effort` field this plugin already exposes for exactly that purpose.
+- **(D6)** Do not duplicate the mode matrix into agent prompts, since it is state-backed and read
+  at runtime (`CLAUDE.md Sec."EDM mode matrix"`). The cost of ignoring this is the same drift this
+  whole epic exists to remove -- two copies of the same behavior-governing text disagree, silently,
+  the next time one of them is edited.
+
+#### Contribution convention: before/after with rationale
+
+Because this initiative's entire diff is prose changes to a mature, already-audited prompt set, a
+diff with rationale is the only reviewable artifact. **Every merge request that changes prompt
+text in this plugin -- any `SKILL.md`, any `agents/*.md`, this file -- shows before and after for each changed block, plus one sentence on why the new wording is better.**
+This convention outlives EDMV3: apply it to any future prompt-text change in this plugin, not
+only this initiative's own tickets.
+
 ## Cost tracking
 
 Every `phase-complete` (and, EDMV3-T51, `audit-round-complete`) invocation captures token usage from the project's

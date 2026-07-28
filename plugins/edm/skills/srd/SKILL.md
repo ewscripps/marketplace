@@ -83,6 +83,10 @@ All requirements get sequential IDs: `{PREFIX}-01`, `{PREFIX}-02`, ...
 6. **Cross-referenced** -- actual file paths, API names, library versions
 7. **Appropriate length** -- 800+ lines major, 200+ focused, 50+ small change
 
+These are substance signals, not padding targets: match the length of the document to what the
+task needs, cover the substance, and do not pad with filler sections, redundant summaries, or
+boilerplate. A draft below the floor is probably missing substance, not merely short.
+
 ## SRD Template
 
 ```markdown
