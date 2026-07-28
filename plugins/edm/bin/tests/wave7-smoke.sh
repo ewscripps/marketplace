@@ -881,8 +881,8 @@ with_scratch_repo _t66ac2_fresh_schema_case
 
 echo
 echo "T66 AC3 -- subcommand count and membership match the dispatch table exactly"
-t66ac3_dispatch_count="$(grep -cE '^  [a-z][a-z0-9_-]*\)[[:space:]]+cmd_' "$EDM_STATE")"
-t66ac3_claude_count="$(grep -oE '[0-9]+ subcommands' "$CLAUDE_MD_T66" | head -1 | grep -oE '^[0-9]+')"
+t66ac3_dispatch_count="$({ grep -cE '^  [a-z][a-z0-9_-]*\)[[:space:]]+cmd_' "$EDM_STATE" || true; })"
+t66ac3_claude_count="$({ grep -oE '[0-9]+ subcommands' "$CLAUDE_MD_T66" || true; } | head -1 | grep -oE '^[0-9]+')"
 [[ "$t66ac3_dispatch_count" == "$t66ac3_claude_count" ]] \
   && pass "T66 AC3 -- CLAUDE.md's documented subcommand count ($t66ac3_claude_count) matches the dispatch table ($t66ac3_dispatch_count)" \
   || fail "T66 AC3 -- CLAUDE.md says $t66ac3_claude_count subcommands, dispatch table has $t66ac3_dispatch_count"
@@ -908,22 +908,22 @@ t66ac3_rtd="$("$EDM_STATE" --help 2>&1 | grep -c record-task-duration || true)"
 echo
 echo "T66 AC4 -- linter row, hook row and mode row are accurate (wrong class names gone)"
 check "T66 AC4 -- bin/ table describes four violation classes" "four violation classes" "$(cat "$CLAUDE_MD_T66")"
-t66ac4_wrong_classes="$(grep -rl 'missing version header\|orphan file\|oversized ticket' "$CLAUDE_MD_T66" | wc -l | tr -d ' ')"
+t66ac4_wrong_classes="$({ grep -rl 'missing version header\|orphan file\|oversized ticket' "$CLAUDE_MD_T66" || true; } | wc -l | tr -d ' ')"
 [[ "${t66ac4_wrong_classes:-0}" -eq 0 ]] \
   && pass "T66 AC4 -- no reference to the three never-implemented violation classes" \
   || fail "T66 AC4 -- found a reference to a never-implemented violation class"
-t66ac4_taskcompleted="$(grep -rl 'TaskCompleted' "$CLAUDE_MD_T66" | wc -l | tr -d ' ')"
+t66ac4_taskcompleted="$({ grep -rl 'TaskCompleted' "$CLAUDE_MD_T66" || true; } | wc -l | tr -d ' ')"
 [[ "${t66ac4_taskcompleted:-0}" -eq 0 ]] \
   && pass "T66 AC4 -- Hooks behavior table drops TaskCompleted" \
   || fail "T66 AC4 -- TaskCompleted still referenced in CLAUDE.md"
-t66ac4_lcpartial="$(grep -rl 'lifecycle_mode.*partial' "$CLAUDE_MD_T66" | wc -l | tr -d ' ')"
+t66ac4_lcpartial="$({ grep -rl 'lifecycle_mode.*partial' "$CLAUDE_MD_T66" || true; } | wc -l | tr -d ' ')"
 [[ "${t66ac4_lcpartial:-0}" -eq 0 ]] \
   && pass "T66 AC4 -- lifecycle_mode row drops partial" \
   || fail "T66 AC4 -- lifecycle_mode row still mentions partial"
 
 echo
 echo "T66 AC5 -- state-field table documents schema_version/enforcement/round_type/closing_verdict"
-t66ac5_hits="$(grep -c 'schema_version\|enforcement\|round_type\|closing_verdict' "$CLAUDE_MD_T66")"
+t66ac5_hits="$({ grep -c 'schema_version\|enforcement\|round_type\|closing_verdict' "$CLAUDE_MD_T66" || true; })"
 [[ "$t66ac5_hits" -ge 4 ]] \
   && pass "T66 AC5 -- state-field vocabulary appears at least 4 times ($t66ac5_hits)" \
   || fail "T66 AC5 -- state-field vocabulary appeared only $t66ac5_hits time(s), expected >= 4"
@@ -963,7 +963,7 @@ t66ac11_count="$(echo "$t66ac11_lines" | grep -c 'allow_failure: true' || true)"
 
 echo
 echo "T66 AC12 -- Definition-of-Done spot-check (four mechanical checks)"
-t66ac12_flag_leak="$(grep -c 'code_audit_converged true' "${PLUGIN_DIR}/skills/"*/SKILL.md 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')"
+t66ac12_flag_leak="$({ grep -c 'code_audit_converged true' "${PLUGIN_DIR}/skills/"*/SKILL.md 2>/dev/null || true; } | awk -F: '{s+=$2} END{print s+0}')"
 [[ "${t66ac12_flag_leak:-0}" -eq 0 ]] \
   && pass "T66 AC12 -- no prompt sets code_audit_converged true directly" \
   || fail "T66 AC12 -- found a direct code_audit_converged true instruction"
@@ -1404,7 +1404,7 @@ CLAUDE_MD_CONTENT="$(cat "${PLUGIN_DIR}/CLAUDE.md")"
 
 echo
 echo "T40 AC1 -- canonical Mermaid heading string, placed between Severity vocabulary and Model/effort"
-t40_heading_order="$(grep -n '^## ' "${PLUGIN_DIR}/CLAUDE.md" | grep -A2 'Severity vocabulary')"
+t40_heading_order="$({ grep -n '^## ' "${PLUGIN_DIR}/CLAUDE.md" || true; } | grep -A2 'Severity vocabulary')"
 check "T40 AC1 -- canonical Mermaid heading string present" \
   "## Mermaid diagram conventions (canonical)" "$CLAUDE_MD_CONTENT"
 [[ "$(printf '%s\n' "$t40_heading_order" | sed -n '2p')" == *'Mermaid diagram conventions (canonical)'* ]] \
@@ -1505,7 +1505,7 @@ done
 
 echo
 echo "T42 AC4 -- identical quoting style across every by-name reference"
-t42_ac4_forms="$(grep -rho 'CLAUDE.md Sec\."Mermaid diagram conventions"' "${PLUGIN_DIR}/" | sort -u | wc -l | tr -d ' ')"
+t42_ac4_forms="$({ grep -rho 'CLAUDE.md Sec\."Mermaid diagram conventions"' "${PLUGIN_DIR}/" || true; } | sort -u | wc -l | tr -d ' ')"
 [[ "$t42_ac4_forms" == "1" ]] \
   && pass "T42 AC4 -- exactly one quoting form of the by-name reference is in use" \
   || fail "T42 AC4 -- found ${t42_ac4_forms} distinct quoting forms, expected 1"
@@ -2895,8 +2895,8 @@ check "T45 AC1 -- '## Communication' heading present" "## Communication" "$ORCH_
 
 echo
 echo "T45 AC2 -- <tone_preference> reminder placed after the Anti-Patterns heading"
-t45_antipatterns_line="$(grep -n '^## Anti-Patterns$' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" | head -1 | cut -d: -f1)"
-t45_tonepref_line="$(grep -n '<tone_preference>' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" | head -1 | cut -d: -f1)"
+t45_antipatterns_line="$({ grep -n '^## Anti-Patterns$' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" || true; } | head -1 | cut -d: -f1)"
+t45_tonepref_line="$({ grep -n '<tone_preference>' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" || true; } | head -1 | cut -d: -f1)"
 if [[ -n "$t45_antipatterns_line" && -n "$t45_tonepref_line" && "$t45_tonepref_line" -gt "$t45_antipatterns_line" ]]; then
   pass "T45 AC2 -- <tone_preference> (line ${t45_tonepref_line}) follows Anti-Patterns (line ${t45_antipatterns_line})"
 else
@@ -3282,8 +3282,8 @@ for t48_agent in $T48_CONTESTED_AGENTS; do
     t48_bad="${t48_bad} ${t48_agent}(missing-file)"
     continue
   fi
-  t48_model="$(grep -m1 '^model:' "$t48_file" | awk '{print $2}')"
-  t48_effort="$(grep -m1 '^effort:' "$t48_file" | awk '{print $2}')"
+  t48_model="$({ grep -m1 '^model:' "$t48_file" || true; } | awk '{print $2}')"
+  t48_effort="$({ grep -m1 '^effort:' "$t48_file" || true; } | awk '{print $2}')"
   if [[ "$t48_model" != "opus" || "$t48_effort" != "max" ]]; then
     t48_bad="${t48_bad} ${t48_agent}(${t48_model}/${t48_effort})"
   fi
@@ -3295,9 +3295,9 @@ done
 
 echo
 echo "T48 AC5 -- the three wave-A EDMV3-T02 downgrades are unaffected by this ticket"
-t48_explorer="$(grep -m1 '^model:' "${PLUGIN_DIR}/agents/edm-explorer.md" | awk '{print $2}')/$(grep -m1 '^effort:' "${PLUGIN_DIR}/agents/edm-explorer.md" | awk '{print $2}')"
-t48_tca="$(grep -m1 '^model:' "${PLUGIN_DIR}/agents/edm-test-coverage-auditor.md" | awk '{print $2}')/$(grep -m1 '^effort:' "${PLUGIN_DIR}/agents/edm-test-coverage-auditor.md" | awk '{print $2}')"
-t48_architect="$(grep -m1 '^model:' "${PLUGIN_DIR}/agents/edm-architect.md" | awk '{print $2}')/$(grep -m1 '^effort:' "${PLUGIN_DIR}/agents/edm-architect.md" | awk '{print $2}')"
+t48_explorer="$({ grep -m1 '^model:' "${PLUGIN_DIR}/agents/edm-explorer.md" || true; } | awk '{print $2}')/$(grep -m1 '^effort:' "${PLUGIN_DIR}/agents/edm-explorer.md" | awk '{print $2}')"
+t48_tca="$({ grep -m1 '^model:' "${PLUGIN_DIR}/agents/edm-test-coverage-auditor.md" || true; } | awk '{print $2}')/$(grep -m1 '^effort:' "${PLUGIN_DIR}/agents/edm-test-coverage-auditor.md" | awk '{print $2}')"
+t48_architect="$({ grep -m1 '^model:' "${PLUGIN_DIR}/agents/edm-architect.md" || true; } | awk '{print $2}')/$(grep -m1 '^effort:' "${PLUGIN_DIR}/agents/edm-architect.md" | awk '{print $2}')"
 [[ "$t48_explorer" == "sonnet/high" ]] && pass "T48 AC5 -- edm-explorer stays sonnet/high" || fail "T48 AC5 -- edm-explorer is ${t48_explorer}, expected sonnet/high"
 [[ "$t48_tca" == "sonnet/high" ]] && pass "T48 AC5 -- edm-test-coverage-auditor stays sonnet/high" || fail "T48 AC5 -- edm-test-coverage-auditor is ${t48_tca}, expected sonnet/high"
 [[ "$t48_architect" == "opus/high" ]] && pass "T48 AC5 -- edm-architect stays opus/high" || fail "T48 AC5 -- edm-architect is ${t48_architect}, expected opus/high"
