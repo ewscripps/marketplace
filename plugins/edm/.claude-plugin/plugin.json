@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "edm",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "description": "Enterprise Development Methodology — six-phase process (Planning → SRD → Audit → Tickets → Audit → Implementation) with HITL gates, parallel agent waves, automatic QC, and 11-lens code audit. Produces source-controlled artifacts in the project's SRD/ directory.",
   "author": {
     "name": "Scripps MCP",

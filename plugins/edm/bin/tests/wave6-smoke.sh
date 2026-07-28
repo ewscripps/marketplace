@@ -1918,9 +1918,10 @@ t16_happy_case() {
 }
 with_scratch_repo t16_happy_case
 
-# EDMV3-T18 (wave B) placeholder: the bypass matrix's unclosed-PARTIAL case
-# ("bypass matrix: archive with an unclosed PARTIAL", T16 AC4/T18 AC11) is filled in when
-# EDMV3-T18 lands the PARTIAL closure representation and the archive-side closure check.
+# EDMV3-T18 AC11: the bypass matrix's unclosed-PARTIAL case is filled in in the dedicated
+# EDMV3-T18 section below ("T18 AC11 -- bypass matrix: archive with an unclosed PARTIAL"),
+# once the PARTIAL closure representation and the archive-side closure check it depends on
+# (EDMV3-T32, EDMV3-T18 AC1e) exist.
 # EDMV3-T16 end
 # EDMV3-T14: schema_version three-valued degradation wiring, C-4 field-stability
 # contract, legacy read-compat assertions.
@@ -2780,6 +2781,290 @@ t32_wave4b_ec=$?
 # ---- Surfaced in --help -----------------------------------------------------------------
 t32_help_lines="$("$EDM_STATE" --help 2>&1 | grep 'record-partial-verdict' || true)"
 check "T32 -- the 'close' usage form is documented in --help" "close" "$t32_help_lines"
+
+# =================================================================================
+# EDMV3-T18: archive blocks unclosed PARTIALs and gains its wave-B sub-checks
+# =================================================================================
+echo
+echo "T18 -- archive PARTIAL-closure check, audit-converged re-query, OPEN_PARTIALS anomaly, HANDOFF findings summary"
+
+# ---- AC1: closed PARTIAL entry shape (closing_verdict/closed_at/verification_ref) --------
+echo
+echo "T18 AC1 -- closed PARTIAL entry shape carries all three closure keys"
+"$EDM_STATE" init T18SHAPE >/dev/null
+"$EDM_STATE" record-partial-verdict T18SHAPE T18SHAPE-T01 PARTIAL "needs runtime check" >/dev/null
+"$EDM_STATE" record-partial-verdict T18SHAPE T18SHAPE-T01 close PASS "post-deploy/verification.md#t18shape-t01" >/dev/null
+STATE_T18SHAPE="$TMP/SRD/T18SHAPE/.edm-state.json"
+jq -e '.partial_verdict_map["T18SHAPE-T01"] | has("closing_verdict") and has("closed_at") and has("verification_ref")' \
+  "$STATE_T18SHAPE" >/dev/null \
+  && pass "T18 AC1 -- closed PARTIAL entry has closing_verdict, closed_at, verification_ref" \
+  || fail "T18 AC1 -- closed PARTIAL entry is missing one of the three closure keys"
+t18shape_ref="$(jq -r '.partial_verdict_map["T18SHAPE-T01"].verification_ref' "$STATE_T18SHAPE")"
+check "T18 AC1 -- verification_ref points at a post-deploy/verification.md section" \
+  "post-deploy/verification.md#" "$t18shape_ref"
+
+# ---- Shared helper: bring an initiative to phase 6 with an approved, converged code-audit
+# gate over a clean, full-round ledger (schema_version stamped 2 so the wave-B checks below
+# are fully enforced rather than degraded). ------------------------------------------------
+t18_seed_converged() {
+  local prefix="$1"
+  edm-init --product demo --description "t18-${prefix}" "$prefix" >/dev/null
+  local dir state
+  dir="$(edm-state resolve-dir "$prefix")"
+  state="${dir}/.edm-state.json"
+  jq '.schema_version = 2' "$state" > "${state}.tmp" && mv "${state}.tmp" "$state"
+  edm-state approve-gate "$prefix" 1 >/dev/null
+  edm-state approve-gate "$prefix" 2 >/dev/null
+  edm-state approve-gate "$prefix" 3 >/dev/null
+  mkdir -p "${dir}/code-audit"
+  printf '%s\n' '{"id":"CA-900","sev":"P2","status":"fixed","title":"t18 fixture fixed finding"}' \
+    > "${dir}/code-audit/findings-ledger.jsonl"
+  jq '.audit_rounds.code = {count: 1, rounds: [{round_type: "full", lenses: ["L1","L2","L3","L4","L5","L6","L7","L8","L9","L10","L11"]}]}' \
+    "$state" > "${state}.tmp" && mv "${state}.tmp" "$state"
+  edm-state approve-gate "$prefix" code-audit >/dev/null
+  jq '.current_phase = 6 | .phase_durations["6_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
+    "$state" > "${state}.tmp" && mv "${state}.tmp" "$state"
+}
+
+# ---- AC2: archive refuses with an open (unclosed) PARTIAL --------------------------------
+echo
+echo "T18 AC2 -- archive refuses with an open PARTIAL, naming verify-runtime and no override"
+t18_ac2_case() {
+  t18_seed_converged T18OPN
+  edm-state record-partial-verdict T18OPN T18OPN-T01 PARTIAL "needs retry-logic runtime check" >/dev/null
+  check_fails "T18 AC2 -- archive refuses with an open PARTIAL" \
+    "verify-runtime" \
+    edm-state archive T18OPN
+  check_fails "T18 AC2 -- refusal names the open ticket" \
+    "t18opn-t01" \
+    edm-state archive T18OPN
+  check_fails "T18 AC2 -- refusal states no override exists" \
+    "no override exists" \
+    edm-state archive T18OPN
+  check_state_unchanged "$(edm-state resolve-dir T18OPN)/.edm-state.json" edm-state archive T18OPN
+}
+with_scratch_repo t18_ac2_case
+
+# ---- AC3: archive refuses with a FAIL-closed PARTIAL --------------------------------------
+echo
+echo "T18 AC3 -- archive refuses with a FAIL-closed PARTIAL (no third closure verdict)"
+t18_ac3_case() {
+  t18_seed_converged T18FLC
+  edm-state record-partial-verdict T18FLC T18FLC-T01 PARTIAL "needs retry-logic runtime check" >/dev/null
+  edm-state record-partial-verdict T18FLC T18FLC-T01 close FAIL "post-deploy/verification.md#t18flc-t01" >/dev/null
+  check_fails "T18 AC3 -- archive refuses with a FAIL-closed PARTIAL" \
+    "verify-runtime" \
+    edm-state archive T18FLC
+  check_fails "T18 AC3 -- refusal names the FAIL-closed ticket" \
+    "t18flc-t01" \
+    edm-state archive T18FLC
+}
+with_scratch_repo t18_ac3_case
+
+# ---- AC4: archive succeeds when every PARTIAL entry is PASS-closed ------------------------
+echo
+echo "T18 AC4 -- archive succeeds once every PARTIAL entry is PASS-closed"
+t18_ac4_case() {
+  t18_seed_converged T18PSC
+  edm-state record-partial-verdict T18PSC T18PSC-T01 PARTIAL "needs retry-logic runtime check" >/dev/null
+  edm-state record-partial-verdict T18PSC T18PSC-T01 close PASS "post-deploy/verification.md#t18psc-t01" >/dev/null
+  edm-state archive T18PSC >/dev/null \
+    && pass "T18 AC4 -- archive succeeds with all PARTIALs PASS-closed" \
+    || fail "T18 AC4 -- archive was refused despite every PARTIAL being PASS-closed"
+}
+with_scratch_repo t18_ac4_case
+
+# ---- AC5: audit-converged re-query corroborates (or contradicts) the cached boolean -------
+echo
+echo "T18 AC5 -- archive re-queries audit-converged rather than trusting the cached boolean alone"
+t18_ac5_case() {
+  t18_seed_converged T18RCK
+  local dir; dir="$(edm-state resolve-dir T18RCK)"
+  # A late-arriving blocking finding is appended to the ledger AFTER the code-audit gate was
+  # already approved -- the cached code_audit_converged boolean is stale (still true), but a
+  # fresh ledger re-query must catch it.
+  printf '%s\n' '{"id":"CA-901","sev":"P0","status":"open","title":"late-arriving blocking finding"}' \
+    >> "${dir}/code-audit/findings-ledger.jsonl"
+  check_fails "T18 AC5 -- archive refuses when the audit-converged re-query exits 1" \
+    "CA-901" \
+    edm-state archive T18RCK
+  check_state_unchanged "${dir}/.edm-state.json" edm-state archive T18RCK
+
+  # Remove the late finding -- the re-query now exits 0 and archive proceeds.
+  printf '%s\n' '{"id":"CA-900","sev":"P2","status":"fixed","title":"t18 fixture fixed finding"}' \
+    > "${dir}/code-audit/findings-ledger.jsonl"
+  edm-state archive T18RCK >/dev/null \
+    && pass "T18 AC5 -- archive proceeds once the audit-converged re-query exits 0" \
+    || fail "T18 AC5 -- archive still refused after the ledger re-query would have exited 0"
+}
+with_scratch_repo t18_ac5_case
+
+# ---- AC6: three-valued degradation -- legacy and schema_version:1 warn-and-proceed --------
+echo
+echo "T18 AC6 -- legacy and schema_version:1 initiatives warn-and-proceed through both wave-B checks"
+check "T18 AC6 -- legacy (no schema_version) archive warns rather than enforcing the PARTIAL-closure check" \
+  "skipping PARTIAL-closure check" "$t14leg_arch_out"
+check "T18 AC6 -- legacy (no schema_version) archive warns rather than enforcing the audit-converged re-query" \
+  "skipping audit-converged re-query" "$t14leg_arch_out"
+t14mid_arch_out="$("$EDM_STATE" archive T14MIDDLE 2>&1)"
+t14mid_arch_ec=$?
+check "T18 AC6 -- schema_version 1 (< 2) warns and proceeds through the PARTIAL-closure check, naming it" \
+  "schema_version 1 < 2 -- skipping PARTIAL-closure check" "$t14mid_arch_out"
+check "T18 AC6 -- schema_version 1 (< 2) warns and proceeds through the audit-converged re-query, naming it" \
+  "schema_version 1 < 2 -- skipping audit-converged re-query" "$t14mid_arch_out"
+[[ $t14mid_arch_ec -eq 0 ]] && pass "T18 AC6 -- schema_version 1 archive succeeds despite the open PARTIAL (degraded, not enforced)" \
+  || fail "T18 AC6 -- schema_version 1 archive unexpectedly refused (exit $t14mid_arch_ec)"
+
+# ---- AC7: OPEN_PARTIALS anomaly in the canonical four-field format ------------------------
+echo
+echo "T18 AC7 -- OPEN_PARTIALS anomaly fires in the canonical four-field format"
+"$EDM_STATE" init T18ANOM >/dev/null
+"$EDM_STATE" record-partial-verdict T18ANOM T18ANOM-T01 PARTIAL "needs runtime check" >/dev/null
+set +e
+t18anom_out="$("$EDM_STATE" validate T18ANOM 2>&1)"
+t18anom_ec=$?
+set -e
+check "T18 AC7 -- OPEN_PARTIALS anomaly present in canonical four-field format" \
+  "blocking  OPEN_PARTIALS  partial_verdict_map" "$t18anom_out"
+check "T18 AC7 -- OPEN_PARTIALS names the open ticket" \
+  "T18ANOM-T01" "$t18anom_out"
+[[ $t18anom_ec -eq 3 ]] && pass "T18 AC7 -- OPEN_PARTIALS is class blocking (validate exits 3)" \
+  || fail "T18 AC7 -- validate exited $t18anom_ec, expected 3"
+
+# ---- AC8: HANDOFF renders an open-findings summary sourced from findings-ledger.jsonl -----
+echo
+echo "T18 AC8 -- HANDOFF renders an open-findings summary from findings-ledger.jsonl when present"
+"$EDM_STATE" init T18FINDINGS >/dev/null
+mkdir -p "$TMP/SRD/T18FINDINGS/code-audit"
+printf '%s\n' '{"id":"CA-950","sev":"P1","status":"open","title":"needs remediation before archive"}' \
+  > "$TMP/SRD/T18FINDINGS/code-audit/findings-ledger.jsonl"
+"$EDM_STATE" write-handoff T18FINDINGS >/dev/null
+t18findings_handoff="$(cat "$TMP/SRD/T18FINDINGS/HANDOFF.md")"
+check "T18 AC8 -- HANDOFF renders the Open Code-Audit Findings section" \
+  "## Open Code-Audit Findings" "$t18findings_handoff"
+check "T18 AC8 -- HANDOFF names the open blocking finding" \
+  "CA-950" "$t18findings_handoff"
+
+"$EDM_STATE" init T18NOLEDGER >/dev/null
+"$EDM_STATE" write-handoff T18NOLEDGER >/dev/null
+t18noledger_handoff="$(cat "$TMP/SRD/T18NOLEDGER/HANDOFF.md")"
+check_absent "T18 AC8 -- HANDOFF omits the findings section entirely when no ledger exists (absence is authoritative)" \
+  "## Open Code-Audit Findings" "$t18noledger_handoff"
+
+# ---- AC9 (preserve): HANDOFF still auto-regenerates, Notes preserved, ASCII-only ----------
+echo
+echo "T18 AC9 -- HANDOFF regeneration/ASCII/Notes preservation unaffected (wave5-smoke.sh, edm-lint-artifacts)"
+t18_wave5_out="$(bash "${SCRIPT_DIR}/wave5-smoke.sh" 2>&1)"
+t18_wave5_ec=$?
+[[ $t18_wave5_ec -eq 0 ]] && pass "T18 AC9 -- wave5-smoke.sh stays green" \
+  || fail "T18 AC9 -- wave5-smoke.sh exited ${t18_wave5_ec}"
+t18_lint_out="$(bash "${SCRIPT_DIR}/../edm-lint-artifacts" --all 2>&1)"
+t18_lint_ec=$?
+[[ $t18_lint_ec -eq 0 ]] && pass "T18 AC9 -- edm-lint-artifacts --all exits 0" \
+  || fail "T18 AC9 -- edm-lint-artifacts --all failed (exit ${t18_lint_ec}): ${t18_lint_out}"
+
+# ---- AC10: no --accept-partials (or any) override flag exists on archive -----------------
+echo
+echo "T18 AC10 -- archive --accept-partials is an unknown argument (no override exists)"
+check_fails "T18 AC10 -- archive --accept-partials is refused as a usage error" \
+  "usage: edm-state archive" \
+  "$EDM_STATE" archive T18ANOM --accept-partials
+
+# ---- AC11: bypass matrix's unclosed-PARTIAL case (T16 AC4 placeholder, now filled in) -----
+echo
+echo "T18 AC11 -- bypass matrix: archive with an unclosed PARTIAL"
+t18_ac11_case() {
+  t18_seed_converged T18BYP
+  edm-state record-partial-verdict T18BYP T18BYP-T01 PARTIAL "needs retry-logic runtime check" >/dev/null
+  check_fails "must-fail: T18 AC11 -- bypass matrix: archive with an unclosed PARTIAL refuses" \
+    "verify-runtime" \
+    edm-state archive T18BYP
+  check_state_unchanged "$(edm-state resolve-dir T18BYP)/.edm-state.json" edm-state archive T18BYP
+}
+with_scratch_repo t18_ac11_case
+
+# =================================================================================
+# EDMV3-T41: CLAUDE.md by-name references verified NOT to resolve from an installed cache
+# (negative branch) -- generated docs/canonical-sections.md + byte-identity guard.
+#
+# Note on suite placement: the ticket's own Target Components name
+# plugins/edm/bin/tests/wave7-smoke.sh for the AC5 byte-identity case. This wave's file-
+# ownership split assigns wave6-smoke.sh (not wave7-smoke.sh) to the agent implementing T41, so
+# the equivalent case is implemented here instead -- same assertion, different suite file.
+# =================================================================================
+echo
+echo "T41 -- generated docs/canonical-sections.md is byte-identical to CLAUDE.md and CI-guarded"
+
+SYNC_BIN="${SCRIPT_DIR}/../edm-sync-canonical-sections"
+CANONICAL_SECTIONS_MD="${REPO_ROOT}/plugins/edm/docs/canonical-sections.md"
+
+# ---- AC4: the generated file exists under docs/ with the required header -----------------
+echo
+echo "T41 AC4 -- generated docs/canonical-sections.md exists with the 'generated from CLAUDE.md' header"
+[[ -f "$CANONICAL_SECTIONS_MD" ]] \
+  && pass "T41 AC4 -- plugins/edm/docs/canonical-sections.md exists" \
+  || fail "T41 AC4 -- plugins/edm/docs/canonical-sections.md not found"
+check "T41 AC4 -- header names 'generated from CLAUDE.md'" \
+  "generated from CLAUDE.md" "$(cat "$CANONICAL_SECTIONS_MD" 2>/dev/null)"
+check "T41 AC4 -- generated file carries the Severity vocabulary section" \
+  "## Severity vocabulary (canonical)" "$(cat "$CANONICAL_SECTIONS_MD" 2>/dev/null)"
+check "T41 AC4 -- generated file carries the Mermaid diagram conventions section" \
+  "## Mermaid diagram conventions (canonical)" "$(cat "$CANONICAL_SECTIONS_MD" 2>/dev/null)"
+
+# ---- AC5: byte-identity guard -- committed copy matches a fresh --check run, and a hand-edit
+# to the copy (without re-running the generator) is caught. ---------------------------------
+echo
+echo "T41 AC5 -- byte-identity guard: committed copy matches CLAUDE.md; a hand-edit fails"
+bash "$SYNC_BIN" --check >/dev/null 2>&1 \
+  && pass "T41 AC5 -- committed docs/canonical-sections.md is in sync with CLAUDE.md (--check exits 0)" \
+  || fail "T41 AC5 -- committed docs/canonical-sections.md is OUT OF SYNC with CLAUDE.md"
+
+t41_backup="$(mktemp)"
+cp "$CANONICAL_SECTIONS_MD" "$t41_backup"
+printf '\nhand-edited, not regenerated\n' >> "$CANONICAL_SECTIONS_MD"
+set +e
+bash "$SYNC_BIN" --check >/dev/null 2>&1
+t41_check_ec=$?
+set -e
+[[ $t41_check_ec -ne 0 ]] \
+  && pass "T41 AC5 -- hand-editing the copy without regenerating makes --check fail" \
+  || fail "T41 AC5 -- --check did not catch a hand-edit to the generated copy"
+cp "$t41_backup" "$CANONICAL_SECTIONS_MD"
+rm -f "$t41_backup"
+bash "$SYNC_BIN" --check >/dev/null 2>&1 \
+  && pass "T41 AC5 -- restoring the generated copy makes --check pass again" \
+  || fail "T41 AC5 -- --check still failing after restoring the generated copy"
+
+# ---- AC5 (continued): the extracted section text is byte-identical to its CLAUDE.md source,
+# not merely present -- diff the two sections directly rather than trusting --check alone. ---
+echo
+echo "T41 AC5 -- extracted sections diff byte-identical against their CLAUDE.md source spans"
+t41_claude_md="${REPO_ROOT}/plugins/edm/CLAUDE.md"
+t41_sev_src="$(awk '/^## Severity vocabulary \(canonical\)$/{f=1;print;next} f && /^## /{exit} f{print}' "$t41_claude_md")"
+t41_sev_dst="$(awk '/^## Severity vocabulary \(canonical\)$/{f=1;print;next} f && /^## /{exit} f{print}' "$CANONICAL_SECTIONS_MD")"
+[[ "$t41_sev_src" == "$t41_sev_dst" ]] \
+  && pass "T41 AC5 -- Severity vocabulary section is byte-identical between CLAUDE.md and the generated copy" \
+  || fail "T41 AC5 -- Severity vocabulary section diverged between CLAUDE.md and the generated copy"
+t41_mmd_src="$(awk '/^## Mermaid diagram conventions \(canonical\)$/{f=1;print;next} f && /^## /{exit} f{print}' "$t41_claude_md")"
+t41_mmd_dst="$(awk '/^## Mermaid diagram conventions \(canonical\)$/{f=1;print;next} f && /^## /{exit} f{print}' "$CANONICAL_SECTIONS_MD")"
+[[ "$t41_mmd_src" == "$t41_mmd_dst" ]] \
+  && pass "T41 AC5 -- Mermaid diagram conventions section is byte-identical between CLAUDE.md and the generated copy" \
+  || fail "T41 AC5 -- Mermaid diagram conventions section diverged between CLAUDE.md and the generated copy"
+
+# ---- AC2/AC6: the resolvability finding, install method, Claude Code version and date are
+# recorded in decisions.md as D22, naming which branch (negative) was taken. ------------------
+echo
+echo "T41 AC2/AC6 -- decisions.md records the resolution finding (D22) and states the branch taken"
+DECISIONS_MD="${REPO_ROOT}/SRD/edm/EDMV3__prompt-streamline/decisions.md"
+check "T41 AC2 -- decisions.md names the check performed" \
+  "CLAUDE.md by-name reference resolution" "$(cat "$DECISIONS_MD" 2>/dev/null)"
+t41_d22_line="$(grep -n 'CLAUDE.md by-name reference resolution' "$DECISIONS_MD" | head -1)"
+check "T41 AC2 -- D22 entry names a Claude Code version" \
+  "2.1.220" "$t41_d22_line"
+check "T41 AC2 -- D22 entry names the install method checked" \
+  "installed cache" "$t41_d22_line"
+check "T41 AC6 -- D22 entry states the negative branch was taken" \
+  "negative" "$t41_d22_line"
 
 # ---- Summary -----------------------------------------------------------------
 echo

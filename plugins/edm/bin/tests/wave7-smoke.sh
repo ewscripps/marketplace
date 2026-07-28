@@ -841,9 +841,14 @@ t64_marketplace_version="$(jq -r '.plugins[] | select(.name=="edm") | .version' 
 [[ "$t64_plugin_version" == "$t64_marketplace_version" ]] \
   && pass "T64 AC1 -- plugin.json and marketplace.json versions agree ($t64_plugin_version)" \
   || fail "T64 AC1 -- plugin.json version '$t64_plugin_version' != marketplace.json edm entry '$t64_marketplace_version'"
-[[ "$t64_plugin_version" == "2.1.0" ]] \
-  && pass "T64 AC1 -- plugin.json version is 2.1.0" \
-  || fail "T64 AC1 -- plugin.json version is '$t64_plugin_version', expected '2.1.0'"
+# Superseded by EDMV3-T65 (wave-B closeout): the version literal this case asserts moved from
+# T64's wave-A "2.1.0" to T65's wave-B "3.0.0" -- both closeout tickets bump the same field, and
+# only the latest one's literal is current. This is the version-agreement half of the check
+# (both manifests move together); T65's own wave6-smoke.sh cases assert the "3.0.0" value
+# itself plus the downgrade story.
+[[ "$t64_plugin_version" == "3.0.0" ]] \
+  && pass "T64 AC1 -- plugin.json version is 3.0.0 (EDMV3-T65 wave-B closeout)" \
+  || fail "T64 AC1 -- plugin.json version is '$t64_plugin_version', expected '3.0.0'"
 
 # =================================================================================
 # EDMV3-T24: every lens emits JSONL with confidence under a two-path output contract.

@@ -4,13 +4,141 @@ All notable changes to the EDM plugin are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.0.0] — 2026-07-28
 
-Individual EDMV3 wave-B (Structured Findings) behavioural changes are recorded here as they land;
-the wave-B closeout ticket (EDMV3-T65) folds this section into a versioned entry with the full
-behavioural, breaking-change and required-user-action summary once the whole wave has landed.
+Wave B of EDMV3 (prompt-streamline): the enforcement kernel's version-2 checks (PARTIAL closure,
+computed convergence), the structured JSONL findings ledger and its deterministic markdown
+render, the no-deferral-vocabulary policy and its automated checker, the mandatory
+`/edm:verify-runtime` closure skill, the Skill-tool composition/dispatcher restructure (gate
+PROTOCOL collapsed to one canonical section, every phase skill's Step 0 preflight), and the
+Mermaid diagram-convention rule. EDMV3-T65 is the wave-B closeout ticket that folds every
+individual wave-B change (landed incrementally on `edm/edmv3-prompt-streamline` across
+EDMV3-T18, EDMV3-T24 through EDMV3-T36, EDMV3-T40, and EDMV3-T42 through EDMV3-T44) into this
+single versioned entry.
+
+**This is a major version bump, not a minor one, because the Skill-tool composition/dispatcher
+restructure (EDMV3-T34, EDMV3-T35, EDMV3-T36) is a breaking behavioural change for anyone who
+invoked phase skills directly and relied on the previous local-approval-prompt path** -- see
+"Breaking changes" below. **The permission `ask` rule setup documented in README.md's "Required
+setup" section (`Bash(edm-state approve-gate*)` and `Bash(edm-state archive*)`) is required for
+this version's enforcement guarantees to hold** -- without it, `check_permission_rules()` records
+`prose-only` enforcement instead of `permission-ask`, and the `PERM_RULES_MISSING` informational
+anomaly fires on every `validate` call.
+
+### Breaking changes
+
+- **`branch-check` becomes a BLOCK on the standalone-skill path** (EDMV3-T36): every phase
+  skill's new Step 0 preflight runs `edm-state branch-check <PREFIX>` and hard-blocks the phase
+  on a non-zero exit. Previously `branch-check` hard-blocked only at the orchestrator's Step 1d,
+  so running e.g. `/edm:code-audit PREFIX` directly (bypassing the orchestrator) worked from any
+  branch; that posture now requires checking out the initiative's recorded `initiative_branch`
+  first. Both the `UserPromptExpansion` hooks and the orchestrator's own Step 1d check are
+  retained unchanged -- Step 0 is a second, defence-in-depth enforcement point on the Skill-tool
+  path, not a replacement for either.
+- **`current_step` vocabulary migration (EDMV3-T38): tracked, not yet landed as of this entry.**
+  EDMV3-T38's orchestrator/dispatcher restructure defines a `current_step` vocabulary mapping
+  from the 2.x values (`1a`, `1b`, `1c`, ...) to a wave-B vocabulary, with old values tolerated
+  and resumed with a warning rather than erroring. EDMV3-T38 had not landed on
+  `edm/edmv3-prompt-streamline` as of this changelog entry; its published mapping supersedes this
+  paragraph once it does. Recorded here rather than omitted because EDMV3-95 names this item
+  explicitly and an honest "not yet" is more useful than silence.
+- **archive hard-blocks on any unclosed or FAIL-closed `partial_verdict_map` entry** (EDMV3-T18):
+  previously an open PARTIAL was tracked but never checked by `archive`. At `schema_version >= 2`
+  every PARTIAL must be closed `PASS` via `/edm:verify-runtime` before `archive` will run; no
+  override flag exists. Below `schema_version` 2 this degrades to warn-and-proceed (unchanged
+  behaviour for pre-wave-B initiatives).
 
 ### Added
+
+- **Eleven code-audit lens agents emit structured JSONL findings** (EDMV3-T24): every
+  `agents/edm-audit-*.md` lens instructs a JSONL sibling (one line per finding, `confidence`
+  mandatory, "every finding" scope stated literally) alongside its prose report. A committed
+  synthetic pass fixture (`bin/tests/fixtures/code-audit/`) proves the eleven-lens shape end to
+  end and lets the eval scorer's lens-jsonl-prose-agreement dimension score non-null.
+- **`edm-audit-synthesizer` writes `findings-ledger.jsonl` as the authoritative record**
+  (EDMV3-T25): the legacy `findings-ledger.md` is no longer written by the synthesizer (it is
+  now a pure, deterministic projection rendered by `edm-state render-ledger`, see below). Stable
+  `CA-NNN` IDs are assigned once and preserved across rounds; `resolved_round`/`raised_round`
+  track cross-round history; a single-lens, low-confidence finding is retained and demoted to
+  `NOTED` rather than discarded -- no finding is ever removed from the ledger. The abolished
+  `deferred` status is dropped from the enum (`open`/`fixed`/`noted` only going forward); a
+  legacy `deferred` line already on disk is read and re-opened for backward compatibility, never
+  an error.
+- **No-deferral-vocabulary policy and its checker** (EDMV3-T29, EDMV3-T30): `CLAUDE.md`'s
+  Severity vocabulary section states that `NOTED` is not actionable and is distinct from
+  deferral, and that deferral does not exist in this methodology. `edm-check-vocabulary` is a
+  new deterministic scanner (`skills/`, `agents/`, `docs/`, `hooks/hooks.json`,
+  `monitors/monitors.json`, `CLAUDE.md`, `README.md`, `bin/`) backstopping that policy so it
+  cannot silently regress; a documented, justified allowlist (`bin/vocabulary-allowlist.txt`)
+  carves out the handful of legitimate uses (e.g. this file's own history, a data-shape
+  identifier on legacy ledger input).
+- **`implement` and QC remediate every FAIL, and every PARTIAL closes via `/edm:verify-runtime`**
+  (EDMV3-T31): `skills/implement/SKILL.md`'s FAIL compilation is no longer severity-filtered
+  (every severity, not just P0/P1), and the abolished "PARTIALs do not require remediation"
+  sentence is rewritten to require mandatory runtime-verified closure. `agents/edm-qc-auditor.md`
+  keeps "Never invent a PASS for something you cannot verify" verbatim (preserve-untouched item
+  4, see below) with only the note token renamed.
+- **`edm-state render-ledger <PREFIX>`** (EDMV3-T26): deterministically renders
+  `code-audit/findings-ledger.md` from the authoritative `code-audit/findings-ledger.jsonl`,
+  sorted by `(severity, ID)` for byte-identical output across runs. Writes a machine-readable
+  generated-file header, includes a `Decisions / Non-Findings` section for `NOTED` items, writes
+  atomically (temp file plus rename), and records the rendered file's hash via the existing
+  `record_artifact_hash` helper so `edm-state checkpoint-if-active`'s drift loop warns on a
+  hand-edit out of band. Refuses (non-zero exit, writes nothing) with a message distinguishing
+  "no audit has run" from "the render failed" when `findings-ledger.jsonl` is absent or invalid.
+- **`edm-state audit-round-start` records the round's lens set and `round_type`** (EDMV3-T27):
+  a new optional `--lenses <comma-list>` argument records which lenses ran; `round_type` is
+  derived as `full` when all eleven lenses ran (or `--lenses` was omitted) and `partial`
+  otherwise. `audit_rounds.<type>` widens from a bare integer round-count to
+  `{count, rounds: [...]}` to hold this per-round detail (the one sanctioned C-4 type widening
+  in this initiative) -- no existing state file is rewritten; every reader coerces a bare
+  integer to `{count: N, rounds: []}` at read time. The external contract of
+  `N=$(edm-state audit-round-start <PREFIX> code)` is unchanged (still echoes the round number).
+
+- **`edm-state audit-converged <PREFIX>`** (EDMV3-T28): a read-only convergence query over
+  `code-audit/findings-ledger.jsonl`, replacing "a human re-reads the ledger and asserts
+  convergence in prose" with one deterministic `jq` predicate (`BLOCKING_FILTER`, defined once
+  and referenced by name at all four consumers: `audit-converged` itself, `approve-gate`'s
+  code-audit branch, `archive`'s convergence check, and `write-handoff`'s Phase-6 rendering).
+  Exit 0 converged (or the mode/lifecycle_mode is exempt from a code audit entirely); exit 1
+  when open P0/P1/P2 findings remain, the latest round was partial, or a line carries an
+  out-of-enum status; exit 3 when no ledger exists (distinguishing "no audit has run" from a
+  legacy markdown-only ledger, which degrades per `schema_version` rather than demanding a
+  fresh audit). A legacy `deferred` status line is re-opened (counted as open at its recorded
+  severity) rather than skipped or erroring.
+- **`approve-gate <PREFIX> code-audit` re-runs the convergence pre-check** (EDMV3-T28 AC12): at
+  `schema_version >= 2`, the approval now calls `audit-converged` itself and refuses when it
+  fails, closing the time-of-check-to-time-of-use window between a standalone
+  `audit-converged` call and the approval. Below `schema_version` 2, this degrades to the
+  existing wave-A permissive behaviour (recorded via `degraded_checks`), so a pre-wave-B
+  initiative is never told to run a fresh eleven-lens round it never opted into.
+- **`archive` gains its wave-B sub-checks: PARTIAL-closure and a computed audit-converged
+  re-query** (EDMV3-T18): fills the two wave-B insertion points left in `cmd_archive`. Every
+  `partial_verdict_map` entry must be closed `PASS` (a `FAIL`-closed or still-open entry blocks,
+  no override); `archive` additionally re-queries `audit-converged` directly rather than trusting
+  the cached `code_audit_converged` boolean alone, closing the time-of-check-to-time-of-use gap
+  one more consumer deep. Both checks degrade to warn-and-proceed below `schema_version` 2. A new
+  `OPEN_PARTIALS` blocking anomaly surfaces unclosed/FAIL-closed entries from `validate`, and
+  HANDOFF gains an "Open Code-Audit Findings" section sourced from the ledger when present.
+- **Canonical Mermaid diagram conventions, referenced by name from eleven touch points**
+  (EDMV3-T40, EDMV3-T42): `CLAUDE.md` gains a `## Mermaid diagram conventions (canonical)`
+  section (the `#59;` entity-code rule for a literal `;` inside label/edge/message text, worked
+  examples, legal exceptions). Three authoring agents, two auditing agents, and four skills
+  reference it by name; the two writer-facing pattern-library docs
+  (`docs/audit-patterns/srd-audit.md`, `docs/audit-patterns/ticket-audit.md`) gain a matching
+  entry.
+- **`edm-lint-artifacts` gains a fourth violation class: Mermaid label semicolons**
+  (EDMV3-T43, EDMV3-T44): a one-pass line classifier flags a raw `;` inside Mermaid
+  label/edge/message text (the three existing classes -- attribution trailers, non-ASCII bytes,
+  leaked tool-invocation tags -- are unaffected). A committed 16-file fixture corpus (11 valid,
+  5 invalid) asserts the exact violation set with zero false positives.
+- **`edm-sync-canonical-sections` and `docs/canonical-sections.md`** (EDMV3-T41): `claude plugin
+  validate` confirms plugin-root `CLAUDE.md` is never loaded as runtime context, so by-name
+  references like `` `CLAUDE.md Sec."Severity vocabulary"` `` have no plugin-relative path to
+  resolve against from an installed cache. This generator deterministically, one-directionally
+  duplicates the Severity vocabulary and Mermaid diagram conventions sections, byte-identical,
+  into `docs/canonical-sections.md` -- see `decisions.md` D22 for the full finding and the
+  still-open handoff (the nine prompt-surface reference-form updates).
 
 - **`edm-state render-ledger <PREFIX>`** (EDMV3-T26): deterministically renders
   `code-audit/findings-ledger.md` from the authoritative `code-audit/findings-ledger.jsonl`,
@@ -102,6 +230,55 @@ behavioural, breaking-change and required-user-action summary once the whole wav
   invocation path (Tier 3, prompt text -- the deterministic enforcement is `cmd_gate_check`
   itself, EDMV3-115/T13). Written once in `skills/plan/SKILL.md`, referenced by name from the
   other seven.
+
+### Backward Compatibility
+
+Every wave-B change is backward compatible for existing state files (EDMV3-107): `schema_version`
+gates every new version-2 check so a wave-A (`schema_version: 1`) or legacy (absent) initiative
+warn-and-proceeds through the PARTIAL-closure check, the `audit-converged` re-query, and the
+round-type gate, naming each skipped check rather than silently applying or silently skipping it.
+No existing field changes meaning or name; `audit_rounds.<type>` is the one sanctioned type
+widening (bare integer -> `{count, rounds}`), and every reader coerces the legacy shape at read
+time rather than requiring a rewrite.
+
+### Downgrade Path
+
+Downgrading an initiative under 3.0.0 back to a 2.1.0-era `edm-state` binary is possible but
+lossy. Four concrete things break:
+
+1. **The synthesizer writes `findings-ledger.md` again while a stale `findings-ledger.jsonl`
+   remains on disk and is still authoritative** for anyone still on 3.0.0 -- do not delete the
+   JSONL or treat a post-downgrade markdown render as its replacement; the two are a fork, not a
+   continuation, until re-upgrading.
+2. **PARTIAL closure records become invisible.** A 2.1.0 `edm-state` does not read
+   `closing_verdict`/`closed_at`/`verification_ref`, so every `partial_verdict_map` entry looks
+   still-open even if already closed PASS/FAIL under 3.0.0 -- do not re-verify against that view.
+3. **`/edm:verify-runtime` disappears while `partial_verdict_map` closure entries persist on
+   disk.** A 2.1.0 install cannot close a new PARTIAL until re-upgrading; existing closures are
+   only unreadable by 2.1.0 (item 2), not deleted -- re-upgrading recovers them losslessly.
+4. **The recorded `schema_version` is the signal a downgraded install should refuse to act on,
+   not ignore.** 2.1.0 has no `schema_version >= 2` gating, so it applies wave-A-shaped checks to
+   a 3.0.0-shaped file rather than refusing. Use a 2.1.0 binary on a `schema_version: 2`+ file for
+   read-only inspection only; a full downgrade should re-`edm-init` under 2.1.0.
+
+### Preserve-untouched list verification (EDMV3-111, items 4-6, wave B)
+
+Per-wave verification of the review's "genuinely good -- do not refactor away" list. Commands and
+findings (items 1-3, 7-8 were wave-A/earlier; the full eight-item walk closes at the final wave):
+
+- **Item 4, QC verdict semantics** -- `grep -n 'Never invent a PASS' plugins/edm/agents/edm-qc-auditor.md`
+  finds it verbatim (line 33); the PASS/PARTIAL/FAIL semantics table is otherwise unchanged. Only
+  the runtime note token was renamed (`runtime-check:`, EDMV3-T31) -- confirmed PRESERVED.
+- **Item 5, gate approval rules text** -- the four "CRITICAL -- gate approval rules" bullets now
+  live once in `skills/orchestrator/SKILL.md`'s `## Gate PROTOCOL (canonical)` section
+  (EDMV3-T35) rather than restated at five sites; diffed byte-for-byte against the pre-T35
+  wording (`git show <pre-T35 commit>^:plugins/edm/skills/orchestrator/SKILL.md`) -- identical.
+  Confirmed PRESERVED, relocated not reworded.
+- **Item 6, stable CA-NNN IDs and demote-don't-delete** -- `grep -n 'CA-NNN\|demoted, never deleted'
+  plugins/edm/agents/edm-audit-synthesizer.md` confirms the stable-ID scheme ("assigned once and
+  preserved across every subsequent round") and demote-don't-delete language ("No finding is
+  removed from the ledger by this step") both carried into the EDMV3-T25 JSONL rewrite unchanged.
+  Confirmed PRESERVED.
 
 ## [2.1.0] — 2026-07-27
 
