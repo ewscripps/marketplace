@@ -73,7 +73,7 @@ SRD calls it "order", ticket calls it "purchase", code calls it "transaction." S
 
 ### 3. Pre-existing debt surfaced by a new initiative (8/16)
 An old function is suddenly called in a new code path and reveals stale behavior.
-**Prevention:** code audits include a "standing debt" section; prioritize which must ship vs. can defer.
+**Prevention:** code audits include a "standing debt" section; prioritize which must ship now vs. which is recorded as a follow-on.
 
 ### 4. Migration/schema coordination gaps (7/16)
 SRD says "migration 012" but a parallel initiative already took 012. Two SRDs reference the same file path and disagree on expected state.
@@ -89,6 +89,6 @@ SRD v0.3 says "see migration 015" but that migration was removed in v0.4. A tick
 |----------|-------|-------------|
 | P0 (blocks shipping) | ~10% | Contradictions, security gaps, data-corrupting defaults |
 | P1 (must fix before release) | ~30% | Ambiguities, missing ACs, incomplete coverage, stale refs |
-| P2 (can defer) | ~60% | Cosmetic, docs, optimizations, pre-existing debt noted but deprioritized |
+| P2 (remediate before convergence) | ~60% | Cosmetic, docs, optimizations, pre-existing debt noted but deprioritized |
 
 **Key insight:** Most P0s and P1s are preventable with a thorough pre-flight checklist before submission. The checklists in each doc are designed to catch ~80% of findings before they reach an auditor.

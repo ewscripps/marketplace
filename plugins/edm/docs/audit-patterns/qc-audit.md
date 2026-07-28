@@ -27,7 +27,7 @@ Frequency: [x/16] = appeared in x of 16 audited initiatives (many pre-EDMV2 init
 - Implementer changed a shared utility without updating all callers
 
 ### 3. Unresolved PARTIAL verdicts (5/16)
-- QC auditor assigns PARTIAL ("needs running service to verify") but the ticket is closed without ever reaching a PASS or explicit runtime-deferred decision
+- QC auditor assigns PARTIAL ("needs running service to verify") but the ticket is closed without ever reaching a PASS or explicit runtime-check decision
 - PARTIAL verdicts pile up and are never adjudicated
 
 ### 4. QC artifact in wrong location (4/16)
@@ -65,7 +65,7 @@ Run before declaring a ticket's QC complete:
 
 - [ ] **Every AC has a runnable test command cited** in the QC report -- not just "inspected code."
 - [ ] **Regression check:** The full test suite (not just the ticket's tests) passes. Any new failures in unrelated tests are flagged as regressions before closing the ticket.
-- [ ] **PARTIAL verdicts adjudicated:** Any AC marked PARTIAL has either been verified at runtime (upgraded to PASS) or explicitly documented in the exec-report with a rationale for deferral.
+- [ ] **PARTIAL verdicts adjudicated:** Any AC marked PARTIAL has been closed via `/edm:verify-runtime` -- verified at runtime (PASS) or remediated (FAIL).
 - [ ] **QC artifact committed:** The `qc/{ticket-id}.md` report is staged and committed to the initiative branch.
 - [ ] **TDD compliance (if applicable):** In TDD mode, the QC report includes a TDD compliance pass showing each test predates its implementation and was not modified after implementation began.
 
@@ -73,7 +73,7 @@ Run before declaring a ticket's QC complete:
 
 ## What a Passing QC Round Looks Like
 
-- **Every AC verdict (PASS/PARTIAL/FAIL) cites evidence:** a test command + output snippet for PASS; a rationale and runtime-deferred note for PARTIAL; a reproduction path for FAIL.
+- **Every AC verdict (PASS/PARTIAL/FAIL) cites evidence:** a test command + output snippet for PASS; a `runtime-check:` note for PARTIAL; a reproduction path for FAIL.
 - **No regressions:** the test suite passes at the same rate as before the wave.
 - **PARTIAL verdicts are documented** in the exec-report with explicit "will verify at runtime by [condition]" language -- they don't disappear silently.
 - **QC artifact is committed** on the initiative branch alongside the implementation artifacts.

@@ -68,7 +68,7 @@ Use the canonical four-level scale from `CLAUDE.md Sec."Severity vocabulary"` â€
 |---|---|---|
 | P0 | Blocks implementation, security/legal issue, architecturally wrong | Must fix before Phase 4 |
 | P1 | Significant gap, factual error, missing requirement | Must fix before shipping |
-| P2 | Polish, edge case, improvement | Can defer |
+| P2 | Polish, edge case, improvement | Remediated before convergence |
 | NOTED | Intentional, pre-existing, or accepted trade-off | Document in Decisions / Non-Findings; do not re-investigate |
 
 ## Finding Format
@@ -95,7 +95,7 @@ Use the canonical four-level scale from `CLAUDE.md Sec."Severity vocabulary"` â€
 ## P1 -- Significant (Must Fix Now)
 [findings]
 
-## P2 -- Minor (Can Defer)
+## P2 -- Minor (Remediate Before Convergence)
 [findings]
 
 ## NOTED -- Intentional / Pre-existing
@@ -118,7 +118,7 @@ Prompt: "Audit the SRD at ${user_config.srd_root}/{PREFIX}/${user_config.srd_fil
 ## HITL Gate 2
 
 After remediating all P0/P1:
-1. Summarize: requirement count by priority (Must/Should/Could), key architecture decisions, risks, audit findings resolved (P0: N, P1: N, P2: N deferred).
+1. Summarize: requirement count by priority (Must/Should/Could), key architecture decisions, risks, audit findings resolved (P0: N, P1: N, P2: N).
 2. Ask: *"Do you approve this SRD and want to proceed to ticket creation, or do you have changes?"*
 3. **STOP and WAIT** -- do not proceed to Phase 4 autonomously.
 4. On approval: `edm-state approve-gate <PREFIX> 2`. Next: `/edm:tickets <PREFIX>`.
