@@ -185,44 +185,89 @@ is_ignored_line() {
   [[ -n "$lineset" ]] && echo "$lineset" | grep -qxF "$lineno"
 }
 
-# ---- Helper: does a single Mermaid-fence content line contain an illegal raw semicolon? --------
-# (EDMV3-T43 AC4/AC5) Checked only against lines already known to be inside a mermaid fence and
-# not otherwise ignored -- callers are responsible for that filtering.
-mermaid_line_is_violation() {
-  local line="$1"
-  local trimmed stripped after_colon
+# ---- Helper: the class-4 Mermaid scan for one file, as a single awk pass -----------------------
+# (EDMV3-T43 AC4/AC5) Applies the raw-semicolon rules only to lines already known to be inside a
+# mermaid fence (EDM_MERMAID_SET) and not suppressed by an explicit edm-lint-ignore-start/end
+# block (EDM_MARKER_SET). Both sets arrive through the environment rather than -v so that awk
+# does no backslash-escape processing on them.
+#
+# One awk process per file, not per line: the rules below were previously a bash function that
+# forked sed and grep about ten times for every mermaid line, which made this class the dominant
+# cost of a whole-tree lint once class 1 was fixed.
+#
+# Emits one tab-separated record per finding:
+#   U<TAB><lineno><TAB>            -- an edm-lint-ignore marker misused inside a mermaid fence
+#   V<TAB><lineno><TAB><snippet>   -- a raw semicolon inside label/edge/message text
+mermaid_scan_awk() {
+  local file="$1" mermaid_set="$2" marker_set="$3"
+  EDM_MERMAID_SET="$mermaid_set" EDM_MARKER_SET="$marker_set" awk '
+    function trim(s) {
+      sub(/^[[:space:]]*/, "", s); sub(/[[:space:]]*$/, "", s); return s
+    }
+    # Strip legal entity codes (#59;, #quot;, #35;, ...) before span-checking so a legitimate
+    # entity reference is never mistaken for a raw semicolon. The 1..10 character bound is
+    # walked explicitly rather than written as an ERE interval, because interval support is not
+    # universal across the awk implementations this plugin runs on (bwk awk, mawk, busybox awk).
+    function strip_entities(s,   out, i, n, j, k) {
+      out = ""; i = 1; n = length(s)
+      while (i <= n) {
+        if (substr(s, i, 1) == "#") {
+          j = i + 1; k = 0
+          while (k < 10 && j <= n && substr(s, j, 1) ~ /[0-9A-Za-z]/) { j++; k++ }
+          if (k >= 1 && j <= n && substr(s, j, 1) == ";") { i = j + 1; continue }
+        }
+        out = out substr(s, i, 1); i++
+      }
+      return out
+    }
+    function is_violation(line,   trimmed, stripped, after_colon, p) {
+      trimmed = trim(line)
 
-  trimmed="$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+      # Legal: a Mermaid comment line.
+      if (substr(trimmed, 1, 2) == "%%") return 0
 
-  # Legal: a Mermaid comment line.
-  [[ "$trimmed" == '%%'* ]] && return 1
+      # Legal: classDef / style / linkStyle directives -- their trailing ";" is a statement
+      # terminator, never a label boundary.
+      if (trimmed ~ /^(classDef|style|linkStyle)[[:space:]]/) return 0
+      if (trimmed == "classDef" || trimmed == "style" || trimmed == "linkStyle") return 0
 
-  # Legal: classDef / style / linkStyle directives -- their trailing ';' is a statement
-  # terminator, never a label boundary.
-  [[ "$trimmed" =~ ^(classDef|style|linkStyle)([[:space:]]|$) ]] && return 1
+      stripped = strip_entities(line)
 
-  # Strip legal entity codes (#59;, #quot;, #35;, ...) before span-checking so a legitimate
-  # entity reference is never mistaken for a raw semicolon.
-  stripped="$(printf '%s' "$line" | sed -E 's/#[0-9A-Za-z]{1,10};//g')"
+      # Legal: a bare statement-terminating ";" at the very end of the line (outside any label)
+      # -- strip exactly one trailing ";" before span-checking.
+      sub(/;[[:space:]]*$/, "", stripped)
 
-  # Legal: a bare statement-terminating ';' at the very end of the line (outside any label) --
-  # strip exactly one trailing ';' before span-checking.
-  stripped="$(printf '%s' "$stripped" | sed -E 's/;[[:space:]]*$//')"
+      # Label spans: a raw ";" inside [...], (...), {...}, |...|, or "..." is a violation.
+      if (stripped ~ /\[[^][]*;[^][]*\]/) return 1
+      if (stripped ~ /\([^()]*;[^()]*\)/) return 1
+      if (stripped ~ /\{[^{}]*;[^{}]*\}/) return 1
+      if (stripped ~ /\|[^|]*;[^|]*\|/) return 1
+      if (stripped ~ /"[^"]*;[^"]*"/) return 1
 
-  # Label spans: a raw ';' inside [...], (...), {...}, |...|, or "..." is a violation.
-  printf '%s' "$stripped" | grep -Eq '\[[^][]*;[^][]*\]' && return 0
-  printf '%s' "$stripped" | grep -Eq '\([^()]*;[^()]*\)' && return 0
-  printf '%s' "$stripped" | grep -Eq '\{[^{}]*;[^{}]*\}' && return 0
-  printf '%s' "$stripped" | grep -Eq '\|[^|]*;[^|]*\|' && return 0
-  printf '%s' "$stripped" | grep -Eq '"[^"]*;[^"]*"' && return 0
-
-  # Sequence-diagram-style message line: a raw ';' after the first ':' on an arrow line.
-  if printf '%s' "$stripped" | grep -Eq -- '->' && printf '%s' "$stripped" | grep -q ':'; then
-    after_colon="${stripped#*:}"
-    [[ "$after_colon" == *";"* ]] && return 0
-  fi
-
-  return 1
+      # Sequence-diagram-style message line: a raw ";" after the first ":" on an arrow line.
+      p = index(stripped, ":")
+      if (index(stripped, "->") > 0 && p > 0) {
+        after_colon = substr(stripped, p + 1)
+        if (index(after_colon, ";") > 0) return 1
+      }
+      return 0
+    }
+    BEGIN {
+      n = split(ENVIRON["EDM_MERMAID_SET"], a, "\n")
+      for (i = 1; i <= n; i++) if (a[i] != "") mer[a[i]] = 1
+      n = split(ENVIRON["EDM_MARKER_SET"], b, "\n")
+      for (i = 1; i <= n; i++) if (b[i] != "") ign[b[i]] = 1
+    }
+    {
+      if (!(FNR in mer)) next
+      if (FNR in ign) next
+      # Being merely inside a mermaid fence is not itself a suppression reason -- that is exactly
+      # what this class exists to inspect -- so a single-line marker here is unsupported usage
+      # and is reported rather than silently honored (EDMV3-T43 AC6).
+      if (index($0, "<!-- edm-lint-ignore -->") > 0) { print "U\t" FNR "\t"; next }
+      if (is_violation($0)) print "V\t" FNR "\t" substr($0, 1, 120)
+    }
+  ' "$file"
 }
 
 # ---- Helper: list *.md files under a directory, excluding .git/ and .archived/ ----------------
@@ -341,24 +386,24 @@ scan_md_files() {
     local mermaid_set="${MERMAID_SETS[$i]}"
     [[ -z "$mermaid_set" ]] && continue
     local marker_set="${MARKER_SETS[$i]}"
-    local lineno linetext snippet
-    while IFS= read -r lineno; do
-      [[ -z "$lineno" ]] && continue
-      # Skip lines suppressed by an EXPLICIT edm-lint-ignore-start/end block (the supported
-      # escape valve, EDMV3-T43 AC6) -- being merely inside a mermaid fence is not itself a
-      # suppression reason, since that is exactly what this class exists to inspect.
-      is_ignored_line "$lineno" "$marker_set" && continue
-      linetext="$(sed -n "${lineno}p" "$file" 2>/dev/null || true)"
-      if [[ "$linetext" == *'<!-- edm-lint-ignore -->'* ]]; then
+    local rec rest kind lineno snippet
+    # Lines suppressed by an EXPLICIT edm-lint-ignore-start/end block (the supported escape
+    # valve, EDMV3-T43 AC6) are filtered inside the awk pass via EDM_MARKER_SET.
+    #
+    # Split the record by hand rather than with `IFS=$'\t' read`: tab is IFS whitespace, so read
+    # would collapse the field separator and a following literal tab into one delimiter and eat
+    # the leading indentation of any tab-indented source line reported in the snippet.
+    while IFS= read -r rec; do
+      [[ -z "$rec" ]] && continue
+      kind="${rec%%$'\t'*}"
+      rest="${rec#*$'\t'}"
+      lineno="${rest%%$'\t'*}"
+      snippet="${rest#*$'\t'}"
+      if [[ "$kind" == "U" ]]; then
         snippet="unsupported: edm-lint-ignore has no effect inside a mermaid fence (Mermaid's comment syntax is %%); use edm-lint-ignore-start/end around the fence instead"
-        report_violation "mermaid-semicolon" "$file" "$lineno" "$snippet"
-        continue
       fi
-      if mermaid_line_is_violation "$linetext"; then
-        snippet="$(printf '%s' "$linetext" | cut -c1-120)"
-        report_violation "mermaid-semicolon" "$file" "$lineno" "$snippet"
-      fi
-    done <<< "$mermaid_set"
+      report_violation "mermaid-semicolon" "$file" "$lineno" "$snippet"
+    done < <(mermaid_scan_awk "$file" "$mermaid_set" "$marker_set" 2>/dev/null || true)
   done
 }
 
