@@ -443,7 +443,25 @@ this refresh is never silently repriced on a later read:
 | Sonnet 4.6 | $3 | $15 | $0.30 | $3.75 | $6.00 |
 | Haiku 4.5 | $1 | $5 | $0.10 | $1.25 | $2.00 |
 
-Override the current-generation rates with `EDM_OPUS_INPUT_RATE`, `EDM_SONNET_OUTPUT_RATE`, `EDM_HAIKU_CACHE_READ_RATE`, `EDM_OPUS_CACHE_WRITE_5M_RATE`, `EDM_OPUS_CACHE_WRITE_1H_RATE`, etc. when rates change. A `model_used` value matching neither generation nor the `unknown` no-session sentinel produces an explicit stderr warning and is priced at the current Sonnet-tier rate as a placeholder (EDMV3-T52 AC10) rather than silently costing zero.
+Override the current-generation rates with `EDM_OPUS_INPUT_RATE`, `EDM_SONNET_OUTPUT_RATE`, `EDM_HAIKU_CACHE_READ_RATE`, `EDM_OPUS_CACHE_WRITE_5M_RATE`, `EDM_OPUS_CACHE_WRITE_1H_RATE`, etc. when rates change.
+
+**How `compute_cost_usd` picks a rate row, and the gap that leaves.** The `case` in `bin/edm-state`
+matches, in order: the three previous-generation identifiers (`*opus-4-7*`, `*sonnet-4-6*`,
+`*haiku-4-5*`) at their frozen rates; then the `unknown` no-session sentinel; then the bare family
+wildcards `*opus*`, `*sonnet*`, `*haiku*` at current-generation rates. The explicit stderr warning
+("unrecognized model_used ... verify manually", EDMV3-T52 AC10) fires **only in the final `*)`
+arm** -- that is, only for an identifier matching none of the three families, such as a non-Claude
+model string.
+
+The consequence, stated plainly because this table exists for economics honesty: **a model from a
+newer (or older) generation within a known family is priced at the current-generation rate for
+that family, silently, with no warning.** `claude-opus-5-20260501` matches `*opus*` and is billed
+at the Opus 4.8 row; `claude-sonnet-9` matches `*sonnet*` and is billed at the Sonnet 4.7 row.
+Neither prints anything. A recorded `estimated_cost_usd` can therefore understate or overstate the
+real spend by whatever the generation-over-generation rate delta happens to be, and nothing in the
+figure itself marks it as suspect. Cross-check `model_used` against the two tables above before
+quoting a cost figure from a run driven by a model generation newer than this section's
+"Verified" date.
 
 Cache writes are tracked separately by TTL (5-minute vs 1-hour) because they have different rates. Claude Code typically uses 1-hour caching for system prompts and tool definitions, so `cache_write_1h` is usually the dominant figure.
 
@@ -637,7 +655,27 @@ tasks (same trust tier as hooks), confirmed by direct inspection of the installe
 ## Artifact content conventions
 
 Every artifact this plugin produces or templates is **ASCII-only**: no em dashes, no arrows (use `->`), no smart
-quotes, no emoji glyphs. `edm-lint-artifacts` class 2 enforces this at commit time over every tracked artifact tree.
+quotes, no emoji glyphs.
+
+**What actually enforces it, and what does not.** `edm-lint-artifacts` class 2 (`unicode`) is the
+check, but its reach is narrower than the rule:
+
+- **It scans initiative directories only.** Prefix mode resolves one initiative directory via
+  `edm-state resolve-dir`; `--all` walks the initiative directories `edm-state list --paths`
+  returns. Both then call `collect_md_files`, a plain `find` for `*.md` excluding `.git/` and
+  `.archived/`. Git is never consulted, so "tracked" is not a property the scan can observe -- an
+  untracked `.md` file sitting in an initiative directory is scanned exactly like a committed one.
+- **Lines inside fenced code blocks are skipped**, as are lines under an `edm-lint-ignore` marker.
+- **This plugin's own source tree is scanned by no invocation the hook or CI makes.** The
+  `PreToolUse` git-commit hook runs prefix mode; the `lint:artifacts` CI job runs `--all`. Neither
+  reaches `plugins/edm/skills/`, `plugins/edm/agents/`, `plugins/edm/docs/` (including
+  `docs/templates/`, named as "templates" in the rule above), `plugins/edm/evals/`, this file, or
+  `README.md`. Em dashes have in fact landed in `skills/` and `agents/` and survived there
+  undetected, found only by hand -- the rule holds for the plugin's own prose, but nothing
+  automatic is checking it.
+
+To check a tree the automatic invocations miss, run `edm-lint-artifacts --path <dir>` by hand; it
+is read-only and calls no state resolution.
 
 **Imported third-party documents are ASCII-normalized on import** -- when an external document (a design review, a
 vendor report, a pasted analysis) is copied into an initiative's directory, the person or agent performing the
@@ -741,9 +779,21 @@ Absent `schema_version` is the legacy pre-EDMV3 signal (grandfathered, C-4).
 **Three-valued degradation.** A present-but-lower `schema_version` is a distinct state from both
 "legacy/absent" (no enforcement at all) and "fully compliant" (every check applies normally): a
 check whose required version is *above* the recorded `schema_version` degrades to warn-and-proceed
-naming the check; a check *at or below* the recorded version applies normally. Each check that
-consults `schema_version` records its own minimum in a `# requires schema_version >= N` comment at
-the check in `bin/edm-state`. EDMV3-T09 defines this contract and lands the one such comment for
+naming the check; a check *at or below* the recorded version applies normally. The standard for a
+check that consults `schema_version` is to record its own minimum in a `# requires schema_version
+>= N` comment at the check in `bin/edm-state`. Five of the eight `schema_at_least()` call sites in
+`bin/edm-state` carry that comment today; three do not, and adding them is outstanding work rather
+than a sanctioned exception:
+
+- `cmd_approve_gate`'s code-audit convergence precheck (needs `>= 2`) -- the surrounding comment
+  explains the gating in prose but does not use the canonical form.
+- `cmd_archive`'s wave-B sub-check block (needs `>= 2`) -- reads "gated on schema_version >= 2",
+  which is the right number in the wrong shape, so a grep for the canonical string misses it.
+- `cmd_audit_converged` (needs `>= 2`) -- no schema comment at all.
+
+Until those three are brought into line, do not treat "no `# requires schema_version >= N` comment
+here" as evidence that a check is version-independent; check the `schema_at_least()` call itself.
+EDMV3-T09 defines this contract and lands the one such comment for
 the check that exists as of wave A (EDMV3-115, `cmd_gate_check`); the degradation *behaviour*
 itself is implemented per-check by the ticket that owns that check. EDMV3-T14 wires the shared
 `schema_at_least()` helper into the wave-A checks (`cmd_phase_complete`, `cmd_archive`) and tests
@@ -774,7 +824,7 @@ skill that owns each step, never restated in the dispatcher (EDMV3-T37).
 | `lifecycle_mode` | What changes | Owning phase skill(s) |
 |---|---|---|
 | `standard` | No change from the `mode` behavior above | -- |
-| `fast-track` / `fix-pack` | Tickets generated directly from an analysis document; Phases 1, 2, 3, 5 recorded `skip-phase`; a single review gate (`"Gate 3 -- Ticket Review"`) replaces the normal Gate 2 -> Phase 4 -> Gate 3 sequence | `skills/tickets/SKILL.md` ("Fast-Track / Fix-Pack Mode" section) |
+| `fast-track` / `fix-pack` | Tickets generated directly from an analysis document; Phases 1, 2, 3, 5 recorded `skip-phase`; a single ticket-pack review gate, header `"Gate 3"`, replaces the normal Gate 2 -> Phase 4 -> Gate 3 sequence; no convergence gate required to archive (`cmd_archive` exempts both `lifecycle_mode` values regardless of `mode` and records `archive_exemptions: ["CONVERGENCE_NOT_REQUIRED"]`) | `skills/tickets/SKILL.md` ("Fast-Track / Fix-Pack Mode" section) |
 
 `compliance_enabled=true` inserts **Gate 3.5** (a compliance review, distinct from the `mode` and
 `lifecycle_mode` families above) between Gate 3 and Phase 6, and adds regulatory-traceability
@@ -803,7 +853,7 @@ Prompted at install time. See `.claude-plugin/plugin.json` for the live schema. 
 - `srd_root` -- output root directory (default `./SRD`)
 - `srd_filename` -- SRD file inside the initiative directory (default `srd.md`)
 - `ticket_pack_dirname` -- ticket pack subdirectory name (default `tickets`)
-- `prefix_format_hint` -- hint shown when prompting for a prefix (default `UPPERCASE 3-6 chars`)
+- `prefix_format_hint` -- hint shown when prompting for a prefix (default `UPPERCASE 3-6 chars (AUTH, MIGR, TIPS)`)
 - `commit_state_file` -- whether `.edm-state.json` is git-tracked (default `true`)
 - `human_hourly_rate_usd` -- human developer rate for cost comparison in `/edm:metrics` (default `150`)
 - `jira_project_key` -- default Jira project key for `/edm:push-jira`; leave empty to require explicit arg (default `""`)

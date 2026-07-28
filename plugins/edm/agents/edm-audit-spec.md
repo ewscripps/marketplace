@@ -46,7 +46,10 @@ Flag as P1:
 - New data models that have no ticket
 - New configuration options that have no ticket
 
-Flag as P2 (scope creep doesn't block ship but should be documented or removed)
+Flag as P2 (minor: the code either gets a ticket that specifies it, or gets removed). P2 is not a
+soft severity -- an open P2 blocks convergence exactly as P0 and P1 do (`CLAUDE.md
+Sec."Severity vocabulary"`), so every scope-creep finding is remediated or demoted to `NOTED`
+through the False Alarm Filter before this round can converge.
 
 ## Process
 

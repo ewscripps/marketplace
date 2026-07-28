@@ -51,9 +51,12 @@ De-duplication: if the finding title (lowercased, whitespace-collapsed, trailing
 
 Pending entries (`status: pending-review`) are presented to a human at three existing HITL gates -- Gate 2 (`/edm:audit-srd`), Gate 3 (`/edm:audit-tickets`), and the code-audit Convergence gate -- alongside the findings review already happening there, never as a separate interaction round. For each pending entry the human is offered:
 
-- **Keep** -- remove the `status: pending-review` marker; the entry is curated as-is.
-- **Edit** -- prompt for the one-paragraph description, then remove the marker.
-- **Discard** -- remove the entry from the pattern document entirely.
+- **Keep** -- remove the `status: pending-review` marker; the entry is curated as-is. Heading, provenance lines and body stay exactly as written.
+- **Edit** -- prompt for the one-paragraph description, then remove the marker. The human's revised paragraph replaces the entry's body.
+- **Discard** -- remove the entry from the pattern document entirely: its `###` heading, its provenance lines and its body.
+- **Leave pending** -- change nothing. The entry keeps its marker and is offered again at the next gate.
+
+All four options are offered at every gate. **Leave pending** is load-bearing, not filler: an entry the human is not ready to judge needs a no-op, or the gate forces a premature keep-or-discard on a stub whose merit is not yet clear.
 
 Declining to curate (or when nothing is pending) leaves the gate presentation unchanged and never blocks gate approval -- the entries simply remain pending for the next gate.
 
@@ -63,15 +66,22 @@ This library is loaded at write time by three agents (EDMV2-81/82/83):
 - `edm-srd-writer` loads `srd-audit.md`
 - `edm-ticket-writer` loads `ticket-audit.md`
 - `edm-implementer` loads `qc-audit.md` + `code-audit.md`
-- `skills/orchestrator` uses `edm-state update-patterns` after each audit phase (EDMV2-80a)
+
+And appended to by each audit phase's own skill, which calls `edm-state update-patterns` directly
+(EDMV2-80a; the dispatcher does not -- phase procedure moved into the phase skills at EDMV3-T37):
+- `skills/audit-srd/SKILL.md:44` -- `edm-state update-patterns <PREFIX> srd`
+- `skills/audit-tickets/SKILL.md:46` -- `edm-state update-patterns <PREFIX> ticket`
+- `skills/code-audit/SKILL.md:110` -- `edm-state update-patterns <PREFIX> code`
+- `skills/implement/SKILL.md:46` -- `edm-state update-patterns <PREFIX> qc`
 
 And by the planning template (EDMV2-84):
-- `skills/orchestrator/SKILL.md` and `skills/plan/SKILL.md` planning.md template
+- `skills/plan/SKILL.md`'s planning.md template, which quotes the authoring guidance from
+  `srd-audit.md`
 
 ## How This Library Works
 
 - **Seed:** created from analysis of 16 real-world initiatives (600+ findings). See `SOURCES.md` for details.
-- **Auto-update:** after each audit phase, the orchestrator appends novel findings (EDMV2-80a).
+- **Auto-update:** after each audit phase, that phase's own skill appends novel findings (EDMV2-80a).
 - **Manual update:** `edm-state update-patterns <PREFIX> <audit-type>` to backfill on demand (EDMV2-80b).
 - **Consumer:** writer agents load the relevant doc at write time so guidance improves without manual prompt edits.
 

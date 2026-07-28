@@ -16,6 +16,67 @@ communication cadence and deliverable-length calibration, and this wave-C closeo
 `edm/edmv3-prompt-streamline` across EDMV3-T25(AC8), EDMV3-T30-T31, EDMV3-T33-T47, EDMV3-T50-T60)
 into this single versioned entry.
 
+### Wave-C QC remediation and prose-versus-code sweep
+
+Folded into this same unreleased entry rather than given a version of its own, because none of it
+shipped separately. Two QC shards audited T45-T67 and reported 34 findings; a subsequent
+prose-versus-code sweep enumerated 118 enforcement points, checked 110, and found 24 more. Every
+finding was remediated -- `NOTED` is the only status that closes one without a fix (decisions.md
+D13), and the convergence gate counts open P2 as blocking, so there was no lower tier to park
+anything in.
+
+The findings that were code defects rather than documentation drift:
+
+- **T54 never shipped its code half.** `update-patterns` still appended at end-of-file with no
+  `pending-review` marker, while the contract document asserted it never does that and T56's own
+  CI guard was built to fail on exactly what the append produced. Both stayed green only because
+  nothing in the suite ever called `update-patterns`. Insertion is now heading-targeted and a
+  missing heading is a skip, never an EOF fallback.
+- **A de-duplication bug that produced eleven copies over ten runs.** The normalizer stripped one
+  trailing paren group, but a library heading carries the source title's parens *plus* the
+  `(prefix, date, severity)` group this command appends, so any finding title ending in parens
+  never matched itself.
+- **T55's gate curation was documented and unimplemented**, with a green test asserting the
+  documentation.
+- **`edm-lint-artifacts` was 70,168 ms** on a 30-file initiative against a 3,000 ms budget, from
+  two per-line fork loops. Now 978 ms, with the Mermaid-class ratio at 1.19x against a 1.40x
+  ceiling. Byte-identical detection across 17 fixtures, a purpose-built adversarial corpus and a
+  full tree scan.
+- **Indented code fences were invisible to the linter**, in both directions: false positives on
+  the contents of an indented plain fence, and missed violations inside an indented mermaid fence.
+- **Exit codes contradicted their own contract** -- usage and environment errors returned 1,
+  colliding with "violations found", so the commit hook could not distinguish a misinvocation from
+  a dirty tree.
+- **The attribution class only recognized Claude.** `Generated-By: <any other tool>` passed clean
+  despite the convention banning those trailers as a class.
+- **`compute_cost_usd`'s family wildcards defeated T52 AC10 from inside a known family** (D32).
+  Every generation of Opus, Sonnet or Haiku was priced at *current*-generation rates with no
+  warning. This initiative's own recorded figures are the evidence: `model_used` is
+  `claude-sonnet-5` and `claude-fable-5`, neither of which is in either pricing table, so the
+  recorded $25.869 is placeholder arithmetic. Left as recorded rather than repriced against
+  invented rates, and now warned rather than silent.
+- **The convergence blocking set was described wrongly in four places.** `BLOCKING_FILTER`
+  includes open P2; the skill said P2 does not block, so `audit-converged` would have refused a
+  round the skill called clean.
+- **`implementation_mode` was named in three places as governing the code audit.** It governs
+  nothing of the kind, and the sentence mixed two orthogonal enums.
+- **The convergence exemption existed twice** in `bin/edm-state`, byte-identically, while every
+  prose description states it as one rule. Now one `convergence_exempt()`.
+- **The CI lint stage ran four checks as sequential script lines** (T67 AC10), so their times
+  summed and `set -e` hid every result after the first failure. Split into four jobs with
+  `needs:`. That split then dropped `jq` from two of them, caught before merge; and it exposed
+  that `edm-lint-artifacts --all` never had `edm-state` on PATH in any lint job, latent because
+  this pipeline has not yet run against a live runner.
+- **Nothing enforced ASCII on the plugin's own tree.** Class 2 scans initiative directories only,
+  which is how four em dashes reached `skills/` and `agents/` prompt templates -- the literal
+  shapes agents copy into artifacts. Shipped surfaces are now asserted ASCII-only, with a positive
+  control on the detector: the first version of that check used `grep -P`, which BSD grep rejects
+  with exit 2, and the guard swallowed it into a false green.
+- **T67 AC8 asserted `hooks.json` had no uncommitted diff**, which goes green after any commit
+  whatever the content. Replaced with seven assertions on the scoping properties it names.
+
+Suite: 1401 assertions passing before this remediation's own test additions.
+
 ### Added
 
 - **`edm-state phase-complete 6` is actually called** (EDMV3-T50): the orchestrator's Phase 6

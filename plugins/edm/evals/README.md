@@ -128,12 +128,26 @@ the only tree the three phases were ever expected to touch. A clean run prints
 
 ## Lint policy
 
-**Eval run artifacts are linted by the same rules as real artifacts.** A run that produces
+**Eval run artifacts are held to the same content rules as real artifacts.** A run that produces
 non-ASCII text or malformed Mermaid inside `planning.md`, `srd.md`, `architecture.md`, or
-`audit-srd.md` is a genuine signal about the prompts, not noise to filter out -- and those lint
-results feed the scorer's dimension 3 (Mermaid parse success, EDMV3-T23). Committed baseline run
-artifacts, by contrast, live outside the plugin source tree entirely (see below) and are excluded
-from `edm-lint-artifacts --all` by location, not by an exemption rule.
+`audit-srd.md` is a genuine signal about the prompts, not noise to filter out.
+
+**Nothing lints them automatically, though.** `run-eval.sh` contains no reference to
+`edm-lint-artifacts` -- it provisions, runs three phases, and checks containment, and that is all.
+Neither does the `eval:nightly` CI job, which runs the driver, then the scorer, then
+`bin/edm-compare-eval`. To lint a run, invoke it by hand:
+
+```bash
+bash plugins/edm/bin/edm-lint-artifacts --path plugins/edm/evals/runs/<run-dir>
+```
+
+The scorer's dimension 3 (Mermaid parse success, EDMV3-T23) does **not** consume lint output. It
+runs its own `_scan_mermaid_blocks` over the four artifact files and scores a per-block OK/BAD
+ratio -- see the header comment in `score-artifacts.sh` for why that implementation is separate
+from the linter's mermaid-semicolon class rather than delegating to it.
+
+Committed baseline run artifacts live outside the plugin source tree entirely (see below) and are
+excluded from `edm-lint-artifacts --all` by location, not by an exemption rule.
 
 ## Where committed run artifacts live
 

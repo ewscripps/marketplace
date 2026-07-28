@@ -129,8 +129,8 @@ All phase skills set `disable-model-invocation: true` -- Claude won't auto-fire 
 
 | Agent | Phase | Model |
 |---|---|---|
-| `edm-explorer` | 1 -- Planning | opus / max |
-| `edm-architect` | 2 -- Architecture | opus / max |
+| `edm-explorer` | 1 -- Planning | sonnet / high |
+| `edm-architect` | 2 -- Architecture | opus / high |
 | `edm-srd-writer` | 2 -- SRD content | opus / high |
 | `edm-srd-auditor` | 3 -- SRD audit | opus / max (read-only) |
 | `edm-ticket-writer` | 4 -- Tickets | opus / high |
@@ -148,7 +148,7 @@ All phase skills set `disable-model-invocation: true` -- Claude won't auto-fire 
 | `edm-test-contract` | Testing | sonnet / high (green) -- OpenAPI/GraphQL contract tests |
 | `edm-test-e2e` | Testing | sonnet / high (green) -- Playwright/Cypress journeys |
 | `edm-test-a11y` | Testing | sonnet / high (green) -- axe-core + keyboard nav |
-| `edm-test-coverage-auditor` | Testing | opus / max (cyan, read-only) -- coverage gaps + AC cross-ref |
+| `edm-test-coverage-auditor` | Testing | sonnet / high (cyan, read-only) -- coverage gaps + AC cross-ref |
 
 ## When to Use EDM
 

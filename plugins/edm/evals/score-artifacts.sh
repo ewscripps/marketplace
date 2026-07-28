@@ -61,13 +61,24 @@
 # decimal place only at print time (EDMV3-T23 Technical Notes).
 #
 # Dimension 3's "no raw ; in label text" check is score-artifacts.sh's own standalone
-# Mermaid-block scan, not a call into bin/edm-lint-artifacts: as of this ticket landing,
-# edm-lint-artifacts has three violation classes (attribution, unicode, leaked-tool-tag)
-# and does not yet have the fourth Mermaid-semicolon class described by EDMV3-56 (wave B).
-# When that class lands, dimension 3 should be updated to consume it directly (via
-# `edm-lint-artifacts --path <run-dir>`) rather than maintain a second implementation of
-# the same rule (EDMV3-111) -- there is nothing to consume yet, so that is a follow-up,
-# not a defect in this ticket.
+# Mermaid-block scan (_scan_mermaid_blocks, below), not a call into bin/edm-lint-artifacts.
+# edm-lint-artifacts now HAS the fourth mermaid-semicolon class (EDMV3-56, wave B), so the
+# two implementations of the semicolon rule genuinely overlap and that overlap is real
+# duplication (EDMV3-111). It is retained deliberately rather than replaced, for three
+# reasons a straight swap would break:
+#   1. Dimension 3 is "mermaid-parse-success", a superset of the semicolon rule. It also
+#      requires each block's first non-blank line to be a recognized diagram-type keyword,
+#      and treats an empty or unterminated block as bad. edm-lint-artifacts checks none of
+#      those.
+#   2. The score is a per-block OK/BAD ratio over exactly four named artifact files.
+#      edm-lint-artifacts reports per-LINE violations over every *.md under a path and
+#      signals via exit code 1, which this scorer must never do for a low score (AC5).
+#   3. This script depends on nothing beyond bash 3.2 and jq (AC6) and calls nothing in
+#      bin/. Shelling out to edm-lint-artifacts would put a bin/ script on the scorer's
+#      required PATH.
+# The de-duplication worth doing is therefore not "call the linter": it is to lift the
+# shared semicolon-detection awk into one sourceable file both consume. That is a bin/
+# change and is not attempted here.
 #
 # Depends on nothing beyond bash 3.2 and jq (AC6). Never calls bin/edm-state, never reads
 # ANTHROPIC_API_KEY, never launches claude -- this script only ever reads files under the
