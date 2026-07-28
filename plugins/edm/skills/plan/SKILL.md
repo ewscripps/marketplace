@@ -54,7 +54,7 @@ allowed-tools: Read, Write, Bash(edm-state *), Bash(edm-init *), Bash(edm-valida
 ### 3. Define Scope Boundaries
 - **In scope**: what this delivers
 - **Out of scope**: explicit exclusions
-- **Deferred**: follow-up initiatives
+- **Follow-on initiatives**: recorded scope boundaries
 
 ### 4. Identify Constraints
 Licensing, code ownership, regulatory requirements, platform limitations, team expertise.

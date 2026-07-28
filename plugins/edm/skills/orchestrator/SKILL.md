@@ -377,7 +377,7 @@ Before starting any phase (on a new initiative or a resume), run two read-only s
    b. Collect all `[DECISION: ...]` questions. Batch them into `AskUserQuestion` calls (up to 4 per call).
       - Use a <=12-char header that names the decision (e.g., `"Auth method"`, `"DB approach"`).
       - Parse the options from the tag brackets -- those become the selectable choices.
-      - Always append an `"Defer to SRD"` option so the user can skip without blocking.
+      - Always append a `"Resolve in SRD"` option so the user can skip without blocking.
 
    c. If any `[OPEN]` questions remain, output them as a numbered list and wait for the user's typed
       response before continuing.
@@ -392,7 +392,7 @@ Before starting any phase (on a new initiative or a resume), run two read-only s
    - **Constraints**: key constraints surfaced
    - **Complexity**: Small/Medium/Large with estimated ticket count
    - **Decisions resolved**: N of N open questions answered
-   - **Deferred to SRD**: any questions answered "Defer to SRD"
+   - **Resolved in SRD**: any questions answered "Resolve in SRD"
    - **Recommendation**: Go / No-Go with one-line rationale
 
    Then call `AskUserQuestion` with header `"Gate 1"` and options:
@@ -449,7 +449,7 @@ Before starting any phase (on a new initiative or a resume), run two read-only s
    - **Requirements**: count by priority (P0/P1/P2)
    - **Architecture decisions**: key choices made
    - **Risks**: top 3 from audit
-   - **Audit findings resolved**: P0: N, P1: N, P2: N deferred
+   - **Audit findings resolved**: P0: N, P1: N, P2: N
 
    Options:
    - **Approve** -- SRD is correct, proceed to ticket creation
@@ -530,7 +530,7 @@ Before starting any phase (on a new initiative or a resume), run two read-only s
    | Finding {ID} | <source> | <resolution> | {ticket-ref} | resolved |
    ```
 7. Write the execution report to `exec-report.md` in the initiative directory (or `epicN-execution-report.md`
-   for per-epic variants). Minimum content: summary of what was built, deferred work, known issues,
+   for per-epic variants). Minimum content: summary of what was built, recorded scope boundaries, known issues,
    outstanding PARTIAL ACs (referencing `qc/qc-summary.md`), and a `mode` field (e.g., `live-db`, `dry-run`).
    Note: this `mode` field is the **run** mode, distinct from the `mode` adaptation profile in state.
 8. `edm-state phase-complete <PREFIX> 6`

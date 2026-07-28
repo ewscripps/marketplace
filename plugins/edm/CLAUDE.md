@@ -180,9 +180,13 @@ All EDM audit agents use the following four-level scale. No agent may define a d
 | Level | Meaning | Required action |
 |---|---|---|
 | **P0** | Critical -- blocks implementation, security/legal issue, production failure, or architecturally wrong | Fix before this phase may be called complete |
-| **P1** | Significant -- material gap, factual error, missing requirement, or behavior that must be corrected before shipping | Fix before shipping; defer only with explicit written rationale |
-| **P2** | Minor -- polish, edge-case, improvement, or nice-to-have | Fix if low-effort; explicitly defer otherwise |
+| **P1** | Significant -- material gap, factual error, missing requirement, or behavior that must be corrected before shipping | Remediated before the phase or round may be called complete |
+| **P2** | Minor -- polish, edge-case, improvement, or nice-to-have | Remediated before convergence |
 | **NOTED** | Not actionable -- the issue is intentional, pre-existing, or a known accepted trade-off | Document in "Decisions / Non-Findings"; do not re-investigate |
+
+`NOTED` is not actionable and is distinct from deferral -- a deferral is an actionable finding
+postponed to later, and deferral does not exist in this methodology. Every P0, P1 and P2 finding
+is remediated before convergence; `NOTED` is the only status that closes a finding without a fix.
 
 **Backward-compatibility mapping** (from the synthesizer's legacy P1/P2/P3 scale used before v2.0):
 - Legacy P1 (production failure / security) -> **P0**
