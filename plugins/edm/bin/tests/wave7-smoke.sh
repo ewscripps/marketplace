@@ -1069,6 +1069,45 @@ t30_ac2_case() {
 t30_ac2_case
 # EDMV3-T30 end
 
+# ---- EDMV3-T31: implement/QC PARTIAL-lifecycle sweep, verified against the checker ------------
+echo
+echo "T30 AC12/T31 -- the checker's remaining violations, if any, are outside this ticket pair's file boundary"
+t30_scan_out="$(bash "$CHECK_VOCAB" 2>&1 || true)"
+check_absent "T31 -- skills/implement/SKILL.md carries no checker violation" "skills/implement/SKILL.md:" "$t30_scan_out"
+check_absent "T31 -- agents/edm-qc-auditor.md carries no checker violation" "agents/edm-qc-auditor.md:" "$t30_scan_out"
+check_absent "T31 -- hooks/hooks.json carries no checker violation" "hooks/hooks.json:" "$t30_scan_out"
+check_absent "T30 -- CLAUDE.md carries no checker violation (its NOTED-clarification is allowlisted)" "plugins/edm/CLAUDE.md:" "$t30_scan_out"
+
+echo
+echo "T31 AC1/AC2/AC3 -- skills/implement/SKILL.md: every-severity FAIL compilation, PARTIAL lifecycle rewritten"
+IMPL_SKILL="$(cat "${PLUGIN_DIR}/skills/implement/SKILL.md")"
+check_absent "T31 AC1 -- no severity-filtered FAIL compilation" "P0/P1 FAIL" "$IMPL_SKILL"
+check "T31 AC1 -- FAIL compilation is at every severity" "at every severity" "$IMPL_SKILL"
+check_absent "T31 AC2 -- abolished 'do not require remediation' sentence is gone" "do not require remediation" "$IMPL_SKILL"
+check "T31 AC2 -- PARTIAL closure via mandatory verify-runtime" "mandatory \`/edm:verify-runtime\` step" "$IMPL_SKILL"
+check "T31 AC3 -- Declare Done requires verify-runtime" "Every outstanding PARTIAL closed via \`/edm:verify-runtime\`" "$IMPL_SKILL"
+check_absent "T31 AC4 -- no residual deferred-to-runtime token" "deferred-to-runtime" "$IMPL_SKILL"
+check "T31 AC5 -- Out of Scope (recorded boundaries) section" "## Out of Scope (recorded boundaries)" "$IMPL_SKILL"
+check "T31 AC6 -- Runtime-check note exec-report column" "Runtime-check note" "$IMPL_SKILL"
+
+echo
+echo "T31 AC7/AC8 -- agents/edm-qc-auditor.md: PARTIAL semantics preserved, abolished sentence rewritten"
+QC_AUDITOR="$(cat "${PLUGIN_DIR}/agents/edm-qc-auditor.md")"
+check "T31 AC7 -- Never invent a PASS survives verbatim" "Never invent a PASS for something you cannot verify" "$QC_AUDITOR"
+check_absent "T31 AC7 -- no residual deferred-to-runtime token" "deferred-to-runtime" "$QC_AUDITOR"
+check "T31 AC8 -- abolished PARTIAL-remediation sentence rewritten to name verify-runtime closure" \
+  "closed by the mandatory \`/edm:verify-runtime\` step" "$QC_AUDITOR"
+
+echo
+echo "T31 AC11 -- hooks/hooks.json: runtime-check token, still valid JSON"
+jq -e . "${PLUGIN_DIR}/hooks/hooks.json" >/dev/null 2>&1 \
+  && pass "T31 AC11 -- hooks.json is valid JSON" || fail "T31 AC11 -- hooks.json failed to parse"
+t31_hooks_defer_count="$(jq -r '.. | strings' "${PLUGIN_DIR}/hooks/hooks.json" 2>/dev/null | grep -c 'deferred-to-runtime' || true)"
+[[ "${t31_hooks_defer_count:-0}" -eq 0 ]] && pass "T31 AC11 -- no deferred-to-runtime string inside any hooks.json JSON value" \
+  || fail "T31 AC11 -- hooks.json still contains deferred-to-runtime in a JSON string value"
+check "T31 AC11 -- hooks.json prompt uses runtime-check token" "runtime-check:" "$(cat "${PLUGIN_DIR}/hooks/hooks.json")"
+# EDMV3-T31 end
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

@@ -30,7 +30,7 @@ For each ticket in your assigned epic (or assigned shard range, if sharding is a
 | Verdict | Precise Meaning |
 |---|---|
 | **PASS** | The AC is statically verifiable AND the code provably satisfies it -- evidence found with file:line |
-| **PARTIAL** | The AC **cannot be verified statically** and requires a live runtime environment (running service, real DB, deployed container). Record a `deferred-to-runtime` note describing what runtime check would resolve it. **Never invent a PASS for something you cannot verify.** |
+| **PARTIAL** | The AC **cannot be verified statically** and requires a live runtime environment (running service, real DB, deployed container). Record a `runtime-check:` note describing what runtime check would resolve it. **Never invent a PASS for something you cannot verify.** |
 | **FAIL** | The AC is statically verifiable AND the code provably does NOT satisfy it |
 
 **Ticket-level rollup (worst-case)**:
@@ -56,9 +56,9 @@ Examples of statically-verifiable ACs (must be PASS or FAIL):
 [SEVERITY] {PREFIX}-T{NN} | path/to/file.py:line | AC#{N}: {criterion text} | {what's wrong}
 ```
 
-For PARTIAL (deferred-to-runtime):
+For PARTIAL (runtime-check:):
 ```
-[PARTIAL] {PREFIX}-T{NN} | AC#{N}: {criterion text} | deferred-to-runtime: {what runtime check would verify this}
+[PARTIAL] {PREFIX}-T{NN} | AC#{N}: {criterion text} | runtime-check: {what runtime check would verify this}
 ```
 
 Severity for FAIL findings -- use the canonical scale from `CLAUDE.md Sec."Severity vocabulary"`:
@@ -100,10 +100,10 @@ All N acceptance criteria verified.
 
 ### {PREFIX}-T{MM}: {title} -- PARTIAL
 - [x] AC1-AC3: Verified (statically)
-- [ ] AC4: {criterion text} -- **deferred-to-runtime**: requires a running service to verify the 201 response
+- [ ] AC4: {criterion text} -- **runtime-check:** requires a running service to verify the 201 response
 - [x] AC5-AC8: Verified (statically)
 
-**Finding**: [PARTIAL] {PREFIX}-T{MM} | AC#4: deferred-to-runtime: call the endpoint with a live server and assert 201
+**Finding**: [PARTIAL] {PREFIX}-T{MM} | AC#4: runtime-check: call the endpoint with a live server and assert 201
 
 ### {PREFIX}-T{KK}: {title} -- FAIL
 - [x] AC1-AC2: Verified
@@ -113,7 +113,7 @@ All N acceptance criteria verified.
 
 ## Remediation Required
 
-[Prioritized P0 and P1 FAIL findings with file:line and specific fix. PARTIAL findings do not require remediation -- they are deferred to runtime verification.]
+[Prioritized FAIL findings, at every severity, with file:line and specific fix. PARTIAL findings are not remediated here -- they are closed by the mandatory `/edm:verify-runtime` step before archive, which either upgrades each to PASS or downgrades it to FAIL for remediation like any other finding.]
 ```
 
 ## Process
@@ -122,7 +122,7 @@ All N acceptance criteria verified.
 2. For each ticket, read every file in `Target Components`
 3. For each AC: first classify as statically-verifiable or runtime-only
 4. For statically-verifiable ACs: grep/read for evidence; grade PASS or FAIL
-5. For runtime-only ACs: grade PARTIAL with a `deferred-to-runtime` note
+5. For runtime-only ACs: grade PARTIAL with a `runtime-check:` note
 6. Assign ticket verdict (worst-case rollup: FAIL > PARTIAL > PASS)
 7. Compile all findings; write report to canonical qc/ path
 
@@ -152,6 +152,6 @@ In `implementation_mode=standard`, this pass does not run -- standard QC behavio
 - Error responses include the specified fields and format
 - Tests: if AC specifies a test must exist, search for the test file and function
 - Edge cases: if AC specifies edge case behavior, is that code path present?
-- Integration ACs (running services, DB calls, browser events): these are runtime-only -- PARTIAL with deferral note
+- Integration ACs (running services, DB calls, browser events): these are runtime-only -- PARTIAL with a runtime-check note
 
 Be precise. A developer will use your FAIL findings to fix specific lines. Vague findings are useless -- give the file, line, and exact discrepancy. For PARTIAL findings, be equally precise about what runtime check is needed.
