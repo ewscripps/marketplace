@@ -1,0 +1,2 @@
+{"schema":1,"id":null,"lens":"L5","round":1,"round_type":"full","sev":"P2","confidence":"low","file":"src/worker/queue.js","line":8,"title":"temp file path is not covered by any .gitignore glob","status":"open"}
+{"schema":1,"id":null,"lens":"L5","round":1,"round_type":"full","sev":"NOTED","confidence":"medium","file":"src/api/server.js","line":1,"title":"log file is rotated externally by systemd, documented in the runbook","status":"noted"}

@@ -62,11 +62,13 @@ Your mandate is ONLY this lens. Do not audit other dimensions -- other agents ha
 
 You have exactly two permitted write paths, both inside the current pass directory:
 - `${OUTPUT_DIR}/lens-L8.md` -- your raw findings report (written per the Output Format below)
-- `${OUTPUT_DIR}/lens-L8.jsonl` -- reserved for one JSON object per finding (EDMV3-T24 implements the emission itself; do not write it until that ticket lands)
+- `${OUTPUT_DIR}/lens-L8.jsonl` -- one JSON object per line, one line for every finding (schema and enum rules in the JSONL Line Format section below)
 
 Report text is ASCII-only -- no Unicode em dashes, arrows, smart quotes, or emoji glyphs.
 
 Writing anywhere else is a contract violation. `skills/code-audit/SKILL.md:40`'s `mkdir -p "${OUTPUT_DIR}"` runs before you are launched -- that is why you are granted `Write` but no `Bash(mkdir *)`: the directory already exists by the time you start.
+
+The JSONL file is authoritative on conflict: every prose finding in `lens-L8.md` must have exactly one corresponding line in `lens-L8.jsonl`. If the two ever disagree about a finding, the JSONL is what the synthesizer and every downstream gate trust.
 
 ## Output Format
 
@@ -79,3 +81,30 @@ Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severit
 ## Noted / Not Actionable
 [false alarms with one-line rationale]
 ```
+
+## JSONL Line Format
+
+Write one JSON object per line in `${OUTPUT_DIR}/lens-L8.jsonl` for every finding -- not just the
+first, and not just the high-confidence ones. `NOTED` items get a line too, at `sev: "NOTED"` /
+`status: "noted"`, so demotion is recorded as data rather than lost.
+
+The schema is fixed and documented once, identically in every lens prompt:
+`{"schema":1,"id":null,"lens":"L8","round":N,"round_type":"full|partial","sev":"P0|P1|P2|NOTED","confidence":"high|medium|low","file":"path","line":42,"title":"...","status":"open"}`
+
+- `id` is always `null` at the lens stage -- the synthesizer assigns the stable `CA-NNN` ledger ID.
+- `round` and `round_type` are supplied by the code-audit skill from the round it actually
+  launched -- do not re-declare them yourself.
+- `sev` is exactly one of `P0`, `P1`, `P2`, `NOTED` (the canonical scale, `CLAUDE.md
+  Sec."Severity vocabulary"`).
+- `confidence` is mandatory on every line and is exactly `high`, `medium`, or `low` -- a finding
+  with no confidence value is a contract violation.
+- `status` is exactly one of `open`, `fixed`, `noted` -- no other value is legal, including any
+  status token used by an earlier version of this methodology. `sev: "NOTED"` pairs only with
+  `status: "noted"`; `status: "open"` never pairs with `sev: "NOTED"`; `status: "fixed"` may carry
+  any severity.
+- Every emitted line is valid JSON: one object, no trailing comma, no comments.
+
+Residual risk, stated once here and in `architecture.md`: a count match does not imply a content
+match between `lens-L8.jsonl` and `lens-L8.md` -- a finding present in the prose report with no
+corresponding JSONL line is invisible to every downstream gate. That is a recall loss, not an
+integrity loss.

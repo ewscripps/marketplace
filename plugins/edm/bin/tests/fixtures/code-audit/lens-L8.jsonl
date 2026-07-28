@@ -1,0 +1,2 @@
+{"schema":1,"id":null,"lens":"L8","round":1,"round_type":"full","sev":"P0","confidence":"high","file":"src/worker/queue.js","line":1,"title":"queue consumer's systemd unit runs as root with no NoNewPrivileges","status":"open"}
+{"schema":1,"id":null,"lens":"L8","round":1,"round_type":"full","sev":"NOTED","confidence":"medium","file":"config/settings.json","line":1,"title":"hardcoded path is identical across all deployment hosts by design","status":"noted"}

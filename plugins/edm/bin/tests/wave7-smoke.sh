@@ -845,6 +845,146 @@ t64_marketplace_version="$(jq -r '.plugins[] | select(.name=="edm") | .version' 
   && pass "T64 AC1 -- plugin.json version is 2.1.0" \
   || fail "T64 AC1 -- plugin.json version is '$t64_plugin_version', expected '2.1.0'"
 
+# =================================================================================
+# EDMV3-T24: every lens emits JSONL with confidence under a two-path output contract.
+# This block asserts the eleven lens agent prompts (agents/edm-audit-*.md, excluding the
+# synthesizer, which is not a lens) and the committed AC0 fixture at
+# bin/tests/fixtures/code-audit/. Batch scope note: this agent's remit for this batch is
+# agents/edm-audit-*.md, skills/code-audit/SKILL.md, and this wave7-smoke.sh append block --
+# bin/edm-state, bin/edm-lint-artifacts and plugins/edm/CLAUDE.md are out of scope and are not
+# touched here (owned by other agents this batch).
+# =================================================================================
+LENS_AGENTS="edm-audit-logic edm-audit-dead-code edm-audit-edge-cases edm-audit-test-quality edm-audit-runtime edm-audit-docs edm-audit-consistency edm-audit-security edm-audit-spec edm-audit-dry edm-audit-wiring"
+CODE_AUDIT_FIXTURE_DIR="${PLUGIN_DIR}/bin/tests/fixtures/code-audit"
+ARCHITECTURE_MD="$(cd "$PLUGIN_DIR/../.." && pwd)/SRD/edm/EDMV3__prompt-streamline/architecture.md"
+
+echo
+echo "T24 AC0 -- committed synthetic code-audit pass fixture exists with the required shape"
+t24_jsonl_count="$(ls "${CODE_AUDIT_FIXTURE_DIR}"/lens-L*.jsonl 2>/dev/null | wc -l | tr -d '[:space:]')"
+[[ "$t24_jsonl_count" -eq 11 ]] && pass "T24 AC0 -- eleven lens-L*.jsonl fixture files present" \
+  || fail "T24 AC0 -- found $t24_jsonl_count lens-L*.jsonl fixture file(s), expected 11"
+t24_md_count="$(ls "${CODE_AUDIT_FIXTURE_DIR}"/lens-L*.md 2>/dev/null | wc -l | tr -d '[:space:]')"
+[[ "$t24_md_count" -eq 11 ]] && pass "T24 AC0 -- eleven lens-L*.md fixture prose reports present" \
+  || fail "T24 AC0 -- found $t24_md_count lens-L*.md fixture file(s), expected 11"
+[[ -f "${CODE_AUDIT_FIXTURE_DIR}/lenses-run.txt" ]] && pass "T24 AC0 -- lenses-run.txt present" \
+  || fail "T24 AC0 -- lenses-run.txt missing"
+check "T24 AC0 -- lenses-run.txt carries the Round type: header" "Round type: full" \
+  "$(cat "${CODE_AUDIT_FIXTURE_DIR}/lenses-run.txt" 2>/dev/null)"
+[[ -s "${CODE_AUDIT_FIXTURE_DIR}/README.md" ]] && pass "T24 AC0 -- fixture README.md present and non-empty" \
+  || fail "T24 AC0 -- fixture README.md missing or empty"
+check "T24 AC0 -- fixture README states it is hand-authored, not captured" "hand-authored" \
+  "$(cat "${CODE_AUDIT_FIXTURE_DIR}/README.md" 2>/dev/null)"
+t24_l1_sevs="$(jq -sr '[.[].sev] | sort | unique | join(",")' "${CODE_AUDIT_FIXTURE_DIR}/lens-L1.jsonl" 2>/dev/null)"
+[[ "$t24_l1_sevs" == "NOTED,P0,P1,P2" ]] \
+  && pass "T24 AC0 -- lens-L1.jsonl covers every severity (NOTED,P0,P1,P2)" \
+  || fail "T24 AC0 -- lens-L1.jsonl severities were '$t24_l1_sevs', expected 'NOTED,P0,P1,P2'"
+check "T24 AC0 -- lens-L1.jsonl carries a fixed-status line" '"status":"fixed"' \
+  "$(cat "${CODE_AUDIT_FIXTURE_DIR}/lens-L1.jsonl" 2>/dev/null)"
+check "T24 AC0 -- lens-L1.jsonl carries a legacy deferred-status line for the re-open fixture" '"status":"deferred"' \
+  "$(cat "${CODE_AUDIT_FIXTURE_DIR}/lens-L1.jsonl" 2>/dev/null)"
+
+echo
+echo "T24 AC1 -- eleven lens prompts instruct a JSONL sibling"
+t24_ac1_count=0
+for t24_agent in $LENS_AGENTS; do
+  grep -q "one JSON object per line, one line for every finding" "${PLUGIN_DIR}/agents/${t24_agent}.md" \
+    && t24_ac1_count=$((t24_ac1_count + 1))
+done
+[[ "$t24_ac1_count" -eq 11 ]] && pass "T24 AC1 -- eleven lens prompts instruct a JSONL sibling" \
+  || fail "T24 AC1 -- only $t24_ac1_count/11 lens prompts instruct a JSONL sibling"
+
+echo
+echo "T24 AC2 -- lens JSONL schema text present in eleven files"
+t24_ac2_count=0
+for t24_agent in $LENS_AGENTS; do
+  t24_hits="$(grep -c '"schema":1' "${PLUGIN_DIR}/agents/${t24_agent}.md" 2>/dev/null || true)"
+  [[ "${t24_hits:-0}" -ge 1 ]] && t24_ac2_count=$((t24_ac2_count + 1))
+done
+[[ "$t24_ac2_count" -eq 11 ]] && pass "T24 AC2 -- eleven lens files carry the fixed schema text" \
+  || fail "T24 AC2 -- only $t24_ac2_count/11 lens files carry '\"schema\":1'"
+
+echo
+echo "T24 AC3 -- no lens declares a deferred status (scoped to this ticket's own JSONL Line Format section)"
+t24_ac3_fail=0
+for t24_agent in $LENS_AGENTS; do
+  t24_section="$(awk '/^## JSONL Line Format/{f=1} f' "${PLUGIN_DIR}/agents/${t24_agent}.md")"
+  if printf '%s' "$t24_section" | grep -qi 'deferred'; then
+    t24_ac3_fail=1
+    echo "  FOUND 'deferred' in ${t24_agent}.md JSONL Line Format section"
+  fi
+done
+[[ "$t24_ac3_fail" -eq 0 ]] && pass "T24 AC3 -- no lens JSONL Line Format section declares a deferred status" \
+  || fail "T24 AC3 -- at least one lens JSONL Line Format section mentions 'deferred'"
+
+echo
+echo "T24 AC4 -- confidence is mandatory in every lens prompt"
+t24_ac4_count=0
+for t24_agent in $LENS_AGENTS; do
+  t24_hits="$(grep -c 'confidence' "${PLUGIN_DIR}/agents/${t24_agent}.md" 2>/dev/null || true)"
+  [[ "${t24_hits:-0}" -ge 1 ]] && t24_ac4_count=$((t24_ac4_count + 1))
+done
+[[ "$t24_ac4_count" -eq 11 ]] && pass "T24 AC4 -- eleven lens files mandate confidence" \
+  || fail "T24 AC4 -- only $t24_ac4_count/11 lens files mention confidence"
+
+echo
+echo "T24 AC5 -- scope stated literally: 'every finding' in every lens prompt"
+t24_ac5_count=0
+for t24_agent in $LENS_AGENTS; do
+  t24_hits="$(grep -c 'every finding' "${PLUGIN_DIR}/agents/${t24_agent}.md" 2>/dev/null || true)"
+  [[ "${t24_hits:-0}" -ge 1 ]] && t24_ac5_count=$((t24_ac5_count + 1))
+done
+[[ "$t24_ac5_count" -eq 11 ]] && pass "T24 AC5 -- eleven lens files state 'every finding'" \
+  || fail "T24 AC5 -- only $t24_ac5_count/11 lens files state 'every finding'"
+
+echo
+echo "T24 AC6/AC8 -- eleven lens files contain the two-path contract text"
+t24_ac6_count=0
+for t24_agent in $LENS_AGENTS; do
+  t24_output_section="$(awk '/^## Output$/{f=1} f && /^## Output Format/{exit} f' "${PLUGIN_DIR}/agents/${t24_agent}.md")"
+  if printf '%s' "$t24_output_section" | grep -q "authoritative on conflict" \
+    && printf '%s' "$t24_output_section" | grep -q "exactly one corresponding"; then
+    t24_ac6_count=$((t24_ac6_count + 1))
+  fi
+done
+[[ "$t24_ac6_count" -eq 11 ]] && pass "T24 AC6/AC8 -- eleven lens '## Output' sections state the JSONL-authoritative, one-line-per-finding contract" \
+  || fail "T24 AC6/AC8 -- only $t24_ac6_count/11 lens '## Output' sections state the two-path contract"
+
+echo
+echo "T24 AC7 -- every emitted line of every fixture JSONL file is valid JSON"
+t24_ac7_bad=0
+for t24_n in 1 2 3 4 5 6 7 8 9 10 11; do
+  t24_f="${CODE_AUDIT_FIXTURE_DIR}/lens-L${t24_n}.jsonl"
+  [[ -f "$t24_f" ]] || { t24_ac7_bad=1; echo "  MISSING: $t24_f"; continue; }
+  while IFS= read -r t24_line; do
+    [[ -z "$t24_line" ]] && continue
+    echo "$t24_line" | jq -e . >/dev/null 2>&1 || { t24_ac7_bad=1; echo "  BAD JSON in $t24_f: $t24_line"; }
+  done < "$t24_f"
+done
+[[ "$t24_ac7_bad" -eq 0 ]] && pass "T24 AC7 -- every line of every fixture lens-L*.jsonl file is valid JSON" \
+  || fail "T24 AC7 -- at least one fixture JSONL line failed to parse (see above)"
+
+echo
+echo "T24 AC9 -- residual risk (count match does not imply content match) documented in edm-audit-logic.md and architecture.md"
+check "T24 AC9 -- edm-audit-logic.md states the residual-risk sentence" "count match does not imply" \
+  "$(cat "${PLUGIN_DIR}/agents/edm-audit-logic.md" 2>/dev/null)"
+check "T24 AC9 -- architecture.md states the residual-risk sentence" "count match does not imply" \
+  "$(cat "$ARCHITECTURE_MD" 2>/dev/null)"
+
+echo
+echo "T24 AC10 -- eval scorer dimension 5 scores non-null against the committed fixture"
+t24_ac10_case() {
+  local scratch
+  scratch="$(mktemp -d /tmp/edm-t24-ac10.XXXXXX)" || { fail "T24 AC10 -- mktemp failed"; return 1; }
+  cp -R "${CODE_AUDIT_FIXTURE_DIR}/." "$scratch/"
+  local d5
+  d5="$(bash "${PLUGIN_DIR}/evals/score-artifacts.sh" "$scratch" 2>/dev/null | jq -e '.dimensions[4].score != null' 2>/dev/null)"
+  [[ "$d5" == "true" ]] && pass "T24 AC10 -- score-artifacts.sh dimension 5 (lens-jsonl-prose-agreement) is non-null against the fixture" \
+    || fail "T24 AC10 -- dimension 5 was null or the scorer failed against the fixture"
+  rm -rf "$scratch"
+}
+t24_ac10_case
+# EDMV3-T24 end
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
