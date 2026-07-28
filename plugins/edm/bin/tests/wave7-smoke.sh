@@ -2650,6 +2650,80 @@ bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t47_lint_ex
 [[ "$t47_lint_exit" -eq 0 ]] && pass "T47 -- edm-lint-artifacts --all exits 0" || fail "T47 -- edm-lint-artifacts --all exited ${t47_lint_exit}"
 # EDMV3-T47 end
 
+# =================================================================================
+# EDMV3-T49: do-NOT-adopt guards and the before/after prose convention
+# =================================================================================
+echo
+echo "=== EDMV3-T49: do-NOT-adopt guards and the before/after prose convention ==="
+
+echo
+echo "T49 AC1 -- conventions recorded as house style"
+check "T49 AC1 -- 'house style' present" "house style" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+
+echo
+echo "T49 AC2 -- four sources named with licence and location"
+check "T49 AC2 -- opus-5 named" "opus-5" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check "T49 AC2 -- sonnet-5 named" "sonnet-5" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check "T49 AC2 -- caveman named" "caveman" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check "T49 AC2 -- ponytail named" "ponytail" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check "T49 AC2 -- clean-room note present (licence unverified, pattern-level only)" "licence is unverified" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+
+echo
+echo "T49 AC3 -- six do-NOT-adopt guards named and cited"
+t49_guard_count="$(grep -c '(D[1-6])' "${PLUGIN_DIR}/CLAUDE.md" || true)"
+[[ "${t49_guard_count:-0}" -eq 6 ]] && pass "T49 AC3 -- six (D1)-(D6) guard identifiers present" \
+  || fail "T49 AC3 -- found ${t49_guard_count:-0} guard identifiers, expected 6"
+
+echo
+echo "T49 AC4 -- each guard carries a 'the cost of ignoring this is' clause"
+t49_cost_count="$(grep -c 'cost of ignoring this is' "${PLUGIN_DIR}/CLAUDE.md" || true)"
+[[ "${t49_cost_count:-0}" -eq 6 ]] && pass "T49 AC4 -- six guards each carry a cost clause" \
+  || fail "T49 AC4 -- found ${t49_cost_count:-0} cost clauses, expected 6"
+
+echo
+echo "T49 AC5 -- do-NOT-adopt subsection with six identifiers"
+check "T49 AC5 -- '#### Do-NOT-adopt guards' heading present" "#### Do-NOT-adopt guards" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+[[ "${t49_guard_count:-0}" -eq 6 ]] && pass "T49 AC5 -- do-NOT-adopt subsection carries all six guard identifiers" \
+  || fail "T49 AC5 -- subsection carries ${t49_guard_count:-0} guard identifiers, expected 6"
+
+echo
+echo "T49 AC6 -- self-verification phrase family absent outside skills/verify-runtime/"
+t49_selfverify_hits="$(grep -rni 'double-check\|verify your own\|check your work\|re-verify your' "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" 2>/dev/null | grep -v 'skills/verify-runtime/' || true)"
+[[ -z "$t49_selfverify_hits" ]] && pass "T49 AC6 -- zero self-verification phrase-family hits outside skills/verify-runtime/" \
+  || fail "T49 AC6 -- found hit(s): ${t49_selfverify_hits}"
+
+echo
+echo "T49 AC7 -- before/after convention present on every prompt-text epic file (positive check)"
+t49_ac7_missing=""
+for t49_epic in 01 02 04 05 06 07 08 09 10; do
+  t49_epic_file="$(ls "${PLUGIN_DIR}/../../SRD/edm/EDMV3__prompt-streamline/tickets/epics/${t49_epic}-"*.md 2>/dev/null | head -1)"
+  if [[ -z "$t49_epic_file" ]] || ! grep -q 'before and after' "$t49_epic_file" 2>/dev/null; then
+    t49_ac7_missing="${t49_ac7_missing} epics/${t49_epic}"
+  fi
+done
+[[ -z "$t49_ac7_missing" ]] && pass "T49 AC7 -- all nine prompt-text epic files (01,02,04-10) carry the before/after AC" \
+  || fail "T49 AC7 -- missing the before/after AC in:${t49_ac7_missing}"
+echo "  NOTE (known pre-existing gap, not introduced by T49): epics/11-cross-cutting-delivery.md also" \
+  "matches a bare 'before and after' grep due to unrelated cost/output-comparison wording" \
+  "(three incidental hits, none of them the prose-change AC) -- the ticket's literal" \
+  "'grep -rl | exactly nine files' form would currently list ten, not nine. Recorded here rather" \
+  "than silently edited, since fixing epics/11's incidental wording is outside T49's scope" \
+  "(records conventions and guards; no prompt/ticket-pack prose edits)."
+
+echo
+echo "T49 AC8 -- convention recorded once in CLAUDE.md under contribution guidance"
+check "T49 AC8 -- 'before and after for each changed block' present" "before and after for each changed block" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+
+echo
+echo "T49 -- full suite stays green with the guard/convention subsection in place"
+t49_grants_exit=0
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t49_grants_exit=$?
+[[ "$t49_grants_exit" -eq 0 ]] && pass "T49 -- edm-check-grants exits 0" || fail "T49 -- edm-check-grants exited ${t49_grants_exit}"
+t49_lint_exit=0
+bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t49_lint_exit=$?
+[[ "$t49_lint_exit" -eq 0 ]] && pass "T49 -- edm-lint-artifacts --all exits 0" || fail "T49 -- edm-lint-artifacts --all exited ${t49_lint_exit}"
+# EDMV3-T49 end
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
