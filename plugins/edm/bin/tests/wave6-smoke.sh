@@ -2146,6 +2146,36 @@ t14lcpartial_ec=$?
 check "T14 AC8 -- lifecycle_mode: partial is recorded as set" \
   '"lifecycle_mode": "partial"' "$t14lcpartial_out"
 
+# The anomaly half of the same C-4 contract (EDMV3-T59 AC3, "legacy lifecycle_mode partial
+# reads and reports an anomaly"): reading the planted file is only half the behaviour -- the
+# operator must also be TOLD the value is stale, or a legacy file silently keeps a removed
+# enum value forever. `validate` emits it in the canonical four-field format
+# (class/CODE/field/description, EDMV3-T05 AC2) at class `info`, so it is reported without
+# flipping the exit code -- reading a pre-removal file is not a defect.
+set +e
+t14lcpartial_val="$("$EDM_STATE" validate T14LCPARTIAL 2>&1)"
+t14lcpartial_val_ec=$?
+set -e
+check "T14 AC8 / T59 AC3 -- LEGACY_LIFECYCLE_MODE anomaly present in canonical four-field format" \
+  "info  LEGACY_LIFECYCLE_MODE  lifecycle_mode" "$t14lcpartial_val"
+check "T14 AC8 / T59 AC3 -- the anomaly names the initiative and the removed value" \
+  "T14LCPARTIAL carries the removed lifecycle_mode 'partial'" "$t14lcpartial_val"
+check "T14 AC8 / T59 AC3 -- the anomaly states the value is read as 'standard'" \
+  "(read as 'standard')" "$t14lcpartial_val"
+check "T14 AC8 / T59 AC3 -- the anomaly names the command that clears it" \
+  "set-mode T14LCPARTIAL lifecycle_mode standard" "$t14lcpartial_val"
+[[ $t14lcpartial_val_ec -eq 0 ]] \
+  && pass "T14 AC8 / T59 AC3 -- LEGACY_LIFECYCLE_MODE is class info (validate still exits 0, non-blocking)" \
+  || fail "T14 AC8 / T59 AC3 -- validate exited $t14lcpartial_val_ec on a legacy lifecycle_mode file, expected 0 (info is non-blocking)"
+# Negative half of the class claim: no line of this initiative's anomaly output is `blocking`,
+# so the exit-0 above is genuinely "info only", not "a blocking line that failed to fire".
+# Guarded with `|| true` -- a zero-match grep exits 1 and would abort the suite under
+# `set -euo pipefail`.
+t14lcpartial_blocking="$(printf '%s\n' "$t14lcpartial_val" | grep -c '^blocking ' || true)"
+[[ "$t14lcpartial_blocking" -eq 0 ]] \
+  && pass "T14 AC8 / T59 AC3 -- a legacy lifecycle_mode file raises no blocking anomaly" \
+  || fail "T14 AC8 / T59 AC3 -- $t14lcpartial_blocking blocking anomaly line(s) fired on a legacy lifecycle_mode file"
+
 # ---- AC9 (both layouts): flat and product-scoped layouts continue to resolve; migrate-path
 # continues to work and is not a prerequisite for anything. --------------------------------
 echo
@@ -2190,6 +2220,48 @@ t14archived_status="$(cd "$REPO_ROOT" && git status --porcelain SRD/.archived/ 2
 [[ -z "$t14archived_status" ]] \
   && pass "T14 AC11 -- git status --porcelain SRD/.archived/ is empty (nothing modified)" \
   || fail "T14 AC11 -- SRD/.archived/ was modified: $t14archived_status"
+
+# =================================================================================
+# EDMV3-T59 AC2: the narrowed lifecycle_mode enum stays narrowed (D12)
+# =================================================================================
+# Companion to the T14 AC8 / T59 AC3 read-half above: that case proves a file already
+# carrying the removed `partial` value still READS and reports an informational anomaly.
+# This one proves the value can never be WRITTEN back in. Without it the enum is only
+# pinned by a generic bad-value case (wave4a-smoke.sh's `badvalue`), which would keep
+# passing if `partial` were quietly re-added to LIFECYCLE_MODE_ENUM_LIST -- exactly the
+# re-widening this ticket removed it to prevent.
+echo
+echo "T59 AC2 -- set-mode lifecycle_mode partial refused, naming the three surviving values"
+"$EDM_STATE" init T59ENUM >/dev/null
+STATE_T59ENUM="$TMP/SRD/T59ENUM/.edm-state.json"
+set +e
+t59enum_out="$("$EDM_STATE" set-mode T59ENUM lifecycle_mode partial 2>&1)"
+t59enum_ec=$?
+set -e
+[[ $t59enum_ec -ne 0 ]] \
+  && pass "T59 AC2 -- set-mode lifecycle_mode partial exits non-zero" \
+  || fail "T59 AC2 -- set-mode lifecycle_mode partial exited 0 (the removed value was accepted)"
+check "T59 AC2 -- the refusal names the rejected value" \
+  "invalid lifecycle_mode 'partial'" "$t59enum_out"
+# The three surviving members, asserted individually rather than as one concatenated
+# "standard|fast-track|fix-pack" literal, so a re-ordering of LIFECYCLE_MODE_ENUM_LIST does
+# not read as a regression while a genuinely dropped member still does.
+check "T59 AC2 -- the refusal names the surviving value 'standard'"   "standard"   "$t59enum_out"
+check "T59 AC2 -- the refusal names the surviving value 'fast-track'" "fast-track" "$t59enum_out"
+check "T59 AC2 -- the refusal names the surviving value 'fix-pack'"   "fix-pack"   "$t59enum_out"
+check_absent "T59 AC2 -- the removed value is not offered back as a legal choice" \
+  "expected: standard|fast-track|fix-pack|partial" "$t59enum_out"
+# Byte-identity, not a field re-read: cmd_set_mode dies inside the enum guard BEFORE it
+# reaches rmw_state, so nothing at all should be written -- not lifecycle_mode, and not the
+# last_updated timestamp that every successful write bumps alongside it.
+check_state_unchanged "$STATE_T59ENUM" "$EDM_STATE" set-mode T59ENUM lifecycle_mode partial
+# Positive control: the same subcommand on a surviving enum member DOES write, so the
+# byte-identity assertion above is proving a refusal, not a broken/no-op code path.
+"$EDM_STATE" set-mode T59ENUM lifecycle_mode fast-track >/dev/null
+t59enum_live="$(jq -r '.lifecycle_mode' "$STATE_T59ENUM")"
+[[ "$t59enum_live" == "fast-track" ]] \
+  && pass "T59 AC2 -- positive control: a surviving enum member still writes (lifecycle_mode = fast-track)" \
+  || fail "T59 AC2 -- positive control failed: lifecycle_mode = '$t59enum_live', expected fast-track"
 
 # =================================================================================
 # EDMV3-T61 AC6: a prefix argument cannot be used to traverse outside SRD_ROOT

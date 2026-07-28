@@ -659,13 +659,18 @@ echo "T61 AC5 -- every dispatch entry that requires arguments emits a usage: lin
 # test is still the live dispatch table via _t61_dispatch_labels): these entries are legitimately
 # callable with zero arguments by design, so asserting a usage: line on zero args would be
 # asserting a false contract for them.
-#   - list, active-initiatives, checkpoint-if-active, record-task-duration, git-lock-check,
-#     session-start: every required argument is optional or absent by design.
+#   - list, active-initiatives, checkpoint-if-active, git-lock-check, session-start: every
+#     required argument is optional or absent by design.
 #   - metrics-report: dispatches on an optional first arg (<PREFIX>|--all|--calibrate); zero
 #     args is a valid "no scope" invocation path handled inside the command itself.
 #   - watch-impl: an intentional infinite loop (tails git log until interrupted) -- it has no
 #     usage-line concept and invoking it in a test would hang forever, not fail fast.
-T61_ZERO_ARG_SAFE="list active-initiatives checkpoint-if-active record-task-duration git-lock-check session-start metrics-report watch-impl"
+# Every name below must correspond to a live dispatch label. The duration-recording subcommand
+# EDMV3-T58 deleted was listed here until that deletion landed; the entry then matched nothing
+# and was removed with it (the deletion itself stays pinned by the T66 AC3 --help case further
+# down, which is why that case names it and this comment does not). A name with no live
+# dispatch entry is dead weight that also silently pre-exempts a future subcommand reusing it.
+T61_ZERO_ARG_SAFE="list active-initiatives checkpoint-if-active git-lock-check session-start metrics-report watch-impl"
 t61_usage_fail=0
 t61_usage_names=""
 while IFS= read -r t61_sub; do
@@ -904,6 +909,29 @@ t66ac3_rtd="$("$EDM_STATE" --help 2>&1 | grep -c record-task-duration || true)"
 [[ "${t66ac3_rtd:-0}" -eq 0 ]] \
   && pass "T66 AC3 -- record-task-duration is absent from --help (deleted, EDMV3-T58)" \
   || fail "T66 AC3 -- record-task-duration still appears in --help"
+
+echo
+echo "T58 AC1 -- implement no longer names edm-test-coverage-auditor"
+# The other half of the same delete-list ticket as the T66 AC3 --help case above.
+# EDMV3-T58 removed the coverage auditor from the Phase 6 implement flow -- it belongs to
+# /edm:test, which owns coverage. The condition has held since the reference was deleted, but
+# nothing pinned it, so a later edit could reintroduce the spawn silently and nothing would
+# fail. `grep -c` is guarded with `|| true`: a zero-match grep exits 1, which would abort the
+# whole suite under `set -euo pipefail` -- and zero is precisely the passing value here.
+T58_IMPLEMENT_SKILL="${PLUGIN_DIR}/skills/implement/SKILL.md"
+t58ac1_count="$(grep -c 'edm-test-coverage-auditor' "$T58_IMPLEMENT_SKILL" || true)"
+[[ "${t58ac1_count:-0}" -eq 0 ]] \
+  && pass "T58 AC1 -- zero occurrences of edm-test-coverage-auditor in skills/implement/SKILL.md" \
+  || fail "T58 AC1 -- skills/implement/SKILL.md names edm-test-coverage-auditor ${t58ac1_count} time(s)"
+# Positive control for the zero above: a zero-occurrence assertion also passes when the needle
+# is misspelled or the path is wrong, which would make it a permanently-green no-op. Prove the
+# identical needle still matches where the agent legitimately survives. Scoped to agents/
+# (the agent's own definition, plus edm-audit-test-quality's reference to it) rather than to
+# the whole plugin, which would include this suite's own text and be self-satisfying.
+t58ac1_live="$({ grep -rl 'edm-test-coverage-auditor' "${PLUGIN_DIR}/agents/" 2>/dev/null || true; } | wc -l | tr -d ' ')"
+[[ "${t58ac1_live:-0}" -gt 0 ]] \
+  && pass "T58 AC1 -- positive control: the same needle still matches ${t58ac1_live} file(s) under agents/, so the zero above is real" \
+  || fail "T58 AC1 -- positive control failed: 'edm-test-coverage-auditor' matches nothing under agents/, so the zero-occurrence assertion above is vacuous"
 
 echo
 echo "T66 AC4 -- linter row, hook row and mode row are accurate (wrong class names gone)"
@@ -2971,14 +2999,27 @@ else
   pass "T45 AC10 -- <tone_preference> block never mentions the deliverable-length clause"
 fi
 
+# ---- Whole-tree artifact lint: run ONCE here, asserted by five ticket blocks below --------
+# T45, T46, T47, T49 and T48 each close with their own "full suite stays green" case, and each
+# one needs to stay separately named for its ticket's AC to be traceable. But all five ran the
+# identical `edm-lint-artifacts --all` whole-tree scan with no state mutation between them, so
+# four of the five scans were pure duplicate work measuring the same tree. The scan happens
+# once here; each block below asserts against the captured exit code, so every ticket keeps its
+# own named passing case and nothing that was asserted before is weakened.
+# INVARIANT: nothing between this line and the T48 block at the end of the file may mutate the
+# tracked SRD tree or change EDM_SRD_ROOT/cwd. Everything in that range is read-only prose
+# inspection today; if that stops being true, re-capture at the point of the mutation rather
+# than reverting to five scans.
+WAVE7_ALL_LINT_EXIT=0
+WAVE7_ALL_LINT_OUT="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all 2>&1)" || WAVE7_ALL_LINT_EXIT=$?
+
 echo
 echo "T45 -- full suite stays green with the cadence/length additions in place"
 t45_grants_exit=0
 bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t45_grants_exit=$?
 [[ "$t45_grants_exit" -eq 0 ]] && pass "T45 -- edm-check-grants exits 0" || fail "T45 -- edm-check-grants exited ${t45_grants_exit}"
-t45_lint_exit=0
-bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t45_lint_exit=$?
-[[ "$t45_lint_exit" -eq 0 ]] && pass "T45 -- edm-lint-artifacts --all exits 0" || fail "T45 -- edm-lint-artifacts --all exited ${t45_lint_exit}"
+[[ "$WAVE7_ALL_LINT_EXIT" -eq 0 ]] && pass "T45 -- edm-lint-artifacts --all exits 0" \
+  || fail "T45 -- edm-lint-artifacts --all exited ${WAVE7_ALL_LINT_EXIT} (captured once; output: ${WAVE7_ALL_LINT_OUT})"
 # EDMV3-T45 end
 
 # =================================================================================
@@ -3082,9 +3123,8 @@ echo "T46 -- full suite stays green with the agent-contract additions in place"
 t46_grants2_exit=0
 bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t46_grants2_exit=$?
 [[ "$t46_grants2_exit" -eq 0 ]] && pass "T46 -- edm-check-grants exits 0" || fail "T46 -- edm-check-grants exited ${t46_grants2_exit}"
-t46_lint_exit=0
-bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t46_lint_exit=$?
-[[ "$t46_lint_exit" -eq 0 ]] && pass "T46 -- edm-lint-artifacts --all exits 0" || fail "T46 -- edm-lint-artifacts --all exited ${t46_lint_exit}"
+[[ "$WAVE7_ALL_LINT_EXIT" -eq 0 ]] && pass "T46 -- edm-lint-artifacts --all exits 0" \
+  || fail "T46 -- edm-lint-artifacts --all exited ${WAVE7_ALL_LINT_EXIT} (captured once; output: ${WAVE7_ALL_LINT_OUT})"
 # EDMV3-T46 end
 
 # =================================================================================
@@ -3141,9 +3181,8 @@ echo "T47 -- full suite stays green with the explorer cap in place"
 t47_grants_exit=0
 bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t47_grants_exit=$?
 [[ "$t47_grants_exit" -eq 0 ]] && pass "T47 -- edm-check-grants exits 0" || fail "T47 -- edm-check-grants exited ${t47_grants_exit}"
-t47_lint_exit=0
-bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t47_lint_exit=$?
-[[ "$t47_lint_exit" -eq 0 ]] && pass "T47 -- edm-lint-artifacts --all exits 0" || fail "T47 -- edm-lint-artifacts --all exited ${t47_lint_exit}"
+[[ "$WAVE7_ALL_LINT_EXIT" -eq 0 ]] && pass "T47 -- edm-lint-artifacts --all exits 0" \
+  || fail "T47 -- edm-lint-artifacts --all exited ${WAVE7_ALL_LINT_EXIT} (captured once; output: ${WAVE7_ALL_LINT_OUT})"
 # EDMV3-T47 end
 
 # =================================================================================
@@ -3162,7 +3201,16 @@ check "T49 AC2 -- opus-5 named" "opus-5" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
 check "T49 AC2 -- sonnet-5 named" "sonnet-5" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
 check "T49 AC2 -- caveman named" "caveman" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
 check "T49 AC2 -- ponytail named" "ponytail" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
-check "T49 AC2 -- clean-room note present (licence unverified, pattern-level only)" "licence is unverified" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+# AC2 requires a URL and a licence for each of the four sources, plus a clean-room note for the
+# two adopted from sibling repositories. This case asserted the literal string "licence is
+# unverified", which was true only while the two licences were unresolved -- so it asserted the
+# defect rather than the requirement, and went red the moment the licences were verified as MIT.
+# Assert what AC2 actually asks for: the licence value, and that the clean-room posture survives.
+check "T49 AC2 -- caveman/ponytail licences recorded" "MIT" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check "T49 AC2 -- clean-room note present" "Clean-room note" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+t49_url_count="$(grep -c 'https://' "${PLUGIN_DIR}/CLAUDE.md" || true)"
+[[ "${t49_url_count:-0}" -ge 4 ]] && pass "T49 AC2 -- at least four source URLs present" \
+  || fail "T49 AC2 -- found ${t49_url_count:-0} https:// URLs in CLAUDE.md, expected >= 4"
 
 echo
 echo "T49 AC3 -- six do-NOT-adopt guards named and cited"
@@ -3199,12 +3247,17 @@ for t49_epic in 01 02 04 05 06 07 08 09 10; do
 done
 [[ -z "$t49_ac7_missing" ]] && pass "T49 AC7 -- all nine prompt-text epic files (01,02,04-10) carry the before/after AC" \
   || fail "T49 AC7 -- missing the before/after AC in:${t49_ac7_missing}"
-echo "  NOTE (known pre-existing gap, not introduced by T49): epics/11-cross-cutting-delivery.md also" \
-  "matches a bare 'before and after' grep due to unrelated cost/output-comparison wording" \
-  "(three incidental hits, none of them the prose-change AC) -- the ticket's literal" \
-  "'grep -rl | exactly nine files' form would currently list ten, not nine. Recorded here rather" \
-  "than silently edited, since fixing epics/11's incidental wording is outside T49's scope" \
-  "(records conventions and guards; no prompt/ticket-pack prose edits)."
+# AC7's own literal verify is `grep -rl 'before and after' epics/ | wc -l` == 9. That used to
+# return ten: epics/11-cross-cutting-delivery.md matched incidentally on cost/output-comparison
+# wording, none of it the prose-change AC. This suite recorded that as a known gap instead of
+# asserting it, which left the AC's stated command permanently wrong. The three incidental
+# phrases were reworded to "pre- and post-change" (same meaning), so the count is now assertable
+# and this is a mechanism rather than a note.
+t49_ac7_count="$(grep -rl 'before and after' "${PLUGIN_DIR}/../../SRD/edm/EDMV3__prompt-streamline/tickets/epics/" 2>/dev/null | wc -l | tr -d ' ')"
+[[ "${t49_ac7_count:-0}" -eq 9 ]] && pass "T49 AC7 -- the AC's literal grep lists exactly nine epic files" \
+  || fail "T49 AC7 -- the AC's literal grep lists ${t49_ac7_count:-0} epic files, expected exactly 9"
+check_absent "T49 AC7 -- epics/11 no longer collides with the convention grep" "before and after" \
+  "$(cat "${PLUGIN_DIR}/../../SRD/edm/EDMV3__prompt-streamline/tickets/epics/11-cross-cutting-delivery.md" 2>/dev/null || true)"
 
 echo
 echo "T49 AC8 -- convention recorded once in CLAUDE.md under contribution guidance"
@@ -3215,9 +3268,8 @@ echo "T49 -- full suite stays green with the guard/convention subsection in plac
 t49_grants_exit=0
 bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t49_grants_exit=$?
 [[ "$t49_grants_exit" -eq 0 ]] && pass "T49 -- edm-check-grants exits 0" || fail "T49 -- edm-check-grants exited ${t49_grants_exit}"
-t49_lint_exit=0
-bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t49_lint_exit=$?
-[[ "$t49_lint_exit" -eq 0 ]] && pass "T49 -- edm-lint-artifacts --all exits 0" || fail "T49 -- edm-lint-artifacts --all exited ${t49_lint_exit}"
+[[ "$WAVE7_ALL_LINT_EXIT" -eq 0 ]] && pass "T49 -- edm-lint-artifacts --all exits 0" \
+  || fail "T49 -- edm-lint-artifacts --all exited ${WAVE7_ALL_LINT_EXIT} (captured once; output: ${WAVE7_ALL_LINT_OUT})"
 # EDMV3-T49 end
 # EDMV3-T67: performance and cost budgets are measured and recorded
 # =================================================================================
@@ -3236,15 +3288,34 @@ check "T67 AC2 -- token read is capped with tail -n, not an unbounded jq -s over
   "EDM_TOKEN_READ_LINE_CAP" "$(cat "$EDM_STATE")"
 
 echo
-echo "T67 AC8 -- commit-hook scoping (hooks.json:80-90) preserved"
-t67ac8_hooks_diff="$(git -C "$PLUGIN_DIR" diff --stat -- hooks/hooks.json 2>/dev/null || true)"
-[[ -z "$t67ac8_hooks_diff" ]] \
-  && pass "T67 AC8 -- hooks/hooks.json has no diff this wave (commit-hook scoping preserved)" \
-  || fail "T67 AC8 -- hooks/hooks.json changed unexpectedly: $t67ac8_hooks_diff"
+echo "T67 AC8 -- commit-hook scoping (PreToolUse git commit) preserved"
+# This assertion used to be `git diff --stat -- hooks/hooks.json` is empty. That measures
+# "the file has no UNCOMMITTED change right now", not "the scoping is preserved": it goes green
+# the moment anything is committed, whatever the content, and goes red for an unrelated edit like
+# normalizing an em dash in a prompt string. Assert the scoping properties AC8 actually names,
+# read out of the hook command itself, so the check means the same thing before and after a commit.
+t67ac8_cmd="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' \
+  "${PLUGIN_DIR}/hooks/hooks.json" 2>/dev/null || true)"
+if [[ -z "$t67ac8_cmd" ]]; then
+  fail "T67 AC8 -- no PreToolUse hook with matcher 'git commit' found in hooks/hooks.json"
+else
+  # Scoped to staged SRD/ paths only, resolves prefixes from both layouts, degrades to exit 0
+  # when the helpers are absent, and propagates a non-zero exit so a violation blocks the commit.
+  check "T67 AC8 -- scoped to staged paths under SRD/" "diff --cached --name-only" "$t67ac8_cmd"
+  check "T67 AC8 -- filters staged paths to SRD/" "grep '^SRD/'" "$t67ac8_cmd"
+  check "T67 AC8 -- exits 0 when edm-lint-artifacts is unavailable" \
+    "command -v edm-lint-artifacts >/dev/null 2>&1 || exit 0" "$t67ac8_cmd"
+  check "T67 AC8 -- exits 0 when nothing under SRD/ is staged" 'test -z "$staged" && exit 0' "$t67ac8_cmd"
+  check "T67 AC8 -- propagates failure so the commit is blocked" 'exit $fail' "$t67ac8_cmd"
+  check "T67 AC8 -- invokes the linter per resolved prefix, not with --all" 'edm-lint-artifacts "$p"' "$t67ac8_cmd"
+  check_absent "T67 AC8 -- commit path does not scan the whole tree" "edm-lint-artifacts --all" "$t67ac8_cmd"
+fi
 
 echo
 echo "T67 AC11 -- no blocking job's script contains a network call"
-t67ac11_blocking_jobs="lint:shell-and-artifacts lint:shellcheck test:smoke test:smoke-bash32 test:state-validate validate:manifest"
+# EDMV3-T67 AC10 split lint:shell-and-artifacts into four jobs, so the blocking set names all
+# four rather than the one they replaced.
+t67ac11_blocking_jobs="lint:bash-syntax lint:artifacts lint:grants lint:vocabulary lint:shellcheck test:smoke test:smoke-bash32 test:state-validate validate:manifest"
 t67ac11_net_hits=""
 for t67_job in $t67ac11_blocking_jobs; do
   t67_job_body="$(awk -v job="^${t67_job}:" '$0 ~ job {f=1; next} /^[a-zA-Z_.-]+:$/ {f=0} f' "$GITLAB_CI_YML")"
@@ -3333,10 +3404,57 @@ echo "T48 -- full suite stays green with the tiering-matrix instrument in place"
 t48_grants_exit=0
 bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t48_grants_exit=$?
 [[ "$t48_grants_exit" -eq 0 ]] && pass "T48 -- edm-check-grants exits 0" || fail "T48 -- edm-check-grants exited ${t48_grants_exit}"
-t48_lint_exit=0
-bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t48_lint_exit=$?
-[[ "$t48_lint_exit" -eq 0 ]] && pass "T48 -- edm-lint-artifacts --all exits 0" || fail "T48 -- edm-lint-artifacts --all exited ${t48_lint_exit}"
+[[ "$WAVE7_ALL_LINT_EXIT" -eq 0 ]] && pass "T48 -- edm-lint-artifacts --all exits 0" \
+  || fail "T48 -- edm-lint-artifacts --all exited ${WAVE7_ALL_LINT_EXIT} (captured once; output: ${WAVE7_ALL_LINT_OUT})"
 # EDMV3-T48 end
+
+# ---- Shipped surfaces are ASCII-only (EDMV3 wave-C drift sweep) -------------------------------
+# CLAUDE.md Sec."Artifact content conventions" requires ASCII-only text, and edm-lint-artifacts
+# class 2 enforces it -- but only over initiative directories under the SRD root. Nothing scanned
+# the plugin's own tree, and four em dashes duly survived in skills/ and agents/ prompt templates
+# until this sweep found them by hand. Those templates are the literal shapes agents copy into
+# artifacts, so a non-ASCII character there propagates into output the artifact lint then blocks.
+#
+# Scope: every surface that ships and is read at runtime, plus the prompt text in hooks.json.
+# Deliberately excluded: CHANGELOG.md (project history, not rewritten retroactively -- the same
+# carve-out bin/vocabulary-allowlist.txt makes) and bin/tests/ (this suite's own labels, which
+# nothing reads as a prompt).
+echo
+echo "wave-C drift sweep -- shipped surfaces contain no non-ASCII bytes"
+t_ascii_offenders=""
+for t_ascii_target in \
+  "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" "${PLUGIN_DIR}/docs" "${PLUGIN_DIR}/evals" \
+  "${PLUGIN_DIR}/hooks" "${PLUGIN_DIR}/monitors" "${PLUGIN_DIR}/.claude-plugin" \
+  "${PLUGIN_DIR}/CLAUDE.md" "${PLUGIN_DIR}/README.md"
+do
+  [[ -e "$t_ascii_target" ]] || continue
+  t_ascii_hit="$(LC_ALL=C grep -rlv '^[[:print:][:space:]]*$' "$t_ascii_target" 2>/dev/null || true)"
+  [[ -n "$t_ascii_hit" ]] && t_ascii_offenders="${t_ascii_offenders} ${t_ascii_hit}"
+done
+# bin/ excluding bin/tests/ -- the helper scripts themselves, whose comments and output strings
+# are held to the same rule (two live session-start output strings carried em dashes).
+for t_ascii_bin in "${PLUGIN_DIR}"/bin/*; do
+  [[ -f "$t_ascii_bin" ]] || continue
+  if LC_ALL=C grep -qv '^[[:print:][:space:]]*$' "$t_ascii_bin" 2>/dev/null; then
+    t_ascii_offenders="${t_ascii_offenders} ${t_ascii_bin}"
+  fi
+done
+[[ -z "$t_ascii_offenders" ]] && pass "shipped surfaces are ASCII-only (skills, agents, docs, evals, hooks, monitors, manifest, CLAUDE.md, README.md, bin/)" \
+  || fail "non-ASCII bytes found on shipped surfaces:${t_ascii_offenders}"
+
+# Positive control: the detector must actually be able to find a non-ASCII byte. Without this, a
+# broken grep invocation would make the assertion above permanently and silently green. This is
+# not hypothetical: the first version of this check used `grep -P`, which BSD grep does not
+# support -- it exited 2, the `|| true` swallowed it, and the check reported clean. The portable
+# `[[:print:][:space:]]` form under LC_ALL=C is what bin/edm-lint-artifacts already falls back to.
+t_ascii_probe="$(mktemp)"
+printf 'em dash \xe2\x80\x94 here\n' > "$t_ascii_probe"
+if LC_ALL=C grep -qv '^[[:print:][:space:]]*$' "$t_ascii_probe" 2>/dev/null; then
+  pass "non-ASCII detector positive control fires on a known em dash"
+else
+  fail "non-ASCII detector positive control did NOT fire -- the assertion above is meaningless"
+fi
+rm -f "$t_ascii_probe"
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
