@@ -294,7 +294,7 @@ collect_md_files() {
 }
 
 # ---- Helper: scan a list of files across all violation classes --------------------------------
-# scan_md_files <file...> — prints 'path:line: <class>: <snippet>' per violation and increments
+# scan_md_files <file...> -- prints 'path:line: <class>: <snippet>' per violation and increments
 # the global `violations`. Shared by prefix mode, --all mode and --path mode so there is exactly
 # one implementation of the scan (EDMV3-111).
 scan_md_files() {

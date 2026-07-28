@@ -60,7 +60,7 @@ HUMAN_HOURLY_RATE_USD="${EDM_HUMAN_HOURLY_RATE_USD:-${CLAUDE_PLUGIN_OPTION_HUMAN
 
 die() { echo "edm-state: $*" >&2; exit 1; }
 
-# print_help <script-path> — prints everything between the EDM-HELP-BEGIN/EDM-HELP-END sentinel
+# print_help <script-path> -- prints everything between the EDM-HELP-BEGIN/EDM-HELP-END sentinel
 # comment lines near the top of <script-path> (EDMV3-T61 AC1). awk, not a hardcoded `sed -n
 # 'A,Bp'` line range: a hardcoded range silently stops covering new subcommand doc lines added
 # below its end without the two numbers being bumped in lockstep, which is exactly how
@@ -94,7 +94,7 @@ list_state_files() {
   done
 }
 
-# phase_name_for <phase-num> — returns human-readable phase name
+# phase_name_for <phase-num> -- returns human-readable phase name
 phase_name_for() {
   case "$1" in
     0) echo "Not started" ;;
@@ -169,7 +169,7 @@ state_file_for() {
   [[ "$prefix" =~ ^[A-Za-z0-9_-]+$ ]] || die "state_file_for: invalid PREFIX '${prefix}' (only alphanumeric, hyphen, underscore allowed)"
   local flat_path="${SRD_ROOT}/${prefix}/.edm-state.json"
 
-  # AC2: Legacy flat state file already exists — keep its path unchanged.
+  # AC2: Legacy flat state file already exists -- keep its path unchanged.
   [[ -f "$flat_path" ]] && echo "$flat_path" && return 0
 
   # AC1/AC6: Product-scoped directory already exists on disk.
@@ -197,7 +197,7 @@ state_file_for() {
     return 0
   fi
 
-  # AC6: Product known but description unknown — glob within product directory.
+  # AC6: Product known but description unknown -- glob within product directory.
   if [[ -n "$product" ]]; then
     for dir in "${SRD_ROOT}/${product}/${prefix}__"*/; do
       dir="${dir%/}"
@@ -318,14 +318,22 @@ compute_cost_usd() {
       in_rate=3; out_rate=15; cr_rate=0.30; cw5m_rate=3.75; cw1h_rate=6.00 ;;
     *haiku-4-5*|*haiku-4.5*)
       in_rate=1; out_rate=5; cr_rate=0.10; cw5m_rate=1.25; cw1h_rate=2.00 ;;
-    *opus*)
+    # Current generation, matched by EXPLICIT generation identifier rather than by bare family
+    # wildcard (EDMV3 wave-C drift sweep). A bare `*opus*` arm here would sit ahead of the `*)`
+    # warning arm and swallow every past and future Opus identifier, pricing an unrecognized
+    # generation at this generation's rates silently -- measured before this fix,
+    # `claude-opus-5-20260501` priced at the Opus 4.8 input rate and `claude-sonnet-9` at the
+    # Sonnet 4.7 rate, neither with a warning. That is precisely the silent-guess AC10 exists to
+    # prevent, and it defeated it from inside a known family. An unknown generation now falls
+    # through to `*)` and warns.
+    *opus-4-8*|*opus-4.8*)
       in_rate="${EDM_OPUS_INPUT_RATE:-6}"
       out_rate="${EDM_OPUS_OUTPUT_RATE:-30}"
       cr_rate="${EDM_OPUS_CACHE_READ_RATE:-0.60}"
       cw5m_rate="${EDM_OPUS_CACHE_WRITE_5M_RATE:-7.50}"
       cw1h_rate="${EDM_OPUS_CACHE_WRITE_1H_RATE:-12.00}"
       ;;
-    *haiku*)
+    *haiku-4-6*|*haiku-4.6*)
       in_rate="${EDM_HAIKU_INPUT_RATE:-1.20}"
       out_rate="${EDM_HAIKU_OUTPUT_RATE:-6.00}"
       cr_rate="${EDM_HAIKU_CACHE_READ_RATE:-0.12}"
@@ -342,7 +350,7 @@ compute_cost_usd() {
       cw5m_rate="${EDM_SONNET_CACHE_WRITE_5M_RATE:-5.00}"
       cw1h_rate="${EDM_SONNET_CACHE_WRITE_1H_RATE:-8.00}"
       ;;
-    *sonnet*)
+    *sonnet-4-7*|*sonnet-4.7*)
       in_rate="${EDM_SONNET_INPUT_RATE:-4}"
       out_rate="${EDM_SONNET_OUTPUT_RATE:-20}"
       cr_rate="${EDM_SONNET_CACHE_READ_RATE:-0.40}"
@@ -397,7 +405,7 @@ read_state() {
 
 # _rmw_state_body <state-file> <jq-filter> [jq-args...]   (runs INSIDE with_state_lock)
 # Reads the file, applies the jq filter atomically, writes back. (write_state/_write_state_body
-# were removed in CA-007 — every mutator goes through rmw_state; this is the sole write body.)
+# were removed in CA-007 -- every mutator goes through rmw_state; this is the sole write body.)
 # On jq failure the temp file is removed and a non-zero status is returned (NOT die) so callers
 # that wrap rmw_state in `if !` (e.g. cmd_migrate_path's rollback) can react; bare callers abort
 # under set -e as before. (CA-009)
@@ -429,7 +437,7 @@ now_utc() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
 
-# git_aware_mv <src> <dst> — move a directory, using `git mv` when src is inside a git
+# git_aware_mv <src> <dst> -- move a directory, using `git mv` when src is inside a git
 # worktree (so the move is tracked), falling back to plain mv otherwise. Single source
 # for the archive + migrate-path move idiom. (CA-015)
 git_aware_mv() {
@@ -441,7 +449,7 @@ git_aware_mv() {
   fi
 }
 
-# present_or_absent <path> [nonempty] — echo '[present]' if the file exists, else '[absent]'.
+# present_or_absent <path> [nonempty] -- echo '[present]' if the file exists, else '[absent]'.
 # (CA-015) The optional second arg "nonempty" (EDMV3-T11 AC1) extends this same idiom into a
 # non-empty variant (`-s` instead of `-f`) for cmd_phase_complete's per-phase artifact check,
 # rather than defining a sixth presence idiom. Existing no-arg callers are unaffected.
@@ -454,14 +462,14 @@ present_or_absent() {
   fi
 }
 
-# gated_phase_for_gate <gate-num> — the phase whose completion feeds the given HITL gate
+# gated_phase_for_gate <gate-num> -- the phase whose completion feeds the given HITL gate
 # (gate 1 -> phase 1, gate 2 -> phase 3, gate 3 -> phase 5). Single source for this map. (CA-013)
 gated_phase_for_gate() {
   case "$1" in 1) echo 1 ;; 2) echo 3 ;; 3) echo 5 ;; *) echo "null" ;; esac
 }
 
 # ---- Mode derivation helpers (EDMV3-T07 / EDMV3-114) ------------------------
-# MODE_ENUM_LIST / LIFECYCLE_MODE_ENUM_LIST — single source for the two legal
+# MODE_ENUM_LIST / LIFECYCLE_MODE_ENUM_LIST -- single source for the two legal
 # enums. Deliberately space-separated strings (bash 3.2 has no arrays usable as
 # a portable single-line constant) and consumed with the word-membership idiom
 # `case " $LIST " in *" $item "*)` so no caller re-encodes the enum as a second
@@ -469,7 +477,7 @@ gated_phase_for_gate() {
 MODE_ENUM_LIST="standard mini-srd iac data-ml prototype"
 LIFECYCLE_MODE_ENUM_LIST="standard fast-track fix-pack"
 
-# terminal_phase_for_mode <mode> <lifecycle_mode> — the phase at which this
+# terminal_phase_for_mode <mode> <lifecycle_mode> -- the phase at which this
 # initiative's lifecycle ends (EDMV3-T07 AC1). One comment per enum row so the
 # mapping's rationale is never re-derived from memory. `lifecycle_mode` never
 # shortens the terminal phase -- a fast-track initiative still ends at phase 6
@@ -538,7 +546,7 @@ phase_start_prerequisite_gate() {
   echo "none"
 }
 
-# code_audit_required_for_mode <mode> — whether this mode's phase graph includes
+# code_audit_required_for_mode <mode> -- whether this mode's phase graph includes
 # a code-audit round (EDMV3-T07 AC6). Consumed by cmd_archive so the convergence
 # exemption is derived once rather than special-cased separately; EDMV3-T08 adds
 # the second consumer (cmd_approve_gate's code-audit gate token).
@@ -582,7 +590,7 @@ convergence_exempt() {
   esac
 }
 
-# default_skipped_phases_json_for_mode <mode> — the phase graph's own skip set for
+# default_skipped_phases_json_for_mode <mode> -- the phase graph's own skip set for
 # a freshly created (or newly mode-switched) initiative (EDMV3-T07 AC4), as a JSON
 # array of {phase, rationale, skipped_at} ready for skipped_phases. Each rationale
 # names the mode per AC4. standard/iac/data-ml run the full graph -- no phase is
@@ -668,7 +676,7 @@ check_permission_rules() {
   fi
 }
 
-# Shared jq def for the whole-initiative coverage layer row — one renderer, one padding scheme
+# Shared jq def for the whole-initiative coverage layer row -- one renderer, one padding scheme
 # (clamped 14-wide layer column; 9/8/7 pct padding), prepended to both get-coverage and
 # metrics-report so the two can never diverge again. Input: a {key,value} coverage entry. (CA-012)
 COVERAGE_LAYER_ROW_JQ_DEF='def coverage_layer_row:
@@ -691,7 +699,7 @@ with_state_lock() {
     # (the brace-redirection idiom naming a variable instead of a literal FD number, a bash-4
     # construct EDMV3-T61 AC9's CI grep bans), so we pick 200 by convention instead)
     # `|| _lock_ec=$?` keeps the subshell in a tested position so `set -e` does NOT abort here on a
-    # non-zero exit — otherwise the timeout `die` below is unreachable and a flock-host timeout exits
+    # non-zero exit -- otherwise the timeout `die` below is unreachable and a flock-host timeout exits
     # with a bare 99 and no message (CA-006). Success leaves _lock_ec=0.
     local _lock_ec=0
     ( flock -w 10 200 || exit 99; "$@" ) 200>"${lockfile}" || _lock_ec=$?
@@ -1196,7 +1204,7 @@ cmd_init() {
 }
 
 cmd_list() {
-  # --paths: read-only, no lock, no jq dependency — print each resolved initiative directory
+  # --paths: read-only, no lock, no jq dependency -- print each resolved initiative directory
   # (one per line), covering both flat and product-scoped layouts and excluding .archived/
   # (list_state_files with no arg already excludes it). Consumed by `edm-lint-artifacts --all`
   # so there is exactly one implementation of layout resolution (EDMV3-111).
@@ -1243,7 +1251,7 @@ cmd_approve_gate() {
   local prefix="$1" gate="$2"
   local approver="${USER:-unknown}"
   # Gate 3.5 (compliance review) is stored as a dedicated boolean field rather than
-  # appended to gates_approved (which expects integers) — avoids overloading numeric gate IDs.
+  # appended to gates_approved (which expects integers) -- avoids overloading numeric gate IDs.
   # `code-audit` below (EDMV3-T08) is the second user of this dedicated-boolean pattern: a
   # fourth gate field added later should inherit the same shape by adding one token here.
   # approved_at/approver/enforcement are sibling scalar keys alongside the boolean, the
@@ -1555,14 +1563,14 @@ cmd_checkpoint() {
   # gate-critical artifacts (SRD, ticket pack) have changed since their last
   # recorded hash. Warnings are printed to stdout so Claude surfaces them.
   # T53: write_handoff_internal is called at the end of each iteration, so the
-  # PreCompact hook chain (checkpoint-if-active → write_handoff_internal) already
-  # refreshes the Resume Point section on every compaction — no separate hook needed.
+  # PreCompact hook chain (checkpoint-if-active -> write_handoff_internal) already
+  # refreshes the Resume Point section on every compaction -- no separate hook needed.
   [[ -d "$SRD_ROOT" ]] || return 0
   require_jq
   while IFS= read -r state; do
     local current prefix
     prefix="$(jq -r '.prefix' "$state" 2>/dev/null || echo unknown)"
-    # G3: route through locked RMW — no more hand-rolled cat/jq/printf
+    # G3: route through locked RMW -- no more hand-rolled cat/jq/printf
     rmw_state "$prefix" '.last_updated = $t' --arg t "$(now_utc)"
 
     # Drift detection (read-only)
@@ -2406,7 +2414,7 @@ cmd_migrate_path() {
   # Create product subdirectory.
   mkdir -p "${SRD_ROOT}/${product}"
 
-  # Move the initiative directory — git-aware when inside a worktree. (CA-015)
+  # Move the initiative directory -- git-aware when inside a worktree. (CA-015)
   git_aware_mv "$src" "$dst"
 
   # Update state through the locked/atomic/backup primitive (CA-001). After the move,
@@ -2454,7 +2462,7 @@ cmd_active_initiatives() {
 # gate-check <PREFIX> <gated-command>
 # Exits 0 if the gate prerequisite for <gated-command> is satisfied.
 # Exits 1 with a human-readable error if the gate is not yet approved.
-# Read-only — never mutates state.
+# Read-only -- never mutates state.
 #
 # Gated commands and their required gates (all eight phase-skill tokens resolve;
 # EDMV3-T13 AC3):
@@ -2596,7 +2604,7 @@ cmd_branch_check() {
   state="$(read_state "$prefix")"
   initiative_branch="$(echo "$state" | jq -r '.initiative_branch // ""')"
   if [[ -z "$initiative_branch" ]]; then
-    # Legacy state without initiative_branch — no enforcement.
+    # Legacy state without initiative_branch -- no enforcement.
     return 0
   fi
   current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
@@ -2669,17 +2677,17 @@ cmd_git_lock_check() {
 
 # ---- Current step tracking (T47) --------------------------------------------
 # current-step <PREFIX> [<step>]
-# Without <step>: print current_step (empty when not yet set — lazy init).
+# Without <step>: print current_step (empty when not yet set -- lazy init).
 # With <step>: store current_step; typed as number if numeric, otherwise string.
 # current_step is intentionally ABSENT from cmd_init so it is only set when the
-# orchestrator explicitly records progress — never pre-initialised to 0.
+# orchestrator explicitly records progress -- never pre-initialised to 0.
 
 cmd_current_step() {
   [[ $# -ge 1 ]] || die "usage: edm-state current-step <PREFIX> [<step>]"
   require_jq
   local prefix="$1"
   if [[ $# -eq 1 ]]; then
-    # Read mode — current_step // "" gives empty string on missing field (null).
+    # Read mode -- current_step // "" gives empty string on missing field (null).
     read_state "$prefix" | jq -r '.current_step // ""'
     return 0
   fi
@@ -2693,7 +2701,7 @@ cmd_current_step() {
 
 # ---- Session start (T50) ----------------------------------------------------
 # session-start
-# Emits Resume Point for any active initiatives (phase 1–6).
+# Emits Resume Point for any active initiatives (phase 1-6).
 # Called headlessly from the SessionStart hook at the start of every conversation.
 # Scans both flat (SRD/*/) and product-scoped (SRD/*/*/) layouts and de-duplicates.
 
@@ -2719,7 +2727,7 @@ cmd_session_start() {
     seen_prefixes+=("$prefix")
     active_count=$((active_count + 1))
     if [[ $active_count -eq 1 ]]; then
-      echo "# EDM Active Initiative(s) — Session Resume"
+      echo "# EDM Active Initiative(s) -- Session Resume"
       echo
     fi
     local current_step last_cmd last_decision last_updated phase_name
@@ -2728,7 +2736,7 @@ cmd_session_start() {
     last_decision="$(jq -r '.last_decision // ""' "$state" 2>/dev/null || echo '')"
     last_updated="$(jq -r '.last_updated // ""' "$state" 2>/dev/null || echo '')"
     phase_name="$(phase_name_for "$phase")"
-    printf '## %s — %s\n' "$prefix" "$phase_name"
+    printf '## %s -- %s\n' "$prefix" "$phase_name"
     [[ -n "$current_step" ]]   && printf '  Step:          %s\n' "$current_step"
     [[ -n "$last_cmd" ]]       && printf '  Last command:  %s\n' "$last_cmd"
     [[ -n "$last_decision" ]]  && printf '  Last decision: %s\n' "$last_decision"
@@ -3298,7 +3306,7 @@ cmd_set_forked_from() {
 }
 
 # ---- Product-line linkage (T101/T102) ----------------------------------------
-# resolve-dir <PREFIX> — resolve bare prefix to initiative directory (read-only).
+# resolve-dir <PREFIX> -- resolve bare prefix to initiative directory (read-only).
 # Returns a non-zero exit and a message when no initiative exists for the prefix.
 
 cmd_resolve_dir() {
@@ -3310,7 +3318,7 @@ cmd_resolve_dir() {
   echo "${state_file%/.edm-state.json}"
 }
 
-# set-parent <PREFIX> <PARENT> — set parent_prefix; validates PARENT exists.
+# set-parent <PREFIX> <PARENT> -- set parent_prefix; validates PARENT exists.
 cmd_set_parent() {
   [[ $# -eq 2 ]] || die "usage: edm-state set-parent <PREFIX> <PARENT>"
   require_jq
@@ -3323,7 +3331,7 @@ cmd_set_parent() {
   write_handoff_internal "$prefix"
 }
 
-# add-related <PREFIX> <RELATED> — append to related_prefixes (idempotent); validates RELATED exists.
+# add-related <PREFIX> <RELATED> -- append to related_prefixes (idempotent); validates RELATED exists.
 cmd_add_related() {
   [[ $# -eq 2 ]] || die "usage: edm-state add-related <PREFIX> <RELATED>"
   require_jq
@@ -3627,7 +3635,7 @@ write_handoff_internal() {
     end
   ')"
 
-  # Lifecycle & Mode fields (T83, T96, T98, T99) — empty-safe defaults for pre-T83 state files.
+  # Lifecycle & Mode fields (T83, T96, T98, T99) -- empty-safe defaults for pre-T83 state files.
   local mode lifecycle_mode compliance_enabled implementation_mode supersedes forked_from skipped_phases_json
   mode="$(echo "$state" | jq -r '.mode // "standard"')"
   lifecycle_mode="$(echo "$state" | jq -r '.lifecycle_mode // "standard"')"
@@ -3774,7 +3782,7 @@ write_handoff_internal() {
   fi
   [[ -n "$gate_list" ]] || gate_list="_(none yet)_"
 
-  # Artifact presence — derive paths from the layout resolver (T44).
+  # Artifact presence -- derive paths from the layout resolver (T44).
   local _init_dir
   _init_dir="$(initiative_dir_for "$prefix")"
   local planning_path="${_init_dir}/planning.md"
@@ -3826,7 +3834,7 @@ write_handoff_internal() {
   local updated_at
   updated_at="$(now_utc)"
 
-  # Resume Point fields (T48, T52) — empty-safe; absent on pre-T52 state files.
+  # Resume Point fields (T48, T52) -- empty-safe; absent on pre-T52 state files.
   local current_step last_cmd last_decision
   current_step="$(echo "$state" | jq -r '.current_step // ""')"
   last_cmd="$(echo "$state" | jq -r '.last_cmd // ""')"

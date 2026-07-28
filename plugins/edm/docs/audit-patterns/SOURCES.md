@@ -16,4 +16,4 @@ and `test-coverage.md` files where present.
 
 | Date | Initiative | Audit type | Findings added | Updated by |
 |------|-----------|-----------|---------------|-----------|
-| *(auto-populated by orchestrator after each audit round — see EDMV2-80a)* | | | | |
+| *(auto-populated by orchestrator after each audit round -- see EDMV2-80a)* | | | | |

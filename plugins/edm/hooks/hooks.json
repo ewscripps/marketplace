@@ -20,7 +20,7 @@
           },
           {
             "type": "prompt",
-            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array — /edm:srd requires gate 1 approved.\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet — gate 1 for {PREFIX} has not been approved. Run /edm:orchestrator first.'\n5. If approved (or if the state file does not exist — first invocation), allow expansion."
+            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array -- /edm:srd requires gate 1 approved.\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet -- gate 1 for {PREFIX} has not been approved. Run /edm:orchestrator first.'\n5. If approved (or if the state file does not exist -- first invocation), allow expansion."
           }
         ]
       },
@@ -33,7 +33,7 @@
           },
           {
             "type": "prompt",
-            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array — /edm:audit-srd requires gate 1 approved.\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet — gate 1 for {PREFIX} has not been approved. Run /edm:orchestrator first.'\n5. If approved (or if the state file does not exist — first invocation), allow expansion."
+            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array -- /edm:audit-srd requires gate 1 approved.\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet -- gate 1 for {PREFIX} has not been approved. Run /edm:orchestrator first.'\n5. If approved (or if the state file does not exist -- first invocation), allow expansion."
           }
         ]
       },
@@ -46,7 +46,7 @@
           },
           {
             "type": "prompt",
-            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array — /edm:tickets requires gate 2 approved.\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet — gate 2 for {PREFIX} has not been approved. Run /edm:orchestrator first.'\n5. If approved (or if the state file does not exist — first invocation), allow expansion."
+            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array -- /edm:tickets requires gate 2 approved.\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet -- gate 2 for {PREFIX} has not been approved. Run /edm:orchestrator first.'\n5. If approved (or if the state file does not exist -- first invocation), allow expansion."
           }
         ]
       },
@@ -59,7 +59,7 @@
           },
           {
             "type": "prompt",
-            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array — /edm:audit-tickets requires gate 3 approved.\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet — gate 3 for {PREFIX} has not been approved. Run /edm:orchestrator first.'\n5. If approved (or if the state file does not exist — first invocation), allow expansion."
+            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array -- /edm:audit-tickets requires gate 3 approved.\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet -- gate 3 for {PREFIX} has not been approved. Run /edm:orchestrator first.'\n5. If approved (or if the state file does not exist -- first invocation), allow expansion."
           }
         ]
       },
@@ -72,7 +72,7 @@
           },
           {
             "type": "prompt",
-            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array — /edm:implement requires gate 3 approved.\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet — gate 3 for {PREFIX} has not been approved. Run /edm:orchestrator first.'\n5. If approved (or if the state file does not exist — first invocation), allow expansion."
+            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array -- /edm:implement requires gate 3 approved.\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet -- gate 3 for {PREFIX} has not been approved. Run /edm:orchestrator first.'\n5. If approved (or if the state file does not exist -- first invocation), allow expansion."
           }
         ]
       }

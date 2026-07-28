@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# edm-validate-prefix — verify a proposed prefix is valid and unique within SRD/.
+# edm-validate-prefix -- verify a proposed prefix is valid and unique within SRD/.
 # Usage: edm-validate-prefix <PREFIX>
 # Exit codes:
 #   0 = valid and unique (safe to use)
@@ -19,7 +19,7 @@ if [[ ! "$PREFIX" =~ ^[A-Z][A-Z0-9]{2,5}$ ]]; then
   die "invalid format: prefix must be 3-6 uppercase alphanumeric chars, starting with a letter (got '$PREFIX')" 1
 fi
 
-# Global collision scan — PREFIX must be unique across ALL of SRD/:
+# Global collision scan -- PREFIX must be unique across ALL of SRD/:
 #   1. Legacy flat layout: SRD/{PREFIX}/
 #   2. Product-scoped layout: SRD/{PRODUCT}/{PREFIX}__*/
 # Both must be absent for the prefix to be considered unique (EDMV2-87).
@@ -47,7 +47,7 @@ if [[ -d "$SRD_ROOT" ]]; then
   done
 fi
 
-# AC5: Also check archived initiatives — non-fatal warning only.
+# AC5: Also check archived initiatives -- non-fatal warning only.
 # Check flat archived path.
 if [[ -d "${SRD_ROOT}/.archived/${PREFIX}" ]]; then
   echo "edm-validate-prefix: NOTE: $PREFIX exists in ${SRD_ROOT}/.archived/ (previously used and archived)" >&2

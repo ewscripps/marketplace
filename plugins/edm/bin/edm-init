@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# edm-init — scaffold a new SRD/{PREFIX}/ (or product-scoped) initiative directory.
+# edm-init -- scaffold a new SRD/{PREFIX}/ (or product-scoped) initiative directory.
 # Usage: edm-init [--product <name>] [--description <slug>] [--mode standard|mini-srd|iac|data-ml|prototype] <PREFIX>
 set -euo pipefail
 
@@ -74,7 +74,7 @@ if [[ -n "$PRODUCT" && -n "$DESCRIPTION" ]]; then
   export EDM_PRODUCT="$PRODUCT"
   export EDM_DESCRIPTION="$DESCRIPTION"
 elif [[ -n "$PRODUCT" && -z "$DESCRIPTION" ]]; then
-  # Product given without description — check if interactive.
+  # Product given without description -- check if interactive.
   if [[ -t 0 ]]; then
     printf "edm-init: enter a short slug for the initiative description (e.g. enhance-edm-plugin): " >&2
     read -r DESCRIPTION
@@ -92,7 +92,7 @@ elif [[ -n "$PRODUCT" && -z "$DESCRIPTION" ]]; then
     DIR="${SRD_ROOT}/${PREFIX}"
   fi
 else
-  # Neither flag — legacy flat layout (AC6).
+  # Neither flag -- legacy flat layout (AC6).
   DIR="${SRD_ROOT}/${PREFIX}"
 fi
 
@@ -128,7 +128,7 @@ case "$MODE" in
     mkdir -p "$DIR/code-audit"
     ;;
   prototype)
-    # Prototype mode: Phase 1-2 only — no tickets/, no code-audit/.
+    # Prototype mode: Phase 1-2 only -- no tickets/, no code-audit/.
     ;;
 esac
 
