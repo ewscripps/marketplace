@@ -144,3 +144,9 @@ This file is appended to, never rewritten -- each verify-runtime run adds new cl
 - An AC that cannot be verified because its runtime environment does not exist is not this
   skill's problem to solve by inventing a verdict -- it is a specification defect, routed through
   gate change control per `CLAUDE.md Sec."Unverifiable acceptance criteria (D15)"`.
+
+This skill presents no HITL gate of its own -- its per-entry PASS/FAIL prompts (Two-Verdict Policy
+above) are a distinct, two-option pattern, not the three-option Approve/Revise/No-Go gate defined in
+`skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`. Both share the same STOP-and-WAIT discipline:
+`edm-state record-partial-verdict ... close` runs only after the explicit PASS/FAIL selection, never
+before it, and free text is re-presented rather than interpreted.
