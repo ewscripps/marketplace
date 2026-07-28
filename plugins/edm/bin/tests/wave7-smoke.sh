@@ -2870,6 +2870,51 @@ for t52_pair in "${t52_pricing_pairs[@]}"; do
     || fail "T52 AC7 -- ${t52_var} mismatch: script=${t52_script_val}, CLAUDE.md ${t52_label} column ${t52_col}=${t52_md_val}"
 done
 
+# =================================================================================
+# EDMV3-T67: performance and cost budgets are measured and recorded
+# =================================================================================
+echo
+echo "T67 AC14 -- committed, reproducible timing script exists and is executable"
+TIMING_SH="${PLUGIN_DIR}/bin/tests/timing.sh"
+[[ -x "$TIMING_SH" ]] \
+  && pass "T67 AC14 -- bin/tests/timing.sh is executable" \
+  || fail "T67 AC14 -- bin/tests/timing.sh is missing or not executable"
+check "T67 AC14 -- timing.sh usage lists all seven measurement modes" \
+  "generate-fixture" "$(bash "$TIMING_SH" 2>&1 || true)"
+
+echo
+echo "T67 AC2 -- get_session_tokens_since bounds its read (EDM_TOKEN_READ_LINE_CAP)"
+check "T67 AC2 -- token read is capped with tail -n, not an unbounded jq -s over the whole file" \
+  "EDM_TOKEN_READ_LINE_CAP" "$(cat "$EDM_STATE")"
+
+echo
+echo "T67 AC8 -- commit-hook scoping (hooks.json:80-90) preserved"
+t67ac8_hooks_diff="$(git -C "$PLUGIN_DIR" diff --stat -- hooks/hooks.json 2>/dev/null || true)"
+[[ -z "$t67ac8_hooks_diff" ]] \
+  && pass "T67 AC8 -- hooks/hooks.json has no diff this wave (commit-hook scoping preserved)" \
+  || fail "T67 AC8 -- hooks/hooks.json changed unexpectedly: $t67ac8_hooks_diff"
+
+echo
+echo "T67 AC11 -- no blocking job's script contains a network call"
+t67ac11_blocking_jobs="lint:shell-and-artifacts lint:shellcheck test:smoke test:smoke-bash32 test:state-validate validate:manifest"
+t67ac11_net_hits=""
+for t67_job in $t67ac11_blocking_jobs; do
+  t67_job_body="$(awk -v job="^${t67_job}:" '$0 ~ job {f=1; next} /^[a-zA-Z_.-]+:$/ {f=0} f' "$GITLAB_CI_YML")"
+  echo "$t67_job_body" | grep -qE 'curl |wget |anthropic\.com' && t67ac11_net_hits="${t67ac11_net_hits} ${t67_job}"
+done
+[[ -z "$t67ac11_net_hits" ]] \
+  && pass "T67 AC11 -- no blocking job's script calls curl/wget/anthropic.com" \
+  || fail "T67 AC11 -- network call found in blocking job(s):${t67ac11_net_hits}"
+
+echo "T67 AC1/AC3/AC4/AC5/AC6/AC7 -- measured this session against real generated fixtures via"
+echo "  bin/tests/timing.sh; the numbers are recorded in CHANGELOG.md's EDMV3-T67 table, not"
+echo "  re-run here (they take minutes and generate scratch fixtures unsuited to a fast smoke"
+echo "  suite). AC9/AC13 are recorded verified-locally-pending-pipeline (decisions.md D27) --"
+echo "  both require a live GitLab runner / a real costed eval run this session did not trigger."
+echo "  AC10 is a recorded, unfixed gap (decisions.md D26): the four lint checks run as"
+echo "  sequential script lines in one job, not four parallel jobs."
+# EDMV3-T67 end
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

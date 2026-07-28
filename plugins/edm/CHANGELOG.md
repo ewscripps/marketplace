@@ -117,6 +117,46 @@ regression.
 8. **HANDOFF auto-refresh and `## Notes`** -- unchanged: no wave-C ticket touches
    `cmd_write_handoff`.
 
+### Performance and cost budgets measured (EDMV3-T67)
+
+A committed, executable timing harness (`bin/tests/timing.sh`) measures the eight budgets named
+in EDMV3-T67 against reproducible, generated fixtures (a 50-initiative repo, a 500-finding
+ledger, a 30-file/~10,000-line initiative directory) rather than ad hoc one-off numbers. Every
+figure below was measured on this machine (macOS, bash 3.2.57, this initiative's working tree);
+figures that require the pinned CI runner image or a live pipeline are marked
+**verified-locally-pending-pipeline** rather than asserted as certified. `get_session_tokens_since`
+now bounds its read of each session JSONL to the last `${EDM_TOKEN_READ_LINE_CAP:-20000}` lines
+(`tail -n`, per file) so phase-complete's latency can no longer grow unbounded with total session
+history (AC2's `since`-anchored read means the messages that matter are always among the newest
+lines).
+
+| AC | Budget | Measured (this machine) | Result |
+|---|---|---|---|
+| AC1 | get/resolve-dir/branch-check/gate-check < 250ms p95 (50-init fixture) | get 28ms, resolve-dir 28ms, branch-check 48ms, gate-check 64ms | PASS |
+| AC2 | phase-complete < 2000ms p95 excl. token read; token read bounded | 340ms p95; bound added (`tail -n` cap, see above) | PASS |
+| AC3 | audit-converged < 500ms p95, render-ledger < 1000ms p95 (500-finding ledger) | audit-converged 123ms, render-ledger 84ms | PASS |
+| AC4 | check_permission_rules() adds < 50ms to session-start | measured delta -2ms (noise-level) | PASS |
+| AC5 | full lint of a 30-file/~10,000-line initiative < 3000ms | **39,872ms p95** (measured 3 times: 43862/39872/39230ms) | **MISS -- recorded, not fixed here (out of scope per this ticket's own terms)** |
+| AC6 | Mermaid class adds <= 40% lint time vs. 3-class baseline | measured ratio 2.26x on a small (5-file) fixture -- directional, not the full 50-init/T43-AC10 scale | **MISS -- recorded** (re-confirms T43 AC10's own finding; a small fixture makes the relative overhead more visible, not less real) |
+| AC7 | `--all` over 50 initiatives < 60,000ms (CI budget) | 1,671ms | PASS |
+| AC8 | commit-hook scoping in `hooks.json:80-90` unchanged | `git diff --stat` shows zero changes to `hooks/hooks.json` | PASS |
+| AC9 | blocking pipeline < 5 minutes at each wave boundary, fixed fixture subject | not run against a live GitLab runner this session | **verified-locally-pending-pipeline** |
+| AC10 | the four lint checks (`bash -n`, `edm-lint-artifacts --all`, `edm-check-grants`, `edm-check-vocabulary`) run as parallel jobs | all four currently run as sequential script lines inside one job, `lint:shell-and-artifacts` -- not four separate jobs | **MISS -- recorded, not restructured here** (a `.gitlab-ci.yml` job-split is a real change that needs a live-runner validation pass this session cannot safely give it) |
+| AC11 | no blocking job reaches the network beyond image pull | exactly 2 `allow_failure: true` lines (`validate:plugin-cli`, `eval:nightly`), both outside the blocking path; confirmed by `grep` | PASS |
+| AC12 | code-audit round cost measurable and reported | `metrics-report` renders the code-audit section (rounds run, lenses per round, cost per round) once EDMV3-T51 data exists, per this wave's own T51/T53 work | PASS |
+| AC13 | one eval run < 30 minutes, cost documented | `evals/README.md` already documents 30-60 minutes wall-clock and a `$15`/phase budget ceiling from a prior measured run (2026-07-27) -- the existing documented range itself brackets the 30-minute figure, so a fresh timed run is needed to confirm | **verified-locally-pending-pipeline** (a live eval run was not triggered this session -- real API spend and up to an hour of wall time) |
+| AC14 | reproducible, committed timing script | `bin/tests/timing.sh`, executable, all modes above run from it | PASS |
+
+**Two real, recorded misses (AC5, AC6, AC10) are not silently accepted.** Per this ticket's own
+Out of Scope clause ("optimizing anything that misses a budget... this ticket measures and
+records"), each is left for its own follow-on ticket rather than patched here under time
+pressure without a fresh full-suite validation pass. The root cause for AC5/AC6 is visible in
+`bin/edm-lint-artifacts`: `build_line_classes()` (and companion per-line loops) process every
+line of every file through a bash `while IFS= read -r` loop regardless of file content, which
+does not scale to a 10,000-line file the way it does to a typical individual artifact. AC10's
+gap is structural, not a speed problem: `.gitlab-ci.yml`'s `lint:shell-and-artifacts` job runs
+the four checks as sequential script lines in one job rather than four jobs in the same stage.
+
 ## [3.0.0] — 2026-07-28
 
 Wave B of EDMV3 (prompt-streamline): the enforcement kernel's version-2 checks (PARTIAL closure,

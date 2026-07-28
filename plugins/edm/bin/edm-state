@@ -251,8 +251,18 @@ get_session_tokens_since() {
   local driving_session
   driving_session="$(ls -t "$sessions_dir"/*.jsonl 2>/dev/null | head -1)"
 
+  # EDMV3-T67 AC2: bound the read regardless of how large a single session JSONL grows. A
+  # long-running conversation's own session file has no size limit, so an unbounded `jq -s` over
+  # it would make phase-complete's latency proportional to total session history rather than to
+  # the work since phase-start. `tail -n <cap>` keeps only the most recent lines before parsing --
+  # safe because `since` is always a recent phase/round-start timestamp, so the messages that
+  # matter are always among the newest lines, never the oldest. Override via
+  # EDM_TOKEN_READ_LINE_CAP; default 20000 lines is generous for a single phase's turn count while
+  # still bounding worst-case read cost.
+  local _token_read_cap="${EDM_TOKEN_READ_LINE_CAP:-20000}"
+
   if [[ -n "$driving_session" && -f "$driving_session" ]]; then
-    jq -s --arg since "$since" --arg mode "scoped" '
+    tail -n "$_token_read_cap" "$driving_session" | jq -s --arg since "$since" --arg mode "scoped" '
       [.[] | select(.type == "assistant" and (.timestamp // "") >= $since)] as $msgs |
       {
         input: ([$msgs[].message.usage.input_tokens // 0] | add // 0),
@@ -263,14 +273,15 @@ get_session_tokens_since() {
         model: ($msgs[-1].message.model // "unknown"),
         attribution_mode: $mode
       }
-    ' "$driving_session" 2>/dev/null && return 0
+    ' 2>/dev/null && return 0
   fi
 
   # AC2 fallback: the driving session could not be identified (e.g. a TOCTOU race where every
   # file was removed between the existence check above and the `ls -t` read) even though the
   # directory has jsonl files. Sums every session JSONL -- the pre-T52 behaviour -- and tags
-  # the result so callers and readers can tell a whole-directory figure from a scoped one.
-  cat "$sessions_dir"/*.jsonl 2>/dev/null | jq -s --arg since "$since" --arg mode "whole-directory" '
+  # the result so callers and readers can tell a whole-directory figure from a scoped one. Each
+  # file is independently line-capped for the same reason as the scoped branch above.
+  tail -n "$_token_read_cap" -q "$sessions_dir"/*.jsonl 2>/dev/null | jq -s --arg since "$since" --arg mode "whole-directory" '
     [.[] | select(.type == "assistant" and (.timestamp // "") >= $since)] as $msgs |
     {
       input: ([$msgs[].message.usage.input_tokens // 0] | add // 0),
