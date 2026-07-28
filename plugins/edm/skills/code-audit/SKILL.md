@@ -33,6 +33,9 @@ using `<gated-command>` = `code-audit`.
    - Validate lens tokens against L1-L11; reject unknown tokens with a clear message.
    - If `--lenses` is omitted, run all 11 (full round).
    - Set `LENS_SET` = the list to run; set `ROUND_TYPE` = `full` (11 lenses) or `partial` (subset).
+   - Set `LENS_SET_CSV` = `LENS_SET` joined with commas (e.g. `L1,L9,L11`, or all eleven on a full
+     round). Step 4 **must** pass this to `audit-round-start`, or the round is recorded as `full`
+     whatever you actually ran, and the never-convergent guarantee below silently stops applying.
 2. Determine scope: files / commits / branch. Read critical files yourself first to write sharp agent prompts.
 3. Resolve the initiative directory from state (handles both flat and product-scoped layouts):
    ```bash
@@ -41,7 +44,16 @@ using `<gated-command>` = `code-audit`.
    - SRD: `${INIT_DIR}/${user_config.srd_filename}`
    - Ticket pack: `${INIT_DIR}/${user_config.ticket_pack_dirname}/`
    - Ledger: `${INIT_DIR}/code-audit/findings-ledger.md`  (canonical cross-round path)
-4. Obtain the pass number: `N=$(edm-state audit-round-start <PREFIX> code)`
+4. Obtain the pass number, passing the lens set so the round records what actually ran:
+   ```bash
+   N=$(edm-state audit-round-start <PREFIX> code --lenses "${LENS_SET_CSV}")
+   ```
+   `--lenses` is not optional here even on a full round. `cmd_audit_round_start` derives
+   `round_type` from the set -- eleven members means `full`, fewer means `partial` -- and omitting
+   the flag makes it record `full` with an empty `lenses` array regardless of what was run. A smoke
+   round would then satisfy `audit-converged` and could close the initiative, which is exactly what
+   step 10's never-convergent rule exists to prevent. Passing all eleven explicitly on a full round
+   is deliberate and self-documenting.
 5. Set `OUTPUT_DIR="${INIT_DIR}/code-audit/pass-${N}_$(date +%Y-%m-%d)/"` and `mkdir -p "${OUTPUT_DIR}"`
 6. Read the prior `findings-ledger.md` if it exists (prior round context for the synthesizer).
 7. **Launch lens agents in parallel** for every lens in `LENS_SET` (single message, multiple Task calls).

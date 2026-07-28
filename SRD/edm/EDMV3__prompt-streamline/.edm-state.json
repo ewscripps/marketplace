@@ -123,7 +123,19 @@
   "compliance_gate_approved": false,
   "last_cmd": "",
   "last_decision": "Wave A complete: 26/26 tickets, QC 2 shards, 12 findings remediated (D13), v2.1.0, 709/709; open items are environment/human-dependent (baseline runs, live pipeline, cache refresh, permission-dialog observation)",
-  "audit_rounds": {},
+  "audit_rounds": {
+    "code": {
+      "count": 1,
+      "rounds": [
+        {
+          "round": 1,
+          "lenses": [],
+          "round_type": "full",
+          "started_at": "2026-07-28T14:50:19Z"
+        }
+      ]
+    }
+  },
   "partial_verdict_map": {},
   "mode": "standard",
   "lifecycle_mode": "standard",
@@ -134,7 +146,7 @@
   "forked_from": "",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-07-28T13:56:19Z",
+  "last_updated": "2026-07-28T14:50:19Z",
   "current_step": "6.wave-a-complete",
   "schema_version": 1
 }

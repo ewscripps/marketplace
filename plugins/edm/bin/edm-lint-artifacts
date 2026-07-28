@@ -432,8 +432,8 @@ case "$MODE" in
     # Resolve the initiative directory via edm-state (honors product-scoped layout).
     command -v edm-state >/dev/null 2>&1 || die "edm-state not found on PATH" 2
     INIT_DIR="$(edm-state resolve-dir "$PREFIX" 2>&1)" \
-      || die "no initiative for prefix  (run: edm-state init )" 2
-    [[ -d "$INIT_DIR" ]] || die "initiative directory not found: " 2
+      || die "no initiative for prefix ${PREFIX} (run: edm-state init ${PREFIX})" 2
+    [[ -d "$INIT_DIR" ]] || die "initiative directory not found: ${INIT_DIR}" 2
 
     MD_FILES=()
     while IFS= read -r _md_f; do
@@ -468,7 +468,7 @@ case "$MODE" in
       # explicitly, unlike directory mode which only considers *.md files.
       MD_FILES=("$PATH_ARG")
     else
-      die "--path target not found: " 2
+      die "--path target not found: ${PATH_ARG}" 2
     fi
 
     if [[ ${#MD_FILES[@]} -eq 0 ]]; then

