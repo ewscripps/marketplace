@@ -34,14 +34,33 @@ stages:
     changes:
       - "plugins/edm/**/*"
 
-# ---- lint stage -------------------------------------------------------------------------------
-
-lint:shell-and-artifacts:
-  stage: lint
+# ---- Shared job template (EDMV3-T67 AC10) ----------------------------------------------------
+# The pinned alpine image and the shared rule set are identical across every lint job. Expressed
+# once so a digest refresh (see the header note) stays a single-line change even though the lint
+# stage is now four jobs rather than one.
+.alpine_edm: &alpine_edm
   image: "alpine:3.20@sha256:4117b6e5b09d84c8f03ea45234ee7f8ec9f5c3a9792b80e3c9d54ded36d3735a"
   rules: *edm_rules
+
+# ---- lint stage -------------------------------------------------------------------------------
+#
+# EDMV3-T67 AC10. The four checks below were previously four sequential script lines inside a
+# single `lint:shell-and-artifacts` job. That had two costs: their wall-clock times summed, and
+# because the block ran under `set -e`, the first failure suppressed the results of every check
+# after it -- so a contributor fixing a syntax error learned about an artifact violation only on
+# the next pipeline.
+#
+# They are now four independent jobs, each carrying `needs: []`. An empty `needs` starts a job
+# as soon as the pipeline begins instead of waiting for the stage ahead of it, so the runner
+# fleet executes all four concurrently and each reports its own pass/fail. Downstream jobs
+# declare the specific lint jobs they depend on rather than waiting for the whole stage.
+
+lint:bash-syntax:
+  stage: lint
+  <<: *alpine_edm
+  needs: []
   before_script:
-    - apk add --no-cache bash jq git
+    - apk add --no-cache bash
   script:
     - |
       set -e
@@ -57,10 +76,34 @@ lint:shell-and-artifacts:
         fi
       done
       [ "$FAIL" -eq 0 ] || exit 1
+
+lint:artifacts:
+  stage: lint
+  <<: *alpine_edm
+  needs: []
+  before_script:
+    - apk add --no-cache bash jq git
+  script:
     - echo "=== edm-lint-artifacts --all (every tracked initiative, both layouts) ==="
     - bash plugins/edm/bin/edm-lint-artifacts --all
+
+lint:grants:
+  stage: lint
+  <<: *alpine_edm
+  needs: []
+  before_script:
+    - apk add --no-cache bash git
+  script:
     - echo "=== edm-check-grants (four-source grant/instruction contract) ==="
     - bash plugins/edm/bin/edm-check-grants
+
+lint:vocabulary:
+  stage: lint
+  <<: *alpine_edm
+  needs: []
+  before_script:
+    - apk add --no-cache bash git
+  script:
     - echo "=== edm-check-vocabulary (abolished-vocabulary and override-flag backstop, EDMV3-T30) ==="
     - bash plugins/edm/bin/edm-check-vocabulary
 
@@ -73,8 +116,8 @@ lint:shell-and-artifacts:
 # are out of scope for "no unquoted-expansion findings in new code" specifically.
 lint:shellcheck:
   stage: lint
-  image: "alpine:3.20@sha256:4117b6e5b09d84c8f03ea45234ee7f8ec9f5c3a9792b80e3c9d54ded36d3735a"
-  rules: *edm_rules
+  <<: *alpine_edm
+  needs: []
   before_script:
     - apk add --no-cache bash shellcheck
   script:
@@ -101,8 +144,8 @@ lint:shellcheck:
 # .DS_Store).
 lint:file-type-ban:
   stage: lint
-  image: "alpine:3.20@sha256:4117b6e5b09d84c8f03ea45234ee7f8ec9f5c3a9792b80e3c9d54ded36d3735a"
-  rules: *edm_rules
+  <<: *alpine_edm
+  needs: []
   before_script:
     - apk add --no-cache bash git
   script:
@@ -135,8 +178,8 @@ lint:file-type-ban:
 # fast. No literal suite filename is named here (EDMV3-T21 AC5's no-wave-token guard).
 lint:pattern-library-contract:
   stage: lint
-  image: "alpine:3.20@sha256:4117b6e5b09d84c8f03ea45234ee7f8ec9f5c3a9792b80e3c9d54ded36d3735a"
-  rules: *edm_rules
+  <<: *alpine_edm
+  needs: []
   before_script:
     - apk add --no-cache bash
   script:
@@ -187,8 +230,12 @@ lint:pattern-library-contract:
 # a second, silently-stale source of truth for the suite set.
 test:smoke:
   stage: test
-  image: "alpine:3.20@sha256:4117b6e5b09d84c8f03ea45234ee7f8ec9f5c3a9792b80e3c9d54ded36d3735a"
-  rules: *edm_rules
+  <<: *alpine_edm
+  # EDMV3-T67 AC10: depend on the syntax check specifically, not on the whole lint stage. A
+  # `bash -n` failure means the suite cannot run meaningfully, so gate on it; the artifact,
+  # grant and vocabulary checks are orthogonal to whether the suite passes and should not hold
+  # it up.
+  needs: ["lint:bash-syntax"]
   before_script:
     - apk add --no-cache bash jq git
   script:
@@ -219,6 +266,7 @@ test:smoke-bash32:
   stage: test
   image: "bash:3.2"
   rules: *edm_rules
+  needs: ["lint:bash-syntax"]
   before_script:
     - apt-get update -qq && apt-get install -y -qq jq git >/dev/null
   script:
@@ -243,8 +291,8 @@ test:smoke-bash32:
 # fails it, naming the initiative and the anomaly code.
 test:state-validate:
   stage: test
-  image: "alpine:3.20@sha256:4117b6e5b09d84c8f03ea45234ee7f8ec9f5c3a9792b80e3c9d54ded36d3735a"
-  rules: *edm_rules
+  <<: *alpine_edm
+  needs: ["lint:bash-syntax"]
   before_script:
     - apk add --no-cache bash jq git
   script:
