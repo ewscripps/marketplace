@@ -18,7 +18,6 @@
 #   edm-state phase-start <PREFIX> <phase-num>          # record phase start timestamp
 #   edm-state phase-complete <PREFIX> <phase-num>       # record phase completion + duration
 #   edm-state checkpoint-if-active                      # called by Stop/PreCompact hooks
-#   edm-state record-task-duration                      # called by TaskCompleted hook (reserved no-op)
 #   edm-state record-test-coverage <PREFIX> <layer> <pct> [<epic>]  # record coverage % for a layer (optionally per-epic)
 #   edm-state record-tests-added <PREFIX> <phase> <layer> <count>  # record test count by layer
 #   edm-state get-coverage <PREFIX>                     # print coverage summary for all layers
@@ -457,7 +456,7 @@ gated_phase_for_gate() {
 # `case " $LIST " in *" $item "*)` so no caller re-encodes the enum as a second
 # literal (EDMV3-T09 uses the identical idiom for SETTABLE_KEYS).
 MODE_ENUM_LIST="standard mini-srd iac data-ml prototype"
-LIFECYCLE_MODE_ENUM_LIST="standard partial fast-track fix-pack"
+LIFECYCLE_MODE_ENUM_LIST="standard fast-track fix-pack"
 
 # terminal_phase_for_mode <mode> <lifecycle_mode> — the phase at which this
 # initiative's lifecycle ends (EDMV3-T07 AC1). One comment per enum row so the
@@ -469,6 +468,14 @@ LIFECYCLE_MODE_ENUM_LIST="standard partial fast-track fix-pack"
 # by required_gates_for_mode(), not replaced (AC2/AC5).
 terminal_phase_for_mode() {
   local mode="$1" lifecycle_mode="$2"
+  # C-4 read-compat (EDMV3-T59 / D12): `partial` was removed from the settable enum because it
+  # was a legal value with no documented sub-flow anywhere. A state file written before the
+  # removal can still carry it, and refusing to READ such a file would strand the initiative.
+  # It is accepted here (treated as `standard`, its only ever behaviour) and reported as an
+  # informational LEGACY_LIFECYCLE_MODE anomaly; `set-mode` still refuses to WRITE it.
+  if [[ "$lifecycle_mode" == "partial" ]]; then
+    lifecycle_mode="standard"
+  fi
   case " $LIFECYCLE_MODE_ENUM_LIST " in
     *" $lifecycle_mode "*) ;;
     *) die "terminal_phase_for_mode: unknown lifecycle_mode '${lifecycle_mode}' (expected: ${LIFECYCLE_MODE_ENUM_LIST// /|})" ;;
@@ -877,6 +884,17 @@ state_anomalies() {
       open_partials_anom="${open_partials_anom}${open_partials_anom:+, }${open_partials_anom_entry}"
     done <<< "$open_partials_anom_lines"
     echo "blocking  OPEN_PARTIALS  partial_verdict_map  unclosed or FAIL-closed PARTIAL verdict(s) for ${prefix}: ${open_partials_anom}; run /edm:verify-runtime ${prefix} to close each before archiving"
+    found=1
+  fi
+  # LEGACY_LIFECYCLE_MODE (info -- EDMV3-T59 / D12): `partial` was removed from the settable
+  # lifecycle_mode enum (a legal value with no sub-flow anywhere). A file written before the
+  # removal still reads -- terminal_phase_for_mode treats it as `standard`, its only ever
+  # behaviour -- but the operator is told, so the stale value can be corrected deliberately
+  # rather than discovered later. Informational: reading a legacy file is not a defect.
+  local legacy_lifecycle_anom
+  legacy_lifecycle_anom="$(echo "$state" | jq -r '.lifecycle_mode // empty')"
+  if [[ "$legacy_lifecycle_anom" == "partial" ]]; then
+    echo "info  LEGACY_LIFECYCLE_MODE  lifecycle_mode  ${prefix} carries the removed lifecycle_mode 'partial' (read as 'standard'); run edm-state set-mode ${prefix} lifecycle_mode standard to clear it"
     found=1
   fi
   # SCHEMA_VERSION_MISSING (info -- EDMV3-T10 AC6): schema_version is absent for this
@@ -1550,13 +1568,6 @@ cmd_checkpoint() {
     [[ $drift_found -eq 0 ]] || echo ""
     write_handoff_internal "$prefix"
   done < <(list_state_files)
-}
-
-cmd_record_task_duration() {
-  # Reserved no-op — TaskCompleted hook wires here but accumulation is not yet implemented.
-  # The hook fires correctly and this function runs safely, but no durations are recorded.
-  # Future work: parse stdin JSON from hook and accumulate per-task durations into state.
-  return 0
 }
 
 cmd_record_test_coverage() {
@@ -3853,7 +3864,6 @@ case "$cmd" in
   phase-start)          cmd_phase_start "$@" ;;
   phase-complete)       cmd_phase_complete "$@" ;;
   checkpoint-if-active) cmd_checkpoint "$@" ;;
-  record-task-duration) cmd_record_task_duration "$@" ;;
   record-test-coverage) cmd_record_test_coverage "$@" ;;
   record-tests-added)   cmd_record_tests_added "$@" ;;
   get-coverage)         cmd_get_coverage "$@" ;;

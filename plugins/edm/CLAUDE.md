@@ -521,9 +521,29 @@ The `userConfig.jira_project_key` value provides a default; otherwise the user m
 | `PreToolUse` matching `git commit`                                                     | Run `edm-lint-artifacts` -- block commit if active-initiative artifacts have violations |
 | `Stop` and `PreCompact`                                                                | Checkpoint state via `edm-state checkpoint-if-active`         |
 | `SubagentStop` matching `edm-implementer`                                              | Auto-spawn `edm-qc-auditor`; write verdict to `qc/qc-summary.md`; persist PARTIAL verdicts via `edm-state record-partial-verdict` |
-| `TaskCompleted`                                                                        | Reserved -- per-task duration accumulation not yet implemented |
 
 These are part of the methodology -- do not disable them in normal operation.
+
+## Monitors behavior (EDMV3-T59, D24)
+
+`monitors/monitors.json` declares `edm-impl-progress`, running `edm-state watch-impl`. This is
+**host-managed**: Claude Code arms plugin-declared monitors as persistent background Monitor
+tasks (same trust tier as hooks), confirmed by direct inspection of the installed CLI (D24,
+`SRD/edm/EDMV3__prompt-streamline/decisions.md`).
+
+- **Arm trigger**: `on-skill-invoke:implement` -- the host arms the monitor the first time
+  `/edm:implement` is dispatched in a session (via the Skill tool or the slash command). Repeat
+  invocations of `/edm:implement` in the same session do not spawn a duplicate; the host dedupes
+  on the monitor's name.
+- **Polling interval**: `cmd_watch_impl` polls `git log` every 5 seconds (`sleep 5`) for new
+  commits referencing a `{PREFIX}-T{NN}` ticket ID, emitting one line per new commit so the host
+  surfaces it as a notification.
+- **Lifecycle / how to stop it**: a persistent monitor runs for the lifetime of the Claude Code
+  session, not just for the duration of the triggering skill -- it is not restarted or killed by
+  context compaction. It stops when the session ends, or can be stopped early via the host's
+  `TaskStop` mechanism. There is no separate EDM-side kill switch; this is intentional -- the
+  monitor is a read-only `git log` poll with no state mutation, so leaving it running for the
+  rest of the session is inert.
 
 ## Artifact content conventions
 
@@ -564,7 +584,7 @@ Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call the
 
 | Script                | Purpose                                                                                                                                                                                                                                     |
 |-----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `edm-state`           | Read/write `.edm-state.json` files; 41 subcommands: `init`, `get`, `set`, `list`, `active-initiatives`, `migrate-path`, `migrate-schema`, `approve-gate`, `phase-start`, `phase-complete`, `checkpoint-if-active`, `record-task-duration`, `record-test-coverage`, `record-tests-added`, `get-coverage`, `srd-version`, `archive`, `write-handoff`, `watch-impl`, `metrics-report`, `validate`, `gate-check`, `branch-check`, `record-branch`, `git-lock-check`, `current-step`, `session-start`, `audit-round-start`, `audit-round-complete`, `render-ledger`, `audit-converged`, `record-partial-verdict`, `set-mode`, `skip-phase`, `set-supersedes`, `set-forked-from`, `resolve-dir`, `set-parent`, `add-related`, `update-patterns`, `lint` |
+| `edm-state`           | Read/write `.edm-state.json` files; 40 subcommands: `init`, `get`, `set`, `list`, `active-initiatives`, `migrate-path`, `migrate-schema`, `approve-gate`, `phase-start`, `phase-complete`, `checkpoint-if-active`, `record-test-coverage`, `record-tests-added`, `get-coverage`, `srd-version`, `archive`, `write-handoff`, `watch-impl`, `metrics-report`, `validate`, `gate-check`, `branch-check`, `record-branch`, `git-lock-check`, `current-step`, `session-start`, `audit-round-start`, `audit-round-complete`, `render-ledger`, `audit-converged`, `record-partial-verdict`, `set-mode`, `skip-phase`, `set-supersedes`, `set-forked-from`, `resolve-dir`, `set-parent`, `add-related`, `update-patterns`, `lint` |
 | `edm-init`            | Scaffold a new initiative directory (`SRD/{PREFIX}/` or `SRD/{PRODUCT}/{PREFIX}__{desc}/`) with empty state file |
 | `edm-validate-prefix` | Verify a proposed prefix doesn't collide with existing initiatives across all product subdirectories |
 | `edm-lint-artifacts`  | Scan `.md` artifact files for four violation classes -- attribution trailers, non-ASCII bytes, leaked tool-invocation tags, and a literal `;` inside Mermaid label/edge/message text; called by the `PreToolUse` git-commit hook |

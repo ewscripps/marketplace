@@ -118,16 +118,6 @@
           }
         ]
       }
-    ],
-    "TaskCompleted": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 && edm-state record-task-duration || true"
-          }
-        ]
-      }
     ]
   }
 }

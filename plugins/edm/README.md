@@ -22,6 +22,16 @@ When installed, Claude Code prompts for a few `userConfig` values (defaults are 
 - bash 3.2 or newer
 - `jq` required
 - `git` required
+
+## Documentation
+
+A slide presentation and a full user guide live outside the plugin's shipped source tree, at
+the repository root (EDMV3-T57 -- distribution hygiene; these binaries are not needed by the
+plugin at runtime):
+
+- [`docs/EDM_Plugin_Presentation.pptx`](../../docs/EDM_Plugin_Presentation.pptx)
+- [`docs/EDM_Plugin_User_Guide.docx`](../../docs/EDM_Plugin_User_Guide.docx)
+
 ## Required setup: permission `ask` rules
 
 **Required setup.** Add the block below to your project's `.claude/settings.json` (or
