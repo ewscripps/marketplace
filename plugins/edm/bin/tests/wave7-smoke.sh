@@ -2591,6 +2591,65 @@ bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t46_lint_ex
 [[ "$t46_lint_exit" -eq 0 ]] && pass "T46 -- edm-lint-artifacts --all exits 0" || fail "T46 -- edm-lint-artifacts --all exited ${t46_lint_exit}"
 # EDMV3-T46 end
 
+# =================================================================================
+# EDMV3-T47: explorer fan-out gets a deterministic cap
+# =================================================================================
+echo
+echo "=== EDMV3-T47: explorer fan-out gets a deterministic cap ==="
+
+echo
+echo "T47 AC1 -- the cap: 'maximum 4' present in skills/plan/SKILL.md"
+check "T47 AC1 -- 'maximum 4' present" "maximum 4" "$(cat "${PLUGIN_DIR}/skills/plan/SKILL.md")"
+
+echo
+echo "T47 AC2 -- rationale recorded alongside the cap"
+T47_PLAN_PATTERN="$(sed -n '/AI Execution Pattern/,/^## /p' "${PLUGIN_DIR}/skills/plan/SKILL.md")"
+check "T47 AC2 -- AskUserQuestion four-option rationale" "AskUserQuestion" "$T47_PLAN_PATTERN"
+check "T47 AC2 -- cites existing fan-outs (ticket auditors)" "ticket auditors" "$T47_PLAN_PATTERN"
+check "T47 AC2 -- cites existing fan-outs (SRD auditors)" "SRD auditors" "$T47_PLAN_PATTERN"
+check "T47 AC2 -- fifth-area-means-split rationale" "signal the" "$T47_PLAN_PATTERN"
+
+echo
+echo "T47 AC3 -- the one-is-enough case stated explicitly"
+check "T47 AC3 -- 'use one' present" "use one" "$T47_PLAN_PATTERN"
+
+echo
+echo "T47 AC4 -- criterion given concretely"
+check "T47 AC4 -- 'distinct top-level source trees' present" "distinct top-level source trees" "$T47_PLAN_PATTERN"
+
+echo
+echo "T47 AC5 -- one location after the move: orchestrator carries no copy"
+t47_orch_explorer_hits="$(grep -c 'edm-explorer' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" || true)"
+[[ "${t47_orch_explorer_hits:-0}" -eq 0 ]] && pass "T47 AC5 -- orchestrator/SKILL.md carries zero 'edm-explorer' mentions" \
+  || fail "T47 AC5 -- orchestrator/SKILL.md carries ${t47_orch_explorer_hits} 'edm-explorer' mention(s), expected 0"
+
+echo
+echo "T47 AC6 -- other deterministic caps unchanged (asserted positively on the surviving text)"
+check "T47 AC6 -- ticket-auditor cap surviving unchanged" "spawn exactly 2 \`edm-ticket-auditor\`" \
+  "$(cat "${PLUGIN_DIR}/skills/audit-tickets/SKILL.md")"
+check "T47 AC6 -- SRD-auditor cap surviving unchanged" "Spawn 2-3 \`edm-srd-auditor\`" \
+  "$(cat "${PLUGIN_DIR}/skills/audit-srd/SKILL.md")"
+check "T47 AC6 -- implementer cap surviving unchanged" "6-10 parallel" \
+  "$(cat "${PLUGIN_DIR}/skills/implement/SKILL.md")"
+check "T47 AC6 -- lens cap surviving unchanged" "run all 11" \
+  "$(cat "${PLUGIN_DIR}/skills/code-audit/SKILL.md")"
+
+echo
+echo "T47 AC7 -- the cap text appears in exactly one file"
+t47_cap_files="$(grep -rl 'maximum 4' "${PLUGIN_DIR}/skills/" | wc -l | tr -d ' ')" || true
+[[ "${t47_cap_files:-0}" -eq 1 ]] && pass "T47 AC7 -- 'maximum 4' appears in exactly one skills/ file" \
+  || fail "T47 AC7 -- 'maximum 4' appears in ${t47_cap_files:-0} file(s), expected 1"
+
+echo
+echo "T47 -- full suite stays green with the explorer cap in place"
+t47_grants_exit=0
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t47_grants_exit=$?
+[[ "$t47_grants_exit" -eq 0 ]] && pass "T47 -- edm-check-grants exits 0" || fail "T47 -- edm-check-grants exited ${t47_grants_exit}"
+t47_lint_exit=0
+bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t47_lint_exit=$?
+[[ "$t47_lint_exit" -eq 0 ]] && pass "T47 -- edm-lint-artifacts --all exits 0" || fail "T47 -- edm-lint-artifacts --all exited ${t47_lint_exit}"
+# EDMV3-T47 end
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

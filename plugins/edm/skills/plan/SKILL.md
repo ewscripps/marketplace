@@ -157,7 +157,14 @@ Files affected, new modules, integration points, approximate ticket count (S/M/L
 
 ## AI Execution Pattern
 
-Spawn the `edm-explorer` agent. For initiatives spanning multiple codebase areas, launch parallel agents:
+Spawn one `edm-explorer` agent per genuinely distinct codebase area, **maximum 4**. If one
+explorer can cover the whole scope, use one. The cap is 4 for consistency with the
+`AskUserQuestion` four-option convention and with the plugin's other fan-outs (exactly 2 ticket auditors,
+2-3 SRD auditors) -- and because a fifth genuinely distinct area is a signal the initiative should
+be split rather than explored wider. A "genuinely distinct area" is judged concretely:
+distinct top-level source trees (e.g., `frontend/` vs. `backend/` vs. `infra/`), or distinct
+subsystems explicitly named in the initiative description -- not a subjective read of "how big"
+the change feels.
 
 ```
 Agent: edm-explorer
