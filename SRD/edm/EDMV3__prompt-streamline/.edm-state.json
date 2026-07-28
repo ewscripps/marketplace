@@ -32,7 +32,7 @@
     }
   },
   "srd_version": "1.3.0",
-  "estimated_size": "Unknown",
+  "estimated_size": "Large",
   "initiative_branch": "edm/edmv3-prompt-streamline",
   "product_name": "edm",
   "initiative_description": "prompt-streamline",
@@ -134,7 +134,7 @@
   "forked_from": "",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-07-27T08:08:24Z",
+  "last_updated": "2026-07-28T13:56:19Z",
   "current_step": "6.wave-a-complete",
   "schema_version": 1
 }
