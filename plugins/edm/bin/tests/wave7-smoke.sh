@@ -811,17 +811,19 @@ t20_path_no_edmstate_case
 # EDMV3-T20 end
 
 # =================================================================================
-# EDMV3-T21 AC3 (shard-2 QC remediation): tripwire for lint:file-type-ban's allow_failure
-# flip -- T57's flip to `false` and T66's cross-check both depend on a passing assertion
-# existing here first (no case previously read this field out of .gitlab-ci.yml at all).
+# EDMV3-T57 AC10 (was the EDMV3-T21 AC3 tripwire): lint:file-type-ban is now blocking.
+# EDMV3-T57 relocated plugins/edm/'s two banned files, recorded a clean six-plugin scan, and
+# flipped this job to blocking in the same merge request -- the tripwire case above (asserting
+# `allow_failure: true` was still present) has served its purpose and is replaced by its own
+# negative assertion: the flip landed and stayed landed. T66 AC11 cross-checks this at wave-C
+# close.
 # =================================================================================
 echo
-echo "T21 AC3 -- lint:file-type-ban currently carries allow_failure: true (T57/T66 tripwire)"
+echo "T57 AC10 -- lint:file-type-ban no longer carries allow_failure (flipped to blocking)"
 t21_ban_block="$(awk '/^lint:file-type-ban:/{f=1;next} f && /^[a-zA-Z]/{f=0} f' "$GITLAB_CI_YML")"
-check "T21 AC3 -- lint:file-type-ban block found in .gitlab-ci.yml" "allow_failure" "$t21_ban_block"
-check "T21 AC3 -- lint:file-type-ban carries allow_failure: true (flip to false lands with EDMV3-T57)" \
-  "true" "$(printf '%s\n' "$t21_ban_block" | grep 'allow_failure' || true)"
-# EDMV3-T21 AC3 end
+check "T57 AC10 -- lint:file-type-ban block found in .gitlab-ci.yml" "before_script" "$t21_ban_block"
+check_absent "T57 AC10 -- lint:file-type-ban no longer carries allow_failure" "allow_failure" "$t21_ban_block"
+# EDMV3-T57 AC10 end
 
 # ---- AC5 (D19 amendment, decisions.md): no literal wave-suite token anywhere in
 # .gitlab-ci.yml -- suites run via run-all.sh auto-discovery and are never hand-named. -------

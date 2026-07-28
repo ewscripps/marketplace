@@ -93,17 +93,16 @@ lint:shellcheck:
       done
       [ "$FAIL" -eq 0 ] || exit 1
 
-# AC3: added here non-blocking only. EDMV3-80's file-type ban binds all six marketplace
-# plugins; plugins/edm/ itself currently carries two banned files (a .pptx and a .docx), so
-# this job runs the real scan every pipeline but never blocks a merge until EDMV3-T57 records a
-# clean six-plugin scan and flips `allow_failure` to `false` in the same MR that fixes what it
-# finds. Scans git-tracked files only (never local, untracked OS artifacts like a developer's
-# own uncommitted .DS_Store).
+# EDMV3-T57 AC10: this job blocks. EDMV3-80's file-type ban binds all six marketplace
+# plugins; EDMV3-T57 relocated plugins/edm/'s two banned files (a .pptx and a .docx) out of
+# the plugin directory and recorded a clean pre-merge scan across all six plugins (see the
+# ticket's QC evidence), so the check no longer carries `allow_failure`. Scans git-tracked
+# files only (never local, untracked OS artifacts like a developer's own uncommitted
+# .DS_Store).
 lint:file-type-ban:
   stage: lint
   image: "alpine:3.20@sha256:4117b6e5b09d84c8f03ea45234ee7f8ec9f5c3a9792b80e3c9d54ded36d3735a"
   rules: *edm_rules
-  allow_failure: true
   before_script:
     - apk add --no-cache bash git
   script:
@@ -111,7 +110,7 @@ lint:file-type-ban:
       set -e
       banned="$(git ls-files -- plugins | grep -iE '\.(pptx|docx)$|(^|/)\.DS_Store$' || true)"
       if [ -n "$banned" ]; then
-        echo "file-type-ban: banned file(s) found under plugins/ (non-blocking until EDMV3-T57):"
+        echo "file-type-ban: banned file(s) found under plugins/:"
         printf '%s\n' "$banned"
         exit 1
       fi
@@ -119,11 +118,10 @@ lint:file-type-ban:
       # EDMV3-T22 AC3 (shard-2 QC remediation): plugins/edm/evals/ has a documented 100KB
       # directory-size ceiling (plugins/edm/evals/fixtures/tiny-svc/README.md), so growth there
       # (a new fixture, a bloated baseline capture) is caught here rather than silently landing.
-      # Non-blocking for the same reason as the scan above (allow_failure: true until EDMV3-T57).
       evals_kb="$(du -sk plugins/edm/evals/ 2>/dev/null | awk '{print $1}')"
       evals_kb="${evals_kb:-0}"
       if [ "$evals_kb" -gt 100 ]; then
-        echo "file-type-ban: plugins/edm/evals/ is ${evals_kb}KB, exceeds the documented 100KB budget (non-blocking until EDMV3-T57):"
+        echo "file-type-ban: plugins/edm/evals/ is ${evals_kb}KB, exceeds the documented 100KB budget:"
         exit 1
       fi
       echo "file-type-ban: plugins/edm/evals/ size OK (${evals_kb}KB, documented budget is 100KB)"
