@@ -2176,6 +2176,50 @@ bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t36_lint_ex
 [[ "$t36_lint_exit" -eq 0 ]] && pass "T36 -- edm-lint-artifacts --all exits 0" || fail "T36 -- edm-lint-artifacts --all exited ${t36_lint_exit}"
 # EDMV3-T36 end
 
+# =================================================================================
+# EDMV3-T54: update-patterns respects the Living-Library Contract, entries pending-review
+# =================================================================================
+# Ownership split (recorded here, not worked around silently): cmd_update_patterns
+# (plugins/edm/bin/edm-state:1576-1692 per the ticket) is owned by a different agent in this
+# wave and is out of this batch's file remit to edit. AC1-AC12 below are the functional
+# insertion-logic acceptance criteria and are BLOCKED-ON-OWNER (bin/edm-state) as of this
+# commit -- asserting them here against unmodified code would be a false FAIL, and faking them
+# would be a false PASS, so they are named below and left for the owning agent's commit instead.
+# Only the docs/contract half this batch owns is asserted: AC13 (README.md's Append Schema
+# documents the pending-review marker, its provenance fields, and the curation lifecycle) plus
+# the "Insertion target" mapping/never-EOF contract prose that AC1/AC2/AC3 are written against.
+echo
+echo "=== EDMV3-T54: update-patterns Living-Library Contract + pending-review (docs/contract half) ==="
+README_T54="${PLUGIN_DIR}/docs/audit-patterns/README.md"
+README_T54_CONTENT="$(cat "$README_T54")"
+
+echo "T54 AC13 -- Append Schema documents the pending-review marker and curation lifecycle"
+check "T54 AC13 -- 'status: pending-review' marker documented" "status: pending-review" "$README_T54_CONTENT"
+check "T54 AC13 -- provenance field 'source' documented" "source: {source-prefix}" "$README_T54_CONTENT"
+check "T54 AC13 -- provenance field 'audit-type' documented" "audit-type: {srd|ticket|qc|code}" "$README_T54_CONTENT"
+check "T54 AC13 -- provenance field 'date' documented" "date: {date}" "$README_T54_CONTENT"
+check "T54 AC13 -- curation lifecycle documented (one-way, de-dup prevents re-add)" \
+  "curation is one-way" "$README_T54_CONTENT"
+
+echo
+echo "T54 -- contract prose this batch owns (AC1/AC2/AC3's documented insertion contract)"
+check "T54 -- default insertion target documented" \
+  "\`## Anti-Patterns\` is the default target" "$README_T54_CONTENT"
+check "T54 -- missing-heading skip (never EOF fallback) documented" \
+  "it never falls back to appending at end-of-file" "$README_T54_CONTENT"
+
+echo
+echo "T54 -- BLOCKED-ON-OWNER (bin/edm-state, cmd_update_patterns): AC1 (heading-targeted"
+echo "  insertion), AC2 (missing-heading skip, not EOF fallback), AC3 (no fifth section/orphan"
+echo "  content), AC4 (idempotent structure under repetition), AC5 (de-duplication preserved),"
+echo "  AC6 (skip list + read-only skip preserved), AC7 (atomic insertion via temp file + rename),"
+echo "  AC8 (state recording preserved), AC9 (pending-review marker on every auto-append), AC10"
+echo "  (stub delimited, not disguised), AC11 (single source of truth for pending count), AC12"
+echo "  (curation is one-way) all require the insertion-logic rewrite at"
+echo "  plugins/edm/bin/edm-state:1576-1692, out of this batch's file remit. Not asserted here;"
+echo "  report these as blocked-on-owner rather than a false PASS or FAIL."
+# EDMV3-T54 end
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

@@ -11,6 +11,8 @@ Each document in this library contains exactly four subsection headings (in this
 3. `## Pre-Flight Checklist` -- self-checks to run before submission
 4. `## What a Passing [X] Looks Like` -- concrete example of a passing artifact
 
+**Insertion target** (EDMV3-76/77): new entries are inserted as `### ` entries under one of the four `##` headings above, chosen by a documented mapping from finding type; `## Anti-Patterns` is the default target absent a more specific mapping entry (self-consistent with where this initiative's own EDMV3-T42 entries live). Insertion never lands past the fourth section or at end-of-file. If the target heading is absent from a document, the insertion is skipped with a message -- it never falls back to appending at end-of-file.
+
 **Structure check** (run as a regression guard):
 ```bash
 for doc in srd-audit ticket-audit code-audit test-coverage-audit qc-audit; do
@@ -21,15 +23,23 @@ All four headings must be present in every document.
 
 ## Append Schema
 
-When appending a new finding (via auto-update or `edm-state update-patterns`), place it under the appropriate subsection heading:
+When appending a new finding (via auto-update or `edm-state update-patterns`), place it under the appropriate subsection heading (see "Insertion target" above -- `## Anti-Patterns` by default):
 
 ```markdown
 ### {Finding title} ({source-prefix}, {date}, {severity})
 
-{One-paragraph description of the finding and how to prevent it.}
+status: pending-review
+source: {source-prefix}
+audit-type: {srd|ticket|qc|code}
+date: {date}
+
+> {One-paragraph description of the finding and how to prevent it -- delimited stub text pending
+> human curation; not yet curated prose.}
 ```
 
-De-duplication: if the finding title (lowercased, whitespace-collapsed) already exists in the document, skip the append.
+De-duplication: if the finding title (lowercased, whitespace-collapsed, trailing-parens metadata stripped) already exists in the document, skip the append.
+
+**Curation lifecycle** (EDMV3-77/78): every auto-appended entry carries `status: pending-review` on its own line, plus its provenance (`source`, `audit-type`, `date`). Pending entries are surfaced for human curation at the audit gates (EDMV3-T55). Removing the `status: pending-review` line marks an entry curated; curation is one-way -- nothing re-adds the marker, and de-duplication prevents the same title being re-appended. The pending count is always `grep -c 'status: pending-review' docs/audit-patterns/*.md` computed at read time -- there is no mirrored count in `.edm-state.json`.
 
 ## Consumers
 
