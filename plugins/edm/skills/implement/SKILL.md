@@ -5,7 +5,7 @@ disable-model-invocation: true
 model: opus
 effort: max
 argument-hint: <PREFIX>
-allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(grep *), Glob, Grep, Task, TodoWrite, TodoRead
+allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(grep *), Glob, Grep, Task, TodoWrite, TodoRead, AskUserQuestion
 ---
 
 # EDM Phase 6: Implementation + QC Audit + Remediation
@@ -24,14 +24,27 @@ using `<gated-command>` = `implement`.
 
 1. Parse `{PREFIX}` from `$ARGUMENTS`.
 2. `edm-state phase-start <PREFIX> 6`
-3. Read the ticket pack. Group tickets by file/component independence into parallel waves.
-4. **For each wave**: spawn `edm-implementer` agents (6-10 parallel). Each gets `isolation: worktree` automatically.
-5. After each implementer completes, the `SubagentStop` hook automatically spawns `edm-qc-auditor` to verify the ticket's acceptance criteria against the implemented code. (The hook is configured in `hooks/hooks.json`.)
-6. Aggregate QC findings as they arrive.
-7. **Remediate** any FAIL QC findings, at every severity: spawn `edm-implementer` agents to fix; re-trigger QC.
-8. Loop until all tickets have PASS verdict.
-9. `edm-state phase-complete <PREFIX> 6`
-10. Print the post-implementation checklist and remind the user about `/edm:code-audit <PREFIX>` for the optional 11-lens audit before merge.
+3. **TDD mode selection** -- if `implementation_mode` is not already set in state, ask the user:
+   ```
+   AskUserQuestion header: "Impl mode"
+   Options: Standard -- basic smoke tests per ticket (Recommended) | TDD -- Red-Green-Refactor per ticket
+   ```
+   Record the choice: `edm-state set-mode <PREFIX> implementation_mode <value>`
+   On resume, read `implementation_mode` from state and skip this prompt.
+4. Read the ticket pack. Group tickets by file/component independence into parallel waves.
+5. **For each wave**: spawn `edm-implementer` agents (6-10 parallel). Each gets `isolation: worktree` automatically.
+   - In TDD mode, pass `implementation_mode=tdd` instruction to each implementer (Red-Green-Refactor per ticket).
+6. After each implementer completes, the `SubagentStop` hook automatically spawns `edm-qc-auditor` to verify the ticket's acceptance criteria against the implemented code. (The hook is configured in `hooks/hooks.json`.)
+   - In TDD mode, the QC auditor also runs the TDD compliance pass.
+7. Aggregate QC findings as they arrive.
+8. **Remediate** any FAIL QC findings, at every severity: spawn `edm-implementer` agents to fix; re-trigger QC.
+9. Loop until all tickets have PASS verdict.
+10. `edm-state phase-complete <PREFIX> 6`
+10a. **Auto-update patterns** -- append novel QC findings from this wave:
+    ```bash
+    edm-state update-patterns <PREFIX> qc
+    ```
+11. Print the post-implementation checklist and remind the user about `/edm:code-audit <PREFIX>` for the mandatory 11-lens audit (standard/tdd modes) before merge.
 
 ## Step 1: Identify Parallelizable Work
 
@@ -191,8 +204,25 @@ Only when:
   Fail condition: if `Write` is absent from `tools:` or present in `disallowedTools:`, the
   test-coverage-auditor cannot write `SRD/{PREFIX}/test-coverage.md` -- the testing layer is
   broken. Fix by editing `agents/edm-test-coverage-auditor.md` before declaring done.
+- [ ] `/edm:test {PREFIX}` run and all coverage targets met, or consciously skipped
+  (`test_layer_skipped` recorded in state per Step 7 above)
+- [ ] Code audit converged: the Convergence gate (`/edm:code-audit`'s own Step 10) recorded explicit
+  Approve -- `edm-state get {PREFIX} code_audit_converged` shows `true` (or mode is `prototype`)
 
-After declaration, recommend the user run `/edm:code-audit <PREFIX>` for the 11-lens exhaustive audit before merging.
+**On-demand artifacts at completion** -- write these when applicable, not always:
+- `ROLLBACK.md` -- if this initiative changes production behavior or involves an irreversible
+  migration. Minimum content: trigger conditions, ordered revert steps,
+  verification-after-rollback, and owner/contact.
+- `post-deploy/verification.md` -- post-deploy smoke-test / verification report (after the deploy,
+  not before). Also the canonical `/edm:verify-runtime` closure output (Step 8 above).
+- `post-deploy/analysis/` -- analysis-input documents (rate-limit-analysis.md, source-triage.md,
+  cost-analysis.md) if relevant. All paths are state-derived; a fresh initiative has none of these.
+
+After declaration, recommend the user run `/edm:code-audit <PREFIX>` for the 11-lens exhaustive audit
+before merging (mandatory for standard and tdd modes; `prototype` mode may skip code-audit
+convergence -- `edm-state archive` proceeds with a warning). Once converged, run
+`edm-state archive <PREFIX>` to close the initiative (blocked by `code_audit_converged=false` for
+non-prototype v2+ initiatives).
 
 ## QC Audit Report Format
 
@@ -240,3 +270,8 @@ PARTIAL findings appear in the exec-report's runtime-check table (Step 6) and ar
 - **Commit often**: Small commits referencing ticket IDs.
 - **Re-audit**: Always re-audit after remediation.
 - **Background monitor**: While Phase 6 runs, the `edm-impl-progress` monitor reports each ticket commit as a notification.
+
+This phase presents no HITL gate of its own -- it is the terminal phase, closed by the "Declare
+Done" checklist above and `edm-state archive`, not by an `AskUserQuestion` gate. The Convergence and
+Remediation gates that run within it are presented by `/edm:code-audit` per
+`skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`.

@@ -599,6 +599,45 @@ the version-2 checks themselves are built.
 Operates against the project's working directory (no plugin-relative paths). All scripts must be POSIX-compatible bash (
 `#!/bin/bash` or `#!/usr/bin/env bash`).
 
+## EDM mode matrix (EDMV3-T38)
+
+`skills/orchestrator/SKILL.md` Step 1c presents this selection interactively and records the
+routing; the descriptive matrix and each mode's sub-flow **procedure** live here and in the phase
+skill that owns each step, never restated in the dispatcher (EDMV3-T37).
+
+| `mode` | What changes | Owning phase skill(s) |
+|---|---|---|
+| `standard` | Full six-phase flow, file-path vocabulary, standard QC (Recommended) | all eight, unmodified |
+| `mini-srd` | Phases 2-5 fuse into one audited file; no separate ticket pack; a merged `"Gate 2+3"` replaces Gate 2 and Gate 3 | `skills/srd/SKILL.md` (fused file), `skills/audit-srd/SKILL.md` (merged gate + `skip-phase 4/5`) |
+| `iac` | Resource-path vocabulary in Target Components; QC verifies `terraform plan` / drift | `skills/srd/SKILL.md`, `skills/tickets/SKILL.md` |
+| `data-ml` | Requires a `## Data Requirements` SRD section; QC validates model metrics | `skills/srd/SKILL.md` |
+| `prototype` | Stops after Phase 2 (SRD); Phases 3-6 recorded `skip-phase`; no convergence gate required to archive | `skills/srd/SKILL.md` (the stop message and skip-phase recording) |
+
+| `lifecycle_mode` | What changes | Owning phase skill(s) |
+|---|---|---|
+| `standard` | No change from the `mode` behavior above | -- |
+| `fast-track` / `fix-pack` | Tickets generated directly from an analysis document; Phases 1, 2, 3, 5 recorded `skip-phase`; a single review gate (`"Gate 3 -- Ticket Review"`) replaces the normal Gate 2 -> Phase 4 -> Gate 3 sequence | `skills/tickets/SKILL.md` ("Fast-Track / Fix-Pack Mode" section) |
+
+`compliance_enabled=true` inserts **Gate 3.5** (a compliance review, distinct from the `mode` and
+`lifecycle_mode` families above) between Gate 3 and Phase 6, and adds regulatory-traceability
+columns to ticket ACs -- owned by `skills/audit-tickets/SKILL.md` (the gate) and
+`skills/tickets/SKILL.md` (the columns).
+
+Mode suppression for gates and phases (which gate applies, which phase is terminal) is computed by
+`cmd_gate_check`/`cmd_branch_check`/`terminal_phase_for_mode()` in `bin/edm-state`, per each phase
+skill's Step 0 preflight (`skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`) -- never
+restated as prose in a phase skill or in the dispatcher.
+
+## Phase Timing Guidelines (EDMV3-T38)
+
+| Initiative Size        | Planning | SRD | Audit | Tickets | Audit | Impl   | Total     |
+|------------------------|----------|-----|-------|---------|-------|--------|-----------|
+| Small (10-20 tickets)  | 30m      | 2h  | 1h    | 1h      | 30m   | 4-8h   | 1-2 days  |
+| Medium (30-50 tickets) | 1h       | 4h  | 2h    | 3h      | 1h    | 12-24h | 3-5 days  |
+| Large (50-85 tickets)  | 2h       | 8h  | 4h    | 6h      | 2h    | 24-48h | 5-10 days |
+
+Run `/edm:metrics --calibrate` periodically to update these from your team's actual data.
+
 ## `userConfig` reference
 
 Prompted at install time. See `.claude-plugin/plugin.json` for the live schema. Keys:

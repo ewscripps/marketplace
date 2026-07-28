@@ -63,8 +63,25 @@ itself. Step 0 is a second, defence-in-depth line alongside the `UserPromptExpan
 6. Synthesize agent output into the planning document at `${user_config.srd_root}/{PREFIX}/planning.md` using the template below.
 7. `edm-state phase-complete <PREFIX> 1`
 8. `edm-state write-handoff <PREFIX>` -- create/refresh HANDOFF.md from the just-written planning.md. This is idempotent; re-running regenerates HANDOFF.md without error.
-9. Present **HITL Gate 1** (see below, per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`) and STOP for sign-off.
-10. On approval: `edm-state approve-gate <PREFIX> 1`.
+9. **Resolve Open Questions interactively** before presenting the gate:
+   a. Read the `## Open Questions` section of `planning.md`.
+   b. Collect all `[DECISION: ...]` questions. Batch them into `AskUserQuestion` calls (up to 4 per call).
+      - Use a <=12-char header that names the decision (e.g., `"Auth method"`, `"DB approach"`).
+      - Parse the options from the tag brackets -- those become the selectable choices.
+      - Always append a `"Resolve in SRD"` option so the user can skip without blocking.
+   c. If any `[OPEN]` questions remain, output them as a numbered list and wait for the user's typed
+      response before continuing.
+   d. Write all answers into the `## Decisions Made` section of `planning.md` (one `- Question: Answer`
+      line each). Strike or remove resolved items from `## Open Questions`.
+10. Present **HITL Gate 1** (see below, per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`) and STOP for sign-off.
+11. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 1`. Then append Gate 1
+    scope decisions into `decisions.md` in the initiative directory:
+    ```
+    | Gate 1 | <decision text> | <chosen> | <rationale> | {date} |
+    ```
+    On **Revise**: ask what context is missing, then rework the planning document with that additional
+    context and re-present the gate.
+    On **No-Go**: summarize the blockers and stop. Do not archive -- leave state for the user to revisit.
 
 ## Activities -- the agent must cover ALL
 
