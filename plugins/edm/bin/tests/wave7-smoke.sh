@@ -2451,14 +2451,14 @@ check "T45 AC8 -- skills/srd/SKILL.md carries anti-padding clause" "do not pad w
 
 echo
 echo "T45 AC9 -- identical deliverable-length clause on the eight file-writing agents"
-t45_ac9_unique="$(grep -rho 'match the length of the document to what the task needs' "${PLUGIN_DIR}/agents/" | sort -u | wc -l | tr -d ' ')"
+t45_ac9_unique="$(grep -rho 'match the length of the document to what the task needs' "${PLUGIN_DIR}/agents/" | sort -u | wc -l | tr -d ' ')" || true
 [[ "$t45_ac9_unique" -eq 1 ]] && pass "T45 AC9 -- exactly one unique phrasing of the deliverable-length clause" \
   || fail "T45 AC9 -- ${t45_ac9_unique} unique phrasings found, expected 1"
 # NOTE: -rl (no -c) is used deliberately, not the AC's literal '-rlc' -- BSD grep (macOS,
 # EDMV3-106 divergence) prints both a "file:count" line AND a bare filename line when -l and -c
 # are combined, doubling the count; GNU grep gives -l precedence and would return 8 either way.
 # -rl alone is portable and correct on both.
-t45_ac9_files="$(grep -rl 'match the length of the document' "${PLUGIN_DIR}/agents/" | wc -l | tr -d ' ')"
+t45_ac9_files="$(grep -rl 'match the length of the document' "${PLUGIN_DIR}/agents/" | wc -l | tr -d ' ')" || true
 [[ "$t45_ac9_files" -eq 8 ]] && pass "T45 AC9 -- exactly eight agent files carry the clause" \
   || fail "T45 AC9 -- ${t45_ac9_files} agent files carry the clause, expected 8"
 
@@ -2484,6 +2484,112 @@ t45_lint_exit=0
 bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t45_lint_exit=$?
 [[ "$t45_lint_exit" -eq 0 ]] && pass "T45 -- edm-lint-artifacts --all exits 0" || fail "T45 -- edm-lint-artifacts --all exited ${t45_lint_exit}"
 # EDMV3-T45 end
+
+# =================================================================================
+# EDMV3-T46: agent scope, output contracts, decision ladder, and N/A carve-outs
+# =================================================================================
+echo
+echo "=== EDMV3-T46: agent scope, output contracts, decision ladder, and N/A carve-outs ==="
+
+T46_LENSES="edm-audit-consistency edm-audit-dead-code edm-audit-docs edm-audit-dry edm-audit-edge-cases edm-audit-logic edm-audit-runtime edm-audit-security edm-audit-spec edm-audit-test-quality edm-audit-wiring"
+T46_SCOPE13="edm-explorer edm-audit-synthesizer $T46_LENSES"
+T46_OUTPUT10="edm-implementer edm-test-unit edm-test-component edm-test-composable edm-test-integration edm-test-contract edm-test-e2e edm-test-a11y edm-test-scaffold edm-test-planner"
+
+echo
+echo "T46 AC1 -- thirteen occurrences of the scope line"
+t46_scope_count=0
+t46_scope_missing=""
+for t46_a in $T46_SCOPE13; do
+  if grep -q '^## Scope$' "${PLUGIN_DIR}/agents/${t46_a}.md"; then
+    t46_scope_count=$((t46_scope_count + 1))
+  else
+    t46_scope_missing="${t46_scope_missing} ${t46_a}"
+  fi
+done
+[[ "$t46_scope_count" -eq 13 && -z "$t46_scope_missing" ]] && pass "T46 AC1 -- thirteen occurrences of the scope line (all thirteen agents)" \
+  || fail "T46 AC1 -- found ${t46_scope_count}/13, missing:${t46_scope_missing}"
+t46_scope_unique="$(grep -rho 'deliver what was asked at the scope intended' "${PLUGIN_DIR}/agents/" | sort -u | wc -l | tr -d ' ')" || true
+[[ "$t46_scope_unique" -eq 1 ]] && pass "T46 AC1 -- exactly one unique phrasing of the scope line" \
+  || fail "T46 AC1 -- ${t46_scope_unique} unique phrasings found, expected 1"
+
+echo
+echo "T46 AC2 -- False Alarm Filter criteria count unchanged (three per lens, all eleven lenses)"
+t46_faf_bad=""
+for t46_l in $T46_LENSES; do
+  t46_faf_cnt="$(awk '/^## False Alarm Filter/{f=1;next} /^## /{f=0} f' "${PLUGIN_DIR}/agents/${t46_l}.md" | grep -c '^[0-9]\+\.' || true)"
+  [[ "${t46_faf_cnt:-0}" -eq 3 ]] || t46_faf_bad="${t46_faf_bad} ${t46_l}=${t46_faf_cnt:-0}"
+done
+[[ -z "$t46_faf_bad" ]] && pass "T46 AC2 -- all eleven lenses still carry exactly three False Alarm Filter criteria" \
+  || fail "T46 AC2 -- unexpected criteria count(s):${t46_faf_bad}"
+
+echo
+echo "T46 AC3 -- ten agents contain an '## Output' section"
+t46_out_count=0
+t46_out_missing=""
+for t46_a in $T46_OUTPUT10; do
+  if grep -q '^## Output$' "${PLUGIN_DIR}/agents/${t46_a}.md"; then
+    t46_out_count=$((t46_out_count + 1))
+  else
+    t46_out_missing="${t46_out_missing} ${t46_a}"
+  fi
+done
+[[ "$t46_out_count" -eq 10 && -z "$t46_out_missing" ]] && pass "T46 AC3 -- ten agents contain an '## Output' section" \
+  || fail "T46 AC3 -- found ${t46_out_count}/10, missing:${t46_out_missing}"
+
+echo
+echo "T46 AC4 -- write-path class documented (edm-test-unit) and edm-check-grants clean"
+check "T46 AC4 -- 'detected test root' present in edm-test-unit.md" "detected test root" \
+  "$(cat "${PLUGIN_DIR}/agents/edm-test-unit.md")"
+t46_grants_exit=0
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t46_grants_exit=$?
+[[ "$t46_grants_exit" -eq 0 ]] && pass "T46 AC4 -- edm-check-grants exits 0" || fail "T46 AC4 -- edm-check-grants exited ${t46_grants_exit}"
+
+echo
+echo "T46 AC6 -- generalization stated literally in edm-implementer.md"
+t46_ac6_cnt="$(grep -c 'every item, not just the first' "${PLUGIN_DIR}/agents/edm-implementer.md" || true)"
+[[ "${t46_ac6_cnt:-0}" -gt 0 ]] && pass "T46 AC6 -- 'every item, not just the first' present (${t46_ac6_cnt}x)" \
+  || fail "T46 AC6 -- phrase absent from edm-implementer.md"
+
+echo
+echo "T46 AC7/AC8 -- Core Rules is a numbered, stop-at-first-rung ladder bound to ticket understanding"
+check "T46 AC7 -- 'stop at the first rung that holds' present" "stop at the first rung that holds" \
+  "$(cat "${PLUGIN_DIR}/agents/edm-implementer.md")"
+check "T46 AC8 -- 'after the ticket is understood' present" "after the ticket is understood" \
+  "$(cat "${PLUGIN_DIR}/agents/edm-implementer.md")"
+check "T46 AC8 -- 'never a rung' present" "never a rung" \
+  "$(cat "${PLUGIN_DIR}/agents/edm-implementer.md")"
+
+echo
+echo "T46 AC10 -- carve-out section present in all 30 agent files, exact heading and file count"
+t46_ac10_missing=""
+t46_ac10_count=0
+for t46_f in "${PLUGIN_DIR}"/agents/*.md; do
+  if grep -q '^## When this does NOT apply$' "$t46_f"; then
+    t46_ac10_count=$((t46_ac10_count + 1))
+  else
+    t46_ac10_missing="${t46_ac10_missing} $(basename "$t46_f")"
+  fi
+done
+t46_ac10_total="$(ls "${PLUGIN_DIR}"/agents/*.md | wc -l | tr -d ' ')"
+[[ "$t46_ac10_count" -eq 30 && "$t46_ac10_total" -eq 30 && -z "$t46_ac10_missing" ]] && pass "T46 AC10 -- all 30 agent files carry the carve-out heading" \
+  || fail "T46 AC10 -- ${t46_ac10_count}/${t46_ac10_total} carry it, missing:${t46_ac10_missing}"
+
+echo
+echo "T46 AC12 -- N/A behaviour cross-referenced, not restated, in agents/"
+t46_ac12_agents="$(grep -rl 'recomputed each run' "${PLUGIN_DIR}/agents/" 2>/dev/null | wc -l | tr -d ' ')" || true
+[[ "${t46_ac12_agents:-0}" -eq 0 ]] && pass "T46 AC12 -- zero agent files restate 'recomputed each run'" \
+  || fail "T46 AC12 -- ${t46_ac12_agents} agent file(s) restate the phrase"
+check "T46 AC12 -- CLAUDE.md carries the single source" "recomputed each run" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+
+echo
+echo "T46 -- full suite stays green with the agent-contract additions in place"
+t46_grants2_exit=0
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t46_grants2_exit=$?
+[[ "$t46_grants2_exit" -eq 0 ]] && pass "T46 -- edm-check-grants exits 0" || fail "T46 -- edm-check-grants exited ${t46_grants2_exit}"
+t46_lint_exit=0
+bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t46_lint_exit=$?
+[[ "$t46_lint_exit" -eq 0 ]] && pass "T46 -- edm-lint-artifacts --all exits 0" || fail "T46 -- edm-lint-artifacts --all exited ${t46_lint_exit}"
+# EDMV3-T46 end
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

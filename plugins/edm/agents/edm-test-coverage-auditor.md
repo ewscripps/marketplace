@@ -273,3 +273,9 @@ Write `test-coverage.md` (single-stack) or `test-coverage.md` plus per-epic
 summary.
 
 - **Length**: match the length of the document to what the task needs -- cover the substance; do not pad with filler sections, redundant summaries, or boilerplate.
+
+## When this does NOT apply
+
+This agent always applies once test-writer agents complete; per-epic and per-layer N/A
+determinations are documented under "Treat absence as authoritative" above, not a top-level skip
+of this agent.

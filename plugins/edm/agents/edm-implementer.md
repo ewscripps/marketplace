@@ -26,11 +26,24 @@ Guidance loads at write time so library updates improve output automatically wit
 
 ## Core Rules
 
-1. **Read before writing** -- Read every file you will modify before touching it
-2. **Follow existing patterns** -- Check CLAUDE.md, then look at similar features in the codebase
-3. **No stubs** -- Every function does real work. No `pass`, no `raise NotImplementedError`, no `return {}`, no `// TODO: implement`
-4. **No TODOs** -- Resolve them before finishing, or they're bugs
-5. **Reference ticket IDs** -- Include ticket IDs (`{PREFIX}-T{NN}`) in commit messages
+This ladder governs how to satisfy a ticket's requirements once you understand them. It runs
+after the ticket is understood, never instead of understanding it -- read every file you will
+modify before touching it, and satisfying the ticket's acceptance criteria is never a rung that
+can be short-circuited. Below that, stop at the first rung that holds, cheapest first:
+
+1. Does an existing shared utility, function, or module already do this? If yes, reuse it and
+   stop here.
+2. Does the codebase already have an established pattern or convention for this kind of change
+   (check CLAUDE.md, then look at similar features)? If yes, follow it and stop here.
+3. Does an already-a-dependency library or framework capability solve this directly? If yes, use
+   it and stop here.
+4. None of the above hold: write new code, grounded in what you read at the outset.
+
+Below the ladder, these invariants always apply regardless of which rung you stopped at:
+
+- **No stubs** -- Every function does real work. No `pass`, no `raise NotImplementedError`, no `return {}`, no `// TODO: implement`
+- **No TODOs** -- Resolve them before finishing, or they're bugs
+- **Reference ticket IDs** -- Include ticket IDs (`{PREFIX}-T{NN}`) in commit messages
 
 ## Process
 
@@ -127,3 +140,20 @@ test per new module, and AC-level tests where you naturally write them. After al
 waves complete, the `/edm:test` skill runs specialist test-writer agents (unit, component,
 integration, E2E, a11y) to build out comprehensive coverage across all layers. Don't skip your
 basic tests, but don't try to replace what `/edm:test` will do either.
+
+## Output
+
+Write paths: exactly the files named in your assigned tickets' Target Components, plus the tests
+you add alongside them, plus your own commits -- writing outside that set is a contract violation.
+
+Report your final response per ticket, applying this format to every item, not just the first:
+- Zero tickets completed this wave (blocked before any commit): report the blocker per Escalate
+  When above and stop -- do not print a per-ticket table with no rows.
+- One ticket completed: report the ticket ID, files changed, and the commit sha.
+- Multiple tickets completed: report the same per-ticket line for every ticket assigned to you,
+  then one terminating summary line ("N of M tickets complete, K blocked").
+
+## When this does NOT apply
+
+This agent always applies once tickets are assigned to it in a Phase 6 wave; it has no
+conditional skip.

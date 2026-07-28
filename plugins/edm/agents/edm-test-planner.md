@@ -266,4 +266,19 @@ Print a summary to the user:
 Write `test-plan.md` (single-stack) or `test-plan.md` plus per-epic `test-plan-{epic}.md` files
 (multi-stack) per the templates above, and print the Step 7 summary.
 
+Write paths, stated exactly: `${user_config.srd_root}/{PREFIX}/test-plan.md` (single-stack) or
+that file plus per-epic `test-plan-{epic-slug}.md` files (multi-stack) -- writing anywhere else
+is a contract violation.
+
+Apply the Step 7 report format to every epic in scope, not just the first:
+- Zero epics in scope (empty ticket pack): report "No epics found -- nothing to plan" and stop.
+- One epic: print its stack, active/N/A layers, and plan file written.
+- Multiple epics: print the same per-epic summary for every epic, then one terminating summary
+  line ("N epics planned, M tickets in scope, K infrastructure gaps").
+
 - **Length**: match the length of the document to what the task needs -- cover the substance; do not pad with filler sections, redundant summaries, or boilerplate.
+
+## When this does NOT apply
+
+This agent always applies once `/edm:test` is invoked; per-layer and per-epic N/A determinations
+are this agent's own output (Step 1), not a top-level skip of the agent itself.

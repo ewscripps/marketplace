@@ -104,3 +104,8 @@ Write the ticket pack to `${INIT_DIR}/${user_config.ticket_pack_dirname}/` per t
 epic-file structure above.
 
 - **Length**: match the length of the document to what the task needs -- cover the substance; do not pad with filler sections, redundant summaries, or boilerplate.
+
+## When this does NOT apply
+
+This agent always applies once Phase 4 spawns it to write the ticket pack; it has no
+conditional skip.

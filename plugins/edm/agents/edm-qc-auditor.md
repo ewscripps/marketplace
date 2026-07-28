@@ -163,3 +163,8 @@ In `implementation_mode=standard`, this pass does not run -- standard QC behavio
 - Integration ACs (running services, DB calls, browser events): these are runtime-only -- PARTIAL with a runtime-check note
 
 Be precise. A developer will use your FAIL findings to fix specific lines. Vague findings are useless -- give the file, line, and exact discrepancy. For PARTIAL findings, be equally precise about what runtime check is needed.
+
+## When this does NOT apply
+
+This agent always applies once `edm-implementer` finishes a wave (auto-spawned by the
+`SubagentStop` hook); it has no conditional skip.

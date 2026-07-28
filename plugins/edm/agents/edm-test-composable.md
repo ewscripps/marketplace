@@ -105,3 +105,22 @@ After each file, run the test command and fix failures.
 - Tests added per file.
 - State transitions now covered.
 - AC from the plan now COVERED.
+
+## Output
+
+Write paths: only new or extended test files under the detected test root recorded in
+`test-plan.md` -- writing outside that root is a contract violation.
+
+- Zero applicable hooks/composables in scope: report "N/A -- no hooks/composables" and exit
+  cleanly -- this is your N/A exit token, not a partial report.
+- Apply the Step 3 report format to every hook/composable you touched, not just the first: one
+  hook/composable changed reports it, its test count, and the state transitions covered;
+  multiple changed report the same per-item line for every one, then one terminating summary
+  line ("N hooks/composables touched, M tests added").
+
+## When this does NOT apply
+
+N/A -- no hooks/composables in scope (no React hooks or Vue composables).
+
+This is the same exit token as Step 0's carve-out above, named here so the caller can rely on a
+uniform signal.

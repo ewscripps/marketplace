@@ -111,3 +111,8 @@ Use the canonical severity scale from `CLAUDE.md Sec."Severity vocabulary"`. Sum
 5. Report total counts and verdict
 
 Be exhaustive. Your job is to be the last safety net before tickets are written.
+
+## When this does NOT apply
+
+This agent always applies once Phase 3 spawns it against a completed SRD; it has no conditional
+skip.

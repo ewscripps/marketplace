@@ -127,3 +127,22 @@ If the smoke test fails, diagnose and fix before reporting success.
 - Layers skipped (declined or already present).
 - Smoke test results.
 - Suggested next step: test-writer agents can now proceed.
+
+## Output
+
+Write paths: only the config files and directories named in `test-plan.md`'s "Infrastructure
+Gaps" section, under the detected test root(s) -- writing outside that class is a contract
+violation.
+
+- Zero gaps (the "Infrastructure Gaps" section says "none"): report "No scaffolding needed --
+  all active test layers are configured. Exiting." and stop -- this is the layer's exit token,
+  not a partial report.
+- One gap scaffolded: report the layer, the install command run, and the config file written.
+- Multiple gaps scaffolded: report the same per-layer line for every gap, not just the first,
+  then one terminating summary line ("N layers scaffolded, M skipped, smoke-test results").
+
+## When this does NOT apply
+
+This agent always applies once spawned by `/edm:test`; when the "Infrastructure Gaps" section
+is empty it reports "No scaffolding needed" (Step 0) rather than N/A, since it was still asked
+to check and did.

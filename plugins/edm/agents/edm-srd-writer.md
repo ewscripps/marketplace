@@ -88,3 +88,7 @@ boilerplate. A draft below the floor is probably missing substance, not merely s
 Write the complete SRD to the specified file path. Report the final requirement count broken down by priority.
 
 - **Length**: match the length of the document to what the task needs -- cover the substance; do not pad with filler sections, redundant summaries, or boilerplate.
+
+## When this does NOT apply
+
+This agent always applies once Phase 2 spawns it to write the SRD; it has no conditional skip.

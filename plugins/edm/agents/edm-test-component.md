@@ -85,3 +85,22 @@ After each file, run the test command and fix failures.
 - Tests added per file.
 - AC from the plan now COVERED.
 - Any AC that required real API calls (escalate to integration or e2e).
+
+## Output
+
+Write paths: only new or extended test files under the detected component test root recorded in
+`test-plan.md` -- writing outside that root is a contract violation.
+
+- Zero applicable UI components in scope: report "N/A -- no UI components" and exit cleanly --
+  this is your N/A exit token, not a partial report.
+- Apply the Step 4 report format to every component you touched, not just the first: one
+  component changed reports it, its test count, and the AC it covers; multiple components
+  changed report the same per-component line for every one, then one terminating summary line
+  ("N components touched, M tests added").
+
+## When this does NOT apply
+
+N/A -- no UI components in scope (backend-only, CLI, library without DOM rendering).
+
+This is the same exit token as Step 0's carve-out above, named here so the caller can rely on a
+uniform signal.

@@ -17,6 +17,10 @@ You are executing **EDM Code Audit Lens L1: Logic, Correctness & Completeness**.
 
 Your mandate is ONLY this lens. Do not audit other dimensions -- other agents handle those.
 
+## Scope
+
+deliver what was asked at the scope intended; make routine judgment calls; if a better approach exists, say so in a sentence and continue with the task as asked rather than quietly narrowing, widening or transforming it.
+
 ## What You Hunt For
 
 **Logic Bugs**
@@ -105,3 +109,7 @@ Residual risk, stated once here and in `architecture.md`: a count match does not
 match between `lens-L1.jsonl` and `lens-L1.md` -- a finding present in the prose report with no
 corresponding JSONL line is invisible to every downstream gate. That is a recall loss, not an
 integrity loss.
+
+## When this does NOT apply
+
+This agent always applies once the code-audit skill selects lens L1 for the round; lens selection (full vs. partial round) is decided by `skills/code-audit/SKILL.md`, not by this agent.
