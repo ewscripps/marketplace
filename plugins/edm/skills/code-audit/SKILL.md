@@ -234,12 +234,12 @@ Synthesizer responsibilities:
 
 Use the **canonical** severity scale from `CLAUDE.md Sec."Severity vocabulary"`:
 
-| Severity | Definition                                                                  | Action                       |
-|----------|-----------------------------------------------------------------------------|------------------------------|
-| **P0**   | Critical -- blocks implementation, security/legal issue, production failure  | Fix before phase is complete |
-| **P1**   | Significant -- material gap, factual error, behavior that must be corrected  | Fix before shipping          |
-| **P2**   | Minor -- polish, edge-case, improvement, nice-to-have                        | Fix if low effort            |
-| NOTED    | Looks like a problem but is intentional -- documented trade-off              | Document once, never revisit |
+| Severity  | Definition                                                                   | Action                                                        |
+|-----------|------------------------------------------------------------------------------|---------------------------------------------------------------|
+| **P0**    | Critical -- blocks implementation, security/legal issue, production failure   | Fix before this phase may be called complete                  |
+| **P1**    | Significant -- material gap, factual error, behavior that must be corrected   | Remediated before the phase or round may be called complete   |
+| **P2**    | Minor -- polish, edge-case, improvement, nice-to-have                         | Remediated before convergence                                 |
+| **NOTED** | Not actionable -- intentional, pre-existing, or a known accepted trade-off    | Document in "Decisions / Non-Findings"; do not re-investigate |
 
 **Convergence blocking set**: open P0, P1 **and P2** findings from the ledger. `NOTED` is the only
 status that closes a finding without a fix, because it is non-actionable rather than postponed

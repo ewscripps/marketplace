@@ -155,14 +155,14 @@ continue (`CLAUDE.md Sec."Skill-tool composition"`).
 3. **Phase 3 (SRD Audit)**: invoke `/edm:audit-srd <PREFIX>` (auto-invoked by step 2 above unless
    already run). Presents Gate 2 (or the mini-SRD merged `"Gate 2+3"`).
 4. **Phase 4 (Tickets)**: invoke `/edm:tickets <PREFIX>`. Runs its own Phase 5 handoff
-   automatically -- under fast-track/fix-pack, `skills/tickets/SKILL.md` presents
-   `"Gate 3 -- Ticket Review"` directly instead.
+   automatically -- under fast-track/fix-pack, `skills/tickets/SKILL.md` presents its own Gate 3
+   ticket review directly instead.
 5. **Phase 5 (Ticket Audit)**: invoke `/edm:audit-tickets <PREFIX>` (auto-invoked by step 4 above
    unless already run, or skipped entirely by fast-track/fix-pack). Presents Gate 3, then Gate 3.5
    when `compliance_enabled=true`.
 6. **Phase 6 (Implementation + QC + Code Audit + Closure)**: invoke `/edm:implement <PREFIX>`.
-   When all tickets PASS, invoke `/edm:code-audit <PREFIX>` (mandatory for `standard`/`tdd`
-   `implementation_mode`; `prototype` may skip convergence) --
+   When all tickets PASS, invoke `/edm:code-audit <PREFIX>` (mandatory for every `mode` except
+   `prototype`; also exempt under `fast-track`/`fix-pack` `lifecycle_mode`) --
    `/edm:code-audit` Step 10 presents the Convergence gate itself; this dispatcher does not
    restate it. When code-audit converges, invoke `/edm:verify-runtime <PREFIX>` via the `Skill`
    tool to close every PARTIAL verdict, then call `edm-state phase-complete <PREFIX> 6` (EDMV3-T50
@@ -176,7 +176,7 @@ continue (`CLAUDE.md Sec."Skill-tool composition"`).
 straight to that phase skill's own Step 0, which re-derives any finer-grained position itself. A
 legacy 2.x value (`1a`, `1b`, `1c`, `2.srd`, `2.arch`, `4.epic-N`, etc.) resumes at the **start** of
 its phase with a warning naming the legacy value seen, rather than erroring (recorded in
-`CHANGELOG.md`). `SessionStart` prints in-progress initiatives via `edm-state list`; `PreCompact`/
+`CHANGELOG.md`). `SessionStart` prints in-progress initiatives via `edm-state session-start`; `PreCompact`/
 `Stop` opportunistically checkpoint state; HANDOFF.md is refreshed at every phase/gate/stop by the
 phase skill or `edm-state write-handoff` directly.
 

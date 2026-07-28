@@ -155,7 +155,7 @@ a11y         N/A      --        N/A        --
 
 Findings: 0 P0  |  0 P1  |  2 P2
 
-P2 findings (should fix before next sprint):
+P2 findings (remediate before convergence):
   - AUTH-T07 AC3 partially covered -- edge case for concurrent login not tested
 
 Coverage report: SRD/{PREFIX}/test-coverage.md

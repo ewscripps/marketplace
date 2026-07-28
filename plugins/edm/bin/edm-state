@@ -551,6 +551,37 @@ code_audit_required_for_mode() {
   esac
 }
 
+# convergence_exempt <mode> <lifecycle_mode> - echoes "true" when this initiative's phase graph
+# never runs a code-audit round at all, so the convergence gate cannot meaningfully apply.
+#
+# Two independent reasons, OR-ed: the mode has no implementation phase
+# (code_audit_required_for_mode, which stays the single source of the mode-keyed half), or the
+# lifecycle mode generates tickets straight from an analysis document and has no audit round.
+#
+# Single source for both consumers. cmd_archive and cmd_audit_converged previously carried
+# byte-identical copies of the lifecycle case and the mode derivation, and every prose
+# description of the rule -- CLAUDE.md's mode matrix, skills/implement/SKILL.md's Declare Done
+# step -- states it as one rule, so two copies is exactly the drift this methodology exists to
+# remove. cmd_approve_gate's code-audit precheck deliberately does NOT use this helper: it
+# applies the mode half only, because approving a code-audit gate under a lifecycle mode that
+# has no audit round should stay refused rather than become exempt.
+#
+# mode == "null" is a legacy state predating the mode field and defaults to "audit required"
+# (existing behaviour preserved) rather than being passed to a helper that would die on it.
+convergence_exempt() {
+  local mode="$1" lifecycle_mode="$2"
+  local audit_required="true"
+  [[ "$mode" != "null" ]] && audit_required="$(code_audit_required_for_mode "$mode")"
+  if [[ "$audit_required" == "false" ]]; then
+    echo true
+    return 0
+  fi
+  case "$lifecycle_mode" in
+    fast-track|fix-pack) echo true ;;
+    *) echo false ;;
+  esac
+}
+
 # default_skipped_phases_json_for_mode <mode> — the phase graph's own skip set for
 # a freshly created (or newly mode-switched) initiative (EDMV3-T07 AC4), as a JSON
 # array of {phase, rationale, skipped_at} ready for skipped_phases. Each rationale
@@ -1901,24 +1932,9 @@ cmd_archive() {
       fi
 
       # ---- AC1d/AC8/AC9: convergence, with the prototype and fast-track/fix-pack exemptions --
-      # audit_required is derived from code_audit_required_for_mode() (EDMV3-T07 AC6) -- one
-      # of the three legal mode-case sites counted by EDMV3-T07 AC5's single-derivation grep.
-      # mode == "null" is a legacy state predating the mode field and defaults to "audit
-      # required" (existing behaviour preserved) rather than being passed to a helper that
-      # would die on it.
-      local audit_required="true"
-      [[ "$mode" != "null" ]] && audit_required="$(code_audit_required_for_mode "$mode")"
-
-      # fast-track and fix-pack lifecycle_modes never run a code-audit round either (their
-      # phase graph has no audit round at all) -- this is a second, lifecycle_mode-keyed OR
-      # condition alongside the mode-keyed one above, not a rewrite of
-      # code_audit_required_for_mode()'s single-source mode mapping (AC9).
-      local lifecycle_exempt="false"
-      case "$lifecycle_mode" in
-        fast-track|fix-pack) lifecycle_exempt="true" ;;
-      esac
-
-      if [[ "$audit_required" == "false" || "$lifecycle_exempt" == "true" ]]; then
+      # Both halves of the exemption come from convergence_exempt(), which is shared with
+      # cmd_audit_converged so the two cannot drift.
+      if [[ "$(convergence_exempt "$mode" "$lifecycle_mode")" == "true" ]]; then
         case "$mode" in
           prototype) echo "[warn] prototype mode -- skipping code-audit convergence check" >&2 ;;
           *)         echo "[warn] ${mode} mode -- skipping code-audit convergence check" >&2 ;;
@@ -2966,14 +2982,9 @@ cmd_audit_converged() {
 
   # AC8: audit-free modes exit 0 with the exemption wording, checked first -- there is no
   # ledger to converge when this mode/lifecycle_mode's phase graph never runs a code-audit
-  # round at all (mirrors cmd_archive's identical mode+lifecycle_mode exemption derivation).
-  local audit_required="true"
-  [[ "$mode" != "null" ]] && audit_required="$(code_audit_required_for_mode "$mode")"
-  local lifecycle_exempt="false"
-  case "$lifecycle_mode" in
-    fast-track|fix-pack) lifecycle_exempt="true" ;;
-  esac
-  if [[ "$audit_required" == "false" || "$lifecycle_exempt" == "true" ]]; then
+  # round at all. Shares convergence_exempt() with cmd_archive rather than mirroring it, so the
+  # two cannot answer the same question differently.
+  if [[ "$(convergence_exempt "$mode" "$lifecycle_mode")" == "true" ]]; then
     echo "no code audit is required for this mode (${mode}/${lifecycle_mode})"
     return 0
   fi

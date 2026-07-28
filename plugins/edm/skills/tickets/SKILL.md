@@ -147,7 +147,8 @@ assumption that Gate 2 is already approved, because Phases 1-3 never ran:
 7. Present the single human review gate directly -- Phase 5 (ticket audit) is skipped, so this gate
    takes the place of Gate 3:
    ```
-   AskUserQuestion header: "Gate 3 -- Ticket Review"
+   AskUserQuestion header: "Gate 3"
+   Question body: names this as the ticket-pack review that stands in for the skipped Phase 5
    Options: Approve / Revise / No-Go
    ```
    Follows `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`. On **Approve** (explicit selection only):

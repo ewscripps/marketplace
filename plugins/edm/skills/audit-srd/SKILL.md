@@ -78,7 +78,7 @@ Use the canonical four-level scale from `CLAUDE.md Sec."Severity vocabulary"` --
 | Severity | Definition | Action |
 |---|---|---|
 | P0 | Blocks implementation, security/legal issue, architecturally wrong | Must fix before Phase 4 |
-| P1 | Significant gap, factual error, missing requirement | Must fix before shipping |
+| P1 | Significant gap, factual error, missing requirement | Remediated before the phase or round may be called complete |
 | P2 | Polish, edge case, improvement | Remediated before convergence |
 | NOTED | Intentional, pre-existing, or accepted trade-off | Document in Decisions / Non-Findings; do not re-investigate |
 

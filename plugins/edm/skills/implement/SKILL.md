@@ -45,7 +45,7 @@ using `<gated-command>` = `implement`.
     ```bash
     edm-state update-patterns <PREFIX> qc
     ```
-11. Print the post-implementation checklist and remind the user about `/edm:code-audit <PREFIX>` for the mandatory 11-lens audit (standard/tdd modes) before merge.
+11. Print the post-implementation checklist and remind the user about `/edm:code-audit <PREFIX>` for the 11-lens audit before merge -- mandatory for every `mode` except `prototype`, and not required when `lifecycle_mode` is `fast-track` or `fix-pack` (see Step 8 below).
 
 ## Step 1: Identify Parallelizable Work
 
@@ -197,7 +197,9 @@ Only when:
 - [ ] `/edm:test {PREFIX}` run and all coverage targets met, or consciously skipped
   (`test_layer_skipped` recorded in state per Step 7 above)
 - [ ] Code audit converged: the Convergence gate (`/edm:code-audit`'s own Step 10) recorded explicit
-  Approve -- `edm-state get {PREFIX} code_audit_converged` shows `true` (or mode is `prototype`)
+  Approve -- `edm-state get {PREFIX} | jq -r '.code_audit_converged'` prints `true` (or the
+  initiative is convergence-exempt: `mode` is `prototype`, or `lifecycle_mode` is `fast-track` or
+  `fix-pack`)
 
 **On-demand artifacts at completion** -- write these when applicable, not always:
 - `ROLLBACK.md` -- if this initiative changes production behavior or involves an irreversible
@@ -209,10 +211,14 @@ Only when:
   cost-analysis.md) if relevant. All paths are state-derived; a fresh initiative has none of these.
 
 After declaration, recommend the user run `/edm:code-audit <PREFIX>` for the 11-lens exhaustive audit
-before merging (mandatory for standard and tdd modes; `prototype` mode may skip code-audit
-convergence -- `edm-state archive` proceeds with a warning). Once converged, run
-`edm-state archive <PREFIX>` to close the initiative (blocked by `code_audit_converged=false` for
-non-prototype v2+ initiatives).
+before merging. The audit is keyed off `mode`, never off `implementation_mode` (which selects
+Red-Green-Refactor for this phase and governs nothing else): it is mandatory for `standard`,
+`mini-srd`, `iac` and `data-ml`, and `prototype` runs no audit round at all. Independently of
+`mode`, a `lifecycle_mode` of `fast-track` or `fix-pack` also runs no audit round. For all three
+exemptions `edm-state archive` proceeds with a warning and records
+`archive_exemptions: ["CONVERGENCE_NOT_REQUIRED"]`. Once converged, run
+`edm-state archive <PREFIX>` to close the initiative -- blocked by `code_audit_converged=false`
+only on a v2+ initiative that none of those three exemptions covers.
 
 ## QC Audit Report Format
 
