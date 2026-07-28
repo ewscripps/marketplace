@@ -36,7 +36,7 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 
 6. **Remediate** all coverage gaps, decompose XL tickets, fix dependency declarations, improve vague AC, fix consistency mismatches.
 7. `edm-state phase-complete <PREFIX> 5`
-8. Present **HITL Gate 3** (see below) and STOP for sign-off.
+8. Present **HITL Gate 3** (see below, per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`) and STOP for sign-off.
 9. On approval: `edm-state approve-gate <PREFIX> 3`.
 
 ## 8 Audit Dimensions
@@ -124,6 +124,7 @@ Prompt: "Audit the ticket pack at ${user_config.srd_root}/{PREFIX}/${user_config
 
 After resolving all findings:
 1. Summarize: total ticket count by epic, size distribution (XS/S/M/L counts), critical path summary, estimated total effort, SRD coverage (N/N = 100%), version alignment confirmed.
-2. Ask: *"Do you approve this ticket pack and want to proceed to implementation, or do you have changes?"*
-3. **STOP and WAIT** -- do not proceed to Phase 6 autonomously.
-4. On approval: `edm-state approve-gate <PREFIX> 3`. Next: `/edm:implement <PREFIX>`.
+2. Present the gate per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` -- header `"Gate 3"`, options **Approve** / **Revise** / **No-Go**. **STOP and WAIT** for the response.
+3. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 3`. Next: `/edm:implement <PREFIX>`.
+   On **Revise**: rework the flagged tickets and re-present the gate.
+   On **No-Go**: summarize the blockers and stop.

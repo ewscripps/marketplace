@@ -208,7 +208,7 @@ When `mode=mini-srd`, run this compressed lifecycle instead of Steps 3-6:
    Options: Approve / Revise / No-Go
    ```
    On Approve: `edm-state approve-gate <PREFIX> 2` (records the merged gate).
-   Apply the gate approval rules from Gate 1 -- free-text is never approval.
+   Follows `` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` ``.
 5. Record skipped phases:
    ```bash
    edm-state skip-phase <PREFIX> 4 "mini-SRD: ticket pack fused into SRD file"
@@ -266,7 +266,7 @@ document without the full SRD/ticket-audit sequence:
    Options: Approve / Revise / No-Go
    ```
    On Approve (explicit selection only): `edm-state approve-gate <PREFIX> 3`.
-   Apply the gate approval rules from Gate 1 -- free-text is never approval.
+   Follows `` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` ``.
 
 The state file is valid and recognized as fast-track -- `validate` does not flag it as incomplete.
 
@@ -287,7 +287,7 @@ Insert this gate between Gate 3 (end of Step 6) and Phase 6 (Step 7), only when
    edm-state approve-gate <PREFIX> 3.5   # only on explicit Approve
    ```
 
-3. Apply the gate approval rules from Gate 1 -- free-text is never approval.
+3. Follows `` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` ``.
 
 The ticket pack tables include regulatory-traceability columns
 (`Regulation | Control | Evidence`) when `compliance_enabled=true` (see `skills/tickets/SKILL.md`).
@@ -304,6 +304,27 @@ Before starting any phase (on a new initiative or a resume), run two read-only s
 2. **Branch match** -- `edm-state branch-check <PREFIX>`. If it exits non-zero (the current git
    branch does not match the initiative's `initiative_branch`), **BLOCK** and surface the
    `git checkout` instruction it prints; do not proceed with the phase until the branch matches.
+
+---
+
+## Gate PROTOCOL (canonical)
+
+This is the single definition of gate-approval behavior for every HITL gate in this methodology --
+Gate 1, Gate 2, Gate 3, Gate 3.5, the code-audit Convergence gate, and the code-audit Remediation
+gate. Every gate site in this plugin references it by name --
+`` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` `` -- rather than restating it.
+
+**STOP and WAIT for the `AskUserQuestion` response.** Headers are 12 characters or fewer (e.g.,
+`"Gate 1"`, `"Gate 2"`, `"Convergence"`). The three standard options are Approve, Revise, No-Go
+(a gate may add a fourth option only when its own section documents why, e.g., Gate 3.5's
+compliance-specific wording). The `approve-gate` invocation happens only after the selection is
+made, never before it.
+
+**CRITICAL -- gate approval rules (apply to ALL gates)**:
+- `edm-state approve-gate` is called ONLY when the user selects the **exact "Approve" option** from the `AskUserQuestion` dialog.
+- Free-text responses ("yes", "ok", "looks good", "proceed", "sounds good", "go ahead") are **NOT** approvals.
+- If the user types free text instead of selecting an option: re-present the `AskUserQuestion` with a brief note: "Please select an option to proceed."
+- Never infer intent from sentiment -- only the explicit AskUserQuestion selection counts.
 
 ---
 
@@ -400,12 +421,7 @@ Before starting any phase (on a new initiative or a resume), run two read-only s
    - **Revise** -- re-run planning with additional context (user will type what's missing)
    - **No-Go** -- initiative is not ready to proceed
 
-7. **STOP and WAIT for the `AskUserQuestion` response.**
-8. **CRITICAL -- gate approval rules (apply to ALL gates)**:
-   - `edm-state approve-gate` is called ONLY when the user selects the **exact "Approve" option** from the `AskUserQuestion` dialog.
-   - Free-text responses ("yes", "ok", "looks good", "proceed", "sounds good", "go ahead") are **NOT** approvals.
-   - If the user types free text instead of selecting an option: re-present the `AskUserQuestion` with a brief note: "Please select an option to proceed."
-   - Never infer intent from sentiment -- only the explicit AskUserQuestion selection counts.
+7. Present the gate per `` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` ``.
 
    On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 1` and proceed to Phase 2.
    Then append Gate 1 scope decisions into `decisions.md` in the initiative directory:
@@ -456,7 +472,7 @@ Before starting any phase (on a new initiative or a resume), run two read-only s
    - **Revise** -- specific SRD sections need rework (user will describe)
    - **No-Go** -- initiative scope or approach needs rethinking
 
-7. **STOP and WAIT for the `AskUserQuestion` response.**
+7. Present the gate per `` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` ``.
 8. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 2` and proceed to Phase 4.
    Then append Gate 2 architecture decisions into `decisions.md` in the initiative directory:
    ```
@@ -464,7 +480,6 @@ Before starting any phase (on a new initiative or a resume), run two read-only s
    ```
    On **Revise**: ask which sections need rework, remediate, then re-run Phase 3 audit and re-present Gate 2.
    On **No-Go**: summarize blockers and stop.
-   (Apply the gate approval rules from Gate 1 -- free-text is never approval.)
 
 ### Step 5 -- Execute Phase 4 (Ticket Pack)
 
@@ -503,11 +518,10 @@ Before starting any phase (on a new initiative or a resume), run two read-only s
    - **Revise** -- specific tickets or epics need rework (user will describe)
    - **No-Go** -- scope has shifted enough to warrant re-planning
 
-7. **STOP and WAIT for the `AskUserQuestion` response.**
+7. Present the gate per `` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` ``.
 8. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 3` and proceed to Phase 6.
    On **Revise**: ask which tickets need rework, remediate, then re-run Phase 5 audit and re-present Gate 3.
    On **No-Go**: summarize blockers and stop.
-   (Apply the gate approval rules from Gate 1 -- free-text is never approval.)
 
 ### Step 7 -- Execute Phase 6 (Implementation + QC)
 

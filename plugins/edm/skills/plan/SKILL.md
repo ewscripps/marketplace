@@ -36,7 +36,7 @@ allowed-tools: Read, Write, Bash(edm-state *), Bash(edm-init *), Bash(edm-valida
 6. Synthesize agent output into the planning document at `${user_config.srd_root}/{PREFIX}/planning.md` using the template below.
 7. `edm-state phase-complete <PREFIX> 1`
 8. `edm-state write-handoff <PREFIX>` -- create/refresh HANDOFF.md from the just-written planning.md. This is idempotent; re-running regenerates HANDOFF.md without error.
-9. Present **HITL Gate 1** (see below) and STOP for sign-off.
+9. Present **HITL Gate 1** (see below, per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`) and STOP for sign-off.
 10. On approval: `edm-state approve-gate <PREFIX> 1`.
 
 ## Activities -- the agent must cover ALL
@@ -127,6 +127,7 @@ Prompt: "Explore the codebase to understand [area]. Map all components,
 
 After writing the planning document:
 1. Summarize concisely: scope (1-2 sentences), components affected, key constraints, estimated initiative size, go/no-go recommendation.
-2. Ask: *"Do you approve this scope and want to proceed to SRD creation, or do you have changes?"*
-3. **STOP and WAIT** -- do not proceed to Phase 2 autonomously.
-4. On approval: `edm-state approve-gate <PREFIX> 1`. The next phase is `/edm:srd <PREFIX>` or via `/edm:orchestrator`.
+2. Present the gate per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` -- header `"Gate 1"`, options **Approve** / **Revise** / **No-Go**. **STOP and WAIT** for the response.
+3. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 1`. The next phase is `/edm:srd <PREFIX>` or via `/edm:orchestrator`.
+   On **Revise**: rework the planning document per the feedback and re-present the gate.
+   On **No-Go**: summarize the blockers and stop.

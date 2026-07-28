@@ -34,7 +34,7 @@ Every error caught here saves 10x the effort of catching it during implementatio
 6. **Remediate**: fix every P0 and P1 finding directly in the SRD. Update the Revision History (bump SRD version, e.g., 1.0.0 -> 1.1.0).
 7. Update `srd_version` in `.edm-state.json`: `edm-state srd-version <PREFIX> 1.1.0`
 8. `edm-state phase-complete <PREFIX> 3`
-9. Present **HITL Gate 2** (see below) and STOP for sign-off.
+9. Present **HITL Gate 2** (see below, per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`) and STOP for sign-off.
 10. On approval: `edm-state approve-gate <PREFIX> 2`.
 
 ## 7 Audit Categories
@@ -119,6 +119,7 @@ Prompt: "Audit the SRD at ${user_config.srd_root}/{PREFIX}/${user_config.srd_fil
 
 After remediating all P0/P1:
 1. Summarize: requirement count by priority (Must/Should/Could), key architecture decisions, risks, audit findings resolved (P0: N, P1: N, P2: N).
-2. Ask: *"Do you approve this SRD and want to proceed to ticket creation, or do you have changes?"*
-3. **STOP and WAIT** -- do not proceed to Phase 4 autonomously.
-4. On approval: `edm-state approve-gate <PREFIX> 2`. Next: `/edm:tickets <PREFIX>`.
+2. Present the gate per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` -- header `"Gate 2"`, options **Approve** / **Revise** / **No-Go**. **STOP and WAIT** for the response.
+3. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 2`. Next: `/edm:tickets <PREFIX>`.
+   On **Revise**: rework the flagged SRD sections and re-present the gate.
+   On **No-Go**: summarize the blockers and stop.

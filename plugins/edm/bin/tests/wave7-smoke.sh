@@ -350,8 +350,8 @@ check "Convergence gate options Approve/Revise/No-Go present" \
   "**Approve** (record convergence now), **Revise**" "$CA_CONTENT"
 check "approve-gate code-audit command present" \
   "edm-state approve-gate <PREFIX> code-audit" "$CA_CONTENT"
-check "free-text-is-never-approval restated at the convergence gate" \
-  "never** treated as approval" "$CA_CONTENT"
+check "free-text-is-never-approval referenced by name at the convergence gate (EDMV3-T35 re-baseline: restatement replaced by the by-name Gate PROTOCOL reference)" \
+  "Gate PROTOCOL" "$CA_CONTENT"
 
 echo
 echo "T15 AC3 -- Step 10 states the compute -> present -> approve -> record order explicitly"
@@ -1424,6 +1424,99 @@ echo "T34 AC10 -- intent-to-file index added"
 check "T34 AC10 -- intent-to-file index present" "Intent-to-file index" "$CLAUDE_MD_T34"
 check "T34 AC10 -- 'which file is authoritative' framing present" "which file is authoritative" "$CLAUDE_MD_T34"
 # EDMV3-T34 end
+
+
+# ---- EDMV3-T35: canonical Gate PROTOCOL written once; weak free-prose gates deleted ------------
+echo
+echo "=== EDMV3-T35: Gate PROTOCOL (canonical) + by-name references replace restatement ==="
+ORCH_SKILL_T35="$(cat "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
+
+echo "T35 AC1 -- one canonical section"
+t35_protocol_count="$(grep -c '^## Gate PROTOCOL (canonical)$' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
+[[ "$t35_protocol_count" -eq 1 ]] && pass "T35 AC1 -- '## Gate PROTOCOL (canonical)' appears exactly once" \
+  || fail "T35 AC1 -- '## Gate PROTOCOL (canonical)' appears ${t35_protocol_count} times, expected 1"
+
+echo
+echo "T35 AC2 -- the four preserved rules, verbatim"
+check "T35 AC2 -- 'Please select an option to proceed' preserved" "Please select an option to proceed" "$ORCH_SKILL_T35"
+check "T35 AC2 -- approve-gate called only on exact Approve selection" \
+  'is called ONLY when the user selects the **exact "Approve" option**' "$ORCH_SKILL_T35"
+check "T35 AC2 -- free-text responses are not approvals" "are **NOT** approvals" "$ORCH_SKILL_T35"
+check "T35 AC2 -- never infer intent from sentiment" "Never infer intent from sentiment" "$ORCH_SKILL_T35"
+
+echo
+echo "T35 AC3 -- four additions: STOP and WAIT, 12-char headers, three options, approve-gate after selection"
+check "T35 AC3 -- STOP and WAIT for the AskUserQuestion response" "STOP and WAIT for the \`AskUserQuestion\` response" "$ORCH_SKILL_T35"
+check "T35 AC3 -- 12 characters or fewer" "12 characters or fewer" "$ORCH_SKILL_T35"
+check "T35 AC3 -- Approve, Revise, No-Go" "Approve, Revise, No-Go" "$ORCH_SKILL_T35"
+check "T35 AC3 -- approve-gate invocation happens only after the selection" \
+  "invocation happens only after the selection" "$ORCH_SKILL_T35"
+
+echo
+echo "T35 AC4 -- zero restatements of 'free-text is never approval' outside orchestrator/SKILL.md"
+t35_freetext_hits="$(grep -rn 'free-text is never approval\|free text is not an approval' "${PLUGIN_DIR}/" 2>/dev/null | grep -v 'orchestrator/SKILL.md' || true)"
+[[ -z "$t35_freetext_hits" ]] && pass "T35 AC4 -- no free-text-approval restatement outside orchestrator/SKILL.md" \
+  || fail "T35 AC4 -- found a restatement outside orchestrator/SKILL.md: $t35_freetext_hits"
+for t35_gate_site in "plugins/edm/skills/plan/SKILL.md" "plugins/edm/skills/audit-srd/SKILL.md" \
+                     "plugins/edm/skills/audit-tickets/SKILL.md" "plugins/edm/skills/code-audit/SKILL.md"; do
+  check "T35 AC4 -- ${t35_gate_site} references Gate PROTOCOL by name" \
+    'Gate PROTOCOL' "$(cat "$(cd "${PLUGIN_DIR}/../.." && pwd)/${t35_gate_site}")"
+done
+
+echo
+echo "T35 AC5 -- weak free-prose approval questions deleted"
+t35_weak_gate_hits="$(grep -rn "Ask: .Do you approve" "${PLUGIN_DIR}/skills/" 2>/dev/null || true)"
+[[ -z "$t35_weak_gate_hits" ]] && pass "T35 AC5 -- no 'Ask: \"Do you approve' free-prose gate remains in skills/" \
+  || fail "T35 AC5 -- found a weak free-prose gate: $t35_weak_gate_hits"
+
+echo
+echo "T35 AC6 -- abbreviated approval lines corrected to reference the PROTOCOL by name"
+PLAN_SKILL_T35="$(cat "${PLUGIN_DIR}/skills/plan/SKILL.md")"
+AUDIT_SRD_SKILL_T35="$(cat "${PLUGIN_DIR}/skills/audit-srd/SKILL.md")"
+AUDIT_TICKETS_SKILL_T35="$(cat "${PLUGIN_DIR}/skills/audit-tickets/SKILL.md")"
+check "T35 AC6 -- plan/SKILL.md's abbreviated Gate 1 line references the PROTOCOL" \
+  'Gate PROTOCOL' "$PLAN_SKILL_T35"
+check "T35 AC6 -- audit-srd/SKILL.md's abbreviated Gate 2 line references the PROTOCOL" \
+  'Gate PROTOCOL' "$AUDIT_SRD_SKILL_T35"
+check "T35 AC6 -- audit-tickets/SKILL.md's abbreviated Gate 3 line references the PROTOCOL" \
+  'Gate PROTOCOL' "$AUDIT_TICKETS_SKILL_T35"
+
+echo
+echo "T35 AC7 -- the fourth free-prose gate (code-audit remediation gate) at the same standard"
+CODE_AUDIT_SKILL_T35="$(cat "${PLUGIN_DIR}/skills/code-audit/SKILL.md")"
+check "T35 AC7 -- 'remediation gate' named" "remediation gate" "$CODE_AUDIT_SKILL_T35"
+check "T35 AC7 -- 'Remediation Gate (Code Audit)' section titled" "Remediation Gate (Code Audit)" "$CODE_AUDIT_SKILL_T35"
+check "T35 AC7 -- upgraded to AskUserQuestion" 'Present via `AskUserQuestion`' "$CODE_AUDIT_SKILL_T35"
+
+echo
+echo "T35 AC8 -- all four skills grant AskUserQuestion (edm-check-grants clean)"
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1
+t35_grants_exit=$?
+[[ "$t35_grants_exit" -eq 0 ]] && pass "T35 AC8 -- edm-check-grants exits 0" \
+  || fail "T35 AC8 -- edm-check-grants exited ${t35_grants_exit}"
+for t35_gate_skill in plan audit-srd audit-tickets code-audit; do
+  check "T35 AC8 -- ${t35_gate_skill}/SKILL.md's allowed-tools grants AskUserQuestion" \
+    "AskUserQuestion" "$(grep '^allowed-tools:' "${PLUGIN_DIR}/skills/${t35_gate_skill}/SKILL.md")"
+done
+
+echo
+echo "T35 AC10 -- smoke assertions: section appears once, five gate sites reference it by name"
+t35_gate_site_refs=0
+for t35_ref_file in "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" "${PLUGIN_DIR}/skills/plan/SKILL.md" \
+                    "${PLUGIN_DIR}/skills/audit-srd/SKILL.md" "${PLUGIN_DIR}/skills/audit-tickets/SKILL.md" \
+                    "${PLUGIN_DIR}/skills/code-audit/SKILL.md"; do
+  grep -q 'Gate PROTOCOL' "$t35_ref_file" && t35_gate_site_refs=$((t35_gate_site_refs + 1))
+done
+[[ "$t35_gate_site_refs" -eq 5 ]] && pass "T35 AC10 -- all five gate sites reference Gate PROTOCOL by name" \
+  || fail "T35 AC10 -- only ${t35_gate_site_refs}/5 gate sites reference Gate PROTOCOL by name"
+
+echo
+echo "T35 -- full suite stays green with the PROTOCOL section in place"
+t35_lint_exit=0
+bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t35_lint_exit=$?
+[[ "$t35_lint_exit" -eq 0 ]] && pass "T35 -- edm-lint-artifacts --all exits 0" \
+  || fail "T35 -- edm-lint-artifacts --all exited ${t35_lint_exit}"
+# EDMV3-T35 end
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
