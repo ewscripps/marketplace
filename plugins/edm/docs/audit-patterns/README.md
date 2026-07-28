@@ -39,7 +39,17 @@ date: {date}
 
 De-duplication: if the finding title (lowercased, whitespace-collapsed, trailing-parens metadata stripped) already exists in the document, skip the append.
 
-**Curation lifecycle** (EDMV3-77/78): every auto-appended entry carries `status: pending-review` on its own line, plus its provenance (`source`, `audit-type`, `date`). Pending entries are surfaced for human curation at the audit gates (EDMV3-T55). Removing the `status: pending-review` line marks an entry curated; curation is one-way -- nothing re-adds the marker, and de-duplication prevents the same title being re-appended. The pending count is always `grep -c 'status: pending-review' docs/audit-patterns/*.md` computed at read time -- there is no mirrored count in `.edm-state.json`.
+**Curation lifecycle** (EDMV3-77/78): every auto-appended entry carries `status: pending-review` on its own line, plus its provenance (`source`, `audit-type`, `date`). Pending entries are surfaced for human curation at the audit gates -- see "Curation at Gates" below. Removing the `status: pending-review` line marks an entry curated; curation is one-way -- nothing re-adds the marker, and de-duplication prevents the same title being re-appended. The pending count is always `grep -c 'status: pending-review' docs/audit-patterns/*.md` computed at read time -- there is no mirrored count in `.edm-state.json`.
+
+## Curation at Gates
+
+Pending entries (`status: pending-review`) are presented to a human at three existing HITL gates -- Gate 2 (`/edm:audit-srd`), Gate 3 (`/edm:audit-tickets`), and the code-audit Convergence gate -- alongside the findings review already happening there, never as a separate interaction round. For each pending entry the human is offered:
+
+- **Keep** -- remove the `status: pending-review` marker; the entry is curated as-is.
+- **Edit** -- prompt for the one-paragraph description, then remove the marker.
+- **Discard** -- remove the entry from the pattern document entirely.
+
+Declining to curate (or when nothing is pending) leaves the gate presentation unchanged and never blocks gate approval -- the entries simply remain pending for the next gate.
 
 ## Consumers
 

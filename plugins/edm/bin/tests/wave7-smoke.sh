@@ -2220,6 +2220,77 @@ echo "  plugins/edm/bin/edm-state:1576-1692, out of this batch's file remit. Not
 echo "  report these as blocked-on-owner rather than a false PASS or FAIL."
 # EDMV3-T54 end
 
+# =================================================================================
+# EDMV3-T55: the audit gate presents pending pattern entries for human curation
+# =================================================================================
+# Ownership split (recorded here, not worked around silently): the presentation logic itself
+# lives in skills/audit-srd/SKILL.md, skills/audit-tickets/SKILL.md and
+# skills/code-audit/SKILL.md, all owned by a different agent in this wave and out of this
+# batch's file remit to edit. AC1 (presented at three gates), AC2 (keep/edit/discard in one
+# AskUserQuestion round) and AC4 (nothing shown when nothing is pending) require prose in those
+# three files and are BLOCKED-ON-OWNER (skills/*.md) as of this commit. AC9 (MR before/after
+# review) is a review artifact, not a runnable assertion, and is out of scope for this suite
+# regardless of ownership (same framing as T15 AC9 above). AC3, AC5, AC6, AC7 and AC8 are
+# asserted below: AC7 and AC6 are already true of the live tree (no owner dependency); AC3, AC5
+# and AC8 assert the docs/contract half this batch owns -- the actual gate-time behavior these
+# three prose describe is still the skills owner's to implement and is noted as such.
+echo
+echo "=== EDMV3-T55: gate-time curation of pending pattern entries (docs/contract half) ==="
+CURATION_SECTION_T55="$(awk '/^## Curation at Gates$/{f=1;next} /^## /{f=0} f' "$README_T54")"
+
+echo "T55 AC3 -- contract documents the three action semantics (keep/edit/discard)"
+check "T55 AC3 -- Keep semantics documented" \
+  "remove the \`status: pending-review\` marker; the entry is curated as-is" "$CURATION_SECTION_T55"
+check "T55 AC3 -- Edit semantics documented" \
+  "prompt for the one-paragraph description, then remove the marker" "$CURATION_SECTION_T55"
+check "T55 AC3 -- Discard semantics documented" \
+  "remove the entry from the pattern document entirely" "$CURATION_SECTION_T55"
+
+echo
+echo "T55 AC5 -- contract documents curation never blocking the gate"
+check "T55 AC5 -- README states declining curation never blocks gate approval" \
+  "never blocks gate approval" "$CURATION_SECTION_T55"
+
+echo
+echo "T55 AC6 -- regression guard: Gate PROTOCOL (canonical) is unchanged by this ticket"
+ORCH_SKILL_T55="$(cat "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
+t55_protocol_count="$(grep -c '^## Gate PROTOCOL (canonical)$' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" || true)"
+[[ "${t55_protocol_count:-0}" -eq 1 ]] && pass "T55 AC6 -- '## Gate PROTOCOL (canonical)' still appears exactly once" \
+  || fail "T55 AC6 -- '## Gate PROTOCOL (canonical)' appears ${t55_protocol_count:-0} times, expected 1"
+check "T55 AC6 -- approve-gate still called only on exact Approve selection" \
+  'is called ONLY when the user selects the **exact "Approve" option**' "$ORCH_SKILL_T55"
+check "T55 AC6 -- free-text responses are still not approvals" "are **NOT** approvals" "$ORCH_SKILL_T55"
+
+echo
+echo "T55 AC7 -- AskUserQuestion already granted on the three curation-presenting skills"
+t55_grants_ec=0
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t55_grants_ec=$?
+[[ "$t55_grants_ec" -eq 0 ]] && pass "T55 AC7 -- edm-check-grants exits 0" \
+  || fail "T55 AC7 -- edm-check-grants exited ${t55_grants_ec}"
+for t55_gate_skill in audit-srd audit-tickets code-audit; do
+  check "T55 AC7 -- ${t55_gate_skill}/SKILL.md's allowed-tools grants AskUserQuestion" \
+    "AskUserQuestion" "$(grep '^allowed-tools:' "${PLUGIN_DIR}/skills/${t55_gate_skill}/SKILL.md")"
+done
+
+echo
+echo "T55 AC8 -- contract documents grep-derived pending count, no state mirror (docs half)"
+check "T55 AC8 -- README documents the keep/edit/discard curation contract by section name" \
+  "## Curation at Gates" "$README_T54_CONTENT"
+check "T55 AC8 -- README states the pending count is derived by grep, not mirrored in state" \
+  "grep -c 'status: pending-review' docs/audit-patterns/*.md\` computed at read time" "$README_T54_CONTENT"
+check_absent "T55 AC8 -- no 'patterns_pending' state-array token anywhere in docs/audit-patterns/" \
+  "patterns_pending" "$README_T54_CONTENT"
+
+echo
+echo "T55 -- BLOCKED-ON-OWNER (skills/audit-srd, skills/audit-tickets, skills/code-audit SKILL.md):"
+echo "  AC1 (presented at three gates, showing title/source prefix/target doc), AC2 (keep/edit/"
+echo "  discard offered in the same AskUserQuestion round as the findings review), AC4 (nothing"
+echo "  shown when nothing is pending) all require prose changes to the three skill files, out of"
+echo "  this batch's file remit. Not asserted here; report these as blocked-on-owner rather than a"
+echo "  false PASS or FAIL. AC9 (MR before/after review artifact) is out of scope for this suite"
+echo "  regardless of ownership."
+# EDMV3-T55 end
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
