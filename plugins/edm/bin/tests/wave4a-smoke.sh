@@ -184,14 +184,16 @@ check "empty forked_from rejected" "non-empty" \
 echo
 echo "T99 — Lifecycle & Mode section in HANDOFF.md"
 "$EDM_STATE" set-mode TSMK mode iac >/dev/null
-"$EDM_STATE" set-mode TSMK lifecycle_mode partial >/dev/null
+# `partial` was removed from the settable enum (EDMV3-T59 / D12); this case only needs
+# a non-default lifecycle_mode to render, so use a currently-legal one.
+"$EDM_STATE" set-mode TSMK lifecycle_mode fast-track >/dev/null
 "$EDM_STATE" set-mode TSMK compliance_enabled true >/dev/null
 "$EDM_STATE" set-mode TSMK implementation_mode tdd >/dev/null
 "$EDM_STATE" write-handoff TSMK >/dev/null
 
 check "HANDOFF has Lifecycle & Mode section"     "## Lifecycle & Mode"    "$(cat "$HANDOFF")"
 check "HANDOFF shows mode = iac"                 "Mode**: iac"            "$(cat "$HANDOFF")"
-check "HANDOFF shows lifecycle_mode = partial"   "Lifecycle mode**: partial" "$(cat "$HANDOFF")"
+check "HANDOFF shows lifecycle_mode = fast-track"   "Lifecycle mode**: fast-track" "$(cat "$HANDOFF")"
 check "HANDOFF shows compliance_enabled = true"  "Compliance**: true"     "$(cat "$HANDOFF")"
 check "HANDOFF shows implementation_mode = tdd"  "Implementation mode**: tdd" "$(cat "$HANDOFF")"
 check "HANDOFF shows supersedes"                 "Supersedes**: OLDPREFIX" "$(cat "$HANDOFF")"

@@ -256,7 +256,7 @@ bad_lc_out="$(call_edm_helper terminal_phase_for_mode standard bogus-lc 2>&1)"
 set -e
 check_fails "unknown lifecycle_mode fails loudly naming the value" "unknown lifecycle_mode 'bogus-lc'" \
   call_edm_helper terminal_phase_for_mode standard bogus-lc
-check "unknown lifecycle_mode error lists the legal enum" "standard|partial|fast-track|fix-pack" "$bad_lc_out"
+check "unknown lifecycle_mode error lists the legal enum" "standard|fast-track|fix-pack" "$bad_lc_out"
 
 check_fails "set-mode rejects unknown mode value (CLI path)" "invalid mode" \
   "$EDM_STATE" set-mode T7SEEDSTD mode bogus-mode
@@ -2131,7 +2131,11 @@ check "T14 AC8 -- pre-closure partial_verdict_map entry is present as recorded" 
 
 # shape 3: lifecycle_mode: "partial" state file.
 "$EDM_STATE" init T14LCPARTIAL >/dev/null
-"$EDM_STATE" set-mode T14LCPARTIAL lifecycle_mode partial >/dev/null
+# A LEGACY file carrying the removed `partial` value cannot be produced by the current
+# binary (set-mode refuses it, EDMV3-T59 / D12) -- plant it directly, which is what a
+# pre-removal state file actually looks like on disk.
+jq '.lifecycle_mode = "partial"' "$TMP/SRD/T14LCPARTIAL/.edm-state.json" > "$TMP/lcp.tmp" \
+  && mv "$TMP/lcp.tmp" "$TMP/SRD/T14LCPARTIAL/.edm-state.json"
 t14lcpartial_out="$("$EDM_STATE" get T14LCPARTIAL 2>&1)"
 t14lcpartial_ec=$?
 [[ $t14lcpartial_ec -eq 0 ]] && pass "T14 AC8 -- lifecycle_mode: partial state file: edm-state get reads without error" \
