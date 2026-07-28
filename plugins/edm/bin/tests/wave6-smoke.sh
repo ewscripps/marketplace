@@ -3066,6 +3066,69 @@ check "T41 AC2 -- D22 entry names the install method checked" \
 check "T41 AC6 -- D22 entry states the negative branch was taken" \
   "negative" "$t41_d22_line"
 
+# =================================================================================
+# EDMV3-T50: phase-complete 6 is actually called -- edm-state-side verification.
+# AC1/AC2/AC3/AC4 wire skills/orchestrator, skills/implement and skills/code-audit SKILL.md;
+# those edits are out of scope for this batch (owned by the concurrent T37/T38 dispatcher
+# refactor) and are reported separately, not asserted here as a red test. AC8 is already
+# covered by T12 AC3 above ("archive without terminal completed_at refuses"). AC6 and AC7 are
+# pure edm-state behaviour and are covered below.
+# =================================================================================
+
+# ---- AC6 (ordering precondition): phase-complete 6 succeeds once qc-summary.md exists, i.e.
+# EDMV3-T11's artifact check passes rather than refuses -- the invariant the orchestrator's
+# Phase 6 ordering (verify-runtime, then phase-complete 6, called after qc-summary.md is
+# written) depends on. -------------------------------------------------------------------------
+echo
+echo "T50 AC6 -- orchestrator Phase 6 ordering: qc-summary exists before phase-complete 6"
+"$EDM_STATE" init T50ORDER >/dev/null
+"$EDM_STATE" approve-gate T50ORDER 1 >/dev/null
+"$EDM_STATE" approve-gate T50ORDER 2 >/dev/null
+"$EDM_STATE" approve-gate T50ORDER 3 >/dev/null
+"$EDM_STATE" phase-start T50ORDER 6 >/dev/null
+mkdir -p "$TMP/SRD/T50ORDER/qc"
+echo "# QC Summary" > "$TMP/SRD/T50ORDER/qc/qc-summary.md"
+t50order_out="$("$EDM_STATE" phase-complete T50ORDER 6 2>&1)"; t50order_ec=$?
+[[ $t50order_ec -eq 0 ]] \
+  && pass "T50 AC6 -- orchestrator Phase 6 ordering: qc-summary exists before phase-complete 6" \
+  || fail "T50 AC6 -- phase-complete 6 refused despite qc-summary.md present: $t50order_out"
+
+# ---- AC7 (behavioural, the number is non-zero): a scratch run with a staged session JSONL
+# fixture produces non-zero duration_seconds and estimated_cost_usd for 6_phase -- the exact
+# figure the EDMV2 defect (D9) left at 0s/$0.00. -------------------------------------------------
+echo
+echo "T50 AC7 -- phase 6 duration_seconds and estimated_cost_usd are non-zero after a real run"
+T50_HOME="$(mktemp -d)"
+T50_CWD="$(mktemp -d)"
+T50_PREV_HOME="${HOME:-}"
+T50_PREV_PWD="$(pwd)"
+cd "$T50_CWD"
+export HOME="$T50_HOME"
+T50_SESS_DIR="$(session_dir_for_test_cwd)"
+"$EDM_STATE" init T50PH6 >/dev/null
+"$EDM_STATE" approve-gate T50PH6 1 >/dev/null
+"$EDM_STATE" approve-gate T50PH6 2 >/dev/null
+"$EDM_STATE" approve-gate T50PH6 3 >/dev/null
+"$EDM_STATE" phase-start T50PH6 6 >/dev/null
+sleep 1
+# Staged AFTER phase-start: get_session_tokens_since filters on timestamp >= started_at, so a
+# fixture timestamped before phase-start would be (correctly) excluded.
+stage_session_jsonl "$T50_SESS_DIR" "session-1.jsonl" "claude-sonnet-4-6-20260601" 1000 500
+mkdir -p "$TMP/SRD/T50PH6/qc"
+echo "# QC Summary" > "$TMP/SRD/T50PH6/qc/qc-summary.md"
+"$EDM_STATE" phase-complete T50PH6 6 >/dev/null
+t50_dur="$(jq -r '.phase_durations["6_phase"].duration_seconds' "$TMP/SRD/T50PH6/.edm-state.json")"
+t50_cost="$(jq -r '.phase_durations["6_phase"].estimated_cost_usd' "$TMP/SRD/T50PH6/.edm-state.json")"
+[[ "$t50_dur" -gt 0 ]] 2>/dev/null \
+  && pass "T50 AC7 -- phase 6 duration_seconds > 0 (${t50_dur}s)" \
+  || fail "T50 AC7 -- duration_seconds = '$t50_dur', expected > 0"
+awk -v c="$t50_cost" 'BEGIN{exit !(c>0)}' \
+  && pass "T50 AC7 -- phase 6 estimated_cost_usd > 0 (\$${t50_cost})" \
+  || fail "T50 AC7 -- estimated_cost_usd = '$t50_cost', expected > 0"
+cd "$T50_PREV_PWD"
+export HOME="$T50_PREV_HOME"
+rm -rf "$T50_HOME" "$T50_CWD"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
