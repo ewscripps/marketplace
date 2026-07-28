@@ -46,9 +46,9 @@ track findings across passes and determine convergence.
 8. Write `${OUTPUT_DIR}/lenses-run.txt` -- one lens ID per line (e.g., `L1`, `L2`, ... for a full round, or `L1`, `L3` for a partial). Add a `Round type: full` or `Round type: partial` header line.
 9. **Spawn `edm-audit-synthesizer`**. It:
    - Reads the lens reports in `${OUTPUT_DIR}/`
-   - Reads the prior `findings-ledger.md` (if present)
-   - Merges findings: assigns stable IDs to new findings, marks prior-round findings as `fixed` if absent, re-opens any that reappear
-   - Writes the updated `findings-ledger.md` to `${INIT_DIR}/code-audit/findings-ledger.md`
+   - Reads the prior `findings-ledger.jsonl` (or the legacy `findings-ledger.md` if only that exists)
+   - Merges findings: assigns stable CA-NNN IDs to new findings, marks prior-round findings as `fixed` if absent, re-opens any that reappear, and ranks by confidence rather than discarding single-lens findings
+   - Writes the updated `findings-ledger.jsonl` to `${INIT_DIR}/code-audit/findings-ledger.jsonl` -- the authoritative record (it does not write `findings-ledger.md`; that file is rendered separately, deterministically, by `edm-state render-ledger`)
    - Writes `${OUTPUT_DIR}/REMEDIATION.md` for this round
    - Marks the round as `partial` (non-convergent) in REMEDIATION.md if `ROUND_TYPE=partial`
 10. **Convergence gate** (full rounds only -- partial rounds are never convergent). The order is always
@@ -137,14 +137,18 @@ After all lens reports are written, spawn `edm-audit-synthesizer` with:
 
 ```
 Agent: edm-audit-synthesizer
-Prompt: "Read the lens reports in ${OUTPUT_DIR}/. Read the prior findings ledger at
-         ${INIT_DIR}/code-audit/findings-ledger.md (if it exists).
-         Apply the second-pass False Alarm Filter. Deduplicate findings flagged by
-         multiple lenses (multi-lens = higher confidence).
+Prompt: "Read the lens reports (prose and JSONL) in ${OUTPUT_DIR}/. Read the prior findings
+         ledger at ${INIT_DIR}/code-audit/findings-ledger.jsonl (or the legacy
+         findings-ledger.md if only that exists).
+         Apply the second-pass False Alarm Filter, ranking by confidence and corroboration
+         rather than discarding single-lens findings (multi-lens = higher confidence; a
+         single-lens low-confidence finding is demoted to NOTED, never dropped).
+         Deduplicate findings flagged by multiple lenses.
          Merge findings with the ledger: assign stable IDs (CA-001, CA-002, ...) to new
          findings; mark prior open findings as 'fixed' (resolved_round = N) if they no
          longer appear; re-open any that reappear under their original ID.
-         Write the updated ledger to ${INIT_DIR}/code-audit/findings-ledger.md.
+         Write the updated ledger to ${INIT_DIR}/code-audit/findings-ledger.jsonl -- the
+         authoritative record. Do not write findings-ledger.md yourself.
          Write the consolidated remediation plan to ${OUTPUT_DIR}/REMEDIATION.md.
          If this is a partial round (fewer than 11 lenses), note 'Round type: partial'
          in REMEDIATION.md -- this round cannot satisfy the convergence gate."
@@ -152,12 +156,12 @@ Prompt: "Read the lens reports in ${OUTPUT_DIR}/. Read the prior findings ledger
 
 Synthesizer responsibilities:
 
-- Apply second-pass filter (intentional behavior, pre-existing issue, documented trade-off, multi-lens corroboration)
+- Apply second-pass filter (intentional behavior, pre-existing issue, documented trade-off), ranking by confidence and corroboration rather than discarding single-lens findings
 - Deduplicate (same issue flagged by L1 and L4 -> one finding, higher confidence)
 - Severity-rank using canonical P0/P1/P2/NOTED scale (NOT legacy P1/P2/P3)
 - Assign stable CA-NNN IDs and merge with prior-round ledger
 - Suggest rollout order (which fixes first, which can batch)
-- Write ledger to `${INIT_DIR}/code-audit/findings-ledger.md`
+- Write the authoritative ledger to `${INIT_DIR}/code-audit/findings-ledger.jsonl` (never `findings-ledger.md` directly -- `edm-state render-ledger` renders that file)
 - Write round report to `${OUTPUT_DIR}/REMEDIATION.md`
 
 ## Severity Reference

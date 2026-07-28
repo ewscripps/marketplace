@@ -985,6 +985,143 @@ t24_ac10_case() {
 t24_ac10_case
 # EDMV3-T24 end
 
+# =================================================================================
+# EDMV3-T25: the synthesizer emits the authoritative JSONL ledger and ranks by
+# confidence instead of discarding uncorroborated findings. The synthesizer is an LLM
+# agent with no bin/ entry point to invoke directly, so every assertion here is either
+# a prompt-text contract (grep/awk against the committed agent/skill prose) or a
+# hand-constructed ledger fixture proving the JSONL shape's structural properties
+# (AC1, AC3, AC10) -- consistent with the T24 block above.
+# Batch scope note: this agent's remit for this batch is agents/edm-audit-
+# synthesizer.md, skills/code-audit/SKILL.md, and this wave7-smoke.sh append block.
+# Two ACs are explicitly out of scope for this batch and are NOT asserted here:
+#   - AC4 (a legacy 'deferred' line re-opens at read time; `edm-state audit-converged`
+#     exits non-zero naming it) is owned by EDMV3-T28 -- the ticket's own text says so
+#     ("implemented in EDMV3-T28 and asserted here against the same fixture ledger"),
+#     and `edm-state audit-converged` does not exist yet.
+#   - AC8 (the eleven lens '## False Alarm Filter' sections get an identical framing
+#     sentence about demote-not-delete) requires editing agents/edm-audit-{logic,
+#     dead-code,edge-cases,test-quality,runtime,docs,consistency,security,spec,dry,
+#     wiring}.md, all outside this batch's file boundary -- not touched here, pending
+#     a follow-up batch.
+# =================================================================================
+SYNTHESIZER_AGENT="${PLUGIN_DIR}/agents/edm-audit-synthesizer.md"
+SYNTH_CONTENT="$(cat "$SYNTHESIZER_AGENT")"
+
+echo
+echo "T25 AC1 -- synthesizer names findings-ledger.jsonl as its authoritative ledger output"
+check "T25 AC1 -- findings-ledger.jsonl named as the ledger output" "findings-ledger.jsonl" "$SYNTH_CONTENT"
+check "T25 AC1 -- authoritative record language present" "authoritative" "$SYNTH_CONTENT"
+check "T25 AC1 -- CA-NNN id format documented" "CA-001" "$SYNTH_CONTENT"
+check "T25 AC1 -- confidence field documented" "confidence" "$SYNTH_CONTENT"
+check "T25 AC1 -- lenses field documented" '"lenses"' "$SYNTH_CONTENT"
+
+echo
+echo "T25 AC1/AC3/AC10 -- hand-constructed ledger fixture: valid JSON, unique CA-NNN ids, confidence+lenses present, status enum exactly open|fixed|noted"
+t25_ledger_case() {
+  local scratch
+  scratch="$(mktemp -d /tmp/edm-t25-ledger.XXXXXX)" || { fail "T25 AC1/AC10 -- mktemp failed"; return 1; }
+  local ledger="$scratch/findings-ledger.jsonl"
+  {
+    echo '{"schema":1,"id":"CA-001","sev":"P1","status":"fixed","confidence":"high","lenses":["L1","L4"],"file":"src/auth/handler.py","line":42,"title":"Stub returns hardcoded data","raised_round":1,"resolved_round":2}'
+    echo '{"schema":1,"id":"CA-002","sev":"P0","status":"open","confidence":"high","lenses":["L9"],"file":"(missing)","line":null,"title":"--dry-run flag not built","raised_round":1,"resolved_round":null}'
+    echo '{"schema":1,"id":"CA-003","sev":"NOTED","status":"noted","confidence":"low","lenses":["L7"],"file":"svc-a/config.yaml","line":null,"title":"Timeout inconsistency","raised_round":2,"resolved_round":null}'
+  } > "$ledger"
+
+  local bad=0 t25_line
+  while IFS= read -r t25_line; do
+    [[ -z "$t25_line" ]] && continue
+    echo "$t25_line" | jq -e . >/dev/null 2>&1 || bad=1
+  done < "$ledger"
+  [[ $bad -eq 0 ]] && pass "T25 AC10 -- every line of the ledger fixture is valid JSON" \
+    || fail "T25 AC10 -- at least one ledger fixture line failed to parse"
+
+  jq -se 'all(.id | test("^CA-[0-9]{3}$")) and all(has("confidence") and has("lenses"))' "$ledger" >/dev/null 2>&1 \
+    && pass "T25 AC1 -- every line carries a CA-NNN id plus confidence and lenses fields" \
+    || fail "T25 AC1 -- ledger fixture failed the id/confidence/lenses jq assertion"
+
+  jq -se '(map(.id) | length) == (map(.id) | unique | length)' "$ledger" >/dev/null 2>&1 \
+    && pass "T25 AC10 -- ledger fixture IDs are unique" \
+    || fail "T25 AC10 -- ledger fixture IDs are not unique"
+
+  jq -se 'all(.status == "open" or .status == "fixed" or .status == "noted")' "$ledger" >/dev/null 2>&1 \
+    && pass "T25 AC3 -- ledger fixture status values are exactly open|fixed|noted" \
+    || fail "T25 AC3 -- ledger fixture contains a status value outside open|fixed|noted"
+
+  rm -rf "$scratch"
+}
+t25_ledger_case
+
+echo
+echo "T25 AC2 -- synthesizer does not write findings-ledger.md; every mention is a legacy-read reference or an explicit forbid"
+t25_ac2_case() {
+  local bad=0 line
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    case "$line" in
+      *legacy*) ;;
+      *"not write"*|*"Not write"*|*"never write"*|*"Never write"*|*"contract violation"*) ;;
+      *) bad=1; echo "  UNQUALIFIED MENTION: $line" ;;
+    esac
+  done < <(grep -n 'findings-ledger.md' "$SYNTHESIZER_AGENT")
+  [[ $bad -eq 0 ]] && pass "T25 AC2 -- every findings-ledger.md mention is a legacy-read reference or an explicit forbid" \
+    || fail "T25 AC2 -- found an unqualified findings-ledger.md mention (see above)"
+}
+t25_ac2_case
+t25_output_section="$(awk '/^## Output$/{f=1} f && /^## Second-Pass/{exit} f' "$SYNTHESIZER_AGENT")"
+t25_output_bullets="$(printf '%s\n' "$t25_output_section" | grep -c '^- `' || true)"
+[[ "${t25_output_bullets:-0}" -eq 2 ]] && pass "T25 AC2 -- Output section names exactly two permitted write paths" \
+  || fail "T25 AC2 -- Output section has ${t25_output_bullets:-0} write-path bullet(s), expected 2"
+check_absent "T25 AC2 -- Output section's write paths do not include a bare findings-ledger.md bullet" \
+  '- `<initiative-dir>/code-audit/findings-ledger.md`' "$t25_output_section"
+
+echo
+echo "T25 AC3 -- deferred abolished from the synthesizer prompt; status enum is exactly open|fixed|noted"
+t25_defer_count="$(grep -ci 'defer' "$SYNTHESIZER_AGENT" || true)"
+[[ "${t25_defer_count:-0}" -eq 0 ]] && pass "T25 AC3 -- zero case-insensitive 'defer' occurrences in the synthesizer prompt" \
+  || fail "T25 AC3 -- found ${t25_defer_count} 'defer' occurrence(s) in the synthesizer prompt"
+check "T25 AC3 -- status enum stated as open, fixed, noted" 'open`, `fixed`, `noted' "$SYNTH_CONTENT"
+
+echo
+echo "T25 AC5 -- cross-round semantics preserved: fixed/resolved_round/raised_round/re-open language present"
+check "T25 AC5 -- resolved_round tracked" "resolved_round" "$SYNTH_CONTENT"
+check "T25 AC5 -- re-open language present" "re-open" "$SYNTH_CONTENT"
+check "T25 AC5 -- raised_round tracked" "raised_round" "$SYNTH_CONTENT"
+
+echo
+echo "T25 AC6 -- blind corroboration discard phrase absent from the synthesizer prompt"
+check_absent "T25 AC6 -- 'low corroboration' (the old blind-discard phrase) is absent" \
+  "low corroboration" "$SYNTH_CONTENT"
+check "T25 AC6 -- confidence-ranking rule present (low confidence retained but demoted)" \
+  "confidence: low" "$SYNTH_CONTENT"
+check "T25 AC6 -- demotion language present, not discard" "is retained but demoted" "$SYNTH_CONTENT"
+
+echo
+echo "T25 AC7 -- synthesizer prompt states no finding is removed"
+check "T25 AC7 -- 'No finding is ever removed' stated" "No finding is ever removed" "$SYNTH_CONTENT"
+check "T25 AC7 -- substantive false-alarm criteria (documented trade-off) preserved" \
+  "known trade-off explicitly accepted" "$SYNTH_CONTENT"
+
+echo
+echo "T25 AC9 -- legacy markdown-only prior ledger is read without error (C-4)"
+check "T25 AC9 -- Mission bullet documents legacy findings-ledger.md fallback" \
+  "legacy \`<initiative-dir>/code-audit/findings-ledger.md\` if only that exists" "$SYNTH_CONTENT"
+check "T25 AC9 -- Process step documents legacy findings-ledger.md fallback" \
+  "If only a legacy \`findings-ledger.md\` exists, read that instead" "$SYNTH_CONTENT"
+
+echo
+echo "T25 -- skills/code-audit/SKILL.md's synthesizer launch reflects the JSONL-authoritative contract"
+CA_CONTENT_T25="$(cat "${PLUGIN_DIR}/skills/code-audit/SKILL.md")"
+check "T25 -- SKILL.md Step 9 writes findings-ledger.jsonl as the authoritative record" \
+  "the authoritative record" "$CA_CONTENT_T25"
+check "T25 -- SKILL.md Step 9 states the synthesizer does not write findings-ledger.md" \
+  "does not write \`findings-ledger.md\`" "$CA_CONTENT_T25"
+check "T25 -- SKILL.md Synthesizer Phase launch prompt reads findings-ledger.jsonl with legacy fallback" \
+  "findings-ledger.jsonl (or the legacy" "$CA_CONTENT_T25"
+check "T25 -- SKILL.md Synthesizer Phase launch prompt forbids writing findings-ledger.md" \
+  "Do not write findings-ledger.md yourself" "$CA_CONTENT_T25"
+# EDMV3-T25 end
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
