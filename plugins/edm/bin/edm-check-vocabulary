@@ -1,0 +1,296 @@
+#!/usr/bin/env bash
+# edm-check-vocabulary - deterministic backstop for the abolished-vocabulary policy
+# (EDMV3-T29/T30; see CLAUDE.md's "Severity vocabulary" section for the policy itself).
+#
+# Usage:
+#   edm-check-vocabulary               # scan the full scope, report violations
+#   edm-check-vocabulary --list-scope  # print the scan scope roots and exit 0
+#   edm-check-vocabulary -h|--help     # show this help
+#
+# Why a checker, not just a one-time sweep: the policy needs a deterministic backstop, or the
+# abolished vocabulary creeps back the first time someone writes a prompt from memory.
+#
+# Scan scope (eight roots, AC1): skills/, agents/, docs/ (including
+# docs/audit-patterns/qc-audit.md), hooks/hooks.json, monitors/monitors.json, CLAUDE.md,
+# README.md, and bin/ (including bin/tests/ -- see the allowlist file for why that
+# directory is carved out rather than excluded from the walk entirely).
+#
+# hooks/hooks.json and monitors/monitors.json are named explicitly in the scope list above
+# (AC2) rather than reached only via a *.md glob -- a scanner that only read *.md files would
+# silently skip the single highest-leverage site in the corpus (a `type: prompt` hook the
+# model executes on every implementer completion). Both files are additionally validated as
+# parseable JSON via `jq` before the text scan runs, so a malformed hooks.json is reported as
+# an environment error (exit 2) rather than silently skipped.
+#
+# Prohibited tokens are data, not code: they live in vocabulary-prohibited.txt, a sibling of
+# this script (AC3). Each token line is prefixed `word:` (whole-word-boundary match -- so a
+# longer word sharing the same stem as a short banned word does not also match) or `literal:`
+# (fixed-string match, used for compound phrases and flags where stemming is not a concern).
+# Extending the list later requires no code change here.
+#
+# The allowlist (vocabulary-allowlist.txt, a sibling of the prohibited list, AC4) holds
+# <path>|<substring> pairs, each preceded by a one-line "#" justification. A violation is
+# suppressed only when the file matches <path> (an exact file, or a "/"-suffixed directory
+# prefix) AND the reported snippet contains <substring> verbatim (an empty substring
+# allowlists the whole file/directory).
+#
+# Performance note: for each token this script runs exactly one `grep -n` across the entire
+# scanned file set, not a per-line-per-token subprocess loop -- a prior attempt died from
+# exactly that loop shape.
+#
+# The two override-flag strings (see vocabulary-prohibited.txt) are in the prohibited-token
+# list (AC3) for the same reason EDMV3-90 forbids override flags anywhere in this plugin's
+# prompts/templates: running this one checker also satisfies that repository-wide
+# override-flag scan (AC10) in the same pass, with the same documented bin/tests/ carve-out.
+#
+# Output format (AC6): "path:line: vocabulary: <token>: <snippet>"
+# Exit codes (EDMV3-100): 0 = clean; 1 = one or more violations found; 2 = usage or
+# environment error (unknown flag, missing jq, unreadable scope path, invalid JSON).
+#
+# AC9: mirrors bin/edm-lint-artifacts' report_violation and ignore-marker helpers (see
+# report_violation() and build_ignore_set() below) rather than re-deriving the file walk or
+# the output-format convention.
+#
+# bash 3.2 compatible: no associative arrays, no mapfile/readarray.
+set -euo pipefail
+
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_DIR="$(cd "${SELF_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${PLUGIN_DIR}/../.." && pwd)"
+PROHIBITED_FILE="${SELF_DIR}/vocabulary-prohibited.txt"
+ALLOWLIST_FILE="${SELF_DIR}/vocabulary-allowlist.txt"
+
+die() {
+  local msg="$1" code="${2:-2}"
+  echo "edm-check-vocabulary: $msg" >&2
+  exit "$code"
+}
+
+usage() {
+  awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$0"
+  exit 0
+}
+# EDM-HELP-BEGIN
+# edm-check-vocabulary - deterministic backstop for the abolished-vocabulary policy.
+# Usage:
+#   edm-check-vocabulary               # scan the full scope, report violations
+#   edm-check-vocabulary --list-scope  # print the scan scope roots and exit 0
+#   edm-check-vocabulary -h|--help     # show this help
+# Output format: "path:line: vocabulary: <token>: <snippet>"
+# Exit codes: 0 clean; 1 violations found; 2 usage or environment error.
+# EDM-HELP-END
+
+case "${1:-}" in
+  -h|--help|help) usage ;;
+esac
+
+LIST_SCOPE=0
+if [[ $# -gt 0 ]]; then
+  case "$1" in
+    --list-scope)
+      [[ $# -eq 1 ]] || die "usage: --list-scope takes no further arguments"
+      LIST_SCOPE=1
+      ;;
+    --*)
+      die "unknown flag: $1"
+      ;;
+    *)
+      die "unexpected argument: $1"
+      ;;
+  esac
+fi
+
+# ---- Scope roots (AC1: eight paths) --------------------------------------------------------
+SCOPE_ROOTS=(
+  "${PLUGIN_DIR}/skills"
+  "${PLUGIN_DIR}/agents"
+  "${PLUGIN_DIR}/docs"
+  "${PLUGIN_DIR}/hooks/hooks.json"
+  "${PLUGIN_DIR}/monitors/monitors.json"
+  "${PLUGIN_DIR}/CLAUDE.md"
+  "${PLUGIN_DIR}/README.md"
+  "${PLUGIN_DIR}/bin"
+)
+
+if [[ "$LIST_SCOPE" -eq 1 ]]; then
+  for root in "${SCOPE_ROOTS[@]}"; do
+    echo "${root#"${REPO_ROOT}"/}"
+  done
+  exit 0
+fi
+
+[[ -f "$PROHIBITED_FILE" ]] || die "prohibited-token file not found: $PROHIBITED_FILE"
+[[ -f "$ALLOWLIST_FILE" ]] || die "allowlist file not found: $ALLOWLIST_FILE"
+
+# ---- JSON scope files: validated as parseable JSON, not only grepped (AC2) -----------------
+command -v jq >/dev/null 2>&1 || die "jq not found on PATH (required to validate JSON scope files)"
+for jf in "${PLUGIN_DIR}/hooks/hooks.json" "${PLUGIN_DIR}/monitors/monitors.json"; do
+  [[ -f "$jf" ]] || die "scope file not found: ${jf#"${REPO_ROOT}"/}"
+  jq -e . "$jf" >/dev/null 2>&1 || die "invalid JSON, cannot scan: ${jf#"${REPO_ROOT}"/}"
+done
+
+# ---- Helper: report a violation (mirrors bin/edm-lint-artifacts' report_violation) ---------
+violations=0
+report_violation() {
+  local class="$1" filepath="$2" lineno="$3" snippet="$4"
+  printf '%s:%s: %s: %s\n' "$filepath" "$lineno" "$class" "$snippet"
+  violations=$((violations + 1))
+}
+
+# ---- Helper: build ignore set for a file (mirrors bin/edm-lint-artifacts' build_ignore_set) -
+# Emits newline-separated line numbers to skip: lines inside ``` code fences, lines following
+# <!-- edm-lint-ignore -->, and lines inside <!-- edm-lint-ignore-start/-end --> blocks. Only
+# meaningful for markdown; called lazily (per matched file, not per scanned line) so the whole-
+# file-grep-per-token performance shape above is preserved.
+build_ignore_set() {
+  local file="$1"
+  local in_fence=0 in_ignore_block=0 ignore_next=0 lineno=0
+  while IFS= read -r linetext; do
+    lineno=$((lineno + 1))
+
+    if [[ "$ignore_next" -eq 1 ]]; then
+      echo "$lineno"
+      ignore_next=0
+      continue
+    fi
+
+    if [[ "$linetext" =~ ^\`\`\` ]]; then
+      in_fence=$((1 - in_fence))
+      continue
+    fi
+
+    if [[ "$linetext" == *'<!-- edm-lint-ignore-end -->'* ]]; then
+      in_ignore_block=0
+      continue
+    fi
+
+    if [[ "$in_fence" -eq 1 || "$in_ignore_block" -eq 1 ]]; then
+      echo "$lineno"
+    fi
+
+    if [[ "$linetext" == *'<!-- edm-lint-ignore-start -->'* ]]; then
+      in_ignore_block=1
+    fi
+
+    if [[ "$linetext" == *'<!-- edm-lint-ignore -->'* ]]; then
+      ignore_next=1
+    fi
+  done < "$file"
+}
+
+is_ignored_line() {
+  local lineno="$1" ignoreset="$2"
+  [[ -n "$ignoreset" ]] && echo "$ignoreset" | grep -qxF "$lineno"
+}
+
+# ---- Helper: is a (relfile, snippet) pair allowlisted? -------------------------------------
+is_allowlisted() {
+  local relfile="$1" snippet="$2"
+  local aline apath asub
+  while IFS= read -r aline; do
+    [[ -z "$aline" ]] && continue
+    case "$aline" in
+      \#*) continue ;;
+    esac
+    apath="${aline%%|*}"
+    asub="${aline#*|}"
+    [[ "$asub" == "$aline" ]] && asub=""
+
+    if [[ "$apath" == */ ]]; then
+      case "$relfile" in
+        "$apath"*) : ;;
+        *) continue ;;
+      esac
+    else
+      [[ "$relfile" == "$apath" ]] || continue
+    fi
+
+    if [[ -z "$asub" ]]; then
+      return 0
+    fi
+    case "$snippet" in
+      *"$asub"*) return 0 ;;
+    esac
+  done < "$ALLOWLIST_FILE"
+  return 1
+}
+
+# ---- Build the file list (AC1/AC2: JSON scope files are explicit list members, not reached
+# only via a *.md glob; bin/ recurses into bin/tests/ so the AC5 carve-out has something to
+# carve out of) ---------------------------------------------------------------------------
+FILES=()
+for root in "${SCOPE_ROOTS[@]}"; do
+  if [[ -d "$root" ]]; then
+    while IFS= read -r f; do
+      FILES+=("$f")
+    done < <(find "$root" -type f \( -name '*.md' -o -name '*.json' -o -name '*.txt' -o -name '*.sh' \) 2>/dev/null | sort)
+    if [[ "$root" == "${PLUGIN_DIR}/bin" ]]; then
+      # Extensionless executables directly under bin/ (edm-state, edm-init, this script, ...).
+      while IFS= read -r f; do
+        FILES+=("$f")
+      done < <(find "$root" -maxdepth 1 -type f ! -name '*.*' 2>/dev/null | sort)
+    fi
+  elif [[ -f "$root" ]]; then
+    FILES+=("$root")
+  else
+    die "scope path not found: ${root#"${REPO_ROOT}"/}"
+  fi
+done
+
+if [[ ${#FILES[@]} -eq 0 ]]; then
+  echo "edm-check-vocabulary: no files found in scan scope"
+  exit 0
+fi
+
+# ---- Token scan: one whole-fileset grep per token, never per-line-per-token ----------------
+while IFS= read -r tline; do
+  [[ -z "$tline" ]] && continue
+  case "$tline" in
+    \#*) continue ;;
+  esac
+
+  mode="${tline%%:*}"
+  tok="${tline#*:}"
+  [[ "$mode" == "$tline" ]] && mode="literal"
+
+  matches=""
+  if [[ "$mode" == "word" ]]; then
+    pattern="(^|[^A-Za-z])${tok}([^A-Za-z]|$)"
+    matches="$(grep -inE -- "$pattern" "${FILES[@]}" 2>/dev/null || true)"
+  else
+    matches="$(grep -inF -- "$tok" "${FILES[@]}" 2>/dev/null || true)"
+  fi
+
+  [[ -z "$matches" ]] && continue
+
+  while IFS= read -r mline; do
+    [[ -z "$mline" ]] && continue
+    f="${mline%%:*}"
+    rest="${mline#*:}"
+    lineno="${rest%%:*}"
+    snippet="${rest#*:}"
+    relfile="${f#"${REPO_ROOT}"/}"
+
+    ignore_set=""
+    case "$relfile" in
+      *.md) ignore_set="$(build_ignore_set "$f")" ;;
+    esac
+    if [[ -n "$ignore_set" ]] && is_ignored_line "$lineno" "$ignore_set"; then
+      continue
+    fi
+
+    if is_allowlisted "$relfile" "$snippet"; then
+      continue
+    fi
+
+    report_violation "vocabulary: ${tok}" "$relfile" "$lineno" "$(printf '%s' "$snippet" | cut -c1-160)"
+  done <<< "$matches"
+done < "$PROHIBITED_FILE"
+
+if [[ "$violations" -eq 0 ]]; then
+  echo "edm-check-vocabulary: CLEAN (no abolished-vocabulary violations found)"
+  exit 0
+else
+  echo "edm-check-vocabulary: ${violations} violation(s) found" >&2
+  exit 1
+fi

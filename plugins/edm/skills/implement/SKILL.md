@@ -23,7 +23,7 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(grep *), Glob, Grep, T
 4. **For each wave**: spawn `edm-implementer` agents (6-10 parallel). Each gets `isolation: worktree` automatically.
 5. After each implementer completes, the `SubagentStop` hook automatically spawns `edm-qc-auditor` to verify the ticket's acceptance criteria against the implemented code. (The hook is configured in `hooks/hooks.json`.)
 6. Aggregate QC findings as they arrive.
-7. **Remediate** any P0/P1 QC findings: spawn `edm-implementer` agents to fix; re-trigger QC.
+7. **Remediate** any FAIL QC findings, at every severity: spawn `edm-implementer` agents to fix; re-trigger QC.
 8. Loop until all tickets have PASS verdict.
 9. `edm-state phase-complete <PREFIX> 6`
 10. Print the post-implementation checklist and remind the user about `/edm:code-audit <PREFIX>` for the optional 11-lens audit before merge.
@@ -81,29 +81,31 @@ else:
 
 **Verdict semantics**:
 - **PASS** -- AC is statically verifiable AND the code provably satisfies it (evidence at file:line)
-- **PARTIAL** -- AC **cannot be verified statically** and requires a live runtime environment (running service, real DB, deployed container); record a `deferred-to-runtime` note
+- **PARTIAL** -- AC **cannot be verified statically** and requires a live runtime environment (running service, real DB, deployed container); record a `runtime-check:` note
 - **FAIL** -- AC is statically verifiable AND the code provably does NOT satisfy it
 
 Finding format:
 ```
 [SEVERITY] {PREFIX}-T{NN} | path/to/file.py:line | AC#{N}: {criterion} | {what's wrong}
-[PARTIAL]  {PREFIX}-T{NN} | AC#{N}: {criterion}  | deferred-to-runtime: {what runtime check resolves this}
+[PARTIAL]  {PREFIX}-T{NN} | AC#{N}: {criterion}  | runtime-check: {what runtime check resolves this}
 ```
 
 ## Step 5: Remediate
 
-1. Compile all P0/P1 FAIL findings from `qc/qc-summary.md`.
+1. Compile all FAIL findings from `qc/qc-summary.md`, at every severity.
 2. For each ticket with a PARTIAL verdict, persist it:
    ```bash
-   edm-state record-partial-verdict <PREFIX> <ticket> PARTIAL '<deferred-to-runtime note>'
+   edm-state record-partial-verdict <PREFIX> <ticket> PARTIAL '<runtime-check note>'
    ```
 3. Group FAIL findings by file independence -> parallelize.
 4. Spawn `edm-implementer` agents to fix: *"Fix these QC findings: [list]. Read the file at the given line before modifying. Write complete implementations."*
 5. Commit referencing ticket IDs and finding numbers.
 6. **Re-audit affected tickets** to prevent fix regressions.
 
-Note: PARTIAL findings do not require remediation -- they are deferred to runtime verification.
-The `record-partial-verdict` call persists them in state so HANDOFF.md can surface them.
+Every PARTIAL is closed by the mandatory `/edm:verify-runtime` step before archive: it either
+upgrades to PASS (verified at runtime) or, if runtime verification fails, becomes a FAIL and is
+remediated like any other finding. The `record-partial-verdict` call persists a PARTIAL in state
+only so HANDOFF.md can surface it as outstanding work until `/edm:verify-runtime` closes it.
 
 ## Step 6: Execution Report
 
@@ -118,8 +120,10 @@ mode: {run-mode}   # e.g., live-db, dry-run, staging -- NOT the adaptation profi
 ## Summary
 {what was built}
 
-## Deferred Work
-{items not implemented -- e.g., optional AC#, follow-on tickets}
+## Out of Scope (recorded boundaries)
+{items not implemented -- e.g., optional AC#, follow-on tickets. A recorded boundary is a
+decision made on its own merits, not a postponed finding -- it can only hold decisions, never
+findings; a FAIL finding placed here instead of remediated is a QC failure.}
 
 ## Known Issues
 {post-implementation issues visible but not blocking}
@@ -127,7 +131,7 @@ mode: {run-mode}   # e.g., live-db, dry-run, staging -- NOT the adaptation profi
 ## Outstanding PARTIAL ACs
 Cross-reference: see qc/qc-summary.md PARTIAL entries.
 
-| Ticket | AC | Deferred-to-runtime note |
+| Ticket | AC | Runtime-check note |
 |--------|-----|--------------------------|
 ```
 
@@ -153,7 +157,9 @@ edm-state set {PREFIX} test_layer_skipped true
 
 Only when:
 - [ ] All tickets have PASS verdict
-- [ ] All P0 QC findings resolved
+- [ ] All FAIL findings resolved, at every severity
+- [ ] Every outstanding PARTIAL closed via `/edm:verify-runtime` (upgraded to PASS, or
+  downgraded to FAIL and remediated)
 - [ ] Code compiles, existing tests pass
 - [ ] No TODO or FIXME markers remain
 - [ ] Execution report written to `exec-report.md` (Step 6)
@@ -196,8 +202,8 @@ All N acceptance criteria verified.
 
 ### {PREFIX}-T02: {title} -- PARTIAL
 - [x] AC1-AC3: Verified (statically)
-- [ ] AC4: {criterion} -- **deferred-to-runtime**: requires a running service to verify the 201 response
-**Finding**: [PARTIAL] {PREFIX}-T02 | AC#4: deferred-to-runtime: call the endpoint with a live server and assert 201
+- [ ] AC4: {criterion} -- **runtime-check:** requires a running service to verify the 201 response
+**Finding**: [PARTIAL] {PREFIX}-T02 | AC#4: runtime-check: call the endpoint with a live server and assert 201
 
 ### {PREFIX}-T03: {title} -- FAIL
 - [x] AC1-AC2: Verified
@@ -205,8 +211,9 @@ All N acceptance criteria verified.
 **Finding**: [P1] {PREFIX}-T03 | src/handler.py:78 | AC#3: Wrong status code -- returns 200, must be 201
 
 ## Remediation Required
-[Prioritized P0 and P1 FAIL findings with file:line and specific fix.
-PARTIAL findings do not appear here -- they are deferred to runtime verification.]
+[Prioritized FAIL findings, at every severity, with file:line and specific fix.
+PARTIAL findings appear in the exec-report's runtime-check table (Step 6) and are closed by
+`/edm:verify-runtime` before archive, not remediated here directly.]
 ```
 
 ## AI Execution Tips

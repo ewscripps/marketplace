@@ -1121,6 +1121,128 @@ check "T25 -- SKILL.md Synthesizer Phase launch prompt reads findings-ledger.jso
 check "T25 -- SKILL.md Synthesizer Phase launch prompt forbids writing findings-ledger.md" \
   "Do not write findings-ledger.md yourself" "$CA_CONTENT_T25"
 # EDMV3-T25 end
+# ---- EDMV3-T30/T31: bin/edm-check-vocabulary and the implement/QC PARTIAL-lifecycle sweep -----
+echo
+echo "=== EDMV3-T30/T31: no-deferral-vocabulary checker and PARTIAL-lifecycle sweep ==="
+CHECK_VOCAB="${PLUGIN_DIR}/bin/edm-check-vocabulary"
+VOCAB_PROHIBITED="${PLUGIN_DIR}/bin/vocabulary-prohibited.txt"
+VOCAB_ALLOWLIST="${PLUGIN_DIR}/bin/vocabulary-allowlist.txt"
+
+echo "T30 AC1 -- --list-scope prints all eight scan roots"
+t30_scope="$(bash "$CHECK_VOCAB" --list-scope 2>&1)"
+for t30_root in "plugins/edm/skills" "plugins/edm/agents" "plugins/edm/docs" \
+                "plugins/edm/hooks/hooks.json" "plugins/edm/monitors/monitors.json" \
+                "plugins/edm/CLAUDE.md" "plugins/edm/README.md" "plugins/edm/bin"; do
+  check "T30 AC1 -- --list-scope includes ${t30_root}" "$t30_root" "$t30_scope"
+done
+
+echo
+echo "T30 AC6 -- usage/environment error exits 2 on an unrecognized flag"
+t30_bogus_status=0
+bash "$CHECK_VOCAB" --bogus >/dev/null 2>&1 || t30_bogus_status=$?
+[[ "$t30_bogus_status" -eq 2 ]] && pass "T30 AC6 -- --bogus exits 2" \
+  || fail "T30 AC6 -- --bogus exited $t30_bogus_status, expected 2"
+
+echo
+echo "T30 AC3 -- prohibited-token list is data (>= 7 non-blank lines), not an inline list in the script"
+t30_prohibited_count="$(grep -c . "$VOCAB_PROHIBITED" 2>/dev/null || echo 0)"
+[[ "$t30_prohibited_count" -ge 7 ]] && pass "T30 AC3 -- vocabulary-prohibited.txt has >= 7 non-blank lines ($t30_prohibited_count)" \
+  || fail "T30 AC3 -- vocabulary-prohibited.txt has only $t30_prohibited_count non-blank lines"
+check_absent "T30 AC3 -- edm-check-vocabulary has no literal abolished-word token" "defer" \
+  "$(tr '[:upper:]' '[:lower:]' < "$CHECK_VOCAB")"
+check "T30 AC3 -- word: mode present" "word:defer" "$(cat "$VOCAB_PROHIBITED")"
+check "T30 AC3 -- literal: mode present" "literal:--force" "$(cat "$VOCAB_PROHIBITED")"
+
+echo
+echo "T30 AC4 -- allowlist documents each justified class with a one-line comment"
+VOCAB_ALLOWLIST_TXT="$(cat "$VOCAB_ALLOWLIST")"
+check "T30 AC4 -- CLAUDE.md NOTED-vs-deferral class" "NOTED-versus-deferral clarification in CLAUDE.md" "$VOCAB_ALLOWLIST_TXT"
+check "T30 AC4 -- checker's own prohibited-list class" "vocabulary-prohibited.txt|" "$VOCAB_ALLOWLIST_TXT"
+check "T30 AC4 -- checker's own allowlist-file class" "vocabulary-allowlist.txt|" "$VOCAB_ALLOWLIST_TXT"
+check "T30 AC4 -- CHANGELOG.md history class" "plugins/edm/CHANGELOG.md|" "$VOCAB_ALLOWLIST_TXT"
+check "T30 AC4 -- bin/tests/ negative-test carve-out class" "plugins/edm/bin/tests/|" "$VOCAB_ALLOWLIST_TXT"
+check "T30 AC4 -- edm-audit-spec.md False-Alarm-Filter class" "plugins/edm/agents/edm-audit-spec.md|" "$VOCAB_ALLOWLIST_TXT"
+
+echo
+echo "T30 AC9 -- mirrors report_violation/build_ignore_set rather than re-deriving the file walk"
+check "T30 AC9 -- report_violation defined" "report_violation()" "$(cat "$CHECK_VOCAB")"
+check "T30 AC9 -- build_ignore_set defined" "build_ignore_set()" "$(cat "$CHECK_VOCAB")"
+
+echo
+echo "T30 AC10 -- override-flag grep (repo-wide, documented carve-outs) is clean"
+t30_override_hits="$(grep -rn -- '--force\|--accept-partials' "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" 2>/dev/null \
+  | grep -v "${PLUGIN_DIR}/bin/tests/" | grep -v vocabulary- | grep -v 'refused:' || true)"
+[[ -z "$t30_override_hits" ]] && pass "T30 AC10 -- no stray --force/--accept-partials outside bin/tests/ and the vocabulary checker's own files" \
+  || fail "T30 AC10 -- found stray override-flag text: $t30_override_hits"
+
+echo
+echo "T30 AC11 -- bash 3.2 syntax check and CI wiring"
+bash -n "$CHECK_VOCAB" && pass "T30 AC11 -- bash -n edm-check-vocabulary" || fail "T30 AC11 -- bash -n edm-check-vocabulary failed"
+check "T30 AC11 -- edm-check-vocabulary wired into .gitlab-ci.yml lint stage" "edm-check-vocabulary" \
+  "$(cat "$GITLAB_CI_YML" 2>/dev/null)"
+
+echo
+echo "T30 AC2 -- JSON-escaped prompt strings: a scratch hooks.json carrying the abolished token is caught"
+t30_ac2_case() {
+  local scratch
+  scratch="$(mktemp -d /tmp/edm-t30-ac2.XXXXXX)" || { fail "T30 AC2 -- mktemp failed"; return 1; }
+  mkdir -p "$scratch/plugins/edm"
+  cp -R "${PLUGIN_DIR}/." "$scratch/plugins/edm/"
+  # Reinsert the abolished token into the scratch copy's hooks.json prompt text only
+  # (sed -i.bak: GNU and BSD/macOS sed both accept an attached, no-space backup suffix).
+  sed -i.bak 's/runtime-check: note/deferred-to-runtime note/' "$scratch/plugins/edm/hooks/hooks.json"
+  rm -f "$scratch/plugins/edm/hooks/hooks.json.bak"
+  local out status
+  out="$(bash "$scratch/plugins/edm/bin/edm-check-vocabulary" 2>&1)" || status=$?
+  status="${status:-0}"
+  if [[ "$status" -eq 1 ]] && [[ "$out" == *"hooks/hooks.json"* ]]; then
+    pass "T30 AC2 -- reinserted token in a scratch hooks.json is caught, naming hooks/hooks.json"
+  else
+    fail "T30 AC2 -- expected exit 1 naming hooks/hooks.json, got exit=$status output: $out"
+  fi
+  rm -rf "$scratch"
+}
+t30_ac2_case
+# EDMV3-T30 end
+
+# ---- EDMV3-T31: implement/QC PARTIAL-lifecycle sweep, verified against the checker ------------
+echo
+echo "T30 AC12/T31 -- the checker's remaining violations, if any, are outside this ticket pair's file boundary"
+t30_scan_out="$(bash "$CHECK_VOCAB" 2>&1 || true)"
+check_absent "T31 -- skills/implement/SKILL.md carries no checker violation" "skills/implement/SKILL.md:" "$t30_scan_out"
+check_absent "T31 -- agents/edm-qc-auditor.md carries no checker violation" "agents/edm-qc-auditor.md:" "$t30_scan_out"
+check_absent "T31 -- hooks/hooks.json carries no checker violation" "hooks/hooks.json:" "$t30_scan_out"
+check_absent "T30 -- CLAUDE.md carries no checker violation (its NOTED-clarification is allowlisted)" "plugins/edm/CLAUDE.md:" "$t30_scan_out"
+
+echo
+echo "T31 AC1/AC2/AC3 -- skills/implement/SKILL.md: every-severity FAIL compilation, PARTIAL lifecycle rewritten"
+IMPL_SKILL="$(cat "${PLUGIN_DIR}/skills/implement/SKILL.md")"
+check_absent "T31 AC1 -- no severity-filtered FAIL compilation" "P0/P1 FAIL" "$IMPL_SKILL"
+check "T31 AC1 -- FAIL compilation is at every severity" "at every severity" "$IMPL_SKILL"
+check_absent "T31 AC2 -- abolished 'do not require remediation' sentence is gone" "do not require remediation" "$IMPL_SKILL"
+check "T31 AC2 -- PARTIAL closure via mandatory verify-runtime" "mandatory \`/edm:verify-runtime\` step" "$IMPL_SKILL"
+check "T31 AC3 -- Declare Done requires verify-runtime" "Every outstanding PARTIAL closed via \`/edm:verify-runtime\`" "$IMPL_SKILL"
+check_absent "T31 AC4 -- no residual deferred-to-runtime token" "deferred-to-runtime" "$IMPL_SKILL"
+check "T31 AC5 -- Out of Scope (recorded boundaries) section" "## Out of Scope (recorded boundaries)" "$IMPL_SKILL"
+check "T31 AC6 -- Runtime-check note exec-report column" "Runtime-check note" "$IMPL_SKILL"
+
+echo
+echo "T31 AC7/AC8 -- agents/edm-qc-auditor.md: PARTIAL semantics preserved, abolished sentence rewritten"
+QC_AUDITOR="$(cat "${PLUGIN_DIR}/agents/edm-qc-auditor.md")"
+check "T31 AC7 -- Never invent a PASS survives verbatim" "Never invent a PASS for something you cannot verify" "$QC_AUDITOR"
+check_absent "T31 AC7 -- no residual deferred-to-runtime token" "deferred-to-runtime" "$QC_AUDITOR"
+check "T31 AC8 -- abolished PARTIAL-remediation sentence rewritten to name verify-runtime closure" \
+  "closed by the mandatory \`/edm:verify-runtime\` step" "$QC_AUDITOR"
+
+echo
+echo "T31 AC11 -- hooks/hooks.json: runtime-check token, still valid JSON"
+jq -e . "${PLUGIN_DIR}/hooks/hooks.json" >/dev/null 2>&1 \
+  && pass "T31 AC11 -- hooks.json is valid JSON" || fail "T31 AC11 -- hooks.json failed to parse"
+t31_hooks_defer_count="$(jq -r '.. | strings' "${PLUGIN_DIR}/hooks/hooks.json" 2>/dev/null | grep -c 'deferred-to-runtime' || true)"
+[[ "${t31_hooks_defer_count:-0}" -eq 0 ]] && pass "T31 AC11 -- no deferred-to-runtime string inside any hooks.json JSON value" \
+  || fail "T31 AC11 -- hooks.json still contains deferred-to-runtime in a JSON string value"
+check "T31 AC11 -- hooks.json prompt uses runtime-check token" "runtime-check:" "$(cat "${PLUGIN_DIR}/hooks/hooks.json")"
+# EDMV3-T31 end
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

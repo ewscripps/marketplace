@@ -61,6 +61,8 @@ lint:shell-and-artifacts:
     - bash plugins/edm/bin/edm-lint-artifacts --all
     - echo "=== edm-check-grants (four-source grant/instruction contract) ==="
     - bash plugins/edm/bin/edm-check-grants
+    - echo "=== edm-check-vocabulary (abolished-vocabulary and override-flag backstop, EDMV3-T30) ==="
+    - bash plugins/edm/bin/edm-check-vocabulary
 
 # EDMV3-T61 AC8: pinned shellcheck job over the plugin's own bin/ scripts (new/modified code --
 # pre-existing findings in code this initiative did not touch are out of scope per the ticket
