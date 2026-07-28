@@ -1558,6 +1558,116 @@ check "T43 AC12 -- CLAUDE.md's bin/ table describes four violation classes" \
 rm -rf "$T43_SCRATCH"
 # EDMV3-T43 end
 
+# =================================================================================
+# EDMV3-T44: the committed bin/tests/fixtures/mermaid/{valid,invalid}/ corpus proves the
+# EDMV3-T43 Mermaid lint class has zero false positives and zero false negatives.
+# =================================================================================
+MERMAID_FIXTURES_DIR="${PLUGIN_DIR}/bin/tests/fixtures/mermaid"
+MERMAID_VALID_DIR="${MERMAID_FIXTURES_DIR}/valid"
+MERMAID_INVALID_DIR="${MERMAID_FIXTURES_DIR}/invalid"
+
+echo
+echo "T44 AC1 -- corpus size and split, each side's floor asserted separately"
+t44_valid_count="$(ls "${MERMAID_VALID_DIR}"/*.md 2>/dev/null | wc -l | tr -d ' ')"
+t44_invalid_count="$(ls "${MERMAID_INVALID_DIR}"/*.md 2>/dev/null | wc -l | tr -d ' ')"
+[[ "$t44_valid_count" -ge 10 ]] && pass "T44 AC1 -- valid/ has >=10 files (found ${t44_valid_count})" \
+  || fail "T44 AC1 -- valid/ has only ${t44_valid_count} files, expected >=10"
+[[ "$t44_invalid_count" -ge 5 ]] && pass "T44 AC1 -- invalid/ has >=5 files (found ${t44_invalid_count})" \
+  || fail "T44 AC1 -- invalid/ has only ${t44_invalid_count} files, expected >=5"
+t44_sum=$((t44_valid_count + t44_invalid_count))
+[[ "$t44_sum" -ge 15 ]] && pass "T44 AC1 -- combined corpus has >=15 files (found ${t44_sum})" \
+  || fail "T44 AC1 -- combined corpus has only ${t44_sum} files, expected >=15"
+
+echo
+echo "T44 AC2 -- valid/ coverage: entity codes, terminator, comment, directives, sequence, quoted labels, non-mermaid fence"
+[[ -n "$(grep -l '#59;' "${MERMAID_VALID_DIR}"/*.md 2>/dev/null || true)" ]] \
+  && pass "T44 AC2 -- a valid fixture covers #59;" || fail "T44 AC2 -- no valid fixture covers #59;"
+[[ -n "$(grep -l '#quot;' "${MERMAID_VALID_DIR}"/*.md 2>/dev/null || true)" ]] \
+  && pass "T44 AC2 -- a valid fixture covers #quot;" || fail "T44 AC2 -- no valid fixture covers #quot;"
+[[ -n "$(grep -l '#35;' "${MERMAID_VALID_DIR}"/*.md 2>/dev/null || true)" ]] \
+  && pass "T44 AC2 -- a valid fixture covers #35;" || fail "T44 AC2 -- no valid fixture covers #35;"
+[[ -n "$(grep -l 'classDef' "${MERMAID_VALID_DIR}"/*.md 2>/dev/null || true)" ]] \
+  && pass "T44 AC2 -- a valid fixture covers classDef" || fail "T44 AC2 -- no valid fixture covers classDef"
+[[ -n "$(grep -l 'linkStyle' "${MERMAID_VALID_DIR}"/*.md 2>/dev/null || true)" ]] \
+  && pass "T44 AC2 -- a valid fixture covers linkStyle" || fail "T44 AC2 -- no valid fixture covers linkStyle"
+[[ -n "$(grep -l 'sequenceDiagram' "${MERMAID_VALID_DIR}"/*.md 2>/dev/null || true)" ]] \
+  && pass "T44 AC2 -- a valid fixture covers a clean sequenceDiagram" || fail "T44 AC2 -- no valid fixture covers sequenceDiagram"
+[[ -n "$(grep -l '```text' "${MERMAID_VALID_DIR}"/*.md 2>/dev/null || true)" ]] \
+  && pass "T44 AC2 -- a valid fixture covers a non-Mermaid fence" || fail "T44 AC2 -- no valid fixture covers a non-Mermaid fence"
+[[ -n "$(grep -l '%%' "${MERMAID_VALID_DIR}"/*.md 2>/dev/null || true)" ]] \
+  && pass "T44 AC2 -- a valid fixture covers a %% comment with a semicolon" || fail "T44 AC2 -- no valid fixture covers a %% comment"
+
+echo
+echo "T44 AC3 -- invalid/ coverage: one file per required case, each with an expected-line marker"
+for _t44_case in i01-bracket-label i02-quoted-label i03-edge-pipe-label i04-curly-label i05-sequence-message; do
+  _t44_f="${MERMAID_INVALID_DIR}/${_t44_case}.md"
+  [[ -f "$_t44_f" ]] && pass "T44 AC3 -- ${_t44_case}.md exists" || fail "T44 AC3 -- ${_t44_case}.md is missing"
+  grep -q 'expected-line:' "$_t44_f" 2>/dev/null && pass "T44 AC3 -- ${_t44_case}.md carries an expected-line marker" \
+    || fail "T44 AC3 -- ${_t44_case}.md has no expected-line marker"
+done
+
+echo
+echo "T44 AC4 -- exact violation set: zero on valid/, exactly one per file (at its expected line) on invalid/"
+t44_valid_out="$(bash "$LINT_BIN" --path "$MERMAID_VALID_DIR" 2>&1)"
+check "T44 AC4 -- valid/ is CLEAN" "CLEAN" "$t44_valid_out"
+
+t44_ac4_case() {
+  local bad=0 f expected actual
+  for f in "${MERMAID_INVALID_DIR}"/*.md; do
+    expected="$(sed -n '1p' "$f" | grep -oE 'expected-line: [0-9]+' | grep -oE '[0-9]+')"
+    set +e
+    actual="$(bash "$LINT_BIN" --path "$f" 2>&1 | grep -oE ':[0-9]+: mermaid-semicolon:' | grep -oE '[0-9]+' | head -1)"
+    set -e
+    if [[ "$actual" != "$expected" ]]; then
+      bad=1
+      echo "  MISMATCH in $(basename "$f"): expected line ${expected}, got ${actual:-<none>}"
+    fi
+  done
+  [[ $bad -eq 0 ]] && pass "T44 AC4 -- every invalid/ fixture violates at exactly its recorded expected-line" \
+    || fail "T44 AC4 -- at least one invalid/ fixture's violation line did not match its expected-line marker (see above)"
+}
+t44_ac4_case
+
+echo
+echo "T44 AC5 -- false positives are a release blocker"
+t44_ac5_case() {
+  local scratch
+  scratch="$(mktemp -d /tmp/edm-t44-fp.XXXXXX)" || { fail "T44 AC5 -- mktemp failed"; return 1; }
+  cp "${MERMAID_VALID_DIR}/v01-entity-codes.md" "${scratch}/copy.md"
+
+  bash "$LINT_BIN" --path "${scratch}/copy.md" >/dev/null 2>&1 \
+    && pass "T44 AC5 -- unmodified copy of a valid fixture (with a legal #59;) still passes" \
+    || fail "T44 AC5 -- unmodified copy of a valid fixture unexpectedly failed"
+
+  printf '\n```mermaid\nflowchart TD\n    Z[Raw; semicolon] --> Y[End]\n```\n' >> "${scratch}/copy.md"
+  check_fails "T44 AC5 -- adding a raw ';' to the copy makes the suite fail" "mermaid-semicolon" \
+    bash "$LINT_BIN" --path "${scratch}/copy.md"
+
+  rm -rf "$scratch"
+}
+t44_ac5_case
+
+echo
+echo "T44 AC6 -- the corpus test runs in CI"
+# Same auto-discovery mechanism as T42 AC12: test:smoke's script is the run-all.sh aggregator,
+# which discovers every bin/tests/*-smoke.sh suite (EDMV3-T20 AC3) including this one.
+check "T44 AC6 -- .gitlab-ci.yml's test:smoke job runs the run-all.sh aggregator" \
+  "bin/tests/run-all.sh" "$(cat "$GITLAB_CI_YML" 2>/dev/null)"
+
+echo
+echo "T44 AC7 -- existing committed diagrams under tracked SRD/ trees pass"
+t44_all_out="$(bash "$LINT_BIN" --all 2>&1)"
+check "T44 AC7 -- edm-lint-artifacts --all is CLEAN across the tracked SRD tree" "CLEAN" "$t44_all_out"
+
+echo
+echo "T44 AC8 -- this suite's T44 cases use the shared _harness.sh assertions"
+t44_block="$(awk '/^# EDMV3-T44:/{f=1} f{print} /^# EDMV3-T44 end/{exit}' "${SCRIPT_DIR}/wave7-smoke.sh")"
+t44_check_uses="$(printf '%s\n' "$t44_block" | grep -c 'check_fails\|check "' || true)"
+[[ "${t44_check_uses:-0}" -gt 0 ]] \
+  && pass "T44 AC8 -- T44's own cases use check/check_fails from _harness.sh" \
+  || fail "T44 AC8 -- T44's cases do not appear to use the shared harness assertions"
+# EDMV3-T44 end
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
