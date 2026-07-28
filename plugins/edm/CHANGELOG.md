@@ -4,6 +4,23 @@ All notable changes to the EDM plugin are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Individual EDMV3 wave-B (Structured Findings) behavioural changes are recorded here as they land;
+the wave-B closeout ticket (EDMV3-T65) folds this section into a versioned entry with the full
+behavioural, breaking-change and required-user-action summary once the whole wave has landed.
+
+### Added
+
+- **`edm-state render-ledger <PREFIX>`** (EDMV3-T26): deterministically renders
+  `code-audit/findings-ledger.md` from the authoritative `code-audit/findings-ledger.jsonl`,
+  sorted by `(severity, ID)` for byte-identical output across runs. Writes a machine-readable
+  generated-file header, includes a `Decisions / Non-Findings` section for `NOTED` items, writes
+  atomically (temp file plus rename), and records the rendered file's hash via the existing
+  `record_artifact_hash` helper so `edm-state checkpoint-if-active`'s drift loop warns on a
+  hand-edit out of band. Refuses (non-zero exit, writes nothing) with a message distinguishing
+  "no audit has run" from "the render failed" when `findings-ledger.jsonl` is absent or invalid.
+
 ## [2.1.0] — 2026-07-27
 
 Wave A of EDMV3 (prompt-streamline): the enforcement kernel, the mechanical-fixes epic, the CI

@@ -37,6 +37,7 @@
 #   edm-state current-step <PREFIX> [<step>]                          # read/write orchestrator step (compaction resume)
 #   edm-state session-start                                           # emit resume points for active initiatives (SessionStart hook)
 #   edm-state audit-round-start <PREFIX> <code|srd|tickets>           # increment audit-round counter, echo new value
+#   edm-state render-ledger <PREFIX>                                   # deterministically render findings-ledger.md from findings-ledger.jsonl
 #   edm-state record-partial-verdict <PREFIX> <ticket> <verdict> [note]  # persist per-ticket PASS/PARTIAL/FAIL
 #   edm-state set-mode <PREFIX> <kind> <value>                        # set mode, lifecycle_mode, compliance_enabled, or implementation_mode
 #   edm-state skip-phase <PREFIX> <phase-num> <rationale>              # record an intentionally skipped phase (rationale required, EDMV3-94)
@@ -2364,6 +2365,76 @@ cmd_session_start() {
   done < <(list_state_files)
 }
 
+# ---- Findings ledger rendering (EDMV3-T26) ----------------------------------
+# render-ledger <PREFIX>
+# Reads code-audit/findings-ledger.jsonl (the authoritative source, EDMV3-T25) and
+# deterministically renders code-audit/findings-ledger.md. The markdown is a pure projection,
+# rebuilt from scratch on every call -- a hand-edit is silently overwritten on the next render
+# (AC5), which is what proves the JSONL, not the markdown, is the source of truth.
+cmd_render_ledger() {
+  [[ $# -eq 1 ]] || die "usage: edm-state render-ledger <PREFIX>"
+  require_jq
+  local prefix="$1"
+  local init_dir jsonl_path md_path
+  init_dir="$(initiative_dir_for "$prefix")"
+  jsonl_path="${init_dir}/code-audit/findings-ledger.jsonl"
+  md_path="${init_dir}/code-audit/findings-ledger.md"
+
+  # AC10: distinguish "no audit has run" from "the render failed"; writes nothing either way.
+  if [[ ! -f "$jsonl_path" ]]; then
+    die "render-ledger: no code audit has run for ${prefix} (missing findings-ledger.jsonl at ${jsonl_path}); nothing rendered"
+  fi
+
+  # Ordering is total, not just by severity (Technical Notes): sort_by([sev_rank, .id]) so two
+  # P1s with adjacent IDs never swap between runs (AC2, determinism).
+  local body
+  if ! body="$(jq -rs '
+      def coerce_status: if .status == "deferred" then (.status = "open") else . end;
+      def sev_rank: if .sev == "P0" then 0 elif .sev == "P1" then 1 elif .sev == "P2" then 2 else 3 end;
+      (map(coerce_status) | sort_by([sev_rank, .id])) as $sorted
+      | ($sorted | map(select(.sev != "NOTED"))) as $findings
+      | ($sorted | map(select(.sev == "NOTED"))) as $noted
+      | (
+          ["| ID | Severity | Status | Lens(es) | Component | Summary | Raised Round | Resolved Round |",
+           "|----|----------|--------|----------|-----------|---------|--------------|----------------|"]
+          + ($findings | map(
+              "| \(.id) | \(.sev) | \(.status) | \(.lenses | join("+")) | \(.component // "(missing)") | \(.title) | \(.raised_round // "") | \(.resolved_round // "") |"
+            ))
+        ) as $table
+      | (
+          ["", "## Decisions / Non-Findings", "",
+           "Findings demoted to Not Actionable by the False Alarm Filter. Future audits should NOT re-investigate them."]
+          + (if ($noted | length) == 0
+             then ["", "(none)"]
+             else (["" ] + ($noted | to_entries | map(
+                     "\(.key + 1). **\(.value.title)** (\(.value.id), \(.value.lenses | join("+"))) -- \(.value.component // "(missing)")"
+                   )))
+             end)
+        ) as $decisions
+      | ($table + $decisions) | .[]
+    ' "$jsonl_path" 2>/dev/null)"; then
+    die "render-ledger: failed to render ledger for ${prefix} (invalid JSONL at ${jsonl_path}); nothing written"
+  fi
+
+  # AC6: atomic write -- temp file plus rename, matching the discipline used elsewhere in this
+  # script (_rmw_state_body, cmd_init).
+  mkdir -p "${init_dir}/code-audit"
+  local tmp="${md_path}.tmp.$$"
+  {
+    echo "# Code Audit Findings Ledger: ${prefix}"
+    echo ""
+    echo "<!-- GENERATED FILE -- rendered by 'edm-state render-ledger' from findings-ledger.jsonl. Do not hand-edit; edits are overwritten on the next render. -->"
+    echo ""
+    printf '%s\n' "$body"
+  } > "$tmp"
+  mv -f "$tmp" "${init_dir}/code-audit/findings-ledger.md"
+
+  # AC4: reuse record_artifact_hash (bin/edm-state:~131) so cmd_checkpoint's existing drift
+  # loop warns on an out-of-band hand-edit -- the detection machinery is not re-implemented.
+  record_artifact_hash "$prefix" "findings_ledger" "${init_dir}/code-audit/findings-ledger.md"
+  echo "rendered ${init_dir}/code-audit/findings-ledger.md"
+}
+
 # ---- Audit round tracking (T56) ---------------------------------------------
 # audit-round-start <PREFIX> <code|srd|tickets>
 # Increments the round counter for the given audit type and echoes the new value.
@@ -3094,6 +3165,7 @@ case "$cmd" in
   current-step)         cmd_current_step "$@" ;;
   session-start)        cmd_session_start "$@" ;;
   audit-round-start)    cmd_audit_round_start "$@" ;;
+  render-ledger)        cmd_render_ledger "$@" ;;
   record-partial-verdict) cmd_record_partial_verdict "$@" ;;
   set-mode)             cmd_set_mode "$@" ;;
   skip-phase)           cmd_skip_phase "$@" ;;

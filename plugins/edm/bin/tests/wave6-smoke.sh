@@ -2376,6 +2376,82 @@ t64ac8_threshold="$(jq -r '.qc_shard_threshold' "$STATE_T64AC8")"
 [[ "$t64ac8_threshold" == "42" ]] && pass "T64 AC8 -- second concurrent mutation (qc_shard_threshold) landed" \
   || fail "T64 AC8 -- qc_shard_threshold is '$t64ac8_threshold', expected '42'"
 
+# =================================================================================
+# EDMV3-T26: edm-state render-ledger produces the markdown deterministically
+# =================================================================================
+echo
+echo "T26 -- render-ledger renders findings-ledger.md deterministically from the JSONL"
+
+"$EDM_STATE" init T26LEDGER >/dev/null
+T26_DIR="$TMP/SRD/T26LEDGER"
+mkdir -p "${T26_DIR}/code-audit"
+T26_JSONL="${T26_DIR}/code-audit/findings-ledger.jsonl"
+T26_MD="${T26_DIR}/code-audit/findings-ledger.md"
+cat > "$T26_JSONL" <<'EOF'
+{"schema":1,"id":"CA-001","sev":"P0","status":"fixed","lenses":["L1","L4"],"confidence":"high","component":"src/auth/handler.py","title":"Stub returns hardcoded data","raised_round":1,"resolved_round":1,"round":1,"round_type":"full"}
+{"schema":1,"id":"CA-002","sev":"NOTED","status":"noted","lenses":["L8"],"confidence":"high","component":"src/api/server.js","title":"hardcoded port documented as intentional","raised_round":1,"resolved_round":null,"round":1,"round_type":"full"}
+{"schema":1,"id":"CA-003","sev":"P1","status":"open","lenses":["L9"],"confidence":"medium","component":"(missing)","title":"--dry-run flag not built","raised_round":1,"resolved_round":null,"round":1,"round_type":"full"}
+EOF
+
+# ---- AC1 (positive): the table + Decisions / Non-Findings section --------------------------
+t26_out="$("$EDM_STATE" render-ledger T26LEDGER)"
+[[ -f "$T26_MD" ]] && pass "T26 AC1 -- render-ledger writes findings-ledger.md" \
+  || fail "T26 AC1 -- findings-ledger.md not written"
+check "T26 AC1 -- rendered ledger has the Decisions / Non-Findings section" \
+  "Decisions / Non-Findings" "$(cat "$T26_MD" 2>/dev/null)"
+check "T26 AC1 -- rendered ledger names CA-001" "CA-001" "$(cat "$T26_MD" 2>/dev/null)"
+check "T26 AC1 -- rendered ledger names CA-003 (open P1)" "CA-003" "$(cat "$T26_MD" 2>/dev/null)"
+check "T26 AC1 -- CA-002 (NOTED) appears in the Decisions section, not the findings table" \
+  "hardcoded port documented as intentional" "$(cat "$T26_MD" 2>/dev/null)"
+
+# ---- AC2 (deterministic): running it twice produces byte-identical output ------------------
+cp "$T26_MD" "$TMP/T26_a.md"
+"$EDM_STATE" render-ledger T26LEDGER >/dev/null
+if diff -q "$TMP/T26_a.md" "$T26_MD" >/dev/null 2>&1; then
+  pass "T26 AC2 -- render-ledger is deterministic (byte-identical across two runs)"
+else
+  fail "T26 AC2 -- render-ledger output differs across two runs"
+fi
+
+# ---- AC3 (generated-file header) -----------------------------------------------------------
+t26_head3="$(head -3 "$T26_MD")"
+check "T26 AC3 -- header names the file as generated and not to be hand-edited" \
+  "GENERATED FILE" "$t26_head3"
+
+# ---- AC4/AC5 (hand-edit detected by the drift loop, then overwritten on re-render) ---------
+echo "HAND EDITED CONTENT" >> "$T26_MD"
+t26_checkpoint_out="$("$EDM_STATE" checkpoint-if-active 2>&1 || true)"
+check "T26 AC4 -- checkpoint-if-active's drift loop names findings-ledger.md" \
+  "findings-ledger.md" "$t26_checkpoint_out"
+"$EDM_STATE" render-ledger T26LEDGER >/dev/null
+check_absent "T26 AC5 -- re-running render-ledger overwrites the hand-edit" \
+  "HAND EDITED CONTENT" "$(cat "$T26_MD" 2>/dev/null)"
+
+# ---- AC6 (atomic write, static assertion) --------------------------------------------------
+check "T26 AC6 -- render-ledger writes via a temp-file-plus-rename (mv ... findings-ledger.md)" \
+  "findings-ledger.md" \
+  "$(grep -n 'mv .*findings-ledger.md' "$EDM_STATE" || true)"
+
+# ---- AC8 (lint clean, minus the not-yet-landed Mermaid class from EDMV3-T43) ---------------
+t26_lint_out="$(bash "${SCRIPT_DIR}/../edm-lint-artifacts" --path "$T26_MD" 2>&1)"
+t26_lint_ec=$?
+[[ $t26_lint_ec -eq 0 ]] && pass "T26 AC8 -- edm-lint-artifacts --path exits 0 against the rendered ledger" \
+  || fail "T26 AC8 -- edm-lint-artifacts --path exited ${t26_lint_ec}: ${t26_lint_out}"
+
+# ---- AC9 (surfaced in --help and the dispatch table) ---------------------------------------
+check "T26 AC9 -- render-ledger documented in --help" \
+  "render-ledger" "$("$EDM_STATE" --help 2>&1)"
+check "T26 AC9 -- render-ledger wired in the dispatch table" \
+  "render-ledger)" "$(grep -n 'render-ledger)' "$EDM_STATE" || true)"
+
+# ---- AC10 (negative, no ledger) -------------------------------------------------------------
+"$EDM_STATE" init T26NOLEDGER >/dev/null
+check_fails "T26 AC10 -- render-ledger with no JSONL refuses, naming 'no code audit has run'" \
+  "no code audit has run" "$EDM_STATE" render-ledger T26NOLEDGER
+[[ ! -f "$TMP/SRD/T26NOLEDGER/code-audit/findings-ledger.md" ]] \
+  && pass "T26 AC10 -- no findings-ledger.md written when the JSONL is absent" \
+  || fail "T26 AC10 -- findings-ledger.md was written despite the missing JSONL"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
