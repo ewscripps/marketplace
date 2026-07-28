@@ -68,18 +68,26 @@ using `<gated-command>` = `code-audit`.
     cost of an individual code-audit round is never invisible.
 10. **Convergence gate** (full rounds only -- partial rounds are never convergent). The order is always
     **compute -> present -> approve -> record** -- the flag is never set as a side effect of computing it:
-    1. **Compute**: read `findings-ledger.md` and count open `P0`, `P1`, `P2`, and `NOTED` findings introduced
-       or surviving in this round (call these `P0_COUNT`, `P1_COUNT`, `P2_COUNT`, `NOTED_COUNT`). A round with
-       zero open P0/P1 findings is clean; any open P0/P1 is the blocking set. (Once `edm-state audit-converged`
-       exists (EDMV3-T28) it becomes the authority for this computation; until then this step reads the ledger
-       directly.)
+    1. **Compute**: `edm-state audit-converged <PREFIX>` is the authority for this computation. Run it
+       and take its exit code as the verdict (`0` converged, `1` blocking findings remain or the latest
+       round was partial, `3` no `findings-ledger.jsonl` exists yet); it reads the JSONL ledger and names
+       every blocking finding by ID, severity and title. Read `findings-ledger.md` alongside it only for
+       the presentation counts the gate body quotes -- open `P0`, `P1`, `P2`, and `NOTED` findings
+       introduced or surviving in this round (call these `P0_COUNT`, `P1_COUNT`, `P2_COUNT`,
+       `NOTED_COUNT`). A round with zero open P0, P1 and P2 findings is clean; any open P0, P1 or P2
+       is the blocking set (`Sec."Severity Reference"` below). Do not treat P2 as non-blocking --
+       `BLOCKING_FILTER` in `bin/edm-state` includes it, so `audit-converged` will refuse a round
+       that a P0/P1-only reading would call clean.
     2. **Present** the gate via `AskUserQuestion` -- before any state mutation, regardless of clean or blocked:
         - Header: `"Convergence"`
         - Question body states the computed result and pass number, e.g.: *"Pass {N}: {P0_COUNT} P0,
           {P1_COUNT} P1, {P2_COUNT} P2, {NOTED_COUNT} NOTED findings open. Converge this round?"* -- if any
-          P0/P1 remain open, name the blocking set findings in the body.
+          P0, P1 or P2 remain open, name the blocking set findings in the body.
         - Options: **Approve** (record convergence now), **Revise** (address the blocking set and re-run
           affected lenses before asking again), **No-Go** (stop; do not record convergence)
+        - If any pattern-library entries are pending review, this same `AskUserQuestion` call also
+          carries their curation questions -- see Sec."Pending Pattern Entries (gate-time curation)"
+          below. If none are pending, the presentation is exactly as described above.
         - Follows `` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` `` -- only the explicit
           **Approve** option records convergence.
     3. **Approve** (and only on explicit Approve): run `edm-state approve-gate <PREFIX> code-audit`.
@@ -123,6 +131,45 @@ using `<gated-command>` = `code-audit`.
 | `edm-audit-spec`         | L9: Spec/ticket compliance (REQUIRES ticket pack/SRD paths)                  |
 | `edm-audit-dry`          | L10: DRY violations, duplicate utilities, divergent parallel implementations |
 | `edm-audit-wiring`       | L11: Integration wiring (frontend<->API<->backend, dummy data, unused endpoints) |
+
+## Smoke Audit vs. Full Round
+
+A partial round is a sanctioned choice with a stated cost, not a shortcut taken quietly. There are
+exactly two paths:
+
+| Path | Command | When |
+|---|---|---|
+| **Smoke audit** (3 lenses) | `/edm:code-audit <PREFIX> --lenses L1,L9,L11` | The wave under audit is **10 tickets or fewer** AND the change **does not touch production behaviour** |
+| **Full round** (11 lenses) | `/edm:code-audit <PREFIX>` | Everything else, and **always** for a release candidate |
+
+Both conditions must hold to take the smoke path. Ticket count is the count of `{PREFIX}-T{NN}`
+tickets in the scope being audited this round, not the initiative total.
+
+"Touches production behaviour" is mechanical, not a judgment call. The change touches production
+behaviour if **any** of the following is true:
+
+1. It edits code that runs in a deployed environment -- application, service, scheduled job,
+   migration, or infrastructure definition -- rather than only tests, fixtures, docs, or
+   developer-only tooling.
+2. It changes a database schema, a migration, an API request/response contract, or a persisted
+   data format.
+3. It changes authentication, authorization, secret handling, or any network boundary.
+4. It changes a runtime default, timeout, retry policy, or the default value of a feature flag.
+
+If any one of the four holds, run the full eleven regardless of ticket count.
+
+L1, L9 and L11 are the smoke set because their misses are the ones review does not recover: a stub
+that returns a constant (L1), an AC that was never built (L9), and a UI wired to `MOCK_DATA` (L11)
+each pass every other lens cleanly.
+
+**A partial round is never convergent, so a smoke audit cannot close an initiative** --
+enforced by `edm-state audit-converged`, which refuses convergence when the latest recorded
+round's round type is `partial`. Reaching convergence always costs one full eleven-lens round; a
+smoke audit buys a faster answer between rounds, never the last one. Nothing about the
+partial-round machinery changes here: `ROUND_TYPE=partial` is still set in Operational
+Orchestration step 1, the `Round type: partial` header is still written into `lenses-run.txt` in
+step 8, and the synthesizer still marks the round non-convergent in `REMEDIATION.md` (step 9 and
+Sec."Synthesizer Phase").
 
 ## Lens Agent Launch Template
 
@@ -194,7 +241,13 @@ Use the **canonical** severity scale from `CLAUDE.md Sec."Severity vocabulary"`:
 | **P2**   | Minor -- polish, edge-case, improvement, nice-to-have                        | Fix if low effort            |
 | NOTED    | Looks like a problem but is intentional -- documented trade-off              | Document once, never revisit |
 
-**Convergence blocking set**: open P0 and P1 findings from the ledger. P2 and NOTED findings do not block convergence.
+**Convergence blocking set**: open P0, P1 **and P2** findings from the ledger. `NOTED` is the only
+status that closes a finding without a fix, because it is non-actionable rather than postponed
+(`CLAUDE.md Sec."Severity vocabulary"`, decisions.md D13 -- nothing is deferred, ever). This is not
+a prose claim: it is `BLOCKING_FILTER` in `bin/edm-state`, which every consumer of the blocking set
+references by name, and `edm-state audit-converged` refuses convergence while any of the three
+remain open. A ledger entry whose status is `deferred` is treated as open by that same filter --
+the status exists only to read legacy ledgers, and it never lets a finding through.
 
 ## Remediation Plan Format
 
@@ -249,6 +302,59 @@ After the synthesizer writes `REMEDIATION.md`:
      before starting), **No-Go** (stop; do not remediate)
    - Follows `` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` ``.
 3. **STOP and WAIT** for explicit approval.
+
+## Pending Pattern Entries (gate-time curation)
+
+`edm-state update-patterns` appends novel findings to the pattern library as stubs, each carrying a
+`status: pending-review` line plus `source:`, `audit-type:` and `date:` provenance
+(`docs/audit-patterns/README.md Sec."Append Schema"`). A stub nobody is ever asked about is a stub
+forever, so the Convergence gate -- one the human already stops at -- is where the ask happens. The
+entries pending here are whatever earlier rounds and earlier phases left behind; this round's own
+`update-patterns` (step 10.5) runs after Approve, so its entries surface at the next gate.
+
+**Derive the list at presentation time, by grep, never from state:**
+
+```bash
+grep -n 'status: pending-review' docs/audit-patterns/*.md
+```
+
+Nothing about pending entries is mirrored in `.edm-state.json`. The pattern documents are the only
+record, so an entry curated by hand between gates simply stops appearing here.
+
+**No matches: show nothing.** No heading, no "0 pending entries" line, no mention of curation
+anywhere in the gate summary. Absence is authoritative.
+
+**Matches: add one line per entry** to the gate summary, reading the entry's `###` heading and its
+`source:` line out of the file each match came from:
+
+```
+Pending pattern entries
+- {entry title} (source: {source-prefix}) -- landed in docs/audit-patterns/{target-document}.md
+```
+
+Then carry the curation questions **in the same `AskUserQuestion` call as the Convergence
+question** -- never a second round. Four questions is that tool's ceiling, so at most three entries
+are curated per gate; when more are pending, take the three oldest by `date:` and leave the rest
+for the next gate. Each per-entry question uses a short header (`"Pattern 1"`, `"Pattern 2"`,
+`"Pattern 3"` -- within the PROTOCOL's header limit), names the entry and its target document in
+its body, and offers exactly these four options:
+
+- **Keep** -- delete the entry's `status: pending-review` line, and only that line. Heading,
+  provenance lines and body stay exactly as written.
+- **Edit** -- take the human's revised one-paragraph description, replace the entry's body with it,
+  then delete the `status: pending-review` line.
+- **Discard** -- delete the entry outright: its `###` heading, its provenance lines and its body.
+- **Leave pending** -- change nothing. The entry keeps its marker and is offered again at the next
+  gate.
+
+Apply the chosen edits with `Edit` after the response comes back and before running
+`edm-state approve-gate`. Curation is one-way: once the marker is gone the entry is an ordinary
+library entry, and a later `update-patterns` never re-marks it (de-duplication on the entry title
+blocks the re-append).
+
+Curation carries no approval weight. The Convergence question itself follows
+`` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` `` unchanged, and leaving every entry pending
+has no effect on **Approve** / **Revise** / **No-Go**.
 
 ## What Single-Pass Audits Miss (Why 11 Lenses)
 

@@ -71,7 +71,7 @@ in `${user_config.srd_root}/` (active and `.archived/`) and prints one row per i
 Calls `edm-state metrics-report --calibrate`. Outputs per (size, phase) aggregate rows from all completed initiatives (active and archived):
 - For each (size, phase) combination: sample count, median duration in seconds, median Claude cost
 
-Useful for retrospectives. The team can then update the Phase Timing Guidelines table in `skills/orchestrator/SKILL.md` based on the observed medians. `--calibrate` ignores `--with-human-baseline` -- there is no baseline concept at this granularity.
+Useful for retrospectives. The team can then update the Phase Timing Guidelines table in `CLAUDE.md Sec."Phase Timing Guidelines"` based on the observed medians. `--calibrate` ignores `--with-human-baseline` -- there is no baseline concept at this granularity.
 
 ## Interpretation Notes
 

@@ -99,7 +99,7 @@ Use the canonical severity scale from `CLAUDE.md Sec."Severity vocabulary"`. Sum
 [findings]
 
 ## NOTED -- Intentional / Pre-existing
-[items that look wrong but are documented as intentional — one line each with rationale]
+[items that look wrong but are documented as intentional -- one line each with rationale]
 ```
 
 ## Process

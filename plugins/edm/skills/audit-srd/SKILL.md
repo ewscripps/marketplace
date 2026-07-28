@@ -73,7 +73,7 @@ Licensing, accessibility (WCAG), i18n, backward compatibility, deployment impact
 
 ## Severity Levels
 
-Use the canonical four-level scale from `CLAUDE.md Sec."Severity vocabulary"` — no divergent local scale.
+Use the canonical four-level scale from `CLAUDE.md Sec."Severity vocabulary"` -- no divergent local scale.
 
 | Severity | Definition | Action |
 |---|---|---|
@@ -110,7 +110,7 @@ Use the canonical four-level scale from `CLAUDE.md Sec."Severity vocabulary"` �
 [findings]
 
 ## NOTED -- Intentional / Pre-existing
-[Items that look like findings but are intentional, pre-existing, or accepted trade-offs — documented once, not re-investigated]
+[Items that look like findings but are intentional, pre-existing, or accepted trade-offs -- documented once, not re-investigated]
 
 ## Remediation
 [List of P0/P1 fixes applied to the SRD]
@@ -139,6 +139,9 @@ After remediating all P0/P1:
    ```
    then proceed directly to Phase 6 (`/edm:implement <PREFIX>`) instead of Phase 4. On resume of a
    `mode=mini-srd` initiative past this merged gate, enter Phase 6 directly.
+2a. **Pending pattern entries**: derive them and fold their curation into this same gate round --
+   see Sec."Pending Pattern Entries (gate-time curation)" below. When none are pending, the gate
+   presentation is exactly as it would otherwise be.
 3. Present the gate per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` -- header `"Gate 2"` (or
    `"Gate 2+3"` under the mini-SRD branch above), options **Approve** / **Revise** / **No-Go**. **STOP
    and WAIT** for the response.
@@ -150,3 +153,54 @@ After remediating all P0/P1:
    ```
    On **Revise**: rework the flagged SRD sections and re-present the gate.
    On **No-Go**: summarize the blockers and stop.
+
+## Pending Pattern Entries (gate-time curation)
+
+`edm-state update-patterns` (step 8a above) appends novel findings to the pattern library as stubs,
+each carrying a `status: pending-review` line plus `source:`, `audit-type:` and `date:` provenance
+(`docs/audit-patterns/README.md Sec."Append Schema"`). A stub nobody is ever asked about is a stub
+forever, so Gate 2 -- one the human already stops at -- is where the ask happens.
+
+**Derive the list at presentation time, by grep, never from state:**
+
+```bash
+grep -n 'status: pending-review' docs/audit-patterns/*.md
+```
+
+Nothing about pending entries is mirrored in `.edm-state.json`. The pattern documents are the only
+record, so an entry curated by hand between gates simply stops appearing here.
+
+**No matches: show nothing.** No heading, no "0 pending entries" line, no mention of curation
+anywhere in the gate summary. Absence is authoritative.
+
+**Matches: add one line per entry** to the gate summary, reading the entry's `###` heading and its
+`source:` line out of the file each match came from:
+
+```
+Pending pattern entries
+- {entry title} (source: {source-prefix}) -- landed in docs/audit-patterns/{target-document}.md
+```
+
+Then carry the curation questions **in the same `AskUserQuestion` call as the Gate 2 question** --
+never a second round. Four questions is that tool's ceiling, so at most three entries are curated
+per gate; when more are pending, take the three oldest by `date:` and leave the rest for the next
+gate. Each per-entry question uses a short header (`"Pattern 1"`, `"Pattern 2"`, `"Pattern 3"` --
+within the PROTOCOL's header limit), names the entry and its target document in its body, and
+offers exactly these four options:
+
+- **Keep** -- delete the entry's `status: pending-review` line, and only that line. Heading,
+  provenance lines and body stay exactly as written.
+- **Edit** -- take the human's revised one-paragraph description, replace the entry's body with it,
+  then delete the `status: pending-review` line.
+- **Discard** -- delete the entry outright: its `###` heading, its provenance lines and its body.
+- **Leave pending** -- change nothing. The entry keeps its marker and is offered again at the next
+  gate.
+
+Apply the chosen edits with `Edit` after the response comes back and before running
+`edm-state approve-gate`. Curation is one-way: once the marker is gone the entry is an ordinary
+library entry, and a later `update-patterns` never re-marks it (de-duplication on the entry title
+blocks the re-append).
+
+Curation carries no approval weight. The Gate 2 question itself follows
+`` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` `` unchanged, and leaving every entry pending
+has no effect on **Approve** / **Revise** / **No-Go**.
