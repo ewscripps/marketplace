@@ -241,3 +241,29 @@ against each other and against the wave-A baseline.
 This harness measures whether the *methodology's prompts* still produce a competent SRD against a
 known subject. It does not measure the quality of any real initiative's SRD, and a green run here
 is not a substitute for the SRD audit gate (Gate 2) on real work.
+
+## Tiering matrix (`tiering-matrix.sh`, EDMV3-T48, D16)
+
+`tiering-matrix.sh` applies D16's mechanical model/effort promotion rule to the fifteen contested
+agents (the eleven code-audit lenses, `edm-audit-synthesizer`, `edm-srd-auditor`,
+`edm-ticket-auditor`, `edm-qc-auditor`). Like `bin/edm-compare-eval`, it never invokes `claude`
+itself -- it consumes a JSON manifest of already-captured per-agent, per-configuration finding
+counts and cost, and applies the rule mechanically:
+
+1. Evaluate candidate configurations cheapest-first (`tier_rank` ascending).
+2. A configuration missing even one baseline P0 or P1 finding (checked by finding ID, not just
+   count) is disqualified outright, regardless of its total-findings ratio.
+3. A configuration that is not disqualified qualifies only if its total findings are >= 80% of
+   the baseline's total findings.
+4. The first (cheapest) qualifying configuration wins; if none qualify, the agent stays
+   `opus`/`max`.
+
+Run `bash plugins/edm/evals/tiering-matrix.sh --help` for the full manifest schema and
+`bash plugins/edm/evals/tiering-matrix.sh --self-test` to verify the promotion rule end to end
+against three synthetic agents (a qualifying config wins; a P0-missing config is rejected and the
+next tier wins instead; an agent with no qualifying config is left unchanged).
+
+**As of this ticket's landing, this script has not been run against real data.** Producing a real
+manifest requires the wave-A eval baseline (`evals/baseline/scores.json`), which does not exist
+yet (D23). See `SRD/edm/EDMV3__prompt-streamline/decisions.md` D26 for the exact command that
+closes this gap once the baseline is captured.

@@ -303,12 +303,23 @@ of the bare `CLAUDE.md Sec."..."` form once EDMV3-T42 lands.
 
 ## Model and effort assignments
 
-| Role | Model | Effort | Rationale |
+Derived from tiering matrix <date>; re-run when the model generation or pricing table changes
+(EDMV3-73). **Status: NOT yet matrix-derived.** The tiering matrix (`evals/tiering-matrix.sh`,
+EDMV3-T48) is built and unit-verified against synthetic fixtures, but has not been run against
+real data: the wave-A eval baseline it would measure against does not exist yet (decisions.md
+D23). Until that baseline is captured and the matrix runs for real, the table below is the same
+judgment-calibrated set of tiers from Gate 3 (D16), unchanged except the three wave-A downgrades
+EDMV3-T02 already applied on their own, independently-argued merits (D16). See decisions.md D26
+for the exact command that closes this gap and replaces this note with a real run date.
+
+| Role / Agent(s) | Model | Effort | Rationale |
 |---|---|---|---|
-| Planning, audit, QC | `opus` | `max` | Judgment-heavy work -- surface subtle issues |
-| Writing (SRD, tickets) | `opus` | `high` | High-stakes artifacts the rest of the methodology depends on; opus catches missed requirements and weak ACs that sonnet sometimes misses |
-| Implementation | `sonnet` | `high` | Throughput work -- well-specified by tickets |
-| Code audit lenses + synthesizer | `opus` | `max` | Each lens hunts for subtle, lens-specific issues |
+| Contested audit set -- 11 code-audit lenses, `edm-audit-synthesizer`, `edm-srd-auditor`, `edm-ticket-auditor`, `edm-qc-auditor` (15 agents) | `opus` | `max` | Judgment-heavy work -- surface subtle issues. UNCHANGED pending the tiering matrix (D16): no hand-picked downgrade is taken here -- only a measured, mechanical promotion (EDMV3-T48 AC3) may retier this set |
+| `edm-explorer` | `sonnet` | `high` | Scan/list work, not judgment-heavy synthesis; downgraded from `opus`/`max` EDMV3-T02 (D16 wave-A safe downgrade) |
+| `edm-test-coverage-auditor` | `sonnet` | `high` | Read-only coverage parse and AC cross-reference, not judgment-heavy; downgraded from `opus`/`max` EDMV3-T02 (D16 wave-A safe downgrade) |
+| `edm-architect` | `opus` | `high` | Writing work; downgraded from `opus`/`max` EDMV3-T02 (D16 wave-A safe downgrade) |
+| Writing (`edm-srd-writer`, `edm-ticket-writer`) | `opus` | `high` | High-stakes artifacts the rest of the methodology depends on; opus catches missed requirements and weak ACs that sonnet sometimes misses |
+| Implementation (`edm-implementer`) | `sonnet` | `high` | Throughput work -- well-specified by tickets |
 | Jira sync (optional) | `sonnet` | `high` | Mechanical mapping -- ticket pack already exists; this just translates fields |
 
 Skills mirror the split: `skills/orchestrator/`, `skills/plan/`, `skills/srd/`, `skills/audit-srd/`, `skills/tickets/`, `skills/audit-tickets/`, `skills/implement/`, `skills/code-audit/` are all on `opus`. The two writers run at `effort: high`; planning, audits, and QC run at `effort: max`. `skills/push-jira/` and `skills/metrics/` run on `sonnet`/`high`.

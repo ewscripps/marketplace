@@ -3089,6 +3089,81 @@ bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t49_lint_ex
 [[ "$t49_lint_exit" -eq 0 ]] && pass "T49 -- edm-lint-artifacts --all exits 0" || fail "T49 -- edm-lint-artifacts --all exited ${t49_lint_exit}"
 # EDMV3-T49 end
 
+# =================================================================================
+# EDMV3-T48: tiering matrix (D16) -- built and unit-verified, not run; 15 contested
+# agents stay opus/max until a real matrix result retiers them mechanically.
+# =================================================================================
+echo
+echo "=== EDMV3-T48: tiering matrix (D16) -- contested set unchanged, promotion rule unit-verified ==="
+
+echo
+echo "T48 AC1 -- nothing pre-tiered: the 15 contested agents are still opus/max"
+T48_CONTESTED_AGENTS="edm-audit-consistency edm-audit-dead-code edm-audit-docs edm-audit-dry edm-audit-edge-cases edm-audit-logic edm-audit-runtime edm-audit-security edm-audit-spec edm-audit-test-quality edm-audit-wiring edm-audit-synthesizer edm-srd-auditor edm-ticket-auditor edm-qc-auditor"
+t48_contested_count=0
+t48_bad=""
+for t48_agent in $T48_CONTESTED_AGENTS; do
+  t48_contested_count=$((t48_contested_count + 1))
+  t48_file="${PLUGIN_DIR}/agents/${t48_agent}.md"
+  if [[ ! -f "$t48_file" ]]; then
+    t48_bad="${t48_bad} ${t48_agent}(missing-file)"
+    continue
+  fi
+  t48_model="$(grep -m1 '^model:' "$t48_file" | awk '{print $2}')"
+  t48_effort="$(grep -m1 '^effort:' "$t48_file" | awk '{print $2}')"
+  if [[ "$t48_model" != "opus" || "$t48_effort" != "max" ]]; then
+    t48_bad="${t48_bad} ${t48_agent}(${t48_model}/${t48_effort})"
+  fi
+done
+[[ "$t48_contested_count" -eq 15 ]] && pass "T48 AC1 -- exactly 15 contested agents enumerated" \
+  || fail "T48 AC1 -- enumerated ${t48_contested_count} contested agents, expected 15"
+[[ -z "$t48_bad" ]] && pass "T48 AC1 -- all 15 contested agents are opus/max (no hand-tiering slipped in)" \
+  || fail "T48 AC1 -- non-opus/max contested agent(s) found, D16 violation:${t48_bad}"
+
+echo
+echo "T48 AC5 -- the three wave-A EDMV3-T02 downgrades are unaffected by this ticket"
+t48_explorer="$(grep -m1 '^model:' "${PLUGIN_DIR}/agents/edm-explorer.md" | awk '{print $2}')/$(grep -m1 '^effort:' "${PLUGIN_DIR}/agents/edm-explorer.md" | awk '{print $2}')"
+t48_tca="$(grep -m1 '^model:' "${PLUGIN_DIR}/agents/edm-test-coverage-auditor.md" | awk '{print $2}')/$(grep -m1 '^effort:' "${PLUGIN_DIR}/agents/edm-test-coverage-auditor.md" | awk '{print $2}')"
+t48_architect="$(grep -m1 '^model:' "${PLUGIN_DIR}/agents/edm-architect.md" | awk '{print $2}')/$(grep -m1 '^effort:' "${PLUGIN_DIR}/agents/edm-architect.md" | awk '{print $2}')"
+[[ "$t48_explorer" == "sonnet/high" ]] && pass "T48 AC5 -- edm-explorer stays sonnet/high" || fail "T48 AC5 -- edm-explorer is ${t48_explorer}, expected sonnet/high"
+[[ "$t48_tca" == "sonnet/high" ]] && pass "T48 AC5 -- edm-test-coverage-auditor stays sonnet/high" || fail "T48 AC5 -- edm-test-coverage-auditor is ${t48_tca}, expected sonnet/high"
+[[ "$t48_architect" == "opus/high" ]] && pass "T48 AC5 -- edm-architect stays opus/high" || fail "T48 AC5 -- edm-architect is ${t48_architect}, expected opus/high"
+
+echo
+echo "T48 AC6 -- lens fan-out unchanged: eleven lenses, none merged or removed"
+t48_lens_count="$(ls "${PLUGIN_DIR}"/agents/edm-audit-*.md | grep -vc synthesizer)"
+[[ "$t48_lens_count" -eq 11 ]] && pass "T48 AC6 -- eleven code-audit lens agent files present" \
+  || fail "T48 AC6 -- found ${t48_lens_count} lens agent files, expected 11"
+
+echo
+echo "T48 -- the tiering-matrix promotion rule is unit-verified against synthetic fixtures"
+t48_matrix_out=""
+t48_matrix_exit=0
+t48_matrix_out="$(bash "${PLUGIN_DIR}/evals/tiering-matrix.sh" --self-test 2>&1)" || t48_matrix_exit=$?
+[[ "$t48_matrix_exit" -eq 0 ]] && pass "T48 -- tiering-matrix.sh --self-test exits 0" \
+  || fail "T48 -- tiering-matrix.sh --self-test exited ${t48_matrix_exit}: ${t48_matrix_out}"
+check "T48 -- self-test proves a qualifying cheaper config wins" \
+  "self-test PASS: qualifying cheaper config wins" "$t48_matrix_out"
+check "T48 -- self-test proves a P0-missing config is rejected and the next tier wins" \
+  "self-test PASS: P0-missing config rejected, next tier wins" "$t48_matrix_out"
+check "T48 -- self-test proves an agent with no qualifying config is left unchanged" \
+  "self-test PASS: no qualifying config leaves the agent unchanged" "$t48_matrix_out"
+check "T48 -- self-test summary reports 3/3" "self-test: PASS (3/3" "$t48_matrix_out"
+
+echo
+echo "T48 -- CLAUDE.md provenance header present and honestly states not-yet-derived"
+check "T48 -- 'Derived from tiering matrix' header present" "Derived from tiering matrix" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check "T48 -- honestly flags the table as not yet matrix-derived" "NOT yet matrix-derived" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+
+echo
+echo "T48 -- full suite stays green with the tiering-matrix instrument in place"
+t48_grants_exit=0
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t48_grants_exit=$?
+[[ "$t48_grants_exit" -eq 0 ]] && pass "T48 -- edm-check-grants exits 0" || fail "T48 -- edm-check-grants exited ${t48_grants_exit}"
+t48_lint_exit=0
+bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t48_lint_exit=$?
+[[ "$t48_lint_exit" -eq 0 ]] && pass "T48 -- edm-lint-artifacts --all exits 0" || fail "T48 -- edm-lint-artifacts --all exited ${t48_lint_exit}"
+# EDMV3-T48 end
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
