@@ -505,6 +505,27 @@ The `userConfig.jira_project_key` value provides a default; otherwise the user m
 
 These are part of the methodology -- do not disable them in normal operation.
 
+## Monitors behavior (EDMV3-T59, D24)
+
+`monitors/monitors.json` declares `edm-impl-progress`, running `edm-state watch-impl`. This is
+**host-managed**: Claude Code arms plugin-declared monitors as persistent background Monitor
+tasks (same trust tier as hooks), confirmed by direct inspection of the installed CLI (D24,
+`SRD/edm/EDMV3__prompt-streamline/decisions.md`).
+
+- **Arm trigger**: `on-skill-invoke:implement` -- the host arms the monitor the first time
+  `/edm:implement` is dispatched in a session (via the Skill tool or the slash command). Repeat
+  invocations of `/edm:implement` in the same session do not spawn a duplicate; the host dedupes
+  on the monitor's name.
+- **Polling interval**: `cmd_watch_impl` polls `git log` every 5 seconds (`sleep 5`) for new
+  commits referencing a `{PREFIX}-T{NN}` ticket ID, emitting one line per new commit so the host
+  surfaces it as a notification.
+- **Lifecycle / how to stop it**: a persistent monitor runs for the lifetime of the Claude Code
+  session, not just for the duration of the triggering skill -- it is not restarted or killed by
+  context compaction. It stops when the session ends, or can be stopped early via the host's
+  `TaskStop` mechanism. There is no separate EDM-side kill switch; this is intentional -- the
+  monitor is a read-only `git log` poll with no state mutation, so leaving it running for the
+  rest of the session is inert.
+
 ## Artifact content conventions
 
 Every artifact this plugin produces or templates is **ASCII-only**: no em dashes, no arrows (use `->`), no smart
