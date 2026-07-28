@@ -256,7 +256,7 @@ bad_lc_out="$(call_edm_helper terminal_phase_for_mode standard bogus-lc 2>&1)"
 set -e
 check_fails "unknown lifecycle_mode fails loudly naming the value" "unknown lifecycle_mode 'bogus-lc'" \
   call_edm_helper terminal_phase_for_mode standard bogus-lc
-check "unknown lifecycle_mode error lists the legal enum" "standard|partial|fast-track|fix-pack" "$bad_lc_out"
+check "unknown lifecycle_mode error lists the legal enum" "standard|fast-track|fix-pack" "$bad_lc_out"
 
 check_fails "set-mode rejects unknown mode value (CLI path)" "invalid mode" \
   "$EDM_STATE" set-mode T7SEEDSTD mode bogus-mode
@@ -2129,9 +2129,13 @@ t14pvm_ec=$?
 check "T14 AC8 -- pre-closure partial_verdict_map entry is present as recorded" \
   '"verdict": "PARTIAL"' "$t14pvm_out"
 
-# shape 3: lifecycle_mode: "partial" state file.
+# shape 3: lifecycle_mode: "partial" state file. "partial" is a dead value removed from
+# LIFECYCLE_MODE_ENUM_LIST by the delete-list epic (D12, EDMV3-T57..T60), so it can no longer
+# be written via `set-mode` -- this simulates a pre-delete-list on-disk file by writing the
+# dead value directly, matching every other C-4 legacy-shape fixture in this suite.
 "$EDM_STATE" init T14LCPARTIAL >/dev/null
-"$EDM_STATE" set-mode T14LCPARTIAL lifecycle_mode partial >/dev/null
+jq '.lifecycle_mode = "partial"' "$TMP/SRD/T14LCPARTIAL/.edm-state.json" > "$TMP/SRD/T14LCPARTIAL/.edm-state.json.tmp" \
+  && mv "$TMP/SRD/T14LCPARTIAL/.edm-state.json.tmp" "$TMP/SRD/T14LCPARTIAL/.edm-state.json"
 t14lcpartial_out="$("$EDM_STATE" get T14LCPARTIAL 2>&1)"
 t14lcpartial_ec=$?
 [[ $t14lcpartial_ec -eq 0 ]] && pass "T14 AC8 -- lifecycle_mode: partial state file: edm-state get reads without error" \
@@ -3067,13 +3071,70 @@ check "T41 AC6 -- D22 entry states the negative branch was taken" \
   "negative" "$t41_d22_line"
 
 # =================================================================================
-# EDMV3-T50: phase-complete 6 is actually called -- edm-state-side verification.
-# AC1/AC2/AC3/AC4 wire skills/orchestrator, skills/implement and skills/code-audit SKILL.md;
-# those edits are out of scope for this batch (owned by the concurrent T37/T38 dispatcher
-# refactor) and are reported separately, not asserted here as a red test. AC8 is already
-# covered by T12 AC3 above ("archive without terminal completed_at refuses"). AC6 and AC7 are
-# pure edm-state behaviour and are covered below.
+# EDMV3-T50: phase-complete 6 is actually called.
+# AC1/AC2/AC3/AC4/AC5 wire skills/orchestrator, skills/implement and skills/code-audit SKILL.md --
+# the skills-side sweep, landed here. AC8 is already covered by T12 AC3 above ("archive without
+# terminal completed_at refuses"). AC6 and AC7 are pure edm-state behaviour and are covered below.
 # =================================================================================
+
+# ---- AC1 (positive, single owner): the orchestrator's Phase 6 entry invokes /edm:verify-runtime
+# via the Skill tool and then calls phase-complete 6, in that order. ---------------------------
+echo
+echo "T50 AC1 -- orchestrator's Phase 6 entry invokes verify-runtime via the Skill tool, then phase-complete 6"
+ORCH_T50="${PLUGIN_DIR}/skills/orchestrator/SKILL.md"
+t50ac1_vr_line="$(grep -n '/edm:verify-runtime' "$ORCH_T50" | head -1 | cut -d: -f1)"
+t50ac1_pc_line="$(grep -n 'phase-complete <PREFIX> 6' "$ORCH_T50" | head -1 | cut -d: -f1)"
+[[ -n "$t50ac1_vr_line" && -n "$t50ac1_pc_line" && "$t50ac1_vr_line" -le "$t50ac1_pc_line" ]] \
+  && pass "T50 AC1 -- verify-runtime Skill invocation precedes phase-complete 6 (lines ${t50ac1_vr_line} <= ${t50ac1_pc_line})" \
+  || fail "T50 AC1 -- expected verify-runtime line <= phase-complete line, got vr=${t50ac1_vr_line:-absent} pc=${t50ac1_pc_line:-absent}"
+check "T50 AC1 -- orchestrator invokes verify-runtime" \
+  "invoke \`/edm:verify-runtime <PREFIX>\`" "$(cat "$ORCH_T50")"
+check "T50 AC1 -- orchestrator's Phase 6 entry names the Skill tool" \
+  "via the \`Skill\`" "$(cat "$ORCH_T50")"
+
+# ---- AC2 (negative, implement does not close the phase): Declare Done ends after the exec
+# report and states ownership belongs to the orchestrator; no Skill grant to chain verify-runtime. ---
+echo
+echo "T50 AC2 -- implement/SKILL.md does not close Phase 6 itself and carries no Skill grant"
+IMPL_T50="${PLUGIN_DIR}/skills/implement/SKILL.md"
+check "T50 AC2 -- Step 8 states Phase 6 closure belongs to the orchestrator, not this skill" \
+  "Phase 6 is closed by the orchestrator" "$(cat "$IMPL_T50")"
+check_absent "T50 AC2 -- Operational Orchestration list no longer instructs phase-complete 6 as an owned step" \
+  "9. \`edm-state phase-complete" "$(cat "$IMPL_T50")"
+t50ac2_skill_grant="$(grep -n '^allowed-tools:' "$IMPL_T50" | grep -c 'Skill' || true)"
+[[ "${t50ac2_skill_grant:-0}" -eq 0 ]] \
+  && pass "T50 AC2 -- implement/SKILL.md's allowed-tools line carries no Skill grant" \
+  || fail "T50 AC2 -- allowed-tools line unexpectedly grants Skill"
+
+# ---- AC3 (negative, code-audit does not either): the responsibility lives in exactly one place. --
+echo
+echo "T50 AC3 -- code-audit/SKILL.md never calls phase-complete"
+t50ac3_hits="$(grep -rl 'phase-complete' "${PLUGIN_DIR}/skills/code-audit/" 2>/dev/null | wc -l | tr -d ' ' || true)"
+[[ "${t50ac3_hits:-0}" -eq 0 ]] \
+  && pass "T50 AC3 -- code-audit/SKILL.md contains no phase-complete call" \
+  || fail "T50 AC3 -- found phase-complete reference(s) in skills/code-audit/"
+
+# ---- AC4 (exactly one call site, asserted): exactly one file owns the automatic call
+# (orchestrator); the other two matches (implement, verify-runtime) are the T37 AC6-documented
+# direct-invocation restatements for users who never run the orchestrator (AC5). ----------------
+echo
+echo "T50 AC4 -- exactly one owning phase-complete 6 call site, plus the two documented direct-invocation restatements"
+t50ac4_total="$(grep -rl 'phase-complete <PREFIX> 6' "${PLUGIN_DIR}/skills/"*/SKILL.md 2>/dev/null | wc -l | tr -d ' ' || true)"
+t50ac4_owner="$(grep -rl 'single owner of that call' "${PLUGIN_DIR}/skills/"*/SKILL.md 2>/dev/null | wc -l | tr -d ' ' || true)"
+[[ "${t50ac4_total:-0}" -eq 3 && "${t50ac4_owner:-0}" -eq 1 ]] \
+  && pass "T50 AC4 -- exactly one owning call site (orchestrator) plus two documented direct-invocation restatements" \
+  || fail "T50 AC4 -- total files=${t50ac4_total} (expected 3), owner markers=${t50ac4_owner} (expected 1)"
+
+# ---- AC5 (ordering, direct-invocation path): implement Step 8 and README.md state the
+# two-command sequence for users who never run the orchestrator. --------------------------------
+echo
+echo "T50 AC5 -- direct-invocation path: implement Step 8 and README.md state the two-command sequence"
+check "T50 AC5 -- implement/SKILL.md states the verify-runtime call" \
+  "/edm:verify-runtime <PREFIX>" "$(cat "$IMPL_T50")"
+check "T50 AC5 -- implement/SKILL.md states phase-complete 6" \
+  "phase-complete <PREFIX> 6" "$(cat "$IMPL_T50")"
+check "T50 AC5 -- README.md command table states phase-complete 6" \
+  "phase-complete <PREFIX> 6" "$(cat "${PLUGIN_DIR}/README.md")"
 
 # ---- AC6 (ordering precondition): phase-complete 6 succeeds once qc-summary.md exists, i.e.
 # EDMV3-T11's artifact check passes rather than refuses -- the invariant the orchestrator's
@@ -3131,11 +3192,21 @@ rm -rf "$T50_HOME" "$T50_CWD"
 
 # =================================================================================
 # EDMV3-T51: per-round audit cost is captured (audit-round-complete)
-# AC3 (skills/code-audit/SKILL.md calling audit-round-complete after render-ledger) is a
-# SKILL.md edit out of scope this batch (T37/T38 dispatcher refactor owns that file);
-# reported as blocked-on-skills-owner. AC2 and AC8 are grep-verified directly below (not a
-# smoke-test case). AC1/AC4/AC5/AC6/AC7/AC9/AC10 are covered here.
+# AC2 and AC8 are grep-verified directly below (not a smoke-test case). AC1/AC4/AC5/AC6/AC7/AC9/AC10
+# are covered here. AC3 (skills/code-audit/SKILL.md calling audit-round-complete after
+# render-ledger) is asserted immediately below.
 # =================================================================================
+
+# ---- AC3 (called at the right point): skills/code-audit/SKILL.md calls audit-round-complete
+# at the end of each round, after the synthesizer returns and the ledger is rendered. -----------
+echo
+echo "T51 AC3 -- code-audit/SKILL.md calls audit-round-complete after render-ledger"
+CODE_AUDIT_SKILL_T51="${PLUGIN_DIR}/skills/code-audit/SKILL.md"
+t51ac3_rl_line="$(grep -n 'edm-state render-ledger' "$CODE_AUDIT_SKILL_T51" | head -1 | cut -d: -f1)"
+t51ac3_arc_line="$(grep -n 'edm-state audit-round-complete' "$CODE_AUDIT_SKILL_T51" | head -1 | cut -d: -f1)"
+[[ -n "$t51ac3_rl_line" && -n "$t51ac3_arc_line" && "$t51ac3_rl_line" -lt "$t51ac3_arc_line" ]] \
+  && pass "T51 AC3 -- audit-round-complete call (line ${t51ac3_arc_line}) follows render-ledger call (line ${t51ac3_rl_line})" \
+  || fail "T51 AC3 -- expected render-ledger line < audit-round-complete line, got rl=${t51ac3_rl_line:-absent} arc=${t51ac3_arc_line:-absent}"
 
 # ---- AC1 (positive): records completion timestamp, duration, tokens and cost, keyed by
 # audit type and round number. ------------------------------------------------------------------

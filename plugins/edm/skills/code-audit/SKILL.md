@@ -56,6 +56,16 @@ using `<gated-command>` = `code-audit`.
    - Writes the updated `findings-ledger.jsonl` to `${INIT_DIR}/code-audit/findings-ledger.jsonl` -- the authoritative record (it does not write `findings-ledger.md`; that file is rendered separately, deterministically, by `edm-state render-ledger`)
    - Writes `${OUTPUT_DIR}/REMEDIATION.md` for this round
    - Marks the round as `partial` (non-convergent) in REMEDIATION.md if `ROUND_TYPE=partial`
+9a. **Render the ledger, then close the round** -- runs for every round (full or partial), after
+    the synthesizer returns, regardless of convergence outcome:
+    ```bash
+    edm-state render-ledger <PREFIX>
+    edm-state audit-round-complete <PREFIX> code
+    ```
+    `render-ledger` deterministically writes `findings-ledger.md` from the synthesizer's
+    authoritative `findings-ledger.jsonl`; `audit-round-complete` (EDMV3-T51) then records this
+    round's completion timestamp, duration, and token/cost totals, keyed by round number, so the
+    cost of an individual code-audit round is never invisible.
 10. **Convergence gate** (full rounds only -- partial rounds are never convergent). The order is always
     **compute -> present -> approve -> record** -- the flag is never set as a side effect of computing it:
     1. **Compute**: read `findings-ledger.md` and count open `P0`, `P1`, `P2`, and `NOTED` findings introduced

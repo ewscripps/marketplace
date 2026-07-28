@@ -183,15 +183,18 @@ check "empty forked_from rejected" "non-empty" \
 # ---- T99: ## Lifecycle & Mode section in HANDOFF.md -------------------------
 echo
 echo "T99 — Lifecycle & Mode section in HANDOFF.md"
+# lifecycle_mode "partial" is a dead value removed from LIFECYCLE_MODE_ENUM_LIST by the
+# delete-list epic (D12, EDMV3-T57..T60) -- "fix-pack" exercises the same HANDOFF rendering
+# path with a live enum member.
 "$EDM_STATE" set-mode TSMK mode iac >/dev/null
-"$EDM_STATE" set-mode TSMK lifecycle_mode partial >/dev/null
+"$EDM_STATE" set-mode TSMK lifecycle_mode fix-pack >/dev/null
 "$EDM_STATE" set-mode TSMK compliance_enabled true >/dev/null
 "$EDM_STATE" set-mode TSMK implementation_mode tdd >/dev/null
 "$EDM_STATE" write-handoff TSMK >/dev/null
 
 check "HANDOFF has Lifecycle & Mode section"     "## Lifecycle & Mode"    "$(cat "$HANDOFF")"
 check "HANDOFF shows mode = iac"                 "Mode**: iac"            "$(cat "$HANDOFF")"
-check "HANDOFF shows lifecycle_mode = partial"   "Lifecycle mode**: partial" "$(cat "$HANDOFF")"
+check "HANDOFF shows lifecycle_mode = fix-pack"  "Lifecycle mode**: fix-pack" "$(cat "$HANDOFF")"
 check "HANDOFF shows compliance_enabled = true"  "Compliance**: true"     "$(cat "$HANDOFF")"
 check "HANDOFF shows implementation_mode = tdd"  "Implementation mode**: tdd" "$(cat "$HANDOFF")"
 check "HANDOFF shows supersedes"                 "Supersedes**: OLDPREFIX" "$(cat "$HANDOFF")"

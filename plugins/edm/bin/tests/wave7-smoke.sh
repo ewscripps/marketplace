@@ -355,7 +355,7 @@ check "free-text-is-never-approval referenced by name at the convergence gate (E
 
 echo
 echo "T15 AC3 -- Step 10 states the compute -> present -> approve -> record order explicitly"
-T15_STEP10="$(sed -n '54,69p' "$CODE_AUDIT_SKILL")"
+T15_STEP10="$(sed -n '69,106p' "$CODE_AUDIT_SKILL")"
 check "convergence gate ordering text" "compute -> present -> approve -> record" "$T15_STEP10"
 check "Step 10 compute sub-step precedes present" "**Compute**" "$T15_STEP10"
 check "Step 10 present sub-step follows compute" "**Present** the gate via" "$T15_STEP10"
@@ -2250,19 +2250,19 @@ done
   || fail "T37 AC4 -- missing in:${t37_ac4_missing}"
 
 echo
-echo "T37 AC6 -- phase-start/phase-complete calls: one owning file per phase (fast-track's mode-branch duplicate inside skills/tickets, and verify-runtime's documented direct-invocation phase-complete-6, are the two sanctioned exceptions)"
+echo "T37 AC6 -- phase-start/phase-complete calls: one owning file per phase (fast-track's mode-branch duplicate inside skills/tickets, and orchestrator+verify-runtime's documented phase-complete-6 split, are the sanctioned exceptions -- re-baselined to 3 files by EDMV3-T50, which wires the orchestrator's owning call)"
 t37_ac6_bad=""
 for t37_n in 1 2 3 4 5 6; do
   t37_start_files="$(grep -rl "phase-start <PREFIX> ${t37_n}\\b" "${PLUGIN_DIR}/skills/"*/SKILL.md 2>/dev/null | wc -l | tr -d ' ' || true)"
   [[ "$t37_start_files" -eq 1 ]] || t37_ac6_bad="${t37_ac6_bad} phase-start:${t37_n}=${t37_start_files}file(s)"
   t37_complete_files="$(grep -rl "phase-complete <PREFIX> ${t37_n}\\b" "${PLUGIN_DIR}/skills/"*/SKILL.md 2>/dev/null | wc -l | tr -d ' ' || true)"
   if [[ "$t37_n" -eq 6 ]]; then
-    [[ "$t37_complete_files" -eq 2 ]] || t37_ac6_bad="${t37_ac6_bad} phase-complete:6=${t37_complete_files}file(s),expected2(implement+verify-runtime)"
+    [[ "$t37_complete_files" -eq 3 ]] || t37_ac6_bad="${t37_ac6_bad} phase-complete:6=${t37_complete_files}file(s),expected3(orchestrator+implement+verify-runtime)"
   else
     [[ "$t37_complete_files" -eq 1 ]] || t37_ac6_bad="${t37_ac6_bad} phase-complete:${t37_n}=${t37_complete_files}file(s)"
   fi
 done
-[[ -z "$t37_ac6_bad" ]] && pass "T37 AC6 -- one owning file per phase-start/phase-complete call (phase-complete 6's two-file split is the documented implement+verify-runtime direct-invocation exception)" \
+[[ -z "$t37_ac6_bad" ]] && pass "T37 AC6 -- one owning file per phase-start/phase-complete call (phase-complete 6's three-file split is the documented orchestrator-owns/implement+verify-runtime-restate-for-direct-invocation exception, EDMV3-T50)" \
   || fail "T37 AC6 -- unexpected file counts:${t37_ac6_bad}"
 
 echo
