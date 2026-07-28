@@ -112,6 +112,23 @@ else
   _failed_suites+=("edm-check-grants")
 fi
 
+# ---- EDMV3-T39 AC7: the dispatcher-duplication tripwire runs every time too. It guards the
+# branch that was NOT taken (deduplication shipped instead), so it should always be clean --
+# which is exactly why a silent regression here would otherwise go unnoticed. ------------------
+echo
+echo "edm-check-skill-sync -- dispatcher holds no phase procedure (EDMV3-T39 AC7 fallback tripwire)"
+_sync_out="$(bash "${SCRIPT_DIR}/../edm-check-skill-sync" 2>&1)"
+_sync_ec=$?
+if [[ $_sync_ec -eq 0 ]]; then
+  echo "  PASS: edm-check-skill-sync (exit 0)"
+  _total_pass=$((_total_pass + 1))
+else
+  echo "  FAIL: edm-check-skill-sync (exit ${_sync_ec})" >&2
+  printf '%s\n' "$_sync_out" >&2
+  _total_fail=$((_total_fail + 1))
+  _failed_suites+=("edm-check-skill-sync")
+fi
+
 echo
 echo "Total: ${_total_pass} passed, ${_total_fail} failed across ${#_run_order[@]} suite(s)"
 

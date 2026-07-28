@@ -411,6 +411,21 @@ eval:nightly:
           bash plugins/edm/evals/score-artifacts.sh "$RUN_DIR"
         fi
       fi
+    # EDMV3-T39 AC2: the baseline comparison lives HERE, in CI, not in the scorer -- a scoring
+    # change and a threshold change stay separately reviewable. baseline_total and the allowed
+    # variance come from plugins/edm/evals/baseline/scores.json. Exit 3 means no committed
+    # baseline exists yet (tripwire not armed); that is reported, not silently treated as a pass.
+    - |
+      RUN_DIR="$(ls -td plugins/edm/evals/runs/*/ 2>/dev/null | head -1)"
+      if [ -n "$RUN_DIR" ] && [ -f "$RUN_DIR/scores.json" ]; then
+        bash plugins/edm/bin/edm-compare-eval "$RUN_DIR/scores.json"
+        rc=$?
+        case "$rc" in
+          0) echo "eval comparison: candidate at or above baseline_total minus variance" ;;
+          3) echo "eval comparison: NOT ARMED -- no committed baseline (see evals/baseline/README.md)" ;;
+          *) echo "eval comparison: failed with exit $rc"; exit "$rc" ;;
+        esac
+      fi
   artifacts:
     when: always
     expire_in: 30 days

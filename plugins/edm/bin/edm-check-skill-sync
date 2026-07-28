@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# EDM-HELP-BEGIN
+# edm-check-skill-sync -- the EDMV3-T39 AC7 fallback tripwire.
+#
+# CONTEXT: this script exists for a branch that was NOT taken. EDMV3-T37/T38 deduplicated the
+# phase procedures -- each phase's procedure now lives once, in its own phase skill, and the
+# orchestrator dispatches via the Skill tool. Deduplication makes drift structurally impossible,
+# which is strictly better than detecting it.
+#
+# It ships anyway for two reasons:
+#   1. AC7 requires the fallback to exist and be runnable, not merely described. A fallback that
+#      has never been executed is a promise, not a plan (this initiative's founding defect class).
+#   2. If a future change re-introduces duplicated orchestration prose -- a phase procedure copied
+#      back into the dispatcher "for convenience" -- this catches it.
+#
+# What it asserts:
+#   - The dispatcher (skills/orchestrator/SKILL.md) contains no phase procedure body: no phase
+#     skill's distinctive procedure headings appear in it.
+#   - Every phase skill still carries its own procedure (the thing the dispatcher must not).
+#
+# Usage: edm-check-skill-sync
+# Exit codes: 0 clean, 1 duplication found, 2 usage or environment error.
+# EDM-HELP-END
+set -uo pipefail
+
+die() { echo "edm-check-skill-sync: $*" >&2; exit 2; }
+
+print_help() { awk '/^# EDM-HELP-BEGIN$/{f=1;next} /^# EDM-HELP-END$/{exit} f{sub(/^# ?/,"");print}' "$1"; }
+case "${1:-}" in
+  -h|--help) print_help "${BASH_SOURCE[0]}"; exit 0 ;;
+  "") : ;;
+  *) die "unknown argument: $1 (see --help)" ;;
+esac
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKILLS_DIR="$(cd "${SCRIPT_DIR}/../skills" 2>/dev/null && pwd)" || die "skills directory not found"
+ORCH="${SKILLS_DIR}/orchestrator/SKILL.md"
+[ -f "$ORCH" ] || die "dispatcher not found: $ORCH"
+
+# The marker each phase skill uses for its own procedure body. If one of these appears in the
+# dispatcher, a procedure has been copied back in.
+PROCEDURE_MARKER='## Operational Orchestration'
+
+violations=0
+
+if grep -q "$PROCEDURE_MARKER" "$ORCH"; then
+  echo "${ORCH}: duplication: dispatcher contains a phase procedure body ('${PROCEDURE_MARKER}')" >&2
+  violations=$((violations + 1))
+fi
+
+# Every phase skill must still own its procedure. A phase skill that lost it means the procedure
+# went somewhere else -- most likely back into the dispatcher.
+for phase in plan srd audit-srd tickets audit-tickets implement code-audit verify-runtime; do
+  f="${SKILLS_DIR}/${phase}/SKILL.md"
+  [ -f "$f" ] || continue
+  if ! grep -q "$PROCEDURE_MARKER" "$f"; then
+    echo "${f}: missing: phase skill has no '${PROCEDURE_MARKER}' section of its own" >&2
+    violations=$((violations + 1))
+  fi
+done
+
+if [ "$violations" -eq 0 ]; then
+  echo "edm-check-skill-sync: CLEAN (dispatcher holds no phase procedure; every phase skill owns its own)"
+  exit 0
+fi
+
+echo "edm-check-skill-sync: ${violations} violation(s) found" >&2
+exit 1
