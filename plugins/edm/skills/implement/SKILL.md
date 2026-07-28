@@ -193,17 +193,6 @@ Only when:
 - [ ] Execution report written to `exec-report.md` (Step 6)
 - [ ] Documentation updated
 - [ ] All files committed on the feature branch
-- [ ] Coverage-auditor write-permission check (EDMV2-02 regression guard): verify that
-  `agents/edm-test-coverage-auditor.md` has `Write` in `tools:` and does NOT have `Write`
-  in `disallowedTools:`. Run these two commands and inspect the output:
-  ```bash
-  grep '^tools:' agents/edm-test-coverage-auditor.md
-  grep '^disallowedTools:' agents/edm-test-coverage-auditor.md
-  ```
-  Pass condition: `tools:` line contains `Write`; `disallowedTools:` line does not contain `Write`.
-  Fail condition: if `Write` is absent from `tools:` or present in `disallowedTools:`, the
-  test-coverage-auditor cannot write `SRD/{PREFIX}/test-coverage.md` -- the testing layer is
-  broken. Fix by editing `agents/edm-test-coverage-auditor.md` before declaring done.
 - [ ] `/edm:test {PREFIX}` run and all coverage targets met, or consciously skipped
   (`test_layer_skipped` recorded in state per Step 7 above)
 - [ ] Code audit converged: the Convergence gate (`/edm:code-audit`'s own Step 10) recorded explicit

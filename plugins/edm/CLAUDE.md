@@ -502,7 +502,6 @@ The `userConfig.jira_project_key` value provides a default; otherwise the user m
 | `PreToolUse` matching `git commit`                                                     | Run `edm-lint-artifacts` -- block commit if active-initiative artifacts have violations |
 | `Stop` and `PreCompact`                                                                | Checkpoint state via `edm-state checkpoint-if-active`         |
 | `SubagentStop` matching `edm-implementer`                                              | Auto-spawn `edm-qc-auditor`; write verdict to `qc/qc-summary.md`; persist PARTIAL verdicts via `edm-state record-partial-verdict` |
-| `TaskCompleted`                                                                        | Reserved -- per-task duration accumulation not yet implemented |
 
 These are part of the methodology -- do not disable them in normal operation.
 
@@ -545,7 +544,7 @@ Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call the
 
 | Script                | Purpose                                                                                                                                                                                                                                     |
 |-----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `edm-state`           | Read/write `.edm-state.json` files; 37 subcommands: `init`, `get`, `set`, `list`, `active-initiatives`, `migrate-path`, `migrate-schema`, `approve-gate`, `phase-start`, `phase-complete`, `checkpoint-if-active`, `record-task-duration`, `record-test-coverage`, `record-tests-added`, `get-coverage`, `srd-version`, `archive`, `write-handoff`, `watch-impl`, `metrics-report`, `validate`, `gate-check`, `branch-check`, `git-lock-check`, `current-step`, `session-start`, `audit-round-start`, `record-partial-verdict`, `set-mode`, `skip-phase`, `set-supersedes`, `set-forked-from`, `resolve-dir`, `set-parent`, `add-related`, `update-patterns`, `lint` |
+| `edm-state`           | Read/write `.edm-state.json` files; 36 subcommands: `init`, `get`, `set`, `list`, `active-initiatives`, `migrate-path`, `migrate-schema`, `approve-gate`, `phase-start`, `phase-complete`, `checkpoint-if-active`, `record-test-coverage`, `record-tests-added`, `get-coverage`, `srd-version`, `archive`, `write-handoff`, `watch-impl`, `metrics-report`, `validate`, `gate-check`, `branch-check`, `git-lock-check`, `current-step`, `session-start`, `audit-round-start`, `record-partial-verdict`, `set-mode`, `skip-phase`, `set-supersedes`, `set-forked-from`, `resolve-dir`, `set-parent`, `add-related`, `update-patterns`, `lint` |
 | `edm-init`            | Scaffold a new initiative directory (`SRD/{PREFIX}/` or `SRD/{PRODUCT}/{PREFIX}__{desc}/`) with empty state file |
 | `edm-validate-prefix` | Verify a proposed prefix doesn't collide with existing initiatives across all product subdirectories |
 | `edm-lint-artifacts`  | Scan `.md` artifact files for four violation classes -- attribution trailers, non-ASCII bytes, leaked tool-invocation tags, and a literal `;` inside Mermaid label/edge/message text; called by the `PreToolUse` git-commit hook |
