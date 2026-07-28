@@ -90,39 +90,41 @@ check "resume reads mode fields" "mode-family fields" "$ORCH"
 check "resume skips Step 1c" "Skip Step 1c" "$ORCH"
 echo ""
 
-# ---- T88: mini-SRD sub-flow --------------------------------------------------
-echo "--- T88: mini-SRD sub-flow ---"
-check "mini-SRD sub-flow section" "mini-SRD Sub-Flow" "$ORCH"
-check "mini-SRD fused file" "fused file" "$ORCH"
-check "mini-SRD merged gate" "Gate 2+3" "$ORCH"
-check "mini-SRD skip-phase 4" "skip-phase <PREFIX> 4" "$ORCH"
-check "mini-SRD skip-phase 5" "skip-phase <PREFIX> 5" "$ORCH"
-check_absent "mini-SRD does not spawn ticket-writer" "edm-ticket-writer" \
-  "$(echo "$ORCH" | awk '/### mini-SRD Sub-Flow/{f=1} f && /^---$/{exit} f{print}')"
+# ---- T88: mini-SRD sub-flow (EDMV3-T37 re-baseline: relocated from orchestrator to srd/audit-srd) --
+echo "--- T88: mini-SRD sub-flow (re-pointed to skills/srd, skills/audit-srd per EDMV3-T37) ---"
+SRD_SKILL_T88="$(cat "$PLUGIN_DIR/skills/srd/SKILL.md")"
+AUDIT_SRD_T88="$(cat "$PLUGIN_DIR/skills/audit-srd/SKILL.md")"
+check "mini-SRD fused file (skills/srd)" "fused file" "$SRD_SKILL_T88"
+check "mini-SRD merged gate (skills/audit-srd)" "Gate 2+3" "$AUDIT_SRD_T88"
+check "mini-SRD skip-phase 4 (skills/audit-srd)" "skip-phase <PREFIX> 4" "$AUDIT_SRD_T88"
+check "mini-SRD skip-phase 5 (skills/audit-srd)" "skip-phase <PREFIX> 5" "$AUDIT_SRD_T88"
+check_absent "mini-SRD does not spawn ticket-writer (skills/audit-srd)" "edm-ticket-writer" "$AUDIT_SRD_T88"
 echo ""
 
-# ---- T91: Gate 3.5 compliance review -----------------------------------------
-echo "--- T91: Gate 3.5 compliance review ---"
-check "Gate 3.5 section" "Gate 3.5" "$ORCH"
-check "Gate 3.5 compliance_enabled condition" "compliance_enabled=true" "$ORCH"
-check "Gate 3.5 header" '"Gate 3.5"' "$ORCH"
-check "Gate 3.5 approve-gate" "approve-gate <PREFIX> 3.5" "$ORCH"
+# ---- T91: Gate 3.5 compliance review (EDMV3-T37 re-baseline: relocated to skills/audit-tickets) ----
+echo "--- T91: Gate 3.5 compliance review (re-pointed to skills/audit-tickets per EDMV3-T37) ---"
+AUDIT_TICKETS_T91="$(cat "$PLUGIN_DIR/skills/audit-tickets/SKILL.md")"
+check "Gate 3.5 section" "Gate 3.5" "$AUDIT_TICKETS_T91"
+check "Gate 3.5 compliance_enabled condition" "compliance_enabled=true" "$AUDIT_TICKETS_T91"
+check "Gate 3.5 header" '"Gate 3.5"' "$AUDIT_TICKETS_T91"
+check "Gate 3.5 approve-gate" "approve-gate <PREFIX> 3.5" "$AUDIT_TICKETS_T91"
 echo ""
 
-# ---- T92: prototype sub-flow -------------------------------------------------
-echo "--- T92: prototype sub-flow ---"
-check "Prototype sub-flow section" "Prototype Sub-Flow" "$ORCH"
-check "prototype stop after Phase 2" "Phases 3-6 are skipped" "$ORCH"
-check "prototype skip-phase 3" "skip-phase <PREFIX> 3" "$ORCH"
-check "prototype skip-phase 6" "skip-phase <PREFIX> 6" "$ORCH"
-check "prototype graduation message" "mode standard" "$ORCH"
+# ---- T92: prototype mode branch (EDMV3-T37 re-baseline: relocated to skills/srd) --------------------
+echo "--- T92: prototype mode branch (re-pointed to skills/srd per EDMV3-T37) ---"
+check "prototype mode branch present (skills/srd)" "mode=prototype" "$SRD_SKILL_T88"
+check "prototype stop after Phase 2 (skills/srd)" "Phases 3-6 are skipped" "$SRD_SKILL_T88"
+check "prototype skip-phase 3 (skills/srd)" "skip-phase <PREFIX> 3" "$SRD_SKILL_T88"
+check "prototype skip-phase 6 (skills/srd)" "skip-phase <PREFIX> 6" "$SRD_SKILL_T88"
+check "prototype graduation message (skills/srd)" "mode standard" "$SRD_SKILL_T88"
 echo ""
 
-# ---- T93: TDD mode in orchestrator and implementer ---------------------------
-echo "--- T93: TDD mode ---"
-check "TDD mode prompt at Phase 6" "Impl mode" "$ORCH"
-check "TDD option" "TDD" "$ORCH"
-check "set-mode implementation_mode" "set-mode <PREFIX> implementation_mode" "$ORCH"
+# ---- T93: TDD mode (EDMV3-T37 re-baseline: relocated to skills/implement) --------------------------
+echo "--- T93: TDD mode (re-pointed to skills/implement per EDMV3-T37) ---"
+IMPLEMENT_T93="$(cat "$PLUGIN_DIR/skills/implement/SKILL.md")"
+check "TDD mode prompt at Phase 6 (skills/implement)" "Impl mode" "$IMPLEMENT_T93"
+check "TDD option (skills/implement)" "TDD" "$IMPLEMENT_T93"
+check "set-mode implementation_mode (skills/implement)" "set-mode <PREFIX> implementation_mode" "$IMPLEMENT_T93"
 
 IMPL="$(cat "$PLUGIN_DIR/agents/edm-implementer.md")"
 check "TDD branch in implementer" "TDD Mode" "$IMPL"

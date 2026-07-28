@@ -366,11 +366,11 @@ check "code-audit/SKILL.md gate text names all four severity counts (P0/P1/P2/NO
   "P0" "$(grep -o 'P0.*P1.*P2.*NOTED[^.]*' "$CODE_AUDIT_SKILL" || true)"
 
 echo
-echo "T15 AC5 -- orchestrator Step 8 point 5 invokes the gate protocol by name, not a restatement"
-T15_STEP8="$(awk '/^### Step 8 --/{f=1} /^### Step 9 --/{f=0} f' "$ORCH_SKILL")"
-check "Step 8 names the Convergence gate by reference to /edm:code-audit Step 10" \
+echo "T15 AC5 -- orchestrator's Phase 6 dispatch entry invokes the gate protocol by name, not a restatement (EDMV3-T38 re-baseline: '### Step 8' no longer exists -- the dispatcher's Phase 6 entry in '## Step 2 -- Dispatch each phase' item 6 is the relocated text)"
+T15_STEP8="$(awk '/^6\. \*\*Phase 6/{f=1} /^## Resume and Compaction/{f=0} f' "$ORCH_SKILL")"
+check "Phase 6 entry names the Convergence gate by reference to /edm:code-audit Step 10" \
   "/edm:code-audit\` Step 10 presents the Convergence" "$T15_STEP8"
-check_absent "Step 8 does not restate the gate's own STOP-and-WAIT protocol locally" \
+check_absent "Phase 6 entry does not restate the gate's own STOP-and-WAIT protocol locally" \
   "STOP and WAIT" "$T15_STEP8"
 
 echo
@@ -383,9 +383,9 @@ check_absent "remediation gate records no state (no approve-gate call in its own
   "edm-state approve-gate" "$T15_REMEDIATION_SECTION"
 
 echo
-echo "T15 AC8 -- Step 9 checklist names the Convergence gate; Post-Remediation Closure note preserved"
-T15_STEP9="$(awk '/^### Step 9 --/{f=1} /^## Phase Timing/{f=0} f' "$ORCH_SKILL")"
-check "Step 9 checklist names the Convergence gate" "Convergence gate" "$T15_STEP9"
+echo "T15 AC8 -- completion checklist names the Convergence gate; Post-Remediation Closure note preserved (EDMV3-T38 re-baseline: the orchestrator's '### Step 9' checklist moved into skills/implement/SKILL.md's own 'Step 8: Declare Done' checklist -- EDMV3-T37)"
+T15_STEP9="$(cat "${PLUGIN_DIR}/skills/implement/SKILL.md")"
+check "completion checklist names the Convergence gate" "Convergence gate" "$T15_STEP9"
 check "Post-Remediation Closure section still present" "Post-Remediation Closure" "$CA_CONTENT"
 # EDMV3-T15 end
 
@@ -2170,6 +2170,204 @@ t36_lint_exit=0
 bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t36_lint_exit=$?
 [[ "$t36_lint_exit" -eq 0 ]] && pass "T36 -- edm-lint-artifacts --all exits 0" || fail "T36 -- edm-lint-artifacts --all exited ${t36_lint_exit}"
 # EDMV3-T36 end
+
+# ---- shared helper: numbered-list ascending check (T37 AC9 / T38 AC9) ---------------------------
+# Column-0 numbered items ("1.", "2.", ...) must be strictly ascending with no repeats/gaps within
+# each section. Resets at a "## "/"### " markdown heading or a whole-line "**Bold Header**"
+# pseudo-heading (the convention this file set uses inside "## Step 1 -- Intake"). Lettered
+# sub-steps ("7a.") never match the leading-integer pattern, so they do not break the sequence --
+# consistent with T36 AC5's precedent that a named sub-step is not itself a restatement.
+_wave7_check_ascending() {
+  awk '
+    BEGIN { prev = 0; err = "" }
+    /^##/ { prev = 0 }
+    /^\*\*[^*]+\*\*[ \t]*$/ { prev = 0 }
+    {
+      if (match($0, /^[0-9]+\./)) {
+        numstr = substr($0, RSTART, RLENGTH - 1)
+        num = numstr + 0
+        if (prev == 0) {
+          if (num != 1) { err = err sprintf("first item is %d not 1 (line %d); ", num, NR) }
+        } else {
+          if (num != prev + 1) { err = err sprintf("expected %d got %d (line %d); ", prev + 1, num, NR) }
+        }
+        prev = num
+      }
+    }
+    END { if (err != "") { print err; exit 1 } else { exit 0 } }
+  ' "$1"
+}
+
+# =================================================================================
+# EDMV3-T37: each phase skill owns its phase entirely
+# =================================================================================
+echo
+echo "=== EDMV3-T37: each phase skill owns its phase entirely (procedures relocated out of the dispatcher) ==="
+T37_PHASE_SKILLS="plan srd audit-srd tickets audit-tickets implement code-audit verify-runtime"
+ORCH_SKILL_T37="$(cat "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
+
+echo "T37 AC1 -- each phase's agent spawn template text appears in exactly one file"
+declare -a t37_anchor_files=(plan srd srd audit-srd tickets audit-tickets implement code-audit code-audit)
+declare -a t37_anchors=("Agent: edm-explorer" "Agent: edm-srd-writer" "Agent: edm-architect" \
+  "Agent: edm-srd-auditor" "Agent: edm-ticket-writer" "Agent: edm-ticket-auditor" \
+  "Agent: edm-implementer" "Agent: edm-audit-{lens-name}" "Agent: edm-audit-synthesizer")
+t37_anchor_i=0
+while [[ $t37_anchor_i -lt ${#t37_anchors[@]} ]]; do
+  t37_anchor="${t37_anchors[$t37_anchor_i]}"
+  t37_owner="${t37_anchor_files[$t37_anchor_i]}"
+  t37_hit_count="$(grep -rl -- "$t37_anchor" "${PLUGIN_DIR}/skills/"*/SKILL.md 2>/dev/null | wc -l | tr -d ' ' || true)"
+  t37_hit_owner_only="$(grep -l -- "$t37_anchor" "${PLUGIN_DIR}/skills/${t37_owner}/SKILL.md" 2>/dev/null || true)"
+  if [[ "$t37_hit_count" -eq 1 && -n "$t37_hit_owner_only" ]]; then
+    pass "T37 AC1 -- '${t37_anchor}' appears in exactly one file (skills/${t37_owner}/SKILL.md)"
+  else
+    fail "T37 AC1 -- '${t37_anchor}' expected exactly one file (skills/${t37_owner}/SKILL.md), found ${t37_hit_count}"
+  fi
+  t37_anchor_i=$((t37_anchor_i + 1))
+done
+check_absent "T37 AC1 -- orchestrator carries no agent spawn template marker" "Agent: edm-" "$ORCH_SKILL_T37"
+
+echo
+echo "T37 AC2 -- orchestrator contains no agent spawn template, no artifact template, no per-phase step list"
+t37_ac2_hits="$(grep -c 'Task tool\|spawn the .edm-' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" 2>/dev/null || true)"
+[[ "${t37_ac2_hits:-0}" -eq 0 ]] && pass "T37 AC2 -- orchestrator contains no spawn template ('Task tool'/'spawn the \`edm-' both absent)" \
+  || fail "T37 AC2 -- found ${t37_ac2_hits} spawn-template marker(s) in orchestrator/SKILL.md"
+
+echo
+echo "T37 AC4 -- each of the eight phase skills ends with a Gate PROTOCOL reference in its last 20 lines"
+t37_ac4_missing=""
+for t37_skill in $T37_PHASE_SKILLS; do
+  tail -20 "${PLUGIN_DIR}/skills/${t37_skill}/SKILL.md" | grep -q 'Gate PROTOCOL' \
+    || t37_ac4_missing="${t37_ac4_missing} ${t37_skill}"
+done
+[[ -z "$t37_ac4_missing" ]] && pass "T37 AC4 -- all eight phase skills reference Gate PROTOCOL within their last 20 lines" \
+  || fail "T37 AC4 -- missing in:${t37_ac4_missing}"
+
+echo
+echo "T37 AC6 -- phase-start/phase-complete calls: one owning file per phase (fast-track's mode-branch duplicate inside skills/tickets, and verify-runtime's documented direct-invocation phase-complete-6, are the two sanctioned exceptions)"
+t37_ac6_bad=""
+for t37_n in 1 2 3 4 5 6; do
+  t37_start_files="$(grep -rl "phase-start <PREFIX> ${t37_n}\\b" "${PLUGIN_DIR}/skills/"*/SKILL.md 2>/dev/null | wc -l | tr -d ' ' || true)"
+  [[ "$t37_start_files" -eq 1 ]] || t37_ac6_bad="${t37_ac6_bad} phase-start:${t37_n}=${t37_start_files}file(s)"
+  t37_complete_files="$(grep -rl "phase-complete <PREFIX> ${t37_n}\\b" "${PLUGIN_DIR}/skills/"*/SKILL.md 2>/dev/null | wc -l | tr -d ' ' || true)"
+  if [[ "$t37_n" -eq 6 ]]; then
+    [[ "$t37_complete_files" -eq 2 ]] || t37_ac6_bad="${t37_ac6_bad} phase-complete:6=${t37_complete_files}file(s),expected2(implement+verify-runtime)"
+  else
+    [[ "$t37_complete_files" -eq 1 ]] || t37_ac6_bad="${t37_ac6_bad} phase-complete:${t37_n}=${t37_complete_files}file(s)"
+  fi
+done
+[[ -z "$t37_ac6_bad" ]] && pass "T37 AC6 -- one owning file per phase-start/phase-complete call (phase-complete 6's two-file split is the documented implement+verify-runtime direct-invocation exception)" \
+  || fail "T37 AC6 -- unexpected file counts:${t37_ac6_bad}"
+
+echo
+echo "T37 AC9 -- numbered lists in every phase skill are strictly ascending, no repeats, no gaps"
+t37_ac9_bad=""
+for t37_skill in $T37_PHASE_SKILLS; do
+  t37_ac9_err="$(_wave7_check_ascending "${PLUGIN_DIR}/skills/${t37_skill}/SKILL.md" || true)"
+  [[ -z "$t37_ac9_err" ]] || t37_ac9_bad="${t37_ac9_bad} ${t37_skill}(${t37_ac9_err})"
+done
+[[ -z "$t37_ac9_bad" ]] && pass "T37 AC9 -- all eight phase skills have strictly ascending numbered lists" \
+  || fail "T37 AC9 -- numbering defect(s):${t37_ac9_bad}"
+
+echo
+echo "T37 -- full suite and grants stay green with the phase-procedure move in place"
+t37_grants_exit=0
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t37_grants_exit=$?
+[[ "$t37_grants_exit" -eq 0 ]] && pass "T37 -- edm-check-grants exits 0" || fail "T37 -- edm-check-grants exited ${t37_grants_exit}"
+t37_lint_exit=0
+bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t37_lint_exit=$?
+[[ "$t37_lint_exit" -eq 0 ]] && pass "T37 -- edm-lint-artifacts --all exits 0" || fail "T37 -- edm-lint-artifacts --all exited ${t37_lint_exit}"
+# EDMV3-T37 end
+
+# =================================================================================
+# EDMV3-T38: the orchestrator becomes a dispatcher of at most 300 lines
+# =================================================================================
+echo
+echo "=== EDMV3-T38: orchestrator collapsed to a <=300-line dispatcher ==="
+
+echo "T38 AC1 -- orchestrator/SKILL.md is at most 300 lines"
+t38_orch_lines="$(wc -l < "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" | tr -d ' ')"
+[[ "$t38_orch_lines" -le 300 ]] && pass "T38 AC1 -- orchestrator/SKILL.md is ${t38_orch_lines} lines (<= 300)" \
+  || fail "T38 AC1 -- orchestrator/SKILL.md is ${t38_orch_lines} lines, expected <= 300"
+
+echo
+echo "T38 AC2 -- retained set: six '## ' sections (Overview, Step 1 -- Intake, Gate PROTOCOL, Step 2 -- Dispatch each phase, Resume and Compaction, Anti-Patterns)"
+t38_section_count="$(grep -c '^## ' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" || true)"
+[[ "$t38_section_count" -eq 6 ]] && pass "T38 AC2 -- exactly six top-level sections" \
+  || fail "T38 AC2 -- found ${t38_section_count} top-level sections, expected 6"
+check "T38 AC2 -- Overview retained" "## Overview" "$ORCH_SKILL_T37"
+check "T38 AC2 -- Step 1 -- Intake retained" "## Step 1 -- Intake" "$ORCH_SKILL_T37"
+check "T38 AC2 -- Gate PROTOCOL retained" "## Gate PROTOCOL (canonical)" "$ORCH_SKILL_T37"
+check "T38 AC2 -- Step 2 -- Dispatch each phase retained" "## Step 2 -- Dispatch each phase" "$ORCH_SKILL_T37"
+check "T38 AC2 -- Resume and Compaction retained" "## Resume and Compaction" "$ORCH_SKILL_T37"
+check "T38 AC2 -- Anti-Patterns retained" "## Anti-Patterns" "$ORCH_SKILL_T37"
+
+echo
+echo "T38 AC3 -- no phase procedure body (mirrors T37 AC2's check_absent)"
+check_absent "T38 AC3 -- orchestrator contains no spawn template" "Agent: edm-" "$ORCH_SKILL_T37"
+
+echo
+echo "T38 AC4 -- Skill grant appears exactly once across all skills (orchestrator only), edm-check-grants clean"
+t38_skill_grant_count="$(grep -rn '^allowed-tools:' "${PLUGIN_DIR}/skills/"*/SKILL.md | grep -c 'Skill\b' || true)"
+[[ "$t38_skill_grant_count" -eq 1 ]] && pass "T38 AC4 -- exactly one skill's allowed-tools grants Skill" \
+  || fail "T38 AC4 -- ${t38_skill_grant_count} skills grant Skill, expected 1"
+check "T38 AC4 -- orchestrator/SKILL.md's allowed-tools grants Skill" "Skill" \
+  "$(grep '^allowed-tools:' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
+t38_grants_exit=0
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t38_grants_exit=$?
+[[ "$t38_grants_exit" -eq 0 ]] && pass "T38 AC4/AC13 -- edm-check-grants exits 0" || fail "T38 AC4/AC13 -- edm-check-grants exited ${t38_grants_exit}"
+
+echo
+echo "T38 AC5 -- graceful degradation instruction present (Skill-tool composition CLAUDE.md reference)"
+check "T38 AC5 -- names the unavailable-skill failure text" "tool_use_error: Unknown skill" "$ORCH_SKILL_T37"
+check "T38 AC5 -- never falls back to inlining" "does not fall back to inlining" "$ORCH_SKILL_T37"
+
+echo
+echo "T38 AC6 -- mode sub-flow bodies relocated; only the routing mention of mini-srd remains in the dispatcher"
+t38_minisrd_count="$(grep -c 'mini-srd' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" || true)"
+[[ "${t38_minisrd_count:-0}" -le 1 ]] && pass "T38 AC6 -- 'mini-srd' (lowercase, literal mode value) appears at most once in the dispatcher" \
+  || fail "T38 AC6 -- 'mini-srd' appears ${t38_minisrd_count} times in the dispatcher, expected at most 1"
+check_absent "T38 AC6 -- 'mini-SRD Sub-Flow' section body no longer in the dispatcher" "mini-SRD Sub-Flow" "$ORCH_SKILL_T37"
+check_absent "T38 AC6 -- 'Prototype Sub-Flow' section body no longer in the dispatcher" "Prototype Sub-Flow" "$ORCH_SKILL_T37"
+check_absent "T38 AC6 -- 'Fast-Track / Fix-Pack Sub-Flow' section body no longer in the dispatcher" "Fast-Track / Fix-Pack Sub-Flow" "$ORCH_SKILL_T37"
+check "T38 AC6 -- CLAUDE.md documents the EDM mode matrix" "## EDM mode matrix" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check "T38 AC6 -- CLAUDE.md documents Phase Timing Guidelines" "## Phase Timing Guidelines" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+
+echo
+echo "T38 AC7 -- resume preserved: wave5-smoke.sh (current-step / SessionStart / HANDOFF) stays green"
+t38_wave5_exit=0
+bash "${PLUGIN_DIR}/bin/tests/wave5-smoke.sh" >/dev/null 2>&1 || t38_wave5_exit=$?
+[[ "$t38_wave5_exit" -eq 0 ]] && pass "T38 AC7 -- wave5-smoke.sh exits 0" || fail "T38 AC7 -- wave5-smoke.sh exited ${t38_wave5_exit}"
+
+echo
+echo "T38 AC8 -- current_step vocabulary defined, legacy values tolerated, mapping recorded in CHANGELOG.md"
+check "T38 AC8 -- post-refactor current_step is a bare phase number" "a bare phase number" "$ORCH_SKILL_T37"
+check "T38 AC8 -- legacy 2.x values named" "2.srd" "$ORCH_SKILL_T37"
+check "T38 AC8 -- unrecognized current_step resumes at the start of its phase with a warning" \
+  "resumes at the **start**" "$ORCH_SKILL_T37"
+check "T38 AC8 -- CHANGELOG.md records the current_step mapping" "current_step" "$(cat "${PLUGIN_DIR}/CHANGELOG.md")"
+
+echo
+echo "T38 AC9 -- numbered lists in the surviving orchestrator content are strictly ascending"
+t38_ac9_err="$(_wave7_check_ascending "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" || true)"
+[[ -z "$t38_ac9_err" ]] && pass "T38 AC9 -- orchestrator/SKILL.md numbered lists are strictly ascending" \
+  || fail "T38 AC9 -- numbering defect: ${t38_ac9_err}"
+
+echo
+echo "T38 AC12 -- no phases.json / phase-graph interpreter introduced"
+t38_phasesjson_count="$(grep -rl 'phases\.json' "${PLUGIN_DIR}/" 2>/dev/null | grep -v '/bin/tests/' | wc -l | tr -d ' ' || true)"
+[[ "$t38_phasesjson_count" -eq 0 ]] && pass "T38 AC12 -- zero literal 'phases.json' file references anywhere in plugins/edm/ (excluding this negative-test carve-out in bin/tests/)" \
+  || fail "T38 AC12 -- found ${t38_phasesjson_count} 'phases.json' reference(s)"
+
+echo
+echo "T38 AC13 -- the Phase 6 dispatcher entry invokes /edm:verify-runtime via the Skill tool"
+check "T38 AC13 -- verify-runtime invoked from the Phase 6 entry" "verify-runtime" "$ORCH_SKILL_T37"
+
+echo
+echo "T38 -- full suite stays green with the dispatcher collapse in place"
+t38_lint_exit=0
+bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t38_lint_exit=$?
+[[ "$t38_lint_exit" -eq 0 ]] && pass "T38 -- edm-lint-artifacts --all exits 0" || fail "T38 -- edm-lint-artifacts --all exited ${t38_lint_exit}"
+# EDMV3-T38 end
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
