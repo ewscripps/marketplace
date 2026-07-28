@@ -11,6 +11,8 @@ Each document in this library contains exactly four subsection headings (in this
 3. `## Pre-Flight Checklist` -- self-checks to run before submission
 4. `## What a Passing [X] Looks Like` -- concrete example of a passing artifact
 
+The fourth heading's exact wording varies by document (`What a Passing First Draft Looks Like` in `srd-audit.md`/`ticket-audit.md`, `What a Passing QC Round Looks Like` in `qc-audit.md`, `What Passing Code Looks Like` in `code-audit.md`, `What Passing Test Coverage Looks Like` in `test-coverage-audit.md`) -- this variation is sanctioned, not accidental: headings 1-3 must match exactly; heading 4 must match the regex `^## What .*Looks Like$`.
+
 **Insertion target** (EDMV3-76/77): new entries are inserted as `### ` entries under one of the four `##` headings above, chosen by a documented mapping from finding type; `## Anti-Patterns` is the default target absent a more specific mapping entry (self-consistent with where this initiative's own EDMV3-T42 entries live). Insertion never lands past the fourth section or at end-of-file. If the target heading is absent from a document, the insertion is skipped with a message -- it never falls back to appending at end-of-file.
 
 **Structure check** (run as a regression guard):
@@ -19,7 +21,11 @@ for doc in srd-audit ticket-audit code-audit test-coverage-audit qc-audit; do
   echo "=== $doc.md ===" && grep "^## " docs/audit-patterns/$doc.md
 done
 ```
-All four headings must be present in every document.
+All four headings must be present in every document, in contract order, with heading 4 matching the regex above.
+
+**Exemptions** (named, not incidental): `README.md` is exempt -- it is the contract document itself, not a library document. `SOURCES.md` is exempt -- it is the provenance document (two `##` headings), neither four-heading-compliant nor exempted from this contract before EDMV3-79. Any third file appearing under `docs/audit-patterns/` without either the four contract headings or an explicit, named exemption entry here fails the automated check below.
+
+CI runs the authoritative version of this check automatically -- see `.gitlab-ci.yml`'s `lint:pattern-library-contract` job (lint stage) and `bin/tests/wave7-smoke.sh`'s "EDMV3-T56" section (test stage). The snippet above is for a contributor's own local sanity check; it does not itself enforce the fourth-heading regex or the exemption list -- the automated checks do.
 
 ## Append Schema
 
