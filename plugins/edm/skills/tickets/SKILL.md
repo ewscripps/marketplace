@@ -5,7 +5,7 @@ disable-model-invocation: true
 model: opus
 effort: high
 argument-hint: <PREFIX>
-allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
+allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(edm-init *), Glob, Grep, Task, TodoWrite, AskUserQuestion
 ---
 
 # EDM Phase 4: Ticket Pack Creation
@@ -122,3 +122,38 @@ Prompt: "Create a developer ticket pack for the SRD at ${user_config.srd_root}/{
 For large initiatives, launch one `edm-ticket-writer` per epic in parallel, then merge into the README.
 
 After writing, automatically proceed to `/edm:audit-tickets <PREFIX>`.
+
+## Fast-Track / Fix-Pack Mode (`lifecycle_mode=fast-track` or `fix-pack`)
+
+When `lifecycle_mode` is `fast-track` or `fix-pack`, tickets are generated directly from an analysis
+document without the full SRD/ticket-audit sequence -- this mode bypasses the normal Step 0 preflight's
+assumption that Gate 2 is already approved, because Phases 1-3 never ran:
+
+1. Read the analysis document the user provides.
+2. If the initiative does not yet exist, scaffold it (`edm-init <PREFIX>`, or the product-scoped form)
+   and record the lifecycle mode: `edm-state set-mode <PREFIX> lifecycle_mode fast-track` (or `fix-pack`).
+3. Record skipped phases -- phase 1 is included because fast-track genuinely never runs a formal
+   planning step; the analysis document replaces it:
+   ```bash
+   edm-state skip-phase <PREFIX> 1 "fast-track: planning skipped -- tickets from analysis doc"
+   edm-state skip-phase <PREFIX> 2 "fast-track: SRD skipped -- tickets from analysis doc"
+   edm-state skip-phase <PREFIX> 3 "fast-track: SRD audit skipped"
+   edm-state skip-phase <PREFIX> 5 "fast-track: ticket audit skipped"
+   ```
+4. `edm-state phase-start <PREFIX> 4`
+5. Spawn `edm-ticket-writer` directly from the analysis document (the same AI Execution Pattern above,
+   with the analysis document as the source instead of an audited SRD).
+6. `edm-state phase-complete <PREFIX> 4`
+7. Present the single human review gate directly -- Phase 5 (ticket audit) is skipped, so this gate
+   takes the place of Gate 3:
+   ```
+   AskUserQuestion header: "Gate 3 -- Ticket Review"
+   Options: Approve / Revise / No-Go
+   ```
+   Follows `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`. On **Approve** (explicit selection only):
+   `edm-state approve-gate <PREFIX> 3`, then proceed to Phase 6 (`/edm:implement <PREFIX>`).
+
+The state file is valid and recognized as fast-track -- `validate` does not flag it as incomplete.
+
+In every other mode, this phase presents no gate of its own -- Gate 3 is presented by
+`/edm:audit-tickets` per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`.

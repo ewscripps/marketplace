@@ -28,11 +28,29 @@ using `<gated-command>` = `srd`.
 4. `edm-state phase-start <PREFIX> 2`
 5. **Standard / IaC / Data-ML modes**: Spawn `edm-srd-writer` for main content + `edm-architect` in
    parallel. `edm-srd-writer` writes to `${user_config.srd_filename}` (default `srd.md`).
-   `edm-architect` writes to `architecture.md` (not into the SRD body).
+   `edm-architect` writes to `architecture.md` (not into the SRD body). Record the decision:
+   ```bash
+   edm-state set <PREFIX> last_decision "architecture.md written by edm-architect"
+   ```
    **mini-SRD mode**: Spawn `edm-srd-writer` with the fused-file structure (see section below).
 6. After both complete, verify the SRD file. `edm-state srd-version <PREFIX> 1.0.0`
 7. `edm-state phase-complete <PREFIX> 2`
-8. Proceed automatically to Phase 3 audit (`/edm:audit-srd <PREFIX>`) -- no HITL gate between Phase 2 and Phase 3.
+8. **Mode branch**:
+   - `mode=prototype`: stop here with a clean message instead of proceeding to Phase 3:
+     > "Prototype complete. SRD is at `{path}`. Phases 3-6 are skipped. To graduate this
+     > prototype to a full initiative, run `edm-state set-mode <PREFIX> mode standard` then
+     > resume with `/edm:orchestrator <PREFIX>`."
+     Record skipped phases:
+     ```bash
+     edm-state skip-phase <PREFIX> 3 "prototype: SRD audit skipped"
+     edm-state skip-phase <PREFIX> 4 "prototype: ticket creation skipped"
+     edm-state skip-phase <PREFIX> 5 "prototype: ticket audit skipped"
+     edm-state skip-phase <PREFIX> 6 "prototype: implementation skipped"
+     ```
+     Do not spawn ticket writers, implementers, or QC agents. `edm-state archive` proceeds with a
+     warning when `mode=prototype` (no convergence gate required).
+   - All other modes: proceed automatically to Phase 3 audit (`/edm:audit-srd <PREFIX>`) -- no HITL
+     gate between Phase 2 and Phase 3.
 
 ## SRD Sections
 
@@ -195,3 +213,7 @@ The rendering must be ASCII-only; do not use Unicode markers.
 - Vague language
 
 After writing, the next step is automatic: `/edm:audit-srd <PREFIX>`.
+
+This phase presents no gate of its own (except the `mode=prototype` stop above, which is not an
+approval gate) -- Gate 2 is presented by `/edm:audit-srd` per
+`skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`.

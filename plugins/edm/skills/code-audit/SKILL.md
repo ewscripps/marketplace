@@ -86,6 +86,11 @@ using `<gated-command>` = `code-audit`.
        no arrows, no smart quotes) -- `edm-lint-artifacts` class 2 enforces this at commit time.
        This prevents a reviewer reading the round directory in isolation from seeing
        "Convergence NOT reached" after all work is done.
+    5. **Auto-update patterns** -- immediately after Approve, append novel code-audit findings to the
+       pattern library:
+       ```bash
+       edm-state update-patterns <PREFIX> code
+       ```
     - On **Revise**: no state mutation; loop back to the remediation gate (step 11) and step 12.
     - On **No-Go**: no state mutation; stop and summarize the blockers for the human.
 11. Read `REMEDIATION.md`. Present the remediation gate (see "Remediation Gate (Code Audit)" below) and STOP

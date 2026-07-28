@@ -39,6 +39,10 @@ using `<gated-command>` = `audit-srd`.
 6. **Remediate**: fix every P0 and P1 finding directly in the SRD. Update the Revision History (bump SRD version, e.g., 1.0.0 -> 1.1.0).
 7. Update `srd_version` in `.edm-state.json`: `edm-state srd-version <PREFIX> 1.1.0`
 8. `edm-state phase-complete <PREFIX> 3`
+8a. **Auto-update patterns** -- append novel SRD-audit findings to the pattern library:
+    ```bash
+    edm-state update-patterns <PREFIX> srd
+    ```
 9. Present **HITL Gate 2** (see below, per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`) and STOP for sign-off.
 10. On approval: `edm-state approve-gate <PREFIX> 2`.
 
@@ -126,7 +130,23 @@ Prompt: "Audit the SRD at ${user_config.srd_root}/{PREFIX}/${user_config.srd_fil
 
 After remediating all P0/P1:
 1. Summarize: requirement count by priority (Must/Should/Could), key architecture decisions, risks, audit findings resolved (P0: N, P1: N, P2: N).
-2. Present the gate per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` -- header `"Gate 2"`, options **Approve** / **Revise** / **No-Go**. **STOP and WAIT** for the response.
-3. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 2`. Next: `/edm:tickets <PREFIX>`.
+2. **Mode branch (mini-SRD)**: when `mode=mini-srd`, this gate additionally stands in for the ticket-pack
+   review -- present it as the merged gate with header `"Gate 2+3"` instead of `"Gate 2"`, and on Approve
+   additionally record:
+   ```bash
+   edm-state skip-phase <PREFIX> 4 "mini-SRD: ticket pack fused into SRD file"
+   edm-state skip-phase <PREFIX> 5 "mini-SRD: ticket audit fused into SRD audit"
+   ```
+   then proceed directly to Phase 6 (`/edm:implement <PREFIX>`) instead of Phase 4. On resume of a
+   `mode=mini-srd` initiative past this merged gate, enter Phase 6 directly.
+3. Present the gate per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` -- header `"Gate 2"` (or
+   `"Gate 2+3"` under the mini-SRD branch above), options **Approve** / **Revise** / **No-Go**. **STOP
+   and WAIT** for the response.
+4. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 2`. Next: `/edm:tickets
+   <PREFIX>` (or `/edm:implement <PREFIX>` directly under the mini-SRD branch above). Then append Gate 2
+   architecture decisions into `decisions.md` in the initiative directory:
+   ```
+   | Gate 2 | <architecture decision> | <chosen> | <rationale> | {date} |
+   ```
    On **Revise**: rework the flagged SRD sections and re-present the gate.
    On **No-Go**: summarize the blockers and stop.

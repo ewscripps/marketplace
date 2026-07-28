@@ -41,8 +41,13 @@ using `<gated-command>` = `audit-tickets`.
 
 6. **Remediate** all coverage gaps, decompose XL tickets, fix dependency declarations, improve vague AC, fix consistency mismatches.
 7. `edm-state phase-complete <PREFIX> 5`
+7a. **Auto-update patterns** -- append novel ticket-audit findings:
+    ```bash
+    edm-state update-patterns <PREFIX> ticket
+    ```
 8. Present **HITL Gate 3** (see below, per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`) and STOP for sign-off.
-9. On approval: `edm-state approve-gate <PREFIX> 3`.
+9. On approval: `edm-state approve-gate <PREFIX> 3`. If `compliance_enabled=true`, present **Gate 3.5**
+   (below) before proceeding to Phase 6; otherwise proceed directly to `/edm:implement <PREFIX>`.
 
 ## 8 Audit Dimensions
 
@@ -133,6 +138,22 @@ Prompt: "Audit the ticket pack at ${user_config.srd_root}/{PREFIX}/${user_config
 After resolving all findings:
 1. Summarize: total ticket count by epic, size distribution (XS/S/M/L counts), critical path summary, estimated total effort, SRD coverage (N/N = 100%), version alignment confirmed.
 2. Present the gate per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` -- header `"Gate 3"`, options **Approve** / **Revise** / **No-Go**. **STOP and WAIT** for the response.
-3. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 3`. Next: `/edm:implement <PREFIX>`.
+3. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 3`. If
+   `compliance_enabled=true`, present Gate 3.5 (below) next; otherwise the next command is
+   `/edm:implement <PREFIX>`.
    On **Revise**: rework the flagged tickets and re-present the gate.
    On **No-Go**: summarize the blockers and stop.
+
+## Gate 3.5 -- Compliance Review (when compliance_enabled=true)
+
+Insert this gate between Gate 3 (above) and Phase 6, only when `compliance_enabled=true`:
+
+1. Present a compliance review gate via `AskUserQuestion` (header `"Gate 3.5"`):
+   - **Approve** -- regulatory traceability is verified, proceed to Phase 6
+   - **Revise** -- specific tickets need compliance coverage rework (user will describe)
+   - **No-Go** -- compliance gap is too large; re-plan
+2. Record the gate: `edm-state approve-gate <PREFIX> 3.5` (only on explicit Approve).
+3. Follows `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`.
+
+The ticket pack tables include regulatory-traceability columns (`Regulation | Control | Evidence`) when
+`compliance_enabled=true` (see `skills/tickets/SKILL.md`).
