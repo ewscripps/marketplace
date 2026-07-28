@@ -2983,6 +2983,89 @@ t18_ac11_case() {
 }
 with_scratch_repo t18_ac11_case
 
+# =================================================================================
+# EDMV3-T41: CLAUDE.md by-name references verified NOT to resolve from an installed cache
+# (negative branch) -- generated docs/canonical-sections.md + byte-identity guard.
+#
+# Note on suite placement: the ticket's own Target Components name
+# plugins/edm/bin/tests/wave7-smoke.sh for the AC5 byte-identity case. This wave's file-
+# ownership split assigns wave6-smoke.sh (not wave7-smoke.sh) to the agent implementing T41, so
+# the equivalent case is implemented here instead -- same assertion, different suite file.
+# =================================================================================
+echo
+echo "T41 -- generated docs/canonical-sections.md is byte-identical to CLAUDE.md and CI-guarded"
+
+SYNC_BIN="${SCRIPT_DIR}/../edm-sync-canonical-sections"
+CANONICAL_SECTIONS_MD="${REPO_ROOT}/plugins/edm/docs/canonical-sections.md"
+
+# ---- AC4: the generated file exists under docs/ with the required header -----------------
+echo
+echo "T41 AC4 -- generated docs/canonical-sections.md exists with the 'generated from CLAUDE.md' header"
+[[ -f "$CANONICAL_SECTIONS_MD" ]] \
+  && pass "T41 AC4 -- plugins/edm/docs/canonical-sections.md exists" \
+  || fail "T41 AC4 -- plugins/edm/docs/canonical-sections.md not found"
+check "T41 AC4 -- header names 'generated from CLAUDE.md'" \
+  "generated from CLAUDE.md" "$(cat "$CANONICAL_SECTIONS_MD" 2>/dev/null)"
+check "T41 AC4 -- generated file carries the Severity vocabulary section" \
+  "## Severity vocabulary (canonical)" "$(cat "$CANONICAL_SECTIONS_MD" 2>/dev/null)"
+check "T41 AC4 -- generated file carries the Mermaid diagram conventions section" \
+  "## Mermaid diagram conventions (canonical)" "$(cat "$CANONICAL_SECTIONS_MD" 2>/dev/null)"
+
+# ---- AC5: byte-identity guard -- committed copy matches a fresh --check run, and a hand-edit
+# to the copy (without re-running the generator) is caught. ---------------------------------
+echo
+echo "T41 AC5 -- byte-identity guard: committed copy matches CLAUDE.md; a hand-edit fails"
+bash "$SYNC_BIN" --check >/dev/null 2>&1 \
+  && pass "T41 AC5 -- committed docs/canonical-sections.md is in sync with CLAUDE.md (--check exits 0)" \
+  || fail "T41 AC5 -- committed docs/canonical-sections.md is OUT OF SYNC with CLAUDE.md"
+
+t41_backup="$(mktemp)"
+cp "$CANONICAL_SECTIONS_MD" "$t41_backup"
+printf '\nhand-edited, not regenerated\n' >> "$CANONICAL_SECTIONS_MD"
+set +e
+bash "$SYNC_BIN" --check >/dev/null 2>&1
+t41_check_ec=$?
+set -e
+[[ $t41_check_ec -ne 0 ]] \
+  && pass "T41 AC5 -- hand-editing the copy without regenerating makes --check fail" \
+  || fail "T41 AC5 -- --check did not catch a hand-edit to the generated copy"
+cp "$t41_backup" "$CANONICAL_SECTIONS_MD"
+rm -f "$t41_backup"
+bash "$SYNC_BIN" --check >/dev/null 2>&1 \
+  && pass "T41 AC5 -- restoring the generated copy makes --check pass again" \
+  || fail "T41 AC5 -- --check still failing after restoring the generated copy"
+
+# ---- AC5 (continued): the extracted section text is byte-identical to its CLAUDE.md source,
+# not merely present -- diff the two sections directly rather than trusting --check alone. ---
+echo
+echo "T41 AC5 -- extracted sections diff byte-identical against their CLAUDE.md source spans"
+t41_claude_md="${REPO_ROOT}/plugins/edm/CLAUDE.md"
+t41_sev_src="$(awk '/^## Severity vocabulary \(canonical\)$/{f=1;print;next} f && /^## /{exit} f{print}' "$t41_claude_md")"
+t41_sev_dst="$(awk '/^## Severity vocabulary \(canonical\)$/{f=1;print;next} f && /^## /{exit} f{print}' "$CANONICAL_SECTIONS_MD")"
+[[ "$t41_sev_src" == "$t41_sev_dst" ]] \
+  && pass "T41 AC5 -- Severity vocabulary section is byte-identical between CLAUDE.md and the generated copy" \
+  || fail "T41 AC5 -- Severity vocabulary section diverged between CLAUDE.md and the generated copy"
+t41_mmd_src="$(awk '/^## Mermaid diagram conventions \(canonical\)$/{f=1;print;next} f && /^## /{exit} f{print}' "$t41_claude_md")"
+t41_mmd_dst="$(awk '/^## Mermaid diagram conventions \(canonical\)$/{f=1;print;next} f && /^## /{exit} f{print}' "$CANONICAL_SECTIONS_MD")"
+[[ "$t41_mmd_src" == "$t41_mmd_dst" ]] \
+  && pass "T41 AC5 -- Mermaid diagram conventions section is byte-identical between CLAUDE.md and the generated copy" \
+  || fail "T41 AC5 -- Mermaid diagram conventions section diverged between CLAUDE.md and the generated copy"
+
+# ---- AC2/AC6: the resolvability finding, install method, Claude Code version and date are
+# recorded in decisions.md as D22, naming which branch (negative) was taken. ------------------
+echo
+echo "T41 AC2/AC6 -- decisions.md records the resolution finding (D22) and states the branch taken"
+DECISIONS_MD="${REPO_ROOT}/SRD/edm/EDMV3__prompt-streamline/decisions.md"
+check "T41 AC2 -- decisions.md names the check performed" \
+  "CLAUDE.md by-name reference resolution" "$(cat "$DECISIONS_MD" 2>/dev/null)"
+t41_d22_line="$(grep -n 'CLAUDE.md by-name reference resolution' "$DECISIONS_MD" | head -1)"
+check "T41 AC2 -- D22 entry names a Claude Code version" \
+  "2.1.220" "$t41_d22_line"
+check "T41 AC2 -- D22 entry names the install method checked" \
+  "installed cache" "$t41_d22_line"
+check "T41 AC6 -- D22 entry states the negative branch was taken" \
+  "negative" "$t41_d22_line"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

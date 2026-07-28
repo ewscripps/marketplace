@@ -32,6 +32,17 @@ plugins/edm/bin/tests/|
 # (EDMV3-32 forbids deleting a filter criterion, and editing that file's wording is outside
 # this ticket's file boundary -- EDMV3-T29's agent owns it).
 plugins/edm/agents/edm-audit-spec.md|deferred
+# Class 7 (EDMV3-T41): docs/canonical-sections.md is a generated, one-directional, byte-
+# identical duplicate of plugins/edm/CLAUDE.md's "Severity vocabulary" and "Mermaid diagram
+# conventions" sections (edm-sync-canonical-sections). Its content -- including the Class 1
+# "is distinct from deferral" / "deferral does not exist" clarification sentence -- is already
+# reviewed and allowlisted at its CLAUDE.md source; allowlisting the whole generated file here
+# avoids re-litigating the same two Class 1 substrings a second time under a second path.
+# NOTE: this bare-trailing-"|" (whole-file allowlist) entry must not be the last data line in
+# this file -- bash -n treats a "word|" with no right-hand side as an incomplete pipeline only
+# when nothing follows it before EOF (T18/T41 QC finding); keep at least one "|<substring>"
+# entry (like Class 6 below) after any bare-trailing-"|" entry.
+plugins/edm/docs/canonical-sections.md|
 # Class 6 (EDMV3-T18): bin/edm-state's findings-ledger handling names the literal JSON status
 # value "deferred" -- a legacy per-finding enum value written by pre-EDMV3-T25 ledgers, read
 # and coerced to "open" for backward compatibility (EDMV3-T25 AC4 / EDMV3-T28 AC5). This is a

@@ -229,6 +229,20 @@ Other entity codes follow the same form, so the rule generalizes: `#quot;` (doub
 
 This section's heading string, `## Mermaid diagram conventions (canonical)`, is referenced by name from the eleven touch points inventoried in `architecture.md` and asserted by a smoke test -- do not rename it without updating every reference.
 
+## By-name reference resolution from an installed plugin cache (EDMV3-T41)
+
+**Verified NOT to resolve deterministically (decisions.md D22, Claude Code 2.1.220,
+2026-07-28).** `claude plugin validate` confirms plugin-root `CLAUDE.md` is never loaded as
+runtime context ("use a skill instead"), and an installed plugin's cache directory is not
+path-adjacent to whatever project it is installed into, so a bare `` `CLAUDE.md Sec."..."` ``
+reference in a prompt has no plugin-relative anchor to resolve against from there -- it either
+fails to resolve, or (since "CLAUDE.md" is itself a common convention) silently resolves to the
+target project's own unrelated `CLAUDE.md` instead. Both the Severity vocabulary section and
+the Mermaid diagram conventions section above are additionally generated, byte-identical, into
+`docs/canonical-sections.md` (regenerate via `edm-sync-canonical-sections` after editing either
+section above) -- a plugin-relative path new prompt-surface references should point at instead
+of the bare `CLAUDE.md Sec."..."` form once EDMV3-T42 lands.
+
 ## Model and effort assignments
 
 | Role | Model | Effort | Rationale |
@@ -477,6 +491,7 @@ Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call the
 | `edm-init`            | Scaffold a new initiative directory (`SRD/{PREFIX}/` or `SRD/{PRODUCT}/{PREFIX}__{desc}/`) with empty state file |
 | `edm-validate-prefix` | Verify a proposed prefix doesn't collide with existing initiatives across all product subdirectories |
 | `edm-lint-artifacts`  | Scan `.md` artifact files for four violation classes -- attribution trailers, non-ASCII bytes, leaked tool-invocation tags, and a literal `;` inside Mermaid label/edge/message text; called by the `PreToolUse` git-commit hook |
+| `edm-sync-canonical-sections` | Regenerate `docs/canonical-sections.md` from this file's "Severity vocabulary" and "Mermaid diagram conventions" sections (byte-identical, one-directional); `--check` exits 1 on drift. See the note below the Mermaid section for why this file exists (EDMV3-T41). |
 
 ### `.edm-state.json` mode-family fields
 
