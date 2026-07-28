@@ -3431,14 +3431,20 @@ cmd_update_patterns() {
       continue
     fi
 
-    # Append the novel finding at the end of the pattern file.
+    # Append the novel finding atomically (EDMV3-92, EDMV3-T66 AC9): build the appended
+    # content in a tmp file alongside the target, then mv it into place -- never leaves a
+    # docs/audit-patterns/*.md file half-written if the process is interrupted mid-append, and
+    # never interleaves with a concurrent update-patterns call on the same file.
+    local _pattern_tmp="${pattern_file}.tmp.$$"
+    cp "$pattern_file" "$_pattern_tmp"
     {
       printf '\n'
       printf '### %s (%s, %s, P2)\n\n' "$raw_title" "$prefix" "$today"
       printf 'Extracted from %s audit for %s. Review and refine: add a one-paragraph description\n' \
         "$audit_type" "$prefix"
       printf 'explaining the finding and how to prevent it. Adjust severity from P2 if warranted.\n'
-    } >> "$pattern_file"
+    } >> "$_pattern_tmp"
+    mv "$_pattern_tmp" "$pattern_file"  # atomic replace of the docs/audit-patterns/*.md target
 
     new_findings=$((new_findings + 1))
   done < <(grep '^### ' "$audit_report_path" 2>/dev/null || true)

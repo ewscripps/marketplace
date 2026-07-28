@@ -595,7 +595,7 @@ Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call the
 | Field | Type | Default | Purpose |
 |---|---|---|---|
 | `mode` | string enum | `standard` | Adaptation profile: `standard`, `mini-srd`, `iac`, `data-ml`, `prototype` |
-| `lifecycle_mode` | string enum | `standard` | Lifecycle variant: `standard`, `partial`, `fast-track`, `fix-pack` |
+| `lifecycle_mode` | string enum | `standard` | Lifecycle variant: `standard`, `fast-track`, `fix-pack` (a fourth legacy enum value was removed by the delete-list epic, D12/EDMV3-T57..T60) |
 | `compliance_enabled` | boolean | `false` | When true, adds Gate 3.5 compliance review and regulatory-traceability columns |
 | `implementation_mode` | string enum | `standard` | Phase 6 mode: `standard` or `tdd` (Red-Green-Refactor per ticket) |
 | `skipped_phases` | array of objects | `[]` | Intentionally skipped phases; each: `{phase: N, rationale: "..."}` |
@@ -617,7 +617,7 @@ Absent `schema_version` is the legacy pre-EDMV3 signal (grandfathered, C-4).
 |---|---|---|---|
 | `1` | A | gates, mode-derived terminal phase, phase-6 `completed_at`, artifact checks, `cmd_set` allowlist | EDMV3-16, EDMV3-17, EDMV3-115 (`>= 1`) |
 | `2` | B | JSONL findings ledger, PARTIAL closure representation, audit round-type recording, gate `enforcement` tags | EDMV3-18, EDMV3-36, EDMV3-42, EDMV3-120 (`>= 2`) |
-| `3` | C | assigned only if a state shape actually changes in wave C; otherwise wave C leaves the value at `2` rather than bumping it for symmetry | none yet -- decided by EDMV3-T66 only if needed |
+| `3` | C | **not assigned (EDMV3-T66 decision)** -- wave C's only state-shape work (EDMV3-T51) is an additive extension of the wave-B round-record shape (adds `completed_at`, `duration_seconds`, `tokens`, `model_used`, `estimated_cost_usd`, `attribution_mode` to an existing `rounds[]` entry), not a new shape a reader must recognize; every wave-C check that consults these fields reads them with `//` defaults, so no check requires `schema_version >= 3`. The value stays at `2` rather than bumping for symmetry | none -- no check requires `>= 3` |
 
 **Three-valued degradation.** A present-but-lower `schema_version` is a distinct state from both
 "legacy/absent" (no enforcement at all) and "fully compliant" (every check applies normally): a
@@ -707,7 +707,13 @@ Skills reference values as `${user_config.srd_root}` etc.
 
 macOS and Linux only (bash 3.2+, `jq`, `git` required). Windows and WSL are unsupported.
 
-After modifying any plugin component:
+**CI is the primary verification path** (EDMV3-T66 AC7): the GitLab pipeline below runs the full
+smoke suite on both the pinned image and a `bash:3.2` image, the manifest/CLI validators, and
+`edm-state validate` across every tracked initiative on every merge request that touches
+`plugins/edm/**`. A contributor's own local run is a fast local-convenience check before opening
+an MR -- it catches the same regressions sooner, but the MR does not merge on the strength of a
+local run; it merges on the pipeline's own green result. After modifying any plugin component,
+as a local convenience before pushing:
 
 1. `claude plugin validate plugins/edm/` -- schema and frontmatter check
 2. Test in a sandbox: `claude --plugin-dir ./plugins/edm`
