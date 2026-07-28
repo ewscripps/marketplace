@@ -53,6 +53,8 @@ File types to hunt:
 
 ## False Alarm Filter
 
+Report every finding at your best-effort confidence level rather than self-suppressing on uncertainty: this filter demotes a finding to `## Noted / Not Actionable` with a documented rationale and never deletes it outright, and ranking by confidence and cross-lens corroboration is the synthesizer's job, not this lens's.
+
 1. Is the file in a directory already covered by a `.gitignore` glob?
 2. Is the file deleted immediately after use?
 3. Is the file on a tmpfs/ephemeral mount that doesn't persist to git status?

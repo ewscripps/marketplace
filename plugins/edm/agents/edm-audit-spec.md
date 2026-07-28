@@ -54,6 +54,8 @@ Flag as P2 (scope creep doesn't block ship but should be documented or removed)
 
 ## False Alarm Filter
 
+Report every finding at your best-effort confidence level rather than self-suppressing on uncertainty: this filter demotes a finding to `## Noted / Not Actionable` with a documented rationale and never deletes it outright, and ranking by confidence and cross-lens corroboration is the synthesizer's job, not this lens's.
+
 1. Is the requirement explicitly marked "deferred" or "out of scope" in the ticket?
 2. Is the "scope creep" a necessary implementation detail not worth ticketing?
 3. Is there a PR or commit that is pending merge and will satisfy the requirement?

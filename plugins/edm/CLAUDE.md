@@ -194,6 +194,41 @@ is remediated before convergence; `NOTED` is the only status that closes a findi
 - Legacy P3 (defensive improvement / nice-to-have) -> **P2**
 - NOTED -> unchanged
 
+## Mermaid diagram conventions (canonical)
+
+All EDM agents that author or audit Mermaid diagrams follow these conventions. No agent may define a divergent local rule.
+
+Mermaid's `;` is a lexer-level statement separator, and this is reserved even where the `;` appears inside label text -- the parser does not distinguish "inside a label" from "between statements," so a literal semicolon inside a node, edge or message label breaks the diagram.
+
+**The rule:** a literal semicolon in Mermaid label, node, edge or message text is written as the entity code `#59;` -- `#` followed by either a base-10 code point or an entity name, then `;`, with no leading ampersand. `&#59;` is not this project's convention; `#59;` is correct.
+
+Before (raw semicolon inside a label -- breaks the diagram):
+
+<!-- edm-lint-ignore-start -->
+```mermaid
+flowchart TD
+    A[Wait; then retry] --> B[Done]
+```
+<!-- edm-lint-ignore-end -->
+
+After (entity code, no leading ampersand -- renders correctly):
+
+```mermaid
+flowchart TD
+    A[Wait#59; then retry] --> B[Done]
+```
+
+Quoting label text is not a reliable substitute for the entity code across every diagram type. A `sequenceDiagram` message's text after the `:` is unquoted, so it is especially exposed to this failure -- there is no quote to protect it there.
+
+The following remain legal and are **not** violations of this rule:
+- A statement-terminating `;` at the end of a line, outside any label.
+- `;` on a `%%` comment line.
+- `;` terminating a `classDef`, `style`, or `linkStyle` directive.
+
+Other entity codes follow the same form, so the rule generalizes: `#quot;` (double quote), `#35;` (`#`), and so on.
+
+This section's heading string, `## Mermaid diagram conventions (canonical)`, is referenced by name from the eleven touch points inventoried in `architecture.md` and asserted by a smoke test -- do not rename it without updating every reference.
+
 ## Model and effort assignments
 
 | Role | Model | Effort | Rationale |
@@ -441,7 +476,7 @@ Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call the
 | `edm-state`           | Read/write `.edm-state.json` files; 37 subcommands: `init`, `get`, `set`, `list`, `active-initiatives`, `migrate-path`, `migrate-schema`, `approve-gate`, `phase-start`, `phase-complete`, `checkpoint-if-active`, `record-task-duration`, `record-test-coverage`, `record-tests-added`, `get-coverage`, `srd-version`, `archive`, `write-handoff`, `watch-impl`, `metrics-report`, `validate`, `gate-check`, `branch-check`, `git-lock-check`, `current-step`, `session-start`, `audit-round-start`, `record-partial-verdict`, `set-mode`, `skip-phase`, `set-supersedes`, `set-forked-from`, `resolve-dir`, `set-parent`, `add-related`, `update-patterns`, `lint` |
 | `edm-init`            | Scaffold a new initiative directory (`SRD/{PREFIX}/` or `SRD/{PRODUCT}/{PREFIX}__{desc}/`) with empty state file |
 | `edm-validate-prefix` | Verify a proposed prefix doesn't collide with existing initiatives across all product subdirectories |
-| `edm-lint-artifacts`  | Scan active-initiative artifact files for violations (missing version headers, orphan files, oversized tickets); called by the `PreToolUse` git-commit hook |
+| `edm-lint-artifacts`  | Scan `.md` artifact files for four violation classes -- attribution trailers, non-ASCII bytes, leaked tool-invocation tags, and a literal `;` inside Mermaid label/edge/message text; called by the `PreToolUse` git-commit hook |
 
 ### `.edm-state.json` mode-family fields
 

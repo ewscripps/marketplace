@@ -46,6 +46,8 @@ Your mandate is ONLY this lens. Do not audit other dimensions -- other agents ha
 
 ## False Alarm Filter
 
+Report every finding at your best-effort confidence level rather than self-suppressing on uncertainty: this filter demotes a finding to `## Noted / Not Actionable` with a documented rationale and never deletes it outright, and ranking by confidence and cross-lens corroboration is the synthesizer's job, not this lens's.
+
 1. Is the skip/ignore documented with a linked issue and timeline?
 2. Is the mock intentional and is the real behavior tested elsewhere?
 3. Is this a known gap tracked in the ticket backlog?

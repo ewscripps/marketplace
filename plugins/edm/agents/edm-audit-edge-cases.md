@@ -48,6 +48,8 @@ Your mandate is ONLY this lens. Do not audit other dimensions -- other agents ha
 
 ## False Alarm Filter
 
+Report every finding at your best-effort confidence level rather than self-suppressing on uncertainty: this filter demotes a finding to `## Noted / Not Actionable` with a documented rationale and never deletes it outright, and ranking by confidence and cross-lens corroboration is the synthesizer's job, not this lens's.
+
 1. Is the race condition documented as acceptable (e.g., "single-writer by design")?
 2. Is input validation handled at a boundary the code doesn't own?
 3. Is this a test-only code path?

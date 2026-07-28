@@ -34,6 +34,8 @@ Read the ENTIRE SRD. Read all codebase files it references. Audit systematically
 - Mermaid/PlantUML syntax errors (test every diagram)
 - Logical flow errors (missing edges, orphan nodes)
 - Diagrams that don't match the prose description
+- A raw `;` (literal semicolon) inside Mermaid label, node, edge or message text -- a violation
+  of `CLAUDE.md Sec."Mermaid diagram conventions"`
 
 ### 4. Competing Requirements
 - Two requirements that can't both be true

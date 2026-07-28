@@ -48,6 +48,8 @@ Your mandate is ONLY this lens. Do not audit other dimensions -- other agents ha
 
 ## False Alarm Filter
 
+Report every finding at your best-effort confidence level rather than self-suppressing on uncertainty: this filter demotes a finding to `## Noted / Not Actionable` with a documented rationale and never deletes it outright, and ranking by confidence and cross-lens corroboration is the synthesizer's job, not this lens's.
+
 1. Is the difference documented (e.g., "this service gets extra retries because it's on a flaky external API")?
 2. Is one sibling newer and the difference will be normalized in the current implementation?
 3. Is the difference intentional for performance or operational reasons?

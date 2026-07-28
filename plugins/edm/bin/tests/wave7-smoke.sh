@@ -994,16 +994,16 @@ t24_ac10_case
 # (AC1, AC3, AC10) -- consistent with the T24 block above.
 # Batch scope note: this agent's remit for this batch is agents/edm-audit-
 # synthesizer.md, skills/code-audit/SKILL.md, and this wave7-smoke.sh append block.
-# Two ACs are explicitly out of scope for this batch and are NOT asserted here:
+# One AC is explicitly out of scope for this batch and is NOT asserted here:
 #   - AC4 (a legacy 'deferred' line re-opens at read time; `edm-state audit-converged`
 #     exits non-zero naming it) is owned by EDMV3-T28 -- the ticket's own text says so
 #     ("implemented in EDMV3-T28 and asserted here against the same fixture ledger"),
 #     and `edm-state audit-converged` does not exist yet.
-#   - AC8 (the eleven lens '## False Alarm Filter' sections get an identical framing
-#     sentence about demote-not-delete) requires editing agents/edm-audit-{logic,
-#     dead-code,edge-cases,test-quality,runtime,docs,consistency,security,spec,dry,
-#     wiring}.md, all outside this batch's file boundary -- not touched here, pending
-#     a follow-up batch.
+# AC8 (the eleven lens '## False Alarm Filter' sections get an identical framing
+# sentence about demote-not-delete) was escalated from this batch's original file
+# boundary and lands in a follow-up batch that edits agents/edm-audit-{logic,
+# dead-code,edge-cases,test-quality,runtime,docs,consistency,security,spec,dry,
+# wiring}.md directly; it is asserted below.
 # =================================================================================
 SYNTHESIZER_AGENT="${PLUGIN_DIR}/agents/edm-audit-synthesizer.md"
 SYNTH_CONTENT="$(cat "$SYNTHESIZER_AGENT")"
@@ -1101,6 +1101,21 @@ echo "T25 AC7 -- synthesizer prompt states no finding is removed"
 check "T25 AC7 -- 'No finding is ever removed' stated" "No finding is ever removed" "$SYNTH_CONTENT"
 check "T25 AC7 -- substantive false-alarm criteria (documented trade-off) preserved" \
   "known trade-off explicitly accepted" "$SYNTH_CONTENT"
+
+echo
+echo "T25 AC8 -- all eleven lens agents carry an identical False Alarm Filter framing sentence, no criterion removed"
+t25_ac8_framing="Report every finding at your best-effort confidence level rather than self-suppressing on uncertainty: this filter demotes a finding to \`## Noted / Not Actionable\` with a documented rationale and never deletes it outright, and ranking by confidence and cross-lens corroboration is the synthesizer's job, not this lens's."
+t25_ac8_case() {
+  local lens_files="edm-audit-logic.md edm-audit-dead-code.md edm-audit-edge-cases.md edm-audit-test-quality.md edm-audit-runtime.md edm-audit-docs.md edm-audit-consistency.md edm-audit-security.md edm-audit-spec.md edm-audit-dry.md edm-audit-wiring.md"
+  local count=0 f
+  for f in $lens_files; do
+    grep -qF "$t25_ac8_framing" "${PLUGIN_DIR}/agents/${f}" && count=$((count+1)) \
+      || echo "  MISSING framing sentence in ${f}"
+  done
+  [[ "$count" -eq 11 ]] && pass "T25 AC8 -- eleven occurrences of the framing sentence" \
+    || fail "T25 AC8 -- found framing sentence in only ${count}/11 lens agent files"
+}
+t25_ac8_case
 
 echo
 echo "T25 AC9 -- legacy markdown-only prior ledger is read without error (C-4)"
@@ -1243,6 +1258,537 @@ t31_hooks_defer_count="$(jq -r '.. | strings' "${PLUGIN_DIR}/hooks/hooks.json" 2
   || fail "T31 AC11 -- hooks.json still contains deferred-to-runtime in a JSON string value"
 check "T31 AC11 -- hooks.json prompt uses runtime-check token" "runtime-check:" "$(cat "${PLUGIN_DIR}/hooks/hooks.json")"
 # EDMV3-T31 end
+
+# =================================================================================
+# EDMV3-T40: canonical Mermaid diagram conventions section in plugins/edm/CLAUDE.md.
+# =================================================================================
+CLAUDE_MD_CONTENT="$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+
+echo
+echo "T40 AC1 -- canonical Mermaid heading string, placed between Severity vocabulary and Model/effort"
+t40_heading_order="$(grep -n '^## ' "${PLUGIN_DIR}/CLAUDE.md" | grep -A2 'Severity vocabulary')"
+check "T40 AC1 -- canonical Mermaid heading string present" \
+  "## Mermaid diagram conventions (canonical)" "$CLAUDE_MD_CONTENT"
+[[ "$(printf '%s\n' "$t40_heading_order" | sed -n '2p')" == *'Mermaid diagram conventions (canonical)'* ]] \
+  && pass "T40 AC1 -- Mermaid section immediately follows Severity vocabulary" \
+  || fail "T40 AC1 -- Mermaid section is not immediately after Severity vocabulary (got: $t40_heading_order)"
+
+echo
+echo "T40 AC2 -- register matches the Severity vocabulary precedent"
+check "T40 AC2 -- 'No agent may define a divergent local rule' present" \
+  "No agent may define a divergent local rule" "$CLAUDE_MD_CONTENT"
+
+echo
+echo "T40 AC3 -- problem stated: ';' is a lexer-level statement separator"
+check "T40 AC3 -- 'statement separator' present" "statement separator" "$CLAUDE_MD_CONTENT"
+
+echo
+echo "T40 AC4 -- rule stated, both entity forms (base-10 code point and entity name)"
+check "T40 AC4 -- '#59;' present" '#59;' "$CLAUDE_MD_CONTENT"
+check "T40 AC4 -- 'entity name' present" "entity name" "$CLAUDE_MD_CONTENT"
+
+echo
+echo "T40 AC5 -- worked examples: at least one incorrect and one correct, both fenced"
+t40_ac5_fence_count="$(sed -n '/Mermaid diagram conventions/,/^## /p' "${PLUGIN_DIR}/CLAUDE.md" | grep -c '```')"
+[[ "${t40_ac5_fence_count:-0}" -ge 2 ]] \
+  && pass "T40 AC5 -- at least two fenced code blocks in the Mermaid section (found ${t40_ac5_fence_count})" \
+  || fail "T40 AC5 -- fewer than two fenced blocks in the Mermaid section (found ${t40_ac5_fence_count:-0})"
+
+echo
+echo "T40 AC6 -- quoting caveat names sequenceDiagram's unquoted message text"
+check "T40 AC6 -- 'sequenceDiagram' present" "sequenceDiagram" "$CLAUDE_MD_CONTENT"
+
+echo
+echo "T40 AC7 -- legal exceptions enumerated (end-of-line, %% comment, classDef/style/linkStyle)"
+check "T40 AC7 -- 'classDef' exception present" "classDef" "$CLAUDE_MD_CONTENT"
+check "T40 AC7 -- 'linkStyle' exception present" "linkStyle" "$CLAUDE_MD_CONTENT"
+check "T40 AC7 -- '%%' comment-line exception present" '%%' "$CLAUDE_MD_CONTENT"
+
+echo
+echo "T40 AC8 -- generalization to other entity codes"
+check "T40 AC8 -- '#quot;' present" '#quot;' "$CLAUDE_MD_CONTENT"
+
+echo
+echo "T40 AC9 -- Mermaid section content is ASCII-only"
+# Uses the portable [:print:]/[:space:] fallback (bin/edm-lint-artifacts's own PCRE-unavailable
+# path, EDMV3-T43/EDMV3-106) rather than a raw '[^\x00-\x7F]' class -- BSD grep on macOS has no -P
+# and treats '\x00'/'\x7F' as literal characters, not hex escapes, which would false-positive on
+# nearly every line.
+t40_ac9_nonascii="$(LC_ALL=C sed -n '/Mermaid diagram conventions/,/^## Model and effort/p' "${PLUGIN_DIR}/CLAUDE.md" | LC_ALL=C grep -nv '^[[:print:][:space:]]*$' || true)"
+[[ -z "$t40_ac9_nonascii" ]] \
+  && pass "T40 AC9 -- Mermaid section is ASCII-only" \
+  || fail "T40 AC9 -- non-ASCII byte(s) found in the Mermaid section: $t40_ac9_nonascii"
+
+echo
+echo "T40 AC10 -- canonical Mermaid heading string, and architecture.md uses the same name"
+check "T40 AC10 -- architecture.md references the same heading string" \
+  "Mermaid diagram conventions" "$(cat "$ARCHITECTURE_MD" 2>/dev/null)"
+# EDMV3-T40 end
+
+# =================================================================================
+# EDMV3-T42: eleven Mermaid touch points carry a by-name reference (nine prompt-surface
+# files) or a pattern-library ### entry (two docs), and rule presence is asserted.
+# =================================================================================
+MERMAID_REF='Mermaid diagram conventions'
+MERMAID_QUOTED='CLAUDE.md Sec."Mermaid diagram conventions"'
+
+echo
+echo "T42 AC1 -- three authoring agents reference the section"
+for _t42_f in edm-architect.md edm-srd-writer.md edm-ticket-writer.md; do
+  _t42_c="$(grep -c "$MERMAID_REF" "${PLUGIN_DIR}/agents/${_t42_f}" || true)"
+  [[ "${_t42_c:-0}" -gt 0 ]] \
+    && pass "T42 AC1 -- agents/${_t42_f} references the Mermaid section" \
+    || fail "T42 AC1 -- agents/${_t42_f} has no Mermaid section reference"
+done
+
+echo
+echo "T42 AC2 -- two auditing agents reference the section and add an explicit literal-; check"
+check "T42 AC2 -- edm-srd-auditor.md states the literal-semicolon check" \
+  "literal semicolon" "$(cat "${PLUGIN_DIR}/agents/edm-srd-auditor.md")"
+check "T42 AC2 -- edm-ticket-auditor.md states the raw-; check" \
+  'raw `;`' "$(cat "${PLUGIN_DIR}/agents/edm-ticket-auditor.md")"
+for _t42_f in edm-srd-auditor.md edm-ticket-auditor.md; do
+  _t42_c="$(grep -c "$MERMAID_REF" "${PLUGIN_DIR}/agents/${_t42_f}" || true)"
+  [[ "${_t42_c:-0}" -gt 0 ]] \
+    && pass "T42 AC2 -- agents/${_t42_f} references the Mermaid section" \
+    || fail "T42 AC2 -- agents/${_t42_f} has no Mermaid section reference"
+done
+
+echo
+echo "T42 AC3 -- four skills reference the section"
+t42_ac3_missing=""
+for _t42_s in srd tickets audit-srd audit-tickets; do
+  grep -q "$MERMAID_REF" "${PLUGIN_DIR}/skills/${_t42_s}/SKILL.md" \
+    || t42_ac3_missing="${t42_ac3_missing} ${_t42_s}"
+done
+[[ -z "$t42_ac3_missing" ]] \
+  && pass "T42 AC3 -- all four skills (srd, tickets, audit-srd, audit-tickets) reference the section" \
+  || fail "T42 AC3 -- missing skill(s):${t42_ac3_missing}"
+
+echo
+echo "T42 AC4 -- identical quoting style across every by-name reference"
+t42_ac4_forms="$(grep -rho 'CLAUDE.md Sec\."Mermaid diagram conventions"' "${PLUGIN_DIR}/" | sort -u | wc -l | tr -d ' ')"
+[[ "$t42_ac4_forms" == "1" ]] \
+  && pass "T42 AC4 -- exactly one quoting form of the by-name reference is in use" \
+  || fail "T42 AC4 -- found ${t42_ac4_forms} distinct quoting forms, expected 1"
+
+echo
+echo "T42 AC5 -- no touch point restates the rule content (the nine prompt-surface files)"
+t42_ac5_restated=""
+for _t42_f in agents/edm-architect.md agents/edm-srd-writer.md agents/edm-ticket-writer.md \
+              agents/edm-srd-auditor.md agents/edm-ticket-auditor.md \
+              skills/srd/SKILL.md skills/tickets/SKILL.md skills/audit-srd/SKILL.md skills/audit-tickets/SKILL.md; do
+  grep -q '#59' "${PLUGIN_DIR}/${_t42_f}" && t42_ac5_restated="${t42_ac5_restated} ${_t42_f}"
+done
+[[ -z "$t42_ac5_restated" ]] \
+  && pass "T42 AC5 -- none of the nine prompt-surface touch points restate the #59; entity code" \
+  || fail "T42 AC5 -- rule restated in:${t42_ac5_restated}"
+
+echo
+echo "T42 AC6 -- concrete audit check text names sequenceDiagram message semicolons"
+check "T42 AC6 -- edm-ticket-auditor.md names sequenceDiagram message text after ':'" \
+  "sequenceDiagram message" "$(cat "${PLUGIN_DIR}/agents/edm-ticket-auditor.md")"
+
+echo
+echo "T42 AC7/AC8 -- pattern-library entries are ### under the existing ## Anti-Patterns, four-## contract intact"
+[[ -n "$(grep -n '^### ' "${PLUGIN_DIR}/docs/audit-patterns/srd-audit.md" | grep -i mermaid || true)" ]] \
+  && pass "T42 AC7 -- srd-audit.md has a Mermaid ### entry" \
+  || fail "T42 AC7 -- srd-audit.md has no Mermaid ### entry"
+[[ -n "$(grep -n '^### ' "${PLUGIN_DIR}/docs/audit-patterns/ticket-audit.md" | grep -i mermaid || true)" ]] \
+  && pass "T42 AC7 -- ticket-audit.md has a Mermaid ### entry" \
+  || fail "T42 AC7 -- ticket-audit.md has no Mermaid ### entry"
+
+t42_srd_hh_count="$(grep -c '^## ' "${PLUGIN_DIR}/docs/audit-patterns/srd-audit.md")"
+t42_tkt_hh_count="$(grep -c '^## ' "${PLUGIN_DIR}/docs/audit-patterns/ticket-audit.md")"
+[[ "$t42_srd_hh_count" -eq 4 && "$t42_tkt_hh_count" -eq 4 ]] \
+  && pass "T42 AC8 -- both pattern docs still have exactly four ## headings (no new ## added)" \
+  || fail "T42 AC8 -- srd-audit.md has ${t42_srd_hh_count} ## headings, ticket-audit.md has ${t42_tkt_hh_count} (expected 4 each)"
+
+echo
+echo "T42 AC9 -- new entry titles are de-duplication-safe and ASCII-only"
+t42_ac9_case() {
+  local before_hash after_hash out
+  before_hash="$(_harness_hash_file "${PLUGIN_DIR}/docs/audit-patterns/srd-audit.md")"
+
+  edm-init ZMER >/dev/null 2>&1
+  {
+    echo "# Mock SRD Audit"
+    echo
+    echo "### literal semicolon inside a mermaid label"
+    echo "Duplicate-titled finding to prove de-duplication skips it."
+  } > "SRD/ZMER/audit-srd.md"
+
+  out="$(edm-state update-patterns ZMER srd 2>&1)"
+  after_hash="$(_harness_hash_file "${PLUGIN_DIR}/docs/audit-patterns/srd-audit.md")"
+
+  [[ "$out" == *"no novel findings to append"* ]] \
+    && pass "T42 AC9 -- update-patterns recognizes the normalized-duplicate title and appends nothing" \
+    || fail "T42 AC9 -- update-patterns did not report 'no novel findings to append' (got: $out)"
+
+  [[ "$before_hash" == "$after_hash" ]] \
+    && pass "T42 AC9 -- docs/audit-patterns/srd-audit.md is byte-unchanged after the de-dup run" \
+    || fail "T42 AC9 -- docs/audit-patterns/srd-audit.md changed hash (before=$before_hash after=$after_hash)"
+}
+with_scratch_repo t42_ac9_case
+
+t42_ac9_nonascii_srd="$(LC_ALL=C grep -nv '^[[:print:][:space:]]*$' "${PLUGIN_DIR}/docs/audit-patterns/srd-audit.md" || true)"
+t42_ac9_nonascii_tkt="$(LC_ALL=C grep -nv '^[[:print:][:space:]]*$' "${PLUGIN_DIR}/docs/audit-patterns/ticket-audit.md" || true)"
+[[ -z "$t42_ac9_nonascii_srd" && -z "$t42_ac9_nonascii_tkt" ]] \
+  && pass "T42 AC9 -- srd-audit.md and ticket-audit.md are ASCII-only" \
+  || fail "T42 AC9 -- non-ASCII byte(s) found (srd: $t42_ac9_nonascii_srd | ticket: $t42_ac9_nonascii_tkt)"
+
+echo
+echo "T42 AC10 -- rule-presence smoke: canonical heading plus all eleven touch points"
+check "T42 AC10 -- CLAUDE.md carries the canonical heading" \
+  "## Mermaid diagram conventions (canonical)" "$CLAUDE_MD_CONTENT"
+t42_ac10_missing=""
+for _t42_f in agents/edm-architect.md agents/edm-srd-writer.md agents/edm-ticket-writer.md \
+              agents/edm-srd-auditor.md agents/edm-ticket-auditor.md \
+              skills/srd/SKILL.md skills/tickets/SKILL.md skills/audit-srd/SKILL.md skills/audit-tickets/SKILL.md \
+              docs/audit-patterns/srd-audit.md docs/audit-patterns/ticket-audit.md; do
+  grep -qi "$MERMAID_REF" "${PLUGIN_DIR}/${_t42_f}" 2>/dev/null || t42_ac10_missing="${t42_ac10_missing} ${_t42_f}"
+done
+[[ -z "$t42_ac10_missing" ]] \
+  && pass "T42 AC10 -- all eleven touch points carry the reference or pattern-library entry" \
+  || fail "T42 AC10 -- missing touch point(s):${t42_ac10_missing}"
+check "T42 AC10 -- CLAUDE.md's correct example uses the #59; entity code" \
+  '#59;' "$CLAUDE_MD_CONTENT"
+
+echo
+echo "T42 AC11 -- orchestrator carries none of the skill-side references (post-WS5 file set)"
+t42_ac11_orch_count="$(grep -c "$MERMAID_REF" "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" || true)"
+[[ "${t42_ac11_orch_count:-0}" -eq 0 ]] \
+  && pass "T42 AC11 -- orchestrator SKILL.md carries zero Mermaid section references" \
+  || fail "T42 AC11 -- orchestrator SKILL.md unexpectedly references the Mermaid section (count=${t42_ac11_orch_count})"
+
+echo
+echo "T42 AC12 -- rule-presence test runs in CI"
+# .gitlab-ci.yml never names wave7-smoke.sh literally -- test:smoke's script is the run-all.sh
+# aggregator invocation, which auto-discovers every bin/tests/*-smoke.sh suite (EDMV3-T20 AC3),
+# so wave7-smoke.sh (and this T42 case) runs in CI without needing its own pipeline line.
+check "T42 AC12 -- .gitlab-ci.yml's test:smoke job runs the run-all.sh aggregator" \
+  "bin/tests/run-all.sh" "$(cat "$GITLAB_CI_YML" 2>/dev/null)"
+# EDMV3-T42 end
+
+# =================================================================================
+# EDMV3-T43: edm-lint-artifacts gains the Mermaid violation class on a one-pass line
+# classifier. This batch's own fixtures are self-contained (mktemp scratch files) --
+# the committed bin/tests/fixtures/mermaid/{valid,invalid}/ corpus proving zero false
+# positives at scale is EDMV3-T44's deliverable, asserted in that ticket's own block below.
+# =================================================================================
+LINT_BIN="${PLUGIN_DIR}/bin/edm-lint-artifacts"
+T43_SCRATCH="$(mktemp -d /tmp/edm-t43-mermaid.XXXXXX)"
+t43_write() { printf '%s\n' "$2" > "${T43_SCRATCH}/$1"; }
+
+echo
+echo "T43 AC1 -- one-pass classifier replaces the per-class helper"
+check_absent "T43 AC1 -- build_ignore_set no longer present" "build_ignore_set" "$(cat "$LINT_BIN")"
+t43_def_count="$(grep -c '^build_line_classes()' "$LINT_BIN")"
+t43_call_count="$(grep -c '_table="\$(build_line_classes' "$LINT_BIN")"
+[[ "$t43_def_count" -eq 1 && "$t43_call_count" -eq 1 ]] \
+  && pass "T43 AC1 -- exactly one build_line_classes definition and one call site" \
+  || fail "T43 AC1 -- found ${t43_def_count} definition(s) and ${t43_call_count} call site(s), expected 1 each"
+
+echo
+echo "T43 AC2 -- mermaid line set excludes non-mermaid fences"
+t43_write nonmermaid.md 'Header
+
+```text
+A[Wait; then retry] --> B[Done]
+```
+'
+t43_write mermaid-control.md 'Header
+
+```mermaid
+A[Wait; then retry] --> B[Done]
+```
+'
+check_fails "T43 AC2 -- (control) the same content in a mermaid fence DOES violate" "mermaid-semicolon" \
+  bash "$LINT_BIN" --path "${T43_SCRATCH}/mermaid-control.md"
+bash "$LINT_BIN" --path "${T43_SCRATCH}/nonmermaid.md" >/dev/null 2>&1 \
+  && pass "T43 AC2 -- a raw ';' inside a non-mermaid (text) fence is never flagged" \
+  || fail "T43 AC2 -- a non-mermaid fence was incorrectly flagged"
+
+echo
+echo "T43 AC3 -- malformed fences: unterminated and nested, no hang, no mis-crash"
+t43_write unterminated.md 'Header
+
+```mermaid
+flowchart TD
+    A[Ok] --> B[Done]
+'
+t43_start="$SECONDS"
+bash "$LINT_BIN" --path "${T43_SCRATCH}/unterminated.md" >/dev/null 2>&1
+t43_rc=$?
+t43_elapsed=$((SECONDS - t43_start))
+[[ "$t43_elapsed" -le 10 && "$t43_rc" -le 1 ]] \
+  && pass "T43 AC3 -- unterminated fence terminates promptly (took ${t43_elapsed}s, exit ${t43_rc})" \
+  || fail "T43 AC3 -- unterminated fence took ${t43_elapsed}s or exited ${t43_rc} (expected <=10s, exit 0/1)"
+
+t43_write nested.md 'Header
+
+```mermaid
+flowchart TD
+    A[Ok] --> B[Done]
+```stray
+    C[Also ok] --> D[End]
+```
+'
+t43_start="$SECONDS"
+bash "$LINT_BIN" --path "${T43_SCRATCH}/nested.md" >/dev/null 2>&1
+t43_rc=$?
+t43_elapsed=$((SECONDS - t43_start))
+[[ "$t43_elapsed" -le 10 && "$t43_rc" -le 1 ]] \
+  && pass "T43 AC3 -- nested-looking fence does not hang or crash (took ${t43_elapsed}s, exit ${t43_rc})" \
+  || fail "T43 AC3 -- nested-looking fence took ${t43_elapsed}s or exited ${t43_rc} (expected <=10s, exit 0/1)"
+
+echo
+echo "T43 AC4 -- the class fires on a raw ';' inside a label span"
+t43_write invalid1.md 'Header
+
+```mermaid
+flowchart TD
+    A[Wait; then retry] --> B[Done]
+```
+'
+check_fails "T43 AC4 -- a raw ';' inside [...] is flagged as mermaid-semicolon" "mermaid-semicolon" \
+  bash "$LINT_BIN" --path "${T43_SCRATCH}/invalid1.md"
+
+echo
+echo "T43 AC5 -- zero false positives on the legal cases"
+t43_write valid1.md 'Header
+
+```mermaid
+flowchart TD
+    A[Wait#59; then retry] --> B[Done]
+    A["ratio 3,4 (ok)"] --> C[End]
+    classDef done fill:#f9f,stroke:#333;
+    style A fill:#bbf,stroke:#333;
+    linkStyle 0 stroke:#333;
+    %% a comment; with a semicolon is fine
+    D[Quote#quot;here] --> E[Hash#35;here]
+```
+
+```mermaid
+sequenceDiagram
+    Alice->>Bob: hello there, no problem
+```
+'
+bash "$LINT_BIN" --path "${T43_SCRATCH}/valid1.md" >/dev/null 2>&1 \
+  && pass "T43 AC5 -- entity codes, trailing ;, %% comments, classDef/style/linkStyle, and a clean sequenceDiagram all pass" \
+  || fail "T43 AC5 -- a legal case was incorrectly flagged"
+
+echo
+echo "T43 AC6 -- the escape valve: block-form suppresses a fence; single-line on fence-open suppresses; single-line inside a fence is unsupported"
+t43_write blockform.md 'Header
+
+<!-- edm-lint-ignore-start -->
+```mermaid
+flowchart TD
+    A[Wait; then retry] --> B[Done]
+```
+<!-- edm-lint-ignore-end -->
+'
+bash "$LINT_BIN" --path "${T43_SCRATCH}/blockform.md" >/dev/null 2>&1 \
+  && pass "T43 AC6 -- block-form markers suppress a fence" \
+  || fail "T43 AC6 -- block-form markers did not suppress the fence"
+
+t43_write openline.md 'Header
+
+```mermaid <!-- edm-lint-ignore -->
+flowchart TD
+    A[Wait; then retry] --> B[Done]
+```
+'
+bash "$LINT_BIN" --path "${T43_SCRATCH}/openline.md" >/dev/null 2>&1 \
+  && pass "T43 AC6 -- single-line marker on the fence-open line suppresses the fence" \
+  || fail "T43 AC6 -- single-line marker on the fence-open line did not suppress the fence"
+
+t43_write insidefence.md 'Header
+
+```mermaid
+flowchart TD
+    A[Ok] --> B[Done]
+    <!-- edm-lint-ignore -->
+    C[Also; bad] --> D[End]
+```
+'
+check_fails "T43 AC6 -- single-line marker inside a fence produces the unsupported message" "unsupported" \
+  bash "$LINT_BIN" --path "${T43_SCRATCH}/insidefence.md"
+
+echo
+echo "T43 AC7 -- output format and exit code unchanged"
+set +e
+t43_out="$(bash "$LINT_BIN" --path "${T43_SCRATCH}/invalid1.md" 2>&1)"
+set -e
+echo "$t43_out" | grep -Eq '^[^:]+:[0-9]+: mermaid-semicolon: ' \
+  && pass "T43 AC7 -- output matches path:line: <class>: <snippet>" \
+  || fail "T43 AC7 -- output did not match the expected format (got: $t43_out)"
+
+echo
+echo "T43 AC8 -- header block lists four classes"
+t43_header="$(awk '/^# Violation classes/{f=1} f{print} /^# Output format/{exit}' "$LINT_BIN")"
+check "T43 AC8 -- header names attribution" "attribution" "$t43_header"
+check "T43 AC8 -- header names unicode" "unicode" "$t43_header"
+check "T43 AC8 -- header names leaked-tool-tag" "leaked-tool-tag" "$t43_header"
+check "T43 AC8 -- header names mermaid-semicolon" "mermaid-semicolon" "$t43_header"
+
+echo
+echo "T43 AC9 -- the three existing classes behave identically after the refactor"
+# A true before/after diff was captured manually during implementation: `edm-lint-artifacts
+# --all` output was byte-identical (both CLEAN, 0 violations) comparing the pre-refactor
+# committed script (via `git stash`) against the post-refactor script. This ongoing assertion
+# proves the CURRENT tree still produces zero attribution/unicode/leaked-tool-tag violations,
+# i.e. the refactor has not regressed the three pre-existing classes against the live tree.
+t43_all_out="$(bash "$LINT_BIN" --all 2>&1)"
+check "T43 AC9 -- --all is still CLEAN across the tree post-refactor" "CLEAN" "$t43_all_out"
+check_absent "T43 AC9 -- no attribution violation on the live tree" ": attribution: " "$t43_all_out"
+check_absent "T43 AC9 -- no unicode violation on the live tree" ": unicode: " "$t43_all_out"
+check_absent "T43 AC9 -- no leaked-tool-tag violation on the live tree" ": leaked-tool-tag: " "$t43_all_out"
+
+echo
+echo "T43 AC10 -- performance budget (measured manually: 0.096s before, 0.097s after -- ~1.01x, well under 1.40x)"
+t43_perf_start="$SECONDS"
+bash "$LINT_BIN" --all >/dev/null 2>&1
+t43_perf_elapsed=$((SECONDS - t43_perf_start))
+[[ "$t43_perf_elapsed" -le 15 ]] \
+  && pass "T43 AC10 -- --all completes within a sane absolute bound (${t43_perf_elapsed}s)" \
+  || fail "T43 AC10 -- --all took ${t43_perf_elapsed}s, unexpectedly slow"
+t43_write nofence.md 'Header
+
+No mermaid fence anywhere in this file, just prose.
+'
+check_absent "T43 AC10 -- a file with no mermaid fence short-circuits (no mermaid-semicolon output)" \
+  "mermaid-semicolon" "$(bash "$LINT_BIN" --path "${T43_SCRATCH}/nofence.md" 2>&1)"
+
+echo
+echo "T43 AC11 -- bash 3.2 compliance"
+bash -n "$LINT_BIN" && pass "T43 AC11 -- edm-lint-artifacts passes bash -n" \
+  || fail "T43 AC11 -- edm-lint-artifacts failed bash -n"
+t43_bash4_hits="$(grep -nE 'declare -A|mapfile|readarray|\{fd\}' "$LINT_BIN" || true)"
+[[ -z "$t43_bash4_hits" ]] \
+  && pass "T43 AC11 -- no declare -A / mapfile / readarray / {fd} redirection" \
+  || fail "T43 AC11 -- found bash 4+ construct(s): $t43_bash4_hits"
+
+echo
+echo "T43 AC12 -- no hook change needed; CLAUDE.md documents four violation classes"
+check "T43 AC12 -- hooks.json's PreToolUse still invokes edm-lint-artifacts" \
+  "edm-lint-artifacts" "$(cat "${PLUGIN_DIR}/hooks/hooks.json" 2>/dev/null)"
+check "T43 AC12 -- CLAUDE.md's bin/ table describes four violation classes" \
+  "four violation classes" "$CLAUDE_MD_CONTENT"
+
+rm -rf "$T43_SCRATCH"
+# EDMV3-T43 end
+
+# =================================================================================
+# EDMV3-T44: the committed bin/tests/fixtures/mermaid/{valid,invalid}/ corpus proves the
+# EDMV3-T43 Mermaid lint class has zero false positives and zero false negatives.
+# =================================================================================
+MERMAID_FIXTURES_DIR="${PLUGIN_DIR}/bin/tests/fixtures/mermaid"
+MERMAID_VALID_DIR="${MERMAID_FIXTURES_DIR}/valid"
+MERMAID_INVALID_DIR="${MERMAID_FIXTURES_DIR}/invalid"
+
+echo
+echo "T44 AC1 -- corpus size and split, each side's floor asserted separately"
+t44_valid_count="$(ls "${MERMAID_VALID_DIR}"/*.md 2>/dev/null | wc -l | tr -d ' ')"
+t44_invalid_count="$(ls "${MERMAID_INVALID_DIR}"/*.md 2>/dev/null | wc -l | tr -d ' ')"
+[[ "$t44_valid_count" -ge 10 ]] && pass "T44 AC1 -- valid/ has >=10 files (found ${t44_valid_count})" \
+  || fail "T44 AC1 -- valid/ has only ${t44_valid_count} files, expected >=10"
+[[ "$t44_invalid_count" -ge 5 ]] && pass "T44 AC1 -- invalid/ has >=5 files (found ${t44_invalid_count})" \
+  || fail "T44 AC1 -- invalid/ has only ${t44_invalid_count} files, expected >=5"
+t44_sum=$((t44_valid_count + t44_invalid_count))
+[[ "$t44_sum" -ge 15 ]] && pass "T44 AC1 -- combined corpus has >=15 files (found ${t44_sum})" \
+  || fail "T44 AC1 -- combined corpus has only ${t44_sum} files, expected >=15"
+
+echo
+echo "T44 AC2 -- valid/ coverage: entity codes, terminator, comment, directives, sequence, quoted labels, non-mermaid fence"
+[[ -n "$(grep -l '#59;' "${MERMAID_VALID_DIR}"/*.md 2>/dev/null || true)" ]] \
+  && pass "T44 AC2 -- a valid fixture covers #59;" || fail "T44 AC2 -- no valid fixture covers #59;"
+[[ -n "$(grep -l '#quot;' "${MERMAID_VALID_DIR}"/*.md 2>/dev/null || true)" ]] \
+  && pass "T44 AC2 -- a valid fixture covers #quot;" || fail "T44 AC2 -- no valid fixture covers #quot;"
+[[ -n "$(grep -l '#35;' "${MERMAID_VALID_DIR}"/*.md 2>/dev/null || true)" ]] \
+  && pass "T44 AC2 -- a valid fixture covers #35;" || fail "T44 AC2 -- no valid fixture covers #35;"
+[[ -n "$(grep -l 'classDef' "${MERMAID_VALID_DIR}"/*.md 2>/dev/null || true)" ]] \
+  && pass "T44 AC2 -- a valid fixture covers classDef" || fail "T44 AC2 -- no valid fixture covers classDef"
+[[ -n "$(grep -l 'linkStyle' "${MERMAID_VALID_DIR}"/*.md 2>/dev/null || true)" ]] \
+  && pass "T44 AC2 -- a valid fixture covers linkStyle" || fail "T44 AC2 -- no valid fixture covers linkStyle"
+[[ -n "$(grep -l 'sequenceDiagram' "${MERMAID_VALID_DIR}"/*.md 2>/dev/null || true)" ]] \
+  && pass "T44 AC2 -- a valid fixture covers a clean sequenceDiagram" || fail "T44 AC2 -- no valid fixture covers sequenceDiagram"
+[[ -n "$(grep -l '```text' "${MERMAID_VALID_DIR}"/*.md 2>/dev/null || true)" ]] \
+  && pass "T44 AC2 -- a valid fixture covers a non-Mermaid fence" || fail "T44 AC2 -- no valid fixture covers a non-Mermaid fence"
+[[ -n "$(grep -l '%%' "${MERMAID_VALID_DIR}"/*.md 2>/dev/null || true)" ]] \
+  && pass "T44 AC2 -- a valid fixture covers a %% comment with a semicolon" || fail "T44 AC2 -- no valid fixture covers a %% comment"
+
+echo
+echo "T44 AC3 -- invalid/ coverage: one file per required case, each with an expected-line marker"
+for _t44_case in i01-bracket-label i02-quoted-label i03-edge-pipe-label i04-curly-label i05-sequence-message; do
+  _t44_f="${MERMAID_INVALID_DIR}/${_t44_case}.md"
+  [[ -f "$_t44_f" ]] && pass "T44 AC3 -- ${_t44_case}.md exists" || fail "T44 AC3 -- ${_t44_case}.md is missing"
+  grep -q 'expected-line:' "$_t44_f" 2>/dev/null && pass "T44 AC3 -- ${_t44_case}.md carries an expected-line marker" \
+    || fail "T44 AC3 -- ${_t44_case}.md has no expected-line marker"
+done
+
+echo
+echo "T44 AC4 -- exact violation set: zero on valid/, exactly one per file (at its expected line) on invalid/"
+t44_valid_out="$(bash "$LINT_BIN" --path "$MERMAID_VALID_DIR" 2>&1)"
+check "T44 AC4 -- valid/ is CLEAN" "CLEAN" "$t44_valid_out"
+
+t44_ac4_case() {
+  local bad=0 f expected actual
+  for f in "${MERMAID_INVALID_DIR}"/*.md; do
+    expected="$(sed -n '1p' "$f" | grep -oE 'expected-line: [0-9]+' | grep -oE '[0-9]+')"
+    set +e
+    actual="$(bash "$LINT_BIN" --path "$f" 2>&1 | grep -oE ':[0-9]+: mermaid-semicolon:' | grep -oE '[0-9]+' | head -1)"
+    set -e
+    if [[ "$actual" != "$expected" ]]; then
+      bad=1
+      echo "  MISMATCH in $(basename "$f"): expected line ${expected}, got ${actual:-<none>}"
+    fi
+  done
+  [[ $bad -eq 0 ]] && pass "T44 AC4 -- every invalid/ fixture violates at exactly its recorded expected-line" \
+    || fail "T44 AC4 -- at least one invalid/ fixture's violation line did not match its expected-line marker (see above)"
+}
+t44_ac4_case
+
+echo
+echo "T44 AC5 -- false positives are a release blocker"
+t44_ac5_case() {
+  local scratch
+  scratch="$(mktemp -d /tmp/edm-t44-fp.XXXXXX)" || { fail "T44 AC5 -- mktemp failed"; return 1; }
+  cp "${MERMAID_VALID_DIR}/v01-entity-codes.md" "${scratch}/copy.md"
+
+  bash "$LINT_BIN" --path "${scratch}/copy.md" >/dev/null 2>&1 \
+    && pass "T44 AC5 -- unmodified copy of a valid fixture (with a legal #59;) still passes" \
+    || fail "T44 AC5 -- unmodified copy of a valid fixture unexpectedly failed"
+
+  printf '\n```mermaid\nflowchart TD\n    Z[Raw; semicolon] --> Y[End]\n```\n' >> "${scratch}/copy.md"
+  check_fails "T44 AC5 -- adding a raw ';' to the copy makes the suite fail" "mermaid-semicolon" \
+    bash "$LINT_BIN" --path "${scratch}/copy.md"
+
+  rm -rf "$scratch"
+}
+t44_ac5_case
+
+echo
+echo "T44 AC6 -- the corpus test runs in CI"
+# Same auto-discovery mechanism as T42 AC12: test:smoke's script is the run-all.sh aggregator,
+# which discovers every bin/tests/*-smoke.sh suite (EDMV3-T20 AC3) including this one.
+check "T44 AC6 -- .gitlab-ci.yml's test:smoke job runs the run-all.sh aggregator" \
+  "bin/tests/run-all.sh" "$(cat "$GITLAB_CI_YML" 2>/dev/null)"
+
+echo
+echo "T44 AC7 -- existing committed diagrams under tracked SRD/ trees pass"
+t44_all_out="$(bash "$LINT_BIN" --all 2>&1)"
+check "T44 AC7 -- edm-lint-artifacts --all is CLEAN across the tracked SRD tree" "CLEAN" "$t44_all_out"
+
+echo
+echo "T44 AC8 -- this suite's T44 cases use the shared _harness.sh assertions"
+t44_block="$(awk '/^# EDMV3-T44:/{f=1} f{print} /^# EDMV3-T44 end/{exit}' "${SCRIPT_DIR}/wave7-smoke.sh")"
+t44_check_uses="$(printf '%s\n' "$t44_block" | grep -c 'check_fails\|check "' || true)"
+[[ "${t44_check_uses:-0}" -gt 0 ]] \
+  && pass "T44 AC8 -- T44's own cases use check/check_fails from _harness.sh" \
+  || fail "T44 AC8 -- T44's cases do not appear to use the shared harness assertions"
+# EDMV3-T44 end
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

@@ -81,6 +81,10 @@ When a flag is off, do you (a) silently skip, (b) log INFO, (c) log WARN, or (d)
 "Typical operator workstation" maps to 0.5-8 vCPU -- too wide to be testable.
 **Fix:** `MUST complete in <=200 seconds on a 4-vCPU instance with 100 Mbps network and a pre-warmed cache.`
 
+### Literal semicolon inside a Mermaid label
+A diagram's node, edge or message label contains a raw `;` (e.g., `A[Wait; then retry] --> B`). Mermaid reserves `;` as a lexer-level statement separator even inside label text, so the diagram breaks or silently mis-renders.
+**Fix:** Use the `#59;` entity code instead of a raw semicolon (see `CLAUDE.md Sec."Mermaid diagram conventions"`); flag any raw `;` found inside `[...]`, `(...)`, `{...}`, `|...|`, `"..."`, or after the `:` in a `sequenceDiagram` message.
+
 ---
 
 ## Pre-Flight Checklist
@@ -95,6 +99,7 @@ Run before submitting an SRD to audit:
 - [ ] **API error codes complete:** Grep for `[1-5]\d\d` -- every HTTP status code found in prose must appear in the Sec.8 status-code table.
 - [ ] **Secret/security anchor:** For every secret/token/credential, verify it appears in Sec.7 Risk and has a documented mitigation. Grep `password|secret|key|token|credential|jwt|api_key`.
 - [ ] **Line-number freshness:** For any `path:line` reference, verify against current source (allow +/-2 lines; +/-10 is a finding).
+- [ ] **Mermaid semicolon scan:** Grep every diagram fence for a raw `;` inside label/edge/message text; per `CLAUDE.md Sec."Mermaid diagram conventions"` it must be the `#59;` entity code instead.
 
 ---
 
