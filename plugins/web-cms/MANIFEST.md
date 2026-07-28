@@ -33,7 +33,7 @@ INTAKE (creates Jira cards)          EXECUTION (works Jira cards)
                                          Standalone -- independently runs test-reviewer and documentation-reviewer; skips TD0 when no Jira key is provided
 
                                        /manual-qa-plan PROJ-123 (Q0-Q4)
-                                         Standalone -- reviews Jira context plus related branch diff, generates manual QA steps, and appends the plan to the issue description
+                                         Standalone -- reviews Jira context plus related branch diff, generates manual QA steps, creates a linked QA card with the plan, and references it on the issue description
 
                                        /document-card PROJ-123 (DC0-DC8)
                                          Standalone -- documents completed work

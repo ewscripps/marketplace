@@ -1,10 +1,10 @@
 ---
 name: manual-qa-plan
-description: Generate a manual QA verification plan for a Jira task, bug, or epic. Use when implementation is complete and a tester-friendly QA plan is needed — invoke with the Jira issue key whenever a task or bug has been implemented and needs verification steps before or during QA. Reviews the work item context and the related branch diff to produce prerequisites, expected results, regression scenarios, and edge cases, then appends the final QA plan to the Jira issue description.
+description: Generate a manual QA verification plan for a Jira task, bug, or epic. Use when implementation is complete and a tester-friendly QA plan is needed — invoke with the Jira issue key whenever a task or bug has been implemented and needs verification steps before or during QA. Reviews the work item context and the related branch diff to produce prerequisites, expected results, regression scenarios, and edge cases, then creates a linked QA card with the final QA plan and references it on the original Jira issue description.
 user-invocable: true
 argument-hint: "[PROJ-123]"
 disable-model-invocation: true
-allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion, mcp__plugin_web-cms_atlassian__jira_get_issue, mcp__plugin_web-cms_atlassian__jira_search, mcp__plugin_web-cms_atlassian__jira_update_issue
+allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion, mcp__plugin_web-cms_atlassian__jira_get_issue, mcp__plugin_web-cms_atlassian__jira_search, mcp__plugin_web-cms_atlassian__jira_update_issue, mcp__plugin_web-cms_atlassian__jira_create_issue, mcp__plugin_web-cms_atlassian__jira_create_issue_link
 model: sonnet
 effort: high
 ---

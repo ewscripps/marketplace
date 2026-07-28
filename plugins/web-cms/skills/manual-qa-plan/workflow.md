@@ -7,7 +7,7 @@
 3. Each phase must be fully completed before starting the next.
 4. If any phase fails, stop immediately and report the failure in the chat. Do not continue.
 5. Every required output must be presented in the chat before the phase is considered complete.
-6. This workflow does not change Jira status, post Jira comments, create branches, commit changes, push, or use destructive git commands. The only allowed Jira mutation is appending the final QA plan to the bottom of the issue description in Q4.
+6. This workflow does not change Jira status, post Jira comments, create branches, commit changes, push, or use destructive git commands. The only allowed Jira mutations are, in Q4: creating a new linked QA issue, linking it to the original issue, and appending the final QA plan to the bottom of the original issue's description.
 
 **CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
@@ -48,7 +48,7 @@
     - **Bug:** Contains `## Bug Details` and `## Fix Criteria`
     - **Epic:** Epic issue, or an issue whose description uses the epic `## Task Details` structure and represents multi-task scope
     - **Anything else:** Stop and explain that this workflow only supports Task, Bug, and Epic issues.
-- Extract the issue summary, criteria, affected areas, dependencies, scope boundaries, and any explicit risks or open items.
+- Extract the issue summary, criteria, affected areas, dependencies, scope boundaries, priority, epic link (if any), and any explicit risks or open items.
 - Recover the latest durable execution context from Jira comments when present:
     - **Task:** Latest approved implementation-plan comment, plus the latest user-testing handoff or summary comment if present
     - **Bug:** Latest approved fix-plan comment, plus the latest user-testing handoff or summary comment if present
@@ -177,18 +177,44 @@ Present a final structured summary in the chat containing ALL of the following:
 - **Assumptions / open questions:** Anything the tester or user should confirm before relying on the plan
 - **Workflow limitations:** Explicitly state that this workflow does not execute the manual tests, change Jira, or guarantee environment-specific setup beyond what was observable from the issue and repository context
 
-After reviewing the final QA plan, append it to the Jira issue description:
+**REQUIRED APPROVAL GATE:** Do not post anything to Jira until the user has reviewed the final QA plan above. Use `AskUserQuestion`:
 
-- Use the exact description text captured in Q0 as the prefix.
-- Append the QA plan as a new terminal markdown section with the heading `## Final QA Plan`.
-- The appended section must contain the final QA plan content from this phase: branch context, change summary, prerequisites, core manual QA scenarios, edge cases and negative scenarios, regression watch list, assumptions / open questions, and workflow limitations.
-- Insert the new section only at the bottom of the description. If the original description is non-empty, separate it from the appended section with exactly two newline characters.
-- Call `jira_update_issue` with the full updated description.
-- Do not modify any text that existed before the appended `## Final QA Plan` section.
+- Header: `QA Plan Review`
+- Question: `Ready to create a linked QA card with this plan and reference it on the original issue?`
+- Options:
+    - `Approve and post (Recommended)` — Create the QA card and update the original issue exactly as presented.
+    - `Revise` — Do not post. Ask what should change, update the plan, and present it again for approval.
+    - `Cancel` — Do not post. End the workflow without modifying Jira.
+
+If the user requests revisions, repeat this gate after presenting the revised plan. Do not proceed to the Jira mutations until the user selects `Approve and post`.
+
+After the user approves the final QA plan:
+
+1. **Create the linked QA card.** Call `jira_create_issue` with:
+
+    |Field|Source|
+    |---|---|
+    |Issue Type|Task|
+    |Summary|`QA: [Original Issue Title] -- [ORIGINAL-ISSUE-KEY]`|
+    |Description|The final QA plan content from this phase: branch context, change summary, prerequisites, core manual QA scenarios, edge cases and negative scenarios, regression watch list, assumptions / open questions, and workflow limitations|
+    |Priority|The original issue's priority from Q0 (default `Medium` if unavailable)|
+    |Labels|`qa` + the work type in lowercase (`task`, `bug`, or `epic`)|
+    |Epic Link|The original issue's epic link from Q0, if any|
+
+    **API notes:** Set Priority via `additional_fields`: `{"priority": {"name": "Medium"}}` (substituting the confirmed name). Set Labels via `additional_fields`: `{"labels": ["qa", "task"]}`. Set Epic Link via `additional_fields`: `{"epicKey": "EPIC-KEY"}` — only include this field if an epic link was found. Do not attempt to set the link to the original issue during `jira_create_issue` — that tool does not support it.
+
+2. **Link the QA card to the original issue.** Call `jira_create_issue_link` with `link_type: "Relates to"`, `inward_issue_key` set to the new QA card's key, and `outward_issue_key` set to the original issue's key.
+
+3. **Append a pointer and the plan to the original issue's description.** Use the exact description text captured in Q0 as the prefix and append a new terminal markdown section with the heading `## Final QA Plan`:
+    - Start the section with a line referencing the new QA card: `See [QA-CARD-KEY] for the full manual QA plan.`
+    - Follow it with the same final QA plan content used in the QA card's description: branch context, change summary, prerequisites, core manual QA scenarios, edge cases and negative scenarios, regression watch list, assumptions / open questions, and workflow limitations.
+    - Insert the new section only at the bottom of the description. If the original description is non-empty, separate it from the appended section with exactly two newline characters.
+    - Call `jira_update_issue` with the full updated description.
+    - Do not modify any text that existed before the appended `## Final QA Plan` section.
 
 If branch review had to be broadened or the user approved Jira-only planning, explicitly warn that confidence is reduced and explain why.
 
-Do not mark this workflow complete until every field above is populated and the Jira description has been updated successfully.
+Do not mark this workflow complete until every field above is populated, the QA card has been created and linked, and the original issue's description has been updated successfully.
 
 ---
 
@@ -201,4 +227,6 @@ This workflow is complete when **all** of the following are true:
 - The related branch and diff scope were identified, or the user explicitly approved reduced-context planning
 - `manual-qa-reviewer` ran and returned a `MANUAL QA REVIEW REPORT`
 - A final tester-friendly QA plan was presented in the chat with prerequisites, core scenarios, and edge cases
-- The Jira issue description was updated by appending the final QA plan at the bottom without changing any earlier description content
+- The user explicitly approved the final QA plan via the Q4 approval gate before it was posted to Jira
+- A new linked QA card was created containing the final QA plan and linked to the original issue via `jira_create_issue_link`
+- The original Jira issue description was updated by appending a pointer to the QA card and the final QA plan at the bottom, without changing any earlier description content
