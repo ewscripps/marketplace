@@ -2685,6 +2685,102 @@ check "T28 AC13 -- audit-converged wired in the dispatch table" \
 # ---- Read-only guarantee (Technical Notes: takes no lock, mutates nothing) ------------------
 check_state_unchanged "$STATE_T28CONV" "$EDM_STATE" audit-converged T28CONV
 
+# =================================================================================
+# EDMV3-T32: record-partial-verdict supports closure without losing the original note
+# =================================================================================
+echo
+echo "T32 -- record-partial-verdict close preserves the prior note and enforces single closure"
+
+"$EDM_STATE" init T32PV >/dev/null
+STATE_T32PV="$TMP/SRD/T32PV/.edm-state.json"
+
+# ---- AC1/AC2 (positive, note preserved; closed entry shape) --------------------------------
+"$EDM_STATE" record-partial-verdict T32PV T32PV-T01 PARTIAL "needs retry-logic runtime check" >/dev/null
+"$EDM_STATE" record-partial-verdict T32PV T32PV-T01 close PASS "post-deploy/verification.md#t32pv-t01" >/dev/null
+t32_ac1_note="$(jq -r '.partial_verdict_map["T32PV-T01"].prior.note' "$STATE_T32PV")"
+[[ "$t32_ac1_note" == "needs retry-logic runtime check" ]] \
+  && pass "T32 AC1 -- closure preserves the prior note under .prior.note" \
+  || fail "T32 AC1 -- .prior.note = '$t32_ac1_note', expected the original note"
+t32_ac2_shape="$(jq -e '.partial_verdict_map["T32PV-T01"] | has("prior") and has("closing_verdict") and has("closed_at") and has("verification_ref")' "$STATE_T32PV" 2>/dev/null || echo false)"
+[[ "$t32_ac2_shape" == "true" ]] \
+  && pass "T32 AC2 -- closed entry has prior/closing_verdict/closed_at/verification_ref" \
+  || fail "T32 AC2 -- closed entry is missing one or more of the four expected keys"
+t32_ac2_prior_verdict="$(jq -r '.partial_verdict_map["T32PV-T01"].prior.verdict' "$STATE_T32PV")"
+[[ "$t32_ac2_prior_verdict" == "PARTIAL" ]] \
+  && pass "T32 AC2 -- prior.verdict is the original PARTIAL" \
+  || fail "T32 AC2 -- prior.verdict = '$t32_ac2_prior_verdict', expected PARTIAL"
+t32_ac2_closing="$(jq -r '.partial_verdict_map["T32PV-T01"].closing_verdict' "$STATE_T32PV")"
+[[ "$t32_ac2_closing" == "PASS" ]] && pass "T32 AC2 -- closing_verdict = PASS" \
+  || fail "T32 AC2 -- closing_verdict = '$t32_ac2_closing', expected PASS"
+
+# ---- AC3 (negative, single closure) ---------------------------------------------------------
+check_fails "T32 AC3 -- second closure attempt refused, naming the existing closure" \
+  "already closed" "$EDM_STATE" record-partial-verdict T32PV T32PV-T01 close FAIL "some-other-ref"
+check_state_unchanged "$STATE_T32PV" "$EDM_STATE" record-partial-verdict T32PV T32PV-T01 close FAIL "some-other-ref"
+
+# ---- AC4 (positive, the sanctioned exception): FAIL then re-close appends to history --------
+"$EDM_STATE" record-partial-verdict T32PV T32PV-T02 PARTIAL "needs check" >/dev/null
+"$EDM_STATE" record-partial-verdict T32PV T32PV-T02 close FAIL "post-deploy/verification.md#t32pv-t02-fail" >/dev/null
+"$EDM_STATE" record-partial-verdict T32PV T32PV-T02 close PASS "post-deploy/verification.md#t32pv-t02-pass" >/dev/null
+t32_ac4_history_len="$(jq -r '.partial_verdict_map["T32PV-T02"].closure_history | length' "$STATE_T32PV")"
+[[ "$t32_ac4_history_len" == "2" ]] \
+  && pass "T32 AC4 -- FAIL then re-close appends to closure_history (length 2)" \
+  || fail "T32 AC4 -- closure_history length = '$t32_ac4_history_len', expected 2"
+t32_ac4_final="$(jq -r '.partial_verdict_map["T32PV-T02"].closing_verdict' "$STATE_T32PV")"
+[[ "$t32_ac4_final" == "PASS" ]] && pass "T32 AC4 -- the current closing_verdict reflects the re-close (PASS)" \
+  || fail "T32 AC4 -- closing_verdict = '$t32_ac4_final', expected PASS"
+t32_ac4_first_fail="$(jq -r '.partial_verdict_map["T32PV-T02"].closure_history[0].closing_verdict' "$STATE_T32PV")"
+[[ "$t32_ac4_first_fail" == "FAIL" ]] \
+  && pass "T32 AC4 -- the original FAIL closure is preserved in closure_history[0]" \
+  || fail "T32 AC4 -- closure_history[0].closing_verdict = '$t32_ac4_first_fail', expected FAIL"
+
+# ---- AC5 (negative, unknown ticket) ----------------------------------------------------------
+check_fails "T32 AC5 -- closing an unknown ticket is refused" \
+  "unknown ticket" "$EDM_STATE" record-partial-verdict T32PV T32PV-NOSUCHTICKET close PASS "ref"
+check_state_unchanged "$STATE_T32PV" "$EDM_STATE" record-partial-verdict T32PV T32PV-NOSUCHTICKET close PASS "ref"
+
+# ---- AC6 (existing callers unchanged): the open/record form still works exactly as before ----
+"$EDM_STATE" record-partial-verdict T32PV T32PV-T03 PASS >/dev/null
+t32_ac6_verdict="$(jq -r '.partial_verdict_map["T32PV-T03"].verdict' "$STATE_T32PV")"
+[[ "$t32_ac6_verdict" == "PASS" ]] && pass "T32 AC6 -- the unchanged open/record form still writes {verdict, note, recorded_at}" \
+  || fail "T32 AC6 -- open/record form verdict = '$t32_ac6_verdict', expected PASS"
+t32_ac6_no_closure_keys="$(jq -r '.partial_verdict_map["T32PV-T03"] | has("closing_verdict")' "$STATE_T32PV")"
+[[ "$t32_ac6_no_closure_keys" == "false" ]] \
+  && pass "T32 AC6 -- a plain open/record entry carries no closure fields" \
+  || fail "T32 AC6 -- a plain open/record entry unexpectedly has closing_verdict"
+
+# ---- AC7 (C-4, legacy entry shape reads as unclosed) -----------------------------------------
+jq '.partial_verdict_map["T32PV-LEGACY"] = {verdict: "PARTIAL", note: "pre-T32 shape", recorded_at: "2020-01-01T00:00:00Z"}' \
+  "$STATE_T32PV" > "$STATE_T32PV.tmp" && mv "$STATE_T32PV.tmp" "$STATE_T32PV"
+t32_ac7_unclosed="$(jq -r '.partial_verdict_map["T32PV-LEGACY"] | has("closing_verdict")' "$STATE_T32PV")"
+[[ "$t32_ac7_unclosed" == "false" ]] \
+  && pass "T32 AC7 -- a legacy-shape entry (no closure fields) reads as unclosed" \
+  || fail "T32 AC7 -- legacy entry unexpectedly reports has(closing_verdict)=true"
+
+# ---- AC9 (negative, no third verdict): BLOCKED (or any non-PASS/FAIL) closing verdict refused
+"$EDM_STATE" record-partial-verdict T32PV T32PV-T04 PARTIAL "needs check" >/dev/null
+check_fails "T32 AC9 -- a BLOCKED closing verdict is refused, naming the two legal values" \
+  "PASS|FAIL" "$EDM_STATE" record-partial-verdict T32PV T32PV-T04 close BLOCKED "ref"
+check_state_unchanged "$STATE_T32PV" "$EDM_STATE" record-partial-verdict T32PV T32PV-T04 close BLOCKED "ref"
+
+# ---- AC8 (atomicity): every write goes through rmw_state; bin/edm-state passes bash -n -------
+bash -n "$EDM_STATE" && pass "T32 AC8 -- bin/edm-state passes bash -n" \
+  || fail "T32 AC8 -- bin/edm-state failed bash -n"
+jq -e . "$STATE_T32PV" >/dev/null 2>&1 && pass "T32 AC8 -- state file is valid JSON after every T32 write" \
+  || fail "T32 AC8 -- state file is not valid JSON"
+
+# ---- AC6 (existing callers, hooks/skill single-write path stays green) -----------------------
+echo
+echo "T32 AC6 -- wave4b-smoke.sh (existing PARTIAL-recording callers) stays green"
+t32_wave4b_out="$(bash "${SCRIPT_DIR}/wave4b-smoke.sh" 2>&1)"
+t32_wave4b_ec=$?
+[[ $t32_wave4b_ec -eq 0 ]] && pass "T32 AC6 -- wave4b-smoke.sh exits 0 (existing single-write callers unaffected)" \
+  || fail "T32 AC6 -- wave4b-smoke.sh exited ${t32_wave4b_ec}"
+
+# ---- Surfaced in --help -----------------------------------------------------------------
+t32_help_lines="$("$EDM_STATE" --help 2>&1 | grep 'record-partial-verdict' || true)"
+check "T32 -- the 'close' usage form is documented in --help" "close" "$t32_help_lines"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

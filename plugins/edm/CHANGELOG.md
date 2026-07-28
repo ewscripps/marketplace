@@ -56,6 +56,19 @@ behavioural, breaking-change and required-user-action summary once the whole wav
   hardcoded wave-A interim literal `"absent"`, when `code-audit/findings-ledger.jsonl` exists at
   approval time.
 
+### Added (continued)
+
+- **`edm-state record-partial-verdict <PREFIX> <ticket> close <PASS|FAIL> <verification_ref>`**
+  (EDMV3-T32): closes an existing PARTIAL entry in `partial_verdict_map` without losing the
+  original note -- the whole prior entry (verdict, note, recorded_at) nests under a `prior` key
+  alongside the new `closing_verdict`, `closed_at` and `verification_ref`. An entry may be
+  closed only once; the sole exception is re-closing an entry whose existing closure was
+  `FAIL` (after remediation), which appends to a `closure_history` array instead of
+  overwriting. Only `PASS` and `FAIL` are legal closing verdicts. The existing
+  `<PREFIX> <ticket> <PASS|PARTIAL|FAIL> [<note>]` open/record form (used by
+  `hooks/hooks.json`'s `SubagentStop` handler and `skills/implement/SKILL.md`) is unchanged --
+  the literal third argument `close` disambiguates the two forms.
+
 ## [2.1.0] — 2026-07-27
 
 Wave A of EDMV3 (prompt-streamline): the enforcement kernel, the mechanical-fixes epic, the CI

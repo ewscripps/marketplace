@@ -40,6 +40,7 @@
 #   edm-state render-ledger <PREFIX>                                   # deterministically render findings-ledger.md from findings-ledger.jsonl
 #   edm-state audit-converged <PREFIX>                                 # query code-audit convergence over findings-ledger.jsonl (read-only)
 #   edm-state record-partial-verdict <PREFIX> <ticket> <verdict> [note]  # persist per-ticket PASS/PARTIAL/FAIL
+#   edm-state record-partial-verdict <PREFIX> <ticket> close <PASS|FAIL> <verification_ref>  # close an existing PARTIAL verdict
 #   edm-state set-mode <PREFIX> <kind> <value>                        # set mode, lifecycle_mode, compliance_enabled, or implementation_mode
 #   edm-state skip-phase <PREFIX> <phase-num> <rationale>              # record an intentionally skipped phase (rationale required, EDMV3-94)
 #   edm-state set-supersedes <PREFIX> <other-prefix>                  # record which initiative this supersedes
@@ -2709,14 +2710,83 @@ cmd_audit_converged() {
   return 1
 }
 
-# ---- Partial verdict tracking (T67) -----------------------------------------
-# record-partial-verdict <PREFIX> <ticket> <PASS|PARTIAL|FAIL> [<note>]
-# Persists a per-ticket verdict into partial_verdict_map.
+# ---- Partial verdict tracking (T67, closure support EDMV3-T32) --------------
+# record-partial-verdict <PREFIX> <ticket> <PASS|PARTIAL|FAIL> [<note>]         -- open/record
+# record-partial-verdict <PREFIX> <ticket> close <PASS|FAIL> <verification_ref> -- close
+# The first (existing, unchanged, AC6) form persists a per-ticket verdict into
+# partial_verdict_map. The second (new, EDMV3-T32) form closes an existing PARTIAL entry: the
+# literal third argument "close" disambiguates it from a verdict (never a legal value of the
+# first form), so hooks/hooks.json:117 and skills/implement/SKILL.md:98 -- both single-write
+# callers of the first form -- are unaffected.
 
 cmd_record_partial_verdict() {
-  [[ $# -ge 3 ]] || die "usage: edm-state record-partial-verdict <PREFIX> <ticket> <PASS|PARTIAL|FAIL> [<note>]"
+  [[ $# -ge 3 ]] || die "usage: edm-state record-partial-verdict <PREFIX> <ticket> <PASS|PARTIAL|FAIL> [<note>]  |  edm-state record-partial-verdict <PREFIX> <ticket> close <PASS|FAIL> <verification_ref>"
   require_jq
-  local prefix="$1" ticket="$2" verdict="$3" note="${4:-}"
+  local prefix="$1" ticket="$2" verdict_or_close="$3"
+
+  if [[ "$verdict_or_close" == "close" ]]; then
+    [[ $# -eq 5 ]] || die "usage: edm-state record-partial-verdict <PREFIX> <ticket> close <PASS|FAIL> <verification_ref>"
+    local closing_verdict="$4" verification_ref="$5"
+    # AC9: no third verdict -- only PASS or FAIL are legal closing verdicts.
+    case "$closing_verdict" in
+      PASS|FAIL) ;;
+      *) die "record-partial-verdict close: unknown closing verdict '$closing_verdict' (expected: PASS|FAIL)" ;;
+    esac
+    [[ -n "$verification_ref" ]] || die "record-partial-verdict close: verification_ref must be non-empty"
+
+    # AC5: unknown ticket exits non-zero and mutates nothing (checked before any rmw_state call).
+    local existing already_closed already_closing_verdict already_closed_at
+    existing="$(read_state "$prefix" | jq -c --arg tk "$ticket" '.partial_verdict_map[$tk] // null')"
+    [[ "$existing" != "null" ]] || die "record-partial-verdict close: unknown ticket '${ticket}' for ${prefix} (no entry in partial_verdict_map)"
+
+    already_closed="$(echo "$existing" | jq -r 'has("closing_verdict")')"
+    already_closing_verdict="$(echo "$existing" | jq -r '.closing_verdict // ""')"
+    already_closed_at="$(echo "$existing" | jq -r '.closed_at // "unknown"')"
+
+    if [[ "$already_closed" == "true" ]]; then
+      if [[ "$already_closing_verdict" != "FAIL" ]]; then
+        # AC3: an entry may be closed only once -- refused naming the existing closure. The
+        # sole sanctioned exception (AC4, below) is re-closing an entry whose existing closure
+        # was FAIL.
+        die "record-partial-verdict close: ${ticket} is already closed (${already_closing_verdict} at ${already_closed_at}) for ${prefix}; an entry may be closed only once unless the existing closure was FAIL"
+      fi
+      # AC4: FAIL-closed entries may be re-closed after remediation; the closure this call is
+      # about to make is appended to a closure history array rather than overwriting the prior
+      # closure, so the FAIL record is never lost.
+      rmw_state "$prefix" '
+        .partial_verdict_map[$tk] as $e
+        | .partial_verdict_map[$tk] = (
+            $e
+            | .closure_history = ((.closure_history // [{closing_verdict: .closing_verdict, closed_at: .closed_at, verification_ref: .verification_ref}]) + [{closing_verdict: $cv, closed_at: $ts, verification_ref: $ref}])
+            | .closing_verdict = $cv
+            | .closed_at = $ts
+            | .verification_ref = $ref
+          )
+        | .last_updated = $ts
+      ' --arg tk "$ticket" --arg cv "$closing_verdict" --arg ref "$verification_ref" --arg ts "$(now_utc)"
+      echo "re-closed verdict: $ticket = $closing_verdict (was FAIL) for $prefix; closure history recorded"
+      return 0
+    fi
+
+    # AC1/AC2: first closure -- nest the whole original entry under `prior` (not just the note,
+    # so a future field added to the open shape survives closure automatically) rather than
+    # overwriting it, alongside the new closing_verdict/closed_at/verification_ref.
+    rmw_state "$prefix" '
+      .partial_verdict_map[$tk] as $e
+      | .partial_verdict_map[$tk] = {
+          prior: $e,
+          closing_verdict: $cv,
+          closed_at: $ts,
+          verification_ref: $ref
+        }
+      | .last_updated = $ts
+    ' --arg tk "$ticket" --arg cv "$closing_verdict" --arg ref "$verification_ref" --arg ts "$(now_utc)"
+    echo "closed verdict: $ticket = $closing_verdict (was ${already_closing_verdict:-PARTIAL}) for $prefix"
+    return 0
+  fi
+
+  # ---- Existing open/record path (unchanged, AC6) --------------------------------------------
+  local verdict="$verdict_or_close" note="${4:-}"
   case "$verdict" in
     PASS|PARTIAL|FAIL) ;;
     *) die "record-partial-verdict: unknown verdict '$verdict' (expected: PASS|PARTIAL|FAIL)" ;;
