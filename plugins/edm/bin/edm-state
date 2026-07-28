@@ -36,7 +36,7 @@
 #   edm-state migrate-path --product <n> --description <s> <PREFIX>  # opt-in move to product-scoped layout
 #   edm-state current-step <PREFIX> [<step>]                          # read/write orchestrator step (compaction resume)
 #   edm-state session-start                                           # emit resume points for active initiatives (SessionStart hook)
-#   edm-state audit-round-start <PREFIX> <code|srd|tickets>           # increment audit-round counter, echo new value
+#   edm-state audit-round-start <PREFIX> <code|srd|tickets> [--lenses L1,L3]  # increment audit-round counter (also records lens set + round_type), echo new value
 #   edm-state render-ledger <PREFIX>                                   # deterministically render findings-ledger.md from findings-ledger.jsonl
 #   edm-state record-partial-verdict <PREFIX> <ticket> <verdict> [note]  # persist per-ticket PASS/PARTIAL/FAIL
 #   edm-state set-mode <PREFIX> <kind> <value>                        # set mode, lifecycle_mode, compliance_enabled, or implementation_mode
@@ -642,6 +642,27 @@ schema_at_least() {
     echo 1
   fi
 }
+
+# ---- Audit round shared definitions (EDMV3-T27) -----------------------------
+# ALL_LENS_IDS -- the eleven canonical code-audit lens IDs, single source (EDMV3-T27 Technical
+# Notes: "Hardcode the list once next to the derivation and assert its length is 11"). bash 3.2
+# has no portable array-as-constant idiom usable across functions, so this follows the identical
+# space-separated-string + word-membership pattern MODE_ENUM_LIST/LIFECYCLE_MODE_ENUM_LIST use
+# above, for the same reason.
+ALL_LENS_IDS="L1 L2 L3 L4 L5 L6 L7 L8 L9 L10 L11"
+[[ "$(echo $ALL_LENS_IDS | wc -w | tr -d ' ')" -eq 11 ]] || die "internal: ALL_LENS_IDS must enumerate exactly 11 lenses"
+
+# AUDIT_ROUND_COERCE_JQ_DEF -- the single C-4 coercion for audit_rounds.<type> (EDMV3-T27 AC1a).
+# Every state file written before this ticket (and the archived EDMV2 fixture literally) stores
+# audit_rounds.<type> as a bare integer round COUNT. This ticket widens the shape to
+# {count, rounds: [...]} so a round can carry its lens set and round_type -- but no legacy file
+# is rewritten (AC1a), so every reader of audit_rounds.<type> pipes the raw value through this
+# one jq `def` first: a bare number N reads as {count: N, rounds: []} (no per-round detail
+# available, which is exactly the "unknown round type" case AC6 handles); a value already in the
+# new shape passes through with `rounds` defaulted to `[]` so a partially-written object never
+# crashes a `.rounds[-1]` lookup downstream. Embedded as source text into each jq program that
+# needs it (bash has no way to pass a jq function value directly).
+AUDIT_ROUND_COERCE_JQ_DEF='def coerce_round_entry: if type == "number" then {count: ., rounds: []} elif type == "object" then (. + {rounds: (.rounds // [])}) else {count: 0, rounds: []} end;'
 
 # ---- State anomaly detection (T29, class split EDMV3-T05 / EDMV3-118) ------
 # state_anomalies <PREFIX>
@@ -2435,22 +2456,73 @@ cmd_render_ledger() {
   echo "rendered ${init_dir}/code-audit/findings-ledger.md"
 }
 
-# ---- Audit round tracking (T56) ---------------------------------------------
-# audit-round-start <PREFIX> <code|srd|tickets>
-# Increments the round counter for the given audit type and echoes the new value.
+# ---- Audit round tracking (T56, widened EDMV3-T27) --------------------------
+# audit-round-start <PREFIX> <code|srd|tickets> [--lenses <comma-list>]
+# Increments the round counter for the given audit type and echoes the new round number
+# (unchanged external contract: `N=$(edm-state audit-round-start <PREFIX> code)`). Additively
+# (EDMV3-T27 AC1) records the round's lens set and derived round_type -- full when all eleven
+# lenses ran (or --lenses was omitted, matching skills/code-audit/SKILL.md's existing "absence
+# of --lenses means run all 11" convention), partial otherwise -- inside audit_rounds.<type>,
+# which this ticket widens from a bare integer to {count, rounds: [...]} (AC1a, the sanctioned
+# C-4 type widening; see AUDIT_ROUND_COERCE_JQ_DEF above). No existing file is rewritten by this
+# widening -- every reader coerces at read time, including this command's own read of a
+# pre-existing bare-integer count on its very first post-upgrade call.
 
 cmd_audit_round_start() {
-  [[ $# -eq 2 ]] || die "usage: edm-state audit-round-start <PREFIX> <code|srd|tickets>"
+  [[ $# -ge 2 ]] || die "usage: edm-state audit-round-start <PREFIX> <code|srd|tickets> [--lenses <comma-list>]"
   require_jq
   local prefix="$1" audit_type="$2"
+  shift 2
   case "$audit_type" in
     code|srd|tickets) ;;
     *) die "audit-round-start: unknown audit type '$audit_type' (expected: code|srd|tickets)" ;;
   esac
-  rmw_state "$prefix" '.audit_rounds[$t] = ((.audit_rounds[$t] // 0) + 1) | .last_updated = $ts' \
-    --arg t "$audit_type" --arg ts "$(now_utc)"
-  # Re-read to echo the new round number
-  read_state "$prefix" | jq -r --arg t "$audit_type" '.audit_rounds[$t]'
+
+  local lenses_arg=""
+  if [[ $# -gt 0 ]]; then
+    case "$1" in
+      --lenses)
+        [[ $# -eq 2 && -n "${2:-}" ]] || die "audit-round-start: --lenses requires a non-empty comma-separated value"
+        lenses_arg="$2"
+        ;;
+      *) die "audit-round-start: unknown argument '$1' (expected: --lenses <comma-list>)" ;;
+    esac
+  fi
+
+  local lenses_json round_type
+  if [[ -z "$lenses_arg" ]]; then
+    # No --lenses given: full round by definition (mirrors skills/code-audit/SKILL.md step 1's
+    # existing "if --lenses is omitted, run all 11" rule). Also the correct default for the
+    # srd/tickets audit types, which have no lens concept at all.
+    lenses_json="[]"
+    round_type="full"
+  else
+    lenses_json="$(printf '%s' "$lenses_arg" | tr ',' '\n' | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//' | grep -v '^$' | jq -R . | jq -s .)"
+    local given_sorted all_sorted
+    given_sorted="$(printf '%s' "$lenses_json" | jq -r 'sort | join(",")')"
+    all_sorted="$(printf '%s\n' $ALL_LENS_IDS | sort | tr '\n' ',' | sed 's/,$//')"
+    if [[ "$given_sorted" == "$all_sorted" ]]; then
+      round_type="full"
+    else
+      round_type="partial"
+    fi
+  fi
+
+  local ts
+  ts="$(now_utc)"
+  rmw_state "$prefix" "
+      ${AUDIT_ROUND_COERCE_JQ_DEF}
+      (.audit_rounds[\$t] // 0 | coerce_round_entry) as \$existing
+      | (\$existing.count + 1) as \$new_count
+      | .audit_rounds[\$t] = {
+          count: \$new_count,
+          rounds: (\$existing.rounds + [{round: \$new_count, lenses: \$lenses, round_type: \$rt, started_at: \$ts}])
+        }
+      | .last_updated = \$ts
+    " --arg t "$audit_type" --argjson lenses "$lenses_json" --arg rt "$round_type" --arg ts "$ts"
+
+  # Re-read to echo the new round number (count), the same external contract as before.
+  read_state "$prefix" | jq -r --arg t "$audit_type" "${AUDIT_ROUND_COERCE_JQ_DEF} (.audit_rounds[\$t] // 0 | coerce_round_entry).count"
 }
 
 # ---- Partial verdict tracking (T67) -----------------------------------------

@@ -20,6 +20,20 @@ behavioural, breaking-change and required-user-action summary once the whole wav
   `record_artifact_hash` helper so `edm-state checkpoint-if-active`'s drift loop warns on a
   hand-edit out of band. Refuses (non-zero exit, writes nothing) with a message distinguishing
   "no audit has run" from "the render failed" when `findings-ledger.jsonl` is absent or invalid.
+- **`edm-state audit-round-start` records the round's lens set and `round_type`** (EDMV3-T27):
+  a new optional `--lenses <comma-list>` argument records which lenses ran; `round_type` is
+  derived as `full` when all eleven lenses ran (or `--lenses` was omitted) and `partial`
+  otherwise. `audit_rounds.<type>` widens from a bare integer round-count to
+  `{count, rounds: [...]}` to hold this per-round detail (the one sanctioned C-4 type widening
+  in this initiative) -- no existing state file is rewritten; every reader coerces a bare
+  integer to `{count: N, rounds: []}` at read time. The external contract of
+  `N=$(edm-state audit-round-start <PREFIX> code)` is unchanged (still echoes the round number).
+
+### Changed
+
+- **`wave4a-smoke.sh`'s `audit_rounds.code` assertion re-baselined** (EDMV3-T27, same commit as
+  the widening): reads `.audit_rounds.code.count` instead of the old bare-integer
+  `.audit_rounds.code`.
 
 ## [2.1.0] — 2026-07-27
 

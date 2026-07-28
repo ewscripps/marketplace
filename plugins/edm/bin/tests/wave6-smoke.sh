@@ -2452,6 +2452,88 @@ check_fails "T26 AC10 -- render-ledger with no JSONL refuses, naming 'no code au
   && pass "T26 AC10 -- no findings-ledger.md written when the JSONL is absent" \
   || fail "T26 AC10 -- findings-ledger.md was written despite the missing JSONL"
 
+# =================================================================================
+# EDMV3-T27: rounds record their lens set, so a partial round can never compute convergence
+# =================================================================================
+echo
+echo "T27 -- audit-round-start records lens set + round_type; audit_rounds widens to {count, rounds}"
+
+"$EDM_STATE" init T27ROUND >/dev/null
+STATE_T27ROUND="$TMP/SRD/T27ROUND/.edm-state.json"
+
+# ---- AC1 (positive, full round -- no --lenses given) ---------------------------------------
+round_full="$("$EDM_STATE" audit-round-start T27ROUND code)"
+[[ "$round_full" == "1" ]] && pass "T27 AC1 -- audit-round-start still echoes the round number (1)" \
+  || fail "T27 AC1 -- audit-round-start echoed '$round_full', expected 1"
+full_round_type="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$STATE_T27ROUND")"
+[[ "$full_round_type" == "full" ]] && pass "T27 AC1 -- omitting --lenses records round_type=full" \
+  || fail "T27 AC1 -- round_type = '$full_round_type', expected full"
+
+# ---- AC1 (positive, partial round -- --lenses given a strict subset) -----------------------
+round_partial="$("$EDM_STATE" audit-round-start T27ROUND code --lenses L1,L9,L11)"
+[[ "$round_partial" == "2" ]] && pass "T27 AC1 -- second round still echoes 2 (unchanged external contract)" \
+  || fail "T27 AC1 -- audit-round-start echoed '$round_partial', expected 2"
+"$EDM_STATE" get T27ROUND | jq -e '.audit_rounds.code.rounds[-1].round_type == "partial"' >/dev/null \
+  && pass "T27 AC1 -- --lenses L1,L9,L11 records round_type=partial" \
+  || fail "T27 AC1 -- round_type is not 'partial' after a 3-of-11 lens round"
+partial_lenses="$(jq -r '.audit_rounds.code.rounds[-1].lenses | join(",")' "$STATE_T27ROUND")"
+[[ "$partial_lenses" == "L1,L9,L11" ]] && pass "T27 AC1 -- the recorded lens set matches --lenses exactly" \
+  || fail "T27 AC1 -- recorded lenses = '$partial_lenses', expected L1,L9,L11"
+
+# ---- AC1 (full round via an explicit --lenses listing all eleven) --------------------------
+round_all11="$("$EDM_STATE" audit-round-start T27ROUND code --lenses L1,L2,L3,L4,L5,L6,L7,L8,L9,L10,L11)"
+all11_round_type="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$STATE_T27ROUND")"
+[[ "$all11_round_type" == "full" ]] && pass "T27 AC1 -- --lenses listing all eleven records round_type=full" \
+  || fail "T27 AC1 -- round_type = '$all11_round_type', expected full for an explicit all-11 listing"
+
+# ---- srd/tickets audit types: independent counters, always full (no lens concept) ----------
+round_srd27="$("$EDM_STATE" audit-round-start T27ROUND srd)"
+[[ "$round_srd27" == "1" ]] && pass "T27 -- srd round type is independent of code's counter" \
+  || fail "T27 -- srd round = '$round_srd27', expected 1"
+srd_round_type="$(jq -r '.audit_rounds.srd.rounds[-1].round_type' "$STATE_T27ROUND")"
+[[ "$srd_round_type" == "full" ]] && pass "T27 -- srd audit type has no lens concept, records round_type=full" \
+  || fail "T27 -- srd round_type = '$srd_round_type', expected full"
+
+# ---- AC1a (C-4, the sanctioned type widening): a legacy bare-integer audit_rounds.<type> is
+# coerced on the very next write, rather than erroring or losing the existing count -----------
+echo
+echo "T27 AC1a -- legacy bare-integer audit_rounds.code coerces on the next write"
+"$EDM_STATE" init T27LEGACY >/dev/null
+STATE_T27LEGACY="$TMP/SRD/T27LEGACY/.edm-state.json"
+jq '.audit_rounds = {"code": 2}' "$STATE_T27LEGACY" > "$STATE_T27LEGACY.tmp" && mv "$STATE_T27LEGACY.tmp" "$STATE_T27LEGACY"
+pre_legacy_type="$(jq -r '.audit_rounds.code | type' "$STATE_T27LEGACY")"
+[[ "$pre_legacy_type" == "number" ]] && pass "T27 AC1a -- fixture starts with the legacy bare-integer shape" \
+  || fail "T27 AC1a -- fixture audit_rounds.code type = '$pre_legacy_type', expected number"
+"$EDM_STATE" audit-round-start T27LEGACY code >/dev/null
+legacy_count="$(jq -r '.audit_rounds.code.count' "$STATE_T27LEGACY")"
+[[ "$legacy_count" == "3" ]] && pass "T27 AC1a -- coerced count continues from the legacy integer (2 -> 3)" \
+  || fail "T27 AC1a -- audit_rounds.code.count = '$legacy_count', expected 3"
+legacy_rounds_len="$(jq -r '.audit_rounds.code.rounds | length' "$STATE_T27LEGACY")"
+[[ "$legacy_rounds_len" == "1" ]] && pass "T27 AC1a -- only the new round is recorded in detail (no fabricated history)" \
+  || fail "T27 AC1a -- rounds array length = '$legacy_rounds_len', expected 1 (the two legacy rounds have no per-round detail)"
+
+# ---- AC8 (atomicity and bash 3.2): valid JSON after the write, bash -n on the script --------
+echo
+echo "T27 AC8 -- audit-round-start leaves valid JSON; bin/edm-state passes bash -n"
+jq -e . "$STATE_T27ROUND" >/dev/null 2>&1 \
+  && pass "T27 AC8 -- state file is valid JSON after audit-round-start" \
+  || fail "T27 AC8 -- state file is not valid JSON after audit-round-start"
+bash -n "$EDM_STATE" && pass "T27 AC8 -- bin/edm-state passes bash -n" \
+  || fail "T27 AC8 -- bin/edm-state failed bash -n"
+
+# ---- Negative: unknown audit type / malformed --lenses still refused -----------------------
+echo
+check_fails "T27 -- unknown audit type still refused" "unknown audit type" \
+  "$EDM_STATE" audit-round-start T27ROUND bogus
+check_fails "T27 -- --lenses with no value refused" "requires a non-empty" \
+  "$EDM_STATE" audit-round-start T27ROUND code --lenses
+check_fails "T27 -- unknown flag after audit type refused" "unknown argument" \
+  "$EDM_STATE" audit-round-start T27ROUND code --bogus L1
+
+# ---- Surfaced in --help -----------------------------------------------------------------
+t27_help_line="$("$EDM_STATE" --help 2>&1 | grep 'audit-round-start' || true)"
+check "T27 -- --lenses documented on the audit-round-start help line" "--lenses" "$t27_help_line"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
