@@ -50,19 +50,41 @@ unambiguous and the tool surface stays minimal.
       step ends after the execution report is written and states that Phase 6 closure belongs to the
       orchestrator's Phase 6 entry. It does **not** call `phase-complete 6` itself and is not given a
       `Skill` grant to chain `verify-runtime`.
-      Verify: `grep -rl 'phase-complete <PREFIX> 6' plugins/edm/skills/implement/ | wc -l` prints 0,
-      and `grep -n '^allowed-tools:' plugins/edm/skills/implement/SKILL.md | grep -c 'Skill'`
-      prints 0. (The earlier `grep -c 'Skill' <file>` matched the word inside prose and inside
-      `SKILL.md` self-references, so it could never return 0; the assertion is scoped to the
-      `allowed-tools` line, which is the thing that must not contain it.)
+      Verify: `bash plugins/edm/bin/tests/wave6-smoke.sh` (cases "Step 8 states Phase 6 closure
+      belongs to the orchestrator, not this skill", "Operational Orchestration list no longer
+      instructs phase-complete 6 as an owned step", and "implement/SKILL.md's allowed-tools line
+      carries no Skill grant"), plus
+      `grep -n '^allowed-tools:' plugins/edm/skills/implement/SKILL.md | grep -c 'Skill'` prints 0.
+      **Note -- why the obvious command does not work.** The obvious form,
+      `grep -rl 'phase-complete <PREFIX> 6' plugins/edm/skills/implement/ | wc -l` prints 0, is
+      unsatisfiable: AC5 below *requires* that exact string in `skills/implement/SKILL.md` so a user
+      who never runs the orchestrator still gets the two-command sequence. A future reader running
+      the literal grep sees 1, reads it as a failure, and "fixes" it by deleting the AC5 text. What
+      AC2 actually forbids is `implement` closing the phase *itself*, which is asserted positively
+      (the ownership sentence is present) and negatively (the numbered `9. edm-state phase-complete`
+      step is absent) at `plugins/edm/bin/tests/wave6-smoke.sh:3100-3109`. The `allowed-tools`
+      assertion is kept because it is exact: the earlier `grep -c 'Skill' <file>` form matched the
+      word inside prose and inside `SKILL.md` self-references, so it could never return 0.
 - [ ] AC3 (negative, code-audit does not either): `skills/code-audit/SKILL.md` does not call
       `phase-complete 6`; the responsibility lives in exactly one place and the other skills
       reference it.
       Verify: `grep -rl 'phase-complete' plugins/edm/skills/code-audit/ | wc -l` prints 0.
-- [ ] AC4 (exactly one call site, asserted): a smoke assertion checks that exactly one
-      `phase-complete <PREFIX> 6` invocation exists across all skill files.
-      Verify: `bash plugins/edm/bin/tests/wave7-smoke.sh` (case "exactly one phase-complete 6 call
-      site").
+- [ ] AC4 (exactly one *owning* call site, asserted): a smoke assertion checks that exactly one skill
+      file owns the automatic `phase-complete <PREFIX> 6` call -- the orchestrator -- and that the
+      other two files carrying the string are the documented direct-invocation restatements, not
+      second owners.
+      Verify: `bash plugins/edm/bin/tests/wave6-smoke.sh` (case "exactly one owning phase-complete 6
+      call site, plus the two documented direct-invocation restatements"), which asserts
+      `grep -rl 'phase-complete <PREFIX> 6' plugins/edm/skills/*/SKILL.md | wc -l` is **3** and
+      `grep -rl 'single owner of that call' plugins/edm/skills/*/SKILL.md | wc -l` is **1**.
+      **Note -- why the obvious command does not work.** "Exactly one call site" read as "exactly one
+      file contains the string" collides with two other ACs that deliberately put the string in two
+      more files: AC5 (`skills/implement/SKILL.md`'s direct-invocation sequence) and EDMV3-T33's
+      `skills/verify-runtime/SKILL.md`, which restates the same sequence for the same reason. A
+      future reader asserting 1 sees 3, reads it as a failure, and "fixes" it by deleting documented
+      user-facing guidance. Ownership, not string count, is the invariant: it is carried by the
+      `single owner of that call` marker, which appears exactly once. Re-baselined at
+      `plugins/edm/bin/tests/wave6-smoke.sh:3124-3129`.
 - [ ] AC5 (ordering, direct-invocation path): for users who never run the orchestrator,
       `skills/implement/SKILL.md` Step 8 and the `README.md` command table state the two-command
       sequence -- `/edm:verify-runtime <PREFIX>` then `edm-state phase-complete <PREFIX> 6`. The
@@ -247,7 +269,17 @@ pre-deciding it.
       script constants").
 - [ ] AC8 (override mechanism preserved): the existing environment-variable override mechanism is
       preserved, and the override names are updated if model identifiers change.
-      Verify: `EDM_OPUS_INPUT_RATE=99 edm-state metrics-report TESTX` reflects the override.
+      Verify: `bash plugins/edm/bin/tests/wave6-smoke.sh` (case "EDM_OPUS_INPUT_RATE=99 override
+      reflected in compute_cost_usd"), which calls the mechanism directly --
+      `EDM_OPUS_INPUT_RATE=99 compute_cost_usd claude-opus-4-8-20260701 1000000 0 0 0 0` returns
+      exactly `99.0000`.
+      **Note -- why the obvious command does not work.** `EDM_OPUS_INPUT_RATE=99 edm-state
+      metrics-report TESTX` cannot demonstrate the override: `metrics-report` renders the
+      `estimated_cost_usd` already **recorded** in `.edm-state.json` at `phase-complete` time, it
+      does not recompute cost at report time, so the env var has nothing to act on and the output is
+      byte-identical with and without it. A future reader would read that as the override being
+      broken. The override lives in `compute_cost_usd`, so that is where it is asserted --
+      `plugins/edm/bin/tests/wave6-smoke.sh:3430-3436`.
 - [ ] AC9 (C-4, old identifiers still cost): model-identifier matching in `compute_cost_usd` handles
       both the previous and current generation identifiers, so archived state files with old
       `model_used` values still render a cost rather than falling through to zero.
@@ -314,7 +346,14 @@ the effect visible, so a cost number can finally steer a decision instead of onl
 - [ ] AC3 (opt-in view, with its caveat): an explicit opt-in flag renders the comparison for anyone
       who wants it, and its output states the baseline rate used and that the baseline is an
       estimate.
-      Verify: `edm-state metrics-report TESTX --with-human-baseline | grep -n 'estimate'`.
+      Verify: `edm-state metrics-report TESTX --with-human-baseline | grep -in 'estimate'` returns
+      the caveat line, and the same output contains `Human baseline`.
+      **Note -- why the obvious command does not work.** The case-sensitive form,
+      `grep -n 'estimate'`, matches nothing: the rendered caveat says `ESTIMATE`, in capitals. The
+      grep returns no lines and exits 1, which under `set -e` aborts the whole verification block --
+      so the AC reads as a failure while the code is correct. `grep -in` is the fix. The smoke test
+      takes the equivalent route, lowercasing the output before matching, at
+      `plugins/edm/bin/tests/wave6-smoke.sh:3481-3482`.
 - [ ] AC4 (skill matches): `skills/metrics/SKILL.md` is updated to match and no longer presents the
       multiple as a headline.
       Verify: `grep -rli 'multiple\|ROI' plugins/edm/skills/metrics/ | wc -l` prints 0 once the

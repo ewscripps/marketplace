@@ -94,6 +94,25 @@ conversational guidance and the deliverable guidance must never appear in the sa
       a check of archived EDMV2 artifacts for filler sections, so the change is grounded rather than
       assumed (explorer 02 F4).
       Verify: the ticket's QC evidence names the archived artifacts inspected and what was found.
+      **Recorded 2026-07-28 as decisions.md D31** -- `grep -n 'D31' SRD/edm/EDMV3__prompt-streamline/decisions.md`.
+      Inspected: `SRD/.archived/EDMV2/srd.md` end to end (1,522 lines, all 11 sections plus the
+      three appendix subsections), `planning.md`, `audit-srd.md`, `HANDOFF.md`, `tickets/README.md`,
+      `tickets/audit.md`, plus the section structure of the eight epic files and the two
+      `code-audit/` rounds. Scored against the three defects AC8's clause names. **Filler sections:
+      one, and not in the SRD** -- `HANDOFF.md:74-76`'s `## Notes` is an unfilled template
+      placeholder; every one of `srd.md`'s 14 sections carries `file:line` evidence, EDMV2-NN
+      requirement IDs or workstream codes, and none exists only to fill a template slot.
+      **Redundant summaries: three, one of them exact** -- `planning.md:179-190` and
+      `HANDOFF.md:55-66` are byte-identical under `diff` (only the heading differs); `srd.md` Sec.
+      6.1 restates Sec. 5.4's target schema field-for-field, and Sec. 6.2 restates Sec. 5.4's
+      `validate` anomaly list; the staging-copy self-hosting mitigation is stated three times (Sec.
+      3.3 C-5, Sec. 5.6 Risk 1, Sec. 10.4). **Boilerplate: one** -- `tickets/README.md:11-27`'s
+      generic Size and Priority legend tables. **Conclusion: supports the change.** All three
+      categories are attested, so AC8's clause is grounded in this methodology's own output rather
+      than imported generic advice; and because every instance is restatement across documents
+      rather than length-driven inflation of a single deliverable, the archive supplies no argument
+      for lowering a floor -- which is why AC7's verbatim preservation is right and the change was
+      correctly additive.
 - [ ] AC12 (prose-change convention): the merge request shows before and after for each changed block
       plus one sentence of rationale (EDMV3-69).
       Verify: the MR description contains the before/after blocks.
@@ -301,10 +320,35 @@ guide recommends.
       phase-procedure move touches these same files in the same wave.
       Verify: after the change, `grep -rn 'exactly 2 .*ticket auditor' plugins/edm/skills/`,
       `grep -rn '2-3 .*SRD auditor' plugins/edm/skills/`,
-      `grep -rn '6-10 .*implementer' plugins/edm/skills/` and
-      `grep -rn 'all 11 lenses' plugins/edm/skills/` each return the surviving line with its count
-      unchanged. The four outputs are pasted into the ticket alongside the same four commands run
-      against the pre-change tree, and the pairs are identical.
+      `grep -rn '6-10 parallel' plugins/edm/skills/` and
+      `grep -rn '11 lenses' plugins/edm/skills/` each return the surviving line with its count
+      unchanged. The four outputs are pasted below alongside the same four commands run against the
+      pre-change tree.
+
+      **Corroborating evidence, pasted 2026-07-28.** Pre-change tree is `b6650fa^`
+      (`b6650fa` is this ticket's implementing commit); post-change tree is the branch head.
+      Commands run with `git grep -n <pattern> <rev> -- plugins/edm/skills/`.
+
+      Two of the four patterns as originally written never matched on either tree and are corrected
+      above: `6-10 .*implementer` cannot match, because the shipped wording puts the agent name
+      *before* the count (`` spawn `edm-implementer` agents (6-10 parallel) ``); and `all 11 lenses`
+      cannot match, because the shipped wording is the parenthetical `(11 lenses)`. Both were
+      pattern defects in the AC, not missing caps -- the caps themselves are present and unchanged,
+      as the paste shows.
+
+      | Cap | Pattern | Pre-change (`b6650fa^`) | Post-change (HEAD) | Verdict |
+      |---|---|---|---|---|
+      | ticket auditors | `exactly 2 .*ticket auditor` | (no hits under `skills/`) | `skills/plan/SKILL.md:162` | **New text, not a changed cap** -- see below |
+      | SRD auditors | `2-3 .*SRD auditor` | (no hits under `skills/`) | `skills/plan/SKILL.md:163` | **New text, not a changed cap** -- see below |
+      | implementers | `6-10 parallel` | `skills/implement/SKILL.md:35`, `:62` | `skills/implement/SKILL.md:35`, `:63` | **Identical** -- same two lines, byte-identical text; `:62 -> :63` is a one-line offset from an adjacent same-wave edit |
+      | lenses | `11 lenses` | `skills/code-audit/SKILL.md:35`, `:162`, `:243` | `skills/code-audit/SKILL.md:35`, `:172`, `:253` | **Identical** -- same three lines, byte-identical text; the `+10` offset is EDMV3-T37's phase-procedure move, exactly the same-wave collision this AC was written in positive form to survive |
+
+      The two "new text" rows are the pairs that are *not* identical, and the reason is the one this
+      AC wants: neither the ticket-auditor cap nor the SRD-auditor cap appears anywhere under
+      `plugins/edm/skills/` on the pre-change tree. Both strings enter with this ticket, inside the
+      single sentence it adds at `skills/plan/SKILL.md:162-163` justifying the explorer cap of 4 by
+      citing the plugin's other fan-outs. No pre-existing cap was edited, moved or renumbered by
+      EDMV3-T47; the only new occurrences are a citation of two of them.
 - [ ] AC7 (smoke assertion): a smoke assertion checks the cap text is present in exactly one file.
       Verify: `bash plugins/edm/bin/tests/wave7-smoke.sh` (case "explorer cap appears exactly once").
 

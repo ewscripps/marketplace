@@ -60,8 +60,21 @@ not only `edm`, so it cannot become blocking until a clean pre-merge scan across
 - [ ] AC5 (negative, CI ban across all six plugins): a CI check asserts that no file matching
       `.DS_Store`, `*.pptx` or `*.docx` exists anywhere under `plugins/`. This binds all six
       marketplace plugins.
-      Verify: `find plugins -name '.DS_Store' -o -name '*.pptx' -o -name '*.docx' | wc -l` returns 0,
-      and the CI job fails when a matching file is added.
+      Verify: `git ls-files -- plugins | grep -icE '\.(pptx|docx)$|(^|/)\.DS_Store$'` returns 0, and
+      the CI job fails when a matching file is committed. The developer-side hygiene equivalent,
+      `find plugins -name '.DS_Store' -o -name '*.pptx' -o -name '*.docx' | wc -l`, should also
+      return 0 and is worth running locally, but it is not the shipped assertion.
+      **Amended per D30 (accepted deviation, recorded).** The shipped CI check
+      (`.gitlab-ci.yml:111`) scans `git ls-files -- plugins`, not a plain `find`. That is a
+      deliberate, accepted choice, not drift: the failure this control exists to prevent (F11) is
+      banned files *shipping* inside the plugin, shipping means tracked, and `git ls-files` measures
+      exactly that. On a runner the two forms are equivalent anyway -- a GitLab checkout carries the
+      tracked tree and nothing else -- while `find` adds one failure mode a **blocking** job should
+      not have: going red on a runner-local artifact that is not and never will be committed. The
+      untracked case is covered by `.gitignore:3` (a bare, unanchored `.DS_Store`, so it matches at
+      every depth), and a deliberate `git add -f` override lands the file in `git ls-files`, where
+      this check catches it. Both forms measured 0 on the live tree 2026-07-28. See D30 for the full
+      argument; this supersedes the Technical Note below.
 - [ ] AC6 (pre-merge scan recorded before the check blocks): the ticket records a clean pre-merge scan
       across `git`, `jira`, `ada-tablo`, `web-cms`, `myday` and `edm` before the check becomes
       blocking, so an unrelated plugin's stray file does not red the pipeline on merge day.
@@ -95,9 +108,15 @@ not only `edm`, so it cannot become blocking until a clean pre-merge scan across
 - Use `git mv`, not `mv` plus `git add` -- AC1's `--follow` check depends on rename detection.
 - The `docs/` destination is the repository root's `docs/`, which does not exist yet in this tree.
   Creating it is part of this ticket.
-- AC5's check should be a plain `find` in the lint stage, not a `git ls-files` check: an untracked
+- ~~AC5's check should be a plain `find` in the lint stage, not a `git ls-files` check: an untracked
   `.DS_Store` in a runner checkout is not the failure case, but a tracked one is, and `find` catches
-  both while `.gitignore` (AC4) prevents the untracked case from becoming tracked.
+  both while `.gitignore` (AC4) prevents the untracked case from becoming tracked.~~
+  **Overruled by D30 (2026-07-28).** The `git ls-files` form shipped and is accepted. This note's own
+  premise concedes the point: an untracked `.DS_Store` in a runner checkout "is not the failure
+  case", so the extra reach buys nothing on the surface the job actually runs on, and it costs a
+  false-red mode that a blocking job should not carry. The untracked-becomes-tracked path stays
+  closed by `.gitignore:3` plus the fact that a `git add -f` override lands in `git ls-files`
+  anyway. See D30 and the amendment on AC5 above.
 
 ### Out of Scope
 
@@ -160,8 +179,14 @@ implemented". A wired no-op is documentation debt: it implies a capability that 
       Verify: the MR description contains the command output alongside the claim.
 - [ ] AC5 (positive, hook block removed, JSON still valid): the `TaskCompleted` block is removed from
       `hooks/hooks.json`, leaving the remaining hook families structurally valid JSON.
-      Verify: `jq -e . plugins/edm/hooks/hooks.json >/dev/null && jq -r 'keys[]' plugins/edm/hooks/hooks.json | wc -l`
+      Verify: `jq -e . plugins/edm/hooks/hooks.json >/dev/null && jq -r '.hooks|keys[]' plugins/edm/hooks/hooks.json | wc -l`
       returns 6.
+      **Note (spec defect, no code change needed).** The command originally read `jq -r 'keys[]'`,
+      which enumerates the *top-level* keys of `hooks.json`. There is exactly one -- `hooks` -- so it
+      returns 1, not 6, no matter how many hook families survive. The six families live one level
+      down, under `.hooks`. The corrected filter is `jq -r '.hooks|keys[]'`. Confirmed 2026-07-28:
+      the corrected form prints 6 (`PreCompact`, `PreToolUse`, `SessionStart`, `Stop`,
+      `SubagentStop`, `UserPromptExpansion`).
 - [ ] AC6 (positive, handler and its three references removed): `cmd_record_task_duration` is removed
       from `bin/edm-state`, along with its dispatch entry at `:1991` and its `--help` header line at
       `:13`.
@@ -257,8 +282,22 @@ and the same `CLAUDE.md` tables, and because both are conditional on preserving 
       Verify: `grep -n 'lifecycle_mode' plugins/edm/CLAUDE.md` shows the three remaining values.
 - [ ] AC5 (negative, class-wide grep): `grep -rn 'lifecycle_mode.*partial' plugins/edm/` returns only
       the validation error message, the anomaly text and `CHANGELOG.md` history.
-      Verify: `grep -rn 'lifecycle_mode.*partial' plugins/edm/ | grep -vc 'CHANGELOG.md\|die \|anomaly'`
+      Verify: `grep -rn 'lifecycle_mode.*partial' plugins/edm/ | grep -vc 'CHANGELOG.md\|die \|anomaly\|bin/tests/\|LEGACY_LIFECYCLE_MODE\|== "partial"'`
       returns 0.
+      **Note (spec defect, no code change needed).** The exclusion filter originally carved out only
+      `CHANGELOG.md`, `die ` and `anomaly`, and therefore had no `bin/tests/` carve-out -- which puts
+      it in direct conflict with this ticket's own AC3, which *mandates* C-4 regression tests proving
+      that an existing state file carrying `lifecycle_mode: "partial"` still reads without error.
+      Those tests cannot be written without the literal string, so satisfying AC3 guarantees AC5
+      fails. Measured 2026-07-28: the original filter returns **13**. Eleven are the AC3-mandated
+      regression cases (`bin/tests/wave4a-smoke.sh:186`, `wave6-smoke.sh:2107-2147`,
+      `wave7-smoke.sh:919-922`). The remaining two are the survivors this AC's own prose already
+      names as expected, which the filter's tokens simply fail to match: `bin/edm-state:487`, the
+      C-4 legacy-read branch (`if [[ "$lifecycle_mode" == "partial" ]]`, which coerces to
+      `standard`), and `bin/edm-state:908`, the `LEGACY_LIFECYCLE_MODE` anomaly message (the word
+      `anomaly` never appears on that line). Adding the three missing tokens brings it to 0 and makes
+      the AC assert what it means: no *production* code path outside the documented legacy-read
+      branch and its anomaly message still treats `partial` as a live enum value.
 - [ ] AC6 (negative, the unrelated PARTIAL vocabulary is untouched): the distinct and unrelated
       PARTIAL *verdict* vocabulary is unaffected.
       Verify: `bash plugins/edm/bin/tests/wave6-smoke.sh` (case "partial_verdict_map and the QC
@@ -334,8 +373,18 @@ three deletion tickets and proves none of them left a dangling reference.
 - [ ] AC2 (positive, manifest is bidirectional): `.claude-plugin/marketplace.json` and
       `plugins/edm/.claude-plugin/plugin.json` list exactly the skills and agents that exist on disk
       -- no entry for a deleted file, no file without an entry.
-      Verify: `diff <(jq -r '.plugins[]|select(.name=="edm").skills[]' .claude-plugin/marketplace.json | sort) <(cd plugins/edm && ls -d skills/*/SKILL.md | sort)`
-      prints nothing, and the equivalent for `agents`.
+      Verify: `diff <(jq -r '.plugins[]|select(.name=="edm").skills[]' .claude-plugin/marketplace.json | sed 's#^\./skills/##' | sort) <(cd plugins/edm && for d in skills/*/; do [ -f "${d}SKILL.md" ] && basename "$d"; done | sort)`
+      prints nothing, and the equivalent for `agents`. This is the same normalization the CI job
+      already performs; `.gitlab-ci.yml:314` is the reference implementation.
+      **Note (spec defect, no code change needed).** The command originally diffed the raw manifest
+      values against `ls -d skills/*/SKILL.md`. Those are two different shapes and can never match:
+      the manifest declares `./skills/orchestrator` (leading `./`, no filename) while the `ls` form
+      yields `skills/orchestrator/SKILL.md`. Confirmed 2026-07-28 -- the un-normalized diff reports
+      all 14 skills as differing on a tree where the manifest and disk agree perfectly, so a future
+      reader sees 14 phantom mismatches and may "fix" a correct manifest. The comparison is only
+      meaningful once both sides are reduced to bare skill names, which is what
+      `.gitlab-ci.yml:314`'s `sed 's#^\./skills/##'` plus `basename` loop does, and why the tier-1
+      `validate:manifest` job passes while the AC's literal command does not.
 - [ ] AC3 (negative, no dangling hook command): `hooks/hooks.json` is valid JSON and every remaining
       hook command resolves to an existing subcommand.
       Verify: `jq -e . plugins/edm/hooks/hooks.json >/dev/null` and

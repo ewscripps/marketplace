@@ -456,7 +456,7 @@ and something on the preserve-untouched list breaks quietly.
       `edm-lint-artifacts` classes behave identically, and the staged-prefix derivation in the commit
       hook is unchanged.
       Verify: `git diff --stat plugins/edm/hooks/hooks.json` shows no change to `:80-90`, and the
-      three-class output on a fixed corpus is byte-identical before and after wave A.
+      three-class output on a fixed corpus is byte-identical pre- and post-change across wave A.
 - [ ] AC11 (wave exit criteria met): the three-command bypass fails at command 2 and again at command
       3 on gate, phase and `completed_at` grounds; all smoke suites are green in CI including the
       flat-layout, `fast-track` and `mini-srd` cases; and `evals/baseline/scores.json` is committed.
@@ -800,7 +800,7 @@ written early and run at each boundary -- that is a scheduling property of one L
       Verify: `bash plugins/edm/bin/tests/timing.sh --lint` against a generated fixture directory.
 - [ ] AC6 (negative, the Mermaid class does not blow the budget) **(cross-check, owned by
       EDMV3-T43)**: adding the Mermaid class increases total lint time by no more than 40% relative
-      to the three-class baseline, measured before and after and recorded. Files containing no
+      to the three-class baseline, measured pre- and post-change and recorded. Files containing no
       ` ```mermaid ` fence short-circuit the new class without a per-line scan. EDMV3-T43 AC10 takes
       the measurement in wave B; this ticket re-takes it on the reference environment with the
       committed timing script and confirms the ratio holds on the 50-initiative fixture.
@@ -833,7 +833,7 @@ written early and run at each boundary -- that is a scheduling property of one L
       reduction figure from EDMV3-T48 AC11 is recorded alongside it, with recall loss on any tiered
       lens remaining a hard revert.
       Verify: `edm-state metrics-report <fixture-prefix>` shows the full-round cost, and the ticket
-      records the before and after figures with the percentage delta.
+      records the pre- and post-change figures with the percentage delta.
 - [ ] AC13 (eval run bounded and documented): one eval run (plan -> srd -> audit against the fixture)
       completes within 30 minutes wall clock and its cost is documented in `evals/README.md` so the
       decision to trigger it is informed.
