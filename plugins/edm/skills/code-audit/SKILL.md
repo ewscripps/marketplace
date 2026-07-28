@@ -243,11 +243,11 @@ Use the **canonical** severity scale from `CLAUDE.md Sec."Severity vocabulary"`:
 
 **Convergence blocking set**: open P0, P1 **and P2** findings from the ledger. `NOTED` is the only
 status that closes a finding without a fix, because it is non-actionable rather than postponed
-(`CLAUDE.md Sec."Severity vocabulary"`, decisions.md D13 -- nothing is deferred, ever). This is not
-a prose claim: it is `BLOCKING_FILTER` in `bin/edm-state`, which every consumer of the blocking set
-references by name, and `edm-state audit-converged` refuses convergence while any of the three
-remain open. A ledger entry whose status is `deferred` is treated as open by that same filter --
-the status exists only to read legacy ledgers, and it never lets a finding through.
+(`CLAUDE.md Sec."Severity vocabulary"`, decisions.md D13). This is not a prose claim: it is
+`BLOCKING_FILTER` in `bin/edm-state`, which every consumer of the blocking set references by name,
+and `edm-state audit-converged` refuses convergence while any of the three remain open. Legacy
+per-finding statuses that a pre-EDMV3 ledger may still carry are coerced to open on read by that
+same code, so a finding recorded under the abolished vocabulary cannot reach convergence unfixed.
 
 ## Remediation Plan Format
 

@@ -309,7 +309,7 @@ EDMV3-T48) is built and unit-verified against synthetic fixtures, but has not be
 real data: the wave-A eval baseline it would measure against does not exist yet (decisions.md
 D23). Until that baseline is captured and the matrix runs for real, the table below is the same
 judgment-calibrated set of tiers from Gate 3 (D16), unchanged except the three wave-A downgrades
-EDMV3-T02 already applied on their own, independently-argued merits (D16). See decisions.md D26
+EDMV3-T02 already applied on their own, independently-argued merits (D16). See decisions.md D28
 for the exact command that closes this gap and replaces this note with a real run date.
 
 | Role / Agent(s) | Model | Effort | Rationale |
@@ -341,16 +341,27 @@ kind of clause) and never verbatim text lifted from a source.
 - **sonnet-5** -- the Sonnet 5 prompting guide:
   `https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-sonnet-5`
   (Anthropic documentation; publicly readable; guidance mined for structure, not copied verbatim).
-- **caveman** -- `skills/caveman/SKILL.md` and `CONTRIBUTING.md` in the `caveman` repository (a
-  local sibling repo at exploration time, not yet confirmed to have a stable public URL; licence:
-  unverified as of this writing). Clean-room note: because the licence is unverified, the
-  adoption here is pattern-level only (persistence framing, the before/after PR convention,
+- **caveman** -- `skills/caveman/SKILL.md` and `CONTRIBUTING.md` in the `caveman` repository:
+  `https://github.com/JuliusBrussee/caveman` (**MIT**). Licence verified 2026-07-28 by direct
+  inspection of the local clone at `/Users/darryl.porter/projects/caveman`: a top-level `LICENSE`
+  file reading "MIT License / Copyright (c) 2026 Julius Brussee", `"license": "MIT"` in
+  `package.json`, and a shields.io licence badge in `README.md`. The URL above is that clone's
+  `origin` remote, not a link re-fetched over the network from this environment. Clean-room note:
+  the adoption here is pattern-level only (persistence framing, the before/after PR convention,
   output-contract shape) -- no text was copied from either file.
-- **ponytail** -- `skills/ponytail/SKILL.md` and `ARCHITECTURE.md` in the `ponytail` repository (a
-  local sibling repo at exploration time, not yet confirmed to have a stable public URL; licence:
-  unverified as of this writing). Clean-room note: because the licence is unverified, the
-  adoption here is pattern-level only (the numbered decision ladder, the "when NOT to" carve-out,
-  the "cost of ignoring this" clause) -- no text was copied from either file.
+- **ponytail** -- `skills/ponytail/SKILL.md` and `ARCHITECTURE.md` in the `ponytail` repository:
+  `https://github.com/DietrichGebert/ponytail` (**MIT**). Licence verified 2026-07-28 by direct
+  inspection of the local clone at `/Users/darryl.porter/projects/ponytail`: a top-level `LICENSE`
+  file reading "MIT License / Copyright (c) 2026 DietrichGebert", `"license": "MIT"` in
+  `package.json`, and a `## License` section in `README.md` reading "[MIT](LICENSE)". The URL
+  above is that clone's `origin` remote, not a link re-fetched over the network from this
+  environment. Clean-room note: the adoption here is pattern-level only (the numbered decision
+  ladder, the "when NOT to" carve-out, the "cost of ignoring this" clause) -- no text was copied
+  from either file.
+
+The clean-room posture on both is deliberately unchanged now that the licences are known: MIT
+would have permitted verbatim reuse with attribution, but structural adoption was what this
+initiative actually did, and restating it as a licence consequence would misdescribe the work.
 
 #### Do-NOT-adopt guards
 
@@ -405,7 +416,7 @@ Anthropic pricing. The state schema's `phase_durations[N_phase]` entry includes:
   default $150/hr); recorded on every phase but shown by default only via `metrics-report --with-human-baseline`
   (EDMV3-T53)
 
-**Token attribution (EDMV3-T52, decisions.md D23):** token/cost figures are scoped to the *driving session* -- the
+**Token attribution (EDMV3-T52, decisions.md D25):** token/cost figures are scoped to the *driving session* -- the
 single most-recently-modified `*.jsonl` file in the sessions directory at read time, since Claude Code appends to
 its own session's JSONL as the conversation proceeds, making it always the most recently touched file on disk. This
 prevents a second Claude Code window open on the same project from inflating a phase's or audit round's figures.
@@ -668,17 +679,47 @@ Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call the
 | `edm-lint-artifacts`  | Scan `.md` artifact files for four violation classes -- attribution trailers, non-ASCII bytes, leaked tool-invocation tags, and a literal `;` inside Mermaid label/edge/message text; called by the `PreToolUse` git-commit hook |
 | `edm-sync-canonical-sections` | Regenerate `docs/canonical-sections.md` from this file's "Severity vocabulary" and "Mermaid diagram conventions" sections (byte-identical, one-directional); `--check` exits 1 on drift. See the note below the Mermaid section for why this file exists (EDMV3-T41). |
 
+### `edm-lint-artifacts` latency budgets (EDMV3-T67 AC5/AC7)
+
+`edm-lint-artifacts` has **two separate latency budgets and they are not interchangeable**. They
+are documented here, with the script, rather than beside the CI job table below, because both are
+properties of this one binary: a contributor who changes its scanning cost needs both numbers in
+one place, and only one of the two is a CI concern at all.
+
+| Budget | Invocation | Ceiling | Fixture the ceiling is stated against | Where it binds |
+|---|---|---|---|---|
+| **Commit-path** | `edm-lint-artifacts <PREFIX>`, from the `PreToolUse` git-commit hook | **3,000 ms** p95 | one initiative directory of 30 `.md` files / 9,990 lines | Every `git commit` that stages anything under `SRD/`. A human is waiting on this one, so it is the budget that must stay small |
+| **CI** | `edm-lint-artifacts --all`, inside the blocking `lint:artifacts` job | **60,000 ms** | a 50-initiative repository | The CI lint stage only. `--all` walks every active initiative directory `edm-state list --paths` returns, so it is roughly 50x the work at 20x the ceiling -- a commit-path number must never be compared against it, or vice versa |
+
+Both are measured by `bin/tests/timing.sh` (`--lint` and `--all-lint`) against generated fixtures,
+never by an ad hoc one-off number. **Always quote a budget together with its input size.** A bare
+millisecond ceiling (or a bare ratio) with no stated fixture is dominated by fixed process
+overhead: it reads differently on every machine, and it moves when unrelated code gets faster.
+
 ### `.edm-state.json` mode-family fields
 
-| Field | Type | Default | Purpose |
-|---|---|---|---|
-| `mode` | string enum | `standard` | Adaptation profile: `standard`, `mini-srd`, `iac`, `data-ml`, `prototype` |
-| `lifecycle_mode` | string enum | `standard` | Lifecycle variant: `standard`, `fast-track`, `fix-pack` (a fourth legacy enum value was removed by the delete-list epic, D12/EDMV3-T57..T60) |
-| `compliance_enabled` | boolean | `false` | When true, adds Gate 3.5 compliance review and regulatory-traceability columns |
-| `implementation_mode` | string enum | `standard` | Phase 6 mode: `standard` or `tdd` (Red-Green-Refactor per ticket) |
-| `skipped_phases` | array of objects | `[]` | Intentionally skipped phases; each: `{phase: N, rationale: "..."}` |
-| `supersedes` | string | `""` | Prefix of the initiative this supersedes (provenance link) |
-| `forked_from` | string | `""` | Prefix of the initiative this forked from (provenance link) |
+The heading string is fixed -- `skills/orchestrator/SKILL.md`'s resume step names it -- but the
+table below is the whole state-field reference, not only the mode family: the mode-family rows
+come first, then the EDMV3 gate-enforcement, audit-round, and PARTIAL-closure fields. Every row
+states what a reader does when the field is absent (C-4 backward compatibility); a v1.x or wave-A
+state file that predates a field is never an error.
+
+| Field | Type | Default | Purpose | C-4 when absent |
+|---|---|---|---|---|
+| `mode` | string enum | `standard` | Adaptation profile: `standard`, `mini-srd`, `iac`, `data-ml`, `prototype` | Read as `standard` |
+| `lifecycle_mode` | string enum | `standard` | Lifecycle variant: `standard`, `fast-track`, `fix-pack` (a fourth legacy enum value was removed by the delete-list epic, D12/EDMV3-T57..T60) | Read as `standard`; a state file still carrying the removed legacy value reads without error |
+| `compliance_enabled` | boolean | `false` | When true, adds Gate 3.5 compliance review and regulatory-traceability columns | Read as `false` |
+| `implementation_mode` | string enum | `standard` | Phase 6 mode: `standard` or `tdd` (Red-Green-Refactor per ticket) | Read as `standard` |
+| `skipped_phases` | array of objects | `[]` | Intentionally skipped phases; each: `{phase: N, rationale: "..."}` | Read as `[]` (nothing skipped) |
+| `supersedes` | string | `""` | Prefix of the initiative this supersedes (provenance link) | Read as `""` (no link) |
+| `forked_from` | string | `""` | Prefix of the initiative this forked from (provenance link) | Read as `""` (no link) |
+| `gates_approved[].enforcement` | string enum: `permission-ask` \| `prose-only` | no seeded default -- `cmd_approve_gate` writes it on **every** numeric-gate approval, from `check_permission_rules()` | The honesty tag (EDMV3-T06): `permission-ask` when BOTH `Bash(edm-state approve-gate*)` and `Bash(edm-state archive*)` were found across the three scanned settings files at approval time, `prose-only` otherwise. It records that the rules were **configured**, never that a prompt actually fired -- see README.md's matcher-limitation note for the bypass shapes a configured rule still misses | Absent on entries written before EDMV3-T06. An absent tag reads as "unknown", never as `permission-ask`; nothing fails on absence |
+| `gates_approved[].approved_at`, `gates_approved[].approver` | string (ISO-8601 UTC), string | written with the entry; `approver` is `$USER`, falling back to the literal `unknown` when unset | Who approved a numeric HITL gate and when. Written as sibling scalars inside the `gates_approved[]` entry object | Absent on pre-EDMV3 entries; renderers show `?` rather than failing |
+| `code_audit_gate_approved_at` / `_approver` / `_enforcement` / `_ledger`, and `compliance_gate_approved_at` / `_approver` / `_enforcement` | strings; `_enforcement` is the same enum as above | the four `code_audit_gate_*` keys are seeded `""` by `edm-state init`; the three `compliance_gate_*` keys are created on first approval | Sibling scalars for the two dedicated-boolean gates (`code-audit` and 3.5). The boolean itself stays a plain boolean -- `metrics-report` and HANDOFF both depend on that -- so the metadata hangs beside it rather than converting it to an object. `code_audit_gate_enforcement` additionally carries the sentinel `CONVERGENCE_NOT_REQUIRED` when the initiative's `mode` has no code-audit round, keeping a mode exemption distinguishable from an approval. `_ledger` holds the real `findings-ledger.jsonl` path or the literal `absent` | Empty string and absent both read as "not approved"; no check fails on either |
+| `audit_rounds.<type>.rounds[].round_type` | string enum: `full` \| `partial` | `full` when `audit-round-start` is called without `--lenses` | Derived at `edm-state audit-round-start` (EDMV3-T27): `full` when the lens set equals all eleven lens IDs, or when `--lenses` was omitted (matching `skills/code-audit/SKILL.md`'s "absence of `--lenses` means run all 11"); `partial` otherwise. A partial round is **never convergent** -- `edm-state audit-converged` exits 1 when the latest round is `partial` | `audit_rounds.<type>` may still be a bare integer in a file written before the `{count, rounds: [...]}` widening; every reader coerces via `coerce_round_entry` and no existing file is rewritten. A round carrying no `round_type` reads as `unknown`: blocking at `schema_version >= 2`, warn-and-proceed below that |
+| `audit_rounds.<type>.rounds[].completed_at` / `duration_seconds` / `tokens` / `model_used` / `estimated_cost_usd` / `attribution_mode` | string (ISO-8601 UTC) / number (seconds) / object `{input, output, cache_read, cache_write_5m, cache_write_1h}` / string / number (USD) / string enum `scoped` \| `whole-directory` | written only by `edm-state audit-round-complete`; on a round with no recorded `started_at` the token counts stay `0`, `model_used` stays `unknown`, `estimated_cost_usd` stays `0.0000`, `attribution_mode` stays `whole-directory` | Per-round duration and cost for one audit round (EDMV3-T51), computed with the same `get_session_tokens_since` / `compute_cost_usd` pair `phase-complete` uses, so audit-round cost can never diverge from phase cost via a second implementation. `metrics-report` renders them as its code-audit section. A double completion is refused before any write | Additive extension of the wave-B round shape -- **no `schema_version` bump** (stays `2`, EDMV3-T66 AC2). Every reader reads these with jq `//` defaults, so a round closed before T51 simply has none of them; a round never closed at all surfaces as the informational `OPEN_AUDIT_ROUND` anomaly on `edm-state validate` rather than staying invisible |
+| `partial_verdict_map.<ticket>.closing_verdict` | string enum: `PASS` \| `FAIL` | absent while the entry is open | The closing verdict written by `edm-state record-partial-verdict <PREFIX> <ticket> close <PASS\|FAIL> <ref>`, driven by `/edm:verify-runtime`. There is no third value -- no `BLOCKED`, `WAIVED` or `N/A-runtime` (D15). `archive` hard-blocks on any entry that is unclosed or FAIL-closed. An entry may be closed once, the sole exception being re-closure of a FAIL after remediation | Absent means still open; the blocking `OPEN_PARTIALS` anomaly names the ticket. The entire pre-closure entry is preserved under `prior` rather than overwritten, and a re-closure appends to `closure_history` so the FAIL record is never lost |
+| `partial_verdict_map.<ticket>.verification_ref` | string, non-empty (enforced -- `close` refuses an empty value) | absent while the entry is open | The evidence pointer for the closure: the command, `file:line`, or run that produced the PASS or FAIL. Recorded alongside `closing_verdict` and `closed_at` | Absent alongside `closing_verdict` on an open entry. `edm-state validate` renders `(no ref)` for a closed entry that somehow lacks one rather than failing on it |
 
 All fields default safely so v1.x state files without them work unchanged (C-4 backward compatibility).
 
@@ -809,15 +850,30 @@ four stages:
 
 | Stage | Job | Blocking? | What it does |
 |---|---|---|---|
-| `lint` | `lint:shell-and-artifacts` | Yes | `bash -n` over every file in `bin/` (incl. `bin/tests/*.sh`), `edm-lint-artifacts --all`, `edm-check-grants` |
-| `lint` | `lint:file-type-ban` | No (`allow_failure: true` until EDMV3-T57) | Scans tracked files under `plugins/` for banned types (`.pptx`, `.docx`, `.DS_Store`) |
+| `lint` | `lint:bash-syntax` | Yes | `bash -n` over every file in `bin/` (incl. `bin/tests/*.sh`) |
+| `lint` | `lint:artifacts` | Yes | `edm-lint-artifacts --all` (the 60,000 ms CI budget above, not the commit-path budget) |
+| `lint` | `lint:grants` | Yes | `edm-check-grants` -- the four-source grant/instruction contract |
+| `lint` | `lint:vocabulary` | Yes | `edm-check-vocabulary` -- the abolished-vocabulary and override-flag backstop (EDMV3-T30) |
+| `lint` | `lint:file-type-ban` | Yes (blocking since EDMV3-T57 AC10 -- carries no `allow_failure`) | Scans **git-tracked** files under `plugins/` for banned types (`.pptx`, `.docx`, `.DS_Store`) -- a developer's own untracked local artifact is never flagged. Also enforces the documented 100KB directory-size ceiling on `plugins/edm/evals/` (EDMV3-T22 AC3), so a new fixture or a bloated baseline capture cannot land silently |
 | `lint` | `lint:shellcheck` (EDMV3-T61) | Yes | `shellcheck` over every file directly in `bin/`, scoped to the unquoted-expansion class of findings (SC2086/SC2046/SC2048/SC2068) -- pre-existing style findings outside that class are out of scope |
+| `lint` | `lint:pattern-library-contract` (EDMV3-T56) | Yes | Enforces the Living-Library four-`##`-heading contract (`docs/audit-patterns/README.md Sec."Living-Library Contract"`) over every `docs/audit-patterns/*.md` except the two exempt documents (`README.md`, the contract itself; `SOURCES.md`, the provenance document): exactly four `##` headings, in the fixed order `## Top Recurring Findings`, `## Anti-Patterns`, `## Pre-Flight Checklist`, and a fourth matching `^## What .*Looks Like$`, with no `###` heading appended under the fourth section (the orphan-append case). This is the authoritative copy of the check; the smoke aggregator's twin in `test:smoke` also exercises the negative cases. It lives in `lint` rather than `test` because it is cheap and should fail fast |
 | `test` | `test:smoke` | Yes | `bash plugins/edm/bin/tests/run-all.sh` -- the single aggregator invocation; no suite is enumerated in the pipeline file, so a new `*-smoke.sh` suite runs in CI automatically (this is where `wave7-smoke.sh`'s help-completeness case, EDMV3-T61 AC2/AC13, runs) |
 | `test` | `test:smoke-bash32` (EDMV3-T61) | Yes | The same `run-all.sh` aggregator run a second time under a pinned `bash:3.2` image, proving the bash-3.2 compatibility constraint (EDMV3-91/106) end-to-end rather than only asserting it by grep |
 | `test` | `test:state-validate` | Yes | `edm-state validate` across every tracked, non-archived initiative; informational anomalies are reported, a blocking anomaly fails the job |
 | `validate` | `validate:manifest` | Yes (tier 1) | Deterministic `jq`-only check: every skill/agent on disk is declared in `.claude-plugin/marketplace.json` and vice versa, every `SKILL.md`/agent frontmatter block parses, every declared tool name is well-formed |
 | `validate` | `validate:plugin-cli` | No (`allow_failure: true`, tier 2) | `claude plugin validate plugins/edm/`, compared against the committed warning-count baseline in `.gitlab/edm-validate-baseline.txt`; skips cleanly if the `claude` CLI isn't in the runner image |
-| `eval` | `eval:nightly` | No (`allow_failure: true`) | Runs the headless eval driver (`plugins/edm/evals/run-eval.sh`) against the `tiny-svc` fixture. `when: manual` on a normal pipeline; runs automatically on a scheduled nightly pipeline. Skipped outright (not failed) when `ANTHROPIC_API_KEY` is unset |
+| `eval` | `eval:nightly` | No (`allow_failure: true`) | Runs the headless eval driver (`plugins/edm/evals/run-eval.sh`) against the `tiny-svc` fixture, then scores the run (`evals/score-artifacts.sh`) and compares the result against the committed baseline via `bin/edm-compare-eval` -- the threshold comparison lives here in CI, not in the scorer (EDMV3-T39 AC2), so a scoring change and a threshold change stay separately reviewable; exit 3 means no baseline is committed yet and is reported, never silently treated as a pass. `when: manual` on a normal pipeline; runs automatically on a scheduled nightly pipeline. Skipped outright (not failed) when `ANTHROPIC_API_KEY` is unset. Run artifacts under `evals/runs/` are kept 30 days |
+
+**Job graph (EDMV3-T67 AC10).** The four checks above split across `lint:bash-syntax`,
+`lint:artifacts`, `lint:grants` and `lint:vocabulary` were previously four sequential script lines
+inside a single `lint:shell-and-artifacts` job. That cost twice over: their wall-clock times
+summed, and because the block ran under `set -e` the first failure suppressed the results of every
+check after it. Every `lint` job now carries `needs: []`, which starts it at pipeline start rather
+than at the head of its stage, so the runner fleet executes all seven concurrently and each
+reports its own pass/fail. The three `test` jobs carry `needs: ["lint:bash-syntax"]` -- a syntax
+error means the suite cannot run meaningfully, while the artifact, grant and vocabulary checks are
+orthogonal to whether it passes and must not hold it up. The pinned image and shared rule set live
+in one `.alpine_edm` anchor so a digest refresh stays a single-line change across all seven jobs.
 
 All job images are pinned by digest (`@sha256:...`) rather than a floating tag, with one
 documented, explicitly authorized exception: `test:smoke-bash32`'s `bash:3.2` image (EDMV3-T61,

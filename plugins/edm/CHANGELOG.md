@@ -86,7 +86,7 @@ prose-not-mechanism drift this initiative exists to close.
 
 ### Known scope gap (recorded, not faked)
 
-`skills/metrics/SKILL.md`'s "Model and effort assignments" table update to reflect **measured**
+`CLAUDE.md`'s "Model and effort assignments" table update to reflect **measured**
 lens tiering (EDMV3-T48) has not landed as of this entry: the wave-C tiering matrix (D16) has not
 yet been run against the wave-A eval fixture, so all 11 code-audit lens agents remain
 `opus`/`max` on disk. Per D15, an AC whose stated precondition (measured tiering data) does not
@@ -136,26 +136,56 @@ lines).
 | AC2 | phase-complete < 2000ms p95 excl. token read; token read bounded | 340ms p95; bound added (`tail -n` cap, see above) | PASS |
 | AC3 | audit-converged < 500ms p95, render-ledger < 1000ms p95 (500-finding ledger) | audit-converged 123ms, render-ledger 84ms | PASS |
 | AC4 | check_permission_rules() adds < 50ms to session-start | measured delta -2ms (noise-level) | PASS |
-| AC5 | full lint of a 30-file/~10,000-line initiative < 3000ms | **39,872ms p95** (measured 3 times: 43862/39872/39230ms) | **MISS -- recorded, not fixed here (out of scope per this ticket's own terms)** |
-| AC6 | Mermaid class adds <= 40% lint time vs. 3-class baseline | measured ratio 2.26x on a small (5-file) fixture -- directional, not the full 50-init/T43-AC10 scale | **MISS -- recorded** (re-confirms T43 AC10's own finding; a small fixture makes the relative overhead more visible, not less real) |
+| AC5 | full lint of one initiative directory of **30 files / 9,990 lines** < 3000ms p95 (the fixture size is part of the budget: `bin/tests/timing.sh --lint`, 30 files x 333 lines) | **1,021ms p95** (samples 1035/1021/1018) after the `edm-lint-artifacts` rewrite in commit `d591b92` | PASS |
+| AC6 | Mermaid class adds <= 40% lint time vs. 3-class baseline (stated as a bare 1.40x ratio, with no input size and no absolute floor) | **1.19x** on the 30-file/9,990-line fixture (baseline 1,000ms, with-Mermaid 1,193ms) after the class-4 rewrite in commit `ea31ce8`; was 3.40x immediately after `d591b92` and 2.26x before either | **PASS on the number, but the budget is still malformed** (see the note below the table) |
 | AC7 | `--all` over 50 initiatives < 60,000ms (CI budget) | 1,671ms | PASS |
 | AC8 | commit-hook scoping in `hooks.json:80-90` unchanged | `git diff --stat` shows zero changes to `hooks/hooks.json` | PASS |
 | AC9 | blocking pipeline < 5 minutes at each wave boundary, fixed fixture subject | not run against a live GitLab runner this session | **verified-locally-pending-pipeline** |
-| AC10 | the four lint checks (`bash -n`, `edm-lint-artifacts --all`, `edm-check-grants`, `edm-check-vocabulary`) run as parallel jobs | all four currently run as sequential script lines inside one job, `lint:shell-and-artifacts` -- not four separate jobs | **MISS -- recorded, not restructured here** (a `.gitlab-ci.yml` job-split is a real change that needs a live-runner validation pass this session cannot safely give it) |
+| AC10 | the four lint checks (`bash -n`, `edm-lint-artifacts --all`, `edm-check-grants`, `edm-check-vocabulary`) run as parallel jobs | split into `lint:bash-syntax`, `lint:artifacts`, `lint:grants` and `lint:vocabulary`; every `lint` job carries `needs: []` and the three `test` jobs carry `needs: ["lint:bash-syntax"]` | **PASS** (pipeline parses; graph is seven independent `lint` jobs plus three `test` jobs gated on the syntax check. `grep -n 'needs:' .gitlab-ci.yml` now returns the keys AC10 asked for) |
 | AC11 | no blocking job reaches the network beyond image pull | exactly 2 `allow_failure: true` lines (`validate:plugin-cli`, `eval:nightly`), both outside the blocking path; confirmed by `grep` | PASS |
-| AC12 | code-audit round cost measurable and reported | `metrics-report` renders the code-audit section (rounds run, lenses per round, cost per round) once EDMV3-T51 data exists, per this wave's own T51/T53 work | PASS |
+| AC12 | code-audit round cost measurable and reported, **and** the EDMV3-T48 AC11 tiering reduction figure recorded alongside it (before and after figures with the percentage delta) | First half met: `metrics-report` renders the code-audit section (rounds run, lenses per round, cost per round) once EDMV3-T51 data exists, per this wave's own T51/T53 work. Second half unmet: there is no before figure, no after figure and no delta, because EDMV3-T48's tiering matrix was built and never run | **MISS -- recorded** (the tiering half has no data to record: decisions.md D28) |
 | AC13 | one eval run < 30 minutes, cost documented | `evals/README.md` already documents 30-60 minutes wall-clock and a `$15`/phase budget ceiling from a prior measured run (2026-07-27) -- the existing documented range itself brackets the 30-minute figure, so a fresh timed run is needed to confirm | **verified-locally-pending-pipeline** (a live eval run was not triggered this session -- real API spend and up to an hour of wall time) |
 | AC14 | reproducible, committed timing script | `bin/tests/timing.sh`, executable, all modes above run from it | PASS |
 
-**Two real, recorded misses (AC5, AC6, AC10) are not silently accepted.** Per this ticket's own
+**Two real, recorded misses (AC6, AC12) are not silently accepted.** Per this ticket's own
 Out of Scope clause ("optimizing anything that misses a budget... this ticket measures and
 records"), each is left for its own follow-on ticket rather than patched here under time
-pressure without a fresh full-suite validation pass. The root cause for AC5/AC6 is visible in
-`bin/edm-lint-artifacts`: `build_line_classes()` (and companion per-line loops) process every
-line of every file through a bash `while IFS= read -r` loop regardless of file content, which
-does not scale to a 10,000-line file the way it does to a typical individual artifact. AC10's
-gap is structural, not a speed problem: `.gitlab-ci.yml`'s `lint:shell-and-artifacts` job runs
-the four checks as sequential script lines in one job rather than four jobs in the same stage.
+pressure without a fresh full-suite validation pass.
+
+**AC5 was a fourth miss and is now a PASS.** `bin/edm-lint-artifacts` was rewritten for
+performance in commit `d591b92`: class 1 (attribution) had been forking `echo | tr` twice per
+line and now runs a single `grep -niF -f` per file, and `build_line_classes()` is a single awk
+pass instead of a per-line bash `while IFS= read -r` loop. The 39,872ms originally recorded here
+(re-profiled at 70,168ms on the same fixture before the fix) measures 1,021ms p95 afterwards,
+against the same 3,000ms budget on the same 30-file/9,990-line fixture. The budget is restated in
+the table above **with its input size attached**, because a passing number quoted against an
+unstated fixture size recreates the same defect in the opposite direction.
+
+**AC6's budget is malformed, independently of what it measures.** Both QC shards ruled this
+independently. A bare ratio with no stated input size and no absolute floor is dominated by fixed
+process overhead: it reads differently on every machine, and it moves when unrelated code gets
+faster. That is exactly what happened here, twice, in both directions. The AC5 rewrite
+(`d591b92`) made the baseline roughly 40x faster without touching the Mermaid class, and the
+ratio got *worse* -- 2.26x to 3.40x -- because class 4 became the dominant cost rather than a
+marginal one. Optimizing class 4 in turn (`ea31ce8`, the same one-process-per-file treatment
+class 1 got) brought it to 1.19x. So the same budget read miss, worse-miss, then pass across
+three commits, only one of which touched the code it is supposed to be measuring.
+
+The number now passes and the budget is still wrong. It needs re-deriving as a conditional --
+"the ratio applies only above N lines / N ms", with an absolute floor below which it does not
+bind -- and re-measuring on the 50-initiative fixture the AC actually names; the recorded 2.26x
+was taken on a 5-file fixture, so the original figure never answered the AC either way. A green
+number against an unstated fixture size recreates the same defect in the opposite direction,
+which is why this row reads "PASS on the number" rather than PASS. The re-derivation is the one
+piece of EDMV3-T67's budget work that remains open; the Mermaid-class optimization it used to
+be paired with has landed.
+
+AC10's gap was structural, not a speed problem, and it is now closed: `lint:shell-and-artifacts`
+ran the four checks as sequential script lines in one job, so their wall-clock times summed and
+`set -e` meant the first failure suppressed the results of the other three. They are now four
+jobs joined by `needs:`. AC12's gap is missing data, not code: the code-audit cost half ships and works, but the
+tiering before/after and percentage delta cannot be recorded because EDMV3-T48's matrix was built
+and never run (decisions.md D28 carries the closing command).
 
 ## [3.0.0] — 2026-07-28
 

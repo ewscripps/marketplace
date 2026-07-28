@@ -115,7 +115,7 @@ All EDM phases are user-invocable as `/edm:<name>`:
 | `/edm:tickets <PREFIX>` | 4 | Ticket Pack -- `{PREFIX}-T{NN}` tickets with 6-12 testable AC each |
 | `/edm:audit-tickets <PREFIX>` | 5 | Ticket Audit -- 8-dimension validation including SRD version alignment |
 | `/edm:implement <PREFIX>` | 6 | Implementation -- parallel waves with auto-QC after each wave |
-| `/edm:code-audit <PREFIX>` | Post-6 | 11-lens exhaustive audit + synthesizer-produced remediation plan |
+| `/edm:code-audit <PREFIX> [--lenses L1,L9,L11]` | Post-6 | 11-lens exhaustive audit + synthesizer-produced remediation plan. `--lenses` runs a named subset instead -- `L1,L9,L11` (logic, spec compliance, integration wiring) is the cheap smoke path for a small initiative. A subset round is recorded as `partial` and is **never convergent**, so a full eleven-lens round is still required before the convergence gate and archive |
 | `/edm:verify-runtime <PREFIX>` | 6 closure | Mandatory Phase 6 closure -- drives every PARTIAL verdict to PASS or FAIL via runtime checks; then run `edm-state phase-complete <PREFIX> 6` |
 | `/edm:metrics <PREFIX\|--all\|--calibrate> [--with-human-baseline]` | Reporting | Per-phase durations and raw Claude cost by default; gate review times; per-round audit cost; `--with-human-baseline` opts into an estimated human-cost comparison; calibration |
 | `/edm:push-jira <PREFIX> [PROJECT_KEY]` | Optional | Sync ticket pack to Jira via Atlassian MCP (idempotent, label-tracked, dependency-linked) |
@@ -217,9 +217,18 @@ initiatives complete to regenerate it from real numbers).
 
 Run `/edm:metrics --calibrate` after a few completed initiatives to recalibrate these from your team's actual data.
 
+**The post-Phase-6 code audit does not have to be the full eleven lenses.** For a small
+initiative, `/edm:code-audit <PREFIX> --lenses L1,L9,L11` (logic and correctness, spec and ticket
+compliance, integration wiring) is a much cheaper smoke path -- three parallel lens agents plus
+the synthesizer instead of eleven. Reserve the full eleven-lens round for a release candidate, or
+for any initiative whose audit result is going to be relied on. A subset round is recorded as
+`partial` and is **never convergent**: `edm-state audit-converged` refuses it, so the convergence
+gate and `edm-state archive` still require one full round no matter how many partial rounds
+preceded it. See `skills/code-audit/SKILL.md` for the lens inventory and the round-type rules.
+
 ## Plugin features
 
-- **Hooks** (`hooks/hooks.json`): SessionStart prints in-progress initiatives; UserPromptExpansion enforces gate approval; PreToolUse blocks `git commit` on artifact violations; Stop/PreCompact checkpoint state; SubagentStop auto-fires `edm-qc-auditor` after every implementer; TaskCompleted is reserved (per-task accumulation not yet implemented).
+- **Hooks** (`hooks/hooks.json`): SessionStart prints in-progress initiatives; UserPromptExpansion enforces gate approval; PreToolUse blocks `git commit` on artifact violations; Stop/PreCompact checkpoint state; SubagentStop auto-fires `edm-qc-auditor` after every implementer.
 - **Background monitor** (`monitors/monitors.json`): during Phase 6, tails `git log` and reports each ticket commit as a notification.
 - **Worktree isolation**: parallel `edm-implementer` agents each get their own git worktree automatically -- no manual setup, no merge conflicts mid-wave.
 - **State persistence**: `bin/edm-state` tracks each initiative's phase, gate approvals, timing, cost, and test coverage in `SRD/{PREFIX}/.edm-state.json`. Survives across sessions.
