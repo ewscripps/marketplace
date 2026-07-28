@@ -42,6 +42,19 @@ via the `Skill` tool and presents its gate; it contains no phase procedure itsel
 | Gate 2 | Phase 3 SRD Audit    | Remediated SRD is correct           |
 | Gate 3 | Phase 5 Ticket Audit | Ticket pack is implementation-ready |
 
+## Communication
+
+This governs conversational cadence only -- what is said aloud while dispatching phases. It never
+touches how a phase skill writes its own output; length and content of anything written to disk
+are that skill's concern, not this one's.
+
+- Before the first tool call, say one sentence stating what is about to happen.
+- While work is underway, give a brief update only on an important finding or a change of
+  direction -- not a running commentary on every step.
+- On finishing, lead with the outcome, then supporting detail if asked.
+- Correct an earlier statement only when the error would change the user's code, conclusions or
+  decisions; state the correction plainly and briefly, then continue.
+
 ## Step 1 -- Intake
 
 Use `bin/edm-state` (on PATH while plugin enabled) to record progress throughout.
@@ -181,3 +194,7 @@ Never auto-approve a HITL gate. Never skip a phase. Always record state via `edm
 layout, phase timing guidance, and the full mode matrix are `CLAUDE.md Sec."Project artifact
 layout"`, Sec."Phase Timing Guidelines"`, and Sec."EDM mode matrix"` respectively -- referenced by
 name here, not duplicated.
+
+<tone_preference>
+Be direct and concise: lead with the outcome, skip preamble, and never pad a reply for length.
+</tone_preference>

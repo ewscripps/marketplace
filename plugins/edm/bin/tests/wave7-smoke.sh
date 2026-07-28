@@ -2295,10 +2295,10 @@ t38_orch_lines="$(wc -l < "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" | tr -d '
   || fail "T38 AC1 -- orchestrator/SKILL.md is ${t38_orch_lines} lines, expected <= 300"
 
 echo
-echo "T38 AC2 -- retained set: six '## ' sections (Overview, Step 1 -- Intake, Gate PROTOCOL, Step 2 -- Dispatch each phase, Resume and Compaction, Anti-Patterns)"
+echo "T38 AC2 -- retained set: seven '## ' sections (Overview, Communication [added EDMV3-T45], Step 1 -- Intake, Gate PROTOCOL, Step 2 -- Dispatch each phase, Resume and Compaction, Anti-Patterns)"
 t38_section_count="$(grep -c '^## ' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" || true)"
-[[ "$t38_section_count" -eq 6 ]] && pass "T38 AC2 -- exactly six top-level sections" \
-  || fail "T38 AC2 -- found ${t38_section_count} top-level sections, expected 6"
+[[ "$t38_section_count" -eq 7 ]] && pass "T38 AC2 -- exactly seven top-level sections (six T38 sections plus T45's Communication)" \
+  || fail "T38 AC2 -- found ${t38_section_count} top-level sections, expected 7"
 check "T38 AC2 -- Overview retained" "## Overview" "$ORCH_SKILL_T37"
 check "T38 AC2 -- Step 1 -- Intake retained" "## Step 1 -- Intake" "$ORCH_SKILL_T37"
 check "T38 AC2 -- Gate PROTOCOL retained" "## Gate PROTOCOL (canonical)" "$ORCH_SKILL_T37"
@@ -2373,6 +2373,117 @@ t38_lint_exit=0
 bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t38_lint_exit=$?
 [[ "$t38_lint_exit" -eq 0 ]] && pass "T38 -- edm-lint-artifacts --all exits 0" || fail "T38 -- edm-lint-artifacts --all exited ${t38_lint_exit}"
 # EDMV3-T38 end
+
+# =================================================================================
+# EDMV3-T45: communication cadence and deliverable-length calibration
+# =================================================================================
+echo
+echo "=== EDMV3-T45: communication cadence and deliverable-length calibration ==="
+
+ORCH_SKILL_T45="$(cat "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
+
+# _wave7_extract_section <file> <heading-regex> -- prints the body of the first '## ' section
+# whose heading matches <heading-regex>, up to (not including) the next '## ' heading or EOF.
+_wave7_extract_section() {
+  local file="$1" heading="$2"
+  awk -v h="$heading" '
+    $0 ~ ("^## " h "$") { found=1; next }
+    found && /^## / { exit }
+    found { print }
+  ' "$file"
+}
+
+echo
+echo "T45 AC1 -- orchestrator gains a top-level '## Communication' section"
+check "T45 AC1 -- '## Communication' heading present" "## Communication" "$ORCH_SKILL_T45"
+
+echo
+echo "T45 AC2 -- <tone_preference> reminder placed after the Anti-Patterns heading"
+t45_antipatterns_line="$(grep -n '^## Anti-Patterns$' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" | head -1 | cut -d: -f1)"
+t45_tonepref_line="$(grep -n '<tone_preference>' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" | head -1 | cut -d: -f1)"
+if [[ -n "$t45_antipatterns_line" && -n "$t45_tonepref_line" && "$t45_tonepref_line" -gt "$t45_antipatterns_line" ]]; then
+  pass "T45 AC2 -- <tone_preference> (line ${t45_tonepref_line}) follows Anti-Patterns (line ${t45_antipatterns_line})"
+else
+  fail "T45 AC2 -- <tone_preference> line ${t45_tonepref_line:-absent} does not follow Anti-Patterns line ${t45_antipatterns_line:-absent}"
+fi
+
+echo
+echo "T45 AC3 -- orchestrator at most 300 lines"
+t45_orch_lines="$(wc -l < "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" | tr -d ' ')"
+[[ "$t45_orch_lines" -le 300 ]] && pass "T45 AC3 -- orchestrator at most 300 lines (${t45_orch_lines})" \
+  || fail "T45 AC3 -- orchestrator/SKILL.md is ${t45_orch_lines} lines, expected <= 300"
+
+echo
+echo "T45 AC4 -- Communication section mentions no artifact"
+t45_comm_body="$(_wave7_extract_section "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" "Communication")"
+t45_tonepref_body="$(awk '/<tone_preference>/{f=1;next} /<\/tone_preference>/{f=0} f' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
+t45_ac4_bad=""
+for t45_word in "srd.md" "artifact" "deliverable"; do
+  printf '%s' "$t45_comm_body" | grep -qi -- "$t45_word" && t45_ac4_bad="${t45_ac4_bad} comm:${t45_word}"
+  printf '%s' "$t45_tonepref_body" | grep -qi -- "$t45_word" && t45_ac4_bad="${t45_ac4_bad} tone:${t45_word}"
+done
+[[ -z "$t45_ac4_bad" ]] && pass "T45 AC4 -- Communication section mentions no artifact (and <tone_preference> is clean too)" \
+  || fail "T45 AC4 -- forbidden word(s) found:${t45_ac4_bad}"
+
+echo
+echo "T45 AC5 -- correction-narration guidance present"
+check "T45 AC5 -- 'change the user' present" "change the user" "$ORCH_SKILL_T45"
+
+echo
+echo "T45 AC6 -- no interim-progress scaffolding introduced"
+t45_ac6_hits="$(grep -rn -i 'every [0-9]* tool calls\|summarize every' "${PLUGIN_DIR}/skills/" 2>/dev/null || true)"
+[[ -z "$t45_ac6_hits" ]] && pass "T45 AC6 -- no 'every N tool calls' / 'summarize every' scaffolding in skills/" \
+  || fail "T45 AC6 -- found scaffolding text: ${t45_ac6_hits}"
+
+echo
+echo "T45 AC7 -- length floors preserved verbatim"
+check "T45 AC7 -- edm-srd-writer.md floor unchanged" "800+ lines for major initiative, 200+ for focused feature, 50+ for small change" \
+  "$(cat "${PLUGIN_DIR}/agents/edm-srd-writer.md")"
+check "T45 AC7 -- skills/srd/SKILL.md floor unchanged" "800+ lines major, 200+ focused, 50+ small change" \
+  "$(cat "${PLUGIN_DIR}/skills/srd/SKILL.md")"
+
+echo
+echo "T45 AC8 -- anti-padding clause on both floor sites"
+check "T45 AC8 -- edm-srd-writer.md carries anti-padding clause" "do not pad with filler" \
+  "$(cat "${PLUGIN_DIR}/agents/edm-srd-writer.md")"
+check "T45 AC8 -- skills/srd/SKILL.md carries anti-padding clause" "do not pad with filler" \
+  "$(cat "${PLUGIN_DIR}/skills/srd/SKILL.md")"
+
+echo
+echo "T45 AC9 -- identical deliverable-length clause on the eight file-writing agents"
+t45_ac9_unique="$(grep -rho 'match the length of the document to what the task needs' "${PLUGIN_DIR}/agents/" | sort -u | wc -l | tr -d ' ')"
+[[ "$t45_ac9_unique" -eq 1 ]] && pass "T45 AC9 -- exactly one unique phrasing of the deliverable-length clause" \
+  || fail "T45 AC9 -- ${t45_ac9_unique} unique phrasings found, expected 1"
+# NOTE: -rl (no -c) is used deliberately, not the AC's literal '-rlc' -- BSD grep (macOS,
+# EDMV3-106 divergence) prints both a "file:count" line AND a bare filename line when -l and -c
+# are combined, doubling the count; GNU grep gives -l precedence and would return 8 either way.
+# -rl alone is portable and correct on both.
+t45_ac9_files="$(grep -rl 'match the length of the document' "${PLUGIN_DIR}/agents/" | wc -l | tr -d ' ')"
+[[ "$t45_ac9_files" -eq 8 ]] && pass "T45 AC9 -- exactly eight agent files carry the clause" \
+  || fail "T45 AC9 -- ${t45_ac9_files} agent files carry the clause, expected 8"
+
+echo
+echo "T45 AC10 -- length clause absent from the Communication section"
+if printf '%s' "$t45_comm_body" | grep -q 'match the length of the document'; then
+  fail "T45 AC10 -- Communication section contains the deliverable-length clause"
+else
+  pass "T45 AC10 -- Communication section never mentions the deliverable-length clause"
+fi
+if printf '%s' "$t45_tonepref_body" | grep -q 'match the length of the document'; then
+  fail "T45 AC10 -- <tone_preference> block contains the deliverable-length clause"
+else
+  pass "T45 AC10 -- <tone_preference> block never mentions the deliverable-length clause"
+fi
+
+echo
+echo "T45 -- full suite stays green with the cadence/length additions in place"
+t45_grants_exit=0
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t45_grants_exit=$?
+[[ "$t45_grants_exit" -eq 0 ]] && pass "T45 -- edm-check-grants exits 0" || fail "T45 -- edm-check-grants exited ${t45_grants_exit}"
+t45_lint_exit=0
+bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t45_lint_exit=$?
+[[ "$t45_lint_exit" -eq 0 ]] && pass "T45 -- edm-lint-artifacts --all exits 0" || fail "T45 -- edm-lint-artifacts --all exited ${t45_lint_exit}"
+# EDMV3-T45 end
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

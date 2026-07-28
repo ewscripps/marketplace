@@ -97,3 +97,10 @@ Guidance loads at write time so library updates improve output automatically wit
 6. Write tickets starting with Phase 1 (foundation), using `{PREFIX}-T{NN}` IDs
 7. Verify SRD coverage -- every `{PREFIX}-NN` requirement must appear in at least one ticket
 8. Draw the critical path Mermaid diagram with colored nodes, following `CLAUDE.md Sec."Mermaid diagram conventions"` for label text -- a raw semicolon in a label is a violation
+
+## Output
+
+Write the ticket pack to `${INIT_DIR}/${user_config.ticket_pack_dirname}/` per the README.md and
+epic-file structure above.
+
+- **Length**: match the length of the document to what the task needs -- cover the substance; do not pad with filler sections, redundant summaries, or boilerplate.

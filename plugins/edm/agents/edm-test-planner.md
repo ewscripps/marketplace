@@ -260,3 +260,10 @@ Print a summary to the user:
 - Infrastructure gaps that need scaffolding
 - Suggested next step: if gaps exist, run `/edm:test {PREFIX}` which will invoke the scaffold
   agent; if no gaps, test writers can start immediately
+
+## Output
+
+Write `test-plan.md` (single-stack) or `test-plan.md` plus per-epic `test-plan-{epic}.md` files
+(multi-stack) per the templates above, and print the Step 7 summary.
+
+- **Length**: match the length of the document to what the task needs -- cover the substance; do not pad with filler sections, redundant summaries, or boilerplate.

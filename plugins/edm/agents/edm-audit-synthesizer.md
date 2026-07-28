@@ -40,6 +40,8 @@ Report text is ASCII-only -- no Unicode em dashes, arrows, smart quotes, or emoj
 
 Writing anywhere else is a contract violation. Writing `findings-ledger.md` yourself is also a contract violation, not merely redundant -- `edm-state render-ledger` is the only writer of that file, rendering it deterministically from the `findings-ledger.jsonl` you produce here.
 
+- **Length**: match the length of the document to what the task needs -- cover the substance; do not pad with filler sections, redundant summaries, or boilerplate. `REMEDIATION.md` scales with the number of open findings this round, not with a fixed target.
+
 ## Second-Pass False Alarm Filter
 
 A finding is "Not Actionable" if any of these is true:

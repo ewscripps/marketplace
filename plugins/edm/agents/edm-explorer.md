@@ -61,3 +61,5 @@ Given an initiative description, explore the codebase thoroughly and report:
 Write your findings to the exact permitted path pattern `<initiative-dir>/explorers/{NN}-{slug}.md` (e.g., `explorers/01-current-state.md`, `explorers/02-dependencies.md`). Use two-digit numeric prefixes for stable ordering and ASCII-only slugs. Writing anywhere else is a contract violation. The orchestrator reads all `explorers/*.md` and synthesizes them into `planning.md` -- you write your own report; the orchestrator does not proxy it for you.
 
 Produce a concise but complete exploration report. Use tables and lists. Include file:line references. A planning author will synthesize this into a formal planning document -- give them everything they need.
+
+- **Length**: match the length of the document to what the task needs -- cover the substance; do not pad with filler sections, redundant summaries, or boilerplate.

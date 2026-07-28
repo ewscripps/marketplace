@@ -265,3 +265,11 @@ Print a concise summary:
 - If coverage is within 2 points of target, raise P2 not P1 -- rounding and measurement noise.
 - After a plan correction that makes a previously-N/A layer applicable, the next coverage run
   reports real coverage for that layer (not the stale N/A designation).
+
+## Output
+
+Write `test-coverage.md` (single-stack) or `test-coverage.md` plus per-epic
+`test-coverage-{epic}.md` files (multi-stack) per the templates above, and print the Step 6
+summary.
+
+- **Length**: match the length of the document to what the task needs -- cover the substance; do not pad with filler sections, redundant summaries, or boilerplate.

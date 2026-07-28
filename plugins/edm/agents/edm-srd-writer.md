@@ -36,6 +36,10 @@ Guidance loads at write time so library updates improve output automatically wit
 5. **Cross-referenced** -- Reference actual file paths, API names, library versions from the codebase
 6. **Length** -- 800+ lines for major initiative, 200+ for focused feature, 50+ for small change
 
+These are substance signals, not padding targets: match the length of the document to what the
+task needs, cover the substance, and do not pad with filler sections, redundant summaries, or
+boilerplate. A draft below the floor is probably missing substance, not merely short.
+
 ## SRD Structure
 
 ```markdown
@@ -82,3 +86,5 @@ Guidance loads at write time so library updates improve output automatically wit
 ## Output
 
 Write the complete SRD to the specified file path. Report the final requirement count broken down by priority.
+
+- **Length**: match the length of the document to what the task needs -- cover the substance; do not pad with filler sections, redundant summaries, or boilerplate.
