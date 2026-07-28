@@ -175,8 +175,13 @@ echo "planning notes" > "$TMP/SRD/MTRX/planning.md"
 MR_OUT="$("$EDM_STATE" metrics-report MTRX 2>&1)"
 check "metrics-report Phase 1 row label (G20)" "Phase 1" "$MR_OUT"
 check_absent "metrics-report no '1Phase' mangled label (G20)" "1Phase" "$MR_OUT"
-check "metrics-report savings n/a for zero-cost initiative (G8)" "n/a" "$MR_OUT"
-check_absent "metrics-report no '0x cheaper' for zero-cost initiative (G8)" "0x cheaper" "$MR_OUT"
+# EDMV3-T53: the human-baseline comparison (and its G8 "n/a"/"0x cheaper" guard) moved behind
+# the --with-human-baseline opt-in flag; default output carries neither the comparison nor the
+# words that describe it.
+check_absent "metrics-report default output has no human-baseline comparison (EDMV3-T53 AC1)" "baseline" "$MR_OUT"
+MR_BASELINE_OUT="$("$EDM_STATE" metrics-report MTRX --with-human-baseline 2>&1)"
+check "metrics-report --with-human-baseline savings n/a for zero-cost initiative (G8)" "n/a" "$MR_BASELINE_OUT"
+check_absent "metrics-report --with-human-baseline no '0x cheaper' for zero-cost initiative (G8)" "0x cheaper" "$MR_BASELINE_OUT"
 
 # ---- metrics-report --all: G1 both-layout enumeration (product-scoped + flat) ------
 # Guards against the G1 regression where --all only walked the flat SRD_ROOT and missed

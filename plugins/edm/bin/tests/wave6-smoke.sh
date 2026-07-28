@@ -3373,6 +3373,92 @@ check "T52 AC1 -- D23 entry names branch (a)" \
 check "T52 AC1 -- get_session_tokens_since's comment block documents the driving-session mechanism" \
   "driving session" "$(sed -n '226,246p' "$EDM_STATE")"
 
+# =================================================================================
+# EDMV3-T53: the human-baseline ROI table leaves default output; metrics reflect tiering
+# AC4 (skills/metrics/SKILL.md no longer presents the human-baseline comparison as a
+# headline) is a SKILL.md edit out of scope this batch (T37/T38 dispatcher refactor owns
+# that file); reported as blocked-on-skills-owner. AC7's wave5-smoke.sh re-baseline is a
+# regression fix, not a new case here. AC6 (plugin.json description) already verified below.
+# =================================================================================
+
+echo
+echo "T53 AC1 -- default metrics-report output has no human-baseline comparison or multiple"
+"$EDM_STATE" init T53DEFAULT >/dev/null
+"$EDM_STATE" phase-start T53DEFAULT 1 >/dev/null
+echo "planning notes" > "$TMP/SRD/T53DEFAULT/planning.md"
+"$EDM_STATE" phase-complete T53DEFAULT 1 >/dev/null
+t53_default_out="$("$EDM_STATE" metrics-report T53DEFAULT 2>&1)"
+t53_default_hits=0
+printf '%s' "$t53_default_out" | grep -qi 'baseline\|multiple\|savings' && t53_default_hits=1
+[[ "$t53_default_hits" -eq 0 ]] \
+  && pass "T53 AC1 -- default output contains none of baseline/multiple/savings" \
+  || fail "T53 AC1 -- default output unexpectedly mentions baseline/multiple/savings: $t53_default_out"
+
+echo
+echo "T53 AC2 -- human_baseline_usd continues to be recorded in state (data not lost)"
+check "T53 AC2 -- human_baseline_usd recorded on phase 1 despite not being shown by default" \
+  "true" "$(jq -r '.phase_durations["1_phase"].human_baseline_usd != null' "$TMP/SRD/T53DEFAULT/.edm-state.json")"
+
+echo
+echo "T53 AC3 -- --with-human-baseline opt-in view states the estimate caveat"
+t53_baseline_out="$("$EDM_STATE" metrics-report T53DEFAULT --with-human-baseline 2>&1)"
+check "T53 AC3 -- --with-human-baseline renders the human-baseline comparison" \
+  "Human baseline" "$t53_baseline_out"
+check "T53 AC3 -- --with-human-baseline states it is an estimate" \
+  "estimate" "$(echo "$t53_baseline_out" | tr '[:upper:]' '[:lower:]')"
+
+echo
+echo "T53 AC6 -- plugin.json human_hourly_rate_usd description reflects the opt-in view"
+check "T53 AC6 -- plugin.json description mentions the opt-in view" \
+  "opt-in" "$(jq -r '.userConfig.human_hourly_rate_usd.description' "${REPO_ROOT}/plugins/edm/.claude-plugin/plugin.json")"
+
+echo
+echo "T53 AC8 -- metrics-report code-audit section names rounds run and lenses per round"
+"$EDM_STATE" audit-round-start T53DEFAULT code >/dev/null
+sleep 1
+"$EDM_STATE" audit-round-complete T53DEFAULT code >/dev/null
+t53_code_audit_out="$("$EDM_STATE" metrics-report T53DEFAULT 2>&1)"
+check "T53 AC8 -- 'rounds run' present once a code-audit round completes" \
+  "rounds run" "$t53_code_audit_out"
+check "T53 AC8 -- 'lenses per round' present once a code-audit round completes" \
+  "lenses per round" "$t53_code_audit_out"
+
+echo
+echo "T53 AC9 -- tiered-vs-untiered section omitted when no tiering data exists (T48 not landed)"
+check_absent "T53 AC9 -- no 'Tiered vs Untiered' section without tiering_results data" \
+  "Tiered vs Untiered" "$t53_default_out"
+
+echo
+echo "T53 AC10 -- --calibrate still works and now has Phase 6 data to calibrate against"
+"$EDM_STATE" init T53CALIB >/dev/null
+"$EDM_STATE" approve-gate T53CALIB 1 >/dev/null
+"$EDM_STATE" approve-gate T53CALIB 2 >/dev/null
+"$EDM_STATE" approve-gate T53CALIB 3 >/dev/null
+"$EDM_STATE" set T53CALIB estimated_size Small >/dev/null
+"$EDM_STATE" phase-start T53CALIB 6 >/dev/null
+sleep 1
+mkdir -p "$TMP/SRD/T53CALIB/qc"
+echo "# QC Summary" > "$TMP/SRD/T53CALIB/qc/qc-summary.md"
+"$EDM_STATE" phase-complete T53CALIB 6 >/dev/null
+set +e
+t53_calib_out="$("$EDM_STATE" metrics-report --calibrate 2>&1)"
+t53_calib_ec=$?
+set -e
+[[ $t53_calib_ec -eq 0 ]] \
+  && pass "T53 AC10 -- --calibrate exits 0" \
+  || fail "T53 AC10 -- --calibrate exited $t53_calib_ec: $t53_calib_out"
+check "T53 AC10 -- --calibrate output references phase 6" \
+  "Small_phase_6" "$t53_calib_out"
+
+echo
+echo "T53 AC11 -- metrics-report output stays ASCII-only and passes the artifact lint"
+t53_lint_dir="${TMP}/SRD/T53DEFAULT"
+"$EDM_STATE" metrics-report T53DEFAULT > "${t53_lint_dir}/metrics.md"
+t53_nonascii="$(LC_ALL=C grep -n '[^ -~	]' "${t53_lint_dir}/metrics.md" || true)"
+[[ -z "$t53_nonascii" ]] \
+  && pass "T53 AC11 -- metrics-report output is ASCII-only" \
+  || fail "T53 AC11 -- non-ASCII bytes found in metrics-report output: $t53_nonascii"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

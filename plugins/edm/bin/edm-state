@@ -27,7 +27,7 @@
 #   edm-state archive <PREFIX>                          # mark initiative complete (git-aware)
 #   edm-state write-handoff <PREFIX>                    # write/refresh HANDOFF.md for cross-user resumption
 #   edm-state watch-impl                                # tail git log for ticket commits (called by monitor)
-#   edm-state metrics-report <PREFIX|--all|--calibrate>
+#   edm-state metrics-report <PREFIX|--all|--calibrate> [--with-human-baseline]  # raw cost/duration by default; --with-human-baseline opts into the human-cost comparison
 #   edm-state validate <PREFIX>                         # check state file for anomalies (read-only)
 #   edm-state gate-check <PREFIX> <gated-command>       # deterministic gate enforcement (read-only)
 #   edm-state branch-check <PREFIX>                     # verify current git branch matches initiative_branch
@@ -2021,28 +2021,53 @@ cmd_watch_impl() {
 cmd_metrics_report() {
   require_jq
   local arg="${1:-}"
+  # EDMV3-T53 AC1/AC3: the human-baseline comparison is opt-in everywhere it can render (--all
+  # and the per-prefix report both honor it), not a per-mode special case. --calibrate has no
+  # baseline concept and ignores this flag either way.
+  local with_baseline="false"
+  [[ "${2:-}" == "--with-human-baseline" ]] && with_baseline="true"
   case "$arg" in
     --all)
       [[ -d "$SRD_ROOT" ]] || { echo "no SRD/ directory"; return 0; }
       echo "# EDM Metrics - Aggregate"
       echo
-      printf "  %-12s  %-8s  %-10s  %-12s  %-12s  %-12s\n" "Initiative" "Size" "Total Time" "Claude Cost" "Human Cost" "Cost Ratio"
-      printf "  %-12s  %-8s  %-10s  %-12s  %-12s  %-12s\n" "----------" "----" "----------" "-----------" "----------" "----------"
+      if [[ "$with_baseline" == "true" ]]; then
+        printf "  %-12s  %-8s  %-10s  %-12s  %-12s  %-12s\n" "Initiative" "Size" "Total Time" "Claude Cost" "Human Cost" "Cost Ratio"
+        printf "  %-12s  %-8s  %-10s  %-12s  %-12s  %-12s\n" "----------" "----" "----------" "-----------" "----------" "----------"
+      else
+        printf "  %-12s  %-8s  %-10s  %-12s\n" "Initiative" "Size" "Total Time" "Claude Cost"
+        printf "  %-12s  %-8s  %-10s  %-12s\n" "----------" "----" "----------" "-----------"
+      fi
       while IFS= read -r state; do
-        jq -r '
-          [.phase_durations | to_entries[] | .value] as $phases |
-          {
-            prefix: .prefix,
-            size: (.estimated_size // "?"),
-            total_seconds: ([$phases[].duration_seconds // 0] | add),
-            total_claude: ([$phases[].estimated_cost_usd // 0] | add),
-            total_human: ([$phases[].human_baseline_usd // 0] | add)
-          }
-          | "  \(.prefix | tostring | .[0:12])  \(.size | tostring | .[0:8])  \(.total_seconds)s\(if .total_seconds < 100 then "         " else "       " end)  $\(.total_claude)\(if .total_claude < 10 then "        " else "      " end)  $\(.total_human)\(if .total_human < 100 then "       " else "     " end)  \(if .total_claude > 0 and .total_human > 0 then ((.total_human / .total_claude) | tostring | .[0:6]) + "x" else "n/a" end)"
-        ' "$state" 2>/dev/null
+        if [[ "$with_baseline" == "true" ]]; then
+          jq -r '
+            [.phase_durations | to_entries[] | .value] as $phases |
+            {
+              prefix: .prefix,
+              size: (.estimated_size // "?"),
+              total_seconds: ([$phases[].duration_seconds // 0] | add),
+              total_claude: ([$phases[].estimated_cost_usd // 0] | add),
+              total_human: ([$phases[].human_baseline_usd // 0] | add)
+            }
+            | "  \(.prefix | tostring | .[0:12])  \(.size | tostring | .[0:8])  \(.total_seconds)s\(if .total_seconds < 100 then "         " else "       " end)  $\(.total_claude)\(if .total_claude < 10 then "        " else "      " end)  $\(.total_human)\(if .total_human < 100 then "       " else "     " end)  \(if .total_claude > 0 and .total_human > 0 then ((.total_human / .total_claude) | tostring | .[0:6]) + "x" else "n/a" end)"
+          ' "$state" 2>/dev/null
+        else
+          jq -r '
+            [.phase_durations | to_entries[] | .value] as $phases |
+            {
+              prefix: .prefix,
+              size: (.estimated_size // "?"),
+              total_seconds: ([$phases[].duration_seconds // 0] | add),
+              total_claude: ([$phases[].estimated_cost_usd // 0] | add)
+            }
+            | "  \(.prefix | tostring | .[0:12])  \(.size | tostring | .[0:8])  \(.total_seconds)s\(if .total_seconds < 100 then "         " else "       " end)  $\(.total_claude)"
+          ' "$state" 2>/dev/null
+        fi
       done < <(list_state_files --archived)
       echo
-      echo "Cost Ratio = human_cost / claude_cost (higher = more savings vs. human team baseline)"
+      if [[ "$with_baseline" == "true" ]]; then
+        echo "Cost Ratio = human_cost / claude_cost (higher = more savings vs. human team baseline). human_baseline_usd is an ESTIMATE derived from Phase Timing Guidelines median hours x human_hourly_rate_usd -- not a measured figure."
+      fi
       ;;
     --calibrate)
       [[ -d "$SRD_ROOT" ]] || { echo "no SRD/ directory"; return 0; }
@@ -2090,29 +2115,56 @@ cmd_metrics_report() {
       jq -r '"Initiative: \(.prefix)  |  size: \(.estimated_size // "Unknown")  |  current phase: \(.current_phase)  |  human hourly rate: $'"$HUMAN_HOURLY_RATE_USD"'"' "$state"
       jq -r 'if (.product_name // "") != "" or (.initiative_description // "") != "" then "Product: \(.product_name // "(none)")  |  Description: \(.initiative_description // "(none)")" else empty end' "$state" 2>/dev/null || true
       echo
-      printf "  %-10s  %-10s  %-12s  %-12s  %-10s  %-12s  %-10s\n" "Phase" "Duration" "Claude Cost" "Human Cost" "Savings" "Tokens (i/o)" "Model"
-      printf "  %-10s  %-10s  %-12s  %-12s  %-10s  %-12s  %-10s\n" "-----" "--------" "-----------" "----------" "-------" "------------" "-----"
-      jq -r '
-        .phase_durations
-        | to_entries
-        | sort_by(.key)
-        | .[]
-        | .key as $k
-        | .value as $v
-        | ("Phase " + ($k | sub("_phase$"; ""))) as $phase_label
-        | "  \($phase_label | .[0:10])  \(($v.duration_seconds // 0))s\(if ($v.duration_seconds // 0) < 100 then "       " else "     " end)  $\(($v.estimated_cost_usd // 0))\(if ($v.estimated_cost_usd // 0) < 10 then "        " else "      " end)  $\(($v.human_baseline_usd // 0))\(if ($v.human_baseline_usd // 0) < 100 then "        " else "      " end)  \(if ($v.estimated_cost_usd // 0) > 0 and ($v.human_baseline_usd // 0) > 0 then ((($v.human_baseline_usd // 0) / ($v.estimated_cost_usd // 1)) | tostring | .[0:5]) + "x" else "n/a" end)\(if ($v.estimated_cost_usd // 0) > 0 and ($v.human_baseline_usd // 0) > 0 then "    " else "        " end)  \(($v.tokens.input // 0))/\(($v.tokens.output // 0))\(if (($v.tokens.input // 0) + ($v.tokens.output // 0)) < 1000 then "        " else "     " end)  \($v.model_used // "?")"
-      ' "$state"
-      echo
-      jq -r '
-        [.phase_durations[] | .estimated_cost_usd // 0] as $costs |
-        [.phase_durations[] | .human_baseline_usd // 0] as $humans |
-        [.phase_durations[] | .duration_seconds // 0] as $secs |
-        ($costs | add) as $tc |
-        ($humans | add) as $th |
-        ($secs | add) as $ts |
-        "  Total: \($ts)s  |  Claude: $\($tc)  |  Human baseline: $\($th)  |  Savings: " +
-          (if $tc > 0 and $th > 0 then "\(($th / $tc) | tostring | .[0:6])x cheaper" else "n/a" end)
-      ' "$state"
+      # EDMV3-T53 AC1: default output is raw cost/duration only -- no human-baseline comparison
+      # or multiple. AC3: --with-human-baseline is the explicit opt-in that restores it, with
+      # its own caveat line stating the baseline is an estimate.
+      if [[ "$with_baseline" == "true" ]]; then
+        printf "  %-10s  %-10s  %-12s  %-12s  %-10s  %-12s  %-10s\n" "Phase" "Duration" "Claude Cost" "Human Cost" "Savings" "Tokens (i/o)" "Model"
+        printf "  %-10s  %-10s  %-12s  %-12s  %-10s  %-12s  %-10s\n" "-----" "--------" "-----------" "----------" "-------" "------------" "-----"
+        jq -r '
+          .phase_durations
+          | to_entries
+          | sort_by(.key)
+          | .[]
+          | .key as $k
+          | .value as $v
+          | ("Phase " + ($k | sub("_phase$"; ""))) as $phase_label
+          | "  \($phase_label | .[0:10])  \(($v.duration_seconds // 0))s\(if ($v.duration_seconds // 0) < 100 then "       " else "     " end)  $\(($v.estimated_cost_usd // 0))\(if ($v.estimated_cost_usd // 0) < 10 then "        " else "      " end)  $\(($v.human_baseline_usd // 0))\(if ($v.human_baseline_usd // 0) < 100 then "        " else "      " end)  \(if ($v.estimated_cost_usd // 0) > 0 and ($v.human_baseline_usd // 0) > 0 then ((($v.human_baseline_usd // 0) / ($v.estimated_cost_usd // 1)) | tostring | .[0:5]) + "x" else "n/a" end)\(if ($v.estimated_cost_usd // 0) > 0 and ($v.human_baseline_usd // 0) > 0 then "    " else "        " end)  \(($v.tokens.input // 0))/\(($v.tokens.output // 0))\(if (($v.tokens.input // 0) + ($v.tokens.output // 0)) < 1000 then "        " else "     " end)  \($v.model_used // "?")"
+        ' "$state"
+        echo
+        jq -r '
+          [.phase_durations[] | .estimated_cost_usd // 0] as $costs |
+          [.phase_durations[] | .human_baseline_usd // 0] as $humans |
+          [.phase_durations[] | .duration_seconds // 0] as $secs |
+          ($costs | add) as $tc |
+          ($humans | add) as $th |
+          ($secs | add) as $ts |
+          "  Total: \($ts)s  |  Claude: $\($tc)  |  Human baseline (ESTIMATE): $\($th)  |  Savings: " +
+            (if $tc > 0 and $th > 0 then "\(($th / $tc) | tostring | .[0:6])x cheaper" else "n/a" end)
+        ' "$state"
+        echo "  (Human baseline is an ESTIMATE derived from Phase Timing Guidelines median hours x \$${HUMAN_HOURLY_RATE_USD}/hr -- not a measured cost.)"
+      else
+        printf "  %-10s  %-10s  %-12s  %-12s  %-10s\n" "Phase" "Duration" "Claude Cost" "Tokens (i/o)" "Model"
+        printf "  %-10s  %-10s  %-12s  %-12s  %-10s\n" "-----" "--------" "-----------" "------------" "-----"
+        jq -r '
+          .phase_durations
+          | to_entries
+          | sort_by(.key)
+          | .[]
+          | .key as $k
+          | .value as $v
+          | ("Phase " + ($k | sub("_phase$"; ""))) as $phase_label
+          | "  \($phase_label | .[0:10])  \(($v.duration_seconds // 0))s\(if ($v.duration_seconds // 0) < 100 then "       " else "     " end)  $\(($v.estimated_cost_usd // 0))\(if ($v.estimated_cost_usd // 0) < 10 then "        " else "      " end)  \(($v.tokens.input // 0))/\(($v.tokens.output // 0))\(if (($v.tokens.input // 0) + ($v.tokens.output // 0)) < 1000 then "        " else "     " end)  \($v.model_used // "?")"
+        ' "$state"
+        echo
+        jq -r '
+          [.phase_durations[] | .estimated_cost_usd // 0] as $costs |
+          [.phase_durations[] | .duration_seconds // 0] as $secs |
+          ($costs | add) as $tc |
+          ($secs | add) as $ts |
+          "  Total: \($ts)s  |  Claude: $\($tc)"
+        ' "$state"
+      fi
       echo
       # ---- Code Audit: per-round cost (EDMV3-T51 AC6) + rounds-run/lenses-per-round summary
       # (EDMV3-T53 AC8) -- one section, both tickets read the same audit_rounds data, so it is
@@ -2150,6 +2202,26 @@ cmd_metrics_report() {
           [$t, (.round|tostring), ((.lenses // []) | length | tostring), ((.duration_seconds // 0)|tostring), ((.estimated_cost_usd // 0)|tostring), (.model_used // "?")] | @tsv
         ' "$state" 2>/dev/null)
         echo "  (lenses per round shown in the Lenses column above; round_type full = all 11 lenses)"
+        echo
+      fi
+      # ---- Tiered vs untiered lens cost (EDMV3-T53 AC9) ------------------------------------
+      # Renders only where tiering data exists; omitted (not rendered empty) where it does not.
+      # No producer of `.tiering_results` exists yet -- EDMV3-T48 (a separate, not-in-this-
+      # batch ticket) is the measurement this section reads; today every initiative has none,
+      # so this section correctly never renders until T48 lands and populates the field. The
+      # anticipated shape (documented here so T48 has a concrete target rather than inventing
+      # its own): .tiering_results = [{lens_set, tiered_cost_usd, untiered_cost_usd}, ...].
+      local has_tiering_data
+      has_tiering_data="$(jq -r '(.tiering_results // []) | length' "$state" 2>/dev/null || echo 0)"
+      if [[ "$has_tiering_data" -gt 0 ]]; then
+        echo "## Tiered vs Untiered Lens Cost"
+        echo
+        printf "  %-20s  %-14s  %-14s\n" "Lens Set" "Tiered Cost" "Untiered Cost"
+        printf "  %-20s  %-14s  %-14s\n" "--------" "-----------" "-------------"
+        jq -r '
+          (.tiering_results // [])[] |
+          "  \(.lens_set // "?" | tostring | .[0:20])  $\(.tiered_cost_usd // 0)  $\(.untiered_cost_usd // 0)"
+        ' "$state" 2>/dev/null
         echo
       fi
       # Gate review time section (only shown when at least one gate is approved)

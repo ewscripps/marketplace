@@ -107,7 +107,7 @@ All EDM phases are user-invocable as `/edm:<name>`:
 | `/edm:implement <PREFIX>` | 6 | Implementation -- parallel waves with auto-QC after each wave |
 | `/edm:code-audit <PREFIX>` | Post-6 | 11-lens exhaustive audit + synthesizer-produced remediation plan |
 | `/edm:verify-runtime <PREFIX>` | 6 closure | Mandatory Phase 6 closure -- drives every PARTIAL verdict to PASS or FAIL via runtime checks; then run `edm-state phase-complete <PREFIX> 6` |
-| `/edm:metrics <PREFIX\|--all\|--calibrate>` | Reporting | Per-phase durations, gate review times, Claude/human cost comparison, calibration |
+| `/edm:metrics <PREFIX\|--all\|--calibrate> [--with-human-baseline]` | Reporting | Per-phase durations and raw Claude cost by default; gate review times; per-round audit cost; `--with-human-baseline` opts into an estimated human-cost comparison; calibration |
 | `/edm:push-jira <PREFIX> [PROJECT_KEY]` | Optional | Sync ticket pack to Jira via Atlassian MCP (idempotent, label-tracked, dependency-linked) |
 | `/edm:test <PREFIX>` | Post-6 | Comprehensive testing pipeline: plan -> scaffold -> write (unit/component/composable/integration/contract/E2E/a11y) -> run -> audit coverage |
 | `/edm:test-plan <PREFIX>` | Post-6 | Preview test scope only: detect stack + map AC to layers, no test writing |
@@ -194,6 +194,10 @@ See `CLAUDE.md` for the full v2.0 artifact inventory including optional on-deman
 Artifacts are reviewed in PRs. Gate approvals show up in git history. Multiple developers see the same in-flight initiative state.
 
 ## Phase Timing Guidelines
+
+This table is an estimate pending calibration -- judgment-based, not yet regenerated from measured
+Phase 6 data (EDMV3-T50/T51 now instrument that data; run `/edm:metrics --calibrate` once a few
+initiatives complete to regenerate it from real numbers).
 
 | Initiative Size | Total Estimate |
 |---|---|
