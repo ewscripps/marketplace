@@ -126,8 +126,8 @@
   "coverage_by_epic": {},
   "code_audit_converged": false,
   "compliance_gate_approved": false,
-  "last_cmd": "",
-  "last_decision": "Wave A complete: 26/26 tickets, QC 2 shards, 12 findings remediated (D13), v2.1.0, 709/709; open items are environment/human-dependent (baseline runs, live pipeline, cache refresh, permission-dialog observation)",
+  "last_cmd": "edm-state audit-converged EDMV3  (exit 1, NOT CONVERGENT)",
+  "last_decision": "Code-audit round 1 (full, 11 lenses) complete and NON-CONVERGENT. Ledger: 132 findings after cross-lens dedup -- 4 P0, 40 P1, 60 P2, 28 NOTED. Four fixed in-round (both arithmetic-context injection sinks CA-001/CA-003, the missing --lenses arg CA-004, the lost die interpolations); 100 remain open and ALL block, because BLOCKING_FILTER includes open P2. Next action is remediation, not the gate: work REMEDIATION.md in code-audit/pass-1_2026-07-28/, then re-run a full round. The convergence gate stays unapproved -- only an explicit human Approve may set code_audit_converged, and there is nothing to approve while 100 findings block. Three root causes carry most of the volume: the ignore-marker/fence rewrite three hand-copies did not follow (2 of them in blocking CI jobs), status captures that structurally cannot observe failure, and prose describing pre-change code in files that are themselves the contract.",
   "audit_rounds": {
     "code": {
       "count": 1,
@@ -163,7 +163,7 @@
   "forked_from": "",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-07-28T16:22:23Z",
-  "current_step": "6.wave-a-complete",
+  "last_updated": "2026-07-28T19:40:41Z",
+  "current_step": "6.code-audit-round-1-non-convergent",
   "schema_version": 1
 }
