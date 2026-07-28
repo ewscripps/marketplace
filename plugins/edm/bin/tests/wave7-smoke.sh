@@ -2373,6 +2373,318 @@ t38_lint_exit=0
 bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t38_lint_exit=$?
 [[ "$t38_lint_exit" -eq 0 ]] && pass "T38 -- edm-lint-artifacts --all exits 0" || fail "T38 -- edm-lint-artifacts --all exited ${t38_lint_exit}"
 # EDMV3-T38 end
+# =================================================================================
+# EDMV3-T54: update-patterns respects the Living-Library Contract, entries pending-review
+# =================================================================================
+# Ownership split (recorded here, not worked around silently): cmd_update_patterns
+# (plugins/edm/bin/edm-state:1576-1692 per the ticket) is owned by a different agent in this
+# wave and is out of this batch's file remit to edit. AC1-AC12 below are the functional
+# insertion-logic acceptance criteria and are BLOCKED-ON-OWNER (bin/edm-state) as of this
+# commit -- asserting them here against unmodified code would be a false FAIL, and faking them
+# would be a false PASS, so they are named below and left for the owning agent's commit instead.
+# Only the docs/contract half this batch owns is asserted: AC13 (README.md's Append Schema
+# documents the pending-review marker, its provenance fields, and the curation lifecycle) plus
+# the "Insertion target" mapping/never-EOF contract prose that AC1/AC2/AC3 are written against.
+echo
+echo "=== EDMV3-T54: update-patterns Living-Library Contract + pending-review (docs/contract half) ==="
+README_T54="${PLUGIN_DIR}/docs/audit-patterns/README.md"
+README_T54_CONTENT="$(cat "$README_T54")"
+
+echo "T54 AC13 -- Append Schema documents the pending-review marker and curation lifecycle"
+check "T54 AC13 -- 'status: pending-review' marker documented" "status: pending-review" "$README_T54_CONTENT"
+check "T54 AC13 -- provenance field 'source' documented" "source: {source-prefix}" "$README_T54_CONTENT"
+check "T54 AC13 -- provenance field 'audit-type' documented" "audit-type: {srd|ticket|qc|code}" "$README_T54_CONTENT"
+check "T54 AC13 -- provenance field 'date' documented" "date: {date}" "$README_T54_CONTENT"
+check "T54 AC13 -- curation lifecycle documented (one-way, de-dup prevents re-add)" \
+  "curation is one-way" "$README_T54_CONTENT"
+
+echo
+echo "T54 -- contract prose this batch owns (AC1/AC2/AC3's documented insertion contract)"
+check "T54 -- default insertion target documented" \
+  "\`## Anti-Patterns\` is the default target" "$README_T54_CONTENT"
+check "T54 -- missing-heading skip (never EOF fallback) documented" \
+  "it never falls back to appending at end-of-file" "$README_T54_CONTENT"
+
+echo
+echo "T54 -- BLOCKED-ON-OWNER (bin/edm-state, cmd_update_patterns): AC1 (heading-targeted"
+echo "  insertion), AC2 (missing-heading skip, not EOF fallback), AC3 (no fifth section/orphan"
+echo "  content), AC4 (idempotent structure under repetition), AC5 (de-duplication preserved),"
+echo "  AC6 (skip list + read-only skip preserved), AC7 (atomic insertion via temp file + rename),"
+echo "  AC8 (state recording preserved), AC9 (pending-review marker on every auto-append), AC10"
+echo "  (stub delimited, not disguised), AC11 (single source of truth for pending count), AC12"
+echo "  (curation is one-way) all require the insertion-logic rewrite at"
+echo "  plugins/edm/bin/edm-state:1576-1692, out of this batch's file remit. Not asserted here;"
+echo "  report these as blocked-on-owner rather than a false PASS or FAIL."
+# EDMV3-T54 end
+
+# =================================================================================
+# EDMV3-T55: the audit gate presents pending pattern entries for human curation
+# =================================================================================
+# Ownership split (recorded here, not worked around silently): the presentation logic itself
+# lives in skills/audit-srd/SKILL.md, skills/audit-tickets/SKILL.md and
+# skills/code-audit/SKILL.md, all owned by a different agent in this wave and out of this
+# batch's file remit to edit. AC1 (presented at three gates), AC2 (keep/edit/discard in one
+# AskUserQuestion round) and AC4 (nothing shown when nothing is pending) require prose in those
+# three files and are BLOCKED-ON-OWNER (skills/*.md) as of this commit. AC9 (MR before/after
+# review) is a review artifact, not a runnable assertion, and is out of scope for this suite
+# regardless of ownership (same framing as T15 AC9 above). AC3, AC5, AC6, AC7 and AC8 are
+# asserted below: AC7 and AC6 are already true of the live tree (no owner dependency); AC3, AC5
+# and AC8 assert the docs/contract half this batch owns -- the actual gate-time behavior these
+# three prose describe is still the skills owner's to implement and is noted as such.
+echo
+echo "=== EDMV3-T55: gate-time curation of pending pattern entries (docs/contract half) ==="
+CURATION_SECTION_T55="$(awk '/^## Curation at Gates$/{f=1;next} /^## /{f=0} f' "$README_T54")"
+
+echo "T55 AC3 -- contract documents the three action semantics (keep/edit/discard)"
+check "T55 AC3 -- Keep semantics documented" \
+  "remove the \`status: pending-review\` marker; the entry is curated as-is" "$CURATION_SECTION_T55"
+check "T55 AC3 -- Edit semantics documented" \
+  "prompt for the one-paragraph description, then remove the marker" "$CURATION_SECTION_T55"
+check "T55 AC3 -- Discard semantics documented" \
+  "remove the entry from the pattern document entirely" "$CURATION_SECTION_T55"
+
+echo
+echo "T55 AC5 -- contract documents curation never blocking the gate"
+check "T55 AC5 -- README states declining curation never blocks gate approval" \
+  "never blocks gate approval" "$CURATION_SECTION_T55"
+
+echo
+echo "T55 AC6 -- regression guard: Gate PROTOCOL (canonical) is unchanged by this ticket"
+ORCH_SKILL_T55="$(cat "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
+t55_protocol_count="$(grep -c '^## Gate PROTOCOL (canonical)$' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" || true)"
+[[ "${t55_protocol_count:-0}" -eq 1 ]] && pass "T55 AC6 -- '## Gate PROTOCOL (canonical)' still appears exactly once" \
+  || fail "T55 AC6 -- '## Gate PROTOCOL (canonical)' appears ${t55_protocol_count:-0} times, expected 1"
+check "T55 AC6 -- approve-gate still called only on exact Approve selection" \
+  'is called ONLY when the user selects the **exact "Approve" option**' "$ORCH_SKILL_T55"
+check "T55 AC6 -- free-text responses are still not approvals" "are **NOT** approvals" "$ORCH_SKILL_T55"
+
+echo
+echo "T55 AC7 -- AskUserQuestion already granted on the three curation-presenting skills"
+t55_grants_ec=0
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t55_grants_ec=$?
+[[ "$t55_grants_ec" -eq 0 ]] && pass "T55 AC7 -- edm-check-grants exits 0" \
+  || fail "T55 AC7 -- edm-check-grants exited ${t55_grants_ec}"
+for t55_gate_skill in audit-srd audit-tickets code-audit; do
+  check "T55 AC7 -- ${t55_gate_skill}/SKILL.md's allowed-tools grants AskUserQuestion" \
+    "AskUserQuestion" "$(grep '^allowed-tools:' "${PLUGIN_DIR}/skills/${t55_gate_skill}/SKILL.md")"
+done
+
+echo
+echo "T55 AC8 -- contract documents grep-derived pending count, no state mirror (docs half)"
+check "T55 AC8 -- README documents the keep/edit/discard curation contract by section name" \
+  "## Curation at Gates" "$README_T54_CONTENT"
+check "T55 AC8 -- README states the pending count is derived by grep, not mirrored in state" \
+  "grep -c 'status: pending-review' docs/audit-patterns/*.md\` computed at read time" "$README_T54_CONTENT"
+check_absent "T55 AC8 -- no 'patterns_pending' state-array token anywhere in docs/audit-patterns/" \
+  "patterns_pending" "$README_T54_CONTENT"
+
+echo
+echo "T55 -- BLOCKED-ON-OWNER (skills/audit-srd, skills/audit-tickets, skills/code-audit SKILL.md):"
+echo "  AC1 (presented at three gates, showing title/source prefix/target doc), AC2 (keep/edit/"
+echo "  discard offered in the same AskUserQuestion round as the findings review), AC4 (nothing"
+echo "  shown when nothing is pending) all require prose changes to the three skill files, out of"
+echo "  this batch's file remit. Not asserted here; report these as blocked-on-owner rather than a"
+echo "  false PASS or FAIL. AC9 (MR before/after review artifact) is out of scope for this suite"
+echo "  regardless of ownership."
+# EDMV3-T55 end
+
+# =================================================================================
+# EDMV3-T56: the four-`##` Living-Library contract becomes a CI regression guard
+# =================================================================================
+# Fully owned by this batch (docs/audit-patterns/*.md, wave7-smoke.sh, .gitlab-ci.yml -- no
+# bin/edm-state or skills/*.md edit required). This is the authoritative four-heading contract
+# check (four-heading contract check, EDMV3-T56): five documents, four `##` headings each, in
+# contract order, heading 4 by regex, README.md and SOURCES.md exempt by name, no orphan `###`
+# under the 4th section. .gitlab-ci.yml's lint:pattern-library-contract job runs an
+# independent, minimal re-implementation of the same contract in the lint stage (mirrors, not
+# re-derives -- same convention as edm-check-grants mirroring edm-lint-artifacts, "T03 AC8"
+# above); this suite's version below is the one with full negative-case coverage.
+
+# _t56_four_heading_contract_check <docs-dir> -- validates the Living-Library four-`##`-heading
+# contract (README.md Sec."Living-Library Contract") against every *.md file directly in
+# <docs-dir>, except the two explicitly named exemptions:
+#   - README.md is exempt: it is the contract document itself, not a library document.
+#   - SOURCES.md is exempt: it is the provenance document (two `##` headings), neither
+#     four-heading-compliant nor exempted from the four-heading contract before EDMV3-T56.
+# For every other file: asserts headings 1-3 match exactly ("## Top Recurring Findings",
+# "## Anti-Patterns", "## Pre-Flight Checklist"), heading 4 matches the regex
+# `^## What .*Looks Like$`, there are exactly four `##` headings total (catches a 5th/orphan
+# section or an unexempted third file with the wrong shape), and no `###` heading appears under
+# the 4th section (catches an EOF-appended orphan, EDMV3-T54 AC3's own regression guard).
+# Prints one "CONTRACT-FAIL <file>: <reason>" line per violation and returns 1 iff any
+# violation was found; 0 otherwise. Read-only; never mutates the scanned tree.
+_t56_four_heading_contract_check() {
+  local docs_dir="$1"
+  local viol=0
+  local f base headings h1 h2 h3 h4 count orphan_count
+
+  for f in "${docs_dir}"/*.md; do
+    [[ -f "$f" ]] || continue
+    base="$(basename "$f")"
+
+    case "$base" in
+      README.md) continue ;;   # README.md is exempt: the contract document itself
+      SOURCES.md) continue ;;  # SOURCES.md is exempt: the provenance document (two headings)
+    esac
+
+    headings="$(grep '^## ' "$f" || true)"
+    count="$(printf '%s\n' "$headings" | grep -c '^## ' || true)"
+    if [[ "${count:-0}" -ne 4 ]]; then
+      echo "CONTRACT-FAIL ${base}: expected exactly 4 '##' headings, found ${count:-0}"
+      viol=1
+      continue
+    fi
+
+    h1="$(printf '%s\n' "$headings" | sed -n '1p')"
+    h2="$(printf '%s\n' "$headings" | sed -n '2p')"
+    h3="$(printf '%s\n' "$headings" | sed -n '3p')"
+    h4="$(printf '%s\n' "$headings" | sed -n '4p')"
+
+    [[ "$h1" == "## Top Recurring Findings" ]] \
+      || { echo "CONTRACT-FAIL ${base}: heading 1 is '${h1}', expected '## Top Recurring Findings'"; viol=1; }
+    [[ "$h2" == "## Anti-Patterns" ]] \
+      || { echo "CONTRACT-FAIL ${base}: heading 2 is '${h2}', expected '## Anti-Patterns'"; viol=1; }
+    [[ "$h3" == "## Pre-Flight Checklist" ]] \
+      || { echo "CONTRACT-FAIL ${base}: heading 3 is '${h3}', expected '## Pre-Flight Checklist'"; viol=1; }
+    if ! printf '%s' "$h4" | grep -qE '^## What .*Looks Like$'; then
+      echo "CONTRACT-FAIL ${base}: heading 4 is '${h4}', expected to match regex '^## What .*Looks Like\$'"
+      viol=1
+    fi
+
+    orphan_count="$(awk '/^## What /{f=1} f' "$f" | grep -c '^### ' || true)"
+    if [[ "${orphan_count:-0}" -ne 0 ]]; then
+      echo "CONTRACT-FAIL ${base}: ${orphan_count} '###' heading(s) found under the 4th section (orphan append)"
+      viol=1
+    fi
+  done
+
+  return $viol
+}
+
+echo
+echo "=== EDMV3-T56: four-'##' Living-Library contract as a CI regression guard ==="
+DOCS_DIR_T56="${PLUGIN_DIR}/docs/audit-patterns"
+
+echo "T56 AC1/AC7 -- five pattern docs carry four headings in contract order (also re-verifies"
+echo "  this initiative's own T42 Mermaid entries and T33 D15 entries did not break it)"
+set +e
+t56_live_out="$(_t56_four_heading_contract_check "$DOCS_DIR_T56" 2>&1)"
+t56_live_ec=$?
+set -e
+[[ $t56_live_ec -eq 0 ]] && pass "T56 AC1/AC7 -- all five library docs pass the four-heading contract (zero CONTRACT-FAIL lines)" \
+  || fail "T56 AC1/AC7 -- contract violation(s) against the live tree:\n$t56_live_out"
+check_absent "T56 AC1 -- no CONTRACT-FAIL line against the live tree" "CONTRACT-FAIL" "$t56_live_out"
+
+echo
+echo "T56 AC2 -- the fourth-heading regex is documented in README.md and matches all five docs"
+check "T56 AC2 -- README documents the regex '^## What .*Looks Like\$'" \
+  '^## What .*Looks Like$' "$README_T54_CONTENT"
+t56_ac2_all_match=1
+for t56_doc in srd-audit ticket-audit code-audit test-coverage-audit qc-audit; do
+  t56_h4_count="$(grep -c '^## What .*Looks Like$' "${DOCS_DIR_T56}/${t56_doc}.md" 2>/dev/null || true)"
+  if [[ "${t56_h4_count:-0}" -eq 1 ]]; then
+    pass "T56 AC2 -- ${t56_doc}.md's 4th heading matches the regex exactly once"
+  else
+    fail "T56 AC2 -- ${t56_doc}.md matched the 4th-heading regex ${t56_h4_count:-0} time(s), expected 1"
+    t56_ac2_all_match=0
+  fi
+done
+[[ "$t56_ac2_all_match" -eq 1 ]] && pass "T56 AC2 -- all five documents' fourth heading matches the sanctioned regex"
+
+echo
+echo "T56 AC3 -- negative: a fifth '##' heading fails, naming the document and the heading"
+t56_ac3_case() {
+  local scratch
+  scratch="$(mktemp -d /tmp/edm-t56-ac3.XXXXXX)" || { fail "T56 AC3 -- mktemp failed"; return 1; }
+  cp "${DOCS_DIR_T56}/code-audit.md" "${scratch}/code-audit.md"
+  printf '\n## Unexpected Fifth Section\n\nSurprise content.\n' >> "${scratch}/code-audit.md"
+
+  local out ec
+  set +e
+  out="$(_t56_four_heading_contract_check "$scratch" 2>&1)"
+  ec=$?
+  set -e
+
+  [[ $ec -ne 0 ]] && pass "T56 AC3 -- a fifth heading fails the contract check" \
+    || fail "T56 AC3 -- a fifth heading did not fail the check"
+  check "T56 AC3 -- failure names the document" "code-audit.md" "$out"
+  check "T56 AC3 -- failure names the unexpected heading count" "expected exactly 4" "$out"
+
+  rm -rf "$scratch"
+}
+t56_ac3_case
+
+echo
+echo "T56 AC4 -- both non-library documents (README.md, SOURCES.md) are explicitly exempt by name"
+check "T56 AC4 -- README.md is exempt, with its reason, in the check function" \
+  "README.md) continue ;;   # README.md is exempt" "$(cat "${SCRIPT_DIR}/wave7-smoke.sh")"
+check "T56 AC4 -- SOURCES.md is exempt, with its reason, in the check function" \
+  "SOURCES.md) continue ;;  # SOURCES.md is exempt" "$(cat "${SCRIPT_DIR}/wave7-smoke.sh")"
+[[ $t56_live_ec -eq 0 ]] && pass "T56 AC4 -- the suite passes despite README.md/SOURCES.md having different heading sets" \
+  || fail "T56 AC4 -- the live-tree check unexpectedly failed with the two exemptions in place"
+
+t56_ac4_third_file_case() {
+  local scratch
+  scratch="$(mktemp -d /tmp/edm-t56-ac4.XXXXXX)" || { fail "T56 AC4 -- mktemp failed"; return 1; }
+  local f
+  for f in "${DOCS_DIR_T56}"/*.md; do
+    cp "$f" "${scratch}/$(basename "$f")"
+  done
+  printf '## Scratch Heading One\n\nContent.\n\n## Scratch Heading Two\n\nContent.\n' > "${scratch}/scratch.md"
+
+  local out ec
+  set +e
+  out="$(_t56_four_heading_contract_check "$scratch" 2>&1)"
+  ec=$?
+  set -e
+
+  [[ $ec -ne 0 ]] && pass "T56 AC4 -- an unexempted third file (scratch.md) fails the suite" \
+    || fail "T56 AC4 -- adding scratch.md with two headings did not fail the check"
+  check "T56 AC4 -- failure names scratch.md" "scratch.md" "$out"
+
+  rm -rf "$scratch"
+}
+t56_ac4_third_file_case
+
+echo
+echo "T56 AC5 -- negative: a stray orphan '### ' heading after the last section's boundary fails"
+t56_ac5_case() {
+  local scratch
+  scratch="$(mktemp -d /tmp/edm-t56-ac5.XXXXXX)" || { fail "T56 AC5 -- mktemp failed"; return 1; }
+  cp "${DOCS_DIR_T56}/code-audit.md" "${scratch}/code-audit.md"
+  printf '\n### Orphan\n\nThis should never land here.\n' >> "${scratch}/code-audit.md"
+
+  local out ec
+  set +e
+  out="$(_t56_four_heading_contract_check "$scratch" 2>&1)"
+  ec=$?
+  set -e
+
+  [[ $ec -ne 0 ]] && pass "T56 AC5 -- a stray '### Orphan' after the last section fails the check" \
+    || fail "T56 AC5 -- appending '### Orphan' did not fail the check"
+  check "T56 AC5 -- failure names the orphan-append condition" "orphan append" "$out"
+
+  rm -rf "$scratch"
+}
+t56_ac5_case
+
+echo
+echo "T56 AC6 -- runs in the CI lint stage; coordination point for future update-patterns cases"
+check "T56 AC6 -- .gitlab-ci.yml runs the pattern-library contract check in the lint stage" \
+  "lint:pattern-library-contract" "$(cat "$GITLAB_CI_YML")"
+check "T56 AC6 -- wave7-smoke.sh runs the contract check as part of the test stage" \
+  "_t56_four_heading_contract_check" "$(cat "${SCRIPT_DIR}/wave7-smoke.sh")"
+echo "  NOTE (coordination point, not this batch's file remit): EDMV3-T54's own update-patterns"
+echo "  test cases (bin/edm-state, owned by a different agent this wave) must call"
+echo "  _t56_four_heading_contract_check \"\$DOCS_DIR_T56\" again immediately after each"
+echo "  update-patterns invocation once those cases land in this file, per AC6."
+
+echo
+echo "T56 AC8 -- BLOCKED-ON-OWNER (bin/edm-state): the ten-update-patterns-runs case requires"
+echo "  T54's insertion-logic rewrite, out of this batch's file remit. The contract check itself"
+echo "  (above) is already the mechanism that will catch a regression once that code lands and"
+echo "  this case is added."
+# EDMV3-T56 end
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
