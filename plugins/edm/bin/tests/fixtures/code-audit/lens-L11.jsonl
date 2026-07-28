@@ -1,0 +1,2 @@
+{"schema":1,"id":null,"lens":"L11","round":1,"round_type":"full","sev":"P1","confidence":"medium","file":"src/api/routes.js","line":1,"title":"DELETE endpoint is registered but no client in this fixture calls it","status":"open"}
+{"schema":1,"id":null,"lens":"L11","round":1,"round_type":"full","sev":"NOTED","confidence":"high","file":"src/worker/queue.js","line":1,"title":"queue consumer intentionally has no producer in this trimmed fixture","status":"noted"}

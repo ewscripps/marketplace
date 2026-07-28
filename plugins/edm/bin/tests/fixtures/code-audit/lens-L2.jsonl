@@ -1,0 +1,2 @@
+{"schema":1,"id":null,"lens":"L2","round":1,"round_type":"full","sev":"P1","confidence":"medium","file":"src/worker/queue.js","line":15,"title":"unreachable branch after an unconditional return in dequeue()","status":"open"}
+{"schema":1,"id":null,"lens":"L2","round":1,"round_type":"full","sev":"NOTED","confidence":"high","file":"src/worker/processor.js","line":2,"title":"retry branch only reachable in staging config, documented in README","status":"noted"}

@@ -1,0 +1,6 @@
+{"schema":1,"id":null,"lens":"L1","round":1,"round_type":"full","sev":"P0","confidence":"high","file":"src/api/routes.js","line":12,"title":"DELETE /users/:id has no auth check before deleting","status":"open"}
+{"schema":1,"id":null,"lens":"L1","round":1,"round_type":"full","sev":"P1","confidence":"medium","file":"src/worker/processor.js","line":20,"title":"batch loop drops the last item (off-by-one in the range bound)","status":"open"}
+{"schema":1,"id":null,"lens":"L1","round":1,"round_type":"full","sev":"P2","confidence":"low","file":"src/worker/queue.js","line":5,"title":"retry count of 3 has no comment explaining the choice","status":"open"}
+{"schema":1,"id":null,"lens":"L1","round":1,"round_type":"full","sev":"NOTED","confidence":"high","file":"src/api/server.js","line":8,"title":"hardcoded port 8080 is documented as intentional for local dev","status":"noted"}
+{"schema":1,"id":null,"lens":"L1","round":1,"round_type":"full","sev":"P1","confidence":"medium","file":"src/api/routes.js","line":30,"title":"stub handler from a prior pass now returns real data","status":"fixed"}
+{"schema":1,"id":null,"lens":"L1","round":1,"round_type":"full","sev":"P2","confidence":"low","file":"src/worker/processor.js","line":40,"title":"legacy line carrying the pre-EDMV3 deferred status, retained for the re-open fixture","status":"deferred"}

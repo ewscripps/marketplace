@@ -1,0 +1,2 @@
+{"schema":1,"id":null,"lens":"L10","round":1,"round_type":"full","sev":"P2","confidence":"low","file":"src/worker/queue.js","line":12,"title":"retry-backoff logic is duplicated in src/worker/processor.js","status":"open"}
+{"schema":1,"id":null,"lens":"L10","round":1,"round_type":"full","sev":"NOTED","confidence":"medium","file":"src/api/routes.js","line":1,"title":"duplication intentional to avoid a circular import","status":"noted"}

@@ -689,7 +689,7 @@ different findings in each.
 every prose finding must have exactly one JSONL line. `score-artifacts.sh` and a wave7 assertion
 compare finding counts between the two files for the fixture run.
 
-*Assumption*: that a count match implies a content match. It does not. Content-level drift at the
+*Assumption*: a count match does not imply a content match. Content-level drift at the
 lens boundary is an accepted residual risk, bounded by the fact that only the JSONL feeds
 convergence -- a prose-only finding is invisible to the gate, which is a recall loss, not an
 integrity loss.
