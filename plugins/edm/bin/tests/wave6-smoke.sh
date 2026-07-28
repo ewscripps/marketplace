@@ -2534,6 +2534,157 @@ check_fails "T27 -- unknown flag after audit type refused" "unknown argument" \
 t27_help_line="$("$EDM_STATE" --help 2>&1 | grep 'audit-round-start' || true)"
 check "T27 -- --lenses documented on the audit-round-start help line" "--lenses" "$t27_help_line"
 
+# =================================================================================
+# EDMV3-T28: edm-state audit-converged computes convergence over one blocking predicate
+# =================================================================================
+echo
+echo "T28 -- audit-converged computes convergence via the shared BLOCKING_FILTER predicate"
+
+"$EDM_STATE" init T28CONV >/dev/null
+STATE_T28CONV="$TMP/SRD/T28CONV/.edm-state.json"
+jq '.schema_version = 2' "$STATE_T28CONV" > "$STATE_T28CONV.tmp" && mv "$STATE_T28CONV.tmp" "$STATE_T28CONV"
+T28_DIR="$TMP/SRD/T28CONV"
+T28_JSONL="${T28_DIR}/code-audit/findings-ledger.jsonl"
+
+# ---- AC6 (negative, no ledger vs no findings) -- missing jsonl exits 3 ---------------------
+check_fails "T28 AC6 -- audit-converged with no ledger exits 3 naming 'no audit has run'" \
+  "no code audit has run" "$EDM_STATE" audit-converged T28CONV
+set +e
+"$EDM_STATE" audit-converged T28CONV >/dev/null 2>&1
+t28_noledger_ec=$?
+set -e
+[[ $t28_noledger_ec -eq 3 ]] && pass "T28 AC6 -- exit code is 3 for a missing ledger" \
+  || fail "T28 AC6 -- exit code = $t28_noledger_ec, expected 3"
+
+# ---- AC1 (positive, empty ledger -- "no findings" wording) ---------------------------------
+mkdir -p "${T28_DIR}/code-audit"
+: > "$T28_JSONL"
+"$EDM_STATE" audit-round-start T28CONV code >/dev/null   # full round (no --lenses)
+t28_empty_out="$("$EDM_STATE" audit-converged T28CONV)"
+t28_empty_ec=$?
+[[ $t28_empty_ec -eq 0 ]] && pass "T28 AC1/AC6 -- an empty ledger converges (exit 0)" \
+  || fail "T28 AC1/AC6 -- empty ledger exited $t28_empty_ec, expected 0"
+check "T28 AC6 -- empty ledger uses the 'no findings' wording, distinct from 'no ledger'" \
+  "no findings recorded" "$t28_empty_out"
+
+# ---- AC2/AC5 (negative): open P0/P1/P2 plus a re-opened legacy 'deferred' line all block ---
+cat > "$T28_JSONL" <<'EOF'
+{"schema":1,"id":"CA-001","sev":"P0","status":"open","lenses":["L1"],"confidence":"high","component":"a.py","title":"open P0 finding","raised_round":1,"resolved_round":null,"round":1,"round_type":"full"}
+{"schema":1,"id":"CA-002","sev":"P1","status":"open","lenses":["L4"],"confidence":"high","component":"b.py","title":"open P1 finding","raised_round":1,"resolved_round":null,"round":1,"round_type":"full"}
+{"schema":1,"id":"CA-003","sev":"P2","status":"open","lenses":["L10"],"confidence":"medium","component":"c.py","title":"open P2 finding","raised_round":1,"resolved_round":null,"round":1,"round_type":"full"}
+{"schema":1,"id":"CA-004","sev":"NOTED","status":"noted","lenses":["L8"],"confidence":"high","component":"d.py","title":"intentional, not actionable","raised_round":1,"resolved_round":null,"round":1,"round_type":"full"}
+{"schema":1,"id":"CA-005","sev":"P1","status":"fixed","lenses":["L9"],"confidence":"medium","component":"e.py","title":"fixed finding","raised_round":1,"resolved_round":1,"round":1,"round_type":"full"}
+{"schema":1,"id":"CA-006","sev":"P2","status":"deferred","lenses":["L7"],"confidence":"low","component":"f.py","title":"legacy deferred line","raised_round":1,"resolved_round":null,"round":1,"round_type":"full"}
+EOF
+check_fails "T28 AC2 -- open P0/P1/P2 findings fail convergence" \
+  "not converged" "$EDM_STATE" audit-converged T28CONV
+t28_blocking_out="$("$EDM_STATE" audit-converged T28CONV 2>&1 || true)"
+check "T28 AC2 -- blocking output names CA-001 (open P0)" "CA-001" "$t28_blocking_out"
+check "T28 AC2 -- blocking output names CA-002 (open P1)" "CA-002" "$t28_blocking_out"
+check "T28 AC2 -- blocking output names CA-003 (open P2)" "CA-003" "$t28_blocking_out"
+check "T28 AC5 -- legacy 'deferred' line CA-006 is re-opened and named in the blocking set" \
+  "CA-006" "$t28_blocking_out"
+check_absent "T28 -- fixed finding CA-005 is not in the blocking output" "CA-005" "$t28_blocking_out"
+check "T28 AC2 -- per-severity counts printed (P0=1 P1=1 P2=2, deferred counted at its own severity)" \
+  "P0=1 P1=1 P2=2" "$t28_blocking_out"
+set +e
+"$EDM_STATE" audit-converged T28CONV >/dev/null 2>&1
+t28_blocking_ec=$?
+set -e
+[[ $t28_blocking_ec -eq 1 ]] && pass "T28 AC3 -- exit code is 1 when blocking findings remain" \
+  || fail "T28 AC3 -- exit code = $t28_blocking_ec, expected 1"
+
+# ---- AC12 (wiring): approve-gate code-audit refuses on an open P0 --------------------------
+check_fails "T28 AC12 -- approve-gate refuses on an open P0" \
+  "code-audit gate refused" "$EDM_STATE" approve-gate T28CONV code-audit
+check_state_unchanged "$STATE_T28CONV" "$EDM_STATE" approve-gate T28CONV code-audit
+
+# ---- Remediate: close every blocking finding, leaving only the fixed/NOTED entries ---------
+jq -cs '
+  map(if (.id == "CA-001" or .id == "CA-002" or .id == "CA-003" or .id == "CA-006")
+      then .status = "fixed" else . end)
+  | .[]
+' "$T28_JSONL" > "${T28_JSONL}.tmp" && mv "${T28_JSONL}.tmp" "$T28_JSONL"
+
+# ---- AC11 (four consumers agree on one fixture ledger, after remediation) ------------------
+t28_conv_out="$("$EDM_STATE" audit-converged T28CONV)"
+t28_conv_ec=$?
+[[ $t28_conv_ec -eq 0 ]] && pass "T28 AC11 -- consumer 1 (audit-converged) agrees: converged after remediation" \
+  || fail "T28 AC11 -- audit-converged still exits $t28_conv_ec after remediation"
+# Advance to phase 6 first so write_handoff_internal's Phase-6 next_action branch (consumer 4)
+# is actually exercised below -- at phase 0 it would render the generic "Not started" message
+# regardless of code_audit_converged.
+jq '.current_phase = 6' "$STATE_T28CONV" > "$STATE_T28CONV.tmp" && mv "$STATE_T28CONV.tmp" "$STATE_T28CONV"
+"$EDM_STATE" approve-gate T28CONV code-audit >/dev/null \
+  && pass "T28 AC11/AC12 -- consumer 2 (approve-gate code-audit) agrees: approval now succeeds" \
+  || fail "T28 AC11/AC12 -- approve-gate code-audit still refuses after remediation"
+t28_converged_field="$(jq -r '.code_audit_converged' "$STATE_T28CONV")"
+[[ "$t28_converged_field" == "true" ]] \
+  && pass "T28 AC11 -- consumer 3 (cmd_archive's boolean check) agrees: code_audit_converged=true" \
+  || fail "T28 AC11 -- code_audit_converged = '$t28_converged_field', expected true"
+t28_handoff_out="$(cat "${T28_DIR}/HANDOFF.md" 2>/dev/null || true)"
+check "T28 AC11 -- consumer 4 (write_handoff_internal) agrees: HANDOFF reflects the converged state" \
+  "Ready to archive" "$t28_handoff_out"
+
+# ---- AC4 (negative, partial round): a partial round blocks even a clean ledger -------------
+"$EDM_STATE" audit-round-start T28CONV code --lenses L1,L2 >/dev/null
+check_fails "T28 AC4 -- a partial round fails naming the lens list, even with a clean ledger" \
+  "last round was partial" "$EDM_STATE" audit-converged T28CONV
+t28_partial_out="$("$EDM_STATE" audit-converged T28CONV 2>&1 || true)"
+check "T28 AC4 -- the partial round's lens list is named" "L1,L2" "$t28_partial_out"
+# Restore a full round so this fixture doesn't leak a partial state to later tests.
+"$EDM_STATE" audit-round-start T28CONV code >/dev/null
+
+# ---- AC7 (C-4, legacy migration is not a fresh audit) --------------------------------------
+echo
+echo "T28 AC7 -- legacy markdown-only ledger (schema_version < 2) exits 3 with a warning"
+"$EDM_STATE" init T28LEGACYMD >/dev/null
+mkdir -p "$TMP/SRD/T28LEGACYMD/code-audit"
+echo "# Code Audit Findings Ledger" > "$TMP/SRD/T28LEGACYMD/code-audit/findings-ledger.md"
+check_fails "T28 AC7 -- legacy markdown-only ledger exits non-zero with a legacy warning" \
+  "legacy initiative" "$EDM_STATE" audit-converged T28LEGACYMD
+set +e
+"$EDM_STATE" audit-converged T28LEGACYMD >/dev/null 2>&1
+t28_legacymd_ec=$?
+set -e
+[[ $t28_legacymd_ec -eq 3 ]] && pass "T28 AC7 -- legacy markdown-only ledger exits 3 (same code as 'no ledger', distinct wording)" \
+  || fail "T28 AC7 -- exit code = $t28_legacymd_ec, expected 3"
+
+# ---- AC8 (positive, audit-free modes) -------------------------------------------------------
+echo
+echo "T28 AC8 -- audit-free mode exits 0 with the exemption wording"
+export EDM_MODE="prototype"
+"$EDM_STATE" init T28EXEMPT >/dev/null
+unset EDM_MODE
+t28_exempt_out="$("$EDM_STATE" audit-converged T28EXEMPT)"
+t28_exempt_ec=$?
+[[ $t28_exempt_ec -eq 0 ]] && pass "T28 AC8 -- prototype mode exits 0 without a ledger" \
+  || fail "T28 AC8 -- prototype mode exited $t28_exempt_ec, expected 0"
+check "T28 AC8 -- exemption wording names the mode" \
+  "no code audit is required for this mode" "$t28_exempt_out"
+
+# ---- AC3 (exit-2 is never used inside cmd_audit_converged) ----------------------------------
+t28_body="$(awk '/^cmd_audit_converged\(\) \{/{f=1} f{print} f && /^\}/{exit}' "$EDM_STATE")"
+t28_exit2="$(printf '%s\n' "$t28_body" | grep -c 'exit 2' || true)"
+[[ "${t28_exit2:-0}" -eq 0 ]] && pass "T28 AC3 -- cmd_audit_converged never uses exit 2" \
+  || fail "T28 AC3 -- found ${t28_exit2} 'exit 2' occurrence(s) in cmd_audit_converged"
+
+# ---- AC9 (blocking predicate defined once, referenced by name at all four consumers) --------
+echo
+echo "T28 AC9 -- BLOCKING_FILTER defined once, referenced by name at exactly four consumers"
+t28_bf_count="$(grep -c 'BLOCKING_FILTER' "$EDM_STATE")"
+[[ "$t28_bf_count" -eq 5 ]] && pass "T28 AC9 -- BLOCKING_FILTER appears 5 times (1 definition + 4 consumers)" \
+  || fail "T28 AC9 -- BLOCKING_FILTER appears ${t28_bf_count} time(s), expected 5"
+
+# ---- AC13 (surfaced) -------------------------------------------------------------------------
+check "T28 AC13 -- audit-converged documented in --help" \
+  "audit-converged" "$("$EDM_STATE" --help 2>&1)"
+check "T28 AC13 -- audit-converged wired in the dispatch table" \
+  "audit-converged)" "$(grep -n 'audit-converged)' "$EDM_STATE" || true)"
+
+# ---- Read-only guarantee (Technical Notes: takes no lock, mutates nothing) ------------------
+check_state_unchanged "$STATE_T28CONV" "$EDM_STATE" audit-converged T28CONV
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

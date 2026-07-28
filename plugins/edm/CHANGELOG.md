@@ -29,11 +29,32 @@ behavioural, breaking-change and required-user-action summary once the whole wav
   integer to `{count: N, rounds: []}` at read time. The external contract of
   `N=$(edm-state audit-round-start <PREFIX> code)` is unchanged (still echoes the round number).
 
+- **`edm-state audit-converged <PREFIX>`** (EDMV3-T28): a read-only convergence query over
+  `code-audit/findings-ledger.jsonl`, replacing "a human re-reads the ledger and asserts
+  convergence in prose" with one deterministic `jq` predicate (`BLOCKING_FILTER`, defined once
+  and referenced by name at all four consumers: `audit-converged` itself, `approve-gate`'s
+  code-audit branch, `archive`'s convergence check, and `write-handoff`'s Phase-6 rendering).
+  Exit 0 converged (or the mode/lifecycle_mode is exempt from a code audit entirely); exit 1
+  when open P0/P1/P2 findings remain, the latest round was partial, or a line carries an
+  out-of-enum status; exit 3 when no ledger exists (distinguishing "no audit has run" from a
+  legacy markdown-only ledger, which degrades per `schema_version` rather than demanding a
+  fresh audit). A legacy `deferred` status line is re-opened (counted as open at its recorded
+  severity) rather than skipped or erroring.
+- **`approve-gate <PREFIX> code-audit` re-runs the convergence pre-check** (EDMV3-T28 AC12): at
+  `schema_version >= 2`, the approval now calls `audit-converged` itself and refuses when it
+  fails, closing the time-of-check-to-time-of-use window between a standalone
+  `audit-converged` call and the approval. Below `schema_version` 2, this degrades to the
+  existing wave-A permissive behaviour (recorded via `degraded_checks`), so a pre-wave-B
+  initiative is never told to run a fresh eleven-lens round it never opted into.
+
 ### Changed
 
 - **`wave4a-smoke.sh`'s `audit_rounds.code` assertion re-baselined** (EDMV3-T27, same commit as
   the widening): reads `.audit_rounds.code.count` instead of the old bare-integer
   `.audit_rounds.code`.
+- **`code_audit_gate_ledger` now records the real ledger path** (EDMV3-T28) instead of the
+  hardcoded wave-A interim literal `"absent"`, when `code-audit/findings-ledger.jsonl` exists at
+  approval time.
 
 ## [2.1.0] — 2026-07-27
 
