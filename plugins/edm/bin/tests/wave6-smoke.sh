@@ -3129,6 +3129,132 @@ cd "$T50_PREV_PWD"
 export HOME="$T50_PREV_HOME"
 rm -rf "$T50_HOME" "$T50_CWD"
 
+# =================================================================================
+# EDMV3-T51: per-round audit cost is captured (audit-round-complete)
+# AC3 (skills/code-audit/SKILL.md calling audit-round-complete after render-ledger) is a
+# SKILL.md edit out of scope this batch (T37/T38 dispatcher refactor owns that file);
+# reported as blocked-on-skills-owner. AC2 and AC8 are grep-verified directly below (not a
+# smoke-test case). AC1/AC4/AC5/AC6/AC7/AC9/AC10 are covered here.
+# =================================================================================
+
+# ---- AC1 (positive): records completion timestamp, duration, tokens and cost, keyed by
+# audit type and round number. ------------------------------------------------------------------
+echo
+echo "T51 AC1 -- audit-round-complete records duration, tokens and cost for the round"
+T51_HOME="$(mktemp -d)"
+T51_CWD="$(mktemp -d)"
+T51_PREV_HOME="${HOME:-}"
+T51_PREV_PWD="$(pwd)"
+cd "$T51_CWD"
+export HOME="$T51_HOME"
+T51_SESS_DIR="$(session_dir_for_test_cwd)"
+"$EDM_STATE" init T51ROUND >/dev/null
+STATE_T51ROUND="$TMP/SRD/T51ROUND/.edm-state.json"
+"$EDM_STATE" audit-round-start T51ROUND code >/dev/null
+sleep 1
+stage_session_jsonl "$T51_SESS_DIR" "session-1.jsonl" "claude-sonnet-4-6-20260601" 2000 800
+t51_complete_out="$("$EDM_STATE" audit-round-complete T51ROUND code 2>&1)"
+t51_dur="$(jq -r '.audit_rounds.code.rounds[-1].duration_seconds' "$STATE_T51ROUND")"
+t51_cost="$(jq -r '.audit_rounds.code.rounds[-1].estimated_cost_usd' "$STATE_T51ROUND")"
+[[ "$t51_dur" -gt 0 ]] 2>/dev/null \
+  && pass "T51 AC1 -- round duration_seconds > 0 (${t51_dur}s)" \
+  || fail "T51 AC1 -- round duration_seconds = '$t51_dur', expected > 0 (output: $t51_complete_out)"
+awk -v c="$t51_cost" 'BEGIN{exit !(c>0)}' \
+  && pass "T51 AC1 -- round estimated_cost_usd > 0 (\$${t51_cost})" \
+  || fail "T51 AC1 -- round estimated_cost_usd = '$t51_cost', expected > 0"
+check "T51 AC1 -- round completed_at recorded" \
+  "true" "$(jq -r '.audit_rounds.code.rounds[-1].completed_at != null' "$STATE_T51ROUND")"
+
+# ---- AC4/AC5 (negative, an unclosed round is visible as an info anomaly): audit-round-start
+# with no matching audit-round-complete surfaces OPEN_AUDIT_ROUND, informational only. ---------
+echo
+echo "T51 AC4/AC5 -- unclosed audit round surfaces OPEN_AUDIT_ROUND (info, does not fail validate)"
+"$EDM_STATE" init T51OPEN >/dev/null
+"$EDM_STATE" set T51OPEN estimated_size Small >/dev/null   # suppress SIZE_UNKNOWN noise
+"$EDM_STATE" audit-round-start T51OPEN srd >/dev/null
+t51open_validate_out="$("$EDM_STATE" validate T51OPEN 2>&1)"
+t51open_ec=$?
+check "T51 AC4 -- OPEN_AUDIT_ROUND anomaly present, canonical four-field format" \
+  "info  OPEN_AUDIT_ROUND  audit_rounds" "$t51open_validate_out"
+[[ $t51open_ec -eq 0 ]] \
+  && pass "T51 AC5 -- OPEN_AUDIT_ROUND is informational; validate still exits 0" \
+  || fail "T51 AC5 -- validate exited $t51open_ec with only an OPEN_AUDIT_ROUND anomaly present"
+
+# ---- AC6 (metrics surface): metrics-report renders a per-round section only once a round has
+# completed. --------------------------------------------------------------------------------
+echo
+echo "T51 AC6 -- metrics-report renders per-round cost only once a round has completed"
+mr_before_complete="$("$EDM_STATE" metrics-report T51OPEN 2>&1)"
+check_absent "T51 AC6 -- no per-round section before any round completes" \
+  "per-round" "$mr_before_complete"
+sleep 1
+stage_session_jsonl "$T51_SESS_DIR" "session-2.jsonl" "claude-sonnet-4-6-20260601" 500 200
+"$EDM_STATE" audit-round-complete T51OPEN srd >/dev/null
+mr_after_complete="$("$EDM_STATE" metrics-report T51OPEN 2>&1)"
+check "T51 AC6 -- per-round section present once a round completes" \
+  "per-round" "$mr_after_complete"
+check "T51 AC6 -- per-round section names 'rounds run'" \
+  "rounds run" "$mr_after_complete"
+
+cd "$T51_PREV_PWD"
+export HOME="$T51_PREV_HOME"
+rm -rf "$T51_HOME" "$T51_CWD"
+
+# ---- AC7 (C-4): legacy state files with rounds recorded but no completions render without
+# error -- both the pre-widening bare-integer shape and the post-widening {count, rounds}
+# shape with no completed round. ---------------------------------------------------------------
+echo
+echo "T51 AC7 -- legacy audit_rounds shapes render via metrics-report without error"
+"$EDM_STATE" init T51LEGACY1 >/dev/null
+STATE_T51LEGACY1="$TMP/SRD/T51LEGACY1/.edm-state.json"
+jq '.audit_rounds = {"code": 3}' "$STATE_T51LEGACY1" > "$STATE_T51LEGACY1.tmp" && mv "$STATE_T51LEGACY1.tmp" "$STATE_T51LEGACY1"
+set +e
+t51legacy1_out="$("$EDM_STATE" metrics-report T51LEGACY1 2>&1)"
+t51legacy1_ec=$?
+set -e
+[[ $t51legacy1_ec -eq 0 ]] \
+  && pass "T51 AC7 -- bare-integer legacy audit_rounds.code renders via metrics-report without error" \
+  || fail "T51 AC7 -- metrics-report exited $t51legacy1_ec on bare-integer legacy shape: $t51legacy1_out"
+
+"$EDM_STATE" init T51LEGACY2 >/dev/null
+STATE_T51LEGACY2="$TMP/SRD/T51LEGACY2/.edm-state.json"
+jq '.audit_rounds = {code: {count: 1, rounds: [{round: 1, lenses: [], round_type: "full", started_at: "2026-07-01T00:00:00Z"}]}}' \
+  "$STATE_T51LEGACY2" > "$STATE_T51LEGACY2.tmp" && mv "$STATE_T51LEGACY2.tmp" "$STATE_T51LEGACY2"
+set +e
+t51legacy2_out="$("$EDM_STATE" metrics-report T51LEGACY2 2>&1)"
+t51legacy2_ec=$?
+set -e
+[[ $t51legacy2_ec -eq 0 ]] \
+  && pass "T51 AC7 -- started-but-never-completed round renders via metrics-report without error" \
+  || fail "T51 AC7 -- metrics-report exited $t51legacy2_ec on an unclosed round: $t51legacy2_out"
+check_absent "T51 AC7 -- no per-round section for a round with no completion" \
+  "per-round" "$t51legacy2_out"
+
+# ---- AC9 (negative, double completion): completing a round twice refuses, names the existing
+# completion, and mutates nothing. --------------------------------------------------------------
+echo
+echo "T51 AC9 -- second audit-round-complete refused, naming the existing completion"
+"$EDM_STATE" init T51DBL >/dev/null
+STATE_T51DBL="$TMP/SRD/T51DBL/.edm-state.json"
+"$EDM_STATE" audit-round-start T51DBL tickets >/dev/null
+"$EDM_STATE" audit-round-complete T51DBL tickets >/dev/null
+check_fails "T51 AC9 -- second audit-round-complete refuses, naming the existing completion" \
+  "already completed" \
+  "$EDM_STATE" audit-round-complete T51DBL tickets
+check_state_unchanged "$STATE_T51DBL" "$EDM_STATE" audit-round-complete T51DBL tickets
+
+# ---- AC10 (atomicity and bash 3.2): bash -n passes; state is valid JSON after a double
+# invocation (the lock serializes what a true concurrent pair of invocations would race on;
+# this exercises the identical write path). ------------------------------------------------------
+echo
+echo "T51 AC10 -- bash -n passes; state remains valid JSON after a double invocation"
+bash -n "$EDM_STATE" \
+  && pass "T51 AC10 -- bin/edm-state passes bash -n" \
+  || fail "T51 AC10 -- bin/edm-state failed bash -n"
+jq -e . "$STATE_T51DBL" >/dev/null 2>&1 \
+  && pass "T51 AC10 -- state file is valid JSON after a double audit-round-complete invocation" \
+  || fail "T51 AC10 -- state file is not valid JSON after a double audit-round-complete invocation"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

@@ -37,6 +37,7 @@
 #   edm-state current-step <PREFIX> [<step>]                          # read/write orchestrator step (compaction resume)
 #   edm-state session-start                                           # emit resume points for active initiatives (SessionStart hook)
 #   edm-state audit-round-start <PREFIX> <code|srd|tickets> [--lenses L1,L3]  # increment audit-round counter (also records lens set + round_type), echo new value
+#   edm-state audit-round-complete <PREFIX> <code|srd|tickets>        # record completion timestamp, duration, tokens and cost for the current round
 #   edm-state render-ledger <PREFIX>                                   # deterministically render findings-ledger.md from findings-ledger.jsonl
 #   edm-state audit-converged <PREFIX>                                 # query code-audit convergence over findings-ledger.jsonl (read-only)
 #   edm-state record-partial-verdict <PREFIX> <ticket> <verdict> [note]  # persist per-ticket PASS/PARTIAL/FAIL
@@ -743,6 +744,25 @@ state_anomalies() {
       "ZERO_TOKENS  phase_durations.\($k).tokens  model_used is \($v.model_used) but both input and output tokens are 0"
     else empty end
   ' 2>/dev/null)
+  # OPEN_AUDIT_ROUND (info -- EDMV3-T51 AC4/AC5): an audit round was started
+  # (audit-round-start) but never completed (audit-round-complete) -- the EDMV2 Phase-6
+  # failure mode (phase-start fired, phase-complete never did) applied to a single audit
+  # round instead of a whole phase. Informational only: a round in progress mid-audit is
+  # normal, not corrupted data, so this never flips cmd_validate's exit code (mirrors
+  # SIZE_UNKNOWN's reclassification rationale above). Uses the same coerce_round_entry
+  # widening every audit_rounds reader uses, so a legacy bare-integer shape reads cleanly.
+  local oar_type oar_rounds_json oar_last oar_round_num oar_completed
+  for oar_type in code srd tickets; do
+    oar_rounds_json="$(echo "$state" | jq -c --arg t "$oar_type" "${AUDIT_ROUND_COERCE_JQ_DEF} (.audit_rounds[\$t] // 0 | coerce_round_entry).rounds" 2>/dev/null || echo '[]')"
+    oar_last="$(echo "$oar_rounds_json" | jq -c 'if length > 0 then .[-1] else null end' 2>/dev/null || echo null)"
+    [[ "$oar_last" == "null" ]] && continue
+    oar_round_num="$(echo "$oar_last" | jq -r '.round // "?"')"
+    oar_completed="$(echo "$oar_last" | jq -r '.completed_at // empty')"
+    if [[ -z "$oar_completed" ]]; then
+      echo "info  OPEN_AUDIT_ROUND  audit_rounds  ${oar_type} audit round ${oar_round_num} for ${prefix} was started but never completed -- run edm-state audit-round-complete ${prefix} ${oar_type}"
+      found=1
+    fi
+  done
   # PERM_RULES_MISSING (info -- EDMV3-T06 AC5): the two "ask" rules that gate
   # `edm-state approve-gate` and `edm-state archive` are absent from every settings file
   # check_permission_rules() scans. Informational only (AC7): the plugin cannot ship these
@@ -2019,6 +2039,45 @@ cmd_metrics_report() {
         "  Total: \($ts)s  |  Claude: $\($tc)  |  Human baseline: $\($th)  |  Savings: " +
           (if $tc > 0 and $th > 0 then "\(($th / $tc) | tostring | .[0:6])x cheaper" else "n/a" end)
       ' "$state"
+      echo
+      # ---- Code Audit: per-round cost (EDMV3-T51 AC6) + rounds-run/lenses-per-round summary
+      # (EDMV3-T53 AC8) -- one section, both tickets read the same audit_rounds data, so it is
+      # built once here rather than edited twice. Rendered only when at least one round has a
+      # recorded completion; omitted entirely (not rendered empty) when audit-round-start has
+      # run but audit-round-complete never has, or when no audit round has ever started
+      # (EDMV3-T51 AC7: a legacy or bare-integer audit_rounds shape renders without error via
+      # the same coerce_round_entry widening every other audit_rounds reader uses).
+      local has_round_data
+      has_round_data="$(jq -r "${AUDIT_ROUND_COERCE_JQ_DEF}"'
+        [(.audit_rounds // {}) | to_entries[] | (.value | coerce_round_entry).rounds[] | select(.completed_at != null)] | length
+      ' "$state" 2>/dev/null || echo 0)"
+      if [[ "$has_round_data" -gt 0 ]]; then
+        echo "## Code Audit -- per-round cost"
+        echo
+        while IFS=$'\t' read -r car_type car_rounds_run; do
+          [[ -n "$car_type" ]] || continue
+          echo "  ${car_type}: ${car_rounds_run} rounds run"
+        done < <(jq -r "${AUDIT_ROUND_COERCE_JQ_DEF}"'
+          (.audit_rounds // {}) | to_entries[] |
+          .key as $t | (.value | coerce_round_entry) |
+          select((.rounds | map(select(.completed_at != null)) | length) > 0) |
+          [$t, ((.rounds | map(select(.completed_at != null)) | length) | tostring)] | @tsv
+        ' "$state" 2>/dev/null)
+        echo
+        printf "  %-8s  %-6s  %-8s  %-10s  %-10s  %-12s\n" "Type" "Round" "Lenses" "Duration" "Cost" "Model"
+        printf "  %-8s  %-6s  %-8s  %-10s  %-10s  %-12s\n" "----" "-----" "------" "--------" "----" "-----"
+        while IFS=$'\t' read -r ar_type ar_round ar_lenses ar_dur ar_cost ar_model; do
+          [[ -n "$ar_type" ]] || continue
+          printf "  %-8s  %-6s  %-8s  %-10s  %-10s  %-12s\n" "$ar_type" "$ar_round" "$ar_lenses" "${ar_dur}s" "\$${ar_cost}" "$ar_model"
+        done < <(jq -r "${AUDIT_ROUND_COERCE_JQ_DEF}"'
+          (.audit_rounds // {}) | to_entries[] |
+          .key as $t | (.value | coerce_round_entry).rounds[] |
+          select(.completed_at != null) |
+          [$t, (.round|tostring), ((.lenses // []) | length | tostring), ((.duration_seconds // 0)|tostring), ((.estimated_cost_usd // 0)|tostring), (.model_used // "?")] | @tsv
+        ' "$state" 2>/dev/null)
+        echo "  (lenses per round shown in the Lenses column above; round_type full = all 11 lenses)"
+        echo
+      fi
       # Gate review time section (only shown when at least one gate is approved)
       # gate_review_seconds = approved_at(gate_N) - phase_complete_timestamp(gated_phase)
       # Gated phases: gate 1 -> phase 1, gate 2 -> phase 3, gate 3 -> phase 5
@@ -2642,6 +2701,77 @@ cmd_audit_round_start() {
 
   # Re-read to echo the new round number (count), the same external contract as before.
   read_state "$prefix" | jq -r --arg t "$audit_type" "${AUDIT_ROUND_COERCE_JQ_DEF} (.audit_rounds[\$t] // 0 | coerce_round_entry).count"
+}
+
+# audit-round-complete <PREFIX> <code|srd|tickets> (EDMV3-T51)
+# Closes the most recently started round of the given audit type: records completion
+# timestamp, duration, token/cost totals, keyed by round number within
+# .audit_rounds[type].rounds[]. Pre-check-then-lock, mirroring cmd_record_partial_verdict's
+# close path (bin/edm-state:2801) -- a double completion is refused before any rmw_state call
+# so it mutates nothing (AC9).
+cmd_audit_round_complete() {
+  [[ $# -eq 2 ]] || die "usage: edm-state audit-round-complete <PREFIX> <code|srd|tickets>"
+  require_jq
+  local prefix="$1" audit_type="$2"
+  case "$audit_type" in
+    code|srd|tickets) ;;
+    *) die "audit-round-complete: unknown audit type '$audit_type' (expected: code|srd|tickets)" ;;
+  esac
+
+  # AC9 (negative, double completion): pre-check before any lock is acquired.
+  local existing_rounds last_round round_num started_at already_completed_at
+  existing_rounds="$(read_state "$prefix" | jq -c --arg t "$audit_type" "${AUDIT_ROUND_COERCE_JQ_DEF} (.audit_rounds[\$t] // 0 | coerce_round_entry).rounds")"
+  last_round="$(echo "$existing_rounds" | jq -c 'if length > 0 then .[-1] else null end')"
+  [[ "$last_round" != "null" ]] \
+    || die "audit-round-complete: no ${audit_type} audit round started for ${prefix}; run edm-state audit-round-start ${prefix} ${audit_type} first"
+  round_num="$(echo "$last_round" | jq -r '.round')"
+  started_at="$(echo "$last_round" | jq -r '.started_at // empty')"
+  already_completed_at="$(echo "$last_round" | jq -r '.completed_at // empty')"
+  [[ -z "$already_completed_at" ]] \
+    || die "audit-round-complete: ${audit_type} round ${round_num} for ${prefix} is already completed (at ${already_completed_at}); a round may be completed only once"
+
+  # AC2 (one cost computation, not two): reuses get_session_tokens_since / compute_cost_usd,
+  # the exact same calls cmd_phase_complete makes, so audit-round cost can never diverge from
+  # phase cost via a second implementation.
+  local input=0 output=0 cache_read=0 cw5m=0 cw1h=0 model="unknown" cost="0.0000" attribution_mode="whole-directory"
+  if [[ -n "$started_at" ]]; then
+    local tokens
+    tokens="$(get_session_tokens_since "$started_at")"
+    input="$(echo "$tokens" | jq -r '.input // 0')"
+    output="$(echo "$tokens" | jq -r '.output // 0')"
+    cache_read="$(echo "$tokens" | jq -r '.cache_read // 0')"
+    cw5m="$(echo "$tokens" | jq -r '.cache_write_5m // 0')"
+    cw1h="$(echo "$tokens" | jq -r '.cache_write_1h // 0')"
+    model="$(echo "$tokens" | jq -r '.model // "unknown"')"
+    attribution_mode="$(echo "$tokens" | jq -r '.attribution_mode // "whole-directory"')"
+    cost="$(compute_cost_usd "$model" "$input" "$output" "$cache_read" "$cw5m" "$cw1h")"
+  fi
+
+  local now_ts
+  now_ts="$(now_utc)"
+
+  rmw_state "$prefix" "
+      ${AUDIT_ROUND_COERCE_JQ_DEF}
+      (.audit_rounds[\$t] // 0 | coerce_round_entry) as \$existing
+      | (\$existing.rounds | map(
+          if .round == (\$rn | tonumber) then
+            . + {
+              completed_at: \$ts,
+              duration_seconds: (if .started_at then ((\$ts | fromdateiso8601) - (.started_at | fromdateiso8601)) else 0 end),
+              tokens: {input: (\$i|tonumber), output: (\$o|tonumber), cache_read: (\$cr|tonumber), cache_write_5m: (\$c5|tonumber), cache_write_1h: (\$c1|tonumber)},
+              model_used: \$model,
+              estimated_cost_usd: (\$cost|tonumber),
+              attribution_mode: \$am
+            }
+          else . end
+        )) as \$new_rounds
+      | .audit_rounds[\$t] = (\$existing + {rounds: \$new_rounds})
+      | .last_updated = \$ts
+    " --arg t "$audit_type" --arg rn "$round_num" --arg ts "$now_ts" \
+      --arg i "$input" --arg o "$output" --arg cr "$cache_read" --arg c5 "$cw5m" --arg c1 "$cw1h" \
+      --arg model "$model" --arg cost "$cost" --arg am "$attribution_mode"
+
+  echo "recorded completion: ${audit_type} round ${round_num} for ${prefix} (\$${cost})"
 }
 
 # ---- Convergence query (EDMV3-T28) ------------------------------------------
@@ -3595,6 +3725,7 @@ case "$cmd" in
   current-step)         cmd_current_step "$@" ;;
   session-start)        cmd_session_start "$@" ;;
   audit-round-start)    cmd_audit_round_start "$@" ;;
+  audit-round-complete) cmd_audit_round_complete "$@" ;;
   render-ledger)        cmd_render_ledger "$@" ;;
   audit-converged)      cmd_audit_converged "$@" ;;
   record-partial-verdict) cmd_record_partial_verdict "$@" ;;
