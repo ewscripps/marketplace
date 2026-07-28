@@ -1348,6 +1348,83 @@ bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 && pass "T33 -- edm-ch
   || fail "T33 -- edm-check-grants failed with the new skill present"
 # EDMV3-T33 end
 
+
+# ---- EDMV3-T34: Skill-tool composition depth spike, CLAUDE.md documents the pattern -----------
+echo
+echo "=== EDMV3-T34: skill-composition spike recorded, CLAUDE.md rule 2 rewritten ==="
+SPIKE_NOTE="$(cd "$PLUGIN_DIR/../.." && pwd)/SRD/edm/EDMV3__prompt-streamline/spike-skill-composition.md"
+DECISIONS_MD="$(cd "$PLUGIN_DIR/../.." && pwd)/SRD/edm/EDMV3__prompt-streamline/decisions.md"
+
+echo "T34 AC1 -- spike note exists and answers all six questions"
+[[ -f "$SPIKE_NOTE" ]] && pass "T34 AC1 -- spike-skill-composition.md exists" \
+  || fail "T34 AC1 -- spike-skill-composition.md does not exist"
+SPIKE_CONTENT="$(cat "$SPIKE_NOTE" 2>/dev/null || true)"
+check "T34 AC1 -- Q1 (invocation succeeds) answered" "Does the invocation succeed?" "$SPIKE_CONTENT"
+check "T34 AC1 -- Q2 (\$ARGUMENTS reaches callee) answered" "Does \`\$ARGUMENTS\` reach the callee?" "$SPIKE_CONTENT"
+check "T34 AC1 -- Q3 (caller variables visible) answered" "visible to the callee" "$SPIKE_CONTENT"
+check "T34 AC1 -- Q4 (whose allowed-tools govern) answered" "Whose \`allowed-tools\` govern?" "$SPIKE_CONTENT"
+check "T34 AC1 -- Q5 (disabled target) answered" "not enabled" "$SPIKE_CONTENT"
+check "T34 AC1 -- Q6 (context survives round trip) answered" "survive the round trip" "$SPIKE_CONTENT"
+
+echo
+echo "T34 AC2 -- depth: at least two chained invocations recorded"
+check "T34 AC2 -- two-level chain recorded (hop 1: caller -> mid)" '`spike-caller` -> `spike-mid`' "$SPIKE_CONTENT"
+check "T34 AC2 -- two-level chain recorded (hop 2: leaf reached)" "spike-leaf" "$SPIKE_CONTENT"
+check "T34 AC2 -- depth framing (not just existence) stated" "two-level chain in one session" "$SPIKE_CONTENT"
+
+echo
+echo "T34 AC3 -- disabled/nonexistent target failure mode recorded precisely"
+check "T34 AC3 -- observed error text captured verbatim" "tool_use_error: Unknown skill:" "$SPIKE_CONTENT"
+
+echo
+echo "T34 AC4 -- explicit GO or NO-GO recommendation, dated, in decisions.md"
+DECISIONS_CONTENT="$(cat "$DECISIONS_MD" 2>/dev/null || true)"
+check "T34 AC4 -- GO recommendation recorded in decisions.md as D21" "D21 | Skill-tool composition depth spike" "$DECISIONS_CONTENT"
+check "T34 AC4 -- explicit GO verdict" "**GO**" "$DECISIONS_CONTENT"
+check "T34 AC4 -- dated" "2026-07-28" "$DECISIONS_CONTENT"
+
+echo
+echo "T34 AC5 -- ordering: the spike note is committed, and T34's own commit made no dispatcher edit"
+[[ -f "$SPIKE_NOTE" ]] && pass "T34 AC5 -- spike-skill-composition.md is committed to the initiative directory" \
+  || fail "T34 AC5 -- spike-skill-composition.md is missing"
+t34_orch_touched_by_t34="$(git -C "$PLUGIN_DIR/../.." log --format='%s' -- plugins/edm/skills/orchestrator/SKILL.md 2>/dev/null | grep -c 'EDMV3-T34' || true)"
+[[ "${t34_orch_touched_by_t34:-0}" -eq 0 ]] && pass "T34 AC5 -- no commit tagged EDMV3-T34 touches orchestrator/SKILL.md (that edge is EDMV3-T35/T38's)" \
+  || fail "T34 AC5 -- an EDMV3-T34-tagged commit touched orchestrator/SKILL.md"
+
+echo
+echo "T34 AC6 -- rule 2 rewritten: Skill-tool composition pattern and both caller obligations"
+CLAUDE_MD_T34="$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check "T34 AC6 -- 'Skill-tool composition' section present" "Skill-tool composition" "$CLAUDE_MD_T34"
+check "T34 AC6 -- caller obligation 1: Skill in allowed-tools" "must appear in the caller's \`allowed-tools\`" "$CLAUDE_MD_T34"
+check "T34 AC6 -- caller obligation 2: graceful degradation" "must handle a target-skill-not-enabled failure gracefully" "$CLAUDE_MD_T34"
+
+echo
+echo "T34 AC7 -- the old sentence is removed, not qualified, and appears nowhere else"
+# Built from two halves at runtime (never written as one literal string in this file) so this
+# negative assertion's own search term does not itself count as an occurrence under a repo-wide
+# grep -- the real AC7 verify command has no bin/tests/ carve-out, unlike the vocabulary checker.
+t34_old_sentence="each contain their own"
+t34_old_sentence="${t34_old_sentence} orchestration"
+t34_old_sentence_hits="$(grep -rl "$t34_old_sentence" "${PLUGIN_DIR}/" 2>/dev/null | wc -l | tr -d ' ' || true)"
+[[ "${t34_old_sentence_hits:-1}" -eq 0 ]] && pass "T34 AC7 -- the abolished rule-2 sentence appears nowhere in plugins/edm/" \
+  || fail "T34 AC7 -- old sentence still present in ${t34_old_sentence_hits} file(s)"
+
+echo
+echo "T34 AC8 -- concrete failure mode, git plugin cited as precedent"
+check "T34 AC8 -- concrete failure mode (tool_use_error) recorded in CLAUDE.md" "tool_use_error: Unknown skill" "$CLAUDE_MD_T34"
+check "T34 AC8 -- git plugin cited as precedent" "git plugin" "$CLAUDE_MD_T34"
+
+echo
+echo "T34 AC9 -- rules 1, 3, 4 untouched (no 'commands/' reword)"
+check "T34 AC9 -- rule 1 ('there is no commands/') intact" "there is no \`commands/\`" "$CLAUDE_MD_T34"
+check "T34 AC9 -- rule 1's 'Do not re-introduce' instruction intact" "Do not re-introduce a \`commands/\`" "$CLAUDE_MD_T34"
+
+echo
+echo "T34 AC10 -- intent-to-file index added"
+check "T34 AC10 -- intent-to-file index present" "Intent-to-file index" "$CLAUDE_MD_T34"
+check "T34 AC10 -- 'which file is authoritative' framing present" "which file is authoritative" "$CLAUDE_MD_T34"
+# EDMV3-T34 end
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

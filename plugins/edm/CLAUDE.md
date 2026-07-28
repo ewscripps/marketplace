@@ -19,8 +19,43 @@ Each phase skill (`skills/orchestrator/SKILL.md`, `skills/plan/SKILL.md`, etc.) 
 - Step-by-step operational orchestration
 - The HITL gate prompts
 
-Agents are invoked from skills, not the other way around. Skills don't load other skills -- they each contain their own
-orchestration.
+Agents are invoked from skills, not the other way around.
+
+**Skill-tool composition** (EDMV3-T34; spike recorded as decision D21 in
+`SRD/edm/EDMV3__prompt-streamline/decisions.md` and `spike-skill-composition.md`): skills DO load
+other skills, via the `Skill` tool. This marketplace's own **git plugin is the in-repository
+precedent** -- `skills/commit/SKILL.md` invokes the `jira` plugin's `search-jira` skill exactly
+this way today. The orchestrator dispatches; each phase skill owns its phase's complete procedure
+exactly once, never duplicated in the orchestrator. Two obligations fall on any caller:
+
+1. **`Skill` must appear in the caller's `allowed-tools`.** The callee's own `allowed-tools`
+   governs what the callee itself may do while it runs -- grants are not inherited from, or
+   intersected with, the caller's (confirmed live in the D21 spike: a `Bash`-less caller's callee
+   ran `Bash` successfully because the callee's own frontmatter granted it).
+2. **The caller must handle a target-skill-not-enabled failure gracefully.** An unavailable
+   target fails the Skill-tool call with a `tool_use_error: Unknown skill: <name>` -- a clean,
+   nameable error, not a silent no-op or a hang (confirmed live in the D21 spike). The caller must
+   report the unavailable skill by name and stop; it must never fall back to silently inlining the
+   target's procedure.
+
+Context accumulated by the caller (its own reasoning, anything it has read or written this turn)
+is visible to the callee automatically -- the callee runs within the **same conversation**, not an
+isolated sub-agent context the way a `Task`-spawned agent (`edm-explorer`, `edm-implementer`,
+etc.) does.
+
+#### Intent-to-file index
+
+Some behaviors are described in more than one file with no indication which is authoritative
+(explorer 02 C3.3). When in doubt about **which file is authoritative**, this table wins:
+
+| I want to change... | Edit this file (authoritative) |
+|---|---|
+| What a phase does, step by step | `skills/{phase}/SKILL.md` |
+| What the explorer agent explores and how it reports | `agents/edm-explorer.md` -- `skills/plan/SKILL.md`'s "AI Execution Pattern" only names when/how many to spawn |
+| Gate approval behavior (STOP/WAIT, free-text rejection, options) | `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` -- every other gate site references it by name, never restates it |
+| Severity definitions (P0/P1/P2/NOTED) | `CLAUDE.md Sec."Severity vocabulary"` -- every other site references it by name |
+| A `bin/edm-state` subcommand's behavior | `bin/edm-state` itself -- the `bin/` table below only indexes it |
+| An audit lens's mandate | `agents/edm-audit-{lens}.md` -- `skills/code-audit/SKILL.md`'s lens table only summarizes |
 
 ### 3. Artifacts live in the project's `SRD/` directory and are committed to git
 
