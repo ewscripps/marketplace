@@ -2685,6 +2685,57 @@ echo "  T54's insertion-logic rewrite, out of this batch's file remit. The contr
 echo "  (above) is already the mechanism that will catch a regression once that code lands and"
 echo "  this case is added."
 # EDMV3-T56 end
+# =================================================================================
+# EDMV3-T52 AC7: CLAUDE.md pricing table matches script constants (cannot drift)
+# =================================================================================
+echo
+echo "T52 AC7 -- CLAUDE.md pricing table matches script constants"
+
+CLAUDE_MD_T52="${PLUGIN_DIR}/CLAUDE.md"
+EDM_STATE_BIN_T52="${PLUGIN_DIR}/bin/edm-state"
+
+# _t52_script_rate <env-var-name> -- the single-source default value baked into compute_cost_usd
+# for that override variable, extracted directly from the script rather than re-typed by hand.
+_t52_script_rate() {
+  grep -oE "${1}:-[0-9.]+" "$EDM_STATE_BIN_T52" | head -1 | sed -E 's/.*:-//'
+}
+
+# _t52_md_cell <model-label> <column-index-1-based-after-model> -- the numeric value (dollar
+# sign and header/separator rows stripped) from CLAUDE.md's pricing table row for <model-label>.
+_t52_md_cell() {
+  local label="$1" col="$2"
+  grep -F "| ${label} |" "$CLAUDE_MD_T52" | head -1 \
+    | awk -F'|' -v c="$col" '{gsub(/^[ \t$]+|[ \t]+$/, "", $(c+2)); print $(c+2)}'
+}
+
+t52_pricing_pairs=(
+  "EDM_OPUS_INPUT_RATE:Opus 4.8:1"
+  "EDM_OPUS_OUTPUT_RATE:Opus 4.8:2"
+  "EDM_OPUS_CACHE_READ_RATE:Opus 4.8:3"
+  "EDM_OPUS_CACHE_WRITE_5M_RATE:Opus 4.8:4"
+  "EDM_OPUS_CACHE_WRITE_1H_RATE:Opus 4.8:5"
+  "EDM_SONNET_INPUT_RATE:Sonnet 4.7:1"
+  "EDM_SONNET_OUTPUT_RATE:Sonnet 4.7:2"
+  "EDM_SONNET_CACHE_READ_RATE:Sonnet 4.7:3"
+  "EDM_SONNET_CACHE_WRITE_5M_RATE:Sonnet 4.7:4"
+  "EDM_SONNET_CACHE_WRITE_1H_RATE:Sonnet 4.7:5"
+  "EDM_HAIKU_INPUT_RATE:Haiku 4.6:1"
+  "EDM_HAIKU_OUTPUT_RATE:Haiku 4.6:2"
+  "EDM_HAIKU_CACHE_READ_RATE:Haiku 4.6:3"
+  "EDM_HAIKU_CACHE_WRITE_5M_RATE:Haiku 4.6:4"
+  "EDM_HAIKU_CACHE_WRITE_1H_RATE:Haiku 4.6:5"
+)
+for t52_pair in "${t52_pricing_pairs[@]}"; do
+  t52_var="${t52_pair%%:*}"
+  t52_rest="${t52_pair#*:}"
+  t52_label="${t52_rest%:*}"
+  t52_col="${t52_rest##*:}"
+  t52_script_val="$(_t52_script_rate "$t52_var")"
+  t52_md_val="$(_t52_md_cell "$t52_label" "$t52_col")"
+  [[ "$t52_script_val" == "$t52_md_val" ]] \
+    && pass "T52 AC7 -- ${t52_var} matches CLAUDE.md ${t52_label} column ${t52_col} (both ${t52_script_val})" \
+    || fail "T52 AC7 -- ${t52_var} mismatch: script=${t52_script_val}, CLAUDE.md ${t52_label} column ${t52_col}=${t52_md_val}"
+done
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

@@ -27,7 +27,7 @@
 #   edm-state archive <PREFIX>                          # mark initiative complete (git-aware)
 #   edm-state write-handoff <PREFIX>                    # write/refresh HANDOFF.md for cross-user resumption
 #   edm-state watch-impl                                # tail git log for ticket commits (called by monitor)
-#   edm-state metrics-report <PREFIX|--all|--calibrate>
+#   edm-state metrics-report <PREFIX|--all|--calibrate> [--with-human-baseline]  # raw cost/duration by default; --with-human-baseline opts into the human-cost comparison
 #   edm-state validate <PREFIX>                         # check state file for anomalies (read-only)
 #   edm-state gate-check <PREFIX> <gated-command>       # deterministic gate enforcement (read-only)
 #   edm-state branch-check <PREFIX>                     # verify current git branch matches initiative_branch
@@ -37,6 +37,7 @@
 #   edm-state current-step <PREFIX> [<step>]                          # read/write orchestrator step (compaction resume)
 #   edm-state session-start                                           # emit resume points for active initiatives (SessionStart hook)
 #   edm-state audit-round-start <PREFIX> <code|srd|tickets> [--lenses L1,L3]  # increment audit-round counter (also records lens set + round_type), echo new value
+#   edm-state audit-round-complete <PREFIX> <code|srd|tickets>        # record completion timestamp, duration, tokens and cost for the current round
 #   edm-state render-ledger <PREFIX>                                   # deterministically render findings-ledger.md from findings-ledger.jsonl
 #   edm-state audit-converged <PREFIX>                                 # query code-audit convergence over findings-ledger.jsonl (read-only)
 #   edm-state record-partial-verdict <PREFIX> <ticket> <verdict> [note]  # persist per-ticket PASS/PARTIAL/FAIL
@@ -222,20 +223,55 @@ session_dir_for_cwd() {
   echo "${HOME}/.claude/projects/$(echo "$cwd" | tr '/.' '-')"
 }
 
-# Sum cumulative tokens across all assistant messages in this project's sessions
-# whose timestamp >= the given ISO 8601 time. Outputs JSON:
-#   {input, output, cache_read, cache_write_5m, cache_write_1h, model}
+# Sum cumulative tokens across the driving session's assistant messages whose timestamp >=
+# the given ISO 8601 time. Outputs JSON:
+#   {input, output, cache_read, cache_write_5m, cache_write_1h, model, attribution_mode}
 # Cache writes are split by TTL because 5-min and 1-hour writes have different
 # per-million-token rates.
+#
+# EDMV3-T52 AC1 (branch a chosen; recorded in decisions.md D23): every session JSONL under
+# sessions_dir was previously summed unconditionally, so a second Claude Code window open on
+# the same project inflated this phase's/round's token count. The driving session -- the one
+# this process is actually running inside -- is identified as the single most-recently-
+# modified *.jsonl file in sessions_dir at call time: the session actively being written to is
+# always the most recently touched file on disk, because Claude Code appends to its own
+# session's JSONL as the conversation proceeds. `ls -t` breaks mtime ties deterministically (by
+# name), so this always yields exactly one candidate when the directory is non-empty.
+# attribution_mode records which path was taken ("scoped" vs the AC2 whole-directory fallback)
+# so a caller (cmd_phase_complete, cmd_audit_round_complete) can persist it and a reader can
+# tell which mode produced a given figure.
 get_session_tokens_since() {
   local since="$1"
   local sessions_dir
   sessions_dir="$(session_dir_for_cwd)"
   if [[ ! -d "$sessions_dir" ]] || ! ls "$sessions_dir"/*.jsonl >/dev/null 2>&1; then
-    echo '{"input":0,"output":0,"cache_read":0,"cache_write_5m":0,"cache_write_1h":0,"model":"unknown"}'
+    echo '{"input":0,"output":0,"cache_read":0,"cache_write_5m":0,"cache_write_1h":0,"model":"unknown","attribution_mode":"whole-directory"}'
     return 0
   fi
-  cat "$sessions_dir"/*.jsonl 2>/dev/null | jq -s --arg since "$since" '
+
+  local driving_session
+  driving_session="$(ls -t "$sessions_dir"/*.jsonl 2>/dev/null | head -1)"
+
+  if [[ -n "$driving_session" && -f "$driving_session" ]]; then
+    jq -s --arg since "$since" --arg mode "scoped" '
+      [.[] | select(.type == "assistant" and (.timestamp // "") >= $since)] as $msgs |
+      {
+        input: ([$msgs[].message.usage.input_tokens // 0] | add // 0),
+        output: ([$msgs[].message.usage.output_tokens // 0] | add // 0),
+        cache_read: ([$msgs[].message.usage.cache_read_input_tokens // 0] | add // 0),
+        cache_write_5m: ([$msgs[].message.usage.cache_creation.ephemeral_5m_input_tokens // 0] | add // 0),
+        cache_write_1h: ([$msgs[].message.usage.cache_creation.ephemeral_1h_input_tokens // 0] | add // 0),
+        model: ($msgs[-1].message.model // "unknown"),
+        attribution_mode: $mode
+      }
+    ' "$driving_session" 2>/dev/null && return 0
+  fi
+
+  # AC2 fallback: the driving session could not be identified (e.g. a TOCTOU race where every
+  # file was removed between the existence check above and the `ls -t` read) even though the
+  # directory has jsonl files. Sums every session JSONL -- the pre-T52 behaviour -- and tags
+  # the result so callers and readers can tell a whole-directory figure from a scoped one.
+  cat "$sessions_dir"/*.jsonl 2>/dev/null | jq -s --arg since "$since" --arg mode "whole-directory" '
     [.[] | select(.type == "assistant" and (.timestamp // "") >= $since)] as $msgs |
     {
       input: ([$msgs[].message.usage.input_tokens // 0] | add // 0),
@@ -243,41 +279,78 @@ get_session_tokens_since() {
       cache_read: ([$msgs[].message.usage.cache_read_input_tokens // 0] | add // 0),
       cache_write_5m: ([$msgs[].message.usage.cache_creation.ephemeral_5m_input_tokens // 0] | add // 0),
       cache_write_1h: ([$msgs[].message.usage.cache_creation.ephemeral_1h_input_tokens // 0] | add // 0),
-      model: ($msgs[-1].message.model // "unknown")
+      model: ($msgs[-1].message.model // "unknown"),
+      attribution_mode: $mode
     }
-  ' 2>/dev/null || echo '{"input":0,"output":0,"cache_read":0,"cache_write_5m":0,"cache_write_1h":0,"model":"unknown"}'
+  ' 2>/dev/null || echo '{"input":0,"output":0,"cache_read":0,"cache_write_5m":0,"cache_write_1h":0,"model":"unknown","attribution_mode":"whole-directory"}'
 }
 
-# Anthropic pricing per million tokens (USD), verified May 2026.
+# Anthropic pricing per million tokens (USD), verified 2026-07-28.
 # https://docs.anthropic.com/en/docs/about-claude/pricing
-# Override via env vars to track rate changes without modifying this script.
+# Current generation: Opus 4.8 / Sonnet 4.7 / Haiku 4.6 -- the generation this plugin's agents
+# actually run on (CLAUDE.md "Model and effort assignments"). Override via env vars to track
+# rate changes without modifying this script:
 #   EDM_OPUS_INPUT_RATE, EDM_OPUS_OUTPUT_RATE,
 #   EDM_OPUS_CACHE_READ_RATE, EDM_OPUS_CACHE_WRITE_5M_RATE, EDM_OPUS_CACHE_WRITE_1H_RATE
 #   (likewise for SONNET, HAIKU)
+#
+# Previous-generation identifiers (Opus 4.7 / Sonnet 4.6 / Haiku 4.5) are matched separately,
+# below, at their own frozen (non-overridable) rates -- EDMV3-T52 AC9: a state file recorded
+# before this ticket landed keeps the cost it actually incurred rather than being silently
+# repriced under the current table when read back later.
 compute_cost_usd() {
   local model="$1" input="$2" output="$3" cache_read="$4" cw5m="$5" cw1h="$6"
   local in_rate out_rate cr_rate cw5m_rate cw1h_rate
   case "$model" in
+    *opus-4-7*|*opus-4.7*)
+      in_rate=5; out_rate=25; cr_rate=0.50; cw5m_rate=6.25; cw1h_rate=10.00 ;;
+    *sonnet-4-6*|*sonnet-4.6*)
+      in_rate=3; out_rate=15; cr_rate=0.30; cw5m_rate=3.75; cw1h_rate=6.00 ;;
+    *haiku-4-5*|*haiku-4.5*)
+      in_rate=1; out_rate=5; cr_rate=0.10; cw5m_rate=1.25; cw1h_rate=2.00 ;;
     *opus*)
-      in_rate="${EDM_OPUS_INPUT_RATE:-5}"
-      out_rate="${EDM_OPUS_OUTPUT_RATE:-25}"
-      cr_rate="${EDM_OPUS_CACHE_READ_RATE:-0.50}"
-      cw5m_rate="${EDM_OPUS_CACHE_WRITE_5M_RATE:-6.25}"
-      cw1h_rate="${EDM_OPUS_CACHE_WRITE_1H_RATE:-10.00}"
+      in_rate="${EDM_OPUS_INPUT_RATE:-6}"
+      out_rate="${EDM_OPUS_OUTPUT_RATE:-30}"
+      cr_rate="${EDM_OPUS_CACHE_READ_RATE:-0.60}"
+      cw5m_rate="${EDM_OPUS_CACHE_WRITE_5M_RATE:-7.50}"
+      cw1h_rate="${EDM_OPUS_CACHE_WRITE_1H_RATE:-12.00}"
       ;;
     *haiku*)
-      in_rate="${EDM_HAIKU_INPUT_RATE:-1}"
-      out_rate="${EDM_HAIKU_OUTPUT_RATE:-5}"
-      cr_rate="${EDM_HAIKU_CACHE_READ_RATE:-0.10}"
-      cw5m_rate="${EDM_HAIKU_CACHE_WRITE_5M_RATE:-1.25}"
-      cw1h_rate="${EDM_HAIKU_CACHE_WRITE_1H_RATE:-2.00}"
+      in_rate="${EDM_HAIKU_INPUT_RATE:-1.20}"
+      out_rate="${EDM_HAIKU_OUTPUT_RATE:-6.00}"
+      cr_rate="${EDM_HAIKU_CACHE_READ_RATE:-0.12}"
+      cw5m_rate="${EDM_HAIKU_CACHE_WRITE_5M_RATE:-1.50}"
+      cw1h_rate="${EDM_HAIKU_CACHE_WRITE_1H_RATE:-2.40}"
       ;;
-    *sonnet*|*)
-      in_rate="${EDM_SONNET_INPUT_RATE:-3}"
-      out_rate="${EDM_SONNET_OUTPUT_RATE:-15}"
-      cr_rate="${EDM_SONNET_CACHE_READ_RATE:-0.30}"
-      cw5m_rate="${EDM_SONNET_CACHE_WRITE_5M_RATE:-3.75}"
-      cw1h_rate="${EDM_SONNET_CACHE_WRITE_1H_RATE:-6.00}"
+    unknown)
+      # get_session_tokens_since's own sentinel for "no session data found at all" -- tokens
+      # are necessarily 0 too (a real, explained zero), not AC10's silent-zero-from-an-
+      # unrecognized-model case, so this is deliberately silent (no warning).
+      in_rate="${EDM_SONNET_INPUT_RATE:-4}"
+      out_rate="${EDM_SONNET_OUTPUT_RATE:-20}"
+      cr_rate="${EDM_SONNET_CACHE_READ_RATE:-0.40}"
+      cw5m_rate="${EDM_SONNET_CACHE_WRITE_5M_RATE:-5.00}"
+      cw1h_rate="${EDM_SONNET_CACHE_WRITE_1H_RATE:-8.00}"
+      ;;
+    *sonnet*)
+      in_rate="${EDM_SONNET_INPUT_RATE:-4}"
+      out_rate="${EDM_SONNET_OUTPUT_RATE:-20}"
+      cr_rate="${EDM_SONNET_CACHE_READ_RATE:-0.40}"
+      cw5m_rate="${EDM_SONNET_CACHE_WRITE_5M_RATE:-5.00}"
+      cw1h_rate="${EDM_SONNET_CACHE_WRITE_1H_RATE:-8.00}"
+      ;;
+    *)
+      # AC10: a model identifier that is neither a known family/generation substring nor the
+      # "unknown" no-session sentinel produces an explicit warning rather than a silently-
+      # zero or silently-guessed cost. Current-generation Sonnet rates are used as the least-
+      # wrong placeholder (the modal tier); the warning names the model so the figure gets
+      # investigated instead of trusted.
+      echo "edm-state: WARNING: unrecognized model_used '${model}' -- cost estimated at current Sonnet-tier rates as a placeholder; verify manually" >&2
+      in_rate="${EDM_SONNET_INPUT_RATE:-4}"
+      out_rate="${EDM_SONNET_OUTPUT_RATE:-20}"
+      cr_rate="${EDM_SONNET_CACHE_READ_RATE:-0.40}"
+      cw5m_rate="${EDM_SONNET_CACHE_WRITE_5M_RATE:-5.00}"
+      cw1h_rate="${EDM_SONNET_CACHE_WRITE_1H_RATE:-8.00}"
       ;;
   esac
   awk -v i="$input" -v o="$output" -v cr="$cache_read" -v c5="$cw5m" -v c1="$cw1h" \
@@ -743,6 +816,25 @@ state_anomalies() {
       "ZERO_TOKENS  phase_durations.\($k).tokens  model_used is \($v.model_used) but both input and output tokens are 0"
     else empty end
   ' 2>/dev/null)
+  # OPEN_AUDIT_ROUND (info -- EDMV3-T51 AC4/AC5): an audit round was started
+  # (audit-round-start) but never completed (audit-round-complete) -- the EDMV2 Phase-6
+  # failure mode (phase-start fired, phase-complete never did) applied to a single audit
+  # round instead of a whole phase. Informational only: a round in progress mid-audit is
+  # normal, not corrupted data, so this never flips cmd_validate's exit code (mirrors
+  # SIZE_UNKNOWN's reclassification rationale above). Uses the same coerce_round_entry
+  # widening every audit_rounds reader uses, so a legacy bare-integer shape reads cleanly.
+  local oar_type oar_rounds_json oar_last oar_round_num oar_completed
+  for oar_type in code srd tickets; do
+    oar_rounds_json="$(echo "$state" | jq -c --arg t "$oar_type" "${AUDIT_ROUND_COERCE_JQ_DEF} (.audit_rounds[\$t] // 0 | coerce_round_entry).rounds" 2>/dev/null || echo '[]')"
+    oar_last="$(echo "$oar_rounds_json" | jq -c 'if length > 0 then .[-1] else null end' 2>/dev/null || echo null)"
+    [[ "$oar_last" == "null" ]] && continue
+    oar_round_num="$(echo "$oar_last" | jq -r '.round // "?"')"
+    oar_completed="$(echo "$oar_last" | jq -r '.completed_at // empty')"
+    if [[ -z "$oar_completed" ]]; then
+      echo "info  OPEN_AUDIT_ROUND  audit_rounds  ${oar_type} audit round ${oar_round_num} for ${prefix} was started but never completed -- run edm-state audit-round-complete ${prefix} ${oar_type}"
+      found=1
+    fi
+  done
   # PERM_RULES_MISSING (info -- EDMV3-T06 AC5): the two "ask" rules that gate
   # `edm-state approve-gate` and `edm-state archive` are absent from every settings file
   # check_permission_rules() scans. Informational only (AC7): the plugin cannot ship these
@@ -1340,7 +1432,7 @@ cmd_phase_complete() {
   fi
 
   # Compute tokens + cost outside the lock (read-only)
-  local input=0 output=0 cache_read=0 cw5m=0 cw1h=0 model="unknown" cost="0.0000"
+  local input=0 output=0 cache_read=0 cw5m=0 cw1h=0 model="unknown" cost="0.0000" attribution_mode="whole-directory"
   if [[ -n "$started_at" ]]; then
     local tokens
     tokens="$(get_session_tokens_since "$started_at")"
@@ -1350,6 +1442,7 @@ cmd_phase_complete() {
     cw5m="$(echo "$tokens" | jq -r '.cache_write_5m // 0')"
     cw1h="$(echo "$tokens" | jq -r '.cache_write_1h // 0')"
     model="$(echo "$tokens" | jq -r '.model // "unknown"')"
+    attribution_mode="$(echo "$tokens" | jq -r '.attribution_mode // "whole-directory"')"
     cost="$(compute_cost_usd "$model" "$input" "$output" "$cache_read" "$cw5m" "$cw1h")"
   fi
 
@@ -1373,11 +1466,12 @@ cmd_phase_complete() {
       | . + {model_used: $model}
       | . + {estimated_cost_usd: ($cost | tonumber)}
       | . + {human_baseline_usd: ($human_cost | tonumber)}
+      | . + {attribution_mode: $am}
     )
     | .last_updated = $t
   ' --arg k "$key" --arg t "$now_ts" \
     --arg i "$input" --arg o "$output" --arg cr "$cache_read" --arg c5 "$cw5m" --arg c1 "$cw1h" \
-    --arg model "$model" --arg cost "$cost" --arg human_cost "$human_cost"
+    --arg model "$model" --arg cost "$cost" --arg human_cost "$human_cost" --arg am "$attribution_mode"
 
   # Record artifact hashes for phases that produce or revise gate-critical files.
   # Drift is detected in checkpoint-if-active by comparing these stored hashes to
@@ -1927,28 +2021,53 @@ cmd_watch_impl() {
 cmd_metrics_report() {
   require_jq
   local arg="${1:-}"
+  # EDMV3-T53 AC1/AC3: the human-baseline comparison is opt-in everywhere it can render (--all
+  # and the per-prefix report both honor it), not a per-mode special case. --calibrate has no
+  # baseline concept and ignores this flag either way.
+  local with_baseline="false"
+  [[ "${2:-}" == "--with-human-baseline" ]] && with_baseline="true"
   case "$arg" in
     --all)
       [[ -d "$SRD_ROOT" ]] || { echo "no SRD/ directory"; return 0; }
       echo "# EDM Metrics - Aggregate"
       echo
-      printf "  %-12s  %-8s  %-10s  %-12s  %-12s  %-12s\n" "Initiative" "Size" "Total Time" "Claude Cost" "Human Cost" "Cost Ratio"
-      printf "  %-12s  %-8s  %-10s  %-12s  %-12s  %-12s\n" "----------" "----" "----------" "-----------" "----------" "----------"
+      if [[ "$with_baseline" == "true" ]]; then
+        printf "  %-12s  %-8s  %-10s  %-12s  %-12s  %-12s\n" "Initiative" "Size" "Total Time" "Claude Cost" "Human Cost" "Cost Ratio"
+        printf "  %-12s  %-8s  %-10s  %-12s  %-12s  %-12s\n" "----------" "----" "----------" "-----------" "----------" "----------"
+      else
+        printf "  %-12s  %-8s  %-10s  %-12s\n" "Initiative" "Size" "Total Time" "Claude Cost"
+        printf "  %-12s  %-8s  %-10s  %-12s\n" "----------" "----" "----------" "-----------"
+      fi
       while IFS= read -r state; do
-        jq -r '
-          [.phase_durations | to_entries[] | .value] as $phases |
-          {
-            prefix: .prefix,
-            size: (.estimated_size // "?"),
-            total_seconds: ([$phases[].duration_seconds // 0] | add),
-            total_claude: ([$phases[].estimated_cost_usd // 0] | add),
-            total_human: ([$phases[].human_baseline_usd // 0] | add)
-          }
-          | "  \(.prefix | tostring | .[0:12])  \(.size | tostring | .[0:8])  \(.total_seconds)s\(if .total_seconds < 100 then "         " else "       " end)  $\(.total_claude)\(if .total_claude < 10 then "        " else "      " end)  $\(.total_human)\(if .total_human < 100 then "       " else "     " end)  \(if .total_claude > 0 and .total_human > 0 then ((.total_human / .total_claude) | tostring | .[0:6]) + "x" else "n/a" end)"
-        ' "$state" 2>/dev/null
+        if [[ "$with_baseline" == "true" ]]; then
+          jq -r '
+            [.phase_durations | to_entries[] | .value] as $phases |
+            {
+              prefix: .prefix,
+              size: (.estimated_size // "?"),
+              total_seconds: ([$phases[].duration_seconds // 0] | add),
+              total_claude: ([$phases[].estimated_cost_usd // 0] | add),
+              total_human: ([$phases[].human_baseline_usd // 0] | add)
+            }
+            | "  \(.prefix | tostring | .[0:12])  \(.size | tostring | .[0:8])  \(.total_seconds)s\(if .total_seconds < 100 then "         " else "       " end)  $\(.total_claude)\(if .total_claude < 10 then "        " else "      " end)  $\(.total_human)\(if .total_human < 100 then "       " else "     " end)  \(if .total_claude > 0 and .total_human > 0 then ((.total_human / .total_claude) | tostring | .[0:6]) + "x" else "n/a" end)"
+          ' "$state" 2>/dev/null
+        else
+          jq -r '
+            [.phase_durations | to_entries[] | .value] as $phases |
+            {
+              prefix: .prefix,
+              size: (.estimated_size // "?"),
+              total_seconds: ([$phases[].duration_seconds // 0] | add),
+              total_claude: ([$phases[].estimated_cost_usd // 0] | add)
+            }
+            | "  \(.prefix | tostring | .[0:12])  \(.size | tostring | .[0:8])  \(.total_seconds)s\(if .total_seconds < 100 then "         " else "       " end)  $\(.total_claude)"
+          ' "$state" 2>/dev/null
+        fi
       done < <(list_state_files --archived)
       echo
-      echo "Cost Ratio = human_cost / claude_cost (higher = more savings vs. human team baseline)"
+      if [[ "$with_baseline" == "true" ]]; then
+        echo "Cost Ratio = human_cost / claude_cost (higher = more savings vs. human team baseline). human_baseline_usd is an ESTIMATE derived from Phase Timing Guidelines median hours x human_hourly_rate_usd -- not a measured figure."
+      fi
       ;;
     --calibrate)
       [[ -d "$SRD_ROOT" ]] || { echo "no SRD/ directory"; return 0; }
@@ -1996,29 +2115,115 @@ cmd_metrics_report() {
       jq -r '"Initiative: \(.prefix)  |  size: \(.estimated_size // "Unknown")  |  current phase: \(.current_phase)  |  human hourly rate: $'"$HUMAN_HOURLY_RATE_USD"'"' "$state"
       jq -r 'if (.product_name // "") != "" or (.initiative_description // "") != "" then "Product: \(.product_name // "(none)")  |  Description: \(.initiative_description // "(none)")" else empty end' "$state" 2>/dev/null || true
       echo
-      printf "  %-10s  %-10s  %-12s  %-12s  %-10s  %-12s  %-10s\n" "Phase" "Duration" "Claude Cost" "Human Cost" "Savings" "Tokens (i/o)" "Model"
-      printf "  %-10s  %-10s  %-12s  %-12s  %-10s  %-12s  %-10s\n" "-----" "--------" "-----------" "----------" "-------" "------------" "-----"
-      jq -r '
-        .phase_durations
-        | to_entries
-        | sort_by(.key)
-        | .[]
-        | .key as $k
-        | .value as $v
-        | ("Phase " + ($k | sub("_phase$"; ""))) as $phase_label
-        | "  \($phase_label | .[0:10])  \(($v.duration_seconds // 0))s\(if ($v.duration_seconds // 0) < 100 then "       " else "     " end)  $\(($v.estimated_cost_usd // 0))\(if ($v.estimated_cost_usd // 0) < 10 then "        " else "      " end)  $\(($v.human_baseline_usd // 0))\(if ($v.human_baseline_usd // 0) < 100 then "        " else "      " end)  \(if ($v.estimated_cost_usd // 0) > 0 and ($v.human_baseline_usd // 0) > 0 then ((($v.human_baseline_usd // 0) / ($v.estimated_cost_usd // 1)) | tostring | .[0:5]) + "x" else "n/a" end)\(if ($v.estimated_cost_usd // 0) > 0 and ($v.human_baseline_usd // 0) > 0 then "    " else "        " end)  \(($v.tokens.input // 0))/\(($v.tokens.output // 0))\(if (($v.tokens.input // 0) + ($v.tokens.output // 0)) < 1000 then "        " else "     " end)  \($v.model_used // "?")"
-      ' "$state"
+      # EDMV3-T53 AC1: default output is raw cost/duration only -- no human-baseline comparison
+      # or multiple. AC3: --with-human-baseline is the explicit opt-in that restores it, with
+      # its own caveat line stating the baseline is an estimate.
+      if [[ "$with_baseline" == "true" ]]; then
+        printf "  %-10s  %-10s  %-12s  %-12s  %-10s  %-12s  %-10s\n" "Phase" "Duration" "Claude Cost" "Human Cost" "Savings" "Tokens (i/o)" "Model"
+        printf "  %-10s  %-10s  %-12s  %-12s  %-10s  %-12s  %-10s\n" "-----" "--------" "-----------" "----------" "-------" "------------" "-----"
+        jq -r '
+          .phase_durations
+          | to_entries
+          | sort_by(.key)
+          | .[]
+          | .key as $k
+          | .value as $v
+          | ("Phase " + ($k | sub("_phase$"; ""))) as $phase_label
+          | "  \($phase_label | .[0:10])  \(($v.duration_seconds // 0))s\(if ($v.duration_seconds // 0) < 100 then "       " else "     " end)  $\(($v.estimated_cost_usd // 0))\(if ($v.estimated_cost_usd // 0) < 10 then "        " else "      " end)  $\(($v.human_baseline_usd // 0))\(if ($v.human_baseline_usd // 0) < 100 then "        " else "      " end)  \(if ($v.estimated_cost_usd // 0) > 0 and ($v.human_baseline_usd // 0) > 0 then ((($v.human_baseline_usd // 0) / ($v.estimated_cost_usd // 1)) | tostring | .[0:5]) + "x" else "n/a" end)\(if ($v.estimated_cost_usd // 0) > 0 and ($v.human_baseline_usd // 0) > 0 then "    " else "        " end)  \(($v.tokens.input // 0))/\(($v.tokens.output // 0))\(if (($v.tokens.input // 0) + ($v.tokens.output // 0)) < 1000 then "        " else "     " end)  \($v.model_used // "?")"
+        ' "$state"
+        echo
+        jq -r '
+          [.phase_durations[] | .estimated_cost_usd // 0] as $costs |
+          [.phase_durations[] | .human_baseline_usd // 0] as $humans |
+          [.phase_durations[] | .duration_seconds // 0] as $secs |
+          ($costs | add) as $tc |
+          ($humans | add) as $th |
+          ($secs | add) as $ts |
+          "  Total: \($ts)s  |  Claude: $\($tc)  |  Human baseline (ESTIMATE): $\($th)  |  Savings: " +
+            (if $tc > 0 and $th > 0 then "\(($th / $tc) | tostring | .[0:6])x cheaper" else "n/a" end)
+        ' "$state"
+        echo "  (Human baseline is an ESTIMATE derived from Phase Timing Guidelines median hours x \$${HUMAN_HOURLY_RATE_USD}/hr -- not a measured cost.)"
+      else
+        printf "  %-10s  %-10s  %-12s  %-12s  %-10s\n" "Phase" "Duration" "Claude Cost" "Tokens (i/o)" "Model"
+        printf "  %-10s  %-10s  %-12s  %-12s  %-10s\n" "-----" "--------" "-----------" "------------" "-----"
+        jq -r '
+          .phase_durations
+          | to_entries
+          | sort_by(.key)
+          | .[]
+          | .key as $k
+          | .value as $v
+          | ("Phase " + ($k | sub("_phase$"; ""))) as $phase_label
+          | "  \($phase_label | .[0:10])  \(($v.duration_seconds // 0))s\(if ($v.duration_seconds // 0) < 100 then "       " else "     " end)  $\(($v.estimated_cost_usd // 0))\(if ($v.estimated_cost_usd // 0) < 10 then "        " else "      " end)  \(($v.tokens.input // 0))/\(($v.tokens.output // 0))\(if (($v.tokens.input // 0) + ($v.tokens.output // 0)) < 1000 then "        " else "     " end)  \($v.model_used // "?")"
+        ' "$state"
+        echo
+        jq -r '
+          [.phase_durations[] | .estimated_cost_usd // 0] as $costs |
+          [.phase_durations[] | .duration_seconds // 0] as $secs |
+          ($costs | add) as $tc |
+          ($secs | add) as $ts |
+          "  Total: \($ts)s  |  Claude: $\($tc)"
+        ' "$state"
+      fi
       echo
-      jq -r '
-        [.phase_durations[] | .estimated_cost_usd // 0] as $costs |
-        [.phase_durations[] | .human_baseline_usd // 0] as $humans |
-        [.phase_durations[] | .duration_seconds // 0] as $secs |
-        ($costs | add) as $tc |
-        ($humans | add) as $th |
-        ($secs | add) as $ts |
-        "  Total: \($ts)s  |  Claude: $\($tc)  |  Human baseline: $\($th)  |  Savings: " +
-          (if $tc > 0 and $th > 0 then "\(($th / $tc) | tostring | .[0:6])x cheaper" else "n/a" end)
-      ' "$state"
+      # ---- Code Audit: per-round cost (EDMV3-T51 AC6) + rounds-run/lenses-per-round summary
+      # (EDMV3-T53 AC8) -- one section, both tickets read the same audit_rounds data, so it is
+      # built once here rather than edited twice. Rendered only when at least one round has a
+      # recorded completion; omitted entirely (not rendered empty) when audit-round-start has
+      # run but audit-round-complete never has, or when no audit round has ever started
+      # (EDMV3-T51 AC7: a legacy or bare-integer audit_rounds shape renders without error via
+      # the same coerce_round_entry widening every other audit_rounds reader uses).
+      local has_round_data
+      has_round_data="$(jq -r "${AUDIT_ROUND_COERCE_JQ_DEF}"'
+        [(.audit_rounds // {}) | to_entries[] | (.value | coerce_round_entry).rounds[] | select(.completed_at != null)] | length
+      ' "$state" 2>/dev/null || echo 0)"
+      if [[ "$has_round_data" -gt 0 ]]; then
+        echo "## Code Audit -- per-round cost"
+        echo
+        while IFS=$'\t' read -r car_type car_rounds_run; do
+          [[ -n "$car_type" ]] || continue
+          echo "  ${car_type}: ${car_rounds_run} rounds run"
+        done < <(jq -r "${AUDIT_ROUND_COERCE_JQ_DEF}"'
+          (.audit_rounds // {}) | to_entries[] |
+          .key as $t | (.value | coerce_round_entry) |
+          select((.rounds | map(select(.completed_at != null)) | length) > 0) |
+          [$t, ((.rounds | map(select(.completed_at != null)) | length) | tostring)] | @tsv
+        ' "$state" 2>/dev/null)
+        echo
+        printf "  %-8s  %-6s  %-8s  %-10s  %-10s  %-12s\n" "Type" "Round" "Lenses" "Duration" "Cost" "Model"
+        printf "  %-8s  %-6s  %-8s  %-10s  %-10s  %-12s\n" "----" "-----" "------" "--------" "----" "-----"
+        while IFS=$'\t' read -r ar_type ar_round ar_lenses ar_dur ar_cost ar_model; do
+          [[ -n "$ar_type" ]] || continue
+          printf "  %-8s  %-6s  %-8s  %-10s  %-10s  %-12s\n" "$ar_type" "$ar_round" "$ar_lenses" "${ar_dur}s" "\$${ar_cost}" "$ar_model"
+        done < <(jq -r "${AUDIT_ROUND_COERCE_JQ_DEF}"'
+          (.audit_rounds // {}) | to_entries[] |
+          .key as $t | (.value | coerce_round_entry).rounds[] |
+          select(.completed_at != null) |
+          [$t, (.round|tostring), ((.lenses // []) | length | tostring), ((.duration_seconds // 0)|tostring), ((.estimated_cost_usd // 0)|tostring), (.model_used // "?")] | @tsv
+        ' "$state" 2>/dev/null)
+        echo "  (lenses per round shown in the Lenses column above; round_type full = all 11 lenses)"
+        echo
+      fi
+      # ---- Tiered vs untiered lens cost (EDMV3-T53 AC9) ------------------------------------
+      # Renders only where tiering data exists; omitted (not rendered empty) where it does not.
+      # No producer of `.tiering_results` exists yet -- EDMV3-T48 (a separate, not-in-this-
+      # batch ticket) is the measurement this section reads; today every initiative has none,
+      # so this section correctly never renders until T48 lands and populates the field. The
+      # anticipated shape (documented here so T48 has a concrete target rather than inventing
+      # its own): .tiering_results = [{lens_set, tiered_cost_usd, untiered_cost_usd}, ...].
+      local has_tiering_data
+      has_tiering_data="$(jq -r '(.tiering_results // []) | length' "$state" 2>/dev/null || echo 0)"
+      if [[ "$has_tiering_data" -gt 0 ]]; then
+        echo "## Tiered vs Untiered Lens Cost"
+        echo
+        printf "  %-20s  %-14s  %-14s\n" "Lens Set" "Tiered Cost" "Untiered Cost"
+        printf "  %-20s  %-14s  %-14s\n" "--------" "-----------" "-------------"
+        jq -r '
+          (.tiering_results // [])[] |
+          "  \(.lens_set // "?" | tostring | .[0:20])  $\(.tiered_cost_usd // 0)  $\(.untiered_cost_usd // 0)"
+        ' "$state" 2>/dev/null
+        echo
+      fi
       # Gate review time section (only shown when at least one gate is approved)
       # gate_review_seconds = approved_at(gate_N) - phase_complete_timestamp(gated_phase)
       # Gated phases: gate 1 -> phase 1, gate 2 -> phase 3, gate 3 -> phase 5
@@ -2642,6 +2847,77 @@ cmd_audit_round_start() {
 
   # Re-read to echo the new round number (count), the same external contract as before.
   read_state "$prefix" | jq -r --arg t "$audit_type" "${AUDIT_ROUND_COERCE_JQ_DEF} (.audit_rounds[\$t] // 0 | coerce_round_entry).count"
+}
+
+# audit-round-complete <PREFIX> <code|srd|tickets> (EDMV3-T51)
+# Closes the most recently started round of the given audit type: records completion
+# timestamp, duration, token/cost totals, keyed by round number within
+# .audit_rounds[type].rounds[]. Pre-check-then-lock, mirroring cmd_record_partial_verdict's
+# close path (bin/edm-state:2801) -- a double completion is refused before any rmw_state call
+# so it mutates nothing (AC9).
+cmd_audit_round_complete() {
+  [[ $# -eq 2 ]] || die "usage: edm-state audit-round-complete <PREFIX> <code|srd|tickets>"
+  require_jq
+  local prefix="$1" audit_type="$2"
+  case "$audit_type" in
+    code|srd|tickets) ;;
+    *) die "audit-round-complete: unknown audit type '$audit_type' (expected: code|srd|tickets)" ;;
+  esac
+
+  # AC9 (negative, double completion): pre-check before any lock is acquired.
+  local existing_rounds last_round round_num started_at already_completed_at
+  existing_rounds="$(read_state "$prefix" | jq -c --arg t "$audit_type" "${AUDIT_ROUND_COERCE_JQ_DEF} (.audit_rounds[\$t] // 0 | coerce_round_entry).rounds")"
+  last_round="$(echo "$existing_rounds" | jq -c 'if length > 0 then .[-1] else null end')"
+  [[ "$last_round" != "null" ]] \
+    || die "audit-round-complete: no ${audit_type} audit round started for ${prefix}; run edm-state audit-round-start ${prefix} ${audit_type} first"
+  round_num="$(echo "$last_round" | jq -r '.round')"
+  started_at="$(echo "$last_round" | jq -r '.started_at // empty')"
+  already_completed_at="$(echo "$last_round" | jq -r '.completed_at // empty')"
+  [[ -z "$already_completed_at" ]] \
+    || die "audit-round-complete: ${audit_type} round ${round_num} for ${prefix} is already completed (at ${already_completed_at}); a round may be completed only once"
+
+  # AC2 (one cost computation, not two): reuses get_session_tokens_since / compute_cost_usd,
+  # the exact same calls cmd_phase_complete makes, so audit-round cost can never diverge from
+  # phase cost via a second implementation.
+  local input=0 output=0 cache_read=0 cw5m=0 cw1h=0 model="unknown" cost="0.0000" attribution_mode="whole-directory"
+  if [[ -n "$started_at" ]]; then
+    local tokens
+    tokens="$(get_session_tokens_since "$started_at")"
+    input="$(echo "$tokens" | jq -r '.input // 0')"
+    output="$(echo "$tokens" | jq -r '.output // 0')"
+    cache_read="$(echo "$tokens" | jq -r '.cache_read // 0')"
+    cw5m="$(echo "$tokens" | jq -r '.cache_write_5m // 0')"
+    cw1h="$(echo "$tokens" | jq -r '.cache_write_1h // 0')"
+    model="$(echo "$tokens" | jq -r '.model // "unknown"')"
+    attribution_mode="$(echo "$tokens" | jq -r '.attribution_mode // "whole-directory"')"
+    cost="$(compute_cost_usd "$model" "$input" "$output" "$cache_read" "$cw5m" "$cw1h")"
+  fi
+
+  local now_ts
+  now_ts="$(now_utc)"
+
+  rmw_state "$prefix" "
+      ${AUDIT_ROUND_COERCE_JQ_DEF}
+      (.audit_rounds[\$t] // 0 | coerce_round_entry) as \$existing
+      | (\$existing.rounds | map(
+          if .round == (\$rn | tonumber) then
+            . + {
+              completed_at: \$ts,
+              duration_seconds: (if .started_at then ((\$ts | fromdateiso8601) - (.started_at | fromdateiso8601)) else 0 end),
+              tokens: {input: (\$i|tonumber), output: (\$o|tonumber), cache_read: (\$cr|tonumber), cache_write_5m: (\$c5|tonumber), cache_write_1h: (\$c1|tonumber)},
+              model_used: \$model,
+              estimated_cost_usd: (\$cost|tonumber),
+              attribution_mode: \$am
+            }
+          else . end
+        )) as \$new_rounds
+      | .audit_rounds[\$t] = (\$existing + {rounds: \$new_rounds})
+      | .last_updated = \$ts
+    " --arg t "$audit_type" --arg rn "$round_num" --arg ts "$now_ts" \
+      --arg i "$input" --arg o "$output" --arg cr "$cache_read" --arg c5 "$cw5m" --arg c1 "$cw1h" \
+      --arg model "$model" --arg cost "$cost" --arg am "$attribution_mode"
+
+  echo "recorded completion: ${audit_type} round ${round_num} for ${prefix} (\$${cost})"
 }
 
 # ---- Convergence query (EDMV3-T28) ------------------------------------------
@@ -3595,6 +3871,7 @@ case "$cmd" in
   current-step)         cmd_current_step "$@" ;;
   session-start)        cmd_session_start "$@" ;;
   audit-round-start)    cmd_audit_round_start "$@" ;;
+  audit-round-complete) cmd_audit_round_complete "$@" ;;
   render-ledger)        cmd_render_ledger "$@" ;;
   audit-converged)      cmd_audit_converged "$@" ;;
   record-partial-verdict) cmd_record_partial_verdict "$@" ;;

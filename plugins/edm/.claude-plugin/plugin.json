@@ -54,7 +54,7 @@
     "human_hourly_rate_usd": {
       "type": "number",
       "title": "Human developer hourly rate (USD)",
-      "description": "Used by /edm:metrics to compute human-baseline cost per phase for comparison against Claude API cost. Defaults to $150/hr (typical fully-loaded engineer cost in the US).",
+      "description": "Used by /edm:metrics --with-human-baseline (opt-in view; not shown by default -- default output is raw Claude cost/duration only) to compute an ESTIMATED human-baseline cost per phase for comparison against Claude API cost. Defaults to $150/hr (typical fully-loaded engineer cost in the US).",
       "default": 150
     },
     "jira_project_key": {

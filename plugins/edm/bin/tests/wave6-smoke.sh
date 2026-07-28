@@ -3066,6 +3066,399 @@ check "T41 AC2 -- D22 entry names the install method checked" \
 check "T41 AC6 -- D22 entry states the negative branch was taken" \
   "negative" "$t41_d22_line"
 
+# =================================================================================
+# EDMV3-T50: phase-complete 6 is actually called -- edm-state-side verification.
+# AC1/AC2/AC3/AC4 wire skills/orchestrator, skills/implement and skills/code-audit SKILL.md;
+# those edits are out of scope for this batch (owned by the concurrent T37/T38 dispatcher
+# refactor) and are reported separately, not asserted here as a red test. AC8 is already
+# covered by T12 AC3 above ("archive without terminal completed_at refuses"). AC6 and AC7 are
+# pure edm-state behaviour and are covered below.
+# =================================================================================
+
+# ---- AC6 (ordering precondition): phase-complete 6 succeeds once qc-summary.md exists, i.e.
+# EDMV3-T11's artifact check passes rather than refuses -- the invariant the orchestrator's
+# Phase 6 ordering (verify-runtime, then phase-complete 6, called after qc-summary.md is
+# written) depends on. -------------------------------------------------------------------------
+echo
+echo "T50 AC6 -- orchestrator Phase 6 ordering: qc-summary exists before phase-complete 6"
+"$EDM_STATE" init T50ORDER >/dev/null
+"$EDM_STATE" approve-gate T50ORDER 1 >/dev/null
+"$EDM_STATE" approve-gate T50ORDER 2 >/dev/null
+"$EDM_STATE" approve-gate T50ORDER 3 >/dev/null
+"$EDM_STATE" phase-start T50ORDER 6 >/dev/null
+mkdir -p "$TMP/SRD/T50ORDER/qc"
+echo "# QC Summary" > "$TMP/SRD/T50ORDER/qc/qc-summary.md"
+t50order_out="$("$EDM_STATE" phase-complete T50ORDER 6 2>&1)"; t50order_ec=$?
+[[ $t50order_ec -eq 0 ]] \
+  && pass "T50 AC6 -- orchestrator Phase 6 ordering: qc-summary exists before phase-complete 6" \
+  || fail "T50 AC6 -- phase-complete 6 refused despite qc-summary.md present: $t50order_out"
+
+# ---- AC7 (behavioural, the number is non-zero): a scratch run with a staged session JSONL
+# fixture produces non-zero duration_seconds and estimated_cost_usd for 6_phase -- the exact
+# figure the EDMV2 defect (D9) left at 0s/$0.00. -------------------------------------------------
+echo
+echo "T50 AC7 -- phase 6 duration_seconds and estimated_cost_usd are non-zero after a real run"
+T50_HOME="$(mktemp -d)"
+T50_CWD="$(mktemp -d)"
+T50_PREV_HOME="${HOME:-}"
+T50_PREV_PWD="$(pwd)"
+cd "$T50_CWD"
+export HOME="$T50_HOME"
+T50_SESS_DIR="$(session_dir_for_test_cwd)"
+"$EDM_STATE" init T50PH6 >/dev/null
+"$EDM_STATE" approve-gate T50PH6 1 >/dev/null
+"$EDM_STATE" approve-gate T50PH6 2 >/dev/null
+"$EDM_STATE" approve-gate T50PH6 3 >/dev/null
+"$EDM_STATE" phase-start T50PH6 6 >/dev/null
+sleep 1
+# Staged AFTER phase-start: get_session_tokens_since filters on timestamp >= started_at, so a
+# fixture timestamped before phase-start would be (correctly) excluded.
+stage_session_jsonl "$T50_SESS_DIR" "session-1.jsonl" "claude-sonnet-4-6-20260601" 1000 500
+mkdir -p "$TMP/SRD/T50PH6/qc"
+echo "# QC Summary" > "$TMP/SRD/T50PH6/qc/qc-summary.md"
+"$EDM_STATE" phase-complete T50PH6 6 >/dev/null
+t50_dur="$(jq -r '.phase_durations["6_phase"].duration_seconds' "$TMP/SRD/T50PH6/.edm-state.json")"
+t50_cost="$(jq -r '.phase_durations["6_phase"].estimated_cost_usd' "$TMP/SRD/T50PH6/.edm-state.json")"
+[[ "$t50_dur" -gt 0 ]] 2>/dev/null \
+  && pass "T50 AC7 -- phase 6 duration_seconds > 0 (${t50_dur}s)" \
+  || fail "T50 AC7 -- duration_seconds = '$t50_dur', expected > 0"
+awk -v c="$t50_cost" 'BEGIN{exit !(c>0)}' \
+  && pass "T50 AC7 -- phase 6 estimated_cost_usd > 0 (\$${t50_cost})" \
+  || fail "T50 AC7 -- estimated_cost_usd = '$t50_cost', expected > 0"
+cd "$T50_PREV_PWD"
+export HOME="$T50_PREV_HOME"
+rm -rf "$T50_HOME" "$T50_CWD"
+
+# =================================================================================
+# EDMV3-T51: per-round audit cost is captured (audit-round-complete)
+# AC3 (skills/code-audit/SKILL.md calling audit-round-complete after render-ledger) is a
+# SKILL.md edit out of scope this batch (T37/T38 dispatcher refactor owns that file);
+# reported as blocked-on-skills-owner. AC2 and AC8 are grep-verified directly below (not a
+# smoke-test case). AC1/AC4/AC5/AC6/AC7/AC9/AC10 are covered here.
+# =================================================================================
+
+# ---- AC1 (positive): records completion timestamp, duration, tokens and cost, keyed by
+# audit type and round number. ------------------------------------------------------------------
+echo
+echo "T51 AC1 -- audit-round-complete records duration, tokens and cost for the round"
+T51_HOME="$(mktemp -d)"
+T51_CWD="$(mktemp -d)"
+T51_PREV_HOME="${HOME:-}"
+T51_PREV_PWD="$(pwd)"
+cd "$T51_CWD"
+export HOME="$T51_HOME"
+T51_SESS_DIR="$(session_dir_for_test_cwd)"
+"$EDM_STATE" init T51ROUND >/dev/null
+STATE_T51ROUND="$TMP/SRD/T51ROUND/.edm-state.json"
+"$EDM_STATE" audit-round-start T51ROUND code >/dev/null
+sleep 1
+stage_session_jsonl "$T51_SESS_DIR" "session-1.jsonl" "claude-sonnet-4-6-20260601" 2000 800
+t51_complete_out="$("$EDM_STATE" audit-round-complete T51ROUND code 2>&1)"
+t51_dur="$(jq -r '.audit_rounds.code.rounds[-1].duration_seconds' "$STATE_T51ROUND")"
+t51_cost="$(jq -r '.audit_rounds.code.rounds[-1].estimated_cost_usd' "$STATE_T51ROUND")"
+[[ "$t51_dur" -gt 0 ]] 2>/dev/null \
+  && pass "T51 AC1 -- round duration_seconds > 0 (${t51_dur}s)" \
+  || fail "T51 AC1 -- round duration_seconds = '$t51_dur', expected > 0 (output: $t51_complete_out)"
+awk -v c="$t51_cost" 'BEGIN{exit !(c>0)}' \
+  && pass "T51 AC1 -- round estimated_cost_usd > 0 (\$${t51_cost})" \
+  || fail "T51 AC1 -- round estimated_cost_usd = '$t51_cost', expected > 0"
+check "T51 AC1 -- round completed_at recorded" \
+  "true" "$(jq -r '.audit_rounds.code.rounds[-1].completed_at != null' "$STATE_T51ROUND")"
+
+# ---- AC4/AC5 (negative, an unclosed round is visible as an info anomaly): audit-round-start
+# with no matching audit-round-complete surfaces OPEN_AUDIT_ROUND, informational only. ---------
+echo
+echo "T51 AC4/AC5 -- unclosed audit round surfaces OPEN_AUDIT_ROUND (info, does not fail validate)"
+"$EDM_STATE" init T51OPEN >/dev/null
+"$EDM_STATE" set T51OPEN estimated_size Small >/dev/null   # suppress SIZE_UNKNOWN noise
+"$EDM_STATE" audit-round-start T51OPEN srd >/dev/null
+t51open_validate_out="$("$EDM_STATE" validate T51OPEN 2>&1)"
+t51open_ec=$?
+check "T51 AC4 -- OPEN_AUDIT_ROUND anomaly present, canonical four-field format" \
+  "info  OPEN_AUDIT_ROUND  audit_rounds" "$t51open_validate_out"
+[[ $t51open_ec -eq 0 ]] \
+  && pass "T51 AC5 -- OPEN_AUDIT_ROUND is informational; validate still exits 0" \
+  || fail "T51 AC5 -- validate exited $t51open_ec with only an OPEN_AUDIT_ROUND anomaly present"
+
+# ---- AC6 (metrics surface): metrics-report renders a per-round section only once a round has
+# completed. --------------------------------------------------------------------------------
+echo
+echo "T51 AC6 -- metrics-report renders per-round cost only once a round has completed"
+mr_before_complete="$("$EDM_STATE" metrics-report T51OPEN 2>&1)"
+check_absent "T51 AC6 -- no per-round section before any round completes" \
+  "per-round" "$mr_before_complete"
+sleep 1
+stage_session_jsonl "$T51_SESS_DIR" "session-2.jsonl" "claude-sonnet-4-6-20260601" 500 200
+"$EDM_STATE" audit-round-complete T51OPEN srd >/dev/null
+mr_after_complete="$("$EDM_STATE" metrics-report T51OPEN 2>&1)"
+check "T51 AC6 -- per-round section present once a round completes" \
+  "per-round" "$mr_after_complete"
+check "T51 AC6 -- per-round section names 'rounds run'" \
+  "rounds run" "$mr_after_complete"
+
+cd "$T51_PREV_PWD"
+export HOME="$T51_PREV_HOME"
+rm -rf "$T51_HOME" "$T51_CWD"
+
+# ---- AC7 (C-4): legacy state files with rounds recorded but no completions render without
+# error -- both the pre-widening bare-integer shape and the post-widening {count, rounds}
+# shape with no completed round. ---------------------------------------------------------------
+echo
+echo "T51 AC7 -- legacy audit_rounds shapes render via metrics-report without error"
+"$EDM_STATE" init T51LEGACY1 >/dev/null
+STATE_T51LEGACY1="$TMP/SRD/T51LEGACY1/.edm-state.json"
+jq '.audit_rounds = {"code": 3}' "$STATE_T51LEGACY1" > "$STATE_T51LEGACY1.tmp" && mv "$STATE_T51LEGACY1.tmp" "$STATE_T51LEGACY1"
+set +e
+t51legacy1_out="$("$EDM_STATE" metrics-report T51LEGACY1 2>&1)"
+t51legacy1_ec=$?
+set -e
+[[ $t51legacy1_ec -eq 0 ]] \
+  && pass "T51 AC7 -- bare-integer legacy audit_rounds.code renders via metrics-report without error" \
+  || fail "T51 AC7 -- metrics-report exited $t51legacy1_ec on bare-integer legacy shape: $t51legacy1_out"
+
+"$EDM_STATE" init T51LEGACY2 >/dev/null
+STATE_T51LEGACY2="$TMP/SRD/T51LEGACY2/.edm-state.json"
+jq '.audit_rounds = {code: {count: 1, rounds: [{round: 1, lenses: [], round_type: "full", started_at: "2026-07-01T00:00:00Z"}]}}' \
+  "$STATE_T51LEGACY2" > "$STATE_T51LEGACY2.tmp" && mv "$STATE_T51LEGACY2.tmp" "$STATE_T51LEGACY2"
+set +e
+t51legacy2_out="$("$EDM_STATE" metrics-report T51LEGACY2 2>&1)"
+t51legacy2_ec=$?
+set -e
+[[ $t51legacy2_ec -eq 0 ]] \
+  && pass "T51 AC7 -- started-but-never-completed round renders via metrics-report without error" \
+  || fail "T51 AC7 -- metrics-report exited $t51legacy2_ec on an unclosed round: $t51legacy2_out"
+check_absent "T51 AC7 -- no per-round section for a round with no completion" \
+  "per-round" "$t51legacy2_out"
+
+# ---- AC9 (negative, double completion): completing a round twice refuses, names the existing
+# completion, and mutates nothing. --------------------------------------------------------------
+echo
+echo "T51 AC9 -- second audit-round-complete refused, naming the existing completion"
+"$EDM_STATE" init T51DBL >/dev/null
+STATE_T51DBL="$TMP/SRD/T51DBL/.edm-state.json"
+"$EDM_STATE" audit-round-start T51DBL tickets >/dev/null
+"$EDM_STATE" audit-round-complete T51DBL tickets >/dev/null
+check_fails "T51 AC9 -- second audit-round-complete refuses, naming the existing completion" \
+  "already completed" \
+  "$EDM_STATE" audit-round-complete T51DBL tickets
+check_state_unchanged "$STATE_T51DBL" "$EDM_STATE" audit-round-complete T51DBL tickets
+
+# ---- AC10 (atomicity and bash 3.2): bash -n passes; state is valid JSON after a double
+# invocation (the lock serializes what a true concurrent pair of invocations would race on;
+# this exercises the identical write path). ------------------------------------------------------
+echo
+echo "T51 AC10 -- bash -n passes; state remains valid JSON after a double invocation"
+bash -n "$EDM_STATE" \
+  && pass "T51 AC10 -- bin/edm-state passes bash -n" \
+  || fail "T51 AC10 -- bin/edm-state failed bash -n"
+jq -e . "$STATE_T51DBL" >/dev/null 2>&1 \
+  && pass "T51 AC10 -- state file is valid JSON after a double audit-round-complete invocation" \
+  || fail "T51 AC10 -- state file is not valid JSON after a double audit-round-complete invocation"
+
+# =================================================================================
+# EDMV3-T52: token attribution and the pricing table become honest
+# =================================================================================
+
+# ---- AC4 (behavioural, either branch): two synthetic session JSONL files in the sessions
+# directory -- an older, unrelated one and the driving one -- and get_session_tokens_since
+# (via phase-complete) scopes to the driving (most-recently-modified) session only. -----------
+echo
+echo "T52 AC4 -- two synthetic sessions produce the documented attribution"
+T52_HOME="$(mktemp -d)"
+T52_CWD="$(mktemp -d)"
+T52_PREV_HOME="${HOME:-}"
+T52_PREV_PWD="$(pwd)"
+cd "$T52_CWD"
+export HOME="$T52_HOME"
+T52_SESS_DIR="$(session_dir_for_test_cwd)"
+"$EDM_STATE" init T52ATTR >/dev/null
+"$EDM_STATE" approve-gate T52ATTR 1 >/dev/null
+"$EDM_STATE" approve-gate T52ATTR 2 >/dev/null
+"$EDM_STATE" approve-gate T52ATTR 3 >/dev/null
+"$EDM_STATE" phase-start T52ATTR 6 >/dev/null
+sleep 1
+# Older, unrelated concurrent session -- a second Claude Code window on the same project.
+stage_session_jsonl "$T52_SESS_DIR" "session-old.jsonl" "claude-sonnet-4-7-20260701" 100000 50000
+sleep 1
+# The driving session -- staged last, so it is the most-recently-modified file.
+stage_session_jsonl "$T52_SESS_DIR" "session-driving.jsonl" "claude-sonnet-4-7-20260701" 1000 500
+mkdir -p "$TMP/SRD/T52ATTR/qc"
+echo "# QC Summary" > "$TMP/SRD/T52ATTR/qc/qc-summary.md"
+"$EDM_STATE" phase-complete T52ATTR 6 >/dev/null
+STATE_T52ATTR="$TMP/SRD/T52ATTR/.edm-state.json"
+t52_attr_mode="$(jq -r '.phase_durations["6_phase"].attribution_mode' "$STATE_T52ATTR")"
+check "T52 AC2 -- attribution_mode is scoped or whole-directory" \
+  "" "$(echo "$t52_attr_mode" | grep -E '^(scoped|whole-directory)$' || true)"
+t52_input="$(jq -r '.phase_durations["6_phase"].tokens.input' "$STATE_T52ATTR")"
+if [[ "$t52_attr_mode" == "scoped" ]]; then
+  [[ "$t52_input" -eq 1000 ]] \
+    && pass "T52 AC4 -- scoped attribution: input tokens = 1000 (driving session only, not 101000)" \
+    || fail "T52 AC4 -- scoped attribution recorded input=$t52_input, expected 1000 (the old concurrent session leaked in)"
+else
+  pass "T52 AC4 -- whole-directory fallback taken (attribution_mode recorded honestly as such)"
+fi
+cd "$T52_PREV_PWD"
+export HOME="$T52_PREV_HOME"
+rm -rf "$T52_HOME" "$T52_CWD"
+
+# ---- AC9 (positive, previous-generation model_used renders a non-zero cost): both a direct
+# compute_cost_usd call and a full phase-complete run with a previous-generation model in the
+# staged session JSONL. -------------------------------------------------------------------------
+echo
+echo "T52 AC9 -- previous-generation model_used renders a non-zero cost"
+t52_prevgen_cost="$(call_edm_helper compute_cost_usd "claude-opus-4-7-20260201" 1000000 0 0 0 0)"
+awk -v c="$t52_prevgen_cost" 'BEGIN{exit !(c>0)}' \
+  && pass "T52 AC9 -- compute_cost_usd on a previous-generation opus identifier is non-zero (\$${t52_prevgen_cost})" \
+  || fail "T52 AC9 -- compute_cost_usd on a previous-generation opus identifier = '$t52_prevgen_cost', expected > 0"
+
+T52B_HOME="$(mktemp -d)"
+T52B_CWD="$(mktemp -d)"
+T52B_PREV_HOME="${HOME:-}"
+T52B_PREV_PWD="$(pwd)"
+cd "$T52B_CWD"
+export HOME="$T52B_HOME"
+T52B_SESS_DIR="$(session_dir_for_test_cwd)"
+"$EDM_STATE" init T52PREVGEN >/dev/null
+"$EDM_STATE" approve-gate T52PREVGEN 1 >/dev/null
+"$EDM_STATE" approve-gate T52PREVGEN 2 >/dev/null
+"$EDM_STATE" approve-gate T52PREVGEN 3 >/dev/null
+"$EDM_STATE" phase-start T52PREVGEN 6 >/dev/null
+sleep 1
+stage_session_jsonl "$T52B_SESS_DIR" "session-1.jsonl" "claude-opus-4-7-20260201" 1000 500
+mkdir -p "$TMP/SRD/T52PREVGEN/qc"
+echo "# QC Summary" > "$TMP/SRD/T52PREVGEN/qc/qc-summary.md"
+"$EDM_STATE" phase-complete T52PREVGEN 6 >/dev/null
+t52_prevgen_recorded_cost="$(jq -r '.phase_durations["6_phase"].estimated_cost_usd' "$TMP/SRD/T52PREVGEN/.edm-state.json")"
+awk -v c="$t52_prevgen_recorded_cost" 'BEGIN{exit !(c>0)}' \
+  && pass "T52 AC9 -- a real phase-complete run with a previous-generation model_used records a non-zero cost (\$${t52_prevgen_recorded_cost})" \
+  || fail "T52 AC9 -- recorded cost = '$t52_prevgen_recorded_cost', expected > 0"
+cd "$T52B_PREV_PWD"
+export HOME="$T52B_PREV_HOME"
+rm -rf "$T52B_HOME" "$T52B_CWD"
+
+# ---- AC10 (negative, unknown model warns rather than costing zero) ----------------------------
+echo
+echo "T52 AC10 -- unrecognized model_used warns and does not silently cost zero"
+t52_unknown_stderr="$(call_edm_helper compute_cost_usd "claude-nebula-9-1-20261231" 1000000 0 0 0 0 2>&1 1>/dev/null)"
+t52_unknown_cost="$(call_edm_helper compute_cost_usd "claude-nebula-9-1-20261231" 1000000 0 0 0 0 2>/dev/null)"
+check "T52 AC10 -- unrecognized model_used emits an explicit warning naming the model" \
+  "claude-nebula-9-1-20261231" "$t52_unknown_stderr"
+check "T52 AC10 -- warning text says WARNING" "WARNING" "$t52_unknown_stderr"
+awk -v c="$t52_unknown_cost" 'BEGIN{exit !(c>0)}' \
+  && pass "T52 AC10 -- unrecognized model_used cost is not silently 0 (\$${t52_unknown_cost})" \
+  || fail "T52 AC10 -- unrecognized model_used cost = '$t52_unknown_cost', expected > 0"
+# The pre-existing "unknown" sentinel (no session data at all) stays silent -- a real zero, not
+# an unrecognized-model silent zero.
+t52_sentinel_stderr="$(call_edm_helper compute_cost_usd "unknown" 0 0 0 0 0 2>&1 1>/dev/null)"
+check_absent "T52 AC10 -- the pre-existing 'unknown' no-session sentinel does not warn" \
+  "WARNING" "$t52_sentinel_stderr"
+
+# ---- AC8 (override mechanism preserved): current-generation env var overrides still work. -----
+echo
+echo "T52 AC8 -- the environment-variable override mechanism is preserved"
+t52_override_cost="$(EDM_OPUS_INPUT_RATE=99 call_edm_helper compute_cost_usd "claude-opus-4-8-20260701" 1000000 0 0 0 0)"
+[[ "$t52_override_cost" == "99.0000" ]] \
+  && pass "T52 AC8 -- EDM_OPUS_INPUT_RATE=99 override reflected in compute_cost_usd (\$${t52_override_cost})" \
+  || fail "T52 AC8 -- EDM_OPUS_INPUT_RATE=99 override produced '$t52_override_cost', expected 99.0000"
+
+# ---- AC1 (the choice is recorded) ----------------------------------------------------------
+echo
+echo "T52 AC1 -- decisions.md names the branch taken and the function comment states the mechanism"
+DECISIONS_MD_T52="${REPO_ROOT}/SRD/edm/EDMV3__prompt-streamline/decisions.md"
+check "T52 AC1 -- decisions.md names the token attribution decision" \
+  "token attribution" "$(cat "$DECISIONS_MD_T52" 2>/dev/null)"
+t52_d23_line="$(grep -n 'token attribution' "$DECISIONS_MD_T52" | head -1)"
+check "T52 AC1 -- D23 entry names branch (a)" \
+  "Branch (a)" "$t52_d23_line"
+check "T52 AC1 -- get_session_tokens_since's comment block documents the driving-session mechanism" \
+  "driving session" "$(sed -n '226,246p' "$EDM_STATE")"
+
+# =================================================================================
+# EDMV3-T53: the human-baseline ROI table leaves default output; metrics reflect tiering
+# AC4 (skills/metrics/SKILL.md no longer presents the human-baseline comparison as a
+# headline) is a SKILL.md edit out of scope this batch (T37/T38 dispatcher refactor owns
+# that file); reported as blocked-on-skills-owner. AC7's wave5-smoke.sh re-baseline is a
+# regression fix, not a new case here. AC6 (plugin.json description) already verified below.
+# =================================================================================
+
+echo
+echo "T53 AC1 -- default metrics-report output has no human-baseline comparison or multiple"
+"$EDM_STATE" init T53DEFAULT >/dev/null
+"$EDM_STATE" phase-start T53DEFAULT 1 >/dev/null
+echo "planning notes" > "$TMP/SRD/T53DEFAULT/planning.md"
+"$EDM_STATE" phase-complete T53DEFAULT 1 >/dev/null
+t53_default_out="$("$EDM_STATE" metrics-report T53DEFAULT 2>&1)"
+t53_default_hits=0
+printf '%s' "$t53_default_out" | grep -qi 'baseline\|multiple\|savings' && t53_default_hits=1
+[[ "$t53_default_hits" -eq 0 ]] \
+  && pass "T53 AC1 -- default output contains none of baseline/multiple/savings" \
+  || fail "T53 AC1 -- default output unexpectedly mentions baseline/multiple/savings: $t53_default_out"
+
+echo
+echo "T53 AC2 -- human_baseline_usd continues to be recorded in state (data not lost)"
+check "T53 AC2 -- human_baseline_usd recorded on phase 1 despite not being shown by default" \
+  "true" "$(jq -r '.phase_durations["1_phase"].human_baseline_usd != null' "$TMP/SRD/T53DEFAULT/.edm-state.json")"
+
+echo
+echo "T53 AC3 -- --with-human-baseline opt-in view states the estimate caveat"
+t53_baseline_out="$("$EDM_STATE" metrics-report T53DEFAULT --with-human-baseline 2>&1)"
+check "T53 AC3 -- --with-human-baseline renders the human-baseline comparison" \
+  "Human baseline" "$t53_baseline_out"
+check "T53 AC3 -- --with-human-baseline states it is an estimate" \
+  "estimate" "$(echo "$t53_baseline_out" | tr '[:upper:]' '[:lower:]')"
+
+echo
+echo "T53 AC6 -- plugin.json human_hourly_rate_usd description reflects the opt-in view"
+check "T53 AC6 -- plugin.json description mentions the opt-in view" \
+  "opt-in" "$(jq -r '.userConfig.human_hourly_rate_usd.description' "${REPO_ROOT}/plugins/edm/.claude-plugin/plugin.json")"
+
+echo
+echo "T53 AC8 -- metrics-report code-audit section names rounds run and lenses per round"
+"$EDM_STATE" audit-round-start T53DEFAULT code >/dev/null
+sleep 1
+"$EDM_STATE" audit-round-complete T53DEFAULT code >/dev/null
+t53_code_audit_out="$("$EDM_STATE" metrics-report T53DEFAULT 2>&1)"
+check "T53 AC8 -- 'rounds run' present once a code-audit round completes" \
+  "rounds run" "$t53_code_audit_out"
+check "T53 AC8 -- 'lenses per round' present once a code-audit round completes" \
+  "lenses per round" "$t53_code_audit_out"
+
+echo
+echo "T53 AC9 -- tiered-vs-untiered section omitted when no tiering data exists (T48 not landed)"
+check_absent "T53 AC9 -- no 'Tiered vs Untiered' section without tiering_results data" \
+  "Tiered vs Untiered" "$t53_default_out"
+
+echo
+echo "T53 AC10 -- --calibrate still works and now has Phase 6 data to calibrate against"
+"$EDM_STATE" init T53CALIB >/dev/null
+"$EDM_STATE" approve-gate T53CALIB 1 >/dev/null
+"$EDM_STATE" approve-gate T53CALIB 2 >/dev/null
+"$EDM_STATE" approve-gate T53CALIB 3 >/dev/null
+"$EDM_STATE" set T53CALIB estimated_size Small >/dev/null
+"$EDM_STATE" phase-start T53CALIB 6 >/dev/null
+sleep 1
+mkdir -p "$TMP/SRD/T53CALIB/qc"
+echo "# QC Summary" > "$TMP/SRD/T53CALIB/qc/qc-summary.md"
+"$EDM_STATE" phase-complete T53CALIB 6 >/dev/null
+set +e
+t53_calib_out="$("$EDM_STATE" metrics-report --calibrate 2>&1)"
+t53_calib_ec=$?
+set -e
+[[ $t53_calib_ec -eq 0 ]] \
+  && pass "T53 AC10 -- --calibrate exits 0" \
+  || fail "T53 AC10 -- --calibrate exited $t53_calib_ec: $t53_calib_out"
+check "T53 AC10 -- --calibrate output references phase 6" \
+  "Small_phase_6" "$t53_calib_out"
+
+echo
+echo "T53 AC11 -- metrics-report output stays ASCII-only and passes the artifact lint"
+t53_lint_dir="${TMP}/SRD/T53DEFAULT"
+"$EDM_STATE" metrics-report T53DEFAULT > "${t53_lint_dir}/metrics.md"
+t53_nonascii="$(LC_ALL=C grep -n '[^ -~	]' "${t53_lint_dir}/metrics.md" || true)"
+[[ -z "$t53_nonascii" ]] \
+  && pass "T53 AC11 -- metrics-report output is ASCII-only" \
+  || fail "T53 AC11 -- non-ASCII bytes found in metrics-report output: $t53_nonascii"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

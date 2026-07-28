@@ -156,3 +156,38 @@ check_state_unchanged() {
     fail "state changed: $state_file (hash before: $before, after: $after)"
   fi
 }
+
+# ---- EDMV3-T50/T51/T52: cost-tracking test fixtures ------------------------------------------
+# session_dir_for_test_cwd — mirrors bin/edm-state's own session_dir_for_cwd() formula exactly
+# (same `tr '/.' '-'` encoding of $HOME + $(pwd)) so a test can predict, and stage fixtures
+# into, the exact directory get_session_tokens_since() will read at call time.
+session_dir_for_test_cwd() {
+  echo "${HOME}/.claude/projects/$(pwd | tr '/.' '-')"
+}
+
+# stage_session_jsonl <sessions_dir> <filename> <model> <input_tokens> <output_tokens> [<timestamp>]
+# Writes one synthetic assistant-message JSONL line in the exact shape
+# get_session_tokens_since() (bin/edm-state) parses: .type == "assistant", .timestamp,
+# .message.model, .message.usage.{input_tokens,output_tokens,cache_read_input_tokens,
+# cache_creation.ephemeral_{5m,1h}_input_tokens}. Creates <sessions_dir> if absent. Lets a test
+# inject deterministic token/model data without depending on real Claude Code session history.
+stage_session_jsonl() {
+  local sessions_dir="$1" filename="$2" model="$3" input_tokens="$4" output_tokens="$5"
+  local ts="${6:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
+  mkdir -p "$sessions_dir"
+  jq -n --arg ts "$ts" --arg model "$model" --argjson in "$input_tokens" --argjson out "$output_tokens" '
+    {
+      type: "assistant",
+      timestamp: $ts,
+      message: {
+        model: $model,
+        usage: {
+          input_tokens: $in,
+          output_tokens: $out,
+          cache_read_input_tokens: 0,
+          cache_creation: {ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0}
+        }
+      }
+    }
+  ' > "${sessions_dir}/${filename}"
+}
