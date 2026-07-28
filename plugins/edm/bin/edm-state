@@ -228,7 +228,7 @@ session_dir_for_cwd() {
 # Cache writes are split by TTL because 5-min and 1-hour writes have different
 # per-million-token rates.
 #
-# EDMV3-T52 AC1 (branch a chosen; recorded in decisions.md D23): every session JSONL under
+# EDMV3-T52 AC1 (branch a chosen; recorded in decisions.md D25): every session JSONL under
 # sessions_dir was previously summed unconditionally, so a second Claude Code window open on
 # the same project inflated this phase's/round's token count. The driving session -- the one
 # this process is actually running inside -- is identified as the single most-recently-
@@ -3345,10 +3345,89 @@ cmd_lint() {
 
 # ---- Audit pattern library update (T121) -------------------------------------
 # update-patterns <PREFIX> <srd|ticket|qc|code>
-# Extracts ### headings from the initiative's audit report and appends novel
-# ones to the corresponding docs/audit-patterns/*.md file.
+# Extracts ### headings from the initiative's audit report and inserts novel
+# ones into the corresponding docs/audit-patterns/*.md file, under the target
+# `##` heading the Living-Library Contract names for the audit type.
 # Novel = normalized title not already present as a ### heading in the pattern file.
 # Records the action in state (.patterns_updates).
+
+# Living-Library insertion target (EDMV3-T54; docs/audit-patterns/README.md
+# Sec."Living-Library Contract", "Insertion target"): a new entry is inserted as a `### ` entry
+# under one of the document's four `##` headings, chosen by a documented mapping from finding
+# type, with `## Anti-Patterns` as the default target "absent a more specific mapping entry".
+# The README documents no per-audit-type mapping row today, so every audit type resolves to the
+# default. This case statement is the extension point: adding an arm here REQUIRES adding the
+# matching mapping row to the README, because the README is the contract and this is the
+# implementation of it -- the two must never disagree.
+PATTERN_DEFAULT_TARGET_HEADING="## Anti-Patterns"
+
+# normalize_pattern_titles -- stdin: `### ` headings or bare titles, one per line.
+# stdout: the de-duplication key for each, per docs/audit-patterns/README.md Sec."Append Schema"
+# ("if the finding title -- lowercased, whitespace-collapsed, trailing-parens metadata stripped
+# -- already exists in the document, skip the append").
+#
+# EVERY trailing "(...)" group is stripped, not just the last one. A library heading carries the
+# source finding's own trailing parens PLUS the "(prefix, date, severity)" group this command
+# appends, e.g. "### Missing error taxonomy (P1) (PFX, 2026-07-28, P2)". Stripping one group
+# leaves "missing error taxonomy (p1)" on the library side against "missing error taxonomy" on
+# the report side -- the two never match, so the same finding is re-appended on every run. Both
+# sides run through this one filter so they can never drift apart again (EDMV3-T54 idempotence).
+normalize_pattern_titles() {
+  awk '{
+    t = $0
+    sub(/^### /, "", t)
+    while (match(t, / *\([^()]*\) *$/)) { t = substr(t, 1, RSTART - 1) }
+    t = tolower(t)
+    gsub(/[ \t][ \t]*/, " ", t)
+    sub(/^ /, "", t)
+    sub(/ $/, "", t)
+    print t
+  }'
+}
+
+pattern_target_heading_for() {
+  case "$1" in
+    # srd|ticket|qc|code all take the default target; no more-specific README mapping exists.
+    *) printf '%s\n' "$PATTERN_DEFAULT_TARGET_HEADING" ;;
+  esac
+}
+
+# pattern_insert_line_for <pattern-file> <target-heading>
+# Prints the 1-based line number the new entry must be inserted BEFORE, so the entry lands
+# inside the target `##` section and never past the document's fourth-section content boundary
+# (README.md: "Insertion never lands past the fourth section or at end-of-file"; enforced by
+# bin/tests/wave7-smoke.sh's _t56_four_heading_contract_check and by .gitlab-ci.yml's
+# lint:pattern-library-contract job, both of which fail on any `###` heading appearing after the
+# last `##` section boundary).
+#
+# Walks forward from the target heading to the next `^## ` line -- that is the section boundary
+# -- then backs up over the trailing blank lines and the `---` rule these documents use to
+# separate sections, so the entry reads as the last entry OF the target section rather than as a
+# stray block glued onto the following heading. When the target section is the document's last
+# one there is no following `^## `, so the insertion point is end-of-file; that is legitimate
+# because end-of-the-last-section is still inside that section.
+#
+# Prints 0 when the target heading is absent. Callers must treat 0 as a skip -- never as licence
+# to fall back to an end-of-file append.
+pattern_insert_line_for() {
+  local _pf="$1" _heading="$2"
+  awk -v h="$_heading" '
+    { line[NR] = $0 }
+    !start && $0 == h { start = NR; next }
+    start && !boundary && /^## / { boundary = NR }
+    END {
+      if (!start) { print "0"; exit 0 }
+      if (boundary) { ins = boundary } else { ins = NR + 1 }
+      j = ins - 1
+      while (j > start && line[j] == "") { j-- }
+      if (j > start && line[j] == "---") {
+        j--
+        while (j > start && line[j] == "") { j-- }
+      }
+      print j + 1
+    }
+  ' "$_pf"
+}
 
 cmd_update_patterns() {
   [[ $# -eq 2 ]] || die "usage: edm-state update-patterns <PREFIX> <srd|ticket|qc|code>"
@@ -3401,21 +3480,27 @@ cmd_update_patterns() {
     return 0
   fi
 
+  # Resolve the Living-Library insertion target for this audit type, and verify the document
+  # actually carries that heading. A missing target heading is a SKIP, never a fallback: nothing
+  # is appended (the file stays byte-identical), the message names both the file and the heading,
+  # and the exit status stays 0 because a skip is not an error
+  # (docs/audit-patterns/README.md Sec."Living-Library Contract", "Insertion target").
+  local target_heading
+  target_heading="$(pattern_target_heading_for "$audit_type")"
+  if ! grep -qxF "$target_heading" "$pattern_file"; then
+    echo "update-patterns: target heading '${target_heading}' not found in ${pattern_file}; skipping (nothing appended, no end-of-file fallback)" >&2
+    return 0
+  fi
+
   if [[ -z "${audit_report_path}" || ! -f "$audit_report_path" ]]; then
     echo "update-patterns: no audit report found for ${prefix}/${audit_type} (nothing to append)"
     return 0
   fi
 
   # Read existing ### headings from the pattern file for de-duplication.
-  # Normalize: lowercase, collapse whitespace, strip trailing "(source, date, severity)" metadata.
+  # Normalize both sides through the same filter (normalize_pattern_titles).
   local existing_normalized
-  existing_normalized="$(grep '^### ' "$pattern_file" 2>/dev/null \
-    | sed 's/^### //' \
-    | sed 's/ *([^)]*) *$//' \
-    | tr '[:upper:]' '[:lower:]' \
-    | tr -s ' ' \
-    | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
-    || true)"
+  existing_normalized="$(grep '^### ' "$pattern_file" 2>/dev/null | normalize_pattern_titles || true)"
 
   local new_findings=0 today
   today="$(date -u +"%Y-%m-%d")"
@@ -3430,11 +3515,9 @@ cmd_update_patterns() {
       "summary"|"findings"|"recommendations"|"overview"|"appendix"|"legend") continue ;;
     esac
 
-    # Normalize for de-duplication: strip metadata parens, lowercase, collapse spaces.
+    # Normalize for de-duplication through the same filter used on the pattern file's headings.
     local norm
-    norm="$(echo "$raw_title" | sed 's/ *([^)]*) *$//' \
-      | tr '[:upper:]' '[:lower:]' | tr -s ' ' \
-      | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    norm="$(printf '%s\n' "$raw_title" | normalize_pattern_titles)"
     [[ -z "$norm" ]] && continue
 
     # Skip if this normalized title already exists in the pattern file.
@@ -3442,20 +3525,48 @@ cmd_update_patterns() {
       continue
     fi
 
-    # Append the novel finding atomically (EDMV3-92, EDMV3-T66 AC9): build the appended
-    # content in a tmp file alongside the target, then mv it into place -- never leaves a
-    # docs/audit-patterns/*.md file half-written if the process is interrupted mid-append, and
-    # never interleaves with a concurrent update-patterns call on the same file.
+    # Resolve the insertion point fresh for every entry: each insertion shifts the line numbers
+    # of everything below it, so a point computed once before the loop would be stale by the
+    # second entry.
+    local _insert_line
+    _insert_line="$(pattern_insert_line_for "$pattern_file" "$target_heading")"
+    if [[ -z "$_insert_line" || "$_insert_line" -eq 0 ]]; then
+      # Defensive backstop for the pre-loop check above (the heading could only vanish here if
+      # something else rewrote the file mid-run). Skip, do not fall back to an EOF append.
+      echo "update-patterns: target heading '${target_heading}' not found in ${pattern_file}; skipping remaining entries (nothing appended, no end-of-file fallback)" >&2
+      break
+    fi
+
+    # Insert the novel finding into the target `##` section atomically (EDMV3-92, EDMV3-T66 AC9,
+    # EDMV3-T54): render the whole document with the entry spliced in to a tmp file alongside the
+    # target, then mv it into place -- never leaves a docs/audit-patterns/*.md file half-written
+    # if the process is interrupted mid-write, and never interleaves with a concurrent
+    # update-patterns call on the same file. The `.tmp.$$` suffix keeps the in-flight file out of
+    # the `*.md` glob the four-heading contract checks scan.
     local _pattern_tmp="${pattern_file}.tmp.$$"
-    cp "$pattern_file" "$_pattern_tmp"
+    head -n "$(( _insert_line - 1 ))" "$pattern_file" > "$_pattern_tmp"
+    # Append Schema -- docs/audit-patterns/README.md Sec."Append Schema". Field order
+    # (status, source, audit-type, date) and the `>` blockquote delimiting of the stub body
+    # match that block exactly; `status: pending-review` is what the curation lifecycle greps
+    # for, and removing that line is what marks an entry curated.
     {
       printf '\n'
       printf '### %s (%s, %s, P2)\n\n' "$raw_title" "$prefix" "$today"
-      printf 'Extracted from %s audit for %s. Review and refine: add a one-paragraph description\n' \
+      printf 'status: pending-review\n'
+      printf 'source: %s\n' "$prefix"
+      printf 'audit-type: %s\n' "$audit_type"
+      printf 'date: %s\n\n' "$today"
+      printf '> Extracted from the %s audit for %s. One-paragraph description of the finding\n' \
         "$audit_type" "$prefix"
-      printf 'explaining the finding and how to prevent it. Adjust severity from P2 if warranted.\n'
+      printf '> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.\n'
     } >> "$_pattern_tmp"
+    tail -n "+${_insert_line}" "$pattern_file" >> "$_pattern_tmp"
     mv "$_pattern_tmp" "$pattern_file"  # atomic replace of the docs/audit-patterns/*.md target
+
+    # Record the title as present so a duplicated `### ` heading within this same audit report
+    # cannot produce two copies of the entry in one run.
+    existing_normalized="${existing_normalized}
+${norm}"
 
     new_findings=$((new_findings + 1))
   done < <(grep '^### ' "$audit_report_path" 2>/dev/null || true)
