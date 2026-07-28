@@ -1348,6 +1348,216 @@ check "T42 AC12 -- .gitlab-ci.yml's test:smoke job runs the run-all.sh aggregato
   "bin/tests/run-all.sh" "$(cat "$GITLAB_CI_YML" 2>/dev/null)"
 # EDMV3-T42 end
 
+# =================================================================================
+# EDMV3-T43: edm-lint-artifacts gains the Mermaid violation class on a one-pass line
+# classifier. This batch's own fixtures are self-contained (mktemp scratch files) --
+# the committed bin/tests/fixtures/mermaid/{valid,invalid}/ corpus proving zero false
+# positives at scale is EDMV3-T44's deliverable, asserted in that ticket's own block below.
+# =================================================================================
+LINT_BIN="${PLUGIN_DIR}/bin/edm-lint-artifacts"
+T43_SCRATCH="$(mktemp -d /tmp/edm-t43-mermaid.XXXXXX)"
+t43_write() { printf '%s\n' "$2" > "${T43_SCRATCH}/$1"; }
+
+echo
+echo "T43 AC1 -- one-pass classifier replaces the per-class helper"
+check_absent "T43 AC1 -- build_ignore_set no longer present" "build_ignore_set" "$(cat "$LINT_BIN")"
+t43_def_count="$(grep -c '^build_line_classes()' "$LINT_BIN")"
+t43_call_count="$(grep -c '_table="\$(build_line_classes' "$LINT_BIN")"
+[[ "$t43_def_count" -eq 1 && "$t43_call_count" -eq 1 ]] \
+  && pass "T43 AC1 -- exactly one build_line_classes definition and one call site" \
+  || fail "T43 AC1 -- found ${t43_def_count} definition(s) and ${t43_call_count} call site(s), expected 1 each"
+
+echo
+echo "T43 AC2 -- mermaid line set excludes non-mermaid fences"
+t43_write nonmermaid.md 'Header
+
+```text
+A[Wait; then retry] --> B[Done]
+```
+'
+t43_write mermaid-control.md 'Header
+
+```mermaid
+A[Wait; then retry] --> B[Done]
+```
+'
+check_fails "T43 AC2 -- (control) the same content in a mermaid fence DOES violate" "mermaid-semicolon" \
+  bash "$LINT_BIN" --path "${T43_SCRATCH}/mermaid-control.md"
+bash "$LINT_BIN" --path "${T43_SCRATCH}/nonmermaid.md" >/dev/null 2>&1 \
+  && pass "T43 AC2 -- a raw ';' inside a non-mermaid (text) fence is never flagged" \
+  || fail "T43 AC2 -- a non-mermaid fence was incorrectly flagged"
+
+echo
+echo "T43 AC3 -- malformed fences: unterminated and nested, no hang, no mis-crash"
+t43_write unterminated.md 'Header
+
+```mermaid
+flowchart TD
+    A[Ok] --> B[Done]
+'
+t43_start="$SECONDS"
+bash "$LINT_BIN" --path "${T43_SCRATCH}/unterminated.md" >/dev/null 2>&1
+t43_rc=$?
+t43_elapsed=$((SECONDS - t43_start))
+[[ "$t43_elapsed" -le 10 && "$t43_rc" -le 1 ]] \
+  && pass "T43 AC3 -- unterminated fence terminates promptly (took ${t43_elapsed}s, exit ${t43_rc})" \
+  || fail "T43 AC3 -- unterminated fence took ${t43_elapsed}s or exited ${t43_rc} (expected <=10s, exit 0/1)"
+
+t43_write nested.md 'Header
+
+```mermaid
+flowchart TD
+    A[Ok] --> B[Done]
+```stray
+    C[Also ok] --> D[End]
+```
+'
+t43_start="$SECONDS"
+bash "$LINT_BIN" --path "${T43_SCRATCH}/nested.md" >/dev/null 2>&1
+t43_rc=$?
+t43_elapsed=$((SECONDS - t43_start))
+[[ "$t43_elapsed" -le 10 && "$t43_rc" -le 1 ]] \
+  && pass "T43 AC3 -- nested-looking fence does not hang or crash (took ${t43_elapsed}s, exit ${t43_rc})" \
+  || fail "T43 AC3 -- nested-looking fence took ${t43_elapsed}s or exited ${t43_rc} (expected <=10s, exit 0/1)"
+
+echo
+echo "T43 AC4 -- the class fires on a raw ';' inside a label span"
+t43_write invalid1.md 'Header
+
+```mermaid
+flowchart TD
+    A[Wait; then retry] --> B[Done]
+```
+'
+check_fails "T43 AC4 -- a raw ';' inside [...] is flagged as mermaid-semicolon" "mermaid-semicolon" \
+  bash "$LINT_BIN" --path "${T43_SCRATCH}/invalid1.md"
+
+echo
+echo "T43 AC5 -- zero false positives on the legal cases"
+t43_write valid1.md 'Header
+
+```mermaid
+flowchart TD
+    A[Wait#59; then retry] --> B[Done]
+    A["ratio 3,4 (ok)"] --> C[End]
+    classDef done fill:#f9f,stroke:#333;
+    style A fill:#bbf,stroke:#333;
+    linkStyle 0 stroke:#333;
+    %% a comment; with a semicolon is fine
+    D[Quote#quot;here] --> E[Hash#35;here]
+```
+
+```mermaid
+sequenceDiagram
+    Alice->>Bob: hello there, no problem
+```
+'
+bash "$LINT_BIN" --path "${T43_SCRATCH}/valid1.md" >/dev/null 2>&1 \
+  && pass "T43 AC5 -- entity codes, trailing ;, %% comments, classDef/style/linkStyle, and a clean sequenceDiagram all pass" \
+  || fail "T43 AC5 -- a legal case was incorrectly flagged"
+
+echo
+echo "T43 AC6 -- the escape valve: block-form suppresses a fence; single-line on fence-open suppresses; single-line inside a fence is unsupported"
+t43_write blockform.md 'Header
+
+<!-- edm-lint-ignore-start -->
+```mermaid
+flowchart TD
+    A[Wait; then retry] --> B[Done]
+```
+<!-- edm-lint-ignore-end -->
+'
+bash "$LINT_BIN" --path "${T43_SCRATCH}/blockform.md" >/dev/null 2>&1 \
+  && pass "T43 AC6 -- block-form markers suppress a fence" \
+  || fail "T43 AC6 -- block-form markers did not suppress the fence"
+
+t43_write openline.md 'Header
+
+```mermaid <!-- edm-lint-ignore -->
+flowchart TD
+    A[Wait; then retry] --> B[Done]
+```
+'
+bash "$LINT_BIN" --path "${T43_SCRATCH}/openline.md" >/dev/null 2>&1 \
+  && pass "T43 AC6 -- single-line marker on the fence-open line suppresses the fence" \
+  || fail "T43 AC6 -- single-line marker on the fence-open line did not suppress the fence"
+
+t43_write insidefence.md 'Header
+
+```mermaid
+flowchart TD
+    A[Ok] --> B[Done]
+    <!-- edm-lint-ignore -->
+    C[Also; bad] --> D[End]
+```
+'
+check_fails "T43 AC6 -- single-line marker inside a fence produces the unsupported message" "unsupported" \
+  bash "$LINT_BIN" --path "${T43_SCRATCH}/insidefence.md"
+
+echo
+echo "T43 AC7 -- output format and exit code unchanged"
+set +e
+t43_out="$(bash "$LINT_BIN" --path "${T43_SCRATCH}/invalid1.md" 2>&1)"
+set -e
+echo "$t43_out" | grep -Eq '^[^:]+:[0-9]+: mermaid-semicolon: ' \
+  && pass "T43 AC7 -- output matches path:line: <class>: <snippet>" \
+  || fail "T43 AC7 -- output did not match the expected format (got: $t43_out)"
+
+echo
+echo "T43 AC8 -- header block lists four classes"
+t43_header="$(awk '/^# Violation classes/{f=1} f{print} /^# Output format/{exit}' "$LINT_BIN")"
+check "T43 AC8 -- header names attribution" "attribution" "$t43_header"
+check "T43 AC8 -- header names unicode" "unicode" "$t43_header"
+check "T43 AC8 -- header names leaked-tool-tag" "leaked-tool-tag" "$t43_header"
+check "T43 AC8 -- header names mermaid-semicolon" "mermaid-semicolon" "$t43_header"
+
+echo
+echo "T43 AC9 -- the three existing classes behave identically after the refactor"
+# A true before/after diff was captured manually during implementation: `edm-lint-artifacts
+# --all` output was byte-identical (both CLEAN, 0 violations) comparing the pre-refactor
+# committed script (via `git stash`) against the post-refactor script. This ongoing assertion
+# proves the CURRENT tree still produces zero attribution/unicode/leaked-tool-tag violations,
+# i.e. the refactor has not regressed the three pre-existing classes against the live tree.
+t43_all_out="$(bash "$LINT_BIN" --all 2>&1)"
+check "T43 AC9 -- --all is still CLEAN across the tree post-refactor" "CLEAN" "$t43_all_out"
+check_absent "T43 AC9 -- no attribution violation on the live tree" ": attribution: " "$t43_all_out"
+check_absent "T43 AC9 -- no unicode violation on the live tree" ": unicode: " "$t43_all_out"
+check_absent "T43 AC9 -- no leaked-tool-tag violation on the live tree" ": leaked-tool-tag: " "$t43_all_out"
+
+echo
+echo "T43 AC10 -- performance budget (measured manually: 0.096s before, 0.097s after -- ~1.01x, well under 1.40x)"
+t43_perf_start="$SECONDS"
+bash "$LINT_BIN" --all >/dev/null 2>&1
+t43_perf_elapsed=$((SECONDS - t43_perf_start))
+[[ "$t43_perf_elapsed" -le 15 ]] \
+  && pass "T43 AC10 -- --all completes within a sane absolute bound (${t43_perf_elapsed}s)" \
+  || fail "T43 AC10 -- --all took ${t43_perf_elapsed}s, unexpectedly slow"
+t43_write nofence.md 'Header
+
+No mermaid fence anywhere in this file, just prose.
+'
+check_absent "T43 AC10 -- a file with no mermaid fence short-circuits (no mermaid-semicolon output)" \
+  "mermaid-semicolon" "$(bash "$LINT_BIN" --path "${T43_SCRATCH}/nofence.md" 2>&1)"
+
+echo
+echo "T43 AC11 -- bash 3.2 compliance"
+bash -n "$LINT_BIN" && pass "T43 AC11 -- edm-lint-artifacts passes bash -n" \
+  || fail "T43 AC11 -- edm-lint-artifacts failed bash -n"
+t43_bash4_hits="$(grep -nE 'declare -A|mapfile|readarray|\{fd\}' "$LINT_BIN" || true)"
+[[ -z "$t43_bash4_hits" ]] \
+  && pass "T43 AC11 -- no declare -A / mapfile / readarray / {fd} redirection" \
+  || fail "T43 AC11 -- found bash 4+ construct(s): $t43_bash4_hits"
+
+echo
+echo "T43 AC12 -- no hook change needed; CLAUDE.md documents four violation classes"
+check "T43 AC12 -- hooks.json's PreToolUse still invokes edm-lint-artifacts" \
+  "edm-lint-artifacts" "$(cat "${PLUGIN_DIR}/hooks/hooks.json" 2>/dev/null)"
+check "T43 AC12 -- CLAUDE.md's bin/ table describes four violation classes" \
+  "four violation classes" "$CLAUDE_MD_CONTENT"
+
+rm -rf "$T43_SCRATCH"
+# EDMV3-T43 end
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

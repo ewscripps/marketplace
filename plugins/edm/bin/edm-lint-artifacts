@@ -18,9 +18,12 @@
 # error (exit 2), not a silent precedence rule.
 #
 # Violation classes (all cause a non-zero exit):
-#   attribution    -- AI-attribution trailers (co-authored-by, generated with, etc.)
-#   unicode        -- non-ASCII bytes in committed artifact files
-#   leaked-tool-tag -- XML/tool-invocation tags leaked into artifact content
+#   attribution        -- AI-attribution trailers (co-authored-by, generated with, etc.)
+#   unicode            -- non-ASCII bytes in committed artifact files
+#   leaked-tool-tag    -- XML/tool-invocation tags leaked into artifact content
+#   mermaid-semicolon  -- a literal ';' inside Mermaid label/edge/message text, or a misused
+#                         ignore marker inside a mermaid fence (EDMV3-T43); see plugins/edm/
+#                         CLAUDE.md's "Mermaid diagram conventions (canonical)" section
 #
 # Output format: path:line: <class>: <snippet>
 # Exit code: 0 = clean; 1 = one or more violations found; 2 = usage error.
@@ -107,26 +110,72 @@ report_violation() {
   violations=$((violations + 1))
 }
 
-# ---- Helper: build ignore set for a file --------------------------------------
-# Emits newline-separated line numbers that should be skipped by all lint checks.
-# Skips: lines inside ``` code fences, lines following <!-- edm-lint-ignore -->,
-# and lines inside <!-- edm-lint-ignore-start --> ... <!-- edm-lint-ignore-end --> blocks.
-build_ignore_set() {
+# ---- Helper: build the shared per-line classification table for a file (EDMV3-T43) -----------
+# Emits "lineno<TAB>ignored" and/or "lineno<TAB>mermaid" for every line that qualifies, computed
+# in exactly ONE read of the file, in place of the prior per-class helper that was called once
+# per violation class (three separate reads of every file); all four classes below now share this
+# single pass, which is both the cleanest factoring and how EDMV3-102's 40% lint-time budget is
+# met by construction rather than by a fourth independent full pass.
+#
+# ignored  -- lines inside ANY ``` fence (any language, or none), inside an
+#             <!-- edm-lint-ignore-start/end --> block, or the single line following a bare
+#             <!-- edm-lint-ignore --> marker. Consumed by classes 1-3; behavior is unchanged
+#             from before this refactor (EDMV3-T43 AC9).
+# mermaid  -- lines inside a fence opened with the info string `mermaid` (its first whitespace-
+#             delimited token), excluding the fence delimiter lines themselves. Consumed by
+#             class 4 only.
+#
+# Two escape valves suppress a mermaid fence for class 4 specifically (EDMV3-T43 AC6):
+#   - The block-form markers (<!-- edm-lint-ignore-start/end -->) placed OUTSIDE the fence --
+#     handled generically, since the whole fence then also lands in the "ignored" set, and class
+#     4 skips any line that is ignored.
+#   - A single-line <!-- edm-lint-ignore --> marker literally on the fence-open line -- suppresses
+#     that one fence's "mermaid" membership entirely (its usual next-line-only meaning does not
+#     apply here; there is no safe "next line" inside fenced diagram source for it to land on).
+# A single-line marker anywhere else inside a mermaid fence is unsupported usage (an HTML comment
+# is Mermaid *content*, not a comment -- Mermaid's own comment syntax is `%%`) and is left in the
+# "mermaid" set so class 4 reports it explicitly rather than silently doing nothing with it.
+build_line_classes() {
   local file="$1"
   local in_fence=0 in_ignore_block=0 ignore_next=0 lineno=0
+  local in_mermaid_fence=0 mermaid_fence_suppressed=0
+  local linetext info lang_token
+
   while IFS= read -r linetext; do
     lineno=$((lineno + 1))
 
     # Apply single-line ignore to current line (set by previous line's marker).
     if [[ "$ignore_next" -eq 1 ]]; then
-      echo "$lineno"
+      printf '%s\tignored\n' "$lineno"
+      printf '%s\tmarker\n' "$lineno"
       ignore_next=0
       continue
     fi
 
     # Code fence delimiter: toggle fence state; the delimiter line itself is not content.
     if [[ "$linetext" =~ ^\`\`\` ]]; then
-      in_fence=$((1 - in_fence))
+      if [[ "$in_fence" -eq 0 ]]; then
+        # Opening a fence -- read the info string's first token to detect a mermaid fence.
+        info="${linetext#\`\`\`}"
+        lang_token="$(printf '%s' "$info" | awk '{print $1}')"
+        in_fence=1
+        if [[ "$lang_token" == "mermaid" ]]; then
+          in_mermaid_fence=1
+          mermaid_fence_suppressed=0
+          # Single-line marker on the fence-open line suppresses this whole fence for class 4.
+          if [[ "$linetext" == *'<!-- edm-lint-ignore -->'* ]]; then
+            mermaid_fence_suppressed=1
+          fi
+        else
+          in_mermaid_fence=0
+          mermaid_fence_suppressed=0
+        fi
+      else
+        # Closing a fence.
+        in_fence=0
+        in_mermaid_fence=0
+        mermaid_fence_suppressed=0
+      fi
       continue
     fi
 
@@ -136,9 +185,20 @@ build_ignore_set() {
       continue
     fi
 
-    # Emit as ignored if inside a code fence or ignore block.
+    # Emit as ignored if inside a code fence (any language) or an ignore block.
     if [[ "$in_fence" -eq 1 || "$in_ignore_block" -eq 1 ]]; then
-      echo "$lineno"
+      printf '%s\tignored\n' "$lineno"
+    fi
+    # Emit "marker" separately whenever the ignore reason is an EXPLICIT edm-lint-ignore-*
+    # marker rather than merely being inside a fence -- class 4 needs to tell these apart, since
+    # "inside a mermaid fence" is exactly the condition it exists to inspect, not to skip.
+    if [[ "$in_ignore_block" -eq 1 ]]; then
+      printf '%s\tmarker\n' "$lineno"
+    fi
+
+    # Emit as mermaid if inside a mermaid fence not suppressed by the fence-open marker.
+    if [[ "$in_mermaid_fence" -eq 1 && "$mermaid_fence_suppressed" -eq 0 ]]; then
+      printf '%s\tmermaid\n' "$lineno"
     fi
 
     # Block-ignore start marker (set AFTER emitting, so the marker line itself is not ignored).
@@ -146,17 +206,58 @@ build_ignore_set() {
       in_ignore_block=1
     fi
 
-    # Single-line marker: flag next line.
-    if [[ "$linetext" == *'<!-- edm-lint-ignore -->'* ]]; then
+    # Single-line marker: flag next line. Inside a mermaid fence this position is unsupported
+    # (class 4 reports it directly from the "mermaid" set above), so it is not consumed here.
+    if [[ "$linetext" == *'<!-- edm-lint-ignore -->'* && "$in_mermaid_fence" -eq 0 ]]; then
       ignore_next=1
     fi
   done < "$file"
 }
 
-# ---- Helper: is a line number in the ignore set? ------------------------------
+# ---- Helper: is a line number in a given line-set (generic membership test) --------------------
 is_ignored_line() {
-  local lineno="$1" ignoreset="$2"
-  [[ -n "$ignoreset" ]] && echo "$ignoreset" | grep -qxF "$lineno"
+  local lineno="$1" lineset="$2"
+  [[ -n "$lineset" ]] && echo "$lineset" | grep -qxF "$lineno"
+}
+
+# ---- Helper: does a single Mermaid-fence content line contain an illegal raw semicolon? --------
+# (EDMV3-T43 AC4/AC5) Checked only against lines already known to be inside a mermaid fence and
+# not otherwise ignored -- callers are responsible for that filtering.
+mermaid_line_is_violation() {
+  local line="$1"
+  local trimmed stripped after_colon
+
+  trimmed="$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+  # Legal: a Mermaid comment line.
+  [[ "$trimmed" == '%%'* ]] && return 1
+
+  # Legal: classDef / style / linkStyle directives -- their trailing ';' is a statement
+  # terminator, never a label boundary.
+  [[ "$trimmed" =~ ^(classDef|style|linkStyle)([[:space:]]|$) ]] && return 1
+
+  # Strip legal entity codes (#59;, #quot;, #35;, ...) before span-checking so a legitimate
+  # entity reference is never mistaken for a raw semicolon.
+  stripped="$(printf '%s' "$line" | sed -E 's/#[0-9A-Za-z]{1,10};//g')"
+
+  # Legal: a bare statement-terminating ';' at the very end of the line (outside any label) --
+  # strip exactly one trailing ';' before span-checking.
+  stripped="$(printf '%s' "$stripped" | sed -E 's/;[[:space:]]*$//')"
+
+  # Label spans: a raw ';' inside [...], (...), {...}, |...|, or "..." is a violation.
+  printf '%s' "$stripped" | grep -Eq '\[[^][]*;[^][]*\]' && return 0
+  printf '%s' "$stripped" | grep -Eq '\([^()]*;[^()]*\)' && return 0
+  printf '%s' "$stripped" | grep -Eq '\{[^{}]*;[^{}]*\}' && return 0
+  printf '%s' "$stripped" | grep -Eq '\|[^|]*;[^|]*\|' && return 0
+  printf '%s' "$stripped" | grep -Eq '"[^"]*;[^"]*"' && return 0
+
+  # Sequence-diagram-style message line: a raw ';' after the first ':' on an arrow line.
+  if printf '%s' "$stripped" | grep -Eq -- '->' && printf '%s' "$stripped" | grep -q ':'; then
+    after_colon="${stripped#*:}"
+    [[ "$after_colon" == *";"* ]] && return 0
+  fi
+
+  return 1
 }
 
 # ---- Helper: list *.md files under a directory, excluding .git/ and .archived/ ----------------
@@ -176,7 +277,23 @@ collect_md_files() {
 # one implementation of the scan (EDMV3-111).
 scan_md_files() {
   [[ $# -eq 0 ]] && return 0
-  local file
+  local file i
+
+  # ---- Shared one-pass line classification (EDMV3-T43) --------------------------
+  # build_line_classes is called exactly once per file here, computed up front, and its two
+  # derived sets (ignore/mermaid) are reused by all four classes below -- a four-class lint run
+  # still costs one read of each file, not four.
+  local FILES=("$@")
+  local IGNORE_SETS=()
+  local MERMAID_SETS=()
+  local MARKER_SETS=()
+  for i in "${!FILES[@]}"; do
+    local _table
+    _table="$(build_line_classes "${FILES[$i]}")"
+    IGNORE_SETS[$i]="$(printf '%s\n' "$_table" | awk -F'\t' '$2=="ignored"{print $1}')"
+    MERMAID_SETS[$i]="$(printf '%s\n' "$_table" | awk -F'\t' '$2=="mermaid"{print $1}')"
+    MARKER_SETS[$i]="$(printf '%s\n' "$_table" | awk -F'\t' '$2=="marker"{print $1}')"
+  done
 
   # ---- Class 1: Attribution trailers (EDMV2-T113 phrase set) --------------------
   local _ATTR_PHRASES=(
@@ -187,9 +304,10 @@ scan_md_files() {
     "claude-flow"
     "created by claude"
   )
-  for file in "$@"; do
+  for i in "${!FILES[@]}"; do
+    file="${FILES[$i]}"
     local ignore_set lineno linetext lower phrase snippet
-    ignore_set="$(build_ignore_set "$file")"
+    ignore_set="${IGNORE_SETS[$i]}"
     lineno=0
     while IFS= read -r linetext; do
       lineno=$((lineno + 1))
@@ -207,9 +325,10 @@ scan_md_files() {
 
   # ---- Class 2: Non-ASCII (Unicode) bytes ---------------------------------------
   if [[ "$_has_pcre_grep" -eq 1 ]]; then
-    for file in "$@"; do
+    for i in "${!FILES[@]}"; do
+      file="${FILES[$i]}"
       local ignore_set lineno _rest snippet
-      ignore_set="$(build_ignore_set "$file")"
+      ignore_set="${IGNORE_SETS[$i]}"
       while IFS=: read -r _f lineno _rest; do
         is_ignored_line "$lineno" "$ignore_set" && continue
         snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | cut -c1-120 || true)"
@@ -218,9 +337,10 @@ scan_md_files() {
     done
   else
     # Fallback: LC_ALL=C grep for bytes > 0x7F
-    for file in "$@"; do
+    for i in "${!FILES[@]}"; do
+      file="${FILES[$i]}"
       local ignore_set lineno _rest snippet
-      ignore_set="$(build_ignore_set "$file")"
+      ignore_set="${IGNORE_SETS[$i]}"
       while IFS=: read -r lineno _rest; do
         is_ignored_line "$lineno" "$ignore_set" && continue
         snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | cut -c1-120 || true)"
@@ -234,14 +354,44 @@ scan_md_files() {
   # Pattern scoped to known tag names to avoid false positives on legitimate HTML
   # in code fences or Mermaid diagrams (no bare angle-bracket match).
   local _TAG_PATTERN='</?[[:space:]]*(function_calls|invoke|parameter|antml:|use_mcp_tool|result)[^>]*>'
-  for file in "$@"; do
+  for i in "${!FILES[@]}"; do
+    file="${FILES[$i]}"
     local ignore_set lineno _rest snippet
-    ignore_set="$(build_ignore_set "$file")"
+    ignore_set="${IGNORE_SETS[$i]}"
     while IFS=: read -r lineno _rest; do
       is_ignored_line "$lineno" "$ignore_set" && continue
       snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | cut -c1-120 || true)"
       report_violation "leaked-tool-tag" "$file" "$lineno" "$snippet"
     done < <(grep -nE "$_TAG_PATTERN" "$file" 2>/dev/null || true)
+  done
+
+  # ---- Class 4: Mermaid literal-semicolon (EDMV3-T43) ---------------------------
+  # Files with no ``` mermaid ``` fence short-circuit without a per-line scan (EDMV3-102 AC10
+  # performance budget) -- the mermaid set is already empty from the shared pass above, so there
+  # is nothing further to compute here.
+  for i in "${!FILES[@]}"; do
+    file="${FILES[$i]}"
+    local mermaid_set="${MERMAID_SETS[$i]}"
+    [[ -z "$mermaid_set" ]] && continue
+    local marker_set="${MARKER_SETS[$i]}"
+    local lineno linetext snippet
+    while IFS= read -r lineno; do
+      [[ -z "$lineno" ]] && continue
+      # Skip lines suppressed by an EXPLICIT edm-lint-ignore-start/end block (the supported
+      # escape valve, EDMV3-T43 AC6) -- being merely inside a mermaid fence is not itself a
+      # suppression reason, since that is exactly what this class exists to inspect.
+      is_ignored_line "$lineno" "$marker_set" && continue
+      linetext="$(sed -n "${lineno}p" "$file" 2>/dev/null || true)"
+      if [[ "$linetext" == *'<!-- edm-lint-ignore -->'* ]]; then
+        snippet="unsupported: edm-lint-ignore has no effect inside a mermaid fence (Mermaid's comment syntax is %%); use edm-lint-ignore-start/end around the fence instead"
+        report_violation "mermaid-semicolon" "$file" "$lineno" "$snippet"
+        continue
+      fi
+      if mermaid_line_is_violation "$linetext"; then
+        snippet="$(printf '%s' "$linetext" | cut -c1-120)"
+        report_violation "mermaid-semicolon" "$file" "$lineno" "$snippet"
+      fi
+    done <<< "$mermaid_set"
   done
 }
 
