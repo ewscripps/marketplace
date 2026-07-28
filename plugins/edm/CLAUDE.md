@@ -315,17 +315,38 @@ Skills mirror the split: `skills/orchestrator/`, `skills/plan/`, `skills/srd/`, 
 
 ## Cost tracking
 
-Every `phase-complete` invocation captures token usage from the project's session JSONL files (
-`~/.claude/projects/<encoded-cwd>/*.jsonl`) and computes Claude API cost using current Anthropic pricing. The state
-schema's `phase_durations[N_phase]` entry includes:
+Every `phase-complete` (and, EDMV3-T51, `audit-round-complete`) invocation captures token usage from the project's
+session JSONL files (`~/.claude/projects/<encoded-cwd>/*.jsonl`) and computes Claude API cost using current
+Anthropic pricing. The state schema's `phase_durations[N_phase]` entry includes:
 
 - `tokens.{input, output, cache_read, cache_write}` -- raw counts
 - `model_used` -- the model that handled most of the phase work (last assistant message)
 - `estimated_cost_usd` -- computed from tokens x per-million-token rates
+- `attribution_mode` -- `"scoped"` or `"whole-directory"` (EDMV3-T52); see below
 - `human_baseline_usd` -- computed from Phase Timing Guidelines median hours x `${user_config.human_hourly_rate_usd}` (
-  default $150/hr)
+  default $150/hr); recorded on every phase but shown by default only via `metrics-report --with-human-baseline`
+  (EDMV3-T53)
 
-Pricing constants (per million tokens, USD) are baked in but env-overridable:
+**Token attribution (EDMV3-T52, decisions.md D23):** token/cost figures are scoped to the *driving session* -- the
+single most-recently-modified `*.jsonl` file in the sessions directory at read time, since Claude Code appends to
+its own session's JSONL as the conversation proceeds, making it always the most recently touched file on disk. This
+prevents a second Claude Code window open on the same project from inflating a phase's or audit round's figures.
+`attribution_mode` records `"scoped"` when this succeeded, or `"whole-directory"` on the pre-T52 fallback (sums
+every session JSONL) if the sessions directory has no readable file at read time.
+
+Pricing constants (per million tokens, USD) are baked in but env-overridable. Current generation (the model
+generation this plugin's agents actually run on, see "Model and effort assignments" above):
+
+| Model | Input | Output | Cache Read | Cache Write 5m | Cache Write 1h |
+|---|---|---|---|---|---|
+| Opus 4.8 | $6 | $30 | $0.60 | $7.50 | $12.00 |
+| Sonnet 4.7 | $4 | $20 | $0.40 | $5.00 | $8.00 |
+| Haiku 4.6 | $1.20 | $6.00 | $0.12 | $1.50 | $2.40 |
+
+Verified 2026-07-28 against [docs.anthropic.com/en/docs/about-claude/pricing](https://docs.anthropic.com/en/docs/about-claude/pricing).
+
+Previous-generation rates (frozen, not env-overridable -- EDMV3-T52 AC9) are kept so a state file recorded before
+this refresh is never silently repriced on a later read:
 
 | Model | Input | Output | Cache Read | Cache Write 5m | Cache Write 1h |
 |---|---|---|---|---|---|
@@ -333,9 +354,7 @@ Pricing constants (per million tokens, USD) are baked in but env-overridable:
 | Sonnet 4.6 | $3 | $15 | $0.30 | $3.75 | $6.00 |
 | Haiku 4.5 | $1 | $5 | $0.10 | $1.25 | $2.00 |
 
-Verified May 2026 against [docs.anthropic.com/en/docs/about-claude/pricing](https://docs.anthropic.com/en/docs/about-claude/pricing).
-
-Override with `EDM_OPUS_INPUT_RATE`, `EDM_SONNET_OUTPUT_RATE`, `EDM_HAIKU_CACHE_READ_RATE`, `EDM_OPUS_CACHE_WRITE_5M_RATE`, `EDM_OPUS_CACHE_WRITE_1H_RATE`, etc. when rates change.
+Override the current-generation rates with `EDM_OPUS_INPUT_RATE`, `EDM_SONNET_OUTPUT_RATE`, `EDM_HAIKU_CACHE_READ_RATE`, `EDM_OPUS_CACHE_WRITE_5M_RATE`, `EDM_OPUS_CACHE_WRITE_1H_RATE`, etc. when rates change. A `model_used` value matching neither generation nor the `unknown` no-session sentinel produces an explicit stderr warning and is priced at the current Sonnet-tier rate as a placeholder (EDMV3-T52 AC10) rather than silently costing zero.
 
 Cache writes are tracked separately by TTL (5-minute vs 1-hour) because they have different rates. Claude Code typically uses 1-hour caching for system prompts and tool definitions, so `cache_write_1h` is usually the dominant figure.
 

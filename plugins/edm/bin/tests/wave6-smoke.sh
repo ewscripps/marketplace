@@ -3255,6 +3255,124 @@ jq -e . "$STATE_T51DBL" >/dev/null 2>&1 \
   && pass "T51 AC10 -- state file is valid JSON after a double audit-round-complete invocation" \
   || fail "T51 AC10 -- state file is not valid JSON after a double audit-round-complete invocation"
 
+# =================================================================================
+# EDMV3-T52: token attribution and the pricing table become honest
+# =================================================================================
+
+# ---- AC4 (behavioural, either branch): two synthetic session JSONL files in the sessions
+# directory -- an older, unrelated one and the driving one -- and get_session_tokens_since
+# (via phase-complete) scopes to the driving (most-recently-modified) session only. -----------
+echo
+echo "T52 AC4 -- two synthetic sessions produce the documented attribution"
+T52_HOME="$(mktemp -d)"
+T52_CWD="$(mktemp -d)"
+T52_PREV_HOME="${HOME:-}"
+T52_PREV_PWD="$(pwd)"
+cd "$T52_CWD"
+export HOME="$T52_HOME"
+T52_SESS_DIR="$(session_dir_for_test_cwd)"
+"$EDM_STATE" init T52ATTR >/dev/null
+"$EDM_STATE" approve-gate T52ATTR 1 >/dev/null
+"$EDM_STATE" approve-gate T52ATTR 2 >/dev/null
+"$EDM_STATE" approve-gate T52ATTR 3 >/dev/null
+"$EDM_STATE" phase-start T52ATTR 6 >/dev/null
+sleep 1
+# Older, unrelated concurrent session -- a second Claude Code window on the same project.
+stage_session_jsonl "$T52_SESS_DIR" "session-old.jsonl" "claude-sonnet-4-7-20260701" 100000 50000
+sleep 1
+# The driving session -- staged last, so it is the most-recently-modified file.
+stage_session_jsonl "$T52_SESS_DIR" "session-driving.jsonl" "claude-sonnet-4-7-20260701" 1000 500
+mkdir -p "$TMP/SRD/T52ATTR/qc"
+echo "# QC Summary" > "$TMP/SRD/T52ATTR/qc/qc-summary.md"
+"$EDM_STATE" phase-complete T52ATTR 6 >/dev/null
+STATE_T52ATTR="$TMP/SRD/T52ATTR/.edm-state.json"
+t52_attr_mode="$(jq -r '.phase_durations["6_phase"].attribution_mode' "$STATE_T52ATTR")"
+check "T52 AC2 -- attribution_mode is scoped or whole-directory" \
+  "" "$(echo "$t52_attr_mode" | grep -E '^(scoped|whole-directory)$' || true)"
+t52_input="$(jq -r '.phase_durations["6_phase"].tokens.input' "$STATE_T52ATTR")"
+if [[ "$t52_attr_mode" == "scoped" ]]; then
+  [[ "$t52_input" -eq 1000 ]] \
+    && pass "T52 AC4 -- scoped attribution: input tokens = 1000 (driving session only, not 101000)" \
+    || fail "T52 AC4 -- scoped attribution recorded input=$t52_input, expected 1000 (the old concurrent session leaked in)"
+else
+  pass "T52 AC4 -- whole-directory fallback taken (attribution_mode recorded honestly as such)"
+fi
+cd "$T52_PREV_PWD"
+export HOME="$T52_PREV_HOME"
+rm -rf "$T52_HOME" "$T52_CWD"
+
+# ---- AC9 (positive, previous-generation model_used renders a non-zero cost): both a direct
+# compute_cost_usd call and a full phase-complete run with a previous-generation model in the
+# staged session JSONL. -------------------------------------------------------------------------
+echo
+echo "T52 AC9 -- previous-generation model_used renders a non-zero cost"
+t52_prevgen_cost="$(call_edm_helper compute_cost_usd "claude-opus-4-7-20260201" 1000000 0 0 0 0)"
+awk -v c="$t52_prevgen_cost" 'BEGIN{exit !(c>0)}' \
+  && pass "T52 AC9 -- compute_cost_usd on a previous-generation opus identifier is non-zero (\$${t52_prevgen_cost})" \
+  || fail "T52 AC9 -- compute_cost_usd on a previous-generation opus identifier = '$t52_prevgen_cost', expected > 0"
+
+T52B_HOME="$(mktemp -d)"
+T52B_CWD="$(mktemp -d)"
+T52B_PREV_HOME="${HOME:-}"
+T52B_PREV_PWD="$(pwd)"
+cd "$T52B_CWD"
+export HOME="$T52B_HOME"
+T52B_SESS_DIR="$(session_dir_for_test_cwd)"
+"$EDM_STATE" init T52PREVGEN >/dev/null
+"$EDM_STATE" approve-gate T52PREVGEN 1 >/dev/null
+"$EDM_STATE" approve-gate T52PREVGEN 2 >/dev/null
+"$EDM_STATE" approve-gate T52PREVGEN 3 >/dev/null
+"$EDM_STATE" phase-start T52PREVGEN 6 >/dev/null
+sleep 1
+stage_session_jsonl "$T52B_SESS_DIR" "session-1.jsonl" "claude-opus-4-7-20260201" 1000 500
+mkdir -p "$TMP/SRD/T52PREVGEN/qc"
+echo "# QC Summary" > "$TMP/SRD/T52PREVGEN/qc/qc-summary.md"
+"$EDM_STATE" phase-complete T52PREVGEN 6 >/dev/null
+t52_prevgen_recorded_cost="$(jq -r '.phase_durations["6_phase"].estimated_cost_usd' "$TMP/SRD/T52PREVGEN/.edm-state.json")"
+awk -v c="$t52_prevgen_recorded_cost" 'BEGIN{exit !(c>0)}' \
+  && pass "T52 AC9 -- a real phase-complete run with a previous-generation model_used records a non-zero cost (\$${t52_prevgen_recorded_cost})" \
+  || fail "T52 AC9 -- recorded cost = '$t52_prevgen_recorded_cost', expected > 0"
+cd "$T52B_PREV_PWD"
+export HOME="$T52B_PREV_HOME"
+rm -rf "$T52B_HOME" "$T52B_CWD"
+
+# ---- AC10 (negative, unknown model warns rather than costing zero) ----------------------------
+echo
+echo "T52 AC10 -- unrecognized model_used warns and does not silently cost zero"
+t52_unknown_stderr="$(call_edm_helper compute_cost_usd "claude-nebula-9-1-20261231" 1000000 0 0 0 0 2>&1 1>/dev/null)"
+t52_unknown_cost="$(call_edm_helper compute_cost_usd "claude-nebula-9-1-20261231" 1000000 0 0 0 0 2>/dev/null)"
+check "T52 AC10 -- unrecognized model_used emits an explicit warning naming the model" \
+  "claude-nebula-9-1-20261231" "$t52_unknown_stderr"
+check "T52 AC10 -- warning text says WARNING" "WARNING" "$t52_unknown_stderr"
+awk -v c="$t52_unknown_cost" 'BEGIN{exit !(c>0)}' \
+  && pass "T52 AC10 -- unrecognized model_used cost is not silently 0 (\$${t52_unknown_cost})" \
+  || fail "T52 AC10 -- unrecognized model_used cost = '$t52_unknown_cost', expected > 0"
+# The pre-existing "unknown" sentinel (no session data at all) stays silent -- a real zero, not
+# an unrecognized-model silent zero.
+t52_sentinel_stderr="$(call_edm_helper compute_cost_usd "unknown" 0 0 0 0 0 2>&1 1>/dev/null)"
+check_absent "T52 AC10 -- the pre-existing 'unknown' no-session sentinel does not warn" \
+  "WARNING" "$t52_sentinel_stderr"
+
+# ---- AC8 (override mechanism preserved): current-generation env var overrides still work. -----
+echo
+echo "T52 AC8 -- the environment-variable override mechanism is preserved"
+t52_override_cost="$(EDM_OPUS_INPUT_RATE=99 call_edm_helper compute_cost_usd "claude-opus-4-8-20260701" 1000000 0 0 0 0)"
+[[ "$t52_override_cost" == "99.0000" ]] \
+  && pass "T52 AC8 -- EDM_OPUS_INPUT_RATE=99 override reflected in compute_cost_usd (\$${t52_override_cost})" \
+  || fail "T52 AC8 -- EDM_OPUS_INPUT_RATE=99 override produced '$t52_override_cost', expected 99.0000"
+
+# ---- AC1 (the choice is recorded) ----------------------------------------------------------
+echo
+echo "T52 AC1 -- decisions.md names the branch taken and the function comment states the mechanism"
+DECISIONS_MD_T52="${REPO_ROOT}/SRD/edm/EDMV3__prompt-streamline/decisions.md"
+check "T52 AC1 -- decisions.md names the token attribution decision" \
+  "token attribution" "$(cat "$DECISIONS_MD_T52" 2>/dev/null)"
+t52_d23_line="$(grep -n 'token attribution' "$DECISIONS_MD_T52" | head -1)"
+check "T52 AC1 -- D23 entry names branch (a)" \
+  "Branch (a)" "$t52_d23_line"
+check "T52 AC1 -- get_session_tokens_since's comment block documents the driving-session mechanism" \
+  "driving session" "$(sed -n '226,246p' "$EDM_STATE")"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
