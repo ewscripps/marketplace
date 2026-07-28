@@ -15,6 +15,11 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(grep *), Glob, Grep, T
 - **Input**: Audited ticket pack at `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/`
 - **Output**: Committed code on a feature branch with all tickets PASS-verified
 
+## Step 0 -- Gate and Branch Preflight
+
+Before Step 1, run the preflight per `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`,
+using `<gated-command>` = `implement`.
+
 ## Operational Orchestration
 
 1. Parse `{PREFIX}` from `$ARGUMENTS`.
@@ -159,7 +164,17 @@ Only when:
 - [ ] All tickets have PASS verdict
 - [ ] All FAIL findings resolved, at every severity
 - [ ] Every outstanding PARTIAL closed via `/edm:verify-runtime` (upgraded to PASS, or
-  downgraded to FAIL and remediated)
+  downgraded to FAIL and remediated). The mandatory closing sequence is two commands, in order:
+  ```bash
+  /edm:verify-runtime <PREFIX>
+  edm-state phase-complete <PREFIX> 6
+  ```
+  `phase-complete 6` refuses while an open PARTIAL remains, so this ordering is enforced, not
+  merely requested. **Phase 6 is closed by the orchestrator**, not by this skill, when running
+  through `/edm:orchestrator` -- the dispatcher's Phase 6 entry invokes `/edm:verify-runtime` via
+  the Skill tool and then calls `phase-complete 6` (EDMV3-T38/T50). This skill states the same
+  two-command sequence above only for the standalone/direct-invocation path, where the user (not
+  the orchestrator) runs both commands itself.
 - [ ] Code compiles, existing tests pass
 - [ ] No TODO or FIXME markers remain
 - [ ] Execution report written to `exec-report.md` (Step 6)

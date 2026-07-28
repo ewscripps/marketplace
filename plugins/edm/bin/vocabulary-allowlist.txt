@@ -32,3 +32,10 @@ plugins/edm/bin/tests/|
 # (EDMV3-32 forbids deleting a filter criterion, and editing that file's wording is outside
 # this ticket's file boundary -- EDMV3-T29's agent owns it).
 plugins/edm/agents/edm-audit-spec.md|deferred
+
+# Class 6: bin/edm-state's legacy-status coercion. This is the code that ABOLISHES the
+# `deferred` status -- the blocking predicate deliberately treats a legacy `deferred` line as
+# open, and coerce_status rewrites it to open on read (EDMV3-T25 AC4 / EDMV3-T28 AC5). The
+# token must appear here precisely because the mechanism exists to neutralize it; removing the
+# word would remove the neutralization. Every other occurrence in bin/ remains a violation.
+plugins/edm/bin/edm-state|deferred

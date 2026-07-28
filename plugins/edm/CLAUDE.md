@@ -19,8 +19,43 @@ Each phase skill (`skills/orchestrator/SKILL.md`, `skills/plan/SKILL.md`, etc.) 
 - Step-by-step operational orchestration
 - The HITL gate prompts
 
-Agents are invoked from skills, not the other way around. Skills don't load other skills -- they each contain their own
-orchestration.
+Agents are invoked from skills, not the other way around.
+
+**Skill-tool composition** (EDMV3-T34; spike recorded as decision D21 in
+`SRD/edm/EDMV3__prompt-streamline/decisions.md` and `spike-skill-composition.md`): skills DO load
+other skills, via the `Skill` tool. This marketplace's own **git plugin is the in-repository
+precedent** -- `skills/commit/SKILL.md` invokes the `jira` plugin's `search-jira` skill exactly
+this way today. The orchestrator dispatches; each phase skill owns its phase's complete procedure
+exactly once, never duplicated in the orchestrator. Two obligations fall on any caller:
+
+1. **`Skill` must appear in the caller's `allowed-tools`.** The callee's own `allowed-tools`
+   governs what the callee itself may do while it runs -- grants are not inherited from, or
+   intersected with, the caller's (confirmed live in the D21 spike: a `Bash`-less caller's callee
+   ran `Bash` successfully because the callee's own frontmatter granted it).
+2. **The caller must handle a target-skill-not-enabled failure gracefully.** An unavailable
+   target fails the Skill-tool call with a `tool_use_error: Unknown skill: <name>` -- a clean,
+   nameable error, not a silent no-op or a hang (confirmed live in the D21 spike). The caller must
+   report the unavailable skill by name and stop; it must never fall back to silently inlining the
+   target's procedure.
+
+Context accumulated by the caller (its own reasoning, anything it has read or written this turn)
+is visible to the callee automatically -- the callee runs within the **same conversation**, not an
+isolated sub-agent context the way a `Task`-spawned agent (`edm-explorer`, `edm-implementer`,
+etc.) does.
+
+#### Intent-to-file index
+
+Some behaviors are described in more than one file with no indication which is authoritative
+(explorer 02 C3.3). When in doubt about **which file is authoritative**, this table wins:
+
+| I want to change... | Edit this file (authoritative) |
+|---|---|
+| What a phase does, step by step | `skills/{phase}/SKILL.md` |
+| What the explorer agent explores and how it reports | `agents/edm-explorer.md` -- `skills/plan/SKILL.md`'s "AI Execution Pattern" only names when/how many to spawn |
+| Gate approval behavior (STOP/WAIT, free-text rejection, options) | `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` -- every other gate site references it by name, never restates it |
+| Severity definitions (P0/P1/P2/NOTED) | `CLAUDE.md Sec."Severity vocabulary"` -- every other site references it by name |
+| A `bin/edm-state` subcommand's behavior | `bin/edm-state` itself -- the `bin/` table below only indexes it |
+| An audit lens's mandate | `agents/edm-audit-{lens}.md` -- `skills/code-audit/SKILL.md`'s lens table only summarizes |
 
 ### 3. Artifacts live in the project's `SRD/` directory and are committed to git
 
@@ -228,6 +263,29 @@ The following remain legal and are **not** violations of this rule:
 Other entity codes follow the same form, so the rule generalizes: `#quot;` (double quote), `#35;` (`#`), and so on.
 
 This section's heading string, `## Mermaid diagram conventions (canonical)`, is referenced by name from the eleven touch points inventoried in `architecture.md` and asserted by a smoke test -- do not rename it without updating every reference.
+## Unverifiable acceptance criteria (D15)
+
+An unverifiable acceptance criterion -- one whose stated runtime environment does not exist in
+the project (no staging deploy, no live database, no browser harness) -- is a specification
+defect, not a fourth verdict. `/edm:verify-runtime` (EDMV3-T33) records exactly two closing
+verdicts, PASS or FAIL, for every entry in `partial_verdict_map`; there is no `BLOCKED`,
+`WAIVED`, or `N/A-runtime` value anywhere in this methodology.
+
+When an AC's runtime environment genuinely does not exist, there are exactly two sanctioned
+responses:
+
+1. **Rework the AC** into something verifiable in the environment that does exist -- the usual
+   outcome. Most "PARTIAL forever" ACs are testable with a narrower, still-meaningful claim.
+2. **Move the unverifiable clause out of scope** as a recorded boundary for a follow-on
+   initiative, using the D14 scope-boundary framing -- a decision made on its own merits, not a
+   postponed finding.
+
+Both routes are a scope change to an approved ticket, so both go through gate change control:
+presented at the relevant gate with the rationale, approved or rejected by the human via the
+canonical `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`, and recorded in `decisions.md` and
+the ticket's audit trail. **The implementer cannot descope an AC by declaring it unverifiable** --
+only a human, at a gate, can accept route (1) or (2). Archive stays hard-blocked until every AC in
+`partial_verdict_map` carries a `closing_verdict` of PASS or FAIL.
 
 ## Model and effort assignments
 

@@ -42,6 +42,7 @@
                 "./skills/audit-tickets",
                 "./skills/implement",
                 "./skills/code-audit",
+                "./skills/verify-runtime",
                 "./skills/test",
                 "./skills/test-plan",
                 "./skills/test-coverage",

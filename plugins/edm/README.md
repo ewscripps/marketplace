@@ -106,6 +106,7 @@ All EDM phases are user-invocable as `/edm:<name>`:
 | `/edm:audit-tickets <PREFIX>` | 5 | Ticket Audit -- 8-dimension validation including SRD version alignment |
 | `/edm:implement <PREFIX>` | 6 | Implementation -- parallel waves with auto-QC after each wave |
 | `/edm:code-audit <PREFIX>` | Post-6 | 11-lens exhaustive audit + synthesizer-produced remediation plan |
+| `/edm:verify-runtime <PREFIX>` | 6 closure | Mandatory Phase 6 closure -- drives every PARTIAL verdict to PASS or FAIL via runtime checks; then run `edm-state phase-complete <PREFIX> 6` |
 | `/edm:metrics <PREFIX\|--all\|--calibrate>` | Reporting | Per-phase durations, gate review times, Claude/human cost comparison, calibration |
 | `/edm:push-jira <PREFIX> [PROJECT_KEY]` | Optional | Sync ticket pack to Jira via Atlassian MCP (idempotent, label-tracked, dependency-linked) |
 | `/edm:test <PREFIX>` | Post-6 | Comprehensive testing pipeline: plan -> scaffold -> write (unit/component/composable/integration/contract/E2E/a11y) -> run -> audit coverage |

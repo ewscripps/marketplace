@@ -15,6 +15,33 @@ allowed-tools: Read, Write, Bash(edm-state *), Bash(edm-init *), Bash(edm-valida
 - **Input**: Business requirement, feature request, or strategic initiative
 - **Output**: `${user_config.srd_root}/{PREFIX}/planning.md` -- scope definition, current-state assessment, go/no-go decision
 
+## Step 0 -- Gate and Branch Preflight
+
+Before Step 1 (or any other step, on a fresh invocation or a resume), every phase skill in this
+methodology runs two read-only checks. This text is written once, here -- every other phase
+skill (`srd`, `audit-srd`, `tickets`, `audit-tickets`, `implement`, `code-audit`,
+`verify-runtime`) references it by name --
+`` `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"` `` -- rather than restating it,
+substituting its own `<gated-command>` token.
+
+**This is defence in depth on the Skill-tool path, not the deterministic layer.** Prompt text
+(Tier 3, SRD Section 5.1) "cannot be bypassed by: nothing" -- the requirement that actually
+restores deterministic enforcement when a phase is reached through the Skill tool rather than
+direct user invocation is EDMV3-115 (landed in wave A as EDMV3-T13), inside `cmd_gate_check`
+itself. Step 0 is a second, defence-in-depth line alongside the `UserPromptExpansion` hooks
+(`hooks/hooks.json`), which are retained unchanged and fire only on direct invocation.
+
+1. **Gate check**: run `edm-state gate-check <PREFIX> <gated-command>`, where `<gated-command>`
+   is this skill's own token -- `plan` for this skill. Whether this phase's gate applies at all
+   under the initiative's current mode is computed entirely inside `cmd_gate_check` itself; that
+   mode-suppression logic is not restated here or in any other phase skill.
+   If it exits non-zero, **BLOCK**: do not proceed with the phase, and surface the exact message
+   the command printed.
+2. **Branch check**: run `edm-state branch-check <PREFIX>`. If it exits non-zero, **BLOCK**: do
+   not proceed with the phase, and surface the `git checkout <initiative_branch>` instruction it
+   printed. This is a behaviour change on the standalone-skill path (CHANGELOG.md) -- previously
+   `branch-check` hard-blocked only at the orchestrator's Step 1d.
+
 ## Operational Orchestration
 
 1. Parse `$ARGUMENTS` for `{PREFIX}` and the initiative description. If missing, ask the user.
@@ -36,7 +63,7 @@ allowed-tools: Read, Write, Bash(edm-state *), Bash(edm-init *), Bash(edm-valida
 6. Synthesize agent output into the planning document at `${user_config.srd_root}/{PREFIX}/planning.md` using the template below.
 7. `edm-state phase-complete <PREFIX> 1`
 8. `edm-state write-handoff <PREFIX>` -- create/refresh HANDOFF.md from the just-written planning.md. This is idempotent; re-running regenerates HANDOFF.md without error.
-9. Present **HITL Gate 1** (see below) and STOP for sign-off.
+9. Present **HITL Gate 1** (see below, per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`) and STOP for sign-off.
 10. On approval: `edm-state approve-gate <PREFIX> 1`.
 
 ## Activities -- the agent must cover ALL
@@ -127,6 +154,7 @@ Prompt: "Explore the codebase to understand [area]. Map all components,
 
 After writing the planning document:
 1. Summarize concisely: scope (1-2 sentences), components affected, key constraints, estimated initiative size, go/no-go recommendation.
-2. Ask: *"Do you approve this scope and want to proceed to SRD creation, or do you have changes?"*
-3. **STOP and WAIT** -- do not proceed to Phase 2 autonomously.
-4. On approval: `edm-state approve-gate <PREFIX> 1`. The next phase is `/edm:srd <PREFIX>` or via `/edm:orchestrator`.
+2. Present the gate per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` -- header `"Gate 1"`, options **Approve** / **Revise** / **No-Go**. **STOP and WAIT** for the response.
+3. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 1`. The next phase is `/edm:srd <PREFIX>` or via `/edm:orchestrator`.
+   On **Revise**: rework the planning document per the feedback and re-present the gate.
+   On **No-Go**: summarize the blockers and stop.

@@ -15,6 +15,11 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 - **Input**: Planning document at `${user_config.srd_root}/{PREFIX}/planning.md`
 - **Output**: SRD at `${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}` (default `srd.md`)
 
+## Step 0 -- Gate and Branch Preflight
+
+Before Step 1, run the preflight per `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`,
+using `<gated-command>` = `srd`.
+
 ## Operational Orchestration
 
 1. Parse `$ARGUMENTS` for `{PREFIX}`. If missing, ask the user or read from in-progress initiatives via `edm-state list`.
