@@ -21,6 +21,11 @@ A single auditor misses things because it gravitates toward familiar patterns. E
 mandates** -- plus a synthesizer -- catch what a single pass misses. Multiple rounds use a persistent ledger to
 track findings across passes and determine convergence.
 
+## Step 0 -- Gate and Branch Preflight
+
+Before Step 1, run the preflight per `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`,
+using `<gated-command>` = `code-audit`.
+
 ## Operational Orchestration
 
 1. Parse `{PREFIX}`, optional scope, and optional `--lenses` subset from `$ARGUMENTS`.
@@ -65,9 +70,8 @@ track findings across passes and determine convergence.
           P0/P1 remain open, name the blocking set findings in the body.
         - Options: **Approve** (record convergence now), **Revise** (address the blocking set and re-run
           affected lenses before asking again), **No-Go** (stop; do not record convergence)
-        - Per the gate approval rules that apply to every gate in this methodology: a free-text reply
-          ("yes", "looks good", "proceed") is **never** treated as approval -- only the explicit **Approve**
-          option records convergence.
+        - Follows `` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` `` -- only the explicit
+          **Approve** option records convergence.
     3. **Approve** (and only on explicit Approve): run `edm-state approve-gate <PREFIX> code-audit`.
     4. **Record**: immediately after Approve, add a closure note to the top of `${OUTPUT_DIR}/REMEDIATION.md`
        (the current round's file):
@@ -228,7 +232,7 @@ After the synthesizer writes `REMEDIATION.md`:
    - Question: *"Do you approve this remediation plan?"* -- summarize the counts and top findings in the body.
    - Options: **Approve** (proceed to remediate per the rollout order), **Revise** (change scope or priority
      before starting), **No-Go** (stop; do not remediate)
-   - A free-text reply is never treated as approval -- only the explicit **Approve** option proceeds.
+   - Follows `` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` ``.
 3. **STOP and WAIT** for explicit approval.
 
 ## What Single-Pass Audits Miss (Why 11 Lenses)

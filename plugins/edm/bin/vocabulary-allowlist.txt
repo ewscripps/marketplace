@@ -43,10 +43,14 @@ plugins/edm/agents/edm-audit-spec.md|deferred
 # when nothing follows it before EOF (T18/T41 QC finding); keep at least one "|<substring>"
 # entry (like Class 6 below) after any bare-trailing-"|" entry.
 plugins/edm/docs/canonical-sections.md|
-# Class 6 (EDMV3-T18): bin/edm-state's findings-ledger handling names the literal JSON status
-# value "deferred" -- a legacy per-finding enum value written by pre-EDMV3-T25 ledgers, read
-# and coerced to "open" for backward compatibility (EDMV3-T25 AC4 / EDMV3-T28 AC5). This is a
-# data-shape identifier this methodology must recognize on legacy input, not an instance of
-# the abolished deferral-vocabulary policy (which governs how EDM agents talk about findings,
-# not the literal enum strings a ledger file may already contain).
+# Class 6: bin/edm-state's legacy-status coercion and findings-ledger handling both name the
+# literal JSON status value "deferred". This is the code that ABOLISHES that status -- the
+# blocking predicate deliberately treats a legacy `deferred` line as open, and coerce_status
+# rewrites it to open on read (EDMV3-T25 AC4 / EDMV3-T28 AC5) -- a legacy per-finding enum
+# value written by pre-EDMV3-T25 ledgers, recognized on read for backward compatibility. The
+# token must appear here precisely because the mechanism exists to neutralize it; removing the
+# word would remove the neutralization. This is a data-shape identifier this methodology must
+# recognize on legacy input, not an instance of the abolished deferral-vocabulary policy (which
+# governs how EDM agents talk about findings, not the literal enum strings a ledger file may
+# already contain). Every other occurrence in bin/ remains a violation.
 plugins/edm/bin/edm-state|deferred

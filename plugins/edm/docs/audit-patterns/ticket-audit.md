@@ -94,6 +94,10 @@ Run before submitting a ticket pack to audit:
 - [ ] **Ticket sizing distribution:** Count XS/S/M/L/XL. Healthy: ~40-50% S, ~30-40% M, ~10-20% XS, <=5% L, 0 XL. Heavy skew toward L/XL signals over-scoping.
 - [ ] **Phantom-role hunt:** Grep entire pack for any mention of removed roles or deleted features. Each hit must be paired with a removal ticket or confirmed as intentional.
 - [ ] **Mermaid semicolon scan:** Grep the critical-path diagram and every epic-file diagram for a raw `;` inside label/edge/message text; per `CLAUDE.md Sec."Mermaid diagram conventions"` it must be the `#59;` entity code instead.
+- [ ] **Runtime-environment reality check:** any AC assuming a runtime environment the project does not have (staging deploy, live database, deployed container, browser harness) is reworked
+  into something verifiable, or moved out of scope, before the ticket is approved -- see
+  `CLAUDE.md Sec."Unverifiable acceptance criteria (D15)"`. Caught here, it costs a rewording;
+  caught at Phase 6's `/edm:verify-runtime` instead, it costs a gate change-control cycle.
 
 ---
 

@@ -33,6 +33,12 @@ For each ticket in your assigned epic (or assigned shard range, if sharding is a
 | **PARTIAL** | The AC **cannot be verified statically** and requires a live runtime environment (running service, real DB, deployed container). Record a `runtime-check:` note describing what runtime check would resolve it. **Never invent a PASS for something you cannot verify.** |
 | **FAIL** | The AC is statically verifiable AND the code provably does NOT satisfy it |
 
+A PARTIAL is never a dead end and never a fourth verdict either: `/edm:verify-runtime` closes
+every PARTIAL to PASS or FAIL. If the runtime environment a `runtime-check:` note describes
+turns out not to exist in this project at all, that is a specification defect handled per
+`CLAUDE.md Sec."Unverifiable acceptance criteria (D15)"` -- not a reason for this agent to invent
+a PASS, a FAIL, or any other verdict for an AC it genuinely cannot evaluate.
+
 **Ticket-level rollup (worst-case)**:
 - Any AC = FAIL -> ticket verdict = FAIL
 - No FAIL and any AC = PARTIAL -> ticket verdict = PARTIAL

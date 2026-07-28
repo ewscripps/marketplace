@@ -350,8 +350,8 @@ check "Convergence gate options Approve/Revise/No-Go present" \
   "**Approve** (record convergence now), **Revise**" "$CA_CONTENT"
 check "approve-gate code-audit command present" \
   "edm-state approve-gate <PREFIX> code-audit" "$CA_CONTENT"
-check "free-text-is-never-approval restated at the convergence gate" \
-  "never** treated as approval" "$CA_CONTENT"
+check "free-text-is-never-approval referenced by name at the convergence gate (EDMV3-T35 re-baseline: restatement replaced by the by-name Gate PROTOCOL reference)" \
+  "Gate PROTOCOL" "$CA_CONTENT"
 
 echo
 echo "T15 AC3 -- Step 10 states the compute -> present -> approve -> record order explicitly"
@@ -1789,6 +1789,387 @@ t44_check_uses="$(printf '%s\n' "$t44_block" | grep -c 'check_fails\|check "' ||
   && pass "T44 AC8 -- T44's own cases use check/check_fails from _harness.sh" \
   || fail "T44 AC8 -- T44's cases do not appear to use the shared harness assertions"
 # EDMV3-T44 end
+
+# ---- EDMV3-T33: /edm:verify-runtime closes every PARTIAL; D15 spec-defect policy -------------
+echo
+echo "=== EDMV3-T33: /edm:verify-runtime skill + D15 unverifiable-AC policy ==="
+VERIFY_RUNTIME_SKILL="${PLUGIN_DIR}/skills/verify-runtime/SKILL.md"
+VR_CONTENT="$(cat "$VERIFY_RUNTIME_SKILL")"
+
+echo "T33 AC1 -- verify-runtime skill file exists and names partial_verdict_map"
+[[ -f "$VERIFY_RUNTIME_SKILL" ]] && pass "T33 AC1 -- skills/verify-runtime/SKILL.md exists" \
+  || fail "T33 AC1 -- skills/verify-runtime/SKILL.md does not exist"
+check "T33 AC1 -- names partial_verdict_map" "partial_verdict_map" "$VR_CONTENT"
+check "T33 AC1 -- invocable as /edm:verify-runtime <PREFIX>" "/edm:verify-runtime <PREFIX>" "$VR_CONTENT"
+
+echo
+echo "T33 AC2 -- closure recorded with closing timestamp and a verification.md section reference"
+check "T33 AC2 -- record-partial-verdict close call present" "record-partial-verdict <PREFIX> <ticket> close" "$VR_CONTENT"
+check "T33 AC2 -- post-deploy/verification.md is the written output" "post-deploy/verification.md" "$VR_CONTENT"
+check "T33 AC2 -- one section per PARTIAL documented" "Closed" "$VR_CONTENT"
+
+echo
+echo "T33 AC3 -- FAIL directs to remediation loop and offers no acceptance option"
+check "T33 AC3 -- FAIL directs to /edm:implement remediation loop" "/edm:implement" "$VR_CONTENT"
+check "T33 AC3 -- states no way to accept the failure" "no way to accept the failure" "$VR_CONTENT"
+check_absent "T33 AC3 -- no 'accept and continue' style escape hatch" "Accept and continue" "$VR_CONTENT"
+check_absent "T33 AC3 -- no 'skip remediation' escape hatch" "skip remediation" "$VR_CONTENT"
+check "T33 AC3 -- AskUserQuestion PASS/FAIL options state there is no third option" \
+  "There is no third option" "$VR_CONTENT"
+
+echo
+echo "T33 AC4 -- no third verdict (BLOCKED/WAIVED/N/A-runtime) anywhere in scope"
+t33_third_verdict_hits="$(grep -rn 'BLOCKED\|WAIVED\|N/A-runtime' \
+  "${PLUGIN_DIR}/bin/edm-state" "$VERIFY_RUNTIME_SKILL" "${PLUGIN_DIR}/agents/edm-qc-auditor.md" 2>/dev/null || true)"
+[[ -z "$t33_third_verdict_hits" ]] && pass "T33 AC4 -- no BLOCKED/WAIVED/N/A-runtime token in edm-state, verify-runtime, or qc-auditor" \
+  || fail "T33 AC4 -- found a third-verdict token: $t33_third_verdict_hits"
+
+echo
+echo "T33 AC5 -- D15 policy in CLAUDE.md: two sanctioned responses"
+CLAUDE_MD_T33="$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check "T33 AC5 -- 'unverifiable acceptance criterion' subsection language present" \
+  "unverifiable acceptance criterion" "$CLAUDE_MD_T33"
+check "T33 AC5 -- route (a): rework the AC" "Rework the AC" "$CLAUDE_MD_T33"
+check "T33 AC5 -- route (b): move out of scope" "Move the unverifiable clause out of scope" "$CLAUDE_MD_T33"
+check "T33 AC5 -- referenced by name from verify-runtime" 'CLAUDE.md Sec."Unverifiable acceptance criteria (D15)"' "$VR_CONTENT"
+QC_AUDITOR_T33="$(cat "${PLUGIN_DIR}/agents/edm-qc-auditor.md")"
+check "T33 AC5 -- referenced by name from edm-qc-auditor.md" 'CLAUDE.md Sec."Unverifiable acceptance criteria (D15)"' "$QC_AUDITOR_T33"
+
+echo
+echo "T33 AC6 -- route (b) is a gate action; implementer cannot descope"
+check "T33 AC6 -- 'implementer cannot descope' stated in CLAUDE.md" "implementer cannot descope" "$CLAUDE_MD_T33"
+check "T33 AC6 -- 'gate change control' stated in verify-runtime skill" "gate change control" "$VR_CONTENT"
+
+echo
+echo "T33 AC8 -- ownership boundary: this ticket adds no Skill invocation to the orchestrator"
+IMPLEMENT_SKILL_T33="$(cat "${PLUGIN_DIR}/skills/implement/SKILL.md")"
+check "T33 AC8 -- ownership sentence present in implement/SKILL.md" \
+  "Phase 6 is closed by the orchestrator" "$IMPLEMENT_SKILL_T33"
+t33_orch_skill_grant="$(grep -n '^allowed-tools:' "${PLUGIN_DIR}/skills/implement/SKILL.md" | grep -c 'Skill' || true)"
+[[ "${t33_orch_skill_grant:-0}" -eq 0 ]] && pass "T33 AC8 -- implement/SKILL.md's allowed-tools does not grant Skill" \
+  || fail "T33 AC8 -- implement/SKILL.md's allowed-tools unexpectedly grants Skill"
+
+echo
+echo "T33 AC9 -- direct-invocation path: README.md and implement/SKILL.md state the two-command sequence"
+check "T33 AC9 -- README.md command table mentions verify-runtime" "verify-runtime" "$(cat "${PLUGIN_DIR}/README.md")"
+check "T33 AC9 -- implement/SKILL.md Step 8 states the two-command sequence" \
+  "edm-state phase-complete <PREFIX> 6" "$IMPLEMENT_SKILL_T33"
+
+echo
+echo "T33 AC10 -- frontmatter contract: full grant set, no Edit, no bare Bash"
+t33_frontmatter="$(sed -n '1,10p' "$VERIFY_RUNTIME_SKILL")"
+check "T33 AC10 -- argument-hint '<PREFIX>'" "argument-hint: '<PREFIX>'" "$t33_frontmatter"
+check "T33 AC10 -- allowed-tools exact set" \
+  "allowed-tools: Read, Write, Bash(edm-state *), Bash(mkdir *), Glob, Grep, AskUserQuestion, TodoWrite" "$t33_frontmatter"
+check_absent "T33 AC10 -- no Edit grant" "Edit" "$t33_frontmatter"
+check_absent "T33 AC10 -- no bare Bash grant" "Bash," "$(printf '%s' "$t33_frontmatter" | grep '^allowed-tools:')"
+
+echo
+echo "T33 AC12 -- empty partial_verdict_map: nothing to verify, writes no file"
+check "T33 AC12 -- empty-map message documented" "Nothing to verify" "$VR_CONTENT"
+check "T33 AC12 -- absence is authoritative -- writes no file" "absence is authoritative" "$VR_CONTENT"
+
+echo
+echo "T33 AC13 -- manifest lists the new skill"
+check "T33 AC13 -- marketplace.json lists ./skills/verify-runtime" \
+  '"./skills/verify-runtime"' "$(cat "${PLUGIN_DIR}/../../.claude-plugin/marketplace.json")"
+
+echo
+echo "T33 AC14 -- upstream loop closed: qc-audit.md and ticket-audit.md anti-pattern/pre-flight entries"
+QC_AUDIT_DOC_T33="$(cat "${PLUGIN_DIR}/docs/audit-patterns/qc-audit.md")"
+check "T33 AC14 -- qc-audit.md anti-pattern names infrastructure that does not exist" \
+  "infrastructure that does not exist" "$QC_AUDIT_DOC_T33"
+t33_qc_audit_h2_count="$(grep -c '^## ' "${PLUGIN_DIR}/docs/audit-patterns/qc-audit.md")"
+[[ "$t33_qc_audit_h2_count" -eq 4 ]] && pass "T33 AC14 -- qc-audit.md still has exactly 4 '##' headings" \
+  || fail "T33 AC14 -- qc-audit.md has ${t33_qc_audit_h2_count} '##' headings, expected 4"
+TICKET_AUDIT_DOC_T33="$(cat "${PLUGIN_DIR}/docs/audit-patterns/ticket-audit.md")"
+check "T33 AC14 -- ticket-audit.md pre-flight names environment the project does not have" \
+  "environment the project does not have" "$TICKET_AUDIT_DOC_T33"
+
+echo
+echo "T33 -- edm-check-grants and bash -n stay clean with the new skill in the tree"
+bash -n "${PLUGIN_DIR}/bin/edm-state" && pass "T33 -- bash -n bin/edm-state" || fail "T33 -- bash -n bin/edm-state failed"
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 && pass "T33 -- edm-check-grants exits 0" \
+  || fail "T33 -- edm-check-grants failed with the new skill present"
+# EDMV3-T33 end
+
+
+# ---- EDMV3-T34: Skill-tool composition depth spike, CLAUDE.md documents the pattern -----------
+echo
+echo "=== EDMV3-T34: skill-composition spike recorded, CLAUDE.md rule 2 rewritten ==="
+SPIKE_NOTE="$(cd "$PLUGIN_DIR/../.." && pwd)/SRD/edm/EDMV3__prompt-streamline/spike-skill-composition.md"
+DECISIONS_MD="$(cd "$PLUGIN_DIR/../.." && pwd)/SRD/edm/EDMV3__prompt-streamline/decisions.md"
+
+echo "T34 AC1 -- spike note exists and answers all six questions"
+[[ -f "$SPIKE_NOTE" ]] && pass "T34 AC1 -- spike-skill-composition.md exists" \
+  || fail "T34 AC1 -- spike-skill-composition.md does not exist"
+SPIKE_CONTENT="$(cat "$SPIKE_NOTE" 2>/dev/null || true)"
+check "T34 AC1 -- Q1 (invocation succeeds) answered" "Does the invocation succeed?" "$SPIKE_CONTENT"
+check "T34 AC1 -- Q2 (\$ARGUMENTS reaches callee) answered" "Does \`\$ARGUMENTS\` reach the callee?" "$SPIKE_CONTENT"
+check "T34 AC1 -- Q3 (caller variables visible) answered" "visible to the callee" "$SPIKE_CONTENT"
+check "T34 AC1 -- Q4 (whose allowed-tools govern) answered" "Whose \`allowed-tools\` govern?" "$SPIKE_CONTENT"
+check "T34 AC1 -- Q5 (disabled target) answered" "not enabled" "$SPIKE_CONTENT"
+check "T34 AC1 -- Q6 (context survives round trip) answered" "survive the round trip" "$SPIKE_CONTENT"
+
+echo
+echo "T34 AC2 -- depth: at least two chained invocations recorded"
+check "T34 AC2 -- two-level chain recorded (hop 1: caller -> mid)" '`spike-caller` -> `spike-mid`' "$SPIKE_CONTENT"
+check "T34 AC2 -- two-level chain recorded (hop 2: leaf reached)" "spike-leaf" "$SPIKE_CONTENT"
+check "T34 AC2 -- depth framing (not just existence) stated" "two-level chain in one session" "$SPIKE_CONTENT"
+
+echo
+echo "T34 AC3 -- disabled/nonexistent target failure mode recorded precisely"
+check "T34 AC3 -- observed error text captured verbatim" "tool_use_error: Unknown skill:" "$SPIKE_CONTENT"
+
+echo
+echo "T34 AC4 -- explicit GO or NO-GO recommendation, dated, in decisions.md"
+DECISIONS_CONTENT="$(cat "$DECISIONS_MD" 2>/dev/null || true)"
+check "T34 AC4 -- GO recommendation recorded in decisions.md as D21" "D21 | Skill-tool composition depth spike" "$DECISIONS_CONTENT"
+check "T34 AC4 -- explicit GO verdict" "**GO**" "$DECISIONS_CONTENT"
+check "T34 AC4 -- dated" "2026-07-28" "$DECISIONS_CONTENT"
+
+echo
+echo "T34 AC5 -- ordering: the spike note is committed, and T34's own commit made no dispatcher edit"
+[[ -f "$SPIKE_NOTE" ]] && pass "T34 AC5 -- spike-skill-composition.md is committed to the initiative directory" \
+  || fail "T34 AC5 -- spike-skill-composition.md is missing"
+t34_orch_touched_by_t34="$(git -C "$PLUGIN_DIR/../.." log --format='%s' -- plugins/edm/skills/orchestrator/SKILL.md 2>/dev/null | grep -c 'EDMV3-T34' || true)"
+[[ "${t34_orch_touched_by_t34:-0}" -eq 0 ]] && pass "T34 AC5 -- no commit tagged EDMV3-T34 touches orchestrator/SKILL.md (that edge is EDMV3-T35/T38's)" \
+  || fail "T34 AC5 -- an EDMV3-T34-tagged commit touched orchestrator/SKILL.md"
+
+echo
+echo "T34 AC6 -- rule 2 rewritten: Skill-tool composition pattern and both caller obligations"
+CLAUDE_MD_T34="$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check "T34 AC6 -- 'Skill-tool composition' section present" "Skill-tool composition" "$CLAUDE_MD_T34"
+check "T34 AC6 -- caller obligation 1: Skill in allowed-tools" "must appear in the caller's \`allowed-tools\`" "$CLAUDE_MD_T34"
+check "T34 AC6 -- caller obligation 2: graceful degradation" "must handle a target-skill-not-enabled failure gracefully" "$CLAUDE_MD_T34"
+
+echo
+echo "T34 AC7 -- the old sentence is removed, not qualified, and appears nowhere else"
+# Built from two halves at runtime (never written as one literal string in this file) so this
+# negative assertion's own search term does not itself count as an occurrence under a repo-wide
+# grep -- the real AC7 verify command has no bin/tests/ carve-out, unlike the vocabulary checker.
+t34_old_sentence="each contain their own"
+t34_old_sentence="${t34_old_sentence} orchestration"
+t34_old_sentence_hits="$(grep -rl "$t34_old_sentence" "${PLUGIN_DIR}/" 2>/dev/null | wc -l | tr -d ' ' || true)"
+[[ "${t34_old_sentence_hits:-1}" -eq 0 ]] && pass "T34 AC7 -- the abolished rule-2 sentence appears nowhere in plugins/edm/" \
+  || fail "T34 AC7 -- old sentence still present in ${t34_old_sentence_hits} file(s)"
+
+echo
+echo "T34 AC8 -- concrete failure mode, git plugin cited as precedent"
+check "T34 AC8 -- concrete failure mode (tool_use_error) recorded in CLAUDE.md" "tool_use_error: Unknown skill" "$CLAUDE_MD_T34"
+check "T34 AC8 -- git plugin cited as precedent" "git plugin" "$CLAUDE_MD_T34"
+
+echo
+echo "T34 AC9 -- rules 1, 3, 4 untouched (no 'commands/' reword)"
+check "T34 AC9 -- rule 1 ('there is no commands/') intact" "there is no \`commands/\`" "$CLAUDE_MD_T34"
+check "T34 AC9 -- rule 1's 'Do not re-introduce' instruction intact" "Do not re-introduce a \`commands/\`" "$CLAUDE_MD_T34"
+
+echo
+echo "T34 AC10 -- intent-to-file index added"
+check "T34 AC10 -- intent-to-file index present" "Intent-to-file index" "$CLAUDE_MD_T34"
+check "T34 AC10 -- 'which file is authoritative' framing present" "which file is authoritative" "$CLAUDE_MD_T34"
+# EDMV3-T34 end
+
+
+# ---- EDMV3-T35: canonical Gate PROTOCOL written once; weak free-prose gates deleted ------------
+echo
+echo "=== EDMV3-T35: Gate PROTOCOL (canonical) + by-name references replace restatement ==="
+ORCH_SKILL_T35="$(cat "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
+
+echo "T35 AC1 -- one canonical section"
+t35_protocol_count="$(grep -c '^## Gate PROTOCOL (canonical)$' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
+[[ "$t35_protocol_count" -eq 1 ]] && pass "T35 AC1 -- '## Gate PROTOCOL (canonical)' appears exactly once" \
+  || fail "T35 AC1 -- '## Gate PROTOCOL (canonical)' appears ${t35_protocol_count} times, expected 1"
+
+echo
+echo "T35 AC2 -- the four preserved rules, verbatim"
+check "T35 AC2 -- 'Please select an option to proceed' preserved" "Please select an option to proceed" "$ORCH_SKILL_T35"
+check "T35 AC2 -- approve-gate called only on exact Approve selection" \
+  'is called ONLY when the user selects the **exact "Approve" option**' "$ORCH_SKILL_T35"
+check "T35 AC2 -- free-text responses are not approvals" "are **NOT** approvals" "$ORCH_SKILL_T35"
+check "T35 AC2 -- never infer intent from sentiment" "Never infer intent from sentiment" "$ORCH_SKILL_T35"
+
+echo
+echo "T35 AC3 -- four additions: STOP and WAIT, 12-char headers, three options, approve-gate after selection"
+check "T35 AC3 -- STOP and WAIT for the AskUserQuestion response" "STOP and WAIT for the \`AskUserQuestion\` response" "$ORCH_SKILL_T35"
+check "T35 AC3 -- 12 characters or fewer" "12 characters or fewer" "$ORCH_SKILL_T35"
+check "T35 AC3 -- Approve, Revise, No-Go" "Approve, Revise, No-Go" "$ORCH_SKILL_T35"
+check "T35 AC3 -- approve-gate invocation happens only after the selection" \
+  "invocation happens only after the selection" "$ORCH_SKILL_T35"
+
+echo
+echo "T35 AC4 -- zero restatements of 'free-text is never approval' outside orchestrator/SKILL.md"
+t35_freetext_hits="$(grep -rn 'free-text is never approval\|free text is not an approval' "${PLUGIN_DIR}/" 2>/dev/null | grep -v 'orchestrator/SKILL.md' || true)"
+[[ -z "$t35_freetext_hits" ]] && pass "T35 AC4 -- no free-text-approval restatement outside orchestrator/SKILL.md" \
+  || fail "T35 AC4 -- found a restatement outside orchestrator/SKILL.md: $t35_freetext_hits"
+for t35_gate_site in "plugins/edm/skills/plan/SKILL.md" "plugins/edm/skills/audit-srd/SKILL.md" \
+                     "plugins/edm/skills/audit-tickets/SKILL.md" "plugins/edm/skills/code-audit/SKILL.md"; do
+  check "T35 AC4 -- ${t35_gate_site} references Gate PROTOCOL by name" \
+    'Gate PROTOCOL' "$(cat "$(cd "${PLUGIN_DIR}/../.." && pwd)/${t35_gate_site}")"
+done
+
+echo
+echo "T35 AC5 -- weak free-prose approval questions deleted"
+t35_weak_gate_hits="$(grep -rn "Ask: .Do you approve" "${PLUGIN_DIR}/skills/" 2>/dev/null || true)"
+[[ -z "$t35_weak_gate_hits" ]] && pass "T35 AC5 -- no 'Ask: \"Do you approve' free-prose gate remains in skills/" \
+  || fail "T35 AC5 -- found a weak free-prose gate: $t35_weak_gate_hits"
+
+echo
+echo "T35 AC6 -- abbreviated approval lines corrected to reference the PROTOCOL by name"
+PLAN_SKILL_T35="$(cat "${PLUGIN_DIR}/skills/plan/SKILL.md")"
+AUDIT_SRD_SKILL_T35="$(cat "${PLUGIN_DIR}/skills/audit-srd/SKILL.md")"
+AUDIT_TICKETS_SKILL_T35="$(cat "${PLUGIN_DIR}/skills/audit-tickets/SKILL.md")"
+check "T35 AC6 -- plan/SKILL.md's abbreviated Gate 1 line references the PROTOCOL" \
+  'Gate PROTOCOL' "$PLAN_SKILL_T35"
+check "T35 AC6 -- audit-srd/SKILL.md's abbreviated Gate 2 line references the PROTOCOL" \
+  'Gate PROTOCOL' "$AUDIT_SRD_SKILL_T35"
+check "T35 AC6 -- audit-tickets/SKILL.md's abbreviated Gate 3 line references the PROTOCOL" \
+  'Gate PROTOCOL' "$AUDIT_TICKETS_SKILL_T35"
+
+echo
+echo "T35 AC7 -- the fourth free-prose gate (code-audit remediation gate) at the same standard"
+CODE_AUDIT_SKILL_T35="$(cat "${PLUGIN_DIR}/skills/code-audit/SKILL.md")"
+check "T35 AC7 -- 'remediation gate' named" "remediation gate" "$CODE_AUDIT_SKILL_T35"
+check "T35 AC7 -- 'Remediation Gate (Code Audit)' section titled" "Remediation Gate (Code Audit)" "$CODE_AUDIT_SKILL_T35"
+check "T35 AC7 -- upgraded to AskUserQuestion" 'Present via `AskUserQuestion`' "$CODE_AUDIT_SKILL_T35"
+
+echo
+echo "T35 AC8 -- all four skills grant AskUserQuestion (edm-check-grants clean)"
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1
+t35_grants_exit=$?
+[[ "$t35_grants_exit" -eq 0 ]] && pass "T35 AC8 -- edm-check-grants exits 0" \
+  || fail "T35 AC8 -- edm-check-grants exited ${t35_grants_exit}"
+for t35_gate_skill in plan audit-srd audit-tickets code-audit; do
+  check "T35 AC8 -- ${t35_gate_skill}/SKILL.md's allowed-tools grants AskUserQuestion" \
+    "AskUserQuestion" "$(grep '^allowed-tools:' "${PLUGIN_DIR}/skills/${t35_gate_skill}/SKILL.md")"
+done
+
+echo
+echo "T35 AC10 -- smoke assertions: section appears once, five gate sites reference it by name"
+t35_gate_site_refs=0
+for t35_ref_file in "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" "${PLUGIN_DIR}/skills/plan/SKILL.md" \
+                    "${PLUGIN_DIR}/skills/audit-srd/SKILL.md" "${PLUGIN_DIR}/skills/audit-tickets/SKILL.md" \
+                    "${PLUGIN_DIR}/skills/code-audit/SKILL.md"; do
+  grep -q 'Gate PROTOCOL' "$t35_ref_file" && t35_gate_site_refs=$((t35_gate_site_refs + 1))
+done
+[[ "$t35_gate_site_refs" -eq 5 ]] && pass "T35 AC10 -- all five gate sites reference Gate PROTOCOL by name" \
+  || fail "T35 AC10 -- only ${t35_gate_site_refs}/5 gate sites reference Gate PROTOCOL by name"
+
+echo
+echo "T35 -- full suite stays green with the PROTOCOL section in place"
+t35_lint_exit=0
+bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t35_lint_exit=$?
+[[ "$t35_lint_exit" -eq 0 ]] && pass "T35 -- edm-lint-artifacts --all exits 0" \
+  || fail "T35 -- edm-lint-artifacts --all exited ${t35_lint_exit}"
+# EDMV3-T35 end
+
+
+# ---- EDMV3-T36: every phase skill opens with a Step 0 gate/branch preflight --------------------
+echo
+echo "=== EDMV3-T36: Step 0 -- Gate and Branch Preflight, all eight phase skills ==="
+T36_PHASE_SKILLS="plan srd audit-srd tickets audit-tickets implement code-audit verify-runtime"
+
+echo "T36 AC1 -- all eight phase skills contain the Step 0 reference"
+t36_step0_count=0
+for t36_skill in $T36_PHASE_SKILLS; do
+  if grep -q '^## Step 0 -- Gate and Branch Preflight$' "${PLUGIN_DIR}/skills/${t36_skill}/SKILL.md" 2>/dev/null; then
+    t36_step0_count=$((t36_step0_count + 1))
+  else
+    fail "T36 AC1 -- skills/${t36_skill}/SKILL.md is missing the Step 0 heading"
+  fi
+done
+[[ "$t36_step0_count" -eq 8 ]] && pass "T36 AC1 -- all eight phase skills contain the Step 0 heading" \
+  || fail "T36 AC1 -- only ${t36_step0_count}/8 phase skills contain the Step 0 heading"
+
+echo
+echo "T36 AC2 -- the token each skill passes resolves to a real gate (functional, against a scratch initiative)"
+t36_ac2_case() {
+  with_scratch_repo _t36_ac2_inner
+}
+_t36_ac2_inner() {
+  edm-init T36X >/dev/null 2>&1 || true
+  local t36_tok t36_out t36_ec t36_results=""
+  for t36_tok in $T36_PHASE_SKILLS; do
+    t36_out="$("$EDM_STATE" gate-check T36X "$t36_tok" 2>&1)"
+    t36_ec=$?
+    t36_results="${t36_results}${t36_tok}=${t36_ec} "
+  done
+  # None of the eight tokens is unrecognized (the *) branch's distinctive message).
+  if printf '%s\n' "$t36_results" | grep -q 'unknown gated command' 2>/dev/null; then
+    fail "T36 AC2 -- a phase token fell through to the unknown-gated-command branch: $t36_results"
+  else
+    pass "T36 AC2 -- every one of the eight tokens resolves to a real gate outcome (no silent fall-through): $t36_results"
+  fi
+}
+t36_ac2_case
+
+echo
+echo "T36 AC3 -- Step 0 text instructs a block on non-zero gate-check and surfaces the message"
+PLAN_STEP0_T36="$(sed -n '/^## Step 0 -- Gate and Branch Preflight$/,/^## Operational Orchestration$/p' "${PLUGIN_DIR}/skills/plan/SKILL.md")"
+check "T36 AC3 -- gate-check non-zero BLOCKs" "**BLOCK**: do not proceed with the phase, and surface the exact message" "$PLAN_STEP0_T36"
+
+echo
+echo "T36 AC4 -- Step 0 text instructs a block on non-zero branch-check; CHANGELOG records the behaviour change"
+check "T36 AC4 -- branch-check non-zero BLOCKs, surfacing the git checkout instruction" \
+  'surface the `git checkout <initiative_branch>` instruction it' "$PLAN_STEP0_T36"
+check "T36 AC4 -- CHANGELOG.md records 'branch-check becoming a BLOCK'" \
+  "branch-check becoming a BLOCK" "$(cat "${PLUGIN_DIR}/CHANGELOG.md")"
+
+echo
+echo "T36 AC5 -- written once (full text in one file), referenced by name from the other seven"
+t36_full_text_files=0
+for t36_skill in $T36_PHASE_SKILLS; do
+  t36_hits="$(grep -c 'edm-state branch-check' "${PLUGIN_DIR}/skills/${t36_skill}/SKILL.md" 2>/dev/null || echo 0)"
+  [[ "${t36_hits:-0}" -gt 0 ]] && t36_full_text_files=$((t36_full_text_files + 1))
+done
+[[ "$t36_full_text_files" -eq 1 ]] && pass "T36 AC5 -- exactly one of the eight phase skills (plan) carries the literal edm-state branch-check text" \
+  || fail "T36 AC5 -- ${t36_full_text_files}/8 phase skills carry the literal text, expected exactly 1"
+for t36_skill in srd audit-srd tickets audit-tickets implement code-audit verify-runtime; do
+  check "T36 AC5 -- skills/${t36_skill}/SKILL.md references Step 0 by name" \
+    'skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"' \
+    "$(cat "${PLUGIN_DIR}/skills/${t36_skill}/SKILL.md")"
+done
+
+echo
+echo "T36 AC6 -- UserPromptExpansion hooks retained unchanged"
+t36_hooks_hits="$(grep -c 'UserPromptExpansion' "${PLUGIN_DIR}/hooks/hooks.json" 2>/dev/null || echo 0)"
+[[ "${t36_hooks_hits:-0}" -gt 0 ]] && pass "T36 AC6 -- hooks.json still declares UserPromptExpansion hooks" \
+  || fail "T36 AC6 -- hooks.json no longer declares UserPromptExpansion hooks"
+
+echo
+echo "T36 AC7 -- mode suppression computed, not restated (no 'skipped_phases' token in any of the eight)"
+t36_skipped_phases_hits=0
+for t36_skill in $T36_PHASE_SKILLS; do
+  t36_c="$(grep -c 'skipped_phases' "${PLUGIN_DIR}/skills/${t36_skill}/SKILL.md" 2>/dev/null || echo 0)"
+  t36_skipped_phases_hits=$((t36_skipped_phases_hits + ${t36_c:-0}))
+done
+[[ "$t36_skipped_phases_hits" -eq 0 ]] && pass "T36 AC7 -- zero 'skipped_phases' occurrences across all eight phase skills" \
+  || fail "T36 AC7 -- found ${t36_skipped_phases_hits} 'skipped_phases' occurrence(s) across the eight phase skills"
+
+echo
+echo "T36 AC8 -- vocabulary check: the phase-preflight step is never paired on one line with the D-word for restored certainty"
+# Pattern built from two halves assigned on separate lines, and the grep call itself split across
+# two variables, so no single physical line in this checker ever contains both search terms
+# together -- the real AC8 verify command has no self-exclusion, so this checker's own source
+# must not be a false-positive hit under it.
+t36_needle_a="step"
+t36_needle_a="${t36_needle_a} 0"
+t36_needle_b="determin"
+t36_needle_b="${t36_needle_b}istic"
+t36_step0_deterministic_hits="$(grep -rni "$t36_needle_a" "${PLUGIN_DIR}/" 2>/dev/null | grep -i "$t36_needle_b" || true)"
+[[ -z "$t36_step0_deterministic_hits" ]] && pass "T36 AC8 -- no such pairing found anywhere in plugins/edm/" \
+  || fail "T36 AC8 -- found a disallowed pairing: $t36_step0_deterministic_hits"
+check "T36 AC8 -- defence-in-depth framing used instead" "defence in depth on the Skill-tool path" "$(cat "${PLUGIN_DIR}/skills/plan/SKILL.md")"
+
+echo
+echo "T36 -- full suite and lint stay green with Step 0 in place across all eight phase skills"
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1
+t36_grants_exit=$?
+[[ "$t36_grants_exit" -eq 0 ]] && pass "T36 -- edm-check-grants exits 0" || fail "T36 -- edm-check-grants exited ${t36_grants_exit}"
+t36_lint_exit=0
+bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t36_lint_exit=$?
+[[ "$t36_lint_exit" -eq 0 ]] && pass "T36 -- edm-lint-artifacts --all exits 0" || fail "T36 -- edm-lint-artifacts --all exited ${t36_lint_exit}"
+# EDMV3-T36 end
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
