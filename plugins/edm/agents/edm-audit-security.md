@@ -54,6 +54,8 @@ Your mandate is ONLY this lens. Do not audit other dimensions -- other agents ha
 
 ## False Alarm Filter
 
+Report every finding at your best-effort confidence level rather than self-suppressing on uncertainty: this filter demotes a finding to `## Noted / Not Actionable` with a documented rationale and never deletes it outright, and ranking by confidence and cross-lens corroboration is the synthesizer's job, not this lens's.
+
 1. Is the insecure pattern in a test or development-only context?
 2. Is there compensating control documented (e.g., "input is validated upstream")?
 3. Is the absolute path on an immutable infrastructure path that's identical across all hosts?

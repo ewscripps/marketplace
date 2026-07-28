@@ -42,6 +42,8 @@ Your mandate is ONLY this lens. Do not audit other dimensions -- other agents ha
 
 ## False Alarm Filter
 
+Report every finding at your best-effort confidence level rather than self-suppressing on uncertainty: this filter demotes a finding to `## Noted / Not Actionable` with a documented rationale and never deletes it outright, and ranking by confidence and cross-lens corroboration is the synthesizer's job, not this lens's.
+
 Before reporting a finding:
 1. Is this behavior documented as intentional in the plan/SRD/ticket?
 2. Is there a comment in the code explaining why this looks wrong but is correct?

@@ -41,6 +41,8 @@ Cross-reference timeout values and restart policies with the actual deployment c
 
 ## False Alarm Filter
 
+Report every finding at your best-effort confidence level rather than self-suppressing on uncertainty: this filter demotes a finding to `## Noted / Not Actionable` with a documented rationale and never deletes it outright, and ranking by confidence and cross-lens corroboration is the synthesizer's job, not this lens's.
+
 Before reporting:
 1. Could this code become reachable in a future deployment config?
 2. Is it documented as an intentional safety net?

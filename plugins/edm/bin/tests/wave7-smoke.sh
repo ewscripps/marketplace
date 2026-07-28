@@ -994,16 +994,16 @@ t24_ac10_case
 # (AC1, AC3, AC10) -- consistent with the T24 block above.
 # Batch scope note: this agent's remit for this batch is agents/edm-audit-
 # synthesizer.md, skills/code-audit/SKILL.md, and this wave7-smoke.sh append block.
-# Two ACs are explicitly out of scope for this batch and are NOT asserted here:
+# One AC is explicitly out of scope for this batch and is NOT asserted here:
 #   - AC4 (a legacy 'deferred' line re-opens at read time; `edm-state audit-converged`
 #     exits non-zero naming it) is owned by EDMV3-T28 -- the ticket's own text says so
 #     ("implemented in EDMV3-T28 and asserted here against the same fixture ledger"),
 #     and `edm-state audit-converged` does not exist yet.
-#   - AC8 (the eleven lens '## False Alarm Filter' sections get an identical framing
-#     sentence about demote-not-delete) requires editing agents/edm-audit-{logic,
-#     dead-code,edge-cases,test-quality,runtime,docs,consistency,security,spec,dry,
-#     wiring}.md, all outside this batch's file boundary -- not touched here, pending
-#     a follow-up batch.
+# AC8 (the eleven lens '## False Alarm Filter' sections get an identical framing
+# sentence about demote-not-delete) was escalated from this batch's original file
+# boundary and lands in a follow-up batch that edits agents/edm-audit-{logic,
+# dead-code,edge-cases,test-quality,runtime,docs,consistency,security,spec,dry,
+# wiring}.md directly; it is asserted below.
 # =================================================================================
 SYNTHESIZER_AGENT="${PLUGIN_DIR}/agents/edm-audit-synthesizer.md"
 SYNTH_CONTENT="$(cat "$SYNTHESIZER_AGENT")"
@@ -1101,6 +1101,21 @@ echo "T25 AC7 -- synthesizer prompt states no finding is removed"
 check "T25 AC7 -- 'No finding is ever removed' stated" "No finding is ever removed" "$SYNTH_CONTENT"
 check "T25 AC7 -- substantive false-alarm criteria (documented trade-off) preserved" \
   "known trade-off explicitly accepted" "$SYNTH_CONTENT"
+
+echo
+echo "T25 AC8 -- all eleven lens agents carry an identical False Alarm Filter framing sentence, no criterion removed"
+t25_ac8_framing="Report every finding at your best-effort confidence level rather than self-suppressing on uncertainty: this filter demotes a finding to \`## Noted / Not Actionable\` with a documented rationale and never deletes it outright, and ranking by confidence and cross-lens corroboration is the synthesizer's job, not this lens's."
+t25_ac8_case() {
+  local lens_files="edm-audit-logic.md edm-audit-dead-code.md edm-audit-edge-cases.md edm-audit-test-quality.md edm-audit-runtime.md edm-audit-docs.md edm-audit-consistency.md edm-audit-security.md edm-audit-spec.md edm-audit-dry.md edm-audit-wiring.md"
+  local count=0 f
+  for f in $lens_files; do
+    grep -qF "$t25_ac8_framing" "${PLUGIN_DIR}/agents/${f}" && count=$((count+1)) \
+      || echo "  MISSING framing sentence in ${f}"
+  done
+  [[ "$count" -eq 11 ]] && pass "T25 AC8 -- eleven occurrences of the framing sentence" \
+    || fail "T25 AC8 -- found framing sentence in only ${count}/11 lens agent files"
+}
+t25_ac8_case
 
 echo
 echo "T25 AC9 -- legacy markdown-only prior ledger is read without error (C-4)"
