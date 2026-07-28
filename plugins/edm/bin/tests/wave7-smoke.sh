@@ -1244,6 +1244,110 @@ t31_hooks_defer_count="$(jq -r '.. | strings' "${PLUGIN_DIR}/hooks/hooks.json" 2
 check "T31 AC11 -- hooks.json prompt uses runtime-check token" "runtime-check:" "$(cat "${PLUGIN_DIR}/hooks/hooks.json")"
 # EDMV3-T31 end
 
+
+# ---- EDMV3-T33: /edm:verify-runtime closes every PARTIAL; D15 spec-defect policy -------------
+echo
+echo "=== EDMV3-T33: /edm:verify-runtime skill + D15 unverifiable-AC policy ==="
+VERIFY_RUNTIME_SKILL="${PLUGIN_DIR}/skills/verify-runtime/SKILL.md"
+VR_CONTENT="$(cat "$VERIFY_RUNTIME_SKILL")"
+
+echo "T33 AC1 -- verify-runtime skill file exists and names partial_verdict_map"
+[[ -f "$VERIFY_RUNTIME_SKILL" ]] && pass "T33 AC1 -- skills/verify-runtime/SKILL.md exists" \
+  || fail "T33 AC1 -- skills/verify-runtime/SKILL.md does not exist"
+check "T33 AC1 -- names partial_verdict_map" "partial_verdict_map" "$VR_CONTENT"
+check "T33 AC1 -- invocable as /edm:verify-runtime <PREFIX>" "/edm:verify-runtime <PREFIX>" "$VR_CONTENT"
+
+echo
+echo "T33 AC2 -- closure recorded with closing timestamp and a verification.md section reference"
+check "T33 AC2 -- record-partial-verdict close call present" "record-partial-verdict <PREFIX> <ticket> close" "$VR_CONTENT"
+check "T33 AC2 -- post-deploy/verification.md is the written output" "post-deploy/verification.md" "$VR_CONTENT"
+check "T33 AC2 -- one section per PARTIAL documented" "Closed" "$VR_CONTENT"
+
+echo
+echo "T33 AC3 -- FAIL directs to remediation loop and offers no acceptance option"
+check "T33 AC3 -- FAIL directs to /edm:implement remediation loop" "/edm:implement" "$VR_CONTENT"
+check "T33 AC3 -- states no way to accept the failure" "no way to accept the failure" "$VR_CONTENT"
+check_absent "T33 AC3 -- no 'accept and continue' style escape hatch" "Accept and continue" "$VR_CONTENT"
+check_absent "T33 AC3 -- no 'skip remediation' escape hatch" "skip remediation" "$VR_CONTENT"
+check "T33 AC3 -- AskUserQuestion PASS/FAIL options state there is no third option" \
+  "There is no third option" "$VR_CONTENT"
+
+echo
+echo "T33 AC4 -- no third verdict (BLOCKED/WAIVED/N/A-runtime) anywhere in scope"
+t33_third_verdict_hits="$(grep -rn 'BLOCKED\|WAIVED\|N/A-runtime' \
+  "${PLUGIN_DIR}/bin/edm-state" "$VERIFY_RUNTIME_SKILL" "${PLUGIN_DIR}/agents/edm-qc-auditor.md" 2>/dev/null || true)"
+[[ -z "$t33_third_verdict_hits" ]] && pass "T33 AC4 -- no BLOCKED/WAIVED/N/A-runtime token in edm-state, verify-runtime, or qc-auditor" \
+  || fail "T33 AC4 -- found a third-verdict token: $t33_third_verdict_hits"
+
+echo
+echo "T33 AC5 -- D15 policy in CLAUDE.md: two sanctioned responses"
+CLAUDE_MD_T33="$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check "T33 AC5 -- 'unverifiable acceptance criterion' subsection language present" \
+  "unverifiable acceptance criterion" "$CLAUDE_MD_T33"
+check "T33 AC5 -- route (a): rework the AC" "Rework the AC" "$CLAUDE_MD_T33"
+check "T33 AC5 -- route (b): move out of scope" "Move the unverifiable clause out of scope" "$CLAUDE_MD_T33"
+check "T33 AC5 -- referenced by name from verify-runtime" 'CLAUDE.md Sec."Unverifiable acceptance criteria (D15)"' "$VR_CONTENT"
+QC_AUDITOR_T33="$(cat "${PLUGIN_DIR}/agents/edm-qc-auditor.md")"
+check "T33 AC5 -- referenced by name from edm-qc-auditor.md" 'CLAUDE.md Sec."Unverifiable acceptance criteria (D15)"' "$QC_AUDITOR_T33"
+
+echo
+echo "T33 AC6 -- route (b) is a gate action; implementer cannot descope"
+check "T33 AC6 -- 'implementer cannot descope' stated in CLAUDE.md" "implementer cannot descope" "$CLAUDE_MD_T33"
+check "T33 AC6 -- 'gate change control' stated in verify-runtime skill" "gate change control" "$VR_CONTENT"
+
+echo
+echo "T33 AC8 -- ownership boundary: this ticket adds no Skill invocation to the orchestrator"
+IMPLEMENT_SKILL_T33="$(cat "${PLUGIN_DIR}/skills/implement/SKILL.md")"
+check "T33 AC8 -- ownership sentence present in implement/SKILL.md" \
+  "Phase 6 is closed by the orchestrator" "$IMPLEMENT_SKILL_T33"
+t33_orch_skill_grant="$(grep -n '^allowed-tools:' "${PLUGIN_DIR}/skills/implement/SKILL.md" | grep -c 'Skill' || true)"
+[[ "${t33_orch_skill_grant:-0}" -eq 0 ]] && pass "T33 AC8 -- implement/SKILL.md's allowed-tools does not grant Skill" \
+  || fail "T33 AC8 -- implement/SKILL.md's allowed-tools unexpectedly grants Skill"
+
+echo
+echo "T33 AC9 -- direct-invocation path: README.md and implement/SKILL.md state the two-command sequence"
+check "T33 AC9 -- README.md command table mentions verify-runtime" "verify-runtime" "$(cat "${PLUGIN_DIR}/README.md")"
+check "T33 AC9 -- implement/SKILL.md Step 8 states the two-command sequence" \
+  "edm-state phase-complete <PREFIX> 6" "$IMPLEMENT_SKILL_T33"
+
+echo
+echo "T33 AC10 -- frontmatter contract: full grant set, no Edit, no bare Bash"
+t33_frontmatter="$(sed -n '1,10p' "$VERIFY_RUNTIME_SKILL")"
+check "T33 AC10 -- argument-hint '<PREFIX>'" "argument-hint: '<PREFIX>'" "$t33_frontmatter"
+check "T33 AC10 -- allowed-tools exact set" \
+  "allowed-tools: Read, Write, Bash(edm-state *), Bash(mkdir *), Glob, Grep, AskUserQuestion, TodoWrite" "$t33_frontmatter"
+check_absent "T33 AC10 -- no Edit grant" "Edit" "$t33_frontmatter"
+check_absent "T33 AC10 -- no bare Bash grant" "Bash," "$(printf '%s' "$t33_frontmatter" | grep '^allowed-tools:')"
+
+echo
+echo "T33 AC12 -- empty partial_verdict_map: nothing to verify, writes no file"
+check "T33 AC12 -- empty-map message documented" "Nothing to verify" "$VR_CONTENT"
+check "T33 AC12 -- absence is authoritative -- writes no file" "absence is authoritative" "$VR_CONTENT"
+
+echo
+echo "T33 AC13 -- manifest lists the new skill"
+check "T33 AC13 -- marketplace.json lists ./skills/verify-runtime" \
+  '"./skills/verify-runtime"' "$(cat "${PLUGIN_DIR}/../../.claude-plugin/marketplace.json")"
+
+echo
+echo "T33 AC14 -- upstream loop closed: qc-audit.md and ticket-audit.md anti-pattern/pre-flight entries"
+QC_AUDIT_DOC_T33="$(cat "${PLUGIN_DIR}/docs/audit-patterns/qc-audit.md")"
+check "T33 AC14 -- qc-audit.md anti-pattern names infrastructure that does not exist" \
+  "infrastructure that does not exist" "$QC_AUDIT_DOC_T33"
+t33_qc_audit_h2_count="$(grep -c '^## ' "${PLUGIN_DIR}/docs/audit-patterns/qc-audit.md")"
+[[ "$t33_qc_audit_h2_count" -eq 4 ]] && pass "T33 AC14 -- qc-audit.md still has exactly 4 '##' headings" \
+  || fail "T33 AC14 -- qc-audit.md has ${t33_qc_audit_h2_count} '##' headings, expected 4"
+TICKET_AUDIT_DOC_T33="$(cat "${PLUGIN_DIR}/docs/audit-patterns/ticket-audit.md")"
+check "T33 AC14 -- ticket-audit.md pre-flight names environment the project does not have" \
+  "environment the project does not have" "$TICKET_AUDIT_DOC_T33"
+
+echo
+echo "T33 -- edm-check-grants and bash -n stay clean with the new skill in the tree"
+bash -n "${PLUGIN_DIR}/bin/edm-state" && pass "T33 -- bash -n bin/edm-state" || fail "T33 -- bash -n bin/edm-state failed"
+bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 && pass "T33 -- edm-check-grants exits 0" \
+  || fail "T33 -- edm-check-grants failed with the new skill present"
+# EDMV3-T33 end
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

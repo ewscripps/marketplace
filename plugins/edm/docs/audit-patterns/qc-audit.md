@@ -59,6 +59,18 @@ The same agent that implemented the ticket also performs QC. The agent's own fra
 
 ---
 
+### AC written against infrastructure that does not exist
+
+An acceptance criterion assumes a runtime environment -- a staging deployment, a live database, a
+deployed container -- that the project does not have, discovered only when Phase 6's
+`/edm:verify-runtime` tries to close the PARTIAL it produced. By then the AC has survived ticket
+audit, implementation, and QC unquestioned, and the only sanctioned responses left are rework or
+descope through gate change control -- neither of which a QC auditor or an implementer can decide
+alone.
+**Fix:** catch it at ticket-audit time, via `docs/audit-patterns/ticket-audit.md`'s corresponding
+pre-flight check -- rework the AC or move it out of scope per `CLAUDE.md Sec."Unverifiable
+acceptance criteria (D15)"`, before a single line of code is written against it.
+
 ## Pre-Flight Checklist
 
 Run before declaring a ticket's QC complete:

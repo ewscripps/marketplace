@@ -194,6 +194,30 @@ is remediated before convergence; `NOTED` is the only status that closes a findi
 - Legacy P3 (defensive improvement / nice-to-have) -> **P2**
 - NOTED -> unchanged
 
+## Unverifiable acceptance criteria (D15)
+
+An unverifiable acceptance criterion -- one whose stated runtime environment does not exist in
+the project (no staging deploy, no live database, no browser harness) -- is a specification
+defect, not a fourth verdict. `/edm:verify-runtime` (EDMV3-T33) records exactly two closing
+verdicts, PASS or FAIL, for every entry in `partial_verdict_map`; there is no `BLOCKED`,
+`WAIVED`, or `N/A-runtime` value anywhere in this methodology.
+
+When an AC's runtime environment genuinely does not exist, there are exactly two sanctioned
+responses:
+
+1. **Rework the AC** into something verifiable in the environment that does exist -- the usual
+   outcome. Most "PARTIAL forever" ACs are testable with a narrower, still-meaningful claim.
+2. **Move the unverifiable clause out of scope** as a recorded boundary for a follow-on
+   initiative, using the D14 scope-boundary framing -- a decision made on its own merits, not a
+   postponed finding.
+
+Both routes are a scope change to an approved ticket, so both go through gate change control:
+presented at the relevant gate with the rationale, approved or rejected by the human via the
+canonical `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`, and recorded in `decisions.md` and
+the ticket's audit trail. **The implementer cannot descope an AC by declaring it unverifiable** --
+only a human, at a gate, can accept route (1) or (2). Archive stays hard-blocked until every AC in
+`partial_verdict_map` carries a `closing_verdict` of PASS or FAIL.
+
 ## Model and effort assignments
 
 | Role | Model | Effort | Rationale |

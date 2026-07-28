@@ -48,6 +48,12 @@ Cross-reference the ticket pack against the SRD. Audit across all **8 dimensions
 - Each ticket has 6-12 AC?
 - Vague AC ("should work", "is performant")?
 - Duplicate AC across tickets?
+- Does any AC assume a runtime environment the project does not have (a staging deploy, a live
+  database, a deployed container, a browser harness that does not exist in this codebase)? Catching
+  this here is the cheap fix -- discovered instead at Phase 6's `/edm:verify-runtime`, it is a
+  specification defect resolved only through gate change control (`CLAUDE.md
+  Sec."Unverifiable acceptance criteria (D15)"`). Flag as P1: rework the AC to something verifiable
+  in the environment that does exist, or move it out of scope.
 
 ### 6. Diagram Correctness
 - Mermaid syntax valid throughout?
