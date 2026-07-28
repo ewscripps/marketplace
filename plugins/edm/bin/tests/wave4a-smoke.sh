@@ -183,6 +183,9 @@ check "empty forked_from rejected" "non-empty" \
 # ---- T99: ## Lifecycle & Mode section in HANDOFF.md -------------------------
 echo
 echo "T99 — Lifecycle & Mode section in HANDOFF.md"
+# lifecycle_mode "partial" is a dead value removed from LIFECYCLE_MODE_ENUM_LIST by the
+# delete-list epic (D12, EDMV3-T57..T60) -- "fix-pack" exercises the same HANDOFF rendering
+# path with a live enum member.
 "$EDM_STATE" set-mode TSMK mode iac >/dev/null
 # `partial` was removed from the settable enum (EDMV3-T59 / D12); this case only needs
 # a non-default lifecycle_mode to render, so use a currently-legal one.

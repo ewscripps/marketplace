@@ -38,9 +38,10 @@ using `<gated-command>` = `implement`.
    - In TDD mode, the QC auditor also runs the TDD compliance pass.
 7. Aggregate QC findings as they arrive.
 8. **Remediate** any FAIL QC findings, at every severity: spawn `edm-implementer` agents to fix; re-trigger QC.
-9. Loop until all tickets have PASS verdict.
-10. `edm-state phase-complete <PREFIX> 6`
-10a. **Auto-update patterns** -- append novel QC findings from this wave:
+9. Loop until all tickets have PASS verdict. Phase 6 closure (`edm-state phase-complete <PREFIX> 6`)
+   is **not** a step in this list -- it belongs to the orchestrator's Phase 6 entry (or, for the
+   standalone/direct-invocation path, to Step 8 "Declare Done" below), and is called there only.
+10. **Auto-update patterns** -- append novel QC findings from this wave:
     ```bash
     edm-state update-patterns <PREFIX> qc
     ```

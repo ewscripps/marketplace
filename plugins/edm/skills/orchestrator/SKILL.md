@@ -164,10 +164,11 @@ continue (`CLAUDE.md Sec."Skill-tool composition"`).
    When all tickets PASS, invoke `/edm:code-audit <PREFIX>` (mandatory for `standard`/`tdd`
    `implementation_mode`; `prototype` may skip convergence) --
    `/edm:code-audit` Step 10 presents the Convergence gate itself; this dispatcher does not
-   restate it. When code-audit converges,
-   invoke `/edm:verify-runtime <PREFIX>` to close every PARTIAL verdict. (`edm-state phase-complete
-   <PREFIX> 6` wiring immediately after this call lands in wave C, EDMV3-T50 -- until then, run it
-   manually per `skills/implement/SKILL.md` Step 8's direct-invocation sequence.)
+   restate it. When code-audit converges, invoke `/edm:verify-runtime <PREFIX>` via the `Skill`
+   tool to close every PARTIAL verdict, then call `edm-state phase-complete <PREFIX> 6` (EDMV3-T50
+   -- this dispatcher's Phase 6 entry is the single owner of that call; `skills/implement/SKILL.md`
+   Step 8 states the same two-command sequence only for the standalone/direct-invocation path,
+   where the user runs both commands without going through this dispatcher).
 
 ## Resume and Compaction
 

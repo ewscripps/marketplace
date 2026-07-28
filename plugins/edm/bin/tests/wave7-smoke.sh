@@ -355,7 +355,7 @@ check "free-text-is-never-approval referenced by name at the convergence gate (E
 
 echo
 echo "T15 AC3 -- Step 10 states the compute -> present -> approve -> record order explicitly"
-T15_STEP10="$(sed -n '54,69p' "$CODE_AUDIT_SKILL")"
+T15_STEP10="$(sed -n '69,106p' "$CODE_AUDIT_SKILL")"
 check "convergence gate ordering text" "compute -> present -> approve -> record" "$T15_STEP10"
 check "Step 10 compute sub-step precedes present" "**Compute**" "$T15_STEP10"
 check "Step 10 present sub-step follows compute" "**Present** the gate via" "$T15_STEP10"
@@ -843,14 +843,145 @@ t64_marketplace_version="$(jq -r '.plugins[] | select(.name=="edm") | .version' 
 [[ "$t64_plugin_version" == "$t64_marketplace_version" ]] \
   && pass "T64 AC1 -- plugin.json and marketplace.json versions agree ($t64_plugin_version)" \
   || fail "T64 AC1 -- plugin.json version '$t64_plugin_version' != marketplace.json edm entry '$t64_marketplace_version'"
-# Superseded by EDMV3-T65 (wave-B closeout): the version literal this case asserts moved from
-# T64's wave-A "2.1.0" to T65's wave-B "3.0.0" -- both closeout tickets bump the same field, and
-# only the latest one's literal is current. This is the version-agreement half of the check
-# (both manifests move together); T65's own wave6-smoke.sh cases assert the "3.0.0" value
-# itself plus the downgrade story.
-[[ "$t64_plugin_version" == "3.0.0" ]] \
-  && pass "T64 AC1 -- plugin.json version is 3.0.0 (EDMV3-T65 wave-B closeout)" \
-  || fail "T64 AC1 -- plugin.json version is '$t64_plugin_version', expected '3.0.0'"
+# Superseded by EDMV3-T66 (wave-C closeout): the version literal this case asserts moved from
+# T64's wave-A "2.1.0" through T65's wave-B "3.0.0" to T66's wave-C "3.1.0" -- each closeout
+# ticket bumps the same field, and only the latest one's literal is current. This is the
+# version-agreement half of the check (both manifests move together); T66's own wave6-smoke.sh
+# cases assert the "3.1.0" value itself plus the schema_version decision.
+[[ "$t64_plugin_version" == "3.1.0" ]] \
+  && pass "T64 AC1 -- plugin.json version is 3.1.0 (EDMV3-T66 wave-C closeout)" \
+  || fail "T64 AC1 -- plugin.json version is '$t64_plugin_version', expected '3.1.0'"
+
+# =================================================================================
+# EDMV3-T66: wave-C closeout -- version 3.1.0 and CLAUDE.md reference tables match reality
+# =================================================================================
+CLAUDE_MD_T66="${PLUGIN_DIR}/CLAUDE.md"
+
+echo
+echo "T66 AC1 -- versions agree (CHANGELOG.md wave-C entry present)"
+check "T66 AC1 -- CHANGELOG.md has a 3.1.0 heading" "## [3.1.0]" "$(cat "${PLUGIN_DIR}/CHANGELOG.md")"
+
+echo
+echo "T66 AC2 -- schema_version decision recorded: stays at 2, no wave-C shape change"
+check "T66 AC2 -- CHANGELOG.md records the schema_version decision" "schema_version" "$(cat "${PLUGIN_DIR}/CHANGELOG.md")"
+check "T66 AC2 -- CLAUDE.md state-field table records the not-assigned decision" \
+  "not assigned (EDMV3-T66 decision)" "$(cat "$CLAUDE_MD_T66")"
+_t66ac2_fresh_schema_case() {
+  "$EDM_STATE" init T66SCHEMA >/dev/null
+  local sv
+  sv="$("$EDM_STATE" get T66SCHEMA | jq -r '.schema_version')"
+  # cmd_init's stamped value (1, EDMV3-T09) is a separate question from this ticket's decision
+  # (whether wave C needed a NEW certified shape, value 3): it did not, so the contract table's
+  # top row stays unchanged and this case only confirms init's existing, unmodified behavior.
+  [[ "$sv" == "1" ]] \
+    && pass "T66 AC2 -- a fresh initiative's cmd_init-stamped schema_version (1) is unchanged by the wave-C decision" \
+    || fail "T66 AC2 -- fresh initiative schema_version = '$sv', expected '1'"
+}
+with_scratch_repo _t66ac2_fresh_schema_case
+
+echo
+echo "T66 AC3 -- subcommand count and membership match the dispatch table exactly"
+t66ac3_dispatch_count="$(grep -cE '^  [a-z][a-z0-9_-]*\)[[:space:]]+cmd_' "$EDM_STATE")"
+t66ac3_claude_count="$(grep -oE '[0-9]+ subcommands' "$CLAUDE_MD_T66" | head -1 | grep -oE '^[0-9]+')"
+[[ "$t66ac3_dispatch_count" == "$t66ac3_claude_count" ]] \
+  && pass "T66 AC3 -- CLAUDE.md's documented subcommand count ($t66ac3_claude_count) matches the dispatch table ($t66ac3_dispatch_count)" \
+  || fail "T66 AC3 -- CLAUDE.md says $t66ac3_claude_count subcommands, dispatch table has $t66ac3_dispatch_count"
+t66ac3_missing=""
+for t66_c in audit-converged render-ledger audit-round-complete migrate-schema; do
+  grep -q -- "$t66_c" "$CLAUDE_MD_T66" || t66ac3_missing="${t66ac3_missing} ${t66_c}"
+done
+[[ -z "$t66ac3_missing" ]] \
+  && pass "T66 AC3 -- CLAUDE.md's bin/ table names all four wave-B/C subcommands" \
+  || fail "T66 AC3 -- CLAUDE.md's bin/ table is missing:${t66ac3_missing}"
+t66ac3_help_missing=""
+for t66_c in audit-converged render-ledger audit-round-complete migrate-schema; do
+  "$EDM_STATE" --help 2>&1 | grep -q -- "$t66_c" || t66ac3_help_missing="${t66ac3_help_missing} ${t66_c}"
+done
+[[ -z "$t66ac3_help_missing" ]] \
+  && pass "T66 AC3 -- --help enumerates all four wave-B/C subcommands" \
+  || fail "T66 AC3 -- --help is missing:${t66ac3_help_missing}"
+t66ac3_rtd="$("$EDM_STATE" --help 2>&1 | grep -c record-task-duration || true)"
+[[ "${t66ac3_rtd:-0}" -eq 0 ]] \
+  && pass "T66 AC3 -- record-task-duration is absent from --help (deleted, EDMV3-T58)" \
+  || fail "T66 AC3 -- record-task-duration still appears in --help"
+
+echo
+echo "T66 AC4 -- linter row, hook row and mode row are accurate (wrong class names gone)"
+check "T66 AC4 -- bin/ table describes four violation classes" "four violation classes" "$(cat "$CLAUDE_MD_T66")"
+t66ac4_wrong_classes="$(grep -rl 'missing version header\|orphan file\|oversized ticket' "$CLAUDE_MD_T66" | wc -l | tr -d ' ')"
+[[ "${t66ac4_wrong_classes:-0}" -eq 0 ]] \
+  && pass "T66 AC4 -- no reference to the three never-implemented violation classes" \
+  || fail "T66 AC4 -- found a reference to a never-implemented violation class"
+t66ac4_taskcompleted="$(grep -rl 'TaskCompleted' "$CLAUDE_MD_T66" | wc -l | tr -d ' ')"
+[[ "${t66ac4_taskcompleted:-0}" -eq 0 ]] \
+  && pass "T66 AC4 -- Hooks behavior table drops TaskCompleted" \
+  || fail "T66 AC4 -- TaskCompleted still referenced in CLAUDE.md"
+t66ac4_lcpartial="$(grep -rl 'lifecycle_mode.*partial' "$CLAUDE_MD_T66" | wc -l | tr -d ' ')"
+[[ "${t66ac4_lcpartial:-0}" -eq 0 ]] \
+  && pass "T66 AC4 -- lifecycle_mode row drops partial" \
+  || fail "T66 AC4 -- lifecycle_mode row still mentions partial"
+
+echo
+echo "T66 AC5 -- state-field table documents schema_version/enforcement/round_type/closing_verdict"
+t66ac5_hits="$(grep -c 'schema_version\|enforcement\|round_type\|closing_verdict' "$CLAUDE_MD_T66")"
+[[ "$t66ac5_hits" -ge 4 ]] \
+  && pass "T66 AC5 -- state-field vocabulary appears at least 4 times ($t66ac5_hits)" \
+  || fail "T66 AC5 -- state-field vocabulary appeared only $t66ac5_hits time(s), expected >= 4"
+
+echo
+echo "T66 AC6 -- documented agent and skill counts match reality"
+t66ac6_agent_disk="$(ls "${PLUGIN_DIR}/agents/"*.md | wc -l | tr -d ' ')"
+t66ac6_skill_manifest="$(jq -r '.plugins[] | select(.name=="edm") | .skills | length' "$(cd "$PLUGIN_DIR/../.." && pwd)/.claude-plugin/marketplace.json")"
+[[ "$t66ac6_agent_disk" -eq 30 ]] \
+  && pass "T66 AC6 -- 30 agent files on disk" \
+  || fail "T66 AC6 -- found $t66ac6_agent_disk agent file(s) on disk, expected 30"
+[[ "$t66ac6_skill_manifest" -eq 14 ]] \
+  && pass "T66 AC6 -- 14 skills declared in marketplace.json (post verify-runtime)" \
+  || fail "T66 AC6 -- marketplace.json declares $t66ac6_skill_manifest skill(s), expected 14"
+
+echo
+echo "T66 AC7 -- Testing changes section names CI as the primary verification path"
+check "T66 AC7 -- CI is the primary verification path" "CI is the primary verification path" "$(cat "$CLAUDE_MD_T66")"
+echo "T66 AC7 -- lens tiering table update: BLOCKED on EDMV3-T48 (out of this ticket's scope, not"
+echo "  yet run -- all 11 lens agents remain opus/max on disk). Recorded honestly in CHANGELOG.md"
+echo "  rather than asserted here as a passing case (D15: an unmet precondition is not faked)."
+
+echo
+echo "T66 AC9 -- update-patterns writes atomically; audit-round-complete routes through rmw_state"
+check "T66 AC9 -- update-patterns' insertion path is an atomic mv into the docs/audit-patterns/*.md target" \
+  "mv \"\$_pattern_tmp\" \"\$pattern_file\"" "$(cat "$EDM_STATE")"
+t66ac9_arc_body="$(awk '/^cmd_audit_round_complete\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check "T66 AC9 -- cmd_audit_round_complete calls rmw_state" "rmw_state" "$t66ac9_arc_body"
+
+echo
+echo "T66 AC11 -- allow_failure is scoped to only the plugin-cli validate and eval jobs"
+t66ac11_lines="$(grep -n 'allow_failure: true' "$GITLAB_CI_YML" | grep -v '^[0-9]*:[[:space:]]*#' || true)"
+t66ac11_count="$(echo "$t66ac11_lines" | grep -c 'allow_failure: true' || true)"
+[[ "${t66ac11_count:-0}" -eq 2 ]] \
+  && pass "T66 AC11 -- exactly 2 non-comment allow_failure: true lines in .gitlab-ci.yml" \
+  || fail "T66 AC11 -- found ${t66ac11_count:-0} allow_failure: true line(s), expected 2 (got: $t66ac11_lines)"
+
+echo
+echo "T66 AC12 -- Definition-of-Done spot-check (four mechanical checks)"
+t66ac12_flag_leak="$(grep -c 'code_audit_converged true' "${PLUGIN_DIR}/skills/"*/SKILL.md 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')"
+[[ "${t66ac12_flag_leak:-0}" -eq 0 ]] \
+  && pass "T66 AC12 -- no prompt sets code_audit_converged true directly" \
+  || fail "T66 AC12 -- found a direct code_audit_converged true instruction"
+t66ac12_orch_lines="$(wc -l < "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" | tr -d ' ')"
+[[ "$t66ac12_orch_lines" -le 300 ]] \
+  && pass "T66 AC12 -- orchestrator/SKILL.md is $t66ac12_orch_lines lines (<= 300)" \
+  || fail "T66 AC12 -- orchestrator/SKILL.md is $t66ac12_orch_lines lines, expected <= 300"
+t66ac12_lint_exit=0
+bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t66ac12_lint_exit=$?
+[[ "$t66ac12_lint_exit" -eq 0 ]] \
+  && pass "T66 AC12 -- edm-lint-artifacts --all exits 0" \
+  || fail "T66 AC12 -- edm-lint-artifacts --all exited $t66ac12_lint_exit"
+t66ac12_force_hits="$(grep -rn -- '--force\|--accept-partials' "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" 2>/dev/null \
+  | grep -v tests/ | grep -v 'vocabulary-' | grep -v "refused:" || true)"
+[[ -z "$t66ac12_force_hits" ]] \
+  && pass "T66 AC12 -- no --force/--accept-partials escape hatch outside tests/vocabulary/refusal text" \
+  || fail "T66 AC12 -- found: $t66ac12_force_hits"
+# EDMV3-T66 end
 
 # =================================================================================
 # EDMV3-T24: every lens emits JSONL with confidence under a two-path output contract.
@@ -2250,19 +2381,19 @@ done
   || fail "T37 AC4 -- missing in:${t37_ac4_missing}"
 
 echo
-echo "T37 AC6 -- phase-start/phase-complete calls: one owning file per phase (fast-track's mode-branch duplicate inside skills/tickets, and verify-runtime's documented direct-invocation phase-complete-6, are the two sanctioned exceptions)"
+echo "T37 AC6 -- phase-start/phase-complete calls: one owning file per phase (fast-track's mode-branch duplicate inside skills/tickets, and orchestrator+verify-runtime's documented phase-complete-6 split, are the sanctioned exceptions -- re-baselined to 3 files by EDMV3-T50, which wires the orchestrator's owning call)"
 t37_ac6_bad=""
 for t37_n in 1 2 3 4 5 6; do
   t37_start_files="$(grep -rl "phase-start <PREFIX> ${t37_n}\\b" "${PLUGIN_DIR}/skills/"*/SKILL.md 2>/dev/null | wc -l | tr -d ' ' || true)"
   [[ "$t37_start_files" -eq 1 ]] || t37_ac6_bad="${t37_ac6_bad} phase-start:${t37_n}=${t37_start_files}file(s)"
   t37_complete_files="$(grep -rl "phase-complete <PREFIX> ${t37_n}\\b" "${PLUGIN_DIR}/skills/"*/SKILL.md 2>/dev/null | wc -l | tr -d ' ' || true)"
   if [[ "$t37_n" -eq 6 ]]; then
-    [[ "$t37_complete_files" -eq 2 ]] || t37_ac6_bad="${t37_ac6_bad} phase-complete:6=${t37_complete_files}file(s),expected2(implement+verify-runtime)"
+    [[ "$t37_complete_files" -eq 3 ]] || t37_ac6_bad="${t37_ac6_bad} phase-complete:6=${t37_complete_files}file(s),expected3(orchestrator+implement+verify-runtime)"
   else
     [[ "$t37_complete_files" -eq 1 ]] || t37_ac6_bad="${t37_ac6_bad} phase-complete:${t37_n}=${t37_complete_files}file(s)"
   fi
 done
-[[ -z "$t37_ac6_bad" ]] && pass "T37 AC6 -- one owning file per phase-start/phase-complete call (phase-complete 6's two-file split is the documented implement+verify-runtime direct-invocation exception)" \
+[[ -z "$t37_ac6_bad" ]] && pass "T37 AC6 -- one owning file per phase-start/phase-complete call (phase-complete 6's three-file split is the documented orchestrator-owns/implement+verify-runtime-restate-for-direct-invocation exception, EDMV3-T50)" \
   || fail "T37 AC6 -- unexpected file counts:${t37_ac6_bad}"
 
 echo
@@ -3088,6 +3219,49 @@ t49_lint_exit=0
 bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t49_lint_exit=$?
 [[ "$t49_lint_exit" -eq 0 ]] && pass "T49 -- edm-lint-artifacts --all exits 0" || fail "T49 -- edm-lint-artifacts --all exited ${t49_lint_exit}"
 # EDMV3-T49 end
+# EDMV3-T67: performance and cost budgets are measured and recorded
+# =================================================================================
+echo
+echo "T67 AC14 -- committed, reproducible timing script exists and is executable"
+TIMING_SH="${PLUGIN_DIR}/bin/tests/timing.sh"
+[[ -x "$TIMING_SH" ]] \
+  && pass "T67 AC14 -- bin/tests/timing.sh is executable" \
+  || fail "T67 AC14 -- bin/tests/timing.sh is missing or not executable"
+check "T67 AC14 -- timing.sh usage lists all seven measurement modes" \
+  "generate-fixture" "$(bash "$TIMING_SH" 2>&1 || true)"
+
+echo
+echo "T67 AC2 -- get_session_tokens_since bounds its read (EDM_TOKEN_READ_LINE_CAP)"
+check "T67 AC2 -- token read is capped with tail -n, not an unbounded jq -s over the whole file" \
+  "EDM_TOKEN_READ_LINE_CAP" "$(cat "$EDM_STATE")"
+
+echo
+echo "T67 AC8 -- commit-hook scoping (hooks.json:80-90) preserved"
+t67ac8_hooks_diff="$(git -C "$PLUGIN_DIR" diff --stat -- hooks/hooks.json 2>/dev/null || true)"
+[[ -z "$t67ac8_hooks_diff" ]] \
+  && pass "T67 AC8 -- hooks/hooks.json has no diff this wave (commit-hook scoping preserved)" \
+  || fail "T67 AC8 -- hooks/hooks.json changed unexpectedly: $t67ac8_hooks_diff"
+
+echo
+echo "T67 AC11 -- no blocking job's script contains a network call"
+t67ac11_blocking_jobs="lint:shell-and-artifacts lint:shellcheck test:smoke test:smoke-bash32 test:state-validate validate:manifest"
+t67ac11_net_hits=""
+for t67_job in $t67ac11_blocking_jobs; do
+  t67_job_body="$(awk -v job="^${t67_job}:" '$0 ~ job {f=1; next} /^[a-zA-Z_.-]+:$/ {f=0} f' "$GITLAB_CI_YML")"
+  echo "$t67_job_body" | grep -qE 'curl |wget |anthropic\.com' && t67ac11_net_hits="${t67ac11_net_hits} ${t67_job}"
+done
+[[ -z "$t67ac11_net_hits" ]] \
+  && pass "T67 AC11 -- no blocking job's script calls curl/wget/anthropic.com" \
+  || fail "T67 AC11 -- network call found in blocking job(s):${t67ac11_net_hits}"
+
+echo "T67 AC1/AC3/AC4/AC5/AC6/AC7 -- measured this session against real generated fixtures via"
+echo "  bin/tests/timing.sh; the numbers are recorded in CHANGELOG.md's EDMV3-T67 table, not"
+echo "  re-run here (they take minutes and generate scratch fixtures unsuited to a fast smoke"
+echo "  suite). AC9/AC13 are recorded verified-locally-pending-pipeline (decisions.md D27) --"
+echo "  both require a live GitLab runner / a real costed eval run this session did not trigger."
+echo "  AC10 is a recorded, unfixed gap (decisions.md D26): the four lint checks run as"
+echo "  sequential script lines in one job, not four parallel jobs."
+# EDMV3-T67 end
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

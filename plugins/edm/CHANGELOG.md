@@ -4,6 +4,159 @@ All notable changes to the EDM plugin are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] — 2026-07-28
+
+Wave C of EDMV3 (prompt-streamline): economics honesty (Phase 6 cost is now actually recorded,
+per-round audit cost, honest token attribution and a refreshed pricing table, the human-baseline
+comparison moved behind an opt-in flag), the delete-list epic (dead surfaces removed:
+`lifecycle_mode=partial`, the grant ritual, the `TaskCompleted` no-op), the pattern-library
+curation contract (Append Schema, keep/edit/discard at gates, a four-heading CI regression guard),
+communication cadence and deliverable-length calibration, and this wave-C closeout ticket
+(EDMV3-T66), which folds every individual wave-C change (landed incrementally on
+`edm/edmv3-prompt-streamline` across EDMV3-T25(AC8), EDMV3-T30-T31, EDMV3-T33-T47, EDMV3-T50-T60)
+into this single versioned entry.
+
+### Added
+
+- **`edm-state phase-complete 6` is actually called** (EDMV3-T50): the orchestrator's Phase 6
+  entry now invokes `/edm:verify-runtime` via the `Skill` tool and then calls
+  `edm-state phase-complete <PREFIX> 6` itself -- the single owning, automatic call site.
+  `skills/implement/SKILL.md` Step 8 and `README.md`'s command table restate the same
+  two-command sequence only for the standalone/direct-invocation path. This closes the exact
+  EDMV2 failure mode D9 identified: `phase-start 6` firing and `phase-complete 6` never following,
+  leaving Phase 6 permanently recorded at 0s/$0.00.
+- **`edm-state audit-round-complete <PREFIX> <code|srd|tickets>`** (EDMV3-T51): records a
+  completion timestamp, duration, and token/cost totals for an individual code-audit round, keyed
+  by audit type and round number, reusing the same `get_session_tokens_since` helper
+  `phase-complete` uses (one cost computation, not two). `skills/code-audit/SKILL.md` calls it at
+  the end of every round (full or partial), immediately after `edm-state render-ledger`. An
+  unclosed round surfaces as an informational `OPEN_AUDIT_ROUND` anomaly on `edm-state validate`
+  rather than staying invisible.
+- **Update-patterns writes atomically** (EDMV3-92, EDMV3-T66 AC9): the pattern-library insertion
+  path now builds its appended content in a tmp file beside the target
+  `docs/audit-patterns/*.md` file and `mv`s it into place, rather than appending in place --
+  never leaves a shared pattern file half-written if interrupted mid-append, and never
+  interleaves with a concurrent `update-patterns` call on the same file.
+
+### Changed
+
+- **Token attribution scoped to the driving session, pricing refreshed** (EDMV3-T52, decisions.md
+  D25): `get_session_tokens_since` now scopes to the single most-recently-modified session JSONL
+  (falling back to the pre-fix whole-directory sum, recorded via `attribution_mode`) instead of
+  summing every session JSONL unconditionally, so a second open Claude Code window no longer
+  inflates a phase's or round's cost. Pricing constants move one generation forward (Opus
+  4.7/Sonnet 4.6/Haiku 4.5 -> Opus 4.8/Sonnet 4.7/Haiku 4.6, verified 2026-07-28); previous-generation
+  identifiers and rates are frozen (not env-overridable) so an already-recorded state file is never
+  silently repriced on a later read, and an unrecognized `model_used` now warns explicitly and
+  prices at a Sonnet-tier placeholder rather than silently costing zero.
+- **The human-baseline comparison leaves default output** (EDMV3-T53): `edm-state metrics-report`
+  now shows raw Claude cost and duration by default, with no baseline/multiple/savings language.
+  `--with-human-baseline` is the explicit opt-in that restores the comparison, labelled as an
+  estimate. `human_baseline_usd` continues to be recorded in state on every phase regardless, so
+  the comparison remains reconstructable. `skills/metrics/SKILL.md` no longer frames the
+  comparison as a headline. `metrics-report` also gains a code-audit section (rounds run, lenses
+  per round, cost per round) and a tiered-vs-untiered lens-cost section where tiering data exists
+  (omitted, not rendered empty, where it does not).
+- **Delete-list epic executed** (EDMV3-T57..T60, D12/D24): `lifecycle_mode=partial` is removed
+  from `LIFECYCLE_MODE_ENUM_LIST` (existing state files carrying the legacy value still read
+  without error, C-4); the standalone grant-approval ritual and the `TaskCompleted` hook no-op are
+  deleted; `.pptx`/`.docx` assets moved out of the plugin directory (`docs/`) and the CI
+  file-type-ban job flips from `allow_failure: true` to blocking; the `monitors/watch-impl`
+  lifecycle finding (D24) is documented (host-managed, Branch A) rather than deleted.
+- **Pattern-library curation contract** (EDMV3-T54..T56): a pending-review Append Schema, a
+  keep/edit/discard decision surfaced at gates, and a four-`##`-heading Living-Library contract
+  now enforced as a CI regression guard rather than only a convention.
+- **CI blocking scope widened** (EDMV3-T66 AC11): `bin/edm-check-vocabulary` and the four-heading
+  contract check are both blocking in the CI lint stage. After this wave, exactly two jobs in
+  `.gitlab-ci.yml` carry `allow_failure: true`: `validate:plugin-cli` (tier-2 `claude plugin
+  validate`, no CLI in every runner image) and `eval:nightly` (reaches the Anthropic API). The
+  file-type-ban job (previously non-blocking) is no longer one of them, per the delete-list item
+  above.
+
+### Schema version decision (EDMV3-T66 AC2)
+
+`schema_version` stays at `2` for wave C -- **not** bumped to `3`. Wave C's only state-shape work
+(EDMV3-T51's round-completion fields) is an additive extension of the wave-B round-record shape
+already certified at `schema_version 2` (adds `completed_at`, `duration_seconds`, `tokens`,
+`model_used`, `estimated_cost_usd`, `attribution_mode` to an existing `rounds[]` entry), not a new
+shape a reader must recognize to interpret correctly. Every wave-C check that consults these
+fields reads them with jq `//` defaults, so no check requires `schema_version >= 3`. Bumping for
+symmetry with the wave number would create a version value with no check gated on it -- the same
+prose-not-mechanism drift this initiative exists to close.
+
+### Known scope gap (recorded, not faked)
+
+`skills/metrics/SKILL.md`'s "Model and effort assignments" table update to reflect **measured**
+lens tiering (EDMV3-T48) has not landed as of this entry: the wave-C tiering matrix (D16) has not
+yet been run against the wave-A eval fixture, so all 11 code-audit lens agents remain
+`opus`/`max` on disk. Per D15, an AC whose stated precondition (measured tiering data) does not
+yet exist is not asserted as passing here. `CLAUDE.md`'s Model and effort table is left
+unchanged pending EDMV3-T48; this is a recorded scope gap for EDMV3-T48 to close, not a wave-C
+regression.
+
+### Preserve-untouched verification (EDMV3-111, all eight, EDMV3-T66 AC10)
+
+1. **State-derived path resolution** -- unchanged: `resolve-dir`/`initiative_dir_for` still resolve
+   both flat and product-scoped layouts; no new wave-C write path (`audit-round-complete`,
+   `update-patterns`) hardcodes a path -- both call `initiative_dir_for`/the existing
+   `patterns_dir` resolution.
+2. **Locking and atomicity** -- unchanged and extended: every new wave-C write
+   (`audit-round-complete`) goes through the existing `rmw_state` helper; `update-patterns`'
+   insertion path is now also atomic (tmp file + `mv`, this wave, see Added above).
+3. **Artifact-hash drift detection** -- unchanged: no wave-C ticket touches `artifact_hashes` or
+   its check.
+4. **QC verdict semantics** -- verbatim: PASS/PARTIAL/FAIL definitions in
+   `skills/implement/SKILL.md` are byte-identical to wave B.
+5. **Gate approval rules text** -- verbatim: the canonical Gate PROTOCOL section in
+   `skills/orchestrator/SKILL.md` is unchanged by any wave-C ticket.
+6. **Stable CA-NNN IDs and demote-don't-delete** -- unchanged: `edm-audit-synthesizer`'s merge
+   logic is untouched this wave.
+7. **Lint infrastructure extended, not replaced** -- the three existing violation classes
+   (attribution trailers, non-ASCII bytes, leaked tool tags) behave identically; only the
+   file-type-ban job's blocking status changed (CI config, not linter behavior).
+8. **HANDOFF auto-refresh and `## Notes`** -- unchanged: no wave-C ticket touches
+   `cmd_write_handoff`.
+
+### Performance and cost budgets measured (EDMV3-T67)
+
+A committed, executable timing harness (`bin/tests/timing.sh`) measures the eight budgets named
+in EDMV3-T67 against reproducible, generated fixtures (a 50-initiative repo, a 500-finding
+ledger, a 30-file/~10,000-line initiative directory) rather than ad hoc one-off numbers. Every
+figure below was measured on this machine (macOS, bash 3.2.57, this initiative's working tree);
+figures that require the pinned CI runner image or a live pipeline are marked
+**verified-locally-pending-pipeline** rather than asserted as certified. `get_session_tokens_since`
+now bounds its read of each session JSONL to the last `${EDM_TOKEN_READ_LINE_CAP:-20000}` lines
+(`tail -n`, per file) so phase-complete's latency can no longer grow unbounded with total session
+history (AC2's `since`-anchored read means the messages that matter are always among the newest
+lines).
+
+| AC | Budget | Measured (this machine) | Result |
+|---|---|---|---|
+| AC1 | get/resolve-dir/branch-check/gate-check < 250ms p95 (50-init fixture) | get 28ms, resolve-dir 28ms, branch-check 48ms, gate-check 64ms | PASS |
+| AC2 | phase-complete < 2000ms p95 excl. token read; token read bounded | 340ms p95; bound added (`tail -n` cap, see above) | PASS |
+| AC3 | audit-converged < 500ms p95, render-ledger < 1000ms p95 (500-finding ledger) | audit-converged 123ms, render-ledger 84ms | PASS |
+| AC4 | check_permission_rules() adds < 50ms to session-start | measured delta -2ms (noise-level) | PASS |
+| AC5 | full lint of a 30-file/~10,000-line initiative < 3000ms | **39,872ms p95** (measured 3 times: 43862/39872/39230ms) | **MISS -- recorded, not fixed here (out of scope per this ticket's own terms)** |
+| AC6 | Mermaid class adds <= 40% lint time vs. 3-class baseline | measured ratio 2.26x on a small (5-file) fixture -- directional, not the full 50-init/T43-AC10 scale | **MISS -- recorded** (re-confirms T43 AC10's own finding; a small fixture makes the relative overhead more visible, not less real) |
+| AC7 | `--all` over 50 initiatives < 60,000ms (CI budget) | 1,671ms | PASS |
+| AC8 | commit-hook scoping in `hooks.json:80-90` unchanged | `git diff --stat` shows zero changes to `hooks/hooks.json` | PASS |
+| AC9 | blocking pipeline < 5 minutes at each wave boundary, fixed fixture subject | not run against a live GitLab runner this session | **verified-locally-pending-pipeline** |
+| AC10 | the four lint checks (`bash -n`, `edm-lint-artifacts --all`, `edm-check-grants`, `edm-check-vocabulary`) run as parallel jobs | all four currently run as sequential script lines inside one job, `lint:shell-and-artifacts` -- not four separate jobs | **MISS -- recorded, not restructured here** (a `.gitlab-ci.yml` job-split is a real change that needs a live-runner validation pass this session cannot safely give it) |
+| AC11 | no blocking job reaches the network beyond image pull | exactly 2 `allow_failure: true` lines (`validate:plugin-cli`, `eval:nightly`), both outside the blocking path; confirmed by `grep` | PASS |
+| AC12 | code-audit round cost measurable and reported | `metrics-report` renders the code-audit section (rounds run, lenses per round, cost per round) once EDMV3-T51 data exists, per this wave's own T51/T53 work | PASS |
+| AC13 | one eval run < 30 minutes, cost documented | `evals/README.md` already documents 30-60 minutes wall-clock and a `$15`/phase budget ceiling from a prior measured run (2026-07-27) -- the existing documented range itself brackets the 30-minute figure, so a fresh timed run is needed to confirm | **verified-locally-pending-pipeline** (a live eval run was not triggered this session -- real API spend and up to an hour of wall time) |
+| AC14 | reproducible, committed timing script | `bin/tests/timing.sh`, executable, all modes above run from it | PASS |
+
+**Two real, recorded misses (AC5, AC6, AC10) are not silently accepted.** Per this ticket's own
+Out of Scope clause ("optimizing anything that misses a budget... this ticket measures and
+records"), each is left for its own follow-on ticket rather than patched here under time
+pressure without a fresh full-suite validation pass. The root cause for AC5/AC6 is visible in
+`bin/edm-lint-artifacts`: `build_line_classes()` (and companion per-line loops) process every
+line of every file through a bash `while IFS= read -r` loop regardless of file content, which
+does not scale to a 10,000-line file the way it does to a typical individual artifact. AC10's
+gap is structural, not a speed problem: `.gitlab-ci.yml`'s `lint:shell-and-artifacts` job runs
+the four checks as sequential script lines in one job rather than four jobs in the same stage.
+
 ## [3.0.0] — 2026-07-28
 
 Wave B of EDMV3 (prompt-streamline): the enforcement kernel's version-2 checks (PARTIAL closure,
