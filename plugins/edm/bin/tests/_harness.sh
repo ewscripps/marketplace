@@ -39,7 +39,7 @@ check_absent() {
 _HARNESS_TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _HARNESS_BIN_DIR="$(cd "${_HARNESS_TESTS_DIR}/.." && pwd)"
 
-# with_scratch_repo <fn> — create a scratch git repository in /tmp, `git init` it, commit an
+# with_scratch_repo <fn> — create a scratch git repository under ${TMPDIR:-/tmp}, `git init` it, commit an
 # initial file, then run <fn> with that directory as the working tree, EDM_SRD_ROOT pointed
 # inside it, and plugins/edm/bin prepended to PATH (bin/edm-init and bin/edm-validate-prefix
 # invoke sibling scripts by bare name, unlike these test suites which call "$EDM_STATE" by
@@ -51,7 +51,7 @@ _HARNESS_BIN_DIR="$(cd "${_HARNESS_TESTS_DIR}/.." && pwd)"
 with_scratch_repo() {
   local fn="$1"
   local dir
-  dir="$(mktemp -d /tmp/edm-scratch.XXXXXX)" || { fail "with_scratch_repo: mktemp failed"; return 1; }
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/edm-scratch.XXXXXX")" || { fail "with_scratch_repo: mktemp failed"; return 1; }
 
   local prev_dir prev_srd_root prev_path
   local prev_trap_exit prev_trap_int prev_trap_term
@@ -126,6 +126,28 @@ check_fails() {
   fi
 }
 
+# count_matches <grep-args...> — grep -c that returns 0 on no match instead of exiting 1 under
+# set -e. Used by count-based assertions so a regression becomes one failed assertion, not a
+# crashed suite.
+count_matches() {
+  local count
+  count="$(command grep -c "$@" 2>/dev/null)" || count=0
+  printf '%s\n' "${count:-0}"
+}
+
+# assert_absent_with_control <label> <needle> <actual> <control-label> <control-haystack> —
+# passes only when <needle> is absent from <actual> AND present in the positive-control haystack.
+assert_absent_with_control() {
+  local label="$1" needle="$2" actual="$3" control_label="$4" control_haystack="$5"
+  if [[ "$control_haystack" != *"$needle"* ]]; then
+    fail "$label (positive control '${needle}' missing from ${control_label})"
+  elif [[ "$actual" == *"$needle"* ]]; then
+    fail "$label (expected '${needle}' to be absent, but it was present)"
+  else
+    pass "$label"
+  fi
+}
+
 # _harness_hash_file <file> — sha256 of <file>, or "absent" if it doesn't exist. Tries
 # `shasum -a 256` first, falling back to `sha256sum` (macOS/Linux divergence, EDMV3-106).
 _harness_hash_file() {
@@ -148,6 +170,10 @@ check_state_unchanged() {
   shift
   local before after
   before="$(_harness_hash_file "$state_file")"
+  if [[ "$before" == "absent" ]]; then
+    fail "state unchanged: $state_file (baseline file missing before command ran)"
+    return
+  fi
   "$@" >/dev/null 2>&1 || true
   after="$(_harness_hash_file "$state_file")"
   if [[ "$before" == "$after" ]]; then
@@ -175,7 +201,7 @@ stage_session_jsonl() {
   local sessions_dir="$1" filename="$2" model="$3" input_tokens="$4" output_tokens="$5"
   local ts="${6:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
   mkdir -p "$sessions_dir"
-  jq -n --arg ts "$ts" --arg model "$model" --argjson in "$input_tokens" --argjson out "$output_tokens" '
+  jq -cn --arg ts "$ts" --arg model "$model" --argjson in "$input_tokens" --argjson out "$output_tokens" '
     {
       type: "assistant",
       timestamp: $ts,

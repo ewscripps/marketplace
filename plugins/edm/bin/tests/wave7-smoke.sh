@@ -15,6 +15,10 @@ GITLAB_CI_YML="$(cd "$PLUGIN_DIR/../.." && pwd)/.gitlab-ci.yml"
 # Shared assertions / counters (CA-014).
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_harness.sh"
 
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave7.XXXXXX")"
+trap 'rm -rf "$TMP"' EXIT INT TERM
+PATH="${PLUGIN_DIR}/bin:$PATH"
+
 echo "wave7 smoke check -- EDMV3-T09 cmd_set caller-contract and no-override-flag guard"
 echo
 
@@ -138,7 +142,7 @@ echo
 echo "T09 AC12 -- an injected unknown key fails the scan, naming the file and line"
 neg_case_bogus_key() {
   local scratch
-  scratch="$(mktemp -d /tmp/edm-wave7-neg.XXXXXX)" || { fail "AC12 -- mktemp failed"; return 1; }
+  scratch="$(mktemp -d "${TMP}/edm-wave7-neg.XXXXXX")" || { fail "AC12 -- mktemp failed"; return 1; }
 
   mkdir -p "$scratch/bin"
   cp -R "$PLUGIN_DIR/skills" "$scratch/skills"
@@ -171,10 +175,13 @@ neg_case_bogus_key
 # =================================================================================
 echo
 echo "T09 AC13 -- no literal --force anywhere in bin/edm-state"
-force_count="$(grep -c -- '--force' "$EDM_STATE" 2>/dev/null || true)"
-force_count="${force_count:-0}"
-[[ "$force_count" -eq 0 ]] && pass "no literal --force in bin/edm-state" \
-  || fail "found $force_count occurrence(s) of literal --force in bin/edm-state"
+force_hits="$(grep -n -- '--force' "$EDM_STATE" 2>/dev/null || true)"
+assert_absent_with_control \
+  "no literal --force in bin/edm-state" \
+  "--force" \
+  "$force_hits" \
+  "bin/vocabulary-prohibited.txt" \
+  "$(cat "${PLUGIN_DIR}/bin/vocabulary-prohibited.txt" 2>/dev/null)"
 
 # =================================================================================
 # EDMV3-T04 -- README install path regression guard (AC6). Do not add unrelated cases
@@ -195,7 +202,7 @@ echo
 echo "T03 AC1 -- --list-sources prints exactly four source labels"
 t03_sources_out="$(bash "$EDM_CHECK_GRANTS" --list-sources 2>&1)"
 t03_sources_ec=$?
-t03_sources_count="$(printf '%s\n' "$t03_sources_out" | grep -c '.')"
+t03_sources_count="$(printf '%s\n' "$t03_sources_out" | grep -c '.' || true)"
 [[ $t03_sources_ec -eq 0 ]] && pass "--list-sources exits 0" || fail "--list-sources exited $t03_sources_ec"
 [[ "$t03_sources_count" -eq 4 ]] && pass "--list-sources prints exactly four lines" \
   || fail "--list-sources printed $t03_sources_count line(s), expected 4:\n$t03_sources_out"
@@ -206,12 +213,11 @@ check "source label: skill-allowed-tools-vs-body" "skill-allowed-tools-vs-body" 
 
 echo
 echo "T03 AC7 -- exit contract: usage error is exit 2"
+t03_bogus_ec=0
 set +e
-bash "$EDM_CHECK_GRANTS" --bogus-flag >/tmp/edm-cg-bogus.$$.out 2>&1
-t03_bogus_ec=$?
+bash "$EDM_CHECK_GRANTS" --bogus-flag >/dev/null 2>&1 || t03_bogus_ec=$?
 set -e
 [[ $t03_bogus_ec -eq 2 ]] && pass "unknown flag exits 2" || fail "unknown flag exited $t03_bogus_ec, expected 2"
-rm -f "/tmp/edm-cg-bogus.$$.out"
 
 echo
 echo "T03 AC2/AC4 -- every agent grant is satisfied against the live (post-EDMV3-T02) tree"
@@ -221,9 +227,6 @@ t03_live_ec=$?
 set -e
 [[ $t03_live_ec -eq 0 ]] && pass "edm-check-grants exits 0 against the live tree" \
   || fail "edm-check-grants exited $t03_live_ec against the live tree:\n$t03_live_out"
-t03_live_agent_count="$(printf '%s\n' "$t03_live_out" | grep -c '^agent:' || true)"
-[[ "$t03_live_agent_count" -eq 0 ]] && pass "zero unsatisfied agents against the live tree" \
-  || fail "found $t03_live_agent_count unsatisfied agent(s) against the live tree"
 
 echo
 echo "T03 AC3 -- grant-without-instruction warnings are advisory, never block the exit code"
@@ -249,13 +252,14 @@ echo
 echo "T03 AC6 -- must-fail: a skill body needing AskUserQuestion without the grant fails the run"
 t03_ac6_case() {
   local scratch
-  scratch="$(mktemp -d /tmp/edm-cg-ac6.XXXXXX)" || { fail "AC6 -- mktemp failed"; return 1; }
+  scratch="$(mktemp -d "${TMP}/edm-cg-ac6.XXXXXX")" || { fail "AC6 -- mktemp failed"; return 1; }
 
   mkdir -p "$scratch/bin"
   cp -R "$PLUGIN_DIR/agents" "$scratch/agents"
   cp -R "$PLUGIN_DIR/skills" "$scratch/skills"
   cp -R "$PLUGIN_DIR/hooks" "$scratch/hooks"
   cp "$EDM_CHECK_GRANTS" "$scratch/bin/edm-check-grants"
+  cp "${SCRIPT_DIR}/../_edm-lint-lib.sh" "$scratch/bin/_edm-lint-lib.sh"
   chmod +x "$scratch/bin/edm-check-grants"
 
   # Strip AskUserQuestion from the scratch copy of plan/SKILL.md's allowed-tools line only.
@@ -274,9 +278,19 @@ t03_ac6_case() {
   check "AC6 -- failure names skills/plan/SKILL.md" "skills/plan/SKILL.md" "$out"
   check "AC6 -- failure class is missing-askuserquestion-grant" "missing-askuserquestion-grant" "$out"
 
+  T03_AC6_OUT="$out"
   rm -rf "$scratch"
 }
 t03_ac6_case
+t03_live_agents="$(printf '%s\n' "$t03_live_out" | grep -E '^agent:|missing-askuserquestion-grant' || true)"
+t03_control_agents="$(printf '%s\n' "${T03_AC6_OUT:-}" | grep -E '^agent:|missing-askuserquestion-grant' || true)"
+if [[ -z "$t03_control_agents" ]]; then
+  fail "zero unsatisfied agents against the live tree (positive control produced no failure marker)"
+elif [[ -z "$t03_live_agents" ]]; then
+  pass "zero unsatisfied agents against the live tree"
+else
+  fail "found unsatisfied agent line(s) against the live tree: $t03_live_agents"
+fi
 
 echo
 echo "T03 AC8 -- mirrors (not re-derives) edm-lint-artifacts's report_violation/build_ignore_set/is_ignored_line"
@@ -425,7 +439,13 @@ t23_score_synthetic_run() {
     echo '#### TSVE-01: sample requirement'
     echo '- **Acceptance Criteria**:'
     echo '    - [ ] A concrete, testable behavior with a specific numeric threshold.'
+    echo
+    echo '```mermaid'
+    echo 'flowchart TD'
+    echo '    A[Ready] --> B[Done]'
+    echo '```'
   } > run-dir/srd.md
+  echo 'Coverage discussion: TSVE-01' > run-dir/audit-srd.md
   echo "run-dir/srd.md written, TSVE-01 present" > /dev/null
 
   bash "$SCORE_ARTIFACTS" run-dir > out-a.json 2> err-a.json
@@ -447,6 +467,11 @@ t23_score_synthetic_run() {
   dim_count="$(jq -e '.dimensions | length' out-a.json 2>/dev/null || echo "ERR")"
   [[ "$dim_count" == "5" ]] && pass "scores.json has exactly 5 dimensions (AC1)" \
     || fail "scores.json has $dim_count dimensions, expected exactly 5"
+
+  jq -e '.dimensions[0].score != null and .dimensions[1].score != null and .dimensions[2].score != null and .dimensions[3].score != null' \
+    out-a.json >/dev/null 2>&1 \
+    && pass "dimensions 1-4 all execute on the synthetic run fixture" \
+    || fail "expected dimensions 1-4 to score non-null on the synthetic run fixture"
 
   jq -e '. as $r | ([$r.dimensions[].score | select(. != null)] | add) as $sum
          | $r.dimensions_scored as $n | (($sum / $n * 10 | round) / 10) == $r.total' \
@@ -583,8 +608,8 @@ _t61_help_subcommands() {
 _t61_bidirectional_check() {
   local f="$1"
   local dispatch_file help_file miss=0 name
-  dispatch_file="$(mktemp /tmp/edm-t61-dispatch.XXXXXX)"
-  help_file="$(mktemp /tmp/edm-t61-help.XXXXXX)"
+  dispatch_file="$(mktemp "${TMP}/edm-t61-dispatch.XXXXXX")"
+  help_file="$(mktemp "${TMP}/edm-t61-help.XXXXXX")"
   _t61_dispatch_labels "$f" > "$dispatch_file"
   _t61_help_subcommands "$f" > "$help_file"
 
@@ -634,7 +659,7 @@ echo
 echo "T61 AC2 -- negative: a dispatch entry with no matching help line fails, naming it"
 t61_neg_case() {
   local scratch
-  scratch="$(mktemp /tmp/edm-t61-neg.XXXXXX)" || { fail "T61 AC2 negative -- mktemp failed"; return 1; }
+  scratch="$(mktemp "${TMP}/edm-t61-neg.XXXXXX")" || { fail "T61 AC2 negative -- mktemp failed"; return 1; }
   # Inject a dispatch-only entry (bogus-new-cmd) with no corresponding help doc line, immediately
   # above the closing `esac` -- case arm order is irrelevant to bash, so this is always valid.
   awk '/^esac/{print "  bogus-new-cmd) die \"nope\" ;;"} {print}' "$EDM_STATE" > "$scratch"
@@ -756,7 +781,7 @@ echo
 echo "T20 AC10 -- --path <dir> recurses into subdirectories and finds a nested violation"
 t20_path_dir_case() {
   local scratch
-  scratch="$(mktemp -d /tmp/edm-t20-path-dir.XXXXXX)" || { fail "T20 --path dir -- mktemp failed"; return 1; }
+  scratch="$(mktemp -d "${TMP}/edm-t20-path-dir.XXXXXX")" || { fail "T20 --path dir -- mktemp failed"; return 1; }
   mkdir -p "$scratch/a/b/c"
   printf '# top-level note\n\nClean ASCII content.\n' > "$scratch/top.md"
   printf '# nested note\n\nAlso clean ASCII content, three levels deep.\n' > "$scratch/a/b/c/nested.md"
@@ -791,7 +816,7 @@ echo
 echo "T20 AC10 -- --path never calls edm-state (read-only contract holds with edm-state off PATH)"
 t20_path_no_edmstate_case() {
   local scratch scrub_path
-  scratch="$(mktemp -d /tmp/edm-t20-path-noedm.XXXXXX)" || { fail "T20 --path no-edm-state -- mktemp failed"; return 1; }
+  scratch="$(mktemp -d "${TMP}/edm-t20-path-noedm.XXXXXX")" || { fail "T20 --path no-edm-state -- mktemp failed"; return 1; }
   printf '# clean note\n\nNo violations here.\n' > "$scratch/note.md"
 
   # A PATH with only /usr/bin and /bin -- enough for find/sort/grep/sed/cut/tr to resolve, but
@@ -951,10 +976,9 @@ t66ac4_lcpartial="$({ grep -rl 'lifecycle_mode.*partial' "$CLAUDE_MD_T66" || tru
 
 echo
 echo "T66 AC5 -- state-field table documents schema_version/enforcement/round_type/closing_verdict"
-t66ac5_hits="$({ grep -c 'schema_version\|enforcement\|round_type\|closing_verdict' "$CLAUDE_MD_T66" || true; })"
-[[ "$t66ac5_hits" -ge 4 ]] \
-  && pass "T66 AC5 -- state-field vocabulary appears at least 4 times ($t66ac5_hits)" \
-  || fail "T66 AC5 -- state-field vocabulary appeared only $t66ac5_hits time(s), expected >= 4"
+for t66_field in schema_version enforcement round_type closing_verdict; do
+  check "T66 AC5 -- ${t66_field} is documented in the state-field table" "$t66_field" "$(cat "$CLAUDE_MD_T66")"
+done
 
 echo
 echo "T66 AC6 -- documented agent and skill counts match reality"
@@ -977,17 +1001,25 @@ echo "  rather than asserted here as a passing case (D15: an unmet precondition 
 echo
 echo "T66 AC9 -- update-patterns writes atomically; audit-round-complete routes through rmw_state"
 check "T66 AC9 -- update-patterns' insertion path is an atomic mv into the docs/audit-patterns/*.md target" \
-  "mv \"\$_pattern_tmp\" \"\$pattern_file\"" "$(cat "$EDM_STATE")"
+  'write_atomic "$pattern_file" _splice_pattern_file' "$(cat "$EDM_STATE")"
 t66ac9_arc_body="$(awk '/^cmd_audit_round_complete\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
-check "T66 AC9 -- cmd_audit_round_complete calls rmw_state" "rmw_state" "$t66ac9_arc_body"
+check "T66 AC9 -- cmd_audit_round_complete completes via with_state_lock" "with_state_lock" "$t66ac9_arc_body"
 
 echo
 echo "T66 AC11 -- allow_failure is scoped to only the plugin-cli validate and eval jobs"
-t66ac11_lines="$(grep -n 'allow_failure: true' "$GITLAB_CI_YML" | grep -v '^[0-9]*:[[:space:]]*#' || true)"
-t66ac11_count="$(echo "$t66ac11_lines" | grep -c 'allow_failure: true' || true)"
-[[ "${t66ac11_count:-0}" -eq 2 ]] \
-  && pass "T66 AC11 -- exactly 2 non-comment allow_failure: true lines in .gitlab-ci.yml" \
-  || fail "T66 AC11 -- found ${t66ac11_count:-0} allow_failure: true line(s), expected 2 (got: $t66ac11_lines)"
+t66_validate_plugin_block="$(awk '/^validate:plugin-cli:/{f=1;next} f && /^[^[:space:]][^#]*:$/ {f=0} f' "$GITLAB_CI_YML")"
+t66_eval_block="$(awk '/^eval:nightly:/{f=1;next} f && /^[^[:space:]][^#]*:$/ {f=0} f' "$GITLAB_CI_YML")"
+check "T66 AC11 -- validate:plugin-cli carries allow_failure" "allow_failure: true" "$t66_validate_plugin_block"
+check "T66 AC11 -- eval:nightly carries allow_failure" "allow_failure: true" "$t66_eval_block"
+t66_lint_allow_fail=""
+for t66_job in lint:bash-syntax lint:artifacts lint:grants lint:vocabulary; do
+  t66_job_block="$(awk -v job="^${t66_job}:$" '$0 ~ job {f=1;next} f && /^[^[:space:]][^#]*:$/ {f=0} f' "$GITLAB_CI_YML")"
+  [[ "$t66_job_block" == *"allow_failure"* ]] && t66_lint_allow_fail="${t66_lint_allow_fail} ${t66_job}"
+done
+[[ -z "$t66_lint_allow_fail" ]] \
+  && pass "T66 AC11 -- none of the four split lint jobs carry allow_failure" \
+  || fail "T66 AC11 -- split lint job(s) unexpectedly carry allow_failure:${t66_lint_allow_fail}"
+check "T66 AC11 -- code-audit uses audit-round-start with --lenses" "--lenses" "$(grep 'audit-round-start' "${PLUGIN_DIR}/skills/code-audit/SKILL.md" || true)"
 
 echo
 echo "T66 AC12 -- Definition-of-Done spot-check (four mechanical checks)"
@@ -1140,7 +1172,7 @@ echo
 echo "T24 AC10 -- eval scorer dimension 5 scores non-null against the committed fixture"
 t24_ac10_case() {
   local scratch
-  scratch="$(mktemp -d /tmp/edm-t24-ac10.XXXXXX)" || { fail "T24 AC10 -- mktemp failed"; return 1; }
+  scratch="$(mktemp -d "${TMP}/edm-t24-ac10.XXXXXX")" || { fail "T24 AC10 -- mktemp failed"; return 1; }
   cp -R "${CODE_AUDIT_FIXTURE_DIR}/." "$scratch/"
   local d5
   d5="$(bash "${PLUGIN_DIR}/evals/score-artifacts.sh" "$scratch" 2>/dev/null | jq -e '.dimensions[4].score != null' 2>/dev/null)"
@@ -1186,7 +1218,7 @@ echo
 echo "T25 AC1/AC3/AC10 -- hand-constructed ledger fixture: valid JSON, unique CA-NNN ids, confidence+lenses present, status enum exactly open|fixed|noted"
 t25_ledger_case() {
   local scratch
-  scratch="$(mktemp -d /tmp/edm-t25-ledger.XXXXXX)" || { fail "T25 AC1/AC10 -- mktemp failed"; return 1; }
+  scratch="$(mktemp -d "${TMP}/edm-t25-ledger.XXXXXX")" || { fail "T25 AC1/AC10 -- mktemp failed"; return 1; }
   local ledger="$scratch/findings-ledger.jsonl"
   {
     echo '{"schema":1,"id":"CA-001","sev":"P1","status":"fixed","confidence":"high","lenses":["L1","L4"],"file":"src/auth/handler.py","line":42,"title":"Stub returns hardcoded data","raised_round":1,"resolved_round":2}'
@@ -1345,9 +1377,9 @@ check "T30 AC4 -- bin/tests/ negative-test carve-out class" "plugins/edm/bin/tes
 check "T30 AC4 -- edm-audit-spec.md False-Alarm-Filter class" "plugins/edm/agents/edm-audit-spec.md|" "$VOCAB_ALLOWLIST_TXT"
 
 echo
-echo "T30 AC9 -- mirrors report_violation/build_ignore_set rather than re-deriving the file walk"
-check "T30 AC9 -- report_violation defined" "report_violation()" "$(cat "$CHECK_VOCAB")"
-check "T30 AC9 -- build_ignore_set defined" "build_ignore_set()" "$(cat "$CHECK_VOCAB")"
+echo "T30 AC9 -- sources shared lint library rather than re-deriving the file walk"
+check "T30 AC9 -- sources _edm-lint-lib.sh" "_edm-lint-lib.sh" "$(cat "$CHECK_VOCAB")"
+check "T30 AC9 -- uses build_line_classes from shared lib" "build_line_classes" "$(cat "$CHECK_VOCAB")"
 
 echo
 echo "T30 AC10 -- override-flag grep (repo-wide, documented carve-outs) is clean"
@@ -1366,7 +1398,7 @@ echo
 echo "T30 AC2 -- JSON-escaped prompt strings: a scratch hooks.json carrying the abolished token is caught"
 t30_ac2_case() {
   local scratch
-  scratch="$(mktemp -d /tmp/edm-t30-ac2.XXXXXX)" || { fail "T30 AC2 -- mktemp failed"; return 1; }
+  scratch="$(mktemp -d "${TMP}/edm-t30-ac2.XXXXXX")" || { fail "T30 AC2 -- mktemp failed"; return 1; }
   mkdir -p "$scratch/plugins/edm"
   cp -R "${PLUGIN_DIR}/." "$scratch/plugins/edm/"
   # Reinsert the abolished token into the scratch copy's hooks.json prompt text only
@@ -1455,7 +1487,7 @@ check "T40 AC4 -- 'entity name' present" "entity name" "$CLAUDE_MD_CONTENT"
 
 echo
 echo "T40 AC5 -- worked examples: at least one incorrect and one correct, both fenced"
-t40_ac5_fence_count="$(sed -n '/Mermaid diagram conventions/,/^## /p' "${PLUGIN_DIR}/CLAUDE.md" | grep -c '```')"
+t40_ac5_fence_count="$(sed -n '/Mermaid diagram conventions/,/^## /p' "${PLUGIN_DIR}/CLAUDE.md" | grep -c '```' || true)"
 [[ "${t40_ac5_fence_count:-0}" -ge 2 ]] \
   && pass "T40 AC5 -- at least two fenced code blocks in the Mermaid section (found ${t40_ac5_fence_count})" \
   || fail "T40 AC5 -- fewer than two fenced blocks in the Mermaid section (found ${t40_ac5_fence_count:-0})"
@@ -1533,7 +1565,7 @@ done
 
 echo
 echo "T42 AC4 -- identical quoting style across every by-name reference"
-t42_ac4_forms="$({ grep -rho 'CLAUDE.md Sec\."Mermaid diagram conventions"' "${PLUGIN_DIR}/" || true; } | sort -u | wc -l | tr -d ' ')"
+t42_ac4_forms="$(grep -rho 'CLAUDE\.md Sec\.\\"*"*Mermaid diagram conventions\\"*"*' "${PLUGIN_DIR}/" 2>/dev/null | sort -u | wc -l | tr -d ' ')"
 [[ "$t42_ac4_forms" == "1" ]] \
   && pass "T42 AC4 -- exactly one quoting form of the by-name reference is in use" \
   || fail "T42 AC4 -- found ${t42_ac4_forms} distinct quoting forms, expected 1"
@@ -1564,8 +1596,8 @@ echo "T42 AC7/AC8 -- pattern-library entries are ### under the existing ## Anti-
   && pass "T42 AC7 -- ticket-audit.md has a Mermaid ### entry" \
   || fail "T42 AC7 -- ticket-audit.md has no Mermaid ### entry"
 
-t42_srd_hh_count="$(grep -c '^## ' "${PLUGIN_DIR}/docs/audit-patterns/srd-audit.md")"
-t42_tkt_hh_count="$(grep -c '^## ' "${PLUGIN_DIR}/docs/audit-patterns/ticket-audit.md")"
+t42_srd_hh_count="$(count_matches '^## ' "${PLUGIN_DIR}/docs/audit-patterns/srd-audit.md")"
+t42_tkt_hh_count="$(count_matches '^## ' "${PLUGIN_DIR}/docs/audit-patterns/ticket-audit.md")"
 [[ "$t42_srd_hh_count" -eq 4 && "$t42_tkt_hh_count" -eq 4 ]] \
   && pass "T42 AC8 -- both pattern docs still have exactly four ## headings (no new ## added)" \
   || fail "T42 AC8 -- srd-audit.md has ${t42_srd_hh_count} ## headings, ticket-audit.md has ${t42_tkt_hh_count} (expected 4 each)"
@@ -1643,16 +1675,18 @@ check "T42 AC12 -- .gitlab-ci.yml's test:smoke job runs the run-all.sh aggregato
 # positives at scale is EDMV3-T44's deliverable, asserted in that ticket's own block below.
 # =================================================================================
 LINT_BIN="${PLUGIN_DIR}/bin/edm-lint-artifacts"
-T43_SCRATCH="$(mktemp -d /tmp/edm-t43-mermaid.XXXXXX)"
+T43_SCRATCH="$(mktemp -d "${TMP}/edm-t43-mermaid.XXXXXX")"
 t43_write() { printf '%s\n' "$2" > "${T43_SCRATCH}/$1"; }
 
 echo
 echo "T43 AC1 -- one-pass classifier replaces the per-class helper"
 check_absent "T43 AC1 -- build_ignore_set no longer present" "build_ignore_set" "$(cat "$LINT_BIN")"
-t43_def_count="$(grep -c '^build_line_classes()' "$LINT_BIN")"
-t43_call_count="$(grep -c '_table="\$(build_line_classes' "$LINT_BIN")"
+# build_line_classes is defined in the shared library and called from edm-lint-artifacts
+LINT_LIB="${SCRIPT_DIR}/../_edm-lint-lib.sh"
+t43_def_count="$(count_matches '^build_line_classes()' "$LINT_LIB")"
+t43_call_count="$(count_matches '_table="\$(build_line_classes' "$LINT_BIN")"
 [[ "$t43_def_count" -eq 1 && "$t43_call_count" -eq 1 ]] \
-  && pass "T43 AC1 -- exactly one build_line_classes definition and one call site" \
+  && pass "T43 AC1 -- exactly one build_line_classes definition (in shared lib) and one call site" \
   || fail "T43 AC1 -- found ${t43_def_count} definition(s) and ${t43_call_count} call site(s), expected 1 each"
 
 echo
@@ -1684,12 +1718,13 @@ flowchart TD
     A[Ok] --> B[Done]
 '
 t43_start="$SECONDS"
-bash "$LINT_BIN" --path "${T43_SCRATCH}/unterminated.md" >/dev/null 2>&1
-t43_rc=$?
+t43_rc=0
+t43_unterminated_out="$(bash "$LINT_BIN" --path "${T43_SCRATCH}/unterminated.md" 2>&1)" || t43_rc=$?
 t43_elapsed=$((SECONDS - t43_start))
-[[ "$t43_elapsed" -le 10 && "$t43_rc" -le 1 ]] \
-  && pass "T43 AC3 -- unterminated fence terminates promptly (took ${t43_elapsed}s, exit ${t43_rc})" \
-  || fail "T43 AC3 -- unterminated fence took ${t43_elapsed}s or exited ${t43_rc} (expected <=10s, exit 0/1)"
+[[ "$t43_elapsed" -le 10 && "$t43_rc" -eq 1 ]] \
+  && pass "T43 AC3 -- unterminated fence terminates promptly and exits 1 (took ${t43_elapsed}s)" \
+  || fail "T43 AC3 -- unterminated fence took ${t43_elapsed}s or exited ${t43_rc} (expected <=10s, exit 1)"
+check "T43 AC3 -- unterminated fence emits the dedicated violation class" "unterminated-fence" "$t43_unterminated_out"
 
 t43_write nested.md 'Header
 
@@ -1708,6 +1743,20 @@ t43_elapsed=$((SECONDS - t43_start))
   && pass "T43 AC3 -- nested-looking fence does not hang or crash (took ${t43_elapsed}s, exit ${t43_rc})" \
   || fail "T43 AC3 -- nested-looking fence took ${t43_elapsed}s or exited ${t43_rc} (expected <=10s, exit 0/1)"
 
+t43_write four-backtick.md 'Header
+
+````mermaid
+flowchart TD
+    A[Inner three-backtick example follows] --> B[Still in fence]
+    ```text
+    literal sample
+    ```
+    C[Wait; then retry] --> D[Done]
+````
+'
+check_fails "T43 AC3 -- a four-backtick mermaid fence stays open across inner triple-backtick examples" "mermaid-semicolon" \
+  bash "$LINT_BIN" --path "${T43_SCRATCH}/four-backtick.md"
+
 echo
 echo "T43 AC4 -- the class fires on a raw ';' inside a label span"
 t43_write invalid1.md 'Header
@@ -1715,6 +1764,8 @@ t43_write invalid1.md 'Header
 ```mermaid
 flowchart TD
     A[Wait; then retry] --> B[Done]
+    C[Entity boundary #abcdefghijk; still violates] --> D[Done]
+    E[#; still violates] --> F[Done]
 ```
 '
 check_fails "T43 AC4 -- a raw ';' inside [...] is flagged as mermaid-semicolon" "mermaid-semicolon" \
@@ -1722,24 +1773,25 @@ check_fails "T43 AC4 -- a raw ';' inside [...] is flagged as mermaid-semicolon" 
 
 echo
 echo "T43 AC5 -- zero false positives on the legal cases"
-t43_write valid1.md 'Header
-
-```mermaid
-flowchart TD
-    A[Wait#59; then retry] --> B[Done]
-    A["ratio 3,4 (ok)"] --> C[End]
-    classDef done fill:#f9f,stroke:#333;
-    style A fill:#bbf,stroke:#333;
-    linkStyle 0 stroke:#333;
-    %% a comment; with a semicolon is fine
-    D[Quote#quot;here] --> E[Hash#35;here]
-```
-
-```mermaid
-sequenceDiagram
-    Alice->>Bob: hello there, no problem
-```
-'
+{
+  printf '%s\n' 'Header'
+  printf '\n'
+  printf '%s\n' '```mermaid'
+  printf '%s\n' 'flowchart TD'
+  printf '%s\n' '    A[Wait#59; then retry] --> B[Done]'
+  printf '%s\n' '    A["ratio 3,4 (ok)"] --> C[End]'
+  printf '%s\n' '    classDef done fill:#f9f,stroke:#333;'
+  printf '%s\n' '    style A fill:#bbf,stroke:#333;'
+  printf '%s\n' '    linkStyle 0 stroke:#333;'
+  printf '%s\n' '    %% a comment; with a semicolon is fine'
+  printf '%s\n' '    D[Quote#quot;here] --> E[Hash#35;here]'
+  printf '%s\n' '```'
+  printf '\n'
+  printf '%s\n' '```mermaid'
+  printf '%s\n' 'sequenceDiagram'
+  printf '%s\n' '    Alice->>Bob: hello there, no problem'
+  printf '%s\n' '```'
+} > "${T43_SCRATCH}/valid1.md"
 bash "$LINT_BIN" --path "${T43_SCRATCH}/valid1.md" >/dev/null 2>&1 \
   && pass "T43 AC5 -- entity codes, trailing ;, %% comments, classDef/style/linkStyle, and a clean sequenceDiagram all pass" \
   || fail "T43 AC5 -- a legal case was incorrectly flagged"
@@ -1764,6 +1816,8 @@ t43_write openline.md 'Header
 ```mermaid <!-- edm-lint-ignore -->
 flowchart TD
     A[Wait; then retry] --> B[Done]
+    C[Entity boundary #abcdefghijk; still violates] --> D[Done]
+    E[#; still violates] --> F[Done]
 ```
 '
 bash "$LINT_BIN" --path "${T43_SCRATCH}/openline.md" >/dev/null 2>&1 \
@@ -1806,7 +1860,9 @@ echo "T43 AC9 -- the three existing classes behave identically after the refacto
 # committed script (via `git stash`) against the post-refactor script. This ongoing assertion
 # proves the CURRENT tree still produces zero attribution/unicode/leaked-tool-tag violations,
 # i.e. the refactor has not regressed the three pre-existing classes against the live tree.
-t43_all_out="$(bash "$LINT_BIN" --all 2>&1)"
+t43_all_ec=0
+t43_all_out="$(bash "$LINT_BIN" --all 2>&1)" || t43_all_ec=$?
+[[ "$t43_all_ec" -eq 0 ]] || fail "T43 AC9 -- edm-lint-artifacts --all exited ${t43_all_ec}: ${t43_all_out}"
 check "T43 AC9 -- --all is still CLEAN across the tree post-refactor" "CLEAN" "$t43_all_out"
 check_absent "T43 AC9 -- no attribution violation on the live tree" ": attribution: " "$t43_all_out"
 check_absent "T43 AC9 -- no unicode violation on the live tree" ": unicode: " "$t43_all_out"
@@ -1815,7 +1871,8 @@ check_absent "T43 AC9 -- no leaked-tool-tag violation on the live tree" ": leake
 echo
 echo "T43 AC10 -- performance budget (measured manually: 0.096s before, 0.097s after -- ~1.01x, well under 1.40x)"
 t43_perf_start="$SECONDS"
-bash "$LINT_BIN" --all >/dev/null 2>&1
+t43_perf_ec=0
+bash "$LINT_BIN" --all >/dev/null 2>&1 || t43_perf_ec=$?
 t43_perf_elapsed=$((SECONDS - t43_perf_start))
 [[ "$t43_perf_elapsed" -le 15 ]] \
   && pass "T43 AC10 -- --all completes within a sane absolute bound (${t43_perf_elapsed}s)" \
@@ -1884,6 +1941,8 @@ echo "T44 AC2 -- valid/ coverage: entity codes, terminator, comment, directives,
   && pass "T44 AC2 -- a valid fixture covers a non-Mermaid fence" || fail "T44 AC2 -- no valid fixture covers a non-Mermaid fence"
 [[ -n "$(grep -l '%%' "${MERMAID_VALID_DIR}"/*.md 2>/dev/null || true)" ]] \
   && pass "T44 AC2 -- a valid fixture covers a %% comment with a semicolon" || fail "T44 AC2 -- no valid fixture covers a %% comment"
+[[ -f "${MERMAID_VALID_DIR}/v12-indented-fence.md" ]] \
+  && pass "T44 AC2 -- an indented-fence fixture is present" || fail "T44 AC2 -- v12-indented-fence.md is missing"
 
 echo
 echo "T44 AC3 -- invalid/ coverage: one file per required case, each with an expected-line marker"
@@ -1898,6 +1957,8 @@ echo
 echo "T44 AC4 -- exact violation set: zero on valid/, exactly one per file (at its expected line) on invalid/"
 t44_valid_out="$(bash "$LINT_BIN" --path "$MERMAID_VALID_DIR" 2>&1)"
 check "T44 AC4 -- valid/ is CLEAN" "CLEAN" "$t44_valid_out"
+check_absent "T44 AC4 -- the indented-fence fixture does not leak a mermaid-semicolon violation" \
+  "v12-indented-fence.md" "$t44_valid_out"
 
 t44_ac4_case() {
   local bad=0 f expected actual
@@ -1920,7 +1981,7 @@ echo
 echo "T44 AC5 -- false positives are a release blocker"
 t44_ac5_case() {
   local scratch
-  scratch="$(mktemp -d /tmp/edm-t44-fp.XXXXXX)" || { fail "T44 AC5 -- mktemp failed"; return 1; }
+  scratch="$(mktemp -d "${TMP}/edm-t44-fp.XXXXXX")" || { fail "T44 AC5 -- mktemp failed"; return 1; }
   cp "${MERMAID_VALID_DIR}/v01-entity-codes.md" "${scratch}/copy.md"
 
   bash "$LINT_BIN" --path "${scratch}/copy.md" >/dev/null 2>&1 \
@@ -1944,7 +2005,9 @@ check "T44 AC6 -- .gitlab-ci.yml's test:smoke job runs the run-all.sh aggregator
 
 echo
 echo "T44 AC7 -- existing committed diagrams under tracked SRD/ trees pass"
-t44_all_out="$(bash "$LINT_BIN" --all 2>&1)"
+t44_all_ec=0
+t44_all_out="$(bash "$LINT_BIN" --all 2>&1)" || t44_all_ec=$?
+[[ "$t44_all_ec" -eq 0 ]] || fail "T44 AC7 -- edm-lint-artifacts --all exited ${t44_all_ec}: ${t44_all_out}"
 check "T44 AC7 -- edm-lint-artifacts --all is CLEAN across the tracked SRD tree" "CLEAN" "$t44_all_out"
 
 echo
@@ -2045,7 +2108,7 @@ echo "T33 AC14 -- upstream loop closed: qc-audit.md and ticket-audit.md anti-pat
 QC_AUDIT_DOC_T33="$(cat "${PLUGIN_DIR}/docs/audit-patterns/qc-audit.md")"
 check "T33 AC14 -- qc-audit.md anti-pattern names infrastructure that does not exist" \
   "infrastructure that does not exist" "$QC_AUDIT_DOC_T33"
-t33_qc_audit_h2_count="$(grep -c '^## ' "${PLUGIN_DIR}/docs/audit-patterns/qc-audit.md")"
+t33_qc_audit_h2_count="$(count_matches '^## ' "${PLUGIN_DIR}/docs/audit-patterns/qc-audit.md")"
 [[ "$t33_qc_audit_h2_count" -eq 4 ]] && pass "T33 AC14 -- qc-audit.md still has exactly 4 '##' headings" \
   || fail "T33 AC14 -- qc-audit.md has ${t33_qc_audit_h2_count} '##' headings, expected 4"
 TICKET_AUDIT_DOC_T33="$(cat "${PLUGIN_DIR}/docs/audit-patterns/ticket-audit.md")"
@@ -2095,12 +2158,10 @@ check "T34 AC4 -- explicit GO verdict" "**GO**" "$DECISIONS_CONTENT"
 check "T34 AC4 -- dated" "2026-07-28" "$DECISIONS_CONTENT"
 
 echo
-echo "T34 AC5 -- ordering: the spike note is committed, and T34's own commit made no dispatcher edit"
+echo "T34 AC5 -- ordering: the spike note is committed, and orchestrator holds no T34-specific note"
 [[ -f "$SPIKE_NOTE" ]] && pass "T34 AC5 -- spike-skill-composition.md is committed to the initiative directory" \
   || fail "T34 AC5 -- spike-skill-composition.md is missing"
-t34_orch_touched_by_t34="$(git -C "$PLUGIN_DIR/../.." log --format='%s' -- plugins/edm/skills/orchestrator/SKILL.md 2>/dev/null | grep -c 'EDMV3-T34' || true)"
-[[ "${t34_orch_touched_by_t34:-0}" -eq 0 ]] && pass "T34 AC5 -- no commit tagged EDMV3-T34 touches orchestrator/SKILL.md (that edge is EDMV3-T35/T38's)" \
-  || fail "T34 AC5 -- an EDMV3-T34-tagged commit touched orchestrator/SKILL.md"
+check_absent "T34 AC5 -- orchestrator/SKILL.md carries no T34-specific spike note" "EDMV3-T34" "$(cat "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
 
 echo
 echo "T34 AC6 -- rule 2 rewritten: Skill-tool composition pattern and both caller obligations"
@@ -2143,7 +2204,7 @@ echo "=== EDMV3-T35: Gate PROTOCOL (canonical) + by-name references replace rest
 ORCH_SKILL_T35="$(cat "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
 
 echo "T35 AC1 -- one canonical section"
-t35_protocol_count="$(grep -c '^## Gate PROTOCOL (canonical)$' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
+t35_protocol_count="$(count_matches '^## Gate PROTOCOL (canonical)$' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
 [[ "$t35_protocol_count" -eq 1 ]] && pass "T35 AC1 -- '## Gate PROTOCOL (canonical)' appears exactly once" \
   || fail "T35 AC1 -- '## Gate PROTOCOL (canonical)' appears ${t35_protocol_count} times, expected 1"
 
@@ -2278,14 +2339,15 @@ echo
 echo "T36 AC4 -- Step 0 text instructs a block on non-zero branch-check; CHANGELOG records the behaviour change"
 check "T36 AC4 -- branch-check non-zero BLOCKs, surfacing the git checkout instruction" \
   'surface the `git checkout <initiative_branch>` instruction it' "$PLAN_STEP0_T36"
+t36_changelog_block="$(awk '/EDMV3-T36/{f=1} f{print} /^## /{if (f && NR > 1) exit}' "${PLUGIN_DIR}/CHANGELOG.md")"
 check "T36 AC4 -- CHANGELOG.md records 'branch-check becoming a BLOCK'" \
-  "branch-check becoming a BLOCK" "$(cat "${PLUGIN_DIR}/CHANGELOG.md")"
+  "branch-check becoming a BLOCK" "$t36_changelog_block"
 
 echo
 echo "T36 AC5 -- written once (full text in one file), referenced by name from the other seven"
 t36_full_text_files=0
 for t36_skill in $T36_PHASE_SKILLS; do
-  t36_hits="$(grep -c 'edm-state branch-check' "${PLUGIN_DIR}/skills/${t36_skill}/SKILL.md" 2>/dev/null || echo 0)"
+  t36_hits="$(count_matches 'edm-state branch-check' "${PLUGIN_DIR}/skills/${t36_skill}/SKILL.md")"
   [[ "${t36_hits:-0}" -gt 0 ]] && t36_full_text_files=$((t36_full_text_files + 1))
 done
 [[ "$t36_full_text_files" -eq 1 ]] && pass "T36 AC5 -- exactly one of the eight phase skills (plan) carries the literal edm-state branch-check text" \
@@ -2306,7 +2368,7 @@ echo
 echo "T36 AC7 -- mode suppression computed, not restated (no 'skipped_phases' token in any of the eight)"
 t36_skipped_phases_hits=0
 for t36_skill in $T36_PHASE_SKILLS; do
-  t36_c="$(grep -c 'skipped_phases' "${PLUGIN_DIR}/skills/${t36_skill}/SKILL.md" 2>/dev/null || echo 0)"
+  t36_c="$(count_matches 'skipped_phases' "${PLUGIN_DIR}/skills/${t36_skill}/SKILL.md")"
   t36_skipped_phases_hits=$((t36_skipped_phases_hits + ${t36_c:-0}))
 done
 [[ "$t36_skipped_phases_hits" -eq 0 ]] && pass "T36 AC7 -- zero 'skipped_phases' occurrences across all eight phase skills" \
@@ -2612,7 +2674,7 @@ check "T55 AC5 -- README states declining curation never blocks gate approval" \
 echo
 echo "T55 AC6 -- regression guard: Gate PROTOCOL (canonical) is unchanged by this ticket"
 ORCH_SKILL_T55="$(cat "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
-t55_protocol_count="$(grep -c '^## Gate PROTOCOL (canonical)$' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" || true)"
+t55_protocol_count="$(count_matches '^## Gate PROTOCOL (canonical)$' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
 [[ "${t55_protocol_count:-0}" -eq 1 ]] && pass "T55 AC6 -- '## Gate PROTOCOL (canonical)' still appears exactly once" \
   || fail "T55 AC6 -- '## Gate PROTOCOL (canonical)' appears ${t55_protocol_count:-0} times, expected 1"
 check "T55 AC6 -- approve-gate still called only on exact Approve selection" \
@@ -2756,7 +2818,7 @@ echo
 echo "T56 AC3 -- negative: a fifth '##' heading fails, naming the document and the heading"
 t56_ac3_case() {
   local scratch
-  scratch="$(mktemp -d /tmp/edm-t56-ac3.XXXXXX)" || { fail "T56 AC3 -- mktemp failed"; return 1; }
+  scratch="$(mktemp -d "${TMP}/edm-t56-ac3.XXXXXX")" || { fail "T56 AC3 -- mktemp failed"; return 1; }
   cp "${DOCS_DIR_T56}/code-audit.md" "${scratch}/code-audit.md"
   printf '\n## Unexpected Fifth Section\n\nSurprise content.\n' >> "${scratch}/code-audit.md"
 
@@ -2786,7 +2848,7 @@ check "T56 AC4 -- SOURCES.md is exempt, with its reason, in the check function" 
 
 t56_ac4_third_file_case() {
   local scratch
-  scratch="$(mktemp -d /tmp/edm-t56-ac4.XXXXXX)" || { fail "T56 AC4 -- mktemp failed"; return 1; }
+  scratch="$(mktemp -d "${TMP}/edm-t56-ac4.XXXXXX")" || { fail "T56 AC4 -- mktemp failed"; return 1; }
   local f
   for f in "${DOCS_DIR_T56}"/*.md; do
     cp "$f" "${scratch}/$(basename "$f")"
@@ -2811,7 +2873,7 @@ echo
 echo "T56 AC5 -- negative: a stray orphan '### ' heading after the last section's boundary fails"
 t56_ac5_case() {
   local scratch
-  scratch="$(mktemp -d /tmp/edm-t56-ac5.XXXXXX)" || { fail "T56 AC5 -- mktemp failed"; return 1; }
+  scratch="$(mktemp -d "${TMP}/edm-t56-ac5.XXXXXX")" || { fail "T56 AC5 -- mktemp failed"; return 1; }
   cp "${DOCS_DIR_T56}/code-audit.md" "${scratch}/code-audit.md"
   printf '\n### Orphan\n\nThis should never land here.\n' >> "${scratch}/code-audit.md"
 
@@ -3010,6 +3072,9 @@ fi
 # tracked SRD tree or change EDM_SRD_ROOT/cwd. Everything in that range is read-only prose
 # inspection today; if that stops being true, re-capture at the point of the mutation rather
 # than reverting to five scans.
+WAVE7_ALL_LINT_CWD="$(pwd)"
+WAVE7_ALL_LINT_SRD_ROOT="${EDM_SRD_ROOT:-}"
+WAVE7_ALL_LINT_GIT_STATUS="$(git -C "$PLUGIN_DIR/../.." status --porcelain 2>/dev/null || true)"
 WAVE7_ALL_LINT_EXIT=0
 WAVE7_ALL_LINT_OUT="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all 2>&1)" || WAVE7_ALL_LINT_EXIT=$?
 
@@ -3155,7 +3220,7 @@ check "T47 AC4 -- 'distinct top-level source trees' present" "distinct top-level
 
 echo
 echo "T47 AC5 -- one location after the move: orchestrator carries no copy"
-t47_orch_explorer_hits="$(grep -c 'edm-explorer' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" || true)"
+t47_orch_explorer_hits="$(count_matches 'edm-explorer' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
 [[ "${t47_orch_explorer_hits:-0}" -eq 0 ]] && pass "T47 AC5 -- orchestrator/SKILL.md carries zero 'edm-explorer' mentions" \
   || fail "T47 AC5 -- orchestrator/SKILL.md carries ${t47_orch_explorer_hits} 'edm-explorer' mention(s), expected 0"
 
@@ -3318,7 +3383,11 @@ echo "T67 AC11 -- no blocking job's script contains a network call"
 t67ac11_blocking_jobs="lint:bash-syntax lint:artifacts lint:grants lint:vocabulary lint:shellcheck test:smoke test:smoke-bash32 test:state-validate validate:manifest"
 t67ac11_net_hits=""
 for t67_job in $t67ac11_blocking_jobs; do
-  t67_job_body="$(awk -v job="^${t67_job}:" '$0 ~ job {f=1; next} /^[a-zA-Z_.-]+:$/ {f=0} f' "$GITLAB_CI_YML")"
+  t67_job_body="$(awk -v job="^${t67_job}:$" '
+    $0 ~ job {f=1; next}
+    f && /^[^[:space:]][^#]*:$/ {exit}
+    f {print}
+  ' "$GITLAB_CI_YML")"
   echo "$t67_job_body" | grep -qE 'curl |wget |anthropic\.com' && t67ac11_net_hits="${t67ac11_net_hits} ${t67_job}"
 done
 [[ -z "$t67ac11_net_hits" ]] \
@@ -3340,6 +3409,17 @@ echo "  sequential script lines in one job, not four parallel jobs."
 # =================================================================================
 echo
 echo "=== EDMV3-T48: tiering matrix (D16) -- contested set unchanged, promotion rule unit-verified ==="
+
+if [[ "$(pwd)" == "$WAVE7_ALL_LINT_CWD" && "${EDM_SRD_ROOT:-}" == "$WAVE7_ALL_LINT_SRD_ROOT" ]]; then
+  pass "shared-lint invariant -- cwd and EDM_SRD_ROOT match the captured values before T48"
+else
+  fail "shared-lint invariant -- cwd or EDM_SRD_ROOT drifted before T48"
+fi
+if [[ "$(git -C "$PLUGIN_DIR/../.." status --porcelain 2>/dev/null || true)" == "$WAVE7_ALL_LINT_GIT_STATUS" ]]; then
+  pass "shared-lint invariant -- tracked-tree fingerprint unchanged before T48"
+else
+  fail "shared-lint invariant -- tracked-tree fingerprint changed before T48"
+fi
 
 echo
 echo "T48 AC1 -- nothing pre-tiered: the 15 contested agents are still opus/max"
@@ -3392,7 +3472,7 @@ check "T48 -- self-test proves a P0-missing config is rejected and the next tier
   "self-test PASS: P0-missing config rejected, next tier wins" "$t48_matrix_out"
 check "T48 -- self-test proves an agent with no qualifying config is left unchanged" \
   "self-test PASS: no qualifying config leaves the agent unchanged" "$t48_matrix_out"
-check "T48 -- self-test summary reports 3/3" "self-test: PASS (3/3" "$t48_matrix_out"
+check "T48 -- self-test summary reports 6/6" "self-test: PASS (6/6" "$t48_matrix_out"
 
 echo
 echo "T48 -- CLAUDE.md provenance header present and honestly states not-yet-derived"
@@ -3447,7 +3527,7 @@ done
 # not hypothetical: the first version of this check used `grep -P`, which BSD grep does not
 # support -- it exited 2, the `|| true` swallowed it, and the check reported clean. The portable
 # `[[:print:][:space:]]` form under LC_ALL=C is what bin/edm-lint-artifacts already falls back to.
-t_ascii_probe="$(mktemp)"
+t_ascii_probe="$(mktemp "${TMP}/edm-ascii-probe.XXXXXX")"
 printf 'em dash \xe2\x80\x94 here\n' > "$t_ascii_probe"
 if LC_ALL=C grep -qv '^[[:print:][:space:]]*$' "$t_ascii_probe" 2>/dev/null; then
   pass "non-ASCII detector positive control fires on a known em dash"

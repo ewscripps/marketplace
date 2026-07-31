@@ -5,6 +5,7 @@
 # every dimension is computed by grep/awk/jq over the run's own artifact files, so the
 # same run directory scores the same way every time (AC6).
 #
+# EDM-HELP-BEGIN
 # Usage:
 #   score-artifacts.sh <run-dir>              Score one run directory. Writes
 #                                              <run-dir>/scores.json and prints the same
@@ -26,7 +27,7 @@
 #                                              CI decision that consumes --compare's output
 #                                              is EDMV3-T39's job (srd.md EDMV3-52), not
 #                                              this ticket's.
-#   score-artifacts.sh -h|--help               Show this help.
+#   score-artifacts.sh -h|--help|help          Show this help.
 #
 # The five dimensions, in fixed order (AC1, exactly five -- never "at least five"):
 #   1. requirement-id-coverage        -- every {PREFIX}-NN ID in the SRD is unique,
@@ -83,7 +84,12 @@
 # Depends on nothing beyond bash 3.2 and jq (AC6). Never calls bin/edm-state, never reads
 # ANTHROPIC_API_KEY, never launches claude -- this script only ever reads files under the
 # run directory it is given.
+# EDM-HELP-END
 set -uo pipefail
+
+print_help() {
+  awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "${BASH_SOURCE[0]}"
+}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCORER_VERSION="1.0.0"
@@ -97,7 +103,7 @@ die() {
 }
 
 usage() {
-  sed -n '2,45p' "${BASH_SOURCE[0]}"
+  print_help
 }
 
 describe() {
@@ -242,37 +248,87 @@ compute_dim2() {
 _scan_mermaid_blocks() {
   local file="$1"
   awk '
-    BEGIN { in_block=0; first_line=1; bad=0; has_content=0 }
-    /^```[Mm][Ee][Rr][Mm][Aa][Ii][Dd][[:space:]]*$/ {
-      if (in_block) next
-      in_block=1; first_line=1; bad=0; has_content=0
-      next
+    function trim(s) {
+      sub(/^[[:space:]]*/, "", s)
+      sub(/[[:space:]]*$/, "", s)
+      return s
     }
-    in_block && /^```[[:space:]]*$/ {
-      if (has_content == 0) bad = 1
-      print (bad == 0 ? "OK" : "BAD")
-      in_block = 0
-      next
-    }
-    in_block {
-      line = $0
-      if (line ~ /^[[:space:]]*$/) next
-      has_content = 1
-      if (first_line) {
-        first_line = 0
-        stripped = line
-        gsub(/^[[:space:]]+/, "", stripped)
-        if (stripped !~ /^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|journey|gitGraph|mindmap|timeline|quadrantChart|requirementDiagram|C4Context|C4Container|C4Component|C4Dynamic|C4Deployment)/) {
-          bad = 1
+    function strip_entities(s,   out, i, n, j, k) {
+      out = ""
+      i = 1
+      n = length(s)
+      while (i <= n) {
+        if (substr(s, i, 1) == "#") {
+          j = i + 1
+          k = 0
+          while (k < 10 && j <= n && substr(s, j, 1) ~ /[0-9A-Za-z]/) {
+            j++
+            k++
+          }
+          if (k >= 1 && j <= n && substr(s, j, 1) == ";") {
+            i = j + 1
+            continue
+          }
         }
+        out = out substr(s, i, 1)
+        i++
       }
-      stripped_line = line
-      gsub(/#(59|35|quot|[0-9]+);/, "", stripped_line)
-      if (stripped_line ~ /\[[^]]*;[^]]*\]/) bad = 1
-      if (stripped_line ~ /"[^"]*;[^"]*"/) bad = 1
-      if (stripped_line ~ /\([^)]*;[^)]*\)/) bad = 1
-      if (stripped_line ~ /\|[^|]*;[^|]*\|/) bad = 1
-      next
+      return out
+    }
+    function is_violation(line,   trimmed, stripped, after_colon, p) {
+      trimmed = trim(line)
+      if (substr(trimmed, 1, 2) == "%%") return 0
+      if (trimmed ~ /^(classDef|style|linkStyle)[[:space:]]/) return 0
+      if (trimmed == "classDef" || trimmed == "style" || trimmed == "linkStyle") return 0
+
+      stripped = strip_entities(line)
+      sub(/;[[:space:]]*$/, "", stripped)
+
+      if (stripped ~ /\[[^][]*;[^][]*\]/) return 1
+      if (stripped ~ /\([^()]*;[^()]*\)/) return 1
+      if (stripped ~ /\{[^{}]*;[^{}]*\}/) return 1
+      if (stripped ~ /\|[^|]*;[^|]*\|/) return 1
+      if (stripped ~ /"[^"]*;[^"]*"/) return 1
+
+      p = index(stripped, ":")
+      if (index(stripped, "->") > 0 && p > 0) {
+        after_colon = substr(stripped, p + 1)
+        if (index(after_colon, ";") > 0) return 1
+      }
+      return 0
+    }
+    BEGIN { in_block=0; first_line=1; bad=0; has_content=0 }
+    {
+      sub(/\r$/, "")
+      if ($0 ~ /^```[Mm][Ee][Rr][Mm][Aa][Ii][Dd][[:space:]]*$/) {
+        if (in_block) next
+        in_block=1
+        first_line=1
+        bad=0
+        has_content=0
+        next
+      }
+      if (in_block && $0 ~ /^```[[:space:]]*$/) {
+        if (has_content == 0) bad = 1
+        print (bad == 0 ? "OK" : "BAD")
+        in_block = 0
+        next
+      }
+      if (in_block) {
+        line = $0
+        if (line ~ /^[[:space:]]*$/) next
+        has_content = 1
+        if (first_line) {
+          first_line = 0
+          stripped = line
+          gsub(/^[[:space:]]+/, "", stripped)
+          if (stripped !~ /^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|journey|gitGraph|mindmap|timeline|quadrantChart|requirementDiagram|C4Context|C4Container|C4Component|C4Dynamic|C4Deployment)/) {
+            bad = 1
+          }
+        }
+        if (is_violation(line)) bad = 1
+        next
+      }
     }
     END { if (in_block) print "BAD" }
   ' "$file"
@@ -588,7 +644,7 @@ cmd_compare() {
 
 # ---- dispatch ------------------------------------------------------------------------------
 case "${1:-}" in
-  -h|--help)
+  -h|--help|help)
     usage
     exit 0
     ;;

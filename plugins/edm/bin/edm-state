@@ -220,6 +220,10 @@ state_file_for() {
   # AC1: Compute product-scoped path from env vars when no on-disk match found.
   local product="${EDM_PRODUCT:-}"
   local description="${EDM_DESCRIPTION:-}"
+  [[ -z "$product" || "$product" =~ ^[A-Za-z0-9_-]+$ ]] \
+    || die "state_file_for: invalid EDM_PRODUCT '${product}' (only alphanumeric, hyphen, underscore allowed)"
+  [[ -z "$description" || "$description" =~ ^[A-Za-z0-9_-]+$ ]] \
+    || die "state_file_for: invalid EDM_DESCRIPTION '${description}' (only alphanumeric, hyphen, underscore allowed)"
   if [[ -n "$product" && -n "$description" ]]; then
     echo "${SRD_ROOT}/${product}/${prefix}__${description}/.edm-state.json"
     return 0
@@ -290,17 +294,28 @@ get_session_tokens_since() {
   local _token_read_cap="${EDM_TOKEN_READ_LINE_CAP:-20000}"
 
   if [[ -n "$driving_session" && -f "$driving_session" ]]; then
-    tail -n "$_token_read_cap" "$driving_session" | jq -s --arg since "$since" --arg mode "scoped" '
-      [.[] | select(.type == "assistant" and (.timestamp // "") >= $since)] as $msgs |
-      {
-        input: ([$msgs[].message.usage.input_tokens // 0] | add // 0),
-        output: ([$msgs[].message.usage.output_tokens // 0] | add // 0),
-        cache_read: ([$msgs[].message.usage.cache_read_input_tokens // 0] | add // 0),
-        cache_write_5m: ([$msgs[].message.usage.cache_creation.ephemeral_5m_input_tokens // 0] | add // 0),
-        cache_write_1h: ([$msgs[].message.usage.cache_creation.ephemeral_1h_input_tokens // 0] | add // 0),
-        model: ($msgs[-1].message.model // "unknown"),
-        attribution_mode: $mode
-      }
+    tail -n "$_token_read_cap" "$driving_session" | jq -Rn --arg since "$since" --arg mode "scoped" '
+      reduce inputs as $line (
+        {msgs: [], bad: 0};
+        if ($line | length) == 0 then .
+        else
+          ($line | fromjson?) as $obj
+          | if $obj == null then .bad += 1
+            elif $obj.type == "assistant" and (($obj.timestamp // "") >= $since) then .msgs += [$obj]
+            else .
+            end
+        end
+      ) as $acc
+      | ($acc.msgs) as $msgs
+      | {
+          input: ([$msgs[].message.usage.input_tokens // 0] | add // 0),
+          output: ([$msgs[].message.usage.output_tokens // 0] | add // 0),
+          cache_read: ([$msgs[].message.usage.cache_read_input_tokens // 0] | add // 0),
+          cache_write_5m: ([$msgs[].message.usage.cache_creation.ephemeral_5m_input_tokens // 0] | add // 0),
+          cache_write_1h: ([$msgs[].message.usage.cache_creation.ephemeral_1h_input_tokens // 0] | add // 0),
+          model: ($msgs[-1].message.model // "unknown"),
+          attribution_mode: (if $acc.bad > 0 then "unparseable" else $mode end)
+        }
     ' 2>/dev/null && return 0
   fi
 
@@ -309,17 +324,28 @@ get_session_tokens_since() {
   # directory has jsonl files. Sums every session JSONL -- the pre-T52 behaviour -- and tags
   # the result so callers and readers can tell a whole-directory figure from a scoped one. Each
   # file is independently line-capped for the same reason as the scoped branch above.
-  tail -n "$_token_read_cap" -q "$sessions_dir"/*.jsonl 2>/dev/null | jq -s --arg since "$since" --arg mode "whole-directory" '
-    [.[] | select(.type == "assistant" and (.timestamp // "") >= $since)] as $msgs |
-    {
-      input: ([$msgs[].message.usage.input_tokens // 0] | add // 0),
-      output: ([$msgs[].message.usage.output_tokens // 0] | add // 0),
-      cache_read: ([$msgs[].message.usage.cache_read_input_tokens // 0] | add // 0),
-      cache_write_5m: ([$msgs[].message.usage.cache_creation.ephemeral_5m_input_tokens // 0] | add // 0),
-      cache_write_1h: ([$msgs[].message.usage.cache_creation.ephemeral_1h_input_tokens // 0] | add // 0),
-      model: ($msgs[-1].message.model // "unknown"),
-      attribution_mode: $mode
-    }
+  cat "$sessions_dir"/*.jsonl 2>/dev/null | tail -n "$_token_read_cap" | jq -Rn --arg since "$since" --arg mode "whole-directory" '
+    reduce inputs as $line (
+      {msgs: [], bad: 0};
+      if ($line | length) == 0 then .
+      else
+        ($line | fromjson?) as $obj
+        | if $obj == null then .bad += 1
+          elif $obj.type == "assistant" and (($obj.timestamp // "") >= $since) then .msgs += [$obj]
+          else .
+          end
+      end
+    ) as $acc
+    | ($acc.msgs) as $msgs
+    | {
+        input: ([$msgs[].message.usage.input_tokens // 0] | add // 0),
+        output: ([$msgs[].message.usage.output_tokens // 0] | add // 0),
+        cache_read: ([$msgs[].message.usage.cache_read_input_tokens // 0] | add // 0),
+        cache_write_5m: ([$msgs[].message.usage.cache_creation.ephemeral_5m_input_tokens // 0] | add // 0),
+        cache_write_1h: ([$msgs[].message.usage.cache_creation.ephemeral_1h_input_tokens // 0] | add // 0),
+        model: ($msgs[-1].message.model // "unknown"),
+        attribution_mode: (if $acc.bad > 0 then "unparseable" else $mode end)
+      }
   ' 2>/dev/null || echo '{"input":0,"output":0,"cache_read":0,"cache_write_5m":0,"cache_write_1h":0,"model":"unknown","attribution_mode":"whole-directory"}'
 }
 
@@ -400,8 +426,8 @@ compute_cost_usd() {
       ;;
   esac
   awk -v i="$input" -v o="$output" -v cr="$cache_read" -v c5="$cw5m" -v c1="$cw1h" \
-      -v ir="$in_rate" -v or="$out_rate" -v crr="$cr_rate" -v c5r="$cw5m_rate" -v c1r="$cw1h_rate" \
-      'BEGIN { printf "%.4f", (i*ir + o*or + cr*crr + c5*c5r + c1*c1r) / 1000000 }'
+      -v ir="$in_rate" -v orr="$out_rate" -v crr="$cr_rate" -v c5r="$cw5m_rate" -v c1r="$cw1h_rate" \
+      'BEGIN { printf "%.4f", (i*ir + o*orr + cr*crr + c5*c5r + c1*c1r) / 1000000 }'
 }
 
 # Estimate human cost (USD) for a phase given:
@@ -437,16 +463,72 @@ read_state() {
 # On jq failure the temp file is removed and a non-zero status is returned (NOT die) so callers
 # that wrap rmw_state in `if !` (e.g. cmd_migrate_path's rollback) can react; bare callers abort
 # under set -e as before. (CA-009)
+_restore_trap() {
+  local sig="$1" saved="$2"
+  if [[ -n "$saved" ]]; then
+    eval "$saved"
+  else
+    trap - "$sig"
+  fi
+}
+
+_write_atomic_cleanup() {
+  rm -f "$1"
+}
+
+write_atomic() {
+  [[ $# -ge 2 ]] || { echo "write_atomic: usage: write_atomic <dest> <command> [args...]" >&2; return 2; }
+  local dest="$1"; shift
+  local dest_dir tmp old_exit old_int old_term ec=0
+  dest_dir="$(dirname "$dest")"
+  [[ -d "$dest_dir" ]] || { echo "write_atomic: destination directory does not exist: ${dest_dir}" >&2; return 1; }
+  [[ -w "$dest_dir" ]] || { echo "write_atomic: destination directory is not writable: ${dest_dir}" >&2; return 1; }
+  tmp="$(mktemp "${dest}.tmp.XXXXXX" 2>/dev/null)" || { echo "write_atomic: mktemp failed for ${dest}" >&2; return 1; }
+  old_exit="$(trap -p EXIT || true)"
+  old_int="$(trap -p INT || true)"
+  old_term="$(trap -p TERM || true)"
+  trap "_write_atomic_cleanup '$tmp'" EXIT INT TERM
+  "$@" > "$tmp"
+  ec=$?
+  if [[ $ec -ne 0 ]]; then
+    rm -f "$tmp"
+    _restore_trap EXIT "$old_exit"
+    _restore_trap INT "$old_int"
+    _restore_trap TERM "$old_term"
+    return $ec
+  fi
+  mv -f "$tmp" "$dest"
+  ec=$?
+  if [[ $ec -ne 0 ]]; then
+    rm -f "$tmp"
+    _restore_trap EXIT "$old_exit"
+    _restore_trap INT "$old_int"
+    _restore_trap TERM "$old_term"
+    return $ec
+  fi
+  _restore_trap EXIT "$old_exit"
+  _restore_trap INT "$old_int"
+  _restore_trap TERM "$old_term"
+}
+
+_rmw_state_render() {
+  local f="$1"; shift
+  local filter="$1"; shift
+  jq "$@" "$filter" "$f"
+}
+
+_print_literal() {
+  printf '%s' "$1"
+}
+
 _rmw_state_body() {
   local f="$1"; shift
   local filter="$1"; shift
   [[ -f "$f" ]] && cp -p "$f" "${f}.bak"
-  if ! jq "$@" "$filter" "$f" > "${f}.tmp.$$"; then
-    rm -f "${f}.tmp.$$"
+  if ! write_atomic "$f" _rmw_state_render "$f" "$filter" "$@"; then
     echo "edm-state: state write failed (jq error) for $f" >&2
     return 1
   fi
-  mv -f "${f}.tmp.$$" "$f"
 }
 
 # rmw_state <PREFIX> <jq-filter> [jq-args...]
@@ -470,8 +552,14 @@ now_utc() {
 # for the archive + migrate-path move idiom. (CA-015)
 git_aware_mv() {
   local s="$1" d="$2"
+  [[ ! -e "$d" ]] || die "git_aware_mv: destination already exists: $d"
   if git -C "$s" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git mv "$s" "$d" 2>/dev/null || mv "$s" "$d"
+    if ! git mv "$s" "$d" 2>/dev/null; then
+      if git -C "$s" ls-files --error-unmatch . >/dev/null 2>&1; then
+        die "git_aware_mv: git mv failed for tracked path '${s}' -> '${d}'"
+      fi
+      mv "$s" "$d"
+    fi
   else
     mv "$s" "$d"
   fi
@@ -587,6 +675,15 @@ code_audit_required_for_mode() {
   esac
 }
 
+audit_required_for_mode_or_legacy() {
+  local mode="$1"
+  if [[ "$mode" == "null" ]]; then
+    echo true
+  else
+    code_audit_required_for_mode "$mode"
+  fi
+}
+
 # convergence_exempt <mode> <lifecycle_mode> - echoes "true" when this initiative's phase graph
 # never runs a code-audit round at all, so the convergence gate cannot meaningfully apply.
 #
@@ -599,15 +696,15 @@ code_audit_required_for_mode() {
 # description of the rule -- CLAUDE.md's mode matrix, skills/implement/SKILL.md's Declare Done
 # step -- states it as one rule, so two copies is exactly the drift this methodology exists to
 # remove. cmd_approve_gate's code-audit precheck deliberately does NOT use this helper: it
-# applies the mode half only, because approving a code-audit gate under a lifecycle mode that
-# has no audit round should stay refused rather than become exempt.
+# shares only the mode-half helper below, because approving a code-audit gate under a lifecycle
+# mode that has no audit round should stay refused rather than become exempt.
 #
 # mode == "null" is a legacy state predating the mode field and defaults to "audit required"
-# (existing behaviour preserved) rather than being passed to a helper that would die on it.
+# through audit_required_for_mode_or_legacy() so every caller shares the same legacy fallback.
 convergence_exempt() {
   local mode="$1" lifecycle_mode="$2"
-  local audit_required="true"
-  [[ "$mode" != "null" ]] && audit_required="$(code_audit_required_for_mode "$mode")"
+  local audit_required
+  audit_required="$(audit_required_for_mode_or_legacy "$mode")"
   if [[ "$audit_required" == "false" ]]; then
     echo true
     return 0
@@ -735,23 +832,41 @@ with_state_lock() {
     return $_lock_ec
   else
     # Fallback: mkdir-based spin-lock (POSIX-portable, atomic on local filesystems)
-    local tries=0
+    local tries=0 holder_pid="" old_exit old_int old_term old_hup
     until mkdir "$lockdir" 2>/dev/null; do
+      holder_pid=""
+      if [[ -f "$pidfile" ]]; then
+        holder_pid="$(cat "$pidfile" 2>/dev/null || true)"
+        if [[ -z "$holder_pid" || ! "$holder_pid" =~ ^[0-9]+$ ]]; then
+          echo "edm-state: removing stale state lock ${lockdir} (invalid PID '${holder_pid:-missing}')" >&2
+          rm -rf "$lockdir"
+          continue
+        fi
+        if ! kill -0 "$holder_pid" 2>/dev/null; then
+          echo "edm-state: removing stale state lock ${lockdir} (PID ${holder_pid} no longer running)" >&2
+          rm -rf "$lockdir"
+          continue
+        fi
+      fi
       tries=$(( tries + 1 ))
       if [[ $tries -ge 50 ]]; then
-        local holder_pid=""
-        [[ -f "$pidfile" ]] && holder_pid="$(cat "$pidfile" 2>/dev/null || true)"
         die "state lock timeout after 50 tries on ${lockdir}${holder_pid:+ (held by PID ${holder_pid})}"
       fi
       sleep 0.1
     done
     echo $$ > "$pidfile" 2>/dev/null || true
-    # shellcheck disable=SC2064
+    old_exit="$(trap -p EXIT || true)"
+    old_int="$(trap -p INT || true)"
+    old_term="$(trap -p TERM || true)"
+    old_hup="$(trap -p HUP || true)"
     trap "rm -rf '${lockdir}'" EXIT INT TERM HUP
     "$@"
     local ec=$?
     rm -rf "$lockdir"
-    trap - EXIT INT TERM HUP
+    _restore_trap EXIT "$old_exit"
+    _restore_trap INT "$old_int"
+    _restore_trap TERM "$old_term"
+    _restore_trap HUP "$old_hup"
     return $ec
   fi
 }
@@ -821,6 +936,7 @@ schema_at_least() {
 # space-separated-string + word-membership pattern MODE_ENUM_LIST/LIFECYCLE_MODE_ENUM_LIST use
 # above, for the same reason.
 ALL_LENS_IDS="L1 L2 L3 L4 L5 L6 L7 L8 L9 L10 L11"
+# shellcheck disable=SC2086 -- deliberate word-splitting; bash 3.2 has no arrays-as-constants
 [[ "$(echo $ALL_LENS_IDS | wc -w | tr -d ' ')" -eq 11 ]] || die "internal: ALL_LENS_IDS must enumerate exactly 11 lenses"
 
 # AUDIT_ROUND_COERCE_JQ_DEF -- the single C-4 coercion for audit_rounds.<type> (EDMV3-T27 AC1a).
@@ -1053,8 +1169,11 @@ state_anomalies() {
 record_degraded_check() {
   local prefix="$1" check="$2" reason="$3"
   rmw_state "$prefix" '
-    .degraded_checks = ((.degraded_checks // []) + [{check: $c, reason: $r, recorded_at: $ts}])
-    | .last_updated = $ts
+    (.degraded_checks // []) as $existing
+    | if any($existing[]?; .check == $c and .reason == $r) then .
+      else .degraded_checks = ($existing + [{check: $c, reason: $r, recorded_at: $ts}])
+      | .last_updated = $ts
+      end
   ' --arg c "$check" --arg r "$reason" --arg ts "$(now_utc)"
 }
 
@@ -1140,6 +1259,7 @@ cmd_set() {
   case " $SETTABLE_KEYS " in
     *" $key "*) ;;
     *)
+      # shellcheck disable=SC2086 -- deliberate word-splitting; bash 3.2 has no arrays-as-constants
       die "set: unknown key '$key'. Valid keys: $(printf '%s\n' $SETTABLE_KEYS | sort | tr '\n' ' ' | sed 's/ *$//')"
       ;;
   esac
@@ -1164,41 +1284,8 @@ cmd_set() {
   esac
 }
 
-cmd_init() {
-  [[ $# -eq 1 ]] || die "usage: edm-state init <PREFIX>"
-  require_jq
-  local prefix="$1"
-  local f
-  f="$(state_file_for "$prefix")"
-  if [[ -f "$f" ]]; then
-    echo "edm-state: state file already exists at $f" >&2
-    return 0
-  fi
-  mkdir -p "$(dirname "$f")"
-  local branch product description
-  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
-  # Accept product/description from env so edm-init --product/--description can pre-seed them.
-  product="${EDM_PRODUCT:-}"
-  description="${EDM_DESCRIPTION:-}"
-  # Seed mode-family fields from install-time userConfig defaults when edm-init exported them
-  # (CA-010 / EDMV2-102 middle tier). A bare `edm-state init` (no env) keeps the built-in defaults.
-  # Validate defensively so a stray env value can't write an invalid enum into fresh state.
-  local mode="${EDM_MODE:-standard}"
-  local compliance="${EDM_COMPLIANCE_ENABLED:-false}"
-  local impl_mode="${EDM_IMPLEMENTATION_MODE:-standard}"
-  # Word-membership test against the single-source MODE_ENUM_LIST (EDMV3-T07 AC5) --
-  # avoids re-declaring the mode enum as a second case-literal list that would drift
-  # from terminal_phase_for_mode()'s own enum.
-  case " $MODE_ENUM_LIST " in *" $mode "*) ;; *) mode="standard" ;; esac
-  case "$impl_mode" in standard|tdd) ;; *) impl_mode="standard" ;; esac
-  case "$compliance" in true|false) ;; *) compliance="false" ;; esac
-  # Seed skipped_phases from the mode's phase graph (EDMV3-T07 AC4) so a fresh
-  # mini-srd or prototype initiative starts with its phase-skip exemptions already
-  # recorded, rather than empty.
-  local seeded_skipped
-  seeded_skipped="$(default_skipped_phases_json_for_mode "$mode")"
-  # Atomic create: write to a temp file then rename, mirroring _rmw_state_body (CA-008). The
-  # existing-file guard above prevents clobbering; this prevents a partial file on crash mid-write.
+_cmd_init_render() {
+  local prefix="$1" branch="$2" product="$3" description="$4" mode="$5" impl_mode="$6" compliance="$7" seeded_skipped="$8"
   jq -n --arg p "$prefix" --arg t "$(now_utc)" --arg b "$branch" \
         --arg prod "$product" --arg desc "$description" \
         --arg mode "$mode" --arg impl "$impl_mode" --argjson ce "$compliance" \
@@ -1238,7 +1325,55 @@ cmd_init() {
     parent_prefix: "",
     related_prefixes: [],
     last_updated: $t
-  }' > "${f}.tmp.$$" && mv -f "${f}.tmp.$$" "$f"
+  }'
+}
+
+_cmd_init_body() {
+  local f="$1" prefix="$2" branch="$3" product="$4" description="$5" mode="$6" impl_mode="$7" compliance="$8" seeded_skipped="$9"
+  if [[ -f "$f" ]]; then
+    echo "edm-state: state file already exists at $f" >&2
+    return 10
+  fi
+  write_atomic "$f" _cmd_init_render "$prefix" "$branch" "$product" "$description" "$mode" "$impl_mode" "$compliance" "$seeded_skipped"
+}
+
+cmd_init() {
+  [[ $# -eq 1 ]] || die "usage: edm-state init <PREFIX>"
+  require_jq
+  local prefix="$1"
+  local f lockbase
+  f="$(state_file_for "$prefix")"
+  lockbase="${f%.json}"
+  mkdir -p "$(dirname "$f")"
+  local branch product description
+  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+  # Accept product/description from env so edm-init --product/--description can pre-seed them.
+  product="${EDM_PRODUCT:-}"
+  description="${EDM_DESCRIPTION:-}"
+  # Seed mode-family fields from install-time userConfig defaults when edm-init exported them
+  # (CA-010 / EDMV2-102 middle tier). A bare `edm-state init` (no env) keeps the built-in defaults.
+  # Validate defensively so a stray env value can't write an invalid enum into fresh state.
+  local mode="${EDM_MODE:-standard}"
+  local compliance="${EDM_COMPLIANCE_ENABLED:-false}"
+  local impl_mode="${EDM_IMPLEMENTATION_MODE:-standard}"
+  # Word-membership test against the single-source MODE_ENUM_LIST (EDMV3-T07 AC5) --
+  # avoids re-declaring the mode enum as a second case-literal list that would drift
+  # from terminal_phase_for_mode()'s own enum.
+  case " $MODE_ENUM_LIST " in *" $mode "*) ;; *) mode="standard" ;; esac
+  case "$impl_mode" in standard|tdd) ;; *) impl_mode="standard" ;; esac
+  case "$compliance" in true|false) ;; *) compliance="false" ;; esac
+  # Seed skipped_phases from the mode's phase graph (EDMV3-T07 AC4) so a fresh
+  # mini-srd or prototype initiative starts with its phase-skip exemptions already
+  # recorded, rather than empty.
+  local seeded_skipped
+  seeded_skipped="$(default_skipped_phases_json_for_mode "$mode")"
+  local init_ec=0
+  with_state_lock "$lockbase" _cmd_init_body "$f" "$prefix" "$branch" "$product" "$description" "$mode" "$impl_mode" "$compliance" "$seeded_skipped" || init_ec=$?
+  if [[ $init_ec -eq 10 ]]; then
+    return 0
+  elif [[ $init_ec -ne 0 ]]; then
+    return $init_ec
+  fi
   echo "initialized $f"
 }
 
@@ -1285,7 +1420,7 @@ cmd_list() {
 }
 
 cmd_approve_gate() {
-  [[ $# -eq 2 ]] || die "usage: edm-state approve-gate <PREFIX> <gate-num>"
+  [[ $# -eq 2 ]] || die "usage: edm-state approve-gate <PREFIX> <gate-num>|3.5|code-audit"
   require_jq
   local prefix="$1" gate="$2"
   local approver="${USER:-unknown}"
@@ -1314,12 +1449,10 @@ cmd_approve_gate() {
   # it (gates_approved holds integers only -- a non-integer gate id would overload
   # cmd_gate_check's `select(.gate == $g)` comparison).
   if [[ "$gate" == "code-audit" ]]; then
-    local mode state_json audit_required="true"
+    local mode state_json audit_required
     state_json="$(read_state "$prefix")"
     mode="$(echo "$state_json" | jq -r '.mode // "null"')"
-    # mode == "null" is a legacy state predating the mode field; default to "audit required"
-    # so legacy behaviour is unchanged (mirrors cmd_archive's identical guard).
-    [[ "$mode" != "null" ]] && audit_required="$(code_audit_required_for_mode "$mode")"
+    audit_required="$(audit_required_for_mode_or_legacy "$mode")"
 
     if [[ "$audit_required" == "false" ]]; then
       # AC4 (mode exemption): this mode's phase graph has no code-audit round, so the gate
@@ -1607,8 +1740,14 @@ cmd_checkpoint() {
   [[ -d "$SRD_ROOT" ]] || return 0
   require_jq
   while IFS= read -r state; do
+    [[ -f "$state" ]] || { echo "edm-state checkpoint: [warn] skipping missing state file at ${state}" >&2; continue; }
+    if ! jq -e '.' "$state" >/dev/null 2>&1; then
+      echo "edm-state checkpoint: [warn] skipping unreadable or invalid state file at ${state}" >&2
+      continue
+    fi
     local current prefix
-    prefix="$(jq -r '.prefix' "$state" 2>/dev/null || echo unknown)"
+    prefix="$(jq -r '.prefix // empty' "$state" 2>/dev/null || true)"
+    [[ -n "$prefix" ]] || { echo "edm-state checkpoint: [warn] skipping state file with no prefix at ${state}" >&2; continue; }
     # G3: route through locked RMW -- no more hand-rolled cat/jq/printf
     rmw_state "$prefix" '.last_updated = $t' --arg t "$(now_utc)"
 
@@ -1963,6 +2102,7 @@ cmd_archive() {
         local skipped_phases_str_arch required_gates_list_arch missing_gates="" g approved_g
         skipped_phases_str_arch="$(echo "$state_json" | jq -r '[(.skipped_phases // [])[].phase] | join(" ")')"
         required_gates_list_arch="$(required_gates_for_mode "$mode" "$lifecycle_mode" "$skipped_phases_str_arch")"
+        # shellcheck disable=SC2086 -- deliberate word-splitting; result is a space-separated list of gate numbers
         for g in $required_gates_list_arch; do
           approved_g="$(echo "$state_json" | jq -r --argjson gg "$g" '(.gates_approved // []) | map(select(.gate == $gg)) | length')"
           [[ "$approved_g" -gt 0 ]] || missing_gates="${missing_gates}${missing_gates:+, }${g}"
@@ -1989,14 +2129,11 @@ cmd_archive() {
       # Both halves of the exemption come from convergence_exempt(), which is shared with
       # cmd_audit_converged so the two cannot drift.
       if [[ "$(convergence_exempt "$mode" "$lifecycle_mode")" == "true" ]]; then
-        case "$mode" in
-          prototype) echo "[warn] prototype mode -- skipping code-audit convergence check" >&2 ;;
-          *)         echo "[warn] ${mode} mode -- skipping code-audit convergence check" >&2 ;;
-        esac
+        echo "[warn] ${mode} mode -- skipping code-audit convergence check" >&2
         # AC9: record the exemption reason in state rather than skipping silently, and echo it
         # too so the CLI output itself (not only the state file) documents why no code-audit
         # gate was demanded of this lifecycle.
-        echo "recorded CONVERGENCE_NOT_REQUIRED for ${prefix} (${lifecycle_mode} lifecycle_mode / ${mode} mode)"
+        echo "recorded CONVERGENCE_NOT_REQUIRED for ${prefix} (phase graph has no code-audit round: mode=${mode}, lifecycle_mode=${lifecycle_mode})"
         rmw_state "$prefix" \
           '.archive_exemptions = (((.archive_exemptions // []) + ["CONVERGENCE_NOT_REQUIRED"]) | unique) | .last_updated = $t' \
           --arg t "$(now_utc)"
@@ -2074,7 +2211,7 @@ ${open_partials_list}"
           record_degraded_check "$prefix" "archive:audit-converged-recheck" "no findings-ledger.jsonl (audit-converged exit 3)"
           ;;
         *)
-          die "archive refused: audit-converged re-query failed for ${prefix} (exit ${ac_recheck_ec}): ${ac_recheck_out}; run /edm:code-audit ${prefix} and remediate the blocking findings before archiving"
+          die "archive refused: audit-converged re-query failed for ${prefix} (exit ${ac_recheck_ec}): ${ac_recheck_out}; resolve the audit-converged failure before archiving (remediate findings / rerun a full round, or repair the findings ledger data)"
           ;;
       esac
     fi
@@ -2097,8 +2234,10 @@ cmd_watch_impl() {
   # referencing any {PREFIX}-T{NN} ticket ID. Emits one line per new commit so
   # the monitor delivers it as a notification.
   command -v git >/dev/null 2>&1 || { echo "git not available"; return 0; }
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "edm-state watch-impl: current directory is not inside a git worktree" >&2; return 1; }
   local last_sha
-  last_sha="$(git rev-parse HEAD 2>/dev/null || echo '')"
+  last_sha="$(git rev-parse --verify HEAD 2>/dev/null || echo '')"
+  [[ -n "$last_sha" ]] || { echo "edm-state watch-impl: repository has no commits yet" >&2; return 1; }
   while true; do
     sleep 5
     local new_commits
@@ -2808,6 +2947,15 @@ cmd_session_start() {
 # deterministically renders code-audit/findings-ledger.md. The markdown is a pure projection,
 # rebuilt from scratch on every call -- a hand-edit is silently overwritten on the next render
 # (AC5), which is what proves the JSONL, not the markdown, is the source of truth.
+_render_ledger_markdown() {
+  local prefix="$1" body="$2"
+  echo "# Code Audit Findings Ledger: ${prefix}"
+  echo ""
+  echo "<!-- GENERATED FILE -- rendered by 'edm-state render-ledger' from findings-ledger.jsonl. Do not hand-edit; edits are overwritten on the next render. -->"
+  echo ""
+  printf '%s\n' "$body"
+}
+
 cmd_render_ledger() {
   [[ $# -eq 1 ]] || die "usage: edm-state render-ledger <PREFIX>"
   require_jq
@@ -2856,15 +3004,7 @@ cmd_render_ledger() {
   # AC6: atomic write -- temp file plus rename, matching the discipline used elsewhere in this
   # script (_rmw_state_body, cmd_init).
   mkdir -p "${init_dir}/code-audit"
-  local tmp="${md_path}.tmp.$$"
-  {
-    echo "# Code Audit Findings Ledger: ${prefix}"
-    echo ""
-    echo "<!-- GENERATED FILE -- rendered by 'edm-state render-ledger' from findings-ledger.jsonl. Do not hand-edit; edits are overwritten on the next render. -->"
-    echo ""
-    printf '%s\n' "$body"
-  } > "$tmp"
-  mv -f "$tmp" "${init_dir}/code-audit/findings-ledger.md"
+  write_atomic "$md_path" _render_ledger_markdown "$prefix" "$body" || die "render-ledger: failed to write ${md_path}"
 
   # AC4: reuse record_artifact_hash (bin/edm-state:~131) so cmd_checkpoint's existing drift
   # loop warns on an out-of-band hand-edit -- the detection machinery is not re-implemented.
@@ -2883,6 +3023,21 @@ cmd_render_ledger() {
 # C-4 type widening; see AUDIT_ROUND_COERCE_JQ_DEF above). No existing file is rewritten by this
 # widening -- every reader coerces at read time, including this command's own read of a
 # pre-existing bare-integer count on its very first post-upgrade call.
+
+_cmd_audit_round_start_body() {
+  local f="$1" audit_type="$2" lenses_json="$3" round_type="$4" ts="$5"
+  _rmw_state_body "$f" "
+      ${AUDIT_ROUND_COERCE_JQ_DEF}
+      (.audit_rounds[\$t] // 0 | coerce_round_entry) as \$existing
+      | (\$existing.count + 1) as \$new_count
+      | .audit_rounds[\$t] = {
+          count: \$new_count,
+          rounds: (\$existing.rounds + [{round: \$new_count, lenses: \$lenses, round_type: \$rt, started_at: \$ts}])
+        }
+      | .last_updated = \$ts
+    " --arg t "$audit_type" --argjson lenses "$lenses_json" --arg rt "$round_type" --arg ts "$ts" || return 1
+  jq -r --arg t "$audit_type" "${AUDIT_ROUND_COERCE_JQ_DEF} (.audit_rounds[\$t] // 0 | coerce_round_entry).count" "$f"
+}
 
 cmd_audit_round_start() {
   [[ $# -ge 2 ]] || die "usage: edm-state audit-round-start <PREFIX> <code|srd|tickets> [--lenses <comma-list>]"
@@ -2913,9 +3068,13 @@ cmd_audit_round_start() {
     lenses_json="[]"
     round_type="full"
   else
-    lenses_json="$(printf '%s' "$lenses_arg" | tr ',' '\n' | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//' | grep -v '^$' | jq -R . | jq -s .)"
+    local normalized_lenses
+    normalized_lenses="$(printf '%s' "$lenses_arg" | tr ',' '\n' | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//' | grep -v '^$' || true)"
+    [[ -n "$normalized_lenses" ]] || die "audit-round-start: --lenses must contain at least one non-empty lens ID"
+    lenses_json="$(printf '%s\n' "$normalized_lenses" | jq -R . | jq -s .)"
     local given_sorted all_sorted
     given_sorted="$(printf '%s' "$lenses_json" | jq -r 'sort | join(",")')"
+    # shellcheck disable=SC2086 -- deliberate word-splitting; bash 3.2 has no arrays-as-constants
     all_sorted="$(printf '%s\n' $ALL_LENS_IDS | sort | tr '\n' ',' | sed 's/,$//')"
     if [[ "$given_sorted" == "$all_sorted" ]]; then
       round_type="full"
@@ -2924,21 +3083,11 @@ cmd_audit_round_start() {
     fi
   fi
 
-  local ts
+  local ts f lockbase
   ts="$(now_utc)"
-  rmw_state "$prefix" "
-      ${AUDIT_ROUND_COERCE_JQ_DEF}
-      (.audit_rounds[\$t] // 0 | coerce_round_entry) as \$existing
-      | (\$existing.count + 1) as \$new_count
-      | .audit_rounds[\$t] = {
-          count: \$new_count,
-          rounds: (\$existing.rounds + [{round: \$new_count, lenses: \$lenses, round_type: \$rt, started_at: \$ts}])
-        }
-      | .last_updated = \$ts
-    " --arg t "$audit_type" --argjson lenses "$lenses_json" --arg rt "$round_type" --arg ts "$ts"
-
-  # Re-read to echo the new round number (count), the same external contract as before.
-  read_state "$prefix" | jq -r --arg t "$audit_type" "${AUDIT_ROUND_COERCE_JQ_DEF} (.audit_rounds[\$t] // 0 | coerce_round_entry).count"
+  f="$(state_file_for "$prefix")"
+  lockbase="${f%.json}"
+  with_state_lock "$lockbase" _cmd_audit_round_start_body "$f" "$audit_type" "$lenses_json" "$round_type" "$ts"
 }
 
 # audit-round-complete <PREFIX> <code|srd|tickets> (EDMV3-T51)
@@ -2947,30 +3096,20 @@ cmd_audit_round_start() {
 # .audit_rounds[type].rounds[]. Pre-check-then-lock, mirroring cmd_record_partial_verdict's
 # close path (bin/edm-state:2801) -- a double completion is refused before any rmw_state call
 # so it mutates nothing (AC9).
-cmd_audit_round_complete() {
-  [[ $# -eq 2 ]] || die "usage: edm-state audit-round-complete <PREFIX> <code|srd|tickets>"
-  require_jq
-  local prefix="$1" audit_type="$2"
-  case "$audit_type" in
-    code|srd|tickets) ;;
-    *) die "audit-round-complete: unknown audit type '$audit_type' (expected: code|srd|tickets)" ;;
-  esac
-
-  # AC9 (negative, double completion): pre-check before any lock is acquired.
-  local existing_rounds last_round round_num started_at already_completed_at
-  existing_rounds="$(read_state "$prefix" | jq -c --arg t "$audit_type" "${AUDIT_ROUND_COERCE_JQ_DEF} (.audit_rounds[\$t] // 0 | coerce_round_entry).rounds")"
+_cmd_audit_round_complete_body() {
+  local f="$1" prefix="$2" audit_type="$3" now_ts="$4"
+  local state_json existing_rounds last_round round_num started_at already_completed_at
+  state_json="$(cat "$f" 2>/dev/null || echo '{}')"
+  existing_rounds="$(echo "$state_json" | jq -c --arg t "$audit_type" "${AUDIT_ROUND_COERCE_JQ_DEF} (.audit_rounds[\$t] // 0 | coerce_round_entry).rounds")"
   last_round="$(echo "$existing_rounds" | jq -c 'if length > 0 then .[-1] else null end')"
   [[ "$last_round" != "null" ]] \
-    || die "audit-round-complete: no ${audit_type} audit round started for ${prefix}; run edm-state audit-round-start ${prefix} ${audit_type} first"
+    || { echo "audit-round-complete: no ${audit_type} audit round started for ${prefix}; run edm-state audit-round-start ${prefix} ${audit_type} first" >&2; return 1; }
   round_num="$(echo "$last_round" | jq -r '.round')"
   started_at="$(echo "$last_round" | jq -r '.started_at // empty')"
   already_completed_at="$(echo "$last_round" | jq -r '.completed_at // empty')"
   [[ -z "$already_completed_at" ]] \
-    || die "audit-round-complete: ${audit_type} round ${round_num} for ${prefix} is already completed (at ${already_completed_at}); a round may be completed only once"
+    || { echo "audit-round-complete: ${audit_type} round ${round_num} for ${prefix} is already completed (at ${already_completed_at}); a round may be completed only once" >&2; return 1; }
 
-  # AC2 (one cost computation, not two): reuses get_session_tokens_since / compute_cost_usd,
-  # the exact same calls cmd_phase_complete makes, so audit-round cost can never diverge from
-  # phase cost via a second implementation.
   local input=0 output=0 cache_read=0 cw5m=0 cw1h=0 model="unknown" cost="0.0000" attribution_mode="whole-directory"
   if [[ -n "$started_at" ]]; then
     local tokens
@@ -2985,10 +3124,7 @@ cmd_audit_round_complete() {
     cost="$(compute_cost_usd "$model" "$input" "$output" "$cache_read" "$cw5m" "$cw1h")"
   fi
 
-  local now_ts
-  now_ts="$(now_utc)"
-
-  rmw_state "$prefix" "
+  _rmw_state_body "$f" "
       ${AUDIT_ROUND_COERCE_JQ_DEF}
       (.audit_rounds[\$t] // 0 | coerce_round_entry) as \$existing
       | (\$existing.rounds | map(
@@ -3007,8 +3143,27 @@ cmd_audit_round_complete() {
       | .last_updated = \$ts
     " --arg t "$audit_type" --arg rn "$round_num" --arg ts "$now_ts" \
       --arg i "$input" --arg o "$output" --arg cr "$cache_read" --arg c5 "$cw5m" --arg c1 "$cw1h" \
-      --arg model "$model" --arg cost "$cost" --arg am "$attribution_mode"
+      --arg model "$model" --arg cost "$cost" --arg am "$attribution_mode" || return 1
 
+  printf '%s\t%s\n' "$round_num" "$cost"
+}
+
+cmd_audit_round_complete() {
+  [[ $# -eq 2 ]] || die "usage: edm-state audit-round-complete <PREFIX> <code|srd|tickets>"
+  require_jq
+  local prefix="$1" audit_type="$2"
+  case "$audit_type" in
+    code|srd|tickets) ;;
+    *) die "audit-round-complete: unknown audit type '$audit_type' (expected: code|srd|tickets)" ;;
+  esac
+
+  local now_ts f lockbase complete_result round_num cost
+  now_ts="$(now_utc)"
+  f="$(state_file_for "$prefix")"
+  lockbase="${f%.json}"
+  complete_result="$(with_state_lock "$lockbase" _cmd_audit_round_complete_body "$f" "$prefix" "$audit_type" "$now_ts")" || return 1
+  round_num="${complete_result%%$'\t'*}"
+  cost="${complete_result#*$'\t'}"
   echo "recorded completion: ${audit_type} round ${round_num} for ${prefix} (\$${cost})"
 }
 
@@ -3177,13 +3332,14 @@ cmd_record_partial_verdict() {
     [[ -n "$verification_ref" ]] || die "record-partial-verdict close: verification_ref must be non-empty"
 
     # AC5: unknown ticket exits non-zero and mutates nothing (checked before any rmw_state call).
-    local existing already_closed already_closing_verdict already_closed_at
+    local existing already_closed already_closing_verdict already_closed_at prior_verdict
     existing="$(read_state "$prefix" | jq -c --arg tk "$ticket" '.partial_verdict_map[$tk] // null')"
     [[ "$existing" != "null" ]] || die "record-partial-verdict close: unknown ticket '${ticket}' for ${prefix} (no entry in partial_verdict_map)"
 
     already_closed="$(echo "$existing" | jq -r 'has("closing_verdict")')"
     already_closing_verdict="$(echo "$existing" | jq -r '.closing_verdict // ""')"
     already_closed_at="$(echo "$existing" | jq -r '.closed_at // "unknown"')"
+    prior_verdict="$(echo "$existing" | jq -r '.verdict // .prior.verdict // "PARTIAL"')"
 
     if [[ "$already_closed" == "true" ]]; then
       if [[ "$already_closing_verdict" != "FAIL" ]]; then
@@ -3223,7 +3379,7 @@ cmd_record_partial_verdict() {
         }
       | .last_updated = $ts
     ' --arg tk "$ticket" --arg cv "$closing_verdict" --arg ref "$verification_ref" --arg ts "$(now_utc)"
-    echo "closed verdict: $ticket = $closing_verdict (was ${already_closing_verdict:-PARTIAL}) for $prefix"
+    echo "closed verdict: $ticket = $closing_verdict (was ${prior_verdict:-PARTIAL}) for $prefix"
     return 0
   fi
 
@@ -3234,7 +3390,17 @@ cmd_record_partial_verdict() {
     *) die "record-partial-verdict: unknown verdict '$verdict' (expected: PASS|PARTIAL|FAIL)" ;;
   esac
   rmw_state "$prefix" \
-    '.partial_verdict_map[$tk] = {verdict: $v, note: $n, recorded_at: $ts} | .last_updated = $ts' \
+    '.partial_verdict_map[$tk] as $existing
+     | .partial_verdict_map[$tk] = (
+         if $existing == null then
+           {verdict: $v, note: $n, recorded_at: $ts}
+         elif ($existing | has("closing_verdict")) then
+           {verdict: $v, note: $n, recorded_at: $ts, prior: $existing}
+         else
+           {verdict: $v, note: $n, recorded_at: $ts}
+         end
+       )
+     | .last_updated = $ts' \
     --arg tk "$ticket" --arg v "$verdict" --arg n "$note" --arg ts "$(now_utc)"
   echo "recorded verdict: $ticket = $verdict for $prefix"
 }
@@ -3494,6 +3660,61 @@ pattern_insert_line_for() {
   ' "$_pf"
 }
 
+_render_pattern_entry() {
+  local raw_title="$1" prefix="$2" audit_type="$3" today="$4"
+  printf '\n'
+  printf '### %s (%s, %s, P2)\n\n' "$raw_title" "$prefix" "$today"
+  printf 'status: pending-review\n'
+  printf 'source: %s\n' "$prefix"
+  printf 'audit-type: %s\n' "$audit_type"
+  printf 'date: %s\n\n' "$today"
+  printf '> Extracted from the %s audit for %s. One-paragraph description of the finding\n' \
+    "$audit_type" "$prefix"
+  printf '> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.\n'
+}
+
+_splice_pattern_file() {
+  local pattern_file="$1" insert_line="$2" pending_entries="$3"
+  head -n "$((insert_line - 1))" "$pattern_file"
+  printf '%s' "$pending_entries"
+  tail -n "+${insert_line}" "$pattern_file"
+}
+
+_cmd_update_patterns_body() {
+  local pattern_file="$1" audit_report_path="$2" target_heading="$3" audit_type="$4" prefix="$5" today="$6"
+  local existing_normalized new_findings=0 pending_entries="" raw_heading raw_title lower_title norm insert_line
+  existing_normalized="$(grep '^### ' "$pattern_file" 2>/dev/null | normalize_pattern_titles || true)"
+
+  while IFS= read -r raw_heading; do
+    raw_title="${raw_heading#\#\#\# }"
+    lower_title="$(echo "$raw_title" | tr '[:upper:]' '[:lower:]' | tr -s ' ')"
+    case "$lower_title" in
+      "summary"|"findings"|"recommendations"|"overview"|"appendix"|"legend") continue ;;
+    esac
+    norm="$(printf '%s\n' "$raw_title" | normalize_pattern_titles)"
+    [[ -z "$norm" ]] && continue
+    if echo "$existing_normalized" | grep -qxF "$norm"; then
+      continue
+    fi
+    pending_entries="${pending_entries}$(_render_pattern_entry "$raw_title" "$prefix" "$audit_type" "$today")"
+    existing_normalized="${existing_normalized}
+${norm}"
+    new_findings=$((new_findings + 1))
+  done < <(grep '^### ' "$audit_report_path" 2>/dev/null || true)
+
+  if [[ "$new_findings" -gt 0 ]]; then
+    insert_line="$(pattern_insert_line_for "$pattern_file" "$target_heading")"
+    if [[ -z "$insert_line" || "$insert_line" -eq 0 ]]; then
+      echo "update-patterns: target heading '${target_heading}' not found in ${pattern_file}; skipping (nothing appended, no end-of-file fallback)" >&2
+      echo 0
+      return 0
+    fi
+    write_atomic "$pattern_file" _splice_pattern_file "$pattern_file" "$insert_line" "$pending_entries" || return 1
+  fi
+
+  echo "$new_findings"
+}
+
 cmd_update_patterns() {
   [[ $# -eq 2 ]] || die "usage: edm-state update-patterns <PREFIX> <srd|ticket|qc|code>"
   require_jq
@@ -3540,8 +3761,10 @@ cmd_update_patterns() {
     return 0
   fi
 
-  if [[ ! -w "$pattern_file" ]]; then
-    echo "update-patterns: pattern file is not writable at ${pattern_file} (plugin may be installed read-only; skipping)" >&2
+  local pattern_dir
+  pattern_dir="$(dirname "$pattern_file")"
+  if [[ ! -w "$pattern_dir" ]]; then
+    echo "update-patterns: pattern directory is not writable at ${pattern_dir} (plugin may be installed read-only; skipping)" >&2
     return 0
   fi
 
@@ -3562,79 +3785,10 @@ cmd_update_patterns() {
     return 0
   fi
 
-  # Read existing ### headings from the pattern file for de-duplication.
-  # Normalize both sides through the same filter (normalize_pattern_titles).
-  local existing_normalized
-  existing_normalized="$(grep '^### ' "$pattern_file" 2>/dev/null | normalize_pattern_titles || true)"
-
   local new_findings=0 today
   today="$(date -u +"%Y-%m-%d")"
-
-  while IFS= read -r raw_heading; do
-    local raw_title="${raw_heading#\#\#\# }"
-
-    # Skip structural section headings that are not findings.
-    local lower_title
-    lower_title="$(echo "$raw_title" | tr '[:upper:]' '[:lower:]' | tr -s ' ')"
-    case "$lower_title" in
-      "summary"|"findings"|"recommendations"|"overview"|"appendix"|"legend") continue ;;
-    esac
-
-    # Normalize for de-duplication through the same filter used on the pattern file's headings.
-    local norm
-    norm="$(printf '%s\n' "$raw_title" | normalize_pattern_titles)"
-    [[ -z "$norm" ]] && continue
-
-    # Skip if this normalized title already exists in the pattern file.
-    if echo "$existing_normalized" | grep -qxF "$norm"; then
-      continue
-    fi
-
-    # Resolve the insertion point fresh for every entry: each insertion shifts the line numbers
-    # of everything below it, so a point computed once before the loop would be stale by the
-    # second entry.
-    local _insert_line
-    _insert_line="$(pattern_insert_line_for "$pattern_file" "$target_heading")"
-    if [[ -z "$_insert_line" || "$_insert_line" -eq 0 ]]; then
-      # Defensive backstop for the pre-loop check above (the heading could only vanish here if
-      # something else rewrote the file mid-run). Skip, do not fall back to an EOF append.
-      echo "update-patterns: target heading '${target_heading}' not found in ${pattern_file}; skipping remaining entries (nothing appended, no end-of-file fallback)" >&2
-      break
-    fi
-
-    # Insert the novel finding into the target `##` section atomically (EDMV3-92, EDMV3-T66 AC9,
-    # EDMV3-T54): render the whole document with the entry spliced in to a tmp file alongside the
-    # target, then mv it into place -- never leaves a docs/audit-patterns/*.md file half-written
-    # if the process is interrupted mid-write, and never interleaves with a concurrent
-    # update-patterns call on the same file. The `.tmp.$$` suffix keeps the in-flight file out of
-    # the `*.md` glob the four-heading contract checks scan.
-    local _pattern_tmp="${pattern_file}.tmp.$$"
-    head -n "$(( _insert_line - 1 ))" "$pattern_file" > "$_pattern_tmp"
-    # Append Schema -- docs/audit-patterns/README.md Sec."Append Schema". Field order
-    # (status, source, audit-type, date) and the `>` blockquote delimiting of the stub body
-    # match that block exactly; `status: pending-review` is what the curation lifecycle greps
-    # for, and removing that line is what marks an entry curated.
-    {
-      printf '\n'
-      printf '### %s (%s, %s, P2)\n\n' "$raw_title" "$prefix" "$today"
-      printf 'status: pending-review\n'
-      printf 'source: %s\n' "$prefix"
-      printf 'audit-type: %s\n' "$audit_type"
-      printf 'date: %s\n\n' "$today"
-      printf '> Extracted from the %s audit for %s. One-paragraph description of the finding\n' \
-        "$audit_type" "$prefix"
-      printf '> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.\n'
-    } >> "$_pattern_tmp"
-    tail -n "+${_insert_line}" "$pattern_file" >> "$_pattern_tmp"
-    mv "$_pattern_tmp" "$pattern_file"  # atomic replace of the docs/audit-patterns/*.md target
-
-    # Record the title as present so a duplicated `### ` heading within this same audit report
-    # cannot produce two copies of the entry in one run.
-    existing_normalized="${existing_normalized}
-${norm}"
-
-    new_findings=$((new_findings + 1))
-  done < <(grep '^### ' "$audit_report_path" 2>/dev/null || true)
+  new_findings="$(with_state_lock "${pattern_file%.md}" _cmd_update_patterns_body "$pattern_file" "$audit_report_path" "$target_heading" "$audit_type" "$prefix" "$today")" \
+    || die "update-patterns: failed to update ${pattern_file}"
 
   # Record in state (.patterns_updates is a new field; safe to add to any existing state file).
   rmw_state "$prefix" '
@@ -3933,7 +4087,8 @@ write_handoff_internal() {
     *) open_findings_summary="" ;;
   esac
 
-  {
+  local handoff_content
+  handoff_content="$({
     printf '%s\n\n' "# ${prefix} - Session Handoff"
     printf '%s  \n' "> **Last updated**: ${updated_at} by ${USER:-unknown}"
     printf '%s\n\n' "> **To resume**: \`/edm:orchestrator ${prefix}\`"
@@ -4009,6 +4164,7 @@ write_handoff_internal() {
       fi
       if [[ -n "$related_prefixes_val" ]]; then
         local rp
+        # shellcheck disable=SC2086 -- deliberate word-splitting; value is a space-separated prefix list
         for rp in $related_prefixes_val; do
           local rp_dir
           rp_dir="$(state_file_for "$rp" 2>/dev/null || true)"
@@ -4028,7 +4184,8 @@ write_handoff_internal() {
     printf '%s\n\n' "4. The orchestrator detects the existing initiative and resumes from **${phase_name}**"
     printf '%s\n\n' "## Notes"
     printf '%s\n' "${notes}"
-  } > "$handoff_path"
+  })"
+  write_atomic "$handoff_path" _print_literal "$handoff_content" || die "write-handoff: failed to write ${handoff_path}"
 }
 
 cmd_write_handoff() {

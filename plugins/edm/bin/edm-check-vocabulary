@@ -47,14 +47,14 @@
 # Exit codes (EDMV3-100): 0 = clean; 1 = one or more violations found; 2 = usage or
 # environment error (unknown flag, missing jq, unreadable scope path, invalid JSON).
 #
-# AC9: mirrors bin/edm-lint-artifacts' report_violation and ignore-marker helpers (see
-# report_violation() and build_ignore_set() below) rather than re-deriving the file walk or
-# the output-format convention.
+# AC9: sources the shared lint helper library used by bin/edm-lint-artifacts so ignore markers,
+# fence handling, and violation accounting stay identical across both scanners.
 #
 # bash 3.2 compatible: no associative arrays, no mapfile/readarray.
 set -euo pipefail
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "${SELF_DIR}/_edm-lint-lib.sh"
 PLUGIN_DIR="$(cd "${SELF_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${PLUGIN_DIR}/../.." && pwd)"
 PROHIBITED_FILE="${SELF_DIR}/vocabulary-prohibited.txt"
@@ -129,58 +129,11 @@ for jf in "${PLUGIN_DIR}/hooks/hooks.json" "${PLUGIN_DIR}/monitors/monitors.json
   jq -e . "$jf" >/dev/null 2>&1 || die "invalid JSON, cannot scan: ${jf#"${REPO_ROOT}"/}"
 done
 
-# ---- Helper: report a violation (mirrors bin/edm-lint-artifacts' report_violation) ---------
 violations=0
-report_violation() {
-  local class="$1" filepath="$2" lineno="$3" snippet="$4"
-  printf '%s:%s: %s: %s\n' "$filepath" "$lineno" "$class" "$snippet"
-  violations=$((violations + 1))
-}
 
-# ---- Helper: build ignore set for a file (mirrors bin/edm-lint-artifacts' build_ignore_set) -
-# Emits newline-separated line numbers to skip: lines inside ``` code fences, lines following
-# <!-- edm-lint-ignore -->, and lines inside <!-- edm-lint-ignore-start/-end --> blocks. Only
-# meaningful for markdown; called lazily (per matched file, not per scanned line) so the whole-
-# file-grep-per-token performance shape above is preserved.
-build_ignore_set() {
+ignored_line_set() {
   local file="$1"
-  local in_fence=0 in_ignore_block=0 ignore_next=0 lineno=0
-  while IFS= read -r linetext; do
-    lineno=$((lineno + 1))
-
-    if [[ "$ignore_next" -eq 1 ]]; then
-      echo "$lineno"
-      ignore_next=0
-      continue
-    fi
-
-    if [[ "$linetext" =~ ^\`\`\` ]]; then
-      in_fence=$((1 - in_fence))
-      continue
-    fi
-
-    if [[ "$linetext" == *'<!-- edm-lint-ignore-end -->'* ]]; then
-      in_ignore_block=0
-      continue
-    fi
-
-    if [[ "$in_fence" -eq 1 || "$in_ignore_block" -eq 1 ]]; then
-      echo "$lineno"
-    fi
-
-    if [[ "$linetext" == *'<!-- edm-lint-ignore-start -->'* ]]; then
-      in_ignore_block=1
-    fi
-
-    if [[ "$linetext" == *'<!-- edm-lint-ignore -->'* ]]; then
-      ignore_next=1
-    fi
-  done < "$file"
-}
-
-is_ignored_line() {
-  local lineno="$1" ignoreset="$2"
-  [[ -n "$ignoreset" ]] && echo "$ignoreset" | grep -qxF "$lineno"
+  build_line_classes "$file" | awk -F'	' '$2=="ignored"{print $1}'
 }
 
 # ---- Helper: is a (relfile, snippet) pair allowlisted? -------------------------------------
@@ -256,9 +209,9 @@ while IFS= read -r tline; do
   matches=""
   if [[ "$mode" == "word" ]]; then
     pattern="(^|[^A-Za-z])${tok}([^A-Za-z]|$)"
-    matches="$(grep -inE -- "$pattern" "${FILES[@]}" 2>/dev/null || true)"
+    matches="$(grep -HinE -- "$pattern" "${FILES[@]}" 2>/dev/null || true)"
   else
-    matches="$(grep -inF -- "$tok" "${FILES[@]}" 2>/dev/null || true)"
+    matches="$(grep -HinF -- "$tok" "${FILES[@]}" 2>/dev/null || true)"
   fi
 
   [[ -z "$matches" ]] && continue
@@ -273,7 +226,7 @@ while IFS= read -r tline; do
 
     ignore_set=""
     case "$relfile" in
-      *.md) ignore_set="$(build_ignore_set "$f")" ;;
+      *.md) ignore_set="$(ignored_line_set "$f")" ;;
     esac
     if [[ -n "$ignore_set" ]] && is_ignored_line "$lineno" "$ignore_set"; then
       continue

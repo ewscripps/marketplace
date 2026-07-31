@@ -1,9 +1,25 @@
 #!/usr/bin/env bash
+# EDM-HELP-BEGIN
 # edm-init -- scaffold a new SRD/{PREFIX}/ (or product-scoped) initiative directory.
-# Usage: edm-init [--product <name>] [--description <slug>] [--mode standard|mini-srd|iac|data-ml|prototype] <PREFIX>
+# Usage:
+#   edm-init [--product <name>] [--description <slug>] [--mode standard|mini-srd|iac|data-ml|prototype] <PREFIX>
+#   edm-init -h|--help|help
+# Exit codes:
+#   0 = initiative created
+#   1 = usage, validation, or runtime error
+# Notes:
+#   - Honors EDM_SRD_ROOT / CLAUDE_PLUGIN_OPTION_SRD_ROOT for the initiative root.
+#   - If both --product and --description are set, uses product-scoped layout:
+#     SRD/{PRODUCT}/{PREFIX}__{description}/
+#   - If only --product is set in a non-interactive context, falls back to flat layout.
+# EDM-HELP-END
 set -euo pipefail
 
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
+
+print_help() {
+  awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$0"
+}
 
 die() { echo "edm-init: $*" >&2; exit 1; }
 
@@ -19,6 +35,7 @@ IMPL_MODE="${CLAUDE_PLUGIN_OPTION_IMPLEMENTATION_MODE:-standard}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -h|--help|help) print_help; exit 0 ;;
     --product)    [[ $# -ge 2 ]] || die "--product requires a value"; PRODUCT="$2"; shift 2 ;;
     --description) [[ $# -ge 2 ]] || die "--description requires a value"; DESCRIPTION="$2"; shift 2 ;;
     --mode)       [[ $# -ge 2 ]] || die "--mode requires a value"; MODE="$2"; shift 2 ;;

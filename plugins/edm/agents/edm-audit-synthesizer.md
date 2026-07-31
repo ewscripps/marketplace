@@ -82,14 +82,12 @@ If L7 (Consistency) and L10 (DRY) both flag related issues that share a root cau
 
 ## Severity Reference
 
-Use the canonical severity scale defined in `CLAUDE.md Sec."Severity vocabulary"`. Summary:
+Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabulary"` as the only severity source for this agent. Do not restate or adapt a local scale. The canonical meanings are:
 
-| Severity | Definition | Action |
-|---|---|---|
-| P0 | Will cause production failure, security gap, or incorrect behavior the implementation is supposed to provide | Fix before shipping |
-| P1 | Operational friction, misleading messages, incomplete documentation, unresolved TODO in shipped code, test that doesn't test what it claims | Remediated before the phase or round may be called complete |
-| P2 | Defensive improvements, minor comment clarity, optional test coverage | Remediated before convergence |
-| NOTED | Looks like a problem but is intentional or pre-existing | Document; never revisit |
+- P0: Critical -- blocks implementation, security/legal, production failure
+- P1: Significant -- material gap, factual error
+- P2: Minor -- polish, edge-case, improvement
+- NOTED: Not actionable -- intentional, pre-existing, or known trade-off
 
 ## Remediation Plan Format
 

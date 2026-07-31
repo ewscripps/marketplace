@@ -5,7 +5,7 @@ disable-model-invocation: true
 model: opus
 effort: max
 argument-hint: <PREFIX>
-allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(grep *), Glob, Grep, Task, TodoWrite, TodoRead, AskUserQuestion
+allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite, TodoRead, AskUserQuestion
 ---
 
 # EDM Phase 6: Implementation + QC Audit + Remediation

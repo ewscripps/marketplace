@@ -61,32 +61,50 @@ for _suite in "${_run_order[@]+"${_run_order[@]}"}"; do
   _out="$(bash "${SCRIPT_DIR}/${_suite}" 2>&1)"
   _status=$?
 
-  # Extract this suite's own pass/fail counts from its summary line. Two summary formats are
-  # in use across existing suites: "Results: N passed, N failed" and "PASS: N  FAIL: N"
-  # (anchored to line start so it never matches an individual "  PASS: <label>" assertion line).
+  # Extract this suite's own pass/fail counts from its standard summary line.
   _summary_line="$(printf '%s\n' "$_out" | grep -E '^Results: [0-9]+ passed, [0-9]+ failed' | tail -1)"
   if [[ -n "$_summary_line" ]]; then
     _s_pass="$(printf '%s' "$_summary_line" | sed -E 's/^Results: ([0-9]+) passed.*/\1/')"
     _s_fail="$(printf '%s' "$_summary_line" | sed -E 's/.*, ([0-9]+) failed.*/\1/')"
   else
-    _summary_line2="$(printf '%s\n' "$_out" | grep -E '^PASS: [0-9]+  FAIL: [0-9]+' | tail -1)"
-    if [[ -n "$_summary_line2" ]]; then
-      _s_pass="$(printf '%s' "$_summary_line2" | sed -E 's/^PASS: ([0-9]+).*/\1/')"
-      _s_fail="$(printf '%s' "$_summary_line2" | sed -E 's/.*FAIL: ([0-9]+)$/\1/')"
+    _s_pass=""
+    _s_fail=""
+  fi
+  _suite_status="PASS"
+  _suite_note=""
+  if [[ -n "${_s_pass:-}" && -n "${_s_fail:-}" ]]; then
+    _suite_assertions=$((_s_pass + _s_fail))
+    if [[ $_suite_assertions -lt 1 ]]; then
+      _suite_status="FAIL"
+      _suite_note="suite emitted zero assertions"
+      _s_fail=$((_s_fail + 1))
+    elif [[ $_status -ne 0 ]]; then
+      _suite_status="FAIL"
+      _suite_note="suite exited non-zero"
+      [[ $_s_fail -ge 1 ]] || _s_fail=$((_s_fail + 1))
+    elif [[ $_s_fail -ne 0 ]]; then
+      _suite_status="FAIL"
+      _suite_note="suite reported failed assertions"
+    fi
+  else
+    _s_pass=0
+    _s_fail=1
+    if [[ $_status -ne 0 ]]; then
+      _suite_status="CRASH"
+      _suite_note="suite crashed before emitting Results summary"
+      echo "CRASH ${_suite}"
     else
-      _s_pass=""
-      _s_fail=""
+      _suite_status="FAIL"
+      _suite_note="suite exited 0 without emitting Results summary"
     fi
   fi
-  _s_pass="${_s_pass:-0}"
-  _s_fail="${_s_fail:-0}"
 
-  if [[ $_status -eq 0 ]]; then
-    printf '%-28s %8s %8s %8s\n' "$_suite" "$_s_pass" "$_s_fail" "PASS"
+  if [[ "$_suite_status" == "PASS" ]]; then
+    printf '%-28s %8s %8s %8s\n' "$_suite" "$_s_pass" "$_s_fail" "$_suite_status"
   else
-    printf '%-28s %8s %8s %8s\n' "$_suite" "$_s_pass" "$_s_fail" "FAIL"
+    printf '%-28s %8s %8s %8s\n' "$_suite" "$_s_pass" "$_s_fail" "$_suite_status"
     _failed_suites+=("$_suite")
-    echo "---- ${_suite} output (failed, exit=${_status}) ----"
+    echo "---- ${_suite} output (${_suite_note}, exit=${_status}) ----"
     printf '%s\n' "$_out"
     echo "---- end ${_suite} output ----"
   fi

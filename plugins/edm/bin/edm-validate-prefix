@@ -1,16 +1,34 @@
 #!/usr/bin/env bash
+# EDM-HELP-BEGIN
 # edm-validate-prefix -- verify a proposed prefix is valid and unique within SRD/.
-# Usage: edm-validate-prefix <PREFIX>
+# Usage:
+#   edm-validate-prefix <PREFIX>
+#   edm-validate-prefix -h|--help|help
 # Exit codes:
 #   0 = valid and unique (safe to use)
 #   1 = invalid format
 #   2 = collision (already exists anywhere in SRD/ across all products)
+# Notes:
+#   - Honors EDM_SRD_ROOT / CLAUDE_PLUGIN_OPTION_SRD_ROOT for the scan root.
+#   - Product-scoped collisions are checked as SRD/{PRODUCT}/{PREFIX}__*/
+# EDM-HELP-END
 set -euo pipefail
 
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
 PREFIX="${1:-}"
 
+print_help() {
+  awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$0"
+}
+
 die() { echo "edm-validate-prefix: $*" >&2; exit "${2:-1}"; }
+
+case "${PREFIX}" in
+  -h|--help|help)
+    print_help
+    exit 0
+    ;;
+esac
 
 [[ -n "$PREFIX" ]] || die "usage: edm-validate-prefix <PREFIX>" 1
 

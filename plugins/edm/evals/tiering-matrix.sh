@@ -105,7 +105,8 @@ _MATRIX_JQ_FILTER='
 # the caller distinguishes usage/parse errors separately via jq's own exit code.
 run_matrix() {
   local manifest="$1"
-  jq -e "$_MATRIX_JQ_FILTER" "$manifest" | jq -s -r '
+  local rendered rc=0
+  rendered="$(jq -e "$_MATRIX_JQ_FILTER" "$manifest" | jq -s -r '
     .[] | (
       ["=== \(.agent) ===",
        "  baseline: opus/max total_findings=\(.baseline_total) cost_usd=\(.baseline_cost)"]
@@ -121,13 +122,17 @@ run_matrix() {
            end),
           "" ]
     ) | .[]
-  '
+  ')" || rc=$?
+  [[ "$rc" -eq 0 ]] || return "$rc"
+  [[ -n "$rendered" ]] || die "manifest produced no agent table rows: $manifest"
+  printf '%s\n' "$rendered" | grep -q '^DECISION ' || die "manifest produced no DECISION line: $manifest"
+  printf '%s\n' "$rendered"
 }
 
 # ---- --self-test: three synthetic agents, one per D16 branch --------------------------------
 self_test() {
   local tmp
-  tmp="$(mktemp /tmp/edm-tiering-matrix-selftest.XXXXXX.json)" || die "mktemp failed"
+  tmp="$(mktemp "${TMPDIR:-/tmp}/edm-tiering-matrix-selftest.XXXXXX")" || die "mktemp failed"
   trap 'rm -f "$tmp"' RETURN
 
   cat > "$tmp" <<'EOF'
@@ -230,12 +235,77 @@ EOF
     failures=$((failures + 1))
   fi
 
+  if echo "$out" | grep -qxF "DECISION synthetic-agent-a-qualifies: sonnet/high (cheapest qualifying config, tier 1)"; then
+    :
+  else
+    failures=$((failures + 1))
+  fi
+
+  cat > "$tmp" <<'EOF'
+{
+  "agents": [
+    {
+      "agent": "synthetic-agent-d-eighty-qualifies",
+      "baseline": {
+        "total_findings": 10,
+        "findings": ["P0-1", "P1-1", "P1-2", "P2-1", "P2-2", "P2-3", "P2-4", "P2-5", "NOTED-1", "NOTED-2"],
+        "cost_usd": 1.80
+      },
+      "results": [
+        {
+          "model": "sonnet", "effort": "high", "tier_rank": 1, "total_findings": 8,
+          "findings": ["P0-1", "P1-1", "P1-2", "P2-1", "P2-9", "P2-10", "NOTED-1", "NOTED-2"],
+          "cost_usd": 0.35
+        }
+      ]
+    },
+    {
+      "agent": "synthetic-agent-e-seventy-nine-disqualified",
+      "baseline": {
+        "total_findings": 10,
+        "findings": ["P0-1", "P1-1", "P1-2", "P2-1", "P2-2", "P2-3", "P2-4", "P2-5", "NOTED-1", "NOTED-2"],
+        "cost_usd": 1.80
+      },
+      "results": [
+        {
+          "model": "sonnet", "effort": "high", "tier_rank": 1, "total_findings": 7.9,
+          "findings": ["P0-1", "P1-1", "P1-2", "P2-1", "P2-9", "P2-10", "NOTED-1", "NOTED-2"],
+          "cost_usd": 0.35
+        }
+      ]
+    }
+  ]
+}
+EOF
+
+  out="$(run_matrix "$tmp")" || { echo "self-test: FAIL -- run_matrix errored on the boundary manifest" >&2; return 1; }
+  if echo "$out" | grep -qxF "DECISION synthetic-agent-d-eighty-qualifies: sonnet/high (cheapest qualifying config, tier 1)"; then
+    echo "self-test PASS: exactly 80 percent qualifies and matching P2 counts need not match IDs"
+  else
+    echo "self-test FAIL: expected the 80 percent candidate to qualify" >&2
+    failures=$((failures + 1))
+  fi
+  if echo "$out" | grep -qxF "DECISION synthetic-agent-e-seventy-nine-disqualified: opus/max (no qualifying cheaper config -- unchanged)"; then
+    echo "self-test PASS: below 80 percent is disqualified"
+  else
+    echo "self-test FAIL: expected the 79 percent candidate to stay unchanged" >&2
+    failures=$((failures + 1))
+  fi
+
+  out="$(bash "$0" "$tmp" 2>&1)" || { echo "self-test FAIL: script path invocation errored on a real manifest path" >&2; return 1; }
+  if printf '%s\n' "$out" | grep -q '^DECISION '; then
+    echo "self-test PASS: real-path invocation prints at least one DECISION line"
+  else
+    echo "self-test FAIL: real-path invocation produced no DECISION line" >&2
+    failures=$((failures + 1))
+  fi
+
   echo
   if [[ "$failures" -eq 0 ]]; then
-    echo "self-test: PASS (3/3 promotion-rule branches verified)"
+    echo "self-test: PASS (6/6 promotion-rule assertions verified)"
     return 0
   else
-    echo "self-test: FAIL (${failures}/3 assertion(s) failed)" >&2
+    echo "self-test: FAIL (${failures}/6 assertion(s) failed)" >&2
     return 1
   fi
 }

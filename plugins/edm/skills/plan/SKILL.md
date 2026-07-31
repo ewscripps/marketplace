@@ -5,7 +5,7 @@ disable-model-invocation: true
 model: opus
 effort: max
 argument-hint: <PREFIX> <initiative description>
-allowed-tools: Read, Write, Bash(edm-state *), Bash(edm-init *), Bash(edm-validate-prefix *), Glob, Grep, Task, TodoWrite, AskUserQuestion
+allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(edm-init *), Bash(edm-validate-prefix *), Glob, Grep, Task, TodoWrite, AskUserQuestion
 ---
 
 # EDM Phase 1: Planning & Discovery
@@ -14,6 +14,8 @@ allowed-tools: Read, Write, Bash(edm-state *), Bash(edm-init *), Bash(edm-valida
 
 - **Input**: Business requirement, feature request, or strategic initiative
 - **Output**: `${user_config.srd_root}/{PREFIX}/planning.md` -- scope definition, current-state assessment, go/no-go decision
+
+**Plugin asset note**: every `docs/...` reference in this skill is relative to the EDM plugin root (`plugins/edm/` in this repository, or the installed plugin root in cache). Resolve the plugin root before reading those files; never assume the current working directory is the plugin root.
 
 ## Step 0 -- Gate and Branch Preflight
 
@@ -111,7 +113,7 @@ Files affected, new modules, integration points, approximate ticket count (S/M/L
 
 ## Planning Document Template
 
-> **Planning authoring guidance** (from `docs/audit-patterns/srd-audit.md`):
+> **Planning authoring guidance** (from plugin-root-relative `docs/audit-patterns/srd-audit.md`):
 > - **`## Go/No-Go`** -- an explicit GO/NO-GO/CONDITIONAL here prevents "undefined scope boundary" (top SRD P1 finding).
 > - **`## Riskiest Assumptions`** -- pre-empts "requirement assumed but never validated" (top SRD P0/P1 finding).
 > - **`## Open Questions`** -- tag with `[DECISION: A|B|C]` to surface bounded choices at Gate 1; resolves "ambiguous requirement" findings.

@@ -60,8 +60,8 @@ extract_section() {
   ' "$src"
 }
 
-tmp="$(mktemp)"
-trap 'rm -f "$tmp"' EXIT
+tmp="$(mktemp "${DST}.tmp.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT INT TERM
 
 {
   echo "<!-- GENERATED FILE. This file is generated from CLAUDE.md by edm-sync-canonical-sections;"
@@ -89,5 +89,5 @@ if [[ "$mode" == "--check" ]]; then
 fi
 
 mkdir -p "$(dirname "$DST")"
-cp "$tmp" "$DST"
+mv -f "$tmp" "$DST"
 echo "regenerated ${DST}"

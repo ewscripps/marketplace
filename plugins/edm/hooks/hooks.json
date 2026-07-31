@@ -83,7 +83,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; command -v edm-lint-artifacts >/dev/null 2>&1 || exit 0; staged=$(git diff --cached --name-only 2>/dev/null | grep '^SRD/'); test -z \"$staged\" && exit 0; prefixes=$(echo \"$staged\" | awk -F'/' '{ if (NF>=3 && $3 ~ /__/) { p=$3; sub(/__.*/, \"\", p); print p } else if (NF>=2 && $2 ~ /^[A-Z]/) { print $2 } }' | grep -E '^[A-Z][A-Z0-9_-]*$' | sort -u); test -z \"$prefixes\" && exit 0; fail=0; for p in $prefixes; do edm-lint-artifacts \"$p\" 2>&1 || { echo \"[EDM] Fix artifact violations before committing (edm-lint-artifacts $p)\" >&2; fail=1; }; done; exit $fail"
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; command -v edm-lint-artifacts >/dev/null 2>&1 || exit 0; staged=$(git diff --cached --name-only 2>/dev/null | grep '^SRD/'); test -z \"$staged\" && exit 0; prefixes=$(echo \"$staged\" | awk -F'/' '{ if (NF>=3 && $3 ~ /__/) { p=$3; sub(/__.*/, \"\", p); print p } else if (NF>=2 && $2 ~ /^[A-Z]/) { print $2 } }' | grep -E '^[A-Z][A-Z0-9_-]*$' | sort -u); test -z \"$prefixes\" && exit 0; fail=0; for p in $prefixes; do edm-lint-artifacts \"$p\" 2>&1 || { echo \"[EDM] Fix artifact violations or edm-lint-artifacts setup/usage errors before committing (edm-lint-artifacts $p)\" >&2; fail=1; }; done; exit $fail"
           }
         ]
       }

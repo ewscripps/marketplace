@@ -27,16 +27,23 @@ PLUGIN_DIR="$(cd "${SCRIPT_DIR}/.." && cd .. && pwd)"
 EDM_STATE="${SCRIPT_DIR}/../edm-state"
 EDM_LINT="${SCRIPT_DIR}/../edm-lint-artifacts"
 
-# ---- Sub-second timer (bash 3.2 has no $EPOCHREALTIME; perl's Time::HiRes is present on every
-# macOS and Linux CI image this plugin targets -- no GNU-date-only flags, no bash version
-# dependency). Returns seconds.fraction as a float string. ----------------------------------------
+# ---- Sub-second timer (bash 3.2 has no $EPOCHREALTIME). Prefer perl's Time::HiRes when present;
+# otherwise fall back to date+awk so Alpine-like images without perl still work. ------------------
 _now() {
-  perl -MTime::HiRes=time -e 'printf("%.6f\n", time())'
+  if command -v perl >/dev/null 2>&1; then
+    perl -MTime::HiRes=time -e 'printf("%.6f\n", time())'
+  else
+    awk 'BEGIN{srand(); printf "%.6f\n", systime() + rand()}'
+  fi
 }
 
 # _ms_between <start> <end> -- integer milliseconds between two _now() readings.
 _ms_between() {
-  perl -e 'printf("%d\n", ($ARGV[1] - $ARGV[0]) * 1000)' "$1" "$2"
+  if command -v perl >/dev/null 2>&1; then
+    perl -e 'printf("%d\n", ($ARGV[1] - $ARGV[0]) * 1000)' "$1" "$2"
+  else
+    awk -v start="$1" -v end="$2" 'BEGIN{printf "%d\n", (end - start) * 1000}'
+  fi
 }
 
 # _p95 <values...> -- integer p95 (nearest-rank) of a list of millisecond integers passed as args.
@@ -76,7 +83,7 @@ case "$MODE" in
   --generate-fixture)
     # AC1/AC7: a reproducible 50-initiative repository so subcommand and --all latency are
     # measured against a fixed, regenerable subject rather than whatever happens to be on disk.
-    : "${DIR:=$(mktemp -d /tmp/edm-timing-fixture.XXXXXX)}"
+    : "${DIR:=$(mktemp -d "${TMPDIR:-/tmp}/edm-timing-fixture.XXXXXX")}"
     export EDM_SRD_ROOT="${DIR}/SRD"
     mkdir -p "$EDM_SRD_ROOT"
     echo "timing.sh: generating ${N_INITIATIVES} initiatives under ${EDM_SRD_ROOT}"
@@ -120,7 +127,7 @@ case "$MODE" in
     # JSONL fixtures staged (get_session_tokens_since's directory-absent fast path, ~0 tokens
     # read) so the figure isolates the state-mutation cost from token-parsing cost, which is the
     # explicit exclusion this AC states.
-    TMP_PC="$(mktemp -d /tmp/edm-timing-pc.XXXXXX)"
+    TMP_PC="$(mktemp -d "${TMPDIR:-/tmp}/edm-timing-pc.XXXXXX")"
     export EDM_SRD_ROOT="${TMP_PC}/SRD"
     export HOME="${TMP_PC}/home"
     mkdir -p "$EDM_SRD_ROOT" "$HOME"
@@ -150,7 +157,7 @@ case "$MODE" in
     # AC3: audit-converged under 500ms p95 and render-ledger under 1000ms p95 on a 500-finding
     # ledger. Findings are synthetic but structurally real (same fields cmd_render_ledger and
     # cmd_audit_converged consume), generated deterministically rather than hand-typed.
-    TMP_LG="$(mktemp -d /tmp/edm-timing-ledger.XXXXXX)"
+    TMP_LG="$(mktemp -d "${TMPDIR:-/tmp}/edm-timing-ledger.XXXXXX")"
     export EDM_SRD_ROOT="${TMP_LG}/SRD"
     mkdir -p "$EDM_SRD_ROOT"
     "$EDM_STATE" init TIMLEDGER >/dev/null
@@ -196,7 +203,7 @@ case "$MODE" in
     # AC4: check_permission_rules() reads at most three small files and adds under 50ms to
     # session-start. Measured as the delta between session-start with the permission-ask rule
     # files present vs. absent, isolating the check's own overhead from the rest of session-start.
-    TMP_SS="$(mktemp -d /tmp/edm-timing-ss.XXXXXX)"
+    TMP_SS="$(mktemp -d "${TMPDIR:-/tmp}/edm-timing-ss.XXXXXX")"
     export EDM_SRD_ROOT="${TMP_SS}/SRD"
     mkdir -p "$EDM_SRD_ROOT" "${TMP_SS}/.claude"
     "$EDM_STATE" init TIMSS >/dev/null
@@ -226,7 +233,7 @@ case "$MODE" in
   --lint)
     # AC5: full lint of a typical initiative directory (30 .md files, 10,000 total lines) under
     # 3000ms. Files are generated at N_LINES_PER_FILE lines each (default 333 * 30 ~= 10,000).
-    TMP_LINT="$(mktemp -d /tmp/edm-timing-lint.XXXXXX)"
+    TMP_LINT="$(mktemp -d "${TMPDIR:-/tmp}/edm-timing-lint.XXXXXX")"
     export EDM_SRD_ROOT="${TMP_LINT}/SRD"
     mkdir -p "${EDM_SRD_ROOT}/TIMLINT"
     "$EDM_STATE" init TIMLINT >/dev/null
@@ -256,7 +263,7 @@ case "$MODE" in
     # environment. Files with no fence short-circuit the class without a per-line scan (T43), so
     # the with/without ratio should stay near 1.0x for a corpus with few or no diagrams; this
     # mode reports the measured ratio rather than asserting a fixed number.
-    TMP_MR="$(mktemp -d /tmp/edm-timing-mermaid.XXXXXX)"
+    TMP_MR="$(mktemp -d "${TMPDIR:-/tmp}/edm-timing-mermaid.XXXXXX")"
     export EDM_SRD_ROOT="${TMP_MR}/SRD"
     mkdir -p "${EDM_SRD_ROOT}/TIMMR"
     "$EDM_STATE" init TIMMR >/dev/null

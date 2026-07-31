@@ -5,7 +5,7 @@ disable-model-invocation: true
 model: opus
 effort: max
 argument-hint: '<initiative description | /path/to/file | PROJ-123>'
-allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(edm-init *), Bash(edm-validate-prefix *), Glob, Grep, Task, TodoWrite, AskUserQuestion, Skill
+allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(edm-init *), Bash(edm-validate-prefix *), Glob, Grep, Task, TodoWrite, AskUserQuestion, Skill, mcp__{jira_mcp_namespace}__atlassianUserInfo, mcp__{jira_mcp_namespace}__getAccessibleAtlassianResources, mcp__{jira_mcp_namespace}__getJiraIssue
 ---
 
 # EDM Orchestrator
@@ -63,8 +63,10 @@ Use `bin/edm-state` (on PATH while plugin enabled) to record progress throughout
 
 - **Empty**: ask *"What are we building? Describe the initiative, provide a file path, or give a
   Jira ticket key (e.g., PROJ-123)."* Use the answer as the initiative description.
-- **Jira ticket key** (`$ARGUMENTS` matches `[A-Z][A-Z0-9]+-\d+`): call
-  `getAccessibleAtlassianResources`, then `getJiraIssue`; compose the description from the issue
+- **Jira ticket key** (`$ARGUMENTS` matches `[A-Z][A-Z0-9]+-\d+`): first probe Jira availability with
+  `mcp__{jira_mcp_namespace}__atlassianUserInfo`. If that fails, say Jira is unavailable and stop.
+  If it succeeds, call `mcp__{jira_mcp_namespace}__getAccessibleAtlassianResources`, then
+  `mcp__{jira_mcp_namespace}__getJiraIssue`; compose the description from the issue
   summary/description/AC; confirm with the user: *"Using Jira ticket {KEY}: '{summary}'. Proceed?"*
 - **File path** (`$ARGUMENTS` starts with `/`, `./`, `~/`, or ends `.md`/`.txt`/`.rst`): `Read` it;
   use the full contents as the description; tell the user *"Using contents of {path}..."*

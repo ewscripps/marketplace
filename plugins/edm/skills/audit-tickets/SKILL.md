@@ -15,6 +15,8 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 - **Input**: Ticket pack at `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/`
 - **Output**: Audit report at the same directory's `audit.md` + remediated ticket pack
 
+**Plugin asset note**: every `docs/...` reference in this skill is relative to the EDM plugin root (`plugins/edm/` in this repository, or the installed plugin root in cache). Resolve that root before reading or grepping those files; never assume the current working directory is the plugin root.
+
 ## Step 0 -- Gate and Branch Preflight
 
 Before Step 1, run the preflight per `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`,
@@ -35,7 +37,7 @@ using `<gated-command>` = `audit-tickets`.
    | Ticket pack was generated from an outdated SRD. Re-run /edm:tickets or accept with rationale.
    ```
 4. **Two-lane mandatory spawn** -- spawn exactly 2 `edm-ticket-auditor` agents in parallel (never serial, never merged into one agent):
-   - **Lane 1 (structural)** -- dimensions 1-4: coverage, sizing (using shared legend from `docs/templates/ticket-size-legend.md`), dependencies, version alignment
+   - **Lane 1 (structural)** -- dimensions 1-4: coverage, sizing (using the plugin-root-relative shared legend at `docs/templates/ticket-size-legend.md`), dependencies, version alignment
    - **Lane 2 (content-quality)** -- dimensions 5-8: AC quality, diagram correctness, consistency, version alignment overlap
 5. Compile findings into `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/audit.md`. Tag each finding with its lane (`[structural]` or `[content-quality]`). De-duplicate findings that both lanes surface (deduplicated findings appear once).
 
@@ -46,7 +48,11 @@ using `<gated-command>` = `audit-tickets`.
     edm-state update-patterns <PREFIX> ticket
     ```
 8. Present **HITL Gate 3** (see below, per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`) and STOP for sign-off.
-9. On approval: `edm-state approve-gate <PREFIX> 3`. If `compliance_enabled=true`, present **Gate 3.5**
+9. On approval: `edm-state approve-gate <PREFIX> 3`. Then append Gate 3 approval decisions into `decisions.md` in the initiative directory:
+   ```
+   | Gate 3 | <ticket-pack decision> | <chosen> | <rationale> | {date} |
+   ```
+   If `compliance_enabled=true`, present **Gate 3.5**
    (below) before proceeding to Phase 6; otherwise proceed directly to `/edm:implement <PREFIX>`.
 
 ## 8 Audit Dimensions
@@ -122,7 +128,7 @@ Agent: edm-ticket-auditor (Lane 1 -- structural)
 Prompt: "Audit the ticket pack at ${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/.
          Cross-reference against SRD at ${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}.
          You are the STRUCTURAL lane (dimensions 1-4): coverage, sizing, dependencies, version alignment.
-         For sizing checks, read the shared size legend at docs/templates/ticket-size-legend.md.
+         For sizing checks, read the plugin-root-relative shared size legend at docs/templates/ticket-size-legend.md.
          Tag all findings: [structural]. Report every gap found."
 
 Agent: edm-ticket-auditor (Lane 2 -- content-quality)
@@ -141,9 +147,12 @@ After resolving all findings:
    see Sec."Pending Pattern Entries (gate-time curation)" below. When none are pending, the gate
    presentation is exactly as it would otherwise be.
 2. Present the gate per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` -- header `"Gate 3"`, options **Approve** / **Revise** / **No-Go**. **STOP and WAIT** for the response.
-3. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 3`. If
-   `compliance_enabled=true`, present Gate 3.5 (below) next; otherwise the next command is
-   `/edm:implement <PREFIX>`.
+3. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 3`, then append:
+   ```
+   | Gate 3 | <ticket-pack decision> | <chosen> | <rationale> | {date} |
+   ```
+   to `decisions.md` in the initiative directory. If `compliance_enabled=true`, present Gate 3.5
+   (below) next; otherwise the next command is `/edm:implement <PREFIX>`.
    On **Revise**: rework the flagged tickets and re-present the gate.
    On **No-Go**: summarize the blockers and stop.
 
@@ -168,11 +177,8 @@ each carrying a `status: pending-review` line plus `source:`, `audit-type:` and 
 (`docs/audit-patterns/README.md Sec."Append Schema"`). A stub nobody is ever asked about is a stub
 forever, so Gate 3 -- one the human already stops at -- is where the ask happens.
 
-**Derive the list at presentation time, by grep, never from state:**
-
-```bash
-grep -n 'status: pending-review' docs/audit-patterns/*.md
-```
+**Derive the list at presentation time with the `Grep` tool, never from state:** search the
+plugin-root-relative path `docs/audit-patterns/*.md` for `status: pending-review`.
 
 Nothing about pending entries is mirrored in `.edm-state.json`. The pattern documents are the only
 record, so an entry curated by hand between gates simply stops appearing here.
@@ -185,7 +191,7 @@ anywhere in the gate summary. Absence is authoritative.
 
 ```
 Pending pattern entries
-- {entry title} (source: {source-prefix}) -- landed in docs/audit-patterns/{target-document}.md
+- {entry title} (source: {source-prefix}) -- landed in plugin-root-relative docs/audit-patterns/{target-document}.md
 ```
 
 Then carry the curation questions **in the same `AskUserQuestion` call as the Gate 3 question** --

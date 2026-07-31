@@ -15,6 +15,8 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 - **Input**: SRD at `${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}`
 - **Output**: Audit report at `${user_config.srd_root}/{PREFIX}/audit-srd.md` + remediated SRD
 
+**Plugin asset note**: every `docs/...` reference in this skill is relative to the EDM plugin root (`plugins/edm/` in this repository, or the installed plugin root in cache). Resolve that root before reading or grepping those files; never assume the current working directory is the plugin root.
+
 Every error caught here saves 10x the effort of catching it during implementation.
 
 ## Step 0 -- Gate and Branch Preflight
@@ -44,7 +46,10 @@ using `<gated-command>` = `audit-srd`.
     edm-state update-patterns <PREFIX> srd
     ```
 9. Present **HITL Gate 2** (see below, per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`) and STOP for sign-off.
-10. On approval: `edm-state approve-gate <PREFIX> 2`.
+10. On approval: `edm-state approve-gate <PREFIX> 2`. Then append Gate 2 architecture decisions into `decisions.md` in the initiative directory:
+    ```
+    | Gate 2 | <architecture decision> | <chosen> | <rationale> | {date} |
+    ```
 
 ## 7 Audit Categories
 
@@ -73,14 +78,7 @@ Licensing, accessibility (WCAG), i18n, backward compatibility, deployment impact
 
 ## Severity Levels
 
-Use the canonical four-level scale from `CLAUDE.md Sec."Severity vocabulary"` -- no divergent local scale.
-
-| Severity | Definition | Action |
-|---|---|---|
-| P0 | Blocks implementation, security/legal issue, architecturally wrong | Must fix before Phase 4 |
-| P1 | Significant gap, factual error, missing requirement | Remediated before the phase or round may be called complete |
-| P2 | Polish, edge case, improvement | Remediated before convergence |
-| NOTED | Intentional, pre-existing, or accepted trade-off | Document in Decisions / Non-Findings; do not re-investigate |
+Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabulary"` -- no divergent local scale or local restatement.
 
 ## Finding Format
 
@@ -161,11 +159,8 @@ each carrying a `status: pending-review` line plus `source:`, `audit-type:` and 
 (`docs/audit-patterns/README.md Sec."Append Schema"`). A stub nobody is ever asked about is a stub
 forever, so Gate 2 -- one the human already stops at -- is where the ask happens.
 
-**Derive the list at presentation time, by grep, never from state:**
-
-```bash
-grep -n 'status: pending-review' docs/audit-patterns/*.md
-```
+**Derive the list at presentation time with the `Grep` tool, never from state:** search the
+plugin-root-relative path `docs/audit-patterns/*.md` for `status: pending-review`.
 
 Nothing about pending entries is mirrored in `.edm-state.json`. The pattern documents are the only
 record, so an entry curated by hand between gates simply stops appearing here.
@@ -178,7 +173,7 @@ anywhere in the gate summary. Absence is authoritative.
 
 ```
 Pending pattern entries
-- {entry title} (source: {source-prefix}) -- landed in docs/audit-patterns/{target-document}.md
+- {entry title} (source: {source-prefix}) -- landed in plugin-root-relative docs/audit-patterns/{target-document}.md
 ```
 
 Then carry the curation questions **in the same `AskUserQuestion` call as the Gate 2 question** --

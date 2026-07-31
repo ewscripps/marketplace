@@ -39,7 +39,7 @@ echo
 echo "AC2 — cleanup on failure and on interrupt"
 
 # Same scoping fix as the SIGINT case below: assert on THIS call's scratch directory, not on
-# the existence of any edm-scratch.* in /tmp (other suites and concurrent agents have their own).
+# the existence of any edm-scratch.* under ${TMPDIR:-/tmp} (other suites and concurrent agents have their own).
 _ac2_failpath="$(mktemp -t edm-harness-ac2fail.XXXXXX)"
 _ac2_fail_fn() { pwd > "$_ac2_failpath"; return 1; }
 with_scratch_repo _ac2_fail_fn || true
@@ -54,7 +54,7 @@ fi
 rm -f "$_ac2_failpath"
 
 # The child records its own scratch path so this assertion targets exactly that directory.
-# Grepping /tmp for any `edm-scratch.*` was wrong: other suites (and, on this repo, other
+# Grepping ${TMPDIR:-/tmp} for any `edm-scratch.*` was wrong: other suites (and, on this repo, other
 # concurrent worktree agents) legitimately have their own scratch dirs in flight, so the test
 # failed on their existence rather than on a real cleanup miss. Scope the check, and poll for
 # the child to actually reach its sleep instead of assuming a fixed 0.5s is long enough.
@@ -110,7 +110,7 @@ check "check_fails correctly fails on a non-matching substring" "PASS=0 FAIL=1" 
 # ---- AC5: check_state_unchanged --------------------------------------------------------------
 echo
 echo "AC5 — check_state_unchanged (positive and negative)"
-STATE_TMP="$(mktemp /tmp/edm-harness-state-test.XXXXXX)"
+STATE_TMP="$(mktemp "${TMPDIR:-/tmp}/edm-harness-state-test.XXXXXX")"
 echo '{"a":1}' > "$STATE_TMP"
 
 check_state_unchanged "$STATE_TMP" true
@@ -121,6 +121,13 @@ _neg_out2="$(
   echo "PASS=$PASS FAIL=$FAIL"
 )"
 check "check_state_unchanged correctly fails when the file is mutated" "PASS=0 FAIL=1" "$_neg_out2"
+
+_neg_out3="$(
+  PASS=0; FAIL=0
+  check_state_unchanged "${STATE_TMP}.missing" true
+  echo "PASS=$PASS FAIL=$FAIL"
+)"
+check "check_state_unchanged fails when no baseline file exists" "PASS=0 FAIL=1" "$_neg_out3"
 rm -f "$STATE_TMP"
 
 # ---- AC6/AC7 (meta): existing helpers untouched, bash 3.2 compliance --------------------------

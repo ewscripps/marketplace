@@ -78,7 +78,7 @@ Cross-reference the ticket pack against the SRD. Audit across all **8 dimensions
 
 ## Output
 
-Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severity vocabulary"`.
+Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabulary"` as the only severity source for this agent. Do not restate or adapt a local scale.
 
 ```markdown
 # Ticket Pack Audit Report: {Initiative Name}

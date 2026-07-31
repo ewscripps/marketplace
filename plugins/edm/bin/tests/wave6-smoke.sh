@@ -9,12 +9,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EDM_STATE="${SCRIPT_DIR}/../edm-state"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 
+# Ensure bin/ is on PATH so edm-lint-artifacts --all can find edm-state
+export PATH="${SCRIPT_DIR}/..:${PATH}"
+
 # Shared assertions / counters (CA-014).
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_harness.sh"
 
 # ---- Setup -------------------------------------------------------------------
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave6.XXXXXX")"
+T41_BACKUP=""
+T41_CANONICAL=""
+cleanup_wave6() {
+  if [[ -n "${T41_BACKUP:-}" && -n "${T41_CANONICAL:-}" && -f "${T41_BACKUP}" ]]; then
+    cp "$T41_BACKUP" "$T41_CANONICAL"
+  fi
+  rm -f "${T41_BACKUP:-}"
+  rm -rf "$TMP"
+}
+trap cleanup_wave6 EXIT INT TERM
 export EDM_SRD_ROOT="$TMP/SRD"
 mkdir -p "$TMP/SRD"
 
@@ -225,14 +237,14 @@ seed_len_std="$(jq -r '.skipped_phases | length' "$STATE_T7SEEDSTD")"
 # ---- AC5: single mode derivation (no second mode-to-phase/gate mapping) -------
 echo
 echo "T07 AC5 -- single mode derivation"
-proto_hits="$(grep -c 'prototype)' "$EDM_STATE")"
-[[ "$proto_hits" -eq 3 ]] && pass "exactly 3 'prototype)' sites in edm-state (single derivation)" \
-  || fail "found $proto_hits 'prototype)' sites, expected exactly 3"
+proto_hits="$(count_matches 'prototype)' "$EDM_STATE")"
+[[ "$proto_hits" -eq 2 ]] && pass "exactly 2 'prototype)' sites in edm-state (single derivation, CA-054 removed redundant arm)" \
+  || fail "found $proto_hits 'prototype)' sites, expected exactly 2"
 
 # ---- AC6: code_audit_required_for_mode has a definition + call site(s) -------
 echo
 echo "T07 AC6 -- code_audit_required_for_mode defined and consumed"
-cadef_hits="$(grep -c 'code_audit_required_for_mode' "$EDM_STATE")"
+cadef_hits="$(count_matches 'code_audit_required_for_mode' "$EDM_STATE")"
 [[ "$cadef_hits" -ge 2 ]] && pass "code_audit_required_for_mode has a definition plus at least one call site" \
   || fail "code_audit_required_for_mode total hits = $cadef_hits, expected >= 2 (def + call site)"
 # NOTE: the ticket's full "exactly two call sites" verify assumes EDMV3-T08 (cmd_approve_gate's
@@ -390,7 +402,7 @@ with_scratch_repo t01_case_checkout_failure
 # ---- AC1: correction is a no-op outside a git worktree -------------------------
 t01_case_non_worktree() {
   local nongit_dir
-  # Nested under $TMP (not a fresh /tmp entry) so the suite's own top-level
+  # Nested under $TMP (not a fresh ${TMPDIR:-/tmp} entry) so the suite's own top-level
   # `trap 'rm -rf "$TMP"' EXIT` (set at the top of this file) already covers cleanup on
   # every exit path -- normal, failure, and interrupt -- without a second trap layer.
   nongit_dir="$(mktemp -d "$TMP/edm-t01-nongit.XXXXXX")" || { fail "T01 AC1 -- non-worktree mktemp failed"; return 1; }
@@ -569,14 +581,14 @@ check "metrics-report shows a dedicated code-audit gate row" "Gate code-audit re
 # ---- AC9: design-rationale comment names code-audit as the second dedicated-boolean user ----
 echo
 echo "T08 AC9 -- design-rationale comment extended for code-audit"
-rationale_hits="$(grep -c 'second user of this dedicated-boolean pattern' "$EDM_STATE")"
+rationale_hits="$(count_matches 'second user of this dedicated-boolean pattern' "$EDM_STATE")"
 [[ "$rationale_hits" -ge 1 ]] && pass "design-rationale comment names code-audit as the second dedicated-boolean user" \
   || fail "design-rationale comment not found naming code-audit as second dedicated-boolean user"
 
 # ---- AC10: all state mutation goes through rmw_state -----------------------------------
 echo
 echo "T08 AC10 -- cmd_approve_gate's three gate branches all mutate via rmw_state"
-mutation_hits="$(sed -n '/^cmd_approve_gate() {/,/^}/p' "$EDM_STATE" | grep -c 'rmw_state ')"
+mutation_hits="$(sed -n '/^cmd_approve_gate() {/,/^}/p' "$EDM_STATE" | grep -c 'rmw_state ' || true)"
 [[ "$mutation_hits" -ge 3 ]] \
   && pass "cmd_approve_gate has >=3 rmw_state call sites (3.5 / code-audit / numeric)" \
   || fail "expected >=3 rmw_state call sites inside cmd_approve_gate, found $mutation_hits"
@@ -660,7 +672,7 @@ echo "T13 AC5 -- fast-track passes gate-check tickets without gate 2"
 # ---- AC6 (preserve): cmd_gate_check's numeric comparison logic is unchanged -----------
 echo
 echo "T13 AC6 -- numeric comparison logic (select(.gate == \$g)) preserved verbatim"
-select_hits="$(grep -c '(.gates_approved // \[\]) | map(select(.gate == \$g)) | length' "$EDM_STATE")"
+select_hits="$(count_matches '(.gates_approved // \[\]) | map(select(.gate == \$g)) | length' "$EDM_STATE")"
 [[ "$select_hits" -ge 2 ]] \
   && pass "the original select(.gate == \$g) | length expression still appears (cmd_gate_check + phase-start)" \
   || fail "expected >=2 occurrences of the unchanged numeric comparison expression, found $select_hits"
@@ -688,7 +700,7 @@ leg_phase="$(jq -r '.current_phase' "$STATE_T13LEG")"
 echo
 echo "T13 AC8 -- hooks.json UserPromptExpansion gate-check call sites unchanged"
 HOOKS_JSON="$(cd "$(dirname "$EDM_STATE")/.." && pwd)/hooks/hooks.json"
-hook_gate_check_hits="$(grep -c 'gate-check' "$HOOKS_JSON")"
+hook_gate_check_hits="$(count_matches 'gate-check' "$HOOKS_JSON")"
 [[ "$hook_gate_check_hits" -eq 5 ]] \
   && pass "hooks.json still has exactly 5 gate-check call sites (srd x2, tickets, audit-tickets, implement)" \
   || fail "hooks.json has $hook_gate_check_hits gate-check call sites, expected 5 (unchanged)"
@@ -815,8 +827,8 @@ echo "T06 -- permission ask-rule detection and honest enforcement tags"
 # Isolated scratch cwd + isolated HOME so this suite's outcome never depends on the
 # developer machine's real ~/.claude/settings.json (AC4/AC6 fail-safe requires this to be
 # deterministic, not "whatever happens to be on the box that runs it").
-T06_HOME="$(mktemp -d)"
-T06_CWD="$(mktemp -d)"
+T06_HOME="$(mktemp -d "${TMP}/t06-home.XXXXXX")"
+T06_CWD="$(mktemp -d "${TMP}/t06-cwd.XXXXXX")"
 T06_PREV_HOME="${HOME:-}"
 T06_PREV_PWD="$(pwd)"
 mkdir -p "$T06_HOME/.claude" "$T06_CWD/.claude"
@@ -1388,7 +1400,7 @@ echo "# Shard 1" > "$TMP/SRD/T11SHARD/qc/qc-shard-01.md"
 echo
 echo "T11 AC1 -- artifact-presence checks route through present_or_absent nonempty, not a bare [[ -s ]]"
 t11_pc_block="$(awk '/^cmd_phase_complete\(\) \{/{f=1} f{print} f && /^\}/{exit}' "$EDM_STATE")"
-t11_helper_hits="$(printf '%s\n' "$t11_pc_block" | grep -c 'present_or_absent "[^"]*" nonempty')"
+t11_helper_hits="$(printf '%s\n' "$t11_pc_block" | grep -c 'present_or_absent "[^"]*" nonempty' || true)"
 [[ "$t11_helper_hits" -ge 6 ]] \
   && pass "T11 AC1 -- cmd_phase_complete has >=6 present_or_absent ... nonempty call sites" \
   || fail "T11 AC1 -- expected >=6 present_or_absent ... nonempty call sites in cmd_phase_complete, found $t11_helper_hits"
@@ -1488,7 +1500,7 @@ hash_check="$("$EDM_STATE" get T11HASH | jq -r '.artifact_hashes.srd.hash // "nu
 # ---- AC10: comment states the three fixed filenames are not user-configurable -----------
 echo
 echo "T11 AC10 -- comment documents the fixed vs. configurable artifact filenames"
-ac10_hits="$(sed -n '/^cmd_phase_complete() {/,/^}/p' "$EDM_STATE" | grep -c 'NOT user-configurable')"
+ac10_hits="$(sed -n '/^cmd_phase_complete() {/,/^}/p' "$EDM_STATE" | grep -c 'NOT user-configurable' || true)"
 [[ "$ac10_hits" -ge 1 ]] && pass "T11 AC10 -- comment present inside cmd_phase_complete" \
   || fail "T11 AC10 -- comment not found inside cmd_phase_complete"
 
@@ -2428,9 +2440,19 @@ echo
 echo "T64 AC7 -- read-only commands leave the state byte-identical"
 "$EDM_STATE" init T64AC7 >/dev/null
 STATE_T64AC7="$TMP/SRD/T64AC7/.edm-state.json"
+validate_t64ac7="$("$EDM_STATE" validate T64AC7 2>&1 || true)"
+[[ -n "$validate_t64ac7" ]] && pass "T64 AC7 -- validate emits read-only output" \
+  || fail "T64 AC7 -- validate produced no output"
+get_t64ac7="$("$EDM_STATE" get T64AC7 2>/dev/null || true)"
+check "T64 AC7 -- get emits the initiative prefix" '"prefix": "T64AC7"' "$get_t64ac7"
+gate_t64ac7="$("$EDM_STATE" gate-check T64AC7 srd 2>&1 || true)"
+[[ -n "$gate_t64ac7" ]] && pass "T64 AC7 -- gate-check emits refusal output without mutating state" \
+  || fail "T64 AC7 -- gate-check produced no output"
+list_t64ac7="$("$EDM_STATE" list --paths 2>/dev/null || true)"
+check "T64 AC7 -- list --paths emits the initiative directory" "$TMP/SRD/T64AC7" "$list_t64ac7"
 check_state_unchanged "$STATE_T64AC7" "$EDM_STATE" validate T64AC7
 check_state_unchanged "$STATE_T64AC7" "$EDM_STATE" get T64AC7
-check_state_unchanged "$STATE_T64AC7" "$EDM_STATE" gate-check T64AC7 plan
+check_state_unchanged "$STATE_T64AC7" "$EDM_STATE" gate-check T64AC7 srd
 check_state_unchanged "$STATE_T64AC7" "$EDM_STATE" list --paths
 
 # ---- AC8 (EDMV3-92, concurrency): two concurrent mutations both land ----------------------
@@ -2508,9 +2530,9 @@ check_absent "T26 AC5 -- re-running render-ledger overwrites the hand-edit" \
   "HAND EDITED CONTENT" "$(cat "$T26_MD" 2>/dev/null)"
 
 # ---- AC6 (atomic write, static assertion) --------------------------------------------------
-check "T26 AC6 -- render-ledger writes via a temp-file-plus-rename (mv ... findings-ledger.md)" \
-  "findings-ledger.md" \
-  "$(grep -n 'mv .*findings-ledger.md' "$EDM_STATE" || true)"
+check "T26 AC6 -- render-ledger writes via write_atomic helper (atomic temp-file-plus-rename)" \
+  "write_atomic" \
+  "$(grep -n 'write_atomic.*md_path\|write_atomic.*ledger' "$EDM_STATE" || true)"
 
 # ---- AC8 (lint clean, minus the not-yet-landed Mermaid class from EDMV3-T43) ---------------
 t26_lint_out="$(bash "${SCRIPT_DIR}/../edm-lint-artifacts" --path "$T26_MD" 2>&1)"
@@ -2752,7 +2774,7 @@ t28_exit2="$(printf '%s\n' "$t28_body" | grep -c 'exit 2' || true)"
 # ---- AC9 (blocking predicate defined once, referenced by name at all four consumers) --------
 echo
 echo "T28 AC9 -- BLOCKING_FILTER defined once, referenced by name at exactly four consumers"
-t28_bf_count="$(grep -c 'BLOCKING_FILTER' "$EDM_STATE")"
+t28_bf_count="$(count_matches 'BLOCKING_FILTER' "$EDM_STATE")"
 [[ "$t28_bf_count" -eq 5 ]] && pass "T28 AC9 -- BLOCKING_FILTER appears 5 times (1 definition + 4 consumers)" \
   || fail "T28 AC9 -- BLOCKING_FILTER appears ${t28_bf_count} time(s), expected 5"
 
@@ -3033,12 +3055,12 @@ check_absent "T18 AC8 -- HANDOFF omits the findings section entirely when no led
 # ---- AC9 (preserve): HANDOFF still auto-regenerates, Notes preserved, ASCII-only ----------
 echo
 echo "T18 AC9 -- HANDOFF regeneration/ASCII/Notes preservation unaffected (wave5-smoke.sh, edm-lint-artifacts)"
-t18_wave5_out="$(bash "${SCRIPT_DIR}/wave5-smoke.sh" 2>&1)"
-t18_wave5_ec=$?
+t18_wave5_ec=0
+t18_wave5_out="$(bash "${SCRIPT_DIR}/wave5-smoke.sh" 2>&1)" || t18_wave5_ec=$?
 [[ $t18_wave5_ec -eq 0 ]] && pass "T18 AC9 -- wave5-smoke.sh stays green" \
   || fail "T18 AC9 -- wave5-smoke.sh exited ${t18_wave5_ec}"
-t18_lint_out="$(bash "${SCRIPT_DIR}/../edm-lint-artifacts" --all 2>&1)"
-t18_lint_ec=$?
+t18_lint_ec=0
+t18_lint_out="$(bash "${SCRIPT_DIR}/../edm-lint-artifacts" --all 2>&1)" || t18_lint_ec=$?
 [[ $t18_lint_ec -eq 0 ]] && pass "T18 AC9 -- edm-lint-artifacts --all exits 0" \
   || fail "T18 AC9 -- edm-lint-artifacts --all failed (exit ${t18_lint_ec}): ${t18_lint_out}"
 
@@ -3098,8 +3120,9 @@ bash "$SYNC_BIN" --check >/dev/null 2>&1 \
   && pass "T41 AC5 -- committed docs/canonical-sections.md is in sync with CLAUDE.md (--check exits 0)" \
   || fail "T41 AC5 -- committed docs/canonical-sections.md is OUT OF SYNC with CLAUDE.md"
 
-t41_backup="$(mktemp)"
-cp "$CANONICAL_SECTIONS_MD" "$t41_backup"
+T41_CANONICAL="$CANONICAL_SECTIONS_MD"
+T41_BACKUP="$(mktemp "${TMP}/t41-canonical.XXXXXX")"
+cp "$CANONICAL_SECTIONS_MD" "$T41_BACKUP"
 printf '\nhand-edited, not regenerated\n' >> "$CANONICAL_SECTIONS_MD"
 set +e
 bash "$SYNC_BIN" --check >/dev/null 2>&1
@@ -3108,8 +3131,9 @@ set -e
 [[ $t41_check_ec -ne 0 ]] \
   && pass "T41 AC5 -- hand-editing the copy without regenerating makes --check fail" \
   || fail "T41 AC5 -- --check did not catch a hand-edit to the generated copy"
-cp "$t41_backup" "$CANONICAL_SECTIONS_MD"
-rm -f "$t41_backup"
+cp "$T41_BACKUP" "$CANONICAL_SECTIONS_MD"
+rm -f "$T41_BACKUP"
+T41_BACKUP=""
 bash "$SYNC_BIN" --check >/dev/null 2>&1 \
   && pass "T41 AC5 -- restoring the generated copy makes --check pass again" \
   || fail "T41 AC5 -- --check still failing after restoring the generated copy"
@@ -3234,8 +3258,8 @@ t50order_out="$("$EDM_STATE" phase-complete T50ORDER 6 2>&1)"; t50order_ec=$?
 # figure the EDMV2 defect (D9) left at 0s/$0.00. -------------------------------------------------
 echo
 echo "T50 AC7 -- phase 6 duration_seconds and estimated_cost_usd are non-zero after a real run"
-T50_HOME="$(mktemp -d)"
-T50_CWD="$(mktemp -d)"
+T50_HOME="$(mktemp -d "${TMP}/t50-home.XXXXXX")"
+T50_CWD="$(mktemp -d "${TMP}/t50-cwd.XXXXXX")"
 T50_PREV_HOME="${HOME:-}"
 T50_PREV_PWD="$(pwd)"
 cd "$T50_CWD"
@@ -3287,8 +3311,8 @@ t51ac3_arc_line="$(grep -n 'edm-state audit-round-complete' "$CODE_AUDIT_SKILL_T
 # audit type and round number. ------------------------------------------------------------------
 echo
 echo "T51 AC1 -- audit-round-complete records duration, tokens and cost for the round"
-T51_HOME="$(mktemp -d)"
-T51_CWD="$(mktemp -d)"
+T51_HOME="$(mktemp -d "${TMP}/t51-home.XXXXXX")"
+T51_CWD="$(mktemp -d "${TMP}/t51-cwd.XXXXXX")"
 T51_PREV_HOME="${HOME:-}"
 T51_PREV_PWD="$(pwd)"
 cd "$T51_CWD"
@@ -3410,8 +3434,8 @@ jq -e . "$STATE_T51DBL" >/dev/null 2>&1 \
 # (via phase-complete) scopes to the driving (most-recently-modified) session only. -----------
 echo
 echo "T52 AC4 -- two synthetic sessions produce the documented attribution"
-T52_HOME="$(mktemp -d)"
-T52_CWD="$(mktemp -d)"
+T52_HOME="$(mktemp -d "${TMP}/t52-home.XXXXXX")"
+T52_CWD="$(mktemp -d "${TMP}/t52-cwd.XXXXXX")"
 T52_PREV_HOME="${HOME:-}"
 T52_PREV_PWD="$(pwd)"
 cd "$T52_CWD"
@@ -3433,15 +3457,23 @@ echo "# QC Summary" > "$TMP/SRD/T52ATTR/qc/qc-summary.md"
 "$EDM_STATE" phase-complete T52ATTR 6 >/dev/null
 STATE_T52ATTR="$TMP/SRD/T52ATTR/.edm-state.json"
 t52_attr_mode="$(jq -r '.phase_durations["6_phase"].attribution_mode' "$STATE_T52ATTR")"
-check "T52 AC2 -- attribution_mode is scoped or whole-directory" \
-  "" "$(echo "$t52_attr_mode" | grep -E '^(scoped|whole-directory)$' || true)"
+case "$t52_attr_mode" in
+  scoped|whole-directory)
+    pass "T52 AC2 -- attribution_mode is scoped or whole-directory (${t52_attr_mode})"
+    ;;
+  *)
+    fail "T52 AC2 -- attribution_mode was '${t52_attr_mode}', expected scoped or whole-directory"
+    ;;
+esac
 t52_input="$(jq -r '.phase_durations["6_phase"].tokens.input' "$STATE_T52ATTR")"
 if [[ "$t52_attr_mode" == "scoped" ]]; then
   [[ "$t52_input" -eq 1000 ]] \
     && pass "T52 AC4 -- scoped attribution: input tokens = 1000 (driving session only, not 101000)" \
     || fail "T52 AC4 -- scoped attribution recorded input=$t52_input, expected 1000 (the old concurrent session leaked in)"
 else
-  pass "T52 AC4 -- whole-directory fallback taken (attribution_mode recorded honestly as such)"
+  [[ "$t52_input" -eq 101000 ]] \
+    && pass "T52 AC4 -- whole-directory fallback records the honest 101000 input total" \
+    || fail "T52 AC4 -- whole-directory fallback recorded input=$t52_input, expected 101000"
 fi
 cd "$T52_PREV_PWD"
 export HOME="$T52_PREV_HOME"
@@ -3456,9 +3488,24 @@ t52_prevgen_cost="$(call_edm_helper compute_cost_usd "claude-opus-4-7-20260201" 
 awk -v c="$t52_prevgen_cost" 'BEGIN{exit !(c>0)}' \
   && pass "T52 AC9 -- compute_cost_usd on a previous-generation opus identifier is non-zero (\$${t52_prevgen_cost})" \
   || fail "T52 AC9 -- compute_cost_usd on a previous-generation opus identifier = '$t52_prevgen_cost', expected > 0"
+t52_prevgen_opus_output="$(call_edm_helper compute_cost_usd "claude-opus-4-7-20260201" 0 1000000 0 0 0)"
+t52_prevgen_opus_override="$(EDM_OPUS_OUTPUT_RATE=999 call_edm_helper compute_cost_usd "claude-opus-4-7-20260201" 0 1000000 0 0 0)"
+[[ "$t52_prevgen_opus_output" == "25.0000" && "$t52_prevgen_opus_override" == "25.0000" ]] \
+  && pass "T52 AC9 -- previous-generation opus output rate stays frozen at 25.0000 even when EDM_OPUS_OUTPUT_RATE is set" \
+  || fail "T52 AC9 -- previous-generation opus output rate drifted (default=${t52_prevgen_opus_output}, override=${t52_prevgen_opus_override})"
+t52_prevgen_sonnet_output="$(call_edm_helper compute_cost_usd "claude-sonnet-4-6-20260201" 0 1000000 0 0 0)"
+t52_prevgen_sonnet_override="$(EDM_SONNET_OUTPUT_RATE=999 call_edm_helper compute_cost_usd "claude-sonnet-4-6-20260201" 0 1000000 0 0 0)"
+[[ "$t52_prevgen_sonnet_output" == "15.0000" && "$t52_prevgen_sonnet_override" == "15.0000" ]] \
+  && pass "T52 AC9 -- previous-generation sonnet output rate stays frozen at 15.0000 even when EDM_SONNET_OUTPUT_RATE is set" \
+  || fail "T52 AC9 -- previous-generation sonnet output rate drifted (default=${t52_prevgen_sonnet_output}, override=${t52_prevgen_sonnet_override})"
+t52_prevgen_haiku_output="$(call_edm_helper compute_cost_usd "claude-haiku-4-5-20260201" 0 1000000 0 0 0)"
+t52_prevgen_haiku_override="$(EDM_HAIKU_OUTPUT_RATE=999 call_edm_helper compute_cost_usd "claude-haiku-4-5-20260201" 0 1000000 0 0 0)"
+[[ "$t52_prevgen_haiku_output" == "5.0000" && "$t52_prevgen_haiku_override" == "5.0000" ]] \
+  && pass "T52 AC9 -- previous-generation haiku output rate stays frozen at 5.0000 even when EDM_HAIKU_OUTPUT_RATE is set" \
+  || fail "T52 AC9 -- previous-generation haiku output rate drifted (default=${t52_prevgen_haiku_output}, override=${t52_prevgen_haiku_override})"
 
-T52B_HOME="$(mktemp -d)"
-T52B_CWD="$(mktemp -d)"
+T52B_HOME="$(mktemp -d "${TMP}/t52b-home.XXXXXX")"
+T52B_CWD="$(mktemp -d "${TMP}/t52b-cwd.XXXXXX")"
 T52B_PREV_HOME="${HOME:-}"
 T52B_PREV_PWD="$(pwd)"
 cd "$T52B_CWD"
@@ -3484,15 +3531,15 @@ rm -rf "$T52B_HOME" "$T52B_CWD"
 
 # ---- AC10 (negative, unknown model warns rather than costing zero) ----------------------------
 echo
-echo "T52 AC10 -- unrecognized model_used warns and does not silently cost zero"
-t52_unknown_stderr="$(call_edm_helper compute_cost_usd "claude-nebula-9-1-20261231" 1000000 0 0 0 0 2>&1 1>/dev/null)"
-t52_unknown_cost="$(call_edm_helper compute_cost_usd "claude-nebula-9-1-20261231" 1000000 0 0 0 0 2>/dev/null)"
+echo "T52 AC10 -- unknown in-family generations warn and use the Sonnet placeholder cost"
+t52_unknown_stderr="$(call_edm_helper compute_cost_usd "claude-opus-5-20260501" 1000000 0 0 0 0 2>&1 1>/dev/null)"
+t52_unknown_cost="$(call_edm_helper compute_cost_usd "claude-opus-5-20260501" 1000000 0 0 0 0 2>/dev/null)"
 check "T52 AC10 -- unrecognized model_used emits an explicit warning naming the model" \
-  "claude-nebula-9-1-20261231" "$t52_unknown_stderr"
+  "claude-opus-5-20260501" "$t52_unknown_stderr"
 check "T52 AC10 -- warning text says WARNING" "WARNING" "$t52_unknown_stderr"
-awk -v c="$t52_unknown_cost" 'BEGIN{exit !(c>0)}' \
-  && pass "T52 AC10 -- unrecognized model_used cost is not silently 0 (\$${t52_unknown_cost})" \
-  || fail "T52 AC10 -- unrecognized model_used cost = '$t52_unknown_cost', expected > 0"
+[[ "$t52_unknown_cost" == "4.0000" ]] \
+  && pass "T52 AC10 -- unknown generation uses the documented Sonnet placeholder cost (\$${t52_unknown_cost})" \
+  || fail "T52 AC10 -- unknown generation cost = '$t52_unknown_cost', expected 4.0000"
 # The pre-existing "unknown" sentinel (no session data at all) stays silent -- a real zero, not
 # an unrecognized-model silent zero.
 t52_sentinel_stderr="$(call_edm_helper compute_cost_usd "unknown" 0 0 0 0 0 2>&1 1>/dev/null)"

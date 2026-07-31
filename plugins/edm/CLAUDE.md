@@ -445,23 +445,24 @@ this refresh is never silently repriced on a later read:
 
 Override the current-generation rates with `EDM_OPUS_INPUT_RATE`, `EDM_SONNET_OUTPUT_RATE`, `EDM_HAIKU_CACHE_READ_RATE`, `EDM_OPUS_CACHE_WRITE_5M_RATE`, `EDM_OPUS_CACHE_WRITE_1H_RATE`, etc. when rates change.
 
-**How `compute_cost_usd` picks a rate row, and the gap that leaves.** The `case` in `bin/edm-state`
-matches, in order: the three previous-generation identifiers (`*opus-4-7*`, `*sonnet-4-6*`,
-`*haiku-4-5*`) at their frozen rates; then the `unknown` no-session sentinel; then the bare family
-wildcards `*opus*`, `*sonnet*`, `*haiku*` at current-generation rates. The explicit stderr warning
-("unrecognized model_used ... verify manually", EDMV3-T52 AC10) fires **only in the final `*)`
-arm** -- that is, only for an identifier matching none of the three families, such as a non-Claude
-model string.
+**How `compute_cost_usd` picks a rate row after D32.** D32 removed the bare family wildcards. The
+`case` in `bin/edm-state` now has eight explicit arms, in this order:
 
-The consequence, stated plainly because this table exists for economics honesty: **a model from a
-newer (or older) generation within a known family is priced at the current-generation rate for
-that family, silently, with no warning.** `claude-opus-5-20260501` matches `*opus*` and is billed
-at the Opus 4.8 row; `claude-sonnet-9` matches `*sonnet*` and is billed at the Sonnet 4.7 row.
-Neither prints anything. A recorded `estimated_cost_usd` can therefore understate or overstate the
-real spend by whatever the generation-over-generation rate delta happens to be, and nothing in the
-figure itself marks it as suspect. Cross-check `model_used` against the two tables above before
-quoting a cost figure from a run driven by a model generation newer than this section's
-"Verified" date.
+1. previous-generation frozen rows: `*opus-4-7*|*opus-4.7*`, `*sonnet-4-6*|*sonnet-4.6*`,
+   `*haiku-4-5*|*haiku-4.5*`
+2. current-generation explicit rows: `*opus-4-8*|*opus-4.8*`, `*haiku-4-6*|*haiku-4.6*`,
+   `*sonnet-4-7*|*sonnet-4.7*`
+3. the literal `unknown` sentinel from `get_session_tokens_since` (silent placeholder pricing at
+   current Sonnet-tier rates; tokens are already zero in that path)
+4. final `*)` fallback: warn on stderr and also price at current Sonnet-tier rates as a clearly
+   suspect placeholder
+
+The important behavioral change is the opposite of the pre-D32 contract: an unrecognized model in a
+known family no longer matches silently. `claude-opus-5-20260501`, `claude-sonnet-9`, or any other
+identifier outside the six explicit version arms now falls through to `*)`, emits the warning, and
+gets placeholder Sonnet-tier pricing until a human updates the table. Cross-check `model_used`
+against the two tables above before quoting a cost figure from a run driven by a model generation
+newer than this section's "Verified" date.
 
 Cache writes are tracked separately by TTL (5-minute vs 1-hour) because they have different rates. Claude Code typically uses 1-hour caching for system prompts and tool definitions, so `cache_write_1h` is usually the dominant figure.
 
@@ -625,11 +626,16 @@ The `userConfig.jira_project_key` value provides a default; otherwise the user m
 |----------------------------------------------------------------------------------------|---------------------------------------------------------------|
 | `SessionStart`                                                                         | Emit Resume Point for active initiatives via `edm-state session-start` |
 | `UserPromptExpansion` matching `edm:(srd\|audit-srd\|tickets\|audit-tickets\|implement)` | Block expansion if the prerequisite HITL gate isn't approved  |
-| `PreToolUse` matching `git commit`                                                     | Run `edm-lint-artifacts` -- block commit if active-initiative artifacts have violations |
+| `PreToolUse` matching `git commit`                                                     | For staged paths under the literal repository-relative `SRD/` only, run `edm-lint-artifacts <PREFIX>` per discovered prefix; any non-zero exit blocks the commit (`1` = violations, `2` = usage/environment/resolution issue, though the hook prints one generic fix-it line for both) |
 | `Stop` and `PreCompact`                                                                | Checkpoint state via `edm-state checkpoint-if-active`         |
 | `SubagentStop` matching `edm-implementer`                                              | Auto-spawn `edm-qc-auditor`; write verdict to `qc/qc-summary.md`; persist PARTIAL verdicts via `edm-state record-partial-verdict` |
 
 These are part of the methodology -- do not disable them in normal operation.
+
+`edm-lint-artifacts` itself honors `${user_config.srd_root}` through `EDM_SRD_ROOT` /
+`CLAUDE_PLUGIN_OPTION_SRD_ROOT`, but the git-commit hook does not: its staged-file probe is the
+literal regex `^SRD/`. If `srd_root` is relocated, direct `edm-lint-artifacts` invocations still
+work, but the automatic commit-path enforcement is lost until the hook matcher is updated too.
 
 ## Monitors behavior (EDMV3-T59, D24)
 
@@ -714,7 +720,7 @@ Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call the
 | `edm-state`           | Read/write `.edm-state.json` files; 40 subcommands: `init`, `get`, `set`, `list`, `active-initiatives`, `migrate-path`, `migrate-schema`, `approve-gate`, `phase-start`, `phase-complete`, `checkpoint-if-active`, `record-test-coverage`, `record-tests-added`, `get-coverage`, `srd-version`, `archive`, `write-handoff`, `watch-impl`, `metrics-report`, `validate`, `gate-check`, `branch-check`, `record-branch`, `git-lock-check`, `current-step`, `session-start`, `audit-round-start`, `audit-round-complete`, `render-ledger`, `audit-converged`, `record-partial-verdict`, `set-mode`, `skip-phase`, `set-supersedes`, `set-forked-from`, `resolve-dir`, `set-parent`, `add-related`, `update-patterns`, `lint` |
 | `edm-init`            | Scaffold a new initiative directory (`SRD/{PREFIX}/` or `SRD/{PRODUCT}/{PREFIX}__{desc}/`) with empty state file |
 | `edm-validate-prefix` | Verify a proposed prefix doesn't collide with existing initiatives across all product subdirectories |
-| `edm-lint-artifacts`  | Scan `.md` artifact files for four violation classes -- attribution trailers, non-ASCII bytes, leaked tool-invocation tags, and a literal `;` inside Mermaid label/edge/message text; called by the `PreToolUse` git-commit hook |
+| `edm-lint-artifacts`  | Scan initiative artifact markdown for four violation classes -- attribution trailers, non-ASCII bytes, leaked tool-invocation tags, and a literal `;` inside Mermaid label/edge/message text; called by the `PreToolUse` git-commit hook |
 | `edm-sync-canonical-sections` | Regenerate `docs/canonical-sections.md` from this file's "Severity vocabulary" and "Mermaid diagram conventions" sections (byte-identical, one-directional); `--check` exits 1 on drift. See the note below the Mermaid section for why this file exists (EDMV3-T41). |
 
 ### `edm-lint-artifacts` latency budgets (EDMV3-T67 AC5/AC7)
@@ -726,7 +732,7 @@ one place, and only one of the two is a CI concern at all.
 
 | Budget | Invocation | Ceiling | Fixture the ceiling is stated against | Where it binds |
 |---|---|---|---|---|
-| **Commit-path** | `edm-lint-artifacts <PREFIX>`, from the `PreToolUse` git-commit hook | **3,000 ms** p95 | one initiative directory of 30 `.md` files / 9,990 lines | Every `git commit` that stages anything under `SRD/`. A human is waiting on this one, so it is the budget that must stay small |
+| **Commit-path** | `edm-lint-artifacts <PREFIX>`, from the `PreToolUse` git-commit hook | **3,000 ms** p95 | one initiative directory of 30 `.md` files / 9,990 lines | Every `git commit` that stages anything under the hook's literal `SRD/` matcher. A human is waiting on this one, so it is the budget that must stay small |
 | **CI** | `edm-lint-artifacts --all`, inside the blocking `lint:artifacts` job | **60,000 ms** | a 50-initiative repository | The CI lint stage only. `--all` walks every active initiative directory `edm-state list --paths` returns, so it is roughly 50x the work at 20x the ceiling -- a commit-path number must never be compared against it, or vice versa |
 
 Both are measured by `bin/tests/timing.sh` (`--lint` and `--all-lint`) against generated fixtures,
@@ -753,7 +759,7 @@ state file that predates a field is never an error.
 | `forked_from` | string | `""` | Prefix of the initiative this forked from (provenance link) | Read as `""` (no link) |
 | `gates_approved[].enforcement` | string enum: `permission-ask` \| `prose-only` | no seeded default -- `cmd_approve_gate` writes it on **every** numeric-gate approval, from `check_permission_rules()` | The honesty tag (EDMV3-T06): `permission-ask` when BOTH `Bash(edm-state approve-gate*)` and `Bash(edm-state archive*)` were found across the three scanned settings files at approval time, `prose-only` otherwise. It records that the rules were **configured**, never that a prompt actually fired -- see README.md's matcher-limitation note for the bypass shapes a configured rule still misses | Absent on entries written before EDMV3-T06. An absent tag reads as "unknown", never as `permission-ask`; nothing fails on absence |
 | `gates_approved[].approved_at`, `gates_approved[].approver` | string (ISO-8601 UTC), string | written with the entry; `approver` is `$USER`, falling back to the literal `unknown` when unset | Who approved a numeric HITL gate and when. Written as sibling scalars inside the `gates_approved[]` entry object | Absent on pre-EDMV3 entries; renderers show `?` rather than failing |
-| `code_audit_gate_approved_at` / `_approver` / `_enforcement` / `_ledger`, and `compliance_gate_approved_at` / `_approver` / `_enforcement` | strings; `_enforcement` is the same enum as above | the four `code_audit_gate_*` keys are seeded `""` by `edm-state init`; the three `compliance_gate_*` keys are created on first approval | Sibling scalars for the two dedicated-boolean gates (`code-audit` and 3.5). The boolean itself stays a plain boolean -- `metrics-report` and HANDOFF both depend on that -- so the metadata hangs beside it rather than converting it to an object. `code_audit_gate_enforcement` additionally carries the sentinel `CONVERGENCE_NOT_REQUIRED` when the initiative's `mode` has no code-audit round, keeping a mode exemption distinguishable from an approval. `_ledger` holds the real `findings-ledger.jsonl` path or the literal `absent` | Empty string and absent both read as "not approved"; no check fails on either |
+| `code_audit_gate_approved_at` / `_approver` / `_enforcement` / `_ledger`, and `compliance_gate_approved_at` / `_approver` / `_enforcement` | strings; `_enforcement` is the same enum as above | the four `code_audit_gate_*` keys are seeded `""` by `edm-state init`; the three `compliance_gate_*` keys are created on first approval | Sibling scalars for the two dedicated-boolean gates (`code-audit` and 3.5). The boolean itself stays a plain boolean -- `metrics-report` and HANDOFF both depend on that -- so the metadata hangs beside it rather than converting it to an object. `code_audit_gate_enforcement` additionally carries the sentinel `CONVERGENCE_NOT_REQUIRED` when the initiative's phase graph skips the code-audit round because of its `mode` or `lifecycle_mode`, keeping an exemption distinguishable from an approval. `_ledger` holds the real `findings-ledger.jsonl` path or the literal `absent` | Empty string and absent both read as "not approved"; no check fails on either |
 | `audit_rounds.<type>.rounds[].round_type` | string enum: `full` \| `partial` | `full` when `audit-round-start` is called without `--lenses` | Derived at `edm-state audit-round-start` (EDMV3-T27): `full` when the lens set equals all eleven lens IDs, or when `--lenses` was omitted (matching `skills/code-audit/SKILL.md`'s "absence of `--lenses` means run all 11"); `partial` otherwise. A partial round is **never convergent** -- `edm-state audit-converged` exits 1 when the latest round is `partial` | `audit_rounds.<type>` may still be a bare integer in a file written before the `{count, rounds: [...]}` widening; every reader coerces via `coerce_round_entry` and no existing file is rewritten. A round carrying no `round_type` reads as `unknown`: blocking at `schema_version >= 2`, warn-and-proceed below that |
 | `audit_rounds.<type>.rounds[].completed_at` / `duration_seconds` / `tokens` / `model_used` / `estimated_cost_usd` / `attribution_mode` | string (ISO-8601 UTC) / number (seconds) / object `{input, output, cache_read, cache_write_5m, cache_write_1h}` / string / number (USD) / string enum `scoped` \| `whole-directory` | written only by `edm-state audit-round-complete`; on a round with no recorded `started_at` the token counts stay `0`, `model_used` stays `unknown`, `estimated_cost_usd` stays `0.0000`, `attribution_mode` stays `whole-directory` | Per-round duration and cost for one audit round (EDMV3-T51), computed with the same `get_session_tokens_since` / `compute_cost_usd` pair `phase-complete` uses, so audit-round cost can never diverge from phase cost via a second implementation. `metrics-report` renders them as its code-audit section. A double completion is refused before any write | Additive extension of the wave-B round shape -- **no `schema_version` bump** (stays `2`, EDMV3-T66 AC2). Every reader reads these with jq `//` defaults, so a round closed before T51 simply has none of them; a round never closed at all surfaces as the informational `OPEN_AUDIT_ROUND` anomaly on `edm-state validate` rather than staying invisible |
 | `partial_verdict_map.<ticket>.closing_verdict` | string enum: `PASS` \| `FAIL` | absent while the entry is open | The closing verdict written by `edm-state record-partial-verdict <PREFIX> <ticket> close <PASS\|FAIL> <ref>`, driven by `/edm:verify-runtime`. There is no third value -- no `BLOCKED`, `WAIVED` or `N/A-runtime` (D15). `archive` hard-blocks on any entry that is unclosed or FAIL-closed. An entry may be closed once, the sole exception being re-closure of a FAIL after remediation | Absent means still open; the blocking `OPEN_PARTIALS` anomaly names the ticket. The entire pre-closure entry is preserved under `prior` rather than overwritten, and a re-closure appends to `closure_history` so the FAIL record is never lost |
@@ -844,7 +850,7 @@ restated as prose in a phase skill or in the dispatcher.
 | Medium (30-50 tickets) | 1h       | 4h  | 2h    | 3h      | 1h    | 12-24h | 3-5 days  |
 | Large (50-85 tickets)  | 2h       | 8h  | 4h    | 6h      | 2h    | 24-48h | 5-10 days |
 
-Run `/edm:metrics --calibrate` periodically to update these from your team's actual data.
+Run `/edm:metrics --calibrate` periodically and use the printed medians to update these guidelines.
 
 ## `userConfig` reference
 

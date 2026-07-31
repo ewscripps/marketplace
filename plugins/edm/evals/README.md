@@ -71,23 +71,23 @@ scratch tree.
   needs.
 - **Plugin directory**: `--plugin-dir <this checkout's plugins/edm>`, so the run always exercises
   the plugin version in the working tree, never a globally installed copy.
-- **Timeout**: a per-phase wall-clock budget (`EDM_EVAL_PHASE_TIMEOUT_SECONDS`, default 900) plus a
-  per-phase `--max-budget-usd` spend ceiling (`EDM_EVAL_MAX_BUDGET_USD`, default 2). A phase that
+- **Timeout**: a per-phase wall-clock budget (`EDM_EVAL_PHASE_TIMEOUT_SECONDS`, default 2700) plus a
+  per-phase `--max-budget-usd` spend ceiling (`EDM_EVAL_MAX_BUDGET_USD`, default 15). A phase that
   exceeds either is killed (`SIGTERM` then `SIGKILL`) and the run is scored as incomplete -- see
   "Exit codes" below. The timeout is implemented in bash (`run_with_timeout` in `run-eval.sh`)
   rather than depending on GNU coreutils' `timeout`, which is absent by default on macOS.
-- `--bare` is also set: it forces `ANTHROPIC_API_KEY` (or `apiKeyHelper`) as the only auth path, so
-  the credential requirement below is enforced by the `claude` CLI itself, not only by this
-  script's own pre-flight check.
+- `--bare` is deliberately **not** set: the driver uses `--no-session-persistence` for isolation,
+  and it accepts either an exported `ANTHROPIC_API_KEY` or a `claude` CLI that is already logged
+  in via subscription/OAuth auth.
 
 ## Credentials
 
-`run-eval.sh` requires `ANTHROPIC_API_KEY` in the environment for a real run. Without it:
+`run-eval.sh` requires working Claude auth for a real run. Either export `ANTHROPIC_API_KEY`, or
+run it from a machine where the `claude` CLI is already logged in. If neither auth path is
+available, it exits 2 with:
 
-```bash
-env -u ANTHROPIC_API_KEY bash plugins/edm/evals/run-eval.sh
-# run-eval: ANTHROPIC_API_KEY is not set. ...
-# exit=2
+```text
+run-eval: no working Claude auth: ANTHROPIC_API_KEY is not set and the 'claude' CLI is not authenticated. Export ANTHROPIC_API_KEY or run 'claude' interactively to log in. Use --provision-only to exercise fixture provisioning without auth.
 ```
 
 `--provision-only` is the exception -- it never needs the key.

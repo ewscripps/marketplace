@@ -15,6 +15,8 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(edm-init *), Glob, Gre
 - **Input**: Audited SRD at `${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}`
 - **Output**: Ticket pack at `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/`
 
+**Plugin asset note**: every `docs/...` reference in this skill is relative to the EDM plugin root (`plugins/edm/` in this repository, or the installed plugin root in cache). Resolve that root before reading or grepping those files; never assume the current working directory is the plugin root.
+
 ## Step 0 -- Gate and Branch Preflight
 
 Before Step 1, run the preflight per `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`,
@@ -42,8 +44,8 @@ using `<gated-command>` = `tickets`.
 ## README.md Must Contain
 
 1. **Header**: `Generated From: {srd_filename} v{srd_version}` (for the version-alignment audit)
-2. **Legend** -- Read `docs/templates/ticket-size-legend.md` and inline it verbatim (single source of truth; never re-author inline)
-3. **Cross-Cutting Requirements** -- Read `docs/templates/cross-cutting-ac.md` and inline it verbatim (single source of truth)
+2. **Legend** -- Read plugin-root-relative `docs/templates/ticket-size-legend.md` and inline it verbatim (single source of truth; never re-author inline)
+3. **Cross-Cutting Requirements** -- Read plugin-root-relative `docs/templates/cross-cutting-ac.md` and inline it verbatim (single source of truth)
 4. **Ticket Index** -- one table per phase: ID, Title, Epic, Size, Priority, Depends On, SRD Refs
 5. **Critical Path** -- Mermaid diagram, every node colored, following `CLAUDE.md Sec."Mermaid diagram conventions"` for label text (a raw semicolon in a label is a violation)
 6. **Epics Summary** -- table mapping epic numbers to ticket counts and file links

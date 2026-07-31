@@ -14,7 +14,7 @@ catch and produces zero false positives on every legal case it must leave alone.
 
 ## Floors
 
-At least 10 files in `valid/` and at least 5 in `invalid/` (11 and 5 respectively as of this
+At least 10 files in `valid/` and at least 5 in `invalid/` (12 and 5 respectively as of this
 writing) -- each side carries its own floor rather than a single combined count, because a
 combined floor of 15 would be satisfiable by 15 valid fixtures and zero invalid ones, which
 would prove the class never fires rather than that it fires correctly.
@@ -24,10 +24,11 @@ would prove the class never fires rather than that it fires correctly.
 `valid/` covers: entity codes (`#59;`, `#quot;`, `#35;`), a statement-terminating semicolon,
 `%%` comment lines containing semicolons, `classDef`/`style`/`linkStyle` directives, a clean
 `sequenceDiagram`, a `flowchart` with quoted labels containing commas and parentheses, a
-diagram inside a non-Mermaid fence, the block-form `edm-lint-ignore-start/end` escape valve
-around a genuine violation, the single-line marker on a fence-open line, a multi-diagram file
-with prose (including a semicolon) outside any fence, and a `classDiagram` relationship line
-to guard against the sequence-message heuristic over-firing.
+diagram inside a non-Mermaid fence, an indented non-Mermaid fence nested under a numbered
+step, the block-form `edm-lint-ignore-start/end` escape valve around a genuine violation, the
+single-line marker on a fence-open line, a multi-diagram file with prose (including a
+semicolon) outside any fence, and a `classDiagram` relationship line to guard against the
+sequence-message heuristic over-firing.
 
 `invalid/` covers: a raw `;` inside `[...]`, inside `"..."`, inside an edge `|...|` label,
 inside `{...}`, and inside a `sequenceDiagram` message after the `:`.

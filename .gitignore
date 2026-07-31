@@ -7,6 +7,10 @@ plugins/web-cms/.DS_Store
 plugins/web-cms/skills/.DS_Store
 /.idea/
 .edm-state.json.bak
-.edm-state.json.lock
-.edm-state.json.lockd/
+SRD/**/.edm-state.lock
+SRD/**/.edm-state.lockd/
 .edm-state.json.tmp.*
+plugins/edm/docs/audit-patterns/*.lock
+plugins/edm/docs/audit-patterns/*.lockd/
+plugins/edm/docs/audit-patterns/*.tmp.*
+SRD/**/*.md.tmp.*

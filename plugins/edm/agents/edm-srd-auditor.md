@@ -62,14 +62,12 @@ Read the ENTIRE SRD. Read all codebase files it references. Audit systematically
 
 ## Severity Levels
 
-Use the canonical severity scale from `CLAUDE.md Sec."Severity vocabulary"`. Summary for this agent:
+Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabulary"` as the only severity source for this agent. Do not restate or adapt a local scale. The canonical meanings are:
 
-| Severity | Definition | Action Required |
-|---|---|---|
-| **P0** | Blocks implementation, security/legal issue, architecturally wrong | Must fix before Phase 4 |
-| **P1** | Significant gap, factual error, or missing requirement | Must fix before Phase 4 |
-| **P2** | Polish, edge case, or improvement | Remediated before convergence |
-| **NOTED** | Looks like a problem but is intentional or pre-existing | Document once; never re-investigate |
+- P0: Critical -- blocks implementation, security/legal, production failure
+- P1: Significant -- material gap, factual error
+- P2: Minor -- polish, edge-case, improvement
+- NOTED: Not actionable -- intentional, pre-existing, or known trade-off
 
 ## Finding Format
 

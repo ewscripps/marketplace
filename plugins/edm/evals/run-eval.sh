@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # run-eval.sh -- headless EDM eval driver (EDMV3-T22, EDMV3-25, EDMV3-26).
 #
+# EDM-HELP-BEGIN
 # Provisions a scratch copy of the tiny-svc fixture (fixtures/tiny-svc/), initializes a
 # throwaway git repository inside it, and runs `claude -p` through EDM Phase 1 -> Phase 2 ->
 # Phase 3 (plan -> srd -> audit-srd) headlessly against a frozen initiative description
@@ -11,6 +12,7 @@
 #
 # Usage:
 #   bash run-eval.sh [--out DIR] [--provision-only]
+#   bash run-eval.sh -h|--help|help
 #
 #   --out DIR          Write the run directory under DIR instead of evals/runs/.
 #   --provision-only   Provision the scratch fixture tree and print its path, then exit 0.
@@ -20,8 +22,9 @@
 #                       proxy on macOS).
 #
 # Environment (all optional overrides):
-#   ANTHROPIC_API_KEY            Required for a real run (not for --provision-only). Missing:
-#                                 exit 2 naming this variable.
+#   ANTHROPIC_API_KEY             Optional explicit auth path for a real run. If unset, an already
+#                                 authenticated `claude` CLI is also accepted. `--provision-only`
+#                                 needs neither.
 #   EDM_EVAL_MODEL                claude -p --model value.               Default: opus
 #   EDM_EVAL_PHASE_TIMEOUT_SECONDS Per-phase wall-clock timeout, seconds. Default: 2700
 #   EDM_EVAL_MAX_BUDGET_USD        claude -p --max-budget-usd, per phase. Default: 15
@@ -31,13 +34,14 @@
 #      is clean. This is *not* a quality verdict -- run score-artifacts.sh separately for that.
 #   1  reserved for the scorer/CI comparison (score-artifacts.sh and its caller, EDMV3-T23 /
 #      EDMV3-T39). This script never emits exit 1 itself -- it does not run the scorer.
-#   2  a usage or environment error: missing ANTHROPIC_API_KEY, a missing required binary, bad
+#   2  a usage or environment error: no working Claude auth, a missing required binary, bad
 #      flags, a provisioning failure before any phase started, or a containment violation
 #      detected after a run that otherwise completed all three phases.
 #   4  a partially completed run: at least one phase did not finish (timeout, non-zero exit,
 #      or a missing expected artifact) so the run never reached the final (audit-srd) phase.
 #      run.json and a stub scores.json are written with complete: false so CI refuses to
 #      compare this run against the baseline.
+# EDM-HELP-END
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,10 +53,14 @@ INITIATIVE_FILE="$EVALS_DIR/initiative.txt"
 
 export PATH="$EDM_BIN_DIR:$PATH"
 
+print_help() {
+  awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "${BASH_SOURCE[0]}"
+}
+
 die() { echo "run-eval: $*" >&2; exit 2; }
 
 usage() {
-  sed -n '2,33p' "${BASH_SOURCE[0]}"
+  print_help
 }
 
 # --- Flag parsing --------------------------------------------------------------------------
@@ -65,7 +73,7 @@ while [ $# -gt 0 ]; do
       OUT_ROOT="$2"; shift 2 ;;
     --provision-only)
       PROVISION_ONLY=true; shift ;;
-    -h|--help)
+    -h|--help|help)
       usage; exit 0 ;;
     *)
       die "unknown argument: $1 (see --help)" ;;
@@ -161,7 +169,7 @@ if [ "$PROVISION_ONLY" = "true" ]; then
 fi
 
 # --- Environment / credential requirements (AC8, amended by D20) ----------------------------
-# Two sanctioned auth paths: an exported ANTHROPIC_API_KEY, or a 'claude' CLI that is already
+# Two sanctioned auth paths: an exported ANTHROPIC_API_KEY, or a `claude` CLI that is already
 # authenticated (subscription/OAuth login). The original env-var-only gate was a false
 # precondition on logged-in developer machines and CI images using CLI auth (D15 rework,
 # recorded as D20 in the initiative's decisions.md). The driver still refuses to start a run
@@ -212,12 +220,10 @@ provision_scratch
 #   run cannot reach anything outside the scratch tree via a tool call.
 # --plugin-dir: loads the edm plugin (and its bin/ PATH entries and hooks) for this session
 #   only, from this checkout, never a globally installed copy.
-# --bare: forces ANTHROPIC_API_KEY (or apiKeyHelper) as the only auth path -- OAuth/keychain
-#   auth on the operator's machine is never read, which is what makes the AC8 requirement
-#   ("requires ANTHROPIC_API_KEY") true at the claude CLI level, not only in this script's own
-#   pre-flight check above. It also skips hooks/auto-memory/CLAUDE.md discovery, which is fine
-#   here: this driver pre-seeds gate approvals itself and does not depend on the
-#   UserPromptExpansion hook to enforce phase ordering.
+# No `--bare`: verified live on claude 2.1.220 that `--bare` strips stored subscription/OAuth
+#   credentials and turns an otherwise valid logged-in machine into "Not logged in". This driver
+#   uses `--no-session-persistence` for session isolation and permits either auth path described
+#   above.
 # --max-budget-usd: a hard per-phase spend ceiling, independent of the wall-clock timeout.
 # --no-session-persistence: an eval run never needs to be resumed via `claude --resume`.
 CLAUDE_MODEL="${EDM_EVAL_MODEL:-opus}"
@@ -434,6 +440,12 @@ COMPLETE=true
 # Every file the three phases were expected to create lives under SRD/ inside the scratch
 # tree (product-scoped layout: SRD/<product>/<PREFIX>__<description>/...). Anything else that
 # shows up in `git status --porcelain` is a stray mutation outside the expected artifact paths.
+containment_status=0
+containment_output="$(cd "$SCRATCH_DIR" && git status --porcelain 2>/dev/null)" || containment_status=$?
+if [ "$containment_status" -ne 0 ]; then
+  die "post-run cleanliness check could not read git status from the scratch tree"
+fi
+
 CONTAINMENT_VIOLATIONS=""
 while IFS= read -r line; do
   [ -z "$line" ] && continue
@@ -444,7 +456,7 @@ while IFS= read -r line; do
 " ;;
   esac
 done <<CONTAINMENT_EOF
-$(cd "$SCRATCH_DIR" && git status --porcelain)
+${containment_output}
 CONTAINMENT_EOF
 
 if [ -n "$CONTAINMENT_VIOLATIONS" ]; then

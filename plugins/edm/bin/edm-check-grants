@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
+# EDM-HELP-BEGIN
 # edm-check-grants - four-source grant/instruction contract checker (EDMV3-T03 / EDMV3-07,
 # EDMV3-113).
 #
 # Usage:
 #   edm-check-grants                 # run the full four-source check
 #   edm-check-grants --list-sources  # print the four source labels and exit 0
-#   edm-check-grants -h|--help       # show this help
+#   edm-check-grants -h|--help|help  # show this help
 #
 # Why four sources, not one: a "grep every agents/*.md" check passes green while eleven
 # code-audit lens agents are still unable to write, because their write instruction lives in
@@ -55,7 +56,12 @@
 # frontmatter data is held in flat TSV scratch files (name<TAB>file<TAB>tools<TAB>disallowed for
 # agents; name<TAB>file<TAB>allowed-tools for skills), queried with awk, rather than an
 # associative array.
+# EDM-HELP-END
 set -euo pipefail
+
+print_help() {
+  awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$0"
+}
 
 die() {
   local msg="$1" code="${2:-2}"
@@ -64,7 +70,7 @@ die() {
 }
 
 usage() {
-  sed -n '2,45p' "$0"
+  print_help
   exit 0
 }
 
@@ -92,6 +98,7 @@ fi
 
 # ---- Resolve plugin paths (relative to this script, not the caller's cwd) ---------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/_edm-lint-lib.sh"
 PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 AGENTS_DIR="${PLUGIN_ROOT}/agents"
 SKILLS_DIR="${PLUGIN_ROOT}/skills"
@@ -100,6 +107,7 @@ HOOKS_FILE="${PLUGIN_ROOT}/hooks/hooks.json"
 SOURCE_LABELS="agent-bodies skill-launch-templates hook-prompt-text skill-allowed-tools-vs-body"
 
 if [[ "$LIST_SOURCES" -eq 1 ]]; then
+  # shellcheck disable=SC2086 -- deliberate word-splitting; bash 3.2 has no arrays-as-constants
   for _s in $SOURCE_LABELS; do
     echo "$_s"
   done
@@ -116,65 +124,9 @@ trap 'rm -rf "$WORKDIR"' EXIT
 
 VIOLATIONS=0
 
-# ---- Mirrored from bin/edm-lint-artifacts (AC8: reuse, don't re-derive) -----------------------
-#
-# report_violation mirrors edm-lint-artifacts's function of the same name and purpose (print one
-# formatted line, increment a shared counter) -- but the line SHAPE is this checker's own AC7
-# contract ("<kind>: <name>: <class>: <path>:<line>"), not edm-lint-artifacts's generic
-# "<path>:<line>: <class>: <snippet>" shape. AC7 mandates an actor-first format so agent/skill
-# grant findings read consistently regardless of which of the four sources produced them; that is
-# a deliberate divergence in output shape, not a re-implementation of the underlying mechanism.
-report_violation() {  # report_violation <kind: agent|skill> <name> <class> <filepath> <lineno>
-  printf '%s: %s: %s: %s:%s\n' "$1" "$2" "$3" "$4" "$5"
-  VIOLATIONS=$((VIOLATIONS + 1))
-}
-
-# build_ignore_set / is_ignored_line are mirrored VERBATIM from bin/edm-lint-artifacts (same
-# ignore-marker + code-fence semantics an author may already rely on in these same markdown
-# files). Applied only to source 1 (agent bodies): every current agent's write instruction is
-# plain prose, never inside a fence, so fence-skipping is safe there. It is deliberately NOT
-# applied to source 2 (skill launch templates), because the lens launch template itself lives
-# inside a ```-fenced code block (skills/code-audit/SKILL.md ~L91-103) -- fence-skipping there
-# would blind the checker to the exact instruction EDMV3-07 exists to catch.
-build_ignore_set() {
+ignored_line_set() {
   local file="$1"
-  local in_fence=0 in_ignore_block=0 ignore_next=0 lineno=0
-  while IFS= read -r linetext; do
-    lineno=$((lineno + 1))
-
-    if [[ "$ignore_next" -eq 1 ]]; then
-      echo "$lineno"
-      ignore_next=0
-      continue
-    fi
-
-    if [[ "$linetext" =~ ^\`\`\` ]]; then
-      in_fence=$((1 - in_fence))
-      continue
-    fi
-
-    if [[ "$linetext" == *'<!-- edm-lint-ignore-end -->'* ]]; then
-      in_ignore_block=0
-      continue
-    fi
-
-    if [[ "$in_fence" -eq 1 || "$in_ignore_block" -eq 1 ]]; then
-      echo "$lineno"
-    fi
-
-    if [[ "$linetext" == *'<!-- edm-lint-ignore-start -->'* ]]; then
-      in_ignore_block=1
-    fi
-
-    if [[ "$linetext" == *'<!-- edm-lint-ignore -->'* ]]; then
-      ignore_next=1
-    fi
-  done < "$file"
-}
-
-is_ignored_line() {
-  local lineno="$1" ignoreset="$2"
-  [[ -n "$ignoreset" ]] && echo "$ignoreset" | grep -qxF "$lineno"
+  build_line_classes "$file" | awk -F'	' '$2=="ignored"{print $1}'
 }
 
 # ---- Detection patterns (Technical Notes: conservative, explicit, verb list biased wide) -------
@@ -229,6 +181,7 @@ has_tool() {
   [[ -z "$list" ]] && return 1
   local old_ifs="$IFS"
   IFS=','
+  # shellcheck disable=SC2086 -- deliberate word-splitting on IFS=','
   set -- $list
   IFS="$old_ifs"
   for item in "$@"; do
@@ -314,15 +267,15 @@ assert_agent_grant() {
   return 0
 }
 
-# scan_write_instructions <file> [start-line] -- prints one line number per detected
+# scan_write_instructions <file> [start-line] [skip-ignored: 1|0] -- prints one line number per detected
 # write-instruction anchor (a write-verb line within a +/-3 line window of a path-shaped token).
 scan_write_instructions() {
-  local file="$1" start="${2:-1}"
+  local file="$1" start="${2:-1}" skip_ignored="${3:-1}"
   local total_lines
   total_lines="$(wc -l < "$file" 2>/dev/null | tr -d '[:space:]')"
   [[ -z "$total_lines" ]] && total_lines=0
   local ignore_set=""
-  [[ "$start" -le 1 ]] && ignore_set="$(build_ignore_set "$file")"
+  [[ "$skip_ignored" -eq 1 ]] && ignore_set="$(ignored_line_set "$file")"
 
   local hit_line _rest lo hi window
   while IFS=: read -r hit_line _rest; do
@@ -338,13 +291,13 @@ scan_write_instructions() {
   done < <(grep -nE "$_WRITE_VERB_RE" "$file" 2>/dev/null || true)
 }
 
-# scan_shell_instructions <file> [start-line] -- prints one line number per detected shell-command
+# scan_shell_instructions <file> [start-line] [skip-ignored: 1|0] -- prints one line number per detected shell-command
 # instruction. Candidate lines (naming edm-state, mkdir or jq as a whole word) are re-checked by
 # line_has_shell_instruction so a bare mention never counts on its own.
 scan_shell_instructions() {
-  local file="$1" start="${2:-1}"
+  local file="$1" start="${2:-1}" skip_ignored="${3:-1}"
   local ignore_set=""
-  [[ "$start" -le 1 ]] && ignore_set="$(build_ignore_set "$file")"
+  [[ "$skip_ignored" -eq 1 ]] && ignore_set="$(ignored_line_set "$file")"
   local hit_line content
   while IFS=: read -r hit_line content; do
     [[ -z "$hit_line" ]] && continue
@@ -369,11 +322,11 @@ scan_agent_bodies() {
 
     while IFS= read -r ln; do
       assert_agent_grant "$name" Write "$f" "$ln"
-    done < <(scan_write_instructions "$f" "$body_start")
+    done < <(scan_write_instructions "$f" "$body_start" 1)
 
     while IFS= read -r ln; do
       assert_agent_grant "$name" Bash "$f" "$ln"
-    done < <(scan_shell_instructions "$f" "$body_start")
+    done < <(scan_shell_instructions "$f" "$body_start" 1)
   done
 }
 
@@ -386,7 +339,10 @@ scan_agent_bodies() {
 # ("Launch lens agents in parallel for every lens in LENS_SET") -- so the same "lens" keyword
 # trigger is checked as a fallback whenever no explicit "Agent:" line is found in the lookback
 # window. This is a codebase-specific heuristic (not a generic templating engine), documented here
-# because it is the concrete mechanism EDMV3-07's Technical Notes call for.
+# because it is the concrete mechanism EDMV3-07's Technical Notes call for. This source is
+# deliberately NOT ignore/fence-skipped: the code-audit lens launch template lives inside a
+# fenced block, and skipping that fence would blind the checker to the exact instruction it exists
+# to enforce.
 # =================================================================================================
 expand_lens_agents() {
   local f base
@@ -449,7 +405,7 @@ scan_skill_launch_templates() {
         [[ -z "$t" ]] && continue
         assert_agent_grant "$t" Write "$f" "$ln"
       done < <(resolve_targets_for_line "$f" "$ln" 15)
-    done < <(scan_write_instructions "$f" "$body_start")
+    done < <(scan_write_instructions "$f" "$body_start" 0)
   done
 }
 
@@ -477,11 +433,11 @@ scan_hook_prompts() {
 
     while IFS= read -r ln; do
       assert_agent_grant "$target" Write "$HOOKS_FILE" "$lnum"
-    done < <(scan_write_instructions "$scratch" 1)
+    done < <(scan_write_instructions "$scratch" 1 1)
 
     while IFS= read -r ln; do
       assert_agent_grant "$target" Bash "$HOOKS_FILE" "$lnum"
-    done < <(scan_shell_instructions "$scratch" 1)
+    done < <(scan_shell_instructions "$scratch" 1 1)
   done < <(grep -n '"prompt":' "$HOOKS_FILE" 2>/dev/null || true)
 }
 

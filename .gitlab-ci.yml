@@ -7,12 +7,13 @@
 #   - every pipeline on the default branch (unconditionally), so the pipeline cannot rot
 #     behind an unrelated merge and go stale without anyone noticing (SRD EDMV3-23).
 #
-# Image digest pinning (AC7). Every `image:` entry below is pinned to a `@sha256:` digest, not
-# a floating tag. The two digests currently pinned (`alpine:3.20`, `node:20-alpine`) were
-# captured on 2026-07-24 and MUST be refreshed against the live registry before this pipeline
-# is first enabled against a real GitLab runner fleet -- pulling a tag and pinning by digest is
-# an operational step that cannot be verified from a sandboxed development environment with no
-# route to a container registry. Refresh procedure (run whenever these images are rotated):
+# Image digest pinning (AC7). Every `image:` entry below is pinned to a `@sha256:` digest except
+# the documented `bash:3.2` compatibility job, which is the one temporary floating-tag exception.
+# The two digests currently pinned (`alpine:3.20`, `node:20-alpine`) were captured on 2026-07-24
+# and MUST be refreshed against the live registry before this pipeline is first enabled against a
+# real GitLab runner fleet -- pulling a tag and pinning by digest is an operational step that
+# cannot be verified from a sandboxed development environment with no route to a container
+# registry. Refresh procedure (run whenever these images are rotated):
 #   docker pull <image>:<tag>
 #   docker inspect --format='{{index .RepoDigests 0}}' <image>:<tag>
 # then paste the resulting `<image>:<tag>@sha256:...` string into every `image:` line that uses
@@ -40,6 +41,10 @@ stages:
 # stage is now four jobs rather than one.
 .alpine_edm: &alpine_edm
   image: "alpine:3.20@sha256:4117b6e5b09d84c8f03ea45234ee7f8ec9f5c3a9792b80e3c9d54ded36d3735a"
+  rules: *edm_rules
+
+.node_edm: &node_edm
+  image: "node:20-alpine@sha256:8a1761ffc4f153d49b3c6711271b962620a9cc77ffe7c693469a77907a136ea2"
   rules: *edm_rules
 
 # ---- lint stage -------------------------------------------------------------------------------
@@ -100,10 +105,11 @@ lint:grants:
   # hooks.json). The pre-split lint:shell-and-artifacts job installed it for all four checks at
   # once; keep it on every job that needs it now that they are separate.
   before_script:
-    - apk add --no-cache bash jq git
+    - apk add --no-cache bash jq
   script:
     - echo "=== edm-check-grants (four-source grant/instruction contract) ==="
     - bash plugins/edm/bin/edm-check-grants
+    - echo "lint:grants: OK -- grants and instruction surfaces consistent"
 
 lint:vocabulary:
   stage: lint
@@ -112,10 +118,11 @@ lint:vocabulary:
   # jq required -- edm-check-vocabulary dies with exit 2 without it (it validates the JSON scope
   # files). Same reason as lint:grants above.
   before_script:
-    - apk add --no-cache bash jq git
+    - apk add --no-cache bash jq
   script:
     - echo "=== edm-check-vocabulary (abolished-vocabulary and override-flag backstop, EDMV3-T30) ==="
     - bash plugins/edm/bin/edm-check-vocabulary
+    - echo "lint:vocabulary: OK -- vocabulary backstop clean"
 
 # EDMV3-T61 AC8: pinned shellcheck job over the plugin's own bin/ scripts (new/modified code --
 # pre-existing findings in code this initiative did not touch are out of scope per the ticket
@@ -171,13 +178,22 @@ lint:file-type-ban:
       # EDMV3-T22 AC3 (shard-2 QC remediation): plugins/edm/evals/ has a documented 100KB
       # directory-size ceiling (plugins/edm/evals/fixtures/tiny-svc/README.md), so growth there
       # (a new fixture, a bloated baseline capture) is caught here rather than silently landing.
-      evals_kb="$(du -sk plugins/edm/evals/ 2>/dev/null | awk '{print $1}')"
+      evals_bytes="$(
+        git ls-files -- plugins/edm/evals \
+          | while IFS= read -r f; do
+              [ -f "$f" ] || continue
+              wc -c < "$f"
+            done \
+          | awk '{s+=$1} END{print s+0}'
+      )"
+      evals_kb="$(( (evals_bytes + 1023) / 1024 ))"
       evals_kb="${evals_kb:-0}"
       if [ "$evals_kb" -gt 100 ]; then
-        echo "file-type-ban: plugins/edm/evals/ is ${evals_kb}KB, exceeds the documented 100KB budget:"
+        echo "file-type-ban: tracked plugins/edm/evals/ content is ${evals_kb}KB, exceeds the documented 100KB budget:"
         exit 1
       fi
-      echo "file-type-ban: plugins/edm/evals/ size OK (${evals_kb}KB, documented budget is 100KB)"
+      echo "file-type-ban: tracked plugins/edm/evals/ size OK (${evals_kb}KB, documented budget is 100KB)"
+      echo "file-type-ban: note -- eval runtime output under plugins/edm/evals/runs/ is retention-managed separately by CI artifacts and is not counted in this tracked-bytes budget"
 
 # EDMV3-T56: the Living-Library four-`##`-heading contract (docs/audit-patterns/README.md
 # Sec."Living-Library Contract") as an enforced CI regression guard rather than a
@@ -227,11 +243,12 @@ lint:pattern-library-contract:
           FAIL=1
         fi
       done
+      doc_count="$(find "$DOCS_DIR" -maxdepth 1 -name '*.md' ! -name 'README.md' ! -name 'SOURCES.md' | wc -l | tr -d ' ')"
       if [ "$FAIL" -ne 0 ]; then
         echo "lint:pattern-library-contract: FAILED"
         exit 1
       fi
-      echo "lint:pattern-library-contract: OK -- all five library docs pass the four-heading contract"
+      echo "lint:pattern-library-contract: OK -- ${doc_count} library doc(s) pass the four-heading contract"
 
 # ---- test stage -------------------------------------------------------------------------------
 
@@ -278,9 +295,12 @@ test:smoke-bash32:
   rules: *edm_rules
   needs: ["lint:bash-syntax"]
   before_script:
-    - apt-get update -qq && apt-get install -y -qq jq git >/dev/null
+    - apk add --no-cache jq git
   script:
     - bash --version
+    # CA-006: assert we are actually running under bash 3.2 so a future image bump cannot
+    # pass this job while proving nothing about the declared target shell.
+    - bash --version | head -1 | grep -q 'version 3\.2'
     - bash plugins/edm/bin/tests/run-all.sh
 
 # EDMV3-T61 AC12 (named exception taken): no macOS runner class is confirmed registered against
@@ -314,7 +334,7 @@ test:state-validate:
       export PATH="$(pwd)/plugins/edm/bin:$PATH"
       FAIL=0
       COUNT=0
-      LIST_FILE="$(mktemp)"
+      LIST_FILE="$(mktemp "${TMPDIR:-/tmp}/edm-state-validate.XXXXXX")"
       edm-state list --paths > "$LIST_FILE"
       while IFS= read -r dir; do
         [ -n "$dir" ] || continue
@@ -324,8 +344,8 @@ test:state-validate:
         [ -n "$prefix" ] || { echo "SKIP: $state_file has no .prefix"; continue; }
         COUNT=$((COUNT + 1))
         echo "validate: ${prefix} (${dir})"
-        out="$(edm-state validate "$prefix" 2>&1)"
-        ec=$?
+        ec=0
+        out="$(edm-state validate "$prefix" 2>&1)" || ec=$?
         printf '%s\n' "$out"
         if [ "$ec" -eq 3 ]; then
           echo "  BLOCKING anomaly in ${prefix} (edm-state validate exit 3)"
@@ -350,8 +370,8 @@ test:state-validate:
 # manifest check that survives a runner fleet that never has the CLI installed. Always blocks.
 validate:manifest:
   stage: validate
-  image: "alpine:3.20@sha256:4117b6e5b09d84c8f03ea45234ee7f8ec9f5c3a9792b80e3c9d54ded36d3735a"
-  rules: *edm_rules
+  <<: *alpine_edm
+  needs: []
   before_script:
     - apk add --no-cache bash jq
   script:
@@ -458,8 +478,8 @@ validate:manifest:
 # introduced or because the `claude` CLI image is unavailable on a given runner.
 validate:plugin-cli:
   stage: validate
-  image: "node:20-alpine@sha256:8a1761ffc4f153d49b3c6711271b962620a9cc77ffe7c693469a77907a136ea2"
-  rules: *edm_rules
+  <<: *node_edm
+  needs: []
   allow_failure: true
   before_script:
     - npm install -g @anthropic-ai/claude-code || true
@@ -471,8 +491,8 @@ validate:plugin-cli:
         echo "validate:plugin-cli: 'claude' CLI not available in this image -- skipping tier 2"
         exit 0
       fi
-      OUT="$(claude plugin validate plugins/edm/ 2>&1)"
-      CLI_EC=$?
+      CLI_EC=0
+      OUT="$(claude plugin validate plugins/edm/ 2>&1)" || CLI_EC=$?
       printf '%s\n' "$OUT"
       if [ "$CLI_EC" -ne 0 ]; then
         echo "validate:plugin-cli: FAIL -- claude plugin validate exited ${CLI_EC} (structural error)"
@@ -496,8 +516,9 @@ validate:plugin-cli:
 # not failed -- a missing secret on a fork or contributor pipeline must not present as broken.
 eval:nightly:
   stage: eval
-  image: "node:20-alpine@sha256:8a1761ffc4f153d49b3c6711271b962620a9cc77ffe7c693469a77907a136ea2"
+  <<: *node_edm
   allow_failure: true
+  timeout: 150m
   rules:
     - if: '$ANTHROPIC_API_KEY == null'
       when: never
@@ -528,8 +549,8 @@ eval:nightly:
     - |
       RUN_DIR="$(ls -td plugins/edm/evals/runs/*/ 2>/dev/null | head -1)"
       if [ -n "$RUN_DIR" ] && [ -f "$RUN_DIR/scores.json" ]; then
-        bash plugins/edm/bin/edm-compare-eval "$RUN_DIR/scores.json"
-        rc=$?
+        rc=0
+        bash plugins/edm/bin/edm-compare-eval "$RUN_DIR/scores.json" || rc=$?
         case "$rc" in
           0) echo "eval comparison: candidate at or above baseline_total minus variance" ;;
           3) echo "eval comparison: NOT ARMED -- no committed baseline (see evals/baseline/README.md)" ;;

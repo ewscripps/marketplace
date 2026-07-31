@@ -172,11 +172,5 @@ check "empty traceability is P0" "P0" "$TICKETS"
 echo ""
 
 echo "=== Summary ==="
-echo "PASS: $PASS  FAIL: $FAIL"
-if [ "$FAIL" -eq 0 ]; then
-  echo "All $PASS checks passed."
-  exit 0
-else
-  echo "$FAIL check(s) failed."
-  exit 1
-fi
+echo "Results: ${PASS} passed, ${FAIL} failed"
+[[ $FAIL -eq 0 ]] && exit 0 || exit 1
