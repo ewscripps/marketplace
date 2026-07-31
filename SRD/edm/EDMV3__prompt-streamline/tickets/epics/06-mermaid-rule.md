@@ -276,7 +276,7 @@ writers' point of view, and the four-`##` Living-Library Contract binds both edi
       Verify: `grep -c 'Mermaid diagram conventions' plugins/edm/skills/orchestrator/SKILL.md`
       returns 0.
 - [ ] AC12 (CI): the rule-presence test runs in CI.
-      Verify: `grep -n 'wave7-smoke' .gitlab-ci.yml`.
+      Verify: `grep -n 'run-all.sh' .gitlab-ci.yml`.
 - [ ] AC13 (prose-change convention, EDMV3-69): the merge request shows before and after for each of
       the eleven changed blocks plus one sentence on why the new wording is better. The nine by-name
       references share one canonical form, so they are shown once as a canonical before/after plus
@@ -478,7 +478,7 @@ corpus before it is trusted on the commit path.
       Verify: add a legal `#59;` to a `valid/` fixture and confirm the suite still passes; add a raw
       `;` to it and confirm the suite fails.
 - [ ] AC6 (CI): the corpus test runs in CI.
-      Verify: `grep -n 'wave7-smoke' .gitlab-ci.yml`.
+      Verify: `grep -n 'run-all.sh' .gitlab-ci.yml`.
 - [ ] AC7 (existing committed diagrams): any Mermaid diagram already committed under tracked `SRD/`
       trees is linted as part of `--all` and either passes or is corrected in the same MR.
       Verify: `bash plugins/edm/bin/edm-lint-artifacts --all; echo "exit=$?"` prints `exit=0`, and

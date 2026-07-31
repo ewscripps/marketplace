@@ -150,7 +150,7 @@ from the bidirectional test leaves the test parsing a hardcoded range it is mean
       Verify: `grep -n 'macos' .gitlab-ci.yml`, or the ticket records the exception and
       `grep -n 'macOS runner' plugins/edm/CLAUDE.md` documents the gap.
 - [ ] AC13 (CI): the help-completeness test runs in CI.
-      Verify: `grep -n 'wave7-smoke' .gitlab-ci.yml`.
+      Verify: `grep -n 'run-all.sh' .gitlab-ci.yml`.
 
 ### Technical Notes
 

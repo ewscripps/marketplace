@@ -83,7 +83,7 @@ is the file (`wave6-smoke.sh`) that EDMV3-T14 and EDMV3-T16 later extend.
       then `grep -nE 'declare -A|mapfile|readarray|\$\{[a-zA-Z_]+\^\^\}|\$\{[a-zA-Z_]+,,\}' plugins/edm/bin/edm-init`
       returns zero results.
 - [ ] AC9: the new suite is registered in the CI test stage.
-      Verify: `grep -n 'wave6-smoke' .gitlab-ci.yml plugins/edm/bin/tests/run-all.sh` returns a hit
+      Verify: `grep -n 'run-all.sh' .gitlab-ci.yml plugins/edm/bin/tests/run-all.sh` returns a hit
       in each file (both land in EDMV3-T20 and EDMV3-T21 -- if this ticket merges first, the
       registration is added by those tickets and this AC is checked at wave close).
 

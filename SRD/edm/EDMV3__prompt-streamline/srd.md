@@ -900,8 +900,8 @@ makes it urgent. Wave A.
     - [ ] The Gate 3.5 branch is extended to record the same three fields **as sibling scalar keys** --
       `compliance_gate_approved_at`, `compliance_gate_approver`, `compliance_gate_enforcement` -- so
       `compliance_gate_approved` stays a scalar boolean and `read_bool` (`bin/edm-state:402-412`) is unaffected. The
-      code-audit gate uses the identical shape: `code_audit_converged_at`, `code_audit_converged_approver`,
-      `code_audit_converged_enforcement`. Converting either boolean into an object is a failing condition, because it
+      code-audit gate uses the identical shape: `code_audit_gate_approved_at`, `code_audit_gate_approver`,
+      `code_audit_gate_enforcement`. Converting either boolean into an object is a failing condition, because it
       would break `read_bool` and the C-4 contract at once.
     - [ ] A smoke assertion confirms `read_bool` on both original booleans returns the same result before and after the
       sibling keys exist.
@@ -1768,7 +1768,9 @@ dispatcher refactor. Wave A.
     - [ ] `evals/baseline/README.md` states plainly that the five dimensions are proxies, that a refactor can score
       identically and still produce worse artifacts, and that the number is a regression tripwire rather than a quality
       score (`architecture.md` R-A).
-    - [ ] The baseline is captured before the first wave-B commit; the ticket is a wave-A exit criterion.
+    - [ ] The committed baseline artifact records the wave-A fixture/scorer provenance plus the variance table consumed by
+      EDMV3-52, so later tickets verify the artifact itself rather than a chronology claim that expires once later waves
+      ship.
 - **Dependencies**: EDMV3-27. Blocks EDMV3-52.
 - **Target Components**: `plugins/edm/evals/baseline/` (new)
 
@@ -2750,13 +2752,15 @@ in the initiative, which is why it lands after the harness. Wave B.
       recorded baseline range is explained in the merge request description even when the total passes.
     - [ ] "CI will catch it" is documented as an invalid substitute for running the eval; the run artifact is a hard
       acceptance criterion.
-    - [ ] If the comparison fails, the documented fallback is adopted: revert the dispatcher change and ship
-      `bin/edm-check-skill-sync` instead, a script asserting the duplicated orchestration blocks are identical, run in
-      the smoke suite. The fallback is worse than deduplication and strictly better than today.
+    - [ ] `bin/edm-check-skill-sync` is the documented fallback tripwire and may ship even when the full eval gate is
+      not yet armed, provided the ticket and decisions ledger record that narrower outcome honestly: it verifies the
+      fallback path, catches any future re-introduction of duplicated orchestration prose, and remains strictly weaker
+      than deduplication. If the comparison later fails once the baseline exists, the same script remains the fallback
+      artifact paired with reverting the dispatcher change.
     - [ ] The fallback decision, if taken, is recorded in `decisions.md` with the score comparison that triggered it,
       and waves A and C proceed unaffected.
 - **Dependencies**: EDMV3-28, EDMV3-46
-- **Target Components**: `plugins/edm/evals/`, `plugins/edm/bin/edm-check-skill-sync` (fallback only),
+- **Target Components**: `plugins/edm/evals/`, `plugins/edm/bin/edm-check-skill-sync` (fallback tripwire, shipped and also used on the rollback path),
   `SRD/edm/EDMV3__prompt-streamline/decisions.md`
 
 ---
@@ -4737,4 +4741,3 @@ source set is unaddressed.
 ---
 
 **End of document.**
-

@@ -7,7 +7,7 @@ Generated From: srd.md v1.3.0
 | Initiative | EDMV3 -- prompt-streamline |
 | Product | `edm` |
 | Subject codebase | `plugins/edm/` (EDM plugin v2.0.0) |
-| SRD | `../srd.md` v1.2.0 (120 requirements, EDMV3-01 .. EDMV3-120) |
+| SRD | `../srd.md` v1.3.0 (120 requirements, EDMV3-01 .. EDMV3-120) |
 | Companion documents | `../architecture.md`, `../decisions.md` (D1-D15), `../audit-srd.md` (SRD arbitration rulings 1-20), `audit.md` (ticket-pack arbitration rulings 1-20), `../planning.md` |
 | Tickets | 67 (`EDMV3-T01` .. `EDMV3-T67`) |
 | Epics | 11 files -- 10 workstream epics plus one cross-cutting delivery grouping |
@@ -573,7 +573,7 @@ on different nodes here.
 
 ## SRD Coverage Map
 
-Bidirectional. Every requirement in `../srd.md` v1.2.0 appears exactly once below with its
+Bidirectional. Every requirement in `../srd.md` v1.3.0 appears exactly once below with its
 implementing ticket or its recorded disposition. Every ticket `EDMV3-T01` .. `EDMV3-T67` appears in
 at least one row.
 

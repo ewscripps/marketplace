@@ -259,7 +259,7 @@ on for the "ships with its assertion updates" ordering rule.
       would be a second source of truth for the suite set and would silently skip any suite added
       later -- exactly the omission AC3 there exists to prevent.
       Verify: `grep -n 'run-all.sh' .gitlab-ci.yml` returns the single invocation, and
-      `grep -cE 'wave(3|4a|4b|5|6|7)-smoke' .gitlab-ci.yml` returns 0.
+      `grep -c 'bin/tests/' .gitlab-ci.yml` returns 1 (the aggregator only; no individual suite entries).
 - [ ] AC6 (validate stage is two-tier, positive and negative): tier 1 is a deterministic `jq`
       manifest-and-frontmatter check -- every skill and agent on disk appears in
       `.claude-plugin/marketplace.json` and vice versa, every frontmatter block parses, every
@@ -397,10 +397,13 @@ driver shell between invocations.
       failure.
       Verify: `grep -n 'permission-mode\|allowedTools\|timeout' plugins/edm/evals/run-eval.sh` and
       the same four items documented in `plugins/edm/evals/README.md`.
-- [ ] AC8 (credentials named): the driver requires `ANTHROPIC_API_KEY`. Run locally without it, it
-      exits with a usage message naming the variable.
+- [ ] AC8 (auth contract matches shipped driver): the driver requires working Claude auth for a real
+      run. Either an exported `ANTHROPIC_API_KEY` or an already authenticated `claude` CLI session
+      satisfies the contract; `--provision-only` needs neither. When both auth paths are absent, the
+      driver exits with a usage message naming both remedies.
       Verify: `env -u ANTHROPIC_API_KEY bash plugins/edm/evals/run-eval.sh; echo "exit=$?"` prints
-      the variable name and `exit=2`.
+      the combined-auth refusal and `exit=2` on a machine with no stored `claude` auth, while a
+      logged-in CLI run still succeeds without exporting the variable.
 - [ ] AC9 (containment check): a post-run cleanliness check asserts `git status` in the scratch tree
       shows no files created outside the expected artifact paths. This is the containment check for
       EDMV3-93.
@@ -563,10 +566,12 @@ rather than hoped away.
       run so the decision to trigger it is informed, and states that "CI will catch it" is an
       invalid justification for skipping the run.
       Verify: `grep -n 'cost per run\|CI will catch it' plugins/edm/evals/README.md`.
-- [ ] AC13: the baseline is captured before the first wave-B commit. This ticket is a wave-A exit
-      criterion.
-      Verify: `git log -1 --format=%cI plugins/edm/evals/baseline/scores.json` predates the first
-      wave-B commit date recorded in `CHANGELOG.md`.
+- [ ] AC13 (verifiable today): the committed baseline artifact records the wave-A fixture/scorer it
+      was captured from and the variance table that EDMV3-T39 consumes, so later tickets can verify
+      provenance from the artifact itself instead of from a no-longer-live chronology claim.
+      Verify: `grep -n 'wave-A\|variance\|dimensions_scored' plugins/edm/evals/baseline/README.md`
+      shows the provenance and tolerance table, and
+      `jq -e '(.dimensions_scored == 4) and (.complete == true)' plugins/edm/evals/baseline/scores.json`.
 
 ### Technical Notes
 

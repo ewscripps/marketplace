@@ -185,12 +185,12 @@ invocation. Overstating it would make it dishonest in exactly the bypass case it
 - [ ] AC10 (sibling scalar keys, `read_bool` unaffected): the Gate 3.5 branch records
       `compliance_gate_approved_at`, `compliance_gate_approver` and `compliance_gate_enforcement` as
       sibling scalar keys, and the code-audit gate uses the identical shape
-      (`code_audit_converged_at`, `code_audit_converged_approver`,
-      `code_audit_converged_enforcement`). Converting either boolean into an object is a failing
+      (`code_audit_gate_approved_at`, `code_audit_gate_approver`,
+      `code_audit_gate_enforcement`). Converting either boolean into an object is a failing
       condition.
       Verify: `bash plugins/edm/bin/tests/wave6-smoke.sh` (case "read_bool unchanged before and
       after sibling keys exist") and
-      `jq -e '(.code_audit_converged | type) == "boolean"' <state-file>`.
+      `jq -e '(.code_audit_converged | type) == "boolean" and has("code_audit_gate_approved_at") and has("code_audit_gate_approver") and has("code_audit_gate_enforcement")' <state-file>`.
 - [ ] AC11 (tag meaning documented): the tag's precise meaning -- rule *presence* at approval time,
       not that a prompt fired -- is documented where it is defined in `bin/edm-state` and where it
       is rendered in `HANDOFF.md`.
@@ -1251,7 +1251,7 @@ which is why the happy path is asserted alongside every must-fail case.
       Verify: `bash plugins/edm/bin/tests/wave6-smoke.sh; git status --porcelain` prints nothing
       new.
 - [ ] AC10 (CI): all cases run in CI.
-      Verify: `grep -n 'wave6-smoke' .gitlab-ci.yml plugins/edm/bin/tests/run-all.sh`.
+      Verify: `grep -n 'run-all.sh' .gitlab-ci.yml plugins/edm/bin/tests/run-all.sh`.
 
 ### Technical Notes
 

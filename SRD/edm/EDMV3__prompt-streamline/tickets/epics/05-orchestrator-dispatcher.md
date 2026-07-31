@@ -551,7 +551,7 @@ The risk is managed by the harness (E3), the spike (T34) and the fallback (T39),
 | SRD Refs | EDMV3-52 |
 | Depends On | EDMV3-T23, EDMV3-T38 |
 | Ships-with | -- |
-| Target Components | `.gitlab-ci.yml` (the comparison job), `plugins/edm/evals/baseline/scores.json`, `plugins/edm/evals/run-eval.sh` (the stop-before-gate contract re-verification), `plugins/edm/bin/edm-check-skill-sync` (fallback only, new), `SRD/edm/EDMV3__prompt-streamline/decisions.md` |
+| Target Components | `.gitlab-ci.yml` (the comparison job), `plugins/edm/evals/baseline/scores.json`, `plugins/edm/evals/run-eval.sh` (the stop-before-gate contract re-verification), `plugins/edm/bin/edm-check-skill-sync` (fallback tripwire, shipped and also used on the rollback path), `SRD/edm/EDMV3__prompt-streamline/decisions.md` |
 
 ### Description
 
