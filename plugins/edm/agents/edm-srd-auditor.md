@@ -35,7 +35,11 @@ Read the ENTIRE SRD. Read all codebase files it references. Audit systematically
 - Logical flow errors (missing edges, orphan nodes)
 - Diagrams that don't match the prose description
 - A raw `;` (literal semicolon) inside Mermaid label, node, edge or message text -- a violation
-  of `CLAUDE.md Sec."Mermaid diagram conventions"`
+  of `CLAUDE.md Sec."Mermaid diagram conventions"`. That section's text is not directly loadable at
+  runtime (CLAUDE.md at the plugin root is not loaded as runtime context); read
+  `docs/canonical-sections.md` instead, resolved relative to the EDM plugin's own root
+  (`plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd)
+  -- it carries a byte-identical copy of this section
 
 ### 4. Competing Requirements
 - Two requirements that can't both be true
@@ -62,7 +66,7 @@ Read the ENTIRE SRD. Read all codebase files it references. Audit systematically
 
 ## Severity Levels
 
-Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabulary"` as the only severity source for this agent. Do not restate or adapt a local scale. The canonical meanings are:
+Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabulary"` as the only severity source for this agent. Do not restate or adapt a local scale. Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd) for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not loaded as runtime context. The canonical meanings are:
 
 - P0: Critical -- blocks implementation, security/legal, production failure
 - P1: Significant -- material gap, factual error

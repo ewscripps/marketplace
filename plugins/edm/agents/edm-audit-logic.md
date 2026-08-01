@@ -70,7 +70,7 @@ The JSONL file is authoritative on conflict: every prose finding in `lens-L1.md`
 ## Output Format
 
 For every finding:
-- **Severity**: use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severity vocabulary"`
+- **Severity**: use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severity vocabulary"`. Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd) for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not loaded as runtime context.
 - **File + line number**
 - **What is wrong** (be precise -- what value, what condition, what function)
 - **Concrete fix** (specific code change, not vague advice)

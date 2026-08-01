@@ -82,7 +82,7 @@ If L7 (Consistency) and L10 (DRY) both flag related issues that share a root cau
 
 ## Severity Reference
 
-Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabulary"` as the only severity source for this agent. Do not restate or adapt a local scale. The canonical meanings are:
+Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabulary"` as the only severity source for this agent. Do not restate or adapt a local scale. Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd) for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not loaded as runtime context. The canonical meanings are:
 
 - P0: Critical -- blocks implementation, security/legal, production failure
 - P1: Significant -- material gap, factual error
