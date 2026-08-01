@@ -449,7 +449,11 @@ fi
 CONTAINMENT_VIOLATIONS=""
 while IFS= read -r line; do
   [ -z "$line" ] && continue
+  xy="${line%%"${line#??}"}"
   path="${line:3}"
+  case "$xy" in
+    R*|C*) path="${path##* -> }" ;;  # porcelain rename/copy: the destination is what matters
+  esac
   case "$path" in
     SRD/*) ;;
     *) CONTAINMENT_VIOLATIONS="${CONTAINMENT_VIOLATIONS}${line}

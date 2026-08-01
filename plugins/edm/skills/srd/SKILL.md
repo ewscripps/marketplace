@@ -179,7 +179,7 @@ Prompt: "Write the Target Architecture document for {PREFIX}. First resolve the 
          Write to ${INIT_DIR}/architecture.md.
          Include Mermaid diagrams (system context + sequence) and component design grounded in
          the existing codebase. The SRD Section 5 references this file -- do not duplicate content.
-         Follow CLAUDE.md Sec.\"Mermaid diagram conventions\" for label text -- a raw semicolon
+         Follow CLAUDE.md Sec."Mermaid diagram conventions" for label text -- a raw semicolon
          in a label is a violation."
 ```
 
