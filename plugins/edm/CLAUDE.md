@@ -638,16 +638,16 @@ The `userConfig.jira_project_key` value provides a default; otherwise the user m
 |----------------------------------------------------------------------------------------|---------------------------------------------------------------|
 | `SessionStart`                                                                         | Emit Resume Point for active initiatives via `edm-state session-start` |
 | `UserPromptExpansion` matching `edm:(srd\|audit-srd\|tickets\|audit-tickets\|implement)` | Block expansion if the prerequisite HITL gate isn't approved  |
-| `PreToolUse` matching `git commit`                                                     | For staged paths under the literal repository-relative `SRD/` only, run `edm-lint-artifacts <PREFIX>` per discovered prefix; any non-zero exit blocks the commit (`1` = violations, `2` = usage/environment/resolution issue, though the hook prints one generic fix-it line for both) |
+| `PreToolUse` matching `git commit`                                                     | For staged paths under the derived `srd_root` (`EDM_SRD_ROOT` / `CLAUDE_PLUGIN_OPTION_SRD_ROOT`, default `./SRD`), resolve a prefix per discovered initiative and skip it if it has no resolvable state (CA-011); run `edm-lint-artifacts <PREFIX>` for each survivor. Exit 1 (a real violation) sets the code that actually blocks the commit; exit 2 (a setup/usage error, e.g. no initiative for that prefix) is reported to stderr but does not block (CA-011) |
 | `Stop` and `PreCompact`                                                                | Checkpoint state via `edm-state checkpoint-if-active`         |
 | `SubagentStop` matching `edm-implementer`                                              | Auto-spawn `edm-qc-auditor`; write verdict to `qc/qc-summary.md`; persist PARTIAL verdicts via `edm-state record-partial-verdict` |
 
 These are part of the methodology -- do not disable them in normal operation.
 
-`edm-lint-artifacts` itself honors `${user_config.srd_root}` through `EDM_SRD_ROOT` /
-`CLAUDE_PLUGIN_OPTION_SRD_ROOT`, but the git-commit hook does not: its staged-file probe is the
-literal regex `^SRD/`. If `srd_root` is relocated, direct `edm-lint-artifacts` invocations still
-work, but the automatic commit-path enforcement is lost until the hook matcher is updated too.
+`edm-lint-artifacts` and the git-commit hook now both honor `${user_config.srd_root}` through
+`EDM_SRD_ROOT` / `CLAUDE_PLUGIN_OPTION_SRD_ROOT` (CA-023) -- a relocated `srd_root` scopes the
+automatic commit-path enforcement the same way it scopes a direct `edm-lint-artifacts`
+invocation, with no separate hook-matcher update required.
 
 ## Monitors behavior (EDMV3-T59, D24)
 
@@ -744,7 +744,7 @@ one place, and only one of the two is a CI concern at all.
 
 | Budget | Invocation | Ceiling | Fixture the ceiling is stated against | Where it binds |
 |---|---|---|---|---|
-| **Commit-path** | `edm-lint-artifacts <PREFIX>`, from the `PreToolUse` git-commit hook | **3,000 ms** p95 | one initiative directory of 30 `.md` files / 9,990 lines | Every `git commit` that stages anything under the hook's literal `SRD/` matcher. A human is waiting on this one, so it is the budget that must stay small |
+| **Commit-path** | `edm-lint-artifacts <PREFIX>`, from the `PreToolUse` git-commit hook | **3,000 ms** p95 | one initiative directory of 30 `.md` files / 9,990 lines | Every `git commit` that stages anything under the hook's derived `srd_root` scope (CA-023). A human is waiting on this one, so it is the budget that must stay small |
 | **CI** | `edm-lint-artifacts --all`, inside the blocking `lint:artifacts` job | **60,000 ms** | a 50-initiative repository | The CI lint stage only. `--all` walks every active initiative directory `edm-state list --paths` returns, so it is roughly 50x the work at 20x the ceiling -- a commit-path number must never be compared against it, or vice versa |
 
 Both are measured by `bin/tests/timing.sh` (`--lint` and `--all-lint`) against generated fixtures,

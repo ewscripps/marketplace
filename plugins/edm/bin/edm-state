@@ -4069,6 +4069,11 @@ _write_handoff_body() {
   local notes=""
   if [[ -f "$handoff_path" ]]; then
     notes="$(awk '/^## Notes/{p=1;next} p{print}' "$handoff_path" 2>/dev/null || true)"
+    # The render below emits its own blank line after the "## Notes" heading (matching every
+    # other section), and the captured text starts with that same blank line copied verbatim --
+    # strip exactly one leading blank so it does not double up and grow by one blank line on
+    # every single regeneration cycle over an initiative's life.
+    notes="${notes#$'\n'}"
   fi
   [[ -n "$notes" ]] || notes="_(Add anything a teammate should know before resuming - context, blockers, preferences)_"
 

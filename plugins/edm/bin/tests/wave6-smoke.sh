@@ -1140,9 +1140,9 @@ awk '{print} /^## Notes$/{
   print ""
   print "Second paragraph, after a blank line and the user'\''s own heading."
 }' "$ca027_notes_path" > "${ca027_notes_path}.tmp" && mv "${ca027_notes_path}.tmp" "$ca027_notes_path"
-ca027_before="$(cat "$ca027_notes_path")"
+ca027_before="$(awk '/^## Notes/{f=1} f' "$ca027_notes_path")"
 "$EDM_STATE" write-handoff ZCA27 >/dev/null
-ca027_after="$(cat "$ca027_notes_path")"
+ca027_after="$(awk '/^## Notes/{f=1} f' "$ca027_notes_path")"
 check "CA-027 -- first paragraph survives regeneration" \
   "First paragraph of a real note." "$ca027_after"
 check "CA-027 -- a user-authored '## ' subheading inside Notes is NOT truncated away" \

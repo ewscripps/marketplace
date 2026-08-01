@@ -3764,7 +3764,25 @@ else
   # Scoped to staged SRD/ paths only, resolves prefixes from both layouts, degrades to exit 0
   # when the helpers are absent, and propagates a non-zero exit so a violation blocks the commit.
   check "T67 AC8 -- scoped to staged paths under SRD/" "diff --cached --name-only" "$t67ac8_cmd"
-  check "T67 AC8 -- filters staged paths to SRD/" "grep '^SRD/'" "$t67ac8_cmd"
+  # CA-023: srd_root is now derived dynamically (EDM_SRD_ROOT / CLAUDE_PLUGIN_OPTION_SRD_ROOT,
+  # default ./SRD) rather than the literal hardcoded `grep '^SRD/'` pattern this assertion used
+  # to require -- a relocated srd_root now scopes the commit-path hook too, not just direct
+  # edm-lint-artifacts invocations (plugins/edm/CLAUDE.md's own "Hooks behavior" note on this
+  # exact gap is now stale and should be read as historical, not current).
+  check "T67 AC8 -- srd_root is derived, not hardcoded to SRD/" \
+    'srd_root="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"' "$t67ac8_cmd"
+  # CA-011: a staged path whose prefix has no resolvable initiative (a deleted initiative
+  # directory, a pre-plugin legacy path, a stale prefix) is skipped rather than blocking an
+  # otherwise-clean commit on an edm-lint-artifacts exit-2 "no initiative for prefix" error.
+  check "T67 AC8 -- unresolvable prefixes are skipped, not treated as violations" \
+    'edm-state resolve-dir "$p" >/dev/null 2>&1 || continue' "$t67ac8_cmd"
+  # CA-011: a PreToolUse hook must exit 2 to actually block Claude Code's tool call -- the
+  # honest violation path (edm-lint-artifacts exit 1) sets fail=2; a setup/usage error
+  # (edm-lint-artifacts exit 2) is reported but does NOT set fail, so it warns without blocking.
+  check "T67 AC8 -- a real violation (exit 1) sets fail=2, the code that actually blocks" \
+    'code" -eq 1' "$t67ac8_cmd"
+  check "T67 AC8 -- a setup/usage error (exit 2) is reported but does not block the commit" \
+    'code" -eq 2' "$t67ac8_cmd"
   check "T67 AC8 -- exits 0 when edm-lint-artifacts is unavailable" \
     "command -v edm-lint-artifacts >/dev/null 2>&1 || exit 0" "$t67ac8_cmd"
   check "T67 AC8 -- exits 0 when nothing under SRD/ is staged" 'test -z "$staged" && exit 0' "$t67ac8_cmd"
