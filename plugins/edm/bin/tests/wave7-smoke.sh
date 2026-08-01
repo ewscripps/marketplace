@@ -4021,6 +4021,242 @@ else
 fi
 rm -f "$t_ascii_probe"
 
+# =================================================================================
+# Code-audit round-2 remediation, Wave 4a: CA-141/CA-142/CA-143/CA-159/CA-025
+# (with_state_lock / write_atomic concurrency and trap-nesting fixes)
+# =================================================================================
+#
+# Every case below forces the mkdir-based fallback lock branch regardless of whether this host
+# has flock(1) -- the eight findings this wave fixes are concentrated in that branch -- by
+# shadowing the `command` builtin so `command -v flock` reports absent. Each case sources
+# bin/edm-state inside its own `$( )` subshell (matching _wave7_settable_keys's established
+# convention above) so the sourced functions/globals never leak into this suite's own shell.
+echo
+echo "CA-141/CA-142/CA-143/CA-159/CA-025 -- with_state_lock / write_atomic concurrency fixes"
+
+# ---- CA-159: no path is ever interpolated into a trap body string (apostrophe-safe) -----------
+t_ca159_out="$(
+  set +e
+  tmp159="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca159.XXXXXX")" || exit 1
+  apos_dir="${tmp159}/o'brien"
+  mkdir -p "$apos_dir" || exit 1
+  command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
+  source "$EDM_STATE" >/dev/null 2>&1
+  lockbase="${apos_dir}/state"
+  lock_ec=0
+  body_out="$(with_state_lock "$lockbase" echo ca159-body-ran 2>&1)" || lock_ec=$?
+  lockdir_state=absent
+  [[ -d "${lockbase}.lockd" ]] && lockdir_state=present
+  dest="${apos_dir}/out.txt"
+  wa_ec=0
+  write_atomic "$dest" echo ca159-write-ran >/dev/null 2>&1 || wa_ec=$?
+  tmp_left="$(find "$apos_dir" -maxdepth 1 -name '*.tmp.*' 2>/dev/null | wc -l | tr -d ' ')"
+  dest_content="$(cat "$dest" 2>/dev/null || echo absent)"
+  rm -rf "$tmp159"
+  printf 'lock_ec=%s lockdir=%s body_out=%s wa_ec=%s tmp_left=%s dest=%s\n' \
+    "$lock_ec" "$lockdir_state" "$body_out" "$wa_ec" "$tmp_left" "$dest_content"
+)" || true
+check "CA-159 -- with_state_lock completes cleanly against an apostrophe-containing lockbase path" \
+  "lock_ec=0" "$t_ca159_out"
+check "CA-159 -- the locked body actually ran (no trap-body syntax error swallowed it)" \
+  "body_out=ca159-body-ran" "$t_ca159_out"
+check "CA-159 -- the lockdir is cleaned up (no leaked lock under the apostrophe path)" \
+  "lockdir=absent" "$t_ca159_out"
+check "CA-159 -- write_atomic completes cleanly against an apostrophe-containing destination path" \
+  "wa_ec=0" "$t_ca159_out"
+check "CA-159 -- write_atomic's destination file was actually written" \
+  "dest=ca159-write-ran" "$t_ca159_out"
+check "CA-159 -- no leaked *.tmp.* file remains after write_atomic completes" \
+  "tmp_left=0" "$t_ca159_out"
+
+# ---- CA-141a: a stale lockdir held by a genuinely dead PID is reclaimed (atomic mv-based) ------
+t_ca141a_out="$(
+  set +e
+  tmp141a="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca141a.XXXXXX")" || exit 1
+  command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
+  source "$EDM_STATE" >/dev/null 2>&1
+  lockbase="${tmp141a}/state"
+  lockdir="${lockbase}.lockd"
+  mkdir -p "$lockdir"
+  # A genuinely dead PID: spawn a child that exits on its own and reap it, so its PID cannot
+  # still be alive. Deliberately NOT sleep-then-kill: `wait` on a job that was terminated by a
+  # signal hangs indefinitely under `set -e` on bash 3.2 (reproduced in isolation, unrelated to
+  # with_state_lock itself) -- sourcing edm-state re-enables errexit in this subshell (its own
+  # top-level `set -euo pipefail` overrides the `set +e` above), so this case must avoid that
+  # bash 3.2 wait-after-signal interaction rather than rely on staying errexit-free.
+  ( exit 0 ) &
+  deadpid=$!
+  wait "$deadpid" 2>/dev/null
+  echo "$deadpid" > "${lockdir}/pid"
+  ec=0
+  body_out="$(with_state_lock "$lockbase" echo ca141a-reclaimed)" || ec=$?
+  lockdir_state=absent
+  [[ -d "$lockdir" ]] && lockdir_state=present
+  rm -rf "$tmp141a"
+  printf 'ec=%s body_out=%s lockdir=%s\n' "$ec" "$body_out" "$lockdir_state"
+)" || true
+check "CA-141 -- a stale lockdir held by a genuinely dead PID is reclaimed and the lock acquired" \
+  "ec=0" "$t_ca141a_out"
+check "CA-141 -- the locked body runs after a dead-PID reclaim" \
+  "body_out=ca141a-reclaimed" "$t_ca141a_out"
+check "CA-141 -- the lockdir is cleaned up after a successful reclaim-then-acquire" \
+  "lockdir=absent" "$t_ca141a_out"
+
+# ---- CA-141b: a lockdir with an invalid (non-numeric) PID marker is also reclaimed -------------
+t_ca141b_out="$(
+  set +e
+  tmp141b="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca141b.XXXXXX")" || exit 1
+  command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
+  source "$EDM_STATE" >/dev/null 2>&1
+  lockbase="${tmp141b}/state"
+  lockdir="${lockbase}.lockd"
+  mkdir -p "$lockdir"
+  echo "not-a-pid" > "${lockdir}/pid"
+  ec=0
+  body_out="$(with_state_lock "$lockbase" echo ca141b-reclaimed)" || ec=$?
+  rm -rf "$tmp141b"
+  printf 'ec=%s body_out=%s\n' "$ec" "$body_out"
+)" || true
+check "CA-141 -- a lockdir with an invalid (non-numeric) PID marker is reclaimed" \
+  "ec=0" "$t_ca141b_out"
+check "CA-141 -- the locked body runs after an invalid-PID reclaim" \
+  "body_out=ca141b-reclaimed" "$t_ca141b_out"
+
+# ---- CA-141c: a live cross-UID holder (kill -0 EPERM) is never reclaimed (narrower: kill -0 is
+# mocked to fail with an "Operation not permitted"-shaped message, since actually becoming a
+# second UID is not available in this harness) ---------------------------------------------------
+t_ca141c_out="$(
+  set +e
+  tmp141c="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca141c.XXXXXX")" || exit 1
+  command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
+  kill() {
+    if [[ "${1:-}" == "-0" && "${2:-}" == "99999" ]]; then
+      echo "kill: (99999) - Operation not permitted" >&2
+      return 1
+    fi
+    builtin kill "$@"
+  }
+  source "$EDM_STATE" >/dev/null 2>&1
+  lockbase="${tmp141c}/state"
+  lockdir="${lockbase}.lockd"
+  mkdir -p "$lockdir"
+  echo "99999" > "${lockdir}/pid"
+  ec=0
+  out="$(with_state_lock "$lockbase" echo ca141c-should-not-run 2>&1)" || ec=$?
+  rm -rf "$tmp141c"
+  printf 'ec=%s out=%s\n' "$ec" "$out"
+)" || true
+check "CA-141 -- a live cross-UID holder (EPERM on kill -0) is never reclaimed" \
+  "owned by another user" "$t_ca141c_out"
+check_absent "CA-141 -- the locked body never runs against a live cross-UID holder's lock" \
+  "ca141c-should-not-run" "$t_ca141c_out"
+
+# ---- CA-141 (sub-issue 4, narrower static guard): both reclaim branches increment `tries`
+# before their `continue` -- forcing 50 real reclaim-vs-recreate iterations deterministically
+# would need a timing-sensitive background contender racing this process's own retry loop, which
+# is exactly the kind of flaky test this suite's own conventions avoid, so the bound itself is
+# checked structurally instead. The dead-PID and invalid-PID cases above already prove each
+# reclaim path is reachable and functions; this proves neither path can loop unaccounted-for. ---
+t_ca141_lock_body="$(awk '/^with_state_lock\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+t_ca141_invalid_pid_block="$(printf '%s\n' "$t_ca141_lock_body" | awk '/invalid PID/{f=1} f{print} f && /continue/{exit}')"
+check "CA-141 -- the invalid-PID reclaim branch increments tries before its continue" \
+  "tries + 1" "$t_ca141_invalid_pid_block"
+t_ca141_stale_pid_block="$(printf '%s\n' "$t_ca141_lock_body" | awk '/reclaimed stale state lock/{f=1} f{print} f && /^[[:space:]]*continue$/{exit}')"
+check "CA-141 -- the stale-PID reclaim branch increments tries before its continue" \
+  "tries + 1" "$t_ca141_stale_pid_block"
+
+# ---- CA-142: a write_atomic call nested inside a locked mkdir-branch body does not install a
+# second trap layer -- it registers with the shared cleanup list instead, and the real-world
+# nested path (cmd_init -> with_state_lock -> _cmd_init_body -> write_atomic) completes cleanly.
+t_ca142_out="$(
+  set +e
+  tmp142="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca142.XXXXXX")" || exit 1
+  command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
+  source "$EDM_STATE" >/dev/null 2>&1
+  lockbase="${tmp142}/state"
+  nested_body() {
+    printf 'depth-seen=%s\n' "${_EDM_TRAP_DEPTH:-unset}"
+    write_atomic "${tmp142}/dest.txt" echo ca142-nested-write
+  }
+  ec=0
+  out="$(with_state_lock "$lockbase" nested_body 2>&1)" || ec=$?
+  lockdir_state=absent
+  [[ -d "${lockbase}.lockd" ]] && lockdir_state=present
+  dest_content="$(cat "${tmp142}/dest.txt" 2>/dev/null || echo absent)"
+  tmp_left="$(find "$tmp142" -maxdepth 1 -name '*.tmp.*' 2>/dev/null | wc -l | tr -d ' ')"
+  rm -rf "$tmp142"
+  printf 'ec=%s out=%s lockdir=%s dest=%s tmp_left=%s\n' "$ec" "$out" "$lockdir_state" "$dest_content" "$tmp_left"
+)" || true
+check "CA-142 -- with_state_lock's mkdir branch sets _EDM_TRAP_DEPTH=1 before running the locked body" \
+  "depth-seen=1" "$t_ca142_out"
+check "CA-142 -- a write_atomic call nested inside a locked body completes successfully (no double-trap error)" \
+  "ec=0" "$t_ca142_out"
+check "CA-142 -- the nested write_atomic call's destination file is written" \
+  "dest=ca142-nested-write" "$t_ca142_out"
+check "CA-142 -- no leaked *.tmp.* file remains from the nested write_atomic call" \
+  "tmp_left=0" "$t_ca142_out"
+check "CA-142 -- the lockdir is cleaned up after the nested-write_atomic body completes" \
+  "lockdir=absent" "$t_ca142_out"
+check "CA-142 -- write_atomic contains an internal sanity check enforcing the nesting-depth-one invariant" \
+  "unsupported trap nesting depth" "$(grep -n 'unsupported trap nesting depth' "$EDM_STATE" || true)"
+# The real-world nested path this fix targets (cmd_init routes _cmd_init_body's write_atomic call
+# through an active with_state_lock trap) is exercised implicitly by every "$EDM_STATE" init call
+# elsewhere in this suite and wave6-smoke.sh -- hundreds of them, all green -- so this case adds
+# the depth assertion those calls cannot make, rather than re-proving init itself works.
+
+# ---- CA-025: the mkdir branch now runs the locked body in a subshell (matching the flock
+# branch's existing subshell semantics) -- a variable a locked body sets must not leak back into
+# with_state_lock's caller. -----------------------------------------------------------------------
+t_ca025_out="$(
+  set +e
+  tmp025="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca025.XXXXXX")" || exit 1
+  command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
+  source "$EDM_STATE" >/dev/null 2>&1
+  lockbase="${tmp025}/state"
+  ca025_leak_probe="before"
+  set_leak_var() { ca025_leak_probe="leaked-from-locked-body"; echo "body-ran"; }
+  ec=0
+  body_out="$(with_state_lock "$lockbase" set_leak_var 2>&1)" || ec=$?
+  rm -rf "$tmp025"
+  printf 'ec=%s body_out=%s leak_probe=%s\n' "$ec" "$body_out" "$ca025_leak_probe"
+)" || true
+check "CA-025 -- the mkdir branch runs the locked body successfully" "ec=0" "$t_ca025_out"
+check "CA-025 -- the locked body's own stdout still crosses the subshell back to the caller" \
+  "body_out=body-ran" "$t_ca025_out"
+check "CA-025 -- a variable the locked body sets does NOT leak into with_state_lock's caller (subshell semantics, matching the flock branch)" \
+  "leak_probe=before" "$t_ca025_out"
+
+# ---- CA-143: INT/TERM traps actually terminate the process instead of resuming ----------------
+# A full integration-level test that signals a with_state_lock call while it is blocked inside
+# the CA-025 nested subshell running the locked body was attempted and found unreliable in this
+# harness: this bash defers trap execution while synchronously waiting on a foreground subshell
+# (confirmed by direct experiment -- a signal sent to the parent while a `( sleep 5 )` foreground
+# subshell runs is not processed until the subshell exits on its own), and signaling the whole
+# process group to more faithfully reproduce a terminal Ctrl-C risks killing this test driver
+# itself, since a non-interactive script's background jobs share its own process group.
+#
+# A self-signaling isolation case (obtaining the running subshell's own PID via `sh -c 'echo
+# $PPID'`, since bash's `$$` does not update across `$( )` subshells on this bash) was also
+# attempted and removed: confirmed by direct experiment that the PID it captures does not
+# reliably match the PID `kill` can still signal by the time control returns to the parent
+# subshell (`kill: No such process` on this host/bash combination), making the case itself
+# unreliable rather than the fix it was meant to exercise. Per this ticket's own verification
+# guidance (fall back to the most practical guard when a full behavioral test proves
+# impractical), CA-143 relies on the static assertions below instead: they confirm
+# with_state_lock and write_atomic both install the exact `cleanup; exit 130`/`exit 143` trap
+# idiom, which is the documented, reviewed fix for this finding.
+t_ca143_lock_body="$(awk '/^with_state_lock\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check "CA-143 -- with_state_lock's INT trap calls exit 130" "exit 130' INT" "$t_ca143_lock_body"
+check "CA-143 -- with_state_lock's TERM trap calls exit 143" "exit 143' TERM" "$t_ca143_lock_body"
+t_ca143_lock_exit_line="$(printf '%s\n' "$t_ca143_lock_body" | grep "' EXIT$" || true)"
+check_absent "CA-143 -- with_state_lock's EXIT-only trap arm never calls exit itself" "exit " "$t_ca143_lock_exit_line"
+
+t_ca143_wa_body="$(awk '/^write_atomic\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check "CA-143 -- write_atomic's INT trap calls exit 130" "exit 130' INT" "$t_ca143_wa_body"
+check "CA-143 -- write_atomic's TERM trap calls exit 143" "exit 143' TERM" "$t_ca143_wa_body"
+t_ca143_wa_exit_line="$(printf '%s\n' "$t_ca143_wa_body" | grep "' EXIT$" || true)"
+check_absent "CA-143 -- write_atomic's EXIT-only trap arm never calls exit itself" "exit " "$t_ca143_wa_exit_line"
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

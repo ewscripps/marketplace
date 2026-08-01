@@ -3819,6 +3819,170 @@ ca040i_converged="$(jq -r '.code_audit_converged' "$ca040i_state")"
   || fail "CA-183/CA-040 -- code_audit_converged was set to '${ca040i_converged}' despite the refusal -- gate bypass regression"
 # CA-040 remediation end
 
+# =================================================================================
+# Code-audit round-2 remediation, Wave 4a: CA-026, CA-059, CA-061
+# =================================================================================
+echo
+echo "CA-026 -- checkpoint sweep isolates a per-initiative failure instead of aborting the sweep"
+
+# ---- CA-026: one initiative's checkpoint body failing does not abort the rest of the sweep -----
+ca026_case() {
+  "$EDM_STATE" init AAAABROKEN >/dev/null
+  "$EDM_STATE" init ZZZZHEALTHY >/dev/null
+  local broken_dir="SRD/AAAABROKEN" healthy_state="SRD/ZZZZHEALTHY/.edm-state.json"
+  local healthy_before
+  healthy_before="$(jq -r '.last_updated' "$healthy_state")"
+
+  # Force rmw_state (and therefore with_state_lock) to fail for AAAABROKEN specifically, from
+  # INSIDE the checkpoint sweep's per-initiative body -- the exact failure surface CA-026 wraps
+  # in a subshell. Root can bypass a directory's own write bit, so this sub-case is skipped
+  # (not faked as a pass) when running as root.
+  if [[ "$(id -u)" -eq 0 ]]; then
+    echo "CA-026 -- skipping the permission-induced-failure sub-case: running as root, which bypasses the write-bit denial this case depends on"
+  else
+    chmod 555 "$broken_dir"
+    local ckpt_out ckpt_ec=0
+    ckpt_out="$("$EDM_STATE" checkpoint-if-active 2>&1)" || ckpt_ec=$?
+    chmod 755 "$broken_dir"
+
+    [[ $ckpt_ec -eq 0 ]] \
+      && pass "CA-026 -- checkpoint-if-active itself exits 0 even though one initiative's body failed" \
+      || fail "CA-026 -- checkpoint-if-active exited ${ckpt_ec}, expected 0 (a per-initiative failure must not propagate to the sweep's own exit code)"
+    check "CA-026 -- the sweep names the failing initiative and continues rather than aborting silently" \
+      "skipping AAAABROKEN" "$ckpt_out"
+
+    local healthy_after
+    healthy_after="$(jq -r '.last_updated' "$healthy_state")"
+    [[ "$healthy_after" != "$healthy_before" ]] \
+      && pass "CA-026 -- an initiative queued after the failing one in iteration order still gets checkpointed" \
+      || fail "CA-026 -- healthy initiative's last_updated did not change (${healthy_before}) -- sweep aborted before reaching it"
+  fi
+}
+with_scratch_repo ca026_case
+
+# ---- CA-026: a state file whose .prefix disagrees with its own directory is skipped with a
+# warning rather than causing a stray SRD/<other-prefix>/ directory to be created ----------------
+ca026_mismatch_case() {
+  "$EDM_STATE" init ZMISMATCH >/dev/null
+  local state="SRD/ZMISMATCH/.edm-state.json"
+  jq '.prefix = "SOMEOTHERPREFIX"' "$state" > "${state}.tmp" && mv "${state}.tmp" "$state"
+
+  local ckpt_out ckpt_ec=0
+  ckpt_out="$("$EDM_STATE" checkpoint-if-active 2>&1)" || ckpt_ec=$?
+  check "CA-026 -- a prefix/directory mismatch is named and skipped rather than mutated" \
+    "resolves to" "$ckpt_out"
+  [[ ! -d "SRD/SOMEOTHERPREFIX" ]] \
+    && pass "CA-026 -- no stray SRD/<other-prefix>/ directory was created for the mismatched entry" \
+    || fail "CA-026 -- a stray SRD/SOMEOTHERPREFIX/ directory was created during the sweep"
+}
+with_scratch_repo ca026_mismatch_case
+
+echo
+echo "CA-059 -- record-partial-verdict close checks and writes under a single lock acquisition"
+
+# ---- CA-059: two concurrent close calls on the same entry cannot both succeed as a first
+# closure (the check-then-lock race the fix closes) -----------------------------------------------
+ca059_case() {
+  "$EDM_STATE" init T59RACE >/dev/null
+  "$EDM_STATE" record-partial-verdict T59RACE T59RACE-T01 PARTIAL "needs runtime check" >/dev/null
+  local state="SRD/T59RACE/.edm-state.json"
+  local out1_file out2_file ec1=0 ec2=0
+  out1_file="$(mktemp "${TMPDIR:-/tmp}/edm-ca059-1.XXXXXX")"
+  out2_file="$(mktemp "${TMPDIR:-/tmp}/edm-ca059-2.XXXXXX")"
+
+  "$EDM_STATE" record-partial-verdict T59RACE T59RACE-T01 close PASS "race-ref-pass" > "$out1_file" 2>&1 &
+  local pid1=$!
+  "$EDM_STATE" record-partial-verdict T59RACE T59RACE-T01 close FAIL "race-ref-fail" > "$out2_file" 2>&1 &
+  local pid2=$!
+  wait "$pid1" || ec1=$?
+  wait "$pid2" || ec2=$?
+
+  if { [[ $ec1 -eq 0 && $ec2 -ne 0 ]] || [[ $ec1 -ne 0 && $ec2 -eq 0 ]]; }; then
+    pass "CA-059 -- exactly one of two concurrent close calls on the same entry succeeds (close-once invariant holds under race)"
+  else
+    fail "CA-059 -- expected exactly one success, got ec1=${ec1} ec2=${ec2} (both succeeding means the check-then-lock race landed; both failing means neither closed)"
+  fi
+
+  local loser_out
+  if [[ $ec1 -ne 0 ]]; then loser_out="$(cat "$out1_file")"; else loser_out="$(cat "$out2_file")"; fi
+  check "CA-059 -- the losing concurrent close call is refused, naming the existing closure" \
+    "already closed" "$loser_out"
+
+  jq -e . "$state" >/dev/null 2>&1 \
+    && pass "CA-059 -- state file is valid JSON after the concurrent close race (no torn write)" \
+    || fail "CA-059 -- state file is not valid JSON after the concurrent close race"
+
+  local has_closure
+  has_closure="$(jq -r '.partial_verdict_map["T59RACE-T01"] | has("closing_verdict")' "$state" 2>/dev/null || echo false)"
+  [[ "$has_closure" == "true" ]] \
+    && pass "CA-059 -- the entry carries a recorded closure after the race" \
+    || fail "CA-059 -- the entry has no closing_verdict after the race"
+
+  rm -f "$out1_file" "$out2_file"
+}
+with_scratch_repo ca059_case
+
+# ---- CA-059: sequential proxy -- close once, then immediately close again with a different
+# verdict; the second call must be refused, not silently accepted as a second first closure ------
+ca059_sequential_case() {
+  "$EDM_STATE" init T59SEQ >/dev/null
+  "$EDM_STATE" record-partial-verdict T59SEQ T59SEQ-T01 PARTIAL "needs check" >/dev/null
+  "$EDM_STATE" record-partial-verdict T59SEQ T59SEQ-T01 close PASS "first-ref" >/dev/null
+  check_fails "CA-059 -- an immediate second close with a different verdict is refused, not accepted as a new first closure" \
+    "already closed" "$EDM_STATE" record-partial-verdict T59SEQ T59SEQ-T01 close FAIL "second-ref"
+  local closing
+  closing="$(jq -r '.partial_verdict_map["T59SEQ-T01"].closing_verdict' "SRD/T59SEQ/.edm-state.json")"
+  [[ "$closing" == "PASS" ]] \
+    && pass "CA-059 -- the original PASS closure is preserved (not overwritten by the refused second call)" \
+    || fail "CA-059 -- closing_verdict = '${closing}', expected PASS (the refused second call must not have mutated it)"
+}
+with_scratch_repo ca059_sequential_case
+
+echo
+echo "CA-061 -- gate-check's degraded-check recording short-circuits before taking the write lock"
+
+# ---- CA-061: repeating an already-recorded degraded check does not rewrite the state file -------
+ca061_case() {
+  "$EDM_STATE" init T61DEGR >/dev/null
+  local state="SRD/T61DEGR/.edm-state.json"
+  jq 'del(.schema_version)' "$state" > "${state}.tmp" && mv "${state}.tmp" "$state"
+
+  # First call: a genuinely new (check, reason) pair -- this call is expected to write.
+  "$EDM_STATE" gate-check T61DEGR srd >/dev/null 2>&1 || true
+  local hash_after_first
+  hash_after_first="$(_harness_hash_file "$state")"
+
+  # Second call: identical (check, reason) -- CA-061's short-circuit must skip rmw_state entirely.
+  "$EDM_STATE" gate-check T61DEGR srd >/dev/null 2>&1 || true
+  local hash_after_second
+  hash_after_second="$(_harness_hash_file "$state")"
+
+  [[ "$hash_after_first" == "$hash_after_second" ]] \
+    && pass "CA-061 -- repeating an already-recorded degraded check does not rewrite the state file" \
+    || fail "CA-061 -- state file hash changed on the second identical gate-check call (before: ${hash_after_first}, after: ${hash_after_second})"
+
+  local degraded_count
+  degraded_count="$(jq -r '.degraded_checks | length' "$state")"
+  [[ "$degraded_count" == "1" ]] \
+    && pass "CA-061 -- degraded_checks still records exactly one entry (idempotent content, not just an idempotent write-skip)" \
+    || fail "CA-061 -- degraded_checks has ${degraded_count} entry/entries, expected 1"
+
+  # A DIFFERENT (check, reason) pair for the same initiative must still be recorded -- the
+  # short-circuit is keyed on the pair, not a blanket "never write again for this prefix".
+  "$EDM_STATE" record-partial-verdict T61DEGR T61DEGR-T99 PARTIAL "unrelated" >/dev/null
+  local hash_after_unrelated
+  hash_after_unrelated="$(_harness_hash_file "$state")"
+  [[ "$hash_after_unrelated" != "$hash_after_second" ]] \
+    && pass "CA-061 -- an unrelated write still reaches the state file (the short-circuit only skips a repeated identical pair)" \
+    || fail "CA-061 -- an unrelated write did not change the state file hash"
+}
+with_scratch_repo ca061_case
+
+# ---- CA-061: static guard -- record_degraded_check reads state before calling rmw_state --------
+t_ca061_body="$(awk '/^record_degraded_check\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check "CA-061 -- record_degraded_check short-circuits (reads and compares) before its rmw_state call" \
+  "read_state" "$t_ca061_body"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
