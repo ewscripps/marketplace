@@ -1453,9 +1453,10 @@ cmd_approve_gate() {
   # it (gates_approved holds integers only -- a non-integer gate id would overload
   # cmd_gate_check's `select(.gate == $g)` comparison).
   if [[ "$gate" == "code-audit" ]]; then
-    local mode state_json audit_required
+    local mode lifecycle_mode state_json audit_required
     state_json="$(read_state "$prefix")"
     mode="$(echo "$state_json" | jq -r '.mode // "null"')"
+    lifecycle_mode="$(echo "$state_json" | jq -r '.lifecycle_mode // "standard"')"
     audit_required="$(audit_required_for_mode_or_legacy "$mode")"
 
     if [[ "$audit_required" == "false" ]]; then
@@ -1468,6 +1469,20 @@ cmd_approve_gate() {
       write_handoff_internal "$prefix"
       return 0
     fi
+
+    # CA-183: fast-track/fix-pack is a convergence_exempt() lifecycle (audit_converged and
+    # archive both treat it as "no audit round to converge"), but approve-gate deliberately
+    # stays refused rather than exempt -- a human approving a numeric gate should never see a
+    # silent auto-pass just because the lifecycle would let archive skip the check later. This
+    # must be checked BEFORE the schema-gated block below delegates to cmd_audit_converged,
+    # because that helper calls the SHARED convergence_exempt() and would otherwise exit 0 here
+    # too, silently approving the gate under fast-track exactly as CA-182 did under a stale
+    # schema_version -- the same bypass shape, a different gap.
+    case "$lifecycle_mode" in
+      fast-track|fix-pack)
+        die "code-audit gate refused for ${prefix}: lifecycle_mode=${lifecycle_mode} is convergence_exempt for archive/audit-converged, but approve-gate never exempts a lifecycle_mode -- run a real code-audit round and converge it, or use skip-phase if no implementation code-audit applies"
+        ;;
+    esac
 
     # EDMV3-T28 AC12/AC9: re-run the convergence pre-check here too (not just trust a prior
     # standalone `audit-converged` call), closing the time-of-check-to-time-of-use window

@@ -1119,6 +1119,46 @@ with open('$notes_path', 'w') as f:
 check "AC5 -- Notes content preserved across regeneration" \
   "A teammate note that must survive regeneration." "$(cat "$notes_path")"
 
+# ---- CA-027 remediation (code-audit round 2): blank lines and a user "## " subheading -----
+# inside Notes must survive verbatim, and the read-render-write must be lock-serialized.
+# Round-1's fix only proved a single content LINE survives (AC5 above); CA-027 named two
+# still-live defects the single-line case cannot catch: a `grep -v` pass that silently deleted
+# every blank line in the user's own prose on every rewrite, and an `awk` stop condition
+# (`p && /^## /{p=0}`) that truncated the Notes block at the FIRST `## ` a user typed inside
+# their own notes, since `## Notes` is unconditionally the last generated heading.
+echo
+echo "CA-027 remediation: blank lines and a user-authored '## ' subheading survive write-handoff"
+"$EDM_STATE" init ZCA27 >/dev/null
+"$EDM_STATE" write-handoff ZCA27 >/dev/null
+ca027_notes_path="$TMP/SRD/ZCA27/HANDOFF.md"
+awk '{print} /^## Notes$/{
+  print ""
+  print "First paragraph of a real note."
+  print ""
+  print "## My Own Subheading"
+  print "Text the user wrote under their own heading -- must not be truncated here."
+  print ""
+  print "Second paragraph, after a blank line and the user'\''s own heading."
+}' "$ca027_notes_path" > "${ca027_notes_path}.tmp" && mv "${ca027_notes_path}.tmp" "$ca027_notes_path"
+ca027_before="$(cat "$ca027_notes_path")"
+"$EDM_STATE" write-handoff ZCA27 >/dev/null
+ca027_after="$(cat "$ca027_notes_path")"
+check "CA-027 -- first paragraph survives regeneration" \
+  "First paragraph of a real note." "$ca027_after"
+check "CA-027 -- a user-authored '## ' subheading inside Notes is NOT truncated away" \
+  "## My Own Subheading" "$ca027_after"
+check "CA-027 -- text under the user's own subheading survives" \
+  "must not be truncated here" "$ca027_after"
+check "CA-027 -- the second paragraph after the user's subheading also survives" \
+  "Second paragraph, after a blank line" "$ca027_after"
+ca027_blank_count="$(grep -c '^$' "$ca027_notes_path" || true)"
+[[ "$ca027_blank_count" -gt 0 ]] \
+  && pass "CA-027 -- blank lines inside the Notes block are preserved, not stripped" \
+  || fail "CA-027 -- every blank line was deleted from the Notes block (the pre-fix grep -v regression)"
+[[ "$ca027_before" == "$ca027_after" ]] \
+  && pass "CA-027 -- the Notes block is byte-identical across two write-handoff runs" \
+  || fail "CA-027 -- Notes block changed across regeneration runs (before != after)"
+
 # ---- AC6 -- C-4: legacy HANDOFF omits new sections rather than erroring -------
 echo
 echo "T17 AC6 -- legacy initiative (no mode/schema_version) omits new sections without erroring"
@@ -3664,6 +3704,120 @@ t53_nonascii="$(LC_ALL=C grep -n '[^ -~	]' "${t53_lint_dir}/metrics.md" || true)
 [[ -z "$t53_nonascii" ]] \
   && pass "T53 AC11 -- metrics-report output is ASCII-only" \
   || fail "T53 AC11 -- non-ASCII bytes found in metrics-report output: $t53_nonascii"
+
+# =================================================================================
+# CA-040 remediation (code-audit round 2): convergence_exempt coverage at both consumers
+# =================================================================================
+# CA-040 (P1): convergence_exempt() (bin/edm-state:687-704) has zero test coverage at either
+# consumer (cmd_archive, cmd_audit_converged) across the four mode/lifecycle_mode combinations
+# that matter, and the deliberate asymmetry -- approve-gate code-audit stays refused under
+# fast-track/fix-pack while archive and audit-converged treat it as convergence_exempt -- was
+# entirely undocumented by a test. Writing this case is what surfaced CA-183: at schema_version
+# >= 2, approve-gate's code-audit branch delegated straight to cmd_audit_converged, which shares
+# convergence_exempt() with cmd_archive, so fast-track silently passed approve-gate too, exactly
+# contradicting the asymmetry this section's own code comment already claimed -- now fixed.
+echo
+echo "=== CA-040 remediation: convergence_exempt at cmd_audit_converged and cmd_archive ==="
+
+# Every case below uses "$EDM_STATE" init (flat layout, state-only) rather than the edm-init
+# wrapper script -- edm-init also does a real `git checkout -b` against whatever repository
+# this suite happens to run inside (T01's branch handshake), which has no place in a state-only
+# convergence_exempt() test and would otherwise leave stray branches in the enclosing repo.
+
+# ---- audit-converged: mode=prototype (exempt regardless of lifecycle_mode) ---------------
+"$EDM_STATE" init ZC40A >/dev/null
+"$EDM_STATE" set-mode ZC40A mode prototype >/dev/null
+ca040a_out="$("$EDM_STATE" audit-converged ZC40A 2>&1)"; ca040a_ec=$?
+[[ $ca040a_ec -eq 0 ]] \
+  && pass "CA-040 -- audit-converged exits 0 for mode=prototype (audit-free mode, AC8)" \
+  || fail "CA-040 -- audit-converged did not exit 0 for mode=prototype (got $ca040a_ec: $ca040a_out)"
+check "CA-040 -- audit-converged names the exemption for mode=prototype" \
+  "no code audit is required" "$ca040a_out"
+
+# ---- audit-converged: mode=standard, lifecycle_mode=fast-track (exempt via lifecycle) -----
+"$EDM_STATE" init ZC40B >/dev/null
+"$EDM_STATE" set-mode ZC40B mode standard >/dev/null
+"$EDM_STATE" set-mode ZC40B lifecycle_mode fast-track >/dev/null
+ca040b_state="$TMP/SRD/ZC40B/.edm-state.json"
+jq '.schema_version = 2' "$ca040b_state" > "${ca040b_state}.tmp" && mv "${ca040b_state}.tmp" "$ca040b_state"
+ca040b_out="$("$EDM_STATE" audit-converged ZC40B 2>&1)"; ca040b_ec=$?
+[[ $ca040b_ec -eq 0 ]] \
+  && pass "CA-040 -- audit-converged exits 0 for mode=standard/lifecycle_mode=fast-track" \
+  || fail "CA-040 -- audit-converged did not exit 0 for fast-track (got $ca040b_ec: $ca040b_out)"
+
+# ---- audit-converged: mode=standard, lifecycle_mode=fix-pack (exempt via lifecycle) -------
+"$EDM_STATE" init ZC40C >/dev/null
+"$EDM_STATE" set-mode ZC40C mode standard >/dev/null
+"$EDM_STATE" set-mode ZC40C lifecycle_mode fix-pack >/dev/null
+ca040c_out="$("$EDM_STATE" audit-converged ZC40C 2>&1)"; ca040c_ec=$?
+[[ $ca040c_ec -eq 0 ]] \
+  && pass "CA-040 -- audit-converged exits 0 for mode=standard/lifecycle_mode=fix-pack" \
+  || fail "CA-040 -- audit-converged did not exit 0 for fix-pack (got $ca040c_ec: $ca040c_out)"
+
+# ---- audit-converged: mode=standard, lifecycle_mode=standard (NOT exempt -- real check runs) --
+"$EDM_STATE" init ZC40D >/dev/null
+"$EDM_STATE" set-mode ZC40D mode standard >/dev/null
+ca040d_ec=0
+ca040d_out="$("$EDM_STATE" audit-converged ZC40D 2>&1)" || ca040d_ec=$?
+[[ $ca040d_ec -eq 3 ]] \
+  && pass "CA-040 -- audit-converged is NOT exempt for mode=standard/lifecycle_mode=standard (falls through to the real no-ledger check, exit 3)" \
+  || fail "CA-040 -- expected exit 3 (no ledger, not exempt) for standard/standard, got $ca040d_ec: $ca040d_out"
+
+# ---- archive: same four combinations, exercised via the shared convergence_exempt() ------
+# archive has additional prerequisites (gates, terminal phase) unrelated to convergence_exempt,
+# so these cases assert on the specific convergence clause rather than a bare exit code: a
+# convergence-exempt combination must never cite code_audit_converged/findings-ledger in its
+# refusal, while a non-exempt one must.
+"$EDM_STATE" init ZC40E >/dev/null
+"$EDM_STATE" set-mode ZC40E mode prototype >/dev/null
+ca040e_out="$("$EDM_STATE" archive ZC40E 2>&1)" || true
+check_absent "CA-040 -- archive's refusal for mode=prototype never cites the convergence gate (exempt)" \
+  "code_audit_converged" "$ca040e_out"
+
+"$EDM_STATE" init ZC40F >/dev/null
+"$EDM_STATE" set-mode ZC40F mode standard >/dev/null
+"$EDM_STATE" set-mode ZC40F lifecycle_mode fast-track >/dev/null
+ca040f_out="$("$EDM_STATE" archive ZC40F 2>&1)" || true
+check_absent "CA-040 -- archive's refusal for lifecycle_mode=fast-track never cites the convergence gate (exempt)" \
+  "code_audit_converged" "$ca040f_out"
+
+"$EDM_STATE" init ZC40G >/dev/null
+"$EDM_STATE" set-mode ZC40G mode standard >/dev/null
+"$EDM_STATE" set-mode ZC40G lifecycle_mode fix-pack >/dev/null
+ca040g_out="$("$EDM_STATE" archive ZC40G 2>&1)" || true
+check_absent "CA-040 -- archive's refusal for lifecycle_mode=fix-pack never cites the convergence gate (exempt)" \
+  "code_audit_converged" "$ca040g_out"
+
+"$EDM_STATE" init ZC40H >/dev/null
+"$EDM_STATE" set-mode ZC40H mode standard >/dev/null
+# Satisfy the gate/terminal-phase/completed_at prerequisites archive checks before it ever
+# reaches the convergence clause this case targets (same shape as T08 AC6 above), so a
+# not-exempt refusal is guaranteed to be ABOUT convergence, not an earlier prerequisite.
+"$EDM_STATE" approve-gate ZC40H 1 >/dev/null
+"$EDM_STATE" approve-gate ZC40H 2 >/dev/null
+"$EDM_STATE" approve-gate ZC40H 3 >/dev/null
+ca040h_state="$TMP/SRD/ZC40H/.edm-state.json"
+jq '.current_phase = 6 | .phase_durations["6_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
+  "$ca040h_state" > "${ca040h_state}.tmp" && mv "${ca040h_state}.tmp" "$ca040h_state"
+ca040h_out="$("$EDM_STATE" archive ZC40H 2>&1)" || true
+check "CA-040 -- archive's refusal for mode=standard/lifecycle_mode=standard DOES reach the real convergence gate (not exempt)" \
+  "code_audit_converged" "$ca040h_out"
+
+# ---- CA-183: the deliberate asymmetry -- approve-gate code-audit stays refused under a
+# convergence_exempt lifecycle_mode, even though archive/audit-converged both exempt it. -------
+"$EDM_STATE" init ZC40I >/dev/null
+"$EDM_STATE" set-mode ZC40I mode standard >/dev/null
+"$EDM_STATE" set-mode ZC40I lifecycle_mode fast-track >/dev/null
+ca040i_state="$TMP/SRD/ZC40I/.edm-state.json"
+jq '.schema_version = 2' "$ca040i_state" > "${ca040i_state}.tmp" && mv "${ca040i_state}.tmp" "$ca040i_state"
+check_fails "CA-183/CA-040 -- approve-gate code-audit still refuses under lifecycle_mode=fast-track, unlike archive/audit-converged" \
+  "never exempts a lifecycle_mode" \
+  "$EDM_STATE" approve-gate ZC40I code-audit
+ca040i_converged="$(jq -r '.code_audit_converged' "$ca040i_state")"
+[[ "$ca040i_converged" == "false" ]] \
+  && pass "CA-183/CA-040 -- code_audit_converged stays false after the refused fast-track approve-gate attempt" \
+  || fail "CA-183/CA-040 -- code_audit_converged was set to '${ca040i_converged}' despite the refusal -- gate bypass regression"
+# CA-040 remediation end
 
 # ---- Summary -----------------------------------------------------------------
 echo

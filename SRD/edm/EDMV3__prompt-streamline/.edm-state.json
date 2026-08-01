@@ -31,9 +31,9 @@
       "recorded_at": "2026-07-26T02:01:55Z"
     },
     "findings_ledger": {
-      "hash": "af03d230fbdc0b338a19ceec2a8f6d86e232fab106837b45a21ae2d05abd10ef",
+      "hash": "c1e0b0c0e5af2d1e0d45fec9d7ee380541318e587e9dee9c6d9c55c9b21f2e25",
       "path": "./SRD/edm/EDMV3__prompt-streamline/code-audit/findings-ledger.md",
-      "recorded_at": "2026-08-01T01:11:32Z"
+      "recorded_at": "2026-08-01T02:49:36Z"
     }
   },
   "srd_version": "1.3.0",
@@ -193,7 +193,7 @@
   "forked_from": "",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-08-01T01:11:32Z",
+  "last_updated": "2026-08-01T02:49:36Z",
   "current_step": "6.code-audit-round-1-non-convergent",
   "schema_version": 2,
   "patterns_last_updated": "2026-07-31T23:56:05Z",
