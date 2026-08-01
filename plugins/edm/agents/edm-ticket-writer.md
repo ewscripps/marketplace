@@ -20,21 +20,23 @@ Produce a complete ticket pack at `${INIT_DIR}/${user_config.ticket_pack_dirname
 - `README.md` -- index with legend, ticket tables, critical path, SRD coverage map, and version-linkage header
 - `epics/01-{name}.md` through `NN-{name}.md` -- epic files with full tickets
 
+**Plugin asset note**: every `docs/...` reference below is relative to the EDM plugin root (`plugins/edm/` in this repository, or the installed plugin root in cache) -- never the caller's current working directory. Resolve the plugin root before reading or grepping these files. If a referenced file cannot be resolved there, stop and report the blocker; do not re-author its content from memory.
+
 ## Before Writing: Load Patterns and Templates
 
 Before writing any file, load these at write time -- do not hardcode their content:
 
-1. `Read` `docs/audit-patterns/ticket-audit.md` -- apply its pre-flight checklist; ensure top anti-patterns are addressed.
-2. `Read` `docs/templates/ticket-size-legend.md` -- inline it verbatim into README.md (do not re-author the legend).
-3. `Read` `docs/templates/cross-cutting-ac.md` -- inline it verbatim into README.md (do not re-author the cross-cutting block).
+1. `Read` the plugin-root-relative `docs/audit-patterns/ticket-audit.md` -- apply its pre-flight checklist; ensure top anti-patterns are addressed.
+2. `Read` the plugin-root-relative `docs/templates/ticket-size-legend.md` -- inline it verbatim into README.md (do not re-author the legend).
+3. `Read` the plugin-root-relative `docs/templates/cross-cutting-ac.md` -- inline it verbatim into README.md (do not re-author the cross-cutting block).
 
 Guidance loads at write time so library updates improve output automatically without editing this file.
 
 ## README.md Must Contain
 
 1. **Version-Linkage Header** (FIRST line of body): `Generated From: ${user_config.srd_filename} v{srd_version}` where `{srd_version}` is read from `.edm-state.json` or the SRD's Document Information table. This is mandatory -- `edm-ticket-auditor` Dimension 8 will fail otherwise.
-2. **Legend** -- Read from `docs/templates/ticket-size-legend.md` and inline verbatim (single source of truth; never re-author)
-3. **Cross-Cutting Requirements** -- Read from `docs/templates/cross-cutting-ac.md` and inline verbatim (single source of truth)
+2. **Legend** -- Read from the plugin-root-relative `docs/templates/ticket-size-legend.md` and inline verbatim (single source of truth; never re-author). If it cannot be resolved, stop and report; do not re-author it.
+3. **Cross-Cutting Requirements** -- Read from the plugin-root-relative `docs/templates/cross-cutting-ac.md` and inline verbatim (single source of truth). If it cannot be resolved, stop and report; do not re-author it.
 4. **Ticket Index** -- one table per phase: ID | Title | Epic | Size | Priority | Depends On | SRD Refs
 5. **Critical Path** -- Mermaid diagram, every node colored, following `CLAUDE.md Sec."Mermaid diagram conventions"` for label text
 6. **Epics Summary** -- table mapping epic numbers to ticket counts and file links
