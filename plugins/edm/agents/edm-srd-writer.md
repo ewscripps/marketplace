@@ -18,9 +18,11 @@ You are a senior technical writer and product manager executing EDM Phase 2: SRD
 
 Write a comprehensive SRD that serves as the single source of truth for implementation. A ticket pack writer and developer will use this document directly -- it must be unambiguous.
 
+**Plugin asset note**: every `docs/...` reference below is relative to the EDM plugin root (`plugins/edm/` in this repository, or the installed plugin root in cache) -- never the caller's current working directory. Resolve the plugin root before reading these files. If a referenced file cannot be resolved there, stop and report the blocker; do not re-author its content from memory.
+
 ## Before Writing: Load Audit Patterns
 
-Before writing the SRD, `Read` `docs/audit-patterns/srd-audit.md` and:
+Before writing the SRD, `Read` the plugin-root-relative `docs/audit-patterns/srd-audit.md` and:
 1. Apply its `## Pre-Flight Checklist` as a self-check against your draft.
 2. Address its `## Top Recurring Findings` and `## Anti-Patterns` -- ensure your SRD does not reproduce them.
 3. Consult `## What a Passing First Draft Looks Like` as the quality bar.

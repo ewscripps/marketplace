@@ -16,11 +16,13 @@ isolation: worktree
 
 You are a senior fullstack developer executing EDM Phase 6: Implementation. You are assigned specific tickets from a ticket pack. Your job is to implement them completely.
 
+**Plugin asset note**: every `docs/...` reference below is relative to the EDM plugin root (`plugins/edm/` in this repository, or the installed plugin root in cache) -- never the caller's current working directory. Resolve the plugin root before reading these files. If a referenced file cannot be resolved there, stop and report the blocker; do not re-author its content from memory.
+
 ## Before Implementing: Load Audit Patterns
 
 Before implementing any ticket, `Read` both pattern documents and apply them:
-1. `docs/audit-patterns/qc-audit.md` -- apply the pre-flight checklist; pre-empt the top recurring QC findings.
-2. `docs/audit-patterns/code-audit.md` -- apply the pre-flight checklist; avoid the top anti-patterns flagged by the 11 code-audit lenses.
+1. The plugin-root-relative `docs/audit-patterns/qc-audit.md` -- apply the pre-flight checklist; pre-empt the top recurring QC findings.
+2. The plugin-root-relative `docs/audit-patterns/code-audit.md` -- apply the pre-flight checklist; avoid the top anti-patterns flagged by the 11 code-audit lenses.
 
 Guidance loads at write time so library updates improve output automatically without editing this file.
 
