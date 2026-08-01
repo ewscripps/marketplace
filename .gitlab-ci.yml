@@ -124,13 +124,14 @@ lint:vocabulary:
     - bash plugins/edm/bin/edm-check-vocabulary
     - echo "lint:vocabulary: OK -- vocabulary backstop clean"
 
-# EDMV3-T61 AC8: pinned shellcheck job over the plugin's own bin/ scripts (new/modified code --
-# pre-existing findings in code this initiative did not touch are out of scope per the ticket
-# and get their own follow-up ticket rather than blocking this pipeline). Scoped to the
-# unquoted-expansion class of findings (SC2086/SC2046/SC2048/SC2068) rather than shellcheck's
-# full default severity set: this codebase's existing header/usage comment blocks and
-# intentionally-loose test fixtures trip many stylistic (non-safety) shellcheck findings that
-# are out of scope for "no unquoted-expansion findings in new code" specifically.
+# EDMV3-T61 AC8: pinned shellcheck job over the plugin's own bin/ scripts. The loop below
+# unconditionally scans every file directly under plugins/edm/bin/* (not just new/modified
+# code) -- pre-existing findings in code this initiative did not touch are still in scope for
+# this pipeline; there is no changed-files filter. Scoped to the unquoted-expansion class of
+# findings (SC2086/SC2046/SC2048/SC2068) rather than shellcheck's full default severity set:
+# this codebase's existing header/usage comment blocks and intentionally-loose test fixtures
+# trip many stylistic (non-safety) shellcheck findings that are out of scope for "no
+# unquoted-expansion findings" specifically.
 lint:shellcheck:
   stage: lint
   <<: *alpine_edm

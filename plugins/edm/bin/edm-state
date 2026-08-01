@@ -107,6 +107,7 @@ list_state_files() {
   local include_archived="${1:-}"
   local _lsf_seen=()
   local _lsf_f _lsf_already _lsf_s
+  # shellcheck disable=SC2086 -- deliberate glob expansion; quoting would prevent the archived-state glob from expanding
   for _lsf_f in \
       "$SRD_ROOT"/*/.edm-state.json \
       "$SRD_ROOT"/*/*/.edm-state.json \
@@ -3841,6 +3842,21 @@ write_handoff_internal() {
   state_file="$(state_file_for "$prefix")"
   [[ -f "$state_file" ]] || return 0
 
+  # CA-027: the Notes-preserving read of HANDOFF.md, the full re-render, and the atomic
+  # write are a read-modify-write sequence. Without a lock, two concurrent checkpoints (e.g.
+  # a Stop hook firing while an orchestrator command is also mid-checkpoint) can race and one
+  # write clobbers the other's freshly-typed Notes prose -- there is no .bak for HANDOFF.md to
+  # recover from. Locked on the same lockbase as state mutations so HANDOFF.md writes
+  # serialize with them too.
+  with_state_lock "${state_file%.json}" _write_handoff_body "$prefix" "$state_file"
+}
+
+# _write_handoff_body <prefix> <state-file>   (runs INSIDE with_state_lock; see
+# write_handoff_internal above, which acquires the lock and dispatches here)
+_write_handoff_body() {
+  local prefix="$1"
+  local state_file="$2"
+
   local state
   state="$(cat "$state_file")"
 
@@ -4041,12 +4057,18 @@ write_handoff_internal() {
   fi
   [[ -n "$decisions" ]] || decisions="_(none recorded yet - decisions are captured at Gate 1)_"
 
-  # Preserve user-edited Notes section across re-writes
+  # Preserve user-edited Notes section across re-writes (CA-027). `## Notes` is the LAST
+  # section this function renders (see the final printf block below), so capturing everything
+  # from the `## Notes` heading through end-of-file, verbatim, is correct -- there is no next
+  # generated heading to stop at, and stopping at the first `## ` line would wrongly truncate
+  # the block if the user types their own `## ` subheading inside their notes prose. The old
+  # `grep -v '^[[:space:]]*$'` pass has been removed: it silently deleted every blank line in
+  # the user's own notes on every rewrite, destroying paragraph structure with no .bak to
+  # recover from.
   local handoff_path="${_init_dir}/HANDOFF.md"
   local notes=""
   if [[ -f "$handoff_path" ]]; then
-    notes="$(awk '/^## Notes/{p=1;next} p && /^## /{p=0} p{print}' "$handoff_path" 2>/dev/null \
-      | grep -v '^[[:space:]]*$' || true)"
+    notes="$(awk '/^## Notes/{p=1;next} p{print}' "$handoff_path" 2>/dev/null || true)"
   fi
   [[ -n "$notes" ]] || notes="_(Add anything a teammate should know before resuming - context, blockers, preferences)_"
 
