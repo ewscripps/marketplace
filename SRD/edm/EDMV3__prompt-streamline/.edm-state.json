@@ -31,9 +31,9 @@
       "recorded_at": "2026-07-26T02:01:55Z"
     },
     "findings_ledger": {
-      "hash": "0dc81da988226a4e8713a724baea28aebaee82e10c9b8558c881db8f0e2275b5",
+      "hash": "af03d230fbdc0b338a19ceec2a8f6d86e232fab106837b45a21ae2d05abd10ef",
       "path": "./SRD/edm/EDMV3__prompt-streamline/code-audit/findings-ledger.md",
-      "recorded_at": "2026-07-28T16:22:22Z"
+      "recorded_at": "2026-08-01T01:11:32Z"
     }
   },
   "srd_version": "1.3.0",
@@ -126,11 +126,11 @@
   "coverage_by_epic": {},
   "code_audit_converged": false,
   "compliance_gate_approved": false,
-  "last_cmd": "edm-state audit-converged EDMV3  (exit 1, NOT CONVERGENT)",
-  "last_decision": "Code-audit round 1 (full, 11 lenses) complete and NON-CONVERGENT. Ledger: 132 findings after cross-lens dedup -- 4 P0, 40 P1, 60 P2, 28 NOTED. Four fixed in-round (both arithmetic-context injection sinks CA-001/CA-003, the missing --lenses arg CA-004, the lost die interpolations); 100 remain open and ALL block, because BLOCKING_FILTER includes open P2. Next action is remediation, not the gate: work REMEDIATION.md in code-audit/pass-1_2026-07-28/, then re-run a full round. The convergence gate stays unapproved -- only an explicit human Approve may set code_audit_converged, and there is nothing to approve while 100 findings block. Three root causes carry most of the volume: the ignore-marker/fence rewrite three hand-copies did not follow (2 of them in blocking CI jobs), status captures that structurally cannot observe failure, and prose describing pre-change code in files that are themselves the contract.",
+  "last_cmd": "edm-state approve-gate EDMV3 code-audit (exit 1, refused after schema_version fix)",
+  "last_decision": "Round 2 (full) synthesized: 91 blocking (1 P0, 13 P1, 77 P2), NOT CONVERGENT. User approved the Convergence gate anyway; approve-gate incorrectly succeeded because schema_version was still 1 (cmd_init default), which skips the code-audit precheck entirely (CA-182, new P0, filed). Migrated schema_version to 2, manually reverted the bogus code_audit_converged=true and its gate metadata (no cmd_set path exists for that field by design), and re-ran approve-gate to confirm it now correctly refuses. code_audit_converged is false; next action is remediation per pass-2 REMEDIATION.md, approved by the user, then a third full round.",
   "audit_rounds": {
     "code": {
-      "count": 1,
+      "count": 2,
       "rounds": [
         {
           "round": 1,
@@ -149,6 +149,36 @@
           "model_used": "claude-opus-5",
           "estimated_cost_usd": 51.6010,
           "attribution_mode": "scoped"
+        },
+        {
+          "round": 2,
+          "lenses": [
+            "L1",
+            "L2",
+            "L3",
+            "L4",
+            "L5",
+            "L6",
+            "L7",
+            "L8",
+            "L9",
+            "L10",
+            "L11"
+          ],
+          "round_type": "full",
+          "started_at": "2026-07-31T22:58:30Z",
+          "completed_at": "2026-07-31T23:56:05Z",
+          "duration_seconds": 3455,
+          "tokens": {
+            "input": 196,
+            "output": 948665,
+            "cache_read": 44366515,
+            "cache_write_5m": 0,
+            "cache_write_1h": 3197960
+          },
+          "model_used": "claude-sonnet-5",
+          "estimated_cost_usd": 62.3044,
+          "attribution_mode": "scoped"
         }
       ]
     }
@@ -163,7 +193,25 @@
   "forked_from": "",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-07-28T19:40:41Z",
+  "last_updated": "2026-08-01T01:11:32Z",
   "current_step": "6.code-audit-round-1-non-convergent",
-  "schema_version": 1
+  "schema_version": 2,
+  "patterns_last_updated": "2026-07-31T23:56:05Z",
+  "patterns_updates": {
+    "code": {
+      "updated_at": "2026-07-31T23:56:05Z",
+      "new_findings": 0
+    }
+  },
+  "degraded_checks": [
+    {
+      "check": "approve-gate:code-audit-convergence-precheck",
+      "reason": "schema_version 1 < 2",
+      "recorded_at": "2026-08-01T01:06:16Z"
+    }
+  ],
+  "code_audit_gate_approved_at": "",
+  "code_audit_gate_approver": "",
+  "code_audit_gate_enforcement": "",
+  "code_audit_gate_ledger": "absent"
 }
