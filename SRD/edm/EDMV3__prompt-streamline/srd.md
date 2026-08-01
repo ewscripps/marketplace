@@ -2843,13 +2843,17 @@ independent of the dispatcher.
       `skills/audit-tickets/SKILL.md:72-75`.
     - [ ] After the WS5 move (EDMV3-48), the skill-side references exist only in the phase-skill copies; the
       orchestrator carries none.
-    - [ ] Every reference uses the identical quoting style already in use:
-      `` `CLAUDE.md Sec."Mermaid diagram conventions"` ``. The referenced heading is
+    - [ ] Every reference uses one of two accepted forms: the identical quoting style already in use,
+      `` `CLAUDE.md Sec."Mermaid diagram conventions"` ``, **or** the plugin-relative fallback,
+      `` `docs/canonical-sections.md` `` (resolved relative to the EDM plugin's own root, never the
+      caller's cwd) -- the two forms are equivalent because the latter is a generated, byte-identical
+      extract of the former (EDMV3-T41 AC4/AC5). The referenced heading is
       `## Mermaid diagram conventions (canonical)` (EDMV3-53); `architecture.md` uses the same name, and a smoke
       assertion checks the exact heading string, so the two documents cannot drift on it.
-    - [ ] **The references are verified to actually resolve from an installed plugin cache before this requirement is
-      considered done** (EDMV3-116). Adding by-name references is only worth doing if an agent given
-      `CLAUDE.md Sec."Mermaid diagram conventions"` retrieves the content.
+    - [ ] Consumers cite the plugin-relative form (decisions.md D22, D34): a bare
+      `` `CLAUDE.md Sec."..."` `` reference does not resolve from an installed plugin cache -- disproven by
+      two independent methods and not re-asserted here. `docs/canonical-sections.md` is the resolvable
+      fallback and is what new prompt-surface references point at.
     - [ ] No touch point restates the rule content; a grep for `#59` outside `CLAUDE.md`, the pattern library entries,
       the linter, and its tests returns only reference lines.
     - [ ] The auditing agents' new check text names what to look for concretely: a raw `;` inside `[...]`, `(...)`,

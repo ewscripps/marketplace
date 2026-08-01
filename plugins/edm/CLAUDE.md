@@ -298,8 +298,20 @@ fails to resolve, or (since "CLAUDE.md" is itself a common convention) silently 
 target project's own unrelated `CLAUDE.md` instead. Both the Severity vocabulary section and
 the Mermaid diagram conventions section above are additionally generated, byte-identical, into
 `docs/canonical-sections.md` (regenerate via `edm-sync-canonical-sections` after editing either
-section above) -- a plugin-relative path new prompt-surface references should point at instead
-of the bare `CLAUDE.md Sec."..."` form once EDMV3-T42 lands.
+section above) -- the plugin-relative path new prompt-surface references point at instead of the
+bare `CLAUDE.md Sec."..."` form.
+
+**Current position (decisions.md D34): the negative branch is now the shipped default, not a
+future one.** EDMV3-T42's eleven bare-form touch points landed before this fallback existed
+(decisions.md D22); that ordering gap is now closed. `agents/edm-audit-synthesizer.md`,
+`agents/edm-srd-auditor.md`, and all eleven `agents/edm-audit-*.md` lens definitions now carry an
+explicit `Read docs/canonical-sections.md` instruction anchored to the plugin's own root (never
+the caller's cwd) alongside their `CLAUDE.md Sec."..."` citation, so both forms resolve for a
+consumer reading this file. Residual scope -- auditing whether the remaining prompt-surface
+files (skills and any agent not yet touched) also need the same anchor -- is opened as a named
+follow-on ticket, `EDMV4-T04` (the next unused ticket number in `EDMV4__lint-and-pipeline-budgets`;
+`EDMV4-T02` and `EDMV4-T03` are already closed per decisions.md D29), rather than left as an
+unnamed candidate (D34).
 
 ## Model and effort assignments
 
