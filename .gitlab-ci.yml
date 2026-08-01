@@ -70,9 +70,15 @@ lint:bash-syntax:
     - |
       set -e
       echo "=== bash -n over plugins/edm/bin/ (including bin/tests/*.sh) ==="
+      # CA-019: plugins/edm/bin/edm-mermaid-rules.awk is a plain awk source file (loaded via
+      # `awk -f`, never executed as a bash script and never sourced by bash), so it is excluded
+      # from this bash-syntax sweep by extension the same way a future non-bash helper would be.
       FAIL=0
       for f in plugins/edm/bin/* plugins/edm/bin/tests/*.sh; do
         [ -f "$f" ] || continue
+        case "$f" in
+          *.awk) continue ;;
+        esac
         if bash -n "$f"; then
           echo "  OK: $f"
         else

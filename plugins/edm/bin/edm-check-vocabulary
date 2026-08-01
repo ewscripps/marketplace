@@ -131,10 +131,7 @@ done
 
 violations=0
 
-ignored_line_set() {
-  local file="$1"
-  build_line_classes "$file" | awk -F'	' '$2=="ignored"{print $1}'
-}
+# ignored_line_set is provided by _edm-lint-lib.sh (CA-156) -- do not redefine it locally here.
 
 # ---- Helper: is a (relfile, snippet) pair allowlisted? -------------------------------------
 is_allowlisted() {

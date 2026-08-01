@@ -62,11 +62,10 @@
 # decimal place only at print time (EDMV3-T23 Technical Notes).
 #
 # Dimension 3's "no raw ; in label text" check is score-artifacts.sh's own standalone
-# Mermaid-block scan (_scan_mermaid_blocks, below), not a call into bin/edm-lint-artifacts.
-# edm-lint-artifacts now HAS the fourth mermaid-semicolon class (EDMV3-56, wave B), so the
-# two implementations of the semicolon rule genuinely overlap and that overlap is real
-# duplication (EDMV3-111). It is retained deliberately rather than replaced, for three
-# reasons a straight swap would break:
+# Mermaid-block scan (_scan_mermaid_blocks, below), still not a call into
+# bin/edm-lint-artifacts as a command. edm-lint-artifacts has the fourth mermaid-semicolon
+# class (EDMV3-56, wave B), so the two dimension's OVERALL jobs still genuinely differ, for
+# three reasons a straight swap would break:
 #   1. Dimension 3 is "mermaid-parse-success", a superset of the semicolon rule. It also
 #      requires each block's first non-blank line to be a recognized diagram-type keyword,
 #      and treats an empty or unterminated block as bad. edm-lint-artifacts checks none of
@@ -74,12 +73,22 @@
 #   2. The score is a per-block OK/BAD ratio over exactly four named artifact files.
 #      edm-lint-artifacts reports per-LINE violations over every *.md under a path and
 #      signals via exit code 1, which this scorer must never do for a low score (AC5).
-#   3. This script depends on nothing beyond bash 3.2 and jq (AC6) and calls nothing in
-#      bin/. Shelling out to edm-lint-artifacts would put a bin/ script on the scorer's
-#      required PATH.
-# The de-duplication worth doing is therefore not "call the linter": it is to lift the
-# shared semicolon-detection awk into one sourceable file both consume. That is a bin/
-# change and is not attempted here.
+#   3. This script still never invokes bin/edm-lint-artifacts as a command, and still never
+#      shells out to anything beyond bash 3.2 and jq (AC6) -- a bin/ EXECUTABLE never goes on
+#      this scorer's required PATH.
+# CA-019 (code-audit round 2): the underlying RULE BODY -- fence recognition (including
+# de-indenting before counting backtick runs, so a fence nested under a numbered list step or
+# blockquote is still recognized) and the literal-semicolon violation check -- used to be a
+# byte-equivalent clone of bin/edm-lint-artifacts's own copy, with no shared guard, and this
+# scorer's fence detection was anchored at column 1 while bin/'s was not, so an indented
+# ```mermaid fence was invisible here and silently under-counted (see
+# bin/tests/fixtures/mermaid/valid/v12-indented-fence.md). _scan_mermaid_blocks below now
+# loads plugins/edm/bin/edm-mermaid-rules.awk (a plain awk source file containing only
+# function definitions, composed via `awk -f edm-mermaid-rules.awk -f <this script's own
+# per-block state machine>`) for both fence recognition and the semicolon rule, so this
+# scorer and bin/_edm-lint-lib.sh/bin/edm-lint-artifacts now agree on what counts as a fence
+# and what counts as a violation, while this scorer's own OK/BAD-per-block verdict stream,
+# diagram-keyword check and exit-0 contract (AC5) are unchanged.
 #
 # Depends on nothing beyond bash 3.2 and jq (AC6). Never calls bin/edm-state, never reads
 # ANTHROPIC_API_KEY, never launches claude -- this script only ever reads files under the
@@ -94,6 +103,11 @@ print_help() {
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCORER_VERSION="1.0.0"
 PATTERNS_FILE="$SCRIPT_DIR/vague-ac-patterns.txt"
+# CA-019: shared fence-recognition and semicolon-violation rule file, also loaded by
+# bin/_edm-lint-lib.sh's build_line_classes. A plain awk source file (function definitions
+# only, no top-level rule of its own), loaded via -f, not executed as a command -- this
+# remains a bash-3.2-and-jq-only script per AC6, no bin/ executable goes on its PATH.
+MERMAID_RULES_AWK="$SCRIPT_DIR/../bin/edm-mermaid-rules.awk"
 
 DIM_NAMES=(requirement-id-coverage ac-testability mermaid-parse-success coverage-map-bidirectionality lens-jsonl-prose-agreement)
 
@@ -126,6 +140,7 @@ EOF
 }
 
 command -v jq >/dev/null 2>&1 || die "jq is required and was not found on PATH"
+[[ -f "$MERMAID_RULES_AWK" ]] || die "shared mermaid rules file not found: $MERMAID_RULES_AWK"
 
 # ---- shared numeric helpers --------------------------------------------------------------
 
@@ -244,94 +259,55 @@ compute_dim2() {
 # first non-blank content line begins with a recognized Mermaid diagram-type keyword, and
 # no line in the block contains a raw semicolon inside a label context ([...], "...",
 # (...), or a |...| edge label) once known HTML entity escapes (#59;, #35;, #quot;, and any
-# #NNN; numeric entity) have been stripped first.
+# #NNN; numeric entity) have been stripped first. Fence recognition (CA-019) is de-indented
+# the same way bin/_edm-lint-lib.sh's build_line_classes is, via the shared
+# plugins/edm/bin/edm-mermaid-rules.awk functions, so a ```mermaid fence nested under a
+# numbered list step or blockquote is recognized here exactly as it is there -- see
+# bin/tests/fixtures/mermaid/valid/v12-indented-fence.md.
+#
+# NOTE: the second -f argument's heredoc below must never contain a literal backtick
+# character. bash 3.2 mis-parses a backtick inside a quoted heredoc that is itself nested
+# inside a <(...) process substitution (confirmed empirically against this exact
+# construct) -- any inline comment describing a fence must spell it out in prose instead.
 _scan_mermaid_blocks() {
   local file="$1"
-  awk '
-    function trim(s) {
-      sub(/^[[:space:]]*/, "", s)
-      sub(/[[:space:]]*$/, "", s)
-      return s
-    }
-    function strip_entities(s,   out, i, n, j, k) {
-      out = ""
-      i = 1
-      n = length(s)
-      while (i <= n) {
-        if (substr(s, i, 1) == "#") {
-          j = i + 1
-          k = 0
-          while (k < 10 && j <= n && substr(s, j, 1) ~ /[0-9A-Za-z]/) {
-            j++
-            k++
-          }
-          if (k >= 1 && j <= n && substr(s, j, 1) == ";") {
-            i = j + 1
-            continue
-          }
-        }
-        out = out substr(s, i, 1)
-        i++
-      }
-      return out
-    }
-    function is_violation(line,   trimmed, stripped, after_colon, p) {
-      trimmed = trim(line)
-      if (substr(trimmed, 1, 2) == "%%") return 0
-      if (trimmed ~ /^(classDef|style|linkStyle)[[:space:]]/) return 0
-      if (trimmed == "classDef" || trimmed == "style" || trimmed == "linkStyle") return 0
-
-      stripped = strip_entities(line)
-      sub(/;[[:space:]]*$/, "", stripped)
-
-      if (stripped ~ /\[[^][]*;[^][]*\]/) return 1
-      if (stripped ~ /\([^()]*;[^()]*\)/) return 1
-      if (stripped ~ /\{[^{}]*;[^{}]*\}/) return 1
-      if (stripped ~ /\|[^|]*;[^|]*\|/) return 1
-      if (stripped ~ /"[^"]*;[^"]*"/) return 1
-
-      p = index(stripped, ":")
-      if (index(stripped, "->") > 0 && p > 0) {
-        after_colon = substr(stripped, p + 1)
-        if (index(after_colon, ";") > 0) return 1
-      }
-      return 0
-    }
-    BEGIN { in_block=0; first_line=1; bad=0; has_content=0 }
+  awk -f "$MERMAID_RULES_AWK" -f <(cat <<'AWK_MAIN'
+    BEGIN { in_block=0; first_line=1; bad=0; has_content=0; fence_len=0 }
     {
       sub(/\r$/, "")
-      if ($0 ~ /^```[Mm][Ee][Rr][Mm][Aa][Ii][Dd][[:space:]]*$/) {
-        if (in_block) next
-        in_block=1
-        first_line=1
-        bad=0
-        has_content=0
+      if (in_block == 0) {
+        if (mermaid_fence_run_len($0) >= 3 && mermaid_fence_lang($0) == "mermaid") {
+          in_block = 1
+          fence_len = mermaid_fence_run_len($0)
+          first_line = 1
+          bad = 0
+          has_content = 0
+        }
         next
       }
-      if (in_block && $0 ~ /^```[[:space:]]*$/) {
+      if (mermaid_is_fence_close($0, fence_len)) {
         if (has_content == 0) bad = 1
         print (bad == 0 ? "OK" : "BAD")
         in_block = 0
         next
       }
-      if (in_block) {
-        line = $0
-        if (line ~ /^[[:space:]]*$/) next
-        has_content = 1
-        if (first_line) {
-          first_line = 0
-          stripped = line
-          gsub(/^[[:space:]]+/, "", stripped)
-          if (stripped !~ /^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|journey|gitGraph|mindmap|timeline|quadrantChart|requirementDiagram|C4Context|C4Container|C4Component|C4Dynamic|C4Deployment)/) {
-            bad = 1
-          }
+      line = $0
+      if (line ~ /^[[:space:]]*$/) next
+      has_content = 1
+      if (first_line) {
+        first_line = 0
+        stripped = line
+        gsub(/^[[:space:]]+/, "", stripped)
+        if (stripped !~ /^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|journey|gitGraph|mindmap|timeline|quadrantChart|requirementDiagram|C4Context|C4Container|C4Component|C4Dynamic|C4Deployment)/) {
+          bad = 1
         }
-        if (is_violation(line)) bad = 1
-        next
       }
+      if (mermaid_is_violation(line)) bad = 1
+      next
     }
     END { if (in_block) print "BAD" }
-  ' "$file"
+AWK_MAIN
+  ) "$file"
 }
 
 compute_dim3() {

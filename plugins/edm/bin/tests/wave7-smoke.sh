@@ -293,10 +293,32 @@ else
 fi
 
 echo
-echo "T03 AC8 -- mirrors (not re-derives) edm-lint-artifacts's report_violation/build_ignore_set/is_ignored_line"
-t03_mirror_hits="$(grep -c 'report_violation\|build_ignore_set\|is_ignored_line' "$EDM_CHECK_GRANTS" || true)"
-[[ "${t03_mirror_hits:-0}" -gt 0 ]] && pass "AC8 -- mirrored helper names present in edm-check-grants" \
-  || fail "AC8 -- report_violation/build_ignore_set/is_ignored_line not found in edm-check-grants"
+echo "CA-010 -- AC8's shared-lint-library boundary: each of the three consumers sources"
+echo "_edm-lint-lib.sh (bin/edm-lint-artifacts, edm-check-grants, edm-check-vocabulary are peer"
+echo "consumers of it, not of one another) and defines none of build_line_classes/is_ignored_line/"
+echo "report_violation itself. The prior version of this assertion greped for the presence of"
+echo "report_violation/build_ignore_set/is_ignored_line call sites and passed on any hit -- it would"
+echo "have passed unchanged even with the source line deleted and the three helpers pasted back in"
+echo "locally, which is exactly the regression this boundary exists to catch. It also grepped for"
+echo "build_ignore_set, a symbol that has never existed in this tree post-extraction, so a hit on"
+echo "it never asserted anything real."
+for ca010_consumer in edm-lint-artifacts edm-check-grants edm-check-vocabulary; do
+  ca010_file="${PLUGIN_DIR}/bin/${ca010_consumer}"
+  ca010_sources="$(grep -cE 'source .*_edm-lint-lib\.sh' "$ca010_file" 2>/dev/null || true)"
+  [[ "${ca010_sources:-0}" -gt 0 ]] \
+    && pass "CA-010 -- ${ca010_consumer} sources _edm-lint-lib.sh" \
+    || fail "CA-010 -- ${ca010_consumer} does not source _edm-lint-lib.sh"
+
+  ca010_bad_defs=""
+  for ca010_fn in build_line_classes is_ignored_line report_violation; do
+    if grep -qE "^${ca010_fn}\(\)" "$ca010_file"; then
+      ca010_bad_defs="${ca010_bad_defs}${ca010_fn} "
+    fi
+  done
+  [[ -z "$ca010_bad_defs" ]] \
+    && pass "CA-010 -- ${ca010_consumer} defines none of build_line_classes/is_ignored_line/report_violation locally" \
+    || fail "CA-010 -- ${ca010_consumer} redefines locally: ${ca010_bad_defs}(should come only from _edm-lint-lib.sh)"
+done
 
 echo
 echo "T03 AC9 -- documented agent count matches disk (count-drift guard)"
@@ -851,9 +873,14 @@ done < <(find "$PLUGIN_DIR/bin" -maxdepth 1 -type f 2>/dev/null)
 
 echo
 echo "T61 AC10 -- bash -n passes over every file in plugins/edm/bin/ (incl. bin/tests/*.sh)"
+# CA-019: edm-mermaid-rules.awk is a plain awk source file (loaded via -f, never executed as
+# bash), excluded here the same way .gitlab-ci.yml's real lint:bash-syntax job excludes it.
 t61_bashn_fail=0
 for t61_f in "$PLUGIN_DIR"/bin/* "$PLUGIN_DIR"/bin/tests/*.sh; do
   [[ -f "$t61_f" ]] || continue
+  case "$t61_f" in
+    *.awk) continue ;;
+  esac
   bash -n "$t61_f" 2>/dev/null || { t61_bashn_fail=1; echo "  bash -n FAILED: $t61_f"; }
 done
 [[ $t61_bashn_fail -eq 0 ]] && pass "T61 AC10 -- bash -n passes over every bin/ and bin/tests/ file" \
@@ -1483,7 +1510,12 @@ check "T30 AC4 -- edm-audit-spec.md False-Alarm-Filter class" "plugins/edm/agent
 echo
 echo "T30 AC9 -- sources shared lint library rather than re-deriving the file walk"
 check "T30 AC9 -- sources _edm-lint-lib.sh" "_edm-lint-lib.sh" "$(cat "$CHECK_VOCAB")"
-check "T30 AC9 -- uses build_line_classes from shared lib" "build_line_classes" "$(cat "$CHECK_VOCAB")"
+# CA-156: edm-check-vocabulary no longer calls build_line_classes directly -- it calls the
+# shared ignored_line_set (also from _edm-lint-lib.sh) instead of carrying its own local
+# byte-identical copy of that one-line wrapper. Asserting the wrapper's own name is used, not
+# the lower-level function it wraps, is the correct post-CA-156 shape of this AC.
+check "T30 AC9 -- uses ignored_line_set from shared lib" "ignored_line_set" "$(cat "$CHECK_VOCAB")"
+check_absent "T30 AC9 -- does not redefine ignored_line_set locally" "ignored_line_set() {" "$(cat "$CHECK_VOCAB")"
 
 echo
 echo "T30 AC10 -- override-flag grep (repo-wide, documented carve-outs) is clean"
@@ -1791,7 +1823,10 @@ t43_write() { printf '%s\n' "$2" > "${T43_SCRATCH}/$1"; }
 
 echo
 echo "T43 AC1 -- one-pass classifier replaces the per-class helper"
-check_absent "T43 AC1 -- build_ignore_set no longer present" "build_ignore_set" "$(cat "$LINT_BIN")"
+# CA-010: the former check_absent here (asserting the string "build_ignore_set" was absent from
+# edm-lint-artifacts) is retired. That symbol has never existed anywhere in this tree
+# post-extraction, so a check for its absence never asserted anything real -- see this file's
+# own CA-010 block above for the actual structural boundary assertion.
 # build_line_classes is defined in the shared library and called from edm-lint-artifacts
 LINT_LIB="${SCRIPT_DIR}/../_edm-lint-lib.sh"
 t43_def_count="$(count_matches '^build_line_classes()' "$LINT_LIB")"
@@ -2129,6 +2164,39 @@ t44_check_uses="$(printf '%s\n' "$t44_block" | grep -c 'check_fails\|check "' ||
   && pass "T44 AC8 -- T44's own cases use check/check_fails from _harness.sh" \
   || fail "T44 AC8 -- T44's cases do not appear to use the shared harness assertions"
 # EDMV3-T44 end
+
+# =================================================================================
+# CA-144 (code-audit round 2): an edm-lint-ignore marker directly above a fence opener must
+# not corrupt the fence state machine in bin/_edm-lint-lib.sh's build_line_classes. Before the
+# fix, the marker's ignore_next branch consumed the fence-open line via `next` before the
+# fence-open transition ran, so in_fence never became 1 -- the fenced content below was
+# scanned as ordinary prose (a false positive) and the fence's own CLOSING line was then
+# matched by the still-armed opener branch instead, inverting fence-suppression state for
+# everything after it in the file.
+# =================================================================================
+echo
+echo "CA-144 -- edm-lint-ignore directly above a fence opener: suppresses the fenced content,"
+echo "does not corrupt fence state for the prose after the fence's real close"
+CA144_FIXTURE="${PLUGIN_DIR}/bin/tests/fixtures/lint-lib/ca144-ignore-marker-before-fence.md"
+[[ -f "$CA144_FIXTURE" ]] && pass "CA-144 -- fixture file exists" \
+  || fail "CA-144 -- fixture file missing: $CA144_FIXTURE"
+
+ca144_ec=0
+ca144_out="$(bash "$LINT_BIN" --path "$CA144_FIXTURE" 2>&1)" || ca144_ec=$?
+
+[[ "$ca144_ec" -eq 1 ]] && pass "CA-144 -- fixture reports exactly one violation, not zero and not more" \
+  || fail "CA-144 -- expected exit 1 (exactly one violation), got exit ${ca144_ec}: ${ca144_out}"
+check_absent "CA-144 -- the fenced Co-Authored-By line (inside the ignored fence) is suppressed" \
+  "Should Be Suppressed By The Fence" "$ca144_out"
+check "CA-144 -- the Co-Authored-By line AFTER the fence's real close is still reported (not" \
+  "Should Be Reported" "$ca144_out"
+check "CA-144 -- the reported violation is attributed to the attribution class" \
+  "attribution:" "$ca144_out"
+ca144_violation_count="$(printf '%s\n' "$ca144_out" | grep -cE ': attribution: ' || true)"
+[[ "${ca144_violation_count:-0}" -eq 1 ]] \
+  && pass "CA-144 -- exactly one attribution violation reported (the post-fence one, not the fenced one)" \
+  || fail "CA-144 -- expected exactly 1 attribution violation, found ${ca144_violation_count:-0}"
+# CA-144 end
 
 # ---- EDMV3-T33: /edm:verify-runtime closes every PARTIAL; D15 spec-defect policy -------------
 echo
@@ -2827,8 +2895,10 @@ echo "  regardless of ownership."
 # contract order, heading 4 by regex, README.md and SOURCES.md exempt by name, no orphan `###`
 # under the 4th section. .gitlab-ci.yml's lint:pattern-library-contract job runs an
 # independent, minimal re-implementation of the same contract in the lint stage (mirrors, not
-# re-derives -- same convention as edm-check-grants mirroring edm-lint-artifacts, "T03 AC8"
-# above); this suite's version below is the one with full negative-case coverage.
+# re-derives -- same convention as edm-lint-artifacts, edm-check-grants and edm-check-vocabulary
+# each sourcing the shared bin/_edm-lint-lib.sh as peer consumers rather than re-deriving its
+# helpers, "CA-010" above); this suite's version below is the one with full negative-case
+# coverage.
 
 # _t56_four_heading_contract_check <docs-dir> -- validates the Living-Library four-`##`-heading
 # contract (README.md Sec."Living-Library Contract") against every *.md file directly in

@@ -250,6 +250,16 @@ scan_md_files() {
       UNREADABLE_FLAGS[$i]=1
       continue
     fi
+    # CA-156: this is a deliberate exception to routing through the shared
+    # ignored_line_set/mermaid_line_set/marker_line_set functions in _edm-lint-lib.sh. Those
+    # three each call build_line_classes on their own, which would cost three additional
+    # per-file awk invocations here on top of the one below -- against the documented
+    # commit-path (3,000 ms) and CI (60,000 ms) latency budgets (see this file's own
+    # "edm-lint-artifacts latency budgets" note in plugins/edm/CLAUDE.md), quadrupling the
+    # per-file awk cost for a scan that already reads every file exactly once by design
+    # (EDMV3-111). All four projections -- including FENCE_DIAGS, which is not duplicated
+    # anywhere else and so is out of CA-156's scope regardless -- are derived from this one
+    # $_table instead.
     local _table
     _table="$(build_line_classes "${FILES[$i]}")"
     IGNORE_SETS[$i]="$(printf '%s\n' "$_table" | awk -F'\t' '$2=="ignored"{print $1}')"

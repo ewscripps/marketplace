@@ -122,12 +122,9 @@ command -v jq >/dev/null 2>&1 || die "jq not found on PATH (required to parse ho
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/edm-check-grants.XXXXXX")" || die "cannot create scratch directory"
 trap 'rm -rf "$WORKDIR"' EXIT
 
-VIOLATIONS=0
+violations=0
 
-ignored_line_set() {
-  local file="$1"
-  build_line_classes "$file" | awk -F'	' '$2=="ignored"{print $1}'
-}
+# ignored_line_set is provided by _edm-lint-lib.sh (CA-156) -- do not redefine it locally here.
 
 # ---- Detection patterns (Technical Notes: conservative, explicit, verb list biased wide) -------
 _WRITE_VERB_RE='(^|[^A-Za-z])([Ww]rite|[Ww]rites|[Ww]riting|[Ee]mit|[Ee]mits|[Pp]roduce|[Pp]roduces)([^A-Za-z]|$)'
@@ -522,7 +519,7 @@ while IFS=$'\t' read -r _agent_name _agent_file _agent_tools _agent_disallowed; 
 done < "$AGENT_TSV"
 
 # ---- Exit contract (EDMV3-100): 0 clean, 1 unsatisfied grant(s) found, 2 usage/env error -------
-if [[ "$VIOLATIONS" -eq 0 ]]; then
+if [[ "$violations" -eq 0 ]]; then
   exit 0
 else
   exit 1
