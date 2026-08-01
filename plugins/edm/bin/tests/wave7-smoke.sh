@@ -485,6 +485,110 @@ t23_score_synthetic_run() {
 }
 with_scratch_repo t23_score_synthetic_run
 
+# =================================================================================
+# CA-039 remediation (code-audit round 2): expected-value assertions for dimensions 2-4
+# =================================================================================
+# CA-039 (P1): every prior assertion on dimensions 2-4 was `!= null` or the AC3
+# self-consistency identity (kept above, still useful for what it verifies), neither of
+# which can catch a wrong dimension score, a swapped dimension, or a scorer that returns 0
+# for everything. The three cases below hand-compute an expected score against
+# score-artifacts.sh's own documented formula (score_from_ratio: round(100*num/den)) and
+# assert the literal value, so a real regression in any of these three dimensions now fails
+# the suite instead of passing silently.
+echo
+echo "=== CA-039 remediation: literal expected-value assertions (dimensions 2, 3, 4) ==="
+
+ca039_dim2_vague_case() {
+  mkdir -p run-dir
+  {
+    echo '#### TSVE-01: sample requirement'
+    echo '- **Acceptance Criteria**:'
+    echo '    - [ ] A concrete, testable behavior with a specific numeric threshold.'
+    echo '    - [ ] The system should work as expected.'
+  } > run-dir/srd.md
+  echo 'Coverage discussion: TSVE-01' > run-dir/audit-srd.md
+
+  bash "$SCORE_ARTIFACTS" run-dir > out-dim2.json 2>/dev/null
+  local d2
+  d2="$(jq -r '.dimensions[1].score' out-dim2.json 2>/dev/null)"
+  # 2 AC bullets, 1 matches vague-ac-patterns.txt's "should work" -- score_from_ratio(2-1, 2) = 50.
+  [[ "$d2" == "50" ]] \
+    && pass "CA-039 -- dimension 2 (ac-testability) scores the hand-computed 50 for 1 vague of 2 ACs" \
+    || fail "CA-039 -- dimension 2 scored ${d2}, expected the hand-computed value 50"
+}
+with_scratch_repo ca039_dim2_vague_case
+
+ca039_dim3_valid_corpus_case() {
+  mkdir -p run-dir
+  local vdir="${MERMAID_FIXTURES_DIR:-${PLUGIN_DIR}/bin/tests/fixtures/mermaid}/valid"
+  local f
+  for f in "$vdir"/*.md; do
+    # v08 and v09 are valid only under edm-lint-artifacts' own edm-lint-ignore-start/-end and
+    # fence-open-marker conventions (EDMV3-T43 AC6) -- score-artifacts.sh's _scan_mermaid_blocks
+    # is a separate, independent scanner (CA-019) that does not implement either suppression
+    # convention, so v08's deliberately-violating fence genuinely scores BAD here and v09's fence
+    # is not even recognized as mermaid. That is real, already-tracked cross-implementation
+    # divergence (CA-019's scope), not a dimension-3 scoring defect -- excluded here so this case
+    # asserts dimension 3's actual job (diagram validity) without redoing CA-019's work.
+    case "$(basename "$f")" in
+      v08-block-form-ignore-escape.md|v09-fence-open-marker-escape.md) continue ;;
+    esac
+    cat "$f" >> run-dir/srd.md
+  done
+
+  bash "$SCORE_ARTIFACTS" run-dir > out-dim3-valid.json 2>/dev/null
+  local d3
+  d3="$(jq -r '.dimensions[2].score' out-dim3-valid.json 2>/dev/null)"
+  [[ "$d3" == "100" ]] \
+    && pass "CA-039 -- dimension 3 (mermaid-parse-success) scores 100 against the genuinely-clean valid fixtures" \
+    || fail "CA-039 -- dimension 3 scored ${d3} against the clean valid corpus, expected 100"
+}
+with_scratch_repo ca039_dim3_valid_corpus_case
+
+ca039_dim3_invalid_corpus_case() {
+  mkdir -p run-dir
+  cat "${MERMAID_FIXTURES_DIR:-${PLUGIN_DIR}/bin/tests/fixtures/mermaid}/invalid"/*.md > run-dir/srd.md
+
+  bash "$SCORE_ARTIFACTS" run-dir > out-dim3-invalid.json 2>/dev/null
+  local d3
+  d3="$(jq -r '.dimensions[2].score' out-dim3-invalid.json 2>/dev/null)"
+  [[ -n "$d3" && "$d3" != "null" && "$d3" -lt 100 ]] \
+    && pass "CA-039 -- dimension 3 scores below 100 against the committed all-invalid fixture corpus (got ${d3})" \
+    || fail "CA-039 -- dimension 3 scored ${d3} against the all-invalid corpus, expected < 100"
+}
+with_scratch_repo ca039_dim3_invalid_corpus_case
+
+ca039_dim4_fabricated_id_case() {
+  mkdir -p run-dir
+  {
+    echo '#### TSVE-01: first requirement'
+    echo '- **Acceptance Criteria**:'
+    echo '    - [ ] A concrete, testable behavior with a specific numeric threshold.'
+    echo
+    echo '#### TSVE-02: second requirement'
+    echo '- **Acceptance Criteria**:'
+    echo '    - [ ] Another concrete, testable behavior with a specific numeric threshold.'
+  } > run-dir/srd.md
+  {
+    echo 'Coverage discussion: TSVE-01 and TSVE-02 are both covered.'
+    echo 'This audit also references TSVE-99, a fabricated ID absent from srd.md, to exercise'
+    echo 'the reverse (backward) half of the bidirectionality check.'
+  } > run-dir/audit-srd.md
+
+  bash "$SCORE_ARTIFACTS" run-dir > out-dim4.json 2>/dev/null
+  local d4
+  d4="$(jq -r '.dimensions[3].score' out-dim4.json 2>/dev/null)"
+  # srd_ids={TSVE-01,TSVE-02} (2), target_ids={TSVE-01,TSVE-02,TSVE-99} (3).
+  # forward_hits=2 (both srd IDs found in target), backward_hits=2 (TSVE-99 is NOT found in
+  # srd_ids, so only 2 of the 3 target IDs match back). denom=2+3=5, numerator=2+2=4.
+  # score_from_ratio(4,5) = round(100*4/5) = 80.
+  [[ "$d4" == "80" ]] \
+    && pass "CA-039 -- dimension 4 (coverage-map-bidirectionality) scores the hand-computed 80 with one fabricated reverse ID" \
+    || fail "CA-039 -- dimension 4 scored ${d4}, expected the hand-computed value 80"
+}
+with_scratch_repo ca039_dim4_fabricated_id_case
+# CA-039 remediation end
+
 echo
 echo "T23 AC4 -- --compare refuses on scorer_version and dimensions_scored mismatch"
 t23_compare_refusal() {
@@ -1565,10 +1669,17 @@ done
 
 echo
 echo "T42 AC4 -- identical quoting style across every by-name reference"
-t42_ac4_forms="$(grep -rho 'CLAUDE\.md Sec\.\\"*"*Mermaid diagram conventions\\"*"*' "${PLUGIN_DIR}/" 2>/dev/null | sort -u | wc -l | tr -d ' ')"
-[[ "$t42_ac4_forms" == "1" ]] \
-  && pass "T42 AC4 -- exactly one quoting form of the by-name reference is in use" \
-  || fail "T42 AC4 -- found ${t42_ac4_forms} distinct quoting forms, expected 1"
+# CA-035: the prior pattern was single-quoted with a literal '\\"*"*', which (BRE, no -E) requires
+# an actual backslash before Sec. and before "conventions" -- only the one deliberately-escaped
+# line at skills/srd/SKILL.md matched, so sort -u | wc -l was always 1 and the assertion was blind
+# to the other 20 references. The widened pattern below matches the reference family itself
+# (backslash before the quote optional), so a real divergence in quoting style is now visible; the
+# raw-count floor distinguishes "matched nothing" and "matched only one file" from "one true form".
+t42_ac4_forms="$(grep -rhoE 'CLAUDE\.md Sec\.\\?"?Mermaid diagram conventions\\?"?' "${PLUGIN_DIR}/" 2>/dev/null | sort -u | wc -l | tr -d ' ')"
+t42_ac4_raw="$(grep -rhcE 'CLAUDE\.md Sec\.\\?"?Mermaid diagram conventions' "${PLUGIN_DIR}/" 2>/dev/null | paste -sd+ - | bc)"
+[[ "$t42_ac4_forms" == "1" && "$t42_ac4_raw" -ge 11 ]] \
+  && pass "T42 AC4 -- exactly one quoting form of the by-name reference is in use (${t42_ac4_raw} references)" \
+  || fail "T42 AC4 -- found ${t42_ac4_forms} distinct quoting forms across ${t42_ac4_raw} references, expected 1 form across >= 11"
 
 echo
 echo "T42 AC5 -- no touch point restates the rule content (the nine prompt-surface files)"
@@ -2600,14 +2711,20 @@ bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t38_lint_ex
 # EDMV3-T54: update-patterns respects the Living-Library Contract, entries pending-review
 # =================================================================================
 # Ownership split (recorded here, not worked around silently): cmd_update_patterns
-# (plugins/edm/bin/edm-state:1576-1692 per the ticket) is owned by a different agent in this
-# wave and is out of this batch's file remit to edit. AC1-AC12 below are the functional
-# insertion-logic acceptance criteria and are BLOCKED-ON-OWNER (bin/edm-state) as of this
-# commit -- asserting them here against unmodified code would be a false FAIL, and faking them
-# would be a false PASS, so they are named below and left for the owning agent's commit instead.
-# Only the docs/contract half this batch owns is asserted: AC13 (README.md's Append Schema
-# documents the pending-review marker, its provenance fields, and the curation lifecycle) plus
-# the "Insertion target" mapping/never-EOF contract prose that AC1/AC2/AC3 are written against.
+# (plugins/edm/bin/edm-state: cmd_update_patterns / _cmd_update_patterns_body /
+# _splice_pattern_file / pattern_insert_line_for) was owned by a different agent in an earlier
+# wave, so only the docs/contract half was assertable from this file at that time: AC13
+# (README.md's Append Schema documents the pending-review marker, its provenance fields, and the
+# curation lifecycle) plus the "Insertion target" mapping/never-EOF contract prose that
+# AC1/AC2/AC3 are written against.
+#
+# CA-002 remediation (code-audit round 2): AC1-AC5, AC8, AC9 and AC10 now have real runtime
+# coverage that exercises the insertion path itself -- the only pre-existing case (T42 AC9 below)
+# seeds a pure duplicate, so new_findings stays 0 and the insertion path never ran. That coverage,
+# plus a byte-content assertion so a concatenation-merge regression like CA-133 cannot ship
+# undetected again, lives in the "CA-002 remediation" section further below, after
+# `_t56_four_heading_contract_check` is defined (EDMV3-T56) -- the byte-content assertion reuses
+# that helper rather than re-deriving the four-heading contract a second time.
 echo
 echo "=== EDMV3-T54: update-patterns Living-Library Contract + pending-review (docs/contract half) ==="
 README_T54="${PLUGIN_DIR}/docs/audit-patterns/README.md"
@@ -2628,16 +2745,6 @@ check "T54 -- default insertion target documented" \
 check "T54 -- missing-heading skip (never EOF fallback) documented" \
   "it never falls back to appending at end-of-file" "$README_T54_CONTENT"
 
-echo
-echo "T54 -- BLOCKED-ON-OWNER (bin/edm-state, cmd_update_patterns): AC1 (heading-targeted"
-echo "  insertion), AC2 (missing-heading skip, not EOF fallback), AC3 (no fifth section/orphan"
-echo "  content), AC4 (idempotent structure under repetition), AC5 (de-duplication preserved),"
-echo "  AC6 (skip list + read-only skip preserved), AC7 (atomic insertion via temp file + rename),"
-echo "  AC8 (state recording preserved), AC9 (pending-review marker on every auto-append), AC10"
-echo "  (stub delimited, not disguised), AC11 (single source of truth for pending count), AC12"
-echo "  (curation is one-way) all require the insertion-logic rewrite at"
-echo "  plugins/edm/bin/edm-state:1576-1692, out of this batch's file remit. Not asserted here;"
-echo "  report these as blocked-on-owner rather than a false PASS or FAIL."
 # EDMV3-T54 end
 
 # =================================================================================
@@ -2897,17 +3004,307 @@ check "T56 AC6 -- .gitlab-ci.yml runs the pattern-library contract check in the 
   "lint:pattern-library-contract" "$(cat "$GITLAB_CI_YML")"
 check "T56 AC6 -- wave7-smoke.sh runs the contract check as part of the test stage" \
   "_t56_four_heading_contract_check" "$(cat "${SCRIPT_DIR}/wave7-smoke.sh")"
-echo "  NOTE (coordination point, not this batch's file remit): EDMV3-T54's own update-patterns"
-echo "  test cases (bin/edm-state, owned by a different agent this wave) must call"
-echo "  _t56_four_heading_contract_check \"\$DOCS_DIR_T56\" again immediately after each"
-echo "  update-patterns invocation once those cases land in this file, per AC6."
+echo "  NOTE: EDMV3-T54's own update-patterns test cases, in the CA-002 remediation section"
+echo "  immediately below, call _t56_four_heading_contract_check again after each"
+echo "  update-patterns invocation, per this AC6 coordination point."
 
 echo
-echo "T56 AC8 -- BLOCKED-ON-OWNER (bin/edm-state): the ten-update-patterns-runs case requires"
-echo "  T54's insertion-logic rewrite, out of this batch's file remit. The contract check itself"
-echo "  (above) is already the mechanism that will catch a regression once that code lands and"
-echo "  this case is added."
+echo "T56 AC8 -- the ten-update-patterns-runs case: repeated insertion never regresses the"
+echo "  four-heading contract, checked after every single run rather than only at the end"
+t56_ac8_case() {
+  local scratch
+  scratch="$(mktemp -d "${TMP}/edm-t56-ac8.XXXXXX")" || { fail "T56 AC8 -- mktemp failed"; return 1; }
+  mkdir -p "$scratch/plugins/edm"
+  cp -R "${PLUGIN_DIR}/." "$scratch/plugins/edm/"
+  local scratch_docs="$scratch/plugins/edm/docs/audit-patterns"
+  local scratch_code="$scratch_docs/code-audit.md"
+
+  mkdir -p "$scratch/work/SRD/ZCA8"
+  echo '{}' > "$scratch/work/SRD/ZCA8/.edm-state.json"
+  mkdir -p "$scratch/work/SRD/ZCA8/code-audit/pass-1_2026-07-31"
+
+  local i out ec all_ok=1
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    {
+      echo "# Mock Code Audit REMEDIATION"
+      echo
+      echo "### T56 AC8 run ${i} novel finding"
+      echo "Run ${i} of ten, proving repeated insertion never regresses the contract."
+    } > "$scratch/work/SRD/ZCA8/code-audit/pass-1_2026-07-31/REMEDIATION.md"
+
+    out="$(EDM_SRD_ROOT="$scratch/work/SRD" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZCA8 code 2>&1)"
+    [[ "$out" == *"1 new finding(s) appended"* ]] || { fail "T56 AC8 -- run ${i} did not append its novel finding (got: $out)"; all_ok=0; }
+
+    set +e
+    _t56_four_heading_contract_check "$scratch_docs" >/dev/null 2>&1
+    ec=$?
+    set -e
+    [[ $ec -eq 0 ]] || { fail "T56 AC8 -- four-heading contract violated after run ${i}"; all_ok=0; }
+  done
+
+  [[ "$all_ok" -eq 1 ]] \
+    && pass "T56 AC8 -- ten consecutive update-patterns runs each appended exactly one entry and never broke the four-heading contract" \
+    || fail "T56 AC8 -- at least one of the ten runs failed (see FAIL lines above)"
+
+  local final_heading_count
+  final_heading_count="$(grep -c '^### T56 AC8 run ' "$scratch_code" || true)"
+  [[ "${final_heading_count:-0}" -eq 10 ]] \
+    && pass "T56 AC8 -- all ten distinct entries are present in the final document" \
+    || fail "T56 AC8 -- expected 10 distinct run entries, found ${final_heading_count:-0}"
+
+  rm -rf "$scratch"
+}
+t56_ac8_case
 # EDMV3-T56 end
+
+# =================================================================================
+# CA-002 remediation (code-audit round 2): cmd_update_patterns insertion-path coverage
+# =================================================================================
+# CA-002 (P0): the only pre-existing insertion-path test (T42 AC9 above) seeds a pure
+# duplicate, so new_findings stays 0 and cmd_update_patterns / _cmd_update_patterns_body /
+# _splice_pattern_file / pattern_insert_line_for never actually run their insertion branch. The
+# two cases below exercise that branch for real, against a scratch copy of the whole plugin
+# invoked by explicit path (the t30_ac2_case pattern) rather than with_scratch_repo + a bare
+# `edm-state` call -- with_scratch_repo prepends the REAL plugins/edm/bin to PATH, and
+# cmd_update_patterns resolves docs/audit-patterns/ relative to $0's directory, so a bare call
+# under with_scratch_repo would write into this repository's own committed pattern-library docs.
+echo
+echo "=== CA-002 remediation: cmd_update_patterns insertion path (T54 AC1/AC2/AC3/AC4/AC5/AC8/AC9/AC10) ==="
+
+ca002_insertion_case() {
+  local scratch
+  scratch="$(mktemp -d "${TMP}/edm-ca002-ins.XXXXXX")" || { fail "CA-002 -- mktemp failed"; return 1; }
+  mkdir -p "$scratch/plugins/edm"
+  cp -R "${PLUGIN_DIR}/." "$scratch/plugins/edm/"
+  local scratch_docs="$scratch/plugins/edm/docs/audit-patterns"
+  local scratch_srd="$scratch_docs/srd-audit.md"
+  local scratch_srd_root="$scratch/work/SRD"
+
+  mkdir -p "${scratch_srd_root}/ZCA2"
+  {
+    echo "# Mock SRD Audit"
+    echo
+    echo "### CA002 novel finding one"
+    echo "First novel finding for the insertion-path regression test."
+    echo
+    echo "### CA002 novel finding two"
+    echo "Second novel finding for the insertion-path regression test."
+    echo
+    echo "### literal semicolon inside a mermaid label"
+    echo "Duplicate-titled finding (normalized case-insensitive match) to prove de-duplication"
+    echo "still skips it on the insertion path, not just on the pure-duplicate path T42 AC9 covers."
+  } > "${scratch_srd_root}/ZCA2/audit-srd.md"
+  echo '{}' > "${scratch_srd_root}/ZCA2/.edm-state.json"
+
+  local before_heading_count after_heading_count out1 out2
+  before_heading_count="$(grep -c '^### ' "$scratch_srd")"
+
+  out1="$(EDM_SRD_ROOT="$scratch_srd_root" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZCA2 srd 2>&1)"
+  [[ "$out1" == *"2 new finding(s) appended"* ]] \
+    && pass "CA-002 AC1 -- two novel findings are appended through the real insertion path" \
+    || fail "CA-002 AC1 -- expected '2 new finding(s) appended', got: $out1"
+
+  after_heading_count="$(grep -c '^### ' "$scratch_srd")"
+  [[ "$((after_heading_count - before_heading_count))" -eq 2 ]] \
+    && pass "CA-002 AC1 -- exactly two '### ' headings were added (${before_heading_count} -> ${after_heading_count})" \
+    || fail "CA-002 AC1 -- expected +2 '### ' headings, got ${before_heading_count} -> ${after_heading_count}"
+
+  check "CA-002 AC1 -- first novel title landed as a '### ' heading" \
+    "### CA002 novel finding one" "$(cat "$scratch_srd")"
+  check "CA-002 AC1 -- second novel title landed as a '### ' heading" \
+    "### CA002 novel finding two" "$(cat "$scratch_srd")"
+
+  local anti_patterns_section
+  anti_patterns_section="$(awk '/^## Anti-Patterns$/{f=1;next} /^## /{f=0} f' "$scratch_srd")"
+  check "CA-002 AC1 -- first novel entry lands inside '## Anti-Patterns', not some other section" \
+    "### CA002 novel finding one" "$anti_patterns_section"
+  check "CA-002 AC1 -- second novel entry lands inside '## Anti-Patterns', not some other section" \
+    "### CA002 novel finding two" "$anti_patterns_section"
+
+  local dup_original_count
+  dup_original_count="$(grep -c '^### Literal semicolon inside a Mermaid label$' "$scratch_srd" || true)"
+  [[ "${dup_original_count:-0}" -eq 1 ]] \
+    && pass "CA-002 AC5 -- the pre-existing entry the mock report duplicates still appears exactly once" \
+    || fail "CA-002 AC5 -- pre-existing duplicate-titled entry appears ${dup_original_count:-0} time(s), expected 1"
+  check_absent "CA-002 AC5 -- the duplicate was skipped, not re-appended under its report-side casing" \
+    "### literal semicolon inside a mermaid label" "$(cat "$scratch_srd")"
+
+  local pending_count
+  pending_count="$(grep -c 'status: pending-review' "$scratch_srd" || true)"
+  [[ "${pending_count:-0}" -eq 2 ]] \
+    && pass "CA-002 AC9 -- both auto-appended entries carry the pending-review marker" \
+    || fail "CA-002 AC9 -- found ${pending_count:-0} pending-review marker(s), expected 2"
+
+  check "CA-002 AC10 -- appended stub text is delimited, not disguised as curated prose" \
+    "delimited stub text pending human curation; not yet curated prose" "$(cat "$scratch_srd")"
+
+  # Byte-content assertion (CA-002's central point): a presence-only check is exactly what let
+  # CA-133's concatenation-merge regression ship undetected. Reuse the authoritative four-heading
+  # contract check (_t56_four_heading_contract_check, defined above under EDMV3-T56) against this
+  # scratch docs dir -- it fails loudly if the appended block ran the trailing '## Pre-Flight
+  # Checklist' boundary heading onto the same physical line as an entry's last line (heading
+  # count drops below 4) or left an orphan '### ' heading stranded past the fourth section.
+  local t_ca002_contract_out t_ca002_contract_ec
+  set +e
+  t_ca002_contract_out="$(_t56_four_heading_contract_check "$scratch_docs" 2>&1)"
+  t_ca002_contract_ec=$?
+  set -e
+  [[ $t_ca002_contract_ec -eq 0 ]] \
+    && pass "CA-002 AC3 -- the four-heading contract still holds after insertion (no heading/content concatenation-merge, no orphan section)" \
+    || fail "CA-002 AC3 -- four-heading contract violated after insertion: $t_ca002_contract_out"
+  check_absent "CA-002 -- appended prose never runs directly into the next '##' boundary heading (no dropped newline)" \
+    "curated prose.## " "$(cat "$scratch_srd")"
+
+  check "CA-002 AC8 -- patterns_updates records this audit type in state on the insertion path" \
+    '"srd"' "$(cat "${scratch_srd_root}/ZCA2/.edm-state.json")"
+  local ca002_new_findings_recorded
+  ca002_new_findings_recorded="$(jq -r '.patterns_updates.srd.new_findings' "${scratch_srd_root}/ZCA2/.edm-state.json" 2>/dev/null)"
+  [[ "$ca002_new_findings_recorded" == "2" ]] \
+    && pass "CA-002 AC8 -- state records new_findings=2 for this run" \
+    || fail "CA-002 AC8 -- state's patterns_updates.srd.new_findings is '${ca002_new_findings_recorded}', expected '2'"
+
+  # AC4: idempotent under repetition -- an immediate second run against the SAME audit report
+  # (all three titles are now already present as '### ' headings: two from this run, one
+  # pre-existing) appends nothing further.
+  out2="$(EDM_SRD_ROOT="$scratch_srd_root" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZCA2 srd 2>&1)"
+  [[ "$out2" == *"no novel findings to append"* ]] \
+    && pass "CA-002 AC4 -- a second identical run appends nothing further (idempotent)" \
+    || fail "CA-002 AC4 -- second run did not report 'no novel findings to append' (got: $out2)"
+
+  local after_second_heading_count
+  after_second_heading_count="$(grep -c '^### ' "$scratch_srd")"
+  [[ "$after_second_heading_count" -eq "$after_heading_count" ]] \
+    && pass "CA-002 AC4 -- '### ' heading count is unchanged by the second run (${after_second_heading_count})" \
+    || fail "CA-002 AC4 -- '### ' heading count changed on the second run (${after_heading_count} -> ${after_second_heading_count})"
+
+  set +e
+  t_ca002_contract_out="$(_t56_four_heading_contract_check "$scratch_docs" 2>&1)"
+  t_ca002_contract_ec=$?
+  set -e
+  [[ $t_ca002_contract_ec -eq 0 ]] \
+    && pass "CA-002 AC3/T56 AC6 -- four-heading contract still holds after the repeat run" \
+    || fail "CA-002 AC3/T56 AC6 -- four-heading contract violated after the repeat run: $t_ca002_contract_out"
+
+  rm -rf "$scratch"
+}
+ca002_insertion_case
+
+echo
+echo "CA-002 AC2 -- a missing target heading is a skip (nothing appended, no end-of-file fallback), never an error"
+ca002_missing_heading_case() {
+  local scratch
+  scratch="$(mktemp -d "${TMP}/edm-ca002-missing-heading.XXXXXX")" || { fail "CA-002 AC2 -- mktemp failed"; return 1; }
+  mkdir -p "$scratch/plugins/edm"
+  cp -R "${PLUGIN_DIR}/." "$scratch/plugins/edm/"
+  local scratch_srd="$scratch/plugins/edm/docs/audit-patterns/srd-audit.md"
+  local scratch_srd_root="$scratch/work/SRD"
+
+  # Remove the '## Anti-Patterns' target heading entirely -- the default insertion target can no
+  # longer be found.
+  sed -i.bak '/^## Anti-Patterns$/d' "$scratch_srd"
+  rm -f "${scratch_srd}.bak"
+
+  mkdir -p "${scratch_srd_root}/ZCA4"
+  {
+    echo "# Mock SRD Audit"
+    echo
+    echo "### CA002 AC2 novel finding"
+    echo "Would be appended if a target heading existed."
+  } > "${scratch_srd_root}/ZCA4/audit-srd.md"
+  echo '{}' > "${scratch_srd_root}/ZCA4/.edm-state.json"
+
+  local before_hash after_hash out status
+  before_hash="$(_harness_hash_file "$scratch_srd")"
+
+  status=0
+  out="$(EDM_SRD_ROOT="$scratch_srd_root" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZCA4 srd 2>&1)" || status=$?
+  after_hash="$(_harness_hash_file "$scratch_srd")"
+
+  [[ "$status" -eq 0 ]] \
+    && pass "CA-002 AC2 -- a missing target heading exits 0 (a skip, never an error)" \
+    || fail "CA-002 AC2 -- expected exit 0 on a missing target heading, got $status"
+
+  check "CA-002 AC2 -- skip message names the file and states no end-of-file fallback" \
+    "skipping (nothing appended, no end-of-file fallback)" "$out"
+
+  [[ "$before_hash" == "$after_hash" ]] \
+    && pass "CA-002 AC2 -- the document is byte-identical before and after the skip" \
+    || fail "CA-002 AC2 -- document hash changed on a skip (before=$before_hash after=$after_hash)"
+
+  rm -rf "$scratch"
+}
+ca002_missing_heading_case
+# CA-002 remediation end
+
+# =================================================================================
+# CA-007 remediation (code-audit round 2): porcelain rename/copy containment parsing
+# =================================================================================
+# CA-007 (P1): run-eval.sh's containment check read `${line:3}` as the path unconditionally,
+# but `git status --porcelain` emits a rename/copy as `R  <old> -> <new>` (or `C  ...`), so
+# `${line:3}` yielded the OLD path concatenated with " -> " and the NEW path -- a rename whose
+# destination escapes SRD/ still matched the `SRD/*` glob and was scored as contained. The fix
+# reproduces run-eval.sh's exact fixed parsing loop against real `git status --porcelain` output
+# from a scratch git repo (not by invoking run-eval.sh itself, which requires a live
+# ANTHROPIC_API_KEY for its `claude -p` phases -- out of scope for a smoke suite).
+echo
+echo "=== CA-007 remediation: porcelain rename/copy containment parsing (EDMV3-93 AC9) ==="
+
+ca007_containment_case() {
+  local scratch
+  scratch="$(mktemp -d "${TMP}/edm-ca007-containment.XXXXXX")" || { fail "CA-007 -- mktemp failed"; return 1; }
+  ( cd "$scratch" && git init -q && git config user.email t@t && git config user.name t )
+  mkdir -p "$scratch/SRD"
+  echo "one" > "$scratch/SRD/x.md"
+  ( cd "$scratch" && git add SRD/x.md && git commit -qm init )
+
+  # Case 1: a rename whose destination stays under SRD/ -- contained, no violation.
+  ( cd "$scratch" && git mv SRD/x.md SRD/y.md )
+  local porcelain1 violations1
+  porcelain1="$(cd "$scratch" && git status --porcelain)"
+  violations1="$(_ca007_containment_violations "$porcelain1")"
+  [[ -z "$violations1" ]] \
+    && pass "CA-007 -- a rename staying under SRD/ is still scored as contained (no false positive)" \
+    || fail "CA-007 -- a contained rename was wrongly flagged: $violations1"
+
+  # Case 2: a rename whose destination escapes SRD/ but stays inside the scratch tree/repo
+  # (the actual shape run-eval.sh's containment check guards against -- a phase writing
+  # outside SRD/ within the same scratch repo, not literally outside the filesystem repo,
+  # which git refuses to track at all) -- must be a violation (the CA-007 bug).
+  ( cd "$scratch" && git mv SRD/y.md escape.md )
+  local porcelain2 violations2
+  porcelain2="$(cd "$scratch" && git status --porcelain)"
+  violations2="$(_ca007_containment_violations "$porcelain2")"
+  [[ -n "$violations2" ]] \
+    && pass "CA-007 -- a rename whose destination escapes SRD/ is caught as a containment violation" \
+    || fail "CA-007 -- an escaping rename went undetected (the pre-fix bug this finding names)"
+
+  rm -rf "$scratch"
+}
+
+# Reproduces run-eval.sh:443-460's fixed containment loop verbatim, so a future edit to one and
+# not the other is caught the next time this test runs against a real regression scenario.
+_ca007_containment_violations() {
+  local containment_output="$1" line xy path violations=""
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    xy="${line%%"${line#??}"}"
+    path="${line:3}"
+    case "$xy" in
+      R*|C*) path="${path##* -> }" ;;
+    esac
+    case "$path" in
+      SRD/*) ;;
+      *) violations="${violations}${line}
+" ;;
+    esac
+  done <<CONTAINMENT_EOF
+${containment_output}
+CONTAINMENT_EOF
+  echo "$violations"
+}
+ca007_containment_case
+# CA-007 remediation end
+
 # =================================================================================
 # EDMV3-T52 AC7: CLAUDE.md pricing table matches script constants (cannot drift)
 # =================================================================================
