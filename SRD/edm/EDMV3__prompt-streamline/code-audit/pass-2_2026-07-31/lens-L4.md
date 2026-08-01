@@ -269,9 +269,9 @@ exists, add the one-line comment naming the adjacent control, as `wave7:951-955`
 fixture `plugins/edm/bin/tests/fixtures/mermaid/valid/v12-indented-fence.md`; assertions at
 `wave7-smoke.sh:1944-1945`, `:1960-1961`.
 
-The valid direction landed: `v12-indented-fence.md` places a three-space-indented ```` ```text ````
-fence containing `Co-Authored-By: Example Person <example@example.com>` under a numbered step and
-asserts the corpus stays clean.
+The valid direction landed: `v12-indented-fence.md` places a three-space-indented plain-text fence
+(an indented triple-backtick block, language tag `text`) under a numbered step, with an
+AI-attribution-trailer-shaped example line inside it, and asserts the corpus stays clean.
 
 The second prescribed fixture did not land. `bin/tests/fixtures/mermaid/invalid/` still contains
 only `i01`-`i05`, every one with a column-0 fence. `plugins/edm/CHANGELOG.md:46` records the bug
@@ -283,8 +283,8 @@ The em-dash half of the prescribed valid fixture is also missing: `v12` carries 
 attribution trailer, so class 2 (`unicode`) suppression inside an indented fence is untested.
 
 **Fix**: add `bin/tests/fixtures/mermaid/invalid/i06-indented-mermaid-label.md` -- an indented
-```` ```mermaid ```` fence with a raw `;` inside a `[...]` label plus the `expected-line:` marker
-the corpus convention uses -- and add an em dash to `v12`.
+mermaid fence with a raw `;` inside a `[...]` label plus the `expected-line:` marker the corpus
+convention uses -- and add an em dash to `v12`.
 
 ---
 
