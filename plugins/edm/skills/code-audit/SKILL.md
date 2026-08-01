@@ -198,7 +198,9 @@ Scope:
 - Context: [deployment env, tool versions, constraints]
 - Related docs: ${INIT_DIR}/${user_config.srd_filename}, ${INIT_DIR}/${user_config.ticket_pack_dirname}/
 - Output: write your raw report to ${OUTPUT_DIR}/lens-L{N}.md and ${OUTPUT_DIR}/lens-L{N}.jsonl
-- JSONL schema: one finding per line matching findings-ledger.jsonl: {"schema":1,"id":"CA-NNN","sev":"P0|P1|P2|NOTED","status":"open|fixed|noted","lenses":["LN"],"confidence":"high|medium|low","component":"path","title":"one-line","raised_round":N,"resolved_round":null,"round":N,"round_type":"full|partial"}
+- JSONL schema: emit the schema documented in your own agent definition's `## JSONL Line Format`
+  section -- do not use the findings-ledger schema here (`id` is null at the lens stage; the
+  synthesizer assigns the stable `CA-NNN` ledger ID later; that is a different, larger schema)
 
 Your mandate is ONLY [lens name]. Apply the False Alarm Filter before reporting.
 Write findings + 'Noted / Not Actionable' section to your markdown file, and emit the same actionable/noted findings to your JSONL file using that schema."

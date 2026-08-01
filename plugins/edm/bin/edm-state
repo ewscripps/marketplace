@@ -61,8 +61,9 @@ HUMAN_HOURLY_RATE_USD="${EDM_HUMAN_HOURLY_RATE_USD:-${CLAUDE_PLUGIN_OPTION_HUMAN
 die() { echo "edm-state: $*" >&2; exit 1; }
 
 # to_int <value> [default] -- echo <value> when it is a bare non-negative integer, else <default>
-# (0 if omitted). Every value read out of .edm-state.json that reaches an arithmetic context MUST
-# pass through here first.
+# (0 if omitted). Every value from any external source -- state file, environment, or command
+# line -- that reaches an arithmetic context MUST pass through here first (CA-157: this is not
+# only a .edm-state.json concern).
 #
 # Why this exists: bash's arithmetic evaluation -- `[[ x -ge y ]]`, `(( ))`, `${a[expr]}` -- does
 # NOT treat its operands as data. It recursively expands them, and an array subscript inside an
@@ -653,7 +654,10 @@ required_gates_for_mode() {
 # "none" when this phase has no kernel-enforced prerequisite (phase 1, or any phase that does
 # not immediately follow a gated phase).
 phase_start_prerequisite_gate() {
-  local phase="$1" g gated_phase
+  # CA-157: defence in depth -- coerce before the arithmetic-context -eq below, even though
+  # both current callers now validate at their own entry point first.
+  local phase g gated_phase
+  phase="$(to_int "$1" 0)"
   for g in 1 2 3; do
     gated_phase="$(gated_phase_for_gate "$g")"
     [[ "$gated_phase" == "null" ]] && continue
@@ -1515,6 +1519,9 @@ cmd_phase_start() {
   [[ $# -eq 2 ]] || die "usage: edm-state phase-start <PREFIX> <phase-num>"
   require_jq
   local prefix="$1" phase="$2"
+  # CA-157: phase reaches an arithmetic context in phase_start_prerequisite_gate below --
+  # validate here at the entry point, same shape as cmd_skip_phase's phase_num check.
+  [[ "$phase" =~ ^[1-6]$ ]] || die "phase-start: phase-num must be 1-6; got: $phase"
 
   # Kernel gate refusal (EDMV3-T13 AC1): the deterministic enforcement point -- every phase
   # skill already calls phase-start, so this applies to every entry path (including the
@@ -1573,6 +1580,8 @@ cmd_phase_complete() {
   [[ $# -eq 2 ]] || die "usage: edm-state phase-complete <PREFIX> <phase-num>"
   require_jq
   local prefix="$1" phase="$2"
+  # CA-157: same arithmetic-context injection guard as cmd_phase_start.
+  [[ "$phase" =~ ^[1-6]$ ]] || die "phase-complete: phase-num must be 1-6; got: $phase"
   local key="${phase}_phase"
 
   # Read started_at for token computation (read-only, no lock needed)
@@ -3696,7 +3705,7 @@ _cmd_update_patterns_body() {
     if echo "$existing_normalized" | grep -qxF "$norm"; then
       continue
     fi
-    pending_entries="${pending_entries}$(_render_pattern_entry "$raw_title" "$prefix" "$audit_type" "$today")"
+    pending_entries="${pending_entries}$(_render_pattern_entry "$raw_title" "$prefix" "$audit_type" "$today")"$'\n'
     existing_normalized="${existing_normalized}
 ${norm}"
     new_findings=$((new_findings + 1))

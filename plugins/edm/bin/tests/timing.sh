@@ -28,12 +28,15 @@ EDM_STATE="${SCRIPT_DIR}/../edm-state"
 EDM_LINT="${SCRIPT_DIR}/../edm-lint-artifacts"
 
 # ---- Sub-second timer (bash 3.2 has no $EPOCHREALTIME). Prefer perl's Time::HiRes when present;
-# otherwise fall back to date+awk so Alpine-like images without perl still work. ------------------
+# otherwise fall back to whole-second resolution so Alpine-like images without perl still work --
+# CA-158: the fallback must never invent sub-second digits (a prior version added rand(), which
+# could return a negative duration and made every reported number noise on a perl-less image).
 _now() {
   if command -v perl >/dev/null 2>&1; then
     perl -MTime::HiRes=time -e 'printf("%.6f\n", time())'
   else
-    awk 'BEGIN{srand(); printf "%.6f\n", systime() + rand()}'
+    echo "timing.sh: [warn] perl not found -- falling back to whole-second resolution" >&2
+    awk 'BEGIN{srand(); printf "%.6f\n", systime()}'
   fi
 }
 
@@ -291,7 +294,8 @@ case "$MODE" in
       samples_mermaid+=("$(_ms_between "$t0" "$t1")")
     done
     p95_mermaid="$(_p95 "${samples_mermaid[@]}")"
-    ratio="$(perl -e 'printf("%.2f", $ARGV[1] / ($ARGV[0] > 0 ? $ARGV[0] : 1))' "$p95_base" "$p95_mermaid")"
+    # CA-084/CA-158: no perl dependency here -- awk is already required by --lint's own callers.
+    ratio="$(awk -v a="$p95_base" -v b="$p95_mermaid" 'BEGIN{printf "%.2f", b/(a>0?a:1)}')"
     echo "TIMING mermaid_ratio baseline_p95_ms=${p95_base} with_mermaid_p95_ms=${p95_mermaid} ratio=${ratio}x (budget: <= 1.40x)"
     rm -rf "$TMP_MR"
     ;;
