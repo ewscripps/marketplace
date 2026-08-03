@@ -21,17 +21,34 @@ Use the following expected outlines when reviewing. The phase label determines w
 
 ### Plan / Approval comments
 
-**`T4/T5 — Implementation Plan & Approval Request`** and **`B5/B6 — Fix Plan & Approval Request`** and **`E4/E5 — Breakdown Plan & Approval Request`**
+**`T4/T5 — Implementation Plan & Approval Request`** and **`B5/B6 — Fix Plan & Approval Request`**
 
 Required heading: `**<PHASE> — <Title>**` (exact label above as the verbatim first line, using `**bold**` not `##`)
 
 Required content (all must be present):
-- The reviewed plan / fix plan / breakdown plan
+- The reviewed plan / fix plan
 - Architecture diagram section (under `### Architecture`, or a note if skipped)
 - Testing/regression test expectations for the reviewer sub-agents
 - Documentation expectations
 - Risks, dependencies, or open items
 - `Approval requested:` line
+
+---
+
+**`E4/E5 — Breakdown Plan & Approval Request`**
+
+Required heading: `**E4/E5 — Breakdown Plan & Approval Request**` as verbatim first line, `**bold**`, not `##`
+
+Required content (all must be present; items marked *(existing children only)* are required only when the epic had existing child tasks):
+- *(existing children only)* Inventory table of existing children with status, disposition, and coverage classification
+- *(existing children only)* Backfill list detailing additive edits planned for Partial children
+- New task list (breakdown plan) with execution order, dependencies, and rationale — or the explicit statement "All AC is addressed by existing child tasks. No new tasks will be created."
+- Execution order across the full set (existing + new), including where `Done` children are skipped
+- How the combined set satisfies the epic's acceptance criteria
+- Architecture diagram section (under `### Architecture` — the Mermaid dependency graph, or a note if skipped)
+- `Approval requested:` line
+
+Do NOT require testing-expectations or documentation-expectations sections here — breakdown plans do not carry them; those belong to each child task's own T4/T5 comment.
 
 ### User Testing Handoff comments
 
@@ -43,6 +60,7 @@ Required content (all must be present, in this order):
 - Branch name
 - Summary of what was implemented
 - `**Acceptance Criteria & Testing Steps:**` section — one numbered entry per acceptance criterion, each containing the criterion restated clearly and step-by-step verification instructions
+- `**Not covered by automated checks:**` section — specific behaviors the automated build/tests could not exercise and the tester should watch for, or the literal line "None — automated coverage exercises all criteria"
 
 ---
 
@@ -54,6 +72,7 @@ Required content (all must be present, in this order):
 - Branch name
 - Summary of what was fixed
 - `**Fix Criteria & Testing Steps:**` section — one numbered entry per expected behavior item, each containing the criterion/expected behavior restated clearly and step-by-step verification instructions
+- `**Not covered by automated checks:**` section — specific behaviors the automated build/tests could not exercise and the tester should watch for, or the literal line "None — automated coverage exercises all criteria"
 
 ---
 
@@ -64,6 +83,7 @@ Required heading: `**E9 — User Testing Handoff**` as verbatim first line, `**b
 Required content (all must be present, in this order):
 - Summary of everything implemented across all child tasks (including pre-existing children already done at workflow start)
 - `**Acceptance Criteria & Testing Steps:**` section — one numbered entry per epic-level acceptance criterion, each containing the criterion restated clearly and step-by-step end-to-end verification instructions
+- `**Not covered by automated checks:**` section — specific cross-child integration behaviors the automated builds/tests could not exercise and the tester should watch for, or the literal line "None — automated coverage exercises all criteria"
 
 ---
 

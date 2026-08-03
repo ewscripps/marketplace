@@ -18,6 +18,13 @@
 
 **CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
+**SUB-AGENT NAME RESOLUTION:** This workflow refers to sub-agents by short name (`codebase-explorer`, `area-mapper`). The runtime registers them under different identifiers depending on how they are installed. Before the first sub-agent invocation, resolve each short name against the runtime's available-agents list and use the exact registered identifier:
+
+- If the short name appears verbatim in the list (agents deployed into the project's `.claude/agents/`), use it as-is.
+- If installed via the plugin, the registered identifier is `web-cms:<short-name>:<short-name>` — e.g. `codebase-explorer` → `web-cms:codebase-explorer:codebase-explorer`.
+- Never invent a partial form such as `web-cms:codebase-explorer` — it will not resolve. If an invocation fails with an "agent type not found" error, read the available-agents list in the error message, select the entry whose **final segment** equals the short name, and retry with that exact identifier.
+- Resolve the scheme once, then reuse it for every subsequent sub-agent invocation in the session.
+
 **TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
 
 - **File I/O (read, write, edit a known file):** Use native `Read`, `Write`, `Edit`.
@@ -41,7 +48,7 @@
 
 **Per-phase checkpoint — after EVERY phase (D0–D5), automatically, with no chat output and no `/compact` prompt.** Atomically overwrite `$MEM/checkpoint.md` (`Write` to `checkpoint.md.tmp`, then `mv` over `checkpoint.md`) with `checkpoint_type: phase`, the just-completed `phase`, the upcoming `next_phase`, the `references` list, `## Decisions`, and `## Open items`. (The first checkpoint is written after D1 creates `$MEM`.)
 
-**Compaction gates (D2, D4) — additionally prompt the user to `/compact`.** Do the per-phase write but with `checkpoint_type: gate`, then: (1) wait for any background `area-mapper` to finish; (2) emit the Phase Summary block (§4(b)) — phase + skill, topic slug, one-line decisions, verbatim approval condition, `next_phase`, the checkpoint file path, and the resume contract; (3) end the turn with the literal line **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` at a gate.
+**Compaction gate (D2) — additionally prompts the user to `/compact`.** Do the per-phase write but with `checkpoint_type: gate`, then: (1) wait for any background `area-mapper` to finish; (2) emit the Phase Summary block (§4(b)) — phase + skill, topic slug, one-line decisions, verbatim approval condition, `next_phase`, the checkpoint file path, and the resume contract; (3) end the turn with the literal line **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` at a gate.
 
 **Universal resume rule — on ANY resume, before doing anything else:** `Read $MEM/checkpoint.md` → `Read` every file in its `references` (`summary.md`, `explorations/*.md`, `work-item.md`) → **re-read the `next_phase` section of this `workflow.md`** (any phase asking clarifying/structured questions MUST use `AskUserQuestion`) → continue at `next_phase`. If `$MEM` is absent, restart the affected phase from prior chat. Approval gates stay chat-scoped — never assume a pending approval was granted.
 
@@ -287,8 +294,6 @@
 6. **Refresh durable memory.** Spawn the `area-mapper` sub-agent **in the background** (`run_in_background: true`) one more time with the same `memory_dir` (`$MEM`) so its Serena memory crystallization reflects the verified picture. Do not wait for it.
 
 > **APPROVAL GATE — FULL STOP.** Present the verification report (and the revised synthesis, if revision happened in step 5). Use `AskUserQuestion` (Header: `D4 Approval`, Question: `Does the verification report (and any revisions) look correct? Ready to save the discovery output?`, Options: `Approve and proceed (Recommended)` — the verification outcome and any revisions are correct, `Request changes` — something needs revision). Do not proceed to D5 until the user approves.
-
-> **COMPACTION GATE — D4:** Once D4 approval is confirmed, follow the Checkpoint & Compaction Contract above (gate path). Write `checkpoint.md` with `phase: D4`, `next_phase: D5`, `checkpoint_type: gate`, `references: [explorations/*.md, work-item.md]`; `## Decisions`: verification outcome (clean / revised / accepted-with-open-questions), approach confirmed or revised. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to D5.
 
 > **REQUIRED before proceeding:**
 > - Chosen approach is recorded

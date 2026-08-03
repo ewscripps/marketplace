@@ -19,6 +19,13 @@
 
 **FILE MEMORY SCOPE:** This workflow stores session state in a per-work-item file-memory directory. `$MEM/work-item.md` is the root (title, description, and the `## Affected Areas`, `## Design Spec`, `## Patterns & Code References`, `## Architecture` sections built across R2/R4); `$MEM/clarifications.md` holds R3 Q&A; `$MEM/criteria.md` holds R4A acceptance criteria; `$MEM/related-cards.md` holds relevant related Jira cards from R1; `$MEM/explorations/*.md` hold R2 codebase findings. Compute `MEM` once with the recipe in `file-memory-protocol.md` §1 (`<work-item-key>` = the Jira key, or `intake-<slug>`). All file content must be fully materialized into the Jira card description in R5 before the session ends. See `file-memory-protocol.md` for schemas, the checkpoint/compaction contract, and the full-context-load rule.
 
+**SUB-AGENT NAME RESOLUTION:** This workflow refers to sub-agents by short name (`codebase-explorer`, `area-mapper`). The runtime registers them under different identifiers depending on how they are installed. Before the first sub-agent invocation, resolve each short name against the runtime's available-agents list and use the exact registered identifier:
+
+- If the short name appears verbatim in the list (agents deployed into the project's `.claude/agents/`), use it as-is.
+- If installed via the plugin, the registered identifier is `web-cms:<short-name>:<short-name>` — e.g. `codebase-explorer` → `web-cms:codebase-explorer:codebase-explorer`.
+- Never invent a partial form such as `web-cms:codebase-explorer` — it will not resolve. If an invocation fails with an "agent type not found" error, read the available-agents list in the error message, select the entry whose **final segment** equals the short name, and retry with that exact identifier.
+- Resolve the scheme once, then reuse it for every subsequent sub-agent invocation in the session.
+
 **TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
 
 - **File I/O (read, write, edit a known file):** Use native `Read`, `Write`, `Edit`.
@@ -385,6 +392,8 @@ Evaluate the work item against these criteria:
 
 > **REQUIRED: Review the full R4 synthesis before presenting.** Verify every acceptance criterion is unambiguous, testable, and traceable. Remove or revise any that fail this check. Do not present an unreviewed synthesis.
 
+> **BLIND-SPOT CALLOUT (conditional):** After presenting the synthesis and before asking for approval, answer this question for the user: *"What is the biggest thing the user may be missing about this design work — what don't they realize?"* Render the answer as a short **What you might be missing** block containing at most two specific, evidence-backed items drawn from the R2 exploration findings (`risks`, `integration_points`, component-reuse conventions), related cards, or the R3 answers — cite the source for each. Typical candidates: an existing component that should be extended instead of built, a design-token or accessibility constraint that reshapes the visual spec, a state or breakpoint the mockups never showed. If nothing qualifies, write exactly one line — "Nothing notable — the synthesis surfaces the known risks." — and never invent a generic risk to fill the section.
+
 > **APPROVAL GATE — FULL STOP.** Present the full R4 synthesis (acceptance criteria, risk register, Epic vs. Task recommendation, and Patterns & Code References). Then use `AskUserQuestion` with header `R4 Approval`, options: `Approve and proceed (Recommended)` (description: "The synthesis is accurate — ready to create the Jira issue") / `Request changes` (description: "Something needs correction before continuing"). Do not create a Jira issue of the wrong type.
 
 > **REGENERATE DASHBOARD:** After approval, regenerate `$MEM/work-item.html` from the current memory files (per `file-memory-protocol.md` §8) so the user has an up-to-date rendered view.
@@ -407,12 +416,19 @@ Evaluate the work item against these criteria:
 
 |Field|Source|
 |---|---|
+|Project|User-confirmed at the Project selection gate below|
 |Issue Type|Epic or Task per R4C|
 |Summary|Title + core behavior or problem (max 10 words)|
 |Description|Assembled per Description Structure below|
 |Priority|Recommended based on risk and impact (see below)|
 |Labels|Work type in lowercase + codebase area|
 |Epic Link|Recommended epic (Task only — see below)|
+
+    **Project selection (new-card path only — skip when updating an existing card, whose project is fixed by its key):** Never guess the Jira project; an educated guess that is usually right still creates cards in the wrong space when it isn't. Before any other field confirmation:
+
+    1. Determine the recommended project key from the strongest evidence available: the project of material related cards in `$MEM/related-cards.md` (R1), the project of an epic confirmed in R1, or the project of any Jira issue the user referenced during intake. Call `jira_get_all_projects` to validate the candidate key and identify plausible alternates. If no evidence points to a project, work from that list alone.
+    2. Use `AskUserQuestion` (Header: `Jira Project`, Question: `Which Jira project should this card be created in?`, Options: `<KEY> — <project name> (Recommended)` first with a description naming the specific evidence, then up to two alternates with their evidence; the user can type any other key via the auto-injected Other input). When there is no evidence-backed recommendation, present the most plausible projects from the list without a `(Recommended)` tag and say so plainly — do not manufacture a recommendation.
+    3. Record the confirmed key in `$MEM/work-item.md` frontmatter as `jira_project: <KEY>`. On resume, if `jira_project` is already recorded, use it without re-asking. Pass it as the `project_key` on `jira_create_issue` — never a key the user did not confirm.
 
     **Priority recommendation:** Before creating the issue, determine the recommended priority based on the risk register from R4B and the overall impact of the work item. Consider: user-facing impact, number of affected areas, dependency urgency, and whether this unblocks other work. Use `AskUserQuestion` with header `Task Priority` to confirm. Put the recommended priority first with `(Recommended)` appended. Options: one of `Critical (Recommended)` / `High (Recommended)` / `Medium (Recommended)` / `Low (Recommended)` as the first option (only the recommended one gets the label), then the remaining three priorities as subsequent options.
 

@@ -60,7 +60,7 @@
             "name": "web-cms",
             "source": "./plugins/web-cms",
             "description": "Skills and agents for creating and implementing Jira cards for Web & CMS development workflows.",
-            "version": "1.0.19",
+            "version": "1.0.20",
             "skills": [
                 "./skills/implementation-discovery",
                 "./skills/requirements-intake",
@@ -75,7 +75,8 @@
                 "./skills/manual-qa-plan",
                 "./skills/test-doc-review",
                 "./skills/mr-creation",
-                "./skills/compact-context"
+                "./skills/compact-context",
+                "./skills/project-onboarding"
             ]
         }
     ]

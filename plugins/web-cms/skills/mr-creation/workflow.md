@@ -2,7 +2,7 @@
 
 **STRICT EXECUTION RULES — NO EXCEPTIONS:**
 
-1. Execute phases in strict sequential order (M0 through M7).
+1. Execute phases in strict sequential order (M0 through M8).
 2. Do not skip, reorder, or combine phases.
 3. Each phase must be fully completed before starting the next.
 4. If any phase fails, stop immediately and report the failure in the chat. Do not continue.
@@ -16,6 +16,14 @@
 **APPROVAL GATE BEHAVIOR:** Approval gates are chat-scoped. If explicit approval is not captured before the session ends or context is lost, stop at the gate. On resume, re-present the latest MR preview and ask for confirmation again. Never assume a pending approval was granted.
 
 **CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
+
+**SUB-AGENT NAME RESOLUTION:** M7 refers to the `code-review-responder` sub-agent by short name. The runtime registers it under different identifiers depending on how it is installed. Before invoking it, resolve the short name against the runtime's available-agents list and use the exact registered identifier:
+
+- If the short name appears verbatim in the list (agents deployed into the project's `.claude/agents/`), use it as-is.
+- If installed via the plugin, the registered identifier is `web-cms:code-review-responder:code-review-responder`.
+- Never invent a partial form such as `web-cms:code-review-responder` — it will not resolve. If an invocation fails with an "agent type not found" error, read the available-agents list in the error message, select the entry whose **final segment** equals the short name, and retry with that exact identifier.
+
+**SERENA PROJECT ACTIVATION:** Before invoking `code-review-responder` in M7, check Serena's project-activation message (emitted on connect via `--project-from-cwd`); if it reports that onboarding has not been performed, call `onboarding` to scope Serena's language server to the current project directory. The agent's symbol-aware editing tools depend on this. This is only needed for M7 — M0–M6 do not use Serena.
 
 **TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
 
@@ -34,7 +42,8 @@
 - M4 — Pre-Creation Confirmation
 - M5 — Description Generation & Review Gate
 - M6 — MR Creation
-- M7 — Cleanup
+- M7 — Code Review Bot Response
+- M8 — Cleanup
 
 ---
 
@@ -172,12 +181,6 @@ and Jira card or release context — describes WHAT changed and WHY]
 ## Testing Notes
 [Areas that may need focused review based on scope of changes —
 e.g. impacted services, risky refactors, migrations, or configuration changes]
-
-## Checklist
-- [ ] Code compiles and passes existing tests
-- [ ] No unintended files included (e.g. local configs, debug code)
-- [ ] Branch is up to date with destination branch
-- [ ] MR is correctly scoped (no unrelated changes)
 ```
 
 **REQUIRED: Review the description before presenting.** Verify:
@@ -226,7 +229,50 @@ Once the user confirms:
 
 ---
 
-### M7 — Cleanup
+### M7 — Code Review Bot Response
+
+**Objective:** After the MR is created, wait for the automated GitLab code review bot to post its findings, independently evaluate each finding, fix the legitimate ones, and post a single response comment summarizing the fixes and rebutting any false positives. The MR IID and project path from M6 are the inputs to this phase.
+
+**Agent Actions:**
+
+1. **Poll for the review comment (up to 10 minutes) — with real, verifiable waits.** The bot posts asynchronously, usually a few minutes after creation, so you must actually wait between checks.
+
+   > **NO FABRICATED WAITS.** You have no internal clock — you cannot make wall-clock time pass by thinking or narrating. The ONLY way to wait is to execute a blocking command and observe its return. Never state or record that any amount of time has elapsed unless it is backed by the return of a `sleep` command you actually ran in this session. Polling quickly and then claiming "waited 60 seconds" is a defect, not an acceptable shortcut.
+
+   Check the MR's notes with `mcp__plugin_web-cms_gitlab__gitlab_list_merge_request_notes` (project path derived from the git remote, e.g. `scripps/sdp/web/brightspot`; MR IID from M6). **Identify the review comment** by either: author username `engineroom-code-reviewer` (display name "GitLab Code Reviewer Bot"), OR a note body containing the `<!-- ai-review -->` marker or the `AI Code Review Summary` heading.
+
+   Run this loop:
+   - **Check #1 — immediately** after MR creation: call the notes tool once. If the comment is present, stop and go to step 2.
+   - **Checks #2 through #10 — one per minute:** before each of these checks you MUST first run this exact blocking wait as a **single Bash call** and let it return before doing anything else:
+     ```
+     date -u +'%H:%M:%SZ wait start'; sleep 60; date -u +'%H:%M:%SZ wait end'
+     ```
+     Only after that command prints its `wait end` line may you call the notes tool again. Any statement you make about elapsed time must come from the timestamps this command actually printed — never from an estimate.
+   - **Never call the notes tool twice without a completed `sleep 60` return between the two calls.** Never announce or record a check number whose wait you have not executed. Do not pre-plan or batch the waits — run the wait, observe its output, then poll, then decide whether to loop again.
+   - **If the wait command fails or is denied** (a permission/sandbox error rather than a normal return), do NOT proceed as if it succeeded and do NOT fabricate the wait — stop, report in the chat that the timed poll could not run, and ask the user how to proceed (wait and re-run M7, or check the MR manually).
+   - **If the comment appears** at any check, stop polling and continue to step 2.
+   - **If all 10 checks complete (~10 minutes of real waiting) with no comment**, report that the review bot did not comment within 10 minutes (it may still review later) and proceed to M8. Do not extend the window.
+
+2. **Delegate verification and fixing to the `code-review-responder` sub-agent (opus).** The independent verification of each finding, and the authoring of any fixes and rebuttals, is reasoning-heavy work — hand it to the dedicated agent rather than doing it in this loop. First ensure Serena is activated (see SERENA PROJECT ACTIVATION), then invoke `code-review-responder`, providing:
+   - The **review comment body**, verbatim (the full bot comment).
+   - The **source branch** and **base (destination) branch** from M0 — the agent establishes the change under review from `git diff <base>...<source>`.
+   - The related **Jira key** and MR title from M2 (context only).
+   - The project's **build / test / lint commands** if known, so the agent can verify its fixes.
+
+   The agent verifies each finding against the actual code, applies only the genuinely legitimate fixes (symbol-aware editing; it runs the tests but never commits, pushes, or touches GitLab/Jira), and returns a structured `CODE REVIEW RESPONSE REPORT` with per-finding verdicts, a `FILES CHANGED` list, a `VERIFICATION RUN` result, any `DEFERRED` items, a `SUGGESTED COMMIT MESSAGE`, and a ready-to-post `RESPONSE COMMENT` body.
+
+3. **Handle deferrals, then commit and push the agent's changes.**
+   - If the report lists **DEFERRED** items (legitimate but large / out-of-scope / risky fixes the agent declined to apply blind), surface each to the user with `AskUserQuestion` (options along the lines of: fix now / defer to a follow-up card / leave for manual handling) and follow their choice. If the user chooses "fix now," re-invoke `code-review-responder` with that instruction.
+   - If `FILES CHANGED` is non-empty: sanity-check the changes (`git status` / `git diff --stat`), then commit on the source branch and push so the MR updates, using the report's `SUGGESTED COMMIT MESSAGE` (`[PROJECTKEY-ISSUENUMBER] Address AI code review findings`, or a concise imperative message if there is no Jira key). Report the commit hash in the chat. Re-approval is not required, but tell the user exactly what changed.
+   - If `FILES CHANGED` is empty (all findings were false positives, optional, or self-retracted), there is nothing to commit — proceed to the response comment.
+
+4. **Post the response comment.** Take the `RESPONSE COMMENT` body from the agent's report, fill in the commit hash where the agent left a placeholder, and post it with `mcp__plugin_web-cms_gitlab__gitlab_create_merge_request_note` (same project path and MR IID). Confirm it is clean, renderable GFM markdown with real newlines — never escaped `\n` / `\\n` sequences (same rule as the M5 description).
+
+> **REQUIRED before proceeding:** Either the review comment was found, `code-review-responder` returned its report, any legitimate fixes were committed and pushed, and the response comment was posted — or the 10-minute window elapsed with no bot comment and that was reported in the chat.
+
+---
+
+### M8 — Cleanup
 
 - Remove the MR's file-memory directory: `rm -rf "$MEM"` (Bash). Do not retain Jira-context, commit, or diff-summary state on disk after the MR description has been created.
 
@@ -245,7 +291,7 @@ Once the user confirms:
 
 This workflow is complete when **all** of the following are true:
 
-- All 8 phases executed in sequence (M0 through M7)
+- All 9 phases executed in sequence (M0 through M8)
 - Repository confirmed as GitLab-hosted
 - Pre-flight checks passed, or failures resolved with explicit user input
 - Source branch confirmed up to date with destination branch (merged if needed, conflicts resolved or workflow stopped)
@@ -253,4 +299,5 @@ This workflow is complete when **all** of the following are true:
 - Diff summary presented and acknowledged before description generation
 - Full MR preview explicitly confirmed in the chat
 - MR created successfully and URL reported in the chat
-- M7 cleanup removed the file-memory directory (`rm -rf "$MEM"`) after successful MR creation
+- Code review bot response round completed: the bot's findings were evaluated and a response comment posted (fixes committed and pushed, false positives rebutted), OR the 10-minute poll window elapsed with no bot comment and that was reported in the chat
+- M8 cleanup removed the file-memory directory (`rm -rf "$MEM"`) after successful MR creation
