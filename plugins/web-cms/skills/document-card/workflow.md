@@ -12,6 +12,12 @@
 
 **CLARIFICATION RULE:** Do not assume anything. If required information is missing, ambiguous, conflicting, or underspecified, stop and use `AskUserQuestion` to ask the user for clarification before proceeding.
 
+**SUB-AGENT NAME RESOLUTION:** This workflow refers to sub-agents by short name (`comment-reviewer`). The runtime registers them under different identifiers depending on how they are installed. Before the first sub-agent invocation, resolve the short name against the runtime's available-agents list and use the exact registered identifier:
+
+- If the short name appears verbatim in the list (agents deployed into the project's `.claude/agents/`), use it as-is.
+- If installed via the plugin, the registered identifier is `web-cms:<short-name>:<short-name>` — e.g. `comment-reviewer` → `web-cms:comment-reviewer:comment-reviewer`.
+- Never invent a partial form such as `web-cms:comment-reviewer` — it will not resolve. If an invocation fails with an "agent type not found" error, read the available-agents list in the error message, select the entry whose **final segment** equals the short name, and retry with that exact identifier.
+
 **TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
 
 - **File I/O (read, write, edit a known file):** Use native `Read`, `Write`, `Edit`.

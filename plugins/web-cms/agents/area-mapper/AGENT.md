@@ -148,4 +148,4 @@ Reason: <one-line explanation>
 - If the quality bar isn't met for an area, skip it — never write a thin memory just to record that the area exists.
 - Use `git rev-parse HEAD` from the project root for `verified_against`. If this fails, fall back to `unknown` and add a `## Notes` line explaining.
 - One memory per area per run. Do not write more than once to the same key in a single run.
-- **Turn budget:** 30 turns. If you have processed all explorations and run out of budget mid-merge, write what you can and return with `Memories partial:` listing any areas where the merge did not complete.
+- **Turn budget:** 25 turns. If you have processed all explorations and run out of budget mid-merge, write what you can and return with `Memories partial:` listing any areas where the merge did not complete.

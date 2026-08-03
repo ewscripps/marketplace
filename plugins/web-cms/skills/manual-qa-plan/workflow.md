@@ -20,6 +20,12 @@
     - `Provide the branch name (Recommended)` — Specify the branch to use for diff analysis. Best QA plan accuracy.
     - `Approve Jira-only QA planning` — Continue without a branch diff. QA plan will have reduced confidence.
 
+**SUB-AGENT NAME RESOLUTION:** This workflow refers to its sub-agent by short name (`manual-qa-reviewer`). The runtime registers it under a different identifier depending on how it is installed. Before invoking it, resolve the short name against the runtime's available-agents list and use the exact registered identifier:
+
+- If the short name appears verbatim in the list (agents deployed into the project's `.claude/agents/`), use it as-is.
+- If installed via the plugin, the registered identifier is `web-cms:<short-name>:<short-name>` — e.g. `manual-qa-reviewer` → `web-cms:manual-qa-reviewer:manual-qa-reviewer`.
+- Never invent a partial form such as `web-cms:manual-qa-reviewer` — it will not resolve. If an invocation fails with an "agent type not found" error, read the available-agents list in the error message, select the entry whose **final segment** equals the short name, and retry with that exact identifier.
+
 **TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
 
 - **File I/O (read, write, edit a known file):** Use native `Read`, `Write`, `Edit`.

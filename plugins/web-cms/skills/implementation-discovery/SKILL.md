@@ -4,7 +4,7 @@ description: Run implementation discovery to surface and iterate over approaches
 user-invocable: true
 argument-hint: '[what you want to build or investigate]'
 disable-model-invocation: true
-allowed-tools: Bash, Read, Write, Glob, Grep, AskUserQuestion, mcp__plugin_web-cms_sequentialthinking__sequentialthinking
+allowed-tools: Bash, Read, Write, Glob, Grep, AskUserQuestion, mcp__plugin_web-cms_sequentialthinking__sequentialthinking, mcp__plugin_web-cms_serena__onboarding
 model: opus
 effort: high
 ---
