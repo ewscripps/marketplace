@@ -53,12 +53,26 @@
 # EDM-HELP-END
 set -euo pipefail
 
+# CA-056: source the shared line-classification library (build_line_classes / ignored_line_set /
+# is_ignored_line) so the pattern-library machinery below can tell whether a "### " heading or a
+# target "## " heading sits inside a fenced code block, the same way bin/edm-lint-artifacts,
+# bin/edm-check-grants and bin/edm-check-vocabulary already do.
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SELF_DIR}/_edm-lint-lib.sh"
+
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
 SRD_FILENAME="${EDM_SRD_FILENAME:-${CLAUDE_PLUGIN_OPTION_SRD_FILENAME:-srd.md}}"
 TICKET_PACK_DIRNAME="${EDM_TICKET_PACK_DIRNAME:-${CLAUDE_PLUGIN_OPTION_TICKET_PACK_DIRNAME:-tickets}}"
 HUMAN_HOURLY_RATE_USD="${EDM_HUMAN_HOURLY_RATE_USD:-${CLAUDE_PLUGIN_OPTION_HUMAN_HOURLY_RATE_USD:-150}}"
 
 die() { echo "edm-state: $*" >&2; exit 1; }
+
+# CA-160: validate HUMAN_HOURLY_RATE_USD once, right next to where its default is established
+# above, rather than letting a bad value reach the jq program-string splice (:2557) or the
+# printf math (:451) and produce a confusing downstream error. Plain non-negative decimal only
+# (cents allowed): no leading '+', no exponent notation, no arithmetic metacharacters.
+[[ "$HUMAN_HOURLY_RATE_USD" =~ ^[0-9]+(\.[0-9]+)?$ ]] \
+  || die "invalid HUMAN_HOURLY_RATE_USD: '${HUMAN_HOURLY_RATE_USD}' (expected a non-negative number, e.g. 150 or 150.50)"
 
 # to_int <value> [default] -- echo <value> when it is a bare non-negative integer, else <default>
 # (0 if omitted). Every value from any external source -- state file, environment, or command
@@ -93,8 +107,10 @@ to_int() {
 # comment lines near the top of <script-path> (EDMV3-T61 AC1). awk, not a hardcoded `sed -n
 # 'A,Bp'` line range: a hardcoded range silently stops covering new subcommand doc lines added
 # below its end without the two numbers being bumped in lockstep, which is exactly how
-# `update-patterns` and `lint` fell out of `--help` before this ticket. Mirrored verbatim in
-# edm-lint-artifacts (same fix, same reason, applied to that script's own header block).
+# `update-patterns` and `lint` fell out of `--help` before this ticket. CA-154: the same
+# sentinel-based help-text convention is used by every `bin/` helper and the three `evals/` drivers
+# -- not just this file and one sibling -- and every one of those sites now renders its help
+# text in the same form (this one: keep the leading "# " on each printed line).
 print_help() {
   awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$1"
 }
@@ -294,6 +310,12 @@ get_session_tokens_since() {
   # EDM_TOKEN_READ_LINE_CAP; default 20000 lines is generous for a single phase's turn count while
   # still bounding worst-case read cost.
   local _token_read_cap="${EDM_TOKEN_READ_LINE_CAP:-20000}"
+  # CA-160: validate right next to where the default is established -- a non-numeric value
+  # reaches `tail -n` and aborts with a raw, user-hostile "tail: illegal offset"; a value with a
+  # leading '+' silently INVERTS the flag's meaning from "last N lines" to "from line N onward",
+  # a silent behaviour change rather than an error. Plain non-negative integer only.
+  [[ "$_token_read_cap" =~ ^[0-9]+$ ]] \
+    || die "invalid EDM_TOKEN_READ_LINE_CAP: '${_token_read_cap}' (expected a non-negative integer line count)"
 
   if [[ -n "$driving_session" && -f "$driving_session" ]]; then
     tail -n "$_token_read_cap" "$driving_session" | jq -Rn --arg since "$since" --arg mode "scoped" '
@@ -556,8 +578,13 @@ write_atomic() {
     trap '_write_atomic_cleanup "$_WRITE_ATOMIC_TMP"; exit 129' HUP
   fi
 
-  "$@" > "$tmp"
-  ec=$?
+  # CA-134: guard the capture on the SAME statement, not on the line after it -- a bare
+  # `"$@" > "$tmp"` followed by a separate `ec=$?` is only safe under set -e because every
+  # current call site happens to sit in an errexit-suspended position (inside an `if`, an
+  # `&&`/`||` chain, etc). The next plain, unguarded `write_atomic` call anyone adds anywhere
+  # changes this from "return the renderer's exit status" to "abort the process immediately,
+  # with none of the cleanup/trap-restoration logic below ever running".
+  "$@" > "$tmp" || ec=$?
   if [[ $ec -ne 0 ]]; then
     rm -f "$tmp"
     if [[ $nested -eq 1 ]]; then
@@ -570,8 +597,9 @@ write_atomic() {
     fi
     return $ec
   fi
-  mv -f "$tmp" "$dest"
-  ec=$?
+  # CA-134: same guard as above -- the mv's exit status must be captured on this statement
+  # itself, not on a following bare line.
+  mv -f "$tmp" "$dest" || ec=$?
   if [[ $ec -ne 0 ]]; then
     rm -f "$tmp"
     if [[ $nested -eq 1 ]]; then
@@ -1075,7 +1103,10 @@ schema_at_least() {
   # unparseable value tells us nothing about the shape on disk, so the safe reading is "no
   # enforcement claim", which is exactly what an absent field means.
   sv="$(to_int "$sv" 0)"
-  if [[ -z "$sv" || "$sv" -eq 0 ]]; then
+  # CA-140: `-z` was dead -- to_int with a default never returns empty, so the only condition
+  # that can ever be true after coercion is "coerced to 0" (absent or non-integer input, both of
+  # which to_int normalizes to the default).
+  if [[ "$sv" -eq 0 ]]; then
     echo 0
   elif [[ "$sv" -ge "$min" ]]; then
     echo 2
@@ -1140,12 +1171,10 @@ state_anomalies() {
   require_jq
   local state
   state="$(read_state "$prefix")"
-  local found=0
   # TIME_ORDER (blocking): completed_at earlier than started_at within any phase entry
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
     echo "blocking  $line"
-    found=1
   done < <(echo "$state" | jq -r '
     .phase_durations // {} | to_entries[] |
     .key as $k | .value as $v |
@@ -1168,13 +1197,11 @@ state_anomalies() {
   if [[ "$size" == "Unknown" && "$phase" -ge 2 \
         && "$lifecycle_mode_anom" != "fast-track" && "$lifecycle_mode_anom" != "fix-pack" ]]; then
     echo "info  SIZE_UNKNOWN  estimated_size  size is still Unknown at phase ${phase} (set via edm-state set ${prefix} estimated_size Small|Medium|Large)"
-    found=1
   fi
   # ZERO_TOKENS (blocking): model_used is set but input+output tokens are both 0
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
     echo "blocking  $line"
-    found=1
   done < <(echo "$state" | jq -r '
     .phase_durations // {} | to_entries[] |
     .key as $k | .value as $v |
@@ -1199,7 +1226,6 @@ state_anomalies() {
     oar_completed="$(echo "$oar_last" | jq -r '.completed_at // empty')"
     if [[ -z "$oar_completed" ]]; then
       echo "info  OPEN_AUDIT_ROUND  audit_rounds  ${oar_type} audit round ${oar_round_num} for ${prefix} was started but never completed -- run edm-state audit-round-complete ${prefix} ${oar_type}"
-      found=1
     fi
   done
   # PERM_RULES_MISSING (info -- EDMV3-T06 AC5): the two "ask" rules that gate
@@ -1209,7 +1235,6 @@ state_anomalies() {
   # warning, never a validate-failing condition -- it never flips cmd_validate's exit code.
   if [[ "$(check_permission_rules)" != "permission-ask" ]]; then
     echo "info  PERM_RULES_MISSING  permissions.ask  required ask rules Bash(edm-state approve-gate*) and Bash(edm-state archive*) not found in .claude/settings.local.json, .claude/settings.json, or ~/.claude/settings.json -- add {\"permissions\": {\"ask\": [\"Bash(edm-state approve-gate*)\", \"Bash(edm-state archive*)\"]}} to enforce human review at gate-approval and archive time"
-    found=1
   fi
   # CONVERGED_NO_APPROVAL (blocking -- EDMV3-T17 AC3): code_audit_converged is true but no
   # code_audit_gate_approved_at record exists -- e.g. a hand-edited state file, not one
@@ -1222,7 +1247,6 @@ state_anomalies() {
   cac_approved_at="$(echo "$state" | jq -r '.code_audit_gate_approved_at // empty')"
   if [[ "$cac_val" == "true" && -n "$cac_schema_version" && -z "$cac_approved_at" ]]; then
     echo "blocking  CONVERGED_NO_APPROVAL  code_audit_converged  code_audit_converged is true for ${prefix} but no code_audit_gate_approved_at record exists -- run edm-state approve-gate ${prefix} code-audit, or investigate a hand-edited state file"
-    found=1
   fi
   # OPEN_PARTIALS (blocking -- EDMV3-T18 AC7): a partial_verdict_map entry is either still
   # open (never closed, the original `verdict == "PARTIAL"` shape from T67) or closed FAIL
@@ -1244,7 +1268,6 @@ state_anomalies() {
       open_partials_anom="${open_partials_anom}${open_partials_anom:+, }${open_partials_anom_entry}"
     done <<< "$open_partials_anom_lines"
     echo "blocking  OPEN_PARTIALS  partial_verdict_map  unclosed or FAIL-closed PARTIAL verdict(s) for ${prefix}: ${open_partials_anom}; run /edm:verify-runtime ${prefix} to close each before archiving"
-    found=1
   fi
   # LEGACY_LIFECYCLE_MODE (info -- EDMV3-T59 / D12): `partial` was removed from the settable
   # lifecycle_mode enum (a legal value with no sub-flow anywhere). A file written before the
@@ -1255,7 +1278,6 @@ state_anomalies() {
   legacy_lifecycle_anom="$(echo "$state" | jq -r '.lifecycle_mode // empty')"
   if [[ "$legacy_lifecycle_anom" == "partial" ]]; then
     echo "info  LEGACY_LIFECYCLE_MODE  lifecycle_mode  ${prefix} carries the removed lifecycle_mode 'partial' (read as 'standard'); run edm-state set-mode ${prefix} lifecycle_mode standard to clear it"
-    found=1
   fi
   # SCHEMA_VERSION_MISSING (info -- EDMV3-T10 AC6): schema_version is absent for this
   # (necessarily non-archived -- state_anomalies is only ever reached via a resolvable,
@@ -1268,7 +1290,6 @@ state_anomalies() {
   schema_version_anom="$(echo "$state" | jq -r '.schema_version // empty')"
   if [[ -z "$schema_version_anom" ]]; then
     echo "info  SCHEMA_VERSION_MISSING  schema_version  no schema_version recorded for ${prefix} -- run edm-state migrate-schema ${prefix} to backfill enforcement-kernel compatibility"
-    found=1
   fi
   # EMPTY_SKIP_RATIONALE / ACTIVE_EXEMPTION on skipped_phases (info -- EDMV3-T62 AC3/AC7): every
   # exemption D13(c) leaves in place (skip-phase, legacy degradation) must leave an audit trail
@@ -1287,7 +1308,6 @@ state_anomalies() {
       else
         echo "info  ACTIVE_EXEMPTION  skipped_phases  phase ${skip_phase} of ${prefix} is intentionally skipped: ${skip_rationale}"
       fi
-      found=1
     done <<< "$skip_lines"
   fi
   # ACTIVE_EXEMPTION on archive_exemptions (info -- EDMV3-T62 AC7): a lifecycle/mode that waived
@@ -1298,7 +1318,6 @@ state_anomalies() {
   while IFS= read -r archive_exemption; do
     [[ -n "$archive_exemption" ]] || continue
     echo "info  ACTIVE_EXEMPTION  archive_exemptions  ${archive_exemption} recorded for ${prefix} (lifecycle/mode waives the code-audit convergence check)"
-    found=1
   done < <(echo "$state" | jq -r '(.archive_exemptions // [])[]' 2>/dev/null || true)
   # ACTIVE_EXEMPTION on degraded_checks (info -- EDMV3-T62 AC5/AC7): a legacy warn-and-proceed
   # skip (recorded by record_degraded_check() below) is the other half of "the only ways a check
@@ -1308,7 +1327,6 @@ state_anomalies() {
   while IFS=$'\t' read -r degraded_check degraded_reason; do
     [[ -n "$degraded_check" ]] || continue
     echo "info  ACTIVE_EXEMPTION  degraded_checks  ${degraded_check} skipped for ${prefix}: ${degraded_reason}"
-    found=1
   done < <(echo "$state" | jq -r '(.degraded_checks // [])[] | "\(.check)\t\(.reason)"' 2>/dev/null || true)
   return 0
 }
@@ -2048,6 +2066,10 @@ cmd_get_coverage() {
   local state
   state="$(state_file_for "$prefix")"
   [[ -f "$state" ]] || die "no state for $prefix"
+  # CA-136: a state file that exists but is not valid JSON previously aborted this command with
+  # no message at all under set -euo pipefail (jq's own diagnostic was already discarded by the
+  # 2>/dev/null redirects on every renderer below) -- fail loudly here instead, once, up front.
+  jq -e . "$state" >/dev/null 2>&1 || die "get-coverage: unparseable state file at $state"
   echo "# Test Coverage - $prefix"
   echo
   # Whole-initiative coverage (single-stack)
@@ -2062,7 +2084,7 @@ cmd_get_coverage() {
       (.[] | coverage_layer_row),
       ""
     end
-  ' "$state" 2>/dev/null
+  ' "$state" 2>/dev/null || true
   # Per-epic coverage (multi-stack)
   jq -r '
     (.coverage_by_epic // {}) | to_entries |
@@ -2076,7 +2098,7 @@ cmd_get_coverage() {
         "  \($epic | . + (" " * (15 - length | if . < 0 then 0 else . end)))  \(.key | . + (" " * (14 - length | if . < 0 then 0 else . end)))  \(.value.pct)%\(if .value.pct < 10 then "        " elif .value.pct < 100 then "       " else "      " end)  \(.value.measured_at // "?")"),
       ""
     end
-  ' "$state" 2>/dev/null
+  ' "$state" 2>/dev/null || true
   # Fallback message when neither is present
   jq -r '
     if ((.coverage_by_layer // {} | length) + (.coverage_by_epic // {} | length)) == 0
@@ -2146,15 +2168,24 @@ cmd_migrate_schema() {
   state_file="${dir}/.edm-state.json"
   [[ -f "$state_file" ]] || die "migrate-schema: no state file for $prefix at $state_file"
 
-  local state current_version
+  local state current_version current_version_raw
   state="$(cat "$state_file")"
-  current_version="$(echo "$state" | jq -r '.schema_version // empty')"
+  current_version_raw="$(echo "$state" | jq -r '.schema_version // empty')"
+  current_version="$current_version_raw"
   # Same arithmetic-context injection guard as schema_at_least: this value reaches `-le` and
   # `$(( ))` below. An empty value is legitimate (legacy, no field) and must stay empty so the
-  # `[[ -n ... ]]` branch below still distinguishes it; only a present-but-non-integer value is
-  # coerced, to 0, which then fails the `-le` guard and is reported rather than acted on.
+  # `[[ -n ... ]]` branch below still distinguishes it. A present-but-non-integer value is coerced
+  # to 0 for the arithmetic below -- but the coercion alone would silently normalize a corrupted
+  # schema_version DOWN to 1 (target_version=1 always satisfies `1 -le 0`... no, wait: coercion
+  # makes current_version=0, and target_version (1 or 2) is never <= 0, so the refusal guard below
+  # never fires against a coerced 0, and the file gets stamped schema_version=1). CA-135: refuse
+  # rather than guess whenever the coerced value actually differs from what is on disk, and report
+  # the RAW value below, not the coerced one, so the operator sees the actual corrupted string.
   if [[ -n "$current_version" ]]; then
     current_version="$(to_int "$current_version" 0)"
+    if [[ "$current_version" != "$current_version_raw" ]]; then
+      die "migrate-schema: ${prefix} has a non-integer schema_version (${current_version_raw}); repair the state file by hand -- refusing to guess a version"
+    fi
   fi
 
   # ---- Diagnostic report, printed before any confirmation is requested (AC1) -------------
@@ -2206,7 +2237,10 @@ cmd_migrate_schema() {
   echo "  terminal completed_at:  ${terminal_completed_at:-(none)}"
   echo "  findings ledger:        ${ledger_format}"
   echo "  unclosed PARTIAL count: ${open_partials}"
-  echo "  recorded schema_version: ${current_version:-(absent)}"
+  # CA-135: print the RAW value read from disk, not the coerced one -- if the two ever differ,
+  # the branch above already refused before this line is reached, so this is a no-op change on
+  # the surviving path and the fix for the case that matters.
+  echo "  recorded schema_version: ${current_version_raw:-(absent)}"
   echo "  predates wave-A merge (${WAVE_A_MERGE_DATE}): ${predates_wave_a}"
 
   # ---- AC2: honest version -- the highest shape this initiative actually satisfies -------
@@ -2336,7 +2370,12 @@ cmd_archive() {
       # Both halves of the exemption come from convergence_exempt(), which is shared with
       # cmd_audit_converged so the two cannot drift.
       if [[ "$(convergence_exempt "$mode" "$lifecycle_mode")" == "true" ]]; then
-        echo "[warn] ${mode} mode -- skipping code-audit convergence check" >&2
+        # CA-069: convergence_exempt() returns true for two independent reasons -- mode has no
+        # code-audit phase at all, OR lifecycle_mode is fast-track/fix-pack (in which case mode
+        # itself is irrelevant) -- so naming only mode here was actively misleading for a
+        # standard-mode/fast-track initiative (the exact mode that normally REQUIRES this check).
+        # Name both fields, matching the phrasing the recorded-exemption line below already uses.
+        echo "[warn] no code-audit round in this phase graph (mode=${mode}, lifecycle_mode=${lifecycle_mode}) -- skipping the convergence check" >&2
         # AC9: record the exemption reason in state rather than skipping silently, and echo it
         # too so the CLI output itself (not only the state file) documents why no code-audit
         # gate was demanded of this lifecycle.
@@ -2550,7 +2589,10 @@ cmd_metrics_report() {
       [[ -f "$state" ]] || die "no state for $prefix"
       echo "# EDM Metrics - $prefix"
       echo
-      jq -r '"Initiative: \(.prefix)  |  size: \(.estimated_size // "Unknown")  |  current phase: \(.current_phase)  |  human hourly rate: $'"$HUMAN_HOURLY_RATE_USD"'"' "$state"
+      # CA-160: pass the rate as jq DATA (--arg), never spliced into the program string -- a
+      # value containing '"' or '\(' would otherwise break the program or be interpreted as a
+      # nested jq expression. Same treatment every sibling numeric value gets via awk -v.
+      jq -r --arg rate "$HUMAN_HOURLY_RATE_USD" '"Initiative: \(.prefix)  |  size: \(.estimated_size // "Unknown")  |  current phase: \(.current_phase)  |  human hourly rate: $\($rate)"' "$state"
       jq -r 'if (.product_name // "") != "" or (.initiative_description // "") != "" then "Product: \(.product_name // "(none)")  |  Description: \(.initiative_description // "(none)")" else empty end' "$state" 2>/dev/null || true
       echo
       # EDMV3-T53 AC1: default output is raw cost/duration only -- no human-baseline comparison
@@ -3882,14 +3924,39 @@ pattern_target_heading_for() {
 #
 # Prints 0 when the target heading is absent. Callers must treat 0 as a skip -- never as licence
 # to fall back to an end-of-file append.
+#
+# CA-056: the heading match is fence-aware and refuses ambiguity. A pattern doc documenting its
+# own Append Schema by showing an EXAMPLE heading inside a fenced code block would otherwise be a
+# plain-text first-match-wins hit -- splicing the new entry into the fenced example instead of the
+# real section, unbalancing the fence and corrupting the document. The line-number filtering
+# below (via the shared ignored_line_set/is_ignored_line from _edm-lint-lib.sh) requires the
+# match to be OUTSIDE any fence, and dies loudly rather than guessing when the heading occurs more
+# than once outside fences.
 pattern_insert_line_for() {
   local _pf="$1" _heading="$2"
-  awk -v h="$_heading" '
+  local _pif_ignored _pif_matches _pif_entry _pif_lineno _pif_start="" _pif_count=0
+  _pif_ignored="$(ignored_line_set "$_pf" 2>/dev/null || true)"
+  _pif_matches="$(grep -nFx "$_heading" "$_pf" 2>/dev/null || true)"
+  while IFS= read -r _pif_entry; do
+    [[ -n "$_pif_entry" ]] || continue
+    _pif_lineno="${_pif_entry%%:*}"
+    is_ignored_line "$_pif_lineno" "$_pif_ignored" && continue
+    _pif_count=$((_pif_count + 1))
+    [[ -z "$_pif_start" ]] && _pif_start="$_pif_lineno"
+  done <<< "$_pif_matches"
+
+  if [[ "$_pif_count" -gt 1 ]]; then
+    die "update-patterns: target heading '${_heading}' occurs ${_pif_count} times outside fenced code blocks in ${_pf}; refusing to guess which one is the real section -- make the heading unique before running update-patterns again"
+  fi
+  if [[ -z "$_pif_start" ]]; then
+    echo 0
+    return 0
+  fi
+
+  awk -v start="$_pif_start" '
     { line[NR] = $0 }
-    !start && $0 == h { start = NR; next }
-    start && !boundary && /^## / { boundary = NR }
+    NR > start && !boundary && /^## / { boundary = NR }
     END {
-      if (!start) { print "0"; exit 0 }
       if (boundary) { ins = boundary } else { ins = NR + 1 }
       j = ins - 1
       while (j > start && line[j] == "") { j-- }
@@ -3925,7 +3992,23 @@ _splice_pattern_file() {
 _cmd_update_patterns_body() {
   local pattern_file="$1" audit_report_path="$2" target_heading="$3" audit_type="$4" prefix="$5" today="$6"
   local existing_normalized new_findings=0 pending_entries="" raw_heading raw_title lower_title norm insert_line
-  existing_normalized="$(grep '^### ' "$pattern_file" 2>/dev/null | normalize_pattern_titles || true)"
+  # CA-056: the pre-flight duplicate check must ignore any "### " heading that lives inside a
+  # fenced code block -- a pattern doc documenting its own Append Schema by showing an EXAMPLE
+  # heading in a fence is the concrete case. A fenced example could otherwise mask a real
+  # duplicate, or a real heading could be skipped because it happens to textually match content
+  # that only exists inside a fence.
+  local _cup_fenced_lines _cup_heading_line _cup_heading_lineno _cup_heading_text
+  _cup_fenced_lines="$(ignored_line_set "$pattern_file" 2>/dev/null || true)"
+  existing_normalized=""
+  while IFS= read -r _cup_heading_line; do
+    [[ -n "$_cup_heading_line" ]] || continue
+    _cup_heading_lineno="${_cup_heading_line%%:*}"
+    _cup_heading_text="${_cup_heading_line#*:}"
+    is_ignored_line "$_cup_heading_lineno" "$_cup_fenced_lines" && continue
+    norm="$(printf '%s\n' "$_cup_heading_text" | normalize_pattern_titles)"
+    existing_normalized="${existing_normalized}
+${norm}"
+  done < <(grep -n '^### ' "$pattern_file" 2>/dev/null || true)
 
   while IFS= read -r raw_heading; do
     raw_title="${raw_heading#\#\#\# }"

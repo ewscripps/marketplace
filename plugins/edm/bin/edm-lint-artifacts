@@ -2,7 +2,10 @@
 # EDMV3-T61 AC1: the block between EDM-HELP-BEGIN and EDM-HELP-END below is sentinel-delimited,
 # not a hardcoded `sed -n 'A,Bp'` line range -- `usage()` extracts between the sentinels with
 # awk. A hardcoded range silently stops covering a new doc line added below its end unless two
-# numbers are bumped in lockstep. Mirrored verbatim in bin/edm-state (same fix, same reason).
+# numbers are bumped in lockstep. CA-154: the same sentinel-based help-text convention is used by
+# every `bin/` helper and the three `evals/` drivers -- not just this file and one sibling -- and
+# every one of those sites now renders its help text in the same form (this one: keep the
+# leading "# " on each printed line).
 # EDM-HELP-BEGIN
 # edm-lint-artifacts - scan EDM initiative artifacts for violations.
 # Usage:

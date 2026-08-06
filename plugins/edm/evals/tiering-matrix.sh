@@ -64,7 +64,7 @@ SELF="$(basename "${BASH_SOURCE[0]}")"
 
 die() { echo "${SELF}: $*" >&2; exit 2; }
 
-print_help() { awk '/^# EDM-HELP-BEGIN$/{f=1;next} /^# EDM-HELP-END$/{exit} f{sub(/^# ?/,"");print}' "${BASH_SOURCE[0]}"; }
+print_help() { awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "${BASH_SOURCE[0]}"; }
 
 case "${1:-}" in
   -h|--help) print_help; exit 0 ;;

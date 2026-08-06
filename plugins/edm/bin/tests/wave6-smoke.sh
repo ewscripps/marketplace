@@ -1657,7 +1657,7 @@ jq '.current_phase = 2 | .phase_durations["2_phase"] = {started_at: "2026-01-01T
   "$STATE_T12PROTO" > "$STATE_T12PROTO.tmp" && mv "$STATE_T12PROTO.tmp" "$STATE_T12PROTO"
 proto_out="$("$EDM_STATE" archive T12PROTO 2>&1)"
 check "T12 AC8 -- prototype warning text preserved" \
-  "[warn] prototype mode -- skipping code-audit convergence check" "$proto_out"
+  "[warn] no code-audit round in this phase graph (mode=prototype, lifecycle_mode=standard) -- skipping the convergence check" "$proto_out"
 [[ -d "$TMP/SRD/.archived/T12PROTO" ]] \
   && pass "T12 AC8 -- prototype archives at its own terminal phase (2) once its checks pass" \
   || fail "T12 AC8 -- prototype archive did not relocate the directory"
@@ -2450,7 +2450,7 @@ jq '.current_phase = 2 | .phase_durations["2_phase"] = {started_at: "2026-01-01T
   "$STATE_T62AC8" > "$STATE_T62AC8.tmp" && mv "$STATE_T62AC8.tmp" "$STATE_T62AC8"
 t62ac8_out="$("$EDM_STATE" archive T62AC8 2>&1)"
 check "T62 AC8 -- prototype archive warning text preserved" \
-  "[warn] prototype mode -- skipping code-audit convergence check" "$t62ac8_out"
+  "[warn] no code-audit round in this phase graph (mode=prototype, lifecycle_mode=standard) -- skipping the convergence check" "$t62ac8_out"
 
 # ---- AC9 (every approval carries its enforcement tag) --------------------------------------
 echo

@@ -4037,6 +4037,17 @@ echo "CA-141/CA-142/CA-143/CA-159/CA-025 -- with_state_lock / write_atomic concu
 # ---- CA-159: no path is ever interpolated into a trap body string (apostrophe-safe) -----------
 t_ca159_out="$(
   set +e
+  # This subshell inherits a COPY of the parent script's own EXIT/INT/TERM trap (the
+  # top-level "rm -rf $TMP" cleanup at the top of this file) at fork time. No backtick pair
+  # in this comment -- bash 3.2 mis-parses a backtick pair inside a comment that is itself
+  # inside a $( ) command substitution (confirmed empirically), the same class of bug
+  # _edm-lint-lib.sh's own header already documents for a heredoc-in-process-substitution
+  # case. with_state_lock/write_atomic below correctly save-and-restore whatever trap was
+  # active when they install their own -- but restoring that inherited trap means it fires
+  # again when THIS subshell exits, deleting the real, shared TMP out from under every later
+  # test in the suite. Clear the inherited dispositions here, before either function ever
+  # runs, so there is nothing dangerous left to restore.
+  trap - EXIT INT TERM HUP
   tmp159="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca159.XXXXXX")" || exit 1
   apos_dir="${tmp159}/o'brien"
   mkdir -p "$apos_dir" || exit 1
@@ -4072,6 +4083,9 @@ check "CA-159 -- no leaked *.tmp.* file remains after write_atomic completes" \
 # ---- CA-141a: a stale lockdir held by a genuinely dead PID is reclaimed (atomic mv-based) ------
 t_ca141a_out="$(
   set +e
+  # Clear inherited EXIT/INT/TERM/HUP dispositions before with_state_lock runs -- see the CA-159
+  # case above for why (restoring an inherited trap on this subshell own exit deletes TMP).
+  trap - EXIT INT TERM HUP
   tmp141a="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca141a.XXXXXX")" || exit 1
   command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
   source "$EDM_STATE" >/dev/null 2>&1
@@ -4105,6 +4119,9 @@ check "CA-141 -- the lockdir is cleaned up after a successful reclaim-then-acqui
 # ---- CA-141b: a lockdir with an invalid (non-numeric) PID marker is also reclaimed -------------
 t_ca141b_out="$(
   set +e
+  # Clear inherited EXIT/INT/TERM/HUP dispositions before with_state_lock runs -- see the CA-159
+  # case above for why (restoring an inherited trap on this subshell own exit deletes TMP).
+  trap - EXIT INT TERM HUP
   tmp141b="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca141b.XXXXXX")" || exit 1
   command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
   source "$EDM_STATE" >/dev/null 2>&1
@@ -4127,6 +4144,9 @@ check "CA-141 -- the locked body runs after an invalid-PID reclaim" \
 # second UID is not available in this harness) ---------------------------------------------------
 t_ca141c_out="$(
   set +e
+  # Clear inherited EXIT/INT/TERM/HUP dispositions before with_state_lock runs -- see the CA-159
+  # case above for why (restoring an inherited trap on this subshell own exit deletes TMP).
+  trap - EXIT INT TERM HUP
   tmp141c="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca141c.XXXXXX")" || exit 1
   command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
   kill() {
@@ -4170,6 +4190,10 @@ check "CA-141 -- the stale-PID reclaim branch increments tries before its contin
 # nested path (cmd_init -> with_state_lock -> _cmd_init_body -> write_atomic) completes cleanly.
 t_ca142_out="$(
   set +e
+  # Clear inherited EXIT/INT/TERM/HUP dispositions before with_state_lock/write_atomic run --
+  # see the CA-159 case above for why (restoring an inherited trap on this subshell own
+  # exit deletes TMP).
+  trap - EXIT INT TERM HUP
   tmp142="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca142.XXXXXX")" || exit 1
   command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
   source "$EDM_STATE" >/dev/null 2>&1
@@ -4209,6 +4233,9 @@ check "CA-142 -- write_atomic contains an internal sanity check enforcing the ne
 # with_state_lock's caller. -----------------------------------------------------------------------
 t_ca025_out="$(
   set +e
+  # Clear inherited EXIT/INT/TERM/HUP dispositions before with_state_lock runs -- see the CA-159
+  # case above for why (restoring an inherited trap on this subshell own exit deletes TMP).
+  trap - EXIT INT TERM HUP
   tmp025="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca025.XXXXXX")" || exit 1
   command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
   source "$EDM_STATE" >/dev/null 2>&1
@@ -4256,6 +4283,306 @@ check "CA-143 -- write_atomic's INT trap calls exit 130" "exit 130' INT" "$t_ca1
 check "CA-143 -- write_atomic's TERM trap calls exit 143" "exit 143' TERM" "$t_ca143_wa_body"
 t_ca143_wa_exit_line="$(printf '%s\n' "$t_ca143_wa_body" | grep "' EXIT$" || true)"
 check_absent "CA-143 -- write_atomic's EXIT-only trap arm never calls exit itself" "exit " "$t_ca143_wa_exit_line"
+
+# =================================================================================
+# Code-audit round-2 remediation, Wave 4b: CA-135/CA-140/CA-137/CA-136/CA-134/CA-160/CA-056/
+# CA-069/CA-154 (mechanical P2 fixes to bin/edm-state; CA-133 was already landed with CA-002 --
+# _cmd_update_patterns_body's pending_entries loop already appends the trailing $'\n', verified
+# by inspection rather than re-fixed here).
+# =================================================================================
+echo
+echo "CA-135/CA-140/CA-137/CA-136/CA-134/CA-160/CA-056/CA-069/CA-154 -- Wave 4b mechanical fixes"
+
+# ---- CA-140: schema_at_least's dead '-z "$sv"' disjunct removed; the injection-prevention
+# comment above the coercion is preserved verbatim; three-valued behaviour unchanged -----------
+t_ca140_body="$(awk '/^schema_at_least\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check_absent "CA-140 -- schema_at_least's dead '-z \"\$sv\"' disjunct is removed" \
+  '-z "$sv"' "$t_ca140_body"
+check "CA-140 -- the injection-prevention comment block above the coercion is preserved verbatim" \
+  "A present-but-non-integer value is treated as legacy/absent" "$t_ca140_body"
+ca140_empty="$(bash -c "source '$EDM_STATE' >/dev/null 2>&1; schema_at_least '' 1")"
+ca140_bad="$(bash -c "source '$EDM_STATE' >/dev/null 2>&1; schema_at_least abc 1")"
+ca140_below="$(bash -c "source '$EDM_STATE' >/dev/null 2>&1; schema_at_least 1 2")"
+ca140_at="$(bash -c "source '$EDM_STATE' >/dev/null 2>&1; schema_at_least 2 2")"
+check "CA-140 -- an absent schema_version still degrades to class 0" "0" "$ca140_empty"
+check "CA-140 -- a non-integer schema_version still degrades to class 0" "0" "$ca140_bad"
+check "CA-140 -- a present-but-below-minimum schema_version is still class 1" "1" "$ca140_below"
+check "CA-140 -- an at-or-above-minimum schema_version is still class 2" "2" "$ca140_at"
+
+# ---- CA-135: migrate-schema refuses a non-integer schema_version instead of silently
+# coercing it to 0 and stamping schema_version=1 over it; the diagnostic prints the RAW value --
+ca135_scratch="$(mktemp -d "${TMP}/edm-ca135.XXXXXX")" || fail "CA-135 -- mktemp failed"
+mkdir -p "${ca135_scratch}/CA135"
+cat > "${ca135_scratch}/CA135/.edm-state.json" <<'EOF'
+{"prefix":"CA135","schema_version":"corrupted-not-a-number","current_phase":1,"gates_approved":[]}
+EOF
+set +e
+ca135_out="$(EDM_SRD_ROOT="$ca135_scratch" bash "$EDM_STATE" migrate-schema CA135 <<< "yes" 2>&1)"
+ca135_ec=$?
+set -e
+[[ $ca135_ec -ne 0 ]] \
+  && pass "CA-135 -- migrate-schema refuses a non-integer schema_version rather than exiting 0" \
+  || fail "CA-135 -- expected non-zero exit against a corrupted schema_version, got 0: $ca135_out"
+check "CA-135 -- the refusal names the actual raw corrupted value, not a coerced 0" \
+  "corrupted-not-a-number" "$ca135_out"
+check "CA-135 -- the refusal states it is refusing to guess a version" \
+  "refusing to guess a version" "$ca135_out"
+ca135_after="$(cat "${ca135_scratch}/CA135/.edm-state.json")"
+check "CA-135 -- schema_version on disk is untouched by the refused migration (never lowered/guessed)" \
+  '"corrupted-not-a-number"' "$ca135_after"
+
+# ---- CA-135 (no regression): a genuinely-absent schema_version still migrates cleanly --------
+ca135b_scratch="$(mktemp -d "${TMP}/edm-ca135b.XXXXXX")" || fail "CA-135b -- mktemp failed"
+mkdir -p "${ca135b_scratch}/CA135B"
+cat > "${ca135b_scratch}/CA135B/.edm-state.json" <<'EOF'
+{"prefix":"CA135B","current_phase":1,"gates_approved":[]}
+EOF
+ca135b_out="$(EDM_SRD_ROOT="$ca135b_scratch" bash "$EDM_STATE" migrate-schema CA135B <<< "yes" 2>&1)"
+check "CA-135 -- an absent schema_version (the legacy signal) still migrates to 1 cleanly" \
+  "migrated CA135B: schema_version = 1" "$ca135b_out"
+
+# ---- CA-137: dead 'found' bookkeeping removed from state_anomalies; anomaly detection itself
+# is unaffected (functional regression guard) --------------------------------------------------
+t_ca137_body="$(awk '/^state_anomalies\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check_absent "CA-137 -- state_anomalies no longer declares the dead 'found' bookkeeping variable" \
+  "local found=0" "$t_ca137_body"
+ca137_found_assigns="$(printf '%s\n' "$t_ca137_body" | grep -c '^[[:space:]]*found=1[[:space:]]*$' || true)"
+[[ "${ca137_found_assigns:-0}" -eq 0 ]] \
+  && pass "CA-137 -- zero remaining 'found=1' assignment statements inside state_anomalies" \
+  || fail "CA-137 -- expected zero 'found=1' statements inside state_anomalies, found ${ca137_found_assigns}"
+ca137_scratch="$(mktemp -d "${TMP}/edm-ca137.XXXXXX")" || fail "CA-137 -- mktemp failed"
+mkdir -p "${ca137_scratch}/CA137"
+cat > "${ca137_scratch}/CA137/.edm-state.json" <<'EOF'
+{"prefix":"CA137","current_phase":2,"gates_approved":[],"estimated_size":"Unknown"}
+EOF
+ca137_out="$(EDM_SRD_ROOT="$ca137_scratch" bash "$EDM_STATE" validate CA137 2>&1)" || true
+check "CA-137 -- state_anomalies still emits SIZE_UNKNOWN after removing the dead 'found' variable" \
+  "SIZE_UNKNOWN" "$ca137_out"
+
+# ---- CA-136: get-coverage fails loudly on an unparseable state file instead of silently
+# aborting under set -euo pipefail; both previously-bare renderers now carry a fallback --------
+ca136_scratch="$(mktemp -d "${TMP}/edm-ca136.XXXXXX")" || fail "CA-136 -- mktemp failed"
+mkdir -p "${ca136_scratch}/CA136"
+printf 'not valid json at all' > "${ca136_scratch}/CA136/.edm-state.json"
+set +e
+ca136_out="$(EDM_SRD_ROOT="$ca136_scratch" bash "$EDM_STATE" get-coverage CA136 2>&1)"
+ca136_ec=$?
+set -e
+[[ $ca136_ec -ne 0 ]] \
+  && pass "CA-136 -- get-coverage fails loudly (non-zero exit) against an unparseable state file" \
+  || fail "CA-136 -- expected non-zero exit against an unparseable state file, got 0: $ca136_out"
+check "CA-136 -- the failure names the unparseable state file rather than aborting silently" \
+  "unparseable state file" "$ca136_out"
+t_ca136_body="$(awk '/^cmd_get_coverage\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+ca136_bare_renderers="$(printf '%s\n' "$t_ca136_body" | grep -c '2>/dev/null$' || true)"
+[[ "${ca136_bare_renderers:-0}" -eq 0 ]] \
+  && pass "CA-136 -- no renderer inside cmd_get_coverage ends bare on '2>/dev/null' with no fallback" \
+  || fail "CA-136 -- ${ca136_bare_renderers} renderer(s) still end bare on 2>/dev/null with no fallback"
+ca136b_scratch="$(mktemp -d "${TMP}/edm-ca136b.XXXXXX")" || fail "CA-136b -- mktemp failed"
+mkdir -p "${ca136b_scratch}/CA136B"
+cat > "${ca136b_scratch}/CA136B/.edm-state.json" <<'EOF'
+{"prefix":"CA136B","coverage_by_layer":{"unit":{"pct":82.4,"measured_at":"2026-08-01T00:00:00Z"}}}
+EOF
+ca136b_out="$(EDM_SRD_ROOT="$ca136b_scratch" bash "$EDM_STATE" get-coverage CA136B 2>&1)"
+check "CA-136 -- a valid state file's whole-initiative coverage still renders (no regression)" \
+  "Whole-Initiative Coverage" "$ca136b_out"
+
+# ---- CA-134: write_atomic's ec=$? capture is guarded on the SAME statement as the risky
+# command, not on a bare line after it -- so a future unprotected bare call returns the
+# renderer's status instead of aborting mid-cleanup. Structural + behavioural coverage --------
+t_ca134_body="$(awk '/^write_atomic\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check "CA-134 -- the render capture is guarded on the same statement (|| ec=\$?)" \
+  '"$@" > "$tmp" || ec=$?' "$t_ca134_body"
+check "CA-134 -- the mv capture is guarded on the same statement (|| ec=\$?)" \
+  'mv -f "$tmp" "$dest" || ec=$?' "$t_ca134_body"
+ca134_scratch="$(mktemp -d "${TMP}/edm-ca134.XXXXXX")" || fail "CA-134 -- mktemp failed"
+printf 'original content\n' > "${ca134_scratch}/dest.txt"
+ca134_script="${ca134_scratch}/probe.sh"
+cat > "$ca134_script" <<PROBE
+#!/usr/bin/env bash
+set -euo pipefail
+source "$EDM_STATE" >/dev/null 2>&1
+fail_renderer() { echo "renderer output should never be committed"; return 1; }
+write_atomic "${ca134_scratch}/dest.txt" fail_renderer
+PROBE
+chmod +x "$ca134_script"
+set +e
+ca134_out="$(bash "$ca134_script" 2>&1)"
+ca134_ec=$?
+set -e
+[[ $ca134_ec -ne 0 ]] \
+  && pass "CA-134 -- a bare write_atomic call with a failing renderer exits non-zero rather than silently succeeding" \
+  || fail "CA-134 -- expected non-zero exit from a failing renderer, got 0: $ca134_out"
+check "CA-134 -- the destination file is left byte-unchanged after the failed write" \
+  "original content" "$(cat "${ca134_scratch}/dest.txt")"
+ca134_leftover="$(ls "${ca134_scratch}"/dest.txt.tmp.* 2>/dev/null || true)"
+[[ -z "$ca134_leftover" ]] \
+  && pass "CA-134 -- no leftover *.tmp.* file remains after write_atomic's failure path" \
+  || fail "CA-134 -- leftover tmp file(s) found: $ca134_leftover"
+
+# ---- CA-160: HUMAN_HOURLY_RATE_USD is passed to jq as data (--arg), never spliced into the
+# program string; both HUMAN_HOURLY_RATE_USD and EDM_TOKEN_READ_LINE_CAP are validated up front -
+t_ca160_metrics_body="$(awk '/^cmd_metrics_report\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check_absent "CA-160 -- HUMAN_HOURLY_RATE_USD is no longer spliced into the jq program string" \
+  "human hourly rate: \$'\"\$HUMAN_HOURLY_RATE_USD\"'" "$t_ca160_metrics_body"
+check "CA-160 -- the rate reaches jq as data via --arg" \
+  '--arg rate "$HUMAN_HOURLY_RATE_USD"' "$t_ca160_metrics_body"
+set +e
+ca160_rate_out="$(EDM_HUMAN_HOURLY_RATE_USD='150"; touch /tmp/edm-ca160-proof #' bash "$EDM_STATE" --help 2>&1)"
+ca160_rate_ec=$?
+set -e
+[[ $ca160_rate_ec -ne 0 ]] \
+  && pass "CA-160 -- a HUMAN_HOURLY_RATE_USD value with jq-breaking characters is refused at startup" \
+  || fail "CA-160 -- expected refusal of a malformed HUMAN_HOURLY_RATE_USD, got 0: $ca160_rate_out"
+check "CA-160 -- the refusal names the bad rate value" "invalid HUMAN_HOURLY_RATE_USD" "$ca160_rate_out"
+[[ ! -e /tmp/edm-ca160-proof ]] \
+  && pass "CA-160 -- the malformed rate never reached a shell/jq eval sink" \
+  || { fail "CA-160 -- /tmp/edm-ca160-proof exists -- the malformed rate was executed"; rm -f /tmp/edm-ca160-proof; }
+
+check "CA-160 -- EDM_TOKEN_READ_LINE_CAP validation is present next to the tail invocation" \
+  "invalid EDM_TOKEN_READ_LINE_CAP" "$(awk '/^get_session_tokens_since\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+ca160b_scratch="$(mktemp -d "${TMP}/edm-ca160b.XXXXXX")"
+(
+  cd "$ca160b_scratch" || exit 1
+  sess_dir="${HOME}/.claude/projects/$(pwd | tr '/.' '-')"
+  mkdir -p "$sess_dir"
+  jq -cn '{type:"assistant",timestamp:"2026-01-01T00:00:00Z",message:{model:"claude-sonnet-4-7",usage:{input_tokens:10,output_tokens:5}}}' \
+    > "${sess_dir}/a.jsonl"
+  set +e
+  out="$(EDM_TOKEN_READ_LINE_CAP='+500' bash -c "source '$EDM_STATE' >/dev/null 2>&1; get_session_tokens_since 2000-01-01T00:00:00Z" 2>&1)"
+  ec=$?
+  set -e
+  echo "ca160b_ec=$ec"
+  echo "ca160b_out=$out"
+  rm -rf "$sess_dir"
+) > "${TMP}/ca160b.out" 2>&1 || true
+ca160b_ec="$(grep '^ca160b_ec=' "${TMP}/ca160b.out" | cut -d= -f2)"
+ca160b_out="$(grep '^ca160b_out=' "${TMP}/ca160b.out" | cut -d= -f2-)"
+[[ "${ca160b_ec:-0}" -ne 0 ]] \
+  && pass "CA-160 -- a leading-'+' EDM_TOKEN_READ_LINE_CAP is refused rather than silently inverting tail's meaning" \
+  || fail "CA-160 -- expected refusal of EDM_TOKEN_READ_LINE_CAP=+500, got exit ${ca160b_ec:-0}: $ca160b_out"
+check "CA-160 -- the refusal names the bad line-cap value" "invalid EDM_TOKEN_READ_LINE_CAP" "$ca160b_out"
+
+# ---- CA-056: the pattern-library heading match and pre-flight duplicate check are
+# fence-aware, and refuse (rather than guess) when a heading is ambiguous outside fences -------
+check "CA-056 -- edm-state sources the shared line-classification library" \
+  'source "${SELF_DIR}/_edm-lint-lib.sh"' "$(cat "$EDM_STATE")"
+ca056_scratch="$(mktemp -d "${TMP}/edm-ca056.XXXXXX")" || fail "CA-056 -- mktemp failed"
+cat > "${ca056_scratch}/doc.md" <<'EOF'
+## Top Recurring Findings
+
+body
+
+## Anti-Patterns
+
+Here is an example of the Append Schema shown in a fence:
+
+```markdown
+## Anti-Patterns
+### Example Fenced Heading
+```
+
+Some real content in the real Anti-Patterns section.
+
+## Pre-Flight Checklist
+
+body
+
+## What Good Looks Like
+EOF
+ca056_line="$(bash -c "source '$EDM_STATE' >/dev/null 2>&1; pattern_insert_line_for '${ca056_scratch}/doc.md' '## Anti-Patterns'")"
+ca056_line_content="$(sed -n "${ca056_line}p" "${ca056_scratch}/doc.md")"
+check_absent "CA-056 -- the insertion point for a heading with a fenced example does not land inside the fence" \
+  '```' "$ca056_line_content"
+[[ "$ca056_line" -eq 10 ]] \
+  && pass "CA-056 -- the real (non-fenced) '## Anti-Patterns' heading is matched, not the fenced example" \
+  || fail "CA-056 -- expected insert_line=10 (the real heading line), got $ca056_line"
+
+cat > "${ca056_scratch}/dup.md" <<'EOF'
+## Top Recurring Findings
+
+body
+
+## Anti-Patterns
+
+first section body
+
+## Anti-Patterns
+
+second section body (duplicate heading, outside any fence)
+
+## Pre-Flight Checklist
+
+body
+
+## What Good Looks Like
+EOF
+set +e
+ca056_dup_out="$(bash -c "source '$EDM_STATE' >/dev/null 2>&1; pattern_insert_line_for '${ca056_scratch}/dup.md' '## Anti-Patterns'" 2>&1)"
+ca056_dup_ec=$?
+set -e
+[[ $ca056_dup_ec -ne 0 ]] \
+  && pass "CA-056 -- an ambiguous heading (occurs twice outside fences) is refused rather than guessed" \
+  || fail "CA-056 -- expected refusal on an ambiguous heading, got 0: $ca056_dup_out"
+check "CA-056 -- the refusal names the ambiguous heading and the occurrence count" \
+  "occurs 2 times outside fenced code blocks" "$ca056_dup_out"
+
+cat > "${ca056_scratch}/preflight.md" <<'EOF'
+## Top Recurring Findings
+
+body
+
+## Anti-Patterns
+
+An example of the Append Schema, showing the exact heading shape a real entry uses -- this is
+documentation, not a real entry, so its title must not count as an existing duplicate:
+
+```markdown
+### Fenced Example Duplicate Heading
+```
+
+## Pre-Flight Checklist
+
+body
+
+## What Good Looks Like
+EOF
+cat > "${ca056_scratch}/audit-report.md" <<'EOF'
+# Mock Audit Report
+
+### Fenced Example Duplicate Heading
+Novel finding whose title collides only with a FENCED example in the pattern doc, not a real
+entry -- the fence-aware pre-flight check must still append it once.
+EOF
+ca056_body_out="$(bash -c "
+  source '$EDM_STATE' >/dev/null 2>&1
+  _cmd_update_patterns_body '${ca056_scratch}/preflight.md' '${ca056_scratch}/audit-report.md' '## Anti-Patterns' code CA056 2026-08-06
+" 2>&1)"
+check "CA-056 -- a heading that only textually matches a FENCED example is treated as novel, not a duplicate" \
+  "1" "$(printf '%s\n' "$ca056_body_out" | tail -1)"
+
+# ---- CA-154: the cross-reference comments name the whole convention (not just one sibling
+# file), and all eleven sentinel-based --help extractors now render the same form -------------
+check "CA-154 -- bin/edm-state's cross-reference names the whole bin/+evals convention" \
+  "every \`bin/\` helper and the three \`evals/\` drivers" "$(cat "$EDM_STATE")"
+check "CA-154 -- bin/edm-lint-artifacts' cross-reference names the whole bin/+evals convention" \
+  "every \`bin/\` helper and the three \`evals/\` drivers" "$(cat "${PLUGIN_DIR}/bin/edm-lint-artifacts")"
+ca154_form_b_hits="$(grep -rl 'sub(/^# ?/,""' "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/evals" 2>/dev/null | grep -v '/tests/' || true)"
+[[ -z "$ca154_form_b_hits" ]] \
+  && pass "CA-154 -- zero remaining form-B (leading-hash-stripping) print_help sites; all eleven agree" \
+  || fail "CA-154 -- form-B print_help site(s) still present: $ca154_form_b_hits"
+for ca154_f in edm-state edm-lint-artifacts edm-validate-prefix edm-init edm-check-vocabulary edm-check-grants edm-compare-eval edm-check-skill-sync; do
+  ca154_hit="$(grep -c '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "${PLUGIN_DIR}/bin/${ca154_f}" 2>/dev/null || true)"
+  [[ "${ca154_hit:-0}" -ge 1 ]] \
+    && pass "CA-154 -- bin/${ca154_f} uses the canonical (form-A) sentinel extractor" \
+    || fail "CA-154 -- bin/${ca154_f} does not use the canonical sentinel extractor form"
+done
+for ca154_ef in run-eval.sh score-artifacts.sh tiering-matrix.sh; do
+  ca154_hit="$(grep -c '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "${PLUGIN_DIR}/evals/${ca154_ef}" 2>/dev/null || true)"
+  [[ "${ca154_hit:-0}" -ge 1 ]] \
+    && pass "CA-154 -- evals/${ca154_ef} uses the canonical (form-A) sentinel extractor" \
+    || fail "CA-154 -- evals/${ca154_ef} does not use the canonical sentinel extractor form"
+done
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
