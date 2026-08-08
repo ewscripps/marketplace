@@ -3506,6 +3506,71 @@ cd "$T52_PREV_PWD"
 export HOME="$T52_PREV_HOME"
 rm -rf "$T52_HOME" "$T52_CWD"
 
+# ---- G10 (round-3 Wave 7c remediation): a torn/truncated session-JSONL line must not leak a
+# third value into attribution_mode -- it stays a strict scoped|whole-directory enum, and the
+# parse-failure count surfaces separately as unparseable_lines / the informational
+# TORN_TOKEN_LINES anomaly. -----------------------------------------------------------------------
+echo
+echo "G10 -- a torn JSONL line keeps attribution_mode two-valued and is counted separately"
+G10_HOME="$(mktemp -d "${TMP}/g10-home.XXXXXX")"
+G10_CWD="$(mktemp -d "${TMP}/g10-cwd.XXXXXX")"
+G10_PREV_HOME="${HOME:-}"
+G10_PREV_PWD="$(pwd)"
+cd "$G10_CWD"
+export HOME="$G10_HOME"
+G10_SESS_DIR="$(session_dir_for_test_cwd)"
+"$EDM_STATE" init G10TORN >/dev/null
+"$EDM_STATE" approve-gate G10TORN 1 >/dev/null
+"$EDM_STATE" approve-gate G10TORN 2 >/dev/null
+"$EDM_STATE" approve-gate G10TORN 3 >/dev/null
+"$EDM_STATE" phase-start G10TORN 6 >/dev/null
+sleep 1
+# One well-formed line, then a deliberately truncated line (no closing brace/quote) that fails
+# fromjson?, then a second well-formed line -- exercises the reduce loop's .bad accumulator with
+# real, not synthetic-count, torn input.
+stage_session_jsonl "$G10_SESS_DIR" "session-driving.jsonl" "claude-sonnet-4-7-20260701" 200 100
+printf '%s\n' '{"type":"assistant","timestamp":"2026-08-08T00:00:00Z","message":{model' \
+  >> "${G10_SESS_DIR}/session-driving.jsonl"
+jq -cn --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" '
+  {type:"assistant", timestamp:$ts, message:{model:"claude-sonnet-4-7-20260701",
+   usage:{input_tokens:50,output_tokens:25,cache_read_input_tokens:0,
+          cache_creation:{ephemeral_5m_input_tokens:0,ephemeral_1h_input_tokens:0}}}}
+' >> "${G10_SESS_DIR}/session-driving.jsonl"
+mkdir -p "$TMP/SRD/G10TORN/qc"
+echo "# QC Summary" > "$TMP/SRD/G10TORN/qc/qc-summary.md"
+"$EDM_STATE" phase-complete G10TORN 6 >/dev/null
+STATE_G10TORN="$TMP/SRD/G10TORN/.edm-state.json"
+g10_attr_mode="$(jq -r '.phase_durations["6_phase"].attribution_mode' "$STATE_G10TORN")"
+case "$g10_attr_mode" in
+  scoped|whole-directory)
+    pass "G10 -- attribution_mode stayed a documented two-value enum despite the torn line (${g10_attr_mode})"
+    ;;
+  *)
+    fail "G10 -- attribution_mode was '${g10_attr_mode}', expected scoped or whole-directory (never a third value)"
+    ;;
+esac
+g10_unparseable="$(jq -r '.phase_durations["6_phase"].unparseable_lines' "$STATE_G10TORN")"
+[[ "$g10_unparseable" == "1" ]] \
+  && pass "G10 -- unparseable_lines recorded exactly 1 for the single torn line" \
+  || fail "G10 -- unparseable_lines = '$g10_unparseable', expected 1"
+g10_input="$(jq -r '.phase_durations["6_phase"].tokens.input' "$STATE_G10TORN")"
+if [[ "$g10_attr_mode" == "scoped" ]]; then
+  [[ "$g10_input" -eq 250 ]] \
+    && pass "G10 -- scoped attribution still sums the two well-formed lines (input=250), skipping only the torn one" \
+    || fail "G10 -- scoped attribution recorded input=$g10_input, expected 250"
+fi
+g10_validate_out="$("$EDM_STATE" validate G10TORN 2>&1)"
+check "G10 -- edm-state validate reports TORN_TOKEN_LINES" "TORN_TOKEN_LINES" "$g10_validate_out"
+check "G10 -- TORN_TOKEN_LINES is informational, not blocking" "info  TORN_TOKEN_LINES" "$g10_validate_out"
+g10_validate_ec=0
+"$EDM_STATE" validate G10TORN >/dev/null 2>&1 || g10_validate_ec=$?
+[[ "$g10_validate_ec" -eq 0 ]] \
+  && pass "G10 -- TORN_TOKEN_LINES alone does not flip validate's exit code" \
+  || fail "G10 -- edm-state validate exited ${g10_validate_ec} on TORN_TOKEN_LINES alone, expected 0"
+cd "$G10_PREV_PWD"
+export HOME="$G10_PREV_HOME"
+rm -rf "$G10_HOME" "$G10_CWD"
+
 # ---- AC9 (positive, previous-generation model_used renders a non-zero cost): both a direct
 # compute_cost_usd call and a full phase-complete run with a previous-generation model in the
 # staged session JSONL. -------------------------------------------------------------------------

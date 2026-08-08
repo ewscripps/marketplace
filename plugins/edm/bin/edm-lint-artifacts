@@ -35,13 +35,16 @@
 #   scan-error         -- the class-4 mermaid-semicolon scan itself failed (a staging write or an
 #                         awk error) for this file; reported at line 0 rather than silently
 #                         contributing zero mermaid findings (CA-058)
+#   unreadable         -- the file could not be read (permissions); reported at line 0, and no
+#                         other class is evaluated for that file
 #
 # Output format: path:line: <class>: <snippet>
 # Exit codes: 0 = clean; 1 = one or more violations found; 2 = usage or environment error
 # (unknown flag, missing argument, edm-state absent, unresolvable prefix, unreadable --path
-# target). Direct callers, CI, and tests can distinguish exit 1 from exit 2. The current
-# PreToolUse git-commit hook blocks on any non-zero exit and prints one generic remediation line
-# for both classes of failure.
+# target). Direct callers, CI, and tests can distinguish exit 1 from exit 2, and so does the
+# PreToolUse git-commit hook: exit 1 (a real violation) makes the hook exit 2, the code that
+# actually blocks the commit; exit 2 (a setup/usage error) makes the hook exit 0 and report the
+# error to stderr without blocking. The two classes get distinct remediation lines.
 #
 # Ignore markers (place in .md files to suppress false positives on policy docs):
 #   <!-- edm-lint-ignore -->           -- ignores the NEXT line only
@@ -50,9 +53,11 @@
 #   Lines inside ``` code fences are also ignored automatically, including fences indented
 #   inside a numbered step or list item.
 #
-# Direct invocations honor EDM_SRD_ROOT and CLAUDE_PLUGIN_OPTION_SRD_ROOT so relocated trees are
-# linted correctly (AC9). The git-commit hook's staged-path matcher is still the literal `^SRD/`,
-# so relocating srd_root drops that automatic hook enforcement unless the hook is updated too.
+# Direct invocations and the PreToolUse git-commit hook both honor EDM_SRD_ROOT and
+# CLAUDE_PLUGIN_OPTION_SRD_ROOT (AC9) -- a relocated tree is linted and enforced at commit time
+# with no separate hook-matcher update needed, provided the value is repository-relative with no
+# trailing slash (an absolute srd_root cannot match git's repository-relative staged paths, so
+# the hook logs a diagnostic and does not block rather than silently linting nothing).
 # EDM-HELP-END
 set -euo pipefail
 

@@ -1154,7 +1154,11 @@ t58ac1_live="$({ grep -rl 'edm-test-coverage-auditor' "${PLUGIN_DIR}/agents/" 2>
 
 echo
 echo "T66 AC4 -- linter row, hook row and mode row are accurate (wrong class names gone)"
-check "T66 AC4 -- bin/ table describes four violation classes" "four violation classes" "$(cat "$CLAUDE_MD_T66")"
+# G19 (round-3 Wave 7c): the hardcoded "four violation classes" count drifted true as classes
+# were added, so the bin/ table row now points readers at `--help` instead of a count that goes
+# stale again the next time a class is added.
+check "T66 AC4 -- bin/ table points readers at edm-lint-artifacts --help rather than a hardcoded class count" \
+  "edm-lint-artifacts --help" "$(cat "$CLAUDE_MD_T66")"
 # CA-037: three deleted-text counts, none previously proving their own grep pattern could match
 # anything -- each gets a synthetic positive control run through the identical pattern first.
 t66ac4_wrong_classes_control="$(printf '%s\n' 'a row mentioning missing version header' | grep -c 'missing version header\|orphan file\|oversized ticket' || true)"
@@ -2207,11 +2211,14 @@ t43_bash4_hits="$(grep -nE 'declare -A|mapfile|readarray|\{fd\}' "$LINT_BIN" || 
   || fail "T43 AC11 -- found bash 4+ construct(s): $t43_bash4_hits"
 
 echo
-echo "T43 AC12 -- no hook change needed; CLAUDE.md documents four violation classes"
+echo "T43 AC12 -- no hook change needed; CLAUDE.md's bin/ table points at edm-lint-artifacts --help"
 check "T43 AC12 -- hooks.json's PreToolUse still invokes edm-lint-artifacts" \
   "edm-lint-artifacts" "$(cat "${PLUGIN_DIR}/hooks/hooks.json" 2>/dev/null)"
-check "T43 AC12 -- CLAUDE.md's bin/ table describes four violation classes" \
-  "four violation classes" "$CLAUDE_MD_CONTENT"
+# G19 (round-3 Wave 7c): the hardcoded "four violation classes" count drifted true as classes
+# were added (mermaid-semicolon, unterminated-fence, scan-error, unreadable all landed after
+# this row was first written) -- the row now points at --help rather than a count.
+check "T43 AC12 -- CLAUDE.md's bin/ table points readers at edm-lint-artifacts --help rather than a hardcoded class count" \
+  "edm-lint-artifacts --help" "$CLAUDE_MD_CONTENT"
 
 rm -rf "$T43_SCRATCH"
 # EDMV3-T43 end
@@ -5142,6 +5149,136 @@ g6_real_hits="$(printf '%s\n' "$g6_real_hit_lines" | grep -c . || true)"
   || fail "G6 -- found ${g6_real_hits} bc invocation(s) under plugins/edm/ (no CI image installs it):\n${g6_real_hit_lines}"
 
 rm -rf "$g6_scratch"
+
+# =================================================================================
+# G8 (round-3 Wave 7c): a trailing-slash or absolute srd_root must not silently disable
+# commit-time enforcement. Extracts the real PreToolUse git-commit hook command (same jq
+# extraction pattern T67 AC8 uses above) and runs it against a scratch git repo with stub
+# edm-state/edm-lint-artifacts binaries, so this exercises the actual shipped hook script, not a
+# hand-written stand-in for it.
+# =================================================================================
+g8_srd_root_case() {
+  local scratch cmdfile cmd out ec
+  scratch="$(mktemp -d "${TMP}/edm-g8.XXXXXX")" || { fail "G8 -- mktemp failed"; return 1; }
+  mkdir -p "${scratch}/SRD/FOOG8" "${scratch}/bin"
+  ( cd "$scratch" && git init -q && git config user.email t@t && git config user.name t )
+
+  cat > "${scratch}/bin/edm-state" <<'EOS'
+#!/bin/bash
+case "$1" in
+  resolve-dir) echo "SRD/FOOG8"; exit 0 ;;
+esac
+EOS
+  cat > "${scratch}/bin/edm-lint-artifacts" <<'EOS'
+#!/bin/bash
+echo "SRD/FOOG8/planning.md:1: unicode: synthetic violation"
+exit 1
+EOS
+  chmod +x "${scratch}/bin/edm-state" "${scratch}/bin/edm-lint-artifacts"
+  echo "hello" > "${scratch}/SRD/FOOG8/planning.md"
+  ( cd "$scratch" && git add SRD/FOOG8/planning.md bin/edm-state bin/edm-lint-artifacts )
+
+  cmdfile="${scratch}/hook-command.sh"
+  jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' \
+    "${PLUGIN_DIR}/hooks/hooks.json" > "$cmdfile" 2>/dev/null
+  cmd="$(cat "$cmdfile" 2>/dev/null || true)"
+  if [[ -z "$cmd" ]]; then
+    fail "G8 -- could not extract the PreToolUse git-commit hook command from hooks.json"
+    rm -rf "$scratch"
+    return 1
+  fi
+
+  # Case 1: a trailing slash (EDM_SRD_ROOT=SRD/) must not silently disable enforcement -- the
+  # original bug (an unnormalized trailing slash makes the awk prefix match against "SRD//",
+  # which never matches a real staged path, so `prefixes` was silently empty).
+  ec=0
+  out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" EDM_SRD_ROOT="SRD/" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 2 && "$out" == *"FOOG8"* ]] \
+    && pass "G8 -- EDM_SRD_ROOT=SRD/ (trailing slash) still detects the violation and blocks (hook exit 2)" \
+    || fail "G8 -- EDM_SRD_ROOT=SRD/ produced exit=${ec}, output: ${out} (expected exit 2 naming FOOG8 -- a trailing slash must not silently disable enforcement)"
+
+  # Case 2: a leading ./ combined with a trailing slash (EDM_SRD_ROOT=./SRD/).
+  ec=0
+  out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" EDM_SRD_ROOT="./SRD/" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 2 && "$out" == *"FOOG8"* ]] \
+    && pass "G8 -- EDM_SRD_ROOT=./SRD/ still detects the violation and blocks (hook exit 2)" \
+    || fail "G8 -- EDM_SRD_ROOT=./SRD/ produced exit=${ec}, output: ${out} (expected exit 2 naming FOOG8)"
+
+  # Case 3: an absolute srd_root cannot match git's repository-relative staged paths -- the fix
+  # prints a diagnostic and exits without blocking, rather than either crashing or silently
+  # linting nothing.
+  ec=0
+  out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" EDM_SRD_ROOT="/nonexistent/absolute/SRD" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 0 && "$out" == *"srd_root is absolute"* ]] \
+    && pass "G8 -- an absolute EDM_SRD_ROOT prints a diagnostic and does not block (hook exit 0, no crash)" \
+    || fail "G8 -- absolute EDM_SRD_ROOT produced exit=${ec}, output: ${out} (expected exit 0 with an absolute-path diagnostic)"
+
+  # Regression: the unset (default ./SRD) case still detects and blocks exactly as before.
+  ec=0
+  out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 2 && "$out" == *"FOOG8"* ]] \
+    && pass "G8 -- default (unset EDM_SRD_ROOT) still detects the violation and blocks (regression check)" \
+    || fail "G8 -- default EDM_SRD_ROOT produced exit=${ec}, output: ${out} (expected exit 2 naming FOOG8)"
+
+  rm -rf "$scratch"
+}
+echo
+echo "=== G8 (round-3 Wave 7c): a trailing-slash or absolute srd_root must not silently disable commit-time enforcement ==="
+g8_srd_root_case
+
+# =================================================================================
+# G9/G19 (round-3 Wave 7c): the two --help sentences this round's own remediation inverted are
+# corrected, and the "unreadable" violation class is documented. A positive control proves the
+# assertions actually catch the old (wrong) text if it were reintroduced, not just that the
+# current text happens to be absent.
+# =================================================================================
+echo
+echo "=== G9/G19: edm-lint-artifacts --help states the current exit-code/hook contract and lists 'unreadable' ==="
+g9_help_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --help 2>&1)"
+
+check_absent "G9 -- --help no longer claims the hook blocks on any non-zero exit with one generic line" \
+  "blocks on any non-zero" "$g9_help_out"
+check_absent "G9 -- --help no longer claims the hook's staged-path matcher is the literal ^SRD/" \
+  "literal \`^SRD/\`" "$g9_help_out"
+check "G9 -- --help states exit 1 makes the hook exit 2 (the blocking code)" \
+  "makes the hook exit 2" "$g9_help_out"
+check "G9 -- --help states exit 2 makes the hook exit 0 (does not block)" \
+  "makes the hook exit 0" "$g9_help_out"
+check "G19 -- --help's class list documents the 'unreadable' class" \
+  "unreadable" "$g9_help_out"
+
+# Positive control: the two old (wrong) phrasings are still individually recognizable strings, so
+# check_absent above is not vacuously passing against something the tests can't actually detect.
+g9_old_phrase_1="blocks on any non-zero exit and prints one generic remediation line"
+g9_old_phrase_2='staged-path matcher is still the literal `^SRD/`'
+case "$g9_old_phrase_1" in
+  *"blocks on any non-zero"*) pass "G9 (positive control) -- the retired phrase 1 text does contain the substring check_absent looks for" ;;
+  *) fail "G9 (positive control) -- the retired phrase 1 fixture does not contain the substring being checked; the assertion above would pass vacuously" ;;
+esac
+case "$g9_old_phrase_2" in
+  *"literal \`^SRD/\`"*) pass "G9 (positive control) -- the retired phrase 2 text does contain the substring check_absent looks for" ;;
+  *) fail "G9 (positive control) -- the retired phrase 2 fixture does not contain the substring being checked; the assertion above would pass vacuously" ;;
+esac
+
+echo
+echo "=== G9/G19: plugins/edm/CLAUDE.md's bin/ table row for edm-lint-artifacts matches the current contract ==="
+g9_claude_md="$(cat "${PLUGIN_DIR}/CLAUDE.md" 2>/dev/null)"
+check_absent "G9 -- CLAUDE.md's bin/ table no longer hardcodes 'four violation classes' for edm-lint-artifacts" \
+  "four violation classes" "$g9_claude_md"
+check "G9 -- CLAUDE.md's bin/ table points readers at --help instead of a hardcoded count" \
+  "edm-lint-artifacts --help" "$g9_claude_md"
+
+# =================================================================================
+# G64 (round-3 Wave 7c): CLAUDE.md's Hooks behavior table must not present edm-lint-artifacts's
+# own exit codes as if they were the hook's own -- the mapping is inverted (linter exit 1 -> hook
+# exit 2; linter exit 2 -> hook exit 0).
+# =================================================================================
+echo
+echo "=== G64: CLAUDE.md's Hooks behavior table disambiguates the linter's exit codes from the hook's own ==="
+check "G64 -- CLAUDE.md states linter exit 1 makes the hook exit 2 (the blocking code)" \
+  "makes the hook exit **2**" "$g9_claude_md"
+check "G64 -- CLAUDE.md states linter exit 2 makes the hook exit 0 (does not block)" \
+  "makes the hook exit 0" "$g9_claude_md"
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

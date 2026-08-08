@@ -274,7 +274,8 @@ session_dir_for_cwd() {
 
 # Sum cumulative tokens across the driving session's assistant messages whose timestamp >=
 # the given ISO 8601 time. Outputs JSON:
-#   {input, output, cache_read, cache_write_5m, cache_write_1h, model, attribution_mode}
+#   {input, output, cache_read, cache_write_5m, cache_write_1h, model, attribution_mode,
+#    unparseable_lines}
 # Cache writes are split by TTL because 5-min and 1-hour writes have different
 # per-million-token rates.
 #
@@ -288,13 +289,29 @@ session_dir_for_cwd() {
 # name), so this always yields exactly one candidate when the directory is non-empty.
 # attribution_mode records which path was taken ("scoped" vs the AC2 whole-directory fallback)
 # so a caller (cmd_phase_complete, cmd_audit_round_complete) can persist it and a reader can
-# tell which mode produced a given figure.
+# tell which mode produced a given figure. attribution_mode is a strict two-value enum
+# ("scoped" | "whole-directory") documented everywhere as such (see plugins/edm/CLAUDE.md's
+# state-field table and the wave6-smoke.sh enum-checking case) -- it never carries a third value
+# for a parse failure. unparseable_lines is the separate counter for that: a torn/truncated JSONL
+# line (routine, since Claude Code may still be appending to the driving session while this reads
+# it) is counted here rather than overloading attribution_mode to also signal a parse failure,
+# which would destroy the actual scoped-vs-whole-directory information attribution_mode exists to
+# carry (G10).
+#
+# G10 root cause: `EXPR?` (`try EXPR` with no catch) produces ZERO outputs on a parse error, not
+# `null` -- so a bare `($line | fromjson?) as $obj | ...` silently drops the entire reduce step
+# for a malformed line, which resets the WHOLE accumulator to `null` for every line after it
+# (jq's `reduce` semantics: a step with no output feeds `null` forward as the next state), wiping
+# every message already summed, not just miscounting one line. `(($line | fromjson?) // null) as
+# $obj` closes this: `//` supplies its right-hand default whenever the left side produces no
+# output (exactly the parse-error case here), so `$obj` is reliably bound to `null` on a genuine
+# parse failure and `.bad` increments correctly instead of the whole accumulator vanishing.
 get_session_tokens_since() {
   local since="$1"
   local sessions_dir
   sessions_dir="$(session_dir_for_cwd)"
   if [[ ! -d "$sessions_dir" ]] || ! ls "$sessions_dir"/*.jsonl >/dev/null 2>&1; then
-    echo '{"input":0,"output":0,"cache_read":0,"cache_write_5m":0,"cache_write_1h":0,"model":"unknown","attribution_mode":"whole-directory"}'
+    echo '{"input":0,"output":0,"cache_read":0,"cache_write_5m":0,"cache_write_1h":0,"model":"unknown","attribution_mode":"whole-directory","unparseable_lines":0}'
     return 0
   fi
 
@@ -323,7 +340,7 @@ get_session_tokens_since() {
         {msgs: [], bad: 0};
         if ($line | length) == 0 then .
         else
-          ($line | fromjson?) as $obj
+          (($line | fromjson?) // null) as $obj
           | if $obj == null then .bad += 1
             elif $obj.type == "assistant" and (($obj.timestamp // "") >= $since) then .msgs += [$obj]
             else .
@@ -338,7 +355,8 @@ get_session_tokens_since() {
           cache_write_5m: ([$msgs[].message.usage.cache_creation.ephemeral_5m_input_tokens // 0] | add // 0),
           cache_write_1h: ([$msgs[].message.usage.cache_creation.ephemeral_1h_input_tokens // 0] | add // 0),
           model: ($msgs[-1].message.model // "unknown"),
-          attribution_mode: (if $acc.bad > 0 then "unparseable" else $mode end)
+          attribution_mode: $mode,
+          unparseable_lines: $acc.bad
         }
     ' 2>/dev/null && return 0
   fi
@@ -353,7 +371,7 @@ get_session_tokens_since() {
       {msgs: [], bad: 0};
       if ($line | length) == 0 then .
       else
-        ($line | fromjson?) as $obj
+        (($line | fromjson?) // null) as $obj
         | if $obj == null then .bad += 1
           elif $obj.type == "assistant" and (($obj.timestamp // "") >= $since) then .msgs += [$obj]
           else .
@@ -368,9 +386,10 @@ get_session_tokens_since() {
         cache_write_5m: ([$msgs[].message.usage.cache_creation.ephemeral_5m_input_tokens // 0] | add // 0),
         cache_write_1h: ([$msgs[].message.usage.cache_creation.ephemeral_1h_input_tokens // 0] | add // 0),
         model: ($msgs[-1].message.model // "unknown"),
-        attribution_mode: (if $acc.bad > 0 then "unparseable" else $mode end)
+        attribution_mode: $mode,
+        unparseable_lines: $acc.bad
       }
-  ' 2>/dev/null || echo '{"input":0,"output":0,"cache_read":0,"cache_write_5m":0,"cache_write_1h":0,"model":"unknown","attribution_mode":"whole-directory"}'
+  ' 2>/dev/null || echo '{"input":0,"output":0,"cache_read":0,"cache_write_5m":0,"cache_write_1h":0,"model":"unknown","attribution_mode":"whole-directory","unparseable_lines":0}'
 }
 
 # Anthropic pricing per million tokens (USD), verified 2026-07-28.
@@ -1222,6 +1241,37 @@ state_anomalies() {
       "ZERO_TOKENS  phase_durations.\($k).tokens  model_used is \($v.model_used) but both input and output tokens are 0"
     else empty end
   ' 2>/dev/null)
+  # TORN_TOKEN_LINES (info -- G10 remediation, round-3 Wave 7c): unparseable_lines is a non-zero
+  # count of session-JSONL lines that get_session_tokens_since could not parse as JSON while
+  # summing tokens for a phase or audit round -- a routine race against Claude Code still
+  # appending to its own driving session file, not corrupted state. Informational only: it never
+  # flips cmd_validate's exit code, and attribution_mode stays a strict scoped|whole-directory
+  # enum regardless (a parse failure no longer overloads that field with a third value). Surfaced
+  # here so a reviewer can distinguish a low/zero token figure caused by skipped lines from one
+  # that is a genuine anomaly.
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    echo "info  $line"
+  done < <(echo "$state" | jq -r '
+    .phase_durations // {} | to_entries[] |
+    .key as $k | .value as $v |
+    if ((($v.unparseable_lines // 0) | tonumber) > 0) then
+      "TORN_TOKEN_LINES  phase_durations.\($k).unparseable_lines  \($v.unparseable_lines) session-JSONL line(s) failed to parse while computing tokens for phase \($k)"
+    else empty end
+  ' 2>/dev/null)
+  local ttl_type ttl_rounds_json
+  for ttl_type in code srd tickets; do
+    ttl_rounds_json="$(echo "$state" | jq -c --arg t "$ttl_type" "${AUDIT_ROUND_COERCE_JQ_DEF} (.audit_rounds[\$t] // 0 | coerce_round_entry).rounds" 2>/dev/null || echo '[]')"
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      echo "info  $line"
+    done < <(echo "$ttl_rounds_json" | jq -r --arg t "$ttl_type" '
+      .[] |
+      if ((.unparseable_lines // 0) | tonumber) > 0 then
+        "TORN_TOKEN_LINES  audit_rounds.\($t).rounds[\(.round)].unparseable_lines  \(.unparseable_lines) session-JSONL line(s) failed to parse while computing tokens for \($t) audit round \(.round)"
+      else empty end
+    ' 2>/dev/null)
+  done
   # OPEN_AUDIT_ROUND (info -- EDMV3-T51 AC4/AC5): an audit round was started
   # (audit-round-start) but never completed (audit-round-complete) -- the EDMV2 Phase-6
   # failure mode (phase-start fired, phase-complete never did) applied to a single audit
@@ -1900,7 +1950,7 @@ cmd_phase_complete() {
   fi
 
   # Compute tokens + cost outside the lock (read-only)
-  local input=0 output=0 cache_read=0 cw5m=0 cw1h=0 model="unknown" cost="0.0000" attribution_mode="whole-directory"
+  local input=0 output=0 cache_read=0 cw5m=0 cw1h=0 model="unknown" cost="0.0000" attribution_mode="whole-directory" unparseable_lines=0
   if [[ -n "$started_at" ]]; then
     local tokens
     tokens="$(get_session_tokens_since "$started_at")"
@@ -1911,6 +1961,7 @@ cmd_phase_complete() {
     cw1h="$(echo "$tokens" | jq -r '.cache_write_1h // 0')"
     model="$(echo "$tokens" | jq -r '.model // "unknown"')"
     attribution_mode="$(echo "$tokens" | jq -r '.attribution_mode // "whole-directory"')"
+    unparseable_lines="$(echo "$tokens" | jq -r '.unparseable_lines // 0')"
     cost="$(compute_cost_usd "$model" "$input" "$output" "$cache_read" "$cw5m" "$cw1h")"
   fi
 
@@ -1935,11 +1986,13 @@ cmd_phase_complete() {
       | . + {estimated_cost_usd: ($cost | tonumber)}
       | . + {human_baseline_usd: ($human_cost | tonumber)}
       | . + {attribution_mode: $am}
+      | . + {unparseable_lines: ($ul | tonumber)}
     )
     | .last_updated = $t
   ' --arg k "$key" --arg t "$now_ts" \
     --arg i "$input" --arg o "$output" --arg cr "$cache_read" --arg c5 "$cw5m" --arg c1 "$cw1h" \
-    --arg model "$model" --arg cost "$cost" --arg human_cost "$human_cost" --arg am "$attribution_mode"
+    --arg model "$model" --arg cost "$cost" --arg human_cost "$human_cost" --arg am "$attribution_mode" \
+    --arg ul "$unparseable_lines"
 
   # Record artifact hashes for phases that produce or revise gate-critical files.
   # Drift is detected in checkpoint-if-active by comparing these stored hashes to
@@ -3382,7 +3435,7 @@ _cmd_audit_round_complete_body() {
   [[ -z "$already_completed_at" ]] \
     || { echo "audit-round-complete: ${audit_type} round ${round_num} for ${prefix} is already completed (at ${already_completed_at}); a round may be completed only once" >&2; return 1; }
 
-  local input=0 output=0 cache_read=0 cw5m=0 cw1h=0 model="unknown" cost="0.0000" attribution_mode="whole-directory"
+  local input=0 output=0 cache_read=0 cw5m=0 cw1h=0 model="unknown" cost="0.0000" attribution_mode="whole-directory" unparseable_lines=0
   if [[ -n "$started_at" ]]; then
     local tokens
     tokens="$(get_session_tokens_since "$started_at")"
@@ -3393,6 +3446,7 @@ _cmd_audit_round_complete_body() {
     cw1h="$(echo "$tokens" | jq -r '.cache_write_1h // 0')"
     model="$(echo "$tokens" | jq -r '.model // "unknown"')"
     attribution_mode="$(echo "$tokens" | jq -r '.attribution_mode // "whole-directory"')"
+    unparseable_lines="$(echo "$tokens" | jq -r '.unparseable_lines // 0')"
     cost="$(compute_cost_usd "$model" "$input" "$output" "$cache_read" "$cw5m" "$cw1h")"
   fi
 
@@ -3407,7 +3461,8 @@ _cmd_audit_round_complete_body() {
               tokens: {input: (\$i|tonumber), output: (\$o|tonumber), cache_read: (\$cr|tonumber), cache_write_5m: (\$c5|tonumber), cache_write_1h: (\$c1|tonumber)},
               model_used: \$model,
               estimated_cost_usd: (\$cost|tonumber),
-              attribution_mode: \$am
+              attribution_mode: \$am,
+              unparseable_lines: (\$ul|tonumber)
             }
           else . end
         )) as \$new_rounds
@@ -3415,7 +3470,8 @@ _cmd_audit_round_complete_body() {
       | .last_updated = \$ts
     " --arg t "$audit_type" --arg rn "$round_num" --arg ts "$now_ts" \
       --arg i "$input" --arg o "$output" --arg cr "$cache_read" --arg c5 "$cw5m" --arg c1 "$cw1h" \
-      --arg model "$model" --arg cost "$cost" --arg am "$attribution_mode" || return 1
+      --arg model "$model" --arg cost "$cost" --arg am "$attribution_mode" \
+      --arg ul "$unparseable_lines" || return 1
 
   printf '%s\t%s\n' "$round_num" "$cost"
 }
