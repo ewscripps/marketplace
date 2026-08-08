@@ -68,8 +68,8 @@ first_field="$(echo "$anomaly_line" | awk -F'  ' '{print $1}')"
 echo
 echo "T05 AC3 -- info-only validate exits 0 with output"
 set +e
-info_out="$("$EDM_STATE" validate ANOMFMT 2>&1)"
-info_ec=$?
+info_ec=0
+info_out="$("$EDM_STATE" validate ANOMFMT 2>&1)" || info_ec=$?
 set -e
 [[ $info_ec -eq 0 ]] && pass "info-only validate exits 0" || fail "info-only validate exited $info_ec"
 check "info-only validate prints the SIZE_UNKNOWN anomaly" "SIZE_UNKNOWN" "$info_out"
@@ -90,8 +90,8 @@ jq '.phase_durations["1_phase"].started_at = "2026-01-02T00:00:00Z"
   "$STATE_ANOMBLK" > "$STATE_ANOMBLK.tmp" && mv "$STATE_ANOMBLK.tmp" "$STATE_ANOMBLK"
 
 set +e
-blk_out="$("$EDM_STATE" validate ANOMBLK 2>&1)"
-blk_ec=$?
+blk_ec=0
+blk_out="$("$EDM_STATE" validate ANOMBLK 2>&1)" || blk_ec=$?
 set -e
 [[ $blk_ec -eq 3 ]] && pass "single blocking anomaly (TIME_ORDER) exits 3" || fail "exited $blk_ec, expected 3"
 check "TIME_ORDER anomaly text present" "TIME_ORDER" "$blk_out"
@@ -118,8 +118,8 @@ jq '.phase_durations["1_phase"].started_at = "2026-01-02T00:00:00Z"
   "$STATE_ANOMBOTH" > "$STATE_ANOMBOTH.tmp" && mv "$STATE_ANOMBOTH.tmp" "$STATE_ANOMBOTH"
 
 set +e
-both_out="$("$EDM_STATE" validate ANOMBOTH 2>&1)"
-both_ec=$?
+both_ec=0
+both_out="$("$EDM_STATE" validate ANOMBOTH 2>&1)" || both_ec=$?
 set -e
 [[ $both_ec -eq 3 ]] && pass "both classes present exits 3" || fail "exited $both_ec, expected 3"
 check "both-classes output lists SIZE_UNKNOWN (info)" "info  SIZE_UNKNOWN" "$both_out"
@@ -140,8 +140,8 @@ jq '.phase_durations["1_phase"].model_used = "claude-test"
     | .phase_durations["1_phase"].tokens.output = 0' \
   "$STATE_ANOMZT" > "$STATE_ANOMZT.tmp" && mv "$STATE_ANOMZT.tmp" "$STATE_ANOMZT"
 set +e
-zt_out="$("$EDM_STATE" validate ANOMZT 2>&1)"
-zt_ec=$?
+zt_ec=0
+zt_out="$("$EDM_STATE" validate ANOMZT 2>&1)" || zt_ec=$?
 set -e
 [[ $zt_ec -eq 3 ]] && pass "ZERO_TOKENS still exits 3 (blocking, unchanged)" || fail "exited $zt_ec, expected 3"
 check "ZERO_TOKENS carries class 'blocking'" "blocking  ZERO_TOKENS" "$zt_out"
@@ -367,8 +367,8 @@ GITSHIM_EOF
 
   local init_out init_ec
   set +e
-  init_out="$(edm-init T1CKOF 2>&1)"
-  init_ec=$?
+  init_ec=0
+  init_out="$(edm-init T1CKOF 2>&1)" || init_ec=$?
   set -e
   [[ $init_ec -eq 0 ]] \
     && pass "T01 AC4 -- checkout failure keeps origin branch: edm-init still exits 0" \
@@ -417,8 +417,8 @@ t01_case_non_worktree() {
 
   local init_out init_ec
   set +e
-  init_out="$(edm-init T1NOG 2>&1)"
-  init_ec=$?
+  init_ec=0
+  init_out="$(edm-init T1NOG 2>&1)" || init_ec=$?
   set -e
   [[ $init_ec -eq 0 ]] \
     && pass "T01 AC1 -- correction is a no-op outside a git worktree: edm-init still exits 0" \
@@ -590,6 +590,65 @@ mutation_hits="$(sed -n '/^cmd_approve_gate() {/,/^}/p' "$EDM_STATE" | grep -c '
   || fail "expected >=3 rmw_state call sites inside cmd_approve_gate, found $mutation_hits"
 
 # =================================================================================
+# G1 (round-3 Wave 7b, CA-182 REOPENED): the code-audit gate is unconditionally approvable at
+# schema_version < 2. Previously the convergence precheck ran ONLY when schema_version >= 2 --
+# `_cmd_init_render` always writes the literal schema_version: 1, so for EVERY initiative
+# created by the current plugin version the precheck was environmentally unreachable and the
+# gate was approvable regardless of open findings. Fixed: the precheck now always runs; only its
+# exit-3 (no JSONL ledger) arm still degrades, and only for a pre-wave-B initiative.
+# =================================================================================
+echo
+echo "G1 -- approve-gate code-audit refuses on a blocking finding even at schema_version 1"
+"$EDM_STATE" init G1SCHEMA1 >/dev/null
+STATE_G1SCHEMA1="$TMP/SRD/G1SCHEMA1/.edm-state.json"
+g1s1_schema_pre="$(jq -r '.schema_version' "$STATE_G1SCHEMA1")"
+[[ "$g1s1_schema_pre" == "1" ]] \
+  && pass "G1 -- edm-init writes schema_version 1 by default (the environmentally-unreachable case CA-182 exploited)" \
+  || fail "G1 -- edm-init wrote schema_version '${g1s1_schema_pre}', expected 1 (test fixture assumption invalid)"
+mkdir -p "$TMP/SRD/G1SCHEMA1/code-audit"
+G1S1_JSONL="$TMP/SRD/G1SCHEMA1/code-audit/findings-ledger.jsonl"
+cat > "$G1S1_JSONL" <<'EOF'
+{"schema":1,"id":"CA-901","sev":"P0","status":"open","lenses":["L1"],"confidence":"high","component":"a.py","title":"G1 regression fixture -- open P0","raised_round":1,"resolved_round":null,"round":1,"round_type":"full"}
+EOF
+check_refuses_and_leaves_state "G1 -- approve-gate code-audit refuses at schema_version 1 with an open P0" \
+  "code-audit gate refused" "$STATE_G1SCHEMA1" "$EDM_STATE" approve-gate G1SCHEMA1 code-audit
+g1s1_converged="$(jq -r '.code_audit_converged' "$STATE_G1SCHEMA1")"
+[[ "$g1s1_converged" == "false" ]] \
+  && pass "G1 -- code_audit_converged is still unset (false) after the refusal (the gate-bypass regression, closed)" \
+  || fail "G1 -- code_audit_converged = '${g1s1_converged}', expected false"
+
+# ---- Mirror (negative): schema_version 2 with the identical fixture -- proves the pre-existing
+# schema>=2 refusal path (T28 AC12 above) is unchanged by this fix. -------------------------
+echo
+echo "G1 -- mirror: approve-gate code-audit refuses identically at schema_version 2 (pass path unchanged)"
+"$EDM_STATE" init G1SCHEMA2 >/dev/null
+STATE_G1SCHEMA2="$TMP/SRD/G1SCHEMA2/.edm-state.json"
+jq '.schema_version = 2' "$STATE_G1SCHEMA2" > "${STATE_G1SCHEMA2}.tmp" && mv "${STATE_G1SCHEMA2}.tmp" "$STATE_G1SCHEMA2"
+mkdir -p "$TMP/SRD/G1SCHEMA2/code-audit"
+G1S2_JSONL="$TMP/SRD/G1SCHEMA2/code-audit/findings-ledger.jsonl"
+cp "$G1S1_JSONL" "$G1S2_JSONL"
+"$EDM_STATE" audit-round-start G1SCHEMA2 code >/dev/null   # full round (no --lenses)
+check_refuses_and_leaves_state "G1 mirror -- approve-gate code-audit refuses at schema_version 2 with an open P0" \
+  "code-audit gate refused" "$STATE_G1SCHEMA2" "$EDM_STATE" approve-gate G1SCHEMA2 code-audit
+g1s2_converged="$(jq -r '.code_audit_converged' "$STATE_G1SCHEMA2")"
+[[ "$g1s2_converged" == "false" ]] \
+  && pass "G1 mirror -- code_audit_converged is still unset (false) after the refusal" \
+  || fail "G1 mirror -- code_audit_converged = '${g1s2_converged}', expected false"
+
+# ---- Mirror (positive): the same schema_version 2 initiative, once remediated, still
+# approves cleanly -- the existing pass path is provably unaffected by this fix. -------------
+echo
+echo "G1 -- mirror positive: a converged initiative at schema_version 2 still approves cleanly"
+jq -cs 'map(.status = "fixed") | .[]' "$G1S2_JSONL" > "${G1S2_JSONL}.tmp" && mv "${G1S2_JSONL}.tmp" "$G1S2_JSONL"
+"$EDM_STATE" approve-gate G1SCHEMA2 code-audit >/dev/null \
+  && pass "G1 mirror positive -- approve-gate succeeds once the blocking finding is remediated" \
+  || fail "G1 mirror positive -- approve-gate still refused after remediation"
+g1s2_converged_after="$(jq -r '.code_audit_converged' "$STATE_G1SCHEMA2")"
+[[ "$g1s2_converged_after" == "true" ]] \
+  && pass "G1 mirror positive -- code_audit_converged flips to true after remediation" \
+  || fail "G1 mirror positive -- code_audit_converged = '${g1s2_converged_after}', expected true"
+
+# =================================================================================
 # EDMV3-T13: gate enforcement moves into the kernel; gate-check becomes complete
 # =================================================================================
 
@@ -622,8 +681,8 @@ echo "T13 AC3 -- each of the eight phase-skill tokens resolves"
 tok_resolved=0
 for tok in plan srd audit-srd tickets audit-tickets implement code-audit verify-runtime; do
   set +e
-  tok_out="$("$EDM_STATE" gate-check T13TOK "$tok" 2>&1)"
-  tok_ec=$?
+  tok_ec=0
+  tok_out="$("$EDM_STATE" gate-check T13TOK "$tok" 2>&1)" || tok_ec=$?
   set -e
   # A resolved token either passes (plan, no prerequisite) or fails naming a specific numeric
   # Gate -- neither is the old silent `*) return 0` fall-through this ticket removes.
@@ -1052,8 +1111,8 @@ echo "T17 AC3 -- CONVERGED_NO_APPROVAL fires on a hand-set flag with four fields
 STATE_T17CONV="$TMP/SRD/T17CONV/.edm-state.json"
 jq '.code_audit_converged = true' "$STATE_T17CONV" > "$STATE_T17CONV.tmp" && mv "$STATE_T17CONV.tmp" "$STATE_T17CONV"
 set +e
-conv_out="$("$EDM_STATE" validate T17CONV 2>&1)"
-conv_ec=$?
+conv_ec=0
+conv_out="$("$EDM_STATE" validate T17CONV 2>&1)" || conv_ec=$?
 set -e
 check "AC3 -- CONVERGED_NO_APPROVAL present" "blocking  CONVERGED_NO_APPROVAL  code_audit_converged" "$conv_out"
 [[ $conv_ec -eq 3 ]] && pass "AC3 -- CONVERGED_NO_APPROVAL is class blocking (validate exits 3)" \
@@ -1074,8 +1133,8 @@ echo
 echo "T17 AC4 -- an initiative whose only anomaly is informational exits 0"
 "$EDM_STATE" init T17SEV >/dev/null
 set +e
-sev_out="$("$EDM_STATE" validate T17SEV 2>&1)"
-sev_ec=$?
+sev_ec=0
+sev_out="$("$EDM_STATE" validate T17SEV 2>&1)" || sev_ec=$?
 set -e
 echo "exit=$sev_ec"
 [[ $sev_ec -eq 0 ]] && pass "AC4 -- informational-only anomalies leave validate exit 0" \
@@ -1248,8 +1307,8 @@ STATE_MIGSCH1="$TMP/SRD/MIGSCH1/.edm-state.json"
 jq 'del(.schema_version)' "$STATE_MIGSCH1" > "$STATE_MIGSCH1.tmp" && mv "$STATE_MIGSCH1.tmp" "$STATE_MIGSCH1"
 
 set +e
-migsch1_validate_out="$("$EDM_STATE" validate MIGSCH1 2>&1)"
-migsch1_validate_ec=$?
+migsch1_validate_ec=0
+migsch1_validate_out="$("$EDM_STATE" validate MIGSCH1 2>&1)" || migsch1_validate_ec=$?
 set -e
 [[ $migsch1_validate_ec -eq 0 ]] && pass "AC6 -- SCHEMA_VERSION_MISSING does not flip validate's exit code" \
   || fail "AC6 -- validate exited $migsch1_validate_ec, expected 0"
@@ -1487,8 +1546,8 @@ echo "T11 AC8 -- legacy phase-complete warns and proceeds"
 STATE_T11LEGACY="$TMP/SRD/T11LEGACY/.edm-state.json"
 jq 'del(.schema_version)' "$STATE_T11LEGACY" > "$STATE_T11LEGACY.tmp" && mv "$STATE_T11LEGACY.tmp" "$STATE_T11LEGACY"
 set +e
-legacy_pc_out="$("$EDM_STATE" phase-complete T11LEGACY 1 2>&1)"
-legacy_pc_ec=$?
+legacy_pc_ec=0
+legacy_pc_out="$("$EDM_STATE" phase-complete T11LEGACY 1 2>&1)" || legacy_pc_ec=$?
 set -e
 check "T11 AC8 -- legacy phase-complete warns rather than hard-failing" \
   "[warn] legacy initiative" "$legacy_pc_out"
@@ -1923,8 +1982,8 @@ jq -n '{
 }' > "$STATE_T14LEGACY"
 
 # check 1: phase-complete artifact verification (T11) -- no planning.md on disk, must not die.
-t14leg_pc1_out="$("$EDM_STATE" phase-complete T14LEGACY 1 2>&1)"
-t14leg_pc1_ec=$?
+t14leg_pc1_ec=0
+t14leg_pc1_out="$("$EDM_STATE" phase-complete T14LEGACY 1 2>&1)" || t14leg_pc1_ec=$?
 check "T14 AC2 -- phase-complete artifact check names 'phase 1' when it warns" \
   "[warn] legacy initiative" "$t14leg_pc1_out"
 check "T14 AC2 -- phase-complete artifact check names the skipped phase" \
@@ -1933,16 +1992,16 @@ check "T14 AC2 -- phase-complete artifact check names the skipped phase" \
   || fail "T14 AC1 -- phase-complete artifact check hard-failed on a legacy file (exit $t14leg_pc1_ec)"
 
 # check 2: phase-complete open-PARTIAL check (T11) -- an open PARTIAL exists, must not die.
-t14leg_pc6_out="$("$EDM_STATE" phase-complete T14LEGACY 6 2>&1)"
-t14leg_pc6_ec=$?
+t14leg_pc6_ec=0
+t14leg_pc6_out="$("$EDM_STATE" phase-complete T14LEGACY 6 2>&1)" || t14leg_pc6_ec=$?
 check "T14 AC2 -- phase-complete PARTIAL check names 'phase 6' when it warns" \
   "phase 6" "$t14leg_pc6_out"
 [[ $t14leg_pc6_ec -eq 0 ]] && pass "T14 AC1 -- phase-complete open-PARTIAL check (T11) warns and proceeds despite an unresolved PARTIAL" \
   || fail "T14 AC1 -- phase-complete open-PARTIAL check hard-failed on a legacy file (exit $t14leg_pc6_ec)"
 
 # check 3: archive lifecycle checks (T12) -- no gates approved, no completed_at, must not die.
-t14leg_arch_out="$("$EDM_STATE" archive T14LEGACY 2>&1)"
-t14leg_arch_ec=$?
+t14leg_arch_ec=0
+t14leg_arch_out="$("$EDM_STATE" archive T14LEGACY 2>&1)" || t14leg_arch_ec=$?
 check "T14 AC2 -- archive names the skipped check class when it warns" \
   "skipping wave-A lifecycle checks" "$t14leg_arch_out"
 [[ $t14leg_arch_ec -eq 0 ]] && pass "T14 AC1 -- archive lifecycle checks (T12) warn and proceed rather than hard-failing" \
@@ -1959,8 +2018,8 @@ mkdir -p "$TMP/SRD/T14LEGSTART"
 STATE_T14LEGSTART="$TMP/SRD/T14LEGSTART/.edm-state.json"
 jq -n '{prefix: "T14LEGSTART", mode: "standard", current_phase: 1, gates_approved: [], phase_durations: {}, last_updated: "2020-01-01T00:00:00Z"}' \
   > "$STATE_T14LEGSTART"
-t14leg_ps_out="$("$EDM_STATE" phase-start T14LEGSTART 2 2>&1)"
-t14leg_ps_ec=$?
+t14leg_ps_ec=0
+t14leg_ps_out="$("$EDM_STATE" phase-start T14LEGSTART 2 2>&1)" || t14leg_ps_ec=$?
 check "T14 AC2 -- phase-start names the skipped check when it warns" \
   "skipping kernel gate enforcement" "$t14leg_ps_out"
 [[ $t14leg_ps_ec -eq 0 ]] && pass "T14 AC1 -- phase-start kernel gate check (T13) warns and proceeds rather than hard-failing" \
@@ -1986,27 +2045,27 @@ STATE_T14EDMV2="$TMP/SRD/T14EDMV2/.edm-state.json"
 cp "$REAL_EDMV2_FIXTURE" "$STATE_T14EDMV2"
 jq '.prefix = "T14EDMV2"' "$STATE_T14EDMV2" > "$STATE_T14EDMV2.tmp" && mv "$STATE_T14EDMV2.tmp" "$STATE_T14EDMV2"
 
-t14edmv2_get_out="$("$EDM_STATE" get T14EDMV2 2>&1)"
-t14edmv2_get_ec=$?
+t14edmv2_get_ec=0
+t14edmv2_get_out="$("$EDM_STATE" get T14EDMV2 2>&1)" || t14edmv2_get_ec=$?
 [[ $t14edmv2_get_ec -eq 0 ]] && pass "T14 AC4 -- edm-state get reads the copied EDMV2 fixture without error" \
   || fail "T14 AC4 -- edm-state get errored on the copied EDMV2 fixture (exit $t14edmv2_get_ec)"
 
-t14edmv2_validate_out="$("$EDM_STATE" validate T14EDMV2 2>&1)"
-t14edmv2_validate_ec=$?
+t14edmv2_validate_ec=0
+t14edmv2_validate_out="$("$EDM_STATE" validate T14EDMV2 2>&1)" || t14edmv2_validate_ec=$?
 check "T14 AC4 -- validate flags the missing schema_version informationally" \
   "SCHEMA_VERSION_MISSING" "$t14edmv2_validate_out"
 [[ $t14edmv2_validate_ec -eq 0 ]] && pass "T14 AC4 -- validate exits 0 (informational, not blocking)" \
   || fail "T14 AC4 -- validate exited $t14edmv2_validate_ec, expected 0"
 
-t14edmv2_pc_out="$("$EDM_STATE" phase-complete T14EDMV2 6 2>&1)"
-t14edmv2_pc_ec=$?
+t14edmv2_pc_ec=0
+t14edmv2_pc_out="$("$EDM_STATE" phase-complete T14EDMV2 6 2>&1)" || t14edmv2_pc_ec=$?
 check "T14 AC4 -- phase-complete warns and proceeds against the real fixture" \
   "[warn] legacy initiative" "$t14edmv2_pc_out"
 [[ $t14edmv2_pc_ec -eq 0 ]] && pass "T14 AC4 -- phase-complete succeeds against the real fixture (schema_version absent, mode present)" \
   || fail "T14 AC4 -- phase-complete hard-failed against the real fixture (exit $t14edmv2_pc_ec)"
 
-t14edmv2_arch_out="$("$EDM_STATE" archive T14EDMV2 2>&1)"
-t14edmv2_arch_ec=$?
+t14edmv2_arch_ec=0
+t14edmv2_arch_out="$("$EDM_STATE" archive T14EDMV2 2>&1)" || t14edmv2_arch_ec=$?
 check "T14 AC4 -- archive warns and proceeds against the real fixture" \
   "[warn] legacy initiative" "$t14edmv2_arch_out"
 [[ $t14edmv2_arch_ec -eq 0 ]] && pass "T14 AC4 -- archive succeeds end-to-end against the real fixture" \
@@ -2052,8 +2111,8 @@ jq -n '{
 # PARTIAL check's degradation, not the >=1 artifact check's.
 mkdir -p "$TMP/SRD/T14MIDDLE/qc"
 echo "# QC summary" > "$TMP/SRD/T14MIDDLE/qc/qc-summary.md"
-t14mid_out="$("$EDM_STATE" phase-complete T14MIDDLE 6 2>&1)"
-t14mid_ec=$?
+t14mid_ec=0
+t14mid_out="$("$EDM_STATE" phase-complete T14MIDDLE 6 2>&1)" || t14mid_ec=$?
 check "T14 AC6 -- schema_version 1 (< 2) warn-and-proceeds through the version-2 PARTIAL check, naming it" \
   "schema_version 1 < 2" "$t14mid_out"
 [[ $t14mid_ec -eq 0 ]] && pass "T14 AC6 -- the middle class (present-but-below) is reachable and does not hard-fail" \
@@ -2086,8 +2145,8 @@ echo "T14 AC8 -- legacy artifact/state shapes read without error"
 "$EDM_STATE" init T14MDLEDGER >/dev/null
 mkdir -p "$TMP/SRD/T14MDLEDGER/code-audit"
 echo "# Findings Ledger (markdown-only, pre-JSONL shape)" > "$TMP/SRD/T14MDLEDGER/code-audit/findings-ledger.md"
-t14mdledger_out="$("$EDM_STATE" get T14MDLEDGER 2>&1)"
-t14mdledger_ec=$?
+t14mdledger_ec=0
+t14mdledger_out="$("$EDM_STATE" get T14MDLEDGER 2>&1)" || t14mdledger_ec=$?
 [[ $t14mdledger_ec -eq 0 ]] && pass "T14 AC8 -- markdown-only findings ledger: edm-state get reads without error" \
   || fail "T14 AC8 -- edm-state get errored with a markdown-only findings ledger present (exit $t14mdledger_ec)"
 
@@ -2095,8 +2154,8 @@ t14mdledger_ec=$?
 # closure/resolution field -- that shape does not exist until EDMV3-T28, wave B).
 "$EDM_STATE" init T14PVMSHAPE >/dev/null
 "$EDM_STATE" record-partial-verdict T14PVMSHAPE T14PVMSHAPE-T01 PARTIAL "pre-closure shape" >/dev/null
-t14pvm_out="$("$EDM_STATE" get T14PVMSHAPE 2>&1)"
-t14pvm_ec=$?
+t14pvm_ec=0
+t14pvm_out="$("$EDM_STATE" get T14PVMSHAPE 2>&1)" || t14pvm_ec=$?
 [[ $t14pvm_ec -eq 0 ]] && pass "T14 AC8 -- pre-closure partial_verdict_map shape: edm-state get reads without error" \
   || fail "T14 AC8 -- edm-state get errored on the pre-closure partial_verdict_map shape (exit $t14pvm_ec)"
 check "T14 AC8 -- pre-closure partial_verdict_map entry is present as recorded" \
@@ -2112,8 +2171,8 @@ check "T14 AC8 -- pre-closure partial_verdict_map entry is present as recorded" 
 # pre-removal state file actually looks like on disk.
 jq '.lifecycle_mode = "partial"' "$TMP/SRD/T14LCPARTIAL/.edm-state.json" > "$TMP/lcp.tmp" \
   && mv "$TMP/lcp.tmp" "$TMP/SRD/T14LCPARTIAL/.edm-state.json"
-t14lcpartial_out="$("$EDM_STATE" get T14LCPARTIAL 2>&1)"
-t14lcpartial_ec=$?
+t14lcpartial_ec=0
+t14lcpartial_out="$("$EDM_STATE" get T14LCPARTIAL 2>&1)" || t14lcpartial_ec=$?
 [[ $t14lcpartial_ec -eq 0 ]] && pass "T14 AC8 -- lifecycle_mode: partial state file: edm-state get reads without error" \
   || fail "T14 AC8 -- edm-state get errored on a lifecycle_mode: partial state file (exit $t14lcpartial_ec)"
 check "T14 AC8 -- lifecycle_mode: partial is recorded as set" \
@@ -2126,8 +2185,8 @@ check "T14 AC8 -- lifecycle_mode: partial is recorded as set" \
 # (class/CODE/field/description, EDMV3-T05 AC2) at class `info`, so it is reported without
 # flipping the exit code -- reading a pre-removal file is not a defect.
 set +e
-t14lcpartial_val="$("$EDM_STATE" validate T14LCPARTIAL 2>&1)"
-t14lcpartial_val_ec=$?
+t14lcpartial_val_ec=0
+t14lcpartial_val="$("$EDM_STATE" validate T14LCPARTIAL 2>&1)" || t14lcpartial_val_ec=$?
 set -e
 check "T14 AC8 / T59 AC3 -- LEGACY_LIFECYCLE_MODE anomaly present in canonical four-field format" \
   "info  LEGACY_LIFECYCLE_MODE  lifecycle_mode" "$t14lcpartial_val"
@@ -2208,8 +2267,8 @@ echo "T59 AC2 -- set-mode lifecycle_mode partial refused, naming the three survi
 "$EDM_STATE" init T59ENUM >/dev/null
 STATE_T59ENUM="$TMP/SRD/T59ENUM/.edm-state.json"
 set +e
-t59enum_out="$("$EDM_STATE" set-mode T59ENUM lifecycle_mode partial 2>&1)"
-t59enum_ec=$?
+t59enum_ec=0
+t59enum_out="$("$EDM_STATE" set-mode T59ENUM lifecycle_mode partial 2>&1)" || t59enum_ec=$?
 set -e
 [[ $t59enum_ec -ne 0 ]] \
   && pass "T59 AC2 -- set-mode lifecycle_mode partial exits non-zero" \
@@ -2252,8 +2311,8 @@ t59enum_live="$(jq -r '.lifecycle_mode' "$STATE_T59ENUM")"
 echo
 echo "T61 AC6 -- path-traversal prefix refused"
 set +e
-t61_trav_out="$("$EDM_STATE" resolve-dir '../../etc' 2>&1)"
-t61_trav_ec=$?
+t61_trav_ec=0
+t61_trav_out="$("$EDM_STATE" resolve-dir '../../etc' 2>&1)" || t61_trav_ec=$?
 set -e
 [[ $t61_trav_ec -ne 0 ]] && pass "T61 AC6 -- path-traversal prefix exits non-zero" \
   || fail "T61 AC6 -- path-traversal prefix exited 0 (expected non-zero)"
@@ -2298,8 +2357,8 @@ t62ac3_get_ec=0
 "$EDM_STATE" get T62AC3 >/dev/null 2>&1 || t62ac3_get_ec=$?
 [[ $t62ac3_get_ec -eq 0 ]] && pass "T62 AC3 -- legacy empty-rationale entry reads without error" \
   || fail "T62 AC3 -- edm-state get errored on a legacy empty-rationale entry"
-t62ac3_validate_out="$("$EDM_STATE" validate T62AC3 2>&1)"
-t62ac3_validate_ec=$?
+t62ac3_validate_ec=0
+t62ac3_validate_out="$("$EDM_STATE" validate T62AC3 2>&1)" || t62ac3_validate_ec=$?
 check "T62 AC3 -- validate reports the canonical four-field EMPTY_SKIP_RATIONALE line" \
   "info  EMPTY_SKIP_RATIONALE  skipped_phases" "$t62ac3_validate_out"
 check "T62 AC3 -- the anomaly names the phase and the initiative" "phase 3 of T62AC3" "$t62ac3_validate_out"
@@ -2347,8 +2406,8 @@ check "T62 AC6 -- HANDOFF.md names the skipped phase and its rationale" \
 # ---- AC7 (validate reports every active exemption, informationally) -----------------------
 echo
 echo "T62 AC7 -- validate reports every active exemption informationally, exit 0"
-t62ac7_out="$("$EDM_STATE" validate T62AC1 2>&1)"
-t62ac7_ec=$?
+t62ac7_ec=0
+t62ac7_out="$("$EDM_STATE" validate T62AC1 2>&1)" || t62ac7_ec=$?
 check "T62 AC7 -- validate reports the canonical four-field ACTIVE_EXEMPTION line" \
   "info  ACTIVE_EXEMPTION  skipped_phases" "$t62ac7_out"
 [[ $t62ac7_ec -eq 0 ]] && pass "T62 AC7 -- validate exits 0 with an active exemption present" \
@@ -2511,8 +2570,8 @@ check "T26 AC6 -- render-ledger writes via write_atomic helper (atomic temp-file
   "$(grep -n 'write_atomic.*md_path\|write_atomic.*ledger' "$EDM_STATE" || true)"
 
 # ---- AC8 (lint clean, minus the not-yet-landed Mermaid class from EDMV3-T43) ---------------
-t26_lint_out="$(bash "${SCRIPT_DIR}/../edm-lint-artifacts" --path "$T26_MD" 2>&1)"
-t26_lint_ec=$?
+t26_lint_ec=0
+t26_lint_out="$(bash "${SCRIPT_DIR}/../edm-lint-artifacts" --path "$T26_MD" 2>&1)" || t26_lint_ec=$?
 [[ $t26_lint_ec -eq 0 ]] && pass "T26 AC8 -- edm-lint-artifacts --path exits 0 against the rendered ledger" \
   || fail "T26 AC8 -- edm-lint-artifacts --path exited ${t26_lint_ec}: ${t26_lint_out}"
 
@@ -2638,8 +2697,8 @@ set -e
 mkdir -p "${T28_DIR}/code-audit"
 : > "$T28_JSONL"
 "$EDM_STATE" audit-round-start T28CONV code >/dev/null   # full round (no --lenses)
-t28_empty_out="$("$EDM_STATE" audit-converged T28CONV)"
-t28_empty_ec=$?
+t28_empty_ec=0
+t28_empty_out="$("$EDM_STATE" audit-converged T28CONV)" || t28_empty_ec=$?
 [[ $t28_empty_ec -eq 0 ]] && pass "T28 AC1/AC6 -- an empty ledger converges (exit 0)" \
   || fail "T28 AC1/AC6 -- empty ledger exited $t28_empty_ec, expected 0"
 check "T28 AC6 -- empty ledger uses the 'no findings' wording, distinct from 'no ledger'" \
@@ -2683,8 +2742,8 @@ jq -cs '
 ' "$T28_JSONL" > "${T28_JSONL}.tmp" && mv "${T28_JSONL}.tmp" "$T28_JSONL"
 
 # ---- AC11 (four consumers agree on one fixture ledger, after remediation) ------------------
-t28_conv_out="$("$EDM_STATE" audit-converged T28CONV)"
-t28_conv_ec=$?
+t28_conv_ec=0
+t28_conv_out="$("$EDM_STATE" audit-converged T28CONV)" || t28_conv_ec=$?
 [[ $t28_conv_ec -eq 0 ]] && pass "T28 AC11 -- consumer 1 (audit-converged) agrees: converged after remediation" \
   || fail "T28 AC11 -- audit-converged still exits $t28_conv_ec after remediation"
 # Advance to phase 6 first so write_handoff_internal's Phase-6 next_action branch (consumer 4)
@@ -2732,8 +2791,8 @@ echo "T28 AC8 -- audit-free mode exits 0 with the exemption wording"
 export EDM_MODE="prototype"
 "$EDM_STATE" init T28EXEMPT >/dev/null
 unset EDM_MODE
-t28_exempt_out="$("$EDM_STATE" audit-converged T28EXEMPT)"
-t28_exempt_ec=$?
+t28_exempt_ec=0
+t28_exempt_out="$("$EDM_STATE" audit-converged T28EXEMPT)" || t28_exempt_ec=$?
 [[ $t28_exempt_ec -eq 0 ]] && pass "T28 AC8 -- prototype mode exits 0 without a ledger" \
   || fail "T28 AC8 -- prototype mode exited $t28_exempt_ec, expected 0"
 check "T28 AC8 -- exemption wording names the mode" \
@@ -2765,8 +2824,8 @@ check "T28 AC13 -- audit-converged wired in the dispatch table" \
 # block), and this line is what actually proves that rather than assuming it from AC11's earlier
 # (differently-invoked) converged=true check.
 set +e
-t28_roguard_out="$("$EDM_STATE" audit-converged T28CONV 2>&1)"
-t28_roguard_ec=$?
+t28_roguard_ec=0
+t28_roguard_out="$("$EDM_STATE" audit-converged T28CONV 2>&1)" || t28_roguard_ec=$?
 set -e
 [[ $t28_roguard_ec -eq 0 ]] && pass "T28 read-only guarantee -- audit-converged T28CONV exits 0 (clean full round)" \
   || fail "T28 read-only guarantee -- audit-converged T28CONV exited ${t28_roguard_ec}, expected 0 (output: $t28_roguard_out)"
@@ -2853,8 +2912,8 @@ jq -e . "$STATE_T32PV" >/dev/null 2>&1 && pass "T32 AC8 -- state file is valid J
 # ---- AC6 (existing callers, hooks/skill single-write path stays green) -----------------------
 echo
 echo "T32 AC6 -- wave4b-smoke.sh (existing PARTIAL-recording callers) stays green"
-t32_wave4b_out="$(bash "${SCRIPT_DIR}/wave4b-smoke.sh" 2>&1)"
-t32_wave4b_ec=$?
+t32_wave4b_ec=0
+t32_wave4b_out="$(bash "${SCRIPT_DIR}/wave4b-smoke.sh" 2>&1)" || t32_wave4b_ec=$?
 [[ $t32_wave4b_ec -eq 0 ]] && pass "T32 AC6 -- wave4b-smoke.sh exits 0 (existing single-write callers unaffected)" \
   || fail "T32 AC6 -- wave4b-smoke.sh exited ${t32_wave4b_ec}"
 
@@ -2980,8 +3039,8 @@ check "T18 AC6 -- legacy (no schema_version) archive warns rather than enforcing
   "skipping PARTIAL-closure check" "$t14leg_arch_out"
 check "T18 AC6 -- legacy (no schema_version) archive warns rather than enforcing the audit-converged re-query" \
   "skipping audit-converged re-query" "$t14leg_arch_out"
-t14mid_arch_out="$("$EDM_STATE" archive T14MIDDLE 2>&1)"
-t14mid_arch_ec=$?
+t14mid_arch_ec=0
+t14mid_arch_out="$("$EDM_STATE" archive T14MIDDLE 2>&1)" || t14mid_arch_ec=$?
 check "T18 AC6 -- schema_version 1 (< 2) warns and proceeds through the PARTIAL-closure check, naming it" \
   "schema_version 1 < 2 -- skipping PARTIAL-closure check" "$t14mid_arch_out"
 check "T18 AC6 -- schema_version 1 (< 2) warns and proceeds through the audit-converged re-query, naming it" \
@@ -2995,8 +3054,8 @@ echo "T18 AC7 -- OPEN_PARTIALS anomaly fires in the canonical four-field format"
 "$EDM_STATE" init T18ANOM >/dev/null
 "$EDM_STATE" record-partial-verdict T18ANOM T18ANOM-T01 PARTIAL "needs runtime check" >/dev/null
 set +e
-t18anom_out="$("$EDM_STATE" validate T18ANOM 2>&1)"
-t18anom_ec=$?
+t18anom_ec=0
+t18anom_out="$("$EDM_STATE" validate T18ANOM 2>&1)" || t18anom_ec=$?
 set -e
 check "T18 AC7 -- OPEN_PARTIALS anomaly present in canonical four-field format" \
   "blocking  OPEN_PARTIALS  partial_verdict_map" "$t18anom_out"
@@ -3218,7 +3277,8 @@ echo "T50 AC6 -- orchestrator Phase 6 ordering: qc-summary exists before phase-c
 "$EDM_STATE" phase-start T50ORDER 6 >/dev/null
 mkdir -p "$TMP/SRD/T50ORDER/qc"
 echo "# QC Summary" > "$TMP/SRD/T50ORDER/qc/qc-summary.md"
-t50order_out="$("$EDM_STATE" phase-complete T50ORDER 6 2>&1)"; t50order_ec=$?
+t50order_ec=0
+t50order_out="$("$EDM_STATE" phase-complete T50ORDER 6 2>&1)" || t50order_ec=$?
 [[ $t50order_ec -eq 0 ]] \
   && pass "T50 AC6 -- orchestrator Phase 6 ordering: qc-summary exists before phase-complete 6" \
   || fail "T50 AC6 -- phase-complete 6 refused despite qc-summary.md present: $t50order_out"
@@ -3312,8 +3372,8 @@ echo "T51 AC4/AC5 -- unclosed audit round surfaces OPEN_AUDIT_ROUND (info, does 
 "$EDM_STATE" init T51OPEN >/dev/null
 "$EDM_STATE" set T51OPEN estimated_size Small >/dev/null   # suppress SIZE_UNKNOWN noise
 "$EDM_STATE" audit-round-start T51OPEN srd >/dev/null
-t51open_validate_out="$("$EDM_STATE" validate T51OPEN 2>&1)"
-t51open_ec=$?
+t51open_ec=0
+t51open_validate_out="$("$EDM_STATE" validate T51OPEN 2>&1)" || t51open_ec=$?
 check "T51 AC4 -- OPEN_AUDIT_ROUND anomaly present, canonical four-field format" \
   "info  OPEN_AUDIT_ROUND  audit_rounds" "$t51open_validate_out"
 [[ $t51open_ec -eq 0 ]] \
@@ -3349,8 +3409,8 @@ echo "T51 AC7 -- legacy audit_rounds shapes render via metrics-report without er
 STATE_T51LEGACY1="$TMP/SRD/T51LEGACY1/.edm-state.json"
 jq '.audit_rounds = {"code": 3}' "$STATE_T51LEGACY1" > "$STATE_T51LEGACY1.tmp" && mv "$STATE_T51LEGACY1.tmp" "$STATE_T51LEGACY1"
 set +e
-t51legacy1_out="$("$EDM_STATE" metrics-report T51LEGACY1 2>&1)"
-t51legacy1_ec=$?
+t51legacy1_ec=0
+t51legacy1_out="$("$EDM_STATE" metrics-report T51LEGACY1 2>&1)" || t51legacy1_ec=$?
 set -e
 [[ $t51legacy1_ec -eq 0 ]] \
   && pass "T51 AC7 -- bare-integer legacy audit_rounds.code renders via metrics-report without error" \
@@ -3361,8 +3421,8 @@ STATE_T51LEGACY2="$TMP/SRD/T51LEGACY2/.edm-state.json"
 jq '.audit_rounds = {code: {count: 1, rounds: [{round: 1, lenses: [], round_type: "full", started_at: "2026-07-01T00:00:00Z"}]}}' \
   "$STATE_T51LEGACY2" > "$STATE_T51LEGACY2.tmp" && mv "$STATE_T51LEGACY2.tmp" "$STATE_T51LEGACY2"
 set +e
-t51legacy2_out="$("$EDM_STATE" metrics-report T51LEGACY2 2>&1)"
-t51legacy2_ec=$?
+t51legacy2_ec=0
+t51legacy2_out="$("$EDM_STATE" metrics-report T51LEGACY2 2>&1)" || t51legacy2_ec=$?
 set -e
 [[ $t51legacy2_ec -eq 0 ]] \
   && pass "T51 AC7 -- started-but-never-completed round renders via metrics-report without error" \
@@ -3614,8 +3674,8 @@ mkdir -p "$TMP/SRD/T53CALIB/qc"
 echo "# QC Summary" > "$TMP/SRD/T53CALIB/qc/qc-summary.md"
 "$EDM_STATE" phase-complete T53CALIB 6 >/dev/null
 set +e
-t53_calib_out="$("$EDM_STATE" metrics-report --calibrate 2>&1)"
-t53_calib_ec=$?
+t53_calib_ec=0
+t53_calib_out="$("$EDM_STATE" metrics-report --calibrate 2>&1)" || t53_calib_ec=$?
 set -e
 [[ $t53_calib_ec -eq 0 ]] \
   && pass "T53 AC10 -- --calibrate exits 0" \
@@ -3654,7 +3714,8 @@ echo "=== CA-040 remediation: convergence_exempt at cmd_audit_converged and cmd_
 # ---- audit-converged: mode=prototype (exempt regardless of lifecycle_mode) ---------------
 "$EDM_STATE" init ZC40A >/dev/null
 "$EDM_STATE" set-mode ZC40A mode prototype >/dev/null
-ca040a_out="$("$EDM_STATE" audit-converged ZC40A 2>&1)"; ca040a_ec=$?
+ca040a_ec=0
+ca040a_out="$("$EDM_STATE" audit-converged ZC40A 2>&1)" || ca040a_ec=$?
 [[ $ca040a_ec -eq 0 ]] \
   && pass "CA-040 -- audit-converged exits 0 for mode=prototype (audit-free mode, AC8)" \
   || fail "CA-040 -- audit-converged did not exit 0 for mode=prototype (got $ca040a_ec: $ca040a_out)"
@@ -3667,7 +3728,8 @@ check "CA-040 -- audit-converged names the exemption for mode=prototype" \
 "$EDM_STATE" set-mode ZC40B lifecycle_mode fast-track >/dev/null
 ca040b_state="$TMP/SRD/ZC40B/.edm-state.json"
 jq '.schema_version = 2' "$ca040b_state" > "${ca040b_state}.tmp" && mv "${ca040b_state}.tmp" "$ca040b_state"
-ca040b_out="$("$EDM_STATE" audit-converged ZC40B 2>&1)"; ca040b_ec=$?
+ca040b_ec=0
+ca040b_out="$("$EDM_STATE" audit-converged ZC40B 2>&1)" || ca040b_ec=$?
 [[ $ca040b_ec -eq 0 ]] \
   && pass "CA-040 -- audit-converged exits 0 for mode=standard/lifecycle_mode=fast-track" \
   || fail "CA-040 -- audit-converged did not exit 0 for fast-track (got $ca040b_ec: $ca040b_out)"
@@ -3676,7 +3738,8 @@ ca040b_out="$("$EDM_STATE" audit-converged ZC40B 2>&1)"; ca040b_ec=$?
 "$EDM_STATE" init ZC40C >/dev/null
 "$EDM_STATE" set-mode ZC40C mode standard >/dev/null
 "$EDM_STATE" set-mode ZC40C lifecycle_mode fix-pack >/dev/null
-ca040c_out="$("$EDM_STATE" audit-converged ZC40C 2>&1)"; ca040c_ec=$?
+ca040c_ec=0
+ca040c_out="$("$EDM_STATE" audit-converged ZC40C 2>&1)" || ca040c_ec=$?
 [[ $ca040c_ec -eq 0 ]] \
   && pass "CA-040 -- audit-converged exits 0 for mode=standard/lifecycle_mode=fix-pack" \
   || fail "CA-040 -- audit-converged did not exit 0 for fix-pack (got $ca040c_ec: $ca040c_out)"

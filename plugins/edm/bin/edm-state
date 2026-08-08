@@ -1684,19 +1684,26 @@ cmd_approve_gate() {
     # EDMV3-T28 AC12/AC9: re-run the convergence pre-check here too (not just trust a prior
     # standalone `audit-converged` call), closing the time-of-check-to-time-of-use window
     # between that call and this approval (SRD Section 5.3). Evaluates the shared
-    # BLOCKING_FILTER predicate via cmd_audit_converged -- gated by schema_version so a
-    # pre-wave-B initiative keeps the wave-A permissive behaviour (no ledger requirement) rather
-    # than being told to run a fresh eleven-lens round it never opted into (EDMV3-T28 AC7's
-    # caller-side degradation).
+    # BLOCKING_FILTER predicate via cmd_audit_converged.
+    #
+    # G1/CA-182 (round 3): the precheck is now ALWAYS run -- only its exit-3 (no JSONL ledger)
+    # arm degrades, and only for a pre-wave-B initiative (EDMV3-T28 AC7's caller-side
+    # degradation). Previously the entire precheck ran only when ag_schema_class2 == "2";
+    # `_cmd_init_render` still writes the literal `schema_version: 1` and nothing auto-migrates
+    # or prompts migrate-schema, so for EVERY initiative created by the current plugin version
+    # the precheck was environmentally unreachable and the gate was unconditionally approvable
+    # regardless of open findings.
     local ag_schema_version ag_schema_class2
     ag_schema_version="$(echo "$state_json" | jq -r '.schema_version // empty')"
     ag_schema_class2="$(schema_at_least "$ag_schema_version" 2)"
-    if [[ "$ag_schema_class2" == "2" ]]; then
-      local conv_out conv_ec=0
-      conv_out="$(cmd_audit_converged "$prefix" 2>&1)" || conv_ec=$?
-      [[ $conv_ec -eq 0 ]] || die "code-audit gate refused for ${prefix}: ${conv_out}"
+    local conv_out conv_ec=0
+    conv_out="$(cmd_audit_converged "$prefix" 2>&1)" || conv_ec=$?
+    if [[ $conv_ec -eq 3 && "$ag_schema_class2" != "2" ]]; then
+      record_degraded_check "$prefix" "approve-gate:code-audit-ledger-shape" \
+        "schema_version ${ag_schema_version:-absent} < 2 and no findings-ledger.jsonl"
+      echo "edm-state approve-gate: [warn] no JSONL findings ledger and schema_version ${ag_schema_version:-absent} < 2 -- convergence not computable" >&2
     else
-      record_degraded_check "$prefix" "approve-gate:code-audit-convergence-precheck" "schema_version ${ag_schema_version:-absent} < 2"
+      [[ $conv_ec -eq 0 ]] || die "code-audit gate refused for ${prefix}: ${conv_out}"
     fi
 
     # Wave-A interim (AC3) shape retained: records the approval with `enforcement` and the

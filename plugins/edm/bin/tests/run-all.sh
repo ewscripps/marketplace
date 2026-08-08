@@ -15,21 +15,34 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# G7/CA-146 (round-3 Wave 7b): EDM_RUN_ALL_SUITE_DIR overrides where suite discovery and
+# execution read from, so harness-smoke.sh can point this aggregator at a scratch directory of
+# throwaway stub suites and exercise its own PASS/FAIL/CRASH/missing-summary accounting without
+# touching the real suite set. Unset (the default) is byte-identical to prior behavior: discovery
+# and execution both read from $SCRIPT_DIR. When set, the three real-repo-anchored standalone
+# checks below (edm-check-grants/-skill-sync/-vocabulary) are also skipped -- they are meaningless
+# against a scratch suite set and their own live-tree state must never leak into an accounting test.
+_SUITE_DIR="${EDM_RUN_ALL_SUITE_DIR:-$SCRIPT_DIR}"
+
 # Diagnostic ordering preference (Technical Notes): foundational suites first, lifecycle suites
 # last, so a foundational break is reported before a downstream one. This is a SORT HINT only --
 # it never gates which suites run. Every file matching *-smoke.sh runs whether or not it is
 # named here (AC3); anything discovered but not listed here just runs after the named ones, in
 # glob order.
-_PREFERRED_ORDER="wave3-smoke.sh wave4a-smoke.sh wave4b-smoke.sh wave5-smoke.sh harness-smoke.sh wave6-smoke.sh wave7-smoke.sh"
+# G7/CA-146: EDM_RUN_ALL_PREFERRED_ORDER and EDM_RUN_ALL_MIN_SUITE_COUNT let harness-smoke.sh's
+# scratch-directory cases exercise a single stub suite without also having to satisfy the
+# real seven-suite floor and preferred-name set below -- unset (the default, "${VAR-default}"
+# so an explicitly-empty override is distinct from "unset") preserves prior behavior exactly.
+_PREFERRED_ORDER="${EDM_RUN_ALL_PREFERRED_ORDER-wave3-smoke.sh wave4a-smoke.sh wave4b-smoke.sh wave5-smoke.sh harness-smoke.sh wave6-smoke.sh wave7-smoke.sh}"
 
 # ---- Discover all suites (AC3: glob-driven, not a hand-kept list) -----------------------------
 _all_suites=()
 while IFS= read -r _f; do
   _all_suites+=("$(basename "$_f")")
-done < <(find "$SCRIPT_DIR" -maxdepth 1 -name '*-smoke.sh' -type f 2>/dev/null | sort)
+done < <(find "$_SUITE_DIR" -maxdepth 1 -name '*-smoke.sh' -type f 2>/dev/null | sort)
 
 if [[ ${#_all_suites[@]} -eq 0 ]]; then
-  echo "run-all: no *-smoke.sh suites found in $SCRIPT_DIR" >&2
+  echo "run-all: no *-smoke.sh suites found in $_SUITE_DIR" >&2
   exit 1
 fi
 
@@ -68,7 +81,7 @@ if [[ ${#_missing_preferred[@]} -gt 0 ]]; then
   echo "run-all: expected suite(s) not discovered: ${_missing_preferred[*]}" >&2
   exit 1
 fi
-_MIN_SUITE_COUNT=7
+_MIN_SUITE_COUNT="${EDM_RUN_ALL_MIN_SUITE_COUNT:-7}"
 if [[ ${#_run_order[@]} -lt $_MIN_SUITE_COUNT ]]; then
   echo "run-all: only ${#_run_order[@]} suite(s) discovered, expected at least ${_MIN_SUITE_COUNT}" >&2
   exit 1
@@ -85,8 +98,8 @@ printf '%-28s %8s %8s %8s\n' "SUITE" "PASS" "FAIL" "STATUS"
 printf '%-28s %8s %8s %8s\n' "----------------------------" "--------" "--------" "--------"
 
 for _suite in "${_run_order[@]+"${_run_order[@]}"}"; do
-  _out="$(bash "${SCRIPT_DIR}/${_suite}" 2>&1)"
-  _status=$?
+  _status=0
+  _out="$(bash "${_SUITE_DIR}/${_suite}" 2>&1)" || _status=$?
 
   # Extract this suite's own pass/fail counts from its standard summary line.
   _summary_line="$(printf '%s\n' "$_out" | grep -E '^Results: [0-9]+ passed, [0-9]+ failed' | tail -1)"
@@ -152,8 +165,8 @@ _standalone_check() {
   local out ec
   echo
   echo "$label"
-  out="$(bash "$script_path" 2>&1)"
-  ec=$?
+  ec=0
+  out="$(bash "$script_path" 2>&1)" || ec=$?
   if [[ $ec -eq 0 ]]; then
     echo "  PASS: $(basename "$script_path") (exit 0)"
     _total_pass=$((_total_pass + 1))
@@ -165,23 +178,29 @@ _standalone_check() {
   fi
 }
 
-# EDMV3-T03 AC10: edm-check-grants runs as part of the aggregator, not just as a suite case it is
-# exercised from (wave7-smoke.sh). Real invocation, not a comment reference: it must actually pass
-# the 0/1/2 exit contract against the live tree every time run-all.sh runs.
-_standalone_check "${SCRIPT_DIR}/../edm-check-grants" \
-  "edm-check-grants -- four-source grant/instruction contract check"
+# G7/CA-146: these three real-repo-anchored checks are skipped under EDM_RUN_ALL_SUITE_DIR --
+# they check this actual plugin tree, which is meaningless (and, worse, a source of unrelated
+# real-tree flakiness) when run-all.sh is being pointed at a scratch suite directory for an
+# accounting-logic test.
+if [[ -z "${EDM_RUN_ALL_SUITE_DIR:-}" ]]; then
+  # EDMV3-T03 AC10: edm-check-grants runs as part of the aggregator, not just as a suite case it is
+  # exercised from (wave7-smoke.sh). Real invocation, not a comment reference: it must actually pass
+  # the 0/1/2 exit contract against the live tree every time run-all.sh runs.
+  _standalone_check "${SCRIPT_DIR}/../edm-check-grants" \
+    "edm-check-grants -- four-source grant/instruction contract check"
 
-# EDMV3-T39 AC7: the dispatcher-duplication tripwire runs every time too. It guards the branch
-# that was NOT taken (deduplication shipped instead), so it should always be clean -- which is
-# exactly why a silent regression here would otherwise go unnoticed.
-_standalone_check "${SCRIPT_DIR}/../edm-check-skill-sync" \
-  "edm-check-skill-sync -- dispatcher holds no phase procedure (EDMV3-T39 AC7 fallback tripwire)"
+  # EDMV3-T39 AC7: the dispatcher-duplication tripwire runs every time too. It guards the branch
+  # that was NOT taken (deduplication shipped instead), so it should always be clean -- which is
+  # exactly why a silent regression here would otherwise go unnoticed.
+  _standalone_check "${SCRIPT_DIR}/../edm-check-skill-sync" \
+    "edm-check-skill-sync -- dispatcher holds no phase procedure (EDMV3-T39 AC7 fallback tripwire)"
 
-# CA-096: edm-check-vocabulary -- one of the two standalone checkers a blocking CI lint job
-# (lint:vocabulary) runs directly -- was never wired into this aggregator at all. This call is
-# the fix.
-_standalone_check "${SCRIPT_DIR}/../edm-check-vocabulary" \
-  "edm-check-vocabulary -- abolished-vocabulary and override-flag backstop (EDMV3-T30)"
+  # CA-096: edm-check-vocabulary -- one of the two standalone checkers a blocking CI lint job
+  # (lint:vocabulary) runs directly -- was never wired into this aggregator at all. This call is
+  # the fix.
+  _standalone_check "${SCRIPT_DIR}/../edm-check-vocabulary" \
+    "edm-check-vocabulary -- abolished-vocabulary and override-flag backstop (EDMV3-T30)"
+fi
 
 echo
 echo "Total: ${_total_pass} passed, ${_total_fail} failed across ${#_run_order[@]} suite(s)"

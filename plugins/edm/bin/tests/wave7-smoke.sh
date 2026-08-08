@@ -114,8 +114,8 @@ caller_contract_scan() {
 # ---- AC11 (positive): zero misses against the live tree at the moment this lands ----
 echo "T09 AC11 -- every set caller key is allowlisted"
 set +e
-live_out="$(caller_contract_scan "$PLUGIN_DIR" 2>&1)"
-live_ec=$?
+live_ec=0
+live_out="$(caller_contract_scan "$PLUGIN_DIR" 2>&1)" || live_ec=$?
 set -e
 [[ $live_ec -eq 0 ]] && pass "every set caller key is allowlisted (zero MISS lines against the live tree)" \
   || fail "caller-contract scan found MISS line(s) against the live tree:\n$live_out"
@@ -161,8 +161,8 @@ neg_case_bogus_key() {
 
   local out ec
   set +e
-  out="$(caller_contract_scan "$scratch" 2>&1)"
-  ec=$?
+  ec=0
+  out="$(caller_contract_scan "$scratch" 2>&1)" || ec=$?
   set -e
 
   [[ $ec -ne 0 ]] && pass "AC12 -- injected unknown key fails the scan" \
@@ -204,8 +204,8 @@ EDM_CHECK_GRANTS="${SCRIPT_DIR}/../edm-check-grants"
 
 echo
 echo "T03 AC1 -- --list-sources prints exactly four source labels"
-t03_sources_out="$(bash "$EDM_CHECK_GRANTS" --list-sources 2>&1)"
-t03_sources_ec=$?
+t03_sources_ec=0
+t03_sources_out="$(bash "$EDM_CHECK_GRANTS" --list-sources 2>&1)" || t03_sources_ec=$?
 t03_sources_count="$(printf '%s\n' "$t03_sources_out" | grep -c '.' || true)"
 [[ $t03_sources_ec -eq 0 ]] && pass "--list-sources exits 0" || fail "--list-sources exited $t03_sources_ec"
 [[ "$t03_sources_count" -eq 4 ]] && pass "--list-sources prints exactly four lines" \
@@ -226,8 +226,8 @@ set -e
 echo
 echo "T03 AC2/AC4 -- every agent grant is satisfied against the live (post-EDMV3-T02) tree"
 set +e
-t03_live_out="$(bash "$EDM_CHECK_GRANTS" 2>&1)"
-t03_live_ec=$?
+t03_live_ec=0
+t03_live_out="$(bash "$EDM_CHECK_GRANTS" 2>&1)" || t03_live_ec=$?
 set -e
 [[ $t03_live_ec -eq 0 ]] && pass "edm-check-grants exits 0 against the live tree" \
   || fail "edm-check-grants exited $t03_live_ec against the live tree:\n$t03_live_out"
@@ -274,8 +274,8 @@ t03_ac6_case() {
 
   local out ec
   set +e
-  out="$(bash "$scratch/bin/edm-check-grants" 2>&1)"
-  ec=$?
+  ec=0
+  out="$(bash "$scratch/bin/edm-check-grants" 2>&1)" || ec=$?
   set -e
 
   [[ $ec -eq 1 ]] && pass "AC6 -- missing AskUserQuestion on a gate skill fails the run" \
@@ -789,8 +789,8 @@ _t61_bidirectional_check() {
 echo
 echo "T61 AC2/AC3 -- help and dispatch agree in both directions"
 set +e
-t61_bidi_out="$(_t61_bidirectional_check "$EDM_STATE" 2>&1)"
-t61_bidi_ec=$?
+t61_bidi_ec=0
+t61_bidi_out="$(_t61_bidirectional_check "$EDM_STATE" 2>&1)" || t61_bidi_ec=$?
 set -e
 [[ $t61_bidi_ec -eq 0 ]] && pass "help and dispatch agree in both directions (zero mismatches)" \
   || fail "help and dispatch disagree:\n$t61_bidi_out"
@@ -823,8 +823,8 @@ t61_neg_case() {
 
   local out ec
   set +e
-  out="$(_t61_bidirectional_check "$scratch" 2>&1)"
-  ec=$?
+  ec=0
+  out="$(_t61_bidirectional_check "$scratch" 2>&1)" || ec=$?
   set -e
 
   [[ $ec -ne 0 ]] && pass "T61 AC2 negative -- injected dispatch-only entry fails the check" \
@@ -978,8 +978,8 @@ t20_path_dir_case() {
 
   local out ec
   set +e
-  out="$("$EDM_LINT_ARTIFACTS" --path "$scratch" 2>&1)"
-  ec=$?
+  ec=0
+  out="$("$EDM_LINT_ARTIFACTS" --path "$scratch" 2>&1)" || ec=$?
   set -e
 
   [[ $ec -ne 0 ]] && pass "T20 -- --path <dir> recursion finds a violation nested two levels deep" \
@@ -992,8 +992,8 @@ t20_path_dir_case
 
 echo
 echo "T20 AC10 -- --path <file> lints exactly the one named file"
-t20_path_file_out="$("$EDM_LINT_ARTIFACTS" --path "${PLUGIN_DIR}/evals/fixtures/tiny-svc/README.md" 2>&1)"
-t20_path_file_ec=$?
+t20_path_file_ec=0
+t20_path_file_out="$("$EDM_LINT_ARTIFACTS" --path "${PLUGIN_DIR}/evals/fixtures/tiny-svc/README.md" 2>&1)" || t20_path_file_ec=$?
 [[ $t20_path_file_ec -eq 0 ]] && pass "T20 -- --path <file> against a known-clean single file exits 0" \
   || fail "T20 -- --path <file> unexpectedly reported violations:\n$t20_path_file_out"
 check "T20 -- --path <file> output names the file, not a directory-wide scan" \
@@ -1015,8 +1015,8 @@ t20_path_no_edmstate_case() {
     || fail "T20 -- edm-state still resolves on the scrubbed PATH ($control) -- test setup invalid"
 
   set +e
-  out="$(PATH="$scrub_path" "$EDM_LINT_ARTIFACTS" --path "$scratch" 2>&1)"
-  ec=$?
+  ec=0
+  out="$(PATH="$scrub_path" "$EDM_LINT_ARTIFACTS" --path "$scratch" 2>&1)" || ec=$?
   set -e
   [[ $ec -eq 0 ]] && pass "T20 -- --path succeeds with edm-state removed from PATH (no edm-state call)" \
     || fail "T20 -- --path failed with edm-state off PATH (exit $ec):\n$out"
@@ -1856,7 +1856,7 @@ echo "T42 AC4 -- identical quoting style across every by-name reference"
 # (backslash before the quote optional), so a real divergence in quoting style is now visible; the
 # raw-count floor distinguishes "matched nothing" and "matched only one file" from "one true form".
 t42_ac4_forms="$(grep -rhoE 'CLAUDE\.md Sec\.\\?"?Mermaid diagram conventions\\?"?' "${PLUGIN_DIR}/" 2>/dev/null | sort -u | wc -l | tr -d ' ')"
-t42_ac4_raw="$(grep -rhcE 'CLAUDE\.md Sec\.\\?"?Mermaid diagram conventions' "${PLUGIN_DIR}/" 2>/dev/null | paste -sd+ - | bc)"
+t42_ac4_raw="$(grep -rhcE 'CLAUDE\.md Sec\.\\?"?Mermaid diagram conventions' "${PLUGIN_DIR}/" 2>/dev/null | awk '{s+=$1} END{print s+0}')"
 [[ "$t42_ac4_forms" == "1" && "$t42_ac4_raw" -ge 11 ]] \
   && pass "T42 AC4 -- exactly one quoting form of the by-name reference is in use (${t42_ac4_raw} references)" \
   || fail "T42 AC4 -- found ${t42_ac4_forms} distinct quoting forms across ${t42_ac4_raw} references, expected 1 form across >= 11"
@@ -2673,8 +2673,8 @@ _t36_ac2_inner() {
   edm-init T36X >/dev/null 2>&1 || true
   local t36_tok t36_out t36_ec t36_results=""
   for t36_tok in $T36_PHASE_SKILLS; do
-    t36_out="$("$EDM_STATE" gate-check T36X "$t36_tok" 2>&1)"
-    t36_ec=$?
+    t36_ec=0
+    t36_out="$("$EDM_STATE" gate-check T36X "$t36_tok" 2>&1)" || t36_ec=$?
     t36_results="${t36_results}${t36_tok}=${t36_ec} "
   done
   # None of the eight tokens is unrecognized (the *) branch's distinctive message).
@@ -3147,8 +3147,8 @@ DOCS_DIR_T56="${PLUGIN_DIR}/docs/audit-patterns"
 echo "T56 AC1/AC7 -- five pattern docs carry four headings in contract order (also re-verifies"
 echo "  this initiative's own T42 Mermaid entries and T33 D15 entries did not break it)"
 set +e
-t56_live_out="$(_t56_four_heading_contract_check "$DOCS_DIR_T56" 2>&1)"
-t56_live_ec=$?
+t56_live_ec=0
+t56_live_out="$(_t56_four_heading_contract_check "$DOCS_DIR_T56" 2>&1)" || t56_live_ec=$?
 set -e
 [[ $t56_live_ec -eq 0 ]] && pass "T56 AC1/AC7 -- all five library docs pass the four-heading contract (zero CONTRACT-FAIL lines)" \
   || fail "T56 AC1/AC7 -- contract violation(s) against the live tree:\n$t56_live_out"
@@ -3180,8 +3180,8 @@ t56_ac3_case() {
 
   local out ec
   set +e
-  out="$(_t56_four_heading_contract_check "$scratch" 2>&1)"
-  ec=$?
+  ec=0
+  out="$(_t56_four_heading_contract_check "$scratch" 2>&1)" || ec=$?
   set -e
 
   [[ $ec -ne 0 ]] && pass "T56 AC3 -- a fifth heading fails the contract check" \
@@ -3213,8 +3213,8 @@ t56_ac4_third_file_case() {
 
   local out ec
   set +e
-  out="$(_t56_four_heading_contract_check "$scratch" 2>&1)"
-  ec=$?
+  ec=0
+  out="$(_t56_four_heading_contract_check "$scratch" 2>&1)" || ec=$?
   set -e
 
   [[ $ec -ne 0 ]] && pass "T56 AC4 -- an unexempted third file (scratch.md) fails the suite" \
@@ -3235,8 +3235,8 @@ t56_ac5_case() {
 
   local out ec
   set +e
-  out="$(_t56_four_heading_contract_check "$scratch" 2>&1)"
-  ec=$?
+  ec=0
+  out="$(_t56_four_heading_contract_check "$scratch" 2>&1)" || ec=$?
   set -e
 
   [[ $ec -ne 0 ]] && pass "T56 AC5 -- a stray '### Orphan' after the last section fails the check" \
@@ -3395,8 +3395,8 @@ ca002_insertion_case() {
   # count drops below 4) or left an orphan '### ' heading stranded past the fourth section.
   local t_ca002_contract_out t_ca002_contract_ec
   set +e
-  t_ca002_contract_out="$(_t56_four_heading_contract_check "$scratch_docs" 2>&1)"
-  t_ca002_contract_ec=$?
+  t_ca002_contract_ec=0
+  t_ca002_contract_out="$(_t56_four_heading_contract_check "$scratch_docs" 2>&1)" || t_ca002_contract_ec=$?
   set -e
   [[ $t_ca002_contract_ec -eq 0 ]] \
     && pass "CA-002 AC3 -- the four-heading contract still holds after insertion (no heading/content concatenation-merge, no orphan section)" \
@@ -3427,8 +3427,8 @@ ca002_insertion_case() {
     || fail "CA-002 AC4 -- '### ' heading count changed on the second run (${after_heading_count} -> ${after_second_heading_count})"
 
   set +e
-  t_ca002_contract_out="$(_t56_four_heading_contract_check "$scratch_docs" 2>&1)"
-  t_ca002_contract_ec=$?
+  t_ca002_contract_ec=0
+  t_ca002_contract_out="$(_t56_four_heading_contract_check "$scratch_docs" 2>&1)" || t_ca002_contract_ec=$?
   set -e
   [[ $t_ca002_contract_ec -eq 0 ]] \
     && pass "CA-002 AC3/T56 AC6 -- four-heading contract still holds after the repeat run" \
@@ -4707,8 +4707,8 @@ cat > "${ca135_scratch}/CA135/.edm-state.json" <<'EOF'
 {"prefix":"CA135","schema_version":"corrupted-not-a-number","current_phase":1,"gates_approved":[]}
 EOF
 set +e
-ca135_out="$(EDM_SRD_ROOT="$ca135_scratch" bash "$EDM_STATE" migrate-schema CA135 <<< "yes" 2>&1)"
-ca135_ec=$?
+ca135_ec=0
+ca135_out="$(EDM_SRD_ROOT="$ca135_scratch" bash "$EDM_STATE" migrate-schema CA135 <<< "yes" 2>&1)" || ca135_ec=$?
 set -e
 [[ $ca135_ec -ne 0 ]] \
   && pass "CA-135 -- migrate-schema refuses a non-integer schema_version rather than exiting 0" \
@@ -4755,8 +4755,8 @@ ca136_scratch="$(mktemp -d "${TMP}/edm-ca136.XXXXXX")" || fail "CA-136 -- mktemp
 mkdir -p "${ca136_scratch}/CA136"
 printf 'not valid json at all' > "${ca136_scratch}/CA136/.edm-state.json"
 set +e
-ca136_out="$(EDM_SRD_ROOT="$ca136_scratch" bash "$EDM_STATE" get-coverage CA136 2>&1)"
-ca136_ec=$?
+ca136_ec=0
+ca136_out="$(EDM_SRD_ROOT="$ca136_scratch" bash "$EDM_STATE" get-coverage CA136 2>&1)" || ca136_ec=$?
 set -e
 [[ $ca136_ec -ne 0 ]] \
   && pass "CA-136 -- get-coverage fails loudly (non-zero exit) against an unparseable state file" \
@@ -4797,8 +4797,8 @@ write_atomic "${ca134_scratch}/dest.txt" fail_renderer
 PROBE
 chmod +x "$ca134_script"
 set +e
-ca134_out="$(bash "$ca134_script" 2>&1)"
-ca134_ec=$?
+ca134_ec=0
+ca134_out="$(bash "$ca134_script" 2>&1)" || ca134_ec=$?
 set -e
 [[ $ca134_ec -ne 0 ]] \
   && pass "CA-134 -- a bare write_atomic call with a failing renderer exits non-zero rather than silently succeeding" \
@@ -4818,8 +4818,8 @@ check_absent "CA-160 -- HUMAN_HOURLY_RATE_USD is no longer spliced into the jq p
 check "CA-160 -- the rate reaches jq as data via --arg" \
   '--arg rate "$HUMAN_HOURLY_RATE_USD"' "$t_ca160_metrics_body"
 set +e
-ca160_rate_out="$(EDM_HUMAN_HOURLY_RATE_USD='150"; touch /tmp/edm-ca160-proof #' bash "$EDM_STATE" --help 2>&1)"
-ca160_rate_ec=$?
+ca160_rate_ec=0
+ca160_rate_out="$(EDM_HUMAN_HOURLY_RATE_USD='150"; touch /tmp/edm-ca160-proof #' bash "$EDM_STATE" --help 2>&1)" || ca160_rate_ec=$?
 set -e
 [[ $ca160_rate_ec -ne 0 ]] \
   && pass "CA-160 -- a HUMAN_HOURLY_RATE_USD value with jq-breaking characters is refused at startup" \
@@ -4839,8 +4839,8 @@ ca160b_scratch="$(mktemp -d "${TMP}/edm-ca160b.XXXXXX")"
   jq -cn '{type:"assistant",timestamp:"2026-01-01T00:00:00Z",message:{model:"claude-sonnet-4-7",usage:{input_tokens:10,output_tokens:5}}}' \
     > "${sess_dir}/a.jsonl"
   set +e
-  out="$(EDM_TOKEN_READ_LINE_CAP='+500' bash -c "source '$EDM_STATE' >/dev/null 2>&1; get_session_tokens_since 2000-01-01T00:00:00Z" 2>&1)"
-  ec=$?
+  ec=0
+  out="$(EDM_TOKEN_READ_LINE_CAP='+500' bash -c "source '$EDM_STATE' >/dev/null 2>&1; get_session_tokens_since 2000-01-01T00:00:00Z" 2>&1)" || ec=$?
   set -e
   echo "ca160b_ec=$ec"
   echo "ca160b_out=$out"
@@ -4908,8 +4908,8 @@ body
 ## What Good Looks Like
 EOF
 set +e
-ca056_dup_out="$(bash -c "source '$EDM_STATE' >/dev/null 2>&1; pattern_insert_line_for '${ca056_scratch}/dup.md' '## Anti-Patterns'" 2>&1)"
-ca056_dup_ec=$?
+ca056_dup_ec=0
+ca056_dup_out="$(bash -c "source '$EDM_STATE' >/dev/null 2>&1; pattern_insert_line_for '${ca056_scratch}/dup.md' '## Anti-Patterns'" 2>&1)" || ca056_dup_ec=$?
 set -e
 [[ $ca056_dup_ec -ne 0 ]] \
   && pass "CA-056 -- an ambiguous heading (occurs twice outside fences) is refused rather than guessed" \
@@ -5053,6 +5053,95 @@ ca148_gitignore_case() {
   rm -rf "$scratch"
 }
 ca148_gitignore_case
+
+# =================================================================================
+# G5 (round-3 Wave 7b, RE-OPENED CA-036): tripwire against the unguarded
+# command-substitution-then-bare-$?-capture shape.
+# =================================================================================
+# CA-036 was fixed once, then reintroduced by the CA-040 remediation (three sites in
+# wave6-smoke.sh) plus two pre-existing siblings (one in wave6-smoke.sh, one in
+# wave7-smoke.sh) -- all five closed in this round. Under `set -euo pipefail`, a
+# `VAR="$(cmd)"` assignment whose substitution fails aborts the shell right there; a bare
+# exit-code capture on a separate statement -- whether on the same physical line via `;`, or
+# the very next physical line -- never runs, so the `fail` branch it exists to reach is
+# unreachable dead code. The guard must live on the SAME statement (`|| VAR2=$?`), or the
+# whole pair must be bracketed in `set +e` / `set -e`.
+#
+# The positive-control file below is assembled from separate literal fragments (never the
+# two-line shape as adjacent text in THIS file) precisely so this section does not trip its
+# own tripwire when the real scan two paragraphs down globs this very file.
+echo
+echo "G5 -- tripwire: bin/tests/*.sh never captures a command substitution's exit code with a bare \$? on a separate, unguarded statement"
+g5_scratch="$(mktemp -d "${TMP}/edm-g5-tripwire.XXXXXX")" || fail "G5 -- mktemp failed"
+g5_detector="${g5_scratch}/detect.awk"
+cat > "$g5_detector" <<'G5AWK'
+FNR==1 { prev_bare = 0 }
+{
+  line = $0
+  if (line ~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*="\$\(.*\)"[[:space:]]*;[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=\$\?[[:space:]]*(#.*)?$/) {
+    print FILENAME ":" FNR ": same-line"
+  }
+  bare = (line ~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*="\$\(.*\)"[[:space:]]*(#.*)?$/)
+  if (prev_bare && (line ~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=\$\?[[:space:]]*(#.*)?$/)) {
+    print FILENAME ":" (FNR-1) "-" FNR ": next-line"
+  }
+  prev_bare = bare
+}
+G5AWK
+
+g5_pc_var1="pc_same"
+g5_pc_var2="pc_next"
+g5_pc_file="${g5_scratch}/positive-control.sh"
+{
+  printf '%s="$(false)"; %s=$?\n' "$g5_pc_var1" "${g5_pc_var1}_ec"
+  printf '%s="$(false)"\n' "$g5_pc_var2"
+  printf '%s=$?\n' "${g5_pc_var2}_ec"
+} > "$g5_pc_file"
+
+g5_pc_hits="$(awk -f "$g5_detector" "$g5_pc_file" 2>/dev/null | wc -l | tr -d ' ')" || g5_pc_hits=0
+[[ "${g5_pc_hits:-0}" -eq 2 ]] \
+  && pass "G5 -- the detector catches both the same-line and next-line shapes on a synthetic positive control" \
+  || fail "G5 -- detector found ${g5_pc_hits:-0} hit(s) on the positive control, expected 2 (the pattern does not actually catch the bug shape)"
+
+g5_real_hit_lines="$(awk -f "$g5_detector" "${PLUGIN_DIR}"/bin/tests/*.sh 2>/dev/null)" || g5_real_hit_lines=""
+g5_real_hits="$(printf '%s\n' "$g5_real_hit_lines" | grep -c . || true)"
+[[ "${g5_real_hits:-0}" -eq 0 ]] \
+  && pass "G5 -- zero unguarded command-substitution/\$? sites across bin/tests/*.sh" \
+  || fail "G5 -- found ${g5_real_hits} unguarded site(s) across bin/tests/*.sh (CA-036 class re-opened):\n${g5_real_hit_lines}"
+
+rm -rf "$g5_scratch"
+
+# =================================================================================
+# G6 (round-3 Wave 7b): tripwire against a hard `bc` dependency re-entering the suite.
+# =================================================================================
+# CA-035's T42 AC4 fix piped a grep -c count through `paste -sd+ -` into `bc` -- the only such
+# invocation anywhere in this plugin, and no `apk add --no-cache` line in .gitlab-ci.yml
+# installs it, so it crashed both blocking smoke jobs on every pinned image. Replaced above
+# with pure awk arithmetic (awk is already a hard dependency of every suite here). This is the
+# regression tripwire so the dependency cannot silently come back. The search token is
+# assembled from two single-character fragments (never spelled out as adjacent literal
+# characters in this file) so this section cannot trip its own assertion.
+echo
+echo "G6 -- tripwire: zero shell-outs to the bc utility anywhere under plugins/edm/"
+g6_scratch="$(mktemp -d "${TMP}/edm-g6-bc.XXXXXX")" || fail "G6 -- mktemp failed"
+g6_bin="b"
+g6_bin="${g6_bin}c"
+g6_pattern="(\\| *${g6_bin}\\b|${g6_bin}\\)[\"'])"
+
+g6_pc_file="${g6_scratch}/positive-control.sh"
+printf '%s\n' "grep -c pattern file | paste -sd+ - | ${g6_bin}" > "$g6_pc_file"
+g6_pc_hits="$(grep -rnE "$g6_pattern" "$g6_pc_file" 2>/dev/null | grep -c . || true)"
+[[ "${g6_pc_hits:-0}" -eq 1 ]] \
+  && pass "G6 -- the detector catches a synthetic bc pipeline planted in a scratch copy" \
+  || fail "G6 -- detector found ${g6_pc_hits:-0} hit(s) on the positive control, expected 1"
+
+g6_real_hit_lines="$(grep -rnE "$g6_pattern" "${PLUGIN_DIR}/" 2>/dev/null)" || g6_real_hit_lines=""
+g6_real_hits="$(printf '%s\n' "$g6_real_hit_lines" | grep -c . || true)"
+[[ "${g6_real_hits:-0}" -eq 0 ]] \
+  && pass "G6 -- zero bc invocations anywhere under plugins/edm/" \
+  || fail "G6 -- found ${g6_real_hits} bc invocation(s) under plugins/edm/ (no CI image installs it):\n${g6_real_hit_lines}"
+
+rm -rf "$g6_scratch"
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
