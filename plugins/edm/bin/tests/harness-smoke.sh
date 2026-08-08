@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# harness-smoke.sh — EDMV3-T19 smoke check for the new _harness.sh helpers:
+# harness-smoke.sh -- EDMV3-T19 smoke check for the new _harness.sh helpers:
 # with_scratch_repo, check_fails, check_state_unchanged.
 # Run from repo root: bash plugins/edm/bin/tests/harness-smoke.sh
 set -euo pipefail
@@ -10,12 +10,12 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 # Shared assertions / counters (CA-014).
 source "${SCRIPT_DIR}/_harness.sh"
 
-echo "EDMV3-T19 smoke check — _harness.sh helpers"
+echo "EDMV3-T19 smoke check -- _harness.sh helpers"
 echo
 
 # ---- AC1/AC3: with_scratch_repo scaffolds inside the temp tree, not the repo, and PATH ---------
 # resolves bare-name sibling scripts to the plugin's own copies.
-echo "AC1/AC3 — with_scratch_repo isolation and PATH"
+echo "AC1/AC3 -- with_scratch_repo isolation and PATH"
 _captured_cwd=""
 _captured_edm_state=""
 _ac1_fn() {
@@ -36,7 +36,7 @@ fi
 
 # ---- AC2: cleanup on every exit path -------------------------------------------------------
 echo
-echo "AC2 — cleanup on failure and on interrupt"
+echo "AC2 -- cleanup on failure and on interrupt"
 
 # Same scoping fix as the SIGINT case below: assert on THIS call's scratch directory, not on
 # the existence of any edm-scratch.* under ${TMPDIR:-/tmp} (other suites and concurrent agents have their own).
@@ -93,7 +93,7 @@ rm -f "$_ac2_pathfile"
 
 # ---- AC4: check_fails -----------------------------------------------------------------------
 echo
-echo "AC4 — check_fails (positive and negative)"
+echo "AC4 -- check_fails (positive and negative)"
 check_fails "check_fails passes when exit is non-zero and message matches (case-insensitive)" \
   "no such" ls /definitely-not-here
 
@@ -109,7 +109,7 @@ check "check_fails correctly fails on a non-matching substring" "PASS=0 FAIL=1" 
 
 # ---- AC5: check_state_unchanged --------------------------------------------------------------
 echo
-echo "AC5 — check_state_unchanged (positive and negative)"
+echo "AC5 -- check_state_unchanged (positive and negative)"
 STATE_TMP="$(mktemp "${TMPDIR:-/tmp}/edm-harness-state-test.XXXXXX")"
 echo '{"a":1}' > "$STATE_TMP"
 
@@ -132,7 +132,7 @@ rm -f "$STATE_TMP"
 
 # ---- CA-145: count_matches, count_matches_strict, assert_absent_with_control -----------------
 echo
-echo "CA-145 — count_matches, count_matches_strict, assert_absent_with_control"
+echo "CA-145 -- count_matches, count_matches_strict, assert_absent_with_control"
 
 CM_FILE="$(mktemp "${TMPDIR:-/tmp}/edm-harness-cm-test.XXXXXX")"
 printf 'alpha\nbeta\nalpha again\n' > "$CM_FILE"
@@ -212,7 +212,7 @@ check "assert_absent_with_control fails when the positive control itself lacks t
 
 # ---- CA-042: check_refuses_and_leaves_state ---------------------------------------------------
 echo
-echo "CA-042 — check_refuses_and_leaves_state (refuse + state-unchanged combined)"
+echo "CA-042 -- check_refuses_and_leaves_state (refuse + state-unchanged combined)"
 
 CRLS_STATE="$(mktemp "${TMPDIR:-/tmp}/edm-harness-crls-test.XXXXXX")"
 echo '{"a":1}' > "$CRLS_STATE"
@@ -260,7 +260,7 @@ check "check_refuses_and_leaves_state fails when no baseline state file exists" 
 
 # ---- AC6/AC7 (meta): existing helpers untouched, bash 3.2 compliance --------------------------
 echo
-echo "AC6/AC7 — existing helper behaviour and bash 3.2 compliance"
+echo "AC6/AC7 -- existing helper behaviour and bash 3.2 compliance"
 check "check() passes on matching substring" "needle" "haystack needle here"
 check_absent "check_absent() passes when substring is absent" "not-present-xyz" "haystack here"
 if bash -n "${SCRIPT_DIR}/_harness.sh"; then

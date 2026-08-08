@@ -704,7 +704,10 @@ check_absent "hooks.json does not reference the new plan token" "gate-check \"\$
 # ---- AC9: vocabulary guard -- no single line calls the preflight block that word ------
 echo
 echo "T13 AC9 -- vocabulary guard: no line names the preflight block with that word"
-PLUGIN_DIR="$(cd "$(dirname "$EDM_STATE")/.." && pwd)"
+# CA-049: reuse the already-derived SCRIPT_DIR rather than re-deriving the plugin root a second,
+# independent way from EDM_STATE's own dirname. SCRIPT_DIR is bin/tests/, so the plugin root is
+# two levels up.
+PLUGIN_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # Mirrors the ticket's literal verify command (line-level co-occurrence, not file-level --
 # edm-state legitimately uses each word separately on unrelated lines, e.g. "deterministic
 # gate enforcement" in the gate-check docblock and "Step 0" in an unrelated hook-typo

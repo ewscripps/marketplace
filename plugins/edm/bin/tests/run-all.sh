@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-all.sh — EDMV3-T20 smoke aggregator.
+# run-all.sh -- EDMV3-T20 smoke aggregator.
 #
 # Auto-discovers every plugins/edm/bin/tests/*-smoke.sh suite (AC3: a new suite is picked up by
 # the glob, not by being added to a hand-kept list -- an unregistered suite still runs). Runs
@@ -7,6 +7,10 @@
 # fails, naming the failing suite(s).
 #
 # Usage: bash plugins/edm/bin/tests/run-all.sh
+# CA-074: -e is intentionally omitted -- the suite loop below does `_out="$(bash "$suite" 2>&1)"`
+# then reads `_status=$?` on the next line specifically so a failing suite's non-zero exit is
+# captured and reported rather than aborting the aggregator before every suite has run (the whole
+# point of an aggregator is to collect every suite's result, not stop at the first failure).
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -70,7 +74,7 @@ if [[ ${#_run_order[@]} -lt $_MIN_SUITE_COUNT ]]; then
   exit 1
 fi
 
-echo "EDM smoke aggregator — ${#_run_order[@]} suite(s) discovered"
+echo "EDM smoke aggregator -- ${#_run_order[@]} suite(s) discovered"
 echo
 
 _total_pass=0

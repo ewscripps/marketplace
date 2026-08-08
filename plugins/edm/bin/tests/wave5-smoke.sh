@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# wave5-smoke.sh — G19 new coverage: migrate-path, per-epic coverage, set-parent/add-related, .bak
+# wave5-smoke.sh -- G19 new coverage: migrate-path, per-epic coverage, set-parent/add-related, .bak
 # Run from repo root: bash plugins/edm/bin/tests/wave5-smoke.sh
 set -euo pipefail
 
@@ -15,11 +15,11 @@ trap 'rm -rf "$TMP"' EXIT
 export EDM_SRD_ROOT="$TMP/SRD"
 mkdir -p "$TMP/SRD"
 
-echo "G19 smoke check — migrate-path, per-epic coverage, set-parent/add-related, .bak"
+echo "G19 smoke check -- migrate-path, per-epic coverage, set-parent/add-related, .bak"
 echo
 
 # ---- migrate-path: valid migration -------------------------------------------
-echo "migrate-path — valid migration"
+echo "migrate-path -- valid migration"
 "$EDM_STATE" init MIGR1 >/dev/null
 src_dir="$TMP/SRD/MIGR1"
 [[ -d "$src_dir" ]] && pass "flat source dir exists before migrate" || fail "flat source dir missing"
@@ -39,11 +39,11 @@ desc="$(jq -r '.initiative_description' "$state_file")"
 
 # CA-001 regression net: migrate-path must go through the locked/atomic/backup writer (rmw_state),
 # so a .bak must exist at the new location after the field update.
-[[ -f "${state_file}.bak" ]] && pass "migrate-path created .bak (locked write, CA-001)" || fail "migrate-path did not create .bak — lock/backup bypass (CA-001)"
+[[ -f "${state_file}.bak" ]] && pass "migrate-path created .bak (locked write, CA-001)" || fail "migrate-path did not create .bak -- lock/backup bypass (CA-001)"
 
 # ---- migrate-path: invalid inputs rejected -----------------------------------
 echo
-echo "migrate-path — invalid inputs rejected"
+echo "migrate-path -- invalid inputs rejected"
 "$EDM_STATE" init MIGR2 >/dev/null
 
 check "path-traversal product rejected" "must contain only" \
@@ -64,7 +64,7 @@ check "path-traversal PREFIX rejected (CA-002)" "invalid PREFIX" \
 
 # ---- migrate-path: duplicate target rejected ---------------------------------
 echo
-echo "migrate-path — duplicate target rejected"
+echo "migrate-path -- duplicate target rejected"
 # Pre-create the destination directory to simulate a collision.
 "$EDM_STATE" init MIGR4 >/dev/null
 mkdir -p "$TMP/SRD/duptest/MIGR4__feat"
@@ -73,7 +73,7 @@ check "duplicate target rejected" "already exists" \
 
 # ---- record-test-coverage: per-epic (4th arg) --------------------------------
 echo
-echo "record-test-coverage — per-epic coverage"
+echo "record-test-coverage -- per-epic coverage"
 "$EDM_STATE" init CVRG >/dev/null
 STATE_CVRG="$TMP/SRD/CVRG/.edm-state.json"
 
@@ -129,9 +129,9 @@ HANDOFF="$TMP/SRD/CHILD/HANDOFF.md"
 [[ -f "$HANDOFF" ]] && check "HANDOFF shows parent_prefix" "PARENT" "$(cat "$HANDOFF")" \
   || fail "HANDOFF.md not written by set-parent/add-related"
 
-# ---- G7 path-traversal guard (PREFIX) — CA-004 regression net for the P1 G7 fix --------------
+# ---- G7 path-traversal guard (PREFIX) -- CA-004 regression net for the P1 G7 fix --------------
 echo
-echo "G7 path-traversal — PREFIX guard (init/set)"
+echo "G7 path-traversal -- PREFIX guard (init/set)"
 check "init rejects traversal PREFIX" "invalid PREFIX" \
   "$("$EDM_STATE" init '../escaped/INJ' 2>&1 || true)"
 [[ ! -e "$TMP/escaped" ]] && pass "init wrote nothing outside SRD_ROOT (G7)" || fail "G7: init traversal wrote outside SRD_ROOT"
@@ -142,7 +142,7 @@ check "init rejects PREFIX with dots" "invalid PREFIX" \
 
 # ---- .bak mechanism ----------------------------------------------------------
 echo
-echo ".bak mechanism — backup created on write"
+echo ".bak mechanism -- backup created on write"
 "$EDM_STATE" init BAKTEST >/dev/null
 STATE_BAK="$TMP/SRD/BAKTEST/.edm-state.json"
 BAK_FILE="${STATE_BAK}.bak"

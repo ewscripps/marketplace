@@ -19,7 +19,7 @@ application stack -- from browser interaction through API to database and back. 
 integration failures that unit and component tests cannot.
 
 **If the project has no browser-rendered UI (backend-only service, CLI tool, library), or if the
-configured e2e framework is not installed, report "N/A" and exit cleanly.**
+configured e2e framework is not installed, report "N/A -- no e2e target" and exit cleanly.**
 
 ## Inputs
 
@@ -136,7 +136,7 @@ Write paths: only new or extended page objects and journey test files under the 
 root recorded in `test-plan.md` -- writing outside that root is a contract violation.
 
 - Zero applicable browser-rendered UI, or the configured e2e framework is not installed: report
-  "N/A" and exit cleanly -- this is your N/A exit token, not a partial report.
+  "N/A -- no e2e target" and exit cleanly -- this is your N/A exit token, not a partial report.
 - Apply the Step 5 report format to every journey you wrote, not just the first: one journey
   written reports the page object(s) touched, the journey test, and the AC it covers; multiple
   journeys written report the same per-journey line for every one, then one terminating summary
@@ -144,7 +144,7 @@ root recorded in `test-plan.md` -- writing outside that root is a contract viola
 
 ## When this does NOT apply
 
-N/A -- no browser-rendered UI, or the configured e2e framework is not installed.
+N/A -- no e2e target (no browser-rendered UI, or the configured e2e framework is not installed).
 
 This is the same exit token as Step 0's carve-out above, named here so the caller can rely on a
 uniform signal.

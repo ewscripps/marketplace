@@ -7,13 +7,17 @@
 # Run from repo root: bash plugins/edm/bin/tests/wave7-smoke.sh
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 EDM_STATE="${SCRIPT_DIR}/../edm-state"
 PLUGIN_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 GITLAB_CI_YML="$(cd "$PLUGIN_DIR/../.." && pwd)/.gitlab-ci.yml"
 
+# CA-005: shared --help extractor -- _t61_help_subcommands below sources this instead of
+# hand-copying the sentinel-extraction awk literal a thirteenth time.
+source "${SCRIPT_DIR}/../_edm-cli-lib.sh"
+
 # Shared assertions / counters (CA-014).
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_harness.sh"
+source "${SCRIPT_DIR}/_harness.sh"
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave7.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -260,6 +264,7 @@ t03_ac6_case() {
   cp -R "$PLUGIN_DIR/hooks" "$scratch/hooks"
   cp "$EDM_CHECK_GRANTS" "$scratch/bin/edm-check-grants"
   cp "${SCRIPT_DIR}/../_edm-lint-lib.sh" "$scratch/bin/_edm-lint-lib.sh"
+  cp "${SCRIPT_DIR}/../_edm-cli-lib.sh" "$scratch/bin/_edm-cli-lib.sh"
   chmod +x "$scratch/bin/edm-check-grants"
 
   # Strip AskUserQuestion from the scratch copy of plan/SKILL.md's allowed-tools line only.
@@ -748,7 +753,7 @@ _t61_dispatch_labels() {
 # description line ("# edm-state - read/write ...") would otherwise contribute.
 _t61_help_subcommands() {
   local f="$1"
-  awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$f" \
+  print_help "$f" \
     | grep -E '^#[[:space:]]+edm-state [a-zA-Z0-9_-]+' \
     | sed -E 's/^#[[:space:]]+edm-state ([a-zA-Z0-9_-]+).*/\1/' \
     | grep -vxF '-' \
@@ -4680,7 +4685,7 @@ check "CA-160 -- the refusal names the bad line-cap value" "invalid EDM_TOKEN_RE
 # ---- CA-056: the pattern-library heading match and pre-flight duplicate check are
 # fence-aware, and refuse (rather than guess) when a heading is ambiguous outside fences -------
 check "CA-056 -- edm-state sources the shared line-classification library" \
-  'source "${SELF_DIR}/_edm-lint-lib.sh"' "$(cat "$EDM_STATE")"
+  'source "${SCRIPT_DIR}/_edm-lint-lib.sh"' "$(cat "$EDM_STATE")"
 ca056_scratch="$(mktemp -d "${TMP}/edm-ca056.XXXXXX")" || fail "CA-056 -- mktemp failed"
 cat > "${ca056_scratch}/doc.md" <<'EOF'
 ## Top Recurring Findings
@@ -4775,27 +4780,36 @@ ca056_body_out="$(bash -c "
 check "CA-056 -- a heading that only textually matches a FENCED example is treated as novel, not a duplicate" \
   "1" "$(printf '%s\n' "$ca056_body_out" | tail -1)"
 
-# ---- CA-154: the cross-reference comments name the whole convention (not just one sibling
-# file), and all eleven sentinel-based --help extractors now render the same form -------------
+# ---- CA-154/CA-005: the cross-reference comments name the whole convention (not just one
+# sibling file), and every bin/ helper + evals/ driver now sources ONE shared print_help
+# (_edm-cli-lib.sh) instead of hand-copying the sentinel-extraction awk literal -------------------
 check "CA-154 -- bin/edm-state's cross-reference names the whole bin/+evals convention" \
   "every \`bin/\` helper and the three \`evals/\` drivers" "$(cat "$EDM_STATE")"
 check "CA-154 -- bin/edm-lint-artifacts' cross-reference names the whole bin/+evals convention" \
   "every \`bin/\` helper and the three \`evals/\` drivers" "$(cat "${PLUGIN_DIR}/bin/edm-lint-artifacts")"
 ca154_form_b_hits="$(grep -rl 'sub(/^# ?/,""' "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/evals" 2>/dev/null | grep -v '/tests/' || true)"
 [[ -z "$ca154_form_b_hits" ]] \
-  && pass "CA-154 -- zero remaining form-B (leading-hash-stripping) print_help sites; all eleven agree" \
+  && pass "CA-154 -- zero remaining form-B (leading-hash-stripping) print_help sites; all agree" \
   || fail "CA-154 -- form-B print_help site(s) still present: $ca154_form_b_hits"
-for ca154_f in edm-state edm-lint-artifacts edm-validate-prefix edm-init edm-check-vocabulary edm-check-grants edm-compare-eval edm-check-skill-sync; do
-  ca154_hit="$(grep -c '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "${PLUGIN_DIR}/bin/${ca154_f}" 2>/dev/null || true)"
+# CA-005: the extractor awk literal itself may now appear in exactly ONE file in the whole
+# plugin -- bin/_edm-cli-lib.sh. Any second occurrence anywhere under bin/ or evals/ (outside
+# bin/tests/, which legitimately re-derives it for its own doc-vs-dispatch cross-check) means a
+# script re-introduced a hand-copied extractor instead of sourcing the shared one.
+ca005_awk_hits="$(grep -rl '/\^# EDM-HELP-BEGIN/{f=1;next} /\^# EDM-HELP-END/{f=0} f' "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/evals" 2>/dev/null | grep -v '/tests/' || true)"
+[[ "$ca005_awk_hits" == "${PLUGIN_DIR}/bin/_edm-cli-lib.sh" ]] \
+  && pass "CA-005 -- the EDM-HELP sentinel-extractor awk literal exists in exactly one file (_edm-cli-lib.sh)" \
+  || fail "CA-005 -- expected the extractor literal ONLY in _edm-cli-lib.sh, found: $ca005_awk_hits"
+for ca154_f in edm-state edm-lint-artifacts edm-validate-prefix edm-init edm-check-vocabulary edm-check-grants edm-compare-eval edm-check-skill-sync edm-sync-canonical-sections; do
+  ca154_hit="$(grep -c 'source "\${SCRIPT_DIR}/_edm-cli-lib\.sh"' "${PLUGIN_DIR}/bin/${ca154_f}" 2>/dev/null || true)"
   [[ "${ca154_hit:-0}" -ge 1 ]] \
-    && pass "CA-154 -- bin/${ca154_f} uses the canonical (form-A) sentinel extractor" \
-    || fail "CA-154 -- bin/${ca154_f} does not use the canonical sentinel extractor form"
+    && pass "CA-005/CA-154 -- bin/${ca154_f} sources the shared _edm-cli-lib.sh print_help" \
+    || fail "CA-005/CA-154 -- bin/${ca154_f} does not source the shared print_help"
 done
 for ca154_ef in run-eval.sh score-artifacts.sh tiering-matrix.sh; do
-  ca154_hit="$(grep -c '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "${PLUGIN_DIR}/evals/${ca154_ef}" 2>/dev/null || true)"
+  ca154_hit="$(grep -c '_edm-cli-lib\.sh"' "${PLUGIN_DIR}/evals/${ca154_ef}" 2>/dev/null || true)"
   [[ "${ca154_hit:-0}" -ge 1 ]] \
-    && pass "CA-154 -- evals/${ca154_ef} uses the canonical (form-A) sentinel extractor" \
-    || fail "CA-154 -- evals/${ca154_ef} does not use the canonical sentinel extractor form"
+    && pass "CA-005/CA-154 -- evals/${ca154_ef} sources the shared _edm-cli-lib.sh print_help" \
+    || fail "CA-005/CA-154 -- evals/${ca154_ef} does not source the shared print_help"
 done
 
 echo

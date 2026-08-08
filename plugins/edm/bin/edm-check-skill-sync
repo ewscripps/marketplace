@@ -21,18 +21,23 @@
 # Usage: edm-check-skill-sync
 # Exit codes: 0 clean, 1 duplication found, 2 usage or environment error.
 # EDM-HELP-END
-set -uo pipefail
+# CA-074: converted from `set -uo pipefail` to `-euo pipefail` -- every command whose failure
+# matters here is already guarded (an explicit `||` on the SKILLS_DIR resolution below, and
+# every `grep -q` call sits in an `if`/`if !` condition, which -e already exempts), so nothing
+# in this script relied on -e being absent.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/_edm-cli-lib.sh"
 
 die() { echo "edm-check-skill-sync: $*" >&2; exit 2; }
 
-print_help() { awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$1"; }
 case "${1:-}" in
-  -h|--help) print_help "${BASH_SOURCE[0]}"; exit 0 ;;
+  -h|--help) print_help "${BASH_SOURCE[0]:-$0}"; exit 0 ;;
   "") : ;;
   *) die "unknown argument: $1 (see --help)" ;;
 esac
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILLS_DIR="$(cd "${SCRIPT_DIR}/../skills" 2>/dev/null && pwd)" || die "skills directory not found"
 ORCH="${SKILLS_DIR}/orchestrator/SKILL.md"
 [ -f "$ORCH" ] || die "dispatcher not found: $ORCH"

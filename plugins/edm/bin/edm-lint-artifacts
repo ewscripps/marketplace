@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # EDMV3-T61 AC1: the block between EDM-HELP-BEGIN and EDM-HELP-END below is sentinel-delimited,
-# not a hardcoded `sed -n 'A,Bp'` line range -- `usage()` extracts between the sentinels with
-# awk. A hardcoded range silently stops covering a new doc line added below its end unless two
-# numbers are bumped in lockstep. CA-154: the same sentinel-based help-text convention is used by
-# every `bin/` helper and the three `evals/` drivers -- not just this file and one sibling -- and
-# every one of those sites now renders its help text in the same form (this one: keep the
-# leading "# " on each printed line).
+# not a hardcoded `sed -n 'A,Bp'` line range -- `usage()` calls the shared `print_help` (CA-005,
+# `_edm-cli-lib.sh`) which extracts between the sentinels with awk. A hardcoded range silently
+# stops covering a new doc line added below its end unless two numbers are bumped in lockstep.
+# CA-005/CA-154: the same sentinel-based help-text convention is used by every `bin/` helper and the three `evals/` drivers
+# -- not just this file and one sibling -- and every one of those sites sources `_edm-cli-lib.sh`
+# and renders its help text in the same form (keep the leading "# " on each printed line) rather
+# than hand-copying the awk extractor.
 # EDM-HELP-BEGIN
 # edm-lint-artifacts - scan EDM initiative artifacts for violations.
 # Usage:
@@ -29,6 +30,8 @@
 #   mermaid-semicolon  -- a literal ';' inside Mermaid label/edge/message text, or a misused
 #                         ignore marker inside a mermaid fence (EDMV3-T43); see plugins/edm/
 #                         CLAUDE.md's "Mermaid diagram conventions (canonical)" section
+#   unterminated-fence -- a ``` fence opened but never closed by EOF; reported once, at the
+#                         fence-open line
 #
 # Output format: path:line: <class>: <snippet>
 # Exit codes: 0 = clean; 1 = one or more violations found; 2 = usage or environment error
@@ -51,17 +54,18 @@
 set -euo pipefail
 
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
-SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-source "${SELF_DIR}/_edm-lint-lib.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/_edm-cli-lib.sh"
+source "${SCRIPT_DIR}/_edm-lint-lib.sh"
 
 die() {
-  local msg="$1" code="${2:-1}"
+  local msg="$1" code="${2:-2}"
   echo "edm-lint-artifacts: $msg" >&2
   exit "$code"
 }
 
 usage() {
-  awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$0"
+  print_help "${BASH_SOURCE[0]:-$0}"
   exit 0
 }
 
@@ -234,9 +238,9 @@ scan_md_files() {
   local file i
 
   # ---- Shared one-pass line classification (EDMV3-T43) --------------------------
-  # build_line_classes is called exactly once per file here, computed up front, and its two
-  # derived sets (ignore/mermaid) are reused by all four classes below -- a four-class lint run
-  # still costs one read of each file, not four.
+  # build_line_classes is called exactly once per file here, computed up front, and its four
+  # derived sets (ignore / mermaid / marker / unterminated-fence) are reused by all five violation
+  # classes below -- a five-class lint run still costs one read of each file, not five.
   local FILES=("$@")
   local IGNORE_SETS=()
   local MERMAID_SETS=()

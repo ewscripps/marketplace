@@ -58,16 +58,21 @@
 # Exit codes: 0 = table produced (or --self-test passed); 1 = --self-test failed one or more
 # assertions; 2 = usage or environment error (missing jq, missing/malformed manifest file).
 # EDM-HELP-END
+# CA-074: -e is intentionally omitted -- --self-test's three assertions each capture run_matrix's
+# own failure with an explicit `|| { ...; return 1; }` so a failing assertion reports a clean
+# "self-test: FAIL" line naming which of the three branches broke, rather than -e aborting the
+# whole self-test mid-run with no indication of which assertion was in flight.
 set -uo pipefail
 
-SELF="$(basename "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# CA-005: shared --help extractor, sourced rather than hand-copied.
+source "${SCRIPT_DIR}/../bin/_edm-cli-lib.sh"
+SELF="$(basename "${BASH_SOURCE[0]:-$0}")"
 
 die() { echo "${SELF}: $*" >&2; exit 2; }
 
-print_help() { awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "${BASH_SOURCE[0]}"; }
-
 case "${1:-}" in
-  -h|--help) print_help; exit 0 ;;
+  -h|--help) print_help "${BASH_SOURCE[0]:-$0}"; exit 0 ;;
 esac
 
 command -v jq >/dev/null 2>&1 || die "required binary not found on PATH: jq"

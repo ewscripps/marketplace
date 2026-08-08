@@ -94,13 +94,17 @@
 # ANTHROPIC_API_KEY, never launches claude -- this script only ever reads files under the
 # run directory it is given.
 # EDM-HELP-END
+# CA-074: -e is intentionally omitted -- several bare `grep` command substitutions below (e.g.
+# the active-patterns and per-dimension ID extraction calls) are expected to return a
+# non-matching (non-zero) exit when a real artifact simply contains none of the pattern, and
+# most are not piped into a command that would absorb that under pipefail, so -e would abort a
+# legitimate zero-match run instead of scoring it. AC5 requires this scorer to exit 0 whenever a
+# score was produced, including a terrible one.
 set -uo pipefail
 
-print_help() {
-  awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "${BASH_SOURCE[0]}"
-}
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# CA-005: shared --help extractor, sourced rather than hand-copied.
+source "${SCRIPT_DIR}/../bin/_edm-cli-lib.sh"
 SCORER_VERSION="1.0.0"
 PATTERNS_FILE="$SCRIPT_DIR/vague-ac-patterns.txt"
 # CA-019: shared fence-recognition and semicolon-violation rule file, also loaded by
@@ -117,7 +121,7 @@ die() {
 }
 
 usage() {
-  print_help
+  print_help "${BASH_SOURCE[0]:-$0}"
 }
 
 describe() {

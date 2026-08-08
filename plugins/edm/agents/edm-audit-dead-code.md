@@ -47,12 +47,9 @@ Cross-reference timeout values and restart policies with the actual deployment c
 
 Report every finding at your best-effort confidence level rather than self-suppressing on uncertainty: this filter demotes a finding to `## Noted / Not Actionable` with a documented rationale and never deletes it outright, and ranking by confidence and cross-lens corroboration is the synthesizer's job, not this lens's.
 
-Before reporting:
 1. Could this code become reachable in a future deployment config?
 2. Is it documented as an intentional safety net?
 3. Could it be reached in a test environment but not production?
-
-If yes -> "Noted / Not Actionable" with rationale.
 
 ## Output
 
@@ -62,7 +59,7 @@ You have exactly two permitted write paths, both inside the current pass directo
 
 Report text is ASCII-only -- no Unicode em dashes, arrows, smart quotes, or emoji glyphs.
 
-Writing anywhere else is a contract violation. `skills/code-audit/SKILL.md:40`'s `mkdir -p "${OUTPUT_DIR}"` runs before you are launched -- that is why you are granted `Write` but no `Bash(mkdir *)`: the directory already exists by the time you start.
+Writing anywhere else is a contract violation. `skills/code-audit/SKILL.md`'s "Operational Orchestration" step that sets `OUTPUT_DIR` runs `mkdir -p "${OUTPUT_DIR}"` before you are launched -- that is why you are granted `Write` but no `Bash(mkdir *)`: the directory already exists by the time you start.
 
 The JSONL file is authoritative on conflict: every prose finding in `lens-L2.md` must have exactly one corresponding line in `lens-L2.jsonl`. If the two ever disagree about a finding, the JSONL is what the synthesizer and every downstream gate trust.
 

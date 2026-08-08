@@ -48,12 +48,9 @@ deliver what was asked at the scope intended; make routine judgment calls; if a 
 
 Report every finding at your best-effort confidence level rather than self-suppressing on uncertainty: this filter demotes a finding to `## Noted / Not Actionable` with a documented rationale and never deletes it outright, and ranking by confidence and cross-lens corroboration is the synthesizer's job, not this lens's.
 
-Before reporting a finding:
 1. Is this behavior documented as intentional in the plan/SRD/ticket?
 2. Is there a comment in the code explaining why this looks wrong but is correct?
 3. Is this pattern used consistently everywhere in the project?
-
-If yes to any -> record as "Noted / Not Actionable" with a one-line rationale.
 
 ## Output
 
@@ -63,21 +60,17 @@ You have exactly two permitted write paths, both inside the current pass directo
 
 Report text is ASCII-only -- no Unicode em dashes, arrows, smart quotes, or emoji glyphs.
 
-Writing anywhere else is a contract violation. `skills/code-audit/SKILL.md:40`'s `mkdir -p "${OUTPUT_DIR}"` runs before you are launched -- that is why you are granted `Write` but no `Bash(mkdir *)`: the directory already exists by the time you start.
+Writing anywhere else is a contract violation. `skills/code-audit/SKILL.md`'s "Operational Orchestration" step that sets `OUTPUT_DIR` runs `mkdir -p "${OUTPUT_DIR}"` before you are launched -- that is why you are granted `Write` but no `Bash(mkdir *)`: the directory already exists by the time you start.
 
 The JSONL file is authoritative on conflict: every prose finding in `lens-L1.md` must have exactly one corresponding line in `lens-L1.jsonl`. If the two ever disagree about a finding, the JSONL is what the synthesizer and every downstream gate trust.
 
 ## Output Format
 
-For every finding:
-- **Severity**: use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severity vocabulary"`. Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd) for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not loaded as runtime context.
-- **File + line number**
-- **What is wrong** (be precise -- what value, what condition, what function)
-- **Concrete fix** (specific code change, not vague advice)
+Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severity vocabulary"`. Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd) for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not loaded as runtime context.
 
 ```markdown
 ## Findings (L1: Logic, Correctness & Completeness)
-[findings in severity order]
+[findings in severity order, each with file:line, what is wrong, and a concrete fix]
 
 ## Noted / Not Actionable
 [false alarms with one-line rationale]

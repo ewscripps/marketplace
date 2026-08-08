@@ -263,9 +263,13 @@ case "$MODE" in
   --mermaid-ratio)
     # AC6 (cross-check, T43 AC10 owns the original measurement): re-take the ratio of lint time
     # with the Mermaid class vs. an equivalent fixture set with no ```mermaid fences, on this
-    # environment. Files with no fence short-circuit the class without a per-line scan (T43), so
-    # the with/without ratio should stay near 1.0x for a corpus with few or no diagrams; this
-    # mode reports the measured ratio rather than asserting a fixed number.
+    # environment. This fixture is the WORST realistic case, not the best one: every single file
+    # gets exactly one small mermaid fence appended below (see the loop a few lines down), so the
+    # no-fence short-circuit (T43) that would keep the ratio near 1.0x for a corpus with few or no
+    # diagrams is deliberately NOT exercised here -- this mode measures the per-line Mermaid scan
+    # cost on every file, not the short-circuit's savings on a mixed corpus. The mode reports the
+    # measured ratio against the actual printed budget (see below, "<= 1.40x"), not an assumed
+    # near-1.0x number; CHANGELOG.md separately records a real 1.19x sample from this same mode.
     TMP_MR="$(mktemp -d "${TMPDIR:-/tmp}/edm-timing-mermaid.XXXXXX")"
     export EDM_SRD_ROOT="${TMP_MR}/SRD"
     mkdir -p "${EDM_SRD_ROOT}/TIMMR"
@@ -301,15 +305,22 @@ case "$MODE" in
     ;;
 
   --all-lint)
-    # AC7: `edm-lint-artifacts --all` over the 50-initiative fixture under 60000ms, a CI budget
-    # rather than a commit-path budget.
+    # AC7: `edm-lint-artifacts --all` over the fixture repository under 60000ms, a CI budget
+    # rather than a commit-path budget. --all-lint takes --dir and derives nothing else from it
+    # (no --initiatives flag exists on this mode), so the initiative count reported below is
+    # counted from the fixture at measurement time via the same resolver edm-lint-artifacts
+    # itself uses (`edm-state list --paths`), never assumed from N_INITIATIVES -- that constant
+    # is only ever set by --generate-fixture's own --initiatives flag and would silently misreport
+    # if this mode were pointed at a differently-sized fixture (CA-073).
     [[ -n "$DIR" ]] || { echo "timing.sh --all-lint requires --dir <fixture-dir>" >&2; exit 2; }
     export EDM_SRD_ROOT="${DIR}/SRD"
+    actual_initiatives="$("$EDM_STATE" list --paths 2>/dev/null | grep -c . || true)"
+    actual_initiatives="${actual_initiatives:-0}"
     t0="$(_now)"
     "$EDM_LINT" --all >/dev/null 2>&1 || true
     t1="$(_now)"
     ms="$(_ms_between "$t0" "$t1")"
-    echo "TIMING all_lint duration_ms=${ms} (${N_INITIATIVES} initiatives, budget <= 60000ms, CI budget not a commit-path budget)"
+    echo "TIMING all_lint duration_ms=${ms} (${actual_initiatives} initiatives, budget <= 60000ms, CI budget not a commit-path budget)"
     ;;
 
   *)

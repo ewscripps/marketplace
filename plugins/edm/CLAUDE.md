@@ -334,7 +334,7 @@ for the exact command that closes this gap and replaces this note with a real ru
 | Implementation (`edm-implementer`) | `sonnet` | `high` | Throughput work -- well-specified by tickets |
 | Jira sync (optional) | `sonnet` | `high` | Mechanical mapping -- ticket pack already exists; this just translates fields |
 
-Skills mirror the split: `skills/orchestrator/`, `skills/plan/`, `skills/srd/`, `skills/audit-srd/`, `skills/tickets/`, `skills/audit-tickets/`, `skills/implement/`, `skills/code-audit/` are all on `opus`. The two writers run at `effort: high`; planning, audits, and QC run at `effort: max`. `skills/push-jira/` and `skills/metrics/` run on `sonnet`/`high`.
+Skills mirror the split: `skills/orchestrator/`, `skills/plan/`, `skills/srd/`, `skills/audit-srd/`, `skills/tickets/`, `skills/audit-tickets/`, `skills/implement/`, `skills/code-audit/`, `skills/test/`, and `skills/test-plan/` are all on `opus`. The two writers (`skills/srd/`, `skills/tickets/`) and `skills/test-plan/` run at `effort: high`; `skills/orchestrator/`, `skills/plan/`, the audit skills, `skills/implement/`, `skills/code-audit/`, and `skills/test/` run at `effort: max`. `skills/push-jira/`, `skills/metrics/`, `skills/test-coverage/`, and `skills/verify-runtime/` run on `sonnet`/`high`. All 14 skills are accounted for above.
 
 ### Prompt conventions (house style)
 
@@ -420,7 +420,8 @@ Every `phase-complete` (and, EDMV3-T51, `audit-round-complete`) invocation captu
 session JSONL files (`~/.claude/projects/<encoded-cwd>/*.jsonl`) and computes Claude API cost using current
 Anthropic pricing. The state schema's `phase_durations[N_phase]` entry includes:
 
-- `tokens.{input, output, cache_read, cache_write}` -- raw counts
+- `tokens.{input, output, cache_read, cache_write_5m, cache_write_1h}` -- raw counts (no bare `cache_write` key
+  exists; cache writes are split by TTL, see below)
 - `model_used` -- the model that handled most of the phase work (last assistant message)
 - `estimated_cost_usd` -- computed from tokens x per-million-token rates
 - `attribution_mode` -- `"scoped"` or `"whole-directory"` (EDMV3-T52); see below
@@ -458,16 +459,24 @@ this refresh is never silently repriced on a later read:
 Override the current-generation rates with `EDM_OPUS_INPUT_RATE`, `EDM_SONNET_OUTPUT_RATE`, `EDM_HAIKU_CACHE_READ_RATE`, `EDM_OPUS_CACHE_WRITE_5M_RATE`, `EDM_OPUS_CACHE_WRITE_1H_RATE`, etc. when rates change.
 
 **How `compute_cost_usd` picks a rate row after D32.** D32 removed the bare family wildcards. The
-`case` in `bin/edm-state` now has eight explicit arms, in this order:
+`case` in `bin/edm-state` now has eight explicit arms:
 
-1. previous-generation frozen rows: `*opus-4-7*|*opus-4.7*`, `*sonnet-4-6*|*sonnet-4.6*`,
-   `*haiku-4-5*|*haiku-4.5*`
-2. current-generation explicit rows: `*opus-4-8*|*opus-4.8*`, `*haiku-4-6*|*haiku-4.6*`,
-   `*sonnet-4-7*|*sonnet-4.7*`
-3. the literal `unknown` sentinel from `get_session_tokens_since` (silent placeholder pricing at
-   current Sonnet-tier rates; tokens are already zero in that path)
-4. final `*)` fallback: warn on stderr and also price at current Sonnet-tier rates as a clearly
-   suspect placeholder
+- previous-generation frozen rows: `*opus-4-7*|*opus-4.7*`, `*sonnet-4-6*|*sonnet-4.6*`,
+  `*haiku-4-5*|*haiku-4.5*`
+- current-generation explicit rows: `*opus-4-8*|*opus-4.8*`, `*haiku-4-6*|*haiku-4.6*`,
+  `*sonnet-4-7*|*sonnet-4.7*`
+- the literal `unknown` sentinel from `get_session_tokens_since` (silent placeholder pricing at
+  current Sonnet-tier rates; tokens are already zero in that path)
+- final `*)` fallback: warn on stderr and also price at current Sonnet-tier rates as a clearly
+  suspect placeholder
+
+Two invariants matter here, not the arms' literal position in the file: every explicit version arm
+precedes the final `*)` fallback, and no bare family wildcard (e.g. a bare `*opus*`) may be
+introduced ahead of `*)` -- that is the exact silent-guess regression D32 removed. The `unknown`
+sentinel only has to precede `*)` too; it is not required to sit after every version arm, and today
+it does not -- it is arm 6 of 8, between the `*haiku-4-6*` and `*sonnet-4-7*` current-generation
+arms. A contributor adding a new version arm (e.g. Sonnet 5) just needs it ahead of `*)`; where it
+lands relative to `unknown` is immaterial.
 
 The important behavioral change is the opposite of the pre-D32 contract: an unrecognized model in a
 known family no longer matches silently. `claude-opus-5-20260501`, `claude-sonnet-9`, or any other
@@ -783,10 +792,18 @@ All fields default safely so v1.x state files without them work unchanged (C-4 b
 
 ### `.edm-state.json` `schema_version` contract (EDMV3-T09)
 
-`schema_version` is an integer, written once by `cmd_init` for the wave the running plugin version
-belongs to, and advanced only by `edm-state migrate-schema` -- never by `cmd_set` (making it
+`schema_version` is an integer, written once by `cmd_init` (`_cmd_init_render` in `bin/edm-state`
+always writes the literal `1`, regardless of which wave the running plugin version actually
+belongs to), and advanced only by `edm-state migrate-schema` -- never by `cmd_set` (making it
 `cmd_set`-settable would reopen the hand-flip path the `SETTABLE_KEYS` allowlist exists to close).
-Absent `schema_version` is the legacy pre-EDMV3 signal (grandfathered, C-4).
+Because `cmd_init` never writes anything above `1`, a brand-new initiative created today by the
+current (wave-C) plugin version starts at `schema_version: 1` and warn-and-proceeds through every
+wave-B (`>= 2`) check -- the enforcement kernel degrades rather than blocks -- until an operator
+explicitly runs `edm-state migrate-schema <PREFIX>` to bump it. This is deliberate: `cmd_init`
+scaffolds the minimal always-valid shape every wave certifies, and letting a fresh initiative
+silently start "ahead" at the plugin's current wave would mean a state file whose recorded version
+was never itself verified against that initiative's actual on-disk shape. Absent `schema_version`
+is the separate legacy pre-EDMV3 signal (grandfathered, C-4).
 
 | Version | Wave | Shape it certifies | Minimum version required by |
 |---|---|---|---|

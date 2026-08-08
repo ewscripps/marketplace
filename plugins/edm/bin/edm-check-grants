@@ -10,7 +10,8 @@
 #
 # Why four sources, not one: a "grep every agents/*.md" check passes green while eleven
 # code-audit lens agents are still unable to write, because their write instruction lives in
-# `skills/code-audit/SKILL.md:44,99` (a skill launch template), not in their own agent body, and
+# `skills/code-audit/SKILL.md`'s "Operational Orchestration" step and its "Lens Agent Launch
+# Template" section (a skill launch template), not in their own agent body, and
 # `edm-qc-auditor`'s write+bash instructions live in `hooks/hooks.json` (a hook prompt), not its
 # own body either. This checker therefore scans:
 #   1. agent bodies             -- agents/*.md (the instruction IS the agent's own body text)
@@ -59,9 +60,14 @@
 # EDM-HELP-END
 set -euo pipefail
 
-print_help() {
-  awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$0"
-}
+# ---- Resolve plugin paths (relative to this script, not the caller's cwd) ---------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/_edm-cli-lib.sh"
+source "${SCRIPT_DIR}/_edm-lint-lib.sh"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+AGENTS_DIR="${PLUGIN_ROOT}/agents"
+SKILLS_DIR="${PLUGIN_ROOT}/skills"
+HOOKS_FILE="${PLUGIN_ROOT}/hooks/hooks.json"
 
 die() {
   local msg="$1" code="${2:-2}"
@@ -70,7 +76,7 @@ die() {
 }
 
 usage() {
-  print_help
+  print_help "${BASH_SOURCE[0]:-$0}"
   exit 0
 }
 
@@ -95,14 +101,6 @@ if [[ $# -gt 0 ]]; then
   esac
 fi
 [[ $# -eq 0 ]] || die "unexpected extra argument: $1" 2
-
-# ---- Resolve plugin paths (relative to this script, not the caller's cwd) ---------------------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-source "${SCRIPT_DIR}/_edm-lint-lib.sh"
-PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-AGENTS_DIR="${PLUGIN_ROOT}/agents"
-SKILLS_DIR="${PLUGIN_ROOT}/skills"
-HOOKS_FILE="${PLUGIN_ROOT}/hooks/hooks.json"
 
 SOURCE_LABELS="agent-bodies skill-launch-templates hook-prompt-text skill-allowed-tools-vs-body"
 
@@ -329,10 +327,12 @@ scan_agent_bodies() {
 
 # =================================================================================================
 # Source 2: skill launch templates -- an instruction that names a target agent explicitly (an
-# "Agent: <name>" launch-template line, e.g. skills/code-audit/SKILL.md:92,120) and a write path
-# or shell command nearby. The lens template's name is a placeholder ("edm-audit-{lens-name}"):
-# expand it to the concrete set of lens agent files. The step-7 bullet at :44 has no "Agent:" line
-# nearby at all -- its target is stated by the word "lens" in the same numbered step instead
+# "Agent: <name>" launch-template line, e.g. skills/code-audit/SKILL.md's "Lens Agent Launch
+# Template" and "Synthesizer Phase" sections) and a write path or shell command nearby. The lens
+# template's name is a placeholder ("edm-audit-{lens-name}"): expand it to the concrete set of
+# lens agent files. The "Operational Orchestration" section's "Launch lens agents in parallel"
+# step has no "Agent:" line nearby at all -- its target is stated by the word "lens" in the same
+# numbered step instead
 # ("Launch lens agents in parallel for every lens in LENS_SET") -- so the same "lens" keyword
 # trigger is checked as a fallback whenever no explicit "Agent:" line is found in the lookback
 # window. This is a codebase-specific heuristic (not a generic templating engine), documented here

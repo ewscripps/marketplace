@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Wave 4b smoke tests — skill/agent/config text changes
+# Wave 4b smoke tests -- skill/agent/config text changes
 # Tickets: T61, T64, T65, T66, T67, T74, T82, T84, T85, T86, T88, T89, T90, T91, T92, T93, T94
 set -euo pipefail
 
-PLUGIN_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+PLUGIN_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # Shared assertions / counters (CA-014). Reconciles wave4b onto the same check contract as the
 # other suites: check <label> <expected-substring> <content> (same arg order as before).
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_harness.sh"
+source "${SCRIPT_DIR}/_harness.sh"
 
 echo "=== Wave 4b Smoke Tests ==="
 echo ""

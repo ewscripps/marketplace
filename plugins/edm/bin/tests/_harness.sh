@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# _harness.sh — shared smoke-test assertions for the EDM bin/tests/*-smoke.sh suites (CA-014;
+# _harness.sh -- shared smoke-test assertions for the EDM bin/tests/*-smoke.sh suites (CA-014;
 # formerly the duplicated G18d preamble). Source it AFTER `set -euo pipefail`:
 #   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_harness.sh"
 # Each suite manages its own SCRIPT_DIR / EDM_STATE / PLUGIN_DIR / TMP setup; this file provides
@@ -11,7 +11,7 @@ FAIL=0
 pass() { echo "  PASS: $*"; PASS=$((PASS+1)); }
 fail() { echo "  FAIL: $*" >&2; FAIL=$((FAIL+1)); }
 
-# check <label> <expected-substring> <actual> — pass when <actual> contains <expected-substring>.
+# check <label> <expected-substring> <actual> -- pass when <actual> contains <expected-substring>.
 check() {
   local label="$1" expected="$2" actual="$3"
   if [[ "$actual" == *"$expected"* ]]; then
@@ -21,7 +21,7 @@ check() {
   fi
 }
 
-# check_absent <label> <unexpected-substring> <actual> — pass when <actual> does NOT contain it.
+# check_absent <label> <unexpected-substring> <actual> -- pass when <actual> does NOT contain it.
 check_absent() {
   local label="$1" unexpected="$2" actual="$3"
   if [[ "$actual" == *"$unexpected"* ]]; then
@@ -38,15 +38,41 @@ check_absent() {
 # ${BASH_SOURCE[0]%/*} tricks needed, plain cd/pwd is portable).
 _HARNESS_TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _HARNESS_BIN_DIR="$(cd "${_HARNESS_TESTS_DIR}/.." && pwd)"
+# CA-049: shared plugin-root and repo-root exports so individual suites stop re-deriving the same
+# value inline (five suites previously recomputed this a few lines above their own use of it).
+_HARNESS_PLUGIN_DIR="$(cd "${_HARNESS_BIN_DIR}/.." && pwd)"
+_HARNESS_REPO_ROOT="$(cd "${_HARNESS_PLUGIN_DIR}/../.." && pwd)"
 
-# with_scratch_repo <fn> — create a scratch git repository under ${TMPDIR:-/tmp}, `git init` it, commit an
+# harness_scratch_dir <outvar> -- create a fresh scratch directory under ${TMPDIR:-/tmp},
+# honoring TMPDIR (unlike a bare `mktemp -d` with no template) and installing a cleanup trap on
+# EXIT/INT/TERM in the CALLER's own shell so a Ctrl-C during a suite run does not leak the
+# directory (CA-049: three older suites hand-rolled a byte-identical bare `mktemp -d` +
+# `trap ... EXIT` preamble that did neither of those two things; wave6/wave7 already do both
+# correctly inline -- this gives every suite, old and new, the same corrected preamble in one
+# place). Takes an out-variable name rather than printing the path for capture via `$(...)`: a
+# command substitution runs in a subshell, so a trap installed inside one is gone the instant
+# that subshell exits -- before the caller could ever use the directory. Call it directly
+# (never via `$(...)`) so the trap lands in the calling script's own shell:
+#   harness_scratch_dir SCRATCH
+#   echo "$SCRATCH"
+# This installs process-wide EXIT/INT/TERM traps, so -- like with_scratch_repo -- do not call it
+# more than once per process without capturing and restoring the prior trap yourself.
+harness_scratch_dir() {
+  local __harness_scratch_outvar="$1"
+  local dir
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/edm-harness.XXXXXX")" || { fail "harness_scratch_dir: mktemp failed"; return 1; }
+  trap 'rm -rf "'"$dir"'"' EXIT INT TERM
+  printf -v "$__harness_scratch_outvar" '%s' "$dir"
+}
+
+# with_scratch_repo <fn> -- create a scratch git repository under ${TMPDIR:-/tmp}, `git init` it, commit an
 # initial file, then run <fn> with that directory as the working tree, EDM_SRD_ROOT pointed
 # inside it, and plugins/edm/bin prepended to PATH (bin/edm-init and bin/edm-validate-prefix
 # invoke sibling scripts by bare name, unlike these test suites which call "$EDM_STATE" by
 # absolute path).
 #
 # Cleanup runs on every exit path: normal return, a non-zero return from <fn>, and interrupt
-# (INT/TERM) — via a trap installed before <fn> runs and restored afterwards, so this must not
+# (INT/TERM) -- via a trap installed before <fn> runs and restored afterwards, so this must not
 # be nested (bash 3.2 has no reliable `trap -p` composition; keep the nesting depth at one).
 with_scratch_repo() {
   local fn="$1"
@@ -100,7 +126,7 @@ with_scratch_repo() {
   return $status
 }
 
-# check_fails <label> <expected-message-substring> <cmd...> — pass when <cmd...> exits non-zero
+# check_fails <label> <expected-message-substring> <cmd...> -- pass when <cmd...> exits non-zero
 # AND its combined stdout+stderr contains <expected-message-substring> (case-insensitive, since
 # coreutils message casing differs, e.g. "No such file" on both GNU and BSD `ls`). An exit-code-
 # only assertion would pass on any unrelated failure, which is the failure mode that matters for
@@ -126,7 +152,7 @@ check_fails() {
   fi
 }
 
-# count_matches <grep-args...> — grep -c that returns 0 on no match instead of exiting 1 under
+# count_matches <grep-args...> -- grep -c that returns 0 on no match instead of exiting 1 under
 # set -e. Used by count-based assertions so a regression becomes one failed assertion, not a
 # crashed suite.
 # CAVEAT (CA-145): this collapses grep exit 1 (no match; a real zero count) and grep exit 2
@@ -142,7 +168,7 @@ count_matches() {
   printf '%s\n' "${count:-0}"
 }
 
-# count_matches_strict <grep-args...> — like count_matches, but does not collapse grep's two
+# count_matches_strict <grep-args...> -- like count_matches, but does not collapse grep's two
 # distinct non-zero exit codes (CA-145 fix): "no match" (grep exit 1) still prints 0 and returns
 # 0, exactly like count_matches always has, but "file not found / unreadable / bad pattern" (grep
 # exit 2) prints the literal string "ERROR" on stdout and returns 2, so a caller that checks this
@@ -159,7 +185,7 @@ count_matches_strict() {
   return 0
 }
 
-# assert_absent_with_control <label> <needle> <actual> <control-label> <control-haystack> —
+# assert_absent_with_control <label> <needle> <actual> <control-label> <control-haystack> --
 # passes only when <needle> is absent from <actual> AND present in the positive-control haystack.
 assert_absent_with_control() {
   local label="$1" needle="$2" actual="$3" control_label="$4" control_haystack="$5"
@@ -172,7 +198,7 @@ assert_absent_with_control() {
   fi
 }
 
-# _harness_hash_file <file> — sha256 of <file>, or "absent" if it doesn't exist. Tries
+# _harness_hash_file <file> -- sha256 of <file>, or "absent" if it doesn't exist. Tries
 # `shasum -a 256` first, falling back to `sha256sum` (macOS/Linux divergence, EDMV3-106).
 _harness_hash_file() {
   local file="$1"
@@ -186,7 +212,7 @@ _harness_hash_file() {
   fi
 }
 
-# check_state_unchanged <state-file> <cmd...> — hashes <state-file>, runs <cmd...>, re-hashes,
+# check_state_unchanged <state-file> <cmd...> -- hashes <state-file>, runs <cmd...>, re-hashes,
 # and asserts byte identity. Used to prove a command that claims to be read-only (e.g.
 # `edm-state list --paths`) never mutates the state file it reads.
 check_state_unchanged() {
@@ -282,7 +308,7 @@ _wave7_extract_section() {
 }
 
 # ---- EDMV3-T50/T51/T52: cost-tracking test fixtures ------------------------------------------
-# session_dir_for_test_cwd — mirrors bin/edm-state's own session_dir_for_cwd() formula exactly
+# session_dir_for_test_cwd -- mirrors bin/edm-state's own session_dir_for_cwd() formula exactly
 # (same `tr '/.' '-'` encoding of $HOME + $(pwd)) so a test can predict, and stage fixtures
 # into, the exact directory get_session_tokens_since() will read at call time.
 session_dir_for_test_cwd() {

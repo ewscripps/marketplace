@@ -15,17 +15,23 @@
 set -euo pipefail
 
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/_edm-cli-lib.sh"
 PREFIX="${1:-}"
 
-print_help() {
-  awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$0"
+# CA-074: takes the message and exit code as two separate arguments so the code is never
+# echoed as part of the diagnostic text (the previous `echo "...: $*"` form printed the numeric
+# exit-code argument as the last word of every message, since `$*` swept it up along with the
+# message). Family contract: 1 = invalid format, 2 = collision.
+die() {
+  local msg="$1" code="${2:-1}"
+  echo "edm-validate-prefix: $msg" >&2
+  exit "$code"
 }
-
-die() { echo "edm-validate-prefix: $*" >&2; exit "${2:-1}"; }
 
 case "${PREFIX}" in
   -h|--help|help)
-    print_help
+    print_help "${BASH_SOURCE[0]:-$0}"
     exit 0
     ;;
 esac

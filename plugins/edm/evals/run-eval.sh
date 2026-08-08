@@ -42,25 +42,30 @@
 #      run.json and a stub scores.json are written with complete: false so CI refuses to
 #      compare this run against the baseline.
 # EDM-HELP-END
+# CA-074: -e is intentionally omitted -- this driver's whole exit-code contract (0/1/2/4, see
+# above) depends on continuing past a failed or timed-out phase so it can still write run.json
+# and a stub scores.json with complete:false (exit 4) instead of the phase failure aborting the
+# script before that bookkeeping runs. Every `read -d ''` heredoc capture below is separately
+# guarded with `|| true` for the same reason (a `read -d ''` that hits EOF without its delimiter
+# exits non-zero by design, not by error).
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 EVALS_DIR="$SCRIPT_DIR"
 EDM_PLUGIN_DIR="$(cd "$EVALS_DIR/.." && pwd)"
 EDM_BIN_DIR="$EDM_PLUGIN_DIR/bin"
 FIXTURE_DIR="$EVALS_DIR/fixtures/tiny-svc"
 INITIATIVE_FILE="$EVALS_DIR/initiative.txt"
 
-export PATH="$EDM_BIN_DIR:$PATH"
+# CA-005: shared --help extractor, sourced rather than hand-copied.
+source "${EDM_BIN_DIR}/_edm-cli-lib.sh"
 
-print_help() {
-  awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "${BASH_SOURCE[0]}"
-}
+export PATH="$EDM_BIN_DIR:$PATH"
 
 die() { echo "run-eval: $*" >&2; exit 2; }
 
 usage() {
-  print_help
+  print_help "${BASH_SOURCE[0]:-$0}"
 }
 
 # --- Flag parsing --------------------------------------------------------------------------

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# EDM-HELP-BEGIN
 # edm-sync-canonical-sections -- EDMV3-T41 negative-branch generator.
 #
 # Why this script exists: `claude plugin validate plugins/edm/` confirms (verified twice, same
@@ -26,21 +27,30 @@
 #
 # Usage:
 #   edm-sync-canonical-sections            # regenerate docs/canonical-sections.md in place
-#   edm-sync-canonical-sections --check     # exit 1 (with a diff) if the committed copy is stale
+#   edm-sync-canonical-sections --check    # exit 1 (with a diff) if the committed copy is stale
+#   edm-sync-canonical-sections -h|--help  # show this help
+#
+# Exit codes: 0 = regenerated (or --check found no drift); 1 = --check found drift; 2 = usage
+# error (unknown flag).
+# EDM-HELP-END
+# CA-005: the block above is EDM-HELP-BEGIN/EDM-HELP-END sentinel-delimited, not keyed on the
+# literal `set -euo pipefail` line below the way this script's --help extraction used to be --
+# moving or annotating that line no longer silently truncates --help output.
 set -euo pipefail
 
-SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
-PLUGIN_DIR="$(cd "${SELF_DIR}/.." && pwd)"
-SRC="${PLUGIN_DIR}/CLAUDE.md"
-DST="${PLUGIN_DIR}/docs/canonical-sections.md"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/_edm-cli-lib.sh"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SRC="${PLUGIN_ROOT}/CLAUDE.md"
+DST="${PLUGIN_ROOT}/docs/canonical-sections.md"
 
-die() { echo "edm-sync-canonical-sections: $*" >&2; exit 1; }
+die() { echo "edm-sync-canonical-sections: $*" >&2; exit "${2:-2}"; }
 
 mode="${1:-}"
 case "$mode" in
   ""|--check) ;;
-  -h|--help)
-    awk '/^# edm-sync-canonical-sections/{f=1} f{print} /^set -euo pipefail/{exit}' "$0" | sed '$d'
+  -h|--help|help)
+    print_help "${BASH_SOURCE[0]:-$0}"
     exit 0
     ;;
   *) die "usage: edm-sync-canonical-sections [--check]" ;;

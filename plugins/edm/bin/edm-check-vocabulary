@@ -53,12 +53,13 @@
 # bash 3.2 compatible: no associative arrays, no mapfile/readarray.
 set -euo pipefail
 
-SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "${SELF_DIR}/_edm-lint-lib.sh"
-PLUGIN_DIR="$(cd "${SELF_DIR}/.." && pwd)"
-REPO_ROOT="$(cd "${PLUGIN_DIR}/../.." && pwd)"
-PROHIBITED_FILE="${SELF_DIR}/vocabulary-prohibited.txt"
-ALLOWLIST_FILE="${SELF_DIR}/vocabulary-allowlist.txt"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/_edm-cli-lib.sh"
+source "${SCRIPT_DIR}/_edm-lint-lib.sh"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${PLUGIN_ROOT}/../.." && pwd)"
+PROHIBITED_FILE="${SCRIPT_DIR}/vocabulary-prohibited.txt"
+ALLOWLIST_FILE="${SCRIPT_DIR}/vocabulary-allowlist.txt"
 
 die() {
   local msg="$1" code="${2:-2}"
@@ -67,7 +68,7 @@ die() {
 }
 
 usage() {
-  awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$0"
+  print_help "${BASH_SOURCE[0]:-$0}"
   exit 0
 }
 # EDM-HELP-BEGIN
@@ -102,14 +103,14 @@ fi
 
 # ---- Scope roots (AC1: eight paths) --------------------------------------------------------
 SCOPE_ROOTS=(
-  "${PLUGIN_DIR}/skills"
-  "${PLUGIN_DIR}/agents"
-  "${PLUGIN_DIR}/docs"
-  "${PLUGIN_DIR}/hooks/hooks.json"
-  "${PLUGIN_DIR}/monitors/monitors.json"
-  "${PLUGIN_DIR}/CLAUDE.md"
-  "${PLUGIN_DIR}/README.md"
-  "${PLUGIN_DIR}/bin"
+  "${PLUGIN_ROOT}/skills"
+  "${PLUGIN_ROOT}/agents"
+  "${PLUGIN_ROOT}/docs"
+  "${PLUGIN_ROOT}/hooks/hooks.json"
+  "${PLUGIN_ROOT}/monitors/monitors.json"
+  "${PLUGIN_ROOT}/CLAUDE.md"
+  "${PLUGIN_ROOT}/README.md"
+  "${PLUGIN_ROOT}/bin"
 )
 
 if [[ "$LIST_SCOPE" -eq 1 ]]; then
@@ -124,7 +125,7 @@ fi
 
 # ---- JSON scope files: validated as parseable JSON, not only grepped (AC2) -----------------
 command -v jq >/dev/null 2>&1 || die "jq not found on PATH (required to validate JSON scope files)"
-for jf in "${PLUGIN_DIR}/hooks/hooks.json" "${PLUGIN_DIR}/monitors/monitors.json"; do
+for jf in "${PLUGIN_ROOT}/hooks/hooks.json" "${PLUGIN_ROOT}/monitors/monitors.json"; do
   [[ -f "$jf" ]] || die "scope file not found: ${jf#"${REPO_ROOT}"/}"
   jq -e . "$jf" >/dev/null 2>&1 || die "invalid JSON, cannot scan: ${jf#"${REPO_ROOT}"/}"
 done
@@ -174,7 +175,7 @@ for root in "${SCOPE_ROOTS[@]}"; do
     while IFS= read -r f; do
       FILES+=("$f")
     done < <(find "$root" -type f \( -name '*.md' -o -name '*.json' -o -name '*.txt' -o -name '*.sh' \) 2>/dev/null | sort)
-    if [[ "$root" == "${PLUGIN_DIR}/bin" ]]; then
+    if [[ "$root" == "${PLUGIN_ROOT}/bin" ]]; then
       # Extensionless executables directly under bin/ (edm-state, edm-init, this script, ...).
       while IFS= read -r f; do
         FILES+=("$f")

@@ -28,19 +28,22 @@
 #   3  no committed baseline exists yet -- the comparison cannot run. This is distinct from a
 #      regression: it means the tripwire is not armed, not that the code got worse.
 # EDM-HELP-END
-set -uo pipefail
+# CA-074: converted from `set -uo pipefail` to `-euo pipefail` -- every jq/awk call below already
+# resolves via `-e`+`||` or a `//` default rather than relying on -e being absent, so nothing in
+# this script depended on -e being absent.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/_edm-cli-lib.sh"
 
 die() { echo "edm-compare-eval: $*" >&2; exit 2; }
 
-print_help() { awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$1"; }
-
 case "${1:-}" in
-  -h|--help) print_help "${BASH_SOURCE[0]}"; exit 0 ;;
+  -h|--help) print_help "${BASH_SOURCE[0]:-$0}"; exit 0 ;;
   "") die "usage: edm-compare-eval <candidate-scores.json> [<baseline-scores.json>]" ;;
 esac
 
 CANDIDATE="$1"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASELINE="${2:-${SCRIPT_DIR}/../evals/baseline/scores.json}"
 
 command -v jq >/dev/null 2>&1 || die "required binary not found on PATH: jq"

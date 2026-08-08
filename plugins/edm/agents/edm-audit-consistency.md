@@ -66,7 +66,7 @@ You have exactly two permitted write paths, both inside the current pass directo
 
 Report text is ASCII-only -- no Unicode em dashes, arrows, smart quotes, or emoji glyphs.
 
-Writing anywhere else is a contract violation. `skills/code-audit/SKILL.md:40`'s `mkdir -p "${OUTPUT_DIR}"` runs before you are launched -- that is why you are granted `Write` but no `Bash(mkdir *)`: the directory already exists by the time you start.
+Writing anywhere else is a contract violation. `skills/code-audit/SKILL.md`'s "Operational Orchestration" step that sets `OUTPUT_DIR` runs `mkdir -p "${OUTPUT_DIR}"` before you are launched -- that is why you are granted `Write` but no `Bash(mkdir *)`: the directory already exists by the time you start.
 
 The JSONL file is authoritative on conflict: every prose finding in `lens-L7.md` must have exactly one corresponding line in `lens-L7.jsonl`. If the two ever disagree about a finding, the JSONL is what the synthesizer and every downstream gate trust.
 

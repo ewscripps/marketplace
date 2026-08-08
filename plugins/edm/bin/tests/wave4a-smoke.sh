@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# wave4a-smoke.sh — WS-B/C/E/F bash-code smoke check (T56, T67, T83, T96, T97, T98, T99)
+# wave4a-smoke.sh -- WS-B/C/E/F bash-code smoke check (T56, T67, T83, T96, T97, T98, T99)
 # Tests: audit-round-start, record-partial-verdict, set-mode, skip-phase,
 #        set-supersedes/set-forked-from, SIZE_UNKNOWN suppression, HANDOFF sections.
 # Run from repo root: bash plugins/edm/bin/tests/wave4a-smoke.sh
@@ -17,11 +17,11 @@ trap 'rm -rf "$TMP"' EXIT
 export EDM_SRD_ROOT="$TMP/SRD"
 mkdir -p "$TMP/SRD"
 
-echo "WS-B/C/E/F smoke check — wave4a bash code"
+echo "WS-B/C/E/F smoke check -- wave4a bash code"
 echo
 
 # ---- T56: audit-round-start --------------------------------------------------
-echo "T56 — audit-round-start"
+echo "T56 -- audit-round-start"
 "$EDM_STATE" init TSMK >/dev/null
 STATE_FILE="$TMP/SRD/TSMK/.edm-state.json"
 
@@ -51,7 +51,7 @@ check "invalid audit type rejected" "unknown audit type" \
 
 # ---- T67: record-partial-verdict ---------------------------------------------
 echo
-echo "T67 — record-partial-verdict"
+echo "T67 -- record-partial-verdict"
 "$EDM_STATE" record-partial-verdict TSMK "TSMK-T01" PASS >/dev/null
 "$EDM_STATE" record-partial-verdict TSMK "TSMK-T02" PARTIAL "needs retry logic" >/dev/null
 "$EDM_STATE" record-partial-verdict TSMK "TSMK-T03" FAIL "assertion missing" >/dev/null
@@ -70,7 +70,7 @@ check "invalid verdict rejected" "unknown verdict" \
 
 # ---- T83: set-mode -----------------------------------------------------------
 echo
-echo "T83 — set-mode"
+echo "T83 -- set-mode"
 "$EDM_STATE" set-mode TSMK mode prototype >/dev/null
 m="$(jq -r '.mode' "$STATE_FILE")"
 [[ "$m" == "prototype" ]] && pass "mode = prototype" || fail "mode = '$m'"
@@ -99,7 +99,7 @@ check "invalid implementation_mode rejected" "invalid implementation_mode" \
 
 # ---- T96: skip-phase ---------------------------------------------------------
 echo
-echo "T96 — skip-phase"
+echo "T96 -- skip-phase"
 # Reset to standard mode for gate-skip tests. Note: T83 above set mode=prototype, which
 # (EDMV3-T07 AC4 remediation) merged prototype's 4 default-skip entries (phases 3,4,5,6)
 # into skipped_phases; a mode change only ever ADDS entries, it never removes ones a prior
@@ -143,7 +143,7 @@ check "HANDOFF shows phase-1-skipped next_action" "Phase 1 skipped" "$(cat "$HAN
 
 # ---- T97: SIZE_UNKNOWN suppression -------------------------------------------
 echo
-echo "T97 — SIZE_UNKNOWN suppression for fast-track/fix-pack"
+echo "T97 -- SIZE_UNKNOWN suppression for fast-track/fix-pack"
 "$EDM_STATE" phase-start TSMK 2 >/dev/null
 
 # Without fast-track: SIZE_UNKNOWN anomaly should fire
@@ -165,7 +165,7 @@ check_absent "SIZE_UNKNOWN suppressed in fix-pack mode" "SIZE_UNKNOWN" "$anomali
 
 # ---- T98: set-supersedes / set-forked-from -----------------------------------
 echo
-echo "T98 — set-supersedes / set-forked-from"
+echo "T98 -- set-supersedes / set-forked-from"
 "$EDM_STATE" set-supersedes TSMK OLDPREFIX >/dev/null
 sup="$(jq -r '.supersedes' "$STATE_FILE")"
 [[ "$sup" == "OLDPREFIX" ]] && pass "supersedes = OLDPREFIX" || fail "supersedes = '$sup'"
@@ -182,7 +182,7 @@ check "empty forked_from rejected" "non-empty" \
 
 # ---- T99: ## Lifecycle & Mode section in HANDOFF.md -------------------------
 echo
-echo "T99 — Lifecycle & Mode section in HANDOFF.md"
+echo "T99 -- Lifecycle & Mode section in HANDOFF.md"
 # lifecycle_mode "partial" is a dead value removed from LIFECYCLE_MODE_ENUM_LIST by the
 # delete-list epic (D12, EDMV3-T57..T60) -- "fix-pack" exercises the same HANDOFF rendering
 # path with a live enum member.
@@ -230,7 +230,7 @@ fi
 
 # ---- init payload: new fields present ----------------------------------------
 echo
-echo "T56/T67/T83/T96/T98 — init payload has all new fields"
+echo "T56/T67/T83/T96/T98 -- init payload has all new fields"
 "$EDM_STATE" init TSMK2 >/dev/null
 STATE2="$TMP/SRD/TSMK2/.edm-state.json"
 audit_rounds="$(jq -r '.audit_rounds | type' "$STATE2")"

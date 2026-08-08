@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # EDMV3-T61 AC1: the block between EDM-HELP-BEGIN and EDM-HELP-END below is sentinel-delimited,
-# not a hardcoded `sed -n 'A,Bp'` line range -- `print_help()` (defined below) extracts between
-# the sentinels with awk. A hardcoded range silently stops covering a new subcommand doc line
-# added below its end unless two numbers are bumped in lockstep, which is exactly how
-# `update-patterns` and `lint` fell out of `--help` before this ticket (the old range stopped at
-# line 39). Add new subcommand doc lines anywhere inside the sentinel block; nothing else to
-# update. Mirrored verbatim in edm-lint-artifacts (same fix, same reason).
+# not a hardcoded `sed -n 'A,Bp'` line range -- the shared `print_help()` (CA-005,
+# `_edm-cli-lib.sh`, sourced below) extracts between the sentinels with awk. A hardcoded range
+# silently stops covering a new subcommand doc line added below its end unless two numbers are
+# bumped in lockstep, which is exactly how `update-patterns` and `lint` fell out of `--help`
+# before this ticket (the old range stopped at line 39). Add new subcommand doc lines anywhere
+# inside the sentinel block; nothing else to update. Every `bin/` helper and `evals/` driver
+# sources the same shared extractor now (CA-005) rather than each hand-copying it.
 # EDM-HELP-BEGIN
 # edm-state - read/write SRD/{PREFIX}/.edm-state.json files for the EDM plugin.
 # Usage:
@@ -56,9 +57,11 @@ set -euo pipefail
 # CA-056: source the shared line-classification library (build_line_classes / ignored_line_set /
 # is_ignored_line) so the pattern-library machinery below can tell whether a "### " heading or a
 # target "## " heading sits inside a fenced code block, the same way bin/edm-lint-artifacts,
-# bin/edm-check-grants and bin/edm-check-vocabulary already do.
-SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-source "${SELF_DIR}/_edm-lint-lib.sh"
+# bin/edm-check-grants and bin/edm-check-vocabulary already do. CA-005: also source the shared
+# --help extractor (print_help) rather than defining a local copy.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/_edm-cli-lib.sh"
+source "${SCRIPT_DIR}/_edm-lint-lib.sh"
 
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
 SRD_FILENAME="${EDM_SRD_FILENAME:-${CLAUDE_PLUGIN_OPTION_SRD_FILENAME:-srd.md}}"
@@ -103,17 +106,14 @@ to_int() {
   esac
 }
 
-# print_help <script-path> -- prints everything between the EDM-HELP-BEGIN/EDM-HELP-END sentinel
-# comment lines near the top of <script-path> (EDMV3-T61 AC1). awk, not a hardcoded `sed -n
-# 'A,Bp'` line range: a hardcoded range silently stops covering new subcommand doc lines added
-# below its end without the two numbers being bumped in lockstep, which is exactly how
-# `update-patterns` and `lint` fell out of `--help` before this ticket. CA-154: the same
-# sentinel-based help-text convention is used by every `bin/` helper and the three `evals/` drivers
-# -- not just this file and one sibling -- and every one of those sites now renders its help
-# text in the same form (this one: keep the leading "# " on each printed line).
-print_help() {
-  awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$1"
-}
+# print_help <script-path> is sourced from _edm-cli-lib.sh above (CA-005): it prints everything
+# between the EDM-HELP-BEGIN/EDM-HELP-END sentinel comment lines near the top of <script-path>
+# (EDMV3-T61 AC1). awk, not a hardcoded `sed -n 'A,Bp'` line range: a hardcoded range silently
+# stops covering new subcommand doc lines added below its end without the two numbers being
+# bumped in lockstep, which is exactly how `update-patterns` and `lint` fell out of `--help`
+# before that ticket. CA-005/CA-154: the same sentinel-based help-text convention is used by
+# every `bin/` helper and the three `evals/` drivers -- not just this file -- and every one of
+# those sites sources this same shared function rather than hand-copying it.
 
 # list_state_files [--archived]
 # Emits each unique .edm-state.json path, one per line, covering both flat (SRD/*/)
