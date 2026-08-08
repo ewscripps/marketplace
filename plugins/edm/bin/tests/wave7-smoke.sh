@@ -4262,6 +4262,18 @@ rm -f "$t_ascii_probe"
 echo
 echo "CA-141/CA-142/CA-143/CA-159/CA-025 -- with_state_lock / write_atomic concurrency fixes"
 
+# ---- G53 (round-3 CA-213 re-fix): the prescribed guard comment above the flock() call lands,
+# so a later round does not mistake the never-unlinked lock file for a leak (ledger CA-169).
+t_g53_flock_context="$(awk '/flock -w 10 200/{print NR; exit}' "$EDM_STATE")"
+t_g53_flock_line="${t_g53_flock_context:-0}"
+t_g53_before_flock="$(sed -n "$(( t_g53_flock_line > 10 ? t_g53_flock_line - 10 : 1 )),${t_g53_flock_line}p" "$EDM_STATE")"
+check "G53 -- the CA-169 guard comment is present immediately above the flock() call" \
+  "CA-169" "$t_g53_before_flock"
+check "G53 -- the guard comment states the lock file is never unlinked (inode-keyed exclusion)" \
+  "never" "$t_g53_before_flock"
+check_absent "G53 -- no rm -f of the flock lockfile was (re)introduced near the flock() call" \
+  'rm -f "${lockfile}"' "$t_g53_before_flock"
+
 # ---- CA-159: no path is ever interpolated into a trap body string (apostrophe-safe) -----------
 t_ca159_out="$(
   set +e
@@ -4367,6 +4379,45 @@ check "CA-141 -- a lockdir with an invalid (non-numeric) PID marker is reclaimed
 check "CA-141 -- the locked body runs after an invalid-PID reclaim" \
   "body_out=ca141b-reclaimed" "$t_ca141b_out"
 
+# ---- G29 (round-3 CA-141 re-fix): a lockdir whose pidfile literally contains "0" is reclaimed
+# too, not classified live forever. `^[0-9]+$` alone accepts the literal string "0" as a
+# syntactically valid PID, but `kill -0 0` targets the WHOLE PROCESS GROUP (not PID 0, which does
+# not exist) and always succeeds -- so pre-fix, this case would burn all 50 retries and die,
+# never reaching the reclaim path at all.
+t_ca141d_out="$(
+  set +e
+  # Clear inherited EXIT/INT/TERM/HUP dispositions before with_state_lock runs -- see the CA-159
+  # case above for why (restoring an inherited trap on this subshell own exit deletes TMP).
+  trap - EXIT INT TERM HUP
+  tmp141d="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca141d.XXXXXX")" || exit 1
+  command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
+  source "$EDM_STATE" >/dev/null 2>&1
+  lockbase="${tmp141d}/state"
+  lockdir="${lockbase}.lockd"
+  mkdir -p "$lockdir"
+  echo "0" > "${lockdir}/pid"
+  ec=0
+  body_out="$(with_state_lock "$lockbase" echo ca141d-reclaimed)" || ec=$?
+  rm -rf "$tmp141d"
+  printf 'ec=%s body_out=%s\n' "$ec" "$body_out"
+)" || true
+check "G29 -- a lockdir whose pidfile literally contains '0' is reclaimed, not treated as forever-live" \
+  "ec=0" "$t_ca141d_out"
+check "G29 -- the locked body runs after a literal-'0'-PID reclaim" \
+  "body_out=ca141d-reclaimed" "$t_ca141d_out"
+
+# ---- G29 (structural): the invalid-PID reclaim path is atomic (routed through the shared
+# mv-aside helper, same as the dead-PID path) and sleeps before its continue, matching the
+# dead-PID path's own retry pacing rather than tight-looping.
+t_g29_lock_body="$(awk '/^with_state_lock\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+t_g29_invalid_pid_block="$(printf '%s\n' "$t_g29_lock_body" | awk '/invalid PID/{f=1} f{print} f && /continue/{exit}')"
+check "G29 -- the invalid-PID reclaim branch routes through the shared atomic mv-aside helper" \
+  "_edm_reclaim_stale_lockdir" "$t_g29_invalid_pid_block"
+check "G29 -- the invalid-PID reclaim branch sleeps before its continue (no tight loop)" \
+  "sleep 0.1" "$t_g29_invalid_pid_block"
+check "G29 -- the invalid-PID check also rejects the literal string '0'" \
+  'holder_pid" == "0"' "$t_g29_invalid_pid_block"
+
 # ---- CA-141c: a live cross-UID holder (kill -0 EPERM) is never reclaimed (narrower: kill -0 is
 # mocked to fail with an "Operation not permitted"-shaped message, since actually becoming a
 # second UID is not available in this harness) ---------------------------------------------------
@@ -4413,9 +4464,11 @@ t_ca141_stale_pid_block="$(printf '%s\n' "$t_ca141_lock_body" | awk '/reclaimed 
 check "CA-141 -- the stale-PID reclaim branch increments tries before its continue" \
   "tries + 1" "$t_ca141_stale_pid_block"
 
-# ---- CA-142: a write_atomic call nested inside a locked mkdir-branch body does not install a
-# second trap layer -- it registers with the shared cleanup list instead, and the real-world
-# nested path (cmd_init -> with_state_lock -> _cmd_init_body -> write_atomic) completes cleanly.
+# ---- CA-142 (round-3 G2 re-fix): a write_atomic call nested inside a locked mkdir-branch body
+# installs its own full trap layer unconditionally now (the previous shared-cleanup-list design
+# was dead code -- see bin/edm-state's comment above _EDM_TRAP_DEPTH for the full analysis), and
+# the real-world nested path (cmd_init -> with_state_lock -> _cmd_init_body -> write_atomic)
+# still completes cleanly with no leaked tmp file and no leaked lockdir.
 t_ca142_out="$(
   set +e
   # Clear inherited EXIT/INT/TERM/HUP dispositions before with_state_lock/write_atomic run --
@@ -4449,8 +4502,6 @@ check "CA-142 -- no leaked *.tmp.* file remains from the nested write_atomic cal
   "tmp_left=0" "$t_ca142_out"
 check "CA-142 -- the lockdir is cleaned up after the nested-write_atomic body completes" \
   "lockdir=absent" "$t_ca142_out"
-check "CA-142 -- write_atomic contains an internal sanity check enforcing the nesting-depth-one invariant" \
-  "unsupported trap nesting depth" "$(grep -n 'unsupported trap nesting depth' "$EDM_STATE" || true)"
 # The real-world nested path this fix targets (cmd_init routes _cmd_init_body's write_atomic call
 # through an active with_state_lock trap) is exercised implicitly by every "$EDM_STATE" init call
 # elsewhere in this suite and wave6-smoke.sh -- hundreds of them, all green -- so this case adds
@@ -4481,25 +4532,9 @@ check "CA-025 -- the locked body's own stdout still crosses the subshell back to
 check "CA-025 -- a variable the locked body sets does NOT leak into with_state_lock's caller (subshell semantics, matching the flock branch)" \
   "leak_probe=before" "$t_ca025_out"
 
-# ---- CA-143: INT/TERM traps actually terminate the process instead of resuming ----------------
-# A full integration-level test that signals a with_state_lock call while it is blocked inside
-# the CA-025 nested subshell running the locked body was attempted and found unreliable in this
-# harness: this bash defers trap execution while synchronously waiting on a foreground subshell
-# (confirmed by direct experiment -- a signal sent to the parent while a `( sleep 5 )` foreground
-# subshell runs is not processed until the subshell exits on its own), and signaling the whole
-# process group to more faithfully reproduce a terminal Ctrl-C risks killing this test driver
-# itself, since a non-interactive script's background jobs share its own process group.
-#
-# A self-signaling isolation case (obtaining the running subshell's own PID via `sh -c 'echo
-# $PPID'`, since bash's `$$` does not update across `$( )` subshells on this bash) was also
-# attempted and removed: confirmed by direct experiment that the PID it captures does not
-# reliably match the PID `kill` can still signal by the time control returns to the parent
-# subshell (`kill: No such process` on this host/bash combination), making the case itself
-# unreliable rather than the fix it was meant to exercise. Per this ticket's own verification
-# guidance (fall back to the most practical guard when a full behavioral test proves
-# impractical), CA-143 relies on the static assertions below instead: they confirm
-# with_state_lock and write_atomic both install the exact `cleanup; exit 130`/`exit 143` trap
-# idiom, which is the documented, reviewed fix for this finding.
+# ---- CA-143: INT/TERM traps actually terminate the process instead of resuming (static backup
+# assertions -- kept alongside the real behavioral test below): confirm with_state_lock and
+# write_atomic both install the exact `cleanup; exit 130`/`exit 143` trap idiom.
 t_ca143_lock_body="$(awk '/^with_state_lock\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
 check "CA-143 -- with_state_lock's INT trap calls exit 130" "exit 130' INT" "$t_ca143_lock_body"
 check "CA-143 -- with_state_lock's TERM trap calls exit 143" "exit 143' TERM" "$t_ca143_lock_body"
@@ -4511,6 +4546,133 @@ check "CA-143 -- write_atomic's INT trap calls exit 130" "exit 130' INT" "$t_ca1
 check "CA-143 -- write_atomic's TERM trap calls exit 143" "exit 143' TERM" "$t_ca143_wa_body"
 t_ca143_wa_exit_line="$(printf '%s\n' "$t_ca143_wa_body" | grep "' EXIT$" || true)"
 check_absent "CA-143 -- write_atomic's EXIT-only trap arm never calls exit itself" "exit " "$t_ca143_wa_exit_line"
+
+# ---- G2/G3/G4 (round-3 CA-142/CA-143/CA-184 re-fix) -- THE central regression case this wave
+# exists to land: a REAL background child process, forced onto the mkdir branch, is sent a REAL
+# SIGINT while genuinely blocked mid-write, and must (1) leave no *.tmp.* file behind, (2) leave
+# no lockdir behind, and (3) actually die from the signal (exit 128+2=130) rather than resume.
+#
+# A prior round's attempt at this exact case (see CHANGELOG history for CA-143) found `kill -INT`
+# targeted at a specific PID unreliable while that process is synchronously blocked waiting on a
+# foreground child (this bash defers trap execution in that position), and worried that
+# group-wide signaling to more faithfully reproduce a terminal Ctrl-C would kill the test driver
+# itself, since a non-interactive script's background jobs normally share its own process group.
+# Both obstacles are solved the same way real interactive shells solve them: `set -m` (job
+# control) gives a freshly backgrounded job its OWN process group (confirmed empirically --
+# verified with a standalone reproduction before landing this case: the job's pgid equals its own
+# pid under `set -m`, distinct from the driver's pgid, so signaling the job's negative pgid
+# reaches every process in that job -- the with_state_lock process AND the nested subshell
+# write_atomic runs in -- without touching this suite's own driver process at all).
+ca_wave7a_sigint_case() {
+  local scratch child_script lockbase dest readyfile child_pid child_ec
+  scratch="$(mktemp -d "${TMP}/edm-wave7a-sigint.XXXXXX")" || { fail "G2/G3/G4 -- mktemp failed"; return 1; }
+  child_script="${scratch}/child.sh"
+  lockbase="${scratch}/state"
+  dest="${scratch}/dest.txt"
+  readyfile="${scratch}/ready"
+
+  # A real, separate bash process (not sourced into this suite's own shell) so a real SIGINT
+  # exercises the actual trap layers installed by with_state_lock and write_atomic rather than
+  # this suite's own top-level cleanup trap.
+  cat > "$child_script" <<'CHILD_SCRIPT_EOF'
+#!/bin/bash
+set -euo pipefail
+EDM_STATE_PATH="$1"; LOCKBASE="$2"; DEST="$3"; READYFILE="$4"
+command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
+source "$EDM_STATE_PATH" >/dev/null 2>&1
+_wave7a_slow_render() {
+  # write_atomic has already run mktemp and installed its own trap layer by the time this
+  # renderer starts (both happen before "$@" > "$tmp" runs) -- touching READYFILE here means the
+  # driver can safely signal us the instant it sees this file without a race against either step.
+  touch "$READYFILE"
+  sleep 5
+  echo should-not-complete-render
+}
+_wave7a_locked_body() {
+  write_atomic "$DEST" _wave7a_slow_render
+}
+with_state_lock "$LOCKBASE" _wave7a_locked_body
+CHILD_SCRIPT_EOF
+  chmod +x "$child_script"
+
+  set -m
+  "$child_script" "$EDM_STATE" "$lockbase" "$dest" "$readyfile" &
+  child_pid=$!
+
+  local waited=0
+  while [[ ! -f "$readyfile" ]] && [[ $waited -lt 100 ]]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  if [[ ! -f "$readyfile" ]]; then
+    fail "G2/G3/G4 -- child never reached its write (could not run the SIGINT assertion)"
+    kill -INT -- "-${child_pid}" 2>/dev/null || true
+    wait "$child_pid" 2>/dev/null || true
+    set +m
+    rm -rf "$scratch"
+    return 1
+  fi
+  # Small safety margin past the readyfile signal itself.
+  sleep 0.1
+
+  # Negative PID targets the whole process group `set -m` gave this job -- both with_state_lock's
+  # own process and the nested subshell write_atomic runs in receive the signal independently.
+  kill -INT -- "-${child_pid}"
+  child_ec=0
+  wait "$child_pid" 2>/dev/null || child_ec=$?
+  set +m
+
+  local tmp_left lockdir_left
+  tmp_left="$(find "$scratch" -maxdepth 1 -name '*.tmp.*' 2>/dev/null | wc -l | tr -d ' ')"
+  lockdir_left=absent
+  [[ -d "${lockbase}.lockd" ]] && lockdir_left=present
+
+  check "G2/G3/G4 -- the SIGINT'd child actually died from the signal (exit 128+2=130)" \
+    "130" "$child_ec"
+  check "G2/G3/G4 -- no *.tmp.* file remains after SIGINT mid-write on the mkdir branch" \
+    "0" "$tmp_left"
+  check "G2/G3/G4 -- the lockdir is gone after SIGINT mid-write on the mkdir branch" \
+    "absent" "$lockdir_left"
+
+  rm -rf "$scratch"
+}
+ca_wave7a_sigint_case
+
+# ---- G4 (round-3 CA-184 re-fix): a failing locked body causes with_state_lock's mkdir branch to
+# take its EXPLICIT return path (reset _EDM_TRAP_DEPTH, rm -rf the lockdir, restore the caller's
+# own traps, `return $ec`) rather than merely surviving via its own EXIT trap catching a premature
+# bare-statement death. Proven by installing our OWN marker trap before calling rmw_state bare (no
+# `||` guard, matching rmw_state's ~30 real bare callers) with a deliberately invalid jq filter: if
+# the fix is in place, with_state_lock restores OUR trap before rmw_state's own non-zero return
+# propagates under `set -e` -- so OUR marker, not with_state_lock's lockdir-removal trap, is what
+# fires when the subshell finally dies. Pre-fix, the bare "( "$@" )" statement would have aborted
+# the shell immediately, one line before the restore ever ran, and with_state_lock's OWN trap
+# (never restored) would have fired instead -- observably different from what this case checks.
+tmp184="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca184.XXXXXX")"
+markerfile184="${tmp184}/marker"
+t_ca184_ec=0
+t_ca184_capture="$(
+  set +e
+  trap - EXIT INT TERM HUP
+  command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
+  source "$EDM_STATE" >/dev/null 2>&1
+  export EDM_SRD_ROOT="$tmp184"
+  trap 'echo original-trap-fired >> "'"$markerfile184"'"' EXIT
+  rmw_state CA184 '.bad_filter_syntax((('
+  echo unreachable-if-rmw-state-failed >> "$markerfile184"
+)" || t_ca184_ec=$?
+t_ca184_marker="$(cat "$markerfile184" 2>/dev/null || echo absent)"
+t_ca184_lockdir=absent
+[[ -d "${tmp184}/CA184/.edm-state.lockd" ]] && t_ca184_lockdir=present
+check "G4/CA-184 -- rmw_state's bare, unguarded call to a failing locked body returns non-zero" \
+  "nonzero" "$([[ $t_ca184_ec -ne 0 ]] && echo nonzero || echo zero)"
+check "G4/CA-184 -- with_state_lock restored the caller's own trap before the failure propagated (explicit return path, not merely the EXIT trap)" \
+  "original-trap-fired" "$t_ca184_marker"
+check_absent "G4/CA-184 -- execution never resumed past the bare rmw_state call (it genuinely aborted under set -e)" \
+  "unreachable-if-rmw-state-failed" "$t_ca184_marker"
+check "G4/CA-184 -- the lockdir is gone after the failing locked body" \
+  "absent" "$t_ca184_lockdir"
+rm -rf "$tmp184"
 
 # =================================================================================
 # Code-audit round-2 remediation, Wave 4b: CA-135/CA-140/CA-137/CA-136/CA-134/CA-160/CA-056/
@@ -4860,18 +5022,24 @@ ca148_gitignore_case() {
   local lockdir="${lockbase}.lockd"
   local statetmp="${state_file}.tmp.ABC123"
   local mdtmp="${relroot}/CA148/decisions.md.tmp.XYZ789"
+  # G52/CA-212: the atomic stale-lock-aside name _edm_reclaim_stale_lockdir derives, using the
+  # SAME "${lockdir}.stale.$$" formula the source uses (bin/edm-state's with_state_lock mkdir
+  # branch) -- never a hand-typed guess at the shape.
+  local lockdir_stale="${lockdir}.stale.$$"
 
   touch "$lockfile"
   mkdir -p "$lockdir"
   touch "$statetmp"
   touch "$mdtmp"
+  mkdir -p "$lockdir_stale"
 
   local ca148_path ca148_label ca148_entry
   for ca148_entry in \
     "${lockfile}|.edm-state.lock (with_state_lock's flock path)" \
     "${lockdir}|.edm-state.lockd/ (with_state_lock's mkdir-spinlock fallback)" \
     "${statetmp}|.edm-state.json.tmp.* (write_atomic staging the state file itself)" \
-    "${mdtmp}|*.md.tmp.* (write_atomic staging an arbitrary artifact, e.g. decisions.md)"
+    "${mdtmp}|*.md.tmp.* (write_atomic staging an arbitrary artifact, e.g. decisions.md)" \
+    "${lockdir_stale}|.edm-state.lockd.stale.PID (with_state_lock's atomic stale-lock-aside name, G29/CA-141 + G52/CA-212)"
   do
     ca148_path="${ca148_entry%%|*}"
     ca148_label="${ca148_entry#*|}"

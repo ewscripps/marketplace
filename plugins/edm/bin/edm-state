@@ -500,83 +500,63 @@ _write_atomic_cleanup() {
   rm -f "$1"
 }
 
-# ---- Shared trap-nesting guard (CA-142/CA-143/CA-159) -----------------------
-# bash 3.2 has no reliable `trap -p` composition (bin/tests/_harness.sh:49-50 documents the
-# identical constraint for the test harness), so every trap layer this file installs is capped
-# at nesting depth one. with_state_lock's mkdir branch is the one place that installs a trap and
-# then calls into a locked body that may itself call write_atomic (cmd_init, rmw_state) --
-# rather than let write_atomic install a second EXIT/INT/TERM layer on top of the lock's own,
-# write_atomic checks _EDM_TRAP_DEPTH and, when a lock trap is already active, pushes its tmp
-# path onto _EDM_CLEANUP_PATHS instead: the ALREADY-installed outer trap drains this list before
-# it removes the lockdir, so both cleanups happen under the one active trap layer.
+# ---- Lock reentrancy guard (round-3 G2/CA-142 re-fix) -----------------------
+# _EDM_TRAP_DEPTH is set to 1 for the lifetime of with_state_lock's mkdir-branch subshell and
+# used ONLY to detect an attempted nested with_state_lock call (with_state_lock is not reentrant
+# -- a nested call would deadlock against its own mkdir). It no longer gates write_atomic's trap
+# installation: write_atomic installs its own full EXIT/INT/TERM/HUP trap layer unconditionally
+# (see write_atomic below), because a `( )` subshell fork resets what `trap -p` reports for the
+# forked process (verified empirically -- a bare `( )` subshell's own `trap -p EXIT/INT/TERM/HUP`
+# reports nothing for a trap the PARENT installed before the fork), so that trap layer is
+# nesting-depth ONE from the subshell's own perspective, not depth two.
+#
+# The previous fix for this (CA-142/CA-143's original _EDM_CLEANUP_PATHS shared-list mechanism)
+# is deleted: it pushed onto the SUBSHELL's own private copy of that array (write_atomic always
+# ran inside the fork, once _EDM_TRAP_DEPTH was set before it), which the trap installed in the
+# PARENT before the fork could never see -- the only reader ran from the outer trap body and
+# always drained an empty list. That made the whole mechanism dead code providing ZERO INT/TERM/
+# HUP coverage during the locked write on the mkdir branch, the only branch a host without
+# flock(1) (i.e. macOS, this project's primary development platform) takes. See round-3 findings
+# G2 (CA-142) and G3 (CA-143).
 _EDM_TRAP_DEPTH=0
-_EDM_CLEANUP_PATHS=()
-
-_edm_cleanup_push() {
-  _EDM_CLEANUP_PATHS+=("$1")
-}
-
-# _edm_cleanup_pop <path> -- removes exactly one matching entry so a nested write_atomic call
-# can retract its own registration once it has handled that path itself (mv'd it away, or
-# removed it on a failure path), keeping the shared list from growing across repeated calls.
-_edm_cleanup_pop() {
-  local target="$1" kept=() p
-  for p in "${_EDM_CLEANUP_PATHS[@]+"${_EDM_CLEANUP_PATHS[@]}"}"; do
-    [[ "$p" == "$target" ]] || kept+=("$p")
-  done
-  _EDM_CLEANUP_PATHS=("${kept[@]+"${kept[@]}"}")
-}
-
-# _edm_cleanup_paths_run -- drains _EDM_CLEANUP_PATHS (best-effort rm -f each). Called from the
-# lock trap installed by with_state_lock's mkdir branch, ahead of that trap's own lockdir removal.
-_edm_cleanup_paths_run() {
-  local p
-  for p in "${_EDM_CLEANUP_PATHS[@]+"${_EDM_CLEANUP_PATHS[@]}"}"; do
-    rm -f "$p" 2>/dev/null || true
-  done
-}
 
 write_atomic() {
   [[ $# -ge 2 ]] || { echo "write_atomic: usage: write_atomic <dest> <command> [args...]" >&2; return 2; }
   local dest="$1"; shift
-  local dest_dir tmp old_exit old_int old_term old_hup ec=0 nested=0 _WRITE_ATOMIC_TMP
+  local dest_dir tmp old_exit old_int old_term old_hup ec=0 _WRITE_ATOMIC_TMP
   dest_dir="$(dirname "$dest")"
   [[ -d "$dest_dir" ]] || { echo "write_atomic: destination directory does not exist: ${dest_dir}" >&2; return 1; }
   [[ -w "$dest_dir" ]] || { echo "write_atomic: destination directory is not writable: ${dest_dir}" >&2; return 1; }
   tmp="$(mktemp "${dest}.tmp.XXXXXX" 2>/dev/null)" || { echo "write_atomic: mktemp failed for ${dest}" >&2; return 1; }
 
-  # CA-142: internal sanity check enforcing the nesting-depth-one constraint documented above --
-  # _EDM_TRAP_DEPTH can only ever be 0 (no lock trap active) or 1 (one lock trap active); any
-  # other value means a caller is nesting locks/traps in a way this file does not support, and a
-  # loud failure here is preferable to a silently corrupted trap body.
-  [[ "${_EDM_TRAP_DEPTH:-0}" -eq 0 || "${_EDM_TRAP_DEPTH:-0}" -eq 1 ]] \
-    || { echo "write_atomic: internal: unsupported trap nesting depth ${_EDM_TRAP_DEPTH} (expected 0 or 1)" >&2; rm -f "$tmp"; return 1; }
-
-  if [[ "${_EDM_TRAP_DEPTH:-0}" -ge 1 ]]; then
-    nested=1
-    _edm_cleanup_push "$tmp"
-  else
-    # CA-159: never interpolate a path into a trap body string -- a path containing an
-    # apostrophe (an ordinary surname directory, e.g. "o'brien") would terminate the quoting
-    # early and corrupt the stored trap body into a syntax error at signal time. Assign to a
-    # dedicated variable first, then reference it INSIDE single quotes so it expands at signal
-    # time, not at install time (the pattern already used correctly at edm-lint-artifacts:113,
-    # edm-check-grants:123, bin/tests/_harness.sh:66).
-    _WRITE_ATOMIC_TMP="$tmp"
-    old_exit="$(trap -p EXIT || true)"
-    old_int="$(trap -p INT || true)"
-    old_term="$(trap -p TERM || true)"
-    old_hup="$(trap -p HUP || true)"
-    # CA-143: INT/TERM/HUP must actually terminate the process after cleanup -- a trap that only
-    # cleans up and returns lets the interrupted caller resume, which can then race a second
-    # process that (correctly) believes the resource is free. The EXIT trap is cleanup ONLY and
-    # must never call exit itself (an EXIT trap calling exit can recurse into confusing
-    # behaviour).
-    trap '_write_atomic_cleanup "$_WRITE_ATOMIC_TMP"' EXIT
-    trap '_write_atomic_cleanup "$_WRITE_ATOMIC_TMP"; exit 130' INT
-    trap '_write_atomic_cleanup "$_WRITE_ATOMIC_TMP"; exit 143' TERM
-    trap '_write_atomic_cleanup "$_WRITE_ATOMIC_TMP"; exit 129' HUP
-  fi
+  # CA-159: never interpolate a path into a trap body string -- a path containing an
+  # apostrophe (an ordinary surname directory, e.g. "o'brien") would terminate the quoting
+  # early and corrupt the stored trap body into a syntax error at signal time. Assign to a
+  # dedicated variable first, then reference it INSIDE single quotes so it expands at signal
+  # time, not at install time (the pattern already used correctly at edm-lint-artifacts:113,
+  # edm-check-grants:123, bin/tests/_harness.sh:66).
+  #
+  # G2/G3 (round-3 CA-142/CA-143 re-fix): this trap layer is now installed UNCONDITIONALLY, even
+  # when write_atomic runs inside with_state_lock's mkdir-branch subshell ("( "$@" )" a few
+  # hundred lines below). A real signal delivered to the process group (a terminal Ctrl-C, or the
+  # group-wide `kill` this file's own regression tests use to reproduce one) reaches BOTH this
+  # subshell's process AND with_state_lock's own outer process independently, so each one's
+  # currently-installed trap fires and cleans up its own resource -- this tmp file here, the
+  # lockdir in the outer process -- with no coordination mechanism needed between them.
+  _WRITE_ATOMIC_TMP="$tmp"
+  old_exit="$(trap -p EXIT || true)"
+  old_int="$(trap -p INT || true)"
+  old_term="$(trap -p TERM || true)"
+  old_hup="$(trap -p HUP || true)"
+  # CA-143: INT/TERM/HUP must actually terminate the process after cleanup -- a trap that only
+  # cleans up and returns lets the interrupted caller resume, which can then race a second
+  # process that (correctly) believes the resource is free. The EXIT trap is cleanup ONLY and
+  # must never call exit itself (an EXIT trap calling exit can recurse into confusing
+  # behaviour).
+  trap '_write_atomic_cleanup "$_WRITE_ATOMIC_TMP"' EXIT
+  trap '_write_atomic_cleanup "$_WRITE_ATOMIC_TMP"; exit 130' INT
+  trap '_write_atomic_cleanup "$_WRITE_ATOMIC_TMP"; exit 143' TERM
+  trap '_write_atomic_cleanup "$_WRITE_ATOMIC_TMP"; exit 129' HUP
 
   # CA-134: guard the capture on the SAME statement, not on the line after it -- a bare
   # `"$@" > "$tmp"` followed by a separate `ec=$?` is only safe under set -e because every
@@ -587,14 +567,10 @@ write_atomic() {
   "$@" > "$tmp" || ec=$?
   if [[ $ec -ne 0 ]]; then
     rm -f "$tmp"
-    if [[ $nested -eq 1 ]]; then
-      _edm_cleanup_pop "$tmp"
-    else
-      _restore_trap EXIT "$old_exit"
-      _restore_trap INT "$old_int"
-      _restore_trap TERM "$old_term"
-      _restore_trap HUP "$old_hup"
-    fi
+    _restore_trap EXIT "$old_exit"
+    _restore_trap INT "$old_int"
+    _restore_trap TERM "$old_term"
+    _restore_trap HUP "$old_hup"
     return $ec
   fi
   # CA-134: same guard as above -- the mv's exit status must be captured on this statement
@@ -602,24 +578,16 @@ write_atomic() {
   mv -f "$tmp" "$dest" || ec=$?
   if [[ $ec -ne 0 ]]; then
     rm -f "$tmp"
-    if [[ $nested -eq 1 ]]; then
-      _edm_cleanup_pop "$tmp"
-    else
-      _restore_trap EXIT "$old_exit"
-      _restore_trap INT "$old_int"
-      _restore_trap TERM "$old_term"
-      _restore_trap HUP "$old_hup"
-    fi
-    return $ec
-  fi
-  if [[ $nested -eq 1 ]]; then
-    _edm_cleanup_pop "$tmp"
-  else
     _restore_trap EXIT "$old_exit"
     _restore_trap INT "$old_int"
     _restore_trap TERM "$old_term"
     _restore_trap HUP "$old_hup"
+    return $ec
   fi
+  _restore_trap EXIT "$old_exit"
+  _restore_trap INT "$old_int"
+  _restore_trap TERM "$old_term"
+  _restore_trap HUP "$old_hup"
 }
 
 _rmw_state_render() {
@@ -921,6 +889,24 @@ check_permission_rules() {
 COVERAGE_LAYER_ROW_JQ_DEF='def coverage_layer_row:
   "  \(.key | . + (" " * (14 - length | if . < 0 then 0 else . end)))  \(.value.pct)%\(if .value.pct < 10 then "         " elif .value.pct < 100 then "        " else "       " end)  \(.value.measured_at // "?")";'
 
+# _edm_reclaim_stale_lockdir <lockdir> <success-log-message>
+# Shared atomic reclaim: `mv "$lockdir" "${lockdir}.stale.$$"` either wins or loses the rename
+# race outright, so at most one contender ever proceeds to remove a given stale lockdir -- unlike
+# a bare `rm -rf "$lockdir"`, which has a TOCTOU window between the staleness decision and the
+# removal where a second contender that had already reclaimed the lock (mkdir'd a brand-new
+# lockdir at the same path) would have that new, LIVE lockdir deleted out from under it (round-3
+# G29/CA-141). Used by both reclaim paths below (dead-PID and invalid-PID) so they can never
+# diverge again. Logs and removes the staged-aside copy only when this call won the race; silently
+# does nothing when it lost (the winner's own call already reclaimed it).
+_edm_reclaim_stale_lockdir() {
+  local lockdir="$1" msg="$2" stale_aside
+  stale_aside="${lockdir}.stale.$$"
+  if mv "$lockdir" "$stale_aside" 2>/dev/null; then
+    echo "edm-state: ${msg}" >&2
+    rm -rf "$stale_aside"
+  fi
+}
+
 # ---- Advisory file locking (T24) -------------------------------------------
 # with_state_lock <lockbase> <command...>
 # Acquires an exclusive advisory lock scoped to <lockbase>, runs the command,
@@ -940,6 +926,13 @@ with_state_lock() {
     # `|| _lock_ec=$?` keeps the subshell in a tested position so `set -e` does NOT abort here on a
     # non-zero exit -- otherwise the timeout `die` below is unreachable and a flock-host timeout exits
     # with a bare 99 and no message (CA-006). Success leaves _lock_ec=0.
+    #
+    # CA-169: never `rm -f "$lockfile"` here or anywhere else in this file. flock(1)'s mutual
+    # exclusion is keyed on the file's INODE, not its path -- unlinking a released lock file lets
+    # a later contender open()+flock() a freshly created inode at the same path while an earlier
+    # holder that still has the old inode open believes it still holds the lock, silently
+    # breaking mutual exclusion. The file is deliberately left on disk forever; `.gitignore`
+    # already hides `**/.edm-state.lock` from git status, so this is not a leak.
     local _lock_ec=0
     ( flock -w 10 200 || exit 99; "$@" ) 200>"${lockfile}" || _lock_ec=$?
     [[ $_lock_ec -eq 99 ]] && die "state lock timeout after 10s on ${lockfile} (another edm-state process may be holding it)"
@@ -947,32 +940,42 @@ with_state_lock() {
   else
     # Fallback: mkdir-based spin-lock (POSIX-portable, atomic on local filesystems)
     #
-    # CA-141: reclamation is atomic and bounded. `mv "$lockdir" "${lockdir}.stale.$$"` either
-    # wins or loses the rename race outright, so at most one contender ever proceeds to remove a
-    # given stale lockdir -- the previous kill -0-then-`rm -rf` sequence had a TOCTOU window
-    # between the staleness decision and the removal where a second contender that had already
-    # reclaimed the lock would have its own, brand-new lockdir deleted out from under it. A
-    # non-zero `kill -0` is NOT unconditionally "dead": a live holder owned by a different UID
-    # also fails `kill -0` (EPERM). bash does not expose errno directly, so the error text
-    # distinguishes the two -- "not permitted" means alive-but-not-ours-to-signal (never
-    # reclaim), anything else (typically "no such process") means genuinely dead (safe to
-    # reclaim). PID reuse / PID namespaces can still make a genuinely dead holder look alive
-    # (kill -0 succeeds) -- that direction is benign (it only means the lock is not reclaimed
-    # when it safely could be), so it is not handled here. Both reclaim paths below increment
-    # `tries` on every pass, so the documented "50 tries" bound is an actual bound on wall-clock
-    # retries rather than something only the non-reclaim path enforced.
+    # CA-141/G29 (round-3 CA-141 re-fix): reclamation is atomic and bounded on BOTH reclaim
+    # paths, via the shared _edm_reclaim_stale_lockdir helper above. `mv "$lockdir"
+    # "${lockdir}.stale.$$"` either wins or loses the rename race outright, so at most one
+    # contender ever proceeds to remove a given stale lockdir -- a bare `rm -rf "$lockdir"` (the
+    # invalid-PID branch's original, pre-G29 behaviour) has a TOCTOU window between the
+    # staleness decision and the removal where a second contender that had already reclaimed the
+    # lock would have its own, brand-new, LIVE lockdir deleted out from under it. A non-zero
+    # `kill -0` is NOT unconditionally "dead": a live holder owned by a different UID also fails
+    # `kill -0` (EPERM). bash does not expose errno directly, so the error text distinguishes the
+    # two -- "not permitted" means alive-but-not-ours-to-signal (never reclaim), anything else
+    # (typically "no such process") means genuinely dead (safe to reclaim). PID reuse / PID
+    # namespaces can still make a genuinely dead holder look alive (kill -0 succeeds) -- that
+    # direction is benign (it only means the lock is not reclaimed when it safely could be), so
+    # it is not handled here. Both reclaim paths below increment `tries` on every pass and sleep
+    # before their `continue`, so the documented "50 tries" bound is an actual bound on
+    # wall-clock retries rather than something only the non-reclaim path enforced, and neither
+    # path tight-loops.
+    #
+    # The numeric-PID regex `^[0-9]+$` alone would accept the literal string "0" as "valid", but
+    # `kill -0 0` targets the WHOLE PROCESS GROUP (not PID 0, which does not exist) and always
+    # succeeds -- so a pidfile containing "0" would be classified live forever (50 retries then a
+    # hard die, with no reclamation ever possible). Reject "0" alongside non-numeric/empty values
+    # so it is routed through the same atomic reclaim as any other invalid PID.
     local tries=0 holder_pid="" old_exit old_int old_term old_hup _STATE_LOCKDIR
     until mkdir "$lockdir" 2>/dev/null; do
       holder_pid=""
       if [[ -f "$pidfile" ]]; then
         holder_pid="$(cat "$pidfile" 2>/dev/null || true)"
-        if [[ -z "$holder_pid" || ! "$holder_pid" =~ ^[0-9]+$ ]]; then
-          echo "edm-state: removing stale state lock ${lockdir} (invalid PID '${holder_pid:-missing}')" >&2
-          rm -rf "$lockdir"
+        if [[ -z "$holder_pid" || ! "$holder_pid" =~ ^[0-9]+$ || "$holder_pid" == "0" ]]; then
+          _edm_reclaim_stale_lockdir "$lockdir" \
+            "reclaimed a lockdir with an invalid PID '${holder_pid:-missing}' at ${lockdir}"
           tries=$(( tries + 1 ))
           if [[ $tries -ge 50 ]]; then
             die "state lock timeout after 50 tries on ${lockdir} (invalid PID)"
           fi
+          sleep 0.1
           continue
         fi
         if ! kill -0 "$holder_pid" 2>/dev/null; then
@@ -981,11 +984,8 @@ with_state_lock() {
           if [[ "$kill0_err" == *"not permitted"* || "$kill0_err" == *"Not permitted"* ]]; then
             echo "edm-state: state lock ${lockdir} is held by PID ${holder_pid} (owned by another user) -- not reclaiming" >&2
           else
-            local stale_aside="${lockdir}.stale.$$"
-            if mv "$lockdir" "$stale_aside" 2>/dev/null; then
-              echo "edm-state: reclaimed stale state lock ${lockdir} (PID ${holder_pid} no longer running)" >&2
-              rm -rf "$stale_aside"
-            fi
+            _edm_reclaim_stale_lockdir "$lockdir" \
+              "reclaimed stale state lock ${lockdir} (PID ${holder_pid} no longer running)"
             # Whether the mv above won or lost the race against another contender, fall through
             # to the shared retry accounting below instead of an unaccounted-for `continue`.
           fi
@@ -1015,22 +1015,26 @@ with_state_lock() {
     old_int="$(trap -p INT || true)"
     old_term="$(trap -p TERM || true)"
     old_hup="$(trap -p HUP || true)"
-    # CA-142/CA-143: one trap layer for the lifetime of this lock (bash 3.2 nesting-depth-one,
-    # bin/tests/_harness.sh:49-50). Each arm drains _EDM_CLEANUP_PATHS first (a nested
-    # write_atomic call registers its tmp file there instead of installing a second trap layer
-    # of its own) and then removes the lockdir. INT/TERM/HUP additionally exit with the
-    # conventional 128+signum code so a signal delivered inside the critical section cannot
-    # release the lock and then resume the interrupted read-modify-write -- the EXIT arm stays
-    # cleanup-only and must never call exit itself.
-    trap '_edm_cleanup_paths_run; rm -rf "$_STATE_LOCKDIR"' EXIT
-    trap '_edm_cleanup_paths_run; rm -rf "$_STATE_LOCKDIR"; exit 130' INT
-    trap '_edm_cleanup_paths_run; rm -rf "$_STATE_LOCKDIR"; exit 143' TERM
-    trap '_edm_cleanup_paths_run; rm -rf "$_STATE_LOCKDIR"; exit 129' HUP
+    # This trap layer owns exactly one resource -- the lockdir -- for the lifetime of this lock.
+    # It does NOT need to know anything about write_atomic's own tmp file: write_atomic (called
+    # from inside the "( "$@" )" subshell just below) installs its own full trap layer
+    # unconditionally now and cleans up its own tmp file independently. A real signal delivered
+    # to the process group reaches this (outer, PARENT) process directly too, so this trap fires
+    # on its own copy of the signal regardless of whatever the subshell is doing to its own,
+    # separate trap table (round-3 G2/CA-142 + G3/CA-143 re-fix -- see write_atomic's comment
+    # above for the full analysis; the previous _EDM_CLEANUP_PATHS shared-list mechanism this
+    # comment used to describe was dead code by construction and is deleted). INT/TERM/HUP
+    # additionally exit with the conventional 128+signum code so a signal delivered inside the
+    # critical section cannot release the lock and then resume the interrupted read-modify-write
+    # -- the EXIT arm stays cleanup-only and must never call exit itself.
+    trap 'rm -rf "$_STATE_LOCKDIR"' EXIT
+    trap 'rm -rf "$_STATE_LOCKDIR"; exit 130' INT
+    trap 'rm -rf "$_STATE_LOCKDIR"; exit 143' TERM
+    trap 'rm -rf "$_STATE_LOCKDIR"; exit 129' HUP
 
-    # CA-142: assert the nesting-depth-one constraint before handing control to the locked body
-    # -- with_state_lock is not reentrant (a nested call would deadlock on `mkdir` against
-    # itself anyway), so a non-zero depth here means a caller is nesting locks, not merely
-    # nesting a write_atomic call inside one lock.
+    # Assert the nesting-depth-one constraint before handing control to the locked body --
+    # with_state_lock is not reentrant (a nested call would deadlock on `mkdir` against itself
+    # anyway), so a non-zero depth here means a caller is nesting with_state_lock calls.
     [[ "${_EDM_TRAP_DEPTH:-0}" -eq 0 ]] \
       || die "with_state_lock: internal: lock trap already active (_EDM_TRAP_DEPTH=${_EDM_TRAP_DEPTH}) -- nested with_state_lock calls are not supported"
 
@@ -1038,12 +1042,20 @@ with_state_lock() {
     # existing subshell semantics -- previously the mkdir branch ran "$@" in the current shell
     # while the flock branch always subshelled it, an undocumented divergence (no live defect
     # today, since every locked body communicates by stdout/exit status only, but a footgun for
-    # the next locked helper that doesn't). _EDM_TRAP_DEPTH is set before the fork so a nested
-    # write_atomic call sees it inside the subshell too (a subshell inherits the parent's
-    # variables at fork time).
+    # the next locked helper that doesn't). _EDM_TRAP_DEPTH is set to 1 before the fork purely so
+    # a nested with_state_lock call (unsupported -- see the reentrancy guard above) is detected
+    # even from inside this subshell; it no longer has any bearing on write_atomic's own trap
+    # installation (round-3 G2/CA-142 re-fix -- write_atomic always installs its own layer now).
+    #
+    # G4 (round-3 CA-184 re-fix): guard the $? capture on the SAME statement as the subshell
+    # call, not on the next line -- with_state_lock has ~30 bare callers (via rmw_state, called
+    # with no `||` guard from most mutators), so a non-zero locked body in a non-tested position
+    # under `set -e` would abort the whole process right here: `_EDM_TRAP_DEPTH` would never
+    # reset to 0, the saved traps would never be restored, and `return $ec` would never run. See
+    # write_atomic:~581's identical guard for the sibling class this round fixed there, CA-134.
     _EDM_TRAP_DEPTH=1
-    ( "$@" )
-    local ec=$?
+    local ec=0
+    ( "$@" ) || ec=$?
     _EDM_TRAP_DEPTH=0
     rm -rf "$lockdir"
     _restore_trap EXIT "$old_exit"
