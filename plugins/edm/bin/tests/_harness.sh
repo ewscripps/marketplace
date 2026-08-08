@@ -129,10 +129,34 @@ check_fails() {
 # count_matches <grep-args...> — grep -c that returns 0 on no match instead of exiting 1 under
 # set -e. Used by count-based assertions so a regression becomes one failed assertion, not a
 # crashed suite.
+# CAVEAT (CA-145): this collapses grep exit 1 (no match; a real zero count) and grep exit 2
+# (file not found, unreadable, or a bad pattern) into the identical printed value "0" -- and 0
+# is the PASSING value for every expect-zero caller. A typo'd or deleted path silently reads as
+# "the thing we asserted is absent, is absent" instead of failing loudly. Any caller whose
+# expected count is 0 MUST pair this with a positive control (assert_absent_with_control below)
+# rather than call count_matches bare, OR use count_matches_strict, which does not collapse the
+# two exit codes.
 count_matches() {
   local count
   count="$(command grep -c "$@" 2>/dev/null)" || count=0
   printf '%s\n' "${count:-0}"
+}
+
+# count_matches_strict <grep-args...> — like count_matches, but does not collapse grep's two
+# distinct non-zero exit codes (CA-145 fix): "no match" (grep exit 1) still prints 0 and returns
+# 0, exactly like count_matches always has, but "file not found / unreadable / bad pattern" (grep
+# exit 2) prints the literal string "ERROR" on stdout and returns 2, so a caller that checks this
+# function's own exit status (not only its printed count) fails loudly on a missing-file typo
+# instead of silently reading a passing zero.
+count_matches_strict() {
+  local count status
+  count="$(command grep -c "$@" 2>/dev/null)" && status=0 || status=$?
+  if [[ $status -eq 2 ]]; then
+    printf '%s\n' "ERROR"
+    return 2
+  fi
+  printf '%s\n' "${count:-0}"
+  return 0
 }
 
 # assert_absent_with_control <label> <needle> <actual> <control-label> <control-haystack> —
@@ -181,6 +205,80 @@ check_state_unchanged() {
   else
     fail "state changed: $state_file (hash before: $before, after: $after)"
   fi
+}
+
+# check_refuses_and_leaves_state <label> <expected-message-substring> <state-file> <cmd...> --
+# CA-042 fix. Combines check_fails (non-zero exit + message substring, case-insensitive) with
+# check_state_unchanged's before/after hash comparison in ONE invocation of <cmd...>, instead of
+# the previous pattern of calling check_fails and check_state_unchanged back to back against the
+# same command -- two separate invocations asserting two separate things, neither of which alone
+# proves the other. This is what 45 of the 49 check_state_unchanged call sites this replaced
+# actually wanted: proof that the command both refused AND left state untouched, from a single
+# real execution.
+check_refuses_and_leaves_state() {
+  local label="$1" expected="$2" state_file="$3"
+  shift 3
+  local before after output status=0
+
+  before="$(_harness_hash_file "$state_file")"
+  if [[ "$before" == "absent" ]]; then
+    fail "$label (baseline state file missing before command ran: $state_file)"
+    return
+  fi
+
+  output="$("$@" 2>&1)" || status=$?
+  after="$(_harness_hash_file "$state_file")"
+
+  if [[ $status -eq 0 ]]; then
+    fail "$label (expected non-zero exit, got 0; output: '$output')"
+    return
+  fi
+
+  local output_lc expected_lc
+  output_lc="$(printf '%s' "$output" | tr '[:upper:]' '[:lower:]')"
+  expected_lc="$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$output_lc" != *"$expected_lc"* ]]; then
+    fail "$label (expected output to contain: '$expected', got: '$output')"
+    return
+  fi
+
+  if [[ "$before" != "$after" ]]; then
+    fail "$label (command refused as expected but state changed: $state_file, hash before: $before, after: $after)"
+    return
+  fi
+
+  pass "$label"
+}
+
+# _wave7_extract_between <file> <start-regex> <end-regex> -- prints the lines strictly between
+# the first line matching <start-regex> (exclusive) and the next line matching <end-regex>
+# (exclusive), or EOF if <end-regex> never matches again. CA-102: this is the general form behind
+# _wave7_extract_section below, and is also what replaces a `sed -n 'A,Bp'` hardcoded line-number
+# range with an anchor-based extraction that survives the target file growing or shrinking above
+# the extracted block.
+# Deliberately passes the two regexes through the environment (ENVIRON[]) rather than `awk -v`:
+# POSIX awk applies the SAME backslash-escape processing to a `-v var=value` assignment that it
+# applies to a string literal in the program text, so `-v s='^10\. \*\*Foo\*\*'` silently becomes
+# the regex `^10. **Foo**` (both backslashes stripped) -- "**" is then two adjacent quantifiers
+# with no atom to repeat, which matches nothing on every awk this was tested against. Environment
+# variables carry no such processing, so a caller's regex reaches awk's regex engine byte-for-byte.
+_wave7_extract_between() {
+  local file="$1"
+  WAVE7_EXTRACT_START="$2" WAVE7_EXTRACT_END="$3" awk '
+    $0 ~ ENVIRON["WAVE7_EXTRACT_START"] { found=1; next }
+    found && $0 ~ ENVIRON["WAVE7_EXTRACT_END"] { exit }
+    found { print }
+  ' "$file"
+}
+
+# _wave7_extract_section <file> <heading-regex> -- prints the body of the first '## ' section
+# whose heading matches <heading-regex>, up to (not including) the next '## ' heading or EOF.
+# Originally a wave7-smoke.sh-local helper (EDMV3-T45); moved here (CA-102/CA-099) so every
+# suite can replace a `sed -n 'A,Bp'` / bare-substring-anywhere-in-the-file assertion with a
+# real, anchor-based section extraction instead of just this one call site.
+_wave7_extract_section() {
+  local file="$1" heading="$2"
+  _wave7_extract_between "$file" "^## ${heading}\$" "^## "
 }
 
 # ---- EDMV3-T50/T51/T52: cost-tracking test fixtures ------------------------------------------

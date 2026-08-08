@@ -54,15 +54,29 @@ echo ""
 # ---- T82/T85: CLAUDE.md artifact layout and mode schema ----------------------
 echo "--- T82/T85: CLAUDE.md WS-D layout and mode schema ---"
 CLAUDE_MD="$(cat "$PLUGIN_DIR/CLAUDE.md")"
-check "architecture.md in layout" "architecture.md" "$CLAUDE_MD"
-check "explorers/ in layout" "explorers/" "$CLAUDE_MD"
-check "decisions.md in layout" "decisions.md" "$CLAUDE_MD"
-check "ROLLBACK.md in layout" "ROLLBACK.md" "$CLAUDE_MD"
-check "exec-report.md in layout" "exec-report.md" "$CLAUDE_MD"
-check "post-deploy/ in layout" "post-deploy/" "$CLAUDE_MD"
-check "qc/ in layout" "qc/" "$CLAUDE_MD"
-check "findings-ledger.md in layout" "findings-ledger.md" "$CLAUDE_MD"
-check "pass-{N}_ in layout" "pass-{N}_{YYYY-MM-DD}/" "$CLAUDE_MD"
+# CA-099: the nine "X in layout" assertions below used to grep a bare filename anywhere in the
+# whole 1000+-line CLAUDE.md, which also contains a CI table, a state-field table, a pricing
+# table and a mode matrix -- moving architecture.md out of the actual layout tree and mentioning
+# it once in unrelated prose would have kept all nine green. Extract the fenced layout tree block
+# itself (via the shared _wave7_extract_section, narrowed further to its first fenced block) and
+# assert each token against that extracted string specifically.
+WAVE4B_LAYOUT_SECTION="$(_wave7_extract_section "$PLUGIN_DIR/CLAUDE.md" "Project artifact layout")"
+WAVE4B_LAYOUT_TREE="$(printf '%s\n' "$WAVE4B_LAYOUT_SECTION" | awk '
+  /^```/ { c++; if (c == 1) { f = 1; next } else { exit } }
+  f { print }
+')"
+[[ -n "$WAVE4B_LAYOUT_TREE" ]] \
+  && pass "CA-099 -- the fenced layout tree block was actually extracted (non-empty)" \
+  || fail "CA-099 -- extracting the fenced layout tree block under 'Project artifact layout' produced nothing"
+check "architecture.md in layout tree" "architecture.md" "$WAVE4B_LAYOUT_TREE"
+check "explorers/ in layout tree" "explorers/" "$WAVE4B_LAYOUT_TREE"
+check "decisions.md in layout tree" "decisions.md" "$WAVE4B_LAYOUT_TREE"
+check "ROLLBACK.md in layout tree" "ROLLBACK.md" "$WAVE4B_LAYOUT_TREE"
+check "exec-report.md in layout tree" "exec-report.md" "$WAVE4B_LAYOUT_TREE"
+check "post-deploy/ in layout tree" "post-deploy/" "$WAVE4B_LAYOUT_TREE"
+check "qc/ in layout tree" "qc/" "$WAVE4B_LAYOUT_TREE"
+check "findings-ledger.md in layout tree" "findings-ledger.md" "$WAVE4B_LAYOUT_TREE"
+check "pass-{N}_ in layout tree" "pass-{N}_{YYYY-MM-DD}/" "$WAVE4B_LAYOUT_TREE"
 check "mode field in schema table" "Adaptation profile:" "$CLAUDE_MD"
 check "lifecycle_mode in schema table" "Lifecycle variant:" "$CLAUDE_MD"
 check "compliance_enabled in schema table" "Gate 3.5" "$CLAUDE_MD"

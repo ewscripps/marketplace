@@ -47,6 +47,29 @@ for _s in "${_all_suites[@]+"${_all_suites[@]}"}"; do
   [[ $_already -eq 1 ]] || _run_order+=("$_s")
 done
 
+# ---- CA-016: a zero-suite guard above catches total deletion, but does nothing if a named
+# suite (e.g. wave7-smoke.sh, ~830 assertions) is deleted or renamed while other suites survive --
+# _run_order would still be non-empty and the aggregate would report ALL SUITES PASSED. Assert
+# every name _PREFERRED_ORDER expects was actually discovered, naming any that were not, and
+# assert a minimum suite count so a silent shrink of the discovered set is never invisible.
+_missing_preferred=()
+for _name in $_PREFERRED_ORDER; do
+  _found=0
+  for _r in "${_run_order[@]+"${_run_order[@]}"}"; do
+    [[ "$_r" == "$_name" ]] && _found=1 && break
+  done
+  [[ $_found -eq 1 ]] || _missing_preferred+=("$_name")
+done
+if [[ ${#_missing_preferred[@]} -gt 0 ]]; then
+  echo "run-all: expected suite(s) not discovered: ${_missing_preferred[*]}" >&2
+  exit 1
+fi
+_MIN_SUITE_COUNT=7
+if [[ ${#_run_order[@]} -lt $_MIN_SUITE_COUNT ]]; then
+  echo "run-all: only ${#_run_order[@]} suite(s) discovered, expected at least ${_MIN_SUITE_COUNT}" >&2
+  exit 1
+fi
+
 echo "EDM smoke aggregator — ${#_run_order[@]} suite(s) discovered"
 echo
 
@@ -113,39 +136,48 @@ for _suite in "${_run_order[@]+"${_run_order[@]}"}"; do
   _total_fail=$((_total_fail + _s_fail))
 done
 
-# ---- EDMV3-T03 AC10: edm-check-grants runs as part of the aggregator, not just as a suite case
-# it is exercised from (wave7-smoke.sh). Real invocation, not a comment reference: it must
-# actually pass 0/1/2 exit contract against the live tree every time run-all.sh runs. ------------
-echo
-echo "edm-check-grants -- four-source grant/instruction contract check"
-_grants_out="$(bash "${SCRIPT_DIR}/../edm-check-grants" 2>&1)"
-_grants_ec=$?
-if [[ $_grants_ec -eq 0 ]]; then
-  echo "  PASS: edm-check-grants (exit 0)"
-  _total_pass=$((_total_pass + 1))
-else
-  echo "  FAIL: edm-check-grants (exit ${_grants_ec})" >&2
-  printf '%s\n' "$_grants_out" >&2
-  _total_fail=$((_total_fail + 1))
-  _failed_suites+=("edm-check-grants")
-fi
+# ---- CA-096: _standalone_check <script-path> <label> -- runs a standalone checker script (one
+# that is not a *-smoke.sh suite, so run-all.sh's own discovery loop above never reaches it) and
+# folds its 0/non-zero exit into the aggregate counters exactly the two blocks below used to do
+# by hand. This replaced two near-identical 15-line blocks (EDMV3-T03 AC10's edm-check-grants
+# case and EDMV3-T39 AC7's edm-check-skill-sync case) and is also what makes it cheap to add the
+# third call below: edm-check-vocabulary is a standalone checker in the same shape, run directly
+# by the blocking lint:vocabulary CI job, that this aggregator never actually invoked before now.
+_standalone_check() {
+  local script_path="$1" label="$2"
+  local out ec
+  echo
+  echo "$label"
+  out="$(bash "$script_path" 2>&1)"
+  ec=$?
+  if [[ $ec -eq 0 ]]; then
+    echo "  PASS: $(basename "$script_path") (exit 0)"
+    _total_pass=$((_total_pass + 1))
+  else
+    echo "  FAIL: $(basename "$script_path") (exit ${ec})" >&2
+    printf '%s\n' "$out" >&2
+    _total_fail=$((_total_fail + 1))
+    _failed_suites+=("$(basename "$script_path")")
+  fi
+}
 
-# ---- EDMV3-T39 AC7: the dispatcher-duplication tripwire runs every time too. It guards the
-# branch that was NOT taken (deduplication shipped instead), so it should always be clean --
-# which is exactly why a silent regression here would otherwise go unnoticed. ------------------
-echo
-echo "edm-check-skill-sync -- dispatcher holds no phase procedure (EDMV3-T39 AC7 fallback tripwire)"
-_sync_out="$(bash "${SCRIPT_DIR}/../edm-check-skill-sync" 2>&1)"
-_sync_ec=$?
-if [[ $_sync_ec -eq 0 ]]; then
-  echo "  PASS: edm-check-skill-sync (exit 0)"
-  _total_pass=$((_total_pass + 1))
-else
-  echo "  FAIL: edm-check-skill-sync (exit ${_sync_ec})" >&2
-  printf '%s\n' "$_sync_out" >&2
-  _total_fail=$((_total_fail + 1))
-  _failed_suites+=("edm-check-skill-sync")
-fi
+# EDMV3-T03 AC10: edm-check-grants runs as part of the aggregator, not just as a suite case it is
+# exercised from (wave7-smoke.sh). Real invocation, not a comment reference: it must actually pass
+# the 0/1/2 exit contract against the live tree every time run-all.sh runs.
+_standalone_check "${SCRIPT_DIR}/../edm-check-grants" \
+  "edm-check-grants -- four-source grant/instruction contract check"
+
+# EDMV3-T39 AC7: the dispatcher-duplication tripwire runs every time too. It guards the branch
+# that was NOT taken (deduplication shipped instead), so it should always be clean -- which is
+# exactly why a silent regression here would otherwise go unnoticed.
+_standalone_check "${SCRIPT_DIR}/../edm-check-skill-sync" \
+  "edm-check-skill-sync -- dispatcher holds no phase procedure (EDMV3-T39 AC7 fallback tripwire)"
+
+# CA-096: edm-check-vocabulary -- one of the two standalone checkers a blocking CI lint job
+# (lint:vocabulary) runs directly -- was never wired into this aggregator at all. This call is
+# the fix.
+_standalone_check "${SCRIPT_DIR}/../edm-check-vocabulary" \
+  "edm-check-vocabulary -- abolished-vocabulary and override-flag backstop (EDMV3-T30)"
 
 echo
 echo "Total: ${_total_pass} passed, ${_total_fail} failed across ${#_run_order[@]} suite(s)"

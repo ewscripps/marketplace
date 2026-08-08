@@ -346,18 +346,34 @@ check "CLAUDE.md documents the lens class as \"all N \`edm-audit-*\`\"" "edm-aud
 [[ "$t03_documented_total" -eq "$t03_disk_count" ]] \
   && pass "documented agent count ($t03_documented_total) matches disk ($t03_disk_count)" \
   || fail "documented agent count ($t03_named_count individually-named + $t03_wildcard_count lens wildcard = $t03_documented_total) does not match disk ($t03_disk_count)"
-[[ "$t03_disk_count" -eq 30 ]] && pass "disk agent count is 30 (baseline)" \
-  || fail "disk agent count is $t03_disk_count, expected 30"
+[[ "$t03_disk_count" -eq 30 ]] && pass "disk agent count is 30 (baseline: ls \$PLUGIN_DIR/agents/*.md, EDMV3-T03)" \
+  || fail "disk agent count is $t03_disk_count, expected 30 (source of truth: ls \$PLUGIN_DIR/agents/*.md)"
 
 echo
 echo "T03 AC10 -- bash 3.2 compatible (no associative arrays/mapfile) and referenced by run-all.sh"
 bash -n "$EDM_CHECK_GRANTS" && pass "edm-check-grants passes bash -n" \
   || fail "edm-check-grants failed bash -n"
-check_absent "no associative array declarations (declare -A)" "declare -A" \
-  "$(cat "$EDM_CHECK_GRANTS")"
-t03_mapfile_usage="$(grep -cE '(^|[^a-zA-Z_])(mapfile|readarray)[[:space:]]' "$EDM_CHECK_GRANTS" || true)"
-[[ "${t03_mapfile_usage:-0}" -eq 0 ]] && pass "no mapfile/readarray command usage" \
-  || fail "found mapfile/readarray usage in edm-check-grants"
+# CA-037: both checks below used to be uncontrolled (check_absent / bare [[ -z ]]) with no proof
+# either pattern could ever match a real hit.
+assert_absent_with_control "no associative array declarations (declare -A)" "declare -A" \
+  "$(cat "$EDM_CHECK_GRANTS")" "synthetic control line" "synthetic control: declare -A foo"
+# CA-037: the trailing [[:space:]] requirement meant a mapfile/readarray call immediately
+# followed by redirection with no space (e.g. "mapfile<f") could never match -- a real bug, not
+# just an untested one. Widened to any non-identifier boundary character (or end of line) so
+# "mapfile<f", "mapfile(...)", and the space-separated form all match, while "mapfile_helper"
+# (part of a longer identifier) still correctly does not. The wider boundary also now matches
+# "readarray." at the end of a prose sentence, so comment-only lines are excluded (same
+# convention T61 AC9 below already uses) -- a prose mention of why the construct is avoided is
+# not a use of it.
+t03_mapfile_usage="$( { grep -nE '(^|[^a-zA-Z0-9_])(mapfile|readarray)([^a-zA-Z0-9_]|$)' "$EDM_CHECK_GRANTS" 2>/dev/null \
+  | grep -vE '^[0-9]+:[[:space:]]*#' || true; } | wc -l | tr -d ' ')"
+t03_mapfile_control="$(printf '%s\n' 'mapfile<f' | grep -cE '(^|[^a-zA-Z0-9_])(mapfile|readarray)([^a-zA-Z0-9_]|$)' || true)"
+if [[ "${t03_mapfile_control:-0}" -lt 1 ]]; then
+  fail "T03 AC10 -- positive control broken: 'mapfile<f' (no space before redirection) was not caught by the pattern"
+else
+  [[ "${t03_mapfile_usage:-0}" -eq 0 ]] && pass "no mapfile/readarray command usage (positive control confirms mapfile<f-style usage would be caught)" \
+    || fail "found mapfile/readarray usage in edm-check-grants"
+fi
 check "run-all.sh references edm-check-grants (AC10 smoke-aggregator half)" "edm-check-grants" \
   "$(cat "${SCRIPT_DIR}/run-all.sh")"
 
@@ -375,8 +391,13 @@ echo "T15 AC1 -- code-audit/SKILL.md no longer instructs the model to set the fl
 CODE_AUDIT_SKILL="${PLUGIN_DIR}/skills/code-audit/SKILL.md"
 ORCH_SKILL="${PLUGIN_DIR}/skills/orchestrator/SKILL.md"
 t15_skills_grep="$(grep -rn 'code_audit_converged true' "${PLUGIN_DIR}/skills/" 2>/dev/null || true)"
-check_absent "no prompt anywhere instructs 'edm-state set <PREFIX> code_audit_converged true'" \
-  "code_audit_converged true" "$t15_skills_grep"
+# CA-037: check_absent alone never proved the grep pattern itself could match anything -- a typo'd
+# pattern or an accidentally-scoped directory would pass identically to a genuinely clean prompt
+# set. assert_absent_with_control's synthetic control (a line that legitimately contains the
+# needle) proves the same grep would have caught a real instance.
+assert_absent_with_control "no prompt anywhere instructs 'edm-state set <PREFIX> code_audit_converged true'" \
+  "code_audit_converged true" "$t15_skills_grep" \
+  "synthetic control line" "synthetic control: edm-state set <PREFIX> code_audit_converged true"
 
 echo
 echo "T15 AC2 -- Step 10 presents the Convergence gate via AskUserQuestion and gates approve-gate on Approve"
@@ -391,7 +412,12 @@ check "free-text-is-never-approval referenced by name at the convergence gate (E
 
 echo
 echo "T15 AC3 -- Step 10 states the compute -> present -> approve -> record order explicitly"
-T15_STEP10="$(sed -n '69,106p' "$CODE_AUDIT_SKILL")"
+# CA-102: this used to pin three assertions to a hardcoded `sed -n '69,106p'` absolute line-number
+# range in a file other tickets edit freely -- any line inserted or removed above line 69 silently
+# shifts the window without the assertion ever failing (or, worse, capturing the wrong content and
+# failing for an unrelated reason). Anchored to step 10's own numbered-list marker and the next
+# marker (step 11) instead, so the extracted text tracks the actual step regardless of line drift.
+T15_STEP10="$(_wave7_extract_between "$CODE_AUDIT_SKILL" '^10\. \*\*Convergence gate\*\*' '^11\. ')"
 check "convergence gate ordering text" "compute -> present -> approve -> record" "$T15_STEP10"
 check "Step 10 compute sub-step precedes present" "**Compute**" "$T15_STEP10"
 check "Step 10 present sub-step follows compute" "**Present** the gate via" "$T15_STEP10"
@@ -853,9 +879,17 @@ echo "T61 AC5 -- edm-check-grants carries set -euo pipefail"
 # edm-lint-artifacts, edm-check-grants) carries a multi-line header/usage comment block before
 # `set -euo pipefail`, consistent with this codebase's established convention; the ticket's own
 # Verify line's `head -5` would falsely report 0 against that same, pre-existing convention.
-t61_cg_pipefail="$(grep -c '^set -euo pipefail' "$EDM_CHECK_GRANTS" || true)"
-[[ "${t61_cg_pipefail:-0}" -ge 1 ]] && pass "edm-check-grants has set -euo pipefail" \
-  || fail "edm-check-grants set -euo pipefail count: ${t61_cg_pipefail:-0}"
+# CA-037: a bare >=1 threshold on its own never proved this exact grep pattern is a working
+# pattern rather than a typo -- cross-check the identical pattern against bin/edm-state, which is
+# independently known (grep it yourself) to carry `set -euo pipefail`, as a real positive control.
+t61_cg_pipefail_control="$(grep -c '^set -euo pipefail' "$EDM_STATE" || true)"
+if [[ "${t61_cg_pipefail_control:-0}" -lt 1 ]]; then
+  fail "T61 AC5 -- positive control broken: the pattern found zero '^set -euo pipefail' in bin/edm-state, which is known to carry it"
+else
+  t61_cg_pipefail="$(grep -c '^set -euo pipefail' "$EDM_CHECK_GRANTS" || true)"
+  [[ "${t61_cg_pipefail:-0}" -ge 1 ]] && pass "edm-check-grants has set -euo pipefail (positive control confirms the pattern works against a known-good file)" \
+    || fail "edm-check-grants set -euo pipefail count: ${t61_cg_pipefail:-0}"
+fi
 
 echo
 echo "T61 AC9 -- no bash-4-only construct in any real bin/ script (bin/tests/ excluded -- test-fixture/assertion surface, same convention T09's caller_contract_scan already uses; comment-only mentions excluded -- a prose reference to why a construct is avoided is not a use of it)"
@@ -868,8 +902,16 @@ while IFS= read -r t61_bf; do
     t61_bash4_hits="${t61_bash4_hits}${t61_bf}:${t61_bl}"$'\n'
   done < <(grep -nE "$T61_BASH4_RE" "$t61_bf" 2>/dev/null | grep -vE '^[0-9]+:[[:space:]]*#')
 done < <(find "$PLUGIN_DIR/bin" -maxdepth 1 -type f 2>/dev/null)
-[[ -z "$t61_bash4_hits" ]] && pass "T61 AC9 -- zero bash-4-only constructs found in real bin/ scripts" \
-  || fail "T61 AC9 -- bash-4-only construct(s) found:\n$t61_bash4_hits"
+# CA-037: positive control -- the same $T61_BASH4_RE against a synthetic line containing a real
+# bash-4-only construct, proving the alternation as a whole can actually fire before trusting the
+# empty result above.
+t61_bash4_control="$(printf '%s\n' 'declare -A foo' | grep -cE "$T61_BASH4_RE" || true)"
+if [[ "${t61_bash4_control:-0}" -lt 1 ]]; then
+  fail "T61 AC9 -- positive control broken: a synthetic 'declare -A foo' line was not caught by \$T61_BASH4_RE"
+else
+  [[ -z "$t61_bash4_hits" ]] && pass "T61 AC9 -- zero bash-4-only constructs found in real bin/ scripts (positive control confirms the pattern works)" \
+    || fail "T61 AC9 -- bash-4-only construct(s) found:\n$t61_bash4_hits"
+fi
 
 echo
 echo "T61 AC10 -- bash -n passes over every file in plugins/edm/bin/ (incl. bin/tests/*.sh)"
@@ -990,11 +1032,18 @@ check_absent "T57 AC10 -- lint:file-type-ban no longer carries allow_failure" "a
 # .gitlab-ci.yml -- suites run via run-all.sh auto-discovery and are never hand-named. -------
 echo
 echo "T21 AC5 -- zero literal wave-suite tokens anywhere in .gitlab-ci.yml"
-t21_wave_token_hits="$(grep -cE 'wave(3|4a|4b|5|6|7)-smoke' "$GITLAB_CI_YML" || true)"
-t21_wave_token_hits="${t21_wave_token_hits:-0}"
-[[ "$t21_wave_token_hits" -eq 0 ]] \
-  && pass "T21 AC5 -- .gitlab-ci.yml names zero literal wave-suite tokens (run-all.sh auto-discovery only)" \
-  || fail "T21 AC5 -- found $t21_wave_token_hits literal wave-suite token(s) in .gitlab-ci.yml"
+# CA-037: positive control -- the identical alternation against a synthetic line naming one of
+# the wave-suite tokens, proving the pattern can actually match before trusting the zero below.
+t21_wave_token_control="$(printf '%s\n' 'bash plugins/edm/bin/tests/wave6-smoke.sh' | grep -cE 'wave(3|4a|4b|5|6|7)-smoke' || true)"
+if [[ "${t21_wave_token_control:-0}" -lt 1 ]]; then
+  fail "T21 AC5 -- positive control broken: a synthetic 'wave6-smoke' line was not caught by the pattern"
+else
+  t21_wave_token_hits="$(grep -cE 'wave(3|4a|4b|5|6|7)-smoke' "$GITLAB_CI_YML" || true)"
+  t21_wave_token_hits="${t21_wave_token_hits:-0}"
+  [[ "$t21_wave_token_hits" -eq 0 ]] \
+    && pass "T21 AC5 -- .gitlab-ci.yml names zero literal wave-suite tokens (run-all.sh auto-discovery only; positive control confirms the pattern works)" \
+    || fail "T21 AC5 -- found $t21_wave_token_hits literal wave-suite token(s) in .gitlab-ci.yml"
+fi
 
 echo
 echo "T64 AC1 -- plugin.json and marketplace.json versions agree"
@@ -1092,18 +1141,35 @@ t58ac1_live="$({ grep -rl 'edm-test-coverage-auditor' "${PLUGIN_DIR}/agents/" 2>
 echo
 echo "T66 AC4 -- linter row, hook row and mode row are accurate (wrong class names gone)"
 check "T66 AC4 -- bin/ table describes four violation classes" "four violation classes" "$(cat "$CLAUDE_MD_T66")"
-t66ac4_wrong_classes="$({ grep -rl 'missing version header\|orphan file\|oversized ticket' "$CLAUDE_MD_T66" || true; } | wc -l | tr -d ' ')"
-[[ "${t66ac4_wrong_classes:-0}" -eq 0 ]] \
-  && pass "T66 AC4 -- no reference to the three never-implemented violation classes" \
-  || fail "T66 AC4 -- found a reference to a never-implemented violation class"
-t66ac4_taskcompleted="$({ grep -rl 'TaskCompleted' "$CLAUDE_MD_T66" || true; } | wc -l | tr -d ' ')"
-[[ "${t66ac4_taskcompleted:-0}" -eq 0 ]] \
-  && pass "T66 AC4 -- Hooks behavior table drops TaskCompleted" \
-  || fail "T66 AC4 -- TaskCompleted still referenced in CLAUDE.md"
-t66ac4_lcpartial="$({ grep -rl 'lifecycle_mode.*partial' "$CLAUDE_MD_T66" || true; } | wc -l | tr -d ' ')"
-[[ "${t66ac4_lcpartial:-0}" -eq 0 ]] \
-  && pass "T66 AC4 -- lifecycle_mode row drops partial" \
-  || fail "T66 AC4 -- lifecycle_mode row still mentions partial"
+# CA-037: three deleted-text counts, none previously proving their own grep pattern could match
+# anything -- each gets a synthetic positive control run through the identical pattern first.
+t66ac4_wrong_classes_control="$(printf '%s\n' 'a row mentioning missing version header' | grep -c 'missing version header\|orphan file\|oversized ticket' || true)"
+if [[ "${t66ac4_wrong_classes_control:-0}" -lt 1 ]]; then
+  fail "T66 AC4 -- positive control broken: a synthetic 'missing version header' line was not caught"
+else
+  t66ac4_wrong_classes="$({ grep -rl 'missing version header\|orphan file\|oversized ticket' "$CLAUDE_MD_T66" || true; } | wc -l | tr -d ' ')"
+  [[ "${t66ac4_wrong_classes:-0}" -eq 0 ]] \
+    && pass "T66 AC4 -- no reference to the three never-implemented violation classes (positive control confirms the pattern works)" \
+    || fail "T66 AC4 -- found a reference to a never-implemented violation class"
+fi
+t66ac4_taskcompleted_control="$(printf '%s\n' 'a row mentioning TaskCompleted' | grep -c 'TaskCompleted' || true)"
+if [[ "${t66ac4_taskcompleted_control:-0}" -lt 1 ]]; then
+  fail "T66 AC4 -- positive control broken: a synthetic 'TaskCompleted' line was not caught"
+else
+  t66ac4_taskcompleted="$({ grep -rl 'TaskCompleted' "$CLAUDE_MD_T66" || true; } | wc -l | tr -d ' ')"
+  [[ "${t66ac4_taskcompleted:-0}" -eq 0 ]] \
+    && pass "T66 AC4 -- Hooks behavior table drops TaskCompleted (positive control confirms the pattern works)" \
+    || fail "T66 AC4 -- TaskCompleted still referenced in CLAUDE.md"
+fi
+t66ac4_lcpartial_control="$(printf '%s\n' 'lifecycle_mode row still says partial' | grep -c 'lifecycle_mode.*partial' || true)"
+if [[ "${t66ac4_lcpartial_control:-0}" -lt 1 ]]; then
+  fail "T66 AC4 -- positive control broken: a synthetic 'lifecycle_mode ... partial' line was not caught"
+else
+  t66ac4_lcpartial="$({ grep -rl 'lifecycle_mode.*partial' "$CLAUDE_MD_T66" || true; } | wc -l | tr -d ' ')"
+  [[ "${t66ac4_lcpartial:-0}" -eq 0 ]] \
+    && pass "T66 AC4 -- lifecycle_mode row drops partial (positive control confirms the pattern works)" \
+    || fail "T66 AC4 -- lifecycle_mode row still mentions partial"
+fi
 
 echo
 echo "T66 AC5 -- state-field table documents schema_version/enforcement/round_type/closing_verdict"
@@ -1116,11 +1182,11 @@ echo "T66 AC6 -- documented agent and skill counts match reality"
 t66ac6_agent_disk="$(ls "${PLUGIN_DIR}/agents/"*.md | wc -l | tr -d ' ')"
 t66ac6_skill_manifest="$(jq -r '.plugins[] | select(.name=="edm") | .skills | length' "$(cd "$PLUGIN_DIR/../.." && pwd)/.claude-plugin/marketplace.json")"
 [[ "$t66ac6_agent_disk" -eq 30 ]] \
-  && pass "T66 AC6 -- 30 agent files on disk" \
-  || fail "T66 AC6 -- found $t66ac6_agent_disk agent file(s) on disk, expected 30"
+  && pass "T66 AC6 -- 30 agent files on disk (source of truth: ls \$PLUGIN_DIR/agents/*.md, same baseline as T03 AC9)" \
+  || fail "T66 AC6 -- found $t66ac6_agent_disk agent file(s) on disk, expected 30 (source of truth: ls \$PLUGIN_DIR/agents/*.md)"
 [[ "$t66ac6_skill_manifest" -eq 14 ]] \
-  && pass "T66 AC6 -- 14 skills declared in marketplace.json (post verify-runtime)" \
-  || fail "T66 AC6 -- marketplace.json declares $t66ac6_skill_manifest skill(s), expected 14"
+  && pass "T66 AC6 -- 14 skills declared in marketplace.json (post verify-runtime; source of truth: .claude-plugin/marketplace.json .plugins[].skills)" \
+  || fail "T66 AC6 -- marketplace.json declares $t66ac6_skill_manifest skill(s), expected 14 (source of truth: .claude-plugin/marketplace.json .plugins[].skills)"
 
 echo
 echo "T66 AC7 -- Testing changes section names CI as the primary verification path"
@@ -1142,31 +1208,99 @@ t66_validate_plugin_block="$(awk '/^validate:plugin-cli:/{f=1;next} f && /^[^[:s
 t66_eval_block="$(awk '/^eval:nightly:/{f=1;next} f && /^[^[:space:]][^#]*:$/ {f=0} f' "$GITLAB_CI_YML")"
 check "T66 AC11 -- validate:plugin-cli carries allow_failure" "allow_failure: true" "$t66_validate_plugin_block"
 check "T66 AC11 -- eval:nightly carries allow_failure" "allow_failure: true" "$t66_eval_block"
+# CA-100: an absent job (deleted, renamed, or a typo in the loop's own job-name list) yields an
+# EMPTY t66_job_block, which has no "allow_failure" substring and was silently scored compliant --
+# the far more consequential fact (the job does not exist at all) went unreported. Assert
+# existence and `stage: lint` before testing the block's content, and assert the union of the
+# four jobs' scripts actually names all four checkers CA-100 says this split job graph must run.
 t66_lint_allow_fail=""
+t66_lint_missing=""
+t66_lint_not_lint_stage=""
+t66_lint_union=""
 for t66_job in lint:bash-syntax lint:artifacts lint:grants lint:vocabulary; do
   t66_job_block="$(awk -v job="^${t66_job}:$" '$0 ~ job {f=1;next} f && /^[^[:space:]][^#]*:$/ {f=0} f' "$GITLAB_CI_YML")"
+  if [[ -z "$t66_job_block" ]]; then
+    t66_lint_missing="${t66_lint_missing} ${t66_job}"
+    continue
+  fi
+  [[ "$t66_job_block" == *"stage: lint"* ]] || t66_lint_not_lint_stage="${t66_lint_not_lint_stage} ${t66_job}"
   [[ "$t66_job_block" == *"allow_failure"* ]] && t66_lint_allow_fail="${t66_lint_allow_fail} ${t66_job}"
+  t66_lint_union="${t66_lint_union}
+${t66_job_block}"
 done
+[[ -z "$t66_lint_missing" ]] \
+  && pass "T66 AC11 -- all four split lint jobs exist in .gitlab-ci.yml" \
+  || fail "T66 AC11 -- job(s) not found in .gitlab-ci.yml:${t66_lint_missing}"
+[[ -z "$t66_lint_not_lint_stage" ]] \
+  && pass "T66 AC11 -- all four split lint jobs declare stage: lint" \
+  || fail "T66 AC11 -- job(s) missing 'stage: lint':${t66_lint_not_lint_stage}"
 [[ -z "$t66_lint_allow_fail" ]] \
   && pass "T66 AC11 -- none of the four split lint jobs carry allow_failure" \
   || fail "T66 AC11 -- split lint job(s) unexpectedly carry allow_failure:${t66_lint_allow_fail}"
+t66_lint_union_missing=""
+for t66_checker in "bash -n" "edm-lint-artifacts" "edm-check-grants" "edm-check-vocabulary"; do
+  printf '%s' "$t66_lint_union" | grep -qF -- "$t66_checker" || t66_lint_union_missing="${t66_lint_union_missing} '${t66_checker}'"
+done
+[[ -z "$t66_lint_union_missing" ]] \
+  && pass "T66 AC11 -- the union of the four lint jobs' scripts names bash -n, edm-lint-artifacts, edm-check-grants and edm-check-vocabulary" \
+  || fail "T66 AC11 -- the four lint jobs' scripts are missing:${t66_lint_union_missing}"
 check "T66 AC11 -- code-audit uses audit-round-start with --lenses" "--lenses" "$(grep 'audit-round-start' "${PLUGIN_DIR}/skills/code-audit/SKILL.md" || true)"
+
+# ---- CA-094: whole-tree edm-lint-artifacts --all / edm-check-grants: run ONCE here, asserted by
+# every block below that used to run its own redundant whole-tree scan. This is the earliest
+# point in the suite that needs either scan -- hoisted here (rather than left declared just
+# before the T45 block far below, where seven earlier consumers could not reach it) so every
+# consumer, not just the later ones, can reuse a single captured run. Five of those seven
+# earlier scans discarded their own output entirely; the two that inspect content (T43 AC9,
+# T44 AC7) get the real captured text below instead of a second live invocation.
+# INVARIANT: nothing from this line to the end of the file may mutate the tracked SRD tree or
+# change EDM_SRD_ROOT/cwd -- every consumer below re-checks the fingerprint before reusing the
+# captured values, so a violation fails loudly by name rather than silently reading stale output.
+WAVE7_ALL_LINT_CWD="$(pwd)"
+WAVE7_ALL_LINT_SRD_ROOT="${EDM_SRD_ROOT:-}"
+WAVE7_ALL_LINT_GIT_STATUS="$(git -C "$PLUGIN_DIR/../.." status --porcelain 2>/dev/null || true)"
+WAVE7_ALL_LINT_EXIT=0
+WAVE7_ALL_LINT_OUT="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all 2>&1)" || WAVE7_ALL_LINT_EXIT=$?
+WAVE7_GRANTS_EXIT=0
+WAVE7_GRANTS_OUT="$(bash "${PLUGIN_DIR}/bin/edm-check-grants" 2>&1)" || WAVE7_GRANTS_EXIT=$?
+
+# _wave7_assert_shared_lint_fresh <label> -- fails loudly, naming <label>, if the tracked tree,
+# cwd, or EDM_SRD_ROOT drifted since the shared lint/grants capture above. Every reuse site below
+# calls this before trusting $WAVE7_ALL_LINT_* / $WAVE7_GRANTS_*.
+_wave7_assert_shared_lint_fresh() {
+  local label="$1"
+  if [[ "$(pwd)" != "$WAVE7_ALL_LINT_CWD" || "${EDM_SRD_ROOT:-}" != "$WAVE7_ALL_LINT_SRD_ROOT" ]]; then
+    fail "${label} -- shared-lint invariant violated: cwd or EDM_SRD_ROOT drifted since capture"
+    return 1
+  fi
+  if [[ "$(git -C "$PLUGIN_DIR/../.." status --porcelain 2>/dev/null || true)" != "$WAVE7_ALL_LINT_GIT_STATUS" ]]; then
+    fail "${label} -- shared-lint invariant violated: tracked-tree fingerprint changed since capture"
+    return 1
+  fi
+  return 0
+}
 
 echo
 echo "T66 AC12 -- Definition-of-Done spot-check (four mechanical checks)"
 t66ac12_flag_leak="$({ grep -c 'code_audit_converged true' "${PLUGIN_DIR}/skills/"*/SKILL.md 2>/dev/null || true; } | awk -F: '{s+=$2} END{print s+0}')"
-[[ "${t66ac12_flag_leak:-0}" -eq 0 ]] \
-  && pass "T66 AC12 -- no prompt sets code_audit_converged true directly" \
-  || fail "T66 AC12 -- found a direct code_audit_converged true instruction"
+# CA-037: positive control proving the same grep -c invocation would actually report >=1 against
+# a line that legitimately contains the needle, so the "0" above is a real absence.
+t66ac12_flag_leak_control="$(printf '%s\n' 'synthetic control: code_audit_converged true' | grep -c 'code_audit_converged true' || true)"
+if [[ "${t66ac12_flag_leak_control:-0}" -lt 1 ]]; then
+  fail "T66 AC12 -- positive control broken: a synthetic 'code_audit_converged true' line was not counted"
+else
+  [[ "${t66ac12_flag_leak:-0}" -eq 0 ]] \
+    && pass "T66 AC12 -- no prompt sets code_audit_converged true directly (positive control confirms the count would be >=1 if present)" \
+    || fail "T66 AC12 -- found a direct code_audit_converged true instruction"
+fi
 t66ac12_orch_lines="$(wc -l < "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" | tr -d ' ')"
 [[ "$t66ac12_orch_lines" -le 300 ]] \
   && pass "T66 AC12 -- orchestrator/SKILL.md is $t66ac12_orch_lines lines (<= 300)" \
   || fail "T66 AC12 -- orchestrator/SKILL.md is $t66ac12_orch_lines lines, expected <= 300"
-t66ac12_lint_exit=0
-bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t66ac12_lint_exit=$?
-[[ "$t66ac12_lint_exit" -eq 0 ]] \
-  && pass "T66 AC12 -- edm-lint-artifacts --all exits 0" \
-  || fail "T66 AC12 -- edm-lint-artifacts --all exited $t66ac12_lint_exit"
+_wave7_assert_shared_lint_fresh "T66 AC12"
+[[ "$WAVE7_ALL_LINT_EXIT" -eq 0 ]] \
+  && pass "T66 AC12 -- edm-lint-artifacts --all exits 0 (captured once; CA-094)" \
+  || fail "T66 AC12 -- edm-lint-artifacts --all exited $WAVE7_ALL_LINT_EXIT (captured once; output: ${WAVE7_ALL_LINT_OUT})"
 t66ac12_force_hits="$(grep -rn -- '--force\|--accept-partials' "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" 2>/dev/null \
   | grep -v tests/ | grep -v 'vocabulary-' | grep -v "refused:" || true)"
 [[ -z "$t66ac12_force_hits" ]] \
@@ -1917,6 +2051,25 @@ flowchart TD
 check_fails "T43 AC4 -- a raw ';' inside [...] is flagged as mermaid-semicolon" "mermaid-semicolon" \
   bash "$LINT_BIN" --path "${T43_SCRATCH}/invalid1.md"
 
+# CA-101 (carried from code-audit round 1, closed here): the check_fails call above only proves
+# the class fires SOMEWHERE in invalid1.md -- it would still pass if line 5's plain "Wait;" were
+# the only line actually flagged and both entity-length boundary lines (6: an 11-character token,
+# one past strip_entities' 1..10 walk ceiling; 7: "#;" with zero characters, one short of its
+# floor) were silently mis-treated as legal entities and swallowed. Assert each boundary line is
+# flagged BY LINE NUMBER, individually, so a regression in the walk's off-by-one bounds fails here
+# specifically rather than staying invisible behind line 5's unrelated pass.
+set +e
+t43_boundary_out="$(bash "$LINT_BIN" --path "${T43_SCRATCH}/invalid1.md" 2>&1)"
+set -e
+check "T43 AC4 (CA-101) -- an 11-character entity-shaped token (over the 1..10 walk's ceiling) still violates, at its own line" \
+  "invalid1.md:6: mermaid-semicolon" "$t43_boundary_out"
+check "T43 AC4 (CA-101) -- a zero-character '#;' (under the 1..10 walk's floor) still violates, at its own line" \
+  "invalid1.md:7: mermaid-semicolon" "$t43_boundary_out"
+t43_boundary_count="$(printf '%s\n' "$t43_boundary_out" | grep -c 'mermaid-semicolon' || true)"
+[[ "${t43_boundary_count:-0}" -eq 3 ]] \
+  && pass "T43 AC4 (CA-101) -- exactly 3 violations in invalid1.md (line 5 plain + both boundary lines 6/7)" \
+  || fail "T43 AC4 (CA-101) -- found ${t43_boundary_count} violation(s), expected 3"
+
 echo
 echo "T43 AC5 -- zero false positives on the legal cases"
 {
@@ -2006,13 +2159,13 @@ echo "T43 AC9 -- the three existing classes behave identically after the refacto
 # committed script (via `git stash`) against the post-refactor script. This ongoing assertion
 # proves the CURRENT tree still produces zero attribution/unicode/leaked-tool-tag violations,
 # i.e. the refactor has not regressed the three pre-existing classes against the live tree.
-t43_all_ec=0
-t43_all_out="$(bash "$LINT_BIN" --all 2>&1)" || t43_all_ec=$?
-[[ "$t43_all_ec" -eq 0 ]] || fail "T43 AC9 -- edm-lint-artifacts --all exited ${t43_all_ec}: ${t43_all_out}"
-check "T43 AC9 -- --all is still CLEAN across the tree post-refactor" "CLEAN" "$t43_all_out"
-check_absent "T43 AC9 -- no attribution violation on the live tree" ": attribution: " "$t43_all_out"
-check_absent "T43 AC9 -- no unicode violation on the live tree" ": unicode: " "$t43_all_out"
-check_absent "T43 AC9 -- no leaked-tool-tag violation on the live tree" ": leaked-tool-tag: " "$t43_all_out"
+# CA-094: reuses the shared whole-tree capture (before T66 AC12) instead of a fresh --all run.
+_wave7_assert_shared_lint_fresh "T43 AC9"
+[[ "$WAVE7_ALL_LINT_EXIT" -eq 0 ]] || fail "T43 AC9 -- edm-lint-artifacts --all exited ${WAVE7_ALL_LINT_EXIT} (captured once): ${WAVE7_ALL_LINT_OUT}"
+check "T43 AC9 -- --all is still CLEAN across the tree post-refactor" "CLEAN" "$WAVE7_ALL_LINT_OUT"
+check_absent "T43 AC9 -- no attribution violation on the live tree" ": attribution: " "$WAVE7_ALL_LINT_OUT"
+check_absent "T43 AC9 -- no unicode violation on the live tree" ": unicode: " "$WAVE7_ALL_LINT_OUT"
+check_absent "T43 AC9 -- no leaked-tool-tag violation on the live tree" ": leaked-tool-tag: " "$WAVE7_ALL_LINT_OUT"
 
 echo
 echo "T43 AC10 -- performance budget (measured manually: 0.096s before, 0.097s after -- ~1.01x, well under 1.40x)"
@@ -2089,10 +2242,18 @@ echo "T44 AC2 -- valid/ coverage: entity codes, terminator, comment, directives,
   && pass "T44 AC2 -- a valid fixture covers a %% comment with a semicolon" || fail "T44 AC2 -- no valid fixture covers a %% comment"
 [[ -f "${MERMAID_VALID_DIR}/v12-indented-fence.md" ]] \
   && pass "T44 AC2 -- an indented-fence fixture is present" || fail "T44 AC2 -- v12-indented-fence.md is missing"
+# CA-038: v12 also now carries an em dash inside its indented fence, proving class 2 (unicode) is
+# suppressed inside an INDENTED fence specifically -- the earlier version of this fixture only
+# proved suppression at column-0 fences (every other valid/ fixture).
+t44_v12_content="$(cat "${MERMAID_VALID_DIR}/v12-indented-fence.md")"
+check "T44 AC2 (CA-038) -- v12's indented fence contains a real em dash" $'\xe2\x80\x94' "$t44_v12_content"
+bash "$LINT_BIN" --path "${MERMAID_VALID_DIR}/v12-indented-fence.md" >/dev/null 2>&1 \
+  && pass "T44 AC2 (CA-038) -- the em dash inside v12's indented fence is class-2 suppressed (fixture stays CLEAN)" \
+  || fail "T44 AC2 (CA-038) -- v12-indented-fence.md is no longer CLEAN after adding an em dash inside its indented fence"
 
 echo
 echo "T44 AC3 -- invalid/ coverage: one file per required case, each with an expected-line marker"
-for _t44_case in i01-bracket-label i02-quoted-label i03-edge-pipe-label i04-curly-label i05-sequence-message; do
+for _t44_case in i01-bracket-label i02-quoted-label i03-edge-pipe-label i04-curly-label i05-sequence-message i06-indented-mermaid-label; do
   _t44_f="${MERMAID_INVALID_DIR}/${_t44_case}.md"
   [[ -f "$_t44_f" ]] && pass "T44 AC3 -- ${_t44_case}.md exists" || fail "T44 AC3 -- ${_t44_case}.md is missing"
   grep -q 'expected-line:' "$_t44_f" 2>/dev/null && pass "T44 AC3 -- ${_t44_case}.md carries an expected-line marker" \
@@ -2151,10 +2312,10 @@ check "T44 AC6 -- .gitlab-ci.yml's test:smoke job runs the run-all.sh aggregator
 
 echo
 echo "T44 AC7 -- existing committed diagrams under tracked SRD/ trees pass"
-t44_all_ec=0
-t44_all_out="$(bash "$LINT_BIN" --all 2>&1)" || t44_all_ec=$?
-[[ "$t44_all_ec" -eq 0 ]] || fail "T44 AC7 -- edm-lint-artifacts --all exited ${t44_all_ec}: ${t44_all_out}"
-check "T44 AC7 -- edm-lint-artifacts --all is CLEAN across the tracked SRD tree" "CLEAN" "$t44_all_out"
+# CA-094: reuses the shared whole-tree capture (before T66 AC12) instead of a fresh --all run.
+_wave7_assert_shared_lint_fresh "T44 AC7"
+[[ "$WAVE7_ALL_LINT_EXIT" -eq 0 ]] || fail "T44 AC7 -- edm-lint-artifacts --all exited ${WAVE7_ALL_LINT_EXIT} (captured once): ${WAVE7_ALL_LINT_OUT}"
+check "T44 AC7 -- edm-lint-artifacts --all is CLEAN across the tracked SRD tree" "CLEAN" "$WAVE7_ALL_LINT_OUT"
 
 echo
 echo "T44 AC8 -- this suite's T44 cases use the shared _harness.sh assertions"
@@ -2297,8 +2458,10 @@ check "T33 AC14 -- ticket-audit.md pre-flight names environment the project does
 echo
 echo "T33 -- edm-check-grants and bash -n stay clean with the new skill in the tree"
 bash -n "${PLUGIN_DIR}/bin/edm-state" && pass "T33 -- bash -n bin/edm-state" || fail "T33 -- bash -n bin/edm-state failed"
-bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 && pass "T33 -- edm-check-grants exits 0" \
-  || fail "T33 -- edm-check-grants failed with the new skill present"
+# CA-094: reuses the shared whole-tree grants capture (before T66 AC12) instead of a fresh run.
+_wave7_assert_shared_lint_fresh "T33"
+[[ "$WAVE7_GRANTS_EXIT" -eq 0 ]] && pass "T33 -- edm-check-grants exits 0 (captured once; CA-094)" \
+  || fail "T33 -- edm-check-grants failed with the new skill present (captured once; output: ${WAVE7_GRANTS_OUT})"
 # EDMV3-T33 end
 
 
@@ -2441,10 +2604,10 @@ check "T35 AC7 -- upgraded to AskUserQuestion" 'Present via `AskUserQuestion`' "
 
 echo
 echo "T35 AC8 -- all four skills grant AskUserQuestion (edm-check-grants clean)"
-bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1
-t35_grants_exit=$?
-[[ "$t35_grants_exit" -eq 0 ]] && pass "T35 AC8 -- edm-check-grants exits 0" \
-  || fail "T35 AC8 -- edm-check-grants exited ${t35_grants_exit}"
+# CA-094: reuses the shared whole-tree grants capture (before T66 AC12) instead of a fresh run.
+_wave7_assert_shared_lint_fresh "T35 AC8"
+[[ "$WAVE7_GRANTS_EXIT" -eq 0 ]] && pass "T35 AC8 -- edm-check-grants exits 0 (captured once; CA-094)" \
+  || fail "T35 AC8 -- edm-check-grants exited ${WAVE7_GRANTS_EXIT} (captured once; output: ${WAVE7_GRANTS_OUT})"
 for t35_gate_skill in plan audit-srd audit-tickets code-audit; do
   check "T35 AC8 -- ${t35_gate_skill}/SKILL.md's allowed-tools grants AskUserQuestion" \
     "AskUserQuestion" "$(grep '^allowed-tools:' "${PLUGIN_DIR}/skills/${t35_gate_skill}/SKILL.md")"
@@ -2463,10 +2626,10 @@ done
 
 echo
 echo "T35 -- full suite stays green with the PROTOCOL section in place"
-t35_lint_exit=0
-bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t35_lint_exit=$?
-[[ "$t35_lint_exit" -eq 0 ]] && pass "T35 -- edm-lint-artifacts --all exits 0" \
-  || fail "T35 -- edm-lint-artifacts --all exited ${t35_lint_exit}"
+# CA-094: reuses the shared whole-tree lint capture (before T66 AC12) instead of a fresh run.
+_wave7_assert_shared_lint_fresh "T35 (full suite)"
+[[ "$WAVE7_ALL_LINT_EXIT" -eq 0 ]] && pass "T35 -- edm-lint-artifacts --all exits 0 (captured once; CA-094)" \
+  || fail "T35 -- edm-lint-artifacts --all exited ${WAVE7_ALL_LINT_EXIT} (captured once; output: ${WAVE7_ALL_LINT_OUT})"
 # EDMV3-T35 end
 
 
@@ -2570,12 +2733,12 @@ check "T36 AC8 -- defence-in-depth framing used instead" "defence in depth on th
 
 echo
 echo "T36 -- full suite and lint stay green with Step 0 in place across all eight phase skills"
-bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1
-t36_grants_exit=$?
-[[ "$t36_grants_exit" -eq 0 ]] && pass "T36 -- edm-check-grants exits 0" || fail "T36 -- edm-check-grants exited ${t36_grants_exit}"
-t36_lint_exit=0
-bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t36_lint_exit=$?
-[[ "$t36_lint_exit" -eq 0 ]] && pass "T36 -- edm-lint-artifacts --all exits 0" || fail "T36 -- edm-lint-artifacts --all exited ${t36_lint_exit}"
+# CA-094: reuses the shared whole-tree lint/grants capture (before T66 AC12) instead of fresh runs.
+_wave7_assert_shared_lint_fresh "T36 (full suite)"
+[[ "$WAVE7_GRANTS_EXIT" -eq 0 ]] && pass "T36 -- edm-check-grants exits 0 (captured once; CA-094)" \
+  || fail "T36 -- edm-check-grants exited ${WAVE7_GRANTS_EXIT} (captured once; output: ${WAVE7_GRANTS_OUT})"
+[[ "$WAVE7_ALL_LINT_EXIT" -eq 0 ]] && pass "T36 -- edm-lint-artifacts --all exits 0 (captured once; CA-094)" \
+  || fail "T36 -- edm-lint-artifacts --all exited ${WAVE7_ALL_LINT_EXIT} (captured once; output: ${WAVE7_ALL_LINT_OUT})"
 # EDMV3-T36 end
 
 # ---- shared helper: numbered-list ascending check (T37 AC9 / T38 AC9) ---------------------------
@@ -2677,12 +2840,12 @@ done
 
 echo
 echo "T37 -- full suite and grants stay green with the phase-procedure move in place"
-t37_grants_exit=0
-bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t37_grants_exit=$?
-[[ "$t37_grants_exit" -eq 0 ]] && pass "T37 -- edm-check-grants exits 0" || fail "T37 -- edm-check-grants exited ${t37_grants_exit}"
-t37_lint_exit=0
-bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t37_lint_exit=$?
-[[ "$t37_lint_exit" -eq 0 ]] && pass "T37 -- edm-lint-artifacts --all exits 0" || fail "T37 -- edm-lint-artifacts --all exited ${t37_lint_exit}"
+# CA-094: reuses the shared whole-tree lint/grants capture (before T66 AC12) instead of fresh runs.
+_wave7_assert_shared_lint_fresh "T37 (full suite)"
+[[ "$WAVE7_GRANTS_EXIT" -eq 0 ]] && pass "T37 -- edm-check-grants exits 0 (captured once; CA-094)" \
+  || fail "T37 -- edm-check-grants exited ${WAVE7_GRANTS_EXIT} (captured once; output: ${WAVE7_GRANTS_OUT})"
+[[ "$WAVE7_ALL_LINT_EXIT" -eq 0 ]] && pass "T37 -- edm-lint-artifacts --all exits 0 (captured once; CA-094)" \
+  || fail "T37 -- edm-lint-artifacts --all exited ${WAVE7_ALL_LINT_EXIT} (captured once; output: ${WAVE7_ALL_LINT_OUT})"
 # EDMV3-T37 end
 
 # =================================================================================
@@ -2719,9 +2882,10 @@ t38_skill_grant_count="$(grep -rn '^allowed-tools:' "${PLUGIN_DIR}/skills/"*/SKI
   || fail "T38 AC4 -- ${t38_skill_grant_count} skills grant Skill, expected 1"
 check "T38 AC4 -- orchestrator/SKILL.md's allowed-tools grants Skill" "Skill" \
   "$(grep '^allowed-tools:' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
-t38_grants_exit=0
-bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t38_grants_exit=$?
-[[ "$t38_grants_exit" -eq 0 ]] && pass "T38 AC4/AC13 -- edm-check-grants exits 0" || fail "T38 AC4/AC13 -- edm-check-grants exited ${t38_grants_exit}"
+# CA-094: reuses the shared whole-tree grants capture (before T66 AC12) instead of a fresh run.
+_wave7_assert_shared_lint_fresh "T38 AC4/AC13"
+[[ "$WAVE7_GRANTS_EXIT" -eq 0 ]] && pass "T38 AC4/AC13 -- edm-check-grants exits 0 (captured once; CA-094)" \
+  || fail "T38 AC4/AC13 -- edm-check-grants exited ${WAVE7_GRANTS_EXIT} (captured once; output: ${WAVE7_GRANTS_OUT})"
 
 echo
 echo "T38 AC5 -- graceful degradation instruction present (Skill-tool composition CLAUDE.md reference)"
@@ -2771,9 +2935,10 @@ check "T38 AC13 -- verify-runtime invoked from the Phase 6 entry" "verify-runtim
 
 echo
 echo "T38 -- full suite stays green with the dispatcher collapse in place"
-t38_lint_exit=0
-bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all >/dev/null 2>&1 || t38_lint_exit=$?
-[[ "$t38_lint_exit" -eq 0 ]] && pass "T38 -- edm-lint-artifacts --all exits 0" || fail "T38 -- edm-lint-artifacts --all exited ${t38_lint_exit}"
+# CA-094: reuses the shared whole-tree lint capture (before T66 AC12) instead of a fresh run.
+_wave7_assert_shared_lint_fresh "T38 (full suite)"
+[[ "$WAVE7_ALL_LINT_EXIT" -eq 0 ]] && pass "T38 -- edm-lint-artifacts --all exits 0 (captured once; CA-094)" \
+  || fail "T38 -- edm-lint-artifacts --all exited ${WAVE7_ALL_LINT_EXIT} (captured once; output: ${WAVE7_ALL_LINT_OUT})"
 # EDMV3-T38 end
 # =================================================================================
 # EDMV3-T54: update-patterns respects the Living-Library Contract, entries pending-review
@@ -3435,16 +3600,9 @@ echo "=== EDMV3-T45: communication cadence and deliverable-length calibration ==
 
 ORCH_SKILL_T45="$(cat "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
 
-# _wave7_extract_section <file> <heading-regex> -- prints the body of the first '## ' section
-# whose heading matches <heading-regex>, up to (not including) the next '## ' heading or EOF.
-_wave7_extract_section() {
-  local file="$1" heading="$2"
-  awk -v h="$heading" '
-    $0 ~ ("^## " h "$") { found=1; next }
-    found && /^## / { exit }
-    found { print }
-  ' "$file"
-}
+# CA-102/CA-099: _wave7_extract_section and _wave7_extract_between moved to _harness.sh (still
+# under their original names for continuity with prior audit findings) so every suite can reuse
+# them, not just this one call site -- see _harness.sh for the definitions.
 
 echo
 echo "T45 AC1 -- orchestrator gains a top-level '## Communication' section"
@@ -3528,28 +3686,16 @@ else
   pass "T45 AC10 -- <tone_preference> block never mentions the deliverable-length clause"
 fi
 
-# ---- Whole-tree artifact lint: run ONCE here, asserted by five ticket blocks below --------
-# T45, T46, T47, T49 and T48 each close with their own "full suite stays green" case, and each
-# one needs to stay separately named for its ticket's AC to be traceable. But all five ran the
-# identical `edm-lint-artifacts --all` whole-tree scan with no state mutation between them, so
-# four of the five scans were pure duplicate work measuring the same tree. The scan happens
-# once here; each block below asserts against the captured exit code, so every ticket keeps its
-# own named passing case and nothing that was asserted before is weakened.
-# INVARIANT: nothing between this line and the T48 block at the end of the file may mutate the
-# tracked SRD tree or change EDM_SRD_ROOT/cwd. Everything in that range is read-only prose
-# inspection today; if that stops being true, re-capture at the point of the mutation rather
-# than reverting to five scans.
-WAVE7_ALL_LINT_CWD="$(pwd)"
-WAVE7_ALL_LINT_SRD_ROOT="${EDM_SRD_ROOT:-}"
-WAVE7_ALL_LINT_GIT_STATUS="$(git -C "$PLUGIN_DIR/../.." status --porcelain 2>/dev/null || true)"
-WAVE7_ALL_LINT_EXIT=0
-WAVE7_ALL_LINT_OUT="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --all 2>&1)" || WAVE7_ALL_LINT_EXIT=$?
+# CA-094: the shared whole-tree lint/grants capture now lives far above (before T66 AC12, its
+# earliest potential consumer) alongside `_wave7_assert_shared_lint_fresh`. T45, T46, T47, T49
+# and T48 below still each close with their own separately-named "full suite stays green" case
+# (AC-traceability preserved), but all reuse that single capture instead of re-running it.
+_wave7_assert_shared_lint_fresh "T45"
 
 echo
 echo "T45 -- full suite stays green with the cadence/length additions in place"
-t45_grants_exit=0
-bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t45_grants_exit=$?
-[[ "$t45_grants_exit" -eq 0 ]] && pass "T45 -- edm-check-grants exits 0" || fail "T45 -- edm-check-grants exited ${t45_grants_exit}"
+[[ "$WAVE7_GRANTS_EXIT" -eq 0 ]] && pass "T45 -- edm-check-grants exits 0 (captured once; CA-094)" \
+  || fail "T45 -- edm-check-grants exited ${WAVE7_GRANTS_EXIT} (captured once; output: ${WAVE7_GRANTS_OUT})"
 [[ "$WAVE7_ALL_LINT_EXIT" -eq 0 ]] && pass "T45 -- edm-lint-artifacts --all exits 0" \
   || fail "T45 -- edm-lint-artifacts --all exited ${WAVE7_ALL_LINT_EXIT} (captured once; output: ${WAVE7_ALL_LINT_OUT})"
 # EDMV3-T45 end
@@ -3811,8 +3957,31 @@ TIMING_SH="${PLUGIN_DIR}/bin/tests/timing.sh"
 [[ -x "$TIMING_SH" ]] \
   && pass "T67 AC14 -- bin/tests/timing.sh is executable" \
   || fail "T67 AC14 -- bin/tests/timing.sh is missing or not executable"
-check "T67 AC14 -- timing.sh usage lists all seven measurement modes" \
-  "generate-fixture" "$(bash "$TIMING_SH" 2>&1 || true)"
+# CA-147: the label claims seven measurement modes; asserting on a single token
+# ("generate-fixture") would still pass on a timing.sh reduced to `echo generate-fixture; exit 0`
+# -- and this is the script that produces the committed latency budgets in CHANGELOG.md's T67
+# table and both budgets in plugins/edm/CLAUDE.md, so a silently-broken timing.sh is a silently
+# untrustworthy budget. Assert each of the seven measurement mode names by itself
+# (--generate-fixture sets up the fixture and is not itself a measurement mode).
+t67_timing_usage="$(bash "$TIMING_SH" 2>&1 || true)"
+for t67_mode in --subcommands --phase-complete --ledger --session-start --lint --mermaid-ratio --all-lint; do
+  check "T67 AC14 -- timing.sh usage lists measurement mode ${t67_mode}" \
+    "$t67_mode" "$t67_timing_usage"
+done
+
+echo
+echo "T67 AC14 (CA-147) -- a single cheap mode actually measures against a real fixture"
+# --session-start is the cheapest real mode: it inits one tiny scratch initiative and times ten
+# real edm-state session-start invocations -- no 30-file/10,000-line fixture generation like
+# --lint/--mermaid-ratio/--all-lint. Asserting a parseable millisecond figure comes back (not
+# just that the mode name is recognized) proves the mode actually measures something real.
+t67_ss_out="$(bash "$TIMING_SH" --session-start 2>&1)"
+check "T67 AC14 -- --session-start reports the TIMING session-start line" \
+  "TIMING session-start" "$t67_ss_out"
+t67_ss_delta="$(printf '%s\n' "$t67_ss_out" | grep -o 'delta_ms=-\?[0-9]\+' | sed -E 's/.*=//' || true)"
+[[ -n "$t67_ss_delta" && "$t67_ss_delta" =~ ^-?[0-9]+$ ]] \
+  && pass "T67 AC14 -- --session-start returns a parseable integer delta_ms (${t67_ss_delta})" \
+  || fail "T67 AC14 -- --session-start did not return a parseable delta_ms (output: $t67_ss_out)"
 
 echo
 echo "T67 AC2 -- get_session_tokens_since bounds its read (EDM_TOKEN_READ_LINE_CAP)"
@@ -3867,25 +4036,70 @@ echo "T67 AC11 -- no blocking job's script contains a network call"
 # four rather than the one they replaced.
 t67ac11_blocking_jobs="lint:bash-syntax lint:artifacts lint:grants lint:vocabulary lint:shellcheck test:smoke test:smoke-bash32 test:state-validate validate:manifest"
 t67ac11_net_hits=""
+t67ac11_missing_jobs=""
 for t67_job in $t67ac11_blocking_jobs; do
   t67_job_body="$(awk -v job="^${t67_job}:$" '
     $0 ~ job {f=1; next}
     f && /^[^[:space:]][^#]*:$/ {exit}
     f {print}
   ' "$GITLAB_CI_YML")"
-  echo "$t67_job_body" | grep -qE 'curl |wget |anthropic\.com' && t67ac11_net_hits="${t67ac11_net_hits} ${t67_job}"
+  # CA-085(a): an absent job (deleted from the pipeline, renamed, or a typo in the list above)
+  # yields an EMPTY body that matches no network pattern and was silently scored clean -- the
+  # far more consequential fact (the job doesn't exist) went unreported. Fail explicitly, naming
+  # the job, instead of letting an empty body pass the grep below by default.
+  if [[ -z "$t67_job_body" ]]; then
+    t67ac11_missing_jobs="${t67ac11_missing_jobs} ${t67_job}"
+    continue
+  fi
+  # CA-085(b): broadened beyond curl/wget/anthropic.com to also catch an unpinned global tool
+  # install (npm install -g, with no version pin) landing in a blocking job -- previously
+  # invisible, with no positive control proving the pattern actually fires. Deliberately does
+  # NOT add a bare "apk add"/"apt-get" ban: every blocking job's before_script bootstraps its
+  # (digest-pinned, per CLAUDE.md's "All job images are pinned by digest" note) Alpine image with
+  # `apk add --no-cache bash` or similar -- that is this pipeline's accepted, reviewed baseline,
+  # not the invisible-network-call class this AC targets. A literal "apk add|apt-get" ban was
+  # tried and immediately flagged all nine blocking jobs identically, which is a false-positive
+  # regression, not real signal -- it would make this assertion permanently red or force someone
+  # to blanket-suppress it, either of which defeats the AC. "npm install" alone has zero matches
+  # in the current blocking set (both existing `npm install -g @anthropic-ai/claude-code` calls
+  # are in the two non-blocking, allow_failure:true jobs), so it adds real forward coverage
+  # without a false positive today.
+  echo "$t67_job_body" | grep -qE 'curl |wget |anthropic\.com|npm install' \
+    && t67ac11_net_hits="${t67ac11_net_hits} ${t67_job}"
 done
+[[ -z "$t67ac11_missing_jobs" ]] \
+  && pass "T67 AC11 -- all named blocking jobs exist in .gitlab-ci.yml" \
+  || fail "T67 AC11 -- job(s) named in the blocking set are not present in .gitlab-ci.yml:${t67ac11_missing_jobs}"
 [[ -z "$t67ac11_net_hits" ]] \
-  && pass "T67 AC11 -- no blocking job's script calls curl/wget/anthropic.com" \
-  || fail "T67 AC11 -- network call found in blocking job(s):${t67ac11_net_hits}"
+  && pass "T67 AC11 -- no blocking job's script calls curl/wget/anthropic.com/npm install" \
+  || fail "T67 AC11 -- network/unpinned-install call found in blocking job(s):${t67ac11_net_hits}"
+
+# CA-085(b) positive control: inject a curl call into a scratch copy of the same job body and
+# prove the widened pattern actually fires -- without this, the assertion above could pass
+# vacuously (silently matching nothing) forever.
+t67ac11_scratch_body="$(awk -v job='^lint:artifacts:$' '
+  $0 ~ job {f=1; next}
+  f && /^[^[:space:]][^#]*:$/ {exit}
+  f {print}
+' "$GITLAB_CI_YML")
+    - curl -sSL https://example.invalid/install.sh | sh"
+echo "$t67ac11_scratch_body" | grep -qE 'curl |wget |anthropic\.com|npm install' \
+  && pass "T67 AC11 (CA-085 positive control) -- an injected curl call is actually caught by the pattern" \
+  || fail "T67 AC11 (CA-085 positive control) -- injecting a curl call did not trip the network-call pattern"
+
+# Second positive control: the "npm install" half of the widened pattern specifically -- proving
+# the new part of the broadened coverage actually fires, not just the pre-existing curl branch.
+t67ac11_scratch_body_npm="${t67ac11_scratch_body}
+    - npm install -g some-unpinned-tool"
+echo "$t67ac11_scratch_body_npm" | grep -qE 'curl |wget |anthropic\.com|npm install' \
+  && pass "T67 AC11 (CA-085 positive control) -- an injected unpinned npm install is actually caught by the widened pattern" \
+  || fail "T67 AC11 (CA-085 positive control) -- injecting an npm install did not trip the widened pattern"
 
 echo "T67 AC1/AC3/AC4/AC5/AC6/AC7 -- measured this session against real generated fixtures via"
 echo "  bin/tests/timing.sh; the numbers are recorded in CHANGELOG.md's EDMV3-T67 table, not"
 echo "  re-run here (they take minutes and generate scratch fixtures unsuited to a fast smoke"
 echo "  suite). AC9/AC13 are recorded verified-locally-pending-pipeline (decisions.md D27) --"
 echo "  both require a live GitLab runner / a real costed eval run this session did not trigger."
-echo "  AC10 is a recorded, unfixed gap (decisions.md D26): the four lint checks run as"
-echo "  sequential script lines in one job, not four parallel jobs."
 # EDMV3-T67 end
 
 # =================================================================================

@@ -6,4 +6,5 @@ This proves the linter de-indents fence markers before classifying them.
 
    ```text
    Co-Authored-By: Example Person <example@example.com>
+   An em dash inside an indented fence — like this one — is class-2 (unicode) suppressed too.
    ```

@@ -14,7 +14,7 @@ catch and produces zero false positives on every legal case it must leave alone.
 
 ## Floors
 
-At least 10 files in `valid/` and at least 5 in `invalid/` (12 and 5 respectively as of this
+At least 10 files in `valid/` and at least 5 in `invalid/` (12 and 6 respectively as of this
 writing) -- each side carries its own floor rather than a single combined count, because a
 combined floor of 15 would be satisfiable by 15 valid fixtures and zero invalid ones, which
 would prove the class never fires rather than that it fires correctly.
@@ -31,7 +31,9 @@ semicolon) outside any fence, and a `classDiagram` relationship line to guard ag
 sequence-message heuristic over-firing.
 
 `invalid/` covers: a raw `;` inside `[...]`, inside `"..."`, inside an edge `|...|` label,
-inside `{...}`, and inside a `sequenceDiagram` message after the `:`.
+inside `{...}`, inside a `sequenceDiagram` message after the `:`, and inside a `[...]` label in
+an INDENTED mermaid fence (CA-038 -- fence de-indentation for recognition must not also suppress
+violation detection inside the fence it recognizes).
 
 ## Regression discipline
 

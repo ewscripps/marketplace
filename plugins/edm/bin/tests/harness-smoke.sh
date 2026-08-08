@@ -130,6 +130,134 @@ _neg_out3="$(
 check "check_state_unchanged fails when no baseline file exists" "PASS=0 FAIL=1" "$_neg_out3"
 rm -f "$STATE_TMP"
 
+# ---- CA-145: count_matches, count_matches_strict, assert_absent_with_control -----------------
+echo
+echo "CA-145 — count_matches, count_matches_strict, assert_absent_with_control"
+
+CM_FILE="$(mktemp "${TMPDIR:-/tmp}/edm-harness-cm-test.XXXXXX")"
+printf 'alpha\nbeta\nalpha again\n' > "$CM_FILE"
+
+# Positive: a real, present pattern counts correctly.
+cm_hits="$(count_matches 'alpha' "$CM_FILE")"
+[[ "$cm_hits" -eq 2 ]] && pass "count_matches counts a present pattern correctly (2)" \
+  || fail "count_matches returned '$cm_hits', expected 2"
+
+# Positive: a genuinely absent pattern (grep exit 1) still prints 0, not an error.
+cm_absent="$(count_matches 'zzz-not-present' "$CM_FILE")"
+[[ "$cm_absent" -eq 0 ]] && pass "count_matches prints 0 for a genuinely absent pattern (grep exit 1)" \
+  || fail "count_matches returned '$cm_absent' for an absent pattern, expected 0"
+
+# CA-145's documented caveat, proven directly: a missing FILE (grep exit 2) collapses to the
+# same printed "0" as a genuinely absent pattern -- this is the correctness gap the strict
+# variant below exists to close, not a hypothetical.
+cm_missing_file="$(count_matches 'alpha' "${CM_FILE}.does-not-exist")"
+[[ "$cm_missing_file" -eq 0 ]] && pass "count_matches (documented caveat) also prints 0 for a missing file (grep exit 2)" \
+  || fail "count_matches returned '$cm_missing_file' for a missing file, expected the documented 0"
+
+# count_matches_strict: positive (present pattern), still returns 0/prints the real count.
+cms_hits="$(count_matches_strict 'alpha' "$CM_FILE")"
+cms_hits_ec=$?
+[[ "$cms_hits" -eq 2 && $cms_hits_ec -eq 0 ]] && pass "count_matches_strict counts a present pattern and returns 0" \
+  || fail "count_matches_strict returned '$cms_hits' (ec=$cms_hits_ec), expected 2/0"
+
+# count_matches_strict: genuinely absent pattern still prints 0 and returns 0 (unchanged from
+# count_matches for this case -- only the missing-file case is supposed to diverge).
+cms_absent="$(count_matches_strict 'zzz-not-present' "$CM_FILE")"
+cms_absent_ec=$?
+[[ "$cms_absent" -eq 0 && $cms_absent_ec -eq 0 ]] && pass "count_matches_strict prints 0/returns 0 for a genuinely absent pattern" \
+  || fail "count_matches_strict returned '$cms_absent' (ec=$cms_absent_ec) for an absent pattern, expected 0/0"
+
+# count_matches_strict: THE FIX -- a missing file (grep exit 2) is distinguished, not collapsed.
+set +e
+cms_missing="$(count_matches_strict 'alpha' "${CM_FILE}.does-not-exist")"
+cms_missing_ec=$?
+set -e
+[[ "$cms_missing" == "ERROR" && $cms_missing_ec -eq 2 ]] \
+  && pass "count_matches_strict prints ERROR/returns 2 for a missing file, unlike count_matches" \
+  || fail "count_matches_strict returned '$cms_missing' (ec=$cms_missing_ec) for a missing file, expected ERROR/2"
+rm -f "$CM_FILE"
+
+# assert_absent_with_control: positive -- needle absent from actual, present in the control.
+_aawc_pos="$(
+  PASS=0; FAIL=0
+  assert_absent_with_control "needle absent, control has it" "banned-word" \
+    "clean haystack text" "control doc" "haystack containing banned-word for real"
+  echo "PASS=$PASS FAIL=$FAIL"
+)"
+check "assert_absent_with_control passes when needle is absent and the control proves it's a real check" \
+  "PASS=1 FAIL=0" "$_aawc_pos"
+
+# assert_absent_with_control: negative (its whole point) -- needle present in actual -> fails,
+# even though the control also has it.
+_aawc_neg_present="$(
+  PASS=0; FAIL=0
+  assert_absent_with_control "needle present in actual" "banned-word" \
+    "haystack containing banned-word here" "control doc" "haystack containing banned-word for real"
+  echo "PASS=$PASS FAIL=$FAIL"
+)"
+check "assert_absent_with_control fails when the needle is present in actual" \
+  "PASS=0 FAIL=1" "$_aawc_neg_present"
+
+# assert_absent_with_control: negative -- the needle is missing from the CONTROL haystack too,
+# meaning the control is not actually a positive control and the whole assertion is vacuous. This
+# must fail loudly rather than pass on an untested guard.
+_aawc_neg_control="$(
+  PASS=0; FAIL=0
+  assert_absent_with_control "control itself lacks the needle" "banned-word" \
+    "clean haystack text" "control doc" "control text that never mentions the needle at all"
+  echo "PASS=$PASS FAIL=$FAIL"
+)"
+check "assert_absent_with_control fails when the positive control itself lacks the needle" \
+  "PASS=0 FAIL=1" "$_aawc_neg_control"
+
+# ---- CA-042: check_refuses_and_leaves_state ---------------------------------------------------
+echo
+echo "CA-042 — check_refuses_and_leaves_state (refuse + state-unchanged combined)"
+
+CRLS_STATE="$(mktemp "${TMPDIR:-/tmp}/edm-harness-crls-test.XXXXXX")"
+echo '{"a":1}' > "$CRLS_STATE"
+
+# Positive: command exits non-zero, message matches, state untouched -- all three true at once.
+check_refuses_and_leaves_state "refuses cleanly and leaves state alone" "no such" "$CRLS_STATE" \
+  ls /definitely-not-here
+
+# Negative: command exits 0 -- must fail regardless of message/state.
+_crls_neg_exit0="$(
+  PASS=0; FAIL=0
+  check_refuses_and_leaves_state "expected refusal but command succeeded" "irrelevant" "$CRLS_STATE" true
+  echo "PASS=$PASS FAIL=$FAIL"
+)"
+check "check_refuses_and_leaves_state fails when the command exits 0" "PASS=0 FAIL=1" "$_crls_neg_exit0"
+
+# Negative: command refuses (non-zero) but the message does not match.
+_crls_neg_msg="$(
+  PASS=0; FAIL=0
+  check_refuses_and_leaves_state "wrong message" "wrong-substring-xyz" "$CRLS_STATE" ls /definitely-not-here
+  echo "PASS=$PASS FAIL=$FAIL"
+)"
+check "check_refuses_and_leaves_state fails on a non-matching message" "PASS=0 FAIL=1" "$_crls_neg_msg"
+
+# Negative: command refuses AND the message matches, but it still mutated state -- the case that
+# check_fails alone (without the hash comparison) could never catch.
+_crls_neg_state="$(
+  PASS=0; FAIL=0
+  check_refuses_and_leaves_state "refused but mutated state anyway" "boom" "$CRLS_STATE" \
+    sh -c "echo x >> '$CRLS_STATE'; echo boom >&2; exit 1"
+  echo "PASS=$PASS FAIL=$FAIL"
+)"
+check "check_refuses_and_leaves_state fails when the refused command still mutated state" \
+  "PASS=0 FAIL=1" "$_crls_neg_state"
+rm -f "$CRLS_STATE"
+
+# Negative: no baseline state file at all.
+_crls_neg_baseline="$(
+  PASS=0; FAIL=0
+  check_refuses_and_leaves_state "no baseline" "irrelevant" "${CRLS_STATE}.missing" ls /definitely-not-here
+  echo "PASS=$PASS FAIL=$FAIL"
+)"
+check "check_refuses_and_leaves_state fails when no baseline state file exists" \
+  "PASS=0 FAIL=1" "$_crls_neg_baseline"
+
 # ---- AC6/AC7 (meta): existing helpers untouched, bash 3.2 compliance --------------------------
 echo
 echo "AC6/AC7 — existing helper behaviour and bash 3.2 compliance"

@@ -270,9 +270,7 @@ check_fails "unknown lifecycle_mode fails loudly naming the value" "unknown life
   call_edm_helper terminal_phase_for_mode standard bogus-lc
 check "unknown lifecycle_mode error lists the legal enum" "standard|fast-track|fix-pack" "$bad_lc_out"
 
-check_fails "set-mode rejects unknown mode value (CLI path)" "invalid mode" \
-  "$EDM_STATE" set-mode T7SEEDSTD mode bogus-mode
-check_state_unchanged "$STATE_T7SEEDSTD" "$EDM_STATE" set-mode T7SEEDSTD mode bogus-mode
+check_refuses_and_leaves_state "set-mode rejects unknown mode value (CLI path)" "invalid mode" "$STATE_T7SEEDSTD" "$EDM_STATE" set-mode T7SEEDSTD mode bogus-mode
 
 # ---- AC8: every (mode, lifecycle_mode) pair covered; bash 3.2 compatibility --
 # Satisfied by the AC1 loop above: it enumerates all 5 x 4 = 20 legal pairs and
@@ -553,9 +551,7 @@ STATE_T08ARCH="$TMP/SRD/T08ARCH/.edm-state.json"
 "$EDM_STATE" approve-gate T08ARCH 3 >/dev/null
 jq '.current_phase = 6 | .phase_durations["6_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
   "$STATE_T08ARCH" > "${STATE_T08ARCH}.tmp" && mv "${STATE_T08ARCH}.tmp" "$STATE_T08ARCH"
-check_fails "archive refuses before approval" "archive refused: code_audit_converged=false" \
-  "$EDM_STATE" archive T08ARCH
-check_state_unchanged "$STATE_T08ARCH" "$EDM_STATE" archive T08ARCH
+check_refuses_and_leaves_state "archive refuses before approval" "archive refused: code_audit_converged=false" "$STATE_T08ARCH" "$EDM_STATE" archive T08ARCH
 [[ -f "$STATE_T08ARCH" ]] && pass "archive refusal leaves the initiative directory in place" \
   || fail "initiative directory moved despite refusal"
 "$EDM_STATE" approve-gate T08ARCH code-audit >/dev/null
@@ -605,12 +601,9 @@ STATE_T13PS="$TMP/SRD/T13PS/.edm-state.json"
 pre_phase="$(jq -r '.current_phase' "$STATE_T13PS")"
 [[ "$pre_phase" == "0" ]] && pass "current_phase starts at 0" || fail "current_phase = '$pre_phase', expected 0"
 
-check_fails "phase-start refuses without the prerequisite gate" \
-  "Gate 1 has not been approved for T13PS; phase 2 cannot start" \
-  "$EDM_STATE" phase-start T13PS 2
+check_refuses_and_leaves_state "phase-start refuses without the prerequisite gate" "Gate 1 has not been approved for T13PS; phase 2 cannot start" "$STATE_T13PS" "$EDM_STATE" phase-start T13PS 2
 check "refusal names the exact approve-gate invocation" "edm-state approve-gate T13PS 1" \
   "$("$EDM_STATE" phase-start T13PS 2 2>&1 || true)"
-check_state_unchanged "$STATE_T13PS" "$EDM_STATE" phase-start T13PS 2
 
 echo
 echo "T13 AC1 -- phase-start succeeds once the prerequisite gate is approved"
@@ -737,28 +730,21 @@ STATE_T09GATE="$TMP/SRD/T09GATE/.edm-state.json"
 # ---- AC1: code_audit_converged refused, naming approve-gate code-audit ---------
 echo
 echo "T09 AC1 -- code_audit_converged refused, naming approve-gate code-audit"
-check_fails "set code_audit_converged refused" \
-  "edm-state approve-gate <PREFIX> code-audit" \
-  "$EDM_STATE" set T09GATE code_audit_converged true
+check_refuses_and_leaves_state "set code_audit_converged refused" "edm-state approve-gate <PREFIX> code-audit" "$STATE_T09GATE" "$EDM_STATE" set T09GATE code_audit_converged true
 
 # ---- AC2: refusal precedes mutation, for every supplied value ------------------
 echo
 echo "T09 AC2 -- refusal happens before mutation, for true/false/garbage"
-check_state_unchanged "$STATE_T09GATE" "$EDM_STATE" set T09GATE code_audit_converged true
-check_state_unchanged "$STATE_T09GATE" "$EDM_STATE" set T09GATE code_audit_converged false
-check_state_unchanged "$STATE_T09GATE" "$EDM_STATE" set T09GATE code_audit_converged garbage
+check_refuses_and_leaves_state "T09 AC2 -- set code_audit_converged=false refused (same class, false value)" \
+  "edm-state approve-gate <PREFIX> code-audit" "$STATE_T09GATE" "$EDM_STATE" set T09GATE code_audit_converged false
+check_refuses_and_leaves_state "T09 AC2 -- set code_audit_converged=garbage refused (same class, invalid value)" \
+  "edm-state approve-gate <PREFIX> code-audit" "$STATE_T09GATE" "$EDM_STATE" set T09GATE code_audit_converged garbage
 
 # ---- AC3: the whole gate-bearing class refuses, no partial mutation -----------
 echo
 echo "T09 AC3 -- compliance_gate_approved and gates_approved refuse entirely"
-check_fails "set compliance_gate_approved refused" \
-  "edm-state approve-gate <PREFIX> 3.5" \
-  "$EDM_STATE" set T09GATE compliance_gate_approved true
-check_state_unchanged "$STATE_T09GATE" "$EDM_STATE" set T09GATE compliance_gate_approved true
-check_fails "set gates_approved refused" \
-  "edm-state approve-gate <PREFIX> <gate-num>" \
-  "$EDM_STATE" set T09GATE gates_approved true
-check_state_unchanged "$STATE_T09GATE" "$EDM_STATE" set T09GATE gates_approved true
+check_refuses_and_leaves_state "set compliance_gate_approved refused" "edm-state approve-gate <PREFIX> 3.5" "$STATE_T09GATE" "$EDM_STATE" set T09GATE compliance_gate_approved true
+check_refuses_and_leaves_state "set gates_approved refused" "edm-state approve-gate <PREFIX> <gate-num>" "$STATE_T09GATE" "$EDM_STATE" set T09GATE gates_approved true
 
 # ---- AC5: a known key still succeeds -------------------------------------------
 echo
@@ -773,13 +759,10 @@ ld_out="$(jq -r '.last_decision' "$STATE_T09GATE")"
 # ---- AC6: unknown key refused, lists the full sorted valid-key list -----------
 echo
 echo "T09 AC6 -- unknown key lists valid keys"
-check_fails "unknown key lists valid keys" \
-  "unknown key 'totally_made_up_key'" \
-  "$EDM_STATE" set T09GATE totally_made_up_key 1
+check_refuses_and_leaves_state "unknown key lists valid keys" "unknown key 'totally_made_up_key'" "$STATE_T09GATE" "$EDM_STATE" set T09GATE totally_made_up_key 1
 unk_out="$("$EDM_STATE" set T09GATE totally_made_up_key 1 2>&1 || true)"
 check "unknown key error lists compliance_enabled" "compliance_enabled" "$unk_out"
 check "unknown key error lists test_frameworks_detected" "test_frameworks_detected" "$unk_out"
-check_state_unchanged "$STATE_T09GATE" "$EDM_STATE" set T09GATE totally_made_up_key 1
 
 # ---- AC7: existing typed validation and its error strings are unchanged -------
 echo
@@ -813,10 +796,7 @@ with_scratch_repo t09_ac8_case_edm_init
 # ---- AC9: schema_version is refused via cmd_set, naming migrate-schema --------
 echo
 echo "T09 AC9 -- set schema_version refused naming migrate-schema"
-check_fails "set schema_version refused naming migrate-schema" \
-  "edm-state migrate-schema <PREFIX>" \
-  "$EDM_STATE" set T09GATE schema_version 2
-check_state_unchanged "$STATE_T09GATE" "$EDM_STATE" set T09GATE schema_version 2
+check_refuses_and_leaves_state "set schema_version refused naming migrate-schema" "edm-state migrate-schema <PREFIX>" "$STATE_T09GATE" "$EDM_STATE" set T09GATE schema_version 2
 
 # =================================================================================
 # EDMV3-T06: permission `ask` rule detection, PERM_RULES_MISSING anomaly, enforcement tags
@@ -1287,9 +1267,7 @@ migsch1_sv="$(jq -r '.schema_version' "$STATE_MIGSCH1")"
 echo
 echo "T10 AC3 -- second migration attempt refused naming the recorded value"
 _t10_migsch1_noconfirm() { "$EDM_STATE" migrate-schema MIGSCH1 < /dev/null; }
-check_fails "second migrate-schema attempt refused" \
-  "already has schema_version=1" _t10_migsch1_noconfirm
-check_state_unchanged "$STATE_MIGSCH1" _t10_migsch1_noconfirm
+check_refuses_and_leaves_state "second migrate-schema attempt refused" "already has schema_version=1" "$STATE_MIGSCH1" _t10_migsch1_noconfirm
 
 # ---- AC3 (advance-by-one): once a higher shape is satisfied, advances by exactly one ------
 echo
@@ -1340,8 +1318,7 @@ mkdir -p "$TMP/SRD/.archived"
 mv "$TMP/SRD/MIGSCH4" "$TMP/SRD/.archived/MIGSCH4"
 STATE_MIGSCH4_ARCH="$TMP/SRD/.archived/MIGSCH4/.edm-state.json"
 _t10_migsch4_archived() { "$EDM_STATE" migrate-schema MIGSCH4 < /dev/null; }
-check_fails "archived initiative refused" "is archived" _t10_migsch4_archived
-check_state_unchanged "$STATE_MIGSCH4_ARCH" _t10_migsch4_archived
+check_refuses_and_leaves_state "archived initiative refused" "is archived" "$STATE_MIGSCH4_ARCH" _t10_migsch4_archived
 
 # ---- AC7 (negative, confirmation required): no input piped refuses, no changes made -------
 echo
@@ -1350,9 +1327,7 @@ echo "T10 AC7 (confirmation gate) -- refuses without a piped/typed confirmation"
 STATE_MIGSCH5="$TMP/SRD/MIGSCH5/.edm-state.json"
 jq 'del(.schema_version)' "$STATE_MIGSCH5" > "$STATE_MIGSCH5.tmp" && mv "$STATE_MIGSCH5.tmp" "$STATE_MIGSCH5"
 _t10_migsch5_noinput() { "$EDM_STATE" migrate-schema MIGSCH5 < /dev/null; }
-check_fails "migrate-schema refuses without a piped/typed confirmation" \
-  "confirmation not received" _t10_migsch5_noinput
-check_state_unchanged "$STATE_MIGSCH5" _t10_migsch5_noinput
+check_refuses_and_leaves_state "migrate-schema refuses without a piped/typed confirmation" "confirmation not received" "$STATE_MIGSCH5" _t10_migsch5_noinput
 
 # ---- AC7 (hand-removal detectable): validate + HANDOFF render the migration prompt --------
 echo
@@ -1393,10 +1368,7 @@ _t11_case() {
   local dir="$TMP/SRD/$prefix"
   local state="${dir}/.edm-state.json"
 
-  check_fails "T11 AC2 -- phase ${phase} artifact absent refuses (${prefix})" \
-    "phase ${phase} artifact missing or empty" \
-    "$EDM_STATE" phase-complete "$prefix" "$phase"
-  check_state_unchanged "$state" "$EDM_STATE" phase-complete "$prefix" "$phase"
+  check_refuses_and_leaves_state "T11 AC2 -- phase ${phase} artifact absent refuses (${prefix})" "phase ${phase} artifact missing or empty" "$state" "$EDM_STATE" phase-complete "$prefix" "$phase"
 
   mkdir -p "$(dirname "${dir}/${artifact_rel}")"
   echo "content" > "${dir}/${artifact_rel}"
@@ -1415,10 +1387,7 @@ _t11_case T11P5 5 "tickets/audit.md"
 # from AC3's shard-only variant below).
 "$EDM_STATE" init T11P6 >/dev/null
 STATE_T11P6="$TMP/SRD/T11P6/.edm-state.json"
-check_fails "T11 AC2 -- phase 6 artifact absent refuses (T11P6)" \
-  "phase 6 artifact missing or empty" \
-  "$EDM_STATE" phase-complete T11P6 6
-check_state_unchanged "$STATE_T11P6" "$EDM_STATE" phase-complete T11P6 6
+check_refuses_and_leaves_state "T11 AC2 -- phase 6 artifact absent refuses (T11P6)" "phase 6 artifact missing or empty" "$STATE_T11P6" "$EDM_STATE" phase-complete T11P6 6
 mkdir -p "$TMP/SRD/T11P6/qc"
 echo "# QC Summary" > "$TMP/SRD/T11P6/qc/qc-summary.md"
 "$EDM_STATE" phase-complete T11P6 6 >/dev/null \
@@ -1456,10 +1425,7 @@ jq '.schema_version = 2' "$STATE_T11PARTIAL" > "$STATE_T11PARTIAL.tmp" && mv "$S
 mkdir -p "$TMP/SRD/T11PARTIAL/qc"
 echo "# QC Summary" > "$TMP/SRD/T11PARTIAL/qc/qc-summary.md"
 "$EDM_STATE" record-partial-verdict T11PARTIAL T11PARTIAL-T01 PARTIAL "needs runtime check" >/dev/null
-check_fails "T11 AC4 -- phase 6 with open PARTIAL refuses naming verify-runtime" \
-  "verify-runtime" \
-  "$EDM_STATE" phase-complete T11PARTIAL 6
-check_state_unchanged "$STATE_T11PARTIAL" "$EDM_STATE" phase-complete T11PARTIAL 6
+check_refuses_and_leaves_state "T11 AC4 -- phase 6 with open PARTIAL refuses naming verify-runtime" "verify-runtime" "$STATE_T11PARTIAL" "$EDM_STATE" phase-complete T11PARTIAL 6
 "$EDM_STATE" record-partial-verdict T11PARTIAL T11PARTIAL-T01 PASS "runtime verified" >/dev/null
 "$EDM_STATE" phase-complete T11PARTIAL 6 >/dev/null \
   && pass "T11 AC4 -- phase 6 completes once the PARTIAL is closed" \
@@ -1555,10 +1521,7 @@ echo
 echo "T12 AC1 -- archive refuses on missing gates, naming each"
 "$EDM_STATE" init T12GATE >/dev/null
 STATE_T12GATE="$TMP/SRD/T12GATE/.edm-state.json"
-check_fails "T12 AC1 -- archive refuses naming all three missing gates" \
-  "gate(s) 1, 2, 3 not approved" \
-  "$EDM_STATE" archive T12GATE
-check_state_unchanged "$STATE_T12GATE" "$EDM_STATE" archive T12GATE
+check_refuses_and_leaves_state "T12 AC1 -- archive refuses naming all three missing gates" "gate(s) 1, 2, 3 not approved" "$STATE_T12GATE" "$EDM_STATE" archive T12GATE
 [[ -d "$TMP/SRD/T12GATE" ]] && pass "T12 AC1 -- refusal leaves the initiative directory in place" \
   || fail "T12 AC1 -- initiative directory moved despite refusal"
 
@@ -1577,10 +1540,7 @@ STATE_T12PHASE="$TMP/SRD/T12PHASE/.edm-state.json"
 "$EDM_STATE" approve-gate T12PHASE 2 >/dev/null
 "$EDM_STATE" approve-gate T12PHASE 3 >/dev/null
 "$EDM_STATE" set T12PHASE current_phase 5 >/dev/null
-check_fails "T12 AC2 -- archive at current_phase 5 refuses" \
-  "has not reached the terminal phase (6)" \
-  "$EDM_STATE" archive T12PHASE
-check_state_unchanged "$STATE_T12PHASE" "$EDM_STATE" archive T12PHASE
+check_refuses_and_leaves_state "T12 AC2 -- archive at current_phase 5 refuses" "has not reached the terminal phase (6)" "$STATE_T12PHASE" "$EDM_STATE" archive T12PHASE
 
 # ---- AC3 (negative, completed_at): the terminal phase's completed_at must be recorded -----
 echo
@@ -1591,10 +1551,7 @@ STATE_T12COMPLETED="$TMP/SRD/T12COMPLETED/.edm-state.json"
 "$EDM_STATE" approve-gate T12COMPLETED 2 >/dev/null
 "$EDM_STATE" approve-gate T12COMPLETED 3 >/dev/null
 "$EDM_STATE" set T12COMPLETED current_phase 6 >/dev/null
-check_fails "T12 AC3 -- archive without terminal completed_at refuses" \
-  "has no completed_at recorded" \
-  "$EDM_STATE" archive T12COMPLETED
-check_state_unchanged "$STATE_T12COMPLETED" "$EDM_STATE" archive T12COMPLETED
+check_refuses_and_leaves_state "T12 AC3 -- archive without terminal completed_at refuses" "has no completed_at recorded" "$STATE_T12COMPLETED" "$EDM_STATE" archive T12COMPLETED
 
 # ---- AC4/AC5 (negative, convergence, unconditional on product_name): converged=false -------
 echo
@@ -1609,10 +1566,7 @@ jq '.current_phase = 6 | .phase_durations["6_phase"] = {started_at: "2026-01-01T
 t12conv_product="$(jq -r '.product_name' "$STATE_T12CONV")"
 [[ -z "$t12conv_product" ]] && pass "T12 AC5 -- fixture is flat-layout (product_name empty)" \
   || fail "T12 AC5 -- fixture unexpectedly has product_name='$t12conv_product'"
-check_fails "T12 AC4 -- archive with converged=false refuses naming approve-gate code-audit" \
-  "edm-state approve-gate T12CONV code-audit" \
-  "$EDM_STATE" archive T12CONV
-check_state_unchanged "$STATE_T12CONV" "$EDM_STATE" archive T12CONV
+check_refuses_and_leaves_state "T12 AC4 -- archive with converged=false refuses naming approve-gate code-audit" "edm-state approve-gate T12CONV code-audit" "$STATE_T12CONV" "$EDM_STATE" archive T12CONV
 
 # ---- AC6: no wave-A archive refusal names a wave-B command --------------------------------
 echo
@@ -1647,10 +1601,7 @@ export EDM_MODE="prototype"
 "$EDM_STATE" init T12PROTO >/dev/null
 unset EDM_MODE
 STATE_T12PROTO="$TMP/SRD/T12PROTO/.edm-state.json"
-check_fails "T12 AC8 -- prototype without gate 1 still refuses" \
-  "gate(s) 1 not approved" \
-  "$EDM_STATE" archive T12PROTO
-check_state_unchanged "$STATE_T12PROTO" "$EDM_STATE" archive T12PROTO
+check_refuses_and_leaves_state "T12 AC8 -- prototype without gate 1 still refuses" "gate(s) 1 not approved" "$STATE_T12PROTO" "$EDM_STATE" archive T12PROTO
 
 "$EDM_STATE" approve-gate T12PROTO 1 >/dev/null
 jq '.current_phase = 2 | .phase_durations["2_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
@@ -1728,19 +1679,13 @@ echo "T12 REGRESSION -- three-command bypass (edm-init -> set converged -> archi
 "$EDM_STATE" init T12BYPASS >/dev/null
 STATE_T12BYPASS="$TMP/SRD/T12BYPASS/.edm-state.json"
 # Step 2: attempt the bypass via `set` -- must fail (EDMV3-T09 AC1).
-check_fails "T12 REGRESSION -- step 2 (set code_audit_converged true) fails" \
-  "edm-state approve-gate <PREFIX> code-audit" \
-  "$EDM_STATE" set T12BYPASS code_audit_converged true
-check_state_unchanged "$STATE_T12BYPASS" "$EDM_STATE" set T12BYPASS code_audit_converged true
+check_refuses_and_leaves_state "T12 REGRESSION -- step 2 (set code_audit_converged true) fails" "edm-state approve-gate <PREFIX> code-audit" "$STATE_T12BYPASS" "$EDM_STATE" set T12BYPASS code_audit_converged true
 
 # Variant: hand-edit the state file directly (bypassing `set` entirely) to flip the boolean,
 # then attempt step 3 (archive) at phase 0 -- must still be refused, on gate grounds (T12
 # AC1), well before convergence is ever consulted.
 jq '.code_audit_converged = true' "$STATE_T12BYPASS" > "$STATE_T12BYPASS.tmp" && mv "$STATE_T12BYPASS.tmp" "$STATE_T12BYPASS"
-check_fails "T12 REGRESSION -- hand-edited converged=true at phase 0 is still refused (gate grounds)" \
-  "gate(s) 1, 2, 3 not approved" \
-  "$EDM_STATE" archive T12BYPASS
-check_state_unchanged "$STATE_T12BYPASS" "$EDM_STATE" archive T12BYPASS
+check_refuses_and_leaves_state "T12 REGRESSION -- hand-edited converged=true at phase 0 is still refused (gate grounds)" "gate(s) 1, 2, 3 not approved" "$STATE_T12BYPASS" "$EDM_STATE" archive T12BYPASS
 [[ -d "$TMP/SRD/T12BYPASS" ]] \
   && pass "T12 REGRESSION -- three-command bypass fails at both step 2 and step 3; directory never moved" \
   || fail "T12 REGRESSION -- initiative directory was archived despite the bypass"
@@ -1771,18 +1716,12 @@ t16_bypass_case() {
   state_file="${init_dir}/.edm-state.json"
 
   # Command 2: edm-state set TESTX code_audit_converged true -- must fail naming approve-gate.
-  check_fails "must-fail: T16 AC1 -- bypass command 2 (set code_audit_converged true) refused" \
-    "approve-gate" \
-    edm-state set TESTX code_audit_converged true
-  check_state_unchanged "$state_file" edm-state set TESTX code_audit_converged true
+  check_refuses_and_leaves_state "must-fail: T16 AC1 -- bypass command 2 (set code_audit_converged true) refused" "approve-gate" "$state_file" edm-state set TESTX code_audit_converged true
 
   # Command 3, first attempt: hand-edit the state file directly (bypassing `set` entirely) to
   # force the flag, then archive at phase 0 -- refused on gate grounds, naming the missing gates.
   jq '.code_audit_converged = true' "$state_file" > "${state_file}.tmp" && mv "${state_file}.tmp" "$state_file"
-  check_fails "must-fail: T16 AC2 -- bypass command 3 refused after hand-edit (missing gates)" \
-    "gate(s) 1, 2, 3 not approved" \
-    edm-state archive TESTX
-  check_state_unchanged "$state_file" edm-state archive TESTX
+  check_refuses_and_leaves_state "must-fail: T16 AC2 -- bypass command 3 refused after hand-edit (missing gates)" "gate(s) 1, 2, 3 not approved" "$state_file" edm-state archive TESTX
 
   # Command 3, second attempt: approve every gate the bypass forgot -- still refused, this time
   # naming the wrong current_phase, proving the gate check is not the only thing in the way.
@@ -1808,10 +1747,7 @@ t16_matrix_case() {
   edm-init --product demo --description mx1 MX1 >/dev/null
   edm-state phase-start MX1 1 >/dev/null
   local mx1_dir; mx1_dir="$(edm-state resolve-dir MX1)"
-  check_fails "must-fail: T16 AC4 -- phase-complete refuses when the phase artifact is absent" \
-    "phase 1 artifact missing or empty" \
-    edm-state phase-complete MX1 1
-  check_state_unchanged "${mx1_dir}/.edm-state.json" edm-state phase-complete MX1 1
+  check_refuses_and_leaves_state "must-fail: T16 AC4 -- phase-complete refuses when the phase artifact is absent" "phase 1 artifact missing or empty" "${mx1_dir}/.edm-state.json" edm-state phase-complete MX1 1
 
   # 2. archive with gates 1 and 2 approved but not 3.
   edm-init --product demo --description mx2 MX2 >/dev/null
@@ -1834,38 +1770,20 @@ t16_matrix_case() {
   # 4. set with an unknown key.
   edm-init --product demo --description mx4 MX4 >/dev/null
   local mx4_dir; mx4_dir="$(edm-state resolve-dir MX4)"
-  check_fails "must-fail: T16 AC4 -- set with an unknown key refuses" \
-    "unknown key 'totally_bogus_key'" \
-    edm-state set MX4 totally_bogus_key 1
-  check_state_unchanged "${mx4_dir}/.edm-state.json" edm-state set MX4 totally_bogus_key 1
+  check_refuses_and_leaves_state "must-fail: T16 AC4 -- set with an unknown key refuses" "unknown key 'totally_bogus_key'" "${mx4_dir}/.edm-state.json" edm-state set MX4 totally_bogus_key 1
 
   # 5-7. set on each of the three gate-bearing fields.
-  check_fails "must-fail: T16 AC4 -- set code_audit_converged refuses (gate-bearing field 1/3)" \
-    "approve-gate <PREFIX> code-audit" \
-    edm-state set MX4 code_audit_converged true
-  check_state_unchanged "${mx4_dir}/.edm-state.json" edm-state set MX4 code_audit_converged true
-  check_fails "must-fail: T16 AC4 -- set compliance_gate_approved refuses (gate-bearing field 2/3)" \
-    "approve-gate <PREFIX> 3.5" \
-    edm-state set MX4 compliance_gate_approved true
-  check_state_unchanged "${mx4_dir}/.edm-state.json" edm-state set MX4 compliance_gate_approved true
-  check_fails "must-fail: T16 AC4 -- set gates_approved refuses (gate-bearing field 3/3)" \
-    "approve-gate <PREFIX> <gate-num>" \
-    edm-state set MX4 gates_approved true
-  check_state_unchanged "${mx4_dir}/.edm-state.json" edm-state set MX4 gates_approved true
+  check_refuses_and_leaves_state "must-fail: T16 AC4 -- set code_audit_converged refuses (gate-bearing field 1/3)" "approve-gate <PREFIX> code-audit" "${mx4_dir}/.edm-state.json" edm-state set MX4 code_audit_converged true
+  check_refuses_and_leaves_state "must-fail: T16 AC4 -- set compliance_gate_approved refuses (gate-bearing field 2/3)" "approve-gate <PREFIX> 3.5" "${mx4_dir}/.edm-state.json" edm-state set MX4 compliance_gate_approved true
+  check_refuses_and_leaves_state "must-fail: T16 AC4 -- set gates_approved refuses (gate-bearing field 3/3)" "approve-gate <PREFIX> <gate-num>" "${mx4_dir}/.edm-state.json" edm-state set MX4 gates_approved true
 
   # 8. set schema_version.
-  check_fails "must-fail: T16 AC4 -- set schema_version refuses naming migrate-schema" \
-    "migrate-schema <PREFIX>" \
-    edm-state set MX4 schema_version 2
-  check_state_unchanged "${mx4_dir}/.edm-state.json" edm-state set MX4 schema_version 2
+  check_refuses_and_leaves_state "must-fail: T16 AC4 -- set schema_version refuses naming migrate-schema" "migrate-schema <PREFIX>" "${mx4_dir}/.edm-state.json" edm-state set MX4 schema_version 2
 
   # 9. phase-start into a phase whose prerequisite gate is unapproved.
   edm-init --product demo --description mx5 MX5 >/dev/null
   local mx5_dir; mx5_dir="$(edm-state resolve-dir MX5)"
-  check_fails "must-fail: T16 AC4 -- phase-start refuses into a phase whose prerequisite gate is unapproved" \
-    "Gate 1 has not been approved" \
-    edm-state phase-start MX5 2
-  check_state_unchanged "${mx5_dir}/.edm-state.json" edm-state phase-start MX5 2
+  check_refuses_and_leaves_state "must-fail: T16 AC4 -- phase-start refuses into a phase whose prerequisite gate is unapproved" "Gate 1 has not been approved" "${mx5_dir}/.edm-state.json" edm-state phase-start MX5 2
 }
 with_scratch_repo t16_matrix_case
 
@@ -2306,7 +2224,8 @@ check_absent "T59 AC2 -- the removed value is not offered back as a legal choice
 # Byte-identity, not a field re-read: cmd_set_mode dies inside the enum guard BEFORE it
 # reaches rmw_state, so nothing at all should be written -- not lifecycle_mode, and not the
 # last_updated timestamp that every successful write bumps alongside it.
-check_state_unchanged "$STATE_T59ENUM" "$EDM_STATE" set-mode T59ENUM lifecycle_mode partial
+check_refuses_and_leaves_state "T59 AC2 -- set-mode lifecycle_mode partial refuses AND leaves state byte-identical" \
+  "invalid lifecycle_mode 'partial'" "$STATE_T59ENUM" "$EDM_STATE" set-mode T59ENUM lifecycle_mode partial
 # Positive control: the same subcommand on a surviving enum member DOES write, so the
 # byte-identity assertion above is proving a refusal, not a broken/no-op code path.
 "$EDM_STATE" set-mode T59ENUM lifecycle_mode fast-track >/dev/null
@@ -2357,9 +2276,7 @@ echo
 echo "T62 AC2 -- skip-phase with an empty rationale is refused"
 "$EDM_STATE" init T62AC2 >/dev/null
 STATE_T62AC2="$TMP/SRD/T62AC2/.edm-state.json"
-check_fails "T62 AC2 -- skip-phase with an empty rationale is refused" "empty rationale" \
-  "$EDM_STATE" skip-phase T62AC2 2 ""
-check_state_unchanged "$STATE_T62AC2" "$EDM_STATE" skip-phase T62AC2 2 ""
+check_refuses_and_leaves_state "T62 AC2 -- skip-phase with an empty rationale is refused" "empty rationale" "$STATE_T62AC2" "$EDM_STATE" skip-phase T62AC2 2 ""
 
 echo
 echo "T62 AC2 -- CHANGELOG.md documents the breaking change"
@@ -2464,12 +2381,28 @@ t62ac9_ok="$("$EDM_STATE" get T62AC9 | jq -e '[.gates_approved[] | has("enforcem
 # ---- AC10 (negative, no unrecorded exemption path exists) ----------------------------------
 echo
 echo "T62 AC10 -- no unrecorded exemption path (no override flag/env var/mode shortcut)"
+# CA-037: this was a bare [[ -z ... ]] with no proof the scan pattern could ever match anything --
+# a typo'd pattern or an accidentally-scoped find would pass identically to a genuinely clean
+# tree. Route each of the three OR'd tokens through assert_absent_with_control separately (so a
+# failure names exactly which token was found, not just "an override-flag-shaped token"), each
+# with its own synthetic positive control proving the same scan actually can match.
 t62ac10_grep="$(command grep -rn 'EDM_SKIP\|EDM_FORCE\|SKIP_CHECKS' "${SCRIPT_DIR}/.." 2>/dev/null | command grep -v '/tests/' || true)"
-[[ -z "$t62ac10_grep" ]] && pass "T62 AC10 -- no EDM_SKIP/EDM_FORCE/SKIP_CHECKS token anywhere in bin/" \
-  || fail "T62 AC10 -- found an override-flag-shaped token: $t62ac10_grep"
+for t62ac10_needle in EDM_SKIP EDM_FORCE SKIP_CHECKS; do
+  t62ac10_control="synthetic control line: if [ -n \"\$${t62ac10_needle}\" ]; then true; fi"
+  assert_absent_with_control "T62 AC10 -- no ${t62ac10_needle} token anywhere in bin/ (excluding tests/)" \
+    "$t62ac10_needle" "$t62ac10_grep" "synthetic control line" "$t62ac10_control"
+done
+# CA-037: same gap for the literal --force/--accept-partials count -- a positive control proves
+# the same grep -c invocation would report >=1 against a line that actually contains the flag,
+# so the "0" below is a real absence, not an untested pattern silently matching nothing.
 t62ac10_force="$(command grep -c -- '--force\|--accept-partials' "$EDM_STATE" 2>/dev/null || true)"
-[[ "${t62ac10_force:-0}" -eq 0 ]] && pass "T62 AC10 -- no --force/--accept-partials literal in bin/edm-state" \
-  || fail "T62 AC10 -- found ${t62ac10_force} occurrence(s) of a literal override flag in bin/edm-state"
+t62ac10_force_control="$(printf '%s\n' 'synthetic control line: --force' | command grep -c -- '--force\|--accept-partials' || true)"
+if [[ "${t62ac10_force_control:-0}" -lt 1 ]]; then
+  fail "T62 AC10 -- positive control broken: a synthetic --force line was not counted by the same grep -c"
+else
+  [[ "${t62ac10_force:-0}" -eq 0 ]] && pass "T62 AC10 -- no --force/--accept-partials literal in bin/edm-state (positive control confirms the count would be >=1 if present)" \
+    || fail "T62 AC10 -- found ${t62ac10_force} occurrence(s) of a literal override flag in bin/edm-state"
+fi
 
 # =================================================================================
 # EDMV3-T64: wave-A closeout -- read-only commands and concurrent mutation smoke
@@ -2737,9 +2670,7 @@ set -e
   || fail "T28 AC3 -- exit code = $t28_blocking_ec, expected 1"
 
 # ---- AC12 (wiring): approve-gate code-audit refuses on an open P0 --------------------------
-check_fails "T28 AC12 -- approve-gate refuses on an open P0" \
-  "code-audit gate refused" "$EDM_STATE" approve-gate T28CONV code-audit
-check_state_unchanged "$STATE_T28CONV" "$EDM_STATE" approve-gate T28CONV code-audit
+check_refuses_and_leaves_state "T28 AC12 -- approve-gate refuses on an open P0" "code-audit gate refused" "$STATE_T28CONV" "$EDM_STATE" approve-gate T28CONV code-audit
 
 # ---- Remediate: close every blocking finding, leaving only the fixed/NOTED entries ---------
 jq -cs '
@@ -2825,6 +2756,17 @@ check "T28 AC13 -- audit-converged wired in the dispatch table" \
   "audit-converged)" "$(grep -n 'audit-converged)' "$EDM_STATE" || true)"
 
 # ---- Read-only guarantee (Technical Notes: takes no lock, mutates nothing) ------------------
+# CA-042: an explicit output assertion on this exact invocation, not only the byte-identity
+# check below -- T28CONV was restored to a clean full round at AC4 above, so audit-converged is
+# expected to succeed here (unlike the partial/legacy/exempt fixtures exercised earlier in this
+# block), and this line is what actually proves that rather than assuming it from AC11's earlier
+# (differently-invoked) converged=true check.
+set +e
+t28_roguard_out="$("$EDM_STATE" audit-converged T28CONV 2>&1)"
+t28_roguard_ec=$?
+set -e
+[[ $t28_roguard_ec -eq 0 ]] && pass "T28 read-only guarantee -- audit-converged T28CONV exits 0 (clean full round)" \
+  || fail "T28 read-only guarantee -- audit-converged T28CONV exited ${t28_roguard_ec}, expected 0 (output: $t28_roguard_out)"
 check_state_unchanged "$STATE_T28CONV" "$EDM_STATE" audit-converged T28CONV
 
 # =================================================================================
@@ -2856,9 +2798,7 @@ t32_ac2_closing="$(jq -r '.partial_verdict_map["T32PV-T01"].closing_verdict' "$S
   || fail "T32 AC2 -- closing_verdict = '$t32_ac2_closing', expected PASS"
 
 # ---- AC3 (negative, single closure) ---------------------------------------------------------
-check_fails "T32 AC3 -- second closure attempt refused, naming the existing closure" \
-  "already closed" "$EDM_STATE" record-partial-verdict T32PV T32PV-T01 close FAIL "some-other-ref"
-check_state_unchanged "$STATE_T32PV" "$EDM_STATE" record-partial-verdict T32PV T32PV-T01 close FAIL "some-other-ref"
+check_refuses_and_leaves_state "T32 AC3 -- second closure attempt refused, naming the existing closure" "already closed" "$STATE_T32PV" "$EDM_STATE" record-partial-verdict T32PV T32PV-T01 close FAIL "some-other-ref"
 
 # ---- AC4 (positive, the sanctioned exception): FAIL then re-close appends to history --------
 "$EDM_STATE" record-partial-verdict T32PV T32PV-T02 PARTIAL "needs check" >/dev/null
@@ -2877,9 +2817,7 @@ t32_ac4_first_fail="$(jq -r '.partial_verdict_map["T32PV-T02"].closure_history[0
   || fail "T32 AC4 -- closure_history[0].closing_verdict = '$t32_ac4_first_fail', expected FAIL"
 
 # ---- AC5 (negative, unknown ticket) ----------------------------------------------------------
-check_fails "T32 AC5 -- closing an unknown ticket is refused" \
-  "unknown ticket" "$EDM_STATE" record-partial-verdict T32PV T32PV-NOSUCHTICKET close PASS "ref"
-check_state_unchanged "$STATE_T32PV" "$EDM_STATE" record-partial-verdict T32PV T32PV-NOSUCHTICKET close PASS "ref"
+check_refuses_and_leaves_state "T32 AC5 -- closing an unknown ticket is refused" "unknown ticket" "$STATE_T32PV" "$EDM_STATE" record-partial-verdict T32PV T32PV-NOSUCHTICKET close PASS "ref"
 
 # ---- AC6 (existing callers unchanged): the open/record form still works exactly as before ----
 "$EDM_STATE" record-partial-verdict T32PV T32PV-T03 PASS >/dev/null
@@ -2901,9 +2839,7 @@ t32_ac7_unclosed="$(jq -r '.partial_verdict_map["T32PV-LEGACY"] | has("closing_v
 
 # ---- AC9 (negative, no third verdict): BLOCKED (or any non-PASS/FAIL) closing verdict refused
 "$EDM_STATE" record-partial-verdict T32PV T32PV-T04 PARTIAL "needs check" >/dev/null
-check_fails "T32 AC9 -- a BLOCKED closing verdict is refused, naming the two legal values" \
-  "PASS|FAIL" "$EDM_STATE" record-partial-verdict T32PV T32PV-T04 close BLOCKED "ref"
-check_state_unchanged "$STATE_T32PV" "$EDM_STATE" record-partial-verdict T32PV T32PV-T04 close BLOCKED "ref"
+check_refuses_and_leaves_state "T32 AC9 -- a BLOCKED closing verdict is refused, naming the two legal values" "PASS|FAIL" "$STATE_T32PV" "$EDM_STATE" record-partial-verdict T32PV T32PV-T04 close BLOCKED "ref"
 
 # ---- AC8 (atomicity): every write goes through rmw_state; bin/edm-state passes bash -n -------
 bash -n "$EDM_STATE" && pass "T32 AC8 -- bin/edm-state passes bash -n" \
@@ -2979,10 +2915,7 @@ t18_ac2_case() {
   check_fails "T18 AC2 -- refusal names the open ticket" \
     "t18opn-t01" \
     edm-state archive T18OPN
-  check_fails "T18 AC2 -- refusal states no override exists" \
-    "no override exists" \
-    edm-state archive T18OPN
-  check_state_unchanged "$(edm-state resolve-dir T18OPN)/.edm-state.json" edm-state archive T18OPN
+  check_refuses_and_leaves_state "T18 AC2 -- refusal states no override exists" "no override exists" "$(edm-state resolve-dir T18OPN)/.edm-state.json" edm-state archive T18OPN
 }
 with_scratch_repo t18_ac2_case
 
@@ -3026,10 +2959,7 @@ t18_ac5_case() {
   # fresh ledger re-query must catch it.
   printf '%s\n' '{"id":"CA-901","sev":"P0","status":"open","title":"late-arriving blocking finding"}' \
     >> "${dir}/code-audit/findings-ledger.jsonl"
-  check_fails "T18 AC5 -- archive refuses when the audit-converged re-query exits 1" \
-    "CA-901" \
-    edm-state archive T18RCK
-  check_state_unchanged "${dir}/.edm-state.json" edm-state archive T18RCK
+  check_refuses_and_leaves_state "T18 AC5 -- archive refuses when the audit-converged re-query exits 1" "CA-901" "${dir}/.edm-state.json" edm-state archive T18RCK
 
   # Remove the late finding -- the re-query now exits 0 and archive proceeds.
   printf '%s\n' '{"id":"CA-900","sev":"P2","status":"fixed","title":"t18 fixture fixed finding"}' \
@@ -3117,10 +3047,7 @@ echo "T18 AC11 -- bypass matrix: archive with an unclosed PARTIAL"
 t18_ac11_case() {
   t18_seed_converged T18BYP
   edm-state record-partial-verdict T18BYP T18BYP-T01 PARTIAL "needs retry-logic runtime check" >/dev/null
-  check_fails "must-fail: T18 AC11 -- bypass matrix: archive with an unclosed PARTIAL refuses" \
-    "verify-runtime" \
-    edm-state archive T18BYP
-  check_state_unchanged "$(edm-state resolve-dir T18BYP)/.edm-state.json" edm-state archive T18BYP
+  check_refuses_and_leaves_state "must-fail: T18 AC11 -- bypass matrix: archive with an unclosed PARTIAL refuses" "verify-runtime" "$(edm-state resolve-dir T18BYP)/.edm-state.json" edm-state archive T18BYP
 }
 with_scratch_repo t18_ac11_case
 
@@ -3448,10 +3375,7 @@ echo "T51 AC9 -- second audit-round-complete refused, naming the existing comple
 STATE_T51DBL="$TMP/SRD/T51DBL/.edm-state.json"
 "$EDM_STATE" audit-round-start T51DBL tickets >/dev/null
 "$EDM_STATE" audit-round-complete T51DBL tickets >/dev/null
-check_fails "T51 AC9 -- second audit-round-complete refuses, naming the existing completion" \
-  "already completed" \
-  "$EDM_STATE" audit-round-complete T51DBL tickets
-check_state_unchanged "$STATE_T51DBL" "$EDM_STATE" audit-round-complete T51DBL tickets
+check_refuses_and_leaves_state "T51 AC9 -- second audit-round-complete refuses, naming the existing completion" "already completed" "$STATE_T51DBL" "$EDM_STATE" audit-round-complete T51DBL tickets
 
 # ---- AC10 (atomicity and bash 3.2): bash -n passes; state is valid JSON after a double
 # invocation (the lock serializes what a true concurrent pair of invocations would race on;
