@@ -70,10 +70,16 @@ Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severit
 
 ```markdown
 ## Findings (L1: Logic, Correctness & Completeness)
-[findings in severity order, each with file:line, what is wrong, and a concrete fix]
+
+| ID | Severity | File:Line | What's Wrong | Fix |
+|----|----------|-----------|--------------|-----|
+| L1-001 | P1 | src/orders/total.py:42 | Off-by-one in the discount loop double-applies the last tier | Use `range(len(tiers) - 1)` or an explicit index guard |
 
 ## Noted / Not Actionable
-[false alarms with one-line rationale]
+
+| ID | File:Line | Rationale |
+|----|-----------|-----------|
+| L1-002 | src/orders/total.py:88 | Looks like an inverted condition but a comment two lines up documents the intentional early-return |
 ```
 
 ## JSONL Line Format

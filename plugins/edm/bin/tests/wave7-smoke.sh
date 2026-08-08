@@ -934,15 +934,24 @@ done
   || fail "T61 AC10 -- bash -n failed on at least one file (see output above)"
 
 echo
-echo "T61 AC11 -- macOS/Linux divergence points (sed -i, grep -P family, stat -c/-f) are all inside a detection branch"
+echo "T61 AC11 -- macOS/Linux divergence points (sed -i, grep -P family, stat -c/-f, mktemp template suffix, date -d, readlink -f, sort -V, head -n -N, printf %q) are all inside a detection branch"
 # -[a-zA-Z]*P (not a literal "grep -P") so this also catches grep -qP / -nP, the actual forms
 # used by edm-lint-artifacts' PCRE-detection-and-fallback branch -- a literal "grep -P" search
 # (as the ticket's own Verify command uses) misses those by one character and would falsely
 # report zero hits, i.e. "nothing to check" rather than "checked and confined".
-t61_divergence_hits="$(grep -rnE 'sed -i|grep -[a-zA-Z]*P|stat -c|stat -f' "$PLUGIN_DIR/bin/" 2>/dev/null | grep -v '/tests/' || true)"
+# CA-014: widened on two axes. Directory set now covers evals/ (not just bin/) -- the exact
+# class that produced this finding (a GNU-only mktemp template regressed in evals/tiering-matrix.sh)
+# lives outside bin/ and neither mechanism meant to protect the bash-3.2/BSD constraint would have
+# seen a regression there under the old, bin/-only sweep. Pattern set now also covers three more
+# GNU-only idioms this codebase must never depend on: a mktemp template with trailing characters
+# after the XXXXXX run (BSD mktemp rejects a suffix there), `date -d`, `readlink -f`, `sort -V`,
+# and `head -n -N` (negative count) -- none are used anywhere in bin/ or evals/ today, so this
+# sweep currently reports zero hits for all four; it exists to catch a future regression, not a
+# present one.
+t61_divergence_hits="$(grep -rnE 'sed -i|grep -[a-zA-Z]*P|stat -c|stat -f|XXXXXX[A-Za-z0-9]|date -d|readlink -f|sort -V|head -n -[0-9]|printf %q' "$PLUGIN_DIR/bin/" "$PLUGIN_DIR/evals/" 2>/dev/null | grep -v '/tests/' || true)"
 t61_divergence_outside_branch="$(printf '%s\n' "$t61_divergence_hits" | grep -v 'edm-lint-artifacts:' || true)"
 [[ -z "$t61_divergence_outside_branch" ]] \
-  && pass "T61 AC11 -- every sed -i/grep -P family/stat -c//stat -f hit is inside edm-lint-artifacts' detection branch" \
+  && pass "T61 AC11 -- every divergence-point hit (bin/ and evals/) is inside edm-lint-artifacts' detection branch" \
   || fail "T61 AC11 -- divergence point(s) found outside the detection branch:\n$t61_divergence_outside_branch"
 check "T61 AC11 -- edm-lint-artifacts' PCRE detection uses the documented grep -qP probe" \
   "grep -qP" "$t61_divergence_hits"
@@ -4811,6 +4820,71 @@ for ca154_ef in run-eval.sh score-artifacts.sh tiering-matrix.sh; do
     && pass "CA-005/CA-154 -- evals/${ca154_ef} sources the shared _edm-cli-lib.sh print_help" \
     || fail "CA-005/CA-154 -- evals/${ca154_ef} does not source the shared print_help"
 done
+
+echo
+echo "=== CA-148/CA-149: .gitignore actually covers the lock/temp paths edm-state derives from lockbase, including a relocated (non-\"SRD\"-named) srd_root ==="
+ca148_gitignore_case() {
+  local scratch repo_root
+  scratch="$(mktemp -d "${TMP}/edm-ca148.XXXXXX")" || { fail "CA-148 -- mktemp failed"; return 1; }
+  repo_root="$(cd "${PLUGIN_DIR}/../.." && pwd)"
+  [[ -f "${repo_root}/.gitignore" ]] || { fail "CA-148 -- repo-root .gitignore not found at ${repo_root}"; return 1; }
+
+  ( cd "$scratch" && git init -q && git config user.email t@t && git config user.name t )
+  cp "${repo_root}/.gitignore" "${scratch}/.gitignore"
+  ( cd "$scratch" && git add .gitignore && git commit -qm "seed real .gitignore" )
+
+  # Deliberately NOT named "SRD" and nested two levels deep -- reproduces the exact relocated-tree
+  # shape CA-149 fixes: a literal "SRD/" prefix in .gitignore never matches this path regardless
+  # of depth, because the directory is not named "SRD" at all.
+  local relroot="${scratch}/artifacts/nested-root"
+
+  # ---- Real state mutation (CA-148): edm-state init acquires and releases a real lock around
+  # a real write_atomic call, and leaves the state file itself on disk afterward.
+  local init_out init_ec=0
+  init_out="$(EDM_SRD_ROOT="$relroot" edm-state init CA148 2>&1)" || init_ec=$?
+  [[ "$init_ec" -eq 0 ]] \
+    && pass "CA-148 -- edm-state init succeeded against a relocated, non-SRD-named srd_root" \
+    || { fail "CA-148 -- edm-state init failed (exit ${init_ec}): $init_out"; rm -rf "$scratch"; return 1; }
+
+  local state_file="${relroot}/CA148/.edm-state.json"
+  [[ -f "$state_file" ]] \
+    && pass "CA-148 -- the real state file exists at the path edm-state actually created" \
+    || { fail "CA-148 -- expected state file not found at ${state_file}"; rm -rf "$scratch"; return 1; }
+
+  # ---- Enumerate the lock/temp paths edm-state derives from this real state file's own path,
+  # using the identical formula cmd_init/with_state_lock/write_atomic use in bin/edm-state
+  # (lockbase="${f%.json}"; lockfile="${lockbase}.lock"; lockdir="${lockbase}.lockd";
+  # write_atomic's staging file is "${dest}.tmp.XXXXXX") -- never a hand-typed guess at the name.
+  local lockbase="${state_file%.json}"
+  local lockfile="${lockbase}.lock"
+  local lockdir="${lockbase}.lockd"
+  local statetmp="${state_file}.tmp.ABC123"
+  local mdtmp="${relroot}/CA148/decisions.md.tmp.XYZ789"
+
+  touch "$lockfile"
+  mkdir -p "$lockdir"
+  touch "$statetmp"
+  touch "$mdtmp"
+
+  local ca148_path ca148_label ca148_entry
+  for ca148_entry in \
+    "${lockfile}|.edm-state.lock (with_state_lock's flock path)" \
+    "${lockdir}|.edm-state.lockd/ (with_state_lock's mkdir-spinlock fallback)" \
+    "${statetmp}|.edm-state.json.tmp.* (write_atomic staging the state file itself)" \
+    "${mdtmp}|*.md.tmp.* (write_atomic staging an arbitrary artifact, e.g. decisions.md)"
+  do
+    ca148_path="${ca148_entry%%|*}"
+    ca148_label="${ca148_entry#*|}"
+    if git -C "$scratch" check-ignore -q "$ca148_path"; then
+      pass "CA-148/CA-149 -- git check-ignore -q succeeds for ${ca148_label}"
+    else
+      fail "CA-148/CA-149 -- git check-ignore -q did NOT match ${ca148_label} at ${ca148_path}"
+    fi
+  done
+
+  rm -rf "$scratch"
+}
+ca148_gitignore_case
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

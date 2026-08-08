@@ -7,10 +7,17 @@ plugins/web-cms/.DS_Store
 plugins/web-cms/skills/.DS_Store
 /.idea/
 .edm-state.json.bak
-SRD/**/.edm-state.lock
-SRD/**/.edm-state.lockd/
 .edm-state.json.tmp.*
 plugins/edm/docs/audit-patterns/*.lock
 plugins/edm/docs/audit-patterns/*.lockd/
 plugins/edm/docs/audit-patterns/*.tmp.*
-SRD/**/*.md.tmp.*
+# CA-149: unanchored (not "SRD/**/...") -- srd_root relocation (userConfig.srd_root) is a
+# documented supported feature, and a literal "SRD/" prefix stops matching the moment an
+# initiative tree is relocated, silently re-exposing lock files and findings-ledger/HANDOFF
+# staging files as untracked.
+**/.edm-state.lock
+**/.edm-state.lockd/
+**/*.md.tmp.*
+# CA-150: edm-sync-canonical-sections' own staging path (docs/canonical-sections.md.tmp.XXXXXX)
+# had no matching glob anywhere in this file.
+plugins/edm/docs/*.tmp.*

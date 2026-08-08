@@ -82,10 +82,16 @@ Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severit
 
 ```markdown
 ## Findings (L8: Security & Portability)
-[file:line, vulnerability class, exploitation scenario, concrete fix]
+
+| ID | File:Line | Vulnerability Class | Exploitation Scenario | Fix |
+|----|-----------|----------------------|--------------------------|-----|
+| L8-001 | src/api/search.py:24 | SQL injection | User-controlled `q` param is string-concatenated into a raw query | Use a parameterized query / the ORM's own escaping |
 
 ## Noted / Not Actionable
-[false alarms with one-line rationale]
+
+| ID | File:Line | Rationale |
+|----|-----------|-----------|
+| L8-002 | bin/edm-lint-artifacts:115 | `grep -qP` probe is a documented, guarded portability branch, not a vulnerability |
 ```
 
 ## JSONL Line Format

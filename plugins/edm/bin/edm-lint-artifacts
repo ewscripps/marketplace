@@ -32,6 +32,9 @@
 #                         CLAUDE.md's "Mermaid diagram conventions (canonical)" section
 #   unterminated-fence -- a ``` fence opened but never closed by EOF; reported once, at the
 #                         fence-open line
+#   scan-error         -- the class-4 mermaid-semicolon scan itself failed (a staging write or an
+#                         awk error) for this file; reported at line 0 rather than silently
+#                         contributing zero mermaid findings (CA-058)
 #
 # Output format: path:line: <class>: <snippet>
 # Exit codes: 0 = clean; 1 = one or more violations found; 2 = usage or environment error
@@ -117,7 +120,14 @@ if echo "" | grep -qP '' 2>/dev/null; then
 fi
 
 ATTR_PATTERN_FILE="$(mktemp "${TMPDIR:-/tmp}/edm-lint-attribution.XXXXXX")" || die "mktemp failed" 2
-trap 'rm -f "$ATTR_PATTERN_FILE"' EXIT INT TERM
+# CA-058: the class-4 mermaid/marker line sets ride through this temp file (one path, passed to
+# awk via -v) rather than through the environment. A large, mostly-mermaid artifact can produce
+# a line-number set that, carried as EDM_MERMAID_SET/EDM_MARKER_SET environment variables, pushes
+# the child process's total environment size past macOS's ARG_MAX (~256KB, environment counts
+# against it) and makes execve fail with E2BIG -- the same temp-file idiom class 1 already uses
+# for ATTR_PATTERN_FILE, reused here for the same reason.
+MERMAID_SCAN_FILE="$(mktemp "${TMPDIR:-/tmp}/edm-lint-mermaid-scan.XXXXXX")" || die "mktemp failed" 2
+trap 'rm -f "$ATTR_PATTERN_FILE" "$MERMAID_SCAN_FILE"' EXIT INT TERM
 printf '%s\n' \
   "co-authored-by" \
   "co-authored by" \
@@ -133,9 +143,13 @@ violations=0
 
 # ---- Helper: the class-4 Mermaid scan for one file, as a single awk pass -----------------------
 # (EDMV3-T43 AC4/AC5) Applies the raw-semicolon rules only to lines already known to be inside a
-# mermaid fence (EDM_MERMAID_SET) and not suppressed by an explicit edm-lint-ignore-start/end
-# block (EDM_MARKER_SET). Both sets arrive through the environment rather than -v so that awk
-# does no backslash-escape processing on them.
+# mermaid fence (mermaid_set) and not suppressed by an explicit edm-lint-ignore-start/end block
+# (marker_set). CA-058: both sets are written to the shared MERMAID_SCAN_FILE temp file (one path,
+# passed to awk via -v, then read back with getline) rather than through the environment -- a
+# large, mostly-mermaid artifact's line-number set could otherwise push the child process's total
+# environment size past macOS's ARG_MAX (~256KB, environment counts against it) and make execve
+# fail with E2BIG. The temp-file path is short and constant-sized regardless of how large the two
+# sets are, so this scan's argument footprint no longer scales with the file being scanned.
 #
 # One awk process per file, not per line: the rules below were previously a bash function that
 # forked sed and grep about ten times for every mermaid line, which made this class the dominant
@@ -146,7 +160,12 @@ violations=0
 #   V<TAB><lineno><TAB><snippet>   -- a raw semicolon inside label/edge/message text
 mermaid_scan_awk() {
   local file="$1" mermaid_set="$2" marker_set="$3"
-  EDM_MERMAID_SET="$mermaid_set" EDM_MARKER_SET="$marker_set" awk '
+  {
+    printf '%s\n' "$mermaid_set"
+    printf '%s\n' "EDM-MERMAID-SCAN-MARKER-SPLIT"
+    printf '%s\n' "$marker_set"
+  } > "$MERMAID_SCAN_FILE" || { echo "mermaid_scan_awk: failed to stage scan sets to $MERMAID_SCAN_FILE" >&2; return 1; }
+  awk -v scan_file="$MERMAID_SCAN_FILE" '
     function trim(s) {
       sub(/^[[:space:]]*/, "", s); sub(/[[:space:]]*$/, "", s); return s
     }
@@ -199,10 +218,14 @@ mermaid_scan_awk() {
       return 0
     }
     BEGIN {
-      n = split(ENVIRON["EDM_MERMAID_SET"], a, "\n")
-      for (i = 1; i <= n; i++) if (a[i] != "") mer[a[i]] = 1
-      n = split(ENVIRON["EDM_MARKER_SET"], b, "\n")
-      for (i = 1; i <= n; i++) if (b[i] != "") ign[b[i]] = 1
+      in_marker_set = 0
+      while ((getline scan_line < scan_file) > 0) {
+        if (scan_line == "EDM-MERMAID-SCAN-MARKER-SPLIT") { in_marker_set = 1; continue }
+        if (scan_line == "") continue
+        if (in_marker_set) ign[scan_line] = 1
+        else mer[scan_line] = 1
+      }
+      close(scan_file)
     }
     {
       sub(/\r$/, "")
@@ -367,17 +390,31 @@ scan_md_files() {
     # Split the record by hand rather than with `IFS=$'\t' read`: tab is IFS whitespace, so read
     # would collapse the field separator and a following literal tab into one delimiter and eat
     # the leading indentation of any tab-indented source line reported in the snippet.
-    while IFS= read -r rec; do
-      [[ -z "$rec" ]] && continue
-      kind="${rec%%$'\t'*}"
-      rest="${rec#*$'\t'}"
-      lineno="${rest%%$'\t'*}"
-      snippet="${rest#*$'\t'}"
-      if [[ "$kind" == "U" ]]; then
-        snippet="unsupported: edm-lint-ignore has no effect inside a mermaid fence (Mermaid's comment syntax is %%); use edm-lint-ignore-start/end around the fence instead"
-      fi
-      report_violation "mermaid-semicolon" "$file" "$lineno" "$snippet"
-    done < <(mermaid_scan_awk "$file" "$mermaid_set" "$marker_set" 2>/dev/null || true)
+    #
+    # CA-058: captured (not streamed via process substitution) specifically so mermaid_rc reflects
+    # mermaid_scan_awk's own exit status rather than being swallowed by `|| true`. A scan failure
+    # (a staging write to MERMAID_SCAN_FILE that fails, or an awk error) now surfaces as a
+    # reported "scan-error" violation on this file instead of silently contributing zero findings
+    # for a file that may be entirely mermaid.
+    local mermaid_out mermaid_rc=0
+    mermaid_out="$(mermaid_scan_awk "$file" "$mermaid_set" "$marker_set" 2>&1)" || mermaid_rc=$?
+    if [[ "$mermaid_rc" -ne 0 ]]; then
+      local _mermaid_err_snip
+      _mermaid_err_snip="$(printf '%s' "$mermaid_out" | head -1)"
+      report_violation "scan-error" "$file" "0" "mermaid-semicolon scan failed (awk/staging exit ${mermaid_rc}): ${_mermaid_err_snip:-no output}"
+    else
+      while IFS= read -r rec; do
+        [[ -z "$rec" ]] && continue
+        kind="${rec%%$'\t'*}"
+        rest="${rec#*$'\t'}"
+        lineno="${rest%%$'\t'*}"
+        snippet="${rest#*$'\t'}"
+        if [[ "$kind" == "U" ]]; then
+          snippet="unsupported: edm-lint-ignore has no effect inside a mermaid fence (Mermaid's comment syntax is %%); use edm-lint-ignore-start/end around the fence instead"
+        fi
+        report_violation "mermaid-semicolon" "$file" "$lineno" "$snippet"
+      done <<< "$mermaid_out"
+    fi
   done
 }
 

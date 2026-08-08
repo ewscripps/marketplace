@@ -15,7 +15,9 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(mkdir *), Bash(date *)
 - **Input**: An implementation (files, commits, branch) plus the initiative's ticket pack and SRD
 - **Output**:
   - Per-round report: `<initiative-dir>/code-audit/pass-{N}_{YYYY-MM-DD}/REMEDIATION.md`
-  - Persistent findings ledger: `<initiative-dir>/code-audit/findings-ledger.md` (spans all rounds)
+  - Persistent findings ledger: `<initiative-dir>/code-audit/findings-ledger.jsonl` (authoritative,
+    spans all rounds); `findings-ledger.md` is deterministically rendered from it by
+    `edm-state render-ledger` (CA-166)
 
 **Plugin asset note**: every `docs/...` reference in this skill is relative to the EDM plugin root (`plugins/edm/` in this repository, or the installed plugin root in cache). Resolve that root before reading or grepping those files; never assume the current working directory is the plugin root.
 
@@ -45,7 +47,8 @@ using `<gated-command>` = `code-audit`.
    ```
    - SRD: `${INIT_DIR}/${user_config.srd_filename}`
    - Ticket pack: `${INIT_DIR}/${user_config.ticket_pack_dirname}/`
-   - Ledger: `${INIT_DIR}/code-audit/findings-ledger.md`  (canonical cross-round path)
+   - Ledger: `${INIT_DIR}/code-audit/findings-ledger.jsonl`  (authoritative cross-round path;
+     `findings-ledger.md` is its rendered copy, written separately by `edm-state render-ledger`)
 4. Obtain the pass number, passing the lens set so the round records what actually ran:
    ```bash
    N=$(edm-state audit-round-start <PREFIX> code --lenses "${LENS_SET_CSV}")
@@ -57,7 +60,11 @@ using `<gated-command>` = `code-audit`.
    step 10's never-convergent rule exists to prevent. Passing all eleven explicitly on a full round
    is deliberate and self-documenting.
 5. Set `OUTPUT_DIR="${INIT_DIR}/code-audit/pass-${N}_$(date +%Y-%m-%d)/"` and `mkdir -p "${OUTPUT_DIR}"`
-6. Read the prior `findings-ledger.md` if it exists (prior round context for the synthesizer).
+6. Read the prior `findings-ledger.jsonl` if it exists (or the legacy `findings-ledger.md` if
+   only that exists) -- prior round context for the synthesizer, and for briefing each lens
+   agent in step 7 with its own prior-round open findings. Reading the JSONL here (not the
+   markdown render) matters when a round was interrupted before step 9a's `render-ledger` call
+   in a *previous* round: the JSONL is always current, the markdown render can be stale (CA-166).
 7. **Launch lens agents in parallel** for every lens in `LENS_SET` (single message, multiple Task calls).
    Each lens:
    - Writes its raw report to `${OUTPUT_DIR}/lens-L{N}.md` and `${OUTPUT_DIR}/lens-L{N}.jsonl`

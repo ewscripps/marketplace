@@ -98,7 +98,10 @@ plugin composes skills.
 
 - Any dispatcher edit -- EDMV3-T38.
 - Adding `Skill` to the orchestrator's `allowed-tools` -- EDMV3-T38.
-- The documented fallback script `bin/edm-check-skill-sync` -- EDMV3-T39, and only on NO-GO.
+- The documented fallback script `bin/edm-check-skill-sync` -- EDMV3-T39. (CA-089 amendment:
+  the GO path was taken and the script shipped anyway, as a regression tripwire rather than a
+  fallback that was never exercised; `run-all.sh` invokes it unconditionally, not only on
+  NO-GO. See EDMV3-T39's Technical Notes for the current framing.)
 
 ---
 
@@ -599,12 +602,19 @@ rather than a suggestion.
       EDMV3-T38.
       Verify: `grep -n 'CI will catch it' plugins/edm/evals/README.md` returns the statement, and
       EDMV3-T38 AC11 is checked.
-- [ ] AC7 (fallback, on comparison failure): if the comparison fails, the documented fallback is
-      adopted -- revert the dispatcher change and ship `bin/edm-check-skill-sync` instead, a script
-      asserting the duplicated orchestration blocks are identical, run in the smoke suite. The
-      fallback is worse than deduplication and strictly better than today.
-      Verify: on failure, `bash plugins/edm/bin/edm-check-skill-sync; echo "exit=$?"` prints
-      `exit=0` on a synced tree and non-zero when one block is edited.
+- [ ] AC7 (tripwire shipped regardless of GO/NO-GO, amended per CA-089): the GO path was taken
+      (the T34 spike recommended GO; EDMV3-T37/T38 deduplicated the phase procedures into the
+      dispatcher's Skill-tool dispatch), and `bin/edm-check-skill-sync` still ships -- not as a
+      fallback that reverts the dispatcher change, but as a regression tripwire proving the
+      deduplication holds. It asserts the inverse of the original wording: the dispatcher
+      (`skills/orchestrator/SKILL.md`) contains **no** phase procedure body (no phase skill's
+      `## Operational Orchestration` marker appears in it), and every phase skill still owns its
+      own `## Operational Orchestration` section. `run-all.sh` runs it unconditionally, as part
+      of the smoke suite, on every invocation -- not only on a comparison failure.
+      Verify: `bash plugins/edm/bin/edm-check-skill-sync; echo "exit=$?"` prints `exit=0` on the
+      current (deduplicated) tree; pasting a phase skill's `## Operational Orchestration` section
+      body back into `skills/orchestrator/SKILL.md`, or deleting that section from any phase
+      skill, makes it exit 1 and name the specific violation.
 - [ ] AC8 (fallback recorded, waves unaffected): the fallback decision, if taken, is recorded in
       `decisions.md` with the score comparison that triggered it, and waves A and C proceed
       unaffected.
@@ -625,7 +635,11 @@ rather than a suggestion.
   useful as a re-capture.
 - The comparison job must read the variance figure from `baseline/scores.json`'s machine-readable
   field, not parse `baseline/README.md`.
-- `bin/edm-check-skill-sync` is written **only** on the fallback path. Do not build it speculatively.
+- **(Amended per CA-089.)** `bin/edm-check-skill-sync` was originally scoped to be written only
+  on the fallback path, to avoid building it speculatively before a GO/NO-GO decision existed.
+  The GO path was taken and the script was built anyway, reframed as a regression tripwire (see
+  AC7 above) rather than deleted -- `run-all.sh` invokes it unconditionally. This amendment
+  records the rework; it does not reopen AC7.
 
 ### Out of Scope
 

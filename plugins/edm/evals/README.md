@@ -40,6 +40,14 @@ the run). The scratch clone is deleted on exit, including on failure -- nothing 
 Writes the run directory under `DIR` instead of `plugins/edm/evals/runs/`. Useful for keeping a
 run somewhere outside the plugin source tree (see "Where committed run artifacts live" below).
 
+**Retention (CA-066):** after a successful run, `run-eval.sh` prunes `DIR` (or
+`plugins/edm/evals/runs/` when `--out` is not given) down to the 10 most recently created run
+directories, oldest first. Override the count with `EDM_EVAL_KEEP_RUNS`. Pruning only happens on
+the success path -- a partial run (exit 4) is never pruned out from under someone still
+investigating it. This is a disk-hygiene measure for the gitignored `runs/` directory, not a
+correctness requirement: `evals/runs/` was never tracked by git, so nothing here affects what
+gets committed.
+
 ### `--provision-only`
 
 ```bash

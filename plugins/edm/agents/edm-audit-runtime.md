@@ -81,10 +81,16 @@ Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severit
 
 ```markdown
 ## Findings (L5: Runtime Hygiene)
-[file type, where it's created (file:line), whether it's in .gitignore, accumulation risk, fix]
+
+| ID | File Type | File:Line | In .gitignore? | Accumulation Risk | Fix |
+|----|-----------|-----------|-----------------|--------------------|-----|
+| L5-001 | lock file | bin/edm-state:546 | no | unbounded -- one per crashed run, never pruned | add the lockbase glob to `.gitignore` |
 
 ## Noted / Not Actionable
-[false alarms with one-line rationale]
+
+| ID | File:Line | Rationale |
+|----|-----------|-----------|
+| L5-002 | evals/runs/.gitignore:1 | Already gitignored and retention-pruned; not a gap |
 ```
 
 ## JSONL Line Format

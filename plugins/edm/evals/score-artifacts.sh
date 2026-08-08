@@ -7,13 +7,17 @@
 #
 # EDM-HELP-BEGIN
 # Usage:
-#   score-artifacts.sh <run-dir>              Score one run directory. Writes
-#                                              <run-dir>/scores.json and prints the same
-#                                              JSON to stdout. Exit 0 whenever a score was
-#                                              produced -- a terrible score is still exit 0
-#                                              (AC5). Exit 2 on a usage or environment
-#                                              error (missing jq, missing run-dir, missing
-#                                              vague-ac-patterns.txt).
+#   score-artifacts.sh <run-dir> [--out FILE]  Score one run directory. Writes scores.json to
+#                                              <run-dir>/scores.json, or to FILE when --out is
+#                                              given, and prints the same JSON to stdout. Exit 0
+#                                              whenever a score was produced -- a terrible score
+#                                              is still exit 0 (AC5). Exit 2 on a usage or
+#                                              environment error (missing jq, missing run-dir,
+#                                              missing vague-ac-patterns.txt). CA-151: --out is
+#                                              REQUIRED when <run-dir> is under
+#                                              bin/tests/fixtures/ (a tracked fixture directory,
+#                                              not a real run) -- refuses rather than silently
+#                                              depositing an untracked scores.json there.
 #   score-artifacts.sh --describe             Print the five dimension definitions
 #                                              verbatim and exit 0.
 #   score-artifacts.sh --compare <a> <b>       Compare two scores.json files. Refuses
@@ -163,7 +167,10 @@ score_from_ratio() {
       v = 100 * n / d
       if (v < 0) v = 0
       if (v > 100) v = 100
-      r = (v < 0) ? int(v - 0.5) : int(v + 0.5)
+      # CA-139: v is clamped to >= 0 immediately above with no intervening assignment, so a
+      # negative branch here is structurally unreachable -- round half-up unconditionally.
+      # (round_int, above, is a separate helper with a real negative branch; leave it alone.)
+      r = int(v + 0.5)
       printf "%d", r
     }'
 }
@@ -416,6 +423,14 @@ compute_dim5() {
     dir="$(dirname "$f")"
     base="$(basename "$f" .jsonl)"
     lens_n="$(printf '%s' "$base" | sed -E 's/^lens-L//')"
+    # CA-088: lens_n is derived from a filename and interpolated raw into a grep -E pattern
+    # below. A run directory containing a file literally named "lens-L*.jsonl" (glob-shaped, not
+    # numeric) would otherwise yield lens_n="*", turning the pattern into "^\| *L*-[0-9]+ *\|"
+    # (zero-or-more "L") and corrupting the count. Skip any file whose lens number isn't a plain
+    # non-empty digit string rather than let it reach the interpolation.
+    case "$lens_n" in
+      ''|*[!0-9]*) continue ;;
+    esac
     md_file="$dir/${base}.md"
 
     jsonl_count=0
@@ -487,9 +502,21 @@ build_skipped_json() {
 
 # ---- main scoring entry point -------------------------------------------------------------
 main_score() {
-  local run_dir="$1"
+  local run_dir="$1" out_file="${2:-}"
   [[ -d "$run_dir" ]] || die "run directory not found: $run_dir"
   run_dir="$(cd "$run_dir" && pwd)"
+
+  # CA-151: refuse to deposit scores.json into a tracked fixture directory unless the caller
+  # explicitly named a scratch --out path. bin/tests/fixtures/code-audit/ is a committed,
+  # hand-authored fixture (not a real run directory), and it has already collected an untracked
+  # scores.json once from a direct invocation against it.
+  case "$run_dir" in
+    */bin/tests/fixtures/*|*/bin/tests/fixtures)
+      [[ -n "$out_file" ]] || die "refusing to write scores.json into a tracked fixture directory ($run_dir) -- pass an explicit --out <path> to a scratch location instead"
+      ;;
+  esac
+
+  local dest_file="${out_file:-$run_dir/scores.json}"
 
   local run_json="$run_dir/run.json"
   local run_id git_sha plugin_version complete
@@ -497,8 +524,13 @@ main_score() {
     run_id=$(jq -r '.run_id // empty' "$run_json" 2>/dev/null); [[ -n "$run_id" ]] || run_id="$(basename "$run_dir")"
     git_sha=$(jq -r '.git_sha // empty' "$run_json" 2>/dev/null); [[ -n "$git_sha" ]] || git_sha="unknown"
     plugin_version=$(jq -r '.plugin_version // empty' "$run_json" 2>/dev/null); [[ -n "$plugin_version" ]] || plugin_version="unknown"
-    complete=$(jq -r 'if .complete == false then "false" else "true" end' "$run_json" 2>/dev/null)
-    [[ "$complete" == "true" || "$complete" == "false" ]] || complete="true"
+    # CA-064: an unparseable or zero-byte run.json makes this jq invocation fail, and both the
+    # command-substitution failure and a subsequently-empty/malformed $complete must resolve to
+    # "false" (incomplete/unknown), never "true" -- edm-compare-eval keys the partial-run
+    # handshake off this value, so coercing an unknown run.json to "true" would let a truncated
+    # run be compared against the baseline, exactly what the handshake exists to prevent.
+    complete=$(jq -r 'if .complete == false then "false" else "true" end' "$run_json" 2>/dev/null) || complete="false"
+    [[ "$complete" == "true" || "$complete" == "false" ]] || complete="false"
   else
     run_id="$(basename "$run_dir")"
     git_sha="unknown"
@@ -568,7 +600,7 @@ main_score() {
     }')"
 
   printf '%s\n' "$output"
-  printf '%s\n' "$output" > "$run_dir/scores.json"
+  printf '%s\n' "$output" > "$dest_file"
 }
 
 # ---- comparison mode (AC4) -- never invoked by main_score, never automatic -----------------
@@ -638,11 +670,25 @@ case "${1:-}" in
     exit $?
     ;;
   "")
-    die "usage: score-artifacts.sh <run-dir> | --describe | --compare <a.json> <b.json>"
+    die "usage: score-artifacts.sh <run-dir> [--out FILE] | --describe | --compare <a.json> <b.json>"
     ;;
   *)
-    [[ $# -eq 1 ]] || die "unexpected extra argument(s): ${2:-}"
-    main_score "$1"
+    RUN_DIR_ARG="$1"
+    OUT_FILE_ARG=""
+    shift
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --out)
+          [[ $# -ge 2 ]] || die "--out requires a value"
+          OUT_FILE_ARG="$2"
+          shift 2
+          ;;
+        *)
+          die "unexpected extra argument(s): $1"
+          ;;
+      esac
+    done
+    main_score "$RUN_DIR_ARG" "$OUT_FILE_ARG"
     exit 0
     ;;
 esac

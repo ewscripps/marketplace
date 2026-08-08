@@ -18,6 +18,23 @@
 #   docker inspect --format='{{index .RepoDigests 0}}' <image>:<tag>
 # then paste the resulting `<image>:<tag>@sha256:...` string into every `image:` line that uses
 # it below.
+#
+# CA-161: package version pinning inside `before_script`. Every blocking job below installs
+# `bash`/`jq`/`git`/`shellcheck` from the image's own Alpine package index at `apk add` time --
+# on top of the image-digest pinning above, an unpinned `apk add` still lets a silently-rotated
+# package (a new `shellcheck` or `jq` minor version) change what a lint job accepts, and the
+# failure would present as "the code broke" rather than "the toolchain moved". Every
+# `apk add --no-cache <pkg> ...` below is now pinned to an explicit `<pkg>=<version>-<rN>`
+# captured from a live `docker run alpine:3.20 apk info -a <pkg>` (respectively `bash:3.2`'s own
+# Alpine 3.22.5 base for `test:smoke-bash32`, which resolves its own independent package set)
+# against this environment's registry access on 2026-08-06. This is a snapshot from this
+# development environment, not a registry query the pinned runner fleet has necessarily made
+# itself -- the same reproducibility caveat as the image-digest note above: an `apk add` for a
+# version no longer present in the runner's configured mirror will fail loudly (a clear signal
+# to re-pin) rather than silently drift, which is the property this fix is actually buying.
+# Refresh procedure: `docker run --rm <image> sh -c "apk update >/dev/null 2>&1 && apk info -a
+# <pkg>"` and paste the resulting `<pkg>-<version>-<rN>` (as `<pkg>=<version>-<rN>`) into every
+# `apk add` line below that installs it.
 
 stages:
   - lint
@@ -65,17 +82,20 @@ lint:bash-syntax:
   <<: *alpine_edm
   needs: []
   before_script:
-    - apk add --no-cache bash
+    - apk add --no-cache bash=5.2.26-r0
   script:
     - |
       set -e
-      echo "=== bash -n over plugins/edm/bin/ (including bin/tests/*.sh) ==="
+      echo "=== bash -n over plugins/edm/bin/ (including bin/tests/*.sh) and plugins/edm/evals/*.sh ==="
       # CA-019: plugins/edm/bin/edm-mermaid-rules.awk is a plain awk source file (loaded via
       # `awk -f`, never executed as a bash script and never sourced by bash), so it is excluded
       # from this bash-syntax sweep by extension the same way a future non-bash helper would be.
+      # CA-162: plugins/edm/evals/*.sh (run-eval.sh, score-artifacts.sh, tiering-matrix.sh) were
+      # previously uncovered by this sweep -- three executable bash scripts including the eval
+      # driver that constructs a `claude` invocation with a permission posture.
       FAIL=0
       COUNT=0
-      for f in plugins/edm/bin/* plugins/edm/bin/tests/*.sh; do
+      for f in plugins/edm/bin/* plugins/edm/bin/tests/*.sh plugins/edm/evals/*.sh; do
         [ -f "$f" ] || continue
         case "$f" in
           *.awk) continue ;;
@@ -110,7 +130,7 @@ lint:artifacts:
   <<: *alpine_edm
   needs: []
   before_script:
-    - apk add --no-cache bash jq git
+    - apk add --no-cache bash=5.2.26-r0 jq=1.7.1-r0 git=2.45.4-r0
   script:
     # `--all` enumerates initiatives via `edm-state list --paths` and dies if edm-state is not on
     # PATH, so bin/ must be exported the same way test:state-validate does it. This was latent in
@@ -129,7 +149,7 @@ lint:grants:
   # hooks.json). The pre-split lint:shell-and-artifacts job installed it for all four checks at
   # once; keep it on every job that needs it now that they are separate.
   before_script:
-    - apk add --no-cache bash jq
+    - apk add --no-cache bash=5.2.26-r0 jq=1.7.1-r0
   script:
     - echo "=== edm-check-grants (four-source grant/instruction contract) ==="
     - bash plugins/edm/bin/edm-check-grants
@@ -142,7 +162,7 @@ lint:vocabulary:
   # jq required -- edm-check-vocabulary dies with exit 2 without it (it validates the JSON scope
   # files). Same reason as lint:grants above.
   before_script:
-    - apk add --no-cache bash jq
+    - apk add --no-cache bash=5.2.26-r0 jq=1.7.1-r0
   script:
     - echo "=== edm-check-vocabulary (abolished-vocabulary and override-flag backstop, EDMV3-T30) ==="
     - bash plugins/edm/bin/edm-check-vocabulary
@@ -156,19 +176,26 @@ lint:vocabulary:
 # this codebase's existing header/usage comment blocks and intentionally-loose test fixtures
 # trip many stylistic (non-safety) shellcheck findings that are out of scope for "no
 # unquoted-expansion findings" specifically.
+# CA-162: plugins/edm/bin/tests/*.sh and plugins/edm/evals/*.sh were previously uncovered by
+# this loop entirely -- the same blind spot that let CA-014's mktemp template and CA-088's
+# unescaped interpolation ship undetected in evals/. bin/tests/*.sh's deliberate
+# space-separated-string-as-constant idiom (already used and disable-commented in bin/, see
+# e.g. bin/edm-state, bin/edm-check-grants) was checked locally with the same
+# --include set before landing this loop change and produced zero new SC2086/SC2046/SC2048/
+# SC2068 hits, so no new disable comments were needed this round.
 lint:shellcheck:
   stage: lint
   <<: *alpine_edm
   needs: []
   before_script:
-    - apk add --no-cache bash shellcheck
+    - apk add --no-cache bash=5.2.26-r0 shellcheck=0.10.0-r1
   script:
     - |
       set -e
-      echo "=== shellcheck (SC2086/SC2046/SC2048/SC2068 -- unquoted-expansion class) over plugins/edm/bin/ ==="
+      echo "=== shellcheck (SC2086/SC2046/SC2048/SC2068 -- unquoted-expansion class) over plugins/edm/bin/, plugins/edm/bin/tests/*.sh and plugins/edm/evals/*.sh ==="
       FAIL=0
       COUNT=0
-      for f in plugins/edm/bin/*; do
+      for f in plugins/edm/bin/* plugins/edm/bin/tests/*.sh plugins/edm/evals/*.sh; do
         [ -f "$f" ] || continue
         COUNT=$((COUNT + 1))
         if shellcheck --shell=bash --include=SC2086,SC2046,SC2048,SC2068 "$f"; then
@@ -192,7 +219,7 @@ lint:file-type-ban:
   <<: *alpine_edm
   needs: []
   before_script:
-    - apk add --no-cache bash git
+    - apk add --no-cache bash=5.2.26-r0 git=2.45.4-r0
   script:
     - |
       set -e
@@ -238,7 +265,7 @@ lint:pattern-library-contract:
   <<: *alpine_edm
   needs: []
   before_script:
-    - apk add --no-cache bash
+    - apk add --no-cache bash=5.2.26-r0
   script:
     - |
       set -e
@@ -295,7 +322,7 @@ test:smoke:
   # it up.
   needs: ["lint:bash-syntax"]
   before_script:
-    - apk add --no-cache bash jq git
+    - apk add --no-cache bash=5.2.26-r0 jq=1.7.1-r0 git=2.45.4-r0
   script:
     - bash plugins/edm/bin/tests/run-all.sh
     # EDMV3-T61 AC13 (amended, D19 in decisions.md): the help-completeness / bidirectional
@@ -325,8 +352,12 @@ test:smoke-bash32:
   image: "bash:3.2"
   rules: *edm_rules
   needs: ["lint:bash-syntax"]
+  # CA-161: bash:3.2's own base (Alpine 3.22.5, confirmed live via `docker run bash:3.2 cat
+  # /etc/os-release`) is a different Alpine minor than the alpine:3.20 pinned elsewhere in this
+  # file, so it resolves its own, independently-pinned jq/git versions -- captured the same way
+  # (`docker run bash:3.2 sh -c "apk update && apk info -a jq git"`) on 2026-08-06.
   before_script:
-    - apk add --no-cache jq git
+    - apk add --no-cache jq=1.8.1-r0 git=2.49.1-r0
   script:
     - bash --version
     # CA-006: assert we are actually running under bash 3.2 so a future image bump cannot
@@ -355,7 +386,7 @@ test:state-validate:
   <<: *alpine_edm
   needs: ["lint:bash-syntax"]
   before_script:
-    - apk add --no-cache bash jq git
+    - apk add --no-cache bash=5.2.26-r0 jq=1.7.1-r0 git=2.45.4-r0
   script:
     - |
       set -u
@@ -404,7 +435,7 @@ validate:manifest:
   <<: *alpine_edm
   needs: []
   before_script:
-    - apk add --no-cache bash jq
+    - apk add --no-cache bash=5.2.26-r0 jq=1.7.1-r0
   script:
     - |
       set -eu

@@ -69,10 +69,16 @@ Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severit
 
 ```markdown
 ## Findings (L2: Dead Code & Unreachable Paths)
-[findings with file:line, why it's unreachable, and whether to delete or fix]
+
+| ID | File:Line | Why Unreachable | Delete or Fix |
+|----|-----------|------------------|----------------|
+| L2-001 | src/api/legacy_routes.py:5 | Route handler is defined but never registered on any router | Delete -- confirmed no caller anywhere in the tree |
 
 ## Noted / Not Actionable
-[false alarms with one-line rationale]
+
+| ID | File:Line | Rationale |
+|----|-----------|-----------|
+| L2-002 | src/utils/format.py:31 | Exported for external consumers per the package's public API surface, not dead |
 ```
 
 ## JSONL Line Format

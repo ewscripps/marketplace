@@ -7,8 +7,10 @@ prompt changes (WS7, `EDMV3-T39`) are measured against. **As of this ticket's la
 `scores.json` does not exist yet.** It is not faked, stubbed, or backfilled with placeholder
 numbers: `score-artifacts.sh` only ever scores a real run directory produced by
 `run-eval.sh`, and `run-eval.sh` only ever produces a real run directory by calling
-`claude -p` against `ANTHROPIC_API_KEY` -- a live, metered API credential this
-implementation pass does not hold. Committing a hand-written `scores.json` here would look
+`claude -p` through one of its two sanctioned auth paths (D20; `epics/03-ci-and-fixture-eval.md`
+AC8; `run-eval.sh:24-27,:37-39,:181-183`) -- an exported `ANTHROPIC_API_KEY`, or a `claude` CLI
+that is already authenticated via subscription/OAuth login -- neither of which this
+implementation pass holds. Committing a hand-written `scores.json` here would look
 identical to a real baseline to every downstream consumer (the CI comparison job, a human
 reading this file, `git blame`) while actually being fiction, which is worse than the file
 being absent. Absent, at least, is honest and fails loudly.
@@ -21,11 +23,16 @@ real runs this document describes below.
 
 ## Exact command to capture it
 
-Run this from the repository root, with a real `ANTHROPIC_API_KEY` exported, three times in
-a row (fresh scratch tree each run -- `run-eval.sh` provisions and tears down its own):
+Run this from the repository root, with working Claude auth in place -- either export a real
+`ANTHROPIC_API_KEY` or use a machine where the `claude` CLI is already logged in
+(subscription/OAuth) -- three times in a row (fresh scratch tree each run -- `run-eval.sh`
+provisions and tears down its own):
 
 ```bash
+# Auth path 1: an exported API key.
 export ANTHROPIC_API_KEY=sk-...
+# Auth path 2 (alternative to the export above): skip it and rely on an already-authenticated
+# `claude` CLI session instead -- run `claude` interactively once to log in if needed.
 for i in 1 2 3; do
   bash plugins/edm/evals/run-eval.sh --out /path/outside/plugins/edm/eval-baseline-runs
 done

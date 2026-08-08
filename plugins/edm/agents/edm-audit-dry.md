@@ -79,20 +79,23 @@ Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severit
 ```markdown
 ## Findings (L10: DRY & Redundancy)
 
-| # | Type | File A | File B | Canonical | Recommendation |
-|---|---|---|---|---|---|
-| 1 | Duplicate function | utils/date.py:42 | helpers/format.py:17 | utils/date.py | Delete helpers/format.py, redirect callers |
+| ID | Type | File A | File B | Canonical | Recommendation |
+|----|------|--------|--------|-----------|----------------|
+| L10-001 | Duplicate function | utils/date.py:42 | helpers/format.py:17 | utils/date.py | Delete helpers/format.py, redirect callers |
 
 ### Details
 
-#### Finding 1: {description}
+#### Finding L10-001: {description}
 - **File A**: path:line -- {what it does}
 - **File B**: path:line -- {what it does}
 - **Divergence**: [if applicable, what's different between them]
 - **Fix**: [which to keep, how to redirect callers]
 
 ## Noted / Not Actionable
-[false alarms with one-line rationale]
+
+| ID | File:Line | Rationale |
+|----|-----------|-----------|
+| L10-002 | path:line | {false-alarm rationale} |
 ```
 
 ## JSONL Line Format

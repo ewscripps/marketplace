@@ -74,10 +74,16 @@ Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severit
 
 ```markdown
 ## Findings (L4: Test Quality)
-[findings with test file:line, what passes that shouldn't, and fix]
+
+| ID | Test File:Line | What Passes That Shouldn't | Fix |
+|----|-----------------|------------------------------|-----|
+| L4-001 | tests/orders/test_total.py:18 | Mocks the function under test itself, so the assertion never exercises real logic | Mock only the collaborator (the pricing API client), call the real `compute_total` |
 
 ## Noted / Not Actionable
-[false alarms with one-line rationale]
+
+| ID | File:Line | Rationale |
+|----|-----------|-----------|
+| L4-002 | tests/orders/test_total.py:40 | Asserts on a fixed timestamp, but the fixture freezes the clock deliberately -- not flaky |
 ```
 
 ## Fixing gaps found here

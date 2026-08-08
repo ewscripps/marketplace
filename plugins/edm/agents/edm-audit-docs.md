@@ -76,10 +76,16 @@ Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severit
 
 ```markdown
 ## Findings (L6: Documentation Accuracy)
-[file:line, what the doc says, what the code actually does, concrete fix]
+
+| ID | File:Line | Doc Says | Code Does | Fix |
+|----|-----------|----------|-----------|-----|
+| L6-001 | README.md:42 | "returns null on a missing key" | Raises `KeyError` on a missing key | Update the doc to match the raise, or change the code to match the doc -- whichever is intended |
 
 ## Noted / Not Actionable
-[false alarms with one-line rationale]
+
+| ID | File:Line | Rationale |
+|----|-----------|-----------|
+| L6-002 | CHANGELOG.md:5 | Historical entry describing removed behavior, correctly framed as history |
 ```
 
 ## JSONL Line Format

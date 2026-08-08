@@ -46,6 +46,10 @@ against, not a snapshot of current model behavior.
 
 - `plugins/edm/bin/tests/wave7-smoke.sh` (EDMV3-T24, EDMV3-T25, EDMV3-T42 sections) reads these
   files directly.
-- `plugins/edm/evals/score-artifacts.sh plugins/edm/bin/tests/fixtures/code-audit/` scores dimension
-  5 against the `lens-L*.jsonl` / `lens-L*.md` pairs here.
+- `plugins/edm/evals/score-artifacts.sh plugins/edm/bin/tests/fixtures/code-audit/ --out /tmp/scores.json`
+  scores dimension 5 against the `lens-L*.jsonl` / `lens-L*.md` pairs here. The explicit `--out`
+  is required (CA-151): this directory is a tracked, committed fixture, not a real run directory,
+  and the scorer refuses to write `scores.json` into it without an explicit scratch destination
+  -- point `--out` at a scratch path outside the plugin source tree, never back into this
+  directory.
 - EDMV3-T02's grant spot-check uses this directory as a known-good two-path-contract example.

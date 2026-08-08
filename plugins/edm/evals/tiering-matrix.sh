@@ -138,7 +138,13 @@ run_matrix() {
 self_test() {
   local tmp
   tmp="$(mktemp "${TMPDIR:-/tmp}/edm-tiering-matrix-selftest.XXXXXX")" || die "mktemp failed"
-  trap 'rm -f "$tmp"' RETURN
+  # CA-014: RETURN-only leaked $tmp on a die (exit 2, no RETURN) or a SIGINT mid-self-test.
+  # RETURN still fires on the ordinary function-return path; EXIT/INT/TERM cover the rest. The
+  # trap is process-wide, not function-scoped, so it can still fire once more at process EXIT
+  # after self_test has already returned and its own `local tmp` has gone out of scope --
+  # "${tmp:-}" (not "$tmp") keeps that second firing from tripping `set -u`'s unbound-variable
+  # check.
+  trap 'rm -f "${tmp:-}"' RETURN EXIT INT TERM
 
   cat > "$tmp" <<'EOF'
 {
@@ -237,12 +243,6 @@ EOF
     echo "self-test PASS: no qualifying config leaves the agent unchanged (synthetic-agent-c-no-qualifier -> opus/max)"
   else
     echo "self-test FAIL: expected synthetic-agent-c-no-qualifier to stay opus/max (unchanged)" >&2
-    failures=$((failures + 1))
-  fi
-
-  if echo "$out" | grep -qxF "DECISION synthetic-agent-a-qualifies: sonnet/high (cheapest qualifying config, tier 1)"; then
-    :
-  else
     failures=$((failures + 1))
   fi
 

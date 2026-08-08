@@ -71,7 +71,9 @@ extract_section() {
 }
 
 tmp="$(mktemp "${DST}.tmp.XXXXXX")"
-trap 'rm -f "$tmp"' EXIT INT TERM
+# CA-150: HUP added -- a terminal disconnect mid-run (e.g. an SSH session dropping) leaked this
+# staging file just as much as an untrapped INT/TERM would have.
+trap 'rm -f "$tmp"' EXIT INT TERM HUP
 
 {
   echo "<!-- GENERATED FILE. This file is generated from CLAUDE.md by edm-sync-canonical-sections;"

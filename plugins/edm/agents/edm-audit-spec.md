@@ -87,17 +87,25 @@ Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severit
 ## Findings (L9: Spec & Ticket Compliance)
 
 ### Missing Implementations (P1)
-| Requirement | Ticket | What's Missing | Evidence (search results) |
-|---|---|---|---|
+| ID | Requirement | Ticket | What's Missing | Evidence (search results) |
+|----|-------------|--------|-----------------|------------------------------|
+| L9-001 | AUTH-14 | AUTH-T09 | No rate-limit check anywhere in the login path | `grep -rn "rate_limit" src/auth/` returns nothing |
 
 ### Partial Implementations (P1)
-| Ticket | AC | What the Spec Requires | What Code Does | File:Line |
+| ID | Ticket | AC | What the Spec Requires | What Code Does | File:Line |
+|----|--------|----|--------------------------|------------------|-----------|
+| L9-002 | AUTH-T09 | AC3 | Lock the account after 5 failed attempts | Logs the failed attempt but never locks | src/auth/login.py:80 |
 
 ### Scope Creep (P2)
-| File / Feature | Not Specified In | Recommendation |
+| ID | File / Feature | Not Specified In | Recommendation |
+|----|------------------|---------------------|-------------------|
+| L9-003 | src/auth/sso.py | AUTH SRD or any AUTH ticket | Confirm whether SSO is in scope for this initiative; if not, flag for a follow-on ticket |
 
 ## Noted / Not Actionable
-[false alarms with one-line rationale]
+
+| ID | File:Line | Rationale |
+|----|-----------|-----------|
+| L9-004 | src/auth/login.py:95 | Additional validation beyond the spec, but explicitly called out as defensive hardening in the ticket's Description |
 ```
 
 ## JSONL Line Format

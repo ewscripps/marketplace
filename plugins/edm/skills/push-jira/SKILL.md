@@ -29,7 +29,7 @@ If any prerequisite is missing, the skill prints a clear "skipping -- Jira not a
    - `--dry-run`: when present, the skill produces a plan table of what would be created/updated/linked but makes no mutating MCP calls and does not rewrite ticket-pack files or update `.edm-state.json`.
    - The Jira MCP namespace is read from `${user_config.jira_mcp_namespace}` (default: `plugin_jira_atlassian-mcp-server`). Override this config value if your MCP server is registered under a different namespace (e.g., a legacy Docker-based namespace).
 2. Verify Atlassian MCP is reachable: call `mcp__{jira_mcp_namespace}__atlassianUserInfo`. If it fails, print:
-   > "Jira MCP not available (tried {jira_mcp_namespace}__atlassianUserInfo). To enable Jira sync: configure the MCP server with namespace '{jira_mcp_namespace}' (see CLAUDE.md -> 'Atlassian MCP setup'). Skipping."
+   > "Jira MCP not available (tried {jira_mcp_namespace}__atlassianUserInfo). To enable Jira sync: configure the MCP server with namespace '{jira_mcp_namespace}' (see `CLAUDE.md Sec."Optional: Jira synchronization"` for the `jira_mcp_namespace` userConfig option). Skipping."
    > and exit successfully (this is not an error -- the skill is optional). This applies even in `--dry-run` mode.
 3. Resolve `cloudId` via `mcp__{jira_mcp_namespace}__getAccessibleAtlassianResources`. Use the first one; if multiple, ask the user.
 4. Verify the project key exists via `mcp__{jira_mcp_namespace}__getVisibleJiraProjects` (filter by `query: <JIRA_PROJECT_KEY>`).

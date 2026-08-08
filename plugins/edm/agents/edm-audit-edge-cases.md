@@ -76,10 +76,16 @@ Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severit
 
 ```markdown
 ## Findings (L3: Edge Cases & Concurrency)
-[findings with file:line, scenario that triggers the issue, and fix]
+
+| ID | File:Line | Trigger Scenario | Fix |
+|----|-----------|-------------------|-----|
+| L3-001 | src/queue/worker.py:60 | Two workers can both read-then-write the same job row with no lock, double-processing it | Wrap the read-modify-write in a row-level lock or a compare-and-swap update |
 
 ## Noted / Not Actionable
-[false alarms with one-line rationale]
+
+| ID | File:Line | Rationale |
+|----|-----------|-----------|
+| L3-002 | src/cache/store.py:19 | Single-threaded by construction (in-process, no async handoff) -- the race this would otherwise be does not apply |
 ```
 
 ## JSONL Line Format
