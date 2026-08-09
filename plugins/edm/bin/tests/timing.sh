@@ -41,7 +41,13 @@ _now() {
     perl -MTime::HiRes=time -e 'printf("%.6f\n", time())'
   else
     echo "timing.sh: [warn] perl not found -- falling back to whole-second resolution" >&2
-    awk 'BEGIN{srand(); printf "%.6f\n", systime()}'
+    # G31/CA-262: systime() is a gawk/mawk/busybox-awk extension, not POSIX awk -- calling it on
+    # the BSD "one true awk" this repo's own supported macOS dev platform ships as /usr/bin/awk
+    # aborts this function (and, under this script's `set -e`, the whole script) instead of
+    # degrading to whole-second resolution as the comment above promises. Piping `date +%s`
+    # through getline is plain POSIX awk and works identically across BSD awk, busybox awk and
+    # gawk, so the fallback actually runs on every awk this plugin is exercised against.
+    awk 'BEGIN{"date +%s" | getline sec; close("date +%s"); printf "%.6f\n", sec}'
   fi
 }
 
@@ -55,15 +61,17 @@ _ms_between() {
 }
 
 # _p95 <values...> -- integer p95 (nearest-rank) of a list of millisecond integers passed as args.
-# G36/CA-196: nearest-rank p95 is ceil(0.95*N), not floor(0.95*N) -- the prior `int(0.95 * NR)`
-# truncated, so for every sample count this file actually uses (3, 5, or 10) the reported "p95"
-# was really a lower percentile (p90 at N=10, p80 at N=5, even the median at N=3), systematically
-# discarding the slowest sample and biasing every published latency budget optimistic. Kept at
-# the existing 3/5/10 sample counts rather than raising to a real percentile-supporting count
-# (e.g. 20): the formula fix is the correctness bug: raising sample counts on top of it would
-# roughly double or quadruple every mode's wall-clock cost in CI and locally for a smaller
-# precision gain than fixing the rounding direction alone, so that is left as a follow-up (see
-# CHANGELOG.md) rather than done in this pass.
+# G36/CA-196 (round 3): nearest-rank p95 is ceil(0.95*N), not floor(0.95*N) -- the prior
+# `int(0.95 * NR)` truncated, so for every sample count this file used at the time (3, 5, or 10)
+# the reported "p95" was really a lower percentile (p90 at N=10, p80 at N=5, even the median at
+# N=3), systematically discarding the slowest sample and biasing every published latency budget
+# optimistic.
+# G16/CA-196 (round 4): the ceiling fix alone was not the whole story -- ceil(0.95*N) == N for
+# every one of those three sample counts, so the corrected formula still returned the sample
+# MAXIMUM, not a real 95th percentile, while the emitted key stayed named p95_ms. N=20 is the
+# smallest sample count where ceil(0.95*N) < N (19 < 20), so every measuring mode below now samples
+# ${_P95_SAMPLE_COUNT} runs -- a one-line change per mode, not the nine synchronized edits it would
+# have been before G49/CA-280 extracted _measure_p95 (below) to share the loop.
 _p95() {
   printf '%s\n' "$@" | sort -n | awk '
     { a[NR] = $1 }
@@ -75,6 +83,31 @@ _p95() {
       if (idx > NR) idx = NR
       print a[idx]
     }'
+}
+
+# G49/CA-280: single source for the sample count every measuring mode below uses, so raising it
+# again (or lowering it) is a one-line change rather than six synchronized ones.
+readonly _P95_SAMPLE_COUNT=20
+
+# _measure_p95 <count> <outvar> -- <cmd...> -- runs <cmd...> <count> times (its own stdout/stderr
+# discarded and a non-zero exit tolerated -- these are latency probes, not correctness checks),
+# times each run with _now/_ms_between, and writes the nearest-rank p95 (via _p95) into the
+# caller's <outvar>. Also stashes the raw per-run millisecond samples into the array
+# `<outvar>_samples`, for the call sites that print the raw samples alongside p95.
+_measure_p95() {
+  local _mp95_n="$1" _mp95_var="$2"
+  shift 2
+  [[ "${1:-}" == "--" ]] || { echo "timing.sh: _measure_p95 requires a -- before the measured command" >&2; return 2; }
+  shift
+  local _mp95_samples=() _mp95_i _mp95_t0 _mp95_t1
+  for ((_mp95_i = 0; _mp95_i < _mp95_n; _mp95_i++)); do
+    _mp95_t0="$(_now)"
+    "$@" >/dev/null 2>&1 || true
+    _mp95_t1="$(_now)"
+    _mp95_samples+=("$(_ms_between "$_mp95_t0" "$_mp95_t1")")
+  done
+  printf -v "$_mp95_var" '%s' "$(_p95 "${_mp95_samples[@]}")"
+  eval "${_mp95_var}_samples=(\"\${_mp95_samples[@]}\")"
 }
 
 MODE="${1:-}"
@@ -123,20 +156,13 @@ case "$MODE" in
     pfx="TIM001"
     echo "timing.sh: --subcommands against ${EDM_SRD_ROOT} (prefix ${pfx})"
     for cmd_name in get resolve-dir branch-check gate-check; do
-      samples=()
-      for _ in 1 2 3 4 5 6 7 8 9 10; do
-        t0="$(_now)"
-        case "$cmd_name" in
-          get)           "$EDM_STATE" get "$pfx" >/dev/null 2>&1 || true ;;
-          resolve-dir)   "$EDM_STATE" resolve-dir "$pfx" >/dev/null 2>&1 || true ;;
-          branch-check)  "$EDM_STATE" branch-check "$pfx" >/dev/null 2>&1 || true ;;
-          gate-check)    "$EDM_STATE" gate-check "$pfx" srd >/dev/null 2>&1 || true ;;
-        esac
-        t1="$(_now)"
-        samples+=("$(_ms_between "$t0" "$t1")")
-      done
-      p95="$(_p95 "${samples[@]}")"
-      echo "TIMING subcommand=${cmd_name} p95_ms=${p95} samples_ms=${samples[*]}"
+      case "$cmd_name" in
+        get)          _measure_p95 "$_P95_SAMPLE_COUNT" p95 -- "$EDM_STATE" get "$pfx" ;;
+        resolve-dir)  _measure_p95 "$_P95_SAMPLE_COUNT" p95 -- "$EDM_STATE" resolve-dir "$pfx" ;;
+        branch-check) _measure_p95 "$_P95_SAMPLE_COUNT" p95 -- "$EDM_STATE" branch-check "$pfx" ;;
+        gate-check)   _measure_p95 "$_P95_SAMPLE_COUNT" p95 -- "$EDM_STATE" gate-check "$pfx" srd ;;
+      esac
+      echo "TIMING subcommand=${cmd_name} p95_ms=${p95} samples_ms=${p95_samples[*]}"
     done
     ;;
 
@@ -153,15 +179,18 @@ case "$MODE" in
     "$EDM_STATE" approve-gate TIMPC 1 >/dev/null
     "$EDM_STATE" approve-gate TIMPC 2 >/dev/null
     "$EDM_STATE" approve-gate TIMPC 3 >/dev/null
+    # phase-complete only succeeds once per phase-start, so every sample needs its own
+    # setup (phase-start, the qc/ artifact phase-complete checks for) and teardown (reset back to
+    # phase 6) around the timed call -- _measure_p95's own loop can't own that per-iteration state
+    # reset, so it is called here with count=1 per iteration purely to share _now/_ms_between/_p95
+    # rather than re-deriving them, and the per-iteration results are pooled into one p95 after.
     samples=()
-    for i in 1 2 3 4 5; do
+    for i in $(seq 1 "$_P95_SAMPLE_COUNT"); do
       "$EDM_STATE" phase-start TIMPC 6 >/dev/null 2>&1 || true
       mkdir -p "${EDM_SRD_ROOT}/TIMPC/qc"
       echo "# QC Summary" > "${EDM_SRD_ROOT}/TIMPC/qc/qc-summary.md"
-      t0="$(_now)"
-      "$EDM_STATE" phase-complete TIMPC 6 >/dev/null 2>&1 || true
-      t1="$(_now)"
-      samples+=("$(_ms_between "$t0" "$t1")")
+      _measure_p95 1 pc_ms -- "$EDM_STATE" phase-complete TIMPC 6
+      samples+=("$pc_ms")
       # Reset for the next sample (phase-complete only succeeds once per phase-start).
       "$EDM_STATE" set TIMPC current_phase 6 >/dev/null 2>&1 || true
     done
@@ -196,24 +225,10 @@ case "$MODE" in
         "$i" "$sev" "$status" "$((i % 20))" "$i" >> "$jsonl"
       i=$((i + 1))
     done
-    samples=()
-    for _ in 1 2 3 4 5; do
-      t0="$(_now)"
-      "$EDM_STATE" audit-converged TIMLEDGER >/dev/null 2>&1 || true
-      t1="$(_now)"
-      samples+=("$(_ms_between "$t0" "$t1")")
-    done
-    p95="$(_p95 "${samples[@]}")"
-    echo "TIMING audit-converged p95_ms=${p95} samples_ms=${samples[*]} (${N_FINDINGS} findings)"
-    samples=()
-    for _ in 1 2 3 4 5; do
-      t0="$(_now)"
-      "$EDM_STATE" render-ledger TIMLEDGER >/dev/null 2>&1 || true
-      t1="$(_now)"
-      samples+=("$(_ms_between "$t0" "$t1")")
-    done
-    p95="$(_p95 "${samples[@]}")"
-    echo "TIMING render-ledger p95_ms=${p95} samples_ms=${samples[*]} (${N_FINDINGS} findings)"
+    _measure_p95 "$_P95_SAMPLE_COUNT" p95 -- "$EDM_STATE" audit-converged TIMLEDGER
+    echo "TIMING audit-converged p95_ms=${p95} samples_ms=${p95_samples[*]} (${N_FINDINGS} findings)"
+    _measure_p95 "$_P95_SAMPLE_COUNT" p95 -- "$EDM_STATE" render-ledger TIMLEDGER
+    echo "TIMING render-ledger p95_ms=${p95} samples_ms=${p95_samples[*]} (${N_FINDINGS} findings)"
     rm -rf "$TMP_LG"
     ;;
 
@@ -225,24 +240,11 @@ case "$MODE" in
     export EDM_SRD_ROOT="${TMP_SS}/SRD"
     mkdir -p "$EDM_SRD_ROOT" "${TMP_SS}/.claude"
     "$EDM_STATE" init TIMSS >/dev/null
-    samples_without=()
-    for _ in 1 2 3 4 5; do
-      t0="$(_now)"
-      ( cd "$TMP_SS" && "$EDM_STATE" session-start >/dev/null 2>&1 ) || true
-      t1="$(_now)"
-      samples_without+=("$(_ms_between "$t0" "$t1")")
-    done
+    _ss_probe() { ( cd "$TMP_SS" && "$EDM_STATE" session-start ); }
+    _measure_p95 "$_P95_SAMPLE_COUNT" p95_without -- _ss_probe
     printf '{"permissions":{"ask":["Bash(edm-state approve-gate*)","Bash(edm-state archive*)"]}}\n' \
       > "${TMP_SS}/.claude/settings.local.json"
-    samples_with=()
-    for _ in 1 2 3 4 5; do
-      t0="$(_now)"
-      ( cd "$TMP_SS" && "$EDM_STATE" session-start >/dev/null 2>&1 ) || true
-      t1="$(_now)"
-      samples_with+=("$(_ms_between "$t0" "$t1")")
-    done
-    p95_without="$(_p95 "${samples_without[@]}")"
-    p95_with="$(_p95 "${samples_with[@]}")"
+    _measure_p95 "$_P95_SAMPLE_COUNT" p95_with -- _ss_probe
     delta=$((p95_with - p95_without))
     echo "TIMING session-start without_permission_files_p95_ms=${p95_without} with_permission_files_p95_ms=${p95_with} delta_ms=${delta}"
     rm -rf "$TMP_SS"
@@ -263,15 +265,8 @@ case "$MODE" in
       done
     done
     total_lines="$(cat "${EDM_SRD_ROOT}/TIMLINT"/fixture-*.md | wc -l | tr -d ' ')"
-    samples=()
-    for _ in 1 2 3; do
-      t0="$(_now)"
-      "$EDM_LINT" TIMLINT >/dev/null 2>&1 || true
-      t1="$(_now)"
-      samples+=("$(_ms_between "$t0" "$t1")")
-    done
-    p95="$(_p95 "${samples[@]}")"
-    echo "TIMING lint p95_ms=${p95} samples_ms=${samples[*]} (${N_FILES} files, ${total_lines} total lines)"
+    _measure_p95 "$_P95_SAMPLE_COUNT" p95 -- "$EDM_LINT" TIMLINT
+    echo "TIMING lint p95_ms=${p95} samples_ms=${p95_samples[*]} (${N_FILES} files, ${total_lines} total lines)"
     rm -rf "$TMP_LINT"
     ;;
 
@@ -296,23 +291,13 @@ case "$MODE" in
         echo "Line ${l} of fixture file ${f} -- ordinary ASCII prose content, no diagrams." >> "$target"
       done
     done
-    samples_base=()
-    for _ in 1 2 3; do
-      t0="$(_now)"; "$EDM_LINT" TIMMR >/dev/null 2>&1 || true; t1="$(_now)"
-      samples_base+=("$(_ms_between "$t0" "$t1")")
-    done
-    p95_base="$(_p95 "${samples_base[@]}")"
+    _measure_p95 "$_P95_SAMPLE_COUNT" p95_base -- "$EDM_LINT" TIMMR
     # Add one small mermaid fence per file (a realistic ratio: most files carry zero or one).
     for f in $(seq 1 "$N_FILES"); do
       target="${EDM_SRD_ROOT}/TIMMR/fixture-${f}.md"
       { echo '```mermaid'; echo 'flowchart TD'; echo '    A[Start] --> B[End]'; echo '```'; } >> "$target"
     done
-    samples_mermaid=()
-    for _ in 1 2 3; do
-      t0="$(_now)"; "$EDM_LINT" TIMMR >/dev/null 2>&1 || true; t1="$(_now)"
-      samples_mermaid+=("$(_ms_between "$t0" "$t1")")
-    done
-    p95_mermaid="$(_p95 "${samples_mermaid[@]}")"
+    _measure_p95 "$_P95_SAMPLE_COUNT" p95_mermaid -- "$EDM_LINT" TIMMR
     # G37/CA-197: when either p95 measures 0ms (routine on the perl-less whole-second-resolution
     # fallback, or on a fast host), the prior `b/(a>0?a:1)` silently substituted a raw millisecond
     # count as if it were a meaningful ratio -- which can look like a huge false budget breach.
