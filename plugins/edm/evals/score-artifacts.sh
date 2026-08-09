@@ -156,7 +156,10 @@ Dimension 4 (coverage-map-bidirectionality): checks coverage-map bidirectionalit
 the run reached the ticket phase.
 
 Dimension 5 (lens-jsonl-prose-agreement): compares per-lens finding counts between
-lens-L{N}.md and lens-L{N}.jsonl for a run including a code-audit round.
+lens-L{N}.md and lens-L{N}.jsonl for a run including a code-audit round. Scores 0 (not
+null/no-score) when lens-L*.md reports exist but zero lens-L*.jsonl files were produced
+(G53/CA-286) -- that is a real code-audit round whose JSONL half is missing, distinct from a
+pass directory with no code-audit round at all.
 EOF
 }
 
@@ -427,7 +430,21 @@ compute_dim5() {
   done < <(find "$run_dir" -name 'lens-L*.jsonl' -type f 2>/dev/null | sort)
 
   if [[ ${#jsonl_files[@]} -eq 0 ]]; then
-    D5_SCORE=""; D5_REASON="run does not include a code-audit round (no lens-L*.jsonl present)"; return
+    # G53 (CA-286): the absence of lens-L*.jsonl alone does not distinguish "no code-audit round
+    # ran in this pass directory" from "a round ran and produced markdown reports but zero
+    # JSONL" (round 3 did exactly this) -- both previously scored identically (null/no-score).
+    # Count lens-L*.md separately before concluding "no round": a non-zero .md count with a zero
+    # .jsonl count means a round is present but its JSONL half was never produced, which is a
+    # real (zero) score, not an absence of data to score at all.
+    local md_files_count
+    md_files_count="$(find "$run_dir" -name 'lens-L*.md' -type f 2>/dev/null | wc -l | tr -d '[:space:]')"
+    if [[ "$md_files_count" -gt 0 ]]; then
+      D5_SCORE=0
+      D5_REASON="code-audit round present (${md_files_count} lens-L*.md) but zero lens-L*.jsonl -- JSONL half not produced"
+    else
+      D5_SCORE=""; D5_REASON="run does not include a code-audit round (no lens-L*.jsonl present)"
+    fi
+    return
   fi
 
   local total=0 sum=0

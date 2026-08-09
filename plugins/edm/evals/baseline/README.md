@@ -8,7 +8,9 @@ prompt changes (WS7, `EDMV3-T39`) are measured against. **As of this ticket's la
 numbers: `score-artifacts.sh` only ever scores a real run directory produced by
 `run-eval.sh`, and `run-eval.sh` only ever produces a real run directory by calling
 `claude -p` through one of its two sanctioned auth paths (D20; `epics/03-ci-and-fixture-eval.md`
-AC8; `run-eval.sh:24-27,:37-39,:181-183`) -- an exported `ANTHROPIC_API_KEY`, or a `claude` CLI
+AC8; `run-eval.sh:30-32,:309-327` -- the `ANTHROPIC_API_KEY` env row and the "Two sanctioned auth
+paths" comment plus the actual gate, not the help-text and retention-block ranges a prior version
+of this citation pointed at) -- an exported `ANTHROPIC_API_KEY`, or a `claude` CLI
 that is already authenticated via subscription/OAuth login -- neither of which this
 implementation pass holds. Committing a hand-written `scores.json` here would look
 identical to a real baseline to every downstream consumer (the CI comparison job, a human
