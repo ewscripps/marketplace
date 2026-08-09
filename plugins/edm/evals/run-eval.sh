@@ -184,8 +184,10 @@ prune_old_runs() {
   # held anything that was not itself a run directory).
   local run_dirs run_total stale_dirs pruned=0
   run_dirs="$(ls -1t "$OUT_ROOT" 2>/dev/null | grep -E '^[0-9]{8}T[0-9]{6}Z_' || true)"
+  # G29 (CA-260): no `${run_total:-0}` default here -- `grep -c .` always prints a digit (0 on no
+  # match), so the fallback is unreachable dead code (the same CA-140/CA-202 class already
+  # accepted elsewhere in this file).
   run_total="$(printf '%s\n' "$run_dirs" | grep -c . || true)"
-  run_total="${run_total:-0}"
   [ "$run_total" -gt "$keep" ] || return 0
 
   # `tail -n +K` idiom (not `head -n -N`, a GNU-only form) drops the K-1 newest and keeps the
@@ -205,11 +207,30 @@ PRUNE_EOF
   return 0
 }
 
+# G7 (CA-252, round-4 pass-4): cleanup() is now the EXIT-trap body ONLY. It never decides a
+# signal's exit code itself -- that decision belongs to the dedicated INT/TERM/HUP wrappers
+# below, matching the idiom `bin/edm-state` already uses at its own write_atomic trap layer
+# (`trap '...' EXIT`, `trap '...; exit 130' INT`, `trap '...; exit 143' TERM`,
+# `trap '...; exit 129' HUP`, around edm-state:622-625). Previously `trap cleanup EXIT INT TERM`
+# installed this SAME function directly as the INT/TERM handler too; since `set -e` is
+# deliberately off (see the CA-074 note above), a signal trap that falls through to
+# `return "$ec"` instead of exiting resumes the interrupted script -- a Ctrl-C before
+# STARTED=true deleted SCRATCH_DIR and then execution continued against a directory that no
+# longer existed, surfacing a misleading "no working Claude auth" error for what was a user
+# interrupt. The CLEANUP_DONE latch also made a second Ctrl-C a no-op, so the driver became
+# uninterruptible after the first press.
+#
+# The one exception, kept deliberately (G7 fix step 3): when a run already reached STARTED=true
+# but never reached COMPLETE=true, cleanup() still decides that outcome is exit 4 -- the
+# documented partial-run contract (AC10) applies uniformly whether that state was reached by
+# falling through the main script body (the explicit `exit 4` at PHASE3_OK != true, below) or by
+# an INT/TERM/HUP interrupt arriving mid-run. That `exit 4` call fires the EXIT trap a second
+# time via bash's own signal-to-EXIT propagation; the CLEANUP_DONE guard makes that second entry
+# a no-op rather than a double prune, so write_partial_artifacts and prune_old_runs each run
+# exactly once no matter which of the four exit paths (normal, INT, TERM, HUP) got here.
 CLEANUP_DONE=false
 cleanup() {
   local ec=$?
-  # Guard against running twice: TERM/INT invoke this trap, and if it then calls `exit 4` itself
-  # (the incomplete-run path below), that in turn fires the EXIT trap a second time.
   [ "$CLEANUP_DONE" = "true" ] && return "$ec"
   CLEANUP_DONE=true
   if [ -n "$CURRENT_CHILD_PID" ]; then
@@ -228,7 +249,10 @@ cleanup() {
   prune_old_runs
   return "$ec"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
+trap 'cleanup; exit 129' HUP
 
 # --- Provision a scratch copy of the fixture, as a fresh git repository ---------------------
 provision_scratch() {
