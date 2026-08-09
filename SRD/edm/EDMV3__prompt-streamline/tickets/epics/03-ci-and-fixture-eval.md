@@ -259,7 +259,12 @@ on for the "ships with its assertion updates" ordering rule.
       would be a second source of truth for the suite set and would silently skip any suite added
       later -- exactly the omission AC3 there exists to prevent.
       Verify: `grep -n 'run-all.sh' .gitlab-ci.yml` returns the single invocation, and
-      `grep -c 'bin/tests/' .gitlab-ci.yml` returns 1 (the aggregator only; no individual suite entries).
+      `grep -nE '^[a-z0-9_-]+:wave[0-9]' .gitlab-ci.yml` returns nothing -- no job KEY is named
+      after an individual wave suite. (A bare `grep -c 'bin/tests/' .gitlab-ci.yml` count is not
+      this check: that literal token also appears in unrelated lint-glob lines, shellcheck-glob
+      lines, and prose comments that legitimately mention the path, so its count moves every time
+      one of those unrelated things is edited and is not a stable signal of "no per-suite job
+      exists" -- decisions.md D44.)
 - [ ] AC6 (validate stage is two-tier, positive and negative): tier 1 is a deterministic `jq`
       manifest-and-frontmatter check -- every skill and agent on disk appears in
       `.claude-plugin/marketplace.json` and vice versa, every frontmatter block parses, every

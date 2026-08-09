@@ -4073,7 +4073,9 @@ did, and whether it is healthy.
 - **Acceptance Criteria**:
     - [ ] The `bin/` table's subcommand count and enumeration match the dispatch table exactly after all waves. A test
       asserts the count and the membership.
-    - [ ] The `edm-lint-artifacts` row describes four violation classes.
+    - [ ] The `edm-lint-artifacts` row no longer hardcodes a violation-class count and instead
+      defers to `edm-lint-artifacts --help`, which enumerates all seven emitted violation classes
+      (decisions.md D42; mirrors the ticket-pack side of the same fix, decisions.md D41).
     - [ ] The state-field table documents every field added by this initiative: `schema_version` (with its integer value
       set and the minimum version each new check requires), the approval `enforcement` tag and its sibling
       `*_approved_at` / `*_approver` keys, the PARTIAL closure representation, audit-round completion data, and

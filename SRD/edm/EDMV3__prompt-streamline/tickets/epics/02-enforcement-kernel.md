@@ -304,12 +304,14 @@ required while no code path ever records it, so a fast-track initiative could ne
 - [ ] AC5 (single derivation, negative): a grep asserts no second mode-to-phase or mode-to-gate
       mapping exists anywhere in `bin/edm-state`. `cmd_phase_start`, `cmd_gate_check`,
       `cmd_phase_complete` and `cmd_archive` all call the helpers.
-      Verify: `grep -n 'prototype)' plugins/edm/bin/edm-state | wc -l` returns **exactly 3** -- one
-      inside `terminal_phase_for_mode()`, one inside `code_audit_required_for_mode()`, and one at
-      the documented `cmd_archive` convergence waiver -- and `grep -n 'prototype)' plugins/edm/bin/edm-state`
-      shows those three line numbers falling inside those three functions and nowhere else. A fourth
-      hit is a second mode mapping and is a failing condition.
-      Also: `bash plugins/edm/bin/tests/wave6-smoke.sh` (case "single mode derivation").
+      Verify: `grep -n 'prototype)' plugins/edm/bin/edm-state | wc -l` returns **exactly 2** -- one
+      inside `terminal_phase_for_mode()` and one inside `code_audit_required_for_mode()`.
+      `cmd_archive`'s own convergence waiver is NOT a third standalone site: it was consolidated
+      into the shared `convergence_exempt()` helper (decisions.md D43), which calls
+      `code_audit_required_for_mode()` rather than carrying its own copy of the `prototype)` case
+      -- one derivation, two consumers, not three derivations. A third hit anywhere in
+      `bin/edm-state` is a second mode mapping and is a failing condition.
+      Also: `bash plugins/edm/bin/tests/wave6-smoke.sh:246` (case "single mode derivation").
 - [ ] AC6: a third helper `code_audit_required_for_mode()` reports whether a mode's phase graph
       contains a code-audit round, consumed by `cmd_archive` and `cmd_approve_gate` so the
       convergence exemption is derived rather than special-cased twice.
