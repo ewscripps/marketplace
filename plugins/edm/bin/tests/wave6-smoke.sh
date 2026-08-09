@@ -2461,14 +2461,29 @@ echo "T62 AC10 -- no unrecorded exemption path (no override flag/env var/mode sh
 # tree. Route each of the three OR'd tokens through assert_tree_absent separately (G2/CA-037 +
 # G13/CA-145, round 4; so a failure names exactly which token was found, not just "an
 # override-flag-shaped token"), each with its own genuinely seeded positive control.
-t62ac10_grep="$(command grep -rn 'EDM_SKIP\|EDM_FORCE\|SKIP_CHECKS' "${SCRIPT_DIR}/.." 2>/dev/null | command grep -v '/tests/' || true)"
+t62ac10_tokens=(EDM_SKIP EDM_FORCE SKIP_CHECKS)
+t62ac10_or_pattern="${t62ac10_tokens[0]}\|${t62ac10_tokens[1]}\|${t62ac10_tokens[2]}"
+t62ac10_grep="$(command grep -rn "$t62ac10_or_pattern" "${SCRIPT_DIR}/.." 2>/dev/null | command grep -v '/tests/' || true)"
 # G2/CA-037 + G13/CA-145: each iteration's control is now a genuinely seeded scratch file (not a
 # hand-typed literal), and "${SCRIPT_DIR}/.." is asserted to exist before each needle check runs
 # -- routed through the shared assert_tree_absent (_harness.sh), which closes CA-145 too by
 # asserting count_matches_strict's own exit status alongside its printed value.
-for t62ac10_needle in EDM_SKIP EDM_FORCE SKIP_CHECKS; do
+# G2/CA-037 residual (round 5): the OR'd producing pattern is now built from the same
+# $t62ac10_tokens array the loop iterates, closing the divergent-typo class between the real
+# scan and each per-token check. Each control's literal text comes from a case statement keyed
+# on the token, not from re-interpolating the loop variable -- so a typo in the token list itself
+# (which would corrupt both the producing pattern and the arg2 check identically) leaves no case
+# arm matching and the control is empty, correctly failing "positive control broken" rather than
+# silently mirroring the same typo into a self-consistent false pass.
+for t62ac10_needle in "${t62ac10_tokens[@]}"; do
+  case "$t62ac10_needle" in
+    EDM_SKIP)    t62ac10_control_text='if [ -n "$EDM_SKIP" ]; then true; fi' ;;
+    EDM_FORCE)   t62ac10_control_text='if [ -n "$EDM_FORCE" ]; then true; fi' ;;
+    SKIP_CHECKS) t62ac10_control_text='if [ -n "$SKIP_CHECKS" ]; then true; fi' ;;
+    *)           t62ac10_control_text='' ;;
+  esac
   t62ac10_control_file="${TMP}/edm-t62-${t62ac10_needle}-control.txt"
-  printf 'if [ -n "$%s" ]; then true; fi\n' "$t62ac10_needle" > "$t62ac10_control_file"
+  printf '%s\n' "$t62ac10_control_text" > "$t62ac10_control_file"
   assert_tree_absent "T62 AC10 -- no ${t62ac10_needle} token anywhere in bin/ (excluding tests/)" \
     "$t62ac10_needle" "$t62ac10_grep" "$(cat "$t62ac10_control_file")" "${SCRIPT_DIR}/.."
   rm -f "$t62ac10_control_file"
@@ -2476,8 +2491,11 @@ done
 # CA-037: same gap for the literal --force/--accept-partials count -- a positive control proves
 # the same grep -c invocation would report >=1 against a line that actually contains the flag,
 # so the "0" below is a real absence, not an untested pattern silently matching nothing.
-t62ac10_force="$(command grep -c -- '--force\|--accept-partials' "$EDM_STATE" 2>/dev/null || true)"
-t62ac10_force_control="$(printf '%s\n' 'synthetic control line: --force' | command grep -c -- '--force\|--accept-partials' || true)"
+# G2/CA-037 residual (round 5): the pattern is now one variable used by both the real count and
+# the control count, instead of two independently-typed copies of the same literal.
+t62ac10_force_or_pattern='--force\|--accept-partials'
+t62ac10_force="$(command grep -c -- "$t62ac10_force_or_pattern" "$EDM_STATE" 2>/dev/null || true)"
+t62ac10_force_control="$(printf '%s\n' 'synthetic control line: --force' | command grep -c -- "$t62ac10_force_or_pattern" || true)"
 if [[ "${t62ac10_force_control:-0}" -lt 1 ]]; then
   fail "T62 AC10 -- positive control broken: a synthetic --force line was not counted by the same grep -c"
 else

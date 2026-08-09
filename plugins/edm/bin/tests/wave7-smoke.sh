@@ -181,13 +181,34 @@ neg_case_bogus_key
 # =================================================================================
 echo
 echo "T09 AC13 -- no literal --force anywhere in bin/edm-state"
-force_hits="$(grep -n -- '--force' "$EDM_STATE" 2>/dev/null || true)"
-assert_absent_with_control \
-  "no literal --force in bin/edm-state" \
-  "--force" \
-  "$force_hits" \
-  "bin/vocabulary-prohibited.txt" \
-  "$(cat "${PLUGIN_DIR}/bin/vocabulary-prohibited.txt" 2>/dev/null)"
+# G2/CA-037 residual (round 5): converted from assert_absent_with_control (whose control here was
+# already a real in-tree file, not a tautological literal, but which discarded the real scan's
+# stderr/exit code and never asserted $EDM_STATE exists) to assert_tree_absent, which closes both
+# gaps and retires assert_absent_with_control's last production caller -- it is now exercised
+# only by harness-smoke.sh's own self-tests.
+t09ac13_force_pattern='--force'
+force_hits="$(grep -n -- "$t09ac13_force_pattern" "$EDM_STATE" 2>/dev/null || true)"
+assert_tree_absent "no literal --force in bin/edm-state" \
+  "$t09ac13_force_pattern" "$force_hits" \
+  "$(cat "${PLUGIN_DIR}/bin/vocabulary-prohibited.txt" 2>/dev/null)" "$EDM_STATE"
+
+# =================================================================================
+# G2/CA-037 (round 5): tripwire -- assert_absent_with_control now has zero production callers
+# (its last one, T09 AC13 above, is converted). Ban any NEW call site outside harness-smoke.sh,
+# which legitimately self-tests the helper -- otherwise the next tautological-control site
+# quietly reintroduces the class this remediation just closed.
+# Scoped to every *.sh in this directory EXCEPT harness-smoke.sh (the sanctioned self-test) and
+# this file itself, which necessarily mentions the banned name by name in this very comment
+# block and in its own labels -- those are prose about the ban, not a call site.
+# =================================================================================
+echo
+echo "=== G2/CA-037 tripwire: assert_absent_with_control has no production callers ==="
+g2_awc_this_file="${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")"
+g2_awc_hits="$(grep -rl 'assert_absent_with_control' "$SCRIPT_DIR"/*.sh 2>/dev/null \
+  | grep -v '/_harness\.sh$' | grep -v '/harness-smoke\.sh$' | grep -vF "$g2_awc_this_file" || true)"
+[[ -z "$g2_awc_hits" ]] \
+  && pass "G2/CA-037 -- assert_absent_with_control is called only from harness-smoke.sh's self-tests" \
+  || fail "G2/CA-037 -- assert_absent_with_control called outside harness-smoke.sh in: $g2_awc_hits (use assert_tree_absent instead)"
 
 # =================================================================================
 # EDMV3-T04 -- README install path regression guard (AC6). Do not add unrelated cases
@@ -408,17 +429,23 @@ echo
 echo "T15 AC1 -- code-audit/SKILL.md no longer instructs the model to set the flag directly"
 CODE_AUDIT_SKILL="${PLUGIN_DIR}/skills/code-audit/SKILL.md"
 ORCH_SKILL="${PLUGIN_DIR}/skills/orchestrator/SKILL.md"
-t15_skills_grep="$(grep -rn 'code_audit_converged true' "${PLUGIN_DIR}/skills/" 2>/dev/null || true)"
+t15_pattern="code_audit_converged true"
+t15_skills_grep="$(grep -rn "$t15_pattern" "${PLUGIN_DIR}/skills/" 2>/dev/null || true)"
 # CA-037: check_absent alone never proved the grep pattern itself could match anything -- a typo'd
 # pattern or an accidentally-scoped directory would pass identically to a genuinely clean prompt
 # set.
 # G2/CA-037 + G13/CA-145: the control is a genuinely seeded scratch file (no skill legitimately
 # contains this phrase anymore -- that is the whole point of T15 AC1), and
 # "${PLUGIN_DIR}/skills/" is asserted to exist before the needle check runs.
+# G2/CA-037 residual (round 5): the producing grep and the check below now share one variable
+# ($t15_pattern) instead of two independently-typed literals, so a typo in the pattern breaks
+# both identically. The control below stays a SEPARATE, independently-typed literal (not built
+# from $t15_pattern) -- if it were also derived from the variable, a typo would poison the
+# control too and the mismatch would go undetected again.
 t15_skills_control="${TMP}/edm-t15-flag-control.txt"
 printf 'edm-state set <PREFIX> code_audit_converged true\n' > "$t15_skills_control"
 assert_tree_absent "no prompt anywhere instructs 'edm-state set <PREFIX> code_audit_converged true'" \
-  "code_audit_converged true" "$t15_skills_grep" "$(cat "$t15_skills_control")" "${PLUGIN_DIR}/skills/"
+  "$t15_pattern" "$t15_skills_grep" "$(cat "$t15_skills_control")" "${PLUGIN_DIR}/skills/"
 rm -f "$t15_skills_control"
 
 echo
@@ -907,11 +934,14 @@ echo "T61 AC5 -- edm-check-grants carries set -euo pipefail"
 # CA-037: a bare >=1 threshold on its own never proved this exact grep pattern is a working
 # pattern rather than a typo -- cross-check the identical pattern against bin/edm-state, which is
 # independently known (grep it yourself) to carry `set -euo pipefail`, as a real positive control.
-t61_cg_pipefail_control="$(grep -c '^set -euo pipefail' "$EDM_STATE" || true)"
+# G2/CA-037 residual (round 5): one shared pattern variable for both files, not two
+# independently-typed copies.
+t61_pipefail_pattern='^set -euo pipefail'
+t61_cg_pipefail_control="$(grep -c "$t61_pipefail_pattern" "$EDM_STATE" || true)"
 if [[ "${t61_cg_pipefail_control:-0}" -lt 1 ]]; then
   fail "T61 AC5 -- positive control broken: the pattern found zero '^set -euo pipefail' in bin/edm-state, which is known to carry it"
 else
-  t61_cg_pipefail="$(grep -c '^set -euo pipefail' "$EDM_CHECK_GRANTS" || true)"
+  t61_cg_pipefail="$(grep -c "$t61_pipefail_pattern" "$EDM_CHECK_GRANTS" || true)"
   [[ "${t61_cg_pipefail:-0}" -ge 1 ]] && pass "edm-check-grants has set -euo pipefail (positive control confirms the pattern works against a known-good file)" \
     || fail "edm-check-grants set -euo pipefail count: ${t61_cg_pipefail:-0}"
 fi
@@ -1068,11 +1098,14 @@ echo
 echo "T21 AC5 -- zero literal wave-suite tokens anywhere in .gitlab-ci.yml"
 # CA-037: positive control -- the identical alternation against a synthetic line naming one of
 # the wave-suite tokens, proving the pattern can actually match before trusting the zero below.
-t21_wave_token_control="$(printf '%s\n' 'bash plugins/edm/bin/tests/wave6-smoke.sh' | grep -cE 'wave(3|4a|4b|5|6|7)-smoke' || true)"
+# G2/CA-037 residual (round 5): both greps below now share one pattern variable instead of two
+# independently-typed copies of the same regex.
+t21_wave_token_pattern='wave(3|4a|4b|5|6|7)-smoke'
+t21_wave_token_control="$(printf '%s\n' 'bash plugins/edm/bin/tests/wave6-smoke.sh' | grep -cE "$t21_wave_token_pattern" || true)"
 if [[ "${t21_wave_token_control:-0}" -lt 1 ]]; then
   fail "T21 AC5 -- positive control broken: a synthetic 'wave6-smoke' line was not caught by the pattern"
 else
-  t21_wave_token_hits="$(grep -cE 'wave(3|4a|4b|5|6|7)-smoke' "$GITLAB_CI_YML" || true)"
+  t21_wave_token_hits="$(grep -cE "$t21_wave_token_pattern" "$GITLAB_CI_YML" || true)"
   t21_wave_token_hits="${t21_wave_token_hits:-0}"
   [[ "$t21_wave_token_hits" -eq 0 ]] \
     && pass "T21 AC5 -- .gitlab-ci.yml names zero literal wave-suite tokens (run-all.sh auto-discovery only; positive control confirms the pattern works)" \
@@ -1158,7 +1191,8 @@ echo "T58 AC1 -- implement no longer names edm-test-coverage-auditor"
 # fail. `grep -c` is guarded with `|| true`: a zero-match grep exits 1, which would abort the
 # whole suite under `set -euo pipefail` -- and zero is precisely the passing value here.
 T58_IMPLEMENT_SKILL="${PLUGIN_DIR}/skills/implement/SKILL.md"
-t58ac1_count="$(grep -c 'edm-test-coverage-auditor' "$T58_IMPLEMENT_SKILL" || true)"
+t58ac1_pattern='edm-test-coverage-auditor'
+t58ac1_count="$(grep -c "$t58ac1_pattern" "$T58_IMPLEMENT_SKILL" || true)"
 [[ "${t58ac1_count:-0}" -eq 0 ]] \
   && pass "T58 AC1 -- zero occurrences of edm-test-coverage-auditor in skills/implement/SKILL.md" \
   || fail "T58 AC1 -- skills/implement/SKILL.md names edm-test-coverage-auditor ${t58ac1_count} time(s)"
@@ -1167,7 +1201,8 @@ t58ac1_count="$(grep -c 'edm-test-coverage-auditor' "$T58_IMPLEMENT_SKILL" || tr
 # identical needle still matches where the agent legitimately survives. Scoped to agents/
 # (the agent's own definition, plus edm-audit-test-quality's reference to it) rather than to
 # the whole plugin, which would include this suite's own text and be self-satisfying.
-t58ac1_live="$({ grep -rl 'edm-test-coverage-auditor' "${PLUGIN_DIR}/agents/" 2>/dev/null || true; } | wc -l | tr -d ' ')"
+# G2/CA-037 residual (round 5): one shared pattern variable, not two independently-typed copies.
+t58ac1_live="$({ grep -rl "$t58ac1_pattern" "${PLUGIN_DIR}/agents/" 2>/dev/null || true; } | wc -l | tr -d ' ')"
 [[ "${t58ac1_live:-0}" -gt 0 ]] \
   && pass "T58 AC1 -- positive control: the same needle still matches ${t58ac1_live} file(s) under agents/, so the zero above is real" \
   || fail "T58 AC1 -- positive control failed: 'edm-test-coverage-auditor' matches nothing under agents/, so the zero-occurrence assertion above is vacuous"
@@ -1181,29 +1216,34 @@ check "T66 AC4 -- bin/ table points readers at edm-lint-artifacts --help rather 
   "edm-lint-artifacts --help" "$(cat "$CLAUDE_MD_T66")"
 # CA-037: three deleted-text counts, none previously proving their own grep pattern could match
 # anything -- each gets a synthetic positive control run through the identical pattern first.
-t66ac4_wrong_classes_control="$(printf '%s\n' 'a row mentioning missing version header' | grep -c 'missing version header\|orphan file\|oversized ticket' || true)"
+# G2/CA-037 residual (round 5): each pattern is now one variable shared by its control grep and
+# its real grep, instead of two independently-typed copies.
+t66ac4_wrong_classes_pattern='missing version header\|orphan file\|oversized ticket'
+t66ac4_wrong_classes_control="$(printf '%s\n' 'a row mentioning missing version header' | grep -c "$t66ac4_wrong_classes_pattern" || true)"
 if [[ "${t66ac4_wrong_classes_control:-0}" -lt 1 ]]; then
   fail "T66 AC4 -- positive control broken: a synthetic 'missing version header' line was not caught"
 else
-  t66ac4_wrong_classes="$({ grep -rl 'missing version header\|orphan file\|oversized ticket' "$CLAUDE_MD_T66" || true; } | wc -l | tr -d ' ')"
+  t66ac4_wrong_classes="$({ grep -rl "$t66ac4_wrong_classes_pattern" "$CLAUDE_MD_T66" || true; } | wc -l | tr -d ' ')"
   [[ "${t66ac4_wrong_classes:-0}" -eq 0 ]] \
     && pass "T66 AC4 -- no reference to the three never-implemented violation classes (positive control confirms the pattern works)" \
     || fail "T66 AC4 -- found a reference to a never-implemented violation class"
 fi
-t66ac4_taskcompleted_control="$(printf '%s\n' 'a row mentioning TaskCompleted' | grep -c 'TaskCompleted' || true)"
+t66ac4_taskcompleted_pattern='TaskCompleted'
+t66ac4_taskcompleted_control="$(printf '%s\n' 'a row mentioning TaskCompleted' | grep -c "$t66ac4_taskcompleted_pattern" || true)"
 if [[ "${t66ac4_taskcompleted_control:-0}" -lt 1 ]]; then
   fail "T66 AC4 -- positive control broken: a synthetic 'TaskCompleted' line was not caught"
 else
-  t66ac4_taskcompleted="$({ grep -rl 'TaskCompleted' "$CLAUDE_MD_T66" || true; } | wc -l | tr -d ' ')"
+  t66ac4_taskcompleted="$({ grep -rl "$t66ac4_taskcompleted_pattern" "$CLAUDE_MD_T66" || true; } | wc -l | tr -d ' ')"
   [[ "${t66ac4_taskcompleted:-0}" -eq 0 ]] \
     && pass "T66 AC4 -- Hooks behavior table drops TaskCompleted (positive control confirms the pattern works)" \
     || fail "T66 AC4 -- TaskCompleted still referenced in CLAUDE.md"
 fi
-t66ac4_lcpartial_control="$(printf '%s\n' 'lifecycle_mode row still says partial' | grep -c 'lifecycle_mode.*partial' || true)"
+t66ac4_lcpartial_pattern='lifecycle_mode.*partial'
+t66ac4_lcpartial_control="$(printf '%s\n' 'lifecycle_mode row still says partial' | grep -c "$t66ac4_lcpartial_pattern" || true)"
 if [[ "${t66ac4_lcpartial_control:-0}" -lt 1 ]]; then
   fail "T66 AC4 -- positive control broken: a synthetic 'lifecycle_mode ... partial' line was not caught"
 else
-  t66ac4_lcpartial="$({ grep -rl 'lifecycle_mode.*partial' "$CLAUDE_MD_T66" || true; } | wc -l | tr -d ' ')"
+  t66ac4_lcpartial="$({ grep -rl "$t66ac4_lcpartial_pattern" "$CLAUDE_MD_T66" || true; } | wc -l | tr -d ' ')"
   [[ "${t66ac4_lcpartial:-0}" -eq 0 ]] \
     && pass "T66 AC4 -- lifecycle_mode row drops partial (positive control confirms the pattern works)" \
     || fail "T66 AC4 -- lifecycle_mode row still mentions partial"
@@ -1332,10 +1372,12 @@ _wave7_assert_shared_lint_fresh() {
 
 echo
 echo "T66 AC12 -- Definition-of-Done spot-check (four mechanical checks)"
-t66ac12_flag_leak="$({ grep -c 'code_audit_converged true' "${PLUGIN_DIR}/skills/"*/SKILL.md 2>/dev/null || true; } | awk -F: '{s+=$2} END{print s+0}')"
+t66ac12_flag_leak_pattern='code_audit_converged true'
+t66ac12_flag_leak="$({ grep -c "$t66ac12_flag_leak_pattern" "${PLUGIN_DIR}/skills/"*/SKILL.md 2>/dev/null || true; } | awk -F: '{s+=$2} END{print s+0}')"
 # CA-037: positive control proving the same grep -c invocation would actually report >=1 against
 # a line that legitimately contains the needle, so the "0" above is a real absence.
-t66ac12_flag_leak_control="$(printf '%s\n' 'synthetic control: code_audit_converged true' | grep -c 'code_audit_converged true' || true)"
+# G2/CA-037 residual (round 5): one shared pattern variable, not two independently-typed copies.
+t66ac12_flag_leak_control="$(printf '%s\n' 'synthetic control: code_audit_converged true' | grep -c "$t66ac12_flag_leak_pattern" || true)"
 if [[ "${t66ac12_flag_leak_control:-0}" -lt 1 ]]; then
   fail "T66 AC12 -- positive control broken: a synthetic 'code_audit_converged true' line was not counted"
 else
@@ -1351,22 +1393,30 @@ _wave7_assert_shared_lint_fresh "T66 AC12"
 [[ "$WAVE7_ALL_LINT_EXIT" -eq 0 ]] \
   && pass "T66 AC12 -- edm-lint-artifacts --all exits 0 (captured once; CA-094)" \
   || fail "T66 AC12 -- edm-lint-artifacts --all exited $WAVE7_ALL_LINT_EXIT (captured once; output: ${WAVE7_ALL_LINT_OUT})"
-t66ac12_force_hits="$(grep -rn -- '--force\|--accept-partials' "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" 2>/dev/null \
+t66ac12_force_pattern='--force'
+t66ac12_accept_pattern='--accept-partials'
+t66ac12_force_hits="$(grep -rn -- "${t66ac12_force_pattern}\|${t66ac12_accept_pattern}" "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" 2>/dev/null \
   | grep -v tests/ | grep -v 'vocabulary-' | grep -v "refused:" || true)"
 # G20 (round-3): this repo-wide escape-hatch scan had no proof either OR'd needle could ever
 # match -- routed through assert_tree_absent per needle (G2/CA-037 + G13/CA-145, round 4). The
 # control is a genuinely seeded scratch file rather than a hand-typed literal, and each of the
 # three scanned directories is asserted to exist before the needle check runs (a broken
 # PLUGIN_DIR previously read identically to a genuinely clean tree).
+# G2/CA-037 residual (round 5): the producing grep's OR'd pattern is now built from the same two
+# variables ($t66ac12_force_pattern/$t66ac12_accept_pattern) passed to assert_tree_absent below,
+# instead of a third, independently-typed copy of each literal -- a typo in either pattern now
+# breaks the real scan and the check identically. Each control is additionally routed through the
+# same three-stage filter chain the real scan applies, so a filter widened to swallow real hits
+# swallows the synthetic one too.
 t66ac12_force_control="${TMP}/edm-t66-force-control.txt"
-printf -- '--force\n' > "$t66ac12_force_control"
+printf -- '--force\n' | grep -v tests/ | grep -v 'vocabulary-' | grep -v "refused:" > "$t66ac12_force_control"
 assert_tree_absent "T66 AC12 -- no --force escape hatch outside tests/vocabulary/refusal text" \
-  "--force" "$t66ac12_force_hits" "$(cat "$t66ac12_force_control")" \
+  "$t66ac12_force_pattern" "$t66ac12_force_hits" "$(cat "$t66ac12_force_control")" \
   "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
 t66ac12_accept_control="${TMP}/edm-t66-accept-control.txt"
-printf -- '--accept-partials\n' > "$t66ac12_accept_control"
+printf -- '--accept-partials\n' | grep -v tests/ | grep -v 'vocabulary-' | grep -v "refused:" > "$t66ac12_accept_control"
 assert_tree_absent "T66 AC12 -- no --accept-partials escape hatch outside tests/vocabulary/refusal text" \
-  "--accept-partials" "$t66ac12_force_hits" "$(cat "$t66ac12_accept_control")" \
+  "$t66ac12_accept_pattern" "$t66ac12_force_hits" "$(cat "$t66ac12_accept_control")" \
   "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
 rm -f "$t66ac12_force_control" "$t66ac12_accept_control"
 # EDMV3-T66 end
@@ -1716,20 +1766,24 @@ check_absent "T30 AC9 -- does not redefine ignored_line_set locally" "ignored_li
 
 echo
 echo "T30 AC10 -- override-flag grep (repo-wide, documented carve-outs) is clean"
-t30_override_hits="$(grep -rn -- '--force\|--accept-partials' "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" 2>/dev/null \
+t30_force_pattern='--force'
+t30_accept_pattern='--accept-partials'
+t30_override_hits="$(grep -rn -- "${t30_force_pattern}\|${t30_accept_pattern}" "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" 2>/dev/null \
   | grep -v "${PLUGIN_DIR}/bin/tests/" | grep -v vocabulary- | grep -v 'refused:' || true)"
 # G20 (round-3): same repo-wide escape-hatch scan as T66 AC12 above -- routed through
 # assert_tree_absent per needle (G2/CA-037 + G13/CA-145, round 4): genuinely seeded scratch
 # controls, and the three scanned directories are asserted to exist before the needle check runs.
+# G2/CA-037 residual (round 5): see T66 AC12's comment above -- same one-variable-per-pattern
+# fix, and each control now passes through the same filter chain the real scan applies.
 t30_force_control="${TMP}/edm-t30-force-control.txt"
-printf -- '--force\n' > "$t30_force_control"
+printf -- '--force\n' | grep -v "${PLUGIN_DIR}/bin/tests/" | grep -v vocabulary- | grep -v 'refused:' > "$t30_force_control"
 assert_tree_absent "T30 AC10 -- no stray --force outside bin/tests/ and the vocabulary checker's own files" \
-  "--force" "$t30_override_hits" "$(cat "$t30_force_control")" \
+  "$t30_force_pattern" "$t30_override_hits" "$(cat "$t30_force_control")" \
   "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
 t30_accept_control="${TMP}/edm-t30-accept-control.txt"
-printf -- '--accept-partials\n' > "$t30_accept_control"
+printf -- '--accept-partials\n' | grep -v "${PLUGIN_DIR}/bin/tests/" | grep -v vocabulary- | grep -v 'refused:' > "$t30_accept_control"
 assert_tree_absent "T30 AC10 -- no stray --accept-partials outside bin/tests/ and the vocabulary checker's own files" \
-  "--accept-partials" "$t30_override_hits" "$(cat "$t30_accept_control")" \
+  "$t30_accept_pattern" "$t30_override_hits" "$(cat "$t30_accept_control")" \
   "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
 rm -f "$t30_force_control" "$t30_accept_control"
 
@@ -2487,25 +2541,30 @@ check "T33 AC3 -- AskUserQuestion PASS/FAIL options state there is no third opti
 
 echo
 echo "T33 AC4 -- no third verdict (BLOCKED/WAIVED/N/A-runtime) anywhere in scope"
-t33_third_verdict_hits="$(grep -rn 'BLOCKED\|WAIVED\|N/A-runtime' \
+t33_blocked_pattern='BLOCKED'
+t33_waived_pattern='WAIVED'
+t33_naruntime_pattern='N/A-runtime'
+t33_third_verdict_hits="$(grep -rn "${t33_blocked_pattern}\|${t33_waived_pattern}\|${t33_naruntime_pattern}" \
   "${PLUGIN_DIR}/bin/edm-state" "$VERIFY_RUNTIME_SKILL" "${PLUGIN_DIR}/agents/edm-qc-auditor.md" 2>/dev/null || true)"
 # G20 (round-3): three-needle OR'd scan for a never-implemented third verdict -- each needle
 # routed through assert_tree_absent (G2/CA-037 + G13/CA-145, round 4): genuinely seeded scratch
 # controls, and the three scanned files are asserted to exist before each needle check runs.
+# G2/CA-037 residual (round 5): the OR'd producing pattern above is built from the same three
+# variables passed to assert_tree_absent below, closing the divergent-typo class.
 t33_blocked_control="${TMP}/edm-t33-blocked-control.txt"
 printf 'BLOCKED\n' > "$t33_blocked_control"
 assert_tree_absent "T33 AC4 -- no BLOCKED token in edm-state, verify-runtime, or qc-auditor" \
-  "BLOCKED" "$t33_third_verdict_hits" "$(cat "$t33_blocked_control")" \
+  "$t33_blocked_pattern" "$t33_third_verdict_hits" "$(cat "$t33_blocked_control")" \
   "${PLUGIN_DIR}/bin/edm-state" "$VERIFY_RUNTIME_SKILL" "${PLUGIN_DIR}/agents/edm-qc-auditor.md"
 t33_waived_control="${TMP}/edm-t33-waived-control.txt"
 printf 'WAIVED\n' > "$t33_waived_control"
 assert_tree_absent "T33 AC4 -- no WAIVED token in edm-state, verify-runtime, or qc-auditor" \
-  "WAIVED" "$t33_third_verdict_hits" "$(cat "$t33_waived_control")" \
+  "$t33_waived_pattern" "$t33_third_verdict_hits" "$(cat "$t33_waived_control")" \
   "${PLUGIN_DIR}/bin/edm-state" "$VERIFY_RUNTIME_SKILL" "${PLUGIN_DIR}/agents/edm-qc-auditor.md"
 t33_naruntime_control="${TMP}/edm-t33-naruntime-control.txt"
 printf 'N/A-runtime\n' > "$t33_naruntime_control"
 assert_tree_absent "T33 AC4 -- no N/A-runtime token in edm-state, verify-runtime, or qc-auditor" \
-  "N/A-runtime" "$t33_third_verdict_hits" "$(cat "$t33_naruntime_control")" \
+  "$t33_naruntime_pattern" "$t33_third_verdict_hits" "$(cat "$t33_naruntime_control")" \
   "${PLUGIN_DIR}/bin/edm-state" "$VERIFY_RUNTIME_SKILL" "${PLUGIN_DIR}/agents/edm-qc-auditor.md"
 rm -f "$t33_blocked_control" "$t33_waived_control" "$t33_naruntime_control"
 
@@ -2714,10 +2773,12 @@ done
 
 echo
 echo "T35 AC5 -- weak free-prose approval questions deleted"
-t35_weak_gate_hits="$(grep -rn "Ask: .Do you approve" "${PLUGIN_DIR}/skills/" 2>/dev/null || true)"
+t35_weak_gate_pattern="Ask: .Do you approve"
+t35_weak_gate_hits="$(grep -rn "$t35_weak_gate_pattern" "${PLUGIN_DIR}/skills/" 2>/dev/null || true)"
 # G20 (round-3): positive control proving the same pattern (the "." wildcard matches a literal
 # quote in the real needle) would actually catch a line containing the retired weak-prose gate.
-t35_weak_gate_control="$(printf '%s\n' 'synthetic control: Ask: "Do you approve of this plan?"' | grep -c "Ask: .Do you approve" || true)"
+# G2/CA-037 residual (round 5): one shared pattern variable, not two independently-typed copies.
+t35_weak_gate_control="$(printf '%s\n' 'synthetic control: Ask: "Do you approve of this plan?"' | grep -c "$t35_weak_gate_pattern" || true)"
 if [[ "${t35_weak_gate_control:-0}" -lt 1 ]]; then
   fail "T35 AC5 -- positive control broken: a synthetic 'Ask: \"Do you approve' line was not caught by the pattern"
 else
@@ -3947,11 +4008,13 @@ t46_ac10_total="$(ls "${PLUGIN_DIR}"/agents/*.md | wc -l | tr -d ' ')"
 
 echo
 echo "T46 AC12 -- N/A behaviour cross-referenced, not restated, in agents/"
-t46_ac12_agents_files="$(grep -rl 'recomputed each run' "${PLUGIN_DIR}/agents/" 2>/dev/null || true)"
+t46_ac12_pattern='recomputed each run'
+t46_ac12_agents_files="$(grep -rl "$t46_ac12_pattern" "${PLUGIN_DIR}/agents/" 2>/dev/null || true)"
 # G20 (round-3): positive control -- the identical grep -l invocation against CLAUDE.md (the
 # documented single source for this phrase, asserted right below) proves the pattern still
 # matches a file that legitimately contains it, so the empty agents/ result is a real absence.
-t46_ac12_control_files="$(grep -l 'recomputed each run' "${PLUGIN_DIR}/CLAUDE.md" 2>/dev/null || true)"
+# G2/CA-037 residual (round 5): one shared pattern variable, not two independently-typed copies.
+t46_ac12_control_files="$(grep -l "$t46_ac12_pattern" "${PLUGIN_DIR}/CLAUDE.md" 2>/dev/null || true)"
 if [[ -z "$t46_ac12_control_files" ]]; then
   fail "T46 AC12 -- positive control broken: CLAUDE.md no longer contains 'recomputed each run'"
 else
@@ -4004,10 +4067,11 @@ echo "T47 AC5 -- one location after the move: orchestrator carries no copy"
 # spawns edm-explorer, EDMV3-T47's own move target) proves the identical needle is not itself
 # broken -- an uncontrolled zero here would pass identically whether the mention was truly absent
 # or the needle had been typo'd.
+t47_orch_explorer_pattern='edm-explorer'
 t47_orch_explorer_ec=0
-t47_orch_explorer_hits="$(count_matches_strict 'edm-explorer' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")" || t47_orch_explorer_ec=$?
+t47_orch_explorer_hits="$(count_matches_strict "$t47_orch_explorer_pattern" "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")" || t47_orch_explorer_ec=$?
 t47_orch_explorer_control_ec=0
-t47_orch_explorer_control="$(count_matches_strict 'edm-explorer' "${PLUGIN_DIR}/skills/plan/SKILL.md")" || t47_orch_explorer_control_ec=$?
+t47_orch_explorer_control="$(count_matches_strict "$t47_orch_explorer_pattern" "${PLUGIN_DIR}/skills/plan/SKILL.md")" || t47_orch_explorer_control_ec=$?
 if [[ $t47_orch_explorer_control_ec -ne 0 || "${t47_orch_explorer_control:-0}" -lt 1 ]]; then
   fail "T47 AC5 -- positive control broken: skills/plan/SKILL.md no longer mentions edm-explorer (ec=${t47_orch_explorer_control_ec}, count=${t47_orch_explorer_control:-0})"
 elif [[ $t47_orch_explorer_ec -ne 0 ]]; then
@@ -4092,26 +4156,32 @@ check "T49 AC5 -- '#### Do-NOT-adopt guards' heading present" "#### Do-NOT-adopt
 
 echo
 echo "T49 AC6 -- self-verification phrase family absent outside skills/verify-runtime/"
-t49_selfverify_hits="$(grep -rni 'double-check\|verify your own\|check your work\|re-verify your' "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" 2>/dev/null | grep -v 'skills/verify-runtime/' || true)"
+t49_dc_pattern='double-check'
+t49_vyo_pattern='verify your own'
+t49_cyw_pattern='check your work'
+t49_rvy_pattern='re-verify your'
+t49_selfverify_hits="$(grep -rni "${t49_dc_pattern}\|${t49_vyo_pattern}\|${t49_cyw_pattern}\|${t49_rvy_pattern}" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" 2>/dev/null | grep -v 'skills/verify-runtime/' || true)"
 # G20 (round-3): four-needle OR'd repo-wide scan -- each phrasing routed through
 # assert_tree_absent (G2/CA-037 + G13/CA-145, round 4): genuinely seeded scratch controls, and
 # the two scanned directories are asserted to exist before each needle check runs.
+# G2/CA-037 residual (round 5): the OR'd producing pattern above is built from the same four
+# variables passed to assert_tree_absent below, closing the divergent-typo class.
 t49_dc_control="${TMP}/edm-t49-doublecheck-control.txt"
 printf 'double-check your own work\n' > "$t49_dc_control"
 assert_tree_absent "T49 AC6 -- no 'double-check' self-verification hit outside skills/verify-runtime/" \
-  "double-check" "$t49_selfverify_hits" "$(cat "$t49_dc_control")" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
+  "$t49_dc_pattern" "$t49_selfverify_hits" "$(cat "$t49_dc_control")" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
 t49_vyo_control="${TMP}/edm-t49-verifyown-control.txt"
 printf 'verify your own output\n' > "$t49_vyo_control"
 assert_tree_absent "T49 AC6 -- no 'verify your own' self-verification hit outside skills/verify-runtime/" \
-  "verify your own" "$t49_selfverify_hits" "$(cat "$t49_vyo_control")" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
+  "$t49_vyo_pattern" "$t49_selfverify_hits" "$(cat "$t49_vyo_control")" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
 t49_cyw_control="${TMP}/edm-t49-checkwork-control.txt"
 printf 'check your work before submitting\n' > "$t49_cyw_control"
 assert_tree_absent "T49 AC6 -- no 'check your work' self-verification hit outside skills/verify-runtime/" \
-  "check your work" "$t49_selfverify_hits" "$(cat "$t49_cyw_control")" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
+  "$t49_cyw_pattern" "$t49_selfverify_hits" "$(cat "$t49_cyw_control")" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
 t49_rvy_control="${TMP}/edm-t49-reverify-control.txt"
 printf 're-verify your findings\n' > "$t49_rvy_control"
 assert_tree_absent "T49 AC6 -- no 're-verify your' self-verification hit outside skills/verify-runtime/" \
-  "re-verify your" "$t49_selfverify_hits" "$(cat "$t49_rvy_control")" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
+  "$t49_rvy_pattern" "$t49_selfverify_hits" "$(cat "$t49_rvy_control")" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
 rm -f "$t49_dc_control" "$t49_vyo_control" "$t49_cyw_control" "$t49_rvy_control"
 
 echo

@@ -210,6 +210,9 @@ count_matches_strict() {
 # containing <needle> by construction, making the control arm provably dead code. Do NOT add a
 # new tautological-control call site; use assert_tree_absent below instead, which forces the
 # control to come from something a real scan is capable of producing.
+# G2/CA-037 (round 5): this helper's last production caller (wave7-smoke.sh's T09 AC13) has been
+# converted to assert_tree_absent. It now has zero production callers; the only remaining callers
+# are this file's own self-tests in harness-smoke.sh, which exercise it deliberately.
 assert_absent_with_control() {
   local label="$1" needle="$2" actual="$3" control_label="$4" control_haystack="$5"
   if [[ "$control_haystack" != *"$needle"* ]]; then
@@ -225,21 +228,28 @@ assert_absent_with_control() {
 # G2/CA-037 + G13/CA-145 combined fix for assert_absent_with_control's tautological-control
 # class (16 call sites across wave5/6/7-smoke.sh, round 4). Two independent defects, closed in
 # one call:
-#   1. (CA-037) <control-haystack> is no longer permitted to be a hand-authored literal that
-#      contains <grep-pattern> by construction -- every caller must pass either a genuinely
-#      seeded scratch file's content or a real in-tree occurrence, so a broken match mechanism
-#      (a typo'd pattern, a mis-anchored regex) actually fails the control instead of trivially
-#      passing it.
-#   2. (CA-037's other half) <path...> are the real directories/files the caller's own scan
-#      (which produced <actual-haystack>) was scoped to; each is asserted to exist BEFORE the
-#      needle check runs, so a wrong PLUGIN_DIR or a mistyped directory fails this assertion
-#      directly instead of reading identically to a genuinely clean, correctly-scoped tree --
-#      CA-037's original failure mode, still live at every one of these 16 sites before this fix
-#      because their scans discarded stderr (`2>/dev/null`) and swallowed grep's own exit code.
-#   3. (CA-145) both haystacks are then routed through count_matches_strict (via stdin, so
+#   1. (CA-037's path-existence half) <path...> are the real directories/files the caller's own
+#      scan (which produced <actual-haystack>) was scoped to; each is asserted to exist BEFORE
+#      the needle check runs, so a wrong PLUGIN_DIR or a mistyped directory fails this assertion
+#      directly instead of reading identically to a genuinely clean, correctly-scoped tree.
+#   2. (CA-145) both haystacks are then routed through count_matches_strict (via stdin, so
 #      <actual-haystack> may still be the output of a caller-composed multi-step filter
 #      pipeline) and its own exit status is asserted alongside its printed value -- a malformed
 #      pattern (grep exit 2) is now a NAMED failure instead of a silently-passing zero.
+#
+# G2/CA-037 residual (round 5): the helper's own two protections above are real, but the CALLER
+# is still responsible for a third property this function cannot enforce by itself -- that
+# <grep-pattern> is the SAME literal the caller used to build <actual-haystack>'s own grep
+# command. Every caller MUST assign the pattern to one shell variable and reference that same
+# variable both when constructing <actual-haystack> and when passing <grep-pattern> here; do NOT
+# type the pattern out a second time. If those two occurrences are allowed to diverge (typed
+# independently), a typo in the haystack-producing grep is invisible: the control (built from an
+# independently-authored, correct literal) still passes, and the mismatched real haystack simply
+# reads as "nothing found" -- a false clean. Where the caller's own scan additionally applies a
+# filter chain (e.g. `| grep -v tests/`), the control-producing content should be run through
+# that identical chain (inject a synthetic hit into a scratch copy of real content and re-derive
+# it with the caller's own pipeline) rather than checked as a bare literal, so a filter that
+# widens to swallow real hits also swallows the synthetic one and the control itself fails.
 assert_tree_absent() {
   local label="$1" pattern="$2" actual="$3" control="$4"
   shift 4
