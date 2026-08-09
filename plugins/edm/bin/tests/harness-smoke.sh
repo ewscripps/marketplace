@@ -401,6 +401,22 @@ check "CA-146 branch 6b -- a missing preferred suite is named in the refusal" \
   && pass "CA-146 branch 6b -- aggregator's own exit code is non-zero when a preferred suite is missing" \
   || fail "CA-146 branch 6b -- aggregator exited 0 despite a missing preferred suite"
 
+# Branch 7 (G14/CA-146): the minimum-suite-count floor itself actually firing. Branches 1-5 above
+# all pass EDM_RUN_ALL_MIN_SUITE_COUNT=1, a floor any non-empty stub set satisfies, and branch 6
+# uses the real default floor (7) against exactly seven discovered stub suites -- so nothing above
+# ever drives the floor's own refusal branch (`only N suite(s) discovered, expected at least M`).
+# One stub suite against a floor of 2 does, with EDM_RUN_ALL_PREFERRED_ORDER="" so the
+# missing-preferred-suite check (which would otherwise fire first) is out of the way.
+CA146_7="$(mktemp -d "${CA146_SCRATCH}/case7.XXXXXX")"
+_ca146_stub "$CA146_7" "onlysuite-smoke.sh" 'echo "Results: 1 passed, 0 failed"' 'exit 0'
+CA146_7_ec=0
+CA146_7_out="$(EDM_RUN_ALL_SUITE_DIR="$CA146_7" EDM_RUN_ALL_PREFERRED_ORDER="" EDM_RUN_ALL_MIN_SUITE_COUNT=2 bash "$RUN_ALL" 2>&1)" || CA146_7_ec=$?
+check "CA-146 branch 7 (G14) -- the minimum-suite-count floor refuses when discovery falls short" \
+  "only 1 suite(s) discovered, expected at least 2" "$CA146_7_out"
+[[ $CA146_7_ec -ne 0 ]] \
+  && pass "CA-146 branch 7 (G14) -- aggregator's own exit code is non-zero when the floor refuses" \
+  || fail "CA-146 branch 7 (G14) -- aggregator exited 0 despite the suite-count floor refusing"
+
 rm -rf "$CA146_SCRATCH"
 trap - EXIT INT TERM
 

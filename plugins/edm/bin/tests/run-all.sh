@@ -192,8 +192,11 @@ if [[ -z "${EDM_RUN_ALL_SUITE_DIR:-}" ]]; then
   # EDMV3-T39 AC7: the dispatcher-duplication tripwire runs every time too. It guards the branch
   # that was NOT taken (deduplication shipped instead), so it should always be clean -- which is
   # exactly why a silent regression here would otherwise go unnoticed.
+  # G43/CA-274: label reworded to drop "fallback" framing -- per edm-check-skill-sync's own header
+  # this is a permanent regression tripwire proving the deduplication holds, not a fallback for an
+  # untaken branch.
   _standalone_check "${SCRIPT_DIR}/../edm-check-skill-sync" \
-    "edm-check-skill-sync -- dispatcher holds no phase procedure (EDMV3-T39 AC7 fallback tripwire)"
+    "edm-check-skill-sync -- dispatcher holds no phase procedure (EDMV3-T39 AC7 regression tripwire)"
 
   # CA-096: edm-check-vocabulary -- one of the two standalone checkers a blocking CI lint job
   # (lint:vocabulary) runs directly -- was never wired into this aggregator at all. This call is
