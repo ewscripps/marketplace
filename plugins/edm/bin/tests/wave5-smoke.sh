@@ -47,20 +47,31 @@ echo
 echo "migrate-path -- invalid inputs rejected"
 "$EDM_STATE" init MIGR2 >/dev/null
 
-check "path-traversal product rejected" "must contain only" \
-  "$("$EDM_STATE" migrate-path --product "../evil" --description safe MIGR2 2>&1 || true)"
+# G50/CA-210: these are state-mutating refusals (migrate-path moves a directory and rewrites its
+# state file on success) -- check_refuses_and_leaves_state proves BOTH the refusal message AND
+# that MIGR2's state file was left byte-identical, not just that some rejection message appeared
+# somewhere in output with the exit code silently discarded via `2>&1 || true`.
+check_refuses_and_leaves_state "path-traversal product rejected" "must contain only" \
+  "$TMP/SRD/MIGR2/.edm-state.json" \
+  "$EDM_STATE" migrate-path --product "../evil" --description safe MIGR2
 
-check "space in product rejected" "must contain only" \
-  "$("$EDM_STATE" migrate-path --product "has space" --description safe MIGR2 2>&1 || true)"
+check_refuses_and_leaves_state "space in product rejected" "must contain only" \
+  "$TMP/SRD/MIGR2/.edm-state.json" \
+  "$EDM_STATE" migrate-path --product "has space" --description safe MIGR2
 
-check "path-traversal description rejected" "must contain only" \
-  "$("$EDM_STATE" migrate-path --product ok --description "a/b" MIGR2 2>&1 || true)"
+check_refuses_and_leaves_state "path-traversal description rejected" "must contain only" \
+  "$TMP/SRD/MIGR2/.edm-state.json" \
+  "$EDM_STATE" migrate-path --product ok --description "a/b" MIGR2
 
-check "empty prefix rejected" "usage:" \
-  "$("$EDM_STATE" migrate-path --product ok --description ok 2>&1 || true)"
+# No initiative is targeted successfully by either of the next two (usage error / unresolvable
+# PREFIX) -- there is no existing state file these commands could plausibly mutate on the way to
+# refusing, so check_fails alone (message + exit code) is the right assertion, not
+# check_refuses_and_leaves_state.
+check_fails "empty prefix rejected" "usage:" \
+  "$EDM_STATE" migrate-path --product ok --description ok
 
-check "path-traversal PREFIX rejected (CA-002)" "invalid PREFIX" \
-  "$("$EDM_STATE" migrate-path --product ok --description ok '../../evil' 2>&1 || true)"
+check_fails "path-traversal PREFIX rejected (CA-002)" "invalid PREFIX" \
+  "$EDM_STATE" migrate-path --product ok --description ok '../../evil'
 [[ ! -e "$TMP/evil" ]] && pass "migrate-path PREFIX traversal moved nothing outside SRD_ROOT (CA-002)" || fail "migrate-path PREFIX traversal escaped SRD_ROOT"
 
 # ---- migrate-path: duplicate target rejected ---------------------------------
@@ -69,8 +80,9 @@ echo "migrate-path -- duplicate target rejected"
 # Pre-create the destination directory to simulate a collision.
 "$EDM_STATE" init MIGR4 >/dev/null
 mkdir -p "$TMP/SRD/duptest/MIGR4__feat"
-check "duplicate target rejected" "already exists" \
-  "$("$EDM_STATE" migrate-path --product duptest --description feat MIGR4 2>&1 || true)"
+check_refuses_and_leaves_state "duplicate target rejected" "already exists" \
+  "$TMP/SRD/MIGR4/.edm-state.json" \
+  "$EDM_STATE" migrate-path --product duptest --description feat MIGR4
 
 # ---- record-test-coverage: per-epic (4th arg) --------------------------------
 echo
@@ -117,13 +129,18 @@ rp="$(jq -r '.related_prefixes[0]' "$STATE_CHILD")"
 rp_len="$(jq -r '.related_prefixes | length' "$STATE_CHILD")"
 [[ "$rp_len" == "1" ]] && pass "add-related is idempotent (no duplicate)" || fail "related_prefixes length = '$rp_len'"
 
-# Non-existent parent rejected
-check "non-existent parent rejected" "no initiative" \
-  "$("$EDM_STATE" set-parent CHILD NOPE 2>&1 || true)"
+# Non-existent parent rejected -- state-mutating (set-parent writes parent_prefix on success), so
+# check_refuses_and_leaves_state proves CHILD's state file was untouched, not just that a
+# rejection message appeared with the exit code discarded (G50/CA-210).
+check_refuses_and_leaves_state "non-existent parent rejected" "no initiative" \
+  "$STATE_CHILD" \
+  "$EDM_STATE" set-parent CHILD NOPE
 
-# Non-existent related rejected
-check "non-existent related rejected" "no initiative" \
-  "$("$EDM_STATE" add-related CHILD NOPE 2>&1 || true)"
+# Non-existent related rejected -- state-mutating (add-related appends to related_prefixes on
+# success); same reasoning as above.
+check_refuses_and_leaves_state "non-existent related rejected" "no initiative" \
+  "$STATE_CHILD" \
+  "$EDM_STATE" add-related CHILD NOPE
 
 # HANDOFF shows linkage fields
 HANDOFF="$TMP/SRD/CHILD/HANDOFF.md"
@@ -133,13 +150,17 @@ HANDOFF="$TMP/SRD/CHILD/HANDOFF.md"
 # ---- G7 path-traversal guard (PREFIX) -- CA-004 regression net for the P1 G7 fix --------------
 echo
 echo "G7 path-traversal -- PREFIX guard (init/set)"
-check "init rejects traversal PREFIX" "invalid PREFIX" \
-  "$("$EDM_STATE" init '../escaped/INJ' 2>&1 || true)"
+# No initiative exists at any of these three malformed PREFIXes -- there is no plausible existing
+# state file to prove untouched, so check_fails (message + exit code) is the right assertion
+# (G50/CA-210); the filesystem-escape check immediately below already covers the mutation risk
+# that matters for `init`.
+check_fails "init rejects traversal PREFIX" "invalid PREFIX" \
+  "$EDM_STATE" init '../escaped/INJ'
 [[ ! -e "$TMP/escaped" ]] && pass "init wrote nothing outside SRD_ROOT (G7)" || fail "G7: init traversal wrote outside SRD_ROOT"
-check "set rejects PREFIX with slash" "invalid PREFIX" \
-  "$("$EDM_STATE" set 'A/B' last_cmd x 2>&1 || true)"
-check "init rejects PREFIX with dots" "invalid PREFIX" \
-  "$("$EDM_STATE" init '..' 2>&1 || true)"
+check_fails "set rejects PREFIX with slash" "invalid PREFIX" \
+  "$EDM_STATE" set 'A/B' last_cmd x
+check_fails "init rejects PREFIX with dots" "invalid PREFIX" \
+  "$EDM_STATE" init '..'
 
 # ---- .bak mechanism ----------------------------------------------------------
 echo

@@ -217,9 +217,14 @@ EOF
   out="$(run_matrix "$tmp")" || { echo "self-test: FAIL -- run_matrix errored on the synthetic manifest" >&2; return 1; }
 
   local failures=0
+  # G28/CA-138: counts assertions actually executed, so the summary denominator reflects reality
+  # rather than a hardcoded "6/6" -- deleting any one of the six blocks below (including the
+  # CA-104 80%-boundary pair) now shrinks the printed denominator instead of silently staying at 6.
+  local assertions_run=0
 
   # Branch 1: a qualifying cheaper config wins (sonnet/high: 9/10 = 90% total, holds all
   # baseline P0/P1 -- QUALIFIES and wins over the more expensive opus/high).
+  assertions_run=$((assertions_run + 1))
   if echo "$out" | grep -qxF "DECISION synthetic-agent-a-qualifies: sonnet/high (cheapest qualifying config, tier 1)"; then
     echo "self-test PASS: qualifying cheaper config wins (synthetic-agent-a-qualifies -> sonnet/high)"
   else
@@ -230,6 +235,7 @@ EOF
   # Branch 2: sonnet/high is missing baseline finding P0-2 -- disqualified outright regardless
   # of its total-findings ratio -- and the next tier (opus/high, which holds every P0/P1 finding
   # and 100% of total) wins instead.
+  assertions_run=$((assertions_run + 1))
   if echo "$out" | grep -qxF "DECISION synthetic-agent-b-p0-missing: opus/high (cheapest qualifying config, tier 2)"; then
     echo "self-test PASS: P0-missing config rejected, next tier wins (synthetic-agent-b-p0-missing -> opus/high)"
   else
@@ -239,6 +245,7 @@ EOF
   # Branch 3: sonnet/high is missing baseline finding P1-3 (disqualified); opus/high holds every
   # P0/P1 finding but only 7/10 = 70% of total findings, below the 80% floor (disqualified too).
   # No candidate qualifies -- the agent is left unchanged at opus/max.
+  assertions_run=$((assertions_run + 1))
   if echo "$out" | grep -qxF "DECISION synthetic-agent-c-no-qualifier: opus/max (no qualifying cheaper config -- unchanged)"; then
     echo "self-test PASS: no qualifying config leaves the agent unchanged (synthetic-agent-c-no-qualifier -> opus/max)"
   else
@@ -284,12 +291,14 @@ EOF
 EOF
 
   out="$(run_matrix "$tmp")" || { echo "self-test: FAIL -- run_matrix errored on the boundary manifest" >&2; return 1; }
+  assertions_run=$((assertions_run + 1))
   if echo "$out" | grep -qxF "DECISION synthetic-agent-d-eighty-qualifies: sonnet/high (cheapest qualifying config, tier 1)"; then
     echo "self-test PASS: exactly 80 percent qualifies and matching P2 counts need not match IDs"
   else
     echo "self-test FAIL: expected the 80 percent candidate to qualify" >&2
     failures=$((failures + 1))
   fi
+  assertions_run=$((assertions_run + 1))
   if echo "$out" | grep -qxF "DECISION synthetic-agent-e-seventy-nine-disqualified: opus/max (no qualifying cheaper config -- unchanged)"; then
     echo "self-test PASS: below 80 percent is disqualified"
   else
@@ -298,6 +307,7 @@ EOF
   fi
 
   out="$(bash "$0" "$tmp" 2>&1)" || { echo "self-test FAIL: script path invocation errored on a real manifest path" >&2; return 1; }
+  assertions_run=$((assertions_run + 1))
   if printf '%s\n' "$out" | grep -q '^DECISION '; then
     echo "self-test PASS: real-path invocation prints at least one DECISION line"
   else
@@ -307,10 +317,10 @@ EOF
 
   echo
   if [[ "$failures" -eq 0 ]]; then
-    echo "self-test: PASS (6/6 promotion-rule assertions verified)"
+    echo "self-test: PASS (${assertions_run}/${assertions_run} promotion-rule assertions verified)"
     return 0
   else
-    echo "self-test: FAIL (${failures}/6 assertion(s) failed)" >&2
+    echo "self-test: FAIL (${failures}/${assertions_run} assertion(s) failed)" >&2
     return 1
   fi
 }

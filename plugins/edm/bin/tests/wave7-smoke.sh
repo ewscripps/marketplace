@@ -607,9 +607,13 @@ ca039_dim3_invalid_corpus_case() {
   bash "$SCORE_ARTIFACTS" run-dir > out-dim3-invalid.json 2>/dev/null
   local d3
   d3="$(jq -r '.dimensions[2].score' out-dim3-invalid.json 2>/dev/null)"
-  [[ -n "$d3" && "$d3" != "null" && "$d3" -lt 100 ]] \
-    && pass "CA-039 -- dimension 3 scores below 100 against the committed all-invalid fixture corpus (got ${d3})" \
-    || fail "CA-039 -- dimension 3 scored ${d3} against the all-invalid corpus, expected < 100"
+  # G51/CA-211: the exact expected value is computable, not merely bounded. Every fixture in
+  # invalid/ carries exactly one ```mermaid``` block with exactly one designed violation (zero
+  # good blocks out of N total), so score_from_ratio(0, N) = 0 exactly -- a scorer that returned
+  # 99 would incorrectly pass a "< 100" bound but must fail this exact-value assertion.
+  [[ -n "$d3" && "$d3" != "null" && "$d3" -eq 0 ]] \
+    && pass "CA-039 -- dimension 3 scores exactly 0 against the committed all-invalid fixture corpus (got ${d3})" \
+    || fail "CA-039 -- dimension 3 scored ${d3} against the all-invalid corpus, expected exactly 0"
 }
 with_scratch_repo ca039_dim3_invalid_corpus_case
 
@@ -2282,6 +2286,16 @@ bash "$LINT_BIN" --path "${MERMAID_VALID_DIR}/v12-indented-fence.md" >/dev/null 
   && pass "T44 AC2 (CA-038) -- the em dash inside v12's indented fence is class-2 suppressed (fixture stays CLEAN)" \
   || fail "T44 AC2 (CA-038) -- v12-indented-fence.md is no longer CLEAN after adding an em dash inside its indented fence"
 
+# G27/CA-101: prove a legal paren/curly label carrying an entity INSIDE plus a real
+# statement-terminating ";" OUTSIDE the label passes -- no prior valid/ fixture exercised this
+# combination for the (...) and {...} label shapes (only [...] and quoted labels were covered).
+[[ -f "${MERMAID_VALID_DIR}/v13-paren-curly-labels.md" ]] \
+  && pass "T44 AC2 (G27) -- a paren/curly-label-with-terminator fixture is present" \
+  || fail "T44 AC2 (G27) -- v13-paren-curly-labels.md is missing"
+t44_v13_content="$(cat "${MERMAID_VALID_DIR}/v13-paren-curly-labels.md" 2>/dev/null || true)"
+check "T44 AC2 (G27) -- v13 carries a (...)-shaped label" "(Wait" "$t44_v13_content"
+check "T44 AC2 (G27) -- v13 carries a {...}-shaped label" "{Retry" "$t44_v13_content"
+
 echo
 echo "T44 AC3 -- invalid/ coverage: one file per required case, each with an expected-line marker"
 for _t44_case in i01-bracket-label i02-quoted-label i03-edge-pipe-label i04-curly-label i05-sequence-message i06-indented-mermaid-label; do
@@ -2301,10 +2315,19 @@ check_absent "T44 AC4 -- the indented-fence fixture does not leak a mermaid-semi
 t44_ac4_case() {
   local bad=0 f expected actual
   for f in "${MERMAID_INVALID_DIR}"/*.md; do
-    expected="$(sed -n '1p' "$f" | grep -oE 'expected-line: [0-9]+' | grep -oE '[0-9]+')"
+    # G51/CA-211: both extractions now share one set +e/set -e bracket -- previously only the
+    # `actual=` extraction two lines below was guarded, so a 7th invalid fixture added later
+    # without an `expected-line:` marker would crash the whole suite here under `set -e` instead
+    # of failing just this one assertion.
     set +e
+    expected="$(sed -n '1p' "$f" | grep -oE 'expected-line: [0-9]+' | grep -oE '[0-9]+')"
     actual="$(bash "$LINT_BIN" --path "$f" 2>&1 | grep -oE ':[0-9]+: mermaid-semicolon:' | grep -oE '[0-9]+' | head -1)"
     set -e
+    if [[ -z "$expected" ]]; then
+      bad=1
+      echo "  MISSING expected-line marker in $(basename "$f")"
+      continue
+    fi
     if [[ "$actual" != "$expected" ]]; then
       bad=1
       echo "  MISMATCH in $(basename "$f"): expected line ${expected}, got ${actual:-<none>}"
@@ -4084,6 +4107,35 @@ t67_ss_delta="$(printf '%s\n' "$t67_ss_out" | grep -o 'delta_ms=-\?[0-9]\+' | se
   || fail "T67 AC14 -- --session-start did not return a parseable delta_ms (output: $t67_ss_out)"
 
 echo
+echo "T67 AC14 (G31/CA-147) -- --generate-fixture + --subcommands is a real, exit-0 measurement run"
+# The block above proves --session-start reports SOME integer, but delta_ms is a signed
+# difference that is routinely negative or zero (noise-level, per CHANGELOG.md's own recorded
+# "-2ms" figure) -- it never proves a genuinely positive measurement came back. A stub timing.sh
+# that only prints its own usage/help text would still pass every assertion above it (the seven
+# mode-name-in-usage checks) and could even be made to print a fake "delta_ms=0" line. This block
+# closes that gap: it drives --generate-fixture for a real (if minimal) 1-initiative fixture, then
+# runs --subcommands against it for real and asserts a parseable POSITIVE p95_ms figure comes
+# back -- which also incidentally exercises (and would catch a regression in) the perl-less
+# whole-second-resolution timing fallback on a host without perl.
+t67_gen_out="$(bash "$TIMING_SH" --generate-fixture --initiatives 1 2>&1)"
+t67_fixture_dir="$(printf '%s\n' "$t67_gen_out" | grep -oE 'FIXTURE_DIR=.*' | cut -d= -f2-)"
+[[ -n "$t67_fixture_dir" && -d "$t67_fixture_dir" ]] \
+  && pass "T67 AC14 (G31) -- --generate-fixture produces a usable 1-initiative fixture directory" \
+  || fail "T67 AC14 (G31) -- --generate-fixture did not produce a usable fixture directory (output: $t67_gen_out)"
+
+t67_sub_exit=0
+t67_sub_out="$(bash "$TIMING_SH" --subcommands --dir "$t67_fixture_dir" 2>&1)" || t67_sub_exit=$?
+[[ "$t67_sub_exit" -eq 0 ]] \
+  && pass "T67 AC14 (G31) -- --subcommands exits 0 against the generated fixture" \
+  || fail "T67 AC14 (G31) -- --subcommands exited ${t67_sub_exit} (output: $t67_sub_out)"
+if [[ "$t67_sub_out" =~ p95_ms=([1-9][0-9]*) ]]; then
+  pass "T67 AC14 (G31) -- --subcommands reports a parseable positive p95_ms figure (${BASH_REMATCH[1]})"
+else
+  fail "T67 AC14 (G31) -- --subcommands produced no parseable positive p95_ms figure (output: $t67_sub_out)"
+fi
+[[ -n "$t67_fixture_dir" ]] && rm -rf "$t67_fixture_dir"
+
+echo
 echo "T67 AC2 -- get_session_tokens_since bounds its read (EDM_TOKEN_READ_LINE_CAP)"
 check "T67 AC2 -- token read is capped with tail -n, not an unbounded jq -s over the whole file" \
   "EDM_TOKEN_READ_LINE_CAP" "$(cat "$EDM_STATE")"
@@ -4132,9 +4184,37 @@ fi
 
 echo
 echo "T67 AC11 -- no blocking job's script contains a network call"
-# EDMV3-T67 AC10 split lint:shell-and-artifacts into four jobs, so the blocking set names all
-# four rather than the one they replaced.
-t67ac11_blocking_jobs="lint:bash-syntax lint:artifacts lint:grants lint:vocabulary lint:shellcheck test:smoke test:smoke-bash32 test:state-validate validate:manifest"
+# G74/CA-234: derive the blocking-job set programmatically from .gitlab-ci.yml itself, rather than
+# a hand-maintained list -- the prior hardcoded 9-job list silently drifted behind the pipeline
+# and omitted two real, current blocking jobs (lint:file-type-ban, lint:pattern-library-contract),
+# covering only 9 of the 11 actual blocking jobs. A job is "blocking" here iff it is a top-level
+# job key (excludes the `stages:` list and the `.foo: &anchor` YAML anchors, which never end a
+# line in a bare `:`) whose block contains no `allow_failure: true`. The "job body must not be
+# empty" guard a few lines below stays in place as a safeguard ON this derivation: a mis-parsed or
+# renamed job still fails loudly by name instead of silently vanishing from the set.
+t67ac11_all_job_names="$(grep -oE '^[A-Za-z][A-Za-z0-9_:-]*:$' "$GITLAB_CI_YML" | sed 's/:$//' | grep -v '^stages$')"
+t67ac11_blocking_jobs=""
+for t67_candidate in $t67ac11_all_job_names; do
+  t67_candidate_body="$(awk -v job="^${t67_candidate}:$" '
+    $0 ~ job {f=1; next}
+    f && /^[^[:space:]][^#]*:$/ {exit}
+    f {print}
+  ' "$GITLAB_CI_YML")"
+  # Comment lines trailing a job's real script (e.g. validate:manifest's own trailing comment
+  # block documents validate:plugin-cli's `allow_failure: true` right below it) get swept into
+  # this crude body extraction because they don't end in a bare ":" the way a real next-job
+  # header does -- strip comment-only lines before checking for a real `allow_failure: true` key,
+  # or a job whose only mention of the phrase is in prose describing its NEIGHBOR gets
+  # misclassified as non-blocking.
+  if ! printf '%s' "$t67_candidate_body" | grep -v '^[[:space:]]*#' | grep -q 'allow_failure: *true'; then
+    t67ac11_blocking_jobs="${t67ac11_blocking_jobs} ${t67_candidate}"
+  fi
+done
+t67ac11_blocking_jobs="${t67ac11_blocking_jobs# }"
+t67ac11_blocking_job_count="$(printf '%s\n' "$t67ac11_blocking_jobs" | wc -w | tr -d ' ')"
+[[ -n "$t67ac11_blocking_jobs" && "$t67ac11_blocking_job_count" -ge 11 ]] \
+  && pass "T67 AC11 -- derived a blocking-job set of >= 11 jobs from .gitlab-ci.yml (got ${t67ac11_blocking_job_count}: ${t67ac11_blocking_jobs})" \
+  || fail "T67 AC11 -- derived blocking-job set has only ${t67ac11_blocking_job_count} job(s), expected >= 11 (got: ${t67ac11_blocking_jobs})"
 t67ac11_net_hits=""
 t67ac11_missing_jobs=""
 for t67_job in $t67ac11_blocking_jobs; do
@@ -4158,7 +4238,7 @@ for t67_job in $t67ac11_blocking_jobs; do
   # (digest-pinned, per CLAUDE.md's "All job images are pinned by digest" note) Alpine image with
   # `apk add --no-cache bash` or similar -- that is this pipeline's accepted, reviewed baseline,
   # not the invisible-network-call class this AC targets. A literal "apk add|apt-get" ban was
-  # tried and immediately flagged all nine blocking jobs identically, which is a false-positive
+  # tried and immediately flagged every blocking job identically, which is a false-positive
   # regression, not real signal -- it would make this assertion permanently red or force someone
   # to blanket-suppress it, either of which defeats the AC. "npm install" alone has zero matches
   # in the current blocking set (both existing `npm install -g @anthropic-ai/claude-code` calls
@@ -4271,7 +4351,15 @@ check "T48 -- self-test proves a P0-missing config is rejected and the next tier
   "self-test PASS: P0-missing config rejected, next tier wins" "$t48_matrix_out"
 check "T48 -- self-test proves an agent with no qualifying config is left unchanged" \
   "self-test PASS: no qualifying config leaves the agent unchanged" "$t48_matrix_out"
-check "T48 -- self-test summary reports 6/6" "self-test: PASS (6/6" "$t48_matrix_out"
+# G28/CA-138: extract the actual denominator from the summary line and assert it's >= 6, rather
+# than matching the literal string "6/6" -- a hardcoded literal match here would still pass even
+# if a self-test block (including the CA-104 80%-boundary pair) were silently deleted from
+# tiering-matrix.sh, since --self-test's own prior "6/6" text was equally hardcoded and never
+# reflected how many assertions actually ran (this is the exact bug G28 fixed on the other side).
+t48_matrix_denom="$(printf '%s' "$t48_matrix_out" | grep -oE 'self-test: PASS \([0-9]+/[0-9]+' | grep -oE '[0-9]+/[0-9]+' | cut -d/ -f2)"
+[[ -n "$t48_matrix_denom" && "$t48_matrix_denom" -ge 6 ]] \
+  && pass "T48 -- self-test summary reports a real denominator >= 6 (got ${t48_matrix_denom})" \
+  || fail "T48 -- self-test summary denominator missing or below 6 (got '${t48_matrix_denom:-<none>}')"
 
 echo
 echo "T48 -- CLAUDE.md provenance header present and honestly states not-yet-derived"
@@ -4905,17 +4993,24 @@ check_absent "CA-160 -- HUMAN_HOURLY_RATE_USD is no longer spliced into the jq p
   "human hourly rate: \$'\"\$HUMAN_HOURLY_RATE_USD\"'" "$t_ca160_metrics_body"
 check "CA-160 -- the rate reaches jq as data via --arg" \
   '--arg rate "$HUMAN_HOURLY_RATE_USD"' "$t_ca160_metrics_body"
+# G55/CA-215: derive the proof path from the suite's own $TMP scratch tree (covered by the
+# suite's own cleanup trap, honors TMPDIR, and is unique per run) instead of a hardcoded /tmp
+# path -- a hardcoded path is never pre-cleaned (a stale leftover from an earlier killed run, or a
+# maliciously planted file, would produce a permanent false FAIL with no way to fix it from the
+# test code alone) and collides across two concurrent suite runs on one machine.
+ca160_proof="${TMP}/edm-ca160-proof"
+rm -f "$ca160_proof"
 set +e
 ca160_rate_ec=0
-ca160_rate_out="$(EDM_HUMAN_HOURLY_RATE_USD='150"; touch /tmp/edm-ca160-proof #' bash "$EDM_STATE" --help 2>&1)" || ca160_rate_ec=$?
+ca160_rate_out="$(EDM_HUMAN_HOURLY_RATE_USD='150"; touch '"$ca160_proof"' #' bash "$EDM_STATE" --help 2>&1)" || ca160_rate_ec=$?
 set -e
 [[ $ca160_rate_ec -ne 0 ]] \
   && pass "CA-160 -- a HUMAN_HOURLY_RATE_USD value with jq-breaking characters is refused at startup" \
   || fail "CA-160 -- expected refusal of a malformed HUMAN_HOURLY_RATE_USD, got 0: $ca160_rate_out"
 check "CA-160 -- the refusal names the bad rate value" "invalid HUMAN_HOURLY_RATE_USD" "$ca160_rate_out"
-[[ ! -e /tmp/edm-ca160-proof ]] \
+[[ ! -e "$ca160_proof" ]] \
   && pass "CA-160 -- the malformed rate never reached a shell/jq eval sink" \
-  || { fail "CA-160 -- /tmp/edm-ca160-proof exists -- the malformed rate was executed"; rm -f /tmp/edm-ca160-proof; }
+  || { fail "CA-160 -- ${ca160_proof} exists -- the malformed rate was executed"; rm -f "$ca160_proof"; }
 
 check "CA-160 -- EDM_TOKEN_READ_LINE_CAP validation is present next to the tail invocation" \
   "invalid EDM_TOKEN_READ_LINE_CAP" "$(awk '/^get_session_tokens_since\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
@@ -4940,6 +5035,32 @@ ca160b_out="$(grep '^ca160b_out=' "${TMP}/ca160b.out" | cut -d= -f2-)"
   && pass "CA-160 -- a leading-'+' EDM_TOKEN_READ_LINE_CAP is refused rather than silently inverting tail's meaning" \
   || fail "CA-160 -- expected refusal of EDM_TOKEN_READ_LINE_CAP=+500, got exit ${ca160b_ec:-0}: $ca160b_out"
 check "CA-160 -- the refusal names the bad line-cap value" "invalid EDM_TOKEN_READ_LINE_CAP" "$ca160b_out"
+
+# ---- G75/CA-235: regression coverage for CA-157's arithmetic-context injection guard on
+# phase-start's and phase-complete's phase-number argument. CA-157 added the guard; nothing
+# proved it actually works or stays working. Mirrors the CA-160 case's shape immediately above:
+# an injection payload as the untrusted argument, asserting BOTH the refusal message and that the
+# proof file was never created, using the suite's own $TMP scratch var (never a hardcoded /tmp
+# path, same reasoning as G55 above). The phase-num validation in both commands runs before any
+# state file is read or resolved, so a real initiative prefix is not required for this to prove
+# the guard fires.
+ca157_ps_proof="${TMP}/edm-ca157-ps-proof"
+rm -f "$ca157_ps_proof"
+check_fails "G75/CA-157 -- phase-start refuses an arithmetic-context injection in phase-num" \
+  "phase-num must be 1-6" \
+  "$EDM_STATE" phase-start CA157PS "a[\$(touch ${ca157_ps_proof})]"
+[[ ! -e "$ca157_ps_proof" ]] \
+  && pass "G75/CA-157 -- phase-start's injection payload was never executed" \
+  || { fail "G75/CA-157 -- ${ca157_ps_proof} exists -- phase-start's injection payload was executed"; rm -f "$ca157_ps_proof"; }
+
+ca157_pc_proof="${TMP}/edm-ca157-pc-proof"
+rm -f "$ca157_pc_proof"
+check_fails "G75/CA-157 -- phase-complete refuses an arithmetic-context injection in phase-num" \
+  "phase-num must be 1-6" \
+  "$EDM_STATE" phase-complete CA157PC "a[\$(touch ${ca157_pc_proof})]"
+[[ ! -e "$ca157_pc_proof" ]] \
+  && pass "G75/CA-157 -- phase-complete's injection payload was never executed" \
+  || { fail "G75/CA-157 -- ${ca157_pc_proof} exists -- phase-complete's injection payload was executed"; rm -f "$ca157_pc_proof"; }
 
 # ---- CA-056: the pattern-library heading match and pre-flight duplicate check are
 # fence-aware, and refuse (rather than guess) when a heading is ambiguous outside fences -------

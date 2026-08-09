@@ -208,6 +208,16 @@ lines).
 | AC13 | one eval run < 30 minutes, cost documented | `evals/README.md` already documents 30-60 minutes wall-clock and a `$15`/phase budget ceiling from a prior measured run (2026-07-27) -- the existing documented range itself brackets the 30-minute figure, so a fresh timed run is needed to confirm | **verified-locally-pending-pipeline** (a live eval run was not triggered this session -- real API spend and up to an hour of wall time) |
 | AC14 | reproducible, committed timing script | `bin/tests/timing.sh`, executable, all modes above run from it | PASS |
 
+**G36 (round-3 code-audit, CA-196) note: the figures in the table above predate a p95 rounding
+fix and are not re-derived here.** `bin/tests/timing.sh`'s `_p95` computed nearest-rank p95 as
+`int(0.95*N)` (floor) instead of `ceil(0.95*N)`, which for every sample count this file uses (3,
+5, or 10) reported a lower percentile than p95 -- discarding the slowest sample and biasing every
+number in the table above optimistic by an unmeasured amount. The formula is fixed
+(round-3 Wave 7g-2); sample counts are unchanged (see the fix's own comment in `timing.sh` for why
+raising them was not also done in that pass). Every AC1/AC2/AC3/AC5 figure above should be
+re-measured against the corrected formula before being cited as current; re-running the full
+timing suite is itself a multi-minute operation and is left as a follow-up rather than done here.
+
 **Two real, recorded misses (AC6, AC12) are not silently accepted.** Per this ticket's own
 Out of Scope clause ("optimizing anything that misses a budget... this ticket measures and
 records"), each is left for its own follow-on ticket rather than patched here under time
