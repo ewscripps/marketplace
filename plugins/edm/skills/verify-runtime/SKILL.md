@@ -18,7 +18,7 @@ allowed-tools: Read, Write, Bash(edm-state *), Bash(mkdir *), Glob, Grep, AskUse
 ## Step 0 -- Gate and Branch Preflight
 
 Before Step 1, run the preflight per `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`,
-using `<gated-command>` = `verify-runtime`.
+using `<gated-command>` = `verify-runtime` and `<phase-num>` = `6`.
 
 This skill is the mandatory Phase 6 closure step. D13 forbids leaving a PARTIAL open at archive
 time, and D15 forbids inventing a third verdict when the runtime check is hard to arrange --

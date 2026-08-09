@@ -18,7 +18,7 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 ## Step 0 -- Gate and Branch Preflight
 
 Before Step 1, run the preflight per `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`,
-using `<gated-command>` = `implement`.
+using `<gated-command>` = `implement` and `<phase-num>` = `6`.
 
 ## Operational Orchestration
 

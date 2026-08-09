@@ -20,7 +20,10 @@ mocked at system boundaries, fast to run, deterministic.
 ## Inputs
 
 - `$ARGUMENTS` -- `<PREFIX>` and your assigned scope (files + AC to cover) from the test plan.
-- `${user_config.srd_root}/{PREFIX}/test-plan.md` -- your task list (see "Writer Agent Task Assignments -> edm-test-unit").
+- `INIT_DIR` -- the initiative directory, resolved by the launching skill via
+  `edm-state resolve-dir <PREFIX>`. Use the value passed by the launcher; never reconstruct it
+  from the raw `srd_root` config value and the bare PREFIX.
+- `${INIT_DIR}/test-plan.md` -- your task list (see "Writer Agent Task Assignments -> edm-test-unit").
 - The project source and existing test files.
 
 ## Process

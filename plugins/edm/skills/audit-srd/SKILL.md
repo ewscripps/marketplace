@@ -12,8 +12,8 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 
 **Arguments**: $ARGUMENTS
 
-- **Input**: SRD at `${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}`
-- **Output**: Audit report at `${user_config.srd_root}/{PREFIX}/audit-srd.md` + remediated SRD
+- **Input**: SRD at `${INIT_DIR}/${user_config.srd_filename}`
+- **Output**: Audit report at `${INIT_DIR}/audit-srd.md` + remediated SRD
 
 **Plugin asset note**: every `docs/...` reference in this skill is relative to the EDM plugin root (`plugins/edm/` in this repository, or the installed plugin root in cache). Resolve that root before reading or grepping those files; never assume the current working directory is the plugin root.
 
@@ -22,12 +22,16 @@ Every error caught here saves 10x the effort of catching it during implementatio
 ## Step 0 -- Gate and Branch Preflight
 
 Before Step 1, run the preflight per `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`,
-using `<gated-command>` = `audit-srd`.
+using `<gated-command>` = `audit-srd` and `<phase-num>` = `3`.
 
 ## Operational Orchestration
 
 1. Parse `{PREFIX}` from `$ARGUMENTS`.
-2. `edm-state phase-start <PREFIX> 3`
+2. `edm-state phase-start <PREFIX> 3`. Resolve the initiative directory from state (handles both
+   flat and product-scoped layouts):
+   ```bash
+   INIT_DIR="$(edm-state resolve-dir <PREFIX>)"
+   ```
 3. **Version-drift check**: Read the SRD's Document Info section (or first Revision History entry) to
    extract the embedded version (e.g., `1.0.0`). Read `srd_version` from state:
    ```bash
@@ -37,7 +41,7 @@ using `<gated-command>` = `audit-srd`.
    before proceeding (`edm-state srd-version <PREFIX> <embedded-version>`). A divergence here means
    the SRD was edited out-of-band; note it in the audit report intro.
 4. Spawn 2-3 `edm-srd-auditor` agents in parallel -- one per section group (e.g., sections 1-4, 5-7, 8-11). Each agent audits its sections across all 7 categories.
-5. Compile findings from all agents into `${user_config.srd_root}/{PREFIX}/audit-srd.md` using the report format below.
+5. Compile findings from all agents into `${INIT_DIR}/audit-srd.md` using the report format below.
 6. **Remediate**: fix every P0 and P1 finding directly in the SRD. Update the Revision History (bump SRD version, e.g., 1.0.0 -> 1.1.0).
 7. Update `srd_version` in `.edm-state.json`: `edm-state srd-version <PREFIX> 1.1.0`
 8. `edm-state phase-complete <PREFIX> 3`
@@ -118,7 +122,8 @@ Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabu
 
 ```
 Agent: edm-srd-auditor (launch 2-3 in parallel)
-Prompt: "Audit the SRD at ${user_config.srd_root}/{PREFIX}/${user_config.srd_filename} for sections [N-M].
+Prompt: "Audit the SRD at ${INIT_DIR}/${user_config.srd_filename} for sections [N-M].
+         Initiative directory (INIT_DIR): ${INIT_DIR} -- use this value; do not reconstruct it.
          Also read the codebase files referenced. Check all 7 categories.
          For each finding: [CATEGORY] [SEVERITY] Section X.Y | Finding | Recommendation.
          Be exhaustive. Cross-reference every factual claim against the actual codebase."

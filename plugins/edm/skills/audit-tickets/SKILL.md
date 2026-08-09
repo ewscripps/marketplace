@@ -12,7 +12,7 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 
 **Arguments**: $ARGUMENTS
 
-- **Input**: Ticket pack at `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/`
+- **Input**: Ticket pack at `${INIT_DIR}/${user_config.ticket_pack_dirname}/`
 - **Output**: Audit report at the same directory's `audit.md` + remediated ticket pack
 
 **Plugin asset note**: every `docs/...` reference in this skill is relative to the EDM plugin root (`plugins/edm/` in this repository, or the installed plugin root in cache). Resolve that root before reading or grepping those files; never assume the current working directory is the plugin root.
@@ -20,12 +20,16 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 ## Step 0 -- Gate and Branch Preflight
 
 Before Step 1, run the preflight per `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`,
-using `<gated-command>` = `audit-tickets`.
+using `<gated-command>` = `audit-tickets` and `<phase-num>` = `5`.
 
 ## Operational Orchestration
 
 1. Parse `{PREFIX}` from `$ARGUMENTS`.
-2. `edm-state phase-start <PREFIX> 5`
+2. `edm-state phase-start <PREFIX> 5`. Resolve the initiative directory from state (handles both
+   flat and product-scoped layouts):
+   ```bash
+   INIT_DIR="$(edm-state resolve-dir <PREFIX>)"
+   ```
 3. **Version-drift check**: Read `srd_version` from state:
    ```bash
    edm-state get <PREFIX> | jq -r '.srd_version // "0.0.0"'
@@ -39,7 +43,7 @@ using `<gated-command>` = `audit-tickets`.
 4. **Two-lane mandatory spawn** -- spawn exactly 2 `edm-ticket-auditor` agents in parallel (never serial, never merged into one agent):
    - **Lane 1 (structural)** -- dimensions 1-4: coverage, sizing (using the plugin-root-relative shared legend at `docs/templates/ticket-size-legend.md`), dependencies, version alignment
    - **Lane 2 (content-quality)** -- dimensions 5-8: AC quality, diagram correctness, consistency, version alignment overlap
-5. Compile findings into `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/audit.md`. Tag each finding with its lane (`[structural]` or `[content-quality]`). De-duplicate findings that both lanes surface (deduplicated findings appear once).
+5. Compile findings into `${INIT_DIR}/${user_config.ticket_pack_dirname}/audit.md`. Tag each finding with its lane (`[structural]` or `[content-quality]`). De-duplicate findings that both lanes surface (deduplicated findings appear once).
 
 6. **Remediate** all coverage gaps, decompose XL tickets, fix dependency declarations, improve vague AC, fix consistency mismatches.
 7. `edm-state phase-complete <PREFIX> 5`
@@ -125,15 +129,17 @@ using `<gated-command>` = `audit-tickets`.
 
 ```
 Agent: edm-ticket-auditor (Lane 1 -- structural)
-Prompt: "Audit the ticket pack at ${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/.
-         Cross-reference against SRD at ${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}.
+Prompt: "Audit the ticket pack at ${INIT_DIR}/${user_config.ticket_pack_dirname}/.
+         Initiative directory (INIT_DIR): ${INIT_DIR} -- use this value; do not reconstruct it.
+         Cross-reference against SRD at ${INIT_DIR}/${user_config.srd_filename}.
          You are the STRUCTURAL lane (dimensions 1-4): coverage, sizing, dependencies, version alignment.
          For sizing checks, read the plugin-root-relative shared size legend at docs/templates/ticket-size-legend.md.
          Tag all findings: [structural]. Report every gap found."
 
 Agent: edm-ticket-auditor (Lane 2 -- content-quality)
-Prompt: "Audit the ticket pack at ${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/.
-         Cross-reference against SRD at ${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}.
+Prompt: "Audit the ticket pack at ${INIT_DIR}/${user_config.ticket_pack_dirname}/.
+         Initiative directory (INIT_DIR): ${INIT_DIR} -- use this value; do not reconstruct it.
+         Cross-reference against SRD at ${INIT_DIR}/${user_config.srd_filename}.
          You are the CONTENT-QUALITY lane (dimensions 5-8): AC quality, diagram correctness,
          consistency, version alignment.
          Tag all findings: [content-quality]. Report every gap found."

@@ -20,11 +20,11 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(edm-init *), Bash(edm-
 ## Step 0 -- Gate and Branch Preflight
 
 Before Step 1 (or any other step, on a fresh invocation or a resume), every phase skill in this
-methodology runs two read-only checks. This text is written once, here -- every other phase
-skill (`srd`, `audit-srd`, `tickets`, `audit-tickets`, `implement`, `code-audit`,
+methodology runs three read-only-or-idempotent checks. This text is written once, here -- every
+other phase skill (`srd`, `audit-srd`, `tickets`, `audit-tickets`, `implement`, `code-audit`,
 `verify-runtime`) references it by name --
 `` `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"` `` -- rather than restating it,
-substituting its own `<gated-command>` token.
+substituting its own `<gated-command>` and `<phase-num>` tokens.
 
 **This is defence in depth on the Skill-tool path, not the deterministic layer.** Prompt text
 (Tier 3, SRD Section 5.1) "cannot be bypassed by: nothing" -- the requirement that actually
@@ -43,6 +43,16 @@ itself. Step 0 is a second, defence-in-depth line alongside the `UserPromptExpan
    not proceed with the phase, and surface the `git checkout <initiative_branch>` instruction it
    printed. This is a behaviour change on the standalone-skill path (CHANGELOG.md) -- previously
    `branch-check` hard-blocked only at the orchestrator's Step 1d.
+3. **Record current step** (only once checks 1-2 pass, i.e. the phase is actually proceeding): run
+   `edm-state current-step <PREFIX> <phase-num>`, where `<phase-num>` is this skill's own bare
+   phase-number token -- `1` for this skill -- matching the `current_step` vocabulary
+   `` `skills/orchestrator/SKILL.md Sec."Resume and Compaction"` `` defines (a bare `"1"`..`"6"`,
+   never a compound legacy value). This is the only writer of `current_step` anywhere in this
+   plugin's instructions; without it the field stays permanently absent and both its consumers
+   (the `session-start` `Step:` line and HANDOFF.md's `- **Step**:` row) stay silently suppressed.
+   `implement`, `code-audit`, and `verify-runtime` all substitute `6` here -- `current_step`'s
+   vocabulary is phase-granularity only, not sub-phase, so all three Phase-6 sub-steps record the
+   same value.
 
 ## Operational Orchestration
 
@@ -181,6 +191,14 @@ Prompt: "Explore the codebase to understand [area]. Map all components,
 After writing the planning document:
 1. Summarize concisely: scope (1-2 sentences), components affected, key constraints, estimated initiative size, go/no-go recommendation.
 2. Present the gate per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` -- header `"Gate 1"`, options **Approve** / **Revise** / **No-Go**. **STOP and WAIT** for the response.
-3. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 1`. The next phase is `/edm:srd <PREFIX>` or via `/edm:orchestrator`.
+3. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 1`. Then record the
+   size estimate from the planning document's `## Complexity Estimate` section:
+   ```bash
+   edm-state set <PREFIX> estimated_size <Small|Medium|Large>
+   ```
+   This is `estimated_size`'s only producer anywhere in this plugin's instructions -- it feeds
+   `metrics-report --calibrate`'s size-bucketed medians and clears the standing `SIZE_UNKNOWN`
+   informational anomaly (`edm-state validate`) that otherwise fires forever. The next phase is
+   `/edm:srd <PREFIX>` or via `/edm:orchestrator`.
    On **Revise**: rework the planning document per the feedback and re-present the gate.
    On **No-Go**: summarize the blockers and stop.

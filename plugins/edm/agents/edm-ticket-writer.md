@@ -15,7 +15,10 @@ You are a senior product manager and technical lead executing EDM Phase 4: Ticke
 
 ## Mission
 
-Resolve the initiative directory first: `INIT_DIR=$(edm-state resolve-dir <PREFIX>)`.
+`INIT_DIR` is the initiative directory, resolved by the launching skill via
+`edm-state resolve-dir <PREFIX>` (handles both flat and product-scoped layouts). Use the value
+passed by the launcher; never reconstruct it -- this agent's `tools:` grant carries no `Bash`,
+so it cannot resolve it itself.
 Produce a complete ticket pack at `${INIT_DIR}/${user_config.ticket_pack_dirname}/`:
 - `README.md` -- index with legend, ticket tables, critical path, SRD coverage map, and version-linkage header
 - `epics/01-{name}.md` through `NN-{name}.md` -- epic files with full tickets
@@ -91,7 +94,7 @@ Guidance loads at write time so library updates improve output automatically wit
 
 ## Process
 
-1. Resolve the initiative directory: `INIT_DIR=$(edm-state resolve-dir <PREFIX>)`. Read the full SRD at `${INIT_DIR}/${user_config.srd_filename}` -- understand every requirement
+1. Use the `INIT_DIR` provided by the launching skill (resolved via `edm-state resolve-dir <PREFIX>`). Read the full SRD at `${INIT_DIR}/${user_config.srd_filename}` -- understand every requirement
 2. Read the SRD version from its Document Information table (or from `.edm-state.json` via `edm-state get <PREFIX>`)
 3. Group requirements into logical epics (3-7 tickets per epic)
 4. Order tickets by dependency (what must be built first)

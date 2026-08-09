@@ -74,7 +74,7 @@ Severity for FAIL findings -- use the canonical scale from `CLAUDE.md Sec."Sever
 
 ## Output Path
 
-Resolve the initiative directory from state: `edm-state get <PREFIX> | jq -r '...'` (handles both flat `SRD/{PREFIX}/` and product-scoped `SRD/{PRODUCT}/{PREFIX}__{DESC}/` layouts).
+Resolve the initiative directory from state: `edm-state resolve-dir <PREFIX>` (handles both flat `SRD/{PREFIX}/` and product-scoped `SRD/{PRODUCT}/{PREFIX}__{DESC}/` layouts) -- never `edm-state get <PREFIX> | jq -r '...'`, which prints raw state JSON, not a resolved path.
 
 Write your report to:
 - **Single auditor (no sharding)**: `<initiative-dir>/qc/qc-summary.md`

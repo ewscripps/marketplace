@@ -23,7 +23,7 @@ Flags:
 ## Prerequisites
 
 - Phase 6 implementation has produced working code (at minimum, the source files exist).
-- Ticket pack exists at `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/`.
+- Ticket pack exists at `${INIT_DIR}/${user_config.ticket_pack_dirname}/`.
 - State shows `current_phase >= 6` (implementation started).
 
 If Phase 6 hasn't started:
@@ -34,8 +34,12 @@ If Phase 6 hasn't started:
 ### Step 1 -- Verify prerequisites
 
 1. Parse `{PREFIX}` and optional flags from `$ARGUMENTS`.
-2. Verify initiative directory, ticket pack, and phase state (phase >= 6).
-3. If `--fill-gaps`: skip to Step 5.
+2. Resolve the initiative directory from state (handles both flat and product-scoped layouts):
+   ```bash
+   INIT_DIR="$(edm-state resolve-dir <PREFIX>)"
+   ```
+3. Verify the ticket pack and phase state (phase >= 6) at `${INIT_DIR}`.
+4. If `--fill-gaps`: skip to Step 5.
 
 ### Step 2 -- Spawn edm-test-planner
 
@@ -43,7 +47,7 @@ Spawn `edm-test-planner` with the full initiative context:
 
 ```
 PREFIX: {PREFIX}
-srd_root: ${user_config.srd_root}
+INIT_DIR: ${INIT_DIR}
 srd_filename: ${user_config.srd_filename}
 ticket_pack_dirname: ${user_config.ticket_pack_dirname}
 coverage_target_unit_pct: ${user_config.coverage_target_unit_pct}
@@ -68,6 +72,7 @@ If `test-plan.md` contains any "SCAFFOLD NEEDED" entries:
 Spawn `edm-test-scaffold` with:
 ```
 PREFIX: {PREFIX}
+INIT_DIR: ${INIT_DIR}
 ```
 
 Wait for scaffold to complete and user to confirm installs. The scaffold agent will ask the user
@@ -120,9 +125,12 @@ Do not proceed to coverage audit if the unit or integration test suite fails (P0
 Spawn `edm-test-coverage-auditor` with:
 ```
 PREFIX: {PREFIX}
+INIT_DIR: ${INIT_DIR}
 ```
 
-Wait for it to complete and `test-coverage.md` to be written.
+Wait for it to complete and `test-coverage.md` to be written. Then run
+`edm-state update-patterns <PREFIX> test-coverage` to append any novel findings from this run's
+`test-coverage.md` into the pattern library.
 
 ### Step 7 -- Record results in state
 

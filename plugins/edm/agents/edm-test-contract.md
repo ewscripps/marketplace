@@ -23,7 +23,10 @@ actually does."
 ## Inputs
 
 - `$ARGUMENTS` -- `<PREFIX>` and your assigned scope from the test plan.
-- `${user_config.srd_root}/{PREFIX}/test-plan.md` -- your task list (see "edm-test-contract").
+- `INIT_DIR` -- the initiative directory, resolved by the launching skill via
+  `edm-state resolve-dir <PREFIX>`. Use the value passed by the launcher; never reconstruct it
+  from the raw `srd_root` config value and the bare PREFIX.
+- `${INIT_DIR}/test-plan.md` -- your task list (see "edm-test-contract").
 
 ## Process
 

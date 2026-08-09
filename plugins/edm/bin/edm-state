@@ -49,7 +49,7 @@
 #   edm-state resolve-dir <PREFIX>                                    # resolve bare prefix to initiative directory (read-only)
 #   edm-state set-parent <PREFIX> <PARENT>                           # set parent_prefix (validates PARENT exists)
 #   edm-state add-related <PREFIX> <RELATED>                         # append to related_prefixes (idempotent)
-#   edm-state update-patterns <PREFIX> <srd|ticket|qc|code>          # append novel audit findings to pattern library (T121)
+#   edm-state update-patterns <PREFIX> <srd|ticket|qc|code|test-coverage>  # append novel audit findings to pattern library (T121)
 #   edm-state lint <PREFIX>                                           # run edm-lint-artifacts over initiative artifacts (T115)
 # EDM-HELP-END
 set -euo pipefail
@@ -1472,9 +1472,15 @@ cmd_get() {
 # Boolean-typed: compliance_enabled. Numeric-typed: current_phase, qc_shard_threshold.
 # Every other entry is a generic (string) key. The enumeration covers every key any
 # live skill/agent/hook/bin call site currently sets (EDMV3-15's caller-contract test,
-# bin/tests/wave7-smoke.sh, greps for drift in either direction): last_cmd/last_decision
-# (skills/orchestrator/SKILL.md), estimated_size (bin/edm-state's own SIZE_UNKNOWN
-# message), product_name (cmd_set smoke coverage), test_layer_skipped
+# bin/tests/wave7-smoke.sh, greps for drift in either direction), with two named
+# exceptions (G86, round-3 Wave 7e): `last_cmd` has NO producer anywhere in
+# skills/agents/hooks today -- only `bin/tests/*.sh` fixtures write it -- and is kept
+# settable so a future producer can be added without a second SETTABLE_KEYS change;
+# `estimated_size`'s producer is `skills/plan/SKILL.md`'s HITL Gate 1 step (added
+# round-3 Wave 7e -- previously also had no producer, only bin/edm-state's own
+# SIZE_UNKNOWN anomaly message reading it). `last_decision`'s one real producer is
+# `skills/srd/SKILL.md` (not `skills/orchestrator/SKILL.md`, a prior misattribution
+# corrected here). product_name (cmd_set smoke coverage), test_layer_skipped
 # (skills/implement/SKILL.md), jira_synced_at/jira_project_key
 # (skills/push-jira/SKILL.md), coverage_by_epic/test_frameworks_detected
 # (agents/edm-test-coverage-auditor.md, agents/edm-test-planner.md).
@@ -3948,7 +3954,7 @@ cmd_lint() {
 }
 
 # ---- Audit pattern library update (T121) -------------------------------------
-# update-patterns <PREFIX> <srd|ticket|qc|code>
+# update-patterns <PREFIX> <srd|ticket|qc|code|test-coverage>
 # Extracts ### headings from the initiative's audit report and inserts novel
 # ones into the corresponding docs/audit-patterns/*.md file, under the target
 # `##` heading the Living-Library Contract names for the audit type.
@@ -3991,7 +3997,7 @@ normalize_pattern_titles() {
 
 pattern_target_heading_for() {
   case "$1" in
-    # srd|ticket|qc|code all take the default target; no more-specific README mapping exists.
+    # srd|ticket|qc|code|test-coverage all take the default target; no more-specific README mapping exists.
     *) printf '%s\n' "$PATTERN_DEFAULT_TARGET_HEADING" ;;
   esac
 }
@@ -4130,13 +4136,13 @@ ${norm}"
 }
 
 cmd_update_patterns() {
-  [[ $# -eq 2 ]] || die "usage: edm-state update-patterns <PREFIX> <srd|ticket|qc|code>"
+  [[ $# -eq 2 ]] || die "usage: edm-state update-patterns <PREFIX> <srd|ticket|qc|code|test-coverage>"
   require_jq
   local prefix="$1" audit_type="$2"
 
   case "$audit_type" in
-    srd|ticket|qc|code) ;;
-    *) die "update-patterns: unknown audit type '$audit_type' (expected: srd|ticket|qc|code)" ;;
+    srd|ticket|qc|code|test-coverage) ;;
+    *) die "update-patterns: unknown audit type '$audit_type' (expected: srd|ticket|qc|code|test-coverage)" ;;
   esac
 
   # Resolve this script's directory so we can find plugin-relative docs/audit-patterns/.
@@ -4151,10 +4157,11 @@ cmd_update_patterns() {
 
   local pattern_file
   case "$audit_type" in
-    srd)    pattern_file="${patterns_dir}/srd-audit.md" ;;
-    ticket) pattern_file="${patterns_dir}/ticket-audit.md" ;;
-    qc)     pattern_file="${patterns_dir}/qc-audit.md" ;;
-    code)   pattern_file="${patterns_dir}/code-audit.md" ;;
+    srd)           pattern_file="${patterns_dir}/srd-audit.md" ;;
+    ticket)        pattern_file="${patterns_dir}/ticket-audit.md" ;;
+    qc)            pattern_file="${patterns_dir}/qc-audit.md" ;;
+    code)          pattern_file="${patterns_dir}/code-audit.md" ;;
+    test-coverage) pattern_file="${patterns_dir}/test-coverage-audit.md" ;;
   esac
 
   # Locate the audit report for this initiative.
@@ -4168,6 +4175,7 @@ cmd_update_patterns() {
     code)
       audit_report_path="$(ls -t "${_dir}/code-audit"/pass-*/REMEDIATION.md 2>/dev/null | head -1 || true)"
       ;;
+    test-coverage) audit_report_path="${_dir}/test-coverage.md" ;;
   esac
 
   if [[ ! -f "$pattern_file" ]]; then

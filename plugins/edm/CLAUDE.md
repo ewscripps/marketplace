@@ -105,7 +105,8 @@ SRD/                              <- project root, committed to git
         |   +-- qc-summary.md         <- merged QC verdict table (single auditor or merged shards)
         |   +-- qc-shard-{NN}.md      <- per-shard reports when ticket count > qc_shard_threshold
         +-- code-audit/               <- /edm:code-audit output
-        |   +-- findings-ledger.md    <- persistent cross-round findings ledger (stable CA-NNN IDs)
+        |   +-- findings-ledger.jsonl <- authoritative cross-round findings ledger (stable CA-NNN IDs)
+        |   +-- findings-ledger.md    <- deterministic render of findings-ledger.jsonl (`edm-state render-ledger`)
         |   +-- pass-{N}_{YYYY-MM-DD}/ <- one directory per audit round (N = monotonic counter)
         |       +-- lens-L1.md ... lens-L11.md
         |       +-- lenses-run.txt    <- lens set for this round (full vs. partial)
@@ -845,7 +846,7 @@ the version-2 checks themselves are built.
 
 **`decisions.md` vs `code-audit/findings-ledger.md`** -- distinct files with distinct scopes:
 - `decisions.md` = initiative-wide key decisions and finding-to-commit ledger (written by orchestrator at gates and Phase 6)
-- `code-audit/findings-ledger.md` = cross-round code audit findings ledger with stable CA-NNN IDs (written by `edm-audit-synthesizer`)
+- `code-audit/findings-ledger.md` = cross-round code audit findings ledger with stable CA-NNN IDs (rendered by `edm-state render-ledger` from the authoritative `code-audit/findings-ledger.jsonl`, which `edm-audit-synthesizer` writes)
 
 Operates against the project's working directory (no plugin-relative paths). All scripts must be POSIX-compatible bash (
 `#!/bin/bash` or `#!/usr/bin/env bash`).

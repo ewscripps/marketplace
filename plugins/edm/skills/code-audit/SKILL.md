@@ -28,7 +28,7 @@ track findings across passes and determine convergence.
 ## Step 0 -- Gate and Branch Preflight
 
 Before Step 1, run the preflight per `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`,
-using `<gated-command>` = `code-audit`.
+using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
 
 ## Operational Orchestration
 
@@ -70,6 +70,15 @@ using `<gated-command>` = `code-audit`.
    - Writes its raw report to `${OUTPUT_DIR}/lens-L{N}.md` and `${OUTPUT_DIR}/lens-L{N}.jsonl`
    - Receives the relevant prior-round open findings from the ledger (filtered to its lens) so it can confirm fixes or re-flag
 8. Write `${OUTPUT_DIR}/lenses-run.txt` -- one lens ID per line (e.g., `L1`, `L2`, ... for a full round, or `L1`, `L3` for a partial). Add a `Round type: full` or `Round type: partial` header line.
+8a. **Precondition -- do not proceed to step 9 until it holds**: confirm one
+    `${OUTPUT_DIR}/lens-L{N}.jsonl` file exists for every lens in `LENS_SET`. If a lens's
+    delivered agent definition lacked a `Write` tool this round (the same stale-plugin-cache
+    issue as the missing `## JSONL Line Format` section, decisions.md D22/CA-130), that lens
+    still returned its findings as text -- in that case YOU, the orchestrator running this
+    skill, must persist BOTH halves from the returned text: write the missing `lens-L{N}.md`
+    AND the missing `lens-L{N}.jsonl` yourself, using the schema in the launch template above.
+    Never persist only the `.md` half and proceed; a lens with zero corresponding JSONL is a
+    blocking gap, not a degraded-but-acceptable result.
 9. **Spawn `edm-audit-synthesizer`**. It:
    - Reads the lens reports in `${OUTPUT_DIR}/`
    - Reads the prior `findings-ledger.jsonl` (or the legacy `findings-ledger.md` if only that exists)
@@ -124,7 +133,8 @@ using `<gated-command>` = `code-audit`.
        ```markdown
        ## Post-Remediation Closure ({YYYY-MM-DD})
        All findings in this round resolved. Convergence reached {YYYY-MM-DD}.
-       The cross-round ledger at `code-audit/findings-ledger.md` is the authoritative record.
+       The cross-round ledger at `code-audit/findings-ledger.jsonl` is the authoritative record;
+       `findings-ledger.md` is its deterministic render, produced by `edm-state render-ledger`.
        The original audit snapshot is preserved below.
        ---
        ```
@@ -205,9 +215,15 @@ Scope:
 - Context: [deployment env, tool versions, constraints]
 - Related docs: ${INIT_DIR}/${user_config.srd_filename}, ${INIT_DIR}/${user_config.ticket_pack_dirname}/
 - Output: write your raw report to ${OUTPUT_DIR}/lens-L{N}.md and ${OUTPUT_DIR}/lens-L{N}.jsonl
-- JSONL schema: emit the schema documented in your own agent definition's `## JSONL Line Format`
-  section -- do not use the findings-ledger schema here (`id` is null at the lens stage; the
-  synthesizer assigns the stable `CA-NNN` ledger ID later; that is a different, larger schema)
+- JSONL schema (one JSON object per line, every finding including NOTED):
+  `{"schema":1,"id":null,"lens":"L{N}","round":N,"round_type":"full|partial","sev":"P0|P1|P2|NOTED","confidence":"high|medium|low","file":"path","line":42,"title":"...","status":"open"}`
+  -- this literal token list is restated here so the schema is never resolvable ONLY by
+  reference. It must also match, verbatim, the schema documented in your own agent
+  definition's `## JSONL Line Format` section; if your delivered definition lacks that
+  section (a stale plugin cache -- decisions.md D22/CA-130), use the schema above as the
+  authoritative fallback rather than treating its absence as license to skip the JSONL file.
+  Do not use the findings-ledger schema here (`id` is null at the lens stage; the synthesizer
+  assigns the stable `CA-NNN` ledger ID later; that is a different, larger schema).
 
 Your mandate is ONLY [lens name]. Apply the False Alarm Filter before reporting.
 Write findings + 'Noted / Not Actionable' section to your markdown file, and emit the same actionable/noted findings to your JSONL file using that schema."

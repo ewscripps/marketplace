@@ -12,20 +12,24 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(edm-init *), Glob, Gre
 
 **Arguments**: $ARGUMENTS
 
-- **Input**: Audited SRD at `${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}`
-- **Output**: Ticket pack at `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/`
+- **Input**: Audited SRD at `${INIT_DIR}/${user_config.srd_filename}`
+- **Output**: Ticket pack at `${INIT_DIR}/${user_config.ticket_pack_dirname}/`
 
 **Plugin asset note**: every `docs/...` reference in this skill is relative to the EDM plugin root (`plugins/edm/` in this repository, or the installed plugin root in cache). Resolve that root before reading or grepping those files; never assume the current working directory is the plugin root.
 
 ## Step 0 -- Gate and Branch Preflight
 
 Before Step 1, run the preflight per `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`,
-using `<gated-command>` = `tickets`.
+using `<gated-command>` = `tickets` and `<phase-num>` = `4`.
 
 ## Operational Orchestration
 
 1. Parse `{PREFIX}` from `$ARGUMENTS`.
 2. `edm-state get <PREFIX>` -- verify Gate 2 approved (UserPromptExpansion hook also enforces).
+   Resolve the initiative directory from state (handles both flat and product-scoped layouts):
+   ```bash
+   INIT_DIR="$(edm-state resolve-dir <PREFIX>)"
+   ```
 3. Read `mode` and `compliance_enabled` from state:
    ```bash
    edm-state get <PREFIX> | jq -r '{mode: (.mode // "standard"), compliance_enabled: (.compliance_enabled // false)}'
@@ -113,8 +117,9 @@ Empty traceability rows are a P0 finding in the ticket audit when `compliance_en
 
 ```
 Agent: edm-ticket-writer
-Prompt: "Create a developer ticket pack for the SRD at ${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}.
-         Output: ${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/README.md + epics/.
+Prompt: "Create a developer ticket pack for the SRD at ${INIT_DIR}/${user_config.srd_filename}.
+         Initiative directory (INIT_DIR): ${INIT_DIR} -- use this value; do not reconstruct it.
+         Output: ${INIT_DIR}/${user_config.ticket_pack_dirname}/README.md + epics/.
          Header must include 'Generated From: {srd_filename} v{srd_version}'.
          Use ticket IDs {PREFIX}-T01 through {PREFIX}-TNN.
          Every SRD requirement must map to at least one ticket.

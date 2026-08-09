@@ -18,7 +18,7 @@ This skill is **optional** -- most EDM workflows produce a ticket pack as a mark
 
 - The Atlassian MCP server is connected (`mcp__{jira_mcp_namespace}__*` tools should be available -- verify with `/mcp`).
 - The user has a Jira project to push into (project key, e.g., `MCP`, `TIPS`).
-- The ticket pack at `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/` is finalized and Phase 5 audit has passed.
+- The ticket pack at `${INIT_DIR}/${user_config.ticket_pack_dirname}/` is finalized and Phase 5 audit has passed.
 
 If any prerequisite is missing, the skill prints a clear "skipping -- Jira not available" message and exits without making changes.
 
@@ -28,6 +28,10 @@ If any prerequisite is missing, the skill prints a clear "skipping -- Jira not a
 1. Parse arguments: `{PREFIX}` (required), `{JIRA_PROJECT_KEY}` (optional -- falls back to `${user_config.jira_project_key}`), `--dry-run` (flag, default: off).
    - `--dry-run`: when present, the skill produces a plan table of what would be created/updated/linked but makes no mutating MCP calls and does not rewrite ticket-pack files or update `.edm-state.json`.
    - The Jira MCP namespace is read from `${user_config.jira_mcp_namespace}` (default: `plugin_jira_atlassian-mcp-server`). Override this config value if your MCP server is registered under a different namespace (e.g., a legacy Docker-based namespace).
+   - Resolve the initiative directory from state (handles both flat and product-scoped layouts):
+     ```bash
+     INIT_DIR="$(edm-state resolve-dir <PREFIX>)"
+     ```
 2. Verify Atlassian MCP is reachable: call `mcp__{jira_mcp_namespace}__atlassianUserInfo`. If it fails, print:
    > "Jira MCP not available (tried {jira_mcp_namespace}__atlassianUserInfo). To enable Jira sync: configure the MCP server with namespace '{jira_mcp_namespace}' (see `CLAUDE.md Sec."Optional: Jira synchronization"` for the `jira_mcp_namespace` userConfig option). Skipping."
    > and exit successfully (this is not an error -- the skill is optional). This applies even in `--dry-run` mode.
@@ -36,7 +40,7 @@ If any prerequisite is missing, the skill prints a clear "skipping -- Jira not a
 5. Resolve the issue type for tickets: call `mcp__{jira_mcp_namespace}__getJiraProjectIssueTypesMetadata` and pick `Task` (or `Story` if `Task` isn't available).
 
 ### Step 2 -- Read the ticket pack
-1. Find epic files: `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/epics/*.md`.
+1. Find epic files: `${INIT_DIR}/${user_config.ticket_pack_dirname}/epics/*.md`.
 2. For each ticket in each epic, parse:
    - **Ticket ID**: `{PREFIX}-T{NN}` from the section heading
    - **Title**: imperative verb phrase from the heading
@@ -138,7 +142,7 @@ with:
 
 Where `{jira_url}` = `https://{site}.atlassian.net/browse/{JIRA_KEY}`.
 
-Also write a summary file at `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/jira-sync.md`:
+Also write a summary file at `${INIT_DIR}/${user_config.ticket_pack_dirname}/jira-sync.md`:
 
 ```markdown
 # Jira Sync -- {PREFIX}

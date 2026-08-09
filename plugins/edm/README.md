@@ -189,7 +189,8 @@ SRD/
 |       |       |-- 01-{epic}.md
 |       |       `-- 02-{epic}.md
 |       |-- code-audit/
-|       |   |-- findings-ledger.md           <- cross-round findings ledger (stable CA-NNN IDs)
+|       |   |-- findings-ledger.jsonl        <- authoritative cross-round findings ledger (stable CA-NNN IDs)
+|       |   |-- findings-ledger.md           <- deterministic render of findings-ledger.jsonl (`edm-state render-ledger`)
 |       |   `-- pass-{N}_{YYYY-MM-DD}/
 |       |       |-- lens-L1.md ... lens-L11.md
 |       |       |-- lenses-run.txt

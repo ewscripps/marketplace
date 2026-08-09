@@ -3027,7 +3027,7 @@ README_T54_CONTENT="$(cat "$README_T54")"
 echo "T54 AC13 -- Append Schema documents the pending-review marker and curation lifecycle"
 check "T54 AC13 -- 'status: pending-review' marker documented" "status: pending-review" "$README_T54_CONTENT"
 check "T54 AC13 -- provenance field 'source' documented" "source: {source-prefix}" "$README_T54_CONTENT"
-check "T54 AC13 -- provenance field 'audit-type' documented" "audit-type: {srd|ticket|qc|code}" "$README_T54_CONTENT"
+check "T54 AC13 -- provenance field 'audit-type' documented" "audit-type: {srd|ticket|qc|code|test-coverage}" "$README_T54_CONTENT"
 check "T54 AC13 -- provenance field 'date' documented" "date: {date}" "$README_T54_CONTENT"
 check "T54 AC13 -- curation lifecycle documented (one-way, de-dup prevents re-add)" \
   "curation is one-way" "$README_T54_CONTENT"
@@ -5360,6 +5360,166 @@ check "G64 -- CLAUDE.md states linter exit 1 makes the hook exit 2 (the blocking
   "makes the hook exit **2**" "$g9_claude_md"
 check "G64 -- CLAUDE.md states linter exit 2 makes the hook exit 0 (does not block)" \
   "makes the hook exit 0" "$g9_claude_md"
+
+
+# =================================================================================
+# G13 (round-3 Wave 7e): the lens JSONL schema is restated as a literal token list
+# alongside the by-name pointer in the launch template, and a step-8a precondition
+# blocks the synthesizer spawn until every lens's .jsonl half exists.
+# =================================================================================
+echo
+echo "=== G13: code-audit SKILL.md restates the literal lens JSONL schema and gates the synthesizer spawn ==="
+g13_code_audit_skill="$(cat "${PLUGIN_DIR}/skills/code-audit/SKILL.md" 2>/dev/null)"
+check "G13 -- launch template restates the literal JSONL schema id field" '"id":null' "$g13_code_audit_skill"
+check "G13 -- launch template restates the literal JSONL schema lens field" '"lens":"L{N}"' "$g13_code_audit_skill"
+check "G13 -- launch template restates the literal JSONL schema file field" '"file":"path"' "$g13_code_audit_skill"
+check "G13 -- launch template restates the literal JSONL schema status field" '"status":"open"' "$g13_code_audit_skill"
+check "G13 -- launch template still carries the by-name pointer to the agent's own JSONL Line Format section" \
+  "JSONL Line Format" "$g13_code_audit_skill"
+check "G13 -- a precondition blocks proceeding to the synthesizer spawn (step 8a) until step 9 may run" \
+  "do not proceed to step 9 until it holds" "$g13_code_audit_skill"
+check "G13 -- the precondition requires a lens-L{N}.jsonl file for every lens in LENS_SET" \
+  "file exists for every lens in \`LENS_SET\`" "$g13_code_audit_skill"
+check "G13 -- the precondition states the orchestrator-persists-both-halves fallback" \
+  "Never persist only the \`.md\` half and proceed" "$g13_code_audit_skill"
+
+# =================================================================================
+# G14 (round-3 Wave 7e): the CA-098 legacy-flat-path break is closed at all 7 skill
+# files and 11 agent files the finding named -- each now resolves INIT_DIR via
+# edm-state resolve-dir rather than hand-building a flat ${srd_root}/{PREFIX} path.
+# =================================================================================
+echo
+echo "=== G14: the 7 named skills and 11 named agents resolve INIT_DIR instead of a hardcoded flat path ==="
+g14_skills="test-plan test-coverage test push-jira tickets audit-srd audit-tickets"
+for g14_s in $g14_skills; do
+  g14_content="$(cat "${PLUGIN_DIR}/skills/${g14_s}/SKILL.md" 2>/dev/null)"
+  check "G14 -- skills/${g14_s}/SKILL.md calls edm-state resolve-dir" "resolve-dir" "$g14_content"
+  check_absent "G14 -- skills/${g14_s}/SKILL.md no longer hardcodes the legacy flat srd_root}/{PREFIX} path" \
+    'srd_root}/{PREFIX}' "$g14_content"
+done
+
+g14_agents="edm-test-coverage-auditor edm-test-planner edm-test-unit edm-test-component edm-test-composable edm-test-contract edm-test-integration edm-test-e2e edm-test-a11y edm-test-scaffold"
+for g14_a in $g14_agents; do
+  g14_acontent="$(cat "${PLUGIN_DIR}/agents/${g14_a}.md" 2>/dev/null)"
+  check "G14 -- agents/${g14_a}.md takes INIT_DIR from its launcher" "INIT_DIR" "$g14_acontent"
+  check_absent "G14 -- agents/${g14_a}.md no longer hardcodes the legacy flat srd_root}/{PREFIX} path" \
+    'srd_root}/{PREFIX}' "$g14_acontent"
+done
+
+g14_qc_auditor="$(cat "${PLUGIN_DIR}/agents/edm-qc-auditor.md" 2>/dev/null)"
+check "G14 -- edm-qc-auditor.md now calls edm-state resolve-dir instead of edm-state get | jq" \
+  "edm-state resolve-dir <PREFIX>" "$g14_qc_auditor"
+check "G14 -- edm-qc-auditor.md's Output Path section names resolve-dir as the operative command" \
+  "Resolve the initiative directory from state: \`edm-state resolve-dir <PREFIX>\`" "$g14_qc_auditor"
+
+# Positive control: the four agent-launch-template sites named in the finding actually pass
+# INIT_DIR to the agent they spawn (tickets -> edm-ticket-writer, audit-srd -> edm-srd-auditor,
+# audit-tickets -> edm-ticket-auditor x2), proving the skill-side fix reaches the spawn site.
+check "G14 -- tickets/SKILL.md's edm-ticket-writer launch template passes INIT_DIR" \
+  "Initiative directory (INIT_DIR): \${INIT_DIR}" "$(cat "${PLUGIN_DIR}/skills/tickets/SKILL.md")"
+check "G14 -- audit-srd/SKILL.md's edm-srd-auditor launch template passes INIT_DIR" \
+  "Initiative directory (INIT_DIR): \${INIT_DIR}" "$(cat "${PLUGIN_DIR}/skills/audit-srd/SKILL.md")"
+g14_audit_tickets_content="$(cat "${PLUGIN_DIR}/skills/audit-tickets/SKILL.md")"
+[[ "$(printf '%s' "$g14_audit_tickets_content" | grep -c 'Initiative directory (INIT_DIR): ${INIT_DIR}')" -ge 2 ]] \
+  && pass "G14 -- audit-tickets/SKILL.md's two edm-ticket-auditor launch templates both pass INIT_DIR" \
+  || fail "G14 -- audit-tickets/SKILL.md does not pass INIT_DIR at both Lane 1 and Lane 2 launch templates"
+
+# =================================================================================
+# G15 (round-3 Wave 7e): current_step gains a producer -- every phase skill's Step 0
+# preflight now records it via the canonical block plan/SKILL.md defines once.
+# =================================================================================
+echo
+echo "=== G15: every phase skill's Step 0 preflight records current_step in the bare phase-number vocabulary ==="
+g15_plan="$(cat "${PLUGIN_DIR}/skills/plan/SKILL.md" 2>/dev/null)"
+check "G15 -- plan/SKILL.md's canonical Step 0 block writes current_step" \
+  "edm-state current-step <PREFIX> <phase-num>" "$g15_plan"
+check "G15 -- plan/SKILL.md substitutes phase-num=1 for itself" \
+  "\`1\` for this skill" "$g15_plan"
+
+g15_phase_num_map="srd:2 audit-srd:3 tickets:4 audit-tickets:5 implement:6 code-audit:6 verify-runtime:6"
+for g15_pair in $g15_phase_num_map; do
+  g15_skill="${g15_pair%%:*}"
+  g15_num="${g15_pair##*:}"
+  g15_content="$(cat "${PLUGIN_DIR}/skills/${g15_skill}/SKILL.md" 2>/dev/null)"
+  check "G15 -- skills/${g15_skill}/SKILL.md substitutes <phase-num> = ${g15_num} into the canonical Step 0 block" \
+    "<phase-num>\` = \`${g15_num}\`" "$g15_content"
+done
+
+# =================================================================================
+# G34 (round-3 Wave 7e): findings-ledger.jsonl (not the .md render) is named
+# authoritative everywhere the prior text called the .md authoritative.
+# =================================================================================
+echo
+echo "=== G34: findings-ledger.jsonl, not the .md render, is named authoritative in every prompt-surface site ==="
+check "G34 -- code-audit/SKILL.md's closure template names the .jsonl ledger authoritative" \
+  "code-audit/findings-ledger.jsonl\` is the authoritative record" "$g13_code_audit_skill"
+g34_claude_md="$(cat "${PLUGIN_DIR}/CLAUDE.md" 2>/dev/null)"
+check "G34 -- CLAUDE.md's decisions.md-vs-ledger note attributes authoritative status to the .jsonl, rendered by edm-state render-ledger" \
+  "rendered by \`edm-state render-ledger\` from the authoritative \`code-audit/findings-ledger.jsonl\`" "$g34_claude_md"
+check "G34 -- CLAUDE.md's artifact-layout diagram lists findings-ledger.jsonl above findings-ledger.md" \
+  "findings-ledger.jsonl <- authoritative cross-round findings ledger" "$g34_claude_md"
+g34_readme="$(cat "${PLUGIN_DIR}/README.md" 2>/dev/null)"
+check "G34 -- README.md's artifact-layout diagram lists findings-ledger.jsonl above findings-ledger.md" \
+  "findings-ledger.jsonl        <- authoritative cross-round findings ledger" "$g34_readme"
+
+# =================================================================================
+# G35 (round-3 Wave 7e): test-coverage-audit.md gains a write side -- a fifth
+# `test-coverage` audit type in cmd_update_patterns, called from its two consuming
+# skills after the coverage auditor returns.
+# =================================================================================
+echo
+echo "=== G35: cmd_update_patterns gains a test-coverage arm, wired from test-coverage/SKILL.md and test/SKILL.md ==="
+g35_edm_state="$(cat "${PLUGIN_DIR}/bin/edm-state" 2>/dev/null)"
+check "G35 -- cmd_update_patterns accepts the test-coverage audit type" \
+  "srd|ticket|qc|code|test-coverage" "$g35_edm_state"
+check "G35 -- cmd_update_patterns maps test-coverage to test-coverage-audit.md" \
+  "test-coverage) pattern_file=\"\${patterns_dir}/test-coverage-audit.md\"" "$g35_edm_state"
+check "G35 -- cmd_update_patterns maps test-coverage's audit report to test-coverage.md" \
+  'test-coverage) audit_report_path="${_dir}/test-coverage.md"' "$g35_edm_state"
+check "G35 -- test-coverage/SKILL.md calls update-patterns test-coverage after the auditor returns" \
+  "edm-state update-patterns <PREFIX> test-coverage" "$(cat "${PLUGIN_DIR}/skills/test-coverage/SKILL.md")"
+check "G35 -- test/SKILL.md calls update-patterns test-coverage after the auditor returns" \
+  "edm-state update-patterns <PREFIX> test-coverage" "$(cat "${PLUGIN_DIR}/skills/test/SKILL.md")"
+g35_readme="$(cat "${PLUGIN_DIR}/docs/audit-patterns/README.md" 2>/dev/null)"
+check "G35 -- audit-patterns README.md's Append Schema enum includes test-coverage" \
+  "srd|ticket|qc|code|test-coverage" "$g35_readme"
+check "G35 -- audit-patterns README.md's Consumers list includes edm-test-coverage-auditor" \
+  "edm-test-coverage-auditor\` loads \`test-coverage-audit.md\`" "$g35_readme"
+
+# =================================================================================
+# G69 (round-3 Wave 7e): the edm:audit-srd UserPromptExpansion hook now passes its
+# own gate token instead of the edm:srd hook's token.
+# =================================================================================
+echo
+echo "=== G69: the edm:audit-srd hook's gate-check call passes 'audit-srd', not 'srd' ==="
+g69_hooks_json="$(cat "${PLUGIN_DIR}/hooks/hooks.json" 2>/dev/null)"
+check "G69 -- hooks.json's edm:audit-srd matcher calls gate-check with the audit-srd token" \
+  'gate-check \"$prefix\" audit-srd' "$g69_hooks_json"
+
+# =================================================================================
+# G85 (round-3 Wave 7e): the SubagentStop hook that spawns edm-qc-auditor resolves
+# the initiative directory with resolve-dir, not `edm-state get | jq`.
+# =================================================================================
+echo
+echo "=== G85: the SubagentStop edm-implementer hook resolves the initiative dir via edm-state resolve-dir ==="
+check "G85 -- SubagentStop prompt step 4 uses edm-state resolve-dir" \
+  "Resolve the initiative directory from state using \`edm-state resolve-dir <PREFIX>\`" "$g69_hooks_json"
+
+# =================================================================================
+# G86 (round-3 Wave 7e): estimated_size gains a real producer (plan/SKILL.md's Gate
+# 1), and the SETTABLE_KEYS provenance comment stops misattributing last_decision
+# and stops implying last_cmd has a real producer it does not have.
+# =================================================================================
+echo
+echo "=== G86: estimated_size is produced at plan/SKILL.md's Gate 1; SETTABLE_KEYS comment corrected ==="
+check "G86 -- plan/SKILL.md's Gate 1 records estimated_size" \
+  "edm-state set <PREFIX> estimated_size <Small|Medium|Large>" "$g15_plan"
+check "G86 -- SETTABLE_KEYS comment attributes last_decision to skills/srd/SKILL.md" \
+  "\`last_decision\`'s one real producer is" "$g35_edm_state"
+check "G86 -- SETTABLE_KEYS comment states last_cmd has no producer today" \
+  "\`last_cmd\` has NO producer anywhere in" "$g35_edm_state"
+check_absent "G86 -- SETTABLE_KEYS comment no longer misattributes last_decision to orchestrator/SKILL.md" \
+  "last_cmd/last_decision" "$g35_edm_state"
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

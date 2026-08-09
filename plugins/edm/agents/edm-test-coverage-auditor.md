@@ -29,9 +29,13 @@ in the current plan.
 ## Inputs
 
 - `$ARGUMENTS` -- `<PREFIX>`.
-- `${user_config.srd_root}/{PREFIX}/test-plan.md` -- produced by `edm-test-planner` (index if multi-stack).
-- `${user_config.srd_root}/{PREFIX}/test-plan-{epic}.md` -- per-epic plans (if multi-stack).
-- `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/` -- ticket pack.
+- `INIT_DIR` -- the initiative directory, resolved by the launching skill via
+  `edm-state resolve-dir <PREFIX>` (handles both flat and product-scoped layouts). Use the value
+  passed by the launcher; never reconstruct it from the raw `srd_root` config value and the bare
+  PREFIX.
+- `${INIT_DIR}/test-plan.md` -- produced by `edm-test-planner` (index if multi-stack).
+- `${INIT_DIR}/test-plan-{epic}.md` -- per-epic plans (if multi-stack).
+- `${INIT_DIR}/${user_config.ticket_pack_dirname}/` -- ticket pack.
 - Project source and test directories.
 - (CA-168/CA-022 anchor) Before writing `test-coverage.md`, `Read` the plugin-root-relative
   `docs/audit-patterns/test-coverage-audit.md` -- resolved against the EDM plugin root
@@ -56,7 +60,7 @@ in the current plan.
 ### Step 0b -- Remove stale coverage files
 
 Before running any coverage measurement:
-1. Find all existing `test-coverage-{slug}.md` files in `${user_config.srd_root}/{PREFIX}/`.
+1. Find all existing `test-coverage-{slug}.md` files in `${INIT_DIR}/`.
 2. For each such file, check whether `{slug}` is in the current valid epic set.
 3. If not, remove the stale file (the plan has been corrected to remove or rename that epic).
 4. Do not remove `test-coverage.md` (the top-level summary file).
@@ -126,18 +130,18 @@ figures across epics.
 
 ### Step 4 -- Write coverage reports
 
-**Single-stack mode**: write `${user_config.srd_root}/{PREFIX}/test-coverage.md` using the
+**Single-stack mode**: write `${INIT_DIR}/test-coverage.md` using the
 template below -- identical to v1.x behavior.
 
 **Multi-stack mode**: write BOTH:
 
 A. **Per-epic reports** -- one file per epic at
-   `${user_config.srd_root}/{PREFIX}/test-coverage-{epic-slug}.md`:
+   `${INIT_DIR}/test-coverage-{epic-slug}.md`:
    - Scope each report to that epic's layers, AC map, and coverage figures.
    - Use the same template as below.
    - Each per-epic report is self-contained; a gap in one epic must not appear in another's.
 
-B. **Top-level summary** -- `${user_config.srd_root}/{PREFIX}/test-coverage.md`:
+B. **Top-level summary** -- `${INIT_DIR}/test-coverage.md`:
 
 ```markdown
 # Test Coverage: {PREFIX}

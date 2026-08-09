@@ -36,7 +36,7 @@ When appending a new finding (via auto-update or `edm-state update-patterns`), p
 
 status: pending-review
 source: {source-prefix}
-audit-type: {srd|ticket|qc|code}
+audit-type: {srd|ticket|qc|code|test-coverage}
 date: {date}
 
 > {One-paragraph description of the finding and how to prevent it -- delimited stub text pending
@@ -62,10 +62,11 @@ Declining to curate (or when nothing is pending) leaves the gate presentation un
 
 ## Consumers
 
-This library is loaded at write time by three agents (EDMV2-81/82/83):
+This library is loaded at write time by four agents (EDMV2-81/82/83; CA-166/G35):
 - `edm-srd-writer` loads `srd-audit.md`
 - `edm-ticket-writer` loads `ticket-audit.md`
 - `edm-implementer` loads `qc-audit.md` + `code-audit.md`
+- `edm-test-coverage-auditor` loads `test-coverage-audit.md`
 
 And appended to by each audit phase's own skill, which calls `edm-state update-patterns` directly
 (EDMV2-80a; the dispatcher does not -- phase procedure moved into the phase skills at EDMV3-T37):
@@ -73,6 +74,8 @@ And appended to by each audit phase's own skill, which calls `edm-state update-p
 - `skills/audit-tickets/SKILL.md:46` -- `edm-state update-patterns <PREFIX> ticket`
 - `skills/code-audit/SKILL.md:110` -- `edm-state update-patterns <PREFIX> code`
 - `skills/implement/SKILL.md:46` -- `edm-state update-patterns <PREFIX> qc`
+- `skills/test-coverage/SKILL.md` -- `edm-state update-patterns <PREFIX> test-coverage`
+- `skills/test/SKILL.md` -- `edm-state update-patterns <PREFIX> test-coverage`
 
 And by the planning template (EDMV2-84):
 - `skills/plan/SKILL.md`'s planning.md template, which quotes the authoring guidance from
