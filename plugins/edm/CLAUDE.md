@@ -108,6 +108,7 @@ SRD/                              <- project root, committed to git
         |   +-- findings-ledger.jsonl <- authoritative cross-round findings ledger (stable CA-NNN IDs)
         |   +-- findings-ledger.md    <- deterministic render of findings-ledger.jsonl (`edm-state render-ledger`)
         |   +-- pass-{N}_{YYYY-MM-DD}/ <- one directory per audit round (N = monotonic counter)
+        |       +-- lens-L1.jsonl ... lens-L11.jsonl  <- authoritative per-lens findings (schema in skills/code-audit/SKILL.md)
         |       +-- lens-L1.md ... lens-L11.md
         |       +-- lenses-run.txt    <- lens set for this round (full vs. partial)
         |       +-- REMEDIATION.md
@@ -958,12 +959,12 @@ four stages:
 
 | Stage | Job | Blocking? | What it does |
 |---|---|---|---|
-| `lint` | `lint:bash-syntax` | Yes | `bash -n` over every file in `bin/` (incl. `bin/tests/*.sh`) |
+| `lint` | `lint:bash-syntax` | Yes | `bash -n` over `bin/*`, `bin/tests/*.sh`, and `evals/*.sh` (excluding `*.awk` and `*.txt`); also enforces three additional CI bans -- a duplicate EDM-HELP sentinel-extractor, a hardcoded `sed` line-range `--help` extraction, and a duplicate Mermaid entity-walk literal -- see `.gitlab-ci.yml` for the exact ban list |
 | `lint` | `lint:artifacts` | Yes | `edm-lint-artifacts --all` (the 60,000 ms CI budget above, not the commit-path budget) |
 | `lint` | `lint:grants` | Yes | `edm-check-grants` -- the four-source grant/instruction contract |
 | `lint` | `lint:vocabulary` | Yes | `edm-check-vocabulary` -- the abolished-vocabulary and override-flag backstop (EDMV3-T30) |
 | `lint` | `lint:file-type-ban` | Yes (blocking since EDMV3-T57 AC10 -- carries no `allow_failure`) | Scans **git-tracked** files under `plugins/` for banned types (`.pptx`, `.docx`, `.DS_Store`) -- a developer's own untracked local artifact is never flagged. Also enforces the documented 100KB directory-size ceiling on `plugins/edm/evals/` (EDMV3-T22 AC3), so a new fixture or a bloated baseline capture cannot land silently |
-| `lint` | `lint:shellcheck` (EDMV3-T61) | Yes | `shellcheck` over every file directly in `bin/`, scoped to the unquoted-expansion class of findings (SC2086/SC2046/SC2048/SC2068) -- pre-existing style findings outside that class are out of scope |
+| `lint` | `lint:shellcheck` (EDMV3-T61) | Yes | `shellcheck` over `bin/*`, `bin/tests/*.sh`, and `evals/*.sh` (excluding `*.txt`), scoped to the unquoted-expansion class of findings (SC2086/SC2046/SC2048/SC2068) -- pre-existing style findings outside that class are out of scope |
 | `lint` | `lint:pattern-library-contract` (EDMV3-T56) | Yes | Enforces the Living-Library four-`##`-heading contract (`docs/audit-patterns/README.md Sec."Living-Library Contract"`) over every `docs/audit-patterns/*.md` except the two exempt documents (`README.md`, the contract itself; `SOURCES.md`, the provenance document): exactly four `##` headings, in the fixed order `## Top Recurring Findings`, `## Anti-Patterns`, `## Pre-Flight Checklist`, and a fourth matching `^## What .*Looks Like$`, with no `###` heading appended under the fourth section (the orphan-append case). This is the authoritative copy of the check; the smoke aggregator's twin in `test:smoke` also exercises the negative cases. It lives in `lint` rather than `test` because it is cheap and should fail fast |
 | `test` | `test:smoke` | Yes | `bash plugins/edm/bin/tests/run-all.sh` -- the single aggregator invocation; no suite is enumerated in the pipeline file, so a new `*-smoke.sh` suite runs in CI automatically (this is where `wave7-smoke.sh`'s help-completeness case, EDMV3-T61 AC2/AC13, runs) |
 | `test` | `test:smoke-bash32` (EDMV3-T61) | Yes | The same `run-all.sh` aggregator run a second time under a pinned `bash:3.2` image, proving the bash-3.2 compatibility constraint (EDMV3-91/106) end-to-end rather than only asserting it by grep |
@@ -981,7 +982,7 @@ than at the head of its stage, so the runner fleet executes all seven concurrent
 reports its own pass/fail. The three `test` jobs carry `needs: ["lint:bash-syntax"]` -- a syntax
 error means the suite cannot run meaningfully, while the artifact, grant and vocabulary checks are
 orthogonal to whether it passes and must not hold it up. The pinned image and shared rule set live
-in one `.alpine_edm` anchor so a digest refresh stays a single-line change across all seven jobs.
+in one `.alpine_edm` anchor so a digest refresh stays a single-line change across all ten consumers.
 
 All job images are pinned by digest (`@sha256:...`) rather than a floating tag, with one
 documented, explicitly authorized exception: `test:smoke-bash32`'s `bash:3.2` image (EDMV3-T61,

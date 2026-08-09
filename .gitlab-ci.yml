@@ -103,7 +103,9 @@ lint:bash-syntax:
       for f in plugins/edm/bin/* plugins/edm/bin/tests/*.sh plugins/edm/evals/*.sh; do
         [ -f "$f" ] || continue
         case "$f" in
-          *.awk) continue ;;
+          # G21/CA-233: *.txt is a data file (e.g. vocabulary-allowlist.txt,
+          # vocabulary-prohibited.txt), never bash source; excluded the same way *.awk is.
+          *.awk|*.txt) continue ;;
         esac
         COUNT=$((COUNT + 1))
         if bash -n "$f"; then
@@ -113,7 +115,10 @@ lint:bash-syntax:
           FAIL=1
         fi
       done
-      [ "$FAIL" -eq 0 ] || exit 1
+      if [ "$FAIL" -ne 0 ]; then
+        echo "lint:bash-syntax: FAILED"
+        exit 1
+      fi
       echo "=== CA-005: the EDM-HELP sentinel-extractor awk literal may exist in exactly one file ==="
       dup_hits="$(grep -rl '/\^# EDM-HELP-BEGIN/{f=1;next} /\^# EDM-HELP-END/{f=0} f' plugins/edm/bin plugins/edm/evals 2>/dev/null | grep -v '^plugins/edm/bin/_edm-cli-lib\.sh$' | grep -v '/tests/' || true)"
       if [ -n "$dup_hits" ]; then
@@ -135,7 +140,7 @@ lint:bash-syntax:
       # copy of this literal for three rounds after the shared file existed -- this grep is the
       # backstop so a fourth copy (here or anywhere else) fails the pipeline instead of drifting
       # silently.
-      entity_hits="$(grep -rlE 'j <= n && substr\(s, j, 1\) ~ /\[0-9A-Za-z\]/' plugins/edm/bin plugins/edm/evals 2>/dev/null | grep -v '^plugins/edm/bin/edm-mermaid-rules\.awk$' || true)"
+      entity_hits="$(grep -rlE 'j <= n && substr\(s, j, 1\) ~ /\[0-9A-Za-z\]/' plugins/edm/bin plugins/edm/evals 2>/dev/null | grep -v '^plugins/edm/bin/edm-mermaid-rules\.awk$' | grep -v '/tests/' || true)"
       if [ -n "$entity_hits" ]; then
         echo "lint:bash-syntax: a second copy of the Mermaid entity-walk literal was found (must load bin/edm-mermaid-rules.awk via awk -f instead):"
         printf '%s\n' "$entity_hits"
@@ -215,6 +220,11 @@ lint:shellcheck:
       COUNT=0
       for f in plugins/edm/bin/* plugins/edm/bin/tests/*.sh plugins/edm/evals/*.sh; do
         [ -f "$f" ] || continue
+        case "$f" in
+          # G21/CA-233: *.txt is a data file (e.g. vocabulary-allowlist.txt,
+          # vocabulary-prohibited.txt), never shellcheck-able bash source.
+          *.txt) continue ;;
+        esac
         COUNT=$((COUNT + 1))
         if shellcheck --shell=bash --include=SC2086,SC2046,SC2048,SC2068 "$f"; then
           echo "  OK: $f"
@@ -223,7 +233,10 @@ lint:shellcheck:
           FAIL=1
         fi
       done
-      [ "$FAIL" -eq 0 ] || exit 1
+      if [ "$FAIL" -ne 0 ]; then
+        echo "lint:shellcheck: FAILED"
+        exit 1
+      fi
       echo "lint:shellcheck: OK -- ${COUNT} file(s) clean"
 
 # EDMV3-T57 AC10: this job blocks. EDMV3-80's file-type ban binds all six marketplace
@@ -245,6 +258,7 @@ lint:file-type-ban:
       if [ -n "$banned" ]; then
         echo "file-type-ban: banned file(s) found under plugins/:"
         printf '%s\n' "$banned"
+        echo "lint:file-type-ban: FAILED"
         exit 1
       fi
       echo "file-type-ban: clean -- no .pptx/.docx/.DS_Store tracked under plugins/"
@@ -265,6 +279,7 @@ lint:file-type-ban:
         git ls-files -- plugins/edm/evals \
           | while IFS= read -r f; do [ -f "$f" ] || continue; printf '  %8s  %s\n' "$(wc -c < "$f")" "$f"; done \
           | sort -rn
+        echo "lint:file-type-ban: FAILED"
         exit 1
       fi
       echo "file-type-ban: tracked plugins/edm/evals/ size OK (${evals_kb}KB, documented budget is 100KB)"

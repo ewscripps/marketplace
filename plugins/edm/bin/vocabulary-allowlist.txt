@@ -38,10 +38,6 @@ plugins/edm/agents/edm-audit-spec.md|deferred
 # "is distinct from deferral" / "deferral does not exist" clarification sentence -- is already
 # reviewed and allowlisted at its CLAUDE.md source; allowlisting the whole generated file here
 # avoids re-litigating the same two Class 1 substrings a second time under a second path.
-# NOTE: this bare-trailing-"|" (whole-file allowlist) entry must not be the last data line in
-# this file -- bash -n treats a "word|" with no right-hand side as an incomplete pipeline only
-# when nothing follows it before EOF (T18/T41 QC finding); keep at least one "|<substring>"
-# entry (like Class 6 below) after any bare-trailing-"|" entry.
 plugins/edm/docs/canonical-sections.md|
 # Class 6: bin/edm-state's legacy-status coercion and findings-ledger handling both name the
 # literal JSON status value "deferred". This is the code that ABOLISHES that status -- the

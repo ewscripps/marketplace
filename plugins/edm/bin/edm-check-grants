@@ -121,7 +121,10 @@ fi
 command -v jq >/dev/null 2>&1 || die "jq not found on PATH (required to parse hooks.json)"
 
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/edm-check-grants.XXXXXX")" || die "cannot create scratch directory"
-trap 'rm -rf "$WORKDIR"' EXIT
+# G37/CA-268: EXIT-only left this the last EXIT-only cleanup trap in bin/+evals/ -- every sibling
+# covers at least EXIT INT TERM, so an interrupted run here was the one holdout that leaked its
+# scratch directory on Ctrl-C/SIGTERM instead of cleaning it up like every other script does.
+trap 'rm -rf "$WORKDIR"' EXIT INT TERM
 
 violations=0
 
