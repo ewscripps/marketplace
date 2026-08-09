@@ -1,7 +1,7 @@
 # Code Audit Patterns
 
 **Source:** EDM seed corpus (16 real-world initiatives).
-**Auto-updated** by orchestrator after each code-audit round (EDMV2-80a).
+**Auto-updated** by the code-audit phase's own skill (`skills/code-audit/SKILL.md`) via `edm-state update-patterns` after each round (EDMV2-80a; EDMV3-T37).
 
 ---
 

@@ -5506,8 +5506,10 @@ check "G13 -- launch template still carries the by-name pointer to the agent's o
   "JSONL Line Format" "$g13_code_audit_skill"
 check "G13 -- a precondition blocks proceeding to the synthesizer spawn (step 8a) until step 9 may run" \
   "do not proceed to step 9 until it holds" "$g13_code_audit_skill"
-check "G13 -- the precondition requires a lens-L{N}.jsonl file for every lens in LENS_SET" \
-  "file exists for every lens in \`LENS_SET\`" "$g13_code_audit_skill"
+check "G13/G4 -- the precondition Globs the pass directory for a lens-L{N}.jsonl file per lens" \
+  '`${OUTPUT_DIR}/lens-L*.jsonl` and count the matches' "$g13_code_audit_skill"
+check "G4 -- a count mismatch refuses to proceed and names the missing lenses by ID" \
+  "name, by lens ID, every member" "$g13_code_audit_skill"
 check "G13 -- the precondition states the orchestrator-persists-both-halves fallback" \
   "Never persist only the \`.md\` half and proceed" "$g13_code_audit_skill"
 
@@ -5515,6 +5517,12 @@ check "G13 -- the precondition states the orchestrator-persists-both-halves fall
 # G14 (round-3 Wave 7e): the CA-098 legacy-flat-path break is closed at all 7 skill
 # files and 11 agent files the finding named -- each now resolves INIT_DIR via
 # edm-state resolve-dir rather than hand-building a flat ${srd_root}/{PREFIX} path.
+#
+# G5 (CA-195, round-4 Wave 8d): the sweep that produced the check_absent calls below
+# keyed on one spelling only (the srd_root-prefixed literal). Twelve further sites
+# used the bare `SRD/{PREFIX}/` spelling instead and survived undetected outside this
+# needle. The needle is widened here to catch both spellings in the same files this
+# block already enumerates, so a future regression under either spelling is caught.
 # =================================================================================
 echo
 echo "=== G14: the 7 named skills and 11 named agents resolve INIT_DIR instead of a hardcoded flat path ==="
@@ -5524,6 +5532,8 @@ for g14_s in $g14_skills; do
   check "G14 -- skills/${g14_s}/SKILL.md calls edm-state resolve-dir" "resolve-dir" "$g14_content"
   check_absent "G14 -- skills/${g14_s}/SKILL.md no longer hardcodes the legacy flat srd_root}/{PREFIX} path" \
     'srd_root}/{PREFIX}' "$g14_content"
+  check_absent "G5 -- skills/${g14_s}/SKILL.md no longer hardcodes the legacy flat bare SRD/{PREFIX} path" \
+    'SRD/{PREFIX}' "$g14_content"
 done
 
 g14_agents="edm-test-coverage-auditor edm-test-planner edm-test-unit edm-test-component edm-test-composable edm-test-contract edm-test-integration edm-test-e2e edm-test-a11y edm-test-scaffold"
@@ -5532,6 +5542,8 @@ for g14_a in $g14_agents; do
   check "G14 -- agents/${g14_a}.md takes INIT_DIR from its launcher" "INIT_DIR" "$g14_acontent"
   check_absent "G14 -- agents/${g14_a}.md no longer hardcodes the legacy flat srd_root}/{PREFIX} path" \
     'srd_root}/{PREFIX}' "$g14_acontent"
+  check_absent "G5 -- agents/${g14_a}.md no longer hardcodes the legacy flat bare SRD/{PREFIX} path" \
+    'SRD/{PREFIX}' "$g14_acontent"
 done
 
 g14_qc_auditor="$(cat "${PLUGIN_DIR}/agents/edm-qc-auditor.md" 2>/dev/null)"
@@ -5539,6 +5551,19 @@ check "G14 -- edm-qc-auditor.md now calls edm-state resolve-dir instead of edm-s
   "edm-state resolve-dir <PREFIX>" "$g14_qc_auditor"
 check "G14 -- edm-qc-auditor.md's Output Path section names resolve-dir as the operative command" \
   "Resolve the initiative directory from state: \`edm-state resolve-dir <PREFIX>\`" "$g14_qc_auditor"
+# G5: edm-qc-auditor.md deliberately keeps exactly one bare SRD/{PREFIX} mention (prose
+# describing what edm-state resolve-dir handles, not a hardcoded path -- CA-297 NOTED). Assert
+# the count stays at exactly one so a second, genuine hardcoded-path regression is still caught.
+g14_qc_bare_count="$(printf '%s' "$g14_qc_auditor" | grep -c 'SRD/{PREFIX}' || true)"
+[[ "$g14_qc_bare_count" -eq 1 ]] \
+  && pass "G5 -- edm-qc-auditor.md carries exactly one deliberate bare SRD/{PREFIX} mention (no new residue)" \
+  || fail "G5 -- edm-qc-auditor.md's bare SRD/{PREFIX} count changed from the one deliberate mention (got: ${g14_qc_bare_count})"
+
+# G5: edm-audit-test-quality.md (CA-195 residual, not part of the original G14 enumeration) --
+# its "Fixing gaps found here" section pointed at a hardcoded flat test-coverage.md path.
+g14_audit_test_quality="$(cat "${PLUGIN_DIR}/agents/edm-audit-test-quality.md" 2>/dev/null)"
+check_absent "G5 -- agents/edm-audit-test-quality.md no longer hardcodes the legacy flat bare SRD/{PREFIX} path" \
+  'SRD/{PREFIX}' "$g14_audit_test_quality"
 
 # Positive control: the four agent-launch-template sites named in the finding actually pass
 # INIT_DIR to the agent they spawn (tickets -> edm-ticket-writer, audit-srd -> edm-srd-auditor,

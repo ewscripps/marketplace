@@ -91,8 +91,8 @@ Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severit
 This audit identifies problems but does not write code. To fix coverage gaps surfaced by L4:
 - Run `/edm:test {PREFIX}` to trigger the specialist test-writer agents (unit, component,
   integration, E2E, a11y) across all layers.
-- Run `/edm:test {PREFIX} --fill-gaps` after reading the `SRD/{PREFIX}/test-coverage.md` report
-  if you want to target only the specific missing pieces.
+- Run `/edm:test {PREFIX} --fill-gaps` after reading the `test-coverage.md` report in the
+  initiative directory if you want to target only the specific missing pieces.
 
 The `edm-test-coverage-auditor` (spawned by `/edm:test`) produces a more detailed AC<->test
 cross-reference than L4 alone.
