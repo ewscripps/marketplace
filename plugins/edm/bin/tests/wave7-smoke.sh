@@ -5937,10 +5937,24 @@ check "G64 -- CLAUDE.md states linter exit 2 makes the hook exit 0 (does not blo
 echo
 echo "=== G13: code-audit SKILL.md restates the literal lens JSONL schema and gates the synthesizer spawn ==="
 g13_code_audit_skill="$(cat "${PLUGIN_DIR}/skills/code-audit/SKILL.md" 2>/dev/null)"
-check "G13 -- launch template restates the literal JSONL schema id field" '"id":null' "$g13_code_audit_skill"
-check "G13 -- launch template restates the literal JSONL schema lens field" '"lens":"L{N}"' "$g13_code_audit_skill"
-check "G13 -- launch template restates the literal JSONL schema file field" '"file":"path"' "$g13_code_audit_skill"
-check "G13 -- launch template restates the literal JSONL schema status field" '"status":"open"' "$g13_code_audit_skill"
+
+# G6/CA-193 (round 5, fifth recurrence): the four schema-token checks below previously asserted
+# against the WHOLE FILE, so moving the schema line back above the fence -- the exact CA-193
+# regression -- left all four green (the tokens still appear "somewhere in the file," just not
+# inside the fenced launch template that actually ships to a lens). Extract the fence's own body
+# and assert against THAT, so a schema line that migrates outside the fence is caught.
+g13_launch_template_body="$(awk '
+  /^## Lens Agent Launch Template/ { f = 1 }
+  f && $0 == "```" { c++; if (c == 2) exit; next }
+  f && c == 1 { print }
+' "${PLUGIN_DIR}/skills/code-audit/SKILL.md")"
+[[ -n "$g13_launch_template_body" ]] \
+  && pass "G6/CA-193 -- the Lens Agent Launch Template fence extraction is non-empty (extraction itself works)" \
+  || fail "G6/CA-193 -- the Lens Agent Launch Template fence extraction returned nothing -- the heading or fence markers moved, and every schema-token check below would be checked against nothing"
+check "G13/G6 -- launch template FENCE BODY restates the literal JSONL schema id field" '"id":null' "$g13_launch_template_body"
+check "G13/G6 -- launch template FENCE BODY restates the literal JSONL schema lens field" '"lens":"L{N}"' "$g13_launch_template_body"
+check "G13/G6 -- launch template FENCE BODY restates the literal JSONL schema file field" '"file":"path"' "$g13_launch_template_body"
+check "G13/G6 -- launch template FENCE BODY restates the literal JSONL schema status field" '"status":"open"' "$g13_launch_template_body"
 check "G13 -- launch template still carries the by-name pointer to the agent's own JSONL Line Format section" \
   "JSONL Line Format" "$g13_code_audit_skill"
 check "G13 -- a precondition blocks proceeding to the synthesizer spawn (step 8a) until step 9 may run" \
@@ -5951,6 +5965,29 @@ check "G4 -- a count mismatch refuses to proceed and names the missing lenses by
   "name, by lens ID, every member" "$g13_code_audit_skill"
 check "G13 -- the precondition states the orchestrator-persists-both-halves fallback" \
   "Never persist only the \`.md\` half and proceed" "$g13_code_audit_skill"
+
+# G6/CA-193 (round 5): the count check alone cannot tell eleven correctly-schema'd files from
+# eleven files carrying an invented schema. Step 8a now also validates CONTENT.
+check "G6/CA-193 -- step 8a's precondition includes a content check beyond the count check" \
+  "Content check (CA-193, fifth recurrence)" "$g13_code_audit_skill"
+check "G6/CA-193 -- the content check names the required lens-schema keys" \
+  'schema`, `lens`, `sev` and `status` present,' "$g13_code_audit_skill"
+check "G6/CA-193 -- the content check requires id to be literally null" \
+  '`id` literally `null`' "$g13_code_audit_skill"
+check "G6/CA-193 -- the content check refuses the ledger-shaped lenses key" \
+  '`lenses` (plural),' "$g13_code_audit_skill"
+check "G6/CA-193 -- the content check refuses the ledger-shaped component/raised_round keys" \
+  '`component`, `raised_round`' "$g13_code_audit_skill"
+check "G6/CA-193 -- a content-check failure re-delivers the lens's launch template rather than hand-patching its output" \
+  "re-deliver that lens's launch template" "$g13_code_audit_skill"
+
+# G6/CA-193 (round 5): the Synthesizer Phase section's own spawn instruction previously carried
+# zero reference to step 8a or LENS_SET, so a reader could satisfy it with markdown-only reports
+# -- precisely the pass-3 CA-193 regression. The section now cross-references step 8a explicitly.
+check "G6/CA-193 -- the Synthesizer Phase section is explicitly gated on step 8a, not merely 'after reports are written'" \
+  "Gated on step 8a (CA-193)" "$g13_code_audit_skill"
+check "G6/CA-193 -- the cross-reference names the regression it prevents (markdown-only reports treated as sufficient)" \
+  "treats markdown-only reports" "$g13_code_audit_skill"
 
 # =================================================================================
 # G14 (round-3 Wave 7e): the CA-098 legacy-flat-path break is closed at all 7 skill

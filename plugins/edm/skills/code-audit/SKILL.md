@@ -79,8 +79,9 @@ using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
 8a. **Checked precondition -- do not proceed to step 9 until it holds**: `Glob`
     `${OUTPUT_DIR}/lens-L*.jsonl` and count the matches. Compare that count against `|LENS_SET|`
     (the number of lenses actually run this round, e.g. 11 on a full round). If the counts are
-    equal, proceed. If the counts differ, **refuse to proceed** and name, by lens ID, every member
-    of `LENS_SET` whose `${OUTPUT_DIR}/lens-L{N}.jsonl` is absent from the Glob result.
+    equal, proceed to the content check below. If the counts differ, **refuse to proceed** and
+    name, by lens ID, every member of `LENS_SET` whose `${OUTPUT_DIR}/lens-L{N}.jsonl` is absent
+    from the Glob result.
     For each named lens, check whether it returned its findings as text without writing either
     file -- the same stale-plugin-cache issue as the missing `## JSONL Line Format` section,
     decisions.md D22/CA-130 (its delivered agent definition lacked a `Write` tool this round). If
@@ -88,8 +89,22 @@ using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
     write the missing `lens-L{N}.md` AND the missing `lens-L{N}.jsonl` yourself, using the schema
     in the launch template above. Never persist only the `.md` half and proceed; a lens with zero
     corresponding JSONL is a blocking gap, not a degraded-but-acceptable result. After persisting
-    any missing halves, re-run the Glob-and-count check; only proceed to step 9 once the count
-    equals `|LENS_SET|`.
+    any missing halves, re-run the Glob-and-count check; only proceed to the content check below
+    once the count equals `|LENS_SET|`.
+
+    **Content check (CA-193, fifth recurrence)**: the count check above cannot distinguish eleven
+    correctly-schema'd files from eleven files carrying an invented schema -- a count match is
+    necessary but not sufficient. For every `${OUTPUT_DIR}/lens-L{N}.jsonl` file, read each line
+    and confirm it carries the lens schema's keys -- `schema`, `lens`, `sev` and `status` present,
+    and `id` literally `null` -- never the findings-ledger schema's keys (`lenses` (plural),
+    `component`, `raised_round`), which is a different, larger schema the synthesizer assigns
+    later and no lens ever produces. If any line carries ledger-shaped keys instead of
+    lens-shaped keys, or is missing any of `schema`/`lens`/`sev`/`status`, **refuse to proceed**:
+    name the offending lens and line, and re-deliver that lens's launch template (below)
+    verbatim -- the schema line and the CA-130 fallback clause travel inside the template's own
+    fence precisely so a lens producing the wrong shape can be corrected by re-sending the same
+    unabridged prompt, not by hand-patching its output. Only proceed to step 9 once every
+    `lens-L{N}.jsonl` file passes this content check.
 9. **Spawn `edm-audit-synthesizer`**. It:
    - Reads the lens reports in `${OUTPUT_DIR}/`
    - Reads the prior `findings-ledger.jsonl` (or the legacy `findings-ledger.md` if only that exists)
@@ -257,7 +272,13 @@ If yes to any -> record as "Noted / Not Actionable" with one-line rationale, do 
 
 ## Synthesizer Phase
 
-After all lens reports are written, spawn `edm-audit-synthesizer` with:
+**Gated on step 8a (CA-193)**: "after all lens reports are written" below means "after step 8a's
+Checked precondition -- both the count check and the content check -- holds for every
+`lens-L{N}.jsonl` file," not "as soon as any report exists." Do not spawn the synthesizer on the
+strength of this section alone; a reader who skips straight here and treats markdown-only reports
+as sufficient reproduces the exact CA-193 regression step 8a's content check exists to catch.
+
+After all lens reports are written (per step 8a, above), spawn `edm-audit-synthesizer` with:
 
 ```
 Agent: edm-audit-synthesizer
