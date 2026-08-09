@@ -3500,11 +3500,22 @@ cmd_git_lock_check() {
     holder_evidence="$(lsof -- "$lock_file" 2>/dev/null | tail -n +2 || true)"
   fi
   if [[ -z "$holder_evidence" && $_have_pgrep -eq 1 ]]; then
-    local _candidate_pids
-    # `|| true`: under `set -euo pipefail`, pgrep's own exit 1 (its documented "no processes
-    # matched" result -- the expected, common case once a lock is genuinely stale) propagates
-    # through the pipeline and aborts the whole script at this assignment without it.
-    _candidate_pids="$(pgrep -f -- "$git_dir" 2>/dev/null | tr '\n' ',' | sed 's/,$//' || true)"
+    local _candidate_pids _pgrep_rc=0 _pgrep_out=""
+    # G10/CA-251 (round 5, residual): pgrep's own exit code must be distinguished, not
+    # swallowed uniformly by a trailing `|| true`. Exit 1 is pgrep's documented "no processes
+    # matched" result -- the expected, common case once a lock is genuinely stale -- and is
+    # safe to treat as an empty candidate list. Any OTHER non-zero exit (an invalid extended
+    # regex in $git_dir -- an unbalanced bracket, a trailing backslash -- exits non-1 on both
+    # GNU and BSD pgrep) must NOT be treated the same way: silently swallowing it previously
+    # left the candidate list empty with no liveness check having actually run at all,
+    # indistinguishable from the genuinely-stale case, reachable on every host lacking lsof
+    # (common on Alpine and in CI).
+    _pgrep_out="$(pgrep -f -- "$git_dir" 2>/dev/null)" || _pgrep_rc=$?
+    if [[ $_pgrep_rc -gt 1 ]]; then
+      echo "WARNING: liveness could not be determined for .git/index.lock (age: ${lock_age_desc}) -- pgrep exited ${_pgrep_rc}, not its documented 'no processes matched' exit of 1; refusing to remove rather than guessing" >&2
+      return 1
+    fi
+    _candidate_pids="$(printf '%s' "$_pgrep_out" | tr '\n' ',' | sed 's/,$//')"
     if [[ -n "$_candidate_pids" ]]; then
       holder_evidence="$(ps -o pid=,args= -p "$_candidate_pids" 2>/dev/null \
         | grep -F -- "$git_dir" \
@@ -3520,13 +3531,35 @@ cmd_git_lock_check() {
     return 1
   fi
 
+  # G10/CA-251 (round 5, residual): re-assert the age gate immediately before the mv-aside,
+  # not just once at function entry. The liveness probe above (lsof and/or pgrep+ps) can take
+  # tens to hundreds of milliseconds; if a concurrent remover cleared this stale lock and git
+  # re-acquired it inside that window, proceeding straight to the mv below would rename git's
+  # brand-new LIVE lock aside and delete it, permitting a second concurrent index write. A lock
+  # file that has disappeared entirely in that window is the existing, already-safe "someone
+  # else already removed it" case the mv's own failure branch below handles; only a lock file
+  # that still EXISTS but now reads younger than the threshold is the residual this re-check
+  # closes.
+  if [[ ! -f "$lock_file" ]]; then
+    echo "$lock_file was already removed before this process could act; nothing to do"
+    return 0
+  elif find "$lock_file" -mmin +0 2>/dev/null | grep -q .; then
+    : # still older than ~60s immediately before the mv -- safe to proceed
+  else
+    echo "WARNING: .git/index.lock now reads less than a minute old (re-checked immediately before removal) -- a concurrent process re-acquired it during the liveness probe; leaving in place" >&2
+    return 1
+  fi
+
   echo "stale .git/index.lock detected (age: ${lock_age_desc}, no holder evidence found for ${git_dir}); removing..."
   # G43: atomic mv-aside-then-remove -- the same idiom with_state_lock's stale-lockdir
   # reclaim uses (_edm_reclaim_stale_lockdir above) -- instead of a bare `rm -f`. A
   # losing racer that reaches this point just after a legitimate git process re-took
   # the lock renames whatever currently occupies the path rather than deleting a name
   # a winner just (re-)created out from under it; the mv either succeeds outright or
-  # fails because the file is already gone, and either outcome is safe.
+  # fails because the file is already gone, and either outcome is safe. The age re-check
+  # immediately above already closes the "renamed a brand-new live lock" window; this mv
+  # failure branch now only covers the file having disappeared in the few instructions
+  # between that re-check and this mv.
   local stale_aside="${lock_file}.stale.$$"
   if mv "$lock_file" "$stale_aside" 2>/dev/null; then
     rm -f "$stale_aside"

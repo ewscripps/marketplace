@@ -6331,6 +6331,109 @@ g43_scratch="$(mktemp -d "${TMP}/edm-g43.XXXXXX")"
 ( cd "$g43_scratch" && g43_case )
 rm -rf "$g43_scratch"
 
+# =================================================================================
+# G10/CA-251 (round 5): the prior test above only exercises the REFUSAL branch (a young lock
+# left in place) -- the removal branch itself was, per the finding, invisible to the suite,
+# which only grepped the function body's literal source text and never executed it. These
+# three cases actually EXECUTE cmd_git_lock_check end to end: a genuinely stale lock is really
+# removed, an undetermined pgrep exit refuses rather than silently proceeding, and a lock that
+# becomes fresh again during the liveness probe is not renamed-and-deleted out from under a
+# process that just re-acquired it.
+# =================================================================================
+echo
+echo "=== G10/CA-251 (round 5): git-lock-check actually removes a genuinely stale lock, refuses on an undetermined pgrep exit, and re-checks age immediately before the mv ==="
+
+g10_removed_case() {
+  local lock_file=".git/index.lock"
+  : > "$lock_file"
+  # Backdate past the ~60s age gate. `touch -t` (POSIX [[CC]YY]MMDDhhmm[.SS]) is identical on
+  # GNU and BSD touch, unlike `-d`/`-r` variants that diverge across platforms.
+  local backdate
+  backdate="$(date -v-5M +%Y%m%d%H%M 2>/dev/null || date -d '5 minutes ago' +%Y%m%d%H%M 2>/dev/null || true)"
+  if [[ -n "$backdate" ]]; then
+    touch -t "$backdate" "$lock_file"
+  else
+    echo "  SKIP: G10/CA-251 -- could not backdate the lock file with either BSD or GNU date; skipping the removal case"
+    return
+  fi
+  local out ec=0
+  out="$("$EDM_STATE" git-lock-check 2>&1)" || ec=$?
+  [[ $ec -eq 0 ]] \
+    && pass "G10/CA-251 -- git-lock-check exits 0 against a genuinely stale, unheld lock" \
+    || fail "G10/CA-251 -- git-lock-check exited ${ec} against a genuinely stale lock (output: ${out})"
+  # cmd_git_lock_check resolves its own git_dir via --absolute-git-dir internally, so the
+  # removal message names the ABSOLUTE path, not this test's relative "$git_dir" convenience
+  # variable used elsewhere in this case.
+  local real_git_dir
+  real_git_dir="$(git rev-parse --absolute-git-dir)"
+  check "G10/CA-251 -- the removal message names the removed path" "removed ${real_git_dir}/index.lock" "$out"
+  [[ ! -e "$lock_file" ]] \
+    && pass "G10/CA-251 -- the stale lock file is ACTUALLY GONE after git-lock-check (executing the removal branch, not merely grepping for it)" \
+    || fail "G10/CA-251 -- the stale lock file still exists after git-lock-check claimed to remove it"
+  if find "$(dirname "$lock_file")" -maxdepth 1 -name "$(basename "$lock_file").stale.*" 2>/dev/null | grep -q .; then
+    fail "G10/CA-251 -- a '.stale.\$\$' mv-aside artifact was left behind uncleaned"
+  else
+    pass "G10/CA-251 -- no leaked '.stale.\$\$' mv-aside artifact remains"
+  fi
+}
+with_scratch_repo g10_removed_case
+
+g10_pgrep_undetermined_case() {
+  local lock_file=".git/index.lock"
+  : > "$lock_file"
+  local backdate
+  backdate="$(date -v-5M +%Y%m%d%H%M 2>/dev/null || date -d '5 minutes ago' +%Y%m%d%H%M 2>/dev/null || true)"
+  [[ -n "$backdate" ]] || { echo "  SKIP: G10/CA-251 -- could not backdate the lock file; skipping the pgrep-undetermined case"; return; }
+  touch -t "$backdate" "$lock_file"
+  # Shadow lsof to find nothing (the normal not-held case) and pgrep to exit 2 -- simulating an
+  # invalid extended regex in git_dir (an unbalanced bracket, a trailing backslash), which is
+  # NOT pgrep's documented "no processes matched" exit of 1. Exported so the child `edm-state`
+  # process (a separate bash invocation, not sourced) inherits both shadows.
+  lsof() { return 1; }
+  pgrep() { return 2; }
+  export -f lsof pgrep
+  local out ec=0
+  out="$("$EDM_STATE" git-lock-check 2>&1)" || ec=$?
+  unset -f lsof pgrep 2>/dev/null || true
+  [[ $ec -eq 1 ]] \
+    && pass "G10/CA-251 -- git-lock-check refuses (exit 1) when pgrep exits undetermined (not 1)" \
+    || fail "G10/CA-251 -- git-lock-check exited ${ec} on an undetermined pgrep exit, expected 1 (output: ${out})"
+  check "G10/CA-251 -- the refusal names pgrep's non-1 exit code, not a silent proceed" \
+    "pgrep exited 2" "$out"
+  [[ -e "$lock_file" ]] \
+    && pass "G10/CA-251 -- the lock file survives an undetermined pgrep exit (not removed with no liveness check having run)" \
+    || fail "G10/CA-251 -- the lock file was removed despite pgrep's liveness check being undetermined"
+}
+with_scratch_repo g10_pgrep_undetermined_case
+
+g10_toctou_case() {
+  local lock_file=".git/index.lock"
+  : > "$lock_file"
+  local backdate
+  backdate="$(date -v-5M +%Y%m%d%H%M 2>/dev/null || date -d '5 minutes ago' +%Y%m%d%H%M 2>/dev/null || true)"
+  [[ -n "$backdate" ]] || { echo "  SKIP: G10/CA-251 -- could not backdate the lock file; skipping the TOCTOU re-check case"; return; }
+  touch -t "$backdate" "$lock_file"
+  # Shadow lsof to simulate a concurrent re-acquire happening DURING the liveness probe: touch
+  # the lock file to "now" (as a real re-acquiring git process would) and THEN report no holder
+  # evidence (lsof genuinely finds nothing for a lock a process just barely created). Without
+  # the re-asserted age gate immediately before the mv, this would rename the now-live lock
+  # aside and delete it.
+  lsof() { local f="$1"; [[ "$f" == "--" ]] && f="$2"; touch "$f"; return 1; }
+  export -f lsof
+  local out ec=0
+  out="$("$EDM_STATE" git-lock-check 2>&1)" || ec=$?
+  unset -f lsof 2>/dev/null || true
+  [[ $ec -eq 1 ]] \
+    && pass "G10/CA-251 -- git-lock-check refuses (exit 1) when the lock reads fresh again immediately before the mv" \
+    || fail "G10/CA-251 -- git-lock-check exited ${ec} instead of refusing on a lock re-acquired during the probe (output: ${out})"
+  check "G10/CA-251 -- the refusal names the re-check, not the entry-level age gate" \
+    "re-checked immediately before removal" "$out"
+  [[ -e "$lock_file" ]] \
+    && pass "G10/CA-251 -- the re-acquired lock file survives (not renamed aside and deleted out from under the new holder)" \
+    || fail "G10/CA-251 -- the re-acquired lock file was removed -- the TOCTOU window is still open"
+}
+with_scratch_repo g10_toctou_case
+
 echo
 echo "=== G44: metrics-report's jq 'add' calls all guard against an empty array (null) with '// 0' ==="
 t_g44_metrics_body="$(awk '/^cmd_metrics_report\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
