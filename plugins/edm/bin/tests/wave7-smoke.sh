@@ -5684,6 +5684,70 @@ ca253_gate_hooks_exit2_case() {
 ca253_gate_hooks_exit2_case
 
 # =================================================================================
+# CA-298/G1 (round-5): CA-253's exit-2 conversion made the command hooks block on ANY gate-check
+# failure, not only a genuine gate refusal -- including a missing state file, which the sibling
+# prompt hook's own text says must allow expansion (first invocation). Extracts each of the five
+# real UserPromptExpansion command hooks and executes them against stub edm-state binaries, so
+# this exercises the actual shipped hook script, not a hand-written stand-in for it.
+# =================================================================================
+echo
+echo "=== CA-298/G1: the five gate hooks allow expansion on a missing state file, still block on a genuine refusal ==="
+ca298_gate_hooks_case() {
+  local matcher token scratch cmdfile cmd out ec
+  for matcher in edm:srd edm:audit-srd edm:tickets edm:audit-tickets edm:implement; do
+    token="${matcher#edm:}"
+    scratch="$(mktemp -d "${TMP}/edm-ca298.XXXXXX")" || { fail "CA-298/G1 -- mktemp failed"; continue; }
+    mkdir -p "${scratch}/bin"
+
+    cmdfile="${scratch}/hook-command.sh"
+    jq -r --arg m "$matcher" \
+      '.hooks.UserPromptExpansion[] | select(.matcher == $m) | .hooks[] | select(.type == "command") | .command' \
+      "${PLUGIN_DIR}/hooks/hooks.json" > "$cmdfile" 2>/dev/null
+    cmd="$(cat "$cmdfile" 2>/dev/null || true)"
+    if [[ -z "$cmd" ]]; then
+      fail "CA-298/G1 -- could not extract the ${matcher} UserPromptExpansion command hook from hooks.json"
+      rm -rf "$scratch"
+      continue
+    fi
+
+    # Case A: no initiative for this prefix (resolve-dir fails) -- must ALLOW expansion (exit 0),
+    # matching the sibling prompt hook's documented first-invocation allowance.
+    cat > "${scratch}/bin/edm-state" <<'EOS'
+#!/bin/bash
+case "$1" in
+  resolve-dir) echo "no initiative for prefix $2" >&2; exit 1 ;;
+  gate-check) echo "CA298: gate-check should not have been called" >&2; exit 1 ;;
+esac
+EOS
+    chmod +x "${scratch}/bin/edm-state"
+    ec=0
+    out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" ARGUMENTS="CA298PFX" bash "$cmdfile" 2>&1)" || ec=$?
+    [[ "$ec" -eq 0 ]] \
+      && pass "CA-298/G1 -- ${matcher} hook allows expansion when the initiative has no state file (first invocation)" \
+      || fail "CA-298/G1 -- ${matcher} hook produced exit=${ec}, output: ${out} (expected exit 0 -- a missing state file must not block)"
+
+    # Case B: the initiative resolves but the gate genuinely is not approved -- must BLOCK
+    # (exit 2), so Case A's fix has not disabled real enforcement.
+    cat > "${scratch}/bin/edm-state" <<'EOS'
+#!/bin/bash
+case "$1" in
+  resolve-dir) echo "/tmp/CA298PFX"; exit 0 ;;
+  gate-check) echo "edm-state gate-check: Gate 1 has not been approved for CA298PFX." >&2; exit 1 ;;
+esac
+EOS
+    chmod +x "${scratch}/bin/edm-state"
+    ec=0
+    out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" ARGUMENTS="CA298PFX" bash "$cmdfile" 2>&1)" || ec=$?
+    [[ "$ec" -eq 2 ]] \
+      && pass "CA-298/G1 -- ${matcher} hook still blocks a genuine gate refusal (hook exit 2)" \
+      || fail "CA-298/G1 -- ${matcher} hook produced exit=${ec}, output: ${out} (expected exit 2 -- a real gate refusal must still block)"
+
+    rm -rf "$scratch"
+  done
+}
+ca298_gate_hooks_case
+
+# =================================================================================
 # G9/G19 (round-3 Wave 7c): the two --help sentences this round's own remediation inverted are
 # corrected, and the "unreadable" violation class is documented. A positive control proves the
 # assertions actually catch the old (wrong) text if it were reintroduced, not just that the

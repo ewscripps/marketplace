@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 2 ;; esac; edm-state gate-check \"$prefix\" srd || exit 2; exit 0"
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 2 ;; esac; edm-state resolve-dir \"$prefix\" >/dev/null 2>&1 || exit 0; edm-state gate-check \"$prefix\" srd || exit 2; exit 0"
           },
           {
             "type": "prompt",
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 2 ;; esac; edm-state gate-check \"$prefix\" audit-srd || exit 2; exit 0"
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 2 ;; esac; edm-state resolve-dir \"$prefix\" >/dev/null 2>&1 || exit 0; edm-state gate-check \"$prefix\" audit-srd || exit 2; exit 0"
           },
           {
             "type": "prompt",
@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 2 ;; esac; edm-state gate-check \"$prefix\" tickets || exit 2; exit 0"
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 2 ;; esac; edm-state resolve-dir \"$prefix\" >/dev/null 2>&1 || exit 0; edm-state gate-check \"$prefix\" tickets || exit 2; exit 0"
           },
           {
             "type": "prompt",
@@ -55,7 +55,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 2 ;; esac; edm-state gate-check \"$prefix\" audit-tickets || exit 2; exit 0"
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 2 ;; esac; edm-state resolve-dir \"$prefix\" >/dev/null 2>&1 || exit 0; edm-state gate-check \"$prefix\" audit-tickets || exit 2; exit 0"
           },
           {
             "type": "prompt",
@@ -68,7 +68,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 2 ;; esac; edm-state gate-check \"$prefix\" implement || exit 2; exit 0"
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 2 ;; esac; edm-state resolve-dir \"$prefix\" >/dev/null 2>&1 || exit 0; edm-state gate-check \"$prefix\" implement || exit 2; exit 0"
           },
           {
             "type": "prompt",
