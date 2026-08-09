@@ -272,6 +272,42 @@ session_dir_for_cwd() {
   echo "${HOME}/.claude/projects/$(echo "$cwd" | tr '/.' '-')"
 }
 
+# G45 (CA-276): the scoped (driving-session) and whole-directory-fallback branches inside
+# get_session_tokens_since below previously each carried a byte-identical 23-line jq program
+# whose only actual difference was already passed in via --arg mode -- hoisted here so a schema
+# change to this program's output shape is made once instead of twice. _TOKEN_SUM_ZERO_JSON is
+# the matching hoist of the duplicated empty-result literal (previously repeated at the
+# directory-missing early return and the whole-directory branch's own final fallback). Defined
+# here, ahead of the function's own doc comment below, so that comment block stays a single
+# contiguous run of `#` lines immediately above `get_session_tokens_since()` -- the anchor
+# `wave6-smoke.sh`'s T52 AC1 case scans for (a non-comment line between the doc comment and the
+# function it documents resets that scan's buffer to empty).
+_TOKEN_SUM_JQ='
+  reduce inputs as $line (
+    {msgs: [], bad: 0};
+    if ($line | length) == 0 then .
+    else
+      (($line | fromjson?) // null) as $obj
+      | if $obj == null then .bad += 1
+        elif $obj.type == "assistant" and (($obj.timestamp // "") >= $since) then .msgs += [$obj]
+        else .
+        end
+    end
+  ) as $acc
+  | ($acc.msgs) as $msgs
+  | {
+      input: ([$msgs[].message.usage.input_tokens // 0] | add // 0),
+      output: ([$msgs[].message.usage.output_tokens // 0] | add // 0),
+      cache_read: ([$msgs[].message.usage.cache_read_input_tokens // 0] | add // 0),
+      cache_write_5m: ([$msgs[].message.usage.cache_creation.ephemeral_5m_input_tokens // 0] | add // 0),
+      cache_write_1h: ([$msgs[].message.usage.cache_creation.ephemeral_1h_input_tokens // 0] | add // 0),
+      model: ($msgs[-1].message.model // "unknown"),
+      attribution_mode: $mode,
+      unparseable_lines: $acc.bad
+    }
+'
+_TOKEN_SUM_ZERO_JSON='{"input":0,"output":0,"cache_read":0,"cache_write_5m":0,"cache_write_1h":0,"model":"unknown","attribution_mode":"whole-directory","unparseable_lines":0}'
+
 # Sum cumulative tokens across the driving session's assistant messages whose timestamp >=
 # the given ISO 8601 time. Outputs JSON:
 #   {input, output, cache_read, cache_write_5m, cache_write_1h, model, attribution_mode,
@@ -311,7 +347,7 @@ get_session_tokens_since() {
   local sessions_dir
   sessions_dir="$(session_dir_for_cwd)"
   if [[ ! -d "$sessions_dir" ]] || ! ls "$sessions_dir"/*.jsonl >/dev/null 2>&1; then
-    echo '{"input":0,"output":0,"cache_read":0,"cache_write_5m":0,"cache_write_1h":0,"model":"unknown","attribution_mode":"whole-directory","unparseable_lines":0}'
+    echo "$_TOKEN_SUM_ZERO_JSON"
     return 0
   fi
 
@@ -338,30 +374,8 @@ get_session_tokens_since() {
     || die "invalid EDM_TOKEN_READ_LINE_CAP: '${_token_read_cap}' (expected a positive integer line count; 0 makes tail read zero lines, which reports 0 tokens and trips the blocking ZERO_TOKENS anomaly)"
 
   if [[ -n "$driving_session" && -f "$driving_session" ]]; then
-    tail -n "$_token_read_cap" "$driving_session" | jq -Rn --arg since "$since" --arg mode "scoped" '
-      reduce inputs as $line (
-        {msgs: [], bad: 0};
-        if ($line | length) == 0 then .
-        else
-          (($line | fromjson?) // null) as $obj
-          | if $obj == null then .bad += 1
-            elif $obj.type == "assistant" and (($obj.timestamp // "") >= $since) then .msgs += [$obj]
-            else .
-            end
-        end
-      ) as $acc
-      | ($acc.msgs) as $msgs
-      | {
-          input: ([$msgs[].message.usage.input_tokens // 0] | add // 0),
-          output: ([$msgs[].message.usage.output_tokens // 0] | add // 0),
-          cache_read: ([$msgs[].message.usage.cache_read_input_tokens // 0] | add // 0),
-          cache_write_5m: ([$msgs[].message.usage.cache_creation.ephemeral_5m_input_tokens // 0] | add // 0),
-          cache_write_1h: ([$msgs[].message.usage.cache_creation.ephemeral_1h_input_tokens // 0] | add // 0),
-          model: ($msgs[-1].message.model // "unknown"),
-          attribution_mode: $mode,
-          unparseable_lines: $acc.bad
-        }
-    ' 2>/dev/null && return 0
+    tail -n "$_token_read_cap" "$driving_session" \
+      | jq -Rn --arg since "$since" --arg mode "scoped" "$_TOKEN_SUM_JQ" 2>/dev/null && return 0
   fi
 
   # AC2 fallback: the driving session could not be identified (e.g. a TOCTOU race where every
@@ -374,36 +388,45 @@ get_session_tokens_since() {
   # so with more than one session file only the tail of the LAST file(s) survived, silently
   # discarding earlier sessions' token counts entirely (contradicting this comment block's own
   # claim of per-file capping). Loop over the files individually instead.
+  #
+  # G18 (CA-207): emit a newline after each file's `tail` output, not just between the loop's
+  # concatenated output as a whole. A session JSONL that lacks a trailing newline (routine for a
+  # file still being appended to) previously had its last line spliced directly onto the NEXT
+  # file's first line with no separator, corrupting both into one unparseable line and losing
+  # both messages' token counts. The downstream jq program's `if ($line | length) == 0 then .`
+  # branch already treats a resulting blank line as a no-op, so this is safe to add
+  # unconditionally.
   local _g47_capped_lines=""
   _g47_capped_lines="$(for _tf in "$sessions_dir"/*.jsonl; do
     if [[ -f "$_tf" ]]; then
       tail -n "$_token_read_cap" "$_tf"
+      printf '\n'
     fi
   done)" || true
-  printf '%s\n' "$_g47_capped_lines" | jq -Rn --arg since "$since" --arg mode "whole-directory" '
-    reduce inputs as $line (
-      {msgs: [], bad: 0};
-      if ($line | length) == 0 then .
-      else
-        (($line | fromjson?) // null) as $obj
-        | if $obj == null then .bad += 1
-          elif $obj.type == "assistant" and (($obj.timestamp // "") >= $since) then .msgs += [$obj]
-          else .
-          end
-      end
-    ) as $acc
-    | ($acc.msgs) as $msgs
-    | {
-        input: ([$msgs[].message.usage.input_tokens // 0] | add // 0),
-        output: ([$msgs[].message.usage.output_tokens // 0] | add // 0),
-        cache_read: ([$msgs[].message.usage.cache_read_input_tokens // 0] | add // 0),
-        cache_write_5m: ([$msgs[].message.usage.cache_creation.ephemeral_5m_input_tokens // 0] | add // 0),
-        cache_write_1h: ([$msgs[].message.usage.cache_creation.ephemeral_1h_input_tokens // 0] | add // 0),
-        model: ($msgs[-1].message.model // "unknown"),
-        attribution_mode: $mode,
-        unparseable_lines: $acc.bad
-      }
-  ' 2>/dev/null || echo '{"input":0,"output":0,"cache_read":0,"cache_write_5m":0,"cache_write_1h":0,"model":"unknown","attribution_mode":"whole-directory","unparseable_lines":0}'
+  printf '%s\n' "$_g47_capped_lines" \
+    | jq -Rn --arg since "$since" --arg mode "whole-directory" "$_TOKEN_SUM_JQ" 2>/dev/null \
+    || echo "$_TOKEN_SUM_ZERO_JSON"
+}
+
+# _unpack_token_fields <tokens-json> -- shared unpack of get_session_tokens_since's JSON output
+# (G46/CA-277). cmd_phase_complete and _cmd_audit_round_complete_body each carried an identical
+# 14-line copy of this jq-per-field extraction; extracted here so a schema change to
+# get_session_tokens_since's output shape is made once. bash 3.2 has no nameref/`local -n` for a
+# helper to set an arbitrary CALLER-local by name, so -- matching the existing
+# _save_traps/_restore_traps convention above -- this writes a fixed set of globals rather than
+# taking a variable-name argument. Safe for the same reason that convention is safe here: neither
+# caller invokes this helper re-entrantly or concurrently with another use of the same globals
+# within one process.
+_unpack_token_fields() {
+  local _utf_json="$1"
+  _EDM_TOKENS_INPUT="$(echo "$_utf_json" | jq -r '.input // 0')"
+  _EDM_TOKENS_OUTPUT="$(echo "$_utf_json" | jq -r '.output // 0')"
+  _EDM_TOKENS_CACHE_READ="$(echo "$_utf_json" | jq -r '.cache_read // 0')"
+  _EDM_TOKENS_CACHE_WRITE_5M="$(echo "$_utf_json" | jq -r '.cache_write_5m // 0')"
+  _EDM_TOKENS_CACHE_WRITE_1H="$(echo "$_utf_json" | jq -r '.cache_write_1h // 0')"
+  _EDM_TOKENS_MODEL="$(echo "$_utf_json" | jq -r '.model // "unknown"')"
+  _EDM_TOKENS_ATTRIBUTION_MODE="$(echo "$_utf_json" | jq -r '.attribution_mode // "whole-directory"')"
+  _EDM_TOKENS_UNPARSEABLE_LINES="$(echo "$_utf_json" | jq -r '.unparseable_lines // 0')"
 }
 
 # Anthropic pricing per million tokens (USD), verified 2026-07-28.
@@ -601,7 +624,7 @@ write_atomic() {
   # early and corrupt the stored trap body into a syntax error at signal time. Assign to a
   # dedicated variable first, then reference it INSIDE single quotes so it expands at signal
   # time, not at install time (the pattern already used correctly at edm-lint-artifacts:141,
-  # edm-check-grants:121, bin/tests/_harness.sh:104; G72/CA-232 closed the one remaining
+  # edm-check-grants:124, bin/tests/_harness.sh:104; G72/CA-232 closed the one remaining
   # interpolation site of this class, bin/tests/_harness.sh's own harness_scratch_dir, whose
   # corrected form is at bin/tests/_harness.sh:76).
   #
@@ -651,15 +674,13 @@ _rmw_state_render() {
   jq "$@" "$filter" "$f"
 }
 
-_print_literal() {
-  printf '%s' "$1"
-}
-
-# _print_line <text> -- sibling of _print_literal, but appends a terminating newline
-# (G38). Use this for any write_atomic call whose content is a complete document (e.g.
-# HANDOFF.md) that should end with a newline; _print_literal itself is left unchanged
-# because a pattern-library splice elsewhere in this file depends on its exact
-# no-newline behavior.
+# _print_line <text> -- appends a terminating newline (G38). Use this for any write_atomic
+# call whose content is a complete document (e.g. HANDOFF.md) that should end with a newline.
+# G28 (CA-259): the no-newline sibling this was originally written beside, _print_literal, is
+# deleted -- it had zero callers left after the G38 fix moved its one caller to this function,
+# and the comment retaining it claimed a pattern-library splice elsewhere in this file depended
+# on its exact no-newline behavior; no such dependency exists (_splice_pattern_file uses its own
+# inline printf, not this helper).
 _print_line() {
   printf '%s\n' "$1"
 }
@@ -971,6 +992,25 @@ _edm_reclaim_stale_lockdir() {
   fi
 }
 
+# _lock_retry_or_die <lockdir> <reason-suffix> -- shared retry-accounting tail for
+# with_state_lock's mkdir-based spin loop below (G47/CA-278). Increments the loop's own `tries`
+# counter and dies naming <reason-suffix> once the 50-try bound is reached; otherwise sleeps
+# 0.1s so the caller's next loop iteration is rate-limited. This used to be duplicated three
+# times (invalid-PID branch, dead-PID-reclaim branch, live-holder fallthrough) under a comment
+# that already (inaccurately) called it "the shared retry accounting" -- extracting it here
+# makes that description true. `tries` is the CALLER's own `local` variable, not a global or an
+# argument: bash's dynamic scoping makes a caller's `local` visible to any function the caller
+# invokes (unlike a lexically scoped language's stack frames), so this helper's plain
+# `tries=$(( tries + 1 ))` reads and writes the caller's own counter directly.
+_lock_retry_or_die() {
+  local _lockdir="$1" _reason="$2"
+  tries=$(( tries + 1 ))
+  if [[ $tries -ge 50 ]]; then
+    die "state lock timeout after 50 tries on ${_lockdir}${_reason}"
+  fi
+  sleep 0.1
+}
+
 # ---- Advisory file locking (T24) -------------------------------------------
 # with_state_lock <lockbase> <command...>
 # Acquires an exclusive advisory lock scoped to <lockbase>, runs the command,
@@ -981,6 +1021,25 @@ with_state_lock() {
   local lockfile="${lockbase}.lock"
   local lockdir="${lockbase}.lockd"
   local pidfile="${lockdir}/pid"
+
+  # G26 (CA-257): assert the nesting-depth-one constraint BEFORE attempting to acquire the lock
+  # at all, ahead of BOTH branches below -- not after acquisition succeeds on only one of them
+  # (the previous position, below the until-mkdir loop on the mkdir branch only). with_state_
+  # lock is not reentrant: a caller's own locked body calling with_state_lock again with the
+  # SAME lockbase previously went undetected here on the mkdir branch until the nested call had
+  # already entered the until-mkdir spin loop, found the still-held lockdir OWNED BY THIS SAME
+  # PROCESS, spun up to 50 times treating its own PID as an external "holder", and died with a
+  # misleading "held by PID <this process>" timeout message -- never reaching the guard at all.
+  # On the flock branch the guard was previously not armed anywhere (see the `_EDM_TRAP_DEPTH=1`
+  # line inside that branch below), making it fully inert there -- a same-lockbase nested call
+  # would instead block against flock(1) itself until the unrelated 10s timeout fired. Checking
+  # depth FIRST, before either branch's acquisition attempt, turns both shapes into one
+  # immediate, correctly named diagnostic instead of a slow, misleading one. This guard detects
+  # same-lockbase self-nesting specifically (one locked body calling with_state_lock again with
+  # the identical lockbase) -- two with_state_lock calls against DIFFERENT lockbases never share
+  # a lockdir/lockfile and are unaffected by this check.
+  [[ "${_EDM_TRAP_DEPTH:-0}" -eq 0 ]] \
+    || die "with_state_lock: internal: lock trap already active (_EDM_TRAP_DEPTH=${_EDM_TRAP_DEPTH}) -- nested with_state_lock calls (the same lockbase, one locked body calling with_state_lock again) are not supported"
 
   if command -v flock >/dev/null 2>&1; then
     # Fast path: flock on FD 200 (high enough to avoid collisions with stdin/stdout/stderr
@@ -996,7 +1055,7 @@ with_state_lock() {
     # a later contender open()+flock() a freshly created inode at the same path while an earlier
     # holder that still has the old inode open believes it still holds the lock, silently
     # breaking mutual exclusion. The file is deliberately left on disk forever; `.gitignore`
-    # already hides `**/.edm-state.lock` from git status, so this is not a leak.
+    # already hides `**/.edm-state.lock*` from git status, so this is not a leak.
     #
     # G49: detect the flock timeout via a side-channel marker file, not the locked body's own
     # exit code. The previous design (`flock -w 10 200 || exit 99` inside the subshell, then
@@ -1006,10 +1065,19 @@ with_state_lock() {
     # `return 10`), so the sentinel space is in active, growing use and a future collision is
     # plausible. A marker file created ONLY by the timeout branch itself, checked after the
     # subshell exits, is unambiguous regardless of what "$@" returns.
+    #
+    # G26: _EDM_TRAP_DEPTH is armed around this subshell too, mirroring the mkdir branch's own
+    # arming below -- previously this flock branch never set it at all, leaving the reentrancy
+    # guard above permanently inert whenever flock(1) was available (i.e. on Linux, including
+    # this project's own CI images). Set before the fork so a nested with_state_lock call
+    # invoked from inside the subshell inherits depth 1 and is caught by the guard above, the
+    # same technique the mkdir branch already used for its own subshell.
     local _lock_ec=0 _lock_timeout_marker
     _lock_timeout_marker="${lockfile}.timeout.$$"
     rm -f "$_lock_timeout_marker" 2>/dev/null || true
+    _EDM_TRAP_DEPTH=1
     ( flock -w 10 200 || { : > "$_lock_timeout_marker" 2>/dev/null; exit 99; }; "$@" ) 200>"${lockfile}" || _lock_ec=$?
+    _EDM_TRAP_DEPTH=0
     if [[ -e "$_lock_timeout_marker" ]]; then
       rm -f "$_lock_timeout_marker" 2>/dev/null || true
       die "state lock timeout after 10s on ${lockfile} (another edm-state process may be holding it)"
@@ -1031,10 +1099,10 @@ with_state_lock() {
     # (typically "no such process") means genuinely dead (safe to reclaim). PID reuse / PID
     # namespaces can still make a genuinely dead holder look alive (kill -0 succeeds) -- that
     # direction is benign (it only means the lock is not reclaimed when it safely could be), so
-    # it is not handled here. Both reclaim paths below increment `tries` on every pass and sleep
-    # before their `continue`, so the documented "50 tries" bound is an actual bound on
-    # wall-clock retries rather than something only the non-reclaim path enforced, and neither
-    # path tight-loops.
+    # it is not handled here. Every path below now falls through to the shared
+    # `_lock_retry_or_die` tail (G47/CA-278), so the documented "50 tries" bound is a single,
+    # actual bound on wall-clock retries rather than three separately-maintained copies, and
+    # neither reclaim path tight-loops.
     #
     # The numeric-PID regex `^[0-9]+$` alone would accept the literal string "0" as "valid", but
     # `kill -0 0` targets the WHOLE PROCESS GROUP (not PID 0, which does not exist) and always
@@ -1059,11 +1127,7 @@ with_state_lock() {
         if [[ -z "$holder_pid" || ! "$holder_pid" =~ ^[0-9]+$ || "$holder_pid" == "0" ]]; then
           _edm_reclaim_stale_lockdir "$lockdir" \
             "reclaimed a lockdir with an invalid PID '${holder_pid:-missing}' at ${lockdir}"
-          tries=$(( tries + 1 ))
-          if [[ $tries -ge 50 ]]; then
-            die "state lock timeout after 50 tries on ${lockdir} (invalid PID)"
-          fi
-          sleep 0.1
+          _lock_retry_or_die "$lockdir" " (invalid PID)"
           continue
         fi
         if ! kill -0 "$holder_pid" 2>/dev/null; then
@@ -1077,19 +1141,11 @@ with_state_lock() {
             # Whether the mv above won or lost the race against another contender, fall through
             # to the shared retry accounting below instead of an unaccounted-for `continue`.
           fi
-          tries=$(( tries + 1 ))
-          if [[ $tries -ge 50 ]]; then
-            die "state lock timeout after 50 tries on ${lockdir} (held by PID ${holder_pid})"
-          fi
-          sleep 0.1
+          _lock_retry_or_die "$lockdir" " (held by PID ${holder_pid})"
           continue
         fi
       fi
-      tries=$(( tries + 1 ))
-      if [[ $tries -ge 50 ]]; then
-        die "state lock timeout after 50 tries on ${lockdir}${holder_pid:+ (held by PID ${holder_pid})}"
-      fi
-      sleep 0.1
+      _lock_retry_or_die "$lockdir" "${holder_pid:+ (held by PID ${holder_pid})}"
     done
     echo $$ > "$pidfile" 2>/dev/null || true
 
@@ -1117,20 +1173,20 @@ with_state_lock() {
     trap 'rm -rf "$_STATE_LOCKDIR"; exit 143' TERM
     trap 'rm -rf "$_STATE_LOCKDIR"; exit 129' HUP
 
-    # Assert the nesting-depth-one constraint before handing control to the locked body --
-    # with_state_lock is not reentrant (a nested call would deadlock on `mkdir` against itself
-    # anyway), so a non-zero depth here means a caller is nesting with_state_lock calls.
-    [[ "${_EDM_TRAP_DEPTH:-0}" -eq 0 ]] \
-      || die "with_state_lock: internal: lock trap already active (_EDM_TRAP_DEPTH=${_EDM_TRAP_DEPTH}) -- nested with_state_lock calls are not supported"
+    # G26: the reentrancy guard used to sit here, AFTER lock acquisition -- see the comment at
+    # with_state_lock's top (above the `if command -v flock` branch) for why it moved ahead of
+    # both branches' acquisition attempts entirely, and for exactly which nesting shape it
+    # detects (same-lockbase self-nesting only).
 
     # CA-025: run the locked body in a subshell so this branch matches the flock branch's
     # existing subshell semantics -- previously the mkdir branch ran "$@" in the current shell
     # while the flock branch always subshelled it, an undocumented divergence (no live defect
     # today, since every locked body communicates by stdout/exit status only, but a footgun for
     # the next locked helper that doesn't). _EDM_TRAP_DEPTH is set to 1 before the fork purely so
-    # a nested with_state_lock call (unsupported -- see the reentrancy guard above) is detected
-    # even from inside this subshell; it no longer has any bearing on write_atomic's own trap
-    # installation (round-3 G2/CA-142 re-fix -- write_atomic always installs its own layer now).
+    # a nested with_state_lock call (unsupported -- see the reentrancy guard at the top of this
+    # function) is detected even from inside this subshell; it no longer has any bearing on
+    # write_atomic's own trap installation (round-3 G2/CA-142 re-fix -- write_atomic always
+    # installs its own layer now).
     #
     # G4 (round-3 CA-184 re-fix): guard the $? capture on the SAME statement as the subshell
     # call, not on the next line -- with_state_lock has ~30 bare callers (via rmw_state, called
@@ -2043,14 +2099,10 @@ cmd_phase_complete() {
   if [[ -n "$started_at" ]]; then
     local tokens
     tokens="$(get_session_tokens_since "$started_at")"
-    input="$(echo "$tokens" | jq -r '.input // 0')"
-    output="$(echo "$tokens" | jq -r '.output // 0')"
-    cache_read="$(echo "$tokens" | jq -r '.cache_read // 0')"
-    cw5m="$(echo "$tokens" | jq -r '.cache_write_5m // 0')"
-    cw1h="$(echo "$tokens" | jq -r '.cache_write_1h // 0')"
-    model="$(echo "$tokens" | jq -r '.model // "unknown"')"
-    attribution_mode="$(echo "$tokens" | jq -r '.attribution_mode // "whole-directory"')"
-    unparseable_lines="$(echo "$tokens" | jq -r '.unparseable_lines // 0')"
+    _unpack_token_fields "$tokens"
+    input="$_EDM_TOKENS_INPUT"; output="$_EDM_TOKENS_OUTPUT"; cache_read="$_EDM_TOKENS_CACHE_READ"
+    cw5m="$_EDM_TOKENS_CACHE_WRITE_5M"; cw1h="$_EDM_TOKENS_CACHE_WRITE_1H"; model="$_EDM_TOKENS_MODEL"
+    attribution_mode="$_EDM_TOKENS_ATTRIBUTION_MODE"; unparseable_lines="$_EDM_TOKENS_UNPARSEABLE_LINES"
     cost="$(compute_cost_usd "$model" "$input" "$output" "$cache_read" "$cw5m" "$cw1h")"
   fi
 
@@ -2643,21 +2695,31 @@ ${open_partials_list}"
 
 # _cmd_archive_move_body <src> <dst> <lockbase>   (runs INSIDE with_state_lock; see
 # cmd_archive above, which acquires the lock and dispatches here)
-# G46: removes the lockdir/lockfile explicitly, immediately BEFORE the rename, so
-# neither travels with the renamed directory to the archive destination. This is a
-# narrow, deliberate exception to CA-169's "never rm -f the flock lockfile" rule
-# (with_state_lock above): CA-169 exists because unlinking a lock file while its PATH
-# can still be reopened leaves a window for a fresh contender to acquire a second,
-# independent lock on the same logical resource while an earlier holder still believes
-# it holds the first one. Here the entire parent directory -- the only thing that path
-# could ever be reopened under -- is renamed away in the very next statement, so no
-# path persists afterward for a fresh contender to reopen; the residual race is
-# confined to the instant between this rm and the mv completing, not indefinite the
-# way CA-169's original scenario is.
+# G17 (CA-206, replaces the G46 pre-rename cleanup this comment used to describe): rename the
+# directory FIRST, then remove the lock names at the DESTINATION path. The pre-rename order
+# opened a TOCTOU window between the two process launches this function's two statements
+# actually require under the hood (git_aware_mv's own `git rev-parse`, then `git mv`): a fresh
+# contender could mkdir a brand-new, live lockdir at the SAME source path in that window, and
+# this process's caller (with_state_lock, after this body returns) then runs an unconditional
+# `rm -rf "$lockdir"` at that same original path -- deleting the contender's live lockdir out
+# from under it (CA-141's exact class, one function away). The lock files live inside the
+# initiative directory itself (alongside .edm-state.json), so they travel with `git_aware_mv`
+# automatically; renaming first means this process is the only one that ever holds a lock at
+# the destination path, and the source path is never a live lock target again once the
+# directory has left it. Removing the lock names at the destination remains a narrow, deliberate
+# exception to CA-169's "never rm -f the flock lockfile" rule (with_state_lock above): CA-169
+# exists because unlinking a lock file while its PATH can still be reopened leaves a window for
+# a fresh contender to acquire a second, independent lock on the same logical resource while an
+# earlier holder still believes it holds the first one -- but this initiative directory is being
+# permanently archived, so no future with_state_lock caller should ever target this path again.
 _cmd_archive_move_body() {
   local _src="$1" _dst="$2" _lockbase="$3"
-  rm -rf "${_lockbase}.lockd" "${_lockbase}.lock"
   git_aware_mv "$_src" "$_dst"
+  local _dst_lockbase="${_dst}${_lockbase#"$_src"}"
+  # G25 (CA-256): also sweep the G49 flock-timeout marker glob (${lockbase}.lock.timeout.<pid>),
+  # which matches neither ".lockd" nor a bare ".lock" and would otherwise be left behind at the
+  # archived destination.
+  rm -rf "${_dst_lockbase}.lockd" "${_dst_lockbase}.lock" ${_dst_lockbase}.lock.timeout.*
 }
 
 cmd_watch_impl() {
@@ -2762,8 +2824,20 @@ cmd_metrics_report() {
       echo
       local _calib_files=()
       while IFS= read -r _f; do _calib_files+=("$_f"); done < <(list_state_files --archived)
-      if [[ ${#_calib_files[@]} -eq 0 ]]; then
-        echo "  (insufficient data - need at least one completed initiative)"
+      # G30 (CA-261): guard on the count of QUALIFYING ROWS (estimated_size set), not the raw
+      # state-FILE count. estimated_size has no guaranteed producer, so a fleet of state files
+      # that all still read "Unknown" previously slipped past a file-count-only guard: the
+      # render below filters on `estimated_size != null`, selects zero rows, and jq exits 0
+      # with empty output -- the "insufficient data" fallback (keyed on jq's exit status) never
+      # fires, and the command silently prints only the header with nothing under it. Counting
+      # the filtered rows directly BEFORE rendering closes that gap regardless of whether any
+      # particular initiative ever actually set estimated_size.
+      local _calib_row_count=0
+      if [[ ${#_calib_files[@]} -gt 0 ]]; then
+        _calib_row_count="$(jq -s -r '[.[] | select(.estimated_size != null)] | length' "${_calib_files[@]}" 2>/dev/null || echo 0)"
+      fi
+      if [[ "$_calib_row_count" -eq 0 ]]; then
+        echo "  (insufficient data - need at least one completed initiative with estimated_size set)"
       else
         jq -s -r '
           [.[] | select(.estimated_size != null) | . as $i |
@@ -2784,7 +2858,7 @@ cmd_metrics_report() {
           | .[]
           | "  \(.key): n=\(.count), median_duration=\(.median_duration_s)s, median_cost=$\(.median_cost_usd)"
         ' "${_calib_files[@]}" 2>/dev/null || \
-          echo "  (insufficient data - need at least one completed initiative)"
+          echo "  (insufficient data - need at least one completed initiative with estimated_size set)"
       fi
       ;;
     "")
@@ -3025,19 +3099,24 @@ cmd_metrics_report() {
 
 # _cmd_migrate_path_move_body <src> <dst> <lockbase>   (runs INSIDE with_state_lock;
 # see cmd_migrate_path below, which acquires the lock and dispatches here)
-# G46: removes the lockdir/lockfile explicitly, immediately BEFORE the rename, so
-# neither travels with the renamed directory to the new product-scoped location -- same
-# narrow, deliberate exception to CA-169 as _cmd_archive_move_body above (the entire
-# parent directory is renamed away in the very next statement, so no path persists
-# afterward for a fresh contender to reopen).
+# G17 (CA-206, replaces the G46 pre-rename cleanup this comment used to describe -- see
+# _cmd_archive_move_body above for the full TOCTOU rationale this mirrors): rename FIRST, then
+# remove the lock names at the DESTINATION path once the move is verified. The lock files live
+# inside the initiative directory itself, so they travel with git_aware_mv (and back again, on
+# the rollback path below) automatically -- there is no window between "lock removed" and
+# "rename complete" for a fresh contender to mkdir a live lockdir at the SAME source path that
+# with_state_lock's own later unconditional cleanup could then delete out from under it. Same
+# narrow, deliberate exception to CA-169 as _cmd_archive_move_body above.
 _cmd_migrate_path_move_body() {
   local _src="$1" _dst="$2" _lockbase="$3"
-  rm -rf "${_lockbase}.lockd" "${_lockbase}.lock"
   git_aware_mv "$_src" "$_dst"
   if [[ ! -f "${_dst}/.edm-state.json" ]]; then
     git_aware_mv "$_dst" "$_src"
     die "migrate-path: state file not found after move (rolled back): ${_dst}/.edm-state.json"
   fi
+  local _dst_lockbase="${_dst}${_lockbase#"$_src"}"
+  # G25 (CA-256): also sweep the G49 flock-timeout marker glob at the destination.
+  rm -rf "${_dst_lockbase}.lockd" "${_dst_lockbase}.lock" ${_dst_lockbase}.lock.timeout.*
 }
 
 cmd_migrate_path() {
@@ -3330,12 +3409,27 @@ _git_lock_age_bucket() {
       return 0
     fi
   done
+  # G27 (CA-258): cmd_git_lock_check's actual removal gate below uses `find -mmin +0` (true at
+  # roughly >=60s), one threshold finer than this loop's smallest bucket (`-mmin +1`, true only
+  # at roughly >=120s). Without a matching "0" bucket here, a lock aged in the [60s,120s) window
+  # fell through every bucket above to the "less than 1 minute" line even though the removal
+  # gate had already judged it old enough to act on -- the printed age contradicted the action
+  # the tool was about to take. This bucket uses the identical `-mmin +0` test so the two can
+  # never disagree again.
+  if find "$f" -mmin +0 2>/dev/null | grep -q .; then
+    echo "at least 1 minute"
+    return 0
+  fi
   echo "less than 1 minute"
 }
 
 cmd_git_lock_check() {
   local git_dir
-  git_dir="$(git rev-parse --git-dir 2>/dev/null || echo '')"
+  # G6 (CA-251): resolve to an ABSOLUTE path via `--absolute-git-dir`, not the relative
+  # `--git-dir`. The relative form prints the bare 4-character string ".git" from the normal
+  # invocation point (the top of a work tree), which is not a repository-identifying scope at
+  # all -- it is a fixed string every git worktree on the host shares.
+  git_dir="$(git rev-parse --absolute-git-dir 2>/dev/null || echo '')"
   if [[ -z "$git_dir" ]]; then
     echo "not inside a git repository" >&2
     return 0
@@ -3371,14 +3465,52 @@ cmd_git_lock_check() {
   # IDE-embedded git, a wrapper-renamed git binary) and MATCHES an unrelated repo's
   # git process anywhere else on the host -- neither false negative nor false positive
   # is acceptable for a check that deletes a lock file. Prefer lsof scoped to the lock
-  # file itself when available; fall back to pgrep -f matched against this repo's own
-  # git-dir path (still an approximation, but scoped rather than a bare name match).
+  # file itself when available; fall back to a pgrep-plus-ps scan matched against this
+  # repo's own absolute git-dir path.
+  #
+  # G6 (CA-251): the pgrep fallback previously self-matched on every invocation. `git_dir`
+  # (now the absolute path from --absolute-git-dir above, not the bare 4-character relative
+  # string ".git") is matched as a FIXED STRING, never an ERE: `pgrep -f` still treats its own
+  # pattern as an ERE for CANDIDATE selection below (an ERE metacharacter in the path, e.g. a
+  # literal '.' matching any character, can only add extra false-positive candidates), but the
+  # actual classification is decided by piping literal command-line text through `grep -F`
+  # against the same absolute path, so a candidate must contain that exact substring to survive.
+  # Full command-line text is fetched via `ps -o pid=,args=` for each candidate PID rather than
+  # via a `pgrep -a`/`-l` display flag: on macOS/BSD pgrep, `-a` means "include process
+  # ancestors in the match list" -- a completely different feature from GNU procps' pgrep `-a`
+  # ("list the full command line") -- and macOS `-l` alone prints only the bare process name, not
+  # its arguments. Adopting either flag's Linux meaning here would silently make this fallback
+  # produce PIDs with no command-line text to match on macOS (this project's primary development
+  # platform, per CLAUDE.md), so `grep -F` would never match anything and the check would always
+  # guess "not held" -- exactly the wrong direction to fail for a check that deletes a file.
+  # `ps -o pid=,args=` is POSIX-specified and gives an identical output shape on both platforms.
+  # This process's own PID and parent PID are excluded from the candidate set so this command's
+  # own invocation (or its parent shell) can never count as holder evidence for itself.
   local holder_evidence=""
-  if command -v lsof >/dev/null 2>&1; then
+  local _have_lsof=0 _have_pgrep=0
+  command -v lsof >/dev/null 2>&1 && _have_lsof=1
+  command -v pgrep >/dev/null 2>&1 && _have_pgrep=1
+
+  if [[ $_have_lsof -eq 0 && $_have_pgrep -eq 0 ]]; then
+    echo "WARNING: liveness could not be determined for .git/index.lock (age: ${lock_age_desc}) -- neither lsof nor pgrep is available on this host; refusing to remove rather than guessing" >&2
+    return 1
+  fi
+
+  if [[ $_have_lsof -eq 1 ]]; then
     holder_evidence="$(lsof -- "$lock_file" 2>/dev/null | tail -n +2 || true)"
   fi
-  if [[ -z "$holder_evidence" ]] && command -v pgrep >/dev/null 2>&1; then
-    holder_evidence="$(pgrep -f -- "$git_dir" 2>/dev/null | paste -sd ' ' - || true)"
+  if [[ -z "$holder_evidence" && $_have_pgrep -eq 1 ]]; then
+    local _candidate_pids
+    # `|| true`: under `set -euo pipefail`, pgrep's own exit 1 (its documented "no processes
+    # matched" result -- the expected, common case once a lock is genuinely stale) propagates
+    # through the pipeline and aborts the whole script at this assignment without it.
+    _candidate_pids="$(pgrep -f -- "$git_dir" 2>/dev/null | tr '\n' ',' | sed 's/,$//' || true)"
+    if [[ -n "$_candidate_pids" ]]; then
+      holder_evidence="$(ps -o pid=,args= -p "$_candidate_pids" 2>/dev/null \
+        | grep -F -- "$git_dir" \
+        | awk -v me="$$" -v parent="$PPID" '$1 != me && $1 != parent' \
+        || true)"
+    fi
   fi
 
   if [[ -n "$holder_evidence" ]]; then
@@ -3662,14 +3794,10 @@ _cmd_audit_round_complete_body() {
   if [[ -n "$started_at" ]]; then
     local tokens
     tokens="$(get_session_tokens_since "$started_at")"
-    input="$(echo "$tokens" | jq -r '.input // 0')"
-    output="$(echo "$tokens" | jq -r '.output // 0')"
-    cache_read="$(echo "$tokens" | jq -r '.cache_read // 0')"
-    cw5m="$(echo "$tokens" | jq -r '.cache_write_5m // 0')"
-    cw1h="$(echo "$tokens" | jq -r '.cache_write_1h // 0')"
-    model="$(echo "$tokens" | jq -r '.model // "unknown"')"
-    attribution_mode="$(echo "$tokens" | jq -r '.attribution_mode // "whole-directory"')"
-    unparseable_lines="$(echo "$tokens" | jq -r '.unparseable_lines // 0')"
+    _unpack_token_fields "$tokens"
+    input="$_EDM_TOKENS_INPUT"; output="$_EDM_TOKENS_OUTPUT"; cache_read="$_EDM_TOKENS_CACHE_READ"
+    cw5m="$_EDM_TOKENS_CACHE_WRITE_5M"; cw1h="$_EDM_TOKENS_CACHE_WRITE_1H"; model="$_EDM_TOKENS_MODEL"
+    attribution_mode="$_EDM_TOKENS_ATTRIBUTION_MODE"; unparseable_lines="$_EDM_TOKENS_UNPARSEABLE_LINES"
     cost="$(compute_cost_usd "$model" "$input" "$output" "$cache_read" "$cw5m" "$cw1h")"
   fi
 
@@ -3864,7 +3992,7 @@ cmd_audit_converged() {
 # The first (existing, unchanged, AC6) form persists a per-ticket verdict into
 # partial_verdict_map. The second (new, EDMV3-T32) form closes an existing PARTIAL entry: the
 # literal third argument "close" disambiguates it from a verdict (never a legal value of the
-# first form), so hooks/hooks.json:117 and skills/implement/SKILL.md:98 -- both single-write
+# first form), so hooks/hooks.json:117 and skills/implement/SKILL.md:117 -- both single-write
 # callers of the first form -- are unaffected.
 
 # _cmd_record_partial_verdict_close_body <state-file> <prefix> <ticket> <closing-verdict>
