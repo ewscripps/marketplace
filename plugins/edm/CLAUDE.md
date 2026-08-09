@@ -303,16 +303,22 @@ section above) -- the plugin-relative path new prompt-surface references point a
 bare `CLAUDE.md Sec."..."` form.
 
 **Current position (decisions.md D34): the negative branch is now the shipped default, not a
-future one.** EDMV3-T42's eleven bare-form touch points landed before this fallback existed
-(decisions.md D22); that ordering gap is now closed. `agents/edm-audit-synthesizer.md`,
-`agents/edm-srd-auditor.md`, and all eleven `agents/edm-audit-*.md` lens definitions now carry an
-explicit `Read docs/canonical-sections.md` instruction anchored to the plugin's own root (never
-the caller's cwd) alongside their `CLAUDE.md Sec."..."` citation, so both forms resolve for a
-consumer reading this file. Residual scope -- auditing whether the remaining prompt-surface
-files (skills and any agent not yet touched) also need the same anchor -- is opened as a named
-follow-on ticket, `EDMV4-T04` (the next unused ticket number in `EDMV4__lint-and-pipeline-budgets`;
-`EDMV4-T02` and `EDMV4-T03` are already closed per decisions.md D29), rather than left as an
-unnamed candidate (D34).
+future one -- for the code-audit consumer set specifically, not for every EDMV3-T42 touch point.**
+`agents/edm-audit-synthesizer.md`, `agents/edm-srd-auditor.md`, and all eleven
+`agents/edm-audit-*.md` lens definitions now carry an explicit `Read docs/canonical-sections.md`
+instruction anchored to the plugin's own root (never the caller's cwd) alongside their
+`CLAUDE.md Sec."..."` citation, so both forms resolve for a consumer reading one of these thirteen
+files. **That is a different, narrower set than the nine prompt-surface touch points
+`srd.md`'s EDMV3-54 originally named** (`agents/edm-architect.md`, `agents/edm-srd-writer.md`,
+`agents/edm-ticket-writer.md`, `agents/edm-ticket-auditor.md`, `skills/srd/SKILL.md`,
+`skills/tickets/SKILL.md`, `skills/audit-srd/SKILL.md`, `skills/audit-tickets/SKILL.md`, plus
+`agents/edm-srd-auditor.md` which the two sets happen to share) -- of those nine, only
+`edm-srd-auditor.md` overlaps with what D34 actually anchored, so the "ordering gap is now
+closed" framing holds for the lens/synthesizer set only, not for the other eight EDMV3-54 touch
+points, which still carry the bare form alone. Auditing and anchoring those eight is the residual
+scope opened as a named follow-on ticket, `EDMV4-T04` (the next unused ticket number in
+`EDMV4__lint-and-pipeline-budgets`; `EDMV4-T02` and `EDMV4-T03` are already closed per
+decisions.md D29), rather than left as an unnamed candidate (D34).
 
 ## Model and effort assignments
 
@@ -755,6 +761,10 @@ Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call the
 | `edm-validate-prefix` | Verify a proposed prefix doesn't collide with existing initiatives across all product subdirectories |
 | `edm-lint-artifacts`  | Scan initiative artifact markdown for violation classes including attribution trailers, non-ASCII bytes, leaked tool-invocation tags, and a literal `;` inside Mermaid label/edge/message text; run `edm-lint-artifacts --help` for the authoritative, current class list rather than a count hardcoded here (a count drifts as classes are added). Called by the `PreToolUse` git-commit hook |
 | `edm-sync-canonical-sections` | Regenerate `docs/canonical-sections.md` from this file's "Severity vocabulary" and "Mermaid diagram conventions" sections (byte-identical, one-directional); `--check` exits 1 on drift. See the note below the Mermaid section for why this file exists (EDMV3-T41). |
+| `edm-check-grants`    | Four-source grant/instruction contract checker (EDMV3-T03/T07/T113): scans agent bodies, skill launch templates, hook prompt text and `AskUserQuestion`/`Skill`/`Write` grants together, so an instruction living in a skill's launch template or a hook prompt rather than the agent's own body is still caught. Run `edm-check-grants --help` for the full source list. |
+| `edm-check-vocabulary` | Deterministic backstop for the abolished-vocabulary policy (EDMV3-T29/T30; see this file's "Severity vocabulary" section for the policy itself). Scans `skills/`, `agents/`, `docs/`, `hooks/hooks.json`, `monitors/monitors.json`, `CLAUDE.md`, `README.md` and `bin/` against `bin/vocabulary-prohibited.txt`, honoring the documented `bin/vocabulary-allowlist.txt` carve-outs. |
+| `edm-compare-eval`    | Compares a post-change eval run's `scores.json` against the committed wave-A baseline (EDMV3-T39/EDMV3-52), applying the `baseline_total - variance.total_range` acceptance threshold and refusing (not silently passing) on a `scorer_version` or `dimensions_scored` mismatch, or a `complete: false` candidate. The scorer itself never compares; this script owns the comparison. |
+| `edm-check-skill-sync` | Regression tripwire (EDMV3-T39 AC7, amended per CA-089) run unconditionally by `bin/tests/run-all.sh`: asserts the dispatcher (`skills/orchestrator/SKILL.md`) holds no phase procedure body and that every phase skill still owns its own `## Operational Orchestration` section, so a future edit cannot silently copy a phase procedure back into the dispatcher. |
 
 ### `edm-lint-artifacts` latency budgets (EDMV3-T67 AC5/AC7)
 

@@ -2843,17 +2843,25 @@ independent of the dispatcher.
       `skills/audit-tickets/SKILL.md:72-75`.
     - [ ] After the WS5 move (EDMV3-48), the skill-side references exist only in the phase-skill copies; the
       orchestrator carries none.
-    - [ ] Every reference uses one of two accepted forms: the identical quoting style already in use,
-      `` `CLAUDE.md Sec."Mermaid diagram conventions"` ``, **or** the plugin-relative fallback,
-      `` `docs/canonical-sections.md` `` (resolved relative to the EDM plugin's own root, never the
-      caller's cwd) -- the two forms are equivalent because the latter is a generated, byte-identical
-      extract of the former (EDMV3-T41 AC4/AC5). The referenced heading is
-      `## Mermaid diagram conventions (canonical)` (EDMV3-53); `architecture.md` uses the same name, and a smoke
-      assertion checks the exact heading string, so the two documents cannot drift on it.
-    - [ ] Consumers cite the plugin-relative form (decisions.md D22, D34): a bare
-      `` `CLAUDE.md Sec."..."` `` reference does not resolve from an installed plugin cache -- disproven by
-      two independent methods and not re-asserted here. `docs/canonical-sections.md` is the resolvable
-      fallback and is what new prompt-surface references point at.
+    - [ ] Both forms are byte-identical in *content* and therefore equally correct to cite: the
+      identical quoting style already in use, `` `CLAUDE.md Sec."Mermaid diagram conventions"` ``,
+      and the plugin-relative fallback, `` `docs/canonical-sections.md` `` (resolved relative to
+      the EDM plugin's own root, never the caller's cwd), read the same text, because the latter is
+      a generated, byte-identical extract of the former (EDMV3-T41 AC4/AC5). The referenced heading
+      is `## Mermaid diagram conventions (canonical)` (EDMV3-53); `architecture.md` uses the same
+      name, and a smoke assertion checks the exact heading string, so the two documents cannot
+      drift on it.
+    - [ ] They are **not** equally correct to rely on for *resolution* from every runtime, which is
+      why they are not interchangeable going forward (decisions.md D22, D34): a bare
+      `` `CLAUDE.md Sec."..."` `` reference does not resolve from an installed plugin cache --
+      disproven by two independent methods and not re-asserted here -- while `docs/canonical-sections.md`
+      does, from either a development tree or an installed cache. Existing bare-form references are
+      not required to be rewritten (the content is identical either way), but **every new
+      prompt-surface reference points at the plugin-relative form**, `docs/canonical-sections.md`,
+      as the one that resolves everywhere. `CLAUDE.md Sec."By-name reference resolution..."` records
+      which of EDMV3-54's nine touch points have been anchored to the resolvable form so far
+      (one of nine, as of D34; the remaining eight are `EDMV4-T04`) and which still carry the bare
+      form only.
     - [ ] No touch point restates the rule content; a grep for `#59` outside `CLAUDE.md`, the pattern library entries,
       the linter, and its tests returns only reference lines.
     - [ ] The auditing agents' new check text names what to look for concretely: a raw `;` inside `[...]`, `(...)`,

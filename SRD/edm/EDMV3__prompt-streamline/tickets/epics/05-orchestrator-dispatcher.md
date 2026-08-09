@@ -153,7 +153,23 @@ additionally cannot record an approval without a human click; that is a second l
       `` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` `` rather than restating it. Gate 1,
       Gate 2, Gate 3, Gate 3.5 and the convergence gate all cite the same section.
       Verify: `grep -rn 'free-text is never approval\|free text is not an approval' plugins/edm/ | grep -v 'orchestrator/SKILL.md'`
-      returns zero results.
+      returns zero results -- confirmed live, round-3 Wave 7f: this exact pipeline returns 0 today.
+
+      **Note -- why this AC's own test case describes the phrase it forbids, and does not fail.**
+      `bin/tests/wave7-smoke.sh`'s "T35 AC4" case is a repo-wide scan that includes `bin/tests/`
+      itself, and its own echo/label text literally spells out `'free-text is never approval'` to
+      describe what it is asserting the absence of -- so the raw (pre-filter) scan does match its
+      own source line before any exclusion runs. The result is correct only because that same echo
+      line also happens to contain the literal substring `orchestrator/SKILL.md` (as part of its own
+      human-readable description, "... outside orchestrator/SKILL.md"), which the `grep -v
+      'orchestrator/SKILL.md'` filter incidentally strips along with the real gate-site restatements
+      it exists to exclude. This is fragile, not a clean self-avoidance: a future rewording of that
+      echo line that drops the literal substring `orchestrator/SKILL.md` (e.g. paraphrasing it)
+      would resurface the self-match and turn this AC red with no change to any actual gate site.
+      The needle is already built from split string parts (`t35_freetext_needle_a`/`_b`,
+      concatenated at runtime) precisely to keep the *pattern itself* out of the source as a
+      contiguous literal, but the plain-English echo/label text describing the case is not covered
+      by that same protection.
 - [ ] AC5 (negative, the weak gates are gone): `skills/plan/SKILL.md:130-132`,
       `skills/audit-srd/SKILL.md:122-124` and `skills/audit-tickets/SKILL.md:127-129` no longer
       contain free-prose approval questions -- "Ask: 'Do you approve ...?'" followed by "On approval:
@@ -355,10 +371,33 @@ and no smoke assertion set is coherent. The move is atomic by nature.
       skills.
       Verify: `/edm:audit-srd EDMV3` invoked directly runs Step 0, executes the phase, and presents
       the gate via `AskUserQuestion`. Recorded as a manual-QA case in the ticket.
-- [ ] AC6 (negative, one call site per phase): `edm-state phase-start` and `phase-complete` calls
-      exist exactly once per phase across the whole plugin.
-      Verify: `grep -rc 'phase-start' plugins/edm/skills/*/SKILL.md` sums to 8 (one per phase skill)
-      and `bash plugins/edm/bin/tests/wave7-smoke.sh` (case "one phase-start per phase").
+- [ ] AC6 (one owning file per phase, phase-complete-6's three-way split sanctioned): for each of
+      the six phases N=1..6, exactly one phase skill's SKILL.md contains `phase-start <PREFIX> N`.
+      The same holds for `phase-complete <PREFIX> N`, except phase 6, where exactly three files
+      contain it: the orchestrator (the owning call, EDMV3-T50), `skills/implement/SKILL.md` and
+      `skills/verify-runtime/SKILL.md` (both documented direct-invocation restatements for a user
+      who invokes the phase standalone, EDMV3-T50 AC5). `skills/tickets/SKILL.md` legitimately
+      contains a second `phase-start <PREFIX> 4` occurrence for its fast-track mode-branch
+      duplicate; both occurrences live in the same file, so phase 4 still has exactly one owning
+      file, not two.
+      Verify: `bash plugins/edm/bin/tests/wave7-smoke.sh` (case "T37 AC6 -- one owning file per
+      phase-start/phase-complete call (phase-complete 6's three-file split is the documented
+      orchestrator-owns/implement+verify-runtime-restate-for-direct-invocation exception,
+      EDMV3-T50)").
+
+      **Note -- why the obvious command does not work.** The obvious form,
+      `grep -rc 'phase-start' plugins/edm/skills/*/SKILL.md` summed across files, does not return 8
+      (one per phase skill) -- it returns **7**. This is not a defect. The contract is per-*phase*
+      (six phases), not per-*skill* (fourteen skills, only eight of which own a numbered phase):
+      `skills/code-audit/SKILL.md` and `skills/verify-runtime/SKILL.md` are Phase 6's two sub-skills
+      and carry no `phase-start` call of their own -- Phase 6's single owning `phase-start` lives in
+      `skills/implement/SKILL.md` -- while `skills/tickets/SKILL.md` carries two occurrences (the
+      base call plus the sanctioned fast-track mode-branch duplicate described above) that both
+      count toward the same phase-4 owning file, not two owners. A future reader re-deriving "one
+      phase-start per phase skill" from a bare per-skill literal sum always lands on 7, never 8, and
+      "fixing" the sum to 8 would mean adding a spurious `phase-start` call to a Phase 6 sub-skill
+      that must not own one. The per-phase ownership check above -- not the per-skill sum -- is what
+      actually verifies this AC.
 - [ ] AC7 (assertions re-baselined in the same MR): every smoke assertion on text this move
       relocates is re-baselined in the same merge request. Each is either re-pointed at the phase
       skill that now owns the text or deleted with a one-line reason in the MR description.
@@ -462,8 +501,10 @@ The risk is managed by the harness (E3), the spike (T34) and the fallback (T39),
       belong and to `CLAUDE.md` for the mode matrix itself. The artifact layout block and phase
       timing guidelines likewise move to `CLAUDE.md` with a by-name reference. Each piece of content
       exists in exactly one place afterwards, and the merge request lists where each moved.
-      Verify: `grep -c 'mini-srd' plugins/edm/skills/orchestrator/SKILL.md` returns only the routing
-      row, and the MR description contains the relocation table.
+      Verify: `grep -ic 'mini-srd' plugins/edm/skills/orchestrator/SKILL.md` returns only the
+      routing row's mention(s) -- the dispatcher writes the display-cased form `mini-SRD` in its
+      mode-header and Gate-2/3 routing text, not the lowercase enum form, so the grep is
+      case-insensitive -- and the MR description contains the relocation table.
 - [ ] AC7 (resume preserved): `edm-state current-step` read and write, `SessionStart` resume points,
       and HANDOFF refresh all continue to work.
       Verify: `bash plugins/edm/bin/tests/wave5-smoke.sh` is green and `edm-state session-start`
@@ -495,8 +536,11 @@ The risk is managed by the harness (E3), the spike (T34) and the fallback (T39),
       mode-as-graph-variant code is introduced. The dispatcher is compatible with such a future
       shape without being built for it. This is the negative enforcement of EDMV3-86, a Won't Have
       and a recorded scope boundary (D14) rather than a delivery of this ticket, which is why
-      EDMV3-86 is not an `SRD Refs` entry.
-      Verify: `grep -rl 'phases.json' plugins/edm/ | wc -l` prints 0.
+      EDMV3-86 is not an `SRD Refs` entry. The negative-test case asserting this AC's own absence
+      necessarily contains the literal string `phases.json` to describe what it is checking for,
+      which lives in `bin/tests/`, inside the same documented carve-out EDMV3-T09 AC13 already
+      uses for this exact self-reference shape.
+      Verify: `grep -rl 'phases.json' plugins/edm/ | grep -v '/bin/tests/' | wc -l` prints 0.
 - [ ] AC13 (the Phase 6 Skill invocation lands here, with its grant): the dispatcher's Phase 6 entry
       contains the `/edm:verify-runtime` Skill-tool invocation, in the same merge request as AC4's
       `Skill` grant. EDMV3-T33 deliberately adds no Skill call to the orchestrator, because a
@@ -593,10 +637,14 @@ rather than a suggestion.
 - [ ] AC5 (stop-before-gate contract re-verified against the final PROTOCOL): the driver's
       stop-before-gate instruction is re-verified against the wave-B PROTOCOL wording from
       EDMV3-T35, and any change to driver behaviour is recorded. If the change is material, the
-      baseline is invalidated and re-captured before the comparison is trusted.
-      Verify: the ticket records the re-verification result, and
-      `grep -n 'stop before gate presentation' plugins/edm/evals/run-eval.sh` matches the final
-      PROTOCOL's terminology.
+      baseline is invalidated and re-captured before the comparison is trusted. Re-verified this
+      wave (round-3 Wave 7f): `run-eval.sh`'s driver prompts already use "STOP and WAIT" phrasing
+      (e.g. "no STOP and WAIT text, no waiting for sign-off"), matching the canonical PROTOCOL's
+      "**STOP and WAIT for the `AskUserQuestion` response**" verbatim at
+      `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL (canonical)"`. No material change -- the
+      terminology already agrees, so the baseline is not invalidated. Recorded in `decisions.md`.
+      Verify: `grep -n 'STOP and WAIT' plugins/edm/evals/run-eval.sh` matches the final PROTOCOL's
+      terminology.
 - [ ] AC6 (negative, "CI will catch it" is invalid): "CI will catch it" is documented as an invalid
       substitute for running the eval, and the run artifact is a hard acceptance criterion on
       EDMV3-T38.
@@ -619,10 +667,17 @@ rather than a suggestion.
       `decisions.md` with the score comparison that triggered it, and waves A and C proceed
       unaffected.
       Verify: `grep -n 'dispatcher fallback' SRD/edm/EDMV3__prompt-streamline/decisions.md`.
-- [ ] AC9 (trend preserved): the nightly `scores.json` files remain named or tagged such that a
-      simple script can plot total score over time after this comparison job lands.
-      Verify: `ls plugins/edm/evals/runs/` shows timestamp-and-SHA names and the plotting script
-      described in `evals/README.md` runs against them.
+- [ ] AC9 (trend preserved, walked back to T23 AC11's naming-convention wording -- decisions.md
+      records the rework): the nightly `scores.json` files remain named or tagged such that a
+      simple script **could** plot total score over time after this comparison job lands -- the
+      naming convention exists and is documented; no plotting script is required to exist. This
+      matches the wording T39 AC9 originally escalated from (`epics/03-ci-and-fixture-eval.md`
+      T23 AC11), which asks only that artifacts be named or tagged so a script could be written,
+      not that one already is. `evals/runs/` is gitignored (never committed), so a run-directory
+      listing is never present in a clean checkout regardless of naming; the naming convention
+      itself, not a populated directory, is what this AC verifies.
+      Verify: `grep -n 'timestamp.*git-sha\|<timestamp>_<git-sha>' plugins/edm/evals/README.md`
+      shows the documented run-directory naming convention.
 
 ### Technical Notes
 

@@ -643,9 +643,13 @@ initiative) and moves six phase procedures. A regression here is expensive and h
 
 *Mitigation*: WS3's fixture eval provides a before/after number, and the baseline must be captured
 on wave-A code before any wave-B prompt edit. Wave-B isolation means a rollback does not disturb
-waves A or C. If the eval regresses, the fallback is the reviewed alternative -- a
-`bin/edm-check-skill-sync` script asserting the duplicated blocks stay identical -- which is worse
-than deduplication but strictly better than today.
+waves A or C. The eval's GO path was taken (EDMV3-T37/T38 deduplicated the six phase procedures
+into the phase skills, dispatched via the Skill tool), so there is no second copy left to keep in
+sync. `bin/edm-check-skill-sync` ships anyway, not as a conditional fallback but as an
+unconditional regression tripwire (run by `bin/tests/run-all.sh` on every invocation, per EDMV3-T39
+AC7 as amended by CA-089): it asserts the dispatcher holds **no** phase procedure body at all,
+which is the inverse of "the duplicated blocks stay identical" -- there is nothing left to
+duplicate, so nothing to keep identical.
 
 *Assumption this rests on*: that the eval's five mechanical dimensions correlate with the qualities
 that actually matter in an SRD. They are proxies. A prompt refactor could score identically and
@@ -870,7 +874,7 @@ survives `edm-check-vocabulary`, and the eval total is at or above baseline.
 | Keep the lenses read-only and persist their output from the code-audit skill | Funnels 11 full reports through the orchestrating context and reproduces the observed explorer failure mode of returning artifacts as prose |
 | A new state field for the code-audit gate instead of reusing `code_audit_converged` | D2. Reuse keeps one field, one meaning, and mirrors the working Gate 3.5 dedicated-boolean precedent at `bin/edm-state:590-609` |
 | Append the `code-audit` gate to `gates_approved` | The array holds integers only; a non-numeric gate would overload the type and break `cmd_gate_check`'s `select(.gate == $g)` comparison |
-| `bin/edm-check-skill-sync` (assert the duplicated blocks stay identical) instead of the dispatcher | D10. Deduplication beats sync-checking. Retained only as the documented fallback if the WS3 eval shows the refactor regresses |
+| `bin/edm-check-skill-sync` (assert the duplicated blocks stay identical) instead of the dispatcher | D10. Deduplication beats sync-checking. The GO path was taken (EDMV3-T37/T38), so there are no duplicated blocks left to compare. The script ships anyway, unconditionally invoked by `run-all.sh` on every run (EDMV3-T39 AC7, amended per CA-089), asserting the inverse: the dispatcher holds **no** phase procedure body at all |
 | Reorder `edm-init` to create the branch before `edm-state init` | D3. The warn-and-continue failure paths at `bin/edm-init:161-166` leave the user on the old branch; a post-checkout correction records whichever branch is truly occupied |
 | A new `bin/edm-doctor` binary for the permission-rule check | Folds into the existing `state_anomalies` and `cmd_session_start` surfaces at no cost, reusing the established `<CODE>  <field>  <description>` format |
 | A `.patterns_pending_review` array mirrored in state | The pattern files themselves are the single source of truth. A `grep 'status: pending-review'` over `docs/audit-patterns/` needs no sync and cannot drift |

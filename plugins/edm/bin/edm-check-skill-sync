@@ -1,22 +1,19 @@
 #!/usr/bin/env bash
 # EDM-HELP-BEGIN
-# edm-check-skill-sync -- the EDMV3-T39 AC7 fallback tripwire.
+# edm-check-skill-sync -- EDMV3-T39 AC7 regression tripwire for the phase-procedure move.
 #
-# CONTEXT: this script exists for a branch that was NOT taken. EDMV3-T37/T38 deduplicated the
-# phase procedures -- each phase's procedure now lives once, in its own phase skill, and the
-# orchestrator dispatches via the Skill tool. Deduplication makes drift structurally impossible,
-# which is strictly better than detecting it.
+# CONTEXT: EDMV3-T37/T38 deduplicated the phase procedures -- each phase's procedure now lives
+# once, in its own phase skill, and the orchestrator dispatches via the Skill tool. This is not a
+# fallback for a branch that was not taken (the GO path was taken); it is a permanent regression
+# tripwire proving the deduplication holds, run unconditionally by `bin/tests/run-all.sh` on every
+# invocation of the smoke suite, not only after a comparison failure.
 #
-# It ships anyway for two reasons:
-#   1. AC7 requires the fallback to exist and be runnable, not merely described. A fallback that
-#      has never been executed is a promise, not a plan (this initiative's founding defect class).
-#   2. If a future change re-introduces duplicated orchestration prose -- a phase procedure copied
-#      back into the dispatcher "for convenience" -- this catches it.
-#
-# What it asserts:
-#   - The dispatcher (skills/orchestrator/SKILL.md) contains no phase procedure body: no phase
-#     skill's distinctive procedure headings appear in it.
-#   - Every phase skill still carries its own procedure (the thing the dispatcher must not).
+# What it asserts (the inverse of a same-named earlier draft that checked the two copies "stayed
+# identical" -- there is no longer a second copy to compare against):
+#   - The dispatcher (skills/orchestrator/SKILL.md) contains NO phase procedure body: no phase
+#     skill's distinctive procedure heading ('## Operational Orchestration') appears in it.
+#   - Every phase skill still carries its own '## Operational Orchestration' section (the thing
+#     the dispatcher must not).
 #
 # Usage: edm-check-skill-sync
 # Exit codes: 0 clean, 1 duplication found, 2 usage or environment error.

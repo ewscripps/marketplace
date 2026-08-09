@@ -566,12 +566,19 @@ rather than hoped away.
       run so the decision to trigger it is informed, and states that "CI will catch it" is an
       invalid justification for skipping the run.
       Verify: `grep -n 'cost per run\|CI will catch it' plugins/edm/evals/README.md`.
-- [ ] AC13 (verifiable today): the committed baseline artifact records the wave-A fixture/scorer it
-      was captured from and the variance table that EDMV3-T39 consumes, so later tickets can verify
-      provenance from the artifact itself instead of from a no-longer-live chronology claim.
+- [ ] AC13 (blocked on the D23-documented baseline gap, corrected from "verifiable today" --
+      decisions.md D36 records this status correction): the committed baseline artifact records the
+      wave-A fixture/scorer it was captured from and the variance table that EDMV3-T39 consumes, so
+      later tickets can verify provenance from the artifact itself instead of from a no-longer-live
+      chronology claim. This AC's `README.md` half is verifiable today; its `scores.json` half is
+      not, because `decisions.md` D23 records that the wave-A baseline has not yet been captured
+      (`plugins/edm/evals/baseline/` holds only `README.md`) -- the jq half below cannot run in a
+      clean checkout until D23's documented closing command is executed. This is not silently
+      passed and not faked, per D15.
       Verify: `grep -n 'wave-A\|variance\|dimensions_scored' plugins/edm/evals/baseline/README.md`
-      shows the provenance and tolerance table, and
-      `jq -e '(.dimensions_scored == 4) and (.complete == true)' plugins/edm/evals/baseline/scores.json`.
+      shows the provenance and tolerance table today; the second half,
+      `jq -e '(.dimensions_scored == 4) and (.complete == true)' plugins/edm/evals/baseline/scores.json`,
+      remains blocked until D23's baseline capture lands.
 
 ### Technical Notes
 

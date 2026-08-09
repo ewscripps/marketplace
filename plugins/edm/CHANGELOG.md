@@ -289,13 +289,13 @@ anomaly fires on every `validate` call.
   first. Both the `UserPromptExpansion` hooks and the orchestrator's own Step 1d check are
   retained unchanged -- Step 0 is a second, defence-in-depth enforcement point on the Skill-tool
   path, not a replacement for either.
-- **`current_step` vocabulary migration (EDMV3-T38): tracked, not yet landed as of this entry.**
-  EDMV3-T38's orchestrator/dispatcher restructure defines a `current_step` vocabulary mapping
-  from the 2.x values (`1a`, `1b`, `1c`, ...) to a wave-B vocabulary, with old values tolerated
-  and resumed with a warning rather than erroring. EDMV3-T38 had not landed on
-  `edm/edmv3-prompt-streamline` as of this changelog entry; its published mapping supersedes this
-  paragraph once it does. Recorded here rather than omitted because EDMV3-95 names this item
-  explicitly and an honest "not yet" is more useful than silence.
+- **`current_step` vocabulary migration (EDMV3-T38): landed.** The post-refactor `current_step`
+  vocabulary is a bare phase number, `"1"`..`"6"` -- the dispatcher jumps straight to that phase
+  skill's own Step 0, which re-derives any finer-grained position itself. A legacy 2.x value
+  (`1a`, `1b`, `1c`, `2.srd`, `2.arch`, `4.epic-N`, etc.) resumes at the **start** of its phase
+  with a warning naming the legacy value seen, rather than erroring. See
+  `skills/orchestrator/SKILL.md Sec."Resume and Compaction"` for the canonical statement; this
+  entry is the by-name reference target that section's own text points at.
 - **archive hard-blocks on any unclosed or FAIL-closed `partial_verdict_map` entry** (EDMV3-T18):
   previously an open PARTIAL was tracked but never checked by `archive`. At `schema_version >= 2`
   every PARTIAL must be closed `PASS` via `/edm:verify-runtime` before `archive` will run; no
@@ -484,6 +484,28 @@ anomaly fires on every `validate` call.
   invocation path (Tier 3, prompt text -- the deterministic enforcement is `cmd_gate_check`
   itself, EDMV3-115/T13). Written once in `skills/plan/SKILL.md`, referenced by name from the
   other seven.
+- **Each phase skill owns its phase entirely; the orchestrator collapses to a dispatcher of at
+  most 300 lines** (EDMV3-T37, ships with EDMV3-T38 as one two-commit merge request): the six
+  phase procedures -- agent spawn templates, artifact templates, output paths, `edm-state` calls
+  -- move out of `skills/orchestrator/SKILL.md` into the phase skill that now owns each one as its
+  single source of truth (`code-audit` and `verify-runtime` both belong to Phase 6). The
+  orchestrator itself drops from 645 lines to 203, retaining only methodology context, intake,
+  mode dispatch, the gate PROTOCOL, resume/compaction, anti-patterns, `## Communication` and one
+  invoke-and-gate line per phase; it invokes each phase skill via the `Skill` tool (the sole
+  `Skill` grant in the plugin) rather than running any phase procedure inline. The three mode
+  sub-flows (`mini-srd`, `prototype`, `fast-track`) and the mode matrix relocate to the phase
+  skills and `CLAUDE.md` respectively. `bin/edm-check-skill-sync` ships as a permanent regression
+  tripwire proving the deduplication holds (see the EDMV3-T39 entry below).
+- **Eval comparison gate on the dispatcher refactor, plus its regression tripwire**
+  (EDMV3-T39): `bin/edm-compare-eval` compares a post-refactor eval run's `scores.json` against
+  the committed wave-A baseline, accepting only when the candidate total is at or above
+  `baseline_total - variance.total_range`, and refusing (naming the mismatch, never silently
+  passing) when the two runs carry different `scorer_version` or `dimensions_scored` values or the
+  candidate is flagged `complete: false`. `bin/edm-check-skill-sync` ships alongside it -- not as
+  the originally-scoped fallback for a NO-GO branch (the GO path was taken; see decisions.md D23),
+  but as a permanent regression tripwire, invoked unconditionally by `bin/tests/run-all.sh` on
+  every run, asserting the dispatcher holds no phase procedure body. The `eval:nightly` CI job
+  runs both the eval driver and this comparison, publishing `scores.json` as a 30-day artifact.
 
 ### Backward Compatibility
 
