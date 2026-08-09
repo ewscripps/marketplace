@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # _harness.sh -- shared smoke-test assertions for the EDM bin/tests/*-smoke.sh suites (CA-014;
-# formerly the duplicated G18d preamble). Source it AFTER `set -euo pipefail`:
-#   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_harness.sh"
+# formerly the duplicated G18d preamble). Each suite must set SCRIPT_DIR before sourcing this
+# file (every suite already needs SCRIPT_DIR for its own EDM_STATE derivation, so this is never
+# an extra line), then source it AFTER `set -euo pipefail`:
+#   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+#   source "${SCRIPT_DIR}/_harness.sh"
+# (G11/CA-049, round 4: this is the form the largest suite, wave7-smoke.sh, actually uses --
+# updated here from the previously-documented inline `$(cd ... && pwd)/_harness.sh` form so the
+# docstring matches actual practice rather than prescribing a shape most suites do not follow.)
 # Each suite still manages its own SCRIPT_DIR / EDM_STATE / TMP setup (TMP via harness_scratch_dir
 # below, CA-049/G21) -- this file provides the shared counters and assertions, the shared
 # _HARNESS_PLUGIN_DIR / _HARNESS_REPO_ROOT root-path exports (every caller reads these instead of
@@ -199,6 +205,11 @@ count_matches_strict() {
 
 # assert_absent_with_control <label> <needle> <actual> <control-label> <control-haystack> --
 # passes only when <needle> is absent from <actual> AND present in the positive-control haystack.
+# CA-037/CA-145 (G2/G13, round 4): this primitive is itself correct and well self-tested -- the
+# defect was at 16 CALL SITES that authored <control-haystack> as a hand-typed literal string
+# containing <needle> by construction, making the control arm provably dead code. Do NOT add a
+# new tautological-control call site; use assert_tree_absent below instead, which forces the
+# control to come from something a real scan is capable of producing.
 assert_absent_with_control() {
   local label="$1" needle="$2" actual="$3" control_label="$4" control_haystack="$5"
   if [[ "$control_haystack" != *"$needle"* ]]; then
@@ -207,6 +218,46 @@ assert_absent_with_control() {
     fail "$label (expected '${needle}' to be absent, but it was present)"
   else
     pass "$label"
+  fi
+}
+
+# assert_tree_absent <label> <grep-pattern> <actual-haystack> <control-haystack> <path...> --
+# G2/CA-037 + G13/CA-145 combined fix for assert_absent_with_control's tautological-control
+# class (16 call sites across wave5/6/7-smoke.sh, round 4). Two independent defects, closed in
+# one call:
+#   1. (CA-037) <control-haystack> is no longer permitted to be a hand-authored literal that
+#      contains <grep-pattern> by construction -- every caller must pass either a genuinely
+#      seeded scratch file's content or a real in-tree occurrence, so a broken match mechanism
+#      (a typo'd pattern, a mis-anchored regex) actually fails the control instead of trivially
+#      passing it.
+#   2. (CA-037's other half) <path...> are the real directories/files the caller's own scan
+#      (which produced <actual-haystack>) was scoped to; each is asserted to exist BEFORE the
+#      needle check runs, so a wrong PLUGIN_DIR or a mistyped directory fails this assertion
+#      directly instead of reading identically to a genuinely clean, correctly-scoped tree --
+#      CA-037's original failure mode, still live at every one of these 16 sites before this fix
+#      because their scans discarded stderr (`2>/dev/null`) and swallowed grep's own exit code.
+#   3. (CA-145) both haystacks are then routed through count_matches_strict (via stdin, so
+#      <actual-haystack> may still be the output of a caller-composed multi-step filter
+#      pipeline) and its own exit status is asserted alongside its printed value -- a malformed
+#      pattern (grep exit 2) is now a NAMED failure instead of a silently-passing zero.
+assert_tree_absent() {
+  local label="$1" pattern="$2" actual="$3" control="$4"
+  shift 4
+  local _p
+  for _p in "$@"; do
+    [[ -e "$_p" ]] || { fail "$label (scan target missing: ${_p} -- broken path, not a clean tree)"; return; }
+  done
+  local control_ec=0 control_count real_ec=0 real_count
+  control_count="$(printf '%s\n' "$control" | count_matches_strict -- "$pattern")" || control_ec=$?
+  real_count="$(printf '%s\n' "$actual" | count_matches_strict -- "$pattern")" || real_ec=$?
+  if [[ $control_ec -ne 0 || "${control_count:-0}" -lt 1 ]]; then
+    fail "$label (positive control broken: count_matches_strict found ${control_count:-0} '${pattern}' occurrence(s) in the control haystack, ec=${control_ec} -- the matcher itself is not proven capable of finding a real hit)"
+  elif [[ $real_ec -ne 0 ]]; then
+    fail "$label (count_matches_strict errored scanning the real haystack, ec=${real_ec})"
+  elif [[ "${real_count:-0}" -eq 0 ]]; then
+    pass "$label"
+  else
+    fail "$label (expected '${pattern}' to be absent, found ${real_count} occurrence(s))"
   fi
 }
 

@@ -227,6 +227,11 @@ set -e
 
 echo
 echo "T03 AC2/AC4 -- every agent grant is satisfied against the live (post-EDMV3-T02) tree"
+# G50/CA-281 (round 4): this is a deliberate second live invocation, not the CA-094 duplicate it
+# was once flagged as -- it runs immediately after this same block's own --list-sources/
+# --bogus-flag exit-contract checks, testing edm-check-grants itself, well before the CA-094
+# hoisted WAVE7_GRANTS_EXIT capture even exists (see that capture's own comment for the full
+# rationale). Left as its own run rather than folded into the later hoist.
 set +e
 t03_live_ec=0
 t03_live_out="$(bash "$EDM_CHECK_GRANTS" 2>&1)" || t03_live_ec=$?
@@ -300,16 +305,16 @@ else
 fi
 
 echo
-echo "CA-010 -- AC8's shared-lint-library boundary: each of the three consumers sources"
-echo "_edm-lint-lib.sh (bin/edm-lint-artifacts, edm-check-grants, edm-check-vocabulary are peer"
-echo "consumers of it, not of one another) and defines none of build_line_classes/is_ignored_line/"
-echo "report_violation itself. The prior version of this assertion greped for the presence of"
-echo "report_violation/build_ignore_set/is_ignored_line call sites and passed on any hit -- it would"
-echo "have passed unchanged even with the source line deleted and the three helpers pasted back in"
-echo "locally, which is exactly the regression this boundary exists to catch. It also grepped for"
-echo "build_ignore_set, a symbol that has never existed in this tree post-extraction, so a hit on"
-echo "it never asserted anything real."
-for ca010_consumer in edm-lint-artifacts edm-check-grants edm-check-vocabulary; do
+echo "CA-010 -- AC8's shared-lint-library boundary: each of the four consumers sources"
+echo "_edm-lint-lib.sh (bin/edm-lint-artifacts, edm-check-grants, edm-check-vocabulary, and"
+echo "bin/edm-state, G39/CA-270, are peer consumers of it, not of one another) and defines none of"
+echo "build_line_classes/is_ignored_line/report_violation itself. The prior version of this"
+echo "assertion greped for the presence of report_violation/build_ignore_set/is_ignored_line call"
+echo "sites and passed on any hit -- it would have passed unchanged even with the source line"
+echo "deleted and the three helpers pasted back in locally, which is exactly the regression this"
+echo "boundary exists to catch. It also grepped for build_ignore_set, a symbol that has never"
+echo "existed in this tree post-extraction, so a hit on it never asserted anything real."
+for ca010_consumer in edm-lint-artifacts edm-check-grants edm-check-vocabulary edm-state; do
   ca010_file="${PLUGIN_DIR}/bin/${ca010_consumer}"
   ca010_sources="$(grep -cE 'source .*_edm-lint-lib\.sh' "$ca010_file" 2>/dev/null || true)"
   [[ "${ca010_sources:-0}" -gt 0 ]] \
@@ -362,8 +367,14 @@ bash -n "$EDM_CHECK_GRANTS" && pass "edm-check-grants passes bash -n" \
   || fail "edm-check-grants failed bash -n"
 # CA-037: both checks below used to be uncontrolled (check_absent / bare [[ -z ]]) with no proof
 # either pattern could ever match a real hit.
-assert_absent_with_control "no associative array declarations (declare -A)" "declare -A" \
-  "$(cat "$EDM_CHECK_GRANTS")" "synthetic control line" "synthetic control: declare -A foo"
+# G2/CA-037 + G13/CA-145: no legitimate in-tree "declare -A" exists (it is banned everywhere for
+# bash 3.2 compatibility), so the positive control is a genuinely seeded scratch file rather
+# than a hand-typed literal, and $EDM_CHECK_GRANTS is asserted to exist before the needle check.
+t03_declarea_control="${TMP}/edm-t03-declareA-control.txt"
+printf 'declare -A foo\n' > "$t03_declarea_control"
+assert_tree_absent "no associative array declarations (declare -A)" "declare -A" \
+  "$(cat "$EDM_CHECK_GRANTS")" "$(cat "$t03_declarea_control")" "$EDM_CHECK_GRANTS"
+rm -f "$t03_declarea_control"
 # CA-037: the trailing [[:space:]] requirement meant a mapfile/readarray call immediately
 # followed by redirection with no space (e.g. "mapfile<f") could never match -- a real bug, not
 # just an untested one. Widened to any non-identifier boundary character (or end of line) so
@@ -400,11 +411,15 @@ ORCH_SKILL="${PLUGIN_DIR}/skills/orchestrator/SKILL.md"
 t15_skills_grep="$(grep -rn 'code_audit_converged true' "${PLUGIN_DIR}/skills/" 2>/dev/null || true)"
 # CA-037: check_absent alone never proved the grep pattern itself could match anything -- a typo'd
 # pattern or an accidentally-scoped directory would pass identically to a genuinely clean prompt
-# set. assert_absent_with_control's synthetic control (a line that legitimately contains the
-# needle) proves the same grep would have caught a real instance.
-assert_absent_with_control "no prompt anywhere instructs 'edm-state set <PREFIX> code_audit_converged true'" \
-  "code_audit_converged true" "$t15_skills_grep" \
-  "synthetic control line" "synthetic control: edm-state set <PREFIX> code_audit_converged true"
+# set.
+# G2/CA-037 + G13/CA-145: the control is a genuinely seeded scratch file (no skill legitimately
+# contains this phrase anymore -- that is the whole point of T15 AC1), and
+# "${PLUGIN_DIR}/skills/" is asserted to exist before the needle check runs.
+t15_skills_control="${TMP}/edm-t15-flag-control.txt"
+printf 'edm-state set <PREFIX> code_audit_converged true\n' > "$t15_skills_control"
+assert_tree_absent "no prompt anywhere instructs 'edm-state set <PREFIX> code_audit_converged true'" \
+  "code_audit_converged true" "$t15_skills_grep" "$(cat "$t15_skills_control")" "${PLUGIN_DIR}/skills/"
+rm -f "$t15_skills_control"
 
 echo
 echo "T15 AC2 -- Step 10 presents the Convergence gate via AskUserQuestion and gates approve-gate on Approve"
@@ -503,10 +518,9 @@ t23_score_synthetic_run() {
   echo 'Coverage discussion: TSVE-01' > run-dir/audit-srd.md
   echo "run-dir/srd.md written, TSVE-01 present" > /dev/null
 
-  bash "$SCORE_ARTIFACTS" run-dir > out-a.json 2> err-a.json
-  local rc_a=$?
-  bash "$SCORE_ARTIFACTS" run-dir > out-b.json 2> err-b.json
-  local rc_b=$?
+  local rc_a=0 rc_b=0
+  bash "$SCORE_ARTIFACTS" run-dir > out-a.json 2> err-a.json || rc_a=$?
+  bash "$SCORE_ARTIFACTS" run-dir > out-b.json 2> err-b.json || rc_b=$?
 
   [[ "$rc_a" -eq 0 && "$rc_b" -eq 0 ]] \
     && pass "score-artifacts.sh exits 0 scoring a minimal synthetic run (AC5, never non-zero on a low score)" \
@@ -1228,8 +1242,12 @@ check "T66 AC9 -- cmd_audit_round_complete completes via with_state_lock" "with_
 
 echo
 echo "T66 AC11 -- allow_failure is scoped to only the plugin-cli validate and eval jobs"
-t66_validate_plugin_block="$(awk '/^validate:plugin-cli:/{f=1;next} f && /^[^[:space:]][^#]*:$/ {f=0} f' "$GITLAB_CI_YML")"
-t66_eval_block="$(awk '/^eval:nightly:/{f=1;next} f && /^[^[:space:]][^#]*:$/ {f=0} f' "$GITLAB_CI_YML")"
+# G40/CA-271 (round 4): the terminator regex excludes '#' from the FIRST character class too, not
+# just the rest of the line -- the previous `^[^[:space:]][^#]*:$` treated '#' as a valid first
+# character (it is not whitespace), so a column-0 comment line ending in a colon (e.g. "# See:")
+# was misread as the next job's header and silently truncated the block being extracted.
+t66_validate_plugin_block="$(awk '/^validate:plugin-cli:/{f=1;next} f && /^[^[:space:]#][^#]*:$/ {f=0} f' "$GITLAB_CI_YML")"
+t66_eval_block="$(awk '/^eval:nightly:/{f=1;next} f && /^[^[:space:]#][^#]*:$/ {f=0} f' "$GITLAB_CI_YML")"
 check "T66 AC11 -- validate:plugin-cli carries allow_failure" "allow_failure: true" "$t66_validate_plugin_block"
 check "T66 AC11 -- eval:nightly carries allow_failure" "allow_failure: true" "$t66_eval_block"
 # CA-100: an absent job (deleted, renamed, or a typo in the loop's own job-name list) yields an
@@ -1242,7 +1260,7 @@ t66_lint_missing=""
 t66_lint_not_lint_stage=""
 t66_lint_union=""
 for t66_job in lint:bash-syntax lint:artifacts lint:grants lint:vocabulary; do
-  t66_job_block="$(awk -v job="^${t66_job}:$" '$0 ~ job {f=1;next} f && /^[^[:space:]][^#]*:$/ {f=0} f' "$GITLAB_CI_YML")"
+  t66_job_block="$(awk -v job="^${t66_job}:$" '$0 ~ job {f=1;next} f && /^[^[:space:]#][^#]*:$/ {f=0} f' "$GITLAB_CI_YML")"
   if [[ -z "$t66_job_block" ]]; then
     t66_lint_missing="${t66_lint_missing} ${t66_job}"
     continue
@@ -1271,11 +1289,19 @@ done
 check "T66 AC11 -- code-audit uses audit-round-start with --lenses" "--lenses" "$(grep 'audit-round-start' "${PLUGIN_DIR}/skills/code-audit/SKILL.md" || true)"
 
 # ---- CA-094: whole-tree edm-lint-artifacts --all / edm-check-grants: run ONCE here, asserted by
-# every block below that used to run its own redundant whole-tree scan. This is the earliest
-# point in the suite that needs either scan -- hoisted here (rather than left declared just
-# before the T45 block far below, where seven earlier consumers could not reach it) so every
-# consumer, not just the later ones, can reuse a single captured run. Five of those seven
-# earlier scans discarded their own output entirely; the two that inspect content (T43 AC9,
+# every block below that used to run its own redundant whole-tree scan. G50/CA-281 (round 4):
+# this is NOT the earliest point in the suite that runs edm-check-grants against the live tree --
+# the T03 AC2/AC4 block far above (~line 231) runs its own separate `bash "$EDM_CHECK_GRANTS"`
+# invocation, deliberately kept as its own live run rather than folded into this hoist: T03's
+# block is testing edm-check-grants ITSELF (its --list-sources/--bogus-flag exit contract
+# immediately before it, in the same self-contained section) before the INVARIANT below -- which
+# governs every consumer of THIS capture -- even exists, and predates it in the file. Hoisting
+# T03's check into this capture would entangle an early, standalone binary-under-test assertion
+# with a shared, invariant-tracked capture 1000+ lines later for no behavioral gain (both runs
+# scan the same unmutated live tree; nothing between the two positions changes cwd, EDM_SRD_ROOT,
+# or the tracked SRD tree). This hoist IS, however, the earliest point for every OTHER consumer:
+# it replaces what were seven separate redundant whole-tree scans further below. Five of those
+# seven earlier scans discarded their own output entirely; the two that inspect content (T43 AC9,
 # T44 AC7) get the real captured text below instead of a second live invocation.
 # INVARIANT: nothing from this line to the end of the file may mutate the tracked SRD tree or
 # change EDM_SRD_ROOT/cwd -- every consumer below re-checks the fingerprint before reusing the
@@ -1328,12 +1354,21 @@ _wave7_assert_shared_lint_fresh "T66 AC12"
 t66ac12_force_hits="$(grep -rn -- '--force\|--accept-partials' "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" 2>/dev/null \
   | grep -v tests/ | grep -v 'vocabulary-' | grep -v "refused:" || true)"
 # G20 (round-3): this repo-wide escape-hatch scan had no proof either OR'd needle could ever
-# match -- routed through assert_absent_with_control per needle (CA-037 shape), each against a
-# synthetic control line that legitimately contains it.
-assert_absent_with_control "T66 AC12 -- no --force escape hatch outside tests/vocabulary/refusal text" \
-  "--force" "$t66ac12_force_hits" "synthetic control line" "synthetic control: --force"
-assert_absent_with_control "T66 AC12 -- no --accept-partials escape hatch outside tests/vocabulary/refusal text" \
-  "--accept-partials" "$t66ac12_force_hits" "synthetic control line" "synthetic control: --accept-partials"
+# match -- routed through assert_tree_absent per needle (G2/CA-037 + G13/CA-145, round 4). The
+# control is a genuinely seeded scratch file rather than a hand-typed literal, and each of the
+# three scanned directories is asserted to exist before the needle check runs (a broken
+# PLUGIN_DIR previously read identically to a genuinely clean tree).
+t66ac12_force_control="${TMP}/edm-t66-force-control.txt"
+printf -- '--force\n' > "$t66ac12_force_control"
+assert_tree_absent "T66 AC12 -- no --force escape hatch outside tests/vocabulary/refusal text" \
+  "--force" "$t66ac12_force_hits" "$(cat "$t66ac12_force_control")" \
+  "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
+t66ac12_accept_control="${TMP}/edm-t66-accept-control.txt"
+printf -- '--accept-partials\n' > "$t66ac12_accept_control"
+assert_tree_absent "T66 AC12 -- no --accept-partials escape hatch outside tests/vocabulary/refusal text" \
+  "--accept-partials" "$t66ac12_force_hits" "$(cat "$t66ac12_accept_control")" \
+  "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
+rm -f "$t66ac12_force_control" "$t66ac12_accept_control"
 # EDMV3-T66 end
 
 # =================================================================================
@@ -1684,11 +1719,19 @@ echo "T30 AC10 -- override-flag grep (repo-wide, documented carve-outs) is clean
 t30_override_hits="$(grep -rn -- '--force\|--accept-partials' "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" 2>/dev/null \
   | grep -v "${PLUGIN_DIR}/bin/tests/" | grep -v vocabulary- | grep -v 'refused:' || true)"
 # G20 (round-3): same repo-wide escape-hatch scan as T66 AC12 above -- routed through
-# assert_absent_with_control per needle so a typo'd/broken pattern cannot pass silently.
-assert_absent_with_control "T30 AC10 -- no stray --force outside bin/tests/ and the vocabulary checker's own files" \
-  "--force" "$t30_override_hits" "synthetic control line" "synthetic control: --force"
-assert_absent_with_control "T30 AC10 -- no stray --accept-partials outside bin/tests/ and the vocabulary checker's own files" \
-  "--accept-partials" "$t30_override_hits" "synthetic control line" "synthetic control: --accept-partials"
+# assert_tree_absent per needle (G2/CA-037 + G13/CA-145, round 4): genuinely seeded scratch
+# controls, and the three scanned directories are asserted to exist before the needle check runs.
+t30_force_control="${TMP}/edm-t30-force-control.txt"
+printf -- '--force\n' > "$t30_force_control"
+assert_tree_absent "T30 AC10 -- no stray --force outside bin/tests/ and the vocabulary checker's own files" \
+  "--force" "$t30_override_hits" "$(cat "$t30_force_control")" \
+  "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
+t30_accept_control="${TMP}/edm-t30-accept-control.txt"
+printf -- '--accept-partials\n' > "$t30_accept_control"
+assert_tree_absent "T30 AC10 -- no stray --accept-partials outside bin/tests/ and the vocabulary checker's own files" \
+  "--accept-partials" "$t30_override_hits" "$(cat "$t30_accept_control")" \
+  "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
+rm -f "$t30_force_control" "$t30_accept_control"
 
 echo
 echo "T30 AC11 -- bash 3.2 syntax check and CI wiring"
@@ -2048,8 +2091,8 @@ flowchart TD
 ```
 '
 t43_start="$SECONDS"
-bash "$LINT_BIN" --path "${T43_SCRATCH}/nested.md" >/dev/null 2>&1
-t43_rc=$?
+t43_rc=0
+bash "$LINT_BIN" --path "${T43_SCRATCH}/nested.md" >/dev/null 2>&1 || t43_rc=$?
 t43_elapsed=$((SECONDS - t43_start))
 [[ "$t43_elapsed" -le 10 && "$t43_rc" -le 1 ]] \
   && pass "T43 AC3 -- nested-looking fence does not hang or crash (took ${t43_elapsed}s, exit ${t43_rc})" \
@@ -2307,7 +2350,9 @@ done
 
 echo
 echo "T44 AC4 -- exact violation set: zero on valid/, exactly one per file (at its expected line) on invalid/"
-t44_valid_out="$(bash "$LINT_BIN" --path "$MERMAID_VALID_DIR" 2>&1)"
+t44_valid_rc=0
+t44_valid_out="$(bash "$LINT_BIN" --path "$MERMAID_VALID_DIR" 2>&1)" || t44_valid_rc=$?
+check "T44 AC4 -- valid/ exits 0 (no violations found)" "0" "$t44_valid_rc"
 check "T44 AC4 -- valid/ is CLEAN" "CLEAN" "$t44_valid_out"
 check_absent "T44 AC4 -- the indented-fence fixture does not leak a mermaid-semicolon violation" \
   "v12-indented-fence.md" "$t44_valid_out"
@@ -2445,13 +2490,24 @@ echo "T33 AC4 -- no third verdict (BLOCKED/WAIVED/N/A-runtime) anywhere in scope
 t33_third_verdict_hits="$(grep -rn 'BLOCKED\|WAIVED\|N/A-runtime' \
   "${PLUGIN_DIR}/bin/edm-state" "$VERIFY_RUNTIME_SKILL" "${PLUGIN_DIR}/agents/edm-qc-auditor.md" 2>/dev/null || true)"
 # G20 (round-3): three-needle OR'd scan for a never-implemented third verdict -- each needle
-# routed through assert_absent_with_control against its own synthetic control line.
-assert_absent_with_control "T33 AC4 -- no BLOCKED token in edm-state, verify-runtime, or qc-auditor" \
-  "BLOCKED" "$t33_third_verdict_hits" "synthetic control line" "synthetic control: BLOCKED"
-assert_absent_with_control "T33 AC4 -- no WAIVED token in edm-state, verify-runtime, or qc-auditor" \
-  "WAIVED" "$t33_third_verdict_hits" "synthetic control line" "synthetic control: WAIVED"
-assert_absent_with_control "T33 AC4 -- no N/A-runtime token in edm-state, verify-runtime, or qc-auditor" \
-  "N/A-runtime" "$t33_third_verdict_hits" "synthetic control line" "synthetic control: N/A-runtime"
+# routed through assert_tree_absent (G2/CA-037 + G13/CA-145, round 4): genuinely seeded scratch
+# controls, and the three scanned files are asserted to exist before each needle check runs.
+t33_blocked_control="${TMP}/edm-t33-blocked-control.txt"
+printf 'BLOCKED\n' > "$t33_blocked_control"
+assert_tree_absent "T33 AC4 -- no BLOCKED token in edm-state, verify-runtime, or qc-auditor" \
+  "BLOCKED" "$t33_third_verdict_hits" "$(cat "$t33_blocked_control")" \
+  "${PLUGIN_DIR}/bin/edm-state" "$VERIFY_RUNTIME_SKILL" "${PLUGIN_DIR}/agents/edm-qc-auditor.md"
+t33_waived_control="${TMP}/edm-t33-waived-control.txt"
+printf 'WAIVED\n' > "$t33_waived_control"
+assert_tree_absent "T33 AC4 -- no WAIVED token in edm-state, verify-runtime, or qc-auditor" \
+  "WAIVED" "$t33_third_verdict_hits" "$(cat "$t33_waived_control")" \
+  "${PLUGIN_DIR}/bin/edm-state" "$VERIFY_RUNTIME_SKILL" "${PLUGIN_DIR}/agents/edm-qc-auditor.md"
+t33_naruntime_control="${TMP}/edm-t33-naruntime-control.txt"
+printf 'N/A-runtime\n' > "$t33_naruntime_control"
+assert_tree_absent "T33 AC4 -- no N/A-runtime token in edm-state, verify-runtime, or qc-auditor" \
+  "N/A-runtime" "$t33_third_verdict_hits" "$(cat "$t33_naruntime_control")" \
+  "${PLUGIN_DIR}/bin/edm-state" "$VERIFY_RUNTIME_SKILL" "${PLUGIN_DIR}/agents/edm-qc-auditor.md"
+rm -f "$t33_blocked_control" "$t33_waived_control" "$t33_naruntime_control"
 
 echo
 echo "T33 AC5 -- D15 policy in CLAUDE.md: two sanctioned responses"
@@ -2636,10 +2692,20 @@ echo "T35 AC4 -- zero restatements of 'free-text is never approval' outside orch
 t35_freetext_needle_a="free-text is never"; t35_freetext_needle_a="${t35_freetext_needle_a} approval"
 t35_freetext_needle_b="free text is not"; t35_freetext_needle_b="${t35_freetext_needle_b} an approval"
 t35_freetext_hits="$(grep -rn -e "$t35_freetext_needle_a" -e "$t35_freetext_needle_b" "${PLUGIN_DIR}/" 2>/dev/null | grep -v 'orchestrator/SKILL.md' || true)"
-assert_absent_with_control "T35 AC4 -- no free-text-is-never-approval restatement outside orchestrator/SKILL.md" \
-  "$t35_freetext_needle_a" "$t35_freetext_hits" "synthetic control line" "synthetic control: ${t35_freetext_needle_a}"
-assert_absent_with_control "T35 AC4 -- no free-text-is-not-an-approval restatement outside orchestrator/SKILL.md" \
-  "$t35_freetext_needle_b" "$t35_freetext_hits" "synthetic control line" "synthetic control: ${t35_freetext_needle_b}"
+# G2/CA-037 + G13/CA-145: controls are genuinely seeded scratch files under $TMP (outside
+# PLUGIN_DIR, so they cannot self-contaminate the repo-wide scan above) built from the same
+# split-needle variables, never a fresh contiguous literal -- reusing $t35_freetext_needle_a/_b
+# keeps this file's own source text free of the contiguous phrase. "${PLUGIN_DIR}/" is asserted
+# to exist before either needle check runs.
+t35_control_a="${TMP}/edm-t35-control-a.txt"
+printf '%s\n' "$t35_freetext_needle_a" > "$t35_control_a"
+t35_control_b="${TMP}/edm-t35-control-b.txt"
+printf '%s\n' "$t35_freetext_needle_b" > "$t35_control_b"
+assert_tree_absent "T35 AC4 -- no free-text-is-never-approval restatement outside orchestrator/SKILL.md" \
+  "$t35_freetext_needle_a" "$t35_freetext_hits" "$(cat "$t35_control_a")" "${PLUGIN_DIR}/"
+assert_tree_absent "T35 AC4 -- no free-text-is-not-an-approval restatement outside orchestrator/SKILL.md" \
+  "$t35_freetext_needle_b" "$t35_freetext_hits" "$(cat "$t35_control_b")" "${PLUGIN_DIR}/"
+rm -f "$t35_control_a" "$t35_control_b"
 for t35_gate_site in "plugins/edm/skills/plan/SKILL.md" "plugins/edm/skills/audit-srd/SKILL.md" \
                      "plugins/edm/skills/audit-tickets/SKILL.md" "plugins/edm/skills/code-audit/SKILL.md"; do
   check "T35 AC4 -- ${t35_gate_site} references Gate PROTOCOL by name" \
@@ -4028,15 +4094,25 @@ echo
 echo "T49 AC6 -- self-verification phrase family absent outside skills/verify-runtime/"
 t49_selfverify_hits="$(grep -rni 'double-check\|verify your own\|check your work\|re-verify your' "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" 2>/dev/null | grep -v 'skills/verify-runtime/' || true)"
 # G20 (round-3): four-needle OR'd repo-wide scan -- each phrasing routed through
-# assert_absent_with_control against its own synthetic control line.
-assert_absent_with_control "T49 AC6 -- no 'double-check' self-verification hit outside skills/verify-runtime/" \
-  "double-check" "$t49_selfverify_hits" "synthetic control line" "synthetic control: double-check your own work"
-assert_absent_with_control "T49 AC6 -- no 'verify your own' self-verification hit outside skills/verify-runtime/" \
-  "verify your own" "$t49_selfverify_hits" "synthetic control line" "synthetic control: verify your own output"
-assert_absent_with_control "T49 AC6 -- no 'check your work' self-verification hit outside skills/verify-runtime/" \
-  "check your work" "$t49_selfverify_hits" "synthetic control line" "synthetic control: check your work before submitting"
-assert_absent_with_control "T49 AC6 -- no 're-verify your' self-verification hit outside skills/verify-runtime/" \
-  "re-verify your" "$t49_selfverify_hits" "synthetic control line" "synthetic control: re-verify your findings"
+# assert_tree_absent (G2/CA-037 + G13/CA-145, round 4): genuinely seeded scratch controls, and
+# the two scanned directories are asserted to exist before each needle check runs.
+t49_dc_control="${TMP}/edm-t49-doublecheck-control.txt"
+printf 'double-check your own work\n' > "$t49_dc_control"
+assert_tree_absent "T49 AC6 -- no 'double-check' self-verification hit outside skills/verify-runtime/" \
+  "double-check" "$t49_selfverify_hits" "$(cat "$t49_dc_control")" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
+t49_vyo_control="${TMP}/edm-t49-verifyown-control.txt"
+printf 'verify your own output\n' > "$t49_vyo_control"
+assert_tree_absent "T49 AC6 -- no 'verify your own' self-verification hit outside skills/verify-runtime/" \
+  "verify your own" "$t49_selfverify_hits" "$(cat "$t49_vyo_control")" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
+t49_cyw_control="${TMP}/edm-t49-checkwork-control.txt"
+printf 'check your work before submitting\n' > "$t49_cyw_control"
+assert_tree_absent "T49 AC6 -- no 'check your work' self-verification hit outside skills/verify-runtime/" \
+  "check your work" "$t49_selfverify_hits" "$(cat "$t49_cyw_control")" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
+t49_rvy_control="${TMP}/edm-t49-reverify-control.txt"
+printf 're-verify your findings\n' > "$t49_rvy_control"
+assert_tree_absent "T49 AC6 -- no 're-verify your' self-verification hit outside skills/verify-runtime/" \
+  "re-verify your" "$t49_selfverify_hits" "$(cat "$t49_rvy_control")" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
+rm -f "$t49_dc_control" "$t49_vyo_control" "$t49_cyw_control" "$t49_rvy_control"
 
 echo
 echo "T49 AC7 -- before/after convention present on every prompt-text epic file (positive check)"
@@ -4101,7 +4177,9 @@ echo "T67 AC14 (CA-147) -- a single cheap mode actually measures against a real 
 # real edm-state session-start invocations -- no 30-file/10,000-line fixture generation like
 # --lint/--mermaid-ratio/--all-lint. Asserting a parseable millisecond figure comes back (not
 # just that the mode name is recognized) proves the mode actually measures something real.
-t67_ss_out="$(bash "$TIMING_SH" --session-start 2>&1)"
+t67_ss_rc=0
+t67_ss_out="$(bash "$TIMING_SH" --session-start 2>&1)" || t67_ss_rc=$?
+check "T67 AC14 -- --session-start exits 0" "0" "$t67_ss_rc"
 check "T67 AC14 -- --session-start reports the TIMING session-start line" \
   "TIMING session-start" "$t67_ss_out"
 t67_ss_delta="$(printf '%s\n' "$t67_ss_out" | grep -o 'delta_ms=-\?[0-9]\+' | sed -E 's/.*=//' || true)"
@@ -4120,7 +4198,9 @@ echo "T67 AC14 (G31/CA-147) -- --generate-fixture + --subcommands is a real, exi
 # runs --subcommands against it for real and asserts a parseable POSITIVE p95_ms figure comes
 # back -- which also incidentally exercises (and would catch a regression in) the perl-less
 # whole-second-resolution timing fallback on a host without perl.
-t67_gen_out="$(bash "$TIMING_SH" --generate-fixture --initiatives 1 2>&1)"
+t67_gen_rc=0
+t67_gen_out="$(bash "$TIMING_SH" --generate-fixture --initiatives 1 2>&1)" || t67_gen_rc=$?
+check "T67 AC14 (G31) -- --generate-fixture exits 0" "0" "$t67_gen_rc"
 t67_fixture_dir="$(printf '%s\n' "$t67_gen_out" | grep -oE 'FIXTURE_DIR=.*' | cut -d= -f2-)"
 [[ -n "$t67_fixture_dir" && -d "$t67_fixture_dir" ]] \
   && pass "T67 AC14 (G31) -- --generate-fixture produces a usable 1-initiative fixture directory" \
@@ -4197,10 +4277,15 @@ echo "T67 AC11 -- no blocking job's script contains a network call"
 # renamed job still fails loudly by name instead of silently vanishing from the set.
 t67ac11_all_job_names="$(grep -oE '^[A-Za-z][A-Za-z0-9_:-]*:$' "$GITLAB_CI_YML" | sed 's/:$//' | grep -v '^stages$')"
 t67ac11_blocking_jobs=""
+# G40/CA-271 (round 4): all three job-body extractions below (this one, the T67 AC11 loop just
+# past it, and the CA-085(b) positive control below that) share the same tightened terminator --
+# excluding '#' from the FIRST character class, not just the rest of the line -- so a column-0
+# comment ending in a colon can never be misread as the next job's header and silently truncate
+# the body being scanned (the T66 AC11 block above carries the identical fix for the same shape).
 for t67_candidate in $t67ac11_all_job_names; do
   t67_candidate_body="$(awk -v job="^${t67_candidate}:$" '
     $0 ~ job {f=1; next}
-    f && /^[^[:space:]][^#]*:$/ {exit}
+    f && /^[^[:space:]#][^#]*:$/ {exit}
     f {print}
   ' "$GITLAB_CI_YML")"
   # Comment lines trailing a job's real script (e.g. validate:manifest's own trailing comment
@@ -4223,7 +4308,7 @@ t67ac11_missing_jobs=""
 for t67_job in $t67ac11_blocking_jobs; do
   t67_job_body="$(awk -v job="^${t67_job}:$" '
     $0 ~ job {f=1; next}
-    f && /^[^[:space:]][^#]*:$/ {exit}
+    f && /^[^[:space:]#][^#]*:$/ {exit}
     f {print}
   ' "$GITLAB_CI_YML")"
   # CA-085(a): an absent job (deleted from the pipeline, renamed, or a typo in the list above)
@@ -4262,7 +4347,7 @@ done
 # vacuously (silently matching nothing) forever.
 t67ac11_scratch_body="$(awk -v job='^lint:artifacts:$' '
   $0 ~ job {f=1; next}
-  f && /^[^[:space:]][^#]*:$/ {exit}
+  f && /^[^[:space:]#][^#]*:$/ {exit}
   f {print}
 ' "$GITLAB_CI_YML")
     - curl -sSL https://example.invalid/install.sh | sh"
@@ -4592,8 +4677,8 @@ t_g29_lock_body="$(awk '/^with_state_lock\(\)/{f=1} f{print} f && /^}/{exit}' "$
 t_g29_invalid_pid_block="$(printf '%s\n' "$t_g29_lock_body" | awk '/invalid PID/{f=1} f{print} f && /continue/{exit}')"
 check "G29 -- the invalid-PID reclaim branch routes through the shared atomic mv-aside helper" \
   "_edm_reclaim_stale_lockdir" "$t_g29_invalid_pid_block"
-check "G29 -- the invalid-PID reclaim branch sleeps before its continue (no tight loop)" \
-  "sleep 0.1" "$t_g29_invalid_pid_block"
+check "G29 -- the invalid-PID reclaim branch retries via the shared _lock_retry_or_die helper before its continue (no tight loop)" \
+  "_lock_retry_or_die" "$t_g29_invalid_pid_block"
 check "G29 -- the invalid-PID check also rejects the literal string '0'" \
   'holder_pid" == "0"' "$t_g29_invalid_pid_block"
 
@@ -4637,11 +4722,11 @@ check_absent "CA-141 -- the locked body never runs against a live cross-UID hold
 # reclaim path is reachable and functions; this proves neither path can loop unaccounted-for. ---
 t_ca141_lock_body="$(awk '/^with_state_lock\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
 t_ca141_invalid_pid_block="$(printf '%s\n' "$t_ca141_lock_body" | awk '/invalid PID/{f=1} f{print} f && /continue/{exit}')"
-check "CA-141 -- the invalid-PID reclaim branch increments tries before its continue" \
-  "tries + 1" "$t_ca141_invalid_pid_block"
+check "CA-141 -- the invalid-PID reclaim branch retries via the shared _lock_retry_or_die helper before its continue" \
+  "_lock_retry_or_die" "$t_ca141_invalid_pid_block"
 t_ca141_stale_pid_block="$(printf '%s\n' "$t_ca141_lock_body" | awk '/reclaimed stale state lock/{f=1} f{print} f && /^[[:space:]]*continue$/{exit}')"
-check "CA-141 -- the stale-PID reclaim branch increments tries before its continue" \
-  "tries + 1" "$t_ca141_stale_pid_block"
+check "CA-141 -- the stale-PID reclaim branch retries via the shared _lock_retry_or_die helper before its continue" \
+  "_lock_retry_or_die" "$t_ca141_stale_pid_block"
 
 # ---- CA-142 (round-3 G2 re-fix): a write_atomic call nested inside a locked mkdir-branch body
 # installs its own full trap layer unconditionally now (the previous shared-cleanup-list design
@@ -4796,15 +4881,21 @@ CHILD_SCRIPT_EOF
 
   # Negative PID targets the whole process group `set -m` gave this job -- both with_state_lock's
   # own process and the nested subshell write_atomic runs in receive the signal independently.
-  kill -INT -- "-${child_pid}"
+  # G1/CA-036: `|| true` guards this kill the same way the sibling at :4788 already does -- an
+  # unguarded `kill` under this script's own `set -euo pipefail` would abort the whole suite
+  # (CRASH) rather than let the assertions below name a failure, on a slow runner where the child
+  # has already exited by the time this signal is sent.
+  kill -INT -- "-${child_pid}" || true
   child_ec=0
   wait "$child_pid" 2>/dev/null || child_ec=$?
   set +m
 
-  local tmp_left lockdir_left
+  local tmp_left lockdir_left dest_left
   tmp_left="$(find "$scratch" -maxdepth 1 -name '*.tmp.*' 2>/dev/null | wc -l | tr -d ' ')"
   lockdir_left=absent
   [[ -d "${lockbase}.lockd" ]] && lockdir_left=present
+  dest_left=absent
+  [[ -e "$dest" ]] && dest_left=present
 
   check "G2/G3/G4 -- the SIGINT'd child actually died from the signal (exit 128+2=130)" \
     "130" "$child_ec"
@@ -4812,10 +4903,16 @@ CHILD_SCRIPT_EOF
     "0" "$tmp_left"
   check "G2/G3/G4 -- the lockdir is gone after SIGINT mid-write on the mkdir branch" \
     "absent" "$lockdir_left"
+  check "G1/CA-036 -- \$dest was never created after SIGINT interrupted the render mid-write" \
+    "absent" "$dest_left"
 
   rm -rf "$scratch"
 }
-ca_wave7a_sigint_case
+# G1/CA-036: called with a trailing `|| true` -- this function has two internal `return 1` paths
+# (the "child never reached its write" guard above), and this script runs under its own top-level
+# `set -euo pipefail`, so a bare call here would turn that named failure into a suite-wide CRASH
+# instead of a single reported FAIL.
+ca_wave7a_sigint_case || true
 
 # ---- G4 (round-3 CA-184 re-fix): a failing locked body causes with_state_lock's mkdir branch to
 # take its EXPLICIT return path (reset _EDM_TRAP_DEPTH, rm -rf the lockdir, restore the caller's
@@ -5271,59 +5368,108 @@ ca148_gitignore_case() {
 ca148_gitignore_case
 
 # =================================================================================
-# G5 (round-3 Wave 7b, RE-OPENED CA-036): tripwire against the unguarded
-# command-substitution-then-bare-$?-capture shape.
+# G5 (round-3 Wave 7b, RE-OPENED CA-036) / G1 (round-4, CA-036 widened): tripwire against the
+# unguarded command-substitution-then-bare-$?-capture shape and its siblings.
 # =================================================================================
 # CA-036 was fixed once, then reintroduced by the CA-040 remediation (three sites in
 # wave6-smoke.sh) plus two pre-existing siblings (one in wave6-smoke.sh, one in
-# wave7-smoke.sh) -- all five closed in this round. Under `set -euo pipefail`, a
-# `VAR="$(cmd)"` assignment whose substitution fails aborts the shell right there; a bare
-# exit-code capture on a separate statement -- whether on the same physical line via `;`, or
-# the very next physical line -- never runs, so the `fail` branch it exists to reach is
-# unreachable dead code. The guard must live on the SAME statement (`|| VAR2=$?`), or the
-# whole pair must be bracketed in `set +e` / `set -e`.
+# wave7-smoke.sh) -- all five closed in round 3. Under `set -euo pipefail`, a `VAR="$(cmd)"`
+# assignment whose substitution fails aborts the shell right there; a bare exit-code capture
+# on a separate statement -- whether on the same physical line via `;`, or the very next
+# physical line -- never runs, so the `fail` branch it exists to reach is unreachable dead
+# code. The guard must live on the SAME statement (`|| VAR2=$?`), or the whole pair must be
+# bracketed in `set +e` / `set -e`.
+#
+# G1/CA-036 (round 4): the round-3 detector only recognized ONE shape -- a QUOTED command
+# substitution assigned to a bare variable. Three more shapes carry the identical hazard and
+# were invisible to it: (a) a PLAIN command (no assignment at all) followed by a bare $?
+# capture on the next line -- exactly wave7-smoke.sh's own T43/T23/T67 live instances this
+# round; (b) a `local`-prefixed assignment; (c) an UNQUOTED command substitution
+# (`VAR=$(cmd)`, no quotes). The widened detector below adds all three as additional
+# alternatives, tracks a `set +e`/`set -e` bracket (a command inside one cannot abort the
+# shell, so a bare $? capture there is genuinely safe and must not be flagged), and carries
+# one new synthetic positive-control fragment per new alternative.
 #
 # The positive-control file below is assembled from separate literal fragments (never the
-# two-line shape as adjacent text in THIS file) precisely so this section does not trip its
-# own tripwire when the real scan two paragraphs down globs this very file.
+# hazard shapes as adjacent text in THIS file) precisely so this section does not trip its own
+# tripwire when the real scan two paragraphs down globs this very file.
 echo
-echo "G5 -- tripwire: bin/tests/*.sh never captures a command substitution's exit code with a bare \$? on a separate, unguarded statement"
-g5_scratch="$(mktemp -d "${TMP}/edm-g5-tripwire.XXXXXX")" || fail "G5 -- mktemp failed"
+echo "G5/G1 -- tripwire: bin/tests/*.sh never captures a command's exit code with a bare \$? on a separate, unguarded statement (quoted/unquoted cmdsub, local-prefixed, or a plain command)"
+g5_scratch="$(mktemp -d "${TMP}/edm-g5-tripwire.XXXXXX")" || fail "G5/G1 -- mktemp failed"
 g5_detector="${g5_scratch}/detect.awk"
 cat > "$g5_detector" <<'G5AWK'
-FNR==1 { prev_bare = 0 }
+FNR==1 { prev_bare = 0; prev_plain = 0; guarded = 0 }
 {
   line = $0
-  if (line ~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*="\$\(.*\)"[[:space:]]*;[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=\$\?[[:space:]]*(#.*)?$/) {
-    print FILENAME ":" FNR ": same-line"
+
+  # A command inside a set +e / set -e bracket cannot abort the shell, so a bare $? capture
+  # anywhere inside the bracket is genuinely safe -- exclude the whole region from every
+  # alternative below rather than just the two boundary lines.
+  if (line ~ /^[[:space:]]*set[[:space:]]+\+e([[:space:]]|$)/) { guarded = 1 }
+
+  # ---- same-line shapes: `VAR="$(cmd)"; VAR2=$?` and the unquoted `VAR=$(cmd); VAR2=$?` -----
+  if (!guarded && line ~ /^[[:space:]]*(local[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*="\$\(.*\)"[[:space:]]*;[[:space:]]*(local[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=\$\?[[:space:]]*(#.*)?$/) {
+    print FILENAME ":" FNR ": same-line (quoted cmdsub)"
   }
-  bare = (line ~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*="\$\(.*\)"[[:space:]]*(#.*)?$/)
-  if (prev_bare && (line ~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=\$\?[[:space:]]*(#.*)?$/)) {
-    print FILENAME ":" (FNR-1) "-" FNR ": next-line"
+  if (!guarded && line ~ /^[[:space:]]*(local[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=\$\(.*\)[[:space:]]*;[[:space:]]*(local[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=\$\?[[:space:]]*(#.*)?$/) {
+    print FILENAME ":" FNR ": same-line (unquoted cmdsub)"
   }
-  prev_bare = bare
+
+  is_bare_capture = (line ~ /^[[:space:]]*(local[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=\$\?[[:space:]]*(#.*)?$/)
+  is_quoted_cmdsub = (line ~ /^[[:space:]]*(local[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*="\$\(.*\)"[[:space:]]*(#.*)?$/)
+  is_unquoted_cmdsub = (line ~ /^[[:space:]]*(local[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=\$\(.*\)[[:space:]]*(#.*)?$/)
+  # A "plain command" candidate: a real statement that is none of the above, not blank or a
+  # comment, not a control-flow keyword line, not already guarded by its own `||`/`&&`, and
+  # not a continuation line -- i.e. exactly wave7's T43/T23/T67 shape, generalized.
+  is_plain_cmd = (line !~ /^[[:space:]]*(#.*)?$/) && !is_bare_capture && !is_quoted_cmdsub && !is_unquoted_cmdsub \
+    && (line !~ /\|\|/) && (line !~ /&&/) \
+    && (line !~ /^[[:space:]]*(if|elif|else|fi|while|until|do|done|for|case|esac|then|\{|\}|set[[:space:]]+[-+]e)\b/) \
+    && (line !~ /\\$/)
+
+  if (!guarded && prev_bare && is_bare_capture) {
+    print FILENAME ":" (FNR-1) "-" FNR ": next-line (cmdsub, quoted or unquoted, optionally local-prefixed)"
+  }
+  if (!guarded && prev_plain && is_bare_capture) {
+    print FILENAME ":" (FNR-1) "-" FNR ": next-line (plain command)"
+  }
+
+  prev_bare = (is_quoted_cmdsub || is_unquoted_cmdsub)
+  prev_plain = is_plain_cmd
+
+  if (line ~ /^[[:space:]]*set[[:space:]]+-e([[:space:]]|$)/) { guarded = 0 }
 }
 G5AWK
 
 g5_pc_var1="pc_same"
 g5_pc_var2="pc_next"
+g5_pc_var3="pc_local"
+g5_pc_var4="pc_usame"
+g5_pc_var5="pc_unext"
+g5_pc_var6="pc_plaincmd"
 g5_pc_file="${g5_scratch}/positive-control.sh"
 {
   printf '%s="$(false)"; %s=$?\n' "$g5_pc_var1" "${g5_pc_var1}_ec"
   printf '%s="$(false)"\n' "$g5_pc_var2"
   printf '%s=$?\n' "${g5_pc_var2}_ec"
+  printf 'local %s="$(false)"\n' "$g5_pc_var3"
+  printf 'local %s=$?\n' "${g5_pc_var3}_ec"
+  printf '%s=$(false); %s=$?\n' "$g5_pc_var4" "${g5_pc_var4}_ec"
+  printf '%s=$(false)\n' "$g5_pc_var5"
+  printf '%s=$?\n' "${g5_pc_var5}_ec"
+  printf 'true\n'
+  printf '%s=$?\n' "${g5_pc_var6}_ec"
 } > "$g5_pc_file"
 
 g5_pc_hits="$(awk -f "$g5_detector" "$g5_pc_file" 2>/dev/null | wc -l | tr -d ' ')" || g5_pc_hits=0
-[[ "${g5_pc_hits:-0}" -eq 2 ]] \
-  && pass "G5 -- the detector catches both the same-line and next-line shapes on a synthetic positive control" \
-  || fail "G5 -- detector found ${g5_pc_hits:-0} hit(s) on the positive control, expected 2 (the pattern does not actually catch the bug shape)"
+[[ "${g5_pc_hits:-0}" -eq 6 ]] \
+  && pass "G5/G1 -- the detector catches all six shapes (same-line/next-line x quoted/unquoted, local-prefixed, plain command) on a synthetic positive control" \
+  || fail "G5/G1 -- detector found ${g5_pc_hits:-0} hit(s) on the positive control, expected 6 (the widened pattern does not actually catch every bug shape)"
 
 g5_real_hit_lines="$(awk -f "$g5_detector" "${PLUGIN_DIR}"/bin/tests/*.sh 2>/dev/null)" || g5_real_hit_lines=""
 g5_real_hits="$(printf '%s\n' "$g5_real_hit_lines" | grep -c . || true)"
 [[ "${g5_real_hits:-0}" -eq 0 ]] \
-  && pass "G5 -- zero unguarded command-substitution/\$? sites across bin/tests/*.sh" \
-  || fail "G5 -- found ${g5_real_hits} unguarded site(s) across bin/tests/*.sh (CA-036 class re-opened):\n${g5_real_hit_lines}"
+  && pass "G5/G1 -- zero unguarded command/\$? sites across bin/tests/*.sh (quoted, unquoted, local-prefixed, or plain command)" \
+  || fail "G5/G1 -- found ${g5_real_hits} unguarded site(s) across bin/tests/*.sh (CA-036 class re-opened):\n${g5_real_hit_lines}"
 
 rm -rf "$g5_scratch"
 
@@ -5982,12 +6128,12 @@ echo
 echo "=== G46: archive and migrate-path hold the state lock across their directory rename ==="
 check "G46 -- cmd_archive wraps its rename in with_state_lock" \
   'with_state_lock "${state_file%.json}" _cmd_archive_move_body' "$(cat "$EDM_STATE")"
-check "G46 -- _cmd_archive_move_body removes the lockdir/lockfile before the rename" \
-  'rm -rf "${_lockbase}.lockd" "${_lockbase}.lock"' "$(awk '/^_cmd_archive_move_body\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check "G46 -- _cmd_archive_move_body renames via git_aware_mv BEFORE removing the lockdir/lockfile at the destination (G17/CA-206 rename-then-clean order)" \
+  "git_aware_mv" "$(awk '/^_cmd_archive_move_body\(\)/{f=1} f{print} f && (/rm -rf.*_dst_lockbase/ || /^}/){exit}' "$EDM_STATE")"
 check "G46 -- cmd_migrate_path wraps its initial rename in with_state_lock" \
   'with_state_lock "$migrate_lockbase" _cmd_migrate_path_move_body' "$(cat "$EDM_STATE")"
-check "G46 -- _cmd_migrate_path_move_body also removes the lockdir/lockfile before the rename" \
-  'rm -rf "${_lockbase}.lockd" "${_lockbase}.lock"' "$(awk '/^_cmd_migrate_path_move_body\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check "G46 -- _cmd_migrate_path_move_body also renames via git_aware_mv BEFORE removing the lockdir/lockfile at the destination (G17/CA-206 rename-then-clean order)" \
+  "git_aware_mv" "$(awk '/^_cmd_migrate_path_move_body\(\)/{f=1} f{print} f && (/rm -rf.*_dst_lockbase/ || /^}/){exit}' "$EDM_STATE")"
 t_g46_migrate_body="$(awk '/^cmd_migrate_path\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
 check_absent "G46 -- migrate-path no longer pre-emptively deletes the carried-over .bak before the write that might need it" \
   'rm -f "${new_state_file}.bak"' "$t_g46_migrate_body"

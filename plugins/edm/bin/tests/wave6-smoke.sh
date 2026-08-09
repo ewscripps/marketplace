@@ -12,7 +12,7 @@ EDM_STATE="${SCRIPT_DIR}/../edm-state"
 export PATH="${SCRIPT_DIR}/..:${PATH}"
 
 # Shared assertions / counters (CA-014).
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_harness.sh"
+source "${SCRIPT_DIR}/_harness.sh"
 # G21 (round-3): REPO_ROOT is the shared _HARNESS_REPO_ROOT export, not a second independent
 # cd/pwd derivation.
 REPO_ROOT="$_HARNESS_REPO_ROOT"
@@ -851,9 +851,10 @@ check_fails "current_phase still requires a numeric value (verbatim message)" \
 # ---- AC8: schema_version is an integer, written by cmd_init, readable via get --
 echo
 echo "T09 AC8 -- schema_version is 1 for a wave-A-created initiative, readable via get"
-sv_out="$("$EDM_STATE" get T09GATE | jq -e '.schema_version == 1')"
+sv_rc=0
+sv_out="$("$EDM_STATE" get T09GATE | jq -e '.schema_version == 1')" || sv_rc=$?
 [[ "$sv_out" == "true" ]] && pass "schema_version = 1 for a wave-A-created initiative" \
-  || fail "schema_version != 1 (jq -e result: $sv_out)"
+  || fail "schema_version != 1 (jq -e result: $sv_out, rc: $sv_rc)"
 
 # Ticket's literal verify path: edm-init (the wrapper, not cmd_init directly) in a
 # scratch repo, product-scoped, then `edm-state get <PREFIX> | jq -e`.
@@ -2457,14 +2458,20 @@ echo
 echo "T62 AC10 -- no unrecorded exemption path (no override flag/env var/mode shortcut)"
 # CA-037: this was a bare [[ -z ... ]] with no proof the scan pattern could ever match anything --
 # a typo'd pattern or an accidentally-scoped find would pass identically to a genuinely clean
-# tree. Route each of the three OR'd tokens through assert_absent_with_control separately (so a
-# failure names exactly which token was found, not just "an override-flag-shaped token"), each
-# with its own synthetic positive control proving the same scan actually can match.
+# tree. Route each of the three OR'd tokens through assert_tree_absent separately (G2/CA-037 +
+# G13/CA-145, round 4; so a failure names exactly which token was found, not just "an
+# override-flag-shaped token"), each with its own genuinely seeded positive control.
 t62ac10_grep="$(command grep -rn 'EDM_SKIP\|EDM_FORCE\|SKIP_CHECKS' "${SCRIPT_DIR}/.." 2>/dev/null | command grep -v '/tests/' || true)"
+# G2/CA-037 + G13/CA-145: each iteration's control is now a genuinely seeded scratch file (not a
+# hand-typed literal), and "${SCRIPT_DIR}/.." is asserted to exist before each needle check runs
+# -- routed through the shared assert_tree_absent (_harness.sh), which closes CA-145 too by
+# asserting count_matches_strict's own exit status alongside its printed value.
 for t62ac10_needle in EDM_SKIP EDM_FORCE SKIP_CHECKS; do
-  t62ac10_control="synthetic control line: if [ -n \"\$${t62ac10_needle}\" ]; then true; fi"
-  assert_absent_with_control "T62 AC10 -- no ${t62ac10_needle} token anywhere in bin/ (excluding tests/)" \
-    "$t62ac10_needle" "$t62ac10_grep" "synthetic control line" "$t62ac10_control"
+  t62ac10_control_file="${TMP}/edm-t62-${t62ac10_needle}-control.txt"
+  printf 'if [ -n "$%s" ]; then true; fi\n' "$t62ac10_needle" > "$t62ac10_control_file"
+  assert_tree_absent "T62 AC10 -- no ${t62ac10_needle} token anywhere in bin/ (excluding tests/)" \
+    "$t62ac10_needle" "$t62ac10_grep" "$(cat "$t62ac10_control_file")" "${SCRIPT_DIR}/.."
+  rm -f "$t62ac10_control_file"
 done
 # CA-037: same gap for the literal --force/--accept-partials count -- a positive control proves
 # the same grep -c invocation would report >=1 against a line that actually contains the flag,
