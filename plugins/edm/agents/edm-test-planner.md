@@ -2,7 +2,7 @@
 name: edm-test-planner
 description: |
   Reads an EDM ticket pack and the project source code, detects the technology stack
-  per epic, and produces `SRD/{PREFIX}/test-plan.md` covering all applicable test
+  per epic, and produces `test-plan.md` in the initiative directory, covering all applicable test
   layers (unit, component, composable, integration, contract, E2E, a11y). For
   multi-stack initiatives emits `test-plan-{epic}.md` per epic alongside an index
   `test-plan.md`. Maps each ticket's Target Components to test files and layers.

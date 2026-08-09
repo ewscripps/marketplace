@@ -101,6 +101,6 @@ Apply the Step 4 report format to every file you touched, not just the first:
 ## When this does NOT apply
 
 This agent always applies once the test plan assigns it a non-empty scope: unit is never itself
-marked N/A by `edm-test-planner` (only `component`, `composable`, `contract`, `e2e`, and `a11y`
-can be -- see `agents/edm-test-planner.md`). If a ticket's scope has no pure-function logic at
-all, the planner assigns it zero files rather than spawning this agent with an empty scope.
+marked N/A by `edm-test-planner` (only `component`, `composable`, `contract`, `e2e`, `a11y`, and
+`integration` can be -- see `agents/edm-test-planner.md`). If a ticket's scope has no pure-function
+logic at all, the planner assigns it zero files rather than spawning this agent with an empty scope.

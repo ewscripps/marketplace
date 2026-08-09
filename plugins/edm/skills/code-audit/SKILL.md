@@ -69,16 +69,27 @@ using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
    Each lens:
    - Writes its raw report to `${OUTPUT_DIR}/lens-L{N}.md` and `${OUTPUT_DIR}/lens-L{N}.jsonl`
    - Receives the relevant prior-round open findings from the ledger (filtered to its lens) so it can confirm fixes or re-flag
+   - Its Task prompt is the "Lens Agent Launch Template" below, copied **verbatim** -- every line,
+     including the JSONL schema line and the CA-130 fallback clause, is literal text that ships in
+     the delivered prompt. Do not summarize, paraphrase, or drop any line of the template when
+     constructing the actual Task call; the schema and fallback live inside the template's own
+     fenced body precisely so they travel with the interpolated prompt rather than being read as
+     prose about the template.
 8. Write `${OUTPUT_DIR}/lenses-run.txt` -- one lens ID per line (e.g., `L1`, `L2`, ... for a full round, or `L1`, `L3` for a partial). Add a `Round type: full` or `Round type: partial` header line.
-8a. **Precondition -- do not proceed to step 9 until it holds**: confirm one
-    `${OUTPUT_DIR}/lens-L{N}.jsonl` file exists for every lens in `LENS_SET`. If a lens's
-    delivered agent definition lacked a `Write` tool this round (the same stale-plugin-cache
-    issue as the missing `## JSONL Line Format` section, decisions.md D22/CA-130), that lens
-    still returned its findings as text -- in that case YOU, the orchestrator running this
-    skill, must persist BOTH halves from the returned text: write the missing `lens-L{N}.md`
-    AND the missing `lens-L{N}.jsonl` yourself, using the schema in the launch template above.
-    Never persist only the `.md` half and proceed; a lens with zero corresponding JSONL is a
-    blocking gap, not a degraded-but-acceptable result.
+8a. **Checked precondition -- do not proceed to step 9 until it holds**: `Glob`
+    `${OUTPUT_DIR}/lens-L*.jsonl` and count the matches. Compare that count against `|LENS_SET|`
+    (the number of lenses actually run this round, e.g. 11 on a full round). If the counts are
+    equal, proceed. If the counts differ, **refuse to proceed** and name, by lens ID, every member
+    of `LENS_SET` whose `${OUTPUT_DIR}/lens-L{N}.jsonl` is absent from the Glob result.
+    For each named lens, check whether it returned its findings as text without writing either
+    file -- the same stale-plugin-cache issue as the missing `## JSONL Line Format` section,
+    decisions.md D22/CA-130 (its delivered agent definition lacked a `Write` tool this round). If
+    so, YOU, the orchestrator running this skill, must persist BOTH halves from the returned text:
+    write the missing `lens-L{N}.md` AND the missing `lens-L{N}.jsonl` yourself, using the schema
+    in the launch template above. Never persist only the `.md` half and proceed; a lens with zero
+    corresponding JSONL is a blocking gap, not a degraded-but-acceptable result. After persisting
+    any missing halves, re-run the Glob-and-count check; only proceed to step 9 once the count
+    equals `|LENS_SET|`.
 9. **Spawn `edm-audit-synthesizer`**. It:
    - Reads the lens reports in `${OUTPUT_DIR}/`
    - Reads the prior `findings-ledger.jsonl` (or the legacy `findings-ledger.md` if only that exists)
@@ -205,6 +216,11 @@ step 8, and the synthesizer still marks the round non-convergent in `REMEDIATION
 Sec."Synthesizer Phase").
 
 ## Lens Agent Launch Template
+
+Copy the fenced block below **verbatim** into each lens's Task prompt. Every line inside the
+fence -- including the JSONL schema line and the CA-130 fallback clause -- is literal text that
+must reach the delivered prompt unabridged; it is not a description of the prompt to write from
+memory.
 
 ```
 Agent: edm-audit-{lens-name}

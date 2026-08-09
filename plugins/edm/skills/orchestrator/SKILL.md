@@ -170,7 +170,9 @@ continue (`CLAUDE.md Sec."Skill-tool composition"`).
    tool to close every PARTIAL verdict, then call `edm-state phase-complete <PREFIX> 6` (EDMV3-T50
    -- this dispatcher's Phase 6 entry is the single owner of that call; `skills/implement/SKILL.md`
    Step 8 states the same two-command sequence only for the standalone/direct-invocation path,
-   where the user runs both commands without going through this dispatcher).
+   where the user runs both commands without going through this dispatcher). After Phase 6
+   closes, suggest `/edm:test <PREFIX>` to build out layered, comprehensive test coverage -- the
+   user decides whether to run it (`skills/test/SKILL.md`).
 
 ## Resume and Compaction
 

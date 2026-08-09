@@ -1,6 +1,6 @@
 ---
 name: test-coverage
-description: Re-run the coverage audit against the current test suite without writing any new tests. Useful after manually adding tests or after /edm:test --fill-gaps to verify gaps were addressed. Reads the existing test-plan.md and produces an updated SRD/{PREFIX}/test-coverage.md.
+description: Re-run the coverage audit against the current test suite without writing any new tests. Useful after manually adding tests or after /edm:test --fill-gaps to verify gaps were addressed. Reads the existing test-plan.md and produces an updated test-coverage.md in the initiative directory.
 disable-model-invocation: true
 model: sonnet
 effort: high

@@ -1,6 +1,6 @@
 ---
 name: test
-description: Full-pipeline EDM test orchestration for an initiative -- plan, scaffold, write tests (unit, component, composable, integration, contract, E2E, a11y), run the suite, and audit coverage. Produces test-plan.md and test-coverage.md in SRD/{PREFIX}/. Run after Phase 6 implementation before declaring the initiative complete.
+description: Full-pipeline EDM test orchestration for an initiative -- plan, scaffold, write tests (unit, component, composable, integration, contract, E2E, a11y), run the suite, and audit coverage. Produces test-plan.md and test-coverage.md in the initiative directory. Run after Phase 6 implementation before declaring the initiative complete.
 disable-model-invocation: true
 model: opus
 effort: max
@@ -166,8 +166,8 @@ Findings: 0 P0  |  0 P1  |  2 P2
 P2 findings (remediate before convergence):
   - AUTH-T07 AC3 partially covered -- edge case for concurrent login not tested
 
-Coverage report: SRD/{PREFIX}/test-coverage.md
-Test plan:       SRD/{PREFIX}/test-plan.md
+Coverage report: ${INIT_DIR}/test-coverage.md
+Test plan:       ${INIT_DIR}/test-plan.md
 ```
 
 **If any findings remain (P0/P1/P2)**: "Testing is not fully complete. Re-run `/edm:test {PREFIX} --fill-gaps` to write tests for all remaining gaps."
