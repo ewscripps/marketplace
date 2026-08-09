@@ -55,12 +55,22 @@ _ms_between() {
 }
 
 # _p95 <values...> -- integer p95 (nearest-rank) of a list of millisecond integers passed as args.
+# G36/CA-196: nearest-rank p95 is ceil(0.95*N), not floor(0.95*N) -- the prior `int(0.95 * NR)`
+# truncated, so for every sample count this file actually uses (3, 5, or 10) the reported "p95"
+# was really a lower percentile (p90 at N=10, p80 at N=5, even the median at N=3), systematically
+# discarding the slowest sample and biasing every published latency budget optimistic. Kept at
+# the existing 3/5/10 sample counts rather than raising to a real percentile-supporting count
+# (e.g. 20): the formula fix is the correctness bug: raising sample counts on top of it would
+# roughly double or quadruple every mode's wall-clock cost in CI and locally for a smaller
+# precision gain than fixing the rounding direction alone, so that is left as a follow-up (see
+# CHANGELOG.md) rather than done in this pass.
 _p95() {
   printf '%s\n' "$@" | sort -n | awk '
     { a[NR] = $1 }
     END {
       if (NR == 0) { print 0; exit }
       idx = int(0.95 * NR)
+      if (idx < 0.95 * NR) idx = idx + 1
       if (idx < 1) idx = 1
       if (idx > NR) idx = NR
       print a[idx]
@@ -303,8 +313,17 @@ case "$MODE" in
       samples_mermaid+=("$(_ms_between "$t0" "$t1")")
     done
     p95_mermaid="$(_p95 "${samples_mermaid[@]}")"
+    # G37/CA-197: when either p95 measures 0ms (routine on the perl-less whole-second-resolution
+    # fallback, or on a fast host), the prior `b/(a>0?a:1)` silently substituted a raw millisecond
+    # count as if it were a meaningful ratio -- which can look like a huge false budget breach.
+    # Refuse instead of reporting a fabricated number.
+    if [[ "$p95_base" -le 0 || "$p95_mermaid" -le 0 ]]; then
+      echo "TIMING mermaid_ratio baseline_p95_ms=${p95_base} with_mermaid_p95_ms=${p95_mermaid} ratio=UNMEASURABLE (timer resolution too coarse -- install perl, or raise --files/--lines-per-file until both baselines exceed 0 ms)" >&2
+      rm -rf "$TMP_MR"
+      exit 3
+    fi
     # CA-084/CA-158: no perl dependency here -- awk is already required by --lint's own callers.
-    ratio="$(awk -v a="$p95_base" -v b="$p95_mermaid" 'BEGIN{printf "%.2f", b/(a>0?a:1)}')"
+    ratio="$(awk -v a="$p95_base" -v b="$p95_mermaid" 'BEGIN{printf "%.2f", b/a}')"
     echo "TIMING mermaid_ratio baseline_p95_ms=${p95_base} with_mermaid_p95_ms=${p95_mermaid} ratio=${ratio}x (budget: <= 1.40x)"
     rm -rf "$TMP_MR"
     ;;

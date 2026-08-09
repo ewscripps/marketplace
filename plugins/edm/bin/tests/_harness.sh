@@ -64,7 +64,16 @@ harness_scratch_dir() {
   local __harness_scratch_outvar="$1"
   local dir
   dir="$(mktemp -d "${TMPDIR:-/tmp}/edm-harness.XXXXXX")" || { fail "harness_scratch_dir: mktemp failed"; return 1; }
-  trap 'rm -rf "'"$dir"'"' EXIT INT TERM
+  # G72/CA-232: never interpolate a path into a trap body string (CA-159) -- a path containing an
+  # apostrophe, backtick, or "$" would terminate the quoting early and corrupt the stored trap
+  # body into a syntax error at signal time. Assign to a dedicated NON-local variable first (this
+  # trap must still fire after this function returns, so it cannot reference a `local`, which is
+  # popped off the local stack the instant the function returns), then reference it INSIDE single
+  # quotes so it expands at signal time, not at install time (matching the already-correct
+  # deferred-expansion pattern used by with_scratch_repo below, and by edm-lint-artifacts and
+  # edm-check-grants).
+  _HARNESS_SCRATCH_DIR="$dir"
+  trap 'rm -rf "$_HARNESS_SCRATCH_DIR"' EXIT INT TERM
   printf -v "$__harness_scratch_outvar" '%s' "$dir"
 }
 

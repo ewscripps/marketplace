@@ -46,9 +46,12 @@ stored_code_type="$(jq -r '.audit_rounds.code | type' "$STATE_FILE")"
 [[ "$stored_code_type" == "object" ]] && pass "audit_rounds.code is an object (EDMV3-T27 AC1a widening)" \
   || fail "audit_rounds.code type = '$stored_code_type', expected object"
 
-# Invalid type rejected
-check "invalid audit type rejected" "unknown audit type" \
-  "$("$EDM_STATE" audit-round-start TSMK invalid 2>&1 || true)"
+# Invalid type rejected -- state-mutating on success (increments audit_rounds.<type>.count), so
+# check_refuses_and_leaves_state proves BOTH the refusal message AND that TSMK's state file was
+# left byte-identical, rather than discarding the exit code via `2>&1 || true` (G50/CA-210).
+check_refuses_and_leaves_state "invalid audit type rejected" "unknown audit type" \
+  "$STATE_FILE" \
+  "$EDM_STATE" audit-round-start TSMK invalid
 
 # ---- T67: record-partial-verdict ---------------------------------------------
 echo
@@ -65,9 +68,11 @@ note_t02="$(jq -r '.partial_verdict_map["TSMK-T02"].note' "$STATE_FILE")"
 [[ "$verdict_t02" == "PARTIAL" ]] && pass "TSMK-T02 verdict = PARTIAL" || fail "TSMK-T02 verdict = '$verdict_t02'"
 [[ "$note_t02" == "needs retry logic" ]] && pass "TSMK-T02 note preserved" || fail "TSMK-T02 note = '$note_t02'"
 
-# Invalid verdict rejected
-check "invalid verdict rejected" "unknown verdict" \
-  "$("$EDM_STATE" record-partial-verdict TSMK "TSMK-T04" UNKNOWN 2>&1 || true)"
+# Invalid verdict rejected -- state-mutating on success (adds a partial_verdict_map entry), same
+# reasoning as above (G50/CA-210).
+check_refuses_and_leaves_state "invalid verdict rejected" "unknown verdict" \
+  "$STATE_FILE" \
+  "$EDM_STATE" record-partial-verdict TSMK "TSMK-T04" UNKNOWN
 
 # ---- T83: set-mode -----------------------------------------------------------
 echo
@@ -88,15 +93,19 @@ ce="$(jq -r '.compliance_enabled' "$STATE_FILE")"
 im="$(jq -r '.implementation_mode' "$STATE_FILE")"
 [[ "$im" == "tdd" ]] && pass "implementation_mode = tdd" || fail "implementation_mode = '$im'"
 
-# Invalid values rejected
-check "invalid mode rejected" "invalid mode" \
-  "$("$EDM_STATE" set-mode TSMK mode badvalue 2>&1 || true)"
-check "invalid lifecycle_mode rejected" "invalid lifecycle_mode" \
-  "$("$EDM_STATE" set-mode TSMK lifecycle_mode badvalue 2>&1 || true)"
-check "invalid compliance_enabled rejected" "requires true|false" \
-  "$("$EDM_STATE" set-mode TSMK compliance_enabled maybe 2>&1 || true)"
-check "invalid implementation_mode rejected" "invalid implementation_mode" \
-  "$("$EDM_STATE" set-mode TSMK implementation_mode bdd 2>&1 || true)"
+# Invalid values rejected -- set-mode is state-mutating on success, same reasoning (G50/CA-210).
+check_refuses_and_leaves_state "invalid mode rejected" "invalid mode" \
+  "$STATE_FILE" \
+  "$EDM_STATE" set-mode TSMK mode badvalue
+check_refuses_and_leaves_state "invalid lifecycle_mode rejected" "invalid lifecycle_mode" \
+  "$STATE_FILE" \
+  "$EDM_STATE" set-mode TSMK lifecycle_mode badvalue
+check_refuses_and_leaves_state "invalid compliance_enabled rejected" "requires true|false" \
+  "$STATE_FILE" \
+  "$EDM_STATE" set-mode TSMK compliance_enabled maybe
+check_refuses_and_leaves_state "invalid implementation_mode rejected" "invalid implementation_mode" \
+  "$STATE_FILE" \
+  "$EDM_STATE" set-mode TSMK implementation_mode bdd
 
 # ---- T96: skip-phase ---------------------------------------------------------
 echo
@@ -175,11 +184,14 @@ sup="$(jq -r '.supersedes' "$STATE_FILE")"
 ff="$(jq -r '.forked_from' "$STATE_FILE")"
 [[ "$ff" == "SRCPREFIX" ]] && pass "forked_from = SRCPREFIX" || fail "forked_from = '$ff'"
 
-# Empty prefix rejected
-check "empty supersedes rejected" "non-empty" \
-  "$("$EDM_STATE" set-supersedes TSMK "" 2>&1 || true)"
-check "empty forked_from rejected" "non-empty" \
-  "$("$EDM_STATE" set-forked-from TSMK "" 2>&1 || true)"
+# Empty prefix rejected -- set-supersedes/set-forked-from are state-mutating on success, same
+# reasoning (G50/CA-210).
+check_refuses_and_leaves_state "empty supersedes rejected" "non-empty" \
+  "$STATE_FILE" \
+  "$EDM_STATE" set-supersedes TSMK ""
+check_refuses_and_leaves_state "empty forked_from rejected" "non-empty" \
+  "$STATE_FILE" \
+  "$EDM_STATE" set-forked-from TSMK ""
 
 # ---- T99: ## Lifecycle & Mode section in HANDOFF.md -------------------------
 echo
@@ -273,9 +285,11 @@ STATE_COMP="$TMP/SRD/COMP/.edm-state.json"
 "$EDM_STATE" approve-gate COMP 2 >/dev/null 2>&1 || true
 "$EDM_STATE" approve-gate COMP 3 >/dev/null 2>&1 || true
 
-# gate-check implement must FAIL when compliance_enabled=true and no gate 3.5.
-check "gate-check implement blocked without gate 3.5" "Gate 3.5" \
-  "$("$EDM_STATE" gate-check COMP implement 2>&1 || true)"
+# gate-check implement must FAIL when compliance_enabled=true and no gate 3.5. gate-check is a
+# read-only query (no state mutation on any path), so check_fails alone -- not
+# check_refuses_and_leaves_state -- is the right assertion (G50/CA-210).
+check_fails "gate-check implement blocked without gate 3.5" "Gate 3.5" \
+  "$EDM_STATE" gate-check COMP implement
 
 cga_before="$(jq -r '.compliance_gate_approved' "$STATE_COMP")"
 [[ "$cga_before" == "false" ]] && pass "compliance_gate_approved = false before approve-gate 3.5" \

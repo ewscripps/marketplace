@@ -28,7 +28,10 @@ cleanup_wave6() {
   rm -f "${T41_BACKUP:-}"
   rm -rf "$TMP"
 }
-trap cleanup_wave6 EXIT INT TERM
+# G56/CA-216: HUP added -- cleanup_wave6 restores a TRACKED, committed file (T41_CANONICAL) from
+# a backup after this suite deliberately mutates it. Omitting HUP left a terminal disconnect
+# mid-test with no automatic restore, corrupting a tracked file in the working tree.
+trap cleanup_wave6 EXIT INT TERM HUP
 export EDM_SRD_ROOT="$TMP/SRD"
 mkdir -p "$TMP/SRD"
 
