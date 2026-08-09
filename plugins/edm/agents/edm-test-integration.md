@@ -19,7 +19,10 @@ together correctly -- database round-trips, API request-to-response flows, messa
 produce-consume cycles.
 
 **If the initiative has no API routes, no database interactions, and no cross-module workflows,
-report "N/A -- no integration boundary" and exit cleanly.**
+report "N/A -- no integration boundary" and exit cleanly.** This carve-out is sanctioned by
+`edm-test-planner.md`'s N/A-assignment enumeration (the planner is the sole authority for
+`integration`'s N/A status) -- this is not a self-declared exemption independent of it; a mismatch
+between this agent's exit and the planner's assignment for the same epic is a contract violation.
 
 ## Inputs
 

@@ -83,6 +83,11 @@ Mark layers as **N/A** when they don't apply to this epic's Target Components:
 - `composable` is N/A unless the epic's Target Components include React hooks or Vue composables.
 - `contract` is N/A unless the epic exposes or consumes a REST/GraphQL API with a schema.
 - `e2e` is N/A for epics whose Target Components involve no runnable UI.
+- `integration` is N/A only when the epic's Target Components cross no module or service
+  boundary -- no API routes, no database interactions, and no cross-module workflows (e.g. a
+  pure algorithmic library or CLI parser with no external I/O). This is the sole authority for
+  `integration`'s N/A status; `edm-test-integration`'s own self-reported "N/A -- no integration
+  boundary" exit must agree with this determination, not substitute for it.
 - If an epic's Target Components match no known stack signal, report "stack undetected" explicitly
   rather than defaulting silently to any framework.
 

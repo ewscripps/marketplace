@@ -611,6 +611,10 @@ Each test-writer agent self-identifies when its layer doesn't apply and exits cl
 - `component`, `composable`, `a11y`, `e2e` are N/A for backend-only or CLI-only epics.
 - `contract` is N/A for epics without an API schema.
 - `composable` is N/A for epics without React hooks or Vue composables.
+- `integration` is N/A only when Target Components cross no module or service boundary -- no API
+  routes, no database interactions, and no cross-module workflows (`agents/edm-test-planner.md`
+  is the sole authority for this determination; `edm-test-integration`'s own N/A exit must agree
+  with it, not substitute for it).
 
 N/A designations are recomputed each run -- never inherited from a previous plan. When a layer
 is N/A, no placeholder file or coverage row is written (absence is authoritative).

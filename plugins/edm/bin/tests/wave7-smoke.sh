@@ -5521,6 +5521,24 @@ check "G86 -- SETTABLE_KEYS comment states last_cmd has no producer today" \
 check_absent "G86 -- SETTABLE_KEYS comment no longer misattributes last_decision to orchestrator/SKILL.md" \
   "last_cmd/last_decision" "$g35_edm_state"
 
+# =================================================================================
+# G68 (round-3 Wave 7e): edm-test-planner (the sole authority for N/A assignment)
+# now enumerates integration alongside the other four N/A-eligible layers, and
+# CLAUDE.md's list agrees, so edm-test-integration's self-N/A carve-out is
+# sanctioned rather than a self-declared exemption no enumerating source lists.
+# =================================================================================
+echo
+echo "=== G68: edm-test-planner and CLAUDE.md both list integration as N/A-eligible; the writer's carve-out is sanctioned, not self-declared ==="
+g68_planner="$(cat "${PLUGIN_DIR}/agents/edm-test-planner.md" 2>/dev/null)"
+check "G68 -- edm-test-planner.md's N/A enumeration now includes integration" \
+  "\`integration\` is N/A only when the epic's Target Components cross no module or service" "$g68_planner"
+g68_claude_md="$(cat "${PLUGIN_DIR}/CLAUDE.md" 2>/dev/null)"
+check "G68 -- CLAUDE.md's Layers-that-are-N/A list now includes integration" \
+  "\`integration\` is N/A only when Target Components cross no module or service boundary" "$g68_claude_md"
+g68_integration="$(cat "${PLUGIN_DIR}/agents/edm-test-integration.md" 2>/dev/null)"
+check "G68 -- edm-test-integration.md's carve-out states it is sanctioned by the planner, not self-declared" \
+  "sanctioned by" "$g68_integration"
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
