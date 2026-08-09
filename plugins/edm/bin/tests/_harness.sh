@@ -2,8 +2,11 @@
 # _harness.sh -- shared smoke-test assertions for the EDM bin/tests/*-smoke.sh suites (CA-014;
 # formerly the duplicated G18d preamble). Source it AFTER `set -euo pipefail`:
 #   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_harness.sh"
-# Each suite manages its own SCRIPT_DIR / EDM_STATE / PLUGIN_DIR / TMP setup; this file provides
-# only the shared counters and assertions so the four suites can never diverge again.
+# Each suite still manages its own SCRIPT_DIR / EDM_STATE / TMP setup (TMP via harness_scratch_dir
+# below, CA-049/G21) -- this file provides the shared counters and assertions, the shared
+# _HARNESS_PLUGIN_DIR / _HARNESS_REPO_ROOT root-path exports (every caller reads these instead of
+# re-deriving the same cd/pwd chain independently), and harness_scratch_dir, so suites can never
+# diverge on any of the three again.
 
 PASS=0
 FAIL=0

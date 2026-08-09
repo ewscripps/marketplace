@@ -5,10 +5,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 
 # Shared assertions / counters (CA-014).
 source "${SCRIPT_DIR}/_harness.sh"
+# G21 (round-3): REPO_ROOT is the shared _HARNESS_REPO_ROOT export, not a second independent
+# cd/pwd derivation.
+REPO_ROOT="$_HARNESS_REPO_ROOT"
 
 echo "EDMV3-T19 smoke check -- _harness.sh helpers"
 echo

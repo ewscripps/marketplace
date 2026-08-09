@@ -23,7 +23,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLUGIN_DIR="$(cd "${SCRIPT_DIR}/.." && cd .. && pwd)"
+# G21 (round-3): sourced for the shared _HARNESS_PLUGIN_DIR export, so PLUGIN_DIR below is not a
+# fifth independent cd/pwd re-derivation of the same plugin root (CA-049). This suite does not
+# use _harness.sh's pass/fail counters or assertions -- it is not a *-smoke.sh suite and is not
+# discovered by run-all.sh -- only the shared root export.
+source "${SCRIPT_DIR}/_harness.sh"
+PLUGIN_DIR="$_HARNESS_PLUGIN_DIR"
 EDM_STATE="${SCRIPT_DIR}/../edm-state"
 EDM_LINT="${SCRIPT_DIR}/../edm-lint-artifacts"
 

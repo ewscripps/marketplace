@@ -77,6 +77,12 @@ usage() {
   exit 0
 }
 
+# MERMAID_RULES_AWK is set by _edm-lint-lib.sh above (CA-019/G11): the shared fence-recognition
+# and literal-semicolon rule file loaded by build_line_classes, mermaid_scan_awk below, and
+# evals/score-artifacts.sh. Verified present here too so a missing/moved shared file fails fast
+# with a named error instead of a cryptic awk "can't open file" further down.
+[[ -f "$MERMAID_RULES_AWK" ]] || die "shared mermaid rules file not found: $MERMAID_RULES_AWK" 2
+
 # ---- Argument parsing: <PREFIX> | --all | --path <dir|file>, mutually exclusive ---------------
 case "${1:-}" in
   -h|--help|help) usage ;;
@@ -163,6 +169,19 @@ violations=0
 # Emits one tab-separated record per finding:
 #   U<TAB><lineno><TAB>            -- an edm-lint-ignore marker misused inside a mermaid fence
 #   V<TAB><lineno><TAB><snippet>   -- a raw semicolon inside label/edge/message text
+# G11 (CA-019, round-3): this function now LOADS the shared rule file (MERMAID_RULES_AWK, set by
+# _edm-lint-lib.sh) via -f rather than carrying a private, independently-maintained trim /
+# strip_entities / is_violation copy. -f and an inline program cannot be mixed on the same awk
+# invocation, so the remaining per-file main-loop logic below moves into a second -f <(...)
+# heredoc -- the exact idiom _edm-lint-lib.sh's build_line_classes and evals/score-artifacts.sh's
+# _scan_mermaid_blocks already use to load the same shared file. Being merely inside a mermaid
+# fence is not itself a suppression reason -- that is exactly what this class exists to inspect --
+# so a single-line edm-lint-ignore marker here is unsupported usage and is reported rather than
+# silently honored (EDMV3-T43 AC6).
+#
+# NOTE: no backtick or apostrophe may appear inside a comment inside the heredoc below -- bash 3.2
+# mis-parses either one inside a quoted heredoc nested inside a <(...) process substitution
+# (confirmed empirically; see the identical note in _edm-lint-lib.sh's build_line_classes).
 mermaid_scan_awk() {
   local file="$1" mermaid_set="$2" marker_set="$3"
   {
@@ -170,58 +189,7 @@ mermaid_scan_awk() {
     printf '%s\n' "EDM-MERMAID-SCAN-MARKER-SPLIT"
     printf '%s\n' "$marker_set"
   } > "$MERMAID_SCAN_FILE" || { echo "mermaid_scan_awk: failed to stage scan sets to $MERMAID_SCAN_FILE" >&2; return 1; }
-  awk -v scan_file="$MERMAID_SCAN_FILE" '
-    function trim(s) {
-      sub(/^[[:space:]]*/, "", s); sub(/[[:space:]]*$/, "", s); return s
-    }
-    # Strip legal entity codes (#59;, #quot;, #35;, ...) before span-checking so a legitimate
-    # entity reference is never mistaken for a raw semicolon. The 1..10 character bound is
-    # walked explicitly rather than written as an ERE interval, because interval support is not
-    # universal across the awk implementations this plugin runs on (bwk awk, mawk, busybox awk).
-    function strip_entities(s,   out, i, n, j, k) {
-      out = ""; i = 1; n = length(s)
-      while (i <= n) {
-        if (substr(s, i, 1) == "#") {
-          j = i + 1; k = 0
-          while (k < 10 && j <= n && substr(s, j, 1) ~ /[0-9A-Za-z]/) { j++; k++ }
-          if (k >= 1 && j <= n && substr(s, j, 1) == ";") { i = j + 1; continue }
-        }
-        out = out substr(s, i, 1); i++
-      }
-      return out
-    }
-    function is_violation(line,   trimmed, stripped, after_colon, p) {
-      trimmed = trim(line)
-
-      # Legal: a Mermaid comment line.
-      if (substr(trimmed, 1, 2) == "%%") return 0
-
-      # Legal: classDef / style / linkStyle directives -- their trailing ";" is a statement
-      # terminator, never a label boundary.
-      if (trimmed ~ /^(classDef|style|linkStyle)[[:space:]]/) return 0
-      if (trimmed == "classDef" || trimmed == "style" || trimmed == "linkStyle") return 0
-
-      stripped = strip_entities(line)
-
-      # Legal: a bare statement-terminating ";" at the very end of the line (outside any label)
-      # -- strip exactly one trailing ";" before span-checking.
-      sub(/;[[:space:]]*$/, "", stripped)
-
-      # Label spans: a raw ";" inside [...], (...), {...}, |...|, or "..." is a violation.
-      if (stripped ~ /\[[^][]*;[^][]*\]/) return 1
-      if (stripped ~ /\([^()]*;[^()]*\)/) return 1
-      if (stripped ~ /\{[^{}]*;[^{}]*\}/) return 1
-      if (stripped ~ /\|[^|]*;[^|]*\|/) return 1
-      if (stripped ~ /"[^"]*;[^"]*"/) return 1
-
-      # Sequence-diagram-style message line: a raw ";" after the first ":" on an arrow line.
-      p = index(stripped, ":")
-      if (index(stripped, "->") > 0 && p > 0) {
-        after_colon = substr(stripped, p + 1)
-        if (index(after_colon, ";") > 0) return 1
-      }
-      return 0
-    }
+  awk -f "$MERMAID_RULES_AWK" -v scan_file="$MERMAID_SCAN_FILE" -f <(cat <<'AWK_MAIN'
     BEGIN {
       in_marker_set = 0
       while ((getline scan_line < scan_file) > 0) {
@@ -236,13 +204,11 @@ mermaid_scan_awk() {
       sub(/\r$/, "")
       if (!(FNR in mer)) next
       if (FNR in ign) next
-      # Being merely inside a mermaid fence is not itself a suppression reason -- that is exactly
-      # what this class exists to inspect -- so a single-line marker here is unsupported usage
-      # and is reported rather than silently honored (EDMV3-T43 AC6).
       if (index($0, "<!-- edm-lint-ignore -->") > 0) { print "U\t" FNR "\t"; next }
-      if (is_violation($0)) print "V\t" FNR "\t" substr($0, 1, 120)
+      if (mermaid_is_violation($0)) print "V\t" FNR "\t" substr($0, 1, 120)
     }
-  ' "$file"
+AWK_MAIN
+  ) "$file"
 }
 
 # ---- Helper: list *.md files under a directory, excluding .git/ and .archived/ ----------------
@@ -297,10 +263,16 @@ scan_md_files() {
     # $_table instead.
     local _table
     _table="$(build_line_classes "${FILES[$i]}")"
-    IGNORE_SETS[$i]="$(printf '%s\n' "$_table" | awk -F'\t' '$2=="ignored"{print $1}')"
-    MERMAID_SETS[$i]="$(printf '%s\n' "$_table" | awk -F'\t' '$2=="mermaid"{print $1}')"
-    MARKER_SETS[$i]="$(printf '%s\n' "$_table" | awk -F'\t' '$2=="marker"{print $1}')"
-    FENCE_DIAGS[$i]="$(printf '%s\n' "$_table" | awk -F'\t' '$2=="unterminated-fence"{print $1 "\t" $3}')"
+    # G32/G40 (round-3): the four hand-written awk filters below now call the shared
+    # project_class filter (_edm-lint-lib.sh) against this already-built $_table instead of each
+    # re-implementing the same "$2==<class>" match -- zero extra awk invocations against the
+    # FILE (still exactly one build_line_classes call per file, per the CA-156 rationale above),
+    # only the trivial `cut` projecting each already-filtered in-memory row onto the column(s)
+    # this call site needs.
+    IGNORE_SETS[$i]="$(printf '%s\n' "$_table" | project_class "ignored" | cut -f1)"
+    MERMAID_SETS[$i]="$(printf '%s\n' "$_table" | project_class "mermaid" | cut -f1)"
+    MARKER_SETS[$i]="$(printf '%s\n' "$_table" | project_class "marker" | cut -f1)"
+    FENCE_DIAGS[$i]="$(printf '%s\n' "$_table" | project_class "unterminated-fence" | cut -f1,3)"
     UNREADABLE_FLAGS[$i]=0
   done
 

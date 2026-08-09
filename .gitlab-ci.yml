@@ -123,6 +123,19 @@ lint:bash-syntax:
         printf '%s\n' "$range_hits"
         exit 1
       fi
+      echo "=== G11/CA-019: the Mermaid entity-walk literal may exist in exactly one file ==="
+      # Bans a second hand-written copy of the strip_entities/mermaid_strip_entities character
+      # walk (the "#NNN;" entity-code skip loop) outside the one canonical file this rule is
+      # extracted into. G11 (round-3): bin/edm-lint-artifacts carried its own byte-equivalent
+      # copy of this literal for three rounds after the shared file existed -- this grep is the
+      # backstop so a fourth copy (here or anywhere else) fails the pipeline instead of drifting
+      # silently.
+      entity_hits="$(grep -rlE 'j <= n && substr\(s, j, 1\) ~ /\[0-9A-Za-z\]/' plugins/edm/bin plugins/edm/evals 2>/dev/null | grep -v '^plugins/edm/bin/edm-mermaid-rules\.awk$' || true)"
+      if [ -n "$entity_hits" ]; then
+        echo "lint:bash-syntax: a second copy of the Mermaid entity-walk literal was found (must load bin/edm-mermaid-rules.awk via awk -f instead):"
+        printf '%s\n' "$entity_hits"
+        exit 1
+      fi
       echo "lint:bash-syntax: OK -- ${COUNT} file(s) parsed"
 
 lint:artifacts:

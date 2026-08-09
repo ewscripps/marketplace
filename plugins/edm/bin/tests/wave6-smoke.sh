@@ -7,13 +7,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EDM_STATE="${SCRIPT_DIR}/../edm-state"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 
 # Ensure bin/ is on PATH so edm-lint-artifacts --all can find edm-state
 export PATH="${SCRIPT_DIR}/..:${PATH}"
 
 # Shared assertions / counters (CA-014).
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_harness.sh"
+# G21 (round-3): REPO_ROOT is the shared _HARNESS_REPO_ROOT export, not a second independent
+# cd/pwd derivation.
+REPO_ROOT="$_HARNESS_REPO_ROOT"
 
 # ---- Setup -------------------------------------------------------------------
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave6.XXXXXX")"
@@ -763,10 +765,9 @@ check_absent "hooks.json does not reference the new plan token" "gate-check \"\$
 # ---- AC9: vocabulary guard -- no single line calls the preflight block that word ------
 echo
 echo "T13 AC9 -- vocabulary guard: no line names the preflight block with that word"
-# CA-049: reuse the already-derived SCRIPT_DIR rather than re-deriving the plugin root a second,
-# independent way from EDM_STATE's own dirname. SCRIPT_DIR is bin/tests/, so the plugin root is
-# two levels up.
-PLUGIN_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# G21/CA-049: the shared _HARNESS_PLUGIN_DIR export (set once in _harness.sh), not a second,
+# independent cd/pwd re-derivation of the plugin root from SCRIPT_DIR.
+PLUGIN_DIR="$_HARNESS_PLUGIN_DIR"
 # Mirrors the ticket's literal verify command (line-level co-occurrence, not file-level --
 # edm-state legitimately uses each word separately on unrelated lines, e.g. "deterministic
 # gate enforcement" in the gate-check docblock and "Step 0" in an unrelated hook-typo
@@ -777,8 +778,16 @@ guard_needle_a="Step"; guard_needle_a="${guard_needle_a} 0"
 guard_needle_b="determin"; guard_needle_b="${guard_needle_b}istic"
 vocab_hits="$(grep -rn "$guard_needle_a" "$PLUGIN_DIR" 2>/dev/null | grep -v '/bin/tests/' \
   | grep -ci "$guard_needle_b" || true)"
-[[ "$vocab_hits" -eq 0 ]] && pass "no line describes the preflight block with that word" \
-  || fail "found $vocab_hits line(s) combining the two guarded terms on one line -- vocabulary guard violated"
+# G20 (round-3): positive control proving the same two-stage co-occurrence pipeline would
+# actually catch a line containing both guarded terms together, so the zero count above is a
+# real absence rather than a broken pipeline silently matching nothing.
+vocab_control_hits="$(printf '%s\n' "synthetic control: ${guard_needle_a} gate uses ${guard_needle_b} enforcement" | grep "$guard_needle_a" | grep -ci "$guard_needle_b" || true)"
+if [[ "${vocab_control_hits:-0}" -lt 1 ]]; then
+  fail "positive control broken: a synthetic co-occurrence line was not caught by the vocabulary guard"
+else
+  [[ "$vocab_hits" -eq 0 ]] && pass "no line describes the preflight block with that word (positive control confirms the scan works)" \
+    || fail "found $vocab_hits line(s) combining the two guarded terms on one line -- vocabulary guard violated"
+fi
 
 # =================================================================================
 # EDMV3-T09: cmd_set becomes a checked contract -- allowlist, gate refusals, schema_version

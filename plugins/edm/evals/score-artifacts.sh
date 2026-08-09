@@ -91,8 +91,20 @@
 # function definitions, composed via `awk -f edm-mermaid-rules.awk -f <this script's own
 # per-block state machine>`) for both fence recognition and the semicolon rule, so this
 # scorer and bin/_edm-lint-lib.sh/bin/edm-lint-artifacts now agree on what counts as a fence
-# and what counts as a violation, while this scorer's own OK/BAD-per-block verdict stream,
-# diagram-keyword check and exit-0 contract (AC5) are unchanged.
+# and what counts as a violation FOR THE UNDERLYING RULE BODY, while this scorer's own
+# OK/BAD-per-block verdict stream, diagram-keyword check and exit-0 contract (AC5) are unchanged.
+#
+# G11 (round-3): one deliberate carve-out remains on top of that shared rule body --
+# _scan_mermaid_blocks honors no edm-lint-ignore marker, where bin/edm-lint-artifacts's
+# mermaid_scan_awk does (a single-line marker on a mermaid-fenced line reports as an
+# "unsupported usage" finding rather than being silently honored, EDMV3-T43 AC6; a
+# block-form ignore-start/-end pair around the fence is honored by removing the lines from
+# the mermaid_set entirely). This scorer intentionally does not thread that marker set
+# through: an eval scorer measuring the QUALITY of an artifact under test should not let the
+# artifact under measurement suppress its own score by wrapping a bad diagram in an ignore
+# marker -- the marker is a lint-suppression escape valve for edm-lint-artifacts's blocking
+# enforcement, not a scoring exemption. A block containing an ignore marker is still scanned
+# and scored on its actual content.
 #
 # Depends on nothing beyond bash 3.2 and jq (AC6). Never calls bin/edm-state, never reads
 # ANTHROPIC_API_KEY, never launches claude -- this script only ever reads files under the

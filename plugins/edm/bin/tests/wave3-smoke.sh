@@ -12,8 +12,9 @@ EDM_STATE="${SCRIPT_DIR}/../edm-state"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_harness.sh"
 
 # ---- Setup -------------------------------------------------------------------
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+# G21 (round-3): harness_scratch_dir honors TMPDIR and installs an EXIT/INT/TERM cleanup trap,
+# unlike the bare `mktemp -d` + EXIT-only trap this replaces.
+harness_scratch_dir TMP
 export EDM_SRD_ROOT="$TMP/SRD"
 mkdir -p "$TMP/SRD"
 

@@ -515,8 +515,42 @@ _restore_trap() {
   fi
 }
 
+# _save_traps / _restore_traps -- G84 (round-3 CA-244): collapses the four-line
+# save-then-restore EXIT/INT/TERM/HUP sequence (write_atomic and with_state_lock each
+# hand-repeated this several times) into one call each. Fixed set of globals rather than
+# named caller-local variables -- bash 3.2 has no nameref/`local -n` to let a helper set an
+# arbitrary caller-local by name. Safe because write_atomic and with_state_lock never share
+# this save/restore pair concurrently within the SAME process: write_atomic's own trap layer
+# runs either in the top-level process directly, or inside with_state_lock's own forked
+# "( "$@" )" subshell, which is a separate process with its own independent copy of these
+# globals (see the CA-142/CA-143 comment above write_atomic for why the fork boundary matters
+# here) -- so a nested call inside the fork can never clobber the outer process's saved copy.
+_save_traps() {
+  _EDM_SAVED_TRAP_EXIT="$(trap -p EXIT || true)"
+  _EDM_SAVED_TRAP_INT="$(trap -p INT || true)"
+  _EDM_SAVED_TRAP_TERM="$(trap -p TERM || true)"
+  _EDM_SAVED_TRAP_HUP="$(trap -p HUP || true)"
+}
+
+_restore_traps() {
+  _restore_trap EXIT "$_EDM_SAVED_TRAP_EXIT"
+  _restore_trap INT "$_EDM_SAVED_TRAP_INT"
+  _restore_trap TERM "$_EDM_SAVED_TRAP_TERM"
+  _restore_trap HUP "$_EDM_SAVED_TRAP_HUP"
+}
+
 _write_atomic_cleanup() {
   rm -f "$1"
+}
+
+# _write_atomic_unwind <tmp> -- G84 (round-3 CA-244): collapses write_atomic's two
+# near-identical failure-branch sequences (remove the temp file, then restore all four
+# signal traps) into one call. The caller still issues its own `return $ec` immediately
+# after -- this helper only performs the unwind side effects, never returns/exits itself, so
+# it is safe to call from either failure branch below without changing control flow.
+_write_atomic_unwind() {
+  rm -f "$1"
+  _restore_traps
 }
 
 # ---- Lock reentrancy guard (round-3 G2/CA-142 re-fix) -----------------------
@@ -542,7 +576,7 @@ _EDM_TRAP_DEPTH=0
 write_atomic() {
   [[ $# -ge 2 ]] || { echo "write_atomic: usage: write_atomic <dest> <command> [args...]" >&2; return 2; }
   local dest="$1"; shift
-  local dest_dir tmp old_exit old_int old_term old_hup ec=0 _WRITE_ATOMIC_TMP
+  local dest_dir tmp ec=0 _WRITE_ATOMIC_TMP
   dest_dir="$(dirname "$dest")"
   [[ -d "$dest_dir" ]] || { echo "write_atomic: destination directory does not exist: ${dest_dir}" >&2; return 1; }
   [[ -w "$dest_dir" ]] || { echo "write_atomic: destination directory is not writable: ${dest_dir}" >&2; return 1; }
@@ -563,10 +597,7 @@ write_atomic() {
   # currently-installed trap fires and cleans up its own resource -- this tmp file here, the
   # lockdir in the outer process -- with no coordination mechanism needed between them.
   _WRITE_ATOMIC_TMP="$tmp"
-  old_exit="$(trap -p EXIT || true)"
-  old_int="$(trap -p INT || true)"
-  old_term="$(trap -p TERM || true)"
-  old_hup="$(trap -p HUP || true)"
+  _save_traps
   # CA-143: INT/TERM/HUP must actually terminate the process after cleanup -- a trap that only
   # cleans up and returns lets the interrupted caller resume, which can then race a second
   # process that (correctly) believes the resource is free. The EXIT trap is cleanup ONLY and
@@ -585,28 +616,17 @@ write_atomic() {
   # with none of the cleanup/trap-restoration logic below ever running".
   "$@" > "$tmp" || ec=$?
   if [[ $ec -ne 0 ]]; then
-    rm -f "$tmp"
-    _restore_trap EXIT "$old_exit"
-    _restore_trap INT "$old_int"
-    _restore_trap TERM "$old_term"
-    _restore_trap HUP "$old_hup"
+    _write_atomic_unwind "$tmp"
     return $ec
   fi
   # CA-134: same guard as above -- the mv's exit status must be captured on this statement
   # itself, not on a following bare line.
   mv -f "$tmp" "$dest" || ec=$?
   if [[ $ec -ne 0 ]]; then
-    rm -f "$tmp"
-    _restore_trap EXIT "$old_exit"
-    _restore_trap INT "$old_int"
-    _restore_trap TERM "$old_term"
-    _restore_trap HUP "$old_hup"
+    _write_atomic_unwind "$tmp"
     return $ec
   fi
-  _restore_trap EXIT "$old_exit"
-  _restore_trap INT "$old_int"
-  _restore_trap TERM "$old_term"
-  _restore_trap HUP "$old_hup"
+  _restore_traps
 }
 
 _rmw_state_render() {
@@ -982,7 +1002,7 @@ with_state_lock() {
     # succeeds -- so a pidfile containing "0" would be classified live forever (50 retries then a
     # hard die, with no reclamation ever possible). Reject "0" alongside non-numeric/empty values
     # so it is routed through the same atomic reclaim as any other invalid PID.
-    local tries=0 holder_pid="" old_exit old_int old_term old_hup _STATE_LOCKDIR
+    local tries=0 holder_pid="" _STATE_LOCKDIR
     until mkdir "$lockdir" 2>/dev/null; do
       holder_pid=""
       if [[ -f "$pidfile" ]]; then
@@ -1030,10 +1050,7 @@ with_state_lock() {
     # terminate the quoting early and corrupt the stored trap body into a syntax error at
     # signal time).
     _STATE_LOCKDIR="$lockdir"
-    old_exit="$(trap -p EXIT || true)"
-    old_int="$(trap -p INT || true)"
-    old_term="$(trap -p TERM || true)"
-    old_hup="$(trap -p HUP || true)"
+    _save_traps
     # This trap layer owns exactly one resource -- the lockdir -- for the lifetime of this lock.
     # It does NOT need to know anything about write_atomic's own tmp file: write_atomic (called
     # from inside the "( "$@" )" subshell just below) installs its own full trap layer
@@ -1077,10 +1094,7 @@ with_state_lock() {
     ( "$@" ) || ec=$?
     _EDM_TRAP_DEPTH=0
     rm -rf "$lockdir"
-    _restore_trap EXIT "$old_exit"
-    _restore_trap INT "$old_int"
-    _restore_trap TERM "$old_term"
-    _restore_trap HUP "$old_hup"
+    _restore_traps
     return $ec
   fi
 }

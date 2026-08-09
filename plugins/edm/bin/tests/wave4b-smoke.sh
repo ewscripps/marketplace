@@ -4,10 +4,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-PLUGIN_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # Shared assertions / counters (CA-014). Reconciles wave4b onto the same check contract as the
 # other suites: check <label> <expected-substring> <content> (same arg order as before).
 source "${SCRIPT_DIR}/_harness.sh"
+# G21 (round-3): PLUGIN_DIR is the shared _HARNESS_PLUGIN_DIR export, not a second independent
+# cd/pwd derivation.
+PLUGIN_DIR="$_HARNESS_PLUGIN_DIR"
 
 echo "=== Wave 4b Smoke Tests ==="
 echo ""

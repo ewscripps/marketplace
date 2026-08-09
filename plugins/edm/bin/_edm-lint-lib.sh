@@ -35,14 +35,31 @@
 #     True if <lineno> appears (as a whole line) in the newline-separated <lineset> string --
 #     typically one of the sets below, or a caller-derived filter of build_line_classes' output.
 #
+#   project_class <class>
+#     Reads a build_line_classes-shaped tab-separated table on STDIN (does NOT itself call
+#     build_line_classes or re-scan any file) and prints the subset of rows whose class field
+#     (column 2) equals <class>, unmodified (all columns, including a third snippet column when
+#     the class carries one, e.g. "unterminated-fence"). This is the single place the record
+#     shape's "$2==<class>" filter is written (CA-156/G32) -- every projection below, and
+#     bin/edm-lint-artifacts's own four per-class projections of its already-built $_table, pipe
+#     through this one function instead of each hand-writing the same awk filter.
+#
 #   ignored_line_set <file> / mermaid_line_set <file> / marker_line_set <file>
 #     Convenience projections of build_line_classes onto one class each, returning a
-#     newline-separated set of line numbers. These exist so all three consumers derive the
-#     "ignored"/"mermaid"/"marker" sets identically instead of each re-deriving the same
-#     `build_line_classes "$file" | awk -F'\t' '$2=="..."{print $1}'` projection locally
-#     (CA-156) -- callers wanting more than one set from the same file may still call
-#     build_line_classes directly to avoid re-scanning the file per projection (as
-#     bin/edm-lint-artifacts does).
+#     newline-separated set of line numbers (column 1 only, via project_class | cut -f1), each
+#     now implemented via the shared project_class filter rather than its own independent
+#     "$2==<class>" copy (CA-156/G32). Honest position on actual callers (G40, corrected --
+#     the prior wording here overstated it): only ignored_line_set has external callers today
+#     (bin/edm-check-grants and bin/edm-check-vocabulary, neither of which needs the mermaid or
+#     marker classes at all). mermaid_line_set and marker_line_set have no external caller --
+#     bin/edm-lint-artifacts is the only consumer that would need them, and it deliberately
+#     bypasses all three (including ignored_line_set) in favour of calling project_class
+#     directly against its own already-built $_table, to avoid the three extra per-file
+#     build_line_classes calls each of these three functions would otherwise cost (see the
+#     CA-156 comment at bin/edm-lint-artifacts's own call site). mermaid_line_set/marker_line_set
+#     remain for API completeness and because they cost nothing to keep once project_class made
+#     ignored_line_set's own duplication-removal trivial to extend to the other two classes --
+#     not because a caller currently needs them.
 #
 #   report_violation <class> <file> <lineno> <snippet>              -- 4-arg form.
 #     Prints "<file>:<lineno>: <class>: <snippet>" (path:line: class: snippet). Used by
@@ -159,24 +176,31 @@ is_ignored_line() {
   [[ -n "$lineset" ]] && echo "$lineset" | grep -qxF "$lineno"
 }
 
+# project_class <class> -- CA-156/G32: the single-sourced "$2==<class>" filter over a
+# build_line_classes-shaped table read from STDIN. See the docstring above.
+project_class() {
+  local class="$1"
+  awk -F'\t' -v class="$class" '$2==class'
+}
+
 # ignored_line_set / mermaid_line_set / marker_line_set <file> -- single-sourced projections of
-# build_line_classes onto one class each (CA-156). Each re-scans the file via build_line_classes;
-# a caller that needs more than one of these sets for the same file should call
-# build_line_classes once itself and derive all needed projections from that one table instead
-# (bin/edm-lint-artifacts does this).
+# build_line_classes onto one class each (CA-156), via the shared project_class filter (G32/G40).
+# Each re-scans the file via build_line_classes; a caller that needs more than one of these sets
+# for the same file should call build_line_classes once itself and pipe the result through
+# project_class for each set needed instead (bin/edm-lint-artifacts does this).
 ignored_line_set() {
   local file="$1"
-  build_line_classes "$file" | awk -F'\t' '$2=="ignored"{print $1}'
+  build_line_classes "$file" | project_class "ignored" | cut -f1
 }
 
 mermaid_line_set() {
   local file="$1"
-  build_line_classes "$file" | awk -F'\t' '$2=="mermaid"{print $1}'
+  build_line_classes "$file" | project_class "mermaid" | cut -f1
 }
 
 marker_line_set() {
   local file="$1"
-  build_line_classes "$file" | awk -F'\t' '$2=="marker"{print $1}'
+  build_line_classes "$file" | project_class "marker" | cut -f1
 }
 
 report_violation() {

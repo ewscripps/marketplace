@@ -9,15 +9,17 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 EDM_STATE="${SCRIPT_DIR}/../edm-state"
-PLUGIN_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-GITLAB_CI_YML="$(cd "$PLUGIN_DIR/../.." && pwd)/.gitlab-ci.yml"
+
+# Shared assertions / counters (CA-014). Sourced BEFORE the PLUGIN_DIR/GITLAB_CI_YML derivations
+# below (reordered, G21/CA-049) so both read the shared _HARNESS_PLUGIN_DIR / _HARNESS_REPO_ROOT
+# exports instead of each re-deriving the same cd/pwd chain independently.
+source "${SCRIPT_DIR}/_harness.sh"
+PLUGIN_DIR="$_HARNESS_PLUGIN_DIR"
+GITLAB_CI_YML="${_HARNESS_REPO_ROOT}/.gitlab-ci.yml"
 
 # CA-005: shared --help extractor -- _t61_help_subcommands below sources this instead of
 # hand-copying the sentinel-extraction awk literal a thirteenth time.
 source "${SCRIPT_DIR}/../_edm-cli-lib.sh"
-
-# Shared assertions / counters (CA-014).
-source "${SCRIPT_DIR}/_harness.sh"
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave7.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -1321,9 +1323,13 @@ _wave7_assert_shared_lint_fresh "T66 AC12"
   || fail "T66 AC12 -- edm-lint-artifacts --all exited $WAVE7_ALL_LINT_EXIT (captured once; output: ${WAVE7_ALL_LINT_OUT})"
 t66ac12_force_hits="$(grep -rn -- '--force\|--accept-partials' "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" 2>/dev/null \
   | grep -v tests/ | grep -v 'vocabulary-' | grep -v "refused:" || true)"
-[[ -z "$t66ac12_force_hits" ]] \
-  && pass "T66 AC12 -- no --force/--accept-partials escape hatch outside tests/vocabulary/refusal text" \
-  || fail "T66 AC12 -- found: $t66ac12_force_hits"
+# G20 (round-3): this repo-wide escape-hatch scan had no proof either OR'd needle could ever
+# match -- routed through assert_absent_with_control per needle (CA-037 shape), each against a
+# synthetic control line that legitimately contains it.
+assert_absent_with_control "T66 AC12 -- no --force escape hatch outside tests/vocabulary/refusal text" \
+  "--force" "$t66ac12_force_hits" "synthetic control line" "synthetic control: --force"
+assert_absent_with_control "T66 AC12 -- no --accept-partials escape hatch outside tests/vocabulary/refusal text" \
+  "--accept-partials" "$t66ac12_force_hits" "synthetic control line" "synthetic control: --accept-partials"
 # EDMV3-T66 end
 
 # =================================================================================
@@ -1673,8 +1679,12 @@ echo
 echo "T30 AC10 -- override-flag grep (repo-wide, documented carve-outs) is clean"
 t30_override_hits="$(grep -rn -- '--force\|--accept-partials' "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" 2>/dev/null \
   | grep -v "${PLUGIN_DIR}/bin/tests/" | grep -v vocabulary- | grep -v 'refused:' || true)"
-[[ -z "$t30_override_hits" ]] && pass "T30 AC10 -- no stray --force/--accept-partials outside bin/tests/ and the vocabulary checker's own files" \
-  || fail "T30 AC10 -- found stray override-flag text: $t30_override_hits"
+# G20 (round-3): same repo-wide escape-hatch scan as T66 AC12 above -- routed through
+# assert_absent_with_control per needle so a typo'd/broken pattern cannot pass silently.
+assert_absent_with_control "T30 AC10 -- no stray --force outside bin/tests/ and the vocabulary checker's own files" \
+  "--force" "$t30_override_hits" "synthetic control line" "synthetic control: --force"
+assert_absent_with_control "T30 AC10 -- no stray --accept-partials outside bin/tests/ and the vocabulary checker's own files" \
+  "--accept-partials" "$t30_override_hits" "synthetic control line" "synthetic control: --accept-partials"
 
 echo
 echo "T30 AC11 -- bash 3.2 syntax check and CI wiring"
@@ -2411,8 +2421,14 @@ echo
 echo "T33 AC4 -- no third verdict (BLOCKED/WAIVED/N/A-runtime) anywhere in scope"
 t33_third_verdict_hits="$(grep -rn 'BLOCKED\|WAIVED\|N/A-runtime' \
   "${PLUGIN_DIR}/bin/edm-state" "$VERIFY_RUNTIME_SKILL" "${PLUGIN_DIR}/agents/edm-qc-auditor.md" 2>/dev/null || true)"
-[[ -z "$t33_third_verdict_hits" ]] && pass "T33 AC4 -- no BLOCKED/WAIVED/N/A-runtime token in edm-state, verify-runtime, or qc-auditor" \
-  || fail "T33 AC4 -- found a third-verdict token: $t33_third_verdict_hits"
+# G20 (round-3): three-needle OR'd scan for a never-implemented third verdict -- each needle
+# routed through assert_absent_with_control against its own synthetic control line.
+assert_absent_with_control "T33 AC4 -- no BLOCKED token in edm-state, verify-runtime, or qc-auditor" \
+  "BLOCKED" "$t33_third_verdict_hits" "synthetic control line" "synthetic control: BLOCKED"
+assert_absent_with_control "T33 AC4 -- no WAIVED token in edm-state, verify-runtime, or qc-auditor" \
+  "WAIVED" "$t33_third_verdict_hits" "synthetic control line" "synthetic control: WAIVED"
+assert_absent_with_control "T33 AC4 -- no N/A-runtime token in edm-state, verify-runtime, or qc-auditor" \
+  "N/A-runtime" "$t33_third_verdict_hits" "synthetic control line" "synthetic control: N/A-runtime"
 
 echo
 echo "T33 AC5 -- D15 policy in CLAUDE.md: two sanctioned responses"
@@ -2589,9 +2605,18 @@ check "T35 AC3 -- approve-gate invocation happens only after the selection" \
 
 echo
 echo "T35 AC4 -- zero restatements of 'free-text is never approval' outside orchestrator/SKILL.md"
-t35_freetext_hits="$(grep -rn 'free-text is never approval\|free text is not an approval' "${PLUGIN_DIR}/" 2>/dev/null | grep -v 'orchestrator/SKILL.md' || true)"
-[[ -z "$t35_freetext_hits" ]] && pass "T35 AC4 -- no free-text-approval restatement outside orchestrator/SKILL.md" \
-  || fail "T35 AC4 -- found a restatement outside orchestrator/SKILL.md: $t35_freetext_hits"
+# G20 (round-3): needles built from split parts so this suite's own source text never contains
+# either contiguous phrase -- otherwise the repo-wide scan below (which includes bin/tests/,
+# unlike most of this file's other repo-wide scans) would self-match its own assertion text,
+# exactly the hazard the T36/vocabulary-guard split-needle idiom elsewhere in this file already
+# avoids.
+t35_freetext_needle_a="free-text is never"; t35_freetext_needle_a="${t35_freetext_needle_a} approval"
+t35_freetext_needle_b="free text is not"; t35_freetext_needle_b="${t35_freetext_needle_b} an approval"
+t35_freetext_hits="$(grep -rn -e "$t35_freetext_needle_a" -e "$t35_freetext_needle_b" "${PLUGIN_DIR}/" 2>/dev/null | grep -v 'orchestrator/SKILL.md' || true)"
+assert_absent_with_control "T35 AC4 -- no free-text-is-never-approval restatement outside orchestrator/SKILL.md" \
+  "$t35_freetext_needle_a" "$t35_freetext_hits" "synthetic control line" "synthetic control: ${t35_freetext_needle_a}"
+assert_absent_with_control "T35 AC4 -- no free-text-is-not-an-approval restatement outside orchestrator/SKILL.md" \
+  "$t35_freetext_needle_b" "$t35_freetext_hits" "synthetic control line" "synthetic control: ${t35_freetext_needle_b}"
 for t35_gate_site in "plugins/edm/skills/plan/SKILL.md" "plugins/edm/skills/audit-srd/SKILL.md" \
                      "plugins/edm/skills/audit-tickets/SKILL.md" "plugins/edm/skills/code-audit/SKILL.md"; do
   check "T35 AC4 -- ${t35_gate_site} references Gate PROTOCOL by name" \
@@ -2601,8 +2626,15 @@ done
 echo
 echo "T35 AC5 -- weak free-prose approval questions deleted"
 t35_weak_gate_hits="$(grep -rn "Ask: .Do you approve" "${PLUGIN_DIR}/skills/" 2>/dev/null || true)"
-[[ -z "$t35_weak_gate_hits" ]] && pass "T35 AC5 -- no 'Ask: \"Do you approve' free-prose gate remains in skills/" \
-  || fail "T35 AC5 -- found a weak free-prose gate: $t35_weak_gate_hits"
+# G20 (round-3): positive control proving the same pattern (the "." wildcard matches a literal
+# quote in the real needle) would actually catch a line containing the retired weak-prose gate.
+t35_weak_gate_control="$(printf '%s\n' 'synthetic control: Ask: "Do you approve of this plan?"' | grep -c "Ask: .Do you approve" || true)"
+if [[ "${t35_weak_gate_control:-0}" -lt 1 ]]; then
+  fail "T35 AC5 -- positive control broken: a synthetic 'Ask: \"Do you approve' line was not caught by the pattern"
+else
+  [[ -z "$t35_weak_gate_hits" ]] && pass "T35 AC5 -- no 'Ask: \"Do you approve' free-prose gate remains in skills/ (positive control confirms the pattern works)" \
+    || fail "T35 AC5 -- found a weak free-prose gate: $t35_weak_gate_hits"
+fi
 
 echo
 echo "T35 AC6 -- abbreviated approval lines corrected to reference the PROTOCOL by name"
@@ -2748,8 +2780,16 @@ t36_needle_a="${t36_needle_a} 0"
 t36_needle_b="determin"
 t36_needle_b="${t36_needle_b}istic"
 t36_step0_deterministic_hits="$(grep -rni "$t36_needle_a" "${PLUGIN_DIR}/" 2>/dev/null | grep -i "$t36_needle_b" || true)"
-[[ -z "$t36_step0_deterministic_hits" ]] && pass "T36 AC8 -- no such pairing found anywhere in plugins/edm/" \
-  || fail "T36 AC8 -- found a disallowed pairing: $t36_step0_deterministic_hits"
+# G20 (round-3): positive control proving the same two-stage co-occurrence pipeline would
+# actually catch a line containing both needles together, so the emptiness above is a real
+# absence rather than a broken pipeline silently matching nothing.
+t36_step0_deterministic_control="$(printf '%s\n' "synthetic control: ${t36_needle_a} gate uses ${t36_needle_b} enforcement" | grep -i "$t36_needle_a" | grep -i "$t36_needle_b" || true)"
+if [[ -z "$t36_step0_deterministic_control" ]]; then
+  fail "T36 AC8 -- positive control broken: a synthetic co-occurrence line was not caught by the pairing scan"
+else
+  [[ -z "$t36_step0_deterministic_hits" ]] && pass "T36 AC8 -- no such pairing found anywhere in plugins/edm/ (positive control confirms the scan works)" \
+    || fail "T36 AC8 -- found a disallowed pairing: $t36_step0_deterministic_hits"
+fi
 check "T36 AC8 -- defence-in-depth framing used instead" "defence in depth on the Skill-tool path" "$(cat "${PLUGIN_DIR}/skills/plan/SKILL.md")"
 
 echo
@@ -3044,10 +3084,11 @@ check "T55 AC6 -- free-text responses are still not approvals" "are **NOT** appr
 
 echo
 echo "T55 AC7 -- AskUserQuestion already granted on the three curation-presenting skills"
-t55_grants_ec=0
-bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t55_grants_ec=$?
-[[ "$t55_grants_ec" -eq 0 ]] && pass "T55 AC7 -- edm-check-grants exits 0" \
-  || fail "T55 AC7 -- edm-check-grants exited ${t55_grants_ec}"
+# G26 (round-3): reuses the shared whole-tree grants capture (before T66 AC12) instead of a
+# fresh run (CA-094).
+_wave7_assert_shared_lint_fresh "T55 AC7"
+[[ "$WAVE7_GRANTS_EXIT" -eq 0 ]] && pass "T55 AC7 -- edm-check-grants exits 0 (captured once; CA-094)" \
+  || fail "T55 AC7 -- edm-check-grants exited ${WAVE7_GRANTS_EXIT} (captured once; output: ${WAVE7_GRANTS_OUT})"
 for t55_gate_skill in audit-srd audit-tickets code-audit; do
   check "T55 AC7 -- ${t55_gate_skill}/SKILL.md's allowed-tools grants AskUserQuestion" \
     "AskUserQuestion" "$(grep '^allowed-tools:' "${PLUGIN_DIR}/skills/${t55_gate_skill}/SKILL.md")"
@@ -3776,9 +3817,11 @@ echo
 echo "T46 AC4 -- write-path class documented (edm-test-unit) and edm-check-grants clean"
 check "T46 AC4 -- 'detected test root' present in edm-test-unit.md" "detected test root" \
   "$(cat "${PLUGIN_DIR}/agents/edm-test-unit.md")"
-t46_grants_exit=0
-bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t46_grants_exit=$?
-[[ "$t46_grants_exit" -eq 0 ]] && pass "T46 AC4 -- edm-check-grants exits 0" || fail "T46 AC4 -- edm-check-grants exited ${t46_grants_exit}"
+# G26 (round-3): reuses the shared whole-tree grants capture (before T66 AC12) instead of a
+# fresh run (CA-094).
+_wave7_assert_shared_lint_fresh "T46 AC4"
+[[ "$WAVE7_GRANTS_EXIT" -eq 0 ]] && pass "T46 AC4 -- edm-check-grants exits 0 (captured once; CA-094)" \
+  || fail "T46 AC4 -- edm-check-grants exited ${WAVE7_GRANTS_EXIT} (captured once; output: ${WAVE7_GRANTS_OUT})"
 
 echo
 echo "T46 AC6 -- generalization stated literally in edm-implementer.md"
@@ -3812,16 +3855,26 @@ t46_ac10_total="$(ls "${PLUGIN_DIR}"/agents/*.md | wc -l | tr -d ' ')"
 
 echo
 echo "T46 AC12 -- N/A behaviour cross-referenced, not restated, in agents/"
-t46_ac12_agents="$(grep -rl 'recomputed each run' "${PLUGIN_DIR}/agents/" 2>/dev/null | wc -l | tr -d ' ')" || true
-[[ "${t46_ac12_agents:-0}" -eq 0 ]] && pass "T46 AC12 -- zero agent files restate 'recomputed each run'" \
-  || fail "T46 AC12 -- ${t46_ac12_agents} agent file(s) restate the phrase"
+t46_ac12_agents_files="$(grep -rl 'recomputed each run' "${PLUGIN_DIR}/agents/" 2>/dev/null || true)"
+# G20 (round-3): positive control -- the identical grep -l invocation against CLAUDE.md (the
+# documented single source for this phrase, asserted right below) proves the pattern still
+# matches a file that legitimately contains it, so the empty agents/ result is a real absence.
+t46_ac12_control_files="$(grep -l 'recomputed each run' "${PLUGIN_DIR}/CLAUDE.md" 2>/dev/null || true)"
+if [[ -z "$t46_ac12_control_files" ]]; then
+  fail "T46 AC12 -- positive control broken: CLAUDE.md no longer contains 'recomputed each run'"
+else
+  [[ -z "$t46_ac12_agents_files" ]] && pass "T46 AC12 -- zero agent files restate 'recomputed each run' (positive control confirms the pattern works)" \
+    || fail "T46 AC12 -- agent file(s) restate the phrase: $t46_ac12_agents_files"
+fi
 check "T46 AC12 -- CLAUDE.md carries the single source" "recomputed each run" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
 
 echo
 echo "T46 -- full suite stays green with the agent-contract additions in place"
-t46_grants2_exit=0
-bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t46_grants2_exit=$?
-[[ "$t46_grants2_exit" -eq 0 ]] && pass "T46 -- edm-check-grants exits 0" || fail "T46 -- edm-check-grants exited ${t46_grants2_exit}"
+# G26 (round-3): reuses the shared whole-tree grants capture (before T66 AC12) instead of a
+# fresh run (CA-094).
+_wave7_assert_shared_lint_fresh "T46 (full suite)"
+[[ "$WAVE7_GRANTS_EXIT" -eq 0 ]] && pass "T46 -- edm-check-grants exits 0 (captured once; CA-094)" \
+  || fail "T46 -- edm-check-grants exited ${WAVE7_GRANTS_EXIT} (captured once; output: ${WAVE7_GRANTS_OUT})"
 [[ "$WAVE7_ALL_LINT_EXIT" -eq 0 ]] && pass "T46 -- edm-lint-artifacts --all exits 0" \
   || fail "T46 -- edm-lint-artifacts --all exited ${WAVE7_ALL_LINT_EXIT} (captured once; output: ${WAVE7_ALL_LINT_OUT})"
 # EDMV3-T46 end
@@ -3854,9 +3907,23 @@ check "T47 AC4 -- 'distinct top-level source trees' present" "distinct top-level
 
 echo
 echo "T47 AC5 -- one location after the move: orchestrator carries no copy"
-t47_orch_explorer_hits="$(count_matches 'edm-explorer' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
-[[ "${t47_orch_explorer_hits:-0}" -eq 0 ]] && pass "T47 AC5 -- orchestrator/SKILL.md carries zero 'edm-explorer' mentions" \
-  || fail "T47 AC5 -- orchestrator/SKILL.md carries ${t47_orch_explorer_hits} 'edm-explorer' mention(s), expected 0"
+# G20/G30 (round-3): count_matches_strict distinguishes "genuinely zero" from "file missing/
+# unreadable" (CA-145), and the positive control below (skills/plan/SKILL.md, which legitimately
+# spawns edm-explorer, EDMV3-T47's own move target) proves the identical needle is not itself
+# broken -- an uncontrolled zero here would pass identically whether the mention was truly absent
+# or the needle had been typo'd.
+t47_orch_explorer_ec=0
+t47_orch_explorer_hits="$(count_matches_strict 'edm-explorer' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")" || t47_orch_explorer_ec=$?
+t47_orch_explorer_control_ec=0
+t47_orch_explorer_control="$(count_matches_strict 'edm-explorer' "${PLUGIN_DIR}/skills/plan/SKILL.md")" || t47_orch_explorer_control_ec=$?
+if [[ $t47_orch_explorer_control_ec -ne 0 || "${t47_orch_explorer_control:-0}" -lt 1 ]]; then
+  fail "T47 AC5 -- positive control broken: skills/plan/SKILL.md no longer mentions edm-explorer (ec=${t47_orch_explorer_control_ec}, count=${t47_orch_explorer_control:-0})"
+elif [[ $t47_orch_explorer_ec -ne 0 ]]; then
+  fail "T47 AC5 -- count_matches_strict errored reading orchestrator/SKILL.md (ec=${t47_orch_explorer_ec})"
+else
+  [[ "${t47_orch_explorer_hits:-0}" -eq 0 ]] && pass "T47 AC5 -- orchestrator/SKILL.md carries zero 'edm-explorer' mentions (positive control confirms the needle still matches a legitimate mention elsewhere)" \
+    || fail "T47 AC5 -- orchestrator/SKILL.md carries ${t47_orch_explorer_hits} 'edm-explorer' mention(s), expected 0"
+fi
 
 echo
 echo "T47 AC6 -- other deterministic caps unchanged (asserted positively on the surviving text)"
@@ -3877,9 +3944,11 @@ t47_cap_files="$(grep -rl 'maximum 4' "${PLUGIN_DIR}/skills/" | wc -l | tr -d ' 
 
 echo
 echo "T47 -- full suite stays green with the explorer cap in place"
-t47_grants_exit=0
-bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t47_grants_exit=$?
-[[ "$t47_grants_exit" -eq 0 ]] && pass "T47 -- edm-check-grants exits 0" || fail "T47 -- edm-check-grants exited ${t47_grants_exit}"
+# G26 (round-3): reuses the shared whole-tree grants capture (before T66 AC12) instead of a
+# fresh run (CA-094).
+_wave7_assert_shared_lint_fresh "T47 (full suite)"
+[[ "$WAVE7_GRANTS_EXIT" -eq 0 ]] && pass "T47 -- edm-check-grants exits 0 (captured once; CA-094)" \
+  || fail "T47 -- edm-check-grants exited ${WAVE7_GRANTS_EXIT} (captured once; output: ${WAVE7_GRANTS_OUT})"
 [[ "$WAVE7_ALL_LINT_EXIT" -eq 0 ]] && pass "T47 -- edm-lint-artifacts --all exits 0" \
   || fail "T47 -- edm-lint-artifacts --all exited ${WAVE7_ALL_LINT_EXIT} (captured once; output: ${WAVE7_ALL_LINT_OUT})"
 # EDMV3-T47 end
@@ -3932,8 +4001,16 @@ check "T49 AC5 -- '#### Do-NOT-adopt guards' heading present" "#### Do-NOT-adopt
 echo
 echo "T49 AC6 -- self-verification phrase family absent outside skills/verify-runtime/"
 t49_selfverify_hits="$(grep -rni 'double-check\|verify your own\|check your work\|re-verify your' "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" 2>/dev/null | grep -v 'skills/verify-runtime/' || true)"
-[[ -z "$t49_selfverify_hits" ]] && pass "T49 AC6 -- zero self-verification phrase-family hits outside skills/verify-runtime/" \
-  || fail "T49 AC6 -- found hit(s): ${t49_selfverify_hits}"
+# G20 (round-3): four-needle OR'd repo-wide scan -- each phrasing routed through
+# assert_absent_with_control against its own synthetic control line.
+assert_absent_with_control "T49 AC6 -- no 'double-check' self-verification hit outside skills/verify-runtime/" \
+  "double-check" "$t49_selfverify_hits" "synthetic control line" "synthetic control: double-check your own work"
+assert_absent_with_control "T49 AC6 -- no 'verify your own' self-verification hit outside skills/verify-runtime/" \
+  "verify your own" "$t49_selfverify_hits" "synthetic control line" "synthetic control: verify your own output"
+assert_absent_with_control "T49 AC6 -- no 'check your work' self-verification hit outside skills/verify-runtime/" \
+  "check your work" "$t49_selfverify_hits" "synthetic control line" "synthetic control: check your work before submitting"
+assert_absent_with_control "T49 AC6 -- no 're-verify your' self-verification hit outside skills/verify-runtime/" \
+  "re-verify your" "$t49_selfverify_hits" "synthetic control line" "synthetic control: re-verify your findings"
 
 echo
 echo "T49 AC7 -- before/after convention present on every prompt-text epic file (positive check)"
@@ -3964,9 +4041,11 @@ check "T49 AC8 -- 'before and after for each changed block' present" "before and
 
 echo
 echo "T49 -- full suite stays green with the guard/convention subsection in place"
-t49_grants_exit=0
-bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t49_grants_exit=$?
-[[ "$t49_grants_exit" -eq 0 ]] && pass "T49 -- edm-check-grants exits 0" || fail "T49 -- edm-check-grants exited ${t49_grants_exit}"
+# G26 (round-3): reuses the shared whole-tree grants capture (before T66 AC12) instead of a
+# fresh run (CA-094).
+_wave7_assert_shared_lint_fresh "T49 (full suite)"
+[[ "$WAVE7_GRANTS_EXIT" -eq 0 ]] && pass "T49 -- edm-check-grants exits 0 (captured once; CA-094)" \
+  || fail "T49 -- edm-check-grants exited ${WAVE7_GRANTS_EXIT} (captured once; output: ${WAVE7_GRANTS_OUT})"
 [[ "$WAVE7_ALL_LINT_EXIT" -eq 0 ]] && pass "T49 -- edm-lint-artifacts --all exits 0" \
   || fail "T49 -- edm-lint-artifacts --all exited ${WAVE7_ALL_LINT_EXIT} (captured once; output: ${WAVE7_ALL_LINT_OUT})"
 # EDMV3-T49 end
@@ -4201,9 +4280,11 @@ check "T48 -- honestly flags the table as not yet matrix-derived" "NOT yet matri
 
 echo
 echo "T48 -- full suite stays green with the tiering-matrix instrument in place"
-t48_grants_exit=0
-bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>&1 || t48_grants_exit=$?
-[[ "$t48_grants_exit" -eq 0 ]] && pass "T48 -- edm-check-grants exits 0" || fail "T48 -- edm-check-grants exited ${t48_grants_exit}"
+# G26 (round-3): reuses the shared whole-tree grants capture (before T66 AC12) instead of a
+# fresh run (CA-094).
+_wave7_assert_shared_lint_fresh "T48 (full suite)"
+[[ "$WAVE7_GRANTS_EXIT" -eq 0 ]] && pass "T48 -- edm-check-grants exits 0 (captured once; CA-094)" \
+  || fail "T48 -- edm-check-grants exited ${WAVE7_GRANTS_EXIT} (captured once; output: ${WAVE7_GRANTS_OUT})"
 [[ "$WAVE7_ALL_LINT_EXIT" -eq 0 ]] && pass "T48 -- edm-lint-artifacts --all exits 0" \
   || fail "T48 -- edm-lint-artifacts --all exited ${WAVE7_ALL_LINT_EXIT} (captured once; output: ${WAVE7_ALL_LINT_OUT})"
 # EDMV3-T48 end
