@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 1 ;; esac; edm-state gate-check \"$prefix\" srd 2>&1 || exit 1; exit 0"
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 2 ;; esac; edm-state gate-check \"$prefix\" srd || exit 2; exit 0"
           },
           {
             "type": "prompt",
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 1 ;; esac; edm-state gate-check \"$prefix\" audit-srd 2>&1 || exit 1; exit 0"
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 2 ;; esac; edm-state gate-check \"$prefix\" audit-srd || exit 2; exit 0"
           },
           {
             "type": "prompt",
@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 1 ;; esac; edm-state gate-check \"$prefix\" tickets 2>&1 || exit 1; exit 0"
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 2 ;; esac; edm-state gate-check \"$prefix\" tickets || exit 2; exit 0"
           },
           {
             "type": "prompt",
@@ -55,7 +55,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 1 ;; esac; edm-state gate-check \"$prefix\" audit-tickets 2>&1 || exit 1; exit 0"
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 2 ;; esac; edm-state gate-check \"$prefix\" audit-tickets || exit 2; exit 0"
           },
           {
             "type": "prompt",
@@ -68,7 +68,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 1 ;; esac; edm-state gate-check \"$prefix\" implement 2>&1 || exit 1; exit 0"
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 2 ;; esac; edm-state gate-check \"$prefix\" implement || exit 2; exit 0"
           },
           {
             "type": "prompt",
@@ -83,7 +83,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; command -v edm-lint-artifacts >/dev/null 2>&1 || exit 0; srd_root=\"${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}\"; srd_root=\"${srd_root#./}\"; while [ \"${srd_root%/}\" != \"$srd_root\" ]; do srd_root=\"${srd_root%/}\"; done; case \"$srd_root\" in /*) echo \"[EDM] srd_root is absolute (${srd_root}); commit-time artifact lint cannot match repository-relative staged paths -- set EDM_SRD_ROOT to a repo-relative path or run edm-lint-artifacts manually\" >&2; exit 0 ;; esac; test -n \"$srd_root\" || exit 0; staged=$(git diff --cached --name-only 2>/dev/null); test -z \"$staged\" && exit 0; prefixes=$(echo \"$staged\" | root=\"$srd_root\" awk '{ rl=length(ENVIRON[\"root\"])+1; if (substr($0,1,rl)==(ENVIRON[\"root\"] \"/\")) { rest=substr($0, rl+1); n=split(rest, parts, \"/\"); if (n>=2 && parts[2] ~ /__/) { p=parts[2]; sub(/__.*/, \"\", p); print p } else if (n>=1 && parts[1] ~ /^[A-Z]/) { print parts[1] } } }' | grep -E '^[A-Z][A-Z0-9_-]*$' | sort -u); test -z \"$prefixes\" && exit 0; fail=0; for p in $prefixes; do edm-state resolve-dir \"$p\" >/dev/null 2>&1 || continue; out=$(edm-lint-artifacts \"$p\" 2>&1); code=$?; if [ \"$code\" -eq 1 ]; then printf '%s\\n' \"$out\" >&2; echo \"[EDM] Fix artifact violations before committing (edm-lint-artifacts $p)\" >&2; fail=2; elif [ \"$code\" -eq 2 ]; then printf '%s\\n' \"$out\" >&2; echo \"[EDM] edm-lint-artifacts setup/usage error for $p -- not blocking the commit; investigate separately\" >&2; fi; done; exit $fail"
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; command -v edm-lint-artifacts >/dev/null 2>&1 || exit 0; srd_root=\"${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}\"; while [ \"${srd_root#./}\" != \"$srd_root\" ]; do srd_root=\"${srd_root#./}\"; done; case \"$srd_root\" in /*) repo_root=$(git rev-parse --show-toplevel 2>/dev/null); relativized=\"\"; if [ -n \"$repo_root\" ]; then case \"$srd_root\" in \"$repo_root\") relativized=\".\" ;; \"$repo_root\"/*) relativized=\"${srd_root#\"$repo_root\"/}\" ;; esac; fi; if [ -n \"$relativized\" ]; then srd_root=\"$relativized\"; else echo \"[EDM] srd_root is absolute (${srd_root}) and could not be relativized under the repository root${repo_root:+ (${repo_root})}; commit-time artifact lint cannot match repository-relative staged paths -- set EDM_SRD_ROOT to a repo-relative path or run edm-lint-artifacts manually\" >&2; exit 1; fi ;; esac; while :; do case \"$srd_root\" in */) srd_root=\"${srd_root%/}\" ;; */.) srd_root=\"${srd_root%/.}\" ;; *) break ;; esac; done; test -n \"$srd_root\" || exit 0; if [ ! -d \"$srd_root\" ]; then echo \"[EDM] srd_root (${srd_root}) does not exist -- commit-time artifact lint has nothing to scan; check EDM_SRD_ROOT / CLAUDE_PLUGIN_OPTION_SRD_ROOT for a typo\" >&2; exit 1; fi; staged=$(git diff --cached --name-only 2>/dev/null); test -z \"$staged\" && exit 0; prefixes=$(echo \"$staged\" | root=\"$srd_root\" awk '{ rl=length(ENVIRON[\"root\"])+1; if (substr($0,1,rl)==(ENVIRON[\"root\"] \"/\")) { rest=substr($0, rl+1); n=split(rest, parts, \"/\"); if (n>=2 && parts[2] ~ /__/) { p=parts[2]; sub(/__.*/, \"\", p); print p } else if (n>=1 && parts[1] ~ /^[A-Z]/) { print parts[1] } } }' | grep -E '^[A-Z][A-Z0-9_-]*$' | sort -u); test -z \"$prefixes\" && exit 0; fail=0; for p in $prefixes; do edm-state resolve-dir \"$p\" >/dev/null 2>&1 || continue; out=$(edm-lint-artifacts \"$p\" 2>&1); code=$?; if [ \"$code\" -eq 1 ]; then printf '%s\\n' \"$out\" >&2; echo \"[EDM] Fix artifact violations before committing (edm-lint-artifacts $p)\" >&2; fail=2; elif [ \"$code\" -eq 2 ]; then printf '%s\\n' \"$out\" >&2; echo \"[EDM] edm-lint-artifacts setup/usage error for $p -- not blocking the commit; investigate separately\" >&2; fi; done; exit $fail"
           }
         ]
       }

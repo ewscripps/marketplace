@@ -5413,14 +5413,65 @@ EOS
     && pass "G8 -- EDM_SRD_ROOT=./SRD/ still detects the violation and blocks (hook exit 2)" \
     || fail "G8 -- EDM_SRD_ROOT=./SRD/ produced exit=${ec}, output: ${out} (expected exit 2 naming FOOG8)"
 
-  # Case 3: an absolute srd_root cannot match git's repository-relative staged paths -- the fix
-  # prints a diagnostic and exits without blocking, rather than either crashing or silently
-  # linting nothing.
+  # Case 3 (round-4 CA-186 G3 fix): an absolute srd_root that cannot be relativized under the
+  # repository root now prints a diagnostic AND exits 1 -- transcript-visible, but not blocking
+  # (a misconfiguration, not a security violation). It previously exited 0, which sent the
+  # diagnostic to the debug log only, never the transcript -- silent loss of enforcement.
   ec=0
   out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" EDM_SRD_ROOT="/nonexistent/absolute/SRD" bash "$cmdfile" 2>&1)" || ec=$?
-  [[ "$ec" -eq 0 && "$out" == *"srd_root is absolute"* ]] \
-    && pass "G8 -- an absolute EDM_SRD_ROOT prints a diagnostic and does not block (hook exit 0, no crash)" \
-    || fail "G8 -- absolute EDM_SRD_ROOT produced exit=${ec}, output: ${out} (expected exit 0 with an absolute-path diagnostic)"
+  [[ "$ec" -eq 1 && "$out" == *"srd_root is absolute"* ]] \
+    && pass "CA-186 G3 -- an absolute EDM_SRD_ROOT outside the repo prints a transcript-visible diagnostic and exits 1 (not 0, not blocking)" \
+    || fail "CA-186 G3 -- absolute EDM_SRD_ROOT produced exit=${ec}, output: ${out} (expected exit 1 with an absolute-path diagnostic)"
+
+  # Case 3b: the bare filesystem root "/" is also absolute and must be classified as such rather
+  # than being reduced to an empty string by an out-of-order trailing-slash collapse (the second
+  # CA-186 residual bug: the absolute check must run BEFORE the trailing-slash strip).
+  ec=0
+  out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" EDM_SRD_ROOT="/" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 1 && "$out" == *"srd_root is absolute"* ]] \
+    && pass "CA-186 G3 -- EDM_SRD_ROOT=/ is classified as absolute (diagnostic + exit 1), not silently collapsed to empty" \
+    || fail "CA-186 G3 -- EDM_SRD_ROOT=/ produced exit=${ec}, output: ${out} (expected exit 1 with an absolute-path diagnostic)"
+
+  # Case 4 (CA-186 G3): a bare relative root with no leading/trailing decoration -- baseline for
+  # the remaining shapes below.
+  ec=0
+  out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" EDM_SRD_ROOT="SRD" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 2 && "$out" == *"FOOG8"* ]] \
+    && pass "CA-186 G3 -- EDM_SRD_ROOT=SRD (bare) still detects the violation and blocks (hook exit 2)" \
+    || fail "CA-186 G3 -- EDM_SRD_ROOT=SRD produced exit=${ec}, output: ${out} (expected exit 2 naming FOOG8)"
+
+  # Case 5 (CA-186 G3): a doubled leading "./" (././SRD) must be fully stripped by the LOOPED
+  # leading-./ strip, not just one iteration of it.
+  ec=0
+  out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" EDM_SRD_ROOT="././SRD" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 2 && "$out" == *"FOOG8"* ]] \
+    && pass "CA-186 G3 -- EDM_SRD_ROOT=././SRD (doubled leading ./) still detects the violation and blocks (hook exit 2)" \
+    || fail "CA-186 G3 -- EDM_SRD_ROOT=././SRD produced exit=${ec}, output: ${out} (expected exit 2 naming FOOG8 -- the ./ strip must be looped)"
+
+  # Case 6 (CA-186 G3): a trailing "/." (current-directory component) must be collapsed the same
+  # way a trailing "/" is -- this was the other silent-bypass shape the trailing-slash-only
+  # collapse missed entirely.
+  ec=0
+  out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" EDM_SRD_ROOT="SRD/." bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 2 && "$out" == *"FOOG8"* ]] \
+    && pass "CA-186 G3 -- EDM_SRD_ROOT=SRD/. (trailing /.) still detects the violation and blocks (hook exit 2)" \
+    || fail "CA-186 G3 -- EDM_SRD_ROOT=SRD/. produced exit=${ec}, output: ${out} (expected exit 2 naming FOOG8 -- a trailing /. must not silently disable enforcement)"
+
+  # Case 7 (CA-186 G3): an empty EDM_SRD_ROOT value falls through bash's ${VAR:-default}
+  # substitution exactly like an unset one, so it must default to ./SRD and still block.
+  ec=0
+  out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" EDM_SRD_ROOT="" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 2 && "$out" == *"FOOG8"* ]] \
+    && pass "CA-186 G3 -- EDM_SRD_ROOT='' (empty string) defaults to ./SRD and still blocks (hook exit 2)" \
+    || fail "CA-186 G3 -- EDM_SRD_ROOT='' produced exit=${ec}, output: ${out} (expected exit 2 naming FOOG8)"
+
+  # Case 8 (CA-186 G3 bullet 4): a relative root that does not exist on disk must be named loudly
+  # (diagnostic + exit 1) rather than silently producing zero matched prefixes.
+  ec=0
+  out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" EDM_SRD_ROOT="SRD_DOES_NOT_EXIST" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 1 && "$out" == *"does not exist"* ]] \
+    && pass "CA-186 G3 -- a nonexistent relative EDM_SRD_ROOT is named loudly (diagnostic + exit 1), not silently skipped" \
+    || fail "CA-186 G3 -- EDM_SRD_ROOT=SRD_DOES_NOT_EXIST produced exit=${ec}, output: ${out} (expected exit 1 naming the missing root)"
 
   # Regression: the unset (default ./SRD) case still detects and blocks exactly as before.
   ec=0
@@ -5429,11 +5480,62 @@ EOS
     && pass "G8 -- default (unset EDM_SRD_ROOT) still detects the violation and blocks (regression check)" \
     || fail "G8 -- default EDM_SRD_ROOT produced exit=${ec}, output: ${out} (expected exit 2 naming FOOG8)"
 
+  # No shape may exit 0 silently (CA-186 G3's core invariant): every one of the eight documented
+  # shapes above resolves to either exit 2 (blocking, relative) or exit 1 (loud, non-blocking
+  # config problem) -- never a bare exit 0.
+  local -a g3_all_shapes=("SRD" "./SRD" "././SRD" "SRD/" "SRD/." "/" "/nonexistent/absolute/SRD" "")
+  local g3_shape g3_ec g3_never_zero=1
+  for g3_shape in "${g3_all_shapes[@]}"; do
+    g3_ec=0
+    (cd "$scratch" && PATH="${scratch}/bin:${PATH}" EDM_SRD_ROOT="$g3_shape" bash "$cmdfile" >/dev/null 2>&1) || g3_ec=$?
+    if [[ "$g3_ec" -eq 0 ]]; then
+      g3_never_zero=0
+      fail "CA-186 G3 -- EDM_SRD_ROOT='${g3_shape}' exited 0 silently (must be 1 or 2)"
+    fi
+  done
+  [[ "$g3_never_zero" -eq 1 ]] \
+    && pass "CA-186 G3 -- none of the eight documented srd_root shapes exits 0 silently"
+
   rm -rf "$scratch"
 }
 echo
-echo "=== G8 (round-3 Wave 7c): a trailing-slash or absolute srd_root must not silently disable commit-time enforcement ==="
+echo "=== G8 (round-3 Wave 7c) / CA-186 G3 (round-4 Wave 8b): a trailing-slash, doubled ./, trailing /., or absolute srd_root must never silently disable commit-time enforcement ==="
 g8_srd_root_case
+
+# =================================================================================
+# CA-253 G8 (round-4 Wave 8b): the five UserPromptExpansion gate hooks must refuse with exit 2
+# (the code Claude Code actually treats as blocking), not exit 1 (non-blocking, expansion
+# proceeds anyway despite the refusal message being shown). Both refusal sites in each hook body
+# -- the invalid-prefix branch and the gate-check-failed branch -- must carry exit 2, and neither
+# may retain a bare "exit 1" on the refusal path. This is a static assertion against the shipped
+# hooks.json text (not an executed hook), which is sufficient here because the two refusal sites
+# are literal, grep-able exit-code tokens rather than a scan/derivation the way CA-186's srd_root
+# normalization is.
+# =================================================================================
+echo
+echo "=== CA-253 G8: the five UserPromptExpansion gate hooks refuse with exit 2, never exit 1 ==="
+ca253_gate_hooks_exit2_case() {
+  local matcher token hook_cmd
+  for matcher in edm:srd edm:audit-srd edm:tickets edm:audit-tickets edm:implement; do
+    token="${matcher#edm:}"
+    hook_cmd="$(jq -r --arg m "$matcher" \
+      '.hooks.UserPromptExpansion[] | select(.matcher == $m) | .hooks[] | select(.type == "command") | .command' \
+      "${PLUGIN_DIR}/hooks/hooks.json" 2>/dev/null)"
+    if [[ -z "$hook_cmd" ]]; then
+      fail "CA-253 G8 -- could not extract the ${matcher} UserPromptExpansion command hook from hooks.json"
+      continue
+    fi
+    check "CA-253 G8 -- ${matcher} hook's invalid-prefix branch refuses with exit 2" \
+      "exit 2 ;; esac" "$hook_cmd"
+    check "CA-253 G8 -- ${matcher} hook's gate-check call for token '${token}' refuses with exit 2" \
+      "gate-check \"\$prefix\" ${token} || exit 2" "$hook_cmd"
+    check_absent "CA-253 G8 -- ${matcher} hook body carries no bare 'exit 1' on the refusal path" \
+      "exit 1" "$hook_cmd"
+    check_absent "CA-253 G8 -- ${matcher} hook's gate-check call no longer merges stderr into stdout via 2>&1" \
+      "gate-check \"\$prefix\" ${token} 2>&1" "$hook_cmd"
+  done
+}
+ca253_gate_hooks_exit2_case
 
 # =================================================================================
 # G9/G19 (round-3 Wave 7c): the two --help sentences this round's own remediation inverted are
