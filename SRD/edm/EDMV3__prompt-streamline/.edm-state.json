@@ -31,9 +31,9 @@
       "recorded_at": "2026-07-26T02:01:55Z"
     },
     "findings_ledger": {
-      "hash": "05ffc0508ffe2f8f007cda756bef50fc96a32b945e48333fb69f6a00d0b58fad",
+      "hash": "60e37114777b020427c1a47e1dcbc7b1dccf6c837056379efc6f18e08aa3c425",
       "path": "./SRD/edm/EDMV3__prompt-streamline/code-audit/findings-ledger.md",
-      "recorded_at": "2026-08-09T05:08:30Z"
+      "recorded_at": "2026-08-09T13:57:09Z"
     }
   },
   "srd_version": "1.3.0",
@@ -130,7 +130,7 @@
   "last_decision": "Round 2 (full) synthesized: 91 blocking (1 P0, 13 P1, 77 P2), NOT CONVERGENT. User approved the Convergence gate anyway; approve-gate incorrectly succeeded because schema_version was still 1 (cmd_init default), which skips the code-audit precheck entirely (CA-182, new P0, filed). Migrated schema_version to 2, manually reverted the bogus code_audit_converged=true and its gate metadata (no cmd_set path exists for that field by design), and re-ran approve-gate to confirm it now correctly refuses. code_audit_converged is false; next action is remediation per pass-2 REMEDIATION.md, approved by the user, then a third full round.",
   "audit_rounds": {
     "code": {
-      "count": 4,
+      "count": 5,
       "rounds": [
         {
           "round": 1,
@@ -191,6 +191,12 @@
           "lenses": [],
           "round_type": "full",
           "started_at": "2026-08-09T03:55:38Z"
+        },
+        {
+          "round": 5,
+          "lenses": [],
+          "round_type": "full",
+          "started_at": "2026-08-09T12:48:07Z"
         }
       ]
     }
@@ -205,7 +211,7 @@
   "forked_from": "",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-08-09T05:08:30Z",
+  "last_updated": "2026-08-09T13:57:09Z",
   "current_step": "6.code-audit-round-1-non-convergent",
   "schema_version": 2,
   "patterns_last_updated": "2026-07-31T23:56:05Z",
