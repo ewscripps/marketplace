@@ -330,9 +330,12 @@ get_session_tokens_since() {
   # CA-160: validate right next to where the default is established -- a non-numeric value
   # reaches `tail -n` and aborts with a raw, user-hostile "tail: illegal offset"; a value with a
   # leading '+' silently INVERTS the flag's meaning from "last N lines" to "from line N onward",
-  # a silent behaviour change rather than an error. Plain non-negative integer only.
-  [[ "$_token_read_cap" =~ ^[0-9]+$ ]] \
-    || die "invalid EDM_TOKEN_READ_LINE_CAP: '${_token_read_cap}' (expected a non-negative integer line count)"
+  # a silent behaviour change rather than an error. G47: a plain "0" used to pass this same
+  # regex too -- `tail -n 0` emits nothing, so tokens record as 0, which then trips the
+  # BLOCKING ZERO_TOKENS anomaly with no diagnostic connecting the cause (a misconfigured
+  # env var) to the effect (a blocked archive). Require a positive integer.
+  [[ "$_token_read_cap" =~ ^[1-9][0-9]*$ ]] \
+    || die "invalid EDM_TOKEN_READ_LINE_CAP: '${_token_read_cap}' (expected a positive integer line count; 0 makes tail read zero lines, which reports 0 tokens and trips the blocking ZERO_TOKENS anomaly)"
 
   if [[ -n "$driving_session" && -f "$driving_session" ]]; then
     tail -n "$_token_read_cap" "$driving_session" | jq -Rn --arg since "$since" --arg mode "scoped" '
@@ -364,9 +367,20 @@ get_session_tokens_since() {
   # AC2 fallback: the driving session could not be identified (e.g. a TOCTOU race where every
   # file was removed between the existence check above and the `ls -t` read) even though the
   # directory has jsonl files. Sums every session JSONL -- the pre-T52 behaviour -- and tags
-  # the result so callers and readers can tell a whole-directory figure from a scoped one. Each
-  # file is independently line-capped for the same reason as the scoped branch above.
-  cat "$sessions_dir"/*.jsonl 2>/dev/null | tail -n "$_token_read_cap" | jq -Rn --arg since "$since" --arg mode "whole-directory" '
+  # the result so callers and readers can tell a whole-directory figure from a scoped one.
+  #
+  # G47: cap EACH session file independently, not the concatenation across all of them --
+  # `cat *.jsonl | tail -n N` applied the cap to the CONCATENATION across every session file,
+  # so with more than one session file only the tail of the LAST file(s) survived, silently
+  # discarding earlier sessions' token counts entirely (contradicting this comment block's own
+  # claim of per-file capping). Loop over the files individually instead.
+  local _g47_capped_lines=""
+  _g47_capped_lines="$(for _tf in "$sessions_dir"/*.jsonl; do
+    if [[ -f "$_tf" ]]; then
+      tail -n "$_token_read_cap" "$_tf"
+    fi
+  done)" || true
+  printf '%s\n' "$_g47_capped_lines" | jq -Rn --arg since "$since" --arg mode "whole-directory" '
     reduce inputs as $line (
       {msgs: [], bad: 0};
       if ($line | length) == 0 then .
@@ -637,6 +651,15 @@ _rmw_state_render() {
 
 _print_literal() {
   printf '%s' "$1"
+}
+
+# _print_line <text> -- sibling of _print_literal, but appends a terminating newline
+# (G38). Use this for any write_atomic call whose content is a complete document (e.g.
+# HANDOFF.md) that should end with a newline; _print_literal itself is left unchanged
+# because a pattern-library splice elsewhere in this file depends on its exact
+# no-newline behavior.
+_print_line() {
+  printf '%s\n' "$1"
 }
 
 _rmw_state_body() {
@@ -972,9 +995,23 @@ with_state_lock() {
     # holder that still has the old inode open believes it still holds the lock, silently
     # breaking mutual exclusion. The file is deliberately left on disk forever; `.gitignore`
     # already hides `**/.edm-state.lock` from git status, so this is not a leak.
-    local _lock_ec=0
-    ( flock -w 10 200 || exit 99; "$@" ) 200>"${lockfile}" || _lock_ec=$?
-    [[ $_lock_ec -eq 99 ]] && die "state lock timeout after 10s on ${lockfile} (another edm-state process may be holding it)"
+    #
+    # G49: detect the flock timeout via a side-channel marker file, not the locked body's own
+    # exit code. The previous design (`flock -w 10 200 || exit 99` inside the subshell, then
+    # `[[ $_lock_ec -eq 99 ]]` outside it) misreports a LOCKED BODY that happens to exit 99 for
+    # its own, unrelated reason as a lock timeout -- 99 was not reserved anywhere else in this
+    # file, and this file's mutators already use other out-of-band codes (e.g. `_cmd_init_body`'s
+    # `return 10`), so the sentinel space is in active, growing use and a future collision is
+    # plausible. A marker file created ONLY by the timeout branch itself, checked after the
+    # subshell exits, is unambiguous regardless of what "$@" returns.
+    local _lock_ec=0 _lock_timeout_marker
+    _lock_timeout_marker="${lockfile}.timeout.$$"
+    rm -f "$_lock_timeout_marker" 2>/dev/null || true
+    ( flock -w 10 200 || { : > "$_lock_timeout_marker" 2>/dev/null; exit 99; }; "$@" ) 200>"${lockfile}" || _lock_ec=$?
+    if [[ -e "$_lock_timeout_marker" ]]; then
+      rm -f "$_lock_timeout_marker" 2>/dev/null || true
+      die "state lock timeout after 10s on ${lockfile} (another edm-state process may be holding it)"
+    fi
     return $_lock_ec
   else
     # Fallback: mkdir-based spin-lock (POSIX-portable, atomic on local filesystems)
@@ -1003,7 +1040,17 @@ with_state_lock() {
     # hard die, with no reclamation ever possible). Reject "0" alongside non-numeric/empty values
     # so it is routed through the same atomic reclaim as any other invalid PID.
     local tries=0 holder_pid="" _STATE_LOCKDIR
-    until mkdir "$lockdir" 2>/dev/null; do
+    local _mkdir_err
+    # G22: capture mkdir's own stderr on this (and every) failed attempt. On the very
+    # first failed attempt, if the lockdir still doesn't exist AND the failure wasn't
+    # the expected "File exists" (i.e. some other process already holds the lock), the
+    # failure is a real environment error (e.g. a read-only checkout) rather than
+    # contention -- die immediately naming it instead of spin-retrying for 50 tries and
+    # reporting a misleading "lock timeout" once the retries are exhausted.
+    until _mkdir_err="$(mkdir "$lockdir" 2>&1)"; do
+      if [[ $tries -eq 0 && ! -d "$lockdir" && "$_mkdir_err" != *"File exists"* ]]; then
+        die "with_state_lock: cannot create lock directory ${lockdir}: ${_mkdir_err}"
+      fi
       holder_pid=""
       if [[ -f "$pidfile" ]]; then
         holder_pid="$(cat "$pidfile" 2>/dev/null || true)"
@@ -1426,6 +1473,17 @@ state_anomalies() {
 # falls through to the normal locked path below rather than risking an incorrect skip, and a
 # benign TOCTOU race against a concurrent recorder just means the locked jq filter's own
 # idempotence handles it exactly as it always has.
+#
+# G22: a SECOND, separate pre-check -- writability, not idempotence -- covers the case the
+# idempotence check above does not: the FIRST invocation for a legacy initiative, where the
+# (check, reason) pair is genuinely new. On a read-only checkout that first call would otherwise
+# fall through to rmw_state, which needs to create the lockdir alongside the state file; that now
+# fails fast with a real "Permission denied" (the with_state_lock G22 fix above) instead of the
+# old misleading 50-try lock-timeout, but a real error is still not what a documented "(read-only)"
+# subcommand like gate-check should surface for something as inconsequential as a degraded-check
+# breadcrumb. So: warn-and-skip here instead, preserving the read-only contract end to end. Best
+# effort like the idempotence check above -- if the directory can't even be determined, fall
+# through to rmw_state rather than risk silently skipping a check that would have succeeded.
 record_degraded_check() {
   local prefix="$1" check="$2" reason="$3"
   local already
@@ -1433,6 +1491,15 @@ record_degraded_check() {
     ((.degraded_checks // []) | any(.check == $c and .reason == $r)) // false
   ' 2>/dev/null || echo false)"
   [[ "$already" == "true" ]] && return 0
+  local _f _dir
+  _f="$(state_file_for "$prefix" 2>/dev/null || true)"
+  if [[ -n "$_f" ]]; then
+    _dir="$(dirname "$_f")"
+    if [[ -d "$_dir" && ! -w "$_dir" ]]; then
+      echo "edm-state: [warn] cannot record degraded check '${check}' for ${prefix} -- state directory ${_dir} is not writable; skipping (gate-check remains read-only)" >&2
+      return 0
+    fi
+  fi
   rmw_state "$prefix" '
     (.degraded_checks // []) as $existing
     | if any($existing[]?; .check == $c and .reason == $r) then .
@@ -2562,9 +2629,33 @@ ${open_partials_list}"
     dst="${SRD_ROOT}/.archived/${prefix}"
   fi
   mkdir -p "$(dirname "$dst")"
+
+  # G46: hold the state lock across the rename itself, instead of moving the directory
+  # (which may contain a live lockdir/lockfile from a concurrent with_state_lock caller)
+  # with no lock of our own held. The locked body performs the rename itself -- it must
+  # NOT call rmw_state or take a second, nested lock (with_state_lock is not reentrant).
   # Use git mv when inside a git worktree so the move is tracked; fall back to plain mv. (CA-015)
-  git_aware_mv "$src" "$dst"
+  with_state_lock "${state_file%.json}" _cmd_archive_move_body "$src" "$dst" "${state_file%.json}"
   echo "archived $prefix -> $dst"
+}
+
+# _cmd_archive_move_body <src> <dst> <lockbase>   (runs INSIDE with_state_lock; see
+# cmd_archive above, which acquires the lock and dispatches here)
+# G46: removes the lockdir/lockfile explicitly, immediately BEFORE the rename, so
+# neither travels with the renamed directory to the archive destination. This is a
+# narrow, deliberate exception to CA-169's "never rm -f the flock lockfile" rule
+# (with_state_lock above): CA-169 exists because unlinking a lock file while its PATH
+# can still be reopened leaves a window for a fresh contender to acquire a second,
+# independent lock on the same logical resource while an earlier holder still believes
+# it holds the first one. Here the entire parent directory -- the only thing that path
+# could ever be reopened under -- is renamed away in the very next statement, so no
+# path persists afterward for a fresh contender to reopen; the residual race is
+# confined to the instant between this rm and the mv completing, not indefinite the
+# way CA-169's original scenario is.
+_cmd_archive_move_body() {
+  local _src="$1" _dst="$2" _lockbase="$3"
+  rm -rf "${_lockbase}.lockd" "${_lockbase}.lock"
+  git_aware_mv "$_src" "$_dst"
 }
 
 cmd_watch_impl() {
@@ -2578,12 +2669,35 @@ cmd_watch_impl() {
   [[ -n "$last_sha" ]] || { echo "edm-state watch-impl: repository has no commits yet" >&2; return 1; }
   while true; do
     sleep 5
-    local new_commits
-    new_commits="$(git log --pretty=format:'%h %s' "${last_sha}..HEAD" 2>/dev/null | grep -E '[A-Z]+-T[0-9]+' || true)"
-    if [[ -n "$new_commits" ]]; then
-      echo "$new_commits"
-      last_sha="$(git rev-parse HEAD 2>/dev/null || echo "$last_sha")"
+    # G48: capture git log's OWN exit status separately from grep's -- piping straight into
+    # `grep ... || true` previously collapsed "no new commits" (git log succeeded, grep found
+    # nothing), "git log genuinely failed", and "last_sha is no longer a valid ref" (e.g. after
+    # a rebase/amend that made the old commit unreachable and later pruned) into one
+    # indistinguishable silent outcome -- once history was rewritten, every later poll silently
+    # produced nothing for the rest of the session with no diagnostic connecting cause to effect.
+    local git_log_out git_log_ec=0
+    git_log_out="$(git log --pretty=format:'%h %s' "${last_sha}..HEAD" 2>/dev/null)" || git_log_ec=$?
+    if [[ $git_log_ec -ne 0 ]]; then
+      if git cat-file -e "${last_sha}^{commit}" 2>/dev/null; then
+        # last_sha is still a valid ref -- git log failed for some other, presumably
+        # transient reason. Leave last_sha unchanged and retry on the next poll.
+        :
+      else
+        # last_sha is no longer reachable: history was rewritten (rebase/amend) and the old
+        # commit was pruned. Re-anchor at the current HEAD and say so once, rather than
+        # silently producing nothing for the rest of the session.
+        echo "edm-state watch-impl: history was rewritten (${last_sha} is no longer a valid ref); monitor re-anchored at current HEAD" >&2
+        last_sha="$(git rev-parse HEAD 2>/dev/null || echo "$last_sha")"
+      fi
+      continue
     fi
+    local new_commits
+    new_commits="$(printf '%s' "$git_log_out" | grep -E '[A-Z]+-T[0-9]+' || true)"
+    [[ -n "$new_commits" ]] && echo "$new_commits"
+    # G48: advance last_sha to HEAD on every SUCCESSFUL poll, not only when a ticket-commit
+    # match was found, so a long run of non-ticket commits does not make the scanned range
+    # (and therefore each poll's git-log cost) grow unboundedly.
+    last_sha="$(git rev-parse HEAD 2>/dev/null || echo "$last_sha")"
   done
 }
 
@@ -2614,9 +2728,9 @@ cmd_metrics_report() {
             {
               prefix: .prefix,
               size: (.estimated_size // "?"),
-              total_seconds: ([$phases[].duration_seconds // 0] | add),
-              total_claude: ([$phases[].estimated_cost_usd // 0] | add),
-              total_human: ([$phases[].human_baseline_usd // 0] | add)
+              total_seconds: ([$phases[].duration_seconds // 0] | add // 0),
+              total_claude: ([$phases[].estimated_cost_usd // 0] | add // 0),
+              total_human: ([$phases[].human_baseline_usd // 0] | add // 0)
             }
             | "  \(.prefix | tostring | .[0:12])  \(.size | tostring | .[0:8])  \(.total_seconds)s\(if .total_seconds < 100 then "         " else "       " end)  $\(.total_claude)\(if .total_claude < 10 then "        " else "      " end)  $\(.total_human)\(if .total_human < 100 then "       " else "     " end)  \(if .total_claude > 0 and .total_human > 0 then ((.total_human / .total_claude) | tostring | .[0:6]) + "x" else "n/a" end)"
           ' "$state" 2>/dev/null
@@ -2626,8 +2740,8 @@ cmd_metrics_report() {
             {
               prefix: .prefix,
               size: (.estimated_size // "?"),
-              total_seconds: ([$phases[].duration_seconds // 0] | add),
-              total_claude: ([$phases[].estimated_cost_usd // 0] | add)
+              total_seconds: ([$phases[].duration_seconds // 0] | add // 0),
+              total_claude: ([$phases[].estimated_cost_usd // 0] | add // 0)
             }
             | "  \(.prefix | tostring | .[0:12])  \(.size | tostring | .[0:8])  \(.total_seconds)s\(if .total_seconds < 100 then "         " else "       " end)  $\(.total_claude)"
           ' "$state" 2>/dev/null
@@ -2708,9 +2822,9 @@ cmd_metrics_report() {
           [.phase_durations[] | .estimated_cost_usd // 0] as $costs |
           [.phase_durations[] | .human_baseline_usd // 0] as $humans |
           [.phase_durations[] | .duration_seconds // 0] as $secs |
-          ($costs | add) as $tc |
-          ($humans | add) as $th |
-          ($secs | add) as $ts |
+          ($costs | add // 0) as $tc |
+          ($humans | add // 0) as $th |
+          ($secs | add // 0) as $ts |
           "  Total: \($ts)s  |  Claude: $\($tc)  |  Human baseline (ESTIMATE): $\($th)  |  Savings: " +
             (if $tc > 0 and $th > 0 then "\(($th / $tc) | tostring | .[0:6])x cheaper" else "n/a" end)
         ' "$state"
@@ -2732,8 +2846,8 @@ cmd_metrics_report() {
         jq -r '
           [.phase_durations[] | .estimated_cost_usd // 0] as $costs |
           [.phase_durations[] | .duration_seconds // 0] as $secs |
-          ($costs | add) as $tc |
-          ($secs | add) as $ts |
+          ($costs | add // 0) as $tc |
+          ($secs | add // 0) as $ts |
           "  Total: \($ts)s  |  Claude: $\($tc)"
         ' "$state"
       fi
@@ -2907,6 +3021,23 @@ cmd_metrics_report() {
 # Relocates a flat initiative SRD/{PREFIX}/ to SRD/{PRODUCT}/{PREFIX}__{DESCRIPTION}/
 # and updates product_name + initiative_description in state. Git-aware when tracked.
 
+# _cmd_migrate_path_move_body <src> <dst> <lockbase>   (runs INSIDE with_state_lock;
+# see cmd_migrate_path below, which acquires the lock and dispatches here)
+# G46: removes the lockdir/lockfile explicitly, immediately BEFORE the rename, so
+# neither travels with the renamed directory to the new product-scoped location -- same
+# narrow, deliberate exception to CA-169 as _cmd_archive_move_body above (the entire
+# parent directory is renamed away in the very next statement, so no path persists
+# afterward for a fresh contender to reopen).
+_cmd_migrate_path_move_body() {
+  local _src="$1" _dst="$2" _lockbase="$3"
+  rm -rf "${_lockbase}.lockd" "${_lockbase}.lock"
+  git_aware_mv "$_src" "$_dst"
+  if [[ ! -f "${_dst}/.edm-state.json" ]]; then
+    git_aware_mv "$_dst" "$_src"
+    die "migrate-path: state file not found after move (rolled back): ${_dst}/.edm-state.json"
+  fi
+}
+
 cmd_migrate_path() {
   require_jq
   local prefix="" product="" description=""
@@ -2940,18 +3071,27 @@ cmd_migrate_path() {
   # Create product subdirectory.
   mkdir -p "${SRD_ROOT}/${product}"
 
-  # Move the initiative directory -- git-aware when inside a worktree. (CA-015)
-  git_aware_mv "$src" "$dst"
+  # G46: hold the state lock across the initial rename, instead of moving the directory
+  # (which may contain a live lockdir/lockfile from a concurrent with_state_lock caller)
+  # with no lock of our own held. The locked body performs the rename itself and, on the
+  # missing-state-file failure, rolls back and dies from inside its own subshell
+  # (with_state_lock always runs its body in a subshell, so `die` here only ends that
+  # subshell; the non-zero return then aborts this script the same way a bare `die`
+  # outside the lock would have). It must NOT call rmw_state or take a second, nested
+  # lock (with_state_lock is not reentrant).
+  local migrate_lockbase="${src}/.edm-state"
+  with_state_lock "$migrate_lockbase" _cmd_migrate_path_move_body "$src" "$dst" "$migrate_lockbase"
 
   # Update state through the locked/atomic/backup primitive (CA-001). After the move,
   # state_file_for "$prefix" glob-resolves the new product-scoped dir, so rmw_state targets it.
-  # Roll the directory move back if the state file is missing or the write fails.
-  local new_state_file="${dst}/.edm-state.json"
-  if [[ ! -f "$new_state_file" ]]; then
-    git_aware_mv "$dst" "$src"
-    die "migrate-path: state file not found after move (rolled back): $new_state_file"
-  fi
-  rm -f "${new_state_file}.bak"   # drop any stale source-carried backup; rmw_state writes a fresh one
+  # Roll the directory move back if the write fails.
+  # G46: do NOT drop a carried-over .bak before attempting the write below -- if
+  # rmw_state fails and the move is rolled back, a pre-existing .bak (from some earlier,
+  # unrelated operation) is exactly the recovery artifact a human would reach for.
+  # rmw_state's own _rmw_state_body already makes a fresh backup unconditionally as its
+  # first step, so the stale one is naturally superseded on success without needing to
+  # be pre-emptively deleted here (and, unlike a pre-emptive delete, is never destroyed
+  # before we know whether this write will actually succeed).
   if ! rmw_state "$prefix" \
         '.product_name = $p | .initiative_description = $d | .last_updated = $t' \
         --arg p "$product" --arg d "$description" --arg t "$(now_utc)"; then
@@ -3174,6 +3314,23 @@ cmd_record_branch() {
 # git-lock-check
 # Detects a stale .git/index.lock file and removes it if the holding process is gone.
 
+# _git_lock_age_bucket <file> -- coarse, portable age description for <file>'s mtime,
+# using only `find -mmin` (supported identically by GNU and BSD find). Deliberately
+# avoids the GNU-vs-BSD `stat` flag divergence (`-c` on GNU, `-f` on BSD): this file
+# must run unmodified on macOS and Linux, and that exact divergence point is one
+# bin/tests/wave7-smoke.sh's T61 AC11 case asserts never appears anywhere in bin/
+# outside edm-lint-artifacts' own sanctioned detection branch.
+_git_lock_age_bucket() {
+  local f="$1" bucket
+  for bucket in 120 60 30 15 5 1; do
+    if find "$f" -mmin "+${bucket}" 2>/dev/null | grep -q .; then
+      echo "more than ${bucket} minute(s)"
+      return 0
+    fi
+  done
+  echo "less than 1 minute"
+}
+
 cmd_git_lock_check() {
   local git_dir
   git_dir="$(git rev-parse --git-dir 2>/dev/null || echo '')"
@@ -3186,18 +3343,62 @@ cmd_git_lock_check() {
     echo "no .git/index.lock present"
     return 0
   fi
-  # Attempt to identify the holding PID if possible (lock file contents not reliable).
-  # On macOS/Linux: if no git process is running, the lock is stale.
-  local git_pids
-  git_pids="$(pgrep -x git 2>/dev/null | paste -sd ' ' - || true)"
-  if [[ -z "$git_pids" ]]; then
-    echo "stale .git/index.lock detected (no git process running); removing..."
-    rm -f "$lock_file"
-    echo "removed $lock_file"
+
+  # G43: print the lock's age and (below) whatever holder evidence is found BEFORE
+  # acting, so a human reading the output can see the actual reasoning that led to
+  # removal or refusal.
+  local lock_age_desc
+  lock_age_desc="$(_git_lock_age_bucket "$lock_file")"
+  echo "found .git/index.lock (age: ${lock_age_desc})"
+
+  # G43: age threshold gate FIRST, before any liveness probe at all. A lock file that
+  # is not yet at least ~60 seconds old is never a removal candidate regardless of what
+  # the liveness probe below would conclude -- a git process can legitimately hold the
+  # lock for a few seconds mid-operation, and this closes the TOCTOU window a raced,
+  # instantaneous liveness check alone left open.
+  if find "$lock_file" -mmin +0 2>/dev/null | grep -q .; then
+    : # older than ~60s -- fall through to the liveness probe below
   else
-    echo "WARNING: .git/index.lock exists and git processes are running (PIDs: ${git_pids})" >&2
+    echo "WARNING: .git/index.lock is less than a minute old; leaving in place -- a git process may be mid-operation" >&2
+    return 1
+  fi
+
+  # G43: scope liveness detection to THIS repo specifically instead of the old bare,
+  # exact-process-name pgrep match (itself no age check either), which both MISSES
+  # legitimate holders whose process name isn't literally "git" (git-remote-https, an
+  # IDE-embedded git, a wrapper-renamed git binary) and MATCHES an unrelated repo's
+  # git process anywhere else on the host -- neither false negative nor false positive
+  # is acceptable for a check that deletes a lock file. Prefer lsof scoped to the lock
+  # file itself when available; fall back to pgrep -f matched against this repo's own
+  # git-dir path (still an approximation, but scoped rather than a bare name match).
+  local holder_evidence=""
+  if command -v lsof >/dev/null 2>&1; then
+    holder_evidence="$(lsof -- "$lock_file" 2>/dev/null | tail -n +2 || true)"
+  fi
+  if [[ -z "$holder_evidence" ]] && command -v pgrep >/dev/null 2>&1; then
+    holder_evidence="$(pgrep -f -- "$git_dir" 2>/dev/null | paste -sd ' ' - || true)"
+  fi
+
+  if [[ -n "$holder_evidence" ]]; then
+    echo "WARNING: .git/index.lock exists (age: ${lock_age_desc}) and possible holder evidence was found for ${git_dir}:" >&2
+    echo "$holder_evidence" >&2
     echo "Do not remove the lock while git is active; wait for the process to finish." >&2
     return 1
+  fi
+
+  echo "stale .git/index.lock detected (age: ${lock_age_desc}, no holder evidence found for ${git_dir}); removing..."
+  # G43: atomic mv-aside-then-remove -- the same idiom with_state_lock's stale-lockdir
+  # reclaim uses (_edm_reclaim_stale_lockdir above) -- instead of a bare `rm -f`. A
+  # losing racer that reaches this point just after a legitimate git process re-took
+  # the lock renames whatever currently occupies the path rather than deleting a name
+  # a winner just (re-)created out from under it; the mv either succeeds outright or
+  # fails because the file is already gone, and either outcome is safe.
+  local stale_aside="${lock_file}.stale.$$"
+  if mv "$lock_file" "$stale_aside" 2>/dev/null; then
+    rm -f "$stale_aside"
+    echo "removed $lock_file"
+  else
+    echo "$lock_file was already removed or replaced by another process; nothing to do"
   fi
 }
 
@@ -4145,15 +4346,11 @@ cmd_update_patterns() {
     *) die "update-patterns: unknown audit type '$audit_type' (expected: srd|ticket|qc|code|test-coverage)" ;;
   esac
 
-  # Resolve this script's directory so we can find plugin-relative docs/audit-patterns/.
-  # When invoked via PATH (no slash in $0), resolve via command -v first.
-  local _s="$0"
-  if [[ "$_s" != */* ]]; then
-    _s="$(command -v "$_s" 2>/dev/null || true)"
-  fi
-  local script_dir
-  script_dir="$(cd "$(dirname "${_s:-$0}")" 2>/dev/null && pwd || echo ".")"
-  local patterns_dir="${script_dir}/../docs/audit-patterns"
+  # G39: use the existing BASH_SOURCE-derived SCRIPT_DIR global (computed once near the top
+  # of this file) instead of re-deriving the plugin root from $0. A local $0-based
+  # derivation breaks when this file is sourced rather than executed -- $0 is then the
+  # sourcing shell, not this script -- silently resolving outside the plugin.
+  local patterns_dir="${SCRIPT_DIR}/../docs/audit-patterns"
 
   local pattern_file
   case "$audit_type" in
@@ -4633,7 +4830,7 @@ _write_handoff_body() {
     printf '%s\n\n' "## Notes"
     printf '%s\n' "${notes}"
   })"
-  write_atomic "$handoff_path" _print_literal "$handoff_content" || die "write-handoff: failed to write ${handoff_path}"
+  write_atomic "$handoff_path" _print_line "$handoff_content" || die "write-handoff: failed to write ${handoff_path}"
 }
 
 cmd_write_handoff() {

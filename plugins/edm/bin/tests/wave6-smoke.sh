@@ -3896,6 +3896,12 @@ ca026_case() {
   local broken_dir="SRD/AAAABROKEN" healthy_state="SRD/ZZZZHEALTHY/.edm-state.json"
   local healthy_before
   healthy_before="$(jq -r '.last_updated' "$healthy_state")"
+  # G22 (round-3 Wave 7g-1): with_state_lock's mkdir branch now dies immediately on a real
+  # permission error instead of spin-retrying for ~5 seconds before giving up -- a deliberate
+  # speed improvement, but it means the whole init+checkpoint sequence below can now complete
+  # within the SAME second-granularity now_utc() tick. Sleep past that tick so the "did
+  # last_updated change" assertion below is not a coin flip on wall-clock timing.
+  sleep 1
 
   # Force rmw_state (and therefore with_state_lock) to fail for AAAABROKEN specifically, from
   # INSIDE the checkpoint sweep's per-initiative body -- the exact failure surface CA-026 wraps

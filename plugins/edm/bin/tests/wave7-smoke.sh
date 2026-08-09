@@ -3363,7 +3363,10 @@ t56_ac8_case
 # two cases below exercise that branch for real, against a scratch copy of the whole plugin
 # invoked by explicit path (the t30_ac2_case pattern) rather than with_scratch_repo + a bare
 # `edm-state` call -- with_scratch_repo prepends the REAL plugins/edm/bin to PATH, and
-# cmd_update_patterns resolves docs/audit-patterns/ relative to $0's directory, so a bare call
+# cmd_update_patterns resolves docs/audit-patterns/ relative to SCRIPT_DIR (G39, round-3 Wave
+# 7g-1: previously $0's directory, which broke under `source`; direct execution -- as every
+# call in this file uses -- leaves BASH_SOURCE[0] and $0 identical, so this note's practical
+# conclusion is unchanged), so a bare call
 # under with_scratch_repo would write into this repository's own committed pattern-library docs.
 echo
 echo "=== CA-002 remediation: cmd_update_patterns insertion path (T54 AC1/AC2/AC3/AC4/AC5/AC8/AC9/AC10) ==="
@@ -5538,6 +5541,417 @@ check "G68 -- CLAUDE.md's Layers-that-are-N/A list now includes integration" \
 g68_integration="$(cat "${PLUGIN_DIR}/agents/edm-test-integration.md" 2>/dev/null)"
 check "G68 -- edm-test-integration.md's carve-out states it is sanctioned by the planner, not self-declared" \
   "sanctioned by" "$g68_integration"
+
+# =================================================================================
+# Round-3 Wave 7g-1: nine independent bin/edm-state findings (G22, G38, G39, G43, G44,
+# G46, G47, G48, G49). Each sub-section below is self-contained per finding.
+# =================================================================================
+
+echo
+echo "=== G22: with_state_lock's mkdir loop dies immediately on a real error, not a 50-try timeout; record_degraded_check warns-and-skips on a non-writable state dir ==="
+
+# ---- G22a: a real (non-"File exists") mkdir failure dies immediately, naming the real error --
+t_g22a_out="$(
+  set +e
+  trap - EXIT INT TERM HUP
+  tmp_g22a="$(mktemp -d "${TMPDIR:-/tmp}/edm-g22a.XXXXXX")" || exit 1
+  command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
+  source "$EDM_STATE" >/dev/null 2>&1
+  if [[ "$(id -u)" -eq 0 ]]; then
+    echo "skip=root"
+  else
+    mkdir -p "${tmp_g22a}/nowrite"
+    chmod 555 "${tmp_g22a}/nowrite"
+    lockbase="${tmp_g22a}/nowrite/state"
+    ec=0
+    out="$(with_state_lock "$lockbase" echo should-not-run 2>&1)" || ec=$?
+    chmod 755 "${tmp_g22a}/nowrite"
+    printf 'ec=%s out=%s\n' "$ec" "$out"
+  fi
+  rm -rf "$tmp_g22a"
+)" || true
+if [[ "$t_g22a_out" == "skip=root" ]]; then
+  echo "  SKIP: G22a permission sub-case -- running as root, which bypasses the write-bit denial this case depends on"
+else
+  check "G22a -- with_state_lock dies immediately on a real mkdir error instead of retrying" \
+    "cannot create lock directory" "$t_g22a_out"
+  check_absent "G22a -- a real mkdir error never falls through to the 50-try timeout message" \
+    "50 tries" "$t_g22a_out"
+fi
+
+# ---- G22b: record_degraded_check warns and returns 0 (does not die) when the state directory
+# is not writable, honoring gate-check's documented read-only contract on a legacy initiative's
+# very first invocation.
+t_g22b_out="$(
+  set +e
+  trap - EXIT INT TERM HUP
+  tmp_g22b="$(mktemp -d "${TMPDIR:-/tmp}/edm-g22b.XXXXXX")" || exit 1
+  cd "$tmp_g22b" || exit 1
+  export EDM_SRD_ROOT="${tmp_g22b}/SRD"
+  "$EDM_STATE" init G22RDC >/dev/null 2>&1
+  source "$EDM_STATE" >/dev/null 2>&1
+  if [[ "$(id -u)" -eq 0 ]]; then
+    echo "skip=root"
+  else
+    chmod 555 "${EDM_SRD_ROOT}/G22RDC"
+    ec=0
+    out="$(record_degraded_check G22RDC g22-check g22-reason 2>&1)" || ec=$?
+    chmod 755 "${EDM_SRD_ROOT}/G22RDC"
+    printf 'ec=%s out=%s\n' "$ec" "$out"
+  fi
+)" || true
+if [[ "$t_g22b_out" == "skip=root" ]]; then
+  echo "  SKIP: G22b permission sub-case -- running as root, which bypasses the write-bit denial this case depends on"
+else
+  check "G22b -- record_degraded_check returns 0 (does not die) when the state directory is not writable" \
+    "ec=0" "$t_g22b_out"
+  check "G22b -- the warning names gate-check's read-only contract" \
+    "gate-check remains read-only" "$t_g22b_out"
+fi
+
+echo
+echo "=== G38: HANDOFF.md is written with a terminating newline ==="
+g38_case() {
+  "$EDM_STATE" init G38HAND >/dev/null
+  "$EDM_STATE" write-handoff G38HAND >/dev/null
+  local handoff_path="SRD/G38HAND/HANDOFF.md"
+  if [[ ! -s "$handoff_path" ]]; then
+    fail "G38 -- HANDOFF.md missing or empty after write-handoff"
+    return
+  fi
+  [[ -z "$(tail -c 1 "$handoff_path")" ]] \
+    && pass "G38 -- HANDOFF.md ends with a terminating newline" \
+    || fail "G38 -- HANDOFF.md does not end with a terminating newline"
+}
+with_scratch_repo g38_case
+check "G38 -- _print_line is a distinct sibling of _print_literal, which is left unmodified" \
+  "_print_line() {" "$(cat "$EDM_STATE")"
+check "G38 -- write-handoff's write_atomic call now uses _print_line" \
+  'write_atomic "$handoff_path" _print_line "$handoff_content"' "$(cat "$EDM_STATE")"
+
+echo
+echo "=== G39: cmd_update_patterns resolves docs/audit-patterns/ via the BASH_SOURCE-derived SCRIPT_DIR global, not a local \$0 re-derivation ==="
+check_absent "G39 -- cmd_update_patterns no longer re-derives its own script directory from \$0" \
+  'local _s="$0"' "$(awk '/^cmd_update_patterns\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check "G39 -- cmd_update_patterns uses the shared SCRIPT_DIR global instead" \
+  'local patterns_dir="${SCRIPT_DIR}/../docs/audit-patterns"' \
+  "$(awk '/^cmd_update_patterns\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+
+g39_source_case() {
+  local scratch
+  scratch="$(mktemp -d "${TMP}/edm-g39.XXXXXX")" || { fail "G39 -- mktemp failed"; return 1; }
+  mkdir -p "$scratch/plugins/edm"
+  cp -R "${PLUGIN_DIR}/." "$scratch/plugins/edm/"
+  local scratch_srd_root="$scratch/work/SRD"
+  mkdir -p "${scratch_srd_root}/ZG39"
+  {
+    echo "# Mock SRD Audit"
+    echo
+    echo "### G39 sourced-invocation novel finding"
+    echo "Proves cmd_update_patterns resolves patterns_dir via SCRIPT_DIR even when this file is"
+    echo "sourced from a wrapper whose own positional \$0 is not edm-state's own path."
+  } > "${scratch_srd_root}/ZG39/audit-srd.md"
+  echo '{}' > "${scratch_srd_root}/ZG39/.edm-state.json"
+
+  # A wrapper script whose own $0 is NOT edm-state's path -- the exact failure mode G39 fixes
+  # ($0-derivation used to resolve to the SOURCING script's own path instead).
+  local wrapper="$scratch/wrapper.sh"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'set -euo pipefail\n'
+    printf 'source "%s/plugins/edm/bin/edm-state" >/dev/null 2>&1\n' "$scratch"
+    printf 'cmd_update_patterns "$1" "$2"\n'
+  } > "$wrapper"
+  chmod +x "$wrapper"
+
+  local out
+  out="$(EDM_SRD_ROOT="$scratch_srd_root" bash "$wrapper" ZG39 srd 2>&1)" || true
+  check "G39 -- cmd_update_patterns still finds the plugin's own docs/audit-patterns/ when sourced from a wrapper with a different \$0" \
+    "1 new finding(s) appended" "$out"
+  rm -rf "$scratch"
+}
+g39_source_case
+
+echo
+echo "=== G43: git-lock-check gates on lock age, scopes liveness detection to this repo, and removes via atomic mv-aside ==="
+check "G43 -- an age threshold gates removal before any liveness probe runs" \
+  '-mmin +0' "$(awk '/^cmd_git_lock_check\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check_absent "G43 -- the bare, unscoped 'pgrep -x git' liveness check is gone" \
+  "pgrep -x git" "$(awk '/^cmd_git_lock_check\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check "G43 -- liveness detection is scoped: lsof against the lock file is tried first" \
+  'lsof -- "$lock_file"' "$(awk '/^cmd_git_lock_check\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check "G43 -- the pgrep fallback is scoped to this repo's git-dir path, not a bare process name" \
+  'pgrep -f -- "$git_dir"' "$(awk '/^cmd_git_lock_check\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check "G43 -- removal uses the atomic mv-aside-then-remove idiom instead of a bare rm -f" \
+  'mv "$lock_file" "$stale_aside"' "$(awk '/^cmd_git_lock_check\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+
+g43_case() {
+  git init -q . >/dev/null 2>&1
+  git config user.email "g43@example.com"; git config user.name "G43 Test"; git config commit.gpgsign false
+  echo seed > seed.txt && git add seed.txt && git commit -q -m seed >/dev/null 2>&1
+  local git_dir=".git"
+  # A fresh (young) lock file must never be removed regardless of liveness.
+  : > "${git_dir}/index.lock"
+  local out1
+  out1="$("$EDM_STATE" git-lock-check 2>&1)" || true
+  check "G43 -- a lock file younger than the age threshold is left in place" \
+    "less than a minute old" "$out1"
+  [[ -f "${git_dir}/index.lock" ]] \
+    && pass "G43 -- the young lock file still exists after the refusal" \
+    || fail "G43 -- the young lock file was removed despite being under the age threshold"
+  rm -f "${git_dir}/index.lock"
+}
+g43_scratch="$(mktemp -d "${TMP}/edm-g43.XXXXXX")"
+( cd "$g43_scratch" && g43_case )
+rm -rf "$g43_scratch"
+
+echo
+echo "=== G44: metrics-report's jq 'add' calls all guard against an empty array (null) with '// 0' ==="
+t_g44_metrics_body="$(awk '/^cmd_metrics_report\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+t_g44_unguarded="$(printf '%s\n' "$t_g44_metrics_body" | grep -E '\| add\)' | grep -v '// 0' || true)"
+[[ -z "$t_g44_unguarded" ]] \
+  && pass "G44 -- every '| add)' in cmd_metrics_report's jq programs is guarded with '// 0'" \
+  || fail "G44 -- unguarded 'add' found in cmd_metrics_report:\n$t_g44_unguarded"
+check "G44 -- the --all/--with-human-baseline totals guard add with // 0" \
+  "add // 0) as \$tc" "$t_g44_metrics_body"
+
+g44_case() {
+  "$EDM_STATE" init G44FRESH >/dev/null
+  local out
+  out="$("$EDM_STATE" metrics-report G44FRESH --with-human-baseline 2>&1)"
+  check_absent "G44 -- a freshly initialized initiative's metrics-report never renders 'null'" \
+    "null" "$out"
+  out="$("$EDM_STATE" metrics-report G44FRESH 2>&1)"
+  check_absent "G44 -- the non-baseline report also never renders 'null'" "null" "$out"
+}
+with_scratch_repo g44_case
+
+echo
+echo "=== G46: archive and migrate-path hold the state lock across their directory rename ==="
+check "G46 -- cmd_archive wraps its rename in with_state_lock" \
+  'with_state_lock "${state_file%.json}" _cmd_archive_move_body' "$(cat "$EDM_STATE")"
+check "G46 -- _cmd_archive_move_body removes the lockdir/lockfile before the rename" \
+  'rm -rf "${_lockbase}.lockd" "${_lockbase}.lock"' "$(awk '/^_cmd_archive_move_body\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check "G46 -- cmd_migrate_path wraps its initial rename in with_state_lock" \
+  'with_state_lock "$migrate_lockbase" _cmd_migrate_path_move_body' "$(cat "$EDM_STATE")"
+check "G46 -- _cmd_migrate_path_move_body also removes the lockdir/lockfile before the rename" \
+  'rm -rf "${_lockbase}.lockd" "${_lockbase}.lock"' "$(awk '/^_cmd_migrate_path_move_body\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+t_g46_migrate_body="$(awk '/^cmd_migrate_path\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check_absent "G46 -- migrate-path no longer pre-emptively deletes the carried-over .bak before the write that might need it" \
+  'rm -f "${new_state_file}.bak"' "$t_g46_migrate_body"
+
+g46_archive_case() {
+  export EDM_MODE="prototype"
+  "$EDM_STATE" init G46ARCH >/dev/null
+  unset EDM_MODE
+  "$EDM_STATE" approve-gate G46ARCH 1 >/dev/null
+  local state_g46arch="SRD/G46ARCH/.edm-state.json"
+  jq '.current_phase = 2 | .phase_durations["2_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
+    "$state_g46arch" > "${state_g46arch}.tmp" && mv "${state_g46arch}.tmp" "$state_g46arch"
+  local out ec=0
+  out="$("$EDM_STATE" archive G46ARCH 2>&1)" || ec=$?
+  [[ $ec -eq 0 ]] \
+    && pass "G46 -- archive still succeeds end-to-end for an eligible (prototype-mode) initiative under the new lock wrapping" \
+    || fail "G46 -- archive failed (exit ${ec}) after the lock-wrapping change: $out"
+  [[ -d "SRD/.archived/G46ARCH" ]] \
+    && pass "G46 -- the archived directory exists at the expected destination" \
+    || fail "G46 -- SRD/.archived/G46ARCH not found after archive"
+  [[ ! -e "SRD/.archived/G46ARCH/.edm-state.lockd" && ! -e "SRD/.archived/G46ARCH/.edm-state.lock" ]] \
+    && pass "G46 -- no lockdir/lockfile artifact traveled to the archive destination" \
+    || fail "G46 -- a lockdir/lockfile artifact was found at the archive destination"
+}
+with_scratch_repo g46_archive_case
+
+g46_migrate_case() {
+  "$EDM_STATE" init G46MIG >/dev/null
+  local out ec=0
+  out="$("$EDM_STATE" migrate-path --product g46prod --description g46desc G46MIG 2>&1)" || ec=$?
+  [[ $ec -eq 0 ]] \
+    && pass "G46 -- migrate-path still succeeds end-to-end under the new lock wrapping" \
+    || fail "G46 -- migrate-path failed (exit ${ec}) after the lock-wrapping change: $out"
+  [[ -f "SRD/g46prod/G46MIG__g46desc/.edm-state.json" ]] \
+    && pass "G46 -- the migrated state file exists at the expected destination" \
+    || fail "G46 -- SRD/g46prod/G46MIG__g46desc/.edm-state.json not found after migrate-path"
+}
+with_scratch_repo g46_migrate_case
+
+echo
+echo "=== G47: get_session_tokens_since's whole-directory fallback caps EACH session file independently; EDM_TOKEN_READ_LINE_CAP=0 is refused ==="
+check_absent "G47 -- the whole-directory fallback no longer concatenates all session files before capping" \
+  'cat "$sessions_dir"/*.jsonl 2>/dev/null | tail -n' "$(awk '/^get_session_tokens_since\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check "G47 -- the fallback now loops over session files individually, capping each one" \
+  'for _tf in "$sessions_dir"/*.jsonl' "$(awk '/^get_session_tokens_since\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check "G47 -- the cap validator now requires a positive integer (rejects 0)" \
+  '^[1-9][0-9]*$' "$(awk '/^get_session_tokens_since\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check "G47 -- the refusal message names the ZERO_TOKENS consequence a CAP=0 would otherwise cause" \
+  "trips the blocking ZERO_TOKENS anomaly" "$(awk '/^get_session_tokens_since\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+
+g47_zero_case() {
+  local scratch
+  scratch="$(mktemp -d "${TMP}/edm-g47zero.XXXXXX")" || { fail "G47 -- mktemp failed"; return 1; }
+  (
+    cd "$scratch" || exit 1
+    sess_dir="$(session_dir_for_test_cwd)"
+    mkdir -p "$sess_dir"
+    stage_session_jsonl "$sess_dir" a.jsonl claude-sonnet-4-7 10 5
+    ec=0
+    out="$(EDM_TOKEN_READ_LINE_CAP=0 bash -c "source '$EDM_STATE' >/dev/null 2>&1; get_session_tokens_since 2000-01-01T00:00:00Z" 2>&1)" || ec=$?
+    printf 'ec=%s out=%s\n' "$ec" "$out"
+    rm -rf "$sess_dir"
+  )
+}
+t_g47_zero_out="$(g47_zero_case)"
+t_g47_zero_ec="$(printf '%s' "$t_g47_zero_out" | grep -oE '^ec=[0-9-]+' | cut -d= -f2)"
+[[ "${t_g47_zero_ec:-0}" -ne 0 ]] \
+  && pass "G47 -- EDM_TOKEN_READ_LINE_CAP=0 is refused rather than silently reading zero lines" \
+  || fail "G47 -- expected refusal of EDM_TOKEN_READ_LINE_CAP=0, got: $t_g47_zero_out"
+check "G47 -- the refusal names the bad line-cap value" "invalid EDM_TOKEN_READ_LINE_CAP" "$t_g47_zero_out"
+
+# ---- G47b: the whole-directory fallback sums EVERY session file, not just the tail of the
+# concatenation. Forces the fallback branch deterministically by shadowing `ls` so the
+# driving-session picker (`ls -t ... | head -1`) finds NOTHING (succeeds, but enumerates zero
+# files) while the initial directory-has-jsonl-files existence check (a bare `ls`, no `-t`)
+# still succeeds -- the exact AC2 "driving session could not be identified" condition, without
+# depending on a real race. The shadow returns 0 (not 1) for the `-t` case deliberately: a
+# genuine `ls -t` failure feeds a failing exit status into `... | head -1` which, under this
+# file's own `set -euo pipefail`, aborts the whole function before it ever reaches the fallback
+# branch this case exists to exercise (a separate, pre-existing pipefail hazard on that exact
+# line, out of scope for G47) -- so the empty-success shape is the only way to actually reach
+# and exercise the AC2 fallback path this case is testing.
+g47_fallback_case() {
+  local scratch
+  scratch="$(mktemp -d "${TMP}/edm-g47fb.XXXXXX")" || { fail "G47b -- mktemp failed"; return 1; }
+  (
+    cd "$scratch" || exit 1
+    sess_dir="$(session_dir_for_test_cwd)"
+    mkdir -p "$sess_dir"
+    stage_session_jsonl "$sess_dir" a-first.jsonl claude-sonnet-4-7 11 0 "2026-01-01T00:00:00Z"
+    stage_session_jsonl "$sess_dir" b-second.jsonl claude-sonnet-4-7 22 0 "2026-01-01T00:00:01Z"
+    ls() { if [[ "${1:-}" == "-t" ]]; then return 0; fi; command ls "$@"; }
+    export -f ls
+    out="$(bash -c "source '$EDM_STATE' >/dev/null 2>&1; get_session_tokens_since 2000-01-01T00:00:00Z")"
+    echo "out=$out"
+    rm -rf "$sess_dir"
+  )
+}
+t_g47_fallback_out="$(g47_fallback_case)"
+t_g47_fallback_json="${t_g47_fallback_out#out=}"
+check "G47b -- the forced whole-directory fallback tags attribution_mode accordingly" \
+  '"attribution_mode": "whole-directory"' "$t_g47_fallback_json"
+t_g47_fallback_input="$(printf '%s' "$t_g47_fallback_json" | jq -r '.input' 2>/dev/null || echo "?")"
+check "G47b -- the fallback sums BOTH session files' input tokens (11+22=33), not just one file's tail" \
+  "33" "$t_g47_fallback_input"
+
+echo
+echo "=== G48: watch-impl distinguishes a genuine git-log failure from history rewritten out from under last_sha, and advances last_sha on every successful poll ==="
+t_g48_body="$(awk '/^cmd_watch_impl\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check "G48 -- git log's own exit status is captured separately from grep's" \
+  'git_log_out="$(git log' "$t_g48_body"
+check "G48 -- a git-log failure is checked against whether last_sha is still a valid ref" \
+  'git cat-file -e "${last_sha}^{commit}"' "$t_g48_body"
+check "G48 -- a rewritten history re-anchors last_sha at HEAD with a named diagnostic" \
+  "history was rewritten" "$t_g48_body"
+check "G48 -- last_sha advances to HEAD on every successful poll, not only on a match" \
+  'last_sha="$(git rev-parse HEAD' "$t_g48_body"
+
+g48_rewrite_case() {
+  local scratch
+  scratch="$(mktemp -d "${TMP}/edm-g48.XXXXXX")" || { fail "G48 -- mktemp failed"; return 1; }
+  ( cd "$scratch" && \
+    git init -q . >/dev/null 2>&1 && \
+    git config user.email "g48@example.com" && git config user.name "G48 Test" && git config commit.gpgsign false && \
+    echo one > a.txt && git add a.txt && git commit -q -m "first" >/dev/null 2>&1 ) || true
+  local pruned_sha
+  pruned_sha="$(cd "$scratch" && git rev-parse HEAD 2>/dev/null || true)"
+  if [[ -z "$pruned_sha" ]]; then
+    fail "G48 -- rewrite sub-case setup failed (no initial commit in scratch repo)"
+    rm -rf "$scratch"
+    return
+  fi
+  ( cd "$scratch" && echo two > a.txt && git add a.txt && git commit -q --amend -m "amended" >/dev/null 2>&1 ) || true
+  # Force the pruned commit unreachable for real (reflog would otherwise keep it alive).
+  ( cd "$scratch" && git reflog expire --expire=now --all >/dev/null 2>&1; git gc --prune=now >/dev/null 2>&1 ) || true
+  # Bare `cmd && var=0` (or a bare subshell alone) as a top-level statement takes on that
+  # command's own exit status under `set -e` -- when the EXPECTED outcome here is that the
+  # commit is unreachable (cat-file fails), a bare form would abort this whole suite right at
+  # the moment the test is working as intended. Wrap in `if` so only `still_reachable`'s value
+  # carries the result.
+  local still_reachable=1
+  if ( cd "$scratch" && git cat-file -e "${pruned_sha}^{commit}" 2>/dev/null ); then
+    still_reachable=0
+  fi
+  if [[ $still_reachable -eq 0 ]]; then
+    echo "  SKIP: G48 rewrite sub-case -- this git/filesystem did not actually prune the old commit (gc left it reachable)"
+  else
+    local ec=0 out
+    out="$(cd "$scratch" && bash -c "
+      source '$EDM_STATE' >/dev/null 2>&1
+      last_sha='$pruned_sha'
+      git_log_out=\"\$(git log --pretty=format:'%h %s' \"\${last_sha}..HEAD\" 2>/dev/null)\" || git_log_ec=\$?
+      if [[ \"\${git_log_ec:-0}\" -ne 0 ]]; then
+        if git cat-file -e \"\${last_sha}^{commit}\" 2>/dev/null; then
+          echo 'still-valid'
+        else
+          echo 'history was rewritten (pruned-sha-test); monitor re-anchored at current HEAD'
+        fi
+      else
+        echo 'log-succeeded'
+      fi
+    ")" || ec=$?
+    check "G48 -- a pruned, unreachable last_sha is correctly detected via git cat-file -e" \
+      "history was rewritten" "$out"
+  fi
+  rm -rf "$scratch"
+}
+g48_rewrite_case
+
+echo
+echo "=== G49: with_state_lock's flock timeout is detected via a side-channel marker file, not a magic exit code any locked body could collide with ==="
+check "G49 -- the timeout branch writes a dedicated marker file instead of relying solely on exit 99" \
+  '_lock_timeout_marker' "$(cat "$EDM_STATE")"
+check "G49 -- the timeout is detected by checking for the marker file's existence, not the locked body's own exit code" \
+  'if [[ -e "$_lock_timeout_marker" ]]; then' "$(cat "$EDM_STATE")"
+
+# No locked body anywhere in this file may itself use exit/return 99 -- that would defeat the
+# marker-file redesign's whole purpose by making the marker and a real body-originated 99 both
+# plausible outcomes to reason about. Scoped to bin/edm-state's own function bodies, excluding
+# the one sanctioned timeout-branch use inside with_state_lock itself (identified by the
+# adjacent marker-file write) and this comment block's own prose.
+t_g49_ec99_hits="$(grep -nE '(^|[^0-9])(exit|return) 99([^0-9]|$)' "$EDM_STATE" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -v '_lock_timeout_marker' || true)"
+[[ -z "$t_g49_ec99_hits" ]] \
+  && pass "G49 -- no locked body in bin/edm-state returns/exits 99 outside the one sanctioned with_state_lock timeout use" \
+  || fail "G49 -- a bare exit/return 99 was found outside the sanctioned use:\n$t_g49_ec99_hits"
+
+g49_timeout_case() {
+  local tmp_g49
+  tmp_g49="$(mktemp -d "${TMPDIR:-/tmp}/edm-g49.XXXXXX")" || { fail "G49 -- mktemp failed"; return 1; }
+  (
+    set +e
+    trap - EXIT INT TERM HUP
+    source "$EDM_STATE" >/dev/null 2>&1
+    lockbase="${tmp_g49}/state"
+    lockfile="${lockbase}.lock"
+    # Hold the flock in a background subshell for longer than with_state_lock's own 10s
+    # timeout, so the call below is guaranteed to time out. Deliberately never `kill` or `wait`
+    # this background job -- bash 3.2's `wait` on a job terminated by a signal can hang forever
+    # under `set -e` (a real, previously-reproduced interaction; see the CA-141 case above) --
+    # so it is simply left to run out its own sleep and exit on its own after this case returns.
+    ( flock 200; sleep 12 ) 200>"$lockfile" &
+    sleep 0.3
+    ec=0
+    body_that_exits_99() { exit 99; }
+    out="$(with_state_lock "$lockbase" body_that_exits_99 2>&1)" || ec=$?
+    printf 'ec=%s out=%s\n' "$ec" "$out"
+  )
+  rm -rf "$tmp_g49"
+}
+if command -v flock >/dev/null 2>&1; then
+  t_g49_out="$(g49_timeout_case)"
+  check "G49 -- a locked body that itself exits 99 while genuinely timed out is still reported as a lock timeout (both true here)" \
+    "state lock timeout" "$t_g49_out"
+else
+  echo "  SKIP: G49 live-timeout sub-case -- flock(1) not available on this host"
+fi
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
