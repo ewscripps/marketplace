@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # wave3-smoke.sh -- WS-N compaction-resilience smoke check (T54)
-# Tests: current-step read/write, session-start output, last_cmd/last_decision
-# in init payload, Resume Point presence in HANDOFF.md.
+# Tests: current-step read/write, session-start output, last_decision in init
+# payload, Resume Point presence in HANDOFF.md.
 # Run from repo root: bash plugins/edm/bin/tests/wave3-smoke.sh
 set -euo pipefail
 
@@ -21,15 +21,13 @@ mkdir -p "$TMP/SRD"
 echo "WS-N smoke check -- wave3 compaction resilience"
 echo
 
-# ---- T52: last_cmd and last_decision in init payload -------------------------
-echo "T52 -- last_cmd / last_decision in init payload"
+# ---- T52: last_decision in init payload ---------------------------------------
+echo "T52 -- last_decision in init payload"
 "$EDM_STATE" init TSMK >/dev/null
 STATE_FILE="$TMP/SRD/TSMK/.edm-state.json"
 [[ -f "$STATE_FILE" ]] || { fail "state file not created"; exit 1; }
 
-last_cmd="$(jq -r '.last_cmd' "$STATE_FILE")"
 last_decision="$(jq -r '.last_decision' "$STATE_FILE")"
-[[ "$last_cmd" == "" ]] && pass "last_cmd initialised as empty string" || fail "last_cmd = '$last_cmd' (expected '')"
 [[ "$last_decision" == "" ]] && pass "last_decision initialised as empty string" || fail "last_decision = '$last_decision' (expected '')"
 
 # current_step must be ABSENT (null) -- not pre-initialised (T46 lazy contract)
@@ -54,14 +52,11 @@ step_read="$("$EDM_STATE" current-step TSMK)"
 step_read="$("$EDM_STATE" current-step TSMK)"
 [[ "$step_read" == "3" ]] && pass "current-step write/read numeric '3'" || fail "current-step = '$step_read' (expected '3')"
 
-# ---- T52 set: last_cmd and last_decision via cmd_set -------------------------
+# ---- T52 set: last_decision via cmd_set ---------------------------------------
 echo
-echo "T52 -- set last_cmd / last_decision via cmd_set"
-"$EDM_STATE" set TSMK last_cmd "edm-state phase-start TSMK 2"
+echo "T52 -- set last_decision via cmd_set"
 "$EDM_STATE" set TSMK last_decision "Use product-scoped layout"
-lc="$("$EDM_STATE" get TSMK | jq -r '.last_cmd')"
 ld="$("$EDM_STATE" get TSMK | jq -r '.last_decision')"
-[[ "$lc" == "edm-state phase-start TSMK 2" ]] && pass "last_cmd set correctly" || fail "last_cmd = '$lc'"
 [[ "$ld" == "Use product-scoped layout" ]] && pass "last_decision set correctly" || fail "last_decision = '$ld'"
 
 # ---- T48: Resume Point in HANDOFF.md ----------------------------------------
@@ -76,7 +71,6 @@ HANDOFF="$TMP/SRD/TSMK/HANDOFF.md"
 
 check "Resume Point header present"       "## Resume Point"             "$(cat "$HANDOFF")"
 check "Phase line in Resume Point"        "Phase 2"                     "$(cat "$HANDOFF")"
-check "Last command in Resume Point"      "edm-state phase-start TSMK 2" "$(cat "$HANDOFF")"
 check "Last decision in Resume Point"     "Use product-scoped layout"    "$(cat "$HANDOFF")"
 check "Copy-paste resume line present"    "/edm:orchestrator TSMK"       "$(cat "$HANDOFF")"
 
@@ -87,7 +81,6 @@ echo "T50 -- session-start emits active initiative"
 session_out="$("$EDM_STATE" session-start 2>/dev/null)"
 check "session-start shows active initiative" "TSMK"               "$session_out"
 check "session-start shows phase name"        "Phase 2"            "$session_out"
-check "session-start shows last_cmd"          "edm-state phase-start TSMK 2" "$session_out"
 check "session-start shows resume command"    "/edm:orchestrator TSMK"   "$session_out"
 
 # Phase 0 initiative should NOT appear

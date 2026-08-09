@@ -158,7 +158,7 @@ check_fails "init rejects traversal PREFIX" "invalid PREFIX" \
   "$EDM_STATE" init '../escaped/INJ'
 [[ ! -e "$TMP/escaped" ]] && pass "init wrote nothing outside SRD_ROOT (G7)" || fail "G7: init traversal wrote outside SRD_ROOT"
 check_fails "set rejects PREFIX with slash" "invalid PREFIX" \
-  "$EDM_STATE" set 'A/B' last_cmd x
+  "$EDM_STATE" set 'A/B' last_decision x
 check_fails "init rejects PREFIX with dots" "invalid PREFIX" \
   "$EDM_STATE" init '..'
 
@@ -171,17 +171,17 @@ BAK_FILE="${STATE_BAK}.bak"
 
 # .bak should not exist before first mutating write (init doesn't call rmw_state for pre-existing)
 # Trigger a mutating write:
-"$EDM_STATE" set BAKTEST last_cmd "first write" >/dev/null
+"$EDM_STATE" set BAKTEST last_decision "first write" >/dev/null
 [[ -f "$BAK_FILE" ]] && pass ".bak created on first mutating write" || fail ".bak file not created at $BAK_FILE"
 
 # .bak should reflect the pre-write state
-bak_cmd="$(jq -r '.last_cmd' "$BAK_FILE")"
-[[ "$bak_cmd" == "" ]] && pass ".bak reflects pre-write state (last_cmd was empty)" || fail ".bak last_cmd = '$bak_cmd'"
+bak_cmd="$(jq -r '.last_decision' "$BAK_FILE")"
+[[ "$bak_cmd" == "" ]] && pass ".bak reflects pre-write state (last_decision was empty)" || fail ".bak last_decision = '$bak_cmd'"
 
 # Second write updates .bak to the previous live state
-"$EDM_STATE" set BAKTEST last_cmd "second write" >/dev/null
-bak_cmd2="$(jq -r '.last_cmd' "$BAK_FILE")"
-[[ "$bak_cmd2" == "first write" ]] && pass ".bak updated to previous live state on second write" || fail ".bak last_cmd = '$bak_cmd2'"
+"$EDM_STATE" set BAKTEST last_decision "second write" >/dev/null
+bak_cmd2="$(jq -r '.last_decision' "$BAK_FILE")"
+[[ "$bak_cmd2" == "first write" ]] && pass ".bak updated to previous live state on second write" || fail ".bak last_decision = '$bak_cmd2'"
 
 # ---- metrics-report: G8 (n/a savings) and G20 (Phase 1 label) ---------------
 # Guards against the G8 regression where zero-cost initiatives printed "0x cheaper"

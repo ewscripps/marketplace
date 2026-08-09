@@ -6136,8 +6136,7 @@ check "G85 -- SubagentStop prompt step 4 uses edm-state resolve-dir" \
 
 # =================================================================================
 # G86 (round-3 Wave 7e): estimated_size gains a real producer (plan/SKILL.md's Gate
-# 1), and the SETTABLE_KEYS provenance comment stops misattributing last_decision
-# and stops implying last_cmd has a real producer it does not have.
+# 1), and the SETTABLE_KEYS provenance comment stops misattributing last_decision.
 # =================================================================================
 echo
 echo "=== G86: estimated_size is produced at plan/SKILL.md's Gate 1; SETTABLE_KEYS comment corrected ==="
@@ -6145,10 +6144,43 @@ check "G86 -- plan/SKILL.md's Gate 1 records estimated_size" \
   "edm-state set <PREFIX> estimated_size <Small|Medium|Large>" "$g15_plan"
 check "G86 -- SETTABLE_KEYS comment attributes last_decision to skills/srd/SKILL.md" \
   "\`last_decision\`'s one real producer is" "$g35_edm_state"
-check "G86 -- SETTABLE_KEYS comment states last_cmd has no producer today" \
-  "\`last_cmd\` has NO producer anywhere in" "$g35_edm_state"
 check_absent "G86 -- SETTABLE_KEYS comment no longer misattributes last_decision to orchestrator/SKILL.md" \
   "last_cmd/last_decision" "$g35_edm_state"
+
+# =================================================================================
+# G11/CA-246 (round 5): last_cmd is deleted entirely rather than left settable with
+# no producer a third consecutive round (L2+L3+L11). Assert it is gone from every
+# surface -- SETTABLE_KEYS, the init payload, and both renderers -- not merely that
+# a comment somewhere admits the gap.
+# =================================================================================
+echo
+echo "=== G11/CA-246: last_cmd is deleted -- no SETTABLE_KEYS entry, no init payload key, no renderer ==="
+t_g11_edm_state="$(cat "$EDM_STATE" 2>/dev/null)"
+g11_settable_line="$(printf '%s\n' "$t_g11_edm_state" | grep '^SETTABLE_KEYS=')"
+check_absent "G11/CA-246 -- last_cmd is not a member of SETTABLE_KEYS" \
+  "last_cmd" "$g11_settable_line"
+check "G11/CA-246 -- SETTABLE_KEYS still carries last_cmd's sibling, last_decision" \
+  "last_decision" "$g11_settable_line"
+check_absent "G11/CA-246 -- the init payload no longer seeds a last_cmd key" \
+  'last_cmd: ""' "$t_g11_edm_state"
+check_absent "G11/CA-246 -- session-start no longer renders a Last command line" \
+  "Last command:" "$t_g11_edm_state"
+check_absent "G11/CA-246 -- write-handoff no longer renders a Last command line" \
+  "Last command**" "$t_g11_edm_state"
+
+g11_case() {
+  "$EDM_STATE" init G11DEL >/dev/null
+  local ec=0 out
+  out="$("$EDM_STATE" set G11DEL last_cmd "should be refused" 2>&1)" || ec=$?
+  [[ $ec -ne 0 ]] \
+    && pass "G11/CA-246 -- edm-state set refuses an unsettable last_cmd key" \
+    || fail "G11/CA-246 -- edm-state set accepted last_cmd, expected refusal (output: ${out})"
+  local state_g11="SRD/G11DEL/.edm-state.json"
+  [[ "$(jq -e 'has("last_cmd")' "$state_g11" 2>/dev/null)" == "false" ]] \
+    && pass "G11/CA-246 -- a freshly initialized state file has no last_cmd key at all" \
+    || fail "G11/CA-246 -- the freshly initialized state file still carries a last_cmd key"
+}
+with_scratch_repo g11_case
 
 # =================================================================================
 # G68 (round-3 Wave 7e): edm-test-planner (the sole authority for N/A assignment)

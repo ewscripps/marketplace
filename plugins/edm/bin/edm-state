@@ -1597,19 +1597,20 @@ cmd_get() {
 # Boolean-typed: compliance_enabled. Numeric-typed: current_phase, qc_shard_threshold.
 # Every other entry is a generic (string) key. The enumeration covers every key any
 # live skill/agent/hook/bin call site currently sets (EDMV3-15's caller-contract test,
-# bin/tests/wave7-smoke.sh, greps for drift in either direction), with two named
-# exceptions (G86, round-3 Wave 7e): `last_cmd` has NO producer anywhere in
-# skills/agents/hooks today -- only `bin/tests/*.sh` fixtures write it -- and is kept
-# settable so a future producer can be added without a second SETTABLE_KEYS change;
+# bin/tests/wave7-smoke.sh, greps for drift in either direction).
 # `estimated_size`'s producer is `skills/plan/SKILL.md`'s HITL Gate 1 step (added
-# round-3 Wave 7e -- previously also had no producer, only bin/edm-state's own
-# SIZE_UNKNOWN anomaly message reading it). `last_decision`'s one real producer is
-# `skills/srd/SKILL.md` (not `skills/orchestrator/SKILL.md`, a prior misattribution
-# corrected here). product_name (cmd_set smoke coverage), test_layer_skipped
-# (skills/implement/SKILL.md), jira_synced_at/jira_project_key
-# (skills/push-jira/SKILL.md), coverage_by_epic/test_frameworks_detected
-# (agents/edm-test-coverage-auditor.md, agents/edm-test-planner.md).
-SETTABLE_KEYS="compliance_enabled current_phase qc_shard_threshold last_cmd last_decision estimated_size product_name test_layer_skipped jira_synced_at jira_project_key coverage_by_epic test_frameworks_detected"
+# round-3 Wave 7e -- previously had no producer, only bin/edm-state's own SIZE_UNKNOWN
+# anomaly message reading it). `last_decision`'s one real producer is `skills/srd/SKILL.md`
+# (not `skills/orchestrator/SKILL.md`, a prior misattribution corrected here). product_name
+# (cmd_set smoke coverage), test_layer_skipped (skills/implement/SKILL.md),
+# jira_synced_at/jira_project_key (skills/push-jira/SKILL.md), coverage_by_epic/
+# test_frameworks_detected (agents/edm-test-coverage-auditor.md, agents/edm-test-planner.md).
+# `last_cmd` (CA-246, round 5 G11): had zero producers anywhere in skills/agents/hooks for
+# three consecutive rounds -- only bin/tests/*.sh fixtures ever wrote it, and both consumers
+# (session-start, HANDOFF.md) were permanently suppressed dead code as a result. Deleted
+# entirely rather than kept settable "for a future producer": documenting an unproduced field
+# a third round is not a resolution state in this methodology (CLAUDE.md Sec."Severity vocabulary").
+SETTABLE_KEYS="compliance_enabled current_phase qc_shard_threshold last_decision estimated_size product_name test_layer_skipped jira_synced_at jira_project_key coverage_by_epic test_frameworks_detected"
 
 # GATE_BEARING_KEYS -- the single token list of gate-bearing fields (EDMV3-14): every
 # field named here refuses `set` unconditionally, regardless of the value supplied,
@@ -1707,7 +1708,6 @@ _cmd_init_render() {
     code_audit_gate_enforcement: "",
     code_audit_gate_ledger: "",
     compliance_gate_approved: false,
-    last_cmd: "",
     last_decision: "",
     audit_rounds: {},
     partial_verdict_map: {},
@@ -3624,15 +3624,13 @@ cmd_session_start() {
       echo "# EDM Active Initiative(s) -- Session Resume"
       echo
     fi
-    local current_step last_cmd last_decision last_updated phase_name
+    local current_step last_decision last_updated phase_name
     current_step="$(jq -r '.current_step // ""' "$state" 2>/dev/null || echo '')"
-    last_cmd="$(jq -r '.last_cmd // ""' "$state" 2>/dev/null || echo '')"
     last_decision="$(jq -r '.last_decision // ""' "$state" 2>/dev/null || echo '')"
     last_updated="$(jq -r '.last_updated // ""' "$state" 2>/dev/null || echo '')"
     phase_name="$(phase_name_for "$phase")"
     printf '## %s -- %s\n' "$prefix" "$phase_name"
     [[ -n "$current_step" ]]   && printf '  Step:          %s\n' "$current_step"
-    [[ -n "$last_cmd" ]]       && printf '  Last command:  %s\n' "$last_cmd"
     [[ -n "$last_decision" ]]  && printf '  Last decision: %s\n' "$last_decision"
     [[ -n "$last_updated" ]]   && printf '  Last updated:  %s\n' "$last_updated"
     # Render state anomalies, both classes, visually distinguished (EDMV3-T05 AC6).
@@ -4843,9 +4841,8 @@ _write_handoff_body() {
   updated_at="$(now_utc)"
 
   # Resume Point fields (T48, T52) -- empty-safe; absent on pre-T52 state files.
-  local current_step last_cmd last_decision
+  local current_step last_decision
   current_step="$(echo "$state" | jq -r '.current_step // ""')"
-  last_cmd="$(echo "$state" | jq -r '.last_cmd // ""')"
   last_decision="$(echo "$state" | jq -r '.last_decision // ""')"
 
   # Pending artifacts for the current phase (absent files only).
@@ -4911,7 +4908,6 @@ _write_handoff_body() {
     printf '%s\n\n' "## Resume Point"
     printf '%s\n' "- **Phase**: ${phase_name}"
     [[ -n "$current_step" ]]  && printf '%s\n' "- **Step**: ${current_step}"
-    [[ -n "$last_cmd" ]]      && printf '%s\n' "- **Last command**: \`${last_cmd}\`"
     [[ -n "$last_decision" ]] && printf '%s\n' "- **Last decision**: ${last_decision}"
     printf '\n%s\n\n' "**Pending artifacts for ${phase_name}**:"
     printf '%s\n\n' "${pending_artifacts}"
