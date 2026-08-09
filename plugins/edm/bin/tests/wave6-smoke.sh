@@ -2536,8 +2536,19 @@ STATE_T64AC8="$TMP/SRD/T64AC8/.edm-state.json"
 t64ac8_pid1=$!
 "$EDM_STATE" set T64AC8 qc_shard_threshold 42 >/dev/null &
 t64ac8_pid2=$!
-wait "$t64ac8_pid1"
-wait "$t64ac8_pid2"
+# G4/CA-036 (round 5): a bare `wait "$pid"` under this file's own `set -euo pipefail` takes on
+# the reaped job's own exit status -- if either backgrounded `edm-state set` loses the
+# lock-timeout race this case exists to exercise, `wait` itself aborts the whole suite instead
+# of reaching a named T64 AC8 failure. Seed-zero-then-capture on the same statement so a losing
+# race reports here, not as a suite-wide CRASH.
+t64ac8_ec1=0
+wait "$t64ac8_pid1" || t64ac8_ec1=$?
+t64ac8_ec2=0
+wait "$t64ac8_pid2" || t64ac8_ec2=$?
+[[ "$t64ac8_ec1" -eq 0 ]] && pass "T64 AC8 -- first backgrounded edm-state set (estimated_size) exited 0" \
+  || fail "T64 AC8 -- first backgrounded edm-state set (estimated_size) exited ${t64ac8_ec1} (expected 0)"
+[[ "$t64ac8_ec2" -eq 0 ]] && pass "T64 AC8 -- second backgrounded edm-state set (qc_shard_threshold) exited 0" \
+  || fail "T64 AC8 -- second backgrounded edm-state set (qc_shard_threshold) exited ${t64ac8_ec2} (expected 0)"
 if jq -e . "$STATE_T64AC8" >/dev/null 2>&1; then
   pass "T64 AC8 -- state file is valid JSON after two concurrent mutations"
 else

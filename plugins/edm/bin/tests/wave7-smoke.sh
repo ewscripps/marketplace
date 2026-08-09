@@ -5507,6 +5507,16 @@ FNR==1 { prev_bare = 0; prev_plain = 0; guarded = 0 }
   prev_plain = is_plain_cmd
 
   if (line ~ /^[[:space:]]*set[[:space:]]+-e([[:space:]]|$)/) { guarded = 0 }
+
+  # G4/CA-036 (round 5): `guarded` was purely lexical -- only a literal `set -e` line cleared
+  # it. This codebase's dominant subshell-probe idiom opens a command substitution with `set +e`
+  # and a trap reset, then never has a matching `set -e` because the scope closes with the
+  # subshell itself (`)"`, optionally followed by `|| true` or a capture). Without this rule,
+  # guarded latches to 1 at the first such site and never clears for the rest of the file,
+  # blinding the detector to every later hazard regardless of file position. A closing `)"` ends
+  # the subshell's `set +e` disposition exactly as surely as a `set -e` would, so it clears the
+  # flag too.
+  if (line ~ /^[[:space:]]*\)"/) { guarded = 0 }
 }
 G5AWK
 
@@ -5516,6 +5526,7 @@ g5_pc_var3="pc_local"
 g5_pc_var4="pc_usame"
 g5_pc_var5="pc_unext"
 g5_pc_var6="pc_plaincmd"
+g5_pc_var7="pc_boundary"
 g5_pc_file="${g5_scratch}/positive-control.sh"
 {
   printf '%s="$(false)"; %s=$?\n' "$g5_pc_var1" "${g5_pc_var1}_ec"
@@ -5528,12 +5539,21 @@ g5_pc_file="${g5_scratch}/positive-control.sh"
   printf '%s=$?\n' "${g5_pc_var5}_ec"
   printf 'true\n'
   printf '%s=$?\n' "${g5_pc_var6}_ec"
+  # G4/CA-036 (round 5): a hazard placed AFTER an unpaired `set +e` inside a closed command
+  # substitution -- the exact shape the subshell-boundary-close fix above exists to catch. The
+  # pre-fix detector would latch guarded=1 at "set +e" and never see the `)"` close, so the bare
+  # capture on the final line would be silently missed.
+  printf '%s="$(\n' "$g5_pc_var7"
+  printf '  set +e\n'
+  printf '  false\n'
+  printf ')"\n'
+  printf '%s=$?\n' "${g5_pc_var7}_ec"
 } > "$g5_pc_file"
 
 g5_pc_hits="$(awk -f "$g5_detector" "$g5_pc_file" 2>/dev/null | wc -l | tr -d ' ')" || g5_pc_hits=0
-[[ "${g5_pc_hits:-0}" -eq 6 ]] \
-  && pass "G5/G1 -- the detector catches all six shapes (same-line/next-line x quoted/unquoted, local-prefixed, plain command) on a synthetic positive control" \
-  || fail "G5/G1 -- detector found ${g5_pc_hits:-0} hit(s) on the positive control, expected 6 (the widened pattern does not actually catch every bug shape)"
+[[ "${g5_pc_hits:-0}" -eq 7 ]] \
+  && pass "G5/G1 -- the detector catches all seven shapes (same-line/next-line x quoted/unquoted, local-prefixed, plain command, post-subshell-boundary) on a synthetic positive control" \
+  || fail "G5/G1 -- detector found ${g5_pc_hits:-0} hit(s) on the positive control, expected 7 (the widened pattern does not actually catch every bug shape)"
 
 g5_real_hit_lines="$(awk -f "$g5_detector" "${PLUGIN_DIR}"/bin/tests/*.sh 2>/dev/null)" || g5_real_hit_lines=""
 g5_real_hits="$(printf '%s\n' "$g5_real_hit_lines" | grep -c . || true)"
