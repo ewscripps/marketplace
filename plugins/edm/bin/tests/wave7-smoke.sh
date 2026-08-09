@@ -5583,10 +5583,11 @@ rm -rf "$g6_scratch"
 # hand-written stand-in for it.
 # =================================================================================
 g8_srd_root_case() {
-  local scratch cmdfile cmd out ec
+  local scratch cmdfile cmd out ec repo_root_g3
   scratch="$(mktemp -d "${TMP}/edm-g8.XXXXXX")" || { fail "G8 -- mktemp failed"; return 1; }
   mkdir -p "${scratch}/SRD/FOOG8" "${scratch}/bin"
   ( cd "$scratch" && git init -q && git config user.email t@t && git config user.name t )
+  repo_root_g3="$(cd "$scratch" && git rev-parse --show-toplevel)"
 
   cat > "${scratch}/bin/edm-state" <<'EOS'
 #!/bin/bash
@@ -5689,6 +5690,42 @@ EOS
     && pass "CA-186 G3 -- a nonexistent relative EDM_SRD_ROOT is named loudly (diagnostic + exit 1), not silently skipped" \
     || fail "CA-186 G3 -- EDM_SRD_ROOT=SRD_DOES_NOT_EXIST produced exit=${ec}, output: ${out} (expected exit 1 naming the missing root)"
 
+  # Case 9 (CA-186 G3 round-5): a bare "." must be treated as "srd_root is the repository root
+  # itself" -- every staged path is under it -- not silently produce zero matched prefixes because
+  # the awk matcher looked for a literal "./" prefix git never emits from --name-only.
+  ec=0
+  out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" EDM_SRD_ROOT="." bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 2 && "$out" == *"FOOG8"* ]] \
+    && pass "CA-186 G3 (round 5) -- EDM_SRD_ROOT=. still detects the violation and blocks (hook exit 2)" \
+    || fail "CA-186 G3 (round 5) -- EDM_SRD_ROOT=. produced exit=${ec}, output: ${out} (expected exit 2 naming FOOG8 -- '.' must not silently disable enforcement)"
+
+  # Case 10 (CA-186 G3 round-5): "./" reduces to empty via the leading-./ strip loop and must land
+  # on the same "repository root" handling as a bare ".", not the empty-string default-substitution
+  # path (Case 7 above) -- those are two different origins for an empty srd_root and only one of
+  # them (an unset/empty env var) is supposed to re-default to ./SRD.
+  ec=0
+  out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" EDM_SRD_ROOT="./" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 2 && "$out" == *"FOOG8"* ]] \
+    && pass "CA-186 G3 (round 5) -- EDM_SRD_ROOT=./ still detects the violation and blocks (hook exit 2)" \
+    || fail "CA-186 G3 (round 5) -- EDM_SRD_ROOT=./ produced exit=${ec}, output: ${out} (expected exit 2 naming FOOG8)"
+
+  # Case 11 (CA-186 G3 round-5): ".." resolves outside the repository root and is nonsensical as an
+  # srd_root -- refuse loudly (exit 1) rather than silently matching zero prefixes.
+  ec=0
+  out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" EDM_SRD_ROOT=".." bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 1 && "$out" == *"'..' path component"* ]] \
+    && pass "CA-186 G3 (round 5) -- EDM_SRD_ROOT=.. is refused loudly (diagnostic + exit 1), not silently skipped" \
+    || fail "CA-186 G3 (round 5) -- EDM_SRD_ROOT=.. produced exit=${ec}, output: ${out} (expected exit 1 naming the '..' component)"
+
+  # Case 12 (CA-186 G3 round-5): an absolute srd_root equal to the repository root exercises the
+  # relativization arm's OWN "." output -- that arm had zero prior coverage; only non-relativizable
+  # absolutes (Case 3/3b) were ever exercised.
+  ec=0
+  out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" EDM_SRD_ROOT="$repo_root_g3" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 2 && "$out" == *"FOOG8"* ]] \
+    && pass "CA-186 G3 (round 5) -- an absolute EDM_SRD_ROOT equal to the repo root relativizes to '.' and still blocks (hook exit 2)" \
+    || fail "CA-186 G3 (round 5) -- absolute-equal-to-repo-root EDM_SRD_ROOT produced exit=${ec}, output: ${out} (expected exit 2 naming FOOG8 -- the relativization arm's '.' output must not silently disable enforcement)"
+
   # Regression: the unset (default ./SRD) case still detects and blocks exactly as before.
   ec=0
   out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" bash "$cmdfile" 2>&1)" || ec=$?
@@ -5696,10 +5733,10 @@ EOS
     && pass "G8 -- default (unset EDM_SRD_ROOT) still detects the violation and blocks (regression check)" \
     || fail "G8 -- default EDM_SRD_ROOT produced exit=${ec}, output: ${out} (expected exit 2 naming FOOG8)"
 
-  # No shape may exit 0 silently (CA-186 G3's core invariant): every one of the eight documented
+  # No shape may exit 0 silently (CA-186 G3's core invariant): every one of the twelve documented
   # shapes above resolves to either exit 2 (blocking, relative) or exit 1 (loud, non-blocking
   # config problem) -- never a bare exit 0.
-  local -a g3_all_shapes=("SRD" "./SRD" "././SRD" "SRD/" "SRD/." "/" "/nonexistent/absolute/SRD" "")
+  local -a g3_all_shapes=("SRD" "./SRD" "././SRD" "SRD/" "SRD/." "/" "/nonexistent/absolute/SRD" "" "." "./" ".." "$repo_root_g3")
   local g3_shape g3_ec g3_never_zero=1
   for g3_shape in "${g3_all_shapes[@]}"; do
     g3_ec=0
@@ -5710,12 +5747,12 @@ EOS
     fi
   done
   [[ "$g3_never_zero" -eq 1 ]] \
-    && pass "CA-186 G3 -- none of the eight documented srd_root shapes exits 0 silently"
+    && pass "CA-186 G3 -- none of the twelve documented srd_root shapes exits 0 silently"
 
   rm -rf "$scratch"
 }
 echo
-echo "=== G8 (round-3 Wave 7c) / CA-186 G3 (round-4 Wave 8b): a trailing-slash, doubled ./, trailing /., or absolute srd_root must never silently disable commit-time enforcement ==="
+echo "=== G8 (round-3 Wave 7c) / CA-186 G3 (round-4 Wave 8b, round-5): a trailing-slash, doubled ./, trailing /., bare '.', './', '..', or absolute srd_root must never silently disable commit-time enforcement ==="
 g8_srd_root_case
 
 # =================================================================================
