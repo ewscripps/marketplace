@@ -14,7 +14,12 @@
 #   bash run-eval.sh [--out DIR] [--provision-only]
 #   bash run-eval.sh -h|--help|help
 #
-#   --out DIR          Write the run directory under DIR instead of evals/runs/.
+#   --out DIR          Write the run directory under DIR instead of evals/runs/. Retention
+#                       pruning (see EDM_EVAL_KEEP_RUNS below) is skipped for a DIR you name here
+#                       unless you also set EDM_EVAL_PRUNE_EXPLICIT_OUT=true (G12) -- an explicit
+#                       --out target may hold content this driver does not own, so it is never
+#                       pruned by default; the default evals/runs/ root is always eligible, since
+#                       nothing else lives there.
 #   --provision-only   Provision the scratch fixture tree and print its path, then exit 0.
 #                       Makes no network call and requires no ANTHROPIC_API_KEY. This is the
 #                       self-contained, no-network mode described in evals/README.md and
@@ -28,8 +33,13 @@
 #   EDM_EVAL_MODEL                claude -p --model value.               Default: opus
 #   EDM_EVAL_PHASE_TIMEOUT_SECONDS Per-phase wall-clock timeout, seconds. Default: 2700
 #   EDM_EVAL_MAX_BUDGET_USD        claude -p --max-budget-usd, per phase. Default: 15
-#   EDM_EVAL_KEEP_RUNS             Retention: run directories kept under OUT_ROOT after a
-#                                 successful run (oldest pruned first). Default: 10
+#   EDM_EVAL_KEEP_RUNS             Retention: run-shaped directories kept under OUT_ROOT (oldest
+#                                 pruned first, on every exit path -- success, partial, or
+#                                 interrupted). Only directories matching the run-ID naming shape
+#                                 (<timestamp>_<git-sha>) are ever counted or pruned; unrelated
+#                                 files and directories always survive.       Default: 10
+#   EDM_EVAL_PRUNE_EXPLICIT_OUT    Set to "true" to allow retention pruning against a
+#                                 caller-supplied --out DIR (see --out above).  Default: false
 #
 # Exit codes (the four-value contract, EDMV3-26 / EDMV3-T22 AC10):
 #   0  the run completed (reached the end of the audit-srd phase) and the containment check
@@ -59,8 +69,11 @@ EDM_BIN_DIR="$EDM_PLUGIN_DIR/bin"
 FIXTURE_DIR="$EVALS_DIR/fixtures/tiny-svc"
 INITIATIVE_FILE="$EVALS_DIR/initiative.txt"
 
-# CA-005: shared --help extractor, sourced rather than hand-copied.
-source "${EDM_BIN_DIR}/_edm-cli-lib.sh"
+# CA-005: shared --help extractor, sourced rather than hand-copied. G66: standardized on the
+# same `${SCRIPT_DIR}/../bin/_edm-cli-lib.sh` form the other two evals/ drivers
+# (score-artifacts.sh, tiering-matrix.sh) already use, rather than this file's own
+# EDM_BIN_DIR-relative variant.
+source "${SCRIPT_DIR}/../bin/_edm-cli-lib.sh"
 
 export PATH="$EDM_BIN_DIR:$PATH"
 
@@ -72,12 +85,17 @@ usage() {
 
 # --- Flag parsing --------------------------------------------------------------------------
 OUT_ROOT="$EVALS_DIR/runs"
+# G12: OUT_ROOT_EXPLICIT distinguishes "the caller pointed --out at a directory they chose" from
+# "the default evals/runs/ root" -- the retention prune below (prune_old_runs) only ever touches
+# a caller-chosen root when the caller also opts in via EDM_EVAL_PRUNE_EXPLICIT_OUT=true, since
+# nothing but this driver's own run directories can live under the default root.
+OUT_ROOT_EXPLICIT=false
 PROVISION_ONLY=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --out)
       [ $# -ge 2 ] || die "--out requires a value"
-      OUT_ROOT="$2"; shift 2 ;;
+      OUT_ROOT="$2"; OUT_ROOT_EXPLICIT=true; shift 2 ;;
     --provision-only)
       PROVISION_ONLY=true; shift ;;
     -h|--help|help)
@@ -131,6 +149,62 @@ write_partial_artifacts() {
   echo "run-eval: partial run -- wrote $RUN_DIR/run.json and $RUN_DIR/scores.json (complete: false)" >&2
 }
 
+# prune_old_runs -- retention (CA-066, G12, G54): removes stale run-shaped directories under
+# OUT_ROOT, keeping the EDM_EVAL_KEEP_RUNS most recent. Called from cleanup() below, which the
+# EXIT/INT/TERM trap runs on every exit path -- success, partial (exit 4), or interrupted -- so a
+# failed or killed run's directory is retention-managed too (G54), not only the success path.
+# The run directory currently being investigated is always the newest by mtime, so it is never
+# eligible for pruning regardless of which path got here.
+#
+# Ownership filter (G12, defect 1): only directories matching the RUN_ID naming shape
+# (${TS}_${GIT_SHA}, e.g. 20260101T000000Z_abc1234) are ever considered stale-eligible -- an
+# unrelated directory or a stray file living under a user-supplied --out root is never touched,
+# counted, or allowed to consume a keep-window slot.
+#
+# Explicit-root opt-in (G12): when --out pointed at a directory the caller chose (OUT_ROOT_EXPLICIT),
+# pruning is skipped unless EDM_EVAL_PRUNE_EXPLICIT_OUT=true is also set. The default evals/runs/
+# root is always eligible, since nothing else can be living there.
+prune_old_runs() {
+  if [ "$OUT_ROOT_EXPLICIT" = "true" ]; then
+    local prune_explicit="${EDM_EVAL_PRUNE_EXPLICIT_OUT:-false}"
+    [ "$prune_explicit" = "true" ] || return 0
+  fi
+  [ -d "$OUT_ROOT" ] || return 0
+
+  local keep="${EDM_EVAL_KEEP_RUNS:-10}"
+  case "$keep" in
+    ''|*[!0-9]*) keep=10 ;;
+  esac
+
+  # ls -t sorts newest-first by mtime (bash-3.2/BSD-safe -- no GNU-only `find -printf`); the
+  # grep restricts the listing to run-shaped entries (defect 1 above) before either counting or
+  # windowing, so a stray file or unrelated directory in OUT_ROOT can never consume a protected
+  # slot or shift the window (defect 2, the off-by-N half of G12 -- the prior code counted with
+  # `find -type d` but windowed with unfiltered `ls -1t`, so the two disagreed whenever OUT_ROOT
+  # held anything that was not itself a run directory).
+  local run_dirs run_total stale_dirs pruned=0
+  run_dirs="$(ls -1t "$OUT_ROOT" 2>/dev/null | grep -E '^[0-9]{8}T[0-9]{6}Z_' || true)"
+  run_total="$(printf '%s\n' "$run_dirs" | grep -c . || true)"
+  run_total="${run_total:-0}"
+  [ "$run_total" -gt "$keep" ] || return 0
+
+  # `tail -n +K` idiom (not `head -n -N`, a GNU-only form) drops the K-1 newest and keeps the
+  # stale tail.
+  stale_dirs="$(printf '%s\n' "$run_dirs" | tail -n "+$((keep + 1))")"
+  while IFS= read -r stale; do
+    [ -n "$stale" ] || continue
+    [ -d "$OUT_ROOT/$stale" ] || continue
+    rm -rf "${OUT_ROOT:?}/$stale"
+    pruned=$((pruned + 1))
+  done <<PRUNE_EOF
+$stale_dirs
+PRUNE_EOF
+  if [ "$pruned" -gt 0 ]; then
+    echo "run-eval: pruned ${pruned} old run director(ies), keeping the ${keep} most recent under $OUT_ROOT (override with EDM_EVAL_KEEP_RUNS)" >&2
+  fi
+  return 0
+}
+
 CLEANUP_DONE=false
 cleanup() {
   local ec=$?
@@ -148,8 +222,10 @@ cleanup() {
   fi
   if [ "$STARTED" = "true" ] && [ "$COMPLETE" != "true" ]; then
     write_partial_artifacts
+    prune_old_runs
     exit 4
   fi
+  prune_old_runs
   return "$ec"
 }
 trap cleanup EXIT INT TERM
@@ -175,6 +251,36 @@ if [ "$PROVISION_ONLY" = "true" ]; then
   exit 0
 fi
 
+# run_with_timeout <seconds> <outfile> <errfile> <cmd...> -- portable bash-3.2 timeout with no
+# dependency on GNU coreutils' `timeout` (absent by default on macOS). Backgrounds <cmd...>,
+# polls once a second, and sends TERM then KILL if <seconds> elapses before it exits. Returns
+# 124 on timeout (matching GNU timeout's convention), else the command's own exit status.
+# Defined here, ahead of the auth probe below (G45), rather than down by the phase invocations --
+# the probe is this driver's first network call and needs the same bound every later `claude -p`
+# invocation gets; defining it only after the probe left the probe unbounded.
+run_with_timeout() {
+  local seconds="$1" outfile="$2" errfile="$3"; shift 3
+  "$@" >"$outfile" 2>"$errfile" &
+  CURRENT_CHILD_PID=$!
+  local pid="$CURRENT_CHILD_PID" waited=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge "$seconds" ]; then
+      kill -TERM "$pid" 2>/dev/null
+      sleep 2
+      kill -KILL "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      CURRENT_CHILD_PID=""
+      return 124
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  wait "$pid"
+  local rc=$?
+  CURRENT_CHILD_PID=""
+  return "$rc"
+}
+
 # --- Environment / credential requirements (AC8, amended by D20) ----------------------------
 # Two sanctioned auth paths: an exported ANTHROPIC_API_KEY, or a `claude` CLI that is already
 # authenticated (subscription/OAuth login). The original env-var-only gate was a false
@@ -186,7 +292,12 @@ for bin in claude jq git; do
 done
 
 if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-  if ! claude -p "Reply with exactly: OK" --model haiku >/dev/null 2>&1; then
+  # G45: every other model call in this driver goes through run_with_timeout; this auth probe
+  # is the one that didn't, so a hung connection blocked indefinitely, the driver never reached
+  # its "started" state, and the whole CI job eventually failed as an opaque timeout with no
+  # run.json ever written. 60s is generous for a one-line haiku reply and far below any phase
+  # timeout, so a genuinely working auth path is never mistaken for a dead one.
+  if ! run_with_timeout 60 /dev/null /dev/null claude -p "Reply with exactly: OK" --model haiku; then
     die "no working Claude auth: ANTHROPIC_API_KEY is not set and the 'claude' CLI is not authenticated. Export ANTHROPIC_API_KEY or run 'claude' interactively to log in. Use --provision-only to exercise fixture provisioning without auth."
   fi
 fi
@@ -247,33 +358,6 @@ CLAUDE_ALLOWED_TOOLS="Read Write Edit Glob Grep LS TodoWrite Task Bash(edm-state
 CLAUDE_DISALLOWED_TOOLS="WebFetch WebSearch KillShell BashOutput"
 PHASE_TIMEOUT_SECONDS="${EDM_EVAL_PHASE_TIMEOUT_SECONDS:-2700}"
 PHASE_MAX_BUDGET_USD="${EDM_EVAL_MAX_BUDGET_USD:-15}"
-
-# run_with_timeout <seconds> <outfile> <errfile> <cmd...> -- portable bash-3.2 timeout with no
-# dependency on GNU coreutils' `timeout` (absent by default on macOS). Backgrounds <cmd...>,
-# polls once a second, and sends TERM then KILL if <seconds> elapses before it exits. Returns
-# 124 on timeout (matching GNU timeout's convention), else the command's own exit status.
-run_with_timeout() {
-  local seconds="$1" outfile="$2" errfile="$3"; shift 3
-  "$@" >"$outfile" 2>"$errfile" &
-  CURRENT_CHILD_PID=$!
-  local pid="$CURRENT_CHILD_PID" waited=0
-  while kill -0 "$pid" 2>/dev/null; do
-    if [ "$waited" -ge "$seconds" ]; then
-      kill -TERM "$pid" 2>/dev/null
-      sleep 2
-      kill -KILL "$pid" 2>/dev/null
-      wait "$pid" 2>/dev/null
-      CURRENT_CHILD_PID=""
-      return 124
-    fi
-    sleep 1
-    waited=$((waited + 1))
-  done
-  wait "$pid"
-  local rc=$?
-  CURRENT_CHILD_PID=""
-  return "$rc"
-}
 
 # invoke_claude <phase-key> <prompt> -- runs claude -p for one phase, cwd'd into the scratch
 # tree, writing raw stdout/stderr under $RUN_DIR/raw/ for later token/cost aggregation.
@@ -539,37 +623,13 @@ jq -n \
      cost_usd: ($cost_usd | tonumber)
    }' > "$RUN_DIR/run.json"
 
-# --- Retention (CA-066): keep only the N most recent run directories under OUT_ROOT ---------
+# --- Retention (CA-066, G12, G54) ------------------------------------------------------------
 # evals/runs/ is gitignored (disk-only concern), but nothing previously pruned it: every
 # invocation, successful or partial, mints a full run directory with raw claude -p payloads and
-# stderr logs. Pruning runs only here, on the success path, so a partial run under investigation
-# (written by write_partial_artifacts via the EXIT trap) is never pruned out from under someone
-# still debugging it. N defaults to 10 and is overridable for a local session that wants more
-# history kept.
-EDM_EVAL_KEEP_RUNS="${EDM_EVAL_KEEP_RUNS:-10}"
-case "$EDM_EVAL_KEEP_RUNS" in
-  ''|*[!0-9]*) EDM_EVAL_KEEP_RUNS=10 ;;
-esac
-if [ -d "$OUT_ROOT" ]; then
-  run_total="$(find "$OUT_ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
-  run_total="${run_total:-0}"
-  if [ "$run_total" -gt "$EDM_EVAL_KEEP_RUNS" ]; then
-    # ls -t sorts newest-first by mtime (bash-3.2/BSD-safe -- no GNU-only `find -printf`); the
-    # `tail -n +K` idiom (not `head -n -N`, a GNU-only form) drops the K-1 newest and keeps the
-    # stale tail.
-    stale_dirs="$(ls -1t "$OUT_ROOT" | tail -n "+$((EDM_EVAL_KEEP_RUNS + 1))")"
-    pruned=0
-    while IFS= read -r stale; do
-      [ -n "$stale" ] || continue
-      [ -d "$OUT_ROOT/$stale" ] || continue
-      rm -rf "${OUT_ROOT:?}/$stale"
-      pruned=$((pruned + 1))
-    done <<PRUNE_EOF
-$stale_dirs
-PRUNE_EOF
-    echo "run-eval: pruned ${pruned} old run director(ies), keeping the ${EDM_EVAL_KEEP_RUNS} most recent under $OUT_ROOT (override with EDM_EVAL_KEEP_RUNS)" >&2
-  fi
-fi
+# stderr logs. prune_old_runs (defined above, near the cleanup trap) is called from cleanup(),
+# which the EXIT trap fires on every exit path including this one -- there is no separate call
+# site here. See prune_old_runs's own header comment for the ownership-filter and explicit-root
+# opt-in behavior (G12) and why retention now also covers the failure/interrupted path (G54).
 
 echo "run-eval: run $RUN_ID complete -> $RUN_DIR" >&2
 exit 0

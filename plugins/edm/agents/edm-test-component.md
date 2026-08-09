@@ -103,7 +103,7 @@ Write paths: only new or extended test files under the detected component test r
 
 ## When this does NOT apply
 
-N/A -- no UI components in scope (backend-only, CLI, library without DOM rendering).
+N/A -- no UI components (backend-only, CLI, library without DOM rendering).
 
 This is the same exit token as Step 0's carve-out above, named here so the caller can rely on a
 uniform signal.

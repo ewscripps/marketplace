@@ -5064,11 +5064,15 @@ for ca154_f in edm-state edm-lint-artifacts edm-validate-prefix edm-init edm-che
     && pass "CA-005/CA-154 -- bin/${ca154_f} sources the shared _edm-cli-lib.sh print_help" \
     || fail "CA-005/CA-154 -- bin/${ca154_f} does not source the shared print_help"
 done
+# G66: all three evals/ drivers now source _edm-cli-lib.sh via the identical literal form
+# `source "${SCRIPT_DIR}/../bin/_edm-cli-lib.sh"` (run-eval.sh previously used its own
+# EDM_BIN_DIR-relative variant) -- this assertion requires the exact literal form rather than a
+# loose substring match, so a future re-divergence fails this check instead of passing silently.
 for ca154_ef in run-eval.sh score-artifacts.sh tiering-matrix.sh; do
-  ca154_hit="$(grep -c '_edm-cli-lib\.sh"' "${PLUGIN_DIR}/evals/${ca154_ef}" 2>/dev/null || true)"
+  ca154_hit="$(grep -c 'source "\${SCRIPT_DIR}/\.\./bin/_edm-cli-lib\.sh"' "${PLUGIN_DIR}/evals/${ca154_ef}" 2>/dev/null || true)"
   [[ "${ca154_hit:-0}" -ge 1 ]] \
-    && pass "CA-005/CA-154 -- evals/${ca154_ef} sources the shared _edm-cli-lib.sh print_help" \
-    || fail "CA-005/CA-154 -- evals/${ca154_ef} does not source the shared print_help"
+    && pass "CA-005/CA-154/G66 -- evals/${ca154_ef} sources _edm-cli-lib.sh via the standardized \${SCRIPT_DIR}/../bin/ form" \
+    || fail "CA-005/CA-154/G66 -- evals/${ca154_ef} does not source the shared print_help via the standardized form"
 done
 
 echo

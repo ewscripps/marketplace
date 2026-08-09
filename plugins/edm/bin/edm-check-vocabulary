@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# EDM-HELP-BEGIN
 # edm-check-vocabulary - deterministic backstop for the abolished-vocabulary policy
 # (EDMV3-T29/T30; see CLAUDE.md's "Severity vocabulary" section for the policy itself).
 #
@@ -51,6 +52,7 @@
 # fence handling, and violation accounting stay identical across both scanners.
 #
 # bash 3.2 compatible: no associative arrays, no mapfile/readarray.
+# EDM-HELP-END
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
@@ -71,15 +73,6 @@ usage() {
   print_help "${BASH_SOURCE[0]:-$0}"
   exit 0
 }
-# EDM-HELP-BEGIN
-# edm-check-vocabulary - deterministic backstop for the abolished-vocabulary policy.
-# Usage:
-#   edm-check-vocabulary               # scan the full scope, report violations
-#   edm-check-vocabulary --list-scope  # print the scan scope roots and exit 0
-#   edm-check-vocabulary -h|--help     # show this help
-# Output format: "path:line: vocabulary: <token>: <snippet>"
-# Exit codes: 0 clean; 1 violations found; 2 usage or environment error.
-# EDM-HELP-END
 
 case "${1:-}" in
   -h|--help|help) usage ;;
@@ -188,10 +181,11 @@ for root in "${SCOPE_ROOTS[@]}"; do
   fi
 done
 
-if [[ ${#FILES[@]} -eq 0 ]]; then
-  echo "edm-check-vocabulary: no files found in scan scope"
-  exit 0
-fi
+# G41: no "FILES empty" guard here -- SCOPE_ROOTS always includes CLAUDE.md and README.md as
+# plain files (not directories), added unconditionally via the `elif [[ -f "$root" ]]` branch
+# above; if either were missing the `else` branch's `die "scope path not found: ..."` would
+# already have exited the script before this point. FILES therefore always holds at least those
+# two entries by the time control reaches here, making an empty-FILES guard unreachable.
 
 # ---- Token scan: one whole-fileset grep per token, never per-line-per-token ----------------
 while IFS= read -r tline; do

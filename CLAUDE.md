@@ -21,9 +21,16 @@ plugins/<plugin-name>/
 ├── .mcp.json                    # MCP server config (can be empty)
 ├── skills/<skill-name>/
 │   └── SKILL.md                 # Skill definition with YAML frontmatter
-└── agents/<agent-name>/
-    └── AGENT.md                 # Agent definition with YAML frontmatter
+└── agents/
+    ├── <agent-name>/AGENT.md    # Shape A: directory-per-agent (e.g. web-cms)
+    └── <agent-name>.md          # Shape B: flat file per agent (e.g. edm)
 ```
+
+Both shapes are in active use -- pick whichever your plugin's own CI validation enforces. The
+`validate:manifest` job in the repository-root `.gitlab-ci.yml` is edm-specific and globs
+`plugins/edm/agents/*.md` (Shape B, flat files); it does not check any other plugin's agent
+layout. A plugin using Shape A should verify its own manifest/agent consistency by whatever means
+that plugin's own tooling provides -- there is no repository-wide agent-layout validator today.
 
 ### SKILL.md Frontmatter
 
@@ -49,11 +56,12 @@ Skills can call other skills via the `Skill` tool (e.g., `skill: "create-jira-ca
 
 ## Current Plugins
 
-- **git** (v1.0.8) — `/commit` skill for conventional commits with Jira scope and gitmoji shortcodes. Delegates Jira operations to the jira plugin.
-- **jira** (v1.0.0) — `/search-jira` and `/create-jira-card` skills. Uses Atlassian MCP server at `https://mcp.atlassian.com/v1/mcp`.
+- **git** (v1.1.0) — `/commit` skill for conventional commits with Jira scope and gitmoji shortcodes. Delegates Jira operations to the jira plugin.
+- **jira** (v1.1.0) — `/search-jira` and `/create-jira-card` skills. Uses Atlassian MCP server at `https://mcp.atlassian.com/v1/mcp`.
 - **edm** (v3.1.0) — Enterprise Development Methodology: `/edm:orchestrator`, `/edm:plan`, `/edm:srd`, `/edm:audit-srd`, `/edm:tickets`, `/edm:audit-tickets`, `/edm:implement`, `/edm:code-audit`, `/edm:test`, `/edm:test-plan`, `/edm:test-coverage`, `/edm:verify-runtime`, `/edm:push-jira`, and `/edm:metrics` skills implementing a six-phase, HITL-gated development methodology (Planning → SRD → Audit → Tickets → Audit → Implementation) with parallel agent waves, automatic QC, and an 11-lens code audit. Produces source-controlled artifacts in the project's `SRD/` directory. Its own GitLab CI pipeline lints, tests, and validates the plugin on every change under `plugins/edm/**`.
-- **ada-tablo** (v1.1.0) — `/weekly-playbook-analysis`, `/weekly-topics-review`, `/coaching-review` skills for Ada chatbot performance analysis. Uses Ada MCP server. Shared workspace at `DavidG91/ada-tablo-ops` (GitHub).
-- **web-cms** (v1.0.0) — Intake and execution skills for web CMS Jira workflows, plus 7 specialist review agents (codebase-explorer, documentation-reviewer, implementation-reviewer, manual-qa-reviewer, plan-reviewer, review-analyst, test-reviewer).
+- **ada-tablo** (v1.2.0) — `/weekly-playbook-analysis`, `/weekly-topics-review`, `/coaching-review` skills for Ada chatbot performance analysis. Uses Ada MCP server. Shared workspace at `DavidG91/ada-tablo-ops` (GitHub).
+- **bruno** (v1.1.0) — Bruno API client skills: scaffold and update collections, run collections with the bru CLI, document endpoints and environments, create new requests, and write or fix tests. Defaults to OpenCollection YAML format.
+- **web-cms** (v1.0.19) — Intake and execution skills for web CMS Jira workflows, plus specialist review agents (codebase-explorer, documentation-reviewer, implementation-reviewer, manual-qa-reviewer, plan-reviewer, review-analyst, test-reviewer, area-mapper, comment-reviewer, verification-runner) using the directory-per-agent layout.
 - **myday** (v1.0.0) — `/myday` skill: morning calendar/Jira briefing, mid-day check-ins, end-of-day reflection, team lookups, PTO tracking, meeting notes with 1:1 success-tracking, reminders, and review prep. Uses its own Atlassian MCP server config (same endpoint as jira plugin, declared independently so it works standalone). Bundles a starter `MyDay/` planner folder (ICS calendar fetch script) and a `myday-config.example.json` for personal config at `~/.claude/myday-config.json`.
 
 ## Key Conventions

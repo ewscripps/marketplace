@@ -100,7 +100,10 @@ if [[ $# -gt 0 ]]; then
       ;;
   esac
 fi
-[[ $# -eq 0 ]] || die "unexpected extra argument: $1" 2
+# G41: no further "$# -eq 0" guard here -- every path through the if-block above that could
+# leave $# > 0 already died (an unknown --flag, a positional argument, or a second argument
+# after --list-sources), and the --list-sources success path shifts down to $#==0. By the time
+# control reaches here $# is always 0, making a repeated guard unreachable.
 
 SOURCE_LABELS="agent-bodies skill-launch-templates hook-prompt-text skill-allowed-tools-vs-body"
 

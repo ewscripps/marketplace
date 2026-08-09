@@ -40,13 +40,25 @@ the run). The scratch clone is deleted on exit, including on failure -- nothing 
 Writes the run directory under `DIR` instead of `plugins/edm/evals/runs/`. Useful for keeping a
 run somewhere outside the plugin source tree (see "Where committed run artifacts live" below).
 
-**Retention (CA-066):** after a successful run, `run-eval.sh` prunes `DIR` (or
-`plugins/edm/evals/runs/` when `--out` is not given) down to the 10 most recently created run
-directories, oldest first. Override the count with `EDM_EVAL_KEEP_RUNS`. Pruning only happens on
-the success path -- a partial run (exit 4) is never pruned out from under someone still
-investigating it. This is a disk-hygiene measure for the gitignored `runs/` directory, not a
-correctness requirement: `evals/runs/` was never tracked by git, so nothing here affects what
-gets committed.
+**Retention (CA-066, G12, G54):** `run-eval.sh` prunes stale run directories under `DIR` (or
+`plugins/edm/evals/runs/` when `--out` is not given) down to the 10 most recently created,
+oldest first. Override the count with `EDM_EVAL_KEEP_RUNS`. Pruning runs on **every** exit path
+-- success, a partial run (exit 4), and an interrupted run (SIGINT/SIGTERM) -- via the driver's
+cleanup/EXIT trap, not only on success (G54): a failed or killed run previously accumulated its
+full run directory, raw `claude -p` payloads included, forever. The run directory currently being
+investigated is always the newest by mtime, so it is never eligible for pruning regardless of
+which exit path got there.
+
+Only directories whose name matches the run-ID shape (`<timestamp>_<git-sha>`, e.g.
+`20260101T000000Z_abc1234`) are ever counted or pruned (G12) -- a stray file or an unrelated
+directory sitting in `DIR` is never touched and never consumes a protected slot in the
+keep-window. **When you pass `--out` at a directory you chose, pruning is skipped by default**
+(G12): `--out` only tells this driver where to write, it never grants permission to delete other
+content that directory might hold, so pruning against a caller-supplied `--out` root requires an
+explicit `EDM_EVAL_PRUNE_EXPLICIT_OUT=true` opt-in. The default `evals/runs/` root has no such
+requirement, since nothing but this driver's own run directories can live there. This is a
+disk-hygiene measure for the gitignored `runs/` directory, not a correctness requirement:
+`evals/runs/` was never tracked by git, so nothing here affects what gets committed.
 
 ### `--provision-only`
 
@@ -287,5 +299,5 @@ next tier wins instead; an agent with no qualifying config is left unchanged).
 
 **As of this ticket's landing, this script has not been run against real data.** Producing a real
 manifest requires the wave-A eval baseline (`evals/baseline/scores.json`), which does not exist
-yet (D23). See `SRD/edm/EDMV3__prompt-streamline/decisions.md` D26 for the exact command that
+yet (D23). See `SRD/edm/EDMV3__prompt-streamline/decisions.md` D28 for the exact command that
 closes this gap once the baseline is captured.

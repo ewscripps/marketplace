@@ -6,11 +6,12 @@
 # twelve times across bin/ and evals/ in three incompatible shapes -- most kept the leading
 # "# " on each printed line, a minority stripped it, and edm-sync-canonical-sections skipped
 # sentinels entirely and keyed its extraction on the literal `set -euo pipefail` line instead
-# (fragile -- moving that line silently truncated its --help). This file is now the ONLY place
-# the extractor awk literal may appear; every bin/ helper and evals/ driver sources this file
-# and calls print_help instead of hand-copying it. lint:bash-syntax (.gitlab-ci.yml) greps for
-# and bans a second occurrence of the literal, and separately bans the hardcoded
-# `sed -n 'A,Bp' "$0"` line-range form this replaces.
+# (fragile -- moving that line silently truncated its --help). This file is the only place
+# outside bin/tests/ the extractor awk literal may appear -- bin/tests/ is exempted because the
+# smoke suite must carry the literal in order to assert on it; every bin/ helper and evals/
+# driver sources this file and calls print_help instead of hand-copying it. lint:bash-syntax
+# (.gitlab-ci.yml) greps for and bans a second occurrence of the literal outside bin/tests/, and
+# separately bans the hardcoded `sed -n 'A,Bp' "$0"` line-range form this replaces.
 #
 # print_help <script-path>
 #   Prints everything between the EDM-HELP-BEGIN/EDM-HELP-END sentinel comment lines near the

@@ -13,9 +13,10 @@
 #                                              whenever a score was produced -- a terrible score
 #                                              is still exit 0 (AC5). Exit 2 on a usage or
 #                                              environment error (missing jq, missing run-dir,
-#                                              missing vague-ac-patterns.txt). CA-151: --out is
-#                                              REQUIRED when <run-dir> is under
-#                                              bin/tests/fixtures/ (a tracked fixture directory,
+#                                              missing vague-ac-patterns.txt). CA-151/G57: --out is
+#                                              REQUIRED when <run-dir> is under any directory
+#                                              named "fixtures" (both tracked fixture roots --
+#                                              bin/tests/fixtures/ and evals/fixtures/tiny-svc/ --
 #                                              not a real run) -- refuses rather than silently
 #                                              depositing an untracked scores.json there.
 #   score-artifacts.sh --describe             Print the five dimension definitions
@@ -518,12 +519,17 @@ main_score() {
   [[ -d "$run_dir" ]] || die "run directory not found: $run_dir"
   run_dir="$(cd "$run_dir" && pwd)"
 
-  # CA-151: refuse to deposit scores.json into a tracked fixture directory unless the caller
-  # explicitly named a scratch --out path. bin/tests/fixtures/code-audit/ is a committed,
-  # hand-authored fixture (not a real run directory), and it has already collected an untracked
-  # scores.json once from a direct invocation against it.
+  # CA-151/G57: refuse to deposit scores.json into a tracked fixture directory unless the
+  # caller explicitly named a scratch --out path. This tree has TWO tracked fixture roots --
+  # bin/tests/fixtures/code-audit/ (a committed, hand-authored fixture, not a real run
+  # directory; it has already collected an untracked scores.json once from a direct invocation
+  # against it) and evals/fixtures/tiny-svc/ (the frozen eval subject) -- so the guard matches
+  # any directory named "fixtures" rather than enumerating both individually. A real run
+  # directory is never named or nested under anything called "fixtures" (it lives under
+  # OUT_ROOT as <TS>_<git-sha>/, e.g. evals/runs/20260101T000000Z_abc1234/), so this cannot
+  # false-positive against one.
   case "$run_dir" in
-    */bin/tests/fixtures/*|*/bin/tests/fixtures)
+    */fixtures/*|*/fixtures)
       [[ -n "$out_file" ]] || die "refusing to write scores.json into a tracked fixture directory ($run_dir) -- pass an explicit --out <path> to a scratch location instead"
       ;;
   esac
@@ -531,7 +537,7 @@ main_score() {
   local dest_file="${out_file:-$run_dir/scores.json}"
 
   local run_json="$run_dir/run.json"
-  local run_id git_sha plugin_version complete
+  local run_id git_sha plugin_version complete complete_reason=""
   if [[ -f "$run_json" ]]; then
     run_id=$(jq -r '.run_id // empty' "$run_json" 2>/dev/null); [[ -n "$run_id" ]] || run_id="$(basename "$run_dir")"
     git_sha=$(jq -r '.git_sha // empty' "$run_json" 2>/dev/null); [[ -n "$git_sha" ]] || git_sha="unknown"
@@ -542,12 +548,20 @@ main_score() {
     # handshake off this value, so coercing an unknown run.json to "true" would let a truncated
     # run be compared against the baseline, exactly what the handshake exists to prevent.
     complete=$(jq -r 'if .complete == false then "false" else "true" end' "$run_json" 2>/dev/null) || complete="false"
-    [[ "$complete" == "true" || "$complete" == "false" ]] || complete="false"
+    if [[ "$complete" != "true" && "$complete" != "false" ]]; then
+      complete="false"
+      complete_reason="run.json unparseable"
+    fi
   else
+    # G23: an absent run.json is the same "incomplete/unknown" case as an unparseable one, not
+    # a green light -- a run directory with no run.json at all never actually finished, so
+    # scoring it complete:true would let it slip past edm-compare-eval's partial-run handshake
+    # the same way an unparseable manifest would if left uncoerced (CA-064 above).
     run_id="$(basename "$run_dir")"
     git_sha="unknown"
     plugin_version="unknown"
-    complete="true"
+    complete="false"
+    complete_reason="run.json absent"
   fi
 
   compute_dim1 "$run_dir"
@@ -598,6 +612,7 @@ main_score() {
     --arg git_sha "$git_sha" \
     --arg plugin_version "$plugin_version" \
     --argjson complete "$complete" \
+    --arg complete_reason "$complete_reason" \
     '{
       scorer_version: $scorer_version,
       dimension_names: $dimension_names,
@@ -609,7 +624,7 @@ main_score() {
       git_sha: $git_sha,
       plugin_version: $plugin_version,
       complete: $complete
-    }')"
+    } + (if $complete_reason == "" then {} else {complete_reason: $complete_reason} end)')"
 
   printf '%s\n' "$output"
   printf '%s\n' "$output" > "$dest_file"

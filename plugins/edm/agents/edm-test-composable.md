@@ -123,7 +123,7 @@ Write paths: only new or extended test files under the detected test root record
 
 ## When this does NOT apply
 
-N/A -- no hooks/composables in scope (no React hooks or Vue composables).
+N/A -- no hooks/composables (no React hooks or Vue composables).
 
 This is the same exit token as Step 0's carve-out above, named here so the caller can rely on a
 uniform signal.

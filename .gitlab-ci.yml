@@ -53,9 +53,11 @@ stages:
       - "plugins/edm/**/*"
 
 # ---- Shared job template (EDMV3-T67 AC10) ----------------------------------------------------
-# The pinned alpine image and the shared rule set are identical across every lint job. Expressed
-# once so a digest refresh (see the header note) stays a single-line change even though the lint
-# stage is now four jobs rather than one.
+# The pinned alpine image and the shared rule set are identical across every lint job -- seven of
+# them today -- plus three non-lint jobs that need only bash/jq/git on Alpine (test:smoke,
+# test:state-validate, validate:manifest); ten consumers total (`grep -c '<<: \*alpine_edm'` over
+# this file). Expressed once so a digest refresh (see the header note) stays a single-line change
+# across all of them, not a stale count to keep in sync by hand.
 .alpine_edm: &alpine_edm
   image: "alpine:3.20@sha256:4117b6e5b09d84c8f03ea45234ee7f8ec9f5c3a9792b80e3c9d54ded36d3735a"
   rules: *edm_rules
@@ -66,16 +68,19 @@ stages:
 
 # ---- lint stage -------------------------------------------------------------------------------
 #
-# EDMV3-T67 AC10. The four checks below were previously four sequential script lines inside a
-# single `lint:shell-and-artifacts` job. That had two costs: their wall-clock times summed, and
-# because the block ran under `set -e`, the first failure suppressed the results of every check
-# after it -- so a contributor fixing a syntax error learned about an artifact violation only on
-# the next pipeline.
+# EDMV3-T67 AC10. The first four jobs below (lint:bash-syntax, lint:artifacts, lint:grants,
+# lint:vocabulary) were previously four sequential script lines inside a single
+# `lint:shell-and-artifacts` job. That had two costs: their wall-clock times summed, and because
+# the block ran under `set -e`, the first failure suppressed the results of every check after it
+# -- so a contributor fixing a syntax error learned about an artifact violation only on the next
+# pipeline.
 #
-# They are now four independent jobs, each carrying `needs: []`. An empty `needs` starts a job
-# as soon as the pipeline begins instead of waiting for the stage ahead of it, so the runner
-# fleet executes all four concurrently and each reports its own pass/fail. Downstream jobs
-# declare the specific lint jobs they depend on rather than waiting for the whole stage.
+# Those four became four independent jobs, each carrying `needs: []`; the lint stage has since
+# grown three more the same way (lint:shellcheck, lint:file-type-ban,
+# lint:pattern-library-contract) -- seven lint jobs total today. An empty `needs` starts a job as
+# soon as the pipeline begins instead of waiting for the stage ahead of it, so the runner fleet
+# executes all seven concurrently and each reports its own pass/fail. Downstream jobs declare the
+# specific lint jobs they depend on rather than waiting for the whole stage.
 
 lint:bash-syntax:
   stage: lint
@@ -255,7 +260,6 @@ lint:file-type-ban:
           | awk '{s+=$1} END{print s+0}'
       )"
       evals_kb="$(( (evals_bytes + 1023) / 1024 ))"
-      evals_kb="${evals_kb:-0}"
       if [ "$evals_kb" -gt 100 ]; then
         echo "file-type-ban: tracked plugins/edm/evals/ content is ${evals_kb}KB, exceeds the documented 100KB budget:"
         git ls-files -- plugins/edm/evals \
@@ -265,6 +269,7 @@ lint:file-type-ban:
       fi
       echo "file-type-ban: tracked plugins/edm/evals/ size OK (${evals_kb}KB, documented budget is 100KB)"
       echo "file-type-ban: note -- eval runtime output under plugins/edm/evals/runs/ is retention-managed separately by CI artifacts and is not counted in this tracked-bytes budget"
+      echo "lint:file-type-ban: OK -- no banned types, evals ${evals_kb}KB/100KB"
 
 # EDMV3-T56: the Living-Library four-`##`-heading contract (docs/audit-patterns/README.md
 # Sec."Living-Library Contract") as an enforced CI regression guard rather than a
@@ -433,10 +438,10 @@ test:state-validate:
       rm -f "$LIST_FILE"
       echo "state-validate: ${COUNT} initiative(s) checked"
       if [ "$FAIL" -ne 0 ]; then
-        echo "state-validate: FAILED (blocking anomaly present)"
+        echo "test:state-validate: FAILED (blocking anomaly present)"
         exit 1
       fi
-      echo "state-validate: OK"
+      echo "test:state-validate: OK"
 
 # ---- validate stage (two-tier, AC6) -------------------------------------------------------
 

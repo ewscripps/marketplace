@@ -44,7 +44,15 @@ PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SRC="${PLUGIN_ROOT}/CLAUDE.md"
 DST="${PLUGIN_ROOT}/docs/canonical-sections.md"
 
-die() { echo "edm-sync-canonical-sections: $*" >&2; exit "${2:-2}"; }
+# CA-074/G24: takes the message and exit code as two separate arguments so the code is never
+# echoed as part of the diagnostic text (a bare `echo "...: $*"` form would print the numeric
+# exit-code argument as the last word of the message, since `$*` sweeps it up along with the
+# message). Family contract: 2 = usage/setup error (this file's default; see Exit codes above).
+die() {
+  local msg="$1" code="${2:-2}"
+  echo "edm-sync-canonical-sections: $msg" >&2
+  exit "$code"
+}
 
 mode="${1:-}"
 case "$mode" in

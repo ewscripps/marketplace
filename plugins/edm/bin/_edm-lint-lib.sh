@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # _edm-lint-lib.sh -- shared line-classification and violation-reporting helpers.
 #
-# This file is meant to be `source`d, never executed directly. Its three consumers are
-# bin/edm-lint-artifacts, bin/edm-check-grants and bin/edm-check-vocabulary. All three source it
-# by relative path from their own script directory (`source "${SELF_DIR}/_edm-lint-lib.sh"` or
-# equivalent) so it works regardless of the caller's PATH or cwd.
+# This file is meant to be `source`d, never executed directly. Its four consumers are
+# bin/edm-lint-artifacts, bin/edm-check-grants, bin/edm-check-vocabulary and bin/edm-state. All
+# four source it by relative path from their own script directory (`source
+# "${SCRIPT_DIR}/_edm-lint-lib.sh"`) so it works regardless of the caller's PATH or cwd.
 #
 # Functions:
 #   build_line_classes <file>

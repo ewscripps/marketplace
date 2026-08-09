@@ -70,10 +70,10 @@ This library is loaded at write time by four agents (EDMV2-81/82/83; CA-166/G35)
 
 And appended to by each audit phase's own skill, which calls `edm-state update-patterns` directly
 (EDMV2-80a; the dispatcher does not -- phase procedure moved into the phase skills at EDMV3-T37):
-- `skills/audit-srd/SKILL.md:44` -- `edm-state update-patterns <PREFIX> srd`
-- `skills/audit-tickets/SKILL.md:46` -- `edm-state update-patterns <PREFIX> ticket`
-- `skills/code-audit/SKILL.md:110` -- `edm-state update-patterns <PREFIX> code`
-- `skills/implement/SKILL.md:46` -- `edm-state update-patterns <PREFIX> qc`
+- `skills/audit-srd/SKILL.md` step 8a -- `edm-state update-patterns <PREFIX> srd`
+- `skills/audit-tickets/SKILL.md` step 7a -- `edm-state update-patterns <PREFIX> ticket`
+- `skills/code-audit/SKILL.md` step 9a -- `edm-state update-patterns <PREFIX> code`
+- `skills/implement/SKILL.md` step 10 -- `edm-state update-patterns <PREFIX> qc`
 - `skills/test-coverage/SKILL.md` -- `edm-state update-patterns <PREFIX> test-coverage`
 - `skills/test/SKILL.md` -- `edm-state update-patterns <PREFIX> test-coverage`
 
