@@ -50,7 +50,9 @@ the eleven references, or they dangle.
 - [ ] AC2 (register matches the precedent): it opens with a sentence in the same register as the
       Severity section -- all EDM agents that author or audit Mermaid follow these conventions, and
       no agent may define a divergent local rule.
-      Verify: `grep -n 'no agent may define a divergent local rule' plugins/edm/CLAUDE.md`.
+      Verify: `grep -in 'no agent may define a divergent local rule' plugins/edm/CLAUDE.md`
+      (case-insensitive -- the shipped sentence starts its own sentence, capitalized "No agent...",
+      not lowercase).
 - [ ] AC3 (problem stated): it states that `;` is a lexer-level statement separator in Mermaid and
       is reserved even where it appears inside a label.
       Verify: `grep -n 'statement separator' plugins/edm/CLAUDE.md`.
@@ -115,7 +117,7 @@ the eleven references, or they dangle.
 | SRD Refs | EDMV3-116 |
 | Depends On | EDMV3-T40 |
 | Ships-with | -- |
-| Target Components | `plugins/edm/CLAUDE.md`, `plugins/edm/agents/*.md` (reference form), `SRD/edm/EDMV3__prompt-streamline/decisions.md`, `plugins/edm/bin/tests/wave7-smoke.sh` (sync assertion, only if duplication is chosen) |
+| Target Components | `plugins/edm/CLAUDE.md`, `plugins/edm/agents/*.md` (reference form), `SRD/edm/EDMV3__prompt-streamline/decisions.md`, `plugins/edm/bin/tests/wave6-smoke.sh` (sync assertion, only if duplication is chosen -- this wave's file-ownership split assigned wave6-smoke.sh, not wave7-smoke.sh, to the implementing agent) |
 
 ### Description
 
@@ -160,8 +162,12 @@ decorative and every requirement resting on it is unsupported.
       the copy -- the duplicated section is byte-identical to its source, asserted in CI. An
       unguarded duplicate would recreate the exact defect the canonical-section pattern exists to
       prevent.
-      Verify: `bash plugins/edm/bin/tests/wave7-smoke.sh` (case "duplicated canonical section is
-      byte-identical"), and hand-editing the copy makes it fail.
+      Verify: `bash plugins/edm/bin/tests/wave6-smoke.sh` (cases "T41 AC5 -- Severity vocabulary
+      section is byte-identical between CLAUDE.md and the generated copy" and "T41 AC5 -- Mermaid
+      diagram conventions section is byte-identical between CLAUDE.md and the generated copy"),
+      not `wave7-smoke.sh` as originally named here -- this wave's file-ownership split assigned
+      wave6-smoke.sh to the implementing agent (see the Target Components field above) -- and
+      hand-editing the copy makes it fail.
 - [ ] AC6 (exactly one branch is implemented, and which is stated): the ticket states which branch
       was taken. A ticket closing without naming the branch is not done.
       Verify: the ticket's QC evidence names the branch and links the `decisions.md` entry.
@@ -397,11 +403,21 @@ by construction.
       Verify: `bash -n plugins/edm/bin/edm-lint-artifacts` and
       `grep -nE 'declare -A|mapfile|readarray|\{fd\}' plugins/edm/bin/edm-lint-artifacts` returns
       nothing.
-- [ ] AC12 (no hook change, docs updated): no hook change is needed --
-      `hooks/hooks.json:80-90` already invokes the linter -- and the `CLAUDE.md` `bin/` table
-      description of `edm-lint-artifacts` is updated to describe four violation classes.
-      Verify: `git diff --stat plugins/edm/hooks/hooks.json` is empty and
-      `grep -n 'four violation classes' plugins/edm/CLAUDE.md`.
+- [ ] AC12 (no hook change, docs updated -- the row defers to `--help` instead of hardcoding a
+      class count, per decisions.md D41): no hook change is needed -- `hooks/hooks.json:80-90`
+      already invokes the linter -- and the `CLAUDE.md` `bin/` table description of
+      `edm-lint-artifacts` no longer hardcodes a violation class count. The linter grows to seven
+      classes across this epic and later tickets (`attribution`, `unicode`, `leaked-tool-tag`,
+      `mermaid-semicolon`, `unterminated-fence`, `scan-error`, `unreadable`); a hardcoded "four
+      violation classes" phrase goes stale the moment a fifth class is added, which happens before
+      this AC is ever satisfied, so the row instead points readers at `edm-lint-artifacts --help`
+      for the authoritative, current list.
+      Verify: `git diff --stat plugins/edm/hooks/hooks.json` is empty;
+      `grep -c 'four violation classes' plugins/edm/CLAUDE.md` prints `0`;
+      `grep -n 'edm-lint-artifacts --help' plugins/edm/CLAUDE.md` shows the bin/ table row
+      deferring to `--help`; and
+      `bash plugins/edm/bin/edm-lint-artifacts --help 2>&1 | grep -cE '^#   (attribution|unicode|leaked-tool-tag|mermaid-semicolon|unterminated-fence|scan-error|unreadable)( |$)'`
+      prints `7`. This mirrors `bin/tests/wave7-smoke.sh:2228-2234`'s "T43 AC12" assertions.
 
 ### Technical Notes
 

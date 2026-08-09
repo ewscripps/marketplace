@@ -98,6 +98,29 @@ Suite: 1401 assertions passing before this remediation's own test additions.
   `docs/audit-patterns/*.md` file and `mv`s it into place, rather than appending in place --
   never leaves a shared pattern file half-written if interrupted mid-append, and never
   interleaves with a concurrent `update-patterns` call on the same file.
+- **G44 (round-4 code-audit, CA-275) note: three audit-remediation configuration knobs
+  documented, none of them new tickets.** All three were sanctioned fixes introduced by earlier
+  remediation waves but never given a CHANGELOG entry (the L9 lens's finding referred to the
+  family loosely as `EDM_SMOKE_SUITES`; the actual shipped names are below). All three are kept
+  as-is by this entry -- this is a documentation and change-control fix, not new behavior.
+  - `EDM_RUN_ALL_SUITE_DIR`, `EDM_RUN_ALL_PREFERRED_ORDER`, `EDM_RUN_ALL_MIN_SUITE_COUNT`
+    (`bin/tests/run-all.sh`, round-3 Wave 7b, G7/CA-146): let `harness-smoke.sh` point the smoke
+    aggregator at a scratch directory of throwaway stub suites and exercise its own
+    PASS/FAIL/CRASH/missing-summary accounting without touching the real suite set. Unset (the
+    default) is byte-identical to prior behavior -- discovery and execution both read from the
+    real `bin/tests/` directory, the preferred-order list is the real seven-suite hint, and the
+    real seven-suite floor applies. When `EDM_RUN_ALL_SUITE_DIR` is set, the three
+    real-repo-anchored standalone checks (`edm-check-grants`/`-skill-sync`/`-vocabulary`) are also
+    skipped, since they are meaningless against a scratch suite set.
+  - `EDM_EVAL_KEEP_RUNS` (`evals/run-eval.sh`): retention count for run-shaped directories kept
+    under the eval driver's output root (oldest pruned first); defaults to `10`. Lets a long-lived
+    eval output directory bound its own disk usage instead of growing without limit.
+  - `EDM_SRD_ROOT` / `CLAUDE_PLUGIN_OPTION_SRD_ROOT` (`bin/edm-lint-artifacts`,
+    `hooks/hooks.json`'s `PreToolUse` git-commit hook): both the direct linter invocation and the
+    commit-time hook honor a relocated `SRD/` root (default `./SRD`) with no separate hook-matcher
+    update needed, provided the value is repository-relative with no trailing slash -- an absolute
+    `srd_root` cannot match git's repository-relative staged paths, so the hook logs a diagnostic
+    and does not block rather than silently linting nothing.
 
 ### Changed
 

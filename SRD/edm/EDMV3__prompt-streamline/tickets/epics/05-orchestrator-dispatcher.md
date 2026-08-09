@@ -371,7 +371,8 @@ and no smoke assertion set is coherent. The move is atomic by nature.
       skills.
       Verify: `/edm:audit-srd EDMV3` invoked directly runs Step 0, executes the phase, and presents
       the gate via `AskUserQuestion`. Recorded as a manual-QA case in the ticket.
-- [ ] AC6 (one owning file per phase, phase-complete-6's three-way split sanctioned): for each of
+- [ ] AC6 (one owning file per phase, phase-complete-6's three-way split sanctioned -- reworked
+      from an unsatisfiable per-skill call count, rework recorded in decisions.md D40): for each of
       the six phases N=1..6, exactly one phase skill's SKILL.md contains `phase-start <PREFIX> N`.
       The same holds for `phase-complete <PREFIX> N`, except phase 6, where exactly three files
       contain it: the orchestrator (the owning call, EDMV3-T50), `skills/implement/SKILL.md` and
@@ -642,7 +643,8 @@ rather than a suggestion.
       (e.g. "no STOP and WAIT text, no waiting for sign-off"), matching the canonical PROTOCOL's
       "**STOP and WAIT for the `AskUserQuestion` response**" verbatim at
       `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL (canonical)"`. No material change -- the
-      terminology already agrees, so the baseline is not invalidated. Recorded in `decisions.md`.
+      terminology already agrees, so the baseline is not invalidated. Recorded in `decisions.md`
+      D38.
       Verify: `grep -n 'STOP and WAIT' plugins/edm/evals/run-eval.sh` matches the final PROTOCOL's
       terminology.
 - [ ] AC6 (negative, "CI will catch it" is invalid): "CI will catch it" is documented as an invalid
@@ -668,7 +670,7 @@ rather than a suggestion.
       unaffected.
       Verify: `grep -n 'dispatcher fallback' SRD/edm/EDMV3__prompt-streamline/decisions.md`.
 - [ ] AC9 (trend preserved, walked back to T23 AC11's naming-convention wording -- decisions.md
-      records the rework): the nightly `scores.json` files remain named or tagged such that a
+      D39 records the rework): the nightly `scores.json` files remain named or tagged such that a
       simple script **could** plot total score over time after this comparison job lands -- the
       naming convention exists and is documented; no plotting script is required to exist. This
       matches the wording T39 AC9 originally escalated from (`epics/03-ci-and-fixture-eval.md`

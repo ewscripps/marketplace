@@ -651,18 +651,23 @@ runtime.
       membership match dispatch"), plus
       `for c in audit-converged render-ledger audit-round-complete migrate-schema; do edm-state --help | grep -q -- "$c" || echo "MISSING: $c"; done`
       printing nothing, and `edm-state --help | grep -l record-task-duration | wc -l` printing 0.
-- [ ] AC4 (linter row, hook row, mode row -- and the **wrong** class names are gone, not merely
-      outnumbered): the `edm-lint-artifacts` row describes the four violation classes the script
-      actually implements (AI-attribution trailers, non-ASCII bytes, leaked tool tags, raw Mermaid
-      semicolons), the Hooks behavior table drops `TaskCompleted`, and the `lifecycle_mode` row
-      drops `partial`. The row's existing parenthetical names **three classes the script has never
-      implemented** -- missing version headers, orphan files, oversized tickets -- and an AC that
-      only checks for the presence of new text passes while that parenthetical survives, which is
-      how a reference table cited by name from agent prompts at runtime stays wrong.
-      Verify: `grep -c 'four violation classes' plugins/edm/CLAUDE.md` is non-zero;
-      `grep -rl 'missing version header\|orphan file\|oversized ticket' plugins/edm/CLAUDE.md | wc -l`
-      prints 0; and `grep -rl 'TaskCompleted' plugins/edm/CLAUDE.md | wc -l` and
-      `grep -rl 'lifecycle_mode.*partial' plugins/edm/CLAUDE.md | wc -l` each print 0.
+- [ ] AC4 (linter row, hook row, mode row -- the row defers to `--help` instead of hardcoding a
+      class count, per decisions.md D41): the `edm-lint-artifacts` row in the `bin/` table no
+      longer hardcodes a violation class count or class names -- the linter emits **seven** classes
+      by the close of this initiative (`attribution`, `unicode`, `leaked-tool-tag`,
+      `mermaid-semicolon`, `unterminated-fence`, `scan-error`, `unreadable`), not the four this AC
+      originally named, and a hardcoded count/list drifts every time a class is added (it already
+      had, before this AC was ever satisfied). The row instead points readers at
+      `edm-lint-artifacts --help` for the authoritative, current class list. The Hooks behavior
+      table drops `TaskCompleted`, and the `lifecycle_mode` row drops `partial`.
+      Verify: `grep -c 'four violation classes' plugins/edm/CLAUDE.md` prints `0` (the phrase is
+      gone, not merely outnumbered); `grep -n 'edm-lint-artifacts --help' plugins/edm/CLAUDE.md`
+      shows the bin/ table row deferring to `--help`;
+      `bash plugins/edm/bin/edm-lint-artifacts --help 2>&1 | grep -cE '^#   (attribution|unicode|leaked-tool-tag|mermaid-semicolon|unterminated-fence|scan-error|unreadable)( |$)'`
+      prints `7` (all seven emitted classes enumerated); and `grep -rl 'TaskCompleted' plugins/edm/CLAUDE.md | wc -l`
+      and `grep -rl 'lifecycle_mode.*partial' plugins/edm/CLAUDE.md | wc -l` each print `0`. This
+      mirrors `bin/tests/wave7-smoke.sh:5475-5478`'s "G9" assertions (`check_absent` on "four
+      violation classes", `check` on "edm-lint-artifacts --help").
 - [ ] AC5 (state-field table complete): the table documents every field added by this initiative --
       `schema_version` with its integer value set and the minimum version each new check requires, the
       approval `enforcement` tag and its sibling `*_approved_at` / `*_approver` keys, the PARTIAL
