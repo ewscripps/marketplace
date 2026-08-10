@@ -6084,20 +6084,12 @@ g14_skills="test-plan test-coverage test push-jira tickets audit-srd audit-ticke
 for g14_s in $g14_skills; do
   g14_content="$(cat "${PLUGIN_DIR}/skills/${g14_s}/SKILL.md" 2>/dev/null)"
   check "G14 -- skills/${g14_s}/SKILL.md calls edm-state resolve-dir" "resolve-dir" "$g14_content"
-  check_absent "G14 -- skills/${g14_s}/SKILL.md no longer hardcodes the legacy flat srd_root}/{PREFIX} path" \
-    'srd_root}/{PREFIX}' "$g14_content"
-  check_absent "G5 -- skills/${g14_s}/SKILL.md no longer hardcodes the legacy flat bare SRD/{PREFIX} path" \
-    'SRD/{PREFIX}' "$g14_content"
 done
 
 g14_agents="edm-test-coverage-auditor edm-test-planner edm-test-unit edm-test-component edm-test-composable edm-test-contract edm-test-integration edm-test-e2e edm-test-a11y edm-test-scaffold"
 for g14_a in $g14_agents; do
   g14_acontent="$(cat "${PLUGIN_DIR}/agents/${g14_a}.md" 2>/dev/null)"
   check "G14 -- agents/${g14_a}.md takes INIT_DIR from its launcher" "INIT_DIR" "$g14_acontent"
-  check_absent "G14 -- agents/${g14_a}.md no longer hardcodes the legacy flat srd_root}/{PREFIX} path" \
-    'srd_root}/{PREFIX}' "$g14_acontent"
-  check_absent "G5 -- agents/${g14_a}.md no longer hardcodes the legacy flat bare SRD/{PREFIX} path" \
-    'SRD/{PREFIX}' "$g14_acontent"
 done
 
 g14_qc_auditor="$(cat "${PLUGIN_DIR}/agents/edm-qc-auditor.md" 2>/dev/null)"
@@ -6105,19 +6097,69 @@ check "G14 -- edm-qc-auditor.md now calls edm-state resolve-dir instead of edm-s
   "edm-state resolve-dir <PREFIX>" "$g14_qc_auditor"
 check "G14 -- edm-qc-auditor.md's Output Path section names resolve-dir as the operative command" \
   "Resolve the initiative directory from state: \`edm-state resolve-dir <PREFIX>\`" "$g14_qc_auditor"
-# G5: edm-qc-auditor.md deliberately keeps exactly one bare SRD/{PREFIX} mention (prose
-# describing what edm-state resolve-dir handles, not a hardcoded path -- CA-297 NOTED). Assert
-# the count stays at exactly one so a second, genuine hardcoded-path regression is still caught.
-g14_qc_bare_count="$(printf '%s' "$g14_qc_auditor" | grep -c 'SRD/{PREFIX}' || true)"
-[[ "$g14_qc_bare_count" -eq 1 ]] \
-  && pass "G5 -- edm-qc-auditor.md carries exactly one deliberate bare SRD/{PREFIX} mention (no new residue)" \
-  || fail "G5 -- edm-qc-auditor.md's bare SRD/{PREFIX} count changed from the one deliberate mention (got: ${g14_qc_bare_count})"
 
-# G5: edm-audit-test-quality.md (CA-195 residual, not part of the original G14 enumeration) --
-# its "Fixing gaps found here" section pointed at a hardcoded flat test-coverage.md path.
-g14_audit_test_quality="$(cat "${PLUGIN_DIR}/agents/edm-audit-test-quality.md" 2>/dev/null)"
-check_absent "G5 -- agents/edm-audit-test-quality.md no longer hardcodes the legacy flat bare SRD/{PREFIX} path" \
-  'SRD/{PREFIX}' "$g14_audit_test_quality"
+# =================================================================================
+# G23/CA-195 (round 5, final pass): the check_absent calls above were keyed on a hardcoded
+# 19-file enumeration (7 skills, 10 agents, edm-qc-auditor) -- the same sweep-keyed-on-one-axis
+# shape CA-195 itself was raised for, one axis over. A regression in any of the ~16 unenumerated
+# skill/agent files was invisible to the suite. Replaced with one tree-wide scan over every
+# skills/*/SKILL.md and agents/*.md file for both needles -- but scoped to text INSIDE fenced
+# code blocks only, not the whole file. Empirically, every current occurrence of either needle
+# (7 sites across implement, orchestrator, plan x3, srd x2) is prose describing an artifact's
+# canonical illustrative location ("- **Output**: `.../{PREFIX}/planning.md`", "if
+# `SRD/{PREFIX}/` already exists" narrating edm-validate-prefix's own already-correct check) --
+# never inside a code fence, because none of them is an executable step. The actual CA-195 bug
+# class this exists to catch is a hardcoded path used AS CODE (a shell existence test, a
+# constructed path an agent is told to run against), which only ever appears inside a fence in
+# this plugin's prompt-authoring convention. Scoping to fences catches that class with zero
+# hand-maintained exceptions, rather than a three-entry list of prose shapes that the next
+# rewording could just as easily fall outside of.
+# =================================================================================
+echo
+echo "=== G23/CA-195: no skills/*/SKILL.md or agents/*.md fenced code block hardcodes the flat SRD/{PREFIX} path ==="
+g23_scan_files="$(find "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" -name '*.md' 2>/dev/null | sort)"
+g23_scan_count="$(printf '%s\n' "$g23_scan_files" | grep -c . || true)"
+[[ "${g23_scan_count:-0}" -ge 20 ]] \
+  && pass "G23/CA-195 -- the tree-wide scan enumerates at least 20 files (sanity floor -- a find-command regression would silently scan nothing)" \
+  || fail "G23/CA-195 -- the tree-wide scan found only ${g23_scan_count:-0} skill/agent files, expected at least 20 -- find itself may be broken"
+g23_fence_scan() {
+  awk '
+    /^```/ { infence = !infence; next }
+    infence && ($0 ~ /srd_root\}\/\{PREFIX\}/ || $0 ~ /SRD\/\{PREFIX\}/) { print FILENAME ":" FNR ": " $0 }
+  ' "$1" 2>/dev/null
+}
+g23_violations=""
+while IFS= read -r g23_f; do
+  [[ -n "$g23_f" ]] || continue
+  g23_hits="$(g23_fence_scan "$g23_f")"
+  [[ -n "$g23_hits" ]] && g23_violations="${g23_violations}${g23_hits}"$'\n'
+done <<< "$g23_scan_files"
+[[ -z "$g23_violations" ]] \
+  && pass "G23/CA-195 -- zero fenced-code-block hits for the hardcoded flat path across every skills/*/SKILL.md and agents/*.md file" \
+  || fail "G23/CA-195 -- hardcoded flat SRD/{PREFIX} path found inside a fenced code block:\n${g23_violations}"
+
+# Positive control: plant one hit OUTSIDE a fence (must NOT be flagged, matching the seven
+# existing prose occurrences) and one INSIDE a fence (must be flagged) in the same probe file,
+# proving the scanner draws the line at the fence boundary rather than, say, reading zero bytes
+# and reporting a false-clean result either way.
+g23_probe_dir="$(mktemp -d "${TMP}/edm-g23-probe.XXXXXX")"
+cat > "${g23_probe_dir}/probe.md" << 'EOF'
+- **Output**: `${user_config.srd_root}/{PREFIX}/planning.md` -- prose, outside any fence.
+
+```bash
+if [[ -d "SRD/{PREFIX}/tickets" ]]; then
+  echo "found"
+fi
+```
+EOF
+g23_probe_hits="$(g23_fence_scan "${g23_probe_dir}/probe.md")"
+g23_probe_hit_lines="$(printf '%s\n' "$g23_probe_hits" | grep -c . || true)"
+[[ "${g23_probe_hit_lines:-0}" -eq 1 ]] \
+  && pass "G23/CA-195 -- positive control: the scanner flags exactly the one violation inside the fence, not the prose line outside it" \
+  || fail "G23/CA-195 -- positive control failed: expected exactly 1 fenced hit, got ${g23_probe_hit_lines:-0} -- the assertion above may be vacuous or over-broad"
+check "G23/CA-195 -- the flagged hit is the fenced one, not the prose one" \
+  "SRD/{PREFIX}/tickets" "$g23_probe_hits"
+rm -rf "$g23_probe_dir"
 
 # Positive control: the four agent-launch-template sites named in the finding actually pass
 # INIT_DIR to the agent they spawn (tickets -> edm-ticket-writer, audit-srd -> edm-srd-auditor,
