@@ -18,6 +18,7 @@
 #   bash bin/tests/timing.sh --lint          [--files N] [--lines-per-file N]
 #   bash bin/tests/timing.sh --mermaid-ratio
 #   bash bin/tests/timing.sh --all-lint      [--dir DIR]
+#   bash bin/tests/timing.sh --self-test
 #
 # Run from repo root: bash plugins/edm/bin/tests/timing.sh <mode> [options]
 set -euo pipefail
@@ -92,6 +93,85 @@ _p95() {
 # again (or lowering it) is a one-line change rather than six synchronized ones.
 readonly _P95_SAMPLE_COUNT=20
 
+# ---- --self-test (G35/CA-311): the perl-lookup fallback, _p95's nearest-rank formula and the
+# shipped sample count had ZERO covering assertions anywhere -- any of the three could be
+# silently reverted with every suite in run-all.sh staying green, since timing.sh is not
+# discovered there (deliberate, CA-328 -- it is not a *-smoke.sh file and its bash-3.2-sensitive
+# constructs are never exercised by test:smoke-bash32). This mode is likewise not auto-discovered
+# by anything; run it by hand: bash bin/tests/timing.sh --self-test.
+self_test() {
+  local failures=0 assertions_run=0
+
+  # (1) Force the perl-less fallback path -- same command-shadow idiom bin/tests/wave7-smoke.sh
+  # uses to force flock unavailable -- and confirm _now/_ms_between still return usable values
+  # rather than crashing or emitting garbage (G31/CA-262's own regression class: BSD awk's
+  # systime() is a gawk/mawk extension that aborts on this project's primary dev platform).
+  command() { if [[ "${1:-}" == "-v" && "${2:-}" == "perl" ]]; then return 1; fi; builtin command "$@"; }
+  local st_t0 st_t1 st_ms
+  st_t0="$(_now)"
+  sleep 1
+  st_t1="$(_now)"
+  st_ms="$(_ms_between "$st_t0" "$st_t1")"
+  unset -f command
+  assertions_run=$((assertions_run + 1))
+  if [[ "$st_t0" =~ ^[0-9]+(\.[0-9]+)?$ && "$st_t1" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    echo "self-test PASS: _now returns a usable numeric value on the perl-less awk fallback (t0=${st_t0}, t1=${st_t1})"
+  else
+    echo "self-test FAIL: _now returned a non-numeric value on the perl-less fallback (t0='${st_t0}', t1='${st_t1}')" >&2
+    failures=$((failures + 1))
+  fi
+  assertions_run=$((assertions_run + 1))
+  if [[ "$st_ms" -ge 900 ]]; then
+    echo "self-test PASS: _ms_between reports a plausible elapsed duration on the fallback (${st_ms}ms for a 1s sleep)"
+  else
+    echo "self-test FAIL: _ms_between reported an implausible duration on the fallback (${st_ms}ms for a 1s sleep)" >&2
+    failures=$((failures + 1))
+  fi
+
+  # (2) Pin _p95's nearest-rank index for two known sample vectors: N=20 (the shipped sample
+  # count) must return the 19th order statistic, NOT the maximum -- G16/CA-196's whole point --
+  # while N=10 (the largest of the three pre-fix counts) demonstrably still returns the maximum,
+  # which is exactly why N=20 is the smallest count where the fix takes effect
+  # (ceil(0.95*20)=19 < 20, but ceil(0.95*10)=10).
+  local st_p95_20 st_p95_10
+  st_p95_20="$(_p95 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20)"
+  st_p95_10="$(_p95 1 2 3 4 5 6 7 8 9 10)"
+  assertions_run=$((assertions_run + 1))
+  if [[ "$st_p95_20" -eq 19 ]]; then
+    echo "self-test PASS: _p95 of 20 samples (1..20) returns the 19th order statistic (19), not the maximum"
+  else
+    echo "self-test FAIL: _p95 of 20 samples (1..20) returned ${st_p95_20}, expected 19" >&2
+    failures=$((failures + 1))
+  fi
+  assertions_run=$((assertions_run + 1))
+  if [[ "$st_p95_10" -eq 10 ]]; then
+    echo "self-test PASS: _p95 of 10 samples (1..10) still returns the maximum (10) -- the documented reason N=20 is the shipped count"
+  else
+    echo "self-test FAIL: _p95 of 10 samples (1..10) returned ${st_p95_10}, expected 10" >&2
+    failures=$((failures + 1))
+  fi
+
+  # (3) Pin the shipped sample count itself -- a silent revert of _P95_SAMPLE_COUNT (20 -> 10)
+  # changes nothing either assertion in (2) can see, since both test _p95 directly rather than
+  # through this constant.
+  assertions_run=$((assertions_run + 1))
+  if [[ "$_P95_SAMPLE_COUNT" -eq 20 ]]; then
+    echo "self-test PASS: _P95_SAMPLE_COUNT is the shipped value (20)"
+  else
+    echo "self-test FAIL: _P95_SAMPLE_COUNT is ${_P95_SAMPLE_COUNT}, expected 20" >&2
+    failures=$((failures + 1))
+  fi
+
+  echo
+  if [[ "$failures" -eq 0 ]]; then
+    echo "self-test: PASS (${assertions_run}/${assertions_run} timing-harness assertions verified)"
+    return 0
+  else
+    echo "self-test: FAIL (${failures}/${assertions_run} assertion(s) failed)" >&2
+    return 1
+  fi
+}
+
 # _measure_p95 <count> <outvar> -- <cmd...> -- runs <cmd...> <count> times (its own stdout/stderr
 # discarded and a non-zero exit tolerated -- these are latency probes, not correctness checks),
 # times each run with _now/_ms_between, and writes the nearest-rank p95 (via _p95) into the
@@ -134,6 +214,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$MODE" in
+  --self-test)
+    self_test
+    exit $?
+    ;;
+
   --generate-fixture)
     # AC1/AC7: a reproducible 50-initiative repository so subcommand and --all latency are
     # measured against a fixed, regenerable subject rather than whatever happens to be on disk.
@@ -346,7 +431,7 @@ case "$MODE" in
     ;;
 
   *)
-    echo "usage: timing.sh <--generate-fixture|--subcommands|--phase-complete|--ledger|--session-start|--lint|--mermaid-ratio|--all-lint> [options]" >&2
+    echo "usage: timing.sh <--generate-fixture|--subcommands|--phase-complete|--ledger|--session-start|--lint|--mermaid-ratio|--all-lint|--self-test> [options]" >&2
     exit 2
     ;;
 esac
