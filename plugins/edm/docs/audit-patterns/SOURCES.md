@@ -16,4 +16,4 @@ and `test-coverage.md` files where present.
 
 | Date | Initiative | Audit type | Findings added | Updated by |
 |------|-----------|-----------|---------------|-----------|
-| *(auto-populated by orchestrator after each audit round -- see EDMV2-80a)* | | | | |
+| *(this table is maintained by hand -- nothing in `bin/edm-state` or any skill writes to this file; add a row here yourself when a subsequent update materially changes the pattern library)* | | | | |
