@@ -2824,23 +2824,31 @@ cmd_metrics_report() {
       echo
       local _calib_files=()
       while IFS= read -r _f; do _calib_files+=("$_f"); done < <(list_state_files --archived)
-      # G30 (CA-261): guard on the count of QUALIFYING ROWS (estimated_size set), not the raw
-      # state-FILE count. estimated_size has no guaranteed producer, so a fleet of state files
-      # that all still read "Unknown" previously slipped past a file-count-only guard: the
-      # render below filters on `estimated_size != null`, selects zero rows, and jq exits 0
-      # with empty output -- the "insufficient data" fallback (keyed on jq's exit status) never
-      # fires, and the command silently prints only the header with nothing under it. Counting
-      # the filtered rows directly BEFORE rendering closes that gap regardless of whether any
-      # particular initiative ever actually set estimated_size.
+      # G12/CA-261 (round 5, third pass): G30's guard tested `estimated_size != null`, but
+      # `_cmd_init_render` seeds the literal string "Unknown" at init -- which IS non-null --
+      # so every state file satisfied that guard regardless of whether estimated_size was ever
+      # really set, making it functionally identical to the raw file count it was meant to
+      # replace. The renderer's own predicate additionally requires non-empty phase_durations
+      # (seeded empty at init), which the guard never checked at all, so --calibrate could still
+      # print a bare header with nothing under it on any repository where no phase had
+      # completed -- CA-261's original symptom. This guard now derives from the EXACT same
+      # `select()` the renderer uses below, with an explicit exclusion of the "Unknown"
+      # sentinel, and counts the phase_durations entries the renderer actually groups (summed
+      # across every qualifying file) rather than the qualifying FILE count -- a qualifying file
+      # with an empty phase_durations object contributes zero rows and must not pass the guard.
       local _calib_row_count=0
       if [[ ${#_calib_files[@]} -gt 0 ]]; then
-        _calib_row_count="$(jq -s -r '[.[] | select(.estimated_size != null)] | length' "${_calib_files[@]}" 2>/dev/null || echo 0)"
+        _calib_row_count="$(jq -s -r '
+          [.[] | select(.estimated_size != null and .estimated_size != "Unknown") |
+            (.phase_durations // {}) | to_entries | length
+          ] | add // 0
+        ' "${_calib_files[@]}" 2>/dev/null || echo 0)"
       fi
       if [[ "$_calib_row_count" -eq 0 ]]; then
         echo "  (insufficient data - need at least one completed initiative with estimated_size set)"
       else
         jq -s -r '
-          [.[] | select(.estimated_size != null) | . as $i |
+          [.[] | select(.estimated_size != null and .estimated_size != "Unknown") | . as $i |
             (.phase_durations | to_entries[] | {
               size: $i.estimated_size,
               phase: (.key | sub("_phase$"; "")),
@@ -2858,7 +2866,7 @@ cmd_metrics_report() {
           | .[]
           | "  \(.key): n=\(.count), median_duration=\(.median_duration_s)s, median_cost=$\(.median_cost_usd)"
         ' "${_calib_files[@]}" 2>/dev/null || \
-          echo "  (insufficient data - need at least one completed initiative with estimated_size set)"
+          echo "  (error building the calibration report -- check for malformed state files; the row-count guard above already confirmed qualifying data exists)"
       fi
       ;;
     "")

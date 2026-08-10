@@ -3796,6 +3796,43 @@ set -e
 check "T53 AC10 -- --calibrate output references phase 6" \
   "Small_phase_6" "$t53_calib_out"
 
+# =================================================================================
+# G12/CA-261 (round 5, third pass): the row-count guard tested `estimated_size != null`,
+# but init seeds the literal string "Unknown" (non-null), so every state file satisfied the
+# guard regardless of whether estimated_size was ever really set -- and the guard never
+# checked phase_durations at all, so when the true calibration-worthy dataset was empty,
+# --calibrate printed a bare header with no fallback message at all, not even a wrong row
+# (an empty phase_durations object naturally contributes zero rows to the renderer regardless
+# of the size filter). Isolated in a scratch SRD_ROOT via with_scratch_repo -- this file's
+# earlier T53 AC10 case has already given the SHARED SRD_ROOT a real Small/phase-6 row, so an
+# un-isolated check here would see that unrelated data and could not observe the guard firing.
+# =================================================================================
+echo
+echo "G12/CA-261 -- --calibrate's row-count guard correctly excludes the Unknown sentinel and requires real phase_durations"
+
+g12_unknown_case() {
+  "$EDM_STATE" init G12UNKNOWN >/dev/null
+  local out
+  out="$("$EDM_STATE" metrics-report --calibrate 2>&1)"
+  check "G12/CA-261 -- an Unknown-sized, phase-less initiative alone yields insufficient data, not a bare empty header" \
+    "insufficient data" "$out"
+  check_absent "G12/CA-261 -- no Unknown_phase_* row is ever rendered" \
+    "Unknown_phase" "$out"
+}
+with_scratch_repo g12_unknown_case
+
+g12_empty_case() {
+  "$EDM_STATE" init G12EMPTY >/dev/null
+  "$EDM_STATE" set G12EMPTY estimated_size Medium >/dev/null
+  local out
+  out="$("$EDM_STATE" metrics-report --calibrate 2>&1)"
+  check "G12/CA-261 -- a real-sized initiative with no completed phases still yields insufficient data (the residual this pass closes)" \
+    "insufficient data" "$out"
+  check_absent "G12/CA-261 -- no Medium_phase_* row is rendered with zero phase_durations" \
+    "Medium_phase" "$out"
+}
+with_scratch_repo g12_empty_case
+
 echo
 echo "T53 AC11 -- metrics-report output stays ASCII-only and passes the artifact lint"
 t53_lint_dir="${TMP}/SRD/T53DEFAULT"
