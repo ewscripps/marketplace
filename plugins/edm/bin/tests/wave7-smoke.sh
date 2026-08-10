@@ -4492,7 +4492,29 @@ t67ac11_scratch_body_npm="${t67ac11_scratch_body}
     - npm install -g some-unpinned-tool"
 echo "$t67ac11_scratch_body_npm" | grep -qE 'curl |wget |anthropic\.com|npm install' \
   && pass "T67 AC11 (CA-085 positive control) -- an injected unpinned npm install is actually caught by the widened pattern" \
-  || fail "T67 AC11 (CA-085 positive control) -- injecting an npm install did not trip the widened pattern"
+  || fail "T67 AC11 (CA-085 positive control) -- injecting an unpinned npm install did not trip the widened pattern"
+
+# G43/CA-319: the blocking-job derivation above structurally EXEMPTS every allow_failure job
+# from all of T67 AC11's checks, including the network-call scan -- exactly the two jobs that
+# actually reach the network (validate:plugin-cli, eval:nightly), and eval:nightly is the one
+# job in the pipeline holding ANTHROPIC_API_KEY. A full network ban doesn't fit these jobs (they
+# legitimately need it), but a WEAKER pass belongs here: both npm installs must carry an
+# explicit version pin, so an unpinned install can't silently drift in the least-controlled,
+# secret-bearing corner of the file the way CA-161's package-manager sweep already closed for
+# every blocking job's apk installs.
+for t67ac11_allowfail_job in validate:plugin-cli eval:nightly; do
+  t67ac11_allowfail_body="$(awk -v job="^${t67ac11_allowfail_job}:$" '
+    $0 ~ job {f=1; next}
+    f && /^[^[:space:]#][^#]*:$/ {exit}
+    f {print}
+  ' "$GITLAB_CI_YML")"
+  check "T67 AC11 (G43/CA-319) -- ${t67ac11_allowfail_job}'s npm install is version-pinned" \
+    "npm install -g @anthropic-ai/claude-code@" "$t67ac11_allowfail_body"
+done
+# Positive control: an unpinned npm install line would NOT satisfy the "@" pin needle above --
+# proves the check discriminates pinned from unpinned rather than matching any npm install line.
+check_absent "T67 AC11 (G43/CA-319) -- positive control: a bare unpinned install does not satisfy the pin needle" \
+  "npm install -g @anthropic-ai/claude-code@" "npm install -g @anthropic-ai/claude-code"
 
 # G37/CA-313: G40/CA-271's tightened terminator (excluding '#' from the FIRST character class,
 # not just the rest of the line) is load-bearing on REAL pipeline content -- .gitlab-ci.yml:198

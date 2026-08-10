@@ -593,8 +593,14 @@ validate:plugin-cli:
   <<: *node_edm
   needs: []
   allow_failure: true
+  # G43/CA-319: pinned to an explicit version -- see the header note's CA-161 refresh procedure
+  # (npm equivalent: `npm view @anthropic-ai/claude-code version`), same reproducibility caveat.
+  # Install scripts are NOT disabled: `npm view @anthropic-ai/claude-code scripts` shows a
+  # genuinely required `postinstall: node install.cjs` step that fetches the platform binary
+  # (`bin/claude` is not a plain JS entry point) -- `--ignore-scripts` here would break the
+  # install, not merely tighten it.
   before_script:
-    - npm install -g @anthropic-ai/claude-code || true
+    - npm install -g @anthropic-ai/claude-code@2.1.226 || true
   script:
     - |
       set -u
@@ -643,8 +649,12 @@ eval:nightly:
         - "plugins/edm/**/*"
       when: manual
     - when: never
+  # G43/CA-319: pinned (see validate:plugin-cli's identical note above for the version-pin
+  # refresh procedure and why install scripts stay enabled). This is the one job in the
+  # pipeline holding ANTHROPIC_API_KEY, so an unpinned, least-controlled install here was the
+  # weakest link in the file, not merely a stylistic gap.
   before_script:
-    - npm install -g @anthropic-ai/claude-code
+    - npm install -g @anthropic-ai/claude-code@2.1.226
   script:
     - bash plugins/edm/evals/run-eval.sh
     - |
