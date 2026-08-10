@@ -6895,6 +6895,30 @@ g17_symlink_attack_case() {
 }
 g17_symlink_attack_case
 
+# =================================================================================
+# G20/CA-049 (round 5, final pass): one mechanical sweep -- wave3-smoke.sh and wave4a-smoke.sh
+# still re-derived the whole SCRIPT_DIR path chain inline at their `source .../_harness.sh` line
+# instead of reusing the SCRIPT_DIR variable already set two lines above, and the
+# `${BASH_SOURCE[0]:-$0}` fallback (present at wave4b/wave7) was absent from the other five
+# suites' SCRIPT_DIR line. All seven now share one shape, matching _harness.sh's own docstring.
+# =================================================================================
+echo
+echo "=== G20/CA-049: all seven smoke suites derive SCRIPT_DIR with the \${BASH_SOURCE[0]:-\$0} fallback and source _harness.sh via that variable, never an inline re-derivation ==="
+# Self-avoiding split needle (same idiom T35 AC4/T36 AC8 use elsewhere in this file): this loop
+# scans wave7-smoke.sh's own content among the seven suites, so any single contiguous literal
+# spelling the banned inline-rederivation line would match THIS test's own source text. Neither
+# half below spells the banned line; only the runtime-concatenated value does.
+g20_bad_prefix='source "$(cd "$(dirname "${BASH_SOURCE[0]}")"'
+g20_bad_suffix=' && pwd)/_harness.sh"'
+g20_bad_needle="${g20_bad_prefix}${g20_bad_suffix}"
+for g20_suite in wave3-smoke.sh wave4a-smoke.sh wave4b-smoke.sh wave5-smoke.sh wave6-smoke.sh wave7-smoke.sh harness-smoke.sh; do
+  g20_content="$(cat "${SCRIPT_DIR}/${g20_suite}" 2>/dev/null)"
+  check "G20/CA-049 -- ${g20_suite} derives SCRIPT_DIR with the \${BASH_SOURCE[0]:-\$0} fallback" \
+    'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"' "$g20_content"
+  check_absent "G20/CA-049 -- ${g20_suite} never re-derives the path chain inline at its source line" \
+    "$g20_bad_needle" "$g20_content"
+done
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

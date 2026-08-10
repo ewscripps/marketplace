@@ -3,7 +3,7 @@
 # Run from repo root: bash plugins/edm/bin/tests/wave5-smoke.sh
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 EDM_STATE="${SCRIPT_DIR}/../edm-state"
 
 # Shared assertions / counters (CA-014).

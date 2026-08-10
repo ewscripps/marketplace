@@ -5,7 +5,7 @@
 # Run from repo root: bash plugins/edm/bin/tests/wave6-smoke.sh
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 EDM_STATE="${SCRIPT_DIR}/../edm-state"
 
 # Ensure bin/ is on PATH so edm-lint-artifacts --all can find edm-state

@@ -5,11 +5,11 @@
 # Run from repo root: bash plugins/edm/bin/tests/wave3-smoke.sh
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 EDM_STATE="${SCRIPT_DIR}/../edm-state"
 
 # Shared assertions / counters (CA-014).
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_harness.sh"
+source "${SCRIPT_DIR}/_harness.sh"
 
 # ---- Setup -------------------------------------------------------------------
 # G21 (round-3): harness_scratch_dir honors TMPDIR and installs an EXIT/INT/TERM cleanup trap,

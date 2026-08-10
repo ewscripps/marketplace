@@ -3,11 +3,14 @@
 # formerly the duplicated G18d preamble). Each suite must set SCRIPT_DIR before sourcing this
 # file (every suite already needs SCRIPT_DIR for its own EDM_STATE derivation, so this is never
 # an extra line), then source it AFTER `set -euo pipefail`:
-#   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+#   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   source "${SCRIPT_DIR}/_harness.sh"
 # (G11/CA-049, round 4: this is the form the largest suite, wave7-smoke.sh, actually uses --
 # updated here from the previously-documented inline `$(cd ... && pwd)/_harness.sh` form so the
-# docstring matches actual practice rather than prescribing a shape most suites do not follow.)
+# docstring matches actual practice rather than prescribing a shape most suites do not follow.
+# G20/CA-049, round 5: the `${BASH_SOURCE[0]:-$0}` fallback added here too, closing the second
+# half of the same mismatch -- wave7-smoke.sh actually carries the fallback, but this docstring's
+# own example previously did not, so it modeled wave7's form only halfway.)
 # Each suite still manages its own SCRIPT_DIR / EDM_STATE / TMP setup (TMP via harness_scratch_dir
 # below, CA-049/G21) -- this file provides the shared counters and assertions, the shared
 # _HARNESS_PLUGIN_DIR / _HARNESS_REPO_ROOT root-path exports (every caller reads these instead of

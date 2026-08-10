@@ -4,7 +4,7 @@
 # Run from repo root: bash plugins/edm/bin/tests/harness-smoke.sh
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 # Shared assertions / counters (CA-014).
 source "${SCRIPT_DIR}/_harness.sh"
