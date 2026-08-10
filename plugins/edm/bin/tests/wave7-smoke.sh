@@ -972,16 +972,37 @@ echo
 echo "T61 AC10 -- bash -n passes over every file in plugins/edm/bin/ (incl. bin/tests/*.sh)"
 # CA-019: edm-mermaid-rules.awk is a plain awk source file (loaded via -f, never executed as
 # bash), excluded here the same way .gitlab-ci.yml's real lint:bash-syntax job excludes it.
+# G24/CA-233 (round 5): *.txt added alongside *.awk -- bin/vocabulary-allowlist.txt and
+# bin/vocabulary-prohibited.txt are data files matched by the bin/* glob above, and this loop
+# was syntax-checking them as bash source before this fix, the same class of gap the two real CI
+# jobs (lint:bash-syntax, lint:shellcheck) were also fixed for.
 t61_bashn_fail=0
 for t61_f in "$PLUGIN_DIR"/bin/* "$PLUGIN_DIR"/bin/tests/*.sh; do
   [[ -f "$t61_f" ]] || continue
   case "$t61_f" in
-    *.awk) continue ;;
+    *.awk|*.txt) continue ;;
   esac
   bash -n "$t61_f" 2>/dev/null || { t61_bashn_fail=1; echo "  bash -n FAILED: $t61_f"; }
 done
 [[ $t61_bashn_fail -eq 0 ]] && pass "T61 AC10 -- bash -n passes over every bin/ and bin/tests/ file" \
   || fail "T61 AC10 -- bash -n failed on at least one file (see output above)"
+
+# =================================================================================
+# G24/CA-233 (round 5, third pass): lint:bash-syntax's exclusion was already fixed to *.awk|*.txt
+# in an earlier wave; lint:shellcheck and this suite's own T61 AC10 twin were each missing one of
+# the two extensions (shellcheck missed *.awk, T61 AC10 missed *.txt) -- both fixed above. Assert
+# all three loops share the identical exclusion set so a future edit to just one of them cannot
+# silently re-diverge the other two.
+# =================================================================================
+echo
+echo "=== G24/CA-233: lint:bash-syntax, lint:shellcheck and this suite's own T61 AC10 twin all share the same *.awk|*.txt exclusion ==="
+g24_ci_content="$(cat "$GITLAB_CI_YML" 2>/dev/null)"
+g24_ci_exclusion_count="$(printf '%s\n' "$g24_ci_content" | grep -c '\*\.awk|\*\.txt) continue ;;' || true)"
+[[ "${g24_ci_exclusion_count:-0}" -eq 2 ]] \
+  && pass "G24/CA-233 -- .gitlab-ci.yml's lint:bash-syntax and lint:shellcheck both exclude *.awk and *.txt identically" \
+  || fail "G24/CA-233 -- expected exactly 2 identical '*.awk|*.txt) continue ;;' lines in .gitlab-ci.yml (lint:bash-syntax + lint:shellcheck), found ${g24_ci_exclusion_count:-0} -- the two jobs' exclusion sets have diverged"
+check "G24/CA-233 -- this suite's own T61 AC10 twin uses the identical exclusion set" \
+  '*.awk|*.txt) continue ;;' "$(cat "${PLUGIN_DIR}/bin/tests/wave7-smoke.sh" 2>/dev/null)"
 
 echo
 echo "T61 AC11 -- macOS/Linux divergence points (sed -i, grep -P family, stat -c/-f, mktemp template suffix, date -d, readlink -f, sort -V, head -n -N, printf %q) are all inside a detection branch"

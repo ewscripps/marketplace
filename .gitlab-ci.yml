@@ -221,9 +221,11 @@ lint:shellcheck:
       for f in plugins/edm/bin/* plugins/edm/bin/tests/*.sh plugins/edm/evals/*.sh; do
         [ -f "$f" ] || continue
         case "$f" in
-          # G21/CA-233: *.txt is a data file (e.g. vocabulary-allowlist.txt,
-          # vocabulary-prohibited.txt), never shellcheck-able bash source.
-          *.txt) continue ;;
+          # G24/CA-233 (round 5): *.awk added alongside *.txt -- edm-mermaid-rules.awk is plain
+          # awk source (loaded via `awk -f`, never executed as bash), same reason lint:bash-syntax
+          # above excludes it. *.txt is a data file (vocabulary-allowlist.txt,
+          # vocabulary-prohibited.txt), never shellcheck-able bash source either.
+          *.awk|*.txt) continue ;;
         esac
         COUNT=$((COUNT + 1))
         if shellcheck --shell=bash --include=SC2086,SC2046,SC2048,SC2068 "$f"; then
