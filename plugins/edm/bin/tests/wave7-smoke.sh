@@ -6564,6 +6564,71 @@ t_g46_migrate_body="$(awk '/^cmd_migrate_path\(\)/{f=1} f{print} f && /^}/{exit}
 check_absent "G46 -- migrate-path no longer pre-emptively deletes the carried-over .bak before the write that might need it" \
   'rm -f "${new_state_file}.bak"' "$t_g46_migrate_body"
 
+# =================================================================================
+# G16/CA-304 (round 5): two residuals of the G46 lock-discipline sweep, both in
+# _cmd_migrate_path_move_body's tail -- the destination sweep unlinked the flock lockfile
+# itself under a false "same exception as archive" claim, and the post-failure rollback
+# rename ran with no lock held at all, the one directory move in this file with none.
+# =================================================================================
+t_g16_move_body="$(awk '/^_cmd_migrate_path_move_body\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check "G16/CA-304 -- the migrate move body's destination sweep removes only .lockd" \
+  $'rm -rf "${_dst_lockbase}.lockd"\n' "$t_g16_move_body"
+check_absent "G16/CA-304 -- the migrate move body no longer removes .lockd and .lock together in one rm -rf (the flock lockfile itself is no longer unlinked)" \
+  '"${_dst_lockbase}.lockd" "${_dst_lockbase}.lock"' "$t_g16_move_body"
+check_absent "G16/CA-304 -- the false 'same exception as archive' claim is gone from this file" \
+  "Same narrow, deliberate exception to CA-169 as _cmd_archive_move_body above" "$(cat "$EDM_STATE")"
+check "G16/CA-304 -- the rollback rename is now wrapped in a fresh with_state_lock acquisition, mirroring the forward move" \
+  'with_state_lock "${dst}/.edm-state" _cmd_migrate_path_rollback_body' "$t_g46_migrate_body"
+check_absent "G16/CA-304 -- cmd_migrate_path's post-failure branch no longer calls git_aware_mv bare (unlocked)" \
+  $'    git_aware_mv "$dst" "$src"\n    die' "$t_g46_migrate_body"
+t_g16_rollback_body="$(awk '/^_cmd_migrate_path_rollback_body\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+check "G16/CA-304 -- the rollback body renames dst back to src via git_aware_mv" \
+  'git_aware_mv "$_dst" "$_src"' "$t_g16_rollback_body"
+check "G16/CA-304 -- the rollback body removes the product directory only if it is left empty (rmdir, not rm -rf)" \
+  'rmdir "$_product_dir"' "$t_g16_rollback_body"
+
+# Executing coverage for the rollback path itself. A jq-filter failure (corrupt destination
+# JSON) triggers rollback without touching any directory permission, so it exercises the
+# rollback exclusively -- unlike a permission-based injection, which was tried first and
+# rejected: chmod'ing the source initiative directory to block the later write also blocks
+# with_state_lock's own lock acquisition (mkdir needs write on the same directory), so it can
+# never isolate "forward move succeeded, then only the write failed" from "the lock never
+# acquired at all."
+g16_rollback_case() {
+  "$EDM_STATE" init G16C >/dev/null
+  echo "{ this is not valid json" > "SRD/G16C/.edm-state.json"
+  local out ec=0
+  out="$("$EDM_STATE" migrate-path --product g16prodc --description g16descc G16C 2>&1)" || ec=$?
+  [[ $ec -ne 0 ]] \
+    && pass "G16/CA-304 -- migrate-path refuses (non-zero exit) when the moved state file is corrupt JSON" \
+    || fail "G16/CA-304 -- migrate-path exited 0 despite a jq-filter failure, output: $out"
+  [[ -d "SRD/G16C" ]] \
+    && pass "G16/CA-304 -- the rollback actually moved the directory back to the source path" \
+    || fail "G16/CA-304 -- SRD/G16C not found after rollback -- the directory was not moved back"
+  [[ ! -e "SRD/g16prodc/G16C__g16descc" ]] \
+    && pass "G16/CA-304 -- nothing is left behind at the destination after rollback" \
+    || fail "G16/CA-304 -- SRD/g16prodc/G16C__g16descc still exists after rollback"
+  [[ ! -d "SRD/g16prodc" ]] \
+    && pass "G16/CA-304 -- the product directory this call created is removed on rollback (left empty by the failed move)" \
+    || fail "G16/CA-304 -- SRD/g16prodc still exists after rollback despite holding nothing"
+}
+with_scratch_repo g16_rollback_case
+
+g16_rollback_nonempty_product_case() {
+  "$EDM_STATE" init G16SIB >/dev/null
+  "$EDM_STATE" migrate-path --product g16prodd --description sibdesc G16SIB >/dev/null
+  "$EDM_STATE" init G16D >/dev/null
+  echo "{ also not valid json" > "SRD/G16D/.edm-state.json"
+  "$EDM_STATE" migrate-path --product g16prodd --description g16descd G16D >/dev/null 2>&1 || true
+  [[ -d "SRD/g16prodd/G16SIB__sibdesc" ]] \
+    && pass "G16/CA-304 -- an unrelated sibling initiative already in the product directory survives the rollback" \
+    || fail "G16/CA-304 -- the sibling initiative SRD/g16prodd/G16SIB__sibdesc was destroyed by the rollback's product-dir cleanup"
+  [[ -d "SRD/g16prodd" ]] \
+    && pass "G16/CA-304 -- the product directory itself survives rollback when it is NOT left empty" \
+    || fail "G16/CA-304 -- SRD/g16prodd was removed despite still holding the sibling initiative"
+}
+with_scratch_repo g16_rollback_nonempty_product_case
+
 g46_archive_case() {
   export EDM_MODE="prototype"
   "$EDM_STATE" init G46ARCH >/dev/null

@@ -3123,12 +3123,21 @@ cmd_metrics_report() {
 # see cmd_migrate_path below, which acquires the lock and dispatches here)
 # G17 (CA-206, replaces the G46 pre-rename cleanup this comment used to describe -- see
 # _cmd_archive_move_body above for the full TOCTOU rationale this mirrors): rename FIRST, then
-# remove the lock names at the DESTINATION path once the move is verified. The lock files live
+# remove the lockd names at the DESTINATION path once the move is verified. The lock names live
 # inside the initiative directory itself, so they travel with git_aware_mv (and back again, on
-# the rollback path below) automatically -- there is no window between "lock removed" and
+# the rollback path below) automatically -- there is no window between "lockd removed" and
 # "rename complete" for a fresh contender to mkdir a live lockdir at the SAME source path that
-# with_state_lock's own later unconditional cleanup could then delete out from under it. Same
-# narrow, deliberate exception to CA-169 as _cmd_archive_move_body above.
+# with_state_lock's own later unconditional cleanup could then delete out from under it.
+# G16/CA-304 (round 5): the destination's ".lock" FLOCK FILE itself is deliberately left in
+# place, unlike _cmd_archive_move_body's identical-looking sweep above. Archive's exception is
+# genuinely safe because the destination is permanently archived and no future caller ever
+# targets that path again; migrate-path's destination is the opposite -- it is the new LIVE
+# home, and rmw_state below locks it again moments later, while this function is still running
+# INSIDE with_state_lock's own flock hold on that same file (fd 200 does not close until this
+# body returns). Unlinking a flock target while a contender could re-create a new file at the
+# same name is exactly the inode-reuse hazard CA-169's "never unlink the flock lockfile" default
+# exists to prevent everywhere else in this file -- this site is not actually an exception to
+# that default, and the comment that used to claim it was is corrected here.
 _cmd_migrate_path_move_body() {
   local _src="$1" _dst="$2" _lockbase="$3"
   git_aware_mv "$_src" "$_dst"
@@ -3138,7 +3147,7 @@ _cmd_migrate_path_move_body() {
   fi
   local _dst_lockbase="${_dst}${_lockbase#"$_src"}"
   # G25 (CA-256): also sweep the G49 flock-timeout marker glob at the destination.
-  rm -rf "${_dst_lockbase}.lockd" "${_dst_lockbase}.lock"
+  rm -rf "${_dst_lockbase}.lockd"
   # G15/CA-256 (round 5): see _cmd_archive_move_body's identical fix above for why this glob is
   # looped with a per-file existence test rather than passed as a third, unquoted `rm -rf`
   # argument (word-splittable on any space in $_dst_lockbase).
@@ -3147,6 +3156,23 @@ _cmd_migrate_path_move_body() {
     [[ -e "$_migrate_timeout_marker" ]] || continue
     rm -f "$_migrate_timeout_marker"
   done
+}
+
+# _cmd_migrate_path_rollback_body <dst> <src> <product-dir>   (runs INSIDE with_state_lock,
+# mirroring the forward move above; see cmd_migrate_path's post-write-failure branch)
+# G16/CA-304 (round 5): G46 wrapped the FORWARD rename in with_state_lock but left this
+# post-failure ROLLBACK rename running bare -- the one directory move in this file with no lock
+# held, against G46's own stated principle. A concurrent writer that acquired the destination
+# lock in this post-failure window would have had its critical section renamed out from under
+# it. Locked the same way the forward move is, on the file's CURRENT (destination) lockbase.
+_cmd_migrate_path_rollback_body() {
+  local _dst="$1" _src="$2" _product_dir="$3"
+  git_aware_mv "$_dst" "$_src"
+  # Remove the product directory only if this rollback leaves it empty -- rmdir fails
+  # harmlessly (non-empty, or already gone) rather than needing a separate emptiness check,
+  # and other initiatives may already live under this product directory from an earlier,
+  # unrelated migrate-path call, which must never be destroyed here.
+  rmdir "$_product_dir" 2>/dev/null || true
 }
 
 cmd_migrate_path() {
@@ -3206,7 +3232,10 @@ cmd_migrate_path() {
   if ! rmw_state "$prefix" \
         '.product_name = $p | .initiative_description = $d | .last_updated = $t' \
         --arg p "$product" --arg d "$description" --arg t "$(now_utc)"; then
-    git_aware_mv "$dst" "$src"
+    # G16/CA-304 (round 5): lock this rollback rename the same way the forward one is, on the
+    # file's current (destination) lockbase -- rmw_state's own lock on this same file was
+    # already released by the time it returned above, so acquiring a fresh one here is safe.
+    with_state_lock "${dst}/.edm-state" _cmd_migrate_path_rollback_body "$dst" "$src" "${SRD_ROOT}/${product}"
     die "migrate-path: state update failed (rolled back move): $prefix"
   fi
 
