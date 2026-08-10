@@ -4323,10 +4323,28 @@ t67_sub_out="$(bash "$TIMING_SH" --subcommands --dir "$t67_fixture_dir" 2>&1)" |
 [[ "$t67_sub_exit" -eq 0 ]] \
   && pass "T67 AC14 (G31) -- --subcommands exits 0 against the generated fixture" \
   || fail "T67 AC14 (G31) -- --subcommands exited ${t67_sub_exit} (output: $t67_sub_out)"
-if [[ "$t67_sub_out" =~ p95_ms=([1-9][0-9]*) ]]; then
-  pass "T67 AC14 (G31) -- --subcommands reports a parseable positive p95_ms figure (${BASH_REMATCH[1]})"
+# G27/CA-262 (round 5): a bare [1-9][0-9]* (strictly-positive) regex is only meaningful when
+# timing.sh has sub-second resolution (perl's Time::HiRes). On a perl-less host it falls back to
+# whole-second resolution (_now() above), where p95_ms is 0 unless a sampled invocation happens
+# to straddle a second boundary -- and G16 raising the sample count 10 -> 20 moved the selected
+# p95 index from the maximum (1 crossing needed) to the second-largest (2 crossings needed),
+# roughly halving the pass probability on exactly the perl-less images this repo's CI runs (no
+# apk line installs perl). Any future change to _P95_SAMPLE_COUNT changes that probability again --
+# re-check this assertion's pass rate on a perl-less host when that count moves. Key the
+# strictness to what the timer can actually deliver: non-zero when perl is present and sub-second
+# timing is possible, merely non-negative-integer otherwise.
+if command -v perl >/dev/null 2>&1; then
+  if [[ "$t67_sub_out" =~ p95_ms=([1-9][0-9]*) ]]; then
+    pass "T67 AC14 (G31) -- --subcommands reports a parseable positive p95_ms figure (${BASH_REMATCH[1]})"
+  else
+    fail "T67 AC14 (G31) -- --subcommands produced no parseable positive p95_ms figure (output: $t67_sub_out)"
+  fi
 else
-  fail "T67 AC14 (G31) -- --subcommands produced no parseable positive p95_ms figure (output: $t67_sub_out)"
+  if [[ "$t67_sub_out" =~ p95_ms=([0-9]+) ]]; then
+    pass "T67 AC14 (G31) -- --subcommands reports a parseable non-negative p95_ms figure (${BASH_REMATCH[1]}; perl absent, whole-second resolution, 0 is routine)"
+  else
+    fail "T67 AC14 (G31) -- --subcommands produced no parseable p95_ms figure (output: $t67_sub_out)"
+  fi
 fi
 [[ -n "$t67_fixture_dir" ]] && rm -rf "$t67_fixture_dir"
 
