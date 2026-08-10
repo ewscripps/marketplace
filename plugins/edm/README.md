@@ -205,6 +205,29 @@ See `CLAUDE.md` for the full v2.0 artifact inventory including optional on-deman
 
 Artifacts are reviewed in PRs. Gate approvals show up in git history. Multiple developers see the same in-flight initiative state.
 
+### Runtime files to `.gitignore` (CA-314)
+
+Every initiative directory accumulates a small set of runtime files that are not artifacts and
+should never be committed: a permanent state-file backup (kept forever, for `migrate-path`
+rollback), the advisory lock file (deliberately never unlinked -- see `bin/edm-state`'s own
+`with_state_lock` comment for why removing it would break mutual exclusion), and the transient
+temp files `write_atomic` creates while writing any file (`.edm-state.json` or a `.md` artifact)
+atomically. `edm-init` writes this block into every new initiative's own `.gitignore`
+automatically (unconditionally, regardless of `commit_state_file`); the same block is reproduced
+here as a copy-pasteable reference and for initiatives created before this was automatic:
+
+```gitignore
+.edm-state.json.bak
+.edm-state.json.tmp.*
+.edm-state.lock*
+*.md.tmp.*
+```
+
+`.edm-state.json` itself is tracked and committed by default (`commit_state_file: true`, the
+recommended setting -- see "Project artifact layout" above for why). Set `commit_state_file` to
+`false` in your plugin config to keep it out of git instead; `edm-init` then adds `.edm-state.json`
+to this same per-initiative `.gitignore`.
+
 ## Phase Timing Guidelines
 
 This table is an estimate pending calibration -- judgment-based, not yet regenerated from measured

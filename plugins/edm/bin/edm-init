@@ -160,11 +160,24 @@ export EDM_COMPLIANCE_ENABLED="$COMPLIANCE"
 export EDM_IMPLEMENTATION_MODE="$IMPL_MODE"
 edm-state init "$PREFIX" >/dev/null
 
-# .gitignore behavior: by default the state file is committed.
-# Honor commit_state_file=false by writing a local .gitignore that excludes it.
+# .gitignore behavior (CA-314): the state backup (edm-state:691, permanent by design for
+# migrate-path rollback), the lock file family (edm-state:1034-1035, deliberately never
+# unlinked per CA-169) and write_atomic's transient temp files are runtime files, not
+# artifacts, and must never be committed regardless of commit_state_file -- written
+# unconditionally, unlike the state file itself below. README.md's "Runtime files to
+# .gitignore" section reproduces this same block as a copy-pasteable reference.
+cat > "$DIR/.gitignore" <<'EOF'
+.edm-state.json.bak
+.edm-state.json.tmp.*
+.edm-state.lock*
+*.md.tmp.*
+EOF
+# By default the state file itself is committed. Honor commit_state_file=false by adding it
+# to the same per-initiative .gitignore above, so it travels correctly under an srd_root
+# relocation rather than living in a second, disconnected file.
 COMMIT_STATE="${CLAUDE_PLUGIN_OPTION_COMMIT_STATE_FILE:-true}"
 if [[ "$COMMIT_STATE" != "true" ]]; then
-  echo ".edm-state.json" > "$DIR/.gitignore"
+  echo ".edm-state.json" >> "$DIR/.gitignore"
 fi
 
 # Create and switch to initiative branch when inside a git worktree.

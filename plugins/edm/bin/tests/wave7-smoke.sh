@@ -4680,9 +4680,14 @@ echo "CA-141/CA-142/CA-143/CA-159/CA-025 -- with_state_lock / write_atomic concu
 
 # ---- G53 (round-3 CA-213 re-fix): the prescribed guard comment above the flock() call lands,
 # so a later round does not mistake the never-unlinked lock file for a leak (ledger CA-169).
-t_g53_flock_context="$(awk '/flock -w 10 200/{print NR; exit}' "$EDM_STATE")"
-t_g53_flock_line="${t_g53_flock_context:-0}"
-t_g53_before_flock="$(sed -n "$(( t_g53_flock_line > 10 ? t_g53_flock_line - 10 : 1 )),${t_g53_flock_line}p" "$EDM_STATE")"
+# G38/CA-314: a fixed "10 lines before" window (below) coincidentally matched a COMMENT'S own
+# mention of "flock -w 10 200" (describing the previous design, not the real code line) rather
+# than the actual `( flock -w 10 200 ...` call -- a fixed line-count window is fragile against
+# either the guard comment or the intervening G49 comment growing. Extract the real range
+# instead: from the "# CA-169:" marker line through the real (unindented-comment) flock call.
+t_g53_flock_line="$(awk '/^    \( flock -w 10 200/{print NR; exit}' "$EDM_STATE")"
+t_g53_ca169_line="$(awk '/# CA-169: never `rm -f/{print NR; exit}' "$EDM_STATE")"
+t_g53_before_flock="$(sed -n "${t_g53_ca169_line:-1},${t_g53_flock_line:-1}p" "$EDM_STATE")"
 check "G53 -- the CA-169 guard comment is present immediately above the flock() call" \
   "CA-169" "$t_g53_before_flock"
 check "G53 -- the guard comment states the lock file is never unlinked (inode-keyed exclusion)" \
@@ -5477,32 +5482,45 @@ done
 echo
 echo "=== CA-148/CA-149: .gitignore actually covers the lock/temp paths edm-state derives from lockbase, including a relocated (non-\"SRD\"-named) srd_root ==="
 ca148_gitignore_case() {
-  local scratch repo_root
+  local scratch
   scratch="$(mktemp -d "${TMP}/edm-ca148.XXXXXX")" || { fail "CA-148 -- mktemp failed"; return 1; }
-  repo_root="$(cd "${PLUGIN_DIR}/../.." && pwd)"
-  [[ -f "${repo_root}/.gitignore" ]] || { fail "CA-148 -- repo-root .gitignore not found at ${repo_root}"; return 1; }
 
+  # G38/CA-314: this case used to copy THIS REPOSITORY's own root .gitignore into the scratch
+  # tree before asserting -- structurally incapable of detecting a consumer-project gap, since
+  # every consumer starts with no .gitignore at all and this repo's only happens to cover these
+  # patterns because EDM is dogfooded against its own SRD tree. `edm-init` now writes the
+  # coverage into the INITIATIVE's own per-initiative .gitignore unconditionally (see below), so
+  # this case seeds only a bare repo -- no pre-existing .gitignore of any kind -- and relies
+  # entirely on that per-initiative file being real coverage for a real consumer project.
   ( cd "$scratch" && git init -q && git config user.email t@t && git config user.name t )
-  cp "${repo_root}/.gitignore" "${scratch}/.gitignore"
-  ( cd "$scratch" && git add .gitignore && git commit -qm "seed real .gitignore" )
 
   # Deliberately NOT named "SRD" and nested two levels deep -- reproduces the exact relocated-tree
   # shape CA-149 fixes: a literal "SRD/" prefix in .gitignore never matches this path regardless
   # of depth, because the directory is not named "SRD" at all.
   local relroot="${scratch}/artifacts/nested-root"
 
-  # ---- Real state mutation (CA-148): edm-state init acquires and releases a real lock around
-  # a real write_atomic call, and leaves the state file itself on disk afterward.
+  # ---- Real scaffold (CA-148, and G38/CA-314 below): `edm-init`, not the lower-level
+  # `edm-state init`, so the per-initiative .gitignore edm-init writes is actually exercised --
+  # `edm-state init` alone never writes one. Real lock acquire/release around a real
+  # write_atomic call, leaving the state file itself on disk afterward.
   local init_out init_ec=0
-  init_out="$(EDM_SRD_ROOT="$relroot" edm-state init CA148 2>&1)" || init_ec=$?
+  init_out="$(cd "$scratch" && EDM_SRD_ROOT="$relroot" edm-init CA148 2>&1)" || init_ec=$?
   [[ "$init_ec" -eq 0 ]] \
-    && pass "CA-148 -- edm-state init succeeded against a relocated, non-SRD-named srd_root" \
-    || { fail "CA-148 -- edm-state init failed (exit ${init_ec}): $init_out"; rm -rf "$scratch"; return 1; }
+    && pass "CA-148 -- edm-init succeeded against a relocated, non-SRD-named srd_root" \
+    || { fail "CA-148 -- edm-init failed (exit ${init_ec}): $init_out"; rm -rf "$scratch"; return 1; }
 
   local state_file="${relroot}/CA148/.edm-state.json"
   [[ -f "$state_file" ]] \
-    && pass "CA-148 -- the real state file exists at the path edm-state actually created" \
+    && pass "CA-148 -- the real state file exists at the path edm-init actually created" \
     || { fail "CA-148 -- expected state file not found at ${state_file}"; rm -rf "$scratch"; return 1; }
+
+  # G38/CA-314: the per-initiative .gitignore itself must exist -- proving the mechanism, not
+  # just its git-check-ignore effect below (which could otherwise pass by coincidence if some
+  # OTHER .gitignore up the tree happened to cover these patterns).
+  local per_init_gitignore="${relroot}/CA148/.gitignore"
+  [[ -f "$per_init_gitignore" ]] \
+    && pass "G38/CA-314 -- edm-init wrote a per-initiative .gitignore" \
+    || { fail "G38/CA-314 -- no .gitignore written at ${per_init_gitignore}"; rm -rf "$scratch"; return 1; }
 
   # ---- Enumerate the lock/temp paths edm-state derives from this real state file's own path,
   # using the identical formula cmd_init/with_state_lock/write_atomic use in bin/edm-state
