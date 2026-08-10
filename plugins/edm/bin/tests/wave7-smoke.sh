@@ -5632,9 +5632,16 @@ ca148_gitignore_case() {
   # SAME "${lockdir}.stale.$$" formula the source uses (bin/edm-state's with_state_lock mkdir
   # branch) -- never a hand-typed guess at the shape.
   local lockdir_stale="${lockdir}.stale.$$"
-  # G15/CA-256 (round 5): the G49 flock-timeout marker, using the SAME "${lockfile}.timeout.$$"
-  # formula with_state_lock's flock branch uses (bin/edm-state:1079) -- never a hand-typed guess.
-  # This name matches neither the ".lock" nor ".lockd" shapes above by one character (it hangs
+  # G15/CA-256 (round 5), corrected by G6/CA-337 (round 6): "${lockfile}.timeout.$$" is the
+  # PRE-G17 legacy in-directory marker shape -- tested here for backward-compatible .gitignore
+  # coverage of any marker a pre-G17 plugin version may have left behind, NOT the shape
+  # with_state_lock's flock branch derives today. G17/CA-305 moved the live marker out of the
+  # initiative directory entirely and renamed it: the CURRENT marker is TMPDIR-based
+  # ("${TMPDIR:-/tmp}/edm-state.lock-timeout.$$", derived inside with_state_lock's flock branch
+  # by function, not by a line number that will drift) and therefore never lands in an initiative
+  # directory at all -- it has nothing to do with THIS .gitignore coverage test, which exists
+  # solely so an old-shape marker left behind by an upgrade does not show up as untracked. This
+  # legacy name matches neither the ".lock" nor ".lockd" shapes above by one character (it hangs
   # off ".lock", not ".lockd"), which is exactly how it escaped every existing pattern.
   local lock_timeout_marker="${lockfile}.timeout.$$"
 

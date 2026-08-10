@@ -39,7 +39,7 @@ The findings that were code defects rather than documentation drift:
 - **T55's gate curation was documented and unimplemented**, with a green test asserting the
   documentation.
 - **`edm-lint-artifacts` was 70,168 ms** on a 30-file initiative against a 3,000 ms budget, from
-  two per-line fork loops. Now 978 ms, with the Mermaid-class ratio at 1.19x against a 1.40x
+  two per-line fork loops. Now 2,034 ms p95, with the Mermaid-class ratio at 1.12x against a 1.40x
   ceiling. Byte-identical detection across 17 fixtures, a purpose-built adversarial corpus and a
   full tree scan.
 - **Indented code fences were invisible to the linter**, in both directions: false positives on
@@ -287,7 +287,7 @@ faster. That is exactly what happened here, twice, in both directions. The AC5 r
 (`d591b92`) made the baseline roughly 40x faster without touching the Mermaid class, and the
 ratio got *worse* -- 2.26x to 3.40x -- because class 4 became the dominant cost rather than a
 marginal one. Optimizing class 4 in turn (`ea31ce8`, the same one-process-per-file treatment
-class 1 got) brought it to 1.19x. So the same budget read miss, worse-miss, then pass across
+class 1 got) brought it to 1.12x. So the same budget read miss, worse-miss, then pass across
 three commits, only one of which touched the code it is supposed to be measuring.
 
 The number now passes and the budget is still wrong. It needs re-deriving as a conditional --
