@@ -69,7 +69,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "${SCRIPT_DIR}/../bin/_edm-cli-lib.sh"
 SELF="$(basename "${BASH_SOURCE[0]:-$0}")"
 
-die() { echo "${SELF}: $*" >&2; exit 2; }
+# G21/CA-074: two-argument form -- see bin/edm-validate-prefix's die() for the full rationale.
+# Family-standard default of 2 (usage/environment error). Prefix stays the computed ${SELF}
+# (this script's own pre-existing convention, out of scope for this shape-only fix).
+die() {
+  local msg="$1" code="${2:-2}"
+  echo "${SELF}: $msg" >&2
+  exit "$code"
+}
 
 case "${1:-}" in
   -h|--help) print_help "${BASH_SOURCE[0]:-$0}"; exit 0 ;;

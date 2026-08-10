@@ -132,9 +132,12 @@ MERMAID_RULES_AWK="$SCRIPT_DIR/../bin/edm-mermaid-rules.awk"
 
 DIM_NAMES=(requirement-id-coverage ac-testability mermaid-parse-success coverage-map-bidirectionality lens-jsonl-prose-agreement)
 
+# G21/CA-074: two-argument form -- see bin/edm-validate-prefix's die() for the full rationale.
+# Family-standard default of 2 (usage/environment error).
 die() {
-  echo "score-artifacts: $*" >&2
-  exit 2
+  local msg="$1" code="${2:-2}"
+  echo "score-artifacts: $msg" >&2
+  exit "$code"
 }
 
 usage() {

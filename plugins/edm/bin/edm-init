@@ -19,7 +19,14 @@ SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "${SCRIPT_DIR}/_edm-cli-lib.sh"
 
-die() { echo "edm-init: $*" >&2; exit 1; }
+# G21/CA-074: two-argument form -- see edm-validate-prefix's die() for the full rationale.
+# Default of 1 preserved (this script's own long-standing exit-code contract; every existing
+# call site is single-argument, so this default keeps their behavior unchanged).
+die() {
+  local msg="$1" code="${2:-1}"
+  echo "edm-init: $msg" >&2
+  exit "$code"
+}
 
 # --- Flag parsing ---
 PREFIX=""

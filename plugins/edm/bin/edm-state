@@ -68,7 +68,15 @@ SRD_FILENAME="${EDM_SRD_FILENAME:-${CLAUDE_PLUGIN_OPTION_SRD_FILENAME:-srd.md}}"
 TICKET_PACK_DIRNAME="${EDM_TICKET_PACK_DIRNAME:-${CLAUDE_PLUGIN_OPTION_TICKET_PACK_DIRNAME:-tickets}}"
 HUMAN_HOURLY_RATE_USD="${EDM_HUMAN_HOURLY_RATE_USD:-${CLAUDE_PLUGIN_OPTION_HUMAN_HOURLY_RATE_USD:-150}}"
 
-die() { echo "edm-state: $*" >&2; exit 1; }
+# G21/CA-074: two-argument form -- see edm-validate-prefix's die() for the full rationale.
+# Default of 1 preserved (this script's own long-standing exit-code contract, depended on by
+# many callers/tests; every existing call site is single-argument, so this default keeps their
+# behavior unchanged).
+die() {
+  local msg="$1" code="${2:-1}"
+  echo "edm-state: $msg" >&2
+  exit "$code"
+}
 
 # CA-160: validate HUMAN_HOURLY_RATE_USD once, right next to where its default is established
 # above, rather than letting a bad value reach the jq program-string splice (:2557) or the

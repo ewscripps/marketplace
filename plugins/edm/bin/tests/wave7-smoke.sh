@@ -6919,6 +6919,37 @@ for g20_suite in wave3-smoke.sh wave4a-smoke.sh wave4b-smoke.sh wave5-smoke.sh w
     "$g20_bad_needle" "$g20_content"
 done
 
+# =================================================================================
+# G21/CA-074 (round 5, escalated since round 1): die() forked into three shapes across twelve
+# bin/ and evals/ scripts. Standardized on the two-argument form edm-validate-prefix already
+# carried the rationale for -- avoids a bare `$*` silently swallowing an intended exit-code
+# override into the message text. Each script keeps its own pre-existing default exit code
+# (edm-init and edm-state default to 1, their own long-standing contract; every other script
+# defaults to 2) -- only the SHAPE is unified, not every script's numeric default.
+# =================================================================================
+echo
+echo "=== G21/CA-074: every bin/* and evals/*.sh die() matches the canonical two-argument shape ==="
+g21_die_map="edm-check-grants:2 edm-check-skill-sync:2 edm-check-vocabulary:2 edm-compare-eval:2 edm-init:1 edm-lint-artifacts:2 edm-state:1 edm-sync-canonical-sections:2 edm-validate-prefix:1"
+for g21_pair in $g21_die_map; do
+  g21_script="${PLUGIN_DIR}/bin/${g21_pair%%:*}"
+  g21_default="${g21_pair##*:}"
+  g21_body="$(awk '/^die\(\)/{f=1} f{print} f && /^}/{exit}' "$g21_script" 2>/dev/null)"
+  check "G21/CA-074 -- bin/$(basename "$g21_script")'s die() takes the canonical two-argument form" \
+    'local msg="$1" code="${2:-'"${g21_default}"'}"' "$g21_body"
+  check "G21/CA-074 -- bin/$(basename "$g21_script")'s die() exits via the code variable, not a hardcoded literal" \
+    'exit "$code"' "$g21_body"
+done
+g21_evals_map="run-eval.sh:2 score-artifacts.sh:2 tiering-matrix.sh:2"
+for g21_pair in $g21_evals_map; do
+  g21_script="${PLUGIN_DIR}/evals/${g21_pair%%:*}"
+  g21_default="${g21_pair##*:}"
+  g21_body="$(awk '/^die\(\)/{f=1} f{print} f && /^}/{exit}' "$g21_script" 2>/dev/null)"
+  check "G21/CA-074 -- evals/$(basename "$g21_script")'s die() takes the canonical two-argument form" \
+    'local msg="$1" code="${2:-'"${g21_default}"'}"' "$g21_body"
+  check "G21/CA-074 -- evals/$(basename "$g21_script")'s die() exits via the code variable, not a hardcoded literal" \
+    'exit "$code"' "$g21_body"
+done
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

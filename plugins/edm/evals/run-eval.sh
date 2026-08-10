@@ -77,7 +77,13 @@ source "${SCRIPT_DIR}/../bin/_edm-cli-lib.sh"
 
 export PATH="$EDM_BIN_DIR:$PATH"
 
-die() { echo "run-eval: $*" >&2; exit 2; }
+# G21/CA-074: two-argument form -- see bin/edm-validate-prefix's die() for the full rationale.
+# Family-standard default of 2 (usage/environment error).
+die() {
+  local msg="$1" code="${2:-2}"
+  echo "run-eval: $msg" >&2
+  exit "$code"
+}
 
 usage() {
   print_help "${BASH_SOURCE[0]:-$0}"
