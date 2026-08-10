@@ -3493,28 +3493,40 @@ cmd_record_branch() {
 # git-lock-check
 # Detects a stale .git/index.lock file and removes it if the holding process is gone.
 
-# _git_lock_age_bucket <file> -- coarse, portable age description for <file>'s mtime,
-# using only `find -mmin` (supported identically by GNU and BSD find). Deliberately
-# avoids the GNU-vs-BSD `stat` flag divergence (`-c` on GNU, `-f` on BSD): this file
-# must run unmodified on macOS and Linux, and that exact divergence point is one
-# bin/tests/wave7-smoke.sh's T61 AC11 case asserts never appears anywhere in bin/
-# outside edm-lint-artifacts' own sanctioned detection branch.
-_git_lock_age_bucket() {
-  local f="$1" bucket
+# _git_lock_age_seconds <file> -- portable numeric age of <file>'s mtime, in whole seconds.
+# G32 (CA-303): the previous implementation used `find -mmin` for both the displayed age
+# bucket and the removal gate, on the documented (and FALSE) assumption that `-mmin`'s
+# rounding is identical across GNU and BSD find -- it is not: GNU truncates the fractional
+# minute, BSD/macOS (this project's primary development platform) rounds UP. A lock only
+# 1-2 seconds old already reads as "more than 0 minutes old" on macOS, silently defeating
+# the >=60s TOCTOU-safety gate on exactly the platform contributors develop on. `date -r
+# <file> +%s` (last-modification time, as whole epoch seconds) and `date +%s` (current time)
+# are supported identically by GNU and BSD date -- unlike `stat`, whose flag differs (`-c` on
+# GNU, `-f` on BSD; that divergence point is one bin/tests/wave7-smoke.sh's T61 AC11 case
+# asserts never appears anywhere in bin/ outside edm-lint-artifacts' own sanctioned detection
+# branch, which is why this function does not use it either). Both the displayed bucket and
+# every age-threshold gate in cmd_git_lock_check below derive from one call to this function
+# per check point, so they can never disagree about what "old enough" means.
+_git_lock_age_seconds() {
+  local f="$1" mtime now
+  mtime="$(date -r "$f" +%s 2>/dev/null)" || return 1
+  now="$(date +%s)"
+  echo $(( now - mtime ))
+}
+
+# _git_lock_age_bucket_label <age_seconds> -- coarse age description for an already-computed
+# numeric age, so the display bucket and the caller's gate decision are guaranteed to agree
+# (both read from the same integer, never two separate primitives).
+_git_lock_age_bucket_label() {
+  local age_s="$1" age_min bucket
+  age_min=$(( age_s / 60 ))
   for bucket in 120 60 30 15 5 1; do
-    if find "$f" -mmin "+${bucket}" 2>/dev/null | grep -q .; then
+    if (( age_min > bucket )); then
       echo "more than ${bucket} minute(s)"
       return 0
     fi
   done
-  # G27 (CA-258): cmd_git_lock_check's actual removal gate below uses `find -mmin +0` (true at
-  # roughly >=60s), one threshold finer than this loop's smallest bucket (`-mmin +1`, true only
-  # at roughly >=120s). Without a matching "0" bucket here, a lock aged in the [60s,120s) window
-  # fell through every bucket above to the "less than 1 minute" line even though the removal
-  # gate had already judged it old enough to act on -- the printed age contradicted the action
-  # the tool was about to take. This bucket uses the identical `-mmin +0` test so the two can
-  # never disagree again.
-  if find "$f" -mmin +0 2>/dev/null | grep -q .; then
+  if (( age_min >= 1 )); then
     echo "at least 1 minute"
     return 0
   fi
@@ -3541,8 +3553,12 @@ cmd_git_lock_check() {
   # G43: print the lock's age and (below) whatever holder evidence is found BEFORE
   # acting, so a human reading the output can see the actual reasoning that led to
   # removal or refusal.
-  local lock_age_desc
-  lock_age_desc="$(_git_lock_age_bucket "$lock_file")"
+  # G32 (CA-303): one numeric age computation feeds BOTH the printed bucket and the gate
+  # immediately below, so they can never disagree the way two independent `find -mmin` calls
+  # could on a platform where its rounding direction differs (see _git_lock_age_seconds).
+  local lock_age_s lock_age_desc
+  lock_age_s="$(_git_lock_age_seconds "$lock_file")" || lock_age_s=""
+  lock_age_desc="$([[ -n "$lock_age_s" ]] && _git_lock_age_bucket_label "$lock_age_s" || echo "unknown")"
   echo "found .git/index.lock (age: ${lock_age_desc})"
 
   # G43: age threshold gate FIRST, before any liveness probe at all. A lock file that
@@ -3550,7 +3566,7 @@ cmd_git_lock_check() {
   # the liveness probe below would conclude -- a git process can legitimately hold the
   # lock for a few seconds mid-operation, and this closes the TOCTOU window a raced,
   # instantaneous liveness check alone left open.
-  if find "$lock_file" -mmin +0 2>/dev/null | grep -q .; then
+  if [[ -n "$lock_age_s" ]] && (( lock_age_s >= 60 )); then
     : # older than ~60s -- fall through to the liveness probe below
   else
     echo "WARNING: .git/index.lock is less than a minute old; leaving in place -- a git process may be mid-operation" >&2
@@ -3638,10 +3654,11 @@ cmd_git_lock_check() {
   # else already removed it" case the mv's own failure branch below handles; only a lock file
   # that still EXISTS but now reads younger than the threshold is the residual this re-check
   # closes.
+  local lock_age_s_recheck
   if [[ ! -f "$lock_file" ]]; then
     echo "$lock_file was already removed before this process could act; nothing to do"
     return 0
-  elif find "$lock_file" -mmin +0 2>/dev/null | grep -q .; then
+  elif lock_age_s_recheck="$(_git_lock_age_seconds "$lock_file")" && (( lock_age_s_recheck >= 60 )); then
     : # still older than ~60s immediately before the mv -- safe to proceed
   else
     echo "WARNING: .git/index.lock now reads less than a minute old (re-checked immediately before removal) -- a concurrent process re-acquired it during the liveness probe; leaving in place" >&2

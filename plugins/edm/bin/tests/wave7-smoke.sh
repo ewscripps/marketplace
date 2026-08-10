@@ -6546,8 +6546,10 @@ g39_source_case
 
 echo
 echo "=== G43: git-lock-check gates on lock age, scopes liveness detection to this repo, and removes via atomic mv-aside ==="
+# G32/CA-303: the age gate moved off `find -mmin +0` (rounding differs between GNU and BSD
+# find) onto a numeric `_git_lock_age_seconds` comparison, so the literal needle changes too.
 check "G43 -- an age threshold gates removal before any liveness probe runs" \
-  '-mmin +0' "$(awk '/^cmd_git_lock_check\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+  'lock_age_s >= 60' "$(awk '/^cmd_git_lock_check\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
 check_absent "G43 -- the bare, unscoped 'pgrep -x git' liveness check is gone" \
   "pgrep -x git" "$(awk '/^cmd_git_lock_check\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
 check "G43 -- liveness detection is scoped: lsof against the lock file is tried first" \
@@ -6558,9 +6560,6 @@ check "G43 -- removal uses the atomic mv-aside-then-remove idiom instead of a ba
   'mv "$lock_file" "$stale_aside"' "$(awk '/^cmd_git_lock_check\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
 
 g43_case() {
-  git init -q . >/dev/null 2>&1
-  git config user.email "g43@example.com"; git config user.name "G43 Test"; git config commit.gpgsign false
-  echo seed > seed.txt && git add seed.txt && git commit -q -m seed >/dev/null 2>&1
   local git_dir=".git"
   # A fresh (young) lock file must never be removed regardless of liveness.
   : > "${git_dir}/index.lock"
@@ -6573,9 +6572,37 @@ g43_case() {
     || fail "G43 -- the young lock file was removed despite being under the age threshold"
   rm -f "${git_dir}/index.lock"
 }
-g43_scratch="$(mktemp -d "${TMP}/edm-g43.XXXXXX")"
-( cd "$g43_scratch" && g43_case )
-rm -rf "$g43_scratch"
+# G32/CA-303 (round 5): this and the sibling g32_case below used to wrap their scratch-repo
+# setup in a bare `( ... )` subshell, which -- same class as the G10/CA-251 harness bug found
+# earlier -- silently discards this in-process suite's pass()/fail() counter increments (the
+# PASS/FAIL text still prints via echo, but the counting variables are subshell-local and lost
+# on exit). Switched to with_scratch_repo, which runs the named function IN-PROCESS.
+with_scratch_repo g43_case
+
+# G32/CA-303: the G43 case above only exercises a lock file created and checked within the
+# same wall-clock second (elapsed 0s), which never actually reached the platform-dependent
+# rounding this finding is about. BSD/macOS `find -mmin` rounds UP any nonzero remainder to
+# the next full minute -- confirmed directly: `find <file backdated by exactly 1s> -mmin +0`
+# reads TRUE on this host's real /usr/bin/find, silently defeating the intended >=60s gate --
+# while a file checked in the same instant (elapsed exactly 0s) never exercises that rounding
+# and stayed FALSE, which is why the pre-existing G43 case above never caught this. This case
+# backdates the lock by exactly 2 real seconds -- old enough to rule out same-instant flakes,
+# nowhere near the 60s threshold -- and asserts the gate still correctly refuses.
+g32_case() {
+  local git_dir=".git" epoch
+  : > "${git_dir}/index.lock"
+  epoch=$(( $(date +%s) - 2 ))
+  touch -t "$(date -r "$epoch" +%Y%m%d%H%M.%S)" "${git_dir}/index.lock"
+  local out
+  out="$("$EDM_STATE" git-lock-check 2>&1)" || true
+  check "G32/CA-303 -- a lock file 2 real seconds old is still refused (not rounded up to a full minute)" \
+    "less than a minute old" "$out"
+  [[ -f "${git_dir}/index.lock" ]] \
+    && pass "G32/CA-303 -- the 2-second-old lock file still exists after the refusal" \
+    || fail "G32/CA-303 -- the 2-second-old lock file was removed -- the platform rounding bug regressed"
+  rm -f "${git_dir}/index.lock"
+}
+with_scratch_repo g32_case
 
 # =================================================================================
 # G10/CA-251 (round 5): the prior test above only exercises the REFUSAL branch (a young lock
