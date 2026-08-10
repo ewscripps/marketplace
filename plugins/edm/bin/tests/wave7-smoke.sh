@@ -4828,6 +4828,34 @@ check "G29 -- a lockdir whose pidfile literally contains '0' is reclaimed, not t
 check "G29 -- the locked body runs after a literal-'0'-PID reclaim" \
   "body_out=ca141d-reclaimed" "$t_ca141d_out"
 
+# ---- G42/CA-318: the invalid-PID reclaim path refuses a lockdir less than 1 second old, then
+# reclaims once it ages past the threshold -- agreeing in direction with cmd_git_lock_check's own
+# refuse-when-undetermined behavior instead of the reverse. Asserts the actual printed evidence
+# (both the refusal AND the eventual reclaim), not just the eventual success t_ca141d_out above
+# already proves -- a regression that deleted the age gate entirely would still pass that case.
+t_g42_out="$(
+  set +e
+  trap - EXIT INT TERM HUP
+  tmp142="$(mktemp -d "${TMPDIR:-/tmp}/edm-g42.XXXXXX")" || exit 1
+  command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
+  source "$EDM_STATE" >/dev/null 2>&1
+  lockbase="${tmp142}/state"
+  lockdir="${lockbase}.lockd"
+  mkdir -p "$lockdir"
+  echo "0" > "${lockdir}/pid"
+  ec=0
+  body_out="$(with_state_lock "$lockbase" echo g42-reclaimed 2>"${tmp142}/stderr")" || ec=$?
+  stderr_out="$(cat "${tmp142}/stderr")"
+  rm -rf "$tmp142"
+  printf 'ec=%s body_out=%s\nstderr=%s\n' "$ec" "$body_out" "$stderr_out"
+)" || true
+check "G42/CA-318 -- a fresh (less than 1 second old) invalid-PID lockdir is refused first" \
+  "less than 1 second old -- not reclaiming yet" "$t_g42_out"
+check "G42/CA-318 -- the same lockdir is reclaimed once it ages past the threshold" \
+  "reclaimed a lockdir with an invalid PID" "$t_g42_out"
+check "G42/CA-318 -- the locked body still runs after the delayed reclaim" \
+  "body_out=g42-reclaimed" "$t_g42_out"
+
 # ---- G29 (structural): the invalid-PID reclaim path is atomic (routed through the shared
 # mv-aside helper, same as the dead-PID path) and sleeps before its continue, matching the
 # dead-PID path's own retry pacing rather than tight-looping.

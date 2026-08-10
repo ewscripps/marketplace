@@ -1165,8 +1165,27 @@ with_state_lock() {
       if [[ -f "$pidfile" ]]; then
         holder_pid="$(cat "$pidfile" 2>/dev/null || true)"
         if [[ -z "$holder_pid" || ! "$holder_pid" =~ ^[0-9]+$ || "$holder_pid" == "0" ]]; then
-          _edm_reclaim_stale_lockdir "$lockdir" \
-            "reclaimed a lockdir with an invalid PID '${holder_pid:-missing}' at ${lockdir}"
+          # G42/CA-318: age-gate this reclaim so it agrees in direction with
+          # cmd_git_lock_check's own undetermined-liveness reclaim (which refuses rather than
+          # assumes dead) instead of doing the opposite for the identical "cannot determine
+          # liveness" situation. A live holder writes its PID via `echo $$ > "$pidfile"`
+          # microseconds after `mkdir` succeeds, so an invalid pidfile should be unreachable in
+          # practice for a live holder -- but refusing to reclaim until the lockdir is at least
+          # 1 second old (10x this loop's own 0.1s poll interval) costs nothing on the
+          # genuinely-stale path (already however many seconds or minutes old) and closes the
+          # theoretical reclaim-a-live-lock window on the momentary-write-race path. Falls
+          # through to the retry tail either way, so a lockdir that's merely too young right now
+          # reclaims on a later iteration once it ages past the threshold, within the existing
+          # 50-try/5s total budget.
+          local _lockdir_created_s _lockdir_age_s
+          _lockdir_created_s="$(date -r "$lockdir" +%s 2>/dev/null || echo 0)"
+          _lockdir_age_s=$(( $(date +%s) - _lockdir_created_s ))
+          if [[ "$_lockdir_age_s" -ge 1 ]]; then
+            _edm_reclaim_stale_lockdir "$lockdir" \
+              "reclaimed a lockdir with an invalid PID '${holder_pid:-missing}' at ${lockdir}"
+          else
+            echo "edm-state: state lock ${lockdir} has an invalid PID '${holder_pid:-missing}' but is less than 1 second old -- not reclaiming yet (may be mid-acquisition)" >&2
+          fi
           _lock_retry_or_die "$lockdir" " (invalid PID)"
           continue
         fi
@@ -3609,6 +3628,9 @@ cmd_git_lock_check() {
   command -v lsof >/dev/null 2>&1 && _have_lsof=1
   command -v pgrep >/dev/null 2>&1 && _have_pgrep=1
 
+  # G42/CA-318: with_state_lock's own invalid-pidfile reclaim path (a different lock family,
+  # same "cannot determine liveness" shape) now agrees with the refusal direction here rather
+  # than assuming dead -- see the age gate at that site's own comment.
   if [[ $_have_lsof -eq 0 && $_have_pgrep -eq 0 ]]; then
     echo "WARNING: liveness could not be determined for .git/index.lock (age: ${lock_age_desc}) -- neither lsof nor pgrep is available on this host; refusing to remove rather than guessing" >&2
     return 1
