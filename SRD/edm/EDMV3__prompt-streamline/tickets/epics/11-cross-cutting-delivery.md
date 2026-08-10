@@ -457,12 +457,19 @@ and something on the preserve-untouched list breaks quietly.
       hook is unchanged.
       Verify: `git diff --stat plugins/edm/hooks/hooks.json` shows no change to `:80-90`, and the
       three-class output on a fixed corpus is byte-identical pre- and post-change across wave A.
-- [ ] AC11 (wave exit criteria met): the three-command bypass fails at command 2 and again at command
-      3 on gate, phase and `completed_at` grounds; all smoke suites are green in CI including the
-      flat-layout, `fast-track` and `mini-srd` cases; and `evals/baseline/scores.json` is committed.
-      Verify: `bash plugins/edm/bin/tests/run-all.sh; echo "exit=$?"` prints `exit=0`, the CI
-      default-branch pipeline is green, and
-      `test -s plugins/edm/evals/baseline/scores.json`.
+- [ ] AC11 (wave exit criteria met; the baseline half is blocked on the D23-documented gap,
+      G47/CA-323, same relabeling `epics/03-ci-and-fixture-eval.md` T23 AC13 already applied
+      per decisions.md D36): the three-command bypass fails at command 2 and again at command 3
+      on gate, phase and `completed_at` grounds; all smoke suites are green in CI including the
+      flat-layout, `fast-track` and `mini-srd` cases. The fourth original clause -- "`evals/
+      baseline/scores.json` is committed" -- is not verifiable today: `decisions.md` D23 records
+      that the wave-A baseline has not yet been captured (`plugins/edm/evals/baseline/` holds
+      only `README.md`), so a non-empty-file test against it cannot run in a clean checkout
+      until D23's documented closing command is executed. This is not silently passed and not
+      faked, per D15.
+      Verify: `bash plugins/edm/bin/tests/run-all.sh; echo "exit=$?"` prints `exit=0` and the CI
+      default-branch pipeline is green today; the baseline-commit half is verified by running
+      D23's closing command and then confirming `test -s plugins/edm/evals/baseline/scores.json`.
 <!-- edm-lint-ignore-start -->
 - [ ] AC12 (no gitmoji or attribution violations in the wave): the wave's commits satisfy EDMV3-T63
       AC8 and AC9.
