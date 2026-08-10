@@ -50,7 +50,6 @@
 #   edm-state set-parent <PREFIX> <PARENT>                           # set parent_prefix (validates PARENT exists)
 #   edm-state add-related <PREFIX> <RELATED>                         # append to related_prefixes (idempotent)
 #   edm-state update-patterns <PREFIX> <srd|ticket|qc|code|test-coverage>  # append novel audit findings to pattern library (T121)
-#   edm-state lint <PREFIX>                                           # run edm-lint-artifacts over initiative artifacts (T115)
 # EDM-HELP-END
 set -euo pipefail
 
@@ -4403,17 +4402,6 @@ cmd_add_related() {
   write_handoff_internal "$prefix"
 }
 
-# ---- Artifact lint dispatch (T115) ------------------------------------------
-# lint <PREFIX>
-# Delegates to edm-lint-artifacts and forwards its exit code.
-
-cmd_lint() {
-  [[ $# -eq 1 ]] || die "usage: edm-state lint <PREFIX>"
-  command -v edm-lint-artifacts >/dev/null 2>&1 \
-    || die "edm-lint-artifacts not found on PATH; ensure the EDM plugin bin/ directory is on PATH"
-  edm-lint-artifacts "$1"
-}
-
 # ---- Audit pattern library update (T121) -------------------------------------
 # update-patterns <PREFIX> <srd|ticket|qc|code|test-coverage>
 # Extracts ### headings from the initiative's audit report and inserts novel
@@ -5146,7 +5134,6 @@ case "$cmd" in
   set-parent)           cmd_set_parent "$@" ;;
   add-related)          cmd_add_related "$@" ;;
   update-patterns)      cmd_update_patterns "$@" ;;
-  lint)                 cmd_lint "$@" ;;
   ""|-h|--help|help)
     print_help "$0"
     ;;
