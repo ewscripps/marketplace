@@ -7195,5 +7195,34 @@ check "G39/CA-315 -- run-all.sh describes the shipped seed-zero-then-capture for
   "seeds \`_status=0\` then captures" "$(cat "${PLUGIN_DIR}/bin/tests/run-all.sh")"
 
 echo
+echo "=== G41/CA-317: every .gitlab-ci.yml job that can fail prints a job-named FAILED line, one token across the file ==="
+# The three single-command lint jobs invoked a binary directly with no wrapper, so a failure
+# printed no job-named string at all in a 600-line pipeline log -- exactly the gap the
+# job-named-FAILED convention exists to close. Pins the fix so the next sweep does not have to
+# re-check the whole file by hand (this is the third consecutive round an L7 sweep closed only
+# the sites it happened to check).
+for g41_job in lint:artifacts lint:grants lint:vocabulary; do
+  g41_body="$(awk -v job="^${g41_job}:$" '
+    $0 ~ job {f=1; next}
+    f && /^[^[:space:]#][^#]*:$/ {exit}
+    f {print}
+  ' "$GITLAB_CI_YML")"
+  check "G41/CA-317 -- ${g41_job} prints a job-named FAILED line before exiting" \
+    "${g41_job}: FAILED" "$g41_body"
+done
+check "G41/CA-317 -- eval:nightly names itself in its comparison-failure branch" \
+  "eval:nightly: FAILED" "$(cat "$GITLAB_CI_YML")"
+g41_bare_fail_hits="$(grep -noE '[a-z][a-z0-9:_-]*: FAIL[^E]|[a-z][a-z0-9:_-]*: FAIL$' "$GITLAB_CI_YML" || true)"
+[[ -z "$g41_bare_fail_hits" ]] \
+  && pass "G41/CA-317 -- no job prints a bare 'FAIL' (only 'FAILED') anywhere in the pipeline" \
+  || fail "G41/CA-317 -- found a bare 'FAIL' token (should be 'FAILED'):${g41_bare_fail_hits}"
+# Positive control: prove the bare-FAIL pattern above would actually match its own shape if
+# reintroduced, so the all-clear isn't silently vacuous.
+g41_control_hit="$(printf '%s\n' 'validate:plugin-cli: FAIL -- something broke' | grep -noE '[a-z][a-z0-9:_-]*: FAIL[^E]|[a-z][a-z0-9:_-]*: FAIL$' || true)"
+[[ -n "$g41_control_hit" ]] \
+  && pass "G41/CA-317 -- positive control: the bare-FAIL pattern still matches a reintroduced instance" \
+  || fail "G41/CA-317 -- positive control broken: the bare-FAIL pattern would not catch a reintroduction"
+
+echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

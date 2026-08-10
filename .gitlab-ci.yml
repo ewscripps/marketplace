@@ -161,8 +161,13 @@ lint:artifacts:
     # live runner (see the digest-pinning note in the header).
     - export PATH="$(pwd)/plugins/edm/bin:$PATH"
     - echo "=== edm-lint-artifacts --all (every tracked initiative, both layouts) ==="
-    - bash plugins/edm/bin/edm-lint-artifacts --all
-    - echo "lint:artifacts: OK"
+    - |
+      if bash plugins/edm/bin/edm-lint-artifacts --all; then
+        echo "lint:artifacts: OK"
+      else
+        echo "lint:artifacts: FAILED"
+        exit 1
+      fi
 
 lint:grants:
   stage: lint
@@ -175,8 +180,13 @@ lint:grants:
     - apk add --no-cache bash=5.2.26-r0 jq=1.7.1-r0
   script:
     - echo "=== edm-check-grants (four-source grant/instruction contract) ==="
-    - bash plugins/edm/bin/edm-check-grants
-    - echo "lint:grants: OK -- grants and instruction surfaces consistent"
+    - |
+      if bash plugins/edm/bin/edm-check-grants; then
+        echo "lint:grants: OK -- grants and instruction surfaces consistent"
+      else
+        echo "lint:grants: FAILED"
+        exit 1
+      fi
 
 lint:vocabulary:
   stage: lint
@@ -188,8 +198,13 @@ lint:vocabulary:
     - apk add --no-cache bash=5.2.26-r0 jq=1.7.1-r0
   script:
     - echo "=== edm-check-vocabulary (abolished-vocabulary and override-flag backstop, EDMV3-T30) ==="
-    - bash plugins/edm/bin/edm-check-vocabulary
-    - echo "lint:vocabulary: OK -- vocabulary backstop clean"
+    - |
+      if bash plugins/edm/bin/edm-check-vocabulary; then
+        echo "lint:vocabulary: OK -- vocabulary backstop clean"
+      else
+        echo "lint:vocabulary: FAILED"
+        exit 1
+      fi
 
 # EDMV3-T61 AC8: pinned shellcheck job over the plugin's own bin/ scripts. The loop below
 # unconditionally scans every file directly under plugins/edm/bin/* (not just new/modified
@@ -592,14 +607,14 @@ validate:plugin-cli:
       OUT="$(claude plugin validate plugins/edm/ 2>&1)" || CLI_EC=$?
       printf '%s\n' "$OUT"
       if [ "$CLI_EC" -ne 0 ]; then
-        echo "validate:plugin-cli: FAIL -- claude plugin validate exited ${CLI_EC} (structural error)"
+        echo "validate:plugin-cli: FAILED -- claude plugin validate exited ${CLI_EC} (structural error)"
         exit 1
       fi
       COUNT="$(printf '%s\n' "$OUT" | grep -oE 'Found [0-9]+ warning' | grep -oE '[0-9]+' | head -1)"
       COUNT="${COUNT:-0}"
       BASELINE="$(cat "$BASELINE_FILE" 2>/dev/null || echo 0)"
       if [ "$COUNT" -gt "$BASELINE" ]; then
-        echo "validate:plugin-cli: FAIL -- ${COUNT} warning(s) found, baseline is ${BASELINE} (new warning introduced)"
+        echo "validate:plugin-cli: FAILED -- ${COUNT} warning(s) found, baseline is ${BASELINE} (new warning introduced)"
         exit 1
       fi
       echo "validate:plugin-cli: OK -- ${COUNT} warning(s) at or under baseline ${BASELINE}"
@@ -651,7 +666,7 @@ eval:nightly:
         case "$rc" in
           0) echo "eval comparison: candidate at or above baseline_total minus variance" ;;
           3) echo "eval comparison: NOT ARMED -- no committed baseline (see evals/baseline/README.md)" ;;
-          *) echo "eval comparison: failed with exit $rc"; exit "$rc" ;;
+          *) echo "eval:nightly: FAILED -- eval comparison failed with exit $rc"; exit "$rc" ;;
         esac
       fi
   artifacts:
