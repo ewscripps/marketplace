@@ -7349,5 +7349,29 @@ g41_control_hit="$(printf '%s\n' 'validate:plugin-cli: FAIL -- something broke' 
   || fail "G41/CA-317 -- positive control broken: the bare-FAIL pattern would not catch a reintroduction"
 
 echo
+echo "=== G51/CA-327: the four per-class violation loops in edm-lint-artifacts route through one shared helper, not four copy-pasted bodies ==="
+# CA-008 was a real P1 that shipped as a divergence between two of the four hand-copied loops
+# (the PCRE unicode branch read a different field count than its own fallback sibling, disabling
+# ignore-marker suppression for the unicode class on the branch CI takes). Structural checks
+# only -- the four loops' actual runtime behavior is already exercised by every attribution/
+# unicode/leaked-tool-tag assertion elsewhere in this suite, and the full smoke suite staying
+# green after this extraction is itself the regression proof for those.
+g51_edm_lint_content="$(cat "${PLUGIN_DIR}/bin/edm-lint-artifacts")"
+check "G51/CA-327 -- the shared per-class reporting helper is defined" \
+  "_lint_report_class_hits() {" "$g51_edm_lint_content"
+g51_call_count="$(grep -c '_lint_report_class_hits "' "${PLUGIN_DIR}/bin/edm-lint-artifacts")"
+[[ "$g51_call_count" -eq 4 ]] \
+  && pass "G51/CA-327 -- all four violation classes (attribution, unicode x2 platform branches, leaked-tool-tag) call the shared helper" \
+  || fail "G51/CA-327 -- found ${g51_call_count} call site(s) of the shared helper, expected exactly 4"
+# The read-loop shape itself now exists exactly ONCE in the whole file (inside the shared
+# helper) -- this is what makes CA-008's class of divergence structurally impossible: there is
+# only one place left where "how many fields does the read loop parse" could differ, and all
+# four call sites (including both unicode platform branches) share it.
+g51_readloop_count="$(grep -c 'while IFS=: read -r lineno _rest' "${PLUGIN_DIR}/bin/edm-lint-artifacts")"
+[[ "$g51_readloop_count" -eq 1 ]] \
+  && pass "G51/CA-327 -- the per-class read-loop shape exists exactly once (inside the shared helper), not hand-copied per class" \
+  || fail "G51/CA-327 -- the read-loop shape appears ${g51_readloop_count} time(s), expected exactly 1"
+
+echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

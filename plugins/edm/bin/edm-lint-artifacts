@@ -223,6 +223,34 @@ collect_md_files() {
     2>/dev/null
 }
 
+# ---- Helper: shared per-class violation reporting loop -----------------------------------------
+# _lint_report_class_hits <class> <file> <ignore_set> <grep-command...> -- runs
+# <grep-command...> <file> (a `-n`-numbered grep, the command supplied WITHOUT its own trailing
+# <file> argument, which this helper appends), skips any line covered by <ignore_set>, extracts
+# the standard 120-char CRLF-stripped snippet, and calls report_violation. G51/CA-327: this body
+# used to be copy-pasted four times (class 1 attribution, class 2's two platform branches, class
+# 3 leaked-tool-tag) -- CA-008 was a real P1 that shipped as a divergence between two of those
+# four copies (the PCRE branch read a different field count than its own fallback sibling,
+# disabling ignore-marker suppression for the unicode class on the branch CI takes). One shared
+# body makes that divergence class structurally impossible to reintroduce.
+#
+# Process substitution (`< <(...)`), not a `<grep-command> | while` pipeline, is REQUIRED here:
+# report_violation increments the CALLER's own `violations` counter via bash's dynamic scoping
+# (the same mechanism `_lock_retry_or_die`'s `tries` counter in bin/edm-state relies on), and a
+# pipeline's last stage runs in a subshell in bash by default, which would silently discard every
+# increment from inside this loop -- process substitution keeps the `while read` in the current
+# shell instead.
+_lint_report_class_hits() {
+  local class="$1" file="$2" ignore_set="$3"
+  shift 3
+  local lineno _rest snippet
+  while IFS=: read -r lineno _rest; do
+    is_ignored_line "$lineno" "$ignore_set" && continue
+    snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | tr -d '\r' | cut -c1-120 || true)"
+    report_violation "$class" "$file" "$lineno" "$snippet"
+  done < <("$@" "$file" 2>/dev/null || true)
+}
+
 # ---- Helper: scan a list of files across all violation classes --------------------------------
 # scan_md_files <file...> -- prints 'path:line: <class>: <snippet>' per violation and increments
 # the global `violations`. Shared by prefix mode, --all mode and --path mode so there is exactly
@@ -297,13 +325,7 @@ scan_md_files() {
   for i in "${!FILES[@]}"; do
     file="${FILES[$i]}"
     [[ "${UNREADABLE_FLAGS[$i]}" -eq 1 ]] && continue
-    local ignore_set lineno _rest snippet
-    ignore_set="${IGNORE_SETS[$i]}"
-    while IFS=: read -r lineno _rest; do
-      is_ignored_line "$lineno" "$ignore_set" && continue
-      snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | tr -d '\r' | cut -c1-120 || true)"
-      report_violation "attribution" "$file" "$lineno" "$snippet"
-    done < <(grep -niF -f "$ATTR_PATTERN_FILE" "$file" 2>/dev/null || true)
+    _lint_report_class_hits "attribution" "$file" "${IGNORE_SETS[$i]}" grep -niF -f "$ATTR_PATTERN_FILE"
   done
 
   # ---- Class 2: Non-ASCII (Unicode) bytes ---------------------------------------
@@ -311,26 +333,17 @@ scan_md_files() {
     for i in "${!FILES[@]}"; do
       file="${FILES[$i]}"
       [[ "${UNREADABLE_FLAGS[$i]}" -eq 1 ]] && continue
-      local ignore_set lineno _rest snippet
-      ignore_set="${IGNORE_SETS[$i]}"
-      while IFS=: read -r lineno _rest; do
-        is_ignored_line "$lineno" "$ignore_set" && continue
-        snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | tr -d '\r' | cut -c1-120 || true)"
-        report_violation "unicode" "$file" "$lineno" "$snippet"
-      done < <(grep -nP '[^\x00-\x7F]' "$file" 2>/dev/null || true)
+      _lint_report_class_hits "unicode" "$file" "${IGNORE_SETS[$i]}" grep -nP '[^\x00-\x7F]'
     done
   else
-    # Fallback: LC_ALL=C grep for bytes > 0x7F
+    # Fallback: LC_ALL=C grep for bytes > 0x7F. Routed through `env` so the LC_ALL=C prefix
+    # survives being passed as ordinary positional arguments to the shared helper below (a bare
+    # `LC_ALL=C grep ...` array element would be exec'd as a literal, nonexistent command named
+    # "LC_ALL=C" rather than an env-var assignment).
     for i in "${!FILES[@]}"; do
       file="${FILES[$i]}"
       [[ "${UNREADABLE_FLAGS[$i]}" -eq 1 ]] && continue
-      local ignore_set lineno _rest snippet
-      ignore_set="${IGNORE_SETS[$i]}"
-      while IFS=: read -r lineno _rest; do
-        is_ignored_line "$lineno" "$ignore_set" && continue
-        snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | tr -d '\r' | cut -c1-120 || true)"
-        report_violation "unicode" "$file" "$lineno" "$snippet"
-      done < <(LC_ALL=C grep -nv '^[[:print:][:space:]]*$' "$file" 2>/dev/null || true)
+      _lint_report_class_hits "unicode" "$file" "${IGNORE_SETS[$i]}" env LC_ALL=C grep -nv '^[[:print:][:space:]]*$'
     done
   fi
 
@@ -342,13 +355,7 @@ scan_md_files() {
   for i in "${!FILES[@]}"; do
     file="${FILES[$i]}"
     [[ "${UNREADABLE_FLAGS[$i]}" -eq 1 ]] && continue
-    local ignore_set lineno _rest snippet
-    ignore_set="${IGNORE_SETS[$i]}"
-    while IFS=: read -r lineno _rest; do
-      is_ignored_line "$lineno" "$ignore_set" && continue
-      snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | tr -d '\r' | cut -c1-120 || true)"
-      report_violation "leaked-tool-tag" "$file" "$lineno" "$snippet"
-    done < <(grep -nE "$_TAG_PATTERN" "$file" 2>/dev/null || true)
+    _lint_report_class_hits "leaked-tool-tag" "$file" "${IGNORE_SETS[$i]}" grep -nE "$_TAG_PATTERN"
   done
 
   # ---- Class 4: Mermaid literal-semicolon (EDMV3-T43) ---------------------------
