@@ -5409,12 +5409,18 @@ ca148_gitignore_case() {
   # SAME "${lockdir}.stale.$$" formula the source uses (bin/edm-state's with_state_lock mkdir
   # branch) -- never a hand-typed guess at the shape.
   local lockdir_stale="${lockdir}.stale.$$"
+  # G15/CA-256 (round 5): the G49 flock-timeout marker, using the SAME "${lockfile}.timeout.$$"
+  # formula with_state_lock's flock branch uses (bin/edm-state:1079) -- never a hand-typed guess.
+  # This name matches neither the ".lock" nor ".lockd" shapes above by one character (it hangs
+  # off ".lock", not ".lockd"), which is exactly how it escaped every existing pattern.
+  local lock_timeout_marker="${lockfile}.timeout.$$"
 
   touch "$lockfile"
   mkdir -p "$lockdir"
   touch "$statetmp"
   touch "$mdtmp"
   mkdir -p "$lockdir_stale"
+  touch "$lock_timeout_marker"
 
   local ca148_path ca148_label ca148_entry
   for ca148_entry in \
@@ -5422,7 +5428,8 @@ ca148_gitignore_case() {
     "${lockdir}|.edm-state.lockd/ (with_state_lock's mkdir-spinlock fallback)" \
     "${statetmp}|.edm-state.json.tmp.* (write_atomic staging the state file itself)" \
     "${mdtmp}|*.md.tmp.* (write_atomic staging an arbitrary artifact, e.g. decisions.md)" \
-    "${lockdir_stale}|.edm-state.lockd.stale.PID (with_state_lock's atomic stale-lock-aside name, G29/CA-141 + G52/CA-212)"
+    "${lockdir_stale}|.edm-state.lockd.stale.PID (with_state_lock's atomic stale-lock-aside name, G29/CA-141 + G52/CA-212)" \
+    "${lock_timeout_marker}|.edm-state.lock.timeout.PID (with_state_lock's G49 flock-timeout marker, G15/CA-256)"
   do
     ca148_path="${ca148_entry%%|*}"
     ca148_label="${ca148_entry#*|}"
@@ -5436,6 +5443,62 @@ ca148_gitignore_case() {
   rm -rf "$scratch"
 }
 ca148_gitignore_case
+
+# =================================================================================
+# G15/CA-256 (round 5): the CA-148 case above only proves .gitignore covers the marker's name --
+# it never proved either destination sweep (_cmd_archive_move_body, _cmd_migrate_path_move_body)
+# actually REMOVES one. Plant a real flock-timeout marker and confirm the archive sweep removes
+# it from the archived destination, exercising the quoted, looped glob fix directly rather than
+# grepping for its source text.
+# =================================================================================
+echo
+echo "=== G15/CA-256: the archive move body's marker sweep actually removes a flock-timeout marker, not just .gitignores it ==="
+g15_archive_sweep_case() {
+  export EDM_MODE="prototype"
+  "$EDM_STATE" init G15ARCH >/dev/null
+  unset EDM_MODE
+  "$EDM_STATE" approve-gate G15ARCH 1 >/dev/null
+  local state_g15arch="SRD/G15ARCH/.edm-state.json"
+  jq '.current_phase = 2 | .phase_durations["2_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
+    "$state_g15arch" > "${state_g15arch}.tmp" && mv "${state_g15arch}.tmp" "$state_g15arch"
+  local lockbase="${state_g15arch%.json}"
+  local timeout_marker="${lockbase}.lock.timeout.99999"
+  touch "$timeout_marker"
+  local out ec=0
+  out="$("$EDM_STATE" archive G15ARCH 2>&1)" || ec=$?
+  [[ $ec -eq 0 ]] \
+    && pass "G15/CA-256 -- archive still succeeds with a flock-timeout marker present at the source" \
+    || fail "G15/CA-256 -- archive failed (exit ${ec}) with a flock-timeout marker present: $out"
+  local dst_marker="SRD/.archived/G15ARCH/.edm-state.lock.timeout.99999"
+  [[ ! -e "$dst_marker" ]] \
+    && pass "G15/CA-256 -- the flock-timeout marker is actually removed from the archived destination (the sweep ran, not merely .gitignored)" \
+    || fail "G15/CA-256 -- the flock-timeout marker leaked into the archived destination at ${dst_marker}"
+  [[ -d "SRD/.archived/G15ARCH" ]] \
+    && pass "G15/CA-256 -- the archived directory itself exists (the marker sweep did not abort or skip the move)" \
+    || fail "G15/CA-256 -- SRD/.archived/G15ARCH not found after archive"
+}
+with_scratch_repo g15_archive_sweep_case
+
+g15_migrate_sweep_case() {
+  "$EDM_STATE" init G15MIG >/dev/null
+  local state_g15mig="SRD/G15MIG/.edm-state.json"
+  local lockbase="${state_g15mig%.json}"
+  local timeout_marker="${lockbase}.lock.timeout.88888"
+  touch "$timeout_marker"
+  local out ec=0
+  out="$("$EDM_STATE" migrate-path --product g15prod --description g15desc G15MIG 2>&1)" || ec=$?
+  [[ $ec -eq 0 ]] \
+    && pass "G15/CA-256 -- migrate-path still succeeds with a flock-timeout marker present at the source" \
+    || fail "G15/CA-256 -- migrate-path failed (exit ${ec}) with a flock-timeout marker present: $out"
+  local dst_marker="SRD/g15prod/G15MIG__g15desc/.edm-state.lock.timeout.88888"
+  [[ ! -e "$dst_marker" ]] \
+    && pass "G15/CA-256 -- the flock-timeout marker is actually removed from the migrated destination" \
+    || fail "G15/CA-256 -- the flock-timeout marker leaked into the migrated destination at ${dst_marker}"
+  [[ -f "SRD/g15prod/G15MIG__g15desc/.edm-state.json" ]] \
+    && pass "G15/CA-256 -- the migrated state file itself exists (the marker sweep did not abort the move)" \
+    || fail "G15/CA-256 -- SRD/g15prod/G15MIG__g15desc/.edm-state.json not found after migrate-path"
+}
+with_scratch_repo g15_migrate_sweep_case
 
 # =================================================================================
 # G5 (round-3 Wave 7b, RE-OPENED CA-036) / G1 (round-4, CA-036 widened): tripwire against the

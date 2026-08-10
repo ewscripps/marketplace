@@ -2722,7 +2722,18 @@ _cmd_archive_move_body() {
   # G25 (CA-256): also sweep the G49 flock-timeout marker glob (${lockbase}.lock.timeout.<pid>),
   # which matches neither ".lockd" nor a bare ".lock" and would otherwise be left behind at the
   # archived destination.
-  rm -rf "${_dst_lockbase}.lockd" "${_dst_lockbase}.lock" ${_dst_lockbase}.lock.timeout.*
+  rm -rf "${_dst_lockbase}.lockd" "${_dst_lockbase}.lock"
+  # G15/CA-256 (round 5): the glob for the marker sweep was previously a THIRD, unquoted `rm -rf`
+  # argument -- word-splittable on any space in $_dst_lockbase (srd_root and product_name are not
+  # charset-validated against spaces), which could silently defeat this cleanup or hand rm -rf a
+  # truncated path. Loop the glob (safe: a `for` expansion iterates matched names, it does not
+  # word-split them) with a per-file existence test, since an unmatched glob with nullglob unset
+  # yields the literal pattern string as the sole "match."
+  local _archive_timeout_marker
+  for _archive_timeout_marker in "${_dst_lockbase}".lock.timeout.*; do
+    [[ -e "$_archive_timeout_marker" ]] || continue
+    rm -f "$_archive_timeout_marker"
+  done
 }
 
 cmd_watch_impl() {
@@ -3127,7 +3138,15 @@ _cmd_migrate_path_move_body() {
   fi
   local _dst_lockbase="${_dst}${_lockbase#"$_src"}"
   # G25 (CA-256): also sweep the G49 flock-timeout marker glob at the destination.
-  rm -rf "${_dst_lockbase}.lockd" "${_dst_lockbase}.lock" ${_dst_lockbase}.lock.timeout.*
+  rm -rf "${_dst_lockbase}.lockd" "${_dst_lockbase}.lock"
+  # G15/CA-256 (round 5): see _cmd_archive_move_body's identical fix above for why this glob is
+  # looped with a per-file existence test rather than passed as a third, unquoted `rm -rf`
+  # argument (word-splittable on any space in $_dst_lockbase).
+  local _migrate_timeout_marker
+  for _migrate_timeout_marker in "${_dst_lockbase}".lock.timeout.*; do
+    [[ -e "$_migrate_timeout_marker" ]] || continue
+    rm -f "$_migrate_timeout_marker"
+  done
 }
 
 cmd_migrate_path() {
