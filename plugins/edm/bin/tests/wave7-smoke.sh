@@ -6015,6 +6015,84 @@ echo
 echo "=== G8 (round-3 Wave 7c) / CA-186 G3 (round-4 Wave 8b, round-5): a trailing-slash, doubled ./, trailing /., bare '.', './', '..', or absolute srd_root must never silently disable commit-time enforcement ==="
 g8_srd_root_case
 
+echo
+echo "=== G44/CA-320: the existence guard resolves against the repo top-level path, not the hook's cwd, and stays silent for a non-EDM project on the default root ==="
+g44_srd_root_case() {
+  local scratch cmdfile cmd out ec
+  scratch="$(mktemp -d "${TMP}/edm-g44.XXXXXX")" || { fail "G44 -- mktemp failed"; return 1; }
+  mkdir -p "${scratch}/SRD/FOOG44" "${scratch}/bin" "${scratch}/subdir"
+  ( cd "$scratch" && git init -q && git config user.email t@t && git config user.name t )
+
+  cat > "${scratch}/bin/edm-state" <<'EOS'
+#!/bin/bash
+case "$1" in
+  resolve-dir) echo "SRD/FOOG44"; exit 0 ;;
+esac
+EOS
+  cat > "${scratch}/bin/edm-lint-artifacts" <<'EOS'
+#!/bin/bash
+echo "SRD/FOOG44/planning.md:1: unicode: synthetic violation"
+exit 1
+EOS
+  chmod +x "${scratch}/bin/edm-state" "${scratch}/bin/edm-lint-artifacts"
+  echo "hello" > "${scratch}/SRD/FOOG44/planning.md"
+  ( cd "$scratch" && git add SRD/FOOG44/planning.md bin/edm-state bin/edm-lint-artifacts )
+
+  cmdfile="${scratch}/hook-command.sh"
+  jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' \
+    "${PLUGIN_DIR}/hooks/hooks.json" > "$cmdfile" 2>/dev/null
+  cmd="$(cat "$cmdfile" 2>/dev/null || true)"
+  if [[ -z "$cmd" ]]; then
+    fail "G44 -- could not extract the PreToolUse git-commit hook command from hooks.json"
+    rm -rf "$scratch"
+    return 1
+  fi
+
+  # Case 1 (CA-320 defect 1): running from a SUBDIRECTORY of the repo, with the default
+  # (unset) EDM_SRD_ROOT, must still find the repo-root SRD/ directory -- the pre-fix version
+  # checked "-d SRD" against the hook's own cwd (the subdirectory), where it never exists,
+  # producing a false "does not exist" diagnostic and silently dropping all enforcement.
+  ec=0
+  out="$(cd "${scratch}/subdir" && PATH="${scratch}/bin:${PATH}" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 2 && "$out" == *"FOOG44"* ]] \
+    && pass "G44/CA-320 -- run from a subdirectory, the default srd_root still resolves against the repo root and blocks (hook exit 2)" \
+    || fail "G44/CA-320 -- run from a subdirectory produced exit=${ec}, output: ${out} (expected exit 2 naming FOOG44 -- the existence check must resolve against the repo root, not the hook's cwd)"
+
+  rm -rf "$scratch"
+}
+g44_srd_root_case
+
+g44_silent_default_case() {
+  local scratch cmdfile cmd out ec
+  scratch="$(mktemp -d "${TMP}/edm-g44silent.XXXXXX")" || { fail "G44 (silent-default) -- mktemp failed"; return 1; }
+  ( cd "$scratch" && git init -q && git config user.email t@t && git config user.name t )
+  echo "hello" > "${scratch}/README.md"
+  ( cd "$scratch" && git add README.md )
+
+  cmdfile="${scratch}/hook-command.sh"
+  jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' \
+    "${PLUGIN_DIR}/hooks/hooks.json" > "$cmdfile" 2>/dev/null
+  cmd="$(cat "$cmdfile" 2>/dev/null || true)"
+  if [[ -z "$cmd" ]]; then
+    fail "G44 (silent-default) -- could not extract the PreToolUse git-commit hook command from hooks.json"
+    rm -rf "$scratch"
+    return 1
+  fi
+
+  # Case 2 (CA-320 defect 2): a project with NO SRD/ directory and no explicit EDM_SRD_ROOT --
+  # exactly this repository's own six other plugins' shape, and every non-EDM project on the
+  # default configuration -- must exit 0 with NO diagnostic on any channel. Pre-fix, this printed
+  # an [EDM] error line on every commit anywhere in a repository that simply doesn't use EDM.
+  ec=0
+  out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 0 && -z "$out" ]] \
+    && pass "G44/CA-320 -- a non-EDM project (no SRD/, default srd_root) exits 0 with no diagnostic on any channel" \
+    || fail "G44/CA-320 -- non-EDM project produced exit=${ec}, output: '${out}' (expected silent exit 0 -- an unset default that does not exist must not be treated as a misconfiguration)"
+
+  rm -rf "$scratch"
+}
+g44_silent_default_case
+
 # =================================================================================
 # CA-253 G8 (round-4 Wave 8b): the five UserPromptExpansion gate hooks must refuse with exit 2
 # (the code Claude Code actually treats as blocking), not exit 1 (non-blocking, expansion
