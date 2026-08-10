@@ -1075,15 +1075,31 @@ with_state_lock() {
     # this project's own CI images). Set before the fork so a nested with_state_lock call
     # invoked from inside the subshell inherits depth 1 and is caught by the guard above, the
     # same technique the mkdir branch already used for its own subshell.
+    # G17/CA-305 (round 5): the marker used to live inside the (tracked, potentially
+    # group-writable) initiative directory, alongside the lockfile itself, and was created with
+    # a truncating, symlink-following `: >` redirect. Two defects that one rewrite closes: (1) a
+    # local user has a window to plant a symlink at the marker's predictable PID-derived name and
+    # have it truncated; (2) if the marker write fails for any reason (e.g. the artifact
+    # directory happens to be read-only), the existence check below sees nothing and a bare,
+    # message-free exit 99 reaches roughly thirty bare mutator callers -- precisely the
+    # misreport G49 built this whole marker mechanism to eliminate, reintroduced in that
+    # sub-case. Now: derived under TMPDIR (writability no longer depends on the artifact
+    # directory at all), created with `mkdir` (atomic, fails on ANY existing name -- file,
+    # directory, or a pre-planted symlink -- unlike a redirect, which follows and truncates a
+    # symlink instead of refusing it).
     local _lock_ec=0 _lock_timeout_marker
-    _lock_timeout_marker="${lockfile}.timeout.$$"
-    rm -f "$_lock_timeout_marker" 2>/dev/null || true
+    _lock_timeout_marker="${TMPDIR:-/tmp}/edm-state.lock-timeout.$$"
+    rm -rf "$_lock_timeout_marker" 2>/dev/null || true
     _EDM_TRAP_DEPTH=1
-    ( flock -w 10 200 || { : > "$_lock_timeout_marker" 2>/dev/null; exit 99; }; "$@" ) 200>"${lockfile}" || _lock_ec=$?
+    ( flock -w 10 200 || { mkdir "$_lock_timeout_marker" 2>/dev/null; exit 99; }; "$@" ) 200>"${lockfile}" || _lock_ec=$?
     _EDM_TRAP_DEPTH=0
     if [[ -e "$_lock_timeout_marker" ]]; then
-      rm -f "$_lock_timeout_marker" 2>/dev/null || true
+      rm -rf "$_lock_timeout_marker" 2>/dev/null || true
       die "state lock timeout after 10s on ${lockfile} (another edm-state process may be holding it)"
+    elif [[ $_lock_ec -eq 99 ]]; then
+      # G17/CA-305: the marker mkdir itself failed (e.g. TMPDIR is not writable) -- still name
+      # the timeout rather than silently returning a bare 99 to a bare mutator caller.
+      die "state lock timeout after 10s on ${lockfile} (another edm-state process may be holding it) -- the timeout marker could not be created at ${_lock_timeout_marker} (check TMPDIR writability)"
     fi
     return $_lock_ec
   else
@@ -2728,7 +2744,11 @@ _cmd_archive_move_body() {
   # charset-validated against spaces), which could silently defeat this cleanup or hand rm -rf a
   # truncated path. Loop the glob (safe: a `for` expansion iterates matched names, it does not
   # word-split them) with a per-file existence test, since an unmatched glob with nullglob unset
-  # yields the literal pattern string as the sole "match."
+  # yields the literal pattern string as the sole "match." G17/CA-305 (round 5) moved the
+  # marker's home to TMPDIR, so a marker created from here on never lands inside an initiative
+  # directory to begin with -- this sweep is kept regardless, as a backward-compatible cleanup
+  # for any pre-G17 marker a not-yet-upgraded run may have left behind before this directory is
+  # archived.
   local _archive_timeout_marker
   for _archive_timeout_marker in "${_dst_lockbase}".lock.timeout.*; do
     [[ -e "$_archive_timeout_marker" ]] || continue
@@ -3150,7 +3170,9 @@ _cmd_migrate_path_move_body() {
   rm -rf "${_dst_lockbase}.lockd"
   # G15/CA-256 (round 5): see _cmd_archive_move_body's identical fix above for why this glob is
   # looped with a per-file existence test rather than passed as a third, unquoted `rm -rf`
-  # argument (word-splittable on any space in $_dst_lockbase).
+  # argument (word-splittable on any space in $_dst_lockbase). G17/CA-305 (round 5) moved the
+  # marker's home to TMPDIR -- see the same function's comment for why this sweep is kept as a
+  # backward-compatible cleanup regardless.
   local _migrate_timeout_marker
   for _migrate_timeout_marker in "${_dst_lockbase}".lock.timeout.*; do
     [[ -e "$_migrate_timeout_marker" ]] || continue

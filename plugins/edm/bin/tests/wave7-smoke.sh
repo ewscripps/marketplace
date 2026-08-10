@@ -6842,6 +6842,44 @@ else
   echo "  SKIP: G49 live-timeout sub-case -- flock(1) not available on this host"
 fi
 
+# =================================================================================
+# G17/CA-305 (round 5): the flock-timeout marker's TWO defects -- a symlink-attackable
+# truncating redirect, and silent failure with no diagnostic if the marker write fails. Both
+# reachable only under genuine flock contention (unavailable on this host, per G49 above), so
+# these cases test the marker MECHANISM directly rather than driving it through a real timeout.
+# =================================================================================
+echo
+echo "=== G17/CA-305: the flock-timeout marker is derived under TMPDIR and created with mkdir, not a truncating redirect inside the artifact directory ==="
+g17_edm_state_content="$(cat "$EDM_STATE")"
+check "G17/CA-305 -- the marker is derived under TMPDIR, not inside the lockfile's own (tracked) directory" \
+  '_lock_timeout_marker="${TMPDIR:-/tmp}/edm-state.lock-timeout.$$"' "$g17_edm_state_content"
+check "G17/CA-305 -- the timeout branch creates the marker with mkdir (atomic, refuses any existing name)" \
+  'mkdir "$_lock_timeout_marker" 2>/dev/null; exit 99' "$g17_edm_state_content"
+check_absent "G17/CA-305 -- the timeout branch no longer creates the marker with a truncating, symlink-following redirect" \
+  ': > "$_lock_timeout_marker"' "$g17_edm_state_content"
+check "G17/CA-305 -- a secondary diagnostic arm still names the timeout when the marker mkdir itself fails" \
+  'elif [[ $_lock_ec -eq 99 ]]; then' "$g17_edm_state_content"
+check "G17/CA-305 -- the secondary diagnostic's message still contains the same 'state lock timeout' text the primary one uses" \
+  'the timeout marker could not be created' "$g17_edm_state_content"
+
+echo "  mechanism case: mkdir refuses a pre-planted symlink at the marker's name; a truncating redirect would not have"
+g17_symlink_attack_case() {
+  local target marker mkdir_ec=0
+  target="$(mktemp "${TMP}/edm-g17-secret.XXXXXX")"
+  marker="${TMP}/edm-g17-marker.$$"
+  printf 'secret content\n' > "$target"
+  ln -s "$target" "$marker"
+  mkdir "$marker" 2>/dev/null || mkdir_ec=$?
+  [[ $mkdir_ec -ne 0 ]] \
+    && pass "G17/CA-305 -- mkdir refuses to create the marker over a pre-planted symlink (the attack window this fix closes)" \
+    || fail "G17/CA-305 -- mkdir succeeded over a pre-planted symlink -- the attack window is still open"
+  [[ "$(cat "$target" 2>/dev/null)" == "secret content" ]] \
+    && pass "G17/CA-305 -- the symlink target's content is untouched (mkdir neither follows nor truncates a symlink, unlike ': >')" \
+    || fail "G17/CA-305 -- the symlink target's content was altered by the marker-creation attempt"
+  rm -f "$target" "$marker"
+}
+g17_symlink_attack_case
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
