@@ -6091,6 +6091,83 @@ g44_silent_default_case() {
 g44_silent_default_case
 
 # =================================================================================
+# G1/CA-320 (round 6): CA-320's own fix repointed the existence guard and the staged-path
+# matcher at the repository root, but left the two CONSUMERS (edm-state resolve-dir,
+# edm-lint-artifacts) resolving EDM_SRD_ROOT against the hook's own cwd -- so a commit from a
+# subdirectory silently dropped all enforcement even though the guard above it passed. This
+# case runs the REAL hook body against the REAL edm-state/edm-lint-artifacts binaries (not
+# stubs -- g44_srd_root_case above stubs both, which cannot observe a resolution-base mismatch
+# between the guard and its consumers) with a genuine staged attribution-trailer violation, from
+# a subdirectory of a scratch repo, under both the default git config and `diff.relative=true`
+# (the second sub-defect: the matcher must survive an ambient config that would otherwise make
+# `git diff --cached --name-only` print cwd-relative paths and exclude everything outside it).
+# =================================================================================
+echo
+echo "=== G1/CA-320 (round 6): the git-commit hook, run from a subdirectory with a REAL staged violation, still blocks via the real edm-lint-artifacts/edm-state binaries; the diff.relative pin survives an ambient diff.relative=true config; no regression from the repo root ==="
+g1_ca320_real_violation_case() {
+  local scratch cmdfile cmd out ec
+  scratch="$(mktemp -d "${TMP}/edm-g1-ca320.XXXXXX")" || { fail "G1/CA-320 -- mktemp failed"; return 1; }
+  ( cd "$scratch" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
+
+  # A real initiative, scaffolded by the real edm-init binary (not a stub), so resolve-dir has a
+  # genuine state file to find at SRD/GCA320/.edm-state.json.
+  ( cd "$scratch" && PATH="${PLUGIN_DIR}/bin:${PATH}" edm-init GCA320 >/dev/null 2>&1 )
+  if [[ ! -f "${scratch}/SRD/GCA320/.edm-state.json" ]]; then
+    fail "G1/CA-320 -- setup failed: edm-init did not create SRD/GCA320/.edm-state.json"
+    rm -rf "$scratch"
+    return 1
+  fi
+
+  mkdir -p "${scratch}/subdir"
+  printf '# note\n\nCo-Authored-By: Someone <someone@example.com>\n' > "${scratch}/SRD/GCA320/violation.md"
+  ( cd "$scratch" && git add SRD/GCA320/violation.md )
+
+  cmdfile="${scratch}/hook-command.sh"
+  jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' \
+    "${PLUGIN_DIR}/hooks/hooks.json" > "$cmdfile" 2>/dev/null
+  cmd="$(cat "$cmdfile" 2>/dev/null || true)"
+  if [[ -z "$cmd" ]]; then
+    fail "G1/CA-320 -- could not extract the PreToolUse git-commit hook command from hooks.json"
+    rm -rf "$scratch"
+    return 1
+  fi
+
+  # Case 1: default git config, run from a SUBDIRECTORY -- the pre-fix consumers re-derived
+  # EDM_SRD_ROOT="./SRD" relative to the subdirectory (which has no SRD/), so resolve-dir found
+  # nothing, the prefix was skipped via `|| continue`, and the commit went through clean.
+  ec=0
+  out="$(cd "${scratch}/subdir" && PATH="${PLUGIN_DIR}/bin:${PATH}" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 2 && "$out" == *"violation.md"* ]] \
+    && pass "G1/CA-320 -- run from a subdirectory with a real staged attribution-trailer violation, the hook blocks (exit 2) via the real edm-lint-artifacts binary" \
+    || fail "G1/CA-320 -- subdirectory run produced exit=${ec}, output: ${out} (expected exit 2 naming violation.md -- resolve-dir/edm-lint-artifacts must receive the same repo-root-anchored EDM_SRD_ROOT the existence guard already uses)"
+
+  # Case 2: same subdirectory run, but with diff.relative=true configured on the repo -- the
+  # hook's `git -c diff.relative=false diff --cached --name-only` pin must defeat this ambient
+  # setting, not merely happen to agree with it. Without the pin, `git diff --cached --name-only`
+  # honors diff.relative, prints paths relative to cwd, and EXCLUDES any staged path outside cwd
+  # entirely -- from the subdirectory that is every staged path, so prefixes would be empty and
+  # `test -z "$prefixes" && exit 0` would fire with no diagnostic.
+  ( cd "$scratch" && git config diff.relative true )
+  ec=0
+  out="$(cd "${scratch}/subdir" && PATH="${PLUGIN_DIR}/bin:${PATH}" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 2 && "$out" == *"violation.md"* ]] \
+    && pass "G1/CA-320 -- with diff.relative=true configured on the repo, the hook's -c diff.relative=false pin still detects and blocks (exit 2)" \
+    || fail "G1/CA-320 -- with diff.relative=true, subdirectory run produced exit=${ec}, output: ${out} (expected exit 2 -- the pin must defeat the ambient diff.relative config, not merely agree with its default)"
+  ( cd "$scratch" && git config --unset diff.relative )
+
+  # Case 3 (no regression on the working path): re-run the identical case from the REPO ROOT
+  # (the path CA-320's round-5 fix already covered) and confirm it still blocks.
+  ec=0
+  out="$(cd "$scratch" && PATH="${PLUGIN_DIR}/bin:${PATH}" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 2 && "$out" == *"violation.md"* ]] \
+    && pass "G1/CA-320 -- re-run of the same violation from the repo root still blocks (exit 2, no regression on the working path)" \
+    || fail "G1/CA-320 -- repo-root run produced exit=${ec}, output: ${out} (expected exit 2 naming violation.md)"
+
+  rm -rf "$scratch"
+}
+g1_ca320_real_violation_case
+
+# =================================================================================
 # CA-253 G8 (round-4 Wave 8b): the five UserPromptExpansion gate hooks must refuse with exit 2
 # (the code Claude Code actually treats as blocking), not exit 1 (non-blocking, expansion
 # proceeds anyway despite the refusal message being shown). Both refusal sites in each hook body
