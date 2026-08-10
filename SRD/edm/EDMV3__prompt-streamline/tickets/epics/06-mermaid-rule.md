@@ -417,7 +417,8 @@ by construction.
       `grep -n 'edm-lint-artifacts --help' plugins/edm/CLAUDE.md` shows the bin/ table row
       deferring to `--help`; and
       `bash plugins/edm/bin/edm-lint-artifacts --help 2>&1 | grep -cE '^#   (attribution|unicode|leaked-tool-tag|mermaid-semicolon|unterminated-fence|scan-error|unreadable)( |$)'`
-      prints `7`. This mirrors `bin/tests/wave7-smoke.sh:2228-2234`'s "T43 AC12" assertions.
+      prints `7`. This mirrors `bin/tests/wave7-smoke.sh`'s "T43 AC12" test case (cited by name
+      per CA-321/G45 -- a line-range citation here had already gone stale).
 
 ### Technical Notes
 

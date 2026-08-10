@@ -677,7 +677,8 @@ runtime.
       `bash plugins/edm/bin/edm-lint-artifacts --help 2>&1 | grep -cE '^#   (attribution|unicode|leaked-tool-tag|mermaid-semicolon|unterminated-fence|scan-error|unreadable)( |$)'`
       prints `7` (all seven emitted classes enumerated); and `grep -rl 'TaskCompleted' plugins/edm/CLAUDE.md | wc -l`
       and `grep -rl 'lifecycle_mode.*partial' plugins/edm/CLAUDE.md | wc -l` each print `0`. This
-      mirrors `bin/tests/wave7-smoke.sh:5475-5478`'s "G9" assertions (`check_absent` on "four
+      mirrors `bin/tests/wave7-smoke.sh`'s "G9" test case (cited by name per CA-321/G45 -- a
+      line-range citation here had already gone stale) (`check_absent` on "four
       violation classes", `check` on "edm-lint-artifacts --help").
 - [ ] AC5 (state-field table complete): the table documents every field added by this initiative --
       `schema_version` with its integer value set and the minimum version each new check requires, the
