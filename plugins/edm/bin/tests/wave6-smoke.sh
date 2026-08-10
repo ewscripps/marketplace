@@ -206,11 +206,30 @@ gates_out2="$(call_edm_helper required_gates_for_mode standard standard "1 3" | 
 check "required_gates_for_mode(standard, standard, phases 1+3 skipped) = only gate 3" "3" "$gates_out2"
 check_absent "gate 1 absent when its origin phase (1) is skipped" "1 " "$gates_out2 "
 
+# G36/CA-312: check() is a substring match, so an expected "1" is satisfied by an actual "1 2 "
+# just as much as by "1 " -- these two cases prove PRESENCE where the contract they guard is
+# EXCLUSIVITY (gate suppression is the entire purpose of the prototype and mini-srd modes here),
+# so a regression that returns the full gate list instead of the suppressed subset would pass
+# both. Asserted as exact string equality instead, matching :203's own already-correct shape.
 gates_out3="$(call_edm_helper required_gates_for_mode prototype standard "3 4 5 6" | tr '\n' ' ')"
-check "required_gates_for_mode(prototype, standard, phases 3-6 skipped) = only gate 1 (phase 1 <= terminal 2)" "1" "$gates_out3"
+[[ "$gates_out3" == "1 " ]] \
+  && pass "required_gates_for_mode(prototype, standard, phases 3-6 skipped) = only gate 1 (phase 1 <= terminal 2)" \
+  || fail "required_gates_for_mode(prototype, standard, phases 3-6 skipped) = '${gates_out3}', expected exactly '1 '"
 
-gates_mini="$(call_edm_helper required_gates_for_mode mini-srd standard "2 4 5" | tr '\n' ' ')"
-check "required_gates_for_mode(mini-srd, standard, phases 2/4/5 skipped) = only gate 1 (phase1, gates 2/3 origins skipped)" "1" "$gates_mini"
+# G36/CA-312: this case's expected value was ALSO wrong, masked by the same substring bug --
+# gate 2's origin phase is 3 (audit-srd), not 2, so mini-srd's real skipped-phases contract
+# (phases 4 and 5 only, per skills/audit-srd/SKILL.md's `skip-phase <PREFIX> 4`/`5` calls -- SRD
+# writing itself, phase 2, still happens for mini-srd, just fused with what would be phase-4
+# content) never skips gate 2's origin. CLAUDE.md's "merged Gate 2+3" is a UI label for gate 2
+# covering both SRD and ticket-pack review in one approval event, not a suppression of gate 2
+# itself -- only gate 3 (origin phase 5) is actually excluded. Input corrected from the
+# unrealistic "2 4 5" to the real "4 5" skip set; the result is unaffected either way since gate
+# 2's origin (phase 3) is in neither list, but the realistic input avoids implying phase 2 is
+# ever skipped for this mode.
+gates_mini="$(call_edm_helper required_gates_for_mode mini-srd standard "4 5" | tr '\n' ' ')"
+[[ "$gates_mini" == "1 2 " ]] \
+  && pass "required_gates_for_mode(mini-srd, standard, phases 4/5 skipped) = gates 1 and 2 (gate 3's origin, phase 5, is skipped; gate 2's origin, phase 3, is not)" \
+  || fail "required_gates_for_mode(mini-srd, standard, phases 4/5 skipped) = '${gates_mini}', expected exactly '1 2 '"
 
 # ---- AC4: edm-init seeds skipped_phases for mini-srd / prototype --------------
 echo
