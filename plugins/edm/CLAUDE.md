@@ -844,8 +844,11 @@ check that consults `schema_version` is to record its own minimum in a `# requir
 `bin/edm-state` carry that comment today; three do not, and adding them is outstanding work rather
 than a sanctioned exception:
 
-- `cmd_approve_gate`'s code-audit convergence precheck (needs `>= 2`) -- the surrounding comment
-  explains the gating in prose but does not use the canonical form.
+- `cmd_approve_gate`'s code-audit convergence precheck -- G1/CA-182 made this precheck run
+  UNCONDITIONALLY; `schema_version >= 2` no longer gates whether it runs at all, only whether
+  its exit-3 ("no JSONL findings ledger") arm degrades to a warning (pre-wave-B initiative) or
+  hard-refuses (wave-B and later). The surrounding comment explains this in prose but does not
+  use the canonical `# requires schema_version >= N` form.
 - `cmd_archive`'s wave-B sub-check block (needs `>= 2`) -- reads "gated on schema_version >= 2",
   which is the right number in the wrong shape, so a grep for the canonical string misses it.
 - `cmd_audit_converged` (needs `>= 2`) -- no schema comment at all.

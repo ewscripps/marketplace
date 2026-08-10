@@ -371,10 +371,15 @@ provision_scratch
 #   live permission prompt, not a hard security boundary. bypassPermissions is deliberately not
 #   used: it would ignore the allow-list below entirely, which is strictly worse than the
 #   bounded-but-not-airtight posture documented here.
-# Allowed tools: the union of every phase skill's own declared allowed-tools (plan, srd,
-#   audit-srd) plus the four Bash prefix matchers above, because those skills' own orchestration
-#   steps pipe `edm-state ... | jq ...` and a headless run must not stall waiting on a tool grant
-#   that would otherwise be answered live by a human. No bare Bash grant, no WebFetch/WebSearch.
+# Allowed tools (CA-316, corrected to actually reproduce the string below): the union of every
+#   phase skill's own declared allowed-tools (plan, srd, audit-srd), MINUS AskUserQuestion --
+#   plan and audit-srd both declare it for their live HITL gate, but a headless eval run can
+#   never answer one, so it is deliberately dropped here, not merely omitted by oversight --
+#   PLUS `LS` (not in any of the three skills' own frontmatter, added because the driver's own
+#   orchestration needs it) and the four Bash prefix matchers below, because those skills' own
+#   orchestration steps pipe `edm-state ... | jq ...` and a headless run must not stall waiting
+#   on a tool grant that would otherwise be answered live by a human. No bare Bash grant, no
+#   WebFetch/WebSearch.
 # --plugin-dir: loads the edm plugin (and its bin/ PATH entries and hooks) for this session
 #   only, from this checkout, never a globally installed copy.
 # No `--bare`: verified live on claude 2.1.220 that `--bare` strips stored subscription/OAuth

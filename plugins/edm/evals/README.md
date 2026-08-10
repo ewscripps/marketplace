@@ -83,10 +83,13 @@ scratch tree.
   so this harness does not go stale as models rotate.
 - **Permission posture**: `--permission-mode acceptEdits` so file edits are auto-accepted (no
   interactive prompt a headless run cannot answer), combined with a tight
-  `--allowedTools`/`--disallowedTools` pair -- the union of what `skills/plan/SKILL.md`,
-  `skills/srd/SKILL.md`, and `skills/audit-srd/SKILL.md` each declare in their own frontmatter,
-  plus `Bash(jq *)` for the inline `jq` usage those skills document, minus `WebFetch`/`WebSearch`/
-  `KillShell`/`BashOutput`. `--permission-mode bypassPermissions` is deliberately never used: it
+  `--allowedTools`/`--disallowedTools` pair. `run-eval.sh`'s own `CLAUDE_ALLOWED_TOOLS` /
+  `CLAUDE_DISALLOWED_TOOLS` assignment (search the script for that name) is the single
+  authoritative definition, with its own comment immediately above explaining every addition and
+  subtraction from the three phase skills' declared allowed-tools (CA-316: this section
+  previously hand-re-derived the string and, by the time it was checked, no longer matched --
+  omitting the deliberate `AskUserQuestion` subtraction and undercounting the Bash prefix
+  matchers). `--permission-mode bypassPermissions` is deliberately never used: it
   would ignore the allow-list entirely, which is exactly the containment property this harness
   needs.
 - **Plugin directory**: `--plugin-dir <this checkout's plugins/edm>`, so the run always exercises
