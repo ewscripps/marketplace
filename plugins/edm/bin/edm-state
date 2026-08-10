@@ -3831,7 +3831,14 @@ cmd_render_ledger() {
   # Ordering is total, not just by severity (Technical Notes): sort_by([sev_rank, .id]) so two
   # P1s with adjacent IDs never swap between runs (AC2, determinism).
   local body
+  # G18/CA-378: every cell-bound field is passed through esc_cell before interpolation, so a
+  # pipe or backslash occurring naturally in free-text fields (titles, components -- case
+  # patterns, regexes, glob sets, enum diagnostics all contain literal pipes) cannot terminate
+  # a markdown table cell early and shift every later column. Backslash is escaped first so the
+  # backslash esc_cell itself introduces for a pipe is never re-escaped on a second pass.
   if ! body="$(jq -rs '
+      def esc_cell: (if . == null then "" elif (type == "string") then . else tostring end)
+        | gsub("\\\\"; "\\\\") | gsub("\\|"; "\\|");
       def coerce_status: if .status == "deferred" then (.status = "open") else . end;
       def sev_rank: if .sev == "P0" then 0 elif .sev == "P1" then 1 elif .sev == "P2" then 2 else 3 end;
       (map(coerce_status) | sort_by([sev_rank, .id])) as $sorted
@@ -3841,7 +3848,7 @@ cmd_render_ledger() {
           ["| ID | Severity | Status | Lens(es) | Component | Summary | Raised Round | Resolved Round |",
            "|----|----------|--------|----------|-----------|---------|--------------|----------------|"]
           + ($findings | map(
-              "| \(.id) | \(.sev) | \(.status) | \(.lenses | join("+")) | \(.component // "(missing)") | \(.title) | \(.raised_round // "") | \(.resolved_round // "") |"
+              "| \(.id | esc_cell) | \(.sev | esc_cell) | \(.status | esc_cell) | \(.lenses | join("+") | esc_cell) | \(.component // "(missing)" | esc_cell) | \(.title | esc_cell) | \(.raised_round // "" | esc_cell) | \(.resolved_round // "" | esc_cell) |"
             ))
         ) as $table
       | (
@@ -3850,7 +3857,7 @@ cmd_render_ledger() {
           + (if ($noted | length) == 0
              then ["", "(none)"]
              else (["" ] + ($noted | to_entries | map(
-                     "\(.key + 1). **\(.value.title)** (\(.value.id), \(.value.lenses | join("+"))) -- \(.value.component // "(missing)")"
+                     "\(.key + 1). **\(.value.title | esc_cell)** (\(.value.id | esc_cell), \(.value.lenses | join("+") | esc_cell)) -- \(.value.component // "(missing)" | esc_cell)"
                    )))
              end)
         ) as $decisions

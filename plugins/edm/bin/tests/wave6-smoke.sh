@@ -2732,6 +2732,39 @@ check_fails "T26 AC10 -- render-ledger with no JSONL refuses, naming 'no code au
   && pass "T26 AC10 -- no findings-ledger.md written when the JSONL is absent" \
   || fail "T26 AC10 -- findings-ledger.md was written despite the missing JSONL"
 
+# ---- G18/CA-378 (pipe-escaping): a pipe-bearing title must not shift table columns ----------
+echo
+echo "G18 -- render-ledger escapes pipes in cell-bound fields (case patterns, regexes, glob sets)"
+"$EDM_STATE" init T26PIPE >/dev/null
+T26PIPE_DIR="$TMP/SRD/T26PIPE"
+mkdir -p "${T26PIPE_DIR}/code-audit"
+T26PIPE_JSONL="${T26PIPE_DIR}/code-audit/findings-ledger.jsonl"
+T26PIPE_MD="${T26PIPE_DIR}/code-audit/findings-ledger.md"
+cat > "$T26PIPE_JSONL" <<'EOF'
+{"schema":1,"id":"CA-901","sev":"P1","status":"open","lenses":["L1"],"confidence":"high","component":"a|b.sh","title":"case \"$x\" in ''|*[!0-9]*) fails; glob set *.awk|*.txt; enum open|fixed|noted","raised_round":1,"resolved_round":null,"round":1,"round_type":"full"}
+EOF
+"$EDM_STATE" render-ledger T26PIPE >/dev/null
+g18_row="$(grep '^| CA-901' "$T26PIPE_MD" || true)"
+check "G18 -- pipe-bearing title's literal pipes are escaped (backslash-pipe), not raw" \
+  '\|*[!0-9]*' "$g18_row"
+g18_cells="$(printf '%s' "$g18_row" | perl -pe 's/\\\|//g' | awk -F'|' '{print NF-2}')"
+[[ "$g18_cells" == "8" ]] && pass "G18 -- pipe-bearing row still has exactly 8 cells once escaped pipes are discounted" \
+  || fail "G18 -- pipe-bearing row has ${g18_cells} cells, expected 8"
+
+# Every rendered row (header + data rows) must have exactly 8 cells once escaped pipes are
+# discounted -- protects the shape even if a future field addition regresses alignment (G18).
+g18_bad_rows=0
+while IFS= read -r g18_line; do
+  case "$g18_line" in
+    '| ID '*|'|----'*|'| CA-'*)
+      g18_n="$(printf '%s' "$g18_line" | perl -pe 's/\\\|//g' | awk -F'|' '{print NF-2}')"
+      [[ "$g18_n" == "8" ]] || g18_bad_rows=$((g18_bad_rows + 1))
+      ;;
+  esac
+done < "$T26PIPE_MD"
+[[ "$g18_bad_rows" -eq 0 ]] && pass "G18 -- every table row (header + data) has exactly 8 cells" \
+  || fail "G18 -- ${g18_bad_rows} table row(s) do not have exactly 8 cells"
+
 # =================================================================================
 # EDMV3-T27: rounds record their lens set, so a partial round can never compute convergence
 # =================================================================================
