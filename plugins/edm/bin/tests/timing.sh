@@ -69,9 +69,12 @@ _ms_between() {
 # G16/CA-196 (round 4): the ceiling fix alone was not the whole story -- ceil(0.95*N) == N for
 # every one of those three sample counts, so the corrected formula still returned the sample
 # MAXIMUM, not a real 95th percentile, while the emitted key stayed named p95_ms. N=20 is the
-# smallest sample count where ceil(0.95*N) < N (19 < 20), so every measuring mode below now samples
-# ${_P95_SAMPLE_COUNT} runs -- a one-line change per mode, not the nine synchronized edits it would
-# have been before G49/CA-280 extracted _measure_p95 (below) to share the loop.
+# smallest sample count where ceil(0.95*N) < N (19 < 20), so every sub-second measuring mode below
+# now samples ${_P95_SAMPLE_COUNT} runs -- a one-line change per mode, not the nine synchronized
+# edits it would have been before G49/CA-280 extracted _measure_p95 (below) to share the loop.
+# G14/CA-309 (round 5): "every measuring mode" above means every mode that samples at all --
+# --all-lint (a ~60s CI-budget scan, not a sub-second latency probe) deliberately runs
+# _measure_p95 with count=1, a single sample, not ${_P95_SAMPLE_COUNT}.
 _p95() {
   printf '%s\n' "$@" | sort -n | awk '
     { a[NR] = $1 }
@@ -323,12 +326,16 @@ case "$MODE" in
     # if this mode were pointed at a differently-sized fixture (CA-073).
     [[ -n "$DIR" ]] || { echo "timing.sh --all-lint requires --dir <fixture-dir>" >&2; exit 2; }
     export EDM_SRD_ROOT="${DIR}/SRD"
+    # G14/CA-309 (round 5): route through _measure_p95, the same as every other mode, rather
+    # than a hand-rolled _now/_ms_between pair -- this was the last surviving hand-rolled
+    # timing loop in the file, and being the one working template left is exactly how a
+    # contributor adding a future mode would find and copy it, regenerating the class.
+    # Deliberately count=1 (a single-sample CI budget check, not a p95 latency probe): a 60s
+    # `--all` scan is not something this harness re-runs 20 times per invocation, unlike the
+    # sub-second modes above. The emitted key stays `duration_ms`, not `p95_ms`, since a single
+    # sample has no percentile to report.
     actual_initiatives="$("$EDM_STATE" list --paths 2>/dev/null | grep -c . || true)"
-    actual_initiatives="${actual_initiatives:-0}"
-    t0="$(_now)"
-    "$EDM_LINT" --all >/dev/null 2>&1 || true
-    t1="$(_now)"
-    ms="$(_ms_between "$t0" "$t1")"
+    _measure_p95 1 ms -- "$EDM_LINT" --all
     echo "TIMING all_lint duration_ms=${ms} (${actual_initiatives} initiatives, budget <= 60000ms, CI budget not a commit-path budget)"
     ;;
 
