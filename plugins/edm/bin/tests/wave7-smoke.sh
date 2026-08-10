@@ -4285,6 +4285,38 @@ for t67_mode in --subcommands --phase-complete --ledger --session-start --lint -
 done
 
 echo
+echo "G46/CA-311 -- timing.sh --self-test is wired into a suite run-all.sh actually discovers"
+# G46/CA-311: self_test() (timing.sh:102-173) carries five correct assertions covering the
+# perl-less awk fallback, _p95's nearest-rank formula (CA-196) and the shipped sample count
+# (_P95_SAMPLE_COUNT=20, CA-280), but nothing invoked --self-test anywhere -- not run-all.sh
+# (timing.sh is deliberately excluded from *-smoke.sh discovery per CA-328), not this suite's own
+# other timing.sh calls above (bare, --session-start, --generate-fixture), not .gitlab-ci.yml. A
+# silent revert of any of the five fixes those assertions guard (e.g. _P95_SAMPLE_COUNT back to
+# 10) would leave the full suite green. Modeled on the T48/tiering-matrix.sh --self-test
+# precedent above (wave7-smoke.sh's own T48 block): capture output and exit code on the same
+# statement, then assert each PASS line individually -- not as one blob -- so deleting a single
+# assertion from self_test() fails one named check here, not a silently-shrunk aggregate.
+t67_self_ec=0
+t67_self_out="$(bash "$TIMING_SH" --self-test 2>&1)" || t67_self_ec=$?
+[[ "$t67_self_ec" -eq 0 ]] && pass "G46 -- timing.sh --self-test exits 0" \
+  || fail "G46 -- timing.sh --self-test exited ${t67_self_ec}: ${t67_self_out}"
+check "G46 -- self-test proves _now returns a usable value on the perl-less awk fallback" \
+  "self-test PASS: _now returns a usable numeric value on the perl-less awk fallback" "$t67_self_out"
+check "G46 -- self-test proves _ms_between reports a plausible duration on the fallback" \
+  "self-test PASS: _ms_between reports a plausible elapsed duration on the fallback" "$t67_self_out"
+check "G46 -- self-test proves _p95 of 20 samples returns the 19th order statistic, not the max" \
+  "self-test PASS: _p95 of 20 samples (1..20) returns the 19th order statistic (19), not the maximum" "$t67_self_out"
+check "G46 -- self-test proves _p95 of 10 samples still returns the maximum" \
+  "self-test PASS: _p95 of 10 samples (1..10) still returns the maximum (10)" "$t67_self_out"
+check "G46 -- self-test pins _P95_SAMPLE_COUNT at the shipped value (20)" \
+  "self-test PASS: _P95_SAMPLE_COUNT is the shipped value (20)" "$t67_self_out"
+# Pin the assertion COUNT itself (not just each line's presence), so a deleted assertion inside
+# self_test() -- which would also shrink this denominator -- cannot hide behind the five checks
+# above still matching whatever PASS lines remain.
+check "G46 -- self-test summary reports all 5 timing-harness assertions verified" \
+  "self-test: PASS (5/5" "$t67_self_out"
+
+echo
 echo "T67 AC14 (CA-147) -- a single cheap mode actually measures against a real fixture"
 # --session-start is the cheapest real mode: it inits one tiny scratch initiative and times ten
 # real edm-state session-start invocations -- no 30-file/10,000-line fixture generation like
