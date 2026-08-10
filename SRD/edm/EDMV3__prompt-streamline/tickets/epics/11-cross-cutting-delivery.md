@@ -857,11 +857,25 @@ written early and run at each boundary -- that is a scheduling property of one L
       concurrently and converge on the test stage, rather than chaining.
       Verify: `grep -n 'needs:' .gitlab-ci.yml` shows the four lint jobs with no inter-dependency, and
       the pipeline graph shows them parallel.
-- [ ] AC11 (negative, no blocking job depends on network beyond image pull): the eval job and
-      `claude plugin validate` tier 2 both reach the Anthropic API and both are outside the blocking
-      path, which is why the constraint is scoped to blocking jobs rather than stated unqualified.
-      Verify: `grep -n 'allow_failure\|when: manual' .gitlab-ci.yml` shows both outside the blocking
-      path, and the blocking jobs' scripts contain no network call.
+- [ ] AC11 (negative, no blocking job depends on network beyond image pull; the two
+      `allow_failure` jobs that DO reach the network get a weaker per-job pin pass instead of a
+      blanket exemption): the eval job and `claude plugin validate` tier 2 both reach the
+      Anthropic API and both are outside the blocking path, which is why the network-call ban is
+      scoped to blocking jobs rather than stated unqualified. Those same two jobs
+      (`validate:plugin-cli`, `eval:nightly`) are not exempted from every control this AC states --
+      `eval:nightly` is the one job in the pipeline holding `ANTHROPIC_API_KEY` -- so each of their
+      `npm install -g @anthropic-ai/claude-code` calls must carry an explicit numeric version pin
+      (a digit immediately after the version `@`, so `@latest`/`@next`/a bare unpinned install all
+      still fail this check), the same discipline CA-161 already enforces for every blocking job's
+      `apk` installs.
+      Verify: `grep -n 'allow_failure\|when: manual' .gitlab-ci.yml` shows both jobs outside the
+      blocking path, and the blocking jobs' scripts contain no network call. Separately, run the
+      case named `T67 AC11 (G43/CA-319)` in `plugins/edm/bin/tests/wave7-smoke.sh` (by case name,
+      not line number -- the G40/CA-368 lesson) and confirm it passes for both
+      `validate:plugin-cli` and `eval:nightly`: it asserts a numeric-pin regex on each job's `npm
+      install` line, with a positive control (a bare unpinned install fails the check) and a
+      G39/CA-349 negative control (`@latest` fails the check too) proving the assertion actually
+      discriminates pinned from unpinned rather than matching any `npm install` line.
 - [ ] AC12 (round cost measurable and reported): after EDMV3-T50 and EDMV3-T51, the cost of one full
       code-audit round is measurable from state and is reported by `metrics-report`. The tiering
       reduction figure from EDMV3-T48 AC11 is recorded alongside it, with recall loss on any tiered

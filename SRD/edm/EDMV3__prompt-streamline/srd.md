@@ -4254,7 +4254,10 @@ turn, a hook on the commit path, and a CI pipeline gating merges.
     - [ ] **No blocking job depends on network access beyond image pull**, so blocking duration is not hostage to an
       external service. The eval job and `claude plugin validate` (validate tier 2) both reach the Anthropic API and
       both are outside the blocking path, which is why the constraint is scoped to blocking jobs rather than stated
-      unqualified.
+      unqualified. Those same two `allow_failure` jobs are not exempted from every control this AC implies, though:
+      `eval:nightly` is the one job in the pipeline holding `ANTHROPIC_API_KEY`, so each of their `npm install -g
+      @anthropic-ai/claude-code` calls must still carry an explicit numeric version pin rather than `@latest`/`@next`/an
+      unpinned install (EDMV3-T67 AC11, decisions.md).
 - **Dependencies**: EDMV3-23, EDMV3-29
 - **Target Components**: `.gitlab-ci.yml`
 

@@ -4502,19 +4502,36 @@ echo "$t67ac11_scratch_body_npm" | grep -qE 'curl |wget |anthropic\.com|npm inst
 # explicit version pin, so an unpinned install can't silently drift in the least-controlled,
 # secret-bearing corner of the file the way CA-161's package-manager sweep already closed for
 # every blocking job's apk installs.
+# G39/CA-349: `check` is a plain substring test (_harness.sh), and the bare needle
+# "npm install -g @anthropic-ai/claude-code@" is satisfied by @latest, @next, @^2.1.0 and @~2.1
+# just as much as by a real numeric pin -- so the one control guarding the least-controlled,
+# ANTHROPIC_API_KEY-bearing job in the pipeline could be satisfied by exactly the unpinned
+# behaviour it exists to prevent, and "replace the stale pin with @latest" is the single most
+# likely future edit to that line. Requires a numeric first character immediately after the
+# version "@" instead.
+t67ac11_pin_regex='npm install -g @anthropic-ai/claude-code@[0-9]'
 for t67ac11_allowfail_job in validate:plugin-cli eval:nightly; do
   t67ac11_allowfail_body="$(awk -v job="^${t67ac11_allowfail_job}:$" '
     $0 ~ job {f=1; next}
     f && /^[^[:space:]#][^#]*:$/ {exit}
     f {print}
   ' "$GITLAB_CI_YML")"
-  check "T67 AC11 (G43/CA-319) -- ${t67ac11_allowfail_job}'s npm install is version-pinned" \
-    "npm install -g @anthropic-ai/claude-code@" "$t67ac11_allowfail_body"
+  if echo "$t67ac11_allowfail_body" | grep -qE "$t67ac11_pin_regex"; then
+    pass "T67 AC11 (G43/CA-319) -- ${t67ac11_allowfail_job}'s npm install is pinned to a numeric version"
+  else
+    fail "T67 AC11 (G43/CA-319) -- ${t67ac11_allowfail_job}'s npm install is not pinned to a numeric version"
+  fi
 done
-# Positive control: an unpinned npm install line would NOT satisfy the "@" pin needle above --
+# Positive control: an unpinned npm install line would NOT satisfy the numeric-pin regex above --
 # proves the check discriminates pinned from unpinned rather than matching any npm install line.
-check_absent "T67 AC11 (G43/CA-319) -- positive control: a bare unpinned install does not satisfy the pin needle" \
-  "npm install -g @anthropic-ai/claude-code@" "npm install -g @anthropic-ai/claude-code"
+echo "npm install -g @anthropic-ai/claude-code" | grep -qE "$t67ac11_pin_regex" \
+  && fail "T67 AC11 (G43/CA-319) -- positive control: a bare unpinned install unexpectedly satisfied the numeric-pin regex" \
+  || pass "T67 AC11 (G43/CA-319) -- positive control: a bare unpinned install does not satisfy the numeric-pin regex"
+# G39/CA-349 negative control: @latest (the single most likely future edit to this line) must
+# NOT satisfy the numeric-pin regex either.
+echo "npm install -g @anthropic-ai/claude-code@latest" | grep -qE "$t67ac11_pin_regex" \
+  && fail "T67 AC11 (G39/CA-349) -- negative control: @latest unexpectedly satisfied the numeric-pin regex" \
+  || pass "T67 AC11 (G39/CA-349) -- negative control: @latest does not satisfy the numeric-pin regex"
 
 # G37/CA-313: G40/CA-271's tightened terminator (excluding '#' from the FIRST character class,
 # not just the rest of the line) is load-bearing on REAL pipeline content -- .gitlab-ci.yml:198

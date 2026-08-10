@@ -339,10 +339,16 @@ by construction.
 
 - [ ] AC1 (one pass serves four classes): `build_ignore_set` is refactored once into
       `build_line_classes <file>`, emitting `lineno<TAB>ignored|mermaid`, computed **once per file**
-      and shared by all four classes.
-      Verify: `grep -c 'build_line_classes' plugins/edm/bin/edm-lint-artifacts` shows one definition
-      and one call per file, and `grep -c 'build_ignore_set' plugins/edm/bin/edm-lint-artifacts`
-      returns 0.
+      and shared by all four classes. `build_line_classes` is defined once, in the shared lint
+      library `plugins/edm/bin/_edm-lint-lib.sh` (extracted from `edm-lint-artifacts` by the
+      shared-lint-library extraction), not in `edm-lint-artifacts` itself, which sources the
+      library and calls the function.
+      Verify: `grep -c '^build_line_classes()' plugins/edm/bin/_edm-lint-lib.sh` returns `1` (the
+      single definition), and `grep -c 'build_line_classes "' plugins/edm/bin/edm-lint-artifacts`
+      returns `1` (the single real call in this file -- the invocation shape, a quoted argument
+      immediately following the name, rather than a bare-name count, which also matches this
+      file's own explanatory comments about the library function; the CA-322/CA-325 lesson), and
+      `grep -c 'build_ignore_set' plugins/edm/bin/edm-lint-artifacts` returns 0.
 - [ ] AC2 (mermaid line set is correct): the mermaid line set contains only line numbers inside
       ` ```mermaid ` fences, using the language token the existing loop discarded at `:83`.
       Verify: `bash plugins/edm/bin/tests/wave7-smoke.sh` (case "mermaid line set excludes
@@ -382,12 +388,19 @@ by construction.
       `path:line: <class>: <snippet>` format via `report_violation`, and the class contributes to the
       same exit code.
       Verify: `bash plugins/edm/bin/edm-lint-artifacts <file-with-violation> | grep -E '^[^:]+:[0-9]+: '`.
-- [ ] AC8 (header block, and the `usage()` range is not touched here): the header comment block at
-      `:7-11` lists the new class. The `usage()` `sed` range is **not** widened here -- EDMV3-96
-      replaces the hardcoded range with sentinel delimiters and owns that line. Widening it here
-      while EDMV3-96 deletes it would be two incompatible instructions for the same code.
-      Verify: `sed -n '7,11p' plugins/edm/bin/edm-lint-artifacts` names four classes, and
-      `git diff plugins/edm/bin/edm-lint-artifacts | grep -c "sed -n '2,19p'"` returns 0.
+- [ ] AC8 (header block, and the `usage()` range is not touched here): the header comment block's
+      "Violation classes" list names the new class. The `usage()` `sed` range is **not** widened
+      here -- EDMV3-96 replaces the hardcoded range with sentinel delimiters and owns that line.
+      Widening it here while EDMV3-96 deletes it would be two incompatible instructions for the
+      same code.
+      Verify (by sentinel, not a hardcoded line range -- the exact idiom EDMV3-96/T61 AC1
+      deleted from this file's `usage()` extraction, so this AC's own verify must not reintroduce
+      it): `awk '/^# Violation classes/{f=1;next} /^# Output format:/{f=0} f'
+      plugins/edm/bin/edm-lint-artifacts | grep -cE '^#   [a-z-]+ '` returns `7`, and the same
+      extracted block names all seven current classes (`attribution`, `unicode`,
+      `leaked-tool-tag`, `mermaid-semicolon`, `unterminated-fence`, `scan-error`, `unreadable`).
+      Separately, `git diff plugins/edm/bin/edm-lint-artifacts | grep -c "sed -n '2,19p'"` returns
+      0 (the `usage()` range stays untouched).
 - [ ] AC9 (three existing classes behave identically): the three existing classes produce identical
       output before and after the refactor on the same corpus.
       Verify: capture `bash plugins/edm/bin/edm-lint-artifacts --all` output before the change, and
