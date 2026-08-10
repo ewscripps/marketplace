@@ -6278,6 +6278,29 @@ EOS
       && pass "CA-298/G1 -- ${matcher} hook still blocks a genuine gate refusal (hook exit 2)" \
       || fail "CA-298/G1 -- ${matcher} hook produced exit=${ec}, output: ${out} (expected exit 2 -- a real gate refusal must still block)"
 
+    # Case C (G8/CA-346, round 6): resolve-dir succeeds AND gate-check succeeds -- must ALLOW
+    # expansion (exit 0). Case A returns before ever calling gate-check, and Case B's stub makes
+    # gate-check fail, so neither above can observe a regression on the shipped hooks' actual
+    # happy path (`... edm-state gate-check "$prefix" ${token} || exit 2; exit 0`). A stray
+    # trailing `; exit 2` appended after that gate-check call -- or the gate-check call being
+    # separated from its own `|| exit 2` by so much as one dropped semicolon -- would still pass
+    # Cases A and B identically (A returns early, B's failing gate-check still exits 2) while
+    # permanently locking the user out of this command even with every gate approved. This is
+    # the P0-class regression only this case actually guards against.
+    cat > "${scratch}/bin/edm-state" <<'EOS'
+#!/bin/bash
+case "$1" in
+  resolve-dir) echo "/tmp/CA298PFX"; exit 0 ;;
+  gate-check) exit 0 ;;
+esac
+EOS
+    chmod +x "${scratch}/bin/edm-state"
+    ec=0
+    out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" ARGUMENTS="CA298PFX" bash "$cmdfile" 2>&1)" || ec=$?
+    [[ "$ec" -eq 0 ]] \
+      && pass "G8/CA-346 -- ${matcher} hook allows expansion when resolve-dir AND gate-check both succeed (an approved gate must not block)" \
+      || fail "G8/CA-346 -- ${matcher} hook produced exit=${ec}, output: ${out} (expected exit 0 -- resolve-dir and gate-check both succeeding must allow expansion)"
+
     rm -rf "$scratch"
   done
 }
