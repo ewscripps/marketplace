@@ -164,6 +164,12 @@ case "$MODE" in
         resolve-dir)  _measure_p95 "$_P95_SAMPLE_COUNT" p95 -- "$EDM_STATE" resolve-dir "$pfx" ;;
         branch-check) _measure_p95 "$_P95_SAMPLE_COUNT" p95 -- "$EDM_STATE" branch-check "$pfx" ;;
         gate-check)   _measure_p95 "$_P95_SAMPLE_COUNT" p95 -- "$EDM_STATE" gate-check "$pfx" srd ;;
+        # G34/CA-310: the driving loop above and this case enumerate the same four names twice
+        # with no default arm -- p95/p95_samples persist across iterations, so a name added to
+        # the loop without a matching arm here would silently print the PRIOR iteration's
+        # measurement under the new name's label instead of failing loudly. This arm makes that
+        # divergence a hard, named failure instead of a silent wrong number.
+        *) echo "timing.sh: --subcommands has no case arm for '${cmd_name}' -- add one alongside the driving loop" >&2; exit 1 ;;
       esac
       echo "TIMING subcommand=${cmd_name} p95_ms=${p95} samples_ms=${p95_samples[*]}"
     done
