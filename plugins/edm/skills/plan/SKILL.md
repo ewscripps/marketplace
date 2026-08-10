@@ -47,12 +47,20 @@ itself. Step 0 is a second, defence-in-depth line alongside the `UserPromptExpan
    `edm-state current-step <PREFIX> <phase-num>`, where `<phase-num>` is this skill's own bare
    phase-number token -- `1` for this skill -- matching the `current_step` vocabulary
    `` `skills/orchestrator/SKILL.md Sec."Resume and Compaction"` `` defines (a bare `"1"`..`"6"`,
-   never a compound legacy value). This is the only writer of `current_step` anywhere in this
-   plugin's instructions; without it the field stays permanently absent and both its consumers
-   (the `session-start` `Step:` line and HANDOFF.md's `- **Step**:` row) stay silently suppressed.
-   `implement`, `code-audit`, and `verify-runtime` all substitute `6` here -- `current_step`'s
-   vocabulary is phase-granularity only, not sub-phase, so all three Phase-6 sub-steps record the
-   same value.
+   never a compound legacy value). This numbered block, written once here, is what every other
+   phase skill's own Step 0 section cross-references by name (the identical convention checks
+   1-2 above already use for the gate token and branch check) -- each substitutes its own
+   `<phase-num>` there, giving every value `2`..`6` a real producer the same way this step gives
+   `plan` its `1`, not a special case limited to some subset of skills. G19/CA-308 (round 5):
+   this substitution is asserted for all six remaining skills (`srd`=2, `audit-srd`=3,
+   `tickets`=4, `audit-tickets`=5, `implement`=6, `code-audit`=6, `verify-runtime`=6) by
+   `bin/tests/wave7-smoke.sh`'s "G15" case (round 3) -- if a reader cannot find the producer for
+   a given value by name here, check that test before concluding one is missing. Without this
+   step running for a given phase, `current_step` stays permanently absent for that phase and
+   both its consumers (the `session-start` `Step:` line and HANDOFF.md's `- **Step**:` row) stay
+   silently suppressed. `current_step`'s vocabulary is phase-granularity only, not sub-phase, so
+   `implement`, `code-audit` and `verify-runtime` (Phase 6's three sub-steps) all substitute the
+   same value, `6`.
 
 ## Operational Orchestration
 
