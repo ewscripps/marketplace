@@ -662,7 +662,7 @@ The `userConfig.jira_project_key` value provides a default; otherwise the user m
 | Event                                                                                  | Effect                                                        |
 |----------------------------------------------------------------------------------------|---------------------------------------------------------------|
 | `SessionStart`                                                                         | Emit Resume Point for active initiatives via `edm-state session-start` |
-| `UserPromptExpansion` matching `edm:(srd\|audit-srd\|tickets\|audit-tickets\|implement)` | Block expansion if the prerequisite HITL gate isn't approved  |
+| `UserPromptExpansion` matching `edm:(srd\|audit-srd\|tickets\|audit-tickets\|implement)` | Block expansion if the prerequisite HITL gate isn't approved. Exit-code contract (CA-298, G1): a missing `edm-state` binary or an unresolvable prefix (no state file yet -- the legitimate first-invocation case) exits **0**, non-blocking; an invalid prefix argument or an actual `edm-state gate-check` refusal exits **2**, blocking. Only a real gate refusal blocks -- a setup condition never does |
 | `PreToolUse` matching `git commit`                                                     | For staged paths under the derived `srd_root` (`EDM_SRD_ROOT` / `CLAUDE_PLUGIN_OPTION_SRD_ROOT`, default `./SRD`), resolve a prefix per discovered initiative and skip it if it has no resolvable state (CA-011); run `edm-lint-artifacts <PREFIX>` for each survivor. These are `edm-lint-artifacts`'s own exit codes, not the hook's: `edm-lint-artifacts` exit 1 (a real violation) makes the hook exit **2**, the code that actually blocks the commit; `edm-lint-artifacts` exit 2 (a setup/usage error, e.g. no initiative for that prefix) makes the hook exit 0, reported to stderr but not blocking (CA-011) |
 | `Stop` and `PreCompact`                                                                | Checkpoint state via `edm-state checkpoint-if-active`         |
 | `SubagentStop` matching `edm-implementer`                                              | Auto-spawn `edm-qc-auditor`; write verdict to `qc/qc-summary.md`; persist PARTIAL verdicts via `edm-state record-partial-verdict` |
@@ -949,6 +949,25 @@ as a local convenience before pushing:
 4. Verify agents appear in `/agents`, skills in `/help`
 5. Run `bash plugins/edm/bin/tests/run-all.sh` locally before pushing -- this is the same
    command CI runs and is the fastest way to catch a regression before opening an MR.
+
+**`EDM_RUN_ALL_*` and `EDM_EVAL_*` knob families (G30/CA-275).** Two small families of
+environment-variable overrides exist for the test/eval tooling itself, distinct from the
+`userConfig` keys below (which configure the plugin's runtime behavior, not its own test harness).
+Unset (the default) is byte-identical to prior behavior for every one of them.
+
+- `EDM_RUN_ALL_SUITE_DIR`, `EDM_RUN_ALL_PREFERRED_ORDER`, `EDM_RUN_ALL_MIN_SUITE_COUNT`
+  (`bin/tests/run-all.sh`): let `harness-smoke.sh` point the smoke aggregator at a scratch
+  directory of throwaway stub suites and exercise its own PASS/FAIL/CRASH/missing-summary
+  accounting without touching the real suite set. When `EDM_RUN_ALL_SUITE_DIR` is set, the three
+  real-repo-anchored standalone checks (`edm-check-grants`/`-skill-sync`/`-vocabulary`) are also
+  skipped, since they are meaningless against a scratch suite set.
+- `EDM_EVAL_KEEP_RUNS` (`evals/run-eval.sh`): retention count for run-shaped directories kept
+  under the eval driver's output root (oldest pruned first); defaults to `10`.
+
+See `CHANGELOG.md`'s `[3.1.0]` entry (G44/CA-275, G30/CA-275) for the full record, including
+`EDM_SRD_ROOT` / `CLAUDE_PLUGIN_OPTION_SRD_ROOT`, which is a plugin-runtime knob (documented above
+under "Hooks behavior" and "Artifact content conventions") rather than a member of either family
+here.
 
 ### CI (EDMV3-T21)
 

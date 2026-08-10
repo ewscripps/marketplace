@@ -121,6 +121,25 @@ Suite: 1401 assertions passing before this remediation's own test additions.
     update needed, provided the value is repository-relative with no trailing slash -- an absolute
     `srd_root` cannot match git's repository-relative staged paths, so the hook logs a diagnostic
     and does not block rather than silently linting nothing.
+- **G30 (round-5 code-audit, CA-275) note: two more shipped behaviour changes documented, same
+  change-control gap as G44 above.** Both are sanctioned fixes from earlier remediation waves,
+  kept as-is by this entry.
+  - **`UserPromptExpansion` hook exit-code conversion** (`hooks/hooks.json`, CA-253/CA-298): all
+    five gate hooks (`srd`, `audit-srd`, `tickets`, `audit-tickets`, `implement`) now exit **2**
+    (blocking) only on an invalid prefix argument or an actual `edm-state gate-check` refusal; a
+    missing `edm-state` binary or an unresolvable prefix (the legitimate first-invocation case, no
+    state file yet) exits **0** (non-blocking). Previously every non-zero `gate-check` exit,
+    including a missing-state-file or missing-`jq` setup error, hard-blocked the prompt --
+    unreachable under the supported `commit_state_file=false` configuration on a fresh clone. See
+    `CLAUDE.md`'s hooks-behaviour table for the settled contract.
+  - **`edm-state git-lock-check` liveness probe rewrite** (`bin/edm-state`, CA-251): resolves the
+    repository scope via `git rev-parse --absolute-git-dir` instead of the relative `--git-dir`
+    (which prints the bare, non-identifying string `.git`), prefers `lsof` scoped to the lock file
+    as the primary liveness oracle, classifies `pgrep` fallback candidates by a fixed-string
+    (`grep -F`) match against the absolute git-dir rather than treating it as an ERE, excludes this
+    process's own PID and parent PID from the candidate set, and refuses to remove the lock (rather
+    than guessing) when neither oracle is available. A destructive subcommand's liveness check
+    changing shape is user-visible behaviour with no prior record.
 
 ### Changed
 
