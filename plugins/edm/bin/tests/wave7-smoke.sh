@@ -4493,6 +4493,28 @@ echo "$t67ac11_scratch_body_npm" | grep -qE 'curl |wget |anthropic\.com|npm inst
   && pass "T67 AC11 (CA-085 positive control) -- an injected unpinned npm install is actually caught by the widened pattern" \
   || fail "T67 AC11 (CA-085 positive control) -- injecting an npm install did not trip the widened pattern"
 
+# G37/CA-313: G40/CA-271's tightened terminator (excluding '#' from the FIRST character class,
+# not just the rest of the line) is load-bearing on REAL pipeline content -- .gitlab-ci.yml:198
+# is a real column-0 comment line ending in a colon, sitting inside lint:vocabulary's trailing
+# comment block before the next real job header (lint:shellcheck: at :209) -- but nothing
+# exercised it: the >=11-job count and the empty-body guard both pass on a body truncated early
+# at :198 yet non-empty, which is exactly CA-271's named failure mode. Extract lint:vocabulary's
+# body and assert a token that only appears AFTER :198 in this job's trailing comments is
+# present, so a re-loosened terminator (misreading :198 as the next job's header) fails loudly.
+t67ac13_lintvocab_body="$(awk -v job='^lint:vocabulary:$' '
+  $0 ~ job {f=1; next}
+  f && /^[^[:space:]#][^#]*:$/ {exit}
+  f {print}
+' "$GITLAB_CI_YML")"
+check "G37/CA-313 -- lint:vocabulary's extracted body is not truncated at .gitlab-ci.yml:198 (a post-198 token survives)" \
+  "CA-162" "$t67ac13_lintvocab_body"
+# Positive control: prove the needle would actually be ABSENT if the terminator were loosened to
+# stop at :198 -- without this, a body that happens to include :198 itself (a comment LINE, not a
+# terminator) could still contain "CA-162" by coincidence and the check above would pass vacuously.
+t67ac13_truncated_body="$(printf '%s\n' "$t67ac13_lintvocab_body" | sed -n '1,/rather than shellcheck.s full default severity set:/p')"
+check_absent "G37/CA-313 -- positive control: a body deliberately truncated at :198 does NOT contain the post-198 token" \
+  "CA-162" "$t67ac13_truncated_body"
+
 echo "T67 AC1/AC3/AC4/AC5/AC6/AC7 -- measured this session against real generated fixtures via"
 echo "  bin/tests/timing.sh; the numbers are recorded in CHANGELOG.md's EDMV3-T67 table, not"
 echo "  re-run here (they take minutes and generate scratch fixtures unsuited to a fast smoke"
