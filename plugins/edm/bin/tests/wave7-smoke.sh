@@ -6241,25 +6241,37 @@ ca253_gate_hooks_exit2_case() {
     fi
     check "CA-253 G8 -- ${matcher} hook's invalid-prefix branch refuses with exit 2" \
       "exit 2 ;; esac" "$hook_cmd"
-    check "CA-253 G8 -- ${matcher} hook's gate-check call for token '${token}' refuses with exit 2" \
-      "gate-check \"\$prefix\" ${token} || exit 2" "$hook_cmd"
+    # G12/CA-345 (round 6): the old `gate-check ... || exit 2` converted ANY non-zero gate-check
+    # status into a refusal. cmd_gate_check now returns a dedicated GATE_CHECK_REFUSED (3) status
+    # only for a genuine gate refusal, so the hook captures the exit code on its own statement and
+    # converts ONLY that specific code into exit 2 -- everything else (a usage error, a `die` from
+    # a missing dependency or a lock timeout) falls through to exit 0.
+    check "CA-253 G8 -- ${matcher} hook's gate-check call for token '${token}' captures its exit code on the same statement" \
+      "edm-state gate-check \"\$prefix\" ${token}; ec=\$?" "$hook_cmd"
+    check "CA-253 G8 -- ${matcher} hook converts ONLY the dedicated refusal code (3) into exit 2" \
+      "if [ \"\$ec\" -eq 3 ]; then exit 2; fi" "$hook_cmd"
     check_absent "CA-253 G8 -- ${matcher} hook body carries no bare 'exit 1' on the refusal path" \
       "exit 1" "$hook_cmd"
     check_absent "CA-253 G8 -- ${matcher} hook's gate-check call no longer merges stderr into stdout via 2>&1" \
       "gate-check \"\$prefix\" ${token} 2>&1" "$hook_cmd"
+    check_absent "G12/CA-345 -- ${matcher} hook no longer pre-probes resolve-dir ahead of gate-check" \
+      "resolve-dir \"\$prefix\"" "$hook_cmd"
   done
 }
 ca253_gate_hooks_exit2_case
 
 # =================================================================================
-# CA-298/G1 (round-5): CA-253's exit-2 conversion made the command hooks block on ANY gate-check
-# failure, not only a genuine gate refusal -- including a missing state file, which the sibling
-# prompt hook's own text says must allow expansion (first invocation). Extracts each of the five
-# real UserPromptExpansion command hooks and executes them against stub edm-state binaries, so
-# this exercises the actual shipped hook script, not a hand-written stand-in for it.
+# CA-298/G1 (round-5), rewired for G12/CA-345 (round 6): CA-253's original exit-2 conversion
+# blocked on ANY gate-check failure, not only a genuine gate refusal. Round 5 patched this with a
+# resolve-dir pre-probe; round 6's G12 replaces that pre-probe entirely with a dedicated
+# GATE_CHECK_REFUSED (3) status from cmd_gate_check itself, so the hook no longer calls
+# resolve-dir at all -- it captures gate-check's own exit code and converts ONLY status 3 into a
+# block. Extracts each of the five real UserPromptExpansion command hooks and executes them
+# against stub edm-state binaries, so this exercises the actual shipped hook script, not a
+# hand-written stand-in for it.
 # =================================================================================
 echo
-echo "=== CA-298/G1: the five gate hooks allow expansion on a missing state file, still block on a genuine refusal ==="
+echo "=== CA-298/G1 + G12/CA-345: the five gate hooks allow expansion on any non-refusal exit, block only on the dedicated refusal code ==="
 ca298_gate_hooks_case() {
   local matcher token scratch cmdfile cmd out ec
   for matcher in edm:srd edm:audit-srd edm:tickets edm:audit-tickets edm:implement; do
@@ -6278,51 +6290,52 @@ ca298_gate_hooks_case() {
       continue
     fi
 
-    # Case A: no initiative for this prefix (resolve-dir fails) -- must ALLOW expansion (exit 0),
-    # matching the sibling prompt hook's documented first-invocation allowance.
+    # Case A: gate-check dies with a generic (non-refusal) status -- the exact shape read_state's
+    # `die "no state file for $prefix"` produces on a missing initiative (first invocation), and
+    # also the shape a lock-timeout inside record_degraded_check produces (G12's own trigger).
+    # Must ALLOW expansion (exit 0): the hook no longer distinguishes "no state file" from any
+    # other non-refusal failure -- it only ever blocks on the dedicated refusal code.
     cat > "${scratch}/bin/edm-state" <<'EOS'
 #!/bin/bash
 case "$1" in
-  resolve-dir) echo "no initiative for prefix $2" >&2; exit 1 ;;
-  gate-check) echo "CA298: gate-check should not have been called" >&2; exit 1 ;;
+  gate-check) echo "edm-state: no state file for CA298PFX at /tmp/SRD/CA298PFX/.edm-state.json" >&2; exit 1 ;;
 esac
 EOS
     chmod +x "${scratch}/bin/edm-state"
     ec=0
     out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" ARGUMENTS="CA298PFX" bash "$cmdfile" 2>&1)" || ec=$?
     [[ "$ec" -eq 0 ]] \
-      && pass "CA-298/G1 -- ${matcher} hook allows expansion when the initiative has no state file (first invocation)" \
-      || fail "CA-298/G1 -- ${matcher} hook produced exit=${ec}, output: ${out} (expected exit 0 -- a missing state file must not block)"
+      && pass "CA-298/G1 -- ${matcher} hook allows expansion when gate-check dies with a generic (non-refusal) status" \
+      || fail "CA-298/G1 -- ${matcher} hook produced exit=${ec}, output: ${out} (expected exit 0 -- a non-refusal failure must not block)"
 
-    # Case B: the initiative resolves but the gate genuinely is not approved -- must BLOCK
-    # (exit 2), so Case A's fix has not disabled real enforcement.
+    # Case B: gate-check exits its dedicated refusal status (3, GATE_CHECK_REFUSED) -- a genuine
+    # gate refusal. Must BLOCK (exit 2), so Case A's widened allowance has not disabled real
+    # enforcement.
     cat > "${scratch}/bin/edm-state" <<'EOS'
 #!/bin/bash
 case "$1" in
-  resolve-dir) echo "/tmp/CA298PFX"; exit 0 ;;
-  gate-check) echo "edm-state gate-check: Gate 1 has not been approved for CA298PFX." >&2; exit 1 ;;
+  gate-check) echo "edm-state gate-check: Gate 1 has not been approved for CA298PFX." >&2; exit 3 ;;
 esac
 EOS
     chmod +x "${scratch}/bin/edm-state"
     ec=0
     out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" ARGUMENTS="CA298PFX" bash "$cmdfile" 2>&1)" || ec=$?
     [[ "$ec" -eq 2 ]] \
-      && pass "CA-298/G1 -- ${matcher} hook still blocks a genuine gate refusal (hook exit 2)" \
+      && pass "CA-298/G1 -- ${matcher} hook still blocks a genuine gate refusal (status 3 -> hook exit 2)" \
       || fail "CA-298/G1 -- ${matcher} hook produced exit=${ec}, output: ${out} (expected exit 2 -- a real gate refusal must still block)"
 
-    # Case C (G8/CA-346, round 6): resolve-dir succeeds AND gate-check succeeds -- must ALLOW
-    # expansion (exit 0). Case A returns before ever calling gate-check, and Case B's stub makes
-    # gate-check fail, so neither above can observe a regression on the shipped hooks' actual
-    # happy path (`... edm-state gate-check "$prefix" ${token} || exit 2; exit 0`). A stray
-    # trailing `; exit 2` appended after that gate-check call -- or the gate-check call being
-    # separated from its own `|| exit 2` by so much as one dropped semicolon -- would still pass
-    # Cases A and B identically (A returns early, B's failing gate-check still exits 2) while
-    # permanently locking the user out of this command even with every gate approved. This is
-    # the P0-class regression only this case actually guards against.
+    # Case C (G8/CA-346, round 6): gate-check succeeds -- must ALLOW expansion (exit 0). Case A's
+    # stub dies before reaching any success path, and Case B's stub always refuses, so neither
+    # above can observe a regression on the shipped hooks' actual happy path (`... edm-state
+    # gate-check "$prefix" ${token}; ec=$?; if [ "$ec" -eq 3 ]; then exit 2; fi; exit 0`). A stray
+    # trailing `; exit 2` appended after that block, or the exit-code capture being separated from
+    # its own check by a dropped semicolon, would still pass Cases A and B identically (A returns
+    # early via the die, B's refusal still exits 2) while permanently locking the user out of this
+    # command even with every gate approved. This is the P0-class regression only this case
+    # actually guards against.
     cat > "${scratch}/bin/edm-state" <<'EOS'
 #!/bin/bash
 case "$1" in
-  resolve-dir) echo "/tmp/CA298PFX"; exit 0 ;;
   gate-check) exit 0 ;;
 esac
 EOS
@@ -6330,13 +6343,78 @@ EOS
     ec=0
     out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" ARGUMENTS="CA298PFX" bash "$cmdfile" 2>&1)" || ec=$?
     [[ "$ec" -eq 0 ]] \
-      && pass "G8/CA-346 -- ${matcher} hook allows expansion when resolve-dir AND gate-check both succeed (an approved gate must not block)" \
-      || fail "G8/CA-346 -- ${matcher} hook produced exit=${ec}, output: ${out} (expected exit 0 -- resolve-dir and gate-check both succeeding must allow expansion)"
+      && pass "G8/CA-346 -- ${matcher} hook allows expansion when gate-check succeeds (an approved gate must not block)" \
+      || fail "G8/CA-346 -- ${matcher} hook produced exit=${ec}, output: ${out} (expected exit 0 -- gate-check succeeding must allow expansion)"
+
+    # Case D (G12/CA-345, round 6): a host without jq -- gate-check's own require_jq dies with a
+    # generic status before it ever reaches the gate logic. Must ALLOW expansion (exit 0), the
+    # same as Case A, proving the hook's new contract does not special-case "missing state file"
+    # over any other setup failure.
+    cat > "${scratch}/bin/edm-state" <<'EOS'
+#!/bin/bash
+case "$1" in
+  gate-check) echo "edm-state: jq is required (install: brew install jq / apt install jq)" >&2; exit 1 ;;
+esac
+EOS
+    chmod +x "${scratch}/bin/edm-state"
+    ec=0
+    out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" ARGUMENTS="CA298PFX" bash "$cmdfile" 2>&1)" || ec=$?
+    [[ "$ec" -eq 0 ]] \
+      && pass "G12/CA-345 -- ${matcher} hook allows expansion when gate-check dies for a missing-jq setup error" \
+      || fail "G12/CA-345 -- ${matcher} hook produced exit=${ec}, output: ${out} (expected exit 0 -- a missing-jq setup error must not block)"
 
     rm -rf "$scratch"
   done
 }
 ca298_gate_hooks_case
+
+# =================================================================================
+# G12/CA-345 (round 6), primary trigger: a legacy (schema-less) initiative's FIRST gate-check
+# invocation takes record_degraded_check's write lock (G9/CA-339's documented one exception to
+# "read-only"). If that lock is genuinely contended -- a Stop/PreCompact checkpoint sweep mid-
+# flight, or here, a background holder standing in for one -- rmw_state exceeds its 10s flock
+# timeout and dies with a generic (non-refusal) status. Before this fix the hook's `|| exit 2`
+# converted that into an opaque gate-refusal block; after this fix the hook only blocks on the
+# dedicated GATE_CHECK_REFUSED (3) status, so a lock timeout must ALLOW expansion instead. Runs
+# the REAL edm-state binary (not a stub) against a REAL held flock, exercising the actual
+# with_state_lock timeout path end to end, per the REMEDIATION's step-3 executing case. Gated on
+# flock(1) exactly like the G49 timeout case above, which this reuses the background-holder idiom
+# from (bare, never killed or waited on -- see G49's comment for why).
+# =================================================================================
+echo
+echo "=== G12/CA-345: a hook body allows expansion (exit 0, not 2) when gate-check times out on a contended lock ==="
+g12_lock_contention_case() {
+  local scratch cmdfile cmd lockbase lockfile state_file ec out
+  scratch="$(mktemp -d "${TMP}/edm-g12lock.XXXXXX")" || { fail "G12/CA-345 -- mktemp failed"; return 1; }
+  (
+    cd "$scratch" || exit 1
+    "$EDM_STATE" init G12LOCK >/dev/null 2>&1
+    state_file="${scratch}/SRD/G12LOCK/.edm-state.json"
+    # Strip .mode so cmd_gate_check's legacy branch (mode == "null") fires unconditionally,
+    # guaranteeing the record_degraded_check write this case depends on actually runs.
+    jq 'del(.mode)' "$state_file" > "${state_file}.tmp" && mv "${state_file}.tmp" "$state_file"
+    lockbase="${state_file%.json}"
+    lockfile="${lockbase}.lock"
+    jq -r --arg m "edm:srd" \
+      '.hooks.UserPromptExpansion[] | select(.matcher == $m) | .hooks[] | select(.type == "command") | .command' \
+      "${PLUGIN_DIR}/hooks/hooks.json" > "${scratch}/hook-command.sh" 2>/dev/null
+    ( flock 200; sleep 12 ) 200>"$lockfile" &
+    sleep 0.3
+    ec=0
+    out="$(ARGUMENTS="G12LOCK" bash "${scratch}/hook-command.sh" 2>&1)" || ec=$?
+    printf 'ec=%s out=%s\n' "$ec" "$out"
+  )
+  rm -rf "$scratch"
+}
+if command -v flock >/dev/null 2>&1; then
+  g12_lock_out="$(g12_lock_contention_case)"
+  check "G12/CA-345 -- the real hook body allows expansion (ec=0) when the legacy write lock is genuinely contended" \
+    "ec=0" "$g12_lock_out"
+  check "G12/CA-345 -- the underlying failure really was a lock timeout, not some other error masking a real bug" \
+    "state lock timeout" "$g12_lock_out"
+else
+  echo "  SKIP: G12/CA-345 live-lock-contention case -- flock(1) not available on this host"
+fi
 
 echo
 echo "=== G31/CA-279: the five prompt hooks delegate to edm-state gate-check rather than restating the phase-to-gate mapping in prose ==="
@@ -6353,6 +6431,16 @@ for g31_matcher in edm:srd edm:audit-srd edm:tickets edm:audit-tickets edm:imple
     "requires gate" "$g31_prompt_text"
   check_absent "G31/CA-279 -- ${g31_matcher} prompt hook no longer instructs reading gates_approved directly" \
     "gates_approved" "$g31_prompt_text"
+  # G31/CA-358 (round 6): the command hooks validate the prefix charset BEFORE resolve-dir, but
+  # the prompt bodies previously had no equivalent guard, so a malformed prefix's resolve-dir
+  # failure got labelled "a legitimate first invocation -- allow expansion" -- contradicting the
+  # command hook's own refusal on the exact same input. Each prompt must now distinguish the two
+  # cases using the same "[EDM] invalid prefix" wording the command hook uses, so the next
+  # rewrite cannot silently drop the distinction again.
+  check "G31/CA-358 -- ${g31_matcher} prompt hook names the invalid-prefix case (matching the command hook's own wording)" \
+    "[EDM] invalid prefix" "$g31_prompt_text"
+  check "G31/CA-358 -- ${g31_matcher} prompt hook distinguishes a malformed prefix from a merely-not-yet-resolvable one" \
+    "malformed prefix argument" "$g31_prompt_text"
 done
 # Positive control: prove check_absent's needles actually match something if reintroduced, rather
 # than passing vacuously because the phrasing was never right to begin with.
@@ -6360,6 +6448,39 @@ g31_control_input="/edm:srd requires gate 1 approved. Check the gates_approved a
 [[ "$g31_control_input" == *"requires gate"* && "$g31_control_input" == *"gates_approved"* ]] \
   && pass "G31/CA-279 -- positive control: both retired needles still match the old phrasing they replaced" \
   || fail "G31/CA-279 -- positive control broken: a needle above would not catch a reintroduction"
+
+# =================================================================================
+# G9/CA-339 (round 6): gate-check was documented "read-only" at eight sites while
+# record_degraded_check additively writes a one-time .degraded_checks breadcrumb for a legacy
+# initiative's first invocation. The fix qualifies the claim at its two source sites in edm-state
+# (the help sentinel and cmd_gate_check's own docstring) and drops the bare "(read-only)"
+# parenthetical from the five hooks.json prompt bodies -- without touching the record_
+# degraded_check warning at edm-state:~1621 ("...skipping (gate-check remains read-only)"), which
+# is accurate in the narrow branch it actually describes (the write was skipped) and is asserted
+# verbatim by the separate G22b case above.
+# =================================================================================
+echo
+echo "=== G9/CA-339: gate-check's read-only claim is qualified, not dropped; record_degraded_check stays reachable ==="
+g9339_help_line="$(grep -n 'edm-state gate-check <PREFIX> <gated-command>' "$EDM_STATE" | head -1)"
+check_absent "G9/CA-339 -- the --help sentinel no longer claims gate-check is unconditionally read-only" \
+  "(read-only)" "$g9339_help_line"
+check "G9/CA-339 -- the --help sentinel qualifies the claim (read-only w.r.t. gate state, additive breadcrumb exception named)" \
+  "read-only w.r.t. gate state" "$g9339_help_line"
+g9339_docstring="$(awk '/^# ---- Gate enforcement/{f=1} f{print} f && /^cmd_gate_check\(\)/{exit}' "$EDM_STATE")"
+check_absent "G9/CA-339 -- cmd_gate_check's own docstring no longer asserts the unqualified 'Read-only -- never mutates state.'" \
+  "Read-only -- never mutates state." "$g9339_docstring"
+check "G9/CA-339 -- cmd_gate_check's docstring names the one documented exception (the .degraded_checks breadcrumb)" \
+  "one documented exception to" "$g9339_docstring"
+g9339_fn_body="$(awk '/^cmd_gate_check\(\) \{/{f=1} f{print} f && /^\}/{exit}' "$EDM_STATE")"
+check "G9/CA-339 -- record_degraded_check is still called from cmd_gate_check (the mutation itself is intentional; only the claim was wrong)" \
+  "record_degraded_check " "$g9339_fn_body"
+for g9339_matcher in edm:srd edm:audit-srd edm:tickets edm:audit-tickets edm:implement; do
+  g9339_prompt_text="$(jq -r --arg m "$g9339_matcher" \
+    '.hooks.UserPromptExpansion[] | select(.matcher == $m) | .hooks[] | select(.type == "prompt") | .prompt' \
+    "${PLUGIN_DIR}/hooks/hooks.json" 2>/dev/null)"
+  check_absent "G9/CA-339 -- ${g9339_matcher} prompt hook no longer carries the bare '(read-only)' parenthetical" \
+    "(read-only" "$g9339_prompt_text"
+done
 
 # =================================================================================
 # G9/G19 (round-3 Wave 7c): the two --help sentences this round's own remediation inverted are
