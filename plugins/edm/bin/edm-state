@@ -237,9 +237,22 @@ state_file_for() {
     echo "${matches[0]}"
     return 0
   elif [[ ${#matches[@]} -gt 1 ]]; then
-    echo "edm-state: WARNING: multiple product-scoped directories for ${prefix}; using first match" >&2
-    echo "${matches[0]}"
-    return 0
+    # G14/CA-352: refuse rather than guess in glob order. The previous behavior (warn to
+    # stderr, then silently pick matches[0]) is indistinguishable from a correct resolution to
+    # every one of the ~30 bare mutator call sites in this file, all of which route through
+    # rmw_state without inspecting stderr, and every automated consumer (the five command hooks
+    # pipe resolve-dir to >/dev/null 2>&1; SessionStart adds 2>/dev/null; Stop/PreCompact end in
+    # || true) discards the warning outright -- so two developers on one repo could have
+    # `edm-state set` silently write to two different initiatives with no diagnostic reaching
+    # either of them. Mirrors pattern_insert_line_for's existing refusal pattern (the house
+    # convention: die naming every candidate rather than guess).
+    local _sff_candidate
+    local _sff_list=""
+    for _sff_candidate in "${matches[@]}"; do
+      _sff_list="${_sff_list}  ${_sff_candidate}"$'\n'
+    done
+    die "state_file_for: multiple product-scoped directories for ${prefix}; refusing to guess which one is correct -- candidates:
+${_sff_list}resolve with 'edm-state migrate-path' or by removing the duplicate initiative directory"
   fi
 
   # AC1: Compute product-scoped path from env vars when no on-disk match found.
@@ -1025,7 +1038,10 @@ _lock_retry_or_die() {
   local _lockdir="$1" _reason="$2"
   tries=$(( tries + 1 ))
   if [[ $tries -ge 50 ]]; then
-    die "state lock timeout after 50 tries on ${_lockdir}${_reason}"
+    # G33/CA-364: quote the same unit (seconds) the flock branch's own timeout die uses, so the
+    # identical class of failure (lock acquisition timed out) is correlatable across both lock
+    # backends in a log instead of leaking a loop-internal try-count on this branch only.
+    die "state lock timeout after ~5s (50 tries x 0.1s) on ${_lockdir}${_reason}"
   fi
   sleep 0.1
 }
@@ -1119,10 +1135,21 @@ with_state_lock() {
     _EDM_TRAP_DEPTH=1
     ( flock -w 10 200 || { mkdir "$_lock_timeout_marker" 2>/dev/null; exit 99; }; "$@" ) 200>"${lockfile}" || _lock_ec=$?
     _EDM_TRAP_DEPTH=0
-    if [[ -e "$_lock_timeout_marker" ]]; then
-      rm -rf "$_lock_timeout_marker" 2>/dev/null || true
-      die "state lock timeout after 10s on ${lockfile} (another edm-state process may be holding it)"
-    elif [[ $_lock_ec -eq 99 ]]; then
+    # G13/CA-347: gate the marker-existence probe on `_lock_ec -eq 99` FIRST -- the previous
+    # form checked `[[ -e "$_lock_timeout_marker" ]]` unconditionally on every return path,
+    # including a SUCCESSFUL run. On a shared /tmp (unset TMPDIR, sticky bit, multiple local
+    # users or a shared CI shell runner), another local user can pre-plant an unremovable
+    # directory at this marker's predictable PID-derived path; the best-effort `rm -rf` above
+    # cannot remove it, `mkdir` inside the subshell is never reached because there was no
+    # timeout, and the unconditional `-e` check then found the pre-planted marker and reported
+    # a successful write as a timeout -- AFTER the locked body had already run and mutated
+    # .edm-state.json. Only the branch that can actually CREATE the marker (the flock-timeout
+    # arm, which exits 99) may treat its presence as meaningful.
+    if [[ $_lock_ec -eq 99 ]]; then
+      if [[ -e "$_lock_timeout_marker" ]]; then
+        rm -rf "$_lock_timeout_marker" 2>/dev/null || true
+        die "state lock timeout after 10s on ${lockfile} (another edm-state process may be holding it)"
+      fi
       # G17/CA-305: the marker mkdir itself failed (e.g. TMPDIR is not writable) -- still name
       # the timeout rather than silently returning a bare 99 to a bare mutator caller.
       die "state lock timeout after 10s on ${lockfile} (another edm-state process may be holding it) -- the timeout marker could not be created at ${_lock_timeout_marker} (check TMPDIR writability)"
@@ -1170,24 +1197,33 @@ with_state_lock() {
       if [[ -f "$pidfile" ]]; then
         holder_pid="$(cat "$pidfile" 2>/dev/null || true)"
         if [[ -z "$holder_pid" || ! "$holder_pid" =~ ^[0-9]+$ || "$holder_pid" == "0" ]]; then
-          # G42/CA-318: age-gate this reclaim so it agrees in direction with
-          # cmd_git_lock_check's own undetermined-liveness reclaim (which refuses rather than
-          # assumes dead) instead of doing the opposite for the identical "cannot determine
-          # liveness" situation. A live holder writes its PID via `echo $$ > "$pidfile"`
-          # microseconds after `mkdir` succeeds, so an invalid pidfile should be unreachable in
-          # practice for a live holder -- but refusing to reclaim until the lockdir is at least
-          # 1 second old (10x this loop's own 0.1s poll interval) costs nothing on the
-          # genuinely-stale path (already however many seconds or minutes old) and closes the
-          # theoretical reclaim-a-live-lock window on the momentary-write-race path. Falls
-          # through to the retry tail either way, so a lockdir that's merely too young right now
-          # reclaims on a later iteration once it ages past the threshold, within the existing
-          # 50-try/5s total budget.
-          local _lockdir_created_s _lockdir_age_s
-          _lockdir_created_s="$(date -r "$lockdir" +%s 2>/dev/null || echo 0)"
-          _lockdir_age_s=$(( $(date +%s) - _lockdir_created_s ))
-          if [[ "$_lockdir_age_s" -ge 1 ]]; then
+          # G42/CA-318, corrected by G45/CA-318 (round 6): age-gate this reclaim so it agrees
+          # in direction with cmd_git_lock_check's own undetermined-liveness reclaim (which
+          # refuses rather than assumes dead) for the identical "cannot determine liveness"
+          # situation. The two prior versions of this comment BOTH claimed that agreement was
+          # already achieved while the code beneath them still hand-computed the age with
+          # `date -r "$lockdir" +%s 2>/dev/null || echo 0` -- an unreadable mtime defaulted to
+          # epoch 0, yielding an age of ~1.7e9 seconds and an UNCONDITIONAL reclaim, the exact
+          # opposite of cmd_git_lock_check's refuse-on-unknown direction. Routing through the
+          # shared `_git_lock_age_seconds` primitive (used by every other age gate in this
+          # file) makes "age could not be determined" and "age determined but too young" two
+          # distinguishable, both-refuse outcomes, so this comment is now true as written. A
+          # live holder writes its PID via `echo $$ > "$pidfile"` microseconds after `mkdir`
+          # succeeds, so an invalid pidfile should be unreachable in practice for a live holder
+          # -- but refusing to reclaim until the lockdir is at least 1 second old (10x this
+          # loop's own 0.1s poll interval) costs nothing on the genuinely-stale path (already
+          # however many seconds or minutes old) and closes the theoretical
+          # reclaim-a-live-lock window on the momentary-write-race path. Falls through to the
+          # retry tail either way, so a lockdir that's merely too young right now reclaims on a
+          # later iteration once it ages past the threshold, within the existing 50-try/5s
+          # total budget.
+          local _lockdir_age_s
+          _lockdir_age_s="$(_git_lock_age_seconds "$lockdir")" || _lockdir_age_s=""
+          if [[ -n "$_lockdir_age_s" ]] && (( _lockdir_age_s >= 1 )); then
             _edm_reclaim_stale_lockdir "$lockdir" \
               "reclaimed a lockdir with an invalid PID '${holder_pid:-missing}' at ${lockdir}"
+          elif [[ -z "$_lockdir_age_s" ]]; then
+            echo "edm-state: state lock ${lockdir} has an invalid PID '${holder_pid:-missing}' but its age could not be determined -- not reclaiming" >&2
           else
             echo "edm-state: state lock ${lockdir} has an invalid PID '${holder_pid:-missing}' but is less than 1 second old -- not reclaiming yet (may be mid-acquisition)" >&2
           fi
@@ -3653,9 +3689,13 @@ cmd_git_lock_check() {
   command -v lsof >/dev/null 2>&1 && _have_lsof=1
   command -v pgrep >/dev/null 2>&1 && _have_pgrep=1
 
-  # G42/CA-318: with_state_lock's own invalid-pidfile reclaim path (a different lock family,
-  # same "cannot determine liveness" shape) now agrees with the refusal direction here rather
-  # than assuming dead -- see the age gate at that site's own comment.
+  # G42/CA-318, corrected by G45/CA-318 (round 6): with_state_lock's own invalid-pidfile
+  # reclaim path (a different lock family, same "cannot determine liveness" shape) now
+  # actually routes through this file's own _git_lock_age_seconds primitive and refuses
+  # rather than assumes dead on an unreadable mtime, closing the prior round's PARTIAL fix
+  # (that site previously hand-computed age with a bare `|| echo 0` default, which reclaimed
+  # unconditionally on the error path this comment already claimed was closed) -- see the age
+  # gate at that site's own comment.
   if [[ $_have_lsof -eq 0 && $_have_pgrep -eq 0 ]]; then
     echo "WARNING: liveness could not be determined for .git/index.lock (age: ${lock_age_desc}) -- neither lsof nor pgrep is available on this host; refusing to remove rather than guessing" >&2
     return 1

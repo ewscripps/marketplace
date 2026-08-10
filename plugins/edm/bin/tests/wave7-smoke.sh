@@ -7489,7 +7489,7 @@ check "G17/CA-305 -- the timeout branch creates the marker with mkdir (atomic, r
 check_absent "G17/CA-305 -- the timeout branch no longer creates the marker with a truncating, symlink-following redirect" \
   ': > "$_lock_timeout_marker"' "$g17_edm_state_content"
 check "G17/CA-305 -- a secondary diagnostic arm still names the timeout when the marker mkdir itself fails" \
-  'elif [[ $_lock_ec -eq 99 ]]; then' "$g17_edm_state_content"
+  'if [[ $_lock_ec -eq 99 ]]; then' "$g17_edm_state_content"
 check "G17/CA-305 -- the secondary diagnostic's message still contains the same 'state lock timeout' text the primary one uses" \
   'the timeout marker could not be created' "$g17_edm_state_content"
 
