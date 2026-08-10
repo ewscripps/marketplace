@@ -452,11 +452,14 @@ and something on the preserve-untouched list breaks quietly.
       Verify: the ticket's QC evidence contains one row per item with a command and its output. For
       wave A the applicable subset is items 1, 2, 3, 7 and 8; items 4, 5 and 6 are verified at
       wave-B close and the row records "not yet touched".
-- [ ] AC10 (EDMV3-111, the three existing lint classes are unchanged): the three existing
+- [ ] AC10 (EDMV3-111, the three existing lint classes are unchanged; method corrected per
+      G48/CA-324, same class CHANGELOG.md already ruled out for T67 AC8): the three existing
       `edm-lint-artifacts` classes behave identically, and the staged-prefix derivation in the commit
       hook is unchanged.
-      Verify: `git diff --stat plugins/edm/hooks/hooks.json` shows no change to `:80-90`, and the
-      three-class output on a fixed corpus is byte-identical pre- and post-change across wave A.
+      Verify: `bash plugins/edm/bin/tests/wave7-smoke.sh` (case "T67 AC8") asserts the staged-prefix
+      derivation's shipped content directly rather than an empty diff stat (which goes green
+      after any commit regardless of content); the three-class output on a fixed corpus is
+      byte-identical pre- and post-change across wave A.
 - [ ] AC11 (wave exit criteria met; the baseline half is blocked on the D23-documented gap,
       G47/CA-323, same relabeling `epics/03-ci-and-fixture-eval.md` T23 AC13 already applied
       per decisions.md D36): the three-command bypass fails at command 2 and again at command 3
@@ -833,10 +836,17 @@ written early and run at each boundary -- that is a scheduling property of one L
       initiatives completes in under 60s, documented as a CI budget rather than a commit-path budget.
       Verify: `time bash plugins/edm/bin/edm-lint-artifacts --all` on the 50-initiative fixture,
       recorded, and `grep -n 'CI budget' plugins/edm/CLAUDE.md`.
-- [ ] AC8 (commit-hook scoping preserved): the commit hook's existing behaviour of linting only the
-      prefixes derived from staged `SRD/` paths is preserved, so commit-path cost stays proportional
-      to what changed.
-      Verify: `git diff --stat plugins/edm/hooks/hooks.json` shows no change to `:80-90`.
+- [ ] AC8 (commit-hook scoping preserved, method corrected per G48/CA-324 -- CHANGELOG.md
+      records that an empty diff stat "goes green after any commit whatever the content" and
+      was replaced): the commit hook's existing behaviour of linting only the prefixes derived
+      from staged `SRD/` paths is preserved, so commit-path cost stays proportional to what
+      changed.
+      Verify: `bash plugins/edm/bin/tests/wave7-smoke.sh` (case "T67 AC8") -- a tree-state
+      assertion naming the shipped content directly: staged-path scoping (`diff --cached
+      --name-only`), a derived (not hardcoded) `srd_root`, unresolvable prefixes skipped rather
+      than treated as violations, the exit-1-vs-exit-2 blocking semantics, per-prefix invocation
+      (never `--all`), and graceful no-op when `edm-lint-artifacts` is unavailable or nothing is
+      staged.
 - [ ] AC9 (pipeline budget, on a fixed subject): the blocking pipeline (lint, test, validate tier 1)
       completes in under 5 minutes wall clock for **the fixture-repository pipeline run measured at
       each wave boundary** -- a fixed, reproducible subject rather than an undefined "typical" MR.

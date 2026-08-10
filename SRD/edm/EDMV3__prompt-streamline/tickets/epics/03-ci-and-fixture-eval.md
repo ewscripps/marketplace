@@ -173,11 +173,14 @@ descoping it would silently break two Must requirements.
       lints the fixture tree, and `bash plugins/edm/bin/tests/wave7-smoke.sh` (cases "--path on a
       directory lints recursively", "--path on a single file lints that file", and "--path makes no
       edm-state call", the last asserted by running it with `edm-state` removed from `PATH`).
-- [ ] AC7 (preserve): the existing single-prefix invocation and the `PreToolUse` commit hook
-      behaviour at `hooks/hooks.json:86` are unchanged, so commit-path cost stays proportional to
+- [ ] AC7 (preserve; method corrected per G48/CA-324, same class CHANGELOG.md already ruled out
+      for the sibling T67 AC8 -- an empty diff stat "goes green after any commit whatever the
+      content"): the existing single-prefix invocation and the `PreToolUse` commit hook
+      behaviour at `hooks/hooks.json` are unchanged, so commit-path cost stays proportional to
       what changed.
       Verify: `bash plugins/edm/bin/edm-lint-artifacts EDMV3` still works, and
-      `git diff --stat plugins/edm/hooks/hooks.json` is empty.
+      `bash plugins/edm/bin/tests/wave7-smoke.sh` (case "T67 AC8") asserts the hook's shipped
+      scoping content directly.
 - [ ] AC8: both are wired into the CI lint and test stages.
       Verify: `grep -n 'run-all.sh\|edm-lint-artifacts --all' .gitlab-ci.yml`.
 - [ ] AC9 (bash 3.2): both pass `bash -n` and introduce no bash 4+ construct.

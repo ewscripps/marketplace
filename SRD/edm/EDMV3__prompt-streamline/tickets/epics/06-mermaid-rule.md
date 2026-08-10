@@ -412,7 +412,9 @@ by construction.
       violation classes" phrase goes stale the moment a fifth class is added, which happens before
       this AC is ever satisfied, so the row instead points readers at `edm-lint-artifacts --help`
       for the authoritative, current list.
-      Verify: `git diff --stat plugins/edm/hooks/hooks.json` is empty;
+      Verify (G48/CA-324: the diff-stat clause below is removed -- CHANGELOG.md records that an
+      empty diff stat on this file "goes green after any commit whatever the content" and was
+      already replaced for the sibling T67 AC8):
       `grep -c 'four violation classes' plugins/edm/CLAUDE.md` prints `0`;
       `grep -n 'edm-lint-artifacts --help' plugins/edm/CLAUDE.md` shows the bin/ table row
       deferring to `--help`; and
