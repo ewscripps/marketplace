@@ -265,15 +265,31 @@ proto_hits="$(count_matches 'prototype)' "$EDM_STATE")"
 [[ "$proto_hits" -eq 2 ]] && pass "exactly 2 'prototype)' sites in edm-state (single derivation, CA-054 removed redundant arm)" \
   || fail "found $proto_hits 'prototype)' sites, expected exactly 2"
 
-# ---- AC6: code_audit_required_for_mode has a definition + call site(s) -------
+# ---- AC6 (G46/CA-322): code_audit_required_for_mode has exactly ONE direct call site --------
 echo
-echo "T07 AC6 -- code_audit_required_for_mode defined and consumed"
-cadef_hits="$(count_matches 'code_audit_required_for_mode' "$EDM_STATE")"
-[[ "$cadef_hits" -ge 2 ]] && pass "code_audit_required_for_mode has a definition plus at least one call site" \
-  || fail "code_audit_required_for_mode total hits = $cadef_hits, expected >= 2 (def + call site)"
-# NOTE: the ticket's full "exactly two call sites" verify assumes EDMV3-T08 (cmd_approve_gate's
-# code-audit gate token) has also landed; T08 is out of this batch's scope and depends on T07.
-# cmd_archive is the one call site T07 delivers -- see final report for the documented gap.
+echo "T07 AC6 -- code_audit_required_for_mode has exactly one direct call site"
+# G46/CA-322: count_matches counted every raw occurrence of the name (definition, comments, the
+# die() message) as if it were a call site, so this assertion passed on the definition plus a
+# comment mentioning it and could not see a missing or an extra real call site. The invocation
+# shape -- name, space, opening quote -- excludes the definition line (`code_audit_required_for_mode() {`,
+# no quote), every comment (prose, no quote-after-space), and the die() message (a colon, not a
+# quote, follows the name).
+cadef_hits="$(grep -c 'code_audit_required_for_mode "' "$EDM_STATE")"
+[[ "$cadef_hits" -eq 1 ]] \
+  && pass "T07 AC6 -- code_audit_required_for_mode has exactly one direct call site (inside audit_required_for_mode_or_legacy)" \
+  || fail "T07 AC6 -- code_audit_required_for_mode has ${cadef_hits} direct call site(s), expected exactly 1"
+# Positive control: prove the invocation-shape needle actually discriminates a real call from a
+# comment mention, rather than passing vacuously because the pattern never matches anything.
+cadef_control="$(printf '%s\n' '# code_audit_required_for_mode is mentioned here in prose' 'code_audit_required_for_mode "$mode"' | grep -c 'code_audit_required_for_mode "')"
+[[ "$cadef_control" -eq 1 ]] \
+  && pass "T07 AC6 -- positive control: the invocation-shape needle matches the real call and not the comment" \
+  || fail "T07 AC6 -- positive control broken: expected exactly 1 match, got ${cadef_control}"
+# D35/CA-183 (decisions.md): cmd_approve_gate's code-audit branch deliberately consumes this
+# function THROUGH audit_required_for_mode_or_legacy(), not by calling it a second time
+# directly -- so a second direct call site is never expected, not merely "not yet landed".
+check "T07 AC6 -- cmd_approve_gate consumes code_audit_required_for_mode through the shared wrapper" \
+  'audit_required="$(audit_required_for_mode_or_legacy "$mode")"' \
+  "$(awk '/^cmd_approve_gate\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
 
 # ---- AC7: unknown mode/lifecycle_mode fails loudly, does not default ---------
 echo

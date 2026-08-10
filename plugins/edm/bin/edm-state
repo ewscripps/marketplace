@@ -844,9 +844,14 @@ phase_start_prerequisite_gate() {
 }
 
 # code_audit_required_for_mode <mode> -- whether this mode's phase graph includes
-# a code-audit round (EDMV3-T07 AC6). Consumed by cmd_archive so the convergence
-# exemption is derived once rather than special-cased separately; EDMV3-T08 adds
-# the second consumer (cmd_approve_gate's code-audit gate token).
+# a code-audit round (EDMV3-T07 AC6). ONE direct call site (inside
+# audit_required_for_mode_or_legacy() immediately below), consumed from there by BOTH
+# cmd_archive (via convergence_exempt()) and cmd_approve_gate's code-audit branch -- not two
+# direct call sites of this function itself. G46/CA-322: this comment previously promised, in
+# future tense, that EDMV3-T08 would add a second DIRECT consumer; D35/CA-183 settled that
+# cmd_approve_gate's code-audit precheck deliberately shares only
+# audit_required_for_mode_or_legacy(), not this function directly, so that second direct call
+# site was never going to exist and the promise was stale from the day D35 landed.
 code_audit_required_for_mode() {
   local mode="$1"
   case "$mode" in
