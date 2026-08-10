@@ -1203,6 +1203,27 @@ t66ac3_rtd="$("$EDM_STATE" --help 2>&1 | grep -c record-task-duration || true)"
   && pass "T66 AC3 -- record-task-duration is absent from --help (deleted, EDMV3-T58)" \
   || fail "T66 AC3 -- record-task-duration still appears in --help"
 
+# G25/CA-242 (round 5): the bin/ table's row count -- one row per shipped script -- had no
+# assertion at all (only edm-state's own subcommand count was checked above). Round 4 fixed the
+# table's content by hand but left the count itself unenforced, so it could go stale again the
+# next time a script was added or removed. Scoped to the "## `bin/` helper scripts" heading so
+# this doesn't also count edm- mentions in the model/effort or testing-agent tables elsewhere in
+# the file.
+t66ac3ext_table_rows="$(awk '/^## `bin\/` helper scripts/{f=1; next} f && /^##/{exit} f && /^\| `edm-/{c++} END{print c+0}' "$CLAUDE_MD_T66")"
+t66ac3ext_shipped="$(find "${PLUGIN_DIR}/bin" -maxdepth 1 -type f -name 'edm-*' ! -name '*.awk' | wc -l | tr -d ' ')"
+[[ "$t66ac3ext_table_rows" == "$t66ac3ext_shipped" ]] \
+  && pass "T66 AC3 (G25/CA-242) -- bin/ table row count matches shipped bin/ script count ($t66ac3ext_shipped)" \
+  || fail "T66 AC3 (G25/CA-242) -- bin/ table has $t66ac3ext_table_rows row(s) but bin/ ships $t66ac3ext_shipped edm-* script(s)"
+t66ac3ext_missing=""
+for t66ac3ext_f in "${PLUGIN_DIR}"/bin/edm-*; do
+  [[ "$t66ac3ext_f" == *.awk ]] && continue
+  t66ac3ext_name="$(basename "$t66ac3ext_f")"
+  grep -q -- "\`${t66ac3ext_name}\`" "$CLAUDE_MD_T66" || t66ac3ext_missing="${t66ac3ext_missing} ${t66ac3ext_name}"
+done
+[[ -z "$t66ac3ext_missing" ]] \
+  && pass "T66 AC3 (G25/CA-242) -- every shipped bin/ script has a bin/ table row" \
+  || fail "T66 AC3 (G25/CA-242) -- bin/ table is missing a row for:${t66ac3ext_missing}"
+
 echo
 echo "T58 AC1 -- implement no longer names edm-test-coverage-auditor"
 # The other half of the same delete-list ticket as the T66 AC3 --help case above.

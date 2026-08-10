@@ -646,11 +646,22 @@ runtime.
       `migrate-schema` (wave A) -- appear in `--help` with usage lines matching the existing style,
       and `record-task-duration` is absent after EDMV3-T58. Wave C is the first boundary at which
       all four exist, which is why the assertion is here rather than three waves earlier (srd.md
-      v1.2.0 CR4's wave split for EDMV3-96).
+      v1.2.0 CR4's wave split for EDMV3-96). A separate, previously-unenforced claim in the same
+      section (CA-242, round 5): the `bin/` table's own **row count** -- one row per shipped
+      script, not `edm-state`'s subcommand count -- must match the actual script set on disk, so
+      the table (cited by name from agent prompts at runtime) cannot go stale undetected the way
+      it did before (round 4 found it stuck at 9 rows describing a set that no longer matched
+      disk). A test asserts both: the row count equals the shipped script count, and every shipped
+      script has a row.
       Verify: `bash plugins/edm/bin/tests/wave7-smoke.sh` (case "CLAUDE.md subcommand count and
       membership match dispatch"), plus
       `for c in audit-converged render-ledger audit-round-complete migrate-schema; do edm-state --help | grep -q -- "$c" || echo "MISSING: $c"; done`
-      printing nothing, and `edm-state --help | grep -l record-task-duration | wc -l` printing 0.
+      printing nothing, `edm-state --help | grep -l record-task-duration | wc -l` printing 0, and
+      `bash plugins/edm/bin/tests/wave7-smoke.sh` (case "T66 AC3 (G25/CA-242) -- bin/ table row
+      count matches shipped bin/ script count") -- which independently derives the shipped count
+      via `find plugins/edm/bin -maxdepth 1 -type f -name 'edm-*' ! -name '*.awk' | wc -l` (9 as of
+      this round) and the table's row count via a heading-scoped scan of the `bin/` table, rather
+      than a second hardcoded literal.
 - [ ] AC4 (linter row, hook row, mode row -- the row defers to `--help` instead of hardcoding a
       class count, per decisions.md D41): the `edm-lint-artifacts` row in the `bin/` table no
       longer hardcodes a violation class count or class names -- the linter emits **seven** classes
