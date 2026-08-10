@@ -591,9 +591,12 @@ _write_atomic_unwind() {
 }
 
 # ---- Lock reentrancy guard (round-3 G2/CA-142 re-fix) -----------------------
-# _EDM_TRAP_DEPTH is set to 1 for the lifetime of with_state_lock's mkdir-branch subshell and
-# used ONLY to detect an attempted nested with_state_lock call (with_state_lock is not reentrant
-# -- a nested call would deadlock against its own mkdir). It no longer gates write_atomic's trap
+# G18/CA-306 (round 5): corrected -- this used to say "mkdir-branch subshell" only. G26 armed
+# the SAME guard around the flock branch's subshell too (below), closing a gap where that
+# branch never armed it at all; both branches now set _EDM_TRAP_DEPTH=1 for their own
+# subshell's lifetime. _EDM_TRAP_DEPTH is used ONLY to detect an attempted nested
+# with_state_lock call (with_state_lock is not reentrant -- a nested call would deadlock against
+# its own mkdir, or against its own flock). It no longer gates write_atomic's trap
 # installation: write_atomic installs its own full EXIT/INT/TERM/HUP trap layer unconditionally
 # (see write_atomic below), because a `( )` subshell fork resets what `trap -p` reports for the
 # forked process (verified empirically -- a bare `( )` subshell's own `trap -p EXIT/INT/TERM/HUP`
@@ -1037,10 +1040,17 @@ with_state_lock() {
   # line inside that branch below), making it fully inert there -- a same-lockbase nested call
   # would instead block against flock(1) itself until the unrelated 10s timeout fired. Checking
   # depth FIRST, before either branch's acquisition attempt, turns both shapes into one
-  # immediate, correctly named diagnostic instead of a slow, misleading one. This guard detects
-  # same-lockbase self-nesting specifically (one locked body calling with_state_lock again with
-  # the identical lockbase) -- two with_state_lock calls against DIFFERENT lockbases never share
-  # a lockdir/lockfile and are unaffected by this check.
+  # immediate, correctly named diagnostic instead of a slow, misleading one.
+  # G18/CA-306 (round 5): corrected -- this used to claim the guard only catches same-lockbase
+  # self-nesting, and that a nested call against a DIFFERENT lockbase is unaffected. That is
+  # false in both directions: `_EDM_TRAP_DEPTH` is a single, PROCESS-GLOBAL flag, not keyed on
+  # lockbase at all, so ANY with_state_lock call attempted while another is already active dies
+  # here immediately, regardless of whether the two calls target the same lockbase or different
+  # ones. No locked body in this file nests today (verified by call-graph sweep), so this has
+  # never fired live -- but a future contributor adding the first nested call, expecting
+  # different lockbases to be legal per the old comment, would be misled by it. If cross-lockbase
+  # nesting should ever become legal, key this guard on the lockbase itself instead of rewriting
+  # this comment again.
   [[ "${_EDM_TRAP_DEPTH:-0}" -eq 0 ]] \
     || die "with_state_lock: internal: lock trap already active (_EDM_TRAP_DEPTH=${_EDM_TRAP_DEPTH}) -- nested with_state_lock calls (the same lockbase, one locked body calling with_state_lock again) are not supported"
 

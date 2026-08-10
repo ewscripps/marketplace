@@ -4841,6 +4841,21 @@ check "CA-142 -- the lockdir is cleaned up after the nested-write_atomic body co
 # elsewhere in this suite and wave6-smoke.sh -- hundreds of them, all green -- so this case adds
 # the depth assertion those calls cannot make, rather than re-proving init itself works.
 
+# =================================================================================
+# G18/CA-306 (round 5): CA-257's reposition (guard armed before BOTH acquisition branches,
+# depth armed on the flock branch too) is correct code; two of its own comments described the
+# old, narrower shape. Doc-only fix -- the guard's actual behavior is unchanged.
+# =================================================================================
+t_g18_edm_state="$(cat "$EDM_STATE")"
+check "G18/CA-306 -- the reentrancy-guard section header now names both acquisition branches" \
+  "the SAME guard around the flock branch's subshell too" "$t_g18_edm_state"
+check_absent "G18/CA-306 -- the section header no longer claims the guard is armed only around the mkdir branch" \
+  "is set to 1 for the lifetime of with_state_lock's mkdir-branch subshell and" "$t_g18_edm_state"
+check "G18/CA-306 -- the guard's own comment now states it is a process-global flag, not lockbase-keyed" \
+  "a single, PROCESS-GLOBAL flag, not keyed on" "$t_g18_edm_state"
+check_absent "G18/CA-306 -- the guard's own comment no longer claims a different lockbase is unaffected" \
+  "two with_state_lock calls against DIFFERENT lockbases never share" "$t_g18_edm_state"
+
 # ---- CA-025: the mkdir branch now runs the locked body in a subshell (matching the flock
 # branch's existing subshell semantics) -- a variable a locked body sets must not leak back into
 # with_state_lock's caller. -----------------------------------------------------------------------
