@@ -1544,16 +1544,25 @@ check_refuses_and_leaves_state "T11 AC4 -- phase 6 with open PARTIAL refuses nam
   && pass "T11 AC4 -- phase 6 completes once the PARTIAL is closed" \
   || fail "T11 AC4 -- phase 6 still refused after the PARTIAL was closed"
 
-# ---- AC4 (degradation): schema_version < 2 warns and proceeds through the PARTIAL check --
+# ---- AC4 (G2/CA-333, round 6: this degradation was removed) -- schema_version 1 now
+# refuses on the open-PARTIAL check exactly like schema_version 2 above, instead of
+# warning and proceeding. `_cmd_init_render` writes the literal schema_version 1 for every
+# initiative the current plugin creates, so the old >= 2 gate made this refusal
+# environmentally unreachable in the shipped default -- the same class CA-182 fixed for
+# cmd_approve_gate's code-audit precheck. -------------------------------------------------
 echo
-echo "T11 AC4 -- schema_version < 2 warns and proceeds through the open-PARTIAL check"
+echo "T11 AC4/G2/CA-333 -- schema_version 1 now refuses on the open-PARTIAL check (no longer degraded)"
 "$EDM_STATE" init T11PARTIALV1 >/dev/null
 mkdir -p "$TMP/SRD/T11PARTIALV1/qc"
 echo "# QC Summary" > "$TMP/SRD/T11PARTIALV1/qc/qc-summary.md"
 "$EDM_STATE" record-partial-verdict T11PARTIALV1 T11PARTIALV1-T01 PARTIAL "needs runtime check" >/dev/null
+STATE_T11PARTIALV1="$TMP/SRD/T11PARTIALV1/.edm-state.json"
+check_refuses_and_leaves_state "T11 AC4/G2/CA-333 -- schema_version 1 refuses on the open-PARTIAL check naming verify-runtime" \
+  "verify-runtime" "$STATE_T11PARTIALV1" "$EDM_STATE" phase-complete T11PARTIALV1 6
+"$EDM_STATE" record-partial-verdict T11PARTIALV1 T11PARTIALV1-T01 PASS "runtime verified" >/dev/null
 "$EDM_STATE" phase-complete T11PARTIALV1 6 >/dev/null \
-  && pass "T11 AC4 -- schema_version 1 (< 2) does not enforce the open-PARTIAL check" \
-  || fail "T11 AC4 -- schema_version 1 unexpectedly enforced the open-PARTIAL check"
+  && pass "T11 AC4/G2/CA-333 -- schema_version 1 phase 6 completes once the PARTIAL is closed" \
+  || fail "T11 AC4/G2/CA-333 -- schema_version 1 phase 6 still refused after the PARTIAL was closed"
 
 # ---- AC5: skipped-phase exemption for the artifact; phase 6's PARTIAL check is NOT exempted --
 echo
@@ -2042,22 +2051,60 @@ check "T14 AC2 -- phase-complete artifact check names the skipped phase" \
 [[ $t14leg_pc1_ec -eq 0 ]] && pass "T14 AC1 -- phase-complete artifact check (T11) warns and proceeds rather than hard-failing" \
   || fail "T14 AC1 -- phase-complete artifact check hard-failed on a legacy file (exit $t14leg_pc1_ec)"
 
-# check 2: phase-complete open-PARTIAL check (T11) -- an open PARTIAL exists, must not die.
+# check 2: phase-complete open-PARTIAL check -- G2/CA-333 (round 6) made this check
+# unconditional (moved out of the legacy/current split entirely, matching `edm-state
+# validate`'s OPEN_PARTIALS anomaly, which is deliberately not schema-gated because
+# partial_verdict_map predates schema_version). A truly legacy (no schema_version) file with a
+# genuine open PARTIAL now refuses here too, not just a schema_version:1 file (T14MIDDLE
+# below) -- there is no longer a "warns and proceeds despite an unresolved PARTIAL" path at
+# any schema_version.
 t14leg_pc6_ec=0
 t14leg_pc6_out="$("$EDM_STATE" phase-complete T14LEGACY 6 2>&1)" || t14leg_pc6_ec=$?
-check "T14 AC2 -- phase-complete PARTIAL check names 'phase 6' when it warns" \
+check "T14 AC2/G2/CA-333 -- phase-complete PARTIAL refusal names 'phase 6'" \
   "phase 6" "$t14leg_pc6_out"
-[[ $t14leg_pc6_ec -eq 0 ]] && pass "T14 AC1 -- phase-complete open-PARTIAL check (T11) warns and proceeds despite an unresolved PARTIAL" \
-  || fail "T14 AC1 -- phase-complete open-PARTIAL check hard-failed on a legacy file (exit $t14leg_pc6_ec)"
+[[ $t14leg_pc6_ec -ne 0 ]] && pass "T14 AC2/G2/CA-333 -- phase-complete now refuses on an open PARTIAL even for a truly legacy (no schema_version) file" \
+  || fail "T14 AC2/G2/CA-333 -- phase-complete succeeded despite an open PARTIAL on a legacy file (exit $t14leg_pc6_ec)"
 
-# check 3: archive lifecycle checks (T12) -- no gates approved, no completed_at, must not die.
+# check 3: archive -- the wave-A lifecycle checks (gates/phase/completed_at) still warn and
+# proceed rather than hard-failing (unchanged), but G2/CA-333 made the separate PARTIAL-closure
+# check (AC1e) unconditional too, so this SAME fixture -- which happens to carry a genuine open
+# PARTIAL -- now refuses on that check instead of completing the archive. A dedicated
+# no-open-PARTIAL fixture (T14LEGACY2 below) isolates the original wave-A-only claim.
 t14leg_arch_ec=0
 t14leg_arch_out="$("$EDM_STATE" archive T14LEGACY 2>&1)" || t14leg_arch_ec=$?
 check "T14 AC2 -- archive names the skipped check class when it warns" \
   "skipping wave-A lifecycle checks" "$t14leg_arch_out"
-[[ $t14leg_arch_ec -eq 0 ]] && pass "T14 AC1 -- archive lifecycle checks (T12) warn and proceed rather than hard-failing" \
-  || fail "T14 AC1 -- archive hard-failed on a legacy file (exit $t14leg_arch_ec)"
-[[ -d "$TMP/SRD/.archived/T14LEGACY" ]] \
+check "T14 AC2/G2/CA-333 -- archive still refuses on the open PARTIAL even for a legacy file" \
+  "unclosed or FAIL-closed PARTIAL verdict" "$t14leg_arch_out"
+[[ $t14leg_arch_ec -ne 0 ]] && pass "T14 AC2/G2/CA-333 -- archive refuses this legacy fixture (open PARTIAL), even though its wave-A checks alone would have warned and proceeded" \
+  || fail "T14 AC2/G2/CA-333 -- archive unexpectedly succeeded despite the open PARTIAL (exit $t14leg_arch_ec)"
+[[ ! -d "$TMP/SRD/.archived/T14LEGACY" ]] \
+  && pass "T14 AC2/G2/CA-333 -- the refused archive left T14LEGACY un-moved" \
+  || fail "T14 AC2/G2/CA-333 -- T14LEGACY was archived despite the refusal"
+
+# ---- Dedicated no-open-PARTIAL legacy fixture: isolates the ORIGINAL wave-A-only claim (T12)
+# that missing gates/phase/completed_at degrade to warn-and-proceed on a truly legacy file,
+# now that T14LEGACY above (which happens to carry an open PARTIAL) demonstrates a different,
+# separately-enforced refusal instead. --------------------------------------------------------
+mkdir -p "$TMP/SRD/T14LEGACY2"
+STATE_T14LEGACY2="$TMP/SRD/T14LEGACY2/.edm-state.json"
+jq -n '{
+  prefix: "T14LEGACY2",
+  mode: "standard",
+  current_phase: 6,
+  gates_approved: [],
+  phase_durations: {"6_phase": {"started_at": "2020-01-01T00:00:00Z"}},
+  partial_verdict_map: {},
+  code_audit_converged: true,
+  last_updated: "2020-01-01T00:00:00Z"
+}' > "$STATE_T14LEGACY2"
+t14leg2_arch_ec=0
+t14leg2_arch_out="$("$EDM_STATE" archive T14LEGACY2 2>&1)" || t14leg2_arch_ec=$?
+check "T14 AC1 -- archive names the skipped check class when it warns (no-open-PARTIAL legacy fixture)" \
+  "skipping wave-A lifecycle checks" "$t14leg2_arch_out"
+[[ $t14leg2_arch_ec -eq 0 ]] && pass "T14 AC1 -- archive lifecycle checks (T12) warn and proceed rather than hard-failing" \
+  || fail "T14 AC1 -- archive hard-failed on a legacy file with no open PARTIAL (exit $t14leg2_arch_ec)"
+[[ -d "$TMP/SRD/.archived/T14LEGACY2" ]] \
   && pass "T14 AC1 -- legacy initiative archives successfully despite missing gates/phase/completed_at" \
   || fail "T14 AC1 -- legacy initiative was not archived"
 
@@ -2077,11 +2124,13 @@ check "T14 AC2 -- phase-start names the skipped check when it warns" \
   || fail "T14 AC1 -- phase-start hard-failed on a legacy file (exit $t14leg_ps_ec)"
 
 # ---- AC3 (D4 grandfathering, positive): code_audit_converged=true set under the old flow
-# archives without being asked to re-approve through the new gate. ------------------------
+# archives without being asked to re-approve through the new gate. Uses T14LEGACY2 (no open
+# PARTIAL), not T14LEGACY, since T14LEGACY's archive attempt above now refuses on the
+# separately-enforced G2/CA-333 PARTIAL check before ever reaching this far. ---------------
 echo
 echo "T14 AC3 -- pre-set converged flag (old flow) archives without re-approval through the new gate"
 check_absent "T14 AC3 -- archive does not ask to re-approve the code-audit gate for a legacy converged=true file" \
-  "approve-gate T14LEGACY code-audit" "$t14leg_arch_out"
+  "approve-gate T14LEGACY2 code-audit" "$t14leg2_arch_out"
 
 # ---- AC4 (end-to-end legacy fixture): copy the real v2.0 archived state file into a scratch
 # initiative and run get/validate/phase-complete/archive end to end. ----------------------
@@ -2141,11 +2190,17 @@ t14cur_arch_out="$("$EDM_STATE" archive T14CURRENT 2>&1 || true)"
 check_absent "T14 AC5 -- archive refusal on a current-version initiative shows no legacy warn line" \
   "[warn] legacy" "$t14cur_arch_out"
 
-# ---- AC6 (class 2, the middle class): schema_version 1 is fully enforced on version-1
-# checks and warn-and-proceeds, naming each, on version-2 checks. In wave A this asserts the
-# class is reachable; T18 (wave B) adds the version-2 checks this exercises further. ------
+# ---- AC6 (historical middle class -- G2/CA-333, round 6, removed this specific degradation):
+# schema_version 1 used to warn-and-proceed through the phase-6 open-PARTIAL check (a >=2-gated
+# check) while fully enforcing every >=1 check. G2/CA-333 found that gate environmentally
+# unreachable: `_cmd_init_render` writes the literal schema_version 1 for every initiative the
+# current plugin creates and nothing auto-migrates it, so this refusal never fired in the
+# shipped default -- the same defect class CA-182 fixed one function over
+# (cmd_approve_gate's code-audit precheck). The check now runs unconditionally, mirroring
+# CA-182's own remediation, so schema_version 1 is fully enforced here too, just like every
+# >=1 check already was. ------
 echo
-echo "T14 AC6 -- schema_version 1 is fully enforced at >=1 and warn-and-proceeds at >=2 (middle class)"
+echo "T14 AC6 -- schema_version 1 fully enforces the >=1 gate-check AND the phase-6 open-PARTIAL check (G2/CA-333: no longer degraded)"
 t14cur_ps_out="$("$EDM_STATE" phase-start T14CURRENT 2 2>&1 || true)"
 check_absent "T14 AC6 -- schema_version 1 fully enforces the >=1 gate-check (no legacy warn)" \
   "[warn] legacy" "$t14cur_ps_out"
@@ -2158,16 +2213,18 @@ jq -n '{
   last_updated: "2020-01-01T00:00:00Z"
 }' > "$STATE_T14MIDDLE"
 # schema_version 1 satisfies the >=1 artifact check in full (EDMV3-T09 AC10), so the phase-6
-# artifact must actually be present here -- this fixture is exercising the separate >=2
-# PARTIAL check's degradation, not the >=1 artifact check's.
+# artifact must actually be present here -- this fixture is exercising the phase-6 open-PARTIAL
+# check specifically, not the >=1 artifact check.
 mkdir -p "$TMP/SRD/T14MIDDLE/qc"
 echo "# QC summary" > "$TMP/SRD/T14MIDDLE/qc/qc-summary.md"
 t14mid_ec=0
 t14mid_out="$("$EDM_STATE" phase-complete T14MIDDLE 6 2>&1)" || t14mid_ec=$?
-check "T14 AC6 -- schema_version 1 (< 2) warn-and-proceeds through the version-2 PARTIAL check, naming it" \
+check "T14 AC6/G2/CA-333 -- schema_version 1 refuses phase-complete 6 on the open PARTIAL, naming verify-runtime" \
+  "unresolved PARTIAL verdict" "$t14mid_out"
+check_absent "T14 AC6/G2/CA-333 -- the retired 'schema_version 1 < 2' degradation line no longer appears" \
   "schema_version 1 < 2" "$t14mid_out"
-[[ $t14mid_ec -eq 0 ]] && pass "T14 AC6 -- the middle class (present-but-below) is reachable and does not hard-fail" \
-  || fail "T14 AC6 -- schema_version 1 unexpectedly enforced the version-2 check (exit $t14mid_ec)"
+[[ $t14mid_ec -ne 0 ]] && pass "T14 AC6/G2/CA-333 -- schema_version 1 now refuses on an open PARTIAL (the degradation that made this environmentally unreachable is gone)" \
+  || fail "T14 AC6/G2/CA-333 -- schema_version 1 phase-complete 6 unexpectedly succeeded despite an open PARTIAL (exit $t14mid_ec)"
 
 # ---- AC7 (additive fields, no null-propagation on legacy reads): jq reads across the real
 # legacy fixture never propagate null into a field a caller treats as present. -------------
@@ -3141,21 +3198,86 @@ t18_ac5_case() {
 }
 with_scratch_repo t18_ac5_case
 
-# ---- AC6: three-valued degradation -- legacy and schema_version:1 warn-and-proceed --------
+# ---- AC6 (historical three-valued degradation -- G2/CA-333, round 6, removed this
+# degradation): both wave-B archive sub-checks (PARTIAL-closure, audit-converged re-query) used
+# to warn-and-proceed for BOTH legacy (no schema_version) and schema_version:1 initiatives.
+# G2/CA-333 found this environmentally unreachable in the shipped default (every initiative the
+# current plugin creates sits at schema_version 1 forever) and made both checks run
+# UNCONDITIONALLY -- the same fix class as CA-182's cmd_approve_gate precheck. The
+# "skipping PARTIAL-closure check" / "skipping audit-converged re-query" strings no longer
+# exist anywhere in bin/edm-state; a genuine open PARTIAL now refuses archive regardless of
+# schema_version, legacy included.
 echo
-echo "T18 AC6 -- legacy and schema_version:1 initiatives warn-and-proceed through both wave-B checks"
-check "T18 AC6 -- legacy (no schema_version) archive warns rather than enforcing the PARTIAL-closure check" \
-  "skipping PARTIAL-closure check" "$t14leg_arch_out"
-check "T18 AC6 -- legacy (no schema_version) archive warns rather than enforcing the audit-converged re-query" \
-  "skipping audit-converged re-query" "$t14leg_arch_out"
+echo "T18 AC6 -- legacy and schema_version:1 initiatives now fully enforce both wave-B checks (G2/CA-333: no longer degraded)"
+check_absent "T18 AC6/G2/CA-333 -- the retired 'skipping PARTIAL-closure check' string no longer appears anywhere in bin/edm-state" \
+  "skipping PARTIAL-closure check" "$(cat "${SCRIPT_DIR}/../edm-state")"
+check_absent "T18 AC6/G2/CA-333 -- the retired 'skipping audit-converged re-query' string no longer appears anywhere in bin/edm-state" \
+  "skipping audit-converged re-query" "$(cat "${SCRIPT_DIR}/../edm-state")"
+check "T18 AC6/G2/CA-333 -- legacy (no schema_version) archive now refuses on the open PARTIAL rather than warning and proceeding" \
+  "unclosed or FAIL-closed PARTIAL verdict" "$t14leg_arch_out"
+[[ $t14leg_arch_ec -ne 0 ]] && pass "T18 AC6/G2/CA-333 -- legacy archive now refuses (degradation removed)" \
+  || fail "T18 AC6/G2/CA-333 -- legacy archive unexpectedly succeeded despite the open PARTIAL (exit $t14leg_arch_ec)"
 t14mid_arch_ec=0
 t14mid_arch_out="$("$EDM_STATE" archive T14MIDDLE 2>&1)" || t14mid_arch_ec=$?
-check "T18 AC6 -- schema_version 1 (< 2) warns and proceeds through the PARTIAL-closure check, naming it" \
-  "schema_version 1 < 2 -- skipping PARTIAL-closure check" "$t14mid_arch_out"
-check "T18 AC6 -- schema_version 1 (< 2) warns and proceeds through the audit-converged re-query, naming it" \
-  "schema_version 1 < 2 -- skipping audit-converged re-query" "$t14mid_arch_out"
-[[ $t14mid_arch_ec -eq 0 ]] && pass "T18 AC6 -- schema_version 1 archive succeeds despite the open PARTIAL (degraded, not enforced)" \
-  || fail "T18 AC6 -- schema_version 1 archive unexpectedly refused (exit $t14mid_arch_ec)"
+check "T18 AC6/G2/CA-333 -- schema_version 1 archive now refuses on the open PARTIAL rather than warning and proceeding" \
+  "unclosed or FAIL-closed PARTIAL verdict" "$t14mid_arch_out"
+[[ $t14mid_arch_ec -ne 0 ]] && pass "T18 AC6/G2/CA-333 -- schema_version 1 archive now refuses (the degradation that made this environmentally unreachable is gone)" \
+  || fail "T18 AC6/G2/CA-333 -- schema_version 1 archive unexpectedly succeeded despite the open PARTIAL (exit $t14mid_arch_ec)"
+
+# ---- G2/CA-333 compensating control: re-run `edm-state validate` against this SAME
+# schema_version:1 fixture with one open PARTIAL and confirm the OPEN_PARTIALS anomaly (never
+# schema-gated -- its own comment in bin/edm-state states the underlying partial_verdict_map
+# predates schema_version entirely) still fires -- it is the compensating control the
+# REMEDIATION plan named as the reason this was P1 rather than P0, and it must not regress now
+# that archive/phase-complete enforce the same fact directly. ------------------------------
+t14mid_validate_ec=0
+t14mid_validate_out="$("$EDM_STATE" validate T14MIDDLE 2>&1)" || t14mid_validate_ec=$?
+check "G2/CA-333 compensating control -- OPEN_PARTIALS still fires for the schema_version:1 fixture" \
+  "blocking  OPEN_PARTIALS  partial_verdict_map" "$t14mid_validate_out"
+check "G2/CA-333 compensating control -- OPEN_PARTIALS names the open ticket" \
+  "T14MIDDLE-T01" "$t14mid_validate_out"
+[[ $t14mid_validate_ec -eq 3 ]] && pass "G2/CA-333 compensating control -- validate exits 3 (blocking class) for the schema_version:1 open-PARTIAL fixture" \
+  || fail "G2/CA-333 compensating control -- validate exited $t14mid_validate_ec, expected 3"
+
+# ---- G2/CA-333 secondary site: cmd_audit_converged's "unknown round_type" refusal was
+# likewise unreachable at schema_version:1 (the same class as the two checks above); now
+# unconditional, degrading only when NO round has ever been recorded for this audit type
+# (genuinely-absent data), never on the schema_version number. -----------------------------
+echo
+echo "G2/CA-333 -- cmd_audit_converged's unknown-round-type refusal is unconditional (no longer schema-gated)"
+t14aud_case() {
+  local scratch
+  scratch="$(mktemp -d "${TMP}/edm-g2-audconv.XXXXXX")" || { fail "G2/CA-333 audit-converged -- mktemp failed"; return 1; }
+  mkdir -p "${scratch}/SRD/T14AUDCONV/code-audit"
+  printf '%s\n' '{"id":"CA-1","status":"open","sev":"P1","title":"x"}' \
+    > "${scratch}/SRD/T14AUDCONV/code-audit/findings-ledger.jsonl"
+  jq -n '{prefix: "T14AUDCONV", schema_version: 1, last_updated: "2020-01-01T00:00:00Z"}' \
+    > "${scratch}/SRD/T14AUDCONV/.edm-state.json"
+
+  # Case 1: no audit_rounds.code entry recorded at all (genuinely-absent data) -- must WARN and
+  # proceed to the real blocking-set computation (not die on the round-type gate itself).
+  local out1 ec1=0
+  out1="$(EDM_SRD_ROOT="${scratch}/SRD" "$EDM_STATE" audit-converged T14AUDCONV 2>&1)" || ec1=$?
+  check "G2/CA-333 -- no recorded round warns rather than refusing on the round-type gate" \
+    "no code-audit round has ever been recorded" "$out1"
+  check_absent "G2/CA-333 -- no recorded round does not hit the round-type refusal message" \
+    "has an unknown round_type" "$out1"
+
+  # Case 2: a round WAS recorded but omitted round_type (real ambiguity) -- must refuse,
+  # regardless of schema_version being only 1.
+  jq '.audit_rounds = {"code": {"count": 1, "rounds": [{"completed_at": "2026-01-01T00:00:00Z"}]}}' \
+    "${scratch}/SRD/T14AUDCONV/.edm-state.json" > "${scratch}/SRD/T14AUDCONV/.edm-state.json.tmp" \
+    && mv "${scratch}/SRD/T14AUDCONV/.edm-state.json.tmp" "${scratch}/SRD/T14AUDCONV/.edm-state.json"
+  local out2 ec2=0
+  out2="$(EDM_SRD_ROOT="${scratch}/SRD" "$EDM_STATE" audit-converged T14AUDCONV 2>&1)" || ec2=$?
+  check "G2/CA-333 -- a recorded round with no round_type refuses, naming the round-type gate" \
+    "has an unknown round_type" "$out2"
+  [[ $ec2 -ne 0 ]] && pass "G2/CA-333 -- schema_version 1 with a real ambiguous round now refuses (no longer environmentally unreachable)" \
+    || fail "G2/CA-333 -- schema_version 1 with an ambiguous round unexpectedly exited 0 (exit $ec2)"
+
+  rm -rf "$scratch"
+}
+t14aud_case
 
 # ---- AC7: OPEN_PARTIALS anomaly in the canonical four-field format ------------------------
 echo
