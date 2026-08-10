@@ -6496,10 +6496,17 @@ g38_case() {
     || fail "G38 -- HANDOFF.md does not end with a terminating newline"
 }
 with_scratch_repo g38_case
-check "G38 -- _print_line is a distinct sibling of _print_literal, which is left unmodified" \
+check "G38 -- _print_line is defined" \
   "_print_line() {" "$(cat "$EDM_STATE")"
 check "G38 -- write-handoff's write_atomic call now uses _print_line" \
   'write_atomic "$handoff_path" _print_line "$handoff_content"' "$(cat "$EDM_STATE")"
+# G33/CA-307: CA-259 deleted _print_literal tree-wide (G28), but the label above still claimed
+# to check that it was "left unmodified" while its needle only ever checked _print_line's
+# definition -- the label named a function the check never examined. Re-worded above, and this
+# is the real absence check CA-259's own fix was supposed to add: catches a reintroduction of
+# the missing-trailing-newline writer rather than merely describing one.
+check_absent "G33/CA-307 -- _print_literal is not reintroduced (deleted tree-wide, G28/CA-259)" \
+  "_print_literal() {" "$(cat "$EDM_STATE")"
 
 echo
 echo "=== G39: cmd_update_patterns resolves docs/audit-patterns/ via the BASH_SOURCE-derived SCRIPT_DIR global, not a local \$0 re-derivation ==="
