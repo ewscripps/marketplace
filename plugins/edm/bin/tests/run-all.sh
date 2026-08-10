@@ -7,10 +7,13 @@
 # fails, naming the failing suite(s).
 #
 # Usage: bash plugins/edm/bin/tests/run-all.sh
-# CA-074: -e is intentionally omitted -- the suite loop below does `_out="$(bash "$suite" 2>&1)"`
-# then reads `_status=$?` on the next line specifically so a failing suite's non-zero exit is
-# captured and reported rather than aborting the aggregator before every suite has run (the whole
-# point of an aggregator is to collect every suite's result, not stop at the first failure).
+# CA-074: -e is intentionally omitted -- the suite loop below seeds `_status=0` then captures
+# `_out="$(bash "$suite" 2>&1)" || _status=$?` (CA-315/G39: corrected from a bare `_out=...` then
+# a bare `_status=$?` read on the next line, the shape this codebase's own class of bugs elsewhere
+# has shown is fragile to an intervening command silently clobbering `$?` before it's read) so a
+# failing suite's non-zero exit is captured and reported rather than aborting the aggregator
+# before every suite has run (the whole point of an aggregator is to collect every suite's
+# result, not stop at the first failure).
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

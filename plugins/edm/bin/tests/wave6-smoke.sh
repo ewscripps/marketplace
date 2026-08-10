@@ -3867,7 +3867,8 @@ t53_nonascii="$(LC_ALL=C grep -n '[^ -~	]' "${t53_lint_dir}/metrics.md" || true)
 # =================================================================================
 # CA-040 remediation (code-audit round 2): convergence_exempt coverage at both consumers
 # =================================================================================
-# CA-040 (P1): convergence_exempt() (bin/edm-state:687-704) has zero test coverage at either
+# CA-040 (P1): convergence_exempt() (bin/edm-state, cited by name per CA-315/G39 -- a line-range
+# citation here had already gone stale) has zero test coverage at either
 # consumer (cmd_archive, cmd_audit_converged) across the four mode/lifecycle_mode combinations
 # that matter, and the deliberate asymmetry -- approve-gate code-audit stays refused under
 # fast-track/fix-pack while archive and audit-converged treat it as convergence_exempt -- was

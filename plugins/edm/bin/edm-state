@@ -420,10 +420,11 @@ get_session_tokens_since() {
 # 14-line copy of this jq-per-field extraction; extracted here so a schema change to
 # get_session_tokens_since's output shape is made once. bash 3.2 has no nameref/`local -n` for a
 # helper to set an arbitrary CALLER-local by name, so -- matching the existing
-# _save_traps/_restore_traps convention above -- this writes a fixed set of globals rather than
-# taking a variable-name argument. Safe for the same reason that convention is safe here: neither
-# caller invokes this helper re-entrantly or concurrently with another use of the same globals
-# within one process.
+# _save_traps/_restore_traps convention (CA-315/G39: cited by name, not position -- this
+# docstring previously said "above", but those functions are defined further DOWN this file)
+# -- this writes a fixed set of globals rather than taking a variable-name argument. Safe for
+# the same reason that convention is safe here: neither caller invokes this helper re-entrantly
+# or concurrently with another use of the same globals within one process.
 _unpack_token_fields() {
   local _utf_json="$1"
   _EDM_TOKENS_INPUT="$(echo "$_utf_json" | jq -r '.input // 0')"

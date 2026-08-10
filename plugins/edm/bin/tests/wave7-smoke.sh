@@ -1031,7 +1031,8 @@ check "T61 AC11 -- edm-lint-artifacts' PCRE detection uses the documented grep -
 # =================================================================================
 # EDMV3-T20 AC10 (shard-2 QC remediation): edm-lint-artifacts --path mode coverage --
 # directory recursion, a single named file, and the read-only (no edm-state call) contract.
-# The mode itself was already implemented (edm-lint-artifacts:278-307) but had zero assertions.
+# The mode itself was already implemented (edm-lint-artifacts's `path)` case arm, cited by name
+# per CA-315/G39 -- a line-range citation here had already gone stale) but had zero assertions.
 # =================================================================================
 EDM_LINT_ARTIFACTS="${SCRIPT_DIR}/../edm-lint-artifacts"
 
@@ -7162,6 +7163,36 @@ for g21_pair in $g21_evals_map; do
   check "G21/CA-074 -- evals/$(basename "$g21_script")'s die() exits via the code variable, not a hardcoded literal" \
     'exit "$code"' "$g21_body"
 done
+
+echo
+echo "=== G39/CA-315: five stale file-and-line citations corrected to by-name form, and each stays gone ==="
+# Durability guard for CA-315's own class: eight of round 5's L6 findings were stale in-code
+# citations, and three were re-staled by the very remediation that fixed their predecessors
+# (CA-268). Scoped to these five specific sites rather than a tree-wide ban on ANY numeric
+# file:line citation in a comment -- this codebase uses that shape legitimately and pervasively
+# (e.g. this same suite's own G37/CA-313 case cites ".gitlab-ci.yml:198" as DATA, not as a
+# citation of a function's own location, which is the actual defect class here). A general ban
+# is not practically enforceable via static grep without producing constant false positives; this
+# guard instead pins the five corrected sites so none of them can silently re-stale again.
+check_absent "G39/CA-315 -- run-eval.sh no longer cites edm-state's write_atomic trap layer by line range" \
+  "edm-state:622-625" "$(cat "${PLUGIN_DIR}/evals/run-eval.sh")"
+check "G39/CA-315 -- run-eval.sh cites write_atomic's trap layer by function name instead" \
+  "write_atomic\` function already uses at its" "$(cat "${PLUGIN_DIR}/evals/run-eval.sh")"
+# Split needle (self-avoiding, matching the established idiom elsewhere in this suite): this
+# check scans wave7-smoke.sh's OWN content, and a literal, unsplit needle here would self-match
+# the very check_absent call that names it.
+g39_lintpath_needle_prefix="edm-lint-artifacts:278"
+g39_lintpath_needle_suffix="-307"
+check_absent "G39/CA-315 -- wave7-smoke.sh no longer cites edm-lint-artifacts's --path mode by line range" \
+  "${g39_lintpath_needle_prefix}${g39_lintpath_needle_suffix}" "$(cat "${PLUGIN_DIR}/bin/tests/wave7-smoke.sh")"
+check_absent "G39/CA-315 -- wave6-smoke.sh no longer cites convergence_exempt() by line range" \
+  "edm-state:687-704" "$(cat "${PLUGIN_DIR}/bin/tests/wave6-smoke.sh")"
+check_absent "G39/CA-315 -- edm-state's _unpack_token_fields docstring no longer claims the trap convention is above it" \
+  "_restore_traps convention above" "$(cat "$EDM_STATE")"
+check_absent "G39/CA-315 -- run-all.sh no longer describes the banned bare-\$?-capture shape as current" \
+  'then reads `_status=$?` on the next line' "$(cat "${PLUGIN_DIR}/bin/tests/run-all.sh")"
+check "G39/CA-315 -- run-all.sh describes the shipped seed-zero-then-capture form" \
+  "seeds \`_status=0\` then captures" "$(cat "${PLUGIN_DIR}/bin/tests/run-all.sh")"
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

@@ -215,9 +215,10 @@ PRUNE_EOF
 
 # G7 (CA-252, round-4 pass-4): cleanup() is now the EXIT-trap body ONLY. It never decides a
 # signal's exit code itself -- that decision belongs to the dedicated INT/TERM/HUP wrappers
-# below, matching the idiom `bin/edm-state` already uses at its own write_atomic trap layer
-# (`trap '...' EXIT`, `trap '...; exit 130' INT`, `trap '...; exit 143' TERM`,
-# `trap '...; exit 129' HUP`, around edm-state:622-625). Previously `trap cleanup EXIT INT TERM`
+# below, matching the idiom `bin/edm-state`'s own `write_atomic` function already uses at its
+# trap layer (`trap '...' EXIT`, `trap '...; exit 130' INT`, `trap '...; exit 143' TERM`,
+# `trap '...; exit 129' HUP` -- cited by function name, not line number, per CA-315/G39: a
+# line-range citation here has already gone stale twice). Previously `trap cleanup EXIT INT TERM`
 # installed this SAME function directly as the INT/TERM handler too; since `set -e` is
 # deliberately off (see the CA-074 note above), a signal trap that falls through to
 # `return "$ec"` instead of exiting resumes the interrupted script -- a Ctrl-C before
