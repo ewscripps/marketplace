@@ -4552,16 +4552,13 @@ echo "  both require a live GitLab runner / a real costed eval run this session 
 echo
 echo "=== EDMV3-T48: tiering matrix (D16) -- contested set unchanged, promotion rule unit-verified ==="
 
-if [[ "$(pwd)" == "$WAVE7_ALL_LINT_CWD" && "${EDM_SRD_ROOT:-}" == "$WAVE7_ALL_LINT_SRD_ROOT" ]]; then
-  pass "shared-lint invariant -- cwd and EDM_SRD_ROOT match the captured values before T48"
-else
-  fail "shared-lint invariant -- cwd or EDM_SRD_ROOT drifted before T48"
-fi
-if [[ "$(git -C "$PLUGIN_DIR/../.." status --porcelain 2>/dev/null || true)" == "$WAVE7_ALL_LINT_GIT_STATUS" ]]; then
-  pass "shared-lint invariant -- tracked-tree fingerprint unchanged before T48"
-else
-  fail "shared-lint invariant -- tracked-tree fingerprint changed before T48"
-fi
+# G50/CA-326: this used to reimplement _wave7_assert_shared_lint_fresh's own two checks inline,
+# duplicated against the real helper call at this same block's own "T48 (full suite)" site below
+# -- one invariant checked twice through two independently maintained implementations that did
+# not even agree on success behaviour (the inline copy emitted pass lines; the helper fails
+# loudly on drift and returns silently on success). Calls the shared helper instead, matching
+# every other reuse site's own pre-block pattern.
+_wave7_assert_shared_lint_fresh "T48 (pre-block)"
 
 echo
 echo "T48 AC1 -- nothing pre-tiered: the 15 contested agents are still opus/max"
