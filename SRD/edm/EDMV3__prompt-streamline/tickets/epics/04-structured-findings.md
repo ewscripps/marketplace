@@ -515,14 +515,24 @@ restatements that can drift apart.
       never archive.
       Verify: `bash plugins/edm/bin/tests/wave7-smoke.sh` (case "audit-free mode exits 0 with the
       exemption wording").
-- [ ] AC9 (blocking set defined once, positive): the blocking predicate is defined once in
-      `bin/edm-state` as a named constant or single `jq` filter string, and every consumer --
-      `audit-converged`, `approve-gate code-audit`, `archive`, HANDOFF rendering -- references that
-      one definition. The set is exactly `status == "open"` and `sev` in `{P0, P1, P2}`, with
-      `NOTED` excluded and a comment at the definition stating why (`NOTED` is non-actionable via
-      the False Alarm Filter, not a deferred finding).
-      Verify: `grep -c 'BLOCKING_FILTER' plugins/edm/bin/edm-state` returns 1 definition plus 4 call
-      sites.
+- [ ] AC9 (blocking set defined once, positive; semantics corrected per G49/CA-325 -- the
+      original "1 definition plus 4 call sites" claim counted comments as if they were
+      enforcing code): the blocking predicate is defined once in `bin/edm-state` as a named
+      constant, and evaluated at exactly ONE real invocation site, inside `cmd_audit_converged`'s
+      own `jq` filter. The four named consumers -- `audit-converged` (the direct CLI dispatch),
+      `approve-gate code-audit`, `archive`, and HANDOFF rendering -- do NOT each re-invoke the
+      predicate themselves; all four reach it INDIRECTLY by calling `cmd_audit_converged` itself,
+      which is where the sole real invocation lives. The set is exactly `status == "open"` and
+      `sev` in `{P0, P1, P2}`, with `NOTED` excluded and a comment at the definition stating why
+      (`NOTED` is non-actionable via the False Alarm Filter, not a deferred finding).
+      Verify: `grep -c '^BLOCKING_FILTER=' plugins/edm/bin/edm-state` returns `1` (the
+      definition); `grep -c '\$BLOCKING_FILTER' plugins/edm/bin/edm-state` returns `1` (the sole
+      real invocation -- this pattern requires the `$` sigil of an actual variable expansion, so
+      it excludes the three comments that mention the bare name without evaluating it, unlike a
+      literal-name count); and `grep -c 'cmd_audit_converged "\$prefix"' plugins/edm/bin/edm-state`
+      returns at least `3` (the three internal callers -- `approve-gate code-audit`, `archive`,
+      HANDOFF rendering -- in addition to the direct CLI dispatch entry, which invokes it by a
+      different call shape).
 - [ ] AC10 (negative, static single-definition assertion): a grep asserts the blocking-predicate
       string appears exactly once in `bin/edm-state`. This is the mechanically checkable form of
       "defined in exactly one place" -- a smoke test cannot mutate the constant inside the script

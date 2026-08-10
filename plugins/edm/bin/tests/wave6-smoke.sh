@@ -2890,12 +2890,35 @@ t28_exit2="$(printf '%s\n' "$t28_body" | grep -c 'exit 2' || true)"
 [[ "${t28_exit2:-0}" -eq 0 ]] && pass "T28 AC3 -- cmd_audit_converged never uses exit 2" \
   || fail "T28 AC3 -- found ${t28_exit2} 'exit 2' occurrence(s) in cmd_audit_converged"
 
-# ---- AC9 (blocking predicate defined once, referenced by name at all four consumers) --------
+# ---- AC9 (blocking predicate defined once, one real invocation site; semantics corrected per
+# G49/CA-325 -- the original count treated 3 comments mentioning the bare name as if they were
+# enforcing call sites, so the assertion stayed green at 5 whether or not the real invocation
+# still existed) --------------------------------------------------------------------------------
 echo
-echo "T28 AC9 -- BLOCKING_FILTER defined once, referenced by name at exactly four consumers"
-t28_bf_count="$(count_matches 'BLOCKING_FILTER' "$EDM_STATE")"
-[[ "$t28_bf_count" -eq 5 ]] && pass "T28 AC9 -- BLOCKING_FILTER appears 5 times (1 definition + 4 consumers)" \
-  || fail "T28 AC9 -- BLOCKING_FILTER appears ${t28_bf_count} time(s), expected 5"
+echo "T28 AC9 -- BLOCKING_FILTER defined once and evaluated at exactly one real invocation site"
+t28_bf_def_count="$(grep -c '^BLOCKING_FILTER=' "$EDM_STATE")"
+[[ "$t28_bf_def_count" -eq 1 ]] \
+  && pass "T28 AC9 -- BLOCKING_FILTER is defined exactly once" \
+  || fail "T28 AC9 -- BLOCKING_FILTER definition count = ${t28_bf_def_count}, expected 1"
+# The $ sigil requires an actual variable EXPANSION, not just the bare name -- this is what
+# excludes the three comments (which mention "BLOCKING_FILTER" in prose, never "$BLOCKING_FILTER")
+# from counting as enforcing usage.
+t28_bf_invoke_count="$(grep -c '\$BLOCKING_FILTER' "$EDM_STATE")"
+[[ "$t28_bf_invoke_count" -eq 1 ]] \
+  && pass "T28 AC9 -- BLOCKING_FILTER has exactly one real invocation site (inside cmd_audit_converged)" \
+  || fail "T28 AC9 -- BLOCKING_FILTER real invocation count = ${t28_bf_invoke_count}, expected 1"
+# Positive control: prove the $ -sigil needle actually discriminates a real expansion from a bare
+# comment mention, rather than passing vacuously.
+t28_bf_control="$(printf '%s\n' '# BLOCKING_FILTER mentioned here in prose' 'select('"'"'$BLOCKING_FILTER'"'"')' | grep -c '\$BLOCKING_FILTER')"
+[[ "$t28_bf_control" -eq 1 ]] \
+  && pass "T28 AC9 -- positive control: the \$ -sigil needle matches the real expansion and not the comment" \
+  || fail "T28 AC9 -- positive control broken: expected exactly 1 match, got ${t28_bf_control}"
+# The four named consumers reach the predicate INDIRECTLY, by calling cmd_audit_converged --
+# three via this exact call shape; the fourth is the direct CLI dispatch entry itself.
+t28_cac_callers="$(grep -c 'cmd_audit_converged "\$prefix"' "$EDM_STATE")"
+[[ "$t28_cac_callers" -ge 3 ]] \
+  && pass "T28 AC9 -- at least three internal callers reach cmd_audit_converged (got ${t28_cac_callers})" \
+  || fail "T28 AC9 -- only ${t28_cac_callers} internal caller(s) reach cmd_audit_converged, expected >= 3"
 
 # ---- AC13 (surfaced) -------------------------------------------------------------------------
 check "T28 AC13 -- audit-converged documented in --help" \
