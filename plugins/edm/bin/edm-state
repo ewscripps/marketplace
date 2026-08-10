@@ -3,7 +3,7 @@
 # not a hardcoded `sed -n 'A,Bp'` line range -- the shared `print_help()` (CA-005,
 # `_edm-cli-lib.sh`, sourced below) extracts between the sentinels with awk. A hardcoded range
 # silently stops covering a new subcommand doc line added below its end unless two numbers are
-# bumped in lockstep, which is exactly how `update-patterns` and `lint` fell out of `--help`
+# bumped in lockstep, which is exactly how `update-patterns` and the since-removed `lint` fell out of `--help`
 # before this ticket (the old range stopped at line 39). Add new subcommand doc lines anywhere
 # inside the sentinel block; nothing else to update. Every `bin/` helper and `evals/` driver
 # sources the same shared extractor now (CA-005) rather than each hand-copying it.
@@ -117,7 +117,7 @@ to_int() {
 # between the EDM-HELP-BEGIN/EDM-HELP-END sentinel comment lines near the top of <script-path>
 # (EDMV3-T61 AC1). awk, not a hardcoded `sed -n 'A,Bp'` line range: a hardcoded range silently
 # stops covering new subcommand doc lines added below its end without the two numbers being
-# bumped in lockstep, which is exactly how `update-patterns` and `lint` fell out of `--help`
+# bumped in lockstep, which is exactly how `update-patterns` and the since-removed `lint` fell out of `--help`
 # before that ticket. CA-005/CA-154: the same sentinel-based help-text convention is used by
 # every `bin/` helper and the three `evals/` drivers -- not just this file -- and every one of
 # those sites sources this same shared function rather than hand-copying it.
@@ -3869,19 +3869,18 @@ _render_ledger_markdown() {
   printf '%s\n' "$body"
 }
 
-cmd_render_ledger() {
-  [[ $# -eq 1 ]] || die "usage: edm-state render-ledger <PREFIX>"
-  require_jq
-  local prefix="$1"
-  local init_dir jsonl_path md_path
-  init_dir="$(initiative_dir_for "$prefix")"
-  jsonl_path="${init_dir}/code-audit/findings-ledger.jsonl"
-  md_path="${init_dir}/code-audit/findings-ledger.md"
-
-  # AC10: distinguish "no audit has run" from "the render failed"; writes nothing either way.
-  if [[ ! -f "$jsonl_path" ]]; then
-    die "render-ledger: no code audit has run for ${prefix} (missing findings-ledger.jsonl at ${jsonl_path}); nothing rendered"
-  fi
+# _cmd_render_ledger_body <prefix> <jsonl-path> <md-path> <init-dir>   (runs INSIDE with_state_lock)
+# G17/CA-354: read+render+write_atomic used to run as three independently-atomic but
+# UN-sequenced steps (no single lock spanning all three), so two concurrent `render-ledger`
+# invocations could interleave: both read the same JSONL, both render, then write_atomic and
+# record_artifact_hash race independently -- last-hash-wins can disagree with last-content-wins,
+# surfacing as a phantom cmd_checkpoint drift warning whose prescribed remediation (re-render) is
+# both expensive and wrong (the file was never actually out of sync with ITS OWN most recent
+# writer, just with a hash recorded by a different, interleaved writer). Moving read+render+
+# write_atomic into one locked body closes that window; record_artifact_hash stays OUTSIDE (see
+# cmd_render_ledger below for why).
+_cmd_render_ledger_body() {
+  local prefix="$1" jsonl_path="$2" md_path="$3" init_dir="$4"
 
   # Ordering is total, not just by severity (Technical Notes): sort_by([sev_rank, .id]) so two
   # P1s with adjacent IDs never swap between runs (AC2, determinism).
@@ -3925,11 +3924,42 @@ cmd_render_ledger() {
   # script (_rmw_state_body, cmd_init).
   mkdir -p "${init_dir}/code-audit"
   write_atomic "$md_path" _render_ledger_markdown "$prefix" "$body" || die "render-ledger: failed to write ${md_path}"
+}
+
+cmd_render_ledger() {
+  [[ $# -eq 1 ]] || die "usage: edm-state render-ledger <PREFIX>"
+  require_jq
+  local prefix="$1"
+  local init_dir jsonl_path md_path
+  init_dir="$(initiative_dir_for "$prefix")"
+  jsonl_path="${init_dir}/code-audit/findings-ledger.jsonl"
+  md_path="${init_dir}/code-audit/findings-ledger.md"
+
+  # AC10: distinguish "no audit has run" from "the render failed"; writes nothing either way.
+  if [[ ! -f "$jsonl_path" ]]; then
+    die "render-ledger: no code audit has run for ${prefix} (missing findings-ledger.jsonl at ${jsonl_path}); nothing rendered"
+  fi
+
+  # G17/CA-354: read+render+write_atomic run as one locked unit, keyed on the ledger's OWN
+  # lockbase (not the state file's) -- this command never touches .edm-state.json directly, so
+  # sharing the state lockbase would only cost unrelated callers unnecessary contention.
+  with_state_lock "${init_dir}/code-audit/findings-ledger" _cmd_render_ledger_body \
+    "$prefix" "$jsonl_path" "$md_path" "$init_dir" \
+    || die "render-ledger: failed to render/write ${md_path}"
 
   # AC4: reuse record_artifact_hash (bin/edm-state:~131) so cmd_checkpoint's existing drift
   # loop warns on an out-of-band hand-edit -- the detection machinery is not re-implemented.
-  record_artifact_hash "$prefix" "findings_ledger" "${init_dir}/code-audit/findings-ledger.md"
-  echo "rendered ${init_dir}/code-audit/findings-ledger.md"
+  # G17/CA-354: this call is deliberately OUTSIDE the with_state_lock above, AFTER it releases.
+  # record_artifact_hash takes the STATE file's own lock via rmw_state -- a DIFFERENT lockbase --
+  # but _EDM_TRAP_DEPTH, the reentrancy guard with_state_lock uses to refuse a nested call, is a
+  # single PROCESS-GLOBAL flag, not keyed per lockbase (G18/CA-306): calling record_artifact_hash
+  # from inside the locked render body above would trip that guard's "lock trap already active"
+  # refusal (or, on the mkdir-lockdir fallback, spin against a lock this same process already
+  # holds) rather than actually recording the hash. The tiny window this reopens between the
+  # write completing and the hash being recorded is the same one every other artifact-hash
+  # caller in this file already accepts (srd/tickets at :2252/:2255 record outside any lock too).
+  record_artifact_hash "$prefix" "findings_ledger" "$md_path"
+  echo "rendered ${md_path}"
 }
 
 # ---- Audit round tracking (T56, widened EDMV3-T27) --------------------------
@@ -4244,9 +4274,17 @@ cmd_audit_converged() {
     return 0
   fi
 
-  echo "not converged: ${blocking_count} blocking finding(s) for ${prefix} (P0=${p0} P1=${p1} P2=${p2}) of ${total} considered, ${noted_count} NOTED excluded:" >&2
+  # G15/CA-353: this is the one exit-1 branch in this function that is genuine open-findings
+  # CONTENT (a report _write_handoff_body renders verbatim under HANDOFF.md's "Open Code-Audit
+  # Findings" heading), not a setup/usage diagnostic -- so it goes to stdout, unlike every other
+  # exit-1 branch above (invalid JSONL, invalid status, unknown/partial round_type), which stay
+  # on stderr because they are genuinely errors, not a findings summary. Callers that want both
+  # (die messages elsewhere in this file) already capture `2>&1`, so this split is invisible to
+  # them; only a caller that inspects the two streams separately (as _write_handoff_body now
+  # does) can tell the difference.
+  echo "not converged: ${blocking_count} blocking finding(s) for ${prefix} (P0=${p0} P1=${p1} P2=${p2}) of ${total} considered, ${noted_count} NOTED excluded:"
   echo "$result_json" | jq -r '.blocking_list[]' | while IFS= read -r bl; do
-    echo "  ${bl}" >&2
+    echo "  ${bl}"
   done
   return 1
 }
@@ -4714,12 +4752,16 @@ ${norm}"
   done < <(grep '^### ' "$audit_report_path" 2>/dev/null || true)
 
   if [[ "$new_findings" -gt 0 ]]; then
+    # G16/CA-355: cmd_update_patterns's own pre-flight already resolved this heading fence-aware
+    # before taking the lock, and refuses (die) or skips (return 0, never reaching this body at
+    # all) on anything but a real insertion point -- so insert_line resolving to 0 HERE, under
+    # the lock, means the file changed out from under that pre-flight in the narrow unlocked
+    # window before this lock was acquired. That is a real ambiguity, not "no novel findings":
+    # refuse loudly instead of the previous silent `echo 0; return 0`, which recorded a false
+    # zero into patterns_updates and lost every one of these findings permanently.
     insert_line="$(pattern_insert_line_for "$pattern_file" "$target_heading")"
-    if [[ -z "$insert_line" || "$insert_line" -eq 0 ]]; then
-      echo "update-patterns: target heading '${target_heading}' not found in ${pattern_file}; skipping (nothing appended, no end-of-file fallback)" >&2
-      echo 0
-      return 0
-    fi
+    [[ -n "$insert_line" && "$insert_line" -ne 0 ]] \
+      || die "update-patterns: target heading '${target_heading}' resolved to no insertion point in ${pattern_file} under lock (changed since the pre-flight check); refusing -- nothing appended, no patterns_updates recorded"
     write_atomic "$pattern_file" _splice_pattern_file "$pattern_file" "$insert_line" "$pending_entries" || return 1
   fi
 
@@ -4778,13 +4820,29 @@ cmd_update_patterns() {
   fi
 
   # Resolve the Living-Library insertion target for this audit type, and verify the document
-  # actually carries that heading. A missing target heading is a SKIP, never a fallback: nothing
-  # is appended (the file stays byte-identical), the message names both the file and the heading,
-  # and the exit status stays 0 because a skip is not an error
-  # (docs/audit-patterns/README.md Sec."Living-Library Contract", "Insertion target").
-  local target_heading
+  # actually carries that heading. A missing target heading (not present anywhere, fenced or
+  # not) is a SKIP, never a fallback: nothing is appended (the file stays byte-identical), the
+  # message names both the file and the heading, and the exit status stays 0 because a skip is
+  # not an error (docs/audit-patterns/README.md Sec."Living-Library Contract", "Insertion
+  # target").
+  #
+  # G16/CA-355: this pre-flight used to be a plain `grep -qxF` -- fence-UNAWARE -- while the body
+  # (_cmd_update_patterns_body, via pattern_insert_line_for) resolves the same heading
+  # fence-AWARE. When the target heading exists only INSIDE a fenced code block (e.g. a doc
+  # showing its own heading as a literal example), the two disagreed: this pre-flight saw a
+  # textual match and let the body run, but pattern_insert_line_for's fence-aware walk found no
+  # real insertion point, returned 0, and the body's old inner branch silently reported
+  # `new_findings: 0` -- indistinguishable from a genuine "no novel findings" outcome, and
+  # persisted as a permanent false record every run. This pre-flight now uses the SAME
+  # fence-aware resolution, so it can distinguish "heading genuinely absent" (still a clean
+  # skip) from "heading present only inside a fence" (a real ambiguity -- refuse loudly).
+  local target_heading _preflight_insert_line
   target_heading="$(pattern_target_heading_for "$audit_type")"
-  if ! grep -qxF "$target_heading" "$pattern_file"; then
+  _preflight_insert_line="$(pattern_insert_line_for "$pattern_file" "$target_heading")"
+  if [[ -z "$_preflight_insert_line" || "$_preflight_insert_line" -eq 0 ]]; then
+    if grep -qxF "$target_heading" "$pattern_file" 2>/dev/null; then
+      die "update-patterns: target heading '${target_heading}' occurs in ${pattern_file} only inside a fenced code block; refusing to guess -- nothing appended, no patterns_updates recorded"
+    fi
     echo "update-patterns: target heading '${target_heading}' not found in ${pattern_file}; skipping (nothing appended, no end-of-file fallback)" >&2
     return 0
   fi
@@ -5073,10 +5131,16 @@ _write_handoff_body() {
   if [[ -f "$handoff_path" ]]; then
     notes="$(awk '/^## Notes/{p=1;next} p{print}' "$handoff_path" 2>/dev/null || true)"
     # The render below emits its own blank line after the "## Notes" heading (matching every
-    # other section), and the captured text starts with that same blank line copied verbatim --
-    # strip exactly one leading blank so it does not double up and grow by one blank line on
-    # every single regeneration cycle over an initiative's life.
-    notes="${notes#$'\n'}"
+    # other section), and the captured text starts with that same blank line copied verbatim.
+    # G37/CA-373: a single `${notes#$'\n'}` strip only normalizes the exactly-one-leading-blank
+    # case; a hand-edited HANDOFF.md can just as easily carry zero (prose typed immediately
+    # after the heading) or two-or-more (an ordinary pasted block) leading blank lines, and the
+    # old single strip left every count but one un-normalized -- growing or shrinking by one
+    # blank line per regeneration instead of landing on a fixed point. Loop until every leading
+    # blank is gone, which is idempotent for all three shapes (0, 1, or N leading blanks).
+    while [[ "$notes" == $'\n'* ]]; do
+      notes="${notes#$'\n'}"
+    done
   fi
   [[ -n "$notes" ]] || notes="_(Add anything a teammate should know before resuming - context, blockers, preferences)_"
 
@@ -5130,13 +5194,41 @@ _write_handoff_body() {
   # time here (EDMV3-T28 AC9 fixes that predicate's name-reference count at exactly four
   # sites; re-deriving it a fifth time here would break that guardrail for no benefit, since
   # cmd_audit_converged already computes exactly what this section needs to show).
-  # Exit 3 ("no ledger") omits the section entirely; exit 0/1 both render
-  # cmd_audit_converged's own summary text.
-  local open_findings_summary="" of_out of_ec=0
-  of_out="$(cmd_audit_converged "$prefix" 2>&1)" || of_ec=$?
+  # Exit 3 ("no ledger") omits the section entirely; exit 0 renders cmd_audit_converged's own
+  # "converged: ..." summary text.
+  #
+  # G15/CA-353: exit 1 covers THREE distinct conditions inside cmd_audit_converged -- real
+  # blocking findings remain (stdout content, per the comment at that echo site above), OR the
+  # ledger is unreadable / the round is partial-or-unknown / a line carries an out-of-enum status
+  # (stderr diagnostics). The previous `2>&1` merge could not tell these apart, so a ledger-error
+  # diagnostic rendered verbatim under this section's heading as if it were the open-findings
+  # summary. Capture the two streams independently and render ONLY stdout under the findings
+  # heading. `cmd_audit_converged` runs here inside a `$(...)` command substitution, so even a
+  # `die` reached via one of its own callees (e.g. `read_state`) only exits that subshell -- its
+  # message lands on the redirected stderr file and its stdout stays empty, which the exit-1/
+  # empty-stdout arm below catches the same as any other non-findings refusal. When exit is 1
+  # and stdout is empty, fall back to a distinct labeled row rather than showing nothing or
+  # leaking the stderr diagnostic into the findings section.
+  local open_findings_summary="" of_out="" of_err="" of_ec=0 _of_errfile
+  _of_errfile="$(mktemp "${TMPDIR:-/tmp}/edm-state.audit-converged-stderr.XXXXXX" 2>/dev/null || true)"
+  if [[ -n "$_of_errfile" ]]; then
+    of_out="$(cmd_audit_converged "$prefix" 2>"$_of_errfile")" || of_ec=$?
+    of_err="$(cat "$_of_errfile" 2>/dev/null || true)"
+    rm -f "$_of_errfile" 2>/dev/null || true
+  else
+    # mktemp failed (unexpected) -- fall back to the old merged-stream behavior rather than
+    # losing the findings section outright; still better than a hard failure here.
+    of_out="$(cmd_audit_converged "$prefix" 2>&1)" || of_ec=$?
+  fi
   case "$of_ec" in
     0) open_findings_summary="_(${of_out})_" ;;
-    1) open_findings_summary="${of_out}" ;;
+    1)
+      if [[ -n "$of_out" ]]; then
+        open_findings_summary="${of_out}"
+      else
+        open_findings_summary="- **Open findings**: unavailable (ledger error; run edm-state audit-converged ${prefix})"
+      fi
+      ;;
     *) open_findings_summary="" ;;
   esac
 
@@ -5296,7 +5388,7 @@ case "$cmd" in
   add-related)          cmd_add_related "$@" ;;
   update-patterns)      cmd_update_patterns "$@" ;;
   ""|-h|--help|help)
-    print_help "$0"
+    print_help "${BASH_SOURCE[0]:-$0}"
     ;;
   *)
     die "unknown subcommand: $cmd (try --help)"

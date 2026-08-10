@@ -3727,6 +3727,64 @@ ca002_missing_heading_case() {
   rm -rf "$scratch"
 }
 ca002_missing_heading_case
+
+echo
+echo "G16/CA-355 -- a target heading present ONLY inside a fenced code block refuses loudly (non-zero exit, no patterns_updates write), not a false 'skip' or a false 'zero novel findings'"
+g16_fenced_heading_only_case() {
+  local scratch
+  scratch="$(mktemp -d "${TMP}/edm-g16-fenced-heading.XXXXXX")" || { fail "G16/CA-355 -- mktemp failed"; return 1; }
+  mkdir -p "$scratch/plugins/edm"
+  cp -R "${PLUGIN_DIR}/." "$scratch/plugins/edm/"
+  local scratch_srd="$scratch/plugins/edm/docs/audit-patterns/srd-audit.md"
+  local scratch_srd_root="$scratch/work/SRD"
+
+  # Replace the real '## Anti-Patterns' heading with one that occurs ONLY inside a fenced code
+  # block -- textually present (a plain `grep -qxF` would match it) but not a real insertion
+  # point (pattern_insert_line_for's fence-aware walk would find nothing).
+  sed -i.bak '/^## Anti-Patterns$/d' "$scratch_srd"
+  rm -f "${scratch_srd}.bak"
+  {
+    echo
+    echo '```markdown'
+    echo '## Anti-Patterns'
+    echo '### Example Fenced Heading'
+    echo '```'
+  } >> "$scratch_srd"
+
+  mkdir -p "${scratch_srd_root}/ZG16"
+  {
+    echo "# Mock SRD Audit"
+    echo
+    echo "### G16 novel finding"
+    echo "Would be appended if the target heading resolved to a real insertion point."
+  } > "${scratch_srd_root}/ZG16/audit-srd.md"
+  echo '{}' > "${scratch_srd_root}/ZG16/.edm-state.json"
+
+  local before_hash after_hash out status
+  before_hash="$(_harness_hash_file "$scratch_srd")"
+
+  status=0
+  out="$(EDM_SRD_ROOT="$scratch_srd_root" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZG16 srd 2>&1)" || status=$?
+  after_hash="$(_harness_hash_file "$scratch_srd")"
+
+  [[ "$status" -ne 0 ]] \
+    && pass "G16/CA-355 -- a fence-only target heading refuses (non-zero exit), not a silent skip or a false zero" \
+    || fail "G16/CA-355 -- expected non-zero exit for a fence-only target heading, got $status (output: $out)"
+
+  check "G16/CA-355 -- the refusal names the fence ambiguity, not a generic 'not found' skip message" \
+    "only inside a fenced code block" "$out"
+
+  [[ "$before_hash" == "$after_hash" ]] \
+    && pass "G16/CA-355 -- the pattern document is byte-identical before and after the refusal (nothing appended)" \
+    || fail "G16/CA-355 -- document hash changed on a refusal (before=$before_hash after=$after_hash)"
+
+  local g16_state_file="${scratch_srd_root}/ZG16/.edm-state.json"
+  check_absent "G16/CA-355 -- no patterns_updates entry was written on the refusal" \
+    "patterns_updates" "$(cat "$g16_state_file")"
+
+  rm -rf "$scratch"
+}
+g16_fenced_heading_only_case
 # CA-002 remediation end
 
 # =================================================================================
@@ -5564,6 +5622,14 @@ for ca154_f in edm-state edm-lint-artifacts edm-validate-prefix edm-init edm-che
   [[ "${ca154_hit:-0}" -ge 1 ]] \
     && pass "CA-005/CA-154 -- bin/${ca154_f} sources the shared _edm-cli-lib.sh print_help" \
     || fail "CA-005/CA-154 -- bin/${ca154_f} does not source the shared print_help"
+  # G34/CA-365: sourcing the shared library is necessary but not sufficient -- edm-state was the
+  # sole call SITE passing a bare "$0" instead of the documented "${BASH_SOURCE[0]:-$0}" caller
+  # convention (_edm-cli-lib.sh:25), and this loop previously asserted only the source line, never
+  # the call form, so that divergence went undetected. Assert the call-site literal too.
+  ca365_hit="$(grep -c 'print_help "\${BASH_SOURCE\[0\]:-\$0}"' "${PLUGIN_DIR}/bin/${ca154_f}" 2>/dev/null || true)"
+  [[ "${ca365_hit:-0}" -ge 1 ]] \
+    && pass "G34/CA-365 -- bin/${ca154_f} calls print_help with the \${BASH_SOURCE[0]:-\$0} caller convention" \
+    || fail "G34/CA-365 -- bin/${ca154_f} does not call print_help with the \${BASH_SOURCE[0]:-\$0} form"
 done
 # G66: all three evals/ drivers now source _edm-cli-lib.sh via the identical literal form
 # `source "${SCRIPT_DIR}/../bin/_edm-cli-lib.sh"` (run-eval.sh previously used its own
@@ -5574,6 +5640,13 @@ for ca154_ef in run-eval.sh score-artifacts.sh tiering-matrix.sh; do
   [[ "${ca154_hit:-0}" -ge 1 ]] \
     && pass "CA-005/CA-154/G66 -- evals/${ca154_ef} sources _edm-cli-lib.sh via the standardized \${SCRIPT_DIR}/../bin/ form" \
     || fail "CA-005/CA-154/G66 -- evals/${ca154_ef} does not source the shared print_help via the standardized form"
+  # G34/CA-365: same call-site-literal assertion as the bin/ loop above, extended to the three
+  # evals/ drivers so all 12 print_help call sites in the plugin are covered, not just the 9
+  # bin/ helpers.
+  ca365_ef_hit="$(grep -c 'print_help "\${BASH_SOURCE\[0\]:-\$0}"' "${PLUGIN_DIR}/evals/${ca154_ef}" 2>/dev/null || true)"
+  [[ "${ca365_ef_hit:-0}" -ge 1 ]] \
+    && pass "G34/CA-365 -- evals/${ca154_ef} calls print_help with the \${BASH_SOURCE[0]:-\$0} caller convention" \
+    || fail "G34/CA-365 -- evals/${ca154_ef} does not call print_help with the \${BASH_SOURCE[0]:-\$0} form"
 done
 
 echo
@@ -7510,6 +7583,55 @@ g17_symlink_attack_case() {
   rm -f "$target" "$marker"
 }
 g17_symlink_attack_case
+
+# =================================================================================
+# G13/CA-347 (round 6): the marker-existence probe is now gated on `_lock_ec -eq 99` (see the
+# G13/CA-347 comment directly above the `if` in with_state_lock), so a marker that survives the
+# unconditional best-effort pre-clean no longer misreports a SUCCESSFUL, non-timeout acquisition
+# as a lock timeout. Reproduce "another local user pre-planted an unremovable marker" without a
+# second user or root: give the marker's TMPDIR a scratch home whose write permission is removed
+# AFTER the marker is created -- same-user `rm -rf` can only unlink a directory ENTRY with write
+# permission on the CONTAINING directory, not the entry's own permissions, so this genuinely
+# defeats the pre-clean's `rm -rf ... 2>/dev/null || true` the same way a foreign-owned marker
+# would. Flock-branch-only (the marker mechanism is exclusive to with_state_lock's flock arm), so
+# this case is skipped when flock(1) is unavailable, matching the G49 live-timeout case above.
+# =================================================================================
+echo
+echo "=== G13/CA-347: an unremovable pre-planted timeout marker does not misreport a SUCCESSFUL (non-timeout) write as a lock timeout ==="
+g13_unremovable_marker_case() {
+  local scratch_tmpdir lock_scratch marker_path out ec
+  scratch_tmpdir="$(mktemp -d "${TMP}/edm-g13-tmpdir.XXXXXX")"
+  lock_scratch="$(mktemp -d "${TMP}/edm-g13-lock.XXXXXX")"
+  (
+    set +e
+    trap - EXIT INT TERM HUP
+    source "$EDM_STATE" >/dev/null 2>&1
+    export TMPDIR="$scratch_tmpdir"
+    marker_path="${scratch_tmpdir}/edm-state.lock-timeout.$$"
+    mkdir "$marker_path"
+    # Remove write permission on the marker's PARENT so this same process cannot unlink the
+    # marker entry, even though it owns the marker itself -- the same effect a foreign-owned
+    # marker on a shared /tmp would have on with_state_lock's own best-effort `rm -rf`.
+    chmod 555 "$scratch_tmpdir"
+    ec=0
+    out="$(with_state_lock "${lock_scratch}/state" echo g13-write-succeeded 2>&1)" || ec=$?
+    printf 'ec=%s out=%s\n' "$ec" "$out"
+    # Restore write permission so the outer scope's cleanup can remove the scratch dir.
+    chmod 755 "$scratch_tmpdir" 2>/dev/null || true
+  )
+}
+if command -v flock >/dev/null 2>&1; then
+  t_g13_out="$(g13_unremovable_marker_case)"
+  check "G13/CA-347 -- a successful with_state_lock write still reports success (ec=0) despite an unremovable pre-planted marker" \
+    "ec=0" "$t_g13_out"
+  check "G13/CA-347 -- the body's own output still reaches the caller" \
+    "g13-write-succeeded" "$t_g13_out"
+  check_absent "G13/CA-347 -- a successful write is never misreported as a lock timeout" \
+    "state lock timeout" "$t_g13_out"
+else
+  echo "  SKIP: G13/CA-347 unremovable-marker case -- flock(1) not available on this host"
+fi
+chmod -R u+w "${TMP}" 2>/dev/null || true
 
 # =================================================================================
 # G20/CA-049 (round 5, final pass): one mechanical sweep -- wave3-smoke.sh and wave4a-smoke.sh

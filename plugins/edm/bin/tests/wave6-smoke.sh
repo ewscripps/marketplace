@@ -2429,6 +2429,32 @@ check "T61 AC6 -- path-traversal prefix reports a validation error" "invalid PRE
   || fail "T61 AC6 -- path-traversal prefix escaped SRD_ROOT"
 
 # =================================================================================
+# G14/CA-352 (round 6): state_file_for refuses rather than guesses when two product-scoped
+# directories exist for the same PREFIX -- the previous behavior warned to stderr and silently
+# returned matches[0] in glob order, which every automated caller (resolve-dir's own callers
+# among them) discards, so two developers on one repo could have a mutator write to two
+# different initiatives with no diagnostic reaching either of them.
+# =================================================================================
+echo
+echo "G14/CA-352 -- state_file_for refuses when two product-scoped directories exist for one PREFIX"
+g14_dup_case() {
+  local dir_a dir_b out ec=0
+  dir_a="$TMP/SRD/prod-a/G14DUP__foo"
+  dir_b="$TMP/SRD/prod-b/G14DUP__bar"
+  mkdir -p "$dir_a" "$dir_b"
+  printf '{"schema_version":1,"current_phase":0}' > "${dir_a}/.edm-state.json"
+  printf '{"schema_version":1,"current_phase":0}' > "${dir_b}/.edm-state.json"
+  out="$("$EDM_STATE" resolve-dir G14DUP 2>&1)" || ec=$?
+  [[ $ec -ne 0 ]] \
+    && pass "G14/CA-352 -- resolve-dir refuses (non-zero exit) on a duplicated PREFIX across two product-scoped directories" \
+    || fail "G14/CA-352 -- resolve-dir exited 0 on a duplicated PREFIX (silently picked one): $out"
+  check "G14/CA-352 -- the refusal names the first candidate path" "${dir_a}/.edm-state.json" "$out"
+  check "G14/CA-352 -- the refusal names the second candidate path" "${dir_b}/.edm-state.json" "$out"
+  rm -rf "$dir_a" "$dir_b" "$TMP/SRD/prod-a" "$TMP/SRD/prod-b"
+}
+g14_dup_case
+
+# =================================================================================
 # EDMV3-T62: every exemption leaves an audit trail
 # =================================================================================
 
@@ -2764,6 +2790,50 @@ while IFS= read -r g18_line; do
 done < "$T26PIPE_MD"
 [[ "$g18_bad_rows" -eq 0 ]] && pass "G18 -- every table row (header + data) has exactly 8 cells" \
   || fail "G18 -- ${g18_bad_rows} table row(s) do not have exactly 8 cells"
+
+# =================================================================================
+# G17/CA-354 (round 6): read+render+write_atomic and record_artifact_hash used to run as three
+# independently-atomic but un-sequenced steps, so two concurrent render-ledger invocations could
+# interleave (last-hash-wins racing last-content-wins) and leave a recorded hash that does not
+# match the file actually on disk -- surfacing later as a phantom cmd_checkpoint drift warning.
+# Fixed by moving read+render+write_atomic under one with_state_lock; verify the two can no
+# longer disagree by actually racing two invocations and checking the recorded hash afterward.
+# =================================================================================
+echo
+echo "G17/CA-354 -- two concurrent render-ledger invocations: the recorded hash matches the on-disk .md's actual hash"
+"$EDM_STATE" init T17RLRACE >/dev/null
+T17RLRACE_DIR="$TMP/SRD/T17RLRACE"
+mkdir -p "${T17RLRACE_DIR}/code-audit"
+cat > "${T17RLRACE_DIR}/code-audit/findings-ledger.jsonl" <<'EOF'
+{"schema":1,"id":"CA-001","sev":"P1","status":"open","lenses":["L1"],"confidence":"high","component":"a.py","title":"race fixture finding one","raised_round":1,"resolved_round":null,"round":1,"round_type":"full"}
+{"schema":1,"id":"CA-002","sev":"P2","status":"open","lenses":["L4"],"confidence":"medium","component":"b.py","title":"race fixture finding two","raised_round":1,"resolved_round":null,"round":1,"round_type":"full"}
+EOF
+t17rlrace_ec1=0 t17rlrace_ec2=0
+"$EDM_STATE" render-ledger T17RLRACE >/dev/null 2>&1 &
+t17rlrace_pid1=$!
+"$EDM_STATE" render-ledger T17RLRACE >/dev/null 2>&1 &
+t17rlrace_pid2=$!
+wait "$t17rlrace_pid1" || t17rlrace_ec1=$?
+wait "$t17rlrace_pid2" || t17rlrace_ec2=$?
+[[ $t17rlrace_ec1 -eq 0 && $t17rlrace_ec2 -eq 0 ]] \
+  && pass "G17/CA-354 -- both concurrent render-ledger invocations exit 0 (no lock-trap collision)" \
+  || fail "G17/CA-354 -- concurrent render-ledger exit codes were ${t17rlrace_ec1}/${t17rlrace_ec2}, expected 0/0"
+
+t17rlrace_md="${T17RLRACE_DIR}/code-audit/findings-ledger.md"
+t17rlrace_actual_hash="$(bash -c "source '$EDM_STATE' >/dev/null 2>&1; artifact_hash '${t17rlrace_md}'")"
+t17rlrace_recorded_hash="$(jq -r '.artifact_hashes.findings_ledger.hash // "absent"' "${T17RLRACE_DIR}/.edm-state.json")"
+[[ -n "$t17rlrace_actual_hash" && "$t17rlrace_actual_hash" == "$t17rlrace_recorded_hash" ]] \
+  && pass "G17/CA-354 -- the recorded artifact hash matches the on-disk file's actual hash after the race" \
+  || fail "G17/CA-354 -- recorded hash '${t17rlrace_recorded_hash}' != actual hash '${t17rlrace_actual_hash}' after concurrent renders"
+
+check "G17/CA-354 -- the .md file itself is still well-formed after the race (not truncated/interleaved)" \
+  "CA-001" "$(cat "$t17rlrace_md" 2>/dev/null)"
+check "G17/CA-354 -- both findings survived the race" \
+  "CA-002" "$(cat "$t17rlrace_md" 2>/dev/null)"
+
+t17rlrace_checkpoint_out="$("$EDM_STATE" checkpoint-if-active 2>&1 || true)"
+check_absent "G17/CA-354 -- checkpoint-if-active reports no phantom drift for T17RLRACE after the race" \
+  "T17RLRACE" "$t17rlrace_checkpoint_out"
 
 # =================================================================================
 # EDMV3-T27: rounds record their lens set, so a partial round can never compute convergence
@@ -3347,6 +3417,28 @@ check "T18 AC8 -- HANDOFF names the open blocking finding" \
 t18noledger_handoff="$(cat "$TMP/SRD/T18NOLEDGER/HANDOFF.md")"
 check_absent "T18 AC8 -- HANDOFF omits the findings section entirely when no ledger exists (absence is authoritative)" \
   "## Open Code-Audit Findings" "$t18noledger_handoff"
+
+# =================================================================================
+# G15/CA-353 (round 6): a ledger-error diagnostic (invalid JSONL) must never render verbatim
+# under HANDOFF's "Open Code-Audit Findings" heading as if it were the findings summary --
+# `_write_handoff_body` used to merge cmd_audit_converged's stdout and stderr with `2>&1`, so
+# an "invalid JSONL" stderr diagnostic rendered identically to a real blocking-findings list.
+# =================================================================================
+echo
+echo "G15/CA-353 -- a malformed findings-ledger.jsonl renders a distinct 'unavailable' row, not the raw diagnostic"
+"$EDM_STATE" init T18BADLEDGER >/dev/null
+mkdir -p "$TMP/SRD/T18BADLEDGER/code-audit"
+printf '%s\n' 'not valid json at all {{{' \
+  > "$TMP/SRD/T18BADLEDGER/code-audit/findings-ledger.jsonl"
+"$EDM_STATE" write-handoff T18BADLEDGER >/dev/null
+t18badledger_handoff="$(cat "$TMP/SRD/T18BADLEDGER/HANDOFF.md")"
+check "G15/CA-353 -- HANDOFF still renders the Open Code-Audit Findings heading" \
+  "## Open Code-Audit Findings" "$t18badledger_handoff"
+check_absent "G15/CA-353 -- the raw 'invalid JSONL' diagnostic never appears in the rendered HANDOFF" \
+  "invalid JSONL" "$t18badledger_handoff"
+check "G15/CA-353 -- a distinct labeled 'unavailable' row is rendered instead" \
+  "- **Open findings**: unavailable (ledger error; run edm-state audit-converged T18BADLEDGER)" \
+  "$t18badledger_handoff"
 
 # ---- AC9 (preserve): HANDOFF still auto-regenerates, Notes preserved, ASCII-only ----------
 echo
