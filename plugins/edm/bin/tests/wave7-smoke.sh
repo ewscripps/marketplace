@@ -6023,6 +6023,29 @@ EOS
 }
 ca298_gate_hooks_case
 
+echo
+echo "=== G31/CA-279: the five prompt hooks delegate to edm-state gate-check rather than restating the phase-to-gate mapping in prose ==="
+for g31_matcher in edm:srd edm:audit-srd edm:tickets edm:audit-tickets edm:implement; do
+  g31_prompt_text="$(jq -r --arg m "$g31_matcher" \
+    '.hooks.UserPromptExpansion[] | select(.matcher == $m) | .hooks[] | select(.type == "prompt") | .prompt' \
+    "${PLUGIN_DIR}/hooks/hooks.json" 2>/dev/null)"
+  [[ -n "$g31_prompt_text" ]] \
+    && pass "G31/CA-279 -- ${g31_matcher} prompt hook extracted" \
+    || fail "G31/CA-279 -- could not extract the ${g31_matcher} prompt hook from hooks.json"
+  check "G31/CA-279 -- ${g31_matcher} prompt hook delegates to edm-state gate-check" \
+    "edm-state gate-check <PREFIX>" "$g31_prompt_text"
+  check_absent "G31/CA-279 -- ${g31_matcher} prompt hook no longer hardcodes a gate NUMBER in prose" \
+    "requires gate" "$g31_prompt_text"
+  check_absent "G31/CA-279 -- ${g31_matcher} prompt hook no longer instructs reading gates_approved directly" \
+    "gates_approved" "$g31_prompt_text"
+done
+# Positive control: prove check_absent's needles actually match something if reintroduced, rather
+# than passing vacuously because the phrasing was never right to begin with.
+g31_control_input="/edm:srd requires gate 1 approved. Check the gates_approved array."
+[[ "$g31_control_input" == *"requires gate"* && "$g31_control_input" == *"gates_approved"* ]] \
+  && pass "G31/CA-279 -- positive control: both retired needles still match the old phrasing they replaced" \
+  || fail "G31/CA-279 -- positive control broken: a needle above would not catch a reintroduction"
+
 # =================================================================================
 # G9/G19 (round-3 Wave 7c): the two --help sentences this round's own remediation inverted are
 # corrected, and the "unreadable" violation class is documented. A positive control proves the

@@ -758,9 +758,12 @@ echo
 echo "T13 AC8 -- hooks.json UserPromptExpansion gate-check call sites unchanged"
 HOOKS_JSON="$(cd "$(dirname "$EDM_STATE")/.." && pwd)/hooks/hooks.json"
 hook_gate_check_hits="$(count_matches 'gate-check' "$HOOKS_JSON")"
-[[ "$hook_gate_check_hits" -eq 5 ]] \
-  && pass "hooks.json still has exactly 5 gate-check call sites (srd x2, tickets, audit-tickets, implement)" \
-  || fail "hooks.json has $hook_gate_check_hits gate-check call sites, expected 5 (unchanged)"
+# G31/CA-279 (round 5): the five "prompt"-type hooks now delegate to `edm-state gate-check`
+# rather than restating the phase-to-gate mapping in prose, adding one more "gate-check" mention
+# per matcher alongside its sibling "command"-type hook's own call -- 5 command + 5 prompt = 10.
+[[ "$hook_gate_check_hits" -eq 10 ]] \
+  && pass "hooks.json has exactly 10 gate-check mentions (5 command call sites + 5 prompt-hook delegation mentions, G31/CA-279)" \
+  || fail "hooks.json has $hook_gate_check_hits gate-check mentions, expected 10"
 check_absent "hooks.json does not reference the new code-audit token" "gate-check \"\$prefix\" code-audit" "$(cat "$HOOKS_JSON")"
 check_absent "hooks.json does not reference the new verify-runtime token" "gate-check \"\$prefix\" verify-runtime" "$(cat "$HOOKS_JSON")"
 check_absent "hooks.json does not reference the new plan token" "gate-check \"\$prefix\" plan" "$(cat "$HOOKS_JSON")"
