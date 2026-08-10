@@ -623,10 +623,13 @@ write_atomic() {
   # apostrophe (an ordinary surname directory, e.g. "o'brien") would terminate the quoting
   # early and corrupt the stored trap body into a syntax error at signal time. Assign to a
   # dedicated variable first, then reference it INSIDE single quotes so it expands at signal
-  # time, not at install time (the pattern already used correctly at edm-lint-artifacts:141,
-  # edm-check-grants:124, bin/tests/_harness.sh:104; G72/CA-232 closed the one remaining
-  # interpolation site of this class, bin/tests/_harness.sh's own harness_scratch_dir, whose
-  # corrected form is at bin/tests/_harness.sh:76).
+  # time, not at install time (the pattern already used correctly at edm-lint-artifacts's own
+  # cleanup trap, edm-check-grants's own cleanup trap, and bin/tests/_harness.sh's
+  # `with_scratch_repo` cleanup trap; G72/CA-232 closed the one remaining interpolation site
+  # of this class, bin/tests/_harness.sh's own `harness_scratch_dir` cleanup trap). CA-268
+  # (round 4/5): cited by function/site NAME rather than by line number here on purpose --
+  # this exact comment's prior line-number form went stale twice, the second time inside the
+  # very commit that fixed the first staleness, by pushing the cited trap down three lines.
   #
   # G2/G3 (round-3 CA-142/CA-143 re-fix): this trap layer is now installed UNCONDITIONALLY, even
   # when write_atomic runs inside with_state_lock's mkdir-branch subshell ("( "$@" )" a few
