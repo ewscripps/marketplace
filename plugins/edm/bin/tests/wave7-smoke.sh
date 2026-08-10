@@ -5044,8 +5044,12 @@ CHILD_SCRIPT_EOF
 
   check "G2/G3/G4 -- the SIGINT'd child actually died from the signal (exit 128+2=130)" \
     "130" "$child_ec"
-  check "G2/G3/G4 -- no *.tmp.* file remains after SIGINT mid-write on the mkdir branch" \
-    "0" "$tmp_left"
+  # G28/CA-263: check() is a substring match, and "0" also matches "10"/"20"/"30" -- a latent
+  # false-pass in exactly the assertion that must not silently weaken. Use the suite's numeric
+  # idiom instead.
+  [[ "$tmp_left" -eq 0 ]] \
+    && pass "G2/G3/G4 -- no *.tmp.* file remains after SIGINT mid-write on the mkdir branch" \
+    || fail "G2/G3/G4 -- no *.tmp.* file remains after SIGINT mid-write on the mkdir branch (found $tmp_left)"
   check "G2/G3/G4 -- the lockdir is gone after SIGINT mid-write on the mkdir branch" \
     "absent" "$lockdir_left"
   check "G1/CA-036 -- \$dest was never created after SIGINT interrupted the render mid-write" \
@@ -6845,8 +6849,11 @@ t_g47_fallback_json="${t_g47_fallback_out#out=}"
 check "G47b -- the forced whole-directory fallback tags attribution_mode accordingly" \
   '"attribution_mode": "whole-directory"' "$t_g47_fallback_json"
 t_g47_fallback_input="$(printf '%s' "$t_g47_fallback_json" | jq -r '.input' 2>/dev/null || echo "?")"
-check "G47b -- the fallback sums BOTH session files' input tokens (11+22=33), not just one file's tail" \
-  "33" "$t_g47_fallback_input"
+# G28/CA-263: check() is a substring match, and "33" also matches "133"/"233"/"330". Use the
+# suite's numeric idiom instead.
+[[ "$t_g47_fallback_input" == "33" ]] \
+  && pass "G47b -- the fallback sums BOTH session files' input tokens (11+22=33), not just one file's tail" \
+  || fail "G47b -- the fallback sums BOTH session files' input tokens (11+22=33), not just one file's tail (got $t_g47_fallback_input)"
 
 echo
 echo "=== G48: watch-impl distinguishes a genuine git-log failure from history rewritten out from under last_sha, and advances last_sha on every successful poll ==="
