@@ -373,7 +373,8 @@ case "$MODE" in
     # diagrams is deliberately NOT exercised here -- this mode measures the per-line Mermaid scan
     # cost on every file, not the short-circuit's savings on a mixed corpus. The mode reports the
     # measured ratio against the actual printed budget (see below, "<= 1.40x"), not an assumed
-    # near-1.0x number; CHANGELOG.md separately records a real 1.19x sample from this same mode.
+    # near-1.0x number; CHANGELOG.md separately records a real sample from this same mode
+    # (G5/CA-302: re-measured against the 20-sample harness).
     TMP_MR="$(mktemp -d "${TMPDIR:-/tmp}/edm-timing-mermaid.XXXXXX")"
     export EDM_SRD_ROOT="${TMP_MR}/SRD"
     mkdir -p "${EDM_SRD_ROOT}/TIMMR"

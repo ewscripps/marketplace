@@ -235,13 +235,13 @@ lines).
 
 | AC | Budget | Measured (this machine) | Result |
 |---|---|---|---|
-| AC1 | get/resolve-dir/branch-check/gate-check < 250ms p95 (50-init fixture) | get 28ms, resolve-dir 28ms, branch-check 48ms, gate-check 64ms | PASS |
-| AC2 | phase-complete < 2000ms p95 excl. token read; token read bounded | 340ms p95; bound added (`tail -n` cap, see above) | PASS |
-| AC3 | audit-converged < 500ms p95, render-ledger < 1000ms p95 (500-finding ledger) | audit-converged 123ms, render-ledger 84ms | PASS |
-| AC4 | check_permission_rules() adds < 50ms to session-start | measured delta -2ms (noise-level) | PASS |
-| AC5 | full lint of one initiative directory of **30 files / 9,990 lines** < 3000ms p95 (the fixture size is part of the budget: `bin/tests/timing.sh --lint`, 30 files x 333 lines) | **1,021ms p95** (samples 1035/1021/1018) after the `edm-lint-artifacts` rewrite in commit `d591b92` | PASS |
-| AC6 | Mermaid class adds <= 40% lint time vs. 3-class baseline (stated as a bare 1.40x ratio, with no input size and no absolute floor) | **1.19x** on the 30-file/9,990-line fixture (baseline 1,000ms, with-Mermaid 1,193ms) after the class-4 rewrite in commit `ea31ce8`; was 3.40x immediately after `d591b92` and 2.26x before either | **PASS on the number, but the budget is still malformed** (see the note below the table) |
-| AC7 | `--all` over 50 initiatives < 60,000ms (CI budget) | 1,671ms | PASS |
+| AC1 | get/resolve-dir/branch-check/gate-check < 250ms p95 (50-init fixture) | get 65ms, resolve-dir 52ms, branch-check 85ms, gate-check 116ms | PASS |
+| AC2 | phase-complete < 2000ms p95 excl. token read; token read bounded | 647ms p95; bound added (`tail -n` cap, see above) | PASS |
+| AC3 | audit-converged < 500ms p95, render-ledger < 1000ms p95 (500-finding ledger) | audit-converged 193ms, render-ledger 186ms | PASS |
+| AC4 | check_permission_rules() adds < 50ms to session-start | measured delta 3ms (noise-level) | PASS |
+| AC5 | full lint of one initiative directory of **30 files / 9,990 lines** < 3000ms p95 (the fixture size is part of the budget: `bin/tests/timing.sh --lint`, 30 files x 333 lines) | **2,034ms p95** (20-sample nearest-rank, see G5/CA-302 note below) after the `edm-lint-artifacts` rewrite in commit `d591b92` | PASS |
+| AC6 | Mermaid class adds <= 40% lint time vs. 3-class baseline (stated as a bare 1.40x ratio, with no input size and no absolute floor) | **1.12x** on the 30-file/9,990-line fixture (baseline 2,013ms, with-Mermaid 2,253ms) after the class-4 rewrite in commit `ea31ce8`; was 3.40x immediately after `d591b92` and 2.26x before either | **PASS on the number, but the budget is still malformed** (see the note below the table) |
+| AC7 | `--all` over 50 initiatives < 60,000ms (CI budget) | 2,657ms | PASS |
 | AC8 | commit-hook scoping (staged-`SRD/`-path scope, derived `srd_root`, unresolvable-prefix skip, exit-1-vs-exit-2 semantics, per-prefix invocation) preserved | `bin/tests/wave7-smoke.sh`'s `"T67 AC8"` case -- the scoping-property assertions named above (this row previously cited `git diff --stat` showing zero changes to `hooks/hooks.json`, which the note above declares an invalid method for this exact case) | PASS |
 | AC9 | blocking pipeline < 5 minutes at each wave boundary, fixed fixture subject | not run against a live GitLab runner this session | **verified-locally-pending-pipeline** |
 | AC10 | the four lint checks (`bash -n`, `edm-lint-artifacts --all`, `edm-check-grants`, `edm-check-vocabulary`) run as parallel jobs | split into `lint:bash-syntax`, `lint:artifacts`, `lint:grants` and `lint:vocabulary`; every `lint` job carries `needs: []` and the three `test` jobs carry `needs: ["lint:bash-syntax"]` | **PASS** (pipeline parses; graph is seven independent `lint` jobs plus three `test` jobs gated on the syntax check. `grep -n 'needs:' .gitlab-ci.yml` now returns the keys AC10 asked for) |
@@ -250,15 +250,20 @@ lines).
 | AC13 | one eval run < 30 minutes, cost documented | `evals/README.md` already documents 30-60 minutes wall-clock and a `$15`/phase budget ceiling from a prior measured run (2026-07-27) -- the existing documented range itself brackets the 30-minute figure, so a fresh timed run is needed to confirm | **verified-locally-pending-pipeline** (a live eval run was not triggered this session -- real API spend and up to an hour of wall time) |
 | AC14 | reproducible, committed timing script | `bin/tests/timing.sh`, executable, all modes above run from it | PASS |
 
-**G36 (round-3 code-audit, CA-196) note: the figures in the table above predate a p95 rounding
-fix and are not re-derived here.** `bin/tests/timing.sh`'s `_p95` computed nearest-rank p95 as
-`int(0.95*N)` (floor) instead of `ceil(0.95*N)`, which for every sample count this file uses (3,
-5, or 10) reported a lower percentile than p95 -- discarding the slowest sample and biasing every
-number in the table above optimistic by an unmeasured amount. The formula is fixed
-(round-3 Wave 7g-2); sample counts are unchanged (see the fix's own comment in `timing.sh` for why
-raising them was not also done in that pass). Every AC1/AC2/AC3/AC5 figure above should be
-re-measured against the corrected formula before being cited as current; re-running the full
-timing suite is itself a multi-minute operation and is left as a follow-up rather than done here.
+**G5 (round-5 code-audit, CA-196/CA-302) result: every figure in the table above is a fresh
+20-sample nearest-rank p95 against the corrected formula, not the pre-fix numbers.** Two
+sequential fixes to `bin/tests/timing.sh`'s `_p95` are both now fully discharged. First
+(round-3 Wave 7g-2, CA-196): nearest-rank p95 was computed as `int(0.95*N)` (floor) instead of
+`ceil(0.95*N)`, biasing every figure optimistic by discarding the slowest sample. Second
+(round-4/5, CA-196): fixing the formula alone was not enough -- `ceil(0.95*N)` equals `N` for
+every sample count this file used at the time (3, 5, or 10), so even the corrected formula
+still returned the sample maximum under the emitted key `p95_ms`. `N=20` (`_P95_SAMPLE_COUNT`
+in `timing.sh`) is the smallest count where `ceil(0.95*20)=19 < 20`, making `p95_ms` a real
+95th-percentile figure rather than a relabeled maximum; `bin/tests/timing.sh --self-test`
+(G35/CA-311) now pins this exact index so a silent revert of either the formula or the sample
+count fails loudly. Every AC1/AC2/AC3/AC5/AC6/AC7 figure in the table above was re-measured
+against this final harness in this session; none of the deferred "should be re-measured"
+language from the prior version of this note still applies.
 
 **Two real, recorded misses (AC6, AC12) are not silently accepted.** Per this ticket's own
 Out of Scope clause ("optimizing anything that misses a budget... this ticket measures and
@@ -269,8 +274,9 @@ pressure without a fresh full-suite validation pass.
 performance in commit `d591b92`: class 1 (attribution) had been forking `echo | tr` twice per
 line and now runs a single `grep -niF -f` per file, and `build_line_classes()` is a single awk
 pass instead of a per-line bash `while IFS= read -r` loop. The 39,872ms originally recorded here
-(re-profiled at 70,168ms on the same fixture before the fix) measures 1,021ms p95 afterwards,
-against the same 3,000ms budget on the same 30-file/9,990-line fixture. The budget is restated in
+(re-profiled at 70,168ms on the same fixture before the fix) measures 2,034ms p95 afterwards
+(20-sample nearest-rank, G5/CA-302), against the same 3,000ms budget on the same
+30-file/9,990-line fixture. The budget is restated in
 the table above **with its input size attached**, because a passing number quoted against an
 unstated fixture size recreates the same defect in the opposite direction.
 
