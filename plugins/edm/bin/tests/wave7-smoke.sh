@@ -5264,9 +5264,16 @@ check "CA-160 -- the refusal names the bad rate value" "invalid HUMAN_HOURLY_RAT
 check "CA-160 -- EDM_TOKEN_READ_LINE_CAP validation is present next to the tail invocation" \
   "invalid EDM_TOKEN_READ_LINE_CAP" "$(awk '/^get_session_tokens_since\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
 ca160b_scratch="$(mktemp -d "${TMP}/edm-ca160b.XXXXXX")"
+ca160b_home="$(mktemp -d "${TMP}/edm-ca160b-home.XXXXXX")"
 (
   cd "$ca160b_scratch" || exit 1
-  sess_dir="${HOME}/.claude/projects/$(pwd | tr '/.' '-')"
+  # G29/CA-264: this used to derive sess_dir straight from the invoking user's REAL $HOME (the
+  # only bare $HOME reference in this suite), fabricating a session JSONL outside the suite's
+  # trap-covered scratch root and cleaned up only on the success path. Export HOME to a scratch
+  # dir first, matching the six wave6-smoke.sh sites, then reuse the shared helper instead of
+  # re-deriving the same expression by hand.
+  export HOME="$ca160b_home"
+  sess_dir="$(session_dir_for_test_cwd)"
   mkdir -p "$sess_dir"
   jq -cn '{type:"assistant",timestamp:"2026-01-01T00:00:00Z",message:{model:"claude-sonnet-4-7",usage:{input_tokens:10,output_tokens:5}}}' \
     > "${sess_dir}/a.jsonl"
