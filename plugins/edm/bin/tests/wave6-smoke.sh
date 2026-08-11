@@ -761,13 +761,68 @@ echo "T13 AC5 -- fast-track passes gate-check tickets without gate 2"
   && pass "gate-check tickets passes when gate 2's origin phase (3) is skipped" \
   || fail "gate-check tickets wrongly blocked despite phase 3 (gate 2's origin) being skipped"
 
-# ---- AC6 (preserve): cmd_gate_check's numeric comparison logic is unchanged -----------
+# ---- AC6 (preserve, updated by G23/CA-343): the gate-approval numeric comparison logic is
+# preserved in substance, but is no longer hand-copied at each call site. G23/CA-343 extracted
+# the "is this gate approved" predicate cmd_phase_start, cmd_gate_check and cmd_archive each
+# used to compute independently into a single shared gate_is_approved() helper (composed, for
+# the single-gate callers, via gate_required_and_approved()) -- so the raw comparison expression
+# itself now has exactly ONE definition, and this test's job changes from "count >=2 hand-copies"
+# to "count == 1 definition, plus every former call site now routes through the shared helper."
 echo
-echo "T13 AC6 -- numeric comparison logic (select(.gate == \$g)) preserved verbatim"
+echo "T13 AC6 -- numeric comparison logic (select(.gate == \$g)) now has exactly one shared definition (G23/CA-343)"
 select_hits="$(count_matches '(.gates_approved // \[\]) | map(select(.gate == \$g)) | length' "$EDM_STATE")"
-[[ "$select_hits" -ge 2 ]] \
-  && pass "the original select(.gate == \$g) | length expression still appears (cmd_gate_check + phase-start)" \
-  || fail "expected >=2 occurrences of the unchanged numeric comparison expression, found $select_hits"
+[[ "$select_hits" -eq 1 ]] \
+  && pass "the select(.gate == \$g) | length expression has exactly one definition (inside gate_is_approved)" \
+  || fail "expected exactly 1 occurrence of the gate-approval comparison expression (single shared def, G23/CA-343), found $select_hits"
+gate_is_approved_callers="$(grep -cE 'gate_is_approved "|gate_required_and_approved "' "$EDM_STATE")"
+[[ "$gate_is_approved_callers" -ge 3 ]] \
+  && pass "cmd_phase_start, cmd_gate_check and cmd_archive all route through the shared gate_is_approved/gate_required_and_approved helpers (G23/CA-343)" \
+  || fail "expected >=3 call sites of gate_is_approved/gate_required_and_approved (cmd_phase_start, cmd_gate_check, cmd_archive), found $gate_is_approved_callers"
+
+# ---- G23/CA-343 (b): phase-start, gate-check and archive agree, live, on a mini-srd
+# initiative with skipped phases -- not just "each independently passes its own suite", but
+# the three commands agree on the SAME gate (gate 3, whose origin phase 5 mini-srd skips) for
+# the SAME initiative in the SAME test. mini-srd seeds skipped_phases {2,4,5} at edm-init
+# (bin/edm-state:~976-978), so required_gates_for_mode(mini-srd, standard, "2 4 5") = "1 2"
+# only -- gate 3 is not required by any of the three commands' independent derivations.
+echo
+echo "G23/CA-343 -- phase-start, gate-check and archive agree that gate 3 is not required for a mini-srd initiative with skipped phases"
+edm-init --product demo --description g23mini G23MIN --mode mini-srd >/dev/null
+G23MIN_DIR="$TMP/SRD/demo/G23MIN__g23mini"
+G23MIN_STATE="${G23MIN_DIR}/.edm-state.json"
+g23_skipped_len="$(jq -r '(.skipped_phases // []) | length' "$G23MIN_STATE")"
+[[ "$g23_skipped_len" -eq 3 ]] \
+  && pass "G23/CA-343 -- fixture sanity: mini-srd seeded 3 skipped phases (2, 4, 5)" \
+  || fail "G23/CA-343 -- fixture sanity failed: mini-srd seeded ${g23_skipped_len} skipped phase(s), expected 3"
+# Approve only gates 1 and 2 -- the two required_gates_for_mode says ARE required. Gate 3 is
+# deliberately never approved.
+"$EDM_STATE" approve-gate G23MIN 1 >/dev/null
+"$EDM_STATE" approve-gate G23MIN 2 >/dev/null
+
+# gate-check: implement is gated on gate 3 -- must exit 0 (not required) without gate 3 ever
+# being approved.
+g23_gc_ec=0
+"$EDM_STATE" gate-check G23MIN implement >/dev/null 2>&1 || g23_gc_ec=$?
+[[ "$g23_gc_ec" -eq 0 ]] \
+  && pass "G23/CA-343 -- gate-check agrees gate 3 is not required for mini-srd (exit 0 without approval)" \
+  || fail "G23/CA-343 -- gate-check refused implement for mini-srd despite gate 3 not being required (exit ${g23_gc_ec})"
+
+# phase-start: phase 6's prerequisite gate is also gate 3 (phase_start_prerequisite_gate maps
+# phase 6 -> gate 3, since gate 3's origin phase 5 immediately precedes phase 6) -- must also
+# agree gate 3 is not required and let phase 6 start.
+g23_ps_ec=0
+"$EDM_STATE" phase-start G23MIN 6 >/dev/null 2>&1 || g23_ps_ec=$?
+[[ "$g23_ps_ec" -eq 0 ]] \
+  && pass "G23/CA-343 -- phase-start agrees gate 3 is not required for mini-srd (phase 6 starts without approval)" \
+  || fail "G23/CA-343 -- phase-start refused into phase 6 for mini-srd despite gate 3 not being required (exit ${g23_ps_ec})"
+
+# archive: its per-gate loop must also agree -- whatever else archive refuses on (terminal
+# phase, convergence), its gate-approval check must never name gate 3 among the missing gates.
+g23_arch_out="$("$EDM_STATE" archive G23MIN 2>&1)" || true
+check_absent "G23/CA-343 -- archive's gate-approval check never names gate 3 as missing for mini-srd" \
+  "gate(s) 3" "$g23_arch_out"
+check_absent "G23/CA-343 -- archive's gate-approval check never names gate 3 alongside other gates for mini-srd" \
+  ", 3" "$g23_arch_out"
 
 # ---- AC7 (C-4): legacy state (mode present, schema_version absent -- the real EDMV2 shape)
 # warns and proceeds through phase-start -----------------------------------------------
@@ -1432,6 +1487,22 @@ mv "$TMP/SRD/MIGSCH4" "$TMP/SRD/.archived/MIGSCH4"
 STATE_MIGSCH4_ARCH="$TMP/SRD/.archived/MIGSCH4/.edm-state.json"
 _t10_migsch4_archived() { "$EDM_STATE" migrate-schema MIGSCH4 < /dev/null; }
 check_refuses_and_leaves_state "archived initiative refused" "is archived" "$STATE_MIGSCH4_ARCH" _t10_migsch4_archived
+
+# G23/CA-343: the AC4 archived-probe now routes through list_state_files --archived instead of
+# hand-globbing both archived shapes itself -- exercise the PRODUCT-SCOPED shape too (the shape
+# above only covers the flat one), so a future change to either enumeration path is still
+# caught by both.
+echo
+echo "G23/CA-343 -- product-scoped archived initiative also refused via the shared list_state_files enumeration"
+edm-init --product demo --description migsch6 MSCH6 >/dev/null
+jq 'del(.schema_version)' "$TMP/SRD/demo/MSCH6__migsch6/.edm-state.json" \
+  > "$TMP/SRD/demo/MSCH6__migsch6/.edm-state.json.tmp" \
+  && mv "$TMP/SRD/demo/MSCH6__migsch6/.edm-state.json.tmp" "$TMP/SRD/demo/MSCH6__migsch6/.edm-state.json"
+mkdir -p "$TMP/SRD/.archived/demo"
+mv "$TMP/SRD/demo/MSCH6__migsch6" "$TMP/SRD/.archived/demo/MSCH6__migsch6"
+STATE_MSCH6_ARCH="$TMP/SRD/.archived/demo/MSCH6__migsch6/.edm-state.json"
+_t_g23_migsch6_archived() { "$EDM_STATE" migrate-schema MSCH6 < /dev/null; }
+check_refuses_and_leaves_state "G23/CA-343 -- product-scoped archived initiative refused" "is archived" "$STATE_MSCH6_ARCH" _t_g23_migsch6_archived
 
 # ---- AC7 (negative, confirmation required): no input piped refuses, no changes made -------
 echo

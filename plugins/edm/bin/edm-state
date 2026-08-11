@@ -837,6 +837,55 @@ required_gates_for_mode() {
   done
 }
 
+# skipped_phases_str <state-json> -- space-joined list of skipped phase numbers, the shared
+# input required_gates_for_mode() needs. G23/CA-343: this jq derivation was hand-copied at
+# cmd_phase_start, cmd_gate_check and cmd_archive (three separate literal copies of
+# `[(.skipped_phases // [])[].phase] | join(" ")`) even though a comment at each site already
+# asserted the three sites share one derivation -- extracted here so that claim is actually true.
+skipped_phases_str() {
+  echo "$1" | jq -r '[(.skipped_phases // [])[].phase] | join(" ")'
+}
+
+# gate_is_approved <state-json> <gate> -- "true"/"false" for whether <gate> (a bare gate
+# number, e.g. "1", "2", "3") appears in .gates_approved[]. Shared by cmd_phase_start,
+# cmd_gate_check and cmd_archive so the "is this gate approved" predicate cannot diverge
+# (G23/CA-343) -- previously each site ran its own `jq -r --argjson g "$gate" '(.gates_approved
+# // []) | map(select(.gate == $g)) | length'` and compared the count to 0 itself.
+gate_is_approved() {
+  local state_json="$1" gate="$2" n
+  n="$(echo "$state_json" | jq -r --argjson g "$gate" '(.gates_approved // []) | map(select(.gate == $g)) | length' 2>/dev/null || echo 0)"
+  [[ "$n" -gt 0 ]] && echo "true" || echo "false"
+}
+
+# gate_required_and_approved <state-json> <mode> <lifecycle_mode> <gate>
+# Composes skipped_phases_str + required_gates_for_mode + gate_is_approved into the single
+# "is THIS gate required by this mode/lifecycle_mode, and if so, is it approved" question that
+# cmd_phase_start (its one prerequisite gate) and cmd_gate_check (its one required gate) each
+# ask about a different gate at a different moment (G23/CA-343: this exact procedure was
+# written out by hand at both sites, and a third time -- partially -- inside cmd_archive's
+# per-gate loop, which needs the required-gates LIST rather than a single gate's status and so
+# calls skipped_phases_str/required_gates_for_mode/gate_is_approved directly instead of this
+# composing wrapper). Echoes exactly one of:
+#   not-required  -- this gate is not in required_gates_for_mode()'s list; the caller proceeds
+#   approved      -- required AND gates_approved contains it
+#   not-approved  -- required AND gates_approved does not contain it (the refusal case)
+# Callers keep their own diagnostic text, exit code and record_degraded_check label at the call
+# site -- only the derivation moves here.
+gate_required_and_approved() {
+  local state_json="$1" mode="$2" lifecycle_mode="$3" gate="$4"
+  local required_list
+  required_list="$(required_gates_for_mode "$mode" "$lifecycle_mode" "$(skipped_phases_str "$state_json")")"
+  if ! printf '%s\n' "$required_list" | grep -qx "$gate"; then
+    echo "not-required"
+    return 0
+  fi
+  if [[ "$(gate_is_approved "$state_json" "$gate")" == "true" ]]; then
+    echo "approved"
+  else
+    echo "not-approved"
+  fi
+}
+
 # phase_start_prerequisite_gate <phase-num> -- the single gate (if any) that must be approved
 # before <phase-num> may start (EDMV3-T13 AC1), derived from the same gated_phase_for_gate()
 # map cmd_gate_check and required_gates_for_mode() already use (CA-013 single source): the
@@ -1000,11 +1049,27 @@ check_permission_rules() {
   fi
 }
 
-# Shared jq def for the whole-initiative coverage layer row -- one renderer, one padding scheme
-# (clamped 14-wide layer column; 9/8/7 pct padding), prepended to both get-coverage and
-# metrics-report so the two can never diverge again. Input: a {key,value} coverage entry. (CA-012)
+# Shared jq defs for the two coverage row shapes -- one renderer per shape, one padding scheme
+# each, prepended to both get-coverage and metrics-report so the two can never diverge again.
+# G23/CA-343 (round 6) corrected this docstring: the "one renderer ... can never diverge again"
+# guarantee below was true only of COVERAGE_LAYER_ROW_JQ_DEF (the whole-initiative LAYER row) --
+# the per-EPIC row had no shared def at all and had already diverged between the two call sites
+# (cmd_get_coverage's copy padded pct and appended measured_at; cmd_metrics_report's copy did
+# neither). COVERAGE_EPIC_ROW_JQ_DEF below closes that gap the same way.
+#
+# COVERAGE_LAYER_ROW_JQ_DEF: whole-initiative coverage layer row (clamped 14-wide layer column;
+# 9/8/7 pct padding). Input: a {key,value} coverage_by_layer entry. (CA-012)
 COVERAGE_LAYER_ROW_JQ_DEF='def coverage_layer_row:
   "  \(.key | . + (" " * (14 - length | if . < 0 then 0 else . end)))  \(.value.pct)%\(if .value.pct < 10 then "         " elif .value.pct < 100 then "        " else "       " end)  \(.value.measured_at // "?")";'
+
+# COVERAGE_EPIC_ROW_JQ_DEF: per-epic coverage row shared columns (clamped 15-wide epic column,
+# clamped 14-wide layer column, 8/7/6 pct padding) -- renders everything both call sites agree
+# on. Input: a {key,value} coverage_by_epic[<epic>] layer entry, with the epic name passed
+# explicitly as $epic (a jq function argument, not `.`, since the epic name lives one level up
+# from the entry being iterated). get-coverage appends its own trailing measured_at column after
+# this shared prefix; metrics-report uses the shared prefix as-is. (G23/CA-343)
+COVERAGE_EPIC_ROW_JQ_DEF='def coverage_epic_row_prefix($epic):
+  "  \($epic | . + (" " * (15 - length | if . < 0 then 0 else . end)))  \(.key | . + (" " * (14 - length | if . < 0 then 0 else . end)))  \(.value.pct)%\(if .value.pct < 10 then "        " elif .value.pct < 100 then "       " else "      " end)";'
 
 # _edm_reclaim_stale_lockdir <lockdir> <success-log-message>
 # Shared atomic reclaim: `mv "$lockdir" "${lockdir}.stale.$$"` either wins or loses the rename
@@ -2087,20 +2152,15 @@ cmd_phase_start() {
     local prereq_gate
     prereq_gate="$(phase_start_prerequisite_gate "$phase")"
     if [[ "$prereq_gate" != "none" ]]; then
-      local lifecycle_mode skipped_phases_str required_gates_list
+      # G23/CA-343: derivation shared with cmd_gate_check and (in list form) cmd_archive via
+      # gate_required_and_approved -- see its docstring above.
+      local lifecycle_mode ps_gate_status
       lifecycle_mode="$(echo "$state" | jq -r '.lifecycle_mode // "standard"')"
-      skipped_phases_str="$(echo "$state" | jq -r '[(.skipped_phases // [])[].phase] | join(" ")')"
-      required_gates_list="$(required_gates_for_mode "$mode" "$lifecycle_mode" "$skipped_phases_str")"
-      if printf '%s\n' "$required_gates_list" | grep -qx "$prereq_gate"; then
-        local approved
-        approved="$(echo "$state" | jq -r --argjson g "$prereq_gate" '
-          (.gates_approved // []) | map(select(.gate == $g)) | length
-        ' 2>/dev/null || echo 0)"
-        if [[ "$approved" -eq 0 ]]; then
-          echo "edm-state phase-start: Gate ${prereq_gate} has not been approved for ${prefix}; phase ${phase} cannot start." >&2
-          echo "Run: edm-state approve-gate ${prefix} ${prereq_gate}" >&2
-          return 1
-        fi
+      ps_gate_status="$(gate_required_and_approved "$state" "$mode" "$lifecycle_mode" "$prereq_gate")"
+      if [[ "$ps_gate_status" == "not-approved" ]]; then
+        echo "edm-state phase-start: Gate ${prereq_gate} has not been approved for ${prefix}; phase ${phase} cannot start." >&2
+        echo "Run: edm-state approve-gate ${prefix} ${prereq_gate}" >&2
+        return 1
       fi
     fi
   fi
@@ -2427,7 +2487,7 @@ cmd_get_coverage() {
     end
   ' "$state" 2>/dev/null || true
   # Per-epic coverage (multi-stack)
-  jq -r '
+  jq -r "${COVERAGE_EPIC_ROW_JQ_DEF}"'
     (.coverage_by_epic // {}) | to_entries |
     if length == 0 then empty
     else
@@ -2436,7 +2496,7 @@ cmd_get_coverage() {
       "  Epic            Layer          Coverage  Measured At",
       "  ------          ----------     --------  -----------",
       (.[] | .key as $epic | .value | to_entries[] |
-        "  \($epic | . + (" " * (15 - length | if . < 0 then 0 else . end)))  \(.key | . + (" " * (14 - length | if . < 0 then 0 else . end)))  \(.value.pct)%\(if .value.pct < 10 then "        " elif .value.pct < 100 then "       " else "      " end)  \(.value.measured_at // "?")"),
+        coverage_epic_row_prefix($epic) + "  \(.value.measured_at // "?")"),
       ""
     end
   ' "$state" 2>/dev/null || true
@@ -2493,14 +2553,19 @@ cmd_migrate_schema() {
   # resolve into SRD_ROOT/.archived/ by design (archived initiatives are inert, EDMV3-111) --
   # so this is checked explicitly, before any other resolution, covering both the flat
   # (.archived/PREFIX/) and product-scoped (.archived/PRODUCT/PREFIX__desc/) archived shapes.
-  local archived_hit="" _ms_af
-  [[ -f "${SRD_ROOT}/.archived/${prefix}/.edm-state.json" ]] \
-    && archived_hit="${SRD_ROOT}/.archived/${prefix}/.edm-state.json"
-  if [[ -z "$archived_hit" ]]; then
-    for _ms_af in "${SRD_ROOT}"/.archived/*/"${prefix}__"*/.edm-state.json; do
-      [[ -f "$_ms_af" ]] && archived_hit="$_ms_af" && break
-    done
-  fi
+  # G23/CA-343: this used to hand-glob both archived shapes itself, a third site knowing the
+  # archived-layout shape against state_file_for's declared "single source of layout truth" --
+  # routed through list_state_files' already-deduped enumeration instead, so a future archived
+  # layout variant only needs to be taught to list_state_files, not to every probe of it.
+  local archived_hit="" _ms_f
+  while IFS= read -r _ms_f; do
+    case "$_ms_f" in
+      "${SRD_ROOT}/.archived/${prefix}/.edm-state.json") archived_hit="$_ms_f" ;;
+      "${SRD_ROOT}"/.archived/*/"${prefix}__"*/.edm-state.json) archived_hit="$_ms_f" ;;
+      *) continue ;;
+    esac
+    break
+  done < <(list_state_files --archived)
   [[ -z "$archived_hit" ]] \
     || die "migrate-schema: refused -- ${prefix} is archived (found at ${archived_hit}); archived initiatives are not migrated"
 
@@ -2681,13 +2746,16 @@ cmd_archive() {
     else
       # ---- AC1a: every gate required_gates_for_mode() returns must be approved ----------
       if [[ "$mode" != "null" ]]; then
-        local skipped_phases_str_arch required_gates_list_arch missing_gates="" g approved_g
-        skipped_phases_str_arch="$(echo "$state_json" | jq -r '[(.skipped_phases // [])[].phase] | join(" ")')"
-        required_gates_list_arch="$(required_gates_for_mode "$mode" "$lifecycle_mode" "$skipped_phases_str_arch")"
+        # G23/CA-343: skipped_phases_str/gate_is_approved are the same shared helpers
+        # cmd_phase_start and cmd_gate_check compose via gate_required_and_approved (see its
+        # docstring above) -- this loop needs the full required-gates LIST rather than one
+        # gate's required-and-approved status, so it calls the two lower-level helpers
+        # directly instead of the composing wrapper.
+        local required_gates_list_arch missing_gates="" g
+        required_gates_list_arch="$(required_gates_for_mode "$mode" "$lifecycle_mode" "$(skipped_phases_str "$state_json")")"
         # shellcheck disable=SC2086 -- deliberate word-splitting; result is a space-separated list of gate numbers
         for g in $required_gates_list_arch; do
-          approved_g="$(echo "$state_json" | jq -r --argjson gg "$g" '(.gates_approved // []) | map(select(.gate == $gg)) | length')"
-          [[ "$approved_g" -gt 0 ]] || missing_gates="${missing_gates}${missing_gates:+, }${g}"
+          [[ "$(gate_is_approved "$state_json" "$g")" == "true" ]] || missing_gates="${missing_gates}${missing_gates:+, }${g}"
         done
         if [[ -n "$missing_gates" ]]; then
           die "archive refused: gate(s) ${missing_gates} not approved for ${prefix}; run edm-state approve-gate ${prefix} <gate-num> for each missing gate"
@@ -3231,10 +3299,10 @@ cmd_metrics_report() {
         echo
         printf "  %-15s  %-14s  %-10s\n" "Epic" "Layer" "Coverage"
         printf "  %-15s  %-14s  %-10s\n" "----" "-----" "--------"
-        jq -r '
+        jq -r "${COVERAGE_EPIC_ROW_JQ_DEF}"'
           (.coverage_by_epic // {}) | to_entries[] |
           .key as $epic | .value | to_entries[] |
-          "  \($epic | . + (" " * (15 - length | if . < 0 then 0 else . end)))  \(.key | . + (" " * (14 - length | if . < 0 then 0 else . end)))  \(.value.pct)%"
+          coverage_epic_row_prefix($epic)
         ' "$state" 2>/dev/null
         echo
       fi
@@ -3473,20 +3541,16 @@ cmd_gate_check() {
     record_degraded_check "$prefix" "gate-check:kernel-gate-enforcement" "no schema_version"
     return 0
   fi
-  local lifecycle_mode skipped_phases_str required_gates_list
+  # G23/CA-343: derivation shared with cmd_phase_start and (in list form) cmd_archive via
+  # gate_required_and_approved -- see its docstring above.
+  local lifecycle_mode gc_gate_status
   lifecycle_mode="$(echo "$state" | jq -r '.lifecycle_mode // "standard"')"
-  skipped_phases_str="$(echo "$state" | jq -r '[(.skipped_phases // [])[].phase] | join(" ")')"
-  required_gates_list="$(required_gates_for_mode "$mode" "$lifecycle_mode" "$skipped_phases_str")"
-  if ! printf '%s\n' "$required_gates_list" | grep -qx "$required_gate"; then
+  gc_gate_status="$(gate_required_and_approved "$state" "$mode" "$lifecycle_mode" "$required_gate")"
+  if [[ "$gc_gate_status" == "not-required" ]]; then
     return 0
   fi
 
-  local approved
-  approved="$(echo "$state" | jq -r --argjson g "$required_gate" '
-    (.gates_approved // []) | map(select(.gate == $g)) | length
-  ' 2>/dev/null || echo 0)"
-
-  if [[ "$approved" -eq 0 ]]; then
+  if [[ "$gc_gate_status" == "not-approved" ]]; then
     echo "edm-state gate-check: Gate ${required_gate} has not been approved for ${prefix}." >&2
     echo "Run /edm:orchestrator ${prefix} and approve Gate ${required_gate} before running /${gated_cmd}." >&2
     return "$GATE_CHECK_REFUSED"

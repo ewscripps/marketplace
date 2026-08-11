@@ -108,6 +108,22 @@ check "get-coverage shows per-epic section" "Per-Epic Coverage" "$cov_out"
 check "get-coverage shows auth epic" "auth" "$cov_out"
 check "get-coverage shows 85.5%" "85.5" "$cov_out"
 
+# ---- G23/CA-343: get-coverage and metrics-report share one epic-row renderer ---------------
+# (COVERAGE_EPIC_ROW_JQ_DEF) -- assert the two are byte-identical on the columns they share
+# (epic/layer/coverage padding), not just each independently non-empty. get-coverage appends
+# its own trailing "  <measured_at>" column metrics-report does not print, so that suffix is
+# stripped before comparing.
+cvrg_metrics_out="$("$EDM_STATE" metrics-report CVRG)"
+cvrg_cov_epic_line="$(printf '%s\n' "$cov_out" | grep '^  auth ')"
+cvrg_metrics_epic_line="$(printf '%s\n' "$cvrg_metrics_out" | grep '^  auth ')"
+cvrg_cov_epic_prefix="$(printf '%s' "$cvrg_cov_epic_line" | sed -E 's/  [0-9TZ:.-]+$//')"
+[[ -n "$cvrg_metrics_epic_line" ]] \
+  && pass "G23/CA-343 -- metrics-report renders the auth epic row" \
+  || fail "G23/CA-343 -- metrics-report produced no row for the auth epic"
+[[ "$cvrg_cov_epic_prefix" == "$cvrg_metrics_epic_line" ]] \
+  && pass "G23/CA-343 -- get-coverage and metrics-report agree byte-for-byte on the shared epic/layer/coverage columns" \
+  || fail "G23/CA-343 -- epic row columns diverged: get-coverage='$cvrg_cov_epic_prefix' metrics-report='$cvrg_metrics_epic_line'"
+
 # ---- set-parent / add-related ------------------------------------------------
 echo
 echo "set-parent / add-related"
