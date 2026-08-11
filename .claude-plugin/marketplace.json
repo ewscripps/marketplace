@@ -125,7 +125,8 @@
                 "./skills/test-doc-review",
                 "./skills/mr-creation",
                 "./skills/compact-context",
-                "./skills/project-onboarding"
+                "./skills/project-onboarding",
+                "./skills/auto-qa-task"
             ]
         },
         {
