@@ -4263,12 +4263,19 @@ t49_dc_pattern='double-check'
 t49_vyo_pattern='verify your own'
 t49_cyw_pattern='check your work'
 t49_rvy_pattern='re-verify your'
-t49_selfverify_hits="$(grep -rni "${t49_dc_pattern}\|${t49_vyo_pattern}\|${t49_cyw_pattern}\|${t49_rvy_pattern}" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" 2>/dev/null | grep -v 'skills/verify-runtime/' || true)"
+t49_selfverify_hits="$(grep -rn "${t49_dc_pattern}\|${t49_vyo_pattern}\|${t49_cyw_pattern}\|${t49_rvy_pattern}" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents" 2>/dev/null | grep -v 'skills/verify-runtime/' || true)"
 # G20 (round-3): four-needle OR'd repo-wide scan -- each phrasing routed through
 # assert_tree_absent (G2/CA-037 + G13/CA-145, round 4): genuinely seeded scratch controls, and
 # the two scanned directories are asserted to exist before each needle check runs.
 # G2/CA-037 residual (round 5): the OR'd producing pattern above is built from the same four
 # variables passed to assert_tree_absent below, closing the divergent-typo class.
+# G26/CA-350 (round 6): this scan used to run `grep -rni` (case-insensitive) while
+# assert_tree_absent's underlying count_matches_strict matches case-SENSITIVELY -- so a real
+# violation written with sentence-initial capitalization ("Double-check your own work") would
+# land in this haystack (found by the loose scan) but be invisible to the case-sensitive needle
+# check below (real_count 0, assertion passes over a live violation). Dropped `-i` here so the
+# scan and the check agree on the same (case-sensitive, exact-literal) contract the AC's own
+# text specifies -- the needles above are already lowercase.
 t49_dc_control="${TMP}/edm-t49-doublecheck-control.txt"
 printf 'double-check your own work\n' > "$t49_dc_control"
 assert_tree_absent "T49 AC6 -- no 'double-check' self-verification hit outside skills/verify-runtime/" \
@@ -4285,7 +4292,18 @@ t49_rvy_control="${TMP}/edm-t49-reverify-control.txt"
 printf 're-verify your findings\n' > "$t49_rvy_control"
 assert_tree_absent "T49 AC6 -- no 're-verify your' self-verification hit outside skills/verify-runtime/" \
   "$t49_rvy_pattern" "$t49_selfverify_hits" "$(cat "$t49_rvy_control")" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
-rm -f "$t49_dc_control" "$t49_vyo_control" "$t49_cyw_control" "$t49_rvy_control"
+# G26/CA-350 5th control (positive control for the case-sensitivity axis): every control above
+# is purely lowercase, so none of them can distinguish a case-sensitive matcher from a
+# case-insensitive one -- a regression that re-added `-i` to the scan above would sail through
+# all four unnoticed. This control's pattern and seed are both the mixed-case literal
+# "Double-Check your own work", proving the case-sensitive matcher correctly finds an exact,
+# non-lowercase literal when one is actually present (not silently lowercase-only).
+t49_case_pattern='Double-Check your own work'
+t49_case_control="${TMP}/edm-t49-case-axis-control.txt"
+printf 'Double-Check your own work\n' > "$t49_case_control"
+assert_tree_absent "T49 AC6 (case axis) -- a differently-cased literal is still caught by the case-sensitive matcher" \
+  "$t49_case_pattern" "$t49_selfverify_hits" "$(cat "$t49_case_control")" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/agents"
+rm -f "$t49_dc_control" "$t49_vyo_control" "$t49_cyw_control" "$t49_rvy_control" "$t49_case_control"
 
 echo
 echo "T49 AC7 -- before/after convention present on every prompt-text epic file (positive check)"
@@ -5451,11 +5469,14 @@ ca160b_scratch="$(mktemp -d "${TMP}/edm-ca160b.XXXXXX")"
 ca160b_home="$(mktemp -d "${TMP}/edm-ca160b-home.XXXXXX")"
 (
   cd "$ca160b_scratch" || exit 1
-  # G29/CA-264: this used to derive sess_dir straight from the invoking user's REAL $HOME (the
-  # only bare $HOME reference in this suite), fabricating a session JSONL outside the suite's
-  # trap-covered scratch root and cleaned up only on the success path. Export HOME to a scratch
-  # dir first, matching the six wave6-smoke.sh sites, then reuse the shared helper instead of
-  # re-deriving the same expression by hand.
+  # G29/CA-264: this used to derive sess_dir straight from the invoking user's REAL $HOME,
+  # fabricating a session JSONL outside the suite's trap-covered scratch root and cleaned up
+  # only on the success path. Export HOME to a scratch dir first, matching the six
+  # wave6-smoke.sh sites, then reuse the shared helper instead of re-deriving the same
+  # expression by hand. G28/CA-351 (round 6): this was NOT the only bare-$HOME site in this
+  # suite as originally claimed here -- the two G47 cases below (g47_zero_case,
+  # g47_fallback_case) also called session_dir_for_test_cwd from a subshell with no scratch
+  # HOME exported, and now export one the same way.
   export HOME="$ca160b_home"
   sess_dir="$(session_dir_for_test_cwd)"
   mkdir -p "$sess_dir"
@@ -7379,10 +7400,15 @@ check "G47 -- the refusal message names the ZERO_TOKENS consequence a CAP=0 woul
   "trips the blocking ZERO_TOKENS anomaly" "$(awk '/^get_session_tokens_since\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
 
 g47_zero_case() {
-  local scratch
+  local scratch home_scratch
   scratch="$(mktemp -d "${TMP}/edm-g47zero.XXXXXX")" || { fail "G47 -- mktemp failed"; return 1; }
+  home_scratch="$(mktemp -d "${TMP}/edm-g47zero-home.XXXXXX")" || { fail "G47 -- mktemp failed (home)"; return 1; }
   (
     cd "$scratch" || exit 1
+    # G28/CA-351: export HOME to a scratch path before deriving sess_dir -- without this, the
+    # fabricated session directory lands in the invoking user's real ~/.claude/projects/...
+    # instead of the test scratch area (mirrors the CA-160b pattern above).
+    export HOME="$home_scratch"
     sess_dir="$(session_dir_for_test_cwd)"
     mkdir -p "$sess_dir"
     stage_session_jsonl "$sess_dir" a.jsonl claude-sonnet-4-7 10 5
@@ -7411,10 +7437,15 @@ check "G47 -- the refusal names the bad line-cap value" "invalid EDM_TOKEN_READ_
 # line, out of scope for G47) -- so the empty-success shape is the only way to actually reach
 # and exercise the AC2 fallback path this case is testing.
 g47_fallback_case() {
-  local scratch
+  local scratch home_scratch
   scratch="$(mktemp -d "${TMP}/edm-g47fb.XXXXXX")" || { fail "G47b -- mktemp failed"; return 1; }
+  home_scratch="$(mktemp -d "${TMP}/edm-g47fb-home.XXXXXX")" || { fail "G47b -- mktemp failed (home)"; return 1; }
   (
     cd "$scratch" || exit 1
+    # G28/CA-351: export HOME to a scratch path before deriving sess_dir -- without this, the
+    # fabricated session directory lands in the invoking user's real ~/.claude/projects/...
+    # instead of the test scratch area (mirrors the CA-160b pattern above).
+    export HOME="$home_scratch"
     sess_dir="$(session_dir_for_test_cwd)"
     mkdir -p "$sess_dir"
     stage_session_jsonl "$sess_dir" a-first.jsonl claude-sonnet-4-7 11 0 "2026-01-01T00:00:00Z"
@@ -7776,15 +7807,15 @@ echo "=== G51/CA-327: the four per-class violation loops in edm-lint-artifacts r
 g51_edm_lint_content="$(cat "${PLUGIN_DIR}/bin/edm-lint-artifacts")"
 check "G51/CA-327 -- the shared per-class reporting helper is defined" \
   "_lint_report_class_hits() {" "$g51_edm_lint_content"
-g51_call_count="$(grep -c '_lint_report_class_hits "' "${PLUGIN_DIR}/bin/edm-lint-artifacts")"
+g51_call_count="$(count_matches '_lint_report_class_hits "' "${PLUGIN_DIR}/bin/edm-lint-artifacts")"
 [[ "$g51_call_count" -eq 4 ]] \
-  && pass "G51/CA-327 -- all four violation classes (attribution, unicode x2 platform branches, leaked-tool-tag) call the shared helper" \
+  && pass "G51/CA-327 -- all four per-class call sites (attribution, unicode on both platform branches, leaked-tool-tag) call the shared helper" \
   || fail "G51/CA-327 -- found ${g51_call_count} call site(s) of the shared helper, expected exactly 4"
 # The read-loop shape itself now exists exactly ONCE in the whole file (inside the shared
 # helper) -- this is what makes CA-008's class of divergence structurally impossible: there is
 # only one place left where "how many fields does the read loop parse" could differ, and all
 # four call sites (including both unicode platform branches) share it.
-g51_readloop_count="$(grep -c 'while IFS=: read -r lineno _rest' "${PLUGIN_DIR}/bin/edm-lint-artifacts")"
+g51_readloop_count="$(count_matches 'while IFS=: read -r lineno _rest' "${PLUGIN_DIR}/bin/edm-lint-artifacts")"
 [[ "$g51_readloop_count" -eq 1 ]] \
   && pass "G51/CA-327 -- the per-class read-loop shape exists exactly once (inside the shared helper), not hand-copied per class" \
   || fail "G51/CA-327 -- the read-loop shape appears ${g51_readloop_count} time(s), expected exactly 1"

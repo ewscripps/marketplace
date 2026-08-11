@@ -202,9 +202,17 @@ echo "T07 AC2 -- required gates per mode"
 gates_out="$(call_edm_helper required_gates_for_mode standard standard "" | tr '\n' ' ')"
 check "required_gates_for_mode(standard, standard, none-skipped) = all 3 gates" "1 2 3" "$gates_out"
 
+# G47/CA-312 (round 6): this was the sibling CA-312 missed -- check() is a substring match, and
+# these two assertions only proved gate 3 PRESENT ("3" matches "3 " or "2 3 ") and gate 1 ABSENT;
+# nothing ruled out gate 2, and gate 2's origin phase (3) is not in this case's skip list ("1
+# 3"), so gate-2 suppression is exactly what this case is supposed to test but didn't. A
+# regression returning "2 3 " would satisfy both the old substring check and the old
+# check_absent. Asserted as exact string equality instead, matching :203's own already-correct
+# shape; the check_absent is now redundant (subsumed by the exact match) and dropped.
 gates_out2="$(call_edm_helper required_gates_for_mode standard standard "1 3" | tr '\n' ' ')"
-check "required_gates_for_mode(standard, standard, phases 1+3 skipped) = only gate 3" "3" "$gates_out2"
-check_absent "gate 1 absent when its origin phase (1) is skipped" "1 " "$gates_out2 "
+[[ "$gates_out2" == "3 " ]] \
+  && pass "required_gates_for_mode(standard, standard, phases 1+3 skipped) = only gate 3" \
+  || fail "required_gates_for_mode(standard, standard, phases 1+3 skipped) = '${gates_out2}', expected exactly '3 '"
 
 # G36/CA-312: check() is a substring match, so an expected "1" is satisfied by an actual "1 2 "
 # just as much as by "1 " -- these two cases prove PRESENCE where the contract they guard is
