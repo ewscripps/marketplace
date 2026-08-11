@@ -124,6 +124,7 @@ lint:bash-syntax:
       if [ -n "$dup_hits" ]; then
         echo "lint:bash-syntax: a second hand-copied EDM-HELP sentinel extractor was found (must source bin/_edm-cli-lib.sh's print_help instead):"
         printf '%s\n' "$dup_hits"
+        echo "lint:bash-syntax: FAILED"
         exit 1
       fi
       echo "=== CA-005: no hardcoded sed -n 'A,Bp' \"\$0\" --help line-range extraction ==="
@@ -131,6 +132,7 @@ lint:bash-syntax:
       if [ -n "$range_hits" ]; then
         echo "lint:bash-syntax: a hardcoded --help line-range extraction was found (use the EDM-HELP sentinel form instead):"
         printf '%s\n' "$range_hits"
+        echo "lint:bash-syntax: FAILED"
         exit 1
       fi
       echo "=== G11/CA-019: the Mermaid entity-walk literal may exist in exactly one file ==="
@@ -144,6 +146,7 @@ lint:bash-syntax:
       if [ -n "$entity_hits" ]; then
         echo "lint:bash-syntax: a second copy of the Mermaid entity-walk literal was found (must load bin/edm-mermaid-rules.awk via awk -f instead):"
         printf '%s\n' "$entity_hits"
+        echo "lint:bash-syntax: FAILED"
         exit 1
       fi
       echo "lint:bash-syntax: OK -- ${COUNT} file(s) parsed"
@@ -374,7 +377,8 @@ test:smoke:
   before_script:
     - apk add --no-cache bash=5.2.26-r0 jq=1.7.1-r0 git=2.45.4-r0
   script:
-    - bash plugins/edm/bin/tests/run-all.sh
+    - |
+      bash plugins/edm/bin/tests/run-all.sh || { echo "test:smoke: FAILED"; exit 1; }
     # EDMV3-T61 AC13 (amended, D19 in decisions.md): the help-completeness / bidirectional
     # dispatch-agreement contract-suite case runs in CI as part of run-all.sh's auto-discovered
     # suite set above -- run-all.sh's own per-suite output already names every discovered suite
@@ -412,8 +416,10 @@ test:smoke-bash32:
     - bash --version
     # CA-006: assert we are actually running under bash 3.2 so a future image bump cannot
     # pass this job while proving nothing about the declared target shell.
-    - bash --version | head -1 | grep -q 'version 3\.2'
-    - bash plugins/edm/bin/tests/run-all.sh
+    - |
+      bash --version | head -1 | grep -q 'version 3\.2' || { echo "test:smoke-bash32: FAILED -- expected bash 3.2, got: $(bash --version | head -1)"; exit 1; }
+    - |
+      bash plugins/edm/bin/tests/run-all.sh || { echo "test:smoke-bash32: FAILED"; exit 1; }
 
 # EDMV3-T61 AC12 (named exception taken): no macOS runner class is confirmed registered against
 # this project's runner fleet -- unlike a Docker Hub image (test:smoke-bash32 above), a macOS
@@ -499,7 +505,7 @@ validate:manifest:
       trap 'rm -rf "$TMP"' EXIT
 
       jq -e '.plugins[] | select(.name == "edm")' "$MANIFEST" > "${TMP}/edm_entry.json" \
-        || { echo "FAIL: marketplace.json does not parse, or no plugin named 'edm' is declared"; exit 1; }
+        || { echo "validate:manifest: marketplace.json does not parse, or no plugin named 'edm' is declared"; echo "validate:manifest: FAILED"; exit 1; }
 
       jq -r '.skills[]?' "${TMP}/edm_entry.json" | sed 's#^\./skills/##' | sort > "${TMP}/declared_skills"
       : > "${TMP}/disk_skills"
@@ -656,12 +662,13 @@ eval:nightly:
   before_script:
     - npm install -g @anthropic-ai/claude-code@2.1.226
   script:
-    - bash plugins/edm/evals/run-eval.sh
+    - |
+      bash plugins/edm/evals/run-eval.sh || { echo "eval:nightly: FAILED -- run-eval.sh"; exit 1; }
     - |
       if [ -f plugins/edm/evals/score-artifacts.sh ]; then
         RUN_DIR="$(ls -td plugins/edm/evals/runs/*/ 2>/dev/null | head -1)"
         if [ -n "$RUN_DIR" ]; then
-          bash plugins/edm/evals/score-artifacts.sh "$RUN_DIR"
+          bash plugins/edm/evals/score-artifacts.sh "$RUN_DIR" || { echo "eval:nightly: FAILED -- score-artifacts.sh"; exit 1; }
         fi
       fi
     # EDMV3-T39 AC2: the baseline comparison lives HERE, in CI, not in the scorer -- a scoring

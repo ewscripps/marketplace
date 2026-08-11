@@ -7722,20 +7722,36 @@ check "G39/CA-315 -- run-all.sh describes the shipped seed-zero-then-capture for
 
 echo
 echo "=== G41/CA-317: every .gitlab-ci.yml job that can fail prints a job-named FAILED line, one token across the file ==="
-# The three single-command lint jobs invoked a binary directly with no wrapper, so a failure
-# printed no job-named string at all in a 600-line pipeline log -- exactly the gap the
-# job-named-FAILED convention exists to close. Pins the fix so the next sweep does not have to
-# re-check the whole file by hand (this is the third consecutive round an L7 sweep closed only
-# the sites it happened to check).
-for g41_job in lint:artifacts lint:grants lint:vocabulary; do
-  g41_body="$(awk -v job="^${g41_job}:$" '
+# G44/CA-317 (round 6, 4th consecutive round of this finding class): the prior version of this
+# sweep hand-enumerated exactly the three jobs a previous round happened to fix
+# (lint:artifacts/lint:grants/lint:vocabulary), so a hole at any OTHER job -- lint:bash-syntax's
+# three grep-ban exits, validate:manifest's parse early exit, test:smoke/test:smoke-bash32
+# printing no job-named line at all, eval:nightly's run-eval.sh/score-artifacts.sh steps -- was
+# invisible to it. Replaced with a whole-file sweep: enumerate every top-level job key
+# (`^[a-z][a-z0-9:_-]*:$`; non-job top-level keys like `stages:` are naturally excluded below
+# since their body never contains `exit 1`) and, for each job body that contains `exit 1`,
+# assert a `<job>: FAILED` occurrence exists. This makes the convention self-enforcing so a 5th
+# round of this finding class cannot happen -- a future job with a bare `exit 1` and no
+# job-named line fails this loop automatically, with no name added by hand.
+# Plain -E (not -P) so this runs under BSD/macOS grep as well as GNU grep -- no lookahead,
+# just strip the trailing colon with sed after the match.
+g44_job_keys="$(grep -E '^[a-z][a-z0-9:_-]*:$' "$GITLAB_CI_YML" | sed 's/:$//')"
+g44_checked_count=0
+while IFS= read -r g44_job; do
+  [[ -n "$g44_job" ]] || continue
+  g44_body="$(awk -v job="^${g44_job}:$" '
     $0 ~ job {f=1; next}
     f && /^[^[:space:]#][^#]*:$/ {exit}
     f {print}
   ' "$GITLAB_CI_YML")"
-  check "G41/CA-317 -- ${g41_job} prints a job-named FAILED line before exiting" \
-    "${g41_job}: FAILED" "$g41_body"
-done
+  echo "$g44_body" | grep -q 'exit 1' || continue
+  g44_checked_count=$((g44_checked_count + 1))
+  check "G44/CA-317 -- ${g44_job} prints a job-named FAILED line before exiting" \
+    "${g44_job}: FAILED" "$g44_body"
+done <<< "$g44_job_keys"
+[[ "$g44_checked_count" -ge 10 ]] \
+  && pass "G44/CA-317 -- the whole-file job sweep actually checked a non-trivial number of jobs (${g44_checked_count}), not zero" \
+  || fail "G44/CA-317 -- the whole-file job sweep only checked ${g44_checked_count} job(s) -- the job-key extraction may be broken"
 check "G41/CA-317 -- eval:nightly names itself in its comparison-failure branch" \
   "eval:nightly: FAILED" "$(cat "$GITLAB_CI_YML")"
 g41_bare_fail_hits="$(grep -noE '[a-z][a-z0-9:_-]*: FAIL[^E]|[a-z][a-z0-9:_-]*: FAIL$' "$GITLAB_CI_YML" || true)"
