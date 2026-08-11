@@ -261,7 +261,7 @@ preceded it. See `skills/code-audit/SKILL.md` for the lens inventory and the rou
 - **`userConfig`**: prompts for output paths, conventions, coverage targets, and framework overrides at install time.
 - **Comprehensive testing**: `/edm:test` runs 10 specialist agents (planner, scaffold, 7 writers, coverage auditor) in parallel waves, producing `test-plan.md` and `test-coverage.md` with AC->test cross-reference. Stack-aware -- automatically marks layers N/A for backend-only or CLI projects.
 - **Multi-stack testing** (v2.0+): for initiatives spanning multiple technology stacks (e.g., a Python backend epic and a Vue frontend epic), the test planner detects the stack per epic and produces `test-plan-{epic}.md` / `test-coverage-{epic}.md` per epic, each scoped to that epic's frameworks and coverage targets. Single-stack initiatives use the same `test-plan.md` / `test-coverage.md` behavior as before.
-- **Product-line linkage** (v2.0+): link related initiatives with `edm-state set-parent <PREFIX> <PARENT>` and `edm-state add-related <PREFIX> <RELATED>`. Linkage fields appear in HANDOFF.md so teams can navigate across child/sibling initiatives without losing context.
+- **Product-line linkage** (v2.0+): link related initiatives with `edm-state set-parent <PREFIX> <PARENT>` and `edm-state add-related <PREFIX> <RELATED>`. Linkage fields appear in HANDOFF.md so teams can navigate across child/sibling initiatives without losing context. Provenance links use the same mechanism: `edm-state set-supersedes <PREFIX> <OTHER>` records that `<PREFIX>` supersedes `<OTHER>`, and `edm-state set-forked-from <PREFIX> <OTHER>` records that `<PREFIX>` was forked from `<OTHER>` -- both also render in HANDOFF.md.
 
 ## See also
 

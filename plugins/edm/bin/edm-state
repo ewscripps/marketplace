@@ -1694,23 +1694,45 @@ cmd_get() {
 # (EDMV3-13 AC5/AC9) so the two can never drift apart. bash 3.2 has no associative
 # arrays, so this is a space-separated string constant tested with the word-membership
 # idiom `case " $SETTABLE_KEYS " in *" $key "*)` (mirrors MODE_ENUM_LIST above).
-# Boolean-typed: compliance_enabled. Numeric-typed: current_phase, qc_shard_threshold.
-# Every other entry is a generic (string) key. The enumeration covers every key any
-# live skill/agent/hook/bin call site currently sets (EDMV3-15's caller-contract test,
-# bin/tests/wave7-smoke.sh, greps for drift in either direction).
+# Boolean-typed: compliance_enabled. Numeric-typed: current_phase. Every other entry is
+# a generic (string) key. The enumeration covers every key any live skill/agent/hook/bin
+# call site currently sets (EDMV3-15's caller-contract test, bin/tests/wave7-smoke.sh,
+# greps for drift in either direction).
+#
+# G29/CA-356 durability rule: every member below must state BOTH a producer (who calls
+# `edm-state set` with this key) and a consumer (who reads it back from state) in this
+# comment. A member with a producer but no consumer -- or vice versa -- is exactly the
+# shape that let `qc_shard_threshold` sit here for multiple rounds looking alive
+# (settable, typed, exercised by wave6-smoke.sh) while `skills/implement/SKILL.md`
+# actually read `user_config.qc_shard_threshold` and never touched state at all; `set`
+# succeeded, persisted, and changed nothing. Removed (G29) rather than given a state
+# reader, mirroring the `last_cmd` precedent below: a key that has sat unconsumed is
+# deleted, not kept settable "for a future consumer."
+#
+# `current_phase`: producer is this file's own phase-transition commands
+# (phase-start/phase-complete/archive); consumer is every phase-gated check in this
+# file plus every phase skill's Step 0 preflight.
+# `compliance_enabled`: producer is `skills/orchestrator/SKILL.md`'s mode-selection
+# step; consumer is `cmd_gate_check`'s Gate 3.5 branch and `skills/audit-tickets/SKILL.md`.
 # `estimated_size`'s producer is `skills/plan/SKILL.md`'s HITL Gate 1 step (added
 # round-3 Wave 7e -- previously had no producer, only bin/edm-state's own SIZE_UNKNOWN
-# anomaly message reading it). `last_decision`'s one real producer is `skills/srd/SKILL.md`
-# (not `skills/orchestrator/SKILL.md`, a prior misattribution corrected here). product_name
-# (cmd_set smoke coverage), test_layer_skipped (skills/implement/SKILL.md),
-# jira_synced_at/jira_project_key (skills/push-jira/SKILL.md), coverage_by_epic/
-# test_frameworks_detected (agents/edm-test-coverage-auditor.md, agents/edm-test-planner.md).
+# anomaly message reading it); consumer is that same SIZE_UNKNOWN anomaly.
+# `last_decision`'s one real producer is `skills/srd/SKILL.md`
+# (not `skills/orchestrator/SKILL.md`, a prior misattribution corrected here); consumer
+# is `_write_handoff_body`'s Resume Point section.
+# `product_name`: producer is `edm-init`/`cmd_migrate_path` (cmd_set smoke coverage is
+# the direct-set path); consumer is every product-scoped path derivation in this file.
+# `test_layer_skipped` (skills/implement/SKILL.md is both producer and consumer, via
+# `edm-test-planner`'s N/A determination), jira_synced_at/jira_project_key
+# (skills/push-jira/SKILL.md, both directions), coverage_by_epic/test_frameworks_detected
+# (agents/edm-test-coverage-auditor.md, agents/edm-test-planner.md produce; `get-coverage`/
+# `metrics-report` consume).
 # `last_cmd` (CA-246, round 5 G11): had zero producers anywhere in skills/agents/hooks for
 # three consecutive rounds -- only bin/tests/*.sh fixtures ever wrote it, and both consumers
 # (session-start, HANDOFF.md) were permanently suppressed dead code as a result. Deleted
 # entirely rather than kept settable "for a future producer": documenting an unproduced field
 # a third round is not a resolution state in this methodology (CLAUDE.md Sec."Severity vocabulary").
-SETTABLE_KEYS="compliance_enabled current_phase qc_shard_threshold last_decision estimated_size product_name test_layer_skipped jira_synced_at jira_project_key coverage_by_epic test_frameworks_detected"
+SETTABLE_KEYS="compliance_enabled current_phase last_decision estimated_size product_name test_layer_skipped jira_synced_at jira_project_key coverage_by_epic test_frameworks_detected"
 
 # GATE_BEARING_KEYS -- the single token list of gate-bearing fields (EDMV3-14): every
 # field named here refuses `set` unconditionally, regardless of the value supplied,
@@ -1768,7 +1790,7 @@ cmd_set() {
       rmw_state "$prefix" '.[$k] = ($v == "true") | .last_updated = $t' \
         --arg v "$value" --arg k "$key" --arg t "$(now_utc)"
       ;;
-    current_phase|qc_shard_threshold)
+    current_phase)
       [[ "$value" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] \
         || die "set: field '$key' requires a numeric value; got: $value"
       rmw_state "$prefix" '.[$k] = ($v|tonumber) | .last_updated = $t' \

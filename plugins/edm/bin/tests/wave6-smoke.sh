@@ -2655,7 +2655,10 @@ echo "T64 AC8 -- two concurrent mutations both land"
 STATE_T64AC8="$TMP/SRD/T64AC8/.edm-state.json"
 "$EDM_STATE" set T64AC8 estimated_size Medium >/dev/null &
 t64ac8_pid1=$!
-"$EDM_STATE" set T64AC8 qc_shard_threshold 42 >/dev/null &
+# G29/CA-356: re-keyed from qc_shard_threshold, deleted from SETTABLE_KEYS (dead settable key,
+# zero producers/readers) -- current_phase is any other numeric settable key, which is all this
+# concurrency case actually needs (it does not care which key it races on).
+"$EDM_STATE" set T64AC8 current_phase 1 >/dev/null &
 t64ac8_pid2=$!
 # G4/CA-036 (round 5): a bare `wait "$pid"` under this file's own `set -euo pipefail` takes on
 # the reaped job's own exit status -- if either backgrounded `edm-state set` loses the
@@ -2668,19 +2671,19 @@ t64ac8_ec2=0
 wait "$t64ac8_pid2" || t64ac8_ec2=$?
 [[ "$t64ac8_ec1" -eq 0 ]] && pass "T64 AC8 -- first backgrounded edm-state set (estimated_size) exited 0" \
   || fail "T64 AC8 -- first backgrounded edm-state set (estimated_size) exited ${t64ac8_ec1} (expected 0)"
-[[ "$t64ac8_ec2" -eq 0 ]] && pass "T64 AC8 -- second backgrounded edm-state set (qc_shard_threshold) exited 0" \
-  || fail "T64 AC8 -- second backgrounded edm-state set (qc_shard_threshold) exited ${t64ac8_ec2} (expected 0)"
+[[ "$t64ac8_ec2" -eq 0 ]] && pass "T64 AC8 -- second backgrounded edm-state set (current_phase) exited 0" \
+  || fail "T64 AC8 -- second backgrounded edm-state set (current_phase) exited ${t64ac8_ec2} (expected 0)"
 if jq -e . "$STATE_T64AC8" >/dev/null 2>&1; then
   pass "T64 AC8 -- state file is valid JSON after two concurrent mutations"
 else
   fail "T64 AC8 -- state file is not valid JSON after two concurrent mutations"
 fi
 t64ac8_size="$(jq -r '.estimated_size' "$STATE_T64AC8")"
-t64ac8_threshold="$(jq -r '.qc_shard_threshold' "$STATE_T64AC8")"
+t64ac8_phase="$(jq -r '.current_phase' "$STATE_T64AC8")"
 [[ "$t64ac8_size" == "Medium" ]] && pass "T64 AC8 -- first concurrent mutation (estimated_size) landed" \
   || fail "T64 AC8 -- estimated_size is '$t64ac8_size', expected 'Medium'"
-[[ "$t64ac8_threshold" == "42" ]] && pass "T64 AC8 -- second concurrent mutation (qc_shard_threshold) landed" \
-  || fail "T64 AC8 -- qc_shard_threshold is '$t64ac8_threshold', expected '42'"
+[[ "$t64ac8_phase" == "1" ]] && pass "T64 AC8 -- second concurrent mutation (current_phase) landed" \
+  || fail "T64 AC8 -- current_phase is '$t64ac8_phase', expected '1'"
 
 # =================================================================================
 # EDMV3-T26: edm-state render-ledger produces the markdown deterministically
