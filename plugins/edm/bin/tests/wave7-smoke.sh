@@ -3834,8 +3834,11 @@ ca007_containment_case() {
   rm -rf "$scratch"
 }
 
-# Reproduces run-eval.sh:443-460's fixed containment loop verbatim, so a future edit to one and
-# not the other is caught the next time this test runs against a real regression scenario.
+# G10/CA-340 (round 6): the prior version of this comment cited run-eval.sh by a line range that
+# had since drifted onto the Phase-1 prompt heredoc rather than the containment check. Reproduces
+# run-eval.sh's own containment-violation parse loop (the R*|C* rename/copy branch, CA-007)
+# verbatim, so a future edit to one and not the other is caught the next time this test runs
+# against a real regression scenario.
 _ca007_containment_violations() {
   local containment_output="$1" line xy path violations=""
   while IFS= read -r line; do
@@ -4256,6 +4259,41 @@ echo "T49 AC5 -- do-NOT-adopt subsection with six identifiers"
 check "T49 AC5 -- '#### Do-NOT-adopt guards' heading present" "#### Do-NOT-adopt guards" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
 [[ "${t49_guard_count:-0}" -eq 6 ]] && pass "T49 AC5 -- do-NOT-adopt subsection carries all six guard identifiers" \
   || fail "T49 AC5 -- subsection carries ${t49_guard_count:-0} guard identifiers, expected 6"
+
+echo
+echo "=== G25/CA-342: CLAUDE.md's schema_at_least() call-site count is computed, not self-describing prose ==="
+# G25/CA-342 (round 6): CLAUDE.md used to say "Five of the eight... call sites... three do not" --
+# wrong by one on both halves after G2/CA-333's fix retired two call sites entirely (rather than
+# adding the missing comment to them). Pinned as computed counts (the shape G51's own -eq 4 check
+# already uses) so a future edit that adds/removes a call site or a canonical comment without
+# updating CLAUDE.md's prose fails a test instead of drifting stale a fifth time.
+g25_call_site_count="$(grep -c 'schema_at_least "' "$EDM_STATE")"
+[[ "$g25_call_site_count" -eq 6 ]] \
+  && pass "G25/CA-342 -- edm-state has exactly 6 real schema_at_least() call sites, matching CLAUDE.md" \
+  || fail "G25/CA-342 -- edm-state has ${g25_call_site_count} schema_at_least() call sites, CLAUDE.md says 6"
+g25_comment_count="$(grep -c '# requires schema_version >= ' "$EDM_STATE")"
+[[ "$g25_comment_count" -eq 5 ]] \
+  && pass "G25/CA-342 -- edm-state has exactly 5 canonical '# requires schema_version >= N' comment lines, matching CLAUDE.md" \
+  || fail "G25/CA-342 -- edm-state has ${g25_comment_count} canonical schema-version comment lines, CLAUDE.md says 5"
+check "G25/CA-342 -- CLAUDE.md states the corrected 6-call-site/2-missing split" \
+  "Four of the six" "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+
+echo
+echo "=== G25/CA-342: _edm-lint-lib.sh's ignored_line_set external-caller count is computed ==="
+# _edm-lint-lib.sh's own header (lines 4-5) always correctly named bin/edm-state as a consumer of
+# the whole file; the narrower "ignored_line_set's own external callers" clause further down
+# undercounted by one (named only edm-check-grants and edm-check-vocabulary). Pinned as a
+# computed per-file count so the two clauses cannot silently diverge again.
+g25_ils_callers=0
+for g25_ils_file in "${PLUGIN_DIR}/bin/edm-check-grants" "${PLUGIN_DIR}/bin/edm-check-vocabulary" "${PLUGIN_DIR}/bin/edm-state"; do
+  g25_ils_hit="$(grep -c 'ignored_line_set "' "$g25_ils_file" 2>/dev/null || echo 0)"
+  [[ "${g25_ils_hit:-0}" -ge 1 ]] && g25_ils_callers=$((g25_ils_callers + 1))
+done
+[[ "$g25_ils_callers" -eq 3 ]] \
+  && pass "G25/CA-342 -- ignored_line_set has exactly 3 external caller files (edm-check-grants, edm-check-vocabulary, edm-state)" \
+  || fail "G25/CA-342 -- found ${g25_ils_callers} external caller file(s) of ignored_line_set, expected 3"
+check "G25/CA-342 -- _edm-lint-lib.sh names bin/edm-state as a third ignored_line_set caller" \
+  "and bin/edm-state's pattern-library" "$(cat "${PLUGIN_DIR}/bin/_edm-lint-lib.sh")"
 
 echo
 echo "T49 AC6 -- self-verification phrase family absent outside skills/verify-runtime/"
@@ -5647,8 +5685,9 @@ for ca154_f in edm-state edm-lint-artifacts edm-validate-prefix edm-init edm-che
     || fail "CA-005/CA-154 -- bin/${ca154_f} does not source the shared print_help"
   # G34/CA-365: sourcing the shared library is necessary but not sufficient -- edm-state was the
   # sole call SITE passing a bare "$0" instead of the documented "${BASH_SOURCE[0]:-$0}" caller
-  # convention (_edm-cli-lib.sh:25), and this loop previously asserted only the source line, never
-  # the call form, so that divergence went undetected. Assert the call-site literal too.
+  # convention (named in _edm-cli-lib.sh's own print_help docstring, G10/CA-340: by name, not
+  # line number), and this loop previously asserted only the source line, never the call form,
+  # so that divergence went undetected. Assert the call-site literal too.
   ca365_hit="$(grep -c 'print_help "\${BASH_SOURCE\[0\]:-\$0}"' "${PLUGIN_DIR}/bin/${ca154_f}" 2>/dev/null || true)"
   [[ "${ca365_hit:-0}" -ge 1 ]] \
     && pass "G34/CA-365 -- bin/${ca154_f} calls print_help with the \${BASH_SOURCE[0]:-\$0} caller convention" \
@@ -7750,6 +7789,64 @@ check_absent "G39/CA-315 -- run-all.sh no longer describes the banned bare-\$?-c
   'then reads `_status=$?` on the next line' "$(cat "${PLUGIN_DIR}/bin/tests/run-all.sh")"
 check "G39/CA-315 -- run-all.sh describes the shipped seed-zero-then-capture form" \
   "seeds \`_status=0\` then captures" "$(cat "${PLUGIN_DIR}/bin/tests/run-all.sh")"
+
+echo
+echo "=== G10/CA-340: shape-restricted ban on new file-and-line citations (durability half) ==="
+# G10/CA-340 (round 6, load-bearing durability half): the CA-315 guard above pins five named
+# sites and explicitly declined a tree-wide ban, calling it "not practically enforceable via
+# static grep without producing constant false positives." L6 falsified that in the narrow case
+# this round: every new stale-citation instance was a citation of this plugin's own bin/tests/
+# evals script by relative name plus digits, inside a comment line -- a shape narrow enough to
+# ban directly. Scoped to exactly that shape (this plugin's own bin/tests/evals scripts), never
+# to .gitlab-ci.yml or hooks.json, both of which are cited by line number elsewhere for
+# legitimate reasons documented in the CA-315 comment above (.gitlab-ci.yml, line 198, as a
+# positive control anchor in the G37/CA-313 case, and the ticket-provenance quote inside
+# edm-check-grants, around line 419, which quotes a ticket's own hooks.json line-117 wording
+# verbatim, not asserting a live fact) -- an explicit allowlist keeps both exempt even if a
+# future widening of this regex would otherwise catch them.
+g10_citation_regex='\b(edm-state|edm-init|edm-lint-artifacts|edm-check-[A-Za-z0-9_-]+|run-eval\.sh|score-artifacts\.sh|_edm-[A-Za-z0-9_-]+\.sh|wave[0-9][A-Za-z0-9_-]*-smoke\.sh|run-all\.sh):[0-9]+'
+g10_allowlist_1=".gitlab-ci.yml:198"
+g10_allowlist_2="plugins/edm/bin/edm-check-grants:419"
+
+g10_scan_tree() {
+  grep -rnE "$g10_citation_regex" "$@" 2>/dev/null | grep -E '^[^:]+:[0-9]+:[[:space:]]*#' || true
+}
+g10_filter_allowlist() {
+  grep -v -F -- "${g10_allowlist_1}:" | grep -v -F -- "${g10_allowlist_2}:" || true
+}
+
+g10_raw_hits="$(cd "$_HARNESS_REPO_ROOT" && g10_scan_tree plugins/edm/bin plugins/edm/evals plugins/edm/CLAUDE.md plugins/edm/README.md .gitlab-ci.yml)"
+g10_filtered_hits="$(printf '%s\n' "$g10_raw_hits" | g10_filter_allowlist)"
+[[ -z "$(printf '%s' "$g10_filtered_hits" | tr -d '[:space:]')" ]] \
+  && pass "G10/CA-340 -- no new stale-shaped file-and-line citation found in a comment (outside the two allowlisted DATA sites)" \
+  || fail "G10/CA-340 -- stale-citation-shaped comment(s) found outside the allowlist:\n${g10_filtered_hits}"
+
+# Positive control: a deliberately-added test comment citing a fabricated edm-state line
+# reference (built as a scratch fixture below, not spelled out contiguously here, so this
+# explanatory line does not itself trip the ban it is describing) must be caught.
+g10_control_dir="$(mktemp -d "${TMP}/g10-citation-control.XXXXXX")"
+mkdir -p "${g10_control_dir}/plugins/edm/bin"
+printf '#!/usr/bin/env bash\n# see edm-state:1234 for details\n' > "${g10_control_dir}/plugins/edm/bin/scratch.sh"
+g10_control_hits="$(cd "$g10_control_dir" && g10_scan_tree plugins/edm/bin)"
+[[ -n "$(printf '%s' "$g10_control_hits" | tr -d '[:space:]')" ]] \
+  && pass "G10/CA-340 -- positive control: a deliberately-added 'edm-state:1234' comment is caught by the ban" \
+  || fail "G10/CA-340 -- positive control broken: a deliberately-added 'edm-state:1234' comment was NOT caught"
+rm -rf "$g10_control_dir"
+
+# Allowlist control: the two named DATA sites must survive the filter unscathed if fed to it, and
+# an unrelated third hit must still be flagged -- proves the filter discriminates by exact
+# location rather than suppressing everything (or nothing).
+g10_synthetic_hits="$(printf '%s\n%s\n%s\n' \
+  ".gitlab-ci.yml:198:# see .gitlab-ci.yml:198" \
+  "plugins/edm/bin/edm-check-grants:419:# quotes hooks/hooks.json:117" \
+  "plugins/edm/bin/edm-state:999:# see edm-state:999 for details")"
+g10_synthetic_filtered="$(printf '%s\n' "$g10_synthetic_hits" | g10_filter_allowlist)"
+[[ "$g10_synthetic_filtered" == *"edm-state:999"* ]] \
+  && pass "G10/CA-340 -- allowlist filter -- an unrelated hit survives filtering (not a no-op filter)" \
+  || fail "G10/CA-340 -- allowlist filter -- an unrelated hit was unexpectedly filtered out"
+[[ "$g10_synthetic_filtered" != *".gitlab-ci.yml:198"* && "$g10_synthetic_filtered" != *"edm-check-grants:419"* ]] \
+  && pass "G10/CA-340 -- allowlist filter -- both named DATA sites are excluded (not an always-fire filter)" \
+  || fail "G10/CA-340 -- allowlist filter -- one of the two named DATA sites was not excluded:\n${g10_synthetic_filtered}"
 
 echo
 echo "=== G41/CA-317: every .gitlab-ci.yml job that can fail prints a job-named FAILED line, one token across the file ==="

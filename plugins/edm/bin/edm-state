@@ -1161,11 +1161,15 @@ with_state_lock() {
     # exclusion is keyed on the file's INODE, not its path -- unlinking a released lock file lets
     # a later contender open()+flock() a freshly created inode at the same path while an earlier
     # holder that still has the old inode open believes it still holds the lock, silently
-    # breaking mutual exclusion. The file is deliberately left on disk forever; G38/CA-314:
-    # `edm-init` writes `.edm-state.lock*` into every initiative's own per-initiative
-    # `.gitignore` unconditionally, so this is not a leak in a consumer project either -- the
-    # prior version of this comment cited this REPOSITORY's root `.gitignore`, which only
-    # covers it here because EDM is dogfooded against its own SRD tree.
+    # breaking mutual exclusion. The file is deliberately left on disk forever; G38/CA-314,
+    # extended by G11/CA-341 (round 6): `cmd_init` (this file) AND `edm-init` both write
+    # `.edm-state.lock*` into every initiative's own per-initiative `.gitignore`
+    # unconditionally, so this is not a leak in a consumer project either regardless of which
+    # entry point created the initiative -- the prior version of this comment named only
+    # `edm-init`, which left `edm-state init <PREFIX>` (a publicly documented subcommand that
+    # bypasses `edm-init` entirely) with no `.gitignore` at all. The prior version before THAT
+    # cited this REPOSITORY's root `.gitignore`, which only covers it here because EDM is
+    # dogfooded against its own SRD tree.
     #
     # G49: detect the flock timeout via a side-channel marker file, not the locked body's own
     # exit code. The previous design (`flock -w 10 200 || exit 99` inside the subshell, then
@@ -1957,6 +1961,21 @@ cmd_init() {
   elif [[ $init_ec -ne 0 ]]; then
     return $init_ec
   fi
+  # G11/CA-341: write the per-initiative .gitignore for EDM runtime files here too, not only in
+  # edm-init -- `edm-state init <PREFIX>` is a publicly documented subcommand
+  # (CLAUDE.md's bin/ table, `edm-state --help`) that can be invoked directly, bypassing
+  # edm-init entirely, and this same function's own `mkdir -p "$(dirname "$f")"` above already
+  # materializes the directory with no ignore file in that path. Idempotent (`cat >` overwrites,
+  # never appends) so edm-init's own copy of this same block, written after this command
+  # returns, is a harmless redundant write, not a second source of truth.
+  local init_dir
+  init_dir="$(dirname "$f")"
+  cat > "${init_dir}/.gitignore" <<'GITIGNORE_EOF'
+.edm-state.json.bak
+.edm-state.json.tmp.*
+.edm-state.lock*
+*.md.tmp.*
+GITIGNORE_EOF
   echo "initialized $f"
 }
 

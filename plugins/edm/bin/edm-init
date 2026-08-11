@@ -160,12 +160,14 @@ export EDM_COMPLIANCE_ENABLED="$COMPLIANCE"
 export EDM_IMPLEMENTATION_MODE="$IMPL_MODE"
 edm-state init "$PREFIX" >/dev/null
 
-# .gitignore behavior (CA-314): the state backup (edm-state:691, permanent by design for
-# migrate-path rollback), the lock file family (edm-state:1034-1035, deliberately never
-# unlinked per CA-169) and write_atomic's transient temp files are runtime files, not
-# artifacts, and must never be committed regardless of commit_state_file -- written
-# unconditionally, unlike the state file itself below. README.md's "Runtime files to
-# .gitignore" section reproduces this same block as a copy-pasteable reference.
+# .gitignore behavior (CA-314): the state backup (written by `_rmw_state_body` in
+# `bin/edm-state`, permanent by design for migrate-path rollback), the lock file family
+# (`with_state_lock`'s `.lock`/`.lockd`, deliberately never unlinked -- see its CA-169 comment)
+# and write_atomic's transient temp files are runtime files, not artifacts, and must never be
+# committed regardless of commit_state_file -- written unconditionally, unlike the state file
+# itself below. README.md's "Runtime files to .gitignore" section reproduces this same block as
+# a copy-pasteable reference. G10/CA-340 (round 6): re-pointed by name, not line number -- the
+# two line-number citations this comment used to carry had already drifted stale.
 cat > "$DIR/.gitignore" <<'EOF'
 .edm-state.json.bak
 .edm-state.json.tmp.*

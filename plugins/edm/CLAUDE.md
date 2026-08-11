@@ -840,21 +840,29 @@ is the separate legacy pre-EDMV3 signal (grandfathered, C-4).
 check whose required version is *above* the recorded `schema_version` degrades to warn-and-proceed
 naming the check; a check *at or below* the recorded version applies normally. The standard for a
 check that consults `schema_version` is to record its own minimum in a `# requires schema_version
->= N` comment at the check in `bin/edm-state`. Five of the eight `schema_at_least()` call sites in
-`bin/edm-state` carry that comment today; three do not, and adding them is outstanding work rather
-than a sanctioned exception:
+>= N` comment at the check in `bin/edm-state`. **Four of the six `schema_at_least()` call sites**
+in `bin/edm-state` carry that comment today (`cmd_phase_start`, `cmd_phase_complete`'s artifact-
+verification precheck, `cmd_archive`'s wave-B-class check, `cmd_gate_check`); **two do not**, and
+adding them is outstanding work rather than a sanctioned exception (G25/CA-342, round 6 --
+re-derived from the tree: G2/CA-333's round-6 fix made `cmd_phase_complete`'s phase-6 PARTIAL
+refusal and `cmd_archive`'s AC1e/AC1f wave-B sub-checks run unconditionally, removing their
+`schema_at_least()` calls entirely rather than adding the canonical comment to them -- the
+original eight-site, three-missing count this passage stated is stale; two call sites were
+retired, not fixed):
 
 - `cmd_approve_gate`'s code-audit convergence precheck -- G1/CA-182 made this precheck run
   UNCONDITIONALLY; `schema_version >= 2` no longer gates whether it runs at all, only whether
   its exit-3 ("no JSONL findings ledger") arm degrades to a warning (pre-wave-B initiative) or
   hard-refuses (wave-B and later). The surrounding comment explains this in prose but does not
   use the canonical `# requires schema_version >= N` form.
-- `cmd_archive`'s wave-B sub-check block (needs `>= 2`) -- reads "gated on schema_version >= 2",
-  which is the right number in the wrong shape, so a grep for the canonical string misses it.
 - `cmd_audit_converged` (needs `>= 2`) -- no schema comment at all.
 
-Until those three are brought into line, do not treat "no `# requires schema_version >= N` comment
+Until those two are brought into line, do not treat "no `# requires schema_version >= N` comment
 here" as evidence that a check is version-independent; check the `schema_at_least()` call itself.
+**Durability (G25/CA-342):** `wave6-smoke.sh` carries a computed assertion (grep -c the real
+`schema_at_least(` call sites in `bin/edm-state` against the count named in this paragraph) so a
+future edit that adds, removes, or comments a call site without updating this passage fails a
+test instead of silently drifting stale a fifth time.
 EDMV3-T09 defines this contract and lands the one such comment for
 the check that exists as of wave A (EDMV3-115, `cmd_gate_check`); the degradation *behaviour*
 itself is implemented per-check by the ticket that owns that check. EDMV3-T14 wires the shared

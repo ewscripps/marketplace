@@ -212,9 +212,12 @@ should never be committed: a permanent state-file backup (kept forever, for `mig
 rollback), the advisory lock file (deliberately never unlinked -- see `bin/edm-state`'s own
 `with_state_lock` comment for why removing it would break mutual exclusion), and the transient
 temp files `write_atomic` creates while writing any file (`.edm-state.json` or a `.md` artifact)
-atomically. `edm-init` writes this block into every new initiative's own `.gitignore`
-automatically (unconditionally, regardless of `commit_state_file`); the same block is reproduced
-here as a copy-pasteable reference and for initiatives created before this was automatic:
+atomically. Both `edm-init` and `edm-state init <PREFIX>` (a publicly documented subcommand that
+can be invoked directly, bypassing `edm-init`) write this block into every new initiative's own
+`.gitignore` automatically (unconditionally, regardless of `commit_state_file`) -- G11/CA-341
+(round 6) closed the gap where only `edm-init`'s copy existed and the direct `edm-state init`
+entry point left a new initiative with no `.gitignore` at all. The same block is reproduced here
+as a copy-pasteable reference and for initiatives created before this was automatic:
 
 ```gitignore
 .edm-state.json.bak

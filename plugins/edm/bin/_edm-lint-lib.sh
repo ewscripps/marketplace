@@ -49,9 +49,12 @@
 #     newline-separated set of line numbers (column 1 only, via project_class | cut -f1), each
 #     now implemented via the shared project_class filter rather than its own independent
 #     "$2==<class>" copy (CA-156/G32). Honest position on actual callers (G40, corrected --
-#     the prior wording here overstated it): only ignored_line_set has external callers today
-#     (bin/edm-check-grants and bin/edm-check-vocabulary, neither of which needs the mermaid or
-#     marker classes at all). mermaid_line_set and marker_line_set have no external caller --
+#     the prior wording here overstated it; G25/CA-342 round 6, corrected again -- the G40
+#     wording undercounted by one): only ignored_line_set has external callers today
+#     (bin/edm-check-grants, bin/edm-check-vocabulary, and bin/edm-state's pattern-library
+#     machinery -- ignored_line_set/is_ignored_line calls near cmd_update_patterns -- none of
+#     which need the mermaid or marker classes at all). mermaid_line_set and marker_line_set
+#     have no external caller --
 #     bin/edm-lint-artifacts is the only consumer that would need them, and it deliberately
 #     bypasses all three (including ignored_line_set) in favour of calling project_class
 #     directly against its own already-built $_table, to avoid the three extra per-file
