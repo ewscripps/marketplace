@@ -263,7 +263,7 @@ trap 'cleanup; exit 129' HUP
 
 # --- Provision a scratch copy of the fixture, as a fresh git repository ---------------------
 provision_scratch() {
-  SCRATCH_DIR="$(mktemp -d)" || die "mktemp -d failed"
+  SCRATCH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/edm-eval-scratch.XXXXXX")" || die "mktemp -d failed"
   cp -R "$FIXTURE_DIR"/. "$SCRATCH_DIR"/ || die "failed to copy fixture into scratch tree"
   (
     cd "$SCRATCH_DIR" || exit 1
@@ -613,10 +613,10 @@ TOTAL_CACHE_CREATE=0
 TOTAL_COST="0.000000"
 for raw in "$RUN_DIR"/raw/*.json; do
   [ -f "$raw" ] || continue
-  in_tok=$(jq -r '.usage.input_tokens // 0' "$raw" 2>/dev/null); in_tok="${in_tok:-0}"
-  out_tok=$(jq -r '.usage.output_tokens // 0' "$raw" 2>/dev/null); out_tok="${out_tok:-0}"
-  cr_tok=$(jq -r '.usage.cache_read_input_tokens // 0' "$raw" 2>/dev/null); cr_tok="${cr_tok:-0}"
-  cc_tok=$(jq -r '.usage.cache_creation_input_tokens // 0' "$raw" 2>/dev/null); cc_tok="${cc_tok:-0}"
+  in_tok=$(jq -r '.usage.input_tokens // 0' "$raw" 2>/dev/null)
+  out_tok=$(jq -r '.usage.output_tokens // 0' "$raw" 2>/dev/null)
+  cr_tok=$(jq -r '.usage.cache_read_input_tokens // 0' "$raw" 2>/dev/null)
+  cc_tok=$(jq -r '.usage.cache_creation_input_tokens // 0' "$raw" 2>/dev/null)
   cost=$(jq -r '.total_cost_usd // 0' "$raw" 2>/dev/null); cost="${cost:-0}"
   case "$in_tok" in ''|*[!0-9]*) in_tok=0 ;; esac
   case "$out_tok" in ''|*[!0-9]*) out_tok=0 ;; esac

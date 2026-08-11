@@ -495,6 +495,12 @@ compute_dim5() {
     sum=$(awk -v s="$sum" -v x="$lens_score" 'BEGIN{printf "%.4f", s + x}')
   done
 
+  if [[ "$total" -eq 0 ]]; then
+    D5_SCORE=""
+    D5_REASON="no lens-L<N>.jsonl with a numeric lens number (every discovered file was skipped)"
+    return
+  fi
+
   D5_SCORE="$(round_int "$(awk -v s="$sum" -v n="$total" 'BEGIN{printf "%.4f", s / n}')")"
   D5_REASON=""
 }

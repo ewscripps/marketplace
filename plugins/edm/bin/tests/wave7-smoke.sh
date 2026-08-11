@@ -1005,7 +1005,7 @@ check "G24/CA-233 -- this suite's own T61 AC10 twin uses the identical exclusion
   '*.awk|*.txt) continue ;;' "$(cat "${PLUGIN_DIR}/bin/tests/wave7-smoke.sh" 2>/dev/null)"
 
 echo
-echo "T61 AC11 -- macOS/Linux divergence points (sed -i, grep -P family, stat -c/-f, mktemp template suffix, date -d, readlink -f, sort -V, head -n -N, printf %q) are all inside a detection branch"
+echo "T61 AC11 -- macOS/Linux divergence points (sed -i, grep -P family, stat -c/-f, mktemp template suffix, bare mktemp -d, date -d, readlink -f, sort -V, head -n -N, printf %q) are all inside a detection branch"
 # -[a-zA-Z]*P (not a literal "grep -P") so this also catches grep -qP / -nP, the actual forms
 # used by edm-lint-artifacts' PCRE-detection-and-fallback branch -- a literal "grep -P" search
 # (as the ticket's own Verify command uses) misses those by one character and would falsely
@@ -1019,7 +1019,9 @@ echo "T61 AC11 -- macOS/Linux divergence points (sed -i, grep -P family, stat -c
 # and `head -n -N` (negative count) -- none are used anywhere in bin/ or evals/ today, so this
 # sweep currently reports zero hits for all four; it exists to catch a future regression, not a
 # present one.
-t61_divergence_hits="$(grep -rnE 'sed -i|grep -[a-zA-Z]*P|stat -c|stat -f|XXXXXX[A-Za-z0-9]|date -d|readlink -f|sort -V|head -n -[0-9]|printf %q' "$PLUGIN_DIR/bin/" "$PLUGIN_DIR/evals/" 2>/dev/null | grep -v '/tests/' || true)"
+# G20/CA-348: also catch a bare template-less `mktemp -d)` -- on macOS this resolves
+# _CS_DARWIN_USER_TEMP_DIR before TMPDIR, the exact shape evals/run-eval.sh regressed to.
+t61_divergence_hits="$(grep -rnE 'sed -i|grep -[a-zA-Z]*P|stat -c|stat -f|XXXXXX[A-Za-z0-9]|mktemp -d\)|date -d|readlink -f|sort -V|head -n -[0-9]|printf %q' "$PLUGIN_DIR/bin/" "$PLUGIN_DIR/evals/" 2>/dev/null | grep -v '/tests/' || true)"
 t61_divergence_outside_branch="$(printf '%s\n' "$t61_divergence_hits" | grep -v 'edm-lint-artifacts:' || true)"
 [[ -z "$t61_divergence_outside_branch" ]] \
   && pass "T61 AC11 -- every divergence-point hit (bin/ and evals/) is inside edm-lint-artifacts' detection branch" \

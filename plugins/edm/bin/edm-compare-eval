@@ -131,6 +131,7 @@ if awk -v c="$cand_total" -v t="$threshold" 'BEGIN{exit !(c >= t)}'; then
 fi
 
 echo "edm-compare-eval: REGRESSION -- candidate ${cand_total} < threshold ${threshold}" >&2
-echo "edm-compare-eval: adopt the documented fallback (EDMV3-T39 AC7): revert the dispatcher and" >&2
-echo "edm-compare-eval: ship bin/edm-check-skill-sync instead, recording the comparison in decisions.md." >&2
+echo "edm-compare-eval: investigate the per-dimension delta table printed above to find which" >&2
+echo "edm-compare-eval: dimension(s) regressed, then record the comparison (both totals and the" >&2
+echo "edm-compare-eval: suspected cause) in decisions.md before deciding how to proceed." >&2
 exit 1
