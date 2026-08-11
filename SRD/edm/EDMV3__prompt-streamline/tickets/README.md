@@ -70,6 +70,15 @@ would be invisible to a reader sizing a wave.
 - **Mermaid literal semicolons.** A literal semicolon inside Mermaid label, node, edge, or message
   text is written `#59;` with no leading ampersand. This is the initiative's own requirement 2
   (EDMV3-53) and this pack obeys it.
+- **Verbatim shipped case labels, never a paraphrase (G40/CA-368).** When an AC's `Verify:` clause
+  cites a smoke-suite case by name, it must quote the case's shipped `echo`/`pass`/`fail`/`check`
+  label text verbatim -- not a shortened or paraphrased summary of it. A paraphrase silently stops
+  matching the moment a reader (or a grep) tries to find the cited string in the suite, and this
+  pack has already shipped one round of exactly that defect (T07 AC6 cited "exactly one direct
+  call site" where the shipped label reads "code_audit_required_for_mode has exactly one direct
+  call site"). Cite the case by its label text, never by line number (see the citation-durability
+  guard in `plugins/edm/bin/tests/wave7-smoke.sh`, G10/CA-340) -- line numbers drift as the suite
+  grows; label text does not.
 
 ---
 

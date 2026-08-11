@@ -261,7 +261,8 @@ on for the "ships with its assertion updates" ordering rule.
       `run-all.sh` auto-discovers `bin/tests/*-smoke.sh` (EDMV3-T20 AC3), so an enumerated CI list
       would be a second source of truth for the suite set and would silently skip any suite added
       later -- exactly the omission AC3 there exists to prevent.
-      Verify: `grep -n 'run-all.sh' .gitlab-ci.yml` returns the single invocation, and
+      Verify: `grep -n 'run-all.sh' .gitlab-ci.yml` returns the aggregator invocation in each of
+      the two `test:` jobs and nothing else, and
       `grep -nE '^[a-z0-9_-]+:wave[0-9]' .gitlab-ci.yml` returns nothing -- no job KEY is named
       after an individual wave suite. (A bare `grep -c 'bin/tests/' .gitlab-ci.yml` count is not
       this check: that literal token also appears in unrelated lint-glob lines, shellcheck-glob

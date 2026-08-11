@@ -311,7 +311,7 @@ required while no code path ever records it, so a fast-track initiative could ne
       `code_audit_required_for_mode()` rather than carrying its own copy of the `prototype)` case
       -- one derivation, two consumers, not three derivations. A third hit anywhere in
       `bin/edm-state` is a second mode mapping and is a failing condition.
-      Also: `bash plugins/edm/bin/tests/wave6-smoke.sh:246` (case "single mode derivation").
+      Also: `bash plugins/edm/bin/tests/wave6-smoke.sh` (case "T07 AC5 -- single mode derivation").
 - [ ] AC6 (one direct call site, corrected per decisions.md D35/G46-CA-322): a third helper
       `code_audit_required_for_mode()` reports whether a mode's phase graph contains a
       code-audit round. It has exactly ONE direct call site, inside the shared
@@ -325,8 +325,8 @@ required while no code path ever records it, so a fast-track initiative could ne
       Verify: `grep -n 'code_audit_required_for_mode "' plugins/edm/bin/edm-state` (the
       invocation shape -- name, space, opening quote -- excludes the definition line, comments
       and the `die()` message, none of which match it) returns exactly one line, and
-      `bash plugins/edm/bin/tests/wave6-smoke.sh` (case "T07 AC6 -- exactly one direct call
-      site").
+      `bash plugins/edm/bin/tests/wave6-smoke.sh` (case "T07 AC6 -- code_audit_required_for_mode
+      has exactly one direct call site").
 - [ ] AC7 (negative, unknown mode): an unrecognized `mode` or `lifecycle_mode` value causes the
       helpers to fail loudly with a message naming the value and listing the legal enum, rather than
       silently returning the `standard` answer.

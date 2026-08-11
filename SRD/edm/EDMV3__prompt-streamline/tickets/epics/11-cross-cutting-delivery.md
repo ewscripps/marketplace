@@ -463,16 +463,21 @@ and something on the preserve-untouched list breaks quietly.
 - [ ] AC11 (wave exit criteria met; the baseline half is blocked on the D23-documented gap,
       G47/CA-323, same relabeling `epics/03-ci-and-fixture-eval.md` T23 AC13 already applied
       per decisions.md D36): the three-command bypass fails at command 2 and again at command 3
-      on gate, phase and `completed_at` grounds; all smoke suites are green in CI including the
-      flat-layout, `fast-track` and `mini-srd` cases. The fourth original clause -- "`evals/
-      baseline/scores.json` is committed" -- is not verifiable today: `decisions.md` D23 records
-      that the wave-A baseline has not yet been captured (`plugins/edm/evals/baseline/` holds
-      only `README.md`), so a non-empty-file test against it cannot run in a clean checkout
-      until D23's documented closing command is executed. This is not silently passed and not
-      faked, per D15.
-      Verify: `bash plugins/edm/bin/tests/run-all.sh; echo "exit=$?"` prints `exit=0` and the CI
-      default-branch pipeline is green today; the baseline-commit half is verified by running
-      D23's closing command and then confirming `test -s plugins/edm/evals/baseline/scores.json`.
+      on gate, phase and `completed_at` grounds; all smoke suites are green locally including the
+      flat-layout, `fast-track` and `mini-srd` cases. The "green in CI" half of this clause is
+      scoped the same way D27 scopes its siblings (verified-locally-pending-pipeline, not
+      faked) -- this sandbox has no live GitLab runner to observe an actual default-branch
+      pipeline result against, the same missing dependency D27 records for EDMV3-T67 AC9/AC13.
+      The fourth original clause -- "`evals/baseline/scores.json` is committed" -- is not
+      verifiable today: `decisions.md` D23 records that the wave-A baseline has not yet been
+      captured (`plugins/edm/evals/baseline/` holds only `README.md`), so a non-empty-file test
+      against it cannot run in a clean checkout until D23's documented closing command is
+      executed. This is not silently passed and not faked, per D15.
+      Verify: `bash plugins/edm/bin/tests/run-all.sh; echo "exit=$?"` prints `exit=0` (the
+      aggregator, verified locally); the CI half is verified-locally-pending-pipeline per D27's
+      precedent, not by observing an actual pipeline run; the baseline-commit half is verified
+      by running D23's closing command and then confirming
+      `test -s plugins/edm/evals/baseline/scores.json`.
 <!-- edm-lint-ignore-start -->
 - [ ] AC12 (no gitmoji or attribution violations in the wave): the wave's commits satisfy EDMV3-T63
       AC8 and AC9.
@@ -669,9 +674,9 @@ runtime.
       printing nothing, `edm-state --help | grep -l record-task-duration | wc -l` printing 0, and
       `bash plugins/edm/bin/tests/wave7-smoke.sh` (case "T66 AC3 (G25/CA-242) -- bin/ table row
       count matches shipped bin/ script count") -- which independently derives the shipped count
-      via `find plugins/edm/bin -maxdepth 1 -type f -name 'edm-*' ! -name '*.awk' | wc -l` (9 as of
-      this round) and the table's row count via a heading-scoped scan of the `bin/` table, rather
-      than a second hardcoded literal.
+      via `find plugins/edm/bin -maxdepth 1 -type f -name 'edm-*' ! -name '*.awk' | wc -l` and the
+      table's row count via a heading-scoped scan of the `bin/` table, rather than a second
+      hardcoded literal.
 - [ ] AC4 (linter row, hook row, mode row -- the row defers to `--help` instead of hardcoding a
       class count, per decisions.md D41): the `edm-lint-artifacts` row in the `bin/` table no
       longer hardcodes a violation class count or class names -- the linter emits **seven** classes
