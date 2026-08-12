@@ -56,7 +56,7 @@ Determine which required fields are missing from the existing config (or all of 
 
 **If all required fields are present**, display the formatted summary (Step 5 format) and output:
 
-> Your `.release-notes.yml` is complete. Run `/release-notes-config <field>` to update a specific field, or run `/release-notes <version>` to generate release notes.
+> Your `.release-notes.yml` is complete. Run `/release-notes-config <field>` to update a specific field, or run `/generate-release-notes <version>` to generate release notes.
 
 Then stop.
 
@@ -217,7 +217,7 @@ Platforms:
 Confluence: space <space_key>, root page "<root_page_title>"
 Email drop: <drop_folder_root>
 
-Next: run `/release-notes <version>` to generate release notes.
+Next: run `/generate-release-notes <version>` to generate release notes.
 ```
 
 If invoked in `--show` mode (Step 1), show the same summary without the "✓ ... written" line and without the "Next:" line.

@@ -22,7 +22,7 @@ The `release-notes` plugin automates release-note generation from Jira fix-versi
 
 2. **Generate release notes** for a specific version:
    ```
-   /release-notes 2.8.0
+   /generate-release-notes 2.8.0
    ```
    The skill collects Jira tickets and GitLab MRs/commits, drafts notes, publishes to Confluence, and writes the email HTML to your drop folder.
 
@@ -62,7 +62,7 @@ The skill builds and maintains the following page structure under the configured
 
 ## Atlassian Auth Note
 
-If the `claude.ai Atlassian` MCP server is not connected when you run `/release-notes`, the skill will stop and display instructions for connecting it. You must complete the OAuth flow (run `/mcp` in Claude Code) before the skill can query Jira or Confluence. Authentication persists across sessions once established.
+If the `claude.ai Atlassian` MCP server is not connected when you run `/generate-release-notes`, the skill will stop and display instructions for connecting it. You must complete the OAuth flow (run `/mcp` in Claude Code) before the skill can query Jira or Confluence. Authentication persists across sessions once established.
 
 ## Contributing
 

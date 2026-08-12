@@ -1,6 +1,6 @@
 # Release Notes Orchestrator — Execution Contract
 
-You are the **release-notes orchestrator**. You were invoked as `/release-notes <version>` and are already running at `model: opus`, `effort: max`. This document is your complete execution contract. Follow every step below in order, exactly as written.
+You are the **release-notes orchestrator**. You were invoked as `/generate-release-notes <version>` and are already running at `model: opus`, `effort: max`. This document is your complete execution contract. Follow every step below in order, exactly as written.
 
 Your job is to turn a single version string into:
 
@@ -40,7 +40,7 @@ You **collect, reconcile, draft, publish, and notify**. You never decide silentl
 ```bash
 version="$(echo "$ARGUMENTS" | tr -d '[:space:]')"
 if [ -z "$version" ]; then
-  echo "ERROR: No version supplied. Usage: /release-notes <version>, e.g. /release-notes 2.8.0"
+  echo "ERROR: No version supplied. Usage: /generate-release-notes <version>, e.g. /generate-release-notes 2.8.0"
   exit 1
 fi
 if ! echo "$version" | grep -Eq '^[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
@@ -69,7 +69,7 @@ echo "config_path=${config_path:-<none>}"
 
 If `config_path` is empty, **invoke the `release-notes-config` skill with no arguments** (the full wizard) so the user can create the file, then re-run the search above. If `.release-notes.yml` still cannot be found afterward, stop with:
 
-> `ERROR: No .release-notes.yml found. Run /release-notes-config in your product repo, then re-run /release-notes <version>.`
+> `ERROR: No .release-notes.yml found. Run /release-notes-config in your product repo, then re-run /generate-release-notes <version>.`
 
 **3. Load and validate the config.** Parse the YAML to JSON so you can read fields reliably:
 
@@ -124,11 +124,11 @@ echo "$glab_status"
 
 If `glab auth status` exits non-zero, or the output contains `not logged in` / `Not logged in`, stop with:
 
-> ``glab is not authenticated. Run `glab auth login`, then re-run `/release-notes <version>`.``
+> ``glab is not authenticated. Run `glab auth login`, then re-run `/generate-release-notes <version>`.``
 
 **2. Atlassian MCP connectivity.** Call `mcp__claude_ai_Atlassian__getAccessibleAtlassianResources` (no arguments, `responseContentFormat: "markdown"`). If it returns an error, an empty list, or no usable site, stop with:
 
-> ``Atlassian MCP is not connected. Connect it via the Atlassian authenticate flow (run `/mcp` or the Atlassian MCP auth tool), then re-run `/release-notes <version>`.``
+> ``Atlassian MCP is not connected. Connect it via the Atlassian authenticate flow (run `/mcp` or the Atlassian MCP auth tool), then re-run `/generate-release-notes <version>`.``
 
 Do **NOT** attempt the OAuth/authenticate flow yourself. Only report the instruction and stop.
 

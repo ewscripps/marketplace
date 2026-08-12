@@ -133,7 +133,7 @@
             "description": "Automated release-note generation from Jira fix-versions + GitLab/git history. Drafts customer-facing notes and an internal companion document, publishes to Confluence, and drops an HTML email for OneDrive-based stakeholder distribution.",
             "version": "1.0.0",
             "skills": [
-                "./skills/release-notes",
+                "./skills/generate-release-notes",
                 "./skills/release-notes-config"
             ],
             "agents": [

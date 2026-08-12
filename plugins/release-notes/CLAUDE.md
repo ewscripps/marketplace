@@ -8,8 +8,8 @@ This plugin automates release-note generation from Jira fix-versions and GitLab/
 
 | Skill | Purpose |
 |---|---|
-| `release-notes` | Orchestrates the full release-note pipeline: spawns Jira and SCM collector agents in parallel, drafts customer-facing notes and an internal companion doc, then invokes the Confluence publisher and writes the email HTML to the configured drop folder. Invoked with a version string, e.g. `/release-notes 2.8.0`. |
-| `release-notes-config` | Bootstrap or update the `.release-notes.yml` config file for the current product repo. Walks the developer through setting up platform names, Jira project keys, repo paths, Confluence space, and the email drop folder. Run once before the first `/release-notes` invocation. |
+| `generate-release-notes` | Orchestrates the full release-note pipeline: spawns Jira and SCM collector agents in parallel, drafts customer-facing notes and an internal companion doc, then invokes the Confluence publisher and writes the email HTML to the configured drop folder. Invoked with a version string, e.g. `/generate-release-notes 2.8.0`. |
+| `release-notes-config` | Bootstrap or update the `.release-notes.yml` config file for the current product repo. Walks the developer through setting up platform names, Jira project keys, repo paths, Confluence space, and the email drop folder. Run once before the first `/generate-release-notes` invocation. |
 
 ## Agents
 
