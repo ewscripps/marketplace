@@ -35,22 +35,219 @@ You **collect, reconcile, draft, publish, and notify**. You never decide silentl
 
 *Validate the version string, then locate and load `.release-notes.yml`, bootstrapping it through the config skill if it is missing or incomplete.*
 
-**1. Extract and validate the version.** The version is `$ARGUMENTS`. Trim it and reject anything that is not semver-like.
+**1. Extract and validate the version.** The version is `$ARGUMENTS`.
 
-```bash
-version="$(echo "$ARGUMENTS" | tr -d '[:space:]')"
-if [ -z "$version" ]; then
-  echo "ERROR: No version supplied. Usage: /generate-release-notes <version>, e.g. /generate-release-notes 2.8.0"
-  exit 1
-fi
-if ! echo "$version" | grep -Eq '^[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
-  echo "ERROR: '$version' is not a valid version. Expected semver like 2.8.0 or 2.8."
-  exit 1
-fi
-echo "version=$version"
+The Python block below is the **single source of truth** for version and tag
+semantics across this plugin. Once W2 has created `$TMPDIR`, write it verbatim to
+`$TMPDIR/rn_version.py`; this step, W5's collector inputs, and W6 all reuse it,
+and `rn-scm-collector` imports it from that path.
+`dev/verify_version_rules.py` extracts this block from this file by its markers
+and asserts its behaviour against real tag fixtures. **Change it here and nowhere
+else** — never re-implement version or tag parsing in an agent file.
+
+```python
+# --- rn:version (canonical) ---
+import re
+
+PHASE_RANK = {"alpha": 0, "beta": 1, "rc": 2, "public": 3}
+
+_VERSION_RE = re.compile(
+    r"^(?P<line>[0-9]+\.[0-9]+(?:\.[0-9]+)?)"
+    r"(?:-(?P<phase>alpha|beta|rc|final|release)(?:\.(?P<idx>[0-9]+))?)?$"
+)
+
+_TAG_RE = re.compile(
+    r"^v?(?P<line>[0-9]+\.[0-9]+(?:\.[0-9]+)?)"
+    r"(?:-(?P<phase>alpha|beta|rc|final|release)(?:\.(?P<idx>[0-9]+))?)?"
+    r"(?P<suffix>_[A-Za-z0-9]+)?$"
+)
+
+
+def _norm(line, phase, idx):
+    if phase in (None, "", "final", "release"):
+        phase = "public"
+    idx = int(idx) if idx else 1
+    parts = [int(p) for p in line.split(".")]
+    while len(parts) < 3:
+        parts.append(0)
+    return {
+        "line": line,
+        "line_tuple": tuple(parts),
+        "phase": phase,
+        "phase_index": idx,
+        "is_public": phase == "public",
+    }
+
+
+def parse_version(raw):
+    """Parse the /generate-release-notes argument. Returns dict or None."""
+    s = (raw or "").strip()
+    if s[:1] in ("v", "V"):
+        s = s[1:]
+    m = _VERSION_RE.match(s.lower())
+    if not m:
+        return None
+    d = _norm(m.group("line"), m.group("phase"), m.group("idx"))
+    d["range_mode"] = "cumulative" if (d["is_public"] or d["phase_index"] == 1) else "delta"
+    d["normalized"] = d["line"] if d["is_public"] else "%s-%s.%d" % (
+        d["line"], d["phase"], d["phase_index"])
+    return d
+
+
+def parse_tag(tag, tag_prefix=""):
+    """Parse a git tag within tag_prefix. Returns dict or None.
+
+    Tags outside tag_prefix are None (not this product line). With an empty
+    tag_prefix only non-namespaced tags qualify, so a repo's namespaced tags
+    never contaminate the main line's ordering.
+    """
+    t = (tag or "").strip()
+    if tag_prefix:
+        if not t.startswith(tag_prefix):
+            return None
+        rest = t[len(tag_prefix):]
+    else:
+        rest = t
+    if "/" in rest or not rest:
+        return None
+    m = _TAG_RE.match(rest)
+    if not m:
+        return None
+    d = _norm(m.group("line"), m.group("phase"), m.group("idx"))
+    d["tag"] = tag
+    d["suffix"] = m.group("suffix") or ""
+    return d
+
+
+def _suffix_pref(suffix, platform_name):
+    """Higher is better: unsuffixed beats a platform match beats anything else."""
+    if not suffix:
+        return 2
+    if platform_name and suffix.lower() == "_" + platform_name.lower():
+        return 1
+    return 0
+
+
+def candidate_tags(v, tag_prefix="", tag_suffix=""):
+    """Ordered exact-match candidates for v's own release tag."""
+    line = v["line"]
+    if v["is_public"]:
+        bases = ["v%s" % line, line, "v%s-release" % line, "v%s-final" % line]
+    else:
+        pn = "%s.%d" % (v["phase"], v["phase_index"])
+        bases = ["v%s-%s" % (line, pn), "%s-%s" % (line, pn)]
+    out = []
+    for b in bases:
+        if tag_suffix:
+            out.append(tag_prefix + b + tag_suffix)
+        out.append(tag_prefix + b)
+    return out
+
+
+def resolve_release_tag(v, tags, tag_prefix="", platform_name="", tag_suffix=""):
+    """Return (tag_or_None, warnings) for v's own release tag."""
+    warnings = []
+    tagset = set(t.strip() for t in tags)
+    cands = candidate_tags(v, tag_prefix, tag_suffix)
+    for cand in cands:
+        if cand in tagset:
+            return cand, warnings
+    for cand in cands:
+        matches = sorted(t for t in tagset
+                         if t.startswith(cand + "_") and parse_tag(t, tag_prefix))
+        if not matches:
+            continue
+        best = max(matches, key=lambda t: (
+            _suffix_pref(parse_tag(t, tag_prefix)["suffix"], platform_name), t))
+        if len(matches) > 1:
+            warnings.append("Multiple tags match %s: %s. Using %s."
+                            % (cand, ", ".join(matches), best))
+        return best, warnings
+    return None, warnings
+
+
+def pick_baseline(v, tags, tag_prefix="", platform_name=""):
+    """Return (baseline_tag_or_None, warnings, stats).
+
+    stats counts what was skipped so nothing disappears silently:
+      in_scope     -- rankable tags on this line
+      unparsed     -- in scope but not rankable (hashes, feature tags)
+      out_of_scope -- outside tag_prefix (another product line / legacy)
+    """
+    parsed, unparsed, out_of_scope = [], [], []
+    for raw in tags:
+        t = raw.strip()
+        if not t:
+            continue
+        in_scope = (t.startswith(tag_prefix) and "/" not in t[len(tag_prefix):]) \
+            if tag_prefix else "/" not in t
+        if not in_scope:
+            out_of_scope.append(t)
+            continue
+        p = parse_tag(t, tag_prefix)
+        (parsed if p else unparsed).append(p if p else t)
+
+    warnings = []
+    if unparsed:
+        warnings.append("Ignored %d unrankable tag(s) in scope: %s"
+                        % (len(unparsed), ", ".join(sorted(unparsed)[:8])))
+    if not tag_prefix:
+        ns = {}
+        for t in out_of_scope:
+            if "/" in t:
+                k = t.rsplit("/", 1)[0] + "/"
+                ns[k] = ns.get(k, 0) + 1
+        hits = {k: n for k, n in ns.items()
+                if any(parse_tag(t, k) for t in out_of_scope if t.startswith(k))}
+        if hits:
+            warnings.append(
+                "No tag_prefix set, so %d namespaced tag(s) were excluded. "
+                "Namespaces with parseable release tags: %s. Set tag_prefix in "
+                ".release-notes.yml if one of these is the current line."
+                % (sum(hits.values()),
+                   ", ".join("%s (%d)" % (k, n) for k, n in sorted(hits.items()))))
+
+    if v["range_mode"] == "delta":
+        cands = [p for p in parsed
+                 if p["line_tuple"] == v["line_tuple"]
+                 and p["phase"] == v["phase"]
+                 and p["phase_index"] < v["phase_index"]]
+    else:
+        cands = [p for p in parsed
+                 if p["is_public"] and p["line_tuple"] < v["line_tuple"]]
+
+    stats = {"in_scope": len(parsed), "unparsed": len(unparsed),
+             "out_of_scope": len(out_of_scope)}
+    if not cands:
+        return None, warnings, stats
+    best = max(cands, key=lambda p: (
+        p["line_tuple"], p["phase_index"],
+        _suffix_pref(p["suffix"], platform_name), p["tag"]))
+    return best["tag"], warnings, stats
+# --- end rn:version ---
 ```
 
-If validation fails, stop and report the error to the user. Do not continue.
+Parse `$ARGUMENTS` with `parse_version`. If it returns `None`, **stop** and
+report, substituting the actual argument:
+
+> `ERROR: '<arg>' is not a valid version. Expected a release line with an
+> optional prerelease qualifier — e.g. 2.2, 2.2.1, 2.2-alpha.1, 2.2-beta.2,
+> 2.2-rc.3, or 2.2-final. Jira fix-version names are not accepted here; pass the
+> build version and the collector resolves the fix version itself.`
+
+If `$ARGUMENTS` is empty, stop with:
+
+> `ERROR: No version supplied. Usage: /generate-release-notes <version>, e.g. /generate-release-notes 2.2-alpha.1`
+
+Bind for every later step: `version` (the raw argument, whitespace-trimmed and
+lowercased, leading `v` removed), `version_line`, `version_phase`,
+`version_phase_index`, `version_is_public`, `range_mode`, and `version_display`
+(= `normalized`).
+
+**Range mode, for reference.** The first build of a phase is cumulative from the
+previous public release; later builds in that phase are deltas from the previous
+build of that same phase. `2.2-alpha.1` and `2.2-beta.1` are both cumulative;
+`2.2-alpha.2` is a delta from `2.2-alpha.1`. A public build is always cumulative.
 
 **2. Locate `.release-notes.yml`.** Search the current working directory first, then the git toplevel of the CWD.
 
