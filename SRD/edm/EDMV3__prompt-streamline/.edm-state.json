@@ -130,7 +130,7 @@
   "last_decision": "Round 2 (full) synthesized: 91 blocking (1 P0, 13 P1, 77 P2), NOT CONVERGENT. User approved the Convergence gate anyway; approve-gate incorrectly succeeded because schema_version was still 1 (cmd_init default), which skips the code-audit precheck entirely (CA-182, new P0, filed). Migrated schema_version to 2, manually reverted the bogus code_audit_converged=true and its gate metadata (no cmd_set path exists for that field by design), and re-ran approve-gate to confirm it now correctly refuses. code_audit_converged is false; next action is remediation per pass-2 REMEDIATION.md, approved by the user, then a third full round.",
   "audit_rounds": {
     "code": {
-      "count": 6,
+      "count": 7,
       "rounds": [
         {
           "round": 1,
@@ -203,6 +203,12 @@
           "lenses": [],
           "round_type": "full",
           "started_at": "2026-08-10T14:21:00Z"
+        },
+        {
+          "round": 7,
+          "lenses": [],
+          "round_type": "full",
+          "started_at": "2026-08-11T02:55:52Z"
         }
       ]
     }
@@ -217,7 +223,7 @@
   "forked_from": "",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-08-10T21:28:28Z",
+  "last_updated": "2026-08-11T02:55:52Z",
   "current_step": "6.code-audit-round-1-non-convergent",
   "schema_version": 2,
   "patterns_last_updated": "2026-07-31T23:56:05Z",
