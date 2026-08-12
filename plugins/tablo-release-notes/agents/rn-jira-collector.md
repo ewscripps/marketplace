@@ -24,9 +24,10 @@ The orchestrator passes you a single JSON object in your prompt. Parse it from `
 ```json
 {
   "project_key": "TBAD",
-  "fix_version": "2.8.0",
+  "version_line": "2.2",
+  "fix_version_override": "",
   "cloud_id": "f1b0109f-4589-41f1-be54-d5789b627577",
-  "shard_output_path": "~/.cache/release-notes/.tmp/tablo-2.8.0/jira-TBAD.json",
+  "shard_output_path": "~/.cache/release-notes/.tmp/tablo-2.2-alpha.1/jira-TBAD.json",
   "today": "2026-06-17"
 }
 ```
@@ -34,10 +35,15 @@ The orchestrator passes you a single JSON object in your prompt. Parse it from `
 Bind these once at the start and reuse them everywhere:
 
 - **`project_key`** — the Jira project you collect (e.g. `TBAD`). Used in JQL and stamped on the shard.
-- **`fix_version`** — the release fix version to filter on (e.g. `2.8.0`).
+- **`version_line`** — the release line only (e.g. `2.2`), **never** a prerelease build string. Jira fix versions track public release lines; `-alpha.N` and `-beta.N` never appear in one. You resolve this to a real fix-version name in S0.
+- **`fix_version_override`** — an exact fix-version name to use verbatim, skipping S0 discovery. Empty means discover.
 - **`cloud_id`** — the Atlassian cloud ID. Use it verbatim on every MCP call.
 - **`shard_output_path`** — where you write the shard JSON. Expand a leading `~` to `$HOME` before writing.
 - **`today`** — the pinned generation date (`YYYY-MM-DD`). Use this exact string for `generated_at`; never call `date` for it.
+
+**`resolved_fix_version`** is not an input — it is what S0 produces from
+`version_line`, and every JQL below uses it. There is no `fix_version` input;
+do not expect one.
 
 If `cloud_id` is missing or empty, and only then, call `mcp__claude_ai_Atlassian__getAccessibleAtlassianResources` once to resolve it for `ewscripps.atlassian.net`. Otherwise do **not** call it — the constant below is authoritative.
 
@@ -66,6 +72,8 @@ If `cloud_id` is missing or empty, and only then, call `mcp__claude_ai_Atlassian
 
 ## Overflow mitigation (applies to S1 and S2)
 
+*S0 overflows too, but handles it with a single inline `jq` whose output is a short list of names — see S0. The sub-agent rule below is for the ticket payloads.*
+
 The Atlassian MCP tools route oversized responses to a temp file on disk instead of returning them inline. When that happens you will see a pointer to a file path rather than the data itself.
 
 **You must never pull that raw file into your own context.** Instead, dispatch a sub-agent (`subagent_type: general-purpose`) whose entire job is to run `jq` over the file in Bash and return a **compact** list of objects — never the raw JSON.
@@ -79,25 +87,66 @@ Instruct the sub-agent explicitly: **"Use jq to summarize. Do NOT return or prin
 
 ---
 
+## Step S0 — Resolve the fix-version name
+
+*Turn the release line into the exact Jira fix-version name, because real names are freeform and never equal a bare version.*
+
+Fix-version names in these projects look like `2.2 - BETA - Airship Push + VSI`, not `2.2`. A JQL of `fixVersion = "2.2"` therefore matches **nothing**. Resolve the name before querying tickets.
+
+**1. Override wins.** If `fix_version_override` is non-empty, bind `resolved_fix_version` to it verbatim and skip to S1. Do not validate it against the project — a human set it deliberately.
+
+**2. Discover the project's fix-version names.** Call `mcp__claude_ai_Atlassian__searchJiraIssuesUsingJql` with:
+
+```
+cloudId: "<cloud_id>"
+jql: "project = <project_key> AND fixVersion IS NOT EMPTY ORDER BY updated DESC"
+fields: ["fixVersions"]
+maxResults: 100
+responseContentFormat: "markdown"
+```
+
+This response is large and will usually overflow to a temp file. Unlike S1 and S2, you do **not** need a summarizer sub-agent here: the extraction is a single `jq` expression whose output is a handful of version names, so no raw JSON enters your context either way.
+
+```bash
+jq -r '[.issues.nodes[].fields.fixVersions[]?.name] | unique | .[]' "$result_file"
+```
+
+If the response came back inline instead, read the distinct `fixVersions[].name` values directly from it.
+
+**3. Match on the line prefix.** Keep every discovered name that starts with `<version_line>`. Then:
+
+- **exactly one match** → bind it as `resolved_fix_version` and continue to S1.
+- **zero matches** → return the **failed** receipt and stop:
+
+  ```json
+  {"project":"TBAD","status":"failed","reason":"No fix version in TBAD starts with '2.2'. Names found: '2.1 - BETA - Pause Ads + DPI + misc', '2.3 - Pause Ads Phase 2'. Set fix_version_override for this platform in .release-notes.yml if the name differs."}
+  ```
+
+- **two or more matches** → return the **failed** receipt and stop, listing every match and naming `fix_version_override` as the fix. **Do not guess** — picking the wrong line silently produces notes for the wrong release, which is worse than stopping.
+
+Record `resolved_fix_version` on the shard so the orchestrator can show it in the document header and final summary.
+
+---
+
 ## Step S1 — Fetch all fix-version tickets (JQL search)
 
 Call `mcp__claude_ai_Atlassian__searchJiraIssuesUsingJql` with exactly:
 
 ```
 cloudId: "<cloud_id>"
-jql: "project = <project_key> AND fixVersion = \"<fix_version>\" ORDER BY priority DESC, key ASC"
+jql: "project = <project_key> AND fixVersion = \"<resolved_fix_version>\" ORDER BY priority DESC, key ASC"
 fields: ["key", "summary", "status", "issuetype", "priority", "assignee", "fixVersions", "resolution", "description", "parent", "labels", "issuelinks"]
 maxResults: 200
 responseContentFormat: "markdown"
 ```
 
-Substitute `<cloud_id>`, `<project_key>`, and `<fix_version>` from your inputs. The fix version is quoted inside the JQL (it may contain dots or spaces).
+Substitute `<cloud_id>` and `<project_key>` from your inputs, and `<resolved_fix_version>` from S0. The fix version **must** stay quoted inside the JQL — real names contain spaces, hyphens, and `+` characters.
 
 Handle the result:
 
 - **Overflow** → dispatch the S1 summarizer sub-agent (see Overflow mitigation). Work from its compact list.
 - **Epics** → exclude every row whose `issuetype.name == "Epic"` from the working ticket list. Record those epic keys in the shard's `epics_seen` array so the orchestrator has the epic context for reference.
-- **Zero non-Epic rows** → write a shard with `"tickets": []`, `"epics_seen": [...]` (any epics found), `"ticket_count": 0`, and `"warnings": ["No tickets found for project <project_key> with fixVersion <fix_version>"]`. Then validate (S5) and return the `ok_empty` receipt (S6). Skip S2–S4.
+- **Zero non-Epic rows** → write a shard with `"tickets": []`, `"epics_seen": [...]` (any epics found), `"ticket_count": 0`, `"resolved_fix_version"` set, and `"warnings": ["No tickets found for project <project_key> with fixVersion '<resolved_fix_version>'"]`. Then validate (S5) and return the `ok_empty` receipt (S6). Skip S2–S4.
 
 The result of S1 is your **list of non-Epic ticket keys** to fetch in detail.
 
@@ -193,7 +242,8 @@ Assemble the shard with this exact shape. **Every key shown is required on the s
 {
   "schema_version": 1,
   "project": "TBAD",
-  "fix_version": "2.8.0",
+  "version_line": "2.2",
+  "resolved_fix_version": "2.2 - BETA - Airship Push + VSI",
   "generated_at": "2026-06-17",
   "tickets": [
     {
@@ -228,7 +278,7 @@ Assemble the shard with this exact shape. **Every key shown is required on the s
 
 Field notes:
 
-- `project` = `project_key`; `fix_version` = `fix_version`; `generated_at` = `today` (verbatim).
+- `project` = `project_key`; `version_line` = the `version_line` input verbatim; `resolved_fix_version` = the name S0 resolved (or the override); `generated_at` = `today` (verbatim).
 - `url` = `https://ewscripps.atlassian.net/browse/<key>`.
 - `type` = `issuetype.name`. `status` = `status.name`. `priority` = `priority.name` (or `null` if unset).
 - `assignee` / `reporter` = the respective `displayName`, or `null` if unset.
@@ -252,7 +302,9 @@ mkdir -p "$(dirname "$shard_path")"
 **Validate after writing.** Run:
 
 ```bash
-jq -e '.schema_version == 1 and (.tickets | type == "array")' "$shard_path"
+jq -e '.schema_version == 1
+  and (.tickets | type == "array")
+  and (.resolved_fix_version | type == "string" and length > 0)' "$shard_path"
 ```
 
 If `jq -e` exits non-zero (or the file is not valid JSON, or the path is missing), the shard is invalid — return a `failed` receipt (S6) with a one-line reason. Do **not** return `ok` for an unvalidated or missing shard.
@@ -266,32 +318,33 @@ Return **exactly one line of JSON** as your entire response — no preamble, no 
 **Success (one or more tickets):**
 
 ```json
-{"project":"TBAD","status":"ok","ticket_count":N,"shard_path":"<shard_output_path>","warnings_count":N}
+{"project":"TBAD","status":"ok","ticket_count":N,"shard_path":"<shard_output_path>","warnings_count":N,"resolved_fix_version":"2.2 - BETA - Airship Push + VSI"}
 ```
 
 **Empty (zero non-Epic tickets):**
 
 ```json
-{"project":"TBAD","status":"ok_empty","ticket_count":0,"shard_path":"<shard_output_path>","warnings_count":1}
+{"project":"TBAD","status":"ok_empty","ticket_count":0,"shard_path":"<shard_output_path>","warnings_count":1,"resolved_fix_version":"2.2 - BETA - Airship Push + VSI"}
 ```
 
-**Failure (validation failed, MCP error you could not recover from, etc.):**
+**Failure (validation failed, an unresolvable or ambiguous fix version from S0, an MCP error you could not recover from):**
 
 ```json
 {"project":"TBAD","status":"failed","reason":"<one-line description>"}
 ```
 
-Substitute the real `project`, counts, and `shard_path`. `warnings_count` is the length of the shard's `warnings` array. Emit the literal one-line receipt and stop.
+Substitute the real `project`, counts, and `shard_path`. `warnings_count` is the length of the shard's `warnings` array. Include `resolved_fix_version` on both `ok` and `ok_empty` — the orchestrator uses it for the document header and the final summary. Emit the literal one-line receipt and stop.
 
 ---
 
 ## Recap of the run
 
-1. **S1** — one JQL search for `project = <key> AND fixVersion = "<version>"`; split out epics into `epics_seen`; if zero non-Epic rows, write empty shard and return `ok_empty`.
-2. **S2** — `getJiraIssue` for each ticket in parallel batches of 10, full field list, `responseContentFormat: "markdown"`.
-3. **S3** — parse ADF comment bodies to plain text (crash-proof); keep the 5 newest non-automation comments per ticket.
-4. **S4** — classify each ticket (`rn_category`) and set omit suggestions; never exclude a ticket.
-5. **S5** — assemble the `schema_version: 1` shard, write it (`mkdir -p` first), validate with `jq -e`.
-6. **S6** — return the one-line receipt.
+1. **S0** — resolve `version_line` to the project's real fix-version name by prefix match (or take `fix_version_override` verbatim); hard-stop on zero or ambiguous matches.
+2. **S1** — one JQL search for `project = <key> AND fixVersion = "<resolved_fix_version>"`; split out epics into `epics_seen`; if zero non-Epic rows, write empty shard and return `ok_empty`.
+3. **S2** — `getJiraIssue` for each ticket in parallel batches of 10, full field list, `responseContentFormat: "markdown"`.
+4. **S3** — parse ADF comment bodies to plain text (crash-proof); keep the 5 newest non-automation comments per ticket.
+5. **S4** — classify each ticket (`rn_category`) and set omit suggestions; never exclude a ticket.
+6. **S5** — assemble the `schema_version: 1` shard, write it (`mkdir -p` first), validate with `jq -e`.
+7. **S6** — return the one-line receipt.
 
 Throughout: `responseContentFormat: "markdown"` on every Atlassian call; never bring overflowed raw JSON into context (summarize via a jq sub-agent); stay READ-ONLY.
