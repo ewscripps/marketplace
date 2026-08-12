@@ -1,6 +1,6 @@
 ---
 name: release-notes-config
-description: Bootstrap or update the .release-notes.yml config file for the current product repo. Run this once before the first /release-notes invocation to set up Jira project keys, repo paths, platform names, Confluence space, and the email drop folder.
+description: Bootstrap or update the .release-notes.yml config file for the current product repo. Run this once before the first /generate-release-notes invocation to set up Jira project keys, repo paths, platform names, git tag scoping, and the Confluence space.
 user-invocable: true
 argument-hint: ''
 allowed-tools: Bash, Read, Write, Edit, AskUserQuestion
@@ -8,7 +8,7 @@ allowed-tools: Bash, Read, Write, Edit, AskUserQuestion
 
 # Config Wizard
 
-Interactive wizard that creates or updates `.release-notes.yml` in the current directory. Run once per product repo before the first `/release-notes` invocation. The orchestrator also invokes this skill with a field name argument when a required field is missing at runtime.
+Interactive wizard that creates or updates `.release-notes.yml` in the current directory. Run once per product repo before the first `/generate-release-notes` invocation. The orchestrator also invokes this skill with a field name argument when a required field is missing at runtime.
 
 The user's request is: $ARGUMENTS
 
@@ -31,11 +31,17 @@ CONFIG_PATH="$(pwd)/.release-notes.yml"
 
 If the file exists, read it with the Read tool. Parse it mentally to determine which required fields are already present. If the file does not exist, treat all required fields as missing.
 
-**Required fields:** `product_name`, `platforms` (at least one entry with `name`, `repo_path`, and `jira_project`), `confluence.space_key`, `confluence.root_page_title`, `drop_folder_root`.
+**Required fields:** `product_name`, `platforms` (at least one entry with `name`, `repo_path`, and `jira_project`), `confluence.space_key`, `confluence.root_page_title`.
 
-**Optional fields:** `email_recipients_note` (ask but allow empty).
+**Optional per-platform fields** (ask but allow empty; each lives inside a `platforms[]` entry):
+
+- `tag_prefix` — tag namespace for the platform's **current** release line, including its trailing slash, e.g. `fast/release/`. Only tags starting with this prefix are considered when resolving a commit range. Blank means only non-namespaced tags are considered. **`tablo-android` requires `fast/release/`** — its unprefixed `v2.x` tags are a legacy codebase and must never be used for a range.
+- `tag_suffix` — platform suffix appended to tags, e.g. `_ios`. Only needed when one repo tags several platforms at the same version (`tablo-apple` has both `v2.3.0-release_ios` and `v2.3.0-release_tvos`).
+- `fix_version_override` — exact Jira fix-version name to use verbatim, skipping line-prefix discovery. Only needed when discovery reports an ambiguous match.
 
 **Auto-set fields:** `release_date_source` — never ask the user; always write as `jira`.
+
+**Removed in v2.0.0:** `drop_folder_root` and `email_recipients_note` are no longer read — the email output was removed and Confluence is the only publish target. Never ask for them. If an existing config still contains them, leave them alone; they are harmless.
 
 ---
 
@@ -45,7 +51,8 @@ Evaluate `$ARGUMENTS`:
 
 - **Empty or not provided:** proceed to Step 2.
 - **`--show`:** display the formatted summary (see Step 5 format) and stop. Do not ask anything.
-- **A recognized field name** (`product_name`, `platforms`, `platform`, `confluence.space_key`, `confluence.root_page_title`, `drop_folder_root`, `email_recipients_note`): skip to Step 3, ask only for that specific field, update the file, save, display the summary, and stop.
+- **A recognized field name** (`product_name`, `platforms`, `platform`, `confluence.space_key`, `confluence.root_page_title`, `tag_prefix`, `tag_suffix`, `fix_version_override`): skip to Step 3, ask only for that specific field, update the file, save, display the summary, and stop.
+- **`drop_folder_root` or `email_recipients_note`:** these were removed in v2.0.0. Print `Note: '<field>' was removed in v2.0.0 — the email output no longer exists and Confluence is the only publish target. Nothing to configure.` and stop without changing the file.
 - **Unrecognized argument:** print `Note: unrecognized argument '$ARGUMENTS' — running full wizard.` and proceed to Step 2.
 
 ---
@@ -105,6 +112,37 @@ If the command fails or returns empty, warn: `Warning: that path doesn't appear 
 **Platform N Jira project key:**
 > Jira project key for Platform N? (e.g. TBAD, TBAP, TBRK, TBRN)
 
+**Platform N tag namespace (`tag_prefix`, optional but important):**
+
+Do not ask this blind — list the namespaces actually present in the repo so the user picks from real data:
+
+```bash
+repo_path="<the path the user typed>"
+expanded="${repo_path/#\~/$HOME}"
+echo "Tag namespaces in this repo:"
+git -C "$expanded" tag --list 2>/dev/null \
+  | grep '/' \
+  | sed 's|/[^/]*$|/|' \
+  | sort | uniq -c | sort -rn | head -5
+echo "Non-namespaced tags: $(git -C "$expanded" tag --list 2>/dev/null | grep -vc '/')"
+echo "Most recent non-namespaced tags:"
+git -C "$expanded" tag --list 2>/dev/null | grep -v '/' | tail -3
+```
+
+Then ask via `AskUserQuestion`, offering each listed namespace as an option plus a "None — non-namespaced tags" option:
+
+> Which tag namespace holds the **current** release line for Platform N? Only tags under it will be used to resolve commit ranges. Choose 'None' if the current line uses plain tags like `v2.4.0-release`.
+
+Guidance to include in the option descriptions: if the repo contains a namespace whose tags look newer or more actively used than the non-namespaced ones, that namespace is probably the current line and the plain tags are legacy. For `tablo-android` the answer is `fast/release/`.
+
+Store the chosen value **with its trailing slash**. If the user chooses None, store nothing (omit the key).
+
+**Platform N tag suffix (`tag_suffix`, optional):**
+
+Only ask when the namespace listing above showed tags ending in `_something` for the same version (e.g. `_ios` and `_tvos`):
+
+> This repo tags more than one platform at the same version (e.g. `_ios`, `_tvos`). Which suffix belongs to Platform N? Press Enter to skip and let the tool pick.
+
 ### 3.3 `confluence.space_key`
 
 Ask:
@@ -120,20 +158,6 @@ Ask:
 Default option: `Release Notes`
 
 If the user presses Enter without typing, use `Release Notes`.
-
-### 3.5 `drop_folder_root`
-
-Ask:
-
-> What is the path to your OneDrive-synced email drop folder? The skill will create a per-release subfolder inside it and write email.html there. (e.g. ~/Library/CloudStorage/OneDrive-Nuvyyo/ReleaseNotesOutbox)
-
-### 3.6 `email_recipients_note` (optional)
-
-Ask:
-
-> Optional: list the email recipients here for reference. This is just a note — it is not read or sent by any automation. Press Enter to skip.
-
-If the user presses Enter without typing, store an empty string.
 
 ---
 
@@ -155,16 +179,19 @@ if os.path.exists(config_path):
     with open(config_path) as f:
         existing = yaml.safe_load(f) or {}
 
-# Merge collected values (substitute actual values below)
+# Merge collected values (substitute actual values below).
+# Include tag_prefix / tag_suffix / fix_version_override ONLY when collected --
+# omit the key entirely rather than writing an empty string, so the file stays
+# readable and the orchestrator's "or ''" defaults do the right thing.
 product_name = "<product_name>"
 platforms = [
-    {"name": "<platform1_name>", "repo_path": "<platform1_repo_path>", "jira_project": "<platform1_project_key>"},
+    {"name": "<platform1_name>", "repo_path": "<platform1_repo_path>",
+     "jira_project": "<platform1_project_key>",
+     "tag_prefix": "<platform1_tag_prefix>"},  # drop this key if not collected
     # additional platform dicts if collected
 ]
 confluence_space_key = "<space_key>"
 confluence_root_page_title = "<root_page_title>"
-drop_folder_root = "<drop_folder_root>"
-email_recipients_note = "<email_recipients_note_or_empty>"
 
 # Build the config dict, preserving release_date_source if already set
 config = dict(existing)
@@ -174,8 +201,6 @@ config["confluence"] = {
     "space_key": confluence_space_key,
     "root_page_title": confluence_root_page_title,
 }
-config["drop_folder_root"] = drop_folder_root
-config["email_recipients_note"] = email_recipients_note
 # Never overwrite release_date_source if already set to something other than 'jira'
 if not config.get("release_date_source"):
     config["release_date_source"] = "jira"
@@ -195,8 +220,13 @@ PYEOF
 - `platforms` / `platform`: replace the entire `platforms` list with newly collected entries
 - `confluence.space_key`: `config.setdefault("confluence", {})["space_key"] = new_value`
 - `confluence.root_page_title`: `config.setdefault("confluence", {})["root_page_title"] = new_value`
-- `drop_folder_root`: `config["drop_folder_root"] = new_value`
-- `email_recipients_note`: `config["email_recipients_note"] = new_value`
+- `tag_prefix` / `tag_suffix` / `fix_version_override`: these are **per platform**, so first ask which platform the update applies to (skip the question when only one platform exists), then set it on that entry:
+
+  ```python
+  for p in config.get("platforms", []):
+      if p.get("name") == target_platform:
+          p["tag_prefix"] = new_value   # or delete the key if the user chose None
+  ```
 
 **Tilde preservation:** if the user typed `~` in a path, `yaml.dump` will quote it correctly. Do not expand `~` before storing.
 
@@ -211,13 +241,13 @@ After writing, display:
 
 Product: <product_name>
 Platforms:
-  • <name> — <repo_path> (Jira: <jira_project>)
-  • <name> — <repo_path> (Jira: <jira_project>)
+  • <name> — <repo_path> (Jira: <jira_project>, tags: <tag_prefix or "non-namespaced">)
+  • <name> — <repo_path> (Jira: <jira_project>, tags: <tag_prefix or "non-namespaced">)
   ...
 Confluence: space <space_key>, root page "<root_page_title>"
-Email drop: <drop_folder_root>
 
-Next: run `/generate-release-notes <version>` to generate release notes.
+Next: run `/generate-release-notes <version>` to generate release notes,
+e.g. `/generate-release-notes 2.2-alpha.1`.
 ```
 
 If invoked in `--show` mode (Step 1), show the same summary without the "✓ ... written" line and without the "Next:" line.
