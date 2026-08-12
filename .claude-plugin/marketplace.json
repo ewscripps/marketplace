@@ -137,6 +137,21 @@
             "skills": [
                 "./skills/myday"
             ]
+        },
+        {
+            "name": "release-notes",
+            "source": "./plugins/release-notes",
+            "description": "Automated release-note generation from Jira fix-versions + GitLab/git history. Drafts customer-facing notes and an internal companion document, publishes to Confluence, and drops an HTML email for OneDrive-based stakeholder distribution.",
+            "version": "1.0.0",
+            "skills": [
+                "./skills/generate-release-notes",
+                "./skills/release-notes-config"
+            ],
+            "agents": [
+                "./agents/rn-jira-collector.md",
+                "./agents/rn-scm-collector.md",
+                "./agents/rn-confluence-publisher.md"
+            ]
         }
     ]
 }

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "release-notes",
+  "version": "1.0.0",
+  "description": "Automated release-note generation from Jira fix-versions + GitLab/git history. Drafts customer-facing notes and an internal companion doc, publishes to Confluence with smart-merge, and drops a formatted email HTML into a configured folder for stakeholder notification.",
+  "author": {
+    "name": "STG Software Engineering Team",
+    "email": "stg@scripps.com"
+  },
+  "homepage": "https://gitlab.com/scripps/public/marketplace",
+  "license": "MIT",
+  "keywords": ["release-notes", "jira", "gitlab", "confluence", "tablo", "scripps"],
+  "userConfig": {
+    "drop_folder_root": {
+      "type": "directory",
+      "title": "Email drop folder root",
+      "description": "Root path of the OneDrive-synced folder where per-release email.html files are written (your Power Automate flow watches this). Each release gets a subfolder named '{Platform} {Version}'.",
+      "default": "",
+      "required": false
+    }
+  }
+}
