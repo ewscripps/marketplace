@@ -1,15 +1,20 @@
-# release-notes Plugin — Contributor Guide
+# tablo-release-notes Plugin — Contributor Guide
 
 ## Overview
 
-This plugin automates release-note generation from Jira fix-versions and GitLab/git history, publishing drafts to Confluence and dropping a formatted email HTML for stakeholder notification.
+This plugin generates release notes for Tablo client-app builds from Jira fix-versions and GitLab/git history, publishing drafts to Confluence.
+
+> **Scope:** This plugin is specific to **Tablo client applications** (Android,
+> Apple, Roku). It assumes Tablo's Jira projects, Tablo's git tag conventions
+> (including the `fast/release/` tag namespace on `tablo-android`), and the
+> Scripps Atlassian site. It is not a general-purpose release-notes tool.
 
 ## Skills
 
 | Skill | Purpose |
 |---|---|
-| `generate-release-notes` | Orchestrates the full release-note pipeline: spawns Jira and SCM collector agents in parallel, drafts customer-facing notes and an internal companion doc, then invokes the Confluence publisher and writes the email HTML to the configured drop folder. Invoked with a version string, e.g. `/generate-release-notes 2.8.0`. |
-| `release-notes-config` | Bootstrap or update the `.release-notes.yml` config file for the current product repo. Walks the developer through setting up platform names, Jira project keys, repo paths, Confluence space, and the email drop folder. Run once before the first `/generate-release-notes` invocation. |
+| `generate-release-notes` | Orchestrates the full release-note pipeline: spawns Jira and SCM collector agents in parallel, drafts customer-facing notes and an internal companion doc, then invokes the Confluence publisher. Invoked with a build version, e.g. `/generate-release-notes 2.2-alpha.1`. |
+| `release-notes-config` | Bootstrap or update the `.release-notes.yml` config file for the current product repo. Walks the developer through setting up platform names, Jira project keys, repo paths, tag scoping, and the Confluence space. Run once before the first `/generate-release-notes` invocation. |
 
 ## Agents
 

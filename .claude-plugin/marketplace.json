@@ -139,10 +139,10 @@
             ]
         },
         {
-            "name": "release-notes",
-            "source": "./plugins/release-notes",
-            "description": "Automated release-note generation from Jira fix-versions + GitLab/git history. Drafts customer-facing notes and an internal companion document, publishes to Confluence, and drops an HTML email for OneDrive-based stakeholder distribution.",
-            "version": "1.0.0",
+            "name": "tablo-release-notes",
+            "source": "./plugins/tablo-release-notes",
+            "description": "Release-note generation for Tablo client applications. Collects Jira fix-version tickets and GitLab MRs/commits for a build, drafts customer-facing notes and an internal companion document, and publishes both to Confluence.",
+            "version": "2.0.0",
             "skills": [
                 "./skills/generate-release-notes",
                 "./skills/release-notes-config"

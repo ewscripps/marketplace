@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "tablo-release-notes",
+  "version": "2.0.0",
+  "description": "Release-note generation for Tablo client applications. Collects Jira fix-version tickets and GitLab MRs/commits for a build, drafts customer-facing notes and an internal companion document, and publishes both to Confluence. Tablo-specific: assumes Tablo Jira projects, Tablo tag conventions, and the Scripps Atlassian site.",
+  "author": {
+    "name": "STG Software Engineering Team",
+    "email": "stg@scripps.com"
+  },
+  "homepage": "https://gitlab.com/scripps/public/marketplace",
+  "license": "MIT",
+  "keywords": ["release-notes", "tablo", "jira", "gitlab", "confluence", "scripps"]
+}

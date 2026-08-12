@@ -54,6 +54,7 @@ Skills can call other skills via the `Skill` tool (e.g., `skill: "create-jira-ca
 - **ada-tablo** (v1.1.0) — `/weekly-playbook-analysis`, `/weekly-topics-review`, `/coaching-review` skills for Ada chatbot performance analysis. Uses Ada MCP server. Shared workspace at `DavidG91/ada-tablo-ops` (GitHub).
 - **web-cms** (v1.0.0) — Intake and execution skills for web CMS Jira workflows, plus 7 specialist review agents (codebase-explorer, documentation-reviewer, implementation-reviewer, manual-qa-reviewer, plan-reviewer, review-analyst, test-reviewer).
 - **myday** (v1.0.0) — `/myday` skill: morning calendar/Jira briefing, mid-day check-ins, end-of-day reflection, team lookups, PTO tracking, meeting notes with 1:1 success-tracking, reminders, and review prep. Uses its own Atlassian MCP server config (same endpoint as jira plugin, declared independently so it works standalone). Bundles a starter `MyDay/` planner folder (ICS calendar fetch script) and a `myday-config.example.json` for personal config at `~/.claude/myday-config.json`.
+- **tablo-release-notes** (v2.0.0) — `/generate-release-notes <version>` for Tablo client apps. Collects Jira fix-version tickets and GitLab MRs/commits for a build, drafts customer notes plus an internal companion doc, and publishes to Confluence. Supports prerelease builds (`2.2-alpha.1`, `2.2-beta.2`, `2.2-final`). Three collector/publisher agents (`rn-jira-collector`, `rn-scm-collector`, `rn-confluence-publisher`).
 
 ## Key Conventions
 
