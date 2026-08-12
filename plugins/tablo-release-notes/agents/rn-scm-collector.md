@@ -25,10 +25,14 @@ The orchestrator passes you a single JSON object in your prompt. Parse it from `
 {
   "repo_path": "~/Documents/newt/git/tablo-android",
   "platform_name": "Android",
-  "version": "2.8.0",
+  "version": "2.2-alpha.1",
   "jira_project_key": "TBAD",
   "fix_version_ticket_keys": ["TBAD-123", "TBAD-124", "TBAD-125"],
-  "shard_output_path": "~/.cache/release-notes/.tmp/tablo-2.8.0/scm-Android.json",
+  "version_helper_path": "~/.cache/release-notes/.tmp/tablo-2.2-alpha.1/rn_version.py",
+  "range_mode": "cumulative",
+  "tag_prefix": "fast/release/",
+  "tag_suffix": "",
+  "shard_output_path": "~/.cache/release-notes/.tmp/tablo-2.2-alpha.1/scm-Android.json",
   "today": "2026-06-17"
 }
 ```
@@ -37,16 +41,22 @@ Bind these once at the start and reuse them everywhere:
 
 - **`repo_path`** — the local git repo you collect from. Expand a leading `~` to `$HOME` before any `git -C` call.
 - **`platform_name`** — the human platform label (e.g. `Android`). Stamped on the shard and the receipt.
-- **`version`** — the release version (e.g. `2.8.0`). Used for tag matching and the date-window warning.
+- **`version`** — the build version (e.g. `2.2-alpha.1`). Used for tag resolution and the date-window warning.
 - **`jira_project_key`** — the Jira project key for this platform (e.g. `TBAD`). Descriptive; stamped on the shard.
 - **`fix_version_ticket_keys`** — the authoritative list of ticket keys carrying this fix version. Used **only** to classify MRs/commits as keyed vs. out-of-version. Do **not** re-query Jira to build or expand this list.
+- **`version_helper_path`** — path to the canonical version helper the orchestrator wrote. Import it; do **not** re-implement version or tag parsing. Expand a leading `~` to `$HOME`.
+- **`range_mode`** — `cumulative` or `delta`, decided by the orchestrator from the version string. Determines which baseline is selected in C1.
+- **`tag_prefix`** — tag namespace for this platform's current release line (e.g. `fast/release/`), or `""`. Only tags in this namespace are considered. For `tablo-android` this is what keeps the legacy `v2.x` line out of the range; without it a baseline search spans two unrelated codebases.
+- **`tag_suffix`** — platform suffix such as `_ios`, or `""`.
 - **`shard_output_path`** — where you write the shard JSON. Expand a leading `~` to `$HOME` before writing.
 - **`today`** — the pinned generation date (`YYYY-MM-DD`). Use this exact string for `generated_at` and as the end of any date-window fallback; never call `date` to derive it.
 
-Bind the expanded repo path once and reuse it:
+Bind every `~`-expanded path once and reuse them:
 
 ```bash
 repo_path_expanded="${repo_path/#\~/$HOME}"
+shard_output_path_expanded="${shard_output_path/#\~/$HOME}"
+version_helper_path_expanded="${version_helper_path/#\~/$HOME}"
 ```
 
 Use `git -C "$repo_path_expanded" ...` for every git call below (shown as `git -C "$repo" ...` for brevity).
@@ -91,7 +101,7 @@ remote_path=$(echo "$remote" \
 **Early exit on no repo / unknown host.** If `git -C "$repo_path_expanded" remote get-url origin` exits non-zero (repo not found, not cloned, no `origin`), or `SCM_CLI="unknown"`:
 
 - Add a warning: `"Repo not resolvable at <repo_path> (SCM_CLI=<unknown|...>, remote='<remote>'). Returning empty shard; verify the repo is cloned and has a gitlab.com/github.com origin."`
-- Write an empty-but-valid shard (every key present; `mrs.keyed/out_of_version/no_key = []`, `commits.keyed/unassociated = []`, `systemic_change_candidates = []`, zeroed `stats`, `scm_cli` = the detected value, `commit_range_description` = `"none"`).
+- Write an empty-but-valid shard (every key present; `mrs.keyed/out_of_version/no_key = []`, `commits.keyed/unassociated = []`, `systemic_change_candidates = []`, zeroed `stats`, `scm_cli` = the detected value, `commit_range_description` = `"none"`, `baseline_ref` = `null`, `release_ref` = `null`, `range_mode` echoed from the input, `effective_range_mode` = `"cumulative"`, `tag_stats` = `{"in_scope": 0, "unparsed": 0, "out_of_scope": 0}`). The schema must be uniform whether or not a range was resolved.
 - Validate (C6) and return the **`ok_empty`** receipt (C7). Skip C1–C5.
 
 Do **not** fail hard here. `ok_empty` is the correct outcome for a missing repo.
@@ -102,22 +112,54 @@ Do **not** fail hard here. `ok_empty` is the correct outcome for a missing repo.
 
 Try these strategies in priority order and record the outcome in `commit_range_description`.
 
-**1. Git tags (preferred).** Find the release tag and the previous release tag:
+**1. Git tags (preferred).** Resolve this build's tag and its baseline using the
+canonical helper. **Never rank tags with `git tag --sort=-version:refname`** — git
+sorts `v2.2-beta.1` *above* `v2.2`, so that approach silently returns the repo's
+newest tag as the baseline for every prerelease.
 
 ```bash
-release_tag=$(git -C "$repo" tag --list | grep -E "^v?${version}$|^${version}$" | head -1)
-prev_tag=$(git -C "$repo" tag --list --sort=-version:refname \
-  | grep -vE "^v?${version}$|^${version}$" | head -1)
+tmp_tags="$(dirname "$shard_output_path_expanded")/tags-${platform_name}.txt"
+git -C "$repo" tag --list > "$tmp_tags"
+python3 - "$version_helper_path_expanded" "$tmp_tags" "$version" \
+         "$tag_prefix" "$platform_name" "$tag_suffix" <<'PYEOF'
+import json, sys
+helper, tagfile, version, prefix, platform, suffix = sys.argv[1:7]
+ns = {}
+exec(open(helper).read(), ns)
+tags = [l.strip() for l in open(tagfile) if l.strip()]
+v = ns["parse_version"](version)
+release_ref, w1 = ns["resolve_release_tag"](v, tags, prefix, platform, suffix)
+baseline_ref, w2, stats = ns["pick_baseline"](v, tags, prefix, platform)
+print(json.dumps({"release_ref": release_ref, "baseline_ref": baseline_ref,
+                  "range_mode": v["range_mode"],
+                  "warnings": w1 + w2, "tag_stats": stats}))
+PYEOF
 ```
 
-- If **both** a release tag and a previous tag are found → the range is `<prev_tag>..<release_tag>`. Set `commit_range_description` to e.g. `"v2.7.0..v2.8.0"`. Bind `prev_ref="$prev_tag"` and `release_ref="$release_tag"` for C2/C5.
-- If only the release tag is found (no earlier tag exists) → use `<release_tag>` as the end and fall back to the date window for the start; note this in a warning.
+Read the JSON back and bind `release_ref`, `baseline_ref`, and `tag_stats`.
+Append every returned warning to the shard's `warnings[]` — they report
+unrankable in-scope tags and any missing-`tag_prefix` namespace hint, and
+dropping them hides why a range looks wrong.
+
+Outcomes:
+
+- **both refs found** → the range is `<baseline_ref>..<release_ref>`. Set
+  `commit_range_description` to that string (e.g.
+  `"fast/release/v2.1-final..fast/release/v2.2-alpha.1"`) and set
+  `effective_range_mode` to the requested `range_mode`.
+- **release ref found, no baseline** → use `release_ref` as the end and fall back
+  to the date window for the start. Warn:
+  `"No baseline tag found for <version> in scope '<tag_prefix or (none)>'. Using date window: <start_date> to <today>. Verify range manually."`
+  Set `effective_range_mode` to `"cumulative"` — a date window cannot express a
+  delta.
+- **no release ref** → fall through to the date-window strategy below and set
+  `effective_range_mode` to `"cumulative"`.
 
 Capture the tag commit dates for MR filtering in C2:
 
 ```bash
-prev_tag_date=$(git -C "$repo" log -1 --format="%aI" "$prev_tag" 2>/dev/null)
-release_tag_date=$(git -C "$repo" log -1 --format="%aI" "$release_tag" 2>/dev/null)
+baseline_date=$(git -C "$repo" log -1 --format="%aI" "$baseline_ref" 2>/dev/null)
+release_date=$(git -C "$repo" log -1 --format="%aI" "$release_ref" 2>/dev/null)
 ```
 
 **2. Date-window fallback.** If no release tag is found, you do not have the Jira release date here (do not query Jira). Use `today` as the end date and **90 days prior** as the start:
@@ -127,7 +169,7 @@ start_date=$(date -j -v-90d -f "%Y-%m-%d" "$today" "+%Y-%m-%d" 2>/dev/null \
   || date -d "$today - 90 days" "+%Y-%m-%d")
 ```
 
-Add the warning: `"Release tag not found for version <version> in repo <repo_path>. Using date window: <start_date> to <today>. Verify range manually."` Set `commit_range_description` to e.g. `"date:2026-03-18..2026-06-17"`. Use this date-window git log in C5:
+Add the warning: `"Release tag not found for version <version> in scope '<tag_prefix or (none)>' in repo <repo_path>. Using date window: <start_date> to <today>. Verify range manually."` Set `commit_range_description` to e.g. `"date:2026-03-18..2026-06-17"` and `effective_range_mode` to `"cumulative"` — a date window cannot express a delta, whatever `range_mode` was requested. Use this date-window git log in C5:
 
 ```bash
 git -C "$repo" log --since="$start_date" --until="$today" \
@@ -140,9 +182,15 @@ git -C "$repo" log --since="$start_date" --until="$today" \
 git -C "$repo" log -200 --format="%H|%h|%s|%an|%ae|%aI" --no-merges 2>/dev/null
 ```
 
-Add the warning: `"No tags found; using last 200 commits — range may be inaccurate."` Set `commit_range_description` to `"last-200"`.
+Add the warning: `"No tags found; using last 200 commits — range may be inaccurate."` Set `commit_range_description` to `"last-200"` and `effective_range_mode` to `"cumulative"`.
 
-Carry forward, for the steps below, whichever applies: a tag range (`prev_ref..release_ref` with `prev_tag_date`/`release_tag_date`), a date window (`start_date`..`today`), or `last-200`.
+Carry forward, for the steps below, whichever applies: a tag range (`baseline_ref..release_ref` with `baseline_date`/`release_date`), a date window (`start_date`..`today`), or `last-200`.
+
+**Why `effective_range_mode` matters.** The orchestrator asked for a specific
+range mode. If you could only deliver a date window, it must know — under `delta`
+it filters tickets down to those touched inside the range, and a silently
+degraded range would let it publish notes that look legitimately empty. Always
+report what you actually achieved, never what was requested.
 
 ---
 
@@ -165,7 +213,7 @@ glab mr list --repo "$remote_path" --all --output json 2>/dev/null \
 
 **Filter to MRs merged within the range:**
 
-- **Tag range:** keep MRs where `merged_at >= prev_tag_date AND merged_at <= release_tag_date`.
+- **Tag range:** keep MRs where `merged_at >= baseline_date AND merged_at <= release_date`.
 - **Date window:** keep MRs where `merged_at >= start_date AND merged_at <= today`.
 - **`last-200`:** you have no reliable date bound from tags; keep MRs whose extracted Jira keys (C3) appear in the commits you walked in C5, plus any MR merged on/after the oldest commit date in your `last-200` window. When in doubt, keep the MR and let classification sort it out.
 
@@ -221,7 +269,7 @@ echo "$mr_title $mr_source_branch" | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | sort -u
 Cross-check against keys present in the commit range (useful when titles are terse):
 
 ```bash
-git -C "$repo" log "${prev_ref}..${release_ref}" --format="%s %b" 2>/dev/null \
+git -C "$repo" log "${baseline_ref}..${release_ref}" --format="%s %b" 2>/dev/null \
   | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | sort -u
 ```
 
@@ -322,7 +370,7 @@ From the `--stat` output compute `files_changed`, and apply the `touches_depende
 Walk the commits in the resolved range (use the range from C1: tag range, date window, or `last-200`):
 
 ```bash
-git -C "$repo" log "${prev_ref}..${release_ref}" \
+git -C "$repo" log "${baseline_ref}..${release_ref}" \
   --format="%H|%h|%s|%an|%ae|%aI" \
   --no-merges 2>/dev/null
 ```
@@ -366,8 +414,13 @@ Assemble the shard with this exact shape. **Every key shown is required** — us
   "repo_path": "~/Documents/newt/git/tablo-android",
   "platform_name": "Android",
   "jira_project_key": "TBAD",
-  "version": "2.8.0",
-  "commit_range_description": "v2.7.0..v2.8.0",
+  "version": "2.2-alpha.1",
+  "commit_range_description": "fast/release/v2.1-final..fast/release/v2.2-alpha.1",
+  "baseline_ref": "fast/release/v2.1-final",
+  "release_ref": "fast/release/v2.2-alpha.1",
+  "range_mode": "cumulative",
+  "effective_range_mode": "cumulative",
+  "tag_stats": {"in_scope": 55, "unparsed": 12, "out_of_scope": 302},
   "generated_at": "2026-06-17",
   "scm_cli": "glab",
   "mrs": {
@@ -441,7 +494,11 @@ Assemble the shard with this exact shape. **Every key shown is required** — us
 Field notes:
 
 - `repo_path`, `platform_name`, `jira_project_key`, `version` — echoed verbatim from the inputs (keep `repo_path` in its original `~`-prefixed form). `generated_at` = `today` verbatim. `scm_cli` = the detected `glab`/`gh`/`unknown`.
-- `commit_range_description` — the C1 outcome string (`"v2.7.0..v2.8.0"`, `"date:..."`, `"last-200"`, or `"none"`).
+- `commit_range_description` — the C1 outcome string (`"<baseline_ref>..<release_ref>"`, `"date:..."`, `"last-200"`, or `"none"`).
+- `baseline_ref` / `release_ref` — the tags C1 resolved, or `null` when a fallback was used. Both are full tag names including any `tag_prefix`.
+- `range_mode` — echoed verbatim from the input.
+- `effective_range_mode` — what you actually achieved: the requested mode when a real tag range was resolved, otherwise `"cumulative"`. Never echo the request here.
+- `tag_stats` — `in_scope` (rankable tags on this line), `unparsed` (in scope but unrankable), `out_of_scope` (outside `tag_prefix` — another product line or a legacy codebase). Integers, always present.
 - `mrs.keyed` / `mrs.out_of_version` / `mrs.no_key` — the C3 buckets, each MR carrying its `change_signals` (C4).
 - `commits.keyed` / `commits.unassociated` — the C5 buckets.
 - `systemic_change_candidates` — one entry per MR **or** commit whose `change_signals.systemic_change_candidate` is `true`. Set `"source"` to `"mr"` (with `mr_number`) or `"commit"` (with `"commit_sha"` instead of `mr_number`). Prefix `systemic_reason` here with **`SUGGEST NOTE — `** so the companion doc can use the line directly.
@@ -459,7 +516,12 @@ mkdir -p "$(dirname "$shard_path")"
 **Validate after writing:**
 
 ```bash
-jq -e '.schema_version == 1 and (.mrs | type == "object") and (.stats | type == "object")' "$shard_path"
+jq -e '.schema_version == 1
+  and (.mrs | type == "object")
+  and (.stats | type == "object")
+  and (.tag_stats | type == "object")
+  and (.effective_range_mode | test("^(cumulative|delta)$"))
+  and (has("baseline_ref") and has("release_ref"))' "$shard_path"
 ```
 
 If `jq -e` exits non-zero (invalid JSON, missing file, or the predicate is false), the shard is invalid — return a **`failed`** receipt (C7) with a one-line reason. Do **not** return `ok` for an unvalidated or missing shard.
@@ -473,13 +535,13 @@ Return **exactly one line of JSON** as your entire response — no preamble, no 
 **Success (range resolved, shard valid):**
 
 ```json
-{"platform":"Android","repo_path":"~/Documents/newt/git/tablo-android","status":"ok","total_mrs":15,"systemic_candidates":2,"shard_path":"~/.cache/release-notes/.tmp/tablo-2.8.0/scm-Android.json","warnings_count":0}
+{"platform":"Android","repo_path":"~/Documents/newt/git/tablo-android","status":"ok","total_mrs":15,"systemic_candidates":2,"shard_path":"~/.cache/release-notes/.tmp/tablo-2.2-alpha.1/scm-Android.json","warnings_count":0,"effective_range_mode":"cumulative"}
 ```
 
 **Empty (no repo, unknown host, or no resolvable range):**
 
 ```json
-{"platform":"Android","repo_path":"~/Documents/newt/git/tablo-android","status":"ok_empty","total_mrs":0,"shard_path":"~/.cache/release-notes/.tmp/tablo-2.8.0/scm-Android.json","warnings_count":1}
+{"platform":"Android","repo_path":"~/Documents/newt/git/tablo-android","status":"ok_empty","total_mrs":0,"shard_path":"~/.cache/release-notes/.tmp/tablo-2.2-alpha.1/scm-Android.json","warnings_count":1,"effective_range_mode":"cumulative"}
 ```
 
 **Failure (shard validation failed, or an unrecoverable error):**
@@ -488,14 +550,14 @@ Return **exactly one line of JSON** as your entire response — no preamble, no 
 {"platform":"Android","repo_path":"~/Documents/newt/git/tablo-android","status":"failed","reason":"<one-line description>"}
 ```
 
-Substitute the real `platform`, `repo_path`, counts, and `shard_path`. `warnings_count` is the length of the shard's `warnings` array. `total_mrs` is `stats.total_mrs`. Emit the literal one-line receipt and stop.
+Substitute the real `platform`, `repo_path`, counts, and `shard_path`. `warnings_count` is the length of the shard's `warnings` array. `total_mrs` is `stats.total_mrs`. `effective_range_mode` is the shard's value — the orchestrator relies on it to detect a degraded delta, so include it on both `ok` and `ok_empty`. Emit the literal one-line receipt and stop.
 
 ---
 
 ## Recap of the run
 
 1. **C0** — bind inputs; auto-detect `SCM_CLI` from the `origin` remote. If the repo is unresolvable or the host is unknown, write an empty valid shard and return `ok_empty`.
-2. **C1** — resolve the commit range: tags first (`prev..release`), then a 90-day date window, then `last-200`; record `commit_range_description` and add a warning for any fallback.
+2. **C1** — resolve the commit range with the canonical helper, scoped to `tag_prefix`: tags first (`baseline_ref..release_ref`), then a 90-day date window, then `last-200`; record `commit_range_description`, `baseline_ref`, `release_ref`, `tag_stats` and `effective_range_mode`, and add a warning for any fallback. Never rank tags with `--sort=-version:refname`.
 3. **C2** — list merged MRs/PRs via `glab`/`gh`, filter to the range, and fetch best-effort diff stats per MR (cap the fan-out; `null` on failure).
 4. **C3** — extract Jira keys from title + branch (regex `[A-Z][A-Z0-9]+-[0-9]+`); bucket each MR as `keyed` / `out_of_version` / `no_key` against `fix_version_ticket_keys`.
 5. **C4** — compute `change_signals` per MR and per uncovered commit (core dirs, dependency manifests, refactor labels, file thresholds); set `systemic_change_candidate` and a one-line `systemic_reason`.
