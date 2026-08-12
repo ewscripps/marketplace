@@ -28,6 +28,12 @@ plugins/edm/docs/audit-patterns/*.tmp.*
 # already subsumes "lockd*") nor the G49 flock-timeout marker path
 # ("${lockfile}.timeout.$$", i.e. "**/.edm-state.lock.timeout.<pid>").
 **/.edm-state.lock*
+# CA-382 (round-7 G5): the state lockbase above covers only `.edm-state.*` -- any OTHER
+# `with_state_lock` lockbase (e.g. `code-audit/findings-ledger.lock`, `findings-ledger.lockd/`)
+# is matched by no pattern in this file. Shape-anchored so a future lockbase is covered by
+# construction rather than requiring a per-lockbase addition here.
+**/*.lock
+**/*.lockd*
 **/*.md.tmp.*
 # CA-150: edm-sync-canonical-sections' own staging path (docs/canonical-sections.md.tmp.XXXXXX)
 # had no matching glob anywhere in this file.

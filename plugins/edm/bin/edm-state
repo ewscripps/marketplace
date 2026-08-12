@@ -1974,6 +1974,8 @@ cmd_init() {
 .edm-state.json.bak
 .edm-state.json.tmp.*
 .edm-state.lock*
+*.lock
+*.lockd*
 *.md.tmp.*
 GITIGNORE_EOF
   echo "initialized $f"

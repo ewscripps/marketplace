@@ -172,6 +172,8 @@ cat > "$DIR/.gitignore" <<'EOF'
 .edm-state.json.bak
 .edm-state.json.tmp.*
 .edm-state.lock*
+*.lock
+*.lockd*
 *.md.tmp.*
 EOF
 # By default the state file itself is committed. Honor commit_state_file=false by adding it
