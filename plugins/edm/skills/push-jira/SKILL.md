@@ -158,13 +158,9 @@ Cloud: {cloudId}
 | ... |
 ```
 
-### Step 8 -- Update state and report
+### Step 8 -- Report
 
-**Normal mode only** (skip state update in dry-run mode):
-
-1. `edm-state set <PREFIX> jira_synced_at $(date -u +%Y-%m-%dT%H:%M:%SZ)`
-2. `edm-state set <PREFIX> jira_project_key <JIRA_PROJECT_KEY>`
-3. Print summary to user: created N, updated M, links N, errors 0.
+Print summary to user: created N, updated M, links N, errors 0.
 
 ## Dry-run output
 
@@ -221,4 +217,4 @@ For first-time use on a ticket pack, use dry-run mode:
 ## See also
 
 - The Atlassian MCP server: configured per-machine via `claude mcp add` or in `.mcp.json`. Register it under the namespace matching `${user_config.jira_mcp_namespace}` (default: `plugin_jira_atlassian-mcp-server`).
-- `bin/edm-state` -- tracks `jira_synced_at` and `jira_project_key` so future runs know what's already been pushed.
+- The idempotency mechanism is the JQL label search in Step 3 (`labels = "edm-{prefix}-t{nn}"`), not `.edm-state.json` -- this skill does not write any Jira-related field to state (G6/CA-384, round 7).

@@ -1792,8 +1792,7 @@ cmd_get() {
 # `product_name`: producer is `edm-init`/`cmd_migrate_path` (cmd_set smoke coverage is
 # the direct-set path); consumer is every product-scoped path derivation in this file.
 # `test_layer_skipped` (skills/implement/SKILL.md is both producer and consumer, via
-# `edm-test-planner`'s N/A determination), jira_synced_at/jira_project_key
-# (skills/push-jira/SKILL.md, both directions), coverage_by_epic/test_frameworks_detected
+# `edm-test-planner`'s N/A determination), coverage_by_epic/test_frameworks_detected
 # (agents/edm-test-coverage-auditor.md, agents/edm-test-planner.md produce; `get-coverage`/
 # `metrics-report` consume).
 # `last_cmd` (CA-246, round 5 G11): had zero producers anywhere in skills/agents/hooks for
@@ -1801,7 +1800,13 @@ cmd_get() {
 # (session-start, HANDOFF.md) were permanently suppressed dead code as a result. Deleted
 # entirely rather than kept settable "for a future producer": documenting an unproduced field
 # a third round is not a resolution state in this methodology (CLAUDE.md Sec."Severity vocabulary").
-SETTABLE_KEYS="compliance_enabled current_phase last_decision estimated_size product_name test_layer_skipped jira_synced_at jira_project_key coverage_by_epic test_frameworks_detected"
+# `jira_synced_at`/`jira_project_key` (G6/CA-384, round 7): had a real producer
+# (skills/push-jira/SKILL.md Step 8) but no consumer anywhere -- the userConfig twin
+# (`user_config.jira_project_key`) is what Step 1's fallback actually reads, so the state
+# write was discarded on every re-run. Deleted entirely rather than given a state reader,
+# mirroring the `last_cmd` and `qc_shard_threshold` precedents; the real idempotency
+# mechanism is the JQL label search in `skills/push-jira/SKILL.md`, which needs neither key.
+SETTABLE_KEYS="compliance_enabled current_phase last_decision estimated_size product_name test_layer_skipped coverage_by_epic test_frameworks_detected"
 
 # GATE_BEARING_KEYS -- the single token list of gate-bearing fields (EDMV3-14): every
 # field named here refuses `set` unconditionally, regardless of the value supplied,
