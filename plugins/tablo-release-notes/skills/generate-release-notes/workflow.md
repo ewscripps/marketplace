@@ -7,15 +7,16 @@ Your job is to turn a single version string into:
 1. `release-notes.md` — the customer-facing notes.
 2. `companion.md` — the internal companion document (detail, findings, engineering notes, ticket audit).
 3. A Confluence page hierarchy (via the `rn-confluence-publisher` agent).
-4. An `email.html` dropped into the configured OneDrive folder for Power Automate.
 
-You **collect, reconcile, draft, publish, and notify**. You never decide silently to drop a ticket: every fix-version ticket appears in the companion's audit table, and every cut is annotated with a `SUGGEST OMIT` / `SUGGEST INCLUDE` / `SUGGEST NOTE` flag for the human reviewer.
+The version string may name a public release (`2.2`, `2.2.1`, `2.2-final`) or a prerelease build (`2.2-alpha.1`, `2.2-beta.2`, `2.2-rc.3`). W1 parses it and decides whether this build's notes are cumulative for the whole release line or a delta from the previous build of its phase.
+
+You **collect, reconcile, draft, and publish**. You never decide silently to drop a ticket: every fix-version ticket appears in the companion's audit table, and every cut is annotated with a `SUGGEST OMIT` / `SUGGEST INCLUDE` / `SUGGEST NOTE` flag for the human reviewer.
 
 ---
 
 ## Conventions used throughout
 
-- Write all generated content in **plain text / Markdown** (the publisher converts to Confluence; the email step converts to HTML).
+- Write all generated content in **plain text / Markdown** (the publisher converts it to Confluence).
 - The Atlassian Cloud ID is the constant `f1b0109f-4589-41f1-be54-d5789b627577` (ewscripps.atlassian.net). Pass it as `cloudId` on every Atlassian MCP call and as `cloud_id` to the Jira collector agents.
 - Pass `responseContentFormat: "markdown"` on **every** Atlassian MCP call you make directly.
 - Pin the generation date **once** at the very start and reuse it everywhere (never call `date` for it again):
@@ -304,7 +305,13 @@ print("MISSING:"+",".join(missing) if missing else "OK")
 
 For any missing field, **invoke `release-notes-config <field_name>`** (e.g. `release-notes-config confluence.space_key`; for a malformed platform list use `release-notes-config platforms`), then reload the config with the Python command above and re-validate. Do **not** ask the user for these fields yourself — delegate to the config skill so the file stays the single source of truth. If a required field is still missing after the config skill runs, stop with an error naming the field.
 
-Read the optional `drop_folder_root` too (used in W9); it may be absent.
+Read the optional **per-platform** fields too; each may be absent, in which case treat it as `""`:
+
+- `platforms[].tag_prefix` — tag namespace for that platform's current release line (passed to the SCM collector in W5).
+- `platforms[].tag_suffix` — platform tag suffix such as `_ios` (W5).
+- `platforms[].fix_version_override` — exact Jira fix-version name (W4).
+
+`drop_folder_root` and `email_recipients_note` are **no longer read**. Existing configs may still contain them; ignore them.
 
 ---
 
@@ -341,39 +348,28 @@ echo "Preflight OK. Workspace: $TMPDIR"
 
 Record `TMPDIR` for every later step.
 
+**4. Write the canonical version helper.** Use the Write tool to write the W1 `rn:version` block — verbatim, markers and all — to `$TMPDIR/rn_version.py`. W5 passes this path to every SCM collector, which imports it rather than re-deriving tag semantics. Verify it before continuing:
+
+```bash
+python3 -c "
+ns={}
+exec(open('$TMPDIR/rn_version.py').read(), ns)
+assert ns['parse_version']('2.2-alpha.1')['range_mode']=='cumulative'
+assert ns['parse_version']('2.2-alpha.2')['range_mode']=='delta'
+assert ns['parse_version']('2.2-final')['normalized']=='2.2'
+print('version helper OK')
+"
+```
+
+If this does not print `version helper OK`, **stop** — every range resolution downstream depends on it. Report the Python error verbatim.
+
 ---
 
 ## Step W3 — Resolve release metadata
 
-*Determine the planned release date and the build number, falling back to config or a single prompt only when Jira does not supply them.*
+*Determine the build number here; the planned release date is resolved in W4, because it needs the fix-version name the Jira collectors resolve.*
 
-**1. Planned release date (from Jira).** Use the first platform's `jira_project` as the project for the version lookup. Call `mcp__claude_ai_Atlassian__searchJiraIssuesUsingJql` with:
-
-- `cloudId`: the cloud-ID constant
-- `jql`: `project = "{jira_project}" AND fixVersion = "{version}"`
-- `fields`: `["fixVersions"]`
-- `maxResults`: `1`
-- `responseContentFormat`: `"markdown"`
-
-Extract `fixVersions[].releaseDate` for the matching `fixVersions[].name == "{version}"`. If the date is present, bind it as `release_date`.
-
-If the release date is **null or unavailable**, persist a manual date to config and reload, rather than carrying an empty value silently. Ask the user once via `AskUserQuestion`: "What is the planned release date for {product} {version}? (YYYY-MM-DD, or leave blank for TBD)". Then write it to config (the orchestrator owns flipping `release_date_source` to `manual`, per the config skill's guardrail):
-
-```bash
-python3 - "$config_path" "<entered_date_or_empty>" <<'PYEOF'
-import yaml,os,sys
-path,date=sys.argv[1],sys.argv[2]
-c=yaml.safe_load(open(path)) or {}
-if date.strip():
-    c["release_date"]=date.strip()
-    c["release_date_source"]="manual"
-with open(path,"w") as f:
-    yaml.dump(c,f,default_flow_style=False,allow_unicode=True,sort_keys=False)
-print("config updated")
-PYEOF
-```
-
-Reload `$cfg` and read `release_date` back from it. If still blank, treat `release_date` as `TBD`.
+**1. Planned release date — deferred to W4.** The release date lives on the Jira fix version, and the fix version's real name is only known after the collectors resolve it (W4 step 4). Do **not** query for it here: a JQL of `fixVersion = "{version}"` cannot match a real name like `2.2 - BETA - Airship Push + VSI`, which is exactly the bug this replaced. Leave `release_date` unbound for now.
 
 **2. Build number.** Read `build_number` from config. If absent, ask once via `AskUserQuestion`: "What is the build number for {product} {version}? (optional — leave blank to skip)". If the user supplies one, save it to config:
 
@@ -392,10 +388,13 @@ PYEOF
 
 Build number is **optional**: if the user declines, bind `build_number` as empty and proceed.
 
-**3. Print the metadata summary.**
+**3. Print the metadata summary.** The fix version and release date are still
+unresolved at this point, so print them in W4 step 4 instead:
 
 ```bash
-echo "Release: ${product_name} ${version} (build ${build_number:-N/A}) — planned ${release_date:-TBD}"
+build_label="Public Release"
+[ "$version_is_public" = "false" ] && build_label="Prerelease (${version_phase}.${version_phase_index})"
+echo "Release: ${product_name} ${version_display} — ${build_label} — build ${build_number:-N/A} — range mode ${range_mode}"
 ```
 
 ---
@@ -421,24 +420,34 @@ For each unique project key `{KEY}`, spawn one `rn-jira-collector` agent (`subag
 {
   "jira_project_key": "{KEY}",
   "project_key": "{KEY}",
-  "fix_version": "{version}",
+  "version_line": "{version_line}",
+  "fix_version_override": "{the fix_version_override of any platform using this project, or ''}",
   "cloud_id": "f1b0109f-4589-41f1-be54-d5789b627577",
   "shard_output_path": "{TMPDIR}/jira-{KEY}.json",
   "today": "{today}"
 }
 ```
 
+Pass `version_line`, **never** the full build string — Jira fix versions track public release lines only, so `2.2-alpha.1` would never match. The collector resolves the line to a real fix-version name itself (its Step S0).
+
 **Emit all project collectors in one message** so they run concurrently. Wait for every receipt. Each receipt is one line of JSON shaped like:
 
 ```json
-{"project":"TBAD","status":"ok","ticket_count":N,"shard_path":"...","warnings_count":N}
+{"project":"TBAD","status":"ok","ticket_count":N,"shard_path":"...","warnings_count":N,"resolved_fix_version":"2.2 - BETA - Airship Push + VSI"}
 ```
 
 Handle the receipts:
 
-- `status: "failed"` on **any** collector → **stop** the whole run and show the failure `reason`. Jira is the master item list; a failed shard means the notes would be incomplete.
+- `status: "failed"` on **any** collector → **stop** the whole run and show the failure `reason`. Jira is the master item list; a failed shard means the notes would be incomplete. This now also covers a fix version that could not be resolved or was ambiguous — the reason lists the candidate names, and the fix is `fix_version_override` in `.release-notes.yml`.
 - `status: "ok_empty"` → continue (that project simply contributes no tickets).
 - `status: "ok"` → continue.
+
+**Bind `resolved_fix_version`.** Take it from the first `ok` or `ok_empty` receipt; it is used in the W6 header, the W8 publisher input, and the W9 summary. If two projects resolved **different** names, print a warning naming both and continue — each shard keeps its own value, so use a shard's own `resolved_fix_version` wherever the context is per-project:
+
+```
+Warning: projects resolved different fix-version names for line {version_line}:
+TBAD -> '<name A>', TBAP -> '<name B>'. Verify both lines are the same release.
+```
 
 **Harvest `fix_version_ticket_keys`.** After all Jira shards are written, read every `jira-*.json` shard in `TMPDIR` and collect the union of `tickets[].key`. This is the authoritative key list the SCM collectors use in W5. Build a per-project mapping so each SCM agent gets the keys for **its** project:
 
@@ -461,6 +470,42 @@ PYEOF
 
 Read `_fixversion_keys.json` back to get the key array for each project in W5.
 
+**4. Planned release date (deferred from W3).** Now that `resolved_fix_version` is known, look up the date. Call `mcp__claude_ai_Atlassian__searchJiraIssuesUsingJql` with:
+
+- `cloudId`: the cloud-ID constant
+- `jql`: `project = "{jira_project}" AND fixVersion = "{resolved_fix_version}"` — the first platform's `jira_project`, and the name resolved above
+- `fields`: `["fixVersions"]`
+- `maxResults`: `1`
+- `responseContentFormat`: `"markdown"`
+
+Extract `fixVersions[].releaseDate` for the entry whose `fixVersions[].name == "{resolved_fix_version}"`. If present, bind it as `release_date`.
+
+If the release date is **null or unavailable**, persist a manual date to config and reload, rather than carrying an empty value silently. Ask the user once via `AskUserQuestion`: "What is the planned release date for {product} {version_display}? (YYYY-MM-DD, or leave blank for TBD)". Then write it to config (the orchestrator owns flipping `release_date_source` to `manual`, per the config skill's guardrail):
+
+```bash
+python3 - "$config_path" "<entered_date_or_empty>" <<'PYEOF'
+import yaml,os,sys
+path,date=sys.argv[1],sys.argv[2]
+c=yaml.safe_load(open(path)) or {}
+if date.strip():
+    c["release_date"]=date.strip()
+    c["release_date_source"]="manual"
+with open(path,"w") as f:
+    yaml.dump(c,f,default_flow_style=False,allow_unicode=True,sort_keys=False)
+print("config updated")
+PYEOF
+```
+
+Reload `$cfg` and read `release_date` back from it. If still blank, treat `release_date` as `TBD`.
+
+For a **prerelease** build, a null release date is normal — the line's public date may not be set yet. Accept `TBD` without pressing the user twice.
+
+**5. Print the resolved metadata.**
+
+```bash
+echo "Fix version: '${resolved_fix_version}' — planned ${release_date:-TBD}"
+```
+
 ---
 
 ## Step W5 — Parallel SCM collection (one agent per platform repo)
@@ -476,22 +521,30 @@ For **each platform** in config (one agent per platform, even if two platforms s
   "version": "{version}",
   "jira_project_key": "{platform.jira_project}",
   "fix_version_ticket_keys": ["TBAD-123", "TBAD-124"],
+  "version_helper_path": "{TMPDIR}/rn_version.py",
+  "range_mode": "{range_mode}",
+  "tag_prefix": "{platform.tag_prefix or ''}",
+  "tag_suffix": "{platform.tag_suffix or ''}",
   "shard_output_path": "{TMPDIR}/scm-{platform.name}.json",
   "today": "{today}"
 }
 ```
 
+`tag_prefix` is what confines the collector to the platform's current release line. Passing it empty for a repo that has a namespaced current line (such as `tablo-android`'s `fast/release/`) makes the collector resolve a legacy baseline and produce a range spanning two unrelated codebases — it will warn, but the notes will be wrong. Pass the configured value.
+
 **Emit all platform collectors in one message** so they run concurrently. Wait for every receipt. Each receipt is one line of JSON shaped like:
 
 ```json
-{"platform":"Android","repo_path":"...","status":"ok","total_mrs":N,"systemic_candidates":N,"shard_path":"...","warnings_count":N}
+{"platform":"Android","repo_path":"...","status":"ok","total_mrs":N,"systemic_candidates":N,"shard_path":"...","warnings_count":N,"effective_range_mode":"cumulative"}
 ```
 
 Handle the receipts:
 
-- `status: "failed"` → **print a warning and continue.** SCM data is supplementary; a failed SCM shard must not abort the release notes. Record the platform name and reason so you can surface it in W10.
-- `status: "ok_empty"` → continue. If the receipt's `warnings_count > 0`, it likely means the repo was missing/unclonable — note the platform for the W10 per-platform warning.
+- `status: "failed"` → **print a warning and continue.** SCM data is supplementary; a failed SCM shard must not abort the release notes. Record the platform name and reason so you can surface it in W9, **and** mark that platform for the W6 delta guard.
+- `status: "ok_empty"` → continue. If the receipt's `warnings_count > 0`, it likely means the repo was missing/unclonable — note the platform for the W9 per-platform warning and the W6 delta guard.
 - `status: "ok"` → continue.
+
+**Record `effective_range_mode` per platform.** When it differs from the `range_mode` you requested, the collector could only resolve a date window rather than a real tag range. Mark that platform for the W6 delta guard and the W9 summary. Do not silently accept the downgrade.
 
 ---
 
@@ -510,14 +563,38 @@ Read each Jira shard (its `tickets[]` are the **master item list**) and each SCM
 ### A. Header block (shared by both documents)
 
 ```markdown
-# {Product} {Platform(s)} {Version} Release Notes
+# {Product} {Platform(s)} {version_display} Release Notes
 **Build:** {build_number | 'N/A'}  
 **Planned Release Date:** {release_date | 'TBD'}  
 **Platforms:** {comma-separated platform names}  
-**Fix Version:** {version}
+**Fix Version:** {resolved_fix_version}  
+**Build Type:** {Public Release | Prerelease ({phase}.{phase_index})}  
+**Change Range:** {Cumulative | Delta} since {baseline_ref | 'unknown — date window used'}
 ```
 
 `{Platform(s)}` is the single platform name for a one-platform release, or the joined platform names (e.g. `Android & Apple`) for multi-platform.
+
+Use `version_display`, not the raw argument — a `-final` build must read as `2.2`, not `2.2-final`. Take `baseline_ref` from the SCM shard; on a multi-platform release where the baselines differ, list each as `{platform}: {baseline_ref}`.
+
+### A2. Apply the build's range mode
+
+`range_mode` is `cumulative` for a public build or the first build of a phase, and `delta` for a later build in a phase (W1).
+
+**Cumulative** — every fix-version ticket is a candidate. No change from the default behaviour below.
+
+**Delta** — a ticket is a candidate only if at least one MR or commit linked to it (its key appearing in `mr.jira_keys[]` or `commit.jira_keys[]`) is present in a platform's SCM shard, whose contents are already confined to the build range. On a multi-platform release, that ticket's `[Platform: …]` tag lists **only** the platforms whose shard placed it in range — so a ticket that landed in Android's alpha.2 but not Apple's is included, marked Android-only.
+
+Tickets excluded by the delta filter are **never dropped silently**. Each one appears in the `## Ticket Audit` table with `Included in Notes?` = `No` and `Reason` = `Not in this build's range (<baseline_ref>..<release_ref>)`. This preserves the never-drop-silently contract that governs the rest of this step.
+
+**Guard — a failed SCM shard must not fake an empty release.** For each platform whose SCM receipt was `status: "failed"`, or whose `effective_range_mode` came back `cumulative` when you requested `delta`, treat that platform as **cumulative** and record this line for W9:
+
+```
+Warning: SCM data for {platform} was unavailable — cannot compute the delta for
+{version_display}. Falling back to cumulative notes for the whole {version_line}
+line. Verify the range manually.
+```
+
+Without this guard, delta mode plus a dead `glab` would filter out every ticket and produce notes that look legitimately empty — the most dangerous possible failure for this tool, because nothing looks wrong.
 
 ### B. `release-notes.md` — customer-facing
 
@@ -586,7 +663,8 @@ Build, in this exact order:
    ```
 
    - **Included in Notes?** = `Yes` when the ticket appears in `release-notes.md` **without** a `SUGGEST OMIT` flag; otherwise `No`.
-   - **Reason** = the omit reason (or the literal `SUGGEST OMIT`) when flagged; blank otherwise.
+   - **Reason** = the omit reason (or the literal `SUGGEST OMIT`) when flagged; the A2 delta reason `Not in this build's range (<baseline_ref>..<release_ref>)` when the delta filter excluded it; blank otherwise.
+   - On a **delta** build, this table is the only place an out-of-range ticket appears. It must still list **every** ticket in the fix version, so a reviewer can see the whole line and what this build actually contains.
 
 ---
 
@@ -617,7 +695,7 @@ Spawn `rn-confluence-publisher` (`subagent_type: "rn-confluence-publisher"`, `mo
 ```json
 {
   "product_name": "{product_name}",
-  "version": "{version}",
+  "version": "{version_display}",
   "platforms": ["Android", "Apple"],
   "release_notes_path": "{TMPDIR}/release-notes.md",
   "companion_path": "{TMPDIR}/companion.md",
@@ -625,57 +703,21 @@ Spawn `rn-confluence-publisher` (`subagent_type: "rn-confluence-publisher"`, `mo
   "confluence_root_page_title": "{confluence.root_page_title}",
   "release_date": "{release_date}",
   "build_number": "{build_number}",
+  "build_type": "Prerelease (alpha.1)",
+  "change_range": "Cumulative since fast/release/v2.1-final",
   "today": "{today}"
 }
 ```
 
-Wait for the publisher's receipt. On success, extract `release_page_url` from the receipt and bind it for W9. On failure, print the error and continue to W9 with `release_page_url` set to an empty string.
+Pass `version_display`, which W1 already normalized — a public build is the bare line (`2.2`) and a prerelease keeps its qualifier (`2.2-alpha.1`). The publisher must use it **verbatim** in every page title and never re-derive it, so `-final` never reaches a page title. Each build gets its own page.
+
+`build_type` and `change_range` are the same strings as the W6 header block, so the published page states which build a reader is looking at and what range it covers.
+
+Wait for the publisher's receipt. On success, extract `release_page_url` from the receipt and bind it for the final summary. On failure, print the error and continue with `release_page_url` set to an empty string.
 
 ---
 
-## Step W9 — Compose and drop `email.html`
-
-*Render the customer-facing notes into a polished HTML email and drop it into the configured OneDrive folder for Power Automate.*
-
-Build a complete, well-formed HTML document with:
-
-- **`<title>`** = `{Product} {Platforms} {Version} — Release Notes`. Power Automate parses this as the email **subject**, so it must be exactly this string.
-- **Header section** in the body: product, platforms, version, build, planned release date.
-- **Intro paragraph** — 1–2 sentences, professional tone (e.g. "The following release notes summarize the changes in {Product} {Version}. Please review before distribution.").
-- **Highlights** `<ul>` — the top 3–5 items, prioritizing New Features first, then Improvements. Plain `<li>` bullets, **short summary only, no Jira keys, no flags**.
-- **Full customer-facing release notes**, inline, converted from `release-notes.md`. **Omit any line containing `SUGGEST OMIT`**; keep everything else. Convert:
-  - `## New Features` → `<h2>New Features</h2>`
-  - `## Improvements` → `<h2>Improvements</h2>`
-  - `## Bug Fixes` → `<h2>Bug Fixes</h2>`
-  - Markdown list items → `<ul><li>…</li></ul>` blocks
-  - Strip any trailing `[Platform: …]` tag and any ` — SUGGEST INCLUDE …` flag from the visible text (those are reviewer annotations, not customer copy).
-- **Confluence link section** — `<p>Full release details (companion document, ticket audit): <a href="{release_page_url}">View on Confluence</a></p>`. **If `release_page_url` is empty, omit this section entirely.**
-- **Footer** — `<p>This release note draft was prepared by the automated release-notes tool. Please review before publishing to public channels.</p>`
-
-Determine the drop location. `Platform` is the **first** platform name for a single-platform release, or the literal `All Platforms` for a multi-platform release; `Version` is the semver string. The folder layout is `{drop_folder_root}/{Platform} {Version}/email.html`.
-
-```bash
-# Resolve drop_folder_root from config (may be empty):
-drop_root="$(echo "$cfg" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("drop_folder_root") or ""))')"
-
-if [ -z "$drop_root" ]; then
-  echo "No drop_folder_root configured — email.html not dropped. Run /release-notes-config drop_folder_root to configure it."
-else
-  drop_root_expanded="${drop_root/#\~/$HOME}"
-  # email_platform = first platform name, OR "All Platforms" if multi-platform (compute in your draft logic)
-  drop_dir="${drop_root_expanded}/${email_platform} ${version}"
-  mkdir -p "$drop_dir"
-  # Write the assembled HTML to "$drop_dir/email.html" (overwrite if present — acceptable):
-  # (use the Write tool to write the HTML you composed above to this path)
-  echo "Email dropped: $drop_dir/email.html"
-fi
-```
-
-Write the composed HTML to `"$drop_dir/email.html"` with the Write tool. Overwriting an existing `email.html` for a re-run is acceptable. If `drop_folder_root` is not configured, print the message above and skip the drop (do not error).
-
----
-
-## Step W10 — Cleanup and final summary
+## Step W9 — Cleanup and final summary
 
 *Remove the workspace on success, then print the final summary with the SUGGEST-flag counts and any per-platform SCM warnings.*
 
@@ -696,12 +738,15 @@ rm -rf "$TMPDIR"
 **3. Print the final summary** (use gitmoji-style ASCII markers; the check/page glyphs below are presentation only in the summary block):
 
 ```
-:white_check_mark: Release notes for {Product} {Version} complete.
+:white_check_mark: Release notes for {Product} {version_display} complete.
+
+Build type:      {Public Release | Prerelease (alpha.1)}
+Change range:    {Cumulative | Delta} since {baseline_ref}
+Fix version:     {resolved_fix_version}
 
 Customer notes:  {config_dir}/release-notes.md
 Companion:       {config_dir}/companion.md
-Email drop:      {drop_folder_root}/{Platform} {Version}/email.html   (or: not dropped)
-Confluence:      {release_page_url}                                    (or: not published)
+Confluence:      {release_page_url}   (or: not published)
 
 Review before publishing:
 - Items marked SUGGEST OMIT:    {omit_count}
@@ -717,12 +762,30 @@ Warning: SCM data for {platform} was empty — verify the repo at {repo_path} is
 
 Also surface any SCM `status: "failed"` platforms recorded in W5 with their reason.
 
+**5. Delta fallback warnings.** Print every line recorded by the W6 delta guard, one per platform that fell back from `delta` to `cumulative`. These matter more than the rest of the summary: they mean the notes cover a wider range than requested.
+
+**6. Tag scoping note.** For each platform whose SCM shard reported a non-zero `tag_stats.out_of_scope`, print:
+
+```
+Note: {platform} — {out_of_scope} tag(s) outside '{tag_prefix}' were excluded from
+range resolution (legacy or other product lines).
+```
+
+For `tablo-android` this is expected and large (about 300 of 369 tags). It is reassurance that the legacy line was excluded, not a problem. If `tag_prefix` is empty and the shard's warnings name a namespace with parseable release tags, surface that warning too — it means the current line may be namespaced and unconfigured.
+
 ---
 
 ## Error recovery and idempotency
 
 - **Re-run on the same version** — `TMPDIR` is cleared at the start of W2, so every run begins from a clean workspace.
 - **Confluence idempotency** — delegated to `rn-confluence-publisher`, which finds-before-create via CQL; re-publishing smart-merges rather than duplicating pages.
-- **Email-drop idempotency** — `email.html` is overwritten if the per-release subfolder already exists; this is acceptable.
-- **Hard stops** (abort the whole run): empty/invalid version (W1); no config after the config skill ran (W1); `glab` not authenticated (W2); Atlassian MCP not connected (W2); any Jira collector `status: "failed"` (W4).
-- **Soft failures** (warn and continue): any SCM collector `status: "failed"` or repo-missing `ok_empty` (W5); a `rn-confluence-publisher` failure (W8, continue with an empty `release_page_url`); a missing `drop_folder_root` (W9, skip the drop).
+- **Hard stops** (abort the whole run):
+  - `$ARGUMENTS` empty, or failing the W1 grammar.
+  - No config after the config skill ran (W1).
+  - The version helper failing its self-check (W2 step 4).
+  - `glab` not authenticated (W2); Atlassian MCP not connected (W2).
+  - Any Jira collector `status: "failed"` (W4) — which now includes a fix version that could not be resolved from the release line, or resolved ambiguously. The remedy is `fix_version_override` in `.release-notes.yml`.
+- **Soft failures** (warn and continue):
+  - Any SCM collector `status: "failed"` or repo-missing `ok_empty` (W5).
+  - A platform whose delta could not be computed: it falls back to cumulative and warns (W6 guard, surfaced in W9).
+  - A `rn-confluence-publisher` failure (W8, continue with an empty `release_page_url`).

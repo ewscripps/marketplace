@@ -1,8 +1,8 @@
 ---
 name: generate-release-notes
-description: Generate release notes for a product version — gathers Jira fix-version tickets and GitLab MRs/commits, drafts customer-facing notes and an internal companion doc, publishes to Confluence, and drops a formatted email.html in the configured OneDrive folder. Invoke with the version string, e.g. `/generate-release-notes 2.8.0`.
+description: Generate release notes for a Tablo client-app build — gathers Jira fix-version tickets and GitLab MRs/commits, drafts customer-facing notes and an internal companion doc, and publishes both to Confluence. Supports prerelease builds. Invoke with the build version, e.g. `/generate-release-notes 2.2-alpha.1`.
 user-invocable: true
-argument-hint: '<version, e.g. 2.8.0>'
+argument-hint: '<version, e.g. 2.2, 2.2-alpha.1, 2.2-beta.2, 2.2-final>'
 allowed-tools: Agent, Bash, Read, Write, Edit, Grep, Glob, AskUserQuestion, Skill
 model: opus
 effort: max
