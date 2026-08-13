@@ -259,6 +259,60 @@ lint:shellcheck:
       fi
       echo "lint:shellcheck: OK -- ${COUNT} file(s) clean"
 
+# CA-380: plugins/edm/hooks/hooks.json's nine command-type hooks are the only shell in the
+# plugin that lint:bash-syntax and lint:shellcheck above never read -- both glob only
+# plugins/edm/bin/*, plugins/edm/bin/tests/*.sh and plugins/edm/evals/*.sh, and hooks.json is
+# in neither glob, despite the PreToolUse git-commit hook being the most privileged shell in
+# the plugin (it runs automatically with no permission prompt on every commit). Extracts every
+# command-type hook's `.command` string via jq and runs both checks over each, matching the
+# finding's explicit "-s sh, not bash: the host picks the interpreter" -- shellcheck below runs
+# `--shell=sh`, not `--shell=bash` as lint:shellcheck above does, because the host (not this
+# plugin) chooses the interpreter that actually executes a hook command string. Each extracted
+# command is written to its own temp file first: `bash -n <(cmd)` process substitution needs
+# bash itself as the invoking shell, which is not guaranteed for the runner's script stage (see
+# the POSIX-sh-safe notes elsewhere in this file). This job does not modify hooks.json -- it is
+# pure CI-config addition, read-only against the file.
+lint:hooks-shell:
+  stage: lint
+  <<: *alpine_edm
+  needs: []
+  before_script:
+    - apk add --no-cache bash=5.2.26-r0 jq=1.7.1-r0 shellcheck=0.10.0-r1
+  script:
+    - |
+      set -e
+      echo "=== bash -n + shellcheck --shell=sh (SC2086/SC2046/SC2048/SC2068) over every command-type hook in plugins/edm/hooks/hooks.json ==="
+      FAIL=0
+      COUNT=0
+      TMP="$(mktemp -d)"
+      trap 'rm -rf "$TMP"' EXIT
+      jq -r '.hooks | to_entries[] | .value[] | .hooks[] | select(.type=="command") | .command' plugins/edm/hooks/hooks.json > "${TMP}/commands.txt"
+      IDX=0
+      while IFS= read -r cmd; do
+        IDX=$((IDX + 1))
+        COUNT=$((COUNT + 1))
+        cmdfile="${TMP}/hook-${IDX}.sh"
+        printf '%s\n' "$cmd" > "$cmdfile"
+        if bash -n "$cmdfile" 2>"${TMP}/bashn-${IDX}.err"; then
+          echo "  OK: bash -n hook #${IDX}"
+        else
+          echo "  FAIL: bash -n hook #${IDX}:"
+          sed 's/^/    /' "${TMP}/bashn-${IDX}.err"
+          FAIL=1
+        fi
+        if shellcheck --shell=sh --include=SC2086,SC2046,SC2048,SC2068 "$cmdfile"; then
+          echo "  OK: shellcheck hook #${IDX}"
+        else
+          echo "  FAIL: shellcheck hook #${IDX}"
+          FAIL=1
+        fi
+      done < "${TMP}/commands.txt"
+      if [ "$FAIL" -ne 0 ]; then
+        echo "lint:hooks-shell: FAILED"
+        exit 1
+      fi
+      echo "lint:hooks-shell: OK -- ${COUNT} command-type hook(s) clean"
+
 # EDMV3-T57 AC10: this job blocks. EDMV3-80's file-type ban binds all six marketplace
 # plugins; EDMV3-T57 relocated plugins/edm/'s two banned files (a .pptx and a .docx) out of
 # the plugin directory and recorded a clean pre-merge scan across all six plugins (see the
