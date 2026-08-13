@@ -1149,10 +1149,13 @@ with_state_lock() {
     || die "with_state_lock: internal: lock trap already active (_EDM_TRAP_DEPTH=${_EDM_TRAP_DEPTH}) -- nested with_state_lock calls (the same lockbase, one locked body calling with_state_lock again) are not supported"
 
   if command -v flock >/dev/null 2>&1; then
-    # Fast path: flock on FD 200 (high enough to avoid collisions with stdin/stdout/stderr
-    # and typical script-level pipes; bash 3.2 lacks dynamic file-descriptor auto-assignment
-    # (the brace-redirection idiom naming a variable instead of a literal FD number, a bash-4
-    # construct EDMV3-T61 AC9's CI grep bans), so we pick 200 by convention instead)
+    # Fast path: flock on FD 200. CA-415: 200 is clear of 0-2 (std streams), of 9 (the
+    # conventional BASH_XTRACEFD target), and of the 10+ band bash reserves for its own internal
+    # redirection bookkeeping -- fd 3 or fd 9/10 would also clear 0-2 while being genuinely
+    # dangerous to pick. Do not lower this. bash 3.2 lacks dynamic file-descriptor
+    # auto-assignment (the brace-redirection idiom naming a variable instead of a literal FD
+    # number, a bash-4 construct EDMV3-T61 AC9's CI grep bans), so we pick 200 by convention
+    # instead.
     # `|| _lock_ec=$?` keeps the subshell in a tested position so `set -e` does NOT abort here on a
     # non-zero exit -- otherwise the timeout `die` below is unreachable and a flock-host timeout exits
     # with a bare 99 and no message (CA-006). Success leaves _lock_ec=0.
@@ -4407,8 +4410,10 @@ cmd_audit_converged() {
 # The first (existing, unchanged, AC6) form persists a per-ticket verdict into
 # partial_verdict_map. The second (new, EDMV3-T32) form closes an existing PARTIAL entry: the
 # literal third argument "close" disambiguates it from a verdict (never a legal value of the
-# first form), so hooks/hooks.json:117 and skills/implement/SKILL.md:117 -- both single-write
-# callers of the first form -- are unaffected.
+# first form), so hooks.json's SubagentStop/edm-implementer prompt and skills/implement/SKILL.md's
+# Step 5 remediation step 2 -- both single-write callers of the first form -- are unaffected.
+# CA-406: named by anchor, not line number -- an unrelated insertion above either site would
+# silently falsify a bare ":117" citation with nothing failing.
 
 # _cmd_record_partial_verdict_close_body <state-file> <prefix> <ticket> <closing-verdict>
 #                                         <verification-ref> <now-ts>
@@ -5324,9 +5329,22 @@ _write_handoff_body() {
   local open_findings_summary="" of_out="" of_err="" of_ec=0 _of_errfile
   _of_errfile="$(mktemp "${TMPDIR:-/tmp}/edm-state.audit-converged-stderr.XXXXXX" 2>/dev/null || true)"
   if [[ -n "$_of_errfile" ]]; then
+    # CA-399: this runs on effectively every Stop/PreCompact hook firing, so register the
+    # errfile for signal-safe cleanup through the same _save_traps/_restore_traps pair
+    # write_atomic uses (see write_atomic's own comment above for why nesting this inside
+    # with_state_lock's locked body is safe) -- the plain `rm -f` below only ran on normal
+    # completion, leaking the file on a Ctrl-C mid-write. CA-159: reference the path through a
+    # dedicated variable inside single quotes so it expands at signal time, not install time.
+    local _OF_ERRFILE_FOR_TRAP="$_of_errfile"
+    _save_traps
+    trap '_write_atomic_cleanup "$_OF_ERRFILE_FOR_TRAP"' EXIT
+    trap '_write_atomic_cleanup "$_OF_ERRFILE_FOR_TRAP"; exit 130' INT
+    trap '_write_atomic_cleanup "$_OF_ERRFILE_FOR_TRAP"; exit 143' TERM
+    trap '_write_atomic_cleanup "$_OF_ERRFILE_FOR_TRAP"; exit 129' HUP
     of_out="$(cmd_audit_converged "$prefix" 2>"$_of_errfile")" || of_ec=$?
     of_err="$(cat "$_of_errfile" 2>/dev/null || true)"
     rm -f "$_of_errfile" 2>/dev/null || true
+    _restore_traps
   else
     # mktemp failed (unexpected) -- fall back to the old merged-stream behavior rather than
     # losing the findings section outright; still better than a hard failure here.

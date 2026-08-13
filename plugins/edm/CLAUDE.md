@@ -861,8 +861,11 @@ Until those two are brought into line, do not treat "no `# requires schema_versi
 here" as evidence that a check is version-independent; check the `schema_at_least()` call itself.
 **Durability (G25/CA-342):** `wave6-smoke.sh` carries a computed assertion (grep -c the real
 `schema_at_least(` call sites in `bin/edm-state` against the count named in this paragraph) so a
-future edit that adds, removes, or comments a call site without updating this passage fails a
-test instead of silently drifting stale a fifth time.
+future edit that adds or removes a call site without updating this passage fails a test instead
+of silently drifting stale a fifth time. CA-407: `grep -c` yields a single total, so only that
+total count is machine-checked -- an edit that comments out a call site without changing the
+total (leaving the count unchanged while removing a live check) is not caught by this assertion;
+the comment-presence split is not machine-checked at all.
 EDMV3-T09 defines this contract and lands the one such comment for
 the check that exists as of wave A (EDMV3-115, `cmd_gate_check`); the degradation *behaviour*
 itself is implemented per-check by the ticket that owns that check. EDMV3-T14 wires the shared

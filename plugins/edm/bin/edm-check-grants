@@ -416,7 +416,9 @@ scan_skill_launch_templates() {
 # Source 3: hook prompt text -- hooks/hooks.json prompt strings are JSON-escaped; parsed with
 # `jq -r` (never grepped raw, or the SubagentStop prompt's step 6 would be missed per Technical
 # Notes). Each "prompt" value is stored on one physical line in this file, so the raw line number
-# doubles as the citation (matches the ticket's own "hooks/hooks.json:117" citation).
+# doubles as the citation -- naming the same site (hooks.json's SubagentStop/edm-implementer
+# prompt) the ticket's own comment in bin/edm-state now cites by anchor rather than line number
+# (CA-406), so neither comment goes stale independently of the other.
 # =================================================================================================
 scan_hook_prompts() {
   local lnum rest frag decoded target scratch ln
