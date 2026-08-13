@@ -606,7 +606,7 @@ fresh `render-ledger` reproduces the committed file byte for byte.
 | Pattern library read-only (installed plugin) | `cmd_update_patterns` existing guard at `:1622-1625` | Skip with a message. The gate-time curation step also skips |
 | Mermaid label contains a raw semicolon | `edm-lint-artifacts` class 4 | `path:line: mermaid-semicolon: snippet`, non-zero exit, pre-commit hook blocks the commit |
 | Deferral vocabulary reintroduced | `edm-check-vocabulary` in CI | Job fails naming file and line |
-| Concurrent `edm-state` writers | `with_state_lock` (`:359-396`) | flock with 10s timeout, or the mkdir spin-lock fallback with 50 tries. Unchanged |
+| Concurrent `edm-state` writers | `with_state_lock` / `write_atomic` (anchored by function name, not a line number that will drift, per the round-6 citation-durability convention applied to the ticket pack's `bin/` citations) | flock with 10s timeout, or the mkdir spin-lock fallback with 50 tries. **Changed in round 6**: commit `4022300` ("close eight with_state_lock/write_atomic concurrency gaps (Wave 4a)") hardened this exact surface -- atomic stale-lock reclaim distinguishing a live cross-UID holder from a dead one (CA-141), trap-nesting-safe `write_atomic` under bash 3.2 (CA-142), INT/TERM/HUP traps that actually exit after cleanup instead of resuming the critical section (CA-143), no path interpolated directly into a trap body (CA-159), and a subshell-isolated mkdir branch (CA-025), among others -- see that commit's message for the full eight-gap list |
 
 ---
 
