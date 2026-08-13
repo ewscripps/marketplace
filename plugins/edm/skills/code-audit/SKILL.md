@@ -150,24 +150,57 @@ using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
        is the blocking set (`Sec."Severity Reference"` below). Do not treat P2 as non-blocking --
        `BLOCKING_FILTER` in `bin/edm-state` includes it, so `audit-converged` will refuse a round
        that a P0/P1-only reading would call clean.
-    2. **Present** the gate via `AskUserQuestion` -- before any state mutation, regardless of clean or blocked:
+    2. **Present** the gate via `AskUserQuestion` -- before any state mutation, regardless of clean or blocked.
+       The option set depends on what's actually open (T-EDMV4, "give the user the option to converge
+       once P0/P1 are clear"):
         - Header: `"Convergence"`
-        - Question body states the computed result and pass number, e.g.: *"Pass {N}: {P0_COUNT} P0,
-          {P1_COUNT} P1, {P2_COUNT} P2, {NOTED_COUNT} NOTED findings open. Converge this round?"* -- if any
-          P0, P1 or P2 remain open, name the blocking set findings in the body.
-        - Options: **Approve** (record convergence now), **Revise** (address the blocking set and re-run
-          affected lenses before asking again), **No-Go** (stop; do not record convergence)
+        - **Clean** (`P0_COUNT=0`, `P1_COUNT=0`, `P2_COUNT=0`): question body states the result, e.g.
+          *"Pass {N}: 0 P0, 0 P1, 0 P2, {NOTED_COUNT} NOTED findings open. Converge this round?"*
+          Options: **Approve** (record convergence now), **Revise** (address anything the human still
+          wants changed and re-run affected lenses before asking again), **No-Go** (stop; do not
+          record convergence).
+        - **P0 or P1 still open**: question body names the blocking set findings (P0/P1 first). Options:
+          **Approve** (attempts `edm-state approve-gate <PREFIX> code-audit`, which refuses -- P0/P1
+          are never waivable by any option here), **Revise**, **No-Go** -- unchanged from today.
+        - **P0/P1 clear but P2s remain** (`P0_COUNT=0`, `P1_COUNT=0`, `P2_COUNT>0`): this is the new
+          branch. Question body states: *"Pass {N}: 0 P0, 0 P1, {P2_COUNT} P2, {NOTED_COUNT} NOTED
+          findings open. P0/P1 are clear."* -- name the open P2 findings by ID. Options:
+          - **Converge now** -- accept the {P2_COUNT} open P2 finding(s) as documented debt and record
+            convergence immediately.
+          - **Fix low-hanging fruit first** -- remediate the P2 findings whose REMEDIATION.md
+            prescription is a single self-contained code change (one file, or a tightly-coupled pair;
+            no new test framework or scaffold needed), re-run `edm-state audit-converged <PREFIX>` for
+            an updated count, and re-present this same gate with the smaller remaining set. This is a
+            loop back to step 11/12 for that narrower subset only -- not every open P2, and not a new
+            lens round.
+          - **Keep fixing everything** -- treat every open P2 as blocking, same as today's default;
+            loop back to the remediation gate (step 11) and step 12 for the full set.
+          - **No-Go** -- stop; do not record convergence.
         - If any pattern-library entries are pending review, this same `AskUserQuestion` call also
           carries their curation questions -- see Sec."Pending Pattern Entries (gate-time curation)"
           below. If none are pending, the presentation is exactly as described above.
-        - Follows `` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` `` -- only the explicit
-          **Approve** option records convergence.
-    3. **Approve** (and only on explicit Approve): run `edm-state approve-gate <PREFIX> code-audit`.
-    4. **Record**: immediately after Approve, append the gate approval to `decisions.md` in the
-       initiative directory and add a closure note to the top of `${OUTPUT_DIR}/REMEDIATION.md`
-       (the current round's file):
+        - Follows `` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` `` -- only an explicit
+          **Approve** or **Converge now** selection records convergence.
+    3. **Approve** (and only on explicit **Approve**, clean or P0/P1-blocked case): run
+       `edm-state approve-gate <PREFIX> code-audit`.
+       **Converge now** (and only on explicit **Converge now**, the P0/P1-clear-P2s-remain case): run
+       `edm-state approve-gate <PREFIX> code-audit --accept-p2-debt`. This flag hard-refuses if any P0
+       or P1 is open (defense in depth -- the gate presentation above should never have offered this
+       option in that case) and otherwise records `code_audit_converged=true` plus debt metadata
+       (`code_audit_p2_debt_accepted`, `_count`, `_round`, `_accepted_at`, `_accepted_by`) -- the ledger
+       itself is left unchanged, so the accepted P2s still show as open findings; only the gate is
+       unblocked. `edm-state archive` later re-verifies P0/P1 are still clear and refuses if a newer
+       full audit round has completed since acceptance (the debt has gone stale -- re-run
+       `--accept-p2-debt` or fix the remaining findings first).
+    4. **Record**: immediately after Approve or Converge now, append the gate approval to
+       `decisions.md` in the initiative directory and add a closure note to the top of
+       `${OUTPUT_DIR}/REMEDIATION.md` (the current round's file):
        ```
        | Convergence | Pass {N} | Approve | {P0_COUNT} P0, {P1_COUNT} P1, {P2_COUNT} P2, {NOTED_COUNT} NOTED open at presentation; convergence approved | {date} |
+       ```
+       or, on **Converge now** with accepted debt:
+       ```
+       | Convergence | Pass {N} | Converge now (accept-p2-debt) | 0 P0, 0 P1, {P2_COUNT} P2 accepted as debt, {NOTED_COUNT} NOTED open at presentation; convergence approved with debt | {date} |
        ```
        ```markdown
        ## Post-Remediation Closure ({YYYY-MM-DD})
@@ -177,11 +210,18 @@ using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
        The original audit snapshot is preserved below.
        ---
        ```
+       On **Converge now**, replace the first sentence with `{P2_COUNT} P2 finding(s) accepted as
+       documented debt; all P0/P1 findings resolved. Convergence reached {YYYY-MM-DD}.` so a reader
+       does not conclude every finding was fixed.
        ASCII-only, like every other committed artifact this methodology produces (no em dashes,
        no arrows, no smart quotes) -- `edm-lint-artifacts` class 2 enforces this at commit time.
        This prevents a reviewer reading the round directory in isolation from seeing
        "Convergence NOT reached" after all work is done.
-    - On **Revise**: no state mutation; loop back to the remediation gate (step 11) and step 12.
+    - On **Fix low-hanging fruit first**: remediate the identified subset, re-run `edm-state
+      audit-converged <PREFIX>`, and re-present this gate (do not loop through the full
+      remediation-gate/step-11 cycle for findings outside that subset).
+    - On **Revise** or **Keep fixing everything**: no state mutation; loop back to the remediation
+      gate (step 11) and step 12.
     - On **No-Go**: no state mutation; stop and summarize the blockers for the human.
 11. Read `REMEDIATION.md`. Present the remediation gate (see "Remediation Gate (Code Audit)" below) and STOP
     for approval.

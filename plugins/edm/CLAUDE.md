@@ -231,6 +231,24 @@ is remediated before convergence; `NOTED` is the only status that closes a findi
 - Legacy P3 (defensive improvement / nice-to-have) -> **P2**
 - NOTED -> unchanged
 
+**Sanctioned exception -- P2 debt acceptance at convergence (T-EDMV4).** "Remediated before
+convergence" above still holds by default; the one sanctioned exception is an explicit human
+choice at the convergence gate, never a silent policy weakening. When a code-audit round's
+blocking set is P0=0, P1=0 and P2>0, `skills/code-audit/SKILL.md`'s convergence gate (Sec."10.
+Convergence gate") offers **Converge now**, which runs `edm-state approve-gate <PREFIX>
+code-audit --accept-p2-debt`. That command hard-refuses if any P0 or P1 is open -- the override
+is P2-only, never P0/P1 -- and otherwise records `code_audit_converged=true` plus
+`code_audit_p2_debt_accepted`/`_count`/`_round`/`_accepted_at`/`_accepted_by` in state. The
+ledger itself is left unchanged: accepted P2s still show as open findings in
+`findings-ledger.md`/`.jsonl`, and HANDOFF's code-audit gate row names the accepted count and
+round so a teammate sees debt was knowingly carried, not silently missed. `edm-state archive`
+re-verifies P0/P1 are still 0 and refuses if a newer full audit round has completed since
+acceptance (the debt has gone stale -- re-run `--accept-p2-debt` or fix the remaining findings
+first). The gate also offers **Fix low-hanging fruit first**: remediate the P2s whose
+REMEDIATION.md prescription is a single self-contained change, then re-present the gate with the
+smaller remaining set -- a middle ground between converging immediately and re-treating every
+open P2 as blocking.
+
 ## Mermaid diagram conventions (canonical)
 
 All EDM agents that author or audit Mermaid diagrams follow these conventions. No agent may define a divergent local rule.
