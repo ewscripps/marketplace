@@ -242,13 +242,20 @@ understanding of what it measures without running it against a run directory.
 
 ### `--compare <a.json> <b.json>`
 
-`bash plugins/edm/evals/score-artifacts.sh --compare <a> <b>` is the one piece of
-comparison logic in this file, kept deliberately separate from the default scoring mode
-above (which never compares anything). It refuses (exit 1, naming the mismatch) when the
-two files' `scorer_version` differ, or when their `dimensions_scored` differ -- comparing a
-four-dimension run against a five-dimension run produces a delta with no meaning. When both
-match, it prints a per-dimension and total delta. Wiring this into an automatic CI
-comparison against `baseline/scores.json` is EDMV3-T39's job, not this ticket's.
+`bash plugins/edm/evals/score-artifacts.sh --compare <a> <b>` is a thin delegation to
+`bin/edm-compare-eval` (CA-383) -- it is not a second comparison implementation, kept
+deliberately separate only from the default scoring mode above (which never compares
+anything). It injects `complete: true` into temp copies of both inputs first (a hand-built
+`scores.json` fixture may not carry that field, but `edm-compare-eval` refuses any candidate
+whose `complete` field is not exactly `true` before it ever reaches the version/dimension
+checks below), then delegates. The exit code and refusal wording are `edm-compare-eval`'s
+own: refuses (exit 2, naming the mismatch) when the two files' `scorer_version` differ, or
+when their `dimensions_scored` differ -- comparing a four-dimension run against a
+five-dimension run produces a delta with no meaning. When both match, it prints a
+per-dimension and total delta and exits 0 (or exit 1 on a threshold regression). Wiring this
+into an automatic CI comparison against `baseline/scores.json` is EDMV3-T39's job -- and CI
+calls `bin/edm-compare-eval` directly rather than this flag, per `.gitlab-ci.yml`'s
+`eval:nightly` job.
 
 ### Cost and duration
 

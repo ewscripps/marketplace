@@ -21,15 +21,16 @@
 #                                              depositing an untracked scores.json there.
 #   score-artifacts.sh --describe             Print the five dimension definitions
 #                                              verbatim and exit 0.
-#   score-artifacts.sh --compare <a> <b>       Compare two scores.json files. Refuses
-#                                              (exit 1) when scorer_version or
+#   score-artifacts.sh --compare <a> <b>       Compare two scores.json files. Delegates to
+#                                              bin/edm-compare-eval (CA-383) -- refuses (its
+#                                              exit 2) when scorer_version or
 #                                              dimensions_scored differ between them,
-#                                              naming the mismatch. This is the only
-#                                              comparison logic in this file -- the
-#                                              default scoring mode above never compares
-#                                              against anything and never exits non-zero
-#                                              on a low score (AC5). The actual pass/fail
-#                                              CI decision that consumes --compare's output
+#                                              naming the mismatch. Not a second comparison
+#                                              implementation -- the default scoring mode
+#                                              above never compares against anything and
+#                                              never exits non-zero on a low score (AC5).
+#                                              The actual pass/fail CI decision that
+#                                              consumes bin/edm-compare-eval's output
 #                                              is EDMV3-T39's job (srd.md EDMV3-52), not
 #                                              this ticket's.
 #   score-artifacts.sh -h|--help|help          Show this help.
@@ -660,51 +661,34 @@ main_score() {
 # The default scoring mode above performs no comparison of any kind (AC5). This mode exists
 # so the exact "refuse on scorer_version or dimensions_scored mismatch" behaviour AC4
 # requires is directly testable; wiring it into a CI job is EDMV3-T39's (srd.md EDMV3-52).
+#
+# CA-383: this used to be a second, hand-rolled comparer that had diverged from
+# bin/edm-compare-eval (different exit codes, missing the complete:false guard, different
+# sentinels) -- bin/edm-compare-eval is now the sole comparison implementation and this is a
+# thin delegation to it, so the two can never diverge again. edm-compare-eval refuses a
+# candidate whose `complete` field is not exactly `true` BEFORE it reaches the
+# scorer_version/dimensions_scored checks this function exists to exercise; a scores.json
+# produced by this scorer's own default mode always sets `complete`, but a hand-built fixture
+# (as used by this repo's own --compare test coverage) may not, so `complete: true` is injected
+# into temp copies of both inputs before delegating rather than assumed present on the
+# originals -- the originals themselves are never mutated. `edm-compare-eval`'s CANDIDATE is the
+# first argument and its BASELINE is the second; passed as ($b, $a) so a's role stays "baseline"
+# and b's role stays "candidate", matching the historical `--compare <a> <b>` = "compare b
+# against a" reading this function's callers expect.
 cmd_compare() {
   local a="$1" b="$2"
   [[ -f "$a" ]] || die "compare: file not found: $a"
   [[ -f "$b" ]] || die "compare: file not found: $b"
 
-  local ver_a ver_b n_a n_b
-  ver_a=$(jq -r '.scorer_version // "unknown"' "$a")
-  ver_b=$(jq -r '.scorer_version // "unknown"' "$b")
-  n_a=$(jq -r '.dimensions_scored // -1' "$a")
-  n_b=$(jq -r '.dimensions_scored // -1' "$b")
-
-  if [[ "$ver_a" != "$ver_b" ]]; then
-    echo "score-artifacts: refusing comparison -- scorer_version mismatch: $(basename "$a") is $ver_a, $(basename "$b") is $ver_b" >&2
-    exit 1
-  fi
-
-  if [[ "$n_a" != "$n_b" ]]; then
-    local names_a names_b
-    names_a="$(jq -r '[.dimensions[] | select(.score != null) | .name] | join(",")' "$a")"
-    names_b="$(jq -r '[.dimensions[] | select(.score != null) | .name] | join(",")' "$b")"
-    echo "score-artifacts: refusing comparison -- dimensions_scored mismatch: $(basename "$a") scored $n_a dimensions ($names_a), $(basename "$b") scored $n_b dimensions ($names_b)" >&2
-    exit 1
-  fi
-
-  jq -s '
-    {
-      scorer_version: .[0].scorer_version,
-      dimensions_scored: .[0].dimensions_scored,
-      total_delta: (.[1].total - .[0].total),
-      dimension_deltas: [
-        range(0; (.[0].dimensions | length)) as $i
-        | {
-            name: .[0].dimensions[$i].name,
-            a: .[0].dimensions[$i].score,
-            b: .[1].dimensions[$i].score,
-            delta: (
-              if (.[0].dimensions[$i].score == null or .[1].dimensions[$i].score == null)
-              then null
-              else (.[1].dimensions[$i].score - .[0].dimensions[$i].score)
-              end
-            )
-          }
-      ]
-    }
-  ' "$a" "$b"
+  local ta tb rc
+  ta="$(mktemp)"
+  tb="$(mktemp)"
+  jq '. + {complete: true}' "$a" > "$ta"
+  jq '. + {complete: true}' "$b" > "$tb"
+  "${SCRIPT_DIR}/../bin/edm-compare-eval" "$tb" "$ta"
+  rc=$?
+  rm -f "$ta" "$tb"
+  return $rc
 }
 
 # ---- dispatch ------------------------------------------------------------------------------
