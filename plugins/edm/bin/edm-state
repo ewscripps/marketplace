@@ -15,7 +15,7 @@
 #   edm-state list [--paths]                            # list in-progress initiatives (--paths: print resolved initiative directories only, read-only, for edm-lint-artifacts --all)
 #   edm-state active-initiatives                        # list initiatives with current_phase in 1-6
 #   edm-state init <PREFIX>                             # write a fresh state file
-#   edm-state approve-gate <PREFIX> <gate-num>|3.5|code-audit  # record a gate approval (numeric gate, compliance gate 3.5, or code-audit convergence)
+#   edm-state approve-gate <PREFIX> <gate-num>|3.5|code-audit [--accept-p2-debt]  # record a gate approval (numeric gate, compliance gate 3.5, or code-audit convergence; --accept-p2-debt converges with P0/P1 clear, carrying open P2s forward as documented debt)
 #   edm-state phase-start <PREFIX> <phase-num>          # record phase start timestamp
 #   edm-state phase-complete <PREFIX> <phase-num>       # record phase completion + duration
 #   edm-state checkpoint-if-active                      # called by Stop/PreCompact hooks
@@ -1471,6 +1471,31 @@ AUDIT_ROUND_COERCE_JQ_DEF='def coerce_round_entry: if type == "number" then {cou
 # P0/P1/P2 membership test a second time.
 BLOCKING_FILTER='(.status == "open" or .status == "deferred") and (.sev == "P0" or .sev == "P1" or .sev == "P2")'
 
+# _audit_ledger_breakdown <jsonl-path> -- the blocking-set computation, extracted so
+# cmd_audit_converged and cmd_approve_gate's code-audit --accept-p2-debt override (T-EDMV4,
+# "give the user the option to converge with P0/P1 clear") compute the identical p0/p1/p2
+# split from one definition, never two independently-maintained jq programs (the CA-343 class).
+# Prints a JSON object: {total, noted, blocking_count, p0, p1, p2, blocking_list}. Exit status
+# is jq's own -- a caller distinguishes "invalid JSONL" from a valid-but-empty ledger the same
+# way the original inline block did.
+_audit_ledger_breakdown() {
+  local jsonl_path="$1"
+  jq -s '
+    def coerce_status: if .status == "deferred" then (.status = "open") else . end;
+    map(coerce_status) as $all
+    | ($all | map(select('"$BLOCKING_FILTER"'))) as $blocking
+    | {
+        total: ($all | length),
+        noted: ([$all[] | select(.sev == "NOTED")] | length),
+        blocking_count: ($blocking | length),
+        p0: ([$blocking[] | select(.sev == "P0")] | length),
+        p1: ([$blocking[] | select(.sev == "P1")] | length),
+        p2: ([$blocking[] | select(.sev == "P2")] | length),
+        blocking_list: ($blocking | map("\(.id) \(.sev) \(.title)"))
+      }
+  ' "$jsonl_path"
+}
+
 # ---- State anomaly detection (T29, class split EDMV3-T05 / EDMV3-118) ------
 # state_anomalies <PREFIX>
 # Reads state and emits zero or more anomaly lines. Each line has the canonical
@@ -2032,9 +2057,17 @@ cmd_list() {
 }
 
 cmd_approve_gate() {
-  [[ $# -eq 2 ]] || die "usage: edm-state approve-gate <PREFIX> <gate-num>|3.5|code-audit"
+  [[ $# -eq 2 || $# -eq 3 ]] \
+    || die "usage: edm-state approve-gate <PREFIX> <gate-num>|3.5|code-audit [--accept-p2-debt]"
   require_jq
-  local prefix="$1" gate="$2"
+  local prefix="$1" gate="$2" accept_p2_debt=0
+  if [[ $# -eq 3 ]]; then
+    [[ "$3" == "--accept-p2-debt" ]] \
+      || die "approve-gate: unrecognized third argument '$3' (only --accept-p2-debt is accepted, and only with the code-audit gate)"
+    [[ "$gate" == "code-audit" ]] \
+      || die "approve-gate: --accept-p2-debt only applies to the code-audit gate, not '$gate'"
+    accept_p2_debt=1
+  fi
   local approver="${USER:-unknown}"
   # Gate 3.5 (compliance review) is stored as a dedicated boolean field rather than
   # appended to gates_approved (which expects integers) -- avoids overloading numeric gate IDs.
@@ -2109,10 +2142,37 @@ cmd_approve_gate() {
     ag_schema_class2="$(schema_at_least "$ag_schema_version" 2)"
     local conv_out conv_ec=0
     conv_out="$(cmd_audit_converged "$prefix" 2>&1)" || conv_ec=$?
+    # T-EDMV4 (accept-p2-debt): give the human the option to converge once P0 and P1 are both
+    # clear, carrying remaining P2s forward as documented debt rather than looping forever.
+    # Deliberately narrow: only the genuine "blocking findings remain" refusal qualifies -- not
+    # a partial/unknown round type, invalid JSONL, or invalid status lines, all of which also
+    # exit 1 from cmd_audit_converged but say nothing about severity and must not be silently
+    # bypassed by this flag. That refusal's message is the stable "not converged: " prefix
+    # (already relied upon verbatim elsewhere -- see write_handoff_internal's Open Code-Audit
+    # Findings section); anything else exiting 1 falls through to the unconditional die below.
+    local p2_debt_p0=0 p2_debt_p1=0 p2_debt_p2=0 p2_debt_accepted=0
+    if [[ $conv_ec -eq 1 && $accept_p2_debt -eq 1 && "$conv_out" == "not converged: "* ]]; then
+      local p2_debt_jsonl p2_debt_json
+      p2_debt_jsonl="$(initiative_dir_for "$prefix")/code-audit/findings-ledger.jsonl"
+      if p2_debt_json="$(_audit_ledger_breakdown "$p2_debt_jsonl" 2>/dev/null)"; then
+        p2_debt_p0="$(echo "$p2_debt_json" | jq -r '.p0')"
+        p2_debt_p1="$(echo "$p2_debt_json" | jq -r '.p1')"
+        p2_debt_p2="$(echo "$p2_debt_json" | jq -r '.p2')"
+        if [[ "$p2_debt_p0" -eq 0 && "$p2_debt_p1" -eq 0 && "$p2_debt_p2" -gt 0 ]]; then
+          conv_ec=0
+          p2_debt_accepted=1
+        fi
+      fi
+    fi
     if [[ $conv_ec -eq 3 && "$ag_schema_class2" != "2" ]]; then
       record_degraded_check "$prefix" "approve-gate:code-audit-ledger-shape" \
         "schema_version ${ag_schema_version:-absent} < 2 and no findings-ledger.jsonl"
       echo "edm-state approve-gate: [warn] no JSONL findings ledger and schema_version ${ag_schema_version:-absent} < 2 -- convergence not computable" >&2
+    elif [[ $accept_p2_debt -eq 1 && $p2_debt_accepted -eq 0 && $conv_ec -ne 0 ]]; then
+      # --accept-p2-debt was passed but did not apply (P0/P1 still open, or the refusal was for
+      # a non-severity reason such as a partial round) -- refuse with the real reason rather
+      # than silently falling through to a generic message that omits why the override failed.
+      die "code-audit gate refused for ${prefix} even with --accept-p2-debt (P0=${p2_debt_p0} P1=${p2_debt_p1} must both be 0, or the refusal is not a severity refusal): ${conv_out}"
     else
       [[ $conv_ec -eq 0 ]] || die "code-audit gate refused for ${prefix}: ${conv_out}"
     fi
@@ -2123,19 +2183,48 @@ cmd_approve_gate() {
     local ledger_field="absent"
     [[ -f "$(initiative_dir_for "$prefix")/code-audit/findings-ledger.jsonl" ]] \
       && ledger_field="$(initiative_dir_for "$prefix")/code-audit/findings-ledger.jsonl"
-    rmw_state "$prefix" '
-      .code_audit_converged = true
-      | .code_audit_gate_approved_at = $t
-      | .code_audit_gate_approver = $a
-      | .code_audit_gate_enforcement = $e
-      | .code_audit_gate_ledger = $l
-      | .last_updated = $t
-    ' --arg t "$(now_utc)" --arg a "$approver" --arg e "$(check_permission_rules)" --arg l "$ledger_field"
-    echo "approved code-audit gate for $prefix at $(now_utc)"
+    if [[ $p2_debt_accepted -eq 1 ]]; then
+      local p2_debt_round
+      p2_debt_round="$(echo "$state_json" | jq -r '.audit_rounds.code.count // 0')"
+      rmw_state "$prefix" '
+        .code_audit_converged = true
+        | .code_audit_gate_approved_at = $t
+        | .code_audit_gate_approver = $a
+        | .code_audit_gate_enforcement = $e
+        | .code_audit_gate_ledger = $l
+        | .code_audit_p2_debt_accepted = true
+        | .code_audit_p2_debt_count = ($p|tonumber)
+        | .code_audit_p2_debt_round = ($r|tonumber)
+        | .code_audit_p2_debt_accepted_at = $t
+        | .code_audit_p2_debt_accepted_by = $a
+        | .last_updated = $t
+      ' --arg t "$(now_utc)" --arg a "$approver" --arg e "$(check_permission_rules)" --arg l "$ledger_field" \
+        --arg p "$p2_debt_p2" --arg r "$p2_debt_round"
+      echo "approved code-audit gate for $prefix at $(now_utc) WITH ${p2_debt_p2} open P2 finding(s) accepted as debt (--accept-p2-debt)"
+    else
+      rmw_state "$prefix" '
+        .code_audit_converged = true
+        | .code_audit_gate_approved_at = $t
+        | .code_audit_gate_approver = $a
+        | .code_audit_gate_enforcement = $e
+        | .code_audit_gate_ledger = $l
+        | .last_updated = $t
+      ' --arg t "$(now_utc)" --arg a "$approver" --arg e "$(check_permission_rules)" --arg l "$ledger_field"
+      echo "approved code-audit gate for $prefix at $(now_utc)"
+    fi
     write_handoff_internal "$prefix"
     return 0
   fi
-  [[ "$gate" =~ ^[0-9]+$ ]] || die "approve-gate: gate-num must be numeric; got: $gate"
+  # G13/CA-391 (round 7): this used to accept any non-negative integer (^[0-9]+$), where
+  # exactly three numeric gates exist -- `approve-gate FOO 7` appended {gate: 7} and exited 0.
+  # Nothing downstream ever looked for gate 7, but CA-335's unique-then-length numerator (see
+  # write-handoff's gates_count, :5036) DOES count it, so a stray approval on a prototype
+  # initiative rendered "Gates approved: 2 of 1" and gained a permanent phantom row in the
+  # Gates list. cmd_phase_start (^[1-6]$, added by CA-157 for this exact reason) and
+  # cmd_skip_phase already validate a tight range; this brings approve-gate's numeric branch
+  # into line with its own siblings. 3.5 and code-audit are handled by the two branches above
+  # and never reach this line.
+  [[ "$gate" =~ ^[123]$ ]] || die "approve-gate: gate-num must be 1, 2, 3, 3.5, or code-audit; got: $gate"
   # `enforcement` on every gates_approved entry (EDMV3-T06 AC8/AC9) -- the numeric HITL
   # gates get the same honesty tag the dedicated-boolean gates above already carry.
   rmw_state "$prefix" \
@@ -2888,6 +2977,29 @@ ${open_partials_list}"
     # unknown/partial round) refuses.
     local ac_recheck_out ac_recheck_ec=0
     ac_recheck_out="$(cmd_audit_converged "$prefix" 2>&1)" || ac_recheck_ec=$?
+    # T-EDMV4 (accept-p2-debt): a prior `approve-gate ... code-audit --accept-p2-debt` records
+    # code_audit_converged=true while the ledger still honestly shows the accepted P2s as open --
+    # so the raw re-query above still reports "not converged" for a debt-accepted initiative.
+    # Honor the acceptance here instead of refusing on a debt the human already explicitly
+    # signed off on. Narrow and staleness-guarded: only when no full audit round has completed
+    # SINCE acceptance (audit_rounds.code.count unchanged) and P0/P1 independently re-verify at
+    # 0 right now -- a coarser proxy than per-finding-ID tracking, but it closes the actual gap
+    # this override exists to prevent: a later round surfacing findings the human accepting
+    # debt never saw.
+    if [[ "$ac_recheck_ec" -eq 1 && "$(read_bool "$state_json" "code_audit_p2_debt_accepted" "false")" == "true" ]]; then
+      local debt_round_at_accept debt_round_now debt_recheck_json debt_recheck_p0 debt_recheck_p1
+      debt_round_at_accept="$(echo "$state_json" | jq -r '.code_audit_p2_debt_round // -1')"
+      debt_round_now="$(echo "$state_json" | jq -r '.audit_rounds.code.count // 0')"
+      if [[ "$debt_round_at_accept" -eq "$debt_round_now" ]] \
+        && debt_recheck_json="$(_audit_ledger_breakdown "${src}/code-audit/findings-ledger.jsonl" 2>/dev/null)"; then
+        debt_recheck_p0="$(echo "$debt_recheck_json" | jq -r '.p0')"
+        debt_recheck_p1="$(echo "$debt_recheck_json" | jq -r '.p1')"
+        if [[ "$debt_recheck_p0" -eq 0 && "$debt_recheck_p1" -eq 0 ]]; then
+          echo "edm-state archive: [info] proceeding on accepted P2 debt for ${prefix} ($(echo "$state_json" | jq -r '.code_audit_p2_debt_count // 0') P2, round ${debt_round_now}, no new round since acceptance)" >&2
+          ac_recheck_ec=0
+        fi
+      fi
+    fi
     case "$ac_recheck_ec" in
       0) : ;;
       3)
@@ -2895,7 +3007,7 @@ ${open_partials_list}"
         record_degraded_check "$prefix" "archive:audit-converged-recheck" "no findings-ledger.jsonl (audit-converged exit 3)"
         ;;
       *)
-        die "archive refused: audit-converged re-query failed for ${prefix} (exit ${ac_recheck_ec}): ${ac_recheck_out}; resolve the audit-converged failure before archiving (remediate findings / rerun a full round, or repair the findings ledger data)"
+        die "archive refused: audit-converged re-query failed for ${prefix} (exit ${ac_recheck_ec}): ${ac_recheck_out}; resolve the audit-converged failure before archiving (remediate findings / rerun a full round, repair the findings ledger data, or run edm-state approve-gate ${prefix} code-audit --accept-p2-debt if only P2s remain and a new round ran since a prior acceptance)"
         ;;
     esac
   fi
@@ -4347,26 +4459,12 @@ cmd_audit_converged() {
     return 1
   fi
 
-  # AC1/AC2/AC9: the blocking-set computation. References the shared predicate constant by name
-  # (defined once above) -- the single definition every consumer (this command,
-  # cmd_approve_gate's code-audit branch, cmd_archive's convergence check, and
-  # write_handoff_internal's Phase-6 rendering) shares.
-  local jq_blocking_filter result_json
-  jq_blocking_filter='
-    def coerce_status: if .status == "deferred" then (.status = "open") else . end;
-    map(coerce_status) as $all
-    | ($all | map(select('"$BLOCKING_FILTER"'))) as $blocking
-    | {
-        total: ($all | length),
-        noted: ([$all[] | select(.sev == "NOTED")] | length),
-        blocking_count: ($blocking | length),
-        p0: ([$blocking[] | select(.sev == "P0")] | length),
-        p1: ([$blocking[] | select(.sev == "P1")] | length),
-        p2: ([$blocking[] | select(.sev == "P2")] | length),
-        blocking_list: ($blocking | map("\(.id) \(.sev) \(.title)"))
-      }
-  '
-  if ! result_json="$(jq -s "$jq_blocking_filter" "$jsonl_path" 2>/dev/null)"; then
+  # AC1/AC2/AC9: the blocking-set computation. Delegates to _audit_ledger_breakdown (defined
+  # above BLOCKING_FILTER) -- the single definition every consumer (this command,
+  # cmd_approve_gate's code-audit branch and its --accept-p2-debt override, cmd_archive's
+  # convergence check, and write_handoff_internal's Phase-6 rendering) shares.
+  local result_json
+  if ! result_json="$(_audit_ledger_breakdown "$jsonl_path" 2>/dev/null)"; then
     echo "edm-state audit-converged: invalid JSONL at ${jsonl_path}" >&2
     return 1
   fi
@@ -5056,11 +5154,27 @@ _write_handoff_body() {
   # required_gates_for_mode() already uses (cmd_gate_check, cmd_archive's AC1a), guarding
   # against a hand-edited invalid mode/lifecycle_mode (terminal_phase_for_mode's own `die`)
   # rather than letting a malformed state file abort the whole locked HANDOFF write.
-  local skipped_for_count required_gate_count
+  local skipped_for_count required_gate_count required_gates_output
   skipped_for_count="$(echo "$state" | jq -r '[(.skipped_phases // [])[].phase] | join(" ")')"
-  required_gate_count="$( (required_gates_for_mode "$mode" "$lifecycle_mode" "$skipped_for_count" \
-    | grep -c . ) 2>/dev/null || echo 3 )"
-  [[ "$required_gate_count" =~ ^[1-9][0-9]*$ ]] || required_gate_count=3
+  # G11/CA-389 (round 7): grep -c . cannot distinguish "the derivation legitimately returned
+  # zero gates" from "the derivation failed" -- on empty input it prints "0" AND exits 1, so
+  # the `|| echo 3` fallback below also fired and the captured value was the two-line string
+  # "0\n3", which fails the digit-only regex and lands on 3 regardless. fast-track and fix-pack
+  # skip phases 1, 2, 3 and 5 (skills/tickets/SKILL.md), so all three gated phases are
+  # legitimately skipped and zero IS the correct denominator for those two lifecycles. Capture
+  # the raw output once via plain command substitution -- which captures stdout regardless of
+  # the function's own exit status, sidestepping that question entirely -- and branch on
+  # emptiness explicitly instead of inferring it from a pipeline's exit code.
+  required_gates_output="$(required_gates_for_mode "$mode" "$lifecycle_mode" "$skipped_for_count" 2>/dev/null)"
+  if [[ -z "$required_gates_output" ]]; then
+    case "$lifecycle_mode" in
+      fast-track|fix-pack) required_gate_count=0 ;;
+      *) required_gate_count=3 ;;  # unexpected for any other lifecycle -- safe fallback, not a silent zero
+    esac
+  else
+    required_gate_count="$(printf '%s\n' "$required_gates_output" | grep -c .)"
+    [[ "$required_gate_count" =~ ^[1-9][0-9]*$ ]] || required_gate_count=3
+  fi
 
   # Migration prompt (EDMV3-T10 AC7): schema_version absent -- whether this initiative
   # predates the enforcement kernel or the field was removed by hand from a previously
@@ -5186,6 +5300,14 @@ _write_handoff_body() {
     ca_approver="$(echo "$state" | jq -r '.code_audit_gate_approver // "unknown"')"
     code_audit_gate_row="- Gate code-audit - approved ${ca_at} by ${ca_approver}"
     [[ -n "$ca_enforcement" ]] && code_audit_gate_row="${code_audit_gate_row} [enforcement: ${ca_enforcement}]"
+    # T-EDMV4 (accept-p2-debt): a teammate reading HANDOFF.md must see debt was knowingly
+    # carried forward, not silently missed -- the ledger itself still shows these P2s as open.
+    if [[ "$(read_bool "$state" "code_audit_p2_debt_accepted" "false")" == "true" ]]; then
+      local ca_debt_count ca_debt_round
+      ca_debt_count="$(echo "$state" | jq -r '.code_audit_p2_debt_count // 0')"
+      ca_debt_round="$(echo "$state" | jq -r '.code_audit_p2_debt_round // "unknown"')"
+      code_audit_gate_row="${code_audit_gate_row} [${ca_debt_count} P2 debt accepted, round ${ca_debt_round}]"
+    fi
   fi
 
   local gate_list=""
@@ -5199,6 +5321,19 @@ _write_handoff_body() {
     gate_list="${gate_list}${code_audit_gate_row}"
   fi
   [[ -n "$gate_list" ]] || gate_list="_(none yet)_"
+
+  # G12/CA-390 (round 7): gates_count (above, :5036) dedupes by .gate via `unique`; this list
+  # renders one row per approval EVENT with no dedup, so after a documented re-approval (the
+  # drift-detection path in cmd_checkpoint itself instructs re-approving the drifted gate) the
+  # "Gates approved: N of M" line reads a smaller N than the number of rows the list below it
+  # shows -- e.g. "2 of 3" above a three-row list after approving gate 1 twice. Keep the
+  # per-event list (the approval trail is useful evidence of a re-approval having happened) but
+  # make the mismatch self-explaining rather than silently confusing.
+  local gate_events_count
+  gate_events_count="$(echo "$state" | jq -r '(.gates_approved // []) | length')"
+  if [[ "$gate_events_count" -gt "$gates_count" ]]; then
+    gate_list="${gate_list}"$'\n\n'"_Note: ${gate_events_count} approval event(s) recorded above for ${gates_count} distinct gate(s) -- a gate re-approved after a drift warning appears once per event, not once per gate; \"Gates approved\" above counts distinct gates._"
+  fi
 
   # Artifact presence -- derive paths from the layout resolver (T44).
   local _init_dir

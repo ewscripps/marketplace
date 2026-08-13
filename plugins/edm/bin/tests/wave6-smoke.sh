@@ -638,6 +638,113 @@ mutation_hits="$(sed -n '/^cmd_approve_gate() {/,/^}/p' "$EDM_STATE" | grep -c '
   || fail "expected >=3 rmw_state call sites inside cmd_approve_gate, found $mutation_hits"
 
 # =================================================================================
+# G13/CA-391 (round 7): approve-gate's numeric branch used to accept any non-negative
+# integer (^[0-9]+$), where exactly three numeric gates exist -- `approve-gate FOO 7`
+# appended a phantom {gate: 7} entry and exited 0, and CA-335's unique-then-length
+# numerator (write-handoff's gates_count) counts it, inflating "Gates approved" past the
+# true denominator. Tightened to ^[123]$, matching cmd_phase_start's own ^[1-6]$ precedent
+# (CA-157). 3.5 and code-audit are separate branches, already covered above and by G1 below.
+# =================================================================================
+echo
+echo "G13/CA-391 -- approve-gate refuses an out-of-range gate-num and leaves state untouched"
+"$EDM_STATE" init T391RANGE >/dev/null
+STATE_T391RANGE="$TMP/SRD/T391RANGE/.edm-state.json"
+check_refuses_and_leaves_state "approve-gate refuses gate 7" "gate-num must be 1, 2, 3" \
+  "$STATE_T391RANGE" "$EDM_STATE" approve-gate T391RANGE 7
+check_refuses_and_leaves_state "approve-gate refuses gate 0" "gate-num must be 1, 2, 3" \
+  "$STATE_T391RANGE" "$EDM_STATE" approve-gate T391RANGE 0
+
+# =================================================================================
+# T-EDMV4 (accept-p2-debt): give the human the option to converge once P0 and P1 are both
+# clear, carrying remaining P2s forward as documented debt instead of looping on P2s forever.
+# =================================================================================
+echo
+echo "T-EDMV4 -- approve-gate code-audit --accept-p2-debt still refuses while an open P1 remains"
+"$EDM_STATE" init PDEBT1 >/dev/null
+mkdir -p "$TMP/SRD/PDEBT1/code-audit"
+cat > "$TMP/SRD/PDEBT1/code-audit/findings-ledger.jsonl" <<'EOF'
+{"id":"CA-D01","status":"open","sev":"P1","title":"still open p1"}
+{"id":"CA-D02","status":"open","sev":"P2","title":"open p2 one"}
+EOF
+"$EDM_STATE" audit-round-start PDEBT1 code >/dev/null
+"$EDM_STATE" audit-round-complete PDEBT1 code >/dev/null
+STATE_PDEBT1="$TMP/SRD/PDEBT1/.edm-state.json"
+check_refuses_and_leaves_state "accept-p2-debt still refuses with an open P1" \
+  "code-audit gate refused" "$STATE_PDEBT1" \
+  "$EDM_STATE" approve-gate PDEBT1 code-audit --accept-p2-debt
+
+echo
+echo "T-EDMV4 -- approve-gate code-audit --accept-p2-debt converges when only P2s remain, records debt fields"
+"$EDM_STATE" init PDEBT2 >/dev/null
+mkdir -p "$TMP/SRD/PDEBT2/code-audit"
+cat > "$TMP/SRD/PDEBT2/code-audit/findings-ledger.jsonl" <<'EOF'
+{"id":"CA-D10","status":"open","sev":"P2","title":"open p2 one"}
+{"id":"CA-D11","status":"open","sev":"P2","title":"open p2 two"}
+{"id":"CA-D12","status":"fixed","sev":"P1","title":"fixed p1"}
+EOF
+"$EDM_STATE" audit-round-start PDEBT2 code >/dev/null
+"$EDM_STATE" audit-round-complete PDEBT2 code >/dev/null
+STATE_PDEBT2="$TMP/SRD/PDEBT2/.edm-state.json"
+pdebt2_out="$("$EDM_STATE" approve-gate PDEBT2 code-audit --accept-p2-debt)"
+check "accept-p2-debt success message names the accepted P2 count" \
+  "WITH 2 open P2 finding(s) accepted as debt" "$pdebt2_out"
+pdebt2_converged="$(jq -r '.code_audit_converged' "$STATE_PDEBT2")"
+[[ "$pdebt2_converged" == "true" ]] && pass "accept-p2-debt sets code_audit_converged=true" \
+  || fail "accept-p2-debt left code_audit_converged=$pdebt2_converged"
+pdebt2_debt_flag="$(jq -r '.code_audit_p2_debt_accepted' "$STATE_PDEBT2")"
+[[ "$pdebt2_debt_flag" == "true" ]] && pass "accept-p2-debt records code_audit_p2_debt_accepted=true" \
+  || fail "code_audit_p2_debt_accepted=$pdebt2_debt_flag, expected true"
+pdebt2_debt_count="$(jq -r '.code_audit_p2_debt_count' "$STATE_PDEBT2")"
+[[ "$pdebt2_debt_count" -eq 2 ]] && pass "accept-p2-debt records code_audit_p2_debt_count=2" \
+  || fail "code_audit_p2_debt_count=$pdebt2_debt_count, expected 2"
+
+echo
+echo "T-EDMV4 -- HANDOFF's code-audit gate row surfaces the accepted P2 debt"
+pdebt2_handoff="$(cat "$TMP/SRD/PDEBT2/HANDOFF.md")"
+check "HANDOFF names the accepted P2 debt count and round on the code-audit gate row" \
+  "2 P2 debt accepted, round 1" "$pdebt2_handoff"
+
+echo
+echo "T-EDMV4 -- archive succeeds immediately after accept-p2-debt (no new round since acceptance)"
+jq '.current_phase = 6 | .phase_durations["6_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
+  "$STATE_PDEBT2" > "${STATE_PDEBT2}.tmp" && mv "${STATE_PDEBT2}.tmp" "$STATE_PDEBT2"
+"$EDM_STATE" set PDEBT2 product_name testprod >/dev/null
+"$EDM_STATE" approve-gate PDEBT2 1 >/dev/null
+"$EDM_STATE" approve-gate PDEBT2 2 >/dev/null
+"$EDM_STATE" approve-gate PDEBT2 3 >/dev/null
+"$EDM_STATE" archive PDEBT2 >/dev/null \
+  && pass "archive succeeds right after accept-p2-debt with no new round" \
+  || fail "archive refused despite accepted P2 debt and no new round"
+
+echo
+echo "T-EDMV4 -- archive refuses again once a NEW full round completes after acceptance (stale debt)"
+"$EDM_STATE" init PDEBT3 >/dev/null
+mkdir -p "$TMP/SRD/PDEBT3/code-audit"
+cat > "$TMP/SRD/PDEBT3/code-audit/findings-ledger.jsonl" <<'EOF'
+{"id":"CA-D20","status":"open","sev":"P2","title":"open p2"}
+EOF
+"$EDM_STATE" audit-round-start PDEBT3 code >/dev/null
+"$EDM_STATE" audit-round-complete PDEBT3 code >/dev/null
+"$EDM_STATE" approve-gate PDEBT3 code-audit --accept-p2-debt >/dev/null
+"$EDM_STATE" set PDEBT3 product_name testprod >/dev/null
+"$EDM_STATE" approve-gate PDEBT3 1 >/dev/null
+"$EDM_STATE" approve-gate PDEBT3 2 >/dev/null
+"$EDM_STATE" approve-gate PDEBT3 3 >/dev/null
+STATE_PDEBT3="$TMP/SRD/PDEBT3/.edm-state.json"
+jq '.current_phase = 6 | .phase_durations["6_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
+  "$STATE_PDEBT3" > "${STATE_PDEBT3}.tmp" && mv "${STATE_PDEBT3}.tmp" "$STATE_PDEBT3"
+# A new full round runs after debt acceptance -- the round counter advances even though the
+# same P2 is still the only open finding, which is enough to make the acceptance stale.
+"$EDM_STATE" audit-round-start PDEBT3 code >/dev/null
+"$EDM_STATE" audit-round-complete PDEBT3 code >/dev/null
+pdebt3_archive_ec=0
+pdebt3_archive_out="$("$EDM_STATE" archive PDEBT3 2>&1)" || pdebt3_archive_ec=$?
+[[ $pdebt3_archive_ec -ne 0 ]] && pass "archive refuses stale P2 debt after a new round completed since acceptance" \
+  || fail "archive succeeded despite a new round completing since debt acceptance (staleness guard did not fire)"
+check "archive staleness refusal points back at accept-p2-debt for re-acceptance" \
+  "accept-p2-debt" "$pdebt3_archive_out"
+
+# =================================================================================
 # G1 (round-3 Wave 7b, CA-182 REOPENED): the code-audit gate is unconditionally approvable at
 # schema_version < 2. Previously the convergence precheck ran ONLY when schema_version >= 2 --
 # `_cmd_init_render` always writes the literal schema_version: 1, so for EVERY initiative
@@ -1540,7 +1647,7 @@ check_fails "AC5 -- cmd_set still refuses schema_version, naming migrate-schema"
   "$EDM_STATE" set MIGSCH2 schema_version 9
 migsch_help_out="$("$EDM_STATE" --help)"
 check "AC9 -- --help lists migrate-schema" "migrate-schema" "$migsch_help_out"
-claude_md_hits="$(grep -c 'migrate-schema' "${SCRIPT_DIR}/../../CLAUDE.md" 2>/dev/null || echo 0)"
+claude_md_hits="$(count_matches 'migrate-schema' "${SCRIPT_DIR}/../../CLAUDE.md")"
 [[ "${claude_md_hits:-0}" -ge 1 ]] && pass "AC9 -- CLAUDE.md bin/ table lists migrate-schema" \
   || fail "AC9 -- migrate-schema not found in plugins/edm/CLAUDE.md"
 
