@@ -1001,8 +1001,17 @@ g24_ci_exclusion_count="$(printf '%s\n' "$g24_ci_content" | grep -c '\*\.awk|\*\
 [[ "${g24_ci_exclusion_count:-0}" -eq 2 ]] \
   && pass "G24/CA-233 -- .gitlab-ci.yml's lint:bash-syntax and lint:shellcheck both exclude *.awk and *.txt identically" \
   || fail "G24/CA-233 -- expected exactly 2 identical '*.awk|*.txt) continue ;;' lines in .gitlab-ci.yml (lint:bash-syntax + lint:shellcheck), found ${g24_ci_exclusion_count:-0} -- the two jobs' exclusion sets have diverged"
+# CA-386 (round 7): the haystack used to be the WHOLE of this file (cat'ing wave7-smoke.sh
+# against itself), and the needle below also appears verbatim on this assertion's own source
+# line just above -- making the check self-satisfying: the T61 AC10 twin loop's exclusion could
+# be deleted entirely and this would stay green, matched only by its own line. Scoped instead to
+# an awk range over just the twin loop's block (":979-986" above, extracted by content -- "for
+# t61_f in " to the loop's own "done" -- not a hardcoded line range that would drift), which ends
+# well before this assertion's own line and therefore cannot self-match.
+g24_t61ac10_loop_block="$(awk '/^for t61_f in /{f=1} f{print} f && /^done$/{exit}' \
+  "${PLUGIN_DIR}/bin/tests/wave7-smoke.sh" 2>/dev/null)"
 check "G24/CA-233 -- this suite's own T61 AC10 twin uses the identical exclusion set" \
-  '*.awk|*.txt) continue ;;' "$(cat "${PLUGIN_DIR}/bin/tests/wave7-smoke.sh" 2>/dev/null)"
+  '*.awk|*.txt) continue ;;' "$g24_t61ac10_loop_block"
 
 echo
 echo "T61 AC11 -- macOS/Linux divergence points (sed -i, grep -P family, stat -c/-f, mktemp template suffix, bare mktemp -d, date -d, readlink -f, sort -V, head -n -N, printf %q) are all inside a detection branch"
