@@ -1196,9 +1196,17 @@ t66ac3_claude_count="$({ grep -oE '[0-9]+ subcommands' "$CLAUDE_MD_T66" || true;
 [[ "$t66ac3_dispatch_count" == "$t66ac3_claude_count" ]] \
   && pass "T66 AC3 -- CLAUDE.md's documented subcommand count ($t66ac3_claude_count) matches the dispatch table ($t66ac3_dispatch_count)" \
   || fail "T66 AC3 -- CLAUDE.md says $t66ac3_claude_count subcommands, dispatch table has $t66ac3_dispatch_count"
+# CA-387 (round 7): the membership loop used to grep the WHOLE ~700-line CLAUDE.md, so it passed
+# on all four names occurring anywhere in the file (migrate-schema in the schema_version contract
+# prose, audit-round-complete in Cost tracking and the state-field table, render-ledger in the
+# decisions.md-vs-findings-ledger.md note, audit-converged in the audit_rounds row) rather than
+# specifically inside the "## bin/ helper scripts" table this AC claims to check. Reuses the same
+# awk range extraction the row-count case just below already scopes to that heading (by content,
+# not a line number), so the haystack here is the table itself, not the whole file.
+t66ac3_bin_table="$(awk '/^## `bin\/` helper scripts/{f=1; next} f && /^##/{exit} f' "$CLAUDE_MD_T66")"
 t66ac3_missing=""
 for t66_c in audit-converged render-ledger audit-round-complete migrate-schema; do
-  grep -q -- "$t66_c" "$CLAUDE_MD_T66" || t66ac3_missing="${t66ac3_missing} ${t66_c}"
+  printf '%s\n' "$t66ac3_bin_table" | grep -q -- "$t66_c" || t66ac3_missing="${t66ac3_missing} ${t66_c}"
 done
 [[ -z "$t66ac3_missing" ]] \
   && pass "T66 AC3 -- CLAUDE.md's bin/ table names all four wave-B/C subcommands" \
