@@ -1798,9 +1798,18 @@ bash "$CHECK_VOCAB" --bogus >/dev/null 2>&1 || t30_bogus_status=$?
 
 echo
 echo "T30 AC3 -- prohibited-token list is data (>= 7 non-blank lines), not an inline list in the script"
-t30_prohibited_count="$(grep -c . "$VOCAB_PROHIBITED" 2>/dev/null || echo 0)"
-[[ "$t30_prohibited_count" -ge 7 ]] && pass "T30 AC3 -- vocabulary-prohibited.txt has >= 7 non-blank lines ($t30_prohibited_count)" \
-  || fail "T30 AC3 -- vocabulary-prohibited.txt has only $t30_prohibited_count non-blank lines"
+t30_prohibited_status=0
+t30_prohibited_count="$(count_matches_strict . "$VOCAB_PROHIBITED")" || t30_prohibited_status=$?
+# G14/CA-392 (round 7): a bare `grep -c . FILE 2>/dev/null || echo 0` prints "0" AND exits 1
+# on a genuine zero-match file, so the `|| echo 0` fallback also fires and the captured value
+# is the two-line string "0\n0" -- under set -euo pipefail this is a bash arithmetic syntax
+# error, not a named FAIL, crashing the suite instead of failing one assertion the way
+# count_matches exists to guarantee. count_matches_strict additionally distinguishes a
+# missing/unreadable VOCAB_PROHIBITED (status 2) from a genuinely empty one (status 0, count
+# 0), so a renamed vocabulary file fails loudly here instead of silently reading as "0 terms".
+[[ "$t30_prohibited_status" -eq 0 && "$t30_prohibited_count" -ge 7 ]] \
+  && pass "T30 AC3 -- vocabulary-prohibited.txt has >= 7 non-blank lines ($t30_prohibited_count)" \
+  || fail "T30 AC3 -- vocabulary-prohibited.txt has only $t30_prohibited_count non-blank lines (count_matches_strict status $t30_prohibited_status)"
 check_absent "T30 AC3 -- edm-check-vocabulary has no literal abolished-word token" "defer" \
   "$(tr '[:upper:]' '[:lower:]' < "$CHECK_VOCAB")"
 check "T30 AC3 -- word: mode present" "word:defer" "$(cat "$VOCAB_PROHIBITED")"
@@ -2967,7 +2976,7 @@ done
 
 echo
 echo "T36 AC6 -- UserPromptExpansion hooks retained unchanged"
-t36_hooks_hits="$(grep -c 'UserPromptExpansion' "${PLUGIN_DIR}/hooks/hooks.json" 2>/dev/null || echo 0)"
+t36_hooks_hits="$(count_matches 'UserPromptExpansion' "${PLUGIN_DIR}/hooks/hooks.json")"
 [[ "${t36_hooks_hits:-0}" -gt 0 ]] && pass "T36 AC6 -- hooks.json still declares UserPromptExpansion hooks" \
   || fail "T36 AC6 -- hooks.json no longer declares UserPromptExpansion hooks"
 
@@ -4303,8 +4312,13 @@ echo "=== G25/CA-342: _edm-lint-lib.sh's ignored_line_set external-caller count 
 # computed per-file count so the two clauses cannot silently diverge again.
 g25_ils_callers=0
 for g25_ils_file in "${PLUGIN_DIR}/bin/edm-check-grants" "${PLUGIN_DIR}/bin/edm-check-vocabulary" "${PLUGIN_DIR}/bin/edm-state"; do
-  g25_ils_hit="$(grep -c 'ignored_line_set "' "$g25_ils_file" 2>/dev/null || echo 0)"
-  [[ "${g25_ils_hit:-0}" -ge 1 ]] && g25_ils_callers=$((g25_ils_callers + 1))
+  # G14/CA-392: count_matches_strict over a bare grep -c -- a missing/renamed file among the
+  # three named here (status 2) must not silently count as "0 hits, not a caller" the way a
+  # bare `grep -c ... || echo 0` would; only a genuine zero-match (status 0) is "not a caller".
+  g25_ils_status=0
+  g25_ils_hit="$(count_matches_strict 'ignored_line_set "' "$g25_ils_file")" || g25_ils_status=$?
+  [[ "$g25_ils_status" -eq 2 ]] && fail "G25/CA-342 -- ${g25_ils_file} missing or unreadable"
+  [[ "$g25_ils_status" -eq 0 && "${g25_ils_hit:-0}" -ge 1 ]] && g25_ils_callers=$((g25_ils_callers + 1))
 done
 [[ "$g25_ils_callers" -eq 3 ]] \
   && pass "G25/CA-342 -- ignored_line_set has exactly 3 external caller files (edm-check-grants, edm-check-vocabulary, edm-state)" \
