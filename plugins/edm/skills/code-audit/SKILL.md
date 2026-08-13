@@ -105,6 +105,19 @@ using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
     fence precisely so a lens producing the wrong shape can be corrected by re-sending the same
     unabridged prompt, not by hand-patching its output. Only proceed to step 9 once every
     `lens-L{N}.jsonl` file passes this content check.
+8b. **Record tooling degradation, if any (CA-388)**. If a lens agent stalled and had to be
+    resumed before it produced usable output, or its final report ships an explicit
+    scope-truncation caveat (e.g. "covered only ~30% of X" or "skipped Y entirely"), record it in
+    `${OUTPUT_DIR}/tooling-notes.md`: one line per affected lens naming the lens ID, its stall
+    count for this round, and a one-sentence quote or paraphrase of any truncation caveat it
+    shipped. Write the file only when there is something to record -- a round where every lens
+    produced clean output on the first attempt writes nothing. `lenses-run.txt` stays exactly what
+    it is today (the lens set and round type, consumed structurally by the synthesizer and by
+    `wave7-smoke.sh`'s T24 AC0); this is a separate, additive file so degraded delivery is
+    measurable round over round rather than lost the moment the round's own transcript scrolls
+    away. Stabilizing lens-agent delivery itself is out of scope here -- that fix is owned outside
+    this repository (findings-ledger.jsonl CA-130, status `noted`) -- this step only makes the
+    degradation countable.
 9. **Spawn `edm-audit-synthesizer`**. It:
    - Reads the lens reports in `${OUTPUT_DIR}/`
    - Reads the prior `findings-ledger.jsonl` (or the legacy `findings-ledger.md` if only that exists)
