@@ -1,6 +1,6 @@
 ---
 name: weekly-playbook-analysis
-description: Run weekly playbook analysis for Ada-Tablo. Pulls per-playbook metrics and failure patterns via Ada MCP, compares to baselines, deploys edits via propose_change.
+description: Run weekly playbook analysis for Ada-Tablo. Pulls per-playbook metrics and failure patterns via Ada MCP, compares to baselines, deploys edits via edit_agent_behavior changesets gated by config-health and a test run.
 user-invocable: true
 allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/scripts/analyze_playbook_failures.py *), Bash(mkdir *), Bash(cp *), Bash(ls *), Read, Grep, Glob, AskUserQuestion, Skill
 ---
@@ -18,6 +18,11 @@ skill: "preflight"
 ```
 
 After preflight completes, all subsequent steps operate in `~/repos/ada-tablo-ops`.
+
+If this is the first `edit_agent_behavior` or `edit_agent_config` call of the session, call
+`get_improvement_guide()` once before proposing or applying any edit — its output stays in
+context for the rest of the session, so do not re-call it. Call `get_available_filters()`
+once before the first `get_ada_metric`/`get_conversations` call if filter names are unfamiliar.
 
 ## Step 0: Determine Date Range
 
@@ -49,7 +54,8 @@ After preflight completes, all subsequent steps operate in `~/repos/ada-tablo-op
 
 ## Step 1: Select Playbooks
 
-Pull the live playbook list — do NOT rely on a hardcoded table (the instance now has 6 active playbooks, and new ones go live without skill updates):
+Pull the live playbook list — do NOT rely on a hardcoded table (playbook count and IDs change
+across cutovers; new ones go live without skill updates):
 
 ```
 get_ada_configuration()
@@ -61,7 +67,7 @@ Present the **active** playbooks from the response and ask the user which to ana
 
 **Note:** First Time Setup has chat and voice variants — the weekly standard is the chat variant. Choose the voice variant only if analyzing the voice channel specifically.
 
-Record each selected playbook's **ID** from the configuration response — the `PLAYBOOKID` filters in Steps 2-3 take IDs, not names.
+Record each selected playbook's **ID** from the configuration response — the `PLAYBOOKID` filters in Steps 2-3 take IDs, not names. Playbook names may carry a version prefix (e.g. `V2 …`) that changes across a cutover — always use the live ID, never a name string, as the join key.
 
 Proceed with the selected playbooks for all remaining steps.
 
@@ -80,7 +86,18 @@ MCP is the default data path — both `get_ada_metric` and `get_conversations` s
    )
    ```
 
-2. **Escalation %** — two volume calls, then divide:
+2. **Escalation %** — prefer the native metric, scoped by playbook:
+   ```
+   get_ada_metric(
+     metric_type="containment_rate",
+     start_date="[from Step 0]", end_date="[from Step 0]",
+     filters=[{"type": "PLAYBOOKID", "operator": "IS", "value": ["<playbook_id>"]}]
+   )
+   ```
+   Escalation % = 100% − containment_rate.
+
+   Fall back to the two-call derivation only if `containment_rate` rejects the `PLAYBOOKID`
+   filter or its definition doesn't match what you need for a specific playbook:
    - Playbook volume: `get_ada_metric(metric_type="conversation_volume_engaged", start_date="[from Step 0]", end_date="[from Step 0]", filters=[{"type": "PLAYBOOKID", "operator": "IS", "value": ["<playbook_id>"]}])`
    - Escalated volume: same call (same dates) with `{"type": "HANDOFF", "operator": "IS", "value": true}` added to the filters
    - Escalation % = escalated volume ÷ playbook volume
@@ -119,9 +136,9 @@ Extract and note:
 
 ## Step 5: Fallback — CSV Export + Analysis Script
 
-Use this path only if MCP is unavailable, the sample is too large for summaries, or a baseline reconciliation run is needed.
+Use this path only if MCP is unavailable or the sample is too large for summaries.
 
-**Baseline caveat:** The Feb 4 baselines were computed by `analyze_playbook_failures.py` from CSV rows. MCP-derived numbers may not be definitionally identical (e.g., abandonment is not a native MCP filter). A parallel run of both paths on the same week is pending to reconcile baselines — keep this CSV path documented until that reconciliation is done.
+**Baseline caveat:** Older baselines were computed by `analyze_playbook_failures.py` from CSV rows. MCP-derived numbers may not be definitionally identical (e.g., abandonment is not a native MCP filter) — treat cross-path comparisons as approximate.
 
 **Export from Ada UI** for each selected playbook:
 
@@ -156,25 +173,27 @@ The script accepts any number of CSV paths and outputs pattern distribution tabl
 
 ## Step 6: Present Results with Baseline Comparison
 
-Format output as comparison table for each analyzed playbook:
+Read the **Baselines** section of `playbook_baselines.md` for the current-generation numbers
+per playbook ID — do NOT hardcode baseline values in this skill, they go stale across
+cutovers (the Feb 4 2025 / pre-cutover numbers in older reference history are historical only
+and not comparable to a post-cutover playbook — a version prefix change in the playbook name,
+e.g. `V2 …`, is a strong signal the underlying baseline was reset). Format output as a
+comparison table for each analyzed playbook:
 
-| Metric | Baseline (Feb 4) | This Week | Change |
-|--------|------------------|-----------|--------|
-| **Connectivity** |
-| Resolution Rate | 13.6% | [X]% | [+/-Y]% |
-| Abandonment (% of NR) | 31.4% | [X]% | [+/-Y]% |
-| Escalated to Human | 27.9% | [X]% | [+/-Y]% |
-| Issue Not Resolved | 37.9% | [X]% | [+/-Y]% |
-| **Setup** |
-| Resolution Rate | 9.5% | [X]% | [+/-Y]% |
-| Abandonment (% of NR) | 36.8% | [X]% | [+/-Y]% |
-| Escalated to Human | 25.8% | [X]% | [+/-Y]% |
-| App Not Found | 6.0% | [X]% | [+/-Y]% |
-| Issue Not Resolved | 51.1% | [X]% | [+/-Y]% |
+| Metric | Baseline | This Week | Change |
+|--------|----------|-----------|--------|
+| Resolution Rate | [from ref] | [X]% | [+/-Y]% |
+| Escalated to Human | [from ref] | [X]% | [+/-Y]% |
+| Issue Not Resolved | [from ref] | [X]% | [+/-Y]% |
+| Abandonment (% of NR) | [from ref] | [X]% | [+/-Y]% |
 
-For non-standard playbooks, present the metrics without baseline comparison and note this is a first run.
+For playbooks with no baseline yet (first run after a cutover, or a brand-new playbook),
+present the metrics without comparison, label it **"First run — establishing baseline,"** and
+write this week's numbers into `playbook_baselines.md` as the new baseline row in Step 10.
 
-**Note:** Baselines are CSV-derived. When using the MCP path (Steps 2-3), treat derived-metric comparisons (Abandonment, App Not Found) as approximate until the parallel-run reconciliation is complete; resolution rate and escalation % compare directly.
+**Note:** Older CSV-derived baselines and MCP-derived numbers may not be definitionally
+identical (e.g., abandonment is not a native MCP filter) — treat derived-metric comparisons
+across that boundary as approximate; resolution rate and escalation % compare directly.
 
 Flag any metrics that crossed red flag thresholds.
 
@@ -198,9 +217,17 @@ Format each recommendation using the established format:
 
 Limit to top 3 recommendations unless more are critical.
 
-## Step 9: Deploy Approved Edits via propose_change
+## Step 9: Deploy Approved Edits via edit_agent_behavior
 
-Playbook edits are applied directly via MCP (`propose_change` supports the `playbook` entity — verified 2026-07-08). Do NOT deliver paste-into-UI edit instructions.
+Playbook edits are applied directly via MCP through `edit_agent_behavior`'s changeset model
+(the old `propose_change` tool no longer exists on the live server). Do NOT deliver
+paste-into-UI edit instructions.
+
+**9a. Gate: config-health check.** Before staging any edit, run (or invoke)
+`/ada-tablo:config-health` scoped to the playbook(s) being changed. If it reports any P0
+(orphan read, unbound action output, or dangling reference) on a playbook you are about to
+touch, surface it to the user and resolve it — as its own change or folded into this one —
+before proceeding. Do not stage an edit on top of a known P0.
 
 For each approved recommendation:
 
@@ -210,18 +237,90 @@ For each approved recommendation:
    ```
    Never propose edits from notes/ or workspace/ copies — they drift from the live instance.
 
-2. **Discover the update schema** — call without fields:
+2. **Discover the editable fields** — call without `changes`:
    ```
-   propose_change(entity_type="playbook", operation="update")
+   edit_agent_behavior(operation="describe_entity", entity_type="playbook")
    ```
+   Pass `change_type="modified"` (the update-time schema — every field optional) since this
+   is always an edit to an existing playbook, never a new one.
 
-3. **Propose with fields** to stage the change and get a preview.
+3. **Stage the edit on a changeset:**
+   ```
+   edit_agent_behavior(
+     operation="update",
+     entity_type="playbook",
+     changeset_id="<existing id, or omit to auto-create>",
+     name="<short generic label if creating a new changeset, e.g. 'Weekly playbook fixes YYYY-MM-DD'>",
+     changes=[{
+       "entity_type": "playbook",
+       "change_type": "modified",
+       "entity_id": "<playbook_id>",
+       "fields": { ... }
+     }]
+   )
+   ```
+   This lands the edit on a TESTING changeset — nothing is live yet. Multiple approved
+   recommendations for the same run can share one changeset (repeat step 3 with the same
+   `changeset_id`).
 
-4. **Present the preview to the user** with Confirm/Cancel options (use AskUserQuestion).
+4. **Verify the staged diff before testing or promoting:**
+   ```
+   list_agent_changesets(changeset_id="<id>", include_diff=true)
+   ```
+   Confirm `diff.changed` shows exactly the intended field(s) changed and nothing else.
 
-5. **Only after explicit user confirmation**, re-call with `confirmed=true`. Never confirm on the user's behalf.
+5. **Gate: test run.** Before promoting, run the relevant test cases against this changeset —
+   see Step 9b below. Do not promote on a regression.
 
-**First-edit safety:** until write fidelity is validated, use `strategy="duplicate"` with `set_active=false` — this creates an inactive copy carrying the edit so the round-trip can be inspected in the Ada UI before trusting `strategy="existing"` on the live playbook.
+6. **Present the preview to the user** with Confirm/Cancel options (use AskUserQuestion) —
+   include the verified diff and the test-run result.
+
+7. **Only after explicit user confirmation**, promote:
+   ```
+   edit_agent_behavior(operation="promote", changeset_id="<id>", confirmed=true)
+   ```
+   If the first (unconfirmed) preview call returned a `warnings_token`, echo that same token
+   back on the `confirmed=true` call — otherwise the tool re-issues the preview. Never confirm
+   on the user's behalf.
+
+If the user wants to walk back an edit before promoting, use
+`edit_agent_behavior(operation="remove", changeset_id="<id>", entity_id="<entity_id>")`; to
+discard the whole changeset before it's live, use `operation="delete"` (same confirm flow as
+promote). A changeset already promoted can be walked back with `operation="revert"`.
+
+### Step 9b: Test-Run Gate
+
+Run this before every promote — do not promote on the strength of the preview diff alone.
+
+1. `get_test_run_quota()` — confirm headroom for the day before creating runs.
+2. Identify the test cases relevant to the changed playbook(s) via `get_test_cases()`.
+3. Create a test run pinned to the changeset so it exercises the staged (not yet live)
+   config:
+   ```
+   edit_agent_config(
+     entity_type="test_run",
+     operation="create",
+     fields={"test_case_ids": ["<id>", ...], "changeset_id": "<id>"}
+   )
+   ```
+   (Call without `fields` first if the exact field names need confirming — this tool
+   discovers schemas the same way as `edit_agent_behavior`.)
+4. Poll `get_test_runs(test_run_id="<id>")` until `status` is `completed` (or `failed`/
+   `timeout`/`cancelled` — treat any of those as a blocked promote, investigate before
+   retrying).
+5. **Read the criteria results and, for anything unexpected, the transcript — not just the
+   pass/fail verdict.** The grader has produced misleading verdicts on this suite before
+   (e.g. penalizing a correct handoff offer as a false failure). A `did_pass: false` on a
+   criterion unrelated to the change under test is not necessarily a regression; a
+   `did_pass: true` is not proof the change works if the criteria don't actually probe it.
+6. Block promotion on any real regression relative to the pre-edit baseline for that test
+   case. Surface the pass/fail delta (not just raw counts) to the user in the Step 9-6
+   preview.
+
+**Standing caveat:** Ada Simulations always execute Actions live against production —
+only Handoffs are mocked. There is no toggle to mock action calls; a field like
+`use_real_web_actions` on a test case is inert. Treat every test run as touching real
+downstream systems.
 
 After deploying, update the Changes Deployed tracking table.
 
@@ -266,12 +365,15 @@ Budget guidance: Allow 50-100 conversations via summaries, limit full transcript
 - Compare metrics week-over-week
 - Pull full transcripts only for edge cases (max 3-5)
 - Pull the live playbook body via `list_entities` before proposing any edit
-- Get explicit user confirmation before calling `propose_change` with `confirmed=true`
+- Run `/ada-tablo:config-health` on any playbook you're about to edit, before staging the edit
+- Run a test-run gate (Step 9b) on the changeset before promoting
+- Read test-run transcripts for anything unexpected, not just the pass/fail verdict
+- Get explicit user confirmation before calling `edit_agent_behavior` with `confirmed=true`
 
 **DON'T:**
-- Call `propose_change` with `confirmed=true` without the user's explicit sign-off
-- Use `strategy="existing"` for playbook edits until duplicate-mode write fidelity is validated
-- Retire the CSV fallback path before baselines are reconciled with a parallel run
+- Call `edit_agent_behavior` promote/revert/delete with `confirmed=true` without the user's explicit sign-off
+- Stage a playbook edit when config-health has an open P0 on that playbook
+- Promote a changeset without running its test-run gate
 - Analyze more than 100-150 conversations at once (diminishing returns)
 - Pull full transcripts for pattern discovery (use summaries or CSV reasons)
 - Expect immediate results — allow 7 days for changes to take effect

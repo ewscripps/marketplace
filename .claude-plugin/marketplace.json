@@ -84,12 +84,13 @@
         {
             "name": "ada-tablo",
             "source": "./plugins/ada-tablo",
-            "description": "Ada chatbot analysis skills for Tablo support — playbook review, topics review, coaching inventory.",
-            "version": "1.2.0",
+            "description": "Ada chatbot analysis skills for Tablo support — playbook review, topics review, coaching inventory, and config-health integrity checks.",
+            "version": "2.0.0",
             "skills": [
                 "./skills/weekly-playbook-analysis",
                 "./skills/weekly-topics-review",
-                "./skills/coaching-review"
+                "./skills/coaching-review",
+                "./skills/config-health"
             ]
         },
         {
