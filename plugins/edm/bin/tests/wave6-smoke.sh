@@ -200,7 +200,12 @@ done
 echo
 echo "T07 AC2 -- required gates per mode"
 gates_out="$(call_edm_helper required_gates_for_mode standard standard "" | tr '\n' ' ')"
-check "required_gates_for_mode(standard, standard, none-skipped) = all 3 gates" "1 2 3" "$gates_out"
+# CA-458: exact equality, not check()'s substring containment -- the two sibling cases below
+# cite this line as the already-correct model, but it was itself still a substring match (an
+# erroneous "1 2 3 4 " would have contained "1 2 3" and passed).
+[[ "$gates_out" == "1 2 3 " ]] \
+  && pass "required_gates_for_mode(standard, standard, none-skipped) = exactly gates 1 2 3" \
+  || fail "required_gates_for_mode(standard, standard, none-skipped) = '${gates_out}', expected exactly '1 2 3 '"
 
 # G47/CA-312 (round 6): this was the sibling CA-312 missed -- check() is a substring match, and
 # these two assertions only proved gate 3 PRESENT ("3" matches "3 " or "2 3 ") and gate 1 ABSENT;

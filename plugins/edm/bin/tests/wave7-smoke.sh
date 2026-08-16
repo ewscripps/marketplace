@@ -298,6 +298,8 @@ readme_content="$(cat "$README_MD" 2>/dev/null || true)"
 check "README install path present" "./plugins/edm" "$readme_content"
 check_absent "README stale path absent" "edm-ai-development" "$readme_content"
 # EDMV3-T04 end
+
+# =================================================================================
 # EDMV3-T03: bin/edm-check-grants -- four-source grant/instruction contract checker
 # =================================================================================
 EDM_CHECK_GRANTS="${SCRIPT_DIR}/../edm-check-grants"
@@ -1294,10 +1296,17 @@ with_scratch_repo _t66ac2_fresh_schema_case
 echo
 echo "T66 AC3 -- subcommand count and membership match the dispatch table exactly"
 t66ac3_dispatch_count="$({ grep -cE '^  [a-z][a-z0-9_-]*\)[[:space:]]+cmd_' "$EDM_STATE" || true; })"
-t66ac3_claude_count="$({ grep -oE '[0-9]+ subcommands' "$CLAUDE_MD_T66" || true; } | head -1 | grep -oE '^[0-9]+')"
-[[ "$t66ac3_dispatch_count" == "$t66ac3_claude_count" ]] \
-  && pass "T66 AC3 -- CLAUDE.md's documented subcommand count ($t66ac3_claude_count) matches the dispatch table ($t66ac3_dispatch_count)" \
-  || fail "T66 AC3 -- CLAUDE.md says $t66ac3_claude_count subcommands, dispatch table has $t66ac3_dispatch_count"
+# CA-401(b): terminal grep guarded (an unguarded '^[0-9]+' extraction under pipefail killed the
+# whole suite if CLAUDE.md ever lost the 'N subcommands' text), and both sides floored numeric
+# non-empty before comparing -- the both-empty case previously passed as "count () matches ()".
+t66ac3_claude_count="$({ grep -oE '[0-9]+ subcommands' "$CLAUDE_MD_T66" || true; } | head -1 | { grep -oE '^[0-9]+' || true; })"
+if [[ ! "$t66ac3_dispatch_count" =~ ^[1-9][0-9]*$ || ! "$t66ac3_claude_count" =~ ^[1-9][0-9]*$ ]]; then
+  fail "T66 AC3 -- extraction floor: dispatch count '$t66ac3_dispatch_count' / CLAUDE.md count '$t66ac3_claude_count' (one side is empty or non-numeric; the comparison would be vacuous)"
+elif [[ "$t66ac3_dispatch_count" == "$t66ac3_claude_count" ]]; then
+  pass "T66 AC3 -- CLAUDE.md's documented subcommand count ($t66ac3_claude_count) matches the dispatch table ($t66ac3_dispatch_count)"
+else
+  fail "T66 AC3 -- CLAUDE.md says $t66ac3_claude_count subcommands, dispatch table has $t66ac3_dispatch_count"
+fi
 # CA-387 (round 7): the membership loop used to grep the WHOLE ~700-line CLAUDE.md, so it passed
 # on all four names occurring anywhere in the file (migrate-schema in the schema_version contract
 # prose, audit-round-complete in Cost tracking and the state-field table, render-ledger in the
@@ -2616,7 +2625,10 @@ echo
 echo "T44 AC4 -- exact violation set: zero on valid/, exactly one per file (at its expected line) on invalid/"
 t44_valid_rc=0
 t44_valid_out="$(bash "$LINT_BIN" --path "$MERMAID_VALID_DIR" 2>&1)" || t44_valid_rc=$?
-check "T44 AC4 -- valid/ exits 0 (no violations found)" "0" "$t44_valid_rc"
+# CA-454: numeric equality, not check()'s substring containment -- any exit code whose decimal
+# form contains a '0' (10, 20, 101...) passed the old substring form.
+[[ "$t44_valid_rc" -eq 0 ]] && pass "T44 AC4 -- valid/ exits 0 (no violations found)" \
+  || fail "T44 AC4 -- valid/ exited $t44_valid_rc, expected 0"
 check "T44 AC4 -- valid/ is CLEAN" "CLEAN" "$t44_valid_out"
 check_absent "T44 AC4 -- the indented-fence fixture does not leak a mermaid-semicolon violation" \
   "v12-indented-fence.md" "$t44_valid_out"
@@ -4610,7 +4622,8 @@ echo "T67 AC14 (CA-147) -- a single cheap mode actually measures against a real 
 # just that the mode name is recognized) proves the mode actually measures something real.
 t67_ss_rc=0
 t67_ss_out="$(bash "$TIMING_SH" --session-start 2>&1)" || t67_ss_rc=$?
-check "T67 AC14 -- --session-start exits 0" "0" "$t67_ss_rc"
+[[ "$t67_ss_rc" -eq 0 ]] && pass "T67 AC14 -- --session-start exits 0" \
+  || fail "T67 AC14 -- --session-start exited $t67_ss_rc, expected 0 (CA-454: numeric, not substring)"
 check "T67 AC14 -- --session-start reports the TIMING session-start line" \
   "TIMING session-start" "$t67_ss_out"
 t67_ss_delta="$(printf '%s\n' "$t67_ss_out" | grep -o 'delta_ms=-\?[0-9]\+' | sed -E 's/.*=//' || true)"
@@ -4631,7 +4644,8 @@ echo "T67 AC14 (G31/CA-147) -- --generate-fixture + --subcommands is a real, exi
 # whole-second-resolution timing fallback on a host without perl.
 t67_gen_rc=0
 t67_gen_out="$(bash "$TIMING_SH" --generate-fixture --initiatives 1 2>&1)" || t67_gen_rc=$?
-check "T67 AC14 (G31) -- --generate-fixture exits 0" "0" "$t67_gen_rc"
+[[ "$t67_gen_rc" -eq 0 ]] && pass "T67 AC14 (G31) -- --generate-fixture exits 0" \
+  || fail "T67 AC14 (G31) -- --generate-fixture exited $t67_gen_rc, expected 0 (CA-454: numeric, not substring)"
 t67_fixture_dir="$(printf '%s\n' "$t67_gen_out" | grep -oE 'FIXTURE_DIR=.*' | cut -d= -f2-)"
 [[ -n "$t67_fixture_dir" && -d "$t67_fixture_dir" ]] \
   && pass "T67 AC14 (G31) -- --generate-fixture produces a usable 1-initiative fixture directory" \

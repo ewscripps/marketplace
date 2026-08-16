@@ -1105,6 +1105,18 @@ COVERAGE_LAYER_ROW_JQ_DEF='def coverage_layer_row:
 COVERAGE_EPIC_ROW_JQ_DEF='def coverage_epic_row_prefix($epic):
   "  \($epic | . + (" " * (15 - length | if . < 0 then 0 else . end)))  \(.key | . + (" " * (14 - length | if . < 0 then 0 else . end)))  \(.value.pct)%\(if .value.pct < 10 then "        " elif .value.pct < 100 then "       " else "      " end)";'
 
+# CA-418: the HEADERS that label those rows, extracted here beside their row defs -- previously
+# four hand-maintained copies in two incompatible mechanisms (get-coverage's hand-counted jq
+# string literals vs metrics-report's printf width specs) that had to track the row defs' clamp
+# constants from a third place. Widths derive from the row clamps: layer table = 14-wide layer +
+# pct + measured_at; epic table = 15-wide epic + 14-wide layer + pct, with get-coverage's epic
+# table alone carrying the extra trailing Measured At column its rows append (the one sanctioned
+# divergence, matching the row-def split above). Each constant is BOTH header lines, newline-
+# joined (jq -r and printf '%s\n' both render that as two lines).
+COVERAGE_LAYER_HEADER="$(printf '  %-14s  %-10s  %s\n  %-14s  %-10s  %s' "Layer" "Coverage" "Measured At" "-----" "--------" "-----------")"
+COVERAGE_EPIC_HEADER="$(printf '  %-15s  %-14s  %s\n  %-15s  %-14s  %s' "Epic" "Layer" "Coverage" "----" "-----" "--------")"
+COVERAGE_EPIC_HEADER_MEASURED="$(printf '  %-15s  %-14s  %-9s  %s\n  %-15s  %-14s  %-9s  %s' "Epic" "Layer" "Coverage" "Measured At" "----" "-----" "--------" "-----------")"
+
 # _edm_reclaim_stale_lockdir <lockdir> <success-log-message>
 # Shared atomic reclaim: `mv "$lockdir" "${lockdir}.stale.$$"` either wins or loses the rename
 # race outright, so at most one contender ever proceeds to remove a given stale lockdir -- unlike
@@ -2690,27 +2702,25 @@ cmd_get_coverage() {
   echo "# Test Coverage - $prefix"
   echo
   # Whole-initiative coverage (single-stack)
-  jq -r "${COVERAGE_LAYER_ROW_JQ_DEF}"'
+  jq -r --arg hdr "$COVERAGE_LAYER_HEADER" "${COVERAGE_LAYER_ROW_JQ_DEF}"'
     (.coverage_by_layer // {}) | to_entries |
     if length == 0 then empty
     else
       "## Whole-Initiative Coverage",
       "",
-      "  Layer          Coverage   Measured At",
-      "  ----------     --------   -----------",
+      $hdr,
       (.[] | coverage_layer_row),
       ""
     end
   ' "$state" 2>/dev/null || true
   # Per-epic coverage (multi-stack)
-  jq -r "${COVERAGE_EPIC_ROW_JQ_DEF}"'
+  jq -r --arg hdr "$COVERAGE_EPIC_HEADER_MEASURED" "${COVERAGE_EPIC_ROW_JQ_DEF}"'
     (.coverage_by_epic // {}) | to_entries |
     if length == 0 then empty
     else
       "## Per-Epic Coverage",
       "",
-      "  Epic            Layer          Coverage  Measured At",
-      "  ------          ----------     --------  -----------",
+      $hdr,
       (.[] | .key as $epic | .value | to_entries[] |
         coverage_epic_row_prefix($epic) + "  \(.value.measured_at // "?")"),
       ""
@@ -3546,8 +3556,7 @@ cmd_metrics_report() {
       if [[ "$has_coverage" -gt 0 ]]; then
         echo "## Test Coverage"
         echo
-        printf "  %-14s  %-10s  %-20s\n" "Layer" "Coverage" "Measured At"
-        printf "  %-14s  %-10s  %-20s\n" "-----" "--------" "-----------"
+        printf '%s\n' "$COVERAGE_LAYER_HEADER"
         jq -r "${COVERAGE_LAYER_ROW_JQ_DEF}"'
           (.coverage_by_layer // {}) | to_entries[] | coverage_layer_row
         ' "$state" 2>/dev/null
@@ -3556,8 +3565,7 @@ cmd_metrics_report() {
       if [[ "$has_epic_coverage" -gt 0 ]]; then
         echo "## Per-Epic Test Coverage"
         echo
-        printf "  %-15s  %-14s  %-10s\n" "Epic" "Layer" "Coverage"
-        printf "  %-15s  %-14s  %-10s\n" "----" "-----" "--------"
+        printf '%s\n' "$COVERAGE_EPIC_HEADER"
         jq -r "${COVERAGE_EPIC_ROW_JQ_DEF}"'
           (.coverage_by_epic // {}) | to_entries[] |
           .key as $epic | .value | to_entries[] |
@@ -4888,24 +4896,24 @@ cmd_skip_phase() {
 # ---- Provenance tracking (T98) -----------------------------------------------
 # set-supersedes <PREFIX> <other-prefix>
 # set-forked-from <PREFIX> <other-prefix>
+# CA-419 (unblocked by CA-357's document-not-delete resolution): the two subcommands stay --
+# they are the documented user-facing surface -- but their structurally identical seven-line
+# bodies now share one parameterized writer, so the guard set and write shape cannot diverge.
 
-cmd_set_supersedes() {
-  [[ $# -eq 2 ]] || die "usage: edm-state set-supersedes <PREFIX> <other-prefix>"
+_cmd_set_provenance_field() {  # <subcommand-name> <state-key> <prefix> <other-prefix...>
+  local subcmd="$1" key="$2"
+  shift 2
+  [[ $# -eq 2 ]] || die "usage: edm-state ${subcmd} <PREFIX> <other-prefix>"
   require_jq
   local prefix="$1" other="$2"
-  [[ -n "$other" ]] || die "set-supersedes: other-prefix must be non-empty"
-  rmw_state "$prefix" '.supersedes = $v | .last_updated = $ts' --arg v "$other" --arg ts "$(now_utc)"
-  echo "set supersedes = $other for $prefix"
+  [[ -n "$other" ]] || die "${subcmd}: other-prefix must be non-empty"
+  rmw_state "$prefix" ".${key} = \$v | .last_updated = \$ts" --arg v "$other" --arg ts "$(now_utc)"
+  echo "set ${key} = $other for $prefix"
 }
 
-cmd_set_forked_from() {
-  [[ $# -eq 2 ]] || die "usage: edm-state set-forked-from <PREFIX> <other-prefix>"
-  require_jq
-  local prefix="$1" other="$2"
-  [[ -n "$other" ]] || die "set-forked-from: other-prefix must be non-empty"
-  rmw_state "$prefix" '.forked_from = $v | .last_updated = $ts' --arg v "$other" --arg ts "$(now_utc)"
-  echo "set forked_from = $other for $prefix"
-}
+cmd_set_supersedes() { _cmd_set_provenance_field set-supersedes supersedes "$@"; }
+
+cmd_set_forked_from() { _cmd_set_provenance_field set-forked-from forked_from "$@"; }
 
 # ---- Product-line linkage (T101/T102) ----------------------------------------
 # resolve-dir <PREFIX> -- resolve bare prefix to initiative directory (read-only).
