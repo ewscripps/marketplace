@@ -28,7 +28,7 @@ is remediated before convergence; `NOTED` is the only status that closes a findi
 - Legacy P3 (defensive improvement / nice-to-have) -> **P2**
 - NOTED -> unchanged
 
-**Sanctioned exception -- P2 debt acceptance at convergence (T-EDMV4).** "Remediated before
+**Sanctioned exception -- P2 debt acceptance at convergence (EDMV3-T68).** "Remediated before
 convergence" above still holds by default; the one sanctioned exception is an explicit human
 choice at the convergence gate, never a silent policy weakening. When a code-audit round's
 blocking set is P0=0, P1=0 and P2>0, `skills/code-audit/SKILL.md`'s convergence gate (Sec."10.

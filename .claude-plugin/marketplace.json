@@ -32,7 +32,7 @@
             "name": "edm",
             "source": "./plugins/edm",
             "description": "Enterprise Development Methodology — six-phase process (Planning → SRD → Audit → Tickets → Audit → Implementation) with HITL gates, parallel agent waves, automatic QC, and 11-lens code audit. Produces source-controlled artifacts in the project's SRD/ directory.",
-            "version": "3.1.0",
+            "version": "3.2.0",
             "skills": [
                 "./skills/orchestrator",
                 "./skills/plan",

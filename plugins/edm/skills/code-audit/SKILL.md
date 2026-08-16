@@ -151,7 +151,7 @@ using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
        `BLOCKING_FILTER` in `bin/edm-state` includes it, so `audit-converged` will refuse a round
        that a P0/P1-only reading would call clean.
     2. **Present** the gate via `AskUserQuestion` -- before any state mutation, regardless of clean or blocked.
-       The option set depends on what's actually open (T-EDMV4, "give the user the option to converge
+       The option set depends on what's actually open (EDMV3-T68, "give the user the option to converge
        once P0/P1 are clear"):
         - Header: `"Convergence"`
         - **Clean** (`P0_COUNT=0`, `P1_COUNT=0`, `P2_COUNT=0`): question body states the result, e.g.

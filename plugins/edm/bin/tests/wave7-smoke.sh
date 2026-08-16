@@ -523,7 +523,7 @@ check "Post-Remediation Closure section still present" "Post-Remediation Closure
 # documentation half of AC8/AC9) is verified below against a synthetic run directory this
 # suite constructs by hand, per score-artifacts.sh's own determinism/no-comparison contract.
 echo
-echo "T23 AC1/AC3/AC6 -- exactly five dimensions, exact total expression, deterministic"
+echo "T23 AC1/AC3/AC6 -- exactly six dimensions (five per AC1 + known-gap-recall per CA-462), exact total expression, deterministic"
 SCORE_ARTIFACTS="${PLUGIN_DIR}/evals/score-artifacts.sh"
 bash -n "$SCORE_ARTIFACTS" && pass "score-artifacts.sh passes bash -n" \
   || fail "score-artifacts.sh failed bash -n"
@@ -561,8 +561,8 @@ t23_score_synthetic_run() {
 
   local dim_count
   dim_count="$(jq -e '.dimensions | length' out-a.json 2>/dev/null || echo "ERR")"
-  [[ "$dim_count" == "5" ]] && pass "scores.json has exactly 5 dimensions (AC1)" \
-    || fail "scores.json has $dim_count dimensions, expected exactly 5"
+  [[ "$dim_count" == "6" ]] && pass "scores.json has exactly 6 dimensions (AC1's five + CA-462's known-gap-recall)" \
+    || fail "scores.json has $dim_count dimensions, expected exactly 6"
 
   jq -e '.dimensions[0].score != null and .dimensions[1].score != null and .dimensions[2].score != null and .dimensions[3].score != null' \
     out-a.json >/dev/null 2>&1 \
@@ -578,6 +578,28 @@ t23_score_synthetic_run() {
   jq -e '.dimensions_skipped[] | select(.name == "lens-jsonl-prose-agreement")' out-a.json >/dev/null 2>&1 \
     && pass "dimension 5 (lens-jsonl-prose-agreement) is null/skipped with no code-audit round present (wave-A shape)" \
     || fail "dimension 5 was not skipped for a run with no code-audit round"
+
+  # CA-462: the synthetic run dir has no run.json attributing it to tiny-svc, so
+  # known-gap-recall must skip with a named reason rather than scoring a meaningless zero.
+  jq -e '.dimensions_skipped[] | select(.name == "known-gap-recall")' out-a.json >/dev/null 2>&1 \
+    && pass "dimension 6 (known-gap-recall) is null/skipped for a run not attributed to the tiny-svc fixture (CA-462 gate)" \
+    || fail "dimension 6 was not skipped for a run with no tiny-svc run.json attribution"
+
+  # CA-462 positive half: with run.json attributing the run to tiny-svc and an srd.md engaging
+  # two of the six ground-truth gaps, known-gap-recall scores 100*2/6 = 33.
+  printf '{"fixture":"tiny-svc","complete":true}\n' > run-dir/run.json
+  {
+    echo '#### TSVE-02: webhook authentication'
+    echo 'The inbound webhook endpoint must verify a signature before enqueueing.'
+    echo '#### TSVE-03: retries'
+    echo 'Failed downstream calls follow retry with backoff and land in a dead-letter queue.'
+  } >> run-dir/srd.md
+  local rc_c=0 d6_score
+  bash "$SCORE_ARTIFACTS" run-dir > out-c.json 2> err-c.json || rc_c=$?
+  d6_score="$(jq -r '.dimensions[] | select(.name == "known-gap-recall") | .score' out-c.json 2>/dev/null)"
+  [[ "$rc_c" -eq 0 && "$d6_score" == "33" ]] \
+    && pass "dimension 6 scores 33 (2 of 6 ground-truth gaps engaged) on an attributed tiny-svc run (CA-462)" \
+    || fail "dimension 6 scored '${d6_score}' (rc=${rc_c}), expected 33 for 2 of 6 gaps engaged"
 }
 with_scratch_repo t23_score_synthetic_run
 
@@ -1153,14 +1175,14 @@ t64_marketplace_version="$(jq -r '.plugins[] | select(.name=="edm") | .version' 
 [[ "$t64_plugin_version" == "$t64_marketplace_version" ]] \
   && pass "T64 AC1 -- plugin.json and marketplace.json versions agree ($t64_plugin_version)" \
   || fail "T64 AC1 -- plugin.json version '$t64_plugin_version' != marketplace.json edm entry '$t64_marketplace_version'"
-# Superseded by EDMV3-T66 (wave-C closeout): the version literal this case asserts moved from
-# T64's wave-A "2.1.0" through T65's wave-B "3.0.0" to T66's wave-C "3.1.0" -- each closeout
-# ticket bumps the same field, and only the latest one's literal is current. This is the
-# version-agreement half of the check (both manifests move together); T66's own wave6-smoke.sh
-# cases assert the "3.1.0" value itself plus the schema_version decision.
-[[ "$t64_plugin_version" == "3.1.0" ]] \
-  && pass "T64 AC1 -- plugin.json version is 3.1.0 (EDMV3-T66 wave-C closeout)" \
-  || fail "T64 AC1 -- plugin.json version is '$t64_plugin_version', expected '3.1.0'"
+# Superseded by EDMV3-T66 (wave-C closeout), then by EDMV3-T68/CA-431 (round-8 remediation):
+# the version literal this case asserts moved from T64's wave-A "2.1.0" through T65's wave-B
+# "3.0.0" to T66's wave-C "3.1.0" to the round-8 "3.2.0" (the accept-p2-debt feature release)
+# -- each release bumps the same field, and only the latest one's literal is current. This is
+# the version-agreement half of the check (both manifests move together).
+[[ "$t64_plugin_version" == "3.2.0" ]] \
+  && pass "T64 AC1 -- plugin.json version is 3.2.0 (EDMV3-T68 / round-8 remediation release)" \
+  || fail "T64 AC1 -- plugin.json version is '$t64_plugin_version', expected '3.2.0'"
 
 # =================================================================================
 # EDMV3-T66: wave-C closeout -- version 3.1.0 and CLAUDE.md reference tables match reality
@@ -7951,5 +7973,109 @@ g51_readloop_count="$(count_matches 'while IFS=: read -r lineno _rest' "${PLUGIN
   || fail "G51/CA-327 -- the read-loop shape appears ${g51_readloop_count} time(s), expected exactly 1"
 
 echo
+# =================================================================================
+# CA-460 (round 8, found independently by L6, L7 and L2): lint:hooks-shell landed without any of
+# the three lint-job-count/consumer-count sites being swept -- .gitlab-ci.yml's own anchor
+# comment named the exact grep whose output (11) contradicted the number it stated (10). These
+# assertions derive both counts mechanically and pin the prose that states them, plus one
+# CI-table row per lint job (the bin/-table shape), so the NEXT job added fails a test instead
+# of drifting three documents.
+# =================================================================================
+echo
+echo "=== CA-460: lint-job and alpine_edm consumer counts match the prose that states them ==="
+ca460_lint_count="$(count_matches '^lint:' "$GITLAB_CI_YML")"
+ca460_alpine_count="$(count_matches '<<: \*alpine_edm' "$GITLAB_CI_YML")"
+[[ "$ca460_lint_count" -eq 8 ]] \
+  && pass "CA-460 -- .gitlab-ci.yml has exactly 8 lint jobs (update the three count sites if adding one)" \
+  || fail "CA-460 -- ^lint: job count is ${ca460_lint_count}, but the prose in .gitlab-ci.yml and CLAUDE.md states 8 -- sweep both count sentences and CLAUDE.md's CI table"
+[[ "$ca460_alpine_count" -eq 11 ]] \
+  && pass "CA-460 -- .gitlab-ci.yml has exactly 11 alpine_edm consumers" \
+  || fail "CA-460 -- alpine_edm consumer count is ${ca460_alpine_count}, but the prose states eleven -- sweep the anchor comment and CLAUDE.md's job-graph paragraph"
+check "CA-460 -- .gitlab-ci.yml's anchor comment states the current lint-job count" \
+  "eight of" "$(cat "$GITLAB_CI_YML")"
+check "CA-460 -- .gitlab-ci.yml's anchor comment states the current consumer count" \
+  "eleven consumers total" "$(cat "$GITLAB_CI_YML")"
+ca460_claude_md="$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check "CA-460 -- CLAUDE.md's job-graph paragraph states the current lint-job count" \
+  "executes all eight concurrently" "$ca460_claude_md"
+check "CA-460 -- CLAUDE.md's job-graph paragraph states the current consumer count" \
+  "across all eleven" "$ca460_claude_md"
+# One CI-table row per lint job: every ^lint: job key in .gitlab-ci.yml appears as a
+# `| \`lint\` | \`lint:<name>\`` row in CLAUDE.md's CI table.
+ca460_missing_rows=""
+while IFS= read -r ca460_job; do
+  ca460_job="${ca460_job%:}"
+  printf '%s\n' "$ca460_claude_md" | grep -q "| \`lint\` | \`${ca460_job}\`" \
+    || ca460_missing_rows="${ca460_missing_rows} ${ca460_job}"
+done < <(grep -E '^lint:' "$GITLAB_CI_YML")
+[[ -z "$ca460_missing_rows" ]] \
+  && pass "CA-460 -- every ^lint: job in .gitlab-ci.yml has a row in CLAUDE.md's CI table" \
+  || fail "CA-460 -- lint job(s) missing from CLAUDE.md's CI table:${ca460_missing_rows}"
+
+# =================================================================================
+# CA-461 (round 8, L6-F3): the baseline runbook prescribed a variance field name
+# (total_max_minus_min) that bin/edm-compare-eval never reads (.variance.total_range), so an
+# operator following the runbook armed the eval tripwire at zero tolerance via the documented
+# missing-field-is-0 fallback. Pin the two names to each other so they cannot diverge again.
+# =================================================================================
+echo
+echo "=== CA-461: the baseline README's variance field name matches what edm-compare-eval reads ==="
+ca461_readme="$(cat "${PLUGIN_DIR}/evals/baseline/README.md")"
+ca461_compare="$(cat "${PLUGIN_DIR}/bin/edm-compare-eval")"
+check "CA-461 -- README's JSON example uses the field edm-compare-eval reads" \
+  '"total_range"' "$ca461_readme"
+check "CA-461 -- edm-compare-eval reads .variance.total_range" \
+  ".variance.total_range" "$ca461_compare"
+check_absent "CA-461 -- the retired total_max_minus_min name is gone from the runbook example" \
+  "total_max_minus_min" "$ca461_readme"
+
+# =================================================================================
+# CA-472 (round-8 Stage A, live-diagnosed): the awk -f <(cat <<'HEREDOC') idiom leaked ~2
+# process-substitution pipe fds per call under bash 3.2; once the leaked fd number crossed
+# macOS's /dev/fd ceiling (~fd 256, at roughly 120 scanned files) the child awk could not open
+# its /dev/fd/NNN program path and edm-lint-artifacts spun at 100% CPU forever -- hanging the
+# PreToolUse commit hook on the flagship EDMV3 tree (129 md files, observed >9 minutes against
+# the 3,000 ms commit-path budget; 10s after the fix). Two guards: a tripwire that the leaking
+# idiom stays out of live code in the three converted files, and a behavioral no-hang case that
+# lints a 130-file scratch tree (past the fd ceiling the old code hit) within a hard bound.
+# =================================================================================
+echo
+echo "=== CA-472: the fd-leaking awk -f <(cat <<heredoc) idiom stays out of live code, and a 130-file tree lints without hanging ==="
+ca472_live_hits=0
+for ca472_f in "${PLUGIN_DIR}/bin/edm-lint-artifacts" "${PLUGIN_DIR}/bin/_edm-lint-lib.sh" "${PLUGIN_DIR}/evals/score-artifacts.sh"; do
+  ca472_n="$(grep -v '^\s*#' "$ca472_f" | count_matches -- '-f <(cat')"
+  ca472_live_hits=$((ca472_live_hits + ca472_n))
+done
+[[ "$ca472_live_hits" -eq 0 ]] \
+  && pass "CA-472 -- zero live (non-comment) 'awk -f <(cat' sites across the three converted files" \
+  || fail "CA-472 -- found ${ca472_live_hits} live 'awk -f <(cat' site(s); the bash-3.2 fd leak idiom was reintroduced"
+ca472_control="$(printf '%s\n' '  awk -f "$RULES" -f <(cat <<X' | grep -v '^\s*#' | count_matches -- '-f <(cat')"
+[[ "$ca472_control" -eq 1 ]] \
+  && pass "CA-472 -- positive control: the tripwire pattern matches a reintroduced live site" \
+  || fail "CA-472 -- positive control broken: the pattern would not catch a reintroduction"
+
+ca472_nohang_case() {
+  mkdir -p tree
+  local i
+  for i in $(seq 1 130); do
+    printf '# doc %s\n\nplain ascii content, no violations.\n' "$i" > "tree/f${i}.md"
+  done
+  "$LINT_ARTIFACTS" --path tree > ca472.out 2>&1 &
+  local lp=$! waited=0
+  while kill -0 "$lp" 2>/dev/null && [[ $waited -lt 60 ]]; do sleep 1; waited=$((waited + 1)); done
+  if kill -0 "$lp" 2>/dev/null; then
+    kill -9 "$lp" 2>/dev/null
+    fail "CA-472 -- lint of a 130-file tree still running after 60s (fd-leak hang regressed; old code spun past ~120 files)"
+  else
+    local lec=0
+    wait "$lp" || lec=$?
+    [[ $lec -eq 0 ]] \
+      && pass "CA-472 -- 130-file tree lints to completion (${waited}s, past the ~120-file fd ceiling the old code hit)" \
+      || fail "CA-472 -- 130-file lint exited ${lec}: $(head -2 ca472.out)"
+  fi
+}
+LINT_ARTIFACTS="${PLUGIN_DIR}/bin/edm-lint-artifacts"
+with_scratch_repo ca472_nohang_case
+
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

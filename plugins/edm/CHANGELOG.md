@@ -4,6 +4,71 @@ All notable changes to the EDM plugin are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] — 2026-08-16
+
+The sanctioned P2-debt convergence override, and the round-8 code-audit remediation wave
+(Stage A of the EDMV3 convergence plan).
+
+### Added
+
+- **`edm-state approve-gate <PREFIX> code-audit --accept-p2-debt` (EDMV3-T68, D57/D58)** --
+  once open P0 and P1 are both zero on a full audit round, the human may converge carrying the
+  remaining P2s forward as documented debt. Hard-refuses on any open P0/P1 (never waivable),
+  records five debt fields in state (`code_audit_p2_debt_accepted/_count/_round/_accepted_at/
+  _accepted_by`), leaves the ledger itself unchanged, and `edm-state archive` refuses when a
+  newer full round completed since acceptance (stale debt). Required user action: none --
+  the default all-severities-block behavior is unchanged without the flag. The in-code label
+  was `T-EDMV4` before EDMV3-T68 existed; every site is relabeled (CA-430).
+- **`known-gap-recall`, the eval scorer's sixth dimension (CA-462)** -- `score-artifacts.sh`
+  now greps the produced `srd.md` for each of the tiny-svc fixture's six ground-truth gaps
+  (`expected.json`'s new `srd_match` patterns, fixture_version 1.1.0), closing the gap where
+  every dimension was a self-consistency check and an SRD surfacing zero known gaps scored
+  identically to one surfacing all six. `scorer_version` 1.0.0 -> 1.1.0 (the compare handshake
+  refuses across the bump); `run.json` gains a `fixture` field the dimension gates on.
+- **`spec_swept` ledger field (CA-416)** -- the synthesizer's findings-ledger template and
+  remediation format now carry a same-commit spec/AC-sweep obligation on every fixed finding,
+  closing the structural root cause of the five-round stale-citation recurrence.
+- **`missing-task-grant` rule in `edm-check-grants` (CA-441)** -- a skill body that spawns an
+  `edm-*` agent without `Task` in its `allowed-tools` now fails the grants lint; the three
+  testing-layer skills that shipped exactly that hole got their grants.
+
+### Fixed
+
+- **`--accept-p2-debt` engagement hardening (CA-426/CA-427/CA-428, wave6-covered per CA-425)**:
+  the convergence pre-check now captures stdout only, so a warn-and-proceed stderr line can no
+  longer silently disable the override or produce a refusal quoting uninitialized P0/P1 values;
+  the two debt-round reads route through `coerce_round_entry` (legacy bare-integer
+  `audit_rounds.code` no longer raises a raw jq error) and `to_int` before arithmetic; refusal
+  messages name the real reason. New negative tests cover the partial-round, invalid-ledger,
+  wrong-gate and unknown-argument classes.
+- **Concurrent QC-auditor overwrite (CA-440, with CA-411/CA-412)**: the `SubagentStop` hook now
+  instructs each auto-spawned `edm-qc-auditor` to write a per-implementer `qc/qc-shard-{NN}.md`
+  instead of the shared `qc/qc-summary.md` (6-10 parallel auditors were last-writer-wins,
+  silently discarding FAIL verdicts); `/edm:implement` owns the single merge step; the hook
+  prompt gains an explicit PREFIX-derivation step.
+- **One gate procedure at both hook layers (CA-409)** and a widened, no-longer-fail-open commit-
+  hook prefix filter (CA-410: `^[A-Za-z0-9_-]+$`, matching `state_file_for` and the five gate
+  hooks, with `edm-state resolve-dir` as the authority on what is a real initiative).
+- **HANDOFF debt row renders who accepted the debt and when (CA-429)** -- the two previously
+  write-only `_accepted_at`/`_accepted_by` fields gained their reader.
+- **CI job-count docs (CA-460)**: `.gitlab-ci.yml`'s anchor comments and `CLAUDE.md`'s CI table
+  now count eight lint jobs / eleven `alpine_edm` consumers and carry a `lint:hooks-shell` row,
+  pinned by computed wave7 assertions so the next added job fails a test instead of drifting.
+- **Eval baseline runbook field name (CA-461)**: `evals/baseline/README.md`'s variance example
+  now names `total_range` -- the field `edm-compare-eval` actually reads -- instead of a name no
+  consumer read (which silently armed the tripwire at zero tolerance).
+- **fd-leak hang in artifact lint (CA-472, live-diagnosed)**: the `awk -f <(cat <<'HEREDOC')`
+  idiom in `edm-lint-artifacts`, `_edm-lint-lib.sh` and `evals/score-artifacts.sh`, plus the
+  per-file `< <(grep ...)` reporting loop, leaked ~2 process-substitution pipe fds per scanned
+  file under bash 3.2; past macOS's /dev/fd ceiling (~120 files) the scan spun at 100% CPU
+  forever, hanging the PreToolUse commit hook on any large initiative tree (observed >9 minutes
+  on the 129-file EDMV3 tree against the 3,000 ms budget; ~10s after the fix). Awk programs are
+  now composed once into cached shell variables and the reporting loop uses
+  capture-then-herestring; guarded by a live-code tripwire plus a 130-file no-hang behavioral
+  case in wave7-smoke.sh.
+- **T28 AC12 amended (CA-424)** to document the one sanctioned exception to "refuses when it
+  fails"; the EDMV3-90 boundary row records the D57/D58 amendment.
+
 ## [3.1.0] — 2026-07-28
 
 Wave C of EDMV3 (prompt-streamline): economics honesty (Phase 6 cost is now actually recorded,

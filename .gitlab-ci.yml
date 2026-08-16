@@ -53,11 +53,13 @@ stages:
       - "plugins/edm/**/*"
 
 # ---- Shared job template (EDMV3-T67 AC10) ----------------------------------------------------
-# The pinned alpine image and the shared rule set are identical across every lint job -- seven of
+# The pinned alpine image and the shared rule set are identical across every lint job -- eight of
 # them today -- plus three non-lint jobs that need only bash/jq/git on Alpine (test:smoke,
-# test:state-validate, validate:manifest); ten consumers total (`grep -c '<<: \*alpine_edm'` over
-# this file). Expressed once so a digest refresh (see the header note) stays a single-line change
-# across all of them, not a stale count to keep in sync by hand.
+# test:state-validate, validate:manifest); eleven consumers total (`grep -c '<<: \*alpine_edm'`
+# over this file, pinned by a computed smoke-suite assertion so this sentence cannot silently
+# drift again -- CA-460: lint:hooks-shell landed without this count, the job-graph note below,
+# or CLAUDE.md's CI table being swept). Expressed once so a digest refresh (see the header note)
+# stays a single-line change across all of them, not a stale count to keep in sync by hand.
 .alpine_edm: &alpine_edm
   image: "alpine:3.20@sha256:4117b6e5b09d84c8f03ea45234ee7f8ec9f5c3a9792b80e3c9d54ded36d3735a"
   rules: *edm_rules
@@ -76,11 +78,12 @@ stages:
 # pipeline.
 #
 # Those four became four independent jobs, each carrying `needs: []`; the lint stage has since
-# grown three more the same way (lint:shellcheck, lint:file-type-ban,
-# lint:pattern-library-contract) -- seven lint jobs total today. An empty `needs` starts a job as
-# soon as the pipeline begins instead of waiting for the stage ahead of it, so the runner fleet
-# executes all seven concurrently and each reports its own pass/fail. Downstream jobs declare the
-# specific lint jobs they depend on rather than waiting for the whole stage.
+# grown four more the same way (lint:shellcheck, lint:file-type-ban,
+# lint:pattern-library-contract, lint:hooks-shell) -- eight lint jobs total today. An empty
+# `needs` starts a job as soon as the pipeline begins instead of waiting for the stage ahead of
+# it, so the runner fleet executes all eight concurrently and each reports its own pass/fail.
+# Downstream jobs declare the specific lint jobs they depend on rather than waiting for the
+# whole stage.
 
 lint:bash-syntax:
   stage: lint
