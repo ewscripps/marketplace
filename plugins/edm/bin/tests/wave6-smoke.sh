@@ -655,11 +655,11 @@ check_refuses_and_leaves_state "approve-gate refuses gate 0" "gate-num must be 1
   "$STATE_T391RANGE" "$EDM_STATE" approve-gate T391RANGE 0
 
 # =================================================================================
-# T-EDMV4 (accept-p2-debt): give the human the option to converge once P0 and P1 are both
+# EDMV3-T68 (accept-p2-debt): give the human the option to converge once P0 and P1 are both
 # clear, carrying remaining P2s forward as documented debt instead of looping on P2s forever.
 # =================================================================================
 echo
-echo "T-EDMV4 -- approve-gate code-audit --accept-p2-debt still refuses while an open P1 remains"
+echo "EDMV3-T68 -- approve-gate code-audit --accept-p2-debt still refuses while an open P1 remains"
 "$EDM_STATE" init PDEBT1 >/dev/null
 mkdir -p "$TMP/SRD/PDEBT1/code-audit"
 cat > "$TMP/SRD/PDEBT1/code-audit/findings-ledger.jsonl" <<'EOF'
@@ -674,7 +674,7 @@ check_refuses_and_leaves_state "accept-p2-debt still refuses with an open P1" \
   "$EDM_STATE" approve-gate PDEBT1 code-audit --accept-p2-debt
 
 echo
-echo "T-EDMV4 -- approve-gate code-audit --accept-p2-debt converges when only P2s remain, records debt fields"
+echo "EDMV3-T68 -- approve-gate code-audit --accept-p2-debt converges when only P2s remain, records debt fields"
 "$EDM_STATE" init PDEBT2 >/dev/null
 mkdir -p "$TMP/SRD/PDEBT2/code-audit"
 cat > "$TMP/SRD/PDEBT2/code-audit/findings-ledger.jsonl" <<'EOF'
@@ -699,13 +699,13 @@ pdebt2_debt_count="$(jq -r '.code_audit_p2_debt_count' "$STATE_PDEBT2")"
   || fail "code_audit_p2_debt_count=$pdebt2_debt_count, expected 2"
 
 echo
-echo "T-EDMV4 -- HANDOFF's code-audit gate row surfaces the accepted P2 debt"
+echo "EDMV3-T68 -- HANDOFF's code-audit gate row surfaces the accepted P2 debt"
 pdebt2_handoff="$(cat "$TMP/SRD/PDEBT2/HANDOFF.md")"
 check "HANDOFF names the accepted P2 debt count and round on the code-audit gate row" \
   "2 P2 debt accepted, round 1" "$pdebt2_handoff"
 
 echo
-echo "T-EDMV4 -- archive succeeds immediately after accept-p2-debt (no new round since acceptance)"
+echo "EDMV3-T68 -- archive succeeds immediately after accept-p2-debt (no new round since acceptance)"
 jq '.current_phase = 6 | .phase_durations["6_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
   "$STATE_PDEBT2" > "${STATE_PDEBT2}.tmp" && mv "${STATE_PDEBT2}.tmp" "$STATE_PDEBT2"
 "$EDM_STATE" set PDEBT2 product_name testprod >/dev/null
@@ -717,7 +717,7 @@ jq '.current_phase = 6 | .phase_durations["6_phase"] = {started_at: "2026-01-01T
   || fail "archive refused despite accepted P2 debt and no new round"
 
 echo
-echo "T-EDMV4 -- archive refuses again once a NEW full round completes after acceptance (stale debt)"
+echo "EDMV3-T68 -- archive refuses again once a NEW full round completes after acceptance (stale debt)"
 "$EDM_STATE" init PDEBT3 >/dev/null
 mkdir -p "$TMP/SRD/PDEBT3/code-audit"
 cat > "$TMP/SRD/PDEBT3/code-audit/findings-ledger.jsonl" <<'EOF'
@@ -743,6 +743,93 @@ pdebt3_archive_out="$("$EDM_STATE" archive PDEBT3 2>&1)" || pdebt3_archive_ec=$?
   || fail "archive succeeded despite a new round completing since debt acceptance (staleness guard did not fire)"
 check "archive staleness refusal points back at accept-p2-debt for re-acceptance" \
   "accept-p2-debt" "$pdebt3_archive_out"
+
+# =================================================================================
+# CA-425: the safety guard that narrows --accept-p2-debt to genuine severity refusals had zero
+# tests -- the "not converged: " stdout-prefix test is the ONLY thing stopping the flag from
+# converging a partial round (documented never-convergent), an invalid ledger, or the wrong
+# gate. Each non-severity refusal class gets its own negative case here.
+# CA-426: the prefix test used to run against a merged 2>&1 capture, so audit-converged's
+# zero-recorded-rounds WARN (stderr, warn-and-proceed) landed at position 0 of conv_out and
+# silently disabled the override on a legitimate P2-only refusal -- the positive case below
+# pins the fixed stream separation.
+# CA-427: the debt-round read used a bare .audit_rounds.code.count that jq hard-errors on the
+# legacy bare-integer shape ("Cannot index number") -- the legacy-shape case pins the coercion.
+# =================================================================================
+echo
+echo "CA-425 -- accept-p2-debt refuses on a PARTIAL round (never convergent, not a severity refusal)"
+"$EDM_STATE" init PDEBT4 >/dev/null
+mkdir -p "$TMP/SRD/PDEBT4/code-audit"
+cat > "$TMP/SRD/PDEBT4/code-audit/findings-ledger.jsonl" <<'EOF'
+{"id":"CA-D30","status":"open","sev":"P2","title":"open p2 only"}
+EOF
+"$EDM_STATE" audit-round-start PDEBT4 code --lenses L1 >/dev/null
+"$EDM_STATE" audit-round-complete PDEBT4 code >/dev/null
+STATE_PDEBT4="$TMP/SRD/PDEBT4/.edm-state.json"
+check_refuses_and_leaves_state "accept-p2-debt refuses when the latest round is partial" \
+  "not a severity refusal" "$STATE_PDEBT4" \
+  "$EDM_STATE" approve-gate PDEBT4 code-audit --accept-p2-debt
+
+echo
+echo "CA-425 -- accept-p2-debt refuses on an invalid (unparseable) findings ledger"
+"$EDM_STATE" init PDEBT5 >/dev/null
+mkdir -p "$TMP/SRD/PDEBT5/code-audit"
+printf 'this is not json\n' > "$TMP/SRD/PDEBT5/code-audit/findings-ledger.jsonl"
+"$EDM_STATE" audit-round-start PDEBT5 code >/dev/null
+"$EDM_STATE" audit-round-complete PDEBT5 code >/dev/null
+STATE_PDEBT5="$TMP/SRD/PDEBT5/.edm-state.json"
+check_refuses_and_leaves_state "accept-p2-debt refuses when the ledger is invalid JSONL" \
+  "not a severity refusal" "$STATE_PDEBT5" \
+  "$EDM_STATE" approve-gate PDEBT5 code-audit --accept-p2-debt
+
+echo
+echo "CA-425 -- the two usage arms refuse: wrong gate, unrecognized third argument"
+check_refuses_and_leaves_state "accept-p2-debt refuses on a numeric gate" \
+  "only applies to the code-audit gate" "$STATE_PDEBT5" \
+  "$EDM_STATE" approve-gate PDEBT5 2 --accept-p2-debt
+check_refuses_and_leaves_state "an unrecognized third argument refuses" \
+  "unrecognized third argument" "$STATE_PDEBT5" \
+  "$EDM_STATE" approve-gate PDEBT5 code-audit --force
+
+echo
+echo "CA-426 -- a warn-and-proceed stderr line must NOT disable the override (stream separation)"
+# Zero recorded rounds: audit-converged emits its zero-rounds WARN on stderr and still prints
+# the "not converged: " refusal on stdout. Pre-fix, the merged capture put the warn at position
+# 0 and the override silently failed with a self-contradictory P0=0/P1=0 message.
+"$EDM_STATE" init PDEBT6 >/dev/null
+mkdir -p "$TMP/SRD/PDEBT6/code-audit"
+cat > "$TMP/SRD/PDEBT6/code-audit/findings-ledger.jsonl" <<'EOF'
+{"id":"CA-D40","status":"open","sev":"P2","title":"open p2 only"}
+EOF
+STATE_PDEBT6="$TMP/SRD/PDEBT6/.edm-state.json"
+pdebt6_ec=0
+pdebt6_out="$("$EDM_STATE" approve-gate PDEBT6 code-audit --accept-p2-debt 2>/dev/null)" || pdebt6_ec=$?
+[[ $pdebt6_ec -eq 0 ]] && pass "CA-426 -- override applies on a P2-only refusal despite a stderr warn" \
+  || fail "CA-426 -- override was disabled by the stderr warn (exit ${pdebt6_ec}: ${pdebt6_out})"
+check "CA-426 -- success message names the accepted P2 count" \
+  "WITH 1 open P2 finding(s) accepted as debt" "$pdebt6_out"
+
+echo
+echo "CA-429 -- HANDOFF's debt row renders who accepted the debt and when"
+pdebt6_handoff="$(cat "$TMP/SRD/PDEBT6/HANDOFF.md")"
+check "HANDOFF debt row carries the accepted-by field" ", by " "$pdebt6_handoff"
+
+echo
+echo "CA-427 -- accept-p2-debt survives a legacy bare-integer audit_rounds.code shape"
+"$EDM_STATE" init PDEBT7 >/dev/null
+mkdir -p "$TMP/SRD/PDEBT7/code-audit"
+cat > "$TMP/SRD/PDEBT7/code-audit/findings-ledger.jsonl" <<'EOF'
+{"id":"CA-D50","status":"open","sev":"P2","title":"open p2 only"}
+EOF
+STATE_PDEBT7="$TMP/SRD/PDEBT7/.edm-state.json"
+jq '.audit_rounds = {"code": 2}' "$STATE_PDEBT7" > "${STATE_PDEBT7}.tmp" && mv "${STATE_PDEBT7}.tmp" "$STATE_PDEBT7"
+pdebt7_ec=0
+"$EDM_STATE" approve-gate PDEBT7 code-audit --accept-p2-debt >/dev/null 2>&1 || pdebt7_ec=$?
+[[ $pdebt7_ec -eq 0 ]] && pass "CA-427 -- override succeeds on the legacy bare-integer shape (no jq index error)" \
+  || fail "CA-427 -- override failed on a legacy bare-integer audit_rounds.code (exit ${pdebt7_ec})"
+pdebt7_round="$(jq -r '.code_audit_p2_debt_round' "$STATE_PDEBT7")"
+[[ "$pdebt7_round" == "2" ]] && pass "CA-427 -- debt round coerced from the bare integer (2)" \
+  || fail "CA-427 -- code_audit_p2_debt_round='$pdebt7_round', expected 2"
 
 # =================================================================================
 # G1 (round-3 Wave 7b, CA-182 REOPENED): the code-audit gate is unconditionally approvable at
@@ -4525,7 +4612,12 @@ echo
 echo "CA-059 -- record-partial-verdict close checks and writes under a single lock acquisition"
 
 # ---- CA-059: two concurrent close calls on the same entry cannot both succeed as a first
-# closure (the check-then-lock race the fix closes) -----------------------------------------------
+# closure (the check-then-lock race the fix closes). Both racers close PASS: re-closure is
+# legal ONLY after a FAIL (the documented remediation exception), so a PASS-vs-FAIL race was
+# order-dependent -- when the FAIL racer happened to win, the PASS racer's success was the
+# legal FAIL-re-closure and BOTH exited 0, failing the exactly-one-success assertion flakily
+# (observed live under load, round-8 Stage A). Two PASS closes make exactly-one-success hold
+# under every scheduling order. --------------------------------------------------------------
 ca059_case() {
   "$EDM_STATE" init T59RACE >/dev/null
   "$EDM_STATE" record-partial-verdict T59RACE T59RACE-T01 PARTIAL "needs runtime check" >/dev/null
@@ -4534,9 +4626,9 @@ ca059_case() {
   out1_file="$(mktemp "${TMPDIR:-/tmp}/edm-ca059-1.XXXXXX")"
   out2_file="$(mktemp "${TMPDIR:-/tmp}/edm-ca059-2.XXXXXX")"
 
-  "$EDM_STATE" record-partial-verdict T59RACE T59RACE-T01 close PASS "race-ref-pass" > "$out1_file" 2>&1 &
+  "$EDM_STATE" record-partial-verdict T59RACE T59RACE-T01 close PASS "race-ref-a" > "$out1_file" 2>&1 &
   local pid1=$!
-  "$EDM_STATE" record-partial-verdict T59RACE T59RACE-T01 close FAIL "race-ref-fail" > "$out2_file" 2>&1 &
+  "$EDM_STATE" record-partial-verdict T59RACE T59RACE-T01 close PASS "race-ref-b" > "$out2_file" 2>&1 &
   local pid2=$!
   wait "$pid1" || ec1=$?
   wait "$pid2" || ec2=$?

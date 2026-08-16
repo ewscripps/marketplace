@@ -1496,7 +1496,7 @@ AUDIT_ROUND_COERCE_JQ_DEF='def coerce_round_entry: if type == "number" then {cou
 BLOCKING_FILTER='(.status == "open" or .status == "deferred") and (.sev == "P0" or .sev == "P1" or .sev == "P2")'
 
 # _audit_ledger_breakdown <jsonl-path> -- the blocking-set computation, extracted so
-# cmd_audit_converged and cmd_approve_gate's code-audit --accept-p2-debt override (T-EDMV4,
+# cmd_audit_converged and cmd_approve_gate's code-audit --accept-p2-debt override (EDMV3-T68,
 # "give the user the option to converge with P0/P1 clear") compute the identical p0/p1/p2
 # split from one definition, never two independently-maintained jq programs (the CA-343 class).
 # Prints a JSON object: {total, noted, blocking_count, p0, p1, p2, blocking_list}. Exit status
@@ -2164,9 +2164,18 @@ cmd_approve_gate() {
     local ag_schema_version ag_schema_class2
     ag_schema_version="$(echo "$state_json" | jq -r '.schema_version // empty')"
     ag_schema_class2="$(schema_at_least "$ag_schema_version" 2)"
+    # G14/CA-426: capture STDOUT ONLY -- no 2>&1. cmd_audit_converged has warn-and-PROCEED arms
+    # that write to stderr and then still emit the "not converged: " refusal on stdout (e.g. the
+    # zero-recorded-rounds warn); merging the streams put that warn text at position 0 of
+    # conv_out, silently defeating the anchored prefix test below and producing a refusal that
+    # quoted uninitialized P0=0/P1=0 locals as if they were the real breakdown. Stderr now
+    # passes straight through to the operator in real time instead of being captured -- nothing
+    # is lost, and the prefix test runs against pure stdout, which is the contract that makes
+    # the narrowing below structural rather than accidental (a partial round, invalid JSONL, or
+    # invalid status line all report on stderr only and leave stdout empty).
     local conv_out conv_ec=0
-    conv_out="$(cmd_audit_converged "$prefix" 2>&1)" || conv_ec=$?
-    # T-EDMV4 (accept-p2-debt): give the human the option to converge once P0 and P1 are both
+    conv_out="$(cmd_audit_converged "$prefix")" || conv_ec=$?
+    # EDMV3-T68 (accept-p2-debt): give the human the option to converge once P0 and P1 are both
     # clear, carrying remaining P2s forward as documented debt rather than looping forever.
     # Deliberately narrow: only the genuine "blocking findings remain" refusal qualifies -- not
     # a partial/unknown round type, invalid JSONL, or invalid status lines, all of which also
@@ -2174,11 +2183,12 @@ cmd_approve_gate() {
     # bypassed by this flag. That refusal's message is the stable "not converged: " prefix
     # (already relied upon verbatim elsewhere -- see write_handoff_internal's Open Code-Audit
     # Findings section); anything else exiting 1 falls through to the unconditional die below.
-    local p2_debt_p0=0 p2_debt_p1=0 p2_debt_p2=0 p2_debt_accepted=0
+    local p2_debt_p0=0 p2_debt_p1=0 p2_debt_p2=0 p2_debt_accepted=0 p2_debt_breakdown_read=0
     if [[ $conv_ec -eq 1 && $accept_p2_debt -eq 1 && "$conv_out" == "not converged: "* ]]; then
       local p2_debt_jsonl p2_debt_json
       p2_debt_jsonl="$(initiative_dir_for "$prefix")/code-audit/findings-ledger.jsonl"
       if p2_debt_json="$(_audit_ledger_breakdown "$p2_debt_jsonl" 2>/dev/null)"; then
+        p2_debt_breakdown_read=1
         p2_debt_p0="$(echo "$p2_debt_json" | jq -r '.p0')"
         p2_debt_p1="$(echo "$p2_debt_json" | jq -r '.p1')"
         p2_debt_p2="$(echo "$p2_debt_json" | jq -r '.p2')"
@@ -2193,12 +2203,17 @@ cmd_approve_gate() {
         "schema_version ${ag_schema_version:-absent} < 2 and no findings-ledger.jsonl"
       echo "edm-state approve-gate: [warn] no JSONL findings ledger and schema_version ${ag_schema_version:-absent} < 2 -- convergence not computable" >&2
     elif [[ $accept_p2_debt -eq 1 && $p2_debt_accepted -eq 0 && $conv_ec -ne 0 ]]; then
-      # --accept-p2-debt was passed but did not apply (P0/P1 still open, or the refusal was for
-      # a non-severity reason such as a partial round) -- refuse with the real reason rather
-      # than silently falling through to a generic message that omits why the override failed.
-      die "code-audit gate refused for ${prefix} even with --accept-p2-debt (P0=${p2_debt_p0} P1=${p2_debt_p1} must both be 0, or the refusal is not a severity refusal): ${conv_out}"
+      # --accept-p2-debt was passed but did not apply. G14/CA-426: quote the P0/P1 breakdown
+      # ONLY when it was actually read -- the prior message printed the uninitialized locals
+      # ("P0=0 P1=0 must both be 0") on exactly the branches where no breakdown existed,
+      # telling the operator the override failed for a condition its own text showed satisfied.
+      if [[ $p2_debt_breakdown_read -eq 1 ]]; then
+        die "code-audit gate refused for ${prefix} even with --accept-p2-debt (open P0=${p2_debt_p0} P1=${p2_debt_p1}; the override applies only when both are 0 and open P2s remain): ${conv_out:-no stdout refusal; see the audit-converged diagnostics above}"
+      else
+        die "code-audit gate refused for ${prefix} even with --accept-p2-debt: the refusal was not a severity refusal (the override applies only to an open-P2-only blocking set): ${conv_out:-no stdout refusal; see the audit-converged diagnostics above}"
+      fi
     else
-      [[ $conv_ec -eq 0 ]] || die "code-audit gate refused for ${prefix}: ${conv_out}"
+      [[ $conv_ec -eq 0 ]] || die "code-audit gate refused for ${prefix}: ${conv_out:-no stdout refusal; see the audit-converged diagnostics above}"
     fi
 
     # Wave-A interim (AC3) shape retained: records the approval with `enforcement` and the
@@ -2208,8 +2223,12 @@ cmd_approve_gate() {
     [[ -f "$(initiative_dir_for "$prefix")/code-audit/findings-ledger.jsonl" ]] \
       && ledger_field="$(initiative_dir_for "$prefix")/code-audit/findings-ledger.jsonl"
     if [[ $p2_debt_accepted -eq 1 ]]; then
+      # G15/CA-427: route through coerce_round_entry like every other audit_rounds reader --
+      # on a legacy bare-integer audit_rounds.code, `.audit_rounds.code.count` raises a jq
+      # "Cannot index number" error that `// 0` does NOT catch (// handles null/false, not
+      # evaluation errors), aborting the whole command under set -e with a raw jq message.
       local p2_debt_round
-      p2_debt_round="$(echo "$state_json" | jq -r '.audit_rounds.code.count // 0')"
+      p2_debt_round="$(echo "$state_json" | jq -r "${AUDIT_ROUND_COERCE_JQ_DEF} (.audit_rounds.code // 0 | coerce_round_entry).count")"
       rmw_state "$prefix" '
         .code_audit_converged = true
         | .code_audit_gate_approved_at = $t
@@ -3001,7 +3020,7 @@ ${open_partials_list}"
     # unknown/partial round) refuses.
     local ac_recheck_out ac_recheck_ec=0
     ac_recheck_out="$(cmd_audit_converged "$prefix" 2>&1)" || ac_recheck_ec=$?
-    # T-EDMV4 (accept-p2-debt): a prior `approve-gate ... code-audit --accept-p2-debt` records
+    # EDMV3-T68 (accept-p2-debt): a prior `approve-gate ... code-audit --accept-p2-debt` records
     # code_audit_converged=true while the ledger still honestly shows the accepted P2s as open --
     # so the raw re-query above still reports "not converged" for a debt-accepted initiative.
     # Honor the acceptance here instead of refusing on a debt the human already explicitly
@@ -3012,8 +3031,12 @@ ${open_partials_list}"
     # debt never saw.
     if [[ "$ac_recheck_ec" -eq 1 && "$(read_bool "$state_json" "code_audit_p2_debt_accepted" "false")" == "true" ]]; then
       local debt_round_at_accept debt_round_now debt_recheck_json debt_recheck_p0 debt_recheck_p1
-      debt_round_at_accept="$(echo "$state_json" | jq -r '.code_audit_p2_debt_round // -1')"
-      debt_round_now="$(echo "$state_json" | jq -r '.audit_rounds.code.count // 0')"
+      # G15/CA-427 + G16/CA-428: coerce the legacy bare-integer audit_rounds shape (same fix as
+      # cmd_approve_gate's debt-round read), and route both jq-derived values through to_int
+      # before they reach the arithmetic [[ -eq ]] below (CA-157's rule: every state-file value
+      # reaching an arithmetic context passes through to_int first).
+      debt_round_at_accept="$(to_int "$(echo "$state_json" | jq -r '.code_audit_p2_debt_round // -1')" -1)"
+      debt_round_now="$(to_int "$(echo "$state_json" | jq -r "${AUDIT_ROUND_COERCE_JQ_DEF} (.audit_rounds.code // 0 | coerce_round_entry).count")" 0)"
       if [[ "$debt_round_at_accept" -eq "$debt_round_now" ]] \
         && debt_recheck_json="$(_audit_ledger_breakdown "${src}/code-audit/findings-ledger.jsonl" 2>/dev/null)"; then
         debt_recheck_p0="$(echo "$debt_recheck_json" | jq -r '.p0')"
@@ -5324,13 +5347,18 @@ _write_handoff_body() {
     ca_approver="$(echo "$state" | jq -r '.code_audit_gate_approver // "unknown"')"
     code_audit_gate_row="- Gate code-audit - approved ${ca_at} by ${ca_approver}"
     [[ -n "$ca_enforcement" ]] && code_audit_gate_row="${code_audit_gate_row} [enforcement: ${ca_enforcement}]"
-    # T-EDMV4 (accept-p2-debt): a teammate reading HANDOFF.md must see debt was knowingly
+    # EDMV3-T68 (accept-p2-debt): a teammate reading HANDOFF.md must see debt was knowingly
     # carried forward, not silently missed -- the ledger itself still shows these P2s as open.
     if [[ "$(read_bool "$state" "code_audit_p2_debt_accepted" "false")" == "true" ]]; then
-      local ca_debt_count ca_debt_round
+      # G17/CA-429: render who accepted the debt and when -- code_audit_p2_debt_accepted_at and
+      # _accepted_by were written by approve-gate but read by nothing, making them write-only
+      # state (the CA-384/CA-421 class); this row is their consumer.
+      local ca_debt_count ca_debt_round ca_debt_by ca_debt_at
       ca_debt_count="$(echo "$state" | jq -r '.code_audit_p2_debt_count // 0')"
       ca_debt_round="$(echo "$state" | jq -r '.code_audit_p2_debt_round // "unknown"')"
-      code_audit_gate_row="${code_audit_gate_row} [${ca_debt_count} P2 debt accepted, round ${ca_debt_round}]"
+      ca_debt_by="$(echo "$state" | jq -r '.code_audit_p2_debt_accepted_by // "unknown"')"
+      ca_debt_at="$(echo "$state" | jq -r '.code_audit_p2_debt_accepted_at // "unknown"')"
+      code_audit_gate_row="${code_audit_gate_row} [${ca_debt_count} P2 debt accepted, round ${ca_debt_round}, by ${ca_debt_by} at ${ca_debt_at}]"
     fi
   fi
 
