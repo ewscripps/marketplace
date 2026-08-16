@@ -99,7 +99,9 @@ using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
     and `id` literally `null` -- never the findings-ledger schema's keys (`lenses` (plural),
     `component`, `raised_round`), which is a different, larger schema the synthesizer assigns
     later and no lens ever produces. If any line carries ledger-shaped keys instead of
-    lens-shaped keys, or is missing any of `schema`/`lens`/`sev`/`status`, **refuse to proceed**:
+    lens-shaped keys, or is missing any of `schema`/`lens`/`sev`/`status`, or the file is EMPTY
+    (zero lines -- an empty file vacuously passes a per-line check but is an unlanded artifact,
+    CA-471), **refuse to proceed**:
     name the offending lens and line, and re-deliver that lens's launch template (below)
     verbatim -- the schema line and the CA-130 fallback clause travel inside the template's own
     fence precisely so a lens producing the wrong shape can be corrected by re-sending the same
@@ -138,6 +140,13 @@ using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
     cost of an individual code-audit round is never invisible. Running `update-patterns` here makes
     this round's pending entries available to the same Convergence gate instead of deferring them to
     the next round.
+    `audit-round-complete` also runs the CA-471 completeness backstop: for every lens named in
+    `lenses-run.txt`, it verifies a non-empty, parseable `lens-L{N}.jsonl` landed in the pass
+    directory, and on any miss it warns naming the lenses and records the round as
+    `round_type=partial` -- so a round whose authoritative artifacts are missing can never
+    converge even if step 8a was skipped or bungled. If that warn fires, go back to step 8a,
+    persist the missing halves, and record the miss in `tooling-notes.md` (step 8b) -- do not
+    proceed to the convergence gate on a downgraded round.
 10. **Convergence gate** (full rounds only -- partial rounds are never convergent). The order is always
     **compute -> present -> approve -> record** -- the flag is never set as a side effect of computing it:
     1. **Compute**: `edm-state audit-converged <PREFIX>` is the authority for this computation. Run it

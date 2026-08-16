@@ -114,7 +114,7 @@ Write one JSON object per line in `${OUTPUT_DIR}/lens-L9.jsonl` for every findin
 first, and not just the high-confidence ones. `NOTED` items get a line too, at `sev: "NOTED"` /
 `status: "noted"`, so demotion is recorded as data rather than lost.
 
-The schema is fixed and documented once, identically in every lens prompt:
+The schema is fixed and deliberately carried verbatim in every lens prompt (modulo the lens ID; D22/CA-130: it must survive a stale plugin cache that breaks by-name resolution), with a smoke-test identity check guarding the copies against drift:
 `{"schema":1,"id":null,"lens":"L9","round":N,"round_type":"full|partial","sev":"P0|P1|P2|NOTED","confidence":"high|medium|low","file":"path","line":42,"title":"...","status":"open"}`
 
 - `id` is always `null` at the lens stage -- the synthesizer assigns the stable `CA-NNN` ledger ID.

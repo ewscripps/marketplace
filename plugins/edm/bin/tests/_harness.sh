@@ -57,7 +57,7 @@ _HARNESS_REPO_ROOT="$(cd "${_HARNESS_PLUGIN_DIR}/../.." && pwd)"
 
 # harness_scratch_dir <outvar> -- create a fresh scratch directory under ${TMPDIR:-/tmp},
 # honoring TMPDIR (unlike a bare `mktemp -d` with no template) and installing a cleanup trap on
-# EXIT/INT/TERM in the CALLER's own shell so a Ctrl-C during a suite run does not leak the
+# EXIT/INT/TERM/HUP in the CALLER's own shell so a Ctrl-C during a suite run does not leak the
 # directory (CA-049: three older suites hand-rolled a byte-identical bare `mktemp -d` +
 # `trap ... EXIT` preamble that did neither of those two things; wave6/wave7 already do both
 # correctly inline -- this gives every suite, old and new, the same corrected preamble in one
@@ -67,7 +67,7 @@ _HARNESS_REPO_ROOT="$(cd "${_HARNESS_PLUGIN_DIR}/../.." && pwd)"
 # (never via `$(...)`) so the trap lands in the calling script's own shell:
 #   harness_scratch_dir SCRATCH
 #   echo "$SCRATCH"
-# This installs process-wide EXIT/INT/TERM traps, so -- like with_scratch_repo -- do not call it
+# This installs process-wide EXIT/INT/TERM/HUP traps, so -- like with_scratch_repo -- do not call it
 # more than once per process without capturing and restoring the prior trap yourself.
 harness_scratch_dir() {
   local __harness_scratch_outvar="$1"
@@ -82,7 +82,7 @@ harness_scratch_dir() {
   # deferred-expansion pattern used by with_scratch_repo below, and by edm-lint-artifacts and
   # edm-check-grants).
   _HARNESS_SCRATCH_DIR="$dir"
-  trap 'rm -rf "$_HARNESS_SCRATCH_DIR"' EXIT INT TERM
+  trap 'rm -rf "$_HARNESS_SCRATCH_DIR"' EXIT INT TERM HUP
   printf -v "$__harness_scratch_outvar" '%s' "$dir"
 }
 
@@ -93,7 +93,7 @@ harness_scratch_dir() {
 # absolute path).
 #
 # Cleanup runs on every exit path: normal return, a non-zero return from <fn>, and interrupt
-# (INT/TERM) -- via a trap installed before <fn> runs and restored afterwards, so this must not
+# (INT/TERM/HUP) -- via a trap installed before <fn> runs and restored afterwards, so this must not
 # be nested (bash 3.2 has no reliable `trap -p` composition; keep the nesting depth at one).
 with_scratch_repo() {
   local fn="$1"
@@ -101,18 +101,19 @@ with_scratch_repo() {
   dir="$(mktemp -d "${TMPDIR:-/tmp}/edm-scratch.XXXXXX")" || { fail "with_scratch_repo: mktemp failed"; return 1; }
 
   local prev_dir prev_srd_root prev_path
-  local prev_trap_exit prev_trap_int prev_trap_term
+  local prev_trap_exit prev_trap_int prev_trap_term prev_trap_hup
   prev_dir="$(pwd)"
   prev_srd_root="${EDM_SRD_ROOT:-}"
   prev_path="$PATH"
   prev_trap_exit="$(trap -p EXIT)"
   prev_trap_int="$(trap -p INT)"
   prev_trap_term="$(trap -p TERM)"
+  prev_trap_hup="$(trap -p HUP)"
 
   # Install cleanup before doing anything that could fail or be interrupted.
-  trap 'rm -rf "$dir"' EXIT INT TERM
+  trap 'rm -rf "$dir"' EXIT INT TERM HUP
 
-  cd "$dir" || { rm -rf "$dir"; trap - EXIT INT TERM; return 1; }
+  cd "$dir" || { rm -rf "$dir"; trap - EXIT INT TERM HUP; return 1; }
   git init -q . >/dev/null 2>&1
   git config user.email "edm-harness@example.com"
   git config user.name "EDM Test Harness"
@@ -139,10 +140,11 @@ with_scratch_repo() {
 
   # Restore whatever trap(s) the caller had before we overwrote them (bash 3.2's `trap -p`
   # output is directly eval-able, unlike its associative-array support).
-  trap - EXIT INT TERM
+  trap - EXIT INT TERM HUP
   [[ -n "$prev_trap_exit" ]] && eval "$prev_trap_exit"
   [[ -n "$prev_trap_int" ]] && eval "$prev_trap_int"
   [[ -n "$prev_trap_term" ]] && eval "$prev_trap_term"
+  [[ -n "$prev_trap_hup" ]] && eval "$prev_trap_hup"
 
   return $status
 }
@@ -180,7 +182,7 @@ check_fails() {
 # (file not found, unreadable, or a bad pattern) into the identical printed value "0" -- and 0
 # is the PASSING value for every expect-zero caller. A typo'd or deleted path silently reads as
 # "the thing we asserted is absent, is absent" instead of failing loudly. Any caller whose
-# expected count is 0 MUST pair this with a positive control (assert_absent_with_control below)
+# expected count is 0 MUST pair this with a positive control (use assert_tree_absent below)
 # rather than call count_matches bare, OR use count_matches_strict, which does not collapse the
 # two exit codes.
 count_matches() {

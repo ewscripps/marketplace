@@ -81,7 +81,16 @@ extract_section() {
 tmp="$(mktemp "${DST}.tmp.XXXXXX")"
 # CA-150: HUP added -- a terminal disconnect mid-run (e.g. an SSH session dropping) leaked this
 # staging file just as much as an untrapped INT/TERM would have.
-trap 'rm -f "$tmp"' EXIT INT TERM HUP
+# CA-446: the three real signals now EXIT after cleaning up (bin/edm-state's own CA-143
+# contract: a trap that only cleans up and returns lets the interrupted caller RESUME). With
+# the single shared trap body, a Ctrl-C during the generation block deleted $tmp and resumed
+# into `diff -u "$DST" "$tmp"`, whose missing-operand failure satisfied the `! diff` test and
+# reported a fabricated "out of sync with CLAUDE.md" verdict (exit 1) for a user interrupt --
+# in the exact mode CI runs. Signal-shaped exit codes per the write_atomic convention.
+trap 'rm -f "$tmp"' EXIT
+trap 'rm -f "$tmp"; exit 130' INT
+trap 'rm -f "$tmp"; exit 143' TERM
+trap 'rm -f "$tmp"; exit 129' HUP
 
 {
   echo "<!-- GENERATED FILE. This file is generated from CLAUDE.md by edm-sync-canonical-sections;"

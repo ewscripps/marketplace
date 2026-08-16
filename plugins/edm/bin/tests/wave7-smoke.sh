@@ -22,7 +22,7 @@ GITLAB_CI_YML="${_HARNESS_REPO_ROOT}/.gitlab-ci.yml"
 source "${SCRIPT_DIR}/../_edm-cli-lib.sh"
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave7.XXXXXX")"
-trap 'rm -rf "$TMP"' EXIT INT TERM
+trap 'rm -rf "$TMP"' EXIT INT TERM HUP
 PATH="${PLUGIN_DIR}/bin:$PATH"
 
 echo "wave7 smoke check -- EDMV3-T09 cmd_set caller-contract and no-override-flag guard"
@@ -109,6 +109,37 @@ caller_contract_scan() {
   [[ $miss -eq 0 ]]
 }
 
+# CA-422: the consumer half of the SETTABLE_KEYS durability rule (bin/edm-state's own
+# provenance comment: every member must have BOTH a producer and a consumer who reads it back
+# from state). caller_contract_scan above covers only the producer direction, and its
+# WARN_UNUSED arm warns on missing PRODUCERS -- a key with a producer and no consumer was
+# structurally invisible, which is exactly how qc_shard_threshold, jira_synced_at/CA-384 and
+# test_frameworks_detected/CA-421 each sat write-only across multiple rounds (and how a fresh
+# write-only pair landed in the very round after the durability rule was written). This pass
+# FAILS (never warns) on a key with zero reads: a read is a non-comment `.$key` jq reference in
+# bin/edm-state that is not the SETTABLE_KEYS definition and not a write-assignment, or --
+# for keys whose consumer is a skill/agent/hook -- any reference outside an `edm-state set `
+# producer line. bin/tests/ is deliberately not searched: a test asserting the key exists is
+# not a consumer.
+settable_consumer_scan() {
+  local root="$1" keys="${2:-}" fail=0 k hits
+  [[ -z "$keys" ]] && keys="$(_wave7_settable_keys)"
+  for k in $keys; do
+    hits="$(grep -n "\.${k}" "$root/bin/edm-state" 2>/dev/null \
+      | grep -vE '^[0-9]+:[[:space:]]*#' | grep -v 'SETTABLE_KEYS' \
+      | grep -vE "\.${k}[[:space:]]*=" || true)"
+    if [[ -z "$hits" ]]; then
+      hits="$(grep -rn "$k" "$root/skills" "$root/agents" "$root/hooks/hooks.json" 2>/dev/null \
+        | grep -v 'edm-state set ' || true)"
+    fi
+    if [[ -z "$hits" ]]; then
+      echo "NO_CONSUMER $k"
+      fail=1
+    fi
+  done
+  return $fail
+}
+
 # =================================================================================
 # EDMV3-T09 AC11/AC12: the cmd_set allowlist and its real callers are a checked contract
 # =================================================================================
@@ -176,6 +207,42 @@ neg_case_bogus_key() {
 }
 neg_case_bogus_key
 
+# ---- CA-422 (positive): every settable key has a live consumer ----------------------------
+echo
+echo "CA-422 -- every SETTABLE_KEYS member has a consumer that reads it back from state"
+set +e
+ca422_ec=0
+ca422_out="$(settable_consumer_scan "$PLUGIN_DIR" 2>&1)" || ca422_ec=$?
+set -e
+[[ $ca422_ec -eq 0 ]] && pass "CA-422 -- zero NO_CONSUMER keys against the live tree (the write-only-state class is closed)" \
+  || fail "CA-422 -- consumer scan found write-only settable key(s):${ca422_out:+ }${ca422_out}"
+check_absent "CA-422 -- no NO_CONSUMER line against the live tree" "NO_CONSUMER" "$ca422_out"
+
+# ---- CA-422 (negative): a synthetic consumer-less key FAILS the scan, not warns -----------
+echo
+echo "CA-422 -- an injected consumer-less settable key fails the consumer scan, naming the key"
+ca422_neg_case() {
+  local scratch ec=0 out
+  scratch="$(mktemp -d "${TMP}/edm-ca422.XXXXXX")" || { fail "CA-422 -- mktemp failed"; return 1; }
+  mkdir -p "${scratch}/bin" "${scratch}/skills" "${scratch}/agents" "${scratch}/hooks"
+  # A minimal edm-state whose SETTABLE_KEYS carries one real-looking key that nothing reads.
+  # The key also gets a producer line so caller_contract_scan's WARN_UNUSED (the old, advisory
+  # check) would stay SILENT about it -- proving this scan catches what that one cannot.
+  cat > "${scratch}/bin/edm-state" <<'EOS'
+#!/bin/bash
+SETTABLE_KEYS="orphan_key_xyz"
+# edm-state set <PREFIX> orphan_key_xyz <value>   (producer exists; no reader anywhere)
+EOS
+  printf '{}\n' > "${scratch}/hooks/hooks.json"
+  # Pass the scratch tree's own key list explicitly -- no function shadowing.
+  out="$(settable_consumer_scan "$scratch" "orphan_key_xyz" 2>&1)" || ec=$?
+  [[ $ec -ne 0 ]] && pass "CA-422 -- a producer-only key fails the consumer scan (fail, not the advisory warn that let three write-only keys survive)" \
+    || fail "CA-422 -- consumer scan passed a key with zero readers"
+  check "CA-422 -- the failure names the orphan key" "NO_CONSUMER orphan_key_xyz" "$out"
+  rm -rf "$scratch"
+}
+ca422_neg_case
+
 # =================================================================================
 # EDMV3-T09 AC13: no override flag reintroduced -- the literal --force never appears
 # =================================================================================
@@ -202,13 +269,23 @@ assert_tree_absent "no literal --force in bin/edm-state" \
 # block and in its own labels -- those are prose about the ban, not a call site.
 # =================================================================================
 echo
-echo "=== G2/CA-037 tripwire: assert_absent_with_control has no production callers ==="
-g2_awc_this_file="${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")"
-g2_awc_hits="$(grep -rl 'assert_absent_with_control' "$SCRIPT_DIR"/*.sh 2>/dev/null \
-  | grep -v '/_harness\.sh$' | grep -v '/harness-smoke\.sh$' | grep -vF "$g2_awc_this_file" || true)"
+echo "=== G2/CA-037 tripwire: assert_absent_with_control stays deleted ==="
+# CA-434: CA-395 DELETED the function and its harness-smoke.sh self-tests, which made this
+# tripwire's previous form doubly dead -- its pass message asserted self-tests that no longer
+# existed, and its fail arm guarded an edit (a new CALL site) that could never survive to be
+# caught: calling an undefined function aborts the suite with exit 127 before any assertion
+# runs. The one edit that genuinely reintroduces the class -- re-DEFINING the function -- was
+# explicitly excluded from the old scan. Retargeted: ban the function DEFINITION shape across
+# every file in this directory, with no exclusions (nothing may define it; prose mentions of
+# the name, like this comment, do not match the definition shape).
+# Needle built from two halves so this file's own pattern literal cannot self-match (the
+# CA-402-class convention the suite already uses at its runtime-halves sites).
+g2_awc_def_needle='assert_absent_with_'
+g2_awc_def_needle="${g2_awc_def_needle}control()"
+g2_awc_hits="$(grep -rlnF "$g2_awc_def_needle" "$SCRIPT_DIR"/*.sh 2>/dev/null || true)"
 [[ -z "$g2_awc_hits" ]] \
-  && pass "G2/CA-037 -- assert_absent_with_control is called only from harness-smoke.sh's self-tests" \
-  || fail "G2/CA-037 -- assert_absent_with_control called outside harness-smoke.sh in: $g2_awc_hits (use assert_tree_absent instead)"
+  && pass "G2/CA-037/CA-434 -- assert_absent_with_control is not (re)defined anywhere in bin/tests (deleted by CA-395, stays deleted)" \
+  || fail "G2/CA-037/CA-434 -- assert_absent_with_control was re-defined in: $g2_awc_hits (use assert_tree_absent instead)"
 
 # =================================================================================
 # EDMV3-T04 -- README install path regression guard (AC6). Do not add unrelated cases
@@ -1052,7 +1129,10 @@ echo "T61 AC11 -- macOS/Linux divergence points (sed -i, grep -P family, stat -c
 # present one.
 # G20/CA-348: also catch a bare template-less `mktemp -d)` -- on macOS this resolves
 # _CS_DARWIN_USER_TEMP_DIR before TMPDIR, the exact shape evals/run-eval.sh regressed to.
-t61_divergence_hits="$(grep -rnE 'sed -i|grep -[a-zA-Z]*P|stat -c|stat -f|XXXXXX[A-Za-z0-9]|mktemp -d\)|date -d|readlink -f|sort -V|head -n -[0-9]|printf %q' "$PLUGIN_DIR/bin/" "$PLUGIN_DIR/evals/" 2>/dev/null | grep -v '/tests/' || true)"
+# CA-449: widened to `mktemp( -d)?\)` -- the FILE form (bare `mktemp)`) has the identical macOS
+# TMPDIR-bypass behavior and had regressed in score-artifacts.sh's cmd_compare while the -d-only
+# tripwire watched the directory form alone.
+t61_divergence_hits="$(grep -rnE 'sed -i|grep -[a-zA-Z]*P|stat -c|stat -f|XXXXXX[A-Za-z0-9]|mktemp( -d)?\)|date -d|readlink -f|sort -V|head -n -[0-9]|printf %q' "$PLUGIN_DIR/bin/" "$PLUGIN_DIR/evals/" 2>/dev/null | grep -v '/tests/' || true)"
 t61_divergence_outside_branch="$(printf '%s\n' "$t61_divergence_hits" | grep -v 'edm-lint-artifacts:' || true)"
 [[ -z "$t61_divergence_outside_branch" ]] \
   && pass "T61 AC11 -- every divergence-point hit (bin/ and evals/) is inside edm-lint-artifacts' detection branch" \
@@ -1562,6 +1642,39 @@ for t24_agent in $LENS_AGENTS; do
 done
 [[ "$t24_ac2_count" -eq 11 ]] && pass "T24 AC2 -- eleven lens files carry the fixed schema text" \
   || fail "T24 AC2 -- only $t24_ac2_count/11 lens files carry '\"schema\":1'"
+
+# CA-467: identity check, not just the presence count above -- the twelve hand-maintained copies
+# of the lens JSONL schema line (deliberate duplication, D22/CA-130: the schema must survive a
+# stale plugin cache that breaks by-name resolution) had NO drift guard; divergence here is
+# silent by construction (a lens emitting the wrong field set is a recall loss invisible to every
+# downstream gate). Extract the lens-schema line from all 11 agents + the SKILL, normalize the
+# lens token, and require exactly one deduplicated line.
+echo
+echo "CA-467 -- the twelve lens JSONL schema copies are byte-identical modulo the lens token"
+_ca467_extract() {  # _ca467_extract <file> -- print that file's lens-schema line, lens-normalized
+  grep -o '{"schema":1,"id":null[^`]*}' "$1" 2>/dev/null | head -1 \
+    | sed -E 's/"lens":"L(\{N\}|[0-9]+)"/"lens":"LENS"/'
+}
+ca467_lines=""
+for t24_agent in $LENS_AGENTS; do
+  ca467_lines="${ca467_lines}$(_ca467_extract "${PLUGIN_DIR}/agents/${t24_agent}.md")"$'\n'
+done
+ca467_lines="${ca467_lines}$(_ca467_extract "${PLUGIN_DIR}/skills/code-audit/SKILL.md")"$'\n'
+ca467_total="$(printf '%s' "$ca467_lines" | grep -c . || true)"
+ca467_unique="$(printf '%s' "$ca467_lines" | grep . | sort -u | wc -l | tr -d '[:space:]')"
+[[ "$ca467_total" -eq 12 ]] \
+  && pass "CA-467 -- all 12 files yield a lens-schema line" \
+  || fail "CA-467 -- extracted only ${ca467_total}/12 lens-schema lines (extraction pattern or a copy has drifted)"
+[[ "$ca467_unique" -eq 1 ]] \
+  && pass "CA-467 -- the 12 copies deduplicate to exactly one line (byte-identical modulo lens token)" \
+  || fail "CA-467 -- the 12 copies deduplicate to ${ca467_unique} distinct lines -- a copy has silently diverged:\n$(printf '%s' "$ca467_lines" | grep . | sort -u)"
+# Positive control: a mutated copy must produce a second distinct line, proving the normalization
+# cannot collapse a real divergence.
+ca467_ctl="$(printf '%s' "$ca467_lines" | grep . | head -1 | sed 's/"status":"open"/"status":"opened"/')"
+ca467_ctl_unique="$(printf '%s\n%s' "$ca467_lines" "$ca467_ctl" | grep . | sort -u | wc -l | tr -d '[:space:]')"
+[[ "$ca467_ctl_unique" -eq 2 ]] \
+  && pass "CA-467 -- positive control: a mutated copy is detected as a second distinct line" \
+  || fail "CA-467 -- positive control failed: mutation did not produce a second distinct line (check would be vacuous)"
 
 echo
 echo "T24 AC3 -- no lens declares a deferred status (scoped to this ticket's own JSONL Line Format section)"
@@ -2416,8 +2529,12 @@ t43_bash4_hits="$(grep -nE 'declare -A|mapfile|readarray|\{fd\}' "$LINT_BIN" || 
 
 echo
 echo "T43 AC12 -- no hook change needed; CLAUDE.md's bin/ table points at edm-lint-artifacts --help"
-check "T43 AC12 -- hooks.json's PreToolUse still invokes edm-lint-artifacts" \
-  "edm-lint-artifacts" "$(cat "${PLUGIN_DIR}/hooks/hooks.json" 2>/dev/null)"
+# CA-436: the commit hook now delegates to bin/edm-lint-staged-artifacts, which is what
+# invokes edm-lint-artifacts -- assert the chain end to end rather than the retired inline form.
+check "T43 AC12 -- hooks.json's PreToolUse delegates to edm-lint-staged-artifacts" \
+  "edm-lint-staged-artifacts" "$(cat "${PLUGIN_DIR}/hooks/hooks.json" 2>/dev/null)"
+check "T43 AC12 -- edm-lint-staged-artifacts invokes edm-lint-artifacts per resolved prefix" \
+  'edm-lint-artifacts "$p"' "$(cat "${PLUGIN_DIR}/bin/edm-lint-staged-artifacts" 2>/dev/null)"
 # G19 (round-3 Wave 7c): the hardcoded "four violation classes" count drifted true as classes
 # were added (mermaid-semicolon, unterminated-fence, scan-error, unreadable all landed after
 # this row was first written) -- the row now points at --help rather than a count.
@@ -4564,8 +4681,19 @@ echo "T67 AC8 -- commit-hook scoping (PreToolUse git commit) preserved"
 # read out of the hook command itself, so the check means the same thing before and after a commit.
 t67ac8_cmd="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' \
   "${PLUGIN_DIR}/hooks/hooks.json" 2>/dev/null || true)"
+# CA-436/CA-413/CA-414 (round-8 Stage B): the hook body was extracted to
+# bin/edm-lint-staged-artifacts (a JSON-string one-liner had no place for a shellcheck
+# directive, defeated symlinked repo roots lexically, and used interpreter-dependent echo).
+# The hook is now a thin delegator; every scoping property AC8 names lives in the script, so
+# the property assertions below read the SCRIPT's content while two new checks pin the
+# delegation itself.
+check "T67 AC8 -- the hook delegates to edm-lint-staged-artifacts" \
+  "edm-lint-staged-artifacts" "$t67ac8_cmd"
+check "T67 AC8 -- the hook degrades to exit 0 when the delegate is absent" \
+  "command -v edm-lint-staged-artifacts >/dev/null 2>&1 || exit 0" "$t67ac8_cmd"
+t67ac8_cmd="$(cat "${PLUGIN_DIR}/bin/edm-lint-staged-artifacts" 2>/dev/null || true)"
 if [[ -z "$t67ac8_cmd" ]]; then
-  fail "T67 AC8 -- no PreToolUse hook with matcher 'git commit' found in hooks/hooks.json"
+  fail "T67 AC8 -- bin/edm-lint-staged-artifacts not found (the hook's delegate is missing)"
 else
   # Scoped to staged SRD/ paths only, resolves prefixes from both layouts, degrades to exit 0
   # when the helpers are absent, and propagates a non-zero exit so a violation blocks the commit.
@@ -4592,7 +4720,7 @@ else
   check "T67 AC8 -- exits 0 when edm-lint-artifacts is unavailable" \
     "command -v edm-lint-artifacts >/dev/null 2>&1 || exit 0" "$t67ac8_cmd"
   check "T67 AC8 -- exits 0 when nothing under SRD/ is staged" 'test -z "$staged" && exit 0' "$t67ac8_cmd"
-  check "T67 AC8 -- propagates failure so the commit is blocked" 'exit $fail' "$t67ac8_cmd"
+  check "T67 AC8 -- propagates failure so the commit is blocked" 'exit "$fail"' "$t67ac8_cmd"
   check "T67 AC8 -- invokes the linter per resolved prefix, not with --all" 'edm-lint-artifacts "$p"' "$t67ac8_cmd"
   check_absent "T67 AC8 -- commit path does not scan the whole tree" "edm-lint-artifacts --all" "$t67ac8_cmd"
 fi
@@ -4923,8 +5051,17 @@ echo "CA-141/CA-142/CA-143/CA-159/CA-025 -- with_state_lock / write_atomic concu
 # than the actual `( flock -w 10 200 ...` call -- a fixed line-count window is fragile against
 # either the guard comment or the intervening G49 comment growing. Extract the real range
 # instead: from the "# CA-169:" marker line through the real (unindented-comment) flock call.
-t_g53_flock_line="$(awk '/^    \( flock -w 10 200/{print NR; exit}' "$EDM_STATE")"
+# CA-433: the anchor must not encode the timeout VALUE -- the previous form matched
+# '( flock -w 10 200' literally, so when CA-397 replaced the literal 10 with
+# "$EDM_STATE_LOCK_WAIT_S" the extraction silently degraded to a single line and all three
+# assertions below passed vacuously (the SECOND recurrence of this fragile-anchor class after
+# G38/CA-314). Anchor on the call shape only, and fail loudly when either anchor goes stale
+# instead of substituting line 1.
+t_g53_flock_line="$(awk '/^    \( flock -w /{print NR; exit}' "$EDM_STATE")"
 t_g53_ca169_line="$(awk '/# CA-169: never `rm -f/{print NR; exit}' "$EDM_STATE")"
+if [[ -z "$t_g53_flock_line" || -z "$t_g53_ca169_line" ]]; then
+  fail "G53/CA-433 -- could not locate the flock() call or the CA-169 comment in bin/edm-state (a stale anchor must fail, not silently extract one line)"
+fi
 t_g53_before_flock="$(sed -n "${t_g53_ca169_line:-1},${t_g53_flock_line:-1}p" "$EDM_STATE")"
 check "G53 -- the CA-169 guard comment is present immediately above the flock() call" \
   "CA-169" "$t_g53_before_flock"
@@ -4932,6 +5069,21 @@ check "G53 -- the guard comment states the lock file is never unlinked (inode-ke
   "never" "$t_g53_before_flock"
 check_absent "G53 -- no rm -f of the flock lockfile was (re)introduced near the flock() call" \
   'rm -f "${lockfile}"' "$t_g53_before_flock"
+
+# ---- CA-438 (residue of CA-415): pin the corrected fd-200 rationale the same way the
+# neighboring CA-169 invariant is pinned -- without this, the comment could be shortened back
+# to the "clears stdin/stdout/stderr" wording that produced CA-415 (which invites fd 9, the
+# conventional BASH_XTRACEFD target, or the 10+ band bash reserves for redirection bookkeeping)
+# with nothing failing.
+ca438_edm_state="$(cat "$EDM_STATE")"
+check "CA-438 -- the fd-200 comment names BASH_XTRACEFD as the reason fd 9 is unsafe" \
+  "BASH_XTRACEFD" "$ca438_edm_state"
+check "CA-438 -- the fd-200 comment carries its do-not-lower instruction" \
+  "Do not lower this" "$ca438_edm_state"
+ca438_lowfd_hits="$(grep -nE '\b[0-9]{1,2}>"?\$\{?lockfile' "$EDM_STATE" || true)"
+[[ -z "$ca438_lowfd_hits" ]] \
+  && pass "CA-438 -- no sub-100 fd redirects onto the lockfile (fd 200 not lowered)" \
+  || fail "CA-438 -- a low-fd lockfile redirect was introduced: ${ca438_lowfd_hits}"
 
 # ---- CA-159: no path is ever interpolated into a trap body string (apostrophe-safe) -----------
 t_ca159_out="$(
@@ -6150,6 +6302,19 @@ EOS
     && pass "CA-186 G3 -- EDM_SRD_ROOT=/ is classified as absolute (diagnostic + exit 1), not silently collapsed to empty" \
     || fail "CA-186 G3 -- EDM_SRD_ROOT=/ produced exit=${ec}, output: ${out} (expected exit 1 with an absolute-path diagnostic)"
 
+  # Case 3c (CA-413, round-8 Stage B): an absolute srd_root reached VIA A SYMLINKED path of the
+  # repo must relativize successfully. git rev-parse --show-toplevel returns the PHYSICAL path,
+  # so the old lexical prefix match failed whenever the caller's path went through a symlink
+  # (macOS /var -> /private/var makes ${TMP}-based scratch repos a natural live fixture; on
+  # Linux, where the two paths coincide, this case still exercises the same arm and must still
+  # block). Pre-fix behaviour was the non-blocking exit-1 "could not be relativized" arm --
+  # commit-time lint silently stopped enforcing.
+  ec=0
+  out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" EDM_SRD_ROOT="${scratch}/SRD" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 2 && "$out" == *"FOOG8"* ]] \
+    && pass "CA-413 -- an absolute srd_root via a (possibly symlinked) scratch path relativizes physically and still blocks (exit 2)" \
+    || fail "CA-413 -- absolute-symlinked EDM_SRD_ROOT produced exit=${ec}, output: ${out} (expected exit 2 naming FOOG8 -- physical normalization regressed)"
+
   # Case 4 (CA-186 G3): a bare relative root with no leading/trailing decoration -- baseline for
   # the remaining shapes below.
   ec=0
@@ -6721,15 +6886,17 @@ check "G9 -- CLAUDE.md's bin/ table points readers at --help instead of a hardco
 
 # =================================================================================
 # G64 (round-3 Wave 7c): CLAUDE.md's Hooks behavior table must not present edm-lint-artifacts's
-# own exit codes as if they were the hook's own -- the mapping is inverted (linter exit 1 -> hook
-# exit 2; linter exit 2 -> hook exit 0).
+# own exit codes as if they were the blocking layer's own -- the mapping is inverted (linter
+# exit 1 -> blocking exit 2; linter exit 2 -> non-blocking). CA-436 moved the hook body into
+# bin/edm-lint-staged-artifacts, so the blocking layer the table describes is now "the script",
+# not "the hook" -- needles updated to the delegated wording, same disambiguation.
 # =================================================================================
 echo
-echo "=== G64: CLAUDE.md's Hooks behavior table disambiguates the linter's exit codes from the hook's own ==="
-check "G64 -- CLAUDE.md states linter exit 1 makes the hook exit 2 (the blocking code)" \
-  "makes the hook exit **2**" "$g9_claude_md"
-check "G64 -- CLAUDE.md states linter exit 2 makes the hook exit 0 (does not block)" \
-  "makes the hook exit 0" "$g9_claude_md"
+echo "=== G64: CLAUDE.md's Hooks behavior table disambiguates the linter's exit codes from the delegate script's own ==="
+check "G64 -- CLAUDE.md states linter exit 1 makes the delegate script exit 2 (the blocking code)" \
+  "makes the script exit **2**" "$g9_claude_md"
+check "G64 -- CLAUDE.md states linter exit 2 is reported but does not block" \
+  "is reported to stderr but not blocking" "$g9_claude_md"
 
 
 # =================================================================================
@@ -7855,19 +8022,20 @@ echo "=== G10/CA-340: shape-restricted ban on new file-and-line citations (durab
 # ban directly. Scoped to exactly that shape (this plugin's own bin/tests/evals scripts), never
 # to .gitlab-ci.yml or hooks.json, both of which are cited by line number elsewhere for
 # legitimate reasons documented in the CA-315 comment above (.gitlab-ci.yml, line 198, as a
-# positive control anchor in the G37/CA-313 case, and the ticket-provenance quote inside
-# edm-check-grants, around line 419, which quotes a ticket's own hooks.json line-117 wording
-# verbatim, not asserting a live fact) -- an explicit allowlist keeps both exempt even if a
-# future widening of this regex would otherwise catch them.
+# positive control anchor in the G37/CA-313 case) -- the explicit allowlist keeps it exempt
+# even if a future widening of this regex would otherwise catch it.
+# CA-435: a second allowlist entry (edm-check-grants around line 419) was dropped -- it
+# justified itself by a hooks.json line-117 quote that CA-406's fix deleted from that file, so
+# the entry filtered nothing from the live scan and its synthetic control asserted the filter
+# suppressed a line shape that no longer exists anywhere in the tree.
 g10_citation_regex='\b(edm-state|edm-init|edm-lint-artifacts|edm-check-[A-Za-z0-9_-]+|run-eval\.sh|score-artifacts\.sh|_edm-[A-Za-z0-9_-]+\.sh|wave[0-9][A-Za-z0-9_-]*-smoke\.sh|run-all\.sh):[0-9]+'
 g10_allowlist_1=".gitlab-ci.yml:198"
-g10_allowlist_2="plugins/edm/bin/edm-check-grants:419"
 
 g10_scan_tree() {
   grep -rnE "$g10_citation_regex" "$@" 2>/dev/null | grep -E '^[^:]+:[0-9]+:[[:space:]]*#' || true
 }
 g10_filter_allowlist() {
-  grep -v -F -- "${g10_allowlist_1}:" | grep -v -F -- "${g10_allowlist_2}:" || true
+  grep -v -F -- "${g10_allowlist_1}:" || true
 }
 
 g10_raw_hits="$(cd "$_HARNESS_REPO_ROOT" && g10_scan_tree plugins/edm/bin plugins/edm/evals plugins/edm/CLAUDE.md plugins/edm/README.md .gitlab-ci.yml)"
@@ -7888,20 +8056,19 @@ g10_control_hits="$(cd "$g10_control_dir" && g10_scan_tree plugins/edm/bin)"
   || fail "G10/CA-340 -- positive control broken: a deliberately-added 'edm-state:1234' comment was NOT caught"
 rm -rf "$g10_control_dir"
 
-# Allowlist control: the two named DATA sites must survive the filter unscathed if fed to it, and
-# an unrelated third hit must still be flagged -- proves the filter discriminates by exact
+# Allowlist control: the named DATA site must survive the filter unscathed if fed to it, and
+# an unrelated second hit must still be flagged -- proves the filter discriminates by exact
 # location rather than suppressing everything (or nothing).
-g10_synthetic_hits="$(printf '%s\n%s\n%s\n' \
+g10_synthetic_hits="$(printf '%s\n%s\n' \
   ".gitlab-ci.yml:198:# see .gitlab-ci.yml:198" \
-  "plugins/edm/bin/edm-check-grants:419:# quotes hooks/hooks.json:117" \
   "plugins/edm/bin/edm-state:999:# see edm-state:999 for details")"
 g10_synthetic_filtered="$(printf '%s\n' "$g10_synthetic_hits" | g10_filter_allowlist)"
 [[ "$g10_synthetic_filtered" == *"edm-state:999"* ]] \
   && pass "G10/CA-340 -- allowlist filter -- an unrelated hit survives filtering (not a no-op filter)" \
   || fail "G10/CA-340 -- allowlist filter -- an unrelated hit was unexpectedly filtered out"
-[[ "$g10_synthetic_filtered" != *".gitlab-ci.yml:198"* && "$g10_synthetic_filtered" != *"edm-check-grants:419"* ]] \
-  && pass "G10/CA-340 -- allowlist filter -- both named DATA sites are excluded (not an always-fire filter)" \
-  || fail "G10/CA-340 -- allowlist filter -- one of the two named DATA sites was not excluded:\n${g10_synthetic_filtered}"
+[[ "$g10_synthetic_filtered" != *".gitlab-ci.yml:198"* ]] \
+  && pass "G10/CA-340 -- allowlist filter -- the named DATA site is excluded (not an always-fire filter)" \
+  || fail "G10/CA-340 -- allowlist filter -- the named DATA site was not excluded:\n${g10_synthetic_filtered}"
 
 echo
 echo "=== G41/CA-317: every .gitlab-ci.yml job that can fail prints a job-named FAILED line, one token across the file ==="

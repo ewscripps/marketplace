@@ -48,43 +48,48 @@ fi
 #   2. Product-scoped layout: SRD/{PRODUCT}/{PREFIX}__*/
 # Both must be absent for the prefix to be considered unique (EDMV2-87).
 
+# _scan_product_dirs_for_prefix <root> <prefix> -- print each {root}/*/{prefix}__* directory,
+# one per line. CA-344(4): the live and archived halves below used to carry two hand-copies of
+# this walk with silently diverged guards (only the live copy had the root -d guard and the
+# .archived basename skip); one walker now serves both, and each caller decides die vs warn.
+# The .archived skip only matters for the live root, and is a harmless no-match under .archived
+# itself (archived trees have no nested .archived).
+_scan_product_dirs_for_prefix() {
+  local root="$1" prefix="$2" product_dir candidate
+  [[ -d "$root" ]] || return 0
+  for product_dir in "$root"/*/; do
+    product_dir="${product_dir%/}"
+    [[ "$(basename "$product_dir")" == ".archived" ]] && continue
+    [[ -d "$product_dir" ]] || continue
+    for candidate in "${product_dir}/${prefix}__"*/; do
+      candidate="${candidate%/}"
+      [[ -d "$candidate" ]] && printf '%s\n' "$candidate"
+    done
+  done
+  return 0
+}
+
 # AC2: Check legacy flat path.
 if [[ -d "${SRD_ROOT}/${PREFIX}" ]]; then
   die "collision: ${SRD_ROOT}/${PREFIX} already exists" 2
 fi
 
-# AC1: Check product-scoped directories in any product subdirectory.
-# Guard the glob: if SRD/ is empty or has no product dirs the loop body never fires.
-if [[ -d "$SRD_ROOT" ]]; then
-  for product_dir in "${SRD_ROOT}"/*/; do
-    product_dir="${product_dir%/}"
-    # Skip the .archived directory and any non-directory entries.
-    [[ "$(basename "$product_dir")" == ".archived" ]] && continue
-    [[ -d "$product_dir" ]] || continue
-    # Look for {PREFIX}__* directories within this product dir.
-    for candidate in "${product_dir}/${PREFIX}__"*/; do
-      candidate="${candidate%/}"
-      if [[ -d "$candidate" ]]; then
-        die "collision: ${candidate} already exists (prefix ${PREFIX} is already in use under product $(basename "$product_dir"))" 2
-      fi
-    done
-  done
-fi
+# AC1: Check product-scoped directories in any product subdirectory -- die on the first hit.
+while IFS= read -r candidate; do
+  [[ -n "$candidate" ]] || continue
+  die "collision: ${candidate} already exists (prefix ${PREFIX} is already in use under product $(basename "$(dirname "$candidate")"))" 2
+done < <(_scan_product_dirs_for_prefix "$SRD_ROOT" "$PREFIX")
 
 # AC5: Also check archived initiatives -- non-fatal warning only.
 # Check flat archived path.
 if [[ -d "${SRD_ROOT}/.archived/${PREFIX}" ]]; then
   echo "edm-validate-prefix: NOTE: $PREFIX exists in ${SRD_ROOT}/.archived/ (previously used and archived)" >&2
 fi
-# Check product-scoped archived paths.
-for archived_product_dir in "${SRD_ROOT}/.archived/"/*/; do
-  archived_product_dir="${archived_product_dir%/}"
-  [[ -d "$archived_product_dir" ]] || continue
-  for candidate in "${archived_product_dir}/${PREFIX}__"*/; do
-    candidate="${candidate%/}"
-    [[ -d "$candidate" ]] && echo "edm-validate-prefix: NOTE: $PREFIX was previously used in $(basename "$archived_product_dir") (archived at $candidate)" >&2
-  done
-done
+# Check product-scoped archived paths -- same walker, warn instead of die.
+while IFS= read -r candidate; do
+  [[ -n "$candidate" ]] || continue
+  echo "edm-validate-prefix: NOTE: $PREFIX was previously used in $(basename "$(dirname "$candidate")") (archived at $candidate)" >&2
+done < <(_scan_product_dirs_for_prefix "${SRD_ROOT}/.archived" "$PREFIX")
 
 echo "ok: $PREFIX is valid and not in use"
 exit 0

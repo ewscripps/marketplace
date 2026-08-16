@@ -121,10 +121,17 @@ fi
 command -v jq >/dev/null 2>&1 || die "jq not found on PATH (required to parse hooks.json)"
 
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/edm-check-grants.XXXXXX")" || die "cannot create scratch directory"
-# G37/CA-268: EXIT-only left this the last EXIT-only cleanup trap in bin/+evals/ -- every sibling
-# covers at least EXIT INT TERM, so an interrupted run here was the one holdout that leaked its
-# scratch directory on Ctrl-C/SIGTERM instead of cleaning it up like every other script does.
-trap 'rm -rf "$WORKDIR"' EXIT INT TERM
+# G37/CA-268, extended by CA-447: the plugin's convention is the FOUR-signal set EXIT INT TERM
+# HUP (established by CA-150 at edm-sync-canonical-sections and by write_atomic/with_state_lock
+# in bin/edm-state -- the prior version of this comment stated a weaker "at least EXIT INT
+# TERM" floor that contradicted that precedent and read as if the family already agreed), and
+# the three real signals exit with signal-shaped codes after cleanup rather than resuming
+# (CA-446's class; this scanner is read-only, so a resume here only corrupted the exit code,
+# but one shape across the family is the point).
+trap 'rm -rf "$WORKDIR"' EXIT
+trap 'rm -rf "$WORKDIR"; exit 130' INT
+trap 'rm -rf "$WORKDIR"; exit 143' TERM
+trap 'rm -rf "$WORKDIR"; exit 129' HUP
 
 violations=0
 
@@ -244,6 +251,21 @@ mark_and_maybe_report() {  # mark_and_maybe_report <kind> <name> <class> <file> 
   report_violation "$kind" "$name" "missing-${class_lc}-grant" "$file" "$line"
 }
 
+# agent_grants_class <tools> <disallowed> <class> -- the effective-grant predicate: a class is
+# granted iff <tools> lists it AND <disallowed> does not. CA-344(2): this three-statement
+# predicate was hand-copied once per direction (assert_agent_grant below and the AC3
+# grant-without-instruction pass at the bottom of this file); both directions must agree by
+# construction or one tool run reports a grant as both unsatisfied and un-instructed, or
+# neither -- one definition now serves both.
+agent_grants_class() {
+  local tools="$1" disallowed="$2" class="$3"
+  has_tool "$tools" "$class" || return 1
+  if [[ -n "$disallowed" ]] && has_tool "$disallowed" "$class"; then
+    return 1
+  fi
+  return 0
+}
+
 # assert_agent_grant <actor> <class: Write|Bash> <file> <line> -- records that <actor> received a
 # <class> instruction (for the AC3 negative-direction pass below) and, if <actor> is a real agent
 # whose frontmatter does not effectively grant <class>, reports it (deduped per actor).
@@ -253,16 +275,7 @@ assert_agent_grant() {
 
   agent_exists "$actor" || return 0
 
-  local tools disallowed satisfied
-  tools="$(agent_field "$actor" 3)"
-  disallowed="$(agent_field "$actor" 4)"
-  satisfied=1
-  has_tool "$tools" "$class" || satisfied=0
-  if [[ -n "$disallowed" ]] && has_tool "$disallowed" "$class"; then
-    satisfied=0
-  fi
-
-  if [[ "$satisfied" -eq 0 ]]; then
+  if ! agent_grants_class "$(agent_field "$actor" 3)" "$(agent_field "$actor" 4)" "$class"; then
     mark_and_maybe_report agent "$actor" "$class" "$file" "$line"
   fi
   return 0
@@ -357,34 +370,41 @@ expand_lens_agents() {
   done
 }
 
-nearby_agent_name() {  # nearby_agent_name <file> <line> <lookback>
+# _lookback_window <file> <line> <lookback> -- print the [line-lookback, line] text window.
+# CA-344(5): nearby_agent_name and window_mentions_lens each hand-computed this identical window,
+# and resolve_targets_for_line can call both for the same hit -- so the same sed range was
+# EXECUTED twice per candidate line. The window is now captured once per resolution and both
+# matchers take the captured text.
+_lookback_window() {
   local file="$1" line="$2" lookback="${3:-15}"
   local lo=$((line - lookback))
   [[ $lo -lt 1 ]] && lo=1
+  sed -n "${lo},${line}p" "$file" 2>/dev/null
+}
+
+nearby_agent_name() {  # nearby_agent_name <window-text>
   local hit
-  hit="$(sed -n "${lo},${line}p" "$file" 2>/dev/null | grep -E '^Agent:[[:space:]]*' | tail -1 || true)"
+  hit="$(printf '%s\n' "$1" | grep -E '^Agent:[[:space:]]*' | tail -1 || true)"
   [[ -z "$hit" ]] && return 0
   printf '%s\n' "$hit" | sed -E 's/^Agent:[[:space:]]*//; s/[[:space:]]*\(.*\)[[:space:]]*$//'
 }
 
-window_mentions_lens() {  # window_mentions_lens <file> <line> <lookback>
-  local file="$1" line="$2" lookback="${3:-15}"
-  local lo=$((line - lookback))
-  [[ $lo -lt 1 ]] && lo=1
-  sed -n "${lo},${line}p" "$file" 2>/dev/null | grep -qiE '\blens\b'
+window_mentions_lens() {  # window_mentions_lens <window-text>
+  printf '%s\n' "$1" | grep -qiE '\blens\b'
 }
 
 resolve_targets_for_line() {  # resolve_targets_for_line <file> <line> <lookback>
   local file="$1" line="$2" lookback="${3:-15}"
-  local literal
-  literal="$(nearby_agent_name "$file" "$line" "$lookback")"
+  local window literal
+  window="$(_lookback_window "$file" "$line" "$lookback")"
+  literal="$(nearby_agent_name "$window")"
   if [[ -n "$literal" ]]; then
     if [[ "$literal" == *"{"* ]]; then
       expand_lens_agents
     else
       echo "$literal"
     fi
-  elif window_mentions_lens "$file" "$line" "$lookback"; then
+  elif window_mentions_lens "$window"; then
     expand_lens_agents
   fi
 }
@@ -520,12 +540,8 @@ while IFS=$'\t' read -r _agent_name _agent_file _agent_tools _agent_disallowed; 
   [[ -z "$_agent_name" ]] && continue
 
   for _class in Write Edit Bash; do
-    _granted=1
-    has_tool "$_agent_tools" "$_class" || _granted=0
-    if [[ -n "$_agent_disallowed" ]] && has_tool "$_agent_disallowed" "$_class"; then
-      _granted=0
-    fi
-    [[ "$_granted" -eq 0 ]] && continue
+    # CA-344(2): same shared effective-grant predicate as assert_agent_grant.
+    agent_grants_class "$_agent_tools" "$_agent_disallowed" "$_class" || continue
 
     if [[ "$_class" == "Edit" ]]; then
       _has_instruction=0

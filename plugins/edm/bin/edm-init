@@ -50,7 +50,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$PREFIX" ]] || die "usage: edm-init [--product <name>] [--description <slug>] [--mode standard|mini-srd|iac|data-ml|prototype] <PREFIX>"
-[[ "$PREFIX" =~ ^[A-Z][A-Z0-9]{2,5}$ ]] || die "prefix must be 3-6 uppercase alphanumeric chars, starting with a letter"
+# CA-344(1): no local prefix-format regex here -- bin/edm-validate-prefix is THE validator
+# (CLAUDE.md names it as such) and is invoked unconditionally below. A second copy of the format
+# regex here rejected input BEFORE the canonical validator was consulted, so a future widening of
+# the format would have appeared not to work at this, the primary entry point.
 
 # --- Validate mode-family values (CA-010) ---
 case "$MODE" in
@@ -76,14 +79,15 @@ validate_slug() {
 validate_slug "--product" "$PRODUCT"
 validate_slug "--description" "$DESCRIPTION"
 
-# --- Validate prefix (global uniqueness check, T41) ---
-# Call edm-validate-prefix before creating any directory. A non-zero exit aborts init.
-if command -v edm-validate-prefix >/dev/null 2>&1; then
-  edm-validate-prefix "$PREFIX" || {
-    ec=$?
-    exit $ec
-  }
-fi
+# --- Validate prefix (format + global uniqueness, T41 / CA-344) ---
+# Invoked by SIBLING path, unconditionally: the validator always ships beside this script, and
+# the old `command -v` guard was inconsistent with this script's own premise (edm-state is
+# called by bare name unconditionally at the init step below). Format errors exit 1, collisions
+# exit 2 -- both propagate.
+"${SCRIPT_DIR}/edm-validate-prefix" "$PREFIX" || {
+  ec=$?
+  exit $ec
+}
 
 # --- Determine directory layout ---
 # If --product and --description are both given, use product-scoped layout.

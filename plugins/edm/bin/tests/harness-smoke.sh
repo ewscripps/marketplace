@@ -132,9 +132,9 @@ _neg_out3="$(
 check "check_state_unchanged fails when no baseline file exists" "PASS=0 FAIL=1" "$_neg_out3"
 rm -f "$STATE_TMP"
 
-# ---- CA-145: count_matches, count_matches_strict, assert_absent_with_control -----------------
+# ---- CA-145: count_matches, count_matches_strict (assert_absent_with_control deleted, CA-395) --
 echo
-echo "CA-145 -- count_matches, count_matches_strict, assert_absent_with_control"
+echo "CA-145 -- count_matches, count_matches_strict"
 
 CM_FILE="$(mktemp "${TMPDIR:-/tmp}/edm-harness-cm-test.XXXXXX")"
 printf 'alpha\nbeta\nalpha again\n' > "$CM_FILE"
@@ -261,7 +261,7 @@ echo "CA-146 -- run-all.sh's PASS/FAIL/CRASH/missing-summary/floor accounting"
 
 RUN_ALL="${SCRIPT_DIR}/run-all.sh"
 CA146_SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/edm-harness-ca146.XXXXXX")"
-trap 'rm -rf "$CA146_SCRATCH"' EXIT INT TERM
+trap 'rm -rf "$CA146_SCRATCH"' EXIT INT TERM HUP
 
 # _ca146_stub <dir> <name> <body...> -- writes one throwaway suite script into <dir>/<name>,
 # named to match the *-smoke.sh discovery glob.
@@ -390,7 +390,7 @@ check "CA-146 branch 7 (G14) -- the minimum-suite-count floor refuses when disco
   || fail "CA-146 branch 7 (G14) -- aggregator exited 0 despite the suite-count floor refusing"
 
 rm -rf "$CA146_SCRATCH"
-trap - EXIT INT TERM
+trap - EXIT INT TERM HUP
 
 # ---- Summary -----------------------------------------------------------------
 echo
