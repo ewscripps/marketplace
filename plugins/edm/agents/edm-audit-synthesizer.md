@@ -117,6 +117,12 @@ Write to `REMEDIATION.md` in the audit directory:
 
 **Files affected**: [List]
 
+**Spec/AC text to sweep in the same commit**: [Every AC, comment, README or CLAUDE.md passage
+that names the behavior this fix changes -- or `n/a` when the fix names no documented behavior.
+CA-416: the stale-citation class recurred five consecutive rounds because code fixes landed
+without sweeping the prose that names them; this row makes the sweep an obligation on the same
+artifact that authorizes the change, and the remediating commit is not done while it is unmet.]
+
 ---
 
 ### G2 (P0, lens L9): Missing --dry-run flag (AUTH-T07)
@@ -151,7 +157,7 @@ These items were flagged by one or more lenses but determined to be Not Actionab
 Write the ledger as one JSON object per line at `<initiative-dir>/code-audit/findings-ledger.jsonl`:
 
 ```jsonl
-{"schema":1,"id":"CA-001","sev":"P1","status":"fixed","confidence":"high","lenses":["L1","L4"],"file":"src/auth/handler.py","line":42,"title":"Stub returns hardcoded data","raised_round":1,"resolved_round":2}
+{"schema":1,"id":"CA-001","sev":"P1","status":"fixed","confidence":"high","lenses":["L1","L4"],"file":"src/auth/handler.py","line":42,"title":"Stub returns hardcoded data","raised_round":1,"resolved_round":2,"spec_swept":"yes"}
 {"schema":1,"id":"CA-002","sev":"P0","status":"open","confidence":"high","lenses":["L9"],"file":"(missing)","line":null,"title":"--dry-run flag not built","raised_round":1,"resolved_round":null}
 {"schema":1,"id":"CA-003","sev":"NOTED","status":"noted","confidence":"low","lenses":["L7"],"file":"svc-a/config.yaml","line":null,"title":"Timeout inconsistency -- single lens, low confidence, no corroborating evidence","raised_round":2,"resolved_round":null}
 ```
@@ -166,6 +172,12 @@ Field rules:
 - `lenses` lists every lens (by ID) that reported this finding, in the order first observed.
 - `raised_round` is the round this finding first appeared; `resolved_round` is the round it was
   first marked `fixed`, or `null` while `open` or `noted`.
+- `spec_swept` (CA-416) is set when a finding is marked `fixed`: `yes` when the remediating
+  commit also updated every AC, comment or doc passage naming the changed behavior, `n/a` when
+  the fix names no documented behavior, `no` when the sweep is known outstanding. A `fixed`
+  entry carrying `spec_swept: "no"` means the remediation wave is NOT done -- the stale-citation
+  class recurred five consecutive rounds precisely because nothing tracked this obligation.
+  Absent on entries recorded before this field existed (read as unknown, never as `yes`).
 
 This JSONL file is the **authoritative record**. You do not write `findings-ledger.md` --
 `edm-state render-ledger` renders the markdown deterministically from this JSONL (a separate
