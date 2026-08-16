@@ -33,6 +33,24 @@ PLUGIN_DIR="$_HARNESS_PLUGIN_DIR"
 EDM_STATE="${SCRIPT_DIR}/../edm-state"
 EDM_LINT="${SCRIPT_DIR}/../edm-lint-artifacts"
 
+# CA-450: process-wide scratch cleanup. Every mode creates its scratch directory at the top of
+# its case arm and removed it only with a single unguarded tail-position `rm -rf` -- under this
+# script's `set -e`, ANY failing command in the middle of a mode (or an INT/TERM/HUP) skipped the
+# tail and leaked the whole tree (up to ~10MB for --lint's generated fixtures). DIR (the
+# --subcommands/--all-lint fixture root) is deliberately NOT swept: it may be a caller-supplied
+# --dir the caller expects to keep.
+_timing_cleanup() {
+  local _d
+  for _d in "${TMP_PC:-}" "${TMP_LG:-}" "${TMP_SS:-}" "${TMP_LINT:-}" "${TMP_MR:-}"; do
+    [[ -n "$_d" && -d "$_d" ]] && rm -rf "$_d"
+  done
+  return 0
+}
+trap '_timing_cleanup' EXIT
+trap '_timing_cleanup; exit 130' INT
+trap '_timing_cleanup; exit 143' TERM
+trap '_timing_cleanup; exit 129' HUP
+
 # ---- Sub-second timer (bash 3.2 has no $EPOCHREALTIME). Prefer perl's Time::HiRes when present;
 # otherwise fall back to whole-second resolution so Alpine-like images without perl still work --
 # CA-158: the fallback must never invent sub-second digits (a prior version added rand(), which
@@ -334,7 +352,9 @@ case "$MODE" in
     export EDM_SRD_ROOT="${TMP_SS}/SRD"
     mkdir -p "$EDM_SRD_ROOT" "${TMP_SS}/.claude"
     "$EDM_STATE" init TIMSS >/dev/null
-    _ss_probe() { ( cd "$TMP_SS" && "$EDM_STATE" session-start ); }
+    # CA-448: pin CLAUDE_PROJECT_DIR to the scratch dir so an inherited value pointing at a real
+    # repo does not make both probes scan the same real settings files (delta would measure 0).
+    _ss_probe() { ( cd "$TMP_SS" && CLAUDE_PROJECT_DIR="$TMP_SS" "$EDM_STATE" session-start ); }
     _measure_p95 "$_P95_SAMPLE_COUNT" p95_without -- _ss_probe
     printf '{"permissions":{"ask":["Bash(edm-state approve-gate*)","Bash(edm-state archive*)"]}}\n' \
       > "${TMP_SS}/.claude/settings.local.json"

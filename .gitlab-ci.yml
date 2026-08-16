@@ -289,9 +289,16 @@ lint:hooks-shell:
       COUNT=0
       TMP="$(mktemp -d)"
       trap 'rm -rf "$TMP"' EXIT
-      jq -r '.hooks | to_entries[] | .value[] | .hooks[] | select(.type=="command") | .command' plugins/edm/hooks/hooks.json > "${TMP}/commands.txt"
+      # CA-437: NUL-delimited extraction, not newline-delimited -- a .command string containing
+      # an embedded newline used to be split into N fragments that were each syntax-checked
+      # independently (two individually well-formed halves of a malformed command both pass
+      # bash -n), with COUNT silently over-reporting. NUL cannot appear inside a JSON string,
+      # so the record boundary is now unforgeable, and COUNT is cross-checked against jq's own
+      # command-hook total below so a splitting regression fails loudly.
+      jq -j '.hooks | to_entries[] | .value[] | .hooks[] | select(.type=="command") | .command + "\u0000"' plugins/edm/hooks/hooks.json > "${TMP}/commands.bin"
+      EXPECTED_COUNT="$(jq '[.hooks | to_entries[] | .value[] | .hooks[] | select(.type=="command")] | length' plugins/edm/hooks/hooks.json)"
       IDX=0
-      while IFS= read -r cmd; do
+      while IFS= read -r -d '' cmd; do
         IDX=$((IDX + 1))
         COUNT=$((COUNT + 1))
         cmdfile="${TMP}/hook-${IDX}.sh"
@@ -309,7 +316,11 @@ lint:hooks-shell:
           echo "  FAIL: shellcheck hook #${IDX}"
           FAIL=1
         fi
-      done < "${TMP}/commands.txt"
+      done < "${TMP}/commands.bin"
+      if [ "$COUNT" -ne "$EXPECTED_COUNT" ]; then
+        echo "lint:hooks-shell: FAILED -- checked ${COUNT} command(s) but hooks.json declares ${EXPECTED_COUNT} (extraction/splitting regression, CA-437)"
+        exit 1
+      fi
       if [ "$FAIL" -ne 0 ]; then
         echo "lint:hooks-shell: FAILED"
         exit 1
@@ -719,8 +730,20 @@ eval:nightly:
   before_script:
     - npm install -g @anthropic-ai/claude-code@2.1.226
   script:
+    # CA-452: exit 4 (a partial run) does NOT abort here. run-eval.sh writes run.json and a stub
+    # scores.json with complete:false on exit 4 *specifically so CI can see it* -- aborting on
+    # any non-zero exit meant no CI path ever read that stub and the partial-run handshake was
+    # dead wiring. A partial run continues through scoring and comparison (edm-compare-eval
+    # REFUSES a complete:false candidate by name, exit 2) and the job still fails at the end.
     - |
-      bash plugins/edm/evals/run-eval.sh || { echo "eval:nightly: FAILED -- run-eval.sh"; exit 1; }
+      RUN_EVAL_EC=0
+      bash plugins/edm/evals/run-eval.sh || RUN_EVAL_EC=$?
+      if [ "$RUN_EVAL_EC" -ne 0 ] && [ "$RUN_EVAL_EC" -ne 4 ]; then
+        echo "eval:nightly: FAILED -- run-eval.sh exited ${RUN_EVAL_EC}"; exit "$RUN_EVAL_EC"
+      fi
+      if [ "$RUN_EVAL_EC" -eq 4 ]; then
+        echo "eval:nightly: PARTIAL run (exit 4) -- continuing so the stub scores.json's complete:false reaches the comparison (CA-452); the job fails after reporting"
+      fi
     - |
       if [ -f plugins/edm/evals/score-artifacts.sh ]; then
         RUN_DIR="$(ls -td plugins/edm/evals/runs/*/ 2>/dev/null | head -1)"
@@ -742,6 +765,13 @@ eval:nightly:
           3) echo "eval comparison: NOT ARMED -- no committed baseline (see evals/baseline/README.md)" ;;
           *) echo "eval:nightly: FAILED -- eval comparison failed with exit $rc"; exit "$rc" ;;
         esac
+      fi
+    # CA-452: a partial run always fails the job, even if the comparison arm above was skipped
+    # (e.g. no scores.json survived) or somehow reported clean -- partial is never green.
+    - |
+      if [ "${RUN_EVAL_EC:-0}" -eq 4 ]; then
+        echo "eval:nightly: FAILED -- partial run (run-eval.sh exit 4); see run.json / stub scores.json in the artifacts"
+        exit 4
       fi
   artifacts:
     when: always

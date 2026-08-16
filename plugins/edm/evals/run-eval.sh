@@ -31,13 +31,16 @@
 #                                 authenticated `claude` CLI is also accepted. `--provision-only`
 #                                 needs neither.
 #   EDM_EVAL_MODEL                claude -p --model value.               Default: opus
-#   EDM_EVAL_PHASE_TIMEOUT_SECONDS Per-phase wall-clock timeout, seconds. Default: 2700
+#   EDM_EVAL_PHASE_TIMEOUT_SECONDS Per-phase wall-clock timeout, seconds; must be a positive
+#                                 integer (anything else exits 2, CA-444).   Default: 2700
 #   EDM_EVAL_MAX_BUDGET_USD        claude -p --max-budget-usd, per phase. Default: 15
 #   EDM_EVAL_KEEP_RUNS             Retention: run-shaped directories kept under OUT_ROOT (oldest
 #                                 pruned first, on every exit path -- success, partial, or
 #                                 interrupted). Only directories matching the run-ID naming shape
 #                                 (<timestamp>_<git-sha>) are ever counted or pruned; unrelated
-#                                 files and directories always survive.       Default: 10
+#                                 files and directories always survive. Non-numeric values fall
+#                                 back to the default; 0 clamps to 1 with a warning, since the
+#                                 just-finished run is never prunable (CA-443). Default: 10
 #   EDM_EVAL_PRUNE_EXPLICIT_OUT    Set to "true" to allow retention pruning against a
 #                                 caller-supplied --out DIR (see --out above).  Default: false
 #
@@ -182,6 +185,14 @@ prune_old_runs() {
   case "$keep" in
     ''|*[!0-9]*) keep=10 ;;
   esac
+  # CA-443: 0 passed the digit-only validation above, made `tail -n +1` select EVERY run-shaped
+  # directory INCLUDING the one this invocation just finished writing, and the EXIT trap then
+  # deleted it -- CI reported green with no eval output at all. The newest run (this one) is
+  # never prunable, so the effective floor is 1.
+  if [ "$keep" -lt 1 ]; then
+    echo "run-eval: EDM_EVAL_KEEP_RUNS=0 would prune the run that just finished; clamping to 1 (CA-443)" >&2
+    keep=1
+  fi
 
   # ls -t sorts newest-first by mtime (bash-3.2/BSD-safe -- no GNU-only `find -printf`); the
   # grep restricts the listing to run-shaped entries (defect 1 above) before either counting or
@@ -394,6 +405,16 @@ CLAUDE_PERMISSION_MODE="acceptEdits"
 CLAUDE_ALLOWED_TOOLS="Read Write Edit Glob Grep LS TodoWrite Task Bash(edm-state *) Bash(edm-init *) Bash(edm-validate-prefix *) Bash(jq *)"
 CLAUDE_DISALLOWED_TOOLS="WebFetch WebSearch KillShell BashOutput"
 PHASE_TIMEOUT_SECONDS="${EDM_EVAL_PHASE_TIMEOUT_SECONDS:-2700}"
+# CA-444: validate beside the default (CA-160 rule). A non-numeric value made run_with_timeout's
+# elapsed-vs-limit numeric comparison fail every poll with "integer expression expected" -- and
+# because this driver deliberately runs without -e, that DISABLED the phase timeout entirely
+# rather than aborting. Refuse the bad knob up front as the usage error it is (exit 2).
+case "$PHASE_TIMEOUT_SECONDS" in
+  ''|*[!0-9]*|0)
+    echo "run-eval: invalid EDM_EVAL_PHASE_TIMEOUT_SECONDS='${PHASE_TIMEOUT_SECONDS}' (expected a positive integer number of seconds)" >&2
+    exit 2
+    ;;
+esac
 PHASE_MAX_BUDGET_USD="${EDM_EVAL_MAX_BUDGET_USD:-15}"
 
 # invoke_claude <phase-key> <prompt> -- runs claude -p for one phase, cwd'd into the scratch

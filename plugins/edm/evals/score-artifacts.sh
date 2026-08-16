@@ -748,14 +748,21 @@ cmd_compare() {
   [[ -f "$a" ]] || die "compare: file not found: $a"
   [[ -f "$b" ]] || die "compare: file not found: $b"
 
-  local ta tb rc
-  ta="$(mktemp)"
-  tb="$(mktemp)"
-  jq '. + {complete: true}' "$a" > "$ta"
-  jq '. + {complete: true}' "$b" > "$tb"
-  "${SCRIPT_DIR}/../bin/edm-compare-eval" "$tb" "$ta"
+  # CA-449: TMPDIR-honoring templates (a bare `mktemp` resolves _CS_DARWIN_USER_TEMP_DIR before
+  # TMPDIR on macOS, the same class as G20/CA-348), checked creation, and a split-signal cleanup
+  # trap -- the tail-position rm alone leaked both staging files on INT/TERM/HUP delivered while
+  # the delegate was running (the longest-lived statement between creation and removal).
+  local rc
+  _CMP_TA="$(mktemp "${TMPDIR:-/tmp}/edm-score-compare-a.XXXXXX")" || die "compare: mktemp failed"
+  _CMP_TB="$(mktemp "${TMPDIR:-/tmp}/edm-score-compare-b.XXXXXX")" || { rm -f "$_CMP_TA"; die "compare: mktemp failed"; }
+  trap 'rm -f "$_CMP_TA" "$_CMP_TB"' EXIT
+  trap 'rm -f "$_CMP_TA" "$_CMP_TB"; exit 130' INT
+  trap 'rm -f "$_CMP_TA" "$_CMP_TB"; exit 143' TERM
+  trap 'rm -f "$_CMP_TA" "$_CMP_TB"; exit 129' HUP
+  jq '. + {complete: true}' "$a" > "$_CMP_TA" || die "compare: failed to stage $a"
+  jq '. + {complete: true}' "$b" > "$_CMP_TB" || die "compare: failed to stage $b"
+  "${SCRIPT_DIR}/../bin/edm-compare-eval" "$_CMP_TB" "$_CMP_TA"
   rc=$?
-  rm -f "$ta" "$tb"
   return $rc
 }
 
