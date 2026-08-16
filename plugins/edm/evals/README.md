@@ -194,8 +194,11 @@ loop -- every dimension is computed by `grep`/`awk`/`jq` over the run's own file
 the same run directory twice produces byte-identical output. `score-artifacts.sh` never
 calls `claude`, never reads `ANTHROPIC_API_KEY`, and never touches `bin/edm-state`.
 
-**Exactly five dimensions**, in fixed order, each normalized to an integer 0-100 (higher is
-better; dimension 2 is inverted at normalization time):
+**Exactly six dimensions**, in fixed order, each normalized to an integer 0-100 (higher is
+better; dimension 2 is inverted at normalization time). (T23 AC1 originally fixed the set at
+five; CA-462 added the sixth with a `scorer_version` bump to 1.1.0, because all five originals
+are self-consistency checks over the run's own output and none consulted the fixture's ground
+truth -- an SRD surfacing zero of the six known gaps scored identically to one surfacing all six.)
 
 1. **requirement-id-coverage** -- every `{PREFIX}-NN` ID in `srd.md` is unique, sequential
    with no gaps, and appears in `audit-srd.md`'s discussion.
@@ -211,6 +214,10 @@ better; dimension 2 is inverted at normalization time):
    true of every wave-A eval run today, since `run-eval.sh` stops after `audit-srd`.
 5. **lens-jsonl-prose-agreement** -- per-lens finding counts, `lens-L{N}.md` versus
    `lens-L{N}.jsonl`, for a run that includes a code-audit round.
+6. **known-gap-recall** -- fraction of the tiny-svc fixture's six ground-truth gaps
+   (`fixtures/tiny-svc/expected.json`, `srd_match` patterns) the produced `srd.md` engages.
+   Skipped (`score: null`) for any run directory whose `run.json` does not carry
+   `fixture: "tiny-svc"`, so the scorer stays usable against arbitrary directories.
 
 A dimension that cannot be computed for the given run (e.g. dimension 5 when the run never
 ran a code-audit round) is emitted `score: null`, named in `dimensions_skipped` with a
@@ -236,7 +243,7 @@ missing `vague-ac-patterns.txt`). The pass/fail decision belongs to the CI job t
 
 ### `--describe`
 
-`bash plugins/edm/evals/score-artifacts.sh --describe` prints the five dimension
+`bash plugins/edm/evals/score-artifacts.sh --describe` prints the six dimension
 definitions above verbatim and exits 0. Useful for confirming the scorer's own
 understanding of what it measures without running it against a run directory.
 

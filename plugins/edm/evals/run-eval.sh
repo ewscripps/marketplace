@@ -145,7 +145,8 @@ write_partial_artifacts() {
     --arg prefix "${PREFIX:-unknown}" \
     --arg last_phase "${LAST_PHASE_ATTEMPTED}" \
     '{run_id: $run_id, timestamp: $timestamp, git_sha: $git_sha, plugin_version: $plugin_version,
-      model: $model, complete: false, prefix: $prefix, last_phase_attempted: $last_phase}' \
+      model: $model, complete: false, prefix: $prefix, last_phase_attempted: $last_phase,
+      fixture: "tiny-svc"}' \
     > "$RUN_DIR/run.json" 2>/dev/null
   jq -n \
     --arg reason "run did not reach the final phase (audit-srd); last phase attempted: ${LAST_PHASE_ATTEMPTED}" \
@@ -650,6 +651,7 @@ jq -n \
      model: $model,
      complete: true,
      prefix: $prefix,
+     fixture: "tiny-svc",
      tokens: {
        input: $input_tokens,
        output: $output_tokens,

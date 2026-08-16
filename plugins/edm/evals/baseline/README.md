@@ -93,8 +93,8 @@ e.g.:
 
 ```json
 "variance": {
-  "total_max_minus_min": 0.0,
-  "per_dimension_max_minus_min": {
+  "total_range": 0.0,
+  "per_dimension_range": {
     "requirement-id-coverage": 0,
     "ac-testability": 0,
     "mermaid-parse-success": 0,
@@ -102,6 +102,13 @@ e.g.:
   }
 }
 ```
+
+`total_range` (max minus min of `total` across the three capture runs) is the ONLY field
+`bin/edm-compare-eval` reads (`jq -r '.variance.total_range // 0'` -- CA-461: an earlier
+version of this example prescribed a differently-named field no consumer ever read, which
+silently armed the tripwire at zero tolerance via the documented missing-field-is-0 fallback;
+a wave7-smoke.sh assertion now pins this example's field name to the one the comparer reads).
+`per_dimension_range` is recorded for humans diagnosing which dimension moved; no code reads it.
 
 ## What this number is, and what it is not
 

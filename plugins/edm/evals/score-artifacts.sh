@@ -19,7 +19,7 @@
 #                                              bin/tests/fixtures/ and evals/fixtures/tiny-svc/ --
 #                                              not a real run) -- refuses rather than silently
 #                                              depositing an untracked scores.json there.
-#   score-artifacts.sh --describe             Print the five dimension definitions
+#   score-artifacts.sh --describe             Print the six dimension definitions
 #                                              verbatim and exit 0.
 #   score-artifacts.sh --compare <a> <b>       Compare two scores.json files. Delegates to
 #                                              bin/edm-compare-eval (CA-383) -- refuses (its
@@ -35,7 +35,10 @@
 #                                              this ticket's.
 #   score-artifacts.sh -h|--help|help          Show this help.
 #
-# The five dimensions, in fixed order (AC1, exactly five -- never "at least five"):
+# The six dimensions, in fixed order (T23 AC1 originally fixed this at exactly five;
+# CA-462 added the sixth -- known-gap-recall -- because without it every dimension was a
+# self-consistency check and an SRD surfacing zero of the fixture's six known gaps scored
+# identically to one surfacing all six):
 #   1. requirement-id-coverage        -- every {PREFIX}-NN ID in the SRD is unique,
 #                                         sequential with no gaps, and appears in the
 #                                         audit report's coverage discussion.
@@ -50,6 +53,11 @@
 #   5. lens-jsonl-prose-agreement     -- per-lens finding counts, lens-L{N}.md versus
 #                                         lens-L{N}.jsonl, for a run including a code-audit
 #                                         round.
+#   6. known-gap-recall               -- fraction of the tiny-svc fixture's six ground-truth
+#                                         gaps (fixtures/tiny-svc/expected.json, srd_match
+#                                         patterns) the produced srd.md engages. Skipped
+#                                         (score: null) for any run directory whose run.json
+#                                         does not attribute it to the tiny-svc fixture.
 #
 # Each dimension normalizes to an integer 0-100, higher is better (dimension 2 is inverted
 # at normalization time: 100 * (1 - vague/total)). A dimension that cannot be computed is
@@ -123,7 +131,10 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # CA-005: shared --help extractor, sourced rather than hand-copied.
 source "${SCRIPT_DIR}/../bin/_edm-cli-lib.sh"
-SCORER_VERSION="1.0.0"
+# CA-462: 1.0.0 -> 1.1.0 with the known-gap-recall dimension -- edm-compare-eval's version
+# handshake refuses to compare across this bump, so a five-dimension baseline is never
+# silently mixed with a six-dimension candidate.
+SCORER_VERSION="1.1.0"
 PATTERNS_FILE="$SCRIPT_DIR/vague-ac-patterns.txt"
 # CA-019: shared fence-recognition and semicolon-violation rule file, also loaded by
 # bin/_edm-lint-lib.sh's build_line_classes. A plain awk source file (function definitions
@@ -131,7 +142,7 @@ PATTERNS_FILE="$SCRIPT_DIR/vague-ac-patterns.txt"
 # remains a bash-3.2-and-jq-only script per AC6, no bin/ executable goes on its PATH.
 MERMAID_RULES_AWK="$SCRIPT_DIR/../bin/edm-mermaid-rules.awk"
 
-DIM_NAMES=(requirement-id-coverage ac-testability mermaid-parse-success coverage-map-bidirectionality lens-jsonl-prose-agreement)
+DIM_NAMES=(requirement-id-coverage ac-testability mermaid-parse-success coverage-map-bidirectionality lens-jsonl-prose-agreement known-gap-recall)
 
 # G21/CA-074: two-argument form -- see bin/edm-validate-prefix's die() for the full rationale.
 # Family-standard default of 2 (usage/environment error).
@@ -164,6 +175,11 @@ lens-L{N}.md and lens-L{N}.jsonl for a run including a code-audit round. Scores 
 null/no-score) when lens-L*.md reports exist but zero lens-L*.jsonl files were produced
 (G53/CA-286) -- that is a real code-audit round whose JSONL half is missing, distinct from a
 pass directory with no code-audit round at all.
+
+Dimension 6 (known-gap-recall): fraction of the tiny-svc fixture's six ground-truth gaps
+(fixtures/tiny-svc/expected.json srd_match patterns) the produced srd.md engages (CA-462).
+Skipped (score: null) for a run directory whose run.json does not attribute it to the
+tiny-svc fixture, so the scorer stays usable against arbitrary directories.
 EOF
 }
 
@@ -302,7 +318,12 @@ compute_dim2() {
 # construct) -- any inline comment describing a fence must spell it out in prose instead.
 _scan_mermaid_blocks() {
   local file="$1"
-  awk -f "$MERMAID_RULES_AWK" -f <(cat <<'AWK_MAIN'
+  # CA-472: cached program text instead of -f <(cat <<heredoc) -- the process-substitution form
+  # leaked ~2 pipe fds per call under bash 3.2, spinning the caller once the leaked fd number
+  # crossed macOS's /dev/fd ceiling (full diagnosis at _edm-lint-lib.sh's build_line_classes).
+  # Program body unchanged.
+  if [[ -z "${_SMB_PROG_CACHE:-}" ]]; then
+    _SMB_PROG_CACHE="$(cat "$MERMAID_RULES_AWK")"$'\n'"$(cat <<'AWK_MAIN'
     BEGIN { in_block=0; first_line=1; bad=0; has_content=0; fence_len=0 }
     {
       sub(/\r$/, "")
@@ -338,7 +359,9 @@ _scan_mermaid_blocks() {
     }
     END { if (in_block) print "BAD" }
 AWK_MAIN
-  ) "$file"
+    )"
+  fi
+  awk "$_SMB_PROG_CACHE" "$file"
 }
 
 compute_dim3() {
@@ -509,6 +532,47 @@ compute_dim5() {
   D5_REASON=""
 }
 
+# ---- dimension 6: known-gap-recall (CA-462) ------------------------------------------------
+# The tiny-svc fixture ships six known, countable gaps in fixtures/tiny-svc/expected.json --
+# ground truth the fixture README always said this scorer consumes "rather than only a
+# self-consistency check", while no dimension actually read it: an SRD surfacing zero of the
+# six gaps scored identically to one surfacing all six, leaving the eval:nightly baseline
+# tripwire structurally blind to the one regression class it exists to catch. This dimension
+# greps the run's srd.md for each gap's srd_match pattern (case-insensitive ERE; deliberately
+# loose recall heuristics -- see expected.json's own description) and scores
+# 100 * matched / total. Gated on run.json attributing the run to the tiny-svc fixture, so
+# pointing the scorer at an arbitrary directory (e.g. bin/tests/fixtures/code-audit/) skips
+# with a named reason instead of polluting the total with a meaningless zero.
+compute_dim6() {
+  local run_dir="$1"
+  local srd="$run_dir/srd.md"
+  local expected="$SCRIPT_DIR/fixtures/tiny-svc/expected.json"
+  local run_fixture
+  run_fixture="$(jq -r '.fixture // "unset"' "$run_dir/run.json" 2>/dev/null || echo "unset")"
+  if [[ "$run_fixture" != "tiny-svc" ]]; then
+    D6_SCORE=""; D6_REASON="run.json does not attribute this run to the tiny-svc fixture (fixture: ${run_fixture}) -- known-gap recall only applies to tiny-svc runs"; return
+  fi
+  if [[ ! -f "$expected" ]]; then
+    D6_SCORE=""; D6_REASON="ground-truth expected.json not found at fixtures/tiny-svc/"; return
+  fi
+  if [[ ! -f "$srd" ]]; then
+    D6_SCORE=""; D6_REASON="no srd.md in run directory"; return
+  fi
+
+  local gap_total=0 gap_matched=0 gap_pattern
+  while IFS= read -r gap_pattern; do
+    [[ -z "$gap_pattern" || "$gap_pattern" == "null" ]] && continue
+    gap_total=$((gap_total + 1))
+    grep -iqE "$gap_pattern" "$srd" 2>/dev/null && gap_matched=$((gap_matched + 1))
+  done < <(jq -r '.gaps[].srd_match' "$expected" 2>/dev/null)
+
+  if [[ "$gap_total" -eq 0 ]]; then
+    D6_SCORE=""; D6_REASON="expected.json carries no srd_match patterns (pre-1.1.0 fixture shape)"; return
+  fi
+  D6_SCORE="$(score_from_ratio "$gap_matched" "$gap_total")"
+  D6_REASON=""
+}
+
 # ---- JSON assembly -----------------------------------------------------------------------
 
 build_dims_json() {
@@ -599,9 +663,10 @@ main_score() {
   compute_dim3 "$run_dir"
   compute_dim4 "$run_dir"
   compute_dim5 "$run_dir"
+  compute_dim6 "$run_dir"
 
-  DIM_SCORES=("$D1_SCORE" "$D2_SCORE" "$D3_SCORE" "$D4_SCORE" "$D5_SCORE")
-  DIM_REASONS=("$D1_REASON" "$D2_REASON" "$D3_REASON" "$D4_REASON" "$D5_REASON")
+  DIM_SCORES=("$D1_SCORE" "$D2_SCORE" "$D3_SCORE" "$D4_SCORE" "$D5_SCORE" "$D6_SCORE")
+  DIM_REASONS=("$D1_REASON" "$D2_REASON" "$D3_REASON" "$D4_REASON" "$D5_REASON" "$D6_REASON")
 
   # total = unweighted arithmetic mean of the non-null dimensions, / dimensions_scored
   # (read from the data), rounded to one decimal place, computed in integer tenths first
