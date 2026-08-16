@@ -417,10 +417,13 @@ compute_dim4() {
     printf '%s\n' "$srd_ids" | grep -qxF -- "$id" && backward_hits=$((backward_hits + 1))
   done <<< "$target_ids"
 
+  # CA-393: no denom-eq-0 skip here -- srd_count is already proven non-zero by the early return
+  # above (the "no PREFIX-NN requirement IDs found" case), and target_count is a grep -c result
+  # that is never negative, so denom is always >= 1 and this branch could never fire. The real
+  # edge case (target_count == 0, i.e. audit-srd.md exists but references zero PREFIX-NN IDs) is
+  # deliberately NOT a skip -- it scores a hard 0 over denom == srd_count, the same "a real zero
+  # is not an absence of data" reasoning G53/CA-286 codified for dimension 5.
   local denom=$((srd_count + target_count))
-  if [[ "$denom" -eq 0 ]]; then
-    D4_SCORE=""; D4_REASON="no comparable IDs found"; return
-  fi
   D4_SCORE="$(score_from_ratio "$((forward_hits + backward_hits))" "$denom")"
   D4_REASON=""
 }
