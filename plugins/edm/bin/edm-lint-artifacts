@@ -189,7 +189,12 @@ mermaid_scan_awk() {
     printf '%s\n' "EDM-MERMAID-SCAN-MARKER-SPLIT"
     printf '%s\n' "$marker_set"
   } > "$MERMAID_SCAN_FILE" || { echo "mermaid_scan_awk: failed to stage scan sets to $MERMAID_SCAN_FILE" >&2; return 1; }
-  awk -f "$MERMAID_RULES_AWK" -v scan_file="$MERMAID_SCAN_FILE" -f <(cat <<'AWK_MAIN'
+  # CA-472: cached program text instead of -f <(cat <<heredoc) -- the process-substitution
+  # form leaked ~2 pipe fds per call under bash 3.2; past fd 256 the child awk could not open
+  # /dev/fd/NNN on macOS and this function's caller spun forever (see _edm-lint-lib.sh's
+  # build_line_classes for the full diagnosis). Program body unchanged.
+  if [[ -z "${_MSA_PROG_CACHE:-}" ]]; then
+    _MSA_PROG_CACHE="$(cat "$MERMAID_RULES_AWK")"$'\n'"$(cat <<'AWK_MAIN'
     BEGIN {
       in_marker_set = 0
       while ((getline scan_line < scan_file) > 0) {
@@ -208,7 +213,9 @@ mermaid_scan_awk() {
       if (mermaid_is_violation($0)) print "V\t" FNR "\t" substr($0, 1, 120)
     }
 AWK_MAIN
-  ) "$file"
+    )"
+  fi
+  awk -v scan_file="$MERMAID_SCAN_FILE" "$_MSA_PROG_CACHE" "$file"
 }
 
 # ---- Helper: list *.md files under a directory, excluding .git/ and .archived/ ----------------
@@ -234,21 +241,30 @@ collect_md_files() {
 # disabling ignore-marker suppression for the unicode class on the branch CI takes). One shared
 # body makes that divergence class structurally impossible to reintroduce.
 #
-# Process substitution (`< <(...)`), not a `<grep-command> | while` pipeline, is REQUIRED here:
-# report_violation increments the CALLER's own `violations` counter via bash's dynamic scoping
-# (the same mechanism `_lock_retry_or_die`'s `tries` counter in bin/edm-state relies on), and a
-# pipeline's last stage runs in a subshell in bash by default, which would silently discard every
-# increment from inside this loop -- process substitution keeps the `while read` in the current
-# shell instead.
+# Capture-then-herestring, not a `<grep-command> | while` pipeline and not `< <(...)` process
+# substitution. The pipeline form is wrong because report_violation increments the CALLER's own
+# `violations` counter via bash's dynamic scoping (the same mechanism `_lock_retry_or_die`'s
+# `tries` counter in bin/edm-state relies on), and a pipeline's last stage runs in a subshell in
+# bash by default, which would silently discard every increment from inside this loop. The
+# process-substitution form this helper previously used keeps the loop in the current shell but
+# LEAKS its pipe fd on every call under bash 3.2 (CA-472, verified live: ~2 leaked pipes per
+# scanned file, 286 open pipes mid-run) -- once the leaked fd number crossed macOS's /dev/fd
+# ceiling the scan spun at 100% CPU forever, hanging the PreToolUse commit hook on any
+# ~120-file initiative tree. A herestring keeps the loop in the current shell (counter intact)
+# with no pipe at all. The `[[ -z "$lineno" ]] && continue` guard is load-bearing: a herestring
+# feeds one empty line when the grep matched nothing, which the process-substitution form never
+# produced.
 _lint_report_class_hits() {
   local class="$1" file="$2" ignore_set="$3"
   shift 3
-  local lineno _rest snippet
+  local lineno _rest snippet _hits
+  _hits="$("$@" "$file" 2>/dev/null || true)"
   while IFS=: read -r lineno _rest; do
+    [[ -z "$lineno" ]] && continue
     is_ignored_line "$lineno" "$ignore_set" && continue
     snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | tr -d '\r' | cut -c1-120 || true)"
     report_violation "$class" "$file" "$lineno" "$snippet"
-  done < <("$@" "$file" 2>/dev/null || true)
+  done <<< "$_hits"
 }
 
 # ---- Helper: scan a list of files across all violation classes --------------------------------

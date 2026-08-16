@@ -89,9 +89,22 @@
 SELF_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MERMAID_RULES_AWK="${SELF_LIB_DIR}/edm-mermaid-rules.awk"
 
+# CA-472 (round-8 Stage A, live-diagnosed): the previous form -- awk -f "$MERMAID_RULES_AWK"
+# -f <(cat <<'AWK_MAIN' ...) -- leaked the process-substitution pipe fds under bash 3.2
+# (~2 per call, never closed; verified live at 294 open fds). Once the leaked fd number
+# crossed 256, the child awk could no longer open its /dev/fd/NNN program path on macOS and
+# the caller spun at 100% CPU with no children -- edm-lint-artifacts hung indefinitely on any
+# initiative tree of roughly 120+ markdown files (the flagship EDMV3 tree hit this on every
+# prefix/--path/--all scan, hanging the PreToolUse commit hook). The program text is static,
+# so it is now composed ONCE into a cached shell variable (rules-file content + the same
+# heredoc body) and passed as awk program text: no process substitution, no fd leak, and one
+# fewer fork per file. The no-backtick rule for the program body still applies (see the
+# original CA-144 note below); the program is unchanged byte for byte.
+_BLC_PROG_CACHE=""
 build_line_classes() {
   local file="$1"
-  awk -f "$MERMAID_RULES_AWK" -f <(cat <<'AWK_MAIN'
+  if [[ -z "$_BLC_PROG_CACHE" ]]; then
+    _BLC_PROG_CACHE="$(cat "$MERMAID_RULES_AWK")"$'\n'"$(cat <<'AWK_MAIN'
     function apply_fence_open(line, lineno,    lang) {
       in_fence = 1
       fence_len = mermaid_fence_run_len(line)
@@ -171,7 +184,9 @@ build_line_classes() {
       }
     }
 AWK_MAIN
-  ) "$file"
+    )"
+  fi
+  awk "$_BLC_PROG_CACHE" "$file"
 }
 
 is_ignored_line() {
