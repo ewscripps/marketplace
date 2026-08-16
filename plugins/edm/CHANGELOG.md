@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [3.2.0] — 2026-08-16
 
 The sanctioned P2-debt convergence override, and the round-8 code-audit remediation waves
-(Stages A and B of the EDMV3 convergence plan).
+(Stages A through C of the EDMV3 convergence plan).
 
 ### Added
 
@@ -110,6 +110,20 @@ The sanctioned P2-debt convergence override, and the round-8 code-audit remediat
   (11 lens agents + the code-audit skill) are now asserted byte-identical modulo the lens token
   by a wave7 case with a positive control; the lens prompts' self-contradictory "documented
   once, identically in every lens prompt" wording now states the real posture.
+- **Stage C triage (round-8 P2 remainder)**: coverage-table HEADERS extracted beside their row
+  defs (CA-418 -- four copies in two incompatible mechanisms became three named constants);
+  `set-supersedes`/`set-forked-from` share one parameterized writer (CA-419);
+  exact-match/numeric-floor fixes at four assertion sites that could false-pass (CA-454's three
+  substring exit-code checks, CA-458's substring gate-list check, CA-401's unfloored T66 AC3
+  count comparison); wave7's T03 section banner repaired (CA-408); `tooling-notes.md` added to
+  both artifact inventories and given a structural consumer -- the synthesizer carries a
+  delivery-degradation note into REMEDIATION.md when it exists (CA-466); the tiny-svc fixture
+  README's nonexistent `du -sk` enforcement claim corrected to the shipped tracked-bytes
+  mechanism (CA-463); the eval-baseline README's twice-staled line-range citation retired for a
+  by-name citation (CA-464); `WHATS_NEW.md` deleted as unticketed scope creep (CA-465, decision
+  D59); three stale ticket ACs amended to match shipped reality (CA-468 verbatim case label,
+  CA-469 seven allowlist classes with measuring derivations, CA-470 checker-as-mechanism).
+  Nine test-infrastructure P2s tagged as the candidate Stage E debt set (decision D60).
 
 ## [3.1.0] — 2026-07-28
 

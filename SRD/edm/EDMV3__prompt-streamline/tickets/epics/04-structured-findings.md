@@ -683,11 +683,15 @@ abolished policy to the agent that implements.
 - [ ] AC11 (synthesizer, five sites): the five sites enumerated in EDMV3-T25 AC3 are edited. This
       ticket cross-checks them rather than duplicating the edit.
       Verify: `grep -ni 'defer' plugins/edm/agents/edm-audit-synthesizer.md` returns zero results.
-- [ ] AC12 (normative catch-all, negative): `grep -rni 'defer' plugins/edm/` returns only the
-      `NOTED`-versus-deferral clarification in `CLAUDE.md`, the vocabulary checker's own pattern and
-      allowlist files, and `CHANGELOG.md` history entries.
-      Verify: `grep -rni 'defer' plugins/edm/ | grep -v CHANGELOG.md | grep -v vocabulary- | grep -v 'not a deferral'`
-      returns zero results.
+- [ ] AC12 (normative catch-all, negative): every `defer`-family hit under `plugins/edm/` is
+      covered by a labelled class in `bin/vocabulary-allowlist.txt` (CA-470 amendment: the
+      original clause enumerated a three-member subset and a hand-rolled three-filter pipeline
+      that never reproduced the allowlist's classes -- both were wrong by construction and went
+      stale each time a sanctioned class was added; the shipped checker IS the mechanism).
+      Verify: `bash plugins/edm/bin/edm-check-vocabulary; echo "exit=$?"` prints `exit=0` -- the
+      checker's exit code, over its full scan scope against the live allowlist, is the
+      authoritative form of this assertion (identical mechanism to AC13; this AC states the
+      normative claim, AC13 pins the contract).
 - [ ] AC13 (checker passes): `bin/edm-check-vocabulary` passes over its full scan scope.
       Verify: `bash plugins/edm/bin/edm-check-vocabulary; echo "exit=$?"` prints `exit=0`.
 - [ ] AC14 (prose-change convention): the merge request shows before and after for each of the
@@ -772,10 +776,19 @@ would report clean while the policy was being taught at runtime.
 - [ ] AC4 (allowlist is a sibling and is justified per entry): the allowlist lives in
       `plugins/edm/bin/vocabulary-allowlist.txt`, a sibling of the prohibited list so both share one
       location and one lookup. Each entry carries a one-line justification comment. The allowed
-      classes are exactly: the `NOTED`-versus-deferral clarification in `CLAUDE.md`, the checker's
-      own two pattern files, `CHANGELOG.md` history entries, and `plugins/edm/bin/tests/`.
-      Verify: `grep -c '^#' plugins/edm/bin/vocabulary-allowlist.txt` matches the entry count, and
-      `grep -c . plugins/edm/bin/vocabulary-allowlist.txt` shows exactly five classes.
+      classes are exactly the SEVEN shipped (CA-469 amendment -- the original five here were
+      never swept when three later tickets sanctioned additions): (1) the `NOTED`-versus-deferral
+      clarification in `CLAUDE.md`, (2) the checker's own two pattern files, (3) `CHANGELOG.md`
+      history entries, (4) `plugins/edm/bin/tests/`, (5) `agents/edm-audit-spec.md`'s
+      False-Alarm-Filter criterion about the audited project's own tickets (EDMV3-32/T29),
+      (6) `bin/edm-state`'s legacy `deferred` status-coercion identifiers (EDMV3-T25 AC4 /
+      EDMV3-T28 AC5), and (7) the generated `docs/canonical-sections.md` wholesale (EDMV3-T41).
+      Verify (derivations that measure what they claim, not raw line counts):
+      `grep -vc '^[[:space:]]*#' plugins/edm/bin/vocabulary-allowlist.txt` minus blank lines --
+      i.e. `grep -cvE '^[[:space:]]*(#|$)' plugins/edm/bin/vocabulary-allowlist.txt` -- prints 9
+      (the data-line count), and
+      `grep -oE '^# Class [0-9]+' plugins/edm/bin/vocabulary-allowlist.txt | sort -u | wc -l`
+      prints 7 (the distinct labelled classes).
 - [ ] AC5 (the carve-out that makes the requirement satisfiable): `plugins/edm/bin/tests/` is
       allowlisted because its negative-test cases must contain `--force` and `--accept-partials`
       verbatim in order to assert those arguments are rejected (EDMV3-16 AC10, EDMV3-17). Without

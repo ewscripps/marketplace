@@ -1,6 +1,6 @@
 # EDMV3 - Session Handoff
 
-> **Last updated**: 2026-08-16T21:28:40Z by darryl.porter  
+> **Last updated**: 2026-08-16T21:51:52Z by darryl.porter  
 > **To resume**: `/edm:orchestrator EDMV3`
 
 ## Current Status
@@ -15,8 +15,8 @@
 ## Resume Point
 
 - **Phase**: Phase 6 - Implementation
-- **Step**: 6.stage-c-p2-triage
-- **Last decision**: Stage B of CONVERGENCE-PLAN.md complete: production-code P2 batches closed (CA-436/413/414 hook extraction; CA-442/445/448/451/471/417/420 edm-state; CA-443/444/449/450/452 evals+CI; CA-446/447/L8-006 traps; CA-344 five-part DRY; CA-467 schema identity check). CA-419 stays blocked on CA-357 (Stage C). Suite 2182/0. Next: Stage C triage of test-meta/doc-text P2s.
+- **Step**: 6.stage-d-round-9-audit
+- **Last decision**: Stage C complete: 13 P2s fixed (CA-401 false-pass site, 408, 418, 419, 454, 458, 463, 464, 465/D59, 466, 468, 469, 470; CA-407 found already fixed). Nine test-infrastructure P2s tagged as candidate Stage E debt set (D60): CA-401 remainder, 402, 403, 404, 405, 453, 455, 456, 457, 459. Suite 2182/0. Next: Stage D round-9 full audit under remediation freeze.
 
 **Pending artifacts for Phase 6 - Implementation**:
 

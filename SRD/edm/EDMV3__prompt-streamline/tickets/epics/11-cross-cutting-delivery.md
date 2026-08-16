@@ -673,8 +673,9 @@ runtime.
       it did before (round 4 found it stuck at 9 rows describing a set that no longer matched
       disk). A test asserts both: the row count equals the shipped script count, and every shipped
       script has a row.
-      Verify: `bash plugins/edm/bin/tests/wave7-smoke.sh` (case "CLAUDE.md subcommand count and
-      membership match dispatch"), plus
+      Verify: `bash plugins/edm/bin/tests/wave7-smoke.sh` (case "T66 AC3 -- subcommand count and
+      membership match the dispatch table exactly" -- verbatim shipped label per G40/CA-368; an
+      earlier paraphrase here was ungreppable, CA-468), plus
       `for c in audit-converged render-ledger audit-round-complete migrate-schema; do edm-state --help | grep -q -- "$c" || echo "MISSING: $c"; done`
       printing nothing, `edm-state --help | grep -l record-task-duration | wc -l` printing 0, and
       `bash plugins/edm/bin/tests/wave7-smoke.sh` (case "T66 AC3 (G25/CA-242) -- bin/ table row
