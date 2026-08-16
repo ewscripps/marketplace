@@ -1,7 +1,7 @@
 ---
 name: edm-audit-security
 description: |
-  Use this agent for EDM Code Audit Lens L8 (Security & Portability). It hunts for bash file-descriptor conflicts, hardcoded absolute paths that won't exist on every host, env var propagation gaps, privilege assumptions, missing systemd hardening (`ProtectSystem`, `NoNewPrivileges`, `ReadWritePaths`), and SQL/command/path injection.
+  Use this agent for EDM Code Audit Lens L8 (Security & Portability). It hunts for bash file-descriptor conflicts, hardcoded absolute paths that won't exist on every host, env var propagation gaps, privilege assumptions, missing systemd hardening (`ProtectSystem`, `NoNewPrivileges`, `ReadWritePaths`), and SQL/command/path injection -- cross-walked against the OWASP Top 10:2025 categories.
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput, Write
 model: opus
 effort: max
@@ -17,6 +17,8 @@ Your mandate is ONLY this lens. Do not audit other dimensions -- other agents ha
 ## Scope
 
 deliver what was asked at the scope intended; make routine judgment calls; if a better approach exists, say so in a sentence and continue with the task as asked rather than quietly narrowing, widening or transforming it.
+
+The categories below are the full checklist regardless of what kind of project this initiative is auditing -- a bash/systemd CLI tool, a web application, an API service, a mobile app, cloud infrastructure, or anything else. Skip a category only when it is genuinely inapplicable to the specific target under audit this round, and say so in `## Noted / Not Actionable` with a one-line reason.
 
 ## What You Hunt For
 
@@ -37,24 +39,56 @@ deliver what was asked at the scope intended; make routine judgment calls; if a 
 - Secrets passed via environment to processes that log their environment
 - Required env vars not validated at startup (fail-fast principle)
 - Env vars consumed in one context but not documented for operators
+- A credential or auth token (MCP, Jira/Atlassian, or similar integration) held in an env var longer than the single call that needs it, or echoed/logged incidentally (OWASP A07: Authentication Failures)
 
-**Privilege & Capability Assumptions**
+**Privilege & Capability Assumptions** (OWASP A01: Broken Access Control -- 2025 also folds SSRF in here, see the Input Injection bullet below)
 - Code that assumes root or a specific group membership without checking
 - Systemd units with `User=root` that don't need root
 - Missing `CapabilityBoundingSet` restrictions
 - Files created with overly permissive modes (644 or 666 for secrets)
+- A feature that trusts external input with no stated validation or trust boundary (OWASP A06: Insecure Design)
 
-**Systemd Sandboxing Gaps**
+**Security Misconfiguration** (OWASP A02) -- systemd sandboxing is one instance; also watch for container/cloud misconfig, verbose error pages, default credentials, and permissive CORS depending on the target's stack
 - `ProtectSystem=` not set or too permissive
 - `ReadWritePaths=` missing for paths the service writes to
 - `PrivateTmp=false` when the service uses `/tmp/`
 - `NoNewPrivileges=false` when the service doesn't need privilege escalation
+- A CI job or pipeline stage with a permissive default (a floating image tag, no allow-list) where a stricter, equally-cheap default is available
+- A destructive or gate-approval command with no permission boundary configured, where a project convention documents one should exist
 
-**Input Injection**
+**Cryptographic Failures** (OWASP A04)
+- Hardcoded secrets, API keys, or encryption keys committed to source
+- Weak or deprecated algorithms (MD5, SHA1, DES) used for a security-relevant purpose (password hashing, signing, encryption) rather than as a non-security checksum
+- Passwords or secrets stored in plaintext, or with a fast general-purpose hash instead of a purpose-built one (bcrypt, scrypt, argon2)
+- Sensitive data transmitted or stored without encryption where encryption is available and expected (plaintext HTTP for credentials, unencrypted database columns for PII)
+- A security-sensitive random value (session token, password-reset token, API key) generated from a non-cryptographic source (`Math.random()`, an unseeded PRNG) instead of a CSPRNG
+- Exception: this plugin's own `sha256sum`/`shasum` artifact-hash usage is integrity tooling for detecting accidental drift, not a security control -- do not flag it here
+
+**Input Injection** (OWASP A05; SSRF below is OWASP A01, not A05 -- 2025 folded it into access control)
 - SQL: string concatenation instead of parameterized queries
 - Shell: `subprocess.call(f"cmd {user_input}", shell=True)` without sanitization
 - Path traversal: user-controlled filename used in `open()` without validation
 - SSRF: user-controlled URL used in HTTP client without allowlist
+
+**Software Supply Chain** (OWASP A03; overlaps A08 where the concern is integrity rather than staleness)
+- A pinned dependency, base image, or CI runner image loosened to a floating specifier (`@latest`, an unpinned tag, an open version range) instead of an exact version or digest
+- An install step with lifecycle scripts enabled where nothing documents why disabling them would break the install
+- A version-pin assertion whose needle is a substring loose enough to also match the floating specifier it exists to reject
+- No documented refresh procedure for a pinned digest or version, leaving the next bump to improvisation
+- A dependency or tool fetched with no integrity/checksum verification where one is available
+- An unsigned or unverified update/deployment mechanism (OWASP A08: Software or Data Integrity Failures)
+
+**Security Logging & Alerting** (OWASP A09)
+- A security-relevant event (auth/permission failure, gate-approval refusal, lock timeout, privilege check) that produces no line an operator could find later
+- A caught exception around a security-relevant operation that is silently discarded (`2>/dev/null`, a bare `except: pass`) rather than logged at least at debug level
+- A log line that includes a secret, token, or full environment dump where a redacted or partial form would do
+- An alert-worthy condition (repeated auth failures, a privilege-escalation attempt) with no signal distinguishable from routine, expected failures
+
+**Mishandling of Exceptional Conditions** (OWASP A10)
+- An error message or stack trace returned to a user/caller that reveals an absolute path, a secret, an internal hostname, or other implementation detail beyond what the caller needs
+- A security-relevant check (auth, permission, validation) that fails open on an unexpected exception instead of failing closed
+- An exception handler broad enough to swallow a security-relevant failure alongside the routine one it was written for -- distinct from L4's test-quality mandate: this is runtime/production exception handling, not test assertion quality
+- A partial failure or crash mid-operation that leaves a resource (lock, temp file, credential) in an insecure state instead of a safe default
 
 ## False Alarm Filter
 
