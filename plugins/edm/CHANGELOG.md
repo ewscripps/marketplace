@@ -6,8 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [3.2.0] — 2026-08-16
 
-The sanctioned P2-debt convergence override, and the round-8 code-audit remediation wave
-(Stage A of the EDMV3 convergence plan).
+The sanctioned P2-debt convergence override, and the round-8 code-audit remediation waves
+(Stages A and B of the EDMV3 convergence plan).
 
 ### Added
 
@@ -68,6 +68,48 @@ The sanctioned P2-debt convergence override, and the round-8 code-audit remediat
   case in wave7-smoke.sh.
 - **T28 AC12 amended (CA-424)** to document the one sanctioned exception to "refuses when it
   fails"; the EDMV3-90 boundary row records the D57/D58 amendment.
+- **Lens-JSONL completeness backstop (CA-471)**: `edm-state audit-round-complete` now verifies,
+  for every lens named in the round's `lenses-run.txt`, that a non-empty parseable
+  `lens-L{N}.jsonl` landed in the pass directory -- on a miss it warns naming the lenses and
+  records the round `round_type=partial` (never convergent). Pass-7 of this plugin's own
+  initiative had shipped eleven prose reports and zero JSONL files with nothing failing.
+- **Trap hygiene sweep (CA-446/CA-447 remainder, CA-449, CA-450, L8-006)**: 4-signal split traps
+  (EXIT / INT 130 / TERM 143 / HUP 129) in `edm-sync-canonical-sections`, `edm-lint-artifacts`
+  (including a first-stage trap between its two mktemps), `edm-check-grants`,
+  `score-artifacts.sh`'s `cmd_compare` (which also gains TMPDIR-honoring mktemp templates and
+  checked staging writes), and a process-wide scratch cleanup in `bin/tests/timing.sh`; HUP
+  added to the four test-harness traps and `with_scratch_repo` now saves/restores the HUP trap
+  alongside EXIT/INT/TERM.
+- **Rolled-back migrate-path no longer strands its own lockdir (CA-442)**: the post-write-failure
+  rollback sweeps `.edm-state.lockd` at the source path after the rename back (with_state_lock's
+  cleanup removes it by the now-empty destination path).
+- **Checkpoint drift loop survives paths with spaces (CA-445)**: the artifact-hash read emits the
+  path last so `read`'s final variable absorbs it whole.
+- **`check_permission_rules` anchors to the project root (CA-448)**: `CLAUDE_PROJECT_DIR`, then
+  git toplevel, then cwd -- a gate approval run from a subdirectory no longer silently downgrades
+  an honestly-configured `permission-ask` to `prose-only`.
+- **Eval knob validation (CA-443/CA-444)**: `EDM_EVAL_KEEP_RUNS=0` clamps to 1 with a warning
+  instead of deleting the run that just finished; a non-numeric `EDM_EVAL_PHASE_TIMEOUT_SECONDS`
+  refuses at startup (exit 2) instead of silently disabling the phase timeout.
+- **`eval:nightly` partial-run wiring (CA-452)**: run-eval.sh exit 4 now flows through scoring
+  and the baseline comparison (whose complete:false refusal is the partial run's visible
+  verdict) before failing the job, instead of aborting before the stub scores.json was ever read.
+- **DRY pass over the small bin/ helpers (CA-344, CA-417, CA-420)**: `edm-init` drops its second
+  copy of the prefix-format regex and calls the sibling validator unconditionally;
+  `edm-check-grants` gains the shared `agent_grants_class` predicate and `_lookback_window`
+  (the same sed range was executed twice per candidate line); `edm-lint-artifacts` gains
+  `_collect_md_files_into`/`_summarize_and_exit` so its 0/1 exit contract is encoded once;
+  `edm-validate-prefix` gains `_scan_product_dirs_for_prefix` (live and archived walks had
+  silently diverged guards); the two unconverted `skipped_phases_str` copies now call the helper
+  (single-copy pinned in wave6); `archived_state_file_for` moves the archived-shape match beside
+  `list_state_files` instead of a consumer-local case.
+- **Dead null guards deleted (CA-451)** in `required_gates_for_mode` and
+  `phase_start_prerequisite_gate` (`gated_phase_for_gate` cannot return null for the literal
+  1/2/3 those loops iterate).
+- **Lens-schema identity check (CA-467)**: the twelve deliberately-duplicated JSONL schema lines
+  (11 lens agents + the code-audit skill) are now asserted byte-identical modulo the lens token
+  by a wave7 case with a positive control; the lens prompts' self-contradictory "documented
+  once, identically in every lens prompt" wording now states the real posture.
 
 ## [3.1.0] — 2026-07-28
 
