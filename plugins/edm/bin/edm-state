@@ -1089,26 +1089,38 @@ _edm_reclaim_stale_lockdir() {
   fi
 }
 
-# _lock_retry_or_die <lockdir> <reason-suffix> -- shared retry-accounting tail for
-# with_state_lock's mkdir-based spin loop below (G47/CA-278). Increments the loop's own `tries`
-# counter and dies naming <reason-suffix> once the 50-try bound is reached; otherwise sleeps
-# 0.1s so the caller's next loop iteration is rate-limited. This used to be duplicated three
-# times (invalid-PID branch, dead-PID-reclaim branch, live-holder fallthrough) under a comment
-# that already (inaccurately) called it "the shared retry accounting" -- extracting it here
-# makes that description true. `tries` is the CALLER's own `local` variable, not a global or an
-# argument: bash's dynamic scoping makes a caller's `local` visible to any function the caller
-# invokes (unlike a lexically scoped language's stack frames), so this helper's plain
-# `tries=$(( tries + 1 ))` reads and writes the caller's own counter directly.
+# EDM_STATE_LOCK_WAIT_S (CA-397): the single source for how long with_state_lock waits before
+# declaring a timeout, on EITHER lock backend. Previously the flock branch hardcoded `-w 10`
+# while the mkdir-fallback branch hardcoded a 50-try x 0.1s bound (~5s) -- the identical logical
+# timeout, two different durations depending only on which lock backend the host happens to
+# have. EDM_STATE_LOCK_MAX_TRIES is derived from it so the 0.1s poll interval stays the only
+# other constant in play. Override via env for testing; do not hardcode a second duration
+# anywhere else in this file.
+EDM_STATE_LOCK_WAIT_S="${EDM_STATE_LOCK_WAIT_S:-10}"
+EDM_STATE_LOCK_MAX_TRIES=$(( EDM_STATE_LOCK_WAIT_S * 10 ))
+
+# _lock_retry_or_die <tries> -- shared retry-accounting check for with_state_lock's mkdir-based
+# spin loop below (G47/CA-278). Takes the caller's current try count as an explicit argument and
+# echoes the incremented count back on success (CA-398): the previous form mutated a same-named
+# `tries` variable in the caller's scope via bash's dynamic scoping, which worked only because
+# every call site happened to sit inside the loop that declares `local tries` -- a call site
+# added anywhere else would silently read/write an unrelated `tries` (or abort under `set -u`).
+# Deliberately does NOT call `die` itself once EDM_STATE_LOCK_MAX_TRIES is reached -- every call
+# site invokes this via `tries="$(_lock_retry_or_die "$tries")"`, and a command substitution
+# always forks a subshell, so a `die` (which calls `exit`) fired from inside this function would
+# only terminate that subshell, silently leaving the real retry loop to continue forever with a
+# `tries` value that resets to empty-then-0 on every subsequent call -- exactly the class of bug
+# this comment now warns against. Returns 1 (echoing nothing) on the terminal case instead; the
+# caller checks that and calls `die` itself, in its own non-subshell shell context. Otherwise
+# sleeps 0.1s so the caller's next loop iteration is rate-limited.
 _lock_retry_or_die() {
-  local _lockdir="$1" _reason="$2"
-  tries=$(( tries + 1 ))
-  if [[ $tries -ge 50 ]]; then
-    # G33/CA-364: quote the same unit (seconds) the flock branch's own timeout die uses, so the
-    # identical class of failure (lock acquisition timed out) is correlatable across both lock
-    # backends in a log instead of leaking a loop-internal try-count on this branch only.
-    die "state lock timeout after ~5s (50 tries x 0.1s) on ${_lockdir}${_reason}"
+  local _tries="$1"
+  _tries=$(( _tries + 1 ))
+  if [[ $_tries -ge $EDM_STATE_LOCK_MAX_TRIES ]]; then
+    return 1
   fi
   sleep 0.1
+  echo "$_tries"
 }
 
 # ---- Advisory file locking (T24) -------------------------------------------
@@ -1201,11 +1213,20 @@ with_state_lock() {
     # directory at all), created with `mkdir` (atomic, fails on ANY existing name -- file,
     # directory, or a pre-planted symlink -- unlike a redirect, which follows and truncates a
     # symlink instead of refusing it).
+    # CA-396: BASHPID, not $$ -- inside this `( )` subshell, $$ still reads as the TOP-LEVEL
+    # shell's PID (a bash quirk: unlike `&` backgrounding, a `( )` subshell does not get a new
+    # $$), so two concurrent with_state_lock calls from the same parent shell computed the
+    # IDENTICAL marker path and could delete/detect each other's marker. BASHPID is this
+    # subshell's own, real PID. (The marker's location stays under TMPDIR per G17/CA-305's
+    # documented rationale -- moving it back beside the lockbase would reintroduce the
+    # symlink-plant and directory-writability exposure that fix closed; the archive/migrate-path
+    # sweeps' dead `.lock.timeout.*` glob is deliberate backward-compat for pre-G17 markers, see
+    # the comment at _cmd_archive_move_body, not a live defect this fixes.)
     local _lock_ec=0 _lock_timeout_marker
-    _lock_timeout_marker="${TMPDIR:-/tmp}/edm-state.lock-timeout.$$"
+    _lock_timeout_marker="${TMPDIR:-/tmp}/edm-state.lock-timeout.${BASHPID:-$$}"
     rm -rf "$_lock_timeout_marker" 2>/dev/null || true
     _EDM_TRAP_DEPTH=1
-    ( flock -w 10 200 || { mkdir "$_lock_timeout_marker" 2>/dev/null; exit 99; }; "$@" ) 200>"${lockfile}" || _lock_ec=$?
+    ( flock -w "$EDM_STATE_LOCK_WAIT_S" 200 || { mkdir "$_lock_timeout_marker" 2>/dev/null; exit 99; }; "$@" ) 200>"${lockfile}" || _lock_ec=$?
     _EDM_TRAP_DEPTH=0
     # G13/CA-347: gate the marker-existence probe on `_lock_ec -eq 99` FIRST -- the previous
     # form checked `[[ -e "$_lock_timeout_marker" ]]` unconditionally on every return path,
@@ -1220,11 +1241,11 @@ with_state_lock() {
     if [[ $_lock_ec -eq 99 ]]; then
       if [[ -e "$_lock_timeout_marker" ]]; then
         rm -rf "$_lock_timeout_marker" 2>/dev/null || true
-        die "state lock timeout after 10s on ${lockfile} (another edm-state process may be holding it)"
+        die "state lock timeout after ${EDM_STATE_LOCK_WAIT_S}s on ${lockfile} (another edm-state process may be holding it)"
       fi
       # G17/CA-305: the marker mkdir itself failed (e.g. TMPDIR is not writable) -- still name
       # the timeout rather than silently returning a bare 99 to a bare mutator caller.
-      die "state lock timeout after 10s on ${lockfile} (another edm-state process may be holding it) -- the timeout marker could not be created at ${_lock_timeout_marker} (check TMPDIR writability)"
+      die "state lock timeout after ${EDM_STATE_LOCK_WAIT_S}s on ${lockfile} (another edm-state process may be holding it) -- the timeout marker could not be created at ${_lock_timeout_marker} (check TMPDIR writability)"
     fi
     return $_lock_ec
   else
@@ -1299,7 +1320,8 @@ with_state_lock() {
           else
             echo "edm-state: state lock ${lockdir} has an invalid PID '${holder_pid:-missing}' but is less than 1 second old -- not reclaiming yet (may be mid-acquisition)" >&2
           fi
-          _lock_retry_or_die "$lockdir" " (invalid PID)"
+          tries="$(_lock_retry_or_die "$tries")" \
+            || die "state lock timeout after ${EDM_STATE_LOCK_WAIT_S}s (${EDM_STATE_LOCK_MAX_TRIES} tries x 0.1s) on ${lockdir} (invalid PID)"
           continue
         fi
         if ! kill -0 "$holder_pid" 2>/dev/null; then
@@ -1313,11 +1335,13 @@ with_state_lock() {
             # Whether the mv above won or lost the race against another contender, fall through
             # to the shared retry accounting below instead of an unaccounted-for `continue`.
           fi
-          _lock_retry_or_die "$lockdir" " (held by PID ${holder_pid})"
+          tries="$(_lock_retry_or_die "$tries")" \
+            || die "state lock timeout after ${EDM_STATE_LOCK_WAIT_S}s (${EDM_STATE_LOCK_MAX_TRIES} tries x 0.1s) on ${lockdir} (held by PID ${holder_pid})"
           continue
         fi
       fi
-      _lock_retry_or_die "$lockdir" "${holder_pid:+ (held by PID ${holder_pid})}"
+      tries="$(_lock_retry_or_die "$tries")" \
+        || die "state lock timeout after ${EDM_STATE_LOCK_WAIT_S}s (${EDM_STATE_LOCK_MAX_TRIES} tries x 0.1s) on ${lockdir}${holder_pid:+ (held by PID ${holder_pid})}"
     done
     echo $$ > "$pidfile" 2>/dev/null || true
 

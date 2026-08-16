@@ -7659,7 +7659,9 @@ echo
 echo "=== G17/CA-305: the flock-timeout marker is derived under TMPDIR and created with mkdir, not a truncating redirect inside the artifact directory ==="
 g17_edm_state_content="$(cat "$EDM_STATE")"
 check "G17/CA-305 -- the marker is derived under TMPDIR, not inside the lockfile's own (tracked) directory" \
-  '_lock_timeout_marker="${TMPDIR:-/tmp}/edm-state.lock-timeout.$$"' "$g17_edm_state_content"
+  '_lock_timeout_marker="${TMPDIR:-/tmp}/edm-state.lock-timeout.${BASHPID:-$$}"' "$g17_edm_state_content"
+check "CA-396 -- the marker key is BASHPID (this subshell's real PID), not \$\$ (which stays the top-level shell's PID inside a ( ) subshell and could collide across concurrent lock attempts)" \
+  '${BASHPID:-$$}' "$g17_edm_state_content"
 check "G17/CA-305 -- the timeout branch creates the marker with mkdir (atomic, refuses any existing name)" \
   'mkdir "$_lock_timeout_marker" 2>/dev/null; exit 99' "$g17_edm_state_content"
 check_absent "G17/CA-305 -- the timeout branch no longer creates the marker with a truncating, symlink-following redirect" \
