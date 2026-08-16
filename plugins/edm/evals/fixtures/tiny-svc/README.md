@@ -38,6 +38,10 @@ version per that file's own header.
 - The fixture plus `expected.json` stays under the 100KB budget for
   `plugins/edm/evals/` (EDMV3-25 AC, EDMV3-80). Nothing in `bin/` measures
   directory size; the enforcement is the `lint:file-type-ban` job in the
-  repository-root `.gitlab-ci.yml`, which runs `du -sk plugins/edm/evals/` and
-  fails the blocking `lint` stage above 100KB.
+  repository-root `.gitlab-ci.yml`, which sums the byte sizes of
+  `git ls-files -- plugins/edm/evals` (tracked content only -- runtime output
+  under `evals/runs/` is never counted) and fails the blocking `lint` stage
+  above 100KB. (CA-463: an earlier revision of this bullet described a
+  `du -sk` mechanism that never shipped -- `du` would count untracked runtime
+  output and block on files the repo does not even carry.)
 - ASCII only, same as every other artifact this initiative produces.

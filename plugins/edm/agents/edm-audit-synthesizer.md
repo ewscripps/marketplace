@@ -22,6 +22,8 @@ Given:
 - A pass directory containing lens reports (`lens-L{N}.md` and `lens-L{N}.jsonl` for each lens that ran this round)
 - The prior findings ledger at `<initiative-dir>/code-audit/findings-ledger.jsonl` (or the legacy `<initiative-dir>/code-audit/findings-ledger.md` if only that exists -- C-4 backward compatibility; may not exist for round 1)
 - The round type (full: 11 lenses, or partial: subset) from `lenses-run.txt`
+- `tooling-notes.md` in the same pass directory, if present (CA-466): per-lens stall counts and
+  truncation caveats the orchestrator recorded at step 8b -- absent when delivery was clean
 
 Steps:
 1. Read all lens reports (prose and JSONL) that exist in the pass directory. The JSONL is authoritative on conflict with the prose.
@@ -189,7 +191,11 @@ Matching across rounds uses component + summary similarity (not literal text).
 ## Process
 
 1. `LS` the pass directory; read every `lens-L{N}.md` and `lens-L{N}.jsonl` that exists. The JSONL is authoritative on conflict with the prose.
-2. Read `lenses-run.txt` to determine if this is a full or partial round.
+2. Read `lenses-run.txt` to determine if this is a full or partial round. Also read
+   `tooling-notes.md` if it exists in the pass directory (CA-466): when present, carry a
+   one-line delivery-degradation note into REMEDIATION.md naming the affected lenses and their
+   stall/truncation caveats, so degraded delivery is visible at the convergence gate rather than
+   only in a file nobody is pointed at. When absent, say nothing -- absence means clean delivery.
 3. Read the prior `findings-ledger.jsonl` (if present); extract all open and noted findings. If only a legacy `findings-ledger.md` exists, read that instead; any row carrying a status value outside `open`/`fixed`/`noted` is out of date and is normalized to `open` on read, never skipped.
 4. Build a new finding inventory from this round's lens JSONL lines.
 5. Apply the False Alarm Filter -- rank by confidence and corroboration. A single-lens finding is never discarded for being single-lens: `high`/`medium` confidence is retained at its reported severity; `low` confidence is retained but demoted to `sev: "NOTED"` / `status: "noted"` with its rationale recorded. No finding is removed from the ledger by this step.

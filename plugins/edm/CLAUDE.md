@@ -111,6 +111,7 @@ SRD/                              <- project root, committed to git
         |       +-- lens-L1.jsonl ... lens-L11.jsonl  <- authoritative per-lens findings (schema in skills/code-audit/SKILL.md)
         |       +-- lens-L1.md ... lens-L11.md
         |       +-- lenses-run.txt    <- lens set for this round (full vs. partial)
+        |       +-- tooling-notes.md  <- on-demand (CA-388/CA-466): per-lens stall counts and truncation caveats; absent when the round's delivery was clean
         |       +-- REMEDIATION.md
         +-- ROLLBACK.md               <- rollback runbook (Should/on-demand; structure: trigger, revert steps, verify, owner)
         +-- exec-report.md            <- post-Phase-6 execution report with mode field (Should/on-demand)

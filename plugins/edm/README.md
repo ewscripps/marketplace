@@ -195,6 +195,7 @@ SRD/
 |       |       |-- lens-L1.jsonl ... lens-L11.jsonl  <- authoritative per-lens findings (schema in skills/code-audit/SKILL.md)
 |       |       |-- lens-L1.md ... lens-L11.md
 |       |       |-- lenses-run.txt
+|       |       |-- tooling-notes.md          <- on-demand: per-lens stall counts / truncation caveats (absent when delivery was clean)
 |       |       `-- REMEDIATION.md
 |       `-- .edm-state.json               <- gate approvals, phase timestamps, mode fields (committed by default)
 `-- {PREFIX}/                          <- legacy flat layout (still supported, auto-detected)
