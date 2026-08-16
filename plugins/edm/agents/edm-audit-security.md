@@ -81,9 +81,7 @@ misconfig, verbose error pages, default credentials, and permissive CORS dependi
 - Sensitive data transmitted or stored without encryption where encryption is available and expected (plaintext HTTP for
   credentials, unencrypted database columns for PII)
 - A security-sensitive random value (session token, password-reset token, API key) generated from a non-cryptographic
-  source (`Math.random()`, an unseeded PRNG) instead of a CSPRNG
-- Exception: this plugin's own `sha256sum`/`shasum` artifact-hash usage is integrity tooling for detecting accidental
-  drift, not a security control -- do not flag it here
+  source (`Math.random()`, an unseeded PRNG) instead of a CSPRNG.
 
 **Input Injection** (OWASP A05; SSRF below is OWASP A01, not A05 -- 2025 folded it into access control)
 
