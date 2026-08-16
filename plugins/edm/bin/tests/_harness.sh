@@ -206,27 +206,6 @@ count_matches_strict() {
   return 0
 }
 
-# assert_absent_with_control <label> <needle> <actual> <control-label> <control-haystack> --
-# passes only when <needle> is absent from <actual> AND present in the positive-control haystack.
-# CA-037/CA-145 (G2/G13, round 4): this primitive is itself correct and well self-tested -- the
-# defect was at 16 CALL SITES that authored <control-haystack> as a hand-typed literal string
-# containing <needle> by construction, making the control arm provably dead code. Do NOT add a
-# new tautological-control call site; use assert_tree_absent below instead, which forces the
-# control to come from something a real scan is capable of producing.
-# G2/CA-037 (round 5): this helper's last production caller (wave7-smoke.sh's T09 AC13) has been
-# converted to assert_tree_absent. It now has zero production callers; the only remaining callers
-# are this file's own self-tests in harness-smoke.sh, which exercise it deliberately.
-assert_absent_with_control() {
-  local label="$1" needle="$2" actual="$3" control_label="$4" control_haystack="$5"
-  if [[ "$control_haystack" != *"$needle"* ]]; then
-    fail "$label (positive control '${needle}' missing from ${control_label})"
-  elif [[ "$actual" == *"$needle"* ]]; then
-    fail "$label (expected '${needle}' to be absent, but it was present)"
-  else
-    pass "$label"
-  fi
-}
-
 # assert_tree_absent <label> <grep-pattern> <actual-haystack> <control-haystack> <path...> --
 # G2/CA-037 + G13/CA-145 combined fix for assert_absent_with_control's tautological-control
 # class (16 call sites across wave5/6/7-smoke.sh, round 4). Two independent defects, closed in
@@ -274,8 +253,13 @@ assert_tree_absent() {
   fi
 }
 
-# _harness_hash_file <file> -- sha256 of <file>, or "absent" if it doesn't exist. Tries
-# `shasum -a 256` first, falling back to `sha256sum` (macOS/Linux divergence, EDMV3-106).
+# _harness_hash_file <file> -- sha256 of <file>, or "absent" if it doesn't exist, or "unhashable"
+# (with exit 1) if neither hasher is on PATH. Tries `shasum -a 256` first, falling back to
+# `sha256sum` (macOS/Linux divergence, EDMV3-106).
+# CA-394: the unhashable arm used to exit 0 like every other arm, so two callers that compare
+# "before" against "after" saw the identical literal "unhashable" both times and reported a
+# byte-identity PASS regardless of what the command under test actually did to the file. Both
+# callers below now check this function's own exit status, not just its printed value.
 _harness_hash_file() {
   local file="$1"
   [[ -f "$file" ]] || { echo "absent"; return 0; }
@@ -285,6 +269,7 @@ _harness_hash_file() {
     sha256sum "$file" | cut -d' ' -f1
   else
     echo "unhashable"
+    return 1
   fi
 }
 
@@ -295,13 +280,15 @@ check_state_unchanged() {
   local state_file="$1"
   shift
   local before after
-  before="$(_harness_hash_file "$state_file")"
+  before="$(_harness_hash_file "$state_file")" \
+    || { fail "state unchanged: $state_file (no hash utility available -- shasum and sha256sum both missing)"; return; }
   if [[ "$before" == "absent" ]]; then
     fail "state unchanged: $state_file (baseline file missing before command ran)"
     return
   fi
   "$@" >/dev/null 2>&1 || true
-  after="$(_harness_hash_file "$state_file")"
+  after="$(_harness_hash_file "$state_file")" \
+    || { fail "state unchanged: $state_file (no hash utility available after command ran)"; return; }
   if [[ "$before" == "$after" ]]; then
     pass "state unchanged: $state_file"
   else
@@ -322,14 +309,16 @@ check_refuses_and_leaves_state() {
   shift 3
   local before after output status=0
 
-  before="$(_harness_hash_file "$state_file")"
+  before="$(_harness_hash_file "$state_file")" \
+    || { fail "$label (no hash utility available -- shasum and sha256sum both missing)"; return; }
   if [[ "$before" == "absent" ]]; then
     fail "$label (baseline state file missing before command ran: $state_file)"
     return
   fi
 
   output="$("$@" 2>&1)" || status=$?
-  after="$(_harness_hash_file "$state_file")"
+  after="$(_harness_hash_file "$state_file")" \
+    || { fail "$label (no hash utility available after command ran)"; return; }
 
   if [[ $status -eq 0 ]]; then
     fail "$label (expected non-zero exit, got 0; output: '$output')"
@@ -387,7 +376,21 @@ _wave7_extract_section() {
 # session_dir_for_test_cwd -- mirrors bin/edm-state's own session_dir_for_cwd() formula exactly
 # (same `tr '/.' '-'` encoding of $HOME + $(pwd)) so a test can predict, and stage fixtures
 # into, the exact directory get_session_tokens_since() will read at call time.
+# CA-400: this interpolates whatever $HOME happens to be with no precondition -- every caller
+# today correctly exports a scratch HOME before calling this, but nothing enforced it, and a
+# regression here is invisible to git status (the path is outside any repo) while actively
+# corrupting the real ~/.claude/projects/ tree: get_session_tokens_since picks the most-recently-
+# modified *.jsonl in that directory as the driving session, so a stray staged fixture becomes
+# the driving session for the developer's own next real phase-complete or audit-round-complete.
+# Refuse rather than silently write against a real, non-scratch HOME.
 session_dir_for_test_cwd() {
+  case "$HOME" in
+    "${TMPDIR:-/tmp}"/*) ;;
+    *)
+      echo "session_dir_for_test_cwd: \$HOME ('${HOME}') is not under \${TMPDIR:-/tmp} -- export a scratch HOME before staging session fixtures, or this call would write into the real ~/.claude/projects/ tree" >&2
+      exit 1
+      ;;
+  esac
   echo "${HOME}/.claude/projects/$(pwd | tr '/.' '-')"
 }
 

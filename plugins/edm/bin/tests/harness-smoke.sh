@@ -179,38 +179,10 @@ set -e
   || fail "count_matches_strict returned '$cms_missing' (ec=$cms_missing_ec) for a missing file, expected ERROR/2"
 rm -f "$CM_FILE"
 
-# assert_absent_with_control: positive -- needle absent from actual, present in the control.
-_aawc_pos="$(
-  PASS=0; FAIL=0
-  assert_absent_with_control "needle absent, control has it" "banned-word" \
-    "clean haystack text" "control doc" "haystack containing banned-word for real"
-  echo "PASS=$PASS FAIL=$FAIL"
-)"
-check "assert_absent_with_control passes when needle is absent and the control proves it's a real check" \
-  "PASS=1 FAIL=0" "$_aawc_pos"
-
-# assert_absent_with_control: negative (its whole point) -- needle present in actual -> fails,
-# even though the control also has it.
-_aawc_neg_present="$(
-  PASS=0; FAIL=0
-  assert_absent_with_control "needle present in actual" "banned-word" \
-    "haystack containing banned-word here" "control doc" "haystack containing banned-word for real"
-  echo "PASS=$PASS FAIL=$FAIL"
-)"
-check "assert_absent_with_control fails when the needle is present in actual" \
-  "PASS=0 FAIL=1" "$_aawc_neg_present"
-
-# assert_absent_with_control: negative -- the needle is missing from the CONTROL haystack too,
-# meaning the control is not actually a positive control and the whole assertion is vacuous. This
-# must fail loudly rather than pass on an untested guard.
-_aawc_neg_control="$(
-  PASS=0; FAIL=0
-  assert_absent_with_control "control itself lacks the needle" "banned-word" \
-    "clean haystack text" "control doc" "control text that never mentions the needle at all"
-  echo "PASS=$PASS FAIL=$FAIL"
-)"
-check "assert_absent_with_control fails when the positive control itself lacks the needle" \
-  "PASS=0 FAIL=1" "$_aawc_neg_control"
+# CA-395: assert_absent_with_control itself was deleted from _harness.sh (zero production callers
+# since G2/CA-037 converted the last one to assert_tree_absent; these three cases existed solely
+# to exercise a function nothing else called). assert_tree_absent's own docstring already carries
+# the tautological-control rule these cases were guarding.
 
 # ---- CA-042: check_refuses_and_leaves_state ---------------------------------------------------
 echo
