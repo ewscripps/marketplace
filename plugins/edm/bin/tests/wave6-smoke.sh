@@ -831,6 +831,79 @@ pdebt7_round="$(jq -r '.code_audit_p2_debt_round' "$STATE_PDEBT7")"
 [[ "$pdebt7_round" == "2" ]] && pass "CA-427 -- debt round coerced from the bare integer (2)" \
   || fail "CA-427 -- code_audit_p2_debt_round='$pdebt7_round', expected 2"
 
+echo
+echo "CA-432 -- EDM_STATE_LOCK_WAIT_S is validated at load (CA-160's validate-beside-the-default rule)"
+# Pre-fix: a fractional value aborted every subcommand with a raw bash arithmetic error at top
+# level; a non-numeric value made flock -w fail instantly and report a fabricated lock timeout.
+ca432_ec=0
+ca432_out="$(EDM_STATE_LOCK_WAIT_S=abc "$EDM_STATE" --help 2>&1)" || ca432_ec=$?
+[[ $ca432_ec -ne 0 ]] && pass "CA-432 -- a non-numeric EDM_STATE_LOCK_WAIT_S refuses at load" \
+  || fail "CA-432 -- EDM_STATE_LOCK_WAIT_S=abc was accepted (exit 0)"
+check "CA-432 -- the refusal names the knob and the expected shape" \
+  "invalid EDM_STATE_LOCK_WAIT_S" "$ca432_out"
+ca432_frac_ec=0
+ca432_frac_out="$(EDM_STATE_LOCK_WAIT_S=0.5 "$EDM_STATE" --help 2>&1)" || ca432_frac_ec=$?
+[[ $ca432_frac_ec -ne 0 ]] && pass "CA-432 -- a fractional EDM_STATE_LOCK_WAIT_S refuses with a named message, not a raw arithmetic error" \
+  || fail "CA-432 -- EDM_STATE_LOCK_WAIT_S=0.5 was accepted (exit 0)"
+check "CA-432 -- the fractional refusal is the named diagnostic, not bash's own" \
+  "invalid EDM_STATE_LOCK_WAIT_S" "$ca432_frac_out"
+ca432_ok_ec=0
+EDM_STATE_LOCK_WAIT_S=5 "$EDM_STATE" --help >/dev/null 2>&1 || ca432_ok_ec=$?
+[[ $ca432_ok_ec -eq 0 ]] && pass "CA-432 -- a valid override (5) is accepted" \
+  || fail "CA-432 -- EDM_STATE_LOCK_WAIT_S=5 refused (exit ${ca432_ok_ec})"
+
+# =================================================================================
+# CA-471 -- audit-round-complete's JSONL-landed completeness gate: a code round whose
+# lenses-run.txt names a lens with a missing/empty/unparseable lens-L{N}.jsonl is downgraded to
+# round_type=partial (never convergent) with a warn naming the lenses; a round whose manifest
+# is fully backed stays full; a round with no pass directory at all is untouched (C-4).
+# =================================================================================
+echo
+echo "CA-471 -- lens JSONL completeness gate at audit-round-complete"
+"$EDM_STATE" init CA471OK >/dev/null
+mkdir -p "$TMP/SRD/CA471OK/code-audit/pass-1_2026-08-16"
+printf 'Round type: partial\nL1\nL2\n' > "$TMP/SRD/CA471OK/code-audit/pass-1_2026-08-16/lenses-run.txt"
+printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA471OK/code-audit/pass-1_2026-08-16/lens-L1.jsonl"
+printf '{"schema":"lens","lens":"L2","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA471OK/code-audit/pass-1_2026-08-16/lens-L2.jsonl"
+"$EDM_STATE" audit-round-start CA471OK code --lenses L1,L2 >/dev/null
+ca471ok_out="$("$EDM_STATE" audit-round-complete CA471OK code 2>&1)"
+check_absent "CA-471 -- a fully-backed manifest completes with no warn" "CA-471" "$ca471ok_out"
+
+"$EDM_STATE" init CA471MISS >/dev/null
+mkdir -p "$TMP/SRD/CA471MISS/code-audit/pass-1_2026-08-16"
+printf 'Round type: full\nL1\nL2\n' > "$TMP/SRD/CA471MISS/code-audit/pass-1_2026-08-16/lenses-run.txt"
+printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA471MISS/code-audit/pass-1_2026-08-16/lens-L1.jsonl"
+: > "$TMP/SRD/CA471MISS/code-audit/pass-1_2026-08-16/lens-L2.jsonl"   # empty = not landed
+"$EDM_STATE" audit-round-start CA471MISS code >/dev/null
+ca471miss_out="$("$EDM_STATE" audit-round-complete CA471MISS code 2>&1)"
+check "CA-471 -- the warn names the finding ID and the missing lens" "CA-471" "$ca471miss_out"
+check "CA-471 -- the warn names L2 as the unlanded lens" "for: L2" "$ca471miss_out"
+ca471miss_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$TMP/SRD/CA471MISS/.edm-state.json")"
+[[ "$ca471miss_rt" == "partial" ]] \
+  && pass "CA-471 -- the round is recorded round_type=partial (non-convergent)" \
+  || fail "CA-471 -- round_type='$ca471miss_rt', expected partial"
+mkdir -p "$TMP/SRD/CA471MISS/code-audit"
+printf '{"id":"CA-X01","status":"fixed","sev":"P2","title":"all clear"}\n' \
+  > "$TMP/SRD/CA471MISS/code-audit/findings-ledger.jsonl"
+ca471miss_conv_ec=0
+"$EDM_STATE" audit-converged CA471MISS >/dev/null 2>&1 || ca471miss_conv_ec=$?
+[[ $ca471miss_conv_ec -eq 1 ]] \
+  && pass "CA-471 -- a downgraded round blocks convergence even with a clean ledger" \
+  || fail "CA-471 -- audit-converged exited ${ca471miss_conv_ec} on a downgraded round, expected 1"
+
+"$EDM_STATE" init CA471NODIR >/dev/null
+mkdir -p "$TMP/SRD/CA471NODIR/code-audit"
+"$EDM_STATE" audit-round-start CA471NODIR code >/dev/null
+ca471nodir_out="$("$EDM_STATE" audit-round-complete CA471NODIR code 2>&1)"
+check_absent "CA-471 -- no pass directory means the gate stays silent (C-4)" "CA-471" "$ca471nodir_out"
+ca471nodir_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$TMP/SRD/CA471NODIR/.edm-state.json")"
+[[ "$ca471nodir_rt" == "full" ]] \
+  && pass "CA-471 -- a manifest-less round keeps its recorded round_type (full)" \
+  || fail "CA-471 -- manifest-less round_type='$ca471nodir_rt', expected full"
+
 # =================================================================================
 # G1 (round-3 Wave 7b, CA-182 REOPENED): the code-audit gate is unconditionally approvable at
 # schema_version < 2. Previously the convergence precheck ran ONLY when schema_version >= 2 --
@@ -980,6 +1053,23 @@ gate_is_approved_callers="$(grep -cE 'gate_is_approved "|gate_required_and_appro
 [[ "$gate_is_approved_callers" -ge 3 ]] \
   && pass "cmd_phase_start, cmd_gate_check and cmd_archive all route through the shared gate_is_approved/gate_required_and_approved helpers (G23/CA-343)" \
   || fail "expected >=3 call sites of gate_is_approved/gate_required_and_approved (cmd_phase_start, cmd_gate_check, cmd_archive), found $gate_is_approved_callers"
+
+# CA-417: the sibling extraction (skipped_phases_str) is held to the same single-copy standard.
+# Round 6 extracted the helper but left two literal copies of the join-derivation unconverted --
+# one authored by the same round's own G4/CA-335 fix -- so the count here is the guard the round-6
+# extraction shipped without.
+echo
+echo "CA-417 -- the skipped-phases join derivation has exactly one literal copy (inside skipped_phases_str)"
+# grep -F (the derivation is jq punctuation soup, not a safe ERE) with comment lines excluded --
+# the helper's own docstring legitimately quotes the derivation.
+ca417_hits="$(grep -F '[(.skipped_phases // [])[].phase] | join(" ")' "$EDM_STATE" | grep -cv '^[[:space:]]*#' || true)"
+[[ "$ca417_hits" -eq 1 ]] \
+  && pass "CA-417 -- exactly one non-comment literal copy of the skipped-phases join derivation (the helper body)" \
+  || fail "CA-417 -- expected exactly 1 non-comment literal copy of the join derivation, found $ca417_hits (a caller re-inlined it instead of calling skipped_phases_str)"
+ca417_callers="$(grep -cE 'skipped_phases_str "' "$EDM_STATE")"
+[[ "$ca417_callers" -ge 4 ]] \
+  && pass "CA-417 -- >=4 call sites route through skipped_phases_str (gate_required_and_approved, phase-complete, archive, handoff)" \
+  || fail "CA-417 -- expected >=4 skipped_phases_str call sites, found $ca417_callers"
 
 # ---- G23/CA-343 (b): phase-start, gate-check and archive agree, live, on a mini-srd
 # initiative with skipped phases -- not just "each independently passes its own suite", but
@@ -1181,13 +1271,24 @@ T06_HOME="$(mktemp -d "${TMP}/t06-home.XXXXXX")"
 T06_CWD="$(mktemp -d "${TMP}/t06-cwd.XXXXXX")"
 T06_PREV_HOME="${HOME:-}"
 T06_PREV_PWD="$(pwd)"
+T06_PREV_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-}"
 mkdir -p "$T06_HOME/.claude" "$T06_CWD/.claude"
 cd "$T06_CWD"
 export HOME="$T06_HOME"
+# CA-448: check_permission_rules now anchors its project-level scan to CLAUDE_PROJECT_DIR (then
+# git toplevel, then cwd). Pin it to the scratch cwd so a value inherited from the driving
+# Claude Code session -- pointing at a real repo with real ask rules -- can never leak into
+# these deterministic assertions.
+export CLAUDE_PROJECT_DIR="$T06_CWD"
 
 t06_restore_env() {
   cd "$T06_PREV_PWD"
   export HOME="$T06_PREV_HOME"
+  if [[ -n "$T06_PREV_PROJECT_DIR" ]]; then
+    export CLAUDE_PROJECT_DIR="$T06_PREV_PROJECT_DIR"
+  else
+    unset CLAUDE_PROJECT_DIR
+  fi
 }
 
 # ---- AC4/AC6 -- no settings files anywhere -> prose-only, fail-safe direction ---

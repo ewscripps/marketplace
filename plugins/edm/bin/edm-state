@@ -147,6 +147,26 @@ list_state_files() {
   done
 }
 
+# archived_state_file_for <prefix> -- print the archived state-file path for <prefix>, or print
+# nothing and return 1 when <prefix> has no archived state. CA-420: the two archived layout
+# shapes (flat .archived/PREFIX/ and product-scoped .archived/PRODUCT/PREFIX__desc/) are matched
+# HERE, directly beside list_state_files' own glob pair above, instead of being re-encoded as
+# case patterns at a consumer (cmd_migrate_schema previously carried its own copy) -- a third
+# archived shape now needs teaching to exactly this pair of adjacent functions, not to every
+# probe of the enumeration.
+archived_state_file_for() {
+  local prefix="$1" _asf_f
+  while IFS= read -r _asf_f; do
+    case "$_asf_f" in
+      "${SRD_ROOT}/.archived/${prefix}/.edm-state.json"|"${SRD_ROOT}"/.archived/*/"${prefix}__"*/.edm-state.json)
+        printf '%s\n' "$_asf_f"
+        return 0
+        ;;
+    esac
+  done < <(list_state_files --archived)
+  return 1
+}
+
 # phase_name_for <phase-num> -- returns human-readable phase name
 phase_name_for() {
   case "$1" in
@@ -827,8 +847,9 @@ required_gates_for_mode() {
   terminal="$(terminal_phase_for_mode "$mode" "$lifecycle_mode")"
   local g gated_phase
   for g in 1 2 3; do
+    # CA-451: no "null" guard here -- gated_phase_for_gate returns null only for inputs outside
+    # the literal 1/2/3 this loop iterates, so that branch was unreachable dead code.
     gated_phase="$(gated_phase_for_gate "$g")"
-    [[ "$gated_phase" == "null" ]] && continue
     # bash 3.2 word-membership test (no associative arrays available).
     case " $skipped_phases " in
       *" $gated_phase "*) continue ;;
@@ -842,6 +863,10 @@ required_gates_for_mode() {
 # cmd_phase_start, cmd_gate_check and cmd_archive (three separate literal copies of
 # `[(.skipped_phases // [])[].phase] | join(" ")`) even though a comment at each site already
 # asserted the three sites share one derivation -- extracted here so that claim is actually true.
+# CA-417: the round-6 extraction left TWO more copies unconverted (cmd_phase_complete's artifact
+# precheck and _write_handoff_body's required-gate count -- the latter authored the same round the
+# helper landed); both now call this helper, and a wave6 pin asserts this function body holds the
+# only non-comment literal copy of the derivation in this file.
 skipped_phases_str() {
   echo "$1" | jq -r '[(.skipped_phases // [])[].phase] | join(" ")'
 }
@@ -898,8 +923,8 @@ phase_start_prerequisite_gate() {
   local phase g gated_phase
   phase="$(to_int "$1" 0)"
   for g in 1 2 3; do
+    # CA-451: same unreachable-"null" deletion as required_gates_for_mode above.
     gated_phase="$(gated_phase_for_gate "$g")"
-    [[ "$gated_phase" == "null" ]] && continue
     [[ $((gated_phase + 1)) -eq "$phase" ]] && { echo "$g"; return 0; }
   done
   echo "none"
@@ -1028,8 +1053,17 @@ check_permission_rules() {
   local pat1='Bash(edm-state approve-gate*)'
   local pat2='Bash(edm-state archive*)'
   local found1=false found2=false
+  # CA-448: anchor the two project-level settings paths to the PROJECT ROOT, not the caller's
+  # cwd -- gate approvals run from wherever the driving session happens to sit (a subdirectory,
+  # a hook's own cwd), and a cwd-relative ".claude/..." probe from there silently misses the real
+  # settings and downgrades an honestly-configured approval to prose-only. Resolution order:
+  # CLAUDE_PROJECT_DIR (the host tells us), git toplevel, then cwd as the pre-CA-448 fallback.
+  local proj_root
+  proj_root="${CLAUDE_PROJECT_DIR:-}"
+  [[ -n "$proj_root" && -d "$proj_root" ]] || proj_root="$(git rev-parse --show-toplevel 2>/dev/null)" || proj_root=""
+  [[ -n "$proj_root" ]] || proj_root="."
   local f ask_json
-  for f in ".claude/settings.local.json" ".claude/settings.json" "${HOME:-}/.claude/settings.json"; do
+  for f in "${proj_root}/.claude/settings.local.json" "${proj_root}/.claude/settings.json" "${HOME:-}/.claude/settings.json"; do
     [[ -n "$f" && -f "$f" && -r "$f" ]] || continue
     # `jq -e` exits non-zero on a null/false result (missing .permissions.ask) or on a
     # JSON parse error -- both land us in `continue`, matching the fail-safe direction.
@@ -1097,6 +1131,13 @@ _edm_reclaim_stale_lockdir() {
 # other constant in play. Override via env for testing; do not hardcode a second duration
 # anywhere else in this file.
 EDM_STATE_LOCK_WAIT_S="${EDM_STATE_LOCK_WAIT_S:-10}"
+# CA-432 (CA-160's standing rule: validate beside the default): unvalidated, a fractional value
+# aborted EVERY subcommand at load with a raw arithmetic error (the derivation below runs at top
+# level under set -e), and a non-numeric value made `flock -w` fail instantly and report a
+# fabricated lock timeout on the first attempt. Positive whole seconds only -- the *10
+# derivation requires an integer; use awk-derived tries if fractional waits are ever wanted.
+[[ "$EDM_STATE_LOCK_WAIT_S" =~ ^[1-9][0-9]*$ ]] \
+  || { echo "edm-state: invalid EDM_STATE_LOCK_WAIT_S: '${EDM_STATE_LOCK_WAIT_S}' (expected a positive whole number of seconds)" >&2; exit 2; }
 EDM_STATE_LOCK_MAX_TRIES=$(( EDM_STATE_LOCK_WAIT_S * 10 ))
 
 # _lock_retry_or_die <tries> -- shared retry-accounting check for with_state_lock's mkdir-based
@@ -1213,11 +1254,16 @@ with_state_lock() {
     # directory at all), created with `mkdir` (atomic, fails on ANY existing name -- file,
     # directory, or a pre-planted symlink -- unlike a redirect, which follows and truncates a
     # symlink instead of refusing it).
-    # CA-396: BASHPID, not $$ -- inside this `( )` subshell, $$ still reads as the TOP-LEVEL
-    # shell's PID (a bash quirk: unlike `&` backgrounding, a `( )` subshell does not get a new
-    # $$), so two concurrent with_state_lock calls from the same parent shell computed the
-    # IDENTICAL marker path and could delete/detect each other's marker. BASHPID is this
-    # subshell's own, real PID. (The marker's location stays under TMPDIR per G17/CA-305's
+    # CA-396: BASHPID, not $$ -- $$ never changes in a subshell, so two with_state_lock
+    # invocations reached from `( )` subshells of ONE parent shell computed the IDENTICAL
+    # marker path and could delete/detect each other's marker. CA-439 correction to this
+    # comment's original rationale: the assignment below runs in THIS shell, BEFORE the
+    # `( flock ... )` fork -- so BASHPID here is the CALLING shell's PID, not the locked
+    # body's. Uniqueness still holds because two concurrently live with_state_lock calls
+    # necessarily occupy two distinct processes, each with its own BASHPID; do not "fix" this
+    # by moving the assignment inside the subshell, where the parent's marker probe below
+    # would never see the path the child computed. (The marker's location stays under TMPDIR
+    # per G17/CA-305's
     # documented rationale -- moving it back beside the lockbase would reintroduce the
     # symlink-plant and directory-writability exposure that fix closed; the archive/migrate-path
     # sweeps' dead `.lock.timeout.*` glob is deliberate backward-compat for pre-G17 markers, see
@@ -1844,9 +1890,13 @@ cmd_get() {
 # `product_name`: producer is `edm-init`/`cmd_migrate_path` (cmd_set smoke coverage is
 # the direct-set path); consumer is every product-scoped path derivation in this file.
 # `test_layer_skipped` (skills/implement/SKILL.md is both producer and consumer, via
-# `edm-test-planner`'s N/A determination), coverage_by_epic/test_frameworks_detected
-# (agents/edm-test-coverage-auditor.md, agents/edm-test-planner.md produce; `get-coverage`/
-# `metrics-report` consume).
+# `edm-test-planner`'s N/A determination). `coverage_by_epic`
+# (agents/edm-test-coverage-auditor.md produces; `get-coverage` and `metrics-report` consume).
+# `test_frameworks_detected` (agents/edm-test-planner.md Step 6 produces; `get-coverage`'s
+# "Detected Frameworks" section consumes -- CA-421: the previous grouped clause here claimed
+# two consumers that only consumed the coverage keys, leaving this key write-only for two
+# audit rounds; one clause per key so a shared consumer can never again be inherited by a key
+# that lacks one).
 # `last_cmd` (CA-246, round 5 G11): had zero producers anywhere in skills/agents/hooks for
 # three consecutive rounds -- only bin/tests/*.sh fixtures ever wrote it, and both consumers
 # (session-start, HANDOFF.md) were permanently suppressed dead code as a result. Deleted
@@ -2261,7 +2311,8 @@ cmd_approve_gate() {
   # G13/CA-391 (round 7): this used to accept any non-negative integer (^[0-9]+$), where
   # exactly three numeric gates exist -- `approve-gate FOO 7` appended {gate: 7} and exited 0.
   # Nothing downstream ever looked for gate 7, but CA-335's unique-then-length numerator (see
-  # write-handoff's gates_count, :5036) DOES count it, so a stray approval on a prototype
+  # _write_handoff_body's gates_count -- named by anchor, not line number, CA-439) DOES count
+  # it, so a stray approval on a prototype
   # initiative rendered "Gates approved: 2 of 1" and gained a permanent phantom row in the
   # Gates list. cmd_phase_start (^[1-6]$, added by CA-157 for this exact reason) and
   # cmd_skip_phase already validate a tight range; this brings approve-gate's numeric branch
@@ -2366,7 +2417,7 @@ cmd_phase_complete() {
     record_degraded_check "$prefix" "phase-complete:artifact-verification" "no schema_version (phase ${phase})"
   else
     local pc_skipped_str pc_phase_skipped=0
-    pc_skipped_str="$(echo "$pc_state" | jq -r '[(.skipped_phases // [])[].phase] | join(" ")')"
+    pc_skipped_str="$(skipped_phases_str "$pc_state")"   # CA-417: shared helper, not a 4th copy
     case " $pc_skipped_str " in
       *" $phase "*) pc_phase_skipped=1 ;;
     esac
@@ -2543,9 +2594,13 @@ cmd_checkpoint() {
 
       # Drift detection (read-only)
       current="$(cat "$state")"   # re-read after the rmw
-      hashes="$(echo "$current" | jq -r '.artifact_hashes // {} | to_entries[] | "\(.key) \(.value.hash) \(.value.path) \(.value.recorded_at)"' 2>/dev/null || true)"
+      # CA-445: path is emitted LAST so `read`'s final variable absorbs every remaining word --
+      # with path third, a path containing a space split across file_path and recorded_at,
+      # hashing a truncated path ("absent") and printing path fragments as the timestamp. The
+      # other three fields (key, sha-256 hex, ISO-8601 UTC) can never contain a space.
+      hashes="$(echo "$current" | jq -r '.artifact_hashes // {} | to_entries[] | "\(.key) \(.value.hash) \(.value.recorded_at) \(.value.path)"' 2>/dev/null || true)"
       drift_found=0
-      while IFS=' ' read -r artifact_name stored_hash file_path recorded_at; do
+      while IFS=' ' read -r artifact_name stored_hash recorded_at file_path; do
         [[ -n "$artifact_name" ]] || continue
         current_hash="$(artifact_hash "$file_path")"
         if [[ "$current_hash" != "$stored_hash" && "$current_hash" != "absent" && "$current_hash" != "unhashable" ]]; then
@@ -2661,6 +2716,29 @@ cmd_get_coverage() {
       ""
     end
   ' "$state" 2>/dev/null || true
+  # CA-421: detected frameworks -- this is test_frameworks_detected's reader. The key was
+  # written every run by edm-test-planner (Step 6) and read by NOTHING for two audit rounds
+  # (the provenance comment claimed get-coverage/metrics-report consumed it; only the
+  # coverage_by_* half of that claim was true), making it the third member of the
+  # write-only-state class (qc_shard_threshold, jira_synced_at). Rendered here rather than
+  # deleted because, unlike those precedents, a user-facing document (CLAUDE.md's state-schema
+  # section) promises the field and a coverage report is the natural place to say which
+  # framework produced the numbers above. Handles both shapes: flat single-stack
+  # ({"unit":"pytest"}) and per-epic ({"auth":{"unit":"pytest"}}).
+  jq -r '
+    (.test_frameworks_detected // {}) as $tf |
+    if ($tf | length) == 0 then empty
+    else
+      "## Detected Frameworks",
+      "",
+      ($tf | to_entries[] |
+        if (.value | type) == "object"
+        then .key as $epic | .value | to_entries[] | "  \($epic): \(.key) = \(.value // "none")"
+        else "  \(.key) = \(.value // "none")"
+        end),
+      ""
+    end
+  ' "$state" 2>/dev/null || true
   # Fallback message when neither is present
   jq -r '
     if ((.coverage_by_layer // {} | length) + (.coverage_by_epic // {} | length)) == 0
@@ -2714,19 +2792,12 @@ cmd_migrate_schema() {
   # resolve into SRD_ROOT/.archived/ by design (archived initiatives are inert, EDMV3-111) --
   # so this is checked explicitly, before any other resolution, covering both the flat
   # (.archived/PREFIX/) and product-scoped (.archived/PRODUCT/PREFIX__desc/) archived shapes.
-  # G23/CA-343: this used to hand-glob both archived shapes itself, a third site knowing the
-  # archived-layout shape against state_file_for's declared "single source of layout truth" --
-  # routed through list_state_files' already-deduped enumeration instead, so a future archived
-  # layout variant only needs to be taught to list_state_files, not to every probe of it.
-  local archived_hit="" _ms_f
-  while IFS= read -r _ms_f; do
-    case "$_ms_f" in
-      "${SRD_ROOT}/.archived/${prefix}/.edm-state.json") archived_hit="$_ms_f" ;;
-      "${SRD_ROOT}"/.archived/*/"${prefix}__"*/.edm-state.json) archived_hit="$_ms_f" ;;
-      *) continue ;;
-    esac
-    break
-  done < <(list_state_files --archived)
+  # G23/CA-343 routed the ENUMERATION through list_state_files; CA-420 finishes the job -- the
+  # per-prefix shape MATCH now lives in archived_state_file_for, defined directly beside
+  # list_state_files, instead of being re-encoded as local case patterns here. A future archived
+  # layout variant is taught to that adjacent pair, not to every probe of the enumeration.
+  local archived_hit
+  archived_hit="$(archived_state_file_for "$prefix")" || archived_hit=""
   [[ -z "$archived_hit" ]] \
     || die "migrate-schema: refused -- ${prefix} is archived (found at ${archived_hit}); archived initiatives are not migrated"
 
@@ -3554,6 +3625,13 @@ _cmd_migrate_path_move_body() {
 _cmd_migrate_path_rollback_body() {
   local _dst="$1" _src="$2" _product_dir="$3"
   git_aware_mv "$_dst" "$_src"
+  # CA-442: sweep the lockdir that just traveled back with the rename -- with_state_lock's own
+  # post-body cleanup removes "${_dst}/.edm-state.lockd" by its DESTINATION path, which is empty
+  # after this rename, so our live lockdir would otherwise be stranded at the source path and
+  # block every future with_state_lock acquisition on the rolled-back initiative. Safe to remove
+  # here for the same reason the forward body's G17 sweep is: the flock file (fd 200) is still
+  # held until this body returns, so no contender can be inside a critical section on this state.
+  rm -rf "${_src}/.edm-state.lockd"
   # Remove the product directory only if this rollback leaves it empty -- rmdir fails
   # harmlessly (non-empty, or already gone) rather than needing a separate emptiness check,
   # and other initiatives may already live under this product directory from an earlier,
@@ -4349,6 +4427,42 @@ _cmd_audit_round_complete_body() {
     cost="$(compute_cost_usd "$model" "$input" "$output" "$cache_read" "$cw5m" "$cw1h")"
   fi
 
+  # CA-471: JSONL-landed completeness gate for code rounds. Before this, nothing verified that
+  # each lens's authoritative lens-L{N}.jsonl actually landed on disk -- pass-7 of this plugin's
+  # own EDMV3 initiative shipped eleven prose reports and ZERO JSONL files, and the round still
+  # closed and counted as full. For every lens named in the round's lenses-run.txt, require a
+  # matching lens-L{N}.jsonl that is non-empty and parses as JSON lines; on any miss, warn naming
+  # the lenses and DOWNGRADE this round's recorded round_type to "partial" (a partial round is
+  # never convergent, so a round whose authoritative artifacts are missing cannot converge).
+  # C-4: a round with no pass directory or no lenses-run.txt (legacy rounds, srd/tickets types,
+  # test scratch states) is left exactly as before -- the gate only fires when the round's own
+  # manifest exists to verify against.
+  local ca471_downgrade=""
+  if [[ "$audit_type" == "code" ]]; then
+    local _init_dir _pass_dir _cand _manifest
+    _init_dir="$(dirname "$f")"
+    _pass_dir=""
+    for _cand in "${_init_dir}/code-audit/pass-${round_num}_"*; do
+      [[ -d "$_cand" ]] || continue
+      _pass_dir="$_cand"
+    done
+    _manifest="${_pass_dir}/lenses-run.txt"
+    if [[ -n "$_pass_dir" && -f "$_manifest" ]]; then
+      local _lens _lens_file _missing=""
+      while IFS= read -r _lens; do
+        [[ "$_lens" =~ ^L[0-9]+$ ]] || continue
+        _lens_file="${_pass_dir}/lens-${_lens}.jsonl"
+        if [[ ! -s "$_lens_file" ]] || ! jq empty "$_lens_file" >/dev/null 2>&1; then
+          _missing="${_missing:+$_missing }${_lens}"
+        fi
+      done < "$_manifest"
+      if [[ -n "$_missing" ]]; then
+        echo "audit-round-complete: [warn] CA-471: round ${round_num} lens JSONL missing/empty/unparseable for: ${_missing} (${_pass_dir}) -- recording round_type=partial (non-convergent); persist the missing lens-L{N}.jsonl halves and note the miss in tooling-notes.md" >&2
+        ca471_downgrade="partial"
+      fi
+    fi
+  fi
+
   _rmw_state_body "$f" "
       ${AUDIT_ROUND_COERCE_JQ_DEF}
       (.audit_rounds[\$t] // 0 | coerce_round_entry) as \$existing
@@ -4363,6 +4477,7 @@ _cmd_audit_round_complete_body() {
               attribution_mode: \$am,
               unparseable_lines: (\$ul|tonumber)
             }
+            + (if \$rt471 != \"\" then {round_type: \$rt471} else {} end)
           else . end
         )) as \$new_rounds
       | .audit_rounds[\$t] = (\$existing + {rounds: \$new_rounds})
@@ -4370,7 +4485,7 @@ _cmd_audit_round_complete_body() {
     " --arg t "$audit_type" --arg rn "$round_num" --arg ts "$now_ts" \
       --arg i "$input" --arg o "$output" --arg cr "$cache_read" --arg c5 "$cw5m" --arg c1 "$cw1h" \
       --arg model "$model" --arg cost "$cost" --arg am "$attribution_mode" \
-      --arg ul "$unparseable_lines" || return 1
+      --arg ul "$unparseable_lines" --arg rt471 "$ca471_downgrade" || return 1
 
   printf '%s\t%s\n' "$round_num" "$cost"
 }
@@ -5202,7 +5317,7 @@ _write_handoff_body() {
   # against a hand-edited invalid mode/lifecycle_mode (terminal_phase_for_mode's own `die`)
   # rather than letting a malformed state file abort the whole locked HANDOFF write.
   local skipped_for_count required_gate_count required_gates_output
-  skipped_for_count="$(echo "$state" | jq -r '[(.skipped_phases // [])[].phase] | join(" ")')"
+  skipped_for_count="$(skipped_phases_str "$state")"   # CA-417: shared helper, not a 5th copy
   # G11/CA-389 (round 7): grep -c . cannot distinguish "the derivation legitimately returned
   # zero gates" from "the derivation failed" -- on empty input it prints "0" AND exits 1, so
   # the `|| echo 3` fallback below also fired and the captured value was the two-line string
@@ -5374,7 +5489,8 @@ _write_handoff_body() {
   fi
   [[ -n "$gate_list" ]] || gate_list="_(none yet)_"
 
-  # G12/CA-390 (round 7): gates_count (above, :5036) dedupes by .gate via `unique`; this list
+  # G12/CA-390 (round 7): gates_count (assigned above in this function -- named by anchor, not
+  # line number, CA-439) dedupes by .gate via `unique`; this list
   # renders one row per approval EVENT with no dedup, so after a documented re-approval (the
   # drift-detection path in cmd_checkpoint itself instructs re-approving the drifted gate) the
   # "Gates approved: N of M" line reads a smaller N than the number of rows the list below it
