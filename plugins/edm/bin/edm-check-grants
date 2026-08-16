@@ -447,12 +447,18 @@ scan_hook_prompts() {
 }
 
 # =================================================================================================
-# Source 4: skill allowed-tools vs. its own body. Currently scoped to AskUserQuestion (EDMV3-113):
-# a skill body that literally names the tool, or that presents a HITL gate ("STOP and WAIT" +
-# "HITL Gate", the pattern every gate-presenting skill in this plugin uses) needs the grant.
+# Source 4: skill allowed-tools vs. its own body. Two positive rules:
+# - AskUserQuestion (EDMV3-113): a skill body that literally names the tool, or that presents a
+#   HITL gate ("STOP and WAIT" + "HITL Gate", the pattern every gate-presenting skill in this
+#   plugin uses) needs the grant.
+# - Task (CA-441): a skill body that spawns an edm-* agent ("Spawn"/"spawn" followed by an
+#   `edm-` agent name anywhere in the body, or an "Agent: edm-" launch-template line) needs the
+#   Task grant -- three testing-layer skills shipped spawn instructions with no Task in
+#   allowed-tools, making /edm:test, /edm:test-plan and /edm:test-coverage non-functional as
+#   written, and nothing here checked the skill's own grants (only agent grants, sources 1-3).
 # =================================================================================================
 scan_skill_tool_usage() {
-  local f skillname allowed body_start body needs_ask ln
+  local f skillname allowed body_start body needs_ask needs_task ln task_ln
   for f in "$SKILLS_DIR"/*/SKILL.md; do
     [[ -f "$f" ]] || continue
     skillname="$(basename "$(dirname "$f")")"
@@ -475,6 +481,19 @@ scan_skill_tool_usage() {
 
     if [[ "$needs_ask" -eq 1 ]] && ! has_tool "$allowed" "AskUserQuestion"; then
       mark_and_maybe_report skill "$skillname" AskUserQuestion "$f" "$ln"
+    fi
+
+    # CA-441: spawn instruction without the Task grant.
+    needs_task=0
+    task_ln=""
+    if printf '%s\n' "$body" | grep -qiE '(^|[^a-zA-Z])spawn[^a-zA-Z].*edm-|^Agent: edm-'; then
+      needs_task=1
+      task_ln="$(grep -niE '(^|[^a-zA-Z])spawn[^a-zA-Z].*edm-|^Agent: edm-' "$f" | head -1 | cut -d: -f1)"
+    fi
+    [[ -z "$task_ln" ]] && task_ln="$body_start"
+
+    if [[ "$needs_task" -eq 1 ]] && ! has_tool "$allowed" "Task"; then
+      mark_and_maybe_report skill "$skillname" Task "$f" "$task_ln"
     fi
   done
 }

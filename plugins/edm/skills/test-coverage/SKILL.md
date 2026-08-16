@@ -5,7 +5,7 @@ disable-model-invocation: true
 model: sonnet
 effort: high
 argument-hint: <PREFIX>
-allowed-tools: Read, Write, Bash(edm-state *), Glob, Grep, TodoWrite
+allowed-tools: Read, Write, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 ---
 
 # EDM Test Coverage -- Re-Audit Existing Tests
