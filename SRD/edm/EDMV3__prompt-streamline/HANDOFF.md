@@ -1,6 +1,6 @@
 # EDMV3 - Session Handoff
 
-> **Last updated**: 2026-08-13T23:05:30Z by darryl.porter  
+> **Last updated**: 2026-08-15T20:33:41Z by darryl.porter  
 > **To resume**: `/edm:orchestrator EDMV3`
 
 ## Current Status
@@ -15,8 +15,8 @@
 ## Resume Point
 
 - **Phase**: Phase 6 - Implementation
-- **Step**: 6.code-audit-round-1-non-convergent
-- **Last decision**: Round 2 (full) synthesized: 91 blocking (1 P0, 13 P1, 77 P2), NOT CONVERGENT. User approved the Convergence gate anyway; approve-gate incorrectly succeeded because schema_version was still 1 (cmd_init default), which skips the code-audit precheck entirely (CA-182, new P0, filed). Migrated schema_version to 2, manually reverted the bogus code_audit_converged=true and its gate metadata (no cmd_set path exists for that field by design), and re-ran approve-gate to confirm it now correctly refuses. code_audit_converged is false; next action is remediation per pass-2 REMEDIATION.md, approved by the user, then a third full round.
+- **Step**: 6.code-audit-round-7-remediation
+- **Last decision**: Resumed via /edm:orchestrator EDMV3. Confirmed 0 P0/P1 open (CA-381 triaged NOTED, CA-334/336/337/338 ledger-corrected fixed). 53 P2 remain blocking per audit-converged (round 7). Continuing manual remediation of round-7 P2 backlog.
 
 **Pending artifacts for Phase 6 - Implementation**:
 

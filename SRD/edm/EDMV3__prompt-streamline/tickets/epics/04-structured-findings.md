@@ -548,8 +548,17 @@ restatements that can drift apart.
       fails, and `cmd_archive` calls it as part of lifecycle verification. No prompt file restates
       the blocking-set membership; prompts reference `CLAUDE.md Sec."Severity vocabulary"` and the
       command.
+      Amended (CA-424, D57/D58): "refuses when it fails" holds unconditionally EXCEPT for the one
+      sanctioned, human-authorized branch added after this AC was written -- when the refusal is
+      P2-only (open P0=0 AND P1=0 AND P2>0) and the human explicitly passed `--accept-p2-debt`,
+      `cmd_approve_gate` records convergence with debt metadata instead of refusing
+      (`CLAUDE.md Sec."Severity vocabulary"`, "Sanctioned exception -- P2 debt acceptance at
+      convergence"; decisions.md D57 authorizes the feature, D58 records the human gate override
+      confirming it as deliberate). Every other refusal class -- any open P0/P1, a partial round,
+      invalid ledger JSONL, invalid status lines -- still refuses even with the flag.
       Verify: `bash plugins/edm/bin/tests/wave6-smoke.sh` (case "approve-gate refuses on an open
-      P0") and `grep -rn 'P0 and P1' plugins/edm/skills/` returns zero results.
+      P0", plus the T-EDMV4 and CA-425 accept-p2-debt cases) and
+      `grep -rn 'P0 and P1' plugins/edm/skills/` returns zero results.
 - [ ] AC13 (surfaced): the subcommand appears in the `--help` block, dispatch, and the `CLAUDE.md`
       `bin/` table.
       Verify: `edm-state --help | grep -n audit-converged`.
@@ -1170,3 +1179,55 @@ answer to "what if the environment does not exist" -- which is precisely the dea
 - `record-partial-verdict`'s closure write -- EDMV3-T32.
 - Wiring `phase-complete 6` -- EDMV3-T50 (wave C). This ticket states the ordering; T50 makes the
   call.
+
+---
+
+## EDMV3-T68: `approve-gate code-audit --accept-p2-debt` -- sanctioned P2-debt convergence
+
+**Size**: S | **Priority**: Should | **Depends on**: T28 | **SRD Refs**: EDMV3-90 (amended, D57/D58)
+
+Added post-Gate-3 as a user-requested amendment (decisions.md D57; reaffirmed by human gate
+override D58 after round-8 finding CA-423 challenged it). Round 7 left 53 open P2s standing
+between the initiative and convergence with no sanctioned way to ship once P0/P1 were clear.
+This ticket retro-documents the shipped feature (commits `dc8a24f`, `bdab2ac`) so it has an
+owning ticket, testable ACs, and a coverage-map row -- closing round-8 finding CA-430. The
+EDMV3-90 Won't-Have boundary ("no override flags") is amended by D57/D58 for exactly this one
+flag: it is never a P0/P1 waiver, and every acceptance leaves a full audit trail in state.
+
+### Acceptance Criteria
+
+- [x] AC1 (positive): with open P0=0, P1=0, P2>0 on a full round, `edm-state approve-gate
+      <PREFIX> code-audit --accept-p2-debt` records `code_audit_converged=true` plus the five
+      debt fields (`code_audit_p2_debt_accepted/_count/_round/_accepted_at/_accepted_by`),
+      leaving the ledger itself unchanged.
+      Verify: `bash plugins/edm/bin/tests/wave6-smoke.sh` (case "approve-gate code-audit
+      --accept-p2-debt converges when only P2s remain, records debt fields").
+- [x] AC2 (negative, severity): any open P0 or P1 refuses even with the flag.
+      Verify: `bash plugins/edm/bin/tests/wave6-smoke.sh` (case "accept-p2-debt still refuses
+      with an open P1").
+- [x] AC3 (negative, non-severity): a partial round, an invalid findings ledger, a numeric
+      gate, or an unrecognized third argument all refuse even with the flag -- the override
+      applies only to a genuine severity refusal (the `"not converged: "` stdout prefix,
+      stream-separated per CA-426).
+      Verify: `bash plugins/edm/bin/tests/wave6-smoke.sh` (cases "accept-p2-debt refuses when
+      the latest round is partial", "accept-p2-debt refuses when the ledger is invalid JSONL",
+      "accept-p2-debt refuses on a numeric gate", "an unrecognized third argument refuses").
+- [x] AC4 (staleness guard): `edm-state archive` re-verifies P0/P1 are still 0 and refuses when
+      a newer full round completed since acceptance.
+      Verify: `bash plugins/edm/bin/tests/wave6-smoke.sh` (cases "archive succeeds immediately
+      after accept-p2-debt" and "archive refuses again once a NEW full round completes").
+- [x] AC5 (visibility): HANDOFF.md's code-audit gate row names the accepted count, round,
+      approver and timestamp, so a teammate sees debt was knowingly carried (CA-429).
+      Verify: `bash plugins/edm/bin/tests/wave6-smoke.sh` (cases "HANDOFF's code-audit gate row
+      surfaces the accepted P2 debt" and "HANDOFF debt row carries the accepted-by field").
+- [x] AC6 (docs): the feature is documented in `CLAUDE.md Sec."Severity vocabulary"`'s
+      sanctioned-exception passage, `skills/code-audit/SKILL.md`'s convergence gate, the
+      CHANGELOG, and `CLAUDE.md`'s state-field table (CA-431).
+      Verify: `grep -n 'accept-p2-debt' plugins/edm/CHANGELOG.md` returns a 3.2.0 entry.
+
+### Technical Notes
+
+- The in-code label for this feature was `T-EDMV4` before this ticket existed; every site was
+  relabeled `EDMV3-T68` when the ticket was added (CA-430). No `EDMV4` initiative exists on disk.
+- The `--accept-p2-debt` literal is carved out of the EDMV3-90 negative-enforcement greps by
+  D57/D58 -- the boundary row in `tickets/README.md` records the amendment.

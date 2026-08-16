@@ -645,8 +645,13 @@ runtime.
 - [ ] AC1 (version and changelog): `plugin.json` version is `3.1.0`, `marketplace.json` matches, and
       `CHANGELOG.md` gains a wave-C entry listing behavioural changes, breaking changes and required
       user action.
-      Verify: `jq -r '.version' plugins/edm/.claude-plugin/plugin.json` prints `3.1.0` and
-      `bash plugins/edm/bin/tests/wave7-smoke.sh` (case "versions agree").
+      Amended (EDMV3-T68/CA-431): the version has since moved to `3.2.0` (the accept-p2-debt
+      release, post-Gate-3); this AC's `3.1.0` literal records wave-C's closeout value, and the
+      version-agreement half (both manifests move together) is the durable claim. The current
+      literal is asserted by wave7-smoke.sh's T64 AC1 case, updated at each release.
+      Verify: `jq -r '.version' plugins/edm/.claude-plugin/plugin.json` prints the current version
+      (matching `marketplace.json`) and `bash plugins/edm/bin/tests/wave7-smoke.sh` (case
+      "versions agree").
 - [ ] AC2 (the open `schema_version` decision is made and recorded): the SRD leaves wave C's
       `schema_version` value conditional -- `3` only if a state shape actually changes in wave C. The
       decision is made explicitly, recorded in `CHANGELOG.md` and in the `CLAUDE.md` state-field

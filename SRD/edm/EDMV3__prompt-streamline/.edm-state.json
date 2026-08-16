@@ -31,9 +31,9 @@
       "recorded_at": "2026-07-26T02:01:55Z"
     },
     "findings_ledger": {
-      "hash": "9ed677fd22be7bb11cf86f4c49d6e62f86dc7821855fe41827493db0e3e78d1f",
+      "hash": "90a448cf8f25e6dd412b48511d238f383472f438989b53b082ea06bdb680bccf",
       "path": "./SRD/edm/EDMV3__prompt-streamline/code-audit/findings-ledger.md",
-      "recorded_at": "2026-08-13T12:31:31Z"
+      "recorded_at": "2026-08-16T06:00:32Z"
     }
   },
   "srd_version": "1.3.0",
@@ -130,7 +130,7 @@
   "last_decision": "Resumed via /edm:orchestrator EDMV3. Confirmed 0 P0/P1 open (CA-381 triaged NOTED, CA-334/336/337/338 ledger-corrected fixed). 53 P2 remain blocking per audit-converged (round 7). Continuing manual remediation of round-7 P2 backlog.",
   "audit_rounds": {
     "code": {
-      "count": 7,
+      "count": 8,
       "rounds": [
         {
           "round": 1,
@@ -209,6 +209,37 @@
           "lenses": [],
           "round_type": "full",
           "started_at": "2026-08-11T02:55:52Z"
+        },
+        {
+          "round": 8,
+          "lenses": [
+            "L1",
+            "L2",
+            "L3",
+            "L4",
+            "L5",
+            "L6",
+            "L7",
+            "L8",
+            "L9",
+            "L10",
+            "L11"
+          ],
+          "round_type": "full",
+          "started_at": "2026-08-16T04:45:55Z",
+          "completed_at": "2026-08-16T05:51:10Z",
+          "duration_seconds": 3915,
+          "tokens": {
+            "input": 220,
+            "output": 723545,
+            "cache_read": 60024600,
+            "cache_write_5m": 0,
+            "cache_write_1h": 1365284
+          },
+          "model_used": "claude-sonnet-5",
+          "estimated_cost_usd": 49.4039,
+          "attribution_mode": "scoped",
+          "unparseable_lines": 0
         }
       ]
     }
@@ -223,14 +254,14 @@
   "forked_from": "",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-08-13T23:11:41Z",
+  "last_updated": "2026-08-16T06:00:32Z",
   "current_step": "6.code-audit-round-7-remediation",
   "schema_version": 2,
-  "patterns_last_updated": "2026-07-31T23:56:05Z",
+  "patterns_last_updated": "2026-08-16T05:51:17Z",
   "patterns_updates": {
     "code": {
-      "updated_at": "2026-07-31T23:56:05Z",
-      "new_findings": 0
+      "updated_at": "2026-08-16T05:51:17Z",
+      "new_findings": 22
     }
   },
   "degraded_checks": [
