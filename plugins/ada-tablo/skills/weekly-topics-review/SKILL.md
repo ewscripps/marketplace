@@ -19,6 +19,10 @@ skill: "preflight"
 
 After preflight completes, all subsequent steps operate in `~/repos/ada-tablo-ops`.
 
+If this is the first `edit_agent_config` call of the session, call `get_improvement_guide()`
+once before proposing or applying any edit — its output stays in context for the rest of the
+session, so do not re-call it.
+
 ## Step 0: Load Context
 
 Read the weekly review notes to understand current state:

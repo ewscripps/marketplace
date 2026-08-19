@@ -255,10 +255,11 @@ This stages the removal on a TESTING changeset — nothing changes live yet. Rev
 via `list_agent_changesets(changeset_id, include_diff=true)`, present Confirm/Cancel to the
 user, then:
 ```
-edit_agent_behavior(operation="promote", changeset_id="<id>", confirmed=true)
+edit_agent_behavior(operation="promote", changeset_id="<id>", confirmed=true, warnings_token="<token>")
 ```
-echoing `warnings_token` if the preview returned one. Only re-call with `confirmed=true` after
-explicit user confirmation. If deprecation should instead mean "keep but stop firing" rather
+omitting `warnings_token` if the preview did not return one. Only re-call with
+`confirmed=true` after explicit user confirmation. If deprecation should instead mean "keep
+but stop firing" rather
 than delete outright, discuss the intended end state with the user first — there is no
 separate disable flag; achieve it via a `modified` change to the coaching's availability
 rules, or via `deleted` if full removal is what's wanted.

@@ -61,6 +61,11 @@ across cutovers; new ones go live without skill updates):
 get_ada_configuration()
 ```
 
+`get_ada_configuration()` is adequate here because this step only needs active playbook names
+and IDs for the selection menu, not the full structural surface — that's what `config-health`
+uses `list_entities` for instead (it also needs disabled entities, which
+`get_ada_configuration()` omits).
+
 Present the **active** playbooks from the response and ask the user which to analyze this run.
 
 **Default suggestion:** Connectivity + First Time Setup (chat)

@@ -28,10 +28,10 @@ skill: "preflight"
 
 ## Step 0: Load Reference
 
-If this is the first `edit_agent_behavior`/`edit_agent_config`-family call of the session,
-call `get_improvement_guide()` once — its output stays in context for the rest of the
-session, so do not re-call it. This skill only reads, but the guide's entity-type notes
-(e.g. which fields are structural vs. cosmetic) inform how findings are framed.
+This skill is read-only — it never calls `edit_agent_behavior` or `edit_agent_config`. Skip
+`get_improvement_guide()` here. If a write skill (e.g. `weekly-playbook-analysis`) already
+called it earlier in the session, its output is still in context and can inform how findings
+are framed — but do not call it on that skill's behalf.
 
 ## Step 1: Pull the Full Config Surface
 
@@ -123,10 +123,13 @@ Independent of any specific playbook, walk every action from Step 1's `list_enti
   id from the Step 1 `variables` list.
 - Flag if `save_as_variable: false` but the output's `key` (e.g. `devices[0].registrationStatus`)
   looks like a field a playbook actually branches on — cross-check by searching all in-scope
-  playbooks' read-sets and instruction text for a variable whose *name* matches the output's
-  `name`/`key` (e.g. output name `registration_status` vs. a playbook reading a variable named
-  `registrationStatus`). This is exactly how the Device Status bug hid: the output existed and
-  had sensible data, it just was never captured into a variable.
+  playbooks' read-sets and instruction text for a variable whose *name* plausibly matches the
+  output's `name`/`key` after normalizing both (lower-case, strip underscores/hyphens, drop
+  leading path segments from the key). e.g. output name `registration_status` and a playbook
+  reading a variable named `registrationStatus` both normalize to `registrationstatus` — flag
+  this as a likely binding gap even though the raw strings differ in convention. This is
+  exactly how the Device Status bug hid: the output existed and had sensible data, it just was
+  never captured into a variable.
 
 Report: action id + name, the specific output, and which playbook(s) appear to expect it.
 
