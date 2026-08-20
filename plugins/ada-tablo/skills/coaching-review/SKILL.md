@@ -1,6 +1,6 @@
 ---
 name: coaching-review
-description: Run monthly coaching inventory review. Syncs with Ada MCP, tracks coaching effectiveness, guides new coaching implementation.
+description: Run monthly coaching inventory review. Syncs with Ada MCP, tracks coaching effectiveness, guides new coaching implementation via edit_agent_behavior changesets.
 user-invocable: true
 allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/scripts/pull_coaching_metrics.py *), Bash(mkdir *), Bash(cp *), Bash(ls *), Read, Grep, Glob, AskUserQuestion, Skill
 ---
@@ -23,6 +23,10 @@ skill: "preflight"
 ```
 
 After preflight completes, all subsequent steps operate in `~/repos/ada-tablo-ops`.
+
+If this is the first `edit_agent_behavior` call of the session, call
+`get_improvement_guide()` once before proposing or applying any edit — its output stays in
+context for the rest of the session, so do not re-call it.
 
 ## Quick Run (Routine Check)
 
@@ -79,11 +83,12 @@ Previous concerns: [any flagged items from last review]
 - `COACHINGAPPLIED` filter: Get resolution rates for specific coaching IDs
 - `search_coaching`: Find coaching IDs via semantic search (need IDs for filtering)
 - `get_ada_configuration`: Config snapshot — playbooks summary, web_actions, and custom_instructions (no coaching list)
-- `propose_change(entity_type="coaching")`: Create/update/disable/delete individual coaching (create: Step 6; disable/delete: Step 3d)
+- `edit_agent_behavior(entity_type="coaching")`: Create/update/delete individual coaching on a changeset, then `promote` to go live (create: Step 6; delete: Step 3d). There is no dedicated "disable" operation — a deprecation is a `modified` or `deleted` change like any other.
+- `list_agent_changesets`: Review in-flight or already-promoted coaching changesets, including a per-field diff (`include_diff=true`)
 
 **What MCP CANNOT do:**
 - `search_coaching` cannot enumerate all coaching — only finds items matching query terms
-- No way to list all coaching rules — `list_entities` has no coaching entity type (re-verified 2026-07-08); Ada does not expose a coaching list programmatically
+- No way to list all coaching rules in one call — `list_entities` has no coaching entity type; Ada does not expose a full coaching list programmatically
 
 **Coaching ID Source:**
 `coaching_ids.md` is the canonical reference for tracked coaching IDs. Run the refresh script to update all known IDs in one pass:
@@ -237,11 +242,27 @@ For coaching with 0 uses/week (see `coaching_ids.md` for current count):
 - **Keep if:** Content accurate (may be relevant for rare scenarios)
 - **Skip monthly:** Focus reviews on high-impact items only
 
-**Executing a deprecation:** can now be done via MCP instead of the UI:
+**Executing a deprecation:** can now be done via MCP instead of the UI, using the changeset flow:
 ```
-propose_change(entity_type="coaching", operation="disable", entity_id="<coaching_id>")
+edit_agent_behavior(
+  operation="update",
+  entity_type="coaching",
+  name="Deprecate <intent> coaching",
+  changes=[{"entity_type": "coaching", "change_type": "deleted", "entity_id": "<coaching_id>"}]
+)
 ```
-(or `operation="delete"` for permanent removal). Review the preview, present Confirm/Cancel to the user, and only re-call with `confirmed=true` after explicit confirmation.
+This stages the removal on a TESTING changeset — nothing changes live yet. Review the diff
+via `list_agent_changesets(changeset_id, include_diff=true)`, present Confirm/Cancel to the
+user, then:
+```
+edit_agent_behavior(operation="promote", changeset_id="<id>", confirmed=true, warnings_token="<token>")
+```
+omitting `warnings_token` if the preview did not return one. Only re-call with
+`confirmed=true` after explicit user confirmation. If deprecation should instead mean "keep
+but stop firing" rather
+than delete outright, discuss the intended end state with the user first — there is no
+separate disable flag; achieve it via a `modified` change to the coaching's availability
+rules, or via `deleted` if full removal is what's wanted.
 
 ## Step 4: Track Month-over-Month Trends
 
@@ -304,32 +325,47 @@ Most recommendations stem from a specific conversation. MCP creation requires an
 
 2. **Find the coachable event:** locate the transcript entry with `is_coachable=true` and take its `generative_actions_event_id`.
 
-3. **Stage the creation:**
+3. **Discover the create-time fields**, if unfamiliar:
    ```
-   propose_change(
+   edit_agent_behavior(operation="describe_entity", entity_type="coaching", change_type="created")
+   ```
+
+4. **Stage the creation on a changeset:**
+   ```
+   edit_agent_behavior(
+     operation="update",
      entity_type="coaching",
-     operation="create",
-     fields={
-       "conversation_id": "<conversation_id>",
-       "generative_actions_event_id": "<event_id>",
-       "intent": "[triggering scenario]",
-       "coaching_type": "reply | action | process | search_knowledge | handoff | playbook",
-       "text": "[the coaching text — reply type only]",
-       "chosen_id": "[required for all types EXCEPT reply — the target playbook/handoff/process/article ID]"
-     }
+     name="New coaching: <short label>",
+     changes=[{
+       "entity_type": "coaching",
+       "change_type": "created",
+       "fields": {
+         "conversation_id": "<conversation_id>",
+         "generative_actions_event_id": "<event_id>",
+         "intent": "[triggering scenario]",
+         "coaching_type": "reply | action | process | search_knowledge | handoff | playbook",
+         "text": "[the coaching text — reply type only]",
+         "chosen_id": "[required for all types EXCEPT reply — the target playbook/handoff/process/article ID]"
+       }
+     }]
    )
    ```
 
-   Field selection by `coaching_type` (verified live against the field-discovery schema 2026-07-08):
+   Field selection by `coaching_type` — confirm against the live `describe_entity` output,
+   not this table alone, since Ada's schema can change between reviews:
 
    | coaching_type | Required fields |
    |---|---|
    | reply | conversation_id, generative_actions_event_id, intent, text |
    | action / process / search_knowledge / handoff / playbook | conversation_id, generative_actions_event_id, intent, chosen_id |
 
-4. **Preview, then confirm:** review the staged preview, present Confirm/Cancel to the user, and only re-call with `confirmed=true` after explicit confirmation.
+5. **Preview, then promote:** review the staged changeset (`list_agent_changesets(changeset_id, include_diff=true)`), present Confirm/Cancel to the user, then
+   ```
+   edit_agent_behavior(operation="promote", changeset_id="<id>", confirmed=true)
+   ```
+   echoing `warnings_token` if the preview carried one. Only call with `confirmed=true` after explicit user confirmation — never on the user's behalf.
 
-5. The create response **returns the new coaching ID directly** — use it for the coaching_ids.md append below (no fishing it out of the UI).
+6. The promoted changeset's edit list carries the new coaching ID — use it for the coaching_ids.md append below (no fishing it out of the UI).
 
 ### Option B: Ada UI (for coaching not anchored to a conversation)
 
@@ -357,7 +393,7 @@ For abstract rules with no source conversation:
 - Associate with topic if applicable
 
 **After Implementation (both options):**
-- Note the coaching ID (MCP create returns it directly; UI requires reading it from the coaching list)
+- Note the coaching ID (the promoted changeset's edit list carries it directly for MCP creation; UI requires reading it from the coaching list)
 - Add to Active Coaching section with all fields
 - Set Status to "Testing"
 - Set Created date
