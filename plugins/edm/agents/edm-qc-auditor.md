@@ -77,10 +77,12 @@ Severity for FAIL findings -- use the canonical scale from `CLAUDE.md Sec."Sever
 Resolve the initiative directory from state: `edm-state resolve-dir <PREFIX>` (handles both flat `SRD/{PREFIX}/` and product-scoped `SRD/{PRODUCT}/{PREFIX}__{DESC}/` layouts) -- never `edm-state get <PREFIX> | jq -r '...'`, which prints raw state JSON, not a resolved path.
 
 Write your report to:
-- **Single auditor (no sharding)**: `<initiative-dir>/qc/qc-summary.md`
-- **Shard N of M**: `<initiative-dir>/qc/qc-shard-{NN}.md` (zero-padded, e.g., `qc-shard-01.md`)
+- **Hook-spawned (per-implementer) shard**: `<initiative-dir>/qc/qc-shard-impl-{NN}.md`, where `{NN}` is the lowest ticket number in your assigned range, zero-padded (e.g. tickets T07-T09 -> `qc-shard-impl-07.md`).
+- **Threshold shard N of M** (spawned by `/edm:implement`'s post-wave QC pass): `<initiative-dir>/qc/qc-shard-pass-{NN}.md`, where `{NN}` is your **shard ordinal** N, zero-padded (e.g. `qc-shard-pass-01.md`) -- never a ticket number.
 
-The implement skill will merge shard files into `qc/qc-summary.md` after all shards complete.
+Never write `qc/qc-summary.md` yourself, and never write a bare `qc/qc-shard-{NN}.md`: the two prefixes above are disjoint namespaces on purpose (CA-473). Both kinds of auditor run concurrently and write whole files into the same `qc/` directory, so a shared key space collides deterministically -- shard 1 against the implementer whose range starts at T01, shard 2 against T02, and so on -- and the loser's PASS/FAIL verdicts are lost silently, since only PARTIAL verdicts are persisted elsewhere (via `edm-state record-partial-verdict`).
+
+The implement skill will merge all `qc-shard-impl-*.md` and `qc-shard-pass-*.md` files into `qc/qc-summary.md` after all shards complete.
 
 Run `mkdir -p <initiative-dir>/qc` before writing.
 

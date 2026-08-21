@@ -103,7 +103,8 @@ SRD/                              <- project root, committed to git
         +-- test-coverage.md          <- /edm:test (coverage by layer + AC<->test cross-ref)
         +-- qc/                       <- Phase 6 QC reports (always-present after first wave)
         |   +-- qc-summary.md         <- merged QC verdict table (single auditor or merged shards)
-        |   +-- qc-shard-{NN}.md      <- per-shard reports when ticket count > qc_shard_threshold
+        |   +-- qc-shard-impl-{NN}.md <- per-implementer hook shards ({NN} = lowest ticket in range)
+        |   +-- qc-shard-pass-{NN}.md <- post-wave threshold shards ({NN} = shard ordinal); disjoint from qc-shard-impl-*
         +-- code-audit/               <- /edm:code-audit output
         |   +-- findings-ledger.jsonl <- authoritative cross-round findings ledger (stable CA-NNN IDs)
         |   +-- findings-ledger.md    <- deterministic render of findings-ledger.jsonl (`edm-state render-ledger`)
@@ -245,7 +246,12 @@ ledger itself is left unchanged: accepted P2s still show as open findings in
 round so a teammate sees debt was knowingly carried, not silently missed. `edm-state archive`
 re-verifies P0/P1 are still 0 and refuses if a newer full audit round has completed since
 acceptance (the debt has gone stale -- re-run `--accept-p2-debt` or fix the remaining findings
-first). The gate also offers **Fix low-hanging fruit first**: remediate the P2s whose
+first). The override reads the blocking set straight from `findings-ledger.jsonl`, so it does
+not itself require that a full eleven-lens round was ever recorded (CA-426): on an initiative
+with zero recorded code-audit rounds the convergence check warns on stderr and proceeds, and the
+flag can engage. It asserts only that no P0 or P1 is open in the ledger as it stands, never that
+the ledger is complete. The gate also offers **Fix low-hanging fruit first**: remediate the P2s
+whose
 REMEDIATION.md prescription is a single self-contained change, then re-present the gate with the
 smaller remaining set -- a middle ground between converging immediately and re-treating every
 open P2 as blocking.
@@ -604,10 +610,12 @@ or flat for single-stack initiatives.
 `coverage_by_epic` holds per-epic coverage for multi-stack initiatives (additive; keyed by epic slug).
 
 `parent_prefix` is the bare PREFIX of the parent initiative in a product line (set via
-`edm-state set-parent <PREFIX> <PARENT>`; validated to exist).
+`edm-state set-parent <PREFIX> <PARENT>`; validated to exist, and refreshes `HANDOFF.md`).
 
 `related_prefixes` is an append-only list of related initiative prefixes (set via
-`edm-state add-related <PREFIX> <RELATED>`; idempotent).
+`edm-state add-related <PREFIX> <RELATED>`; idempotent, validated to exist, and refreshes
+`HANDOFF.md`). The two provenance links `supersedes` and `forked_from` do neither -- see their
+rows in the state-field table below.
 
 `phase_durations[N_phase]` gains `tests_added` (total) and `tests_by_layer` (per layer) counts
 when `edm-state record-tests-added` is called.
@@ -684,7 +692,7 @@ The `userConfig.jira_project_key` value provides a default; otherwise the user m
 | `UserPromptExpansion` matching `edm:(srd\|audit-srd\|tickets\|audit-tickets\|implement)` | Block expansion if the prerequisite HITL gate isn't approved. Exit-code contract (CA-298, G1): a missing `edm-state` binary or an unresolvable prefix (no state file yet -- the legitimate first-invocation case) exits **0**, non-blocking; an invalid prefix argument or an actual `edm-state gate-check` refusal exits **2**, blocking. Only a real gate refusal blocks -- a setup condition never does |
 | `PreToolUse` matching `git commit`                                                     | Delegates to `bin/edm-lint-staged-artifacts` (extracted from the former inline one-liner -- CA-436/CA-413/CA-414; the hook itself only degrades to exit 0 when the delegate is off PATH). The script: for staged paths under the derived `srd_root` (`EDM_SRD_ROOT` / `CLAUDE_PLUGIN_OPTION_SRD_ROOT`, default `./SRD`, physically normalized so a symlinked repo path still relativizes), resolve a prefix per discovered initiative and skip it if it has no resolvable state (CA-011); run `edm-lint-artifacts <PREFIX>` for each survivor. `edm-lint-artifacts` exit 1 (a real violation) makes the script exit **2**, the code that actually blocks the commit; `edm-lint-artifacts` exit 2 (a setup/usage error, e.g. no initiative for that prefix) is reported to stderr but not blocking (CA-011) |
 | `Stop` and `PreCompact`                                                                | Checkpoint state via `edm-state checkpoint-if-active`         |
-| `SubagentStop` matching `edm-implementer`                                              | Auto-spawn `edm-qc-auditor`; write a per-implementer verdict shard to `qc/qc-shard-{NN}.md` ({NN} = lowest ticket number in the implementer's range -- never `qc-summary.md` directly, CA-440: concurrent auditors on one shared file silently overwrite each other's FAIL verdicts); `/edm:implement` merges all shards into `qc/qc-summary.md` after the wave drains; persist PARTIAL verdicts via `edm-state record-partial-verdict` |
+| `SubagentStop` matching `edm-implementer`                                              | Auto-spawn `edm-qc-auditor`; write a per-implementer verdict shard to `qc/qc-shard-impl-{NN}.md` ({NN} = lowest ticket number in the implementer's range -- never `qc-summary.md` directly, CA-440: concurrent auditors on one shared file silently overwrite each other's FAIL verdicts). The `qc-shard-impl-` prefix is mandatory and must stay disjoint from `qc-shard-pass-{NN}.md`, the namespace `/edm:implement`'s own post-wave threshold shards use ({NN} = shard ordinal) -- CA-473: a shared `qc-shard-{NN}.md` key space collides deterministically (threshold shard 1 vs the implementer starting at T01) and the losing writer's FAIL verdicts vanish. `/edm:implement` merges all `qc-shard-impl-*.md` **and** `qc-shard-pass-*.md` into `qc/qc-summary.md` after the wave drains; persist PARTIAL verdicts via `edm-state record-partial-verdict` |
 
 These are part of the methodology -- do not disable them in normal operation.
 
@@ -770,6 +778,17 @@ required block, added to `.claude/settings.json` (or `.claude/settings.local.jso
 result into the `enforcement` field (`permission-ask` | `prose-only`) recorded on every gate
 approval, and into the informational `PERM_RULES_MISSING` anomaly when absent.
 
+It scans three files: `<project-root>/.claude/settings.local.json`,
+`<project-root>/.claude/settings.json`, and `${HOME}/.claude/settings.json`. The two project-level
+paths are anchored to the **project root**, not to the caller's working directory (CA-448):
+`CLAUDE_PROJECT_DIR` when the host exports it and it names a directory, else `git rev-parse
+--show-toplevel`, else `.` as the pre-CA-448 fallback. Anchoring matters in both directions -- a
+cwd-relative probe from a subdirectory misses a correctly-configured install and downgrades an
+honest approval to `prose-only`, and a cwd inside an unrelated project would let that project's
+settings stamp `permission-ask` on this one's approval. `CLAUDE_PROJECT_DIR` is currently accepted
+on a bare directory test with no cross-check against the git toplevel, so it remains a one-token
+override of the resolved root (CA-500, open).
+
 ## `bin/` helper scripts
 
 Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call them by bare name.
@@ -819,17 +838,18 @@ state file that predates a field is never an error.
 | `compliance_enabled` | boolean | `false` | When true, adds Gate 3.5 compliance review and regulatory-traceability columns | Read as `false` |
 | `implementation_mode` | string enum | `standard` | Phase 6 mode: `standard` or `tdd` (Red-Green-Refactor per ticket) | Read as `standard` |
 | `skipped_phases` | array of objects | `[]` | Intentionally skipped phases; each: `{phase: N, rationale: "..."}` | Read as `[]` (nothing skipped) |
-| `supersedes` | string | `""` | Prefix of the initiative this supersedes (provenance link; set via `edm-state set-supersedes <PREFIX> <OTHER>`) | Read as `""` (no link) |
-| `forked_from` | string | `""` | Prefix of the initiative this forked from (provenance link; set via `edm-state set-forked-from <PREFIX> <OTHER>`) | Read as `""` (no link) |
-| `gates_approved[].enforcement` | string enum: `permission-ask` \| `prose-only` | no seeded default -- `cmd_approve_gate` writes it on **every** numeric-gate approval, from `check_permission_rules()` | The honesty tag (EDMV3-T06): `permission-ask` when BOTH `Bash(edm-state approve-gate*)` and `Bash(edm-state archive*)` were found across the three scanned settings files at approval time, `prose-only` otherwise. It records that the rules were **configured**, never that a prompt actually fired -- see README.md's matcher-limitation note for the bypass shapes a configured rule still misses | Absent on entries written before EDMV3-T06. An absent tag reads as "unknown", never as `permission-ask`; nothing fails on absence |
+| `supersedes` | string | `""` | Prefix of the initiative this supersedes (provenance link; set via `edm-state set-supersedes <PREFIX> <OTHER>`). Both provenance links go through the shared `_cmd_set_provenance_field` writer (CA-419) and are deliberately asymmetric with `parent_prefix`/`related_prefixes`: the target prefix is **not** validated to exist, and the write does **not** call `write_handoff_internal`, so `HANDOFF.md` keeps rendering the previous value until some other command rewrites it (CA-504, open) | Read as `""` (no link) |
+| `forked_from` | string | `""` | Prefix of the initiative this forked from (provenance link; set via `edm-state set-forked-from <PREFIX> <OTHER>`). Same unvalidated, no-HANDOFF-refresh contract as `supersedes` above | Read as `""` (no link) |
+| `gates_approved[].enforcement` | string enum: `permission-ask` \| `prose-only` | no seeded default -- `cmd_approve_gate` writes it on **every** numeric-gate approval, from `check_permission_rules()` | The honesty tag (EDMV3-T06): `permission-ask` when BOTH `Bash(edm-state approve-gate*)` and `Bash(edm-state archive*)` were found across the three scanned settings files at approval time (the two project-level files are anchored to the resolved project root, not the caller's cwd -- CA-448; see Sec."Required setup: permission `ask` rules (EDMV3-T06)"), `prose-only` otherwise. It records that the rules were **configured**, never that a prompt actually fired -- see README.md's matcher-limitation note for the bypass shapes a configured rule still misses | Absent on entries written before EDMV3-T06. An absent tag reads as "unknown", never as `permission-ask`; nothing fails on absence |
 | `gates_approved[].approved_at`, `gates_approved[].approver` | string (ISO-8601 UTC), string | written with the entry; `approver` is `$USER`, falling back to the literal `unknown` when unset | Who approved a numeric HITL gate and when. Written as sibling scalars inside the `gates_approved[]` entry object | Absent on pre-EDMV3 entries; renderers show `?` rather than failing |
 | `code_audit_gate_approved_at` / `_approver` / `_enforcement` / `_ledger`, and `compliance_gate_approved_at` / `_approver` / `_enforcement` | strings; `_enforcement` is the same enum as above | the four `code_audit_gate_*` keys are seeded `""` by `edm-state init`; the three `compliance_gate_*` keys are created on first approval | Sibling scalars for the two dedicated-boolean gates (`code-audit` and 3.5). The boolean itself stays a plain boolean -- `metrics-report` and HANDOFF both depend on that -- so the metadata hangs beside it rather than converting it to an object. `code_audit_gate_enforcement` additionally carries the sentinel `CONVERGENCE_NOT_REQUIRED` when the initiative's phase graph skips the code-audit round because of its `mode` or `lifecycle_mode`, keeping an exemption distinguishable from an approval. `_ledger` holds the real `findings-ledger.jsonl` path or the literal `absent` | Empty string and absent both read as "not approved"; no check fails on either |
 | `code_audit_p2_debt_accepted` / `_count` / `_round` / `_accepted_at` / `_accepted_by` | boolean / number / number / string (ISO-8601 UTC) / string | none seeded -- all five written together by `approve-gate <PREFIX> code-audit --accept-p2-debt` (EDMV3-T68, D57/D58) | The sanctioned P2-debt acceptance record: `_count` open P2s carried forward from round `_round`, accepted by `_accepted_by` at `_accepted_at`. The ledger itself is left unchanged (accepted P2s still show open); HANDOFF's code-audit gate row renders all four metadata values (CA-429), and `edm-state archive` compares `_round` against the current `audit_rounds.code.count` to refuse on stale debt | Absent means no debt was ever accepted; every reader uses jq `//` defaults and nothing fails on absence (C-4) |
-| `audit_rounds.<type>.rounds[].round_type` | string enum: `full` \| `partial` | `full` when `audit-round-start` is called without `--lenses` | Derived at `edm-state audit-round-start` (EDMV3-T27): `full` when the lens set equals all eleven lens IDs, or when `--lenses` was omitted (matching `skills/code-audit/SKILL.md`'s "absence of `--lenses` means run all 11"); `partial` otherwise. A partial round is **never convergent** -- `edm-state audit-converged` exits 1 when the latest round is `partial`. `audit-round-complete` additionally DOWNGRADES a code round to `partial` at completion when any lens named in the round's `lenses-run.txt` lacks a non-empty, parseable `lens-L{N}.jsonl` in the pass directory (CA-471 completeness backstop; a round with no pass directory or manifest is left unchanged, C-4) | `audit_rounds.<type>` may still be a bare integer in a file written before the `{count, rounds: [...]}` widening; every reader coerces via `coerce_round_entry` and no existing file is rewritten. A round carrying no `round_type` reads as `unknown`: blocking at `schema_version >= 2`, warn-and-proceed below that |
+| `audit_rounds.<type>.rounds[].round_type` | string enum: `full` \| `partial` | `full` when `audit-round-start` is called without `--lenses` | Derived at `edm-state audit-round-start` (EDMV3-T27): `full` when the lens set equals all eleven lens IDs, or when `--lenses` was omitted (matching `skills/code-audit/SKILL.md`'s "absence of `--lenses` means run all 11"); `partial` otherwise. A partial round is **never convergent** -- `edm-state audit-converged` exits 1 when the latest round is `partial`. `audit-round-complete` additionally DOWNGRADES a code round to `partial` at completion when any lens named in the round's `lenses-run.txt` lacks a non-empty, parseable `lens-L{N}.jsonl` in the pass directory (CA-471 completeness backstop; a round with no pass directory or manifest is left unchanged, C-4). That downgrade is irreversible for the round it fires on: `audit-round-complete` refuses a second completion of the same round, so persisting the missing JSONL afterwards does not restore `full` -- only a new round can converge | `audit_rounds.<type>` may still be a bare integer in a file written before the `{count, rounds: [...]}` widening; every reader coerces via `coerce_round_entry` and no existing file is rewritten. A round carrying no `round_type` reads as `unknown`: blocking at `schema_version >= 2`, warn-and-proceed below that |
 | `audit_rounds.<type>.rounds[].completed_at` / `duration_seconds` / `tokens` / `model_used` / `estimated_cost_usd` / `attribution_mode` | string (ISO-8601 UTC) / number (seconds) / object `{input, output, cache_read, cache_write_5m, cache_write_1h}` / string / number (USD) / string enum `scoped` \| `whole-directory` | written only by `edm-state audit-round-complete`; on a round with no recorded `started_at` the token counts stay `0`, `model_used` stays `unknown`, `estimated_cost_usd` stays `0.0000`, `attribution_mode` stays `whole-directory` | Per-round duration and cost for one audit round (EDMV3-T51), computed with the same `get_session_tokens_since` / `compute_cost_usd` pair `phase-complete` uses, so audit-round cost can never diverge from phase cost via a second implementation. `metrics-report` renders them as its code-audit section. A double completion is refused before any write | Additive extension of the wave-B round shape -- **no `schema_version` bump** (stays `2`, EDMV3-T66 AC2). Every reader reads these with jq `//` defaults, so a round closed before T51 simply has none of them; a round never closed at all surfaces as the informational `OPEN_AUDIT_ROUND` anomaly on `edm-state validate` rather than staying invisible |
 | `phase_durations[N_phase].unparseable_lines` / `audit_rounds.<type>.rounds[].unparseable_lines` | number (count) | `0` | Count of session-JSONL lines `get_session_tokens_since` could not parse as JSON while summing tokens for this phase or audit round (G10, round-3 Wave 7c) -- a torn/truncated line is routine while Claude Code is still appending to the driving session, not corrupted state. Kept strictly separate from `attribution_mode`, which stays a two-value `scoped` \| `whole-directory` enum regardless of this count, so a parse failure never overloads the field that exists to record which token-attribution path was taken | C-4: absent reads as `0`. Non-zero surfaces as the informational `TORN_TOKEN_LINES` anomaly on `edm-state validate`; it never flips `validate`'s exit code |
 | `partial_verdict_map.<ticket>.closing_verdict` | string enum: `PASS` \| `FAIL` | absent while the entry is open | The closing verdict written by `edm-state record-partial-verdict <PREFIX> <ticket> close <PASS\|FAIL> <ref>`, driven by `/edm:verify-runtime`. There is no third value -- no `BLOCKED`, `WAIVED` or `N/A-runtime` (D15). `archive` hard-blocks on any entry that is unclosed or FAIL-closed. An entry may be closed once, the sole exception being re-closure of a FAIL after remediation | Absent means still open; the blocking `OPEN_PARTIALS` anomaly names the ticket. The entire pre-closure entry is preserved under `prior` rather than overwritten, and a re-closure appends to `closure_history` so the FAIL record is never lost |
 | `partial_verdict_map.<ticket>.verification_ref` | string, non-empty (enforced -- `close` refuses an empty value) | absent while the entry is open | The evidence pointer for the closure: the command, `file:line`, or run that produced the PASS or FAIL. Recorded alongside `closing_verdict` and `closed_at` | Absent alongside `closing_verdict` on an open entry. `edm-state validate` renders `(no ref)` for a closed entry that somehow lacks one rather than failing on it |
+| `spec_swept` (**not a state field** -- a `code-audit/findings-ledger.jsonl` entry field; listed here because the same enforcement kernel reads it) | string enum: `yes` \| `n/a` \| `no` | none seeded -- written by `edm-audit-synthesizer` on every entry it marks `status: "fixed"` | The same-commit documentation sweep record (CA-416): `yes` = the remediating commit updated every AC, comment and doc passage naming the changed behavior; `n/a` = the fix names no documented behavior; `no` = the sweep is known outstanding. Enforced, not advisory -- a `fixed` entry carrying the explicit `no` makes `edm-state audit-converged` exit 1 naming the blocking IDs (once the blocking set is otherwise clear) and makes `edm-state approve-gate <PREFIX> code-audit` refuse, `--accept-p2-debt` included (that override carries open P2 *severity* forward, never an undone sweep). `edm-state validate` reports the same set as the informational `SPEC_SWEEP_PENDING` anomaly so the debt is visible mid-round | Absent reads as "predates the field" and NEVER blocks (C-4) -- only the explicit string `no` blocks, and most of the ledger's historical entries carry no `spec_swept` at all. Do not backfill; set it going forward |
 
 All fields default safely so v1.x state files without them work unchanged (C-4 backward compatibility).
 
@@ -880,13 +900,18 @@ retired, not fixed):
 
 Until those two are brought into line, do not treat "no `# requires schema_version >= N` comment
 here" as evidence that a check is version-independent; check the `schema_at_least()` call itself.
-**Durability (G25/CA-342):** `wave6-smoke.sh` carries a computed assertion (grep -c the real
-`schema_at_least(` call sites in `bin/edm-state` against the count named in this paragraph) so a
-future edit that adds or removes a call site without updating this passage fails a test instead
-of silently drifting stale a fifth time. CA-407: `grep -c` yields a single total, so only that
-total count is machine-checked -- an edit that comments out a call site without changing the
-total (leaving the count unchanged while removing a live check) is not caught by this assertion;
-the comment-presence split is not machine-checked at all.
+**Durability (G25/CA-342):** `bin/tests/wave7-smoke.sh` carries the computed assertions, under its
+`G25/CA-342: CLAUDE.md's schema_at_least() call-site count is computed, not self-describing prose`
+banner, so a future edit that adds or removes a call site without updating this passage fails a
+test instead of silently drifting stale a fifth time. THREE things are machine-checked there:
+`grep -c 'schema_at_least "'` over `bin/edm-state` equals 6 (the call form with its opening quote
+is the pattern that matches only real call sites -- `schema_at_least(` matches the definition and
+the prose mentions instead, and no call site at all); `grep -c '# requires schema_version >= '`
+equals 5; and this file literally contains the string `Four of the six`. CA-407/CA-487: what is
+NOT machine-checked is the MAPPING from comment to call site -- nothing verifies that the five
+comments sit at four of the six call sites, so an edit that drops the comment from one call site
+and adds one at another leaves all three totals green while this paragraph's four-with /
+two-without split goes silently stale.
 EDMV3-T09 defines this contract and lands the one such comment for
 the check that exists as of wave A (EDMV3-115, `cmd_gate_check`); the degradation *behaviour*
 itself is implemented per-check by the ticket that owns that check. EDMV3-T14 wires the shared
@@ -997,7 +1022,18 @@ Unset (the default) is byte-identical to prior behavior for every one of them.
   real-repo-anchored standalone checks (`edm-check-grants`/`-skill-sync`/`-vocabulary`) are also
   skipped, since they are meaningless against a scratch suite set.
 - `EDM_EVAL_KEEP_RUNS` (`evals/run-eval.sh`): retention count for run-shaped directories kept
-  under the eval driver's output root (oldest pruned first); defaults to `10`.
+  under the eval driver's output root (oldest pruned first); defaults to `10`. A non-numeric
+  value falls back to the default; `0` is clamped to `1` with a warning (CA-443 -- `0` otherwise
+  pruned the run the invocation had just written, leaving CI green with no eval at all).
+- `EDM_EVAL_PHASE_TIMEOUT_SECONDS` (`evals/run-eval.sh`): per-phase wall-clock ceiling, default
+  `2700`. Validated beside its default and exits 2 on anything that is not a positive whole
+  number (CA-444 -- the driver runs without `set -e`, so an unvalidated value silently disabled
+  the phase timeout instead of aborting, leaving the `claude -p` child unbounded).
+- `EDM_EVAL_MAX_BUDGET_USD` (`evals/run-eval.sh`): per-run spend ceiling, default `15`. **Not**
+  validated -- unlike the timeout knob above, a non-numeric value here is still taken as-is.
+- `EDM_EVAL_MODEL` (`evals/run-eval.sh`): model the eval driver invokes.
+- `EDM_EVAL_PRUNE_EXPLICIT_OUT` (`evals/run-eval.sh`): whether an explicitly-passed output root
+  is subject to retention pruning.
 
 See `CHANGELOG.md`'s `[3.1.0]` entry (G44/CA-275, G30/CA-275) for the full record, including
 `EDM_SRD_ROOT` / `CLAUDE_PLUGIN_OPTION_SRD_ROOT`, which is a plugin-runtime knob (documented above
@@ -1017,9 +1053,9 @@ four stages:
 | `lint` | `lint:artifacts` | Yes | `edm-lint-artifacts --all` (the 60,000 ms CI budget above, not the commit-path budget) |
 | `lint` | `lint:grants` | Yes | `edm-check-grants` -- the four-source grant/instruction contract |
 | `lint` | `lint:vocabulary` | Yes | `edm-check-vocabulary` -- the abolished-vocabulary and override-flag backstop (EDMV3-T30) |
-| `lint` | `lint:file-type-ban` | Yes (blocking since EDMV3-T57 AC10 -- carries no `allow_failure`) | Scans **git-tracked** files under `plugins/` for banned types (`.pptx`, `.docx`, `.DS_Store`) -- a developer's own untracked local artifact is never flagged. Also enforces the documented 100KB directory-size ceiling on `plugins/edm/evals/` (EDMV3-T22 AC3), so a new fixture or a bloated baseline capture cannot land silently |
+| `lint` | `lint:file-type-ban` | Yes (blocking since EDMV3-T57 AC10 -- carries no `allow_failure`) | Scans **git-tracked** files under `plugins/` for banned types (`.pptx`, `.docx`, `.DS_Store`) -- a developer's own untracked local artifact is never flagged. Also enforces the documented 100KB tracked-bytes budget on `plugins/edm/evals/` (EDMV3-T22 AC3) -- git-tracked files only; untracked eval output under `evals/runs/` is excluded -- so a new fixture or a bloated baseline capture cannot land silently. **Scope caveat (CA-463):** EDMV3-T22 AC3 states that budget over the *fixture* tree (~11KB today), but this job sums all of `plugins/edm/evals/`, which is ~134KB and therefore over budget at HEAD; the two scopes are not the same set and the divergence is unresolved |
 | `lint` | `lint:shellcheck` (EDMV3-T61) | Yes | `shellcheck` over `bin/*`, `bin/tests/*.sh`, and `evals/*.sh` (excluding `*.txt`), scoped to the unquoted-expansion class of findings (SC2086/SC2046/SC2048/SC2068) -- pre-existing style findings outside that class are out of scope |
-| `lint` | `lint:hooks-shell` (CA-380) | Yes | Extracts every command-type hook string from `hooks/hooks.json` and runs `bash -n` plus scoped `shellcheck --shell=sh` over each -- the only job that lints the plugin's most privileged shell surface (the git-commit and gate hooks) |
+| `lint` | `lint:hooks-shell` (CA-380) | Yes | Extracts every command-type hook string from `hooks/hooks.json` and runs `bash -n` plus scoped `shellcheck --shell=sh` over each -- the only job that lints the plugin's most privileged shell surface (the git-commit and gate hooks). Extraction is an **indexed `jq` walk** (`[...][$n].command`, one temp file per ordinal) rather than a delimited read loop: the loop bound is jq's own command-hook total, so the count cross-check is structural, and the job body stays POSIX-`sh`-safe. `read -d` (the previous NUL-delimited extraction) is a bash extension that `dash` rejects, and a rejected `read` in a loop condition zeroes the loop silently instead of erroring -- which would have failed this job while naming the wrong cause, since nothing in `.gitlab-ci.yml` chooses the runner's script-stage interpreter (CA-474) |
 | `lint` | `lint:pattern-library-contract` (EDMV3-T56) | Yes | Enforces the Living-Library four-`##`-heading contract (`docs/audit-patterns/README.md Sec."Living-Library Contract"`) over every `docs/audit-patterns/*.md` except the two exempt documents (`README.md`, the contract itself; `SOURCES.md`, the provenance document): exactly four `##` headings, in the fixed order `## Top Recurring Findings`, `## Anti-Patterns`, `## Pre-Flight Checklist`, and a fourth matching `^## What .*Looks Like$`, with no `###` heading appended under the fourth section (the orphan-append case). This is the authoritative copy of the check; the smoke aggregator's twin in `test:smoke` also exercises the negative cases. It lives in `lint` rather than `test` because it is cheap and should fail fast |
 | `test` | `test:smoke` | Yes | `bash plugins/edm/bin/tests/run-all.sh` -- the single aggregator invocation; no suite is enumerated in the pipeline file, so a new `*-smoke.sh` suite runs in CI automatically (this is where `wave7-smoke.sh`'s help-completeness case, EDMV3-T61 AC2/AC13, runs) |
 | `test` | `test:smoke-bash32` (EDMV3-T61) | Yes | The same `run-all.sh` aggregator run a second time under a pinned `bash:3.2` image, proving the bash-3.2 compatibility constraint (EDMV3-91/106) end-to-end rather than only asserting it by grep |

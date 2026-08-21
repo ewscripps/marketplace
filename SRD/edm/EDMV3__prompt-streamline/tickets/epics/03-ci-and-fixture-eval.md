@@ -435,6 +435,22 @@ driver shell between invocations.
       signal about the prompts, and lint results feed scorer dimension 3), while committed baseline
       run artifacts live outside the plugin source tree and are excluded from `--all` by location.
       Verify: `grep -n 'run artifacts are linted' plugins/edm/evals/README.md`.
+- [ ] AC13 (ground-truth match patterns, fixture version, and run attribution -- added with the
+      scorer's sixth dimension): every gap in `expected.json` carries an `srd_match` field, a
+      case-insensitive ERE that the scorer's known-gap-recall dimension (EDMV3-T23 AC1/AC2,
+      dimension 6) greps the produced `srd.md` for, and `expected.json` records a `fixture_version`
+      that is bumped whenever a gap or an `srd_match` pattern changes, so a captured baseline is
+      never silently re-scored against different ground truth. `run-eval.sh` writes
+      `fixture: "tiny-svc"` into `run.json` on **both** its complete and its partial exit path;
+      that field is the sole gate dimension 6 reads to decide whether known-gap recall applies to a
+      run directory, which is why a wave-A run scores dimension 6 and skips only dimension 5. These
+      three fields are owned here rather than by EDMV3-T23 because the fixture and the driver
+      produce them and the scorer only consumes them (the same reasoning that kept `expected.json`
+      in this ticket per the Technical Notes). Added by code-audit finding CA-462; decisions.md D61
+      records the authorization.
+      Verify: `jq -e '([.gaps[].srd_match] | length == 6) and ([.gaps[].srd_match] | map(. != null) | all)' plugins/edm/evals/fixtures/tiny-svc/expected.json`,
+      `jq -e '.fixture_version' plugins/edm/evals/fixtures/tiny-svc/expected.json`, and
+      `grep -c 'fixture: "tiny-svc"' plugins/edm/evals/run-eval.sh` returns `2`.
 
 ### Technical Notes
 
@@ -456,6 +472,13 @@ driver shell between invocations.
   ground truth, and that is bounded by AC2 to the countable gaps the fixture was built to contain.
   Descoping `expected.json` into EDMV3-T23 was considered and rejected: the scorer would then own
   ground truth for a fixture it did not author.
+- **AC-band note.** This ticket carries 13 acceptance criteria against the pack's 6-12 band. The
+  overage is one AC wide and arrived after the fact: AC13 was added when CA-462 gave the fixture's
+  ground truth a machine-readable consumer (the scorer's known-gap-recall dimension), and all three
+  fields it owns -- `expected.json`'s `srd_match` and `fixture_version`, and `run.json`'s `fixture`
+  -- sit in this ticket's own Target Components. Splitting them into a fixture-only ticket would
+  separate `expected.json` from the driver that attributes runs to it, which is exactly the pairing
+  AC13 exists to pin.
 - The fixture must pass `claude plugin validate` scanning cleanly rather than being excluded from
   it, since it contains no skills, agents or manifests to confuse the validator.
 - Keep `run.json` and `scores.json` separate. The driver writes the former; the scorer
@@ -492,20 +515,29 @@ rather than hoped away.
 
 ### Acceptance Criteria
 
-- [ ] AC1 (exactly five dimensions): `plugins/edm/evals/score-artifacts.sh` scores a run directory
-      on **exactly five** dimensions -- not "at least five", which would leave two runs of different
+- [ ] AC1 (exactly six dimensions): `plugins/edm/evals/score-artifacts.sh` scores a run directory
+      on **exactly six** dimensions -- not "at least six", which would leave two runs of different
       scorer versions incomparable -- and emits a `scores.json` with a per-dimension score and a
-      total. The five are: requirement-ID coverage, AC testability, Mermaid parse success,
-      coverage-map bidirectionality, and lens JSONL-versus-prose agreement.
-      Verify: `jq -e '.dimensions | length == 5' <run-dir>/scores.json`.
+      total. The six are: requirement-ID coverage, AC testability, Mermaid parse success,
+      coverage-map bidirectionality, lens JSONL-versus-prose agreement, and known-gap recall
+      against the tiny-svc fixture's ground truth. The set was five as originally written; the
+      sixth was added by code-audit finding CA-462 with a `scorer_version` bump to 1.1.0
+      (decisions.md D61), because the original five are all self-consistency checks over the run's
+      own output, so an SRD surfacing none of the fixture's six known gaps scored identically to
+      one surfacing all six.
+      Verify: `jq -e '.dimensions | length == 6' <run-dir>/scores.json`.
 - [ ] AC2 (dimension definitions): dimension 1 checks that every `{PREFIX}-NN` ID in the SRD is
       unique, sequential with no gaps, and appears in the audit report's coverage discussion.
       Dimension 2 counts ACs matching the vague-AC regexes divided by total AC count. Dimension 3
       checks every ` ```mermaid ` block parses and contains no raw `;` in label text per the
       EDMV3-56 detection rule. Dimension 4 checks coverage-map bidirectionality where the run
       reached the ticket phase. Dimension 5 compares per-lens finding counts between
-      `lens-L{N}.md` and `lens-L{N}.jsonl` for a run including a code-audit round.
-      Verify: `bash plugins/edm/evals/score-artifacts.sh --describe` prints the five definitions
+      `lens-L{N}.md` and `lens-L{N}.jsonl` for a run including a code-audit round. Dimension 6
+      scores the fraction of the tiny-svc fixture's six ground-truth gaps
+      (`fixtures/tiny-svc/expected.json`, `srd_match` patterns) the produced `srd.md` engages, and
+      is skipped (`score: null`) for any run directory whose `run.json` does not attribute it to
+      the tiny-svc fixture.
+      Verify: `bash plugins/edm/evals/score-artifacts.sh --describe` prints the six definitions
       verbatim.
 - [ ] AC3 (normalization fully specified, and the denominator is data not a constant): each
       dimension normalizes to an integer 0-100 where higher is better. Dimension 2 is inverted at
@@ -523,12 +555,12 @@ rather than hoped away.
       dimensions that produced a number) and `dimensions_skipped` (the names that did not, each with
       a reason). A comparison between two `scores.json` files is refused, with a message naming the
       mismatch, when their `scorer_version` values differ **or** when their `dimensions_scored`
-      values differ. Comparing a four-dimension run against a five-dimension run produces a delta
+      values differ. Comparing a five-dimension run against a six-dimension run produces a delta
       with no meaning, and an unstated `null` silently changing the denominator is how two
       incomparable runs come to look comparable (srd.md CR6).
       Verify: run the comparison against a hand-edited `scores.json` with a bumped `scorer_version`
       and confirm it exits non-zero with the refusal message; repeat with `scorer_version` equal and
-      `dimensions_scored` changed from 4 to 5 and confirm the same refusal naming the dimension sets.
+      `dimensions_scored` changed from 5 to 6 and confirm the same refusal naming the dimension sets.
 - [ ] AC5 (negative, the scorer emits scores only): the scorer performs no baseline comparison and
       never exits non-zero on a low score. Exit 0 when it produced a score, non-zero only on a usage
       or environment error. The pass/fail decision belongs to the CI job.
@@ -543,23 +575,25 @@ rather than hoped away.
       path.
       Verify: `test -s plugins/edm/evals/vague-ac-patterns.txt` and
       `grep -n 'vague-ac-patterns.txt' SRD/edm/EDMV3__prompt-streamline/architecture.md`.
-- [ ] AC8 (baseline committed, on wave-A code, and it is a **four**-dimension baseline):
+- [ ] AC8 (baseline committed, on wave-A code, and it is a **five**-dimension wave-A baseline):
       `plugins/edm/evals/baseline/scores.json` is committed, produced by a run against wave-A code,
       and records the plugin version, the git SHA, the `complete` flag from the driver, and
-      `dimensions_scored: 4`. Four, not five: the wave-A driver runs plan -> srd -> audit and never
-      a code audit, so dimension 5 has no input and is emitted `null` with its reason in
-      `dimensions_skipped`. `evals/baseline/README.md` states plainly that this is a four-dimension
-      figure and that the first five-dimension run establishes its own baseline rather than being
-      compared against this one.
-      Verify: `jq -e '.plugin_version and .git_sha and (.complete == true) and (.dimensions_scored == 4) and (.dimensions_skipped | length == 1)' plugins/edm/evals/baseline/scores.json`,
-      and `grep -n 'four-dimension' plugins/edm/evals/baseline/README.md`.
+      `dimensions_scored: 5`. Five of the six, not all six: the wave-A driver runs plan -> srd ->
+      audit and never a code audit, so dimension 5 has no input and is emitted `null` with its
+      reason in `dimensions_skipped`, while dimension 6 does score on a wave-A run because
+      `run-eval.sh` attributes every run it produces to the tiny-svc fixture in `run.json`.
+      `evals/baseline/README.md` states plainly that this is a five-dimension figure and that the
+      first six-dimension run establishes its own baseline rather than being compared against this
+      one.
+      Verify: `jq -e '.plugin_version and .git_sha and (.complete == true) and (.dimensions_scored == 5) and (.dimensions_skipped | length == 1)' plugins/edm/evals/baseline/scores.json`,
+      and `grep -n 'five-dimension' plugins/edm/evals/baseline/README.md`.
 - [ ] AC9 (variance is a named statistic, not a hand-wave): at least three baseline runs are
       performed and the tolerance is recorded as `max - min` of the total across the three runs, as
       a single number, plus the same figure per dimension. Three runs are too few for a meaningful
       sigma, which is why the range is used.
       Verify: `grep -n 'max - min' plugins/edm/evals/baseline/README.md` returns the recorded total
-      range and the five per-dimension ranges.
-- [ ] AC10 (honest framing): `evals/baseline/README.md` states plainly that the five dimensions are
+      range and the six per-dimension ranges (dimension 5's recorded as N/A on a wave-A capture).
+- [ ] AC10 (honest framing): `evals/baseline/README.md` states plainly that the six dimensions are
       proxies, that a refactor can score identically and still produce worse artifacts, that the
       number is a regression tripwire rather than a quality score, and that re-versioning the scorer
       invalidates the baseline and requires re-capture. Baseline run artifacts (not just the scores)
@@ -586,17 +620,19 @@ rather than hoped away.
       passed and not faked, per D15.
       Verify: `grep -n 'wave-A\|variance\|dimensions_scored' plugins/edm/evals/baseline/README.md`
       shows the provenance and tolerance table today; the second half,
-      `jq -e '(.dimensions_scored == 4) and (.complete == true)' plugins/edm/evals/baseline/scores.json`,
+      `jq -e '(.dimensions_scored == 5) and (.complete == true)' plugins/edm/evals/baseline/scores.json`,
       remains blocked until D23's baseline capture lands.
 
 ### Technical Notes
 
 - Dimension 5 requires a code-audit round in the run. The wave-A driver runs plan -> srd -> audit
   (the SRD audit), not a code audit, so dimension 5 scores as `null` and is excluded from the mean
-  for wave-A baseline runs. That exclusion is what `dimensions_scored` makes explicit: the
-  denominator is read from the file rather than assumed to be 5, and a comparison across differing
-  `dimensions_scored` is refused (AC4). An unstated `null` silently changes the denominator and
-  makes the baseline incomparable to later runs, which is the defect srd.md CR6 closes.
+  for wave-A baseline runs -- it is the only one of the six that skips there, since dimension 6
+  reads `run.json`'s `fixture` field, which the driver writes on every run. That exclusion is what
+  `dimensions_scored` makes explicit: the denominator is read from the file rather than assumed to
+  be 6, and a comparison across differing `dimensions_scored` is refused (AC4). An unstated `null`
+  silently changes the denominator and makes the baseline incomparable to later runs, which is the
+  defect srd.md CR6 closes.
 - **AC-band note.** This ticket carries 13 acceptance criteria against the pack's 6-12 band. The
   overage is three requirements batched into one deliverable (scorer, baseline, cadence) rather than
   one requirement over-specified, and every AC is independently checkable. Recorded in the README

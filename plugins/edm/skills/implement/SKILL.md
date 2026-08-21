@@ -34,9 +34,9 @@ using `<gated-command>` = `implement` and `<phase-num>` = `6`.
 4. Read the ticket pack. Group tickets by file/component independence into parallel waves.
 5. **For each wave**: spawn `edm-implementer` agents (6-10 parallel). Each gets `isolation: worktree` automatically.
    - In TDD mode, pass `implementation_mode=tdd` instruction to each implementer (Red-Green-Refactor per ticket).
-6. After each implementer completes, the `SubagentStop` hook automatically spawns `edm-qc-auditor` to verify the ticket's acceptance criteria against the implemented code. (The hook is configured in `hooks/hooks.json`.) Each hook-spawned auditor writes its own per-implementer shard, `qc/qc-shard-{NN}.md` -- never the shared `qc/qc-summary.md` (CA-440: 6-10 auditors finishing concurrently on one file would silently overwrite one another's FAIL verdicts).
+6. After each implementer completes, the `SubagentStop` hook automatically spawns `edm-qc-auditor` to verify the ticket's acceptance criteria against the implemented code. (The hook is configured in `hooks/hooks.json`.) Each hook-spawned auditor writes its own per-implementer shard, `qc/qc-shard-impl-{NN}.md` -- never the shared `qc/qc-summary.md` (CA-440: 6-10 auditors finishing concurrently on one file would silently overwrite one another's FAIL verdicts), and never a `qc-shard-pass-*.md` name, which belongs to this skill's own threshold-shard namespace (CA-473).
    - In TDD mode, the QC auditor also runs the TDD compliance pass.
-7. Aggregate QC findings as they arrive. **After the wave drains, merge every `qc/qc-shard-*.md` into `qc/qc-summary.md`** (one verdict table; keep each shard's file:line evidence). The shard files stay on disk as the per-implementer audit trail.
+7. Aggregate QC findings as they arrive. **After the wave drains, merge every `qc/qc-shard-impl-*.md` and every `qc/qc-shard-pass-*.md` into `qc/qc-summary.md`** (one verdict table; keep each shard's file:line evidence). The shard files stay on disk as the per-implementer audit trail.
 8. **Remediate** any FAIL QC findings, at every severity: spawn `edm-implementer` agents to fix; re-trigger QC.
 9. Loop until all tickets have PASS verdict. Phase 6 closure (`edm-state phase-complete <PREFIX> 6`)
    is **not** a step in this list -- it belongs to the orchestrator's Phase 6 entry (or, for the
@@ -78,11 +78,20 @@ Resolve merge conflicts -> run existing tests -> launch next wave.
 `edm-qc-auditor` which writes its report to the canonical qc/ home under the initiative directory.
 
 **QC output paths** (resolved via `edm-state get <PREFIX>`):
-- Hook-spawned (per-implementer) auditor: `<initiative-dir>/qc/qc-shard-{NN}.md`, where `{NN}` is
+- Hook-spawned (per-implementer) auditor: `<initiative-dir>/qc/qc-shard-impl-{NN}.md`, where `{NN}` is
   the lowest ticket number in that implementer's assigned range, zero-padded (e.g. tickets
-  T07-T09 -> `qc-shard-07.md`). The hook path NEVER writes `qc-summary.md` directly (CA-440).
+  T07-T09 -> `qc-shard-impl-07.md`). The hook path NEVER writes `qc-summary.md` directly (CA-440).
+- Threshold-shard (this skill's post-wave QC) auditor: `<initiative-dir>/qc/qc-shard-pass-{NN}.md`,
+  where `{NN}` is the **shard ordinal** (1-based, zero-padded), not a ticket number.
+- **The two prefixes are disjoint namespaces and MUST NOT overlap** (CA-473). Both mechanisms run
+  concurrently and write whole files into the same `qc/` directory, so a shared key space collides
+  deterministically -- an unprefixed `qc-shard-{NN}.md` would let threshold shard 1 clobber the
+  implementer shard whose range starts at T01 (and shard 2 vs T02, and so on), and the loser's FAIL
+  verdicts would never reach the merge step. Only PARTIAL verdicts survive elsewhere (via the
+  locked `record-partial-verdict`); PASS and FAIL live ONLY in these markdown files.
 - Merged report: `<initiative-dir>/qc/qc-summary.md` -- produced ONLY by this skill's merge step
-  (Step 4 item 7 above / the pseudo-code below), from all `qc-shard-*.md` files.
+  (Step 4 item 7 above / the pseudo-code below), from all `qc-shard-impl-*.md` **and** all
+  `qc-shard-pass-*.md` files.
 
 **Threshold sharding** -- separately from the per-implementer hook shards, when this skill itself
 orchestrates a QC pass after all implementer waves complete and the total ticket count exceeds
@@ -94,13 +103,15 @@ parallel, each assigned a slice of `ceil(N / threshold)` tickets:
 ticket_count = len(wave_tickets)
 threshold    = user_config.qc_shard_threshold   # default 20
 if ticket_count <= threshold:
-    spawn 1 edm-qc-auditor -> writes qc/qc-shard-{lowest-ticket:02d}.md
+    spawn 1 edm-qc-auditor -> writes qc/qc-shard-pass-01.md
 else:
     shard_size = ceil(ticket_count / ceil(ticket_count / threshold))
     for i, range in enumerate(chunks(wave_tickets, shard_size)):
-        spawn edm-qc-auditor(shard=i+1, tickets=range) -> writes qc/qc-shard-{i+1:02d}.md
+        spawn edm-qc-auditor(shard=i+1, tickets=range) -> writes qc/qc-shard-pass-{i+1:02d}.md
+# both branches key on the shard ordinal, never on a ticket number, so they can never
+# collide with the hook's qc-shard-impl-{lowest-ticket:02d}.md namespace (CA-473).
 # either way, exactly one merge step owns qc-summary.md:
-merge all qc-shard-*.md files (hook-spawned and threshold shards alike) into qc/qc-summary.md
+merge all qc-shard-impl-*.md AND all qc-shard-pass-*.md files into qc/qc-summary.md
 ```
 
 **Verdict semantics**:

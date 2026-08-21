@@ -42,12 +42,15 @@ run somewhere outside the plugin source tree (see "Where committed run artifacts
 
 **Retention (CA-066, G12, G54):** `run-eval.sh` prunes stale run directories under `DIR` (or
 `plugins/edm/evals/runs/` when `--out` is not given) down to the 10 most recently created,
-oldest first. Override the count with `EDM_EVAL_KEEP_RUNS`. Pruning runs on **every** exit path
--- success, a partial run (exit 4), and an interrupted run (SIGINT/SIGTERM) -- via the driver's
-cleanup/EXIT trap, not only on success (G54): a failed or killed run previously accumulated its
-full run directory, raw `claude -p` payloads included, forever. The run directory currently being
-investigated is always the newest by mtime, so it is never eligible for pruning regardless of
-which exit path got there.
+oldest first. Override the count with `EDM_EVAL_KEEP_RUNS`; a non-numeric value falls back to
+the default of 10, and `0` is clamped to `1` with a warning on stderr (CA-443: `0` otherwise
+selected every run-shaped directory *including the one the invocation had just written*, and the
+cleanup trap deleted it, leaving CI green with no eval output at all). Pruning runs on **every**
+exit path -- success, a partial run (exit 4), and an interrupted run (SIGINT/SIGTERM/SIGHUP) --
+via the driver's cleanup/EXIT trap, not only on success (G54): a failed or killed run previously
+accumulated its full run directory, raw `claude -p` payloads included, forever. The run directory
+currently being investigated is always the newest by mtime, so with the effective floor of 1 it is
+never eligible for pruning regardless of which exit path got there.
 
 Only directories whose name matches the run-ID shape (`<timestamp>_<git-sha>`, e.g.
 `20260101T000000Z_abc1234`) are ever counted or pruned (G12) -- a stray file or an unrelated
@@ -97,8 +100,13 @@ scratch tree.
 - **Timeout**: a per-phase wall-clock budget (`EDM_EVAL_PHASE_TIMEOUT_SECONDS`, default 2700) plus a
   per-phase `--max-budget-usd` spend ceiling (`EDM_EVAL_MAX_BUDGET_USD`, default 15). A phase that
   exceeds either is killed (`SIGTERM` then `SIGKILL`) and the run is scored as incomplete -- see
-  "Exit codes" below. The timeout is implemented in bash (`run_with_timeout` in `run-eval.sh`)
-  rather than depending on GNU coreutils' `timeout`, which is absent by default on macOS.
+  "Exit codes" below. `EDM_EVAL_PHASE_TIMEOUT_SECONDS` is validated beside its default and a value
+  that is not a positive whole number exits 2 rather than being used (CA-444: the polling
+  comparison is numeric, and because this driver deliberately runs without `set -e`, a non-numeric
+  value made every poll's test fail silently and disabled the phase timeout entirely, leaving the
+  `claude -p` child unbounded). The timeout is implemented in bash (`run_with_timeout` in
+  `run-eval.sh`) rather than depending on GNU coreutils' `timeout`, which is absent by default on
+  macOS.
 - `--bare` is deliberately **not** set: the driver uses `--no-session-persistence` for isolation,
   and it accepts either an exported `ANTHROPIC_API_KEY` or a `claude` CLI that is already logged
   in via subscription/OAuth auth.
@@ -146,8 +154,8 @@ the only tree the three phases were ever expected to touch. A clean run prints
 |---|---|
 | 0 | The run reached the end of the audit-srd phase and containment is clean. **Not** a quality verdict -- run `score-artifacts.sh` separately for that. |
 | 1 | Reserved for the scorer/CI comparison (`score-artifacts.sh` and its caller, EDMV3-T23/EDMV3-T39). `run-eval.sh` never emits this itself. |
-| 2 | A usage or environment error: missing `ANTHROPIC_API_KEY`, a missing required binary, bad flags, a provisioning failure before any phase started, or a containment violation. |
-| 4 | A partially completed run: at least one phase did not finish (timeout, non-zero exit, or a missing expected artifact), so the run never reached the final phase. `run.json` and a stub `scores.json` are written with `complete: false`, and CI refuses to compare that run against the baseline. |
+| 2 | A usage or environment error: missing `ANTHROPIC_API_KEY`, a missing required binary, bad flags, an invalid `EDM_EVAL_PHASE_TIMEOUT_SECONDS` (CA-444), a provisioning failure before any phase started, or a containment violation. |
+| 4 | A partially completed run: at least one phase did not finish (timeout, non-zero exit, or a missing expected artifact), so the run never reached the final phase. `run.json` and a stub `scores.json` are written with `complete: false`. `eval:nightly` does **not** abort on exit 4 (CA-452) -- it continues through scoring and the baseline comparison so `bin/edm-compare-eval` visibly refuses the `complete: false` candidate by name, then fails the job anyway. |
 
 ## Lint policy
 
@@ -223,7 +231,7 @@ A dimension that cannot be computed for the given run (e.g. dimension 5 when the
 ran a code-audit round) is emitted `score: null`, named in `dimensions_skipped` with a
 one-line reason, and excluded from both the sum and the denominator. `total` is the
 unweighted arithmetic mean of the dimensions that produced a number, divided by
-`dimensions_scored` (read from the data, never assumed to be 5), rounded to one decimal
+`dimensions_scored` (read from the data, never assumed to be 6), rounded to one decimal
 place. `scores.json` also records `scorer_version` and the ordered `dimension_names` list,
 so a later comparison can detect a scorer change before treating two runs as comparable.
 This is the exact expression `scores.json`'s own `total` field satisfies -- there is no
@@ -257,8 +265,8 @@ anything). It injects `complete: true` into temp copies of both inputs first (a 
 whose `complete` field is not exactly `true` before it ever reaches the version/dimension
 checks below), then delegates. The exit code and refusal wording are `edm-compare-eval`'s
 own: refuses (exit 2, naming the mismatch) when the two files' `scorer_version` differ, or
-when their `dimensions_scored` differ -- comparing a four-dimension run against a
-five-dimension run produces a delta with no meaning. When both match, it prints a
+when their `dimensions_scored` differ -- comparing a five-dimension run against a
+six-dimension run produces a delta with no meaning. When both match, it prints a
 per-dimension and total delta and exits 0 (or exit 1 on a threshold regression). Wiring this
 into an automatic CI comparison against `baseline/scores.json` is EDMV3-T39's job -- and CI
 calls `bin/edm-compare-eval` directly rather than this flag, per `.gitlab-ci.yml`'s
@@ -283,7 +291,11 @@ it happened.
 `fixtures/tiny-svc/` is a small, frozen, synthetic webhook relay with six known, countable gaps
 (see `fixtures/tiny-svc/expected.json` and `fixtures/tiny-svc/README.md`). It requires no network
 access, no external services, and no dependency on the marketplace repository's own content. The
-fixture plus `expected.json` stays under 100KB.
+fixture plus `expected.json` stays under 100KB. Note the scope difference (CA-463): EDMV3-T22 AC3
+states that budget over the *fixture* tree, but the `lint:file-type-ban` job that enforces it sums
+git-tracked bytes over **all** of `plugins/edm/evals/` -- the driver and scorer scripts included,
+untracked output under `runs/` excluded. Measure with
+`git ls-files -- plugins/edm/evals`, never `du`, or the number will not be the one CI computes.
 
 `initiative.txt` is the frozen Phase 1 input. Its header records a `version:` line; both files
 change together, and neither changes without a recorded version bump, because runs are compared

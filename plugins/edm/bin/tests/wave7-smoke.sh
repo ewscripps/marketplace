@@ -251,8 +251,9 @@ echo "T09 AC13 -- no literal --force anywhere in bin/edm-state"
 # G2/CA-037 residual (round 5): converted from assert_absent_with_control (whose control here was
 # already a real in-tree file, not a tautological literal, but which discarded the real scan's
 # stderr/exit code and never asserted $EDM_STATE exists) to assert_tree_absent, which closes both
-# gaps and retires assert_absent_with_control's last production caller -- it is now exercised
-# only by harness-smoke.sh's own self-tests.
+# gaps and retired assert_absent_with_control's last production caller. CA-395 then DELETED the
+# function itself from _harness.sh along with its harness-smoke.sh self-tests, so there is no
+# longer any caller of any kind (CA-434): assert_tree_absent is the surviving helper.
 t09ac13_force_pattern='--force'
 force_hits="$(grep -n -- "$t09ac13_force_pattern" "$EDM_STATE" 2>/dev/null || true)"
 assert_tree_absent "no literal --force in bin/edm-state" \
@@ -260,13 +261,13 @@ assert_tree_absent "no literal --force in bin/edm-state" \
   "$(cat "${PLUGIN_DIR}/bin/vocabulary-prohibited.txt" 2>/dev/null)" "$EDM_STATE"
 
 # =================================================================================
-# G2/CA-037 (round 5): tripwire -- assert_absent_with_control now has zero production callers
-# (its last one, T09 AC13 above, is converted). Ban any NEW call site outside harness-smoke.sh,
-# which legitimately self-tests the helper -- otherwise the next tautological-control site
-# quietly reintroduces the class this remediation just closed.
-# Scoped to every *.sh in this directory EXCEPT harness-smoke.sh (the sanctioned self-test) and
-# this file itself, which necessarily mentions the banned name by name in this very comment
-# block and in its own labels -- those are prose about the ban, not a call site.
+# G2/CA-037 (round 5), retargeted by CA-434: tripwire -- assert_absent_with_control has no
+# definition and no callers anywhere, because CA-395 deleted it from _harness.sh. Ban any
+# re-DEFINITION of it, so the tautological-control class this remediation closed cannot be
+# reopened by restoring the helper.
+# Scoped to every *.sh in this directory with NO exclusions: the needle is the function
+# DEFINITION shape, so prose mentions of the bare name (this comment block, the assertion
+# labels below, harness-smoke.sh's CA-395 note) cannot match it and need no carve-out.
 # =================================================================================
 echo
 echo "=== G2/CA-037 tripwire: assert_absent_with_control stays deleted ==="
@@ -810,13 +811,14 @@ t23_compare_refusal() {
 with_scratch_repo t23_compare_refusal
 
 echo
-echo "T23 AC2 -- --describe prints the five dimension definitions verbatim"
+echo "T23 AC2 -- --describe prints the six dimension definitions verbatim"
 t23_describe_output="$(bash "$SCORE_ARTIFACTS" --describe)"
 check "describe names dimension 1 (requirement-id-coverage)" "requirement-id-coverage" "$t23_describe_output"
 check "describe names dimension 2 (ac-testability)" "ac-testability" "$t23_describe_output"
 check "describe names dimension 3 (mermaid-parse-success)" "mermaid-parse-success" "$t23_describe_output"
 check "describe names dimension 4 (coverage-map-bidirectionality)" "coverage-map-bidirectionality" "$t23_describe_output"
 check "describe names dimension 5 (lens-jsonl-prose-agreement)" "lens-jsonl-prose-agreement" "$t23_describe_output"
+check "describe names dimension 6 (known-gap-recall)" "known-gap-recall" "$t23_describe_output"
 
 echo
 echo "T23 AC7 -- vague-ac-patterns.txt is the single source, named by architecture.md"
@@ -827,11 +829,11 @@ check_absent "no vague-AC regex list is duplicated inline in score-artifacts.sh"
   "should work" "$(grep -v '^#' "$SCORE_ARTIFACTS")"
 
 echo
-echo "T23 AC8/AC9/AC10 -- baseline/README.md documents the four-dimension, tripwire framing"
+echo "T23 AC8/AC9/AC10 -- baseline/README.md documents the five-dimension wave-A, tripwire framing"
 BASELINE_README="${PLUGIN_DIR}/evals/baseline/README.md"
 [[ -f "$BASELINE_README" ]] && pass "evals/baseline/README.md exists" \
   || fail "evals/baseline/README.md missing"
-check "baseline/README.md states this is a four-dimension baseline" "four-dimension" \
+check "baseline/README.md states this is a five-dimension baseline" "five-dimension" \
   "$(cat "$BASELINE_README" 2>/dev/null)"
 check "baseline/README.md records the max - min variance methodology" "max - min" \
   "$(cat "$BASELINE_README" 2>/dev/null)"
@@ -2233,8 +2235,8 @@ t42_ac9_case() {
   {
     echo "# Mock SRD Audit"
     echo
-    echo "### literal semicolon inside a mermaid label"
-    echo "Duplicate-titled finding to prove de-duplication skips it."
+    echo "## P2 -- Minor"
+    echo "[Diagram Errors] [P2] Section 5.1 | literal semicolon inside a mermaid label | Escape or remove it"
   } > "SRD/ZMER/audit-srd.md"
 
   out="$(edm-state update-patterns ZMER srd 2>&1)"
@@ -3697,7 +3699,9 @@ t56_ac8_case() {
     {
       echo "# Mock Code Audit REMEDIATION"
       echo
-      echo "### T56 AC8 run ${i} novel finding"
+      echo "## Detailed Findings"
+      echo
+      echo "### CA-9${i} (P2, lens L1): T56 AC8 run ${i} novel finding"
       echo "Run ${i} of ten, proving repeated insertion never regresses the contract."
     } > "$scratch/work/SRD/ZCA8/code-audit/pass-1_2026-07-31/REMEDIATION.md"
 
@@ -3716,7 +3720,7 @@ t56_ac8_case() {
     || fail "T56 AC8 -- at least one of the ten runs failed (see FAIL lines above)"
 
   local final_heading_count
-  final_heading_count="$(grep -c '^### T56 AC8 run ' "$scratch_code" || true)"
+  final_heading_count="$(grep -c '^### CA-9[0-9]* (P2, lens L1): T56 AC8 run ' "$scratch_code" || true)"
   [[ "${final_heading_count:-0}" -eq 10 ]] \
     && pass "T56 AC8 -- all ten distinct entries are present in the final document" \
     || fail "T56 AC8 -- expected 10 distinct run entries, found ${final_heading_count:-0}"
@@ -3753,18 +3757,20 @@ ca002_insertion_case() {
   local scratch_srd_root="$scratch/work/SRD"
 
   mkdir -p "${scratch_srd_root}/ZCA2"
+  # CA-476: the mock uses the SRD auditor's real, documented finding-line format
+  # (`[CATEGORY] [SEVERITY] Section X.Y | finding | recommendation`,
+  # agents/edm-srd-auditor.md Sec."Finding Format") -- the shape update-patterns' srd arm
+  # actually extracts. It previously used `### ` headings, a shape no SRD audit report has ever
+  # produced, which is precisely how the srd arm's deadness stayed invisible.
   {
     echo "# Mock SRD Audit"
     echo
-    echo "### CA002 novel finding one"
-    echo "First novel finding for the insertion-path regression test."
+    echo "## P1 -- Significant"
+    echo "[Feature Gaps] [P1] Section 3.2 | CA002 novel finding one | First novel finding for the insertion-path regression test."
+    echo "[Factual Mistakes] [P1] Section 4.1 | CA002 novel finding two | Second novel finding for the insertion-path regression test."
     echo
-    echo "### CA002 novel finding two"
-    echo "Second novel finding for the insertion-path regression test."
-    echo
-    echo "### literal semicolon inside a mermaid label"
-    echo "Duplicate-titled finding (normalized case-insensitive match) to prove de-duplication"
-    echo "still skips it on the insertion path, not just on the pure-duplicate path T42 AC9 covers."
+    echo "## P2 -- Minor"
+    echo "[Diagram Errors] [P2] Section 5.1 | literal semicolon inside a mermaid label | Duplicate-titled finding (normalized case-insensitive match) to prove de-duplication still skips it on the insertion path, not just on the pure-duplicate path T42 AC9 covers."
   } > "${scratch_srd_root}/ZCA2/audit-srd.md"
   echo '{}' > "${scratch_srd_root}/ZCA2/.edm-state.json"
 
@@ -3880,8 +3886,7 @@ ca002_missing_heading_case() {
   {
     echo "# Mock SRD Audit"
     echo
-    echo "### CA002 AC2 novel finding"
-    echo "Would be appended if a target heading existed."
+    echo "[Feature Gaps] [P1] Section 1.1 | CA002 AC2 novel finding | Would be appended if a target heading existed."
   } > "${scratch_srd_root}/ZCA4/audit-srd.md"
   echo '{}' > "${scratch_srd_root}/ZCA4/.edm-state.json"
 
@@ -3934,8 +3939,7 @@ g16_fenced_heading_only_case() {
   {
     echo "# Mock SRD Audit"
     echo
-    echo "### G16 novel finding"
-    echo "Would be appended if the target heading resolved to a real insertion point."
+    echo "[Feature Gaps] [P1] Section 1.1 | G16 novel finding | Would be appended if the target heading resolved to a real insertion point."
   } > "${scratch_srd_root}/ZG16/audit-srd.md"
   echo '{}' > "${scratch_srd_root}/ZG16/.edm-state.json"
 
@@ -3965,6 +3969,428 @@ g16_fenced_heading_only_case() {
 }
 g16_fenced_heading_only_case
 # CA-002 remediation end
+
+# =================================================================================
+# CA-476 remediation (code-audit round 9): WHAT update-patterns extracts, per audit type
+# =================================================================================
+# CA-476 (P1, lens L11): cmd_update_patterns extracted `^### ` from every audit report. No report
+# format this methodology produces means "finding title" by that shape, so the `code` arm
+# harvested the Remediation Plan Format's structural scaffolding (severity roll-ups, rollout
+# stages, verification-plan sub-headings) into a shipped plugin asset that thirteen prompt
+# surfaces read as accumulated wisdom, while the `srd`/`ticket`/`qc` arms -- whose reports carry
+# no `###` finding headings at all -- recorded a permanent, silent `new_findings: 0`.
+#
+# Existing coverage (CA-002, CA-056, CA-355, T56 AC8, T42 AC9) exercises insertion MECHANICS --
+# where an entry lands, idempotence, fence-awareness, contract preservation -- and never once
+# asserts WHICH titles the extractor picked out of a report. These cases assert exactly that,
+# against pattern_extract_titles directly (the unit the finding is about), for every audit type,
+# with a positive control per arm proving the assertion can go red.
+echo
+echo "=== CA-476: pattern_extract_titles extracts findings, not structural scaffolding (per audit type) ==="
+
+# _ca476_extract <audit-type> <report-file> -- runs the real pattern_extract_titles out of the
+# real bin/edm-state (dispatch-guarded source, the EDMV3-T07 AC8 precedent used throughout this
+# suite) so the assertions consume the shipped extractor, never a re-typed copy.
+_ca476_extract() {
+  bash -c "source '$EDM_STATE' >/dev/null 2>&1; pattern_extract_titles '$1' '$2'"
+}
+
+ca476_extraction_case() {
+  local scratch
+  scratch="$(mktemp -d "${TMP}/edm-ca476.XXXXXX")" || { fail "CA-476 -- mktemp failed"; return 1; }
+
+  # ---- code: the real REMEDIATION.md shape (agents/edm-audit-synthesizer.md
+  # Sec."Remediation Plan Format" and every shipped pass-*/REMEDIATION.md). Finding titles are
+  # `### CA-NNN ...` / `### G{N} ...`; the six fixed structural headings are `## `, and the
+  # roll-up and rollout sub-headings under them are `### ` WITHOUT a finding ID -- the exact
+  # strings that landed in the shipped library as if they were patterns.
+  cat > "${scratch}/REMEDIATION.md" <<'EOF'
+# Code Audit Remediation Plan: Mock (Round 9)
+
+## Context
+
+### Delivery degradation this round
+
+## Findings Summary
+
+### P0 (0)
+
+### P1 (9) -- fix before shipping
+
+### P2 -- documentation, spec text and wiring (18)
+
+## Detailed Findings
+
+### CA-476 (P1, lens L11): update-patterns harvests structural scaffolding
+
+### G7 (P2, lenses L6 + L9): a group-form finding heading
+
+## Decisions / Non-Findings
+
+### Cleared by the False Alarm Filter this round
+
+## Rollout Order
+
+### WORK ITEM 4 onward -- P2 detail
+
+### Stage 2 -- The coordinated cluster (ONE work item)
+
+## Verification Plan
+
+### Syntax / static
+
+### Test suites
+
+### Lint / contract checks
+
+### Targeted re-audit (round 9)
+
+An example finding quoted as documentation, which is not a finding:
+
+```markdown
+### CA-999 (P0, lens L1): fenced example, must never be extracted
+```
+EOF
+
+  local ca476_code
+  ca476_code="$(_ca476_extract code "${scratch}/REMEDIATION.md")"
+
+  check "CA-476 code -- the CA-NNN finding title is extracted" \
+    "CA-476 (P1, lens L11): update-patterns harvests structural scaffolding" "$ca476_code"
+  check "CA-476 code -- the G{N} group-form finding title is extracted" \
+    "G7 (P2, lenses L6 + L9): a group-form finding heading" "$ca476_code"
+
+  # The six fixed structural headings of the Remediation Plan Format.
+  local ca476_h
+  for ca476_h in "Context" "Findings Summary" "Detailed Findings" "Decisions / Non-Findings" "Rollout Order" "Verification Plan"; do
+    check_absent "CA-476 code -- the structural heading '${ca476_h}' is not extracted" \
+      "$ca476_h" "$ca476_code"
+  done
+
+  # The exact scaffolding strings that reached the shipped pattern library.
+  for ca476_h in "P0 (0)" "P1 (9) -- fix before shipping" "P2 -- documentation, spec text and wiring (18)" \
+                 "Delivery degradation this round" "Cleared by the False Alarm Filter this round" \
+                 "WORK ITEM 4 onward -- P2 detail" "Stage 2 -- The coordinated cluster (ONE work item)" \
+                 "Syntax / static" "Test suites" "Lint / contract checks" "Targeted re-audit (round 9)"; do
+    check_absent "CA-476 code -- the scaffolding heading '${ca476_h}' is not extracted" \
+      "$ca476_h" "$ca476_code"
+  done
+
+  check_absent "CA-476 code -- a finding quoted inside a fenced code block is not extracted" \
+    "CA-999" "$ca476_code"
+
+  # Set EQUALITY, not just membership: exactly the two finding titles, in report order.
+  local ca476_code_expected
+  ca476_code_expected="CA-476 (P1, lens L11): update-patterns harvests structural scaffolding
+G7 (P2, lenses L6 + L9): a group-form finding heading"
+  [[ "$ca476_code" == "$ca476_code_expected" ]] \
+    && pass "CA-476 code -- the extracted set EQUALS the two real finding titles (nothing else)" \
+    || fail "CA-476 code -- extracted set differs from the two real finding titles; got: $ca476_code"
+
+  # Positive control: a report whose finding heading lost its ID prefix must extract NOTHING,
+  # proving the ID-shape rule (not heading depth) is what is being asserted.
+  cat > "${scratch}/REMEDIATION-control.md" <<'EOF'
+# Code Audit Remediation Plan: Mock (control)
+
+## Detailed Findings
+
+### update-patterns harvests structural scaffolding
+EOF
+  local ca476_code_control
+  ca476_code_control="$(_ca476_extract code "${scratch}/REMEDIATION-control.md")"
+  [[ -z "$ca476_code_control" ]] \
+    && pass "CA-476 code -- positive control: an ID-less '### ' heading extracts nothing (depth alone is not the rule)" \
+    || fail "CA-476 code -- positive control failed: an ID-less heading was extracted: $ca476_code_control"
+
+  # ---- srd: agents/edm-srd-auditor.md Sec."Finding Format" --------------------------------
+  cat > "${scratch}/audit-srd.md" <<'EOF'
+# SRD Audit Report: Mock
+
+## Summary
+- P0: 0 | P1: 1 | P2: 1
+
+## P0 -- Critical
+
+## P1 -- Significant
+[Feature Gaps] [P1] Section 3.2 | Retry budget is unspecified for the ingest path | State the budget and its exhaustion behavior
+
+## P2 -- Minor
+[Diagram Errors] [P2] Section 5.1 | Literal semicolon inside a Mermaid label | Escape or remove it
+
+## NOTED -- Intentional / Pre-existing
+EOF
+
+  local ca476_srd ca476_srd_expected
+  ca476_srd="$(_ca476_extract srd "${scratch}/audit-srd.md")"
+  ca476_srd_expected="Retry budget is unspecified for the ingest path
+Literal semicolon inside a Mermaid label"
+  [[ "$ca476_srd" == "$ca476_srd_expected" ]] \
+    && pass "CA-476 srd -- the extracted set EQUALS the two documented finding lines' middle fields" \
+    || fail "CA-476 srd -- extracted set differs from the two finding lines; got: $ca476_srd"
+  for ca476_h in "Summary" "P0 -- Critical" "P1 -- Significant" "P2 -- Minor" "NOTED -- Intentional / Pre-existing"; do
+    check_absent "CA-476 srd -- the structural heading '${ca476_h}' is not extracted" \
+      "$ca476_h" "$ca476_srd"
+  done
+
+  # Positive control: the pre-CA-476 shape (a bare '### ' heading) must extract NOTHING from an
+  # SRD report -- this is the shape the dead arm used to look for and never found.
+  cat > "${scratch}/audit-srd-control.md" <<'EOF'
+# SRD Audit Report: Mock (control)
+
+### Retry budget is unspecified for the ingest path
+EOF
+  local ca476_srd_control
+  ca476_srd_control="$(_ca476_extract srd "${scratch}/audit-srd-control.md")"
+  [[ -z "$ca476_srd_control" ]] \
+    && pass "CA-476 srd -- positive control: a bare '### ' heading extracts nothing (the old rule found nothing here, which is why the arm was dead)" \
+    || fail "CA-476 srd -- positive control failed: a bare heading was extracted: $ca476_srd_control"
+
+  # ---- qc: agents/edm-qc-auditor.md Sec."Output Format" ------------------------------------
+  cat > "${scratch}/qc-summary.md" <<'EOF'
+# QC Audit Report: Mock
+
+## Summary
+| Ticket | Title | Verdict |
+|---|---|---|
+| MOCK-T01 | Login handler | FAIL |
+
+## Detailed Findings
+
+### MOCK-T01: Login handler -- FAIL
+- [ ] AC3: wrong status code
+
+**Finding**: [P1] MOCK-T01 | handler.py:78 | AC#3: Wrong status code -- returns 200, must be 201
+
+### MOCK-T02: Token refresh -- PARTIAL
+
+**Finding**: [PARTIAL] MOCK-T02 | AC#4: runtime-check: call the endpoint with a live server and assert 201
+
+## Remediation Required
+EOF
+
+  local ca476_qc ca476_qc_expected
+  ca476_qc="$(_ca476_extract qc "${scratch}/qc-summary.md")"
+  ca476_qc_expected="AC#3: Wrong status code -- returns 200, must be 201
+AC#4: runtime-check: call the endpoint with a live server and assert 201"
+  [[ "$ca476_qc" == "$ca476_qc_expected" ]] \
+    && pass "CA-476 qc -- the extracted set EQUALS the two '**Finding**:' lines' finding text" \
+    || fail "CA-476 qc -- extracted set differs from the two Finding lines; got: $ca476_qc"
+  for ca476_h in "Summary" "Detailed Findings" "Remediation Required" "MOCK-T01: Login handler -- FAIL" "MOCK-T02: Token refresh -- PARTIAL"; do
+    check_absent "CA-476 qc -- the structural heading '${ca476_h}' is not extracted" \
+      "$ca476_h" "$ca476_qc"
+  done
+
+  cat > "${scratch}/qc-summary-control.md" <<'EOF'
+# QC Audit Report: Mock (control)
+
+### MOCK-T01: Login handler -- FAIL
+- [ ] AC3: wrong status code
+EOF
+  local ca476_qc_control
+  ca476_qc_control="$(_ca476_extract qc "${scratch}/qc-summary-control.md")"
+  [[ -z "$ca476_qc_control" ]] \
+    && pass "CA-476 qc -- positive control: a per-ticket verdict heading with no '**Finding**:' line extracts nothing" \
+    || fail "CA-476 qc -- positive control failed: a verdict heading was extracted: $ca476_qc_control"
+
+  # ---- ticket / test-coverage: no machine-readable finding shape ---------------------------
+  # Both formats put free prose under fixed structural sub-headings, so the ONLY thing a
+  # heading-based extractor can harvest from them is the scaffolding. These arms must extract
+  # nothing AND say so -- never a silent zero.
+  cat > "${scratch}/ticket-audit.md" <<'EOF'
+# Ticket Pack Audit Report: Mock
+
+## Summary
+- Coverage gaps: 1
+
+## Findings
+
+### Coverage
+- MOCK-12 has no ticket implementing it.
+
+### Sizing
+- MOCK-T04 is a 5-day ticket.
+
+### Dependencies
+
+### Critical Path
+
+### Acceptance Criteria
+
+### Diagrams
+
+### Consistency
+
+## Recommendations
+EOF
+  local ca476_ticket
+  ca476_ticket="$(_ca476_extract ticket "${scratch}/ticket-audit.md")"
+  [[ -z "$ca476_ticket" ]] \
+    && pass "CA-476 ticket -- extracts nothing (the report's only headings are structural categories)" \
+    || fail "CA-476 ticket -- expected an empty extraction, got: $ca476_ticket"
+  for ca476_h in "Coverage" "Sizing" "Dependencies" "Critical Path" "Acceptance Criteria" "Diagrams" "Consistency"; do
+    check_absent "CA-476 ticket -- the category heading '${ca476_h}' is not harvested as a pattern" \
+      "$ca476_h" "$ca476_ticket"
+  done
+
+  cat > "${scratch}/test-coverage.md" <<'EOF'
+# Test Coverage Report: Mock
+
+## Summary
+
+## Findings
+
+### P0 -- Blocking
+
+### P1 -- Must Fix Before Declaring Phase 6 Complete
+
+1. MOCK-T01 AC3 has no test exercising the rate-limit path.
+
+### P2 -- Should Fix
+
+## Recommendations
+EOF
+  local ca476_tc
+  ca476_tc="$(_ca476_extract test-coverage "${scratch}/test-coverage.md")"
+  [[ -z "$ca476_tc" ]] \
+    && pass "CA-476 test-coverage -- extracts nothing (the report's only headings are severity buckets)" \
+    || fail "CA-476 test-coverage -- expected an empty extraction, got: $ca476_tc"
+  for ca476_h in "P0 -- Blocking" "P1 -- Must Fix Before Declaring Phase 6 Complete" "P2 -- Should Fix"; do
+    check_absent "CA-476 test-coverage -- the severity bucket '${ca476_h}' is not harvested as a pattern" \
+      "$ca476_h" "$ca476_tc"
+  done
+
+  # ---- extraction_status: a zero is never ambiguous ----------------------------------------
+  local ca476_st
+  ca476_st="$(bash -c "source '$EDM_STATE' >/dev/null 2>&1; pattern_extraction_status_for code 2")"
+  [[ "$ca476_st" == "ok" ]] \
+    && pass "CA-476 status -- a code arm that recognized findings reports extraction_status=ok" \
+    || fail "CA-476 status -- expected 'ok' for code with 2 titles, got '$ca476_st'"
+  ca476_st="$(bash -c "source '$EDM_STATE' >/dev/null 2>&1; pattern_extraction_status_for code 0")"
+  [[ "$ca476_st" == "no-recognized-findings" ]] \
+    && pass "CA-476 status -- a code arm that recognized nothing reports extraction_status=no-recognized-findings, not a clean zero" \
+    || fail "CA-476 status -- expected 'no-recognized-findings' for code with 0 titles, got '$ca476_st'"
+  ca476_st="$(bash -c "source '$EDM_STATE' >/dev/null 2>&1; pattern_extraction_status_for ticket 0")"
+  [[ "$ca476_st" == "unsupported-format" ]] \
+    && pass "CA-476 status -- the ticket arm reports extraction_status=unsupported-format" \
+    || fail "CA-476 status -- expected 'unsupported-format' for ticket, got '$ca476_st'"
+  ca476_st="$(bash -c "source '$EDM_STATE' >/dev/null 2>&1; pattern_extraction_status_for test-coverage 0")"
+  [[ "$ca476_st" == "unsupported-format" ]] \
+    && pass "CA-476 status -- the test-coverage arm reports extraction_status=unsupported-format" \
+    || fail "CA-476 status -- expected 'unsupported-format' for test-coverage, got '$ca476_st'"
+
+  rm -rf "$scratch"
+}
+ca476_extraction_case
+
+echo
+echo "CA-476 -- an arm that harvests nothing warns loudly and records extraction_status; it never prints a clean 'no novel findings'"
+ca476_loud_diagnostic_case() {
+  local scratch
+  scratch="$(mktemp -d "${TMP}/edm-ca476-loud.XXXXXX")" || { fail "CA-476 loud -- mktemp failed"; return 1; }
+  mkdir -p "$scratch/plugins/edm"
+  cp -R "${PLUGIN_DIR}/." "$scratch/plugins/edm/"
+  local scratch_ticket="$scratch/plugins/edm/docs/audit-patterns/ticket-audit.md"
+  local scratch_srd_root="$scratch/work/SRD"
+
+  mkdir -p "${scratch_srd_root}/ZC476/tickets"
+  {
+    echo "# Ticket Pack Audit Report: Mock"
+    echo
+    echo "## Findings"
+    echo
+    echo "### Coverage"
+    echo "- MOCK-12 has no ticket implementing it."
+  } > "${scratch_srd_root}/ZC476/tickets/audit.md"
+  echo '{}' > "${scratch_srd_root}/ZC476/.edm-state.json"
+
+  local before_hash after_hash out status
+  before_hash="$(_harness_hash_file "$scratch_ticket")"
+  status=0
+  out="$(EDM_SRD_ROOT="$scratch_srd_root" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZC476 ticket 2>&1)" || status=$?
+  after_hash="$(_harness_hash_file "$scratch_ticket")"
+
+  [[ "$status" -eq 0 ]] \
+    && pass "CA-476 loud -- the warning does not abort the calling skill mid-phase (exit 0)" \
+    || fail "CA-476 loud -- expected exit 0, got $status (output: $out)"
+  check "CA-476 loud -- the run warns that the ticket report format has no machine-readable finding shape" \
+    "NO machine-readable finding shape" "$out"
+  check "CA-476 loud -- the warning states this is not a clean round" \
+    "This is NOT a clean round" "$out"
+  check_absent "CA-476 loud -- the run never prints the clean-round wording" \
+    "no novel findings to append" "$out"
+  [[ "$before_hash" == "$after_hash" ]] \
+    && pass "CA-476 loud -- the ticket pattern document is byte-unchanged (no scaffolding harvested)" \
+    || fail "CA-476 loud -- ticket-audit.md changed hash (before=$before_hash after=$after_hash)"
+
+  local ca476_recorded_status ca476_recorded_count
+  ca476_recorded_status="$(jq -r '.patterns_updates.ticket.extraction_status' "${scratch_srd_root}/ZC476/.edm-state.json" 2>/dev/null)"
+  ca476_recorded_count="$(jq -r '.patterns_updates.ticket.extracted_titles' "${scratch_srd_root}/ZC476/.edm-state.json" 2>/dev/null)"
+  [[ "$ca476_recorded_status" == "unsupported-format" ]] \
+    && pass "CA-476 loud -- state records extraction_status=unsupported-format alongside new_findings, so the zero is never ambiguous" \
+    || fail "CA-476 loud -- patterns_updates.ticket.extraction_status is '${ca476_recorded_status}', expected 'unsupported-format'"
+  [[ "$ca476_recorded_count" == "0" ]] \
+    && pass "CA-476 loud -- state records extracted_titles=0 for the unsupported arm" \
+    || fail "CA-476 loud -- patterns_updates.ticket.extracted_titles is '${ca476_recorded_count}', expected '0'"
+
+  # Positive control on the same path: a `code` report that DOES carry a real finding title
+  # takes the ordinary append path and prints no warning -- proving the diagnostic above is a
+  # response to the report, not something this command always emits.
+  mkdir -p "${scratch_srd_root}/ZC477/code-audit/pass-1_2026-08-16"
+  {
+    echo "# Code Audit Remediation Plan: Mock"
+    echo
+    echo "## Detailed Findings"
+    echo
+    echo "### CA-476 control finding that is genuinely novel"
+  } > "${scratch_srd_root}/ZC477/code-audit/pass-1_2026-08-16/REMEDIATION.md"
+  echo '{}' > "${scratch_srd_root}/ZC477/.edm-state.json"
+  out="$(EDM_SRD_ROOT="$scratch_srd_root" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZC477 code 2>&1)"
+  check "CA-476 loud -- positive control: a well-formed code report appends normally" \
+    "1 new finding(s) appended" "$out"
+  check_absent "CA-476 loud -- positive control: a well-formed code report emits no WARNING" \
+    "WARNING" "$out"
+  local ca476_control_status
+  ca476_control_status="$(jq -r '.patterns_updates.code.extraction_status' "${scratch_srd_root}/ZC477/.edm-state.json" 2>/dev/null)"
+  [[ "$ca476_control_status" == "ok" ]] \
+    && pass "CA-476 loud -- positive control: state records extraction_status=ok for the well-formed report" \
+    || fail "CA-476 loud -- positive control: extraction_status is '${ca476_control_status}', expected 'ok'"
+
+  rm -rf "$scratch"
+}
+ca476_loud_diagnostic_case
+
+echo
+echo "CA-476 -- the shipped code-audit pattern library carries no machine-harvested scaffolding"
+ca476_library_hygiene_case() {
+  local ca476_lib="${PLUGIN_DIR}/docs/audit-patterns/code-audit.md"
+  local ca476_anti ca476_anti_count ca476_h
+
+  ca476_anti="$(awk '/^## Anti-Patterns$/{f=1;next} /^## /{f=0} f' "$ca476_lib")"
+  ca476_anti_count="$(printf '%s\n' "$ca476_anti" | grep -c '^### ' || true)"
+  [[ "${ca476_anti_count:-0}" -eq 5 ]] \
+    && pass "CA-476 library -- '## Anti-Patterns' holds exactly the five curated entries (the 22 harvested ones are gone)" \
+    || fail "CA-476 library -- '## Anti-Patterns' holds ${ca476_anti_count:-0} '### ' entries, expected 5"
+
+  for ca476_h in "### P0 (0)" "### P1 (9)" "### Syntax / static" "### Test suites" \
+                 "### Lint / contract checks" "### Targeted re-audit" "### WORK ITEM " "### Stage "; do
+    check_absent "CA-476 library -- no harvested scaffolding entry '${ca476_h}' remains" \
+      "$ca476_h" "$(cat "$ca476_lib")"
+  done
+
+  check_absent "CA-476 library -- no auto-appended EDMV3 provenance stub remains in code-audit.md" \
+    "> Extracted from the code audit for EDMV3." "$(cat "$ca476_lib")"
+
+  local ca476_contract_out ca476_contract_ec
+  set +e
+  ca476_contract_ec=0
+  ca476_contract_out="$(_t56_four_heading_contract_check "${PLUGIN_DIR}/docs/audit-patterns" 2>&1)" || ca476_contract_ec=$?
+  set -e
+  [[ $ca476_contract_ec -eq 0 ]] \
+    && pass "CA-476 library -- the four-heading Living-Library contract still holds after the revert" \
+    || fail "CA-476 library -- four-heading contract violated after the revert: $ca476_contract_out"
+}
+ca476_library_hygiene_case
+# CA-476 remediation end
 
 # =================================================================================
 # CA-007 remediation (code-audit round 2): porcelain rename/copy containment parsing
@@ -5855,7 +6281,7 @@ An example of the Append Schema, showing the exact heading shape a real entry us
 documentation, not a real entry, so its title must not count as an existing duplicate:
 
 ```markdown
-### Fenced Example Duplicate Heading
+### CA-056 Fenced Example Duplicate Heading
 ```
 
 ## Pre-Flight Checklist
@@ -5867,7 +6293,9 @@ EOF
 cat > "${ca056_scratch}/audit-report.md" <<'EOF'
 # Mock Audit Report
 
-### Fenced Example Duplicate Heading
+## Detailed Findings
+
+### CA-056 Fenced Example Duplicate Heading
 Novel finding whose title collides only with a FENCED example in the pattern doc, not a real
 entry -- the fence-aware pre-flight check must still append it once.
 EOF
@@ -7338,9 +7766,7 @@ g39_source_case() {
   {
     echo "# Mock SRD Audit"
     echo
-    echo "### G39 sourced-invocation novel finding"
-    echo "Proves cmd_update_patterns resolves patterns_dir via SCRIPT_DIR even when this file is"
-    echo "sourced from a wrapper whose own positional \$0 is not edm-state's own path."
+    echo "[Specification Quality] [P2] Section 1.1 | G39 sourced-invocation novel finding | Proves cmd_update_patterns resolves patterns_dir via SCRIPT_DIR even when this file is sourced from a wrapper whose own positional \$0 is not edm-state's own path."
   } > "${scratch_srd_root}/ZG39/audit-srd.md"
   echo '{}' > "${scratch_srd_root}/ZG39/.edm-state.json"
 
@@ -8257,6 +8683,283 @@ ca472_nohang_case() {
 }
 LINT_ARTIFACTS="${PLUGIN_DIR}/bin/edm-lint-artifacts"
 with_scratch_repo ca472_nohang_case
+
+# =================================================================================
+# CA-473 (P1, L1+L3): the SubagentStop hook's per-implementer QC shard filename and
+# /edm:implement's post-wave threshold shard filename must occupy DISJOINT namespaces.
+# CA-440 moved the hook off the shared qc/qc-summary.md onto qc/qc-shard-{NN}.md keyed by
+# LOWEST TICKET NUMBER -- but the pre-existing threshold shards already owned that exact
+# filename keyed by SHARD ORDINAL. Both are two-digit zero-padded, both are whole-file
+# writes by concurrently-running agents into one directory, so threshold shard 1
+# deterministically clobbered the implementer whose range starts at T01 (shard 2 vs T02,
+# and so on). PASS and FAIL verdicts live ONLY in these markdown files (only PARTIAL is
+# persisted separately, via the locked record-partial-verdict), so a clobbered shard is a
+# silently lost FAIL. Assert the two tokens are NOT equal, reading each from the file that
+# actually declares it so a one-sided rename is caught rather than hard-coded away.
+# =================================================================================
+echo
+echo "=== CA-473: the hook's QC shard token and the implement skill's QC shard token are not equal ==="
+ca473_hooks_json="$(cat "${PLUGIN_DIR}/hooks/hooks.json" 2>/dev/null)"
+ca473_skill_md="${PLUGIN_DIR}/skills/implement/SKILL.md"
+
+# ca473_tokens <text> -- prints every distinct `qc-shard-<word>-` prefix token in <text>,
+# one per line, deduped and sorted.
+ca473_tokens() {
+  printf '%s\n' "$1" | grep -o 'qc-shard-[a-z][a-z]*-' | sort -u
+}
+
+# Hook side: the one "Write the QC report to `<initiative-dir>/qc/..." instruction.
+ca473_hook_tok="$(printf '%s\n' "$ca473_hooks_json" \
+  | sed -n 's|.*Write the QC report to `<initiative-dir>/qc/\(qc-shard-[a-z][a-z]*-\).*|\1|p')"
+# Skill side: the pseudo-code `-> writes qc/qc-shard-...` spawn lines.
+ca473_skill_lines="$(grep 'writes qc/qc-shard' "$ca473_skill_md" 2>/dev/null)"
+ca473_skill_tok="$(ca473_tokens "$ca473_skill_lines")"
+
+[[ -n "$ca473_hook_tok" ]] \
+  && pass "CA-473 -- extracted the SubagentStop hook's shard token ('${ca473_hook_tok}')" \
+  || fail "CA-473 -- could not extract a shard token from hooks.json's SubagentStop prompt"
+[[ -n "$ca473_skill_tok" ]] \
+  && pass "CA-473 -- extracted the implement skill's pseudo-code shard token ('${ca473_skill_tok}')" \
+  || fail "CA-473 -- could not extract a shard token from skills/implement/SKILL.md's pseudo-code"
+ca473_skill_tok_n="$(printf '%s\n' "$ca473_skill_tok" | grep -c 'qc-shard-')"
+[[ "$ca473_skill_tok_n" -eq 1 ]] \
+  && pass "CA-473 -- both pseudo-code branches agree on a single shard token" \
+  || fail "CA-473 -- the pseudo-code branches use ${ca473_skill_tok_n} different shard tokens: ${ca473_skill_tok}"
+
+[[ "$ca473_hook_tok" != "$ca473_skill_tok" ]] \
+  && pass "CA-473 -- hook token ('${ca473_hook_tok}') and skill token ('${ca473_skill_tok}') are disjoint namespaces" \
+  || fail "CA-473 -- hook and skill both write '${ca473_hook_tok}{NN}.md'; concurrent auditors collide and FAIL verdicts are lost"
+
+# Positive control: force the skill's pseudo-code token to equal the hook's and confirm the
+# inequality above would go red, so a green result above is evidence and not a vacuous pass.
+ca473_control_tok="$(ca473_tokens "$(printf '%s\n' "$ca473_skill_lines" \
+  | sed "s|qc-shard-[a-z][a-z]*-|${ca473_hook_tok}|g")")"
+[[ "$ca473_hook_tok" == "$ca473_control_tok" ]] \
+  && pass "CA-473 -- positive control: a skill pseudo-code rewritten to '${ca473_hook_tok}' is detected as equal (assertion turns red)" \
+  || fail "CA-473 -- positive control broken: the comparison would not catch a collided token"
+
+# The merge step must sweep BOTH namespaces, or the fix trades a clobber for a dropped shard.
+ca473_skill_all="$(cat "$ca473_skill_md" 2>/dev/null)"
+check "CA-473 -- the merge step globs the per-implementer namespace" \
+  "qc-shard-impl-*.md" "$ca473_skill_all"
+check "CA-473 -- the merge step globs the threshold-shard namespace" \
+  "qc-shard-pass-*.md" "$ca473_skill_all"
+check_absent "CA-473 -- no bare qc-shard-*.md merge glob remains in the pseudo-code" \
+  "merge all qc-shard-*.md" "$ca473_skill_all"
+check "CA-473 -- CLAUDE.md's SubagentStop row names the per-implementer prefix" \
+  "qc/qc-shard-impl-{NN}.md" "$(cat "${PLUGIN_DIR}/CLAUDE.md" 2>/dev/null)"
+check "CA-473 -- edm-qc-auditor.md names the threshold-shard prefix" \
+  "qc/qc-shard-pass-{NN}.md" "$(cat "${PLUGIN_DIR}/agents/edm-qc-auditor.md" 2>/dev/null)"
+
+# =================================================================================
+# CA-416: the `spec_swept` obligation is enforced, not just documented. Half of the
+# prescribed fix shipped as prose in agents/edm-audit-synthesizer.md (the entry template
+# plus the field rules); the enforcement half did not, so for five consecutive rounds a
+# code fix could land, its citing prose could go stale, and the wave could still be
+# declared done. These cases pin the mechanism: a `fixed` entry carrying the EXPLICIT
+# string "no" blocks; "yes", "n/a", and an ABSENT field (the grandfathering case -- most
+# historical ledger entries predate the field, C-4) all pass; an `open` entry is out of
+# scope because there is nothing to sweep until it is fixed.
+#
+# Every fixture below is synthetic and lives under this suite's own $TMP -- the real
+# repository ledger is never read, written, or depended on by these assertions.
+# =================================================================================
+echo
+echo "=== CA-416: spec_swept enforcement (audit-converged, approve-gate, validate) ==="
+
+CA416_ROOT="$TMP/ca416-srd"
+mkdir -p "$CA416_ROOT"
+
+# ca416_fixture <prefix> -- create a scratch initiative under $CA416_ROOT whose
+# findings-ledger.jsonl is read from stdin, then record one full code-audit round so the
+# round-type gate in cmd_audit_converged is satisfied and the sweep check is actually reached.
+ca416_fixture() {
+  local prefix="$1"
+  EDM_SRD_ROOT="$CA416_ROOT" "$EDM_STATE" init "$prefix" >/dev/null 2>&1
+  mkdir -p "$CA416_ROOT/$prefix/code-audit"
+  cat > "$CA416_ROOT/$prefix/code-audit/findings-ledger.jsonl"
+  EDM_SRD_ROOT="$CA416_ROOT" "$EDM_STATE" audit-round-start "$prefix" code >/dev/null 2>&1
+  EDM_SRD_ROOT="$CA416_ROOT" "$EDM_STATE" audit-round-complete "$prefix" code >/dev/null 2>&1
+}
+
+# ca416_converged <prefix> -- run audit-converged against a fixture, printing "<exit>\t<stdout>"
+# on one line so a caller can assert on both without a second invocation.
+ca416_converged() {
+  local prefix="$1" out="" ec=0
+  out="$(EDM_SRD_ROOT="$CA416_ROOT" "$EDM_STATE" audit-converged "$prefix" 2>/dev/null)" || ec=$?
+  printf '%s\t%s\n' "$ec" "$(printf '%s' "$out" | tr '\n' ' ')"
+}
+
+echo
+echo "CA-416 -- a fixed entry carrying spec_swept=\"no\" refuses convergence and names the ID"
+ca416_fixture CA416NO <<'EOF'
+{"schema":1,"id":"CA-N01","sev":"P1","status":"fixed","confidence":"high","lenses":["L1"],"file":"src/a.py","line":1,"title":"fixed but unswept","raised_round":1,"resolved_round":2,"spec_swept":"no"}
+EOF
+ca416_no_res="$(ca416_converged CA416NO)"
+check "CA-416 -- fixed+no exits 1 (refusal)" "1	" "$ca416_no_res"
+check "CA-416 -- fixed+no refusal carries the spec-sweep prefix" 'not converged (spec sweep):' "$ca416_no_res"
+check "CA-416 -- fixed+no refusal names the blocking ID" "CA-N01 spec_swept=no" "$ca416_no_res"
+check_absent "CA-416 -- fixed+no does not report the ledger as converged" "converged: 1 finding" "$ca416_no_res"
+
+echo
+echo "CA-416 -- spec_swept=\"yes\" and spec_swept=\"n/a\" both pass"
+ca416_fixture CA416YES <<'EOF'
+{"schema":1,"id":"CA-N10","sev":"P1","status":"fixed","confidence":"high","lenses":["L1"],"file":"src/a.py","line":1,"title":"fixed and swept","raised_round":1,"resolved_round":2,"spec_swept":"yes"}
+EOF
+ca416_yes_res="$(ca416_converged CA416YES)"
+check "CA-416 -- fixed+yes exits 0" "0	" "$ca416_yes_res"
+check "CA-416 -- fixed+yes reports converged" "converged: 1 finding(s) considered for CA416YES" "$ca416_yes_res"
+
+ca416_fixture CA416NA <<'EOF'
+{"schema":1,"id":"CA-N20","sev":"P1","status":"fixed","confidence":"high","lenses":["L1"],"file":"src/a.py","line":1,"title":"no documented behavior","raised_round":1,"resolved_round":2,"spec_swept":"n/a"}
+EOF
+ca416_na_res="$(ca416_converged CA416NA)"
+check "CA-416 -- fixed+n/a exits 0" "0	" "$ca416_na_res"
+check "CA-416 -- fixed+n/a reports converged" "converged: 1 finding(s) considered for CA416NA" "$ca416_na_res"
+
+echo
+echo "CA-416 (C-4 grandfathering) -- a fixed entry with NO spec_swept field never blocks"
+ca416_fixture CA416ABS <<'EOF'
+{"schema":1,"id":"CA-N30","sev":"P1","status":"fixed","confidence":"high","lenses":["L1"],"file":"src/a.py","line":1,"title":"predates the field","raised_round":1,"resolved_round":2}
+{"schema":1,"id":"CA-N31","sev":"P0","status":"fixed","confidence":"high","lenses":["L4"],"file":"src/b.py","line":9,"title":"also predates the field","raised_round":1,"resolved_round":2}
+EOF
+ca416_abs_res="$(ca416_converged CA416ABS)"
+check "CA-416 -- fixed+absent exits 0 (absence is never an error, C-4)" "0	" "$ca416_abs_res"
+check "CA-416 -- fixed+absent reports converged" "converged: 2 finding(s) considered for CA416ABS" "$ca416_abs_res"
+check_absent "CA-416 -- fixed+absent is not reported as sweep debt" "spec sweep" "$ca416_abs_res"
+
+echo
+echo "CA-416 -- an open entry carrying spec_swept=\"no\" does NOT block (nothing to sweep yet)"
+ca416_fixture CA416OPEN <<'EOF'
+{"schema":1,"id":"CA-N40","sev":"NOTED","status":"open","confidence":"low","lenses":["L7"],"file":"src/c.py","line":3,"title":"still open, non-blocking severity","raised_round":1,"resolved_round":null,"spec_swept":"no"}
+{"schema":1,"id":"CA-N41","sev":"P1","status":"fixed","confidence":"high","lenses":["L1"],"file":"src/a.py","line":1,"title":"fixed and swept","raised_round":1,"resolved_round":2,"spec_swept":"yes"}
+EOF
+ca416_open_res="$(ca416_converged CA416OPEN)"
+check "CA-416 -- open+no exits 0" "0	" "$ca416_open_res"
+check_absent "CA-416 -- open+no is not reported as sweep debt" "spec sweep" "$ca416_open_res"
+
+echo
+echo "CA-416 -- the diagnostic names EVERY blocking ID, not just a count"
+ca416_fixture CA416MANY <<'EOF'
+{"schema":1,"id":"CA-N60","sev":"P1","status":"fixed","confidence":"high","lenses":["L1"],"file":"src/a.py","line":1,"title":"unswept one","raised_round":1,"resolved_round":2,"spec_swept":"no"}
+{"schema":1,"id":"CA-N61","sev":"P2","status":"fixed","confidence":"high","lenses":["L6"],"file":"src/b.py","line":2,"title":"unswept two","raised_round":1,"resolved_round":2,"spec_swept":"no"}
+{"schema":1,"id":"CA-N62","sev":"P1","status":"fixed","confidence":"high","lenses":["L1"],"file":"src/c.py","line":3,"title":"swept","raised_round":1,"resolved_round":2,"spec_swept":"yes"}
+EOF
+ca416_many_res="$(ca416_converged CA416MANY)"
+check "CA-416 -- multi-ID refusal counts exactly the two unswept closures" \
+  '2 fixed finding(s) for CA416MANY still carry spec_swept="no"' "$ca416_many_res"
+check "CA-416 -- multi-ID refusal names CA-N60" "CA-N60 spec_swept=no" "$ca416_many_res"
+check "CA-416 -- multi-ID refusal names CA-N61" "CA-N61 spec_swept=no" "$ca416_many_res"
+check_absent "CA-416 -- the swept entry is not named as debt" "CA-N62 spec_swept=no" "$ca416_many_res"
+
+echo
+echo "CA-416 -- approve-gate code-audit refuses on sweep debt and leaves the gate unapproved"
+ca416_ag_out=""
+ca416_ag_ec=0
+ca416_ag_out="$(EDM_SRD_ROOT="$CA416_ROOT" "$EDM_STATE" approve-gate CA416NO code-audit 2>&1)" || ca416_ag_ec=$?
+[[ $ca416_ag_ec -ne 0 ]] \
+  && pass "CA-416 -- approve-gate code-audit exits non-zero on sweep debt" \
+  || fail "CA-416 -- approve-gate code-audit exited 0 with a fixed+no entry in the ledger"
+check "CA-416 -- approve-gate refusal names the outstanding sweep" 'spec_swept="no"' "$ca416_ag_out"
+check "CA-416 -- approve-gate refusal names the blocking ID" "CA-N01" "$ca416_ag_out"
+ca416_ag_converged="$(jq -r '.code_audit_converged // "unset"' "$CA416_ROOT/CA416NO/.edm-state.json")"
+[[ "$ca416_ag_converged" != "true" ]] \
+  && pass "CA-416 -- refused approve-gate left code_audit_converged unset (state untouched)" \
+  || fail "CA-416 -- refused approve-gate still set code_audit_converged=true"
+
+echo
+echo "CA-416 -- --accept-p2-debt carries open P2 SEVERITY forward, never an undone sweep"
+ca416_fixture CA416DEBT <<'EOF'
+{"schema":1,"id":"CA-N70","sev":"P2","status":"open","confidence":"high","lenses":["L1"],"file":"src/a.py","line":1,"title":"open p2 debt","raised_round":1,"resolved_round":null}
+{"schema":1,"id":"CA-N71","sev":"P1","status":"fixed","confidence":"high","lenses":["L1"],"file":"src/b.py","line":2,"title":"fixed but unswept","raised_round":1,"resolved_round":2,"spec_swept":"no"}
+EOF
+ca416_debt_out=""
+ca416_debt_ec=0
+ca416_debt_out="$(EDM_SRD_ROOT="$CA416_ROOT" "$EDM_STATE" approve-gate CA416DEBT code-audit --accept-p2-debt 2>&1)" || ca416_debt_ec=$?
+[[ $ca416_debt_ec -ne 0 ]] \
+  && pass "CA-416 -- --accept-p2-debt still refuses while a fixed entry owes its sweep" \
+  || fail "CA-416 -- --accept-p2-debt approved the gate with CA-N71 still at spec_swept=no"
+check "CA-416 -- the --accept-p2-debt refusal names the unswept ID" "CA-N71" "$ca416_debt_out"
+
+echo
+echo "CA-416 -- validate surfaces SPEC_SWEEP_PENDING as an informational anomaly (never blocking)"
+ca416_val_out=""
+ca416_val_ec=0
+ca416_val_out="$(EDM_SRD_ROOT="$CA416_ROOT" "$EDM_STATE" validate CA416NO 2>&1)" || ca416_val_ec=$?
+check "CA-416 -- validate names the SPEC_SWEEP_PENDING anomaly" "SPEC_SWEEP_PENDING" "$ca416_val_out"
+check "CA-416 -- the anomaly line is classed info, not blocking" "info  SPEC_SWEEP_PENDING" "$ca416_val_out"
+check "CA-416 -- the anomaly names the outstanding ID" "CA-N01" "$ca416_val_out"
+[[ $ca416_val_ec -eq 0 ]] \
+  && pass "CA-416 -- SPEC_SWEEP_PENDING does not flip validate's exit code" \
+  || fail "CA-416 -- validate exited ${ca416_val_ec}; the anomaly must be informational only"
+check_absent "CA-416 -- validate emits no SPEC_SWEEP_PENDING line for a grandfathered ledger" \
+  "SPEC_SWEEP_PENDING" "$(EDM_SRD_ROOT="$CA416_ROOT" "$EDM_STATE" validate CA416ABS 2>&1 || true)"
+
+echo
+echo "CA-416 -- sweep debt is also reported alongside an open-findings refusal, without displacing it"
+ca416_fixture CA416BOTH <<'EOF'
+{"schema":1,"id":"CA-N80","sev":"P1","status":"open","confidence":"high","lenses":["L1"],"file":"src/a.py","line":1,"title":"still open","raised_round":1,"resolved_round":null}
+{"schema":1,"id":"CA-N81","sev":"P1","status":"fixed","confidence":"high","lenses":["L1"],"file":"src/b.py","line":2,"title":"fixed but unswept","raised_round":1,"resolved_round":2,"spec_swept":"no"}
+EOF
+ca416_both_res="$(ca416_converged CA416BOTH)"
+check "CA-416 -- the open-findings refusal keeps its exact 'not converged: ' prefix" \
+  "1	not converged: 1 blocking finding(s) for CA416BOTH" "$ca416_both_res"
+check "CA-416 -- the open-findings refusal still lists the open finding first" "CA-N80 P1 still open" "$ca416_both_res"
+check "CA-416 -- sweep debt is appended to the open-findings refusal" \
+  'plus 1 fixed finding(s) still carrying spec_swept="no"' "$ca416_both_res"
+check "CA-416 -- the appended sweep-debt block names the unswept ID" "CA-N81 spec_swept=no" "$ca416_both_res"
+
+echo
+echo "CA-416 -- positive control: with the guard neutralized, the fixed+no fixture converges"
+# Proves the green assertions above are evidence of a live mechanism rather than a vacuous
+# pass: a copy of bin/edm-state whose SPEC_SWEEP_DEBT_FILTER can never match must let the
+# EXACT fixture that was refused above through. Only the shared predicate is rewritten -- both
+# enforcement seams and the anomaly read it, so one edit disarms the whole mechanism.
+ca416_control_bin="$TMP/ca416-bin/edm-state"
+mkdir -p "$TMP/ca416-bin"
+# The control copy resolves its own sibling libraries through BASH_SOURCE, so it needs a bin
+# directory of its own rather than a bare file under $TMP.
+cp "${PLUGIN_DIR}/bin/_edm-cli-lib.sh" "${PLUGIN_DIR}/bin/_edm-lint-lib.sh" "$TMP/ca416-bin/"
+sed 's|^SPEC_SWEEP_DEBT_FILTER=.*|SPEC_SWEEP_DEBT_FILTER='"'"'false'"'"'|' "$EDM_STATE" > "$ca416_control_bin"
+chmod +x "$ca416_control_bin"
+ca416_control_patched="$(grep -c "^SPEC_SWEEP_DEBT_FILTER='false'\$" "$ca416_control_bin" || true)"
+[[ "${ca416_control_patched:-0}" -eq 1 ]] \
+  && pass "CA-416 -- positive control: the shared predicate was neutralized in the control copy" \
+  || fail "CA-416 -- positive control broken: SPEC_SWEEP_DEBT_FILTER was not rewritten (found ${ca416_control_patched:-0} match(es)); the control proves nothing"
+ca416_control_out=""
+ca416_control_ec=0
+ca416_control_out="$(EDM_SRD_ROOT="$CA416_ROOT" bash "$ca416_control_bin" audit-converged CA416NO 2>/dev/null)" || ca416_control_ec=$?
+[[ $ca416_control_ec -eq 0 ]] \
+  && pass "CA-416 -- positive control: the neutralized copy converges on the same fixture (so the refusal above is the guard's doing)" \
+  || fail "CA-416 -- positive control broken: the neutralized copy still exited ${ca416_control_ec} on CA416NO"
+check "CA-416 -- positive control: the neutralized copy reports converged" \
+  "converged: 1 finding(s) considered for CA416NO" "$ca416_control_out"
+
+# ---------------------------------------------------------------------------
+# CA-431 -- the edm plugin version is asserted in three independent files and
+# nothing pinned them together, so the repo-root CLAUDE.md silently drifted to a
+# fourth stale site through the 3.2.0 release. This tripwire fails on divergence
+# rather than waiting for the next audit round to notice it by hand.
+# ---------------------------------------------------------------------------
+ca431_repo_root="$_HARNESS_REPO_ROOT"
+ca431_plugin_ver="$(jq -r '.version' "$ca431_repo_root/plugins/edm/.claude-plugin/plugin.json" 2>/dev/null || echo MISSING)"
+ca431_market_ver="$(jq -r '.plugins[] | select(.name=="edm") | .version' "$ca431_repo_root/.claude-plugin/marketplace.json" 2>/dev/null || echo MISSING)"
+# No `head` in this pipeline: the suite runs under `set -o pipefail`, and head closing the pipe
+# early sends grep SIGPIPE, which would abort the suite rather than yield an empty version.
+ca431_claude_ver="$(sed -n 's/.*edm\*\* (v\([0-9][0-9.]*\)).*/\1/p' "$ca431_repo_root/CLAUDE.md" 2>/dev/null | sed -n '1p')"
+[[ -n "$ca431_claude_ver" ]] || ca431_claude_ver=MISSING
+
+[[ "$ca431_plugin_ver" != MISSING ]] \
+  && pass "CA-431 -- plugin.json declares an edm version (${ca431_plugin_ver})" \
+  || fail "CA-431 -- could not read .version from plugins/edm/.claude-plugin/plugin.json"
+
+[[ "$ca431_market_ver" == "$ca431_plugin_ver" ]] \
+  && pass "CA-431 -- marketplace.json edm version matches plugin.json (${ca431_market_ver})" \
+  || fail "CA-431 -- version drift: marketplace.json says '${ca431_market_ver}', plugin.json says '${ca431_plugin_ver}'"
+
+[[ "$ca431_claude_ver" == "$ca431_plugin_ver" ]] \
+  && pass "CA-431 -- repo-root CLAUDE.md edm version matches plugin.json (${ca431_claude_ver})" \
+  || fail "CA-431 -- version drift: repo-root CLAUDE.md says '${ca431_claude_ver}', plugin.json says '${ca431_plugin_ver}'"
 
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

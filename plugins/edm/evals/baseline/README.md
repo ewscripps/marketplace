@@ -47,23 +47,32 @@ Then, for each of the three run directories `run-eval.sh` printed:
 bash plugins/edm/evals/score-artifacts.sh /path/outside/plugins/edm/eval-baseline-runs/<run-id>
 ```
 
-Confirm all three runs have `complete: true` and `dimensions_scored: 4` (dimension 5 is
-`null` for every one of them -- see "Why four dimensions" below) before using any of them as
-the committed baseline. Copy the middle-scoring run's `scores.json` (by `total`) to
+Confirm all three runs have `complete: true` and `dimensions_scored: 5` (dimension 5 is
+`null` for every one of them and is the only skipped dimension -- see "Why five scored
+dimensions, not six" below) before using any of them as the committed baseline. Copy the
+middle-scoring run's `scores.json` (by `total`) to
 `plugins/edm/evals/baseline/scores.json` and commit it alongside this README once the
 `max - min` figures below are filled in from the actual three runs.
 
-## Why four dimensions, not five
+## Why five scored dimensions, not six
+
+`score-artifacts.sh` (`scorer_version` 1.1.0) defines **six** dimensions. A wave-A capture
+scores five of them and skips exactly one, so `dimensions_scored: 5` is the correct, expected
+number on every run described above -- not a sign that the capture is broken.
 
 The wave-A eval driver (`run-eval.sh`, `EDMV3-T22`) runs `plan -> srd -> audit-srd` and never
 a code-audit round. Dimension 5 (lens JSONL-versus-prose agreement) has no input without a
 code-audit round, so it is emitted with `score: null` and named in `dimensions_skipped` with
-its reason on every wave-A run. `scores.json` for this baseline therefore records
-`dimensions_scored: 4` and a `dimensions_skipped` array of length 1 (dimension 5 only). This
-is a **four-dimension baseline**, deliberately: the first run that includes a code-audit
-round establishes its own five-dimension baseline rather than being compared against this
+its reason on every wave-A run. Dimension 6 (known-gap-recall, added by CA-462) **does** score
+on a wave-A run: it greps the produced `srd.md` for the tiny-svc fixture's ground-truth
+`srd_match` patterns (`fixtures/tiny-svc/expected.json`), and its only gate is `run.json`
+attributing the run to the `tiny-svc` fixture -- which `run-eval.sh` writes on both its
+complete and its partial exit path. `scores.json` for this baseline therefore records
+`dimensions_scored: 5` and a `dimensions_skipped` array of length 1 (dimension 5 only). This
+is a **five-dimension baseline**, deliberately: the first run that includes a code-audit
+round establishes its own six-dimension baseline rather than being compared against this
 one (`score-artifacts.sh --compare` refuses any comparison where `dimensions_scored` differs
-between the two files being compared, precisely so a 4-dimension and a 5-dimension run are
+between the two files being compared, precisely so a 5-dimension and a 6-dimension run are
 never silently treated as comparable).
 
 ## Variance: `max - min` across the three runs
@@ -82,6 +91,7 @@ yet known**:
 | Dimension 3 (mermaid-parse-success): `max - min` | PENDING |
 | Dimension 4 (coverage-map-bidirectionality): `max - min` | PENDING |
 | Dimension 5 (lens-jsonl-prose-agreement): `max - min` | N/A -- null on every wave-A run |
+| Dimension 6 (known-gap-recall): `max - min` | PENDING |
 
 Once known, this table (and the machine-readable field noted below) become the tolerance
 band the CI comparison job (`EDMV3-T39`) uses to decide whether a later run's total is a
@@ -99,7 +109,8 @@ e.g.:
     "requirement-id-coverage": 0,
     "ac-testability": 0,
     "mermaid-parse-success": 0,
-    "coverage-map-bidirectionality": 0
+    "coverage-map-bidirectionality": 0,
+    "known-gap-recall": 0
   }
 }
 ```
@@ -113,10 +124,11 @@ a wave7-smoke.sh assertion now pins this example's field name to the one the com
 
 ## What this number is, and what it is not
 
-This is a **tripwire**, not a quality score. Five mechanical dimensions are proxies for
-"the methodology's prompts still produce a competent SRD against a known subject" -- they
-are not a substitute for a human reading the run's actual `srd.md`. A prompt refactor can
-score identically on all four (or five) dimensions and still produce a worse SRD in ways
+This is a **tripwire**, not a quality score. Six mechanical dimensions -- five of them scored
+on a wave-A run -- are proxies for "the methodology's prompts still produce a competent SRD
+against a known subject", and they are not a substitute for a human reading the run's actual
+`srd.md`. A prompt refactor can score identically on all five (or six) dimensions and still
+produce a worse SRD in ways
 none of these dimensions happen to measure (weaker rationale in a Description field, a
 Target Components list that quietly drops a file, prose that technically satisfies every
 regex while saying less). Treat a red tripwire as "investigate before merging"; treat a

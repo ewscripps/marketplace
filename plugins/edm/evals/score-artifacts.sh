@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # score-artifacts.sh -- deterministic mechanical scorer for EDM eval runs (EDMV3-T23,
 # SRD EDMV3-27, EDMV3-28, EDMV3-29). Turns a run directory (as produced by run-eval.sh,
-# EDMV3-T22) into a scores.json with exactly five dimensions. No model is in the loop:
+# EDMV3-T22) into a scores.json with exactly six dimensions (five as originally specified plus
+# known-gap-recall, added by CA-462 with the 1.0.0 -> 1.1.0 scorer_version bump; --describe below
+# is the authority on the set). No model is in the loop:
 # every dimension is computed by grep/awk/jq over the run's own artifact files, so the
 # same run directory scores the same way every time (AC6).
 #
@@ -64,7 +66,7 @@
 # emitted with score: null, named in dimensions_skipped with a one-line reason, and
 # excluded from both the sum and the denominator. total is the unweighted arithmetic mean
 # of the dimensions that produced a number, divided by dimensions_scored (read from the
-# data, never assumed to be 5), rounded to one decimal place:
+# data, never assumed to be 6), rounded to one decimal place:
 #
 #   jq -e '. as $r | ([$r.dimensions[].score | select(. != null)] | add) as $sum
 #          | $r.dimensions_scored as $n | (($sum / $n * 10 | round) / 10) == $r.total' \

@@ -79,10 +79,15 @@ but miss the bare-prefix rule above entirely:
 None of these are hypothetical: an agent working under time pressure, or from a different
 working directory, will reliably produce at least one of them. Treat the `ask` rule as a
 best-effort net, not a guarantee -- `edm-state validate` and `edm-state session-start`
-report a `PERM_RULES_MISSING` anomaly (informational, never fails validation) when neither
-scanned settings file has both patterns configured, and every gate approval records an
+report a `PERM_RULES_MISSING` anomaly (informational, never fails validation) when none of the
+three scanned settings files (`<project-root>/.claude/settings.local.json`,
+`<project-root>/.claude/settings.json`, `${HOME}/.claude/settings.json`) has both patterns
+configured, and every gate approval records an
 `enforcement` tag (`permission-ask` or `prose-only`) in `.edm-state.json` so the actual
-coverage is auditable after the fact instead of assumed.
+coverage is auditable after the fact instead of assumed. `<project-root>` there is resolved
+(CA-448) as `CLAUDE_PROJECT_DIR` when the host exports it and it names a directory, else the
+git toplevel, else the caller's cwd -- so running `edm-state` from a subdirectory no longer
+misses a correctly-configured project settings file the way a cwd-relative probe did.
 
 **Observed behaviour (manual QA, wave A)** -- the observed behaviour for each of the three
 invocation shapes below is recorded here. Recorded 2026-07-26 against Claude Code

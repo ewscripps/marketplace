@@ -1108,11 +1108,17 @@ COVERAGE_EPIC_ROW_JQ_DEF='def coverage_epic_row_prefix($epic):
 # CA-418: the HEADERS that label those rows, extracted here beside their row defs -- previously
 # four hand-maintained copies in two incompatible mechanisms (get-coverage's hand-counted jq
 # string literals vs metrics-report's printf width specs) that had to track the row defs' clamp
-# constants from a third place. Widths derive from the row clamps: layer table = 14-wide layer +
-# pct + measured_at; epic table = 15-wide epic + 14-wide layer + pct, with get-coverage's epic
-# table alone carrying the extra trailing Measured At column its rows append (the one sanctioned
-# divergence, matching the row-def split above). Each constant is BOTH header lines, newline-
-# joined (jq -r and printf '%s\n' both render that as two lines).
+# constants from a third place. The NAME columns do derive from the row clamps: layer table =
+# 14-wide layer, epic table = 15-wide epic + 14-wide layer. The Coverage column does NOT -- it
+# is still hand-counted here, and is currently off by one against both row defs (CA-418, open):
+# COVERAGE_LAYER_ROW_JQ_DEF emits pct + "%" + 9/8/7 spaces = 11 columns against this file's
+# `%-10s`, and COVERAGE_EPIC_ROW_JQ_DEF's prefix emits pct + "%" + 8/7/6 spaces = 10 columns
+# against `%-9s`. Both paddings also assume an INTEGER pct, so a fractional value (82.4) widens
+# the row a further two columns. COVERAGE_EPIC_HEADER is exempt only because Coverage is its last
+# column, where a width mismatch cannot show. get-coverage's epic table alone carries the extra
+# trailing Measured At column its rows append (the one sanctioned divergence, matching the
+# row-def split above). Each constant is BOTH header lines, newline-joined (jq -r and printf
+# '%s\n' both render that as two lines).
 COVERAGE_LAYER_HEADER="$(printf '  %-14s  %-10s  %s\n  %-14s  %-10s  %s' "Layer" "Coverage" "Measured At" "-----" "--------" "-----------")"
 COVERAGE_EPIC_HEADER="$(printf '  %-15s  %-14s  %s\n  %-15s  %-14s  %s' "Epic" "Layer" "Coverage" "----" "-----" "--------")"
 COVERAGE_EPIC_HEADER_MEASURED="$(printf '  %-15s  %-14s  %-9s  %s\n  %-15s  %-14s  %-9s  %s' "Epic" "Layer" "Coverage" "Measured At" "----" "-----" "--------" "-----------")"
@@ -1578,6 +1584,32 @@ _audit_ledger_breakdown() {
   ' "$jsonl_path"
 }
 
+# ---- Spec-sweep debt shared definition (CA-416) -----------------------------
+# SPEC_SWEEP_DEBT_FILTER -- the single jq boolean predicate for "this closure still owes its
+# same-commit documentation sweep": a finding already marked `fixed` whose `spec_swept` field
+# is the EXPLICIT string "no". Every other value passes:
+#   - "yes"  -- the remediating commit swept every AC/comment/doc passage naming the behavior
+#   - "n/a"  -- the fix names no documented behavior, so there is nothing to sweep
+#   - absent -- C-4 backward compatibility: the field postdates most of the ledger, so an entry
+#               recorded before it existed can never block (read with a jq `//` default; absence
+#               is never an error, matching every other state/ledger reader in this file).
+# An `open` finding is deliberately out of scope: there is nothing to sweep until it is fixed.
+SPEC_SWEEP_DEBT_FILTER='.status == "fixed" and ((.spec_swept // "absent") == "no")'
+
+# _audit_spec_sweep_debt <jsonl-path> -- prints the CA-NNN id of every entry matching
+# SPEC_SWEEP_DEBT_FILTER, one per line, in ledger order. Prints nothing when the ledger is
+# clean. Exit status is jq's own, so a caller distinguishes invalid JSONL from a clean ledger
+# exactly the way _audit_ledger_breakdown's callers already do.
+#
+# Extracted as a helper (not inlined) because it has two enforcement consumers -- the
+# cmd_audit_converged convergence query and cmd_approve_gate's code-audit branch -- plus the
+# informational SPEC_SWEEP_PENDING anomaly in state_anomalies. Three copies of the predicate is
+# the CA-343 drift class this file already refuses everywhere else.
+_audit_spec_sweep_debt() {
+  local jsonl_path="$1"
+  jq -r -s 'map(select('"$SPEC_SWEEP_DEBT_FILTER"')) | .[] | (.id // "(no id)")' "$jsonl_path"
+}
+
 # ---- State anomaly detection (T29, class split EDMV3-T05 / EDMV3-118) ------
 # state_anomalies <PREFIX>
 # Reads state and emits zero or more anomaly lines. Each line has the canonical
@@ -1694,7 +1726,7 @@ state_anomalies() {
   # settings itself (README.md documents the required block), so their absence is a
   # warning, never a validate-failing condition -- it never flips cmd_validate's exit code.
   if [[ "$(check_permission_rules)" != "permission-ask" ]]; then
-    echo "info  PERM_RULES_MISSING  permissions.ask  required ask rules Bash(edm-state approve-gate*) and Bash(edm-state archive*) not found in .claude/settings.local.json, .claude/settings.json, or ~/.claude/settings.json -- add {\"permissions\": {\"ask\": [\"Bash(edm-state approve-gate*)\", \"Bash(edm-state archive*)\"]}} to enforce human review at gate-approval and archive time"
+    echo "info  PERM_RULES_MISSING  permissions.ask  required ask rules Bash(edm-state approve-gate*) and Bash(edm-state archive*) not found in <project-root>/.claude/settings.local.json, <project-root>/.claude/settings.json, or ~/.claude/settings.json (CA-448: <project-root> is \$CLAUDE_PROJECT_DIR when it names a directory, else the git toplevel, else the current directory -- NOT the current directory unconditionally) -- add {\"permissions\": {\"ask\": [\"Bash(edm-state approve-gate*)\", \"Bash(edm-state archive*)\"]}} to enforce human review at gate-approval and archive time"
   fi
   # CONVERGED_NO_APPROVAL (blocking -- EDMV3-T17 AC3): code_audit_converged is true but no
   # code_audit_gate_approved_at record exists -- e.g. a hand-edited state file, not one
@@ -1788,6 +1820,26 @@ state_anomalies() {
     [[ -n "$degraded_check" ]] || continue
     echo "info  ACTIVE_EXEMPTION  degraded_checks  ${degraded_check} skipped for ${prefix}: ${degraded_reason}"
   done < <(echo "$state" | jq -r '(.degraded_checks // [])[] | "\(.check)\t\(.reason)"' 2>/dev/null || true)
+  # SPEC_SWEEP_PENDING (info -- CA-416): one or more `fixed` findings in this initiative's
+  # code-audit ledger explicitly carry `spec_swept: "no"`, i.e. the same-commit documentation
+  # sweep that closure owed is still outstanding. Informational here (it never flips
+  # cmd_validate's exit code, mirroring OPEN_AUDIT_ROUND and TORN_TOKEN_LINES above) because the
+  # BLOCKING enforcement lives where it can actually stop work: cmd_audit_converged's
+  # blocking-set-clear arm and cmd_approve_gate's code-audit branch. This line exists so the debt
+  # is visible from `validate` mid-round, before an operator reaches the gate and is refused.
+  # C-4: an ABSENT spec_swept never appears here -- only the explicit "no" does (see
+  # SPEC_SWEEP_DEBT_FILTER); 455 of the ledger's entries predate the field.
+  local sweep_anom_jsonl sweep_anom_ids sweep_anom_id sweep_anom_list=""
+  sweep_anom_jsonl="$(initiative_dir_for "$prefix" 2>/dev/null || true)/code-audit/findings-ledger.jsonl"
+  if [[ -f "$sweep_anom_jsonl" ]] \
+     && sweep_anom_ids="$(_audit_spec_sweep_debt "$sweep_anom_jsonl" 2>/dev/null)" \
+     && [[ -n "$sweep_anom_ids" ]]; then
+    while IFS= read -r sweep_anom_id; do
+      [[ -n "$sweep_anom_id" ]] || continue
+      sweep_anom_list="${sweep_anom_list}${sweep_anom_list:+, }${sweep_anom_id}"
+    done <<< "$sweep_anom_ids"
+    echo "info  SPEC_SWEEP_PENDING  code-audit/findings-ledger.jsonl  fixed finding(s) for ${prefix} still owe their same-commit documentation sweep (spec_swept=\"no\"): ${sweep_anom_list}; edm-state audit-converged and approve-gate code-audit both refuse until each is swept and set to \"yes\" or \"n/a\""
+  fi
   return 0
 }
 
@@ -2245,6 +2297,14 @@ cmd_approve_gate() {
     # bypassed by this flag. That refusal's message is the stable "not converged: " prefix
     # (already relied upon verbatim elsewhere -- see write_handoff_internal's Open Code-Audit
     # Findings section); anything else exiting 1 falls through to the unconditional die below.
+    # CA-426: one arm that DOES qualify is easy to miss -- the zero-recorded-rounds warn above
+    # writes its "[warn] no code-audit round has ever been recorded" line to stderr and then
+    # PROCEEDS to the blocking-set computation, so its refusal is a genuine "not converged: "
+    # on stdout with a real severity breakdown behind it. The override therefore engages on an
+    # initiative that has never recorded a single audit round. That is intentional (the numbers
+    # are read from the ledger either way, so the debt record is accurate), but it means this
+    # flag does NOT imply "a full eleven-lens round was run" -- only "no P0 or P1 is open in the
+    # ledger as it stands".
     local p2_debt_p0=0 p2_debt_p1=0 p2_debt_p2=0 p2_debt_accepted=0 p2_debt_breakdown_read=0
     if [[ $conv_ec -eq 1 && $accept_p2_debt -eq 1 && "$conv_out" == "not converged: "* ]]; then
       local p2_debt_jsonl p2_debt_json
@@ -2276,6 +2336,27 @@ cmd_approve_gate() {
       fi
     else
       [[ $conv_ec -eq 0 ]] || die "code-audit gate refused for ${prefix}: ${conv_out:-no stdout refusal; see the audit-converged diagnostics above}"
+    fi
+
+    # CA-416: the sweep-debt gate, evaluated here as well as inside cmd_audit_converged. Two
+    # seams, one predicate (_audit_spec_sweep_debt), because the --accept-p2-debt override above
+    # can flip conv_ec 1 -> 0 on the blocking-findings arm, and cmd_audit_converged only reaches
+    # its own sweep check once the blocking set is clear -- so without this second evaluation an
+    # operator could accept open-P2 debt and approve the gate while `fixed` entries still owed
+    # their same-commit documentation sweep, which is exactly the bypass shape CA-182 and CA-183
+    # closed for other conditions on this same branch. The override is deliberately not extended
+    # to cover sweep debt: --accept-p2-debt carries open P2 SEVERITY forward as documented debt,
+    # it does not authorize shipping stale prose.
+    local ag_sweep_jsonl ag_sweep_ids ag_sweep_id ag_sweep_list=""
+    ag_sweep_jsonl="$(initiative_dir_for "$prefix")/code-audit/findings-ledger.jsonl"
+    if [[ -f "$ag_sweep_jsonl" ]] \
+       && ag_sweep_ids="$(_audit_spec_sweep_debt "$ag_sweep_jsonl" 2>/dev/null)" \
+       && [[ -n "$ag_sweep_ids" ]]; then
+      while IFS= read -r ag_sweep_id; do
+        [[ -n "$ag_sweep_id" ]] || continue
+        ag_sweep_list="${ag_sweep_list}${ag_sweep_list:+, }${ag_sweep_id}"
+      done <<< "$ag_sweep_ids"
+      die "code-audit gate refused for ${prefix}: fixed finding(s) still carry spec_swept=\"no\" -- the same-commit documentation sweep is outstanding for: ${ag_sweep_list}; sweep every AC, comment and doc passage naming the changed behavior and set spec_swept to \"yes\" (or \"n/a\" when the fix names no documented behavior). --accept-p2-debt does not waive this"
     fi
 
     # Wave-A interim (AC3) shape retained: records the approval with `enforcement` and the
@@ -2467,14 +2548,17 @@ cmd_phase_complete() {
             || die "phase-complete: phase 5 artifact missing or empty: ${pc_dir}/${TICKET_PACK_DIRNAME}/audit.md"
           ;;
         6)
-          # AC3: accept qc/qc-summary.md OR any qc/qc-shard-*.md (sharded QC merge).
+          # AC3: accept qc/qc-summary.md OR any qc/qc-shard-*.md (sharded QC merge). The glob
+          # deliberately stays prefix-agnostic so it matches BOTH shard namespaces (CA-473):
+          # qc-shard-impl-{NN}.md (per-implementer hook shards) and qc-shard-pass-{NN}.md
+          # (post-wave threshold shards).
           if [[ "$(present_or_absent "${pc_dir}/qc/qc-summary.md" nonempty)" == "[absent]" ]]; then
             local pc_shard pc_shard_found=0
             for pc_shard in "${pc_dir}"/qc/qc-shard-*.md; do
               [[ "$(present_or_absent "$pc_shard" nonempty)" == "[present]" ]] && pc_shard_found=1 && break
             done
             [[ $pc_shard_found -eq 1 ]] \
-              || die "phase-complete: phase 6 artifact missing or empty: ${pc_dir}/qc/qc-summary.md (or any ${pc_dir}/qc/qc-shard-*.md)"
+              || die "phase-complete: phase 6 artifact missing or empty: ${pc_dir}/qc/qc-summary.md (or any ${pc_dir}/qc/qc-shard-impl-*.md or ${pc_dir}/qc/qc-shard-pass-*.md)"
           fi
           ;;
       esac
@@ -4457,7 +4541,12 @@ _cmd_audit_round_complete_body() {
     _manifest="${_pass_dir}/lenses-run.txt"
     if [[ -n "$_pass_dir" && -f "$_manifest" ]]; then
       local _lens _lens_file _missing=""
-      while IFS= read -r _lens; do
+      # CA-478: lenses-run.txt is agent-authored via Write (skills/code-audit/SKILL.md), so it may
+      # arrive without a trailing newline (bare `read` drops that last line -- on a full round that
+      # is L11) or with CRLF line endings (every line would fail the ^L[0-9]+$ test and silently
+      # disable the gate). Handle both so a truncated delivery cannot pass as complete.
+      while IFS= read -r _lens || [[ -n "$_lens" ]]; do
+        _lens="${_lens%$'\r'}"
         [[ "$_lens" =~ ^L[0-9]+$ ]] || continue
         _lens_file="${_pass_dir}/lens-${_lens}.jsonl"
         if [[ ! -s "$_lens_file" ]] || ! jq empty "$_lens_file" >/dev/null 2>&1; then
@@ -4465,7 +4554,7 @@ _cmd_audit_round_complete_body() {
         fi
       done < "$_manifest"
       if [[ -n "$_missing" ]]; then
-        echo "audit-round-complete: [warn] CA-471: round ${round_num} lens JSONL missing/empty/unparseable for: ${_missing} (${_pass_dir}) -- recording round_type=partial (non-convergent); persist the missing lens-L{N}.jsonl halves and note the miss in tooling-notes.md" >&2
+        echo "audit-round-complete: [warn] CA-471: round ${round_num} lens JSONL missing/empty/unparseable for: ${_missing} (${_pass_dir}) -- recording round_type=partial (non-convergent); persist the missing lens-L{N}.jsonl halves and note the miss in tooling-notes.md, then run a NEW round to converge -- this round cannot be re-completed, so persisting the halves does not restore round_type=full" >&2
         ca471_downgrade="partial"
       fi
     fi
@@ -4647,7 +4736,41 @@ cmd_audit_converged() {
   p2="$(echo "$result_json" | jq -r '.p2')"
   noted_count="$(echo "$result_json" | jq -r '.noted')"
 
+  # CA-416: the sweep-debt set, computed once here and reported on BOTH arms below. The
+  # obligation that a code fix and the prose citing it land in the same commit shipped as prose
+  # in agents/edm-audit-synthesizer.md with no mechanism behind it, which is why the
+  # stale-citation class recurred for five consecutive rounds and produced nine findings in
+  # round 9 alone. `fixed` entries only (an open finding has nothing to sweep yet) and the
+  # EXPLICIT string "no" only (absent is grandfathered, C-4) -- see SPEC_SWEEP_DEBT_FILTER.
+  local sweep_debt_ids="" sweep_debt_id sweep_debt_count=0
+  if sweep_debt_ids="$(_audit_spec_sweep_debt "$jsonl_path" 2>/dev/null)" && [[ -n "$sweep_debt_ids" ]]; then
+    while IFS= read -r sweep_debt_id; do
+      [[ -n "$sweep_debt_id" ]] || continue
+      sweep_debt_count=$((sweep_debt_count+1))
+    done <<< "$sweep_debt_ids"
+  else
+    sweep_debt_ids=""
+  fi
+
   if [[ "$blocking_count" -eq 0 ]]; then
+    # This is the seam that decides a remediation wave is done, so it is where sweep debt has to
+    # refuse: an empty blocking set means every finding is closed, and says nothing about whether
+    # the prose naming the changed behavior was swept. The refusal carries its OWN prefix rather
+    # than reusing "not converged: " -- cmd_approve_gate's --accept-p2-debt narrowing keys on that
+    # exact prefix to recognize an open-P2-severity refusal, and sweep debt is deliberately not
+    # waivable by that override (it carries open P2 severity forward as documented debt, it does
+    # not authorize shipping stale prose). Stdout, not stderr, for the same reason the
+    # blocking-list refusal below uses stdout: this is ledger CONTENT an operator acts on, not a
+    # setup/usage diagnostic, and _write_handoff_body renders it verbatim under HANDOFF.md's Open
+    # Code-Audit Findings heading.
+    if [[ -n "$sweep_debt_ids" ]]; then
+      echo "not converged (spec sweep): ${sweep_debt_count} fixed finding(s) for ${prefix} still carry spec_swept=\"no\" -- the same-commit documentation sweep is outstanding; sweep every AC, comment and doc passage naming the changed behavior, then set spec_swept to \"yes\" (or \"n/a\" when the fix names no documented behavior):"
+      while IFS= read -r sweep_debt_id; do
+        [[ -n "$sweep_debt_id" ]] || continue
+        echo "  ${sweep_debt_id} spec_swept=no"
+      done <<< "$sweep_debt_ids"
+      return 1
+    fi
     # AC6: distinguish "no findings recorded" from "findings recorded, none blocking".
     if [[ "$total" -eq 0 ]]; then
       echo "converged: no findings recorded in the ledger for ${prefix} (0 total, 0 NOTED)"
@@ -4669,6 +4792,19 @@ cmd_audit_converged() {
   echo "$result_json" | jq -r '.blocking_list[]' | while IFS= read -r bl; do
     echo "  ${bl}"
   done
+  # CA-416: sweep debt is reported here too, appended AFTER the blocking list rather than
+  # replacing it. The "not converged: " prefix stays at position 0 (cmd_approve_gate's
+  # --accept-p2-debt narrowing and _write_handoff_body both key on it), and an operator working a
+  # round with open findings still sees which closures owe their documentation sweep instead of
+  # only discovering it once the last open finding closes. Purely additive to this arm's exit 1:
+  # the refusal itself is unchanged.
+  if [[ -n "$sweep_debt_ids" ]]; then
+    echo "plus ${sweep_debt_count} fixed finding(s) still carrying spec_swept=\"no\" (CA-416 same-commit documentation sweep outstanding; these block convergence once the blocking set clears):"
+    while IFS= read -r sweep_debt_id; do
+      [[ -n "$sweep_debt_id" ]] || continue
+      echo "  ${sweep_debt_id} spec_swept=no"
+    done <<< "$sweep_debt_ids"
+  fi
   return 1
 }
 
@@ -4969,11 +5105,15 @@ cmd_add_related() {
 
 # ---- Audit pattern library update (T121) -------------------------------------
 # update-patterns <PREFIX> <srd|ticket|qc|code|test-coverage>
-# Extracts ### headings from the initiative's audit report and inserts novel
-# ones into the corresponding docs/audit-patterns/*.md file, under the target
-# `##` heading the Living-Library Contract names for the audit type.
+# Extracts the FINDING TITLES from the initiative's audit report -- using the per-audit-type
+# source-side shape rule documented at pattern_extract_titles below and in
+# docs/audit-patterns/README.md Sec."Append Schema" -- and inserts novel ones into the
+# corresponding docs/audit-patterns/*.md file, under the target `##` heading the Living-Library
+# Contract names for the audit type.
 # Novel = normalized title not already present as a ### heading in the pattern file.
-# Records the action in state (.patterns_updates).
+# Records the action in state (.patterns_updates), including the extraction_status of the run
+# so that "harvested nothing because the format is not machine-readable" can never again be
+# recorded as, or printed as, a clean "no novel findings" round (CA-476).
 
 # Living-Library insertion target (EDMV3-T54; docs/audit-patterns/README.md
 # Sec."Living-Library Contract", "Insertion target"): a new entry is inserted as a `### ` entry
@@ -5007,6 +5147,119 @@ normalize_pattern_titles() {
     sub(/ $/, "", t)
     print t
   }'
+}
+
+# ---- Source-side finding extraction (CA-476) ---------------------------------
+# pattern_extract_titles <audit-type> <report-path>
+# stdout: one BARE finding title per line (no leading `#` markers), in report order.
+#
+# This is the source-side half of the Append Schema; docs/audit-patterns/README.md
+# Sec."Append Schema" documents the same per-audit-type rules as contract. The two must never
+# disagree.
+#
+# CA-476: this used to be a bare `grep '^### '` applied to every audit type. Nothing in any
+# report format this methodology produces makes `### ` mean "finding title", so the `code` arm
+# harvested the report's structural scaffolding -- severity roll-up headings (`### P1 (7)`),
+# rollout stages, verification-plan sub-headings -- straight into a shipped plugin asset that
+# thirteen prompt surfaces read as accumulated wisdom, while the arms whose reports carry no
+# `### ` finding headings at all silently recorded zero forever. Each arm now states what a
+# finding actually looks like in ITS report, and an arm whose format has no machine-readable
+# finding shape says so loudly instead of pretending it read a clean round.
+#
+# code (agents/edm-audit-synthesizer.md Sec."Remediation Plan Format", and the shipped
+#   REMEDIATION.md artifacts): finding titles are headings whose title begins with the
+#   synthesizer's stable finding ID -- `CA-NNN` for a ledger-tracked finding, `G{N}` for the
+#   in-round group form. Both `##` and `###` are accepted because the two format specs disagree
+#   on depth (the synthesizer agent writes `### CA-NNN`, skills/code-audit/SKILL.md's abridged
+#   template shows `## G1`), and depth is exactly the wrong thing to key on: the ID prefix is
+#   what distinguishes a finding from scaffolding at ANY depth. The six fixed structural
+#   headings the Remediation Plan Format defines -- `Context`, `Findings Summary`,
+#   `Detailed Findings`, `Decisions / Non-Findings`, `Rollout Order`, `Verification Plan` --
+#   carry no finding ID and are therefore excluded by the same one rule, as is every
+#   free-form sub-heading under them.
+# srd (agents/edm-srd-auditor.md Sec."Finding Format"): findings are lines of the documented
+#   form `[CATEGORY] [SEVERITY] Section X.Y | Specific finding | Recommendation`. The finding
+#   text is the middle pipe field. The report's `##` severity buckets are containers, not
+#   findings.
+# qc (agents/edm-qc-auditor.md Sec."Output Format"): findings are lines of the documented form
+#   `**Finding**: [SEV] {PREFIX}-T{NN} | {file:line} | {finding text}`. The finding text is the
+#   last pipe field. The report's `### {PREFIX}-T{NN}: ... -- PASS` headings are per-ticket
+#   verdict containers, not patterns.
+# ticket / test-coverage: NO machine-readable finding shape exists. Both formats
+#   (agents/edm-ticket-auditor.md, agents/edm-test-coverage-auditor.md) place free prose under
+#   fixed structural sub-headings (`### Coverage`, `### Sizing`, ... / `### P0 -- Blocking`,
+#   `### P1 -- ...`), so the only thing a heading-based extractor can harvest from them is the
+#   scaffolding itself. These arms deliberately extract NOTHING and report
+#   `extraction_status: unsupported-format` -- see pattern_extraction_status_for. Giving either
+#   arm a real extractor requires first adding a deterministic finding line to its report
+#   format, then adding the matching arm here and the matching row to the README.
+#
+# Fence-aware throughout, for the same reason pattern_insert_line_for is (CA-056): a report
+# that quotes an example finding inside a fenced code block is documentation, not a finding.
+pattern_extract_titles() {
+  local _pxt_type="$1" _pxt_report="$2"
+  [[ -n "$_pxt_report" && -f "$_pxt_report" ]] || return 0
+  case "$_pxt_type" in
+    code)
+      awk '
+        /^```/ { infence = 1 - infence; next }
+        infence { next }
+        /^##+[ \t]/ {
+          t = $0
+          sub(/^#+[ \t]+/, "", t)
+          if (t ~ /^(CA-[0-9]+|G[0-9]+)([ \t:(]|$)/) print t
+        }
+      ' "$_pxt_report"
+      ;;
+    srd)
+      awk -F'|' '
+        /^```/ { infence = 1 - infence; next }
+        infence { next }
+        NF == 3 && $0 ~ /^\[[^][]+\][ \t]*\[[^][]+\]/ {
+          t = $2
+          gsub(/^[ \t]+/, "", t)
+          gsub(/[ \t]+$/, "", t)
+          if (t != "") print t
+        }
+      ' "$_pxt_report"
+      ;;
+    qc)
+      awk -F'|' '
+        /^```/ { infence = 1 - infence; next }
+        infence { next }
+        NF >= 2 && $0 ~ /^\*\*Finding\*\*:/ {
+          t = $NF
+          gsub(/^[ \t]+/, "", t)
+          gsub(/[ \t]+$/, "", t)
+          if (t != "") print t
+        }
+      ' "$_pxt_report"
+      ;;
+    ticket|test-coverage)
+      : # no machine-readable finding shape -- see the arm notes above
+      ;;
+  esac
+}
+
+# pattern_extraction_status_for <audit-type> <extracted-title-count>
+# stdout: one of `ok`, `no-recognized-findings`, `unsupported-format`.
+#
+# CA-476: the point of this value is that a run which harvested nothing must never be
+# indistinguishable from a run which harvested findings that all turned out to be duplicates.
+# `ok` is the only status under which `new_findings: 0` means "clean round"; the other two mean
+# "this arm read nothing at all, and you should not believe the zero".
+pattern_extraction_status_for() {
+  local _pes_type="$1" _pes_count="${2:-0}"
+  case "$_pes_type" in
+    ticket|test-coverage) printf '%s\n' "unsupported-format" ;;
+    *)
+      if [[ "$_pes_count" -eq 0 ]]; then
+        printf '%s\n' "no-recognized-findings"
+      else
+        printf '%s\n' "ok"
+      fi
+      ;;
+  esac
 }
 
 pattern_target_heading_for() {
@@ -5100,7 +5353,7 @@ _splice_pattern_file() {
 
 _cmd_update_patterns_body() {
   local pattern_file="$1" audit_report_path="$2" target_heading="$3" audit_type="$4" prefix="$5" today="$6"
-  local existing_normalized new_findings=0 pending_entries="" raw_heading raw_title lower_title norm insert_line
+  local existing_normalized new_findings=0 pending_entries="" raw_title lower_title norm insert_line
   # CA-056: the pre-flight duplicate check must ignore any "### " heading that lives inside a
   # fenced code block -- a pattern doc documenting its own Append Schema by showing an EXAMPLE
   # heading in a fence is the concrete case. A fenced example could otherwise mask a real
@@ -5119,8 +5372,7 @@ _cmd_update_patterns_body() {
 ${norm}"
   done < <(grep -n '^### ' "$pattern_file" 2>/dev/null || true)
 
-  while IFS= read -r raw_heading; do
-    raw_title="${raw_heading#\#\#\# }"
+  while IFS= read -r raw_title; do
     lower_title="$(echo "$raw_title" | tr '[:upper:]' '[:lower:]' | tr -s ' ')"
     case "$lower_title" in
       "summary"|"findings"|"recommendations"|"overview"|"appendix"|"legend") continue ;;
@@ -5134,7 +5386,7 @@ ${norm}"
     existing_normalized="${existing_normalized}
 ${norm}"
     new_findings=$((new_findings + 1))
-  done < <(grep '^### ' "$audit_report_path" 2>/dev/null || true)
+  done < <(pattern_extract_titles "$audit_type" "$audit_report_path")
 
   if [[ "$new_findings" -gt 0 ]]; then
     # G16/CA-355: cmd_update_patterns's own pre-flight already resolved this heading fence-aware
@@ -5239,18 +5491,41 @@ cmd_update_patterns() {
 
   local new_findings=0 today
   today="$(date -u +"%Y-%m-%d")"
+
+  # CA-476: resolve HOW MANY findings this arm could even see before doing any work, and say so
+  # out loud when the answer is "none". The extraction is read-only on the report, so running it
+  # here (outside the lock) costs nothing and lets the two "nothing harvested" outcomes be named
+  # separately in both the operator-facing output and the persisted state record. Neither is a
+  # `die`: update-patterns is called mid-phase by four skills, and aborting the phase over a
+  # report-format gap would be worse than the gap.
+  local extracted_count extraction_status
+  extracted_count="$(pattern_extract_titles "$audit_type" "$audit_report_path" | grep -c '.' || true)"
+  extracted_count="$(printf '%s' "${extracted_count:-0}" | tr -d '[:space:]')"
+  extraction_status="$(pattern_extraction_status_for "$audit_type" "${extracted_count:-0}")"
+
+  case "$extraction_status" in
+    unsupported-format)
+      echo "update-patterns: WARNING -- the '${audit_type}' audit report format has NO machine-readable finding shape, so this arm harvested NOTHING from ${audit_report_path}. This is NOT a clean round: recorded as extraction_status=unsupported-format. To make this arm contribute, add a deterministic per-finding line to the ${audit_type} report format, then add the matching arm to pattern_extract_titles and the matching row to docs/audit-patterns/README.md Sec.\"Append Schema\"." >&2
+      ;;
+    no-recognized-findings)
+      echo "update-patterns: WARNING -- ${audit_report_path} contains no line matching the documented '${audit_type}' finding shape (see pattern_extract_titles and docs/audit-patterns/README.md Sec.\"Append Schema\"), so nothing was harvested. This is NOT the same as a clean round: recorded as extraction_status=no-recognized-findings. Either the report does not follow its own documented format, or it genuinely records no findings." >&2
+      ;;
+  esac
+
   new_findings="$(with_state_lock "${pattern_file%.md}" _cmd_update_patterns_body "$pattern_file" "$audit_report_path" "$target_heading" "$audit_type" "$prefix" "$today")" \
     || die "update-patterns: failed to update ${pattern_file}"
 
   # Record in state (.patterns_updates is a new field; safe to add to any existing state file).
   rmw_state "$prefix" '
     .patterns_last_updated = $ts
-    | .patterns_updates = ((.patterns_updates // {}) | .[$t] = {updated_at: $ts, new_findings: ($n|tonumber)})
+    | .patterns_updates = ((.patterns_updates // {}) | .[$t] = {updated_at: $ts, new_findings: ($n|tonumber), extracted_titles: ($e|tonumber), extraction_status: $st})
     | .last_updated = $ts
-  ' --arg t "$audit_type" --arg ts "$(now_utc)" --arg n "$new_findings"
+  ' --arg t "$audit_type" --arg ts "$(now_utc)" --arg n "$new_findings" --arg e "${extracted_count:-0}" --arg st "$extraction_status"
 
   if [[ "$new_findings" -gt 0 ]]; then
     echo "update-patterns: ${prefix}/${audit_type} -> ${new_findings} new finding(s) appended to ${pattern_file}"
+  elif [[ "$extraction_status" != "ok" ]]; then
+    echo "update-patterns: ${prefix}/${audit_type} -> nothing harvested (extraction_status=${extraction_status}); see the WARNING above -- this is NOT a clean round"
   else
     echo "update-patterns: ${prefix}/${audit_type} -> no novel findings to append"
   fi

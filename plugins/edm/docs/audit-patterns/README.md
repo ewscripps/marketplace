@@ -45,6 +45,46 @@ date: {date}
 
 De-duplication: if the finding title (lowercased, whitespace-collapsed, trailing-parens metadata stripped) already exists in the document, skip the append.
 
+### Source-side finding shape (what counts as a finding in the audit report)
+
+The block above is the **destination** shape. This table is the **source** shape: what
+`edm-state update-patterns` treats as a finding title in the audit report it reads. Documenting
+only the destination is what let the extractor harvest structural scaffolding -- severity roll-up
+headings, rollout stages, verification-plan sub-headings -- into the library as if they were
+patterns, and let three arms record a permanent, silent zero (CA-476). This table and
+`bin/edm-state`'s `pattern_extract_titles` are two halves of one contract and must never
+disagree.
+
+| Audit type | Report | What counts as a finding title | Format source |
+|---|---|---|---|
+| `code` | `code-audit/pass-*/REMEDIATION.md` | A `##` or `###` heading whose title starts with the synthesizer's stable finding ID -- `CA-NNN` or `G{N}`. Heading depth is deliberately NOT the rule: the ID prefix is. The six fixed structural headings (`Context`, `Findings Summary`, `Detailed Findings`, `Decisions / Non-Findings`, `Rollout Order`, `Verification Plan`) and every free-form sub-heading under them carry no ID and are excluded by that one rule. | `agents/edm-audit-synthesizer.md` Sec."Remediation Plan Format" |
+| `srd` | `audit-srd.md` | A line of the form `[CATEGORY] [SEVERITY] Section X.Y \| Specific finding \| Recommendation`. The middle pipe field is the title. The `##` severity buckets are containers, not findings. | `agents/edm-srd-auditor.md` Sec."Finding Format" |
+| `qc` | `qc/qc-summary.md` | A line of the form `**Finding**: [SEV] {PREFIX}-T{NN} \| {file:line} \| {finding text}`. The last pipe field is the title. The `### {PREFIX}-T{NN}: ... -- PASS` headings are per-ticket verdict containers, not patterns. | `agents/edm-qc-auditor.md` Sec."Output Format" |
+| `ticket` | `{ticket-pack}/audit.md` | **None.** Findings are free prose under fixed `### {Category}` sub-headings, so nothing in the report is machine-identifiable as a finding. This arm harvests nothing and reports `extraction_status: unsupported-format`. | `agents/edm-ticket-auditor.md` Sec."Output" |
+| `test-coverage` | `test-coverage.md` | **None.** Findings are free prose under fixed `### P{N} -- ...` sub-headings. Same disposition as `ticket`. | `agents/edm-test-coverage-auditor.md` Sec."Step 4 -- Write coverage reports" |
+
+Extraction is fence-aware: a finding quoted inside a fenced code block is documentation, not a
+finding, and is never harvested.
+
+**Adding a real extractor to a `None` arm requires changing that arm's report format first** --
+add a deterministic per-finding line to the agent's output template, then add the matching arm to
+`pattern_extract_titles` and the matching row here. Retrofitting a heading-based extractor onto
+the current free-prose formats can only harvest the scaffolding.
+
+### Extraction status (why `0` is not always a clean round)
+
+Every `update-patterns` run records `extraction_status` alongside `new_findings` in
+`.edm-state.json`'s `patterns_updates`, and prints a `WARNING` to stderr for anything but `ok`:
+
+| Status | Meaning | Is `new_findings: 0` trustworthy? |
+|---|---|---|
+| `ok` | The arm recognized at least one finding in the report. | Yes -- `0` means every finding was already in the library. |
+| `no-recognized-findings` | The arm has an extractor, but the report contained no line matching the documented shape. | No -- either the report does not follow its own format, or it genuinely records nothing. |
+| `unsupported-format` | The arm has no extractor because the report format has no machine-readable finding shape. | No -- nothing was read at all. |
+
+Neither warning status is a failure: `update-patterns` is called mid-phase by four skills, so it
+warns and continues rather than aborting the phase.
+
 **Curation lifecycle** (EDMV3-77/78): every auto-appended entry carries `status: pending-review` on its own line, plus its provenance (`source`, `audit-type`, `date`). Pending entries are surfaced for human curation at the audit gates -- see "Curation at Gates" below. Removing the `status: pending-review` line marks an entry curated; curation is one-way -- nothing re-adds the marker, and de-duplication prevents the same title being re-appended. The pending count is always `grep -c 'status: pending-review' docs/audit-patterns/*.md` computed at read time -- there is no mirrored count in `.edm-state.json`.
 
 ## Curation at Gates

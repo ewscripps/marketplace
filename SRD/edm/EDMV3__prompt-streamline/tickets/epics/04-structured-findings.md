@@ -1,8 +1,8 @@
 # Epic E4 -- WS4: Structured findings and universal no-deferral
 
-**Wave**: B (v2.1.0 -> v3.0.0)
+**Wave**: B (v2.1.0 -> v3.0.0), plus T68 in wave C (post-Gate-3 amendment, D57/D58)
 **SRD requirements**: EDMV3-30 .. EDMV3-43, EDMV3-117, EDMV3-120 (16)
-**Tickets**: EDMV3-T24 .. EDMV3-T33 (10)
+**Tickets**: EDMV3-T24 .. EDMV3-T33 (10), plus EDMV3-T68 (11 total)
 
 R3 plus requirement 3 as broadened by D13. Convergence becomes a computed fact rather than a model's
 opinion about markdown, and the no-deferral policy becomes one predicate in code plus a deterministic
@@ -544,20 +544,35 @@ restatements that can drift apart.
       `deferred` entry, and asserts all four agree on blocking-set membership.
       Verify: `bash plugins/edm/bin/tests/wave7-smoke.sh` (case "four consumers agree on one
       fixture ledger").
-- [ ] AC12 (wiring): `cmd_approve_gate <PREFIX> code-audit` calls the check and refuses when it
-      fails, and `cmd_archive` calls it as part of lifecycle verification. No prompt file restates
-      the blocking-set membership; prompts reference `CLAUDE.md Sec."Severity vocabulary"` and the
-      command.
-      Amended (CA-424, D57/D58): "refuses when it fails" holds unconditionally EXCEPT for the one
-      sanctioned, human-authorized branch added after this AC was written -- when the refusal is
-      P2-only (open P0=0 AND P1=0 AND P2>0) and the human explicitly passed `--accept-p2-debt`,
-      `cmd_approve_gate` records convergence with debt metadata instead of refusing
+- [ ] AC12 (wiring): `cmd_approve_gate <PREFIX> code-audit` calls the check, and `cmd_archive` calls
+      it as part of lifecycle verification. No prompt file restates the blocking-set membership;
+      prompts reference `CLAUDE.md Sec."Severity vocabulary"` and the command.
+      Amended (CA-424, D57/D58) -- the original "refuses when it fails" was written before the one
+      sanctioned, human-authorized override existed and no longer covers every input, so the three
+      input classes are enumerated one branch at a time:
+      (i) WITHOUT `--accept-p2-debt`, any non-zero `cmd_audit_converged` exit refuses and nothing is
+      recorded -- an open P0 or P1 blocks the gate exactly as before, and state is left untouched.
+      (ii) WITH `--accept-p2-debt`, a refusal that is not a severity refusal still refuses. A
+      partial or unknown round type, invalid ledger JSONL and invalid status lines all exit 1 from
+      `cmd_audit_converged` but report on stderr only, so they carry neither the stable
+      `not converged: ` stdout prefix nor a readable P0/P1/P2 breakdown; the flag must not bypass
+      them, and the refusal says the override applies only to an open-P2-only blocking set.
+      (iii) WITH `--accept-p2-debt`, when the blocking set is open-P2-only (open P0=0 AND P1=0 AND
+      P2>0), convergence is recorded WITH debt metadata (`code_audit_p2_debt_accepted`,
+      `code_audit_p2_debt_count`, `code_audit_p2_debt_round`, `code_audit_p2_debt_accepted_at`,
+      `code_audit_p2_debt_accepted_by`) instead of refusing, and the success line names the accepted
+      P2 count. This is the only branch that converges an open blocking set
       (`CLAUDE.md Sec."Severity vocabulary"`, "Sanctioned exception -- P2 debt acceptance at
       convergence"; decisions.md D57 authorizes the feature, D58 records the human gate override
-      confirming it as deliberate). Every other refusal class -- any open P0/P1, a partial round,
-      invalid ledger JSONL, invalid status lines -- still refuses even with the flag.
-      Verify: `bash plugins/edm/bin/tests/wave6-smoke.sh` (case "approve-gate refuses on an open
-      P0", plus the T-EDMV4 and CA-425 accept-p2-debt cases) and
+      confirming it as deliberate).
+      Verify: `bash plugins/edm/bin/tests/wave6-smoke.sh` -- class (i) case
+      `T28 AC12 -- approve-gate refuses on an open P0`; class (ii) cases
+      `accept-p2-debt refuses when the latest round is partial` and
+      `accept-p2-debt refuses when the ledger is invalid JSONL`; class (iii) cases
+      `accept-p2-debt success message names the accepted P2 count`,
+      `accept-p2-debt sets code_audit_converged=true` and
+      `accept-p2-debt records code_audit_p2_debt_accepted=true`, bounded below by
+      `accept-p2-debt still refuses with an open P1`. Also
       `grep -rn 'P0 and P1' plugins/edm/skills/` returns zero results.
 - [ ] AC13 (surfaced): the subcommand appears in the `--help` block, dispatch, and the `CLAUDE.md`
       `bin/` table.

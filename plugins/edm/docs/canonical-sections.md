@@ -41,7 +41,12 @@ ledger itself is left unchanged: accepted P2s still show as open findings in
 round so a teammate sees debt was knowingly carried, not silently missed. `edm-state archive`
 re-verifies P0/P1 are still 0 and refuses if a newer full audit round has completed since
 acceptance (the debt has gone stale -- re-run `--accept-p2-debt` or fix the remaining findings
-first). The gate also offers **Fix low-hanging fruit first**: remediate the P2s whose
+first). The override reads the blocking set straight from `findings-ledger.jsonl`, so it does
+not itself require that a full eleven-lens round was ever recorded (CA-426): on an initiative
+with zero recorded code-audit rounds the convergence check warns on stderr and proceeds, and the
+flag can engage. It asserts only that no P0 or P1 is open in the ledger as it stands, never that
+the ledger is complete. The gate also offers **Fix low-hanging fruit first**: remediate the P2s
+whose
 REMEDIATION.md prescription is a single self-contained change, then re-present the gate with the
 smaller remaining set -- a middle ground between converging immediately and re-treating every
 open P2 as blocking.

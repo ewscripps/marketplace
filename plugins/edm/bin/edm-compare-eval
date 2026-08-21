@@ -17,8 +17,11 @@
 #
 # Refusal conditions (T39 AC3) -- each exits non-zero naming its own condition:
 #   1. scorer_version differs between the two files.
-#   2. dimensions_scored differs (a 4-dimension baseline against a 5-dimension candidate has a
-#      different mean denominator; the delta would be meaningless -- srd.md v1.2.0 CR6).
+#   2. dimensions_scored differs (a five-dimension baseline against a six-dimension candidate has
+#      a different mean denominator; the delta would be meaningless -- srd.md v1.2.0 CR6). This is
+#      the live case since CA-462 added the sixth dimension, known-gap-recall: the committed
+#      wave-A baseline scores five and skips one, so a candidate run that reaches the code-audit
+#      phase and scores all six is refused here rather than compared.
 #   3. the candidate is flagged complete: false.
 #
 # Exit codes:

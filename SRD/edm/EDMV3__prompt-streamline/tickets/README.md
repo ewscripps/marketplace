@@ -9,7 +9,7 @@ Generated From: srd.md v1.3.0
 | Subject codebase | `plugins/edm/` (EDM plugin v2.0.0) |
 | SRD | `../srd.md` v1.3.0 (120 requirements, EDMV3-01 .. EDMV3-120) |
 | Companion documents | `../architecture.md`, `../decisions.md` (D1-D15), `../audit-srd.md` (SRD arbitration rulings 1-20), `audit.md` (ticket-pack arbitration rulings 1-20), `../planning.md` |
-| Tickets | 67 (`EDMV3-T01` .. `EDMV3-T67`) |
+| Tickets | 68 (`EDMV3-T01` .. `EDMV3-T68`) |
 | Epics | 11 files -- 10 workstream epics plus one cross-cutting delivery grouping |
 | Waves | A (v2.1.0), B (v3.0.0), C (v3.1.0) |
 | Generated | 2026-07-25 |
@@ -229,7 +229,7 @@ This initiative has no server and no deployment surface, so the "Logging and Obs
 | E1 | WS1 Mechanical fixes | [`epics/01-mechanical-fixes.md`](epics/01-mechanical-fixes.md) | 4 | A | 8 |
 | E2 | WS2 Enforcement kernel | [`epics/02-enforcement-kernel.md`](epics/02-enforcement-kernel.md) | 14 | A (13), B (1) | 19 |
 | E3 | WS3 CI and fixture eval | [`epics/03-ci-and-fixture-eval.md`](epics/03-ci-and-fixture-eval.md) | 5 | A | 8 |
-| E4 | WS4 Structured findings and universal no-deferral | [`epics/04-structured-findings.md`](epics/04-structured-findings.md) | 10 | B | 16 |
+| E4 | WS4 Structured findings and universal no-deferral | [`epics/04-structured-findings.md`](epics/04-structured-findings.md) | 11 | B (10), C (1) | 16 |
 | E5 | WS5 Orchestrator as dispatcher | [`epics/05-orchestrator-dispatcher.md`](epics/05-orchestrator-dispatcher.md) | 6 | B | 9 |
 | E6 | WS6 Mermaid literal-semicolon rule | [`epics/06-mermaid-rule.md`](epics/06-mermaid-rule.md) | 5 | B | 7 |
 | E7 | WS7 Prompt streamline | [`epics/07-prompt-streamline.md`](epics/07-prompt-streamline.md) | 5 | C | 11 |
@@ -237,7 +237,7 @@ This initiative has no server and no deployment surface, so the "Logging and Obs
 | E9 | WS9 Pattern-library curation | [`epics/09-pattern-library-curation.md`](epics/09-pattern-library-curation.md) | 3 | C | 4 |
 | E10 | WS10 Delete list | [`epics/10-delete-list.md`](epics/10-delete-list.md) | 4 | C | 6 |
 | E11 | Cross-cutting delivery (security, observability, performance, constraints, wave closeouts) | [`epics/11-cross-cutting-delivery.md`](epics/11-cross-cutting-delivery.md) | 7 | A (4), B (1), C (2) | 26 |
-| | **Total** | | **67** | | **120** |
+| | **Total** | | **68** | | **120** |
 
 Requirement-count arithmetic: 8 + 19 + 8 + 16 + 9 + 7 + 11 + 6 + 4 + 6 + 26 = 120. The E11 count of
 26 is the SRD's non-goals (5), security and integrity (5), observability (5), performance and cost
@@ -257,13 +257,13 @@ columns are not expected to agree and a reader should not reconcile them.
 | Size | Count | Share | Healthy band | Status |
 |---|---|---|---|---|
 | XS | 4 | 6% | 10-20% | Below band, disclosed below |
-| S | 31 | 46% | 40-50% | In band |
-| M | 26 | 39% | 30-40% | In band |
+| S | 32 | 47% | 40-50% | In band |
+| M | 26 | 38% | 30-40% | In band |
 | L | 6 | 9% | <= 5% | Above band, disclosed below |
 | XL | 0 | 0% | 0% | In band, with one qualification below |
-| **Total** | **67** | **100%** | | |
+| **Total** | **68** | **100%** | | |
 
-Arithmetic: 4 + 31 + 26 + 6 = 67.
+Arithmetic: 4 + 32 + 26 + 6 = 68.
 
 **The XS share is below the healthy band.** This is a hardening initiative against a mature
 codebase: almost every requirement carries a bash change plus a smoke case plus a documentation
@@ -381,6 +381,7 @@ flowchart TD
         T60["T60 validate after deletions"]
         T66["T66 wave C closeout"]
         T67["T67 performance budgets"]
+        T68["T68 accept-p2-debt convergence"]
     end
 
     T19 --> T01
@@ -508,6 +509,7 @@ flowchart TD
     T43 --> T67
     T51 --> T67
     T48 --> T67
+    T28 --> T68
 
     classDef waveA fill:#cfe8ff,stroke:#1f4e79,stroke-width:1px,color:#0b2545
     classDef waveB fill:#ffe8c2,stroke:#8a5a00,stroke-width:1px,color:#3d2600
@@ -518,19 +520,20 @@ flowchart TD
 
     class T01,T02,T03,T04,T05,T06,T07,T08,T10,T11,T12,T13,T14,T15,T16,T17,T19,T20,T21,T22,T23,T62,T63,T64 waveA
     class T18,T24,T25,T26,T27,T28,T29,T30,T31,T32,T34,T35,T36,T39,T40,T41,T42,T43,T44,T65 waveB
-    class T45,T46,T47,T48,T49,T50,T51,T52,T53,T54,T55,T56,T57,T58,T59,T60,T66 waveC
+    class T45,T46,T47,T48,T49,T50,T51,T52,T53,T54,T55,T56,T57,T58,T59,T60,T66,T68 waveC
     class T09,T61 waveALarge
     class T33,T37,T38 waveBLarge
     class T67 waveCLarge
 ```
 
-**Every node is coloured, and colour still encodes wave.** All 67 nodes appear in exactly one
-`class` line: 26 wave A, 20 wave B, 17 wave C, plus the six L tickets carried by the three
+**Every node is coloured, and colour still encodes wave.** All 68 nodes appear in exactly one
+`class` line: 24 wave A, 20 wave B, 18 wave C, plus the six L tickets carried by the three
 `wave*Large` classes (T09 and T61 wave A, T33/T37/T38 wave B, T67 wave C). Arithmetic:
-24 + 20 + 17 + 2 + 3 + 1 = 67. The earlier diagram used a single `large` class whose fill replaced
+24 + 20 + 18 + 2 + 3 + 1 = 68. The earlier diagram used a single `large` class whose fill replaced
 the wave colour, so the three L tickets read as a fourth wave; the `wave*Large` variants keep the
 wave fill and change only the stroke, so an L ticket is visibly both. T53 was declared and edged but
-appeared in no `class` line at all -- 66 of 67 coloured -- and is now in the wave-C line.
+appeared in no `class` line at all -- 66 of the 67 nodes then present were coloured -- and is now in
+the wave-C line.
 
 **T49 and T52 are isolated by design, not by omission.** They are the only nodes with no edge in
 either direction. T49 records the do-NOT-adopt guards and the before/after convention -- it guards
@@ -542,7 +545,7 @@ its notes state explicitly that it needs neither T50 nor T51. An isolated node i
 
 ### Longest chain
 
-**123 edges over 67 nodes. The graph is acyclic and wave-monotone, and the longest dependency chain
+**124 edges over 68 nodes. The graph is acyclic and wave-monotone, and the longest dependency chain
 runs eleven tickets deep across all three waves.** The figures below are re-derived from the
 post-audit edge set -- nine edges added by ticket-audit arbitration ruling 1, four removed by ruling
 2 -- and supersede the "sixteen deep" and "eight transitive dependents" claims in the pre-audit
@@ -584,7 +587,7 @@ on different nodes here.
 ## SRD Coverage Map
 
 Bidirectional. Every requirement in `../srd.md` v1.3.0 appears exactly once below with its
-implementing ticket or its recorded disposition. Every ticket `EDMV3-T01` .. `EDMV3-T67` appears in
+implementing ticket or its recorded disposition. Every ticket `EDMV3-T01` .. `EDMV3-T68` appears in
 at least one row.
 
 **Convention for the five Won't-Have requirements (EDMV3-86 .. EDMV3-90).** They are recorded scope
@@ -594,6 +597,14 @@ its ticket field tables in five places. The **negative enforcement that keeps ea
 stays as an acceptance criterion** on the ticket that could otherwise violate it, and is named in
 that boundary's disposition row below. Stripped from `SRD Refs` in this pass: EDMV3-87 from T04,
 EDMV3-89 from T14, EDMV3-90 from T09 and T30, EDMV3-86 from T38.
+
+**The one sanctioned exception (D57/D58, post-Gate-3).** T68 carries `EDMV3-90 (amended)` in its
+`SRD Refs`. The `(amended)` suffix is load-bearing and is the only form in which a Won't-Have ID
+may appear in any `SRD Refs` field: it marks a ticket that delivers a gate-approved carve-out from
+a boundary, not a ticket that delivers the boundary. EDMV3-90 remains a Won't Have and remains
+counted as a recorded boundary with zero implementing tickets in the statistics table below -- the
+boundary was narrowed by change control, not lifted. Any future exception needs the same route (a
+decision recorded in `decisions.md` plus an SRD amendment approved at a gate) and the same suffix.
 
 | SRD Req | Priority | Title (abbreviated) | Implementing ticket(s) |
 |---|---|---|---|
@@ -733,12 +744,15 @@ table said zero Won't-Have requirements were covered by a ticket while five tick
 Won't-Have ID in their `SRD Refs` -- the statistics and the field tables contradicted each other in
 five places. One convention is now applied everywhere: a Won't Have appears in no `SRD Refs`, its
 negative enforcement is an acceptance criterion, and its disposition row above names that criterion.
+The single exception is T68's `EDMV3-90 (amended)`, which records a gate-approved carve-out rather
+than delivery and so leaves the Won't-Have row's `0` covered / `5` boundary counts unchanged.
 
 **Union check.** The union of every ticket's `SRD Refs` is exactly
 `{EDMV3-01 .. EDMV3-120} minus {EDMV3-86, EDMV3-87, EDMV3-88, EDMV3-89, EDMV3-90}` -- 115 IDs, with
-no ID appearing that is not an SRD requirement. Reverse direction: all 67 tickets carry at least one
-`SRD Refs` entry and all 67 appear in at least one coverage-map row. Zero tickets are unmapped and
-zero requirements are orphans.
+no ID appearing that is not an SRD requirement, plus the single amendment-marked
+`EDMV3-90 (amended)` on T68 (see the sanctioned-exception note above). Reverse direction: all 68
+tickets carry at least one `SRD Refs` entry and all 68 appear in at least one coverage-map row.
+Zero tickets are unmapped and zero requirements are orphans.
 
 ---
 

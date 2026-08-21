@@ -270,11 +270,13 @@ lint:shellcheck:
 # command-type hook's `.command` string via jq and runs both checks over each, matching the
 # finding's explicit "-s sh, not bash: the host picks the interpreter" -- shellcheck below runs
 # `--shell=sh`, not `--shell=bash` as lint:shellcheck above does, because the host (not this
-# plugin) chooses the interpreter that actually executes a hook command string. Each extracted
-# command is written to its own temp file first: `bash -n <(cmd)` process substitution needs
-# bash itself as the invoking shell, which is not guaranteed for the runner's script stage (see
-# the POSIX-sh-safe notes elsewhere in this file). This job does not modify hooks.json -- it is
-# pure CI-config addition, read-only against the file.
+# plugin) chooses the interpreter that actually executes a hook command string. jq writes each
+# extracted command straight to its own temp file rather than piping it into `bash -n <(cmd)`:
+# process substitution needs bash itself as the invoking shell, which is not guaranteed for the
+# runner's script stage (see the POSIX-sh-safe notes elsewhere in this file). The whole script
+# body below is POSIX-sh-safe for that same reason -- no `read -d`, no `[[`, no arrays, no
+# herestrings (CA-474). This job does not modify hooks.json -- it is pure CI-config addition,
+# read-only against the file.
 lint:hooks-shell:
   stage: lint
   <<: *alpine_edm
@@ -289,20 +291,41 @@ lint:hooks-shell:
       COUNT=0
       TMP="$(mktemp -d)"
       trap 'rm -rf "$TMP"' EXIT
-      # CA-437: NUL-delimited extraction, not newline-delimited -- a .command string containing
-      # an embedded newline used to be split into N fragments that were each syntax-checked
-      # independently (two individually well-formed halves of a malformed command both pass
-      # bash -n), with COUNT silently over-reporting. NUL cannot appear inside a JSON string,
-      # so the record boundary is now unforgeable, and COUNT is cross-checked against jq's own
-      # command-hook total below so a splitting regression fails loudly.
-      jq -j '.hooks | to_entries[] | .value[] | .hooks[] | select(.type=="command") | .command + "\u0000"' plugins/edm/hooks/hooks.json > "${TMP}/commands.bin"
+      # CA-437 + CA-474: indexed jq extraction, not a delimited read loop. CA-437's problem was
+      # a .command string containing an embedded newline being split into N fragments that were
+      # each syntax-checked independently (two individually well-formed halves of a malformed
+      # command both pass bash -n), with COUNT silently over-reporting. Its NUL-delimited fix
+      # relied on `read -d`, which is a bash extension with no POSIX equivalent. Measured, not
+      # assumed: `dash` rejects it outright (`read: Illegal option -d`), while the BusyBox ash
+      # in alpine:3.20 happens to accept it (its read option string is `d:n:bHm`). So the alpine
+      # image is not itself the exposure -- the exposure is that this file does not choose the
+      # script-stage interpreter at all. The runner does, before `apk add bash` in before_script
+      # has installed anything, and on any dash-backed /bin/sh the failure is silent and
+      # misdiagnosing: `read` rejects -d, the while condition is false immediately (errexit does
+      # not apply to a loop condition), the body never runs, COUNT stays 0, and the cross-check
+      # below fails this job while naming a splitting regression that did not happen.
+      # Indexing by ordinal through jq needs no delimiter at all: jq writes each command to its
+      # own file directly, so there is no shared stream for any loop to re-split, and CA-437's
+      # embedded-newline case is handled by construction rather than by delimiter choice. The
+      # loop bound IS jq's own command-hook total, which makes the cross-check below structural
+      # rather than post-hoc.
       EXPECTED_COUNT="$(jq '[.hooks | to_entries[] | .value[] | .hooks[] | select(.type=="command")] | length' plugins/edm/hooks/hooks.json)"
+      # EXPECTED_COUNT is now both the loop bound and the cross-check operand, so a non-numeric
+      # value would mean zero iterations AND a `[` that errors out inside an `if` condition,
+      # which errexit exempts -- i.e. a silent pass. Reject it up front instead.
+      case "$EXPECTED_COUNT" in
+        ''|*[!0-9]*)
+          echo "lint:hooks-shell: FAILED -- jq returned a non-numeric command-hook count ('${EXPECTED_COUNT}') for plugins/edm/hooks/hooks.json"
+          exit 1
+          ;;
+      esac
       IDX=0
-      while IFS= read -r -d '' cmd; do
+      while [ "$IDX" -lt "$EXPECTED_COUNT" ]; do
+        JQ_IDX="$IDX"
         IDX=$((IDX + 1))
         COUNT=$((COUNT + 1))
         cmdfile="${TMP}/hook-${IDX}.sh"
-        printf '%s\n' "$cmd" > "$cmdfile"
+        jq -r --argjson n "$JQ_IDX" '[.hooks | to_entries[] | .value[] | .hooks[] | select(.type=="command")][$n].command' plugins/edm/hooks/hooks.json > "$cmdfile"
         if bash -n "$cmdfile" 2>"${TMP}/bashn-${IDX}.err"; then
           echo "  OK: bash -n hook #${IDX}"
         else
@@ -316,9 +339,9 @@ lint:hooks-shell:
           echo "  FAIL: shellcheck hook #${IDX}"
           FAIL=1
         fi
-      done < "${TMP}/commands.bin"
+      done
       if [ "$COUNT" -ne "$EXPECTED_COUNT" ]; then
-        echo "lint:hooks-shell: FAILED -- checked ${COUNT} command(s) but hooks.json declares ${EXPECTED_COUNT} (extraction/splitting regression, CA-437)"
+        echo "lint:hooks-shell: FAILED -- checked ${COUNT} command(s) but hooks.json declares ${EXPECTED_COUNT} (jq index/loop-bound mismatch, CA-437/CA-474)"
         exit 1
       fi
       if [ "$FAIL" -ne 0 ]; then
@@ -351,8 +374,12 @@ lint:file-type-ban:
       fi
       echo "file-type-ban: clean -- no .pptx/.docx/.DS_Store tracked under plugins/"
       # EDMV3-T22 AC3 (shard-2 QC remediation): plugins/edm/evals/ has a documented 100KB
-      # directory-size ceiling (plugins/edm/evals/fixtures/tiny-svc/README.md), so growth there
-      # (a new fixture, a bloated baseline capture) is caught here rather than silently landing.
+      # tracked-bytes budget (git-tracked files only; untracked eval output under
+      # plugins/edm/evals/runs/ is excluded -- see plugins/edm/evals/fixtures/tiny-svc/README.md),
+      # so growth there (a new fixture, a bloated baseline capture) is caught here rather than
+      # silently landing. CA-463: an earlier revision of this comment called it a "directory-size
+      # ceiling", which described a du-style measure this job has never performed and would send a
+      # contributor reproducing it locally after an eval run far over budget.
       evals_bytes="$(
         git ls-files -- plugins/edm/evals \
           | while IFS= read -r f; do
@@ -514,9 +541,12 @@ test:state-validate:
   script:
     - |
       set -u
-      # POSIX /bin/sh -safe on purpose (no process substitution, no arrays): the runner's
-      # shell-selection probe for this image runs before `apk add bash` in before_script has
-      # installed anything, so the script stage itself may still execute under plain sh.
+      # POSIX /bin/sh -safe on purpose (no process substitution, no arrays, no `read -d`): the
+      # runner's shell-selection probe for this image runs before `apk add bash` in
+      # before_script has installed anything, so the script stage itself may still execute under
+      # plain sh. The `read` below uses only POSIX options; `read -d` is a bash extension that
+      # dash rejects outright, and a rejected `read` in a loop condition zeroes the loop
+      # silently rather than erroring (CA-474).
       export PATH="$(pwd)/plugins/edm/bin:$PATH"
       FAIL=0
       COUNT=0
@@ -563,9 +593,9 @@ validate:manifest:
   script:
     - |
       set -eu
-      # POSIX /bin/sh -safe on purpose (no process substitution, no arrays, no herestrings):
-      # see the note on the test:state-validate job -- the runner may execute this stage under
-      # plain sh regardless of the `apk add bash` in before_script.
+      # POSIX /bin/sh -safe on purpose (no process substitution, no arrays, no herestrings, no
+      # `read -d`): see the note on the test:state-validate job -- the runner may execute this
+      # stage under plain sh regardless of the `apk add bash` in before_script.
       MANIFEST=".claude-plugin/marketplace.json"
       PLUGIN_DIR="plugins/edm"
       FAIL=0
@@ -710,6 +740,15 @@ eval:nightly:
   stage: eval
   <<: *node_edm
   allow_failure: true
+  # CA-444 (NOTED half): this outer job timeout must stay above the driver's own worst-case
+  # inner budget, or the job is killed before run-eval.sh's cleanup trap can write run.json and
+  # the stub scores.json and the partial-run handshake never fires. The arithmetic, recorded
+  # here so raising either number is a deliberate decision rather than an accident:
+  # 3 phases x EDM_EVAL_PHASE_TIMEOUT_SECONDS (2700s default) = 135m, plus the 60s auth probe
+  # = 136m worst case inside the driver, leaving roughly 14m for the global npm install,
+  # fixture provisioning, scoring and the baseline comparison. Adding a fourth phase, or
+  # raising EDM_EVAL_PHASE_TIMEOUT_SECONDS, inverts the nesting -- raise this timeout in the
+  # same change.
   timeout: 150m
   rules:
     - if: '$ANTHROPIC_API_KEY == null'

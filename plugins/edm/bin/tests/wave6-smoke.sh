@@ -876,6 +876,77 @@ printf '{"schema":"lens","lens":"L2","sev":"P2","status":"open","id":null}\n' \
 ca471ok_out="$("$EDM_STATE" audit-round-complete CA471OK code 2>&1)"
 check_absent "CA-471 -- a fully-backed manifest completes with no warn" "CA-471" "$ca471ok_out"
 
+# CA-477: the CA471OK case above starts its round with --lenses L1,L2, so its round_type is
+# ALREADY partial and its only assertion is a check_absent -- moving the downgrade out of its
+# miss guard would go unnoticed. This case runs a FULL round (no --lenses), lands every lens the
+# manifest names, and asserts round_type is still full AFTER audit-round-complete.
+"$EDM_STATE" init CA477FULL >/dev/null
+mkdir -p "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16"
+printf 'Round type: full\nL1\nL2\n' > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lenses-run.txt"
+printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L1.jsonl"
+printf '{"schema":"lens","lens":"L2","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L2.jsonl"
+"$EDM_STATE" audit-round-start CA477FULL code >/dev/null
+ca477full_out="$("$EDM_STATE" audit-round-complete CA477FULL code 2>&1)"
+check_absent "CA-477 -- a fully-backed full round completes with no warn" "CA-471" "$ca477full_out"
+ca477full_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$TMP/SRD/CA477FULL/.edm-state.json")"
+[[ "$ca477full_rt" == "full" ]] \
+  && pass "CA-477 -- a fully-backed round is still round_type=full AFTER audit-round-complete" \
+  || fail "CA-477 -- round_type='$ca477full_rt' after completion, expected full (the gate downgrades unconditionally)"
+
+# CA-477: the gate's comment claims three miss classes (missing / empty / unparseable) but the
+# only fixture was an empty file, which the [[ ! -s ]] arm catches alone -- deleting the jq
+# validity arm changed nothing. One round, one lens per class, all three named in the warn.
+"$EDM_STATE" init CA477CLASS >/dev/null
+mkdir -p "$TMP/SRD/CA477CLASS/code-audit/pass-1_2026-08-16"
+printf 'Round type: full\nL1\nL2\nL3\nL4\n' > "$TMP/SRD/CA477CLASS/code-audit/pass-1_2026-08-16/lenses-run.txt"
+printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA477CLASS/code-audit/pass-1_2026-08-16/lens-L1.jsonl"
+# L2: absent entirely (the pass-7 regression class). L3: empty. L4: present but not JSON.
+: > "$TMP/SRD/CA477CLASS/code-audit/pass-1_2026-08-16/lens-L3.jsonl"
+printf 'not json\n' > "$TMP/SRD/CA477CLASS/code-audit/pass-1_2026-08-16/lens-L4.jsonl"
+"$EDM_STATE" audit-round-start CA477CLASS code >/dev/null
+ca477class_out="$("$EDM_STATE" audit-round-complete CA477CLASS code 2>&1)"
+check "CA-477 -- one warn names all three miss classes (absent, empty, unparseable)" \
+  "for: L2 L3 L4" "$ca477class_out"
+ca477class_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$TMP/SRD/CA477CLASS/.edm-state.json")"
+[[ "$ca477class_rt" == "partial" ]] \
+  && pass "CA-477 -- a round missing any lens class is downgraded to partial" \
+  || fail "CA-477 -- round_type='$ca477class_rt', expected partial"
+
+# CA-478: lenses-run.txt is agent-authored via the Write tool, so its final line may be
+# unterminated. A bare `read` returns non-zero at EOF and never runs the body for that line --
+# on a full round that silently skipped L11, exactly the lens a truncated delivery drops.
+"$EDM_STATE" init CA478NONL >/dev/null
+mkdir -p "$TMP/SRD/CA478NONL/code-audit/pass-1_2026-08-16"
+printf 'Round type: full\nL1\nL2' > "$TMP/SRD/CA478NONL/code-audit/pass-1_2026-08-16/lenses-run.txt"
+printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA478NONL/code-audit/pass-1_2026-08-16/lens-L1.jsonl"
+"$EDM_STATE" audit-round-start CA478NONL code >/dev/null
+ca478nonl_out="$("$EDM_STATE" audit-round-complete CA478NONL code 2>&1)"
+check "CA-478 -- a manifest with no trailing newline still checks its last lens (L2)" \
+  "for: L2" "$ca478nonl_out"
+ca478nonl_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$TMP/SRD/CA478NONL/.edm-state.json")"
+[[ "$ca478nonl_rt" == "partial" ]] \
+  && pass "CA-478 -- the unterminated-manifest round is downgraded to partial" \
+  || fail "CA-478 -- round_type='$ca478nonl_rt', expected partial"
+
+# CA-478: a CRLF manifest previously failed ^L[0-9]+$ on EVERY line, disabling the gate wholesale
+# with no diagnostic at all.
+"$EDM_STATE" init CA478CRLF >/dev/null
+mkdir -p "$TMP/SRD/CA478CRLF/code-audit/pass-1_2026-08-16"
+printf 'Round type: full\r\nL1\r\nL2\r\n' > "$TMP/SRD/CA478CRLF/code-audit/pass-1_2026-08-16/lenses-run.txt"
+printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA478CRLF/code-audit/pass-1_2026-08-16/lens-L1.jsonl"
+"$EDM_STATE" audit-round-start CA478CRLF code >/dev/null
+ca478crlf_out="$("$EDM_STATE" audit-round-complete CA478CRLF code 2>&1)"
+check "CA-478 -- a CRLF manifest still fires the gate and names L2" "for: L2" "$ca478crlf_out"
+ca478crlf_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$TMP/SRD/CA478CRLF/.edm-state.json")"
+[[ "$ca478crlf_rt" == "partial" ]] \
+  && pass "CA-478 -- the CRLF-manifest round is downgraded to partial" \
+  || fail "CA-478 -- round_type='$ca478crlf_rt', expected partial"
+
 "$EDM_STATE" init CA471MISS >/dev/null
 mkdir -p "$TMP/SRD/CA471MISS/code-audit/pass-1_2026-08-16"
 printf 'Round type: full\nL1\nL2\n' > "$TMP/SRD/CA471MISS/code-audit/pass-1_2026-08-16/lenses-run.txt"

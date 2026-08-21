@@ -139,13 +139,23 @@ using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
     round's completion timestamp, duration, and token/cost totals, keyed by round number, so the
     cost of an individual code-audit round is never invisible. Running `update-patterns` here makes
     this round's pending entries available to the same Convergence gate instead of deferring them to
-    the next round.
+    the next round. `update-patterns` harvests only headings whose title starts with a stable
+    finding ID (`CA-NNN` or `G{N}`) -- the Remediation Plan Format's structural headings carry no
+    ID and are never harvested (`docs/audit-patterns/README.md Sec."Append Schema"`). If it prints
+    a `WARNING` with `extraction_status=no-recognized-findings`, the synthesizer's REMEDIATION.md
+    departed from that format: fix the report, do not treat the run as a clean round.
     `audit-round-complete` also runs the CA-471 completeness backstop: for every lens named in
     `lenses-run.txt`, it verifies a non-empty, parseable `lens-L{N}.jsonl` landed in the pass
     directory, and on any miss it warns naming the lenses and records the round as
     `round_type=partial` -- so a round whose authoritative artifacts are missing can never
-    converge even if step 8a was skipped or bungled. If that warn fires, go back to step 8a,
-    persist the missing halves, and record the miss in `tooling-notes.md` (step 8b) -- do not
+    converge even if step 8a was skipped or bungled. That downgrade is IRREVERSIBLE for the round
+    it fires on (CA-471): `audit-round-complete` refuses a second completion of the same round
+    ("a round may be completed only once"), so persisting the missing halves afterwards does not
+    restore `round_type=full` and does not make that round convergent. If the warn fires, persist
+    the missing `lens-L{N}.jsonl` halves and record the miss in `tooling-notes.md` (step 8b) so
+    the evidence is not lost, then recover by running a WHOLE NEW round
+    (`audit-round-start` -> lenses -> synthesis -> `audit-round-complete`) whose lens JSONL all
+    lands; convergence reads the LATEST round's type, so only a fresh full round clears it. Never
     proceed to the convergence gate on a downgraded round.
 10. **Convergence gate** (full rounds only -- partial rounds are never convergent). The order is always
     **compute -> present -> approve -> record** -- the flag is never set as a side effect of computing it:
@@ -344,7 +354,10 @@ After all lens reports are written (per step 8a, above), spawn `edm-audit-synthe
 
 ```
 Agent: edm-audit-synthesizer
-Prompt: "Read the lens reports (prose and JSONL) in ${OUTPUT_DIR}/. Read the prior findings
+Prompt: "Read the lens reports (prose and JSONL) in ${OUTPUT_DIR}/, including
+         ${OUTPUT_DIR}/tooling-notes.md if it exists (CA-466: per-lens stall counts and
+         truncation caveats -- carry them into REMEDIATION.md's coverage caveat).
+         Read the prior findings
          ledger at ${INIT_DIR}/code-audit/findings-ledger.jsonl (or the legacy
          findings-ledger.md if only that exists).
          Apply the second-pass False Alarm Filter, ranking by confidence and corroboration
@@ -396,15 +409,17 @@ same code, so a finding recorded under the abolished vocabulary cannot reach con
 
 | # | Sev | Lens(es) | Component | Issue |
 
-## G1 (P1, L1+L4): [Title]
+## Detailed Findings
 
-### Problem
+### CA-001 (P1, lenses L1 + L4): [Title]
 
-### Fix (concrete code or config)
+**Problem**
 
-### Verification
+**Fix (concrete code or config)**
 
-### Files
+**Verification**
+
+**Files**
 
 ## Decisions / Non-Findings
 
@@ -418,6 +433,16 @@ same code, so a finding recorded under the abolished vocabulary cannot reach con
 
 [Syntax checks, tests to run, manual smoke test steps]
 ```
+
+`agents/edm-audit-synthesizer.md Sec."Remediation Plan Format"` is the authoritative template;
+this is its abridged form and must not disagree with it. Two parts are machine-read, not
+cosmetic: every finding heading starts with its stable ledger ID (`CA-NNN`, or `G{N}` for an
+in-round group), and the six section headings above (`Context`, `Findings Summary`,
+`Detailed Findings`, `Decisions / Non-Findings`, `Rollout Order`, `Verification Plan`) carry no
+ID. That is exactly how `edm-state update-patterns` tells a finding from scaffolding
+(`docs/audit-patterns/README.md Sec."Append Schema"`), so a finding heading written without its
+ID is silently dropped from the pattern library, and a structural heading written with one is
+harvested as a pattern.
 
 ## Remediation Gate (Code Audit)
 
@@ -482,6 +507,15 @@ Apply the chosen edits with `Edit` after the response comes back and before runn
 `edm-state approve-gate`. Curation is one-way: once the marker is gone the entry is an ordinary
 library entry, and a later `update-patterns` never re-marks it (de-duplication on the entry title
 blocks the re-append).
+
+The drain is only as good as what enters it. `update-patterns` appends a stub for every
+*recognized* finding title and nothing else, so a pending list that is obviously not made of
+patterns (severity roll-ups, rollout stages, verification steps) means the source report departed
+from the Remediation Plan Format above and the entries should be **Discard**ed, not curated -- and
+the report format fixed. Conversely, an arm that harvested nothing says so: `update-patterns`
+prints a `WARNING` and records `extraction_status` in state for anything but a clean read, so an
+empty pending list is never by itself evidence that a round found nothing worth keeping
+(`docs/audit-patterns/README.md Sec."Append Schema"`).
 
 Curation carries no approval weight. The Convergence question itself follows
 `` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` `` unchanged, and leaving every entry pending

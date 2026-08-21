@@ -123,7 +123,11 @@ Write to `REMEDIATION.md` in the audit directory:
 that names the behavior this fix changes -- or `n/a` when the fix names no documented behavior.
 CA-416: the stale-citation class recurred five consecutive rounds because code fixes landed
 without sweeping the prose that names them; this row makes the sweep an obligation on the same
-artifact that authorizes the change, and the remediating commit is not done while it is unmet.]
+artifact that authorizes the change, and the remediating commit is not done while it is unmet.
+This row is the prose half of the ledger's `spec_swept` field, which is machine-enforced: while
+any `fixed` ledger entry carries `spec_swept: "no"`, `edm-state audit-converged` exits 1 naming
+the blocking IDs and `edm-state approve-gate <PREFIX> code-audit` refuses the gate -- including
+under `--accept-p2-debt`, which carries open P2 severity forward and never waives a sweep.]
 
 ---
 
@@ -179,7 +183,14 @@ Field rules:
   the fix names no documented behavior, `no` when the sweep is known outstanding. A `fixed`
   entry carrying `spec_swept: "no"` means the remediation wave is NOT done -- the stale-citation
   class recurred five consecutive rounds precisely because nothing tracked this obligation.
-  Absent on entries recorded before this field existed (read as unknown, never as `yes`).
+  This is enforced, not a convention: `edm-state audit-converged` exits 1 and names every
+  offending ID once the blocking set is otherwise clear, `edm-state approve-gate <PREFIX>
+  code-audit` refuses the gate on the same predicate (and `--accept-p2-debt` does not waive it),
+  and `edm-state validate` surfaces the debt as the informational `SPEC_SWEEP_PENDING` anomaly
+  mid-round. Only the explicit string `no` blocks; `yes` and `n/a` pass.
+  Absent on entries recorded before this field existed -- an absent value is grandfathered and
+  never blocks (C-4 backward compatibility), so do not backfill it onto historical entries; set
+  it going forward on every entry you mark `fixed`.
 
 This JSONL file is the **authoritative record**. You do not write `findings-ledger.md` --
 `edm-state render-ledger` renders the markdown deterministically from this JSONL (a separate

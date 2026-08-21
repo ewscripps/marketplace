@@ -133,9 +133,13 @@ CURRENT_CHILD_PID=""
 
 # write_partial_artifacts -- called only from cleanup(), only when a run started but never
 # reached the final phase. run.json is this driver's own record; scores.json here is a stub,
-# not the real scorer's output (score-artifacts.sh, EDMV3-T23, never runs against an
-# incomplete artifact tree) -- it exists purely so CI can see complete: false and refuse the
-# baseline comparison without needing to invoke the real scorer on a run with nothing to score.
+# not the real scorer's output -- it stands in for a scores.json on any path that never reaches
+# score-artifacts.sh at all (a hand-run partial, an interrupted local run, an inspection of the
+# uploaded CI artifacts). CA-452 rewired eval:nightly to continue past exit 4, so the CI path
+# now DOES run the real scorer over the partial run directory and overwrites this stub -- the
+# complete: false verdict survives that overwrite because the scorer reads it from run.json, and
+# it is bin/edm-compare-eval that refuses the candidate by name. The stub is no longer CI's only
+# view of the partial run, only the earliest one.
 write_partial_artifacts() {
   [ -n "$RUN_DIR" ] || return 0
   mkdir -p "$RUN_DIR" 2>/dev/null
@@ -154,7 +158,7 @@ write_partial_artifacts() {
   jq -n \
     --arg reason "run did not reach the final phase (audit-srd); last phase attempted: ${LAST_PHASE_ATTEMPTED}" \
     '{complete: false, dimensions_scored: 0, dimensions: [], total: null, reason: $reason,
-      note: "stub written by run-eval.sh; the real scorer (score-artifacts.sh, EDMV3-T23) never scores an incomplete run"}' \
+      note: "stub written by run-eval.sh for the window before score-artifacts.sh runs (and for hand-run or interrupted partials that never reach it); eval:nightly re-scores this directory and overwrites this file, preserving complete:false from run.json (CA-452)"}' \
     > "$RUN_DIR/scores.json" 2>/dev/null
   echo "run-eval: partial run -- wrote $RUN_DIR/run.json and $RUN_DIR/scores.json (complete: false)" >&2
 }
@@ -163,8 +167,9 @@ write_partial_artifacts() {
 # OUT_ROOT, keeping the EDM_EVAL_KEEP_RUNS most recent. Called from cleanup() below, which the
 # EXIT/INT/TERM trap runs on every exit path -- success, partial (exit 4), or interrupted -- so a
 # failed or killed run's directory is retention-managed too (G54), not only the success path.
-# The run directory currently being investigated is always the newest by mtime, so it is never
-# eligible for pruning regardless of which path got here.
+# The run directory currently being investigated is always the newest by mtime, and the keep
+# count has an effective floor of 1 (see the CA-443 clamp below), so it is never eligible for
+# pruning regardless of which path got here.
 #
 # Ownership filter (G12, defect 1): only directories matching the RUN_ID naming shape
 # (${TS}_${GIT_SHA}, e.g. 20260101T000000Z_abc1234) are ever considered stale-eligible -- an
