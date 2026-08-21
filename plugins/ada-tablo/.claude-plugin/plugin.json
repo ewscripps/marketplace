@@ -1,6 +1,6 @@
 {
   "name": "ada-tablo",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Ada chatbot analysis skills for Tablo support — playbook review, topics review, coaching inventory, and config-health integrity checks.",
   "author": {
     "name": "STG Software Engineering Team"

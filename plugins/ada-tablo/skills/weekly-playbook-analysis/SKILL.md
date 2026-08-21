@@ -126,6 +126,25 @@ get_conversations(
 - Categorize failure patterns from the Classification, Reason, and Inquiry Summary fields
 - Report each pattern as N conversations and % of Not Resolved
 
+## Step 3b: Classification Discipline
+
+- **Classify outcomes by tool-call structure — which tools fired, in what order, with what
+  `result.status` — not by keyword-matching bot text.** Bot phrasing changes with playbook
+  edits and localization (this account is multilingual), so a text match silently miscounts.
+- Where MCP summaries don't establish the tool sequence, pull `tool_call` messages for the
+  window and group by conversation, ordered by call sequence:
+  ```
+  python3 ~/repos/ada-tablo-ops/scripts/export_messages.py --since <start> --until <end> --tool-calls-csv <path>
+  ```
+- Identify the playbook family by `used_playbooks` firing counts, not by name. Check
+  co-occurrence before summing, so an entry flow and its sub-flows are not double counted.
+- **`tool_call` messages mix internal reasoning with real outcomes** (verified 2026-08-20):
+  `deep_thinking` and `(naive_)search_knowledge` are internal steps, not Actions or Handoffs —
+  exclude them when counting Action/Handoff outcomes. Playbook starts also surface as
+  `tool_call` rows named after the playbook.
+- **State the denominator.** Classify the full population when volume allows (low thousands
+  is fine). If sampling, say so and give the sample size and how it was drawn.
+
 ## Step 4: Load Workflow Reference
 
 Read the workflow document for baselines and guidance:
@@ -202,6 +221,10 @@ across that boundary as approximate; resolution rate and escalation % compare di
 
 Flag any metrics that crossed red flag thresholds.
 
+Close the presented results with an explicit **Verified vs inferred** line: name which claims
+were confirmed against live backend data via MCP (e.g. a metric pull, a `list_entities` read)
+and which are pattern inference from summaries.
+
 ## Step 7: Check Deployed Changes
 
 Review the "Changes Deployed" table in the workflow doc. For each tracked change:
@@ -221,6 +244,10 @@ Format each recommendation using the established format:
 ```
 
 Limit to top 3 recommendations unless more are critical.
+
+**Do not report a defect as fact from transcript text alone.** Verify any "bug" claim against
+live backend data via MCP (`list_entities` for the playbook body, `get_ada_metric` /
+`get_conversations` for behavior) before it enters a recommendation.
 
 ## Step 9: Deploy Approved Edits via edit_agent_behavior
 
@@ -374,6 +401,8 @@ Budget guidance: Allow 50-100 conversations via summaries, limit full transcript
 - Run a test-run gate (Step 9b) on the changeset before promoting
 - Read test-run transcripts for anything unexpected, not just the pass/fail verdict
 - Get explicit user confirmation before calling `edit_agent_behavior` with `confirmed=true`
+- Classify outcomes by tool-call structure (which tools fired, in what order, with what status)
+- State the denominator — full population, or sample size and how it was drawn
 
 **DON'T:**
 - Call `edit_agent_behavior` promote/revert/delete with `confirmed=true` without the user's explicit sign-off
@@ -382,3 +411,5 @@ Budget guidance: Allow 50-100 conversations via summaries, limit full transcript
 - Analyze more than 100-150 conversations at once (diminishing returns)
 - Pull full transcripts for pattern discovery (use summaries or CSV reasons)
 - Expect immediate results — allow 7 days for changes to take effect
+- Classify outcomes by keyword-matching bot text
+- Report a defect as fact from transcript text alone — confirm against live backend state first

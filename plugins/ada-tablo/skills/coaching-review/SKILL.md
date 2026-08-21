@@ -264,6 +264,19 @@ than delete outright, discuss the intended end state with the user first — the
 separate disable flag; achieve it via a `modified` change to the coaching's availability
 rules, or via `deleted` if full removal is what's wanted.
 
+### 3e: Classification Discipline
+
+- Attribute effect via the `COACHINGAPPLIED` filter and tool-call structure — which tools
+  fired, in what order, with what `result.status` — not by reading intent out of bot wording.
+  Bot phrasing changes with edits and localization (this account is multilingual), so a text
+  match silently miscounts. Exclude `deep_thinking` and `(naive_)search_knowledge` tool_calls
+  from Action/Handoff outcome counts — they're internal reasoning steps, not outcomes
+  (verified 2026-08-20).
+- Keep the 3a rule that all coaching >10 uses/week is checked each review. When that full
+  check isn't done, say so and give the sample size and how it was drawn.
+- **Do not report a defect as fact from transcript text alone.** Verify any "bug" claim
+  against live backend data via MCP before it enters a recommendation.
+
 ## Step 4: Track Month-over-Month Trends
 
 Track month-over-month resolution rates (measured via Step 3a):
@@ -512,6 +525,8 @@ See Step 1 for capabilities. Key costs:
 - Document the source analysis for each coaching recommendation
 - Move implemented pending items to Active section
 - Append new coaching IDs to `coaching_ids.md` immediately after creating them in Ada
+- Classify effect by tool-call structure (which tools fired, in what order, with what status)
+- State the denominator — full population, or sample size and how it was drawn
 
 **DON'T:**
 - Create coaching without clear triggering scenario
@@ -520,6 +535,8 @@ See Step 1 for capabilities. Key costs:
 - Use full conversation transcripts for volume analysis
 - Assume high usage = effective (check resolution rates)
 - Put dynamic insights (resolution rates) in inventory file — use history file
+- Classify effect by keyword-matching bot text
+- Report a defect as fact from transcript text alone — confirm against live backend state first
 
 ## Completion Checklist
 
@@ -529,6 +546,9 @@ See Step 1 for capabilities. Key costs:
 - [ ] Inventory counts updated (Step 2)
 - [ ] Resolution rates checked for all high-impact items (Step 3)
 - [ ] Performance concerns flagged (Step 3b-c)
+- [ ] Outcomes classified by structure, not bot text (Step 3e)
+- [ ] Denominator stated — full population or sample size (Step 3e)
+- [ ] Any defect claim confirmed against live backend data before reporting (Step 3e)
 - [ ] Trends compared to previous month (Step 4)
 - [ ] New recommendations documented if needed (Step 5)
 - [ ] New coaching IDs appended to coaching_ids.md if any were created (Step 6)
