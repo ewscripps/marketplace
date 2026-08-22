@@ -803,6 +803,13 @@ gated_phase_for_gate() {
 # literal (EDMV3-T09 uses the identical idiom for SETTABLE_KEYS).
 MODE_ENUM_LIST="standard mini-srd iac data-ml prototype"
 LIFECYCLE_MODE_ENUM_LIST="standard fast-track fix-pack"
+# AUDIT_TYPE_ENUM_LIST -- single source for audit-round-start/-complete's audit-type argument
+# (CA-503: this pair was the one enum in the file re-encoding itself as a literal at six sites
+# instead of following the convention above).
+AUDIT_TYPE_ENUM_LIST="code srd tickets"
+# PATTERN_AUDIT_TYPE_ENUM_LIST -- single source for update-patterns' audit-type argument (CA-533,
+# a second larger instance of the same class: five values, seven re-encoded sites).
+PATTERN_AUDIT_TYPE_ENUM_LIST="srd ticket qc code test-coverage"
 
 # terminal_phase_for_mode <mode> <lifecycle_mode> -- the phase at which this
 # initiative's lifecycle ends (EDMV3-T07 AC1). One comment per enum row so the
@@ -1109,19 +1116,26 @@ COVERAGE_EPIC_ROW_JQ_DEF='def coverage_epic_row_prefix($epic):
 # four hand-maintained copies in two incompatible mechanisms (get-coverage's hand-counted jq
 # string literals vs metrics-report's printf width specs) that had to track the row defs' clamp
 # constants from a third place. The NAME columns do derive from the row clamps: layer table =
-# 14-wide layer, epic table = 15-wide epic + 14-wide layer. The Coverage column does NOT -- it
-# is still hand-counted here, and is currently off by one against both row defs (CA-418, open):
-# COVERAGE_LAYER_ROW_JQ_DEF emits pct + "%" + 9/8/7 spaces = 11 columns against this file's
-# `%-10s`, and COVERAGE_EPIC_ROW_JQ_DEF's prefix emits pct + "%" + 8/7/6 spaces = 10 columns
-# against `%-9s`. Both paddings also assume an INTEGER pct, so a fractional value (82.4) widens
-# the row a further two columns. COVERAGE_EPIC_HEADER is exempt only because Coverage is its last
-# column, where a width mismatch cannot show. get-coverage's epic table alone carries the extra
-# trailing Measured At column its rows append (the one sanctioned divergence, matching the
-# row-def split above). Each constant is BOTH header lines, newline-joined (jq -r and printf
-# '%s\n' both render that as two lines).
-COVERAGE_LAYER_HEADER="$(printf '  %-14s  %-10s  %s\n  %-14s  %-10s  %s' "Layer" "Coverage" "Measured At" "-----" "--------" "-----------")"
+# 14-wide layer, epic table = 15-wide epic + 14-wide layer.
+#
+# CA-505 (residual of CA-418): the Coverage column is still hand-counted here rather than
+# deriving from the row defs' own padding scheme, and the two owning constants are the row defs
+# above -- COVERAGE_LAYER_ROW_JQ_DEF's pct+"%"+9/8/7-space ladder totals a CONSTANT 11 columns for
+# any 1/2/3-digit INTEGER pct (the variable space count exists precisely to normalize that), and
+# COVERAGE_EPIC_ROW_JQ_DEF's prefix ladder (8/7/6 spaces) totals a constant 10. The widths below
+# (11 and 10) match those totals; they were previously 10 and 9 (off by one), which shifted every
+# trailing Measured At column left by one against its header. COVERAGE_EPIC_HEADER is exempt from
+# needing a Coverage width at all -- Coverage is its last column, where a width mismatch cannot
+# show. A FRACTIONAL pct (e.g. 82.4, the type the state schema actually documents) still widens
+# the row past either constant -- one extra character per decimal digit -- which these fixed
+# widths do not accommodate; that residual gap is unchanged by this fix and is a live divergence
+# only once a fractional pct is actually recorded (none is, as of this fix). get-coverage's epic
+# table alone carries the extra trailing Measured At column its rows append (the one sanctioned
+# divergence, matching the row-def split above). Each constant is BOTH header lines, newline-
+# joined (jq -r and printf '%s\n' both render that as two lines).
+COVERAGE_LAYER_HEADER="$(printf '  %-14s  %-11s  %s\n  %-14s  %-11s  %s' "Layer" "Coverage" "Measured At" "-----" "--------" "-----------")"
 COVERAGE_EPIC_HEADER="$(printf '  %-15s  %-14s  %s\n  %-15s  %-14s  %s' "Epic" "Layer" "Coverage" "----" "-----" "--------")"
-COVERAGE_EPIC_HEADER_MEASURED="$(printf '  %-15s  %-14s  %-9s  %s\n  %-15s  %-14s  %-9s  %s' "Epic" "Layer" "Coverage" "Measured At" "----" "-----" "--------" "-----------")"
+COVERAGE_EPIC_HEADER_MEASURED="$(printf '  %-15s  %-14s  %-10s  %s\n  %-15s  %-14s  %-10s  %s' "Epic" "Layer" "Coverage" "Measured At" "----" "-----" "--------" "-----------")"
 
 # _edm_reclaim_stale_lockdir <lockdir> <success-log-message>
 # Shared atomic reclaim: `mv "$lockdir" "${lockdir}.stale.$$"` either wins or loses the rename
@@ -4434,13 +4448,13 @@ _cmd_audit_round_start_body() {
 }
 
 cmd_audit_round_start() {
-  [[ $# -ge 2 ]] || die "usage: edm-state audit-round-start <PREFIX> <code|srd|tickets> [--lenses <comma-list>]"
+  [[ $# -ge 2 ]] || die "usage: edm-state audit-round-start <PREFIX> <${AUDIT_TYPE_ENUM_LIST// /|}> [--lenses <comma-list>]"
   require_jq
   local prefix="$1" audit_type="$2"
   shift 2
-  case "$audit_type" in
-    code|srd|tickets) ;;
-    *) die "audit-round-start: unknown audit type '$audit_type' (expected: code|srd|tickets)" ;;
+  case " $AUDIT_TYPE_ENUM_LIST " in
+    *" $audit_type "*) ;;
+    *) die "audit-round-start: unknown audit type '$audit_type' (expected: ${AUDIT_TYPE_ENUM_LIST// /|})" ;;
   esac
 
   local lenses_arg=""
@@ -4588,12 +4602,12 @@ _cmd_audit_round_complete_body() {
 }
 
 cmd_audit_round_complete() {
-  [[ $# -eq 2 ]] || die "usage: edm-state audit-round-complete <PREFIX> <code|srd|tickets>"
+  [[ $# -eq 2 ]] || die "usage: edm-state audit-round-complete <PREFIX> <${AUDIT_TYPE_ENUM_LIST// /|}>"
   require_jq
   local prefix="$1" audit_type="$2"
-  case "$audit_type" in
-    code|srd|tickets) ;;
-    *) die "audit-round-complete: unknown audit type '$audit_type' (expected: code|srd|tickets)" ;;
+  case " $AUDIT_TYPE_ENUM_LIST " in
+    *" $audit_type "*) ;;
+    *) die "audit-round-complete: unknown audit type '$audit_type' (expected: ${AUDIT_TYPE_ENUM_LIST// /|})" ;;
   esac
 
   local now_ts f lockbase complete_result round_num cost
@@ -5043,8 +5057,15 @@ _cmd_set_provenance_field() {  # <subcommand-name> <state-key> <prefix> <other-p
   require_jq
   local prefix="$1" other="$2"
   [[ -n "$other" ]] || die "${subcmd}: other-prefix must be non-empty"
+  # CA-504: $other is deliberately NOT validated to exist (unlike set-parent/add-related below) --
+  # a provenance link may legitimately name a not-yet-created follow-on initiative (e.g.
+  # "this will supersede EDMV4 once it exists"), where parent_prefix/related_prefixes assume the
+  # linked initiative is already part of the same product line. write_handoff_internal below,
+  # however, is not conditional on that: HANDOFF.md must reflect the field this command just
+  # wrote regardless of whether the target exists yet.
   rmw_state "$prefix" ".${key} = \$v | .last_updated = \$ts" --arg v "$other" --arg ts "$(now_utc)"
   echo "set ${key} = $other for $prefix"
+  write_handoff_internal "$prefix"
 }
 
 cmd_set_supersedes() { _cmd_set_provenance_field set-supersedes supersedes "$@"; }
@@ -5440,13 +5461,13 @@ ${norm}"
 }
 
 cmd_update_patterns() {
-  [[ $# -eq 2 ]] || die "usage: edm-state update-patterns <PREFIX> <srd|ticket|qc|code|test-coverage>"
+  [[ $# -eq 2 ]] || die "usage: edm-state update-patterns <PREFIX> <${PATTERN_AUDIT_TYPE_ENUM_LIST// /|}>"
   require_jq
   local prefix="$1" audit_type="$2"
 
-  case "$audit_type" in
-    srd|ticket|qc|code|test-coverage) ;;
-    *) die "update-patterns: unknown audit type '$audit_type' (expected: srd|ticket|qc|code|test-coverage)" ;;
+  case " $PATTERN_AUDIT_TYPE_ENUM_LIST " in
+    *" $audit_type "*) ;;
+    *) die "update-patterns: unknown audit type '$audit_type' (expected: ${PATTERN_AUDIT_TYPE_ENUM_LIST// /|})" ;;
   esac
 
   # G39: use the existing BASH_SOURCE-derived SCRIPT_DIR global (computed once near the top

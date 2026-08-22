@@ -179,10 +179,17 @@ echo "T98 -- set-supersedes / set-forked-from"
 "$EDM_STATE" set-supersedes TSMK OLDPREFIX >/dev/null
 sup="$(jq -r '.supersedes' "$STATE_FILE")"
 [[ "$sup" == "OLDPREFIX" ]] && pass "supersedes = OLDPREFIX" || fail "supersedes = '$sup'"
+# CA-504: set-supersedes now refreshes HANDOFF.md itself -- checked here, BEFORE the T99 block's
+# own unrelated "$EDM_STATE" write-handoff TSMK call below, so a regression back to the
+# no-refresh behavior fails here instead of being silently masked by that later call.
+check "CA-504 -- set-supersedes refreshes HANDOFF.md without a separate write-handoff call" \
+  "Supersedes**: OLDPREFIX" "$(cat "$HANDOFF")"
 
 "$EDM_STATE" set-forked-from TSMK SRCPREFIX >/dev/null
 ff="$(jq -r '.forked_from' "$STATE_FILE")"
 [[ "$ff" == "SRCPREFIX" ]] && pass "forked_from = SRCPREFIX" || fail "forked_from = '$ff'"
+check "CA-504 -- set-forked-from refreshes HANDOFF.md without a separate write-handoff call" \
+  "Forked from**: SRCPREFIX" "$(cat "$HANDOFF")"
 
 # Empty prefix rejected -- set-supersedes/set-forked-from are state-mutating on success, same
 # reasoning (G50/CA-210).

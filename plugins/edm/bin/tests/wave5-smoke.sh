@@ -124,6 +124,35 @@ cvrg_cov_epic_prefix="$(printf '%s' "$cvrg_cov_epic_line" | sed -E 's/  [0-9TZ:.
   && pass "G23/CA-343 -- get-coverage and metrics-report agree byte-for-byte on the shared epic/layer/coverage columns" \
   || fail "G23/CA-343 -- epic row columns diverged: get-coverage='$cvrg_cov_epic_prefix' metrics-report='$cvrg_metrics_epic_line'"
 
+# ---- CA-505 (residual of CA-418): the DATA row check above never covered the header/underline
+# pair, which is exactly where the Coverage column's width mismatch lived. Record a
+# whole-initiative (non-epic) layer entry with an INTEGER pct so the Layer table actually
+# renders, then assert two things the fix claims: (1) get-coverage and metrics-report emit the
+# identical header+underline pair for that table (both consume the same COVERAGE_LAYER_HEADER
+# constant, so a hand-edit to only one call site would diverge them), and (2) the header's
+# "Measured At" column starts at the same character offset as the data row's actual timestamp --
+# the alignment CA-505 found broken for the Coverage column specifically.
+"$EDM_STATE" record-test-coverage CVRG integration 72 >/dev/null
+cvrg_layer_cov_out="$("$EDM_STATE" get-coverage CVRG)"
+cvrg_layer_metrics_out="$("$EDM_STATE" metrics-report CVRG)"
+ca505_cov_header_pair="$(printf '%s\n' "$cvrg_layer_cov_out" | grep -A1 '^  Layer ')"
+ca505_metrics_header_pair="$(printf '%s\n' "$cvrg_layer_metrics_out" | grep -A1 '^  Layer ')"
+[[ -n "$ca505_cov_header_pair" ]] \
+  && pass "CA-505 -- get-coverage renders the Layer table header+underline pair" \
+  || fail "CA-505 -- get-coverage produced no Layer table header for CVRG"
+[[ "$ca505_cov_header_pair" == "$ca505_metrics_header_pair" ]] \
+  && pass "CA-505 -- get-coverage and metrics-report emit an identical Layer header+underline pair (both consume COVERAGE_LAYER_HEADER)" \
+  || fail "CA-505 -- Layer header+underline diverged: get-coverage='$ca505_cov_header_pair' metrics-report='$ca505_metrics_header_pair'"
+
+ca505_header_line="$(printf '%s\n' "$ca505_cov_header_pair" | head -1)"
+ca505_row_line="$(printf '%s\n' "$cvrg_layer_cov_out" | grep -m1 '^  integration ')"
+ca505_row_prefix="$(printf '%s' "$ca505_row_line" | sed -E 's/  [0-9TZ:.-]+$//')"
+ca505_header_ts_offset=$(( ${#ca505_header_line} - 11 ))  # 11 == length of "Measured At"
+ca505_row_ts_offset=$(( ${#ca505_row_prefix} + 2 ))
+[[ "$ca505_header_ts_offset" -eq "$ca505_row_ts_offset" ]] \
+  && pass "CA-505 -- the Layer header's Measured At column starts at the same offset as the data row's timestamp (Coverage column width matches the row def)" \
+  || fail "CA-505 -- Layer header/row Measured At column misaligned: header offset=${ca505_header_ts_offset} row offset=${ca505_row_ts_offset} (header='$ca505_header_line' row='$ca505_row_line')"
+
 # ---- set-parent / add-related ------------------------------------------------
 echo
 echo "set-parent / add-related"

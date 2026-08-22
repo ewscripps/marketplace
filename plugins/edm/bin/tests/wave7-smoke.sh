@@ -1152,6 +1152,64 @@ ca502_control_hit="$(printf '%s\n' "$ca502_control_line" | grep -cE "$ca502_glob
   && pass "CA-502 -- positive control confirms the glob-triple pattern discriminates (a two-element glob does not match)" \
   || fail "CA-502 -- positive control broken: a synthetic two-element glob line matched the three-element pattern"
 
+# =================================================================================
+# CA-503/CA-533: audit-round-start/-complete and update-patterns now derive their audit-type
+# validation, usage strings and die messages from AUDIT_TYPE_ENUM_LIST /
+# PATTERN_AUDIT_TYPE_ENUM_LIST rather than re-encoding the enum as a literal at each site. This
+# pins the single-source constants and the per-type case statements that are genuinely per-type
+# DATA (pattern-file / report-path mapping) rather than something to collapse into the constant.
+# =================================================================================
+echo
+echo "=== CA-503/CA-533: audit-type enums are single-sourced, and the per-type mapping case statements cover exactly as many arms as their enum has words ==="
+ca503_audit_type_list="$(grep -m1 '^AUDIT_TYPE_ENUM_LIST=' "$EDM_STATE" | sed -E 's/^AUDIT_TYPE_ENUM_LIST="([^"]*)"$/\1/')"
+check "CA-503 -- AUDIT_TYPE_ENUM_LIST is defined as 'code srd tickets'" "code srd tickets" "$ca503_audit_type_list"
+check "CA-503 -- audit-round-start validates against AUDIT_TYPE_ENUM_LIST, not a re-typed literal" \
+  '" $AUDIT_TYPE_ENUM_LIST "' "$(awk '/^cmd_audit_round_start\(\)/{f=1} f{print} f && /^}$/{exit}' "$EDM_STATE")"
+check "CA-503 -- audit-round-complete validates against AUDIT_TYPE_ENUM_LIST, not a re-typed literal" \
+  '" $AUDIT_TYPE_ENUM_LIST "' "$(awk '/^cmd_audit_round_complete\(\)/{f=1} f{print} f && /^}$/{exit}' "$EDM_STATE")"
+
+ca533_pattern_type_list="$(grep -m1 '^PATTERN_AUDIT_TYPE_ENUM_LIST=' "$EDM_STATE" | sed -E 's/^PATTERN_AUDIT_TYPE_ENUM_LIST="([^"]*)"$/\1/')"
+check "CA-533 -- PATTERN_AUDIT_TYPE_ENUM_LIST is defined as 'srd ticket qc code test-coverage'" \
+  "srd ticket qc code test-coverage" "$ca533_pattern_type_list"
+check "CA-533 -- update-patterns validates against PATTERN_AUDIT_TYPE_ENUM_LIST, not a re-typed literal" \
+  '" $PATTERN_AUDIT_TYPE_ENUM_LIST "' "$(awk '/^cmd_update_patterns\(\)/{f=1} f{print} f && /^}$/{exit}' "$EDM_STATE")"
+
+# FALSE ALARM FILTER (per CA-533's own text): the pattern-file and report-path mapping case
+# statements inside cmd_update_patterns are genuinely per-type DATA and stay as case statements --
+# this pins their ARM COUNT against the enum's word count instead, so a type added to
+# PATTERN_AUDIT_TYPE_ENUM_LIST without a matching mapping arm fails here rather than silently
+# resolving an empty pattern_file/audit_report_path for the new type.
+ca533_expected_arms="$(printf '%s\n' "$ca533_pattern_type_list" | wc -w | tr -d ' ')"
+ca533_cmd_body="$(awk '/^cmd_update_patterns\(\)/{f=1} f{print} f && /^}$/{exit}' "$EDM_STATE")"
+ca533_pattern_file_arms="$(printf '%s\n' "$ca533_cmd_body" | grep -cE '^\s*(srd|ticket|qc|code|test-coverage)\)\s*pattern_file=')"
+ca533_report_path_arms="$(printf '%s\n' "$ca533_cmd_body" | grep -cE '^\s*(srd|ticket|qc|code|test-coverage)\)\s*(audit_report_path=|$)')"
+[[ "${ca533_pattern_file_arms:-0}" -eq "$ca533_expected_arms" ]] \
+  && pass "CA-533 -- pattern_file mapping covers exactly ${ca533_expected_arms} arm(s), matching PATTERN_AUDIT_TYPE_ENUM_LIST" \
+  || fail "CA-533 -- pattern_file mapping has ${ca533_pattern_file_arms:-0} arm(s), expected ${ca533_expected_arms} (matching PATTERN_AUDIT_TYPE_ENUM_LIST word count)"
+[[ "${ca533_report_path_arms:-0}" -ge "$ca533_expected_arms" ]] \
+  && pass "CA-533 -- audit_report_path mapping covers at least ${ca533_expected_arms} arm(s), matching PATTERN_AUDIT_TYPE_ENUM_LIST" \
+  || fail "CA-533 -- audit_report_path mapping has only ${ca533_report_path_arms:-0} arm(s), expected at least ${ca533_expected_arms} (matching PATTERN_AUDIT_TYPE_ENUM_LIST word count)"
+
+# pattern_extract_titles uses an early-return arm for the two unsupported types (ticket,
+# test-coverage) plus three named arms (code, srd, qc) -- all five enum words are literally
+# named somewhere in its body, so per-word membership holds here.
+ca533_pxt_body="$(awk '/^pattern_extract_titles\(\)/{f=1} f{print} f && /^}$/{exit}' "$EDM_STATE")"
+for ca533_type in $ca533_pattern_type_list; do
+  check "CA-533 -- pattern_extract_titles names audit type '${ca533_type}'" "$ca533_type" "$ca533_pxt_body"
+done
+
+# pattern_extraction_status_for instead names only the two unsupported types explicitly and
+# falls through a wildcard default for the rest (code/srd/qc all resolve identically to "ok" or
+# "no-recognized-findings", so there is nothing type-specific to name for them) -- a per-word
+# membership check would be a false positive on that design. Pin the two shapes that actually
+# make it correct: the same "ticket|test-coverage" named set pattern_extract_titles' early-return
+# uses, and a wildcard default arm to catch everything else.
+ca533_pesf_body="$(awk '/^pattern_extraction_status_for\(\)/{f=1} f{print} f && /^}$/{exit}' "$EDM_STATE")"
+check "CA-533 -- pattern_extraction_status_for names the same ticket|test-coverage unsupported set" \
+  "ticket|test-coverage" "$ca533_pesf_body"
+check "CA-533 -- pattern_extraction_status_for has a wildcard default arm for the remaining types" \
+  '*)' "$ca533_pesf_body"
+
 echo
 echo "T61 AC11 -- macOS/Linux divergence points (sed -i, grep -P family, stat -c/-f, mktemp template suffix, bare mktemp -d, date -d, readlink -f, sort -V, head -n -N, printf %q) are all inside a detection branch"
 # -[a-zA-Z]*P (not a literal "grep -P") so this also catches grep -qP / -nP, the actual forms
