@@ -5367,6 +5367,105 @@ else
   check_absent "T67 AC8 -- commit path does not scan the whole tree" "edm-lint-artifacts --all" "$t67ac8_cmd"
 fi
 
+# CA-499: the git-commit hook's delegate is the one PATH-exposed bin/ script with a hardcoded
+# #!/bin/bash shebang rather than the env-resolved form every other production/eval script uses
+# (fail-open on a host with no bash at that literal path, plus a split-bash-version risk on
+# macOS with Homebrew bash installed). Pinned here rather than left incidental.
+check "CA-499 -- edm-lint-staged-artifacts uses the env-resolved bash shebang, not a hardcoded path" \
+  '#!/usr/bin/env bash' "$t67ac8_cmd"
+check_absent "CA-499 -- edm-lint-staged-artifacts no longer hardcodes #!/bin/bash" \
+  '#!/bin/bash' "$t67ac8_cmd"
+
+# CA-497: this file deliberately uses `set -uo pipefail`, not the full `set -euo pipefail` nine
+# of the ten other PATH-exposed bin/ scripts use -- adding -e would abort on an ORDINARY
+# non-zero (the srd_root probes) and turn commit-time enforcement fail-open. Pin that the
+# rationale comment survives at the site, not just that the flag is what it is.
+check "CA-497 -- set -uo pipefail carries a rationale comment naming the fail-open risk of -e" \
+  "CA-497" "$t67ac8_cmd"
+check "CA-497 -- the file still deliberately omits -e" $'\nset -uo pipefail' "$t67ac8_cmd"
+
+# CA-501: commit-time enforcement now hinges on edm-lint-staged-artifacts' executable bit (the
+# PreToolUse hook's `command -v ... || exit 0` guard degrades silently, exit 0, for a
+# non-executable file on PATH -- the same signal as "commit is clean"). G8 below already
+# exercises this bit indirectly (PATH includes the real plugins/edm/bin), but nothing asserted
+# the bit directly or proved the guard's failure mode actually fires on a 0644 copy. Assert the
+# bit for every non-underscore-prefixed bin/ entry (the underscore prefix marks a sourced
+# library, never invoked via PATH/command -v), and prove the guard's own detection mechanism
+# with a positive control.
+echo
+echo "=== CA-501: every non-underscore-prefixed plugins/edm/bin/ entry (PATH-invoked, not a sourced library) carries the executable bit ==="
+ca501_unexecutable=""
+for ca501_f in "${PLUGIN_DIR}"/bin/*; do
+  [[ -f "$ca501_f" ]] || continue
+  case "$(basename "$ca501_f")" in
+    _*) continue ;;  # sourced library, never invoked via PATH/command -v
+    *.awk|*.txt) continue ;;
+  esac
+  [[ -x "$ca501_f" ]] || ca501_unexecutable="${ca501_unexecutable}${ca501_f}"$'\n'
+done
+[[ -z "$ca501_unexecutable" ]] \
+  && pass "CA-501 -- every non-underscore-prefixed plugins/edm/bin/ entry is executable" \
+  || fail "CA-501 -- non-executable bin/ entry(ies) found (would silently degrade any PreToolUse hook depending on them):\n$ca501_unexecutable"
+
+# End-to-end behavioral proof of the actual gap, rather than an isolated command -v check: on
+# THIS plugin's supported bash (the macOS-shipped 3.2.57), `command -v` does NOT require the
+# executable bit for a PATH hit -- verified directly: a mode-0644 copy still resolves via
+# `command -v`. So the real failure mode is not "the guard's command -v pre-check fires and the
+# hook exits 0 before ever trying to run the delegate" as CA-501 first framed it; it is "the
+# guard's command -v pre-check PASSES anyway, bash then tries to exec the mode-0644 file, that
+# exec fails (permission denied), and the hook still does not exit 2" -- same fail-open outcome,
+# different mechanism. Prove the outcome end-to-end: copy the REAL edm-lint-staged-artifacts to
+# a scratch bin, strip its executable bit, stage a violation a stubbed edm-lint-artifacts would
+# report, run the actual extracted hook command, and assert it does NOT block (exit 2) --
+# because nothing in the repository verifies this precondition today.
+ca501_unexecutable_delegate_case() {
+  local scratch cmdfile cmd out ec
+  scratch="$(mktemp -d "${TMP}/edm-ca501-unexec.XXXXXX")" || { fail "CA-501 unexecutable-delegate case -- mktemp failed"; return 1; }
+  mkdir -p "${scratch}/SRD/FOOCA501B" "${scratch}/bin"
+  ( cd "$scratch" && git init -q && git config user.email t@t && git config user.name t )
+
+  cat > "${scratch}/bin/edm-state" <<'EOS'
+#!/bin/bash
+case "$1" in
+  resolve-dir) echo "SRD/FOOCA501B"; exit 0 ;;
+esac
+EOS
+  cat > "${scratch}/bin/edm-lint-artifacts" <<'EOS'
+#!/bin/bash
+echo "SRD/FOOCA501B/planning.md:1: unicode: synthetic violation"
+exit 1
+EOS
+  chmod +x "${scratch}/bin/edm-state" "${scratch}/bin/edm-lint-artifacts"
+  cp "${PLUGIN_DIR}/bin/edm-lint-staged-artifacts" "${scratch}/bin/edm-lint-staged-artifacts"
+  chmod 0644 "${scratch}/bin/edm-lint-staged-artifacts"
+  echo "hello" > "${scratch}/SRD/FOOCA501B/planning.md"
+  ( cd "$scratch" && git add SRD/FOOCA501B/planning.md bin/edm-state bin/edm-lint-artifacts bin/edm-lint-staged-artifacts )
+
+  cmdfile="${scratch}/hook-command.sh"
+  jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' \
+    "${PLUGIN_DIR}/hooks/hooks.json" > "$cmdfile" 2>/dev/null
+  cmd="$(cat "$cmdfile" 2>/dev/null || true)"
+  if [[ -z "$cmd" ]]; then
+    fail "CA-501 unexecutable-delegate case -- could not extract the PreToolUse git-commit hook command"
+    rm -rf "$scratch"
+    return 1
+  fi
+
+  # PATH is set to ONLY the scratch bin (no fallback to the real PATH) -- bash 3.2 (the
+  # macOS-shipped default this plugin targets) falls through to a LATER PATH entry when an
+  # earlier match exists but is not executable, so a fallback PATH would let the exec attempt
+  # silently succeed against the real, executable edm-lint-staged-artifacts elsewhere on PATH
+  # instead of actually hitting the mode-0644 copy's permission-denied failure this case tests.
+  ec=0
+  out="$(cd "$scratch" && PATH="${scratch}/bin" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -ne 2 ]] \
+    && pass "CA-501 -- a mode-0644 edm-lint-staged-artifacts does NOT block a commit staging a real violation (the unverified precondition this fix names -- exit was ${ec}, not 2)" \
+    || fail "CA-501 unexecutable-delegate case -- expected the hook to fail open (not exit 2) against a mode-0644 delegate; got exit=${ec}, output: ${out}"
+
+  rm -rf "$scratch"
+}
+ca501_unexecutable_delegate_case
+
 echo
 echo "T67 AC11 -- no blocking job's script contains a network call"
 # G74/CA-234: derive the blocking-job set programmatically from .gitlab-ci.yml itself, rather than
@@ -7064,6 +7163,109 @@ EOS
 echo
 echo "=== G8 (round-3 Wave 7c) / CA-186 G3 (round-4 Wave 8b, round-5): a trailing-slash, doubled ./, trailing /., bare '.', './', '..', or absolute srd_root must never silently disable commit-time enforcement ==="
 g8_srd_root_case
+
+# CA-501: every G8 case above stages a VIOLATING artifact and asserts exit 2 -- none of them
+# proves the delegate exits 0 (does not block) on an otherwise-clean commit. Add that missing
+# clean case with the same real-hook, real-PATH shape G8 uses.
+ca501_clean_case() {
+  local scratch cmdfile cmd out ec
+  scratch="$(mktemp -d "${TMP}/edm-ca501-clean.XXXXXX")" || { fail "CA-501 clean case -- mktemp failed"; return 1; }
+  mkdir -p "${scratch}/SRD/FOOCA501" "${scratch}/bin"
+  ( cd "$scratch" && git init -q && git config user.email t@t && git config user.name t )
+
+  cat > "${scratch}/bin/edm-state" <<'EOS'
+#!/bin/bash
+case "$1" in
+  resolve-dir) echo "SRD/FOOCA501"; exit 0 ;;
+esac
+EOS
+  cat > "${scratch}/bin/edm-lint-artifacts" <<'EOS'
+#!/bin/bash
+exit 0
+EOS
+  chmod +x "${scratch}/bin/edm-state" "${scratch}/bin/edm-lint-artifacts"
+  echo "# clean planning note" > "${scratch}/SRD/FOOCA501/planning.md"
+  ( cd "$scratch" && git add SRD/FOOCA501/planning.md bin/edm-state bin/edm-lint-artifacts )
+
+  cmdfile="${scratch}/hook-command.sh"
+  jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' \
+    "${PLUGIN_DIR}/hooks/hooks.json" > "$cmdfile" 2>/dev/null
+  cmd="$(cat "$cmdfile" 2>/dev/null || true)"
+  if [[ -z "$cmd" ]]; then
+    fail "CA-501 clean case -- could not extract the PreToolUse git-commit hook command from hooks.json"
+    rm -rf "$scratch"
+    return 1
+  fi
+
+  ec=0
+  out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 0 ]] \
+    && pass "CA-501 -- the real hook exits 0 (does not block) on an otherwise-clean staged commit" \
+    || fail "CA-501 clean case -- expected exit 0 on a clean commit, got exit=${ec}, output: ${out}"
+
+  rm -rf "$scratch"
+}
+ca501_clean_case
+
+# CA-521: pins the documented, accepted worktree-vs-index gap -- staging a violation and then
+# fixing it UNSTAGED commits clean today, because edm-lint-artifacts (the actual scanner) reads
+# the working tree, not the index the hook selected prefixes from. This is a regression pin for
+# the DOCUMENTED current behavior (both EDM-HELP blocks and CLAUDE.md's hooks table now name it),
+# not an endorsement -- if a future change materializes staged blobs instead (CA-521's full fix),
+# this case should be updated to assert exit 2 and the positive control below should be removed.
+ca521_worktree_vs_index_case() {
+  local scratch cmdfile cmd out ec
+  scratch="$(mktemp -d "${TMP}/edm-ca521.XXXXXX")" || { fail "CA-521 -- mktemp failed"; return 1; }
+  mkdir -p "${scratch}/SRD/FOOCA521" "${scratch}/bin"
+  ( cd "$scratch" && git init -q && git config user.email t@t && git config user.name t )
+
+  cat > "${scratch}/bin/edm-state" <<'EOS'
+#!/bin/bash
+case "$1" in
+  resolve-dir) echo "SRD/FOOCA521"; exit 0 ;;
+esac
+EOS
+  # A real (non-stubbed) edm-lint-artifacts stand-in that actually reads the file from disk, so
+  # this case exercises the worktree-vs-index gap itself rather than a stub that ignores content.
+  cat > "${scratch}/bin/edm-lint-artifacts" <<'EOS'
+#!/bin/bash
+grep -q 'VIOLATION-MARKER' "SRD/FOOCA521/planning.md" 2>/dev/null && { echo "SRD/FOOCA521/planning.md:1: synthetic violation"; exit 1; }
+exit 0
+EOS
+  chmod +x "${scratch}/bin/edm-state" "${scratch}/bin/edm-lint-artifacts"
+
+  cmdfile="${scratch}/hook-command.sh"
+  jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' \
+    "${PLUGIN_DIR}/hooks/hooks.json" > "$cmdfile" 2>/dev/null
+  cmd="$(cat "$cmdfile" 2>/dev/null || true)"
+  if [[ -z "$cmd" ]]; then
+    fail "CA-521 -- could not extract the PreToolUse git-commit hook command from hooks.json"
+    rm -rf "$scratch"
+    return 1
+  fi
+
+  # Positive control: stage the violation and leave it staged -- must still block (exit 2),
+  # proving this harness genuinely detects the violation rather than always exiting 0.
+  echo "VIOLATION-MARKER" > "${scratch}/SRD/FOOCA521/planning.md"
+  ( cd "$scratch" && git add SRD/FOOCA521/planning.md bin/edm-state bin/edm-lint-artifacts )
+  ec=0
+  out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 2 ]] \
+    && pass "CA-521 -- positive control: a violation left staged still blocks (exit 2)" \
+    || fail "CA-521 -- positive control broken: a staged violation produced exit=${ec} (expected 2), output: ${out}"
+
+  # The actual gap: fix the violation in the WORKING TREE without re-staging. The index still
+  # names the violating blob, but the hook's scanner reads the worktree file, which is clean.
+  echo "clean planning note" > "${scratch}/SRD/FOOCA521/planning.md"
+  ec=0
+  out="$(cd "$scratch" && PATH="${scratch}/bin:${PATH}" bash "$cmdfile" 2>&1)" || ec=$?
+  [[ "$ec" -eq 0 ]] \
+    && pass "CA-521 -- documented gap: fixing a staged violation UNSTAGED still commits clean (exit 0) today" \
+    || fail "CA-521 -- expected the documented worktree/index gap (exit 0); got exit=${ec}, output: ${out} (if this now correctly blocks, CA-521's full fix has landed -- update this case to assert exit 2 and drop the note above)"
+
+  rm -rf "$scratch"
+}
+ca521_worktree_vs_index_case
 
 echo
 echo "=== G44/CA-320: the existence guard resolves against the repo top-level path, not the hook's cwd, and stays silent for a non-EDM project on the default root ==="
