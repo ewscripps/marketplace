@@ -31,7 +31,13 @@ cleanup_wave6() {
 # G56/CA-216: HUP added -- cleanup_wave6 restores a TRACKED, committed file (T41_CANONICAL) from
 # a backup after this suite deliberately mutates it. Omitting HUP left a terminal disconnect
 # mid-test with no automatic restore, corrupting a tracked file in the working tree.
-trap cleanup_wave6 EXIT INT TERM HUP
+# CA-482: four-arm split -- a single trap on all four signals cleaned up and RESUMED the suite on
+# INT/TERM/HUP instead of exiting with a signal-shaped code, so a Ctrl-C continued running
+# assertions after cleanup instead of stopping.
+trap cleanup_wave6 EXIT
+trap 'cleanup_wave6; exit 130' INT
+trap 'cleanup_wave6; exit 143' TERM
+trap 'cleanup_wave6; exit 129' HUP
 export EDM_SRD_ROOT="$TMP/SRD"
 mkdir -p "$TMP/SRD"
 
@@ -894,6 +900,13 @@ ca477full_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$TMP/SRD/CA477
 [[ "$ca477full_rt" == "full" ]] \
   && pass "CA-477 -- a fully-backed round is still round_type=full AFTER audit-round-complete" \
   || fail "CA-477 -- round_type='$ca477full_rt' after completion, expected full (the gate downgrades unconditionally)"
+# CA-527: [-1] on the rounds array reads the LAST entry whether there is one round or two, so a
+# regression that APPENDS a round instead of amending the started one would still show
+# round_type=full above while the round count silently doubled. Pin the count too.
+ca477full_rn="$(jq -r '.audit_rounds.code.rounds | length' "$TMP/SRD/CA477FULL/.edm-state.json")"
+[[ "$ca477full_rn" -eq 1 ]] \
+  && pass "CA-527 -- exactly one round is recorded after audit-round-complete (no double-recording)" \
+  || fail "CA-527 -- ${ca477full_rn} rounds recorded, expected 1 (audit-round-complete may have appended instead of amending)"
 
 # CA-477: the gate's comment claims three miss classes (missing / empty / unparseable) but the
 # only fixture was an empty file, which the [[ ! -s ]] arm catches alone -- deleting the jq
@@ -908,12 +921,24 @@ printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
 printf 'not json\n' > "$TMP/SRD/CA477CLASS/code-audit/pass-1_2026-08-16/lens-L4.jsonl"
 "$EDM_STATE" audit-round-start CA477CLASS code >/dev/null
 ca477class_out="$("$EDM_STATE" audit-round-complete CA477CLASS code 2>&1)"
-check "CA-477 -- one warn names all three miss classes (absent, empty, unparseable)" \
-  "for: L2 L3 L4" "$ca477class_out"
+# CA-526: `check` is documented substring containment (_harness.sh:26-34), so asserting the
+# substring "for: L2 L3 L4" also passes on a warn that OVER-reports, e.g. "for: L1 L2 L3 L4" --
+# which would also flag the one lens (L1) whose JSONL is present and valid, the exact
+# false-positive-downgrade harm CA-477(a) names and CA-506 confirms is irreversible. Extract the
+# actual "for: " field and assert it by EXACT equality instead.
+ca477class_for="$(printf '%s\n' "$ca477class_out" | sed -n 's/.*for: \([^(]*\) (.*/\1/p' | sed 's/[[:space:]]*$//')"
+[[ "$ca477class_for" == "L2 L3 L4" ]] \
+  && pass "CA-477/CA-526 -- the warn's lens list is EXACTLY the three miss classes (absent, empty, unparseable), not a superset" \
+  || fail "CA-526 -- the warn's lens list is '${ca477class_for}', expected exactly 'L2 L3 L4' (over-reporting -- e.g. including the valid L1 -- would also pass the old substring check)"
 ca477class_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$TMP/SRD/CA477CLASS/.edm-state.json")"
 [[ "$ca477class_rt" == "partial" ]] \
   && pass "CA-477 -- a round missing any lens class is downgraded to partial" \
   || fail "CA-477 -- round_type='$ca477class_rt', expected partial"
+# CA-527 (second fixture, same mutation risk as CA477FULL above).
+ca477class_rn="$(jq -r '.audit_rounds.code.rounds | length' "$TMP/SRD/CA477CLASS/.edm-state.json")"
+[[ "$ca477class_rn" -eq 1 ]] \
+  && pass "CA-527 -- exactly one round is recorded after audit-round-complete (no double-recording)" \
+  || fail "CA-527 -- ${ca477class_rn} rounds recorded, expected 1"
 
 # CA-478: lenses-run.txt is agent-authored via the Write tool, so its final line may be
 # unterminated. A bare `read` returns non-zero at EOF and never runs the body for that line --
@@ -969,6 +994,26 @@ ca471miss_conv_ec=0
 [[ $ca471miss_conv_ec -eq 1 ]] \
   && pass "CA-471 -- a downgraded round blocks convergence even with a clean ledger" \
   || fail "CA-471 -- audit-converged exited ${ca471miss_conv_ec} on a downgraded round, expected 1"
+
+# CA-525: every CA-471/CA-477/CA-478 fixture above hand-builds lenses-run.txt with mkdir -p and
+# printf, proving the GATE'S parser but nothing else pins that hand-built shape to what
+# skills/code-audit/SKILL.md actually instructs an agent to write. If that instruction drifts
+# (a different header line, an "L1 -- name" suffix form, a comma-separated lens list) the gate's
+# ^L[0-9]+$ filter in bin/edm-state's audit-round-complete would silently `continue` every real
+# line, going quiet on a live manifest while every fixture-driven case above stayed green.
+ca525_skill_md="${_HARNESS_PLUGIN_DIR}/skills/code-audit/SKILL.md"
+ca525_manifest_instr="$(grep 'one lens ID per line' "$ca525_skill_md" 2>/dev/null || true)"
+check "CA-525 -- the manifest-writing instruction still specifies bare 'one lens ID per line'" \
+  "one lens ID per line" "$ca525_manifest_instr"
+check "CA-525 -- the manifest-writing instruction still specifies the 'Round type: full' header" \
+  "Round type: full" "$ca525_manifest_instr"
+check "CA-525 -- the manifest-writing instruction still specifies the 'Round type: partial' header" \
+  "Round type: partial" "$ca525_manifest_instr"
+# Positive control: a mutated instruction with the header phrase stripped must NOT satisfy the
+# checks above -- proves they pin real text rather than an always-true tautology.
+ca525_control="$(printf '%s\n' "$ca525_manifest_instr" | sed 's/Round type://g')"
+check_absent "CA-525 -- positive control: a mutated instruction missing 'Round type:' is detected as missing" \
+  "Round type: full" "$ca525_control"
 
 "$EDM_STATE" init CA471NODIR >/dev/null
 mkdir -p "$TMP/SRD/CA471NODIR/code-audit"
@@ -1957,15 +2002,28 @@ echo "# QC Summary" > "$TMP/SRD/T11P6/qc/qc-summary.md"
   && pass "T11 AC1 -- phase 6 artifact (qc-summary.md) present succeeds (T11P6)" \
   || fail "T11 AC1 -- phase 6 artifact present still refused (T11P6)"
 
-# ---- AC3 (positive, sharded phase 6): qc-shard-01.md only still completes ----------------
+# ---- AC3 (positive, sharded phase 6): each real post-CA-473 shard prefix completes on its
+# own -- CA-534: the prior fixture wrote the bare, unprefixed `qc-shard-01.md`, a name no
+# producer in the plugin writes anymore (hooks.json:117 forbids it; implement/SKILL.md writes
+# only qc-shard-impl-*/qc-shard-pass-*), so neither shape actually produced had a positive
+# assertion and a future tightening of the accept-path glob to the two documented prefixes
+# would have broken both real paths while this test stayed green. Two independent fixtures, one
+# per real prefix.
 echo
-echo "T11 AC3 -- shard-only phase 6 completes"
-"$EDM_STATE" init T11SHARD >/dev/null
-mkdir -p "$TMP/SRD/T11SHARD/qc"
-echo "# Shard 1" > "$TMP/SRD/T11SHARD/qc/qc-shard-01.md"
-"$EDM_STATE" phase-complete T11SHARD 6 >/dev/null \
-  && pass "T11 AC3 -- shard-only phase 6 completes" \
-  || fail "T11 AC3 -- shard-only phase 6 still refused"
+echo "T11 AC3 -- shard-only phase 6 completes (per real post-CA-473 shard prefix)"
+"$EDM_STATE" init T11SHARDIMPL >/dev/null
+mkdir -p "$TMP/SRD/T11SHARDIMPL/qc"
+echo "# Implementer shard" > "$TMP/SRD/T11SHARDIMPL/qc/qc-shard-impl-07.md"
+"$EDM_STATE" phase-complete T11SHARDIMPL 6 >/dev/null \
+  && pass "T11 AC3 / CA-534 -- qc-shard-impl-{NN}.md alone completes phase 6" \
+  || fail "T11 AC3 / CA-534 -- qc-shard-impl-07.md present, phase 6 still refused"
+
+"$EDM_STATE" init T11SHARDPASS >/dev/null
+mkdir -p "$TMP/SRD/T11SHARDPASS/qc"
+echo "# Threshold shard" > "$TMP/SRD/T11SHARDPASS/qc/qc-shard-pass-01.md"
+"$EDM_STATE" phase-complete T11SHARDPASS 6 >/dev/null \
+  && pass "T11 AC3 / CA-534 -- qc-shard-pass-{NN}.md alone completes phase 6" \
+  || fail "T11 AC3 / CA-534 -- qc-shard-pass-01.md present, phase 6 still refused"
 
 # ---- AC1 (shard-1 QC remediation): all six artifact-presence checks route through
 # present_or_absent's nonempty variant, not a re-derived bare `[[ -s ]]` ------------------

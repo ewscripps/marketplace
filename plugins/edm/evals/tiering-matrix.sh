@@ -146,12 +146,19 @@ self_test() {
   local tmp
   tmp="$(mktemp "${TMPDIR:-/tmp}/edm-tiering-matrix-selftest.XXXXXX")" || die "mktemp failed"
   # CA-014: RETURN-only leaked $tmp on a die (exit 2, no RETURN) or a SIGINT mid-self-test.
-  # RETURN still fires on the ordinary function-return path; EXIT/INT/TERM cover the rest. The
+  # RETURN still fires on the ordinary function-return path; EXIT/INT/TERM/HUP cover the rest. The
   # trap is process-wide, not function-scoped, so it can still fire once more at process EXIT
   # after self_test has already returned and its own `local tmp` has gone out of scope --
   # "${tmp:-}" (not "$tmp") keeps that second firing from tripping `set -u`'s unbound-variable
   # check.
-  trap 'rm -f "${tmp:-}"' RETURN EXIT INT TERM
+  # CA-481(a): converted to the plugin-wide four-arm split (edm-check-grants' trap convention) -- INT/TERM/
+  # HUP now exit with a signal-shaped code after cleanup instead of cleaning up and resuming the
+  # caller, and HUP (previously omitted entirely, the last such gap in the plugin) is now covered.
+  # RETURN keeps sharing EXIT's cleanup-only body, which the fix instructions call for explicitly.
+  trap 'rm -f "${tmp:-}"' RETURN EXIT
+  trap 'rm -f "${tmp:-}"; exit 130' INT
+  trap 'rm -f "${tmp:-}"; exit 143' TERM
+  trap 'rm -f "${tmp:-}"; exit 129' HUP
 
   cat > "$tmp" <<'EOF'
 {

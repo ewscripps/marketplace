@@ -82,7 +82,13 @@ harness_scratch_dir() {
   # deferred-expansion pattern used by with_scratch_repo below, and by edm-lint-artifacts and
   # edm-check-grants).
   _HARNESS_SCRATCH_DIR="$dir"
-  trap 'rm -rf "$_HARNESS_SCRATCH_DIR"' EXIT INT TERM HUP
+  # CA-482: four-arm split (edm-check-grants' plugin-wide trap convention) -- a single body on
+  # all four signals cleaned up and RESUMED the caller on INT/TERM/HUP instead of exiting with a
+  # signal-shaped code, contradicting bin/edm-state's file-wide trap contract.
+  trap 'rm -rf "$_HARNESS_SCRATCH_DIR"' EXIT
+  trap 'rm -rf "$_HARNESS_SCRATCH_DIR"; exit 130' INT
+  trap 'rm -rf "$_HARNESS_SCRATCH_DIR"; exit 143' TERM
+  trap 'rm -rf "$_HARNESS_SCRATCH_DIR"; exit 129' HUP
   printf -v "$__harness_scratch_outvar" '%s' "$dir"
 }
 
@@ -111,7 +117,12 @@ with_scratch_repo() {
   prev_trap_hup="$(trap -p HUP)"
 
   # Install cleanup before doing anything that could fail or be interrupted.
-  trap 'rm -rf "$dir"' EXIT INT TERM HUP
+  # CA-482: four-arm split -- INT/TERM/HUP now exit with a signal-shaped code after cleanup
+  # instead of resuming the caller mid-<fn>, matching the plugin-wide convention.
+  trap 'rm -rf "$dir"' EXIT
+  trap 'rm -rf "$dir"; exit 130' INT
+  trap 'rm -rf "$dir"; exit 143' TERM
+  trap 'rm -rf "$dir"; exit 129' HUP
 
   cd "$dir" || { rm -rf "$dir"; trap - EXIT INT TERM HUP; return 1; }
   git init -q . >/dev/null 2>&1

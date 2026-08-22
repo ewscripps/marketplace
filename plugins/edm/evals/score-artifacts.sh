@@ -756,6 +756,17 @@ cmd_compare() {
   # the delegate was running (the longest-lived statement between creation and removal).
   local rc
   _CMP_TA="$(mktemp "${TMPDIR:-/tmp}/edm-score-compare-a.XXXXXX")" || die "compare: mktemp failed"
+  # CA-481(b): first-stage trap armed immediately, covering only $_CMP_TA -- without it, a signal
+  # delivered in the window between this mktemp and the second one below (the die path is already
+  # covered by the inline `rm -f "$_CMP_TA"` two lines down) leaked the first staging file
+  # unconditionally, the exact gap edm-lint-artifacts' own first-stage trap already closed for
+  # the identical two-mktemp shape. Four-arm form from the start (CA-482's class: a single body on all four
+  # signals cleans up and RESUMES on INT/TERM/HUP instead of exiting with a signal-shaped code).
+  # Replaced by the two-file trap once both files exist.
+  trap 'rm -f "$_CMP_TA"' EXIT
+  trap 'rm -f "$_CMP_TA"; exit 130' INT
+  trap 'rm -f "$_CMP_TA"; exit 143' TERM
+  trap 'rm -f "$_CMP_TA"; exit 129' HUP
   _CMP_TB="$(mktemp "${TMPDIR:-/tmp}/edm-score-compare-b.XXXXXX")" || { rm -f "$_CMP_TA"; die "compare: mktemp failed"; }
   trap 'rm -f "$_CMP_TA" "$_CMP_TB"' EXIT
   trap 'rm -f "$_CMP_TA" "$_CMP_TB"; exit 130' INT

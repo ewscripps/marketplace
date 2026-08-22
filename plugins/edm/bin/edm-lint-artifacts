@@ -134,7 +134,16 @@ ATTR_PATTERN_FILE="$(mktemp "${TMPDIR:-/tmp}/edm-lint-attribution.XXXXXX")" || d
 # L8-006/CA-447: first-stage trap armed immediately -- without it, a failure of the SECOND
 # mktemp below die()d with this first file already on disk and no trap yet installed,
 # leaking it unconditionally. Replaced by the two-file trap once both files exist.
-trap 'rm -f "$ATTR_PATTERN_FILE"' EXIT INT TERM HUP
+# CA-482: split into the canonical four-arm form (matching the two-file trap twelve lines below,
+# which already used it) -- the single-body form on all four signals cleaned up and RESUMED on
+# INT/TERM/HUP instead of exiting with a signal-shaped code, contradicting the file-wide contract
+# bin/edm-state's with_state_lock rationale comment states ("a trap that only cleans up and
+# returns lets the interrupted caller resume") on the binary that runs on every git commit via
+# the PreToolUse hook.
+trap 'rm -f "$ATTR_PATTERN_FILE"' EXIT
+trap 'rm -f "$ATTR_PATTERN_FILE"; exit 130' INT
+trap 'rm -f "$ATTR_PATTERN_FILE"; exit 143' TERM
+trap 'rm -f "$ATTR_PATTERN_FILE"; exit 129' HUP
 # CA-058: the class-4 mermaid/marker line sets ride through this temp file (one path, passed to
 # awk via -v) rather than through the environment. A large, mostly-mermaid artifact can produce
 # a line-number set that, carried as EDM_MERMAID_SET/EDM_MARKER_SET environment variables, pushes

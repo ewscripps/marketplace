@@ -261,7 +261,11 @@ echo "CA-146 -- run-all.sh's PASS/FAIL/CRASH/missing-summary/floor accounting"
 
 RUN_ALL="${SCRIPT_DIR}/run-all.sh"
 CA146_SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/edm-harness-ca146.XXXXXX")"
-trap 'rm -rf "$CA146_SCRATCH"' EXIT INT TERM HUP
+# CA-482: four-arm split -- see the identical fix in _harness.sh for the rationale.
+trap 'rm -rf "$CA146_SCRATCH"' EXIT
+trap 'rm -rf "$CA146_SCRATCH"; exit 130' INT
+trap 'rm -rf "$CA146_SCRATCH"; exit 143' TERM
+trap 'rm -rf "$CA146_SCRATCH"; exit 129' HUP
 
 # _ca146_stub <dir> <name> <body...> -- writes one throwaway suite script into <dir>/<name>,
 # named to match the *-smoke.sh discovery glob.

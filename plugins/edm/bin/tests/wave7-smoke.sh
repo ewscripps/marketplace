@@ -22,7 +22,12 @@ GITLAB_CI_YML="${_HARNESS_REPO_ROOT}/.gitlab-ci.yml"
 source "${SCRIPT_DIR}/../_edm-cli-lib.sh"
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave7.XXXXXX")"
-trap 'rm -rf "$TMP"' EXIT INT TERM HUP
+# CA-482: four-arm split -- the prior single-body trap cleaned up and RESUMED on INT/TERM/HUP, so
+# a Ctrl-C deleted $TMP and then kept running assertions against a tree that no longer existed.
+trap 'rm -rf "$TMP"' EXIT
+trap 'rm -rf "$TMP"; exit 130' INT
+trap 'rm -rf "$TMP"; exit 143' TERM
+trap 'rm -rf "$TMP"; exit 129' HUP
 PATH="${PLUGIN_DIR}/bin:$PATH"
 
 echo "wave7 smoke check -- EDMV3-T09 cmd_set caller-contract and no-override-flag guard"
@@ -5647,7 +5652,7 @@ t_ca159_out="$(
   # test in the suite. Clear the inherited dispositions here, before either function ever
   # runs, so there is nothing dangerous left to restore.
   trap - EXIT INT TERM HUP
-  tmp159="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca159.XXXXXX")" || exit 1
+  tmp159="$(mktemp -d "${TMP}/edm-ca159.XXXXXX")" || exit 1
   apos_dir="${tmp159}/o'brien"
   mkdir -p "$apos_dir" || exit 1
   command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
@@ -5685,7 +5690,7 @@ t_ca141a_out="$(
   # Clear inherited EXIT/INT/TERM/HUP dispositions before with_state_lock runs -- see the CA-159
   # case above for why (restoring an inherited trap on this subshell own exit deletes TMP).
   trap - EXIT INT TERM HUP
-  tmp141a="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca141a.XXXXXX")" || exit 1
+  tmp141a="$(mktemp -d "${TMP}/edm-ca141a.XXXXXX")" || exit 1
   command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
   source "$EDM_STATE" >/dev/null 2>&1
   lockbase="${tmp141a}/state"
@@ -5721,7 +5726,7 @@ t_ca141b_out="$(
   # Clear inherited EXIT/INT/TERM/HUP dispositions before with_state_lock runs -- see the CA-159
   # case above for why (restoring an inherited trap on this subshell own exit deletes TMP).
   trap - EXIT INT TERM HUP
-  tmp141b="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca141b.XXXXXX")" || exit 1
+  tmp141b="$(mktemp -d "${TMP}/edm-ca141b.XXXXXX")" || exit 1
   command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
   source "$EDM_STATE" >/dev/null 2>&1
   lockbase="${tmp141b}/state"
@@ -5748,7 +5753,7 @@ t_ca141d_out="$(
   # Clear inherited EXIT/INT/TERM/HUP dispositions before with_state_lock runs -- see the CA-159
   # case above for why (restoring an inherited trap on this subshell own exit deletes TMP).
   trap - EXIT INT TERM HUP
-  tmp141d="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca141d.XXXXXX")" || exit 1
+  tmp141d="$(mktemp -d "${TMP}/edm-ca141d.XXXXXX")" || exit 1
   command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
   source "$EDM_STATE" >/dev/null 2>&1
   lockbase="${tmp141d}/state"
@@ -5773,7 +5778,7 @@ check "G29 -- the locked body runs after a literal-'0'-PID reclaim" \
 t_g42_out="$(
   set +e
   trap - EXIT INT TERM HUP
-  tmp142="$(mktemp -d "${TMPDIR:-/tmp}/edm-g42.XXXXXX")" || exit 1
+  tmp142="$(mktemp -d "${TMP}/edm-g42.XXXXXX")" || exit 1
   command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
   source "$EDM_STATE" >/dev/null 2>&1
   lockbase="${tmp142}/state"
@@ -5813,7 +5818,7 @@ t_ca141c_out="$(
   # Clear inherited EXIT/INT/TERM/HUP dispositions before with_state_lock runs -- see the CA-159
   # case above for why (restoring an inherited trap on this subshell own exit deletes TMP).
   trap - EXIT INT TERM HUP
-  tmp141c="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca141c.XXXXXX")" || exit 1
+  tmp141c="$(mktemp -d "${TMP}/edm-ca141c.XXXXXX")" || exit 1
   command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
   kill() {
     if [[ "${1:-}" == "-0" && "${2:-}" == "99999" ]]; then
@@ -5862,7 +5867,7 @@ t_ca142_out="$(
   # see the CA-159 case above for why (restoring an inherited trap on this subshell own
   # exit deletes TMP).
   trap - EXIT INT TERM HUP
-  tmp142="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca142.XXXXXX")" || exit 1
+  tmp142="$(mktemp -d "${TMP}/edm-ca142.XXXXXX")" || exit 1
   command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
   source "$EDM_STATE" >/dev/null 2>&1
   lockbase="${tmp142}/state"
@@ -5917,7 +5922,7 @@ t_ca025_out="$(
   # Clear inherited EXIT/INT/TERM/HUP dispositions before with_state_lock runs -- see the CA-159
   # case above for why (restoring an inherited trap on this subshell own exit deletes TMP).
   trap - EXIT INT TERM HUP
-  tmp025="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca025.XXXXXX")" || exit 1
+  tmp025="$(mktemp -d "${TMP}/edm-ca025.XXXXXX")" || exit 1
   command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
   source "$EDM_STATE" >/dev/null 2>&1
   lockbase="${tmp025}/state"
@@ -6066,7 +6071,7 @@ ca_wave7a_sigint_case || true
 # fires when the subshell finally dies. Pre-fix, the bare "( "$@" )" statement would have aborted
 # the shell immediately, one line before the restore ever ran, and with_state_lock's OWN trap
 # (never restored) would have fired instead -- observably different from what this case checks.
-tmp184="$(mktemp -d "${TMPDIR:-/tmp}/edm-ca184.XXXXXX")"
+tmp184="$(mktemp -d "${TMP}/edm-ca184.XXXXXX")"
 markerfile184="${tmp184}/marker"
 t_ca184_ec=0
 t_ca184_capture="$(
@@ -7774,7 +7779,7 @@ echo "=== G22: with_state_lock's mkdir loop dies immediately on a real error, no
 t_g22a_out="$(
   set +e
   trap - EXIT INT TERM HUP
-  tmp_g22a="$(mktemp -d "${TMPDIR:-/tmp}/edm-g22a.XXXXXX")" || exit 1
+  tmp_g22a="$(mktemp -d "${TMP}/edm-g22a.XXXXXX")" || exit 1
   command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
   source "$EDM_STATE" >/dev/null 2>&1
   if [[ "$(id -u)" -eq 0 ]]; then
@@ -7805,7 +7810,7 @@ fi
 t_g22b_out="$(
   set +e
   trap - EXIT INT TERM HUP
-  tmp_g22b="$(mktemp -d "${TMPDIR:-/tmp}/edm-g22b.XXXXXX")" || exit 1
+  tmp_g22b="$(mktemp -d "${TMP}/edm-g22b.XXXXXX")" || exit 1
   cd "$tmp_g22b" || exit 1
   export EDM_SRD_ROOT="${tmp_g22b}/SRD"
   "$EDM_STATE" init G22RDC >/dev/null 2>&1
@@ -8357,7 +8362,7 @@ t_g49_ec99_hits="$(grep -nE '(^|[^0-9])(exit|return) 99([^0-9]|$)' "$EDM_STATE" 
 
 g49_timeout_case() {
   local tmp_g49
-  tmp_g49="$(mktemp -d "${TMPDIR:-/tmp}/edm-g49.XXXXXX")" || { fail "G49 -- mktemp failed"; return 1; }
+  tmp_g49="$(mktemp -d "${TMP}/edm-g49.XXXXXX")" || { fail "G49 -- mktemp failed"; return 1; }
   (
     set +e
     trap - EXIT INT TERM HUP
@@ -9098,6 +9103,83 @@ ca431_claude_ver="$(sed -n 's/.*edm\*\* (v\([0-9][0-9.]*\)).*/\1/p' "$ca431_repo
 [[ "$ca431_claude_ver" == "$ca431_plugin_ver" ]] \
   && pass "CA-431 -- repo-root CLAUDE.md edm version matches plugin.json (${ca431_claude_ver})" \
   || fail "CA-431 -- version drift: repo-root CLAUDE.md says '${ca431_claude_ver}', plugin.json says '${ca431_plugin_ver}'"
+
+# =================================================================================
+# CA-481(c): the cross-file trap-convention sweep CA-447 originally asked for and that never
+# landed -- which is precisely why CA-481(a)/(b) and CA-482's six sites all survived rounds that
+# named them in scope. Scans bin/, bin/tests/ and evals/ for cleanup-trap install lines and
+# asserts (1) no single trap statement combines EXIT with a real signal (INT/TERM/HUP) -- that
+# shape is always the CA-446 cleanup-then-resume bug, since every correct site splits EXIT's
+# cleanup-only body from each real signal's own cleanup-then-exit body -- and (2) every file that
+# installs an EXIT cleanup trap also installs a HUP trap somewhere (the CA-481(a)-class gap).
+# =================================================================================
+echo
+echo "CA-481(c) -- cross-file sweep: no cleanup trap combines EXIT with a real signal, and every EXIT-trapping file also traps HUP"
+
+_ca481_sweep() {
+  # $1 = mode ("combined" | "no-hup"); remaining args = files to scan.
+  local ca481_mode="$1"
+  shift
+  awk -v mode="$ca481_mode" '
+    /^[ \t]*trap[ \t]+[^ \t-]/ {
+      line = $0
+      nq = split(line, sq, "\x27")
+      sig = (nq >= 3) ? sq[nq] : ""
+      if (sig == "") {
+        ndq = split(line, dq, "\"")
+        sig = (ndq >= 3) ? dq[ndq] : ""
+      }
+      has_exit = (sig ~ /(^|[^A-Za-z0-9_])EXIT([^A-Za-z0-9_]|$)/)
+      has_int  = (sig ~ /(^|[^A-Za-z0-9_])INT([^A-Za-z0-9_]|$)/)
+      has_term = (sig ~ /(^|[^A-Za-z0-9_])TERM([^A-Za-z0-9_]|$)/)
+      has_hup  = (sig ~ /(^|[^A-Za-z0-9_])HUP([^A-Za-z0-9_]|$)/)
+      if (mode == "combined" && has_exit && (has_int || has_term || has_hup)) {
+        print FILENAME ":" FNR ": " line
+      }
+      if (has_exit) file_has_exit[FILENAME] = 1
+      if (has_hup)  file_has_hup[FILENAME] = 1
+    }
+    END {
+      if (mode == "no-hup") {
+        for (f in file_has_exit) if (!(f in file_has_hup)) print f
+      }
+    }
+  ' "$@"
+}
+
+ca481_scan_files=()
+for ca481_f in "${PLUGIN_DIR}"/bin/* "${PLUGIN_DIR}"/bin/tests/*.sh "${PLUGIN_DIR}"/evals/*.sh; do
+  [[ -f "$ca481_f" ]] || continue
+  case "$ca481_f" in *.awk|*.txt) continue ;; esac
+  ca481_scan_files+=("$ca481_f")
+done
+
+ca481_combined="$(_ca481_sweep combined "${ca481_scan_files[@]}" 2>/dev/null || true)"
+[[ -z "$ca481_combined" ]] \
+  && pass "CA-481(c) -- no cleanup trap combines EXIT with a real signal (INT/TERM/HUP) in one statement" \
+  || fail "CA-481(c) -- combined EXIT+real-signal trap(s) found (the CA-446 cleanup-then-resume shape): ${ca481_combined}"
+
+ca481_no_hup="$(_ca481_sweep no-hup "${ca481_scan_files[@]}" 2>/dev/null || true)"
+[[ -z "$ca481_no_hup" ]] \
+  && pass "CA-481(c) -- every file installing an EXIT cleanup trap also installs a HUP trap" \
+  || fail "CA-481(c) -- file(s) trapping EXIT but never HUP: ${ca481_no_hup}"
+
+# Positive control: a scratch file reproducing both violation shapes must be DETECTED by the same
+# sweep function, proving the checks above pin real structure rather than passing vacuously.
+ca481_control_combined_f="$(mktemp "${TMP}/edm-ca481-combined.XXXXXX")"
+printf '#!/bin/bash\ntrap '"'"'rm -f "$x"'"'"' EXIT INT TERM HUP\n' > "$ca481_control_combined_f"
+ca481_control_combined_out="$(_ca481_sweep combined "$ca481_control_combined_f" 2>/dev/null || true)"
+[[ -n "$ca481_control_combined_out" ]] \
+  && pass "CA-481(c) -- positive control: a single-body EXIT+INT+TERM+HUP trap is detected as combined" \
+  || fail "CA-481(c) -- positive control failed: the combined-trap scratch file was not flagged"
+
+ca481_control_nohup_f="$(mktemp "${TMP}/edm-ca481-nohup.XXXXXX")"
+printf '#!/bin/bash\ntrap '"'"'rm -f "$x"'"'"' EXIT\ntrap '"'"'rm -f "$x"; exit 130'"'"' INT\ntrap '"'"'rm -f "$x"; exit 143'"'"' TERM\n' > "$ca481_control_nohup_f"
+ca481_control_nohup_out="$(_ca481_sweep no-hup "$ca481_control_nohup_f" 2>/dev/null || true)"
+[[ -n "$ca481_control_nohup_out" ]] \
+  && pass "CA-481(c) -- positive control: a file trapping EXIT/INT/TERM but never HUP is detected" \
+  || fail "CA-481(c) -- positive control failed: the HUP-omitting scratch file was not flagged"
+rm -f "$ca481_control_combined_f" "$ca481_control_nohup_f"
 
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
