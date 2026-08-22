@@ -319,6 +319,18 @@ lint:hooks-shell:
           exit 1
           ;;
       esac
+      # CA-518: EXPECTED_COUNT above only counts entries with type=="command"; it says nothing
+      # about whether each one actually carries a usable command string. A hook whose .command
+      # is null, an empty string, or a non-string would pass every check below (bash -n and
+      # shellcheck both run against jq's `-r` rendering of it, which prints an empty file for a
+      # null/absent value rather than erroring) while doing nothing at runtime. WELLFORMED is
+      # the same select-chain narrowed to entries whose .command is a non-empty string, so a
+      # divergence from EXPECTED_COUNT names a hook that is declared but not actually wired.
+      WELLFORMED="$(jq '[.hooks | to_entries[] | .value[] | .hooks[] | select(.type=="command") | select(.command | type=="string" and length > 0)] | length' plugins/edm/hooks/hooks.json)"
+      if [ "$WELLFORMED" != "$EXPECTED_COUNT" ]; then
+        echo "lint:hooks-shell: FAILED -- ${WELLFORMED} of ${EXPECTED_COUNT} command-type hook(s) carry a non-empty string .command; the rest are null/empty/non-string and would silently no-op"
+        exit 1
+      fi
       IDX=0
       while [ "$IDX" -lt "$EXPECTED_COUNT" ]; do
         JQ_IDX="$IDX"
@@ -551,7 +563,17 @@ test:state-validate:
       FAIL=0
       COUNT=0
       LIST_FILE="$(mktemp "${TMPDIR:-/tmp}/edm-state-validate.XXXXXX")"
-      edm-state list --paths > "$LIST_FILE"
+      # CA-493: capture and check the enumerator's own exit status on the same statement, and
+      # floor the checked count below -- without both, a broken EDM_SRD_ROOT, a relocated SRD/
+      # tree, or a jq/layout regression in `list --paths` leaves LIST_FILE empty, the while loop
+      # body never runs, COUNT stays 0, and this blocking job printed OK having validated nothing.
+      LIST_EC=0
+      edm-state list --paths > "$LIST_FILE" || LIST_EC=$?
+      if [ "$LIST_EC" -ne 0 ]; then
+        echo "test:state-validate: FAILED -- edm-state list --paths exited ${LIST_EC}"
+        rm -f "$LIST_FILE"
+        exit 1
+      fi
       while IFS= read -r dir; do
         [ -n "$dir" ] || continue
         state_file="${dir}/.edm-state.json"
@@ -573,6 +595,13 @@ test:state-validate:
       done < "$LIST_FILE"
       rm -f "$LIST_FILE"
       echo "state-validate: ${COUNT} initiative(s) checked"
+      # CA-493: a zero-count floor -- an enumerator that exits 0 but names no initiative directory
+      # (a layout regression that returns an empty listing rather than a non-zero status) would
+      # otherwise report OK having validated nothing, the same class CA-016 closed for run-all.sh.
+      if [ "$COUNT" -eq 0 ]; then
+        echo "test:state-validate: FAILED -- zero initiatives enumerated; the validator scanned nothing"
+        exit 1
+      fi
       if [ "$FAIL" -ne 0 ]; then
         echo "test:state-validate: FAILED (blocking anomaly present)"
         exit 1
@@ -785,27 +814,44 @@ eval:nightly:
       if [ "$RUN_EVAL_EC" -eq 4 ]; then
         echo "eval:nightly: PARTIAL run (exit 4) -- continuing so the stub scores.json's complete:false reaches the comparison (CA-452); the job fails after reporting"
       fi
+      # CA-494: derive RUN_DIR exactly once, here, and reuse it in every later script block.
+      # Scoring and comparison used to each re-run this same `ls -td` independently with no
+      # else-arm, so a run-eval.sh that exited 0/4 without ever creating a runs/ directory --
+      # exactly the kind of bug this job exists to catch -- silently skipped both stages instead
+      # of failing. A plain shell var carries across script items because GitLab CI runs a
+      # job's script list as one shell session, not one process per item.
+      RUN_DIR="$(ls -td plugins/edm/evals/runs/*/ 2>/dev/null | head -1)"
+      if [ -z "$RUN_DIR" ]; then
+        echo "eval:nightly: FAILED -- run-eval.sh exited ${RUN_EVAL_EC} but created no directory under plugins/edm/evals/runs/"
+        exit 1
+      fi
+      if [ ! -f "${RUN_DIR}run.json" ]; then
+        echo "eval:nightly: FAILED -- ${RUN_DIR} exists but has no run.json"
+        exit 1
+      fi
     - |
       if [ -f plugins/edm/evals/score-artifacts.sh ]; then
-        RUN_DIR="$(ls -td plugins/edm/evals/runs/*/ 2>/dev/null | head -1)"
-        if [ -n "$RUN_DIR" ]; then
-          bash plugins/edm/evals/score-artifacts.sh "$RUN_DIR" || { echo "eval:nightly: FAILED -- score-artifacts.sh"; exit 1; }
-        fi
+        bash plugins/edm/evals/score-artifacts.sh "$RUN_DIR" || { echo "eval:nightly: FAILED -- score-artifacts.sh"; exit 1; }
+      else
+        echo "eval:nightly: FAILED -- plugins/edm/evals/score-artifacts.sh not found"
+        exit 1
       fi
     # EDMV3-T39 AC2: the baseline comparison lives HERE, in CI, not in the scorer -- a scoring
     # change and a threshold change stay separately reviewable. baseline_total and the allowed
     # variance come from plugins/edm/evals/baseline/scores.json. Exit 3 means no committed
     # baseline exists yet (tripwire not armed); that is reported, not silently treated as a pass.
     - |
-      RUN_DIR="$(ls -td plugins/edm/evals/runs/*/ 2>/dev/null | head -1)"
-      if [ -n "$RUN_DIR" ] && [ -f "$RUN_DIR/scores.json" ]; then
+      if [ -f "${RUN_DIR}scores.json" ]; then
         rc=0
-        bash plugins/edm/bin/edm-compare-eval "$RUN_DIR/scores.json" || rc=$?
+        bash plugins/edm/bin/edm-compare-eval "${RUN_DIR}scores.json" || rc=$?
         case "$rc" in
           0) echo "eval comparison: candidate at or above baseline_total minus variance" ;;
           3) echo "eval comparison: NOT ARMED -- no committed baseline (see evals/baseline/README.md)" ;;
           *) echo "eval:nightly: FAILED -- eval comparison failed with exit $rc"; exit "$rc" ;;
         esac
+      else
+        echo "eval:nightly: FAILED -- ${RUN_DIR}scores.json missing before comparison (score-artifacts.sh should have written it)"
+        exit 1
       fi
     # CA-452: a partial run always fails the job, even if the comparison arm above was skipped
     # (e.g. no scores.json survived) or somehow reported clean -- partial is never green.

@@ -1077,22 +1077,27 @@ else
 fi
 
 echo
-echo "T61 AC10 -- bash -n passes over every file in plugins/edm/bin/ (incl. bin/tests/*.sh)"
+echo "T61 AC10 -- bash -n passes over every file in plugins/edm/bin/ (incl. bin/tests/*.sh and evals/*.sh)"
 # CA-019: edm-mermaid-rules.awk is a plain awk source file (loaded via -f, never executed as
 # bash), excluded here the same way .gitlab-ci.yml's real lint:bash-syntax job excludes it.
 # G24/CA-233 (round 5): *.txt added alongside *.awk -- bin/vocabulary-allowlist.txt and
 # bin/vocabulary-prohibited.txt are data files matched by the bin/* glob above, and this loop
 # was syntax-checking them as bash source before this fix, the same class of gap the two real CI
 # jobs (lint:bash-syntax, lint:shellcheck) were also fixed for.
+# CA-502: evals/*.sh added to the glob so this in-suite twin actually iterates the same file set
+# as .gitlab-ci.yml's lint:bash-syntax/lint:shellcheck -- it previously omitted evals/*.sh
+# entirely, so a syntax error in run-eval.sh/score-artifacts.sh/tiering-matrix.sh was caught by
+# CI but not by a local run-all.sh, despite CLAUDE.md's "Testing changes" section documenting
+# run-all.sh as the same check CI runs.
 t61_bashn_fail=0
-for t61_f in "$PLUGIN_DIR"/bin/* "$PLUGIN_DIR"/bin/tests/*.sh; do
+for t61_f in "$PLUGIN_DIR"/bin/* "$PLUGIN_DIR"/bin/tests/*.sh "$PLUGIN_DIR"/evals/*.sh; do
   [[ -f "$t61_f" ]] || continue
   case "$t61_f" in
     *.awk|*.txt) continue ;;
   esac
   bash -n "$t61_f" 2>/dev/null || { t61_bashn_fail=1; echo "  bash -n FAILED: $t61_f"; }
 done
-[[ $t61_bashn_fail -eq 0 ]] && pass "T61 AC10 -- bash -n passes over every bin/ and bin/tests/ file" \
+[[ $t61_bashn_fail -eq 0 ]] && pass "T61 AC10 -- bash -n passes over every bin/, bin/tests/ and evals/ file" \
   || fail "T61 AC10 -- bash -n failed on at least one file (see output above)"
 
 # =================================================================================
@@ -1120,6 +1125,32 @@ g24_t61ac10_loop_block="$(awk '/^for t61_f in /{f=1} f{print} f && /^done$/{exit
   "${PLUGIN_DIR}/bin/tests/wave7-smoke.sh" 2>/dev/null)"
 check "G24/CA-233 -- this suite's own T61 AC10 twin uses the identical exclusion set" \
   '*.awk|*.txt) continue ;;' "$g24_t61ac10_loop_block"
+
+# CA-502 (round 9, L10 Finding 1): the CA-233 pin above covers only the exclusion arm
+# (*.awk|*.txt) continue ;;), not the glob-triple naming which files count as "bash source" in
+# the first place. That definition was written three times (lint:bash-syntax, lint:shellcheck,
+# this suite's T61 AC10 twin) and had already diverged -- the twin omitted evals/*.sh entirely
+# (fixed above). This asserts the glob-triple itself, not just the exclusion, so a future edit
+# to only one of the three cannot silently re-diverge the other two again.
+echo
+echo "=== CA-502: lint:bash-syntax, lint:shellcheck and the T61 AC10 twin iterate the identical glob-triple (bin/*, bin/tests/*.sh, evals/*.sh) ==="
+ca502_glob_pattern='for f in plugins/edm/bin/\* plugins/edm/bin/tests/\*\.sh plugins/edm/evals/\*\.sh; do'
+ca502_glob_count="$(printf '%s\n' "$g24_ci_content" | grep -cE "$ca502_glob_pattern" || true)"
+[[ "${ca502_glob_count:-0}" -eq 2 ]] \
+  && pass "CA-502 -- .gitlab-ci.yml's lint:bash-syntax and lint:shellcheck iterate the identical glob-triple" \
+  || fail "CA-502 -- expected exactly 2 identical glob-triple for-loops in .gitlab-ci.yml (lint:bash-syntax + lint:shellcheck), found ${ca502_glob_count:-0} -- the two jobs' file sets have diverged"
+
+check "CA-502 -- this suite's own T61 AC10 twin iterates evals/*.sh too, not bin-only" \
+  '"$PLUGIN_DIR"/evals/*.sh' "$g24_t61ac10_loop_block"
+
+# Positive control: a synthetic two-element glob line (missing evals/*.sh) must NOT satisfy the
+# three-element pattern above, proving it actually discriminates rather than matching any "for f
+# in ...bin..." line.
+ca502_control_line='for f in plugins/edm/bin/* plugins/edm/bin/tests/*.sh; do'
+ca502_control_hit="$(printf '%s\n' "$ca502_control_line" | grep -cE "$ca502_glob_pattern" || true)"
+[[ "${ca502_control_hit:-0}" -eq 0 ]] \
+  && pass "CA-502 -- positive control confirms the glob-triple pattern discriminates (a two-element glob does not match)" \
+  || fail "CA-502 -- positive control broken: a synthetic two-element glob line matched the three-element pattern"
 
 echo
 echo "T61 AC11 -- macOS/Linux divergence points (sed -i, grep -P family, stat -c/-f, mktemp template suffix, bare mktemp -d, date -d, readlink -f, sort -V, head -n -N, printf %q) are all inside a detection branch"
