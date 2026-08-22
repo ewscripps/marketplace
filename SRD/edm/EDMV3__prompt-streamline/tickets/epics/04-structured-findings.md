@@ -575,8 +575,44 @@ restatements that can drift apart.
       `accept-p2-debt still refuses with an open P1`. Also
       `grep -rn 'P0 and P1' plugins/edm/skills/` returns zero results.
 - [ ] AC13 (surfaced): the subcommand appears in the `--help` block, dispatch, and the `CLAUDE.md`
-      `bin/` table.
-      Verify: `edm-state --help | grep -n audit-converged`.
+      `bin/` table, and the `--help` block and the `CLAUDE.md` `bin/` table enumerate every refusal
+      reason `audit_converged` can return, including the `spec_swept` sweep-debt refusal added by
+      AC14 below.
+      Amended (CA-536, D57/D58 series) -- the original Verify clause was satisfied by the bare
+      subcommand name alone, which no longer matches the exit contract once AC14 adds a refusal
+      class the original text does not enumerate.
+      Verify: `edm-state --help | grep -n audit-converged` (name present) AND
+      `edm-state --help | grep -n 'spec_swept\|sweep-debt'` (the new refusal reason named) AND
+      `grep -n 'audit-converged' plugins/edm/CLAUDE.md` returns the `bin/` table row.
+- [ ] AC14 (the `spec_swept` sweep-debt refusal, three branches -- added CA-514, D57/D58 series):
+      a `findings-ledger.jsonl` entry marked `status: "fixed"` carries a `spec_swept` field with
+      exactly three sanctioned values -- `yes`, `n/a`, or `no` -- written by `edm-audit-synthesizer`.
+      (i) POSITIVE: every `fixed` entry carrying `spec_swept: "yes"` or `spec_swept: "n/a"` does not
+      block `audit_converged` or `approve-gate code-audit` (including under `--accept-p2-debt`) on
+      that account.
+      (ii) NEGATIVE (the core guarantee): any `fixed` entry carrying `spec_swept: "no"` makes
+      `audit_converged` exit 1 naming the blocking ID(s) by name (once the severity blocking set is
+      otherwise clear), and makes `approve-gate code-audit` refuse -- **`--accept-p2-debt` does not
+      waive this refusal**, because an undone documentation sweep is not a severity the flag's P2
+      carve-out covers.
+      (iii) C-4: an entry with no `spec_swept` field at all (predates the field) never blocks --
+      absence reads as "predates the field", and only the explicit string `"no"` blocks.
+      A `status: "fixed"` entry carrying `spec_swept: "no"` (branch ii's own trigger) is
+      additionally surfaced by `edm-state validate` as the informational `SPEC_SWEEP_PENDING`
+      anomaly, in EDMV3-T05 AC2's canonical four-field shape (`info  SPEC_SWEEP_PENDING
+      code-audit/findings-ledger.jsonl  <description naming the pending ID(s)>`) -- `info` class
+      per EDMV3-T05 AC1, so the debt is visible mid-round via `validate` (which never blocks on it)
+      before an operator reaches the gate (which does). This ticket is `SPEC_SWEEP_PENDING`'s
+      owning requirement per EDMV3-T05's Out of Scope ("each [new anomaly] lands with its own
+      requirement").
+      Verify: `bash plugins/edm/bin/tests/wave7-smoke.sh:8755-8910` -- the existing case block
+      covers all three branches verbatim (fixed+no refuses and names the ID; yes and n/a both pass;
+      C-4 absent-field grandfathering; open+no does not block since the severity gate has not yet
+      cleared; multi-ID naming; `--accept-p2-debt` does not waive; the `SPEC_SWEEP_PENDING`
+      informational `validate` anomaly for a not-yet-fixed `no` entry).
+- **AC-band note.** 14 acceptance criteria against the 6-12 band; AC1-AC6 are `audit_converged`'s
+  original exit contract branch by branch, and AC14 is the `spec_swept` refusal's own three
+  branches for the identical reason.
 
 ### Technical Notes
 

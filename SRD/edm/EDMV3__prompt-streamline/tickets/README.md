@@ -635,7 +635,7 @@ decision recorded in `decisions.md` plus an SRD amendment approved at a gate) an
 | EDMV3-25 | Must | Fixture initiative for the eval | T22 |
 | EDMV3-26 | Must | Headless eval driver | T22 |
 | EDMV3-27 | Must | Mechanical scoring of eval artifacts | T23 |
-| EDMV3-28 | Must | Baseline captured on wave-A code and committed | T23 |
+| EDMV3-28 | Must | Baseline captured on wave-A code and committed (out-of-scope boundary recorded, D62 -- capture deferred to follow-on **EDMV4-T05**; T23 AC8/AC13 record the boundary, not the capture) | T23 |
 | EDMV3-29 | Should | Eval cadence is manual-on-MR plus nightly | T23 |
 | EDMV3-30 | Must | Every lens emits one JSON line per finding, with confidence | T24 |
 | EDMV3-31 | Must | Lens output contract names its permitted paths and its authority | T24 |

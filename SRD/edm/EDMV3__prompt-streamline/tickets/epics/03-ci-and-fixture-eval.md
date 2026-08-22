@@ -575,17 +575,21 @@ rather than hoped away.
       path.
       Verify: `test -s plugins/edm/evals/vague-ac-patterns.txt` and
       `grep -n 'vague-ac-patterns.txt' SRD/edm/EDMV3__prompt-streamline/architecture.md`.
-- [ ] AC8 (baseline committed, on wave-A code, and it is a **five**-dimension wave-A baseline):
-      `plugins/edm/evals/baseline/scores.json` is committed, produced by a run against wave-A code,
-      and records the plugin version, the git SHA, the `complete` flag from the driver, and
-      `dimensions_scored: 5`. Five of the six, not all six: the wave-A driver runs plan -> srd ->
-      audit and never a code audit, so dimension 5 has no input and is emitted `null` with its
-      reason in `dimensions_skipped`, while dimension 6 does score on a wave-A run because
-      `run-eval.sh` attributes every run it produces to the tiny-svc fixture in `run.json`.
-      `evals/baseline/README.md` states plainly that this is a five-dimension figure and that the
-      first six-dimension run establishes its own baseline rather than being compared against this
-      one.
-      Verify: `jq -e '.plugin_version and .git_sha and (.complete == true) and (.dimensions_scored == 5) and (.dimensions_skipped | length == 1)' plugins/edm/evals/baseline/scores.json`,
+- [ ] AC8 (baseline committed, on wave-A code, and it is a **five**-dimension wave-A baseline) --
+      **out-of-scope boundary recorded (CA-106, D62, D15 route (b)):** `plugins/edm/evals/baseline/scores.json`
+      does not exist in this initiative and its capture is explicitly deferred to the named
+      follow-on **EDMV4-T05**, not silently left "pending" with no owning ticket. The requirement
+      text below is unchanged and remains the target AC13's follow-on must satisfy; this AC is not
+      met by EDMV3 and is not claimed to be. When EDMV4-T05 lands: `plugins/edm/evals/baseline/scores.json`
+      is committed, produced by a run against wave-A code, and records the plugin version, the git
+      SHA, the `complete` flag from the driver, and `dimensions_scored: 5`. Five of the six, not all
+      six: the wave-A driver runs plan -> srd -> audit and never a code audit, so dimension 5 has no
+      input and is emitted `null` with its reason in `dimensions_skipped`, while dimension 6 does
+      score on a wave-A run because `run-eval.sh` attributes every run it produces to the tiny-svc
+      fixture in `run.json`. `evals/baseline/README.md` states plainly that this is a five-dimension
+      figure and that the first six-dimension run establishes its own baseline rather than being
+      compared against this one.
+      Verify (deferred to EDMV4-T05): `jq -e '.plugin_version and .git_sha and (.complete == true) and (.dimensions_scored == 5) and (.dimensions_skipped | length == 1)' plugins/edm/evals/baseline/scores.json`,
       and `grep -n 'five-dimension' plugins/edm/evals/baseline/README.md`.
 - [ ] AC9 (variance is a named statistic, not a hand-wave): at least three baseline runs are
       performed and the tolerance is recorded as `max - min` of the total across the three runs, as
@@ -609,19 +613,19 @@ rather than hoped away.
       run so the decision to trigger it is informed, and states that "CI will catch it" is an
       invalid justification for skipping the run.
       Verify: `grep -n 'cost per run\|CI will catch it' plugins/edm/evals/README.md`.
-- [ ] AC13 (blocked on the D23-documented baseline gap, corrected from "verifiable today" --
-      decisions.md D36 records this status correction): the committed baseline artifact records the
-      wave-A fixture/scorer it was captured from and the variance table that EDMV3-T39 consumes, so
-      later tickets can verify provenance from the artifact itself instead of from a no-longer-live
-      chronology claim. This AC's `README.md` half is verifiable today; its `scores.json` half is
-      not, because `decisions.md` D23 records that the wave-A baseline has not yet been captured
-      (`plugins/edm/evals/baseline/` holds only `README.md`) -- the jq half below cannot run in a
-      clean checkout until D23's documented closing command is executed. This is not silently
-      passed and not faked, per D15.
+- [ ] AC13 (out-of-scope boundary recorded, CA-106/D62, superseding the "blocked" framing D36
+      corrected to): the committed baseline artifact records the wave-A fixture/scorer it was
+      captured from and the variance table that EDMV3-T39 consumes, so later tickets can verify
+      provenance from the artifact itself instead of from a no-longer-live chronology claim. This
+      AC's `README.md` half is verifiable today and is met by this initiative; its `scores.json`
+      half is explicitly **out of scope for EDMV3** and named as follow-on ticket **EDMV4-T05**
+      (D62) rather than left as an open-ended "blocked pending D23" status with no owning ticket --
+      D15's route (b) (move the unverifiable clause out of scope as a recorded boundary), not route
+      (a). This is not silently passed and not faked: the boundary is named, dated, and ticketed.
       Verify: `grep -n 'wave-A\|variance\|dimensions_scored' plugins/edm/evals/baseline/README.md`
-      shows the provenance and tolerance table today; the second half,
+      shows the provenance and tolerance table today (this half is met); the second half,
       `jq -e '(.dimensions_scored == 5) and (.complete == true)' plugins/edm/evals/baseline/scores.json`,
-      remains blocked until D23's baseline capture lands.
+      is EDMV4-T05's closing verify, not EDMV3-T23's.
 
 ### Technical Notes
 

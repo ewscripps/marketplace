@@ -94,23 +94,31 @@ Resolve merge conflicts -> run existing tests -> launch next wave.
   `qc-shard-pass-*.md` files.
 
 **Threshold sharding** -- separately from the per-implementer hook shards, when this skill itself
-orchestrates a QC pass after all implementer waves complete and the total ticket count exceeds
+orchestrates a QC pass **after each wave's implementers complete** (Step 4 item 7 -- this runs once
+per wave, not once per initiative) and that wave's ticket count exceeds
 `user_config.qc_shard_threshold` (default 20), it spawns multiple `edm-qc-auditor` agents in
-parallel, each assigned a slice of `ceil(N / threshold)` tickets:
+parallel, each assigned a slice of `ceil(N / threshold)` tickets from that wave:
 
 ```
-# pseudo-code for the orchestrating skill
-ticket_count = len(wave_tickets)
-threshold    = user_config.qc_shard_threshold   # default 20
-if ticket_count <= threshold:
-    spawn 1 edm-qc-auditor -> writes qc/qc-shard-pass-01.md
+# pseudo-code for the orchestrating skill -- runs once per wave (wave_num is that wave's 1-based index)
+wave_ticket_count = len(wave_tickets)
+threshold         = user_config.qc_shard_threshold   # default 20
+if wave_ticket_count <= threshold:
+    spawn 1 edm-qc-auditor -> writes qc/qc-shard-pass-w{wave_num:02d}-01.md
 else:
-    shard_size = ceil(ticket_count / ceil(ticket_count / threshold))
+    shard_size = ceil(wave_ticket_count / ceil(wave_ticket_count / threshold))
     for i, range in enumerate(chunks(wave_tickets, shard_size)):
-        spawn edm-qc-auditor(shard=i+1, tickets=range) -> writes qc/qc-shard-pass-{i+1:02d}.md
-# both branches key on the shard ordinal, never on a ticket number, so they can never
-# collide with the hook's qc-shard-impl-{lowest-ticket:02d}.md namespace (CA-473).
-# either way, exactly one merge step owns qc-summary.md:
+        spawn edm-qc-auditor(shard=i+1, tickets=range) -> writes qc/qc-shard-pass-w{wave_num:02d}-{i+1:02d}.md
+# CA-515: the wave number is now part of the filename, not just the shard ordinal -- with an
+# ordinal-only name, wave 2's single-shard pass (ticket_count <= threshold) reuses the exact
+# filename wave 1's did (qc-shard-pass-01.md) and silently overwrites wave 1's PASS/FAIL verdicts,
+# which (like CA-473's hook-vs-threshold collision) are never persisted anywhere else. Both
+# branches still key on {shard ordinal} within a wave, never on a ticket number, so they still
+# cannot collide with the hook's qc-shard-impl-{lowest-ticket:02d}.md namespace (CA-473); the
+# `qc-shard-pass-*.md` glob below already matches the wave-prefixed name unchanged, so the merge
+# step needs no widening.
+# either way, exactly one merge step owns qc-summary.md, re-run after every wave drains so it
+# always reflects every shard written by any wave so far:
 merge all qc-shard-impl-*.md AND all qc-shard-pass-*.md files into qc/qc-summary.md
 ```
 

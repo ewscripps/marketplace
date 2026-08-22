@@ -184,6 +184,24 @@ the four scope deltas that took `edm-state` from one new subcommand to four.
       passes `bash -n`.
       Verify: `bash -n plugins/edm/bin/edm-state` and `jq -e . <state-file>` after a concurrent
       double invocation.
+- [ ] AC11 (the CA-471 completeness downgrade, three branches -- added CA-510, D57/D58 series):
+      `cmd_audit_round_complete` verifies, for every lens named in the round's `lenses-run.txt`,
+      that a non-empty, parseable `lens-L{N}.jsonl` landed in the pass directory.
+      (i) POSITIVE: a round that completes with every named lens's JSONL present and valid records
+      `round_type` unchanged from what `audit-round-start` derived (`full` stays `full`).
+      (ii) NEGATIVE: a round missing, holding empty, or holding an unparseable `lens-L{N}.jsonl` for
+      any named lens is downgraded to `round_type=partial` at completion (irreversible for that
+      round -- a second completion of the same round is refused per AC9), the warn names every
+      affected lens by ID, and nothing else in state mutates.
+      (iii) C-4: a round with no pass directory or no `lenses-run.txt` manifest is left unchanged by
+      this check (the pre-existing round-record shape governs; this AC adds no new blocking
+      condition for that case).
+      Verify: `bash plugins/edm/bin/tests/wave6-smoke.sh` -- case `CA477FULL` for branch (i), case
+      `CA477CLASS` for branch (ii) (asserts the single warn names `for: L2 L3 L4`), and the CA-478
+      unterminated-manifest and CRLF-manifest cases for the manifest-parsing edge of branch (ii).
+- **AC-band note.** 11 acceptance criteria against the 6-12 band; AC11 is the exit contract for a
+  gate that ships in this ticket's own code path, split into its three input classes for the same
+  reason EDMV3-T28's AC1-AC6 are (a refusal path must be checkable branch by branch).
 
 ### Technical Notes
 
@@ -200,7 +218,10 @@ the four scope deltas that took `edm-state` from one new subcommand to four.
 
 ### Out of Scope
 
-- `round_type` recording -- EDMV3-T27 (wave B).
+- `round_type` derivation **at round-start** -- EDMV3-T27 (wave B), AC1. This ticket owns the
+  completion-time completeness downgrade (AC11 above) -- the two are sequential, not overlapping:
+  T27 derives the value `audit-round-start` records; this ticket is the only place that can revise
+  it downward at `audit-round-complete`.
 - The tiering comparison that consumes this data -- EDMV3-T48.
 - Attribution correctness -- EDMV3-T52. This ticket records whatever the shared helper returns; T52
   makes what it returns honest.

@@ -773,7 +773,9 @@ eval:nightly:
     # scores.json with complete:false on exit 4 *specifically so CI can see it* -- aborting on
     # any non-zero exit meant no CI path ever read that stub and the partial-run handshake was
     # dead wiring. A partial run continues through scoring and comparison (edm-compare-eval
-    # REFUSES a complete:false candidate by name, exit 2) and the job still fails at the end.
+    # REFUSES a complete:false candidate by name, exit 2) -- once a baseline is committed
+    # (CA-490/CA-106/D62: no baseline exists yet, so today this arm exits 3, "NOT ARMED", before
+    # reaching the complete:false check at all; the job still fails at the end either way).
     - |
       RUN_EVAL_EC=0
       bash plugins/edm/evals/run-eval.sh || RUN_EVAL_EC=$?

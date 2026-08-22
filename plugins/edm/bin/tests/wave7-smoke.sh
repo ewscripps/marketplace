@@ -4102,6 +4102,50 @@ EOF
     && pass "CA-476 code -- positive control: an ID-less '### ' heading extracts nothing (depth alone is not the rule)" \
     || fail "CA-476 code -- positive control failed: an ID-less heading was extracted: $ca476_code_control"
 
+  # CA-513: the fence classifier now shares _edm-lint-lib.sh's ignored_line_set/is_ignored_line
+  # instead of a hand-rolled column-1 `/^```/` toggler. Two regression cases for the two ways the
+  # hand-rolled copy diverged from the shared, de-indenting, run-length-aware classifier: an
+  # indented fence (nested under a numbered step) and a longer fence quoting a shorter one.
+  cat > "${scratch}/REMEDIATION-ca513.md" <<'EOF'
+# Code Audit Remediation Plan: Mock (CA-513 fence-divergence regression)
+
+## Detailed Findings
+
+1. Indented fenced example, nested under a numbered remediation step (must not be extracted --
+   the hand-rolled column-1 toggler in the pre-CA-513 copy never saw this fence at all, so its
+   heading passed straight through as if unfenced):
+
+   ```markdown
+   ### CA-998 (P0, lens L1): indented fenced example, must never be extracted
+   ```
+
+2. A four-backtick block quoting a three-backtick block (must not desync fence state -- the
+   pre-CA-513 copy toggled on ANY three-backtick run regardless of the opening fence's actual
+   length, so the closing ``` below would have been read as the OUTER fence's close, leaving the
+   real finding after it and everything past it silently un-extracted):
+
+````markdown
+```markdown
+### CA-996 (P0, lens L1): a three-backtick block quoted inside a four-backtick block, must never be extracted
+```
+````
+
+### CA-997 (P1, lens L4): a real finding immediately after the nested-fence block, must be extracted
+
+### G21/CA-233 (P2, lens L7): a compound-ID heading with a slash delimiter, must be extracted (CA-517)
+EOF
+
+  local ca476_ca513
+  ca476_ca513="$(_ca476_extract code "${scratch}/REMEDIATION-ca513.md")"
+  check_absent "CA-513 -- a finding heading inside an INDENTED fence is not extracted" \
+    "CA-998" "$ca476_ca513"
+  check_absent "CA-513 -- a finding heading inside a nested (4-backtick-quoting-3-backtick) fence is not extracted" \
+    "CA-996" "$ca476_ca513"
+  check "CA-513 -- the real finding immediately after the nested-fence block IS extracted (fence state did not desync)" \
+    "CA-997 (P1, lens L4): a real finding immediately after the nested-fence block, must be extracted" "$ca476_ca513"
+  check "CA-517 -- a compound-ID heading (G{N}/CA-{N}, slash delimiter) is extracted, not dropped by the enumerated-delimiter class" \
+    "G21/CA-233 (P2, lens L7): a compound-ID heading with a slash delimiter, must be extracted" "$ca476_ca513"
+
   # ---- srd: agents/edm-srd-auditor.md Sec."Finding Format" --------------------------------
   cat > "${scratch}/audit-srd.md" <<'EOF'
 # SRD Audit Report: Mock
@@ -4191,6 +4235,47 @@ EOF
   [[ -z "$ca476_qc_control" ]] \
     && pass "CA-476 qc -- positive control: a per-ticket verdict heading with no '**Finding**:' line extracts nothing" \
     || fail "CA-476 qc -- positive control failed: a verdict heading was extracted: $ca476_qc_control"
+
+  # CA-516: the qc arm must ALSO accept the unlabelled `[SEVERITY] {PREFIX}-T{NN} | path:line |
+  # AC#{N}: ... | ...` shape -- the canonical finding line agents/edm-qc-auditor.md's own
+  # "## Finding Format" section defines, and the shape skills/implement/SKILL.md's merge-owning
+  # section restates -- not only the labelled `**Finding**:` example from "## Output Format".
+  # Before this fix a qc-summary.md following the unlabelled convention extracted nothing.
+  cat > "${scratch}/qc-summary-ca516.md" <<'EOF'
+# QC Audit Report: Mock (CA-516, unlabelled Finding Format)
+
+## Detailed Findings
+
+### MOCK-T03: Signup handler -- FAIL
+
+[FAIL] MOCK-T03 | signup.py:42 | AC#2: Missing email validation -- accepts any string as an email
+
+### MOCK-T04: Session refresh -- PARTIAL
+
+[PARTIAL] MOCK-T04 | AC#5: runtime-check: rotate the session token and confirm the old one is revoked
+EOF
+
+  local ca476_qc516 ca476_qc516_expected
+  ca476_qc516="$(_ca476_extract qc "${scratch}/qc-summary-ca516.md")"
+  ca476_qc516_expected="AC#2: Missing email validation -- accepts any string as an email
+AC#5: runtime-check: rotate the session token and confirm the old one is revoked"
+  [[ "$ca476_qc516" == "$ca476_qc516_expected" ]] \
+    && pass "CA-516 qc -- the unlabelled [SEVERITY] {PREFIX}-T{NN} | ... shape is extracted (both lines)" \
+    || fail "CA-516 qc -- unlabelled-shape extraction differs from the two Finding lines; got: $ca476_qc516"
+
+  # Discriminating control: a near-miss line (missing the required trailing '|' before the AC
+  # clause) must NOT be extracted -- proves the alternation matches the real shape, not "any
+  # bracketed severity token anywhere in the file".
+  cat > "${scratch}/qc-summary-ca516-control.md" <<'EOF'
+# QC Audit Report: Mock (CA-516 control)
+
+[FAIL] MOCK-T05 signup.py:1 this line is missing its pipe separators and must not be extracted
+EOF
+  local ca476_qc516_control
+  ca476_qc516_control="$(_ca476_extract qc "${scratch}/qc-summary-ca516-control.md")"
+  [[ -z "$ca476_qc516_control" ]] \
+    && pass "CA-516 qc -- positive control: a bracketed-severity line missing the pipe shape extracts nothing" \
+    || fail "CA-516 qc -- positive control failed: the malformed line was extracted: $ca476_qc516_control"
 
   # ---- ticket / test-coverage: no machine-readable finding shape ---------------------------
   # Both formats put free prose under fixed structural sub-headings, so the ONLY thing a
@@ -4367,9 +4452,23 @@ ca476_library_hygiene_case() {
 
   ca476_anti="$(awk '/^## Anti-Patterns$/{f=1;next} /^## /{f=0} f' "$ca476_lib")"
   ca476_anti_count="$(printf '%s\n' "$ca476_anti" | grep -c '^### ' || true)"
-  [[ "${ca476_anti_count:-0}" -eq 5 ]] \
-    && pass "CA-476 library -- '## Anti-Patterns' holds exactly the five curated entries (the 22 harvested ones are gone)" \
-    || fail "CA-476 library -- '## Anti-Patterns' holds ${ca476_anti_count:-0} '### ' entries, expected 5"
+  # The exact count is NOT a permanent invariant -- `update-patterns` legitimately appends new
+  # entries every round that finds a novel finding (the Living-Library mechanism this file is
+  # named for), and a human "Keep" curation at the convergence gate legitimately leaves the
+  # entry (heading, provenance, body) in place. What CA-476 actually broke, and what this case
+  # must keep proving stays fixed, is that the five HAND-CURATED originals are never displaced
+  # and the 22 round-8 SCAFFOLDING titles specifically never come back -- not that the count
+  # freezes at 5 forever.
+  [[ "${ca476_anti_count:-0}" -ge 5 ]] \
+    && pass "CA-476 library -- '## Anti-Patterns' holds at least the five hand-curated entries (${ca476_anti_count:-0} total)" \
+    || fail "CA-476 library -- '## Anti-Patterns' holds only ${ca476_anti_count:-0} '### ' entries, expected at least 5"
+
+  for ca476_h in "Bare \`if (role" "Stale docblock with inverted behavior" \
+                 "Configuration validated in multiple places" "Asymmetric error handling on paired operations" \
+                 "Implicit test ordering assumptions"; do
+    check "CA-476 library -- hand-curated entry '${ca476_h}' is still present" \
+      "$ca476_h" "$ca476_anti"
+  done
 
   for ca476_h in "### P0 (0)" "### P1 (9)" "### Syntax / static" "### Test suites" \
                  "### Lint / contract checks" "### Targeted re-audit" "### WORK ITEM " "### Stage "; do
@@ -4377,8 +4476,17 @@ ca476_library_hygiene_case() {
       "$ca476_h" "$(cat "$ca476_lib")"
   done
 
-  check_absent "CA-476 library -- no auto-appended EDMV3 provenance stub remains in code-audit.md" \
-    "> Extracted from the code audit for EDMV3." "$(cat "$ca476_lib")"
+  # NOTE (not a finding): a `status: pending-review` entry curated as "Keep" at the convergence
+  # gate legitimately RETAINS the auto-extracted "> Extracted from the code audit for ..." body
+  # verbatim (skills/code-audit/SKILL.md Sec."Pending Pattern Entries" -- "Keep" deletes only the
+  # `status: pending-review` line; heading, provenance and body stay exactly as written). A blanket
+  # ban on that phrase anywhere in the file is therefore incompatible with a sanctioned curation
+  # outcome and was removed here rather than made to fail on every future "Keep". What still must
+  # never happen -- an entry that both cites this initiative as its source AND still carries the
+  # `status: pending-review` marker from a round more than one round old, i.e. a stub nobody ever
+  # curated -- is out of this case's scope (it needs the round number, which this file does not
+  # expose per entry); the drain mechanism itself (three-per-gate, oldest-by-date-first) is what
+  # bounds that, per skills/code-audit/SKILL.md's own "drain is only as good as what enters it".
 
   local ca476_contract_out ca476_contract_ec
   set +e
@@ -8712,7 +8820,10 @@ ca473_tokens() {
 ca473_hook_tok="$(printf '%s\n' "$ca473_hooks_json" \
   | sed -n 's|.*Write the QC report to `<initiative-dir>/qc/\(qc-shard-[a-z][a-z]*-\).*|\1|p')"
 # Skill side: the pseudo-code `-> writes qc/qc-shard-...` spawn lines.
-ca473_skill_lines="$(grep 'writes qc/qc-shard' "$ca473_skill_md" 2>/dev/null)"
+# CA-523: `|| true` guards this capture -- under set -euo pipefail a zero-match grep exits 1 and
+# would abort the whole suite here, discarding every assertion after this block (including the
+# CA-416 spec_swept block that follows) instead of reporting one named failure below.
+ca473_skill_lines="$(grep 'writes qc/qc-shard' "$ca473_skill_md" 2>/dev/null || true)"
 ca473_skill_tok="$(ca473_tokens "$ca473_skill_lines")"
 
 [[ -n "$ca473_hook_tok" ]] \
@@ -8726,17 +8837,28 @@ ca473_skill_tok_n="$(printf '%s\n' "$ca473_skill_tok" | grep -c 'qc-shard-')"
   && pass "CA-473 -- both pseudo-code branches agree on a single shard token" \
   || fail "CA-473 -- the pseudo-code branches use ${ca473_skill_tok_n} different shard tokens: ${ca473_skill_tok}"
 
-[[ "$ca473_hook_tok" != "$ca473_skill_tok" ]] \
-  && pass "CA-473 -- hook token ('${ca473_hook_tok}') and skill token ('${ca473_skill_tok}') are disjoint namespaces" \
-  || fail "CA-473 -- hook and skill both write '${ca473_hook_tok}{NN}.md'; concurrent auditors collide and FAIL verdicts are lost"
+# CA-524: gate the disjointness check (and its own positive control) on BOTH extractions being
+# non-empty first. Without this, a broken extraction (e.g. the hooks.json sed at the top of this
+# block stops matching after a prompt reword) makes ca473_hook_tok empty, "" != "qc-shard-pass-"
+# is true, and the assertion below reports a PASS naming an empty token -- vacuously "proving"
+# disjointness on a regression it never observed. The positive control degenerates the same way
+# ("" == "" passes), so both the assertion and the control that is supposed to catch this go
+# green together. Requiring non-empty first turns that failure mode into a named FAIL instead.
+if [[ -n "$ca473_hook_tok" && -n "$ca473_skill_tok" ]]; then
+  [[ "$ca473_hook_tok" != "$ca473_skill_tok" ]] \
+    && pass "CA-473 -- hook token ('${ca473_hook_tok}') and skill token ('${ca473_skill_tok}') are disjoint namespaces" \
+    || fail "CA-473 -- hook and skill both write '${ca473_hook_tok}{NN}.md'; concurrent auditors collide and FAIL verdicts are lost"
 
-# Positive control: force the skill's pseudo-code token to equal the hook's and confirm the
-# inequality above would go red, so a green result above is evidence and not a vacuous pass.
-ca473_control_tok="$(ca473_tokens "$(printf '%s\n' "$ca473_skill_lines" \
-  | sed "s|qc-shard-[a-z][a-z]*-|${ca473_hook_tok}|g")")"
-[[ "$ca473_hook_tok" == "$ca473_control_tok" ]] \
-  && pass "CA-473 -- positive control: a skill pseudo-code rewritten to '${ca473_hook_tok}' is detected as equal (assertion turns red)" \
-  || fail "CA-473 -- positive control broken: the comparison would not catch a collided token"
+  # Positive control: force the skill's pseudo-code token to equal the hook's and confirm the
+  # inequality above would go red, so a green result above is evidence and not a vacuous pass.
+  ca473_control_tok="$(ca473_tokens "$(printf '%s\n' "$ca473_skill_lines" \
+    | sed "s|qc-shard-[a-z][a-z]*-|${ca473_hook_tok}|g")")"
+  [[ "$ca473_hook_tok" == "$ca473_control_tok" ]] \
+    && pass "CA-473 -- positive control: a skill pseudo-code rewritten to '${ca473_hook_tok}' is detected as equal (assertion turns red)" \
+    || fail "CA-473 -- positive control broken: the comparison would not catch a collided token"
+else
+  fail "CA-524 -- disjointness check and its positive control SKIPPED (not vacuously passed): extraction failed -- hook_tok='${ca473_hook_tok}' skill_tok='${ca473_skill_tok}'"
+fi
 
 # The merge step must sweep BOTH namespaces, or the fix trades a clobber for a dropped shard.
 ca473_skill_all="$(cat "$ca473_skill_md" 2>/dev/null)"
@@ -8750,6 +8872,22 @@ check "CA-473 -- CLAUDE.md's SubagentStop row names the per-implementer prefix" 
   "qc/qc-shard-impl-{NN}.md" "$(cat "${PLUGIN_DIR}/CLAUDE.md" 2>/dev/null)"
 check "CA-473 -- edm-qc-auditor.md names the threshold-shard prefix" \
   "qc/qc-shard-pass-{NN}.md" "$(cat "${PLUGIN_DIR}/agents/edm-qc-auditor.md" 2>/dev/null)"
+
+# CA-515: the threshold-sharding pseudo-code is now explicitly per-wave (Step 4 item 7 says the
+# same), and the qc-shard-pass filename it writes carries a wave component so wave 2's shard
+# ordinal 1 cannot silently overwrite wave 1's qc-shard-pass-01.md -- the same class of clobber
+# CA-473 closed for the hook-vs-threshold collision, one namespace over.
+check "CA-515 -- the threshold-sharding pseudo-code is explicitly framed as running per wave" \
+  "runs once per wave" "$ca473_skill_all"
+check "CA-515 -- the pass-shard filename key includes a wave component (single-shard branch)" \
+  "qc-shard-pass-w{wave_num:02d}-01.md" "$ca473_skill_all"
+check "CA-515 -- the pass-shard filename key includes a wave component (multi-shard branch)" \
+  "qc-shard-pass-w{wave_num:02d}-{i+1:02d}.md" "$ca473_skill_all"
+# Positive control: an ordinal-only key (the pre-CA-515 shape) must NOT be what ships -- confirms
+# the two checks above are pinning the wave component and not matching some other substring.
+ca515_control="$(printf '%s\n' "$ca473_skill_all" | sed 's/qc-shard-pass-w{wave_num:02d}-/qc-shard-pass-/g')"
+check_absent "CA-515 -- positive control: stripping the wave component reproduces the pre-fix ordinal-only key" \
+  "qc-shard-pass-w{wave_num" "$ca515_control"
 
 # =================================================================================
 # CA-416: the `spec_swept` obligation is enforced, not just documented. Half of the

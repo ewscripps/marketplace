@@ -5196,25 +5196,52 @@ normalize_pattern_titles() {
 #
 # Fence-aware throughout, for the same reason pattern_insert_line_for is (CA-056): a report
 # that quotes an example finding inside a fenced code block is documentation, not a finding.
+# CA-513: this now GENUINELY shares pattern_insert_line_for's mechanism (ignored_line_set /
+# is_ignored_line from _edm-lint-lib.sh) rather than hand-rolling three column-1-anchored
+# `/^```/` togglers of its own. The prior hand-rolled copy anchored fences at column 1 (missing
+# fences indented under a numbered step) and toggled on any 3-backtick run regardless of length
+# (desyncing on a 4-backtick block quoting a 3-backtick one) -- both diverging from the shared
+# classifier's de-indenting, run-length-aware fence detection in the unsafe direction, so a
+# fenced example `### CA-NNN` heading could be harvested into the shipped pattern library as if
+# it were a real finding. Computing the ignored-line set once here and skipping those line
+# numbers in awk closes that gap and makes the two halves of this command agree for real.
 pattern_extract_titles() {
   local _pxt_type="$1" _pxt_report="$2"
   [[ -n "$_pxt_report" && -f "$_pxt_report" ]] || return 0
   case "$_pxt_type" in
+    ticket|test-coverage)
+      return 0 # no machine-readable finding shape -- see the arm notes above
+      ;;
+  esac
+  # Pass the ignored-line set to awk via a FILE read at BEGIN, not a `-v` string: a multi-line
+  # value (one line number per line) in a `-v` assignment is not portable across awk
+  # implementations (the plugin's shipped awk on macOS rejects an embedded raw newline in a `-v`
+  # value with "newline in string"). This is the same file-based idiom `edm-lint-artifacts` uses
+  # for its own multi-line awk inputs (":196-229").
+  local _pxt_ignfile
+  _pxt_ignfile="$(mktemp "${TMPDIR:-/tmp}/edm-pxt-ignored.XXXXXX")" || return 1
+  trap 'rm -f "$_pxt_ignfile"' RETURN
+  ignored_line_set "$_pxt_report" 2>/dev/null > "$_pxt_ignfile" || true
+  case "$_pxt_type" in
     code)
-      awk '
-        /^```/ { infence = 1 - infence; next }
-        infence { next }
+      # CA-517: the delimiter class is inverted to "not an ID character" rather than an
+      # enumerated set, so a compound-ID heading (`G21/CA-233`, `CA-233-followup`) is recognised
+      # instead of silently dropped by a future punctuation convention this enumeration didn't
+      # anticipate.
+      awk -v ignfile="$_pxt_ignfile" '
+        BEGIN { while ((getline _pxt_ln < ignfile) > 0) if (_pxt_ln != "") skip[_pxt_ln] = 1 }
+        (NR in skip) { next }
         /^##+[ \t]/ {
           t = $0
           sub(/^#+[ \t]+/, "", t)
-          if (t ~ /^(CA-[0-9]+|G[0-9]+)([ \t:(]|$)/) print t
+          if (t ~ /^(CA-[0-9]+|G[0-9]+)([^0-9A-Za-z]|$)/) print t
         }
       ' "$_pxt_report"
       ;;
     srd)
-      awk -F'|' '
-        /^```/ { infence = 1 - infence; next }
-        infence { next }
+      awk -F'|' -v ignfile="$_pxt_ignfile" '
+        BEGIN { while ((getline _pxt_ln < ignfile) > 0) if (_pxt_ln != "") skip[_pxt_ln] = 1 }
+        (NR in skip) { next }
         NF == 3 && $0 ~ /^\[[^][]+\][ \t]*\[[^][]+\]/ {
           t = $2
           gsub(/^[ \t]+/, "", t)
@@ -5224,19 +5251,26 @@ pattern_extract_titles() {
       ' "$_pxt_report"
       ;;
     qc)
-      awk -F'|' '
-        /^```/ { infence = 1 - infence; next }
-        infence { next }
-        NF >= 2 && $0 ~ /^\*\*Finding\*\*:/ {
+      # CA-516: accepts BOTH documented finding-line shapes -- the labelled `**Finding**: ...`
+      # form (agents/edm-qc-auditor.md's "## Output Format" example) and the unlabelled
+      # `[SEVERITY] {PREFIX}-T{NN} | path:line | AC#{N}: ... | ...` form that same agent file's
+      # canonical finding-line definition and skills/implement/SKILL.md's merge-owning "Finding
+      # format" section both actually specify (and which is the one every shipped qc-summary.md
+      # on disk actually uses). Reconciling the two documents down to one shape is left as
+      # follow-on work rather than done in this commit -- the unlabelled bracket form is the
+      # literal text QC auditors write and is referenced elsewhere in the suite, so relabelling
+      # it is a larger behavioral change than this fix's scope; the alternation here is what
+      # actually closes CA-516 (a conforming qc-summary.md no longer extracts zero titles).
+      awk -F'|' -v ignfile="$_pxt_ignfile" '
+        BEGIN { while ((getline _pxt_ln < ignfile) > 0) if (_pxt_ln != "") skip[_pxt_ln] = 1 }
+        (NR in skip) { next }
+        NF >= 2 && ($0 ~ /^\*\*Finding\*\*:/ || $0 ~ /^\[[A-Za-z0-9]+\][ \t]+[A-Za-z0-9_-]+-T[0-9]+[ \t]*\|/) {
           t = $NF
           gsub(/^[ \t]+/, "", t)
           gsub(/[ \t]+$/, "", t)
           if (t != "") print t
         }
       ' "$_pxt_report"
-      ;;
-    ticket|test-coverage)
-      : # no machine-readable finding shape -- see the arm notes above
       ;;
   esac
 }
