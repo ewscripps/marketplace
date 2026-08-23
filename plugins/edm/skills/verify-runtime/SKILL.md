@@ -76,8 +76,9 @@ close it -- do not invent a verdict to unblock yourself.
       ```bash
       edm-state record-partial-verdict <PREFIX> <ticket> close FAIL "post-deploy/verification.md#{ticket}-ac{N}"
       ```
-   g. Append (never overwrite -- see Idempotency below) a section to
-      `${INIT_DIR}/post-deploy/verification.md` documenting this closure:
+   g. Run `mkdir -p "${INIT_DIR}/post-deploy"` first (CA-560: the directory does not exist until
+      the first closure writes into it), then append (never overwrite -- see Idempotency below) a
+      section to `${INIT_DIR}/post-deploy/verification.md` documenting this closure:
       ```markdown
       ## {ticket} AC#{N} -- {short criterion}
 

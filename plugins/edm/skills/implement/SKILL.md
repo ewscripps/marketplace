@@ -81,8 +81,12 @@ Resolve merge conflicts -> run existing tests -> launch next wave.
 - Hook-spawned (per-implementer) auditor: `<initiative-dir>/qc/qc-shard-impl-{NN}.md`, where `{NN}` is
   the lowest ticket number in that implementer's assigned range, zero-padded (e.g. tickets
   T07-T09 -> `qc-shard-impl-07.md`). The hook path NEVER writes `qc-summary.md` directly (CA-440).
-- Threshold-shard (this skill's post-wave QC) auditor: `<initiative-dir>/qc/qc-shard-pass-{NN}.md`,
-  where `{NN}` is the **shard ordinal** (1-based, zero-padded), not a ticket number.
+- Threshold-shard (this skill's post-wave QC) auditor:
+  `<initiative-dir>/qc/qc-shard-pass-w{WW}-{NN}.md`, where `{WW}` is the **wave number** (1-based,
+  zero-padded) and `{NN}` is the **shard ordinal within that wave** (1-based, zero-padded), not a
+  ticket number. The wave component is required (CA-515): an ordinal-only name collides across
+  waves whenever two waves both stay at or under `qc_shard_threshold` and each writes a single
+  shard 1.
 - **The two prefixes are disjoint namespaces and MUST NOT overlap** (CA-473). Both mechanisms run
   concurrently and write whole files into the same `qc/` directory, so a shared key space collides
   deterministically -- an unprefixed `qc-shard-{NN}.md` would let threshold shard 1 clobber the

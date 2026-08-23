@@ -39,7 +39,7 @@
 #   edm-state audit-round-start <PREFIX> <code|srd|tickets> [--lenses L1,L3]  # increment audit-round counter (also records lens set + round_type), echo new value
 #   edm-state audit-round-complete <PREFIX> <code|srd|tickets>        # record completion timestamp, duration, tokens and cost for the current round
 #   edm-state render-ledger <PREFIX>                                   # deterministically render findings-ledger.md from findings-ledger.jsonl
-#   edm-state audit-converged <PREFIX>                                 # query code-audit convergence over findings-ledger.jsonl (read-only)
+#   edm-state audit-converged <PREFIX>                                 # query code-audit convergence over findings-ledger.jsonl (read-only); exit 0 converged, exit 3 no ledger yet / legacy markdown-only, exit 1 otherwise -- refusal reasons: blocking P0/P1/P2 findings open, invalid JSONL or finding status, latest round unknown/partial round_type, or spec_swept="no" sweep-debt outstanding on a fixed finding
 #   edm-state record-partial-verdict <PREFIX> <ticket> <verdict> [note]  # persist per-ticket PASS/PARTIAL/FAIL
 #   edm-state record-partial-verdict <PREFIX> <ticket> close <PASS|FAIL> <verification_ref>  # close an existing PARTIAL verdict
 #   edm-state set-mode <PREFIX> <kind> <value>                        # set mode, lifecycle_mode, compliance_enabled, or implementation_mode
@@ -2631,7 +2631,7 @@ cmd_phase_complete() {
         6)
           # AC3: accept qc/qc-summary.md OR any qc/qc-shard-*.md (sharded QC merge). The glob
           # deliberately stays prefix-agnostic so it matches BOTH shard namespaces (CA-473):
-          # qc-shard-impl-{NN}.md (per-implementer hook shards) and qc-shard-pass-{NN}.md
+          # qc-shard-impl-{NN}.md (per-implementer hook shards) and qc-shard-pass-w{WW}-{NN}.md
           # (post-wave threshold shards).
           if [[ "$(present_or_absent "${pc_dir}/qc/qc-summary.md" nonempty)" == "[absent]" ]]; then
             local pc_shard pc_shard_found=0
@@ -5338,17 +5338,40 @@ pattern_extract_titles() {
   # for its own multi-line awk inputs (":196-229").
   local _pxt_ignfile
   _pxt_ignfile="$(mktemp "${TMPDIR:-/tmp}/edm-pxt-ignored.XXXXXX")" || return 1
-  trap 'rm -f "$_pxt_ignfile"' RETURN
+  # CA-544: RETURN-only leaked $_pxt_ignfile on a die/errexit abort (this function runs under
+  # set -euo pipefail, so an unguarded awk failure at :5349/:5360/:5382 exits the process without
+  # firing RETURN) or a SIGINT mid-extraction. Mirrors the CA-014/CA-481(a) four-arm split already
+  # applied to the plugin's other RETURN-only trap (evals/tiering-matrix.sh's self_test): RETURN
+  # keeps sharing EXIT's cleanup-only body; INT/TERM/HUP exit with a signal-shaped code after
+  # cleanup instead of cleaning up and resuming the caller. "${_pxt_ignfile:-}" (not
+  # "$_pxt_ignfile") guards a second EXIT firing after this function's own `local` has gone out of
+  # scope -- the trap is process-wide, not function-scoped. Both call sites run this function
+  # inside a forked subshell (with_state_lock's body fork at :5541's process substitution, and the
+  # command-substitution/pipeline at :5654), so an EXIT trap set here is scoped to that subshell
+  # and never reaches with_state_lock's own _save_traps/_restore_traps bracketing of the outer
+  # process's traps.
+  trap 'rm -f "${_pxt_ignfile:-}"' RETURN EXIT
+  trap 'rm -f "${_pxt_ignfile:-}"; exit 130' INT
+  trap 'rm -f "${_pxt_ignfile:-}"; exit 143' TERM
+  trap 'rm -f "${_pxt_ignfile:-}"; exit 129' HUP
   ignored_line_set "$_pxt_report" 2>/dev/null > "$_pxt_ignfile" || true
+  # CA-556: the skip-set consumption prelude (read ignfile at BEGIN, skip its line numbers) is
+  # single-sourced here rather than hand-copied per arm below -- CA-513 fixed the CLASSIFIER
+  # (ignored_line_set itself) but left this CONSUMPTION boilerplate triplicated, so a future arm
+  # (a fourth hand-copy) or an edit to one copy that misses its siblings can silently re-open
+  # CA-476/CA-513 for just that arm. Bash string concatenation (adjacent quoted strings) prepends
+  # the same prelude text to each arm's own pattern/action body before it reaches awk.
+  local _pxt_awk_prelude='
+        BEGIN { while ((getline _pxt_ln < ignfile) > 0) if (_pxt_ln != "") skip[_pxt_ln] = 1 }
+        (NR in skip) { next }
+'
   case "$_pxt_type" in
     code)
       # CA-517: the delimiter class is inverted to "not an ID character" rather than an
       # enumerated set, so a compound-ID heading (`G21/CA-233`, `CA-233-followup`) is recognised
       # instead of silently dropped by a future punctuation convention this enumeration didn't
       # anticipate.
-      awk -v ignfile="$_pxt_ignfile" '
-        BEGIN { while ((getline _pxt_ln < ignfile) > 0) if (_pxt_ln != "") skip[_pxt_ln] = 1 }
-        (NR in skip) { next }
+      awk -v ignfile="$_pxt_ignfile" "$_pxt_awk_prelude"'
         /^##+[ \t]/ {
           t = $0
           sub(/^#+[ \t]+/, "", t)
@@ -5357,9 +5380,7 @@ pattern_extract_titles() {
       ' "$_pxt_report"
       ;;
     srd)
-      awk -F'|' -v ignfile="$_pxt_ignfile" '
-        BEGIN { while ((getline _pxt_ln < ignfile) > 0) if (_pxt_ln != "") skip[_pxt_ln] = 1 }
-        (NR in skip) { next }
+      awk -F'|' -v ignfile="$_pxt_ignfile" "$_pxt_awk_prelude"'
         NF == 3 && $0 ~ /^\[[^][]+\][ \t]*\[[^][]+\]/ {
           t = $2
           gsub(/^[ \t]+/, "", t)
@@ -5379,9 +5400,7 @@ pattern_extract_titles() {
       # literal text QC auditors write and is referenced elsewhere in the suite, so relabelling
       # it is a larger behavioral change than this fix's scope; the alternation here is what
       # actually closes CA-516 (a conforming qc-summary.md no longer extracts zero titles).
-      awk -F'|' -v ignfile="$_pxt_ignfile" '
-        BEGIN { while ((getline _pxt_ln < ignfile) > 0) if (_pxt_ln != "") skip[_pxt_ln] = 1 }
-        (NR in skip) { next }
+      awk -F'|' -v ignfile="$_pxt_ignfile" "$_pxt_awk_prelude"'
         NF >= 2 && ($0 ~ /^\*\*Finding\*\*:/ || $0 ~ /^\[[A-Za-z0-9]+\][ \t]+[A-Za-z0-9_-]+-T[0-9]+[ \t]*\|/) {
           t = $NF
           gsub(/^[ \t]+/, "", t)

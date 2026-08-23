@@ -126,6 +126,20 @@ if [[ -d "$DIR" ]]; then
   die "initiative directory already exists at $DIR (run 'edm-state get $PREFIX' to inspect)"
 fi
 
+# CA-542: install a cleanup trap for the partial-scaffold window opened by the mkdir below and
+# closed only once `edm-state init` succeeds a few lines down. A failure or Ctrl-C in between
+# left $DIR, explorers/, decisions.md and (in three of five modes) code-audit/ on disk with NO
+# state file -- and the retry then hit the `[[ -d "$DIR" ]]` guard above and died with "run
+# `edm-state get $PREFIX` to inspect", a hint that cannot work because the state file the guard
+# implies was never written. This runs at top level, not inside a function, so RETURN does not
+# apply; EXIT covers ordinary abort paths (die, errexit), INT/TERM/HUP exit with a signal-shaped
+# code after cleanup, matching the plugin's four-arm trap convention.
+_EDM_INIT_SCAFFOLD_DIR="$DIR"
+trap '[[ -n "${_EDM_INIT_SCAFFOLD_DIR:-}" ]] && rm -rf "$_EDM_INIT_SCAFFOLD_DIR"' EXIT
+trap '[[ -n "${_EDM_INIT_SCAFFOLD_DIR:-}" ]] && rm -rf "$_EDM_INIT_SCAFFOLD_DIR"; exit 130' INT
+trap '[[ -n "${_EDM_INIT_SCAFFOLD_DIR:-}" ]] && rm -rf "$_EDM_INIT_SCAFFOLD_DIR"; exit 143' TERM
+trap '[[ -n "${_EDM_INIT_SCAFFOLD_DIR:-}" ]] && rm -rf "$_EDM_INIT_SCAFFOLD_DIR"; exit 129' HUP
+
 # --- Scaffold directory tree based on mode (T45) ---
 mkdir -p "$DIR"
 
@@ -163,6 +177,7 @@ export EDM_MODE="$MODE"
 export EDM_COMPLIANCE_ENABLED="$COMPLIANCE"
 export EDM_IMPLEMENTATION_MODE="$IMPL_MODE"
 edm-state init "$PREFIX" >/dev/null
+_EDM_INIT_SCAFFOLD_DIR=""  # CA-542: scaffold complete and state file written -- disarm cleanup
 
 # .gitignore behavior (CA-314): the state backup (written by `_rmw_state_body` in
 # `bin/edm-state`, permanent by design for migrate-path rollback), the lock file family

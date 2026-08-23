@@ -92,8 +92,11 @@ function mermaid_is_violation(line,   trimmed, stripped, after_colon, p) {
 
   # Legal: classDef / style / linkStyle directives -- their trailing ";" is a statement
   # terminator, never a label boundary.
-  if (trimmed ~ /^(classDef|style|linkStyle)[[:space:]]/) return 0
-  if (trimmed == "classDef" || trimmed == "style" || trimmed == "linkStyle") return 0
+  # CA-539: merged with the bare-keyword case below rather than keeping it a separate guard --
+  # a line whose trimmed form is exactly "classDef"/"style"/"linkStyle" has no ";", no span
+  # character and no "->", so it already fell through every check below to return 0 regardless;
+  # the separate line was a provably inert no-op. ([[:space:]]|$) covers both shapes in one rule.
+  if (trimmed ~ /^(classDef|style|linkStyle)([[:space:]]|$)/) return 0
 
   stripped = mermaid_strip_entities(line)
 

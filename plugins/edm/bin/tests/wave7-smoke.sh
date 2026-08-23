@@ -9385,7 +9385,9 @@ check_absent "CA-473 -- no bare qc-shard-*.md merge glob remains in the pseudo-c
 check "CA-473 -- CLAUDE.md's SubagentStop row names the per-implementer prefix" \
   "qc/qc-shard-impl-{NN}.md" "$(cat "${PLUGIN_DIR}/CLAUDE.md" 2>/dev/null)"
 check "CA-473 -- edm-qc-auditor.md names the threshold-shard prefix" \
-  "qc/qc-shard-pass-{NN}.md" "$(cat "${PLUGIN_DIR}/agents/edm-qc-auditor.md" 2>/dev/null)"
+  "qc/qc-shard-pass-" "$(cat "${PLUGIN_DIR}/agents/edm-qc-auditor.md" 2>/dev/null)"
+check "CA-515 -- edm-qc-auditor.md's threshold-shard filename carries the wave component" \
+  "qc/qc-shard-pass-w{WW}-{NN}.md" "$(cat "${PLUGIN_DIR}/agents/edm-qc-auditor.md" 2>/dev/null)"
 
 # CA-515: the threshold-sharding pseudo-code is now explicitly per-wave (Step 4 item 7 says the
 # same), and the qc-shard-pass filename it writes carries a wave component so wave 2's shard

@@ -78,7 +78,7 @@ Resolve the initiative directory from state: `edm-state resolve-dir <PREFIX>` (h
 
 Write your report to:
 - **Hook-spawned (per-implementer) shard**: `<initiative-dir>/qc/qc-shard-impl-{NN}.md`, where `{NN}` is the lowest ticket number in your assigned range, zero-padded (e.g. tickets T07-T09 -> `qc-shard-impl-07.md`).
-- **Threshold shard N of M** (spawned by `/edm:implement`'s post-wave QC pass): `<initiative-dir>/qc/qc-shard-pass-{NN}.md`, where `{NN}` is your **shard ordinal** N, zero-padded (e.g. `qc-shard-pass-01.md`) -- never a ticket number.
+- **Threshold shard N of M** (spawned by `/edm:implement`'s post-wave QC pass): `<initiative-dir>/qc/qc-shard-pass-w{WW}-{NN}.md`, where `{WW}` is the **wave number** (1-based, zero-padded) and `{NN}` is your **shard ordinal** N within that wave, zero-padded (e.g. `qc-shard-pass-w01-01.md`) -- never a ticket number. The wave component is required (CA-515): an ordinal-only name collides across waves the moment two waves each write a single shard 1, silently discarding the earlier wave's verdicts.
 
 Never write `qc/qc-summary.md` yourself, and never write a bare `qc/qc-shard-{NN}.md`: the two prefixes above are disjoint namespaces on purpose (CA-473). Both kinds of auditor run concurrently and write whole files into the same `qc/` directory, so a shared key space collides deterministically -- shard 1 against the implementer whose range starts at T01, shard 2 against T02, and so on -- and the loser's PASS/FAIL verdicts are lost silently, since only PARTIAL verdicts are persisted elsewhere (via `edm-state record-partial-verdict`).
 

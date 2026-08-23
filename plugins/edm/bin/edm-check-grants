@@ -580,6 +580,53 @@ while IFS=$'\t' read -r _agent_name _agent_file _agent_tools _agent_disallowed; 
   done
 done < "$AGENT_TSV"
 
+# =================================================================================================
+# CA-559: negative direction for source 4 (skills), mirroring the AC3 agent-side warning-only
+# check above (:31-32) rather than leaving skill over-grants structurally invisible -- source 4's
+# existing checks (scan_skill_tool_usage) only ever ask "does the body need a tool the frontmatter
+# lacks?", never the reverse. Deliberately narrow scope: a bare-keyword-in-body search is only
+# reliable for tool classes with no OTHER verb naturally standing in for them in prose. AskUserQuestion,
+# Task and Skill already have dedicated positive-direction detectors above (verb/pattern-based, not
+# keyword search) and are excluded here to avoid a redundant, noisier re-check of the same signal.
+# Read, Glob, Grep, Write, Edit and TodoWrite are excluded because they are described in prose with
+# other verbs almost universally (produces, creates, records, amends) rather than their literal tool
+# name, so a bare-keyword search against them fires on nearly every skill and is pure noise, not
+# signal. What remains, and is reliably keyword-detectable because nothing else stands in for it in
+# prose: a scoped Bash(<cmd> *) grant (checked on <cmd> itself, not the literal string "Bash", so
+# Bash(mkdir *) with no "mkdir" anywhere in the body is flagged even though "Bash(edm-state *)"
+# elsewhere in the same grant list is legitimately used), and the rarely-granted TodoRead. Two live
+# instances at the time of filing: verify-runtime/SKILL.md's Bash(mkdir *) and implement/SKILL.md's
+# TodoRead, neither mentioned anywhere outside their own frontmatter line. Warning-only, never
+# affects the exit code (EDMV3-100's contract stays: 0 clean, 1 unsatisfied grant, 2 usage/env error).
+# =================================================================================================
+while IFS=$'\t' read -r _skill_name _skill_file _skill_tools; do
+  [[ -z "$_skill_name" ]] && continue
+  _skill_body_start="$(body_start_line "$_skill_file")"
+  [[ -z "$_skill_body_start" ]] && _skill_body_start=1
+  _skill_body="$(sed -n "${_skill_body_start},\$p" "$_skill_file" 2>/dev/null || true)"
+
+  _old_ifs="$IFS"; IFS=','
+  # shellcheck disable=SC2086 -- deliberate word-splitting on IFS=','
+  set -- $_skill_tools
+  IFS="$_old_ifs"
+  for _tok in "$@"; do
+    _tok="$(printf '%s' "$_tok" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    [[ -z "$_tok" ]] && continue
+    case "$_tok" in
+      Bash\(*)
+        _kw="${_tok#Bash(}"
+        _kw="${_kw%% *}"
+        ;;
+      TodoRead) _kw="$_tok" ;;
+      *) continue ;;
+    esac
+    [[ -z "$_kw" ]] && continue
+    if ! printf '%s\n' "$_skill_body" | grep -qw -- "$_kw"; then
+      echo "warning: grant-without-instruction: skill: ${_skill_name}: ${_tok}: ${_skill_file}:${_skill_body_start}"
+    fi
+  done
+done < "$SKILL_TSV"
+
 # ---- Exit contract (EDMV3-100): 0 clean, 1 unsatisfied grant(s) found, 2 usage/env error -------
 if [[ "$violations" -eq 0 ]]; then
   exit 0
