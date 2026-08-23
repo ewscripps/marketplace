@@ -5,7 +5,7 @@ description: |
   requirement and ticket AC against the implemented code, flagging missing
   implementations, partial AC coverage, and scope creep. Requires SRD and ticket
   pack as explicit inputs.
-tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput, Write
+tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, Write
 model: opus
 effort: max
 maxTurns: 30

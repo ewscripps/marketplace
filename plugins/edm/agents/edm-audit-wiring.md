@@ -5,7 +5,7 @@ description: |
   backend endpoints end-to-end to find disconnected pieces: frontend using `MOCK_DATA`
   instead of live API calls, backend endpoints never called, event handlers never
   triggered, feature flags gating unwritten code, config values never consumed.
-tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput, Write
+tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, Write
 model: opus
 effort: max
 maxTurns: 30

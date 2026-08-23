@@ -4,7 +4,7 @@ description: Run the full Enterprise Development Methodology (EDM) -- all 6 phas
 disable-model-invocation: true
 model: opus
 effort: max
-argument-hint: '<initiative description | /path/to/file | PROJ-123>'
+argument-hint: '<initiative description | /path/to/file | PROJ-123>'  # quoted: the | here is a literal pipe, not the YAML block-scalar indicator -- unquoted it would be parsed as one
 allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(edm-init *), Bash(edm-validate-prefix *), Glob, Grep, Task, TodoWrite, AskUserQuestion, Skill, mcp__{jira_mcp_namespace}__atlassianUserInfo, mcp__{jira_mcp_namespace}__getAccessibleAtlassianResources, mcp__{jira_mcp_namespace}__getJiraIssue
 ---
 

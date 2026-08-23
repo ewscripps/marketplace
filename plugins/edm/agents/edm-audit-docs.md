@@ -2,7 +2,7 @@
 name: edm-audit-docs
 description: |
   Use this agent for EDM Code Audit Lens L6 (Documentation Accuracy). It cross-references every comment, docstring, and operator-facing message against the actual code: stale claims, mismatched parameter docs, error messages that misstate what happened, missing "why" explanations for non-obvious choices.
-tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput, Write
+tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, Write
 model: opus
 effort: max
 maxTurns: 30

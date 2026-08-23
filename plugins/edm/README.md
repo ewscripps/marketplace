@@ -207,7 +207,11 @@ SRD/
     `-- ...
 ```
 
-See `CLAUDE.md` for the full v2.0 artifact inventory including optional on-demand files (`decisions.md`, `ROLLBACK.md`, `exec-report.md`, `post-deploy/`).
+See `CLAUDE.md` for the full v2.0 artifact inventory. That inventory marks `architecture.md`,
+`explorers/` and `decisions.md` as always-present (Must), not optional -- `decisions.md` in
+particular is load-bearing at runtime: `skills/code-audit/SKILL.md` requires every convergence
+approval be appended to it, and `CLAUDE.md`'s D15 section requires scope changes recorded there.
+The genuinely optional, on-demand files are `ROLLBACK.md`, `exec-report.md` and `post-deploy/`.
 
 Artifacts are reviewed in PRs. Gate approvals show up in git history. Multiple developers see the same in-flight initiative state.
 

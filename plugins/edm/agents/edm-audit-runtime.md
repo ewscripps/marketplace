@@ -2,7 +2,7 @@
 name: edm-audit-runtime
 description: |
   Use this agent for EDM Code Audit Lens L5 (Runtime Hygiene). It traces every file the code creates at runtime (lock files, temp files, PID files, logs, caches, generated configs) and verifies each is in `.gitignore`, won't accumulate indefinitely, and won't appear as untracked in `git status` on the deployment host.
-tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput, Write
+tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, Write
 model: opus
 effort: max
 maxTurns: 30

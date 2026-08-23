@@ -5,7 +5,7 @@ description: |
   files, features implemented twice (two date formatters, two retry helpers, two auth
   flows), copy-pasted blocks that should be utilities, and parallel implementations
   that have diverged.
-tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput, Write
+tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, Write
 model: opus
 effort: max
 maxTurns: 30

@@ -2,7 +2,7 @@
 name: edm-audit-security
 description: |
   Use this agent for EDM Code Audit Lens L8 (Security & Portability). It hunts for bash file-descriptor conflicts, hardcoded absolute paths that won't exist on every host, env var propagation gaps, privilege assumptions, missing systemd hardening (`ProtectSystem`, `NoNewPrivileges`, `ReadWritePaths`), and SQL/command/path injection -- cross-walked against the OWASP Top 10:2025 categories.
-tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput, Write
+tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, Write
 model: opus
 effort: max
 maxTurns: 30

@@ -4,7 +4,7 @@ description: EDM Phase 6 closure -- drives every PARTIAL verdict in partial_verd
 disable-model-invocation: true
 model: sonnet
 effort: high
-argument-hint: '<PREFIX>'
+argument-hint: <PREFIX>
 allowed-tools: Read, Write, Bash(edm-state *), Bash(mkdir *), Glob, Grep, AskUserQuestion, TodoWrite
 ---
 

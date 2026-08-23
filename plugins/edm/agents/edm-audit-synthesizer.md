@@ -2,7 +2,7 @@
 name: edm-audit-synthesizer
 description: |
   Use this agent at the end of an EDM Code Audit to synthesize the lens reports into a single severity-ranked remediation plan. Reads lens reports for this round, applies a second-pass False Alarm Filter that ranks by confidence rather than discarding uncorroborated findings, deduplicates multi-lens findings, merges with the cross-round findings ledger (assigns stable CA-NNN IDs, marks fixed/re-opened findings), and writes REMEDIATION.md plus the updated findings-ledger.jsonl -- the authoritative cross-round record (the markdown ledger is rendered separately, deterministically, by `edm-state render-ledger`). Never modifies the audited source under review (`Edit`/`NotebookEdit` denied) -- only its own two output artifacts.
-tools: Read, Write, Glob, Grep, LS, NotebookRead, WebFetch, TodoWrite, WebSearch
+tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, Write
 model: opus
 effort: max
 maxTurns: 30

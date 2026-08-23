@@ -5,7 +5,7 @@ description: |
   wrong values, incorrect conditionals, off-by-one errors, stub functions, unresolved
   TODO/FIXME/HACK comments, `raise NotImplementedError`, empty catch blocks, and
   functions that always return the same hardcoded value.
-tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput, Write
+tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, Write
 model: opus
 effort: max
 maxTurns: 30

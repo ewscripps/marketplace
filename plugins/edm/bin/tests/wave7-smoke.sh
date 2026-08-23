@@ -1700,6 +1700,37 @@ rm -f "$t66ac12_force_control" "$t66ac12_accept_control"
 # touched here (owned by other agents this batch).
 # =================================================================================
 LENS_AGENTS="edm-audit-logic edm-audit-dead-code edm-audit-edge-cases edm-audit-test-quality edm-audit-runtime edm-audit-docs edm-audit-consistency edm-audit-security edm-audit-spec edm-audit-dry edm-audit-wiring"
+
+# CA-529: the twelve agents/edm-audit-*.md files (eleven lenses + the synthesizer) are a single
+# sibling family launched by one skill in one wave and maintained as a block, but the
+# synthesizer's `tools:` grant had silently diverged from the eleven lenses' (two extra, inert
+# grants -- KillShell/BashOutput, which only operate on a shell started by Bash, a tool none of
+# the twelve carries -- plus a different order). Round 9's L7 sweep had recorded this family as
+# byte-identical on tools, which was false; pin the real invariant here so that claim cannot go
+# stale silently again.
+echo
+echo "=== CA-529: all twelve agents/edm-audit-*.md 'tools:' frontmatter lines are byte-identical ==="
+ca529_tools_lines="$(grep -h '^tools:' "${PLUGIN_DIR}"/agents/edm-audit-*.md | sort -u)"
+ca529_tools_line_count="$(printf '%s\n' "$ca529_tools_lines" | grep -c . || true)"
+[[ "${ca529_tools_line_count:-0}" -eq 1 ]] \
+  && pass "CA-529 -- all twelve agents/edm-audit-*.md tools: lines are byte-identical" \
+  || fail "CA-529 -- agents/edm-audit-*.md tools: lines have diverged (${ca529_tools_line_count:-0} distinct value(s)):\n${ca529_tools_lines}"
+check_absent "CA-529 -- the shared tools: line grants neither KillShell nor BashOutput (inert without Bash)" \
+  "KillShell" "$ca529_tools_lines"
+
+# Positive control: perturb a scratch copy of one file's tools: line and confirm the same
+# comparison would have caught it (proves the check discriminates, not just that it's green today).
+ca529_control_dir="$(mktemp -d "${TMP}/edm-ca529-control.XXXXXX")"
+cp "${PLUGIN_DIR}"/agents/edm-audit-*.md "$ca529_control_dir/"
+sed -i.bak -E 's/^tools: .*/tools: Read, Write/' "${ca529_control_dir}/edm-audit-logic.md"
+rm -f "${ca529_control_dir}"/*.bak
+ca529_control_lines="$(grep -h '^tools:' "${ca529_control_dir}"/edm-audit-*.md | sort -u)"
+ca529_control_count="$(printf '%s\n' "$ca529_control_lines" | grep -c . || true)"
+[[ "${ca529_control_count:-0}" -gt 1 ]] \
+  && pass "CA-529 -- positive control: perturbing one file's tools: line is detected as a divergence" \
+  || fail "CA-529 -- positive control broken: perturbing edm-audit-logic.md's tools: line did not register as a divergence"
+rm -rf "$ca529_control_dir"
+
 CODE_AUDIT_FIXTURE_DIR="${PLUGIN_DIR}/bin/tests/fixtures/code-audit"
 ARCHITECTURE_MD="$(cd "$PLUGIN_DIR/../.." && pwd)/SRD/edm/EDMV3__prompt-streamline/architecture.md"
 
@@ -2920,7 +2951,11 @@ check "T33 AC9 -- implement/SKILL.md Step 8 states the two-command sequence" \
 echo
 echo "T33 AC10 -- frontmatter contract: full grant set, no Edit, no bare Bash"
 t33_frontmatter="$(sed -n '1,10p' "$VERIFY_RUNTIME_SKILL")"
-check "T33 AC10 -- argument-hint '<PREFIX>'" "argument-hint: '<PREFIX>'" "$t33_frontmatter"
+# CA-535: unquoted to match the other 12 skills' bare-scalar argument-hint convention -- '<PREFIX>'
+# was byte-equivalent to <PREFIX> (no YAML block-scalar indicator to escape), so the quoting here
+# was the one unjustified exception in the family (orchestrator's is justified: its value
+# contains a literal |).
+check "T33 AC10 -- argument-hint <PREFIX>" "argument-hint: <PREFIX>" "$t33_frontmatter"
 check "T33 AC10 -- allowed-tools exact set" \
   "allowed-tools: Read, Write, Bash(edm-state *), Bash(mkdir *), Glob, Grep, AskUserQuestion, TodoWrite" "$t33_frontmatter"
 check_absent "T33 AC10 -- no Edit grant" "Edit" "$t33_frontmatter"
@@ -3566,8 +3601,10 @@ echo
 echo "T55 AC8 -- contract documents grep-derived pending count, no state mirror (docs half)"
 check "T55 AC8 -- README documents the keep/edit/discard curation contract by section name" \
   "## Curation at Gates" "$README_T54_CONTENT"
+# CA-489: grep -o ... | wc -l, not grep -c -- grep -c against this multi-file glob prints one
+# file-and-count line PER FILE, not a total.
 check "T55 AC8 -- README states the pending count is derived by grep, not mirrored in state" \
-  "grep -c 'status: pending-review' docs/audit-patterns/*.md\` computed at read time" "$README_T54_CONTENT"
+  "grep -o 'status: pending-review' docs/audit-patterns/*.md | wc -l\` computed at read time" "$README_T54_CONTENT"
 check_absent "T55 AC8 -- no 'patterns_pending' state-array token anywhere in docs/audit-patterns/" \
   "patterns_pending" "$README_T54_CONTENT"
 
@@ -9370,10 +9407,12 @@ check "CA-416 -- positive control: the neutralized copy reports converged" \
   "converged: 1 finding(s) considered for CA416NO" "$ca416_control_out"
 
 # ---------------------------------------------------------------------------
-# CA-431 -- the edm plugin version is asserted in three independent files and
-# nothing pinned them together, so the repo-root CLAUDE.md silently drifted to a
-# fourth stale site through the 3.2.0 release. This tripwire fails on divergence
-# rather than waiting for the next audit round to notice it by hand.
+# CA-431/CA-531 -- the edm plugin version is asserted in FOUR independent files (plugin.json,
+# marketplace.json, repo-root CLAUDE.md, and plugins/edm/CHANGELOG.md's top ## heading) and
+# nothing pinned them together, so the repo-root CLAUDE.md silently drifted to a stale site
+# through the 3.2.0 release (CA-127, then CA-483). CA-483's tripwire read only three of the
+# four -- CHANGELOG.md was never compared -- which is why this went stale a second time; this
+# tripwire now reads and compares all four, matching the count this comment states.
 # ---------------------------------------------------------------------------
 ca431_repo_root="$_HARNESS_REPO_ROOT"
 ca431_plugin_ver="$(jq -r '.version' "$ca431_repo_root/plugins/edm/.claude-plugin/plugin.json" 2>/dev/null || echo MISSING)"
@@ -9382,6 +9421,8 @@ ca431_market_ver="$(jq -r '.plugins[] | select(.name=="edm") | .version' "$ca431
 # early sends grep SIGPIPE, which would abort the suite rather than yield an empty version.
 ca431_claude_ver="$(sed -n 's/.*edm\*\* (v\([0-9][0-9.]*\)).*/\1/p' "$ca431_repo_root/CLAUDE.md" 2>/dev/null | sed -n '1p')"
 [[ -n "$ca431_claude_ver" ]] || ca431_claude_ver=MISSING
+ca431_changelog_ver="$(sed -n 's/^## \[\([0-9][0-9.]*\)\].*/\1/p' "$ca431_repo_root/plugins/edm/CHANGELOG.md" 2>/dev/null | sed -n '1p')"
+[[ -n "$ca431_changelog_ver" ]] || ca431_changelog_ver=MISSING
 
 [[ "$ca431_plugin_ver" != MISSING ]] \
   && pass "CA-431 -- plugin.json declares an edm version (${ca431_plugin_ver})" \
@@ -9394,6 +9435,10 @@ ca431_claude_ver="$(sed -n 's/.*edm\*\* (v\([0-9][0-9.]*\)).*/\1/p' "$ca431_repo
 [[ "$ca431_claude_ver" == "$ca431_plugin_ver" ]] \
   && pass "CA-431 -- repo-root CLAUDE.md edm version matches plugin.json (${ca431_claude_ver})" \
   || fail "CA-431 -- version drift: repo-root CLAUDE.md says '${ca431_claude_ver}', plugin.json says '${ca431_plugin_ver}'"
+
+[[ "$ca431_changelog_ver" == "$ca431_plugin_ver" ]] \
+  && pass "CA-531 -- plugins/edm/CHANGELOG.md's top heading matches plugin.json (${ca431_changelog_ver})" \
+  || fail "CA-531 -- version drift: CHANGELOG.md's top heading says '${ca431_changelog_ver}', plugin.json says '${ca431_plugin_ver}'"
 
 # =================================================================================
 # CA-481(c): the cross-file trap-convention sweep CA-447 originally asked for and that never

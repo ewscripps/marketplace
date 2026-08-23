@@ -2,7 +2,7 @@
 name: edm-audit-dead-code
 description: |
   Use this agent for EDM Code Audit Lens L2 (Dead Code & Unreachable Paths). It cross-references runtime constraints (systemd timeouts, restart policies, env gates) against code paths to find error messages that can never fire, branches eliminated by external constraints, and code after unconditional exits.
-tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput, Write
+tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, Write
 model: opus
 effort: max
 maxTurns: 30

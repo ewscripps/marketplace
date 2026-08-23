@@ -209,7 +209,8 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
       || BRANCH_MSG="[warn] branch creation failed; staying on current branch"
   fi
 
-  # Post-checkout correction (F2a, D3): edm-state init (line 139, above) snapshotted
+  # Post-checkout correction (F2a, D3): the edm-state init call above, before the branch block,
+  # snapshotted
   # initiative_branch from HEAD *before* this block ran, so it recorded the branch the
   # user was on beforehand -- not the branch actually occupied now. record-branch
   # re-reads HEAD itself rather than trusting $BRANCH, so it correctly records the new
