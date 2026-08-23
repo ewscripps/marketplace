@@ -1,0 +1,19 @@
+# EDMV3-T30: prohibited-token list for bin/edm-check-vocabulary.
+#
+# Format: one token per line, prefixed by its match mode:
+#   word:<token>    -- whole-word-boundary match: (^|[^A-Za-z])<token>([^A-Za-z]|$), so a
+#                       longer word sharing the same stem as a short banned word (e.g. one
+#                       ending in "-ential" rather than "-red"/"-ral") does not also match.
+#   literal:<token> -- fixed-string match. Used for compound phrases and CLI flags, where
+#                       there is no shorter word whose stem this token could be confused with.
+# Blank lines and lines starting with "#" are ignored by the checker.
+#
+# This file is data, not code (AC3): extending the list requires no change to
+# bin/edm-check-vocabulary itself.
+word:defer
+word:deferred
+word:deferral
+literal:deferred-to-runtime
+literal:next maintenance window
+literal:accept-partials
+literal:--force

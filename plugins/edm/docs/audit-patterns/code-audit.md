@@ -1,7 +1,7 @@
 # Code Audit Patterns
 
 **Source:** EDM seed corpus (16 real-world initiatives).
-**Auto-updated** by orchestrator after each code-audit round (EDMV2-80a).
+**Auto-updated** by the code-audit phase's own skill (`skills/code-audit/SKILL.md`) via `edm-state update-patterns` after each round (EDMV2-80a; EDMV3-T37).
 
 ---
 
@@ -97,6 +97,113 @@ Read operation has `try/catch` that logs ERROR; write operation's catch silently
 
 Test of feature X assumes feature Y was already initialized in a separate test file that may run in any order.
 **Fix:** Tests are fully independent; each sets up all preconditions in its own `beforeEach`/`beforeAll`.
+
+### CA-513 (P1, lenses L10 + L1): the CA-476 fix hand-rolls a fence tracker three times and it diverged from the shared classifier (EDMV3, 2026-08-21, P2)
+
+source: EDMV3
+audit-type: code
+date: 2026-08-21
+
+> Extracted from the code audit for EDMV3. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
+### CA-514 (P1, lens L9): CA-416's own fix shipped two blocking refusals with zero acceptance criteria (EDMV3, 2026-08-21, P2)
+
+source: EDMV3
+audit-type: code
+date: 2026-08-21
+
+> Extracted from the code audit for EDMV3. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
+### CA-515 (P1, lens L3): CA-473's fix left `qc-shard-pass-{NN}` non-unique across waves, and the skill contradicts itself on cardinality (EDMV3, 2026-08-21, P2)
+
+source: EDMV3
+audit-type: code
+date: 2026-08-21
+
+> Extracted from the code audit for EDMV3. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
+### CA-509 (P1, lens L9): the ticket pack asserts an SRD amendment that does not exist (EDMV3, 2026-08-21, P2)
+
+status: pending-review
+source: EDMV3
+audit-type: code
+date: 2026-08-21
+
+> Extracted from the code audit for EDMV3. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
+### CA-510 (P1, lens L9): the CA-471 `round_type` gate has neither a positive nor a negative AC (EDMV3, 2026-08-21, P2)
+
+status: pending-review
+source: EDMV3
+audit-type: code
+date: 2026-08-21
+
+> Extracted from the code audit for EDMV3. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
+### CA-106 (P1, lens L9; consequence corroborated by L2 and L11): EDMV3-28 is an undelivered Must Have (EDMV3, 2026-08-21, P2)
+
+status: pending-review
+source: EDMV3
+audit-type: code
+date: 2026-08-21
+
+> Extracted from the code audit for EDMV3. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
+### CA-524 (P2, lens L4): CA-473's disjointness assertion **and its positive control** both pass on an empty extraction (EDMV3, 2026-08-21, P2)
+
+status: pending-review
+source: EDMV3
+audit-type: code
+date: 2026-08-21
+
+> Extracted from the code audit for EDMV3. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
+### CA-518 (P2, lens L1): `lint:hooks-shell` prints OK for a hook it never checked (EDMV3, 2026-08-21, P2)
+
+status: pending-review
+source: EDMV3
+audit-type: code
+date: 2026-08-21
+
+> Extracted from the code audit for EDMV3. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
+### CA-493 (P2, lenses L4 + L8): a blocking CI gate reports green having validated nothing (EDMV3, 2026-08-21, P2)
+
+status: pending-review
+source: EDMV3
+audit-type: code
+date: 2026-08-21
+
+> Extracted from the code audit for EDMV3. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
+### CA-481 (P2, lenses L3 + L5 + L7 + L8): the highest-corroboration finding of the round (EDMV3, 2026-08-21, P2)
+
+status: pending-review
+source: EDMV3
+audit-type: code
+date: 2026-08-21
+
+> Extracted from the code audit for EDMV3. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
+### CA-495 (P2, lens L5): a scratch tree removed on no path, leaking on the success path every run (EDMV3, 2026-08-21, P2)
+
+status: pending-review
+source: EDMV3
+audit-type: code
+date: 2026-08-21
+
+> Extracted from the code audit for EDMV3. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
 
 ---
 

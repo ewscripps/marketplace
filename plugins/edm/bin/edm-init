@@ -1,11 +1,32 @@
 #!/usr/bin/env bash
-# edm-init — scaffold a new SRD/{PREFIX}/ (or product-scoped) initiative directory.
-# Usage: edm-init [--product <name>] [--description <slug>] [--mode standard|mini-srd|iac|data-ml|prototype] <PREFIX>
+# EDM-HELP-BEGIN
+# edm-init -- scaffold a new SRD/{PREFIX}/ (or product-scoped) initiative directory.
+# Usage:
+#   edm-init [--product <name>] [--description <slug>] [--mode standard|mini-srd|iac|data-ml|prototype] <PREFIX>
+#   edm-init -h|--help|help
+# Exit codes:
+#   0 = initiative created
+#   1 = usage, validation, or runtime error
+# Notes:
+#   - Honors EDM_SRD_ROOT / CLAUDE_PLUGIN_OPTION_SRD_ROOT for the initiative root.
+#   - If both --product and --description are set, uses product-scoped layout:
+#     SRD/{PRODUCT}/{PREFIX}__{description}/
+#   - If only --product is set in a non-interactive context, falls back to flat layout.
+# EDM-HELP-END
 set -euo pipefail
 
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/_edm-cli-lib.sh"
 
-die() { echo "edm-init: $*" >&2; exit 1; }
+# G21/CA-074: two-argument form -- see edm-validate-prefix's die() for the full rationale.
+# Default of 1 preserved (this script's own long-standing exit-code contract; every existing
+# call site is single-argument, so this default keeps their behavior unchanged).
+die() {
+  local msg="$1" code="${2:-1}"
+  echo "edm-init: $msg" >&2
+  exit "$code"
+}
 
 # --- Flag parsing ---
 PREFIX=""
@@ -19,6 +40,7 @@ IMPL_MODE="${CLAUDE_PLUGIN_OPTION_IMPLEMENTATION_MODE:-standard}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -h|--help|help) print_help "${BASH_SOURCE[0]:-$0}"; exit 0 ;;
     --product)    [[ $# -ge 2 ]] || die "--product requires a value"; PRODUCT="$2"; shift 2 ;;
     --description) [[ $# -ge 2 ]] || die "--description requires a value"; DESCRIPTION="$2"; shift 2 ;;
     --mode)       [[ $# -ge 2 ]] || die "--mode requires a value"; MODE="$2"; shift 2 ;;
@@ -28,7 +50,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$PREFIX" ]] || die "usage: edm-init [--product <name>] [--description <slug>] [--mode standard|mini-srd|iac|data-ml|prototype] <PREFIX>"
-[[ "$PREFIX" =~ ^[A-Z][A-Z0-9]{2,5}$ ]] || die "prefix must be 3-6 uppercase alphanumeric chars, starting with a letter"
+# CA-344(1): no local prefix-format regex here -- bin/edm-validate-prefix is THE validator
+# (CLAUDE.md names it as such) and is invoked unconditionally below. A second copy of the format
+# regex here rejected input BEFORE the canonical validator was consulted, so a future widening of
+# the format would have appeared not to work at this, the primary entry point.
 
 # --- Validate mode-family values (CA-010) ---
 case "$MODE" in
@@ -54,14 +79,15 @@ validate_slug() {
 validate_slug "--product" "$PRODUCT"
 validate_slug "--description" "$DESCRIPTION"
 
-# --- Validate prefix (global uniqueness check, T41) ---
-# Call edm-validate-prefix before creating any directory. A non-zero exit aborts init.
-if command -v edm-validate-prefix >/dev/null 2>&1; then
-  edm-validate-prefix "$PREFIX" || {
-    ec=$?
-    exit $ec
-  }
-fi
+# --- Validate prefix (format + global uniqueness, T41 / CA-344) ---
+# Invoked by SIBLING path, unconditionally: the validator always ships beside this script, and
+# the old `command -v` guard was inconsistent with this script's own premise (edm-state is
+# called by bare name unconditionally at the init step below). Format errors exit 1, collisions
+# exit 2 -- both propagate.
+"${SCRIPT_DIR}/edm-validate-prefix" "$PREFIX" || {
+  ec=$?
+  exit $ec
+}
 
 # --- Determine directory layout ---
 # If --product and --description are both given, use product-scoped layout.
@@ -74,7 +100,7 @@ if [[ -n "$PRODUCT" && -n "$DESCRIPTION" ]]; then
   export EDM_PRODUCT="$PRODUCT"
   export EDM_DESCRIPTION="$DESCRIPTION"
 elif [[ -n "$PRODUCT" && -z "$DESCRIPTION" ]]; then
-  # Product given without description — check if interactive.
+  # Product given without description -- check if interactive.
   if [[ -t 0 ]]; then
     printf "edm-init: enter a short slug for the initiative description (e.g. enhance-edm-plugin): " >&2
     read -r DESCRIPTION
@@ -92,13 +118,27 @@ elif [[ -n "$PRODUCT" && -z "$DESCRIPTION" ]]; then
     DIR="${SRD_ROOT}/${PREFIX}"
   fi
 else
-  # Neither flag — legacy flat layout (AC6).
+  # Neither flag -- legacy flat layout (AC6).
   DIR="${SRD_ROOT}/${PREFIX}"
 fi
 
 if [[ -d "$DIR" ]]; then
   die "initiative directory already exists at $DIR (run 'edm-state get $PREFIX' to inspect)"
 fi
+
+# CA-542: install a cleanup trap for the partial-scaffold window opened by the mkdir below and
+# closed only once `edm-state init` succeeds a few lines down. A failure or Ctrl-C in between
+# left $DIR, explorers/, decisions.md and (in three of five modes) code-audit/ on disk with NO
+# state file -- and the retry then hit the `[[ -d "$DIR" ]]` guard above and died with "run
+# `edm-state get $PREFIX` to inspect", a hint that cannot work because the state file the guard
+# implies was never written. This runs at top level, not inside a function, so RETURN does not
+# apply; EXIT covers ordinary abort paths (die, errexit), INT/TERM/HUP exit with a signal-shaped
+# code after cleanup, matching the plugin's four-arm trap convention.
+_EDM_INIT_SCAFFOLD_DIR="$DIR"
+trap '[[ -n "${_EDM_INIT_SCAFFOLD_DIR:-}" ]] && rm -rf "$_EDM_INIT_SCAFFOLD_DIR"' EXIT
+trap '[[ -n "${_EDM_INIT_SCAFFOLD_DIR:-}" ]] && rm -rf "$_EDM_INIT_SCAFFOLD_DIR"; exit 130' INT
+trap '[[ -n "${_EDM_INIT_SCAFFOLD_DIR:-}" ]] && rm -rf "$_EDM_INIT_SCAFFOLD_DIR"; exit 143' TERM
+trap '[[ -n "${_EDM_INIT_SCAFFOLD_DIR:-}" ]] && rm -rf "$_EDM_INIT_SCAFFOLD_DIR"; exit 129' HUP
 
 # --- Scaffold directory tree based on mode (T45) ---
 mkdir -p "$DIR"
@@ -128,7 +168,7 @@ case "$MODE" in
     mkdir -p "$DIR/code-audit"
     ;;
   prototype)
-    # Prototype mode: Phase 1-2 only — no tickets/, no code-audit/.
+    # Prototype mode: Phase 1-2 only -- no tickets/, no code-audit/.
     ;;
 esac
 
@@ -137,12 +177,30 @@ export EDM_MODE="$MODE"
 export EDM_COMPLIANCE_ENABLED="$COMPLIANCE"
 export EDM_IMPLEMENTATION_MODE="$IMPL_MODE"
 edm-state init "$PREFIX" >/dev/null
+_EDM_INIT_SCAFFOLD_DIR=""  # CA-542: scaffold complete and state file written -- disarm cleanup
 
-# .gitignore behavior: by default the state file is committed.
-# Honor commit_state_file=false by writing a local .gitignore that excludes it.
+# .gitignore behavior (CA-314): the state backup (written by `_rmw_state_body` in
+# `bin/edm-state`, permanent by design for migrate-path rollback), the lock file family
+# (`with_state_lock`'s `.lock`/`.lockd`, deliberately never unlinked -- see its CA-169 comment)
+# and write_atomic's transient temp files are runtime files, not artifacts, and must never be
+# committed regardless of commit_state_file -- written unconditionally, unlike the state file
+# itself below. README.md's "Runtime files to .gitignore" section reproduces this same block as
+# a copy-pasteable reference. G10/CA-340 (round 6): re-pointed by name, not line number -- the
+# two line-number citations this comment used to carry had already drifted stale.
+cat > "$DIR/.gitignore" <<'EOF'
+.edm-state.json.bak
+.edm-state.json.tmp.*
+.edm-state.lock*
+*.lock
+*.lockd*
+*.md.tmp.*
+EOF
+# By default the state file itself is committed. Honor commit_state_file=false by adding it
+# to the same per-initiative .gitignore above, so it travels correctly under an srd_root
+# relocation rather than living in a second, disconnected file.
 COMMIT_STATE="${CLAUDE_PLUGIN_OPTION_COMMIT_STATE_FILE:-true}"
 if [[ "$COMMIT_STATE" != "true" ]]; then
-  echo ".edm-state.json" > "$DIR/.gitignore"
+  echo ".edm-state.json" >> "$DIR/.gitignore"
 fi
 
 # Create and switch to initiative branch when inside a git worktree.
@@ -165,6 +223,16 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
       && BRANCH_MSG="created and switched to branch $BRANCH" \
       || BRANCH_MSG="[warn] branch creation failed; staying on current branch"
   fi
+
+  # Post-checkout correction (F2a, D3): the edm-state init call above, before the branch block,
+  # snapshotted
+  # initiative_branch from HEAD *before* this block ran, so it recorded the branch the
+  # user was on beforehand -- not the branch actually occupied now. record-branch
+  # re-reads HEAD itself rather than trusting $BRANCH, so it correctly records the new
+  # branch on the success paths above and the original branch on the warn-and-continue
+  # paths (checkout failed, user stayed put). It is a no-op outside a git worktree, so
+  # this call is safe to leave unconditional inside this guard.
+  edm-state record-branch "$PREFIX"
 fi
 
 # --- Build tree string before heredoc (bash 3.2: case with | inside $() inside heredoc fails) ---

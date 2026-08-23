@@ -1,0 +1,2 @@
+{"schema":1,"id":null,"lens":"L7","round":1,"round_type":"full","sev":"P1","confidence":"medium","file":"src/worker/processor.js","line":14,"title":"no timeout on this call while src/api/server.js applies 30s to the same external call","status":"open"}
+{"schema":1,"id":null,"lens":"L7","round":1,"round_type":"full","sev":"NOTED","confidence":"low","file":"config/settings.json","line":3,"title":"differing retry counts intentional per documented service SLA","status":"noted"}

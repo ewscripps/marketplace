@@ -48,12 +48,20 @@ Cross-reference the ticket pack against the SRD. Audit across all **8 dimensions
 - Each ticket has 6-12 AC?
 - Vague AC ("should work", "is performant")?
 - Duplicate AC across tickets?
+- Does any AC assume a runtime environment the project does not have (a staging deploy, a live
+  database, a deployed container, a browser harness that does not exist in this codebase)? Catching
+  this here is the cheap fix -- discovered instead at Phase 6's `/edm:verify-runtime`, it is a
+  specification defect resolved only through gate change control (`CLAUDE.md
+  Sec."Unverifiable acceptance criteria (D15)"`). Flag as P1: rework the AC to something verifiable
+  in the environment that does exist, or move it out of scope.
 
 ### 6. Diagram Correctness
 - Mermaid syntax valid throughout?
 - All nodes colored and labeled?
 - No orphan nodes?
 - Flow matches dependency declarations?
+- Follows `CLAUDE.md Sec."Mermaid diagram conventions"`: a raw `;` inside `[...]`, `(...)`,
+  `{...}`, `|...|`, `"..."`, or after the `:` in a sequenceDiagram message is a violation
 
 ### 7. Consistency
 - Ticket IDs in README tables match IDs in epic files?
@@ -70,7 +78,7 @@ Cross-reference the ticket pack against the SRD. Audit across all **8 dimensions
 
 ## Output
 
-Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severity vocabulary"`.
+Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabulary"` as the only severity source for this agent. Do not restate or adapt a local scale.
 
 ```markdown
 # Ticket Pack Audit Report: {Initiative Name}
@@ -112,7 +120,7 @@ Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severit
 [findings]
 
 ## NOTED -- Intentional / Pre-existing
-[items that look like issues but are documented as intentional — one line each with rationale]
+[items that look like issues but are documented as intentional -- one line each with rationale]
 
 ## Recommendations
 [Prioritized list of fixes needed before implementation]
@@ -123,6 +131,12 @@ Use the canonical severity scale (P0/P1/P2 + NOTED) from `CLAUDE.md Sec."Severit
 1. Read the README.md fully -- build the expected picture
 2. Read each epic file -- compare against README
 3. Read the SRD -- cross-reference every requirement ID
-4. Check every Mermaid block for syntax
+4. Check every Mermaid block for syntax and for `CLAUDE.md Sec."Mermaid diagram conventions"`
+   compliance -- a raw `;` inside a label or after a sequenceDiagram message's `:` is a violation
 5. Trace the dependency chain end-to-end
 6. Check every AC for testability -- would you be able to pass/fail it from code alone?
+
+## When this does NOT apply
+
+This agent always applies once Phase 5 spawns it against a completed ticket pack; it has no
+conditional skip.

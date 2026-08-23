@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# EDM-HELP-BEGIN
+# edm-lint-staged-artifacts -- commit-time artifact lint over git-staged initiative paths.
+#
+# Usage:
+#   edm-lint-staged-artifacts        Lint every initiative whose files are staged under the
+#                                    derived srd_root. Exit 0 = clean or nothing to scan;
+#                                    exit 2 = at least one real artifact violation (blocks the
+#                                    commit when run as the PreToolUse git-commit hook);
+#                                    exit 1 = setup/configuration error (non-blocking).
+#   edm-lint-staged-artifacts --help Show this help.
+#
+# Environment:
+#   EDM_SRD_ROOT / CLAUDE_PLUGIN_OPTION_SRD_ROOT  Repository-relative srd_root override
+#                                                 (default ./SRD), same contract as
+#                                                 edm-lint-artifacts.
+#
+# This is the extracted body of hooks/hooks.json's PreToolUse "git commit" hook (CA-436: the
+# hook was a single ;-separated line inside a JSON string, so a shellcheck directive could not
+# be placed anywhere in it and the blocking lint:hooks-shell job had no escape valve for the
+# hook's own intentional word-splits; extraction also closes CA-413 and CA-414 below and makes
+# this surface unit-testable). The hook now delegates here; the exit-code contract is the
+# hook's own: only exit 2 blocks the commit.
+#
+# CA-521: prefixes to scan are derived from `git diff --cached` (the INDEX), but the actual scan
+# is delegated to edm-lint-artifacts, which reads the WORKING TREE. A file staged with a
+# violation and then fixed unstaged commits clean (the fix was never re-staged, but the worktree
+# is clean); an unstaged violation elsewhere in the same initiative's tree can block an otherwise
+# clean staged commit. This is a known, accepted gap in the fast local gate; `edm-lint-artifacts
+# --all` remains available as a manual full-repo sweep if the escaped case is ever suspected.
+# EDM-HELP-END
+# CA-497: deliberately `set -uo pipefail`, NOT the full `set -euo pipefail` nine of the ten other
+# PATH-exposed bin/ scripts use. Adding -e here would be wrong, not merely inconsistent: at least
+# five bare test-and-assignment statements below return non-zero on their ORDINARY path (the
+# srd_root_explicit probes, the leading-./ and trailing-/ strip loops), and three command
+# substitutions have LOAD-BEARING non-zero status (repo_root when not in a git repo, phys_repo_root
+# / phys_srd_root when the directory cannot be entered). Adding -e would abort the script the
+# first time any of those hits its ordinary non-zero case -- which, under this hook's own
+# exit-code contract, is indistinguishable from the non-blocking exit-1 setup-error path, so
+# commit-time artifact lint would silently stop enforcing for everyone (the same fail-open class
+# CA-410 and CA-413 were each filed for). Do not "fix" this to match the other scripts.
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# CA-005: shared --help extractor, sourced rather than hand-copied.
+source "${SCRIPT_DIR}/_edm-cli-lib.sh"
+
+case "${1:-}" in
+  -h|--help|help) print_help "${BASH_SOURCE[0]:-$0}"; exit 0 ;;
+  "") : ;;
+  *) echo "edm-lint-staged-artifacts: unknown argument '$1' (takes no arguments; --help for usage)" >&2; exit 1 ;;
+esac
+
+command -v edm-state >/dev/null 2>&1 || exit 0
+command -v edm-lint-artifacts >/dev/null 2>&1 || exit 0
+
+srd_root_explicit=0
+[ -n "${EDM_SRD_ROOT:-}" ] && srd_root_explicit=1
+[ -n "${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-}" ] && srd_root_explicit=1
+srd_root="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
+
+# Strip any leading ./ components.
+while [ "${srd_root#./}" != "$srd_root" ]; do srd_root="${srd_root#./}"; done
+
+case "$srd_root" in
+  /*)
+    # CA-413: compare PHYSICAL paths, not strings. git rev-parse --show-toplevel returns the
+    # physical path, so on a symlinked repo location (macOS /tmp -> /private/tmp, a symlinked
+    # worktree or home) a lexical prefix match never succeeded, the exit-1 arm fired, and --
+    # because exit 1 is non-blocking by design -- commit-time artifact lint silently stopped
+    # enforcing for that developer. Normalize both sides with pwd -P before comparing, falling
+    # back to the original string when the directory cannot be entered.
+    phys_repo_root="$repo_root"
+    [ -n "$repo_root" ] && phys_repo_root="$(cd "$repo_root" 2>/dev/null && pwd -P)" || phys_repo_root="$repo_root"
+    phys_srd_root="$(cd "$srd_root" 2>/dev/null && pwd -P)" || phys_srd_root="$srd_root"
+    relativized=""
+    if [ -n "$phys_repo_root" ]; then
+      case "$phys_srd_root" in
+        "$phys_repo_root") relativized="." ;;
+        "$phys_repo_root"/*) relativized="${phys_srd_root#"$phys_repo_root"/}" ;;
+      esac
+    fi
+    if [ -n "$relativized" ]; then
+      srd_root="$relativized"
+    else
+      echo "[EDM] srd_root is absolute (${srd_root}) and could not be relativized under the repository root${repo_root:+ (${repo_root})}; commit-time artifact lint cannot match repository-relative staged paths -- set EDM_SRD_ROOT to a repo-relative path or run edm-lint-artifacts manually" >&2
+      exit 1
+    fi
+    ;;
+esac
+
+# Strip trailing /. and / components.
+while :; do
+  case "$srd_root" in
+    */) srd_root="${srd_root%/}" ;;
+    */.) srd_root="${srd_root%/.}" ;;
+    *) break ;;
+  esac
+done
+case "$srd_root" in
+  ""|.) srd_root="." ;;
+  ..|../*|*/..|*/../*)
+    echo "[EDM] srd_root (${srd_root}) resolves outside the repository root (contains a '..' path component); commit-time artifact lint cannot match repository-relative staged paths -- set EDM_SRD_ROOT to a repo-relative path or run edm-lint-artifacts manually" >&2
+    exit 1
+    ;;
+esac
+
+check_dir="${repo_root:-.}/${srd_root}"
+if [ ! -d "$check_dir" ]; then
+  if [ "$srd_root_explicit" -eq 1 ]; then
+    echo "[EDM] srd_root (${srd_root}) does not exist -- commit-time artifact lint has nothing to scan; check EDM_SRD_ROOT / CLAUDE_PLUGIN_OPTION_SRD_ROOT for a typo" >&2
+    exit 1
+  fi
+  exit 0
+fi
+
+# CA-414: -c core.quotePath=false so a path carrying non-ASCII or backslash bytes arrives raw
+# instead of C-quoted, and printf '%s\n' instead of echo -- echo's backslash handling is
+# interpreter-dependent (bash's builtin leaves it alone; dash's and BusyBox ash's expand
+# escapes unconditionally), so on an ash-family host an embedded escape became a real newline,
+# one staged path became two truncated fragments, and the prefix filter dropped both.
+staged=$(git -c core.quotePath=false -c diff.relative=false diff --cached --name-only 2>/dev/null)
+test -z "$staged" && exit 0
+
+root_for_awk="$srd_root"
+[ "$root_for_awk" = "." ] && root_for_awk=""
+# ENVIRON-passing awk, not -v (which reprocesses backslash escapes). The prefix filter is the
+# path-safety class (^[A-Za-z0-9_-]+$, CA-410) -- edm-state resolve-dir below is the authority
+# on what is a real initiative.
+prefixes=$(printf '%s\n' "$staged" | root="$root_for_awk" awk '{
+  if (ENVIRON["root"] == "") { rest = $0 }
+  else {
+    rl = length(ENVIRON["root"]) + 1
+    if (substr($0,1,rl) == (ENVIRON["root"] "/")) { rest = substr($0, rl+1) } else { next }
+  }
+  n = split(rest, parts, "/")
+  if (n>=2 && parts[2] ~ /__/) { p=parts[2]; sub(/__.*/, "", p); print p }
+  else if (n>=1) { print parts[1] }
+}' | grep -E '^[A-Za-z0-9_-]+$' | sort -u)
+test -z "$prefixes" && exit 0
+
+fail=0
+# shellcheck disable=SC2086  # deliberate word-split: $prefixes is newline-separated tokens
+# already clamped to ^[A-Za-z0-9_-]+$ above, so no token can carry whitespace or a glob char.
+for p in $prefixes; do
+  EDM_SRD_ROOT="$check_dir" edm-state resolve-dir "$p" >/dev/null 2>&1 || continue
+  out=$(EDM_SRD_ROOT="$check_dir" edm-lint-artifacts "$p" 2>&1)
+  code=$?
+  if [ "$code" -eq 1 ]; then
+    printf '%s\n' "$out" >&2
+    echo "[EDM] Fix artifact violations before committing (edm-lint-artifacts $p)" >&2
+    fail=2
+  elif [ "$code" -eq 2 ]; then
+    printf '%s\n' "$out" >&2
+    echo "[EDM] edm-lint-artifacts setup/usage error for $p -- not blocking the commit; investigate separately" >&2
+  fi
+done
+exit "$fail"

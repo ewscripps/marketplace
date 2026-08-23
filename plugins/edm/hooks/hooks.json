@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 && edm-state session-start 2>/dev/null || true"
+            "command": "command -v edm-state >/dev/null 2>&1 && edm-state session-start || true"
           }
         ]
       }
@@ -16,11 +16,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); [ -n \"$prefix\" ] && edm-state gate-check \"$prefix\" srd 2>&1 || exit 1; exit 0"
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 2 ;; esac; edm-state gate-check \"$prefix\" srd; ec=$?; if [ \"$ec\" -eq 3 ]; then exit 2; fi; exit 0"
           },
           {
             "type": "prompt",
-            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array — /edm:srd requires gate 1 approved.\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet — gate 1 for {PREFIX} has not been approved. Run /edm:orchestrator first.'\n5. If approved (or if the state file does not exist — first invocation), allow expansion."
+            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS. The command hook running alongside this prompt already enforces this deterministically -- this prompt is an advisory second layer, not the primary check, so it must resolve the SAME gate the binary would rather than hardcode one.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. If the PREFIX is empty or contains any character other than a letter, digit, hyphen or underscore, this is a malformed prefix argument, NOT a legitimate first invocation -- BLOCK the expansion with the same `[EDM] invalid prefix` diagnostic the command hook uses.\n3. Otherwise run `edm-state gate-check <PREFIX> srd` (resolves the correct gate number from the initiative's mode and skipped_phases -- never hardcode one here). This is the SAME single rule the command hook applies; do NOT add a resolve-dir pre-probe or any other separately-derived first-invocation test (CA-409: two independent procedures for one predicate drift apart silently). Exit code 3 is its dedicated gate-refusal status and is the ONLY status that blocks: BLOCK the expansion and show the user its stderr diagnostic verbatim (it already names the missing gate and the exact remediation command). Exit 0 allows expansion. ANY OTHER non-zero status -- including an unresolvable or not-yet-initialized PREFIX (the legitimate first invocation), missing jq, a contended state lock, or an unreadable state file -- must NOT block: allow expansion and report the diagnostic without refusing (CA-298)."
           }
         ]
       },
@@ -29,11 +29,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); [ -n \"$prefix\" ] && edm-state gate-check \"$prefix\" srd 2>&1 || exit 1; exit 0"
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 2 ;; esac; edm-state gate-check \"$prefix\" audit-srd; ec=$?; if [ \"$ec\" -eq 3 ]; then exit 2; fi; exit 0"
           },
           {
             "type": "prompt",
-            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array — /edm:audit-srd requires gate 1 approved.\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet — gate 1 for {PREFIX} has not been approved. Run /edm:orchestrator first.'\n5. If approved (or if the state file does not exist — first invocation), allow expansion."
+            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS. The command hook running alongside this prompt already enforces this deterministically -- this prompt is an advisory second layer, not the primary check, so it must resolve the SAME gate the binary would rather than hardcode one.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. If the PREFIX is empty or contains any character other than a letter, digit, hyphen or underscore, this is a malformed prefix argument, NOT a legitimate first invocation -- BLOCK the expansion with the same `[EDM] invalid prefix` diagnostic the command hook uses.\n3. Otherwise run `edm-state gate-check <PREFIX> audit-srd` (resolves the correct gate number from the initiative's mode and skipped_phases -- never hardcode one here). This is the SAME single rule the command hook applies; do NOT add a resolve-dir pre-probe or any other separately-derived first-invocation test (CA-409: two independent procedures for one predicate drift apart silently). Exit code 3 is its dedicated gate-refusal status and is the ONLY status that blocks: BLOCK the expansion and show the user its stderr diagnostic verbatim (it already names the missing gate and the exact remediation command). Exit 0 allows expansion. ANY OTHER non-zero status -- including an unresolvable or not-yet-initialized PREFIX (the legitimate first invocation), missing jq, a contended state lock, or an unreadable state file -- must NOT block: allow expansion and report the diagnostic without refusing (CA-298)."
           }
         ]
       },
@@ -42,11 +42,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); [ -n \"$prefix\" ] && edm-state gate-check \"$prefix\" tickets 2>&1 || exit 1; exit 0"
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 2 ;; esac; edm-state gate-check \"$prefix\" tickets; ec=$?; if [ \"$ec\" -eq 3 ]; then exit 2; fi; exit 0"
           },
           {
             "type": "prompt",
-            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array — /edm:tickets requires gate 2 approved.\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet — gate 2 for {PREFIX} has not been approved. Run /edm:orchestrator first.'\n5. If approved (or if the state file does not exist — first invocation), allow expansion."
+            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS. The command hook running alongside this prompt already enforces this deterministically -- this prompt is an advisory second layer, not the primary check, so it must resolve the SAME gate the binary would rather than hardcode one.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. If the PREFIX is empty or contains any character other than a letter, digit, hyphen or underscore, this is a malformed prefix argument, NOT a legitimate first invocation -- BLOCK the expansion with the same `[EDM] invalid prefix` diagnostic the command hook uses.\n3. Otherwise run `edm-state gate-check <PREFIX> tickets` (resolves the correct gate number from the initiative's mode and skipped_phases -- never hardcode one here). This is the SAME single rule the command hook applies; do NOT add a resolve-dir pre-probe or any other separately-derived first-invocation test (CA-409: two independent procedures for one predicate drift apart silently). Exit code 3 is its dedicated gate-refusal status and is the ONLY status that blocks: BLOCK the expansion and show the user its stderr diagnostic verbatim (it already names the missing gate and the exact remediation command). Exit 0 allows expansion. ANY OTHER non-zero status -- including an unresolvable or not-yet-initialized PREFIX (the legitimate first invocation), missing jq, a contended state lock, or an unreadable state file -- must NOT block: allow expansion and report the diagnostic without refusing (CA-298)."
           }
         ]
       },
@@ -55,11 +55,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); [ -n \"$prefix\" ] && edm-state gate-check \"$prefix\" audit-tickets 2>&1 || exit 1; exit 0"
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 2 ;; esac; edm-state gate-check \"$prefix\" audit-tickets; ec=$?; if [ \"$ec\" -eq 3 ]; then exit 2; fi; exit 0"
           },
           {
             "type": "prompt",
-            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array — /edm:audit-tickets requires gate 3 approved.\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet — gate 3 for {PREFIX} has not been approved. Run /edm:orchestrator first.'\n5. If approved (or if the state file does not exist — first invocation), allow expansion."
+            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS. The command hook running alongside this prompt already enforces this deterministically -- this prompt is an advisory second layer, not the primary check, so it must resolve the SAME gate the binary would rather than hardcode one.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. If the PREFIX is empty or contains any character other than a letter, digit, hyphen or underscore, this is a malformed prefix argument, NOT a legitimate first invocation -- BLOCK the expansion with the same `[EDM] invalid prefix` diagnostic the command hook uses.\n3. Otherwise run `edm-state gate-check <PREFIX> audit-tickets` (resolves the correct gate number from the initiative's mode and skipped_phases -- never hardcode one here). This is the SAME single rule the command hook applies; do NOT add a resolve-dir pre-probe or any other separately-derived first-invocation test (CA-409: two independent procedures for one predicate drift apart silently). Exit code 3 is its dedicated gate-refusal status and is the ONLY status that blocks: BLOCK the expansion and show the user its stderr diagnostic verbatim (it already names the missing gate and the exact remediation command). Exit 0 allows expansion. ANY OTHER non-zero status -- including an unresolvable or not-yet-initialized PREFIX (the legitimate first invocation), missing jq, a contended state lock, or an unreadable state file -- must NOT block: allow expansion and report the diagnostic without refusing (CA-298)."
           }
         ]
       },
@@ -68,11 +68,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); [ -n \"$prefix\" ] && edm-state gate-check \"$prefix\" implement 2>&1 || exit 1; exit 0"
+            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; prefix=$(echo \"$ARGUMENTS\" | awk '{print $1}'); case \"$prefix\" in ''|*[!A-Za-z0-9_-]*) echo \"[EDM] invalid prefix\" >&2; exit 2 ;; esac; edm-state gate-check \"$prefix\" implement; ec=$?; if [ \"$ec\" -eq 3 ]; then exit 2; fi; exit 0"
           },
           {
             "type": "prompt",
-            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. Run `edm-state get <PREFIX>` to read the state file.\n3. Check `gates_approved` array — /edm:implement requires gate 3 approved.\n4. If the prerequisite gate is missing, BLOCK the expansion with: 'EDM gate enforcement: cannot run this phase yet — gate 3 for {PREFIX} has not been approved. Run /edm:orchestrator first.'\n5. If approved (or if the state file does not exist — first invocation), allow expansion."
+            "prompt": "Before allowing this command to expand, verify the prerequisite EDM HITL gate has been approved for the named initiative. The user is invoking $ARGUMENTS. The command hook running alongside this prompt already enforces this deterministically -- this prompt is an advisory second layer, not the primary check, so it must resolve the SAME gate the binary would rather than hardcode one.\n\nProcedure:\n1. Extract the initiative PREFIX from the first argument.\n2. If the PREFIX is empty or contains any character other than a letter, digit, hyphen or underscore, this is a malformed prefix argument, NOT a legitimate first invocation -- BLOCK the expansion with the same `[EDM] invalid prefix` diagnostic the command hook uses.\n3. Otherwise run `edm-state gate-check <PREFIX> implement` (resolves the correct gate number from the initiative's mode and skipped_phases -- never hardcode one here, and also enforces Gate 3.5 when compliance_enabled=true). This is the SAME single rule the command hook applies; do NOT add a resolve-dir pre-probe or any other separately-derived first-invocation test (CA-409: two independent procedures for one predicate drift apart silently). Exit code 3 is its dedicated gate-refusal status and is the ONLY status that blocks: BLOCK the expansion and show the user its stderr diagnostic verbatim (it already names the missing gate and the exact remediation command). Exit 0 allows expansion. ANY OTHER non-zero status -- including an unresolvable or not-yet-initialized PREFIX (the legitimate first invocation), missing jq, a contended state lock, or an unreadable state file -- must NOT block: allow expansion and report the diagnostic without refusing (CA-298)."
           }
         ]
       }
@@ -83,7 +83,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 || exit 0; command -v edm-lint-artifacts >/dev/null 2>&1 || exit 0; staged=$(git diff --cached --name-only 2>/dev/null | grep '^SRD/'); test -z \"$staged\" && exit 0; prefixes=$(echo \"$staged\" | awk -F'/' '{ if (NF>=3 && $3 ~ /__/) { p=$3; sub(/__.*/, \"\", p); print p } else if (NF>=2 && $2 ~ /^[A-Z]/) { print $2 } }' | grep -E '^[A-Z][A-Z0-9_-]*$' | sort -u); test -z \"$prefixes\" && exit 0; fail=0; for p in $prefixes; do edm-lint-artifacts \"$p\" 2>&1 || { echo \"[EDM] Fix artifact violations before committing (edm-lint-artifacts $p)\" >&2; fail=1; }; done; exit $fail"
+            "command": "command -v edm-lint-staged-artifacts >/dev/null 2>&1 || exit 0; edm-lint-staged-artifacts"
           }
         ]
       }
@@ -114,17 +114,7 @@
         "hooks": [
           {
             "type": "prompt",
-            "prompt": "An edm-implementer subagent just completed. Spawn an edm-qc-auditor agent to verify acceptance criteria for the tickets just implemented in that subagent's work.\n\nInstructions for the spawned edm-qc-auditor:\n1. Read the relevant epic file to get ticket ACs.\n2. For each AC, classify as statically-verifiable or runtime-only before grading.\n3. Assign PASS (statically verified), PARTIAL (runtime-only, with deferred-to-runtime note), or FAIL (statically unmet).\n4. Resolve the initiative directory from state using `edm-state get <PREFIX>`.\n5. Write the QC report to `<initiative-dir>/qc/qc-summary.md` (run `mkdir -p <initiative-dir>/qc` first).\n6. For each PARTIAL verdict, call `edm-state record-partial-verdict <PREFIX> <ticket> PARTIAL '<note>'` to persist it.\n7. Report PASS/PARTIAL/FAIL per ticket with file:line evidence."
-          }
-        ]
-      }
-    ],
-    "TaskCompleted": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "command -v edm-state >/dev/null 2>&1 && edm-state record-task-duration || true"
+            "prompt": "An edm-implementer subagent just completed. Spawn an edm-qc-auditor agent to verify acceptance criteria for the tickets just implemented in that subagent's work.\n\nInstructions for the spawned edm-qc-auditor:\n0. Derive the initiative PREFIX from the completed implementer's own output: its assigned tickets and commit messages carry `{PREFIX}-T{NN}` ticket IDs that name it directly (this hook context has no $ARGUMENTS to extract from, unlike the gate hooks). If ambiguous, `edm-state active-initiatives` lists the candidates (CA-412).\n1. Read the relevant epic file to get ticket ACs.\n2. For each AC, classify as statically-verifiable or runtime-only before grading.\n3. Assign PASS (statically verified), PARTIAL (runtime-only, with runtime-check: note), or FAIL (statically unmet).\n4. Resolve the initiative directory from state using `edm-state resolve-dir <PREFIX>`.\n5. Write the QC report to `<initiative-dir>/qc/qc-shard-impl-{NN}.md` -- the `qc-shard-impl-` prefix is mandatory and {NN} is the lowest ticket number in this implementer's assigned range, zero-padded (e.g. tickets T07-T09 -> qc-shard-impl-07.md). NEVER write `qc/qc-summary.md` from this hook (CA-440): implementers run 6-10 in parallel and each completion spawns its own auditor, so a shared output file would be overwritten by whichever auditor finishes last, silently discarding every other auditor's FAIL verdicts. NEVER write a bare `qc/qc-shard-{NN}.md` or any `qc-shard-pass-*.md` name either (CA-473): `qc-shard-pass-w{WW}-{NN}.md` is the separate namespace owned by /edm:implement's own post-wave threshold-shard auditors, keyed by wave number and shard ordinal rather than by ticket number, so the two namespaces MUST NOT overlap -- an unprefixed name collides deterministically (threshold shard 1 vs the implementer whose range starts at T01) and the loser's FAIL verdicts are lost silently. `/edm:implement` merges all qc-shard-impl-*.md and qc-shard-pass-*.md into `qc/qc-summary.md` after the wave drains (CA-411). Run `mkdir -p <initiative-dir>/qc` first.\n6. For each PARTIAL verdict, call `edm-state record-partial-verdict <PREFIX> <ticket> PARTIAL '<note>'` to persist it.\n7. Report PASS/PARTIAL/FAIL per ticket with file:line evidence."
           }
         ]
       }

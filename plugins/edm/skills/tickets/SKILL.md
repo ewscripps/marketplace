@@ -5,20 +5,31 @@ disable-model-invocation: true
 model: opus
 effort: high
 argument-hint: <PREFIX>
-allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
+allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(edm-init *), Glob, Grep, Task, TodoWrite, AskUserQuestion
 ---
 
 # EDM Phase 4: Ticket Pack Creation
 
 **Arguments**: $ARGUMENTS
 
-- **Input**: Audited SRD at `${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}`
-- **Output**: Ticket pack at `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/`
+- **Input**: Audited SRD at `${INIT_DIR}/${user_config.srd_filename}`
+- **Output**: Ticket pack at `${INIT_DIR}/${user_config.ticket_pack_dirname}/`
+
+**Plugin asset note**: every `docs/...` reference in this skill is relative to the EDM plugin root (`plugins/edm/` in this repository, or the installed plugin root in cache). Resolve that root before reading or grepping those files; never assume the current working directory is the plugin root.
+
+## Step 0 -- Gate and Branch Preflight
+
+Before Step 1, run the preflight per `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`,
+using `<gated-command>` = `tickets` and `<phase-num>` = `4`.
 
 ## Operational Orchestration
 
 1. Parse `{PREFIX}` from `$ARGUMENTS`.
 2. `edm-state get <PREFIX>` -- verify Gate 2 approved (UserPromptExpansion hook also enforces).
+   Resolve the initiative directory from state (handles both flat and product-scoped layouts):
+   ```bash
+   INIT_DIR="$(edm-state resolve-dir <PREFIX>)"
+   ```
 3. Read `mode` and `compliance_enabled` from state:
    ```bash
    edm-state get <PREFIX> | jq -r '{mode: (.mode // "standard"), compliance_enabled: (.compliance_enabled // false)}'
@@ -37,10 +48,10 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 ## README.md Must Contain
 
 1. **Header**: `Generated From: {srd_filename} v{srd_version}` (for the version-alignment audit)
-2. **Legend** -- Read `docs/templates/ticket-size-legend.md` and inline it verbatim (single source of truth; never re-author inline)
-3. **Cross-Cutting Requirements** -- Read `docs/templates/cross-cutting-ac.md` and inline it verbatim (single source of truth)
+2. **Legend** -- Read plugin-root-relative `docs/templates/ticket-size-legend.md` and inline it verbatim (single source of truth; never re-author inline)
+3. **Cross-Cutting Requirements** -- Read plugin-root-relative `docs/templates/cross-cutting-ac.md` and inline it verbatim (single source of truth)
 4. **Ticket Index** -- one table per phase: ID, Title, Epic, Size, Priority, Depends On, SRD Refs
-5. **Critical Path** -- Mermaid diagram, every node colored
+5. **Critical Path** -- Mermaid diagram, every node colored, following `CLAUDE.md Sec."Mermaid diagram conventions"` for label text (a raw semicolon in a label is a violation)
 6. **Epics Summary** -- table mapping epic numbers to ticket counts and file links
 7. **SRD Coverage Map** -- every `{PREFIX}-NN` requirement -> implementing ticket(s); no orphans
 
@@ -106,8 +117,9 @@ Empty traceability rows are a P0 finding in the ticket audit when `compliance_en
 
 ```
 Agent: edm-ticket-writer
-Prompt: "Create a developer ticket pack for the SRD at ${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}.
-         Output: ${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/README.md + epics/.
+Prompt: "Create a developer ticket pack for the SRD at ${INIT_DIR}/${user_config.srd_filename}.
+         Initiative directory (INIT_DIR): ${INIT_DIR} -- use this value; do not reconstruct it.
+         Output: ${INIT_DIR}/${user_config.ticket_pack_dirname}/README.md + epics/.
          Header must include 'Generated From: {srd_filename} v{srd_version}'.
          Use ticket IDs {PREFIX}-T01 through {PREFIX}-TNN.
          Every SRD requirement must map to at least one ticket.
@@ -117,3 +129,39 @@ Prompt: "Create a developer ticket pack for the SRD at ${user_config.srd_root}/{
 For large initiatives, launch one `edm-ticket-writer` per epic in parallel, then merge into the README.
 
 After writing, automatically proceed to `/edm:audit-tickets <PREFIX>`.
+
+## Fast-Track / Fix-Pack Mode (`lifecycle_mode=fast-track` or `fix-pack`)
+
+When `lifecycle_mode` is `fast-track` or `fix-pack`, tickets are generated directly from an analysis
+document without the full SRD/ticket-audit sequence -- this mode bypasses the normal Step 0 preflight's
+assumption that Gate 2 is already approved, because Phases 1-3 never ran:
+
+1. Read the analysis document the user provides.
+2. If the initiative does not yet exist, scaffold it (`edm-init <PREFIX>`, or the product-scoped form)
+   and record the lifecycle mode: `edm-state set-mode <PREFIX> lifecycle_mode fast-track` (or `fix-pack`).
+3. Record skipped phases -- phase 1 is included because fast-track genuinely never runs a formal
+   planning step; the analysis document replaces it:
+   ```bash
+   edm-state skip-phase <PREFIX> 1 "fast-track: planning skipped -- tickets from analysis doc"
+   edm-state skip-phase <PREFIX> 2 "fast-track: SRD skipped -- tickets from analysis doc"
+   edm-state skip-phase <PREFIX> 3 "fast-track: SRD audit skipped"
+   edm-state skip-phase <PREFIX> 5 "fast-track: ticket audit skipped"
+   ```
+4. `edm-state phase-start <PREFIX> 4`
+5. Spawn `edm-ticket-writer` directly from the analysis document (the same AI Execution Pattern above,
+   with the analysis document as the source instead of an audited SRD).
+6. `edm-state phase-complete <PREFIX> 4`
+7. Present the single human review gate directly -- Phase 5 (ticket audit) is skipped, so this gate
+   takes the place of Gate 3:
+   ```
+   AskUserQuestion header: "Gate 3"
+   Question body: names this as the ticket-pack review that stands in for the skipped Phase 5
+   Options: Approve / Revise / No-Go
+   ```
+   Follows `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`. On **Approve** (explicit selection only):
+   `edm-state approve-gate <PREFIX> 3`, then proceed to Phase 6 (`/edm:implement <PREFIX>`).
+
+The state file is valid and recognized as fast-track -- `validate` does not flag it as incomplete.
+
+In every other mode, this phase presents no gate of its own -- Gate 3 is presented by
+`/edm:audit-tickets` per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`.

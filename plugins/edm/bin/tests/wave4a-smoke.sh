@@ -1,27 +1,28 @@
 #!/usr/bin/env bash
-# wave4a-smoke.sh — WS-B/C/E/F bash-code smoke check (T56, T67, T83, T96, T97, T98, T99)
+# wave4a-smoke.sh -- WS-B/C/E/F bash-code smoke check (T56, T67, T83, T96, T97, T98, T99)
 # Tests: audit-round-start, record-partial-verdict, set-mode, skip-phase,
 #        set-supersedes/set-forked-from, SIZE_UNKNOWN suppression, HANDOFF sections.
-# Run from repo root: bash plugins/edm-ai-development/bin/tests/wave4a-smoke.sh
+# Run from repo root: bash plugins/edm/bin/tests/wave4a-smoke.sh
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 EDM_STATE="${SCRIPT_DIR}/../edm-state"
 
 # Shared assertions / counters (CA-014).
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_harness.sh"
+source "${SCRIPT_DIR}/_harness.sh"
 
 # ---- Setup -------------------------------------------------------------------
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+# G21 (round-3): harness_scratch_dir honors TMPDIR and installs an EXIT/INT/TERM cleanup trap,
+# unlike the bare `mktemp -d` + EXIT-only trap this replaces.
+harness_scratch_dir TMP
 export EDM_SRD_ROOT="$TMP/SRD"
 mkdir -p "$TMP/SRD"
 
-echo "WS-B/C/E/F smoke check — wave4a bash code"
+echo "WS-B/C/E/F smoke check -- wave4a bash code"
 echo
 
 # ---- T56: audit-round-start --------------------------------------------------
-echo "T56 — audit-round-start"
+echo "T56 -- audit-round-start"
 "$EDM_STATE" init TSMK >/dev/null
 STATE_FILE="$TMP/SRD/TSMK/.edm-state.json"
 
@@ -36,16 +37,25 @@ round2="$("$EDM_STATE" audit-round-start TSMK code)"
 round_srd="$("$EDM_STATE" audit-round-start TSMK srd)"
 [[ "$round_srd" == "1" ]] && pass "first srd round = 1 (independent)" || fail "srd round = '$round_srd' (expected 1)"
 
-stored_code="$(jq -r '.audit_rounds.code' "$STATE_FILE")"
-[[ "$stored_code" == "2" ]] && pass "audit_rounds.code stored as 2" || fail "audit_rounds.code = '$stored_code'"
+# EDMV3-T27 AC1a: audit_rounds.<type> widened from a bare integer to {count, rounds: [...]} so
+# a round can carry its lens set and round_type. Re-baselined here (same commit as the T27
+# widening) to read .audit_rounds.code.count instead of the old bare-integer .audit_rounds.code.
+stored_code="$(jq -r '.audit_rounds.code.count' "$STATE_FILE")"
+[[ "$stored_code" == "2" ]] && pass "audit_rounds.code.count stored as 2" || fail "audit_rounds.code.count = '$stored_code'"
+stored_code_type="$(jq -r '.audit_rounds.code | type' "$STATE_FILE")"
+[[ "$stored_code_type" == "object" ]] && pass "audit_rounds.code is an object (EDMV3-T27 AC1a widening)" \
+  || fail "audit_rounds.code type = '$stored_code_type', expected object"
 
-# Invalid type rejected
-check "invalid audit type rejected" "unknown audit type" \
-  "$("$EDM_STATE" audit-round-start TSMK invalid 2>&1 || true)"
+# Invalid type rejected -- state-mutating on success (increments audit_rounds.<type>.count), so
+# check_refuses_and_leaves_state proves BOTH the refusal message AND that TSMK's state file was
+# left byte-identical, rather than discarding the exit code via `2>&1 || true` (G50/CA-210).
+check_refuses_and_leaves_state "invalid audit type rejected" "unknown audit type" \
+  "$STATE_FILE" \
+  "$EDM_STATE" audit-round-start TSMK invalid
 
 # ---- T67: record-partial-verdict ---------------------------------------------
 echo
-echo "T67 — record-partial-verdict"
+echo "T67 -- record-partial-verdict"
 "$EDM_STATE" record-partial-verdict TSMK "TSMK-T01" PASS >/dev/null
 "$EDM_STATE" record-partial-verdict TSMK "TSMK-T02" PARTIAL "needs retry logic" >/dev/null
 "$EDM_STATE" record-partial-verdict TSMK "TSMK-T03" FAIL "assertion missing" >/dev/null
@@ -58,13 +68,15 @@ note_t02="$(jq -r '.partial_verdict_map["TSMK-T02"].note' "$STATE_FILE")"
 [[ "$verdict_t02" == "PARTIAL" ]] && pass "TSMK-T02 verdict = PARTIAL" || fail "TSMK-T02 verdict = '$verdict_t02'"
 [[ "$note_t02" == "needs retry logic" ]] && pass "TSMK-T02 note preserved" || fail "TSMK-T02 note = '$note_t02'"
 
-# Invalid verdict rejected
-check "invalid verdict rejected" "unknown verdict" \
-  "$("$EDM_STATE" record-partial-verdict TSMK "TSMK-T04" UNKNOWN 2>&1 || true)"
+# Invalid verdict rejected -- state-mutating on success (adds a partial_verdict_map entry), same
+# reasoning as above (G50/CA-210).
+check_refuses_and_leaves_state "invalid verdict rejected" "unknown verdict" \
+  "$STATE_FILE" \
+  "$EDM_STATE" record-partial-verdict TSMK "TSMK-T04" UNKNOWN
 
 # ---- T83: set-mode -----------------------------------------------------------
 echo
-echo "T83 — set-mode"
+echo "T83 -- set-mode"
 "$EDM_STATE" set-mode TSMK mode prototype >/dev/null
 m="$(jq -r '.mode' "$STATE_FILE")"
 [[ "$m" == "prototype" ]] && pass "mode = prototype" || fail "mode = '$m'"
@@ -81,38 +93,58 @@ ce="$(jq -r '.compliance_enabled' "$STATE_FILE")"
 im="$(jq -r '.implementation_mode' "$STATE_FILE")"
 [[ "$im" == "tdd" ]] && pass "implementation_mode = tdd" || fail "implementation_mode = '$im'"
 
-# Invalid values rejected
-check "invalid mode rejected" "invalid mode" \
-  "$("$EDM_STATE" set-mode TSMK mode badvalue 2>&1 || true)"
-check "invalid lifecycle_mode rejected" "invalid lifecycle_mode" \
-  "$("$EDM_STATE" set-mode TSMK lifecycle_mode badvalue 2>&1 || true)"
-check "invalid compliance_enabled rejected" "requires true|false" \
-  "$("$EDM_STATE" set-mode TSMK compliance_enabled maybe 2>&1 || true)"
-check "invalid implementation_mode rejected" "invalid implementation_mode" \
-  "$("$EDM_STATE" set-mode TSMK implementation_mode bdd 2>&1 || true)"
+# Invalid values rejected -- set-mode is state-mutating on success, same reasoning (G50/CA-210).
+check_refuses_and_leaves_state "invalid mode rejected" "invalid mode" \
+  "$STATE_FILE" \
+  "$EDM_STATE" set-mode TSMK mode badvalue
+check_refuses_and_leaves_state "invalid lifecycle_mode rejected" "invalid lifecycle_mode" \
+  "$STATE_FILE" \
+  "$EDM_STATE" set-mode TSMK lifecycle_mode badvalue
+check_refuses_and_leaves_state "invalid compliance_enabled rejected" "requires true|false" \
+  "$STATE_FILE" \
+  "$EDM_STATE" set-mode TSMK compliance_enabled maybe
+check_refuses_and_leaves_state "invalid implementation_mode rejected" "invalid implementation_mode" \
+  "$STATE_FILE" \
+  "$EDM_STATE" set-mode TSMK implementation_mode bdd
 
 # ---- T96: skip-phase ---------------------------------------------------------
 echo
-echo "T96 — skip-phase"
-# Reset to standard mode for gate-skip tests
+echo "T96 -- skip-phase"
+# Reset to standard mode for gate-skip tests. Note: T83 above set mode=prototype, which
+# (EDMV3-T07 AC4 remediation) merged prototype's 4 default-skip entries (phases 3,4,5,6)
+# into skipped_phases; a mode change only ever ADDS entries, it never removes ones a prior
+# mode seeded, so those 4 persist through this reset back to standard (whose own default
+# skip set is empty, so this reset call adds nothing further).
 "$EDM_STATE" set-mode TSMK mode standard >/dev/null
 "$EDM_STATE" set-mode TSMK lifecycle_mode standard >/dev/null
 
+pre_skip_count="$(jq -r '.skipped_phases | length' "$STATE_FILE")"
+[[ "$pre_skip_count" == "4" ]] \
+  && pass "skipped_phases carries the 4 prototype-mode seeds after reset to standard" \
+  || fail "skipped_phases length before skip-phase = '$pre_skip_count', expected 4"
+
 "$EDM_STATE" skip-phase TSMK 1 "fast-track: scope documented elsewhere" >/dev/null
 skipped="$(jq -r '.skipped_phases | length' "$STATE_FILE")"
-[[ "$skipped" == "1" ]] && pass "skipped_phases has 1 entry" || fail "skipped_phases length = '$skipped'"
+[[ "$skipped" == "5" ]] \
+  && pass "skipped_phases has 5 entries (4 prototype-mode seeds + phase 1)" \
+  || fail "skipped_phases length = '$skipped', expected 5"
 
-phase_num="$(jq -r '.skipped_phases[0].phase' "$STATE_FILE")"
-[[ "$phase_num" == "1" ]] && pass "skipped phase = 1" || fail "skipped phase = '$phase_num'"
+phase_num="$(jq -r '.skipped_phases[] | select(.phase == 1) | .phase' "$STATE_FILE")"
+[[ "$phase_num" == "1" ]] && pass "skipped phase 1 entry present" || fail "skipped phase 1 entry missing (got '$phase_num')"
 
-rationale="$(jq -r '.skipped_phases[0].rationale' "$STATE_FILE")"
+rationale="$(jq -r '.skipped_phases[] | select(.phase == 1) | .rationale' "$STATE_FILE")"
 [[ "$rationale" == "fast-track: scope documented elsewhere" ]] \
   && pass "skip rationale preserved" || fail "rationale = '$rationale'"
 
-# Replacing existing entry for same phase (idempotent)
+# Replacing existing entry for same phase (idempotent) -- only phase 1's rationale changes;
+# the 4 mode-seeded entries (3,4,5,6) are untouched, so the length stays 5.
 "$EDM_STATE" skip-phase TSMK 1 "updated rationale" >/dev/null
 skipped2="$(jq -r '.skipped_phases | length' "$STATE_FILE")"
-[[ "$skipped2" == "1" ]] && pass "re-skip phase 1 replaces (no duplicate)" || fail "skipped_phases length = '$skipped2'"
+[[ "$skipped2" == "5" ]] && pass "re-skip phase 1 replaces (no duplicate)" || fail "skipped_phases length = '$skipped2', expected 5"
+
+rationale2="$(jq -r '.skipped_phases[] | select(.phase == 1) | .rationale' "$STATE_FILE")"
+[[ "$rationale2" == "updated rationale" ]] \
+  && pass "re-skip phase 1 rationale updated" || fail "rationale2 = '$rationale2'"
 
 # Phase 1 skip should trigger HANDOFF 'Phase 1 skipped' next_action
 "$EDM_STATE" write-handoff TSMK >/dev/null
@@ -121,7 +153,7 @@ check "HANDOFF shows phase-1-skipped next_action" "Phase 1 skipped" "$(cat "$HAN
 
 # ---- T97: SIZE_UNKNOWN suppression -------------------------------------------
 echo
-echo "T97 — SIZE_UNKNOWN suppression for fast-track/fix-pack"
+echo "T97 -- SIZE_UNKNOWN suppression for fast-track/fix-pack"
 "$EDM_STATE" phase-start TSMK 2 >/dev/null
 
 # Without fast-track: SIZE_UNKNOWN anomaly should fire
@@ -143,33 +175,48 @@ check_absent "SIZE_UNKNOWN suppressed in fix-pack mode" "SIZE_UNKNOWN" "$anomali
 
 # ---- T98: set-supersedes / set-forked-from -----------------------------------
 echo
-echo "T98 — set-supersedes / set-forked-from"
+echo "T98 -- set-supersedes / set-forked-from"
 "$EDM_STATE" set-supersedes TSMK OLDPREFIX >/dev/null
 sup="$(jq -r '.supersedes' "$STATE_FILE")"
 [[ "$sup" == "OLDPREFIX" ]] && pass "supersedes = OLDPREFIX" || fail "supersedes = '$sup'"
+# CA-504: set-supersedes now refreshes HANDOFF.md itself -- checked here, BEFORE the T99 block's
+# own unrelated "$EDM_STATE" write-handoff TSMK call below, so a regression back to the
+# no-refresh behavior fails here instead of being silently masked by that later call.
+check "CA-504 -- set-supersedes refreshes HANDOFF.md without a separate write-handoff call" \
+  "Supersedes**: OLDPREFIX" "$(cat "$HANDOFF")"
 
 "$EDM_STATE" set-forked-from TSMK SRCPREFIX >/dev/null
 ff="$(jq -r '.forked_from' "$STATE_FILE")"
 [[ "$ff" == "SRCPREFIX" ]] && pass "forked_from = SRCPREFIX" || fail "forked_from = '$ff'"
+check "CA-504 -- set-forked-from refreshes HANDOFF.md without a separate write-handoff call" \
+  "Forked from**: SRCPREFIX" "$(cat "$HANDOFF")"
 
-# Empty prefix rejected
-check "empty supersedes rejected" "non-empty" \
-  "$("$EDM_STATE" set-supersedes TSMK "" 2>&1 || true)"
-check "empty forked_from rejected" "non-empty" \
-  "$("$EDM_STATE" set-forked-from TSMK "" 2>&1 || true)"
+# Empty prefix rejected -- set-supersedes/set-forked-from are state-mutating on success, same
+# reasoning (G50/CA-210).
+check_refuses_and_leaves_state "empty supersedes rejected" "non-empty" \
+  "$STATE_FILE" \
+  "$EDM_STATE" set-supersedes TSMK ""
+check_refuses_and_leaves_state "empty forked_from rejected" "non-empty" \
+  "$STATE_FILE" \
+  "$EDM_STATE" set-forked-from TSMK ""
 
 # ---- T99: ## Lifecycle & Mode section in HANDOFF.md -------------------------
 echo
-echo "T99 — Lifecycle & Mode section in HANDOFF.md"
+echo "T99 -- Lifecycle & Mode section in HANDOFF.md"
+# lifecycle_mode "partial" is a dead value removed from LIFECYCLE_MODE_ENUM_LIST by the
+# delete-list epic (D12, EDMV3-T57..T60) -- "fix-pack" exercises the same HANDOFF rendering
+# path with a live enum member.
 "$EDM_STATE" set-mode TSMK mode iac >/dev/null
-"$EDM_STATE" set-mode TSMK lifecycle_mode partial >/dev/null
+# `partial` was removed from the settable enum (EDMV3-T59 / D12); this case only needs
+# a non-default lifecycle_mode to render, so use a currently-legal one.
+"$EDM_STATE" set-mode TSMK lifecycle_mode fast-track >/dev/null
 "$EDM_STATE" set-mode TSMK compliance_enabled true >/dev/null
 "$EDM_STATE" set-mode TSMK implementation_mode tdd >/dev/null
 "$EDM_STATE" write-handoff TSMK >/dev/null
 
 check "HANDOFF has Lifecycle & Mode section"     "## Lifecycle & Mode"    "$(cat "$HANDOFF")"
 check "HANDOFF shows mode = iac"                 "Mode**: iac"            "$(cat "$HANDOFF")"
-check "HANDOFF shows lifecycle_mode = partial"   "Lifecycle mode**: partial" "$(cat "$HANDOFF")"
+check "HANDOFF shows lifecycle_mode = fast-track"   "Lifecycle mode**: fast-track" "$(cat "$HANDOFF")"
 check "HANDOFF shows compliance_enabled = true"  "Compliance**: true"     "$(cat "$HANDOFF")"
 check "HANDOFF shows implementation_mode = tdd"  "Implementation mode**: tdd" "$(cat "$HANDOFF")"
 check "HANDOFF shows supersedes"                 "Supersedes**: OLDPREFIX" "$(cat "$HANDOFF")"
@@ -203,7 +250,7 @@ fi
 
 # ---- init payload: new fields present ----------------------------------------
 echo
-echo "T56/T67/T83/T96/T98 — init payload has all new fields"
+echo "T56/T67/T83/T96/T98 -- init payload has all new fields"
 "$EDM_STATE" init TSMK2 >/dev/null
 STATE2="$TMP/SRD/TSMK2/.edm-state.json"
 audit_rounds="$(jq -r '.audit_rounds | type' "$STATE2")"
@@ -245,9 +292,11 @@ STATE_COMP="$TMP/SRD/COMP/.edm-state.json"
 "$EDM_STATE" approve-gate COMP 2 >/dev/null 2>&1 || true
 "$EDM_STATE" approve-gate COMP 3 >/dev/null 2>&1 || true
 
-# gate-check implement must FAIL when compliance_enabled=true and no gate 3.5.
-check "gate-check implement blocked without gate 3.5" "Gate 3.5" \
-  "$("$EDM_STATE" gate-check COMP implement 2>&1 || true)"
+# gate-check implement must FAIL when compliance_enabled=true and no gate 3.5. gate-check is a
+# read-only query (no state mutation on any path), so check_fails alone -- not
+# check_refuses_and_leaves_state -- is the right assertion (G50/CA-210).
+check_fails "gate-check implement blocked without gate 3.5" "Gate 3.5" \
+  "$EDM_STATE" gate-check COMP implement
 
 cga_before="$(jq -r '.compliance_gate_approved' "$STATE_COMP")"
 [[ "$cga_before" == "false" ]] && pass "compliance_gate_approved = false before approve-gate 3.5" \

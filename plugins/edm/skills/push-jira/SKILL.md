@@ -18,7 +18,7 @@ This skill is **optional** -- most EDM workflows produce a ticket pack as a mark
 
 - The Atlassian MCP server is connected (`mcp__{jira_mcp_namespace}__*` tools should be available -- verify with `/mcp`).
 - The user has a Jira project to push into (project key, e.g., `MCP`, `TIPS`).
-- The ticket pack at `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/` is finalized and Phase 5 audit has passed.
+- The ticket pack at `${INIT_DIR}/${user_config.ticket_pack_dirname}/` is finalized and Phase 5 audit has passed.
 
 If any prerequisite is missing, the skill prints a clear "skipping -- Jira not available" message and exits without making changes.
 
@@ -28,15 +28,19 @@ If any prerequisite is missing, the skill prints a clear "skipping -- Jira not a
 1. Parse arguments: `{PREFIX}` (required), `{JIRA_PROJECT_KEY}` (optional -- falls back to `${user_config.jira_project_key}`), `--dry-run` (flag, default: off).
    - `--dry-run`: when present, the skill produces a plan table of what would be created/updated/linked but makes no mutating MCP calls and does not rewrite ticket-pack files or update `.edm-state.json`.
    - The Jira MCP namespace is read from `${user_config.jira_mcp_namespace}` (default: `plugin_jira_atlassian-mcp-server`). Override this config value if your MCP server is registered under a different namespace (e.g., a legacy Docker-based namespace).
+   - Resolve the initiative directory from state (handles both flat and product-scoped layouts):
+     ```bash
+     INIT_DIR="$(edm-state resolve-dir <PREFIX>)"
+     ```
 2. Verify Atlassian MCP is reachable: call `mcp__{jira_mcp_namespace}__atlassianUserInfo`. If it fails, print:
-   > "Jira MCP not available (tried {jira_mcp_namespace}__atlassianUserInfo). To enable Jira sync: configure the MCP server with namespace '{jira_mcp_namespace}' (see CLAUDE.md -> 'Atlassian MCP setup'). Skipping."
+   > "Jira MCP not available (tried {jira_mcp_namespace}__atlassianUserInfo). To enable Jira sync: configure the MCP server with namespace '{jira_mcp_namespace}' (see `CLAUDE.md Sec."Optional: Jira synchronization"` for the `jira_mcp_namespace` userConfig option). Skipping."
    > and exit successfully (this is not an error -- the skill is optional). This applies even in `--dry-run` mode.
 3. Resolve `cloudId` via `mcp__{jira_mcp_namespace}__getAccessibleAtlassianResources`. Use the first one; if multiple, ask the user.
 4. Verify the project key exists via `mcp__{jira_mcp_namespace}__getVisibleJiraProjects` (filter by `query: <JIRA_PROJECT_KEY>`).
 5. Resolve the issue type for tickets: call `mcp__{jira_mcp_namespace}__getJiraProjectIssueTypesMetadata` and pick `Task` (or `Story` if `Task` isn't available).
 
 ### Step 2 -- Read the ticket pack
-1. Find epic files: `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/epics/*.md`.
+1. Find epic files: `${INIT_DIR}/${user_config.ticket_pack_dirname}/epics/*.md`.
 2. For each ticket in each epic, parse:
    - **Ticket ID**: `{PREFIX}-T{NN}` from the section heading
    - **Title**: imperative verb phrase from the heading
@@ -138,7 +142,7 @@ with:
 
 Where `{jira_url}` = `https://{site}.atlassian.net/browse/{JIRA_KEY}`.
 
-Also write a summary file at `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/jira-sync.md`:
+Also write a summary file at `${INIT_DIR}/${user_config.ticket_pack_dirname}/jira-sync.md`:
 
 ```markdown
 # Jira Sync -- {PREFIX}
@@ -154,13 +158,9 @@ Cloud: {cloudId}
 | ... |
 ```
 
-### Step 8 -- Update state and report
+### Step 8 -- Report
 
-**Normal mode only** (skip state update in dry-run mode):
-
-1. `edm-state set <PREFIX> jira_synced_at $(date -u +%Y-%m-%dT%H:%M:%SZ)`
-2. `edm-state set <PREFIX> jira_project_key <JIRA_PROJECT_KEY>`
-3. Print summary to user: created N, updated M, links N, errors 0.
+Print summary to user: created N, updated M, links N, errors 0.
 
 ## Dry-run output
 
@@ -217,4 +217,4 @@ For first-time use on a ticket pack, use dry-run mode:
 ## See also
 
 - The Atlassian MCP server: configured per-machine via `claude mcp add` or in `.mcp.json`. Register it under the namespace matching `${user_config.jira_mcp_namespace}` (default: `plugin_jira_atlassian-mcp-server`).
-- `bin/edm-state` -- tracks `jira_synced_at` and `jira_project_key` so future runs know what's already been pushed.
+- The idempotency mechanism is the JQL label search in Step 3 (`labels = "edm-{prefix}-t{nn}"`), not `.edm-state.json` -- this skill does not write any Jira-related field to state (G6/CA-384, round 7).

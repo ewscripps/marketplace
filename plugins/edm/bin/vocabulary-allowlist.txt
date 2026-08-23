@@ -1,0 +1,52 @@
+# EDMV3-T30: allowlist for bin/edm-check-vocabulary.
+#
+# Format: a one-line "#" justification comment, immediately followed by one
+# "<path>|<substring>" data line. A violation is suppressed only when BOTH the reported
+# file matches <path> (an exact repo-relative file path, or a "/"-suffixed directory used
+# as a prefix match) AND the reported snippet contains <substring> verbatim. An empty
+# <substring> (nothing after the "|") allowlists every match under that path unconditionally.
+# Blank lines are ignored; every non-comment line must be a "<path>|..." data line.
+#
+# Class 1: the NOTED-versus-deferral clarification in CLAUDE.md is intentional -- the
+# Severity vocabulary section must name the abolished words in order to state that they no
+# longer apply (EDMV3-T29 AC2).
+plugins/edm/CLAUDE.md|is distinct from deferral
+# Class 1 (continued): second line of the same clarification sentence pair.
+plugins/edm/CLAUDE.md|deferral does not exist in this methodology
+# Class 2: the checker's own prohibited-token list is data describing the banned words, not
+# an instance of the policy violation itself.
+plugins/edm/bin/vocabulary-prohibited.txt|
+# Class 2 (continued): the checker's own allowlist file (this file) names the same tokens in
+# its justification comments and path/substring columns -- also data, not policy prose.
+plugins/edm/bin/vocabulary-allowlist.txt|
+# Class 3: CHANGELOG.md is project history. Past release notes describe the vocabulary that
+# was canonical at release time and are not rewritten retroactively.
+plugins/edm/CHANGELOG.md|
+# Class 4: bin/tests/ negative-test cases must contain the literal flags/phrases verbatim to
+# assert that they are rejected (EDMV3-16 AC10, EDMV3-17); without this carve-out the checker
+# and the required negative tests would be mutually unsatisfiable.
+plugins/edm/bin/tests/|
+# Class 5: agents/edm-audit-spec.md's False-Alarm-Filter criterion asks whether the AUDITED
+# project's own tickets mark a requirement deferred/out of scope -- a legitimate, substantive
+# filter criterion about the project under audit, not this methodology's own vocabulary
+# (EDMV3-32 forbids deleting a filter criterion, and editing that file's wording is outside
+# this ticket's file boundary -- EDMV3-T29's agent owns it).
+plugins/edm/agents/edm-audit-spec.md|deferred
+# Class 7 (EDMV3-T41): docs/canonical-sections.md is a generated, one-directional, byte-
+# identical duplicate of plugins/edm/CLAUDE.md's "Severity vocabulary" and "Mermaid diagram
+# conventions" sections (edm-sync-canonical-sections). Its content -- including the Class 1
+# "is distinct from deferral" / "deferral does not exist" clarification sentence -- is already
+# reviewed and allowlisted at its CLAUDE.md source; allowlisting the whole generated file here
+# avoids re-litigating the same two Class 1 substrings a second time under a second path.
+plugins/edm/docs/canonical-sections.md|
+# Class 6: bin/edm-state's legacy-status coercion and findings-ledger handling both name the
+# literal JSON status value "deferred". This is the code that ABOLISHES that status -- the
+# blocking predicate deliberately treats a legacy `deferred` line as open, and coerce_status
+# rewrites it to open on read (EDMV3-T25 AC4 / EDMV3-T28 AC5) -- a legacy per-finding enum
+# value written by pre-EDMV3-T25 ledgers, recognized on read for backward compatibility. The
+# token must appear here precisely because the mechanism exists to neutralize it; removing the
+# word would remove the neutralization. This is a data-shape identifier this methodology must
+# recognize on legacy input, not an instance of the abolished deferral-vocabulary policy (which
+# governs how EDM agents talk about findings, not the literal enum strings a ledger file may
+# already contain). Every other occurrence in bin/ remains a violation.
+plugins/edm/bin/edm-state|deferred

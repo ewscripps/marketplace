@@ -1,0 +1,820 @@
+#!/usr/bin/env bash
+# score-artifacts.sh -- deterministic mechanical scorer for EDM eval runs (EDMV3-T23,
+# SRD EDMV3-27, EDMV3-28, EDMV3-29). Turns a run directory (as produced by run-eval.sh,
+# EDMV3-T22) into a scores.json with exactly six dimensions (five as originally specified plus
+# known-gap-recall, added by CA-462 with the 1.0.0 -> 1.1.0 scorer_version bump; --describe below
+# is the authority on the set). No model is in the loop:
+# every dimension is computed by grep/awk/jq over the run's own artifact files, so the
+# same run directory scores the same way every time (AC6).
+#
+# EDM-HELP-BEGIN
+# Usage:
+#   score-artifacts.sh <run-dir> [--out FILE]  Score one run directory. Writes scores.json to
+#                                              <run-dir>/scores.json, or to FILE when --out is
+#                                              given, and prints the same JSON to stdout. Exit 0
+#                                              whenever a score was produced -- a terrible score
+#                                              is still exit 0 (AC5). Exit 2 on a usage or
+#                                              environment error (missing jq, missing run-dir,
+#                                              missing vague-ac-patterns.txt). CA-151/G57: --out is
+#                                              REQUIRED when <run-dir> is under any directory
+#                                              named "fixtures" (both tracked fixture roots --
+#                                              bin/tests/fixtures/ and evals/fixtures/tiny-svc/ --
+#                                              not a real run) -- refuses rather than silently
+#                                              depositing an untracked scores.json there.
+#   score-artifacts.sh --describe             Print the six dimension definitions
+#                                              verbatim and exit 0.
+#   score-artifacts.sh --compare <a> <b>       Compare two scores.json files. Delegates to
+#                                              bin/edm-compare-eval (CA-383) -- refuses (its
+#                                              exit 2) when scorer_version or
+#                                              dimensions_scored differ between them,
+#                                              naming the mismatch. Not a second comparison
+#                                              implementation -- the default scoring mode
+#                                              above never compares against anything and
+#                                              never exits non-zero on a low score (AC5).
+#                                              The actual pass/fail CI decision that
+#                                              consumes bin/edm-compare-eval's output
+#                                              is EDMV3-T39's job (srd.md EDMV3-52), not
+#                                              this ticket's.
+#   score-artifacts.sh -h|--help|help          Show this help.
+#
+# The six dimensions, in fixed order (T23 AC1 originally fixed this at exactly five;
+# CA-462 added the sixth -- known-gap-recall -- because without it every dimension was a
+# self-consistency check and an SRD surfacing zero of the fixture's six known gaps scored
+# identically to one surfacing all six):
+#   1. requirement-id-coverage        -- every {PREFIX}-NN ID in the SRD is unique,
+#                                         sequential with no gaps, and appears in the
+#                                         audit report's coverage discussion.
+#   2. ac-testability                 -- ACs matching vague-ac-patterns.txt divided by
+#                                         total AC count, inverted so higher is better.
+#   3. mermaid-parse-success          -- every ```mermaid``` block parses and contains no
+#                                         raw ; in label text (EDMV3-56 detection rule).
+#   4. coverage-map-bidirectionality  -- coverage-map bidirectionality where the run
+#                                         reached the ticket phase, falling back to
+#                                         srd.md <-> audit-srd.md ID bidirectionality when
+#                                         it did not (every wave-A eval run today).
+#   5. lens-jsonl-prose-agreement     -- per-lens finding counts, lens-L{N}.md versus
+#                                         lens-L{N}.jsonl, for a run including a code-audit
+#                                         round.
+#   6. known-gap-recall               -- fraction of the tiny-svc fixture's six ground-truth
+#                                         gaps (fixtures/tiny-svc/expected.json, srd_match
+#                                         patterns) the produced srd.md engages. Skipped
+#                                         (score: null) for any run directory whose run.json
+#                                         does not attribute it to the tiny-svc fixture.
+#
+# Each dimension normalizes to an integer 0-100, higher is better (dimension 2 is inverted
+# at normalization time: 100 * (1 - vague/total)). A dimension that cannot be computed is
+# emitted with score: null, named in dimensions_skipped with a one-line reason, and
+# excluded from both the sum and the denominator. total is the unweighted arithmetic mean
+# of the dimensions that produced a number, divided by dimensions_scored (read from the
+# data, never assumed to be 6), rounded to one decimal place:
+#
+#   jq -e '. as $r | ([$r.dimensions[].score | select(. != null)] | add) as $sum
+#          | $r.dimensions_scored as $n | (($sum / $n * 10 | round) / 10) == $r.total' \
+#     <run-dir>/scores.json
+#
+# This is the exact expression score-artifacts.sh's own output satisfies -- there is no
+# licence to adapt it (EDMV3-T23 AC3). jq's floating-point rounding is not reliable across
+# every build, so the mean is computed here in integer tenths (awk) and formatted to one
+# decimal place only at print time (EDMV3-T23 Technical Notes).
+#
+# Dimension 3's "no raw ; in label text" check is score-artifacts.sh's own standalone
+# Mermaid-block scan (_scan_mermaid_blocks, below), still not a call into
+# bin/edm-lint-artifacts as a command. edm-lint-artifacts has the fourth mermaid-semicolon
+# class (EDMV3-56, wave B), so the two dimension's OVERALL jobs still genuinely differ, for
+# three reasons a straight swap would break:
+#   1. Dimension 3 is "mermaid-parse-success", a superset of the semicolon rule. It also
+#      requires each block's first non-blank line to be a recognized diagram-type keyword,
+#      and treats an empty or unterminated block as bad. edm-lint-artifacts checks none of
+#      those.
+#   2. The score is a per-block OK/BAD ratio over exactly four named artifact files.
+#      edm-lint-artifacts reports per-LINE violations over every *.md under a path and
+#      signals via exit code 1, which this scorer must never do for a low score (AC5).
+#   3. This script still never invokes bin/edm-lint-artifacts as a command, and still never
+#      shells out to anything beyond bash 3.2 and jq (AC6) -- a bin/ EXECUTABLE never goes on
+#      this scorer's required PATH.
+# CA-019 (code-audit round 2): the underlying RULE BODY -- fence recognition (including
+# de-indenting before counting backtick runs, so a fence nested under a numbered list step or
+# blockquote is still recognized) and the literal-semicolon violation check -- used to be a
+# byte-equivalent clone of bin/edm-lint-artifacts's own copy, with no shared guard, and this
+# scorer's fence detection was anchored at column 1 while bin/'s was not, so an indented
+# ```mermaid fence was invisible here and silently under-counted (see
+# bin/tests/fixtures/mermaid/valid/v12-indented-fence.md). _scan_mermaid_blocks below now
+# loads plugins/edm/bin/edm-mermaid-rules.awk (a plain awk source file containing only
+# function definitions, composed via `awk -f edm-mermaid-rules.awk -f <this script's own
+# per-block state machine>`) for both fence recognition and the semicolon rule, so this
+# scorer and bin/_edm-lint-lib.sh/bin/edm-lint-artifacts now agree on what counts as a fence
+# and what counts as a violation FOR THE UNDERLYING RULE BODY, while this scorer's own
+# OK/BAD-per-block verdict stream, diagram-keyword check and exit-0 contract (AC5) are unchanged.
+#
+# G11 (round-3): one deliberate carve-out remains on top of that shared rule body --
+# _scan_mermaid_blocks honors no edm-lint-ignore marker, where bin/edm-lint-artifacts's
+# mermaid_scan_awk does (a single-line marker on a mermaid-fenced line reports as an
+# "unsupported usage" finding rather than being silently honored, EDMV3-T43 AC6; a
+# block-form ignore-start/-end pair around the fence is honored by removing the lines from
+# the mermaid_set entirely). This scorer intentionally does not thread that marker set
+# through: an eval scorer measuring the QUALITY of an artifact under test should not let the
+# artifact under measurement suppress its own score by wrapping a bad diagram in an ignore
+# marker -- the marker is a lint-suppression escape valve for edm-lint-artifacts's blocking
+# enforcement, not a scoring exemption. A block containing an ignore marker is still scanned
+# and scored on its actual content.
+#
+# Depends on nothing beyond bash 3.2 and jq (AC6). Never calls bin/edm-state, never reads
+# ANTHROPIC_API_KEY, never launches claude -- this script only ever reads files under the
+# run directory it is given.
+# EDM-HELP-END
+# CA-074: -e is intentionally omitted -- several bare `grep` command substitutions below (e.g.
+# the active-patterns and per-dimension ID extraction calls) are expected to return a
+# non-matching (non-zero) exit when a real artifact simply contains none of the pattern, and
+# most are not piped into a command that would absorb that under pipefail, so -e would abort a
+# legitimate zero-match run instead of scoring it. AC5 requires this scorer to exit 0 whenever a
+# score was produced, including a terrible one.
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# CA-005: shared --help extractor, sourced rather than hand-copied.
+source "${SCRIPT_DIR}/../bin/_edm-cli-lib.sh"
+# CA-462: 1.0.0 -> 1.1.0 with the known-gap-recall dimension -- edm-compare-eval's version
+# handshake refuses to compare across this bump, so a five-dimension baseline is never
+# silently mixed with a six-dimension candidate.
+SCORER_VERSION="1.1.0"
+PATTERNS_FILE="$SCRIPT_DIR/vague-ac-patterns.txt"
+# CA-019: shared fence-recognition and semicolon-violation rule file, also loaded by
+# bin/_edm-lint-lib.sh's build_line_classes. A plain awk source file (function definitions
+# only, no top-level rule of its own), loaded via -f, not executed as a command -- this
+# remains a bash-3.2-and-jq-only script per AC6, no bin/ executable goes on its PATH.
+MERMAID_RULES_AWK="$SCRIPT_DIR/../bin/edm-mermaid-rules.awk"
+
+DIM_NAMES=(requirement-id-coverage ac-testability mermaid-parse-success coverage-map-bidirectionality lens-jsonl-prose-agreement known-gap-recall)
+
+# G21/CA-074: two-argument form -- see bin/edm-validate-prefix's die() for the full rationale.
+# Family-standard default of 2 (usage/environment error).
+die() {
+  local msg="$1" code="${2:-2}"
+  echo "score-artifacts: $msg" >&2
+  exit "$code"
+}
+
+usage() {
+  print_help "${BASH_SOURCE[0]:-$0}"
+}
+
+describe() {
+  cat <<'EOF'
+Dimension 1 (requirement-id-coverage): checks that every {PREFIX}-NN ID in the SRD is
+unique, sequential with no gaps, and appears in the audit report's coverage discussion.
+
+Dimension 2 (ac-testability): counts ACs matching the vague-AC regexes divided by total
+AC count.
+
+Dimension 3 (mermaid-parse-success): checks every ```mermaid``` block parses and contains
+no raw ; in label text per the EDMV3-56 detection rule.
+
+Dimension 4 (coverage-map-bidirectionality): checks coverage-map bidirectionality where
+the run reached the ticket phase.
+
+Dimension 5 (lens-jsonl-prose-agreement): compares per-lens finding counts between
+lens-L{N}.md and lens-L{N}.jsonl for a run including a code-audit round. Scores 0 (not
+null/no-score) when lens-L*.md reports exist but zero lens-L*.jsonl files were produced
+(G53/CA-286) -- that is a real code-audit round whose JSONL half is missing, distinct from a
+pass directory with no code-audit round at all.
+
+Dimension 6 (known-gap-recall): fraction of the tiny-svc fixture's six ground-truth gaps
+(fixtures/tiny-svc/expected.json srd_match patterns) the produced srd.md engages (CA-462).
+Skipped (score: null) for a run directory whose run.json does not attribute it to the
+tiny-svc fixture, so the scorer stays usable against arbitrary directories.
+EOF
+}
+
+command -v jq >/dev/null 2>&1 || die "jq is required and was not found on PATH"
+[[ -f "$MERMAID_RULES_AWK" ]] || die "shared mermaid rules file not found: $MERMAID_RULES_AWK"
+
+# ---- shared numeric helpers --------------------------------------------------------------
+
+# round_int <float> -- nearest integer, half away from zero.
+round_int() {
+  awk -v v="$1" 'BEGIN{ if (v<0) printf "%d", int(v-0.5); else printf "%d", int(v+0.5) }'
+}
+
+# score_from_ratio <numerator> <denominator> -- 100*num/den, rounded, clamped to 0-100.
+# denominator <= 0 yields 0 (caller decides whether that should instead be a null/skip).
+score_from_ratio() {
+  local num="$1" den="$2"
+  awk -v n="$num" -v d="$den" '
+    BEGIN {
+      if (d <= 0) { printf "%d", 0; exit }
+      v = 100 * n / d
+      if (v < 0) v = 0
+      if (v > 100) v = 100
+      # CA-139: v is clamped to >= 0 immediately above with no intervening assignment, so a
+      # negative branch here is structurally unreachable -- round half-up unconditionally.
+      # (round_int, above, is a separate helper with a real negative branch; leave it alone.)
+      r = int(v + 0.5)
+      printf "%d", r
+    }'
+}
+
+# ---- dimension 1: requirement-id-coverage ------------------------------------------------
+compute_dim1() {
+  local run_dir="$1"
+  local srd="$run_dir/srd.md"
+  if [[ ! -f "$srd" ]]; then
+    D1_SCORE=""; D1_REASON="no srd.md in run directory"; return
+  fi
+
+  local ids
+  ids="$(grep -oE '^#### [A-Za-z][A-Za-z0-9]*-[0-9]+' "$srd" 2>/dev/null | sed -E 's/^#### //')"
+  if [[ -z "$ids" ]]; then
+    D1_SCORE=""; D1_REASON="no {PREFIX}-NN requirement headings found in srd.md"; return
+  fi
+
+  local total_ids unique_ids unique_count
+  total_ids=$(printf '%s\n' "$ids" | grep -c .)
+  unique_ids="$(printf '%s\n' "$ids" | sort -u)"
+  unique_count=$(printf '%s\n' "$unique_ids" | grep -c .)
+  local uniqueness_score
+  uniqueness_score=$(score_from_ratio "$unique_count" "$total_ids")
+
+  # Sequential-with-no-gaps: numeric suffixes across all unique IDs (regardless of the
+  # textual prefix, which is expected to be constant for one initiative's srd.md).
+  local nums present_count max_num sequence_score
+  nums="$(printf '%s\n' "$unique_ids" | sed -E 's/^.*-0*([0-9]+)$/\1/' | sort -n -u)"
+  present_count=$(printf '%s\n' "$nums" | grep -c .)
+  max_num=$(printf '%s\n' "$nums" | tail -1)
+  [[ -z "$max_num" || "$max_num" -le 0 ]] && max_num=1
+  sequence_score=$(score_from_ratio "$present_count" "$max_num")
+
+  # Coverage: each unique ID appears somewhere in audit-srd.md's discussion.
+  local audit="$run_dir/audit-srd.md"
+  local coverage_score found=0 id
+  if [[ -f "$audit" ]]; then
+    while IFS= read -r id; do
+      [[ -z "$id" ]] && continue
+      grep -qF -- "$id" "$audit" && found=$((found + 1))
+    done <<< "$unique_ids"
+    coverage_score=$(score_from_ratio "$found" "$unique_count")
+  else
+    coverage_score=0
+  fi
+
+  local avg
+  avg=$(awk -v a="$uniqueness_score" -v b="$sequence_score" -v c="$coverage_score" \
+    'BEGIN{printf "%.4f", (a + b + c) / 3}')
+  D1_SCORE="$(round_int "$avg")"
+  D1_REASON=""
+}
+
+# ---- dimension 2: ac-testability ---------------------------------------------------------
+compute_dim2() {
+  local run_dir="$1"
+  local srd="$run_dir/srd.md"
+  if [[ ! -f "$srd" ]]; then
+    D2_SCORE=""; D2_REASON="no srd.md in run directory"; return
+  fi
+
+  # Join each AC bullet with its indented continuation lines into one logical line, so a
+  # vague word appearing only on a wrapped continuation (common in real srd.md ACs) is
+  # still matched.
+  local ac_lines
+  ac_lines="$(awk '
+    function flush() { if (buf != "") { print buf; buf="" } }
+    /^[[:space:]]*-[[:space:]]*\[[ xX]\]/ { flush(); buf=$0; next }
+    buf != "" && /^[[:space:]]+[^[:space:]]/ { buf = buf " " $0; next }
+    { flush() }
+    END { flush() }
+  ' "$srd")"
+
+  local total_ac
+  total_ac=$(printf '%s\n' "$ac_lines" | grep -c . || true)
+  if [[ "$total_ac" -eq 0 ]]; then
+    D2_SCORE=""; D2_REASON="no Acceptance Criteria bullets found in srd.md"; return
+  fi
+
+  [[ -s "$PATTERNS_FILE" ]] || die "vague-ac-patterns.txt not found or empty at $PATTERNS_FILE"
+  local active_patterns
+  active_patterns="$(grep -vE '^[[:space:]]*(#|$)' "$PATTERNS_FILE")"
+
+  local vague_count
+  vague_count=$(printf '%s\n' "$ac_lines" | grep -icE -f <(printf '%s\n' "$active_patterns") || true)
+  [[ -z "$vague_count" ]] && vague_count=0
+
+  D2_SCORE="$(score_from_ratio "$((total_ac - vague_count))" "$total_ac")"
+  D2_REASON=""
+}
+
+# ---- dimension 3: mermaid-parse-success --------------------------------------------------
+
+# _scan_mermaid_blocks <file> -- prints one "OK" or "BAD" line per fenced ```mermaid block
+# found in <file>. A block is OK when: it has a closing fence (not still open at EOF), its
+# first non-blank content line begins with a recognized Mermaid diagram-type keyword, and
+# no line in the block contains a raw semicolon inside a label context ([...], "...",
+# (...), or a |...| edge label) once known HTML entity escapes (#59;, #35;, #quot;, and any
+# #NNN; numeric entity) have been stripped first. Fence recognition (CA-019) is de-indented
+# the same way bin/_edm-lint-lib.sh's build_line_classes is, via the shared
+# plugins/edm/bin/edm-mermaid-rules.awk functions, so a ```mermaid fence nested under a
+# numbered list step or blockquote is recognized here exactly as it is there -- see
+# bin/tests/fixtures/mermaid/valid/v12-indented-fence.md.
+#
+# NOTE: the second -f argument's heredoc below must never contain a literal backtick
+# character. bash 3.2 mis-parses a backtick inside a quoted heredoc that is itself nested
+# inside a <(...) process substitution (confirmed empirically against this exact
+# construct) -- any inline comment describing a fence must spell it out in prose instead.
+_scan_mermaid_blocks() {
+  local file="$1"
+  # CA-472: cached program text instead of -f <(cat <<heredoc) -- the process-substitution form
+  # leaked ~2 pipe fds per call under bash 3.2, spinning the caller once the leaked fd number
+  # crossed macOS's /dev/fd ceiling (full diagnosis at _edm-lint-lib.sh's build_line_classes).
+  # Program body unchanged.
+  if [[ -z "${_SMB_PROG_CACHE:-}" ]]; then
+    _SMB_PROG_CACHE="$(cat "$MERMAID_RULES_AWK")"$'\n'"$(cat <<'AWK_MAIN'
+    BEGIN { in_block=0; first_line=1; bad=0; has_content=0; fence_len=0 }
+    {
+      sub(/\r$/, "")
+      if (in_block == 0) {
+        if (mermaid_fence_run_len($0) >= 3 && mermaid_fence_lang($0) == "mermaid") {
+          in_block = 1
+          fence_len = mermaid_fence_run_len($0)
+          first_line = 1
+          bad = 0
+          has_content = 0
+        }
+        next
+      }
+      if (mermaid_is_fence_close($0, fence_len)) {
+        if (has_content == 0) bad = 1
+        print (bad == 0 ? "OK" : "BAD")
+        in_block = 0
+        next
+      }
+      line = $0
+      if (line ~ /^[[:space:]]*$/) next
+      has_content = 1
+      if (first_line) {
+        first_line = 0
+        stripped = line
+        gsub(/^[[:space:]]+/, "", stripped)
+        if (stripped !~ /^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|journey|gitGraph|mindmap|timeline|quadrantChart|requirementDiagram|C4Context|C4Container|C4Component|C4Dynamic|C4Deployment)/) {
+          bad = 1
+        }
+      }
+      if (mermaid_is_violation(line)) bad = 1
+      next
+    }
+    END { if (in_block) print "BAD" }
+AWK_MAIN
+    )"
+  fi
+  awk "$_SMB_PROG_CACHE" "$file"
+}
+
+compute_dim3() {
+  local run_dir="$1"
+  local candidate files=() f
+  for candidate in planning.md srd.md architecture.md audit-srd.md; do
+    [[ -f "$run_dir/$candidate" ]] && files+=("$run_dir/$candidate")
+  done
+  if [[ ${#files[@]} -eq 0 ]]; then
+    D3_SCORE=""; D3_REASON="no run artifacts found to scan for mermaid blocks"; return
+  fi
+
+  local total_blocks=0 good_blocks=0 verdict
+  for f in "${files[@]}"; do
+    while IFS= read -r verdict; do
+      [[ -z "$verdict" ]] && continue
+      total_blocks=$((total_blocks + 1))
+      [[ "$verdict" == "OK" ]] && good_blocks=$((good_blocks + 1))
+    done < <(_scan_mermaid_blocks "$f")
+  done
+
+  if [[ "$total_blocks" -eq 0 ]]; then
+    D3_SCORE=""; D3_REASON="no mermaid blocks found in run artifacts"; return
+  fi
+  D3_SCORE="$(score_from_ratio "$good_blocks" "$total_blocks")"
+  D3_REASON=""
+}
+
+# ---- dimension 4: coverage-map-bidirectionality ------------------------------------------
+compute_dim4() {
+  local run_dir="$1"
+  local srd="$run_dir/srd.md"
+  if [[ ! -f "$srd" ]]; then
+    D4_SCORE=""; D4_REASON="no srd.md in run directory"; return
+  fi
+
+  local prefix
+  prefix="$(grep -oE '^#### [A-Za-z][A-Za-z0-9]*-[0-9]+' "$srd" 2>/dev/null | head -1 | sed -E 's/^#### //; s/-[0-9]+$//')"
+  if [[ -z "$prefix" ]]; then
+    D4_SCORE=""; D4_REASON="could not determine a requirement-ID prefix from srd.md"; return
+  fi
+
+  local srd_ids srd_count
+  srd_ids="$(grep -oE "^#### ${prefix}-[0-9]+" "$srd" 2>/dev/null | sed -E 's/^#### //' | sort -u)"
+  srd_count=$(printf '%s\n' "$srd_ids" | grep -c . || true)
+  if [[ "$srd_count" -eq 0 ]]; then
+    D4_SCORE=""; D4_REASON="no ${prefix}-NN requirement IDs found in srd.md"; return
+  fi
+
+  # Primary source: the ticket phase's own coverage map, when the run reached it.
+  # Fallback source (every wave-A eval run, which never reaches the ticket phase):
+  # srd.md <-> audit-srd.md ID bidirectionality -- every declared ID must appear in the
+  # audit, and every ID-shaped token the audit references must actually exist in srd.md
+  # (no fabricated/orphaned ID references), which is what makes this a *bidirectional*
+  # check rather than dimension 1's forward-only coverage-mention check.
+  local target_file
+  if [[ -f "$run_dir/tickets/README.md" ]]; then
+    target_file="$run_dir/tickets/README.md"
+  elif [[ -f "$run_dir/audit-srd.md" ]]; then
+    target_file="$run_dir/audit-srd.md"
+  else
+    D4_SCORE=""; D4_REASON="no ticket-phase coverage map and no audit-srd.md fallback found"; return
+  fi
+
+  local target_ids target_count
+  target_ids="$(grep -oE "${prefix}-[0-9]+" "$target_file" 2>/dev/null | sort -u)"
+  target_count=$(printf '%s\n' "$target_ids" | grep -c . || true)
+
+  local forward_hits=0 backward_hits=0 id
+  while IFS= read -r id; do
+    [[ -z "$id" ]] && continue
+    printf '%s\n' "$target_ids" | grep -qxF -- "$id" && forward_hits=$((forward_hits + 1))
+  done <<< "$srd_ids"
+  while IFS= read -r id; do
+    [[ -z "$id" ]] && continue
+    printf '%s\n' "$srd_ids" | grep -qxF -- "$id" && backward_hits=$((backward_hits + 1))
+  done <<< "$target_ids"
+
+  # CA-393: no denom-eq-0 skip here -- srd_count is already proven non-zero by the early return
+  # above (the "no PREFIX-NN requirement IDs found" case), and target_count is a grep -c result
+  # that is never negative, so denom is always >= 1 and this branch could never fire. The real
+  # edge case (target_count == 0, i.e. audit-srd.md exists but references zero PREFIX-NN IDs) is
+  # deliberately NOT a skip -- it scores a hard 0 over denom == srd_count, the same "a real zero
+  # is not an absence of data" reasoning G53/CA-286 codified for dimension 5.
+  local denom=$((srd_count + target_count))
+  D4_SCORE="$(score_from_ratio "$((forward_hits + backward_hits))" "$denom")"
+  D4_REASON=""
+}
+
+# ---- dimension 5: lens-jsonl-prose-agreement ---------------------------------------------
+compute_dim5() {
+  local run_dir="$1"
+  local jsonl_files=() f
+  while IFS= read -r f; do
+    [[ -n "$f" ]] && jsonl_files+=("$f")
+  done < <(find "$run_dir" -name 'lens-L*.jsonl' -type f 2>/dev/null | sort)
+
+  if [[ ${#jsonl_files[@]} -eq 0 ]]; then
+    # G53 (CA-286): the absence of lens-L*.jsonl alone does not distinguish "no code-audit round
+    # ran in this pass directory" from "a round ran and produced markdown reports but zero
+    # JSONL" (round 3 did exactly this) -- both previously scored identically (null/no-score).
+    # Count lens-L*.md separately before concluding "no round": a non-zero .md count with a zero
+    # .jsonl count means a round is present but its JSONL half was never produced, which is a
+    # real (zero) score, not an absence of data to score at all.
+    local md_files_count
+    md_files_count="$(find "$run_dir" -name 'lens-L*.md' -type f 2>/dev/null | wc -l | tr -d '[:space:]')"
+    if [[ "$md_files_count" -gt 0 ]]; then
+      D5_SCORE=0
+      D5_REASON="code-audit round present (${md_files_count} lens-L*.md) but zero lens-L*.jsonl -- JSONL half not produced"
+    else
+      D5_SCORE=""; D5_REASON="run does not include a code-audit round (no lens-L*.jsonl present)"
+    fi
+    return
+  fi
+
+  local total=0 sum=0
+  for f in "${jsonl_files[@]}"; do
+    local dir base lens_n md_file jsonl_count md_count line
+    dir="$(dirname "$f")"
+    base="$(basename "$f" .jsonl)"
+    lens_n="$(printf '%s' "$base" | sed -E 's/^lens-L//')"
+    # CA-088: lens_n is derived from a filename and interpolated raw into a grep -E pattern
+    # below. A run directory containing a file literally named "lens-L*.jsonl" (glob-shaped, not
+    # numeric) would otherwise yield lens_n="*", turning the pattern into "^\| *L*-[0-9]+ *\|"
+    # (zero-or-more "L") and corrupting the count. Skip any file whose lens number isn't a plain
+    # non-empty digit string rather than let it reach the interpolation.
+    case "$lens_n" in
+      ''|*[!0-9]*) continue ;;
+    esac
+    md_file="$dir/${base}.md"
+
+    jsonl_count=0
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      echo "$line" | jq -e . >/dev/null 2>&1 && jsonl_count=$((jsonl_count + 1))
+    done < "$f"
+
+    if [[ -f "$md_file" ]]; then
+      md_count=$(grep -cE "^\| *L${lens_n}-[0-9]+ *\|" "$md_file" 2>/dev/null || true)
+    else
+      md_count=0
+    fi
+    [[ -z "$md_count" ]] && md_count=0
+
+    local bigger smaller lens_score
+    if [[ "$md_count" -ge "$jsonl_count" ]]; then
+      bigger=$md_count; smaller=$jsonl_count
+    else
+      bigger=$jsonl_count; smaller=$md_count
+    fi
+    if [[ "$bigger" -eq 0 ]]; then
+      lens_score=100
+    else
+      lens_score=$(score_from_ratio "$smaller" "$bigger")
+    fi
+
+    total=$((total + 1))
+    sum=$(awk -v s="$sum" -v x="$lens_score" 'BEGIN{printf "%.4f", s + x}')
+  done
+
+  if [[ "$total" -eq 0 ]]; then
+    D5_SCORE=""
+    D5_REASON="no lens-L<N>.jsonl with a numeric lens number (every discovered file was skipped)"
+    return
+  fi
+
+  D5_SCORE="$(round_int "$(awk -v s="$sum" -v n="$total" 'BEGIN{printf "%.4f", s / n}')")"
+  D5_REASON=""
+}
+
+# ---- dimension 6: known-gap-recall (CA-462) ------------------------------------------------
+# The tiny-svc fixture ships six known, countable gaps in fixtures/tiny-svc/expected.json --
+# ground truth the fixture README always said this scorer consumes "rather than only a
+# self-consistency check", while no dimension actually read it: an SRD surfacing zero of the
+# six gaps scored identically to one surfacing all six, leaving the baseline comparison
+# tripwire structurally blind to the one regression class it exists to catch. This dimension
+# greps the run's srd.md for each gap's srd_match pattern (case-insensitive ERE; deliberately
+# loose recall heuristics -- see expected.json's own description) and scores
+# 100 * matched / total. Gated on run.json attributing the run to the tiny-svc fixture, so
+# pointing the scorer at an arbitrary directory (e.g. bin/tests/fixtures/code-audit/) skips
+# with a named reason instead of polluting the total with a meaningless zero.
+compute_dim6() {
+  local run_dir="$1"
+  local srd="$run_dir/srd.md"
+  local expected="$SCRIPT_DIR/fixtures/tiny-svc/expected.json"
+  local run_fixture
+  run_fixture="$(jq -r '.fixture // "unset"' "$run_dir/run.json" 2>/dev/null || echo "unset")"
+  if [[ "$run_fixture" != "tiny-svc" ]]; then
+    D6_SCORE=""; D6_REASON="run.json does not attribute this run to the tiny-svc fixture (fixture: ${run_fixture}) -- known-gap recall only applies to tiny-svc runs"; return
+  fi
+  if [[ ! -f "$expected" ]]; then
+    D6_SCORE=""; D6_REASON="ground-truth expected.json not found at fixtures/tiny-svc/"; return
+  fi
+  if [[ ! -f "$srd" ]]; then
+    D6_SCORE=""; D6_REASON="no srd.md in run directory"; return
+  fi
+
+  local gap_total=0 gap_matched=0 gap_pattern
+  while IFS= read -r gap_pattern; do
+    [[ -z "$gap_pattern" || "$gap_pattern" == "null" ]] && continue
+    gap_total=$((gap_total + 1))
+    grep -iqE "$gap_pattern" "$srd" 2>/dev/null && gap_matched=$((gap_matched + 1))
+  done < <(jq -r '.gaps[].srd_match' "$expected" 2>/dev/null)
+
+  if [[ "$gap_total" -eq 0 ]]; then
+    D6_SCORE=""; D6_REASON="expected.json carries no srd_match patterns (pre-1.1.0 fixture shape)"; return
+  fi
+  D6_SCORE="$(score_from_ratio "$gap_matched" "$gap_total")"
+  D6_REASON=""
+}
+
+# ---- JSON assembly -----------------------------------------------------------------------
+
+build_dims_json() {
+  local i=0 name score json="[" first=1
+  for name in "${DIM_NAMES[@]}"; do
+    score="${DIM_SCORES[$i]}"
+    [[ $first -eq 1 ]] || json="$json,"
+    first=0
+    if [[ -n "$score" ]]; then
+      json="$json{\"name\":\"$name\",\"score\":$score}"
+    else
+      json="$json{\"name\":\"$name\",\"score\":null}"
+    fi
+    i=$((i + 1))
+  done
+  json="$json]"
+  printf '%s' "$json"
+}
+
+build_skipped_json() {
+  local i=0 name reason json="[" first=1
+  for name in "${DIM_NAMES[@]}"; do
+    if [[ -z "${DIM_SCORES[$i]}" ]]; then
+      [[ $first -eq 1 ]] || json="$json,"
+      first=0
+      reason="${DIM_REASONS[$i]}"
+      json="$json{\"name\":\"$name\",\"reason\":$(jq -Rn --arg r "$reason" '$r')}"
+    fi
+    i=$((i + 1))
+  done
+  json="$json]"
+  printf '%s' "$json"
+}
+
+# ---- main scoring entry point -------------------------------------------------------------
+main_score() {
+  local run_dir="$1" out_file="${2:-}"
+  [[ -d "$run_dir" ]] || die "run directory not found: $run_dir"
+  run_dir="$(cd "$run_dir" && pwd)"
+
+  # CA-151/G57: refuse to deposit scores.json into a tracked fixture directory unless the
+  # caller explicitly named a scratch --out path. This tree has TWO tracked fixture roots --
+  # bin/tests/fixtures/code-audit/ (a committed, hand-authored fixture, not a real run
+  # directory; it has already collected an untracked scores.json once from a direct invocation
+  # against it) and evals/fixtures/tiny-svc/ (the frozen eval subject) -- so the guard matches
+  # any directory named "fixtures" rather than enumerating both individually. A real run
+  # directory is never named or nested under anything called "fixtures" (it lives under
+  # OUT_ROOT as <TS>_<git-sha>/, e.g. evals/runs/20260101T000000Z_abc1234/), so this cannot
+  # false-positive against one.
+  case "$run_dir" in
+    */fixtures/*|*/fixtures)
+      [[ -n "$out_file" ]] || die "refusing to write scores.json into a tracked fixture directory ($run_dir) -- pass an explicit --out <path> to a scratch location instead"
+      ;;
+  esac
+
+  local dest_file="${out_file:-$run_dir/scores.json}"
+
+  local run_json="$run_dir/run.json"
+  local run_id git_sha plugin_version complete complete_reason=""
+  if [[ -f "$run_json" ]]; then
+    run_id=$(jq -r '.run_id // empty' "$run_json" 2>/dev/null); [[ -n "$run_id" ]] || run_id="$(basename "$run_dir")"
+    git_sha=$(jq -r '.git_sha // empty' "$run_json" 2>/dev/null); [[ -n "$git_sha" ]] || git_sha="unknown"
+    plugin_version=$(jq -r '.plugin_version // empty' "$run_json" 2>/dev/null); [[ -n "$plugin_version" ]] || plugin_version="unknown"
+    # CA-064: an unparseable or zero-byte run.json makes this jq invocation fail, and both the
+    # command-substitution failure and a subsequently-empty/malformed $complete must resolve to
+    # "false" (incomplete/unknown), never "true" -- edm-compare-eval keys the partial-run
+    # handshake off this value, so coercing an unknown run.json to "true" would let a truncated
+    # run be compared against the baseline, exactly what the handshake exists to prevent.
+    complete=$(jq -r 'if .complete == false then "false" else "true" end' "$run_json" 2>/dev/null) || complete="false"
+    if [[ "$complete" != "true" && "$complete" != "false" ]]; then
+      complete="false"
+      complete_reason="run.json unparseable"
+    fi
+  else
+    # G23: an absent run.json is the same "incomplete/unknown" case as an unparseable one, not
+    # a green light -- a run directory with no run.json at all never actually finished, so
+    # scoring it complete:true would let it slip past edm-compare-eval's partial-run handshake
+    # the same way an unparseable manifest would if left uncoerced (CA-064 above).
+    run_id="$(basename "$run_dir")"
+    git_sha="unknown"
+    plugin_version="unknown"
+    complete="false"
+    complete_reason="run.json absent"
+  fi
+
+  compute_dim1 "$run_dir"
+  compute_dim2 "$run_dir"
+  compute_dim3 "$run_dir"
+  compute_dim4 "$run_dir"
+  compute_dim5 "$run_dir"
+  compute_dim6 "$run_dir"
+
+  DIM_SCORES=("$D1_SCORE" "$D2_SCORE" "$D3_SCORE" "$D4_SCORE" "$D5_SCORE" "$D6_SCORE")
+  DIM_REASONS=("$D1_REASON" "$D2_REASON" "$D3_REASON" "$D4_REASON" "$D5_REASON" "$D6_REASON")
+
+  # total = unweighted arithmetic mean of the non-null dimensions, / dimensions_scored
+  # (read from the data), rounded to one decimal place, computed in integer tenths first
+  # per the Technical Notes (jq's own float rounding is not reliable across every build).
+  local sum=0 n=0 s
+  for s in "${DIM_SCORES[@]}"; do
+    if [[ -n "$s" ]]; then
+      sum=$((sum + s))
+      n=$((n + 1))
+    fi
+  done
+
+  local total_json dimensions_scored
+  if [[ "$n" -eq 0 ]]; then
+    total_json="null"
+    dimensions_scored=0
+  else
+    local tenths
+    tenths=$(awk -v s="$sum" -v n="$n" 'BEGIN{ v=(s/n)*10; r=(v<0)?int(v-0.5):int(v+0.5); printf "%d", r }')
+    total_json="$(awk -v t="$tenths" 'BEGIN{printf "%.1f", t/10}')"
+    dimensions_scored=$n
+  fi
+
+  local dims_json skipped_json names_json
+  dims_json="$(build_dims_json)"
+  skipped_json="$(build_skipped_json)"
+  names_json="$(printf '%s\n' "${DIM_NAMES[@]}" | jq -R . | jq -s .)"
+
+  local output
+  output="$(jq -n \
+    --arg scorer_version "$SCORER_VERSION" \
+    --argjson dimension_names "$names_json" \
+    --argjson dimensions "$dims_json" \
+    --argjson dimensions_scored "$dimensions_scored" \
+    --argjson dimensions_skipped "$skipped_json" \
+    --arg total_raw "$total_json" \
+    --arg run_id "$run_id" \
+    --arg git_sha "$git_sha" \
+    --arg plugin_version "$plugin_version" \
+    --argjson complete "$complete" \
+    --arg complete_reason "$complete_reason" \
+    '{
+      scorer_version: $scorer_version,
+      dimension_names: $dimension_names,
+      dimensions: $dimensions,
+      dimensions_scored: $dimensions_scored,
+      dimensions_skipped: $dimensions_skipped,
+      total: ($total_raw | if . == "null" then null else tonumber end),
+      run_id: $run_id,
+      git_sha: $git_sha,
+      plugin_version: $plugin_version,
+      complete: $complete
+    } + (if $complete_reason == "" then {} else {complete_reason: $complete_reason} end)')"
+
+  printf '%s\n' "$output"
+  printf '%s\n' "$output" > "$dest_file"
+}
+
+# ---- comparison mode (AC4) -- never invoked by main_score, never automatic -----------------
+# The default scoring mode above performs no comparison of any kind (AC5). This mode exists
+# so the exact "refuse on scorer_version or dimensions_scored mismatch" behaviour AC4
+# requires is directly testable; the actual comparison against a baseline is
+# bin/edm-compare-eval's job (EDMV3-T39, srd.md EDMV3-52).
+#
+# CA-383: this used to be a second, hand-rolled comparer that had diverged from
+# bin/edm-compare-eval (different exit codes, missing the complete:false guard, different
+# sentinels) -- bin/edm-compare-eval is now the sole comparison implementation and this is a
+# thin delegation to it, so the two can never diverge again. edm-compare-eval refuses a
+# candidate whose `complete` field is not exactly `true` BEFORE it reaches the
+# scorer_version/dimensions_scored checks this function exists to exercise; a scores.json
+# produced by this scorer's own default mode always sets `complete`, but a hand-built fixture
+# (as used by this repo's own --compare test coverage) may not, so `complete: true` is injected
+# into temp copies of both inputs before delegating rather than assumed present on the
+# originals -- the originals themselves are never mutated. `edm-compare-eval`'s CANDIDATE is the
+# first argument and its BASELINE is the second; passed as ($b, $a) so a's role stays "baseline"
+# and b's role stays "candidate", matching the historical `--compare <a> <b>` = "compare b
+# against a" reading this function's callers expect.
+cmd_compare() {
+  local a="$1" b="$2"
+  [[ -f "$a" ]] || die "compare: file not found: $a"
+  [[ -f "$b" ]] || die "compare: file not found: $b"
+
+  # CA-449: TMPDIR-honoring templates (a bare `mktemp` resolves _CS_DARWIN_USER_TEMP_DIR before
+  # TMPDIR on macOS, the same class as G20/CA-348), checked creation, and a split-signal cleanup
+  # trap -- the tail-position rm alone leaked both staging files on INT/TERM/HUP delivered while
+  # the delegate was running (the longest-lived statement between creation and removal).
+  local rc
+  _CMP_TA="$(mktemp "${TMPDIR:-/tmp}/edm-score-compare-a.XXXXXX")" || die "compare: mktemp failed"
+  # CA-481(b): first-stage trap armed immediately, covering only $_CMP_TA -- without it, a signal
+  # delivered in the window between this mktemp and the second one below (the die path is already
+  # covered by the inline `rm -f "$_CMP_TA"` two lines down) leaked the first staging file
+  # unconditionally, the exact gap edm-lint-artifacts' own first-stage trap already closed for
+  # the identical two-mktemp shape. Four-arm form from the start (CA-482's class: a single body on all four
+  # signals cleans up and RESUMES on INT/TERM/HUP instead of exiting with a signal-shaped code).
+  # Replaced by the two-file trap once both files exist.
+  trap 'rm -f "$_CMP_TA"' EXIT
+  trap 'rm -f "$_CMP_TA"; exit 130' INT
+  trap 'rm -f "$_CMP_TA"; exit 143' TERM
+  trap 'rm -f "$_CMP_TA"; exit 129' HUP
+  _CMP_TB="$(mktemp "${TMPDIR:-/tmp}/edm-score-compare-b.XXXXXX")" || { rm -f "$_CMP_TA"; die "compare: mktemp failed"; }
+  trap 'rm -f "$_CMP_TA" "$_CMP_TB"' EXIT
+  trap 'rm -f "$_CMP_TA" "$_CMP_TB"; exit 130' INT
+  trap 'rm -f "$_CMP_TA" "$_CMP_TB"; exit 143' TERM
+  trap 'rm -f "$_CMP_TA" "$_CMP_TB"; exit 129' HUP
+  jq '. + {complete: true}' "$a" > "$_CMP_TA" || die "compare: failed to stage $a"
+  jq '. + {complete: true}' "$b" > "$_CMP_TB" || die "compare: failed to stage $b"
+  "${SCRIPT_DIR}/../bin/edm-compare-eval" "$_CMP_TB" "$_CMP_TA"
+  rc=$?
+  return $rc
+}
+
+# ---- dispatch ------------------------------------------------------------------------------
+case "${1:-}" in
+  -h|--help|help)
+    usage
+    exit 0
+    ;;
+  --describe)
+    describe
+    exit 0
+    ;;
+  --compare)
+    [[ $# -eq 3 ]] || die "usage: score-artifacts.sh --compare <a.json> <b.json>"
+    cmd_compare "$2" "$3"
+    exit $?
+    ;;
+  "")
+    die "usage: score-artifacts.sh <run-dir> [--out FILE] | --describe | --compare <a.json> <b.json>"
+    ;;
+  *)
+    RUN_DIR_ARG="$1"
+    OUT_FILE_ARG=""
+    shift
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --out)
+          [[ $# -ge 2 ]] || die "--out requires a value"
+          OUT_FILE_ARG="$2"
+          shift 2
+          ;;
+        *)
+          die "unexpected extra argument(s): $1"
+          ;;
+      esac
+    done
+    main_score "$RUN_DIR_ARG" "$OUT_FILE_ARG"
+    exit 0
+    ;;
+esac

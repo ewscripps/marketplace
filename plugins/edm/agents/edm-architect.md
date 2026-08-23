@@ -4,7 +4,7 @@ description: |
   Use this agent during EDM Phase 2 (SRD Creation) to write the Target Architecture document to `architecture.md` in the state-derived initiative directory: Mermaid diagrams (system context + sequence), component boundaries with file paths, data flow descriptions, integration patterns, and architectural risk analysis -- all grounded in the existing codebase. The SRD's Section 5 references this file rather than duplicating content.
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, Write, Edit, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
-effort: max
+effort: high
 maxTurns: 50
 color: blue
 ---
@@ -28,6 +28,8 @@ Produce the Target Architecture section for an SRD. You receive: the initiative 
    - Sequence diagram for the primary happy path
    - Data flow diagram if data transformation is significant
    - Validate syntax -- diagrams must render without errors
+   - Follow `CLAUDE.md Sec."Mermaid diagram conventions"` for label text -- a raw semicolon in a
+     node, edge or message label is a violation
 
 4. **Data Flow** -- Trace the data from entry point through all transformations to output. Include error paths.
 
@@ -83,4 +85,12 @@ File structure of `architecture.md`:
 ```
 
 Keep all prose markers ASCII-only (no Unicode arrows or glyphs in text). Mermaid fenced blocks are
-permitted -- the ASCII constraint applies to prose, not to standard Mermaid syntax keywords.
+permitted -- the ASCII constraint applies to prose, not to standard Mermaid syntax keywords. Follow
+`CLAUDE.md Sec."Mermaid diagram conventions"` for label escaping inside those fences.
+
+- **Length**: match the length of the document to what the task needs -- cover the substance; do not pad with filler sections, redundant summaries, or boilerplate.
+
+## When this does NOT apply
+
+This agent always applies once Phase 2 spawns it to write `architecture.md`; it has no
+conditional skip.

@@ -5,20 +5,31 @@ disable-model-invocation: true
 model: opus
 effort: max
 argument-hint: <PREFIX>
-allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
+allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite, AskUserQuestion
 ---
 
 # EDM Phase 5: Ticket Pack Audit
 
 **Arguments**: $ARGUMENTS
 
-- **Input**: Ticket pack at `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/`
+- **Input**: Ticket pack at `${INIT_DIR}/${user_config.ticket_pack_dirname}/`
 - **Output**: Audit report at the same directory's `audit.md` + remediated ticket pack
+
+**Plugin asset note**: every `docs/...` reference in this skill is relative to the EDM plugin root (`plugins/edm/` in this repository, or the installed plugin root in cache). Resolve that root before reading or grepping those files; never assume the current working directory is the plugin root.
+
+## Step 0 -- Gate and Branch Preflight
+
+Before Step 1, run the preflight per `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`,
+using `<gated-command>` = `audit-tickets` and `<phase-num>` = `5`.
 
 ## Operational Orchestration
 
 1. Parse `{PREFIX}` from `$ARGUMENTS`.
-2. `edm-state phase-start <PREFIX> 5`
+2. `edm-state phase-start <PREFIX> 5`. Resolve the initiative directory from state (handles both
+   flat and product-scoped layouts):
+   ```bash
+   INIT_DIR="$(edm-state resolve-dir <PREFIX>)"
+   ```
 3. **Version-drift check**: Read `srd_version` from state:
    ```bash
    edm-state get <PREFIX> | jq -r '.srd_version // "0.0.0"'
@@ -30,14 +41,23 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
    | Ticket pack was generated from an outdated SRD. Re-run /edm:tickets or accept with rationale.
    ```
 4. **Two-lane mandatory spawn** -- spawn exactly 2 `edm-ticket-auditor` agents in parallel (never serial, never merged into one agent):
-   - **Lane 1 (structural)** -- dimensions 1-4: coverage, sizing (using shared legend from `docs/templates/ticket-size-legend.md`), dependencies, version alignment
+   - **Lane 1 (structural)** -- dimensions 1-4: coverage, sizing (using the plugin-root-relative shared legend at `docs/templates/ticket-size-legend.md`), dependencies, version alignment
    - **Lane 2 (content-quality)** -- dimensions 5-8: AC quality, diagram correctness, consistency, version alignment overlap
-5. Compile findings into `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/audit.md`. Tag each finding with its lane (`[structural]` or `[content-quality]`). De-duplicate findings that both lanes surface (deduplicated findings appear once).
+5. Compile findings into `${INIT_DIR}/${user_config.ticket_pack_dirname}/audit.md`. Tag each finding with its lane (`[structural]` or `[content-quality]`). De-duplicate findings that both lanes surface (deduplicated findings appear once).
 
 6. **Remediate** all coverage gaps, decompose XL tickets, fix dependency declarations, improve vague AC, fix consistency mismatches.
 7. `edm-state phase-complete <PREFIX> 5`
-8. Present **HITL Gate 3** (see below) and STOP for sign-off.
-9. On approval: `edm-state approve-gate <PREFIX> 3`.
+7a. **Auto-update patterns** -- append novel ticket-audit findings:
+    ```bash
+    edm-state update-patterns <PREFIX> ticket
+    ```
+8. Present **HITL Gate 3** (see below, per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`) and STOP for sign-off.
+9. On approval: `edm-state approve-gate <PREFIX> 3`. Then append Gate 3 approval decisions into `decisions.md` in the initiative directory:
+   ```
+   | Gate 3 | <ticket-pack decision> | <chosen> | <rationale> | {date} |
+   ```
+   If `compliance_enabled=true`, present **Gate 3.5**
+   (below) before proceeding to Phase 6; otherwise proceed directly to `/edm:implement <PREFIX>`.
 
 ## 8 Audit Dimensions
 
@@ -62,6 +82,7 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 - Mermaid diagram syntactically valid?
 - Diagram matches declared Depends On values?
 - Every node colored?
+- Follows `CLAUDE.md Sec."Mermaid diagram conventions"` for label text?
 
 ### 5. Acceptance Criteria Quality
 - Every AC specific and testable?
@@ -73,6 +94,8 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 - All Mermaid blocks valid?
 - All nodes colored and labeled?
 - No orphan nodes?
+- Per `CLAUDE.md Sec."Mermaid diagram conventions"`: a raw `;` inside `[...]`, `(...)`, `{...}`,
+  `|...|`, `"..."`, or after the `:` in a sequenceDiagram message is a violation -- flag it.
 
 ### 7. Consistency
 - Ticket IDs in README tables match IDs in epic files?
@@ -106,15 +129,17 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 
 ```
 Agent: edm-ticket-auditor (Lane 1 -- structural)
-Prompt: "Audit the ticket pack at ${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/.
-         Cross-reference against SRD at ${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}.
+Prompt: "Audit the ticket pack at ${INIT_DIR}/${user_config.ticket_pack_dirname}/.
+         Initiative directory (INIT_DIR): ${INIT_DIR} -- use this value; do not reconstruct it.
+         Cross-reference against SRD at ${INIT_DIR}/${user_config.srd_filename}.
          You are the STRUCTURAL lane (dimensions 1-4): coverage, sizing, dependencies, version alignment.
-         For sizing checks, read the shared size legend at docs/templates/ticket-size-legend.md.
+         For sizing checks, read the plugin-root-relative shared size legend at docs/templates/ticket-size-legend.md.
          Tag all findings: [structural]. Report every gap found."
 
 Agent: edm-ticket-auditor (Lane 2 -- content-quality)
-Prompt: "Audit the ticket pack at ${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/.
-         Cross-reference against SRD at ${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}.
+Prompt: "Audit the ticket pack at ${INIT_DIR}/${user_config.ticket_pack_dirname}/.
+         Initiative directory (INIT_DIR): ${INIT_DIR} -- use this value; do not reconstruct it.
+         Cross-reference against SRD at ${INIT_DIR}/${user_config.srd_filename}.
          You are the CONTENT-QUALITY lane (dimensions 5-8): AC quality, diagram correctness,
          consistency, version alignment.
          Tag all findings: [content-quality]. Report every gap found."
@@ -124,6 +149,77 @@ Prompt: "Audit the ticket pack at ${user_config.srd_root}/{PREFIX}/${user_config
 
 After resolving all findings:
 1. Summarize: total ticket count by epic, size distribution (XS/S/M/L counts), critical path summary, estimated total effort, SRD coverage (N/N = 100%), version alignment confirmed.
-2. Ask: *"Do you approve this ticket pack and want to proceed to implementation, or do you have changes?"*
-3. **STOP and WAIT** -- do not proceed to Phase 6 autonomously.
-4. On approval: `edm-state approve-gate <PREFIX> 3`. Next: `/edm:implement <PREFIX>`.
+1a. **Pending pattern entries**: derive them and fold their curation into this same gate round --
+   see Sec."Pending Pattern Entries (gate-time curation)" below. When none are pending, the gate
+   presentation is exactly as it would otherwise be.
+2. Present the gate per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` -- header `"Gate 3"`, options **Approve** / **Revise** / **No-Go**. **STOP and WAIT** for the response.
+3. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 3`, then append:
+   ```
+   | Gate 3 | <ticket-pack decision> | <chosen> | <rationale> | {date} |
+   ```
+   to `decisions.md` in the initiative directory. If `compliance_enabled=true`, present Gate 3.5
+   (below) next; otherwise the next command is `/edm:implement <PREFIX>`.
+   On **Revise**: rework the flagged tickets and re-present the gate.
+   On **No-Go**: summarize the blockers and stop.
+
+## Gate 3.5 -- Compliance Review (when compliance_enabled=true)
+
+Insert this gate between Gate 3 (above) and Phase 6, only when `compliance_enabled=true`:
+
+1. Present a compliance review gate via `AskUserQuestion` (header `"Gate 3.5"`):
+   - **Approve** -- regulatory traceability is verified, proceed to Phase 6
+   - **Revise** -- specific tickets need compliance coverage rework (user will describe)
+   - **No-Go** -- compliance gap is too large; re-plan
+2. Record the gate: `edm-state approve-gate <PREFIX> 3.5` (only on explicit Approve).
+3. Follows `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`.
+
+The ticket pack tables include regulatory-traceability columns (`Regulation | Control | Evidence`) when
+`compliance_enabled=true` (see `skills/tickets/SKILL.md`).
+
+## Pending Pattern Entries (gate-time curation)
+
+`edm-state update-patterns` (step 7a above) appends novel findings to the pattern library as stubs,
+each carrying a `status: pending-review` line plus `source:`, `audit-type:` and `date:` provenance
+(`docs/audit-patterns/README.md Sec."Append Schema"`). A stub nobody is ever asked about is a stub
+forever, so Gate 3 -- one the human already stops at -- is where the ask happens.
+
+**Derive the list at presentation time with the `Grep` tool, never from state:** search the
+plugin-root-relative path `docs/audit-patterns/*.md` for `status: pending-review`.
+
+Nothing about pending entries is mirrored in `.edm-state.json`. The pattern documents are the only
+record, so an entry curated by hand between gates simply stops appearing here.
+
+**No matches: show nothing.** No heading, no "0 pending entries" line, no mention of curation
+anywhere in the gate summary. Absence is authoritative.
+
+**Matches: add one line per entry** to the gate summary, reading the entry's `###` heading and its
+`source:` line out of the file each match came from:
+
+```
+Pending pattern entries
+- {entry title} (source: {source-prefix}) -- landed in plugin-root-relative docs/audit-patterns/{target-document}.md
+```
+
+Then carry the curation questions **in the same `AskUserQuestion` call as the Gate 3 question** --
+never a second round. Four questions is that tool's ceiling, so at most three entries are curated
+per gate; when more are pending, take the three oldest by `date:` and leave the rest for the next
+gate. Each per-entry question uses a short header (`"Pattern 1"`, `"Pattern 2"`, `"Pattern 3"` --
+within the PROTOCOL's header limit), names the entry and its target document in its body, and
+offers exactly these four options:
+
+- **Keep** -- delete the entry's `status: pending-review` line, and only that line. Heading,
+  provenance lines and body stay exactly as written.
+- **Edit** -- take the human's revised one-paragraph description, replace the entry's body with it,
+  then delete the `status: pending-review` line.
+- **Discard** -- delete the entry outright: its `###` heading, its provenance lines and its body.
+- **Leave pending** -- change nothing. The entry keeps its marker and is offered again at the next
+  gate.
+
+Apply the chosen edits with `Edit` after the response comes back and before running
+`edm-state approve-gate`. Curation is one-way: once the marker is gone the entry is an ordinary
+library entry, and a later `update-patterns` never re-marks it (de-duplication on the entry title
+blocks the re-append).
+
+Curation carries no approval weight. The Gate 3 question itself follows
+`` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` `` unchanged, and leaving every entry pending
+has no effect on **Approve** / **Revise** / **No-Go**.

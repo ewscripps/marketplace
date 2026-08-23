@@ -5,7 +5,7 @@ disable-model-invocation: true
 model: opus
 effort: max
 argument-hint: <PREFIX> [files-or-branch-scope] [--lenses L1,L3]
-allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(mkdir *), Bash(date *), Glob, Grep, Task, TodoWrite
+allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(mkdir *), Bash(date *), Glob, Grep, Task, TodoWrite, AskUserQuestion
 ---
 
 # EDM Code Audit: Exhaustive Multi-Round QA
@@ -15,11 +15,20 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(mkdir *), Bash(date *)
 - **Input**: An implementation (files, commits, branch) plus the initiative's ticket pack and SRD
 - **Output**:
   - Per-round report: `<initiative-dir>/code-audit/pass-{N}_{YYYY-MM-DD}/REMEDIATION.md`
-  - Persistent findings ledger: `<initiative-dir>/code-audit/findings-ledger.md` (spans all rounds)
+  - Persistent findings ledger: `<initiative-dir>/code-audit/findings-ledger.jsonl` (authoritative,
+    spans all rounds); `findings-ledger.md` is deterministically rendered from it by
+    `edm-state render-ledger` (CA-166)
+
+**Plugin asset note**: every `docs/...` reference in this skill is relative to the EDM plugin root (`plugins/edm/` in this repository, or the installed plugin root in cache). Resolve that root before reading or grepping those files; never assume the current working directory is the plugin root.
 
 A single auditor misses things because it gravitates toward familiar patterns. Eleven auditors with **orthogonal
 mandates** -- plus a synthesizer -- catch what a single pass misses. Multiple rounds use a persistent ledger to
 track findings across passes and determine convergence.
+
+## Step 0 -- Gate and Branch Preflight
+
+Before Step 1, run the preflight per `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`,
+using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
 
 ## Operational Orchestration
 
@@ -28,6 +37,9 @@ track findings across passes and determine convergence.
    - Validate lens tokens against L1-L11; reject unknown tokens with a clear message.
    - If `--lenses` is omitted, run all 11 (full round).
    - Set `LENS_SET` = the list to run; set `ROUND_TYPE` = `full` (11 lenses) or `partial` (subset).
+   - Set `LENS_SET_CSV` = `LENS_SET` joined with commas (e.g. `L1,L9,L11`, or all eleven on a full
+     round). Step 4 **must** pass this to `audit-round-start`, or the round is recorded as `full`
+     whatever you actually ran, and the never-convergent guarantee below silently stops applying.
 2. Determine scope: files / commits / branch. Read critical files yourself first to write sharp agent prompts.
 3. Resolve the initiative directory from state (handles both flat and product-scoped layouts):
    ```bash
@@ -35,40 +47,205 @@ track findings across passes and determine convergence.
    ```
    - SRD: `${INIT_DIR}/${user_config.srd_filename}`
    - Ticket pack: `${INIT_DIR}/${user_config.ticket_pack_dirname}/`
-   - Ledger: `${INIT_DIR}/code-audit/findings-ledger.md`  (canonical cross-round path)
-4. Obtain the pass number: `N=$(edm-state audit-round-start <PREFIX> code)`
+   - Ledger: `${INIT_DIR}/code-audit/findings-ledger.jsonl`  (authoritative cross-round path;
+     `findings-ledger.md` is its rendered copy, written separately by `edm-state render-ledger`)
+4. Obtain the pass number, passing the lens set so the round records what actually ran:
+   ```bash
+   N=$(edm-state audit-round-start <PREFIX> code --lenses "${LENS_SET_CSV}")
+   ```
+   `--lenses` is not optional here even on a full round. `cmd_audit_round_start` derives
+   `round_type` from the set -- eleven members means `full`, fewer means `partial` -- and omitting
+   the flag makes it record `full` with an empty `lenses` array regardless of what was run. A smoke
+   round would then satisfy `audit-converged` and could close the initiative, which is exactly what
+   step 10's never-convergent rule exists to prevent. Passing all eleven explicitly on a full round
+   is deliberate and self-documenting.
 5. Set `OUTPUT_DIR="${INIT_DIR}/code-audit/pass-${N}_$(date +%Y-%m-%d)/"` and `mkdir -p "${OUTPUT_DIR}"`
-6. Read the prior `findings-ledger.md` if it exists (prior round context for the synthesizer).
+6. Read the prior `findings-ledger.jsonl` if it exists (or the legacy `findings-ledger.md` if
+   only that exists) -- prior round context for the synthesizer, and for briefing each lens
+   agent in step 7 with its own prior-round open findings. Reading the JSONL here (not the
+   markdown render) matters when a round was interrupted before step 9a's `render-ledger` call
+   in a *previous* round: the JSONL is always current, the markdown render can be stale (CA-166).
 7. **Launch lens agents in parallel** for every lens in `LENS_SET` (single message, multiple Task calls).
    Each lens:
-   - Writes its raw report to `${OUTPUT_DIR}/lens-L{N}.md`
+   - Writes its raw report to `${OUTPUT_DIR}/lens-L{N}.md` and `${OUTPUT_DIR}/lens-L{N}.jsonl`
    - Receives the relevant prior-round open findings from the ledger (filtered to its lens) so it can confirm fixes or re-flag
+   - Its Task prompt is the "Lens Agent Launch Template" below, copied **verbatim** -- every line,
+     including the JSONL schema line and the CA-130 fallback clause, is literal text that ships in
+     the delivered prompt. Do not summarize, paraphrase, or drop any line of the template when
+     constructing the actual Task call; the schema and fallback live inside the template's own
+     fenced body precisely so they travel with the interpolated prompt rather than being read as
+     prose about the template.
 8. Write `${OUTPUT_DIR}/lenses-run.txt` -- one lens ID per line (e.g., `L1`, `L2`, ... for a full round, or `L1`, `L3` for a partial). Add a `Round type: full` or `Round type: partial` header line.
+8a. **Checked precondition -- do not proceed to step 9 until it holds**: `Glob`
+    `${OUTPUT_DIR}/lens-L*.jsonl` and count the matches. Compare that count against `|LENS_SET|`
+    (the number of lenses actually run this round, e.g. 11 on a full round). If the counts are
+    equal, proceed to the content check below. If the counts differ, **refuse to proceed** and
+    name, by lens ID, every member of `LENS_SET` whose `${OUTPUT_DIR}/lens-L{N}.jsonl` is absent
+    from the Glob result.
+    For each named lens, check whether it returned its findings as text without writing either
+    file -- the same stale-plugin-cache issue as the missing `## JSONL Line Format` section,
+    decisions.md D22/CA-130 (its delivered agent definition lacked a `Write` tool this round). If
+    so, YOU, the orchestrator running this skill, must persist BOTH halves from the returned text:
+    write the missing `lens-L{N}.md` AND the missing `lens-L{N}.jsonl` yourself, using the schema
+    in the launch template above. Never persist only the `.md` half and proceed; a lens with zero
+    corresponding JSONL is a blocking gap, not a degraded-but-acceptable result. After persisting
+    any missing halves, re-run the Glob-and-count check; only proceed to the content check below
+    once the count equals `|LENS_SET|`.
+
+    **Content check (CA-193, fifth recurrence)**: the count check above cannot distinguish eleven
+    correctly-schema'd files from eleven files carrying an invented schema -- a count match is
+    necessary but not sufficient. For every `${OUTPUT_DIR}/lens-L{N}.jsonl` file, read each line
+    and confirm it carries the lens schema's keys -- `schema`, `lens`, `sev` and `status` present,
+    and `id` literally `null` -- never the findings-ledger schema's keys (`lenses` (plural),
+    `component`, `raised_round`), which is a different, larger schema the synthesizer assigns
+    later and no lens ever produces. If any line carries ledger-shaped keys instead of
+    lens-shaped keys, or is missing any of `schema`/`lens`/`sev`/`status`, or the file is EMPTY
+    (zero lines -- an empty file vacuously passes a per-line check but is an unlanded artifact,
+    CA-471), **refuse to proceed**:
+    name the offending lens and line, and re-deliver that lens's launch template (below)
+    verbatim -- the schema line and the CA-130 fallback clause travel inside the template's own
+    fence precisely so a lens producing the wrong shape can be corrected by re-sending the same
+    unabridged prompt, not by hand-patching its output. Only proceed to step 9 once every
+    `lens-L{N}.jsonl` file passes this content check.
+8b. **Record tooling degradation, if any (CA-388)**. If a lens agent stalled and had to be
+    resumed before it produced usable output, or its final report ships an explicit
+    scope-truncation caveat (e.g. "covered only ~30% of X" or "skipped Y entirely"), record it in
+    `${OUTPUT_DIR}/tooling-notes.md`: one line per affected lens naming the lens ID, its stall
+    count for this round, and a one-sentence quote or paraphrase of any truncation caveat it
+    shipped. Write the file only when there is something to record -- a round where every lens
+    produced clean output on the first attempt writes nothing. `lenses-run.txt` stays exactly what
+    it is today (the lens set and round type, consumed structurally by the synthesizer and by
+    `wave7-smoke.sh`'s T24 AC0); this is a separate, additive file so degraded delivery is
+    measurable round over round rather than lost the moment the round's own transcript scrolls
+    away. Stabilizing lens-agent delivery itself is out of scope here -- that fix is owned outside
+    this repository (findings-ledger.jsonl CA-130, status `noted`) -- this step only makes the
+    degradation countable.
 9. **Spawn `edm-audit-synthesizer`**. It:
    - Reads the lens reports in `${OUTPUT_DIR}/`
-   - Reads the prior `findings-ledger.md` (if present)
-   - Merges findings: assigns stable IDs to new findings, marks prior-round findings as `fixed` if absent, re-opens any that reappear
-   - Writes the updated `findings-ledger.md` to `${INIT_DIR}/code-audit/findings-ledger.md`
+   - Reads the prior `findings-ledger.jsonl` (or the legacy `findings-ledger.md` if only that exists)
+   - Merges findings: assigns stable CA-NNN IDs to new findings, marks prior-round findings as `fixed` if absent, re-opens any that reappear, and ranks by confidence rather than discarding single-lens findings
+   - Writes the updated `findings-ledger.jsonl` to `${INIT_DIR}/code-audit/findings-ledger.jsonl` -- the authoritative record (it does not write `findings-ledger.md`; that file is rendered separately, deterministically, by `edm-state render-ledger`)
    - Writes `${OUTPUT_DIR}/REMEDIATION.md` for this round
    - Marks the round as `partial` (non-convergent) in REMEDIATION.md if `ROUND_TYPE=partial`
-10. **Convergence check** (full rounds only -- partial rounds are never convergent):
-    - Read `findings-ledger.md`: count open P0 and P1 findings introduced or surviving in this round
-    - If **zero open P0/P1 findings**: convergence reached ->
-      1. `edm-state set <PREFIX> code_audit_converged true`
-      2. **Add a closure note** to the top of `${OUTPUT_DIR}/REMEDIATION.md` (the current round's file):
-         ```markdown
-         ## Post-Remediation Closure ({YYYY-MM-DD})
-         All findings in this round resolved. Convergence reached {YYYY-MM-DD}.
-         The cross-round ledger at `code-audit/findings-ledger.md` is the authoritative record.
-         The original audit snapshot is preserved below.
-         ---
-         ```
-         This prevents a reviewer reading the round directory in isolation from seeing
-         "Convergence NOT reached" after all work is done.
-    - If any open P0/P1 findings: present the blocking set to the human before looping
-11. Read `REMEDIATION.md`. Present the HITL gate (summary below) and STOP for approval.
+9a. **Render the ledger, close the round, then update the pattern library** -- runs for every round
+    (full or partial), after the synthesizer returns and before any convergence approval is presented:
+    ```bash
+    edm-state render-ledger <PREFIX>
+    edm-state audit-round-complete <PREFIX> code
+    edm-state update-patterns <PREFIX> code
+    ```
+    `render-ledger` deterministically writes `findings-ledger.md` from the synthesizer's
+    authoritative `findings-ledger.jsonl`; `audit-round-complete` (EDMV3-T51) then records this
+    round's completion timestamp, duration, and token/cost totals, keyed by round number, so the
+    cost of an individual code-audit round is never invisible. Running `update-patterns` here makes
+    this round's pending entries available to the same Convergence gate instead of deferring them to
+    the next round. `update-patterns` harvests only headings whose title starts with a stable
+    finding ID (`CA-NNN` or `G{N}`) -- the Remediation Plan Format's structural headings carry no
+    ID and are never harvested (`docs/audit-patterns/README.md Sec."Append Schema"`). If it prints
+    a `WARNING` with `extraction_status=no-recognized-findings`, the synthesizer's REMEDIATION.md
+    departed from that format: fix the report, do not treat the run as a clean round.
+    `audit-round-complete` also runs the CA-471 completeness backstop: for every lens named in
+    `lenses-run.txt`, it verifies a non-empty, parseable `lens-L{N}.jsonl` landed in the pass
+    directory, and on any miss it warns naming the lenses and records the round as
+    `round_type=partial` -- so a round whose authoritative artifacts are missing can never
+    converge even if step 8a was skipped or bungled. That downgrade is IRREVERSIBLE for the round
+    it fires on (CA-471): `audit-round-complete` refuses a second completion of the same round
+    ("a round may be completed only once"), so persisting the missing halves afterwards does not
+    restore `round_type=full` and does not make that round convergent. If the warn fires, persist
+    the missing `lens-L{N}.jsonl` halves and record the miss in `tooling-notes.md` (step 8b) so
+    the evidence is not lost, then recover by running a WHOLE NEW round
+    (`audit-round-start` -> lenses -> synthesis -> `audit-round-complete`) whose lens JSONL all
+    lands; convergence reads the LATEST round's type, so only a fresh full round clears it. Never
+    proceed to the convergence gate on a downgraded round.
+10. **Convergence gate** (full rounds only -- partial rounds are never convergent). The order is always
+    **compute -> present -> approve -> record** -- the flag is never set as a side effect of computing it:
+    1. **Compute**: `edm-state audit-converged <PREFIX>` is the authority for this computation. Run it
+       and take its exit code as the verdict (`0` converged, `1` blocking findings remain or the latest
+       round was partial, `3` no `findings-ledger.jsonl` exists yet); it reads the JSONL ledger and names
+       every blocking finding by ID, severity and title. Read `findings-ledger.md` alongside it only for
+       the presentation counts the gate body quotes -- open `P0`, `P1`, `P2`, and `NOTED` findings
+       introduced or surviving in this round (call these `P0_COUNT`, `P1_COUNT`, `P2_COUNT`,
+       `NOTED_COUNT`). A round with zero open P0, P1 and P2 findings is clean; any open P0, P1 or P2
+       is the blocking set (`Sec."Severity Reference"` below). Do not treat P2 as non-blocking --
+       `BLOCKING_FILTER` in `bin/edm-state` includes it, so `audit-converged` will refuse a round
+       that a P0/P1-only reading would call clean.
+    2. **Present** the gate via `AskUserQuestion` -- before any state mutation, regardless of clean or blocked.
+       The option set depends on what's actually open (EDMV3-T68, "give the user the option to converge
+       once P0/P1 are clear"):
+        - Header: `"Convergence"`
+        - **Clean** (`P0_COUNT=0`, `P1_COUNT=0`, `P2_COUNT=0`): question body states the result, e.g.
+          *"Pass {N}: 0 P0, 0 P1, 0 P2, {NOTED_COUNT} NOTED findings open. Converge this round?"*
+          Options: **Approve** (record convergence now), **Revise** (address anything the human still
+          wants changed and re-run affected lenses before asking again), **No-Go** (stop; do not
+          record convergence).
+        - **P0 or P1 still open**: question body names the blocking set findings (P0/P1 first). Options:
+          **Approve** (attempts `edm-state approve-gate <PREFIX> code-audit`, which refuses -- P0/P1
+          are never waivable by any option here), **Revise**, **No-Go** -- unchanged from today.
+        - **P0/P1 clear but P2s remain** (`P0_COUNT=0`, `P1_COUNT=0`, `P2_COUNT>0`): this is the new
+          branch. Question body states: *"Pass {N}: 0 P0, 0 P1, {P2_COUNT} P2, {NOTED_COUNT} NOTED
+          findings open. P0/P1 are clear."* -- name the open P2 findings by ID. Options:
+          - **Converge now** -- accept the {P2_COUNT} open P2 finding(s) as documented debt and record
+            convergence immediately.
+          - **Fix low-hanging fruit first** -- remediate the P2 findings whose REMEDIATION.md
+            prescription is a single self-contained code change (one file, or a tightly-coupled pair;
+            no new test framework or scaffold needed), re-run `edm-state audit-converged <PREFIX>` for
+            an updated count, and re-present this same gate with the smaller remaining set. This is a
+            loop back to step 11/12 for that narrower subset only -- not every open P2, and not a new
+            lens round.
+          - **Keep fixing everything** -- treat every open P2 as blocking, same as today's default;
+            loop back to the remediation gate (step 11) and step 12 for the full set.
+          - **No-Go** -- stop; do not record convergence.
+        - If any pattern-library entries are pending review, this same `AskUserQuestion` call also
+          carries their curation questions -- see Sec."Pending Pattern Entries (gate-time curation)"
+          below. If none are pending, the presentation is exactly as described above.
+        - Follows `` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` `` -- only an explicit
+          **Approve** or **Converge now** selection records convergence.
+    3. **Approve** (and only on explicit **Approve**, clean or P0/P1-blocked case): run
+       `edm-state approve-gate <PREFIX> code-audit`.
+       **Converge now** (and only on explicit **Converge now**, the P0/P1-clear-P2s-remain case): run
+       `edm-state approve-gate <PREFIX> code-audit --accept-p2-debt`. This flag hard-refuses if any P0
+       or P1 is open (defense in depth -- the gate presentation above should never have offered this
+       option in that case) and otherwise records `code_audit_converged=true` plus debt metadata
+       (`code_audit_p2_debt_accepted`, `_count`, `_round`, `_accepted_at`, `_accepted_by`) -- the ledger
+       itself is left unchanged, so the accepted P2s still show as open findings; only the gate is
+       unblocked. `edm-state archive` later re-verifies P0/P1 are still clear and refuses if a newer
+       full audit round has completed since acceptance (the debt has gone stale -- re-run
+       `--accept-p2-debt` or fix the remaining findings first).
+    4. **Record**: immediately after Approve or Converge now, append the gate approval to
+       `decisions.md` in the initiative directory and add a closure note to the top of
+       `${OUTPUT_DIR}/REMEDIATION.md` (the current round's file):
+       ```
+       | Convergence | Pass {N} | Approve | {P0_COUNT} P0, {P1_COUNT} P1, {P2_COUNT} P2, {NOTED_COUNT} NOTED open at presentation; convergence approved | {date} |
+       ```
+       or, on **Converge now** with accepted debt:
+       ```
+       | Convergence | Pass {N} | Converge now (accept-p2-debt) | 0 P0, 0 P1, {P2_COUNT} P2 accepted as debt, {NOTED_COUNT} NOTED open at presentation; convergence approved with debt | {date} |
+       ```
+       ```markdown
+       ## Post-Remediation Closure ({YYYY-MM-DD})
+       All findings in this round resolved. Convergence reached {YYYY-MM-DD}.
+       The cross-round ledger at `code-audit/findings-ledger.jsonl` is the authoritative record;
+       `findings-ledger.md` is its deterministic render, produced by `edm-state render-ledger`.
+       The original audit snapshot is preserved below.
+       ---
+       ```
+       On **Converge now**, replace the first sentence with `{P2_COUNT} P2 finding(s) accepted as
+       documented debt; all P0/P1 findings resolved. Convergence reached {YYYY-MM-DD}.` so a reader
+       does not conclude every finding was fixed.
+       ASCII-only, like every other committed artifact this methodology produces (no em dashes,
+       no arrows, no smart quotes) -- `edm-lint-artifacts` class 2 enforces this at commit time.
+       This prevents a reviewer reading the round directory in isolation from seeing
+       "Convergence NOT reached" after all work is done.
+    - On **Fix low-hanging fruit first**: remediate the identified subset, re-run `edm-state
+      audit-converged <PREFIX>`, and re-present this gate (do not loop through the full
+      remediation-gate/step-11 cycle for findings outside that subset).
+    - On **Revise** or **Keep fixing everything**: no state mutation; loop back to the remediation
+      gate (step 11) and step 12.
+    - On **No-Go**: no state mutation; stop and summarize the blockers for the human.
+11. Read `REMEDIATION.md`. Present the remediation gate (see "Remediation Gate (Code Audit)" below) and STOP
+    for approval.
 12. On approval, remediate per the rollout order in the plan.
-13. After remediation, re-run affected lenses (use `--lenses` for targeted re-audit, or full round for convergence). Loop until convergence.
+13. After remediation, re-run affected lenses (use `--lenses` for targeted re-audit, or full round for convergence). Loop until the Convergence gate records Approve.
 
 ## The 11 Audit Lenses
 
@@ -86,7 +263,51 @@ track findings across passes and determine convergence.
 | `edm-audit-dry`          | L10: DRY violations, duplicate utilities, divergent parallel implementations |
 | `edm-audit-wiring`       | L11: Integration wiring (frontend<->API<->backend, dummy data, unused endpoints) |
 
+## Smoke Audit vs. Full Round
+
+A partial round is a sanctioned choice with a stated cost, not a shortcut taken quietly. There are
+exactly two paths:
+
+| Path | Command | When |
+|---|---|---|
+| **Smoke audit** (3 lenses) | `/edm:code-audit <PREFIX> --lenses L1,L9,L11` | The wave under audit is **10 tickets or fewer** AND the change **does not touch production behaviour** |
+| **Full round** (11 lenses) | `/edm:code-audit <PREFIX>` | Everything else, and **always** for a release candidate |
+
+Both conditions must hold to take the smoke path. Ticket count is the count of `{PREFIX}-T{NN}`
+tickets in the scope being audited this round, not the initiative total.
+
+"Touches production behaviour" is mechanical, not a judgment call. The change touches production
+behaviour if **any** of the following is true:
+
+1. It edits code that runs in a deployed environment -- application, service, scheduled job,
+   migration, or infrastructure definition -- rather than only tests, fixtures, docs, or
+   developer-only tooling.
+2. It changes a database schema, a migration, an API request/response contract, or a persisted
+   data format.
+3. It changes authentication, authorization, secret handling, or any network boundary.
+4. It changes a runtime default, timeout, retry policy, or the default value of a feature flag.
+
+If any one of the four holds, run the full eleven regardless of ticket count.
+
+L1, L9 and L11 are the smoke set because their misses are the ones review does not recover: a stub
+that returns a constant (L1), an AC that was never built (L9), and a UI wired to `MOCK_DATA` (L11)
+each pass every other lens cleanly.
+
+**A partial round is never convergent, so a smoke audit cannot close an initiative** --
+enforced by `edm-state audit-converged`, which refuses convergence when the latest recorded
+round's round type is `partial`. Reaching convergence always costs one full eleven-lens round; a
+smoke audit buys a faster answer between rounds, never the last one. Nothing about the
+partial-round machinery changes here: `ROUND_TYPE=partial` is still set in Operational
+Orchestration step 1, the `Round type: partial` header is still written into `lenses-run.txt` in
+step 8, and the synthesizer still marks the round non-convergent in `REMEDIATION.md` (step 9 and
+Sec."Synthesizer Phase").
+
 ## Lens Agent Launch Template
+
+Copy the fenced block below **verbatim** into each lens's Task prompt. Every line inside the
+fence -- including the JSONL schema line and the CA-130 fallback clause -- is literal text that
+must reach the delivered prompt unabridged; it is not a description of the prompt to write from
+memory.
 
 ```
 Agent: edm-audit-{lens-name}
@@ -95,11 +316,20 @@ Prompt: "You are auditing [scope] on lens [L#]: [Lens Name].
 Scope:
 - Files: [explicit file paths]
 - Context: [deployment env, tool versions, constraints]
-- Related docs: ${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}, ${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/
-- Output: write your raw report to ${OUTPUT_DIR}/lens-L{N}.md
+- Related docs: ${INIT_DIR}/${user_config.srd_filename}, ${INIT_DIR}/${user_config.ticket_pack_dirname}/
+- Output: write your raw report to ${OUTPUT_DIR}/lens-L{N}.md and ${OUTPUT_DIR}/lens-L{N}.jsonl
+- JSONL schema (one JSON object per line, every finding including NOTED):
+  `{"schema":1,"id":null,"lens":"L{N}","round":N,"round_type":"full|partial","sev":"P0|P1|P2|NOTED","confidence":"high|medium|low","file":"path","line":42,"title":"...","status":"open"}`
+  -- this literal token list is restated here so the schema is never resolvable ONLY by
+  reference. It must also match, verbatim, the schema documented in your own agent
+  definition's `## JSONL Line Format` section; if your delivered definition lacks that
+  section (a stale plugin cache -- decisions.md D22/CA-130), use the schema above as the
+  authoritative fallback rather than treating its absence as license to skip the JSONL file.
+  Do not use the findings-ledger schema here (`id` is null at the lens stage; the synthesizer
+  assigns the stable `CA-NNN` ledger ID later; that is a different, larger schema).
 
 Your mandate is ONLY [lens name]. Apply the False Alarm Filter before reporting.
-Write findings + 'Noted / Not Actionable' section to your assigned file."
+Write findings + 'Noted / Not Actionable' section to your markdown file, and emit the same actionable/noted findings to your JSONL file using that schema."
 ```
 
 ## False Alarm Filter
@@ -114,18 +344,31 @@ If yes to any -> record as "Noted / Not Actionable" with one-line rationale, do 
 
 ## Synthesizer Phase
 
-After all lens reports are written, spawn `edm-audit-synthesizer` with:
+**Gated on step 8a (CA-193)**: "after all lens reports are written" below means "after step 8a's
+Checked precondition -- both the count check and the content check -- holds for every
+`lens-L{N}.jsonl` file," not "as soon as any report exists." Do not spawn the synthesizer on the
+strength of this section alone; a reader who skips straight here and treats markdown-only reports
+as sufficient reproduces the exact CA-193 regression step 8a's content check exists to catch.
+
+After all lens reports are written (per step 8a, above), spawn `edm-audit-synthesizer` with:
 
 ```
 Agent: edm-audit-synthesizer
-Prompt: "Read the lens reports in ${OUTPUT_DIR}/. Read the prior findings ledger at
-         ${INIT_DIR}/code-audit/findings-ledger.md (if it exists).
-         Apply the second-pass False Alarm Filter. Deduplicate findings flagged by
-         multiple lenses (multi-lens = higher confidence).
+Prompt: "Read the lens reports (prose and JSONL) in ${OUTPUT_DIR}/, including
+         ${OUTPUT_DIR}/tooling-notes.md if it exists (CA-466: per-lens stall counts and
+         truncation caveats -- carry them into REMEDIATION.md's coverage caveat).
+         Read the prior findings
+         ledger at ${INIT_DIR}/code-audit/findings-ledger.jsonl (or the legacy
+         findings-ledger.md if only that exists).
+         Apply the second-pass False Alarm Filter, ranking by confidence and corroboration
+         rather than discarding single-lens findings (multi-lens = higher confidence; a
+         single-lens low-confidence finding is demoted to NOTED, never dropped).
+         Deduplicate findings flagged by multiple lenses.
          Merge findings with the ledger: assign stable IDs (CA-001, CA-002, ...) to new
          findings; mark prior open findings as 'fixed' (resolved_round = N) if they no
          longer appear; re-open any that reappear under their original ID.
-         Write the updated ledger to ${INIT_DIR}/code-audit/findings-ledger.md.
+         Write the updated ledger to ${INIT_DIR}/code-audit/findings-ledger.jsonl -- the
+         authoritative record. Do not write findings-ledger.md yourself.
          Write the consolidated remediation plan to ${OUTPUT_DIR}/REMEDIATION.md.
          If this is a partial round (fewer than 11 lenses), note 'Round type: partial'
          in REMEDIATION.md -- this round cannot satisfy the convergence gate."
@@ -133,26 +376,25 @@ Prompt: "Read the lens reports in ${OUTPUT_DIR}/. Read the prior findings ledger
 
 Synthesizer responsibilities:
 
-- Apply second-pass filter (intentional behavior, pre-existing issue, documented trade-off, multi-lens corroboration)
+- Apply second-pass filter (intentional behavior, pre-existing issue, documented trade-off), ranking by confidence and corroboration rather than discarding single-lens findings
 - Deduplicate (same issue flagged by L1 and L4 -> one finding, higher confidence)
 - Severity-rank using canonical P0/P1/P2/NOTED scale (NOT legacy P1/P2/P3)
 - Assign stable CA-NNN IDs and merge with prior-round ledger
 - Suggest rollout order (which fixes first, which can batch)
-- Write ledger to `${INIT_DIR}/code-audit/findings-ledger.md`
+- Write the authoritative ledger to `${INIT_DIR}/code-audit/findings-ledger.jsonl` (never `findings-ledger.md` directly -- `edm-state render-ledger` renders that file)
 - Write round report to `${OUTPUT_DIR}/REMEDIATION.md`
 
 ## Severity Reference
 
-Use the **canonical** severity scale from `CLAUDE.md Sec."Severity vocabulary"`:
+Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabulary"` -- no local restatement or legacy relabeling.
 
-| Severity | Definition                                                                  | Action                       |
-|----------|-----------------------------------------------------------------------------|------------------------------|
-| **P0**   | Critical -- blocks implementation, security/legal issue, production failure  | Fix before phase is complete |
-| **P1**   | Significant -- material gap, factual error, behavior that must be corrected  | Fix before shipping          |
-| **P2**   | Minor -- polish, edge-case, improvement, nice-to-have                        | Fix if low effort            |
-| NOTED    | Looks like a problem but is intentional -- documented trade-off              | Document once, never revisit |
-
-**Convergence blocking set**: open P0 and P1 findings from the ledger. P2 and NOTED findings do not block convergence.
+**Convergence blocking set**: open P0, P1 **and P2** findings from the ledger. `NOTED` is the only
+status that closes a finding without a fix, because it is non-actionable rather than postponed
+(`CLAUDE.md Sec."Severity vocabulary"`, decisions.md D13). This is not a prose claim: it is
+`BLOCKING_FILTER` in `bin/edm-state`, which every consumer of the blocking set references by name,
+and `edm-state audit-converged` refuses convergence while any of the three remain open. Legacy
+per-finding statuses that a pre-EDMV3 ledger may still carry are coerced to open on read by that
+same code, so a finding recorded under the abolished vocabulary cannot reach convergence unfixed.
 
 ## Remediation Plan Format
 
@@ -167,15 +409,17 @@ Use the **canonical** severity scale from `CLAUDE.md Sec."Severity vocabulary"`:
 
 | # | Sev | Lens(es) | Component | Issue |
 
-## G1 (P1, L1+L4): [Title]
+## Detailed Findings
 
-### Problem
+### CA-001 (P1, lenses L1 + L4): [Title]
 
-### Fix (concrete code or config)
+**Problem**
 
-### Verification
+**Fix (concrete code or config)**
 
-### Files
+**Verification**
+
+**Files**
 
 ## Decisions / Non-Findings
 
@@ -190,14 +434,92 @@ Use the **canonical** severity scale from `CLAUDE.md Sec."Severity vocabulary"`:
 [Syntax checks, tests to run, manual smoke test steps]
 ```
 
-## HITL Gate (Code Audit)
+`agents/edm-audit-synthesizer.md Sec."Remediation Plan Format"` is the authoritative template;
+this is its abridged form and must not disagree with it. Two parts are machine-read, not
+cosmetic: every finding heading starts with its stable ledger ID (`CA-NNN`, or `G{N}` for an
+in-round group), and the six section headings above (`Context`, `Findings Summary`,
+`Detailed Findings`, `Decisions / Non-Findings`, `Rollout Order`, `Verification Plan`) carry no
+ID. That is exactly how `edm-state update-patterns` tells a finding from scaffolding
+(`docs/audit-patterns/README.md Sec."Append Schema"`), so a finding heading written without its
+ID is silently dropped from the pattern library, and a structural heading written with one is
+harvested as a pattern.
+
+## Remediation Gate (Code Audit)
+
+This is the remediation gate: distinct from the Convergence gate in Step 10, it approves the *remediation
+plan itself* (whether to start fixing findings) rather than round closure, and it records no state --
+no `edm-state` command runs from this gate.
 
 After the synthesizer writes `REMEDIATION.md`:
 
 1. Summarize: P0/P1/P2 counts (+ NOTED count), top 3 most impactful findings (one sentence each), false alarm count (demonstrates the
    filter worked), estimated remediation effort.
-2. Ask: *"Do you approve this audit plan and want me to remediate, or do you have changes?"*
+2. Present via `AskUserQuestion`:
+   - Header: `"Remediation"`
+   - Question: *"Do you approve this remediation plan?"* -- summarize the counts and top findings in the body.
+   - Options: **Approve** (proceed to remediate per the rollout order), **Revise** (change scope or priority
+     before starting), **No-Go** (stop; do not remediate)
+   - Follows `` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` ``.
 3. **STOP and WAIT** for explicit approval.
+
+## Pending Pattern Entries (gate-time curation)
+
+`edm-state update-patterns` appends novel findings to the pattern library as stubs, each carrying a
+`status: pending-review` line plus `source:`, `audit-type:` and `date:` provenance
+(`docs/audit-patterns/README.md Sec."Append Schema"`). A stub nobody is ever asked about is a stub
+forever, so the Convergence gate -- one the human already stops at -- is where the ask happens.
+Because `update-patterns` now runs before the Convergence gate, the pending set may include entries
+created by this round as well as entries carried over from earlier rounds or earlier phases.
+
+**Derive the list at presentation time with the `Grep` tool, never from state:** search the
+plugin-root-relative path `docs/audit-patterns/*.md` for `status: pending-review`.
+
+Nothing about pending entries is mirrored in `.edm-state.json`. The pattern documents are the only
+record, so an entry curated by hand between gates simply stops appearing here.
+
+**No matches: show nothing.** No heading, no "0 pending entries" line, no mention of curation
+anywhere in the gate summary. Absence is authoritative.
+
+**Matches: add one line per entry** to the gate summary, reading the entry's `###` heading and its
+`source:` line out of the file each match came from:
+
+```
+Pending pattern entries
+- {entry title} (source: {source-prefix}) -- landed in plugin-root-relative docs/audit-patterns/{target-document}.md
+```
+
+Then carry the curation questions **in the same `AskUserQuestion` call as the Convergence
+question** -- never a second round. Four questions is that tool's ceiling, so at most three entries
+are curated per gate; when more are pending, take the three oldest by `date:` and leave the rest
+for the next gate. Each per-entry question uses a short header (`"Pattern 1"`, `"Pattern 2"`,
+`"Pattern 3"` -- within the PROTOCOL's header limit), names the entry and its target document in
+its body, and offers exactly these four options:
+
+- **Keep** -- delete the entry's `status: pending-review` line, and only that line. Heading,
+  provenance lines and body stay exactly as written.
+- **Edit** -- take the human's revised one-paragraph description, replace the entry's body with it,
+  then delete the `status: pending-review` line.
+- **Discard** -- delete the entry outright: its `###` heading, its provenance lines and its body.
+- **Leave pending** -- change nothing. The entry keeps its marker and is offered again at the next
+  gate.
+
+Apply the chosen edits with `Edit` after the response comes back and before running
+`edm-state approve-gate`. Curation is one-way: once the marker is gone the entry is an ordinary
+library entry, and a later `update-patterns` never re-marks it (de-duplication on the entry title
+blocks the re-append).
+
+The drain is only as good as what enters it. `update-patterns` appends a stub for every
+*recognized* finding title and nothing else, so a pending list that is obviously not made of
+patterns (severity roll-ups, rollout stages, verification steps) means the source report departed
+from the Remediation Plan Format above and the entries should be **Discard**ed, not curated -- and
+the report format fixed. Conversely, an arm that harvested nothing says so: `update-patterns`
+prints a `WARNING` and records `extraction_status` in state for anything but a clean read, so an
+empty pending list is never by itself evidence that a round found nothing worth keeping
+(`docs/audit-patterns/README.md Sec."Append Schema"`).
+
+Curation carries no approval weight. The Convergence question itself follows
+`` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` `` unchanged, and leaving every entry pending
+has no effect on **Approve** / **Revise** / **No-Go**.
 
 ## What Single-Pass Audits Miss (Why 11 Lenses)
 

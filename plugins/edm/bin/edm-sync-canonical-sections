@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# EDM-HELP-BEGIN
+# edm-sync-canonical-sections -- EDMV3-T41 negative-branch generator.
+#
+# Why this script exists: `claude plugin validate plugins/edm/` confirms (verified twice, same
+# output both times) that a plugin's root CLAUDE.md is NOT loaded as runtime/project context --
+# "CLAUDE.md at the plugin root is not loaded as project context." From an installed plugin
+# cache, an agent's cwd is the TARGET project the plugin is installed into, not the plugin's own
+# directory, so a bare `CLAUDE.md Sec."..."` reference in a prompt has no plugin-relative path to
+# resolve against: it either fails to resolve, or -- since "CLAUDE.md" is itself a common
+# convention -- silently resolves to the TARGET PROJECT's own CLAUDE.md instead (reproduced: a
+# `find . -iname CLAUDE.md` from an unrelated scratch project resolves to that project's own
+# file, not this plugin's). Full finding recorded in decisions.md as D22.
+#
+# This script deterministically extracts the two by-name-referenced canonical sections out of
+# plugins/edm/CLAUDE.md into docs/canonical-sections.md -- a plugin-relative path under the same
+# docs/ directory already loaded at write time by name (docs/audit-patterns/*.md, EDMV3-T29),
+# rather than a directory Claude Code auto-loads by convention.
+#
+# One-directional and scripted (Technical Notes: never hand-maintained in two places): this
+# script is the ONLY writer of docs/canonical-sections.md. Re-run it (no arguments) after editing
+# either source section in CLAUDE.md. bin/tests/wave6-smoke.sh's "T41 AC5" case asserts the
+# committed copy is byte-identical to what --check would confirm right now -- a hand-edit to the
+# copy without re-running this script fails that assertion (and --check exits 1) rather than
+# silently drifting. The extracted section TEXT is byte-identical to its CLAUDE.md source (AC5);
+# only the generated-file banner above it is new.
+#
+# Usage:
+#   edm-sync-canonical-sections            # regenerate docs/canonical-sections.md in place
+#   edm-sync-canonical-sections --check    # exit 1 (with a diff) if the committed copy is stale
+#   edm-sync-canonical-sections -h|--help  # show this help
+#
+# Exit codes: 0 = regenerated (or --check found no drift); 1 = --check found drift; 2 = usage
+# error (unknown flag).
+# EDM-HELP-END
+# CA-005: the block above is EDM-HELP-BEGIN/EDM-HELP-END sentinel-delimited, not keyed on the
+# literal `set -euo pipefail` line below the way this script's --help extraction used to be --
+# moving or annotating that line no longer silently truncates --help output.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/_edm-cli-lib.sh"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SRC="${PLUGIN_ROOT}/CLAUDE.md"
+DST="${PLUGIN_ROOT}/docs/canonical-sections.md"
+
+# CA-074/G24: takes the message and exit code as two separate arguments so the code is never
+# echoed as part of the diagnostic text (a bare `echo "...: $*"` form would print the numeric
+# exit-code argument as the last word of the message, since `$*` sweeps it up along with the
+# message). Family contract: 2 = usage/setup error (this file's default; see Exit codes above).
+die() {
+  local msg="$1" code="${2:-2}"
+  echo "edm-sync-canonical-sections: $msg" >&2
+  exit "$code"
+}
+
+mode="${1:-}"
+case "$mode" in
+  ""|--check) ;;
+  -h|--help|help)
+    print_help "${BASH_SOURCE[0]:-$0}"
+    exit 0
+    ;;
+  *) die "usage: edm-sync-canonical-sections [--check]" ;;
+esac
+
+[[ -f "$SRC" ]] || die "source not found: $SRC"
+
+# extract_section <exact-heading-text> <src-file> -- prints verbatim from the line matching
+# "## <exact-heading-text>" up to (not including) the next "## " heading, or EOF. No
+# transformation of any kind: this is what makes the copy byte-identical to its source (AC5).
+extract_section() {
+  local heading="$1" src="$2"
+  awk -v h="## ${heading}" '
+    $0 == h { found=1; print; next }
+    found && /^## / { exit }
+    found { print }
+  ' "$src"
+}
+
+# CA-519: hoisted from just above the final `mv` below -- mktemp right below is already inside
+# $(dirname "$DST") under `set -euo pipefail`, so a missing docs/ would abort the script at that
+# mktemp call, 39 lines before the guard used to run. Moved here so it is load-bearing (lets the
+# script regenerate into a not-yet-existing docs/) instead of a preempted no-op.
+mkdir -p "$(dirname "$DST")"
+tmp="$(mktemp "${DST}.tmp.XXXXXX")"
+# CA-150: HUP added -- a terminal disconnect mid-run (e.g. an SSH session dropping) leaked this
+# staging file just as much as an untrapped INT/TERM would have.
+# CA-446: the three real signals now EXIT after cleaning up (bin/edm-state's own CA-143
+# contract: a trap that only cleans up and returns lets the interrupted caller RESUME). With
+# the single shared trap body, a Ctrl-C during the generation block deleted $tmp and resumed
+# into `diff -u "$DST" "$tmp"`, whose missing-operand failure satisfied the `! diff` test and
+# reported a fabricated "out of sync with CLAUDE.md" verdict (exit 1) for a user interrupt --
+# in the exact mode CI runs. Signal-shaped exit codes per the write_atomic convention.
+trap 'rm -f "$tmp"' EXIT
+trap 'rm -f "$tmp"; exit 130' INT
+trap 'rm -f "$tmp"; exit 143' TERM
+trap 'rm -f "$tmp"; exit 129' HUP
+
+{
+  echo "<!-- GENERATED FILE. This file is generated from CLAUDE.md by edm-sync-canonical-sections;"
+  echo "     do not hand-edit -- edits are overwritten on the next run and a stale hand-edit fails"
+  echo "     the byte-identity smoke assertion in CI (EDMV3-T41, decisions.md D22)."
+  echo
+  echo "     Plugin-root CLAUDE.md is confirmed by 'claude plugin validate' NOT to be loaded as"
+  echo "     runtime context, so a bare 'CLAUDE.md Sec.\"...\"' reference in a prompt has no"
+  echo "     resolvable path from an installed plugin cache. Reference the sections below by this"
+  echo "     file's plugin-relative path (docs/canonical-sections.md) instead. -->"
+  echo
+  extract_section "Severity vocabulary (canonical)" "$SRC"
+  echo
+  extract_section "Mermaid diagram conventions (canonical)" "$SRC"
+} > "$tmp"
+
+if [[ "$mode" == "--check" ]]; then
+  if ! diff -u "$DST" "$tmp" >/dev/null 2>&1; then
+    echo "edm-sync-canonical-sections: docs/canonical-sections.md is out of sync with CLAUDE.md:" >&2
+    diff -u "$DST" "$tmp" >&2 || true
+    exit 1
+  fi
+  echo "edm-sync-canonical-sections: docs/canonical-sections.md is in sync with CLAUDE.md"
+  exit 0
+fi
+
+mv -f "$tmp" "$DST"
+echo "regenerated ${DST}"

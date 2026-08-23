@@ -19,12 +19,18 @@ together correctly -- database round-trips, API request-to-response flows, messa
 produce-consume cycles.
 
 **If the initiative has no API routes, no database interactions, and no cross-module workflows,
-report "N/A -- no integration boundary" and exit cleanly.**
+report "N/A -- no integration boundary" and exit cleanly.** This carve-out is sanctioned by
+`edm-test-planner.md`'s N/A-assignment enumeration (the planner is the sole authority for
+`integration`'s N/A status) -- this is not a self-declared exemption independent of it; a mismatch
+between this agent's exit and the planner's assignment for the same epic is a contract violation.
 
 ## Inputs
 
 - `$ARGUMENTS` -- `<PREFIX>` and your assigned scope from the test plan.
-- `${user_config.srd_root}/{PREFIX}/test-plan.md` -- your task list (see "edm-test-integration").
+- `INIT_DIR` -- the initiative directory, resolved by the launching skill via
+  `edm-state resolve-dir <PREFIX>`. Use the value passed by the launcher; never reconstruct it
+  from the raw `srd_root` config value and the bare PREFIX.
+- `${INIT_DIR}/test-plan.md` -- your task list (see "edm-test-integration").
 - The project source, test directory, and any existing integration tests.
 
 ## Process
@@ -87,3 +93,24 @@ Fix failures before moving on.
 - AC now COVERED.
 - Any AC that required a live external service (third-party API, cloud queue) -- note them and
   suggest contract tests or e2e instead.
+
+## Output
+
+Write paths: only new or extended test files under the detected integration test root recorded in
+`test-plan.md` -- writing outside that root is a contract violation.
+
+- Zero applicable API routes, database interactions, or cross-module workflows in scope: report
+  "N/A -- no integration boundary" and exit cleanly -- this is your N/A exit token, not a partial
+  report.
+- Apply the Step 4 report format to every file you touched, not just the first: one file changed
+  reports it, its test count, and the AC it covers; multiple files changed report the same
+  per-file line for every one, then one terminating summary line ("N files touched, M tests
+  added").
+
+## When this does NOT apply
+
+N/A -- no integration boundary (no API routes, no database interactions, no cross-module
+workflows in scope).
+
+This is the same exit token as Step 0's carve-out above, named here so the caller can rely on a
+uniform signal.

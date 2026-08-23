@@ -2,7 +2,7 @@
 name: edm-test-planner
 description: |
   Reads an EDM ticket pack and the project source code, detects the technology stack
-  per epic, and produces `SRD/{PREFIX}/test-plan.md` covering all applicable test
+  per epic, and produces `test-plan.md` in the initiative directory, covering all applicable test
   layers (unit, component, composable, integration, contract, E2E, a11y). For
   multi-stack initiatives emits `test-plan-{epic}.md` per epic alongside an index
   `test-plan.md`. Maps each ticket's Target Components to test files and layers.
@@ -24,8 +24,11 @@ least one test, and identifies what's missing from the test infrastructure befor
 
 - `$ARGUMENTS` -- contains `<PREFIX> [scope]`. Scope defaults to "all tickets". Can be a ticket
   ID (e.g., `DASH-T05`) or epic name (e.g., `authentication`) to narrow focus.
-- `${user_config.srd_root}/{PREFIX}/` -- the initiative directory.
-- `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/epics/*.md` -- ticket pack.
+- `INIT_DIR` -- the initiative directory, resolved by the launching skill via
+  `edm-state resolve-dir <PREFIX>` (handles both flat and product-scoped layouts). Use the value
+  passed by the launcher; never reconstruct it from the raw `srd_root` config value and the bare
+  PREFIX.
+- `${INIT_DIR}/${user_config.ticket_pack_dirname}/epics/*.md` -- ticket pack.
 
 ## Process
 
@@ -33,7 +36,7 @@ least one test, and identifies what's missing from the test infrastructure befor
 
 1. Read the initiative's ticket pack README and all epic files.
 2. Read `CLAUDE.md` (if present) for project-specific conventions.
-3. Read `${user_config.srd_root}/{PREFIX}/.edm-state.json` to understand the estimated size and
+3. Read `${INIT_DIR}/.edm-state.json` to understand the estimated size and
    current phase.
 4. Build an **epic list**: for each epic file `epics/NN-{slug}.md`, record:
    - Epic slug: the filename minus the `NN-` prefix and `.md` suffix (e.g., `auth`, `dashboard`).
@@ -80,6 +83,11 @@ Mark layers as **N/A** when they don't apply to this epic's Target Components:
 - `composable` is N/A unless the epic's Target Components include React hooks or Vue composables.
 - `contract` is N/A unless the epic exposes or consumes a REST/GraphQL API with a schema.
 - `e2e` is N/A for epics whose Target Components involve no runnable UI.
+- `integration` is N/A only when the epic's Target Components cross no module or service
+  boundary -- no API routes, no database interactions, and no cross-module workflows (e.g. a
+  pure algorithmic library or CLI parser with no external I/O). This is the sole authority for
+  `integration`'s N/A status; `edm-test-integration`'s own self-reported "N/A -- no integration
+  boundary" exit must agree with this determination, not substitute for it.
 - If an epic's Target Components match no known stack signal, report "stack undetected" explicitly
   rather than defaulting silently to any framework.
 
@@ -130,18 +138,18 @@ Flag missing infrastructure as **SCAFFOLD NEEDED** with the specific install com
 Use the appropriate mode based on the single-stack collapse check from Step 1:
 
 **Single-stack mode** (all epics share one stack): write only
-`${user_config.srd_root}/{PREFIX}/test-plan.md` using the plan template below -- identical to
+`${INIT_DIR}/test-plan.md` using the plan template below -- identical to
 v1.x behavior, no per-epic files.
 
 **Multi-stack mode** (epics differ): write BOTH:
 
 A. **Per-epic plans** -- one file per epic at
-   `${user_config.srd_root}/{PREFIX}/test-plan-{epic-slug}.md`:
+   `${INIT_DIR}/test-plan-{epic-slug}.md`:
    - Scope each plan to that epic's tickets, Target Components, detected stack, and layers.
    - Each per-epic plan must contain all sections from the plan template below.
    - Use the epic slug as-is (lowercase-hyphenated, e.g., `auth`, `api-gateway`).
 
-B. **Top-level index** -- `${user_config.srd_root}/{PREFIX}/test-plan.md`:
+B. **Top-level index** -- `${INIT_DIR}/test-plan.md`:
 
 ```markdown
 # Test Plan: {PREFIX}
@@ -260,3 +268,25 @@ Print a summary to the user:
 - Infrastructure gaps that need scaffolding
 - Suggested next step: if gaps exist, run `/edm:test {PREFIX}` which will invoke the scaffold
   agent; if no gaps, test writers can start immediately
+
+## Output
+
+Write `test-plan.md` (single-stack) or `test-plan.md` plus per-epic `test-plan-{epic}.md` files
+(multi-stack) per the templates above, and print the Step 7 summary.
+
+Write paths, stated exactly: `${INIT_DIR}/test-plan.md` (single-stack) or
+that file plus per-epic `test-plan-{epic-slug}.md` files (multi-stack) -- writing anywhere else
+is a contract violation.
+
+Apply the Step 7 report format to every epic in scope, not just the first:
+- Zero epics in scope (empty ticket pack): report "No epics found -- nothing to plan" and stop.
+- One epic: print its stack, active/N/A layers, and plan file written.
+- Multiple epics: print the same per-epic summary for every epic, then one terminating summary
+  line ("N epics planned, M tickets in scope, K infrastructure gaps").
+
+- **Length**: match the length of the document to what the task needs -- cover the substance; do not pad with filler sections, redundant summaries, or boilerplate.
+
+## When this does NOT apply
+
+This agent always applies once `/edm:test` is invoked; per-layer and per-epic N/A determinations
+are this agent's own output (Step 1), not a top-level skip of the agent itself.

@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Wave 4b smoke tests — skill/agent/config text changes
+# Wave 4b smoke tests -- skill/agent/config text changes
 # Tickets: T61, T64, T65, T66, T67, T74, T82, T84, T85, T86, T88, T89, T90, T91, T92, T93, T94
 set -euo pipefail
 
-PLUGIN_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # Shared assertions / counters (CA-014). Reconciles wave4b onto the same check contract as the
 # other suites: check <label> <expected-substring> <content> (same arg order as before).
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_harness.sh"
+source "${SCRIPT_DIR}/_harness.sh"
+# G21 (round-3): PLUGIN_DIR is the shared _HARNESS_PLUGIN_DIR export, not a second independent
+# cd/pwd derivation.
+PLUGIN_DIR="$_HARNESS_PLUGIN_DIR"
 
 echo "=== Wave 4b Smoke Tests ==="
 echo ""
@@ -30,14 +33,15 @@ echo "--- T64/T65/T66/T67: implement skill QC sharding and PARTIAL semantics ---
 IMPLEMENT="$(cat "$PLUGIN_DIR/skills/implement/SKILL.md")"
 check "QC output canonical path" "<initiative-dir>/qc/" "$IMPLEMENT"
 check "qc-summary.md path" "qc/qc-summary.md" "$IMPLEMENT"
-check "qc-shard path" "qc-shard-{NN}.md" "$IMPLEMENT"
+check "qc-shard impl namespace path" "qc-shard-impl-{NN}.md" "$IMPLEMENT"
+check "qc-shard pass namespace path" "qc-shard-pass-" "$IMPLEMENT"
 check "qc_shard_threshold reference" "qc_shard_threshold" "$IMPLEMENT"
 check "PARTIAL verdict semantics" "cannot be verified statically" "$IMPLEMENT"
-check "deferred-to-runtime" "deferred-to-runtime" "$IMPLEMENT"
+check "runtime-check token" "runtime-check:" "$IMPLEMENT"
 check "record-partial-verdict call" "record-partial-verdict" "$IMPLEMENT"
-check "PARTIAL does not require remediation" "do not require remediation" "$IMPLEMENT"
+check "PARTIAL closed via verify-runtime, not silently skipped" "mandatory \`/edm:verify-runtime\` step" "$IMPLEMENT"
 check "QC report format has Shard header" "Shard {N}/{M} | Single" "$IMPLEMENT"
-check "QC report deferred-to-runtime note" "deferred-to-runtime: call the endpoint" "$IMPLEMENT"
+check "QC report runtime-check note" "runtime-check: call the endpoint" "$IMPLEMENT"
 echo ""
 
 # ---- T74: edm-architect output to architecture.md ---------------------------
@@ -54,15 +58,29 @@ echo ""
 # ---- T82/T85: CLAUDE.md artifact layout and mode schema ----------------------
 echo "--- T82/T85: CLAUDE.md WS-D layout and mode schema ---"
 CLAUDE_MD="$(cat "$PLUGIN_DIR/CLAUDE.md")"
-check "architecture.md in layout" "architecture.md" "$CLAUDE_MD"
-check "explorers/ in layout" "explorers/" "$CLAUDE_MD"
-check "decisions.md in layout" "decisions.md" "$CLAUDE_MD"
-check "ROLLBACK.md in layout" "ROLLBACK.md" "$CLAUDE_MD"
-check "exec-report.md in layout" "exec-report.md" "$CLAUDE_MD"
-check "post-deploy/ in layout" "post-deploy/" "$CLAUDE_MD"
-check "qc/ in layout" "qc/" "$CLAUDE_MD"
-check "findings-ledger.md in layout" "findings-ledger.md" "$CLAUDE_MD"
-check "pass-{N}_ in layout" "pass-{N}_{YYYY-MM-DD}/" "$CLAUDE_MD"
+# CA-099: the nine "X in layout" assertions below used to grep a bare filename anywhere in the
+# whole 1000+-line CLAUDE.md, which also contains a CI table, a state-field table, a pricing
+# table and a mode matrix -- moving architecture.md out of the actual layout tree and mentioning
+# it once in unrelated prose would have kept all nine green. Extract the fenced layout tree block
+# itself (via the shared _wave7_extract_section, narrowed further to its first fenced block) and
+# assert each token against that extracted string specifically.
+WAVE4B_LAYOUT_SECTION="$(_wave7_extract_section "$PLUGIN_DIR/CLAUDE.md" "Project artifact layout")"
+WAVE4B_LAYOUT_TREE="$(printf '%s\n' "$WAVE4B_LAYOUT_SECTION" | awk '
+  /^```/ { c++; if (c == 1) { f = 1; next } else { exit } }
+  f { print }
+')"
+[[ -n "$WAVE4B_LAYOUT_TREE" ]] \
+  && pass "CA-099 -- the fenced layout tree block was actually extracted (non-empty)" \
+  || fail "CA-099 -- extracting the fenced layout tree block under 'Project artifact layout' produced nothing"
+check "architecture.md in layout tree" "architecture.md" "$WAVE4B_LAYOUT_TREE"
+check "explorers/ in layout tree" "explorers/" "$WAVE4B_LAYOUT_TREE"
+check "decisions.md in layout tree" "decisions.md" "$WAVE4B_LAYOUT_TREE"
+check "ROLLBACK.md in layout tree" "ROLLBACK.md" "$WAVE4B_LAYOUT_TREE"
+check "exec-report.md in layout tree" "exec-report.md" "$WAVE4B_LAYOUT_TREE"
+check "post-deploy/ in layout tree" "post-deploy/" "$WAVE4B_LAYOUT_TREE"
+check "qc/ in layout tree" "qc/" "$WAVE4B_LAYOUT_TREE"
+check "findings-ledger.md in layout tree" "findings-ledger.md" "$WAVE4B_LAYOUT_TREE"
+check "pass-{N}_ in layout tree" "pass-{N}_{YYYY-MM-DD}/" "$WAVE4B_LAYOUT_TREE"
 check "mode field in schema table" "Adaptation profile:" "$CLAUDE_MD"
 check "lifecycle_mode in schema table" "Lifecycle variant:" "$CLAUDE_MD"
 check "compliance_enabled in schema table" "Gate 3.5" "$CLAUDE_MD"
@@ -90,39 +108,41 @@ check "resume reads mode fields" "mode-family fields" "$ORCH"
 check "resume skips Step 1c" "Skip Step 1c" "$ORCH"
 echo ""
 
-# ---- T88: mini-SRD sub-flow --------------------------------------------------
-echo "--- T88: mini-SRD sub-flow ---"
-check "mini-SRD sub-flow section" "mini-SRD Sub-Flow" "$ORCH"
-check "mini-SRD fused file" "fused file" "$ORCH"
-check "mini-SRD merged gate" "Gate 2+3" "$ORCH"
-check "mini-SRD skip-phase 4" "skip-phase <PREFIX> 4" "$ORCH"
-check "mini-SRD skip-phase 5" "skip-phase <PREFIX> 5" "$ORCH"
-check_absent "mini-SRD does not spawn ticket-writer" "edm-ticket-writer" \
-  "$(echo "$ORCH" | awk '/### mini-SRD Sub-Flow/{f=1} f && /^---$/{exit} f{print}')"
+# ---- T88: mini-SRD sub-flow (EDMV3-T37 re-baseline: relocated from orchestrator to srd/audit-srd) --
+echo "--- T88: mini-SRD sub-flow (re-pointed to skills/srd, skills/audit-srd per EDMV3-T37) ---"
+SRD_SKILL_T88="$(cat "$PLUGIN_DIR/skills/srd/SKILL.md")"
+AUDIT_SRD_T88="$(cat "$PLUGIN_DIR/skills/audit-srd/SKILL.md")"
+check "mini-SRD fused file (skills/srd)" "fused file" "$SRD_SKILL_T88"
+check "mini-SRD merged gate (skills/audit-srd)" "Gate 2+3" "$AUDIT_SRD_T88"
+check "mini-SRD skip-phase 4 (skills/audit-srd)" "skip-phase <PREFIX> 4" "$AUDIT_SRD_T88"
+check "mini-SRD skip-phase 5 (skills/audit-srd)" "skip-phase <PREFIX> 5" "$AUDIT_SRD_T88"
+check_absent "mini-SRD does not spawn ticket-writer (skills/audit-srd)" "edm-ticket-writer" "$AUDIT_SRD_T88"
 echo ""
 
-# ---- T91: Gate 3.5 compliance review -----------------------------------------
-echo "--- T91: Gate 3.5 compliance review ---"
-check "Gate 3.5 section" "Gate 3.5" "$ORCH"
-check "Gate 3.5 compliance_enabled condition" "compliance_enabled=true" "$ORCH"
-check "Gate 3.5 header" '"Gate 3.5"' "$ORCH"
-check "Gate 3.5 approve-gate" "approve-gate <PREFIX> 3.5" "$ORCH"
+# ---- T91: Gate 3.5 compliance review (EDMV3-T37 re-baseline: relocated to skills/audit-tickets) ----
+echo "--- T91: Gate 3.5 compliance review (re-pointed to skills/audit-tickets per EDMV3-T37) ---"
+AUDIT_TICKETS_T91="$(cat "$PLUGIN_DIR/skills/audit-tickets/SKILL.md")"
+check "Gate 3.5 section" "Gate 3.5" "$AUDIT_TICKETS_T91"
+check "Gate 3.5 compliance_enabled condition" "compliance_enabled=true" "$AUDIT_TICKETS_T91"
+check "Gate 3.5 header" '"Gate 3.5"' "$AUDIT_TICKETS_T91"
+check "Gate 3.5 approve-gate" "approve-gate <PREFIX> 3.5" "$AUDIT_TICKETS_T91"
 echo ""
 
-# ---- T92: prototype sub-flow -------------------------------------------------
-echo "--- T92: prototype sub-flow ---"
-check "Prototype sub-flow section" "Prototype Sub-Flow" "$ORCH"
-check "prototype stop after Phase 2" "Phases 3-6 are skipped" "$ORCH"
-check "prototype skip-phase 3" "skip-phase <PREFIX> 3" "$ORCH"
-check "prototype skip-phase 6" "skip-phase <PREFIX> 6" "$ORCH"
-check "prototype graduation message" "mode standard" "$ORCH"
+# ---- T92: prototype mode branch (EDMV3-T37 re-baseline: relocated to skills/srd) --------------------
+echo "--- T92: prototype mode branch (re-pointed to skills/srd per EDMV3-T37) ---"
+check "prototype mode branch present (skills/srd)" "mode=prototype" "$SRD_SKILL_T88"
+check "prototype stop after Phase 2 (skills/srd)" "Phases 3-6 are skipped" "$SRD_SKILL_T88"
+check "prototype skip-phase 3 (skills/srd)" "skip-phase <PREFIX> 3" "$SRD_SKILL_T88"
+check "prototype skip-phase 6 (skills/srd)" "skip-phase <PREFIX> 6" "$SRD_SKILL_T88"
+check "prototype graduation message (skills/srd)" "mode standard" "$SRD_SKILL_T88"
 echo ""
 
-# ---- T93: TDD mode in orchestrator and implementer ---------------------------
-echo "--- T93: TDD mode ---"
-check "TDD mode prompt at Phase 6" "Impl mode" "$ORCH"
-check "TDD option" "TDD" "$ORCH"
-check "set-mode implementation_mode" "set-mode <PREFIX> implementation_mode" "$ORCH"
+# ---- T93: TDD mode (EDMV3-T37 re-baseline: relocated to skills/implement) --------------------------
+echo "--- T93: TDD mode (re-pointed to skills/implement per EDMV3-T37) ---"
+IMPLEMENT_T93="$(cat "$PLUGIN_DIR/skills/implement/SKILL.md")"
+check "TDD mode prompt at Phase 6 (skills/implement)" "Impl mode" "$IMPLEMENT_T93"
+check "TDD option (skills/implement)" "TDD" "$IMPLEMENT_T93"
+check "set-mode implementation_mode (skills/implement)" "set-mode <PREFIX> implementation_mode" "$IMPLEMENT_T93"
 
 IMPL="$(cat "$PLUGIN_DIR/agents/edm-implementer.md")"
 check "TDD branch in implementer" "TDD Mode" "$IMPL"
@@ -170,11 +190,5 @@ check "empty traceability is P0" "P0" "$TICKETS"
 echo ""
 
 echo "=== Summary ==="
-echo "PASS: $PASS  FAIL: $FAIL"
-if [ "$FAIL" -eq 0 ]; then
-  echo "All $PASS checks passed."
-  exit 0
-else
-  echo "$FAIL check(s) failed."
-  exit 1
-fi
+echo "Results: ${PASS} passed, ${FAIL} failed"
+[[ $FAIL -eq 0 ]] && exit 0 || exit 1

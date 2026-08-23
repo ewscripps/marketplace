@@ -34,6 +34,12 @@ Read the ENTIRE SRD. Read all codebase files it references. Audit systematically
 - Mermaid/PlantUML syntax errors (test every diagram)
 - Logical flow errors (missing edges, orphan nodes)
 - Diagrams that don't match the prose description
+- A raw `;` (literal semicolon) inside Mermaid label, node, edge or message text -- a violation
+  of `CLAUDE.md Sec."Mermaid diagram conventions"`. That section's text is not directly loadable at
+  runtime (CLAUDE.md at the plugin root is not loaded as runtime context); read
+  `docs/canonical-sections.md` instead, resolved relative to the EDM plugin's own root
+  (`plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd)
+  -- it carries a byte-identical copy of this section
 
 ### 4. Competing Requirements
 - Two requirements that can't both be true
@@ -60,14 +66,7 @@ Read the ENTIRE SRD. Read all codebase files it references. Audit systematically
 
 ## Severity Levels
 
-Use the canonical severity scale from `CLAUDE.md Sec."Severity vocabulary"`. Summary for this agent:
-
-| Severity | Definition | Action Required |
-|---|---|---|
-| **P0** | Blocks implementation, security/legal issue, architecturally wrong | Must fix before Phase 4 |
-| **P1** | Significant gap, factual error, or missing requirement | Must fix before Phase 4 |
-| **P2** | Polish, edge case, or improvement | Can defer |
-| **NOTED** | Looks like a problem but is intentional or pre-existing | Document once; never re-investigate |
+Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabulary"` as the only severity source for this agent. Do not restate or adapt a local scale. Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd) for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not loaded as runtime context.
 
 ## Finding Format
 
@@ -97,7 +96,7 @@ Use the canonical severity scale from `CLAUDE.md Sec."Severity vocabulary"`. Sum
 [findings]
 
 ## NOTED -- Intentional / Pre-existing
-[items that look wrong but are documented as intentional — one line each with rationale]
+[items that look wrong but are documented as intentional -- one line each with rationale]
 ```
 
 ## Process
@@ -109,3 +108,8 @@ Use the canonical severity scale from `CLAUDE.md Sec."Severity vocabulary"`. Sum
 5. Report total counts and verdict
 
 Be exhaustive. Your job is to be the last safety net before tickets are written.
+
+## When this does NOT apply
+
+This agent always applies once Phase 3 spawns it against a completed SRD; it has no conditional
+skip.

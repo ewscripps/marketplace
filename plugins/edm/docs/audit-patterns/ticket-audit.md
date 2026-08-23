@@ -1,7 +1,7 @@
 # Ticket Pack Audit Patterns
 
 **Source:** EDM seed corpus (16 real-world initiatives).
-**Auto-updated** by orchestrator after each ticket audit round (EDMV2-80a).
+**Auto-updated** by the ticket audit phase's own skill (`skills/audit-tickets/SKILL.md`) via `edm-state update-patterns` after each round (EDMV2-80a; EDMV3-T37).
 
 ---
 
@@ -76,6 +76,10 @@ T08 (unit test new feature) depends-on T07 (implementation). T07 has an AC that 
 A "validate input" ticket has ACs for valid and missing input but not for null / 0 / "" / false input.
 **Fix:** AC template includes boundary/edge prompts: null, 0, max-int, empty string, empty array, duplicate.
 
+### Literal semicolon inside the critical-path Mermaid diagram
+A ticket title or dependency label in the README's critical-path diagram contains a raw `;` (e.g., a node labeled `T04[Retry; backoff]`). Mermaid reserves `;` as a lexer-level statement separator even inside label text, so the critical path -- the single diagram every reader checks first -- breaks or mis-renders.
+**Fix:** Use the `#59;` entity code instead of a raw semicolon (see `CLAUDE.md Sec."Mermaid diagram conventions"`); flag any raw `;` found inside `[...]`, `(...)`, `{...}`, `|...|`, `"..."`, or after the `:` in a `sequenceDiagram` message.
+
 ---
 
 ## Pre-Flight Checklist
@@ -89,6 +93,11 @@ Run before submitting a ticket pack to audit:
 - [ ] **Test commands specified:** Every AC verification block includes a copy-pasteable test command (`vitest run`, `pytest`, `npm run test:unit`). No AC says "verify manually."
 - [ ] **Ticket sizing distribution:** Count XS/S/M/L/XL. Healthy: ~40-50% S, ~30-40% M, ~10-20% XS, <=5% L, 0 XL. Heavy skew toward L/XL signals over-scoping.
 - [ ] **Phantom-role hunt:** Grep entire pack for any mention of removed roles or deleted features. Each hit must be paired with a removal ticket or confirmed as intentional.
+- [ ] **Mermaid semicolon scan:** Grep the critical-path diagram and every epic-file diagram for a raw `;` inside label/edge/message text; per `CLAUDE.md Sec."Mermaid diagram conventions"` it must be the `#59;` entity code instead.
+- [ ] **Runtime-environment reality check:** any AC assuming a runtime environment the project does not have (staging deploy, live database, deployed container, browser harness) is reworked
+  into something verifiable, or moved out of scope, before the ticket is approved -- see
+  `CLAUDE.md Sec."Unverifiable acceptance criteria (D15)"`. Caught here, it costs a rewording;
+  caught at Phase 6's `/edm:verify-runtime` instead, it costs a gate change-control cycle.
 
 ---
 

@@ -1,7 +1,7 @@
 # Test-Coverage Audit Patterns
 
 **Source:** EDM seed corpus (16 real-world initiatives).
-**Auto-updated** by orchestrator after each test-coverage audit round (EDMV2-80a).
+**Auto-updated** by the test-coverage phase's own skill (`skills/test-coverage/SKILL.md` and `skills/test/SKILL.md`) via `edm-state update-patterns` after each round (EDMV2-80a; EDMV3-T37).
 
 ---
 

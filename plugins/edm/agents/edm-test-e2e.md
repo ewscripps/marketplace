@@ -19,12 +19,15 @@ application stack -- from browser interaction through API to database and back. 
 integration failures that unit and component tests cannot.
 
 **If the project has no browser-rendered UI (backend-only service, CLI tool, library), or if the
-configured e2e framework is not installed, report "N/A" and exit cleanly.**
+configured e2e framework is not installed, report "N/A -- no e2e target" and exit cleanly.**
 
 ## Inputs
 
 - `$ARGUMENTS` -- `<PREFIX>` and your assigned scope from the test plan.
-- `${user_config.srd_root}/{PREFIX}/test-plan.md` -- your task list (see "edm-test-e2e").
+- `INIT_DIR` -- the initiative directory, resolved by the launching skill via
+  `edm-state resolve-dir <PREFIX>`. Use the value passed by the launcher; never reconstruct it
+  from the raw `srd_root` config value and the bare PREFIX.
+- `${INIT_DIR}/test-plan.md` -- your task list (see "edm-test-e2e").
 - The project source, existing e2e tests (if any), and page structure.
 
 ## Process
@@ -129,3 +132,22 @@ Fix failures before proceeding.
 - AC marked as COVERED.
 - Journeys that required infrastructure not available in the test environment (note for the coverage auditor).
 - Overall pass/fail.
+
+## Output
+
+Write paths: only new or extended page objects and journey test files under the detected e2e test
+root recorded in `test-plan.md` -- writing outside that root is a contract violation.
+
+- Zero applicable browser-rendered UI, or the configured e2e framework is not installed: report
+  "N/A -- no e2e target" and exit cleanly -- this is your N/A exit token, not a partial report.
+- Apply the Step 5 report format to every journey you wrote, not just the first: one journey
+  written reports the page object(s) touched, the journey test, and the AC it covers; multiple
+  journeys written report the same per-journey line for every one, then one terminating summary
+  line ("N journeys written, overall pass/fail").
+
+## When this does NOT apply
+
+N/A -- no e2e target (no browser-rendered UI, or the configured e2e framework is not installed).
+
+This is the same exit token as Step 0's carve-out above, named here so the caller can rely on a
+uniform signal.

@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# EDM-HELP-BEGIN
+# edm-compare-eval -- compare a post-change eval run against the committed wave-A baseline.
+# EDMV3-T39. The scorer (evals/score-artifacts.sh) never compares; it only scores. This script
+# owns the comparison so a scoring change and a threshold change stay separately reviewable.
+#
+# Usage:
+#   edm-compare-eval <candidate-scores.json> [<baseline-scores.json>]
+#
+#   <candidate-scores.json>  scores.json from the run under test.
+#   <baseline-scores.json>   defaults to plugins/edm/evals/baseline/scores.json.
+#
+# Acceptance rule (EDMV3-52 / T39 AC2):
+#   candidate.total >= baseline.total - baseline.variance.total_range
+# where total_range is the (max - min) across the three baseline runs recorded in
+# evals/baseline/README.md. A missing variance record is treated as 0 -- strict.
+#
+# Refusal conditions (T39 AC3) -- each exits non-zero naming its own condition:
+#   1. scorer_version differs between the two files.
+#   2. dimensions_scored differs (a five-dimension baseline against a six-dimension candidate has
+#      a different mean denominator; the delta would be meaningless -- srd.md v1.2.0 CR6). This is
+#      the live case since CA-462 added the sixth dimension, known-gap-recall: the committed
+#      wave-A baseline scores five and skips one, so a candidate run that reaches the code-audit
+#      phase and scores all six is refused here rather than compared.
+#   3. the candidate is flagged complete: false.
+#
+# Exit codes:
+#   0  comparison ran and the candidate is at or above the acceptance threshold.
+#   1  comparison ran and the candidate regressed below the threshold.
+#   2  usage error, unreadable input, or a refused comparison (conditions 1-3 above).
+#   3  no committed baseline exists yet -- the comparison cannot run. This is distinct from a
+#      regression: it means the tripwire is not armed, not that the code got worse.
+# EDM-HELP-END
+# CA-074: converted from `set -uo pipefail` to `-euo pipefail` -- every jq/awk call below already
+# resolves via `-e`+`||` or a `//` default rather than relying on -e being absent, so nothing in
+# this script depended on -e being absent.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/_edm-cli-lib.sh"
+
+# G21/CA-074: two-argument form -- see edm-validate-prefix's die() for the full rationale.
+# Family-standard default of 2 (usage/environment error).
+die() {
+  local msg="$1" code="${2:-2}"
+  echo "edm-compare-eval: $msg" >&2
+  exit "$code"
+}
+
+case "${1:-}" in
+  -h|--help) print_help "${BASH_SOURCE[0]:-$0}"; exit 0 ;;
+  "") die "usage: edm-compare-eval <candidate-scores.json> [<baseline-scores.json>]" ;;
+esac
+
+CANDIDATE="$1"
+BASELINE="${2:-${SCRIPT_DIR}/../evals/baseline/scores.json}"
+
+command -v jq >/dev/null 2>&1 || die "required binary not found on PATH: jq"
+[ -f "$CANDIDATE" ] || die "candidate scores file not found: $CANDIDATE"
+jq -e . "$CANDIDATE" >/dev/null 2>&1 || die "candidate is not valid JSON: $CANDIDATE"
+
+# CA-490 (residual of CA-452): condition 3 needs only the candidate, so it runs BEFORE the
+# baseline-existence check below. Previously it sat after that check, which meant the
+# complete:false handshake CA-452 was filed to make live NEVER EXECUTED on this repo's actual
+# CI path -- no baseline is committed yet, so every invocation hit the "NOT ARMED" exit 3
+# return first and the partial-run refusal below was dead code until a baseline exists.
+# ---- Refusal condition 3: incomplete candidate run -----------------------------------------
+# NOTE: `.complete // "null"` is wrong here -- jq's `//` treats `false` as empty, so a run
+# correctly flagged complete:false would report as "null". Test for the key explicitly.
+cand_complete="$(jq -r 'if has("complete") then (.complete | tostring) else "absent" end' "$CANDIDATE")"
+if [ "$cand_complete" != "true" ]; then
+  echo "edm-compare-eval: REFUSED -- candidate run is flagged complete: ${cand_complete}." >&2
+  echo "edm-compare-eval: an incomplete run has nothing meaningful to compare; re-run the eval." >&2
+  exit 2
+fi
+
+if [ ! -f "$BASELINE" ]; then
+  echo "edm-compare-eval: no committed baseline at $BASELINE" >&2
+  echo "edm-compare-eval: the eval tripwire is NOT armed -- capture it per plugins/edm/evals/baseline/README.md" >&2
+  exit 3
+fi
+jq -e . "$BASELINE" >/dev/null 2>&1 || die "baseline is not valid JSON: $BASELINE"
+
+# ---- Refusal condition 1: scorer_version mismatch ------------------------------------------
+cand_sv="$(jq -r '.scorer_version // "unset"' "$CANDIDATE")"
+base_sv="$(jq -r '.scorer_version // "unset"' "$BASELINE")"
+if [ "$cand_sv" != "$base_sv" ]; then
+  echo "edm-compare-eval: REFUSED -- scorer_version mismatch (baseline ${base_sv}, candidate ${cand_sv})." >&2
+  echo "edm-compare-eval: two scorer versions can weight dimensions differently; re-capture the baseline." >&2
+  exit 2
+fi
+
+# ---- Refusal condition 2: dimensions_scored mismatch ---------------------------------------
+cand_ds="$(jq -r '.dimensions_scored // "unset"' "$CANDIDATE")"
+base_ds="$(jq -r '.dimensions_scored // "unset"' "$BASELINE")"
+if [ "$cand_ds" != "$base_ds" ]; then
+  echo "edm-compare-eval: REFUSED -- dimensions_scored mismatch (baseline ${base_ds}, candidate ${cand_ds})." >&2
+  echo "edm-compare-eval: the total is a mean over the scored dimensions, so a different denominator" >&2
+  echo "edm-compare-eval: makes the delta meaningless (srd.md v1.2.0 CR6)." >&2
+  exit 2
+fi
+
+# ---- Threshold ------------------------------------------------------------------------------
+base_total="$(jq -r '.total // "null"' "$BASELINE")"
+cand_total="$(jq -r '.total // "null"' "$CANDIDATE")"
+[ "$base_total" != "null" ] || die "baseline has no .total"
+[ "$cand_total" != "null" ] || die "candidate has no .total"
+
+variance="$(jq -r '.variance.total_range // 0' "$BASELINE")"
+threshold="$(awk -v b="$base_total" -v v="$variance" 'BEGIN{printf "%.4f", b - v}')"
+
+echo "eval comparison"
+echo "  baseline total:   ${base_total} (scorer ${base_sv}, ${base_ds} dimensions)"
+echo "  candidate total:  ${cand_total}"
+echo "  variance allowed: ${variance}"
+echo "  threshold:        ${threshold}"
+echo
+
+# ---- Per-dimension delta table (AC4) ---------------------------------------------------------
+echo "per-dimension delta (candidate - baseline)"
+jq -r --slurpfile base "$BASELINE" '
+  . as $cand
+  | ($base[0].dimensions // []) as $bd
+  | ($cand.dimensions // [])
+  | to_entries[]
+  | . as $e
+  | ($bd[$e.key] // {}) as $b
+  | "  \($e.value.name // "dim\($e.key)"): " +
+    (if ($e.value.score == null or $b.score == null) then "n/a (one side unscored)"
+     else "\($b.score) -> \($e.value.score) (\((($e.value.score - $b.score) * 10 | round) / 10))"
+     end)
+' "$CANDIDATE" 2>/dev/null || echo "  (per-dimension detail unavailable -- shapes differ)"
+echo
+
+if awk -v c="$cand_total" -v t="$threshold" 'BEGIN{exit !(c >= t)}'; then
+  echo "edm-compare-eval: PASS -- candidate ${cand_total} >= threshold ${threshold}"
+  exit 0
+fi
+
+echo "edm-compare-eval: REGRESSION -- candidate ${cand_total} < threshold ${threshold}" >&2
+echo "edm-compare-eval: investigate the per-dimension delta table printed above to find which" >&2
+echo "edm-compare-eval: dimension(s) regressed, then record the comparison (both totals and the" >&2
+echo "edm-compare-eval: suspected cause) in decisions.md before deciding how to proceed." >&2
+exit 1

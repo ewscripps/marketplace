@@ -1,0 +1,2 @@
+{"schema":1,"id":null,"lens":"L3","round":1,"round_type":"full","sev":"P0","confidence":"high","file":"src/api/routes.js","line":22,"title":"no null check before accessing req.body.id, crashes on a missing field","status":"open"}
+{"schema":1,"id":null,"lens":"L3","round":1,"round_type":"full","sev":"P2","confidence":"low","file":"src/worker/queue.js","line":30,"title":"off-by-one at the max-queue-size boundary","status":"open"}

@@ -7,6 +7,34 @@ plugins/web-cms/.DS_Store
 plugins/web-cms/skills/.DS_Store
 /.idea/
 .edm-state.json.bak
-.edm-state.json.lock
-.edm-state.json.lockd/
 .edm-state.json.tmp.*
+# G25 (CA-256): widened from "*.lock" to "*.lock*" -- the bare exact-name form matched neither
+# the pre-existing ".lockd*" sibling below (now redundant and removed) nor the G49 flock-timeout
+# marker path ("${lockfile}.timeout.$$", i.e. "*.lock.timeout.<pid>"), which walked every pattern
+# in this file and matched none of them.
+plugins/edm/docs/audit-patterns/*.lock*
+plugins/edm/docs/audit-patterns/*.tmp.*
+# CA-149: unanchored (not "SRD/**/...") -- srd_root relocation (userConfig.srd_root) is a
+# documented supported feature, and a literal "SRD/" prefix stops matching the moment an
+# initiative tree is relocated, silently re-exposing lock files and findings-ledger/HANDOFF
+# staging files as untracked.
+# CA-212 (round-3 G52): widened from "**/.edm-state.lockd/" to also match the atomic
+# stale-lock-aside name with_state_lock's reclaim path creates, "${lockdir}.stale.$$" (round-3
+# G29/CA-141) -- an exact-name match with a trailing slash cannot match that ".stale.<pid>"
+# suffix, which would otherwise surface as an untracked directory during the (normally
+# sub-second) window between the mv-aside and the follow-up rm -rf.
+# G25 (CA-256): further widened from "**/.edm-state.lock" to "**/.edm-state.lock*" -- the exact
+# form matched neither the ".lockd*" sibling above (now redundant and removed, since "lock*"
+# already subsumes "lockd*") nor the G49 flock-timeout marker path
+# ("${lockfile}.timeout.$$", i.e. "**/.edm-state.lock.timeout.<pid>").
+**/.edm-state.lock*
+# CA-382 (round-7 G5): the state lockbase above covers only `.edm-state.*` -- any OTHER
+# `with_state_lock` lockbase (e.g. `code-audit/findings-ledger.lock`, `findings-ledger.lockd/`)
+# is matched by no pattern in this file. Shape-anchored so a future lockbase is covered by
+# construction rather than requiring a per-lockbase addition here.
+**/*.lock
+**/*.lockd*
+**/*.md.tmp.*
+# CA-150: edm-sync-canonical-sections' own staging path (docs/canonical-sections.md.tmp.XXXXXX)
+# had no matching glob anywhere in this file.
+plugins/edm/docs/*.tmp.*

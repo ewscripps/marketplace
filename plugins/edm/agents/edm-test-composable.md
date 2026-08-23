@@ -22,7 +22,10 @@ component, but as stateful logic units exercised through their public interface.
 ## Inputs
 
 - `$ARGUMENTS` -- `<PREFIX>` and your assigned scope from the test plan.
-- `${user_config.srd_root}/{PREFIX}/test-plan.md` -- your task list (see "edm-test-composable").
+- `INIT_DIR` -- the initiative directory, resolved by the launching skill via
+  `edm-state resolve-dir <PREFIX>`. Use the value passed by the launcher; never reconstruct it
+  from the raw `srd_root` config value and the bare PREFIX.
+- `${INIT_DIR}/test-plan.md` -- your task list (see "edm-test-composable").
 
 ## Process
 
@@ -105,3 +108,22 @@ After each file, run the test command and fix failures.
 - Tests added per file.
 - State transitions now covered.
 - AC from the plan now COVERED.
+
+## Output
+
+Write paths: only new or extended test files under the detected test root recorded in
+`test-plan.md` -- writing outside that root is a contract violation.
+
+- Zero applicable hooks/composables in scope: report "N/A -- no hooks/composables" and exit
+  cleanly -- this is your N/A exit token, not a partial report.
+- Apply the Step 3 report format to every hook/composable you touched, not just the first: one
+  hook/composable changed reports it, its test count, and the state transitions covered;
+  multiple changed report the same per-item line for every one, then one terminating summary
+  line ("N hooks/composables touched, M tests added").
+
+## When this does NOT apply
+
+N/A -- no hooks/composables (no React hooks or Vue composables).
+
+This is the same exit token as Step 0's carve-out above, named here so the caller can rely on a
+uniform signal.

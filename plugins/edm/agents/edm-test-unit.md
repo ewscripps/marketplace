@@ -20,7 +20,10 @@ mocked at system boundaries, fast to run, deterministic.
 ## Inputs
 
 - `$ARGUMENTS` -- `<PREFIX>` and your assigned scope (files + AC to cover) from the test plan.
-- `${user_config.srd_root}/{PREFIX}/test-plan.md` -- your task list (see "Writer Agent Task Assignments -> edm-test-unit").
+- `INIT_DIR` -- the initiative directory, resolved by the launching skill via
+  `edm-state resolve-dir <PREFIX>`. Use the value passed by the launcher; never reconstruct it
+  from the raw `srd_root` config value and the bare PREFIX.
+- `${INIT_DIR}/test-plan.md` -- your task list (see "Writer Agent Task Assignments -> edm-test-unit").
 - The project source and existing test files.
 
 ## Process
@@ -81,3 +84,23 @@ After all files are done, print:
 - Current pass/fail status.
 - AC from the test plan that are now COVERED by these tests.
 - Any AC that couldn't be unit-tested (escalate to integration or e2e).
+
+## Output
+
+Write paths: only new or extended test files under the detected test root recorded in
+`test-plan.md` (e.g. `tests/unit/`, `src/__tests__/`) -- writing outside that root is a contract
+violation.
+
+Apply the Step 4 report format to every file you touched, not just the first:
+- Zero files in your assigned scope needed unit tests: report "No unit test changes needed" and
+  stop -- do not print a per-file table with no rows.
+- One file changed: report it, its test count, and the AC it covers.
+- Multiple files changed: report the same per-file line for every file, then one terminating
+  summary line ("N files touched, M tests added, current pass/fail status").
+
+## When this does NOT apply
+
+This agent always applies once the test plan assigns it a non-empty scope: unit is never itself
+marked N/A by `edm-test-planner` (only `component`, `composable`, `contract`, `e2e`, `a11y`, and
+`integration` can be -- see `agents/edm-test-planner.md`). If a ticket's scope has no pure-function
+logic at all, the planner assigns it zero files rather than spawning this agent with an empty scope.

@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# EDM-HELP-BEGIN
+# edm-check-skill-sync -- EDMV3-T39 AC7 regression tripwire for the phase-procedure move.
+#
+# CONTEXT: EDMV3-T37/T38 deduplicated the phase procedures -- each phase's procedure now lives
+# once, in its own phase skill, and the orchestrator dispatches via the Skill tool. This is not a
+# fallback for a branch that was not taken (the GO path was taken); it is a permanent regression
+# tripwire proving the deduplication holds, run unconditionally by `bin/tests/run-all.sh` on every
+# invocation of the smoke suite, not only after a comparison failure.
+#
+# What it asserts (the inverse of a same-named earlier draft that checked the two copies "stayed
+# identical" -- there is no longer a second copy to compare against):
+#   - The dispatcher (skills/orchestrator/SKILL.md) contains NO phase procedure body: no phase
+#     skill's distinctive procedure heading ('## Operational Orchestration') appears in it.
+#   - Every phase skill still carries its own '## Operational Orchestration' section (the thing
+#     the dispatcher must not).
+#
+# Usage: edm-check-skill-sync
+# Exit codes: 0 clean, 1 duplication found, 2 usage or environment error.
+# EDM-HELP-END
+# CA-074: converted from `set -uo pipefail` to `-euo pipefail` -- every command whose failure
+# matters here is already guarded (an explicit `||` on the SKILLS_DIR resolution below, and
+# every `grep -q` call sits in an `if`/`if !` condition, which -e already exempts), so nothing
+# in this script relied on -e being absent.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/_edm-cli-lib.sh"
+
+# G21/CA-074: two-argument form -- see edm-validate-prefix's die() for the full rationale
+# (a $*-based single-line form silently swallows an intended exit-code override into the
+# message text). Family-standard default of 2 (usage/environment error).
+die() {
+  local msg="$1" code="${2:-2}"
+  echo "edm-check-skill-sync: $msg" >&2
+  exit "$code"
+}
+
+case "${1:-}" in
+  -h|--help) print_help "${BASH_SOURCE[0]:-$0}"; exit 0 ;;
+  "") : ;;
+  *) die "unknown argument: $1 (see --help)" ;;
+esac
+
+SKILLS_DIR="$(cd "${SCRIPT_DIR}/../skills" 2>/dev/null && pwd)" || die "skills directory not found"
+ORCH="${SKILLS_DIR}/orchestrator/SKILL.md"
+[ -f "$ORCH" ] || die "dispatcher not found: $ORCH"
+
+# The marker each phase skill uses for its own procedure body. If one of these appears in the
+# dispatcher, a procedure has been copied back in.
+PROCEDURE_MARKER='## Operational Orchestration'
+
+violations=0
+
+if grep -q "$PROCEDURE_MARKER" "$ORCH"; then
+  echo "${ORCH}: duplication: dispatcher contains a phase procedure body ('${PROCEDURE_MARKER}')" >&2
+  violations=$((violations + 1))
+fi
+
+# Every phase skill must still own its procedure. A phase skill that lost it means the procedure
+# went somewhere else -- most likely back into the dispatcher.
+for phase in plan srd audit-srd tickets audit-tickets implement code-audit verify-runtime; do
+  f="${SKILLS_DIR}/${phase}/SKILL.md"
+  [ -f "$f" ] || continue
+  if ! grep -q "$PROCEDURE_MARKER" "$f"; then
+    echo "${f}: missing: phase skill has no '${PROCEDURE_MARKER}' section of its own" >&2
+    violations=$((violations + 1))
+  fi
+done
+
+if [ "$violations" -eq 0 ]; then
+  echo "edm-check-skill-sync: CLEAN (dispatcher holds no phase procedure; every phase skill owns its own)"
+  exit 0
+fi
+
+echo "edm-check-skill-sync: ${violations} violation(s) found" >&2
+exit 1

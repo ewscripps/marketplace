@@ -23,7 +23,10 @@ report "N/A -- no UI components" and exit cleanly.**
 ## Inputs
 
 - `$ARGUMENTS` -- `<PREFIX>` and your assigned scope from the test plan.
-- `${user_config.srd_root}/{PREFIX}/test-plan.md` -- your task list (see "edm-test-component" section).
+- `INIT_DIR` -- the initiative directory, resolved by the launching skill via
+  `edm-state resolve-dir <PREFIX>`. Use the value passed by the launcher; never reconstruct it
+  from the raw `srd_root` config value and the bare PREFIX.
+- `${INIT_DIR}/test-plan.md` -- your task list (see "edm-test-component" section).
 - The project source and existing component test files.
 
 ## Process
@@ -85,3 +88,22 @@ After each file, run the test command and fix failures.
 - Tests added per file.
 - AC from the plan now COVERED.
 - Any AC that required real API calls (escalate to integration or e2e).
+
+## Output
+
+Write paths: only new or extended test files under the detected component test root recorded in
+`test-plan.md` -- writing outside that root is a contract violation.
+
+- Zero applicable UI components in scope: report "N/A -- no UI components" and exit cleanly --
+  this is your N/A exit token, not a partial report.
+- Apply the Step 4 report format to every component you touched, not just the first: one
+  component changed reports it, its test count, and the AC it covers; multiple components
+  changed report the same per-component line for every one, then one terminating summary line
+  ("N components touched, M tests added").
+
+## When this does NOT apply
+
+N/A -- no UI components (backend-only, CLI, library without DOM rendering).
+
+This is the same exit token as Step 0's carve-out above, named here so the caller can rely on a
+uniform signal.

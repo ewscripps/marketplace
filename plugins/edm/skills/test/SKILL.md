@@ -1,11 +1,11 @@
 ---
 name: test
-description: Full-pipeline EDM test orchestration for an initiative -- plan, scaffold, write tests (unit, component, composable, integration, contract, E2E, a11y), run the suite, and audit coverage. Produces test-plan.md and test-coverage.md in SRD/{PREFIX}/. Run after Phase 6 implementation before declaring the initiative complete.
+description: Full-pipeline EDM test orchestration for an initiative -- plan, scaffold, write tests (unit, component, composable, integration, contract, E2E, a11y), run the suite, and audit coverage. Produces test-plan.md and test-coverage.md in the initiative directory. Run after Phase 6 implementation before declaring the initiative complete.
 disable-model-invocation: true
 model: opus
 effort: max
 argument-hint: <PREFIX> [--fill-gaps | --skip-scaffold]
-allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, TodoWrite
+allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 ---
 
 # EDM Test -- Comprehensive Testing Pipeline
@@ -23,7 +23,7 @@ Flags:
 ## Prerequisites
 
 - Phase 6 implementation has produced working code (at minimum, the source files exist).
-- Ticket pack exists at `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/`.
+- Ticket pack exists at `${INIT_DIR}/${user_config.ticket_pack_dirname}/`.
 - State shows `current_phase >= 6` (implementation started).
 
 If Phase 6 hasn't started:
@@ -34,8 +34,12 @@ If Phase 6 hasn't started:
 ### Step 1 -- Verify prerequisites
 
 1. Parse `{PREFIX}` and optional flags from `$ARGUMENTS`.
-2. Verify initiative directory, ticket pack, and phase state (phase >= 6).
-3. If `--fill-gaps`: skip to Step 5.
+2. Resolve the initiative directory from state (handles both flat and product-scoped layouts):
+   ```bash
+   INIT_DIR="$(edm-state resolve-dir <PREFIX>)"
+   ```
+3. Verify the ticket pack and phase state (phase >= 6) at `${INIT_DIR}`.
+4. If `--fill-gaps`: skip to Step 5.
 
 ### Step 2 -- Spawn edm-test-planner
 
@@ -43,7 +47,7 @@ Spawn `edm-test-planner` with the full initiative context:
 
 ```
 PREFIX: {PREFIX}
-srd_root: ${user_config.srd_root}
+INIT_DIR: ${INIT_DIR}
 srd_filename: ${user_config.srd_filename}
 ticket_pack_dirname: ${user_config.ticket_pack_dirname}
 coverage_target_unit_pct: ${user_config.coverage_target_unit_pct}
@@ -68,6 +72,7 @@ If `test-plan.md` contains any "SCAFFOLD NEEDED" entries:
 Spawn `edm-test-scaffold` with:
 ```
 PREFIX: {PREFIX}
+INIT_DIR: ${INIT_DIR}
 ```
 
 Wait for scaffold to complete and user to confirm installs. The scaffold agent will ask the user
@@ -120,9 +125,12 @@ Do not proceed to coverage audit if the unit or integration test suite fails (P0
 Spawn `edm-test-coverage-auditor` with:
 ```
 PREFIX: {PREFIX}
+INIT_DIR: ${INIT_DIR}
 ```
 
-Wait for it to complete and `test-coverage.md` to be written.
+Wait for it to complete and `test-coverage.md` to be written. Then run
+`edm-state update-patterns <PREFIX> test-coverage` to append any novel findings from this run's
+`test-coverage.md` into the pattern library.
 
 ### Step 7 -- Record results in state
 
@@ -155,11 +163,11 @@ a11y         N/A      --        N/A        --
 
 Findings: 0 P0  |  0 P1  |  2 P2
 
-P2 findings (should fix before next sprint):
+P2 findings (remediate before convergence):
   - AUTH-T07 AC3 partially covered -- edge case for concurrent login not tested
 
-Coverage report: SRD/{PREFIX}/test-coverage.md
-Test plan:       SRD/{PREFIX}/test-plan.md
+Coverage report: ${INIT_DIR}/test-coverage.md
+Test plan:       ${INIT_DIR}/test-plan.md
 ```
 
 **If any findings remain (P0/P1/P2)**: "Testing is not fully complete. Re-run `/edm:test {PREFIX} --fill-gaps` to write tests for all remaining gaps."

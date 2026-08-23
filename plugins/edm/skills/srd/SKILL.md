@@ -15,6 +15,11 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 - **Input**: Planning document at `${user_config.srd_root}/{PREFIX}/planning.md`
 - **Output**: SRD at `${user_config.srd_root}/{PREFIX}/${user_config.srd_filename}` (default `srd.md`)
 
+## Step 0 -- Gate and Branch Preflight
+
+Before Step 1, run the preflight per `skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`,
+using `<gated-command>` = `srd` and `<phase-num>` = `2`.
+
 ## Operational Orchestration
 
 1. Parse `$ARGUMENTS` for `{PREFIX}`. If missing, ask the user or read from in-progress initiatives via `edm-state list`.
@@ -23,11 +28,29 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 4. `edm-state phase-start <PREFIX> 2`
 5. **Standard / IaC / Data-ML modes**: Spawn `edm-srd-writer` for main content + `edm-architect` in
    parallel. `edm-srd-writer` writes to `${user_config.srd_filename}` (default `srd.md`).
-   `edm-architect` writes to `architecture.md` (not into the SRD body).
+   `edm-architect` writes to `architecture.md` (not into the SRD body). Record the decision:
+   ```bash
+   edm-state set <PREFIX> last_decision "architecture.md written by edm-architect"
+   ```
    **mini-SRD mode**: Spawn `edm-srd-writer` with the fused-file structure (see section below).
 6. After both complete, verify the SRD file. `edm-state srd-version <PREFIX> 1.0.0`
 7. `edm-state phase-complete <PREFIX> 2`
-8. Proceed automatically to Phase 3 audit (`/edm:audit-srd <PREFIX>`) -- no HITL gate between Phase 2 and Phase 3.
+8. **Mode branch**:
+   - `mode=prototype`: stop here with a clean message instead of proceeding to Phase 3:
+     > "Prototype complete. SRD is at `{path}`. Phases 3-6 are skipped. To graduate this
+     > prototype to a full initiative, run `edm-state set-mode <PREFIX> mode standard` then
+     > resume with `/edm:orchestrator <PREFIX>`."
+     Record skipped phases:
+     ```bash
+     edm-state skip-phase <PREFIX> 3 "prototype: SRD audit skipped"
+     edm-state skip-phase <PREFIX> 4 "prototype: ticket creation skipped"
+     edm-state skip-phase <PREFIX> 5 "prototype: ticket audit skipped"
+     edm-state skip-phase <PREFIX> 6 "prototype: implementation skipped"
+     ```
+     Do not spawn ticket writers, implementers, or QC agents. `edm-state archive` proceeds with a
+     warning when `mode=prototype` (no convergence gate required).
+   - All other modes: proceed automatically to Phase 3 audit (`/edm:audit-srd <PREFIX>`) -- no HITL
+     gate between Phase 2 and Phase 3.
 
 ## SRD Sections
 
@@ -54,11 +77,15 @@ All requirements get sequential IDs: `{PREFIX}-01`, `{PREFIX}-02`, ...
 
 1. **Unique IDs** -- every requirement has `{PREFIX}-NN`
 2. **Testable** -- every requirement has clear pass/fail acceptance criteria
-3. **Illustrated** -- architecture shown with Mermaid diagrams (system context + sequence)
+3. **Illustrated** -- architecture shown with Mermaid diagrams (system context + sequence), following `CLAUDE.md Sec."Mermaid diagram conventions"` for label text
 4. **Prioritized** -- Must Have / Should Have / Could Have
 5. **No vague language** -- "fast" -> "< 200ms p95 at 1000 QPS"
 6. **Cross-referenced** -- actual file paths, API names, library versions
 7. **Appropriate length** -- 800+ lines major, 200+ focused, 50+ small change
+
+These are substance signals, not padding targets: match the length of the document to what the
+task needs, cover the substance, and do not pad with filler sections, redundant summaries, or
+boilerplate. A draft below the floor is probably missing substance, not merely short.
 
 ## SRD Template
 
@@ -151,7 +178,9 @@ Prompt: "Write the Target Architecture document for {PREFIX}. First resolve the 
          INIT_DIR=$(edm-state resolve-dir <PREFIX>)
          Write to ${INIT_DIR}/architecture.md.
          Include Mermaid diagrams (system context + sequence) and component design grounded in
-         the existing codebase. The SRD Section 5 references this file -- do not duplicate content."
+         the existing codebase. The SRD Section 5 references this file -- do not duplicate content.
+         Follow CLAUDE.md Sec."Mermaid diagram conventions" for label text -- a raw semicolon
+         in a label is a violation."
 ```
 
 For large SRDs, run multiple `edm-srd-writer` agents in parallel (one per section group). Always run `edm-architect` separately -- it writes `architecture.md`, not the SRD body.
@@ -188,3 +217,7 @@ The rendering must be ASCII-only; do not use Unicode markers.
 - Vague language
 
 After writing, the next step is automatic: `/edm:audit-srd <PREFIX>`.
+
+This phase presents no gate of its own (except the `mode=prototype` stop above, which is not an
+approval gate) -- Gate 2 is presented by `/edm:audit-srd` per
+`skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`.

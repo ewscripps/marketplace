@@ -1,11 +1,11 @@
-# EDM Plugin — Conventions for Contributors
+# EDM Plugin -- Conventions for Contributors
 
 This file documents the architectural rules, naming conventions, and configuration model for the EDM Claude Code plugin.
-Read this before making changes — it captures decisions that aren't otherwise visible in the code.
+Read this before making changes -- it captures decisions that aren't otherwise visible in the code.
 
 ## Architectural rules (do not violate)
 
-### 1. `skills/` is the only entry point — there is no `commands/`
+### 1. `skills/` is the only entry point -- there is no `commands/`
 
 Per the Claude Code plugin docs, `commands/` is the legacy location for skills-as-flat-files. New plugins use `skills/`.
 Both invoke the same way (`/edm:name`), so maintaining both is pure duplication. **Do not re-introduce a `commands/`
@@ -19,13 +19,48 @@ Each phase skill (`skills/orchestrator/SKILL.md`, `skills/plan/SKILL.md`, etc.) 
 - Step-by-step operational orchestration
 - The HITL gate prompts
 
-Agents are invoked from skills, not the other way around. Skills don't load other skills — they each contain their own
-orchestration.
+Agents are invoked from skills, not the other way around.
+
+**Skill-tool composition** (EDMV3-T34; spike recorded as decision D21 in
+`SRD/edm/EDMV3__prompt-streamline/decisions.md` and `spike-skill-composition.md`): skills DO load
+other skills, via the `Skill` tool. This marketplace's own **git plugin is the in-repository
+precedent** -- `skills/commit/SKILL.md` invokes the `jira` plugin's `search-jira` skill exactly
+this way today. The orchestrator dispatches; each phase skill owns its phase's complete procedure
+exactly once, never duplicated in the orchestrator. Two obligations fall on any caller:
+
+1. **`Skill` must appear in the caller's `allowed-tools`.** The callee's own `allowed-tools`
+   governs what the callee itself may do while it runs -- grants are not inherited from, or
+   intersected with, the caller's (confirmed live in the D21 spike: a `Bash`-less caller's callee
+   ran `Bash` successfully because the callee's own frontmatter granted it).
+2. **The caller must handle a target-skill-not-enabled failure gracefully.** An unavailable
+   target fails the Skill-tool call with a `tool_use_error: Unknown skill: <name>` -- a clean,
+   nameable error, not a silent no-op or a hang (confirmed live in the D21 spike). The caller must
+   report the unavailable skill by name and stop; it must never fall back to silently inlining the
+   target's procedure.
+
+Context accumulated by the caller (its own reasoning, anything it has read or written this turn)
+is visible to the callee automatically -- the callee runs within the **same conversation**, not an
+isolated sub-agent context the way a `Task`-spawned agent (`edm-explorer`, `edm-implementer`,
+etc.) does.
+
+#### Intent-to-file index
+
+Some behaviors are described in more than one file with no indication which is authoritative
+(explorer 02 C3.3). When in doubt about **which file is authoritative**, this table wins:
+
+| I want to change... | Edit this file (authoritative) |
+|---|---|
+| What a phase does, step by step | `skills/{phase}/SKILL.md` |
+| What the explorer agent explores and how it reports | `agents/edm-explorer.md` -- `skills/plan/SKILL.md`'s "AI Execution Pattern" only names when/how many to spawn |
+| Gate approval behavior (STOP/WAIT, free-text rejection, options) | `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` -- every other gate site references it by name, never restates it |
+| Severity definitions (P0/P1/P2/NOTED) | `CLAUDE.md Sec."Severity vocabulary"` -- every other site references it by name |
+| A `bin/edm-state` subcommand's behavior | `bin/edm-state` itself -- the `bin/` table below only indexes it |
+| An audit lens's mandate | `agents/edm-audit-{lens}.md` -- `skills/code-audit/SKILL.md`'s lens table only summarizes |
 
 ### 3. Artifacts live in the project's `SRD/` directory and are committed to git
 
-Every artifact EDM produces — planning notes, SRDs, ticket packs, audit reports, code-audit remediation plans, *
-*and `.edm-state.json`** — is a project deliverable that lives in the repository's `SRD/` directory. Source control IS
+Every artifact EDM produces -- planning notes, SRDs, ticket packs, audit reports, code-audit remediation plans, *
+*and `.edm-state.json`** -- is a project deliverable that lives in the repository's `SRD/` directory. Source control IS
 the feature:
 
 - A teammate reviews the SRD in a PR before any code is written
@@ -68,12 +103,16 @@ SRD/                              <- project root, committed to git
         +-- test-coverage.md          <- /edm:test (coverage by layer + AC<->test cross-ref)
         +-- qc/                       <- Phase 6 QC reports (always-present after first wave)
         |   +-- qc-summary.md         <- merged QC verdict table (single auditor or merged shards)
-        |   +-- qc-shard-{NN}.md      <- per-shard reports when ticket count > qc_shard_threshold
+        |   +-- qc-shard-impl-{NN}.md <- per-implementer hook shards ({NN} = lowest ticket in range)
+        |   +-- qc-shard-pass-w{WW}-{NN}.md <- post-wave threshold shards ({WW} = wave number, {NN} = shard ordinal within that wave); disjoint from qc-shard-impl-*
         +-- code-audit/               <- /edm:code-audit output
-        |   +-- findings-ledger.md    <- persistent cross-round findings ledger (stable CA-NNN IDs)
+        |   +-- findings-ledger.jsonl <- authoritative cross-round findings ledger (stable CA-NNN IDs)
+        |   +-- findings-ledger.md    <- deterministic render of findings-ledger.jsonl (`edm-state render-ledger`)
         |   +-- pass-{N}_{YYYY-MM-DD}/ <- one directory per audit round (N = monotonic counter)
+        |       +-- lens-L1.jsonl ... lens-L11.jsonl  <- authoritative per-lens findings (schema in skills/code-audit/SKILL.md)
         |       +-- lens-L1.md ... lens-L11.md
         |       +-- lenses-run.txt    <- lens set for this round (full vs. partial)
+        |       +-- tooling-notes.md  <- on-demand (CA-388/CA-466): per-lens stall counts and truncation caveats; absent when the round's delivery was clean
         |       +-- REMEDIATION.md
         +-- ROLLBACK.md               <- rollback runbook (Should/on-demand; structure: trigger, revert steps, verify, owner)
         +-- exec-report.md            <- post-Phase-6 execution report with mode field (Should/on-demand)
@@ -86,23 +125,23 @@ SRD/                              <- project root, committed to git
 ```
 
 **Slot annotations**:
-- `always-present` — scaffolded by `edm-init` or written early in the phase flow
-- `on-demand` — created by its owning phase/agent only when the initiative needs it
-- `Must/Should/Could` — priority per SRD EDMV2-38..43
+- `always-present` -- scaffolded by `edm-init` or written early in the phase flow
+- `on-demand` -- created by its owning phase/agent only when the initiative needs it
+- `Must/Should/Could` -- priority per SRD EDMV2-38..43
 
 **Canonical artifact homes** (all paths derived from state via `initiative_dir_for()`, never hardcoded):
-- `architecture.md` — canonical home for `edm-architect` diagrams and architecture decisions (EDMV2-38)
-- `explorers/` — canonical home for parallel explorer reports; synthesized into `planning.md` (EDMV2-39)
-- `decisions.md` — initiative-wide key-decisions + finding-to-commit ledger; distinct from `code-audit/findings-ledger.md` which is the code-audit cross-round ledger (EDMV2-40)
-- `ROLLBACK.md` — on-demand rollback runbook; template: trigger conditions, ordered revert steps, verification-after-rollback, owner/contact (EDMV2-41)
-- `exec-report.md` — post-Phase-6 execution report; `mode` field = run mode (e.g., `live-db`, not the adaptation profile) (EDMV2-42)
-- `post-deploy/` — post-deploy verification and analysis-input documents (EDMV2-43)
+- `architecture.md` -- canonical home for `edm-architect` diagrams and architecture decisions (EDMV2-38)
+- `explorers/` -- canonical home for parallel explorer reports; synthesized into `planning.md` (EDMV2-39)
+- `decisions.md` -- initiative-wide key-decisions + finding-to-commit ledger; distinct from `code-audit/findings-ledger.md` which is the code-audit cross-round ledger (EDMV2-40)
+- `ROLLBACK.md` -- on-demand rollback runbook; template: trigger conditions, ordered revert steps, verification-after-rollback, owner/contact (EDMV2-41)
+- `exec-report.md` -- post-Phase-6 execution report; `mode` field = run mode (e.g., `live-db`, not the adaptation profile) (EDMV2-42)
+- `post-deploy/` -- post-deploy verification and analysis-input documents (EDMV2-43)
 
 **Concrete example**: `SRD/edm/EDMV2__enhance-edm-plugin/`
 
-- The **double-underscore** (`__`) separates the PREFIX from the description slug — never use a single underscore.
+- The **double-underscore** (`__`) separates the PREFIX from the description slug -- never use a single underscore.
 - The description slug is lowercase-hyphenated (e.g. `enhance-edm-plugin`, `user-auth-rewrite`).
-- PREFIX is **globally unique** across ALL product subdirectories — two products may not share a PREFIX (see Naming conventions below).
+- PREFIX is **globally unique** across ALL product subdirectories -- two products may not share a PREFIX (see Naming conventions below).
 
 **Existing flat initiatives (`SRD/{PREFIX}/`) continue to work unchanged** (EDMV2-90 backward compat). The resolver
 (`state_file_for` in `bin/edm-state`) detects the layout automatically and prefers an existing on-disk path so
@@ -125,25 +164,25 @@ The plugin reads root paths from `userConfig`, so teams can relocate the entire 
 ### Existing repository conventions (informational)
 
 The project may contain an `/SRD/` directory with initiatives that pre-date the plugin and use older patterns. The
-plugin does NOT migrate these — they keep their current format. New initiatives created via the plugin use the
+plugin does NOT migrate these -- they keep their current format. New initiatives created via the plugin use the
 product-scoped canonical layout above (or flat layout when `--product`/`--description` are omitted).
 
 ## Naming conventions
 
 ### Initiative prefix
 
-3–6 uppercase characters, e.g., `AUTH`, `MIGR`, `TIPS`, `PERF`. Validated by `bin/edm-validate-prefix` for
+3-6 uppercase characters, e.g., `AUTH`, `MIGR`, `TIPS`, `PERF`. Validated by `bin/edm-validate-prefix` for
 **global uniqueness** across ALL product subdirectories in `SRD/` (not just one product). This ensures the PREFIX
-is unambiguous in commit scopes, ticket IDs, HANDOFF references, and Jira scopes — two products sharing a PREFIX
+is unambiguous in commit scopes, ticket IDs, HANDOFF references, and Jira scopes -- two products sharing a PREFIX
 would make all of these ambiguous. Configurable hint: `${user_config.prefix_format_hint}`.
 
 ### Requirement IDs (in SRDs)
 
-`{PREFIX}-{NN}` — e.g., `AUTH-01`, `AUTH-02`, …, `AUTH-37`.
+`{PREFIX}-{NN}` -- e.g., `AUTH-01`, `AUTH-02`, ..., `AUTH-37`.
 
 ### Ticket IDs (in ticket packs)
 
-`{PREFIX}-T{NN}` — e.g., `AUTH-T01`, `AUTH-T02`, …, `AUTH-T48`.
+`{PREFIX}-T{NN}` -- e.g., `AUTH-T01`, `AUTH-T02`, ..., `AUTH-T48`.
 
 The `T` prefix distinguishes tickets from SRD requirements and prevents global collision across initiatives. **Never use
 the legacy `TICK-NN` format**; the plan ID disambiguates initiatives in cross-initiative coverage maps.
@@ -156,19 +195,19 @@ Every ticket pack `README.md` body's first line MUST be:
 Generated From: ${user_config.srd_filename} v{srd_version}
 ```
 
-The `srd_version` is read from `.edm-state.json`. The `edm-ticket-auditor` (Dimension 8 — Version Alignment) verifies
+The `srd_version` is read from `.edm-state.json`. The `edm-ticket-auditor` (Dimension 8 -- Version Alignment) verifies
 this against the current SRD version and flags drift as a P0 finding.
 
 ## Agent color scheme (semantic)
 
 | Color     | Agent(s)                                              | Meaning                                 |
 |-----------|-------------------------------------------------------|-----------------------------------------|
-| `yellow`  | `edm-explorer`                                        | Phase 1 — discovery                     |
-| `blue`    | `edm-architect`, `edm-srd-writer`                     | Phase 2 — writing                       |
-| `orange`  | `edm-srd-auditor`, `edm-ticket-auditor`               | Phase 3 & 5 — pre-implementation audits |
-| `magenta` | `edm-ticket-writer`                                   | Phase 4 — writing tickets               |
-| `green`   | `edm-implementer`                                     | Phase 6 — building                      |
-| `red`     | `edm-qc-auditor`                                      | Phase 6 QC — final gate                 |
+| `yellow`  | `edm-explorer`                                        | Phase 1 -- discovery                     |
+| `blue`    | `edm-architect`, `edm-srd-writer`                     | Phase 2 -- writing                       |
+| `orange`  | `edm-srd-auditor`, `edm-ticket-auditor`               | Phase 3 & 5 -- pre-implementation audits |
+| `magenta` | `edm-ticket-writer`                                   | Phase 4 -- writing tickets               |
+| `green`   | `edm-implementer`                                     | Phase 6 -- building                      |
+| `red`     | `edm-qc-auditor`                                      | Phase 6 QC -- final gate                 |
 | `cyan`    | all 11 `edm-audit-*` lenses + `edm-audit-synthesizer` | Code audit (one logical operation)      |
 
 When adding a new agent, choose a color that matches the phase. Lens agents always share `cyan`.
@@ -179,42 +218,274 @@ All EDM audit agents use the following four-level scale. No agent may define a d
 
 | Level | Meaning | Required action |
 |---|---|---|
-| **P0** | Critical — blocks implementation, security/legal issue, production failure, or architecturally wrong | Fix before this phase may be called complete |
-| **P1** | Significant — material gap, factual error, missing requirement, or behavior that must be corrected before shipping | Fix before shipping; defer only with explicit written rationale |
-| **P2** | Minor — polish, edge-case, improvement, or nice-to-have | Fix if low-effort; explicitly defer otherwise |
-| **NOTED** | Not actionable — the issue is intentional, pre-existing, or a known accepted trade-off | Document in "Decisions / Non-Findings"; do not re-investigate |
+| **P0** | Critical -- blocks implementation, security/legal issue, production failure, or architecturally wrong | Fix before this phase may be called complete |
+| **P1** | Significant -- material gap, factual error, missing requirement, or behavior that must be corrected before shipping | Remediated before the phase or round may be called complete |
+| **P2** | Minor -- polish, edge-case, improvement, or nice-to-have | Remediated before convergence |
+| **NOTED** | Not actionable -- the issue is intentional, pre-existing, or a known accepted trade-off | Document in "Decisions / Non-Findings"; do not re-investigate |
+
+`NOTED` is not actionable and is distinct from deferral -- a deferral is an actionable finding
+postponed to later, and deferral does not exist in this methodology. Every P0, P1 and P2 finding
+is remediated before convergence; `NOTED` is the only status that closes a finding without a fix.
 
 **Backward-compatibility mapping** (from the synthesizer's legacy P1/P2/P3 scale used before v2.0):
-- Legacy P1 (production failure / security) → **P0**
-- Legacy P2 (operational friction / must-fix) → **P1**
-- Legacy P3 (defensive improvement / nice-to-have) → **P2**
-- NOTED → unchanged
+- Legacy P1 (production failure / security) -> **P0**
+- Legacy P2 (operational friction / must-fix) -> **P1**
+- Legacy P3 (defensive improvement / nice-to-have) -> **P2**
+- NOTED -> unchanged
+
+**Sanctioned exception -- P2 debt acceptance at convergence (EDMV3-T68).** "Remediated before
+convergence" above still holds by default; the one sanctioned exception is an explicit human
+choice at the convergence gate, never a silent policy weakening. When a code-audit round's
+blocking set is P0=0, P1=0 and P2>0, `skills/code-audit/SKILL.md`'s convergence gate (Sec."10.
+Convergence gate") offers **Converge now**, which runs `edm-state approve-gate <PREFIX>
+code-audit --accept-p2-debt`. That command hard-refuses if any P0 or P1 is open -- the override
+is P2-only, never P0/P1 -- and otherwise records `code_audit_converged=true` plus
+`code_audit_p2_debt_accepted`/`_count`/`_round`/`_accepted_at`/`_accepted_by` in state. The
+ledger itself is left unchanged: accepted P2s still show as open findings in
+`findings-ledger.md`/`.jsonl`, and HANDOFF's code-audit gate row names the accepted count and
+round so a teammate sees debt was knowingly carried, not silently missed. `edm-state archive`
+re-verifies P0/P1 are still 0 and refuses if a newer full audit round has completed since
+acceptance (the debt has gone stale -- re-run `--accept-p2-debt` or fix the remaining findings
+first). The override reads the blocking set straight from `findings-ledger.jsonl`, so it does
+not itself require that a full eleven-lens round was ever recorded (CA-426): on an initiative
+with zero recorded code-audit rounds the convergence check warns on stderr and proceeds, and the
+flag can engage. It asserts only that no P0 or P1 is open in the ledger as it stands, never that
+the ledger is complete. The gate also offers **Fix low-hanging fruit first**: remediate the P2s
+whose
+REMEDIATION.md prescription is a single self-contained change, then re-present the gate with the
+smaller remaining set -- a middle ground between converging immediately and re-treating every
+open P2 as blocking.
+
+## Mermaid diagram conventions (canonical)
+
+All EDM agents that author or audit Mermaid diagrams follow these conventions. No agent may define a divergent local rule.
+
+Mermaid's `;` is a lexer-level statement separator, and this is reserved even where the `;` appears inside label text -- the parser does not distinguish "inside a label" from "between statements," so a literal semicolon inside a node, edge or message label breaks the diagram.
+
+**The rule:** a literal semicolon in Mermaid label, node, edge or message text is written as the entity code `#59;` -- `#` followed by either a base-10 code point or an entity name, then `;`, with no leading ampersand. `&#59;` is not this project's convention; `#59;` is correct.
+
+Before (raw semicolon inside a label -- breaks the diagram):
+
+<!-- edm-lint-ignore-start -->
+```mermaid
+flowchart TD
+    A[Wait; then retry] --> B[Done]
+```
+<!-- edm-lint-ignore-end -->
+
+After (entity code, no leading ampersand -- renders correctly):
+
+```mermaid
+flowchart TD
+    A[Wait#59; then retry] --> B[Done]
+```
+
+Quoting label text is not a reliable substitute for the entity code across every diagram type. A `sequenceDiagram` message's text after the `:` is unquoted, so it is especially exposed to this failure -- there is no quote to protect it there.
+
+The following remain legal and are **not** violations of this rule:
+- A statement-terminating `;` at the end of a line, outside any label.
+- `;` on a `%%` comment line.
+- `;` terminating a `classDef`, `style`, or `linkStyle` directive.
+
+Other entity codes follow the same form, so the rule generalizes: `#quot;` (double quote), `#35;` (`#`), and so on.
+
+This section's heading string, `## Mermaid diagram conventions (canonical)`, is referenced by name from the eleven touch points inventoried in `architecture.md` and asserted by a smoke test -- do not rename it without updating every reference.
+## Unverifiable acceptance criteria (D15)
+
+An unverifiable acceptance criterion -- one whose stated runtime environment does not exist in
+the project (no staging deploy, no live database, no browser harness) -- is a specification
+defect, not a fourth verdict. `/edm:verify-runtime` (EDMV3-T33) records exactly two closing
+verdicts, PASS or FAIL, for every entry in `partial_verdict_map`; there is no `BLOCKED`,
+`WAIVED`, or `N/A-runtime` value anywhere in this methodology.
+
+When an AC's runtime environment genuinely does not exist, there are exactly two sanctioned
+responses:
+
+1. **Rework the AC** into something verifiable in the environment that does exist -- the usual
+   outcome. Most "PARTIAL forever" ACs are testable with a narrower, still-meaningful claim.
+2. **Move the unverifiable clause out of scope** as a recorded boundary for a follow-on
+   initiative, using the D14 scope-boundary framing -- a decision made on its own merits, not a
+   postponed finding.
+
+Both routes are a scope change to an approved ticket, so both go through gate change control:
+presented at the relevant gate with the rationale, approved or rejected by the human via the
+canonical `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`, and recorded in `decisions.md` and
+the ticket's audit trail. **The implementer cannot descope an AC by declaring it unverifiable** --
+only a human, at a gate, can accept route (1) or (2). Archive stays hard-blocked until every AC in
+`partial_verdict_map` carries a `closing_verdict` of PASS or FAIL.
+
+## By-name reference resolution from an installed plugin cache (EDMV3-T41)
+
+**Verified NOT to resolve deterministically (decisions.md D22, Claude Code 2.1.220,
+2026-07-28).** `claude plugin validate` confirms plugin-root `CLAUDE.md` is never loaded as
+runtime context ("use a skill instead"), and an installed plugin's cache directory is not
+path-adjacent to whatever project it is installed into, so a bare `` `CLAUDE.md Sec."..."` ``
+reference in a prompt has no plugin-relative anchor to resolve against from there -- it either
+fails to resolve, or (since "CLAUDE.md" is itself a common convention) silently resolves to the
+target project's own unrelated `CLAUDE.md` instead. Both the Severity vocabulary section and
+the Mermaid diagram conventions section above are additionally generated, byte-identical, into
+`docs/canonical-sections.md` (regenerate via `edm-sync-canonical-sections` after editing either
+section above) -- the plugin-relative path new prompt-surface references point at instead of the
+bare `CLAUDE.md Sec."..."` form.
+
+**Current position (decisions.md D34): the negative branch is now the shipped default, not a
+future one -- for the code-audit consumer set specifically, not for every EDMV3-T42 touch point.**
+`agents/edm-audit-synthesizer.md`, `agents/edm-srd-auditor.md`, and all eleven
+`agents/edm-audit-*.md` lens definitions now carry an explicit `Read docs/canonical-sections.md`
+instruction anchored to the plugin's own root (never the caller's cwd) alongside their
+`CLAUDE.md Sec."..."` citation, so both forms resolve for a consumer reading one of these thirteen
+files. **That is a different, narrower set than the nine prompt-surface touch points
+`srd.md`'s EDMV3-54 originally named** (`agents/edm-architect.md`, `agents/edm-srd-writer.md`,
+`agents/edm-ticket-writer.md`, `agents/edm-ticket-auditor.md`, `skills/srd/SKILL.md`,
+`skills/tickets/SKILL.md`, `skills/audit-srd/SKILL.md`, `skills/audit-tickets/SKILL.md`, plus
+`agents/edm-srd-auditor.md` which the two sets happen to share) -- of those nine, only
+`edm-srd-auditor.md` overlaps with what D34 actually anchored, so the "ordering gap is now
+closed" framing holds for the lens/synthesizer set only, not for the other eight EDMV3-54 touch
+points, which still carry the bare form alone. Auditing and anchoring those eight is the residual
+scope opened as a named follow-on ticket, `EDMV4-T04` (the next unused ticket number in
+`EDMV4__lint-and-pipeline-budgets`; `EDMV4-T02` and `EDMV4-T03` are already closed per
+decisions.md D29), rather than left as an unnamed candidate (D34).
 
 ## Model and effort assignments
 
-| Role | Model | Effort | Rationale |
-|---|---|---|---|
-| Planning, audit, QC | `opus` | `max` | Judgment-heavy work — surface subtle issues |
-| Writing (SRD, tickets) | `opus` | `high` | High-stakes artifacts the rest of the methodology depends on; opus catches missed requirements and weak ACs that sonnet sometimes misses |
-| Implementation | `sonnet` | `high` | Throughput work — well-specified by tickets |
-| Code audit lenses + synthesizer | `opus` | `max` | Each lens hunts for subtle, lens-specific issues |
-| Jira sync (optional) | `sonnet` | `high` | Mechanical mapping — ticket pack already exists; this just translates fields |
+Derived from tiering matrix <date>; re-run when the model generation or pricing table changes
+(EDMV3-73). **Status: NOT yet matrix-derived.** The tiering matrix (`evals/tiering-matrix.sh`,
+EDMV3-T48) is built and unit-verified against synthetic fixtures, but has not been run against
+real data: the wave-A eval baseline it would measure against does not exist yet (decisions.md
+D23). Until that baseline is captured and the matrix runs for real, the table below is the same
+judgment-calibrated set of tiers from Gate 3 (D16), unchanged except the three wave-A downgrades
+EDMV3-T02 already applied on their own, independently-argued merits (D16). See decisions.md D28
+for the exact command that closes this gap and replaces this note with a real run date.
 
-Skills mirror the split: `skills/orchestrator/`, `skills/plan/`, `skills/srd/`, `skills/audit-srd/`, `skills/tickets/`, `skills/audit-tickets/`, `skills/implement/`, `skills/code-audit/` are all on `opus`. The two writers run at `effort: high`; planning, audits, and QC run at `effort: max`. `skills/push-jira/` and `skills/metrics/` run on `sonnet`/`high`.
+| Role / Agent(s) | Model | Effort | Rationale |
+|---|---|---|---|
+| Contested audit set -- 11 code-audit lenses, `edm-audit-synthesizer`, `edm-srd-auditor`, `edm-ticket-auditor`, `edm-qc-auditor` (15 agents) | `opus` | `max` | Judgment-heavy work -- surface subtle issues. UNCHANGED pending the tiering matrix (D16): no hand-picked downgrade is taken here -- only a measured, mechanical promotion (EDMV3-T48 AC3) may retier this set |
+| `edm-explorer` | `sonnet` | `high` | Scan/list work, not judgment-heavy synthesis; downgraded from `opus`/`max` EDMV3-T02 (D16 wave-A safe downgrade) |
+| `edm-test-coverage-auditor` | `sonnet` | `high` | Read-only coverage parse and AC cross-reference, not judgment-heavy; downgraded from `opus`/`max` EDMV3-T02 (D16 wave-A safe downgrade) |
+| `edm-architect` | `opus` | `high` | Writing work; downgraded from `opus`/`max` EDMV3-T02 (D16 wave-A safe downgrade) |
+| Writing (`edm-srd-writer`, `edm-ticket-writer`) | `opus` | `high` | High-stakes artifacts the rest of the methodology depends on; opus catches missed requirements and weak ACs that sonnet sometimes misses |
+| Implementation (`edm-implementer`) | `sonnet` | `high` | Throughput work -- well-specified by tickets |
+| Jira sync (optional) | `sonnet` | `high` | Mechanical mapping -- ticket pack already exists; this just translates fields |
+
+Skills mirror the split: `skills/orchestrator/`, `skills/plan/`, `skills/srd/`, `skills/audit-srd/`, `skills/tickets/`, `skills/audit-tickets/`, `skills/implement/`, `skills/code-audit/`, `skills/test/`, and `skills/test-plan/` are all on `opus`. The two writers (`skills/srd/`, `skills/tickets/`) and `skills/test-plan/` run at `effort: high`; `skills/orchestrator/`, `skills/plan/`, the audit skills, `skills/implement/`, `skills/code-audit/`, and `skills/test/` run at `effort: max`. `skills/push-jira/`, `skills/metrics/`, `skills/test-coverage/`, and `skills/verify-runtime/` run on `sonnet`/`high`. All 14 skills are accounted for above.
+
+### Prompt conventions (house style)
+
+The prompt-engineering conventions adopted across EDMV3-59 through EDMV3-67 (communication
+cadence, deliverable-length calibration, agent scope statements, output contracts, the
+implementer's decision ladder, N/A carve-outs, and the explorer fan-out cap) are **house style**
+for this plugin: an agent or skill added later inherits them rather than rediscovering them from
+scratch. The adoptions are **structural** (instruction-design patterns -- a shape of section, a
+kind of clause) and never verbatim text lifted from a source.
+
+**Four sources, with licence and location, matching the enumeration this subsection uses**:
+
+- **opus-5** -- the Opus 5 prompting guide:
+  `https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5`
+  (Anthropic documentation; publicly readable; guidance mined for structure, not copied verbatim).
+- **sonnet-5** -- the Sonnet 5 prompting guide:
+  `https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-sonnet-5`
+  (Anthropic documentation; publicly readable; guidance mined for structure, not copied verbatim).
+- **caveman** -- `skills/caveman/SKILL.md` and `CONTRIBUTING.md` in the `caveman` repository:
+  `https://github.com/JuliusBrussee/caveman` (**MIT**). Licence verified 2026-07-28 by direct
+  inspection of the local clone at `/Users/darryl.porter/projects/caveman`: a top-level `LICENSE`
+  file reading "MIT License / Copyright (c) 2026 Julius Brussee", `"license": "MIT"` in
+  `package.json`, and a shields.io licence badge in `README.md`. The URL above is that clone's
+  `origin` remote, not a link re-fetched over the network from this environment. Clean-room note:
+  the adoption here is pattern-level only (persistence framing, the before/after PR convention,
+  output-contract shape) -- no text was copied from either file.
+- **ponytail** -- `skills/ponytail/SKILL.md` and `ARCHITECTURE.md` in the `ponytail` repository:
+  `https://github.com/DietrichGebert/ponytail` (**MIT**). Licence verified 2026-07-28 by direct
+  inspection of the local clone at `/Users/darryl.porter/projects/ponytail`: a top-level `LICENSE`
+  file reading "MIT License / Copyright (c) 2026 DietrichGebert", `"license": "MIT"` in
+  `package.json`, and a `## License` section in `README.md` reading "[MIT](LICENSE)". The URL
+  above is that clone's `origin` remote, not a link re-fetched over the network from this
+  environment. Clean-room note: the adoption here is pattern-level only (the numbered decision
+  ladder, the "when NOT to" carve-out, the "cost of ignoring this" clause) -- no text was copied
+  from either file.
+
+The clean-room posture on both is deliberately unchanged now that the licences are known: MIT
+would have permitted verbatim reuse with attribution, but structural adoption was what this
+initiative actually did, and restating it as a licence consequence would misdescribe the work.
+
+#### Do-NOT-adopt guards
+
+Explorer 02 Part D is the main regression surface for a prompt-only workstream -- these six
+guards are recorded so a future contributor applying Opus 5 / Sonnet 5 guidance does not regress
+EDM's audit architecture in the name of "improving" it. Each names its cost, in the ponytail
+pattern, so it survives edge cases its author did not anticipate:
+
+- **(D1)** Do not strip the audit or QC architecture in the name of over-verification guidance.
+  EDM contains no *self*-verification -- its independent-agent auditing (writer/verifier
+  separation across `edm-implementer` -> `edm-qc-auditor` -> the 11 code-audit lenses) is exactly
+  the pattern the guide praises, not the anti-pattern it warns against. The cost of ignoring this is
+  silent regression of the initiative's entire quality gate -- FAIL findings ship undetected.
+- **(D2)** Do not reduce the 11-lens or 2-auditor fan-out to keep spawn counts low. Those counts
+  are already deterministic, unlike the explorer's uncapped fan-out that EDMV3-T47 just fixed. The
+  cost of ignoring this is coverage loss disguised as an efficiency gain -- a lens or audit lane
+  silently stops existing and nobody notices until the gap it used to catch ships.
+- **(D3)** Do not import terse register into EDM artifacts. SRDs and tickets are read by humans in
+  merge requests, not consumed as a single agent's scratch context. The cost of ignoring this is
+  reviewer confusion and slower human sign-off -- the opposite of what EDM's gates exist to speed
+  up.
+- **(D4)** Do not add interim-progress scaffolding (e.g. "summarize every N tool calls").
+  The cost of ignoring this is exactly the padding EDMV3-T45 spent effort removing from the
+  other direction -- a narrated tool-call log nobody asked for.
+- **(D5)** Do not add "think step by step" or anti-thinking instructions -- raise `effort` instead.
+  The cost of ignoring this is a prompt that fights the model's own extended-thinking budget
+  instead of using the `effort` field this plugin already exposes for exactly that purpose.
+- **(D6)** Do not duplicate the mode matrix into agent prompts, since it is state-backed and read
+  at runtime (`CLAUDE.md Sec."EDM mode matrix"`). The cost of ignoring this is the same drift this
+  whole epic exists to remove -- two copies of the same behavior-governing text disagree, silently,
+  the next time one of them is edited.
+
+#### Contribution convention: before/after with rationale
+
+Because this initiative's entire diff is prose changes to a mature, already-audited prompt set, a
+diff with rationale is the only reviewable artifact. **Every merge request that changes prompt
+text in this plugin -- any `SKILL.md`, any `agents/*.md`, this file -- shows before and after for each changed block, plus one sentence on why the new wording is better.**
+This convention outlives EDMV3: apply it to any future prompt-text change in this plugin, not
+only this initiative's own tickets.
 
 ## Cost tracking
 
-Every `phase-complete` invocation captures token usage from the project's session JSONL files (
-`~/.claude/projects/<encoded-cwd>/*.jsonl`) and computes Claude API cost using current Anthropic pricing. The state
-schema's `phase_durations[N_phase]` entry includes:
+Every `phase-complete` (and, EDMV3-T51, `audit-round-complete`) invocation captures token usage from the project's
+session JSONL files (`~/.claude/projects/<encoded-cwd>/*.jsonl`) and computes Claude API cost using current
+Anthropic pricing. The state schema's `phase_durations[N_phase]` entry includes:
 
-- `tokens.{input, output, cache_read, cache_write}` — raw counts
-- `model_used` — the model that handled most of the phase work (last assistant message)
-- `estimated_cost_usd` — computed from tokens × per-million-token rates
-- `human_baseline_usd` — computed from Phase Timing Guidelines median hours × `${user_config.human_hourly_rate_usd}` (
-  default $150/hr)
+- `tokens.{input, output, cache_read, cache_write_5m, cache_write_1h}` -- raw counts (no bare `cache_write` key
+  exists; cache writes are split by TTL, see below)
+- `model_used` -- the model that handled most of the phase work (last assistant message)
+- `estimated_cost_usd` -- computed from tokens x per-million-token rates
+- `attribution_mode` -- `"scoped"` or `"whole-directory"` (EDMV3-T52); see below. A strict two-value enum -- it never
+  carries a third value for a parse failure (G10); see `unparseable_lines` below for that.
+- `unparseable_lines` -- count of session-JSONL lines that failed to parse as JSON while summing tokens for this
+  phase (G10); a torn/truncated line is routine while Claude Code is still appending to the driving session, not
+  corrupted state. Surfaced as the informational `TORN_TOKEN_LINES` anomaly on `edm-state validate` when non-zero.
+- `human_baseline_usd` -- computed from Phase Timing Guidelines median hours x `${user_config.human_hourly_rate_usd}` (
+  default $150/hr); recorded on every phase but shown by default only via `metrics-report --with-human-baseline`
+  (EDMV3-T53)
 
-Pricing constants (per million tokens, USD) are baked in but env-overridable:
+**Token attribution (EDMV3-T52, decisions.md D25):** token/cost figures are scoped to the *driving session* -- the
+single most-recently-modified `*.jsonl` file in the sessions directory at read time, since Claude Code appends to
+its own session's JSONL as the conversation proceeds, making it always the most recently touched file on disk. This
+prevents a second Claude Code window open on the same project from inflating a phase's or audit round's figures.
+`attribution_mode` records `"scoped"` when this succeeded, or `"whole-directory"` on the pre-T52 fallback (sums
+every session JSONL) if the sessions directory has no readable file at read time.
+
+Pricing constants (per million tokens, USD) are baked in but env-overridable. Current generation (the model
+generation this plugin's agents actually run on, see "Model and effort assignments" above):
+
+| Model | Input | Output | Cache Read | Cache Write 5m | Cache Write 1h |
+|---|---|---|---|---|---|
+| Opus 4.8 | $6 | $30 | $0.60 | $7.50 | $12.00 |
+| Sonnet 4.7 | $4 | $20 | $0.40 | $5.00 | $8.00 |
+| Haiku 4.6 | $1.20 | $6.00 | $0.12 | $1.50 | $2.40 |
+
+Verified 2026-07-28 against [docs.anthropic.com/en/docs/about-claude/pricing](https://docs.anthropic.com/en/docs/about-claude/pricing).
+
+Previous-generation rates (frozen, not env-overridable -- EDMV3-T52 AC9) are kept so a state file recorded before
+this refresh is never silently repriced on a later read:
 
 | Model | Input | Output | Cache Read | Cache Write 5m | Cache Write 1h |
 |---|---|---|---|---|---|
@@ -222,9 +493,34 @@ Pricing constants (per million tokens, USD) are baked in but env-overridable:
 | Sonnet 4.6 | $3 | $15 | $0.30 | $3.75 | $6.00 |
 | Haiku 4.5 | $1 | $5 | $0.10 | $1.25 | $2.00 |
 
-Verified May 2026 against [docs.anthropic.com/en/docs/about-claude/pricing](https://docs.anthropic.com/en/docs/about-claude/pricing).
+Override the current-generation rates with `EDM_OPUS_INPUT_RATE`, `EDM_SONNET_OUTPUT_RATE`, `EDM_HAIKU_CACHE_READ_RATE`, `EDM_OPUS_CACHE_WRITE_5M_RATE`, `EDM_OPUS_CACHE_WRITE_1H_RATE`, etc. when rates change.
 
-Override with `EDM_OPUS_INPUT_RATE`, `EDM_SONNET_OUTPUT_RATE`, `EDM_HAIKU_CACHE_READ_RATE`, `EDM_OPUS_CACHE_WRITE_5M_RATE`, `EDM_OPUS_CACHE_WRITE_1H_RATE`, etc. when rates change.
+**How `compute_cost_usd` picks a rate row after D32.** D32 removed the bare family wildcards. The
+`case` in `bin/edm-state` now has eight explicit arms:
+
+- previous-generation frozen rows: `*opus-4-7*|*opus-4.7*`, `*sonnet-4-6*|*sonnet-4.6*`,
+  `*haiku-4-5*|*haiku-4.5*`
+- current-generation explicit rows: `*opus-4-8*|*opus-4.8*`, `*haiku-4-6*|*haiku-4.6*`,
+  `*sonnet-4-7*|*sonnet-4.7*`
+- the literal `unknown` sentinel from `get_session_tokens_since` (silent placeholder pricing at
+  current Sonnet-tier rates; tokens are already zero in that path)
+- final `*)` fallback: warn on stderr and also price at current Sonnet-tier rates as a clearly
+  suspect placeholder
+
+Two invariants matter here, not the arms' literal position in the file: every explicit version arm
+precedes the final `*)` fallback, and no bare family wildcard (e.g. a bare `*opus*`) may be
+introduced ahead of `*)` -- that is the exact silent-guess regression D32 removed. The `unknown`
+sentinel only has to precede `*)` too; it is not required to sit after every version arm, and today
+it does not -- it is arm 6 of 8, between the `*haiku-4-6*` and `*sonnet-4-7*` current-generation
+arms. A contributor adding a new version arm (e.g. Sonnet 5) just needs it ahead of `*)`; where it
+lands relative to `unknown` is immaterial.
+
+The important behavioral change is the opposite of the pre-D32 contract: an unrecognized model in a
+known family no longer matches silently. `claude-opus-5-20260501`, `claude-sonnet-9`, or any other
+identifier outside the six explicit version arms now falls through to `*)`, emits the warning, and
+gets placeholder Sonnet-tier pricing until a human updates the table. Cross-check `model_used`
+against the two tables above before quoting a cost figure from a run driven by a model generation
+newer than this section's "Verified" date.
 
 Cache writes are tracked separately by TTL (5-minute vs 1-hour) because they have different rates. Claude Code typically uses 1-hour caching for system prompts and tool definitions, so `cache_write_1h` is usually the dominant figure.
 
@@ -243,17 +539,17 @@ Two new artifacts are added to `SRD/{PREFIX}/`:
 
 | File | Written by | Purpose |
 |------|-----------|---------|
-| `test-plan.md` | `edm-test-planner` | Stack detection, AC↔layer mapping, writer task assignments |
-| `test-coverage.md` | `edm-test-coverage-auditor` | Coverage by layer vs. targets, AC↔test cross-reference, P0/P1/P2 gaps |
+| `test-plan.md` | `edm-test-planner` | Stack detection, AC<->layer mapping, writer task assignments |
+| `test-coverage.md` | `edm-test-coverage-auditor` | Coverage by layer vs. targets, AC<->test cross-reference, P0/P1/P2 gaps |
 
-Test code itself lives in the project's existing test directories — `SRD/` artifacts document
+Test code itself lives in the project's existing test directories -- `SRD/` artifacts document
 *intent and coverage*, not the tests themselves.
 
 ### Testing layer agent inventory
 
 | Agent | Model/Effort | Color | maxTurns | Role |
 |-------|-------------|-------|---------|------|
-| `edm-test-planner` | opus / high | yellow | 30 | Detect stack; map tickets → test layers; write `test-plan.md` |
+| `edm-test-planner` | opus / high | yellow | 30 | Detect stack; map tickets -> test layers; write `test-plan.md` |
 | `edm-test-scaffold` | sonnet / high | blue | 30 | Install missing test deps, write config files |
 | `edm-test-unit` | sonnet / high | green | 50 | Pure-function unit tests, mock-isolated |
 | `edm-test-component` | sonnet / high | green | 50 | UI component tests (RTL, Vue Test Utils, etc.) |
@@ -262,13 +558,13 @@ Test code itself lives in the project's existing test directories — `SRD/` art
 | `edm-test-contract` | sonnet / high | green | 50 | API contract tests (OpenAPI/GraphQL-driven) |
 | `edm-test-e2e` | sonnet / high | green | 60 | Playwright/Cypress full user journeys |
 | `edm-test-a11y` | sonnet / high | green | 30 | axe-core + keyboard nav, WCAG 2.1 AA |
-| `edm-test-coverage-auditor` | opus / max | cyan | 25 | Read-only: parse coverage, cross-ref AC, find gaps |
+| `edm-test-coverage-auditor` | sonnet / high | cyan | 25 | Read-only: parse coverage, cross-ref AC, find gaps |
 
 `edm-test-coverage-auditor` is `cyan` (read-only audit lens, like the code-audit lenses). Test
 writers are `green` (build code, like `edm-implementer`). Planner is `yellow` (discovery, like
 `edm-explorer`). Scaffold is `blue` (writes infrastructure, like `edm-architect`).
 
-`edm-test-coverage-auditor` has `disallowedTools: Edit, NotebookEdit` (Write is required — it writes `test-coverage.md`).
+`edm-test-coverage-auditor` has `disallowedTools: Edit, NotebookEdit` (Write is required -- it writes `test-coverage.md`).
 
 ### Coverage targets (userConfig)
 
@@ -314,10 +610,13 @@ or flat for single-stack initiatives.
 `coverage_by_epic` holds per-epic coverage for multi-stack initiatives (additive; keyed by epic slug).
 
 `parent_prefix` is the bare PREFIX of the parent initiative in a product line (set via
-`edm-state set-parent <PREFIX> <PARENT>`; validated to exist).
+`edm-state set-parent <PREFIX> <PARENT>`; validated to exist, and refreshes `HANDOFF.md`).
 
 `related_prefixes` is an append-only list of related initiative prefixes (set via
-`edm-state add-related <PREFIX> <RELATED>`; idempotent).
+`edm-state add-related <PREFIX> <RELATED>`; idempotent, validated to exist, and refreshes
+`HANDOFF.md`). The two provenance links `supersedes` and `forked_from` also refresh `HANDOFF.md`
+(CA-504) but deliberately skip the exists-validation -- see their rows in the state-field table
+below for why.
 
 `phase_durations[N_phase]` gains `tests_added` (total) and `tests_by_layer` (per layer) counts
 when `edm-state record-tests-added` is called.
@@ -347,6 +646,10 @@ Each test-writer agent self-identifies when its layer doesn't apply and exits cl
 - `component`, `composable`, `a11y`, `e2e` are N/A for backend-only or CLI-only epics.
 - `contract` is N/A for epics without an API schema.
 - `composable` is N/A for epics without React hooks or Vue composables.
+- `integration` is N/A only when Target Components cross no module or service boundary -- no API
+  routes, no database interactions, and no cross-module workflows (`agents/edm-test-planner.md`
+  is the sole authority for this determination; `edm-test-integration`'s own N/A exit must agree
+  with it, not substitute for it).
 
 N/A designations are recomputed each run -- never inherited from a previous plan. When a layer
 is N/A, no placeholder file or coverage row is written (absence is authoritative).
@@ -369,14 +672,14 @@ When all epics share the same stack (single-stack initiative), the planner produ
 `skills/push-jira/SKILL.md` (invoked as `/edm:push-jira <PREFIX> [PROJECT_KEY]`) optionally pushes the ticket pack to Jira via the Atlassian MCP. It is **strictly opt-in**:
 
 - The skill checks `mcp__{jira_mcp_namespace}__atlassianUserInfo` first (namespace defaults to `plugin_jira_atlassian-mcp-server`; override via `${user_config.jira_mcp_namespace}`); if unavailable, it skips with a friendly message.
-- Tickets are tracked in Jira via labels (`edm-{prefix}-t{nn}`) — no custom Jira fields required.
+- Tickets are tracked in Jira via labels (`edm-{prefix}-t{nn}`) -- no custom Jira fields required.
 - Re-running is idempotent: existing issues are updated, not duplicated.
 - Status, comments, and worklog on Jira issues are preserved across re-runs.
 - Dependencies become Issue Links of type `Blocks` (or `Relates` if `Blocks` isn't available).
-- Each ticket file gets a Jira link appended after first push: `## AUTH-T01: …  ([MCP-1234](https://….atlassian.net/browse/MCP-1234))`.
+- Each ticket file gets a Jira link appended after first push: `## AUTH-T01: ...  ([MCP-1234](https://....atlassian.net/browse/MCP-1234))`.
 - A summary of all sync actions is written to `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/jira-sync.md`.
 
-The skill does NOT push during active implementation (Phase 6) — let the markdown ticket pack stay authoritative. Re-sync after the initiative completes if desired.
+The skill does NOT push during active implementation (Phase 6) -- let the markdown ticket pack stay authoritative. Re-sync after the initiative completes if desired.
 
 The `userConfig.jira_project_key` value provides a default; otherwise the user must pass `<PROJECT_KEY>` as the second argument.
 
@@ -387,13 +690,105 @@ The `userConfig.jira_project_key` value provides a default; otherwise the user m
 | Event                                                                                  | Effect                                                        |
 |----------------------------------------------------------------------------------------|---------------------------------------------------------------|
 | `SessionStart`                                                                         | Emit Resume Point for active initiatives via `edm-state session-start` |
-| `UserPromptExpansion` matching `edm:(srd\|audit-srd\|tickets\|audit-tickets\|implement)` | Block expansion if the prerequisite HITL gate isn't approved  |
-| `PreToolUse` matching `git commit`                                                     | Run `edm-lint-artifacts` — block commit if active-initiative artifacts have violations |
+| `UserPromptExpansion` matching `edm:(srd\|audit-srd\|tickets\|audit-tickets\|implement)` | Block expansion if the prerequisite HITL gate isn't approved. Exit-code contract (CA-298, G1): a missing `edm-state` binary or an unresolvable prefix (no state file yet -- the legitimate first-invocation case) exits **0**, non-blocking; an invalid prefix argument or an actual `edm-state gate-check` refusal exits **2**, blocking. Only a real gate refusal blocks -- a setup condition never does |
+| `PreToolUse` matching `git commit`                                                     | Delegates to `bin/edm-lint-staged-artifacts` (extracted from the former inline one-liner -- CA-436/CA-413/CA-414; the hook itself only degrades to exit 0 when the delegate is off PATH). The script: for staged paths under the derived `srd_root` (`EDM_SRD_ROOT` / `CLAUDE_PLUGIN_OPTION_SRD_ROOT`, default `./SRD`, physically normalized so a symlinked repo path still relativizes), resolve a prefix per discovered initiative and skip it if it has no resolvable state (CA-011); run `edm-lint-artifacts <PREFIX>` for each survivor. `edm-lint-artifacts` exit 1 (a real violation) makes the script exit **2**, the code that actually blocks the commit; `edm-lint-artifacts` exit 2 (a setup/usage error, e.g. no initiative for that prefix) is reported to stderr but not blocking (CA-011). **CA-521 (known gap):** which prefixes to scan is decided from the git INDEX (`git diff --cached`), but `edm-lint-artifacts` itself reads the WORKING TREE -- a file staged with a violation and then fixed unstaged commits clean, and an unstaged violation elsewhere in the same initiative's tree can block an otherwise-clean staged commit. This is a fast local gate with a known worktree/index gap; `edm-lint-artifacts --all` remains available as a manual full-repo sweep (`edm-lint-artifacts --all` or `--path <dir>`) if the escaped case is ever suspected |
 | `Stop` and `PreCompact`                                                                | Checkpoint state via `edm-state checkpoint-if-active`         |
-| `SubagentStop` matching `edm-implementer`                                              | Auto-spawn `edm-qc-auditor`; write verdict to `qc/qc-summary.md`; persist PARTIAL verdicts via `edm-state record-partial-verdict` |
-| `TaskCompleted`                                                                        | Reserved — per-task duration accumulation not yet implemented |
+| `SubagentStop` matching `edm-implementer`                                              | Auto-spawn `edm-qc-auditor`; write a per-implementer verdict shard to `qc/qc-shard-impl-{NN}.md` ({NN} = lowest ticket number in the implementer's range -- never `qc-summary.md` directly, CA-440: concurrent auditors on one shared file silently overwrite each other's FAIL verdicts). The `qc-shard-impl-` prefix is mandatory and must stay disjoint from `qc-shard-pass-w{WW}-{NN}.md`, the namespace `/edm:implement`'s own post-wave threshold shards use ({WW} = wave number, {NN} = shard ordinal within that wave) -- CA-473: a shared `qc-shard-{NN}.md` key space collides deterministically (threshold shard 1 vs the implementer starting at T01) and the losing writer's FAIL verdicts vanish. The wave component in the threshold-shard name additionally closes CA-515: without it, an ordinal-only name collides across waves whenever two waves each write a single shard 1. `/edm:implement` merges all `qc-shard-impl-*.md` **and** `qc-shard-pass-*.md` into `qc/qc-summary.md` after the wave drains; persist PARTIAL verdicts via `edm-state record-partial-verdict` |
 
-These are part of the methodology — do not disable them in normal operation.
+These are part of the methodology -- do not disable them in normal operation.
+
+`edm-lint-artifacts` and the git-commit hook now both honor `${user_config.srd_root}` through
+`EDM_SRD_ROOT` / `CLAUDE_PLUGIN_OPTION_SRD_ROOT` (CA-023) -- a relocated `srd_root` scopes the
+automatic commit-path enforcement the same way it scopes a direct `edm-lint-artifacts`
+invocation, with no separate hook-matcher update required. The value must be repository-relative
+with no trailing slash: the hook normalizes any trailing slash away, but an absolute `srd_root`
+cannot match git's repository-relative staged paths, so the hook logs a diagnostic and exits
+without linting or blocking rather than silently enforcing nothing.
+
+## Monitors behavior (EDMV3-T59, D24)
+
+`monitors/monitors.json` declares `edm-impl-progress`, running `edm-state watch-impl`. This is
+**host-managed**: Claude Code arms plugin-declared monitors as persistent background Monitor
+tasks (same trust tier as hooks), confirmed by direct inspection of the installed CLI (D24,
+`SRD/edm/EDMV3__prompt-streamline/decisions.md`).
+
+- **Arm trigger**: `on-skill-invoke:implement` -- the host arms the monitor the first time
+  `/edm:implement` is dispatched in a session (via the Skill tool or the slash command). Repeat
+  invocations of `/edm:implement` in the same session do not spawn a duplicate; the host dedupes
+  on the monitor's name.
+- **Polling interval**: `cmd_watch_impl` polls `git log` every 5 seconds (`sleep 5`) for new
+  commits referencing a `{PREFIX}-T{NN}` ticket ID, emitting one line per new commit so the host
+  surfaces it as a notification.
+- **Lifecycle / how to stop it**: a persistent monitor runs for the lifetime of the Claude Code
+  session, not just for the duration of the triggering skill -- it is not restarted or killed by
+  context compaction. It stops when the session ends, or can be stopped early via the host's
+  `TaskStop` mechanism. There is no separate EDM-side kill switch; this is intentional -- the
+  monitor is a read-only `git log` poll with no state mutation, so leaving it running for the
+  rest of the session is inert.
+
+## Artifact content conventions
+
+Every artifact this plugin produces or templates is **ASCII-only**: no em dashes, no arrows (use `->`), no smart
+quotes, no emoji glyphs.
+
+**What actually enforces it, and what does not.** `edm-lint-artifacts` class 2 (`unicode`) is the
+check, but its reach is narrower than the rule:
+
+- **It scans initiative directories only.** Prefix mode resolves one initiative directory via
+  `edm-state resolve-dir`; `--all` walks the initiative directories `edm-state list --paths`
+  returns. Both then call `collect_md_files`, a plain `find` for `*.md` excluding `.git/` and
+  `.archived/`. Git is never consulted, so "tracked" is not a property the scan can observe -- an
+  untracked `.md` file sitting in an initiative directory is scanned exactly like a committed one.
+- **Lines inside fenced code blocks are skipped**, as are lines under an `edm-lint-ignore` marker.
+- **This plugin's own source tree is scanned by no invocation the hook makes.** The
+  `PreToolUse` git-commit hook runs prefix mode, which never
+  reaches `plugins/edm/skills/`, `plugins/edm/agents/`, `plugins/edm/docs/` (including
+  `docs/templates/`, named as "templates" in the rule above), `plugins/edm/evals/`, this file, or
+  `README.md`. Em dashes have in fact landed in `skills/` and `agents/` and survived there
+  undetected, found only by hand -- the rule holds for the plugin's own prose, but nothing
+  automatic is checking it.
+
+To check a tree the automatic invocations miss, run `edm-lint-artifacts --path <dir>` by hand; it
+is read-only and calls no state resolution.
+
+**Imported third-party documents are ASCII-normalized on import** -- when an external document (a design review, a
+vendor report, a pasted analysis) is copied into an initiative's directory, the person or agent performing the
+import replaces non-ASCII characters (em dashes become `--`, arrows become `->`, smart quotes become straight quotes)
+before it is committed, so the document's meaning is unchanged but its bytes pass the same lint the rest of the
+initiative's artifacts pass. Wrapping an imported document in `edm-lint-ignore` markers instead of normalizing it is
+not an acceptable substitute -- an exempted document in an initiative's own directory is a standing invitation to
+exempt the next one.
+## Required setup: permission `ask` rules (EDMV3-T06)
+
+See `README.md`'s "Required setup: permission ask rules" section for the full rationale, the
+matcher-limitation note, and the wave-A manual-QA record -- not re-explained here. The
+required block, added to `.claude/settings.json` (or `.claude/settings.local.json`):
+
+```json
+{
+  "permissions": {
+    "ask": [
+      "Bash(edm-state approve-gate*)",
+      "Bash(edm-state archive*)"
+    ]
+  }
+}
+```
+
+`check_permission_rules()` in `bin/edm-state` scans for these two patterns and feeds the
+result into the `enforcement` field (`permission-ask` | `prose-only`) recorded on every gate
+approval, and into the informational `PERM_RULES_MISSING` anomaly when absent.
+
+It scans three files: `<project-root>/.claude/settings.local.json`,
+`<project-root>/.claude/settings.json`, and `${HOME}/.claude/settings.json`. The two project-level
+paths are anchored to the **project root**, not to the caller's working directory (CA-448):
+`CLAUDE_PROJECT_DIR` when the host exports it and it names a directory, else `git rev-parse
+--show-toplevel`, else `.` as the pre-CA-448 fallback. Anchoring matters in both directions -- a
+cwd-relative probe from a subdirectory misses a correctly-configured install and downgrades an
+honest approval to `prose-only`, and a cwd inside an unrelated project would let that project's
+settings stamp `permission-ask` on this one's approval. `CLAUDE_PROJECT_DIR` is currently accepted
+on a bare directory test with no cross-check against the git toplevel, so it remains a one-token
+override of the resolved root (CA-500, open).
 
 ## `bin/` helper scripts
 
@@ -401,72 +796,253 @@ Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call the
 
 | Script                | Purpose                                                                                                                                                                                                                                     |
 |-----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `edm-state`           | Read/write `.edm-state.json` files; 36 subcommands: `init`, `get`, `set`, `list`, `active-initiatives`, `migrate-path`, `approve-gate`, `phase-start`, `phase-complete`, `checkpoint-if-active`, `record-task-duration`, `record-test-coverage`, `record-tests-added`, `get-coverage`, `srd-version`, `archive`, `write-handoff`, `watch-impl`, `metrics-report`, `validate`, `gate-check`, `branch-check`, `git-lock-check`, `current-step`, `session-start`, `audit-round-start`, `record-partial-verdict`, `set-mode`, `skip-phase`, `set-supersedes`, `set-forked-from`, `resolve-dir`, `set-parent`, `add-related`, `update-patterns`, `lint` |
+| `edm-state`           | Read/write `.edm-state.json` files; 39 subcommands: `init`, `get`, `set`, `list`, `active-initiatives`, `migrate-path`, `migrate-schema`, `approve-gate`, `phase-start`, `phase-complete`, `checkpoint-if-active`, `record-test-coverage`, `record-tests-added`, `get-coverage`, `srd-version`, `archive`, `write-handoff`, `watch-impl`, `metrics-report`, `validate`, `gate-check`, `branch-check`, `record-branch`, `git-lock-check`, `current-step`, `session-start`, `audit-round-start`, `audit-round-complete`, `render-ledger`, `audit-converged`, `record-partial-verdict`, `set-mode`, `skip-phase`, `set-supersedes`, `set-forked-from`, `resolve-dir`, `set-parent`, `add-related`, `update-patterns` |
 | `edm-init`            | Scaffold a new initiative directory (`SRD/{PREFIX}/` or `SRD/{PRODUCT}/{PREFIX}__{desc}/`) with empty state file |
 | `edm-validate-prefix` | Verify a proposed prefix doesn't collide with existing initiatives across all product subdirectories |
-| `edm-lint-artifacts`  | Scan active-initiative artifact files for violations (missing version headers, orphan files, oversized tickets); called by the `PreToolUse` git-commit hook |
+| `edm-lint-artifacts`  | Scan initiative artifact markdown for violation classes including attribution trailers, non-ASCII bytes, leaked tool-invocation tags, and a literal `;` inside Mermaid label/edge/message text; run `edm-lint-artifacts --help` for the authoritative, current class list rather than a count hardcoded here (a count drifts as classes are added). Called per resolved prefix by `edm-lint-staged-artifacts` |
+| `edm-lint-staged-artifacts` | Commit-time artifact lint over git-staged initiative paths -- the extracted body of the `PreToolUse` git-commit hook (CA-436: a one-line JSON-string hook had no place for a shellcheck directive; extraction also fixed the lexical symlink-defeated relativization, CA-413, and the interpreter-dependent `echo` of staged paths, CA-414). Derives `srd_root`, maps staged paths to prefixes, and runs `edm-lint-artifacts <PREFIX>` per resolvable initiative; exit 2 = violation (blocks the commit), exit 1 = setup error (non-blocking), exit 0 = clean or nothing staged |
+| `edm-sync-canonical-sections` | Regenerate `docs/canonical-sections.md` from this file's "Severity vocabulary" and "Mermaid diagram conventions" sections (byte-identical, one-directional); `--check` exits 1 on drift. See the note below the Mermaid section for why this file exists (EDMV3-T41). |
+| `edm-check-grants`    | Four-source grant/instruction contract checker (EDMV3-T03/T07/T113): scans agent bodies, skill launch templates, hook prompt text and `AskUserQuestion`/`Skill`/`Write` grants together, so an instruction living in a skill's launch template or a hook prompt rather than the agent's own body is still caught. Run `edm-check-grants --help` for the full source list. |
+| `edm-check-vocabulary` | Deterministic backstop for the abolished-vocabulary policy (EDMV3-T29/T30; see this file's "Severity vocabulary" section for the policy itself). Scans `skills/`, `agents/`, `docs/`, `hooks/hooks.json`, `monitors/monitors.json`, `CLAUDE.md`, `README.md` and `bin/` against `bin/vocabulary-prohibited.txt`, honoring the documented `bin/vocabulary-allowlist.txt` carve-outs. |
+| `edm-compare-eval`    | Compares a post-change eval run's `scores.json` against the committed wave-A baseline (EDMV3-T39/EDMV3-52), applying the `baseline_total - variance.total_range` acceptance threshold and refusing (not silently passing) on a `scorer_version` or `dimensions_scored` mismatch, or a `complete: false` candidate. The scorer itself never compares; this script owns the comparison. |
+| `edm-check-skill-sync` | Regression tripwire (EDMV3-T39 AC7, amended per CA-089) run unconditionally by `bin/tests/run-all.sh`: asserts the dispatcher (`skills/orchestrator/SKILL.md`) holds no phase procedure body and that every phase skill still owns its own `## Operational Orchestration` section, so a future edit cannot silently copy a phase procedure back into the dispatcher. |
+
+### `edm-lint-artifacts` latency budgets (EDMV3-T67 AC5/AC7)
+
+`edm-lint-artifacts` has **two separate latency budgets and they are not interchangeable**. They
+are documented here, with the script, because both are properties of this one binary: a
+contributor who changes its scanning cost needs both numbers in one place.
+
+| Budget | Invocation | Ceiling | Fixture the ceiling is stated against | Where it binds |
+|---|---|---|---|---|
+| **Commit-path** | `edm-lint-artifacts <PREFIX>`, from the `PreToolUse` git-commit hook | **3,000 ms** p95 | one initiative directory of 30 `.md` files / 9,990 lines | Every `git commit` that stages anything under the hook's derived `srd_root` scope (CA-023). A human is waiting on this one, so it is the budget that must stay small |
+| **Full-repo sweep** | `edm-lint-artifacts --all`, run manually | **60,000 ms** | a 50-initiative repository | A manual sweep across every active initiative directory `edm-state list --paths` returns. `--all` is roughly 50x the work at 20x the commit-path ceiling -- the two numbers must never be compared against each other |
+
+Both are measured by `bin/tests/timing.sh` (`--lint` and `--all-lint`) against generated fixtures,
+never by an ad hoc one-off number. **Always quote a budget together with its input size.** A bare
+millisecond ceiling (or a bare ratio) with no stated fixture is dominated by fixed process
+overhead: it reads differently on every machine, and it moves when unrelated code gets faster.
 
 ### `.edm-state.json` mode-family fields
 
-| Field | Type | Default | Purpose |
-|---|---|---|---|
-| `mode` | string enum | `standard` | Adaptation profile: `standard`, `mini-srd`, `iac`, `data-ml`, `prototype` |
-| `lifecycle_mode` | string enum | `standard` | Lifecycle variant: `standard`, `partial`, `fast-track`, `fix-pack` |
-| `compliance_enabled` | boolean | `false` | When true, adds Gate 3.5 compliance review and regulatory-traceability columns |
-| `implementation_mode` | string enum | `standard` | Phase 6 mode: `standard` or `tdd` (Red-Green-Refactor per ticket) |
-| `skipped_phases` | array of objects | `[]` | Intentionally skipped phases; each: `{phase: N, rationale: "..."}` |
-| `supersedes` | string | `""` | Prefix of the initiative this supersedes (provenance link) |
-| `forked_from` | string | `""` | Prefix of the initiative this forked from (provenance link) |
+The heading string is fixed -- `skills/orchestrator/SKILL.md`'s resume step names it -- but the
+table below is the whole state-field reference, not only the mode family: the mode-family rows
+come first, then the EDMV3 gate-enforcement, audit-round, and PARTIAL-closure fields. Every row
+states what a reader does when the field is absent (C-4 backward compatibility); a v1.x or wave-A
+state file that predates a field is never an error.
+
+| Field | Type | Default | Purpose | C-4 when absent |
+|---|---|---|---|---|
+| `mode` | string enum | `standard` | Adaptation profile: `standard`, `mini-srd`, `iac`, `data-ml`, `prototype` | Read as `standard` |
+| `lifecycle_mode` | string enum | `standard` | Lifecycle variant: `standard`, `fast-track`, `fix-pack` (a fourth legacy enum value was removed by the delete-list epic, D12/EDMV3-T57..T60) | Read as `standard`; a state file still carrying the removed legacy value reads without error |
+| `compliance_enabled` | boolean | `false` | When true, adds Gate 3.5 compliance review and regulatory-traceability columns | Read as `false` |
+| `implementation_mode` | string enum | `standard` | Phase 6 mode: `standard` or `tdd` (Red-Green-Refactor per ticket) | Read as `standard` |
+| `skipped_phases` | array of objects | `[]` | Intentionally skipped phases; each: `{phase: N, rationale: "..."}` | Read as `[]` (nothing skipped) |
+| `supersedes` | string | `""` | Prefix of the initiative this supersedes (provenance link; set via `edm-state set-supersedes <PREFIX> <OTHER>`). Both provenance links go through the shared `_cmd_set_provenance_field` writer (CA-419), which now refreshes `HANDOFF.md` on every write (CA-504) -- the field never lags a stale value the way it did before that fix. The **target prefix is still deliberately not validated to exist**, unlike `parent_prefix`/`related_prefixes` below: a provenance link may legitimately name a not-yet-created follow-on initiative (e.g. "this will supersede EDMV4 once it exists"), where `parent_prefix`/`related_prefixes` assume the linked initiative already exists in the same product line | Read as `""` (no link) |
+| `forked_from` | string | `""` | Prefix of the initiative this forked from (provenance link; set via `edm-state set-forked-from <PREFIX> <OTHER>`). Same unvalidated-target, HANDOFF-refreshing contract as `supersedes` above | Read as `""` (no link) |
+| `gates_approved[].enforcement` | string enum: `permission-ask` \| `prose-only` | no seeded default -- `cmd_approve_gate` writes it on **every** numeric-gate approval, from `check_permission_rules()` | The honesty tag (EDMV3-T06): `permission-ask` when BOTH `Bash(edm-state approve-gate*)` and `Bash(edm-state archive*)` were found across the three scanned settings files at approval time (the two project-level files are anchored to the resolved project root, not the caller's cwd -- CA-448; see Sec."Required setup: permission `ask` rules (EDMV3-T06)"), `prose-only` otherwise. It records that the rules were **configured**, never that a prompt actually fired -- see README.md's matcher-limitation note for the bypass shapes a configured rule still misses | Absent on entries written before EDMV3-T06. An absent tag reads as "unknown", never as `permission-ask`; nothing fails on absence |
+| `gates_approved[].approved_at`, `gates_approved[].approver` | string (ISO-8601 UTC), string | written with the entry; `approver` is `$USER`, falling back to the literal `unknown` when unset | Who approved a numeric HITL gate and when. Written as sibling scalars inside the `gates_approved[]` entry object | Absent on pre-EDMV3 entries; renderers show `?` rather than failing |
+| `code_audit_gate_approved_at` / `_approver` / `_enforcement` / `_ledger`, and `compliance_gate_approved_at` / `_approver` / `_enforcement` | strings; `_enforcement` is the same enum as above | the four `code_audit_gate_*` keys are seeded `""` by `edm-state init`; the three `compliance_gate_*` keys are created on first approval | Sibling scalars for the two dedicated-boolean gates (`code-audit` and 3.5). The boolean itself stays a plain boolean -- `metrics-report` and HANDOFF both depend on that -- so the metadata hangs beside it rather than converting it to an object. `code_audit_gate_enforcement` additionally carries the sentinel `CONVERGENCE_NOT_REQUIRED` when the initiative's phase graph skips the code-audit round because of its `mode` or `lifecycle_mode`, keeping an exemption distinguishable from an approval. `_ledger` holds the real `findings-ledger.jsonl` path or the literal `absent` | Empty string and absent both read as "not approved"; no check fails on either |
+| `code_audit_p2_debt_accepted` / `_count` / `_round` / `_accepted_at` / `_accepted_by` | boolean / number / number / string (ISO-8601 UTC) / string | none seeded -- all five written together by `approve-gate <PREFIX> code-audit --accept-p2-debt` (EDMV3-T68, D57/D58) | The sanctioned P2-debt acceptance record: `_count` open P2s carried forward from round `_round`, accepted by `_accepted_by` at `_accepted_at`. The ledger itself is left unchanged (accepted P2s still show open); HANDOFF's code-audit gate row renders all four metadata values (CA-429), and `edm-state archive` compares `_round` against the current `audit_rounds.code.count` to refuse on stale debt | Absent means no debt was ever accepted; every reader uses jq `//` defaults and nothing fails on absence (C-4) |
+| `audit_rounds.<type>.rounds[].round_type` | string enum: `full` \| `partial` | `full` when `audit-round-start` is called without `--lenses` | Derived at `edm-state audit-round-start` (EDMV3-T27): `full` when the lens set equals all eleven lens IDs, or when `--lenses` was omitted (matching `skills/code-audit/SKILL.md`'s "absence of `--lenses` means run all 11"); `partial` otherwise. A partial round is **never convergent** -- `edm-state audit-converged` exits 1 when the latest round is `partial`. `audit-round-complete` additionally DOWNGRADES a code round to `partial` at completion when any lens named in the round's `lenses-run.txt` lacks a non-empty, parseable `lens-L{N}.jsonl` in the pass directory (CA-471 completeness backstop; a round with no pass directory or manifest is left unchanged, C-4). That downgrade is irreversible for the round it fires on: `audit-round-complete` refuses a second completion of the same round, so persisting the missing JSONL afterwards does not restore `full` -- only a new round can converge | `audit_rounds.<type>` may still be a bare integer in a file written before the `{count, rounds: [...]}` widening; every reader coerces via `coerce_round_entry` and no existing file is rewritten. A round carrying no `round_type` reads as `unknown`: blocking at `schema_version >= 2`, warn-and-proceed below that |
+| `audit_rounds.<type>.rounds[].completed_at` / `duration_seconds` / `tokens` / `model_used` / `estimated_cost_usd` / `attribution_mode` | string (ISO-8601 UTC) / number (seconds) / object `{input, output, cache_read, cache_write_5m, cache_write_1h}` / string / number (USD) / string enum `scoped` \| `whole-directory` | written only by `edm-state audit-round-complete`; on a round with no recorded `started_at` the token counts stay `0`, `model_used` stays `unknown`, `estimated_cost_usd` stays `0.0000`, `attribution_mode` stays `whole-directory` | Per-round duration and cost for one audit round (EDMV3-T51), computed with the same `get_session_tokens_since` / `compute_cost_usd` pair `phase-complete` uses, so audit-round cost can never diverge from phase cost via a second implementation. `metrics-report` renders them as its code-audit section. A double completion is refused before any write | Additive extension of the wave-B round shape -- **no `schema_version` bump** (stays `2`, EDMV3-T66 AC2). Every reader reads these with jq `//` defaults, so a round closed before T51 simply has none of them; a round never closed at all surfaces as the informational `OPEN_AUDIT_ROUND` anomaly on `edm-state validate` rather than staying invisible |
+| `phase_durations[N_phase].unparseable_lines` / `audit_rounds.<type>.rounds[].unparseable_lines` | number (count) | `0` | Count of session-JSONL lines `get_session_tokens_since` could not parse as JSON while summing tokens for this phase or audit round (G10, round-3 Wave 7c) -- a torn/truncated line is routine while Claude Code is still appending to the driving session, not corrupted state. Kept strictly separate from `attribution_mode`, which stays a two-value `scoped` \| `whole-directory` enum regardless of this count, so a parse failure never overloads the field that exists to record which token-attribution path was taken | C-4: absent reads as `0`. Non-zero surfaces as the informational `TORN_TOKEN_LINES` anomaly on `edm-state validate`; it never flips `validate`'s exit code |
+| `partial_verdict_map.<ticket>.closing_verdict` | string enum: `PASS` \| `FAIL` | absent while the entry is open | The closing verdict written by `edm-state record-partial-verdict <PREFIX> <ticket> close <PASS\|FAIL> <ref>`, driven by `/edm:verify-runtime`. There is no third value -- no `BLOCKED`, `WAIVED` or `N/A-runtime` (D15). `archive` hard-blocks on any entry that is unclosed or FAIL-closed. An entry may be closed once, the sole exception being re-closure of a FAIL after remediation | Absent means still open; the blocking `OPEN_PARTIALS` anomaly names the ticket. The entire pre-closure entry is preserved under `prior` rather than overwritten, and a re-closure appends to `closure_history` so the FAIL record is never lost |
+| `partial_verdict_map.<ticket>.verification_ref` | string, non-empty (enforced -- `close` refuses an empty value) | absent while the entry is open | The evidence pointer for the closure: the command, `file:line`, or run that produced the PASS or FAIL. Recorded alongside `closing_verdict` and `closed_at` | Absent alongside `closing_verdict` on an open entry. `edm-state validate` renders `(no ref)` for a closed entry that somehow lacks one rather than failing on it |
+| `spec_swept` (**not a state field** -- a `code-audit/findings-ledger.jsonl` entry field; listed here because the same enforcement kernel reads it) | string enum: `yes` \| `n/a` \| `no` | none seeded -- written by `edm-audit-synthesizer` on every entry it marks `status: "fixed"` | The same-commit documentation sweep record (CA-416): `yes` = the remediating commit updated every AC, comment and doc passage naming the changed behavior; `n/a` = the fix names no documented behavior; `no` = the sweep is known outstanding. Enforced, not advisory -- a `fixed` entry carrying the explicit `no` makes `edm-state audit-converged` exit 1 naming the blocking IDs (once the blocking set is otherwise clear) and makes `edm-state approve-gate <PREFIX> code-audit` refuse, `--accept-p2-debt` included (that override carries open P2 *severity* forward, never an undone sweep). `edm-state validate` reports the same set as the informational `SPEC_SWEEP_PENDING` anomaly so the debt is visible mid-round | Absent reads as "predates the field" and NEVER blocks (C-4) -- only the explicit string `no` blocks, and most of the ledger's historical entries carry no `spec_swept` at all. Do not backfill; set it going forward |
 
 All fields default safely so v1.x state files without them work unchanged (C-4 backward compatibility).
 
-**`mode` vs `lifecycle_mode`** — orthogonal: an initiative can be `mode=iac` AND `lifecycle_mode=fast-track` simultaneously. Set independently via `edm-state set-mode <PREFIX> mode|lifecycle_mode <value>`.
+**`mode` vs `lifecycle_mode`** -- orthogonal: an initiative can be `mode=iac` AND `lifecycle_mode=fast-track` simultaneously. Set independently via `edm-state set-mode <PREFIX> mode|lifecycle_mode <value>`.
 
-**`decisions.md` vs `code-audit/findings-ledger.md`** — distinct files with distinct scopes:
+### `.edm-state.json` `schema_version` contract (EDMV3-T09)
+
+`schema_version` is an integer, written once by `cmd_init` (`_cmd_init_render` in `bin/edm-state`
+always writes the literal `1`, regardless of which wave the running plugin version actually
+belongs to), and advanced only by `edm-state migrate-schema` -- never by `cmd_set` (making it
+`cmd_set`-settable would reopen the hand-flip path the `SETTABLE_KEYS` allowlist exists to close).
+Because `cmd_init` never writes anything above `1`, a brand-new initiative created today by the
+current (wave-C) plugin version starts at `schema_version: 1` and warn-and-proceeds through every
+wave-B (`>= 2`) check -- the enforcement kernel degrades rather than blocks -- until an operator
+explicitly runs `edm-state migrate-schema <PREFIX>` to bump it. This is deliberate: `cmd_init`
+scaffolds the minimal always-valid shape every wave certifies, and letting a fresh initiative
+silently start "ahead" at the plugin's current wave would mean a state file whose recorded version
+was never itself verified against that initiative's actual on-disk shape. Absent `schema_version`
+is the separate legacy pre-EDMV3 signal (grandfathered, C-4).
+
+| Version | Wave | Shape it certifies | Minimum version required by |
+|---|---|---|---|
+| `1` | A | gates, mode-derived terminal phase, phase-6 `completed_at`, artifact checks, `cmd_set` allowlist | EDMV3-16, EDMV3-17, EDMV3-115 (`>= 1`) |
+| `2` | B | JSONL findings ledger, PARTIAL closure representation, audit round-type recording, gate `enforcement` tags | EDMV3-18, EDMV3-36, EDMV3-42, EDMV3-120 (`>= 2`) |
+| `3` | C | **not assigned (EDMV3-T66 decision)** -- wave C's only state-shape work (EDMV3-T51) is an additive extension of the wave-B round-record shape (adds `completed_at`, `duration_seconds`, `tokens`, `model_used`, `estimated_cost_usd`, `attribution_mode` to an existing `rounds[]` entry), not a new shape a reader must recognize; every wave-C check that consults these fields reads them with `//` defaults, so no check requires `schema_version >= 3`. The value stays at `2` rather than bumping for symmetry | none -- no check requires `>= 3` |
+
+**Three-valued degradation.** A present-but-lower `schema_version` is a distinct state from both
+"legacy/absent" (no enforcement at all) and "fully compliant" (every check applies normally): a
+check whose required version is *above* the recorded `schema_version` degrades to warn-and-proceed
+naming the check; a check *at or below* the recorded version applies normally. The standard for a
+check that consults `schema_version` is to record its own minimum in a `# requires schema_version
+>= N` comment at the check in `bin/edm-state`. **Four of the six `schema_at_least()` call sites**
+in `bin/edm-state` carry that comment today (`cmd_phase_start`, `cmd_phase_complete`'s artifact-
+verification precheck, `cmd_archive`'s wave-B-class check, `cmd_gate_check`); **two do not**, and
+adding them is outstanding work rather than a sanctioned exception (G25/CA-342, round 6 --
+re-derived from the tree: G2/CA-333's round-6 fix made `cmd_phase_complete`'s phase-6 PARTIAL
+refusal and `cmd_archive`'s AC1e/AC1f wave-B sub-checks run unconditionally, removing their
+`schema_at_least()` calls entirely rather than adding the canonical comment to them -- the
+original eight-site, three-missing count this passage stated is stale; two call sites were
+retired, not fixed):
+
+- `cmd_approve_gate`'s code-audit convergence precheck -- G1/CA-182 made this precheck run
+  UNCONDITIONALLY; `schema_version >= 2` no longer gates whether it runs at all, only whether
+  its exit-3 ("no JSONL findings ledger") arm degrades to a warning (pre-wave-B initiative) or
+  hard-refuses (wave-B and later). The surrounding comment explains this in prose but does not
+  use the canonical `# requires schema_version >= N` form.
+- `cmd_audit_converged` (needs `>= 2`) -- no schema comment at all.
+
+Until those two are brought into line, do not treat "no `# requires schema_version >= N` comment
+here" as evidence that a check is version-independent; check the `schema_at_least()` call itself.
+**Durability (G25/CA-342):** `bin/tests/wave7-smoke.sh` carries the computed assertions, under its
+`G25/CA-342: CLAUDE.md's schema_at_least() call-site count is computed, not self-describing prose`
+banner, so a future edit that adds or removes a call site without updating this passage fails a
+test instead of silently drifting stale a fifth time. THREE things are machine-checked there:
+`grep -c 'schema_at_least "'` over `bin/edm-state` equals 6 (the call form with its opening quote
+is the pattern that matches only real call sites -- `schema_at_least(` matches the definition and
+the prose mentions instead, and no call site at all); `grep -c '# requires schema_version >= '`
+equals 5; and this file literally contains the string `Four of the six`. CA-407/CA-487: what is
+NOT machine-checked is the MAPPING from comment to call site -- nothing verifies that the five
+comments sit at four of the six call sites, so an edit that drops the comment from one call site
+and adds one at another leaves all three totals green while this paragraph's four-with /
+two-without split goes silently stale.
+EDMV3-T09 defines this contract and lands the one such comment for
+the check that exists as of wave A (EDMV3-115, `cmd_gate_check`); the degradation *behaviour*
+itself is implemented per-check by the ticket that owns that check. EDMV3-T14 wires the shared
+`schema_at_least()` helper into the wave-A checks (`cmd_phase_complete`, `cmd_archive`) and tests
+the whole class end to end, including the real archived EDMV2 fixture; EDMV3-T18 (wave B) is where
+the version-2 checks themselves are built.
+
+**`decisions.md` vs `code-audit/findings-ledger.md`** -- distinct files with distinct scopes:
 - `decisions.md` = initiative-wide key decisions and finding-to-commit ledger (written by orchestrator at gates and Phase 6)
-- `code-audit/findings-ledger.md` = cross-round code audit findings ledger with stable CA-NNN IDs (written by `edm-audit-synthesizer`)
+- `code-audit/findings-ledger.md` = cross-round code audit findings ledger with stable CA-NNN IDs (rendered by `edm-state render-ledger` from the authoritative `code-audit/findings-ledger.jsonl`, which `edm-audit-synthesizer` writes)
 
 Operates against the project's working directory (no plugin-relative paths). All scripts must be POSIX-compatible bash (
 `#!/bin/bash` or `#!/usr/bin/env bash`).
+
+## EDM mode matrix (EDMV3-T38)
+
+`skills/orchestrator/SKILL.md` Step 1c presents this selection interactively and records the
+routing; the descriptive matrix and each mode's sub-flow **procedure** live here and in the phase
+skill that owns each step, never restated in the dispatcher (EDMV3-T37).
+
+| `mode` | What changes | Owning phase skill(s) |
+|---|---|---|
+| `standard` | Full six-phase flow, file-path vocabulary, standard QC (Recommended) | all eight, unmodified |
+| `mini-srd` | Phases 2-5 fuse into one audited file; no separate ticket pack; a merged `"Gate 2+3"` replaces Gate 2 and Gate 3 | `skills/srd/SKILL.md` (fused file), `skills/audit-srd/SKILL.md` (merged gate + `skip-phase 4/5`) |
+| `iac` | Resource-path vocabulary in Target Components; QC verifies `terraform plan` / drift | `skills/srd/SKILL.md`, `skills/tickets/SKILL.md` |
+| `data-ml` | Requires a `## Data Requirements` SRD section; QC validates model metrics | `skills/srd/SKILL.md` |
+| `prototype` | Stops after Phase 2 (SRD); Phases 3-6 recorded `skip-phase`; no convergence gate required to archive | `skills/srd/SKILL.md` (the stop message and skip-phase recording) |
+
+| `lifecycle_mode` | What changes | Owning phase skill(s) |
+|---|---|---|
+| `standard` | No change from the `mode` behavior above | -- |
+| `fast-track` / `fix-pack` | Tickets generated directly from an analysis document; Phases 1, 2, 3, 5 recorded `skip-phase`; a single ticket-pack review gate, header `"Gate 3"`, replaces the normal Gate 2 -> Phase 4 -> Gate 3 sequence; no convergence gate required to archive (`cmd_archive` exempts both `lifecycle_mode` values regardless of `mode` and records `archive_exemptions: ["CONVERGENCE_NOT_REQUIRED"]`) | `skills/tickets/SKILL.md` ("Fast-Track / Fix-Pack Mode" section) |
+
+`compliance_enabled=true` inserts **Gate 3.5** (a compliance review, distinct from the `mode` and
+`lifecycle_mode` families above) between Gate 3 and Phase 6, and adds regulatory-traceability
+columns to ticket ACs -- owned by `skills/audit-tickets/SKILL.md` (the gate) and
+`skills/tickets/SKILL.md` (the columns).
+
+Mode suppression for gates and phases (which gate applies, which phase is terminal) is computed by
+`cmd_gate_check`/`cmd_branch_check`/`terminal_phase_for_mode()` in `bin/edm-state`, per each phase
+skill's Step 0 preflight (`skills/plan/SKILL.md Sec."Step 0 -- Gate and Branch Preflight"`) -- never
+restated as prose in a phase skill or in the dispatcher.
+
+## Phase Timing Guidelines (EDMV3-T38)
+
+| Initiative Size        | Planning | SRD | Audit | Tickets | Audit | Impl   | Total     |
+|------------------------|----------|-----|-------|---------|-------|--------|-----------|
+| Small (10-20 tickets)  | 30m      | 2h  | 1h    | 1h      | 30m   | 4-8h   | 1-2 days  |
+| Medium (30-50 tickets) | 1h       | 4h  | 2h    | 3h      | 1h    | 12-24h | 3-5 days  |
+| Large (50-85 tickets)  | 2h       | 8h  | 4h    | 6h      | 2h    | 24-48h | 5-10 days |
+
+Run `/edm:metrics --calibrate` periodically and use the printed medians to update these guidelines.
 
 ## `userConfig` reference
 
 Prompted at install time. See `.claude-plugin/plugin.json` for the live schema. Keys:
 
-- `srd_root` — output root directory (default `./SRD`)
-- `srd_filename` — SRD file inside the initiative directory (default `srd.md`)
-- `ticket_pack_dirname` — ticket pack subdirectory name (default `tickets`)
-- `prefix_format_hint` — hint shown when prompting for a prefix (default `UPPERCASE 3-6 chars`)
-- `commit_state_file` — whether `.edm-state.json` is git-tracked (default `true`)
-- `human_hourly_rate_usd` — human developer rate for cost comparison in `/edm:metrics` (default `150`)
-- `jira_project_key` — default Jira project key for `/edm:push-jira`; leave empty to require explicit arg (default `""`)
-- `jira_mcp_namespace` — MCP namespace for Atlassian tools (default `plugin_jira_atlassian-mcp-server`)
-- `coverage_target_unit_pct` — minimum unit test coverage % (default `80`)
-- `coverage_target_component_pct` — minimum component test coverage % (default `70`)
-- `coverage_target_integration_pct` — minimum integration test coverage % (default `60`)
-- `coverage_target_e2e_critical_paths_pct` — % of critical paths requiring E2E coverage (default `100`)
-- `test_framework_unit_override` — pin unit test framework, e.g. `jest`, `pytest` (default `""`)
-- `test_framework_component_override` — pin component test framework (default `""`)
-- `test_framework_e2e_override` — pin E2E framework, e.g. `playwright`, `cypress` (default `""`)
-- `mode` — default initiative mode: `standard`, `mini-srd`, `iac`, `data-ml`, `prototype` (default `standard`)
-- `compliance_enabled` — enforce compliance checkpoints when true (default `false`)
-- `qc_shard_threshold` — ticket count above which QC spawns multiple `edm-qc-auditor` shards (default `20`)
-- `implementation_mode` — Phase 6 mode: `standard` or `tdd` Red-Green-Refactor (default `standard`)
+- `srd_root` -- output root directory (default `./SRD`)
+- `srd_filename` -- SRD file inside the initiative directory (default `srd.md`)
+- `ticket_pack_dirname` -- ticket pack subdirectory name (default `tickets`)
+- `prefix_format_hint` -- hint shown when prompting for a prefix (default `UPPERCASE 3-6 chars (AUTH, MIGR, TIPS)`)
+- `commit_state_file` -- whether `.edm-state.json` is git-tracked (default `true`)
+- `human_hourly_rate_usd` -- human developer rate for cost comparison in `/edm:metrics` (default `150`)
+- `jira_project_key` -- default Jira project key for `/edm:push-jira`; leave empty to require explicit arg (default `""`)
+- `jira_mcp_namespace` -- MCP namespace for Atlassian tools (default `plugin_jira_atlassian-mcp-server`)
+- `coverage_target_unit_pct` -- minimum unit test coverage % (default `80`)
+- `coverage_target_component_pct` -- minimum component test coverage % (default `70`)
+- `coverage_target_integration_pct` -- minimum integration test coverage % (default `60`)
+- `coverage_target_e2e_critical_paths_pct` -- % of critical paths requiring E2E coverage (default `100`)
+- `test_framework_unit_override` -- pin unit test framework, e.g. `jest`, `pytest` (default `""`)
+- `test_framework_component_override` -- pin component test framework (default `""`)
+- `test_framework_e2e_override` -- pin E2E framework, e.g. `playwright`, `cypress` (default `""`)
+- `mode` -- default initiative mode: `standard`, `mini-srd`, `iac`, `data-ml`, `prototype` (default `standard`)
+- `compliance_enabled` -- enforce compliance checkpoints when true (default `false`)
+- `qc_shard_threshold` -- ticket count above which QC spawns multiple `edm-qc-auditor` shards (default `20`)
+- `implementation_mode` -- Phase 6 mode: `standard` or `tdd` Red-Green-Refactor (default `standard`)
 
 Skills reference values as `${user_config.srd_root}` etc.
 
 ## Testing changes
 
-After modifying any plugin component:
+macOS and Linux only (bash 3.2+, `jq`, `git` required). Windows and WSL are unsupported.
 
-1. `claude plugin validate edm-plugin/` — schema and frontmatter check
-2. Test in a sandbox: `claude --plugin-dir ./edm-plugin`
+**There is no separate CI pipeline for this plugin** -- EDM's own local mechanisms already catch
+what a CI pipeline would, before an MR is ever opened: `edm-lint-artifacts`/`edm-check-grants`/
+`edm-check-vocabulary` run as part of the git-commit hook and the 11-lens code-audit methodology
+audits the plugin's own bin/ scripts, skills and agents on every code-audit round (this
+initiative's own history is exactly that self-referential audit). Running the local smoke suite
+below is therefore the actual enforcement, not a convenience check ahead of a pipeline that no
+longer exists. After modifying any plugin component:
+
+1. `claude plugin validate plugins/edm/` -- schema and frontmatter check
+2. Test in a sandbox: `claude --plugin-dir ./plugins/edm`
 3. Run `/reload-plugins` to pick up changes without restarting
 4. Verify agents appear in `/agents`, skills in `/help`
+5. Run `bash plugins/edm/bin/tests/run-all.sh` before pushing -- the full smoke suite, and the
+   fastest way to catch a regression before opening an MR.
+
+**`EDM_RUN_ALL_*` and `EDM_EVAL_*` knob families (G30/CA-275).** Two small families of
+environment-variable overrides exist for the test/eval tooling itself, distinct from the
+`userConfig` keys below (which configure the plugin's runtime behavior, not its own test harness).
+Unset (the default) is byte-identical to prior behavior for every one of them.
+
+- `EDM_RUN_ALL_SUITE_DIR`, `EDM_RUN_ALL_PREFERRED_ORDER`, `EDM_RUN_ALL_MIN_SUITE_COUNT`
+  (`bin/tests/run-all.sh`): let `harness-smoke.sh` point the smoke aggregator at a scratch
+  directory of throwaway stub suites and exercise its own PASS/FAIL/CRASH/missing-summary
+  accounting without touching the real suite set. When `EDM_RUN_ALL_SUITE_DIR` is set, the three
+  real-repo-anchored standalone checks (`edm-check-grants`/`-skill-sync`/`-vocabulary`) are also
+  skipped, since they are meaningless against a scratch suite set.
+- `EDM_EVAL_KEEP_RUNS` (`evals/run-eval.sh`): retention count for run-shaped directories kept
+  under the eval driver's output root (oldest pruned first); defaults to `10`. A non-numeric
+  value falls back to the default; `0` is clamped to `1` with a warning (CA-443 -- `0` otherwise
+  pruned the run the invocation had just written, leaving a green result with no eval at all).
+- `EDM_EVAL_PHASE_TIMEOUT_SECONDS` (`evals/run-eval.sh`): per-phase wall-clock ceiling, default
+  `2700`. Validated beside its default and exits 2 on anything that is not a positive whole
+  number (CA-444 -- the driver runs without `set -e`, so an unvalidated value silently disabled
+  the phase timeout instead of aborting, leaving the `claude -p` child unbounded).
+- `EDM_EVAL_MAX_BUDGET_USD` (`evals/run-eval.sh`): per-run spend ceiling, default `15`. **Not**
+  validated -- unlike the timeout knob above, a non-numeric value here is still taken as-is.
+- `EDM_EVAL_MODEL` (`evals/run-eval.sh`): model the eval driver invokes.
+- `EDM_EVAL_PRUNE_EXPLICIT_OUT` (`evals/run-eval.sh`): whether an explicitly-passed output root
+  is subject to retention pruning.
+
+See `CHANGELOG.md`'s `[3.1.0]` entry (G44/CA-275, G30/CA-275) for the full record, including
+`EDM_SRD_ROOT` / `CLAUDE_PLUGIN_OPTION_SRD_ROOT`, which is a plugin-runtime knob (documented above
+under "Hooks behavior" and "Artifact content conventions") rather than a member of either family
+here.
 
 ## Related documentation
 
-- `README.md` — user-facing install + usage
-- `CHANGELOG.md` — version history
+- `README.md` -- user-facing install + usage
+- `CHANGELOG.md` -- version history
 - The official Claude Code plugin docs: `code.claude.com/docs/en/plugins`, `code.claude.com/docs/en/plugins-reference`
-- Existing initiatives at `/SRD/` — informational reference for the legacy convention
+- Existing initiatives at `/SRD/` -- informational reference for the legacy convention

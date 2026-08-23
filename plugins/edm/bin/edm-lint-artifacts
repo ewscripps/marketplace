@@ -1,50 +1,137 @@
 #!/usr/bin/env bash
-# edm-lint-artifacts - scan an EDM initiative's committed artifacts for violations.
+# EDMV3-T61 AC1: the block between EDM-HELP-BEGIN and EDM-HELP-END below is sentinel-delimited,
+# not a hardcoded `sed -n 'A,Bp'` line range -- `usage()` calls the shared `print_help` (CA-005,
+# `_edm-cli-lib.sh`) which extracts between the sentinels with awk. A hardcoded range silently
+# stops covering a new doc line added below its end unless two numbers are bumped in lockstep.
+# CA-005/CA-154: the same sentinel-based help-text convention is used by every `bin/` helper and the three `evals/` drivers
+# -- not just this file and one sibling -- and every one of those sites sources `_edm-cli-lib.sh`
+# and renders its help text in the same form (keep the leading "# " on each printed line) rather
+# than hand-copying the awk extractor.
+# EDM-HELP-BEGIN
+# edm-lint-artifacts - scan EDM initiative artifacts for violations.
 # Usage:
-#   edm-lint-artifacts <PREFIX>        # scan initiative artifacts
-#   edm-lint-artifacts -h|--help       # show this help
+#   edm-lint-artifacts <PREFIX>            # scan one initiative's artifacts (resolved via edm-state)
+#   edm-lint-artifacts --all               # scan every initiative under the SRD root -- flat and
+#                                           # product-scoped layouts, excluding .archived/
+#   edm-lint-artifacts --path <dir|file>   # scan an arbitrary directory or file directly; strictly
+#                                           # read-only, performs no state resolution, never calls
+#                                           # edm-state
+#   edm-lint-artifacts -h|--help|help      # show this help
+#
+# <PREFIX>, --all and --path are mutually exclusive. Supplying two of the three is a usage
+# error (exit 2), not a silent precedence rule.
 #
 # Violation classes (all cause a non-zero exit):
-#   attribution    -- AI-attribution trailers (co-authored-by, generated with, etc.)
-#   unicode        -- non-ASCII bytes in committed artifact files
-#   leaked-tool-tag -- XML/tool-invocation tags leaked into artifact content
+#   attribution        -- AI-attribution trailers: the Co-Authored-By / Generated-By / Assisted-By
+#                         trailer forms naming any tool, plus the Claude-specific "generated with
+#                         claude" / "created by claude" / "claude-flow" phrasings
+#   unicode            -- non-ASCII bytes in scanned artifact files (tracked or untracked)
+#   leaked-tool-tag    -- XML/tool-invocation tags leaked into artifact content
+#   mermaid-semicolon  -- a literal ';' inside Mermaid label/edge/message text, or a misused
+#                         ignore marker inside a mermaid fence (EDMV3-T43); see plugins/edm/
+#                         CLAUDE.md's "Mermaid diagram conventions (canonical)" section
+#   unterminated-fence -- a ``` fence opened but never closed by EOF; reported once, at the
+#                         fence-open line
+#   scan-error         -- the class-4 mermaid-semicolon scan itself failed (a staging write or an
+#                         awk error) for this file; reported at line 0 rather than silently
+#                         contributing zero mermaid findings (CA-058)
+#   unreadable         -- the file could not be read (permissions); reported at line 0, and no
+#                         other class is evaluated for that file
 #
 # Output format: path:line: <class>: <snippet>
-# Exit code: 0 = clean; 1 = one or more violations found.
+# Exit codes: 0 = clean; 1 = one or more violations found; 2 = usage or environment error
+# (unknown flag, missing argument, edm-state absent, unresolvable prefix, unreadable --path
+# target). Direct callers, CI, and tests can distinguish exit 1 from exit 2, and so does the
+# PreToolUse git-commit hook: exit 1 (a real violation) makes the hook exit 2, the code that
+# actually blocks the commit; exit 2 (a setup/usage error) makes the hook exit 0 and report the
+# error to stderr without blocking. The two classes get distinct remediation lines.
 #
 # Ignore markers (place in .md files to suppress false positives on policy docs):
 #   <!-- edm-lint-ignore -->           -- ignores the NEXT line only
 #   <!-- edm-lint-ignore-start -->     -- begins an ignored block
 #   <!-- edm-lint-ignore-end -->       -- ends an ignored block
-#   Lines inside ``` code fences are also ignored automatically.
+#   Lines inside ``` code fences are also ignored automatically, including fences indented
+#   inside a numbered step or list item.
 #
-# Honors EDM_SRD_ROOT and CLAUDE_PLUGIN_OPTION_TICKET_PACK_DIRNAME environment vars
-# so relocated trees are linted correctly (AC9).
+# Direct invocations and the PreToolUse git-commit hook both honor EDM_SRD_ROOT and
+# CLAUDE_PLUGIN_OPTION_SRD_ROOT (AC9) -- a relocated tree is linted and enforced at commit time
+# with no separate hook-matcher update needed, provided the value is repository-relative with no
+# trailing slash (an absolute srd_root cannot match git's repository-relative staged paths, so
+# the hook logs a diagnostic and does not block rather than silently linting nothing).
+#
+# CA-521: this scanner always reads the WORKING TREE (collect_md_files -> find), never the git
+# INDEX. In direct <PREFIX>/--all/--path use that is simply "lints what's on disk", but the
+# PreToolUse git-commit hook decides WHICH initiatives to scan from the staged (index) paths and
+# then hands the scan to this worktree-reading scanner -- so a violation staged and then fixed
+# unstaged commits clean (the fix never got re-staged, but the worktree file is clean), and
+# conversely an unstaged violation anywhere else in the same initiative's tree can block an
+# otherwise-clean staged commit. `edm-lint-artifacts --all` remains available as a manual
+# full-repo sweep against the actual committed checkout if the escaped case is ever suspected.
+# EDM-HELP-END
 set -euo pipefail
 
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
-TICKET_PACK_DIRNAME="${EDM_TICKET_PACK_DIRNAME:-${CLAUDE_PLUGIN_OPTION_TICKET_PACK_DIRNAME:-tickets}}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/_edm-cli-lib.sh"
+source "${SCRIPT_DIR}/_edm-lint-lib.sh"
 
-die() { echo "edm-lint-artifacts: $*" >&2; exit 1; }
+die() {
+  local msg="$1" code="${2:-2}"
+  echo "edm-lint-artifacts: $msg" >&2
+  exit "$code"
+}
 
 usage() {
-  sed -n '2,19p' "$0"
+  print_help "${BASH_SOURCE[0]:-$0}"
   exit 0
 }
 
+# MERMAID_RULES_AWK is set by _edm-lint-lib.sh above (CA-019/G11): the shared fence-recognition
+# and literal-semicolon rule file loaded by build_line_classes, mermaid_scan_awk below, and
+# evals/score-artifacts.sh. Verified present here too so a missing/moved shared file fails fast
+# with a named error instead of a cryptic awk "can't open file" further down.
+[[ -f "$MERMAID_RULES_AWK" ]] || die "shared mermaid rules file not found: $MERMAID_RULES_AWK" 2
+
+# ---- Argument parsing: <PREFIX> | --all | --path <dir|file>, mutually exclusive ---------------
 case "${1:-}" in
   -h|--help|help) usage ;;
-  "") die "usage: edm-lint-artifacts <PREFIX>" ;;
 esac
 
-PREFIX="$1"
+MODE="prefix"
+PREFIX=""
+PATH_ARG=""
 
-# Resolve the initiative directory via edm-state (honors product-scoped layout).
-command -v edm-state >/dev/null 2>&1 || die "edm-state not found on PATH"
-INIT_DIR="$(edm-state resolve-dir "$PREFIX" 2>&1)" \
-  || die "no initiative for prefix $PREFIX (run: edm-state init $PREFIX)"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --all)
+      [[ "$MODE" == "prefix" && -z "$PREFIX" ]] \
+        || die "usage: --all is mutually exclusive with --path and a PREFIX" 2
+      MODE="all"
+      shift
+      ;;
+    --path)
+      [[ $# -ge 2 ]] || die "--path requires a directory or file argument" 2
+      [[ "$MODE" == "prefix" && -z "$PREFIX" ]] \
+        || die "usage: --path is mutually exclusive with --all and a PREFIX" 2
+      MODE="path"
+      PATH_ARG="$2"
+      shift 2
+      ;;
+    --*)
+      die "unknown flag: $1" 2
+      ;;
+    *)
+      [[ "$MODE" == "prefix" ]] || die "usage: PREFIX is mutually exclusive with --all/--path" 2
+      [[ -z "$PREFIX" ]] || die "unexpected extra argument: $1" 2
+      PREFIX="$1"
+      shift
+      ;;
+  esac
+done
 
-[[ -d "$INIT_DIR" ]] || die "initiative directory not found: $INIT_DIR"
+if [[ "$MODE" == "prefix" && -z "$PREFIX" ]]; then
+  die "usage: edm-lint-artifacts <PREFIX> | --all | --path <dir|file>" 2
+fi
 
 # Verify grep supports -P (PCRE) for Unicode detection.
 _has_pcre_grep=0
@@ -52,156 +139,410 @@ if echo "" | grep -qP '' 2>/dev/null; then
   _has_pcre_grep=1
 fi
 
+ATTR_PATTERN_FILE="$(mktemp "${TMPDIR:-/tmp}/edm-lint-attribution.XXXXXX")" || die "mktemp failed" 2
+# L8-006/CA-447: first-stage trap armed immediately -- without it, a failure of the SECOND
+# mktemp below die()d with this first file already on disk and no trap yet installed,
+# leaking it unconditionally. Replaced by the two-file trap once both files exist.
+# CA-482: split into the canonical four-arm form (matching the two-file trap twelve lines below,
+# which already used it) -- the single-body form on all four signals cleaned up and RESUMED on
+# INT/TERM/HUP instead of exiting with a signal-shaped code, contradicting the file-wide contract
+# bin/edm-state's with_state_lock rationale comment states ("a trap that only cleans up and
+# returns lets the interrupted caller resume") on the binary that runs on every git commit via
+# the PreToolUse hook.
+trap 'rm -f "$ATTR_PATTERN_FILE"' EXIT
+trap 'rm -f "$ATTR_PATTERN_FILE"; exit 130' INT
+trap 'rm -f "$ATTR_PATTERN_FILE"; exit 143' TERM
+trap 'rm -f "$ATTR_PATTERN_FILE"; exit 129' HUP
+# CA-058: the class-4 mermaid/marker line sets ride through this temp file (one path, passed to
+# awk via -v) rather than through the environment. A large, mostly-mermaid artifact can produce
+# a line-number set that, carried as EDM_MERMAID_SET/EDM_MARKER_SET environment variables, pushes
+# the child process's total environment size past macOS's ARG_MAX (~256KB, environment counts
+# against it) and makes execve fail with E2BIG -- the same temp-file idiom class 1 already uses
+# for ATTR_PATTERN_FILE, reused here for the same reason.
+MERMAID_SCAN_FILE="$(mktemp "${TMPDIR:-/tmp}/edm-lint-mermaid-scan.XXXXXX")" || die "mktemp failed" 2
+# CA-447 (+L8-006): HUP added (this binary runs on every git commit via the hook, so a
+# terminal close leaked two files per commit into the shared TMPDIR) and the three real
+# signals now exit with signal-shaped codes after cleanup (CA-446's cleanup-then-resume class
+# -- a resumed scan here yields a wrong exit code and a truncated scan).
+trap 'rm -f "$ATTR_PATTERN_FILE" "$MERMAID_SCAN_FILE"' EXIT
+trap 'rm -f "$ATTR_PATTERN_FILE" "$MERMAID_SCAN_FILE"; exit 130' INT
+trap 'rm -f "$ATTR_PATTERN_FILE" "$MERMAID_SCAN_FILE"; exit 143' TERM
+trap 'rm -f "$ATTR_PATTERN_FILE" "$MERMAID_SCAN_FILE"; exit 129' HUP
+printf '%s\n' \
+  "co-authored-by" \
+  "co-authored by" \
+  "generated with claude" \
+  "generated by claude" \
+  "claude-flow" \
+  "created by claude" \
+  "generated-by" \
+  "assisted-by" \
+  > "$ATTR_PATTERN_FILE"
+
 violations=0
 
-# ---- Helper: report a violation -----------------------------------------------
-# report_violation <class> <filepath> <line> <snippet>
-report_violation() {
-  local class="$1" filepath="$2" lineno="$3" snippet="$4"
-  printf '%s:%s: %s: %s\n' "$filepath" "$lineno" "$class" "$snippet"
-  violations=$((violations + 1))
+# ---- Helper: the class-4 Mermaid scan for one file, as a single awk pass -----------------------
+# (EDMV3-T43 AC4/AC5) Applies the raw-semicolon rules only to lines already known to be inside a
+# mermaid fence (mermaid_set) and not suppressed by an explicit edm-lint-ignore-start/end block
+# (marker_set). CA-058: both sets are written to the shared MERMAID_SCAN_FILE temp file (one path,
+# passed to awk via -v, then read back with getline) rather than through the environment -- a
+# large, mostly-mermaid artifact's line-number set could otherwise push the child process's total
+# environment size past macOS's ARG_MAX (~256KB, environment counts against it) and make execve
+# fail with E2BIG. The temp-file path is short and constant-sized regardless of how large the two
+# sets are, so this scan's argument footprint no longer scales with the file being scanned.
+#
+# One awk process per file, not per line: the rules below were previously a bash function that
+# forked sed and grep about ten times for every mermaid line, which made this class the dominant
+# cost of a whole-tree lint once class 1 was fixed.
+#
+# Emits one tab-separated record per finding:
+#   U<TAB><lineno><TAB>            -- an edm-lint-ignore marker misused inside a mermaid fence
+#   V<TAB><lineno><TAB><snippet>   -- a raw semicolon inside label/edge/message text
+# G11 (CA-019, round-3): this function now LOADS the shared rule file (MERMAID_RULES_AWK, set by
+# _edm-lint-lib.sh) via -f rather than carrying a private, independently-maintained trim /
+# strip_entities / is_violation copy. -f and an inline program cannot be mixed on the same awk
+# invocation, so the remaining per-file main-loop logic below moves into a second -f <(...)
+# heredoc -- the exact idiom _edm-lint-lib.sh's build_line_classes and evals/score-artifacts.sh's
+# _scan_mermaid_blocks already use to load the same shared file. Being merely inside a mermaid
+# fence is not itself a suppression reason -- that is exactly what this class exists to inspect --
+# so a single-line edm-lint-ignore marker here is unsupported usage and is reported rather than
+# silently honored (EDMV3-T43 AC6).
+#
+# NOTE: no backtick or apostrophe may appear inside a comment inside the heredoc below -- bash 3.2
+# mis-parses either one inside a quoted heredoc nested inside a <(...) process substitution
+# (confirmed empirically; see the identical note in _edm-lint-lib.sh's build_line_classes).
+mermaid_scan_awk() {
+  local file="$1" mermaid_set="$2" marker_set="$3"
+  {
+    printf '%s\n' "$mermaid_set"
+    printf '%s\n' "EDM-MERMAID-SCAN-MARKER-SPLIT"
+    printf '%s\n' "$marker_set"
+  } > "$MERMAID_SCAN_FILE" || { echo "mermaid_scan_awk: failed to stage scan sets to $MERMAID_SCAN_FILE" >&2; return 1; }
+  # CA-472: cached program text instead of -f <(cat <<heredoc) -- the process-substitution
+  # form leaked ~2 pipe fds per call under bash 3.2; past fd 256 the child awk could not open
+  # /dev/fd/NNN on macOS and this function's caller spun forever (see _edm-lint-lib.sh's
+  # build_line_classes for the full diagnosis). Program body unchanged.
+  if [[ -z "${_MSA_PROG_CACHE:-}" ]]; then
+    _MSA_PROG_CACHE="$(cat "$MERMAID_RULES_AWK")"$'\n'"$(cat <<'AWK_MAIN'
+    BEGIN {
+      in_marker_set = 0
+      while ((getline scan_line < scan_file) > 0) {
+        if (scan_line == "EDM-MERMAID-SCAN-MARKER-SPLIT") { in_marker_set = 1; continue }
+        if (scan_line == "") continue
+        if (in_marker_set) ign[scan_line] = 1
+        else mer[scan_line] = 1
+      }
+      close(scan_file)
+    }
+    {
+      sub(/\r$/, "")
+      if (!(FNR in mer)) next
+      if (FNR in ign) next
+      if (index($0, "<!-- edm-lint-ignore -->") > 0) { print "U\t" FNR "\t"; next }
+      if (mermaid_is_violation($0)) print "V\t" FNR "\t" substr($0, 1, 120)
+    }
+AWK_MAIN
+    )"
+  fi
+  awk -v scan_file="$MERMAID_SCAN_FILE" "$_MSA_PROG_CACHE" "$file"
 }
 
-# ---- Helper: build ignore set for a file --------------------------------------
-# Emits newline-separated line numbers that should be skipped by all lint checks.
-# Skips: lines inside ``` code fences, lines following <!-- edm-lint-ignore -->,
-# and lines inside <!-- edm-lint-ignore-start --> ... <!-- edm-lint-ignore-end --> blocks.
-build_ignore_set() {
-  local file="$1"
-  local in_fence=0 in_ignore_block=0 ignore_next=0 lineno=0
-  while IFS= read -r linetext; do
-    lineno=$((lineno + 1))
-
-    # Apply single-line ignore to current line (set by previous line's marker).
-    if [[ "$ignore_next" -eq 1 ]]; then
-      echo "$lineno"
-      ignore_next=0
-      continue
-    fi
-
-    # Code fence delimiter: toggle fence state; the delimiter line itself is not content.
-    if [[ "$linetext" =~ ^\`\`\` ]]; then
-      in_fence=$((1 - in_fence))
-      continue
-    fi
-
-    # Block-ignore end marker.
-    if [[ "$linetext" == *'<!-- edm-lint-ignore-end -->'* ]]; then
-      in_ignore_block=0
-      continue
-    fi
-
-    # Emit as ignored if inside a code fence or ignore block.
-    if [[ "$in_fence" -eq 1 || "$in_ignore_block" -eq 1 ]]; then
-      echo "$lineno"
-    fi
-
-    # Block-ignore start marker (set AFTER emitting, so the marker line itself is not ignored).
-    if [[ "$linetext" == *'<!-- edm-lint-ignore-start -->'* ]]; then
-      in_ignore_block=1
-    fi
-
-    # Single-line marker: flag next line.
-    if [[ "$linetext" == *'<!-- edm-lint-ignore -->'* ]]; then
-      ignore_next=1
-    fi
-  done < "$file"
-}
-
-# ---- Helper: is a line number in the ignore set? ------------------------------
-is_ignored_line() {
-  local lineno="$1" ignoreset="$2"
-  [[ -n "$ignoreset" ]] && echo "$ignoreset" | grep -qxF "$lineno"
-}
-
-# ---- Scan all *.md files, excluding .git/ and .archived/ ----------------------
-MD_FILES=()
-while IFS= read -r _md_f; do
-  MD_FILES+=("$_md_f")
-done < <(
-  find "$INIT_DIR" \
+# ---- Helper: list *.md files under a directory, excluding .git/ and .archived/ ----------------
+collect_md_files() {
+  local dir="$1"
+  find "$dir" \
+    -type f \
     -not -path '*/.git/*' \
     -not -path '*/.archived/*' \
     -name '*.md' \
-    2>/dev/null \
-  | sort
-)
+    -print0 \
+    2>/dev/null
+}
 
-if [[ ${#MD_FILES[@]} -eq 0 ]]; then
-  echo "edm-lint-artifacts: no .md files found in $INIT_DIR"
-  exit 0
-fi
-
-# ---- Class 1: Attribution trailers (EDMV2-T113 phrase set) --------------------
-# Matches case-insensitively with fixed strings.
-_ATTR_PHRASES=(
-  "co-authored-by"
-  "co-authored by"
-  "generated with claude"
-  "generated by claude"
-  "claude-flow"
-  "created by claude"
-)
-
-for file in "${MD_FILES[@]}"; do
-  ignore_set="$(build_ignore_set "$file")"
-  lineno=0
-  while IFS= read -r linetext; do
-    lineno=$((lineno + 1))
-    is_ignored_line "$lineno" "$ignore_set" && continue
-    lower="$(echo "$linetext" | tr '[:upper:]' '[:lower:]')"
-    for phrase in "${_ATTR_PHRASES[@]}"; do
-      if [[ "$lower" == *"$phrase"* ]]; then
-        snippet="$(echo "$linetext" | tr -d '\r' | cut -c1-120)"
-        report_violation "attribution" "$file" "$lineno" "$snippet"
-        break
-      fi
-    done
-  done < "$file"
-done
-
-# ---- Class 2: Non-ASCII (Unicode) bytes ---------------------------------------
-if [[ "$_has_pcre_grep" -eq 1 ]]; then
-  for file in "${MD_FILES[@]}"; do
-    ignore_set="$(build_ignore_set "$file")"
-    while IFS=: read -r _f lineno _rest; do
-      is_ignored_line "$lineno" "$ignore_set" && continue
-      snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | cut -c1-120 || true)"
-      report_violation "unicode" "$file" "$lineno" "$snippet"
-    done < <(grep -nP '[^\x00-\x7F]' "$file" 2>/dev/null || true)
-  done
-else
-  # Fallback: LC_ALL=C grep for bytes > 0x7F
-  for file in "${MD_FILES[@]}"; do
-    ignore_set="$(build_ignore_set "$file")"
-    while IFS=: read -r lineno _rest; do
-      is_ignored_line "$lineno" "$ignore_set" && continue
-      snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | cut -c1-120 || true)"
-      report_violation "unicode" "$file" "$lineno" "$snippet"
-    done < <(LC_ALL=C grep -nv '^[[:print:][:space:]]*$' "$file" 2>/dev/null || true)
-  done
-fi
-
-# ---- Class 3: Leaked tool/markup tags -----------------------------------------
-# Matches known Claude tool-invocation tag names. Uses -E (extended regex).
-# Pattern scoped to known tag names to avoid false positives on legitimate HTML
-# in code fences or Mermaid diagrams (no bare angle-bracket match).
-_TAG_PATTERN='</?[[:space:]]*(function_calls|invoke|parameter|antml:|use_mcp_tool|result)[^>]*>'
-
-for file in "${MD_FILES[@]}"; do
-  ignore_set="$(build_ignore_set "$file")"
+# ---- Helper: shared per-class violation reporting loop -----------------------------------------
+# _lint_report_class_hits <class> <file> <ignore_set> <grep-command...> -- runs
+# <grep-command...> <file> (a `-n`-numbered grep, the command supplied WITHOUT its own trailing
+# <file> argument, which this helper appends), skips any line covered by <ignore_set>, extracts
+# the standard 120-char CRLF-stripped snippet, and calls report_violation. G51/CA-327: this body
+# used to be copy-pasted four times (class 1 attribution, class 2's two platform branches, class
+# 3 leaked-tool-tag) -- CA-008 was a real P1 that shipped as a divergence between two of those
+# four copies (the PCRE branch read a different field count than its own fallback sibling,
+# disabling ignore-marker suppression for the unicode class on the branch CI takes). One shared
+# body makes that divergence class structurally impossible to reintroduce.
+#
+# Capture-then-herestring, not a `<grep-command> | while` pipeline and not `< <(...)` process
+# substitution. The pipeline form is wrong because report_violation increments the CALLER's own
+# `violations` counter via bash's dynamic scoping (the same mechanism `_lock_retry_or_die`'s
+# `tries` counter in bin/edm-state relies on), and a pipeline's last stage runs in a subshell in
+# bash by default, which would silently discard every increment from inside this loop. The
+# process-substitution form this helper previously used keeps the loop in the current shell but
+# LEAKS its pipe fd on every call under bash 3.2 (CA-472, verified live: ~2 leaked pipes per
+# scanned file, 286 open pipes mid-run) -- once the leaked fd number crossed macOS's /dev/fd
+# ceiling the scan spun at 100% CPU forever, hanging the PreToolUse commit hook on any
+# ~120-file initiative tree. A herestring keeps the loop in the current shell (counter intact)
+# with no pipe at all. The `[[ -z "$lineno" ]] && continue` guard is load-bearing: a herestring
+# feeds one empty line when the grep matched nothing, which the process-substitution form never
+# produced.
+_lint_report_class_hits() {
+  local class="$1" file="$2" ignore_set="$3"
+  shift 3
+  local lineno _rest snippet _hits
+  _hits="$("$@" "$file" 2>/dev/null || true)"
   while IFS=: read -r lineno _rest; do
+    [[ -z "$lineno" ]] && continue
     is_ignored_line "$lineno" "$ignore_set" && continue
-    snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | cut -c1-120 || true)"
-    report_violation "leaked-tool-tag" "$file" "$lineno" "$snippet"
-  done < <(grep -nE "$_TAG_PATTERN" "$file" 2>/dev/null || true)
-done
+    snippet="$(sed -n "${lineno}p" "$file" 2>/dev/null | tr -d '\r' | cut -c1-120 || true)"
+    report_violation "$class" "$file" "$lineno" "$snippet"
+  done <<< "$_hits"
+}
 
-# ---- Summary ------------------------------------------------------------------
-if [[ "$violations" -eq 0 ]]; then
-  echo "edm-lint-artifacts: $PREFIX -- CLEAN (no violations found in $INIT_DIR)"
-  exit 0
-else
-  echo "edm-lint-artifacts: $PREFIX -- $violations violation(s) found" >&2
+# ---- Helper: scan a list of files across all violation classes --------------------------------
+# scan_md_files <file...> -- prints 'path:line: <class>: <snippet>' per violation and increments
+# the global `violations`. Shared by prefix mode, --all mode and --path mode so there is exactly
+# one implementation of the scan (EDMV3-111).
+scan_md_files() {
+  [[ $# -eq 0 ]] && return 0
+  local file i
+
+  # ---- Shared one-pass line classification (EDMV3-T43) --------------------------
+  # build_line_classes is called exactly once per file here, computed up front, and its four
+  # derived sets (ignore / mermaid / marker / unterminated-fence) are reused by all five violation
+  # classes below -- a five-class lint run still costs one read of each file, not five.
+  local FILES=("$@")
+  local IGNORE_SETS=()
+  local MERMAID_SETS=()
+  local MARKER_SETS=()
+  local FENCE_DIAGS=()
+  local UNREADABLE_FLAGS=()
+  for i in "${!FILES[@]}"; do
+    if [[ ! -r "${FILES[$i]}" ]]; then
+      report_violation "unreadable" "${FILES[$i]}" "0" "file is not readable"
+      IGNORE_SETS[$i]=""
+      MERMAID_SETS[$i]=""
+      MARKER_SETS[$i]=""
+      FENCE_DIAGS[$i]=""
+      UNREADABLE_FLAGS[$i]=1
+      continue
+    fi
+    # CA-156: this is a deliberate exception to routing through the shared
+    # ignored_line_set/mermaid_line_set/marker_line_set functions in _edm-lint-lib.sh. Those
+    # three each call build_line_classes on their own, which would cost three additional
+    # per-file awk invocations here on top of the one below -- against the documented
+    # commit-path (3,000 ms) and CI (60,000 ms) latency budgets (see this file's own
+    # "edm-lint-artifacts latency budgets" note in plugins/edm/CLAUDE.md), quadrupling the
+    # per-file awk cost for a scan that already reads every file exactly once by design
+    # (EDMV3-111). All four projections -- including FENCE_DIAGS, which is not duplicated
+    # anywhere else and so is out of CA-156's scope regardless -- are derived from this one
+    # $_table instead.
+    local _table
+    _table="$(build_line_classes "${FILES[$i]}")"
+    # G32/G40 (round-3): the four hand-written awk filters below now call the shared
+    # project_class filter (_edm-lint-lib.sh) against this already-built $_table instead of each
+    # re-implementing the same "$2==<class>" match -- zero extra awk invocations against the
+    # FILE (still exactly one build_line_classes call per file, per the CA-156 rationale above),
+    # only the trivial `cut` projecting each already-filtered in-memory row onto the column(s)
+    # this call site needs.
+    IGNORE_SETS[$i]="$(printf '%s\n' "$_table" | project_class "ignored" | cut -f1)"
+    MERMAID_SETS[$i]="$(printf '%s\n' "$_table" | project_class "mermaid" | cut -f1)"
+    MARKER_SETS[$i]="$(printf '%s\n' "$_table" | project_class "marker" | cut -f1)"
+    FENCE_DIAGS[$i]="$(printf '%s\n' "$_table" | project_class "unterminated-fence" | cut -f1,3)"
+    UNREADABLE_FLAGS[$i]=0
+  done
+
+  for i in "${!FILES[@]}"; do
+    file="${FILES[$i]}"
+    [[ "${UNREADABLE_FLAGS[$i]}" -eq 1 ]] && continue
+    while IFS= read -r _fence_diag; do
+      [[ -z "$_fence_diag" ]] && continue
+      lineno="${_fence_diag%%$'\t'*}"
+      snippet="${_fence_diag#*$'\t'}"
+      report_violation "unterminated-fence" "$file" "$lineno" "$snippet"
+    done <<< "${FENCE_DIAGS[$i]}"
+  done
+
+  # ---- Class 1: Attribution trailers (EDMV2-T113 phrase set) --------------------
+  # One case-insensitive fixed-string grep per file, matching how classes 2 and 3 already work.
+  # This was a bash per-line loop that forked `echo | tr` TWICE per line to lowercase it --
+  # ~20,000 forks on a 30-file/10k-line initiative, which is what EDMV3-T67 measured at 39,872ms
+  # against a 3000ms budget. grep does the same case-insensitive fixed-string match in one fork
+  # per file. Phrase list, matching semantics (case-insensitive substring), one-violation-per-line
+  # (grep prints each matching line once), and the 120-char snippet are all unchanged.
+  for i in "${!FILES[@]}"; do
+    file="${FILES[$i]}"
+    [[ "${UNREADABLE_FLAGS[$i]}" -eq 1 ]] && continue
+    _lint_report_class_hits "attribution" "$file" "${IGNORE_SETS[$i]}" grep -niF -f "$ATTR_PATTERN_FILE"
+  done
+
+  # ---- Class 2: Non-ASCII (Unicode) bytes ---------------------------------------
+  if [[ "$_has_pcre_grep" -eq 1 ]]; then
+    for i in "${!FILES[@]}"; do
+      file="${FILES[$i]}"
+      [[ "${UNREADABLE_FLAGS[$i]}" -eq 1 ]] && continue
+      _lint_report_class_hits "unicode" "$file" "${IGNORE_SETS[$i]}" grep -nP '[^\x00-\x7F]'
+    done
+  else
+    # Fallback: LC_ALL=C grep for bytes > 0x7F. Routed through `env` so the LC_ALL=C prefix
+    # survives being passed as ordinary positional arguments to the shared helper below (a bare
+    # `LC_ALL=C grep ...` array element would be exec'd as a literal, nonexistent command named
+    # "LC_ALL=C" rather than an env-var assignment).
+    for i in "${!FILES[@]}"; do
+      file="${FILES[$i]}"
+      [[ "${UNREADABLE_FLAGS[$i]}" -eq 1 ]] && continue
+      _lint_report_class_hits "unicode" "$file" "${IGNORE_SETS[$i]}" env LC_ALL=C grep -nv '^[[:print:][:space:]]*$'
+    done
+  fi
+
+  # ---- Class 3: Leaked tool/markup tags -----------------------------------------
+  # Matches known Claude tool-invocation tag names. Uses -E (extended regex).
+  # Pattern scoped to known tag names to avoid false positives on legitimate HTML
+  # in code fences or Mermaid diagrams (no bare angle-bracket match).
+  local _TAG_PATTERN='</?[[:space:]]*(function_calls|invoke|parameter|antml:|use_mcp_tool|result)[^>]*>'
+  for i in "${!FILES[@]}"; do
+    file="${FILES[$i]}"
+    [[ "${UNREADABLE_FLAGS[$i]}" -eq 1 ]] && continue
+    _lint_report_class_hits "leaked-tool-tag" "$file" "${IGNORE_SETS[$i]}" grep -nE "$_TAG_PATTERN"
+  done
+
+  # ---- Class 4: Mermaid literal-semicolon (EDMV3-T43) ---------------------------
+  # Files with no ``` mermaid ``` fence short-circuit without a per-line scan (EDMV3-102 AC10
+  # performance budget) -- the mermaid set is already empty from the shared pass above, so there
+  # is nothing further to compute here.
+  for i in "${!FILES[@]}"; do
+    file="${FILES[$i]}"
+    local mermaid_set="${MERMAID_SETS[$i]}"
+    [[ -z "$mermaid_set" ]] && continue
+    local marker_set="${MARKER_SETS[$i]}"
+    local rec rest kind lineno snippet
+    # Lines suppressed by an EXPLICIT edm-lint-ignore-start/end block (the supported escape
+    # valve, EDMV3-T43 AC6) are filtered inside the awk pass via EDM_MARKER_SET.
+    #
+    # Split the record by hand rather than with `IFS=$'\t' read`: tab is IFS whitespace, so read
+    # would collapse the field separator and a following literal tab into one delimiter and eat
+    # the leading indentation of any tab-indented source line reported in the snippet.
+    #
+    # CA-058: captured (not streamed via process substitution) specifically so mermaid_rc reflects
+    # mermaid_scan_awk's own exit status rather than being swallowed by `|| true`. A scan failure
+    # (a staging write to MERMAID_SCAN_FILE that fails, or an awk error) now surfaces as a
+    # reported "scan-error" violation on this file instead of silently contributing zero findings
+    # for a file that may be entirely mermaid.
+    local mermaid_out mermaid_rc=0
+    mermaid_out="$(mermaid_scan_awk "$file" "$mermaid_set" "$marker_set" 2>&1)" || mermaid_rc=$?
+    if [[ "$mermaid_rc" -ne 0 ]]; then
+      local _mermaid_err_snip
+      _mermaid_err_snip="$(printf '%s' "$mermaid_out" | head -1)"
+      report_violation "scan-error" "$file" "0" "mermaid-semicolon scan failed (awk/staging exit ${mermaid_rc}): ${_mermaid_err_snip:-no output}"
+    else
+      while IFS= read -r rec; do
+        [[ -z "$rec" ]] && continue
+        kind="${rec%%$'\t'*}"
+        rest="${rec#*$'\t'}"
+        lineno="${rest%%$'\t'*}"
+        snippet="${rest#*$'\t'}"
+        if [[ "$kind" == "U" ]]; then
+          snippet="unsupported: edm-lint-ignore has no effect inside a mermaid fence (Mermaid's comment syntax is %%); use edm-lint-ignore-start/end around the fence instead"
+        fi
+        report_violation "mermaid-semicolon" "$file" "$lineno" "$snippet"
+      done <<< "$mermaid_out"
+    fi
+  done
+}
+
+# _collect_md_files_into <dir> -- fill the global MD_FILES array from collect_md_files <dir>.
+# CA-344(3): this NUL-delimited read loop was hand-copied in all three mode arms below (bash 3.2
+# has no namerefs, so the shared destination is the one global array every arm already used).
+_collect_md_files_into() {
+  local _cmi_f
+  MD_FILES=()
+  while IFS= read -r -d "" _cmi_f; do
+    MD_FILES+=("$_cmi_f")
+  done < <(collect_md_files "$1")
+}
+
+# _summarize_and_exit <label> <clean-suffix> <violation-suffix> -- render the shared verdict and
+# exit. CA-344(3): the 0-clean/1-violations exit-code contract (depended on by the PreToolUse
+# commit hook, which distinguishes 1 from 2) was previously encoded once per mode arm -- three
+# edits to change one contract. Output is byte-identical to the former inline blocks.
+_summarize_and_exit() {
+  local label="$1" clean_suffix="$2" viol_suffix="$3"
+  if [[ "$violations" -eq 0 ]]; then
+    echo "edm-lint-artifacts: ${label} -- CLEAN (no violations found${clean_suffix})"
+    exit 0
+  fi
+  echo "edm-lint-artifacts: ${label} -- ${violations} violation(s) found${viol_suffix}" >&2
   exit 1
-fi
+}
+
+# ---- Mode dispatch --------------------------------------------------------------------------
+case "$MODE" in
+  prefix)
+    # Resolve the initiative directory via edm-state (honors product-scoped layout).
+    command -v edm-state >/dev/null 2>&1 || die "edm-state not found on PATH" 2
+    INIT_DIR="$(edm-state resolve-dir "$PREFIX" 2>&1)" \
+      || die "no initiative for prefix ${PREFIX} (run: edm-state init ${PREFIX})" 2
+    [[ -d "$INIT_DIR" ]] || die "initiative directory not found: ${INIT_DIR}" 2
+
+    _collect_md_files_into "$INIT_DIR"
+
+    if [[ ${#MD_FILES[@]} -eq 0 ]]; then
+      echo "edm-lint-artifacts: no .md files found in $INIT_DIR"
+      exit 0
+    fi
+
+    scan_md_files "${MD_FILES[@]}"
+    _summarize_and_exit "$PREFIX" " in $INIT_DIR" ""
+    ;;
+
+  path)
+    # Strictly read-only: no state resolution, edm-state is never invoked in this branch.
+    if [[ -d "$PATH_ARG" ]]; then
+      _collect_md_files_into "$PATH_ARG"
+    elif [[ -f "$PATH_ARG" ]]; then
+      # A single named file is linted directly, regardless of extension -- the caller named it
+      # explicitly, unlike directory mode which only considers *.md files.
+      MD_FILES=("$PATH_ARG")
+    else
+      die "--path target not found: ${PATH_ARG}" 2
+    fi
+
+    if [[ ${#MD_FILES[@]} -eq 0 ]]; then
+      echo "edm-lint-artifacts: no .md files found under $PATH_ARG"
+      exit 0
+    fi
+
+    scan_md_files "${MD_FILES[@]}"
+    _summarize_and_exit "--path $PATH_ARG" "" ""
+    ;;
+
+  all)
+    # Consumes the existing layout-aware enumeration rather than re-deriving it (EDMV3-111):
+    # `edm-state list --paths` already covers both flat and product-scoped layouts and already
+    # excludes .archived/ (list_state_files with no --archived arg).
+    command -v edm-state >/dev/null 2>&1 || die "edm-state not found on PATH" 2
+
+    INIT_DIRS=()
+    while IFS= read -r _init_d; do
+      [[ -n "$_init_d" ]] && INIT_DIRS+=("$_init_d")
+    done < <(edm-state list --paths 2>/dev/null || true)
+
+    if [[ ${#INIT_DIRS[@]} -eq 0 ]]; then
+      echo "edm-lint-artifacts: --all found no initiatives under $SRD_ROOT"
+      exit 0
+    fi
+
+    for init_dir in "${INIT_DIRS[@]}"; do
+      [[ -d "$init_dir" ]] || continue
+      label="${init_dir#"$SRD_ROOT"/}"
+
+      _collect_md_files_into "$init_dir"
+      [[ ${#MD_FILES[@]} -eq 0 ]] && continue
+
+      before=$violations
+      echo "=== ${label} (${init_dir}) ==="
+      scan_md_files "${MD_FILES[@]}"
+      this_count=$((violations - before))
+      [[ $this_count -eq 0 ]] && echo "  (clean)"
+    done
+
+    _summarize_and_exit "--all" " across $SRD_ROOT" " across initiatives"
+    ;;
+esac

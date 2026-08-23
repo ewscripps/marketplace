@@ -1,11 +1,11 @@
 ---
 name: test-plan
-description: Preview mode for EDM testing -- detects the project stack and maps ticket ACs to test layers without writing any tests. Produces SRD/{PREFIX}/test-plan.md. Invoke before /edm:test to review scope, or run it standalone when you need the coverage map but aren't ready to write tests yet.
+description: Preview mode for EDM testing -- detects the project stack and maps ticket ACs to test layers without writing any tests. Produces test-plan.md in the initiative directory. Invoke before /edm:test to review scope, or run it standalone when you need the coverage map but aren't ready to write tests yet.
 disable-model-invocation: true
 model: opus
 effort: high
 argument-hint: <PREFIX> [scope]
-allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, TodoWrite
+allowed-tools: Read, Write, Edit, Bash(edm-state *), Glob, Grep, Task, TodoWrite
 ---
 
 # EDM Test Plan -- Stack Detection & Coverage Mapping
@@ -24,9 +24,13 @@ Use this skill when:
 ### Step 1 -- Verify prerequisites
 
 1. Parse `{PREFIX}` from `$ARGUMENTS`. If missing, print usage and exit.
-2. Verify `${user_config.srd_root}/{PREFIX}/` exists. If not, print:
-   > *"No initiative directory at {srd_root}/{PREFIX}/. Run /edm:plan {PREFIX} first."*
-3. Verify the ticket pack exists at `${user_config.srd_root}/{PREFIX}/${user_config.ticket_pack_dirname}/epics/`. If not, print:
+2. Resolve the initiative directory from state (handles both flat and product-scoped layouts):
+   ```bash
+   INIT_DIR="$(edm-state resolve-dir <PREFIX>)"
+   ```
+   If this fails (no state for `{PREFIX}`), print:
+   > *"No initiative directory found for {PREFIX}. Run /edm:plan {PREFIX} first."*
+3. Verify the ticket pack exists at `${INIT_DIR}/${user_config.ticket_pack_dirname}/epics/`. If not, print:
    > *"Ticket pack not found. Run /edm:tickets {PREFIX} and /edm:audit-tickets {PREFIX} first."*
 4. Parse optional `[scope]` argument (default: "all").
 
@@ -37,7 +41,7 @@ Spawn the `edm-test-planner` agent with:
 ```
 PREFIX: {PREFIX}
 scope: {scope arg}
-srd_root: ${user_config.srd_root}
+INIT_DIR: ${INIT_DIR}
 srd_filename: ${user_config.srd_filename}
 ticket_pack_dirname: ${user_config.ticket_pack_dirname}
 coverage_target_unit_pct: ${user_config.coverage_target_unit_pct}
@@ -59,18 +63,18 @@ After the planner completes, present to the user:
 - Infrastructure gaps (if any) with install commands.
 - Total tickets and AC in scope.
 - Locations of the generated plan file(s):
-  - Single-stack: `${user_config.srd_root}/{PREFIX}/test-plan.md`
-  - Multi-stack: `${user_config.srd_root}/{PREFIX}/test-plan.md` (index) plus
-    `${user_config.srd_root}/{PREFIX}/test-plan-{epic}.md` for each epic.
+  - Single-stack: `${INIT_DIR}/test-plan.md`
+  - Multi-stack: `${INIT_DIR}/test-plan.md` (index) plus
+    `${INIT_DIR}/test-plan-{epic}.md` for each epic.
 - Suggested next steps:
   - **No gaps**: "Run `/edm:test {PREFIX}` to write tests based on this plan."
   - **Gaps found**: "Run `/edm:test {PREFIX}` -- it will scaffold the missing frameworks first, then write tests. Or run `/edm:test {PREFIX}` with `--skip-scaffold` to write tests for layers that are already set up."
 
 ### Artifacts produced
 
-- **Single-stack**: `${user_config.srd_root}/{PREFIX}/test-plan.md`
-- **Multi-stack**: `${user_config.srd_root}/{PREFIX}/test-plan.md` (index) plus
-  `${user_config.srd_root}/{PREFIX}/test-plan-{epic-slug}.md` per epic
+- **Single-stack**: `${INIT_DIR}/test-plan.md`
+- **Multi-stack**: `${INIT_DIR}/test-plan.md` (index) plus
+  `${INIT_DIR}/test-plan-{epic-slug}.md` per epic
 
 All files are source-controlled alongside other initiative artifacts.
 
