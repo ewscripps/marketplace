@@ -78,6 +78,11 @@ extract_section() {
   ' "$src"
 }
 
+# CA-519: hoisted from just above the final `mv` below -- mktemp right below is already inside
+# $(dirname "$DST") under `set -euo pipefail`, so a missing docs/ would abort the script at that
+# mktemp call, 39 lines before the guard used to run. Moved here so it is load-bearing (lets the
+# script regenerate into a not-yet-existing docs/) instead of a preempted no-op.
+mkdir -p "$(dirname "$DST")"
 tmp="$(mktemp "${DST}.tmp.XXXXXX")"
 # CA-150: HUP added -- a terminal disconnect mid-run (e.g. an SSH session dropping) leaked this
 # staging file just as much as an untrapped INT/TERM would have.
@@ -117,6 +122,5 @@ if [[ "$mode" == "--check" ]]; then
   exit 0
 fi
 
-mkdir -p "$(dirname "$DST")"
 mv -f "$tmp" "$DST"
 echo "regenerated ${DST}"

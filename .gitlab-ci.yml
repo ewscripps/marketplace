@@ -801,10 +801,11 @@ eval:nightly:
     # CA-452: exit 4 (a partial run) does NOT abort here. run-eval.sh writes run.json and a stub
     # scores.json with complete:false on exit 4 *specifically so CI can see it* -- aborting on
     # any non-zero exit meant no CI path ever read that stub and the partial-run handshake was
-    # dead wiring. A partial run continues through scoring and comparison (edm-compare-eval
-    # REFUSES a complete:false candidate by name, exit 2) -- once a baseline is committed
-    # (CA-490/CA-106/D62: no baseline exists yet, so today this arm exits 3, "NOT ARMED", before
-    # reaching the complete:false check at all; the job still fails at the end either way).
+    # dead wiring. A partial run continues through scoring and comparison, and edm-compare-eval
+    # REFUSES a complete:false candidate by name, exit 2 (CA-490: this check now runs BEFORE the
+    # baseline-existence check, so it fires even with no baseline committed yet -- D62/CA-106:
+    # no baseline exists yet, but that no longer preempts this refusal the way it did before
+    # CA-490's reorder). The job still fails at the end either way (CA-452's own final step).
     - |
       RUN_EVAL_EC=0
       bash plugins/edm/evals/run-eval.sh || RUN_EVAL_EC=$?

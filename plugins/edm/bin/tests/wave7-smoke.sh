@@ -411,6 +411,43 @@ else
 fi
 
 echo
+echo "CA-498 -- must-fail: a skill body instructing a Skill-tool invocation without the Skill grant fails the run"
+ca498_case() {
+  local scratch
+  scratch="$(mktemp -d "${TMP}/edm-cg-ca498.XXXXXX")" || { fail "CA-498 -- mktemp failed"; return 1; }
+
+  mkdir -p "$scratch/bin"
+  cp -R "$PLUGIN_DIR/agents" "$scratch/agents"
+  cp -R "$PLUGIN_DIR/skills" "$scratch/skills"
+  cp -R "$PLUGIN_DIR/hooks" "$scratch/hooks"
+  cp "$EDM_CHECK_GRANTS" "$scratch/bin/edm-check-grants"
+  cp "${SCRIPT_DIR}/../_edm-lint-lib.sh" "$scratch/bin/_edm-lint-lib.sh"
+  cp "${SCRIPT_DIR}/../_edm-cli-lib.sh" "$scratch/bin/_edm-cli-lib.sh"
+  chmod +x "$scratch/bin/edm-check-grants"
+
+  # Strip Skill from the scratch copy of orchestrator/SKILL.md's allowed-tools line only -- it
+  # is the one skill that instructs an actual Skill-tool invocation ("Invoke each phase skill
+  # via the `Skill` tool", Step 2) on a single line.
+  local target="$scratch/skills/orchestrator/SKILL.md"
+  sed -i.bak 's/, Skill,/,/' "$target"
+  rm -f "${target}.bak"
+
+  local out ec
+  set +e
+  ec=0
+  out="$(bash "$scratch/bin/edm-check-grants" 2>&1)" || ec=$?
+  set -e
+
+  [[ $ec -eq 1 ]] && pass "CA-498 -- missing Skill grant on a skill that instructs a Skill-tool invocation fails the run" \
+    || fail "CA-498 -- expected exit 1, got $ec, output: $out"
+  check "CA-498 -- failure names skills/orchestrator/SKILL.md" "skills/orchestrator/SKILL.md" "$out"
+  check "CA-498 -- failure class is missing-skill-grant" "missing-skill-grant" "$out"
+
+  rm -rf "$scratch"
+}
+ca498_case
+
+echo
 echo "CA-010 -- AC8's shared-lint-library boundary: each of the four consumers sources"
 echo "_edm-lint-lib.sh (bin/edm-lint-artifacts, edm-check-grants, edm-check-vocabulary, and"
 echo "bin/edm-state, G39/CA-270, are peer consumers of it, not of one another) and defines none of"
@@ -1181,8 +1218,8 @@ check "CA-533 -- update-patterns validates against PATTERN_AUDIT_TYPE_ENUM_LIST,
 # resolving an empty pattern_file/audit_report_path for the new type.
 ca533_expected_arms="$(printf '%s\n' "$ca533_pattern_type_list" | wc -w | tr -d ' ')"
 ca533_cmd_body="$(awk '/^cmd_update_patterns\(\)/{f=1} f{print} f && /^}$/{exit}' "$EDM_STATE")"
-ca533_pattern_file_arms="$(printf '%s\n' "$ca533_cmd_body" | grep -cE '^\s*(srd|ticket|qc|code|test-coverage)\)\s*pattern_file=')"
-ca533_report_path_arms="$(printf '%s\n' "$ca533_cmd_body" | grep -cE '^\s*(srd|ticket|qc|code|test-coverage)\)\s*(audit_report_path=|$)')"
+ca533_pattern_file_arms="$(printf '%s\n' "$ca533_cmd_body" | grep -cE '^[[:space:]]*(srd|ticket|qc|code|test-coverage)\)[[:space:]]*pattern_file=')"
+ca533_report_path_arms="$(printf '%s\n' "$ca533_cmd_body" | grep -cE '^[[:space:]]*(srd|ticket|qc|code|test-coverage)\)[[:space:]]*(audit_report_path=|$)')"
 [[ "${ca533_pattern_file_arms:-0}" -eq "$ca533_expected_arms" ]] \
   && pass "CA-533 -- pattern_file mapping covers exactly ${ca533_expected_arms} arm(s), matching PATTERN_AUDIT_TYPE_ENUM_LIST" \
   || fail "CA-533 -- pattern_file mapping has ${ca533_pattern_file_arms:-0} arm(s), expected ${ca533_expected_arms} (matching PATTERN_AUDIT_TYPE_ENUM_LIST word count)"
@@ -5995,6 +6032,36 @@ check "G29 -- a lockdir whose pidfile literally contains '0' is reclaimed, not t
 check "G29 -- the locked body runs after a literal-'0'-PID reclaim" \
   "body_out=ca141d-reclaimed" "$t_ca141d_out"
 
+# ---- CA-480: a lockdir that exists with NO pidfile AT ALL (a crash between mkdir succeeding and
+# the pidfile write, or any external process that created just the directory) must reclaim via
+# the SAME age-gated invalid-PID path an empty/corrupt pidfile always used -- previously the
+# entire reclaim block lived inside `if [[ -f "$pidfile" ]]`, so a missing pidfile skipped it
+# entirely, exhausted the retry budget, and died with no way for ANY later invocation to ever
+# reclaim it.
+t_ca480_out="$(
+  set +e
+  trap - EXIT INT TERM HUP
+  tmp480="$(mktemp -d "${TMP}/edm-ca480.XXXXXX")" || exit 1
+  command() { if [[ "${1:-}" == "-v" && "${2:-}" == "flock" ]]; then return 1; fi; builtin command "$@"; }
+  source "$EDM_STATE" >/dev/null 2>&1
+  lockbase="${tmp480}/state"
+  lockdir="${lockbase}.lockd"
+  mkdir -p "$lockdir"
+  # Deliberately NO "${lockdir}/pid" file written at all.
+  ec=0
+  body_out="$(with_state_lock "$lockbase" echo ca480-reclaimed)" || ec=$?
+  lockdir_state=absent
+  [[ -d "$lockdir" ]] && lockdir_state=present
+  rm -rf "$tmp480"
+  printf 'ec=%s body_out=%s lockdir=%s\n' "$ec" "$body_out" "$lockdir_state"
+)" || true
+check "CA-480 -- a lockdir with no pidfile at all is reclaimed rather than exhausting the retry budget" \
+  "ec=0" "$t_ca480_out"
+check "CA-480 -- the locked body runs after a missing-pidfile reclaim" \
+  "body_out=ca480-reclaimed" "$t_ca480_out"
+check "CA-480 -- the lockdir is cleaned up after the missing-pidfile reclaim-then-acquire" \
+  "lockdir=absent" "$t_ca480_out"
+
 # ---- G42/CA-318: the invalid-PID reclaim path refuses a lockdir less than 1 second old, then
 # reclaims once it ages past the threshold -- agreeing in direction with cmd_git_lock_check's own
 # refuse-when-undetermined behavior instead of the reverse. Asserts the actual printed evidence
@@ -7819,6 +7886,22 @@ check "G4 -- a count mismatch refuses to proceed and names the missing lenses by
 check "G13 -- the precondition states the orchestrator-persists-both-halves fallback" \
   "Never persist only the \`.md\` half and proceed" "$g13_code_audit_skill"
 
+# CA-507 (residual of CA-466): tooling-notes.md's structural consumer instruction must live
+# INSIDE the Synthesizer Phase's own fenced spawn prompt -- the surface that is actually live at
+# spawn time (CA-164/CA-193's lesson) -- not merely somewhere in the agent definition file, which
+# CA-130 has recorded arriving stale for seven-plus consecutive rounds. Mirrors the G13/G6 fence
+# extraction above.
+ca507_synth_fence_body="$(awk '
+  /^## Synthesizer Phase/ { f = 1 }
+  f && $0 == "```" { c++; if (c == 2) exit; next }
+  f && c == 1 { print }
+' "${PLUGIN_DIR}/skills/code-audit/SKILL.md")"
+[[ -n "$ca507_synth_fence_body" ]] \
+  && pass "CA-507 -- the Synthesizer Phase fence extraction is non-empty (extraction itself works)" \
+  || fail "CA-507 -- the Synthesizer Phase fence extraction returned nothing -- the heading or fence markers moved, and the check below would be checked against nothing"
+check "CA-507 -- the Synthesizer Phase FENCE BODY instructs reading tooling-notes.md if present" \
+  "tooling-notes.md if it exists" "$ca507_synth_fence_body"
+
 # G6/CA-193 (round 5): the count check alone cannot tell eleven correctly-schema'd files from
 # eleven files carrying an invented schema. Step 8a now also validates CONTENT.
 check "G6/CA-193 -- step 8a's precondition includes a content check beyond the count check" \
@@ -8618,7 +8701,19 @@ check "G48 -- a git-log failure is checked against whether last_sha is still a v
 check "G48 -- a rewritten history re-anchors last_sha at HEAD with a named diagnostic" \
   "history was rewritten" "$t_g48_body"
 check "G48 -- last_sha advances to HEAD on every successful poll, not only on a match" \
-  'last_sha="$(git rev-parse HEAD' "$t_g48_body"
+  'last_sha="$head_now"' "$t_g48_body"
+
+# CA-522: HEAD used to be resolved TWICE per poll -- once as the git-log range end, once again
+# as the new cursor -- with a grep and an echo in between, so a commit landing in that window
+# advanced last_sha past a commit that was never scanned and could never be reported later.
+# Pin that HEAD is now resolved exactly ONCE per poll iteration (into head_now) and reused for
+# both the range end and the cursor.
+ca522_head_resolutions="$(printf '%s\n' "$t_g48_body" | grep -c 'rev-parse HEAD' || true)"
+[[ "${ca522_head_resolutions:-0}" -eq 1 ]] \
+  && pass "CA-522 -- watch-impl resolves HEAD exactly once per poll (head_now), not twice" \
+  || fail "CA-522 -- expected exactly 1 'rev-parse HEAD' call in cmd_watch_impl, found ${ca522_head_resolutions:-0} (HEAD must be resolved once and reused, not re-resolved between the range-end read and the cursor advance)"
+check "CA-522 -- the git-log range end uses head_now, not a second live HEAD read" \
+  '"${last_sha}..${head_now}"' "$t_g48_body"
 
 g48_rewrite_case() {
   local scratch
@@ -8863,6 +8958,63 @@ for g21_pair in $g21_evals_map; do
     'exit "$code"' "$g21_body"
 done
 
+# =================================================================================
+# CA-511: run-eval.sh's inner per-phase timeout budget is now coupled to the CI job's outer
+# timeout via CI_JOB_TIMEOUT (a GitLab predefined variable, seconds) -- refusing up front rather
+# than letting the outer timeout silently kill the job before the CA-452 partial-run handshake's
+# trailing steps (scoring, comparison) ever run. Pinned by source-text assertion (the guard runs
+# after the live auth probe and fixture provisioning, so it is not exercised end-to-end here,
+# matching this suite's established convention of not invoking run-eval.sh live -- see the CA-007
+# containment-loop reproduction elsewhere in this file for the same reasoning) plus a standalone
+# reproduction of the exact arithmetic, proving the formula itself is sound.
+# =================================================================================
+echo
+echo "=== CA-511: run-eval.sh couples its inner phase-timeout budget to CI_JOB_TIMEOUT ==="
+ca511_run_eval_src="$(cat "${PLUGIN_DIR}/evals/run-eval.sh")"
+check "CA-511 -- run-eval.sh reads CI_JOB_TIMEOUT" '${CI_JOB_TIMEOUT:-}' "$ca511_run_eval_src"
+check "CA-511 -- the worst-case arithmetic is three phases plus a 60s auth probe" \
+  'inner_worst_case_secs=$((PHASE_TIMEOUT_SECONDS * 3 + 60))' "$ca511_run_eval_src"
+check "CA-511 -- refuses (exit 2) rather than silently proceeding when the inner budget would meet or exceed the outer" \
+  'inner_worst_case_secs" -ge "$ci_job_timeout_secs"' "$ca511_run_eval_src"
+
+# Standalone reproduction of the exact formula above (not a call into run-eval.sh) -- proves the
+# arithmetic itself discriminates correctly at the boundary a real CI run would hit.
+ca511_check_formula() {
+  local phase_timeout="$1" ci_job_timeout="$2" inner
+  inner=$((phase_timeout * 3 + 60))
+  [[ "$inner" -ge "$ci_job_timeout" ]] && echo "refuse" || echo "proceed"
+}
+[[ "$(ca511_check_formula 2700 9000)" == "proceed" ]] \
+  && pass "CA-511 -- the documented default (2700s phase, 9000s job) does not refuse (8160s < 9000s)" \
+  || fail "CA-511 -- the documented default incorrectly refused"
+[[ "$(ca511_check_formula 3600 9000)" == "refuse" ]] \
+  && pass "CA-511 -- CA-444's own example (a 3600s phase timeout against the 150m/9000s job ceiling) correctly refuses (10860s >= 9000s)" \
+  || fail "CA-511 -- a 3600s phase timeout against a 9000s job ceiling should have refused but did not"
+[[ "$(ca511_check_formula 2700 8000)" == "refuse" ]] \
+  && pass "CA-511 -- a tightened job timeout below the worst case correctly refuses" \
+  || fail "CA-511 -- a tightened 8000s job timeout against the 2700s default should have refused but did not"
+
+# =================================================================================
+# CA-532: --allowedTools/--disallowedTools are passed as real bash arrays expanded with
+# "${ARR[@]}", not a single space-joined string -- the CLI documents these flags as taking
+# space-separated SEPARATE arguments, and 4 of the 12 allowed-tools entries contain an internal
+# space (the Bash prefix matchers), which cannot survive a downstream space-split of one
+# collapsed string.
+# =================================================================================
+echo
+echo "=== CA-532: run-eval.sh passes --allowedTools/--disallowedTools as real arrays, not a joined string ==="
+check "CA-532 -- CLAUDE_ALLOWED_TOOLS is declared as a bash array" \
+  'CLAUDE_ALLOWED_TOOLS=(Read Write Edit Glob Grep LS TodoWrite Task "Bash(edm-state *)" "Bash(edm-init *)" "Bash(edm-validate-prefix *)" "Bash(jq *)")' \
+  "$ca511_run_eval_src"
+check "CA-532 -- CLAUDE_DISALLOWED_TOOLS is declared as a bash array" \
+  'CLAUDE_DISALLOWED_TOOLS=(WebFetch WebSearch KillShell BashOutput)' "$ca511_run_eval_src"
+check "CA-532 -- --allowedTools expands the array, not a single quoted string" \
+  '--allowedTools "${CLAUDE_ALLOWED_TOOLS[@]}"' "$ca511_run_eval_src"
+check "CA-532 -- --disallowedTools expands the array, not a single quoted string" \
+  '--disallowedTools "${CLAUDE_DISALLOWED_TOOLS[@]}"' "$ca511_run_eval_src"
+check_absent "CA-532 -- the old single-string --allowedTools form is gone" \
+  '--allowedTools "$CLAUDE_ALLOWED_TOOLS"' "$ca511_run_eval_src"
+
 echo
 echo "=== G39/CA-315: five stale file-and-line citations corrected to by-name form, and each stays gone ==="
 # Durability guard for CA-315's own class: eight of round 5's L6 findings were stale in-code
@@ -9078,6 +9230,32 @@ check_absent "CA-461 -- the retired total_max_minus_min name is gone from the ru
   "total_max_minus_min" "$ca461_readme"
 
 # =================================================================================
+# CA-490 (residual of CA-452): the complete:false refusal must fire even when no baseline is
+# committed yet -- before this fix, the baseline-existence check ran FIRST and returned exit 3
+# ("NOT ARMED") before the complete:false check was ever reached, so the CA-452 handshake was
+# dead wiring on this repo's actual state (no committed baseline). Prove the real behavior with
+# a scratch invocation rather than reading the source: a complete:false candidate against a
+# nonexistent baseline path must exit 2 and name the refusal, not exit 3.
+# =================================================================================
+echo
+echo "=== CA-490: edm-compare-eval refuses a complete:false candidate even with no baseline committed ==="
+ca490_scratch="$(mktemp -d "${TMP}/edm-ca490.XXXXXX")"
+cat > "${ca490_scratch}/candidate.json" <<'EOF'
+{"complete": false, "scorer_version": "1.1.0", "dimensions_scored": 6, "total": 5.0}
+EOF
+ca490_nonexistent_baseline="${ca490_scratch}/no-such-baseline.json"
+ca490_ec=0
+ca490_out="$("${PLUGIN_DIR}/bin/edm-compare-eval" "${ca490_scratch}/candidate.json" "$ca490_nonexistent_baseline" 2>&1)" || ca490_ec=$?
+[[ "$ca490_ec" -eq 2 ]] \
+  && pass "CA-490 -- a complete:false candidate is refused (exit 2) even with no baseline file present" \
+  || fail "CA-490 -- expected exit 2 (complete:false refusal); got exit=${ca490_ec}, output: ${ca490_out}"
+check "CA-490 -- the refusal names the complete:false condition, not a NOT-ARMED baseline message" \
+  "REFUSED -- candidate run is flagged complete: false" "$ca490_out"
+check_absent "CA-490 -- the NOT-ARMED baseline message is not what fired here" \
+  "NOT armed" "$ca490_out"
+rm -rf "$ca490_scratch"
+
+# =================================================================================
 # CA-472 (round-8 Stage A, live-diagnosed): the awk -f <(cat <<'HEREDOC') idiom leaked ~2
 # process-substitution pipe fds per call under bash 3.2; once the leaked fd number crossed
 # macOS's /dev/fd ceiling (~fd 256, at roughly 120 scanned files) the child awk could not open
@@ -9091,13 +9269,16 @@ echo
 echo "=== CA-472: the fd-leaking awk -f <(cat <<heredoc) idiom stays out of live code, and a 130-file tree lints without hanging ==="
 ca472_live_hits=0
 for ca472_f in "${PLUGIN_DIR}/bin/edm-lint-artifacts" "${PLUGIN_DIR}/bin/_edm-lint-lib.sh" "${PLUGIN_DIR}/evals/score-artifacts.sh"; do
-  ca472_n="$(grep -v '^\s*#' "$ca472_f" | count_matches -- '-f <(cat')"
+  # CA-528: \s is a GNU grep extension -- on BSD grep (macOS, this plugin's documented primary
+  # development platform) it degrades to the literal string "s*#", so only column-0 '#' comments
+  # were actually filtered. [[:space:]] is POSIX and behaves identically on both.
+  ca472_n="$(grep -v '^[[:space:]]*#' "$ca472_f" | count_matches -- '-f <(cat')"
   ca472_live_hits=$((ca472_live_hits + ca472_n))
 done
 [[ "$ca472_live_hits" -eq 0 ]] \
   && pass "CA-472 -- zero live (non-comment) 'awk -f <(cat' sites across the three converted files" \
   || fail "CA-472 -- found ${ca472_live_hits} live 'awk -f <(cat' site(s); the bash-3.2 fd leak idiom was reintroduced"
-ca472_control="$(printf '%s\n' '  awk -f "$RULES" -f <(cat <<X' | grep -v '^\s*#' | count_matches -- '-f <(cat')"
+ca472_control="$(printf '%s\n' '  awk -f "$RULES" -f <(cat <<X' | grep -v '^[[:space:]]*#' | count_matches -- '-f <(cat')"
 [[ "$ca472_control" -eq 1 ]] \
   && pass "CA-472 -- positive control: the tripwire pattern matches a reintroduced live site" \
   || fail "CA-472 -- positive control broken: the pattern would not catch a reintroduction"

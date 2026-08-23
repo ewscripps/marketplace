@@ -882,6 +882,38 @@ printf '{"schema":"lens","lens":"L2","sev":"P2","status":"open","id":null}\n' \
 ca471ok_out="$("$EDM_STATE" audit-round-complete CA471OK code 2>&1)"
 check_absent "CA-471 -- a fully-backed manifest completes with no warn" "CA-471" "$ca471ok_out"
 
+# CA-479: two pass-1_<date> directories for the SAME round number (a re-run across a date
+# boundary, or a hand-copied scratch directory) must not resolve silently -- the prior code kept
+# whichever the glob happened to yield last, with no diagnostic. Here the STALE scratch copy
+# (no lens-L2.jsonl) is touched OLDER, and the fully-backed real copy is touched NEWER, so
+# selecting by mtime should pick the real one and complete with no downgrade -- while still
+# warning that the ambiguity existed.
+"$EDM_STATE" init CA479AMBIG >/dev/null
+mkdir -p "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15" "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16"
+printf 'Round type: full\nL1\nL2\n' > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lenses-run.txt"
+printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L1.jsonl"
+# CA479AMBIG's stale copy deliberately has NO lens-L2.jsonl -- if this were selected, the round
+# would downgrade to partial.
+printf 'Round type: full\nL1\nL2\n' > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lenses-run.txt"
+printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L1.jsonl"
+printf '{"schema":"lens","lens":"L2","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L2.jsonl"
+touch -t 202608150000 "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15"
+touch -t 202608160000 "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16"
+"$EDM_STATE" audit-round-start CA479AMBIG code >/dev/null
+ca479_out="$("$EDM_STATE" audit-round-complete CA479AMBIG code 2>&1)"
+check "CA-479 -- ambiguous pass directories produce a named warning" "CA-479" "$ca479_out"
+check "CA-479 -- the warning names both candidate directories" "pass-1_2026-08-15" "$ca479_out"
+check "CA-479 -- the warning names the other candidate too" "pass-1_2026-08-16" "$ca479_out"
+check_absent "CA-479 -- the newer (fully-backed) directory is selected, so no completeness downgrade fires" \
+  "CA-471" "$ca479_out"
+ca479_round_type="$("$EDM_STATE" get CA479AMBIG | jq -r '.audit_rounds.code.rounds[0].round_type')"
+[[ "$ca479_round_type" == "full" ]] \
+  && pass "CA-479 -- round_type stays full (mtime selection picked the fully-backed directory, not the stale one)" \
+  || fail "CA-479 -- round_type is '${ca479_round_type}', expected full"
+
 # CA-477: the CA471OK case above starts its round with --lenses L1,L2, so its round_type is
 # ALREADY partial and its only assertion is a check_absent -- moving the downgrade out of its
 # miss guard would go unnoticed. This case runs a FULL round (no --lenses), lands every lens the
@@ -1489,6 +1521,42 @@ JSON
 ss_present_out="$("$EDM_STATE" session-start 2>&1 || true)"
 check_absent "session-start omits PERM_RULES_MISSING when rules present" "PERM_RULES_MISSING" "$ss_present_out"
 rm -f "$T06_CWD/.claude/settings.json"
+
+# ---- CA-500: CLAUDE_PROJECT_DIR disagreeing with the git toplevel is not accepted -------------
+echo
+echo "CA-500 -- CLAUDE_PROJECT_DIR disagreeing with the git toplevel is not accepted for permission scanning"
+ca500_repo="$(mktemp -d "${TMP}/ca500-repo.XXXXXX")"
+ca500_attacker="$(mktemp -d "${TMP}/ca500-attacker.XXXXXX")"
+mkdir -p "$ca500_repo/.claude" "$ca500_attacker/.claude"
+( cd "$ca500_repo" && git init -q && git config user.email t@t && git config user.name t )
+# Physically resolve both -- the resolver compares physical paths (pwd -P), and mktemp's own
+# output may carry an unresolved symlink component (e.g. macOS TMPDIR under /var, itself a
+# symlink to /private/var) that would make a literal-string assertion against $ca500_repo
+# false-fail even though the resolver behaved correctly.
+ca500_repo="$(cd "$ca500_repo" && pwd -P)"
+ca500_attacker="$(cd "$ca500_attacker" && pwd -P)"
+# The ask rules live ONLY in the attacker-controlled directory, never in the real repo.
+cat > "$ca500_attacker/.claude/settings.json" <<'JSON'
+{"permissions": {"ask": ["Bash(edm-state approve-gate*)", "Bash(edm-state archive*)"]}}
+JSON
+(
+  cd "$ca500_repo"
+  export HOME="$T06_HOME"
+  export CLAUDE_PROJECT_DIR="$ca500_attacker"
+  "$EDM_STATE" init CA500 >/dev/null
+  "$EDM_STATE" approve-gate CA500 1 >"${ca500_repo}/stdout.log" 2>"${ca500_repo}/stderr.log"
+)
+# EDM_SRD_ROOT is exported globally at the top of this suite ("$TMP/SRD") and governs where
+# edm-state writes regardless of cwd -- the state file lands there, not under $ca500_repo/SRD.
+ca500_enf="$(jq -r '.gates_approved[0].enforcement' "$TMP/SRD/CA500/.edm-state.json")"
+[[ "$ca500_enf" == "prose-only" ]] \
+  && pass "CA-500 -- a CLAUDE_PROJECT_DIR outside the git toplevel does not stamp permission-ask from its own settings" \
+  || fail "CA-500 -- enforcement='$ca500_enf', expected prose-only (the attacker-directory ask rules must not count)"
+check "CA-500 -- the disagreement is reported naming the rejected CLAUDE_PROJECT_DIR value" \
+  "$ca500_attacker" "$(cat "$ca500_repo/stderr.log")"
+check "CA-500 -- the disagreement is reported naming the git toplevel used instead" \
+  "$ca500_repo" "$(cat "$ca500_repo/stderr.log")"
+rm -rf "$ca500_repo" "$ca500_attacker"
 
 # ---- AC7 -- warning only: validate exit code stays 0 either way ---------------
 echo

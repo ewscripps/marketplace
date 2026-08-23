@@ -407,8 +407,19 @@ provision_scratch
 # --no-session-persistence: an eval run never needs to be resumed via `claude --resume`.
 CLAUDE_MODEL="${EDM_EVAL_MODEL:-opus}"
 CLAUDE_PERMISSION_MODE="acceptEdits"
-CLAUDE_ALLOWED_TOOLS="Read Write Edit Glob Grep LS TodoWrite Task Bash(edm-state *) Bash(edm-init *) Bash(edm-validate-prefix *) Bash(jq *)"
-CLAUDE_DISALLOWED_TOOLS="WebFetch WebSearch KillShell BashOutput"
+# CA-532: real bash arrays, not a space-joined string. The CLI's own --allowedTools reference
+# documents SPACE-SEPARATED SEPARATE ARGUMENTS (its example: "Bash(git log *)" "Bash(git diff
+# *)" "Read"), individually quoted when a specifier contains a space -- collapsing this list into
+# one string and passing it as a single --allowedTools "$STRING" argument (the prior shape) does
+# not survive that: 4 of these 12 entries contain an internal space
+# (Bash(edm-state *)/Bash(edm-init *)/Bash(edm-validate-prefix *)/Bash(jq *)), so a downstream
+# space-split either produces the malformed tokens "Bash(edm-state" and "*)", or the whole
+# 12-entry string is treated as one tool name that matches nothing -- fail-closed, not an
+# escalation, but every phase's mandated edm-state/edm-init call then hits an unanswerable
+# permission prompt and the phase burns its timeout. Bash 3.2 (this plugin's floor) supports
+# arrays fine; only associative arrays are the bash-4+ feature this codebase avoids.
+CLAUDE_ALLOWED_TOOLS=(Read Write Edit Glob Grep LS TodoWrite Task "Bash(edm-state *)" "Bash(edm-init *)" "Bash(edm-validate-prefix *)" "Bash(jq *)")
+CLAUDE_DISALLOWED_TOOLS=(WebFetch WebSearch KillShell BashOutput)
 PHASE_TIMEOUT_SECONDS="${EDM_EVAL_PHASE_TIMEOUT_SECONDS:-2700}"
 # CA-444: validate beside the default (CA-160 rule). A non-numeric value made run_with_timeout's
 # elapsed-vs-limit numeric comparison fail every poll with "integer expression expected" -- and
@@ -420,6 +431,32 @@ case "$PHASE_TIMEOUT_SECONDS" in
     exit 2
     ;;
 esac
+# CA-511: nothing coupled this driver's INNER per-phase budget to the CI job's OUTER timeout, and
+# the inner budget already consumes 90% of the outer at the default (3 x 2700s + a 60s auth
+# probe = 8160s against .gitlab-ci.yml eval:nightly's 9000s ceiling -- see that job's own
+# comment for the arithmetic the 150m figure is derived from). CI_JOB_TIMEOUT (GitLab predefined
+# variable, seconds) lets this driver refuse up front, rather than being silently killed by the
+# outer timeout after CA-444 validated the knob's TYPE but left it unbounded ABOVE -- a value
+# that passes the case statement above cleanly can still make 3x its worth exceed the job
+# timeout, turning the phase timeout into dead wiring and skipping the CA-452 partial-run
+# handshake's trailing script steps entirely (they never run once GitLab kills the job).
+if [[ -n "${CI_JOB_TIMEOUT:-}" ]]; then
+  case "$CI_JOB_TIMEOUT" in
+    *[!0-9]*|'')
+      : # non-numeric or empty -- not the seconds form this check knows how to compare; skip
+      ;;
+    *)
+      ci_job_timeout_secs="$CI_JOB_TIMEOUT"
+      # Three phases (plan, srd, audit-srd) plus the 60s auth probe -- see invoke_claude below
+      # and .gitlab-ci.yml's eval:nightly comment for the identical arithmetic.
+      inner_worst_case_secs=$((PHASE_TIMEOUT_SECONDS * 3 + 60))
+      if [[ "$inner_worst_case_secs" -ge "$ci_job_timeout_secs" ]]; then
+        echo "run-eval: refusing -- EDM_EVAL_PHASE_TIMEOUT_SECONDS=${PHASE_TIMEOUT_SECONDS} makes the driver's own worst case (3 phases + a 60s auth probe = ${inner_worst_case_secs}s) exceed or equal CI_JOB_TIMEOUT (${ci_job_timeout_secs}s); the outer job would kill this run before the CA-452 partial-run handshake's trailing steps (scoring, comparison) ever execute. Lower EDM_EVAL_PHASE_TIMEOUT_SECONDS or raise the job's timeout: in the same change." >&2
+        exit 2
+      fi
+      ;;
+  esac
+fi
 PHASE_MAX_BUDGET_USD="${EDM_EVAL_MAX_BUDGET_USD:-15}"
 
 # invoke_claude <phase-key> <prompt> -- runs claude -p for one phase, cwd'd into the scratch
@@ -447,8 +484,8 @@ invoke_claude() {
     claude -p "$prompt" \
     --model "$CLAUDE_MODEL" \
     --permission-mode "$CLAUDE_PERMISSION_MODE" \
-    --allowedTools "$CLAUDE_ALLOWED_TOOLS" \
-    --disallowedTools "$CLAUDE_DISALLOWED_TOOLS" \
+    --allowedTools "${CLAUDE_ALLOWED_TOOLS[@]}" \
+    --disallowedTools "${CLAUDE_DISALLOWED_TOOLS[@]}" \
     --plugin-dir "$EDM_PLUGIN_DIR" \
     --output-format json \
     --no-session-persistence \

@@ -1056,6 +1056,51 @@ default_skipped_phases_json_for_mode() {
 # "not found" for that file and the scan moves to the next one. A false "missing"
 # (prose-only) is harmless; a false "present" (permission-ask) is not, since it would
 # overstate the tier that actually enforced the approval.
+# _resolve_permcheck_project_root -- the shared project-root resolver check_permission_rules()
+# and the PERM_RULES_MISSING diagnostic both call, so the value the scan actually used and the
+# value a human reads in the diagnostic can never diverge.
+#
+# CA-500 (residual of CA-448): CLAUDE_PROJECT_DIR was accepted on the SOLE test that it names a
+# directory, with no cross-check against the git toplevel. That is a real bypass, not a
+# hypothetical one: an env-prefixed invocation (`CLAUDE_PROJECT_DIR=/attacker/dir edm-state
+# approve-gate ...`) is one of the documented shapes that does NOT match the literal-prefix
+# approve-gate ask matcher (README's "Matcher limitation" note), so no permission prompt fires
+# for it -- and the SAME env prefix simultaneously redirects this scan to that attacker-or-
+# operator-chosen directory, which need only contain the two literal ask patterns to stamp the
+# approval `permission-ask`. That is a bypass that RECORDS ITSELF AS ENFORCED, exactly the
+# direction AC6's fail-safe above forbids. Fix: resolve both CLAUDE_PROJECT_DIR and the git
+# toplevel PHYSICALLY (pwd -P, defeating a symlink) and accept CLAUDE_PROJECT_DIR only when it
+# equals or is contained within the toplevel; on disagreement, prefer the toplevel and say so on
+# stderr, naming both paths.
+_resolve_permcheck_project_root() {
+  local proj_root="${CLAUDE_PROJECT_DIR:-}"
+  local git_toplevel
+  git_toplevel="$(git rev-parse --show-toplevel 2>/dev/null)" || git_toplevel=""
+  if [[ -n "$proj_root" && -d "$proj_root" ]]; then
+    if [[ -n "$git_toplevel" ]]; then
+      local phys_proj_root phys_git_toplevel
+      phys_proj_root="$(cd "$proj_root" 2>/dev/null && pwd -P)" || phys_proj_root="$proj_root"
+      phys_git_toplevel="$(cd "$git_toplevel" 2>/dev/null && pwd -P)" || phys_git_toplevel="$git_toplevel"
+      case "$phys_proj_root" in
+        "$phys_git_toplevel"|"$phys_git_toplevel"/*)
+          proj_root="$phys_proj_root"
+          ;;
+        *)
+          echo "edm-state: CLAUDE_PROJECT_DIR (${proj_root}) disagrees with the git repository toplevel (${git_toplevel}) -- using the toplevel for permission-rule resolution" >&2
+          proj_root="$phys_git_toplevel"
+          ;;
+      esac
+    fi
+    # No git toplevel at all (not inside a git worktree): nothing to cross-check
+    # CLAUDE_PROJECT_DIR against, so it is accepted as-is -- the pre-CA-500 behavior for this one
+    # sub-case, since there is no repository boundary here for it to have violated.
+  else
+    proj_root="$git_toplevel"
+  fi
+  [[ -n "$proj_root" ]] || proj_root="."
+  printf '%s\n' "$proj_root"
+}
+
 check_permission_rules() {
   local pat1='Bash(edm-state approve-gate*)'
   local pat2='Bash(edm-state archive*)'
@@ -1064,11 +1109,10 @@ check_permission_rules() {
   # cwd -- gate approvals run from wherever the driving session happens to sit (a subdirectory,
   # a hook's own cwd), and a cwd-relative ".claude/..." probe from there silently misses the real
   # settings and downgrades an honestly-configured approval to prose-only. Resolution order:
-  # CLAUDE_PROJECT_DIR (the host tells us), git toplevel, then cwd as the pre-CA-448 fallback.
+  # CLAUDE_PROJECT_DIR (the host tells us, cross-checked against the git toplevel -- CA-500),
+  # git toplevel, then cwd as the pre-CA-448 fallback.
   local proj_root
-  proj_root="${CLAUDE_PROJECT_DIR:-}"
-  [[ -n "$proj_root" && -d "$proj_root" ]] || proj_root="$(git rev-parse --show-toplevel 2>/dev/null)" || proj_root=""
-  [[ -n "$proj_root" ]] || proj_root="."
+  proj_root="$(_resolve_permcheck_project_root)"
   local f ask_json
   for f in "${proj_root}/.claude/settings.local.json" "${proj_root}/.claude/settings.json" "${HOME:-}/.claude/settings.json"; do
     [[ -n "$f" && -f "$f" && -r "$f" ]] || continue
@@ -1365,63 +1409,81 @@ with_state_lock() {
         die "with_state_lock: cannot create lock directory ${lockdir}: ${_mkdir_err}"
       fi
       holder_pid=""
-      if [[ -f "$pidfile" ]]; then
-        holder_pid="$(cat "$pidfile" 2>/dev/null || true)"
-        if [[ -z "$holder_pid" || ! "$holder_pid" =~ ^[0-9]+$ || "$holder_pid" == "0" ]]; then
-          # G42/CA-318, corrected by G45/CA-318 (round 6): age-gate this reclaim so it agrees
-          # in direction with cmd_git_lock_check's own undetermined-liveness reclaim (which
-          # refuses rather than assumes dead) for the identical "cannot determine liveness"
-          # situation. The two prior versions of this comment BOTH claimed that agreement was
-          # already achieved while the code beneath them still hand-computed the age with
-          # `date -r "$lockdir" +%s 2>/dev/null || echo 0` -- an unreadable mtime defaulted to
-          # epoch 0, yielding an age of ~1.7e9 seconds and an UNCONDITIONAL reclaim, the exact
-          # opposite of cmd_git_lock_check's refuse-on-unknown direction. Routing through the
-          # shared `_git_lock_age_seconds` primitive (used by every other age gate in this
-          # file) makes "age could not be determined" and "age determined but too young" two
-          # distinguishable, both-refuse outcomes, so this comment is now true as written. A
-          # live holder writes its PID via `echo $$ > "$pidfile"` microseconds after `mkdir`
-          # succeeds, so an invalid pidfile should be unreachable in practice for a live holder
-          # -- but refusing to reclaim until the lockdir is at least 1 second old (10x this
-          # loop's own 0.1s poll interval) costs nothing on the genuinely-stale path (already
-          # however many seconds or minutes old) and closes the theoretical
-          # reclaim-a-live-lock window on the momentary-write-race path. Falls through to the
-          # retry tail either way, so a lockdir that's merely too young right now reclaims on a
-          # later iteration once it ages past the threshold, within the existing 50-try/5s
-          # total budget.
-          local _lockdir_age_s
-          _lockdir_age_s="$(_git_lock_age_seconds "$lockdir")" || _lockdir_age_s=""
-          if [[ -n "$_lockdir_age_s" ]] && (( _lockdir_age_s >= 1 )); then
-            _edm_reclaim_stale_lockdir "$lockdir" \
-              "reclaimed a lockdir with an invalid PID '${holder_pid:-missing}' at ${lockdir}"
-          elif [[ -z "$_lockdir_age_s" ]]; then
-            echo "edm-state: state lock ${lockdir} has an invalid PID '${holder_pid:-missing}' but its age could not be determined -- not reclaiming" >&2
-          else
-            echo "edm-state: state lock ${lockdir} has an invalid PID '${holder_pid:-missing}' but is less than 1 second old -- not reclaiming yet (may be mid-acquisition)" >&2
-          fi
-          tries="$(_lock_retry_or_die "$tries")" \
-            || die "state lock timeout after ${EDM_STATE_LOCK_WAIT_S}s (${EDM_STATE_LOCK_MAX_TRIES} tries x 0.1s) on ${lockdir} (invalid PID)"
-          continue
+      # CA-480: the reclaim block below used to run only inside `if [[ -f "$pidfile" ]]`, so a
+      # lockdir that exists with NO pidfile at all (a crash/kill-9/power-loss between mkdir
+      # succeeding above and the pidfile write below, before this function's own trap layer is
+      # even installed; a pidfile write that failed outright; or any external process creating
+      # the directory name) skipped this entire block on every iteration, exhausted the retry
+      # budget, and died -- permanently, since nothing on any later invocation could ever
+      # reclaim it. `cat` on a missing file fails silently into an empty holder_pid, which the
+      # invalid-PID branch immediately below already treats identically to an empty or
+      # corrupt pidfile's contents -- so removing the `-f` guard is sufficient: a missing
+      # pidfile now takes the exact same age-gated reclaim path an empty/invalid one always did.
+      holder_pid="$(cat "$pidfile" 2>/dev/null || true)"
+      if [[ -z "$holder_pid" || ! "$holder_pid" =~ ^[0-9]+$ || "$holder_pid" == "0" ]]; then
+        # G42/CA-318, corrected by G45/CA-318 (round 6): age-gate this reclaim so it agrees
+        # in direction with cmd_git_lock_check's own undetermined-liveness reclaim (which
+        # refuses rather than assumes dead) for the identical "cannot determine liveness"
+        # situation. The two prior versions of this comment BOTH claimed that agreement was
+        # already achieved while the code beneath them still hand-computed the age with
+        # `date -r "$lockdir" +%s 2>/dev/null || echo 0` -- an unreadable mtime defaulted to
+        # epoch 0, yielding an age of ~1.7e9 seconds and an UNCONDITIONAL reclaim, the exact
+        # opposite of cmd_git_lock_check's refuse-on-unknown direction. Routing through the
+        # shared `_git_lock_age_seconds` primitive (used by every other age gate in this
+        # file) makes "age could not be determined" and "age determined but too young" two
+        # distinguishable, both-refuse outcomes, so this comment is now true as written. A
+        # live holder writes its PID via `echo $$ > "$pidfile"` microseconds after `mkdir`
+        # succeeds, so an invalid pidfile should be unreachable in practice for a live holder
+        # -- but refusing to reclaim until the lockdir is at least 1 second old (10x this
+        # loop's own 0.1s poll interval) costs nothing on the genuinely-stale path (already
+        # however many seconds or minutes old) and closes the theoretical
+        # reclaim-a-live-lock window on the momentary-write-race path. Falls through to the
+        # retry tail either way, so a lockdir that's merely too young right now reclaims on a
+        # later iteration once it ages past the threshold, within the existing 50-try/5s
+        # total budget.
+        local _lockdir_age_s
+        _lockdir_age_s="$(_git_lock_age_seconds "$lockdir")" || _lockdir_age_s=""
+        if [[ -n "$_lockdir_age_s" ]] && (( _lockdir_age_s >= 1 )); then
+          _edm_reclaim_stale_lockdir "$lockdir" \
+            "reclaimed a lockdir with an invalid PID '${holder_pid:-missing}' at ${lockdir}"
+        elif [[ -z "$_lockdir_age_s" ]]; then
+          echo "edm-state: state lock ${lockdir} has an invalid PID '${holder_pid:-missing}' but its age could not be determined -- not reclaiming" >&2
+        else
+          echo "edm-state: state lock ${lockdir} has an invalid PID '${holder_pid:-missing}' but is less than 1 second old -- not reclaiming yet (may be mid-acquisition)" >&2
         fi
-        if ! kill -0 "$holder_pid" 2>/dev/null; then
-          local kill0_err
-          kill0_err="$(kill -0 "$holder_pid" 2>&1 >/dev/null || true)"
-          if [[ "$kill0_err" == *"not permitted"* || "$kill0_err" == *"Not permitted"* ]]; then
-            echo "edm-state: state lock ${lockdir} is held by PID ${holder_pid} (owned by another user) -- not reclaiming" >&2
-          else
-            _edm_reclaim_stale_lockdir "$lockdir" \
-              "reclaimed stale state lock ${lockdir} (PID ${holder_pid} no longer running)"
-            # Whether the mv above won or lost the race against another contender, fall through
-            # to the shared retry accounting below instead of an unaccounted-for `continue`.
-          fi
-          tries="$(_lock_retry_or_die "$tries")" \
-            || die "state lock timeout after ${EDM_STATE_LOCK_WAIT_S}s (${EDM_STATE_LOCK_MAX_TRIES} tries x 0.1s) on ${lockdir} (held by PID ${holder_pid})"
-          continue
+        tries="$(_lock_retry_or_die "$tries")" \
+          || die "state lock timeout after ${EDM_STATE_LOCK_WAIT_S}s (${EDM_STATE_LOCK_MAX_TRIES} tries x 0.1s) on ${lockdir} (invalid PID)"
+        continue
+      fi
+      if ! kill -0 "$holder_pid" 2>/dev/null; then
+        local kill0_err
+        kill0_err="$(kill -0 "$holder_pid" 2>&1 >/dev/null || true)"
+        if [[ "$kill0_err" == *"not permitted"* || "$kill0_err" == *"Not permitted"* ]]; then
+          echo "edm-state: state lock ${lockdir} is held by PID ${holder_pid} (owned by another user) -- not reclaiming" >&2
+        else
+          _edm_reclaim_stale_lockdir "$lockdir" \
+            "reclaimed stale state lock ${lockdir} (PID ${holder_pid} no longer running)"
+          # Whether the mv above won or lost the race against another contender, fall through
+          # to the shared retry accounting below instead of an unaccounted-for `continue`.
         fi
+        tries="$(_lock_retry_or_die "$tries")" \
+          || die "state lock timeout after ${EDM_STATE_LOCK_WAIT_S}s (${EDM_STATE_LOCK_MAX_TRIES} tries x 0.1s) on ${lockdir} (held by PID ${holder_pid})"
+        continue
       fi
       tries="$(_lock_retry_or_die "$tries")" \
         || die "state lock timeout after ${EDM_STATE_LOCK_WAIT_S}s (${EDM_STATE_LOCK_MAX_TRIES} tries x 0.1s) on ${lockdir}${holder_pid:+ (held by PID ${holder_pid})}"
     done
-    echo $$ > "$pidfile" 2>/dev/null || true
+    # CA-480: this write used to silence its own failure (`|| true`), which held the lock with
+    # no pidfile for the rest of this process's lifetime -- EROFS, ENOSPC and quota all land
+    # here -- so the first ungraceful exit (before the trap layer below is even installed)
+    # orphaned the lockdir permanently, with nothing on any later invocation able to reclaim it
+    # (the exact failure mode the hoist above fixes for a MISSING pidfile is reopened by a
+    # write that fails after mkdir succeeds). Remove the lockdir we just created and die loudly
+    # instead of holding a lock this process can never durably record itself as owning.
+    if ! echo $$ > "$pidfile" 2>/dev/null; then
+      rm -rf "$lockdir" 2>/dev/null || true
+      die "with_state_lock: failed to write pidfile ${pidfile} after acquiring ${lockdir} (disk full, read-only filesystem, or quota) -- lock released"
+    fi
 
     # CA-159: never interpolate a path into a trap body string -- assign to a dedicated
     # variable first, then reference it INSIDE single quotes so it expands at signal time, not
@@ -1723,7 +1785,7 @@ state_anomalies() {
   # normal, not corrupted data, so this never flips cmd_validate's exit code (mirrors
   # SIZE_UNKNOWN's reclassification rationale above). Uses the same coerce_round_entry
   # widening every audit_rounds reader uses, so a legacy bare-integer shape reads cleanly.
-  local oar_type oar_rounds_json oar_last oar_round_num oar_completed
+  local oar_type oar_rounds_json oar_last oar_round_num oar_completed prm_resolved_root
   for oar_type in code srd tickets; do
     oar_rounds_json="$(echo "$state" | jq -c --arg t "$oar_type" "${AUDIT_ROUND_COERCE_JQ_DEF} (.audit_rounds[\$t] // 0 | coerce_round_entry).rounds" 2>/dev/null || echo '[]')"
     oar_last="$(echo "$oar_rounds_json" | jq -c 'if length > 0 then .[-1] else null end' 2>/dev/null || echo null)"
@@ -1740,7 +1802,12 @@ state_anomalies() {
   # settings itself (README.md documents the required block), so their absence is a
   # warning, never a validate-failing condition -- it never flips cmd_validate's exit code.
   if [[ "$(check_permission_rules)" != "permission-ask" ]]; then
-    echo "info  PERM_RULES_MISSING  permissions.ask  required ask rules Bash(edm-state approve-gate*) and Bash(edm-state archive*) not found in <project-root>/.claude/settings.local.json, <project-root>/.claude/settings.json, or ~/.claude/settings.json (CA-448: <project-root> is \$CLAUDE_PROJECT_DIR when it names a directory, else the git toplevel, else the current directory -- NOT the current directory unconditionally) -- add {\"permissions\": {\"ask\": [\"Bash(edm-state approve-gate*)\", \"Bash(edm-state archive*)\"]}} to enforce human review at gate-approval and archive time"
+    # CA-500: name the ACTUAL resolved project root (via the same shared resolver
+    # check_permission_rules() itself just called), not just describe the resolution algorithm
+    # in the abstract -- a prose-only enforcement tag is otherwise unattributable to any
+    # concrete root, which is exactly what made a CLAUDE_PROJECT_DIR disagreement hard to spot.
+    prm_resolved_root="$(_resolve_permcheck_project_root 2>/dev/null)"
+    echo "info  PERM_RULES_MISSING  permissions.ask  required ask rules Bash(edm-state approve-gate*) and Bash(edm-state archive*) not found in ${prm_resolved_root}/.claude/settings.local.json, ${prm_resolved_root}/.claude/settings.json, or ~/.claude/settings.json (CA-448/CA-500: ${prm_resolved_root} is \$CLAUDE_PROJECT_DIR when it names a directory AND agrees with the git toplevel, else the git toplevel, else the current directory -- NOT the current directory unconditionally) -- add {\"permissions\": {\"ask\": [\"Bash(edm-state approve-gate*)\", \"Bash(edm-state archive*)\"]}} to enforce human review at gate-approval and archive time"
   fi
   # CONVERGED_NO_APPROVAL (blocking -- EDMV3-T17 AC3): code_audit_converged is true but no
   # code_audit_gate_approved_at record exists -- e.g. a hand-edited state file, not one
@@ -3316,8 +3383,16 @@ cmd_watch_impl() {
     # a rebase/amend that made the old commit unreachable and later pruned) into one
     # indistinguishable silent outcome -- once history was rewritten, every later poll silently
     # produced nothing for the rest of the session with no diagnostic connecting cause to effect.
+    # CA-522: resolve HEAD exactly once per poll, into head_now, and use it as BOTH the range end
+    # and the new cursor. Re-resolving HEAD separately for each (the range end here, the cursor
+    # write below) let a commit landing between the two resolutions advance last_sha past a
+    # commit that was never scanned by this poll's git log -- and, since the next poll's range
+    # starts AFTER that new last_sha, that commit could never be reported on any later poll
+    # either.
+    local head_now
+    head_now="$(git rev-parse HEAD 2>/dev/null || echo "$last_sha")"
     local git_log_out git_log_ec=0
-    git_log_out="$(git log --pretty=format:'%h %s' "${last_sha}..HEAD" 2>/dev/null)" || git_log_ec=$?
+    git_log_out="$(git log --pretty=format:'%h %s' "${last_sha}..${head_now}" 2>/dev/null)" || git_log_ec=$?
     if [[ $git_log_ec -ne 0 ]]; then
       if git cat-file -e "${last_sha}^{commit}" 2>/dev/null; then
         # last_sha is still a valid ref -- git log failed for some other, presumably
@@ -3328,7 +3403,7 @@ cmd_watch_impl() {
         # commit was pruned. Re-anchor at the current HEAD and say so once, rather than
         # silently producing nothing for the rest of the session.
         echo "edm-state watch-impl: history was rewritten (${last_sha} is no longer a valid ref); monitor re-anchored at current HEAD" >&2
-        last_sha="$(git rev-parse HEAD 2>/dev/null || echo "$last_sha")"
+        last_sha="$head_now"
       fi
       continue
     fi
@@ -3337,8 +3412,11 @@ cmd_watch_impl() {
     [[ -n "$new_commits" ]] && echo "$new_commits"
     # G48: advance last_sha to HEAD on every SUCCESSFUL poll, not only when a ticket-commit
     # match was found, so a long run of non-ticket commits does not make the scanned range
-    # (and therefore each poll's git-log cost) grow unboundedly.
-    last_sha="$(git rev-parse HEAD 2>/dev/null || echo "$last_sha")"
+    # (and therefore each poll's git-log cost) grow unboundedly. CA-522: reuse head_now (the
+    # SAME HEAD this poll's git log just scanned) rather than re-resolving -- a commit landing
+    # after head_now stays unscanned and will be picked up on the next poll's range instead of
+    # being skipped over.
+    last_sha="$head_now"
   done
 }
 
@@ -4548,10 +4626,29 @@ _cmd_audit_round_complete_body() {
     local _init_dir _pass_dir _cand _manifest
     _init_dir="$(dirname "$f")"
     _pass_dir=""
+    # CA-479: collect EVERY matching pass-<N>_<date> directory rather than silently keeping
+    # whichever the glob happens to yield last. A round re-run across a date boundary, a
+    # hand-copied scratch directory, or a partial retry can leave more than one match for the
+    # same round number; resolving that ambiguity silently fails in BOTH directions -- a stale
+    # or scratch match with no lens JSONL spuriously downgrades a legitimately complete round to
+    # partial (irreversible per CA-506), or a stale match that happens to carry JSONL passes the
+    # gate vacuously for a round that never actually produced it. On ambiguity, warn naming ALL
+    # matches and select the one with the newest mtime (the round that most recently finished
+    # writing), rather than resolving by glob order, which carries no such guarantee.
+    local -a _pass_cands=()
     for _cand in "${_init_dir}/code-audit/pass-${round_num}_"*; do
-      [[ -d "$_cand" ]] || continue
-      _pass_dir="$_cand"
+      [[ -d "$_cand" ]] && _pass_cands+=("$_cand")
     done
+    if [[ "${#_pass_cands[@]}" -gt 1 ]]; then
+      echo "audit-round-complete: [warn] CA-479: round ${round_num} matched ${#_pass_cands[@]} pass directories: ${_pass_cands[*]} -- selecting the newest by mtime rather than resolving silently" >&2
+      for _cand in "${_pass_cands[@]}"; do
+        if [[ -z "$_pass_dir" ]] || [[ "$_cand" -nt "$_pass_dir" ]]; then
+          _pass_dir="$_cand"
+        fi
+      done
+    elif [[ "${#_pass_cands[@]}" -eq 1 ]]; then
+      _pass_dir="${_pass_cands[0]}"
+    fi
     _manifest="${_pass_dir}/lenses-run.txt"
     if [[ -n "$_pass_dir" && -f "$_manifest" ]]; then
       local _lens _lens_file _missing=""

@@ -57,16 +57,13 @@ BASELINE="${2:-${SCRIPT_DIR}/../evals/baseline/scores.json}"
 
 command -v jq >/dev/null 2>&1 || die "required binary not found on PATH: jq"
 [ -f "$CANDIDATE" ] || die "candidate scores file not found: $CANDIDATE"
-
-if [ ! -f "$BASELINE" ]; then
-  echo "edm-compare-eval: no committed baseline at $BASELINE" >&2
-  echo "edm-compare-eval: the eval tripwire is NOT armed -- capture it per plugins/edm/evals/baseline/README.md" >&2
-  exit 3
-fi
-
 jq -e . "$CANDIDATE" >/dev/null 2>&1 || die "candidate is not valid JSON: $CANDIDATE"
-jq -e . "$BASELINE"  >/dev/null 2>&1 || die "baseline is not valid JSON: $BASELINE"
 
+# CA-490 (residual of CA-452): condition 3 needs only the candidate, so it runs BEFORE the
+# baseline-existence check below. Previously it sat after that check, which meant the
+# complete:false handshake CA-452 was filed to make live NEVER EXECUTED on this repo's actual
+# CI path -- no baseline is committed yet, so every invocation hit the "NOT ARMED" exit 3
+# return first and the partial-run refusal below was dead code until a baseline exists.
 # ---- Refusal condition 3: incomplete candidate run -----------------------------------------
 # NOTE: `.complete // "null"` is wrong here -- jq's `//` treats `false` as empty, so a run
 # correctly flagged complete:false would report as "null". Test for the key explicitly.
@@ -76,6 +73,13 @@ if [ "$cand_complete" != "true" ]; then
   echo "edm-compare-eval: an incomplete run has nothing meaningful to compare; re-run the eval." >&2
   exit 2
 fi
+
+if [ ! -f "$BASELINE" ]; then
+  echo "edm-compare-eval: no committed baseline at $BASELINE" >&2
+  echo "edm-compare-eval: the eval tripwire is NOT armed -- capture it per plugins/edm/evals/baseline/README.md" >&2
+  exit 3
+fi
+jq -e . "$BASELINE" >/dev/null 2>&1 || die "baseline is not valid JSON: $BASELINE"
 
 # ---- Refusal condition 1: scorer_version mismatch ------------------------------------------
 cand_sv="$(jq -r '.scorer_version // "unset"' "$CANDIDATE")"

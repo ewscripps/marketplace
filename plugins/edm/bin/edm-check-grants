@@ -476,9 +476,15 @@ scan_hook_prompts() {
 #   Task grant -- three testing-layer skills shipped spawn instructions with no Task in
 #   allowed-tools, making /edm:test, /edm:test-plan and /edm:test-coverage non-functional as
 #   written, and nothing here checked the skill's own grants (only agent grants, sources 1-3).
+# - Skill (CA-498): a skill body instructing an actual Skill-tool invocation ("Invoke ... via the
+#   `Skill` tool" on one line, the imperative shape CLAUDE.md Sec."Skills are the source of truth
+#   for orchestration" documents -- grants are explicitly NOT inherited from a caller, the
+#   identical non-inheritance failure mode CA-441 was filed on) needs the Skill grant. Deliberately
+#   narrower than a bare "Skill tool" mention: implement/SKILL.md and plan/SKILL.md both mention
+#   the tool descriptively without instructing an invocation of their own, and must not trip this.
 # =================================================================================================
 scan_skill_tool_usage() {
-  local f skillname allowed body_start body needs_ask needs_task ln task_ln
+  local f skillname allowed body_start body needs_ask needs_task needs_skill ln task_ln skill_ln
   for f in "$SKILLS_DIR"/*/SKILL.md; do
     [[ -f "$f" ]] || continue
     skillname="$(basename "$(dirname "$f")")"
@@ -514,6 +520,19 @@ scan_skill_tool_usage() {
 
     if [[ "$needs_task" -eq 1 ]] && ! has_tool "$allowed" "Task"; then
       mark_and_maybe_report skill "$skillname" Task "$f" "$task_ln"
+    fi
+
+    # CA-498: an instruction to invoke another skill via the Skill tool, without the Skill grant.
+    needs_skill=0
+    skill_ln=""
+    if printf '%s\n' "$body" | grep -qE 'nvoke[^.]*Skill[^.]*tool'; then
+      needs_skill=1
+      skill_ln="$(grep -nE 'nvoke[^.]*Skill[^.]*tool' "$f" | head -1 | cut -d: -f1)"
+    fi
+    [[ -z "$skill_ln" ]] && skill_ln="$body_start"
+
+    if [[ "$needs_skill" -eq 1 ]] && ! has_tool "$allowed" "Skill"; then
+      mark_and_maybe_report skill "$skillname" Skill "$f" "$skill_ln"
     fi
   done
 }
