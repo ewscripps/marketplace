@@ -34,9 +34,10 @@ Demoted to Should Have in SRD v1.1.0: relocating two binaries and deleting OS me
 hygiene, nothing in the initiative depends on it, and it is worth doing without being a release
 blocker.
 
-The CI check is the part with reach. The file-type ban binds **all six plugins in the marketplace**,
-not only `edm`, so it cannot become blocking until a clean pre-merge scan across `git`, `jira`,
-`ada-tablo`, `web-cms`, `myday` and `edm` is recorded.
+The CI check was the part with reach: the file-type ban bound **all six plugins in the marketplace**,
+not only `edm`, so it could not become blocking until a clean pre-merge scan across `git`, `jira`,
+`ada-tablo`, `web-cms`, `myday` and `edm` was recorded. **Superseded, D63**: the CI pipeline that
+carried this check was later removed; see AC5-AC7 below.
 
 ### Acceptance Criteria
 
@@ -57,34 +58,22 @@ not only `edm`, so it cannot become blocking until a clean pre-merge scan across
       Verify: `grep -n '^\.DS_Store$' .gitignore` and
       `touch plugins/edm/.DS_Store && git status --porcelain | grep -c 'DS_Store'` returns 0
       (remove the file afterwards).
-- [ ] AC5 (negative, CI ban across all six plugins): a CI check asserts that no file matching
+- [ ] ~~AC5 (negative, CI ban across all six plugins): a CI check asserts that no file matching
       `.DS_Store`, `*.pptx` or `*.docx` exists anywhere under `plugins/`. This binds all six
-      marketplace plugins.
-      Verify: `git ls-files -- plugins | grep -icE '\.(pptx|docx)$|(^|/)\.DS_Store$'` returns 0, and
-      the CI job fails when a matching file is committed. The developer-side hygiene equivalent,
-      `find plugins -name '.DS_Store' -o -name '*.pptx' -o -name '*.docx' | wc -l`, should also
-      return 0 and is worth running locally, but it is not the shipped assertion.
-      **Amended per D30 (accepted deviation, recorded).** The shipped CI check
-      (`.gitlab-ci.yml:111`) scans `git ls-files -- plugins`, not a plain `find`. That is a
-      deliberate, accepted choice, not drift: the failure this control exists to prevent (F11) is
-      banned files *shipping* inside the plugin, shipping means tracked, and `git ls-files` measures
-      exactly that. On a runner the two forms are equivalent anyway -- a GitLab checkout carries the
-      tracked tree and nothing else -- while `find` adds one failure mode a **blocking** job should
-      not have: going red on a runner-local artifact that is not and never will be committed. The
-      untracked case is covered by `.gitignore:3` (a bare, unanchored `.DS_Store`, so it matches at
-      every depth), and a deliberate `git add -f` override lands the file in `git ls-files`, where
-      this check catches it. Both forms measured 0 on the live tree 2026-07-28. See D30 for the full
-      argument; this supersedes the Technical Note below.
-- [ ] AC6 (pre-merge scan recorded before the check blocks): the ticket records a clean pre-merge scan
+      marketplace plugins.~~ **Superseded, D63**: the CI job that carried this check (`lint:file-type-ban`)
+      no longer exists; there is no other caller. Re-checking is now a manual command:
+      `git ls-files -- plugins | grep -icE '\.(pptx|docx)$|(^|/)\.DS_Store$'` (expect 0). The D30
+      rationale for scanning `git ls-files` rather than a plain `find` (shipping means tracked)
+      still holds for whoever runs this manually.
+- [ ] ~~AC6 (pre-merge scan recorded before the check blocks): the ticket records a clean pre-merge scan
       across `git`, `jira`, `ada-tablo`, `web-cms`, `myday` and `edm` before the check becomes
-      blocking, so an unrelated plugin's stray file does not red the pipeline on merge day.
-      Verify: the ticket's QC evidence contains the `find plugins -name ...` output per plugin, all
-      empty.
-- [ ] AC7 (negative, size ceiling on what replaces it): the same check asserts a total-directory-size
+      blocking, so an unrelated plugin's stray file does not red the pipeline on merge day.~~
+      **Superseded, D63**: moot -- there is no pipeline for an unrelated plugin's stray file to red.
+- [ ] ~~AC7 (negative, size ceiling on what replaces it): the same check asserts a total-directory-size
       ceiling for `plugins/edm/evals/` (EDMV3-T22 AC3), so the tree this initiative adds cannot
-      quietly replace the 708KB it removes.
-      Verify: `du -sk plugins/edm/evals` is under the documented ceiling, and the CI job fails when
-      it is not.
+      quietly replace the 708KB it removes.~~ **Superseded, D63**: the enforcing CI job is gone; the
+      budget is now checked manually with `git ls-files -- plugins/edm/evals | xargs wc -c | tail -1`
+      (never `du`, which measures disk blocks, not tracked bytes).
 - [ ] AC8 (evidence recorded): the plugin directory size after the change is recorded in the merge
       request as evidence.
       Verify: `du -sh plugins/edm` output is pasted into the MR description alongside the

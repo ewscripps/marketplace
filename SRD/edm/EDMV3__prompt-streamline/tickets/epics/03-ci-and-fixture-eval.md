@@ -181,8 +181,9 @@ descoping it would silently break two Must requirements.
       Verify: `bash plugins/edm/bin/edm-lint-artifacts EDMV3` still works, and
       `bash plugins/edm/bin/tests/wave7-smoke.sh` (case "T67 AC8") asserts the hook's shipped
       scoping content directly.
-- [ ] AC8: both are wired into the CI lint and test stages.
-      Verify: `grep -n 'run-all.sh\|edm-lint-artifacts --all' .gitlab-ci.yml`.
+- [ ] ~~AC8: both are wired into the CI lint and test stages.~~ **Superseded, D63**: no CI pipeline exists;
+      `run-all.sh` is invoked locally (the developer's own pre-push step, `plugins/edm/CLAUDE.md` "Testing
+      changes") and `edm-lint-artifacts` runs via the git-commit hook per initiative.
 - [ ] AC9 (bash 3.2): both pass `bash -n` and introduce no bash 4+ construct.
       Verify: `bash -n plugins/edm/bin/tests/run-all.sh && bash -n plugins/edm/bin/edm-lint-artifacts`.
 
@@ -208,6 +209,10 @@ descoping it would silently break two Must requirements.
 ---
 
 ## EDMV3-T21: GitLab CI pipeline -- lint, test, and two-tier validate
+
+> **SUPERSEDED (D63, 2026-08-23).** Delivered as specified below, then removed by an explicit human decision: EDM's
+> own local mechanisms (the git-commit hook, the 11-lens code-audit methodology) already provide the enforcement
+> this ticket existed to add. Ticket text preserved as historical record; does not describe current state.
 
 | Field | Value |
 |---|---|
@@ -369,13 +374,13 @@ driver shell between invocations.
       prefix and product, never edited without a version bump recorded in the file itself.
       Verify: `jq -e '.gaps | length > 0' plugins/edm/evals/fixtures/tiny-svc/expected.json` and
       `grep -n '^version:' plugins/edm/evals/initiative.txt`.
-- [ ] AC3 (negative, size budget): the fixture plus its `expected.json` stays under 100KB, asserted
-      by the same CI check that enforces the file-type ban, extended to a total-directory-size
-      assertion for `plugins/edm/evals/`. The initiative removes 708KB of binaries from the shipped
-      plugin directory on the grounds that every installer downloads them; an unbounded fixture tree
-      would undo that.
-      Verify: `du -sk plugins/edm/evals/fixtures/tiny-svc` is under 100, and the CI job fails when
-      it is not.
+- [ ] AC3 (negative, size budget): the fixture plus its `expected.json` stays under 100KB. **Superseded, D63**:
+      this was originally asserted by a CI check (the same one enforcing the file-type ban, extended to a
+      total-directory-size assertion for `plugins/edm/evals/`); that check no longer exists, so the budget is now
+      verified manually. The initiative removes 708KB of binaries from the shipped plugin directory on the grounds
+      that every installer downloads them; an unbounded fixture tree would undo that.
+      Verify: `git ls-files -- plugins/edm/evals | xargs wc -c | tail -1` (tracked bytes, never `du`) is under
+      100KB for the tracked tree overall.
 - [ ] AC4 (self-contained, with the network-disable mechanism named): the fixture requires no
       network access, no external services, and no dependency on the marketplace repository's own
       content.
@@ -422,8 +427,8 @@ driver shell between invocations.
       failure with a distinct exit code -- not as a low score, which would be indistinguishable from
       a genuine quality regression. Exit 0 when the run completes and the scorer produces a score,
       1 when the scorer reports a regression, 2 on a usage or environment error, 4 when the run did
-      not reach the final phase. `scores.json` records `complete: false` in that case and CI refuses
-      to compare it against the baseline.
+      not reach the final phase. `scores.json` records `complete: false` in that case and
+      `bin/edm-compare-eval` refuses to compare it against the baseline.
       Verify: kill the run mid-phase and confirm `echo "exit=$?"` prints `exit=4` and
       `jq -e '.complete == false' <run-dir>/scores.json`.
 - [ ] AC11 (cleanup): the driver cleans up the scratch tree on exit including on failure, and never
@@ -563,7 +568,7 @@ rather than hoped away.
       `dimensions_scored` changed from 5 to 6 and confirm the same refusal naming the dimension sets.
 - [ ] AC5 (negative, the scorer emits scores only): the scorer performs no baseline comparison and
       never exits non-zero on a low score. Exit 0 when it produced a score, non-zero only on a usage
-      or environment error. The pass/fail decision belongs to the CI job.
+      or environment error. The pass/fail decision belongs to `bin/edm-compare-eval`.
       Verify: `bash plugins/edm/evals/score-artifacts.sh <run-dir-with-terrible-scores>; echo "exit=$?"`
       prints `exit=0`.
 - [ ] AC6 (deterministic): running the scorer twice over the same run directory produces
@@ -603,16 +608,16 @@ rather than hoped away.
       invalidates the baseline and requires re-capture. Baseline run artifacts (not just the scores)
       live at a documented location **outside `plugins/edm/`** and that location is recorded.
       Verify: `grep -n 'tripwire\|invalidates the baseline\|outside plugins/edm' plugins/edm/evals/baseline/README.md`.
-- [ ] AC11 (cadence): the eval job in `.gitlab-ci.yml` is `when: manual` on merge requests and
+- [ ] ~~AC11 (cadence): the eval job in `.gitlab-ci.yml` is `when: manual` on merge requests and
       additionally runs on a nightly schedule against the default branch, publishing `scores.json`
       as a pipeline artifact with at least 30 days retention, named or tagged so a simple script can
-      plot total score over time.
-      Verify: `grep -n 'when: manual' -A6 .gitlab-ci.yml` shows the schedule rule and
-      `expire_in: 30 days`.
+      plot total score over time.~~ **Superseded, D63**: no CI pipeline exists, so there is no unattended
+      nightly run and no pipeline-artifact retention. A prompt regression is now only caught if a human runs
+      `run-eval.sh` before merging the change that introduced it (acknowledged gap, D63).
 - [ ] AC12 (cost documented): `evals/README.md` documents the approximate cost and duration of one
-      run so the decision to trigger it is informed, and states that "CI will catch it" is an
-      invalid justification for skipping the run.
-      Verify: `grep -n 'cost per run\|CI will catch it' plugins/edm/evals/README.md`.
+      run so the decision to trigger it is informed. **Amended, D63**: the original "CI will catch it" framing
+      no longer applies (there is no CI); the doc instead states plainly that nothing runs this for you.
+      Verify: `grep -n 'cost per run' plugins/edm/evals/README.md`.
 - [ ] AC13 (out-of-scope boundary recorded, CA-106/D62, superseding the "blocked" framing D36
       corrected to): the committed baseline artifact records the wave-A fixture/scorer it was
       captured from and the variance table that EDMV3-T39 consumes, so later tickets can verify

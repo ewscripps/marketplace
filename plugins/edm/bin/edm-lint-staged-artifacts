@@ -26,9 +26,8 @@
 # is delegated to edm-lint-artifacts, which reads the WORKING TREE. A file staged with a
 # violation and then fixed unstaged commits clean (the fix was never re-staged, but the worktree
 # is clean); an unstaged violation elsewhere in the same initiative's tree can block an otherwise
-# clean staged commit. This is a known, accepted gap in the fast local gate, not the enforcement
-# of record -- the blocking `lint:artifacts --all` CI job scans the actual committed checkout and
-# still catches the escaped case.
+# clean staged commit. This is a known, accepted gap in the fast local gate; `edm-lint-artifacts
+# --all` remains available as a manual full-repo sweep if the escaped case is ever suspected.
 # EDM-HELP-END
 # CA-497: deliberately `set -uo pipefail`, NOT the full `set -euo pipefail` nine of the ten other
 # PATH-exposed bin/ scripts use. Adding -e here would be wrong, not merely inconsistent: at least

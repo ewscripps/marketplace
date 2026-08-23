@@ -117,40 +117,37 @@ from the bidirectional test leaves the test parsing a hardcoded range it is mean
       Verify: `grep -n 'eval ' plugins/edm/bin/edm-state plugins/edm/bin/edm-check-*` returns zero
       results, and `grep -n 'jq ' plugins/edm/bin/edm-state | grep -v -- '--arg' | grep -c '\$'`
       returns 0 for new code paths (reviewed line by line and recorded in the ticket).
-- [ ] AC8 (shellcheck job with a named exception): a **pinned `shellcheck` job** in the CI lint stage
-      reports no unquoted-expansion findings in new code. If `shellcheck` is unavailable in the
-      runner fleet, the ticket records why and a documented manual review pass covers the same
-      ground.
-      Verify: `grep -n 'shellcheck' .gitlab-ci.yml` shows the pinned job, or the ticket records the
-      named exception and the manual pass.
+- [ ] ~~AC8 (shellcheck job with a named exception): a **pinned `shellcheck` job** in the CI lint stage
+      reports no unquoted-expansion findings in new code.~~ **Superseded, D63**: the CI job that ran
+      `shellcheck` no longer exists and nothing else invokes it automatically (acknowledged gap). Run
+      manually: `shellcheck` over `bin/*`, `bin/tests/*.sh` and `evals/*.sh` (excluding `*.awk`/`*.txt`),
+      scoped to SC2086/SC2046/SC2048/SC2068.
 - [ ] AC9 (negative, bash 4 constructs banned and grepped): no new or modified bash uses associative
       arrays (`declare -A`), `mapfile`/`readarray`, `{fd}` redirection, `${var^^}`/`${var,,}` case
-      conversion, or negative array indices. A CI check greps for the prohibited constructs and fails
-      naming the file and line. Where a bash 4 idiom would be natural, the bash 3.2 workaround
-      carries a comment naming the constraint.
+      conversion, or negative array indices. Where a bash 4 idiom would be natural, the bash 3.2
+      workaround carries a comment naming the constraint. **Amended, D63**: the CI job that ran this
+      grep automatically no longer exists (acknowledged gap); it is now a manual check.
       Verify: `grep -rnE 'declare -A|mapfile|readarray|\$\{[a-zA-Z_]+\^\^\}|\$\{[a-zA-Z_]+,,\}|\{fd\}' plugins/edm/bin/`
-      returns zero results, and the CI job fails when one is introduced.
-- [ ] AC10 (bash 3.2 image, with a named exception): `bash -n` passes over every file in
-      `plugins/edm/bin/` including `bin/tests/*.sh`, run in CI, and **the CI test stage runs the
-      suites under a pinned bash 3.2 image in addition to the default runner bash**, so the
-      constraint is enforced rather than asserted. If a bash 3.2 image is unavailable in the runner
-      fleet, the ticket records why and the AC9 grep becomes the sole guard.
-      Verify: `grep -n 'bash:3.2' .gitlab-ci.yml` shows the pinned image, or the ticket records the
-      exception.
+      returns zero results.
+- [ ] AC10 (bash 3.2 compatible): `bash -n` passes over every file in `plugins/edm/bin/` including
+      `bin/tests/*.sh`. **Superseded, D63**: this AC originally required CI to additionally run the
+      suites under a pinned bash 3.2 image; that pipeline no longer exists, so bash-3.2 compatibility
+      is enforced only by the AC9 grep and by developers who happen to run on macOS's shipped bash
+      3.2 (acknowledged gap, no automatic cross-version run).
+      Verify: `bash -n` over every file in `plugins/edm/bin/` including `bin/tests/*.sh`.
 - [ ] AC11 (macOS/Linux divergence points checked): new scripts use only utilities available on both
       userlands, or detect and branch. `sed -i`, `date` format strings, `grep -P`, `find` and `stat`
       are the known divergence points and each use is checked. Where `grep -P` is used, the existing
       PCRE-detection-and-fallback pattern at `bin/edm-lint-artifacts:49-53` is followed.
       Verify: `grep -rn "sed -i\|grep -P\|stat -c\|stat -f" plugins/edm/bin/` -- every hit is either
       inside a detection branch or listed in the ticket with its portability justification.
-- [ ] AC12 (macOS runner, with a named exception): CI exercises the suites on a macOS runner in
-      addition to Linux. Where a macOS runner is unavailable, the ticket records why, the divergence
-      points named in AC11 are covered by targeted assertions, and the gap is documented in
-      `CLAUDE.md`.
-      Verify: `grep -n 'macos' .gitlab-ci.yml`, or the ticket records the exception and
-      `grep -n 'macOS runner' plugins/edm/CLAUDE.md` documents the gap.
-- [ ] AC13 (CI): the help-completeness test runs in CI.
-      Verify: `grep -n 'run-all.sh' .gitlab-ci.yml`.
+- [ ] ~~AC12 (macOS runner, with a named exception): CI exercises the suites on a macOS runner in
+      addition to Linux.~~ **Superseded, D63**: moot -- there is no CI runner fleet at all now. The
+      divergence points named in AC11 remain covered by targeted assertions in `wave7-smoke.sh`'s
+      "T61 AC11" case.
+- [ ] AC13: the help-completeness test is discovered by `bin/tests/run-all.sh`'s auto-discovery (this
+      ticket originally said "runs in CI", EDMV3-T21; that pipeline was later removed, D63).
+      Verify: `bash plugins/edm/bin/tests/run-all.sh` output lists the suite carrying this test.
 
 ### Technical Notes
 
@@ -779,6 +776,13 @@ runtime.
 
 ## EDMV3-T67: Performance and cost budgets are measured and recorded
 
+> **Partially superseded (D63, 2026-08-23).** AC1/AC2/AC3/AC4/AC5/AC6/AC8/AC12+ (per-command and
+> per-subsystem latency/cost budgets) are unaffected -- they measure `edm-state` and
+> `edm-lint-artifacts` directly, not the CI pipeline. AC7/AC9/AC10/AC11 (pipeline-level budgets:
+> the 60s `--all` CI budget, the 5-minute blocking-pipeline budget, job parallelism, and the
+> network-call ban scoped to blocking CI jobs) are moot: the CI pipeline they measured no longer
+> exists. Marked individually below.
+
 | Field | Value |
 |---|---|
 | Epic | E11 -- Cross-cutting delivery |
@@ -796,10 +800,12 @@ The plugin has no runtime service, so "performance" means developer-loop latency
 inside a Claude Code turn, a hook on the commit path, and a CI pipeline gating merges. Three budgets
 plus the cost-and-duration record for a code-audit round and an eval run.
 
-**The reference environment is defined by the SRD, not by this ticket**: the pinned CI `test` job
-image, running on the default GitLab shared runner class, against a scratch repository of the stated
-size. Defining it here would let the environment be chosen to fit the number. Local measurements on a
-developer machine are informative and are not the acceptance measurement.
+**The reference environment is defined by the SRD, not by this ticket**: originally the pinned CI
+`test` job image, running on the default GitLab shared runner class, against a scratch repository
+of the stated size. **Amended, D63**: no CI pipeline or runner fleet exists now, so the reference
+environment is a developer machine running `bash plugins/edm/bin/tests/timing.sh` directly, against
+the same stated-size scratch repository. Defining it here would let the environment be chosen to
+fit the number.
 
 **Size justification (L).** Round-1 ticket audit resized this from M. The ticket's deliverable is
 not fourteen readings, it is the harness that produces them: a committed `bin/tests/timing.sh` with
@@ -818,8 +824,9 @@ written early and run at each boundary -- that is a scheduling property of one L
 - [ ] AC1 (subcommand latency): `edm-state get`, `resolve-dir`, `branch-check` and `gate-check`
       complete in under 250ms at p95 on a repository with 50 initiatives, measured on the reference
       environment.
-      Verify: `bash plugins/edm/bin/tests/timing.sh --subcommands` on the CI `test` image prints a
-      p95 per subcommand, all under 250, and the output is recorded in the ticket.
+      Verify: `bash plugins/edm/bin/tests/timing.sh --subcommands` (on a developer machine, D63 --
+      no CI image exists) prints a p95 per subcommand, all under 250, and the output is recorded in
+      the ticket.
 - [ ] AC2 (phase-complete and its bounded token read): `phase-complete` completes in under 2s at p95
       excluding token-file reading, and the token-reading step is bounded so a large session directory
       cannot make it unbounded.
@@ -843,10 +850,12 @@ written early and run at each boundary -- that is a scheduling property of one L
       the measurement in wave B; this ticket re-takes it on the reference environment with the
       committed timing script and confirms the ratio holds on the 50-initiative fixture.
       Verify: both figures recorded, ratio at most 1.40, alongside EDMV3-T43 AC10's wave-B figures.
-- [ ] AC7 (`--all` is a CI budget, documented as such): `--all` mode over a repository with 50
-      initiatives completes in under 60s, documented as a CI budget rather than a commit-path budget.
+- [ ] AC7 (`--all` is a full-repo-sweep budget): `--all` mode over a repository with 50
+      initiatives completes in under 60s, documented as a manual full-repo-sweep budget rather than
+      a commit-path budget. **Amended, D63**: originally documented as "a CI budget"; no CI exists
+      now, so `--all` is a manual invocation only.
       Verify: `time bash plugins/edm/bin/edm-lint-artifacts --all` on the 50-initiative fixture,
-      recorded, and `grep -n 'CI budget' plugins/edm/CLAUDE.md`.
+      recorded, and `grep -n 'Full-repo sweep' plugins/edm/CLAUDE.md`.
 - [ ] AC8 (commit-hook scoping preserved, method corrected per G48/CA-324 -- CHANGELOG.md
       records that an empty diff stat "goes green after any commit whatever the content" and
       was replaced): the commit hook's existing behaviour of linting only the prefixes derived
@@ -858,35 +867,21 @@ written early and run at each boundary -- that is a scheduling property of one L
       than treated as violations, the exit-1-vs-exit-2 blocking semantics, per-prefix invocation
       (never `--all`), and graceful no-op when `edm-lint-artifacts` is unavailable or nothing is
       staged.
-- [ ] AC9 (pipeline budget, on a fixed subject): the blocking pipeline (lint, test, validate tier 1)
+- [ ] ~~AC9 (pipeline budget, on a fixed subject): the blocking pipeline (lint, test, validate tier 1)
       completes in under 5 minutes wall clock for **the fixture-repository pipeline run measured at
-      each wave boundary** -- a fixed, reproducible subject rather than an undefined "typical" MR.
-      Verify: the pipeline duration is recorded at each wave boundary in the ticket, all under 5
-      minutes.
-- [ ] AC10 (parallelism): stages run in parallel where they have no dependency -- the four lint jobs
+      each wave boundary** -- a fixed, reproducible subject rather than an undefined "typical" MR.~~
+      **Superseded, D63**: there is no pipeline to budget.
+- [ ] ~~AC10 (parallelism): stages run in parallel where they have no dependency -- the four lint jobs
       (`bash -n`, `edm-lint-artifacts --all`, `edm-check-grants`, `edm-check-vocabulary`) run
-      concurrently and converge on the test stage, rather than chaining.
-      Verify: `grep -n 'needs:' .gitlab-ci.yml` shows the four lint jobs with no inter-dependency, and
-      the pipeline graph shows them parallel.
-- [ ] AC11 (negative, no blocking job depends on network beyond image pull; the two
-      `allow_failure` jobs that DO reach the network get a weaker per-job pin pass instead of a
-      blanket exemption): the eval job and `claude plugin validate` tier 2 both reach the
-      Anthropic API and both are outside the blocking path, which is why the network-call ban is
-      scoped to blocking jobs rather than stated unqualified. Those same two jobs
-      (`validate:plugin-cli`, `eval:nightly`) are not exempted from every control this AC states --
-      `eval:nightly` is the one job in the pipeline holding `ANTHROPIC_API_KEY` -- so each of their
-      `npm install -g @anthropic-ai/claude-code` calls must carry an explicit numeric version pin
-      (a digit immediately after the version `@`, so `@latest`/`@next`/a bare unpinned install all
-      still fail this check), the same discipline CA-161 already enforces for every blocking job's
-      `apk` installs.
-      Verify: `grep -n 'allow_failure\|when: manual' .gitlab-ci.yml` shows both jobs outside the
-      blocking path, and the blocking jobs' scripts contain no network call. Separately, run the
-      case named `T67 AC11 (G43/CA-319)` in `plugins/edm/bin/tests/wave7-smoke.sh` (by case name,
-      not line number -- the G40/CA-368 lesson) and confirm it passes for both
-      `validate:plugin-cli` and `eval:nightly`: it asserts a numeric-pin regex on each job's `npm
-      install` line, with a positive control (a bare unpinned install fails the check) and a
-      G39/CA-349 negative control (`@latest` fails the check too) proving the assertion actually
-      discriminates pinned from unpinned rather than matching any `npm install` line.
+      concurrently and converge on the test stage, rather than chaining.~~ **Superseded, D63**: moot --
+      there are no pipeline stages. The four checks are independent scripts, invoked separately
+      (git-commit hook, or by hand), with no inherent ordering constraint between them.
+- [ ] ~~AC11 (negative, no blocking job depends on network beyond image pull; ... `eval:nightly`'s
+      `npm install -g @anthropic-ai/claude-code` call must carry an explicit numeric version
+      pin ...)~~ **Superseded, D63**: there is no blocking-job network-call ban to state, since there
+      are no jobs. The underlying concern (an unpinned `npm install` in a credential-bearing
+      context) has no surviving site: `evals/run-eval.sh` itself never runs `npm install` -- that
+      call lived only inside the now-deleted `eval:nightly` job body.
 - [ ] AC12 (round cost measurable and reported): after EDMV3-T50 and EDMV3-T51, the cost of one full
       code-audit round is measurable from state and is reported by `metrics-report`. The tiering
       reduction figure from EDMV3-T48 AC11 is recorded alongside it, with recall loss on any tiered

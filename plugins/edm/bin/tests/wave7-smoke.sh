@@ -10,12 +10,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 EDM_STATE="${SCRIPT_DIR}/../edm-state"
 
-# Shared assertions / counters (CA-014). Sourced BEFORE the PLUGIN_DIR/GITLAB_CI_YML derivations
-# below (reordered, G21/CA-049) so both read the shared _HARNESS_PLUGIN_DIR / _HARNESS_REPO_ROOT
-# exports instead of each re-deriving the same cd/pwd chain independently.
+# Shared assertions / counters (CA-014). Sourced BEFORE the PLUGIN_DIR derivation below
+# (reordered, G21/CA-049) so it reads the shared _HARNESS_PLUGIN_DIR export instead of
+# re-deriving the same cd/pwd chain independently.
 source "${SCRIPT_DIR}/_harness.sh"
 PLUGIN_DIR="$_HARNESS_PLUGIN_DIR"
-GITLAB_CI_YML="${_HARNESS_REPO_ROOT}/.gitlab-ci.yml"
 
 # CA-005: shared --help extractor -- _t61_help_subcommands below sources this instead of
 # hand-copying the sentinel-extraction awk literal a thirteenth time.
@@ -628,11 +627,9 @@ check "Post-Remediation Closure section still present" "Post-Remediation Closure
 # Batch scope note (recorded here rather than silently worked around): this batch's file
 # remit is plugins/edm/evals/* plus this suite's own appends -- bin/edm-state is out of scope
 # for this agent/batch to edit. Concretely:
-#   - AC11 (the eval job's `expire_in: 30 days` scores.json artifact publishing) landed with
-#     EDMV3-T21's `.gitlab-ci.yml`: `eval:nightly`'s `artifacts:` block retains
-#     `plugins/edm/evals/runs/` (where score-artifacts.sh writes each run's `scores.json`) for
-#     30 days. Asserted below (shard-2 QC remediation -- this comment previously said it was
-#     still pending after the pipeline file already landed it).
+#   - AC11 (the eval job's 30-day scores.json artifact publishing) was a CI-pipeline concern
+#     that no longer applies now that there is no separate CI pipeline for this plugin;
+#     `plugins/edm/evals/runs/` retention is governed by `EDM_EVAL_KEEP_RUNS` (see CLAUDE.md).
 #   - AC8, AC9 and AC13 require three REAL baseline runs against wave-A code, each costing
 #     live Anthropic API spend (run-eval.sh's claude -p invocations). This suite does not
 #     spend that budget on its own initiative -- plugins/edm/evals/baseline/scores.json is
@@ -890,20 +887,10 @@ check "baseline/README.md records a run-artifact location outside plugins/edm" "
   || fail "baseline/scores.json exists -- verify it was captured from real live runs, not fabricated"
 
 echo
-echo "T23 AC11 -- eval:nightly retains scores.json (via plugins/edm/evals/runs/) as a 30-day pipeline artifact"
-t23_eval_job_block="$(awk '/^eval:nightly:/{f=1;next} f && /^[a-zA-Z]/{f=0} f' "$GITLAB_CI_YML")"
-check "T23 AC11 -- eval:nightly job found in .gitlab-ci.yml" "artifacts" "$t23_eval_job_block"
-check "T23 AC11 -- artifacts retained for 30 days" "expire_in: 30 days" "$t23_eval_job_block"
-check "T23 AC11 -- artifacts path covers plugins/edm/evals/runs/ (where scores.json is written)" \
-  "plugins/edm/evals/runs/" "$t23_eval_job_block"
-
-echo
-echo "T23 AC12 -- evals/README.md documents cost/duration and rejects 'CI will catch it'"
+echo "T23 AC12 -- evals/README.md documents cost/duration"
 EVALS_README="${PLUGIN_DIR}/evals/README.md"
 check "evals/README.md documents approximate cost per run" "cost" \
   "$(grep -i 'cost' "$EVALS_README" 2>/dev/null || true)"
-check "evals/README.md names 'CI will catch it' as an invalid justification to skip a run" \
-  "CI will catch it" "$(cat "$EVALS_README" 2>/dev/null)"
 # EDMV3-T23 end
 
 # =================================================================================
@@ -1116,16 +1103,12 @@ fi
 echo
 echo "T61 AC10 -- bash -n passes over every file in plugins/edm/bin/ (incl. bin/tests/*.sh and evals/*.sh)"
 # CA-019: edm-mermaid-rules.awk is a plain awk source file (loaded via -f, never executed as
-# bash), excluded here the same way .gitlab-ci.yml's real lint:bash-syntax job excludes it.
+# bash), excluded here.
 # G24/CA-233 (round 5): *.txt added alongside *.awk -- bin/vocabulary-allowlist.txt and
 # bin/vocabulary-prohibited.txt are data files matched by the bin/* glob above, and this loop
-# was syntax-checking them as bash source before this fix, the same class of gap the two real CI
-# jobs (lint:bash-syntax, lint:shellcheck) were also fixed for.
-# CA-502: evals/*.sh added to the glob so this in-suite twin actually iterates the same file set
-# as .gitlab-ci.yml's lint:bash-syntax/lint:shellcheck -- it previously omitted evals/*.sh
-# entirely, so a syntax error in run-eval.sh/score-artifacts.sh/tiering-matrix.sh was caught by
-# CI but not by a local run-all.sh, despite CLAUDE.md's "Testing changes" section documenting
-# run-all.sh as the same check CI runs.
+# was syntax-checking them as bash source before this fix.
+# CA-502: evals/*.sh added to the glob -- it previously omitted evals/*.sh entirely, so a syntax
+# error in run-eval.sh/score-artifacts.sh/tiering-matrix.sh went uncaught by a local run-all.sh.
 t61_bashn_fail=0
 for t61_f in "$PLUGIN_DIR"/bin/* "$PLUGIN_DIR"/bin/tests/*.sh "$PLUGIN_DIR"/evals/*.sh; do
   [[ -f "$t61_f" ]] || continue
@@ -1136,58 +1119,6 @@ for t61_f in "$PLUGIN_DIR"/bin/* "$PLUGIN_DIR"/bin/tests/*.sh "$PLUGIN_DIR"/eval
 done
 [[ $t61_bashn_fail -eq 0 ]] && pass "T61 AC10 -- bash -n passes over every bin/, bin/tests/ and evals/ file" \
   || fail "T61 AC10 -- bash -n failed on at least one file (see output above)"
-
-# =================================================================================
-# G24/CA-233 (round 5, third pass): lint:bash-syntax's exclusion was already fixed to *.awk|*.txt
-# in an earlier wave; lint:shellcheck and this suite's own T61 AC10 twin were each missing one of
-# the two extensions (shellcheck missed *.awk, T61 AC10 missed *.txt) -- both fixed above. Assert
-# all three loops share the identical exclusion set so a future edit to just one of them cannot
-# silently re-diverge the other two.
-# =================================================================================
-echo
-echo "=== G24/CA-233: lint:bash-syntax, lint:shellcheck and this suite's own T61 AC10 twin all share the same *.awk|*.txt exclusion ==="
-g24_ci_content="$(cat "$GITLAB_CI_YML" 2>/dev/null)"
-g24_ci_exclusion_count="$(printf '%s\n' "$g24_ci_content" | grep -c '\*\.awk|\*\.txt) continue ;;' || true)"
-[[ "${g24_ci_exclusion_count:-0}" -eq 2 ]] \
-  && pass "G24/CA-233 -- .gitlab-ci.yml's lint:bash-syntax and lint:shellcheck both exclude *.awk and *.txt identically" \
-  || fail "G24/CA-233 -- expected exactly 2 identical '*.awk|*.txt) continue ;;' lines in .gitlab-ci.yml (lint:bash-syntax + lint:shellcheck), found ${g24_ci_exclusion_count:-0} -- the two jobs' exclusion sets have diverged"
-# CA-386 (round 7): the haystack used to be the WHOLE of this file (cat'ing wave7-smoke.sh
-# against itself), and the needle below also appears verbatim on this assertion's own source
-# line just above -- making the check self-satisfying: the T61 AC10 twin loop's exclusion could
-# be deleted entirely and this would stay green, matched only by its own line. Scoped instead to
-# an awk range over just the twin loop's block (":979-986" above, extracted by content -- "for
-# t61_f in " to the loop's own "done" -- not a hardcoded line range that would drift), which ends
-# well before this assertion's own line and therefore cannot self-match.
-g24_t61ac10_loop_block="$(awk '/^for t61_f in /{f=1} f{print} f && /^done$/{exit}' \
-  "${PLUGIN_DIR}/bin/tests/wave7-smoke.sh" 2>/dev/null)"
-check "G24/CA-233 -- this suite's own T61 AC10 twin uses the identical exclusion set" \
-  '*.awk|*.txt) continue ;;' "$g24_t61ac10_loop_block"
-
-# CA-502 (round 9, L10 Finding 1): the CA-233 pin above covers only the exclusion arm
-# (*.awk|*.txt) continue ;;), not the glob-triple naming which files count as "bash source" in
-# the first place. That definition was written three times (lint:bash-syntax, lint:shellcheck,
-# this suite's T61 AC10 twin) and had already diverged -- the twin omitted evals/*.sh entirely
-# (fixed above). This asserts the glob-triple itself, not just the exclusion, so a future edit
-# to only one of the three cannot silently re-diverge the other two again.
-echo
-echo "=== CA-502: lint:bash-syntax, lint:shellcheck and the T61 AC10 twin iterate the identical glob-triple (bin/*, bin/tests/*.sh, evals/*.sh) ==="
-ca502_glob_pattern='for f in plugins/edm/bin/\* plugins/edm/bin/tests/\*\.sh plugins/edm/evals/\*\.sh; do'
-ca502_glob_count="$(printf '%s\n' "$g24_ci_content" | grep -cE "$ca502_glob_pattern" || true)"
-[[ "${ca502_glob_count:-0}" -eq 2 ]] \
-  && pass "CA-502 -- .gitlab-ci.yml's lint:bash-syntax and lint:shellcheck iterate the identical glob-triple" \
-  || fail "CA-502 -- expected exactly 2 identical glob-triple for-loops in .gitlab-ci.yml (lint:bash-syntax + lint:shellcheck), found ${ca502_glob_count:-0} -- the two jobs' file sets have diverged"
-
-check "CA-502 -- this suite's own T61 AC10 twin iterates evals/*.sh too, not bin-only" \
-  '"$PLUGIN_DIR"/evals/*.sh' "$g24_t61ac10_loop_block"
-
-# Positive control: a synthetic two-element glob line (missing evals/*.sh) must NOT satisfy the
-# three-element pattern above, proving it actually discriminates rather than matching any "for f
-# in ...bin..." line.
-ca502_control_line='for f in plugins/edm/bin/* plugins/edm/bin/tests/*.sh; do'
-ca502_control_hit="$(printf '%s\n' "$ca502_control_line" | grep -cE "$ca502_glob_pattern" || true)"
-[[ "${ca502_control_hit:-0}" -eq 0 ]] \
-  && pass "CA-502 -- positive control confirms the glob-triple pattern discriminates (a two-element glob does not match)" \
-  || fail "CA-502 -- positive control broken: a synthetic two-element glob line matched the three-element pattern"
 
 # =================================================================================
 # CA-503/CA-533: audit-round-start/-complete and update-patterns now derive their audit-type
@@ -1346,41 +1277,6 @@ t20_path_no_edmstate_case() {
 }
 t20_path_no_edmstate_case
 # EDMV3-T20 end
-
-# =================================================================================
-# EDMV3-T57 AC10 (was the EDMV3-T21 AC3 tripwire): lint:file-type-ban is now blocking.
-# EDMV3-T57 relocated plugins/edm/'s two banned files, recorded a clean six-plugin scan, and
-# flipped this job to blocking in the same merge request -- the tripwire case above (asserting
-# `allow_failure: true` was still present) has served its purpose and is replaced by its own
-# negative assertion: the flip landed and stayed landed. T66 AC11 cross-checks this at wave-C
-# close.
-# =================================================================================
-echo
-echo "T57 AC10 -- lint:file-type-ban no longer carries allow_failure (flipped to blocking)"
-t21_ban_block="$(awk '/^lint:file-type-ban:/{f=1;next} f && /^[a-zA-Z]/{f=0} f' "$GITLAB_CI_YML")"
-check "T57 AC10 -- lint:file-type-ban block found in .gitlab-ci.yml" "before_script" "$t21_ban_block"
-check_absent "T57 AC10 -- lint:file-type-ban no longer carries allow_failure" "allow_failure" "$t21_ban_block"
-# EDMV3-T57 AC10 end
-
-# ---- AC5 (D19 amendment, decisions.md): no literal wave-suite token anywhere in
-# .gitlab-ci.yml -- suites run via run-all.sh auto-discovery and are never hand-named. -------
-echo
-echo "T21 AC5 -- zero literal wave-suite tokens anywhere in .gitlab-ci.yml"
-# CA-037: positive control -- the identical alternation against a synthetic line naming one of
-# the wave-suite tokens, proving the pattern can actually match before trusting the zero below.
-# G2/CA-037 residual (round 5): both greps below now share one pattern variable instead of two
-# independently-typed copies of the same regex.
-t21_wave_token_pattern='wave(3|4a|4b|5|6|7)-smoke'
-t21_wave_token_control="$(printf '%s\n' 'bash plugins/edm/bin/tests/wave6-smoke.sh' | grep -cE "$t21_wave_token_pattern" || true)"
-if [[ "${t21_wave_token_control:-0}" -lt 1 ]]; then
-  fail "T21 AC5 -- positive control broken: a synthetic 'wave6-smoke' line was not caught by the pattern"
-else
-  t21_wave_token_hits="$(grep -cE "$t21_wave_token_pattern" "$GITLAB_CI_YML" || true)"
-  t21_wave_token_hits="${t21_wave_token_hits:-0}"
-  [[ "$t21_wave_token_hits" -eq 0 ]] \
-    && pass "T21 AC5 -- .gitlab-ci.yml names zero literal wave-suite tokens (run-all.sh auto-discovery only; positive control confirms the pattern works)" \
-    || fail "T21 AC5 -- found $t21_wave_token_hits literal wave-suite token(s) in .gitlab-ci.yml"
-fi
 
 echo
 echo "T64 AC1 -- plugin.json and marketplace.json versions agree"
@@ -1573,8 +1469,6 @@ t66ac6_skill_manifest="$(jq -r '.plugins[] | select(.name=="edm") | .skills | le
   || fail "T66 AC6 -- marketplace.json declares $t66ac6_skill_manifest skill(s), expected 14 (source of truth: .claude-plugin/marketplace.json .plugins[].skills)"
 
 echo
-echo "T66 AC7 -- Testing changes section names CI as the primary verification path"
-check "T66 AC7 -- CI is the primary verification path" "CI is the primary verification path" "$(cat "$CLAUDE_MD_T66")"
 echo "T66 AC7 -- lens tiering table update: BLOCKED on EDMV3-T48 (out of this ticket's scope, not"
 echo "  yet run -- all 11 lens agents remain opus/max on disk). Recorded honestly in CHANGELOG.md"
 echo "  rather than asserted here as a passing case (D15: an unmet precondition is not faked)."
@@ -1587,51 +1481,7 @@ t66ac9_arc_body="$(awk '/^cmd_audit_round_complete\(\)/{f=1} f{print} f && /^}/{
 check "T66 AC9 -- cmd_audit_round_complete completes via with_state_lock" "with_state_lock" "$t66ac9_arc_body"
 
 echo
-echo "T66 AC11 -- allow_failure is scoped to only the plugin-cli validate and eval jobs"
-# G40/CA-271 (round 4): the terminator regex excludes '#' from the FIRST character class too, not
-# just the rest of the line -- the previous `^[^[:space:]][^#]*:$` treated '#' as a valid first
-# character (it is not whitespace), so a column-0 comment line ending in a colon (e.g. "# See:")
-# was misread as the next job's header and silently truncated the block being extracted.
-t66_validate_plugin_block="$(awk '/^validate:plugin-cli:/{f=1;next} f && /^[^[:space:]#][^#]*:$/ {f=0} f' "$GITLAB_CI_YML")"
-t66_eval_block="$(awk '/^eval:nightly:/{f=1;next} f && /^[^[:space:]#][^#]*:$/ {f=0} f' "$GITLAB_CI_YML")"
-check "T66 AC11 -- validate:plugin-cli carries allow_failure" "allow_failure: true" "$t66_validate_plugin_block"
-check "T66 AC11 -- eval:nightly carries allow_failure" "allow_failure: true" "$t66_eval_block"
-# CA-100: an absent job (deleted, renamed, or a typo in the loop's own job-name list) yields an
-# EMPTY t66_job_block, which has no "allow_failure" substring and was silently scored compliant --
-# the far more consequential fact (the job does not exist at all) went unreported. Assert
-# existence and `stage: lint` before testing the block's content, and assert the union of the
-# four jobs' scripts actually names all four checkers CA-100 says this split job graph must run.
-t66_lint_allow_fail=""
-t66_lint_missing=""
-t66_lint_not_lint_stage=""
-t66_lint_union=""
-for t66_job in lint:bash-syntax lint:artifacts lint:grants lint:vocabulary; do
-  t66_job_block="$(awk -v job="^${t66_job}:$" '$0 ~ job {f=1;next} f && /^[^[:space:]#][^#]*:$/ {f=0} f' "$GITLAB_CI_YML")"
-  if [[ -z "$t66_job_block" ]]; then
-    t66_lint_missing="${t66_lint_missing} ${t66_job}"
-    continue
-  fi
-  [[ "$t66_job_block" == *"stage: lint"* ]] || t66_lint_not_lint_stage="${t66_lint_not_lint_stage} ${t66_job}"
-  [[ "$t66_job_block" == *"allow_failure"* ]] && t66_lint_allow_fail="${t66_lint_allow_fail} ${t66_job}"
-  t66_lint_union="${t66_lint_union}
-${t66_job_block}"
-done
-[[ -z "$t66_lint_missing" ]] \
-  && pass "T66 AC11 -- all four split lint jobs exist in .gitlab-ci.yml" \
-  || fail "T66 AC11 -- job(s) not found in .gitlab-ci.yml:${t66_lint_missing}"
-[[ -z "$t66_lint_not_lint_stage" ]] \
-  && pass "T66 AC11 -- all four split lint jobs declare stage: lint" \
-  || fail "T66 AC11 -- job(s) missing 'stage: lint':${t66_lint_not_lint_stage}"
-[[ -z "$t66_lint_allow_fail" ]] \
-  && pass "T66 AC11 -- none of the four split lint jobs carry allow_failure" \
-  || fail "T66 AC11 -- split lint job(s) unexpectedly carry allow_failure:${t66_lint_allow_fail}"
-t66_lint_union_missing=""
-for t66_checker in "bash -n" "edm-lint-artifacts" "edm-check-grants" "edm-check-vocabulary"; do
-  printf '%s' "$t66_lint_union" | grep -qF -- "$t66_checker" || t66_lint_union_missing="${t66_lint_union_missing} '${t66_checker}'"
-done
-[[ -z "$t66_lint_union_missing" ]] \
-  && pass "T66 AC11 -- the union of the four lint jobs' scripts names bash -n, edm-lint-artifacts, edm-check-grants and edm-check-vocabulary" \
-  || fail "T66 AC11 -- the four lint jobs' scripts are missing:${t66_lint_union_missing}"
+echo "T66 AC11 -- code-audit uses audit-round-start with --lenses"
 check "T66 AC11 -- code-audit uses audit-round-start with --lenses" "--lenses" "$(grep 'audit-round-start' "${PLUGIN_DIR}/skills/code-audit/SKILL.md" || true)"
 
 # ---- CA-094: whole-tree edm-lint-artifacts --all / edm-check-grants: run ONCE here, asserted by
@@ -2167,10 +2017,8 @@ assert_tree_absent "T30 AC10 -- no stray --accept-partials outside bin/tests/ an
 rm -f "$t30_force_control" "$t30_accept_control"
 
 echo
-echo "T30 AC11 -- bash 3.2 syntax check and CI wiring"
+echo "T30 AC11 -- bash 3.2 syntax check"
 bash -n "$CHECK_VOCAB" && pass "T30 AC11 -- bash -n edm-check-vocabulary" || fail "T30 AC11 -- bash -n edm-check-vocabulary failed"
-check "T30 AC11 -- edm-check-vocabulary wired into .gitlab-ci.yml lint stage" "edm-check-vocabulary" \
-  "$(cat "$GITLAB_CI_YML" 2>/dev/null)"
 
 echo
 echo "T30 AC2 -- JSON-escaped prompt strings: a scratch hooks.json carrying the abolished token is caught"
@@ -2444,13 +2292,6 @@ t42_ac11_orch_count="$(grep -c "$MERMAID_REF" "${PLUGIN_DIR}/skills/orchestrator
   && pass "T42 AC11 -- orchestrator SKILL.md carries zero Mermaid section references" \
   || fail "T42 AC11 -- orchestrator SKILL.md unexpectedly references the Mermaid section (count=${t42_ac11_orch_count})"
 
-echo
-echo "T42 AC12 -- rule-presence test runs in CI"
-# .gitlab-ci.yml never names wave7-smoke.sh literally -- test:smoke's script is the run-all.sh
-# aggregator invocation, which auto-discovers every bin/tests/*-smoke.sh suite (EDMV3-T20 AC3),
-# so wave7-smoke.sh (and this T42 case) runs in CI without needing its own pipeline line.
-check "T42 AC12 -- .gitlab-ci.yml's test:smoke job runs the run-all.sh aggregator" \
-  "bin/tests/run-all.sh" "$(cat "$GITLAB_CI_YML" 2>/dev/null)"
 # EDMV3-T42 end
 
 # =================================================================================
@@ -2841,13 +2682,6 @@ t44_ac5_case() {
   rm -rf "$scratch"
 }
 t44_ac5_case
-
-echo
-echo "T44 AC6 -- the corpus test runs in CI"
-# Same auto-discovery mechanism as T42 AC12: test:smoke's script is the run-all.sh aggregator,
-# which discovers every bin/tests/*-smoke.sh suite (EDMV3-T20 AC3) including this one.
-check "T44 AC6 -- .gitlab-ci.yml's test:smoke job runs the run-all.sh aggregator" \
-  "bin/tests/run-all.sh" "$(cat "$GITLAB_CI_YML" 2>/dev/null)"
 
 echo
 echo "T44 AC7 -- existing committed diagrams under tracked SRD/ trees pass"
@@ -3656,18 +3490,11 @@ echo "  regardless of ownership."
 # EDMV3-T55 end
 
 # =================================================================================
-# EDMV3-T56: the four-`##` Living-Library contract becomes a CI regression guard
+# EDMV3-T56: the four-`##` Living-Library contract becomes a regression guard
 # =================================================================================
-# Fully owned by this batch (docs/audit-patterns/*.md, wave7-smoke.sh, .gitlab-ci.yml -- no
-# bin/edm-state or skills/*.md edit required). This is the authoritative four-heading contract
-# check (four-heading contract check, EDMV3-T56): five documents, four `##` headings each, in
-# contract order, heading 4 by regex, README.md and SOURCES.md exempt by name, no orphan `###`
-# under the 4th section. .gitlab-ci.yml's lint:pattern-library-contract job runs an
-# independent, minimal re-implementation of the same contract in the lint stage (mirrors, not
-# re-derives -- same convention as edm-lint-artifacts, edm-check-grants and edm-check-vocabulary
-# each sourcing the shared bin/_edm-lint-lib.sh as peer consumers rather than re-deriving its
-# helpers, "CA-010" above); this suite's version below is the one with full negative-case
-# coverage.
+# This is the authoritative four-heading contract check (four-heading contract check,
+# EDMV3-T56): five documents, four `##` headings each, in contract order, heading 4 by regex,
+# README.md and SOURCES.md exempt by name, no orphan `###` under the 4th section.
 
 # _t56_four_heading_contract_check <docs-dir> -- validates the Living-Library four-`##`-heading
 # contract (README.md Sec."Living-Library Contract") against every *.md file directly in
@@ -3838,10 +3665,8 @@ t56_ac5_case() {
 t56_ac5_case
 
 echo
-echo "T56 AC6 -- runs in the CI lint stage; coordination point for future update-patterns cases"
-check "T56 AC6 -- .gitlab-ci.yml runs the pattern-library contract check in the lint stage" \
-  "lint:pattern-library-contract" "$(cat "$GITLAB_CI_YML")"
-check "T56 AC6 -- wave7-smoke.sh runs the contract check as part of the test stage" \
+echo "T56 AC6 -- runs as part of run-all.sh; coordination point for future update-patterns cases"
+check "T56 AC6 -- wave7-smoke.sh runs the contract check" \
   "_t56_four_heading_contract_check" "$(cat "${SCRIPT_DIR}/wave7-smoke.sh")"
 echo "  NOTE: EDMV3-T54's own update-patterns test cases, in the CA-002 remediation section"
 echo "  immediately below, call _t56_four_heading_contract_check again after each"
@@ -5290,7 +5115,7 @@ echo "G46/CA-311 -- timing.sh --self-test is wired into a suite run-all.sh actua
 # perl-less awk fallback, _p95's nearest-rank formula (CA-196) and the shipped sample count
 # (_P95_SAMPLE_COUNT=20, CA-280), but nothing invoked --self-test anywhere -- not run-all.sh
 # (timing.sh is deliberately excluded from *-smoke.sh discovery per CA-328), not this suite's own
-# other timing.sh calls above (bare, --session-start, --generate-fixture), not .gitlab-ci.yml. A
+# other timing.sh calls above (bare, --session-start, --generate-fixture). A
 # silent revert of any of the five fixes those assertions guard (e.g. _P95_SAMPLE_COUNT back to
 # 10) would leave the full suite green. Modeled on the T48/tiering-matrix.sh --self-test
 # precedent above (wave7-smoke.sh's own T48 block): capture output and exit code on the same
@@ -5540,171 +5365,6 @@ EOS
 }
 ca501_unexecutable_delegate_case
 
-echo
-echo "T67 AC11 -- no blocking job's script contains a network call"
-# G74/CA-234: derive the blocking-job set programmatically from .gitlab-ci.yml itself, rather than
-# a hand-maintained list -- the prior hardcoded 9-job list silently drifted behind the pipeline
-# and omitted two real, current blocking jobs (lint:file-type-ban, lint:pattern-library-contract),
-# covering only 9 of the 11 actual blocking jobs. A job is "blocking" here iff it is a top-level
-# job key (excludes the `stages:` list and the `.foo: &anchor` YAML anchors, which never end a
-# line in a bare `:`) whose block contains no `allow_failure: true`. The "job body must not be
-# empty" guard a few lines below stays in place as a safeguard ON this derivation: a mis-parsed or
-# renamed job still fails loudly by name instead of silently vanishing from the set.
-t67ac11_all_job_names="$(grep -oE '^[A-Za-z][A-Za-z0-9_:-]*:$' "$GITLAB_CI_YML" | sed 's/:$//' | grep -v '^stages$')"
-t67ac11_blocking_jobs=""
-# G40/CA-271 (round 4): all three job-body extractions below (this one, the T67 AC11 loop just
-# past it, and the CA-085(b) positive control below that) share the same tightened terminator --
-# excluding '#' from the FIRST character class, not just the rest of the line -- so a column-0
-# comment ending in a colon can never be misread as the next job's header and silently truncate
-# the body being scanned (the T66 AC11 block above carries the identical fix for the same shape).
-for t67_candidate in $t67ac11_all_job_names; do
-  t67_candidate_body="$(awk -v job="^${t67_candidate}:$" '
-    $0 ~ job {f=1; next}
-    f && /^[^[:space:]#][^#]*:$/ {exit}
-    f {print}
-  ' "$GITLAB_CI_YML")"
-  # Comment lines trailing a job's real script (e.g. validate:manifest's own trailing comment
-  # block documents validate:plugin-cli's `allow_failure: true` right below it) get swept into
-  # this crude body extraction because they don't end in a bare ":" the way a real next-job
-  # header does -- strip comment-only lines before checking for a real `allow_failure: true` key,
-  # or a job whose only mention of the phrase is in prose describing its NEIGHBOR gets
-  # misclassified as non-blocking.
-  if ! printf '%s' "$t67_candidate_body" | grep -v '^[[:space:]]*#' | grep -q 'allow_failure: *true'; then
-    t67ac11_blocking_jobs="${t67ac11_blocking_jobs} ${t67_candidate}"
-  fi
-done
-t67ac11_blocking_jobs="${t67ac11_blocking_jobs# }"
-t67ac11_blocking_job_count="$(printf '%s\n' "$t67ac11_blocking_jobs" | wc -w | tr -d ' ')"
-[[ -n "$t67ac11_blocking_jobs" && "$t67ac11_blocking_job_count" -ge 11 ]] \
-  && pass "T67 AC11 -- derived a blocking-job set of >= 11 jobs from .gitlab-ci.yml (got ${t67ac11_blocking_job_count}: ${t67ac11_blocking_jobs})" \
-  || fail "T67 AC11 -- derived blocking-job set has only ${t67ac11_blocking_job_count} job(s), expected >= 11 (got: ${t67ac11_blocking_jobs})"
-t67ac11_net_hits=""
-t67ac11_missing_jobs=""
-for t67_job in $t67ac11_blocking_jobs; do
-  t67_job_body="$(awk -v job="^${t67_job}:$" '
-    $0 ~ job {f=1; next}
-    f && /^[^[:space:]#][^#]*:$/ {exit}
-    f {print}
-  ' "$GITLAB_CI_YML")"
-  # CA-085(a): an absent job (deleted from the pipeline, renamed, or a typo in the list above)
-  # yields an EMPTY body that matches no network pattern and was silently scored clean -- the
-  # far more consequential fact (the job doesn't exist) went unreported. Fail explicitly, naming
-  # the job, instead of letting an empty body pass the grep below by default.
-  if [[ -z "$t67_job_body" ]]; then
-    t67ac11_missing_jobs="${t67ac11_missing_jobs} ${t67_job}"
-    continue
-  fi
-  # CA-085(b): broadened beyond curl/wget/anthropic.com to also catch an unpinned global tool
-  # install (npm install -g, with no version pin) landing in a blocking job -- previously
-  # invisible, with no positive control proving the pattern actually fires. Deliberately does
-  # NOT add a bare "apk add"/"apt-get" ban: every blocking job's before_script bootstraps its
-  # (digest-pinned, per CLAUDE.md's "All job images are pinned by digest" note) Alpine image with
-  # `apk add --no-cache bash` or similar -- that is this pipeline's accepted, reviewed baseline,
-  # not the invisible-network-call class this AC targets. A literal "apk add|apt-get" ban was
-  # tried and immediately flagged every blocking job identically, which is a false-positive
-  # regression, not real signal -- it would make this assertion permanently red or force someone
-  # to blanket-suppress it, either of which defeats the AC. "npm install" alone has zero matches
-  # in the current blocking set (both existing `npm install -g @anthropic-ai/claude-code` calls
-  # are in the two non-blocking, allow_failure:true jobs), so it adds real forward coverage
-  # without a false positive today.
-  echo "$t67_job_body" | grep -qE 'curl |wget |anthropic\.com|npm install' \
-    && t67ac11_net_hits="${t67ac11_net_hits} ${t67_job}"
-done
-[[ -z "$t67ac11_missing_jobs" ]] \
-  && pass "T67 AC11 -- all named blocking jobs exist in .gitlab-ci.yml" \
-  || fail "T67 AC11 -- job(s) named in the blocking set are not present in .gitlab-ci.yml:${t67ac11_missing_jobs}"
-[[ -z "$t67ac11_net_hits" ]] \
-  && pass "T67 AC11 -- no blocking job's script calls curl/wget/anthropic.com/npm install" \
-  || fail "T67 AC11 -- network/unpinned-install call found in blocking job(s):${t67ac11_net_hits}"
-
-# CA-085(b) positive control: inject a curl call into a scratch copy of the same job body and
-# prove the widened pattern actually fires -- without this, the assertion above could pass
-# vacuously (silently matching nothing) forever.
-t67ac11_scratch_body="$(awk -v job='^lint:artifacts:$' '
-  $0 ~ job {f=1; next}
-  f && /^[^[:space:]#][^#]*:$/ {exit}
-  f {print}
-' "$GITLAB_CI_YML")
-    - curl -sSL https://example.invalid/install.sh | sh"
-echo "$t67ac11_scratch_body" | grep -qE 'curl |wget |anthropic\.com|npm install' \
-  && pass "T67 AC11 (CA-085 positive control) -- an injected curl call is actually caught by the pattern" \
-  || fail "T67 AC11 (CA-085 positive control) -- injecting a curl call did not trip the network-call pattern"
-
-# Second positive control: the "npm install" half of the widened pattern specifically -- proving
-# the new part of the broadened coverage actually fires, not just the pre-existing curl branch.
-t67ac11_scratch_body_npm="${t67ac11_scratch_body}
-    - npm install -g some-unpinned-tool"
-echo "$t67ac11_scratch_body_npm" | grep -qE 'curl |wget |anthropic\.com|npm install' \
-  && pass "T67 AC11 (CA-085 positive control) -- an injected unpinned npm install is actually caught by the widened pattern" \
-  || fail "T67 AC11 (CA-085 positive control) -- injecting an unpinned npm install did not trip the widened pattern"
-
-# G43/CA-319: the blocking-job derivation above structurally EXEMPTS every allow_failure job
-# from all of T67 AC11's checks, including the network-call scan -- exactly the two jobs that
-# actually reach the network (validate:plugin-cli, eval:nightly), and eval:nightly is the one
-# job in the pipeline holding ANTHROPIC_API_KEY. A full network ban doesn't fit these jobs (they
-# legitimately need it), but a WEAKER pass belongs here: both npm installs must carry an
-# explicit version pin, so an unpinned install can't silently drift in the least-controlled,
-# secret-bearing corner of the file the way CA-161's package-manager sweep already closed for
-# every blocking job's apk installs.
-# G39/CA-349: `check` is a plain substring test (_harness.sh), and the bare needle
-# "npm install -g @anthropic-ai/claude-code@" is satisfied by @latest, @next, @^2.1.0 and @~2.1
-# just as much as by a real numeric pin -- so the one control guarding the least-controlled,
-# ANTHROPIC_API_KEY-bearing job in the pipeline could be satisfied by exactly the unpinned
-# behaviour it exists to prevent, and "replace the stale pin with @latest" is the single most
-# likely future edit to that line. Requires a numeric first character immediately after the
-# version "@" instead.
-t67ac11_pin_regex='npm install -g @anthropic-ai/claude-code@[0-9]'
-for t67ac11_allowfail_job in validate:plugin-cli eval:nightly; do
-  t67ac11_allowfail_body="$(awk -v job="^${t67ac11_allowfail_job}:$" '
-    $0 ~ job {f=1; next}
-    f && /^[^[:space:]#][^#]*:$/ {exit}
-    f {print}
-  ' "$GITLAB_CI_YML")"
-  if echo "$t67ac11_allowfail_body" | grep -qE "$t67ac11_pin_regex"; then
-    pass "T67 AC11 (G43/CA-319) -- ${t67ac11_allowfail_job}'s npm install is pinned to a numeric version"
-  else
-    fail "T67 AC11 (G43/CA-319) -- ${t67ac11_allowfail_job}'s npm install is not pinned to a numeric version"
-  fi
-done
-# Positive control: an unpinned npm install line would NOT satisfy the numeric-pin regex above --
-# proves the check discriminates pinned from unpinned rather than matching any npm install line.
-echo "npm install -g @anthropic-ai/claude-code" | grep -qE "$t67ac11_pin_regex" \
-  && fail "T67 AC11 (G43/CA-319) -- positive control: a bare unpinned install unexpectedly satisfied the numeric-pin regex" \
-  || pass "T67 AC11 (G43/CA-319) -- positive control: a bare unpinned install does not satisfy the numeric-pin regex"
-# G39/CA-349 negative control: @latest (the single most likely future edit to this line) must
-# NOT satisfy the numeric-pin regex either.
-echo "npm install -g @anthropic-ai/claude-code@latest" | grep -qE "$t67ac11_pin_regex" \
-  && fail "T67 AC11 (G39/CA-349) -- negative control: @latest unexpectedly satisfied the numeric-pin regex" \
-  || pass "T67 AC11 (G39/CA-349) -- negative control: @latest does not satisfy the numeric-pin regex"
-
-# G37/CA-313: G40/CA-271's tightened terminator (excluding '#' from the FIRST character class,
-# not just the rest of the line) is load-bearing on REAL pipeline content -- .gitlab-ci.yml:198
-# is a real column-0 comment line ending in a colon, sitting inside lint:vocabulary's trailing
-# comment block before the next real job header (lint:shellcheck: at :209) -- but nothing
-# exercised it: the >=11-job count and the empty-body guard both pass on a body truncated early
-# at :198 yet non-empty, which is exactly CA-271's named failure mode. Extract lint:vocabulary's
-# body and assert a token that only appears AFTER :198 in this job's trailing comments is
-# present, so a re-loosened terminator (misreading :198 as the next job's header) fails loudly.
-t67ac13_lintvocab_body="$(awk -v job='^lint:vocabulary:$' '
-  $0 ~ job {f=1; next}
-  f && /^[^[:space:]#][^#]*:$/ {exit}
-  f {print}
-' "$GITLAB_CI_YML")"
-check "G37/CA-313 -- lint:vocabulary's extracted body is not truncated at .gitlab-ci.yml:198 (a post-198 token survives)" \
-  "CA-162" "$t67ac13_lintvocab_body"
-# Positive control: prove the needle would actually be ABSENT if the terminator were loosened to
-# stop at :198 -- without this, a body that happens to include :198 itself (a comment LINE, not a
-# terminator) could still contain "CA-162" by coincidence and the check above would pass vacuously.
-t67ac13_truncated_body="$(printf '%s\n' "$t67ac13_lintvocab_body" | sed -n '1,/rather than shellcheck.s full default severity set:/p')"
-check_absent "G37/CA-313 -- positive control: a body deliberately truncated at :198 does NOT contain the post-198 token" \
-  "CA-162" "$t67ac13_truncated_body"
-
-echo "T67 AC1/AC3/AC4/AC5/AC6/AC7 -- measured this session against real generated fixtures via"
-echo "  bin/tests/timing.sh; the numbers are recorded in CHANGELOG.md's EDMV3-T67 table, not"
-echo "  re-run here (they take minutes and generate scratch fixtures unsuited to a fast smoke"
-echo "  suite). AC9/AC13 are recorded verified-locally-pending-pipeline (decisions.md D27) --"
-echo "  both require a live GitLab runner / a real costed eval run this session did not trigger."
-# EDMV3-T67 end
 
 # =================================================================================
 # EDMV3-T48: tiering matrix (D16) -- built and unit-verified, not run; 15 contested
@@ -7047,8 +6707,8 @@ rm -rf "$g5_scratch"
 # G6 (round-3 Wave 7b): tripwire against a hard `bc` dependency re-entering the suite.
 # =================================================================================
 # CA-035's T42 AC4 fix piped a grep -c count through `paste -sd+ -` into `bc` -- the only such
-# invocation anywhere in this plugin, and no `apk add --no-cache` line in .gitlab-ci.yml
-# installs it, so it crashed both blocking smoke jobs on every pinned image. Replaced above
+# invocation anywhere in this plugin, and `bc` is not installed by default on every image this
+# suite runs against, so it crashed the smoke suite. Replaced above
 # with pure awk arithmetic (awk is already a hard dependency of every suite here). This is the
 # regression tripwire so the dependency cannot silently come back. The search token is
 # assembled from two single-character fragments (never spelled out as adjacent literal
@@ -8959,42 +8619,6 @@ for g21_pair in $g21_evals_map; do
 done
 
 # =================================================================================
-# CA-511: run-eval.sh's inner per-phase timeout budget is now coupled to the CI job's outer
-# timeout via CI_JOB_TIMEOUT (a GitLab predefined variable, seconds) -- refusing up front rather
-# than letting the outer timeout silently kill the job before the CA-452 partial-run handshake's
-# trailing steps (scoring, comparison) ever run. Pinned by source-text assertion (the guard runs
-# after the live auth probe and fixture provisioning, so it is not exercised end-to-end here,
-# matching this suite's established convention of not invoking run-eval.sh live -- see the CA-007
-# containment-loop reproduction elsewhere in this file for the same reasoning) plus a standalone
-# reproduction of the exact arithmetic, proving the formula itself is sound.
-# =================================================================================
-echo
-echo "=== CA-511: run-eval.sh couples its inner phase-timeout budget to CI_JOB_TIMEOUT ==="
-ca511_run_eval_src="$(cat "${PLUGIN_DIR}/evals/run-eval.sh")"
-check "CA-511 -- run-eval.sh reads CI_JOB_TIMEOUT" '${CI_JOB_TIMEOUT:-}' "$ca511_run_eval_src"
-check "CA-511 -- the worst-case arithmetic is three phases plus a 60s auth probe" \
-  'inner_worst_case_secs=$((PHASE_TIMEOUT_SECONDS * 3 + 60))' "$ca511_run_eval_src"
-check "CA-511 -- refuses (exit 2) rather than silently proceeding when the inner budget would meet or exceed the outer" \
-  'inner_worst_case_secs" -ge "$ci_job_timeout_secs"' "$ca511_run_eval_src"
-
-# Standalone reproduction of the exact formula above (not a call into run-eval.sh) -- proves the
-# arithmetic itself discriminates correctly at the boundary a real CI run would hit.
-ca511_check_formula() {
-  local phase_timeout="$1" ci_job_timeout="$2" inner
-  inner=$((phase_timeout * 3 + 60))
-  [[ "$inner" -ge "$ci_job_timeout" ]] && echo "refuse" || echo "proceed"
-}
-[[ "$(ca511_check_formula 2700 9000)" == "proceed" ]] \
-  && pass "CA-511 -- the documented default (2700s phase, 9000s job) does not refuse (8160s < 9000s)" \
-  || fail "CA-511 -- the documented default incorrectly refused"
-[[ "$(ca511_check_formula 3600 9000)" == "refuse" ]] \
-  && pass "CA-511 -- CA-444's own example (a 3600s phase timeout against the 150m/9000s job ceiling) correctly refuses (10860s >= 9000s)" \
-  || fail "CA-511 -- a 3600s phase timeout against a 9000s job ceiling should have refused but did not"
-[[ "$(ca511_check_formula 2700 8000)" == "refuse" ]] \
-  && pass "CA-511 -- a tightened job timeout below the worst case correctly refuses" \
-  || fail "CA-511 -- a tightened 8000s job timeout against the 2700s default should have refused but did not"
-
-# =================================================================================
 # CA-532: --allowedTools/--disallowedTools are passed as real bash arrays expanded with
 # "${ARR[@]}", not a single space-joined string -- the CLI documents these flags as taking
 # space-separated SEPARATE arguments, and 4 of the 12 allowed-tools entries contain an internal
@@ -9003,6 +8627,7 @@ ca511_check_formula() {
 # =================================================================================
 echo
 echo "=== CA-532: run-eval.sh passes --allowedTools/--disallowedTools as real arrays, not a joined string ==="
+ca511_run_eval_src="$(cat "${PLUGIN_DIR}/evals/run-eval.sh")"
 check "CA-532 -- CLAUDE_ALLOWED_TOOLS is declared as a bash array" \
   'CLAUDE_ALLOWED_TOOLS=(Read Write Edit Glob Grep LS TodoWrite Task "Bash(edm-state *)" "Bash(edm-init *)" "Bash(edm-validate-prefix *)" "Bash(jq *)")' \
   "$ca511_run_eval_src"
@@ -9020,11 +8645,11 @@ echo "=== G39/CA-315: five stale file-and-line citations corrected to by-name fo
 # Durability guard for CA-315's own class: eight of round 5's L6 findings were stale in-code
 # citations, and three were re-staled by the very remediation that fixed their predecessors
 # (CA-268). Scoped to these five specific sites rather than a tree-wide ban on ANY numeric
-# file:line citation in a comment -- this codebase uses that shape legitimately and pervasively
-# (e.g. this same suite's own G37/CA-313 case cites ".gitlab-ci.yml:198" as DATA, not as a
-# citation of a function's own location, which is the actual defect class here). A general ban
-# is not practically enforceable via static grep without producing constant false positives; this
-# guard instead pins the five corrected sites so none of them can silently re-stale again.
+# file:line citation in a comment -- this codebase uses that shape legitimately in places (e.g.
+# a comment citing a needle string as DATA, not as a citation of a function's own location, which
+# is the actual defect class here). A general ban is not practically enforceable via static grep
+# without producing constant false positives; this guard instead pins the five corrected sites so
+# none of them can silently re-stale again.
 check_absent "G39/CA-315 -- run-eval.sh no longer cites edm-state's write_atomic trap layer by line range" \
   "edm-state:622-625" "$(cat "${PLUGIN_DIR}/evals/run-eval.sh")"
 check "G39/CA-315 -- run-eval.sh cites write_atomic's trap layer by function name instead" \
@@ -9052,30 +8677,17 @@ echo "=== G10/CA-340: shape-restricted ban on new file-and-line citations (durab
 # static grep without producing constant false positives." L6 falsified that in the narrow case
 # this round: every new stale-citation instance was a citation of this plugin's own bin/tests/
 # evals script by relative name plus digits, inside a comment line -- a shape narrow enough to
-# ban directly. Scoped to exactly that shape (this plugin's own bin/tests/evals scripts), never
-# to .gitlab-ci.yml or hooks.json, both of which are cited by line number elsewhere for
-# legitimate reasons documented in the CA-315 comment above (.gitlab-ci.yml, line 198, as a
-# positive control anchor in the G37/CA-313 case) -- the explicit allowlist keeps it exempt
-# even if a future widening of this regex would otherwise catch it.
-# CA-435: a second allowlist entry (edm-check-grants around line 419) was dropped -- it
-# justified itself by a hooks.json line-117 quote that CA-406's fix deleted from that file, so
-# the entry filtered nothing from the live scan and its synthetic control asserted the filter
-# suppressed a line shape that no longer exists anywhere in the tree.
+# ban directly. Scoped to exactly that shape (this plugin's own bin/tests/evals scripts).
 g10_citation_regex='\b(edm-state|edm-init|edm-lint-artifacts|edm-check-[A-Za-z0-9_-]+|run-eval\.sh|score-artifacts\.sh|_edm-[A-Za-z0-9_-]+\.sh|wave[0-9][A-Za-z0-9_-]*-smoke\.sh|run-all\.sh):[0-9]+'
-g10_allowlist_1=".gitlab-ci.yml:198"
 
 g10_scan_tree() {
   grep -rnE "$g10_citation_regex" "$@" 2>/dev/null | grep -E '^[^:]+:[0-9]+:[[:space:]]*#' || true
 }
-g10_filter_allowlist() {
-  grep -v -F -- "${g10_allowlist_1}:" || true
-}
 
-g10_raw_hits="$(cd "$_HARNESS_REPO_ROOT" && g10_scan_tree plugins/edm/bin plugins/edm/evals plugins/edm/CLAUDE.md plugins/edm/README.md .gitlab-ci.yml)"
-g10_filtered_hits="$(printf '%s\n' "$g10_raw_hits" | g10_filter_allowlist)"
-[[ -z "$(printf '%s' "$g10_filtered_hits" | tr -d '[:space:]')" ]] \
-  && pass "G10/CA-340 -- no new stale-shaped file-and-line citation found in a comment (outside the two allowlisted DATA sites)" \
-  || fail "G10/CA-340 -- stale-citation-shaped comment(s) found outside the allowlist:\n${g10_filtered_hits}"
+g10_raw_hits="$(cd "$_HARNESS_REPO_ROOT" && g10_scan_tree plugins/edm/bin plugins/edm/evals plugins/edm/CLAUDE.md plugins/edm/README.md)"
+[[ -z "$(printf '%s' "$g10_raw_hits" | tr -d '[:space:]')" ]] \
+  && pass "G10/CA-340 -- no new stale-shaped file-and-line citation found in a comment" \
+  || fail "G10/CA-340 -- stale-citation-shaped comment(s) found:\n${g10_raw_hits}"
 
 # Positive control: a deliberately-added test comment citing a fabricated edm-state line
 # reference (built as a scratch fixture below, not spelled out contiguously here, so this
@@ -9088,65 +8700,6 @@ g10_control_hits="$(cd "$g10_control_dir" && g10_scan_tree plugins/edm/bin)"
   && pass "G10/CA-340 -- positive control: a deliberately-added 'edm-state:1234' comment is caught by the ban" \
   || fail "G10/CA-340 -- positive control broken: a deliberately-added 'edm-state:1234' comment was NOT caught"
 rm -rf "$g10_control_dir"
-
-# Allowlist control: the named DATA site must survive the filter unscathed if fed to it, and
-# an unrelated second hit must still be flagged -- proves the filter discriminates by exact
-# location rather than suppressing everything (or nothing).
-g10_synthetic_hits="$(printf '%s\n%s\n' \
-  ".gitlab-ci.yml:198:# see .gitlab-ci.yml:198" \
-  "plugins/edm/bin/edm-state:999:# see edm-state:999 for details")"
-g10_synthetic_filtered="$(printf '%s\n' "$g10_synthetic_hits" | g10_filter_allowlist)"
-[[ "$g10_synthetic_filtered" == *"edm-state:999"* ]] \
-  && pass "G10/CA-340 -- allowlist filter -- an unrelated hit survives filtering (not a no-op filter)" \
-  || fail "G10/CA-340 -- allowlist filter -- an unrelated hit was unexpectedly filtered out"
-[[ "$g10_synthetic_filtered" != *".gitlab-ci.yml:198"* ]] \
-  && pass "G10/CA-340 -- allowlist filter -- the named DATA site is excluded (not an always-fire filter)" \
-  || fail "G10/CA-340 -- allowlist filter -- the named DATA site was not excluded:\n${g10_synthetic_filtered}"
-
-echo
-echo "=== G41/CA-317: every .gitlab-ci.yml job that can fail prints a job-named FAILED line, one token across the file ==="
-# G44/CA-317 (round 6, 4th consecutive round of this finding class): the prior version of this
-# sweep hand-enumerated exactly the three jobs a previous round happened to fix
-# (lint:artifacts/lint:grants/lint:vocabulary), so a hole at any OTHER job -- lint:bash-syntax's
-# three grep-ban exits, validate:manifest's parse early exit, test:smoke/test:smoke-bash32
-# printing no job-named line at all, eval:nightly's run-eval.sh/score-artifacts.sh steps -- was
-# invisible to it. Replaced with a whole-file sweep: enumerate every top-level job key
-# (`^[a-z][a-z0-9:_-]*:$`; non-job top-level keys like `stages:` are naturally excluded below
-# since their body never contains `exit 1`) and, for each job body that contains `exit 1`,
-# assert a `<job>: FAILED` occurrence exists. This makes the convention self-enforcing so a 5th
-# round of this finding class cannot happen -- a future job with a bare `exit 1` and no
-# job-named line fails this loop automatically, with no name added by hand.
-# Plain -E (not -P) so this runs under BSD/macOS grep as well as GNU grep -- no lookahead,
-# just strip the trailing colon with sed after the match.
-g44_job_keys="$(grep -E '^[a-z][a-z0-9:_-]*:$' "$GITLAB_CI_YML" | sed 's/:$//')"
-g44_checked_count=0
-while IFS= read -r g44_job; do
-  [[ -n "$g44_job" ]] || continue
-  g44_body="$(awk -v job="^${g44_job}:$" '
-    $0 ~ job {f=1; next}
-    f && /^[^[:space:]#][^#]*:$/ {exit}
-    f {print}
-  ' "$GITLAB_CI_YML")"
-  echo "$g44_body" | grep -q 'exit 1' || continue
-  g44_checked_count=$((g44_checked_count + 1))
-  check "G44/CA-317 -- ${g44_job} prints a job-named FAILED line before exiting" \
-    "${g44_job}: FAILED" "$g44_body"
-done <<< "$g44_job_keys"
-[[ "$g44_checked_count" -ge 10 ]] \
-  && pass "G44/CA-317 -- the whole-file job sweep actually checked a non-trivial number of jobs (${g44_checked_count}), not zero" \
-  || fail "G44/CA-317 -- the whole-file job sweep only checked ${g44_checked_count} job(s) -- the job-key extraction may be broken"
-check "G41/CA-317 -- eval:nightly names itself in its comparison-failure branch" \
-  "eval:nightly: FAILED" "$(cat "$GITLAB_CI_YML")"
-g41_bare_fail_hits="$(grep -noE '[a-z][a-z0-9:_-]*: FAIL[^E]|[a-z][a-z0-9:_-]*: FAIL$' "$GITLAB_CI_YML" || true)"
-[[ -z "$g41_bare_fail_hits" ]] \
-  && pass "G41/CA-317 -- no job prints a bare 'FAIL' (only 'FAILED') anywhere in the pipeline" \
-  || fail "G41/CA-317 -- found a bare 'FAIL' token (should be 'FAILED'):${g41_bare_fail_hits}"
-# Positive control: prove the bare-FAIL pattern above would actually match its own shape if
-# reintroduced, so the all-clear isn't silently vacuous.
-g41_control_hit="$(printf '%s\n' 'validate:plugin-cli: FAIL -- something broke' | grep -noE '[a-z][a-z0-9:_-]*: FAIL[^E]|[a-z][a-z0-9:_-]*: FAIL$' || true)"
-[[ -n "$g41_control_hit" ]] \
-  && pass "G41/CA-317 -- positive control: the bare-FAIL pattern still matches a reintroduced instance" \
-  || fail "G41/CA-317 -- positive control broken: the bare-FAIL pattern would not catch a reintroduction"
 
 echo
 echo "=== G51/CA-327: the four per-class violation loops in edm-lint-artifacts route through one shared helper, not four copy-pasted bodies ==="
@@ -9173,45 +8726,6 @@ g51_readloop_count="$(count_matches 'while IFS=: read -r lineno _rest' "${PLUGIN
   || fail "G51/CA-327 -- the read-loop shape appears ${g51_readloop_count} time(s), expected exactly 1"
 
 echo
-# =================================================================================
-# CA-460 (round 8, found independently by L6, L7 and L2): lint:hooks-shell landed without any of
-# the three lint-job-count/consumer-count sites being swept -- .gitlab-ci.yml's own anchor
-# comment named the exact grep whose output (11) contradicted the number it stated (10). These
-# assertions derive both counts mechanically and pin the prose that states them, plus one
-# CI-table row per lint job (the bin/-table shape), so the NEXT job added fails a test instead
-# of drifting three documents.
-# =================================================================================
-echo
-echo "=== CA-460: lint-job and alpine_edm consumer counts match the prose that states them ==="
-ca460_lint_count="$(count_matches '^lint:' "$GITLAB_CI_YML")"
-ca460_alpine_count="$(count_matches '<<: \*alpine_edm' "$GITLAB_CI_YML")"
-[[ "$ca460_lint_count" -eq 8 ]] \
-  && pass "CA-460 -- .gitlab-ci.yml has exactly 8 lint jobs (update the three count sites if adding one)" \
-  || fail "CA-460 -- ^lint: job count is ${ca460_lint_count}, but the prose in .gitlab-ci.yml and CLAUDE.md states 8 -- sweep both count sentences and CLAUDE.md's CI table"
-[[ "$ca460_alpine_count" -eq 11 ]] \
-  && pass "CA-460 -- .gitlab-ci.yml has exactly 11 alpine_edm consumers" \
-  || fail "CA-460 -- alpine_edm consumer count is ${ca460_alpine_count}, but the prose states eleven -- sweep the anchor comment and CLAUDE.md's job-graph paragraph"
-check "CA-460 -- .gitlab-ci.yml's anchor comment states the current lint-job count" \
-  "eight of" "$(cat "$GITLAB_CI_YML")"
-check "CA-460 -- .gitlab-ci.yml's anchor comment states the current consumer count" \
-  "eleven consumers total" "$(cat "$GITLAB_CI_YML")"
-ca460_claude_md="$(cat "${PLUGIN_DIR}/CLAUDE.md")"
-check "CA-460 -- CLAUDE.md's job-graph paragraph states the current lint-job count" \
-  "executes all eight concurrently" "$ca460_claude_md"
-check "CA-460 -- CLAUDE.md's job-graph paragraph states the current consumer count" \
-  "across all eleven" "$ca460_claude_md"
-# One CI-table row per lint job: every ^lint: job key in .gitlab-ci.yml appears as a
-# `| \`lint\` | \`lint:<name>\`` row in CLAUDE.md's CI table.
-ca460_missing_rows=""
-while IFS= read -r ca460_job; do
-  ca460_job="${ca460_job%:}"
-  printf '%s\n' "$ca460_claude_md" | grep -q "| \`lint\` | \`${ca460_job}\`" \
-    || ca460_missing_rows="${ca460_missing_rows} ${ca460_job}"
-done < <(grep -E '^lint:' "$GITLAB_CI_YML")
-[[ -z "$ca460_missing_rows" ]] \
-  && pass "CA-460 -- every ^lint: job in .gitlab-ci.yml has a row in CLAUDE.md's CI table" \
-  || fail "CA-460 -- lint job(s) missing from CLAUDE.md's CI table:${ca460_missing_rows}"
-
 # =================================================================================
 # CA-461 (round 8, L6-F3): the baseline runbook prescribed a variance field name
 # (total_max_minus_min) that bin/edm-compare-eval never reads (.variance.total_range), so an

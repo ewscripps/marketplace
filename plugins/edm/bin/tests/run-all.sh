@@ -161,8 +161,8 @@ done
 # folds its 0/non-zero exit into the aggregate counters exactly the two blocks below used to do
 # by hand. This replaced two near-identical 15-line blocks (EDMV3-T03 AC10's edm-check-grants
 # case and EDMV3-T39 AC7's edm-check-skill-sync case) and is also what makes it cheap to add the
-# third call below: edm-check-vocabulary is a standalone checker in the same shape, run directly
-# by the blocking lint:vocabulary CI job, that this aggregator never actually invoked before now.
+# third call below: edm-check-vocabulary is a standalone checker in the same shape that this
+# aggregator never actually invoked before now.
 _standalone_check() {
   local script_path="$1" label="$2"
   local out ec
@@ -201,9 +201,8 @@ if [[ -z "${EDM_RUN_ALL_SUITE_DIR:-}" ]]; then
   _standalone_check "${SCRIPT_DIR}/../edm-check-skill-sync" \
     "edm-check-skill-sync -- dispatcher holds no phase procedure (EDMV3-T39 AC7 regression tripwire)"
 
-  # CA-096: edm-check-vocabulary -- one of the two standalone checkers a blocking CI lint job
-  # (lint:vocabulary) runs directly -- was never wired into this aggregator at all. This call is
-  # the fix.
+  # CA-096: edm-check-vocabulary -- a standalone checker that was never wired into this
+  # aggregator at all. This call is the fix.
   _standalone_check "${SCRIPT_DIR}/../edm-check-vocabulary" \
     "edm-check-vocabulary -- abolished-vocabulary and override-flag backstop (EDMV3-T30)"
 fi

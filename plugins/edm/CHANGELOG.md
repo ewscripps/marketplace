@@ -4,6 +4,24 @@ All notable changes to the EDM plugin are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- **The GitLab CI pipeline (`.gitlab-ci.yml`, 14 jobs) and `.gitlab/` (D63)** -- EDM's own local
+  enforcement (the `PreToolUse` git-commit hook running `edm-lint-artifacts`/`edm-check-grants`/
+  `edm-check-vocabulary`, and the 11-lens code-audit methodology auditing this plugin's own code
+  every round) already provides the enforcement the pipeline duplicated. Also removed:
+  `evals/run-eval.sh`'s `CI_JOB_TIMEOUT` inner/outer-timeout coupling (CA-511, CI-only), and
+  roughly 300-400 lines of `bin/tests/wave7-smoke.sh` assertions that tested `.gitlab-ci.yml`'s
+  own content. Kept unchanged: every checker script with a caller besides CI
+  (`edm-lint-artifacts`, `edm-check-grants`, `edm-check-vocabulary`, `bin/tests/run-all.sh` as
+  the local pre-push command, `run-eval.sh`/`score-artifacts.sh`/`bin/edm-compare-eval` as the
+  standalone eval harness). `eval:nightly`'s unattended scheduled run against a protected secret
+  had no local equivalent; confirmed not needed -- a prompt regression is caught if a human runs
+  `evals/run-eval.sh` before merging the change that introduced it, and that is accepted as
+  sufficient.
+
 ## [3.2.0] — 2026-08-16
 
 The sanctioned P2-debt convergence override, and the round-8 code-audit remediation waves

@@ -17,7 +17,7 @@ This skill runs the coverage audit **without spawning any test-writer agents**. 
 Use this skill when:
 - You've manually added tests after a previous `/edm:test` run and want to verify the gaps closed.
 - You want a fresh coverage snapshot after refactoring tests.
-- The CI pipeline flagged coverage regression and you want to investigate locally.
+- A coverage regression was reported and you want to investigate it.
 - You already ran `/edm:test` and want to re-run just the audit step cheaply.
 
 ## Operational Orchestration

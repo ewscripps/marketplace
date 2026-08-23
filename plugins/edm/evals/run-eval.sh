@@ -134,12 +134,11 @@ CURRENT_CHILD_PID=""
 # write_partial_artifacts -- called only from cleanup(), only when a run started but never
 # reached the final phase. run.json is this driver's own record; scores.json here is a stub,
 # not the real scorer's output -- it stands in for a scores.json on any path that never reaches
-# score-artifacts.sh at all (a hand-run partial, an interrupted local run, an inspection of the
-# uploaded CI artifacts). CA-452 rewired eval:nightly to continue past exit 4, so the CI path
-# now DOES run the real scorer over the partial run directory and overwrites this stub -- the
-# complete: false verdict survives that overwrite because the scorer reads it from run.json, and
-# it is bin/edm-compare-eval that refuses the candidate by name. The stub is no longer CI's only
-# view of the partial run, only the earliest one.
+# score-artifacts.sh at all (a hand-run partial, an interrupted local run). CA-452: running the
+# real scorer over the partial run directory afterward overwrites this stub -- the complete:
+# false verdict survives that overwrite because the scorer reads it from run.json, and it is
+# bin/edm-compare-eval that refuses the candidate by name. The stub is only the earliest view of
+# the partial run, not the only one.
 write_partial_artifacts() {
   [ -n "$RUN_DIR" ] || return 0
   mkdir -p "$RUN_DIR" 2>/dev/null
@@ -158,7 +157,7 @@ write_partial_artifacts() {
   jq -n \
     --arg reason "run did not reach the final phase (audit-srd); last phase attempted: ${LAST_PHASE_ATTEMPTED}" \
     '{complete: false, dimensions_scored: 0, dimensions: [], total: null, reason: $reason,
-      note: "stub written by run-eval.sh for the window before score-artifacts.sh runs (and for hand-run or interrupted partials that never reach it); eval:nightly re-scores this directory and overwrites this file, preserving complete:false from run.json (CA-452)"}' \
+      note: "stub written by run-eval.sh for the window before score-artifacts.sh runs (and for hand-run or interrupted partials that never reach it); re-scoring this directory overwrites this file, preserving complete:false from run.json (CA-452)"}' \
     > "$RUN_DIR/scores.json" 2>/dev/null
   echo "run-eval: partial run -- wrote $RUN_DIR/run.json and $RUN_DIR/scores.json (complete: false)" >&2
 }
@@ -431,32 +430,6 @@ case "$PHASE_TIMEOUT_SECONDS" in
     exit 2
     ;;
 esac
-# CA-511: nothing coupled this driver's INNER per-phase budget to the CI job's OUTER timeout, and
-# the inner budget already consumes 90% of the outer at the default (3 x 2700s + a 60s auth
-# probe = 8160s against .gitlab-ci.yml eval:nightly's 9000s ceiling -- see that job's own
-# comment for the arithmetic the 150m figure is derived from). CI_JOB_TIMEOUT (GitLab predefined
-# variable, seconds) lets this driver refuse up front, rather than being silently killed by the
-# outer timeout after CA-444 validated the knob's TYPE but left it unbounded ABOVE -- a value
-# that passes the case statement above cleanly can still make 3x its worth exceed the job
-# timeout, turning the phase timeout into dead wiring and skipping the CA-452 partial-run
-# handshake's trailing script steps entirely (they never run once GitLab kills the job).
-if [[ -n "${CI_JOB_TIMEOUT:-}" ]]; then
-  case "$CI_JOB_TIMEOUT" in
-    *[!0-9]*|'')
-      : # non-numeric or empty -- not the seconds form this check knows how to compare; skip
-      ;;
-    *)
-      ci_job_timeout_secs="$CI_JOB_TIMEOUT"
-      # Three phases (plan, srd, audit-srd) plus the 60s auth probe -- see invoke_claude below
-      # and .gitlab-ci.yml's eval:nightly comment for the identical arithmetic.
-      inner_worst_case_secs=$((PHASE_TIMEOUT_SECONDS * 3 + 60))
-      if [[ "$inner_worst_case_secs" -ge "$ci_job_timeout_secs" ]]; then
-        echo "run-eval: refusing -- EDM_EVAL_PHASE_TIMEOUT_SECONDS=${PHASE_TIMEOUT_SECONDS} makes the driver's own worst case (3 phases + a 60s auth probe = ${inner_worst_case_secs}s) exceed or equal CI_JOB_TIMEOUT (${ci_job_timeout_secs}s); the outer job would kill this run before the CA-452 partial-run handshake's trailing steps (scoring, comparison) ever execute. Lower EDM_EVAL_PHASE_TIMEOUT_SECONDS or raise the job's timeout: in the same change." >&2
-        exit 2
-      fi
-      ;;
-  esac
-fi
 PHASE_MAX_BUDGET_USD="${EDM_EVAL_MAX_BUDGET_USD:-15}"
 
 # invoke_claude <phase-key> <prompt> -- runs claude -p for one phase, cwd'd into the scratch

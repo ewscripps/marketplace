@@ -538,7 +538,7 @@ compute_dim5() {
 # The tiny-svc fixture ships six known, countable gaps in fixtures/tiny-svc/expected.json --
 # ground truth the fixture README always said this scorer consumes "rather than only a
 # self-consistency check", while no dimension actually read it: an SRD surfacing zero of the
-# six gaps scored identically to one surfacing all six, leaving the eval:nightly baseline
+# six gaps scored identically to one surfacing all six, leaving the baseline comparison
 # tripwire structurally blind to the one regression class it exists to catch. This dimension
 # greps the run's srd.md for each gap's srd_match pattern (case-insensitive ERE; deliberately
 # loose recall heuristics -- see expected.json's own description) and scores
@@ -730,7 +730,8 @@ main_score() {
 # ---- comparison mode (AC4) -- never invoked by main_score, never automatic -----------------
 # The default scoring mode above performs no comparison of any kind (AC5). This mode exists
 # so the exact "refuse on scorer_version or dimensions_scored mismatch" behaviour AC4
-# requires is directly testable; wiring it into a CI job is EDMV3-T39's (srd.md EDMV3-52).
+# requires is directly testable; the actual comparison against a baseline is
+# bin/edm-compare-eval's job (EDMV3-T39, srd.md EDMV3-52).
 #
 # CA-383: this used to be a second, hand-rolled comparer that had diverged from
 # bin/edm-compare-eval (different exit codes, missing the complete:false guard, different

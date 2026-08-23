@@ -691,7 +691,7 @@ The `userConfig.jira_project_key` value provides a default; otherwise the user m
 |----------------------------------------------------------------------------------------|---------------------------------------------------------------|
 | `SessionStart`                                                                         | Emit Resume Point for active initiatives via `edm-state session-start` |
 | `UserPromptExpansion` matching `edm:(srd\|audit-srd\|tickets\|audit-tickets\|implement)` | Block expansion if the prerequisite HITL gate isn't approved. Exit-code contract (CA-298, G1): a missing `edm-state` binary or an unresolvable prefix (no state file yet -- the legitimate first-invocation case) exits **0**, non-blocking; an invalid prefix argument or an actual `edm-state gate-check` refusal exits **2**, blocking. Only a real gate refusal blocks -- a setup condition never does |
-| `PreToolUse` matching `git commit`                                                     | Delegates to `bin/edm-lint-staged-artifacts` (extracted from the former inline one-liner -- CA-436/CA-413/CA-414; the hook itself only degrades to exit 0 when the delegate is off PATH). The script: for staged paths under the derived `srd_root` (`EDM_SRD_ROOT` / `CLAUDE_PLUGIN_OPTION_SRD_ROOT`, default `./SRD`, physically normalized so a symlinked repo path still relativizes), resolve a prefix per discovered initiative and skip it if it has no resolvable state (CA-011); run `edm-lint-artifacts <PREFIX>` for each survivor. `edm-lint-artifacts` exit 1 (a real violation) makes the script exit **2**, the code that actually blocks the commit; `edm-lint-artifacts` exit 2 (a setup/usage error, e.g. no initiative for that prefix) is reported to stderr but not blocking (CA-011). **CA-521 (known gap):** which prefixes to scan is decided from the git INDEX (`git diff --cached`), but `edm-lint-artifacts` itself reads the WORKING TREE -- a file staged with a violation and then fixed unstaged commits clean, and an unstaged violation elsewhere in the same initiative's tree can block an otherwise-clean staged commit. This is a fast local gate with a known worktree/index gap, not the enforcement of record: the blocking `lint:artifacts --all` CI job scans the actual committed checkout and still catches the escaped case |
+| `PreToolUse` matching `git commit`                                                     | Delegates to `bin/edm-lint-staged-artifacts` (extracted from the former inline one-liner -- CA-436/CA-413/CA-414; the hook itself only degrades to exit 0 when the delegate is off PATH). The script: for staged paths under the derived `srd_root` (`EDM_SRD_ROOT` / `CLAUDE_PLUGIN_OPTION_SRD_ROOT`, default `./SRD`, physically normalized so a symlinked repo path still relativizes), resolve a prefix per discovered initiative and skip it if it has no resolvable state (CA-011); run `edm-lint-artifacts <PREFIX>` for each survivor. `edm-lint-artifacts` exit 1 (a real violation) makes the script exit **2**, the code that actually blocks the commit; `edm-lint-artifacts` exit 2 (a setup/usage error, e.g. no initiative for that prefix) is reported to stderr but not blocking (CA-011). **CA-521 (known gap):** which prefixes to scan is decided from the git INDEX (`git diff --cached`), but `edm-lint-artifacts` itself reads the WORKING TREE -- a file staged with a violation and then fixed unstaged commits clean, and an unstaged violation elsewhere in the same initiative's tree can block an otherwise-clean staged commit. This is a fast local gate with a known worktree/index gap; `edm-lint-artifacts --all` remains available as a manual full-repo sweep (`edm-lint-artifacts --all` or `--path <dir>`) if the escaped case is ever suspected |
 | `Stop` and `PreCompact`                                                                | Checkpoint state via `edm-state checkpoint-if-active`         |
 | `SubagentStop` matching `edm-implementer`                                              | Auto-spawn `edm-qc-auditor`; write a per-implementer verdict shard to `qc/qc-shard-impl-{NN}.md` ({NN} = lowest ticket number in the implementer's range -- never `qc-summary.md` directly, CA-440: concurrent auditors on one shared file silently overwrite each other's FAIL verdicts). The `qc-shard-impl-` prefix is mandatory and must stay disjoint from `qc-shard-pass-w{WW}-{NN}.md`, the namespace `/edm:implement`'s own post-wave threshold shards use ({WW} = wave number, {NN} = shard ordinal within that wave) -- CA-473: a shared `qc-shard-{NN}.md` key space collides deterministically (threshold shard 1 vs the implementer starting at T01) and the losing writer's FAIL verdicts vanish. The wave component in the threshold-shard name additionally closes CA-515: without it, an ordinal-only name collides across waves whenever two waves each write a single shard 1. `/edm:implement` merges all `qc-shard-impl-*.md` **and** `qc-shard-pass-*.md` into `qc/qc-summary.md` after the wave drains; persist PARTIAL verdicts via `edm-state record-partial-verdict` |
 
@@ -740,8 +740,8 @@ check, but its reach is narrower than the rule:
   `.archived/`. Git is never consulted, so "tracked" is not a property the scan can observe -- an
   untracked `.md` file sitting in an initiative directory is scanned exactly like a committed one.
 - **Lines inside fenced code blocks are skipped**, as are lines under an `edm-lint-ignore` marker.
-- **This plugin's own source tree is scanned by no invocation the hook or CI makes.** The
-  `PreToolUse` git-commit hook runs prefix mode; the `lint:artifacts` CI job runs `--all`. Neither
+- **This plugin's own source tree is scanned by no invocation the hook makes.** The
+  `PreToolUse` git-commit hook runs prefix mode, which never
   reaches `plugins/edm/skills/`, `plugins/edm/agents/`, `plugins/edm/docs/` (including
   `docs/templates/`, named as "templates" in the rule above), `plugins/edm/evals/`, this file, or
   `README.md`. Em dashes have in fact landed in `skills/` and `agents/` and survived there
@@ -810,14 +810,13 @@ Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call the
 ### `edm-lint-artifacts` latency budgets (EDMV3-T67 AC5/AC7)
 
 `edm-lint-artifacts` has **two separate latency budgets and they are not interchangeable**. They
-are documented here, with the script, rather than beside the CI job table below, because both are
-properties of this one binary: a contributor who changes its scanning cost needs both numbers in
-one place, and only one of the two is a CI concern at all.
+are documented here, with the script, because both are properties of this one binary: a
+contributor who changes its scanning cost needs both numbers in one place.
 
 | Budget | Invocation | Ceiling | Fixture the ceiling is stated against | Where it binds |
 |---|---|---|---|---|
 | **Commit-path** | `edm-lint-artifacts <PREFIX>`, from the `PreToolUse` git-commit hook | **3,000 ms** p95 | one initiative directory of 30 `.md` files / 9,990 lines | Every `git commit` that stages anything under the hook's derived `srd_root` scope (CA-023). A human is waiting on this one, so it is the budget that must stay small |
-| **CI** | `edm-lint-artifacts --all`, inside the blocking `lint:artifacts` job | **60,000 ms** | a 50-initiative repository | The CI lint stage only. `--all` walks every active initiative directory `edm-state list --paths` returns, so it is roughly 50x the work at 20x the ceiling -- a commit-path number must never be compared against it, or vice versa |
+| **Full-repo sweep** | `edm-lint-artifacts --all`, run manually | **60,000 ms** | a 50-initiative repository | A manual sweep across every active initiative directory `edm-state list --paths` returns. `--all` is roughly 50x the work at 20x the commit-path ceiling -- the two numbers must never be compared against each other |
 
 Both are measured by `bin/tests/timing.sh` (`--lint` and `--all-lint`) against generated fixtures,
 never by an ad hoc one-off number. **Always quote a budget together with its input size.** A bare
@@ -996,20 +995,20 @@ Skills reference values as `${user_config.srd_root}` etc.
 
 macOS and Linux only (bash 3.2+, `jq`, `git` required). Windows and WSL are unsupported.
 
-**CI is the primary verification path** (EDMV3-T66 AC7): the GitLab pipeline below runs the full
-smoke suite on both the pinned image and a `bash:3.2` image, the manifest/CLI validators, and
-`edm-state validate` across every tracked initiative on every merge request that touches
-`plugins/edm/**`. A contributor's own local run is a fast local-convenience check before opening
-an MR -- it catches the same regressions sooner, but the MR does not merge on the strength of a
-local run; it merges on the pipeline's own green result. After modifying any plugin component,
-as a local convenience before pushing:
+**There is no separate CI pipeline for this plugin** -- EDM's own local mechanisms already catch
+what a CI pipeline would, before an MR is ever opened: `edm-lint-artifacts`/`edm-check-grants`/
+`edm-check-vocabulary` run as part of the git-commit hook and the 11-lens code-audit methodology
+audits the plugin's own bin/ scripts, skills and agents on every code-audit round (this
+initiative's own history is exactly that self-referential audit). Running the local smoke suite
+below is therefore the actual enforcement, not a convenience check ahead of a pipeline that no
+longer exists. After modifying any plugin component:
 
 1. `claude plugin validate plugins/edm/` -- schema and frontmatter check
 2. Test in a sandbox: `claude --plugin-dir ./plugins/edm`
 3. Run `/reload-plugins` to pick up changes without restarting
 4. Verify agents appear in `/agents`, skills in `/help`
-5. Run `bash plugins/edm/bin/tests/run-all.sh` locally before pushing -- this is the same
-   command CI runs and is the fastest way to catch a regression before opening an MR.
+5. Run `bash plugins/edm/bin/tests/run-all.sh` before pushing -- the full smoke suite, and the
+   fastest way to catch a regression before opening an MR.
 
 **`EDM_RUN_ALL_*` and `EDM_EVAL_*` knob families (G30/CA-275).** Two small families of
 environment-variable overrides exist for the test/eval tooling itself, distinct from the
@@ -1025,7 +1024,7 @@ Unset (the default) is byte-identical to prior behavior for every one of them.
 - `EDM_EVAL_KEEP_RUNS` (`evals/run-eval.sh`): retention count for run-shaped directories kept
   under the eval driver's output root (oldest pruned first); defaults to `10`. A non-numeric
   value falls back to the default; `0` is clamped to `1` with a warning (CA-443 -- `0` otherwise
-  pruned the run the invocation had just written, leaving CI green with no eval at all).
+  pruned the run the invocation had just written, leaving a green result with no eval at all).
 - `EDM_EVAL_PHASE_TIMEOUT_SECONDS` (`evals/run-eval.sh`): per-phase wall-clock ceiling, default
   `2700`. Validated beside its default and exits 2 on anything that is not a positive whole
   number (CA-444 -- the driver runs without `set -e`, so an unvalidated value silently disabled
@@ -1040,64 +1039,6 @@ See `CHANGELOG.md`'s `[3.1.0]` entry (G44/CA-275, G30/CA-275) for the full recor
 `EDM_SRD_ROOT` / `CLAUDE_PLUGIN_OPTION_SRD_ROOT`, which is a plugin-runtime knob (documented above
 under "Hooks behavior" and "Artifact content conventions") rather than a member of either family
 here.
-
-### CI (EDMV3-T21)
-
-A GitLab CI pipeline (`.gitlab-ci.yml`, repository root) runs automatically on every merge
-request whose changes touch `plugins/edm/**`, and on every pipeline on the default branch
-regardless of what changed (so the pipeline cannot go stale behind an unrelated merge). It has
-four stages:
-
-| Stage | Job | Blocking? | What it does |
-|---|---|---|---|
-| `lint` | `lint:bash-syntax` | Yes | `bash -n` over `bin/*`, `bin/tests/*.sh`, and `evals/*.sh` (excluding `*.awk` and `*.txt`); also enforces three additional CI bans -- a duplicate EDM-HELP sentinel-extractor, a hardcoded `sed` line-range `--help` extraction, and a duplicate Mermaid entity-walk literal -- see `.gitlab-ci.yml` for the exact ban list |
-| `lint` | `lint:artifacts` | Yes | `edm-lint-artifacts --all` (the 60,000 ms CI budget above, not the commit-path budget) |
-| `lint` | `lint:grants` | Yes | `edm-check-grants` -- the four-source grant/instruction contract |
-| `lint` | `lint:vocabulary` | Yes | `edm-check-vocabulary` -- the abolished-vocabulary and override-flag backstop (EDMV3-T30) |
-| `lint` | `lint:file-type-ban` | Yes (blocking since EDMV3-T57 AC10 -- carries no `allow_failure`) | Scans **git-tracked** files under `plugins/` for banned types (`.pptx`, `.docx`, `.DS_Store`) -- a developer's own untracked local artifact is never flagged. Also enforces the documented 100KB tracked-bytes budget on `plugins/edm/evals/` (EDMV3-T22 AC3) -- git-tracked files only; untracked eval output under `evals/runs/` is excluded -- so a new fixture or a bloated baseline capture cannot land silently. **Scope caveat (CA-463):** EDMV3-T22 AC3 states that budget over the *fixture* tree, but this job sums all of `plugins/edm/evals/` -- the driver and scorer scripts included; the two scopes are not the same set and the divergence is unresolved. **Do not hand-maintain a byte figure here (CA-547):** the job's own emitted line is the single source of truth for whether HEAD is over budget; reproduce it locally with `git ls-files -- plugins/edm/evals \| xargs wc -c \| tail -1` (never `du`, which measures disk blocks, not tracked bytes) |
-| `lint` | `lint:shellcheck` (EDMV3-T61) | Yes | `shellcheck` over `bin/*`, `bin/tests/*.sh`, and `evals/*.sh` (excluding `*.awk` and `*.txt` -- `edm-mermaid-rules.awk` is plain awk source, never bash, the same reason `lint:bash-syntax` above excludes it), scoped to the unquoted-expansion class of findings (SC2086/SC2046/SC2048/SC2068) -- pre-existing style findings outside that class are out of scope |
-| `lint` | `lint:hooks-shell` (CA-380) | Yes | Extracts every command-type hook string from `hooks/hooks.json` and runs `bash -n` plus scoped `shellcheck --shell=sh` over each -- the only job that lints the plugin's most privileged shell surface (the git-commit and gate hooks). Extraction is an **indexed `jq` walk** (`[...][$n].command`, one temp file per ordinal) rather than a delimited read loop: the loop bound is jq's own command-hook total, so the count cross-check is structural, and the job body stays POSIX-`sh`-safe. `read -d` (the previous NUL-delimited extraction) is a bash extension that `dash` rejects, and a rejected `read` in a loop condition zeroes the loop silently instead of erroring -- which would have failed this job while naming the wrong cause, since nothing in `.gitlab-ci.yml` chooses the runner's script-stage interpreter (CA-474) |
-| `lint` | `lint:pattern-library-contract` (EDMV3-T56) | Yes | Enforces the Living-Library four-`##`-heading contract (`docs/audit-patterns/README.md Sec."Living-Library Contract"`) over every `docs/audit-patterns/*.md` except the two exempt documents (`README.md`, the contract itself; `SOURCES.md`, the provenance document): exactly four `##` headings, in the fixed order `## Top Recurring Findings`, `## Anti-Patterns`, `## Pre-Flight Checklist`, and a fourth matching `^## What .*Looks Like$`, with no `###` heading appended under the fourth section (the orphan-append case). This is the authoritative copy of the check; the smoke aggregator's twin in `test:smoke` also exercises the negative cases. It lives in `lint` rather than `test` because it is cheap and should fail fast |
-| `test` | `test:smoke` | Yes | `bash plugins/edm/bin/tests/run-all.sh` -- the single aggregator invocation; no suite is enumerated in the pipeline file, so a new `*-smoke.sh` suite runs in CI automatically (this is where `wave7-smoke.sh`'s help-completeness case, EDMV3-T61 AC2/AC13, runs) |
-| `test` | `test:smoke-bash32` (EDMV3-T61) | Yes | The same `run-all.sh` aggregator run a second time under a pinned `bash:3.2` image, proving the bash-3.2 compatibility constraint (EDMV3-91/106) end-to-end rather than only asserting it by grep |
-| `test` | `test:state-validate` | Yes | `edm-state validate` across every tracked, non-archived initiative; informational anomalies are reported, a blocking anomaly fails the job |
-| `validate` | `validate:manifest` | Yes (tier 1) | Deterministic `jq`-only check: every skill/agent on disk is declared in `.claude-plugin/marketplace.json` and vice versa, every `SKILL.md`/agent frontmatter block parses, every declared tool name is well-formed |
-| `validate` | `validate:plugin-cli` | No (`allow_failure: true`, tier 2) | `claude plugin validate plugins/edm/`, compared against the committed warning-count baseline in `.gitlab/edm-validate-baseline.txt`; skips cleanly if the `claude` CLI isn't in the runner image |
-| `eval` | `eval:nightly` | No (`allow_failure: true`) | Runs the headless eval driver (`plugins/edm/evals/run-eval.sh`) against the `tiny-svc` fixture, then scores the run (`evals/score-artifacts.sh`) and compares the result against the committed baseline via `bin/edm-compare-eval` -- the threshold comparison lives here in CI, not in the scorer (EDMV3-T39 AC2), so a scoring change and a threshold change stay separately reviewable; exit 3 means no baseline is committed yet and is reported, never silently treated as a pass. A partial run (run-eval.sh exit 4) continues through scoring and comparison so the stub scores.json's `complete: false` is visibly refused by `edm-compare-eval`, exit 2 -- CA-490 reordered that check to run before the baseline-existence check, so the refusal fires even with no baseline committed yet (D62/CA-106: no baseline exists yet, but that no longer preempts this refusal) -- and the job still fails at the end either way (CA-452). `when: manual` on a normal pipeline; runs automatically on a scheduled nightly pipeline. Skipped outright (not failed) when `ANTHROPIC_API_KEY` is unset. Run artifacts under `evals/runs/` are kept 30 days |
-
-**Job graph (EDMV3-T67 AC10).** The four checks above split across `lint:bash-syntax`,
-`lint:artifacts`, `lint:grants` and `lint:vocabulary` were previously four sequential script lines
-inside a single `lint:shell-and-artifacts` job. That cost twice over: their wall-clock times
-summed, and because the block ran under `set -e` the first failure suppressed the results of every
-check after it. Every `lint` job now carries `needs: []`, which starts it at pipeline start rather
-than at the head of its stage, so the runner fleet executes all eight concurrently and each
-reports its own pass/fail. The three `test` jobs carry `needs: ["lint:bash-syntax"]` -- a syntax
-error means the suite cannot run meaningfully, while the artifact, grant and vocabulary checks are
-orthogonal to whether it passes and must not hold it up. The pinned image and shared rule set live
-in one `.alpine_edm` anchor so a digest refresh stays a single-line change across all eleven
-consumers. (Both counts here and the anchor comment's own count in `.gitlab-ci.yml` are pinned by
-computed wave7-smoke.sh assertions -- CA-460: `lint:hooks-shell` landed with none of the three
-count sites swept, found independently by three lenses in round 8.)
-
-All job images are pinned by digest (`@sha256:...`) rather than a floating tag, with one
-documented, explicitly authorized exception: `test:smoke-bash32`'s `bash:3.2` image (EDMV3-T61,
-re-confirmed EDMV3 wave-A QC remediation) is not yet digest-pinned -- no registry-connected
-environment was available to capture its digest while that ticket was implemented (the same
-constraint that left the alpine/node digests as placeholder captures, per the header note at the
-top of `.gitlab-ci.yml`). It MUST be pinned to a real `@sha256:...` digest, using the digest
-refresh procedure documented at the top of `.gitlab-ci.yml`, before this job is first relied on
-against a live GitLab runner fleet.
-
-**macOS runner (EDMV3-T61 AC12, named exception taken):** CI does not currently exercise the
-suites on a macOS runner in addition to Linux -- no macOS runner class is confirmed registered
-against this project's GitLab runner fleet, and (unlike a Docker Hub image) a macOS runner is
-real hardware that must already be provisioned and tagged, not something a pipeline-file edit can
-create. The macOS/Linux divergence points this would have caught (`sed -i`, `grep -P` family,
-`stat -c`/`stat -f`, and the `shasum`/`sha256sum` choice) are instead covered by targeted
-assertions: `bin/tests/wave7-smoke.sh`'s "T61 AC11" case greps for every divergence point outside
-its one documented detection branch, and `bin/tests/_harness.sh`'s `_harness_hash_file` already
-branches on `shasum` vs `sha256sum` availability. Revisit adding a macOS runner once one is
-confirmed available in this project's fleet.
 
 ## Related documentation
 

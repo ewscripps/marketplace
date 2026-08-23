@@ -287,11 +287,13 @@ Like` (`srd-audit.md:101`, `ticket-audit.md:95`), `## What a Passing QC Round Lo
       last section's expected boundary in a way that would constitute an orphan append.
       Verify: append a stray `### Orphan` after the last section in a scratch copy and confirm the
       suite fails.
-- [ ] AC6 (runs after every `update-patterns` invocation in the suite): the test runs in the CI lint
-      stage and after every `update-patterns` invocation in the smoke suite, so a regression in
-      EDMV3-T54's insertion logic is caught immediately rather than at the next audit.
+- [ ] AC6 (runs after every `update-patterns` invocation in the suite): the test runs via
+      `bin/tests/run-all.sh` and after every `update-patterns` invocation in the smoke suite, so a
+      regression in EDMV3-T54's insertion logic is caught immediately rather than at the next audit
+      (this ticket originally also said "runs in the CI lint stage", EDMV3-T21; that pipeline was
+      later removed, D63).
       Verify: `grep -n 'four-heading\|contract check' plugins/edm/bin/tests/wave7-smoke.sh` shows the
-      call following each `update-patterns` case, and `grep -n 'run-all.sh' .gitlab-ci.yml`.
+      call following each `update-patterns` case.
 - [ ] AC7 (the manual edits this initiative made are covered): every manual edit made by this
       initiative to a pattern document adds `###`-level content under an existing `##` heading only,
       and after every wave `grep '^## '` over each of the five library documents returns exactly the

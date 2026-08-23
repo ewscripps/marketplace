@@ -114,9 +114,8 @@ readonly _P95_SAMPLE_COUNT=20
 # ---- --self-test (G35/CA-311): the perl-lookup fallback, _p95's nearest-rank formula and the
 # shipped sample count had ZERO covering assertions anywhere -- any of the three could be
 # silently reverted with every suite in run-all.sh staying green, since timing.sh is not
-# discovered there (deliberate, CA-328 -- it is not a *-smoke.sh file and its bash-3.2-sensitive
-# constructs are never exercised by test:smoke-bash32). This mode is likewise not auto-discovered
-# by anything; run it by hand: bash bin/tests/timing.sh --self-test.
+# discovered there (deliberate, CA-328 -- it is not a *-smoke.sh file). This mode is likewise
+# not auto-discovered by anything; run it by hand: bash bin/tests/timing.sh --self-test.
 self_test() {
   local failures=0 assertions_run=0
 

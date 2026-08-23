@@ -65,9 +65,8 @@
 # then hands the scan to this worktree-reading scanner -- so a violation staged and then fixed
 # unstaged commits clean (the fix never got re-staged, but the worktree file is clean), and
 # conversely an unstaged violation anywhere else in the same initiative's tree can block an
-# otherwise-clean staged commit. The blocking `lint:artifacts --all` CI job scans the actual
-# committed checkout and still catches the escaped case -- this is a lost fast local gate, not an
-# unguarded merge path.
+# otherwise-clean staged commit. `edm-lint-artifacts --all` remains available as a manual
+# full-repo sweep against the actual committed checkout if the escaped case is ever suspected.
 # EDM-HELP-END
 set -euo pipefail
 

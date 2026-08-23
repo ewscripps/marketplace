@@ -253,9 +253,8 @@ fi
 # until now nothing else exercised the seven branches that classify a suite's output as
 # PASS/FAIL/CRASH, detect zero-assertion runs, detect a missing summary, check the
 # minimum-suite-count floor, or check for a missing preferred suite. run-all.sh's exit code IS
-# the verdict of the two blocking CI jobs (test:smoke, test:smoke-bash32) -- if this accounting
-# silently inverted, every suite result in the pipeline would become unreliable with nothing to
-# detect it.
+# the authoritative pass/fail verdict for the whole plugin -- if this accounting silently
+# inverted, every suite result would become unreliable with nothing to detect it.
 echo
 echo "CA-146 -- run-all.sh's PASS/FAIL/CRASH/missing-summary/floor accounting"
 

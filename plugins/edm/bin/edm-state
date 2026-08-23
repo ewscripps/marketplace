@@ -100,9 +100,8 @@ die() {
 # That is reachable with no user action. `.edm-state.json` is a committed, shared artifact by
 # design (see CLAUDE.md, "State is in the project, not the plugin"), the SessionStart hook runs
 # `edm-state session-start` on every session, and it globs every state file under the SRD root.
-# Cloning or pulling a repository is enough. The blocking `test:state-validate` CI job reaches the
-# same sinks via `edm-state validate`, so a merge request touching only a JSON data file would get
-# code execution as the runner user.
+# Cloning or pulling a repository is enough -- a merge touching only a JSON data file would get
+# code execution the next time anyone opens a session in the project.
 #
 # cmd_set validates these fields on WRITE; nothing validated them on READ, and a state file can
 # arrive from git, a merge conflict, or a hand edit without ever passing through cmd_set.
@@ -5444,9 +5443,8 @@ pattern_target_heading_for() {
 # Prints the 1-based line number the new entry must be inserted BEFORE, so the entry lands
 # inside the target `##` section and never past the document's fourth-section content boundary
 # (README.md: "Insertion never lands past the fourth section or at end-of-file"; enforced by
-# bin/tests/wave7-smoke.sh's _t56_four_heading_contract_check and by .gitlab-ci.yml's
-# lint:pattern-library-contract job, both of which fail on any `###` heading appearing after the
-# last `##` section boundary).
+# bin/tests/wave7-smoke.sh's _t56_four_heading_contract_check, which fails on any `###` heading
+# appearing after the last `##` section boundary).
 #
 # Walks forward from the target heading to the next `^## ` line -- that is the section boundary
 # -- then backs up over the trailing blank lines and the `---` rule these documents use to

@@ -45,7 +45,7 @@ run somewhere outside the plugin source tree (see "Where committed run artifacts
 oldest first. Override the count with `EDM_EVAL_KEEP_RUNS`; a non-numeric value falls back to
 the default of 10, and `0` is clamped to `1` with a warning on stderr (CA-443: `0` otherwise
 selected every run-shaped directory *including the one the invocation had just written*, and the
-cleanup trap deleted it, leaving CI green with no eval output at all). Pruning runs on **every**
+cleanup trap deleted it, leaving a green result with no eval output at all). Pruning runs on **every**
 exit path -- success, a partial run (exit 4), and an interrupted run (SIGINT/SIGTERM/SIGHUP) --
 via the driver's cleanup/EXIT trap, not only on success (G54): a failed or killed run previously
 accumulated its full run directory, raw `claude -p` payloads included, forever. The run directory
@@ -153,9 +153,9 @@ the only tree the three phases were ever expected to touch. A clean run prints
 | Code | Meaning |
 |---|---|
 | 0 | The run reached the end of the audit-srd phase and containment is clean. **Not** a quality verdict -- run `score-artifacts.sh` separately for that. |
-| 1 | Reserved for the scorer/CI comparison (`score-artifacts.sh` and its caller, EDMV3-T23/EDMV3-T39). `run-eval.sh` never emits this itself. |
+| 1 | Reserved for the scorer/comparison caller (`score-artifacts.sh` and `bin/edm-compare-eval`, EDMV3-T23/EDMV3-T39). `run-eval.sh` never emits this itself. |
 | 2 | A usage or environment error: missing `ANTHROPIC_API_KEY`, a missing required binary, bad flags, an invalid `EDM_EVAL_PHASE_TIMEOUT_SECONDS` (CA-444), a provisioning failure before any phase started, or a containment violation. |
-| 4 | A partially completed run: at least one phase did not finish (timeout, non-zero exit, or a missing expected artifact), so the run never reached the final phase. `run.json` and a stub `scores.json` are written with `complete: false`. `eval:nightly` does **not** abort on exit 4 (CA-452) -- it continues through scoring and the baseline comparison so `bin/edm-compare-eval` visibly refuses the `complete: false` candidate by name, then fails the job anyway. |
+| 4 | A partially completed run: at least one phase did not finish (timeout, non-zero exit, or a missing expected artifact), so the run never reached the final phase. `run.json` and a stub `scores.json` are written with `complete: false`. Do not treat exit 4 as a reason to skip scoring/comparison (CA-452) -- run `score-artifacts.sh` then `bin/edm-compare-eval` anyway so the `complete: false` candidate is visibly refused by name, rather than silently discarded. |
 
 ## Lint policy
 
@@ -165,8 +165,7 @@ non-ASCII text or malformed Mermaid inside `planning.md`, `srd.md`, `architectur
 
 **Nothing lints them automatically, though.** `run-eval.sh` contains no reference to
 `edm-lint-artifacts` -- it provisions, runs three phases, and checks containment, and that is all.
-Neither does the `eval:nightly` CI job, which runs the driver, then the scorer, then
-`bin/edm-compare-eval`. To lint a run, invoke it by hand:
+Neither does the scorer or `bin/edm-compare-eval`. To lint a run, invoke it by hand:
 
 ```bash
 bash plugins/edm/bin/edm-lint-artifacts --path plugins/edm/evals/runs/<run-dir>
@@ -246,8 +245,8 @@ jq -e '. as $r | ([$r.dimensions[].score | select(. != null)] | add) as $sum
 **The scorer emits scores only.** It performs no baseline comparison of any kind and never
 exits non-zero on a low (or entirely null) score -- exit 0 whenever a score was produced,
 exit 2 only on a usage or environment error (missing `jq`, a missing run directory, a
-missing `vague-ac-patterns.txt`). The pass/fail decision belongs to the CI job that consumes
-`scores.json` (EDMV3-T39, srd.md EDMV3-52), not to this script.
+missing `vague-ac-patterns.txt`). The pass/fail decision belongs to `bin/edm-compare-eval`,
+the script that consumes `scores.json` (EDMV3-T39, srd.md EDMV3-52), not to this script.
 
 ### `--describe`
 
@@ -267,24 +266,20 @@ checks below), then delegates. The exit code and refusal wording are `edm-compar
 own: refuses (exit 2, naming the mismatch) when the two files' `scorer_version` differ, or
 when their `dimensions_scored` differ -- comparing a five-dimension run against a
 six-dimension run produces a delta with no meaning. When both match, it prints a
-per-dimension and total delta and exits 0 (or exit 1 on a threshold regression). Wiring this
-into an automatic CI comparison against `baseline/scores.json` is EDMV3-T39's job -- and CI
-calls `bin/edm-compare-eval` directly rather than this flag, per `.gitlab-ci.yml`'s
-`eval:nightly` job.
+per-dimension and total delta and exits 0 (or exit 1 on a threshold regression). Comparing a
+run against `baseline/scores.json` is done by calling `bin/edm-compare-eval` directly rather
+than via this flag.
 
 ### Cost and duration
 
 One `run-eval.sh` run costs roughly $10-25 in Claude API spend at opus (measured 2026-07-27: plan $1.49, srd $5.42, audit-srd exceeds $6 -- it spawns the auditor subagents; three phases, each capped by
 `EDM_EVAL_MAX_BUDGET_USD`, default $15 per phase) and takes 30-60 minutes wall-clock (measured 2026-07-27: the audit-srd phase alone ran 913s) depending
 on model load, within the default 2700-second per-phase timeout. `score-artifacts.sh`
-itself costs nothing -- it makes no network call. **"CI will catch it" is not a valid reason
-to skip running this locally before a prompt change merges**: the eval job is `when: manual`
-on merge requests and only automatic on a scheduled nightly run against the default branch
-(see `plugins/edm/CLAUDE.md`'s CI table), so a prompt regression introduced and merged
-between two nightly runs will not be caught by CI at all until the next scheduled run --
-possibly after several more prompt changes have landed on top of it, at which point
-isolating which change regressed the score is much harder than it would have been the day
-it happened.
+itself costs nothing -- it makes no network call. There is no automated schedule that runs
+this for you: a prompt regression is only caught if a human runs `run-eval.sh` locally before
+merging the change that introduced it. The longer that run is deferred, the more prompt
+changes may land on top of it, making it progressively harder to isolate which change
+regressed the score.
 
 ## What this fixture is (and isn't)
 
@@ -292,10 +287,10 @@ it happened.
 (see `fixtures/tiny-svc/expected.json` and `fixtures/tiny-svc/README.md`). It requires no network
 access, no external services, and no dependency on the marketplace repository's own content. The
 fixture plus `expected.json` stays under 100KB. Note the scope difference (CA-463): EDMV3-T22 AC3
-states that budget over the *fixture* tree, but the `lint:file-type-ban` job that enforces it sums
-git-tracked bytes over **all** of `plugins/edm/evals/` -- the driver and scorer scripts included,
-untracked output under `runs/` excluded. Measure with
-`git ls-files -- plugins/edm/evals`, never `du`, or the number will not be the one CI computes.
+states that budget over the *fixture* tree specifically, not over all of `plugins/edm/evals/` --
+the driver and scorer scripts included, untracked output under `runs/` excluded. Nothing enforces
+this automatically; measure git-tracked bytes with `git ls-files -- plugins/edm/evals | xargs wc
+-c | tail -1`, never `du`, which measures disk blocks rather than tracked bytes.
 
 `initiative.txt` is the frozen Phase 1 input. Its header records a `version:` line; both files
 change together, and neither changes without a recorded version bump, because runs are compared

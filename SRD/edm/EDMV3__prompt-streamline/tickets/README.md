@@ -131,7 +131,7 @@ This initiative has no server and no deployment surface, so the "Logging and Obs
 | New metrics added | `edm-state metrics-report` (EDMV3-71, EDMV3-75). |
 | Health check updated | `edm-state validate` and `state_anomalies` (EDMV3-118). |
 | Migrations reversible | State-schema migration is `edm-state migrate-schema` (EDMV3-112). It never lowers `schema_version`, so "reversible" is satisfied by the documented downgrade path in `CHANGELOG.md` (EDMV3-98) rather than by a down-migration. |
-| CI passes | `.gitlab-ci.yml` (EDMV3-23), landing in wave A and blocking merge from that point on. |
+| CI passes | `.gitlab-ci.yml` (EDMV3-23) landed in wave A; later removed (D63, 2026-08-23) in favor of EDM's own local enforcement (git-commit hook, code-audit methodology). Equivalent: `bash plugins/edm/bin/tests/run-all.sh` passes. |
 
 ---
 

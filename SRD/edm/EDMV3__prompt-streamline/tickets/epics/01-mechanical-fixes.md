@@ -82,10 +82,9 @@ is the file (`wave6-smoke.sh`) that EDMV3-T14 and EDMV3-T16 later extend.
       Verify: `bash -n plugins/edm/bin/edm-init && bash -n plugins/edm/bin/tests/wave6-smoke.sh`
       then `grep -nE 'declare -A|mapfile|readarray|\$\{[a-zA-Z_]+\^\^\}|\$\{[a-zA-Z_]+,,\}' plugins/edm/bin/edm-init`
       returns zero results.
-- [ ] AC9: the new suite is registered in the CI test stage.
-      Verify: `grep -n 'run-all.sh' .gitlab-ci.yml plugins/edm/bin/tests/run-all.sh` returns a hit
-      in each file (both land in EDMV3-T20 and EDMV3-T21 -- if this ticket merges first, the
-      registration is added by those tickets and this AC is checked at wave close).
+- [ ] AC9: the new suite is discovered by `bin/tests/run-all.sh`'s auto-discovery (this ticket
+      originally registered it in a CI test stage, EDMV3-T21; that pipeline was later removed, D63).
+      Verify: `bash plugins/edm/bin/tests/run-all.sh` output lists the new suite by name.
 
 ### Technical Notes
 
@@ -356,10 +355,11 @@ grant, the gate protocol is physically un-runnable in four skills. The fifth
       (30) -- so the 26-versus-30 drift cannot recur.
       Verify: `bash plugins/edm/bin/tests/wave7-smoke.sh` (case "documented agent count matches
       disk").
-- [ ] AC10 (bash 3.2 and CI): the script uses no associative arrays and no `mapfile`, passes
-      `bash -n`, and runs in the CI lint stage and in the smoke aggregator.
+- [ ] AC10 (bash 3.2): the script uses no associative arrays and no `mapfile`, passes
+      `bash -n`, and runs in the smoke aggregator (this ticket originally also registered it in a CI
+      lint stage, EDMV3-T21; that pipeline was later removed, D63).
       Verify: `bash -n plugins/edm/bin/edm-check-grants` and
-      `grep -n 'edm-check-grants' .gitlab-ci.yml plugins/edm/bin/tests/run-all.sh`.
+      `grep -n 'edm-check-grants' plugins/edm/bin/tests/run-all.sh`.
 - [ ] AC11: `claude plugin validate` passes with no new warnings after the four frontmatter edits.
       Verify: `claude plugin validate plugins/edm/`.
 

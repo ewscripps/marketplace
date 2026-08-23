@@ -74,9 +74,10 @@ EDMV3 closes these gaps. It has three explicitly user-mandated changes and seven
 
 Around those, the initiative moves the load-bearing invariants out of prose and into `bin/edm-state`: permission-`ask`
 rules on `approve-gate` and `archive`, artifact-verified `phase-complete`, lifecycle-verified `archive`, kernel-side
-gate enforcement in `phase-start` and `gate-check`, and a `cmd_set` key allowlist. It puts a GitLab CI pipeline and a
-fixture eval in front of the only genuinely risky change (collapsing the 645-line orchestrator into a dispatcher of at
-most 300 lines that invokes phase skills via the Skill tool). It gives findings a JSONL data representation with a
+gate enforcement in `phase-start` and `gate-check`, and a `cmd_set` key allowlist. It put a GitLab CI pipeline (later
+removed, D63 -- EDM's own local enforcement made it redundant) and a fixture eval in front of the only genuinely risky
+change (collapsing the 645-line orchestrator into a dispatcher of at most 300 lines that invokes phase skills via the
+Skill tool). It gives findings a JSONL data representation with a
 `confidence` field so recall stops being suppressed by blind corroboration filtering. It makes the economics honest. It
 stops the pattern library from appending unreviewed stubs past its own four-heading contract. And it deletes a 708KB of
 binaries, a dead hook, a no-op function, a dead enum value, and a manual regression ritual that should always have been
@@ -135,7 +136,7 @@ property, and streamline the prompt surface so that every future improvement lan
 |------|-----------------------------------------------|------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | WS1  | Mechanical fixes                              | E1   | `edm-init` branch correction, **13** agent tool grants, README paths and platform statement, three-source grant class check                                                                                                                                                                             |
 | WS2  | Enforcement kernel                            | E2   | Permission `ask` rules, `approve-gate code-audit`, `cmd_set` allowlist plus caller contract test, artifact-verified `phase-complete` (no force path), lifecycle-verified `archive` (no override), mode-derived gate and terminal-phase helpers, kernel-side gate enforcement, `schema_version` backfill |
-| WS3  | CI and fixture eval                           | E3   | `.gitlab-ci.yml`, lint `--all`, `plugins/edm/evals/` fixture initiative, mechanical scoring, baseline captured on wave-A code                                                                                                                                                                           |
+| WS3  | CI and fixture eval                           | E3   | `.gitlab-ci.yml` (built, then removed -- D63), lint `--all`, `plugins/edm/evals/` fixture initiative, mechanical scoring, baseline captured on wave-A code                                                                                                                                              |
 | WS4  | Structured findings and universal no-deferral | E4   | Per-lens JSONL with `confidence`, `findings-ledger.jsonl` plus deterministic `render-ledger`, `edm-state audit-converged`, P0+P1+P2 blocking set, mandatory `/edm:verify-runtime` PARTIAL closure, deterministic vocabulary sweep                                                                       |
 | WS5  | Orchestrator as dispatcher                    | E5   | Orchestrator to at most 300 lines, phase procedures live once, gate protocol written once, Step 0 preflight per phase skill, Skill-tool composition                                                                                                                                                     |
 | WS6  | Mermaid rule                                  | E6   | Canonical `CLAUDE.md` section, 11 named references, fourth lint violation class                                                                                                                                                                                                                         |
@@ -163,17 +164,16 @@ property, and streamline the prompt surface so that every future improvement lan
 
 EDMV3 is complete when all of the following hold:
 
-- [ ] All **Must Have** requirements have passing acceptance criteria, evidenced by a smoke test, a CI job, or a file:
-  line inspection recorded in the ticket pack QC report.
+- [ ] All **Must Have** requirements have passing acceptance criteria, evidenced by a smoke test or a file:line
+  inspection recorded in the ticket pack QC report.
 - [ ] The three-command bypass (`edm-init X` -> `edm-state set X code_audit_converged true` -> `edm-state archive X`)
   fails at the second command with a message naming `approve-gate`, and would fail at the third command on lifecycle
   grounds even if the second succeeded. Both are asserted by smoke tests.
 - [ ] A fresh `edm-init` run in a scratch git repo produces a state file whose `initiative_branch` equals
   `git rev-parse --abbrev-ref HEAD`, and `edm-state branch-check` exits 0 immediately afterward.
-- [ ] `.gitlab-ci.yml` runs green on the default branch: `bash -n` over `bin/`, all smoke suites, the deterministic `jq`
-  manifest-and-frontmatter validation, the agent-grant class check, the vocabulary check, the four-`##` contract check,
-  and `edm-lint-artifacts` over tracked artifact trees. `claude plugin validate` runs as the conditional second tier of
-  the validate stage (EDMV3-23).
+- [ ] `bash plugins/edm/bin/tests/run-all.sh` passes: `bash -n` over `bin/`, all smoke suites, the deterministic `jq`
+  manifest-and-frontmatter validation (`edm-check-grants`, `edm-check-vocabulary`), and `edm-lint-artifacts` over
+  tracked artifact trees. (EDMV3-23's CI pipeline was later removed, D63 -- these checks now run locally.)
 - [ ] The fixture eval produces a numeric score before and after the WS5 dispatcher refactor, and the after-score is at
   or above the wave-A baseline minus the observed run-to-run variance recorded in EDMV3-28, per the comparison in
   EDMV3-52.
@@ -348,7 +348,7 @@ flowchart TB
         LINT["edm-lint-artifacts -- 4 classes, class 4 flags a raw #59; inside Mermaid label text"]
         SMOKE["bin/tests smoke suites plus agent-grant class check"]
         EVAL["evals fixture initiative plus mechanical scoring"]
-        CI["GitLab CI runs lint, smoke, plugin validate, contract checks"]
+        CI["Local: git-commit hook plus bin/tests/run-all.sh run lint, smoke, contract checks (no separate CI, D63)"]
     end
 
     U -->|slash command| ORCH
@@ -578,7 +578,7 @@ thirteen agents cannot write the artifacts they are ordered to produce. Wave A, 
     - [ ] Each case asserts `edm-state branch-check TESTB` exits 0 after the run.
     - [ ] The scratch repository is created under a temp directory and removed on exit, including on failure, so the
       test leaves no residue in the developer's tree.
-    - [ ] The test is registered in the CI test stage (EDMV3-23).
+    - [ ] The test is discovered by `bin/tests/run-all.sh`'s auto-discovery (EDMV3-23's CI test stage was later removed, D63).
 - **Dependencies**: EDMV3-01
 - **Target Components**: `plugins/edm/bin/tests/wave6-smoke.sh` (new), `plugins/edm/bin/tests/_harness.sh`
 
@@ -740,7 +740,7 @@ thirteen agents cannot write the artifacts they are ordered to produce. Wave A, 
       (`bin/edm-lint-artifacts:59-63`), `build_ignore_set` (`:69-109`) and `is_ignored_line` (`:112`); the same
       instruction applies to EDMV3-15, EDMV3-43 and EDMV3-79, so the four new checks share one reporting idiom rather
       than four near-copies.
-    - [ ] The script runs in the CI check stage (EDMV3-23) and in the smoke aggregator.
+    - [ ] The script runs in the smoke aggregator (EDMV3-23's CI check stage was later removed, D63).
     - [ ] A smoke assertion ties the documented agent count to reality: the number of agents named in `CLAUDE.md` and in
       this SRD equals `ls plugins/edm/agents/*.md | wc -l`, so the 26-versus-30 drift cannot recur (EDMV3-97 does the
       same for subcommands).
@@ -1052,7 +1052,8 @@ makes it urgent. Wave A.
       documented ignore list rather than by a loose regex.
     - [ ] The test also asserts the inverse direction as a warning, not a failure: allowlisted keys with no caller
       anywhere are reported so dead schema fields become visible.
-    - [ ] The test runs in CI (EDMV3-23) and fails the pipeline on a miss.
+    - [ ] The test runs via `bin/tests/run-all.sh` and fails the suite on a miss (EDMV3-23's CI pipeline was later
+      removed, D63).
     - [ ] Running the test at the moment EDMV3-13 lands produces zero misses.
 - **Dependencies**: EDMV3-13
 - **Target Components**: `plugins/edm/bin/tests/wave7-smoke.sh` (new), `plugins/edm/bin/edm-state`, all skill and agent
@@ -1321,7 +1322,7 @@ makes it urgent. Wave A.
       `check_state_unchanged`) rather than hand-rolling scratch-repo setup, and the suite puts `plugins/edm/bin` on
       `PATH` because `bin/edm-init:139` calls `edm-state` and `:60` calls `edm-validate-prefix` **by bare name**, unlike
       the existing suites which invoke `"$EDM_STATE"` by absolute path.
-    - [ ] All cases run in CI (EDMV3-23).
+    - [ ] All cases run via `bin/tests/run-all.sh` (EDMV3-23's CI pipeline was later removed, D63).
 - **Dependencies**: EDMV3-12, EDMV3-13, EDMV3-14, EDMV3-16, EDMV3-17, EDMV3-114, EDMV3-115, EDMV3-119. The PARTIAL case
   additionally depends on EDMV3-18 and lands in wave B.
 - **Target Components**: `plugins/edm/bin/tests/wave6-smoke.sh` (new), `plugins/edm/bin/tests/_harness.sh`
@@ -1521,6 +1522,14 @@ dispatcher refactor. Wave A.
 
 #### EDMV3-23: GitLab CI pipeline
 
+> **SUPERSEDED (D63, 2026-08-23).** This requirement was delivered as specified below, then the pipeline it
+> mandated was deliberately removed by an explicit human decision: EDM's own local mechanisms (the `PreToolUse`
+> git-commit hook running `edm-lint-artifacts`/`edm-check-grants`/`edm-check-vocabulary`, and the 11-lens
+> code-audit methodology auditing this plugin's own code every round) already provide the enforcement this
+> requirement existed to add, making a separate CI pipeline redundant duplication. The requirement text below is
+> preserved as the historical record of what was built and why; it no longer describes current state. See D63 for
+> what was removed and what was kept.
+
 - **Priority**: Must Have
 - **Description**: F10. There is no CI. The four smoke suites (76/76 passing) run only when someone remembers;
   `CLAUDE.md` "Testing changes" is a manual checklist. The plugin that mandates test coverage for its users has none for
@@ -1656,9 +1665,9 @@ dispatcher refactor. Wave A.
       permission posture (`--permission-mode` and the `--allowedTools` set, chosen so the run cannot mutate anything
       outside the scratch tree), the plugin directory, and a per-phase timeout after which the run is abandoned and
       scored as a failure.
-    - [ ] **Credentials are named**: the driver requires `ANTHROPIC_API_KEY` in the environment. Run locally without it,
-      the driver exits with a usage message naming the variable; run in CI without it, the job skips rather than fails
-      (EDMV3-23).
+    - [ ] **Credentials are named**: the driver requires `ANTHROPIC_API_KEY` in the environment (or an authenticated
+      `claude` CLI). Run without it, the driver exits with a usage message naming the requirement. (The CI-skip-vs-fail
+      clause this AC originally specified is moot: EDMV3-23's CI pipeline was later removed, D63.)
     - [ ] The driver writes all produced artifacts to a run directory named by timestamp and git SHA.
     - [ ] The driver records the model, the plugin version, and the token and cost totals for the run.
     - [ ] The driver cleans up the scratch tree on exit, including on failure, and never mutates the developer's working
@@ -2359,7 +2368,8 @@ than five prompt restatements. Wave B.
       at `:387` is renamed to match. Any smoke assertion on either old string is updated in the same MR.
     - [ ] The checker sources or mirrors `bin/edm-lint-artifacts`' `report_violation` and ignore-marker helpers rather
       than re-deriving the file walk (EDMV3-07).
-    - [ ] The checker is bash 3.2 compatible and runs in the CI lint stage (EDMV3-23).
+    - [ ] The checker is bash 3.2 compatible and runs via `bin/tests/run-all.sh` (EDMV3-23's CI lint stage was later
+      removed, D63).
     - [ ] Running the checker after the sweep returns exit 0 over the full scan scope.
 - **Dependencies**: EDMV3-38
 - **Ships-with**: EDMV3-39, EDMV3-40 (the sweep's edit sites). Consumed by EDMV3-23.
@@ -2972,7 +2982,7 @@ independent of the dispatcher.
       positives and zero false negatives.
     - [ ] The test fails if any `valid/` file produces a violation. False positives are a release blocker, not a
       warning.
-    - [ ] The corpus test runs in CI (EDMV3-23).
+    - [ ] The corpus test runs via `bin/tests/run-all.sh` (EDMV3-23's CI pipeline was later removed, D63).
     - [ ] Any Mermaid diagram already committed under tracked `SRD/` trees is linted as part of `--all` and either
       passes or is corrected in the same MR.
 - **Dependencies**: EDMV3-56
@@ -3634,11 +3644,13 @@ is worse than no wiring because it implies a capability that does not exist. Wav
     - [ ] `plugins/edm/README.md` links to their new location so they remain discoverable.
     - [ ] `plugins/edm/.DS_Store` and `plugins/edm/skills/.DS_Store` are deleted from the index and the working tree.
     - [ ] `.DS_Store` is added to the repository `.gitignore`.
-    - [ ] A CI check asserts that no file matching `.DS_Store`, `*.pptx`, or `*.docx` exists anywhere under `plugins/`.
-      **This binds all six plugins in the marketplace, not only `edm`**, so the ticket records a clean pre-merge scan
-      across `git`, `jira`, `ada-tablo`, `web-cms`, `myday` and `edm` before the check becomes blocking (EDMV3-23).
-    - [ ] The same check asserts a total-directory-size ceiling for `plugins/edm/evals/` (EDMV3-25), so the tree this
-      initiative adds cannot quietly replace the 708KB it removes.
+    - [ ] ~~A CI check asserts that no file matching `.DS_Store`, `*.pptx`, or `*.docx` exists anywhere under
+      `plugins/`.~~ **Superseded, D63**: this AC's enforcement (`lint:file-type-ban`) was pure CI-pipeline glue with
+      no other caller, removed along with the pipeline. Re-scanning for these file types is now a manual check
+      (`git ls-files -- plugins | grep -E '\.DS_Store$|\.pptx$|\.docx$'`), not an automatic one. The move itself (this
+      ticket's other ACs) is unaffected.
+    - [ ] The `plugins/edm/evals/` directory-size budget (EDMV3-25) is likewise unenforced automatically now; see
+      `plugins/edm/CLAUDE.md`'s eval-budget note for the manual reproduction command.
     - [ ] The plugin directory size after the change is recorded in the merge request as evidence.
     - [ ] `claude plugin validate` passes after the move.
 - **Dependencies**: none
@@ -4251,6 +4263,9 @@ turn, a hook on the commit path, and a CI pipeline gating merges.
 ---
 
 #### EDMV3-103: CI pipeline duration budget
+
+> **SUPERSEDED (D63, 2026-08-23).** The pipeline this requirement budgeted was removed; see EDMV3-23's superseded
+> note and D63 for the rationale. The requirement text below is preserved as historical record.
 
 - **Priority**: Should Have
 - **Description**: A pipeline slow enough to be ignored is not a gate. The blocking stages must stay fast; the expensive

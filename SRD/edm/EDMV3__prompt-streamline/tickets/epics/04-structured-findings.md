@@ -866,13 +866,15 @@ would report clean while the policy was being taught at runtime.
       the file walk.
       Verify: `grep -n 'report_violation\|build_ignore_set' plugins/edm/bin/edm-check-vocabulary`.
 - [ ] AC10 (override-flag grep, negative): the repository-wide override-flag grep passes with the
-      documented carve-outs, asserted in CI.
+      documented carve-outs, asserted by `bin/tests/run-all.sh` (this ticket originally said "asserted in
+      CI"; that pipeline was later removed, D63).
       Verify: `grep -rn -- '--force\|--accept-partials' plugins/edm/bin plugins/edm/skills plugins/edm/agents | grep -v 'plugins/edm/bin/tests/' | grep -v vocabulary- | grep -v 'refused:'`
       returns zero results.
-- [ ] AC11 (bash 3.2 and CI): the checker is bash 3.2 compatible, passes `bash -n`, and runs in the
-      CI lint stage.
+- [ ] AC11 (bash 3.2): the checker is bash 3.2 compatible, passes `bash -n`, and runs as a standalone
+      check in `bin/tests/run-all.sh` (this ticket originally also registered it in a CI lint stage,
+      EDMV3-T21; that pipeline was later removed, D63).
       Verify: `bash -n plugins/edm/bin/edm-check-vocabulary` and
-      `grep -n 'edm-check-vocabulary' .gitlab-ci.yml`.
+      `grep -n 'edm-check-vocabulary' plugins/edm/bin/tests/run-all.sh`.
 - [ ] AC12 (clean after the sweep): running the checker after the sweep returns exit 0 over the full
       scan scope.
       Verify: `bash plugins/edm/bin/edm-check-vocabulary; echo "exit=$?"` prints `exit=0`.
