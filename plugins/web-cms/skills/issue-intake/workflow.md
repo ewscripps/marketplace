@@ -19,6 +19,13 @@
 
 **FILE MEMORY SCOPE:** This workflow stores classification state in a per-work-item file-memory directory. `$MEM/work-item.md` is the root (issue title, observed/expected behavior, and the `## Affected Areas` section built in I2); `$MEM/explorations/*.md` hold I2 codebase findings; `$MEM/signals.md` holds the code-evidence, classification signals, and final classification verdict; `$MEM/related-cards.md` holds relevant related Jira cards from I1. Compute `MEM` once with the recipe in `file-memory-protocol.md` §1 (`<work-item-key>` = the Jira key, or `issue-<slug>`); the directory is created after the I1 approval gate. All file content must be fully materialized into the Jira card (Bug path) or carried into requirements-intake (Missing Requirement path) before the session ends. See `file-memory-protocol.md` for schemas and the checkpoint/compaction contract.
 
+**SUB-AGENT NAME RESOLUTION:** This workflow refers to sub-agents by short name (`codebase-explorer`, `area-mapper`). The runtime registers them under different identifiers depending on how they are installed. Before the first sub-agent invocation, resolve each short name against the runtime's available-agents list and use the exact registered identifier:
+
+- If the short name appears verbatim in the list (agents deployed into the project's `.claude/agents/`), use it as-is.
+- If installed via the plugin, the registered identifier is `web-cms:<short-name>:<short-name>` — e.g. `codebase-explorer` → `web-cms:codebase-explorer:codebase-explorer`.
+- Never invent a partial form such as `web-cms:codebase-explorer` — it will not resolve. If an invocation fails with an "agent type not found" error, read the available-agents list in the error message, select the entry whose **final segment** equals the short name, and retry with that exact identifier.
+- Resolve the scheme once, then reuse it for every subsequent sub-agent invocation in the session.
+
 **TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
 
 - **File I/O (read, write, edit a known file):** Use native `Read`, `Write`, `Edit`.
@@ -296,12 +303,19 @@ Follow the path matching the confirmed classification from I4.
 
 |Field|Source|
 |---|---|
+|Project|User-confirmed at the Project selection gate below|
 |Issue Type|Bug|
 |Summary|Issue title from I0 (max 10 words, present-tense description of broken behavior)|
 |Description|Assembled per Bug Description Structure below|
 |Priority|Severity from I4B mapped to Jira priority|
 |Labels|Derived from affected area + "bug"|
 |Epic Link|Recommended epic (see below)|
+
+    **Project selection (new-card path only — skip when updating an existing card, whose project is fixed by its key):** Never guess the Jira project; an educated guess that is usually right still creates cards in the wrong space when it isn't. Before any other field confirmation:
+
+    1. Determine the recommended project key from the strongest evidence available: the project of the related work item this issue was reported against (e.g. a testing-found bug passed a `Related to: [PROJ-KEY]` reference), the project of material related cards in `$MEM/related-cards.md` (I1), or the project of an epic confirmed in I1. Call `jira_get_all_projects` to validate the candidate key and identify plausible alternates. If no evidence points to a project, work from that list alone.
+    2. Use `AskUserQuestion` (Header: `Jira Project`, Question: `Which Jira project should this bug be created in?`, Options: `<KEY> — <project name> (Recommended)` first with a description naming the specific evidence, then up to two alternates with their evidence; the user can type any other key via the auto-injected Other input). When there is no evidence-backed recommendation, present the most plausible projects from the list without a `(Recommended)` tag and say so plainly — do not manufacture a recommendation.
+    3. Record the confirmed key in `$MEM/work-item.md` frontmatter as `jira_project: <KEY>`. On resume, if `jira_project` is already recorded, use it without re-asking. Pass it as the `project_key` on `jira_create_issue` — never a key the user did not confirm.
 
     **Epic recommendation:** If an epic was already confirmed in I1, present it as the recommendation. If no epic was confirmed, search Jira for open epics in the same project that relate to the affected areas or the component where the bug was found. Use `AskUserQuestion` to confirm the epic (Header: `Epic Link`, Question: `Which epic should this bug be linked to?`, Options: `Use suggested epic: <KEY> (Recommended)` — link to the suggested epic, `Provide a different epic key` — type your preferred key using the Other input, `No epic` — leave this bug unlinked to an epic). Only set the Epic Link if the user selects the suggested epic or provides a different key via Other.
 

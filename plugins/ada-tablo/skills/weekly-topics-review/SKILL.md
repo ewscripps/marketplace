@@ -1,6 +1,6 @@
 ---
 name: weekly-topics-review
-description: Run weekly Ada Topics review for catch-all reduction. Guides CSV export, analyzes catch-all %, proposes topic improvements.
+description: Run weekly Ada Topics review for catch-all reduction. Guides CSV export, analyzes catch-all %, proposes and applies topic description edits via edit_agent_config.
 user-invocable: true
 allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/scripts/analyze_topics_report.py *), Bash(python3 ~/repos/ada-tablo-ops/scripts/analyze_catchall_conversations.py *), Bash(mkdir *), Bash(cp *), Bash(ls *), Read, Grep, Glob, AskUserQuestion, Skill
 ---
@@ -18,6 +18,10 @@ skill: "preflight"
 ```
 
 After preflight completes, all subsequent steps operate in `~/repos/ada-tablo-ops`.
+
+If this is the first `edit_agent_config` call of the session, call `get_improvement_guide()`
+once before proposing or applying any edit — its output stays in context for the rest of the
+session, so do not re-call it.
 
 ## Step 0: Load Context
 
@@ -148,6 +152,7 @@ For any topic improvements identified, use this EXACT format:
 ```markdown
 **Category name:** [verbatim from CSV]
 **Topic name:** [verbatim from CSV]
+**Topic ID:** [from list_entities(entity_type="topics") — needed for Step 6b]
 **Current description:** [copy from CSV or Ada UI]
 **Proposed description:**
 [Full text of new description, using the format:]
@@ -161,6 +166,36 @@ Key principles:
 - Reference other topics to reduce overlap ("Do not apply for X — use Category > Topic instead")
 
 Limit to 2-3 recommendations unless more are critical.
+
+## Step 6b: Apply Approved Recommendations via edit_agent_config
+
+Topic descriptions are UI-only entities but are now writable directly via MCP — do NOT
+deliver paste-into-UI instructions as the default path.
+
+1. **Discover the update schema**, if unfamiliar:
+   ```
+   edit_agent_config(entity_type="topic", operation="update")
+   ```
+   (call without `fields` to get the schema preview).
+
+2. **Apply with fields** to get a Confirm/Cancel preview:
+   ```
+   edit_agent_config(
+     entity_type="topic",
+     operation="update",
+     entity_id="<topic_id>",
+     fields={"description": "<proposed description from Step 6>"}
+   )
+   ```
+
+3. **Present the preview to the user** (use AskUserQuestion) — this entity type applies
+   immediately on confirm, there is no TESTING changeset for topics.
+
+4. **Only after explicit user confirmation**, re-call with `confirmed=true`. Never confirm on
+   the user's behalf.
+
+**Fallback:** if MCP write access is unavailable, deliver the Step 6 block formatted for
+manual paste into Settings > Topics in the Ada UI instead.
 
 ## Step 7: Update Weekly Review Notes
 
@@ -182,7 +217,7 @@ Append to `~/repos/ada-tablo-ops/reference/weekly_review_notes.md`:
 ## Step 8: Offer Next Steps
 
 1. **If recommendations ready:**
-   - Offer to format for Ada UI implementation
+   - Offer to apply via `edit_agent_config` (Step 6b) with explicit confirmation
    - Remind: Changes take effect immediately for future conversations
 
 2. **If deep-dive needed:**
@@ -217,11 +252,13 @@ Budget guidance: Use script analysis first, summaries for patterns, full transcr
 - Run analyze_topics_report.py first (free analysis)
 - Follow the exact recommendation format above
 - Use customer phrases from catch-all samples
+- Apply approved topic edits via `edit_agent_config`, with explicit user confirmation
 - Update weekly_review_notes.md with findings
 
 **DON'T:**
 - Propose topic changes without reading current descriptions
 - Skip the structured format (Category/Topic/Current/Proposed/Rationale)
 - Use generic descriptions without specific patterns
+- Call `edit_agent_config` with `confirmed=true` without the user's explicit sign-off
 - Forget to track changes in Implementation Log
 - Expect immediate results — allow 7 days for routing changes to take effect

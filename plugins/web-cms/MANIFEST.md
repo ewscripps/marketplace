@@ -26,7 +26,7 @@ INTAKE (creates Jira cards)          EXECUTION (works Jira cards)
                                          Pre-intake -- explores how to build or
                                          change something before requirements
 
-                                       /mr-creation (M0-M6)
+                                       /mr-creation (M0-M8)
                                          Standalone -- creates GitLab MR
 
                                        /test-doc-review [PROJ-123] (TD0-TD5)
@@ -37,6 +37,15 @@ INTAKE (creates Jira cards)          EXECUTION (works Jira cards)
 
                                        /document-card PROJ-123 (DC0-DC8)
                                          Standalone -- documents completed work
+
+                                       /project-onboarding [path] (O0-O6)
+                                         Standalone -- generates or refreshes
+                                         README, CONTRIBUTING, CONTEXT, CLAUDE,
+                                         and WORKFLOWS docs for AI-agent use
+
+                                       /compact-context
+                                         Standalone utility -- checkpoint the active
+                                         workflow session and prompt /compact
 ```
 
 ## Contract Between Tiers
@@ -64,28 +73,35 @@ The Jira card description is the interface between intake and execution:
 
 | Skill | Invocation | Phases | Input | Sub-agents Used |
 |-------|-----------|--------|-------|-----------------|
-| **task-card** | `/task-card PROJ-123` | T0-T13 | Task card description | codebase-explorer, area-mapper, plan-reviewer, implementation-reviewer, test-reviewer, documentation-reviewer |
-| **bug-card** | `/bug-card PROJ-123` | B0-B15 | Bug card description | codebase-explorer, area-mapper, plan-reviewer, implementation-reviewer, test-reviewer, documentation-reviewer |
-| **epic-card** | `/epic-card PROJ-123` | E0-E11 | Epic card description | codebase-explorer, area-mapper |
-| **code-review** | `/code-review PROJ-123` | CR0-CR11 | Code Review card description | review-analyst (4 or 5 parallel, depending on review type) |
+| **task-card** | `/task-card PROJ-123` | T0-T13 | Task card description | codebase-explorer, area-mapper, plan-reviewer, comment-reviewer, verification-runner, implementation-builder, implementation-reviewer, code-quality-reviewer, test-reviewer, documentation-reviewer |
+| **bug-card** | `/bug-card PROJ-123` | B0-B15 | Bug card description | codebase-explorer, area-mapper, plan-reviewer, comment-reviewer, verification-runner, implementation-builder, implementation-reviewer, code-quality-reviewer, test-reviewer, documentation-reviewer |
+| **epic-card** | `/epic-card PROJ-123` | E0-E11 | Epic card description | codebase-explorer, area-mapper, plan-reviewer, comment-reviewer, verification-runner (plus the full task-card set via E8 inline child execution) |
+| **code-review** | `/code-review PROJ-123` | CR0-CR11 | Code Review card description | review-analyst (4 or 5 parallel, depending on review type), comment-reviewer |
 | **implementation-discovery** | `/implementation-discovery` | D0-D5 | User's build/change goal | codebase-explorer, area-mapper |
-| **mr-creation** | `/mr-creation` | M0-M6 | User input + repo state | None |
+| **mr-creation** | `/mr-creation` | M0-M8 | User input + repo state | code-review-responder (M7) |
 | **test-doc-review** | `/test-doc-review [PROJ-123]` | TD0-TD5 | Optional Task/Bug Jira context + current repo state | test-reviewer, documentation-reviewer |
 | **manual-qa-plan** | `/manual-qa-plan PROJ-123` | Q0-Q4 | Task/Bug/Epic Jira context + related branch diff | manual-qa-reviewer |
-| **document-card** | `/document-card PROJ-123` | DC0-DC8 | Completed Task/Epic/Bug card | None |
+| **document-card** | `/document-card PROJ-123` | DC0-DC8 | Completed Task/Epic/Bug card | comment-reviewer |
+| **project-onboarding** | `/project-onboarding [path]` | O0-O6 | Target project repo state | codebase-explorer, area-mapper |
+| **compact-context** | `/compact-context` | — | Active work item's file memory | None |
 
 ## Agents
 
 | Agent | Purpose | Tool Access | Used By |
 |-------|---------|-------------|---------|
-| **codebase-explorer** | Codebase investigation. Reads Serena project memory as starting hints; writes its findings to one `explorations/<area>.md` file in the work item's memory directory; does not modify project files | Read, Write, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena project memory read (`list_memories`, `read_memory`) | requirements-intake R2, issue-intake I2, task-card T2, bug-card B3, epic-card E2, implementation-discovery D1 |
-| **area-mapper** | Crystallizes durable area knowledge from a session's exploration files into Serena project memory. Does not re-explore code, does not modify project files. Spawned in the background after each codebase-analysis phase to accumulate memory over time | Bash, `Glob`, `Read` (reads the work item's `explorations/*.md`), Serena project memory (`list_memories`, `read_memory`, `write_memory`, `edit_memory`) | requirements-intake R2, issue-intake I2, task-card T2, bug-card B3, epic-card E2, implementation-discovery D1 |
-| **implementation-reviewer** | Adversarial review of core implementation against plan/criteria before test/doc completion | Read, Glob, Grep, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`) | task-card T8, bug-card B10 |
-| **test-reviewer** | Completes automated test coverage and runs relevant test commands after implementation review | Read, Edit, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena symbol-aware writes (`replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol`, `rename_symbol`, `safe_delete_symbol`), Serena project memory (`test-commands.md`) | task-card T8, bug-card B10 |
-| **documentation-reviewer** | Completes inline and repository documentation and flags `/document-card` follow-up when needed | Read, Edit, Glob, Grep, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena symbol-aware writes (`insert_after_symbol`, `insert_before_symbol`, `replace_content`), Serena project memory (`documentation-conventions.md`) | task-card T8, bug-card B10 |
-| **plan-reviewer** | Reviews plan before implementation, including testing and documentation strategy | Read, Glob, Grep, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`) | task-card T4, bug-card B5 |
+| **codebase-explorer** | Codebase investigation. Reads Serena project memory as starting hints; writes its findings to one `explorations/<area>.md` file in the work item's memory directory; does not modify project files | Read, Write, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena project memory read (`list_memories`, `read_memory`) | requirements-intake R2, issue-intake I2, task-card T2, bug-card B3, epic-card E2, implementation-discovery D1, project-onboarding O2 |
+| **area-mapper** | Crystallizes durable area knowledge from a session's exploration files into Serena project memory. Does not re-explore code, does not modify project files. Spawned in the background after each codebase-analysis phase to accumulate memory over time | Bash, `Glob`, `Read` (reads the work item's `explorations/*.md`), Serena project memory (`list_memories`, `read_memory`, `write_memory`, `edit_memory`) | requirements-intake R2, issue-intake I2, task-card T2, bug-card B3, epic-card E2, implementation-discovery D1, project-onboarding O2 |
+| **implementation-builder** | Executes the approved implementation/fix plan in a dedicated context (the default T8/B10 build path). Loads the work item's `$MEM` files itself, applies changes with symbol-aware edits, and returns a `BUILD REPORT` with low-confidence areas and potential issues for the reviewers. Never commits, pushes, or touches Jira | Read, Write, Edit, Glob, Grep, Bash, Serena read tools, Serena symbol-aware writes (`replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol`, `rename_symbol`, `safe_delete_symbol`, `replace_content`), Serena memory read (`list_memories`, `read_memory`) | task-card T8, bug-card B10 |
+| **implementation-reviewer** | Adversarial review of core behavior, plan adherence, and caller integrity against plan/criteria before test/doc completion (conventions and pattern reuse are owned by `code-quality-reviewer`, which runs in parallel) | Bash, Read, Glob, Grep, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`) | task-card T8, bug-card B10 |
+| **code-quality-reviewer** | Single-concern review that conventions are followed and existing patterns/utilities are reused instead of reinvented. Runs in parallel with `implementation-reviewer`; shares the `review-checklist-code_quality.md` Serena memory with `review-analyst` so T8/B10 review and CR4 review enforce one standard | Bash, Read, Glob, Grep, Serena read tools, Serena project memory (`list_memories`, `read_memory`, `write_memory`, `edit_memory`) | task-card T8, bug-card B10 |
+| **test-reviewer** | Completes automated test coverage and runs relevant test commands after implementation review | Read, Write, Edit, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena symbol-aware writes (`replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol`, `rename_symbol`, `safe_delete_symbol`), Serena project memory (`test-commands.md`) | task-card T8, bug-card B10, test-doc-review TD3 |
+| **documentation-reviewer** | Completes inline and repository documentation and flags `/document-card` follow-up when needed | Bash, Read, Write, Edit, Glob, Grep, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena symbol-aware writes (`insert_after_symbol`, `insert_before_symbol`, `replace_content`), Serena project memory (`documentation-conventions.md`) | task-card T8, bug-card B10, test-doc-review TD4 |
+| **plan-reviewer** | Reviews implementation/fix plans and epic breakdown plans before execution, including testing and documentation strategy | Bash, Read, Glob, Grep, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`) | task-card T4, bug-card B5, epic-card E4 |
 | **review-analyst** | Specialist review for one category (4 or 5 parallel, depending on review type) | Read, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena project memory (`review-checklist-<category>.md`) | code-review CR4 |
 | **manual-qa-reviewer** | Translates Jira context and branch diffs into tester-friendly manual QA scenarios, prerequisites, expected results, regressions, and edge cases | Read, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`) | manual-qa-plan Q3 |
+| **comment-reviewer** | Reviews every drafted Jira comment against the phase's required heading and field outline before `jira_add_comment` is called | Bash, Read, Glob, Grep | every gated `jira_add_comment` (task-card T4/T5, T10, T12; bug-card B5/B6, B12, B14; epic-card E4/E5, E9, E10; code-review CR8; document-card DC8) |
+| **verification-runner** | Runs the full build, all tests, and all linters against the working tree; returns a per-category pass/fail verdict with failing-test excerpts | Bash, Read, Glob, Grep | task-card T7/T9 (and T11 in epic child mode), bug-card B8/B11, epic-card E8 (integration branch after each child merge) |
+| **code-review-responder** | Verifies an automated GitLab code-review bot's findings against the actual code, applies the fixes that are genuinely legitimate (symbol-aware edits; runs tests), and returns per-finding verdicts, evidence-backed rebuttals for false positives, and a ready-to-post response comment. Never commits, pushes, or touches GitLab/Jira | Read, Write, Edit, Glob, Grep, Bash, Serena read tools, Serena symbol-aware writes (`replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol`, `rename_symbol`, `safe_delete_symbol`, `replace_content`), Serena memory read (`list_memories`, `read_memory`) | mr-creation M7 |
 
 **Execution skill direct Serena access:** `task-card` (T8), `bug-card` (B10), and `code-review` (CR5/CR6) declare Serena read tools and, for `task-card` and `bug-card`, symbol-aware write tools. This lets the orchestrator use `replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol`, `rename_symbol`, and `safe_delete_symbol` directly during implementation phases rather than falling back to text-level `Edit` for every code change. See the Serena-first editing rule in each workflow's implementation phase.
 
@@ -121,7 +137,9 @@ The Jira card description is the interface between intake and execution:
          T5: Await approval
          T6: Verify working branch (in epic mode, created from the integration branch)
          T7: Baseline verification
-         T8: Core implementation + implementation-reviewer, test-reviewer, and documentation-reviewer loops
+         T8: Core implementation (implementation-builder by default; inline only for
+             trivial changes) + parallel implementation-reviewer / code-quality-reviewer
+             loop, then test-reviewer and documentation-reviewer completion loops
          T9: Post-implementation verification
          T10: User testing (skipped in epic mode -- handled at E9)
          T11: Commit + push (in epic mode, also merge to the integration branch)
@@ -132,7 +150,7 @@ The Jira card description is the interface between intake and execution:
    E11: Cleanup (file memory)
 
 3. User invokes /mr-creation
-   M0-M6: Create GitLab MR for the integration branch
+   M0-M8: Create GitLab MR for the integration branch, then respond to the code review bot
 
 4. User invokes /manual-qa-plan PROJ-123
    Q0-Q4: Read Jira context and related branch diff, then generate tester-friendly manual QA verification steps
@@ -235,6 +253,7 @@ Distinct from the per-work-item file memory, Serena's project memory (`write_mem
 | **test-reviewer** | `test-commands.md` | Canonical build, test, and lint commands for the repo so each run doesn't re-discover them |
 | **documentation-reviewer** | `documentation-conventions.md` | Doc-comment dialect, where docs live, and repo-wide style rules |
 | **review-analyst** | `review-checklist-<category>.md` (one per assigned category) | Repo-specific review checklist and anti-pattern catalog for each review category |
+| **code-quality-reviewer** | `review-checklist-code_quality.md` (shared with review-analyst) | Same checklist as review-analyst's `code_quality` category, so implementation-time review (T8/B10) and CR4 diff review enforce a single repo standard |
 | **codebase-explorer** | `codebase-map-<area>.md` (one per normalized target-area slug) | Durable area maps: purpose, key symbols, patterns, integration points. Read at the start of every run; written at end only when deep area mapping produced multi-file-evidenced knowledge. |
 
 **Discipline rules (apply to every memory-using agent):**
@@ -248,7 +267,7 @@ Distinct from the per-work-item file memory, Serena's project memory (`write_mem
 
 **Staleness detection pattern:** For memories whose claims reference specific files or directories (notably `codebase-map-<area>`), the frontmatter should include a `covers:` list of those paths. On read, compare `verified_against` against `HEAD` for each covered path via `git log <verified_against>..HEAD -- <path>`. Any commits in that range mark the memory as potentially stale, triggering per-claim verification before citation. Memories that encode general conventions (`test-commands`, `documentation-conventions`, `review-checklist-*`) typically do not need a `covers:` list; their staleness is detected by contradiction during the run.
 
-**Parallel-run collisions:** `codebase-explorer` runs in parallel (R2/I2/T2/B3/E2 spawn multiple instances). Memory key collisions are avoided by normalizing target-area arguments to deterministic slugs. For defense in depth, the write protocol re-reads the memory immediately before writing and merges rather than clobbers when a peer instance has written to the same key.
+**Parallel-run collisions:** `codebase-explorer` runs in parallel (R2/I2/T2/B3/E2 spawn multiple instances). Memory key collisions are avoided by normalizing target-area arguments to deterministic slugs. For defense in depth, the write protocol re-reads the memory immediately before writing and merges rather than clobbers when a peer instance has written to the same key. The same re-read-and-merge protocol covers `review-checklist-code_quality.md`, which is deliberately shared between `review-analyst` and `code-quality-reviewer`.
 
 ## Deployment
 
@@ -271,18 +290,29 @@ your-project/
       test-doc-review/
       manual-qa-plan/
       document-card/
+      project-onboarding/
+      compact-context/
     agents/
       area-mapper/
+      code-quality-reviewer/
       codebase-explorer/
+      comment-reviewer/
       documentation-reviewer/
+      implementation-builder/
       implementation-reviewer/
       manual-qa-reviewer/
       plan-reviewer/
       review-analyst/
       test-reviewer/
+      verification-runner/
 ```
 
-Agent invocations in the workflows assume the runtime can resolve agent names directly from the copied `.claude/agents/` directory. If your target environment requires an explicit agent registry or routing configuration, add that registration as part of deployment so references such as `codebase-explorer`, `plan-reviewer`, `test-reviewer`, and `documentation-reviewer` resolve correctly at runtime.
+**Agent name resolution:** Workflows reference sub-agents by short name (`codebase-explorer`, `plan-reviewer`, `implementation-builder`, `code-quality-reviewer`, `test-reviewer`, `documentation-reviewer`, …). The registered identifier depends on the installation mode:
+
+- **Copied into the project's `.claude/agents/`** (the deployment above): the short name resolves verbatim.
+- **Installed as the plugin**: the runtime registers each agent as `web-cms:<short-name>:<short-name>` (e.g. `web-cms:verification-runner:verification-runner`). Partial forms like `web-cms:verification-runner` do **not** resolve.
+
+Every workflow that spawns sub-agents carries a `SUB-AGENT NAME RESOLUTION` header rule instructing the orchestrator to resolve short names against the runtime's available-agents list (matching on the final segment) before the first invocation and to reuse the resolved scheme for the rest of the session. If your target environment requires an explicit agent registry or routing configuration, add that registration as part of deployment so these references resolve at runtime.
 
 **MCP tool names:** Each skill and agent declares its MCP tool dependencies in its `allowed-tools` / `tools` frontmatter using the plugin-declared server names: `mcp__plugin_web-cms_atlassian__<tool>`, `mcp__plugin_web-cms_serena__<tool>`, `mcp__plugin_web-cms_gitlab__<tool>`, `mcp__plugin_web-cms_sequentialthinking__<tool>`, `mcp__plugin_web-cms_playwright__<tool>`. File memory uses the native `Read`/`Write`/`Edit`/`Glob`/`Grep` tools — no MCP server. All git operations use `Bash` directly.
 

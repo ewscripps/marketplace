@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-STG Plugin Marketplace — a distribution repository for AI coding tool plugins (Claude Code, GitHub Copilot). Most content is markdown skill definitions and JSON configuration with no build step. The `edm` plugin's own local mechanisms (its lint/check scripts, its git-commit hook, and its 11-lens code-audit methodology) enforce its bash helpers, artifact conventions, and manifest/state consistency without a separate CI pipeline -- see `plugins/edm/CLAUDE.md` ("Testing changes") for details.
+STG Plugin Marketplace — a distribution repository for AI coding tool plugins (Claude Code, GitHub Copilot). No build process, tests, or CI/CD. All content is markdown skill definitions and JSON configuration.
 
 Jira Project: [ELI](https://ewscripps.atlassian.net/browse/ELI)
 

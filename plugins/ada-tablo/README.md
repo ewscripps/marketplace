@@ -6,11 +6,23 @@ Analysis skills for the Tablo Ada chatbot support system. Used by David and Laur
 
 | Skill | Frequency | Purpose |
 |-------|-----------|---------|
-| `/ada-tablo:weekly-playbook-analysis` | Weekly (Fridays) | Playbook effectiveness review — CSV export, script analysis, baseline comparison |
+| `/ada-tablo:weekly-playbook-analysis` | Weekly (Fridays) | Playbook effectiveness review — CSV export, script analysis, baseline comparison, changeset-gated edits |
 | `/ada-tablo:weekly-topics-review` | Weekly (Fridays) | Catch-all reduction — topics report analysis, recommendation generation |
 | `/ada-tablo:coaching-review` | Monthly | Coaching inventory sync, resolution rate measurement, performance tracking |
+| `/ada-tablo:config-health` | Standalone / pre-cutover / pre-promote gate | Structural integrity check — orphan variable reads, unbound action outputs, dangling references, null conflation. Read-only. |
 
 Two internal helper skills (`preflight`, `commit-results`) handle workspace setup and git operations automatically.
+
+## Writing to Ada
+
+Playbook, coaching, and topic edits go live through a **changeset** model on
+`edit_agent_behavior` (playbooks, coaching, knowledge, custom instructions, api tools) and
+`edit_agent_config` (topics, intents, test cases/runs, glossary, custom metrics/scorecards) —
+stage on a changeset, preview the diff, get explicit user confirmation, then promote. The
+older `propose_change` tool has been retired and no longer exists on the live MCP server.
+Before promoting any playbook edit, run `/ada-tablo:config-health` on the affected
+playbook(s) and a test run pinned to the changeset — see `weekly-playbook-analysis` Steps
+9a/9b.
 
 ## Architecture
 

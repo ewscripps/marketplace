@@ -18,6 +18,13 @@
 
 **SERENA PROJECT ACTIVATION:** Before B0, check Serena's project-activation message (emitted on connect via `--project-from-cwd`); if it reports that onboarding has not been performed, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`, and the symbol-aware write tools) will not function correctly without this. Do this once at the start of the workflow; do not repeat it between phases.
 
+**SUB-AGENT NAME RESOLUTION:** This workflow refers to sub-agents by short name (`codebase-explorer`, `plan-reviewer`, `verification-runner`, …). The runtime registers them under different identifiers depending on how they are installed. Before the first sub-agent invocation, resolve each short name against the runtime's available-agents list and use the exact registered identifier:
+
+- If the short name appears verbatim in the list (agents deployed into the project's `.claude/agents/`), use it as-is.
+- If installed via the plugin, the registered identifier is `web-cms:<short-name>:<short-name>` — e.g. `verification-runner` → `web-cms:verification-runner:verification-runner`.
+- Never invent a partial form such as `web-cms:verification-runner` — it will not resolve. If an invocation fails with an "agent type not found" error, read the available-agents list in the error message, select the entry whose **final segment** equals the short name, and retry with that exact identifier.
+- Resolve the scheme once, then reuse it for every subsequent sub-agent invocation in the session.
+
 **TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
 
 - **File I/O (read files, write new files, edit non-symbol regions):** Use native `Read`, `Write`, `Edit`.
@@ -39,7 +46,7 @@ When a Jira comment heading references workflow phases, use the exact phase labe
 
 **Comment formatting:** Pass clean GitHub-flavored markdown to `jira_add_comment`. Never backslash-escape markdown characters — bold is literal `**text**`, never `\*\*text\*\*`. Ensure every bold span has matching `**` delimiters on both sides.
 
-**Comment reviewer gate:** Every `jira_add_comment` call in this workflow (B5/B6, B12, B14) is gated by an `**Independent comment review:**` block, following the same pattern as `plan-reviewer` and `implementation-reviewer`. The `comment-reviewer` sub-agent must return APPROVED (or the 3-iteration cap must be reached) before `jira_add_comment` is called. There are no exceptions.
+**Comment reviewer gate:** Every routine `jira_add_comment` call in this workflow (B5/B6, B12, B14) is gated by an `**Independent comment review:**` block, following the same pattern as `plan-reviewer` and `implementation-reviewer`. The `comment-reviewer` sub-agent must return APPROVED (or the 3-iteration cap must be reached) before `jira_add_comment` is called — no exceptions for these routine comments. Blocking-failure comments (e.g. the B2 cannot-reproduce comment or an unresolvable B11 failure) are exempt from the comment-reviewer gate (they have no mandated field outline) but must still follow the comment-formatting rules above.
 
 **COMMIT, PUSH, MERGE & TRANSITION DISCIPLINE — HARD RULE:** Every one of the following is an irreversible action that affects shared state. None may run until the user has explicitly selected the "Approve" option at the B12 User Testing gate **in this same session**:
 
@@ -74,7 +81,7 @@ These actions must not be chained. Run each one at a time, reporting the result 
 
 **CHECKPOINT & COMPACTION CONTRACT:** This workflow records position in a single `$MEM/checkpoint.md` file (full schema and contract in `file-memory-protocol.md` §4). Two mechanisms:
 
-**Per-phase checkpoint — after EVERY phase (B0–B14), automatically, with no chat output and no `/compact` prompt.** Run `git branch --show-current` and `git log --oneline -1` (separate Bash calls), then **atomically overwrite** `$MEM/checkpoint.md`: `Write` the content to `checkpoint.md.tmp`, then `mv "$MEM/checkpoint.md.tmp" "$MEM/checkpoint.md"`. Set `checkpoint_type: phase`, the just-completed `phase`, the upcoming `next_phase`, the `references` list, `## Decisions`, and `## Open items`. At B10 also set `reviewer_iterations: { impl, test, doc }`. This keeps the recall point current even if auto-compaction or an interruption fires between gates.
+**Per-phase checkpoint — after EVERY phase (B0–B14), automatically, with no chat output and no `/compact` prompt.** Run `git branch --show-current` and `git log --oneline -1` (separate Bash calls), then **atomically overwrite** `$MEM/checkpoint.md`: `Write` the content to `checkpoint.md.tmp`, then `mv "$MEM/checkpoint.md.tmp" "$MEM/checkpoint.md"`. Set `checkpoint_type: phase`, the just-completed `phase`, the upcoming `next_phase`, the `references` list, `## Decisions`, and `## Open items`. At B10 also set `reviewer_iterations: { impl, quality, test, doc }`. This keeps the recall point current even if auto-compaction or an interruption fires between gates.
 
 **Compaction gates (B4, B6, B10) — additionally prompt the user to `/compact`.** Do the per-phase write but with `checkpoint_type: gate`, then: (1) wait for any background `area-mapper` to finish; (2) emit the Phase Summary block (§4(b)) — phase + skill, Jira key, branch @ head_sha, one-line decisions, verbatim approval condition, reviewer iterations (B10 only), `next_phase`, the checkpoint file path, and the resume contract; (3) end the turn with the literal line **"Run `/compact` now, then type `continue` to resume."** Do NOT call `AskUserQuestion` at a gate — the user's input must stay free for `/compact`.
 
@@ -113,6 +120,8 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 > **THINK HARD:** Before concluding on root cause, think hard about whether the identified cause is necessary and sufficient to explain the observed behavior — could a different cause produce the same symptoms? A misdiagnosed root cause produces a fix that masks the symptom without resolving the underlying issue.
 
+> **ROOT-CAUSE CONFIDENCE CHECK — REQUIRED before leaving B3.** Answer explicitly: **What am I least confident about in this root-cause conclusion?** Name the specific evidence gap — a symptom the hypothesis doesn't fully explain, a code path not traced end-to-end, a second hypothesis not conclusively ruled out. Then state a confidence level (high / medium / low) with the reason. **If confidence is low, or two hypotheses remain live, do not proceed to B4** — dispatch further targeted `codebase-explorer` investigation, or raise the ambiguity as a BLOCKING question in B4 so the user decides how to resolve it. Record the confidence level and the stated gap; they carry into the B5 fix plan's Root cause analysis section. A confidently-wrong root cause is this workflow's most expensive failure mode.
+
 > **BOOTSTRAP FILE MEMORY:** Compute `MEM` via the recipe in `file-memory-protocol.md` §1 and `mkdir -p "$MEM/explorations"`. If `$MEM/work-item.md` does not exist, `Write` it (schema §3.1) with `work_type: bug`, `jira_key`, `title`, `status: in_progress`, `phase: B3`, `skill: bug-card`, and the bug's observed/expected behavior under `## Description`. Pass the absolute `MEM` path (as `memory_dir`) and a normalized `area_slug` to every explorer — each writes its own `$MEM/explorations/<area_slug>.md`. Track competing root-cause hypotheses in your `sequentialthinking` reasoning; the explorations capture the supporting/refuting `evidence`, and the confirmed root cause is recorded in the fix plan at B5.
 
 - Identify all distinct areas of the codebase likely involved based on the **Affected Areas**, reproduction steps, and any logs or stack traces. Limit the scope of this exploration to the current project directory.
@@ -150,6 +159,13 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 > **USE SEQUENTIAL THINKING:** Before drafting the fix plan, invoke the `sequentialthinking` tool. Use it to confirm the root cause conclusion from B3 still holds under scrutiny (could a different cause produce the same observable behavior?), reason through the minimal change that addresses the root cause without introducing new bugs or side effects, consider whether the fix interacts with callers or dependents not directly implicated in B3, and evaluate the regression test strategy. Over-engineering and under-scoping are equally risky here — a fix that patches a symptom rather than the cause leaves the bug latent. Do not draft the plan until the reasoning is complete.
 
 > **THINK HARD:** Before writing the fix plan, think hard about the blast radius of the proposed change — which callers, dependents, or edge-case paths might break if the fix is applied as drafted? A fix that is correct at the point of change but wrong at a caller is a new bug, not a resolved one.
+
+> **SELF-INTERROGATION — REQUIRED before finalizing the fix plan.** Answer these two questions explicitly, and route each answer into an artifact (an answer that lives only in your reasoning is wasted):
+>
+> 1. **What am I least confident about in this fix plan right now?** Start from the B3 root-cause confidence check — does its stated gap still exist? Then name any fix-specific uncertainty: an untraced caller, an assumed invariant, a behavior only inferred from reading. Route: record each item under the plan's risks/open items. If an item is answerable by the user, ask it via `AskUserQuestion` now, before the plan is posted.
+> 2. **What potential bugs or problems could arise from this fix?** Reason about regressions at callers, edge cases adjacent to the fixed path, and the failure scenario where the fix masks the symptom without curing the cause. Route: fold every concrete scenario into the plan's **Regression test strategy** so B9 and `test-reviewer` inherit them as required scenarios.
+>
+> "Nothing" is almost never the true answer to either question. If it genuinely is, state why in one line.
 
 > **FULL CONTEXT LOAD:** Before drafting the fix plan, `Glob $MEM` and `Read` every present input file — `work-item.md`, every `explorations/*.md`, `clarifications.md` and `related-cards.md` if present, and `summary.md` if this work came from `/implementation-discovery` (per `file-memory-protocol.md` §5). The confirmed root-cause analysis is captured as the **Root cause analysis** section of the fix plan written below (and persisted in `plan.md`'s `## Plan`); there is no separate root-cause file.
 
@@ -235,6 +251,7 @@ Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the
 
 - The approval request Jira record is the combined `B5/B6` comment already posted in B5. Do not post a second Jira comment here unless the plan changed.
 - **Present the full fix plan in the chat output.** The user should not have to open Jira to review it — display it here before asking for approval.
+- **BLIND-SPOT CALLOUT (conditional):** After presenting the plan and before asking for approval, answer this question for the user: *"What is the biggest thing the user may be missing about this bug or this fix — what don't they realize?"* Render the answer as a short **What you might be missing** block containing at most two specific, evidence-backed items drawn from the B3 investigation (`risks`, `integration_points`, the root-cause confidence gap), clarification answers, or fix trade-offs — cite the source (exploration file, risk entry, or `path:line`) for each. Typical candidates: the bug is a symptom of a wider defect the fix does not cure, the fix changes behavior other callers observe, or the root-cause confidence is not high. If nothing qualifies, write exactly one line — "Nothing notable — the plan surfaces the known risks." — and never invent a generic risk to fill the section.
 - Then use `AskUserQuestion` with header `B6 Approval`, options: `Approve and proceed (Recommended)` (description: "Fix plan is accurate — begin implementation") / `Request changes` (description: "Revise the plan before proceeding"). Do not poll Jira for approval.
 - If the user selects "Request changes", revise the plan, repost the full combined `B5/B6` comment to Jira, and re-`Write $MEM/plan.md` with the updated plan text (whole-file overwrite). Then use `AskUserQuestion` again.
 - Only proceed to B7 after "Approve and proceed" is selected.
@@ -265,7 +282,24 @@ Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the
 
 ### B10 — Implement the Fix
 
-**ALL of the following are REQUIRED. Do not skip any category.**
+**MODE DECISION — delegated build is the default.** Read `$MEM/plan.md` frontmatter. Implement **inline** only when ALL of the following hold: `files_to_change` lists 2 or fewer files, the fix changes no public API and no cross-area integration point, and no exploration flagged a touched area as high-risk. In every other case, **delegate** the fix to the `implementation-builder` sub-agent — this keeps the orchestrator's context small through the review loops that follow. State the chosen mode and the reason in one line in the chat before proceeding.
+
+**Delegated build (default path):**
+
+Invoke the `implementation-builder` sub-agent, providing:
+
+- The absolute `memory_dir` (`$MEM`) — the builder performs the full-context load itself (`plan.md` including the root-cause analysis and buggy-path/fixed-path flowchart, every `explorations/*.md`, `work-item.md`, `clarifications.md`/`related-cards.md`; per `file-memory-protocol.md` §5). Do not paste those files into the prompt.
+- The Jira issue key and work type (bug)
+- The working branch confirmed at B7 and the base branch
+- The fix criteria from the Bug Details, verbatim
+- The B9 regression-test context: which test file reproduces the bug and the command that runs it — the fix is complete only when that test passes
+
+The sub-agent applies the fix (it never commits, pushes, or touches Jira) and returns a structured `BUILD REPORT` with a status of either **COMPLETE** or **BLOCKED**, plus files changed, deviations from plan, `LOWEST-CONFIDENCE AREAS`, `POTENTIAL ISSUES`, and testing/documentation handoffs.
+
+- If **BLOCKED**: present the BLOCKED DETAIL in the chat. Resolve what is resolvable — supply missing context and re-invoke, or when the block is a decision only the user can make, use `AskUserQuestion` with the specifics. If resolving it requires changing the approved plan's approach or scope (including a root-cause revision), return to B5 (revise) and B6 (re-approval) before re-invoking.
+- If **COMPLETE**: sanity-check the report against the plan (`git status` / `git diff --stat` — files changed should match `files_to_change` plus justified deviations) and run the B9 regression test to confirm it now passes. Carry the report forward: its `LOWEST-CONFIDENCE AREAS` and `POTENTIAL ISSUES` become the reviewer focus areas below, and its handoff sections feed `test-reviewer` and `documentation-reviewer`.
+
+**Inline build (trivial-fix exception only):**
 
 - **Full context load:** Before applying the fix, `Glob $MEM` and `Read` `plan.md` (full — `## Plan`, `## Flowchart`, `files_to_change`, testing/doc expectations), every `explorations/*.md`, `work-item.md`, and any `clarifications.md`/`related-cards.md` present (per `file-memory-protocol.md` §5). Use `plan.md ## Flowchart` (buggy-path vs. fixed-path) as a surgical guide — apply the fix exactly where the flow deviates, and verify the corrected path after each change. If no flowchart was persisted (skipped in B5), proceed without it.
 - **Code:** Apply the fix according to the plan from B5.
@@ -273,7 +307,9 @@ Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the
 - **Documentation handoff:** Identify the public APIs, configuration surfaces, and repository docs the dedicated `documentation-reviewer` sub-agent must cover.
 - Follow existing code style, conventions, and architectural patterns observed in B3.
 
-> **SERENA-FIRST EDITING RULE:** When modifying existing source code to apply the fix, prefer Serena's symbol-aware tools over native `Edit`. Symbol-aware edits produce cleaner diffs, are robust against whitespace or context drift, and — for rename and delete — update references atomically. This matters especially for bug fixes, where the change must be surgical and must not introduce new regressions in adjacent callers.
+> **SELF-INTERROGATION (inline build only) — REQUIRED before the self-review.** Answer explicitly: (1) **What am I least confident about in this fix right now?** — name the specific files, symbols, or behaviors resting on unverified assumptions, starting from the B3 root-cause confidence gap; (2) **What potential bugs or problems could arise from this fix?** — concrete regression scenarios (callers, adjacent edge cases, symptom-masking), not categories. Record both answers; they are passed to the reviewers below as focus areas, exactly as a delegated builder's report sections would be. "Nothing" is almost never the true answer.
+
+> **SERENA-FIRST EDITING RULE (applies to the inline build and to any manual fixes the orchestrator makes during the review loops below):** When modifying existing source code to apply the fix, prefer Serena's symbol-aware tools over native `Edit`. Symbol-aware edits produce cleaner diffs, are robust against whitespace or context drift, and — for rename and delete — update references atomically. This matters especially for bug fixes, where the change must be surgical and must not introduce new regressions in adjacent callers.
 >
 > 1. **Map first.** Use `get_symbols_overview` on the target file to understand its structure before editing.
 > 2. **Locate the target.** Use `find_symbol` to jump to the exact symbol implicated by the root cause. Use scoped paths (`ClassName/methodName`) when multiple symbols share a name.
@@ -289,7 +325,7 @@ Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the
 >     - Multi-symbol or cross-file text edits that the symbol tools cannot express
 >     - New files authored from scratch (use `Write` for those)
 
-**REQUIRED: Review the implementation before proceeding.** Verify:
+**REQUIRED (inline build only): Review the implementation before proceeding.** (In the delegated path the builder has already performed this self-review; do not repeat it.) Verify:
 
 - Does the fix directly and completely address the root cause identified in B3?
 - Does the implementation follow the approved fix plan from B5?
@@ -302,25 +338,36 @@ Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the
 - Have all documentation surfaces affected by the fix been identified for the dedicated `documentation-reviewer` sub-agent?
 - Are there any leftover TODOs, commented-out code, or debugging artifacts?
 
-Fix any issues found in the self-review before invoking the reviewer.
+Fix any issues found in the self-review before invoking the reviewers.
 
-**Independent review loop:**
+**Independent review loop (two parallel reviewers):**
 
-Once the self-review is clean, invoke the `implementation-reviewer` sub-agent, providing:
+Once the build is complete (delegated: `BUILD REPORT` status COMPLETE and the B9 regression test passing; inline: self-review clean), invoke the `implementation-reviewer` and `code-quality-reviewer` sub-agents **in parallel** (a single message with both tool uses). Both are read-only over the same changes, so there is no ordering constraint.
+
+Provide the `implementation-reviewer` with:
 
 - The full diff of all changed files
 - The approved fix plan from B5
 - The fix criteria from the Bug Details
 - The codebase findings from B3 (patterns, conventions, and architectural context)
+- **Focus areas:** the `LOWEST-CONFIDENCE AREAS` and `POTENTIAL ISSUES` from the build (the builder's report, or the inline self-interrogation answers), plus the B3 root-cause confidence gap if one was recorded
 - The Jira issue key
 
-The sub-agent will return a structured findings report with an overall verdict of either **APPROVED** or **CHANGES REQUIRED**.
+Provide the `code-quality-reviewer` with:
 
-- If **APPROVED**: continue with the dedicated testing and documentation completion loops below.
-- If **CHANGES REQUIRED**: address every Critical and Major finding, then invoke the `implementation-reviewer` sub-agent again with the updated diff. Repeat until the verdict is APPROVED.
-- **Max 3 review iterations.** If the implementation-reviewer returns CHANGES REQUIRED after 3 iterations, use `AskUserQuestion` with header `Reviewer Escalation`, options: `Apply the changes manually and continue` (description: "I'll address the remaining findings — continue after I confirm") / `Skip and continue anyway` (description: "Accept the outstanding findings and proceed to testing") / `Abort` (description: "Stop the workflow here"). Present the outstanding findings before the question so the user can make an informed decision.
+- The branch name and base branch — the reviewer fetches the diff itself via `git diff <base-branch>..HEAD`
+- The absolute `memory_dir` (`$MEM`) — it reads the `explorations/*.md` pattern findings itself
+- The **Patterns & Code References** section from the Bug Details
+- **Focus areas:** the same `LOWEST-CONFIDENCE AREAS` and `POTENTIAL ISSUES` from the build
+- The Jira issue key
 
-Do not proceed to the dedicated completion loops until the implementation-reviewer returns an APPROVED verdict.
+Each sub-agent returns a structured findings report with an overall verdict of either **APPROVED** or **CHANGES REQUIRED**. Surface each report's `LOWEST-CONFIDENCE AREAS` in the chat alongside its verdict — an APPROVED with a stated soft spot is information the user and later phases need.
+
+- If **both APPROVED**: continue with the dedicated testing and documentation completion loops below.
+- If **either CHANGES REQUIRED**: collect every Critical and Major finding from both reports. In the delegated path, re-invoke `implementation-builder` with the findings to address; in the inline path, address them directly (Serena-first rule applies). Then re-invoke **only the reviewer(s) that returned CHANGES REQUIRED** with the updated diff. Repeat until both verdicts are APPROVED.
+- **Max 3 review iterations per reviewer.** If either reviewer still returns CHANGES REQUIRED after 3 iterations, use `AskUserQuestion` with header `Reviewer Escalation`, options: `Apply the changes manually and continue` (description: "I'll address the remaining findings — continue after I confirm") / `Skip and continue anyway` (description: "Accept the outstanding findings and proceed to testing") / `Abort` (description: "Stop the workflow here"). Present the outstanding findings before the question so the user can make an informed decision.
+
+Do not proceed to the dedicated completion loops until both `implementation-reviewer` and `code-quality-reviewer` have returned APPROVED verdicts (or the escalation above was resolved with "Skip and continue anyway").
 
 **Dedicated test completion loop:**
 
@@ -328,6 +375,7 @@ Invoke the `test-reviewer` sub-agent, providing:
 
 - The branch name and base branch — the reviewer fetches the diff itself via `git diff <base-branch>..HEAD`. Do not paste the full diff inline.
 - The approved fix plan from B5, especially the regression-test strategy
+- The `POTENTIAL ISSUES` and `TESTING HANDOFF` sections from the build report (or the inline self-interrogation answers and testing handoff notes) — each listed potential issue is a required test scenario unless the reviewer records why it is untestable
 - The fix criteria from the Bug Details
 - The codebase findings from B3, especially testing conventions and nearby test structure
 - The baseline verification results from B8, if they identify canonical test commands
@@ -336,7 +384,7 @@ Invoke the `test-reviewer` sub-agent, providing:
 
 The sub-agent will add or update tests as needed, run the relevant test commands, and return a structured report with a status of either **COMPLETE** or **FAILED**.
 
-- If **COMPLETE**: review the report. If it changed any non-test files, invoke the `implementation-reviewer` again with the updated diff before continuing.
+- If **COMPLETE**: review the report. If it changed any non-test files, invoke the `implementation-reviewer` and `code-quality-reviewer` again (in parallel) with the updated diff before continuing.
 - If **FAILED**: use `AskUserQuestion` with header `Test Reviewer Failed`, options: `Apply a manual fix and retry` (description: "I'll address the test failures — continue after I confirm") / `Skip and continue` (description: "Proceed to documentation with the current test state") / `Abort` (description: "Stop the workflow here"). Present the failure report before the question.
 
 **Dedicated documentation completion loop:**
@@ -345,6 +393,7 @@ Invoke the `documentation-reviewer` sub-agent, providing:
 
 - The branch name and base branch — the reviewer fetches the diff itself via `git diff <base-branch>..HEAD`. Do not paste the full diff inline.
 - The approved fix plan from B5, especially the documentation expectations
+- The `DOCUMENTATION HANDOFF` section from the build report (or the inline documentation handoff notes)
 - The fix criteria from the Bug Details
 - The codebase findings from B3, especially documentation conventions and nearby docs
 - The Jira issue key
@@ -355,9 +404,9 @@ The sub-agent will update inline and repository documentation as needed and retu
 - If **FAILED**: use `AskUserQuestion` with header `Doc Reviewer Failed`, options: `Apply a manual fix and retry` (description: "I'll address the documentation gaps — continue after I confirm") / `Skip and continue` (description: "Proceed to B11 with the current documentation state") / `Abort` (description: "Stop the workflow here"). Present the failure report before the question.
 - If the report says user-facing documentation follow-up is `REQUIRED`, record that in B14 and recommend running `/document-card` after this workflow completes.
 
-Do not proceed to B11 until `implementation-reviewer`, `test-reviewer`, and `documentation-reviewer` have all completed successfully.
+Do not proceed to B11 until `implementation-reviewer`, `code-quality-reviewer`, `test-reviewer`, and `documentation-reviewer` have all completed successfully.
 
-> **COMPACTION GATE — B10:** Once all three reviewers are complete, follow the Checkpoint & Compaction Contract above (gate path). Write `checkpoint.md` with `phase: B10`, `next_phase: B11`, `checkpoint_type: gate`, `reviewer_iterations: { impl: N, test: N, doc: N }`, `references: [plan.md, explorations/*.md, work-item.md]`; `## Decisions`: fix implementation summary and any plan deviations; `approval_condition`: reviewer verdict. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to B11.
+> **COMPACTION GATE — B10:** Once all four reviewers are complete, follow the Checkpoint & Compaction Contract above (gate path). Write `checkpoint.md` with `phase: B10`, `next_phase: B11`, `checkpoint_type: gate`, `reviewer_iterations: { impl: N, quality: N, test: N, doc: N }`, `references: [plan.md, explorations/*.md, work-item.md]`; `## Decisions`: fix implementation summary (including build mode — delegated or inline) and any plan deviations; `## Open items`: any unresolved `LOWEST-CONFIDENCE AREAS` from the build and review reports; `approval_condition`: reviewer verdicts. Emit the Phase Summary block and instruct the user to run `/compact` before proceeding to B11.
 
 ### B11 — Post-Fix Verification
 
@@ -378,6 +427,7 @@ Do not proceed to B11 until `implementation-reviewer`, `test-reviewer`, and `doc
     - **Fix Criteria & Testing Steps:** For each expected behavior item from the Bug Details and fix plan, a numbered section with:
         - The criterion/expected behavior restated clearly
         - Step-by-step instructions to verify it now works correctly
+    - **Not covered by automated checks:** The specific behaviors the automated build and tests could not exercise, which the user's manual test is the only defense for. Draw these from the B9 test-limitation notes (manual-only reproduction), the `test-reviewer` report's stated limitations, and any unresolved `LOWEST-CONFIDENCE AREAS` from the B10 build and review reports — be specific (behavior + where to look), never generic. If nothing qualifies, state exactly: "None — automated coverage exercises all criteria."
 
 **Independent comment review:**
 
@@ -401,7 +451,17 @@ Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the
 - Use `AskUserQuestion` with header `B12 Testing`, options: `Approve — I ran through every step above and the fix works as expected (Recommended)` (description: "I have manually tested the fix and it works correctly") / `Issues found` (description: "One or more problems were found during testing"). Do not proceed until the user selects an option.
 - If the user's message accompanying the approval suggests they have NOT actually run through the steps (e.g. "looks good", "go ahead", "skip", "sure", "proceed"), re-ask the question once and require an explicit testing-was-done confirmation. Treat ambiguous approval as the "Issues found" branch until confirmed otherwise.
 
-- If the user identifies issues: for each distinct issue, invoke the `issue-intake` skill (via the `Skill` tool), passing a brief description of the observed behavior, expected behavior, and this bug's Jira key as args (e.g. `"Testing found: [description]. Related to: [PROJ-KEY]"`). Work through the issue-intake I0–I6 process with the user to document and triage each issue — it will create a Jira card (Bug or Missing Requirement) for each one. After all issues are documented and their Jira cards are created, return to B10, resolve each issue, re-run B11, and return to this step before proceeding.
+- **If the user identifies issues, triage each distinct issue before acting on it.** First gather each issue's observed vs. expected behavior conversationally. Then classify each one and route it:
+
+    - **(A) Minor in-scope defect** — a defect this fix introduced or should have covered, small enough to fix directly now. **Do NOT run issue-intake and do NOT create a new card.** Loop back to **B10**, fix it, re-run **B11**, and return to this step before proceeding. This is the common case for testing feedback.
+
+    - **(B) Deserves its own card** — an unrelated or pre-existing bug that surfaced during testing but was not caused by this fix, OR a genuine in-scope gap that is too large or severe to fold into this bug. Create its own card via the handoff below, then route on whether it blocks this bug:
+        - **Blocking** (prevents this bug's expected behavior from being met, or makes shipping the current fix unsafe or incorrect): do NOT proceed past this step until that card is resolved and the current work re-verified. Resolve the new card, re-run **B11**, and return to this step.
+        - **Non-blocking** (this bug's own fix criteria still pass; the new card is independent follow-up work): the card is tracked and resolved separately — proceed to **B13**.
+
+    - **When the classification is unclear** (A vs. B, or blocking vs. non-blocking), use `AskUserQuestion` to let the user decide. Do not guess.
+
+    - **Own-card handoff — `issue-intake` is gated (`disable-model-invocation: true`), so you CANNOT invoke it via the `Skill` tool; that call will fail.** Instead: write the checkpoint (gate path) noting the pending handoff and its blocking status, then present each issue's pre-populated context and instruct the user to run `/issue-intake` themselves, giving them the exact ready-to-paste argument string: `Testing found: [observed behavior]. Expected: [expected behavior]. Related to: [PROJ-KEY]`. End your turn and wait. After the user's `/issue-intake` completes and its Jira card is created, resume from the checkpoint at this step and apply the blocking / non-blocking routing above.
 
 ---
 
@@ -410,12 +470,12 @@ Do not call `jira_add_comment` until `comment-reviewer` returns APPROVED (or the
 **PRECONDITION — verify in the chat before running any git command.** State each check and its result before staging anything. If any check fails, STOP and return to B12.
 
 1. The user explicitly selected the "Approve" option at B12 in this conversation. Quote their selection verbatim.
-2. No issues were reported by the user after that selection that have not since been addressed and re-approved.
+2. No issues were reported by the user after that selection that remain unaddressed, EXCEPT issues that were triaged at B12 as **non-blocking own-card** items and handed off to `/issue-intake` — those are tracked independently and do not block this commit. Any inline fix or **blocking** own-card issue must have been resolved and re-approved.
 3. The current branch matches the branch confirmed at B7.
 
 Execute the following steps **one at a time, in order**. Report the outcome of each step in the chat before starting the next. Do not pre-batch these into a single tool call sequence — the user must be able to interrupt between any two steps:
 
-**Step 1 — Stage and commit.** Stage all changes and commit with this message format:
+**Step 1 — Stage and commit.** Stage all changes. **Also stage Serena's durable project memories** so the codebase maps and other repo-scoped knowledge produced this session are versioned alongside the code. These live at `.serena/memories/`, which is typically git-ignored — so, as a **separate** Bash call, first confirm the directory exists (`test -d .serena/memories`) and, if it does, force-stage it: `git add -f .serena/memories/`. If the directory does not exist, skip this with no error. Then commit with this message format:
 
 ```
 [{PROJECTKEY}-{ISSUENUMBER}] <concise description of what was fixed>
@@ -490,6 +550,8 @@ This workflow is complete when **all** of the following are true:
 - All phases executed in sequence (B0 through B15)
 - All approval gates explicitly confirmed in the chat
 - Fix plan reviewed and approved (B5/B6)
+- The B10 build ran in the declared mode (delegated `implementation-builder` by default; inline only under the trivial-fix exception, with the reason stated in chat)
+- `implementation-reviewer`, `code-quality-reviewer`, `test-reviewer`, and `documentation-reviewer` all completed successfully (B10)
 - All fix commits pushed (B13)
 - Build, tests, and linters passing on the fix branch (B11)
 - Regression test written and passing (B9)

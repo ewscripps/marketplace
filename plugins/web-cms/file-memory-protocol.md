@@ -49,7 +49,8 @@ fi
 ├── related-cards.md         # intake-only: relevant related Jira cards' excerpts (mixed)
 ├── children.md              # epic-only: ordered child roster + status (structured)
 ├── explorations/
-│   └── <area-slug>.md       # one per codebase-explorer instance — parallel-safe (prose)
+│   ├── <area-slug>.md       # one per codebase-explorer instance — parallel-safe (prose)
+│   └── <area-slug>-verification.md   # discovery-only: D4 verification results (same schema)
 ├── summary.md               # discovery synthesis — cross-workflow reuse (prose)
 └── work-item.html           # GENERATED dashboard — write-only, never read back
 ```
@@ -74,6 +75,7 @@ schema: web-cms-memory/work-item@1
 work_item_key: PROJ-123          # Jira key or intake-/discovery- slug
 work_type: task                  # task | bug | epic | intake | discovery | code-review | mr
 jira_key: PROJ-123               # null when slug-based
+jira_project: null               # intake-only: user-confirmed project key for card creation (set at the Project selection gate; never re-ask when present)
 title: Add retry logic to payment service
 status: in_progress              # in_progress | awaiting_approval | complete | abandoned
 phase: T8                        # current/last-entered phase id
@@ -81,6 +83,7 @@ skill: task-card
 mode: null                       # define | fill_out (intake) | null
 existing_issue_type: null        # Epic | Task (intake fill-out) | null
 epic_integration_branch: null    # set for epic child tasks
+related_items: null              # optional — related Jira issue keys (read by mr-creation)
 requested_by: null
 created_at: 2026-06-03
 updated_at: 2026-06-03
@@ -109,7 +112,7 @@ checkpoint_type: phase            # phase | gate | manual
 branch: feature/PROJ-123-retry    # or "none"
 head_sha: a1b2c3d                 # or "n/a"
 approval_condition: "Approve and proceed"   # verbatim user phrasing, or "none"
-reviewer_iterations: { impl: 2, test: 1, doc: 1 }   # T8/B10 only; else null
+reviewer_iterations: { impl: 2, quality: 1, test: 1, doc: 1 }   # T8/B10 only; else null
 child_completed: null             # epic E8 / R5B only
 next_child: null                  # epic E8 / R5B only
 references:                       # files to reopen on resume (the full-context-load set)
@@ -209,6 +212,8 @@ open_questions:
 
 `evidence_type`: `existence | pattern | reference_chain | behavior | convention`. `confidence`/`relevance`/`risk`/`severity`: `high | medium | low`. Mark anything not directly grounded in code with `inferred: true`.
 
+**Discovery extensions.** `implementation-discovery` additionally writes `source` (`d3_discussion | d4_verification`) and `severity` on `open_questions` entries, marks contradicted entries with `superseded: true` at D4, and writes D4 verification results to sibling files named `explorations/<area-slug>-verification.md` (same schema). Other consumers may ignore these fields; they only exist in discovery-owned directories.
+
 ### 3.5 `clarifications.md` — Q&A pairs
 
 ```markdown
@@ -302,6 +307,8 @@ updated_at: 2026-06-03
 
 `status`: `pending | in_progress | done | skipped`. E8 reads this to pick the next `pending` child whose `depends_on` are all `done`.
 
+**Epic-card extensions.** epic-card writes additional per-child fields beyond the base schema: `existing: true` plus `disposition` and `coverage_status` (`covered` / `partial` / `gap_filled_by_<new-task-title>`) for children that pre-dated the epic run, `integration_branch_present` / `backfilled` markers from E6 backfill work, `merged_at` set at E8, and — for new gap-filler children — a nested `plan` sub-object carrying the E6 token-fill detail (`ac_format`, `acceptance_criteria_draft`, `affected_areas`, `patterns_summary`, `nfr_notes`, `data_interface_notes`, `observability_notes`, `dependencies_summary`). The `plan` sub-object is a sanctioned exception to the "flat and shallow" frontmatter rule: it is written once at E4 and read once at E6, never hand-edited or partially read.
+
 ### 3.9 `summary.md` — discovery synthesis
 
 ```markdown
@@ -314,6 +321,9 @@ chosen_approach: "fan-out via existing queue"
 verification_status: accepted    # accepted | accepted_with_open_questions
 discovery_confirmed: true        # set at D5 — gates the intake discovery pre-check
 affected_areas: [src/notify, src/queue]
+diagram: null                    # optional — discovery: mermaid source carried to intake
+commits: null                    # optional — mr-creation M3: commit list for the MR body
+diff_summary: null               # optional — mr-creation M3: files-changed summary
 updated_at: 2026-06-03
 ---
 
@@ -353,7 +363,7 @@ Each skill marks its gates (e.g. task-card T3/T5/T8). At a gate, do the per-phas
 - Branch: <branch> @ <head_sha>
 - Decisions: <one-line summary>
 - Approval condition: <verbatim, or "none">
-- Reviewer iterations: impl=N test=N doc=N      (T8/B10 only)
+- Reviewer iterations: impl=N quality=N test=N doc=N      (T8/B10 only)
 - Resume at: <next_phase>
 - Checkpoint file: web-cms-memory/<KEY>/checkpoint.md
 - Resume contract: Read checkpoint.md → open its `references` files → `git status` → re-read the <next_phase> section of workflow.md → continue at <next_phase>.
@@ -380,9 +390,9 @@ Covers all recovery paths: the user typed `continue` after a manual `/compact`; 
 
 Because memory is per-work-item and small, load the **entire** work-item directory at the two moments that matter — the scoped equivalent of the old `read_graph`, with no cross-contamination. Both stages `Glob <MEM>` and `Read` every present input file before proceeding; `checkpoint.md`'s `references` names this same set so resume reloads it identically.
 
-**Plan-crafting stage** (task T4 · bug B5 · epic E4 · intake R4 · discovery D2/D3) — read `work-item.md`, every `explorations/*.md`, `clarifications.md`, `related-cards.md`, `summary.md`, and (intake) `criteria.md` before drafting the plan / criteria / breakdown.
+**Plan-crafting stage** (task T4 · bug B5 · epic E4 · intake R4 · discovery D2/D3) — read `work-item.md`, every `explorations/*.md`, `clarifications.md`, `related-cards.md`, `summary.md`, and (intake) `criteria.md` before drafting the plan / criteria / breakdown. (`implementation-discovery` performs this load at D1 step 4 and carries the files through D2/D3 rather than re-reading at each phase.)
 
-**Implementation stage** (task T8 · bug B10 · epic E8 per child) — read `plan.md` (full: `## Plan`, `## Flowchart`, `files_to_change`, testing/doc expectations), every `explorations/*.md`, `work-item.md`, and any `clarifications.md`/`related-cards.md`; acceptance criteria come from the Jira card in execution skills.
+**Implementation stage** (task T8 · bug B10 · epic E8 per child) — read `plan.md` (full: `## Plan`, `## Flowchart`, `files_to_change`, testing/doc expectations), every `explorations/*.md`, `work-item.md`, and any `clarifications.md`/`related-cards.md`; acceptance criteria come from the Jira card in execution skills. **Who performs the load depends on the T8/B10 build mode:** in the default delegated path, the `implementation-builder` sub-agent is handed the `memory_dir` and performs this full-context load itself (the orchestrator must not paste the files into its prompt); the orchestrator performs the load directly only in the inline trivial-change exception.
 
 ---
 

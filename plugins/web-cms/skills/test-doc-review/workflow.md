@@ -15,6 +15,13 @@
 
 **CONTEXT FALLBACK RULE:** When TD0 is skipped, gather the missing plan, criteria, and work-type context from the repository state and the user conversation before invoking either reviewer. In no-Jira mode, pass `No Jira issue provided` as the issue-key context to the sub-agents.
 
+**SUB-AGENT NAME RESOLUTION:** This workflow refers to sub-agents by short name (`test-reviewer`, `documentation-reviewer`). The runtime registers them under different identifiers depending on how they are installed. Before the first sub-agent invocation, resolve each short name against the runtime's available-agents list and use the exact registered identifier:
+
+- If the short name appears verbatim in the list (agents deployed into the project's `.claude/agents/`), use it as-is.
+- If installed via the plugin, the registered identifier is `web-cms:<short-name>:<short-name>` — e.g. `test-reviewer` → `web-cms:test-reviewer:test-reviewer`.
+- Never invent a partial form such as `web-cms:test-reviewer` — it will not resolve. If an invocation fails with an "agent type not found" error, read the available-agents list in the error message, select the entry whose **final segment** equals the short name, and retry with that exact identifier.
+- Resolve the scheme once, then reuse it for every subsequent sub-agent invocation in the session.
+
 **TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
 
 - **File I/O (read, write, edit a known file):** Use native `Read`, `Write`, `Edit`.

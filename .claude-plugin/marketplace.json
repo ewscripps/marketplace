@@ -85,12 +85,13 @@
         {
             "name": "ada-tablo",
             "source": "./plugins/ada-tablo",
-            "description": "Ada chatbot analysis skills for Tablo support — playbook review, topics review, coaching inventory.",
-            "version": "1.2.0",
+            "description": "Ada chatbot analysis skills for Tablo support — playbook review, topics review, coaching inventory, and config-health integrity checks.",
+            "version": "2.0.0",
             "skills": [
                 "./skills/weekly-playbook-analysis",
                 "./skills/weekly-topics-review",
-                "./skills/coaching-review"
+                "./skills/coaching-review",
+                "./skills/config-health"
             ]
         },
         {
@@ -110,7 +111,7 @@
             "name": "web-cms",
             "source": "./plugins/web-cms",
             "description": "Skills and agents for creating and implementing Jira cards for Web & CMS development workflows.",
-            "version": "1.0.19",
+            "version": "1.0.20",
             "skills": [
                 "./skills/implementation-discovery",
                 "./skills/requirements-intake",
@@ -125,7 +126,9 @@
                 "./skills/manual-qa-plan",
                 "./skills/test-doc-review",
                 "./skills/mr-creation",
-                "./skills/compact-context"
+                "./skills/compact-context",
+                "./skills/project-onboarding",
+                "./skills/auto-qa-task"
             ]
         },
         {
@@ -135,6 +138,21 @@
             "version": "1.0.0",
             "skills": [
                 "./skills/myday"
+            ]
+        },
+        {
+            "name": "release-notes",
+            "source": "./plugins/release-notes",
+            "description": "Automated release-note generation from Jira fix-versions + GitLab/git history. Drafts customer-facing notes and an internal companion document, publishes to Confluence, and drops an HTML email for OneDrive-based stakeholder distribution.",
+            "version": "1.0.0",
+            "skills": [
+                "./skills/generate-release-notes",
+                "./skills/release-notes-config"
+            ],
+            "agents": [
+                "./agents/rn-jira-collector.md",
+                "./agents/rn-scm-collector.md",
+                "./agents/rn-confluence-publisher.md"
             ]
         }
     ]

@@ -16,6 +16,13 @@
 
 **SERENA PROJECT ACTIVATION:** Before CR0, check Serena's project-activation message (emitted on connect via `--project-from-cwd`); if it reports that onboarding has not been performed, call `onboarding` to scope Serena's language server to the current project directory. Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`) invoked directly in CR5/CR6 and used by the parallel `review-analyst` sub-agents depend on this being done. Do this once at the start of the workflow; do not repeat it between phases.
 
+**SUB-AGENT NAME RESOLUTION:** This workflow refers to sub-agents by short name (`review-analyst`, `comment-reviewer`, …). The runtime registers them under different identifiers depending on how they are installed. Before the first sub-agent invocation, resolve each short name against the runtime's available-agents list and use the exact registered identifier:
+
+- If the short name appears verbatim in the list (agents deployed into the project's `.claude/agents/`), use it as-is.
+- If installed via the plugin, the registered identifier is `web-cms:<short-name>:<short-name>` — e.g. `review-analyst` → `web-cms:review-analyst:review-analyst`.
+- Never invent a partial form such as `web-cms:review-analyst` — it will not resolve. If an invocation fails with an "agent type not found" error, read the available-agents list in the error message, select the entry whose **final segment** equals the short name, and retry with that exact identifier.
+- Resolve the scheme once, then reuse it for every subsequent sub-agent invocation in the session.
+
 **TOOL PREFERENCE:** Prefer native tools over Bash for filesystem work. All filesystem, search, and directory operations must stay within the current project directory.
 
 - **File I/O (read, write, edit a known file):** Use native `Read`, `Write`, `Edit`.
@@ -28,7 +35,7 @@
 
 **Comment formatting:** Pass clean GitHub-flavored markdown to `jira_add_comment`. Never backslash-escape markdown characters — bold is literal `**text**`, never `\*\*text\*\*`. Ensure every bold span has matching `**` delimiters on both sides.
 
-**Comment reviewer gate:** Every `jira_add_comment` call in this workflow is gated by an `**Independent comment review:**` block, following the same pattern as `plan-reviewer` and `implementation-reviewer`. The `comment-reviewer` sub-agent must return APPROVED (or the 3-iteration cap must be reached) before `jira_add_comment` is called. There are no exceptions.
+**Comment reviewer gate:** The structured **CR8** findings comment is gated by an `**Independent comment review:**` block, following the same pattern as `plan-reviewer` and `implementation-reviewer`. The `comment-reviewer` sub-agent must return APPROVED (or the 3-iteration cap must be reached) before `jira_add_comment` is called for CR8 — no exceptions. The brief CR10 notification comment and any blocking-failure comments are exempt from the comment-reviewer gate (they have no mandated field outline) but must still follow the comment-formatting rules above.
 
 **TASK TRACKING:** Always use task tracking (`TaskCreate`/`TaskUpdate`) so progress is visible throughout. Create one task per phase at the start of the workflow. Mark each task `in_progress` when starting the phase and `completed` when the phase is done:
 
@@ -306,6 +313,6 @@ This workflow is complete when **all** of the following are true:
 - Code reviewed across all applicable categories (CR4–CR6)
 - CR7 clarifying questions resolved (or confirmed none needed)
 - CR8 consolidated findings comment reviewed by `comment-reviewer` (APPROVED or 3-iteration cap reached) before `jira_add_comment` ran, with all required fields populated and overall assessment verdict included
-- Remediation task created and linked if findings required action (CR9), or no-remediation comment posted if approved
+- Remediation task created and linked if findings required action (CR9), or task creation skipped when the overall assessment was Approved
 - Assignee or reporter notified with verdict and links (CR10)
 - File-memory directory removed (`rm -rf "$MEM"`) (CR11)

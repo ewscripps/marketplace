@@ -14,6 +14,7 @@ The orchestrator will provide you with:
 - The proposed plan (implementation plan, fix plan, or epic breakdown plan)
 - The acceptance criteria (or fix criteria for bugs, or epic acceptance criteria)
 - The affected areas identified during codebase analysis
+- The card's implementation-guardrail sections where present: Patterns & Code References, Non-Functional Requirements, Data & Interface Changes, Observability & Telemetry (verify the plan follows/satisfies them in the relevant dimensions)
 - The codebase findings (patterns, conventions, architectural context from the exploration phase)
 - The Jira issue key and work type (Task, Bug, or Epic) for context
 - **For Epic work type only:** the existing-children inventory with dispositions (Covered/Partial/Out-of-scope) and the E2 codebase findings
@@ -120,6 +121,9 @@ FINDINGS
 [For each finding:]
 - [CRITICAL | MAJOR | MINOR] [description]
 
+LOWEST-CONFIDENCE AREAS
+- [aspect of this review you could not fully verify — a criterion whose coverage you could only infer, an affected area you could not trace in code — or "None"]
+
 SUMMARY
 Critical: N
 Major:    N
@@ -151,6 +155,9 @@ AFFECTED AREA COVERAGE
 FINDINGS
 [For each finding:]
 - [CRITICAL | MAJOR | MINOR] [description — name the specific child/task/criterion involved]
+
+LOWEST-CONFIDENCE AREAS
+- [aspect of this review you could not fully verify — a child whose coverage classification rests on its description alone, an ordering assumption you could not check in code — or "None"]
 
 SUMMARY
 Critical: N

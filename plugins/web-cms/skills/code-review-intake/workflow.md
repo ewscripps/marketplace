@@ -313,12 +313,19 @@ Omit this field for Task and Bug reviews.]
 
 |Field|Source|
 |---|---|
+|Project|User-confirmed at the Project selection gate below|
 |Issue Type|Task|
 |Summary|`Code Review: [Review Type] -- [Release Name or Issue Key]`|
 |Description|Assembled per above|
 |Priority|Recommended based on review scope and risk (see below)|
 |Labels|`code-review` + review type in lowercase|
 |Epic Link|Recommended epic (see below)|
+
+    **Project selection (new-card path only — skip when updating an existing card, whose project is fixed by its key):** Never guess the Jira project; an educated guess that is usually right still creates cards in the wrong space when it isn't. Before any other field confirmation:
+
+    1. Determine the recommended project key: for **Release** reviews, the Project Key the user already provided at intake — treat it as confirmed and do not re-ask. For **Epic / Task / Bug** reviews, the project of the Jira issue being reviewed (derived from its key) is the strong default recommendation. Call `jira_get_all_projects` to validate the candidate key and identify plausible alternates.
+    2. Unless the key was explicitly user-provided at intake, use `AskUserQuestion` (Header: `Jira Project`, Question: `Which Jira project should the review card be created in?`, Options: `<KEY> — <project name> (Recommended)` first with a description naming the evidence (e.g. "project of reviewed issue PROJ-123"), then up to two alternates; the user can type any other key via the auto-injected Other input).
+    3. Record the confirmed key in `$MEM/work-item.md` frontmatter as `jira_project: <KEY>`. On resume, if `jira_project` is already recorded, use it without re-asking. Pass it as the `project_key` on `jira_create_issue` — never a key the user did not confirm.
 
     **Priority recommendation:** Before creating the issue, determine the recommended priority based on the review scope and risk: Release reviews default to High, Epic reviews default to Medium, Task/Bug reviews default to the priority of the reviewed issue (or Medium if unknown). Use `AskUserQuestion` with header `Task Priority` to confirm. Put the recommended priority first with `(Recommended)` appended. Options: one of `Critical (Recommended)` / `High (Recommended)` / `Medium (Recommended)` / `Low (Recommended)` as the first option (only the recommended one gets the label), then the remaining three priorities as subsequent options.
 
