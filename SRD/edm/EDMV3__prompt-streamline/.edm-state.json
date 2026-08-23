@@ -31,9 +31,9 @@
       "recorded_at": "2026-07-26T02:01:55Z"
     },
     "findings_ledger": {
-      "hash": "1bad7973473785f7eb6b40f09222b4f178c6f1614ea199b7e98fec52a3afc7a3",
+      "hash": "cd338cd6fd1dd9c925cc91f86539fa2018799ebf027490a0405905f550a8489e",
       "path": "./SRD/edm/EDMV3__prompt-streamline/code-audit/findings-ledger.md",
-      "recorded_at": "2026-08-21T07:25:28Z"
+      "recorded_at": "2026-08-23T02:55:15Z"
     }
   },
   "srd_version": "1.3.0",
@@ -130,7 +130,7 @@
   "last_decision": "Stage C complete: 13 P2s fixed (CA-401 false-pass site, 408, 418, 419, 454, 458, 463, 464, 465/D59, 466, 468, 469, 470; CA-407 found already fixed). Nine test-infrastructure P2s tagged as candidate Stage E debt set (D60): CA-401 remainder, 402, 403, 404, 405, 453, 455, 456, 457, 459. Suite 2182/0. Next: Stage D round-9 full audit under remediation freeze.",
   "audit_rounds": {
     "code": {
-      "count": 10,
+      "count": 11,
       "rounds": [
         {
           "round": 1,
@@ -290,6 +290,25 @@
           "estimated_cost_usd": 65.8606,
           "attribution_mode": "scoped",
           "unparseable_lines": 0
+        },
+        {
+          "round": 11,
+          "lenses": [],
+          "round_type": "full",
+          "started_at": "2026-08-23T01:32:59Z",
+          "completed_at": "2026-08-23T02:55:21Z",
+          "duration_seconds": 4942,
+          "tokens": {
+            "input": 390,
+            "output": 494346,
+            "cache_read": 96596138,
+            "cache_write_5m": 0,
+            "cache_write_1h": 2337657
+          },
+          "model_used": "claude-sonnet-5",
+          "estimated_cost_usd": 67.2282,
+          "attribution_mode": "scoped",
+          "unparseable_lines": 0
         }
       ]
     }
@@ -304,15 +323,15 @@
   "forked_from": "",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-08-21T07:25:29Z",
-  "current_step": "6.stage-d-spec-sweep-complete",
+  "last_updated": "2026-08-23T02:55:27Z",
+  "current_step": 6,
   "schema_version": 2,
-  "patterns_last_updated": "2026-08-21T07:25:29Z",
+  "patterns_last_updated": "2026-08-23T02:55:27Z",
   "patterns_updates": {
     "code": {
-      "updated_at": "2026-08-21T07:25:29Z",
-      "new_findings": 11,
-      "extracted_titles": 11,
+      "updated_at": "2026-08-23T02:55:27Z",
+      "new_findings": 12,
+      "extracted_titles": 12,
       "extraction_status": "ok"
     }
   },
