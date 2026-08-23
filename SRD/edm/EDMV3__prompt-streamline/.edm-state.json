@@ -31,9 +31,9 @@
       "recorded_at": "2026-07-26T02:01:55Z"
     },
     "findings_ledger": {
-      "hash": "cd338cd6fd1dd9c925cc91f86539fa2018799ebf027490a0405905f550a8489e",
+      "hash": "f83a34e08f35771d3309060066ea594daa72b511be4853c4984e532ecf576fbe",
       "path": "./SRD/edm/EDMV3__prompt-streamline/code-audit/findings-ledger.md",
-      "recorded_at": "2026-08-23T02:55:15Z"
+      "recorded_at": "2026-08-23T06:24:33Z"
     }
   },
   "srd_version": "1.3.0",
@@ -124,7 +124,7 @@
   "test_frameworks_detected": {},
   "coverage_by_layer": {},
   "coverage_by_epic": {},
-  "code_audit_converged": false,
+  "code_audit_converged": true,
   "compliance_gate_approved": false,
   "last_cmd": "edm-state approve-gate EDMV3 code-audit (exit 1, refused after schema_version fix)",
   "last_decision": "Stage C complete: 13 P2s fixed (CA-401 false-pass site, 408, 418, 419, 454, 458, 463, 464, 465/D59, 466, 468, 469, 470; CA-407 found already fixed). Nine test-infrastructure P2s tagged as candidate Stage E debt set (D60): CA-401 remainder, 402, 403, 404, 405, 453, 455, 456, 457, 459. Suite 2182/0. Next: Stage D round-9 full audit under remediation freeze.",
@@ -323,7 +323,7 @@
   "forked_from": "",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-08-23T02:55:27Z",
+  "last_updated": "2026-08-23T06:35:49Z",
   "current_step": 6,
   "schema_version": 2,
   "patterns_last_updated": "2026-08-23T02:55:27Z",
@@ -342,8 +342,13 @@
       "recorded_at": "2026-08-01T01:06:16Z"
     }
   ],
-  "code_audit_gate_approved_at": "",
-  "code_audit_gate_approver": "",
-  "code_audit_gate_enforcement": "",
-  "code_audit_gate_ledger": "absent"
+  "code_audit_gate_approved_at": "2026-08-23T06:35:49Z",
+  "code_audit_gate_approver": "darryl.porter",
+  "code_audit_gate_enforcement": "permission-ask",
+  "code_audit_gate_ledger": "./SRD/edm/EDMV3__prompt-streamline/code-audit/findings-ledger.jsonl",
+  "code_audit_p2_debt_accepted": true,
+  "code_audit_p2_debt_count": 39,
+  "code_audit_p2_debt_round": 11,
+  "code_audit_p2_debt_accepted_at": "2026-08-23T06:35:49Z",
+  "code_audit_p2_debt_accepted_by": "darryl.porter"
 }

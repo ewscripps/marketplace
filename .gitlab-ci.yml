@@ -842,24 +842,38 @@ eval:nightly:
     # variance come from plugins/edm/evals/baseline/scores.json. Exit 3 means no committed
     # baseline exists yet (tripwire not armed); that is reported, not silently treated as a pass.
     - |
+      CMP_EC=0
       if [ -f "${RUN_DIR}scores.json" ]; then
         rc=0
         bash plugins/edm/bin/edm-compare-eval "${RUN_DIR}scores.json" || rc=$?
         case "$rc" in
           0) echo "eval comparison: candidate at or above baseline_total minus variance" ;;
           3) echo "eval comparison: NOT ARMED -- no committed baseline (see evals/baseline/README.md)" ;;
-          *) echo "eval:nightly: FAILED -- eval comparison failed with exit $rc"; exit "$rc" ;;
+          # CA-537: record the failure and let the final block below own the exit, instead of
+          # exiting here directly. Post-CA-490, edm-compare-eval's complete:false refusal (exit 2)
+          # fires unconditionally on a partial run, which made the CA-452 exit-4 block below
+          # structurally unreachable -- this arm always exited first. Recording CMP_EC and
+          # deferring lets the final block prefer the documented exit-4 partial signal over this
+          # arm's exit 2 when both would otherwise apply.
+          *) echo "eval:nightly: FAILED -- eval comparison failed with exit $rc"; CMP_EC="$rc" ;;
         esac
       else
         echo "eval:nightly: FAILED -- ${RUN_DIR}scores.json missing before comparison (score-artifacts.sh should have written it)"
         exit 1
       fi
     # CA-452: a partial run always fails the job, even if the comparison arm above was skipped
-    # (e.g. no scores.json survived) or somehow reported clean -- partial is never green.
+    # (e.g. no scores.json survived) or somehow reported clean -- partial is never green. CA-537:
+    # this is now the SOLE exit point for a comparison failure too (CMP_EC, set above) -- checked
+    # AFTER the partial-run check so RUN_EVAL_EC=4 still exits 4 (the documented partial signal)
+    # even when the comparison arm above also failed, rather than losing that signal to whichever
+    # check ran first.
     - |
       if [ "${RUN_EVAL_EC:-0}" -eq 4 ]; then
         echo "eval:nightly: FAILED -- partial run (run-eval.sh exit 4); see run.json / stub scores.json in the artifacts"
         exit 4
+      fi
+      if [ "${CMP_EC:-0}" -ne 0 ]; then
+        exit "$CMP_EC"
       fi
   artifacts:
     when: always
