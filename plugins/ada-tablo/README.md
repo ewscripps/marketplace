@@ -10,6 +10,7 @@ Analysis skills for the Tablo Ada chatbot support system. Used by David and Laur
 | `/ada-tablo:weekly-topics-review` | Weekly (Fridays) | Catch-all reduction — topics report analysis, recommendation generation |
 | `/ada-tablo:coaching-review` | Monthly | Coaching inventory sync, resolution rate measurement, performance tracking |
 | `/ada-tablo:config-health` | Standalone / pre-cutover / pre-promote gate | Structural integrity check — orphan variable reads, unbound action outputs, dangling references, null conflation. Read-only. |
+| `/ada-tablo:deterministic-logic` | On demand | Move computable logic out of playbook prose into a code tool (sandboxed Python) or Answers Utility endpoint. Local case-table test, then changeset-gated deploy. |
 
 Two internal helper skills (`preflight`, `commit-results`) handle workspace setup and git operations automatically.
 
