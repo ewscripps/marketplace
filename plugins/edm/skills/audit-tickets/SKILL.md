@@ -40,19 +40,40 @@ using `<gated-command>` = `audit-tickets` and `<phase-num>` = `5`.
    [VERSION-DRIFT] P0 | README.md | Generated From: srd.md v1.0.0 but current srd_version is 1.2.0
    | Ticket pack was generated from an outdated SRD. Re-run /edm:tickets or accept with rationale.
    ```
-4. **Two-lane mandatory spawn** -- spawn exactly 2 `edm-ticket-auditor` agents in parallel (never serial, never merged into one agent):
+4. **Two-lane mandatory spawn** -- count the total tickets in the pack (sum of ticket entries
+   across the epic files, or the count in `README.md`'s ticket table -- the count Dimension 1
+   coverage checking already needs, not a new counting mechanism) and spawn exactly 2
+   `edm-ticket-auditor` agents in parallel (never serial, never merged into one agent), telling
+   each its lane and the pack's total ticket count as `assigned={M}` (both lanes audit the whole
+   pack, so both get the same `M`):
    - **Lane 1 (structural)** -- dimensions 1-4: coverage, sizing (using the plugin-root-relative shared legend at `docs/templates/ticket-size-legend.md`), dependencies, version alignment
    - **Lane 2 (content-quality)** -- dimensions 5-8: AC quality, diagram correctness, consistency, version alignment overlap
-5. Compile findings into `${INIT_DIR}/${user_config.ticket_pack_dirname}/audit.md`. Tag each finding with its lane (`[structural]` or `[content-quality]`). De-duplicate findings that both lanes surface (deduplicated findings appear once).
+5. **Check each lane's completion sentinel before compiling.** Each `edm-ticket-auditor` returns
+   text rather than writing a file, so check the **last non-empty line of that returned text** for
+   the literal marker `TICKET-AUDIT-COMPLETE` in the canonical grammar defined in `CLAUDE.md
+   Sec."Verifier completion sentinel (canonical)"` (`<!-- TICKET-AUDIT-COMPLETE range={lane}
+   assigned={M} audited={N} -->`, `range=` exactly `structural` or `content-quality`). Refuse
+   exactly as `bin/edm-check-verifier-sentinel` does for the file form, but against the returned
+   text since there is no file to `tail`:
+   - **Missing or misplaced sentinel** (not the true last non-empty line, or absent entirely) --
+     that lane's returned block is truncated. Do not compile it.
+   - **Short count** -- the sentinel is present and well-formed but `audited=` is below
+     `assigned=` -- the lane finished cleanly but graded fewer tickets than the pack contains. Do
+     not compile it.
+   A lane failing either check is **not** compiled, is never de-duplicated against the other
+   lane's findings, and must never be presented as half of a completed two-lane audit. Name the
+   failing lane and re-dispatch it. **Gate 3 must not be presented while either lane is
+   outstanding.**
+6. Compile the surviving (sentinel-verified) findings from both lanes into `${INIT_DIR}/${user_config.ticket_pack_dirname}/audit.md`. Tag each finding with its lane (`[structural]` or `[content-quality]`). De-duplicate findings that both lanes surface (deduplicated findings appear once).
 
-6. **Remediate** all coverage gaps, decompose XL tickets, fix dependency declarations, improve vague AC, fix consistency mismatches.
-7. `edm-state phase-complete <PREFIX> 5`
-7a. **Auto-update patterns** -- append novel ticket-audit findings:
+7. **Remediate** all coverage gaps, decompose XL tickets, fix dependency declarations, improve vague AC, fix consistency mismatches.
+8. `edm-state phase-complete <PREFIX> 5`
+8a. **Auto-update patterns** -- append novel ticket-audit findings:
     ```bash
     edm-state update-patterns <PREFIX> ticket
     ```
-8. Present **HITL Gate 3** (see below, per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`) and STOP for sign-off.
-9. On approval: `edm-state approve-gate <PREFIX> 3`. Then append Gate 3 approval decisions into `decisions.md` in the initiative directory:
+9. Present **HITL Gate 3** (see below, per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`) and STOP for sign-off.
+10. On approval: `edm-state approve-gate <PREFIX> 3`. Then append Gate 3 approval decisions into `decisions.md` in the initiative directory:
    ```
    | Gate 3 | <ticket-pack decision> | <chosen> | <rationale> | {date} |
    ```
@@ -134,7 +155,10 @@ Prompt: "Audit the ticket pack at ${INIT_DIR}/${user_config.ticket_pack_dirname}
          Cross-reference against SRD at ${INIT_DIR}/${user_config.srd_filename}.
          You are the STRUCTURAL lane (dimensions 1-4): coverage, sizing, dependencies, version alignment.
          For sizing checks, read the plugin-root-relative shared size legend at docs/templates/ticket-size-legend.md.
-         Tag all findings: [structural]. Report every gap found."
+         The pack contains {M} tickets total (assigned={M}). Tag all findings: [structural].
+         Report every gap found. End your returned text with the completion sentinel per your own
+         agent definition's 'Completion sentinel' section, using range=structural and
+         assigned={M}."
 
 Agent: edm-ticket-auditor (Lane 2 -- content-quality)
 Prompt: "Audit the ticket pack at ${INIT_DIR}/${user_config.ticket_pack_dirname}/.
@@ -142,7 +166,10 @@ Prompt: "Audit the ticket pack at ${INIT_DIR}/${user_config.ticket_pack_dirname}
          Cross-reference against SRD at ${INIT_DIR}/${user_config.srd_filename}.
          You are the CONTENT-QUALITY lane (dimensions 5-8): AC quality, diagram correctness,
          consistency, version alignment.
-         Tag all findings: [content-quality]. Report every gap found."
+         The pack contains {M} tickets total (assigned={M}). Tag all findings: [content-quality].
+         Report every gap found. End your returned text with the completion sentinel per your own
+         agent definition's 'Completion sentinel' section, using range=content-quality and
+         assigned={M}."
 ```
 
 ## HITL Gate 3
@@ -178,7 +205,7 @@ The ticket pack tables include regulatory-traceability columns (`Regulation | Co
 
 ## Pending Pattern Entries (gate-time curation)
 
-`edm-state update-patterns` (step 7a above) appends novel findings to the pattern library as stubs,
+`edm-state update-patterns` (step 8a above) appends novel findings to the pattern library as stubs,
 each carrying a `status: pending-review` line plus `source:`, `audit-type:` and `date:` provenance
 (`docs/audit-patterns/README.md Sec."Append Schema"`). A stub nobody is ever asked about is a stub
 forever, so Gate 3 -- one the human already stops at -- is where the ask happens.
