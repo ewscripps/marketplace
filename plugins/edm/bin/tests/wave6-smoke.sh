@@ -2712,9 +2712,9 @@ check_absent "T14 AC3 -- archive does not ask to re-approve the code-audit gate 
 # initiative and run get/validate/phase-complete/archive end to end. ----------------------
 echo
 echo "T14 AC4 -- real archived EDMV2 state file, copied into a scratch initiative, runs end to end"
-REAL_EDMV2_FIXTURE="${REPO_ROOT}/SRD/.archived/EDMV2/.edm-state.json"
+REAL_EDMV2_FIXTURE="${REPO_ROOT}/SRD/.archived/edm/EDMV2/.edm-state.json"
 [[ -f "$REAL_EDMV2_FIXTURE" ]] \
-  && pass "T14 AC4 -- source fixture SRD/.archived/EDMV2/.edm-state.json exists" \
+  && pass "T14 AC4 -- source fixture SRD/.archived/edm/EDMV2/.edm-state.json exists" \
   || fail "T14 AC4 -- source fixture not found at $REAL_EDMV2_FIXTURE"
 mkdir -p "$TMP/SRD/T14EDMV2"
 STATE_T14EDMV2="$TMP/SRD/T14EDMV2/.edm-state.json"
