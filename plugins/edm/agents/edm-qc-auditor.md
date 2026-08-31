@@ -122,9 +122,45 @@ All N acceptance criteria verified.
 ## Remediation Required
 
 [Prioritized FAIL findings, at every severity, with file:line and specific fix. PARTIAL findings are not remediated here -- they are closed by the mandatory `/edm:verify-runtime` step before archive, which either upgrades each to PASS or downgrades it to FAIL for remediation like any other finding.]
+
+<!-- QC-SHARD-COMPLETE range={T-first}-{T-last} assigned={M} audited={N} -->
 ```
 
 - **Length**: match the length of the document to what the task needs -- cover the substance; do not pad with filler sections, redundant summaries, or boilerplate. The report scales with the ticket count in your assigned range, not with a fixed target.
+
+### Completion sentinel -- mandatory, and it is the final line of the file
+
+The grammar is defined once, canonically, in `CLAUDE.md Sec."Verifier completion sentinel
+(canonical)"`; the literal string below is that grammar's `QC-SHARD-COMPLETE` marker inlined here
+directly (per D22, a bare section-name citation is not known to resolve from an installed plugin
+cache, so the literal string is what this agent actually follows, not a paraphrase of it):
+
+```
+<!-- QC-SHARD-COMPLETE range={T-first}-{T-last} assigned={M} audited={N} -->
+```
+
+- **This is the final line of the file, with nothing written after it.** Being present somewhere
+  earlier in the file -- in the header, in a mid-document note, anywhere but the true last line --
+  does not satisfy this contract and is treated by the consumer exactly as if the sentinel were
+  absent. Write every other section first, finish the audit, and only then append this one line
+  and stop.
+- **Never write it before the audit is finished.** Do not write it into the header as a
+  placeholder to fill in later, and do not write it early "to be safe." A sentinel written before
+  the work is done is indistinguishable from a truncated agent that happened to guess the right
+  string, and defeats the entire purpose of this contract.
+- **`range=` is the assigned ticket range** (`T{first}-T{last}`), for both shard kinds
+  (`qc-shard-impl-*.md` and `qc-shard-pass-*.md`) -- the tickets you were told to audit, always
+  independent of the shard filename's own wave/ordinal components (those are file-naming
+  metadata, not the assignment; keep the two independent).
+- **`assigned=` is the ticket count the dispatcher told you to audit** when it spawned you --
+  the size of your assigned range.
+- **`audited=` is the number of tickets carrying a verdict row in this report's own `## Summary`
+  table** -- the tickets you actually covered, which is what makes the short-count refusal a
+  plain integer comparison of `audited=` against `assigned=`.
+- **When the sentinel is absent or misplaced, or `audited=` is below `assigned=`,
+  `/edm:implement` refuses this shard outright** and re-runs this agent for the same range. That
+  refusal is the intended behavior this contract exists to produce -- it is not an error condition
+  to work around, silence, or route around by writing the sentinel differently.
 
 ## Process
 
