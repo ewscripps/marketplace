@@ -49,9 +49,43 @@ coverage_target_e2e_critical_paths_pct: ${user_config.coverage_target_e2e_critic
 
 Wait for it to complete.
 
+### Step 2a -- Verify each coverage report's completion sentinel
+
+Before any downstream consumption of the auditor's output -- before presenting results, before
+treating a number as satisfying the Phase 6 "coverage targets met" checklist item -- run
+`edm-check-verifier-sentinel TEST-COVERAGE <file>` (VERIF-T03/T07) against **every** coverage file
+the auditor may have written:
+
+```bash
+edm-check-verifier-sentinel TEST-COVERAGE "${INIT_DIR}/test-coverage.md"
+```
+
+For a multi-stack run, also run it against **every** `${INIT_DIR}/test-coverage-{epic}.md` that
+currently exists (glob for the files present -- an epic with an entirely N/A layer set produces no
+file at all, and absence there is authoritative, not a refusal):
+
+```bash
+for f in "${INIT_DIR}"/test-coverage-*.md; do
+  [ -e "$f" ] || continue
+  edm-check-verifier-sentinel TEST-COVERAGE "$f"
+done
+```
+
+On refusal (exit 2 -- missing/misplaced sentinel, or a short `audited=` count) for any file:
+- Report the failing path and the reason to the user.
+- Treat any coverage `edm-state record-test-coverage` may already have written for that file's
+  layer(s)/epic as **unverified** -- do not present it, and do not count it toward the Phase 6
+  "coverage targets met" checklist item. A refused coverage report must never be used to satisfy
+  that checklist item.
+- Re-dispatch `edm-test-coverage-auditor` (Step 2) -- a fresh run overwrites both the report file
+  and, once it completes with a valid sentinel, the corresponding state entries with newly
+  measured values.
+
+Only once every coverage file present passes this check does Step 3 proceed.
+
 ### Step 3 -- Present results, then update the pattern library
 
-After the auditor completes, present to the user:
+After the auditor completes and every report has passed its sentinel check, present to the user:
 - Updated coverage by layer -- or by epic and layer for multi-stack initiatives (target vs. actual).
 - Stale per-epic coverage files removed (if any).
 - Finding counts (P0, P1, P2) overall and per epic.
