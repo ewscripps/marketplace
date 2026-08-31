@@ -111,28 +111,46 @@ if [[ -z "$range" || -z "$audited" ]]; then
   exit 2
 fi
 
-# Determine the expected count, in priority order:
-#   1. an explicit assigned= field on the sentinel itself (the canonical CLAUDE.md grammar --
-#      a pure integer comparison, no range= parsing required)
-#   2. an explicit [expected-count] CLI argument (for a non-ticket range=, e.g. a lane name or
-#      section group)
-#   3. a parsed T{a}-T{b} ticket-range span
+# Determine the expected count, in priority order. The ordering is a TRUST ordering, not a
+# convenience one, and it is the whole reason this arm is not self-defeating:
+#
+#   1. the [expected-count] CLI argument -- supplied by the DISPATCHER, the party that knows what
+#      it assigned. This outranks everything in the artifact.
+#   2. a parsed T{a}-T{b} span from range=
+#   3. the assigned= field
+#
+# 2 and 3 both come out of the artifact, i.e. from the agent being policed, so neither can be
+# trusted against the failure this check exists to catch. A truncated agent that emits
+# `range=T01-T08 assigned=1 audited=1` would, under an assigned=-first ordering, certify its own
+# completeness by understating what it was given -- the artifact defeating the check that polices
+# it. When both are present and disagree, the sentinel is internally inconsistent and the larger
+# value is taken, so the refusal is never weakened by the agent's own claim.
 expected=""
-if [[ -n "$assigned" ]]; then
-  expected="$assigned"
-elif [[ -n "$EXPECTED_ARG" ]]; then
+if [[ -n "$EXPECTED_ARG" ]]; then
   _is_uint "$EXPECTED_ARG" || die "expected-count argument must be a non-negative integer, got '$EXPECTED_ARG'" 1
   expected="$EXPECTED_ARG"
 else
+  _range_span=""
   case "$range" in
     T[0-9]*-T[0-9]*)
       _r_a="${range#T}"; _r_a="${_r_a%%-T*}"
       _r_b="${range##*-T}"
       if _is_uint "$_r_a" && _is_uint "$_r_b"; then
-        expected=$(( 10#$_r_b - 10#$_r_a + 1 ))
+        _range_span=$(( 10#$_r_b - 10#$_r_a + 1 ))
       fi
       ;;
   esac
+  if [[ -n "$_range_span" && -n "$assigned" ]]; then
+    if [[ $(( 10#$_range_span )) -ge $(( 10#$assigned )) ]]; then
+      expected="$_range_span"
+    else
+      expected="$assigned"
+    fi
+  elif [[ -n "$_range_span" ]]; then
+    expected="$_range_span"
+  elif [[ -n "$assigned" ]]; then
+    expected="$assigned"
+  fi
 fi
 
 if [[ -z "$expected" ]]; then
