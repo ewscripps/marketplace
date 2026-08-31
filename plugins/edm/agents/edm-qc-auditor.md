@@ -8,7 +8,7 @@ description: |
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput, Write, Bash
 model: opus
 effort: max
-maxTurns: 25
+maxTurns: 50
 color: red
 disallowedTools: Edit, NotebookEdit
 ---

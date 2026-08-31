@@ -375,6 +375,20 @@ The check introduces no binary beyond this plugin's existing `bash`, `jq`, `git`
 -- and every implementation is bash 3.2 compatible (the floor both macOS and Linux ship as
 `/bin/bash`).
 
+### Turn budget parity
+
+The four read-only verifiers named at the top of this section -- `edm-srd-auditor`,
+`edm-ticket-auditor`, `edm-qc-auditor`, `edm-test-coverage-auditor` -- run at `maxTurns: 50`, at
+parity with the producer agents whose output they check (`edm-srd-writer`, `edm-ticket-writer`,
+`edm-implementer`). Verification is not cheaper than production: a verifier must read the
+artifact under audit **and** cross-reference it against the codebase, which is strictly more work
+than writing the artifact in the first place. Do not "tidy" any of these four back down to the
+plugin's `maxTurns: 30` floor (the eleven code-audit lens agents' own ceiling, which has no
+evidence of truncation and is unrelated to this parity) -- that floor was set once, before this
+contract existed, and never revisited until this section landed. The completion sentinel above is
+what makes a higher budget safe: it is what still catches a truncated run even though truncation
+becomes rarer at 50 turns than it was at 25.
+
 ### Scope of this section
 
 This is a documentation-only contract: nothing in the plugin reads this section at runtime, and it
@@ -657,7 +671,7 @@ Test code itself lives in the project's existing test directories -- `SRD/` arti
 | `edm-test-contract` | sonnet / high | green | 50 | API contract tests (OpenAPI/GraphQL-driven) |
 | `edm-test-e2e` | sonnet / high | green | 60 | Playwright/Cypress full user journeys |
 | `edm-test-a11y` | sonnet / high | green | 30 | axe-core + keyboard nav, WCAG 2.1 AA |
-| `edm-test-coverage-auditor` | sonnet / high | cyan | 25 | Read-only: parse coverage, cross-ref AC, find gaps |
+| `edm-test-coverage-auditor` | sonnet / high | cyan | 50 | Read-only: parse coverage, cross-ref AC, find gaps |
 
 `edm-test-coverage-auditor` is `cyan` (read-only audit lens, like the code-audit lenses). Test
 writers are `green` (build code, like `edm-implementer`). Planner is `yellow` (discovery, like

@@ -9464,5 +9464,88 @@ verif_t08_control_missing="$(verif_t08_check_sentinel "$verif_t08_control_copy" 
   && pass "VERIF-T08 AC7 -- negative control: a copy of edm-qc-auditor.md with the sentinel and 'final line' wording stripped is correctly rejected by the AC6 function (missing: ${verif_t08_control_missing})" \
   || fail "VERIF-T08 AC7 -- negative control failed: the AC6 function accepted (returned 0) a copy of edm-qc-auditor.md with both the sentinel and 'final line' wording stripped -- the assertion function is not load-bearing"
 
+# =================================================================================
+# VERIF-T09: raise the four read-only verifiers from maxTurns 25 to 50, asserted as computed
+# checks (AC1-AC4), plus a revert-detection self-test (AC8) proving the AC1 assertion function
+# itself is load-bearing rather than passing regardless of file content. Lands after VERIF-T08
+# (dependency: T09 depends on T08) -- the sentinel-presence check must exist before the budget
+# that makes truncation rarer, and therefore harder to notice, is raised.
+# =================================================================================
+echo
+echo "VERIF-T09 -- maxTurns 25 -> 50 parity for the four read-only verifiers; lenses and producers unchanged"
+
+VERIF_T09_AGENTS_DIR="${PLUGIN_DIR}/agents"
+
+# AC1/AC8 -- function taking a path, asserting the 'maxTurns: 50' frontmatter line is present.
+# Path-parameterized so the same function backs both the four real-file assertions (AC1) and the
+# AC8 revert self-test against a mutated temp copy.
+verif_t09_has_maxturns_50() {
+  local file="$1"
+  [[ "$(count_matches '^maxTurns: 50' "$file")" -ge 1 ]]
+}
+
+VERIF_T09_RAISED="edm-srd-auditor.md edm-ticket-auditor.md edm-qc-auditor.md edm-test-coverage-auditor.md"
+for verif_t09_fname in $VERIF_T09_RAISED; do
+  verif_t09_f="${VERIF_T09_AGENTS_DIR}/${verif_t09_fname}"
+  if verif_t09_has_maxturns_50 "$verif_t09_f"; then
+    pass "VERIF-T09 AC1 -- ${verif_t09_fname} carries maxTurns: 50"
+  else
+    fail "VERIF-T09 AC1 -- ${verif_t09_fname} does not carry a '^maxTurns: 50' line"
+  fi
+  verif_t09_still25="$(count_matches '^maxTurns: 25' "$verif_t09_f")"
+  [[ "${verif_t09_still25:-0}" -eq 0 ]] \
+    && pass "VERIF-T09 AC2 -- ${verif_t09_fname} no longer contains maxTurns: 25" \
+    || fail "VERIF-T09 AC2 -- ${verif_t09_fname} still contains maxTurns: 25 (${verif_t09_still25} occurrence(s))"
+done
+
+# AC3 -- the eleven code-audit lens agents are untouched, still maxTurns: 30. Reuses the
+# already-established LENS_AGENTS enumeration (EDMV3-T24 above) rather than a bare
+# agents/edm-audit-*.md glob: that glob also matches edm-audit-synthesizer.md, which is not a
+# lens (CA-529 documents the twelve-vs-eleven distinction), and would silently miscount 12 as the
+# expected total. LENS_AGENTS is asserted to still be exactly eleven names, so a future edit that
+# adds a twelfth real lens must update that shared variable consciously rather than this ticket's
+# count silently drifting out of sync with it.
+verif_t09_lens_name_count="$(printf '%s\n' $LENS_AGENTS | grep -c '.')"
+[[ "$verif_t09_lens_name_count" -eq 11 ]] \
+  && pass "VERIF-T09 AC3 -- LENS_AGENTS still enumerates eleven lens names" \
+  || fail "VERIF-T09 AC3 -- LENS_AGENTS enumerates ${verif_t09_lens_name_count} names, expected 11"
+verif_t09_lens_30_count=0
+verif_t09_lens_checked=0
+for verif_t09_lname in $LENS_AGENTS; do
+  verif_t09_f="${VERIF_T09_AGENTS_DIR}/${verif_t09_lname}.md"
+  verif_t09_lens_checked=$((verif_t09_lens_checked+1))
+  verif_t09_lens_hit="$(count_matches '^maxTurns: 30' "$verif_t09_f")"
+  [[ "${verif_t09_lens_hit:-0}" -ge 1 ]] && verif_t09_lens_30_count=$((verif_t09_lens_30_count+1))
+done
+[[ "$verif_t09_lens_30_count" -eq "$verif_t09_lens_checked" ]] \
+  && pass "VERIF-T09 AC3 -- all ${verif_t09_lens_checked} lens agents still read maxTurns: 30" \
+  || fail "VERIF-T09 AC3 -- only ${verif_t09_lens_30_count} of ${verif_t09_lens_checked} lens agents still read maxTurns: 30"
+
+# AC4 -- no producer's maxTurns changes: edm-implementer stays 60; edm-srd-writer,
+# edm-ticket-writer, edm-architect stay 50 (asserted explicitly, one entry per named producer).
+VERIF_T09_PRODUCERS="edm-implementer.md:60 edm-srd-writer.md:50 edm-ticket-writer.md:50 edm-architect.md:50"
+for verif_t09_entry in $VERIF_T09_PRODUCERS; do
+  verif_t09_pfname="${verif_t09_entry%%:*}"
+  verif_t09_pturns="${verif_t09_entry##*:}"
+  verif_t09_pf="${VERIF_T09_AGENTS_DIR}/${verif_t09_pfname}"
+  verif_t09_pcount="$(count_matches "^maxTurns: ${verif_t09_pturns}" "$verif_t09_pf")"
+  [[ "${verif_t09_pcount:-0}" -ge 1 ]] \
+    && pass "VERIF-T09 AC4 -- ${verif_t09_pfname} unchanged at maxTurns: ${verif_t09_pturns}" \
+    || fail "VERIF-T09 AC4 -- ${verif_t09_pfname} no longer reads maxTurns: ${verif_t09_pturns}"
+done
+
+# AC8 -- revert-detection self-test: a temp copy of one of the four raised files, rewritten back
+# to maxTurns: 25, must make the AC1 assertion function (verif_t09_has_maxturns_50) return
+# non-zero -- proving the assertion demonstrably fails on a revert rather than passing
+# unconditionally regardless of file content.
+verif_t09_revert_src="${VERIF_T09_AGENTS_DIR}/edm-qc-auditor.md"
+verif_t09_revert_copy="${TMP}/verif-t09-revert-qc-auditor.md"
+sed 's/^maxTurns: 50$/maxTurns: 25/' "$verif_t09_revert_src" > "$verif_t09_revert_copy"
+if verif_t09_has_maxturns_50 "$verif_t09_revert_copy"; then
+  fail "VERIF-T09 AC8 -- revert self-test: a copy of edm-qc-auditor.md rewritten to maxTurns: 25 was still accepted by the AC1 assertion function -- the assertion is not load-bearing"
+else
+  pass "VERIF-T09 AC8 -- revert self-test: a copy of edm-qc-auditor.md rewritten to maxTurns: 25 is correctly rejected by the AC1 assertion function"
+fi
+
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

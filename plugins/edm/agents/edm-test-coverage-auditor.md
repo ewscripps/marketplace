@@ -11,7 +11,7 @@ tools: Read, Write, Bash, Glob, Grep, TodoWrite
 disallowedTools: Edit, NotebookEdit
 model: sonnet
 effort: high
-maxTurns: 25
+maxTurns: 50
 color: cyan
 ---
 
