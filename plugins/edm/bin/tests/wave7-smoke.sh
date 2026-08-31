@@ -1286,14 +1286,21 @@ t64_marketplace_version="$(jq -r '.plugins[] | select(.name=="edm") | .version' 
 [[ "$t64_plugin_version" == "$t64_marketplace_version" ]] \
   && pass "T64 AC1 -- plugin.json and marketplace.json versions agree ($t64_plugin_version)" \
   || fail "T64 AC1 -- plugin.json version '$t64_plugin_version' != marketplace.json edm entry '$t64_marketplace_version'"
-# Superseded by EDMV3-T66 (wave-C closeout), then by EDMV3-T68/CA-431 (round-8 remediation):
-# the version literal this case asserts moved from T64's wave-A "2.1.0" through T65's wave-B
-# "3.0.0" to T66's wave-C "3.1.0" to the round-8 "3.2.0" (the accept-p2-debt feature release)
-# -- each release bumps the same field, and only the latest one's literal is current. This is
-# the version-agreement half of the check (both manifests move together).
-[[ "$t64_plugin_version" == "3.2.0" ]] \
-  && pass "T64 AC1 -- plugin.json version is 3.2.0 (EDMV3-T68 / round-8 remediation release)" \
-  || fail "T64 AC1 -- plugin.json version is '$t64_plugin_version', expected '3.2.0'"
+# Superseded by EDMV3-T66 (wave-C closeout), then by EDMV3-T68/CA-431 (round-8 remediation),
+# then by VERIF-T11: the version literal this case asserted moved on every release --
+# T64's wave-A "2.1.0" -> T65's wave-B "3.0.0" -> T66's wave-C "3.1.0" -> round-8's "3.2.0" --
+# and each move required a hand edit to this test file, which is exactly the drift class
+# CA-431/CA-531 exist to catch (VERIF-T11 shipped 3.2.1 -> 3.2.2 with three of four version
+# sites agreeing and this literal itself still pinned to the prior release, a defect only
+# caught because it was hardcoded here). Rather than re-pinning a fourth literal, this compares
+# plugin.json's version against CHANGELOG.md's own top `## [X.Y.Z]` heading -- a file the
+# release ticket already updates in the same commit -- so no separate copy of the version
+# literal needs maintaining inside the test suite itself.
+t64_changelog_version="$(sed -n 's/^## \[\([0-9][0-9.]*\)\].*/\1/p' "$PLUGIN_DIR/CHANGELOG.md" 2>/dev/null | sed -n '1p')"
+[[ -n "$t64_changelog_version" ]] || t64_changelog_version=MISSING
+[[ "$t64_plugin_version" == "$t64_changelog_version" ]] \
+  && pass "T64 AC1 -- plugin.json version matches CHANGELOG.md's top heading ($t64_plugin_version)" \
+  || fail "T64 AC1 -- plugin.json version '$t64_plugin_version' != CHANGELOG.md top heading '$t64_changelog_version'"
 
 # =================================================================================
 # EDMV3-T66: wave-C closeout -- version 3.1.0 and CLAUDE.md reference tables match reality
@@ -1619,7 +1626,7 @@ ca529_control_count="$(printf '%s\n' "$ca529_control_lines" | grep -c . || true)
 rm -rf "$ca529_control_dir"
 
 CODE_AUDIT_FIXTURE_DIR="${PLUGIN_DIR}/bin/tests/fixtures/code-audit"
-ARCHITECTURE_MD="$(cd "$PLUGIN_DIR/../.." && pwd)/SRD/edm/EDMV3__prompt-streamline/architecture.md"
+ARCHITECTURE_MD="$(cd "$PLUGIN_DIR/../.." && pwd)/SRD/.archived/edm/EDMV3__prompt-streamline/architecture.md"
 
 echo
 echo "T24 AC0 -- committed synthetic code-audit pass fixture exists with the required shape"
@@ -2867,8 +2874,8 @@ _wave7_assert_shared_lint_fresh "T33"
 # ---- EDMV3-T34: Skill-tool composition depth spike, CLAUDE.md documents the pattern -----------
 echo
 echo "=== EDMV3-T34: skill-composition spike recorded, CLAUDE.md rule 2 rewritten ==="
-SPIKE_NOTE="$(cd "$PLUGIN_DIR/../.." && pwd)/SRD/edm/EDMV3__prompt-streamline/spike-skill-composition.md"
-DECISIONS_MD="$(cd "$PLUGIN_DIR/../.." && pwd)/SRD/edm/EDMV3__prompt-streamline/decisions.md"
+SPIKE_NOTE="$(cd "$PLUGIN_DIR/../.." && pwd)/SRD/.archived/edm/EDMV3__prompt-streamline/spike-skill-composition.md"
+DECISIONS_MD="$(cd "$PLUGIN_DIR/../.." && pwd)/SRD/.archived/edm/EDMV3__prompt-streamline/decisions.md"
 
 echo "T34 AC1 -- spike note exists and answers all six questions"
 [[ -f "$SPIKE_NOTE" ]] && pass "T34 AC1 -- spike-skill-composition.md exists" \
@@ -3768,7 +3775,13 @@ ca002_insertion_case() {
   echo '{}' > "${scratch_srd_root}/ZCA2/.edm-state.json"
 
   local before_heading_count after_heading_count out1 out2
+  local before_pending_count after_pending_count
   before_heading_count="$(grep -c '^### ' "$scratch_srd")"
+  # Count pending markers as a DELTA, not an absolute. $scratch_srd is a copy of the shipped
+  # docs/audit-patterns/srd-audit.md, which `edm-state update-patterns` appends to as a documented
+  # part of normal operation -- so any absolute expectation here goes stale the first time a real
+  # initiative harvests a finding, and the test then fails for a reason unrelated to what it checks.
+  before_pending_count="$(grep -c 'status: pending-review' "$scratch_srd" || true)"
 
   out1="$(EDM_SRD_ROOT="$scratch_srd_root" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZCA2 srd 2>&1)"
   [[ "$out1" == *"2 new finding(s) appended"* ]] \
@@ -3800,11 +3813,10 @@ ca002_insertion_case() {
   check_absent "CA-002 AC5 -- the duplicate was skipped, not re-appended under its report-side casing" \
     "### literal semicolon inside a mermaid label" "$(cat "$scratch_srd")"
 
-  local pending_count
-  pending_count="$(grep -c 'status: pending-review' "$scratch_srd" || true)"
-  [[ "${pending_count:-0}" -eq 2 ]] \
-    && pass "CA-002 AC9 -- both auto-appended entries carry the pending-review marker" \
-    || fail "CA-002 AC9 -- found ${pending_count:-0} pending-review marker(s), expected 2"
+  after_pending_count="$(grep -c 'status: pending-review' "$scratch_srd" || true)"
+  [[ "$((after_pending_count - before_pending_count))" -eq 2 ]] \
+    && pass "CA-002 AC9 -- both auto-appended entries carry the pending-review marker (${before_pending_count} -> ${after_pending_count})" \
+    || fail "CA-002 AC9 -- expected +2 pending-review marker(s), got ${before_pending_count} -> ${after_pending_count}"
 
   check "CA-002 AC10 -- appended stub text is delimited, not disguised as curated prose" \
     "delimited stub text pending human curation; not yet curated prose" "$(cat "$scratch_srd")"
@@ -4582,9 +4594,17 @@ _t52_script_rate() {
 
 # _t52_md_cell <model-label> <column-index-1-based-after-model> -- the numeric value (dollar
 # sign and header/separator rows stripped) from CLAUDE.md's pricing table row for <model-label>.
+# Pre-existing bug fix (found while verifying VERIF-T02/T03/T04, unrelated to this initiative):
+# CLAUDE.md's pricing table Model column now reads "Opus 4.8, Opus 5" (the row was widened to
+# share Opus 5's rates), but this grep still required an EXACT "| Opus 4.8 |" cell -- no match,
+# so the unguarded `t52_md_val="$(_t52_md_cell ...)"` assignment below aborted the entire suite
+# under `set -e` before it ever printed a PASS/FAIL line, taking every later assertion in this
+# 9000+-line file down with it (confirmed via `git show` against the pre-VERIF commit: the
+# "Opus 4.8, Opus 5" label already existed there, so this is not a VERIF regression). The pattern
+# below now tolerates an optional ", <alias>" suffix on the label cell before the closing " |".
 _t52_md_cell() {
   local label="$1" col="$2"
-  grep -F "| ${label} |" "$CLAUDE_MD_T52" | head -1 \
+  grep -E "\| ${label}(, [^|]+)? \|" "$CLAUDE_MD_T52" | head -1 \
     | awk -F'|' -v c="$col" '{gsub(/^[ \t$]+|[ \t]+$/, "", $(c+2)); print $(c+2)}'
 }
 
@@ -5056,7 +5076,7 @@ echo
 echo "T49 AC7 -- before/after convention present on every prompt-text epic file (positive check)"
 t49_ac7_missing=""
 for t49_epic in 01 02 04 05 06 07 08 09 10; do
-  t49_epic_file="$(ls "${PLUGIN_DIR}/../../SRD/edm/EDMV3__prompt-streamline/tickets/epics/${t49_epic}-"*.md 2>/dev/null | head -1)"
+  t49_epic_file="$(ls "${PLUGIN_DIR}/../../SRD/.archived/edm/EDMV3__prompt-streamline/tickets/epics/${t49_epic}-"*.md 2>/dev/null | head -1)"
   if [[ -z "$t49_epic_file" ]] || ! grep -q 'before and after' "$t49_epic_file" 2>/dev/null; then
     t49_ac7_missing="${t49_ac7_missing} epics/${t49_epic}"
   fi
@@ -5069,11 +5089,11 @@ done
 # asserting it, which left the AC's stated command permanently wrong. The three incidental
 # phrases were reworded to "pre- and post-change" (same meaning), so the count is now assertable
 # and this is a mechanism rather than a note.
-t49_ac7_count="$(grep -rl 'before and after' "${PLUGIN_DIR}/../../SRD/edm/EDMV3__prompt-streamline/tickets/epics/" 2>/dev/null | wc -l | tr -d ' ')"
+t49_ac7_count="$(grep -rl 'before and after' "${PLUGIN_DIR}/../../SRD/.archived/edm/EDMV3__prompt-streamline/tickets/epics/" 2>/dev/null | wc -l | tr -d ' ')"
 [[ "${t49_ac7_count:-0}" -eq 9 ]] && pass "T49 AC7 -- the AC's literal grep lists exactly nine epic files" \
   || fail "T49 AC7 -- the AC's literal grep lists ${t49_ac7_count:-0} epic files, expected exactly 9"
 check_absent "T49 AC7 -- epics/11 no longer collides with the convention grep" "before and after" \
-  "$(cat "${PLUGIN_DIR}/../../SRD/edm/EDMV3__prompt-streamline/tickets/epics/11-cross-cutting-delivery.md" 2>/dev/null || true)"
+  "$(cat "${PLUGIN_DIR}/../../SRD/.archived/edm/EDMV3__prompt-streamline/tickets/epics/11-cross-cutting-delivery.md" 2>/dev/null || true)"
 
 echo
 echo "T49 AC8 -- convention recorded once in CLAUDE.md under contribution guidance"
@@ -9213,6 +9233,326 @@ ca481_control_nohup_out="$(_ca481_sweep no-hup "$ca481_control_nohup_f" 2>/dev/n
   && pass "CA-481(c) -- positive control: a file trapping EXIT/INT/TERM but never HUP is detected" \
   || fail "CA-481(c) -- positive control failed: the HUP-omitting scratch file was not flagged"
 rm -f "$ca481_control_combined_f" "$ca481_control_nohup_f"
+
+# =================================================================================
+# VERIF-T04: negative smoke tests for both edm-check-verifier-sentinel refusal paths (VERIF-T03),
+# plus mutation guards proving each refusal is caused by the check under test and not by some
+# other code path that happens to also refuse the same fixture -- a positive control that still
+# passes when the check is deleted proves nothing, which is exactly what this ticket exists to
+# avoid reproducing.
+# =================================================================================
+echo
+echo "VERIF-T04 -- edm-check-verifier-sentinel: both refusal paths, and mutation guards proving they are load-bearing"
+
+VERIF_T04_SCRIPT="${PLUGIN_DIR}/bin/edm-check-verifier-sentinel"
+
+# Fixture A -- well-formed shard: exit 0.
+verif_t04_a="${TMP}/verif-t04-fixture-a.md"
+printf 'QC Audit shard (VERIF-T04 fixture)\nrange=T01-T08 assigned=8 audited=8\n<!-- QC-SHARD-COMPLETE range=T01-T08 assigned=8 audited=8 -->\n' > "$verif_t04_a"
+verif_t04_a_ec=0
+"$VERIF_T04_SCRIPT" QC-SHARD "$verif_t04_a" >/dev/null 2>&1 || verif_t04_a_ec=$?
+[[ $verif_t04_a_ec -eq 0 ]] \
+  && pass "VERIF-T04 AC1 -- fixture A (well-formed) exits 0" \
+  || fail "VERIF-T04 AC1 -- fixture A (well-formed) exited ${verif_t04_a_ec}, expected 0"
+
+# Fixture B -- fixture A minus its final sentinel line (byte-identical otherwise). Line 2 of A is
+# deliberately built to carry the same range=/assigned=/audited= tokens the sentinel does, but
+# without the "<!-- ... -->" wrapper -- so it becomes B's new last line after the sentinel is
+# stripped, and it is what lets the AC7 mutation guard below isolate the marker-check specifically
+# (with the marker-check gate removed, extraction of those same tokens from this crafted line
+# succeeds and the script accepts; without a line shaped this way, a downstream check unrelated to
+# the marker-check could coincidentally also refuse, which would prove nothing about the marker-
+# check's own necessity).
+verif_t04_b="${TMP}/verif-t04-fixture-b.md"
+sed '$d' "$verif_t04_a" > "$verif_t04_b"
+verif_t04_b_out=""
+verif_t04_b_ec=0
+verif_t04_b_out="$("$VERIF_T04_SCRIPT" QC-SHARD "$verif_t04_b" 2>&1)" || verif_t04_b_ec=$?
+[[ $verif_t04_b_ec -eq 2 ]] \
+  && pass "VERIF-T04 AC2 -- fixture B (final sentinel line deleted) exits 2" \
+  || fail "VERIF-T04 AC2 -- fixture B exited ${verif_t04_b_ec}, expected 2"
+check "VERIF-T04 AC2 -- fixture B's refusal names the file path" "$verif_t04_b" "$verif_t04_b_out"
+check "VERIF-T04 AC2 -- fixture B's refusal contains the word 'truncated'" "truncated" "$verif_t04_b_out"
+
+# Fixture C -- the sentinel present but followed by one further line of report text: proves the
+# check is tail -1 and not a whole-file scan.
+verif_t04_c="${TMP}/verif-t04-fixture-c.md"
+printf 'QC Audit shard (VERIF-T04 fixture)\n<!-- QC-SHARD-COMPLETE range=T01-T08 assigned=8 audited=8 -->\nMore report text after the sentinel\n' > "$verif_t04_c"
+verif_t04_c_ec=0
+"$VERIF_T04_SCRIPT" QC-SHARD "$verif_t04_c" >/dev/null 2>&1 || verif_t04_c_ec=$?
+[[ $verif_t04_c_ec -eq 2 ]] \
+  && pass "VERIF-T04 AC3 -- fixture C (sentinel present but not the true last line) exits 2, proving tail -1 not a whole-file scan" \
+  || fail "VERIF-T04 AC3 -- fixture C exited ${verif_t04_c_ec}, expected 2"
+
+# Fixture D -- audited=6 against assigned=8: short-count refusal, naming both counts.
+verif_t04_d="${TMP}/verif-t04-fixture-d.md"
+printf 'QC Audit shard (VERIF-T04 fixture)\nrange=T01-T08 assigned=8 audited=6\n<!-- QC-SHARD-COMPLETE range=T01-T08 assigned=8 audited=6 -->\n' > "$verif_t04_d"
+verif_t04_d_out=""
+verif_t04_d_ec=0
+verif_t04_d_out="$("$VERIF_T04_SCRIPT" QC-SHARD "$verif_t04_d" 2>&1)" || verif_t04_d_ec=$?
+[[ $verif_t04_d_ec -eq 2 ]] \
+  && pass "VERIF-T04 AC4 -- fixture D (audited=6 below assigned=8) exits 2" \
+  || fail "VERIF-T04 AC4 -- fixture D exited ${verif_t04_d_ec}, expected 2"
+check "VERIF-T04 AC4 -- fixture D's refusal names the audited count (6)" "6" "$verif_t04_d_out"
+check "VERIF-T04 AC4 -- fixture D's refusal names the expected count (8)" "8" "$verif_t04_d_out"
+
+# Fixture E -- audited=8 against assigned=8: exits 0, proving the count arm distinguishes short
+# from complete rather than refusing everything.
+verif_t04_e="${TMP}/verif-t04-fixture-e.md"
+printf 'QC Audit shard (VERIF-T04 fixture)\nrange=T01-T08 assigned=8 audited=8\n<!-- QC-SHARD-COMPLETE range=T01-T08 assigned=8 audited=8 -->\n' > "$verif_t04_e"
+verif_t04_e_ec=0
+"$VERIF_T04_SCRIPT" QC-SHARD "$verif_t04_e" >/dev/null 2>&1 || verif_t04_e_ec=$?
+[[ $verif_t04_e_ec -eq 0 ]] \
+  && pass "VERIF-T04 AC5 -- fixture E (audited=8 meets assigned=8) exits 0" \
+  || fail "VERIF-T04 AC5 -- fixture E exited ${verif_t04_e_ec}, expected 0"
+
+# Fixture F -- marker present but no range=/audited=: malformed, refused, not a usage error.
+verif_t04_f="${TMP}/verif-t04-fixture-f.md"
+printf 'QC Audit shard (VERIF-T04 fixture)\n<!-- QC-SHARD-COMPLETE -->\n' > "$verif_t04_f"
+verif_t04_f_ec=0
+"$VERIF_T04_SCRIPT" QC-SHARD "$verif_t04_f" >/dev/null 2>&1 || verif_t04_f_ec=$?
+[[ $verif_t04_f_ec -eq 2 ]] \
+  && pass "VERIF-T04 AC6 -- fixture F (malformed sentinel, no range=/audited=) exits 2" \
+  || fail "VERIF-T04 AC6 -- fixture F exited ${verif_t04_f_ec}, expected 2 (not a usage error)"
+
+echo
+echo "VERIF-T04 -- mutation guards: each refusal above must vanish when, and only when, its own check is deleted"
+
+# Mutation-guard scratch bin directories carry the real script's sibling library so a mutated copy
+# still sources successfully (the same technique the CA-416 positive control above uses).
+verif_t04_mbin="${TMP}/verif-t04-mutant-marker-bin"
+verif_t04_cbin="${TMP}/verif-t04-mutant-count-bin"
+mkdir -p "$verif_t04_mbin" "$verif_t04_cbin"
+cp "${PLUGIN_DIR}/bin/_edm-cli-lib.sh" "$verif_t04_mbin/"
+cp "${PLUGIN_DIR}/bin/_edm-cli-lib.sh" "$verif_t04_cbin/"
+
+# AC7 -- mutation guard for the truncation/marker-check arm. Deletes the anchored
+# "case ... esac" block (the ONLY code in the script that refuses a non-matching last line) from a
+# copy, then asserts the mutated copy ACCEPTS fixture B, which the real (unmutated) script refused
+# above (AC2). If the mutated copy still refuses, the refusal is coming from somewhere other than
+# the marker-check, and this guard fails with a named message rather than passing vacuously.
+verif_t04_marker_start="$(grep -n 'VERIF-T03 marker-check (mutation-guard anchor' "$VERIF_T04_SCRIPT" | cut -d: -f1)"
+verif_t04_marker_end=""
+if [[ -n "$verif_t04_marker_start" ]]; then
+  verif_t04_marker_end="$(awk -v s="$verif_t04_marker_start" 'NR>=s && /^esac$/ {print NR; exit}' "$VERIF_T04_SCRIPT")"
+fi
+if [[ -z "$verif_t04_marker_start" || -z "$verif_t04_marker_end" ]]; then
+  fail "VERIF-T04 AC7 -- mutation guard could not locate the marker-check anchor comment in edm-check-verifier-sentinel; the script changed shape without updating this guard"
+else
+  sed "${verif_t04_marker_start},${verif_t04_marker_end}d" "$VERIF_T04_SCRIPT" > "${verif_t04_mbin}/edm-check-verifier-sentinel"
+  chmod +x "${verif_t04_mbin}/edm-check-verifier-sentinel"
+  verif_t04_mutant_marker_ec=0
+  "${verif_t04_mbin}/edm-check-verifier-sentinel" QC-SHARD "$verif_t04_b" >/dev/null 2>&1 || verif_t04_mutant_marker_ec=$?
+  [[ $verif_t04_mutant_marker_ec -eq 0 ]] \
+    && pass "VERIF-T04 AC7 -- mutation guard: deleting the marker-check block makes the mutated copy ACCEPT fixture B (proves the check, not something else, caused the AC2 refusal)" \
+    || fail "VERIF-T04 AC7 -- mutation guard failed: the mutated copy still exited ${verif_t04_mutant_marker_ec} (expected 0) on fixture B after the marker-check block was deleted -- the refusal is coming from somewhere other than the check under test"
+fi
+
+# AC8 -- mutation guard for the count arm. Deletes the anchored count-comparison block from a
+# copy, then asserts the mutated copy ACCEPTS fixture D, which the real script refused above
+# (AC4). Same named-failure contract as AC7 if the mutated copy still refuses.
+verif_t04_count_start="$(grep -n 'VERIF-T03 count-check (mutation-guard anchor' "$VERIF_T04_SCRIPT" | cut -d: -f1)"
+verif_t04_count_end=""
+if [[ -n "$verif_t04_count_start" ]]; then
+  verif_t04_count_end="$(awk -v s="$verif_t04_count_start" 'NR>=s && /^fi$/ {print NR; exit}' "$VERIF_T04_SCRIPT")"
+fi
+if [[ -z "$verif_t04_count_start" || -z "$verif_t04_count_end" ]]; then
+  fail "VERIF-T04 AC8 -- mutation guard could not locate the count-check anchor comment in edm-check-verifier-sentinel; the script changed shape without updating this guard"
+else
+  sed "${verif_t04_count_start},${verif_t04_count_end}d" "$VERIF_T04_SCRIPT" > "${verif_t04_cbin}/edm-check-verifier-sentinel"
+  chmod +x "${verif_t04_cbin}/edm-check-verifier-sentinel"
+  verif_t04_mutant_count_ec=0
+  "${verif_t04_cbin}/edm-check-verifier-sentinel" QC-SHARD "$verif_t04_d" >/dev/null 2>&1 || verif_t04_mutant_count_ec=$?
+  [[ $verif_t04_mutant_count_ec -eq 0 ]] \
+    && pass "VERIF-T04 AC8 -- mutation guard: deleting the count-check block makes the mutated copy ACCEPT fixture D (proves the check, not something else, caused the AC4 refusal)" \
+    || fail "VERIF-T04 AC8 -- mutation guard failed: the mutated copy still exited ${verif_t04_mutant_count_ec} (expected 0) on fixture D after the count-check block was deleted -- the refusal is coming from somewhere other than the check under test"
+fi
+
+# =================================================================================
+# VERIF-T08: assert the sentinel instruction (its marker token AND its "final line" positional
+# wording) is present in all four verifier agent prompts, that the four markers are pairwise
+# distinct, and that no OTHER agent file carries a "-COMPLETE " marker. This makes prompt-text
+# that would otherwise rot silently into a machine-checked contract: a later edit that drops the
+# instruction from one of the four, or pastes a sentinel into a producer agent where it would be
+# meaningless, fails here instead of surfacing only as a silent-pass in production.
+# =================================================================================
+echo
+echo "VERIF-T08 -- sentinel instruction asserted across all four verifier agent prompts"
+
+VERIF_T08_AGENTS_DIR="${PLUGIN_DIR}/agents"
+
+# AC5 -- the agent-to-marker mapping, declared once as a here-doc table (bash 3.2: no associative
+# arrays), rather than restated at each of the per-file assertion sites below.
+VERIF_T08_MAP="$(cat <<'EOF'
+edm-qc-auditor.md|QC-SHARD-COMPLETE
+edm-srd-auditor.md|SRD-AUDIT-COMPLETE
+edm-ticket-auditor.md|TICKET-AUDIT-COMPLETE
+edm-test-coverage-auditor.md|TEST-COVERAGE-COMPLETE
+EOF
+)"
+
+# AC6 -- assertion body as a function taking a file path and a marker, so it can be run against an
+# arbitrary path (both the four real agents below, AC1/AC2, and the AC7 negative-control copy).
+# Prints a human-readable "missing" description on stdout and returns non-zero when either
+# property (marker token, "final line" wording) is absent; returns 0 and prints nothing when both
+# are present. AC8: callers use the printed description to name which of the two is missing.
+verif_t08_check_sentinel() {
+  local file="$1" marker="$2"
+  local has_marker has_final missing=""
+  has_marker="$(count_matches -F -- "$marker" "$file")"
+  has_final="$(count_matches -i -- "final line" "$file")"
+  [[ "${has_marker:-0}" -lt 1 ]] && missing="marker(${marker})"
+  if [[ "${has_final:-0}" -lt 1 ]]; then
+    [[ -n "$missing" ]] && missing="${missing}, "
+    missing="${missing}final-line wording"
+  fi
+  if [[ -z "$missing" ]]; then
+    return 0
+  fi
+  printf '%s\n' "$missing"
+  return 1
+}
+
+# AC1/AC2 -- each of the four agent files carries its own marker AND the final-line wording.
+while IFS='|' read -r verif_t08_fname verif_t08_marker; do
+  [[ -z "$verif_t08_fname" ]] && continue
+  verif_t08_f="${VERIF_T08_AGENTS_DIR}/${verif_t08_fname}"
+  if [[ ! -f "$verif_t08_f" ]]; then
+    fail "VERIF-T08 AC1/AC2 -- ${verif_t08_fname} not found under agents/"
+    continue
+  fi
+  verif_t08_missing=""
+  verif_t08_ec=0
+  verif_t08_missing="$(verif_t08_check_sentinel "$verif_t08_f" "$verif_t08_marker")" || verif_t08_ec=$?
+  if [[ $verif_t08_ec -eq 0 ]]; then
+    pass "VERIF-T08 AC1/AC2 -- ${verif_t08_fname} carries marker '${verif_t08_marker}' and 'final line' wording"
+  else
+    fail "VERIF-T08 AC1/AC2/AC8 -- ${verif_t08_fname} missing: ${verif_t08_missing}"
+  fi
+done <<< "$VERIF_T08_MAP"
+
+# AC3 -- the four markers are pairwise distinct (computed from the same map above, not a second,
+# independently-typed literal that could silently diverge from it).
+verif_t08_marker_count="$(printf '%s\n' "$VERIF_T08_MAP" | grep -c '.')"
+verif_t08_unique_count="$(printf '%s\n' "$VERIF_T08_MAP" | cut -d'|' -f2 | sort -u | grep -c '.')"
+[[ "$verif_t08_marker_count" -eq "$verif_t08_unique_count" ]] \
+  && pass "VERIF-T08 AC3 -- all four marker tokens are pairwise distinct" \
+  || fail "VERIF-T08 AC3 -- expected ${verif_t08_marker_count} distinct marker tokens, found only ${verif_t08_unique_count} unique -- a copy-paste has given two agents the same marker"
+
+# AC4 -- no OTHER file under agents/ (outside this four-file allowlist, written as filenames so a
+# fifth verifier added later must be a conscious addition to the list, not a silent pass) carries
+# a "-COMPLETE " marker. Uses assert_tree_absent for its built-in positive control -- proof the
+# scan is actually capable of finding a real hit, not merely finding none because it looked wrong.
+verif_t08_allowed="edm-qc-auditor.md edm-srd-auditor.md edm-ticket-auditor.md edm-test-coverage-auditor.md"
+verif_t08_other_files=()
+for verif_t08_f in "${VERIF_T08_AGENTS_DIR}"/*.md; do
+  verif_t08_base="$(basename "$verif_t08_f")"
+  case " $verif_t08_allowed " in
+    *" $verif_t08_base "*) continue ;;
+  esac
+  verif_t08_other_files+=("$verif_t08_f")
+done
+verif_t08_pattern='-COMPLETE '
+verif_t08_actual="$(grep -rn -- "$verif_t08_pattern" "${verif_t08_other_files[@]}" 2>/dev/null || true)"
+verif_t08_control="other-agent.md: <!-- FOO-COMPLETE range=X assigned=1 audited=1 -->"
+assert_tree_absent "VERIF-T08 AC4 -- no agent file outside the four-file sentinel allowlist carries a '-COMPLETE ' marker" \
+  "$verif_t08_pattern" "$verif_t08_actual" "$verif_t08_control" "${verif_t08_other_files[@]}"
+
+# AC7 -- negative control: a copy of one agent file with both the sentinel marker line and the
+# "final line" wording stripped must be REJECTED (non-zero) by the AC6 function above; if the
+# mutated copy is still accepted, the assertion function itself is not load-bearing.
+verif_t08_control_src="${VERIF_T08_AGENTS_DIR}/edm-qc-auditor.md"
+verif_t08_control_copy="${TMP}/verif-t08-control-qc-auditor.md"
+grep -vF -- "QC-SHARD-COMPLETE" "$verif_t08_control_src" | grep -vi -- "final line" > "$verif_t08_control_copy"
+verif_t08_control_missing=""
+verif_t08_control_ec=0
+verif_t08_control_missing="$(verif_t08_check_sentinel "$verif_t08_control_copy" "QC-SHARD-COMPLETE")" || verif_t08_control_ec=$?
+[[ $verif_t08_control_ec -ne 0 ]] \
+  && pass "VERIF-T08 AC7 -- negative control: a copy of edm-qc-auditor.md with the sentinel and 'final line' wording stripped is correctly rejected by the AC6 function (missing: ${verif_t08_control_missing})" \
+  || fail "VERIF-T08 AC7 -- negative control failed: the AC6 function accepted (returned 0) a copy of edm-qc-auditor.md with both the sentinel and 'final line' wording stripped -- the assertion function is not load-bearing"
+
+# =================================================================================
+# VERIF-T09: raise the four read-only verifiers from maxTurns 25 to 50, asserted as computed
+# checks (AC1-AC4), plus a revert-detection self-test (AC8) proving the AC1 assertion function
+# itself is load-bearing rather than passing regardless of file content. Lands after VERIF-T08
+# (dependency: T09 depends on T08) -- the sentinel-presence check must exist before the budget
+# that makes truncation rarer, and therefore harder to notice, is raised.
+# =================================================================================
+echo
+echo "VERIF-T09 -- maxTurns 25 -> 50 parity for the four read-only verifiers; lenses and producers unchanged"
+
+VERIF_T09_AGENTS_DIR="${PLUGIN_DIR}/agents"
+
+# AC1/AC8 -- function taking a path, asserting the 'maxTurns: 50' frontmatter line is present.
+# Path-parameterized so the same function backs both the four real-file assertions (AC1) and the
+# AC8 revert self-test against a mutated temp copy.
+verif_t09_has_maxturns_50() {
+  local file="$1"
+  [[ "$(count_matches '^maxTurns: 50' "$file")" -ge 1 ]]
+}
+
+VERIF_T09_RAISED="edm-srd-auditor.md edm-ticket-auditor.md edm-qc-auditor.md edm-test-coverage-auditor.md"
+for verif_t09_fname in $VERIF_T09_RAISED; do
+  verif_t09_f="${VERIF_T09_AGENTS_DIR}/${verif_t09_fname}"
+  if verif_t09_has_maxturns_50 "$verif_t09_f"; then
+    pass "VERIF-T09 AC1 -- ${verif_t09_fname} carries maxTurns: 50"
+  else
+    fail "VERIF-T09 AC1 -- ${verif_t09_fname} does not carry a '^maxTurns: 50' line"
+  fi
+  verif_t09_still25="$(count_matches '^maxTurns: 25' "$verif_t09_f")"
+  [[ "${verif_t09_still25:-0}" -eq 0 ]] \
+    && pass "VERIF-T09 AC2 -- ${verif_t09_fname} no longer contains maxTurns: 25" \
+    || fail "VERIF-T09 AC2 -- ${verif_t09_fname} still contains maxTurns: 25 (${verif_t09_still25} occurrence(s))"
+done
+
+# AC3 -- the eleven code-audit lens agents are untouched, still maxTurns: 30. Reuses the
+# already-established LENS_AGENTS enumeration (EDMV3-T24 above) rather than a bare
+# agents/edm-audit-*.md glob: that glob also matches edm-audit-synthesizer.md, which is not a
+# lens (CA-529 documents the twelve-vs-eleven distinction), and would silently miscount 12 as the
+# expected total. LENS_AGENTS is asserted to still be exactly eleven names, so a future edit that
+# adds a twelfth real lens must update that shared variable consciously rather than this ticket's
+# count silently drifting out of sync with it.
+verif_t09_lens_name_count="$(printf '%s\n' $LENS_AGENTS | grep -c '.')"
+[[ "$verif_t09_lens_name_count" -eq 11 ]] \
+  && pass "VERIF-T09 AC3 -- LENS_AGENTS still enumerates eleven lens names" \
+  || fail "VERIF-T09 AC3 -- LENS_AGENTS enumerates ${verif_t09_lens_name_count} names, expected 11"
+verif_t09_lens_30_count=0
+verif_t09_lens_checked=0
+for verif_t09_lname in $LENS_AGENTS; do
+  verif_t09_f="${VERIF_T09_AGENTS_DIR}/${verif_t09_lname}.md"
+  verif_t09_lens_checked=$((verif_t09_lens_checked+1))
+  verif_t09_lens_hit="$(count_matches '^maxTurns: 30' "$verif_t09_f")"
+  [[ "${verif_t09_lens_hit:-0}" -ge 1 ]] && verif_t09_lens_30_count=$((verif_t09_lens_30_count+1))
+done
+[[ "$verif_t09_lens_30_count" -eq "$verif_t09_lens_checked" ]] \
+  && pass "VERIF-T09 AC3 -- all ${verif_t09_lens_checked} lens agents still read maxTurns: 30" \
+  || fail "VERIF-T09 AC3 -- only ${verif_t09_lens_30_count} of ${verif_t09_lens_checked} lens agents still read maxTurns: 30"
+
+# AC4 -- no producer's maxTurns changes: edm-implementer stays 60; edm-srd-writer,
+# edm-ticket-writer, edm-architect stay 50 (asserted explicitly, one entry per named producer).
+VERIF_T09_PRODUCERS="edm-implementer.md:60 edm-srd-writer.md:50 edm-ticket-writer.md:50 edm-architect.md:50"
+for verif_t09_entry in $VERIF_T09_PRODUCERS; do
+  verif_t09_pfname="${verif_t09_entry%%:*}"
+  verif_t09_pturns="${verif_t09_entry##*:}"
+  verif_t09_pf="${VERIF_T09_AGENTS_DIR}/${verif_t09_pfname}"
+  verif_t09_pcount="$(count_matches "^maxTurns: ${verif_t09_pturns}" "$verif_t09_pf")"
+  [[ "${verif_t09_pcount:-0}" -ge 1 ]] \
+    && pass "VERIF-T09 AC4 -- ${verif_t09_pfname} unchanged at maxTurns: ${verif_t09_pturns}" \
+    || fail "VERIF-T09 AC4 -- ${verif_t09_pfname} no longer reads maxTurns: ${verif_t09_pturns}"
+done
+
+# AC8 -- revert-detection self-test: a temp copy of one of the four raised files, rewritten back
+# to maxTurns: 25, must make the AC1 assertion function (verif_t09_has_maxturns_50) return
+# non-zero -- proving the assertion demonstrably fails on a revert rather than passing
+# unconditionally regardless of file content.
+verif_t09_revert_src="${VERIF_T09_AGENTS_DIR}/edm-qc-auditor.md"
+verif_t09_revert_copy="${TMP}/verif-t09-revert-qc-auditor.md"
+sed 's/^maxTurns: 50$/maxTurns: 25/' "$verif_t09_revert_src" > "$verif_t09_revert_copy"
+if verif_t09_has_maxturns_50 "$verif_t09_revert_copy"; then
+  fail "VERIF-T09 AC8 -- revert self-test: a copy of edm-qc-auditor.md rewritten to maxTurns: 25 was still accepted by the AC1 assertion function -- the assertion is not load-bearing"
+else
+  pass "VERIF-T09 AC8 -- revert self-test: a copy of edm-qc-auditor.md rewritten to maxTurns: 25 is correctly rejected by the AC1 assertion function"
+fi
 
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

@@ -84,6 +84,15 @@ if [[ ${#_missing_preferred[@]} -gt 0 ]]; then
   echo "run-all: expected suite(s) not discovered: ${_missing_preferred[*]}" >&2
   exit 1
 fi
+# Captured before any suite runs; compared after the last one by the branch-containment
+# tripwire near the end of this file. "unknown" (not a git worktree, or git absent) disables
+# the comparison rather than failing it.
+if command -v git >/dev/null 2>&1; then
+  _branch_before="$(git -C "${SCRIPT_DIR}/../../../.." rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+else
+  _branch_before=unknown
+fi
+
 _MIN_SUITE_COUNT="${EDM_RUN_ALL_MIN_SUITE_COUNT:-7}"
 if [[ ${#_run_order[@]} -lt $_MIN_SUITE_COUNT ]]; then
   echo "run-all: only ${#_run_order[@]} suite(s) discovered, expected at least ${_MIN_SUITE_COUNT}" >&2
@@ -205,6 +214,32 @@ if [[ -z "${EDM_RUN_ALL_SUITE_DIR:-}" ]]; then
   # aggregator at all. This call is the fix.
   _standalone_check "${SCRIPT_DIR}/../edm-check-vocabulary" \
     "edm-check-vocabulary -- abolished-vocabulary and override-flag backstop (EDMV3-T30)"
+fi
+
+# Containment tripwire: no suite may move the caller's branch.
+#
+# `edm-init` does a real `git checkout -b` against whatever repository the CWD sits in. It
+# honours an absolute EDM_SRD_ROOT for the ARTIFACT path, so a suite that sets that
+# and calls edm-init from the repo root writes its scaffold to the scratch tree while creating
+# and CHECKING OUT a branch in the developer's own working copy -- silently moving them off
+# their branch part-way through the run. Two wave6 call sites did exactly this
+# (edm/g23min-g23mini, edm/msch6-migsch6), and the failure is close to invisible: the suite
+# keeps running, but every assertion after the switch measures a DIFFERENT TREE, so results are
+# neither trustworthy green nor honestly red.
+#
+# harness-smoke.sh already asserts edm-init leaves no stray ARTIFACTS in the real repo; this is
+# the missing other half, and it lives here rather than in one suite so it covers every suite.
+if [[ -z "${EDM_RUN_ALL_SUITE_DIR:-}" ]] && command -v git >/dev/null 2>&1; then
+  _branch_after="$(git -C "${SCRIPT_DIR}/../../../.." rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+  if [[ "$_branch_before" != unknown && "$_branch_after" != unknown && "$_branch_before" != "$_branch_after" ]]; then
+    echo "  FAIL: run-all -- a suite moved the caller's branch: '${_branch_before}' -> '${_branch_after}'" >&2
+    echo "        Every assertion after the switch ran against the wrong tree; re-run after fixing." >&2
+    _total_fail=$(( _total_fail + 1 ))
+    _failed_suites+=("branch-containment")
+  else
+    echo "  PASS: run-all -- no suite moved the caller's branch (${_branch_before})"
+    _total_pass=$(( _total_pass + 1 ))
+  fi
 fi
 
 echo

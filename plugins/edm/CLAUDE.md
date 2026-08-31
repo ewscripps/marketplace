@@ -296,6 +296,112 @@ The following remain legal and are **not** violations of this rule:
 Other entity codes follow the same form, so the rule generalizes: `#quot;` (double quote), `#35;` (`#`), and so on.
 
 This section's heading string, `## Mermaid diagram conventions (canonical)`, is referenced by name from the eleven touch points inventoried in `architecture.md` and asserted by a smoke test -- do not rename it without updating every reference.
+## Verifier completion sentinel (canonical)
+
+Every read-only verifier agent in this plugin -- `edm-srd-auditor`, `edm-ticket-auditor`,
+`edm-qc-auditor`, `edm-test-coverage-auditor` -- can stop at its `maxTurns` ceiling mid-audit.
+Nothing detects this by default: the consumer that reads the verifier's output has no way to tell
+a truncated run from a finished one, and treats a partial result as complete. This section is the
+single contract all four verifier prompts and their four consumers implement against, so an agent
+emitting a marker that differs even slightly from what its consumer checks for does not silently
+reintroduce the exact defect this contract exists to close.
+
+### Grammar
+
+A single-line HTML comment, ASCII only, with exactly one space on either side of both comment
+delimiters (`<!--` and `-->`), and no line continuation:
+
+```
+<!-- {MARKER}-COMPLETE range={ASSIGNMENT} assigned={M} audited={N} -->
+```
+
+`{MARKER}` is one of the four marker tokens below; `{ASSIGNMENT}`, `{M}` and `{N}` are described
+under "Fields" below. The sentinel carries no timestamp, no agent name, and no host metadata --
+anything a truncated agent could plausibly emit early in its run is excluded by construction, so
+an early, incomplete emission can never masquerade as the finished sentinel.
+
+### The four markers
+
+| Marker | Terminates |
+|---|---|
+| `QC-SHARD-COMPLETE` | `qc/qc-shard-impl-*.md` and `qc/qc-shard-pass-*.md` (file form) |
+| `SRD-AUDIT-COMPLETE` | `edm-srd-auditor`'s returned text (returned-text form) |
+| `TICKET-AUDIT-COMPLETE` | `edm-ticket-auditor`'s returned text (returned-text form) |
+| `TEST-COVERAGE-COMPLETE` | `test-coverage.md` and any `test-coverage-{epic}.md` (file form) |
+
+### Fields
+
+- `range=` names the assignment the dispatcher handed the agent (for example `T01-T08`, a
+  section group, or a lane name). It contains no whitespace. It is a human-readable label only --
+  no consumer parses it to derive a count, so it is free to take any assignment-specific shape
+  (a ticket range, a section group, a lane name) without complicating the check.
+- `assigned=` is a base-10 count, supplied by the dispatcher at spawn time, of the units the
+  agent was assigned to cover. This is what makes the short-count comparison a plain integer
+  comparison instead of a parse of `range=`: the dispatcher already knows this number when it
+  spawns the agent, because it is the same number it used to construct `range=`.
+- `audited=` is a base-10 count of the units the agent actually covered -- tickets, sections,
+  files, whatever the marker's artifact counts in -- as of when the agent finished, not the
+  count it was assigned.
+
+### The check: `tail -1`, and nothing else
+
+The consumer checks `tail -1` of the artifact (or, for the two returned-text markers where there
+is no file to `tail`, the last non-empty line of the returned text) and nothing else. This is the
+whole check, deliberately: a truncated agent stops mid-sentence and cannot emit a trailing line it
+never reached, so a well-formed sentinel found anywhere other than the last line proves nothing
+about completion and must be rejected exactly as if no sentinel were present at all. A consumer
+that instead grepped the whole artifact for the marker string would accept a sentinel written into
+a header, or a placeholder written before the work started, which destroys the property this
+contract exists to provide.
+
+### Two refusal conditions
+
+The consumer enforces exactly two conditions, and both refuse loudly, naming the offending
+artifact path rather than failing silently or falling back to partial acceptance:
+
+1. **Missing or misplaced sentinel.** The last line does not carry the marker in the exact
+   grammar above. This catches outright truncation.
+2. **Short count.** The marker is present and well-formed, but `audited=` is less than
+   `assigned=` -- a pure integer comparison (`N < M`), identical for all four markers, that
+   requires no consumer to parse `range=` or know anything about what a given verifier's
+   assignment semantics mean. This catches the clean-but-incomplete case -- an agent that
+   terminated normally having covered, for example, six of eight assigned tickets -- which the
+   completion check alone would miss entirely.
+
+### No new binary dependency
+
+The check introduces no binary beyond this plugin's existing `bash`, `jq`, `git` contract --
+`tail`, `grep`, and `sed` are the only tools any implementation of it needs beyond `bash` itself
+-- and every implementation is bash 3.2 compatible (the floor both macOS and Linux ship as
+`/bin/bash`).
+
+### Turn budget parity
+
+The four read-only verifiers named at the top of this section -- `edm-srd-auditor`,
+`edm-ticket-auditor`, `edm-qc-auditor`, `edm-test-coverage-auditor` -- run at `maxTurns: 50`, at
+parity with the producer agents whose output they check (`edm-srd-writer`, `edm-ticket-writer`,
+`edm-implementer`). Verification is not cheaper than production: a verifier must read the
+artifact under audit **and** cross-reference it against the codebase, which is strictly more work
+than writing the artifact in the first place. Do not "tidy" any of these four back down to the
+plugin's `maxTurns: 30` floor (the eleven code-audit lens agents' own ceiling, which has no
+evidence of truncation and is unrelated to this parity) -- that floor was set once, before this
+contract existed, and never revisited until this section landed. The completion sentinel above is
+what makes a higher budget safe: it is what still catches a truncated run even though truncation
+becomes rarer at 50 turns than it was at 25.
+
+### Scope of this section
+
+This is a documentation-only contract: nothing in the plugin reads this section at runtime, and it
+changes no behavior on its own. It is deliberately not added to `docs/canonical-sections.md`'s
+generated, byte-identical set -- that generator's `--check` mode is a separate concern with its
+own regression surface, and adding a third section to it is out of scope here. The four verifier
+agent prompts inline this grammar as a literal string rather than referencing this section by
+name, because a bare `` `CLAUDE.md Sec."..."` `` reference is known not to resolve from an
+installed plugin cache (D22, above). The executable check, the four prompt edits, and the four
+consumer-side checks that implement this contract are the subject of later tickets in this
+initiative; this section exists so all of them target one fixed grammar instead of re-deriving it
+independently.
+
 ## Unverifiable acceptance criteria (D15)
 
 An unverifiable acceptance criterion -- one whose stated runtime environment does not exist in
@@ -565,7 +671,7 @@ Test code itself lives in the project's existing test directories -- `SRD/` arti
 | `edm-test-contract` | sonnet / high | green | 50 | API contract tests (OpenAPI/GraphQL-driven) |
 | `edm-test-e2e` | sonnet / high | green | 60 | Playwright/Cypress full user journeys |
 | `edm-test-a11y` | sonnet / high | green | 30 | axe-core + keyboard nav, WCAG 2.1 AA |
-| `edm-test-coverage-auditor` | sonnet / high | cyan | 25 | Read-only: parse coverage, cross-ref AC, find gaps |
+| `edm-test-coverage-auditor` | sonnet / high | cyan | 50 | Read-only: parse coverage, cross-ref AC, find gaps |
 
 `edm-test-coverage-auditor` is `cyan` (read-only audit lens, like the code-audit lenses). Test
 writers are `green` (build code, like `edm-implementer`). Planner is `yellow` (discovery, like
@@ -813,6 +919,7 @@ Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call the
 | `edm-check-vocabulary` | Deterministic backstop for the abolished-vocabulary policy (EDMV3-T29/T30; see this file's "Severity vocabulary" section for the policy itself). Scans `skills/`, `agents/`, `docs/`, `hooks/hooks.json`, `monitors/monitors.json`, `CLAUDE.md`, `README.md` and `bin/` against `bin/vocabulary-prohibited.txt`, honoring the documented `bin/vocabulary-allowlist.txt` carve-outs. |
 | `edm-compare-eval`    | Compares a post-change eval run's `scores.json` against the committed wave-A baseline (EDMV3-T39/EDMV3-52), applying the `baseline_total - variance.total_range` acceptance threshold and refusing (not silently passing) on a `scorer_version` or `dimensions_scored` mismatch, or a `complete: false` candidate. The scorer itself never compares; this script owns the comparison. |
 | `edm-check-skill-sync` | Regression tripwire (EDMV3-T39 AC7, amended per CA-089) run unconditionally by `bin/tests/run-all.sh`: asserts the dispatcher (`skills/orchestrator/SKILL.md`) holds no phase procedure body, that every phase skill still owns its own `## Operational Orchestration` section, and that no skill carries `disable-model-invocation: true` (which would block the dispatcher's Skill-tool call to it). |
+| `edm-check-verifier-sentinel` | Consumer-side check (VERIF-T03) for the completion-sentinel contract in this file's "Verifier completion sentinel (canonical)" section: `edm-check-verifier-sentinel <MARKER> <file> [expected-count]` reads only `tail -1` of `<file>` and refuses (exit 2) when the marker is missing/misplaced/malformed, or when `audited=` is below the expected count (from the sentinel's own `assigned=` field, an explicit `[expected-count]` argument, or a parsed `T{a}-T{b}` range). Exit 0 = complete; exit 2 = refusal; exit 1 = usage/setup error. Invoked from `skills/implement/SKILL.md`'s QC-shard merge step over every `qc/qc-shard-impl-*.md` and `qc/qc-shard-pass-*.md` before any content is written to `qc/qc-summary.md`. |
 
 ### `edm-lint-artifacts` latency budgets (EDMV3-T67 AC5/AC7)
 

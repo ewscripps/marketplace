@@ -1232,7 +1232,15 @@ ca417_callers="$(grep -cE 'skipped_phases_str "' "$EDM_STATE")"
 # only -- gate 3 is not required by any of the three commands' independent derivations.
 echo
 echo "G23/CA-343 -- phase-start, gate-check and archive agree that gate 3 is not required for a mini-srd initiative with skipped phases"
-edm-init --product demo --description g23mini G23MIN --mode mini-srd >/dev/null
+# Run from $TMP, not the caller's cwd. edm-init honours the absolute EDM_SRD_ROOT for the
+# artifact path but does its `git checkout -b` against whatever repository the CWD sits in -- so
+# calling it from the repo root creates and CHECKS OUT edm/g23min-g23mini in the developer's own
+# working copy, silently moving them off their branch mid-suite, after which every remaining
+# assertion measures a different tree. $TMP is not a git worktree, so the checkout is a no-op
+# there and edm-init still exits 0 -- the contract T01 AC1's "correction is a no-op outside a git
+# worktree" case asserts. The same hazard is documented at the CA-040 convergence_exempt block
+# below for a different call site; these two top-level calls were the ones still exposed.
+( cd "$TMP" && edm-init --product demo --description g23mini G23MIN --mode mini-srd >/dev/null )
 G23MIN_DIR="$TMP/SRD/demo/G23MIN__g23mini"
 G23MIN_STATE="${G23MIN_DIR}/.edm-state.json"
 g23_skipped_len="$(jq -r '(.skipped_phases // []) | length' "$G23MIN_STATE")"
@@ -1986,7 +1994,9 @@ check_refuses_and_leaves_state "archived initiative refused" "is archived" "$STA
 # caught by both.
 echo
 echo "G23/CA-343 -- product-scoped archived initiative also refused via the shared list_state_files enumeration"
-edm-init --product demo --description migsch6 MSCH6 >/dev/null
+# Same containment as the G23MIN call above -- from the repo root this created and checked out
+# edm/msch6-migsch6 in the developer's working copy.
+( cd "$TMP" && edm-init --product demo --description migsch6 MSCH6 >/dev/null )
 jq 'del(.schema_version)' "$TMP/SRD/demo/MSCH6__migsch6/.edm-state.json" \
   > "$TMP/SRD/demo/MSCH6__migsch6/.edm-state.json.tmp" \
   && mv "$TMP/SRD/demo/MSCH6__migsch6/.edm-state.json.tmp" "$TMP/SRD/demo/MSCH6__migsch6/.edm-state.json"
@@ -2712,9 +2722,9 @@ check_absent "T14 AC3 -- archive does not ask to re-approve the code-audit gate 
 # initiative and run get/validate/phase-complete/archive end to end. ----------------------
 echo
 echo "T14 AC4 -- real archived EDMV2 state file, copied into a scratch initiative, runs end to end"
-REAL_EDMV2_FIXTURE="${REPO_ROOT}/SRD/.archived/EDMV2/.edm-state.json"
+REAL_EDMV2_FIXTURE="${REPO_ROOT}/SRD/.archived/edm/EDMV2/.edm-state.json"
 [[ -f "$REAL_EDMV2_FIXTURE" ]] \
-  && pass "T14 AC4 -- source fixture SRD/.archived/EDMV2/.edm-state.json exists" \
+  && pass "T14 AC4 -- source fixture SRD/.archived/edm/EDMV2/.edm-state.json exists" \
   || fail "T14 AC4 -- source fixture not found at $REAL_EDMV2_FIXTURE"
 mkdir -p "$TMP/SRD/T14EDMV2"
 STATE_T14EDMV2="$TMP/SRD/T14EDMV2/.edm-state.json"
@@ -4122,7 +4132,7 @@ t41_mmd_dst="$(awk '/^## Mermaid diagram conventions \(canonical\)$/{f=1;print;n
 # recorded in decisions.md as D22, naming which branch (negative) was taken. ------------------
 echo
 echo "T41 AC2/AC6 -- decisions.md records the resolution finding (D22) and states the branch taken"
-DECISIONS_MD="${REPO_ROOT}/SRD/edm/EDMV3__prompt-streamline/decisions.md"
+DECISIONS_MD="${REPO_ROOT}/SRD/.archived/edm/EDMV3__prompt-streamline/decisions.md"
 check "T41 AC2 -- decisions.md names the check performed" \
   "CLAUDE.md by-name reference resolution" "$(cat "$DECISIONS_MD" 2>/dev/null)"
 t41_d22_line="$(grep -n 'CLAUDE.md by-name reference resolution' "$DECISIONS_MD" | head -1)"
@@ -4559,10 +4569,10 @@ rm -rf "$T52B_HOME" "$T52B_CWD"
 # ---- AC10 (negative, unknown model warns rather than costing zero) ----------------------------
 echo
 echo "T52 AC10 -- unknown in-family generations warn and use the Sonnet placeholder cost"
-t52_unknown_stderr="$(call_edm_helper compute_cost_usd "claude-opus-5-20260501" 1000000 0 0 0 0 2>&1 1>/dev/null)"
-t52_unknown_cost="$(call_edm_helper compute_cost_usd "claude-opus-5-20260501" 1000000 0 0 0 0 2>/dev/null)"
+t52_unknown_stderr="$(call_edm_helper compute_cost_usd "claude-opus-9-20260501" 1000000 0 0 0 0 2>&1 1>/dev/null)"
+t52_unknown_cost="$(call_edm_helper compute_cost_usd "claude-opus-9-20260501" 1000000 0 0 0 0 2>/dev/null)"
 check "T52 AC10 -- unrecognized model_used emits an explicit warning naming the model" \
-  "claude-opus-5-20260501" "$t52_unknown_stderr"
+  "claude-opus-9-20260501" "$t52_unknown_stderr"
 check "T52 AC10 -- warning text says WARNING" "WARNING" "$t52_unknown_stderr"
 [[ "$t52_unknown_cost" == "4.0000" ]] \
   && pass "T52 AC10 -- unknown generation uses the documented Sonnet placeholder cost (\$${t52_unknown_cost})" \
@@ -4572,6 +4582,15 @@ check "T52 AC10 -- warning text says WARNING" "WARNING" "$t52_unknown_stderr"
 t52_sentinel_stderr="$(call_edm_helper compute_cost_usd "unknown" 0 0 0 0 0 2>&1 1>/dev/null)"
 check_absent "T52 AC10 -- the pre-existing 'unknown' no-session sentinel does not warn" \
   "WARNING" "$t52_sentinel_stderr"
+# Opus 5 is an explicit current-generation arm, not a fall-through: it prices at the Opus input
+# rate ($6/Mtok) and emits no unrecognized-model warning.
+t52_opus5_stderr="$(call_edm_helper compute_cost_usd "claude-opus-5" 1000000 0 0 0 0 2>&1 1>/dev/null)"
+t52_opus5_cost="$(call_edm_helper compute_cost_usd "claude-opus-5" 1000000 0 0 0 0 2>/dev/null)"
+check_absent "T52 -- claude-opus-5 does not warn (explicit current-generation Opus arm)" \
+  "WARNING" "$t52_opus5_stderr"
+[[ "$t52_opus5_cost" == "6.0000" ]] \
+  && pass "T52 -- claude-opus-5 prices at the current-generation Opus input rate (\$${t52_opus5_cost})" \
+  || fail "T52 -- claude-opus-5 cost = '$t52_opus5_cost', expected 6.0000"
 
 # ---- AC8 (override mechanism preserved): current-generation env var overrides still work. -----
 echo
@@ -4584,7 +4603,7 @@ t52_override_cost="$(EDM_OPUS_INPUT_RATE=99 call_edm_helper compute_cost_usd "cl
 # ---- AC1 (the choice is recorded) ----------------------------------------------------------
 echo
 echo "T52 AC1 -- decisions.md names the branch taken and the function comment states the mechanism"
-DECISIONS_MD_T52="${REPO_ROOT}/SRD/edm/EDMV3__prompt-streamline/decisions.md"
+DECISIONS_MD_T52="${REPO_ROOT}/SRD/.archived/edm/EDMV3__prompt-streamline/decisions.md"
 check "T52 AC1 -- decisions.md names the token attribution decision" \
   "token attribution" "$(cat "$DECISIONS_MD_T52" 2>/dev/null)"
 t52_d23_line="$(grep -n 'token attribution' "$DECISIONS_MD_T52" | head -1)"

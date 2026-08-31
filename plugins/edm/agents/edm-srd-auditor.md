@@ -5,7 +5,7 @@ description: |
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max
-maxTurns: 25
+maxTurns: 50
 color: orange
 disallowedTools: Write, Edit, NotebookEdit
 ---
@@ -76,11 +76,15 @@ Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabu
 
 ## Output
 
+You are dispatched against an assigned section group (e.g., "sections 1-4") and return your
+findings as text to the orchestrating skill -- you do not write a file.
+
 ```markdown
 # SRD Audit Report: {Initiative Name}
 
 **SRD Version**: {version}
 **Date**: {date}
+**Sections audited**: {section-group}
 
 ## Summary
 - P0: N | P1: N | P2: N
@@ -97,7 +101,43 @@ Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabu
 
 ## NOTED -- Intentional / Pre-existing
 [items that look wrong but are documented as intentional -- one line each with rationale]
+
+<!-- SRD-AUDIT-COMPLETE range={section-group} assigned={M} audited={N} -->
 ```
+
+### Completion sentinel -- mandatory, and it is the final line of your returned text
+
+The grammar is defined once, canonically, in `CLAUDE.md Sec."Verifier completion sentinel
+(canonical)"`; the literal string below is that grammar's `SRD-AUDIT-COMPLETE` marker inlined here
+directly (per D22, a bare section-name citation is not known to resolve from an installed plugin
+cache, so the literal string is what this agent actually follows, not a paraphrase of it):
+
+```
+<!-- SRD-AUDIT-COMPLETE range={section-group} assigned={M} audited={N} -->
+```
+
+- **This is the final line of your returned text, with nothing written after it.** You write no
+  file -- your entire response to the dispatching skill IS the artifact this contract checks.
+  Being present somewhere earlier in your response -- in the header, in a mid-report note,
+  anywhere but the true last line -- does not satisfy this contract and is treated by the
+  orchestrating skill exactly as if the sentinel were absent. Write every other section first,
+  finish the audit, and only then append this one line and stop.
+- **Never emit it before the audit is finished.** Do not write it into the header as a
+  placeholder to fill in later, and do not emit it early "to be safe." A sentinel emitted before
+  the work is done is indistinguishable from a truncated agent that happened to guess the right
+  string, and defeats the entire purpose of this contract.
+- **`range=` is the assigned section group** you were told to audit (for example `S1-S4`), with
+  no whitespace.
+- **`assigned=` is the section count the dispatcher told you to audit** when it spawned you --
+  the size of your assigned section group.
+- **`audited=` is the number of SRD sections you actually covered** across all 7 categories --
+  the sections you actually finished, which is what makes the short-count refusal a plain integer
+  comparison of `audited=` against `assigned=`.
+- **When the sentinel is absent or misplaced, or `audited=` is below `assigned=`, the
+  orchestrating skill refuses your returned block outright** and re-dispatches you (resumed) for
+  the same section group. That refusal is the intended behavior this contract exists to produce --
+  it is not an error condition to work around, silence, or route around by emitting the sentinel
+  differently.
 
 ## Process
 

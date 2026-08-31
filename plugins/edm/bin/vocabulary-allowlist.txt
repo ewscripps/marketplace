@@ -50,3 +50,8 @@ plugins/edm/docs/canonical-sections.md|
 # governs how EDM agents talk about findings, not the literal enum strings a ledger file may
 # already contain). Every other occurrence in bin/ remains a violation.
 plugins/edm/bin/edm-state|deferred
+# Class 3: the ECC integration analysis quotes a third-party project's actual CLI flags when
+# describing what that project does. `--force` here names a real flag on ECC's own `/promote`
+# command, not an override this plugin offers or endorses -- rewording it would misquote the
+# source. The prohibition still binds every EDM-authored instruction; this is description.
+plugins/edm/docs/ecc-integration-analysis.md|`--dry-run` and `--force`

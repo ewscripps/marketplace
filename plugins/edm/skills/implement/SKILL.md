@@ -36,7 +36,7 @@ using `<gated-command>` = `implement` and `<phase-num>` = `6`.
    - In TDD mode, pass `implementation_mode=tdd` instruction to each implementer (Red-Green-Refactor per ticket).
 6. After each implementer completes, the `SubagentStop` hook automatically spawns `edm-qc-auditor` to verify the ticket's acceptance criteria against the implemented code. (The hook is configured in `hooks/hooks.json`.) Each hook-spawned auditor writes its own per-implementer shard, `qc/qc-shard-impl-{NN}.md` -- never the shared `qc/qc-summary.md` (CA-440: 6-10 auditors finishing concurrently on one file would silently overwrite one another's FAIL verdicts), and never a `qc-shard-pass-*.md` name, which belongs to this skill's own threshold-shard namespace (CA-473).
    - In TDD mode, the QC auditor also runs the TDD compliance pass.
-7. Aggregate QC findings as they arrive. **After the wave drains, merge every `qc/qc-shard-impl-*.md` and every `qc/qc-shard-pass-*.md` into `qc/qc-summary.md`** (one verdict table; keep each shard's file:line evidence). The shard files stay on disk as the per-implementer audit trail.
+7. Aggregate QC findings as they arrive. **Before any content is written to `qc/qc-summary.md`, run `edm-check-verifier-sentinel QC-SHARD <file>` against every `qc/qc-shard-impl-*.md` and every `qc/qc-shard-pass-*.md` from this wave** (VERIF-T03). If any shard refuses (exit 2 -- missing/misplaced sentinel or a short `audited=` count), the merge does not run: `qc/qc-summary.md` is neither created nor overwritten, so no partially-merged summary is ever left on disk. Report the refused shard's path and the reason, then **re-run `edm-qc-auditor` for the named shard's ticket range, then re-run the merge** -- that is the operator remedy, verbatim. Only once every shard for this wave passes the check does the merge proceed: **merge every `qc/qc-shard-impl-*.md` and every `qc/qc-shard-pass-*.md` into `qc/qc-summary.md`** (one verdict table; keep each shard's file:line evidence). The shard files stay on disk as the per-implementer audit trail.
 8. **Remediate** any FAIL QC findings, at every severity: spawn `edm-implementer` agents to fix; re-trigger QC.
 9. Loop until all tickets have PASS verdict. Phase 6 closure (`edm-state phase-complete <PREFIX> 6`)
    is **not** a step in this list -- it belongs to the orchestrator's Phase 6 entry (or, for the
@@ -123,6 +123,16 @@ else:
 # step needs no widening.
 # either way, exactly one merge step owns qc-summary.md, re-run after every wave drains so it
 # always reflects every shard written by any wave so far:
+#
+# VERIF-T03: the merge is all-or-nothing, gated on every shard's completion sentinel BEFORE any
+# byte is written to qc-summary.md -- never a partial write followed by a refusal.
+for shard_file in qc-shard-impl-*.md AND qc-shard-pass-*.md:
+    edm-check-verifier-sentinel QC-SHARD shard_file
+    if exit code is 2:
+        # Refusal -- report shard_file and the reason (truncated / short count) on stderr.
+        # qc/qc-summary.md is NOT created or overwritten. Operator remedy (verbatim):
+        # re-run edm-qc-auditor for the named shard range, then re-run the merge.
+        abort the merge for this pass entirely
 merge all qc-shard-impl-*.md AND all qc-shard-pass-*.md files into qc/qc-summary.md
 ```
 

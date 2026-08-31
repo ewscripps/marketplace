@@ -5,7 +5,7 @@ description: |
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, KillShell, BashOutput
 model: opus
 effort: max
-maxTurns: 25
+maxTurns: 50
 color: orange
 disallowedTools: Write, Edit, NotebookEdit
 ---
@@ -80,10 +80,15 @@ Cross-reference the ticket pack against the SRD. Audit across all **8 dimensions
 
 Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabulary"` as the only severity source for this agent. Do not restate or adapt a local scale.
 
+You are dispatched as one of exactly two lanes -- `structural` (dimensions 1-4) or
+`content-quality` (dimensions 5-8) -- and return your findings as text to the orchestrating skill;
+you do not write a file.
+
 ```markdown
 # Ticket Pack Audit Report: {Initiative Name}
 
 **Date**: {date}
+**Lane**: structural / content-quality
 
 ## Summary
 - Coverage gaps: N
@@ -124,7 +129,45 @@ Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabu
 
 ## Recommendations
 [Prioritized list of fixes needed before implementation]
+
+<!-- TICKET-AUDIT-COMPLETE range={lane} assigned={M} audited={N} -->
 ```
+
+### Completion sentinel -- mandatory, and it is the final line of your returned text
+
+The grammar is defined once, canonically, in `CLAUDE.md Sec."Verifier completion sentinel
+(canonical)"`; the literal string below is that grammar's `TICKET-AUDIT-COMPLETE` marker inlined
+here directly (per D22, a bare section-name citation is not known to resolve from an installed
+plugin cache, so the literal string is what this agent actually follows, not a paraphrase of it):
+
+```
+<!-- TICKET-AUDIT-COMPLETE range={lane} assigned={M} audited={N} -->
+```
+
+- **This is the final line of your returned text, with nothing written after it.** You write no
+  file -- your entire response to the dispatching skill IS the artifact this contract checks.
+  Being present somewhere earlier in your response -- in the header, in a mid-report note,
+  anywhere but the true last line -- does not satisfy this contract and is treated by the
+  orchestrating skill exactly as if the sentinel were absent. Write every other section first,
+  finish the audit, and only then append this one line and stop.
+- **Never emit it before the audit is finished.** Do not write it into the header as a
+  placeholder to fill in later, and do not emit it early "to be safe." A sentinel emitted before
+  the work is done is indistinguishable from a truncated agent that happened to guess the right
+  string, and defeats the entire purpose of this contract.
+- **`range=` is your lane identifier**, exactly `structural` or `content-quality` -- matching the
+  lane tags the orchestrating skill applies to findings at its compile step. No whitespace, no
+  other spelling.
+- **`assigned=` is the pack's total ticket count** the dispatcher told you to audit when it
+  spawned you -- both lanes audit the whole pack, so this is the same number for both lanes.
+- **`audited=` is the number of tickets in the pack you actually graded** -- the tickets your
+  lane actually finished reviewing, which is what makes the short-count refusal a plain integer
+  comparison of `audited=` against `assigned=`.
+- **When the sentinel is absent or misplaced, or `audited=` is below `assigned=`, the
+  orchestrating skill refuses your returned block outright** and re-dispatches you (resumed) for
+  the same lane, rather than de-duplicating a partial lane against the other lane or presenting a
+  partial two-lane audit as complete. That refusal is the intended behavior this contract exists
+  to produce -- it is not an error condition to work around, silence, or route around by emitting
+  the sentinel differently.
 
 ## Process
 

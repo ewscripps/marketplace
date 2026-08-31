@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # timing.sh -- EDMV3-T67 committed timing harness. Reproducible latency/duration measurements for
 # the eight edm-state entry points, the linter, and (documented, not driven from here) the CI
-# pipeline and eval run budgets named in SRD/edm/EDMV3__prompt-streamline/tickets/epics/
+# pipeline and eval run budgets named in SRD/.archived/edm/EDMV3__prompt-streamline/tickets/epics/
 # 11-cross-cutting-delivery.md EDMV3-T67.
 #
 # Every mode is a REAL measurement against a REAL (generated) fixture -- no numbers are invented.

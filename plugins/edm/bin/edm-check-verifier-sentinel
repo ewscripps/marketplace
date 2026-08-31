@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# EDM-HELP-BEGIN
+# edm-check-verifier-sentinel -- verifier completion-sentinel consumer check (VERIF-T03).
+#
+# Usage:
+#   edm-check-verifier-sentinel <MARKER> <file> [expected-count]
+#   edm-check-verifier-sentinel -h|--help
+#
+# Implements the single consumer-side check defined once, canonically, in
+# CLAUDE.md Sec."Verifier completion sentinel (canonical)" (VERIF-T01): a well-formed
+# `<!-- {MARKER}-COMPLETE range={ASSIGNMENT} assigned={M} audited={N} -->` sentinel, present on
+# and ONLY on the artifact's true final line, with `audited=` not below the assigned count.
+#
+# <MARKER> is the bare marker token without its trailing "-COMPLETE" (e.g. QC-SHARD,
+# TEST-COVERAGE). <file> is tail'd for the sentinel line -- this script covers the FILE form
+# only; the two returned-text markers (SRD-AUDIT-COMPLETE, TICKET-AUDIT-COMPLETE) have no file to
+# tail and are checked by their own orchestrating skill's prose (VERIF-T05/T06).
+#
+# [expected-count] overrides the count `audited=` is compared against. When omitted, the
+# expected count comes from the sentinel's own `assigned=` field (the canonical, dispatcher-
+# supplied count -- a pure integer comparison, no parsing of `range=` needed); when `assigned=`
+# is itself absent, this script falls back to parsing a `T{a}-T{b}` ticket-range `range=` value
+# (inclusive span, bash 3.2 `10#` arithmetic so a zero-padded ticket number like T08 is never
+# misread as an invalid octal literal); when neither is available, presence is checked but the
+# count arm is skipped, and that is reported on stderr rather than silently passed over.
+#
+# Exit codes (matching bin/edm-lint-staged-artifacts' contract):
+#   0 = sentinel present, well-formed, on the last line, and audited >= expected
+#   2 = refusal -- missing/misplaced/malformed sentinel (truncation), or short count
+#   1 = usage error (missing/bad arguments) or setup error (file missing/unreadable)
+#
+# Two refusal conditions, matching CLAUDE.md's canonical section exactly, never merged into one:
+#   (a) the last line does not carry the marker in the exact grammar (catches truncation and a
+#       malformed sentinel alike -- both fail to "carry the marker in the exact grammar above")
+#   (b) audited= is below the expected count (catches the clean-but-incomplete case)
+#
+# The check is `tail -1` and nothing else (CLAUDE.md's "The check: tail -1, and nothing else"):
+# this script never scans the file body for the marker string, so a well-formed sentinel found
+# anywhere but the true last line is refused exactly as if absent.
+#
+# No binary beyond bash, grep, sed, tail (CLAUDE.md's "No new binary dependency" clause) -- no
+# jq, no python, no awk-only construct.
+#
+# bash 3.2 compatible: no associative arrays, no ${var^^}, no mapfile.
+# EDM-HELP-END
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/_edm-cli-lib.sh"
+
+die() {
+  local msg="$1" code="${2:-1}"
+  echo "edm-check-verifier-sentinel: $msg" >&2
+  exit "$code"
+}
+
+usage() {
+  print_help "${BASH_SOURCE[0]:-$0}"
+  exit 0
+}
+
+case "${1:-}" in
+  -h|--help|help) usage ;;
+esac
+
+if [[ $# -lt 2 || $# -gt 3 ]]; then
+  die "usage: edm-check-verifier-sentinel <MARKER> <file> [expected-count]" 1
+fi
+
+MARKER="$1"
+FILE="$2"
+EXPECTED_ARG="${3:-}"
+
+[[ -n "$MARKER" ]] || die "MARKER argument must not be empty" 1
+[[ -f "$FILE" ]] || die "file not found: $FILE" 1
+[[ -r "$FILE" ]] || die "file not readable: $FILE" 1
+
+# _is_uint <value> -- true iff <value> is one or more ASCII digits (bash 3.2 safe, no regex ops).
+_is_uint() {
+  case "$1" in
+    ''|*[!0-9]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# AC5: read ONLY the last line -- tail -1, never a whole-file scan. A well-formed sentinel
+# anywhere else in the file is invisible to this check by construction, which is the point: it
+# proves nothing about whether the agent that wrote it actually finished.
+last="$(tail -1 "$FILE" 2>/dev/null || true)"
+
+# VERIF-T03 marker-check (mutation-guard anchor: do not remove this comment; wave7-smoke.sh's
+# AC7 mutation guard deletes from this line through the matching literal "esac" below).
+case "$last" in
+  "<!-- ${MARKER}-COMPLETE "*)
+    : ;;
+  *)
+    printf '%s: truncated -- no %s-COMPLETE sentinel on the last line\n' "$FILE" "$MARKER" >&2
+    exit 2
+    ;;
+esac
+
+range="$(printf '%s\n' "$last" | sed -n 's/.*range=\([^ ]*\).*/\1/p')"
+assigned="$(printf '%s\n' "$last" | sed -n 's/.*assigned=\([0-9][0-9]*\).*/\1/p')"
+audited="$(printf '%s\n' "$last" | sed -n 's/.*audited=\([0-9][0-9]*\).*/\1/p')"
+
+# AC7: a malformed sentinel (marker present but range= or audited= missing, or audited=
+# non-numeric) is refused with exit 2, not silently accepted and not a usage error.
+if [[ -z "$range" || -z "$audited" ]]; then
+  printf '%s: malformed %s-COMPLETE sentinel on the last line -- range= or audited= missing or non-numeric: %s\n' \
+    "$FILE" "$MARKER" "$last" >&2
+  exit 2
+fi
+
+# Determine the expected count, in priority order. The ordering is a TRUST ordering, not a
+# convenience one, and it is the whole reason this arm is not self-defeating:
+#
+#   1. the [expected-count] CLI argument -- supplied by the DISPATCHER, the party that knows what
+#      it assigned. This outranks everything in the artifact.
+#   2. a parsed T{a}-T{b} span from range=
+#   3. the assigned= field
+#
+# 2 and 3 both come out of the artifact, i.e. from the agent being policed, so neither can be
+# trusted against the failure this check exists to catch. A truncated agent that emits
+# `range=T01-T08 assigned=1 audited=1` would, under an assigned=-first ordering, certify its own
+# completeness by understating what it was given -- the artifact defeating the check that polices
+# it. When both are present and disagree, the sentinel is internally inconsistent and the larger
+# value is taken, so the refusal is never weakened by the agent's own claim.
+expected=""
+if [[ -n "$EXPECTED_ARG" ]]; then
+  _is_uint "$EXPECTED_ARG" || die "expected-count argument must be a non-negative integer, got '$EXPECTED_ARG'" 1
+  expected="$EXPECTED_ARG"
+else
+  _range_span=""
+  case "$range" in
+    T[0-9]*-T[0-9]*)
+      _r_a="${range#T}"; _r_a="${_r_a%%-T*}"
+      _r_b="${range##*-T}"
+      if _is_uint "$_r_a" && _is_uint "$_r_b"; then
+        _range_span=$(( 10#$_r_b - 10#$_r_a + 1 ))
+      fi
+      ;;
+  esac
+  if [[ -n "$_range_span" && -n "$assigned" ]]; then
+    if [[ $(( 10#$_range_span )) -ge $(( 10#$assigned )) ]]; then
+      expected="$_range_span"
+    else
+      expected="$assigned"
+    fi
+  elif [[ -n "$_range_span" ]]; then
+    expected="$_range_span"
+  elif [[ -n "$assigned" ]]; then
+    expected="$assigned"
+  fi
+fi
+
+if [[ -z "$expected" ]]; then
+  printf '%s: %s-COMPLETE sentinel present and well-formed (range=%s audited=%s); no assigned= field, no [expected-count] argument, and range= is not a parseable T{a}-T{b} span -- checked presence only, count arm skipped\n' \
+    "$FILE" "$MARKER" "$range" "$audited" >&2
+  exit 0
+fi
+
+# VERIF-T03 count-check (mutation-guard anchor: do not remove this comment; wave7-smoke.sh's
+# AC8 mutation guard deletes from this line through the matching literal "fi" below). 10#
+# prefixes strip any leading-zero ambiguity (a zero-padded count like "08" is never misread as
+# an invalid octal literal by bash's arithmetic evaluator, same as the range span above).
+au=$(( 10#$audited ))
+ex=$(( 10#$expected ))
+if [[ "$au" -lt "$ex" ]]; then
+  printf '%s: %s-COMPLETE short count -- audited=%s is below expected=%s (range=%s)\n' \
+    "$FILE" "$MARKER" "$audited" "$expected" "$range" >&2
+  exit 2
+fi
+
+exit 0

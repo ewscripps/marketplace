@@ -11,7 +11,7 @@ tools: Read, Write, Bash, Glob, Grep, TodoWrite
 disallowedTools: Edit, NotebookEdit
 model: sonnet
 effort: high
-maxTurns: 25
+maxTurns: 50
 color: cyan
 ---
 
@@ -171,6 +171,8 @@ Mode: multi-stack ({N} epics)
 
 - [test-coverage-auth.md](test-coverage-auth.md)
 - [test-coverage-dashboard.md](test-coverage-dashboard.md)
+
+<!-- TEST-COVERAGE-COMPLETE range={assignment} assigned={M} audited={N} -->
 ```
 
 **Coverage report template** (used for single-stack and each per-epic file):
@@ -217,9 +219,56 @@ Test plan: [{plan-file-link}]({plan-file-link})
 ## Recommendations
 
 - P1 gaps above should be fixed before marking the initiative complete.
+
+<!-- TEST-COVERAGE-COMPLETE range={assignment} assigned={M} audited={N} -->
 ```
 
+### Completion sentinel -- mandatory, and it is the final line of every file you write
+
+The grammar is defined once, canonically, in `CLAUDE.md Sec."Verifier completion sentinel
+(canonical)"`; the literal string below is that grammar's `TEST-COVERAGE-COMPLETE` marker inlined
+here directly (per D22, a bare section-name citation is not known to resolve from an installed
+plugin cache, so the literal string is what this agent actually follows, not a paraphrase of it):
+
+```
+<!-- TEST-COVERAGE-COMPLETE range={assignment} assigned={M} audited={N} -->
+```
+
+- **This is the final line of the file, with nothing written after it.** Being present somewhere
+  earlier in a file -- in the header, in a mid-document note, anywhere but the true last line --
+  does not satisfy this contract and is treated by the consumer (`edm-check-verifier-sentinel`,
+  invoked by `skills/test-coverage/SKILL.md` after you return) exactly as if the sentinel were
+  absent. Write every other section first, finish measuring and cross-referencing, and only then
+  append this one line and stop -- for **every** file you write in this run.
+- **Never write it before the coverage audit for that file is finished.** Do not write it into
+  the header as a placeholder to fill in later, and do not write it early "to be safe." A sentinel
+  written before the work is done is indistinguishable from a truncated agent that happened to
+  guess the right string, and defeats the entire purpose of this contract.
+- **Single-stack**: `test-coverage.md` carries `range=` set to the initiative's ticket range (for
+  example `T01-T85`); `assigned=` is the total AC count in the AC Coverage Map you were asked to
+  cross-reference; `audited=` is the number of those ACs you actually cross-referenced (COVERED,
+  PARTIAL and MISSING all count -- `audited=` measures how many ACs you reached, not how many
+  passed).
+- **Multi-stack, per-epic files**: each `test-coverage-{epic-slug}.md` carries `range={epic-slug}`
+  and its own `assigned=`/`audited=` pair, scoped to that epic's own AC count -- a gap in one
+  epic's `audited=` count must never appear in another epic's file.
+- **Multi-stack, top-level summary**: `test-coverage.md` carries `range=` set to the initiative's
+  ticket range (matching the single-stack case, since the summary's assignment is the whole
+  initiative); `assigned=` is the number of epics in the current valid epic set (Step 0);
+  `audited=` is the number of per-epic reports you actually finished summarizing into it.
+- **When the sentinel is absent or misplaced on any file, or that file's `audited=` is below its
+  `assigned=`, `skills/test-coverage/SKILL.md` refuses that file outright** and re-dispatches this
+  agent. That refusal is the intended behavior this contract exists to produce -- it is not an
+  error condition to work around, silence, or route around by writing the sentinel differently.
+  Refused coverage numbers must never be treated as satisfying the Phase 6 "coverage targets met"
+  checklist item.
+
 ### Step 5 -- Record coverage in state
+
+Only call `edm-state record-test-coverage` for a layer or epic whose report file (Step 4) has
+already been written **including its completion sentinel** -- never for a layer or epic whose
+file-write was interrupted before reaching that final line. In the normal (non-truncated) case
+this is automatic, since Step 5 runs only after Step 4 for that scope has completed.
 
 **Single-stack**: for each layer where coverage was successfully measured:
 ```bash
