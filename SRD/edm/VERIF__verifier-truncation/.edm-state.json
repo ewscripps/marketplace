@@ -1,0 +1,106 @@
+{
+  "prefix": "VERIF",
+  "schema_version": 1,
+  "current_phase": 6,
+  "gates_approved": [
+    {
+      "gate": 3,
+      "approved_at": "2026-08-31T13:33:31Z",
+      "approver": "darryl.porter",
+      "enforcement": "permission-ask"
+    }
+  ],
+  "artifacts": {},
+  "artifact_hashes": {
+    "tickets": {
+      "hash": "c6ab521b7e470d6f0b760e488d3178bad455017213d030d5c0b5c997f588c10b",
+      "path": "./SRD/edm/VERIF__verifier-truncation/tickets/README.md",
+      "recorded_at": "2026-08-31T03:38:36Z"
+    }
+  },
+  "srd_version": "0.0.0",
+  "estimated_size": "Unknown",
+  "initiative_branch": "edm/verif-verifier-truncation",
+  "product_name": "edm",
+  "initiative_description": "verifier-truncation",
+  "phase_durations": {
+    "4_phase": {
+      "started_at": "2026-08-31T03:28:25Z",
+      "completed_at": "2026-08-31T03:38:36Z",
+      "duration_seconds": 611,
+      "tokens": {
+        "input": 30,
+        "output": 17406,
+        "cache_read": 8452868,
+        "cache_write_5m": 0,
+        "cache_write_1h": 24762
+      },
+      "model_used": "claude-opus-5",
+      "estimated_cost_usd": 5.8912,
+      "human_baseline_usd": 0.00,
+      "attribution_mode": "scoped",
+      "unparseable_lines": 0
+    },
+    "6_phase": {
+      "started_at": "2026-08-31T13:37:00Z",
+      "completed_at": "2026-08-31T18:29:17Z",
+      "duration_seconds": 17537,
+      "tokens": {
+        "input": 392,
+        "output": 197871,
+        "cache_read": 133643440,
+        "cache_write_5m": 0,
+        "cache_write_1h": 436809
+      },
+      "model_used": "claude-opus-5",
+      "estimated_cost_usd": 91.3663,
+      "human_baseline_usd": 0.00,
+      "attribution_mode": "scoped",
+      "unparseable_lines": 0
+    }
+  },
+  "test_frameworks_detected": {},
+  "coverage_by_layer": {},
+  "coverage_by_epic": {},
+  "code_audit_converged": false,
+  "code_audit_gate_approved_at": "",
+  "code_audit_gate_approver": "",
+  "code_audit_gate_enforcement": "",
+  "code_audit_gate_ledger": "",
+  "compliance_gate_approved": false,
+  "last_decision": "",
+  "audit_rounds": {},
+  "partial_verdict_map": {},
+  "mode": "standard",
+  "lifecycle_mode": "fix-pack",
+  "compliance_enabled": false,
+  "implementation_mode": "standard",
+  "skipped_phases": [
+    {
+      "phase": 1,
+      "rationale": "fix-pack: tickets generated directly from analysis.md",
+      "skipped_at": "2026-08-31T03:21:02Z"
+    },
+    {
+      "phase": 2,
+      "rationale": "fix-pack: tickets generated directly from analysis.md",
+      "skipped_at": "2026-08-31T03:21:02Z"
+    },
+    {
+      "phase": 3,
+      "rationale": "fix-pack: tickets generated directly from analysis.md",
+      "skipped_at": "2026-08-31T03:21:02Z"
+    },
+    {
+      "phase": 5,
+      "rationale": "fix-pack: tickets generated directly from analysis.md",
+      "skipped_at": "2026-08-31T03:21:02Z"
+    }
+  ],
+  "supersedes": "",
+  "forked_from": "",
+  "parent_prefix": "",
+  "related_prefixes": [],
+  "last_updated": "2026-08-31T18:29:17Z",
+  "current_step": 6
+}
