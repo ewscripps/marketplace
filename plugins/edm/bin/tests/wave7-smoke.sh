@@ -4587,9 +4587,17 @@ _t52_script_rate() {
 
 # _t52_md_cell <model-label> <column-index-1-based-after-model> -- the numeric value (dollar
 # sign and header/separator rows stripped) from CLAUDE.md's pricing table row for <model-label>.
+# Pre-existing bug fix (found while verifying VERIF-T02/T03/T04, unrelated to this initiative):
+# CLAUDE.md's pricing table Model column now reads "Opus 4.8, Opus 5" (the row was widened to
+# share Opus 5's rates), but this grep still required an EXACT "| Opus 4.8 |" cell -- no match,
+# so the unguarded `t52_md_val="$(_t52_md_cell ...)"` assignment below aborted the entire suite
+# under `set -e` before it ever printed a PASS/FAIL line, taking every later assertion in this
+# 9000+-line file down with it (confirmed via `git show` against the pre-VERIF commit: the
+# "Opus 4.8, Opus 5" label already existed there, so this is not a VERIF regression). The pattern
+# below now tolerates an optional ", <alias>" suffix on the label cell before the closing " |".
 _t52_md_cell() {
   local label="$1" col="$2"
-  grep -F "| ${label} |" "$CLAUDE_MD_T52" | head -1 \
+  grep -E "\| ${label}(, [^|]+)? \|" "$CLAUDE_MD_T52" | head -1 \
     | awk -F'|' -v c="$col" '{gsub(/^[ \t$]+|[ \t]+$/, "", $(c+2)); print $(c+2)}'
 }
 
@@ -9218,6 +9226,140 @@ ca481_control_nohup_out="$(_ca481_sweep no-hup "$ca481_control_nohup_f" 2>/dev/n
   && pass "CA-481(c) -- positive control: a file trapping EXIT/INT/TERM but never HUP is detected" \
   || fail "CA-481(c) -- positive control failed: the HUP-omitting scratch file was not flagged"
 rm -f "$ca481_control_combined_f" "$ca481_control_nohup_f"
+
+# =================================================================================
+# VERIF-T04: negative smoke tests for both edm-check-verifier-sentinel refusal paths (VERIF-T03),
+# plus mutation guards proving each refusal is caused by the check under test and not by some
+# other code path that happens to also refuse the same fixture -- a positive control that still
+# passes when the check is deleted proves nothing, which is exactly what this ticket exists to
+# avoid reproducing.
+# =================================================================================
+echo
+echo "VERIF-T04 -- edm-check-verifier-sentinel: both refusal paths, and mutation guards proving they are load-bearing"
+
+VERIF_T04_SCRIPT="${PLUGIN_DIR}/bin/edm-check-verifier-sentinel"
+
+# Fixture A -- well-formed shard: exit 0.
+verif_t04_a="${TMP}/verif-t04-fixture-a.md"
+printf 'QC Audit shard (VERIF-T04 fixture)\nrange=T01-T08 assigned=8 audited=8\n<!-- QC-SHARD-COMPLETE range=T01-T08 assigned=8 audited=8 -->\n' > "$verif_t04_a"
+verif_t04_a_ec=0
+"$VERIF_T04_SCRIPT" QC-SHARD "$verif_t04_a" >/dev/null 2>&1 || verif_t04_a_ec=$?
+[[ $verif_t04_a_ec -eq 0 ]] \
+  && pass "VERIF-T04 AC1 -- fixture A (well-formed) exits 0" \
+  || fail "VERIF-T04 AC1 -- fixture A (well-formed) exited ${verif_t04_a_ec}, expected 0"
+
+# Fixture B -- fixture A minus its final sentinel line (byte-identical otherwise). Line 2 of A is
+# deliberately built to carry the same range=/assigned=/audited= tokens the sentinel does, but
+# without the "<!-- ... -->" wrapper -- so it becomes B's new last line after the sentinel is
+# stripped, and it is what lets the AC7 mutation guard below isolate the marker-check specifically
+# (with the marker-check gate removed, extraction of those same tokens from this crafted line
+# succeeds and the script accepts; without a line shaped this way, a downstream check unrelated to
+# the marker-check could coincidentally also refuse, which would prove nothing about the marker-
+# check's own necessity).
+verif_t04_b="${TMP}/verif-t04-fixture-b.md"
+sed '$d' "$verif_t04_a" > "$verif_t04_b"
+verif_t04_b_out=""
+verif_t04_b_ec=0
+verif_t04_b_out="$("$VERIF_T04_SCRIPT" QC-SHARD "$verif_t04_b" 2>&1)" || verif_t04_b_ec=$?
+[[ $verif_t04_b_ec -eq 2 ]] \
+  && pass "VERIF-T04 AC2 -- fixture B (final sentinel line deleted) exits 2" \
+  || fail "VERIF-T04 AC2 -- fixture B exited ${verif_t04_b_ec}, expected 2"
+check "VERIF-T04 AC2 -- fixture B's refusal names the file path" "$verif_t04_b" "$verif_t04_b_out"
+check "VERIF-T04 AC2 -- fixture B's refusal contains the word 'truncated'" "truncated" "$verif_t04_b_out"
+
+# Fixture C -- the sentinel present but followed by one further line of report text: proves the
+# check is tail -1 and not a whole-file scan.
+verif_t04_c="${TMP}/verif-t04-fixture-c.md"
+printf 'QC Audit shard (VERIF-T04 fixture)\n<!-- QC-SHARD-COMPLETE range=T01-T08 assigned=8 audited=8 -->\nMore report text after the sentinel\n' > "$verif_t04_c"
+verif_t04_c_ec=0
+"$VERIF_T04_SCRIPT" QC-SHARD "$verif_t04_c" >/dev/null 2>&1 || verif_t04_c_ec=$?
+[[ $verif_t04_c_ec -eq 2 ]] \
+  && pass "VERIF-T04 AC3 -- fixture C (sentinel present but not the true last line) exits 2, proving tail -1 not a whole-file scan" \
+  || fail "VERIF-T04 AC3 -- fixture C exited ${verif_t04_c_ec}, expected 2"
+
+# Fixture D -- audited=6 against assigned=8: short-count refusal, naming both counts.
+verif_t04_d="${TMP}/verif-t04-fixture-d.md"
+printf 'QC Audit shard (VERIF-T04 fixture)\nrange=T01-T08 assigned=8 audited=6\n<!-- QC-SHARD-COMPLETE range=T01-T08 assigned=8 audited=6 -->\n' > "$verif_t04_d"
+verif_t04_d_out=""
+verif_t04_d_ec=0
+verif_t04_d_out="$("$VERIF_T04_SCRIPT" QC-SHARD "$verif_t04_d" 2>&1)" || verif_t04_d_ec=$?
+[[ $verif_t04_d_ec -eq 2 ]] \
+  && pass "VERIF-T04 AC4 -- fixture D (audited=6 below assigned=8) exits 2" \
+  || fail "VERIF-T04 AC4 -- fixture D exited ${verif_t04_d_ec}, expected 2"
+check "VERIF-T04 AC4 -- fixture D's refusal names the audited count (6)" "6" "$verif_t04_d_out"
+check "VERIF-T04 AC4 -- fixture D's refusal names the expected count (8)" "8" "$verif_t04_d_out"
+
+# Fixture E -- audited=8 against assigned=8: exits 0, proving the count arm distinguishes short
+# from complete rather than refusing everything.
+verif_t04_e="${TMP}/verif-t04-fixture-e.md"
+printf 'QC Audit shard (VERIF-T04 fixture)\nrange=T01-T08 assigned=8 audited=8\n<!-- QC-SHARD-COMPLETE range=T01-T08 assigned=8 audited=8 -->\n' > "$verif_t04_e"
+verif_t04_e_ec=0
+"$VERIF_T04_SCRIPT" QC-SHARD "$verif_t04_e" >/dev/null 2>&1 || verif_t04_e_ec=$?
+[[ $verif_t04_e_ec -eq 0 ]] \
+  && pass "VERIF-T04 AC5 -- fixture E (audited=8 meets assigned=8) exits 0" \
+  || fail "VERIF-T04 AC5 -- fixture E exited ${verif_t04_e_ec}, expected 0"
+
+# Fixture F -- marker present but no range=/audited=: malformed, refused, not a usage error.
+verif_t04_f="${TMP}/verif-t04-fixture-f.md"
+printf 'QC Audit shard (VERIF-T04 fixture)\n<!-- QC-SHARD-COMPLETE -->\n' > "$verif_t04_f"
+verif_t04_f_ec=0
+"$VERIF_T04_SCRIPT" QC-SHARD "$verif_t04_f" >/dev/null 2>&1 || verif_t04_f_ec=$?
+[[ $verif_t04_f_ec -eq 2 ]] \
+  && pass "VERIF-T04 AC6 -- fixture F (malformed sentinel, no range=/audited=) exits 2" \
+  || fail "VERIF-T04 AC6 -- fixture F exited ${verif_t04_f_ec}, expected 2 (not a usage error)"
+
+echo
+echo "VERIF-T04 -- mutation guards: each refusal above must vanish when, and only when, its own check is deleted"
+
+# Mutation-guard scratch bin directories carry the real script's sibling library so a mutated copy
+# still sources successfully (the same technique the CA-416 positive control above uses).
+verif_t04_mbin="${TMP}/verif-t04-mutant-marker-bin"
+verif_t04_cbin="${TMP}/verif-t04-mutant-count-bin"
+mkdir -p "$verif_t04_mbin" "$verif_t04_cbin"
+cp "${PLUGIN_DIR}/bin/_edm-cli-lib.sh" "$verif_t04_mbin/"
+cp "${PLUGIN_DIR}/bin/_edm-cli-lib.sh" "$verif_t04_cbin/"
+
+# AC7 -- mutation guard for the truncation/marker-check arm. Deletes the anchored
+# "case ... esac" block (the ONLY code in the script that refuses a non-matching last line) from a
+# copy, then asserts the mutated copy ACCEPTS fixture B, which the real (unmutated) script refused
+# above (AC2). If the mutated copy still refuses, the refusal is coming from somewhere other than
+# the marker-check, and this guard fails with a named message rather than passing vacuously.
+verif_t04_marker_start="$(grep -n 'VERIF-T03 marker-check (mutation-guard anchor' "$VERIF_T04_SCRIPT" | cut -d: -f1)"
+verif_t04_marker_end=""
+if [[ -n "$verif_t04_marker_start" ]]; then
+  verif_t04_marker_end="$(awk -v s="$verif_t04_marker_start" 'NR>=s && /^esac$/ {print NR; exit}' "$VERIF_T04_SCRIPT")"
+fi
+if [[ -z "$verif_t04_marker_start" || -z "$verif_t04_marker_end" ]]; then
+  fail "VERIF-T04 AC7 -- mutation guard could not locate the marker-check anchor comment in edm-check-verifier-sentinel; the script changed shape without updating this guard"
+else
+  sed "${verif_t04_marker_start},${verif_t04_marker_end}d" "$VERIF_T04_SCRIPT" > "${verif_t04_mbin}/edm-check-verifier-sentinel"
+  chmod +x "${verif_t04_mbin}/edm-check-verifier-sentinel"
+  verif_t04_mutant_marker_ec=0
+  "${verif_t04_mbin}/edm-check-verifier-sentinel" QC-SHARD "$verif_t04_b" >/dev/null 2>&1 || verif_t04_mutant_marker_ec=$?
+  [[ $verif_t04_mutant_marker_ec -eq 0 ]] \
+    && pass "VERIF-T04 AC7 -- mutation guard: deleting the marker-check block makes the mutated copy ACCEPT fixture B (proves the check, not something else, caused the AC2 refusal)" \
+    || fail "VERIF-T04 AC7 -- mutation guard failed: the mutated copy still exited ${verif_t04_mutant_marker_ec} (expected 0) on fixture B after the marker-check block was deleted -- the refusal is coming from somewhere other than the check under test"
+fi
+
+# AC8 -- mutation guard for the count arm. Deletes the anchored count-comparison block from a
+# copy, then asserts the mutated copy ACCEPTS fixture D, which the real script refused above
+# (AC4). Same named-failure contract as AC7 if the mutated copy still refuses.
+verif_t04_count_start="$(grep -n 'VERIF-T03 count-check (mutation-guard anchor' "$VERIF_T04_SCRIPT" | cut -d: -f1)"
+verif_t04_count_end=""
+if [[ -n "$verif_t04_count_start" ]]; then
+  verif_t04_count_end="$(awk -v s="$verif_t04_count_start" 'NR>=s && /^fi$/ {print NR; exit}' "$VERIF_T04_SCRIPT")"
+fi
+if [[ -z "$verif_t04_count_start" || -z "$verif_t04_count_end" ]]; then
+  fail "VERIF-T04 AC8 -- mutation guard could not locate the count-check anchor comment in edm-check-verifier-sentinel; the script changed shape without updating this guard"
+else
+  sed "${verif_t04_count_start},${verif_t04_count_end}d" "$VERIF_T04_SCRIPT" > "${verif_t04_cbin}/edm-check-verifier-sentinel"
+  chmod +x "${verif_t04_cbin}/edm-check-verifier-sentinel"
+  verif_t04_mutant_count_ec=0
+  "${verif_t04_cbin}/edm-check-verifier-sentinel" QC-SHARD "$verif_t04_d" >/dev/null 2>&1 || verif_t04_mutant_count_ec=$?
+  [[ $verif_t04_mutant_count_ec -eq 0 ]] \
+    && pass "VERIF-T04 AC8 -- mutation guard: deleting the count-check block makes the mutated copy ACCEPT fixture D (proves the check, not something else, caused the AC4 refusal)" \
+    || fail "VERIF-T04 AC8 -- mutation guard failed: the mutated copy still exited ${verif_t04_mutant_count_ec} (expected 0) on fixture D after the count-check block was deleted -- the refusal is coming from somewhere other than the check under test"
+fi
 
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
