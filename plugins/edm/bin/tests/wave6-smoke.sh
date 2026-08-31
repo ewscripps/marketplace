@@ -1232,7 +1232,15 @@ ca417_callers="$(grep -cE 'skipped_phases_str "' "$EDM_STATE")"
 # only -- gate 3 is not required by any of the three commands' independent derivations.
 echo
 echo "G23/CA-343 -- phase-start, gate-check and archive agree that gate 3 is not required for a mini-srd initiative with skipped phases"
-edm-init --product demo --description g23mini G23MIN --mode mini-srd >/dev/null
+# Run from $TMP, not the caller's cwd. edm-init honours the absolute EDM_SRD_ROOT for the
+# artifact path but does its `git checkout -b` against whatever repository the CWD sits in -- so
+# calling it from the repo root creates and CHECKS OUT edm/g23min-g23mini in the developer's own
+# working copy, silently moving them off their branch mid-suite, after which every remaining
+# assertion measures a different tree. $TMP is not a git worktree, so the checkout is a no-op
+# there and edm-init still exits 0 -- the contract T01 AC1's "correction is a no-op outside a git
+# worktree" case asserts. The same hazard is documented at the CA-040 convergence_exempt block
+# below for a different call site; these two top-level calls were the ones still exposed.
+( cd "$TMP" && edm-init --product demo --description g23mini G23MIN --mode mini-srd >/dev/null )
 G23MIN_DIR="$TMP/SRD/demo/G23MIN__g23mini"
 G23MIN_STATE="${G23MIN_DIR}/.edm-state.json"
 g23_skipped_len="$(jq -r '(.skipped_phases // []) | length' "$G23MIN_STATE")"
@@ -1986,7 +1994,9 @@ check_refuses_and_leaves_state "archived initiative refused" "is archived" "$STA
 # caught by both.
 echo
 echo "G23/CA-343 -- product-scoped archived initiative also refused via the shared list_state_files enumeration"
-edm-init --product demo --description migsch6 MSCH6 >/dev/null
+# Same containment as the G23MIN call above -- from the repo root this created and checked out
+# edm/msch6-migsch6 in the developer's working copy.
+( cd "$TMP" && edm-init --product demo --description migsch6 MSCH6 >/dev/null )
 jq 'del(.schema_version)' "$TMP/SRD/demo/MSCH6__migsch6/.edm-state.json" \
   > "$TMP/SRD/demo/MSCH6__migsch6/.edm-state.json.tmp" \
   && mv "$TMP/SRD/demo/MSCH6__migsch6/.edm-state.json.tmp" "$TMP/SRD/demo/MSCH6__migsch6/.edm-state.json"
