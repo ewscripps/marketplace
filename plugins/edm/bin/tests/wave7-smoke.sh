@@ -9361,5 +9361,108 @@ else
     || fail "VERIF-T04 AC8 -- mutation guard failed: the mutated copy still exited ${verif_t04_mutant_count_ec} (expected 0) on fixture D after the count-check block was deleted -- the refusal is coming from somewhere other than the check under test"
 fi
 
+# =================================================================================
+# VERIF-T08: assert the sentinel instruction (its marker token AND its "final line" positional
+# wording) is present in all four verifier agent prompts, that the four markers are pairwise
+# distinct, and that no OTHER agent file carries a "-COMPLETE " marker. This makes prompt-text
+# that would otherwise rot silently into a machine-checked contract: a later edit that drops the
+# instruction from one of the four, or pastes a sentinel into a producer agent where it would be
+# meaningless, fails here instead of surfacing only as a silent-pass in production.
+# =================================================================================
+echo
+echo "VERIF-T08 -- sentinel instruction asserted across all four verifier agent prompts"
+
+VERIF_T08_AGENTS_DIR="${PLUGIN_DIR}/agents"
+
+# AC5 -- the agent-to-marker mapping, declared once as a here-doc table (bash 3.2: no associative
+# arrays), rather than restated at each of the per-file assertion sites below.
+VERIF_T08_MAP="$(cat <<'EOF'
+edm-qc-auditor.md|QC-SHARD-COMPLETE
+edm-srd-auditor.md|SRD-AUDIT-COMPLETE
+edm-ticket-auditor.md|TICKET-AUDIT-COMPLETE
+edm-test-coverage-auditor.md|TEST-COVERAGE-COMPLETE
+EOF
+)"
+
+# AC6 -- assertion body as a function taking a file path and a marker, so it can be run against an
+# arbitrary path (both the four real agents below, AC1/AC2, and the AC7 negative-control copy).
+# Prints a human-readable "missing" description on stdout and returns non-zero when either
+# property (marker token, "final line" wording) is absent; returns 0 and prints nothing when both
+# are present. AC8: callers use the printed description to name which of the two is missing.
+verif_t08_check_sentinel() {
+  local file="$1" marker="$2"
+  local has_marker has_final missing=""
+  has_marker="$(count_matches -F -- "$marker" "$file")"
+  has_final="$(count_matches -i -- "final line" "$file")"
+  [[ "${has_marker:-0}" -lt 1 ]] && missing="marker(${marker})"
+  if [[ "${has_final:-0}" -lt 1 ]]; then
+    [[ -n "$missing" ]] && missing="${missing}, "
+    missing="${missing}final-line wording"
+  fi
+  if [[ -z "$missing" ]]; then
+    return 0
+  fi
+  printf '%s\n' "$missing"
+  return 1
+}
+
+# AC1/AC2 -- each of the four agent files carries its own marker AND the final-line wording.
+while IFS='|' read -r verif_t08_fname verif_t08_marker; do
+  [[ -z "$verif_t08_fname" ]] && continue
+  verif_t08_f="${VERIF_T08_AGENTS_DIR}/${verif_t08_fname}"
+  if [[ ! -f "$verif_t08_f" ]]; then
+    fail "VERIF-T08 AC1/AC2 -- ${verif_t08_fname} not found under agents/"
+    continue
+  fi
+  verif_t08_missing=""
+  verif_t08_ec=0
+  verif_t08_missing="$(verif_t08_check_sentinel "$verif_t08_f" "$verif_t08_marker")" || verif_t08_ec=$?
+  if [[ $verif_t08_ec -eq 0 ]]; then
+    pass "VERIF-T08 AC1/AC2 -- ${verif_t08_fname} carries marker '${verif_t08_marker}' and 'final line' wording"
+  else
+    fail "VERIF-T08 AC1/AC2/AC8 -- ${verif_t08_fname} missing: ${verif_t08_missing}"
+  fi
+done <<< "$VERIF_T08_MAP"
+
+# AC3 -- the four markers are pairwise distinct (computed from the same map above, not a second,
+# independently-typed literal that could silently diverge from it).
+verif_t08_marker_count="$(printf '%s\n' "$VERIF_T08_MAP" | grep -c '.')"
+verif_t08_unique_count="$(printf '%s\n' "$VERIF_T08_MAP" | cut -d'|' -f2 | sort -u | grep -c '.')"
+[[ "$verif_t08_marker_count" -eq "$verif_t08_unique_count" ]] \
+  && pass "VERIF-T08 AC3 -- all four marker tokens are pairwise distinct" \
+  || fail "VERIF-T08 AC3 -- expected ${verif_t08_marker_count} distinct marker tokens, found only ${verif_t08_unique_count} unique -- a copy-paste has given two agents the same marker"
+
+# AC4 -- no OTHER file under agents/ (outside this four-file allowlist, written as filenames so a
+# fifth verifier added later must be a conscious addition to the list, not a silent pass) carries
+# a "-COMPLETE " marker. Uses assert_tree_absent for its built-in positive control -- proof the
+# scan is actually capable of finding a real hit, not merely finding none because it looked wrong.
+verif_t08_allowed="edm-qc-auditor.md edm-srd-auditor.md edm-ticket-auditor.md edm-test-coverage-auditor.md"
+verif_t08_other_files=()
+for verif_t08_f in "${VERIF_T08_AGENTS_DIR}"/*.md; do
+  verif_t08_base="$(basename "$verif_t08_f")"
+  case " $verif_t08_allowed " in
+    *" $verif_t08_base "*) continue ;;
+  esac
+  verif_t08_other_files+=("$verif_t08_f")
+done
+verif_t08_pattern='-COMPLETE '
+verif_t08_actual="$(grep -rn -- "$verif_t08_pattern" "${verif_t08_other_files[@]}" 2>/dev/null || true)"
+verif_t08_control="other-agent.md: <!-- FOO-COMPLETE range=X assigned=1 audited=1 -->"
+assert_tree_absent "VERIF-T08 AC4 -- no agent file outside the four-file sentinel allowlist carries a '-COMPLETE ' marker" \
+  "$verif_t08_pattern" "$verif_t08_actual" "$verif_t08_control" "${verif_t08_other_files[@]}"
+
+# AC7 -- negative control: a copy of one agent file with both the sentinel marker line and the
+# "final line" wording stripped must be REJECTED (non-zero) by the AC6 function above; if the
+# mutated copy is still accepted, the assertion function itself is not load-bearing.
+verif_t08_control_src="${VERIF_T08_AGENTS_DIR}/edm-qc-auditor.md"
+verif_t08_control_copy="${TMP}/verif-t08-control-qc-auditor.md"
+grep -vF -- "QC-SHARD-COMPLETE" "$verif_t08_control_src" | grep -vi -- "final line" > "$verif_t08_control_copy"
+verif_t08_control_missing=""
+verif_t08_control_ec=0
+verif_t08_control_missing="$(verif_t08_check_sentinel "$verif_t08_control_copy" "QC-SHARD-COMPLETE")" || verif_t08_control_ec=$?
+[[ $verif_t08_control_ec -ne 0 ]] \
+  && pass "VERIF-T08 AC7 -- negative control: a copy of edm-qc-auditor.md with the sentinel and 'final line' wording stripped is correctly rejected by the AC6 function (missing: ${verif_t08_control_missing})" \
+  || fail "VERIF-T08 AC7 -- negative control failed: the AC6 function accepted (returned 0) a copy of edm-qc-auditor.md with both the sentinel and 'final line' wording stripped -- the assertion function is not load-bearing"
+
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
