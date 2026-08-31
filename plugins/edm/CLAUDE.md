@@ -37,6 +37,12 @@ exactly once, never duplicated in the orchestrator. Two obligations fall on any 
    nameable error, not a silent no-op or a hang (confirmed live in the D21 spike). The caller must
    report the unavailable skill by name and stop; it must never fall back to silently inlining the
    target's procedure.
+3. **No skill in this plugin may set `disable-model-invocation: true`.** That flag rejects every
+   `Skill`-tool call to the skill, the dispatcher's included -- `Skill edm:plan cannot be used
+   with Skill tool due to disable-model-invocation` -- which breaks the composition this whole
+   section rests on. Phase skills set `user-invocable: true` and keep Claude from auto-firing
+   through their descriptions ("Invoked explicitly via `/edm:<name>`"), not through that flag.
+   `bin/edm-check-skill-sync` enforces this.
 
 Context accumulated by the caller (its own reasoning, anything it has read or written this turn)
 is visible to the callee automatically -- the callee runs within the **same conversation**, not an
@@ -478,7 +484,7 @@ generation this plugin's agents actually run on, see "Model and effort assignmen
 
 | Model | Input | Output | Cache Read | Cache Write 5m | Cache Write 1h |
 |---|---|---|---|---|---|
-| Opus 4.8 | $6 | $30 | $0.60 | $7.50 | $12.00 |
+| Opus 4.8, Opus 5 | $6 | $30 | $0.60 | $7.50 | $12.00 |
 | Sonnet 4.7 | $4 | $20 | $0.40 | $5.00 | $8.00 |
 | Haiku 4.6 | $1.20 | $6.00 | $0.12 | $1.50 | $2.40 |
 
@@ -500,8 +506,9 @@ Override the current-generation rates with `EDM_OPUS_INPUT_RATE`, `EDM_SONNET_OU
 
 - previous-generation frozen rows: `*opus-4-7*|*opus-4.7*`, `*sonnet-4-6*|*sonnet-4.6*`,
   `*haiku-4-5*|*haiku-4.5*`
-- current-generation explicit rows: `*opus-4-8*|*opus-4.8*`, `*haiku-4-6*|*haiku-4.6*`,
-  `*sonnet-4-7*|*sonnet-4.7*`
+- current-generation explicit rows: `*opus-4-8*|*opus-4.8*|*opus-5*`, `*haiku-4-6*|*haiku-4.6*`,
+  `*sonnet-4-7*|*sonnet-4.7*` -- Opus 5 shares the Opus arm at the same rates and the same
+  `EDM_OPUS_*` overrides
 - the literal `unknown` sentinel from `get_session_tokens_since` (silent placeholder pricing at
   current Sonnet-tier rates; tokens are already zero in that path)
 - final `*)` fallback: warn on stderr and also price at current Sonnet-tier rates as a clearly
@@ -516,7 +523,7 @@ arms. A contributor adding a new version arm (e.g. Sonnet 5) just needs it ahead
 lands relative to `unknown` is immaterial.
 
 The important behavioral change is the opposite of the pre-D32 contract: an unrecognized model in a
-known family no longer matches silently. `claude-opus-5-20260501`, `claude-sonnet-9`, or any other
+known family no longer matches silently. `claude-opus-9-20260501`, `claude-sonnet-9`, or any other
 identifier outside the six explicit version arms now falls through to `*)`, emits the warning, and
 gets placeholder Sonnet-tier pricing until a human updates the table. Cross-check `model_used`
 against the two tables above before quoting a cost figure from a run driven by a model generation
@@ -805,7 +812,7 @@ Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call the
 | `edm-check-grants`    | Four-source grant/instruction contract checker (EDMV3-T03/T07/T113): scans agent bodies, skill launch templates, hook prompt text and `AskUserQuestion`/`Skill`/`Write` grants together, so an instruction living in a skill's launch template or a hook prompt rather than the agent's own body is still caught. Run `edm-check-grants --help` for the full source list. |
 | `edm-check-vocabulary` | Deterministic backstop for the abolished-vocabulary policy (EDMV3-T29/T30; see this file's "Severity vocabulary" section for the policy itself). Scans `skills/`, `agents/`, `docs/`, `hooks/hooks.json`, `monitors/monitors.json`, `CLAUDE.md`, `README.md` and `bin/` against `bin/vocabulary-prohibited.txt`, honoring the documented `bin/vocabulary-allowlist.txt` carve-outs. |
 | `edm-compare-eval`    | Compares a post-change eval run's `scores.json` against the committed wave-A baseline (EDMV3-T39/EDMV3-52), applying the `baseline_total - variance.total_range` acceptance threshold and refusing (not silently passing) on a `scorer_version` or `dimensions_scored` mismatch, or a `complete: false` candidate. The scorer itself never compares; this script owns the comparison. |
-| `edm-check-skill-sync` | Regression tripwire (EDMV3-T39 AC7, amended per CA-089) run unconditionally by `bin/tests/run-all.sh`: asserts the dispatcher (`skills/orchestrator/SKILL.md`) holds no phase procedure body and that every phase skill still owns its own `## Operational Orchestration` section, so a future edit cannot silently copy a phase procedure back into the dispatcher. |
+| `edm-check-skill-sync` | Regression tripwire (EDMV3-T39 AC7, amended per CA-089) run unconditionally by `bin/tests/run-all.sh`: asserts the dispatcher (`skills/orchestrator/SKILL.md`) holds no phase procedure body, that every phase skill still owns its own `## Operational Orchestration` section, and that no skill carries `disable-model-invocation: true` (which would block the dispatcher's Skill-tool call to it). |
 
 ### `edm-lint-artifacts` latency budgets (EDMV3-T67 AC5/AC7)
 

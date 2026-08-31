@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **`disable-model-invocation: true` removed from all 14 skills** -- the flag rejects every
+  `Skill`-tool call to a skill, so the orchestrator's own dispatch of each phase failed with
+  `Error: Skill edm:plan cannot be used with Skill tool due to disable-model-invocation`. That
+  broke `/edm:orchestrator` end to end and the `/edm:code-audit` -> `/edm:verify-runtime`
+  hand-off, which use the same mechanism. All 14 skills now carry `user-invocable: true`
+  (the marketplace template shape); auto-firing is discouraged through each skill's description
+  ("Invoked explicitly via `/edm:<name>`") instead. `bin/edm-check-skill-sync` gained a third
+  assertion so the flag cannot be reintroduced silently.
+
 ### Removed
 
 - **The GitLab CI pipeline (`.gitlab-ci.yml`, 14 jobs) and `.gitlab/` (D63)** -- EDM's own local

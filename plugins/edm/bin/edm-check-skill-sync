@@ -68,8 +68,20 @@ for phase in plan srd audit-srd tickets audit-tickets implement code-audit verif
   fi
 done
 
+# `disable-model-invocation: true` blocks EVERY Skill-tool call to that skill, including the
+# dispatcher's own `/edm:plan` dispatch -- "Skill edm:plan cannot be used with Skill tool due to
+# disable-model-invocation". The dedup above only holds if the dispatcher can actually reach the
+# phase skills, so the flag is banned plugin-wide, not just on the eight dispatched phases.
+for f in "${SKILLS_DIR}"/*/SKILL.md; do
+  [ -f "$f" ] || continue
+  if grep -q '^disable-model-invocation: *true' "$f"; then
+    echo "${f}: forbidden: 'disable-model-invocation: true' blocks Skill-tool dispatch of this skill" >&2
+    violations=$((violations + 1))
+  fi
+done
+
 if [ "$violations" -eq 0 ]; then
-  echo "edm-check-skill-sync: CLEAN (dispatcher holds no phase procedure; every phase skill owns its own)"
+  echo "edm-check-skill-sync: CLEAN (dispatcher holds no phase procedure; every phase skill owns its own; no skill blocks Skill-tool dispatch)"
   exit 0
 fi
 

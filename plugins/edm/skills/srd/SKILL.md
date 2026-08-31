@@ -1,7 +1,7 @@
 ---
 name: srd
 description: EDM Phase 2 (SRD Creation) -- transform planning scope into a comprehensive Software Requirements Document with unique requirement IDs, testable acceptance criteria, architecture diagrams, and prioritized features. Invoked explicitly via /edm:srd.
-disable-model-invocation: true
+user-invocable: true
 model: opus
 effort: high
 argument-hint: <PREFIX>

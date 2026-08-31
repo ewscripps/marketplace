@@ -1,7 +1,7 @@
 ---
 name: verify-runtime
 description: EDM Phase 6 closure -- drives every PARTIAL verdict in partial_verdict_map to a closing PASS or FAIL via runtime verification, writing post-deploy/verification.md. Mandatory before archive. Invoked explicitly via /edm:verify-runtime <PREFIX>.
-disable-model-invocation: true
+user-invocable: true
 model: sonnet
 effort: high
 argument-hint: <PREFIX>

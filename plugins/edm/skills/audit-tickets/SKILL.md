@@ -1,7 +1,7 @@
 ---
 name: audit-tickets
 description: EDM Phase 5 (Ticket Pack Audit) -- audit the ticket pack for coverage, sizing, dependencies, AC quality, diagrams, version alignment, and consistency; present HITL Gate 3. Invoked explicitly via /edm:audit-tickets.
-disable-model-invocation: true
+user-invocable: true
 model: opus
 effort: max
 argument-hint: <PREFIX>

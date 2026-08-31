@@ -1,7 +1,7 @@
 ---
 name: tickets
 description: EDM Phase 4 (Ticket Pack Creation) -- transform the audited SRD into a developer ticket pack with epic files and 6-12 testable acceptance criteria per ticket. Invoked explicitly via /edm:tickets.
-disable-model-invocation: true
+user-invocable: true
 model: opus
 effort: high
 argument-hint: <PREFIX>

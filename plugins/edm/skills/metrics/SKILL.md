@@ -1,7 +1,7 @@
 ---
 name: metrics
 description: EDM Metrics -- report per-phase durations, gate review times, and Claude API cost; per-round code-audit cost; tiered-vs-untiered lens cost where measured; aggregate across initiatives; suggest calibration of Phase Timing Guidelines from actual data. An optional human-baseline cost comparison is available behind --with-human-baseline. Invoked explicitly via /edm:metrics.
-disable-model-invocation: true
+user-invocable: true
 model: sonnet
 effort: high
 argument-hint: <PREFIX|--all|--calibrate> [--with-human-baseline]

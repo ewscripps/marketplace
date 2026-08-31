@@ -128,7 +128,11 @@ All EDM phases are user-invocable as `/edm:<name>`:
 | `/edm:test-plan <PREFIX>` | Post-6 | Preview test scope only: detect stack + map AC to layers, no test writing |
 | `/edm:test-coverage <PREFIX>` | Post-6 | Re-audit coverage against existing tests, update `test-coverage.md` |
 
-All phase skills set `disable-model-invocation: true` -- Claude won't auto-fire them on casual prompts. Use the slash commands explicitly.
+All phase skills set `user-invocable: true`. They must NOT set `disable-model-invocation: true` --
+that flag blocks every `Skill`-tool call, including the orchestrator's own dispatch of each phase
+(`Skill edm:plan cannot be used with Skill tool due to disable-model-invocation`). Each skill's
+description says "Invoked explicitly via `/edm:<name>`" so Claude doesn't auto-fire it on casual
+prompts; invoke them with the slash commands.
 
 ## Agents
 
