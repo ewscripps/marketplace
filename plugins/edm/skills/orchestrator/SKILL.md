@@ -1,7 +1,7 @@
 ---
 name: orchestrator
 description: Run the full Enterprise Development Methodology (EDM) -- all 6 phases with 3 HITL gates. Invoked explicitly via /edm:orchestrator <initiative>. The initiative can be plain text, a file path, or a Jira ticket key. Use when starting a new feature, refactor, or service that touches 10+ files.
-disable-model-invocation: true
+user-invocable: true
 model: opus
 effort: max
 argument-hint: <initiative description | /path/to/file | PROJ-123>  # a YAML `|` block-scalar indicator only applies in the first character position of a value; this value starts with `<`, so the `|`s here are ordinary plain-scalar text and quoting is optional (see test:7, metrics:7 for the same unquoted shape)

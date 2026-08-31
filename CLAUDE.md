@@ -45,10 +45,9 @@ allowed-tools: Bash(git *), AskUserQuestion, Read, Grep, Glob
 `user-invocable` and `disable-model-invocation` are NOT synonyms or opposites of each other — the
 former gates USER invocation (via `/plugin:skill`), the latter gates MODEL invocation (the model
 deciding on its own to invoke the skill) — and this repository's plugins are not consistent about
-which they set. `git`, `jira`, `ada-tablo`, `bruno` and `myday` follow the template above
-(`user-invocable: true`, no `disable-model-invocation`). `edm`'s 14 skills instead all set
-`disable-model-invocation: true` and carry no `user-invocable` key; `web-cms`'s 14 skills set
-both. `edm` and `web-cms` also add `model:` and `effort:` keys the template above omits — see
+which they set. `git`, `jira`, `ada-tablo`, `bruno`, `myday` and `edm` follow the template above
+(`user-invocable: true`, no `disable-model-invocation`); `web-cms`'s 14 skills set both. `edm` and
+`web-cms` also add `model:` and `effort:` keys the template above omits — see
 `plugins/edm/CLAUDE.md`'s "Model and effort assignments" section for the assignment table that
 governs edm's. When adding a skill to `edm` or `web-cms`, follow that plugin's own existing
 sibling skills rather than the bare template above.

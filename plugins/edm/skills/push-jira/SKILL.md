@@ -1,7 +1,7 @@
 ---
 name: push-jira
 description: Optionally persist an EDM ticket pack to Jira via the Atlassian MCP. Creates one Jira issue per `{PREFIX}-T{NN}` ticket, links dependencies as Issue Links, and writes the resulting Jira keys back into the ticket pack. Idempotent -- re-running updates existing issues instead of creating duplicates. Invoked explicitly via /edm:push-jira.
-disable-model-invocation: true
+user-invocable: true
 model: sonnet
 effort: high
 argument-hint: <PREFIX> [JIRA_PROJECT_KEY] [--dry-run]

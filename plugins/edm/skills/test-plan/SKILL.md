@@ -1,7 +1,7 @@
 ---
 name: test-plan
 description: Preview mode for EDM testing -- detects the project stack and maps ticket ACs to test layers without writing any tests. Produces test-plan.md in the initiative directory. Invoke before /edm:test to review scope, or run it standalone when you need the coverage map but aren't ready to write tests yet.
-disable-model-invocation: true
+user-invocable: true
 model: opus
 effort: high
 argument-hint: <PREFIX> [scope]

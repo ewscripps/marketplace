@@ -1,7 +1,7 @@
 ---
 name: plan
 description: EDM Phase 1 (Planning & Discovery) -- explore the codebase, define scope, map dependencies, produce a go/no-go decision. Invoked explicitly via /edm:plan.
-disable-model-invocation: true
+user-invocable: true
 model: opus
 effort: max
 argument-hint: <PREFIX> <initiative description>

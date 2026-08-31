@@ -1,7 +1,7 @@
 ---
 name: implement
 description: EDM Phase 6 (Implementation + QC + Remediation) -- parallel implementation waves, automatic QC audit (via SubagentStop hook), and remediation loop until all tickets PASS. Invoked explicitly via /edm:implement.
-disable-model-invocation: true
+user-invocable: true
 model: opus
 effort: max
 argument-hint: <PREFIX>

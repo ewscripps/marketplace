@@ -1,7 +1,7 @@
 ---
 name: audit-srd
 description: EDM Phase 3 (SRD Audit) -- audit the SRD across 7 categories, remediate all P0/P1 findings, present HITL Gate 2. Invoked explicitly via /edm:audit-srd.
-disable-model-invocation: true
+user-invocable: true
 model: opus
 effort: max
 argument-hint: <PREFIX>

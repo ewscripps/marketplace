@@ -1,7 +1,7 @@
 ---
 name: test
 description: Full-pipeline EDM test orchestration for an initiative -- plan, scaffold, write tests (unit, component, composable, integration, contract, E2E, a11y), run the suite, and audit coverage. Produces test-plan.md and test-coverage.md in the initiative directory. Run after Phase 6 implementation before declaring the initiative complete.
-disable-model-invocation: true
+user-invocable: true
 model: opus
 effort: max
 argument-hint: <PREFIX> [--fill-gaps | --skip-scaffold]

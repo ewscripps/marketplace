@@ -1,7 +1,7 @@
 ---
 name: code-audit
 description: EDM Code Audit (post-Phase 6) -- 11 parallel orthogonal audit agents (logic, dead code, edge cases, tests, hygiene, docs, consistency, security, spec, DRY, wiring) plus a synthesizer that produces a severity-ranked remediation plan. Invoked explicitly via /edm:code-audit. Supports --lenses subset for targeted re-audits.
-disable-model-invocation: true
+user-invocable: true
 model: opus
 effort: max
 argument-hint: <PREFIX> [files-or-branch-scope] [--lenses L1,L3]
