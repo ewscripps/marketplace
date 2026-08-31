@@ -1286,14 +1286,21 @@ t64_marketplace_version="$(jq -r '.plugins[] | select(.name=="edm") | .version' 
 [[ "$t64_plugin_version" == "$t64_marketplace_version" ]] \
   && pass "T64 AC1 -- plugin.json and marketplace.json versions agree ($t64_plugin_version)" \
   || fail "T64 AC1 -- plugin.json version '$t64_plugin_version' != marketplace.json edm entry '$t64_marketplace_version'"
-# Superseded by EDMV3-T66 (wave-C closeout), then by EDMV3-T68/CA-431 (round-8 remediation):
-# the version literal this case asserts moved from T64's wave-A "2.1.0" through T65's wave-B
-# "3.0.0" to T66's wave-C "3.1.0" to the round-8 "3.2.0" (the accept-p2-debt feature release)
-# -- each release bumps the same field, and only the latest one's literal is current. This is
-# the version-agreement half of the check (both manifests move together).
-[[ "$t64_plugin_version" == "3.2.0" ]] \
-  && pass "T64 AC1 -- plugin.json version is 3.2.0 (EDMV3-T68 / round-8 remediation release)" \
-  || fail "T64 AC1 -- plugin.json version is '$t64_plugin_version', expected '3.2.0'"
+# Superseded by EDMV3-T66 (wave-C closeout), then by EDMV3-T68/CA-431 (round-8 remediation),
+# then by VERIF-T11: the version literal this case asserted moved on every release --
+# T64's wave-A "2.1.0" -> T65's wave-B "3.0.0" -> T66's wave-C "3.1.0" -> round-8's "3.2.0" --
+# and each move required a hand edit to this test file, which is exactly the drift class
+# CA-431/CA-531 exist to catch (VERIF-T11 shipped 3.2.1 -> 3.2.2 with three of four version
+# sites agreeing and this literal itself still pinned to the prior release, a defect only
+# caught because it was hardcoded here). Rather than re-pinning a fourth literal, this compares
+# plugin.json's version against CHANGELOG.md's own top `## [X.Y.Z]` heading -- a file the
+# release ticket already updates in the same commit -- so no separate copy of the version
+# literal needs maintaining inside the test suite itself.
+t64_changelog_version="$(sed -n 's/^## \[\([0-9][0-9.]*\)\].*/\1/p' "$PLUGIN_DIR/CHANGELOG.md" 2>/dev/null | sed -n '1p')"
+[[ -n "$t64_changelog_version" ]] || t64_changelog_version=MISSING
+[[ "$t64_plugin_version" == "$t64_changelog_version" ]] \
+  && pass "T64 AC1 -- plugin.json version matches CHANGELOG.md's top heading ($t64_plugin_version)" \
+  || fail "T64 AC1 -- plugin.json version '$t64_plugin_version' != CHANGELOG.md top heading '$t64_changelog_version'"
 
 # =================================================================================
 # EDMV3-T66: wave-C closeout -- version 3.1.0 and CLAUDE.md reference tables match reality

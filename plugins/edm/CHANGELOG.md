@@ -4,6 +4,74 @@ All notable changes to the EDM plugin are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.2] -- 2026-08-31
+
+The verifier completion-sentinel contract (VERIF initiative) and a manifest-version drift fix.
+
+### Added
+
+- **Verifier completion-sentinel contract (VERIF-T01)** -- `CLAUDE.md` gains a canonical
+  "Verifier completion sentinel" section: a single-line HTML comment grammar
+  (`<!-- {MARKER}-COMPLETE range={ASSIGNMENT} assigned={M} audited={N} -->`) that all four
+  read-only verifier agents and their consumers now implement against, so no agent/consumer
+  pair can drift onto slightly different markers and reintroduce the exact silent-pass defect
+  this contract exists to close.
+- **All four read-only verifiers now emit the sentinel as their final line** (VERIF-T02,
+  VERIF-T05, VERIF-T06, VERIF-T07): `edm-qc-auditor` (`QC-SHARD-COMPLETE`, file form),
+  `edm-srd-auditor` (`SRD-AUDIT-COMPLETE`, returned-text form), `edm-ticket-auditor`
+  (`TICKET-AUDIT-COMPLETE`, returned-text form), and `edm-test-coverage-auditor`
+  (`TEST-COVERAGE-COMPLETE`, file form). Each prompt states the sentinel is the final line,
+  that nothing may follow it, and forbids emitting it before the audit is actually complete.
+- **All four consumers now refuse without it** (VERIF-T03, VERIF-T05, VERIF-T06, VERIF-T07):
+  `/edm:implement`'s qc-summary merge, `/edm:audit-srd`'s findings compile step,
+  `/edm:audit-tickets`'s two-lane compile step, and `/edm:test-coverage`'s per-file check all
+  refuse an artifact or returned block that is missing the sentinel, carries it anywhere but
+  the last line, or reports `audited=` below the assigned count -- naming the offending
+  artifact and the remedy (re-run the verifier for the named range, then re-run the consuming
+  step) rather than silently accepting a truncated result.
+- **`bin/edm-check-verifier-sentinel` (VERIF-T03)** -- new executable implementing the
+  contract's `tail -1` check for the two file-form markers; bash 3.2 compatible, no binary
+  beyond `bash`/`grep`/`sed`/`tail`, exit 0/1/2 (complete/usage-error/refusal). Covered by
+  negative smoke tests including mutation guards that prove the refusal is the check's own
+  doing and not an accident of the fixture (VERIF-T04).
+- **Sentinel presence and distinctness asserted across all four agent prompts** (VERIF-T08) --
+  `wave7-smoke.sh` machine-checks that each of the four markers is present with its final-line
+  wording, that the four markers are distinct from one another, and that no other file under
+  `agents/` carries a stray `-COMPLETE` marker.
+- **The four verifiers raised from `maxTurns: 25` to `maxTurns: 50`** (VERIF-T09), reaching
+  parity with the producer agents whose output they check. Landed only after the sentinel
+  contract above -- a higher budget makes truncation rarer but never reveals when it still
+  happens, so raising it first would have made the remaining truncations harder to notice
+  rather than safer.
+- **Pre-verification of mechanical claims before auditor spawn** (VERIF-T10) -- `/edm:audit-srd`
+  and `/edm:audit-tickets` now verify cheap mechanical claims themselves (file/path existence,
+  `file:line` anchors, requirement/ticket counts, version strings) and hand the auditors an
+  "Established facts -- do not re-derive" block, freeing auditor turns for judgment work. A
+  discrepancy an auditor observes against a supplied fact is recorded as a finding, never
+  silently corrected before the audit runs.
+
+### Fixed
+
+- **Manifest version drift (VERIF-T11)** -- `plugins/edm/.claude-plugin/plugin.json`,
+  `.claude-plugin/marketplace.json`'s `edm` entry, and the repo-root `CLAUDE.md` reference had
+  drifted to three different version strings (`3.2.1`, `3.2.0`, and `3.2.0` respectively); all
+  three now read `3.2.2`, verified programmatically rather than by eye
+  (`bin/tests/wave7-smoke.sh`'s `T64 AC1` and `CA-431`/`CA-531` cases). `T64 AC1`'s own
+  expectation was also de-literalized: instead of re-pinning a fourth hardcoded version string
+  on every release, it now compares `plugin.json`'s version against this file's own top
+  `## [X.Y.Z]` heading, which the release ticket already updates in the same commit.
+
+### Not done (deliberately)
+
+- **Proportional auditor fan-out** -- the number of `edm-srd-auditor`/`edm-ticket-auditor`
+  agents spawned per run is unchanged; only their turn budget and completion contract changed.
+- **Producer budget raises** -- `edm-implementer` stays at `maxTurns: 60`, and
+  `edm-srd-writer`/`edm-ticket-writer`/`edm-architect` stay at `maxTurns: 50`; raising both
+  sides of the verifier/producer gap would have preserved it rather than closed it.
+- **The eleven code-audit lenses' `maxTurns: 30`** -- unchanged; there is no evidence of
+  truncation there, and this release's budget raise is scoped to the four read-only verifiers
+  named above.
+
 ## [3.2.1]
 
 ### Fixed
