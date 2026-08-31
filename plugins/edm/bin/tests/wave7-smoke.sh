@@ -1619,7 +1619,7 @@ ca529_control_count="$(printf '%s\n' "$ca529_control_lines" | grep -c . || true)
 rm -rf "$ca529_control_dir"
 
 CODE_AUDIT_FIXTURE_DIR="${PLUGIN_DIR}/bin/tests/fixtures/code-audit"
-ARCHITECTURE_MD="$(cd "$PLUGIN_DIR/../.." && pwd)/SRD/edm/EDMV3__prompt-streamline/architecture.md"
+ARCHITECTURE_MD="$(cd "$PLUGIN_DIR/../.." && pwd)/SRD/.archived/edm/EDMV3__prompt-streamline/architecture.md"
 
 echo
 echo "T24 AC0 -- committed synthetic code-audit pass fixture exists with the required shape"
@@ -2867,8 +2867,8 @@ _wave7_assert_shared_lint_fresh "T33"
 # ---- EDMV3-T34: Skill-tool composition depth spike, CLAUDE.md documents the pattern -----------
 echo
 echo "=== EDMV3-T34: skill-composition spike recorded, CLAUDE.md rule 2 rewritten ==="
-SPIKE_NOTE="$(cd "$PLUGIN_DIR/../.." && pwd)/SRD/edm/EDMV3__prompt-streamline/spike-skill-composition.md"
-DECISIONS_MD="$(cd "$PLUGIN_DIR/../.." && pwd)/SRD/edm/EDMV3__prompt-streamline/decisions.md"
+SPIKE_NOTE="$(cd "$PLUGIN_DIR/../.." && pwd)/SRD/.archived/edm/EDMV3__prompt-streamline/spike-skill-composition.md"
+DECISIONS_MD="$(cd "$PLUGIN_DIR/../.." && pwd)/SRD/.archived/edm/EDMV3__prompt-streamline/decisions.md"
 
 echo "T34 AC1 -- spike note exists and answers all six questions"
 [[ -f "$SPIKE_NOTE" ]] && pass "T34 AC1 -- spike-skill-composition.md exists" \
@@ -3768,7 +3768,13 @@ ca002_insertion_case() {
   echo '{}' > "${scratch_srd_root}/ZCA2/.edm-state.json"
 
   local before_heading_count after_heading_count out1 out2
+  local before_pending_count after_pending_count
   before_heading_count="$(grep -c '^### ' "$scratch_srd")"
+  # Count pending markers as a DELTA, not an absolute. $scratch_srd is a copy of the shipped
+  # docs/audit-patterns/srd-audit.md, which `edm-state update-patterns` appends to as a documented
+  # part of normal operation -- so any absolute expectation here goes stale the first time a real
+  # initiative harvests a finding, and the test then fails for a reason unrelated to what it checks.
+  before_pending_count="$(grep -c 'status: pending-review' "$scratch_srd" || true)"
 
   out1="$(EDM_SRD_ROOT="$scratch_srd_root" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZCA2 srd 2>&1)"
   [[ "$out1" == *"2 new finding(s) appended"* ]] \
@@ -3800,11 +3806,10 @@ ca002_insertion_case() {
   check_absent "CA-002 AC5 -- the duplicate was skipped, not re-appended under its report-side casing" \
     "### literal semicolon inside a mermaid label" "$(cat "$scratch_srd")"
 
-  local pending_count
-  pending_count="$(grep -c 'status: pending-review' "$scratch_srd" || true)"
-  [[ "${pending_count:-0}" -eq 2 ]] \
-    && pass "CA-002 AC9 -- both auto-appended entries carry the pending-review marker" \
-    || fail "CA-002 AC9 -- found ${pending_count:-0} pending-review marker(s), expected 2"
+  after_pending_count="$(grep -c 'status: pending-review' "$scratch_srd" || true)"
+  [[ "$((after_pending_count - before_pending_count))" -eq 2 ]] \
+    && pass "CA-002 AC9 -- both auto-appended entries carry the pending-review marker (${before_pending_count} -> ${after_pending_count})" \
+    || fail "CA-002 AC9 -- expected +2 pending-review marker(s), got ${before_pending_count} -> ${after_pending_count}"
 
   check "CA-002 AC10 -- appended stub text is delimited, not disguised as curated prose" \
     "delimited stub text pending human curation; not yet curated prose" "$(cat "$scratch_srd")"
@@ -5056,7 +5061,7 @@ echo
 echo "T49 AC7 -- before/after convention present on every prompt-text epic file (positive check)"
 t49_ac7_missing=""
 for t49_epic in 01 02 04 05 06 07 08 09 10; do
-  t49_epic_file="$(ls "${PLUGIN_DIR}/../../SRD/edm/EDMV3__prompt-streamline/tickets/epics/${t49_epic}-"*.md 2>/dev/null | head -1)"
+  t49_epic_file="$(ls "${PLUGIN_DIR}/../../SRD/.archived/edm/EDMV3__prompt-streamline/tickets/epics/${t49_epic}-"*.md 2>/dev/null | head -1)"
   if [[ -z "$t49_epic_file" ]] || ! grep -q 'before and after' "$t49_epic_file" 2>/dev/null; then
     t49_ac7_missing="${t49_ac7_missing} epics/${t49_epic}"
   fi
@@ -5069,11 +5074,11 @@ done
 # asserting it, which left the AC's stated command permanently wrong. The three incidental
 # phrases were reworded to "pre- and post-change" (same meaning), so the count is now assertable
 # and this is a mechanism rather than a note.
-t49_ac7_count="$(grep -rl 'before and after' "${PLUGIN_DIR}/../../SRD/edm/EDMV3__prompt-streamline/tickets/epics/" 2>/dev/null | wc -l | tr -d ' ')"
+t49_ac7_count="$(grep -rl 'before and after' "${PLUGIN_DIR}/../../SRD/.archived/edm/EDMV3__prompt-streamline/tickets/epics/" 2>/dev/null | wc -l | tr -d ' ')"
 [[ "${t49_ac7_count:-0}" -eq 9 ]] && pass "T49 AC7 -- the AC's literal grep lists exactly nine epic files" \
   || fail "T49 AC7 -- the AC's literal grep lists ${t49_ac7_count:-0} epic files, expected exactly 9"
 check_absent "T49 AC7 -- epics/11 no longer collides with the convention grep" "before and after" \
-  "$(cat "${PLUGIN_DIR}/../../SRD/edm/EDMV3__prompt-streamline/tickets/epics/11-cross-cutting-delivery.md" 2>/dev/null || true)"
+  "$(cat "${PLUGIN_DIR}/../../SRD/.archived/edm/EDMV3__prompt-streamline/tickets/epics/11-cross-cutting-delivery.md" 2>/dev/null || true)"
 
 echo
 echo "T49 AC8 -- convention recorded once in CLAUDE.md under contribution guidance"
