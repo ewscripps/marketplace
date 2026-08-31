@@ -496,11 +496,15 @@ compute_cost_usd() {
     # wildcard (EDMV3 wave-C drift sweep). A bare `*opus*` arm here would sit ahead of the `*)`
     # warning arm and swallow every past and future Opus identifier, pricing an unrecognized
     # generation at this generation's rates silently -- measured before this fix,
-    # `claude-opus-5-20260501` priced at the Opus 4.8 input rate and `claude-sonnet-9` at the
+    # `claude-opus-9-20260501` priced at the Opus 4.8 input rate and `claude-sonnet-9` at the
     # Sonnet 4.7 rate, neither with a warning. That is precisely the silent-guess AC10 exists to
     # prevent, and it defeated it from inside a known family. An unknown generation now falls
     # through to `*)` and warns.
-    *opus-4-8*|*opus-4.8*)
+    #
+    # Opus 5 (`claude-opus-5`) shares this arm at the same current-generation Opus rates and the
+    # same EDM_OPUS_* overrides -- an explicit generation identifier, not a family wildcard, so
+    # the silent-guess property above is unchanged for every generation still unlisted.
+    *opus-4-8*|*opus-4.8*|*opus-5*)
       in_rate="${EDM_OPUS_INPUT_RATE:-6}"
       out_rate="${EDM_OPUS_OUTPUT_RATE:-30}"
       cr_rate="${EDM_OPUS_CACHE_READ_RATE:-0.60}"
