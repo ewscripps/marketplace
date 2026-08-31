@@ -40,7 +40,28 @@ using `<gated-command>` = `audit-srd` and `<phase-num>` = `3`.
    If the embedded SRD version differs from the state value, sync state to match the file version
    before proceeding (`edm-state srd-version <PREFIX> <embedded-version>`). A divergence here means
    the SRD was edited out-of-band; note it in the audit report intro.
-4. Spawn 2-3 `edm-srd-auditor` agents in parallel -- one per section group (e.g., sections 1-4, 5-7, 8-11). Each agent audits its sections across all 7 categories. Tell each agent the exact section count it is being assigned (`assigned={M}`, the size of its own section group) so it can emit its own completion sentinel correctly.
+3a. **Pre-verify mechanical claims** (before spawning auditors). The dispatching skill itself
+    checks the cheap, mechanical claims an `edm-srd-auditor` would otherwise spend turns
+    re-deriving, using only `grep`/`ls`/`jq` -- no new binary, no new state field, no new gate:
+    - **File and path existence**: every file path the SRD's Target Components, references, or
+      diagrams name -- confirm each exists (`ls` or `[ -e ... ]`).
+    - **`file:line` anchors**: every `path:line` citation the SRD makes against the codebase --
+      confirm the file exists and, where practical, that the line number is within the file's
+      current line count.
+    - **Requirement counts by priority**: count `Must`/`Should`/`Could` requirement IDs in the SRD
+      with `grep -c` and compare against any total the SRD's own prose or Document Info table
+      asserts.
+    - **Version strings**: any version number the SRD asserts (its own Document Info version,
+      referenced library/API versions where cheaply checkable) against `.edm-state.json` or the
+      codebase's own manifest.
+    A mechanical claim that fails this pre-verification is **not** silently corrected before the
+    auditors run -- record it as a finding in `audit-srd.md` (the same as any other audit
+    finding), exactly the kind of drift the audit exists to surface. Hand the auditors the
+    corrected fact alongside the discrepancy note, per Step 4 below. Pre-verify only mechanical,
+    checkable-by-grep claims -- never a judgment call (is this requirement well-specified? does
+    this diagram match the prose?); those are what the auditors exist for, and pre-verifying a
+    conclusion rather than a fact would defeat the purpose of dispatching them at all.
+4. Spawn 2-3 `edm-srd-auditor` agents in parallel -- one per section group (e.g., sections 1-4, 5-7, 8-11). Each agent audits its sections across all 7 categories. Tell each agent the exact section count it is being assigned (`assigned={M}`, the size of its own section group) so it can emit its own completion sentinel correctly. Include, in each agent's launch prompt, the `Established facts -- do not re-derive` block built from Step 3a's verified claims (scoped to that agent's own assigned section group) per the AI Execution Pattern below.
 5. **Check each agent's completion sentinel before compiling.** Each `edm-srd-auditor` returns
    text rather than writing a file, so check the **last non-empty line of that returned text**
    for the literal marker `SRD-AUDIT-COMPLETE` in the canonical grammar defined in `CLAUDE.md
@@ -145,7 +166,18 @@ Prompt: "Audit the SRD at ${INIT_DIR}/${user_config.srd_filename} for sections [
          section, using range=S{N}-S{M} and assigned={M-N+1}.
          Also read the codebase files referenced. Check all 7 categories.
          For each finding: [CATEGORY] [SEVERITY] Section X.Y | Finding | Recommendation.
-         Be exhaustive. Cross-reference every factual claim against the actual codebase."
+         Be exhaustive. Cross-reference every factual claim against the actual codebase.
+
+         Established facts -- do not re-derive:
+         [The Step 3a mechanical claims scoped to sections S{N}-S{M}: confirmed file/path
+         existence, confirmed file:line anchors, requirement counts by priority, and any version
+         strings verified. One line per fact, e.g.:
+           - src/auth/login.py exists (confirmed)
+           - Requirement count: 12 Must, 8 Should, 3 Could (confirmed against SRD prose)
+           - SRD Document Info version: 1.2.0 (matches .edm-state.json srd_version)]
+         Treat these as given -- do not spend turns re-confirming them. If you observe a
+         discrepancy from any listed fact during your own audit, report it as a finding rather
+         than silently trusting the supplied value."
 ```
 
 ## HITL Gate 2
