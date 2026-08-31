@@ -40,17 +40,33 @@ using `<gated-command>` = `audit-srd` and `<phase-num>` = `3`.
    If the embedded SRD version differs from the state value, sync state to match the file version
    before proceeding (`edm-state srd-version <PREFIX> <embedded-version>`). A divergence here means
    the SRD was edited out-of-band; note it in the audit report intro.
-4. Spawn 2-3 `edm-srd-auditor` agents in parallel -- one per section group (e.g., sections 1-4, 5-7, 8-11). Each agent audits its sections across all 7 categories.
-5. Compile findings from all agents into `${INIT_DIR}/audit-srd.md` using the report format below.
-6. **Remediate**: fix every P0 and P1 finding directly in the SRD. Update the Revision History (bump SRD version, e.g., 1.0.0 -> 1.1.0).
-7. Update `srd_version` in `.edm-state.json`: `edm-state srd-version <PREFIX> 1.1.0`
-8. `edm-state phase-complete <PREFIX> 3`
-8a. **Auto-update patterns** -- append novel SRD-audit findings to the pattern library:
+4. Spawn 2-3 `edm-srd-auditor` agents in parallel -- one per section group (e.g., sections 1-4, 5-7, 8-11). Each agent audits its sections across all 7 categories. Tell each agent the exact section count it is being assigned (`assigned={M}`, the size of its own section group) so it can emit its own completion sentinel correctly.
+5. **Check each agent's completion sentinel before compiling.** Each `edm-srd-auditor` returns
+   text rather than writing a file, so check the **last non-empty line of that returned text**
+   for the literal marker `SRD-AUDIT-COMPLETE` in the canonical grammar defined in `CLAUDE.md
+   Sec."Verifier completion sentinel (canonical)"` (`<!-- SRD-AUDIT-COMPLETE range={section-group}
+   assigned={M} audited={N} -->`). Refuse exactly as `bin/edm-check-verifier-sentinel` does for the
+   file form, but against the returned text since there is no file to `tail`:
+   - **Missing or misplaced sentinel** (not the true last non-empty line, or absent entirely) --
+     the agent's returned block is truncated. Do not compile it.
+   - **Short count** -- the sentinel is present and well-formed but `audited=` is below
+     `assigned=` -- the agent finished cleanly but covered fewer sections than it was assigned. Do
+     not compile it.
+   A block failing either check is **not** compiled into `audit-srd.md`. Name the agent's assigned
+   section group, and re-dispatch (resume) that agent for the same section group rather than
+   treating its partial findings as that section group's audit result. **Gate 2 must not be
+   presented while any block is outstanding** -- a truncated auditor's partial findings are never a
+   substitute for that section group's completed audit.
+6. Compile the surviving (sentinel-verified) findings from all agents into `${INIT_DIR}/audit-srd.md` using the report format below.
+7. **Remediate**: fix every P0 and P1 finding directly in the SRD. Update the Revision History (bump SRD version, e.g., 1.0.0 -> 1.1.0).
+8. Update `srd_version` in `.edm-state.json`: `edm-state srd-version <PREFIX> 1.1.0`
+9. `edm-state phase-complete <PREFIX> 3`
+9a. **Auto-update patterns** -- append novel SRD-audit findings to the pattern library:
     ```bash
     edm-state update-patterns <PREFIX> srd
     ```
-9. Present **HITL Gate 2** (see below, per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`) and STOP for sign-off.
-10. On approval: `edm-state approve-gate <PREFIX> 2`. Then append Gate 2 architecture decisions into `decisions.md` in the initiative directory:
+10. Present **HITL Gate 2** (see below, per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`) and STOP for sign-off.
+11. On approval: `edm-state approve-gate <PREFIX> 2`. Then append Gate 2 architecture decisions into `decisions.md` in the initiative directory:
     ```
     | Gate 2 | <architecture decision> | <chosen> | <rationale> | {date} |
     ```
@@ -124,6 +140,9 @@ Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabu
 Agent: edm-srd-auditor (launch 2-3 in parallel)
 Prompt: "Audit the SRD at ${INIT_DIR}/${user_config.srd_filename} for sections [N-M].
          Initiative directory (INIT_DIR): ${INIT_DIR} -- use this value; do not reconstruct it.
+         Your assigned section group is S{N}-S{M} (assigned={M-N+1} sections). End your returned
+         text with the completion sentinel per your own agent definition's 'Completion sentinel'
+         section, using range=S{N}-S{M} and assigned={M-N+1}.
          Also read the codebase files referenced. Check all 7 categories.
          For each finding: [CATEGORY] [SEVERITY] Section X.Y | Finding | Recommendation.
          Be exhaustive. Cross-reference every factual claim against the actual codebase."
@@ -159,7 +178,7 @@ After remediating all P0/P1:
 
 ## Pending Pattern Entries (gate-time curation)
 
-`edm-state update-patterns` (step 8a above) appends novel findings to the pattern library as stubs,
+`edm-state update-patterns` (step 9a above) appends novel findings to the pattern library as stubs,
 each carrying a `status: pending-review` line plus `source:`, `audit-type:` and `date:` provenance
 (`docs/audit-patterns/README.md Sec."Append Schema"`). A stub nobody is ever asked about is a stub
 forever, so Gate 2 -- one the human already stops at -- is where the ask happens.
