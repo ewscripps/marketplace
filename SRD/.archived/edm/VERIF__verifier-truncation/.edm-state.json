@@ -101,6 +101,9 @@
   "forked_from": "",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-08-31T18:29:17Z",
-  "current_step": 6
+  "last_updated": "2026-08-31T18:29:30Z",
+  "current_step": 6,
+  "archive_exemptions": [
+    "CONVERGENCE_NOT_REQUIRED"
+  ]
 }

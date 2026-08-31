@@ -85,6 +85,116 @@ When a flag is off, do you (a) silently skip, (b) log INFO, (c) log WARN, or (d)
 A diagram's node, edge or message label contains a raw `;` (e.g., `A[Wait; then retry] --> B`). Mermaid reserves `;` as a lexer-level statement separator even inside label text, so the diagram breaks or silently mis-renders.
 **Fix:** Use the `#59;` entity code instead of a raw semicolon (see `CLAUDE.md Sec."Mermaid diagram conventions"`); flag any raw `;` found inside `[...]`, `(...)`, `{...}`, `|...|`, `"..."`, or after the `:` in a `sequenceDiagram` message.
 
+### A constraint spanning two requirements was written as a peer dependency of both, creating a cycle that dependency-ordered wave scheduling cannot resolve, and the constraint is the element most likely to be silently dropped when a tool breaks the cycle (EDMV4, 2026-08-31, P2)
+
+status: pending-review
+source: EDMV4
+audit-type: srd
+date: 2026-08-31
+
+> Extracted from the srd audit for EDMV4. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
+### A replacement derivation was specified unconditionally against a function that has two branches, so the branch the spec did not consider inverts its result and every default invocation returns the opposite verdict (EDMV4, 2026-08-31, P2)
+
+status: pending-review
+source: EDMV4
+audit-type: srd
+date: 2026-08-31
+
+> Extracted from the srd audit for EDMV4. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
+### A completeness gate was re-pointed from a manifest to a state field that is empty in the default case, making the gate vacuous for exactly the incident that motivated building it (EDMV4, 2026-08-31, P2)
+
+status: pending-review
+source: EDMV4
+audit-type: srd
+date: 2026-08-31
+
+> Extracted from the srd audit for EDMV4. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
+### An SRD premise describing repository state went stale mid-phase when the branch it described was updated underneath the document (EDMV4, 2026-08-31, P2)
+
+status: pending-review
+source: EDMV4
+audit-type: srd
+date: 2026-08-31
+
+> Extracted from the srd audit for EDMV4. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
+### An acceptance criterion required updating a counting assertion that does not exist, making it vacuously satisfiable -- an implementer finds nothing to change, ticks the box, and the new surface ships with zero coverage (EDMV4, 2026-08-31, P2)
+
+status: pending-review
+source: EDMV4
+audit-type: srd
+date: 2026-08-31
+
+> Extracted from the srd audit for EDMV4. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
+### A lint sweep was cited as covering shell scripts, but the collector globs only markdown, so no script was ever scanned by the mechanism the AC named (EDMV4, 2026-08-31, P2)
+
+status: pending-review
+source: EDMV4
+audit-type: srd
+date: 2026-08-31
+
+> Extracted from the srd audit for EDMV4. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
+### A design cited an in-repo precedent that on inspection had different element types than the shape being proposed, so the claimed precedent did not support the design (EDMV4, 2026-08-31, P2)
+
+status: pending-review
+source: EDMV4
+audit-type: srd
+date: 2026-08-31
+
+> Extracted from the srd audit for EDMV4. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
+### An anti-regression assertion counts a hardcoded name list rather than the live set, so it stays green while newly added members silently escape the property it exists to enforce (EDMV4, 2026-08-31, P2)
+
+status: pending-review
+source: EDMV4
+audit-type: srd
+date: 2026-08-31
+
+> Extracted from the srd audit for EDMV4. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
+### A dormant licence obligation was wired to the wrong ratification decision, so approving the named requirement while separately reversing the underlying architecture decision would leave the obligation dormant (EDMV4, 2026-08-31, P2)
+
+status: pending-review
+source: EDMV4
+audit-type: srd
+date: 2026-08-31
+
+> Extracted from the srd audit for EDMV4. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
+### Cross-document references keyed to line numbers went stale four to seven lines within a single initiative because the target file was edited mid-flight, including a do-not-touch list that then pointed at unrelated text (EDMV4, 2026-08-31, P2)
+
+status: pending-review
+source: EDMV4
+audit-type: srd
+date: 2026-08-31
+
+> Extracted from the srd audit for EDMV4. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
+### A read-only verifier agent's turn budget sits below the producer agent whose output it checks, so on a large artifact it truncates before emitting findings, and a hook-spawned verifier's partial output is merged as if complete (EDMV4, 2026-08-31, P2)
+
+status: pending-review
+source: EDMV4
+audit-type: srd
+date: 2026-08-31
+
+> Extracted from the srd audit for EDMV4. One-paragraph description of the finding
+> and how to prevent it -- delimited stub text pending human curation; not yet curated prose.
+
 ---
 
 ## Pre-Flight Checklist
