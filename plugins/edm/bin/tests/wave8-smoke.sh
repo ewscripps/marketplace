@@ -1084,5 +1084,344 @@ else
 fi
 
 echo
+
+# =================================================================================================
+# EDMV4-T12: Phase-6 marker primitive with SessionStart reconciliation
+# =================================================================================================
+echo "=== EDMV4-T12: Phase-6 marker primitive + SessionStart reconciliation ==="
+echo
+
+T12_DATADIR_LIB="${SCRIPT_DIR}/../_edm-datadir-lib.sh"
+
+# ---- AC1: edm_marker_path()'s body invokes no external binary --------------------------------
+# The library's own file header states, for the whole file, that "spawns zero subprocesses" means
+# "invokes no external binary" -- not "forks no subshell to call a sibling pure-bash function" --
+# which is the only bash-achievable reading: composing two print-style functions' output requires
+# a command substitution (a real fork), so a literal zero-$(-occurrences reading of this AC would
+# be unsatisfiable without duplicating edm_data_dir()/edm_project_key()'s own resolution chains
+# inside edm_marker_path() -- exactly what this ticket's own Technical Notes forbid ("Do not fork
+# a second resolution chain"). This check is anchored to the function's own body text (extracted
+# below), never to prose describing it, so it cannot self-match its own documentation.
+_t12_extract_fn_body() {
+  local file="$1" name="$2"
+  awk -v needle="${name}() {" '
+    index($0, needle) == 1 { found=1; next }
+    found && /^}/ { exit }
+    found { print }
+  ' "$file"
+}
+
+T12_MARKER_BODY="$(_t12_extract_fn_body "$T12_DATADIR_LIB" edm_marker_path)"
+if [[ -n "$T12_MARKER_BODY" ]]; then
+  pass "EDMV4-T12 AC1 -- edm_marker_path()'s function body was extracted (non-empty)"
+else
+  fail "EDMV4-T12 AC1 -- could not extract edm_marker_path()'s function body from ${T12_DATADIR_LIB}"
+fi
+
+T12_EXTERNAL_BIN_RE='\b(git|tr|sed|awk|cut|find|stat|dirname|basename|wc|head|tail|xargs|jq|cat|grep|readlink|realpath)\b'
+if printf '%s\n' "$T12_MARKER_BODY" | grep -qE "$T12_EXTERNAL_BIN_RE"; then
+  fail "EDMV4-T12 AC1 -- edm_marker_path()'s body invokes an external binary: $(printf '%s\n' "$T12_MARKER_BODY" | grep -E "$T12_EXTERNAL_BIN_RE")"
+else
+  pass "EDMV4-T12 AC1 -- edm_marker_path()'s body invokes no external binary (only the two sibling pure-bash resolvers)"
+fi
+
+# Positive control: a real external-binary call injected into the same body must trip the detector.
+T12_AC1_BROKEN="$(printf '%s\n  git rev-parse --show-toplevel\n' "$T12_MARKER_BODY")"
+if printf '%s\n' "$T12_AC1_BROKEN" | grep -qE "$T12_EXTERNAL_BIN_RE"; then
+  pass "EDMV4-T12 AC1 -- positive control: the detector fires when a real external-binary call (git) is injected"
+else
+  fail "EDMV4-T12 AC1 -- positive control FAILED: injecting a git call did not trip the detector"
+fi
+
+# ---- AC9 (primitive half): edm_marker_path() returns empty when edm_data_dir() is unresolvable,
+# so a caller's single `[[ -n "$marker" ]]` check is the whole "is the marker usable" test. The
+# gate's own consumption of this (edm-gateguard exits 0 with no output) is EDMV4-T11's, which does
+# not exist yet -- Out of Scope above names it explicitly. ------------------------------------
+T12_AC9_ROBLOCK="${TMP}/t12-ac9-roblock"
+mkdir -p "$T12_AC9_ROBLOCK"
+chmod 555 "$T12_AC9_ROBLOCK"
+T12_AC9_MARKER="$(/bin/bash -c "export CLAUDE_PLUGIN_DATA='${T12_AC9_ROBLOCK}/pd'; export XDG_DATA_HOME='${T12_AC9_ROBLOCK}/xdg'; export HOME='${T12_AC9_ROBLOCK}/home'; source '$T12_DATADIR_LIB'; edm_marker_path")"
+chmod 755 "$T12_AC9_ROBLOCK"
+if [[ -z "$T12_AC9_MARKER" ]]; then
+  pass "EDMV4-T12 AC9 -- edm_marker_path() returns empty when edm_data_dir() is unresolvable"
+else
+  fail "EDMV4-T12 AC9 -- edm_marker_path() returned a non-empty path when unresolvable: [${T12_AC9_MARKER}]"
+fi
+
+T12_AC9_OK_DATA="${TMP}/t12-ac9-ok-data"
+mkdir -p "$T12_AC9_OK_DATA"
+T12_AC9_MARKER_OK="$(/bin/bash -c "export CLAUDE_PLUGIN_DATA='${T12_AC9_OK_DATA}'; source '$T12_DATADIR_LIB'; edm_marker_path")"
+if [[ -n "$T12_AC9_MARKER_OK" ]]; then
+  pass "EDMV4-T12 AC9 -- positive control: edm_marker_path() is non-empty when edm_data_dir() DOES resolve"
+else
+  fail "EDMV4-T12 AC9 -- positive control FAILED: edm_marker_path() was empty even with a valid, writable CLAUDE_PLUGIN_DATA"
+fi
+
+# ---- AC9 (edm-state half): phase-start 6 is silent -- no marker-related warning at all -- when
+# the data directory itself is unresolvable, distinct from AC2's negative test below (a resolvable
+# directory whose write then fails DOES warn). ---------------------------------------------------
+T12_AC9_REPO="${TMP}/t12-ac9-repo"
+mkdir -p "$T12_AC9_REPO"
+( cd "$T12_AC9_REPO" && git init -q . && git config user.email edm-harness@example.com && git config user.name "EDM Test Harness" && git config commit.gpgsign false && echo seed > SEED.md && git add SEED.md && git commit -q -m seed ) >/dev/null 2>&1
+
+T12_AC9_ROBLOCK2="${TMP}/t12-ac9-roblock2"
+mkdir -p "$T12_AC9_ROBLOCK2"
+chmod 555 "$T12_AC9_ROBLOCK2"
+
+T12_AC9_PS_STDERR_FILE="${TMP}/t12-ac9-ps.stderr"
+T12_AC9_PS_RC=0
+(
+  cd "$T12_AC9_REPO" || exit 99
+  export CLAUDE_PLUGIN_DATA="${T12_AC9_ROBLOCK2}/pd"
+  export XDG_DATA_HOME="${T12_AC9_ROBLOCK2}/xdg"
+  export HOME="${T12_AC9_ROBLOCK2}/home"
+  export EDM_SRD_ROOT="${T12_AC9_REPO}/SRD"
+  export PATH="${PLUGIN_DIR}/bin:${PATH}"
+  edm-init T12AC9 --mode mini-srd >/dev/null
+  edm-state approve-gate T12AC9 1 >/dev/null
+  edm-state approve-gate T12AC9 2 >/dev/null
+  edm-state phase-start T12AC9 6 >/dev/null
+) 2>"$T12_AC9_PS_STDERR_FILE" || T12_AC9_PS_RC=$?
+chmod 755 "$T12_AC9_ROBLOCK2"
+T12_AC9_PS_STDERR="$(cat "$T12_AC9_PS_STDERR_FILE" 2>/dev/null || true)"
+
+if [[ "$T12_AC9_PS_RC" -eq 0 ]]; then
+  pass "EDMV4-T12 AC9 -- phase-start 6 exits 0 when the data directory itself is unresolvable"
+else
+  fail "EDMV4-T12 AC9 -- phase-start 6 exited ${T12_AC9_PS_RC} when the data directory is unresolvable (rc should be 0)"
+fi
+check_absent "EDMV4-T12 AC9 -- no marker-related warning printed when the data directory is unresolvable" \
+  "Phase-6 marker" "$T12_AC9_PS_STDERR"
+
+# ---- AC2 negative: an unwritable *resolved* marker location still degrades to a warning, never
+# a failure. Uses a file-collision (${data}/run pre-created as a plain file) rather than a
+# chmod-based "read-only" setup: chmod 000/555 is unreliable as a root user (root bypasses
+# permission bits), while a plain-file collision blocks `mkdir -p` deterministically for anyone. -
+echo
+echo "-- EDMV4-T12 AC2 negative: marker write failure degrades to a warning, never a failure --"
+
+T12_AC2_NEG_DATA="${TMP}/t12-ac2-neg-data"
+mkdir -p "$T12_AC2_NEG_DATA"
+touch "${T12_AC2_NEG_DATA}/run"
+
+T12_AC2_NEG_REPO="${TMP}/t12-ac2-neg-repo"
+mkdir -p "$T12_AC2_NEG_REPO"
+( cd "$T12_AC2_NEG_REPO" && git init -q . && git config user.email edm-harness@example.com && git config user.name "EDM Test Harness" && git config commit.gpgsign false && echo seed > SEED.md && git add SEED.md && git commit -q -m seed ) >/dev/null 2>&1
+
+T12_AC2_NEG_STDERR_FILE="${TMP}/t12-ac2-neg.stderr"
+T12_AC2_NEG_RC=0
+(
+  cd "$T12_AC2_NEG_REPO" || exit 99
+  export CLAUDE_PLUGIN_DATA="$T12_AC2_NEG_DATA"
+  export EDM_SRD_ROOT="${T12_AC2_NEG_REPO}/SRD"
+  export PATH="${PLUGIN_DIR}/bin:${PATH}"
+  edm-init T12ACN --mode mini-srd >/dev/null
+  edm-state approve-gate T12ACN 1 >/dev/null
+  edm-state approve-gate T12ACN 2 >/dev/null
+  edm-state phase-start T12ACN 6 >/dev/null
+) 2>"$T12_AC2_NEG_STDERR_FILE" || T12_AC2_NEG_RC=$?
+T12_AC2_NEG_STDERR="$(cat "$T12_AC2_NEG_STDERR_FILE" 2>/dev/null || true)"
+
+if [[ "$T12_AC2_NEG_RC" -eq 0 ]]; then
+  pass "EDMV4-T12 AC2 -- phase-start 6 exits 0 even when the resolved marker location cannot be written"
+else
+  fail "EDMV4-T12 AC2 -- phase-start 6 exited ${T12_AC2_NEG_RC} when marker write should degrade, not fail"
+fi
+check "EDMV4-T12 AC2 -- a warning naming the marker write failure is printed on stderr" \
+  "could not create Phase-6 marker directory" "$T12_AC2_NEG_STDERR"
+
+echo
+
+# ---- AC2 (happy path) / AC3 / AC4 / AC5 / AC6 / AC7 / AC10 / AC11: the full lifecycle, driven
+# through real edm-state subcommands inside one scratch git repo. -------------------------------
+echo "-- EDMV4-T12 AC2/AC3/AC4/AC5/AC6/AC7/AC10/AC11: marker lifecycle + SessionStart reconciliation --"
+
+T12_DATA="${TMP}/t12-plugin-data"
+mkdir -p "$T12_DATA"
+export CLAUDE_PLUGIN_DATA="$T12_DATA"
+
+t12_marker_lifecycle_tests() {
+  # ---- AC2 (happy path) / AC6 / AC7 / AC10 / AC11 (create-on-phase-start-6) -------------------
+  edm-init --product demo --description t12a T12MKA --mode mini-srd >/dev/null
+  "$EDM_STATE" approve-gate T12MKA 1 >/dev/null
+  "$EDM_STATE" approve-gate T12MKA 2 >/dev/null
+
+  T12_GIT_BEFORE="$(git status --porcelain)"
+  T12_PS_RC=0
+  "$EDM_STATE" phase-start T12MKA 6 >/dev/null 2>&1 || T12_PS_RC=$?
+  if [[ "$T12_PS_RC" -eq 0 ]]; then
+    pass "EDMV4-T12 AC2 -- phase-start T12MKA 6 exits 0"
+  else
+    fail "EDMV4-T12 AC2 -- phase-start T12MKA 6 exited ${T12_PS_RC}"
+  fi
+
+  # AC10: edm_project_key() resolves the same marker path from a subdirectory of the repo as it
+  # does from the repo root (git rev-parse --show-toplevel is invariant to cwd within the repo).
+  T12_MARKER="$(/bin/bash -c "source '$T12_DATADIR_LIB'; edm_marker_path")"
+  mkdir -p subdir
+  T12_MARKER_FROM_SUBDIR="$(cd subdir && /bin/bash -c "source '$T12_DATADIR_LIB'; edm_marker_path")"
+  check "EDMV4-T12 AC10 -- marker path resolved from a subdirectory matches the one resolved from the repo root" \
+    "$T12_MARKER" "$T12_MARKER_FROM_SUBDIR"
+
+  if [[ -f "$T12_MARKER" ]]; then
+    pass "EDMV4-T12 AC2/AC11 -- Phase-6 marker created at ${T12_MARKER} on phase-start 6"
+  else
+    fail "EDMV4-T12 AC2/AC11 -- no marker file found at ${T12_MARKER} after phase-start 6"
+  fi
+
+  # AC6: exactly one line, PREFIX<TAB>initiative_dir<TAB>UTC-ISO-8601, a literal tab separator.
+  T12_MARKER_LINES="$(wc -l < "$T12_MARKER" | tr -d ' ')"
+  check "EDMV4-T12 AC6 -- marker holds exactly one line" "1" "$T12_MARKER_LINES"
+
+  IFS=$'\t' read -r T12_A_PREFIX T12_A_DIR T12_A_TS < "$T12_MARKER"
+  check "EDMV4-T12 AC6 -- marker field 1 is the PREFIX" "T12MKA" "$T12_A_PREFIX"
+  T12_EXPECTED_DIR="$("$EDM_STATE" resolve-dir T12MKA)"
+  check "EDMV4-T12 AC6 -- marker field 2 is the initiative directory" "$T12_EXPECTED_DIR" "$T12_A_DIR"
+  if [[ "$T12_A_TS" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+    pass "EDMV4-T12 AC6 -- marker field 3 is a UTC ISO-8601 timestamp"
+  else
+    fail "EDMV4-T12 AC6 -- marker field 3 is not UTC ISO-8601: got [${T12_A_TS}]"
+  fi
+  T12_TAB_LINES="$(grep -c "$(printf '\t')" "$T12_MARKER" || true)"
+  check "EDMV4-T12 AC6 -- marker line contains a literal tab byte" "1" "$T12_TAB_LINES"
+
+  # AC7: the marker lives outside the repository -- no working-tree change, nothing under SRD_ROOT.
+  T12_GIT_AFTER="$(git status --porcelain)"
+  if [[ "$T12_GIT_BEFORE" == "$T12_GIT_AFTER" ]]; then
+    pass "EDMV4-T12 AC7 -- git status --porcelain unchanged after phase-start 6"
+  else
+    fail "EDMV4-T12 AC7 -- git status --porcelain changed: before=[${T12_GIT_BEFORE}] after=[${T12_GIT_AFTER}]"
+  fi
+  case "$T12_MARKER" in
+    "${EDM_SRD_ROOT}"*) fail "EDMV4-T12 AC7 -- marker path is under EDM_SRD_ROOT: ${T12_MARKER}" ;;
+    *) pass "EDMV4-T12 AC7 -- marker path is not under EDM_SRD_ROOT" ;;
+  esac
+
+  # ---- AC3: PREFIX-mismatch non-removal, then matching removal -------------------------------
+  edm-init --product demo --description t12b T12MKB --mode mini-srd >/dev/null
+  "$EDM_STATE" approve-gate T12MKB 1 >/dev/null
+  "$EDM_STATE" approve-gate T12MKB 2 >/dev/null
+  T12MKB_DIR="$("$EDM_STATE" resolve-dir T12MKB)"
+  mkdir -p "${T12MKB_DIR}/qc"
+  echo "qc ok" > "${T12MKB_DIR}/qc/qc-summary.md"
+
+  T12_PC_RC=0
+  "$EDM_STATE" phase-complete T12MKB 6 >/dev/null 2>&1 || T12_PC_RC=$?
+  if [[ "$T12_PC_RC" -eq 0 ]]; then
+    pass "EDMV4-T12 AC3 setup -- phase-complete T12MKB 6 succeeded (exercises the marker-removal code path)"
+  else
+    fail "EDMV4-T12 AC3 setup -- phase-complete T12MKB 6 failed unexpectedly (rc=${T12_PC_RC})"
+  fi
+
+  if [[ -f "$T12_MARKER" ]]; then
+    IFS=$'\t' read -r T12_A2_PREFIX _T12_A2_DIR _T12_A2_TS < "$T12_MARKER"
+    check "EDMV4-T12 AC3 -- marker still exists and still names T12MKA after phase-complete of a DIFFERENT prefix (T12MKB)" \
+      "T12MKA" "$T12_A2_PREFIX"
+  else
+    fail "EDMV4-T12 AC3 -- marker for T12MKA was removed by phase-complete of a different prefix (T12MKB)"
+  fi
+
+  # Positive (matching) removal: completing phase 6 for T12MKA ITSELF must remove its own marker.
+  T12MKA_DIR="$("$EDM_STATE" resolve-dir T12MKA)"
+  mkdir -p "${T12MKA_DIR}/qc"
+  echo "qc ok" > "${T12MKA_DIR}/qc/qc-summary.md"
+  "$EDM_STATE" phase-complete T12MKA 6 >/dev/null 2>&1
+  if [[ ! -f "$T12_MARKER" ]]; then
+    pass "EDMV4-T12 AC3 -- matching phase-complete (T12MKA completing its own phase 6) removes the marker"
+  else
+    fail "EDMV4-T12 AC3 -- marker still present after T12MKA completed its own phase 6"
+  fi
+
+  # ---- AC4: cmd_archive removes the marker defensively -----------------------------------------
+  edm-init T12ARC >/dev/null
+  "$EDM_STATE" approve-gate T12ARC 1 >/dev/null
+  "$EDM_STATE" approve-gate T12ARC 2 >/dev/null
+  "$EDM_STATE" approve-gate T12ARC 3 >/dev/null
+  T12ARC_STATE="${EDM_SRD_ROOT}/T12ARC/.edm-state.json"
+  jq '.current_phase = 6 | .phase_durations["6_phase"] = {started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T01:00:00Z"}' \
+    "$T12ARC_STATE" > "${T12ARC_STATE}.tmp" && mv "${T12ARC_STATE}.tmp" "$T12ARC_STATE"
+  "$EDM_STATE" approve-gate T12ARC code-audit >/dev/null
+  T12ARC_DIR="$("$EDM_STATE" resolve-dir T12ARC)"
+  printf '%s\t%s\t%s\n' "T12ARC" "$T12ARC_DIR" "2026-01-01T00:00:00Z" > "$T12_MARKER"
+
+  T12_ARCH_RC=0
+  "$EDM_STATE" archive T12ARC >/dev/null 2>&1 || T12_ARCH_RC=$?
+  if [[ "$T12_ARCH_RC" -eq 0 ]]; then
+    pass "EDMV4-T12 AC4/AC11 -- archive T12ARC succeeds"
+  else
+    fail "EDMV4-T12 AC4/AC11 -- archive T12ARC failed (rc=${T12_ARCH_RC})"
+  fi
+  if [[ -f "$T12_MARKER" ]]; then
+    fail "EDMV4-T12 AC4/AC11 -- marker for T12ARC still exists after archive"
+  else
+    pass "EDMV4-T12 AC4/AC11 -- marker for T12ARC removed after archive"
+  fi
+
+  # ---- AC4: cmd_skip_phase removes a matching marker when phase 6 itself is skipped -----------
+  edm-init T12SK >/dev/null
+  T12SK_DIR="$("$EDM_STATE" resolve-dir T12SK)"
+  printf '%s\t%s\t%s\n' "T12SK" "$T12SK_DIR" "2026-01-01T00:00:00Z" > "$T12_MARKER"
+  T12_SKIP_RC=0
+  "$EDM_STATE" skip-phase T12SK 6 "smoke test rationale" >/dev/null 2>&1 || T12_SKIP_RC=$?
+  if [[ "$T12_SKIP_RC" -eq 0 ]]; then
+    pass "EDMV4-T12 AC4 -- skip-phase T12SK 6 exits 0"
+  else
+    fail "EDMV4-T12 AC4 -- skip-phase T12SK 6 exited ${T12_SKIP_RC}"
+  fi
+  if [[ -f "$T12_MARKER" ]]; then
+    fail "EDMV4-T12 AC4 -- marker for T12SK still exists after phase 6 was skipped"
+  else
+    pass "EDMV4-T12 AC4 -- marker for T12SK removed after phase 6 was skipped"
+  fi
+
+  # AC4's "no marker present" case: skip-phase (for a non-6 phase, with no marker at all) exits 0.
+  edm-init T12SK2 >/dev/null
+  T12_SKIP2_RC=0
+  "$EDM_STATE" skip-phase T12SK2 1 "no marker present at all" >/dev/null 2>&1 || T12_SKIP2_RC=$?
+  if [[ "$T12_SKIP2_RC" -eq 0 ]]; then
+    pass "EDMV4-T12 AC4 -- skip-phase exits 0 with its pre-change status when no marker is present"
+  else
+    fail "EDMV4-T12 AC4 -- skip-phase exited ${T12_SKIP2_RC} with no marker present (expected 0)"
+  fi
+
+  # ---- AC5: SessionStart reconciliation, both directions ---------------------------------------
+  # (a) a marker naming an initiative that is NOT at current_phase == 6 (T12MKB, still at phase 1
+  # since it never itself called phase-start 6) is removed with exactly one line of output.
+  printf '%s\t%s\t%s\n' "T12MKB" "$T12MKB_DIR" "2026-01-01T00:00:00Z" > "$T12_MARKER"
+  T12_SS_OUT="$("$EDM_STATE" session-start 2>&1)"
+  check "EDMV4-T12 AC5 -- SessionStart output names the removed prefix" "T12MKB" "$T12_SS_OUT"
+  if [[ -f "$T12_MARKER" ]]; then
+    fail "EDMV4-T12 AC5 -- stale marker for T12MKB was NOT removed by session-start"
+  else
+    pass "EDMV4-T12 AC5 -- stale marker for T12MKB removed by session-start"
+  fi
+  T12_SS_REMOVAL_LINES="$(printf '%s\n' "$T12_SS_OUT" | grep -c 'removed stale Phase-6 marker' || true)"
+  check "EDMV4-T12 AC5 -- exactly one removal line printed" "1" "$T12_SS_REMOVAL_LINES"
+
+  # (b) an absent marker is recreated when some initiative genuinely IS at phase 6.
+  T12MKB_STATE="${T12MKB_DIR}/.edm-state.json"
+  jq '.current_phase = 6' "$T12MKB_STATE" > "${T12MKB_STATE}.tmp" && mv "${T12MKB_STATE}.tmp" "$T12MKB_STATE"
+  [[ ! -f "$T12_MARKER" ]] || rm -f "$T12_MARKER"
+  "$EDM_STATE" session-start >/dev/null 2>&1
+  if [[ -f "$T12_MARKER" ]]; then
+    pass "EDMV4-T12 AC5 -- absent marker recreated when an initiative is at current_phase == 6"
+  else
+    fail "EDMV4-T12 AC5 -- marker was NOT recreated even though T12MKB is at current_phase == 6"
+  fi
+  IFS=$'\t' read -r T12_RECREATED_PREFIX _T12_RC_DIR _T12_RC_TS < "$T12_MARKER"
+  # T12MKA's own current_phase also remains 6 (phase-complete records completion metadata but
+  # never decrements current_phase), so both it and T12MKB are genuinely at phase 6 here -- R6's
+  # documented ambiguity for two simultaneous Phase-6 initiatives. Either name is a correct
+  # recreation; the assertion is "recreated with SOME currently-phase-6 prefix", not a specific one.
+  case "$T12_RECREATED_PREFIX" in
+    T12MKA|T12MKB) pass "EDMV4-T12 AC5 -- recreated marker names a genuinely phase-6 initiative (${T12_RECREATED_PREFIX})" ;;
+    *) fail "EDMV4-T12 AC5 -- recreated marker names neither phase-6 initiative: got [${T12_RECREATED_PREFIX}]" ;;
+  esac
+}
+
+with_scratch_repo t12_marker_lifecycle_tests
+unset CLAUDE_PLUGIN_DATA
+
+echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

@@ -125,12 +125,17 @@ edm_project_key() {
   printf '%s\n' "$key"
 }
 
-# edm_marker_path -- see file header. Always exits 0; prints nothing meaningful if edm_data_dir
-# is unresolvable (the caller is expected to treat a path rooted at "/run/<key>.phase6" as
-# unusable in that case, matching edm_data_dir's own "empty string, callers degrade" contract).
+# edm_marker_path -- see file header. Always exits 0. EDMV4-T12 AC9: when edm_data_dir() is
+# unresolvable (empty string), this prints a genuinely empty string too, rather than the
+# misleading-looking "/run/<key>.phase6" a bare concatenation would produce -- every caller
+# (edm-state's marker helpers, edm-gateguard) treats a non-empty return as a real, usable path,
+# so a caller-side special case for "well-formed but actually unusable" would be fragile and is
+# not required: `[[ -n "$marker" ]]` alone is the single-condition "marker is usable" check
+# every consumer already uses for edm_data_dir() itself.
 edm_marker_path() {
   local data key
   data="$(edm_data_dir)"
+  [[ -n "$data" ]] || { printf '%s\n' ""; return 0; }
   key="$(edm_project_key)"
   printf '%s\n' "${data}/run/${key}.phase6"
 }
