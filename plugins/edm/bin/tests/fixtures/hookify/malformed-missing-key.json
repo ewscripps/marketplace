@@ -1,0 +1,9 @@
+{
+  "name": "malformed-missing-key",
+  "enabled": true,
+  "event": "file",
+  "action": "warn",
+  "conditions": [
+    { "field": "new_text", "operator": "contains", "pattern": "TODO" }
+  ]
+}

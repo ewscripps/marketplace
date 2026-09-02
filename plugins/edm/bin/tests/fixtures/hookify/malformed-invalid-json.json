@@ -1,0 +1,9 @@
+{
+  "name": "malformed-invalid-json",
+  "enabled": true,
+  "event": "file",
+  "action": "warn",
+  "conditions": [
+    { "field": "new_text", "operator": "contains", "pattern": "TODO" }
+  ],
+  "message": "This file is deliberately truncated to exercise the invalid-JSON malformed shape."

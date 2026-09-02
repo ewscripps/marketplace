@@ -1,0 +1,10 @@
+{
+  "name": "malformed-unknown-operator",
+  "enabled": true,
+  "event": "file",
+  "action": "warn",
+  "conditions": [
+    { "field": "new_text", "operator": "matches", "pattern": "TODO" }
+  ],
+  "message": "This rule names an operator outside the six supported operators."
+}

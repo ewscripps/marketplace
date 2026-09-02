@@ -1,0 +1,10 @@
+{
+  "name": "malformed-out-of-event-field",
+  "enabled": true,
+  "event": "file",
+  "action": "warn",
+  "conditions": [
+    { "field": "command", "operator": "contains", "pattern": "rm -rf" }
+  ],
+  "message": "This rule names the bash-only field command on a file-event rule."
+}

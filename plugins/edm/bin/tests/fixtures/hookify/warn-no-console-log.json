@@ -1,0 +1,11 @@
+{
+  "name": "warn-no-console-log",
+  "enabled": true,
+  "event": "file",
+  "action": "warn",
+  "conditions": [
+    { "field": "new_text", "operator": "contains", "pattern": "console.log" },
+    { "field": "file_path", "operator": "not_contains", "pattern": "/tests/" }
+  ],
+  "message": "Avoid leaving console.log statements in non-test source files."
+}

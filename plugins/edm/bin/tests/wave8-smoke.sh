@@ -609,5 +609,189 @@ else
 fi
 
 echo
+
+# =================================================================================================
+# EDMV4-T42: Define the JSON hookify rule format and its rule directory
+# =================================================================================================
+echo "=== EDMV4-T42: hookify rule format ==="
+echo
+
+HOOKIFY_FIXTURES="${PLUGIN_DIR}/bin/tests/fixtures/hookify"
+CLAUDE_MD="${PLUGIN_DIR}/CLAUDE.md"
+CLAUDE_MD_TEXT="$(cat "$CLAUDE_MD")"
+
+# ---- Shared format-validation logic (mirrors the schema this ticket documents in CLAUDE.md; ----
+# ---- there is no evaluator yet, EDMV4-T43 builds one -- this is this ticket's own proof that ----
+# ---- the schema it defines is both satisfiable (the valid fixtures) and enforceable (the four ---
+# ---- malformed shapes each fail for the stated, distinct reason). Bash 3.2 (C1): plain space- --
+# ---- delimited strings and `case` membership tests, no associative arrays, matching the -------
+# ---- ALL_LENS_IDS / MODE_ENUM_LIST idiom in bin/edm-state. -------------------------------------
+T42_ALLOWED_KEYS="name enabled event action conditions message"
+T42_ALLOWED_EVENTS="file stop bash"
+T42_ALLOWED_OPERATORS="regex_match contains equals not_contains starts_with ends_with"
+T42_FILE_FIELDS="file_path new_text old_text content"
+T42_BASH_FIELDS="command"
+T42_STOP_FIELDS=""
+
+# t42_validate_rule <path> -- prints exactly one of:
+#   valid
+#   invalid-json
+#   missing-key:<key>
+#   unknown-key:<key>
+#   bad-event:<value>
+#   bad-operator:<value>
+#   bad-field:<value>
+t42_validate_rule() {
+  local f="$1"
+  if ! jq -e . "$f" >/dev/null 2>&1; then
+    echo "invalid-json"
+    return
+  fi
+
+  local k keys
+  keys="$(jq -r 'keys[]' "$f" 2>/dev/null)"
+  for k in $keys; do
+    case " $T42_ALLOWED_KEYS " in
+      *" $k "*) ;;
+      *) echo "unknown-key:$k"; return ;;
+    esac
+  done
+
+  local req
+  for req in name enabled event conditions message; do
+    jq -e "has(\"$req\")" "$f" >/dev/null 2>&1 || { echo "missing-key:$req"; return; }
+  done
+
+  local event
+  event="$(jq -r '.event' "$f")"
+  case " $T42_ALLOWED_EVENTS " in
+    *" $event "*) ;;
+    *) echo "bad-event:$event"; return ;;
+  esac
+
+  local event_fields
+  case "$event" in
+    file) event_fields="$T42_FILE_FIELDS" ;;
+    bash) event_fields="$T42_BASH_FIELDS" ;;
+    stop) event_fields="$T42_STOP_FIELDS" ;;
+  esac
+
+  local cond_count i operator field
+  cond_count="$(jq '.conditions | length' "$f")"
+  for ((i = 0; i < cond_count; i++)); do
+    operator="$(jq -r ".conditions[$i].operator" "$f")"
+    case " $T42_ALLOWED_OPERATORS " in
+      *" $operator "*) ;;
+      *) echo "bad-operator:$operator"; return ;;
+    esac
+    field="$(jq -r ".conditions[$i].field" "$f")"
+    case " $event_fields " in
+      *" $field "*) ;;
+      *) echo "bad-field:$field"; return ;;
+    esac
+  done
+
+  echo "valid"
+}
+
+# ---- AC1: JSON only, jq only; no YAML introduced by this ticket -------------------------------
+check_absent "AC1 -- fixture filenames name no yaml/yml" "yaml" \
+  "$(find "$HOOKIFY_FIXTURES" -type f 2>/dev/null)"
+check "AC1 -- CLAUDE.md hookify section states JSON-only, jq-only" \
+  "JSON, read with \`jq\` only" "$CLAUDE_MD_TEXT"
+if [[ ! -e "${PLUGIN_DIR}/bin/edm-hookify" ]]; then
+  pass "AC1/scope -- edm-hookify (the evaluator) is not built by this format-only ticket"
+else
+  fail "AC1/scope -- edm-hookify exists; EDMV4-T43 owns building the evaluator, not this ticket"
+fi
+
+# ---- AC10 fixture inventory: 4 valid + 4 malformed --------------------------------------------
+VALID_FIXTURES="warn-no-console-log.json require-ticket-id-reference.json block-rm-rf-bash.json warn-stop-placeholder.json"
+MALFORMED_FIXTURES="malformed-invalid-json.json malformed-missing-key.json malformed-unknown-operator.json malformed-out-of-event-field.json"
+
+for vf in $VALID_FIXTURES; do
+  [[ -f "${HOOKIFY_FIXTURES}/${vf}" ]] \
+    && pass "AC10 -- fixture present: $vf" \
+    || fail "AC10 -- fixture MISSING: $vf"
+done
+for mf in $MALFORMED_FIXTURES; do
+  [[ -f "${HOOKIFY_FIXTURES}/${mf}" ]] \
+    && pass "AC10 -- fixture present: $mf" \
+    || fail "AC10 -- fixture MISSING: $mf"
+done
+
+# ---- AC2/AC3/AC4/AC5: each valid fixture validates clean ---------------------------------------
+for vf in $VALID_FIXTURES; do
+  result="$(t42_validate_rule "${HOOKIFY_FIXTURES}/${vf}")"
+  check "AC2-AC5 -- $vf validates as a well-formed rule" "valid" "$result"
+done
+
+# ---- AC10: one valid rule per event -------------------------------------------------------------
+for ev in file stop bash; do
+  count=0
+  for vf in $VALID_FIXTURES; do
+    this_event="$(jq -r '.event' "${HOOKIFY_FIXTURES}/${vf}" 2>/dev/null || echo "")"
+    [[ "$this_event" == "$ev" ]] && count=$((count + 1))
+  done
+  if [[ "$count" -ge 1 ]]; then
+    pass "AC10 -- at least one valid fixture for event=$ev ($count found)"
+  else
+    fail "AC10 -- no valid fixture found for event=$ev"
+  fi
+done
+
+# ---- AC3: AND semantics -- the worked example carries two conditions, both required -----------
+warn_console_conditions="$(jq '.conditions | length' "${HOOKIFY_FIXTURES}/warn-no-console-log.json")"
+check "AC3 -- worked example carries 2 AND'd conditions" "2" "$warn_console_conditions"
+check "AC3 -- AND semantics stated in one explicit sentence in CLAUDE.md" \
+  "must match for the rule to fire (AND semantics)" "$CLAUDE_MD_TEXT"
+
+# ---- AC4: exactly six operators, unknown operator is a named setup error ----------------------
+op_count="$(echo "$T42_ALLOWED_OPERATORS" | wc -w | tr -d ' ')"
+check "AC4 -- exactly six operators enumerated" "6" "$op_count"
+result="$(t42_validate_rule "${HOOKIFY_FIXTURES}/malformed-unknown-operator.json")"
+check "AC4 -- malformed-unknown-operator.json fails as bad-operator" "bad-operator:matches" "$result"
+
+# ---- AC5: per-event field constraint; out-of-event field is a named setup error ---------------
+result="$(t42_validate_rule "${HOOKIFY_FIXTURES}/malformed-out-of-event-field.json")"
+check "AC5 -- malformed-out-of-event-field.json fails as bad-field" "bad-field:command" "$result"
+check "AC5 -- CLAUDE.md states the stop event's field set explicitly, including the empty case" \
+  "the \`stop\` event currently defines no matchable fields" "$CLAUDE_MD_TEXT"
+
+# ---- AC9: the other two malformed shapes fail for their own distinct, named reasons -----------
+result="$(t42_validate_rule "${HOOKIFY_FIXTURES}/malformed-invalid-json.json")"
+check "AC9 -- malformed-invalid-json.json fails as invalid-json" "invalid-json" "$result"
+result="$(t42_validate_rule "${HOOKIFY_FIXTURES}/malformed-missing-key.json")"
+check "AC9 -- malformed-missing-key.json fails as missing-key:message" "missing-key:message" "$result"
+check "AC9 -- CLAUDE.md documents the malformed-file setup-error contract" \
+  "A malformed file must never block anything" "$CLAUDE_MD_TEXT"
+
+# ---- AC6: discovery path and project-root resolution documented -------------------------------
+check "AC6 -- discovery path documented" ".claude/edm-hookify/*.json" "$CLAUDE_MD_TEXT"
+check "AC6 -- CA-448 project-root resolution precedent cited by name" "check_permission_rules()" "$CLAUDE_MD_TEXT"
+check "AC6 -- rule directory documented as source-controlled, never gitignored" \
+  "source-controlled**, never gitignored" "$CLAUDE_MD_TEXT"
+if [[ ! -d "${REPO_ROOT}/.claude/edm-hookify" ]]; then
+  pass "AC6/scope -- .claude/edm-hookify/ is not shipped in this repository"
+else
+  fail "AC6/scope -- .claude/edm-hookify/ exists; no default rule files may ship with the plugin"
+fi
+
+# ---- AC7: format documented once, naming convention + worked example --------------------------
+hookify_section_count="$(grep -c '^## Hookify rule format (canonical)$' "$CLAUDE_MD")"
+check "AC7 -- hookify format section appears exactly once" "1" "$hookify_section_count"
+check "AC7 -- verb-first naming convention documented (warn-*)" '`warn-*.json`' "$CLAUDE_MD_TEXT"
+check "AC7 -- verb-first naming convention documented (block-*)" '`block-*.json`' "$CLAUDE_MD_TEXT"
+check "AC7 -- verb-first naming convention documented (require-*)" '`require-*.json`' "$CLAUDE_MD_TEXT"
+check "AC7 -- worked example present as a fenced json block" '"name": "warn-no-console-log"' "$CLAUDE_MD_TEXT"
+
+# ---- AC8: three documented failure modes, each with a concrete example ------------------------
+check "AC8 -- failure mode 1 (patterns too broad) documented" "Patterns too broad" "$CLAUDE_MD_TEXT"
+check "AC8 -- failure mode 1 concrete example (login/dialog)" "matches \"login\" and \"dialog\"" "$CLAUDE_MD_TEXT"
+check "AC8 -- failure mode 2 (patterns too specific) documented" "Patterns too specific" "$CLAUDE_MD_TEXT"
+check "AC8 -- failure mode 3 (escaping traps) documented" "Shell/JSON escaping traps" "$CLAUDE_MD_TEXT"
+check "AC8 -- failure mode 3 concrete example (JSON backslash escaping)" 'rm\\s+-rf' "$CLAUDE_MD_TEXT"
+
+echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

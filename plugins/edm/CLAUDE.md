@@ -811,6 +811,179 @@ The skill does NOT push during active implementation (Phase 6) -- let the markdo
 
 The `userConfig.jira_project_key` value provides a default; otherwise the user must pass `<PROJECT_KEY>` as the second argument.
 
+## Hookify rule format (canonical)
+
+EDM's enforcement was, before this section, entirely hardcoded bash (`edm-lint-artifacts`,
+`edm-check-grants`, `edm-check-vocabulary`, the gate hooks). A team with its own conventions had
+no way to add enforcement without editing the plugin and carrying a fork. This section is the
+**format half** of a rules-as-data layer that closes that gap: the schema, the rule directory, the
+naming convention and the documented failure modes. It is deliberately format-only -- no evaluator
+reads these files yet, no subcommand consumes them, and no hook fires because of them. A later
+initiative wires an `eval` consumer against this exact schema.
+
+**JSON, read with `jq` only.** This plugin's required binaries are `bash`, `jq`, and `git` and
+nothing else. There is no YAML parser anywhere in `bin/`, so a YAML-based rule format would need
+either a from-scratch bash/awk YAML-subset parser or a new required binary -- neither is
+acceptable. Every rule file is plain JSON; no YAML file, YAML-to-JSON converter, or YAML-aware
+tooling is part of this format.
+
+### Rule directory and discovery
+
+Rule files live at `.claude/edm-hookify/*.json`, relative to the **project root** -- not the
+plugin root, and not the caller's working directory. The project root is resolved exactly the way
+`check_permission_rules()` already resolves it for the permission-rule scan (CA-448 precedent), so
+a future consumer never has to invent a second resolution procedure:
+
+1. `CLAUDE_PROJECT_DIR`, when it names a real directory.
+2. Otherwise, `git rev-parse --show-toplevel`.
+3. Otherwise, `.` (the current working directory).
+
+The rule directory is **source-controlled**, never gitignored. This is a deliberate divergence
+from a `.local.md`-plus-gitignore convention: a rule file changes what gets enforced for every
+teammate, so it is reviewed in a merge request the same way an SRD is -- source control IS the
+feature (see "Artifacts live in the project's `SRD/` directory and are committed to git" above,
+the same principle applied to a second artifact class). The plugin ships the format and (in a
+later initiative) the reader; it does not ship any default rule file. `.claude/edm-hookify/` is a
+project-owned directory that does not exist until a project's own team adds a rule to it.
+
+### Schema
+
+Each rule file is a single JSON object carrying **exactly** these top-level keys. An unknown
+top-level key is a setup error naming the rule file and the offending key -- it never fires as if
+it were a recognized field, and it never silently disables the rest of the rule set:
+
+| Key | Type | Required | Notes |
+|---|---|---|---|
+| `name` | string | yes | Human-readable rule identifier, referenced in evaluator output |
+| `enabled` | boolean | yes | `false` skips the rule entirely -- it is neither evaluated nor counted |
+| `event` | string | yes | Exactly one of `file`, `stop`, `bash` |
+| `action` | string | no | `warn` or `block`; **defaults to `warn` when the key is absent** |
+| `conditions` | array | yes | See "Conditions" below; may be empty (an empty array matches unconditionally) |
+| `message` | string | yes | Shown when the rule fires |
+
+**`action` defaulting to `warn` on absence is a property of the format, not of any evaluator.**
+Any consumer that reads a rule file -- today's format reader, and any future one -- treats an
+absent `action` key identically: as `warn`. A rule blocks only when it carries the literal
+`"action": "block"` explicitly. This is load-bearing for the two-tier exit contract a later
+initiative pins: a rules layer that could block by default would hand every contributor the
+ability to wedge every other contributor's edits with one committed file.
+
+### Conditions
+
+Each element of `conditions` is an object carrying `field`, `operator`, and `pattern`:
+
+```json
+{ "field": "new_text", "operator": "contains", "pattern": "console.log" }
+```
+
+**All conditions in a rule's `conditions` array must match for the rule to fire (AND semantics).**
+A rule with two conditions where only one matches does not fire; the two-condition example under
+"Worked example" below only fires when both its conditions are true simultaneously.
+
+**Exactly six operators are supported.** Any other operator string is a setup error whose stderr
+line names both the rule file path and the offending operator:
+
+| Operator | Meaning |
+|---|---|
+| `regex_match` | `pattern` is a regular expression tested against `field`'s value |
+| `contains` | `field`'s value contains `pattern` as a substring |
+| `not_contains` | `field`'s value does NOT contain `pattern` as a substring |
+| `equals` | `field`'s value equals `pattern` exactly |
+| `starts_with` | `field`'s value starts with `pattern` |
+| `ends_with` | `field`'s value ends with `pattern` |
+
+`regex_match` is evaluated with `jq`'s `test()`, which uses the **Oniguruma** regex engine, not
+POSIX ERE. A rule author who assumes `grep -E` semantics (POSIX character classes, backreference
+support, or anchoring behavior that differs between the two engines) can write a pattern that
+silently matches something different than intended. Test a `regex_match` pattern against `jq -r
+'test("...")'` directly, not against `grep -E`, before committing it.
+
+**`field` values are constrained per event, and a field that does not belong to the rule's own
+event is a setup error** naming the rule, the event, and the offending field:
+
+| Event | Valid `field` values |
+|---|---|
+| `file` | `file_path`, `new_text`, `old_text`, `content` |
+| `bash` | `command` |
+| `stop` | (none -- the `stop` event currently defines no matchable fields) |
+
+The per-event constraint is the cheapest guard against the largest class of authoring mistake: a
+`command` field on a `file` rule would otherwise silently never match, which reads identically to
+"my rule is fine and nothing violated it" -- exactly the failure a rule author cannot detect by
+inspection. Because `stop` defines zero fields today, a `stop`-event rule's `conditions` array must
+be empty (matching unconditionally, per the AND-semantics rule above) or it fires a setup error on
+every field it names; a future initiative may add fields to this event without changing anything
+about this contract.
+
+### Naming convention (verb-first, human-facing only)
+
+Rule filenames follow a verb-first convention so a teammate reviewing a merge request can guess a
+rule's intent from its name alone:
+
+- `warn-*.json` -- the rule's `action` is `warn` (or absent)
+- `block-*.json` -- the rule's `action` is `block`
+- `require-*.json` -- the rule documents an expectation (commonly phrased as a `not_contains` or
+  `contains` condition naming what should or should not be present)
+
+**This is documentation for humans only. No evaluator reads the filename to determine behavior.**
+The `action` key inside the file body is the only thing any consumer reads; a file named
+`block-foo.json` whose body carries `"action": "warn"` behaves as `warn`, precisely because the
+naming convention carries no logic.
+
+### Worked example
+
+`warn-no-console-log.json`:
+
+```json
+{
+  "name": "warn-no-console-log",
+  "enabled": true,
+  "event": "file",
+  "action": "warn",
+  "conditions": [
+    { "field": "new_text", "operator": "contains", "pattern": "console.log" },
+    { "field": "file_path", "operator": "not_contains", "pattern": "/tests/" }
+  ],
+  "message": "Avoid leaving console.log statements in non-test source files."
+}
+```
+
+Both conditions must match for this rule to fire (AND semantics): the new text must contain
+`console.log`, AND the file path must not contain `/tests/`. A change that adds `console.log` only
+inside a `/tests/` file does not trigger this rule.
+
+### Documented failure modes
+
+A rule author writes a `pattern` the same way anyone writes a search string, and three failure
+modes recur often enough to name explicitly rather than let a rule author rediscover them the hard
+way:
+
+1. **Patterns too broad.** `contains` matching the bare string `log` matches "login" and "dialog"
+   as well as the intended "console.log" -- a rule meant to catch one thing fires on unrelated
+   text. Prefer `console.log(` or a `regex_match` with a word boundary over a short bare substring.
+2. **Patterns too specific.** A `regex_match` pattern anchored to one exact code shape (for
+   example, `console\.log\(['"]debug['"]\)`) stops matching the moment a contributor reformats the
+   call (`console.log('debug', extra)`) or renames a variable, and the rule silently stops firing
+   with no error -- it looks identical to "nothing violated it" from the outside.
+3. **Shell/JSON escaping traps in `pattern` values.** A `pattern` value is JSON string content
+   first: a literal backslash in a `regex_match` pattern must be escaped as `\\` inside the JSON
+   string (`"pattern": "rm\\s+-rf"` for the regex `rm\s+-rf`), and a literal double quote inside a
+   pattern must be escaped as `\"`. A rule author who pastes a raw shell-escaped string (for
+   example `rm\ -rf` with a shell-style backslash-space) into a JSON `pattern` value has written a
+   regex that does not mean what it looks like it means, and the rule fails closed with no
+   diagnostic pointing at the escaping itself.
+
+### Malformed rule files are a setup error, never a block
+
+A malformed rule file -- invalid JSON, a missing required key, an unknown operator, or an
+out-of-event field -- is a **setup error**: its path is named on stderr, that file alone is
+skipped, every other valid rule file in the directory is still loaded, and a consumer that reads
+the rule set exits non-zero for the setup condition. A malformed file must never block anything
+(setup errors are never blocking, by the same two-tier reasoning `edm-lint-staged-artifacts`
+already applies to lint violations versus lint setup errors) and must never silently disable the
+rest of the rule set -- one contributor's typo in one rule file cannot take down every other
+contributor's rules.
+
 ## Hooks behavior
 
 `hooks/hooks.json` configures:

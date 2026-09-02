@@ -1,0 +1,10 @@
+{
+  "name": "block-rm-rf-bash",
+  "enabled": true,
+  "event": "bash",
+  "action": "block",
+  "conditions": [
+    { "field": "command", "operator": "regex_match", "pattern": "rm\\s+-rf" }
+  ],
+  "message": "Refusing a bash command matching rm -rf; confirm scope before running it manually."
+}

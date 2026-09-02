@@ -1,0 +1,11 @@
+{
+  "name": "require-ticket-id-reference",
+  "enabled": true,
+  "event": "file",
+  "action": "warn",
+  "conditions": [
+    { "field": "file_path", "operator": "ends_with", "pattern": ".md" },
+    { "field": "new_text", "operator": "not_contains", "pattern": "EDMV4-T" }
+  ],
+  "message": "A ticket-pack markdown edit should reference its EDMV4-T ticket ID."
+}

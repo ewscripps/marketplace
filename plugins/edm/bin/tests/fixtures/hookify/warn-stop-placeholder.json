@@ -1,0 +1,8 @@
+{
+  "name": "warn-stop-placeholder",
+  "enabled": true,
+  "event": "stop",
+  "action": "warn",
+  "conditions": [],
+  "message": "Placeholder stop-event rule: the stop event currently defines no matchable fields, so this rule matches unconditionally."
+}
