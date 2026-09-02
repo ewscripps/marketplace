@@ -732,10 +732,14 @@ check_absent "AC1 -- fixture filenames carry no serialization-format extension o
   "$(find "$HOOKIFY_FIXTURES" -type f 2>/dev/null)"
 check "AC1 -- CLAUDE.md hookify section states JSON-only, jq-only" \
   "JSON, read with \`jq\` only" "$CLAUDE_MD_TEXT"
-if [[ ! -e "${PLUGIN_DIR}/bin/edm-hookify" ]]; then
-  pass "AC1/scope -- edm-hookify (the evaluator) is not built by this format-only ticket"
+# EDMV4-T43 (this wave) legitimately builds edm-hookify -- the evaluator this format-only ticket
+# explicitly leaves out of scope. Before T43 landed, this check asserted the file's ABSENCE; now
+# that both tickets share this suite, the assertion is that the file exists and is EXECUTABLE
+# (T43's own AC1 section below asserts its actual behavior in depth).
+if [[ -x "${PLUGIN_DIR}/bin/edm-hookify" ]]; then
+  pass "AC1/scope -- edm-hookify exists and is executable (built by EDMV4-T43, which owns it)"
 else
-  fail "AC1/scope -- edm-hookify exists; EDMV4-T43 owns building the evaluator, not this ticket"
+  fail "AC1/scope -- edm-hookify missing or not executable"
 fi
 
 # ---- AC10 fixture inventory: 4 valid + 4 malformed --------------------------------------------
@@ -1903,7 +1907,8 @@ check_absent "EDMV4-T43 AC5 -- a disabled rule that would otherwise match produc
   "warn-no-console-log" "$T43_AC5_OUT"
 
 # ---- AC9: no file writes -- only stdout/stderr redirection appears in the script ---------------
-T43_AC9_HIT="$(grep -nE '>[^&]|>>|tee|mktemp' "$EDM_HOOKIFY" || true)"
+T43_AC9_HIT="$(grep -nE '>>|>[[:space:]]*"?\$[A-Za-z_]|[^a-zA-Z]tee[[:space:]]|mktemp' "$EDM_HOOKIFY" \
+  | grep -v '2>/dev/null\|>&2\|2>&1' || true)"
 if [[ -z "$T43_AC9_HIT" ]]; then
   pass "EDMV4-T43 AC9 -- no file-write redirection, tee or mktemp found in edm-hookify"
 else
@@ -2134,9 +2139,10 @@ t46_isolate_and_run t46_ac2_case
 
 # ---- AC9: internal-error paths never block (edm-state off PATH; jq broken/missing) -------------
 t46_ac9_case() {
-  # edm-state off PATH entirely.
+  # edm-state off PATH entirely (invoke edm-stop-gate itself by absolute path -- PATH is what
+  # its OWN internal `command -v edm-state` check must fail to find, not the gate binary itself).
   local rc=0 out
-  out="$(PATH="/usr/bin:/bin" edm-stop-gate 2>&1)" || rc=$?
+  out="$(PATH="/usr/bin:/bin" "$EDM_STOP_GATE" 2>&1)" || rc=$?
   [[ "$rc" -eq 0 ]] && pass "EDMV4-T46 AC9 -- edm-state off PATH exits 0" \
     || fail "EDMV4-T46 AC9 -- edm-state off PATH exited ${rc}, expected 0"
 
