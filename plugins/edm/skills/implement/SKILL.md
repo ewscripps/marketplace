@@ -63,7 +63,7 @@ using `<gated-command>` = `implement` and `<phase-num>` = `6`.
     ```bash
     edm-state update-patterns <PREFIX> qc
     ```
-11. Print the post-implementation checklist and remind the user about `/edm:code-audit <PREFIX>` for the 11-lens audit before merge -- mandatory for every `mode` except `prototype`, and not required when `lifecycle_mode` is `fast-track` or `fix-pack` (see Step 8 below).
+11. Print the post-implementation checklist and remind the user about `/edm:code-audit <PREFIX>` for the 14-lens audit before merge -- mandatory for every `mode` except `prototype`, and not required when `lifecycle_mode` is `fast-track` or `fix-pack` (see Step 8 below).
 
 ## Step 1: Identify Parallelizable Work
 
@@ -266,7 +266,7 @@ Only when:
 - `post-deploy/analysis/` -- analysis-input documents (rate-limit-analysis.md, source-triage.md,
   cost-analysis.md) if relevant. All paths are state-derived; a fresh initiative has none of these.
 
-After declaration, recommend the user run `/edm:code-audit <PREFIX>` for the 11-lens exhaustive audit
+After declaration, recommend the user run `/edm:code-audit <PREFIX>` for the 14-lens exhaustive audit
 before merging. The audit is keyed off `mode`, never off `implementation_mode` (which selects
 Red-Green-Refactor for this phase and governs nothing else): it is mandatory for `standard`,
 `mini-srd`, `iac` and `data-ml`, and `prototype` runs no audit round at all. Independently of
