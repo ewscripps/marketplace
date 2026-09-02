@@ -115,6 +115,14 @@ Empty traceability rows are a P0 finding in the ticket audit when `compliance_en
 
 ## AI Execution Pattern
 
+Before spawning `edm-ticket-writer`, resolve the ticket pattern-library paths (AD6/route (c) --
+the agent carries no `Bash` grant):
+```bash
+TICKET_PATTERN_PATHS="$(edm-state get-patterns ticket --paths)"
+TICKET_PATTERN_SEED="$(printf '%s\n' "$TICKET_PATTERN_PATHS" | sed -n '1p')"
+TICKET_PATTERN_DELTA="$(printf '%s\n' "$TICKET_PATTERN_PATHS" | sed -n '2p')"
+```
+
 ```
 Agent: edm-ticket-writer
 Prompt: "Create a developer ticket pack for the SRD at ${INIT_DIR}/${user_config.srd_filename}.
@@ -123,7 +131,10 @@ Prompt: "Create a developer ticket pack for the SRD at ${INIT_DIR}/${user_config
          Header must include 'Generated From: {srd_filename} v{srd_version}'.
          Use ticket IDs {PREFIX}-T01 through {PREFIX}-TNN.
          Every SRD requirement must map to at least one ticket.
-         6-12 specific, testable AC per ticket. No XL tickets -- decompose."
+         6-12 specific, testable AC per ticket. No XL tickets -- decompose.
+         Pattern library: Read ${TICKET_PATTERN_SEED} first, then Read ${TICKET_PATTERN_DELTA}
+         if it is non-empty and exists -- treat the two as one document, seed first. Do not
+         resolve these paths yourself."
 ```
 
 For large initiatives, launch one `edm-ticket-writer` per epic in parallel, then merge into the README.

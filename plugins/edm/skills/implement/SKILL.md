@@ -77,12 +77,26 @@ Wave 3: [{PREFIX}-T06, {PREFIX}-T07]                  (depend on Wave 2)
 
 ## Step 2: Launch Agent Swarm
 
+Before spawning each wave, resolve the QC and code pattern-library paths (AD6/route (c) --
+merge authority for the pattern library lives in `edm-state`, not in each spawned agent):
+```bash
+QC_PATTERN_PATHS="$(edm-state get-patterns qc --paths)"
+QC_PATTERN_SEED="$(printf '%s\n' "$QC_PATTERN_PATHS" | sed -n '1p')"
+QC_PATTERN_DELTA="$(printf '%s\n' "$QC_PATTERN_PATHS" | sed -n '2p')"
+CODE_PATTERN_PATHS="$(edm-state get-patterns code --paths)"
+CODE_PATTERN_SEED="$(printf '%s\n' "$CODE_PATTERN_PATHS" | sed -n '1p')"
+CODE_PATTERN_DELTA="$(printf '%s\n' "$CODE_PATTERN_PATHS" | sed -n '2p')"
+```
+
 ```
 Agent: edm-implementer (6-10 parallel per wave, each in isolated worktree)
 Prompt: "Implement tickets [{PREFIX}-T01, ...] from the epic file at [path].
          Read the Target Components in each ticket before modifying them.
          Follow CLAUDE.md conventions and existing patterns.
          Write complete implementations -- no stubs, no TODOs, no `pass`, no `raise NotImplementedError`.
+         Pattern library: Read ${QC_PATTERN_SEED} then ${QC_PATTERN_DELTA} (if non-empty and it
+         exists), and Read ${CODE_PATTERN_SEED} then ${CODE_PATTERN_DELTA} (same rule) -- each
+         pair is one document, seed first. Do not resolve these paths yourself.
          Reference ticket IDs ({PREFIX}-T{NN}) in commit messages."
 ```
 

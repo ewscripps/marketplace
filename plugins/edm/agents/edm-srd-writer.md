@@ -22,7 +22,12 @@ Write a comprehensive SRD that serves as the single source of truth for implemen
 
 ## Before Writing: Load Audit Patterns
 
-Before writing the SRD, `Read` the plugin-root-relative `docs/audit-patterns/srd-audit.md` and:
+Before writing the SRD, `Read` the seed and delta pattern-library paths given to you by the
+launching skill (`SRD_PATTERN_SEED` then `SRD_PATTERN_DELTA`, resolved via `edm-state
+get-patterns srd --paths` -- this agent carries no `Bash` grant, so it cannot resolve these
+itself): Read the seed first, then the delta if its path is non-empty and the file exists, and
+treat the two as one document in that order, per `docs/audit-patterns/README.md`'s Append
+Schema. Then:
 1. Apply its `## Pre-Flight Checklist` as a self-check against your draft.
 2. Address its `## Top Recurring Findings` and `## Anti-Patterns` -- ensure your SRD does not reproduce them.
 3. Consult `## What a Passing First Draft Looks Like` as the quality bar.

@@ -50,6 +50,7 @@
 #   edm-state set-parent <PREFIX> <PARENT>                           # set parent_prefix (validates PARENT exists)
 #   edm-state add-related <PREFIX> <RELATED>                         # append to related_prefixes (idempotent)
 #   edm-state update-patterns <PREFIX> <srd|ticket|qc|code|test-coverage>  # append novel audit findings to pattern library (T121)
+#   edm-state get-patterns <srd|ticket|qc|code|test-coverage> --paths  # print seed path then delta path, one per line; delta line is EMPTY (not absent) when no delta exists
 # EDM-HELP-END
 set -euo pipefail
 
@@ -5740,26 +5741,142 @@ _splice_pattern_file() {
   tail -n "+${insert_line}" "$pattern_file"
 }
 
+# ---- EDMV4-T18: writable harvested delta plus its own single-source mappings ------------------
+
+# pattern_seed_file_for <audit-type>
+# stdout: absolute path to the shipped, read-only seed document for <audit-type> under
+# docs/audit-patterns/. Single source for this mapping (CA-533's rationale extended to the
+# EDMV4-T18 read side): cmd_update_patterns and cmd_get_patterns must never re-encode it
+# independently, or the two could silently disagree on what "the seed" means for a given type.
+pattern_seed_file_for() {
+  local _psf_type="$1" _psf_dir="${SCRIPT_DIR}/../docs/audit-patterns"
+  case "$_psf_type" in
+    srd)           printf '%s\n' "${_psf_dir}/srd-audit.md" ;;
+    ticket)        printf '%s\n' "${_psf_dir}/ticket-audit.md" ;;
+    qc)            printf '%s\n' "${_psf_dir}/qc-audit.md" ;;
+    code)          printf '%s\n' "${_psf_dir}/code-audit.md" ;;
+    test-coverage) printf '%s\n' "${_psf_dir}/test-coverage-audit.md" ;;
+  esac
+}
+
+# pattern_delta_file_for <audit-type>
+# stdout: absolute path to the WRITABLE harvested delta for <audit-type> under
+# ${data}/patterns/, or the empty string when the plugin data directory is unresolvable
+# (edm_data_dir() returns empty, or _edm-datadir-lib.sh was not sourced -- EDMV4-T17 AC2's
+# guarded-source degradation). Does NOT test existence or writability of the file itself --
+# callers that need to know "does a delta already exist" or "can I write here" check that
+# themselves; this only resolves the path the delta would live at.
+pattern_delta_file_for() {
+  local _pdf_type="$1" _pdf_data
+  declare -F edm_data_dir >/dev/null 2>&1 || { printf '%s\n' ""; return 0; }
+  _pdf_data="$(edm_data_dir)"
+  [[ -n "$_pdf_data" ]] || { printf '%s\n' ""; return 0; }
+  printf '%s\n' "${_pdf_data}/patterns/${_pdf_type}-audit.md"
+}
+
+# _pattern_heading4_for <audit-type>
+# stdout: the exact fourth Living-Library contract heading text for <audit-type>
+# (docs/audit-patterns/README.md's Living-Library Contract), used only when stubbing a fresh
+# delta (AC2) -- the shipped seed already carries its own copy verbatim.
+_pattern_heading4_for() {
+  case "$1" in
+    srd|ticket)    printf '%s\n' "## What a Passing First Draft Looks Like" ;;
+    qc)            printf '%s\n' "## What a Passing QC Round Looks Like" ;;
+    code)          printf '%s\n' "## What Passing Code Looks Like" ;;
+    test-coverage) printf '%s\n' "## What Passing Test Coverage Looks Like" ;;
+  esac
+}
+
+# _pattern_write_stub <delta-file> <audit-type>
+# Creates <delta-file> (and its parent directory) as a STUB carrying only the four Living-
+# Library contract headings plus one provenance line -- never a copy of the seed's content
+# (EDMV4-T18 AC2; architecture.md AD6's "seed and delta are disjoint by construction" property).
+# Zero "### " finding entries, so a fresh stub can never share a finding with the shipped seed.
+_pattern_write_stub() {
+  local _pws_file="$1" _pws_type="$2" _pws_heading4
+  _pws_heading4="$(_pattern_heading4_for "$_pws_type")"
+  mkdir -p "$(dirname "$_pws_file")" || return 1
+  {
+    printf '# %s Audit Patterns (Harvested Delta)\n\n' "$_pws_type"
+    printf 'This file is the writable half of the EDM pattern library for the `%s` audit type,\n' "$_pws_type"
+    printf 'created automatically by edm-state update-patterns because the shipped seed under\n'
+    printf 'docs/audit-patterns/ is not writable on this install. Read it alongside the shipped\n'
+    printf 'seed, seed first, per the Living-Library Contract in docs/audit-patterns/README.md --\n'
+    printf 'this file and the seed are disjoint by construction and never share a finding.\n\n'
+    printf 'provenance: created by edm-state update-patterns on first writable-data-directory harvest\n\n'
+    printf '## Top Recurring Findings\n\n'
+    printf '## Anti-Patterns\n\n'
+    printf '## Pre-Flight Checklist\n\n'
+    printf '%s\n' "$_pws_heading4"
+  } > "$_pws_file"
+}
+
+# _pattern_collect_normalized_headings <file>
+# stdout: normalize_pattern_titles() output for every fence-outside "### " heading in <file>,
+# one per line. Prints nothing (not an error) when <file> is empty, absent, or unreadable.
+# Single-sourced (EDMV4-T18 AC3) so the write-target scan and the seed cross-check scan below
+# can never diverge on how a heading is normalized -- the CA-556 triplication class this file's
+# pattern_extract_titles comment already names for a sibling piece of this same machinery.
+_pattern_collect_normalized_headings() {
+  local _pch_file="$1"
+  [[ -n "$_pch_file" && -f "$_pch_file" ]] || return 0
+  local _pch_fenced _pch_line _pch_lineno _pch_text
+  _pch_fenced="$(ignored_line_set "$_pch_file" 2>/dev/null || true)"
+  while IFS= read -r _pch_line; do
+    [[ -n "$_pch_line" ]] || continue
+    _pch_lineno="${_pch_line%%:*}"
+    _pch_text="${_pch_line#*:}"
+    is_ignored_line "$_pch_lineno" "$_pch_fenced" && continue
+    printf '%s\n' "$_pch_text" | normalize_pattern_titles
+  done < <(grep -n '^### ' "$_pch_file" 2>/dev/null || true)
+}
+
+# _pattern_record_provenance <provenance-dir> <pattern-filename>
+# Updates <provenance-dir>/harvest-provenance.json's entry for <pattern-filename>: increments
+# write_count by one and sets first_write_at (ISO-8601 UTC) ONCE, on the entry's first-ever
+# write -- never overwritten afterwards. Always called from inside the caller's with_state_lock
+# hold (the same lock guarding the splice this always follows in _cmd_update_patterns_body), so
+# this takes no lock of its own (EDMV4-T18 AC5). Best-effort: a provenance-write failure is
+# warned on stderr and never aborts update-patterns -- provenance is an observability aid for
+# R3, not a correctness requirement of the splice it documents.
+_pattern_record_provenance() {
+  local _ppr_dir="$1" _ppr_name="$2" _ppr_file _ppr_ts _ppr_existing
+  _ppr_file="${_ppr_dir}/harvest-provenance.json"
+  _ppr_ts="$(now_utc)"
+  mkdir -p "$_ppr_dir" 2>/dev/null || {
+    echo "update-patterns: WARNING -- could not create ${_ppr_dir} to record harvest-provenance.json" >&2
+    return 0
+  }
+  _ppr_existing="{}"
+  [[ -f "$_ppr_file" ]] && _ppr_existing="$(cat "$_ppr_file" 2>/dev/null || echo '{}')"
+  if printf '%s' "$_ppr_existing" | jq --arg n "$_ppr_name" --arg ts "$_ppr_ts" '
+    .[$n] = ((.[$n] // {}) as $e | {
+      write_count: (($e.write_count // 0) + 1),
+      first_write_at: ($e.first_write_at // $ts)
+    })
+  ' > "${_ppr_file}.tmp" 2>/dev/null; then
+    mv "${_ppr_file}.tmp" "$_ppr_file"
+  else
+    echo "update-patterns: WARNING -- could not update ${_ppr_file}" >&2
+    rm -f "${_ppr_file}.tmp"
+  fi
+}
+
 _cmd_update_patterns_body() {
-  local pattern_file="$1" audit_report_path="$2" target_heading="$3" audit_type="$4" prefix="$5" today="$6"
+  local pattern_file="$1" seed_file="$2" provenance_dir="$3" audit_report_path="$4" target_heading="$5" audit_type="$6" prefix="$7" today="$8"
   local existing_normalized new_findings=0 pending_entries="" raw_title lower_title norm insert_line
-  # CA-056: the pre-flight duplicate check must ignore any "### " heading that lives inside a
-  # fenced code block -- a pattern doc documenting its own Append Schema by showing an EXAMPLE
-  # heading in a fence is the concrete case. A fenced example could otherwise mask a real
-  # duplicate, or a real heading could be skipped because it happens to textually match content
-  # that only exists inside a fence.
-  local _cup_fenced_lines _cup_heading_line _cup_heading_lineno _cup_heading_text
-  _cup_fenced_lines="$(ignored_line_set "$pattern_file" 2>/dev/null || true)"
-  existing_normalized=""
-  while IFS= read -r _cup_heading_line; do
-    [[ -n "$_cup_heading_line" ]] || continue
-    _cup_heading_lineno="${_cup_heading_line%%:*}"
-    _cup_heading_text="${_cup_heading_line#*:}"
-    is_ignored_line "$_cup_heading_lineno" "$_cup_fenced_lines" && continue
-    norm="$(printf '%s\n' "$_cup_heading_text" | normalize_pattern_titles)"
+  # CA-056 (extended EDMV4-T18 AC3): the pre-flight duplicate check must ignore any "### "
+  # heading that lives inside a fenced code block -- a pattern doc documenting its own Append
+  # Schema by showing an EXAMPLE heading in a fence is the concrete case. A fenced example
+  # could otherwise mask a real duplicate, or a real heading could be skipped because it
+  # happens to textually match content that only exists inside a fence. This now reads from
+  # BOTH the write target (delta or shipped tree) AND, when they differ, the shipped seed, so a
+  # finding already present in the seed is never re-appended into a separate delta (AC3).
+  existing_normalized="$(_pattern_collect_normalized_headings "$pattern_file")"
+  if [[ -n "$seed_file" && "$seed_file" != "$pattern_file" ]]; then
     existing_normalized="${existing_normalized}
-${norm}"
-  done < <(grep -n '^### ' "$pattern_file" 2>/dev/null || true)
+$(_pattern_collect_normalized_headings "$seed_file")"
+  fi
 
   while IFS= read -r raw_title; do
     lower_title="$(echo "$raw_title" | tr '[:upper:]' '[:lower:]' | tr -s ' ')"
@@ -5789,6 +5906,13 @@ ${norm}"
     [[ -n "$insert_line" && "$insert_line" -ne 0 ]] \
       || die "update-patterns: target heading '${target_heading}' resolved to no insertion point in ${pattern_file} under lock (changed since the pre-flight check); refusing -- nothing appended, no patterns_updates recorded"
     write_atomic "$pattern_file" _splice_pattern_file "$pattern_file" "$insert_line" "$pending_entries" || return 1
+
+    # AC5: record harvest provenance under the SAME lock as the splice above -- only when the
+    # write target is the writable-data-directory delta (provenance_dir non-empty). The
+    # shipped-tree fallback branch has no data directory to record provenance against, and
+    # recording provenance there would conflate "the shipped tree got hand-edited" with the
+    # actual R3 signal (a plugin upgrade silently clearing the delta) this exists to catch.
+    [[ -n "$provenance_dir" ]] && _pattern_record_provenance "$provenance_dir" "$(basename "$pattern_file")"
   fi
 
   echo "$new_findings"
@@ -5810,14 +5934,51 @@ cmd_update_patterns() {
   # sourcing shell, not this script -- silently resolving outside the plugin.
   local patterns_dir="${SCRIPT_DIR}/../docs/audit-patterns"
 
-  local pattern_file
-  case "$audit_type" in
-    srd)           pattern_file="${patterns_dir}/srd-audit.md" ;;
-    ticket)        pattern_file="${patterns_dir}/ticket-audit.md" ;;
-    qc)            pattern_file="${patterns_dir}/qc-audit.md" ;;
-    code)          pattern_file="${patterns_dir}/code-audit.md" ;;
-    test-coverage) pattern_file="${patterns_dir}/test-coverage-audit.md" ;;
-  esac
+  local seed_file
+  seed_file="$(pattern_seed_file_for "$audit_type")"
+
+  if [[ ! -f "$seed_file" ]]; then
+    echo "update-patterns: pattern file not found at ${seed_file} (skipping)" >&2
+    return 0
+  fi
+
+  # EDMV4-T18 AC1: resolve the write target through three STRICTLY ADDITIVE branches, in
+  # order, each preserving a behaviour that must never break a phase:
+  #   (a) the plugin data directory's writable delta (${data}/patterns/{type}-audit.md, new --
+  #       created as a stub on first write, per AC2)
+  #   (b) the shipped tree, if writable -- today's ONLY behaviour before this ticket
+  #   (c) neither writable -- warn to stderr and return 0 -- also today's behaviour
+  # All three exit status 0: a read-only install (or an unresolvable/unwritable data
+  # directory) must never abort the phase that called this.
+  local pattern_file="" provenance_dir=""
+  local data_dir="" delta_dir delta_candidate
+  declare -F edm_data_dir >/dev/null 2>&1 && data_dir="$(edm_data_dir)"
+  if [[ -n "$data_dir" ]]; then
+    delta_dir="${data_dir}/patterns"
+    delta_candidate="${delta_dir}/${audit_type}-audit.md"
+    if mkdir -p "$delta_dir" 2>/dev/null && [[ -w "$delta_dir" ]]; then
+      if [[ ! -f "$delta_candidate" ]]; then
+        _pattern_write_stub "$delta_candidate" "$audit_type" \
+          || echo "update-patterns: WARNING -- could not create stub delta at ${delta_candidate}; falling back" >&2
+      fi
+      if [[ -f "$delta_candidate" ]]; then
+        pattern_file="$delta_candidate"
+        provenance_dir="$delta_dir"
+      fi
+    fi
+  fi
+
+  if [[ -z "$pattern_file" ]]; then
+    if [[ -w "$patterns_dir" ]]; then
+      # (b) shipped tree writable -- today's behaviour, unchanged.
+      pattern_file="$seed_file"
+    else
+      # (c) neither writable -- today's behaviour, unchanged. Never a die: a report-format or
+      # install-permissions gap must not abort the phase that called update-patterns.
+      echo "update-patterns: pattern directory is not writable at ${patterns_dir} and no writable plugin data directory is available (plugin may be installed read-only; skipping)" >&2
+      return 0
+    fi
+  fi
 
   # Locate the audit report for this initiative.
   local _dir
@@ -5832,18 +5993,6 @@ cmd_update_patterns() {
       ;;
     test-coverage) audit_report_path="${_dir}/test-coverage.md" ;;
   esac
-
-  if [[ ! -f "$pattern_file" ]]; then
-    echo "update-patterns: pattern file not found at ${pattern_file} (skipping)" >&2
-    return 0
-  fi
-
-  local pattern_dir
-  pattern_dir="$(dirname "$pattern_file")"
-  if [[ ! -w "$pattern_dir" ]]; then
-    echo "update-patterns: pattern directory is not writable at ${pattern_dir} (plugin may be installed read-only; skipping)" >&2
-    return 0
-  fi
 
   # Resolve the Living-Library insertion target for this audit type, and verify the document
   # actually carries that heading. A missing target heading (not present anywhere, fenced or
@@ -5901,7 +6050,7 @@ cmd_update_patterns() {
       ;;
   esac
 
-  new_findings="$(with_state_lock "${pattern_file%.md}" _cmd_update_patterns_body "$pattern_file" "$audit_report_path" "$target_heading" "$audit_type" "$prefix" "$today")" \
+  new_findings="$(with_state_lock "${pattern_file%.md}" _cmd_update_patterns_body "$pattern_file" "$seed_file" "$provenance_dir" "$audit_report_path" "$target_heading" "$audit_type" "$prefix" "$today")" \
     || die "update-patterns: failed to update ${pattern_file}"
 
   # Record in state (.patterns_updates is a new field; safe to add to any existing state file).
@@ -5918,6 +6067,32 @@ cmd_update_patterns() {
   else
     echo "update-patterns: ${prefix}/${audit_type} -> no novel findings to append"
   fi
+}
+
+# cmd_get_patterns <srd|ticket|qc|code|test-coverage> --paths
+# AD6/route (c): prints the seed's absolute path then the delta's absolute path, one per line,
+# so the launching skill (which already has Bash) interpolates both into its agent launch
+# template instead of granting Bash to edm-srd-writer/edm-ticket-writer to read a documentation
+# file. The second line is EMPTY, never absent, when no delta exists or the data directory is
+# unresolvable (AC8): `wc -l` is always 2, so a consumer can distinguish "no delta" from a
+# truncated read. Read-only; never mutates state or the pattern library.
+cmd_get_patterns() {
+  [[ $# -eq 2 && "$2" == "--paths" ]] \
+    || die "usage: edm-state get-patterns <${PATTERN_AUDIT_TYPE_ENUM_LIST// /|}> --paths"
+  local audit_type="$1"
+
+  case " $PATTERN_AUDIT_TYPE_ENUM_LIST " in
+    *" $audit_type "*) ;;
+    *) die "get-patterns: unknown audit type '$audit_type' (expected: ${PATTERN_AUDIT_TYPE_ENUM_LIST// /|})" ;;
+  esac
+
+  local seed_file delta_file="" _candidate
+  seed_file="$(pattern_seed_file_for "$audit_type")"
+  _candidate="$(pattern_delta_file_for "$audit_type")"
+  [[ -n "$_candidate" && -f "$_candidate" ]] && delta_file="$_candidate"
+
+  printf '%s\n' "$seed_file"
+  printf '%s\n' "$delta_file"
 }
 
 # ---- HANDOFF.md generation --------------------------------------------------
@@ -6492,6 +6667,7 @@ case "$cmd" in
   set-parent)           cmd_set_parent "$@" ;;
   add-related)          cmd_add_related "$@" ;;
   update-patterns)      cmd_update_patterns "$@" ;;
+  get-patterns)         cmd_get_patterns "$@" ;;
   ""|-h|--help|help)
     print_help "${BASH_SOURCE[0]:-$0}"
     ;;

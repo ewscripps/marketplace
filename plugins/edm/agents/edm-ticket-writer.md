@@ -29,7 +29,12 @@ Produce a complete ticket pack at `${INIT_DIR}/${user_config.ticket_pack_dirname
 
 Before writing any file, load these at write time -- do not hardcode their content:
 
-1. `Read` the plugin-root-relative `docs/audit-patterns/ticket-audit.md` -- apply its pre-flight checklist; ensure top anti-patterns are addressed.
+1. `Read` the seed and delta pattern-library paths given to you by the launching skill
+   (`TICKET_PATTERN_SEED` then `TICKET_PATTERN_DELTA`, resolved via `edm-state get-patterns
+   ticket --paths` -- this agent's `tools:` grant carries no `Bash`, so it cannot resolve these
+   itself): Read the seed first, then the delta if its path is non-empty and the file exists,
+   treating the two as one document in that order per `docs/audit-patterns/README.md`'s Append
+   Schema -- apply its pre-flight checklist; ensure top anti-patterns are addressed.
 2. `Read` the plugin-root-relative `docs/templates/ticket-size-legend.md` -- inline it verbatim into README.md (do not re-author the legend).
 3. `Read` the plugin-root-relative `docs/templates/cross-cutting-ac.md` -- inline it verbatim into README.md (do not re-author the cross-cutting block).
 

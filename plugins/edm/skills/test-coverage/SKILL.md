@@ -35,6 +35,13 @@ Use this skill when:
 
 ### Step 2 -- Spawn edm-test-coverage-auditor
 
+Resolve the test-coverage pattern-library paths (AD6/route (c)):
+```bash
+TESTCOV_PATTERN_PATHS="$(edm-state get-patterns test-coverage --paths)"
+TESTCOV_PATTERN_SEED="$(printf '%s\n' "$TESTCOV_PATTERN_PATHS" | sed -n '1p')"
+TESTCOV_PATTERN_DELTA="$(printf '%s\n' "$TESTCOV_PATTERN_PATHS" | sed -n '2p')"
+```
+
 Spawn the `edm-test-coverage-auditor` agent with:
 
 ```
@@ -45,6 +52,8 @@ coverage_target_unit_pct: ${user_config.coverage_target_unit_pct}
 coverage_target_component_pct: ${user_config.coverage_target_component_pct}
 coverage_target_integration_pct: ${user_config.coverage_target_integration_pct}
 coverage_target_e2e_critical_paths_pct: ${user_config.coverage_target_e2e_critical_paths_pct}
+TESTCOV_PATTERN_SEED: ${TESTCOV_PATTERN_SEED}
+TESTCOV_PATTERN_DELTA: ${TESTCOV_PATTERN_DELTA}
 ```
 
 Wait for it to complete.

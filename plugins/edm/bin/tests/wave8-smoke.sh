@@ -870,7 +870,6 @@ else
 fi
 rm -f "$t55_ctl"
 
-
 # =================================================================================================
 # EDMV4-T25 -- Lens L12 (Silent Failures) agent file
 # =================================================================================================
@@ -2160,6 +2159,139 @@ FAKEJQ
     || fail "EDMV4-T46 AC9 -- broken jq case exited ${rc2}, expected 0"
 }
 t46_isolate_and_run t46_ac9_case
+
+# =================================================================================================
+# EDMV4-T18 -- writable harvested delta, get-patterns read side, and the single-commit coupling
+# =================================================================================================
+# Own banded section, appended last, so a later GateGuard/hookify commit does not interleave with
+# it (Technical Notes). Every case here runs against a scratch HOME/CLAUDE_PLUGIN_DATA/SRD tree;
+# nothing here touches the real plugin data directory or the shipped docs/audit-patterns/ tree.
+echo
+echo "-- EDMV4-T18: writable harvested delta + get-patterns read side --"
+
+T18_ROOT="${TMP}/t18-root"
+mkdir -p "$T18_ROOT"
+T18_DATA="${T18_ROOT}/data"
+T18_HOME="${T18_ROOT}/home"
+T18_SRD="${T18_ROOT}/SRD"
+mkdir -p "$T18_DATA" "$T18_HOME" "$T18_SRD/edm/EDMV4T18__x/qc"
+
+cat > "${T18_SRD}/edm/EDMV4T18__x/.edm-state.json" <<'EOF'
+{"prefix":"EDMV4T18","current_phase":6,"product_name":"edm","initiative_description":"x"}
+EOF
+cat > "${T18_SRD}/edm/EDMV4T18__x/qc/qc-summary.md" <<'EOF'
+# QC Summary
+
+**Finding**: [P1] EDMV4T18-T01 | bin/foo.sh:10 | A brand new synthetic QC finding for the T18 smoke check
+EOF
+
+t18_run_get_patterns() {
+  ( export CLAUDE_PLUGIN_DATA="$T18_DATA" HOME="$T18_HOME" XDG_DATA_HOME="" CLAUDE_PROJECT_DIR="$T18_ROOT" EDM_SRD_ROOT="$T18_SRD"
+    "$EDM_STATE" get-patterns "$@" )
+}
+t18_run_update_patterns() {
+  ( export CLAUDE_PLUGIN_DATA="$T18_DATA" HOME="$T18_HOME" XDG_DATA_HOME="" CLAUDE_PROJECT_DIR="$T18_ROOT" EDM_SRD_ROOT="$T18_SRD"
+    "$EDM_STATE" update-patterns "$@" )
+}
+
+# ---- AC8: --paths prints exactly two lines, second EMPTY (not absent) before any delta exists ---
+# CA-145-class note: `wc -l` on a re-run piped directly (not on a $()-captured copy) is required
+# here -- command substitution strips ALL trailing newlines, so a captured 2-line output whose
+# second line is empty collapses to 1 line and would falsely fail this assertion.
+T18_BEFORE="$(t18_run_get_patterns qc --paths)"
+T18_BEFORE_LINES="$(t18_run_get_patterns qc --paths | wc -l | tr -d ' ')"
+T18_BEFORE_SEED="$(printf '%s\n' "$T18_BEFORE" | sed -n '1p')"
+T18_BEFORE_DELTA="$(printf '%s\n' "$T18_BEFORE" | sed -n '2p')"
+if [[ "$T18_BEFORE_LINES" -eq 2 && -n "$T18_BEFORE_SEED" && -f "$T18_BEFORE_SEED" && -z "$T18_BEFORE_DELTA" ]]; then
+  pass "EDMV4-T18 AC8 -- get-patterns prints exactly 2 lines before any delta exists, second line empty"
+else
+  fail "EDMV4-T18 AC8 -- expected 2 lines (seed + empty delta), got: [${T18_BEFORE}] (lines=${T18_BEFORE_LINES})"
+fi
+
+# ---- AC1(a)/AC2: writing with a resolvable data directory creates a disjoint stub delta ---------
+T18_SEED_HEADINGS="$(grep -c '^### ' "$T18_BEFORE_SEED" 2>/dev/null || true)"
+[[ "$T18_SEED_HEADINGS" -gt 0 ]] || fail "EDMV4-T18 AC2 positive control -- shipped qc-audit.md seed has zero ### headings; the disjointness assertion below would pass vacuously"
+
+T18_UPDATE_OUT="$(t18_run_update_patterns EDMV4T18 qc)"
+check "EDMV4-T18 AC1(a) -- update-patterns reports a new finding appended when the data dir is resolvable" \
+  "1 new finding(s) appended" "$T18_UPDATE_OUT"
+
+T18_AFTER="$(t18_run_get_patterns qc --paths)"
+T18_AFTER_DELTA="$(printf '%s\n' "$T18_AFTER" | sed -n '2p')"
+if [[ -n "$T18_AFTER_DELTA" && -f "$T18_AFTER_DELTA" ]]; then
+  pass "EDMV4-T18 AC1(a)/AC8 -- get-patterns now reports a real, existing delta path"
+else
+  fail "EDMV4-T18 AC1(a)/AC8 -- delta path missing or not a real file after a successful write: [${T18_AFTER_DELTA}]"
+fi
+
+T18_DELTA_HEADINGS="$(grep -c '^### ' "$T18_AFTER_DELTA" 2>/dev/null || echo 0)"
+check "EDMV4-T18 AC2 -- fresh delta stub carries the four Living-Library contract headings" \
+  "## Anti-Patterns" "$(cat "$T18_AFTER_DELTA" 2>/dev/null)"
+check "EDMV4-T18 AC2 -- delta stub's fourth heading matches the qc-specific wording" \
+  "## What a Passing QC Round Looks Like" "$(cat "$T18_AFTER_DELTA" 2>/dev/null)"
+if [[ "$T18_DELTA_HEADINGS" -eq 1 ]]; then
+  pass "EDMV4-T18 AC2 -- delta carries exactly the one harvested finding as its only ### entry (stub itself had zero)"
+else
+  fail "EDMV4-T18 AC2 -- expected exactly 1 ### heading in the delta after one harvest, found ${T18_DELTA_HEADINGS}"
+fi
+
+# ---- AC3/dedup: re-running does not re-append (dedup against the delta) -------------------------
+t18_run_update_patterns EDMV4T18 qc >/dev/null
+T18_DEDUP_COUNT="$(grep -c '### A brand new synthetic QC finding for the T18 smoke check' "$T18_AFTER_DELTA" 2>/dev/null || echo 0)"
+check "EDMV4-T18 AC3 -- re-running update-patterns does not duplicate the entry in the delta" "1" "$T18_DEDUP_COUNT"
+
+# ---- AC5: harvest-provenance.json records write_count and a first-write timestamp ----------------
+T18_PROV="${T18_DATA}/patterns/harvest-provenance.json"
+if [[ -f "$T18_PROV" ]] && jq -e '."qc-audit.md".write_count >= 1 and (."qc-audit.md".first_write_at | length > 0)' "$T18_PROV" >/dev/null 2>&1; then
+  pass "EDMV4-T18 AC5 -- harvest-provenance.json records a write_count and a first_write_at for qc-audit.md"
+else
+  fail "EDMV4-T18 AC5 -- harvest-provenance.json missing or malformed: $(cat "$T18_PROV" 2>/dev/null || echo ABSENT)"
+fi
+
+# ---- AC12(b): END-TO-END -- write (data dir resolvable, shipped tree simulated read-only by ------
+# never touching it) then read BOTH paths via get-patterns and assert the harvested finding is
+# present in the concatenation. This is the test that fails if either half (write or read) is
+# missing -- it actually drives update-patterns THEN get-patterns THEN two real Reads, in one
+# process, rather than inspecting code structure.
+T18_E2E_SEED="$(printf '%s\n' "$T18_AFTER" | sed -n '1p')"
+T18_E2E_CONCAT="$(cat "$T18_E2E_SEED" "$T18_AFTER_DELTA" 2>/dev/null)"
+check "EDMV4-T18 AC12(b) -- end-to-end: the harvested finding is present when an agent reads seed+delta as get-patterns names them" \
+  "A brand new synthetic QC finding for the T18 smoke check" "$T18_E2E_CONCAT"
+
+# ---- AC12(c): RETAINED NEGATIVE TEST -- write side applied, read side "reverted" (an agent that ---
+# reads ONLY the seed, the pre-EDMV4-T18 behaviour) never sees the harvested finding. This
+# documents exactly the R9 failure mode and must never be deleted as redundant.
+T18_SEED_ONLY="$(cat "$T18_E2E_SEED" 2>/dev/null)"
+check_absent "EDMV4-T18 AC12(c) -- RETAINED negative test: a seed-only read (read side reverted) never sees the harvested finding -- this is risk R9's exact failure mode" \
+  "A brand new synthetic QC finding for the T18 smoke check" "$T18_SEED_ONLY"
+
+# ---- AC9/AC10: the four launching skills interpolate BOTH pattern paths for their agent ----------
+t18_check_skill_paths() {
+  local label="$1" file="$2" call_type="$3" seed_var="$4" delta_var="$5"
+  local body
+  body="$(cat "${PLUGIN_DIR}/${file}" 2>/dev/null)"
+  if [[ "$body" == *"get-patterns ${call_type} --paths"* && "$body" == *"\${${seed_var}}"* && "$body" == *"\${${delta_var}}"* ]]; then
+    pass "$label"
+  else
+    fail "$label (missing get-patterns call or one of \${${seed_var}}/\${${delta_var}} in ${file})"
+  fi
+}
+t18_check_skill_paths "EDMV4-T18 AC9 -- skills/srd/SKILL.md interpolates both srd pattern paths into edm-srd-writer's launch template" \
+  "skills/srd/SKILL.md" srd SRD_PATTERN_SEED SRD_PATTERN_DELTA
+t18_check_skill_paths "EDMV4-T18 AC9 -- skills/tickets/SKILL.md interpolates both ticket pattern paths into edm-ticket-writer's launch template" \
+  "skills/tickets/SKILL.md" ticket TICKET_PATTERN_SEED TICKET_PATTERN_DELTA
+t18_check_skill_paths "EDMV4-T18 AC9 -- skills/implement/SKILL.md interpolates both qc pattern paths into edm-implementer's launch template" \
+  "skills/implement/SKILL.md" qc QC_PATTERN_SEED QC_PATTERN_DELTA
+t18_check_skill_paths "EDMV4-T18 AC9 -- skills/implement/SKILL.md interpolates both code pattern paths into edm-implementer's launch template" \
+  "skills/implement/SKILL.md" code CODE_PATTERN_SEED CODE_PATTERN_DELTA
+t18_check_skill_paths "EDMV4-T18 AC9 -- skills/test-coverage/SKILL.md interpolates both test-coverage pattern paths into edm-test-coverage-auditor's launch template" \
+  "skills/test-coverage/SKILL.md" test-coverage TESTCOV_PATTERN_SEED TESTCOV_PATTERN_DELTA
+
+# ---- AC10: no agent gains a new Bash grant -------------------------------------------------------
+T18_SRD_WRITER_TOOLS="$(grep -m1 '^tools:' "${PLUGIN_DIR}/agents/edm-srd-writer.md" 2>/dev/null)"
+check_absent "EDMV4-T18 AC10 -- edm-srd-writer.md still carries no Bash grant" "Bash" "$T18_SRD_WRITER_TOOLS"
+T18_TICKET_WRITER_TOOLS="$(grep -m1 '^tools:' "${PLUGIN_DIR}/agents/edm-ticket-writer.md" 2>/dev/null)"
+check_absent "EDMV4-T18 AC10 -- edm-ticket-writer.md still carries no Bash grant" "Bash" "$T18_TICKET_WRITER_TOOLS"
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

@@ -162,6 +162,15 @@ If this section is absent from an SRD produced under `mode=data-ml`, the SRD aud
 
 ## AI Execution Pattern
 
+Before spawning `edm-srd-writer`, resolve the SRD pattern-library paths (AD6/route (c) --
+`edm-srd-writer` carries no `Bash` grant, so this skill resolves and interpolates both paths
+rather than the agent calling `get-patterns` itself):
+```bash
+SRD_PATTERN_PATHS="$(edm-state get-patterns srd --paths)"
+SRD_PATTERN_SEED="$(printf '%s\n' "$SRD_PATTERN_PATHS" | sed -n '1p')"
+SRD_PATTERN_DELTA="$(printf '%s\n' "$SRD_PATTERN_PATHS" | sed -n '2p')"
+```
+
 ```
 Agent: edm-srd-writer
 Prompt: "Write the SRD for {PREFIX}. First resolve the initiative directory:
@@ -169,6 +178,9 @@ Prompt: "Write the SRD for {PREFIX}. First resolve the initiative directory:
          Write to ${INIT_DIR}/${user_config.srd_filename}.
          Read the planning doc and existing referenced files. Cover all applicable sections.
          Use requirement IDs {PREFIX}-01 through {PREFIX}-NNN. Every requirement must be testable.
+         Pattern library: Read ${SRD_PATTERN_SEED} first, then Read ${SRD_PATTERN_DELTA} if it
+         is non-empty and exists -- treat the two as one document, seed first. Do not resolve
+         these paths yourself.
          [mode=data-ml: include ## Data Requirements section]
          [mode=iac: use resource paths in Target Components]
          [mode=mini-srd: produce fused file with embedded ticket list section]"

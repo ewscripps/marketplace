@@ -39,12 +39,14 @@ in the current plan.
 - `${INIT_DIR}/test-plan-{epic}.md` -- per-epic plans (if multi-stack).
 - `${INIT_DIR}/${user_config.ticket_pack_dirname}/` -- ticket pack.
 - Project source and test directories.
-- (CA-168/CA-022 anchor) Before writing `test-coverage.md`, `Read` the plugin-root-relative
-  `docs/audit-patterns/test-coverage-audit.md` -- resolved against the EDM plugin root
-  (`plugins/edm/` in this repository, or the installed plugin root in cache), never the caller's
-  current working directory. Apply its `## Pre-Flight Checklist` as a self-check against your
-  draft, address its `## Top Recurring Findings` and `## Anti-Patterns` so this report does not
-  reproduce them, and consult `## What Passing Test Coverage Looks Like` as the quality bar.
+- (CA-168/CA-022 anchor) Before writing `test-coverage.md`, `Read` the seed and delta
+  pattern-library paths given to you by the launching skill (`TESTCOV_PATTERN_SEED` then
+  `TESTCOV_PATTERN_DELTA`, resolved via `edm-state get-patterns test-coverage --paths`): Read the
+  seed first, then the delta if its path is non-empty and the file exists, treating the two as
+  one document in that order per `docs/audit-patterns/README.md`'s Append Schema. Apply its
+  `## Pre-Flight Checklist` as a self-check against your draft, address its `## Top Recurring
+  Findings` and `## Anti-Patterns` so this report does not reproduce them, and consult `## What
+  Passing Test Coverage Looks Like` as the quality bar.
 
 ## Process
 

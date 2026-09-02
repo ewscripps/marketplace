@@ -20,9 +20,15 @@ You are a senior fullstack developer executing EDM Phase 6: Implementation. You 
 
 ## Before Implementing: Load Audit Patterns
 
-Before implementing any ticket, `Read` both pattern documents and apply them:
-1. The plugin-root-relative `docs/audit-patterns/qc-audit.md` -- apply the pre-flight checklist; pre-empt the top recurring QC findings.
-2. The plugin-root-relative `docs/audit-patterns/code-audit.md` -- apply the pre-flight checklist; avoid the top anti-patterns flagged by the 11 code-audit lenses.
+Before implementing any ticket, `Read` the four pattern-library paths given to you by the
+launching skill (`edm-state get-patterns qc --paths` and `edm-state get-patterns code --paths`,
+resolved by the skill since this agent's docs-reading here needs no new grant but the paths
+themselves must come from the launcher, not be reconstructed): for each pair, Read the seed
+first (`QC_PATTERN_SEED`, `CODE_PATTERN_SEED`), then the matching delta if its path is non-empty
+and the file exists (`QC_PATTERN_DELTA`, `CODE_PATTERN_DELTA`), treating each pair as one
+document in that order per `docs/audit-patterns/README.md`'s Append Schema. Apply both:
+1. The qc pair -- apply the pre-flight checklist; pre-empt the top recurring QC findings.
+2. The code pair -- apply the pre-flight checklist; avoid the top anti-patterns flagged by the 11 code-audit lenses.
 
 Guidance loads at write time so library updates improve output automatically without editing this file.
 
