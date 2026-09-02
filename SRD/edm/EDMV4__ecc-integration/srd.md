@@ -652,7 +652,7 @@ retained rather than reused so every existing cross-reference still resolves.
         semantics and its `blocking`-versus-`info` classification, and `EDMV4-45` gains a dependency
         on it.
 - **Dependencies**: none. Must be resolved at Gate 2, before `EDMV4-44` and `EDMV4-45` are ticketed.
-- **Target Components**: `plugins/edm/bin/edm-state:1709-1927` (`state_anomalies`),
+- **Target Components**: `plugins/edm/bin/edm-state:1739-1927` (`state_anomalies`),
   `bin/edm-state:1714-1729` (`TIME_ORDER`), `bin/edm-state:1786-1789` (the
   `OPEN_AUDIT_ROUND` informational rationale), `bin/edm-state:3185` (the terminal-phase check that
   already exists), `SRD/edm/EDMV4__ecc-integration/decisions.md`.
@@ -2483,7 +2483,7 @@ smoke suite fail for the wrong reason.
         can, and exits 0 rather than erroring.
 - **Dependencies**: `EDMV4-36`, `EDMV4-37`.
 - **Target Components**: `plugins/edm/bin/edm-repo-readiness` (new),
-  `plugins/edm/bin/edm-state:1709-1927` (`state_anomalies`), `:4036-4059` (`cmd_validate`),
+  `plugins/edm/bin/edm-state:1739-1927` (`state_anomalies`), `:4036-4059` (`cmd_validate`),
   `:4347+` (`cmd_session_start`), `check_permission_rules()`, `cmd_get_coverage`,
   `cmd_metrics_report`, `plugins/edm/CLAUDE.md Sec."Required setup: permission ask rules (EDMV3-T06)"`.
 

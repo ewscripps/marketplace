@@ -4857,7 +4857,17 @@ t08_version_ge="$(printf '%s\n3.2.1\n' "$t08_plugin_version" | sort -V | head -1
 # ---- AC5 (regression verification): zero disable-model-invocation, all 14 user-invocable -----
 echo
 echo "EDMV4-T08 AC5 -- regression verification: disable-model-invocation stays at zero across all 14 SKILL.md files"
-t08_dmi_count="$(command grep -rc 'disable-model-invocation' "${_HARNESS_PLUGIN_DIR}/skills"/*/SKILL.md 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')"
+# EDMV4 wave-1 QC P0 fix: this line aborted the whole suite on a HEALTHY tree. The file runs
+# under `set -euo pipefail` (see the top of this script). `grep -c` exits 1 when it matches
+# nothing, `pipefail` propagates that through the `awk`, and `set -e` then kills the script --
+# so the assertion terminated the run precisely when zero `disable-model-invocation` hits were
+# found, i.e. when the property it guards was intact. It could only ever proceed if the D3/D4
+# fix had actually regressed: inverted and self-masking. It killed the remaining ~26 assertions
+# of this suite (AC5's tail, all three AC8 assertions, AC9 and the CA-061 block) with no
+# summary line, and run-all.sh reported the truncated run as "1 failed" rather than aborted.
+# `|| true` neutralises grep's no-match exit without suppressing a real error, and the `awk`
+# still sums to 0 on empty input.
+t08_dmi_count="$( { command grep -rc 'disable-model-invocation' "${_HARNESS_PLUGIN_DIR}/skills"/*/SKILL.md 2>/dev/null || true; } | awk -F: '{s+=$2} END{print s+0}')"
 [[ "$t08_dmi_count" -eq 0 ]] \
   && pass "EDMV4-T08 AC5 -- grep -rc disable-model-invocation across all SKILL.md files totals 0" \
   || fail "EDMV4-T08 AC5 -- disable-model-invocation reappeared ${t08_dmi_count} time(s) -- D3/D4's fix regressed"
@@ -4873,24 +4883,47 @@ bash "${_HARNESS_BIN_DIR}/edm-check-skill-sync" >/dev/null 2>&1 || t08_skill_syn
 check "EDMV4-T08 AC5 -- edm-check-skill-sync's own body still bans disable-model-invocation anywhere under skills/" \
   "disable-model-invocation" "$(cat "${_HARNESS_BIN_DIR}/edm-check-skill-sync")"
 
-# ---- AC8 (regression verification): the three re-verified symbol citations this ticket names -
-# hold exactly where srd.md already says they do -- ALL_LENS_IDS:1613, MODE_ENUM_LIST:807,
-# state_anomalies():1709 -- so no srd.md correction is made (AC8 forbids "correcting" srd.md
-# toward a number that turns out to be the wrong one).
+# ---- AC8 (regression verification): the three symbols this ticket re-derives still resolve by
+# NAME. Measured drift at wave-1 close was ALL_LENS_IDS +7 and MODE_ENUM_LIST +6 (both inside
+# AC8's +/-10), and state_anomalies() +30 (outside), so srd.md's state_anomalies() citation was
+# corrected to 1739 as AC8 requires. AC8 still forbids "correcting" srd.md toward a number from
+# the ticket pack -- only toward one re-derived from the tree.
 echo
-echo "EDMV4-T08 AC8 -- the three re-verified symbol citations resolve where srd.md already says they do"
+echo "EDMV4-T08 AC8 -- the three re-verified symbols still resolve by name (line numbers advisory)"
 t08_all_lens_line="$(command grep -n '^ALL_LENS_IDS=' "$EDM_STATE" | head -1 | cut -d: -f1)"
 t08_mode_enum_line="$(command grep -n '^MODE_ENUM_LIST=' "$EDM_STATE" | head -1 | cut -d: -f1)"
 t08_state_anom_line="$(command grep -n '^state_anomalies()' "$EDM_STATE" | head -1 | cut -d: -f1)"
-[[ "$t08_all_lens_line" == "1614" ]] \
-  && pass "EDMV4-T08 AC8 -- ALL_LENS_IDS resolved at line 1614 (this ticket's own edit grew the block by 1 line from srd.md's cited 1613)" \
-  || fail "EDMV4-T08 AC8 -- ALL_LENS_IDS resolved at line ${t08_all_lens_line}, expected 1614"
-[[ "$t08_mode_enum_line" == "807" ]] \
-  && pass "EDMV4-T08 AC8 -- MODE_ENUM_LIST resolved at line 807, matching srd.md exactly" \
-  || fail "EDMV4-T08 AC8 -- MODE_ENUM_LIST resolved at line ${t08_mode_enum_line}, expected 807 (matching srd.md)"
-[[ "$t08_state_anom_line" == "1709" ]] \
-  && pass "EDMV4-T08 AC8 -- state_anomalies() resolved at line 1709, matching srd.md exactly" \
-  || fail "EDMV4-T08 AC8 -- state_anomalies() resolved at line ${t08_state_anom_line}, expected 1709 (matching srd.md)"
+# EDMV4 wave-1 QC P1 fix: these three assertions used to hardcode the expected line number, so
+# ANY later edit to bin/edm-state failed them -- re-encoding the exact line-number fragility the
+# ticket-pack audit's P1-2 finding exists to remove. They also never ran: T08's own inverted
+# `grep -c` above killed the suite before reaching them, so all three drifted out of tolerance
+# undetected (a self-masking defect in the same ticket that introduced them).
+#
+# AC8's actual contract is a TOLERANCE, not an equality: "a citation off by more than +/-10
+# lines is corrected in srd.md". So resolve each symbol by NAME, read the number srd.md
+# currently cites, and assert the drift is within tolerance. When it is not, srd.md is the thing
+# that must change -- and only after re-derivation from the tree proves srd.md wrong, never
+# toward a number from the ticket pack (whose own anchors are stale; see the epic banners).
+# What IS durably testable: each symbol still resolves BY NAME. That is the property AC8's
+# re-derivation actually depends on, and the one the audit's P1-2 finding asks implementers to
+# rely on instead of line numbers.
+#
+# What is NOT smoke-testable: "is srd.md's citation for this symbol within +/-10?". Which prose
+# citation belongs to which symbol cannot be derived mechanically -- an earlier version of this
+# block tried, by pattern-matching any `edm-state:NNNN` and taking the min/max, and reported
+# unrelated numbers (1607, 1786) as the citations for ALL_LENS_IDS and state_anomalies(). That
+# is the same line-number fragility re-encoded one level up. Citation-drift correction is an
+# implementer obligation at ticket close (AC8's "+/-10 -> correct srd.md"), verified by a human
+# or by QC reading the diff, not by this suite.
+t08_ac8_resolves() {
+  local label="$1" line="$2"
+  [[ -n "$line" ]] \
+    && pass "EDMV4-T08 AC8 -- ${label} resolves by name in bin/edm-state (line ${line}; line numbers are advisory)" \
+    || fail "EDMV4-T08 AC8 -- ${label} does not resolve by name in bin/edm-state"
+}
+t08_ac8_resolves "ALL_LENS_IDS"      "$t08_all_lens_line"
+t08_ac8_resolves "MODE_ENUM_LIST"    "$t08_mode_enum_line"
+t08_ac8_resolves "state_anomalies()" "$t08_state_anom_line"
 
 # ---- AC9 -- non-blocking status: no ticket lists EDMV4-T08 as a Depends On -------------------
 echo
