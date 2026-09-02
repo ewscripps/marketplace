@@ -627,6 +627,64 @@ while IFS=$'\t' read -r _skill_name _skill_file _skill_tools; do
   done
 done < "$SKILL_TSV"
 
+# =================================================================================================
+# EDMV4-T04 AC11 -- by-name citation orphan check, two failure modes
+# =================================================================================================
+# A prompt that cites `CLAUDE.md Sec."X"` only resolves for a consumer if X is mirrored into
+# docs/canonical-sections.md AND the citing file carries the plugin-root-anchored read
+# instruction (decisions.md D22/D34). Two things can go wrong, and both are silent:
+#
+#   Mode A -- ORPHANED: the cited section has no mirror in docs/canonical-sections.md, so the
+#             anchor points at nothing.
+#   Mode B -- UNANCHORED: the section IS mirrored, but the citing file never tells the reader to
+#             read docs/canonical-sections.md, so a consumer reading from an installed plugin
+#             cache cannot resolve the bare CLAUDE.md reference at all.
+#
+# Two traps this check must avoid, both of which defeated earlier attempts at it:
+#   1. SELF-MATCHING. The anchor sentences added by EDMV4-T04 themselves contain the literal
+#      placeholder Sec."..." (three dots). An unanchored sweep matches its own descriptive text
+#      and reports growing false positives as more files are anchored. Skip that placeholder.
+#   2. THE (canonical) SUFFIX. edm-sync-canonical-sections emits headings WITH their "(canonical)"
+#      suffix while every prompt cites the bare form, so an exact-string comparison flags ~20
+#      already-correct citations. Compare on the suffix-stripped heading.
+#
+# Deliberately-unmirrored sections are exempt: CLAUDE.md's own text states the verifier completion
+# sentinel is not added to the generated set, so citing it is correct and must not be an orphan.
+CANON_DOC="${PLUGIN_ROOT}/docs/canonical-sections.md"
+CITATION_EXEMPT_SECTIONS="Verifier completion sentinel"
+
+if [[ -f "$CANON_DOC" ]]; then
+  _canon_headings="$(grep -E '^## ' "$CANON_DOC" 2>/dev/null | sed -E 's/^## //; s/ \(canonical\)$//' || true)"
+  _cite_files="$(ls "${PLUGIN_ROOT}"/agents/*.md "${PLUGIN_ROOT}"/skills/*/SKILL.md 2>/dev/null || true)"
+  for _cf in $_cite_files; do
+    [[ -f "$_cf" ]] || continue
+    _cf_has_anchor=0
+    grep -q 'docs/canonical-sections\.md' "$_cf" 2>/dev/null && _cf_has_anchor=1
+    # Every Sec."X" on any line, minus the three-dot placeholder (trap 1).
+    # Trap 3: only CLAUDE.md citations need a canonical-sections mirror. `Sec."X"` is also used
+    # to cite OTHER documents -- skills/orchestrator/SKILL.md Sec."Gate PROTOCOL",
+    # skills/plan/SKILL.md Sec."Step 0 ...", docs/audit-patterns/README.md Sec."Append Schema".
+    # Matching a bare Sec."X" reported all of those as orphans (28 false positives on first run).
+    # Anchor on the CLAUDE.md prefix. NOTE: this catches the same-line form only; a bare Sec."X"
+    # continuation whose CLAUDE.md prefix sits on the PREVIOUS line is not detected here, and is
+    # recorded as a known gap rather than papered over with a heuristic.
+    _cf_secs="$(grep -oE 'CLAUDE\.md Sec\."[^"]+"' "$_cf" 2>/dev/null | sed -E 's/^CLAUDE\.md Sec\."//; s/"$//' | grep -v '^\.\.\.$' | sort -u || true)"
+    [[ -z "$_cf_secs" ]] && continue
+    while IFS= read -r _sec; do
+      [[ -z "$_sec" ]] && continue
+      _sec_bare="$(printf '%s' "$_sec" | sed -E 's/ \(canonical\)$//')"
+      case " $CITATION_EXEMPT_SECTIONS " in *" $_sec_bare "*) continue ;; esac
+      if ! printf '%s\n' "$_canon_headings" | grep -qxF -- "$_sec_bare"; then
+        echo "citation-orphan: ${_cf}: Sec.\"${_sec_bare}\" has no mirror in docs/canonical-sections.md" >&2
+        violations=$((violations + 1))
+      elif [[ "$_cf_has_anchor" -eq 0 ]]; then
+        echo "citation-unanchored: ${_cf}: cites Sec.\"${_sec_bare}\" but carries no docs/canonical-sections.md read instruction" >&2
+        violations=$((violations + 1))
+      fi
+    done <<< "$_cf_secs"
+  done
+fi
+
 # ---- Exit contract (EDMV3-100): 0 clean, 1 unsatisfied grant(s) found, 2 usage/env error -------
 if [[ "$violations" -eq 0 ]]; then
   exit 0

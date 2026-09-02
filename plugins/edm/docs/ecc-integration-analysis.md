@@ -981,7 +981,8 @@ Enumerated by name and frontmatter only: the remaining ~261 skills, ~57 agents, 
 
 ### 8.2 Claims that were verified against source, not taken from documentation
 
-- The `update-patterns` read-only skip (4.2) -- confirmed at `bin/edm-state:5577` and `:5624`.
+- The `update-patterns` read-only skip (4.2) -- confirmed by locating the symbols by name; see
+  correction 8 below for the re-derived citations. Line numbers here are advisory.
 - `harness-audit` scoring being `fileExists` against ECC's own paths (5.2) -- confirmed by reading
   the check table and `detectTargetMode()`. **This corrects an earlier assessment of mine that
   treated it as a neutral readiness rubric.**

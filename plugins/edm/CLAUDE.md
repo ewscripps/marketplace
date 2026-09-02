@@ -471,7 +471,11 @@ prompt-surface touch points not already covered by the lens/synthesizer set) is 
 verified set turned out to be fourteen files (5 agents + 9 skills), not eight -- `CLAUDE.md`'s own
 prior list missed `edm-qc-auditor.md`, `verify-runtime/`, `push-jira/`, `orchestrator/`,
 `metrics/` and `code-audit/SKILL.md`, all of which carried the identical D22 defect
-(decisions.md D10).
+(decisions.md D10). That work lives in `SRD/edm/EDMV4__ecc-integration/` -- the initiative that
+absorbed the never-created `EDMV4__lint-and-pipeline-budgets` name D1 retired, along with its
+three pre-claimed ticket IDs `EDMV4-T01`, `EDMV4-T04` and `EDMV4-T05`. `EDMV4-T02` and
+`EDMV4-T03` were closed inside EDMV3 and are retired; the numbering gap between `T01` and `T04`
+is intentional (`EDMV4-T09`).
 
 ## Model and effort assignments
 
@@ -1146,6 +1150,14 @@ of 1.12x; the difference reflects host-to-host and run-to-run variance on this m
 environment (the Mermaid class itself is unchanged -- `git diff --stat` against
 `bin/edm-lint-artifacts` across this ticket's commits is empty), not a regression, and the
 1.12x figure should be treated as superseded rather than still current.
+
+**Currency with respect to the D4 branch reconciliation (`EDMV4-03`).** The 1.12x figure was
+measured before the Phase 4 fast-forward that took this branch 25 commits forward to
+`origin/main`. That reconciliation changed `bin/edm-state`, the smoke suites and `plugin.json`,
+but **not** `bin/edm-lint-artifacts` -- so the Mermaid class under measurement is byte-identical
+across it, and 1.12x was never invalidated *by the reconciliation*. It is superseded because it
+was re-measured on this host, not because the tree moved underneath it. Both figures are
+reproducible: quote either only with its fixture size, per the rule this section exists to state.
 
 ### `.edm-state.json` mode-family fields
 

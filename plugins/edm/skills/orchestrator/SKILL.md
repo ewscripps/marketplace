@@ -115,12 +115,12 @@ average.
 
 These are the only three pairs emitted. `fast-track` is never recommended: it shares one row
 of the mode matrix with `fix-pack` and the two are documented as behaviourally identical
-(`CLAUDE.md Sec."EDM mode matrix"`), so distinguishing them would require splitting that row,
+(`CLAUDE.md Sec."EDM mode matrix (EDMV3-T38)"`), so distinguishing them would require splitting that row,
 which is out of scope here.
 
 State the computed recommendation in one line inside Step 1c's `AskUserQuestion` body, naming
 both members of the pair and which signal scored what tier -- never the destination's
-behaviour (`CLAUDE.md Sec."EDM mode matrix"` covers that; consult it, do not restate it here).
+behaviour (`CLAUDE.md Sec."EDM mode matrix (EDMV3-T38)"` covers that; consult it, do not restate it here).
 
 This step only marks which existing Step 1c option carries "(Recommended)". It never
 auto-applies a mode and never calls `set-mode` itself -- the classifier is a default, not an

@@ -86,6 +86,10 @@ short "Refreshed" note naming which sections you touched and this initiative's p
 `Edit` tool (denied above), so a refresh is a full `Write` of the merged content, never an in-place
 edit. Omit any section you have nothing real to say about -- never fill it with a placeholder or an
 instruction to the reader; an omitted section is a correct, honest codemap, not an incomplete one.
+**This rule has a named cause**: ECC's codemap generator (`generate.ts:225-231`) emits literal
+template placeholders for its two most valuable sections, Data Flow and External Dependencies, so
+its output *looks* complete while saying nothing. That is the failure this rule exists to prevent,
+and it is why decision D11 chose a hand-written interim over porting the generator.
 No generator script produces, refreshes, or validates this file -- it is written by hand, by you,
 exactly like every other explorer output.
 
@@ -93,6 +97,18 @@ The file is ASCII-only: no em dashes (use `--`), no arrows (use `->`), straight 
 emoji -- hold yourself to this explicitly, since no automatic lint pass reaches `SRD/.codemap.md`
 before it is committed (`edm-lint-artifacts`'s automatic invocations resolve one initiative
 directory or iterate initiative directories; neither reaches the `SRD/` root itself).
+
+Three consequences follow, and a reader who stops at "no automatic lint reaches it" will draw the
+wrong one:
+- **There IS coverage, but only manual.** `edm-lint-artifacts --path SRD/` reaches this file, and
+  `EDMV4-57`'s named manual sweep is the mechanism that exercises it. The gap is that nothing runs
+  that sweep for you -- not that the file is unlintable.
+- **The commit hook will not catch you.** The `PreToolUse` git-commit hook runs prefix mode over
+  staged initiative paths, so a non-ASCII byte in `SRD/.codemap.md` commits clean and surfaces
+  later, in someone else's diff.
+- **Refreshes inherit the risk.** A refresh is a full `Write` of merged content, so a violation
+  introduced by an earlier explorer is re-committed by the next one unless you re-check the whole
+  file, not just the sections you touched.
 
 ## When this does NOT apply
 
