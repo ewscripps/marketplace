@@ -4141,6 +4141,11 @@ check "T41 AC4 -- generated file carries the Severity vocabulary section" \
 check "T41 AC4 -- generated file carries the Mermaid diagram conventions section" \
   "## Mermaid diagram conventions (canonical)" "$(cat "$CANONICAL_SECTIONS_MD" 2>/dev/null)"
 
+# ---- EDMV4-50 (EDMV4-T04): a third generated section, "Unverifiable acceptance criteria (D15)",
+# mirroring the Severity/Mermaid presence checks above exactly. ----------------------------------
+check "EDMV4-50 -- generated file carries the Unverifiable acceptance criteria (D15) section" \
+  "## Unverifiable acceptance criteria (D15)" "$(cat "$CANONICAL_SECTIONS_MD" 2>/dev/null)"
+
 # ---- AC5: byte-identity guard -- committed copy matches a fresh --check run, and a hand-edit
 # to the copy (without re-running the generator) is caught. ---------------------------------
 echo
@@ -4182,6 +4187,15 @@ t41_mmd_dst="$(awk '/^## Mermaid diagram conventions \(canonical\)$/{f=1;print;n
 [[ "$t41_mmd_src" == "$t41_mmd_dst" ]] \
   && pass "T41 AC5 -- Mermaid diagram conventions section is byte-identical between CLAUDE.md and the generated copy" \
   || fail "T41 AC5 -- Mermaid diagram conventions section diverged between CLAUDE.md and the generated copy"
+
+# ---- EDMV4-50 (EDMV4-T04) AC4 -- third byte-identity diff, same awk idiom, for the new D15
+# section. Both directions of --check (0 clean / 1 on drift) are already proven generically by
+# the T41 AC5 hand-edit block above, which re-runs against this now-three-section file. ----------
+t50_d15_src="$(awk '/^## Unverifiable acceptance criteria \(D15\)$/{f=1;print;next} f && /^## /{exit} f{print}' "$t41_claude_md")"
+t50_d15_dst="$(awk '/^## Unverifiable acceptance criteria \(D15\)$/{f=1;print;next} f && /^## /{exit} f{print}' "$CANONICAL_SECTIONS_MD")"
+[[ "$t50_d15_src" == "$t50_d15_dst" ]] \
+  && pass "EDMV4-50 -- Unverifiable acceptance criteria (D15) section is byte-identical between CLAUDE.md and the generated copy" \
+  || fail "EDMV4-50 -- Unverifiable acceptance criteria (D15) section diverged between CLAUDE.md and the generated copy"
 
 # ---- AC2/AC6: the resolvability finding, install method, Claude Code version and date are
 # recorded in decisions.md as D22, naming which branch (negative) was taken. ------------------

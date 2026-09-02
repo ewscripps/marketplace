@@ -110,6 +110,8 @@ trap 'rm -f "$tmp"; exit 129' HUP
   extract_section "Severity vocabulary (canonical)" "$SRC"
   echo
   extract_section "Mermaid diagram conventions (canonical)" "$SRC"
+  echo
+  extract_section "Unverifiable acceptance criteria (D15)" "$SRC"
 } > "$tmp"
 
 if [[ "$mode" == "--check" ]]; then
