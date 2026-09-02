@@ -866,6 +866,282 @@ else
 fi
 rm -f "$t55_ctl"
 
+# =================================================================================================
+# EDMV4-T35 -- Pin the classifier to the eight existing mode enum values
+# =================================================================================================
+# Appended below the sections above, which this ticket leaves untouched, per this file's own
+# "append a banner section, never overwrite" contract.
+echo
+echo "================================================================================================="
+echo "EDMV4-T35 -- Pin the classifier to the eight existing mode enum values"
+echo "================================================================================================="
+echo
+
+# ---- AC2: MODE_ENUM_LIST / LIFECYCLE_MODE_ENUM_LIST are unmodified literals --------------------
+T35_MODE_LIST_LINE="$(grep -m1 '^MODE_ENUM_LIST=' "${PLUGIN_DIR}/bin/edm-state")"
+check "EDMV4-T35 AC2 -- MODE_ENUM_LIST literal is unmodified" \
+  'MODE_ENUM_LIST="standard mini-srd iac data-ml prototype"' "$T35_MODE_LIST_LINE"
+
+T35_LIFECYCLE_LIST_LINE="$(grep -m1 '^LIFECYCLE_MODE_ENUM_LIST=' "${PLUGIN_DIR}/bin/edm-state")"
+check "EDMV4-T35 AC2 -- LIFECYCLE_MODE_ENUM_LIST literal is unmodified" \
+  'LIFECYCLE_MODE_ENUM_LIST="standard fast-track fix-pack"' "$T35_LIFECYCLE_LIST_LINE"
+
+# ---- AC1: exactly 8 values across the two lists, and every value the classifier can emit is a
+# member of one of them -------------------------------------------------------------------------
+T35_MODE_VALUES="$(printf '%s' "$T35_MODE_LIST_LINE" | sed -E 's/^MODE_ENUM_LIST="([^"]*)"$/\1/')"
+T35_LIFECYCLE_VALUES="$(printf '%s' "$T35_LIFECYCLE_LIST_LINE" | sed -E 's/^LIFECYCLE_MODE_ENUM_LIST="([^"]*)"$/\1/')"
+T35_MODE_COUNT="$(echo "$T35_MODE_VALUES" | wc -w | tr -d ' ')"
+T35_LIFECYCLE_COUNT="$(echo "$T35_LIFECYCLE_VALUES" | wc -w | tr -d ' ')"
+T35_TOTAL=$((T35_MODE_COUNT + T35_LIFECYCLE_COUNT))
+if [[ "$T35_TOTAL" -eq 8 ]]; then
+  pass "EDMV4-T35 AC1 -- MODE_ENUM_LIST (${T35_MODE_COUNT} values) + LIFECYCLE_MODE_ENUM_LIST (${T35_LIFECYCLE_COUNT} values) = 8 total enum values"
+else
+  fail "EDMV4-T35 AC1 -- expected exactly 8 enum values across both lists, got ${T35_TOTAL} (mode=${T35_MODE_COUNT}, lifecycle=${T35_LIFECYCLE_COUNT})"
+fi
+
+for T35_V in standard mini-srd fix-pack; do
+  if printf ' %s %s ' "$T35_MODE_VALUES" "$T35_LIFECYCLE_VALUES" | grep -q " $T35_V "; then
+    pass "EDMV4-T35 AC1 -- classifier-emitted value '${T35_V}' is a member of MODE_ENUM_LIST or LIFECYCLE_MODE_ENUM_LIST"
+  else
+    fail "EDMV4-T35 AC1 -- classifier-emitted value '${T35_V}' is NOT a member of either enum list"
+  fi
+done
+
+# ---- AC3: the two-axis mapping is one row per tier, naming both mode and lifecycle_mode, and no
+# others -- reuses T34_BLOCK (Step 1b.5's extracted block, computed above in this same suite run) -
+T35_TABLE_ROWS="$(printf '%s\n' "$T34_BLOCK" | grep -cE '^\| .* \| \(.*\) \|$')"
+if [[ "$T35_TABLE_ROWS" -eq 3 ]]; then
+  pass "EDMV4-T35 AC3 -- classifier table carries exactly 3 tier rows (the same 3 literal pairs EDMV4-T34 AC3 enumerates, and no others)"
+else
+  fail "EDMV4-T35 AC3 -- expected exactly 3 tier rows in the classifier table, found ${T35_TABLE_ROWS}"
+fi
+
+# ---- AC4: terminal_phase_for_mode, code_audit_required_for_mode and convergence_exempt gain no
+# new arms -- arm count is the number of ';;' terminators inside each function's body -----------
+_t35_count_case_arms() {
+  local file="$1" fn="$2"
+  awk -v fn="$fn" '$0 ~ ("^" fn "\\(\\) \\{") {f=1} f{print} f && /^}/{exit}' "$file" | grep -c ';;'
+}
+
+T35_TERMINAL_ARMS="$(_t35_count_case_arms "${PLUGIN_DIR}/bin/edm-state" terminal_phase_for_mode)"
+if [[ "$T35_TERMINAL_ARMS" -eq 8 ]]; then
+  pass "EDMV4-T35 AC4 -- terminal_phase_for_mode carries its baseline 8 case arms (its lifecycle_mode validation case plus its mode case) -- no new arm"
+else
+  fail "EDMV4-T35 AC4 -- terminal_phase_for_mode arm count changed: expected 8, got ${T35_TERMINAL_ARMS}"
+fi
+
+T35_CODEAUDIT_ARMS="$(_t35_count_case_arms "${PLUGIN_DIR}/bin/edm-state" code_audit_required_for_mode)"
+if [[ "$T35_CODEAUDIT_ARMS" -eq 3 ]]; then
+  pass "EDMV4-T35 AC4 -- code_audit_required_for_mode carries its baseline 3 case arms -- no new arm"
+else
+  fail "EDMV4-T35 AC4 -- code_audit_required_for_mode arm count changed: expected 3, got ${T35_CODEAUDIT_ARMS}"
+fi
+
+T35_CONVERGENCE_ARMS="$(_t35_count_case_arms "${PLUGIN_DIR}/bin/edm-state" convergence_exempt)"
+if [[ "$T35_CONVERGENCE_ARMS" -eq 2 ]]; then
+  pass "EDMV4-T35 AC4 -- convergence_exempt carries its baseline 2 case arms -- no new arm"
+else
+  fail "EDMV4-T35 AC4 -- convergence_exempt arm count changed: expected 2, got ${T35_CONVERGENCE_ARMS}"
+fi
+
+# ---- AC5/AC6/AC7: functional -- drive each recommended pair through edm-state set-mode with the
+# correct kind (AC5, expect exit 0), a hypothetical fourth value (AC6, expect refusal), and a
+# valid value driven through the wrong kind (AC7, expect refusal) -- against a real scratch
+# initiative via with_scratch_repo. -----------------------------------------------------------
+t35_functional_case() {
+  with_scratch_repo _t35_functional_inner
+}
+_t35_functional_inner() {
+  edm-init T35F >/dev/null 2>&1 || true
+  local rc
+
+  rc=0; "$EDM_STATE" set-mode T35F lifecycle_mode fix-pack >/dev/null 2>&1 || rc=$?
+  [[ $rc -eq 0 ]] \
+    && pass "EDMV4-T35 AC5 -- set-mode T35F lifecycle_mode fix-pack exits 0" \
+    || fail "EDMV4-T35 AC5 -- set-mode T35F lifecycle_mode fix-pack exited ${rc}, expected 0"
+
+  rc=0; "$EDM_STATE" set-mode T35F mode mini-srd >/dev/null 2>&1 || rc=$?
+  [[ $rc -eq 0 ]] \
+    && pass "EDMV4-T35 AC5 -- set-mode T35F mode mini-srd exits 0" \
+    || fail "EDMV4-T35 AC5 -- set-mode T35F mode mini-srd exited ${rc}, expected 0"
+
+  rc=0; "$EDM_STATE" set-mode T35F mode standard >/dev/null 2>&1 || rc=$?
+  [[ $rc -eq 0 ]] \
+    && pass "EDMV4-T35 AC5 -- set-mode T35F mode standard exits 0" \
+    || fail "EDMV4-T35 AC5 -- set-mode T35F mode standard exited ${rc}, expected 0"
+
+  rc=0; "$EDM_STATE" set-mode T35F lifecycle_mode standard >/dev/null 2>&1 || rc=$?
+  [[ $rc -eq 0 ]] \
+    && pass "EDMV4-T35 AC5 -- set-mode T35F lifecycle_mode standard exits 0" \
+    || fail "EDMV4-T35 AC5 -- set-mode T35F lifecycle_mode standard exited ${rc}, expected 0"
+
+  check_fails "EDMV4-T35 AC6 -- set-mode T35F mode trivial is refused (hypothetical fourth value)" \
+    "set-mode: invalid mode 'trivial'" "$EDM_STATE" set-mode T35F mode trivial
+
+  check_fails "EDMV4-T35 AC7 -- set-mode T35F mode fix-pack is refused (valid value, wrong kind)" \
+    "set-mode: invalid mode 'fix-pack'" "$EDM_STATE" set-mode T35F mode fix-pack
+  check_fails "EDMV4-T35 AC7 -- set-mode T35F lifecycle_mode mini-srd is refused (valid value, wrong kind)" \
+    "set-mode: invalid lifecycle_mode 'mini-srd'" "$EDM_STATE" set-mode T35F lifecycle_mode mini-srd
+}
+t35_functional_case
+
+# ---- AC8: these assertions live in wave8-smoke.sh, a suite bin/tests/run-all.sh discovers via
+# its *-smoke.sh glob (registration in _PREFERRED_ORDER is EDMV4-T53's separate concern). --------
+pass "EDMV4-T35 AC8 -- these assertions live in wave8-smoke.sh, discovered by run-all.sh's *-smoke.sh glob"
+
+echo
+
+# =================================================================================================
+# EDMV4-T36 -- Implement the security-trigger tie-breaker and pre-select the compliance dialog
+# =================================================================================================
+echo "================================================================================================="
+echo "EDMV4-T36 -- Security-trigger tie-breaker and compliance dialog pre-selection"
+echo "================================================================================================="
+echo
+
+T36_BLOCK="$(_t34_extract_between "$ORCH_SKILL" '^\*\*Step 1b\.5' '^\*\*Step 1c')"
+T36_STEP1C="$(_t34_extract_between "$ORCH_SKILL" '^\*\*Step 1c' '^\*\*Step 1d')"
+
+check "EDMV4-T36 AC1 -- tie-breaker forces at least standard on a trigger or public API/contract hit" \
+  'forces the recommendation to **at least** `standard`' "$T36_BLOCK"
+check "EDMV4-T36 AC1 -- tie-breaker overrides a lower tier from the three base signals" \
+  'overriding a lower tier from the three signals above' "$T36_BLOCK"
+
+check "EDMV4-T36 AC2 -- all seven triggers enumerated exactly, in order, with no additions or omissions" \
+  'authentication or authorization, user-input handling, database queries, filesystem paths, external API calls, cryptography, secrets or credentials' \
+  "$T36_BLOCK"
+
+check "EDMV4-T36 AC3 -- triggers are cited to orch-pipeline/SKILL.md" \
+  'orch-pipeline/SKILL.md' "$T36_BLOCK"
+check_absent "EDMV4-T36 AC3 -- no misattribution to rules/common/security.md anywhere in the orchestrator skill" \
+  'rules/common/security.md' "$(cat "$ORCH_SKILL")"
+
+check "EDMV4-T36 AC4 -- firing the tie-breaker also pre-selects On for Step 1c's compliance toggle" \
+  'pre-selects **On** for Step 1c'"'"'s compliance toggle' "$T36_BLOCK"
+check "EDMV4-T36 AC4 -- Recommended moves from Off to On when the tie-breaker fires" \
+  'moving "(Recommended)" from Off to On for this run' "$T36_BLOCK"
+
+check "EDMV4-T36 AC5 -- reasoning names the trigger that fired, not merely that a trigger fired" \
+  'or naming the trigger that fired' "$T36_BLOCK"
+
+T36_AC8_EXPECTED="overrides the trivial tier's \`(standard, fix-pack)\` recommendation with \`(standard, standard)\`"
+check "EDMV4-T36 AC8 -- tie-breaker documented to override the trivial tier's own pair, not merely raise 'at least standard' in the abstract" \
+  "$T36_AC8_EXPECTED" "$T36_BLOCK"
+
+check "EDMV4-T36 -- tie-breaker is a floor, never a ceiling (never lowers standard, never changes mode away from standard)" \
+  'It is a floor, never a ceiling' "$T36_BLOCK"
+
+# ---- AC6: compliance dialog's base option text is unchanged when the tie-breaker does not fire -
+check "EDMV4-T36 AC6 -- compliance dialog base text still reads Off (Recommended) / On, unchanged" \
+  '**Off** (Recommended) /' "$T36_STEP1C"
+check "EDMV4-T36 AC6 -- ... / On." \
+  '**On**.' "$T36_STEP1C"
+check "EDMV4-T36 AC6 -- Step 1c states the default is unchanged when the tie-breaker does not fire" \
+  'when it does not fire, this default is unchanged' "$T36_STEP1C"
+
+# ---- AC7: pre-selection is a recommendation only; existing write path, no new one ---------------
+check "EDMV4-T36 AC7 -- user may still choose Off despite the pre-selection" \
+  'The user may still choose Off' "$T36_STEP1C"
+check "EDMV4-T36 AC7 -- compliance is still recorded only via the existing set-mode compliance_enabled true write" \
+  '`set-mode <PREFIX> compliance_enabled true` write (only if On)' "$T36_STEP1C"
+check_absent "EDMV4-T36 AC7 -- no new write path introduced (no compliance_enabled false write)" \
+  'compliance_enabled false' "$(cat "$ORCH_SKILL")"
+
+# ---- AC8: Step 1b.5 is prose consumed by the orchestrating LLM at runtime, not an executable
+# function -- there is no runnable "classifier" binary this bash suite can invoke with three
+# trivial signals and a trigger flag to observe a live recommendation. The check above
+# (T36_AC8_EXPECTED) is the closest available runnable proxy: it proves the skill text states,
+# unambiguously, that a trigger hit overrides the trivial tier's own (standard, fix-pack) pair
+# with (standard, standard) -- exactly the scenario AC8 describes -- rather than merely gesturing
+# at "at least standard" in the abstract, which would leave the trivial-tier-override case
+# untested. Already asserted above; not repeated here.
+pass "EDMV4-T36 AC8 -- trigger-hit-overrides-trivial-tier scenario is pinned by the check above (Step 1b.5 is prose, not an executable classifier -- see comment)"
+
+echo
+
+# =================================================================================================
+# EDMV4-T37 -- Enforce guard D6 so the classifier never restates the mode matrix
+# =================================================================================================
+echo "================================================================================================="
+echo "EDMV4-T37 -- Enforce guard D6 so the classifier never restates the mode matrix"
+echo "================================================================================================="
+echo
+
+T37_D6_PHRASES="Phases 1, 2, 3, 5 recorded|fuse into one audited file|Tickets generated directly from"
+
+# t37_d6_scoped_check <file> -- 0 = the extracted Step 1b.5 block is non-empty and carries no
+# restatement phrase; 1 = a restatement phrase was found inside the block; 2 = the extracted block
+# was empty, which must fail rather than pass vacuously (the single most likely way this class of
+# assertion silently stops checking anything -- see this file's own EDMV4 anti-pattern entry).
+t37_d6_scoped_check() {
+  local file="$1" block
+  block="$(_t34_extract_between "$file" '^\*\*Step 1b\.5' '^\*\*Step 1c')"
+  [[ -n "$block" ]] || return 2
+  printf '%s\n' "$block" | grep -qE "$T37_D6_PHRASES" && return 1
+  return 0
+}
+
+# ---- AC1: Step 1b.5 contains no mode/lifecycle_mode behaviour description; cites the mode matrix
+# by section reference, following the Step 1c.4 pattern -----------------------------------------
+if t37_d6_scoped_check "$ORCH_SKILL"; then
+  pass "EDMV4-T37 AC1 -- Step 1b.5's block contains no mode-matrix restatement phrase"
+else
+  fail "EDMV4-T37 AC1 -- Step 1b.5's block contains a restatement phrase, or the extraction was empty"
+fi
+check "EDMV4-T37 AC1 -- Step 1b.5 cites the mode matrix by section reference, matching Step 1c.4's pattern" \
+  'CLAUDE.md Sec."EDM mode matrix (EDMV3-T38)"' "$T36_BLOCK"
+
+# ---- AC2: the one-line reasoning explains the classification, never the destination's behaviour -
+check "EDMV4-T37 AC2 -- reasoning explains which signal or trigger fired, not destination behaviour" \
+  'never the destination'"'"'s behaviour' "$T36_BLOCK"
+check "EDMV4-T37 AC2 -- reasoning also covers a fired trigger, not only the three base signals" \
+  'or naming the trigger that fired' "$T36_BLOCK"
+
+# ---- AC3/AC4: scoped extraction, block-only (not tree-wide) -------------------------------------
+T37_CLAUDE_MD_HAS_PHRASES=0
+grep -qE "$T37_D6_PHRASES" "${PLUGIN_DIR}/CLAUDE.md" 2>/dev/null && T37_CLAUDE_MD_HAS_PHRASES=1
+
+if [[ "$T37_CLAUDE_MD_HAS_PHRASES" -eq 1 ]] && t37_d6_scoped_check "$ORCH_SKILL"; then
+  pass "EDMV4-T37 AC3/AC4 -- the restatement phrases legitimately live in CLAUDE.md's own EDM mode matrix table (their owning-phase-skill home), and the block-scoped check on the unmodified tree still passes -- proving the check's scope is the block, not the tree"
+else
+  fail "EDMV4-T37 AC3/AC4 -- either the mode-matrix phrases are no longer present in CLAUDE.md (fixture drift) or the scoped check regressed to something tree-wide"
+fi
+
+# ---- AC5: positive control -- inject a restatement phrase INSIDE Step 1b.5 on a scratch copy and
+# prove the check fails there while the unmodified tree still passes -----------------------------
+T37_POISONED="${TMP}/orchestrator-SKILL-t37-poisoned.md"
+awk '
+  { print }
+  !inserted && $0 ~ /^Skipped on resume \(Step 1b already read a recorded non-default mode\)\.$/ {
+    print "This restates a sub-flow: Phases 1, 2, 3, 5 recorded as skipped."
+    inserted = 1
+  }
+' "$ORCH_SKILL" > "$T37_POISONED"
+
+if t37_d6_scoped_check "$T37_POISONED"; then
+  fail "EDMV4-T37 AC5 -- positive control FAILED: a restatement phrase inserted inside Step 1b.5 still passed the scoped check"
+else
+  pass "EDMV4-T37 AC5 -- positive control: a restatement phrase inserted inside Step 1b.5 correctly fails the scoped check"
+fi
+if t37_d6_scoped_check "$ORCH_SKILL"; then
+  pass "EDMV4-T37 AC5 -- the unmodified tree still passes the identical scoped check (the check discriminates -- it is not a check that always fails)"
+else
+  fail "EDMV4-T37 AC5 -- the unmodified tree unexpectedly failed the scoped check"
+fi
+
+# ---- AC6: CLAUDE.md's mode matrix and D6 guard text are present, unmodified by this initiative --
+check "EDMV4-T37 AC6 -- CLAUDE.md's EDM mode matrix section heading is present" \
+  '## EDM mode matrix (EDMV3-T38)' "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check "EDMV4-T37 AC6 -- CLAUDE.md's D6 guard text is present, unmodified" \
+  'Do not duplicate the mode matrix into agent prompts' "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+
+# ---- AC7: the no-restatement requirement is stated in Step 1b.5's own text, citing guard D6 -----
+check "EDMV4-T37 AC7 -- Step 1b.5 states the no-restatement requirement, citing guard D6 by name" \
+  'Per guard D6, this step names values only and never restates' "$T36_BLOCK"
+
+# ---- AC8: these assertions live in wave8-smoke.sh, a suite bin/tests/run-all.sh discovers -------
+pass "EDMV4-T37 AC8 -- these assertions live in wave8-smoke.sh, discovered by run-all.sh's *-smoke.sh glob"
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
