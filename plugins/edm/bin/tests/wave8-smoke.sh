@@ -732,10 +732,14 @@ check_absent "AC1 -- fixture filenames carry no serialization-format extension o
   "$(find "$HOOKIFY_FIXTURES" -type f 2>/dev/null)"
 check "AC1 -- CLAUDE.md hookify section states JSON-only, jq-only" \
   "JSON, read with \`jq\` only" "$CLAUDE_MD_TEXT"
-if [[ ! -e "${PLUGIN_DIR}/bin/edm-hookify" ]]; then
-  pass "AC1/scope -- edm-hookify (the evaluator) is not built by this format-only ticket"
+# EDMV4-T43 (this wave) legitimately builds edm-hookify -- the evaluator this format-only ticket
+# explicitly leaves out of scope. Before T43 landed, this check asserted the file's ABSENCE; now
+# that both tickets share this suite, the assertion is that the file exists and is EXECUTABLE
+# (T43's own AC1 section below asserts its actual behavior in depth).
+if [[ -x "${PLUGIN_DIR}/bin/edm-hookify" ]]; then
+  pass "AC1/scope -- edm-hookify exists and is executable (built by EDMV4-T43, which owns it)"
 else
-  fail "AC1/scope -- edm-hookify exists; EDMV4-T43 owns building the evaluator, not this ticket"
+  fail "AC1/scope -- edm-hookify missing or not executable"
 fi
 
 # ---- AC10 fixture inventory: 4 valid + 4 malformed --------------------------------------------
@@ -1845,6 +1849,317 @@ t12_marker_lifecycle_tests() {
 
 with_scratch_repo t12_marker_lifecycle_tests
 unset CLAUDE_PLUGIN_DATA
+# =================================================================================================
+# EDMV4-T43: Build the hookify evaluator from nothing, with one classify pass and N projections
+# =================================================================================================
+echo
+echo "=== EDMV4-T43: edm-hookify evaluator ==="
+echo
+
+EDM_HOOKIFY="${PLUGIN_DIR}/bin/edm-hookify"
+
+# ---- AC1/AC11: exists, executable, house conventions ------------------------------------------
+if [[ -x "$EDM_HOOKIFY" ]]; then
+  pass "EDMV4-T43 AC1 -- edm-hookify exists and is executable"
+else
+  fail "EDMV4-T43 AC1 -- edm-hookify missing or not executable"
+fi
+check "EDMV4-T43 AC11 -- sources _edm-cli-lib.sh" "source \"\${SCRIPT_DIR}/_edm-cli-lib.sh\"" "$(cat "$EDM_HOOKIFY")"
+check "EDMV4-T43 AC11 -- calls the shared print_help()" "print_help \"\${BASH_SOURCE[0]:-\$0}\"" "$(cat "$EDM_HOOKIFY")"
+check "EDMV4-T43 AC11 -- carries EDM-HELP-BEGIN/END sentinels" "EDM-HELP-BEGIN" "$(cat "$EDM_HOOKIFY")"
+T43_SCRIPT_DIR_LINE="$(grep -m1 '^SCRIPT_DIR=' "$EDM_HOOKIFY" || true)"
+check "EDMV4-T43 AC11 -- SCRIPT_DIR idiom matches the house convention" \
+  'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"' "$T43_SCRIPT_DIR_LINE"
+
+# ---- AC12: CLAUDE.md bin/ helper table gains a row ---------------------------------------------
+check "EDMV4-T43 AC12 -- CLAUDE.md's bin/ helper table names edm-hookify" \
+  '`edm-hookify`' "$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+
+# ---- Scratch project with a copy of the T42 fixture set (README's documented reuse) ------------
+T43_PROJ="${TMP}/t43-project"
+mkdir -p "${T43_PROJ}/.claude/edm-hookify"
+cp "${HOOKIFY_FIXTURES}/warn-no-console-log.json" "${T43_PROJ}/.claude/edm-hookify/"
+cp "${HOOKIFY_FIXTURES}/block-rm-rf-bash.json" "${T43_PROJ}/.claude/edm-hookify/"
+cp "${HOOKIFY_FIXTURES}/warn-stop-placeholder.json" "${T43_PROJ}/.claude/edm-hookify/"
+
+t43_run() {
+  # t43_run <event> <payload-json>
+  (
+    cd "$T43_PROJ" || exit 99
+    CLAUDE_PROJECT_DIR="$T43_PROJ" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+      bash -c "echo '$2' | edm-hookify eval $1"
+  )
+}
+
+# ---- AC4: exact "rule_id action message" line for a matched rule ------------------------------
+T43_AC4_OUT="$(t43_run file '{"file_path":"src/foo.js","new_text":"console.log(1)"}')"
+check "EDMV4-T43 AC4 -- matched-rule line is exactly 'rule_id action message'" \
+  "warn-no-console-log warn Avoid leaving console.log statements in non-test source files." "$T43_AC4_OUT"
+
+# ---- AC5: enabled:false is skipped even though its condition would otherwise match -------------
+T43_DISABLED_DIR="${TMP}/t43-disabled-project"
+mkdir -p "${T43_DISABLED_DIR}/.claude/edm-hookify"
+jq '.enabled = false' "${HOOKIFY_FIXTURES}/warn-no-console-log.json" \
+  > "${T43_DISABLED_DIR}/.claude/edm-hookify/warn-no-console-log.json"
+T43_AC5_OUT="$(cd "$T43_DISABLED_DIR" && CLAUDE_PROJECT_DIR="$T43_DISABLED_DIR" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+  bash -c 'echo "{\"file_path\":\"src/foo.js\",\"new_text\":\"console.log(1)\"}" | edm-hookify eval file')"
+check_absent "EDMV4-T43 AC5 -- a disabled rule that would otherwise match produces no output" \
+  "warn-no-console-log" "$T43_AC5_OUT"
+
+# ---- AC9: no file writes -- only stdout/stderr redirection appears in the script ---------------
+T43_AC9_HIT="$(grep -nE '>>|>[[:space:]]*"?\$[A-Za-z_]|[^a-zA-Z]tee[[:space:]]|mktemp' "$EDM_HOOKIFY" \
+  | grep -v '2>/dev/null\|>&2\|2>&1' || true)"
+if [[ -z "$T43_AC9_HIT" ]]; then
+  pass "EDMV4-T43 AC9 -- no file-write redirection, tee or mktemp found in edm-hookify"
+else
+  fail "EDMV4-T43 AC9 -- found a possible file write in edm-hookify: ${T43_AC9_HIT}"
+fi
+
+# ---- AC7: no real `timeout` invocation -- every occurrence of the word is inside a comment -----
+T43_AC7_BAD="$(grep -nE '^[^#]*[^#[:alnum:]_]timeout[[:space:]]' "$EDM_HOOKIFY" | grep -vE '^\s*[0-9]+:\s*#' || true)"
+if [[ -z "$T43_AC7_BAD" ]]; then
+  pass "EDMV4-T43 AC7 -- every 'timeout' occurrence in edm-hookify is prose, not an invocation"
+else
+  fail "EDMV4-T43 AC7 -- a real 'timeout' invocation was found: ${T43_AC7_BAD}"
+fi
+
+# ---- AC10: zero rule files (absent .claude/edm-hookify/) exits 0 immediately, spawning no jq ----
+T43_JQSHIM_DIR="${TMP}/t43-jqshim"
+mkdir -p "$T43_JQSHIM_DIR"
+T43_JQ_COUNT_FILE="${TMP}/t43-jq-count"
+cat > "${T43_JQSHIM_DIR}/jq" <<SHIM
+#!/usr/bin/env bash
+echo x >> "${T43_JQ_COUNT_FILE}"
+exec "$(command -v jq)" "\$@"
+SHIM
+chmod +x "${T43_JQSHIM_DIR}/jq"
+
+T43_AC10_PROJ="${TMP}/t43-ac10-project"
+mkdir -p "$T43_AC10_PROJ"
+rm -f "$T43_JQ_COUNT_FILE"; touch "$T43_JQ_COUNT_FILE"
+T43_AC10_RC=0
+(cd "$T43_AC10_PROJ" && CLAUDE_PROJECT_DIR="$T43_AC10_PROJ" PATH="${T43_JQSHIM_DIR}:${PLUGIN_DIR}/bin:${PATH}" \
+  edm-hookify eval file < /dev/null >/dev/null 2>&1) || T43_AC10_RC=$?
+T43_AC10_JQCOUNT="$(wc -l < "$T43_JQ_COUNT_FILE" | tr -d ' ')"
+if [[ "$T43_AC10_RC" -eq 0 && "$T43_AC10_JQCOUNT" -eq 0 ]]; then
+  pass "EDMV4-T43 AC10 -- absent .claude/edm-hookify/ exits 0 and spawns zero jq processes"
+else
+  fail "EDMV4-T43 AC10 -- rc=${T43_AC10_RC} jq_spawns=${T43_AC10_JQCOUNT} (expected rc=0, spawns=0)"
+fi
+
+# ---- AC2/AC3: jq process count is IDENTICAL for a 1-rule and a 50-rule enabled set --------------
+t43_build_ruleset() {
+  local dir="$1" n="$2" i
+  mkdir -p "${dir}/.claude/edm-hookify"
+  for ((i = 0; i < n; i++)); do
+    jq --arg nm "warn-rule-${i}" '.name = $nm' "${HOOKIFY_FIXTURES}/warn-no-console-log.json" \
+      > "${dir}/.claude/edm-hookify/warn-rule-${i}.json"
+  done
+}
+
+T43_1RULE_PROJ="${TMP}/t43-1rule"
+T43_50RULE_PROJ="${TMP}/t43-50rule"
+t43_build_ruleset "$T43_1RULE_PROJ" 1
+t43_build_ruleset "$T43_50RULE_PROJ" 50
+
+rm -f "$T43_JQ_COUNT_FILE"; touch "$T43_JQ_COUNT_FILE"
+(cd "$T43_1RULE_PROJ" && CLAUDE_PROJECT_DIR="$T43_1RULE_PROJ" PATH="${T43_JQSHIM_DIR}:${PLUGIN_DIR}/bin:${PATH}" \
+  bash -c 'echo "{\"file_path\":\"x\",\"new_text\":\"console.log(1)\"}" | edm-hookify eval file' >/dev/null 2>&1) || true
+T43_1RULE_COUNT="$(wc -l < "$T43_JQ_COUNT_FILE" | tr -d ' ')"
+
+rm -f "$T43_JQ_COUNT_FILE"; touch "$T43_JQ_COUNT_FILE"
+(cd "$T43_50RULE_PROJ" && CLAUDE_PROJECT_DIR="$T43_50RULE_PROJ" PATH="${T43_JQSHIM_DIR}:${PLUGIN_DIR}/bin:${PATH}" \
+  bash -c 'echo "{\"file_path\":\"x\",\"new_text\":\"console.log(1)\"}" | edm-hookify eval file' >/dev/null 2>&1) || true
+T43_50RULE_COUNT="$(wc -l < "$T43_JQ_COUNT_FILE" | tr -d ' ')"
+
+if [[ "$T43_1RULE_COUNT" -eq "$T43_50RULE_COUNT" && "$T43_1RULE_COUNT" -ge 1 ]]; then
+  pass "EDMV4-T43 AC2/AC3 -- jq process count identical for 1-rule and 50-rule sets (${T43_1RULE_COUNT} each)"
+else
+  fail "EDMV4-T43 AC2/AC3 -- jq spawns diverged: 1-rule=${T43_1RULE_COUNT}, 50-rule=${T43_50RULE_COUNT}"
+fi
+
+# ---- AC6/AC8: payload truncation cap -- a match only past the ceiling does not fire, and the
+# call returns within the same order of magnitude as a normal call. -----------------------------
+T43_TRUNC_PROJ="${TMP}/t43-trunc"
+mkdir -p "${T43_TRUNC_PROJ}/.claude/edm-hookify"
+jq -n '{name:"trunc-marker",enabled:true,event:"file",action:"warn",
+  conditions:[{field:"new_text",operator:"contains",pattern:"TRUNC_MARKER"}],
+  message:"marker found"}' > "${T43_TRUNC_PROJ}/.claude/edm-hookify/trunc-marker.json"
+
+T43_FILLER="$(printf 'a%.0s' $(seq 1 70000))"
+T43_HUGE_PAYLOAD="$(jq -cn --arg t "${T43_FILLER}TRUNC_MARKER" '{file_path:"x",new_text:$t}')"
+T43_NORMAL_PAYLOAD='{"file_path":"x","new_text":"short TRUNC_MARKER text"}'
+
+T43_T0=$(date +%s)
+T43_HUGE_OUT="$(cd "$T43_TRUNC_PROJ" && CLAUDE_PROJECT_DIR="$T43_TRUNC_PROJ" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+  bash -c "echo '${T43_HUGE_PAYLOAD}' | edm-hookify eval file")"
+T43_T1=$(date +%s)
+T43_NORMAL_OUT="$(cd "$T43_TRUNC_PROJ" && CLAUDE_PROJECT_DIR="$T43_TRUNC_PROJ" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+  bash -c "echo '${T43_NORMAL_PAYLOAD}' | edm-hookify eval file")"
+T43_T2=$(date +%s)
+T43_HUGE_MS=$(( (T43_T1 - T43_T0) ))
+T43_NORMAL_MS=$(( (T43_T2 - T43_T1) ))
+
+check_absent "EDMV4-T43 AC6/AC8 -- a match only past the 65536-char ceiling does not fire" \
+  "trunc-marker" "$T43_HUGE_OUT"
+check "EDMV4-T43 AC6/AC8 -- the same rule DOES fire when the marker is within the ceiling (positive control)" \
+  "trunc-marker" "$T43_NORMAL_OUT"
+if [[ "$T43_HUGE_MS" -le $((T43_NORMAL_MS * 20 + 5)) ]]; then
+  pass "EDMV4-T43 AC8 -- oversized-payload call (${T43_HUGE_MS}s) is the same order of magnitude as normal (${T43_NORMAL_MS}s)"
+else
+  fail "EDMV4-T43 AC8 -- oversized-payload call (${T43_HUGE_MS}s) far exceeds normal call (${T43_NORMAL_MS}s)"
+fi
+
+echo
+
+# =================================================================================================
+# EDMV4-T46: Build edm-stop-gate and add it as a second entry in the existing Stop block
+# =================================================================================================
+echo "=== EDMV4-T46: edm-stop-gate ==="
+echo
+
+EDM_STOP_GATE="${PLUGIN_DIR}/bin/edm-stop-gate"
+HOOKS_JSON="${PLUGIN_DIR}/hooks/hooks.json"
+
+# ---- AC5: exists, executable, validate-only (no hookify stop-rule wiring in this ticket) -------
+if [[ -x "$EDM_STOP_GATE" ]]; then
+  pass "EDMV4-T46 AC5 -- edm-stop-gate exists and is executable"
+else
+  fail "EDMV4-T46 AC5 -- edm-stop-gate missing or not executable"
+fi
+check_absent "EDMV4-T46 AC5 -- edm-stop-gate does not invoke edm-hookify (validate-only this ticket)" \
+  "edm-hookify" "$(cat "$EDM_STOP_GATE")"
+check "EDMV4-T46 AC5 -- edm-stop-gate runs edm-state validate" \
+  "edm-state validate" "$(cat "$EDM_STOP_GATE")"
+
+# ---- AC6/AC7: Stop array length 1, its hooks array length 2, checkpoint entry byte-identical ----
+T46_STOP_LEN="$(jq '.hooks.Stop | length' "$HOOKS_JSON")"
+T46_STOP_HOOKS_LEN="$(jq '.hooks.Stop[0].hooks | length' "$HOOKS_JSON")"
+check "EDMV4-T46 AC6 -- Stop still has exactly one matcher block" "1" "$T46_STOP_LEN"
+check "EDMV4-T46 AC6 -- that block's hooks array now has exactly two entries" "2" "$T46_STOP_HOOKS_LEN"
+T46_CHECKPOINT_CMD="$(jq -r '.hooks.Stop[0].hooks[0].command' "$HOOKS_JSON")"
+check "EDMV4-T46 AC7 -- checkpoint-if-active entry is byte-identical" \
+  "command -v edm-state >/dev/null 2>&1 && edm-state checkpoint-if-active || true" "$T46_CHECKPOINT_CMD"
+T46_GATE_CMD="$(jq -r '.hooks.Stop[0].hooks[1].command' "$HOOKS_JSON")"
+check "EDMV4-T46 AC10 -- the new entry is guarded by 'command -v edm-stop-gate ... || exit 0'" \
+  "command -v edm-stop-gate >/dev/null 2>&1 || exit 0" "$T46_GATE_CMD"
+
+# ---- AC12: CLAUDE.md's Hooks behavior table splits Stop and PreCompact -------------------------
+CLAUDE_MD_TEXT2="$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check_absent "EDMV4-T46 AC12 -- the collapsed 'Stop and PreCompact' row no longer exists" \
+  '`Stop` and `PreCompact`' "$CLAUDE_MD_TEXT2"
+check "EDMV4-T46 AC12 -- Hooks behavior table documents edm-stop-gate's exit contract" \
+  "edm-stop-gate" "$CLAUDE_MD_TEXT2"
+
+# ---- Scratch-repo functional tests (isolated EDM_SRD_ROOT / PATH / HOME / CLAUDE_PROJECT_DIR) ---
+t46_isolate_and_run() {
+  # t46_isolate_and_run <inner-fn> -- runs <inner-fn> inside a fresh scratch git repo with an
+  # isolated HOME and CLAUDE_PROJECT_DIR (so PERM_RULES_MISSING is deterministic regardless of the
+  # developer machine's real ~/.claude/settings.json) and the real bin/ on PATH.
+  local inner="$1"
+  local prev_home="${HOME:-}" prev_cpd="${CLAUDE_PROJECT_DIR:-}"
+  local scratch_home
+  scratch_home="$(mktemp -d "${TMP}/t46-home.XXXXXX")"
+  _t46_body() {
+    export HOME="$scratch_home"
+    export CLAUDE_PROJECT_DIR="$(pwd)"
+    "$inner"
+  }
+  with_scratch_repo _t46_body
+  local rc=$?
+  export HOME="$prev_home"
+  if [[ -n "$prev_cpd" ]]; then export CLAUDE_PROJECT_DIR="$prev_cpd"; else unset CLAUDE_PROJECT_DIR; fi
+  rm -rf "$scratch_home"
+  return $rc
+}
+
+# ---- AC3: no active initiatives -- exits 0, zero bytes on stdout AND stderr --------------------
+t46_ac3_case() {
+  local out rc=0
+  out="$(edm-stop-gate 2>&1)" || rc=$?
+  [[ "$rc" -eq 0 && -z "$out" ]] \
+    && pass "EDMV4-T46 AC3 -- no active initiatives: exit 0, zero bytes on stdout+stderr" \
+    || fail "EDMV4-T46 AC3 -- rc=${rc} out=[${out}] (expected rc=0, empty)"
+}
+t46_isolate_and_run t46_ac3_case
+
+# ---- AC4: informational-only case -- exactly one output line, exit 0, count matches info lines --
+t46_ac4_case() {
+  edm-state init T46INFO >/dev/null
+  local state; state="$(edm-state resolve-dir T46INFO)/.edm-state.json"
+  jq '.current_phase = 2
+      | del(.schema_version)
+      | .skipped_phases = [{phase: 3, rationale: "test exemption"}]' \
+    "$state" > "${state}.tmp" && mv "${state}.tmp" "$state"
+
+  local validate_out info_count
+  validate_out="$(edm-state validate T46INFO 2>&1 || true)"
+  info_count="$(printf '%s\n' "$validate_out" | grep -c '^info ' || true)"
+
+  local out rc=0
+  out="$(edm-stop-gate 2>&1)" || rc=$?
+  local stdout_only; stdout_only="$(edm-stop-gate 2>/dev/null)"
+  local line_count; line_count="$(printf '%s\n' "$out" | grep -c . || true)"
+
+  [[ "$rc" -eq 0 ]] && pass "EDMV4-T46 AC4 -- informational-only case exits 0" \
+    || fail "EDMV4-T46 AC4 -- informational-only case exited ${rc}, expected 0"
+  [[ -z "$stdout_only" ]] && pass "EDMV4-T46 AC4 -- stdout is empty (AC8)" \
+    || fail "EDMV4-T46 AC4 -- stdout carried output: [${stdout_only}]"
+  [[ "$line_count" -eq 1 ]] && pass "EDMV4-T46 AC4 -- exactly one output line" \
+    || fail "EDMV4-T46 AC4 -- expected exactly 1 output line, got ${line_count}: [${out}]"
+  check "EDMV4-T46 AC4 -- the one line names the correct informational count (${info_count})" \
+    "[EDM] ${info_count} informational anomalies (run: edm-state validate T46INFO)" "$out"
+}
+t46_isolate_and_run t46_ac4_case
+
+# ---- AC2: multi-initiative -- one clean, one blocking -- exits 2 and names the offending prefix -
+t46_ac2_case() {
+  edm-state init T46CLEAN >/dev/null
+  edm-state set T46CLEAN current_phase 1 >/dev/null
+  edm-state set T46CLEAN estimated_size Small >/dev/null
+
+  edm-state init T46BLOCK >/dev/null
+  edm-state set T46BLOCK current_phase 1 >/dev/null
+  edm-state set T46BLOCK estimated_size Small >/dev/null
+  edm-state record-partial-verdict T46BLOCK T46BLOCK-T01 PARTIAL "needs runtime check" >/dev/null
+
+  local out rc=0 stdout_only
+  out="$(edm-stop-gate 2>&1)" || rc=$?
+  stdout_only="$(edm-stop-gate 2>/dev/null)" || true
+
+  [[ "$rc" -eq 2 ]] && pass "EDMV4-T46 AC2 -- multi-initiative with one blocking anomaly exits 2" \
+    || fail "EDMV4-T46 AC2 -- exited ${rc}, expected 2"
+  check "EDMV4-T46 AC2 -- blocking message names the offending initiative" "T46BLOCK" "$out"
+  check "EDMV4-T46 AC2 -- blocking message carries the full OPEN_PARTIALS anomaly text" \
+    "blocking  OPEN_PARTIALS" "$out"
+  [[ -z "$stdout_only" ]] && pass "EDMV4-T46 AC8 -- stdout stays empty even in the blocking case" \
+    || fail "EDMV4-T46 AC8 -- stdout carried output in the blocking case: [${stdout_only}]"
+}
+t46_isolate_and_run t46_ac2_case
+
+# ---- AC9: internal-error paths never block (edm-state off PATH; jq broken/missing) -------------
+t46_ac9_case() {
+  # edm-state off PATH entirely (invoke edm-stop-gate itself by absolute path -- PATH is what
+  # its OWN internal `command -v edm-state` check must fail to find, not the gate binary itself).
+  local rc=0 out
+  out="$(PATH="/usr/bin:/bin" "$EDM_STOP_GATE" 2>&1)" || rc=$?
+  [[ "$rc" -eq 0 ]] && pass "EDMV4-T46 AC9 -- edm-state off PATH exits 0" \
+    || fail "EDMV4-T46 AC9 -- edm-state off PATH exited ${rc}, expected 0"
+
+  edm-state init T46JQ >/dev/null
+  edm-state set T46JQ current_phase 1 >/dev/null
+  local fakejq_dir; fakejq_dir="$(mktemp -d "${TMP}/t46-fakejq.XXXXXX")"
+  cat > "${fakejq_dir}/jq" <<'FAKEJQ'
+#!/bin/sh
+exit 1
+FAKEJQ
+  chmod +x "${fakejq_dir}/jq"
+  local rc2=0
+  out="$(PATH="${fakejq_dir}:${PATH}" edm-stop-gate 2>&1)" || rc2=$?
+  [[ "$rc2" -eq 0 ]] && pass "EDMV4-T46 AC9 -- a broken/unusable jq on PATH still exits 0 (never blocks)" \
+    || fail "EDMV4-T46 AC9 -- broken jq case exited ${rc2}, expected 0"
+}
+t46_isolate_and_run t46_ac9_case
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

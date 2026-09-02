@@ -94,6 +94,10 @@
           {
             "type": "command",
             "command": "command -v edm-state >/dev/null 2>&1 && edm-state checkpoint-if-active || true"
+          },
+          {
+            "type": "command",
+            "command": "command -v edm-stop-gate >/dev/null 2>&1 || exit 0; edm-stop-gate"
           }
         ]
       }
