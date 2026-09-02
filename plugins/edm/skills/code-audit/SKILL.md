@@ -1,6 +1,6 @@
 ---
 name: code-audit
-description: EDM Code Audit (post-Phase 6) -- 11 parallel orthogonal audit agents (logic, dead code, edge cases, tests, hygiene, docs, consistency, security, spec, DRY, wiring) plus a synthesizer that produces a severity-ranked remediation plan. Invoked explicitly via /edm:code-audit. Supports --lenses subset for targeted re-audits.
+description: EDM Code Audit (post-Phase 6) -- 14 parallel orthogonal audit agents (logic, dead code, edge cases, tests, hygiene, docs, consistency, security, spec, DRY, wiring, silent failures, type design, behavioral tests) plus a synthesizer that produces a severity-ranked remediation plan. Invoked explicitly via /edm:code-audit. Supports --lenses subset for targeted re-audits.
 user-invocable: true
 model: opus
 effort: max
@@ -21,7 +21,7 @@ allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(mkdir *), Bash(date *)
 
 **Plugin asset note**: every `docs/...` reference in this skill is relative to the EDM plugin root (`plugins/edm/` in this repository, or the installed plugin root in cache). Resolve that root before reading or grepping those files; never assume the current working directory is the plugin root.
 
-A single auditor misses things because it gravitates toward familiar patterns. Eleven auditors with **orthogonal
+A single auditor misses things because it gravitates toward familiar patterns. Fourteen auditors with **orthogonal
 mandates** -- plus a synthesizer -- catch what a single pass misses. Multiple rounds use a persistent ledger to
 track findings across passes and determine convergence.
 
@@ -34,10 +34,13 @@ using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
 
 1. Parse `{PREFIX}`, optional scope, and optional `--lenses` subset from `$ARGUMENTS`.
    - `--lenses L1,L3` runs only those lens agents (comma-separated, with or without spaces).
-   - Validate lens tokens against L1-L11; reject unknown tokens with a clear message.
-   - If `--lenses` is omitted, run all 11 (full round).
-   - Set `LENS_SET` = the list to run; set `ROUND_TYPE` = `full` (11 lenses) or `partial` (subset).
-   - Set `LENS_SET_CSV` = `LENS_SET` joined with commas (e.g. `L1,L9,L11`, or all eleven on a full
+   - Validate lens tokens against L1-L14; reject unknown tokens (including `L15` and above) with a
+     clear message naming the accepted range.
+   - If `--lenses` is omitted, run all 14 (full round).
+   - Set `LENS_SET` = the list to run; set `ROUND_TYPE` = `full` when the union of the lenses run
+     and any lenses legitimately marked N/A (Step 1's stack detection) covers all 14 lens IDs, or
+     `partial` otherwise.
+   - Set `LENS_SET_CSV` = `LENS_SET` joined with commas (e.g. `L1,L9,L11`, or all fourteen on a full
      round). Step 4 **must** pass this to `audit-round-start`, or the round is recorded as `full`
      whatever you actually ran, and the never-convergent guarantee below silently stops applying.
 2. Determine scope: files / commits / branch. Read critical files yourself first to write sharp agent prompts.
@@ -54,10 +57,12 @@ using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
    N=$(edm-state audit-round-start <PREFIX> code --lenses "${LENS_SET_CSV}")
    ```
    `--lenses` is not optional here even on a full round. `cmd_audit_round_start` derives
-   `round_type` from the set -- eleven members means `full`, fewer means `partial` -- and omitting
-   the flag makes it record `full` with an empty `lenses` array regardless of what was run. A smoke
-   round would then satisfy `audit-converged` and could close the initiative, which is exactly what
-   step 10's never-convergent rule exists to prevent. Passing all eleven explicitly on a full round
+   `round_type` from the union rule: `full` when the union of `lenses` and any lens legitimately
+   recorded as N/A (`lenses_na`) covers all 14 lens IDs and `lenses_na` is a subset of the
+   conditional lens set, `partial` otherwise. Omitting `--lenses` materializes `lenses` as the full
+   14-lens set rather than recording an empty array, so a call that omits the flag still records
+   `full` rather than silently satisfying `audit-converged` on a smoke round -- exactly what step
+   10's never-convergent rule exists to prevent. Passing all fourteen explicitly on a full round
    is deliberate and self-documenting.
 5. Set `OUTPUT_DIR="${INIT_DIR}/code-audit/pass-${N}_$(date +%Y-%m-%d)/"` and `mkdir -p "${OUTPUT_DIR}"`
 6. Read the prior `findings-ledger.jsonl` if it exists (or the legacy `findings-ledger.md` if
@@ -78,7 +83,7 @@ using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
 8. Write `${OUTPUT_DIR}/lenses-run.txt` -- one lens ID per line (e.g., `L1`, `L2`, ... for a full round, or `L1`, `L3` for a partial). Add a `Round type: full` or `Round type: partial` header line.
 8a. **Checked precondition -- do not proceed to step 9 until it holds**: `Glob`
     `${OUTPUT_DIR}/lens-L*.jsonl` and count the matches. Compare that count against `|LENS_SET|`
-    (the number of lenses actually run this round, e.g. 11 on a full round). If the counts are
+    (the number of lenses actually run this round, e.g. 14 on a full round). If the counts are
     equal, proceed to the content check below. If the counts differ, **refuse to proceed** and
     name, by lens ID, every member of `LENS_SET` whose `${OUTPUT_DIR}/lens-L{N}.jsonl` is absent
     from the Glob result.
@@ -92,8 +97,8 @@ using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
     any missing halves, re-run the Glob-and-count check; only proceed to the content check below
     once the count equals `|LENS_SET|`.
 
-    **Content check (CA-193, fifth recurrence)**: the count check above cannot distinguish eleven
-    correctly-schema'd files from eleven files carrying an invented schema -- a count match is
+    **Content check (CA-193, fifth recurrence)**: the count check above cannot distinguish fourteen
+    correctly-schema'd files from fourteen files carrying an invented schema -- a count match is
     necessary but not sufficient. For every `${OUTPUT_DIR}/lens-L{N}.jsonl` file, read each line
     and confirm it carries the lens schema's keys -- `schema`, `lens`, `sev` and `status` present,
     and `id` literally `null` -- never the findings-ledger schema's keys (`lenses` (plural),
@@ -247,21 +252,24 @@ using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
 12. On approval, remediate per the rollout order in the plan.
 13. After remediation, re-run affected lenses (use `--lenses` for targeted re-audit, or full round for convergence). Loop until the Convergence gate records Approve.
 
-## The 11 Audit Lenses
+## The 14 Audit Lenses
 
-| Agent                    | Lens                                                                         |
-|--------------------------|------------------------------------------------------------------------------|
-| `edm-audit-logic`        | L1: Logic, correctness, stubs, TODOs, NotImplementedError                    |
-| `edm-audit-dead-code`    | L2: Dead code, unreachable paths, env-eliminated branches                    |
-| `edm-audit-edge-cases`   | L3: Edge cases, concurrency, race conditions, null/empty inputs              |
-| `edm-audit-test-quality` | L4: Test quality, suppressed failures, mock abuse                            |
-| `edm-audit-runtime`      | L5: Runtime hygiene (lock files, temp files, .gitignore coverage)            |
-| `edm-audit-docs`         | L6: Comment & error-message accuracy                                         |
-| `edm-audit-consistency`  | L7: Cross-file consistency (timeouts, retry, error handling)                 |
-| `edm-audit-security`     | L8: Security & portability (bash, paths, env vars, systemd)                  |
-| `edm-audit-spec`         | L9: Spec/ticket compliance (REQUIRES ticket pack/SRD paths)                  |
-| `edm-audit-dry`          | L10: DRY violations, duplicate utilities, divergent parallel implementations |
-| `edm-audit-wiring`       | L11: Integration wiring (frontend<->API<->backend, dummy data, unused endpoints) |
+| Agent                        | Lens                                                                             |
+|-------------------------------|----------------------------------------------------------------------------------|
+| `edm-audit-logic`             | L1: Logic, correctness, stubs, TODOs, NotImplementedError                        |
+| `edm-audit-dead-code`         | L2: Dead code, unreachable paths, env-eliminated branches                        |
+| `edm-audit-edge-cases`        | L3: Edge cases, concurrency, race conditions, null/empty inputs                  |
+| `edm-audit-test-quality`      | L4: Test quality, suppressed failures, mock abuse                                |
+| `edm-audit-runtime`           | L5: Runtime hygiene (lock files, temp files, .gitignore coverage)                |
+| `edm-audit-docs`              | L6: Comment & error-message accuracy                                             |
+| `edm-audit-consistency`       | L7: Cross-file consistency (timeouts, retry, error handling)                     |
+| `edm-audit-security`          | L8: Security & portability (bash, paths, env vars, systemd)                      |
+| `edm-audit-spec`              | L9: Spec/ticket compliance (REQUIRES ticket pack/SRD paths)                      |
+| `edm-audit-dry`               | L10: DRY violations, duplicate utilities, divergent parallel implementations     |
+| `edm-audit-wiring`            | L11: Integration wiring (frontend<->API<->backend, dummy data, unused endpoints) |
+| `edm-audit-silent-failures`   | L12: Silent failures -- dangerous fallbacks and errors that succeed while hiding a real failure |
+| `edm-audit-type-design`       | L13: Type design -- illegal states made unrepresentable (**conditional**: auto-N/A on an untyped stack, see Step 1) |
+| `edm-audit-behavioral-tests`  | L14: Behavioral test coverage -- would the tests catch a real bug in the changed behaviour |
 
 ## Smoke Audit vs. Full Round
 
@@ -271,7 +279,7 @@ exactly two paths:
 | Path | Command | When |
 |---|---|---|
 | **Smoke audit** (3 lenses) | `/edm:code-audit <PREFIX> --lenses L1,L9,L11` | The wave under audit is **10 tickets or fewer** AND the change **does not touch production behaviour** |
-| **Full round** (11 lenses) | `/edm:code-audit <PREFIX>` | Everything else, and **always** for a release candidate |
+| **Full round** (14 lenses) | `/edm:code-audit <PREFIX>` | Everything else, and **always** for a release candidate |
 
 Both conditions must hold to take the smoke path. Ticket count is the count of `{PREFIX}-T{NN}`
 tickets in the scope being audited this round, not the initiative total.
@@ -287,7 +295,7 @@ behaviour if **any** of the following is true:
 3. It changes authentication, authorization, secret handling, or any network boundary.
 4. It changes a runtime default, timeout, retry policy, or the default value of a feature flag.
 
-If any one of the four holds, run the full eleven regardless of ticket count.
+If any one of the four holds, run the full fourteen regardless of ticket count.
 
 L1, L9 and L11 are the smoke set because their misses are the ones review does not recover: a stub
 that returns a constant (L1), an AC that was never built (L9), and a UI wired to `MOCK_DATA` (L11)
@@ -295,7 +303,7 @@ each pass every other lens cleanly.
 
 **A partial round is never convergent, so a smoke audit cannot close an initiative** --
 enforced by `edm-state audit-converged`, which refuses convergence when the latest recorded
-round's round type is `partial`. Reaching convergence always costs one full eleven-lens round; a
+round's round type is `partial`. Reaching convergence always costs one full fourteen-lens round; a
 smoke audit buys a faster answer between rounds, never the last one. Nothing about the
 partial-round machinery changes here: `ROUND_TYPE=partial` is still set in Operational
 Orchestration step 1, the `Round type: partial` header is still written into `lenses-run.txt` in
@@ -370,7 +378,7 @@ Prompt: "Read the lens reports (prose and JSONL) in ${OUTPUT_DIR}/, including
          Write the updated ledger to ${INIT_DIR}/code-audit/findings-ledger.jsonl -- the
          authoritative record. Do not write findings-ledger.md yourself.
          Write the consolidated remediation plan to ${OUTPUT_DIR}/REMEDIATION.md.
-         If this is a partial round (fewer than 11 lenses), note 'Round type: partial'
+         If this is a partial round (fewer than 14 lenses), note 'Round type: partial'
          in REMEDIATION.md -- this round cannot satisfy the convergence gate."
 ```
 
@@ -525,7 +533,7 @@ Curation carries no approval weight. The Convergence question itself follows
 `` `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` `` unchanged, and leaving every entry pending
 has no effect on **Approve** / **Revise** / **No-Go**.
 
-## What Single-Pass Audits Miss (Why 11 Lenses)
+## What Single-Pass Audits Miss (Why 14 Lenses)
 
 - **Stubs**: A function returning `{"status": "ok"}` regardless of input looks syntactically correct to every other
   lens.
