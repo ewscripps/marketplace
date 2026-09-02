@@ -1,6 +1,6 @@
 # EDMV4 - Session Handoff
 
-> **Last updated**: 2026-09-02T19:26:07Z by darryl.porter  
+> **Last updated**: 2026-09-02T19:53:32Z by darryl.porter  
 > **To resume**: `/edm:orchestrator EDMV4`
 
 ## Current Status
@@ -10,7 +10,7 @@
 - **Last gate**: Gate 3 - approved 2026-09-02T16:26:25Z by darryl.porter
 - **Product**: edm
 - **Description**: ecc-integration
-- **Next action**: Phase 6 in progress - run `/edm:orchestrator EDMV4` to continue, then `/edm:test EDMV4` when all tickets pass QC
+- **Next action**: Phase 6 in progress - awaiting runtime verification of 3 open PARTIAL verdict(s) (see Outstanding PARTIAL Verdicts below)
 
 ## Resume Point
 
@@ -30,6 +30,12 @@ _(implementation in progress -- track individual ticket status)_
 - **Lifecycle mode**: standard
 - **Compliance**: false
 - **Implementation mode**: standard
+
+## Outstanding PARTIAL Verdicts
+
+- **EDMV4-T06**: runtime-check: re-run Spike A two-block PreToolUse/Stop experiments on a live host; confirm D25 holds on current claude --version  _(recorded 2026-09-02T19:52:55Z)_
+- **EDMV4-T07**: runtime-check: re-test MultiEdit denial on a host where the tool is present; absent from this session toolset, reproduced twice  _(recorded 2026-09-02T19:52:55Z)_
+- **EDMV4-T34**: runtime-check: exercise the size-classifier pre-step through a real /edm:orchestrator Step 1c dialog  _(recorded 2026-09-02T19:52:55Z)_
 
 ## Gates
 

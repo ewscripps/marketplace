@@ -235,3 +235,33 @@ Run before merging code that will undergo a code audit:
   safe, allowlisted references (e.g., "API key missing" -- not the key value).
 - **Constants are single-sourced:** role names, enums, magic numbers each have one definition; all other usages import
   from that definition.
+
+### A verification scan matches the prose that describes the pattern it hunts, so it reports its own documentation as findings or is defeated into reporting none (EDMV4, 2026-09-02, P1)
+
+source: EDMV4
+audit-type: code
+date: 2026-09-02
+
+A check that greps for a defect pattern must not match the comments, assertion labels, or
+remediation text that *describe* that pattern. This bit five times in one initiative, from four
+different authors, in three distinct shapes -- it is the most reproducible defect EDMV4 found:
+
+- **Self-defeat by exclusion.** `EDMV4-T21` AC7 scanned `${SCRIPT_DIR}/..` then filtered
+  `grep -v '/tests/'`. Every result path from that unnormalized root reads `.../bin/tests/../x`,
+  which contains `/tests/`, so the filter stripped the one legitimate match. It reported zero and
+  failed unconditionally -- a vacuously FAILING assertion.
+- **Self-match by growth.** `EDMV4-T04`'s anchoring sweep matched the literal `Sec."..."`
+  placeholder inside the anchor sentences it was itself adding, so every file it fixed made the
+  next scan noisier. It consumed three implementer turn budgets and was reverted unshipped.
+- **Self-match by label.** `EDMV4-T42` AC1 asserts no `yaml` appears under `bin/`; its own
+  assertion label contained the literal, making the AC's stated command a permanent false
+  positive -- in the same file that already carried a guard against this class.
+- **Over-broad subject.** The `EDMV4-T04` AC11 orphan check matched every `Sec."X"`, including
+  citations to documents other than the one it validates against, reporting 28 phantom orphans.
+
+**Prevention.** Anchor the pattern to the shape a *real* occurrence has and a description cannot:
+require start-of-line position (`^[[:space:]]*# shellcheck disable=`), require the qualifying
+prefix (`CLAUDE.md Sec."`), or assemble the needle at runtime so the literal never appears in
+source. Normalize any path root with `pwd -P` **before** applying a path-based exclusion. Then
+prove the detector fires: pair every zero-count assertion with a positive control against a
+known-bad fixture, because "found 0" and "matched nothing, ever" are indistinguishable otherwise.

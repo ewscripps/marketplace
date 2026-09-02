@@ -141,7 +141,23 @@
   "compliance_gate_approved": false,
   "last_decision": "architecture.md written by edm-architect",
   "audit_rounds": {},
-  "partial_verdict_map": {},
+  "partial_verdict_map": {
+    "EDMV4-T06": {
+      "verdict": "PARTIAL",
+      "note": "runtime-check: re-run Spike A two-block PreToolUse/Stop experiments on a live host; confirm D25 holds on current claude --version",
+      "recorded_at": "2026-09-02T19:52:55Z"
+    },
+    "EDMV4-T07": {
+      "verdict": "PARTIAL",
+      "note": "runtime-check: re-test MultiEdit denial on a host where the tool is present; absent from this session toolset, reproduced twice",
+      "recorded_at": "2026-09-02T19:52:55Z"
+    },
+    "EDMV4-T34": {
+      "verdict": "PARTIAL",
+      "note": "runtime-check: exercise the size-classifier pre-step through a real /edm:orchestrator Step 1c dialog",
+      "recorded_at": "2026-09-02T19:52:55Z"
+    }
+  },
   "mode": "standard",
   "lifecycle_mode": "standard",
   "compliance_enabled": false,
@@ -151,7 +167,7 @@
   "forked_from": "",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-09-02T18:41:15Z",
+  "last_updated": "2026-09-02T19:52:55Z",
   "current_step": 6,
   "patterns_last_updated": "2026-09-02T13:25:32Z",
   "patterns_updates": {
