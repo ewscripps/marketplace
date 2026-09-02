@@ -3574,7 +3574,13 @@ check "EDMV4-T21 AC6 -- the subset check dies naming the offending ID on mismatc
 # of the lens ID list a caller reads from. Scoping the scan to bin/ excluding bin/tests/ (the same
 # exclusion convention T62 AC10 above already uses) targets what AC7 actually cares about: no
 # SOURCE file re-declares the list.
-t21_l123_scan="$(command grep -rn 'L1 L2 L3' "${SCRIPT_DIR}/.." 2>/dev/null | command grep -v '/tests/' || true)"
+# EDMV4 wave-1 merge fix: the scan root MUST be normalized before the `/tests/` exclusion runs.
+# `${SCRIPT_DIR}/..` leaves every result path as `.../bin/tests/../edm-state`, which itself
+# contains the literal `/tests/`, so the very next filter stripped the ALL_LENS_IDS declaration
+# this assertion exists to find -- it reported 0 matches and failed unconditionally, a vacuously
+# FAILING assertion (the mirror of the vacuously-passing class the ticket-pack audit hunted).
+t21_bin_root="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
+t21_l123_scan="$(command grep -rn 'L1 L2 L3' "$t21_bin_root" 2>/dev/null | command grep -v "^${t21_bin_root}/tests/" || true)"
 t21_l123_lines=0
 [[ -n "$t21_l123_scan" ]] && t21_l123_lines="$(printf '%s\n' "$t21_l123_scan" | wc -l | tr -d ' ')"
 if [[ "$t21_l123_lines" -eq 1 && "$t21_l123_scan" == *"ALL_LENS_IDS="* ]]; then

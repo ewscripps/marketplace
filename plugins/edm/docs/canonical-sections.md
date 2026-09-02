@@ -118,6 +118,9 @@ The **canonical layout** (v2.0+) places each initiative inside a product subdire
 
 ```
 SRD/                              <- project root, committed to git
++-- .codemap.md                   <- current-architecture map (Should/on-demand); written and
+|                                     refreshed by the first explorer of each initiative
+|                                     (agents/edm-explorer.md); shared across every initiative
 +-- {PRODUCT}/                    <- one directory per product area (e.g. "edm", "auth", "billing")
     +-- {PREFIX}__{DESCRIPTION}/  <- initiative directory (double-underscore separator)
         |
@@ -165,6 +168,12 @@ SRD/                              <- project root, committed to git
 - `Must/Should/Could` -- priority per SRD EDMV2-38..43
 
 **Canonical artifact homes** (all paths derived from state via `initiative_dir_for()`, never hardcoded):
+- `SRD/.codemap.md` -- the repository's **current** architecture, distinct from any one
+  initiative's `architecture.md` (its **target** architecture): the two never duplicate or
+  contradict each other because they answer different questions. Lives at the `srd_root` root, not
+  inside an initiative directory, because it is shared and refreshed across initiatives rather than
+  scoped to one (D11, `EDMV4-T48`). No generator produces or validates it -- it is written by hand
+  by the first explorer of each initiative (`agents/edm-explorer.md`).
 - `architecture.md` -- canonical home for `edm-architect` diagrams and architecture decisions (EDMV2-38)
 - `explorers/` -- canonical home for parallel explorer reports; synthesized into `planning.md` (EDMV2-39)
 - `decisions.md` -- initiative-wide key-decisions + finding-to-commit ledger; distinct from `code-audit/findings-ledger.md` which is the code-audit cross-round ledger (EDMV2-40)
