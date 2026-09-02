@@ -42,7 +42,7 @@ round so a teammate sees debt was knowingly carried, not silently missed. `edm-s
 re-verifies P0/P1 are still 0 and refuses if a newer full audit round has completed since
 acceptance (the debt has gone stale -- re-run `--accept-p2-debt` or fix the remaining findings
 first). The override reads the blocking set straight from `findings-ledger.jsonl`, so it does
-not itself require that a full eleven-lens round was ever recorded (CA-426): on an initiative
+not itself require that a full fourteen-lens round was ever recorded (CA-426): on an initiative
 with zero recorded code-audit rounds the convergence check warns on stderr and proceeds, and the
 flag can engage. It asserts only that no P0 or P1 is open in the ledger as it stands, never that
 the ledger is complete. The gate also offers **Fix low-hanging fruit first**: remediate the P2s
@@ -147,8 +147,8 @@ SRD/                              <- project root, committed to git
         |   +-- findings-ledger.jsonl <- authoritative cross-round findings ledger (stable CA-NNN IDs)
         |   +-- findings-ledger.md    <- deterministic render of findings-ledger.jsonl (`edm-state render-ledger`)
         |   +-- pass-{N}_{YYYY-MM-DD}/ <- one directory per audit round (N = monotonic counter)
-        |       +-- lens-L1.jsonl ... lens-L11.jsonl  <- authoritative per-lens findings (schema in skills/code-audit/SKILL.md)
-        |       +-- lens-L1.md ... lens-L11.md
+        |       +-- lens-L1.jsonl ... lens-L14.jsonl  <- authoritative per-lens findings (schema in skills/code-audit/SKILL.md)
+        |       +-- lens-L1.md ... lens-L14.md
         |       +-- lenses-run.txt    <- lens set for this round (full vs. partial)
         |       +-- tooling-notes.md  <- on-demand (CA-388/CA-466): per-lens stall counts and truncation caveats; absent when the round's delivery was clean
         |       +-- REMEDIATION.md

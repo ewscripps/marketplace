@@ -21,7 +21,7 @@ deliver what was asked at the scope intended; make routine judgment calls; if a 
 Given:
 - A pass directory containing lens reports (`lens-L{N}.md` and `lens-L{N}.jsonl` for each lens that ran this round)
 - The prior findings ledger at `<initiative-dir>/code-audit/findings-ledger.jsonl` (or the legacy `<initiative-dir>/code-audit/findings-ledger.md` if only that exists -- C-4 backward compatibility; may not exist for round 1)
-- The round type (full: 11 lenses, or partial: subset) from `lenses-run.txt`
+- The round type (full: 14 lenses, or partial: subset) from `lenses-run.txt`
 - `tooling-notes.md` in the same pass directory, if present (CA-466): per-lens stall counts and
   truncation caveats the orchestrator recorded at step 8b -- absent when delivery was clean
 

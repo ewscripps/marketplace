@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Code-audit grows from 11 to 14 lenses (EDMV4-31 through EDMV4-35, EDMV4-T21/T25/T26/T27/T29/T33).**
+  Three new orthogonal lens agents join the existing eleven: **L12 (Silent Failures)** -- dangerous
+  fallbacks and errors that succeed while hiding a real failure, a gap L1's empty-catch hunt does
+  not cover; **L13 (Type Design)** -- whether types make illegal states harder or impossible to
+  represent, the sole **conditional** lens, auto-N/A on a stack with no typed-language marker
+  (`tsconfig.json`, `Cargo.toml`, `go.mod`, a typed Python config, etc.), detected deterministically
+  and never skipped for cost; and **L14 (Behavioral Test Coverage)** -- whether the tests would
+  catch a real bug in the changed behaviour, bounded against L4's in-test defect hunt and
+  `edm-test-coverage-auditor`'s percentage thresholds. `ALL_LENS_IDS` in `bin/edm-state` now
+  enumerates `L1` through `L14`, with a new `CONDITIONAL_LENS_IDS="L13"` sibling constant. The
+  `round_type` derivation moves from set-equality to a union rule: `full` iff
+  `(lenses UNION lenses_na) == ALL_LENS_IDS` and `lenses_na` is a subset of
+  `CONDITIONAL_LENS_IDS`, recorded via a new `--na-lenses` flag on `edm-state audit-round-start`
+  and a new `lenses_na` field alongside the existing `lenses` array in the round record.
+  `skills/code-audit/SKILL.md`, `README.md`, `plugin.json`, `marketplace.json` and the other
+  user-facing surfaces are updated throughout to read 14 lenses / 18 contested agents in place of
+  11 lenses / 15 agents.
+
 ### Changed
 
 - **Mermaid lint budget re-derived as a conditional, not a bare ratio (EDMV4-47/48, EDMV4-T01).**

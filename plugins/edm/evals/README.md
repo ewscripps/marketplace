@@ -302,8 +302,8 @@ is not a substitute for the SRD audit gate (Gate 2) on real work.
 
 ## Tiering matrix (`tiering-matrix.sh`, EDMV3-T48, D16)
 
-`tiering-matrix.sh` applies D16's mechanical model/effort promotion rule to the fifteen contested
-agents (the eleven code-audit lenses, `edm-audit-synthesizer`, `edm-srd-auditor`,
+`tiering-matrix.sh` applies D16's mechanical model/effort promotion rule to the eighteen contested
+agents (the fourteen code-audit lenses, `edm-audit-synthesizer`, `edm-srd-auditor`,
 `edm-ticket-auditor`, `edm-qc-auditor`). Like `bin/edm-compare-eval`, it never invokes `claude`
 itself -- it consumes a JSON manifest of already-captured per-agent, per-configuration finding
 counts and cost, and applies the rule mechanically:

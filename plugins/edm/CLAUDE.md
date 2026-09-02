@@ -118,8 +118,8 @@ SRD/                              <- project root, committed to git
         |   +-- findings-ledger.jsonl <- authoritative cross-round findings ledger (stable CA-NNN IDs)
         |   +-- findings-ledger.md    <- deterministic render of findings-ledger.jsonl (`edm-state render-ledger`)
         |   +-- pass-{N}_{YYYY-MM-DD}/ <- one directory per audit round (N = monotonic counter)
-        |       +-- lens-L1.jsonl ... lens-L11.jsonl  <- authoritative per-lens findings (schema in skills/code-audit/SKILL.md)
-        |       +-- lens-L1.md ... lens-L11.md
+        |       +-- lens-L1.jsonl ... lens-L14.jsonl  <- authoritative per-lens findings (schema in skills/code-audit/SKILL.md)
+        |       +-- lens-L1.md ... lens-L14.md
         |       +-- lenses-run.txt    <- lens set for this round (full vs. partial)
         |       +-- tooling-notes.md  <- on-demand (CA-388/CA-466): per-lens stall counts and truncation caveats; absent when the round's delivery was clean
         |       +-- REMEDIATION.md
@@ -223,7 +223,7 @@ this against the current SRD version and flags drift as a P0 finding.
 | `magenta` | `edm-ticket-writer`                                   | Phase 4 -- writing tickets               |
 | `green`   | `edm-implementer`                                     | Phase 6 -- building                      |
 | `red`     | `edm-qc-auditor`                                      | Phase 6 QC -- final gate                 |
-| `cyan`    | all 11 `edm-audit-*` lenses + `edm-audit-synthesizer` | Code audit (one logical operation)      |
+| `cyan`    | all 14 `edm-audit-*` lenses + `edm-audit-synthesizer` | Code audit (one logical operation)      |
 
 When adding a new agent, choose a color that matches the phase. Lens agents always share `cyan`.
 
@@ -262,7 +262,7 @@ round so a teammate sees debt was knowingly carried, not silently missed. `edm-s
 re-verifies P0/P1 are still 0 and refuses if a newer full audit round has completed since
 acceptance (the debt has gone stale -- re-run `--accept-p2-debt` or fix the remaining findings
 first). The override reads the blocking set straight from `findings-ledger.jsonl`, so it does
-not itself require that a full eleven-lens round was ever recorded (CA-426): on an initiative
+not itself require that a full fourteen-lens round was ever recorded (CA-426): on an initiative
 with zero recorded code-audit rounds the convergence check warns on stderr and proceeds, and the
 flag can engage. It asserts only that no P0 or P1 is open in the ledger as it stands, never that
 the ledger is complete. The gate also offers **Fix low-hanging fruit first**: remediate the P2s
@@ -392,7 +392,7 @@ parity with the producer agents whose output they check (`edm-srd-writer`, `edm-
 `edm-implementer`). Verification is not cheaper than production: a verifier must read the
 artifact under audit **and** cross-reference it against the codebase, which is strictly more work
 than writing the artifact in the first place. Do not "tidy" any of these four back down to the
-plugin's `maxTurns: 30` floor (the eleven code-audit lens agents' own ceiling, which has no
+plugin's `maxTurns: 30` floor (the fourteen code-audit lens agents' own ceiling, which has no
 evidence of truncation and is unrelated to this parity) -- that floor was set once, before this
 contract existed, and never revisited until this section landed. The completion sentinel above is
 what makes a higher budget safe: it is what still catches a truncated run even though truncation
@@ -457,7 +457,7 @@ never added to this generated set.
 
 **Current position (decisions.md D34, extended by `EDMV4-T04`): the negative branch is now the
 shipped default across the full verified set, not a narrower one.** `agents/edm-audit-synthesizer.md`,
-`agents/edm-srd-auditor.md`, all eleven `agents/edm-audit-*.md` lens definitions, and all
+`agents/edm-srd-auditor.md`, all fourteen `agents/edm-audit-*.md` lens definitions, and all
 fourteen files `EDMV4-T04` anchored (`agents/edm-architect.md`, `agents/edm-srd-writer.md`,
 `agents/edm-ticket-writer.md`, `agents/edm-ticket-auditor.md`, `agents/edm-qc-auditor.md`,
 `skills/srd/SKILL.md`, `skills/tickets/SKILL.md`, `skills/audit-srd/SKILL.md`,
@@ -490,7 +490,7 @@ for the exact command that closes this gap and replaces this note with a real ru
 
 | Role / Agent(s) | Model | Effort | Rationale |
 |---|---|---|---|
-| Contested audit set -- 11 code-audit lenses, `edm-audit-synthesizer`, `edm-srd-auditor`, `edm-ticket-auditor`, `edm-qc-auditor` (15 agents) | `opus` | `max` | Judgment-heavy work -- surface subtle issues. UNCHANGED pending the tiering matrix (D16): no hand-picked downgrade is taken here -- only a measured, mechanical promotion (EDMV3-T48 AC3) may retier this set |
+| Contested audit set -- 14 code-audit lenses, `edm-audit-synthesizer`, `edm-srd-auditor`, `edm-ticket-auditor`, `edm-qc-auditor` (18 agents) | `opus` | `max` | Judgment-heavy work -- surface subtle issues. UNCHANGED pending the tiering matrix (D16): no hand-picked downgrade is taken here -- only a measured, mechanical promotion (EDMV3-T48 AC3) may retier this set |
 | `edm-explorer` | `sonnet` | `high` | Scan/list work, not judgment-heavy synthesis; downgraded from `opus`/`max` EDMV3-T02 (D16 wave-A safe downgrade) |
 | `edm-test-coverage-auditor` | `sonnet` | `high` | Read-only coverage parse and AC cross-reference, not judgment-heavy; downgraded from `opus`/`max` EDMV3-T02 (D16 wave-A safe downgrade) |
 | `edm-architect` | `opus` | `high` | Writing work; downgraded from `opus`/`max` EDMV3-T02 (D16 wave-A safe downgrade) |
@@ -509,7 +509,7 @@ for this plugin: an agent or skill added later inherits them rather than redisco
 scratch. The adoptions are **structural** (instruction-design patterns -- a shape of section, a
 kind of clause) and never verbatim text lifted from a source.
 
-**Four sources, with licence and location, matching the enumeration this subsection uses**:
+**Six sources, with licence and location, matching the enumeration this subsection uses**:
 
 - **opus-5** -- the Opus 5 prompting guide:
   `https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5`
@@ -535,9 +535,36 @@ kind of clause) and never verbatim text lifted from a source.
   ladder, the "when NOT to" carve-out, the "cost of ignoring this" clause) -- no text was copied
   from either file.
 
-The clean-room posture on both is deliberately unchanged now that the licences are known: MIT
-would have permitted verbatim reuse with attribution, but structural adoption was what this
-initiative actually did, and restating it as a licence consequence would misdescribe the work.
+- **ECC** -- `everything-claude-code`: `https://github.com/affaan-m/everything-claude-code`
+  (**MIT**). Licence verified 2026-08-31 by direct inspection of the local clone's `LICENSE:1-3`
+  ("MIT License / Copyright (c) 2026 Affaan Mustafa"), clone revision `ca185ef5` (re-confirmed
+  2026-09-02). Clean-room note: L12's taxonomy source (`ECC/agents/silent-failure-hunter.md`) was
+  read for its five-category structure only, per `EDMV4-T25` -- no text was copied.
+- **GateGuard** -- `https://github.com/zunoworks/gateguard` (**MIT**, upstream is Python). ECC
+  vendored a JavaScript port of it at `scripts/hooks/gateguard-fact-force.js`, evidenced by that
+  file's own header at `:19-20` ("Full package with config support: pip install gateguard-ai" /
+  "Repo: https://github.com/zunoworks/gateguard") and by `ECC/skills/gateguard/SKILL.md:5` marking
+  `metadata: origin: community`. Licence verified 2026-08-31 by direct inspection of
+  `https://raw.githubusercontent.com/zunoworks/gateguard/main/LICENSE` -- a fetched URL, not a
+  local clone -- which reads "MIT License / Copyright (c) 2026 Hirokazu Seto / ZUNO WORKS K.K."
+  (decisions.md D13). Clean-room note: per AD1 as ratified at Gate 2 (decisions.md D14,
+  2026-09-02), EDM's `bin/edm-gateguard` is a bash rewrite, not a vendoring of either upstream --
+  what carries over is the mechanism (deny first touch, demand facts, allow on retry), the same
+  pattern-level adoption posture recorded above for `caveman` and `ponytail`; no text was copied
+  from either the Python upstream or ECC's JavaScript port.
+
+The strict MIT NOTICE obligation these two entries would otherwise carry is **dormant**: it binds
+only on verbatim reuse, and AD1's ratified bash rewrite produces none. It is re-raised to Must
+Have if AD1 is ever reversed to vendoring **by any route** -- `EDMV4-59` rejected at a later gate,
+or any subsequent decision directing vendoring -- and on that reversal three things bind together:
+the vendored files retain their original copyright headers unmodified; a new `plugins/edm/NOTICE`
+file names ZUNO WORKS K.K. and Affaan Mustafa with their MIT licence texts; and `EDMV4-56`'s
+required-binary set is re-presented at the gate as an explicit dependency addition.
+
+The clean-room posture on `caveman`, `ponytail`, ECC and GateGuard is deliberately unchanged now
+that all four licences are known: MIT would have permitted verbatim reuse with attribution, but
+structural adoption was what this initiative actually did, and restating it as a licence
+consequence would misdescribe the work.
 
 #### Do-NOT-adopt guards
 
@@ -1343,7 +1370,7 @@ macOS and Linux only (bash 3.2+, `jq`, `git` required). Windows and WSL are unsu
 
 **There is no separate CI pipeline for this plugin** -- EDM's own local mechanisms already catch
 what a CI pipeline would, before an MR is ever opened: `edm-lint-artifacts`/`edm-check-grants`/
-`edm-check-vocabulary` run as part of the git-commit hook and the 11-lens code-audit methodology
+`edm-check-vocabulary` run as part of the git-commit hook and the 14-lens code-audit methodology
 audits the plugin's own bin/ scripts, skills and agents on every code-audit round (this
 initiative's own history is exactly that self-referential audit). Running the local smoke suite
 below is therefore the actual enforcement, not a convenience check ahead of a pipeline that no
