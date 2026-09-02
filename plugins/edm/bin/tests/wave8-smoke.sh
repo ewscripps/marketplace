@@ -2294,5 +2294,131 @@ T18_TICKET_WRITER_TOOLS="$(grep -m1 '^tools:' "${PLUGIN_DIR}/agents/edm-ticket-w
 check_absent "EDMV4-T18 AC10 -- edm-ticket-writer.md still carries no Bash grant" "Bash" "$T18_TICKET_WRITER_TOOLS"
 
 echo
+
+# =================================================================================================
+# EDMV4-T11: Build bin/edm-gateguard and register its Edit/Write/MultiEdit matcher block
+# =================================================================================================
+echo "=== EDMV4-T11: edm-gateguard ==="
+echo
+
+GATEGUARD="${PLUGIN_DIR}/bin/edm-gateguard"
+HOOKS_JSON="${PLUGIN_DIR}/hooks/hooks.json"
+
+# ---- AC1: executable, wc -l in [200,400] --------------------------------------------------------
+if [[ -x "$GATEGUARD" ]]; then
+  pass "EDMV4-T11 AC1 -- edm-gateguard has the executable bit set"
+else
+  fail "EDMV4-T11 AC1 -- edm-gateguard is not executable"
+fi
+t11_lines="$(wc -l < "$GATEGUARD" | tr -d ' ')"
+if [[ "$t11_lines" -ge 200 && "$t11_lines" -le 400 ]]; then
+  pass "EDMV4-T11 AC1 -- edm-gateguard is ${t11_lines} lines (within the closed range 200-400)"
+else
+  fail "EDMV4-T11 AC1 -- edm-gateguard is ${t11_lines} lines (expected 200-400)"
+fi
+
+# ---- AC2: sources _edm-cli-lib.sh; usage() calls the shared print_help() sentinel extractor; no
+# hardcoded sed -n 'A,Bp' help range. -------------------------------------------------------------
+check "EDMV4-T11 AC2 -- sources _edm-cli-lib.sh" "source \"\${SCRIPT_DIR}/_edm-cli-lib.sh\"" "$(cat "$GATEGUARD")"
+check "EDMV4-T11 AC2 -- calls the shared print_help()" "print_help \"\${BASH_SOURCE[0]:-\$0}\"" "$(cat "$GATEGUARD")"
+check "EDMV4-T11 AC2 -- carries EDM-HELP-BEGIN/END sentinels" "EDM-HELP-BEGIN" "$(cat "$GATEGUARD")"
+check_absent "EDMV4-T11 AC2 -- no hardcoded sed -n 'A,Bp' help-range extraction" "sed -n '" "$(cat "$GATEGUARD")"
+
+# ---- AC3: hooks.json gains exactly one new PreToolUse matcher block for Edit/Write/MultiEdit,
+# whose command begins with the same guard the git-commit block uses. -----------------------------
+t11_pretooluse_len="$(jq '.hooks.PreToolUse | length' "$HOOKS_JSON")"
+check "EDMV4-T11 AC3 -- hooks.json PreToolUse array has exactly 2 entries" "2" "$t11_pretooluse_len"
+
+t11_gg_command="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Edit|Write|MultiEdit") | .hooks[0].command' "$HOOKS_JSON")"
+case "$t11_gg_command" in
+  "command -v edm-gateguard >/dev/null 2>&1 || exit 0"*)
+    pass "EDMV4-T11 AC3 -- Edit|Write|MultiEdit matcher's command begins with the edm-gateguard presence guard"
+    ;;
+  *)
+    fail "EDMV4-T11 AC3 -- Edit|Write|MultiEdit matcher's command does not begin with the expected guard: [${t11_gg_command}]"
+    ;;
+esac
+
+# ---- AC4: the existing git-commit matcher block is byte-identical after the change. -------------
+t11_gitcommit_command="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' "$HOOKS_JSON")"
+check "EDMV4-T11 AC4 -- git-commit matcher's command is byte-identical to its pre-change literal" \
+  "command -v edm-lint-staged-artifacts >/dev/null 2>&1 || exit 0; edm-lint-staged-artifacts" "$t11_gitcommit_command"
+
+# ---- AC5: zero invocations of the state binary. --------------------------------------------------
+t11_ac5_count="$(grep -c 'edm-state' "$GATEGUARD" || true)"
+check "EDMV4-T11 AC5 -- edm-gateguard invokes the state binary zero times" "0" "$t11_ac5_count"
+
+# ---- AC6: no shell-command-inspection detection (D15 descope). ----------------------------------
+t11_ac6_count="$(grep -ci 'destructive\|heredoc\|subshell' "$GATEGUARD" || true)"
+check "EDMV4-T11 AC6 -- edm-gateguard carries no destructive/heredoc/subshell detection" "0" "$t11_ac6_count"
+
+# ---- AC7: required-binary set unchanged -- no node/python/npx/pip. -------------------------------
+t11_ac7_count="$(grep -cE '\b(node|python3?|npx|pip)\b' "$GATEGUARD" || true)"
+check "EDMV4-T11 AC7 -- edm-gateguard references no node/python/npx/pip" "0" "$t11_ac7_count"
+
+# ---- AC8: the marker `test -f` check precedes the first jq reference, by line number. ------------
+t11_marker_line="$(grep -n 'test -f' "$GATEGUARD" | head -1 | cut -d: -f1)"
+t11_jq_line="$(grep -n 'jq' "$GATEGUARD" | head -1 | cut -d: -f1)"
+if [[ -n "$t11_marker_line" && -n "$t11_jq_line" && "$t11_marker_line" -lt "$t11_jq_line" ]]; then
+  pass "EDMV4-T11 AC8 -- marker test -f (line ${t11_marker_line}) precedes the first jq reference (line ${t11_jq_line})"
+else
+  fail "EDMV4-T11 AC8 -- marker test -f line=[${t11_marker_line}] jq line=[${t11_jq_line}] -- ordering not satisfied"
+fi
+
+# ---- AC9: with the marker absent and jq only reachable via a spy stub, exit 0, empty stdout, and
+# the spy is never invoked (zero jq processes spawned). --------------------------------------------
+harness_scratch_dir T11_TMP
+T11_FAKEBIN="${T11_TMP}/fakebin"
+mkdir -p "$T11_FAKEBIN"
+ln -s "$(command -v dirname)" "${T11_FAKEBIN}/dirname"
+ln -s "$(command -v bash)" "${T11_FAKEBIN}/bash"
+cat > "${T11_FAKEBIN}/jq" <<T11JQSPY
+#!/bin/sh
+# ':' is a shell builtin (no PATH lookup needed) -- 'touch' is deliberately NOT used here since
+# this spy is exec'd with a PATH restricted to this fakebin dir only, which has no touch binary.
+: > "${T11_FAKEBIN}/.jq_invoked"
+exit 99
+T11JQSPY
+chmod +x "${T11_FAKEBIN}/jq"
+
+T11_DATA_ABSENT="${T11_TMP}/data-absent"
+mkdir -p "$T11_DATA_ABSENT"
+T11_AC9_RC=0
+T11_AC9_OUT="$(printf '{"tool_name":"Edit"}' | PATH="$T11_FAKEBIN" CLAUDE_PLUGIN_DATA="$T11_DATA_ABSENT" bash "$GATEGUARD" 2>"${T11_TMP}/ac9.stderr")" || T11_AC9_RC=$?
+T11_AC9_STDERR="$(cat "${T11_TMP}/ac9.stderr" 2>/dev/null || true)"
+
+if [[ "$T11_AC9_RC" -eq 0 && -z "$T11_AC9_OUT" && -z "$T11_AC9_STDERR" ]]; then
+  pass "EDMV4-T11 AC9 -- marker absent + jq off PATH: exit 0, empty stdout, empty stderr"
+else
+  fail "EDMV4-T11 AC9 -- marker absent + jq off PATH: rc=${T11_AC9_RC} stdout=[${T11_AC9_OUT}] stderr=[${T11_AC9_STDERR}]"
+fi
+
+if [[ ! -f "${T11_FAKEBIN}/.jq_invoked" ]]; then
+  pass "EDMV4-T11 AC9 -- the jq spy was never invoked (zero jq processes spawned on the allow path)"
+else
+  fail "EDMV4-T11 AC9 -- the jq spy WAS invoked; the allow path spawned a jq process it should never touch"
+fi
+
+# Positive control: the same spy DOES get invoked once a marker is present, proving the spy itself
+# actually intercepts a real invocation rather than the AC9 zero-count being vacuous.
+rm -f "${T11_FAKEBIN}/.jq_invoked"
+T11_DATA_PRESENT="${T11_TMP}/data-present"
+mkdir -p "${T11_DATA_PRESENT}/run" "${T11_TMP}/proj"
+T11_PROJECT_KEY="$(CLAUDE_PROJECT_DIR="${T11_TMP}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+T11_MARKER="${T11_DATA_PRESENT}/run/${T11_PROJECT_KEY}.phase6"
+printf 'T11PFX\t%s\t2026-09-02T00:00:00Z\n' "${T11_TMP}/proj" > "$T11_MARKER"
+printf '{"tool_name":"Edit"}' | CLAUDE_PROJECT_DIR="${T11_TMP}/proj" PATH="$T11_FAKEBIN" CLAUDE_PLUGIN_DATA="$T11_DATA_PRESENT" bash "$GATEGUARD" >/dev/null 2>&1 || true
+if [[ -f "${T11_FAKEBIN}/.jq_invoked" ]]; then
+  pass "EDMV4-T11 AC9 -- positive control: the jq spy fires once a marker is present, so the absent-case zero-count above is not vacuous"
+else
+  fail "EDMV4-T11 AC9 -- positive control FAILED: the jq spy never fired even with a marker present, so the absent-case zero-count proves nothing"
+fi
+
+echo
+echo "EDMV4-T11 AC10/AC11 -- allow-path p95 is measured by 'bash bin/tests/timing.sh --gateguard'" \
+  "(not auto-discovered here, matching every other timing.sh mode's own precedent, e.g. --lint," \
+  "--mermaid-ratio); see the ticket's own completion note and decisions.md for the recorded figure."
+
+echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

@@ -18,6 +18,7 @@
 #   bash bin/tests/timing.sh --lint          [--files N] [--lines-per-file N]
 #   bash bin/tests/timing.sh --mermaid-ratio
 #   bash bin/tests/timing.sh --all-lint      [--dir DIR]
+#   bash bin/tests/timing.sh --gateguard
 #   bash bin/tests/timing.sh --self-test
 #
 # Run from repo root: bash plugins/edm/bin/tests/timing.sh <mode> [options]
@@ -32,6 +33,7 @@ source "${SCRIPT_DIR}/_harness.sh"
 PLUGIN_DIR="$_HARNESS_PLUGIN_DIR"
 EDM_STATE="${SCRIPT_DIR}/../edm-state"
 EDM_LINT="${SCRIPT_DIR}/../edm-lint-artifacts"
+EDM_GATEGUARD="${SCRIPT_DIR}/../edm-gateguard"
 
 # CA-450: process-wide scratch cleanup. Every mode creates its scratch directory at the top of
 # its case arm and removed it only with a single unguarded tail-position `rm -rf` -- under this
@@ -41,7 +43,7 @@ EDM_LINT="${SCRIPT_DIR}/../edm-lint-artifacts"
 # --dir the caller expects to keep.
 _timing_cleanup() {
   local _d
-  for _d in "${TMP_PC:-}" "${TMP_LG:-}" "${TMP_SS:-}" "${TMP_LINT:-}" "${TMP_MR:-}"; do
+  for _d in "${TMP_PC:-}" "${TMP_LG:-}" "${TMP_SS:-}" "${TMP_LINT:-}" "${TMP_MR:-}" "${TMP_GG:-}"; do
     [[ -n "$_d" && -d "$_d" ]] && rm -rf "$_d"
   done
   return 0
@@ -468,8 +470,58 @@ case "$MODE" in
     echo "TIMING all_lint duration_ms=${ms} (${actual_initiatives} initiatives, budget <= 60000ms, CI budget not a commit-path budget)"
     ;;
 
+  --gateguard)
+    # EDMV4-T11 AC10/AC11: the allow-path p95 SRD Sec.9.1's own performance table names (50 ms
+    # p95, marker absent, 20 samples) is a DESIGN TARGET until this mode runs for real -- SRD
+    # Sec.9.3's own wording. This mode measures BOTH branches -- marker-absent (the fast exit)
+    # and marker-present (the full gate, the only branch that exercises the per-edit marker
+    # stat) -- against a generated fixture, and states plainly whether the 50 ms target was met
+    # by the branch the SRD table actually names ("GateGuard allow path (marker absent)").
+    TMP_GG="$(mktemp -d "${TMPDIR:-/tmp}/edm-timing-gg.XXXXXX")"
+    export CLAUDE_PROJECT_DIR="$TMP_GG"
+    export CLAUDE_PLUGIN_DATA="${TMP_GG}/data"
+    mkdir -p "$CLAUDE_PLUGIN_DATA"
+
+    # A single representative Edit tool_input payload -- the fixture size this mode's figures are
+    # quoted against, per CLAUDE.md's "Always quote a budget together with its input size" rule.
+    GG_PAYLOAD="${TMP_GG}/payload.json"
+    printf '%s' '{"tool_name":"Edit","tool_input":{"file_path":"/repo/src/example.js","old_string":"const x = 1;","new_string":"const x = 2;"}}' > "$GG_PAYLOAD"
+    GG_PAYLOAD_BYTES="$(wc -c < "$GG_PAYLOAD" | tr -d ' ')"
+
+    _gg_probe() { "$EDM_GATEGUARD" < "$GG_PAYLOAD"; }
+
+    # Branch 1: marker absent (the fast exit) -- no marker file exists anywhere under
+    # CLAUDE_PLUGIN_DATA yet, so this is the SRD table's own "GateGuard allow path (marker
+    # absent)" row.
+    _measure_p95 "$_P95_SAMPLE_COUNT" p95_absent -- _gg_probe
+    echo "TIMING gateguard_allow_absent p95_ms=${p95_absent} samples_ms=${p95_absent_samples[*]} (marker absent, payload=${GG_PAYLOAD_BYTES} bytes, 20 samples, this host)"
+
+    # Branch 2: marker present (the full gate) -- write the marker in its documented one-line,
+    # tab-separated PREFIX/initiative_dir/started_at form (EDMV4-T12 AC6), naming a real,
+    # existing directory so this branch runs the whole path this build exercises rather than
+    # short-circuiting on a missing initiative directory.
+    # shellcheck source=/dev/null
+    source "${SCRIPT_DIR}/../_edm-datadir-lib.sh"
+    GG_MARKER_PATH="$(edm_marker_path)"
+    mkdir -p "$(dirname "$GG_MARKER_PATH")"
+    GG_INIT_DIR="${TMP_GG}/initiative"
+    mkdir -p "$GG_INIT_DIR"
+    printf 'TIMGG\t%s\t%s\n' "$GG_INIT_DIR" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$GG_MARKER_PATH"
+
+    _measure_p95 "$_P95_SAMPLE_COUNT" p95_present -- _gg_probe
+    echo "TIMING gateguard_allow_present p95_ms=${p95_present} samples_ms=${p95_present_samples[*]} (marker present, payload=${GG_PAYLOAD_BYTES} bytes, 20 samples, this host)"
+
+    if [[ "$p95_absent" -le 50 ]]; then
+      echo "TIMING gateguard budget_status=MET (allow-path, marker-absent, p95 ${p95_absent}ms <= 50ms design target, SRD Sec.9.1/9.3)"
+    else
+      echo "TIMING gateguard budget_status=NOT_MET (allow-path, marker-absent, p95 ${p95_absent}ms > 50ms design target, SRD Sec.9.1/9.3) -- a real measured number, recorded per CLAUDE.md's edm-lint-artifacts latency budgets precedent rather than inlining logic into the hook's JSON string (CA-436)"
+    fi
+
+    rm -rf "$TMP_GG"
+    ;;
+
   *)
-    echo "usage: timing.sh <--generate-fixture|--subcommands|--phase-complete|--ledger|--session-start|--lint|--mermaid-ratio|--all-lint|--self-test> [options]" >&2
+    echo "usage: timing.sh <--generate-fixture|--subcommands|--phase-complete|--ledger|--session-start|--lint|--mermaid-ratio|--all-lint|--gateguard|--self-test> [options]" >&2
     exit 2
     ;;
 esac

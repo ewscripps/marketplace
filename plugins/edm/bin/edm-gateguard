@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# edm-gateguard -- PreToolUse fact-forcing edit gate for Phase 6 (EDMV4-T11).
+#
+# Why this exists: every other EDM hook fires a handful of times per conversation. `PreToolUse`
+# fires exactly once per `git commit`, where a 3,000 ms budget is acceptable because a human is
+# already waiting on it. This hook fires on every Edit, Write and MultiEdit call -- tens to
+# hundreds of times per Phase 6 wave -- a different order of magnitude entirely, and the reason
+# every design choice below optimizes for the common case rather than the gated one:
+#
+#   * A repository with no active Phase 6 initiative pays exactly one process exec and one marker
+#     file test. No other filesystem read happens, and no parser subprocess is ever spawned.
+#   * Two rejected designs, recorded for anyone tempted to reach for them later: re-deriving "which
+#     initiative is active" from a fresh sweep on every call costs one interpreter startup plus one
+#     parser subprocess per active initiative (at a 50-initiative fixture, fifty subprocesses PER
+#     EDIT); anything shaped like a full state checkpoint (a write lock plus a hash over every
+#     tracked artifact) is Stop/PreCompact-cadence work, not per-edit work. Both are the failure
+#     mode the marker file exists to avoid, not an optimization left on the table.
+#
+# Provenance (decisions.md D14, ratified at Gate 2): this is a from-scratch rewrite, not a port or
+# a vendored copy of either upstream implementation -- see plugins/edm/CLAUDE.md's "Prompt
+# conventions (house style)" section for the recorded attribution once EDMV4-T16 lands.
+#
+# Scope of THIS build: the marker check, the allow path, and the host registration only. Decision
+# emission and its two selectable back-ends (EDMV4-T13), the fact-forcing denial content and the
+# per-file MultiEdit loop (EDMV4-T14), and the operational safety controls -- kill switches,
+# exemption globs, session state, the denial budget (EDMV4-T15) -- all land in follow-on tickets.
+# Every call that reaches the gated path below still allows today; that is deliberate, not a bug --
+# every acceptance criterion this build satisfies is independently completable without a working
+# deny path, because the function that will eventually deny anything lives inside this very file
+# and cannot exist before the file itself does.
+#
+# EDM-HELP-BEGIN
+# edm-gateguard - PreToolUse fact-forcing edit gate for Phase 6 (structural build).
+#
+# Usage:
+#   edm-gateguard              # normal invocation: reads the host's PreToolUse JSON payload from
+#                               # stdin (tool_name, tool_input, ...) and never takes arguments
+#   edm-gateguard -h|--help    # show this help
+#
+# Registration: plugins/edm/hooks/hooks.json's PreToolUse array carries a matcher block for
+# Edit|Write|MultiEdit whose command guards on this binary's presence exactly like the existing
+# `git commit` block does (`command -v edm-gateguard >/dev/null 2>&1 || exit 0` before exec), so an
+# uninstalled or partially-installed plugin never blocks a tool call it cannot evaluate.
+#
+# What runs today: a repository with no active Phase 6 marker allows immediately -- one process
+# exec, one marker file test, no other filesystem read, no parser subprocess. A repository WITH an
+# active Phase 6 marker also allows today (the deny mechanism is a follow-on ticket's own build),
+# but the gated code path is exercised so its cost is measurable ahead of that ticket landing.
+#
+# Exit codes:
+#   0  the tool call is allowed (the only outcome this build produces on the gated path), or
+#      -h/--help was requested.
+#   1  a setup error (unexpected argument, an unparseable stdin payload, or a required parser
+#      missing once a marker is present). A setup error never blocks the tool call -- this is the
+#      same non-blocking convention every other hook in this plugin already applies (see
+#      plugins/edm/CLAUDE.md's "Hooks behavior" section), and it deliberately differs from this
+#      family of scripts' usual default of 2: on a PreToolUse hook, exit code 2 is how a real
+#      policy refusal blocks a call, so a plain setup error here must never reuse that code by
+#      accident. A later ticket's own decision-emitting function is what actually spends exit
+#      code 2, and only for a real refusal, never for a setup condition.
+# EDM-HELP-END
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/_edm-cli-lib.sh"
+
+# die <msg> [<code>] -- see the EDM-HELP block above for why this script's own default (1) departs
+# from the family-standard 2 (edm-lint-artifacts, edm-repo-readiness, edm-compare-eval): those are
+# standalone tools where 2 means "usage error"; this one is a PreToolUse hook where 2 means "deny",
+# so this default must never collide with that meaning.
+die() {
+  local msg="$1" code="${2:-1}"
+  echo "edm-gateguard: $msg" >&2
+  exit "$code"
+}
+
+usage() {
+  print_help "${BASH_SOURCE[0]:-$0}"
+  exit 0
+}
+
+# ---- Argument parsing: no positional arguments are legal; the payload arrives on stdin. --------
+# A real hook invocation from the host never passes an argument at all -- this parsing exists so
+# the binary is also a well-behaved standalone CLI tool for manual testing and for this ticket's
+# own smoke coverage, matching every other bin/ helper's -h/--help/help convention.
+case "${1:-}" in
+  -h|--help|help) usage ;;
+esac
+
+if [[ $# -gt 0 ]]; then
+  die "unexpected argument: '$1' -- edm-gateguard takes no positional arguments; its payload arrives on stdin as the host's PreToolUse JSON"
+fi
+
+# ---- Shared data-directory resolver: guarded sourcing (EDMV4-T17's own contract) -- a missing or
+# partially-installed library degrades this script to today's behaviour (no gate at all) rather
+# than aborting or, worse, guessing at a marker path. ---------------------------------------------
+if [[ -f "${SCRIPT_DIR}/_edm-datadir-lib.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "${SCRIPT_DIR}/_edm-datadir-lib.sh"
+fi
+
+if ! declare -F edm_marker_path >/dev/null 2>&1; then
+  # The resolver never loaded (missing file, or a partial install that failed to define its own
+  # public function). An unresolvable environment is never a reason to block a tool call -- it is
+  # a reason to behave exactly as this plugin did before this ticket existed: no gate at all.
+  exit 0
+fi
+
+MARKER_PATH="$(edm_marker_path)"
+
+# ---- The allow path: the ONLY filesystem check this script performs when no initiative is in
+# Phase 6. `test -f` here is the single stat this build spends on that common case -- one process
+# exec, one marker test, zero parser subprocesses, zero state reads. Nothing is written to stdout
+# or stderr on this branch: silence on allow is the contract a later ticket's own decision-emission
+# function inherits, not something it introduces. -------------------------------------------------
+if [[ -z "$MARKER_PATH" ]] || ! test -f "$MARKER_PATH"; then
+  exit 0
+fi
+
+# ===================================================================================================
+# Gated path: a Phase 6 marker exists for this project. Everything below this line is the only
+# place in this script where a JSON parser is a legitimate dependency (AD3's qualifier) -- nothing
+# above this comment ever references one, by construction, so a repository with no active Phase 6
+# initiative never spawns a parser subprocess at all.
+# ===================================================================================================
+
+command -v jq >/dev/null 2>&1 \
+  || die "a JSON parser is required once a Phase 6 marker is present (the allow path above needed none)"
+
+# Read the host's PreToolUse JSON payload from stdin. `read -d ''` is a bash builtin: it reads
+# until end-of-file (no literal NUL ever appears in a JSON document) with no subprocess spawned to
+# do it, matching this script's own required-binary contract (bash builtins, jq, stat/test only).
+PAYLOAD=""
+IFS= read -r -d '' PAYLOAD || true
+
+if [[ -z "$PAYLOAD" ]]; then
+  die "no payload was delivered on stdin -- edm-gateguard expects the host's PreToolUse JSON document"
+fi
+
+if ! TOOL_NAME="$(printf '%s' "$PAYLOAD" | jq -r '.tool_name // empty' 2>/dev/null)"; then
+  die "could not parse the JSON payload delivered on stdin"
+fi
+
+# ---- Dispatch on tool name. Bash 3.2 floor (C1): a `case` over a small, fixed name set is the
+# portable form here, not an associative array keyed by tool name -- the same idiom the fact-list
+# and per-file MultiEdit loop (EDMV4-T14) will extend rather than replace. -------------------------
+case "$TOOL_NAME" in
+  Edit)
+    # Extension point: EDMV4-T13's decision-emitting function evaluates a single-file edit here.
+    : ;;
+  Write)
+    # Extension point: EDMV4-T13's decision-emitting function evaluates a new-file write here,
+    # with EDMV4-T14's swapped fact pair (name the caller, confirm no existing file already
+    # serves the same purpose) in place of the Edit variant's import-search facts.
+    : ;;
+  MultiEdit)
+    # Extension point: EDMV4-T14's per-file loop iterates the batch here and denies on the first
+    # still-unchecked path, returning immediately rather than evaluating the rest of the batch.
+    : ;;
+  *)
+    # A tool name reached the gated path that this gate does not target (a future matcher change,
+    # or a payload this build did not anticipate). Allow rather than guess at a decision for a
+    # case nothing above named -- this gate has never inspected anything but Edit/Write/MultiEdit
+    # and is not the place to start guessing about a tool it was never registered against.
+    : ;;
+esac
+
+# Every branch above currently falls through to here: this build's own scope is the marker check,
+# the allow path, and the host registration -- not a decision. Once EDMV4-T13's single decision-
+# emitting function exists, it becomes the one place in this file that ever prints anything or
+# exits non-zero on the gated path; nothing above this line is a second, competing decision site.
+exit 0
+
+# =====================================================================================================
+# Reference for the follow-on tickets that build on this file (not executed -- documentation only).
+#
+# The performance target table this build's own allow path is measured against names two rows:
+#   * allow path (marker absent):            50 ms p95, one repository with no active Phase 6
+#                                             initiative, over 20 samples -- `timing.sh --gateguard`.
+#   * gated path (marker present, first touch): 1 exec, 2-3 stat, 1 parser invocation, 1 small
+#                                             append -- the cumulative shape across every ticket that
+#                                             touches this file, not a single ticket's own budget.
+#
+# What accrues where, so a future contributor does not re-derive the split from scratch:
+#   * This ticket (T11) spends: 1 exec, 1 stat (the marker test above), 1 parser invocation (the
+#     tool_name parse above) once the marker is present -- and zero of either on the allow path.
+#   * EDMV4-T15's session-state file (`${data}/run/<project-key>.checked`) is where the remaining
+#     1-2 stat calls (reading, then checking the state file's own mtime for the 30-minute staleness
+#     rule) and the 1 small append land -- neither exists in this build, by design (Out of Scope).
+#   * EDMV4-T13's decision-emitting function and EDMV4-T14's fact content are what turn today's
+#     unconditional allow on the gated path into an actual first-touch denial; neither changes the
+#     op-count shape above, since the marker test, the parser invocation, and the state-file work
+#     are the operations the table already accounts for.
+#
+# None of the above is invoked from this file today. It is recorded here, rather than only in the
+# ticket pack, because the next contributor to touch this file is more likely to open it than to
+# re-read `srd.md` Sec.9.1 first.
+#
+# `bin/tests/timing.sh --gateguard` measures both branches -- marker-absent and marker-present --
+# against a generated fixture, so a change to either branch's cost shows up as a real number the
+# next time that mode runs, rather than as an assumption nobody re-checked.
+# =====================================================================================================
