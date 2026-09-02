@@ -9486,9 +9486,15 @@ VERIF_T09_AGENTS_DIR="${PLUGIN_DIR}/agents"
 # AC1/AC8 -- function taking a path, asserting the 'maxTurns: 50' frontmatter line is present.
 # Path-parameterized so the same function backs both the four real-file assertions (AC1) and the
 # AC8 revert self-test against a mutated temp copy.
+# EDMV4-T55: assert the FLOOR (>= 50), not the exact value. VERIF-T09's intent was "no longer
+# 25" -- enforced positively here and negatively by AC2 -- not "exactly 50 forever". Pinning the
+# exact number made any later evidence-based raise a test failure, which is what happened when
+# EDMV4 wave 1 measured edm-qc-auditor exhausting 50 on four tickets and raised it to 150. The
+# floor still fails a revert to 25, so AC8's revert self-test stays load-bearing.
 verif_t09_has_maxturns_50() {
-  local file="$1"
-  [[ "$(count_matches '^maxTurns: 50' "$file")" -ge 1 ]]
+  local file="$1" _v
+  _v="$(command grep -m1 -E '^maxTurns: [0-9]+' "$file" 2>/dev/null | command grep -oE '[0-9]+$')"
+  [[ -n "$_v" && "$_v" -ge 50 ]]
 }
 
 VERIF_T09_RAISED="edm-srd-auditor.md edm-ticket-auditor.md edm-qc-auditor.md edm-test-coverage-auditor.md"
@@ -9528,9 +9534,13 @@ done
   && pass "VERIF-T09 AC3 -- all ${verif_t09_lens_checked} lens agents still read maxTurns: 30" \
   || fail "VERIF-T09 AC3 -- only ${verif_t09_lens_30_count} of ${verif_t09_lens_checked} lens agents still read maxTurns: 30"
 
-# AC4 -- no producer's maxTurns changes: edm-implementer stays 60; edm-srd-writer,
-# edm-ticket-writer, edm-architect stay 50 (asserted explicitly, one entry per named producer).
-VERIF_T09_PRODUCERS="edm-implementer.md:60 edm-srd-writer.md:50 edm-ticket-writer.md:50 edm-architect.md:50"
+# AC4 -- scope containment: VERIF-T09 changed only the four read-only verifiers, never a
+# producer. The values below are the CONTROL, pinning each producer's budget so an accidental
+# edit shows up. EDMV4-T55 raised edm-implementer 60 -> 200 deliberately and with evidence (8/8
+# wave-1 implementers exhausted 60; one stopped between building and committing, leaving new
+# bin/ scripts untracked), so its control value is updated here rather than the assertion being
+# weakened -- the other three producers still pin 50 and still catch an accidental change.
+VERIF_T09_PRODUCERS="edm-implementer.md:200 edm-srd-writer.md:50 edm-ticket-writer.md:50 edm-architect.md:50"
 for verif_t09_entry in $VERIF_T09_PRODUCERS; do
   verif_t09_pfname="${verif_t09_entry%%:*}"
   verif_t09_pturns="${verif_t09_entry##*:}"
@@ -9547,7 +9557,12 @@ done
 # unconditionally regardless of file content.
 verif_t09_revert_src="${VERIF_T09_AGENTS_DIR}/edm-qc-auditor.md"
 verif_t09_revert_copy="${TMP}/verif-t09-revert-qc-auditor.md"
-sed 's/^maxTurns: 50$/maxTurns: 25/' "$verif_t09_revert_src" > "$verif_t09_revert_copy"
+# EDMV4-T55: the mutation must be VALUE-AGNOSTIC. It previously rewrote the literal
+# `maxTurns: 50`, so the moment edm-qc-auditor.md was legitimately raised to 150 the sed became a
+# no-op: the "reverted" copy was byte-identical to the original, the AC1 function accepted it,
+# and this self-test could no longer construct the very thing it exists to test. Rewriting
+# whatever numeric value is present keeps AC8 load-bearing across any future retune.
+sed -E 's/^maxTurns: [0-9]+$/maxTurns: 25/' "$verif_t09_revert_src" > "$verif_t09_revert_copy"
 if verif_t09_has_maxturns_50 "$verif_t09_revert_copy"; then
   fail "VERIF-T09 AC8 -- revert self-test: a copy of edm-qc-auditor.md rewritten to maxTurns: 25 was still accepted by the AC1 assertion function -- the assertion is not load-bearing"
 else

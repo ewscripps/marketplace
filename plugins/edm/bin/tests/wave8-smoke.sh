@@ -792,6 +792,39 @@ check "AC8 -- failure mode 2 (patterns too specific) documented" "Patterns too s
 check "AC8 -- failure mode 3 (escaping traps) documented" "Shell/JSON escaping traps" "$CLAUDE_MD_TEXT"
 check "AC8 -- failure mode 3 concrete example (JSON backslash escaping)" 'rm\\s+-rf' "$CLAUDE_MD_TEXT"
 
+# =================================================================================================
+# EDMV4-T55 AC9 -- malformed `# shellcheck disable=` directives must not silently return
+# =================================================================================================
+# `# shellcheck disable=SCNNNN -- prose` is NOT valid directive syntax: shellcheck expects
+# key=value pairs, the ` -- ` prose aborts the parse with SC1072/SC1073, and the ENTIRE file is
+# then skipped. Eleven such directives across bin/edm-state and bin/edm-check-grants meant neither
+# file was ever checked by shellcheck, and the eleven `disable=` suppressions they carried were
+# themselves inert. Prose must be separated by `#`, never by ` -- `.
+echo
+echo "EDMV4-T55 AC9 -- no malformed 'shellcheck disable=' directive under bin/"
+
+t55_bin_root="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
+# Anchored to ^<ws># shellcheck so it matches a REAL directive line, never prose that merely
+# quotes the bad form (this block's own comment above does exactly that -- an unanchored pattern
+# matched it, the same self-matching class that defeated EDMV4-T21 AC7 and EDMV4-T04's sweep).
+t55_bad="$(command grep -rn -E '^[[:space:]]*# shellcheck disable=[A-Z0-9,]+ -- ' "$t55_bin_root" 2>/dev/null || true)"
+t55_bad_count=0
+[[ -n "$t55_bad" ]] && t55_bad_count="$(printf '%s\n' "$t55_bad" | wc -l | tr -d ' ')"
+[[ "$t55_bad_count" -eq 0 ]] \
+  && pass "EDMV4-T55 AC9 -- zero malformed 'shellcheck disable=... -- prose' directives under bin/" \
+  || fail "EDMV4-T55 AC9 -- ${t55_bad_count} malformed directive(s) use ' -- ' instead of '#'; shellcheck aborts the parse and skips the whole file: ${t55_bad}"
+
+# Positive control: the detector must actually fire on a known-bad line, so a future regression
+# cannot pass by the detector silently matching nothing.
+t55_ctl="${TMP:-/tmp}/t55-shellcheck-ctl.sh"
+printf '%s\n' '# shellcheck disable=SC2086 -- deliberate word-splitting' > "$t55_ctl"
+if command grep -qE '^[[:space:]]*# shellcheck disable=[A-Z0-9,]+ -- ' "$t55_ctl" 2>/dev/null; then
+  pass "EDMV4-T55 AC9 -- positive control: the detector fires on a known-bad directive"
+else
+  fail "EDMV4-T55 AC9 -- positive control FAILED: the detector matched nothing on a known-bad directive, so its zero-count result proves nothing"
+fi
+rm -f "$t55_ctl"
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

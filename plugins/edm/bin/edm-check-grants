@@ -108,7 +108,7 @@ fi
 SOURCE_LABELS="agent-bodies skill-launch-templates hook-prompt-text skill-allowed-tools-vs-body"
 
 if [[ "$LIST_SOURCES" -eq 1 ]]; then
-  # shellcheck disable=SC2086 -- deliberate word-splitting; bash 3.2 has no arrays-as-constants
+  # shellcheck disable=SC2086 # deliberate word-splitting; bash 3.2 has no arrays-as-constants
   for _s in $SOURCE_LABELS; do
     echo "$_s"
   done
@@ -189,7 +189,7 @@ has_tool() {
   [[ -z "$list" ]] && return 1
   local old_ifs="$IFS"
   IFS=','
-  # shellcheck disable=SC2086 -- deliberate word-splitting on IFS=','
+  # shellcheck disable=SC2086 # deliberate word-splitting on IFS=','
   set -- $list
   IFS="$old_ifs"
   for item in "$@"; do
@@ -606,7 +606,7 @@ while IFS=$'\t' read -r _skill_name _skill_file _skill_tools; do
   _skill_body="$(sed -n "${_skill_body_start},\$p" "$_skill_file" 2>/dev/null || true)"
 
   _old_ifs="$IFS"; IFS=','
-  # shellcheck disable=SC2086 -- deliberate word-splitting on IFS=','
+  # shellcheck disable=SC2086 # deliberate word-splitting on IFS=','
   set -- $_skill_tools
   IFS="$_old_ifs"
   for _tok in "$@"; do

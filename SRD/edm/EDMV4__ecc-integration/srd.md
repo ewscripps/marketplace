@@ -7,7 +7,7 @@
 | Initiative | EDMV4 -- ECC Integration |
 | Prefix | `EDMV4` |
 | Product | `edm` |
-| Version | 1.2.0 |
+| Version | 1.3.0 |
 | Status | Draft |
 | Owner | darryl.porter |
 | Mode | `standard` (`lifecycle_mode: standard`, `compliance_enabled: false`) |
@@ -22,6 +22,8 @@
 | 1.0.0 | 2026-08-30 | `edm-srd-writer` | Initial SRD from the Gate-1-approved `planning.md` and `decisions.md` D1-D13. Fifty-eight requirements across eleven scope items plus two blocking spikes. |
 | 1.1.0 | 2026-08-31 | `edm-srd-writer` | Remediation against `audit-srd.md` (5 P0, 44 P1). **AD5 round-type design**: `audit-round-start` now materializes `lenses = ALL_LENS_IDS` when `--lenses` is omitted, so the union derivation is correct in both branches and the CA-471 backstop stays meaningful (`EDMV4-24`, `EDMV4-25`). **`EDMV4-T04`**: `EDMV4-51` raised to Must Have and the `EDMV4-49` dependency inverted so orphan enumeration completes before anything is anchored; `EDMV4-50` restated against the verified 8-site / 6-section orphan table. **D4**: `EDMV4-03` and Sec.4.6 C9 rewritten against D4 as amended -- the revert hazard is gone, the residual is a `plugin.json` version reconciliation and is non-blocking. **Dependency cycles**: `EDMV4-14`/`15`/`16` folded into `EDMV4-14` (15 and 16 retained as merged pointers); `EDMV4-07` <-> `EDMV4-09` inverted. **Gate 2 accuracy**: `EDMV4-05`'s saving corrected to 150-250 lines of bash plus the un-ported tokenizer, and the false "`git commit` bounds the residual exposure" claim replaced with the enumerated unguarded classes. **New `EDMV4-59`** ratifies AD1 itself, which is the decision the licence posture actually depends on. Sec.4.6, Sec.4.4, Sec.4.5 and Sec.3.4 cross-references re-derived. Lens-count sweep extended with every missed name-list, non-`-eq 11` count and prose site -- notably `wave7-smoke.sh:5386`, which counts a hardcoded list and so stays green while silently dropping the three new lenses from the D16 opus/max assertion. Sec.10 R5 figures corrected to 90 tokens across 16 files and 10 exact-integer sites. Linux recorded as untested rather than claimed. **Requirement count: 59 IDs (`EDMV4-01` .. `EDMV4-59`), 57 substantive (41 Must / 15 Should / 1 Could) plus 2 merged.** |
 | 1.2.0 | 2026-09-02 | orchestrator | **Scope addition discovered at this initiative's own Phase 5 preflight, raised for Gate 3 ratification.** New `EDMV4-60`: `cmd_gate_check` mapped `audit-tickets` to Gate 3 -- the gate that phase **presents** -- making Phase 5 unreachable for every standard-lifecycle initiative through both enforcement layers (Step 0 preflight and the `edm:audit-tickets` `UserPromptExpansion` hook). `bin/tests/wave6-smoke.sh`'s EDMV3-T13 AC3 loop asserted only that *a* gate was named, never the right one, so the suite stayed green; the loop is now pinned per token and a direct producer/consumer assertion added. Also records the branch reconciliation: the tree described by Sec.4.6 C9 and `decisions.md` D4 as "3 commits behind `origin/main`" was in fact 25 behind and missing `plugins/edm/docs/ecc-integration-analysis.md` entirely -- the document `EDMV4-54` exists to correct. Branch fast-forwarded to `origin/main` (plugin 3.2.2); `file:line` citations throughout Sec.6 shifted again and are advisory, with each ticket carrying its own verified anchors. **Requirement count: 60 IDs (`EDMV4-01` .. `EDMV4-60`), 58 substantive (42 Must / 15 Should / 1 Could) plus 2 merged.** |
+
+| 1.3.0 | 2026-09-02 | orchestrator | **Scope addition from Phase 6 wave 1, raised for ratification at the code-audit convergence gate.** New `EDMV4-61` records seven defects in Phase 6's own agent harness, found by running EDM at full scale on itself: `edm-implementer` `maxTurns: 60` (8/8 wave-1 agents hit it; one left new `bin/` scripts untracked), `edm-qc-auditor` `maxTurns: 50` (2/3 hit it), `qc_shard_threshold: 20` unfittable in any auditor turn budget, the `SubagentStop` matcher naming the bare `edm-implementer` while agents spawn as `edm:edm-implementer` (**the entire automatic QC layer silently did not run** -- only an absent `qc/` directory evidenced it), 6-10 parallel implementers each invoking the whole-tree `run-all.sh` (38 concurrent processes at load 10, producing spurious SIGINT failures), `isolation: worktree` cutting 5/7 worktrees from a base with no `tickets/` directory, and eleven malformed `# shellcheck disable=... -- prose` directives that made shellcheck skip `bin/edm-state` and `bin/edm-check-grants` entirely. An eighth candidate was investigated and **rejected**: `run-all.sh` classifies a truncated suite correctly as `CRASH`; that report was an orchestrator misreading of the aggregate `Total:` line, not a tooling defect. **Requirement count: 61 IDs (`EDMV4-01` .. `EDMV4-61`), 59 substantive (43 Must / 15 Should / 1 Could) plus 2 merged.** |
 
 ### Source documents
 
@@ -778,6 +780,69 @@ retained rather than reused so every existing cross-reference still resolves.
 - **Target Components**: `plugins/edm/bin/edm-state` (`cmd_gate_check` and its docstring),
   `plugins/edm/bin/tests/wave6-smoke.sh` (EDMV3-T13 AC3 block),
   `plugins/edm/CHANGELOG.md`.
+
+#### EDMV4-61: Phase 6's agent capacity and QC wiring defects, found by running EDM on itself
+
+- **Priority**: Must Have
+- **Description**: EDMV4's own Phase 6 wave 1 surfaced seven defects in the methodology's
+  implementation harness. They are grouped as one requirement because they share a root cause --
+  the Phase 6 agent layer was never calibrated against the size of work it is asked to do -- and
+  because six of the seven were only visible by running the methodology at full scale.
+
+  **Capacity.** `agents/edm-implementer.md` ran at `maxTurns: 60`; **eight of eight** wave-1
+  implementers hit that ceiling, two of them twice, and one stopped between building and
+  committing, leaving two new `bin/` scripts untracked where a worktree cleanup would have
+  destroyed them. `agents/edm-qc-auditor.md` ran at `maxTurns: 50` -- the value VERIF raised from
+  25 -- and **two of three** auditors hit it on four tickets each. `qc_shard_threshold` defaulted
+  to 20, which routes 20 tickets (roughly 200 acceptance criteria) to a single auditor and cannot
+  fit in any plausible turn budget.
+
+  **Wiring.** The `SubagentStop` hook that spawns `edm-qc-auditor` matched the bare
+  `edm-implementer` while agents spawn as the plugin-namespaced `edm:edm-implementer`; every other
+  matcher in `hooks/hooks.json` already uses the namespaced form. It fired for nobody, emitted no
+  warning, and **the entire automatic QC layer silently did not run** -- the only evidence was an
+  absent `qc/` directory. `skills/implement/SKILL.md` Step 9's "loop until all tickets have PASS
+  verdict" is vacuously satisfiable when no verdict exists.
+
+  **Contention.** The skill directs 6-10 parallel implementers and has each verify with the test
+  suite, without noting that `run-all.sh` is a whole-tree run spawning every sub-suite. Wave 1
+  produced 38 concurrent suite processes at load average 10; the suite each agent waited on became
+  slower because the others were waiting on it, and the contention produced spurious SIGINT-timing
+  failures indistinguishable from regressions.
+
+  **Worktree base.** `isolation: worktree` cut five of seven wave-1 worktrees from a base
+  predating commits made minutes earlier, so those worktrees contained no `tickets/` directory --
+  the epic files their own prompts named. A naive merge of any would have reverted the ticket pack.
+
+  **Toolchain.** `# shellcheck disable=SCNNNN -- prose` is not valid directive syntax; shellcheck
+  0.11.0 fails the parse and skips the file entirely. Eleven such directives across `bin/edm-state`
+  and `bin/edm-check-grants` meant neither file was ever checked, and their eleven `disable=`
+  suppressions were themselves inert.
+- **Acceptance Criteria**:
+  - [ ] `agents/edm-implementer.md` and `agents/edm-qc-auditor.md` carry turn ceilings calibrated
+        against measured wave-1 usage, not against the previous values.
+  - [ ] `qc_shard_threshold`'s default and its description are consistent with the auditor's turn
+        ceiling, and the description states the calibration basis rather than a bare number.
+  - [ ] The `SubagentStop` matcher matches the agent name as actually spawned, in both the bare
+        and plugin-namespaced forms.
+  - [ ] `skills/implement/SKILL.md` requires the orchestrator to **count QC shards after each wave
+        and before the merge**, to state explicitly when the count is zero, and to spawn auditors
+        manually in that case. An empty `qc/` may never be read as "nothing to merge".
+  - [ ] `skills/implement/SKILL.md` forbids implementers from running `run-all.sh` and names the
+        single-suite alternative, stating the contention mechanism so the rule is not cargo-culted.
+  - [ ] `skills/implement/SKILL.md` requires every implementer prompt to instruct a rebase onto the
+        initiative branch before its first commit, and requires an ancestry check before any
+        worktree branch is merged.
+  - [ ] `shellcheck` parses `bin/edm-state` and `bin/edm-check-grants` with zero error-level
+        findings, and every `disable=` directive in them is syntactically valid.
+  - [ ] `bash bin/tests/run-all.sh` passes with zero failures, excepting assertions a later
+        ticket explicitly owns.
+- **Dependencies**: none. Discovered during Phase 6 wave 1 and fixed before wave 2, because every
+  subsequent wave pays the same cost otherwise.
+- **Target Components**: `plugins/edm/agents/edm-implementer.md`,
+  `plugins/edm/agents/edm-qc-auditor.md`, `plugins/edm/.claude-plugin/plugin.json`,
+  `plugins/edm/hooks/hooks.json`, `plugins/edm/skills/implement/SKILL.md`,
+  `plugins/edm/bin/edm-state`, `plugins/edm/bin/edm-check-grants`.
 
 ---
 
@@ -3782,12 +3847,12 @@ is a design target, not a measured result, and must be described that way.
 
 | Priority | Count | IDs |
 |---|---|---|
-| **Must Have** | **42** | `EDMV4-01` .. `EDMV4-11`, `EDMV4-13`, `EDMV4-14`, `EDMV4-18` .. `EDMV4-20`, `EDMV4-22` .. `EDMV4-35`, `EDMV4-49` .. `EDMV4-51`, `EDMV4-52` .. `EDMV4-60` |
+| **Must Have** | **43** | `EDMV4-01` .. `EDMV4-11`, `EDMV4-13`, `EDMV4-14`, `EDMV4-18` .. `EDMV4-20`, `EDMV4-22` .. `EDMV4-35`, `EDMV4-49` .. `EDMV4-51`, `EDMV4-52` .. `EDMV4-61` |
 | **Should Have** | **15** | `EDMV4-12`, `EDMV4-17`, `EDMV4-21`, `EDMV4-36` .. `EDMV4-38`, `EDMV4-40` .. `EDMV4-48` |
 | **Could Have** | **1** | `EDMV4-39` |
 | **Merged** | **2** | `EDMV4-15`, `EDMV4-16` -- absorbed into `EDMV4-14`. No independent priority, no independent acceptance criteria. IDs retained so existing cross-references resolve |
-| **Substantive total** | **58** | 42 Must + 15 Should + 1 Could |
-| **ID range** | **60** | `EDMV4-01` .. `EDMV4-60`, no gaps, no duplicates |
+| **Substantive total** | **59** | 43 Must + 15 Should + 1 Could |
+| **ID range** | **61** | `EDMV4-01` .. `EDMV4-61`, no gaps, no duplicates |
 
 **Changes from v1.0.0's counts.** `EDMV4-59` (ratify AD1) is new. `EDMV4-51` is raised from Should
 Have to Must Have (P0-3: it gates whether `EDMV4-49` and `EDMV4-50` can be executed correctly).
@@ -3799,7 +3864,7 @@ their single-commit constraint was unenforceable while split). Net: Must Have un
 
 | Scope item | Requirements | Must | Should | Could |
 |---|---|---|---|---|
-| Preconditions and change control | `EDMV4-01` .. `EDMV4-06`, `EDMV4-59`, `EDMV4-60` | 8 | 0 | 0 |
+| Preconditions and change control | `EDMV4-01` .. `EDMV4-06`, `EDMV4-59` .. `EDMV4-61` | 9 | 0 | 0 |
 | 4.1 GateGuard | `EDMV4-07` .. `EDMV4-12` | 5 | 1 | 0 |
 | 4.2 `update-patterns` | `EDMV4-13`, `EDMV4-14`, `EDMV4-17`, `EDMV4-18` (plus merged `EDMV4-15`, `EDMV4-16`) | 3 | 1 | 0 |
 | 4.3 Size classifier | `EDMV4-19` .. `EDMV4-22` | 3 | 1 | 0 |

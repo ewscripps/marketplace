@@ -128,8 +128,8 @@
     "qc_shard_threshold": {
       "type": "number",
       "title": "QC sharding threshold (ticket count)",
-      "description": "When a Phase 6 wave has more than this many tickets, QC spawns multiple edm-qc-auditor shards (at most 12 tickets each) and writes per-shard reports to {initiative-dir}/qc/. Set to a large value (e.g., 999) to always use single-auditor mode.",
-      "default": 20
+      "description": "When a Phase 6 wave has more than this many tickets, QC spawns multiple edm-qc-auditor shards and writes per-shard reports to {initiative-dir}/qc/. Calibrated against edm-qc-auditor maxTurns: EDMV4 wave 1 measured ~4 tickets (roughly 40 acceptance criteria) as one auditor's realistic budget, and a 12-ticket shard exhausted it. Keep this at or below 6 unless maxTurns is raised with it. Set to a large value (e.g., 999) to force single-auditor mode.",
+      "default": 6
     },
     "implementation_mode": {
       "type": "string",

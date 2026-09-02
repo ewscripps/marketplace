@@ -36,6 +36,24 @@ using `<gated-command>` = `implement` and `<phase-num>` = `6`.
    - In TDD mode, pass `implementation_mode=tdd` instruction to each implementer (Red-Green-Refactor per ticket).
 6. After each implementer completes, the `SubagentStop` hook automatically spawns `edm-qc-auditor` to verify the ticket's acceptance criteria against the implemented code. (The hook is configured in `hooks/hooks.json`.) Each hook-spawned auditor writes its own per-implementer shard, `qc/qc-shard-impl-{NN}.md` -- never the shared `qc/qc-summary.md` (CA-440: 6-10 auditors finishing concurrently on one file would silently overwrite one another's FAIL verdicts), and never a `qc-shard-pass-*.md` name, which belongs to this skill's own threshold-shard namespace (CA-473).
    - In TDD mode, the QC auditor also runs the TDD compliance pass.
+6a. **Assert the hook actually fired -- absence is silent otherwise (EDMV4 wave-1 defect).** The
+   `SubagentStop` hook in step 6 is a `prompt`-type hook: it asks the orchestrator to spawn the
+   auditor. If its matcher does not match the agent name as spawned, it fires for nobody, emits no
+   warning, and the ONLY evidence is an absent `qc/` directory. In EDMV4 wave 1 this happened for
+   all eight implementers -- the matcher was the bare `edm-implementer` while agents were spawned
+   as the plugin-namespaced `edm:edm-implementer` -- and the whole automatic QC layer silently did
+   not run. Nothing downstream noticed: step 9's "loop until all tickets have PASS verdict" is
+   vacuously satisfiable when no verdict exists at all.
+
+   **After each wave drains, before step 7, count the shards:**
+   ```bash
+   INIT_DIR="$(edm-state resolve-dir <PREFIX>)"
+   ls "${INIT_DIR}"/qc/qc-shard-impl-*.md 2>/dev/null | wc -l
+   ```
+   A count of zero for a wave that ran N implementers means the hook did not fire. **Say so
+   explicitly to the user, then spawn `edm-qc-auditor` manually for every ticket in the wave** --
+   do not proceed to step 7 with no shards, and never treat an empty `qc/` as "nothing to merge".
+
 7. Aggregate QC findings as they arrive. **Before any content is written to `qc/qc-summary.md`, run `edm-check-verifier-sentinel QC-SHARD <file>` against every `qc/qc-shard-impl-*.md` and every `qc/qc-shard-pass-*.md` from this wave** (VERIF-T03). If any shard refuses (exit 2 -- missing/misplaced sentinel or a short `audited=` count), the merge does not run: `qc/qc-summary.md` is neither created nor overwritten, so no partially-merged summary is ever left on disk. Report the refused shard's path and the reason, then **re-run `edm-qc-auditor` for the named shard's ticket range, then re-run the merge** -- that is the operator remedy, verbatim. Only once every shard for this wave passes the check does the merge proceed: **merge every `qc/qc-shard-impl-*.md` and every `qc/qc-shard-pass-*.md` into `qc/qc-summary.md`** (one verdict table; keep each shard's file:line evidence). The shard files stay on disk as the per-implementer audit trail.
 8. **Remediate** any FAIL QC findings, at every severity: spawn `edm-implementer` agents to fix; re-trigger QC.
 9. Loop until all tickets have PASS verdict. Phase 6 closure (`edm-state phase-complete <PREFIX> 6`)
@@ -300,7 +318,21 @@ PARTIAL findings appear in the exec-report's runtime-check table (Step 6) and ar
 - **Isolation**: `edm-implementer` has `isolation: worktree` -- each parallel agent gets its own worktree automatically.
 - **Read first**: Every agent reads existing code before modifying.
 - **Complete code**: No stubs.
-- **Test**: Run tests after each wave.
+- **Test**: run the full suite ONCE, at the wave merge gate, and only there.
+  **Implementers must NOT run `bin/tests/run-all.sh`.** It is a whole-tree run that itself spawns
+  every sub-suite; with 6-10 parallel implementers each invoking it, EDMV4 wave 1 produced 38
+  concurrent suite processes at load average 10. The suite each agent was waiting on got slower
+  *because* the others were waiting on it, agents burned their turn budget polling, and the
+  contention produced spurious SIGINT-timing failures that looked like regressions. Tell each
+  implementer to run only the single suite covering its change (e.g. `bash
+  bin/tests/wave8-smoke.sh`), and to report rather than re-run on a red result.
+- **Worktree base**: `isolation: worktree` cuts the worktree from the branch state at spawn time,
+  which may predate commits made moments earlier. In EDMV4 wave 1, five of seven worktrees had no
+  `tickets/` directory at all -- the epic files the prompts pointed at did not exist there -- and a
+  naive merge of any of them would have reverted the ticket pack. **Tell every implementer, in its
+  prompt, to run `git rebase <initiative-branch>` before its first commit**, and never merge a
+  worktree branch without checking `git merge-base --is-ancestor <initiative-branch> <wt-branch>`
+  first.
 - **Commit often**: Small commits referencing ticket IDs.
 - **Re-audit**: Always re-audit after remediation.
 - **Background monitor**: While Phase 6 runs, the `edm-impl-progress` monitor reports each ticket commit as a notification.

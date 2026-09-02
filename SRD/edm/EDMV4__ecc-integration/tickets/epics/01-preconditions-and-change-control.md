@@ -637,3 +637,93 @@ found it in its own Phase 5 preflight.
 - The broader question of whether other EDM smoke assertions accept a wrong-but-present value the
   way this one did. That pattern is already recorded in the SRD-audit pattern library; a
   tree-wide sweep is not in this ticket.
+
+---
+
+## EDMV4-T55: Fix Phase 6's agent capacity and QC wiring, found by running EDM on itself
+
+| Field | Value |
+|---|---|
+| Epic | Preconditions and Change Control |
+| Phase | 1 |
+| Priority | Must Have |
+| Size | S |
+| SRD Refs | EDMV4-61 |
+| Depends On | none |
+| Blocks | every subsequent Phase 6 wave |
+| Target Components | `plugins/edm/agents/edm-implementer.md`, `plugins/edm/agents/edm-qc-auditor.md`, `plugins/edm/.claude-plugin/plugin.json`, `plugins/edm/hooks/hooks.json`, `plugins/edm/skills/implement/SKILL.md`, `plugins/edm/bin/edm-state`, `plugins/edm/bin/edm-check-grants` |
+
+### Description
+
+EDMV4's own Phase 6 wave 1 ran the methodology at full scale for the first time since the agent
+layer was written, and seven defects surfaced that no smaller run would have exposed. They share a
+root cause: the Phase 6 agents were never calibrated against the size of the work they are asked to
+do, and the failures they produce are silent rather than loud.
+
+The most serious is the QC wiring. The `SubagentStop` hook that spawns `edm-qc-auditor` matched the
+bare `edm-implementer`, while agents spawn as the plugin-namespaced `edm:edm-implementer` -- the
+form every other matcher in `hooks/hooks.json` already uses. It fired for nobody across eight
+implementers, emitted no warning, and the entire automatic QC layer did not run. The only evidence
+was an absent `qc/` directory, and `skills/implement/SKILL.md` Step 9's "loop until all tickets have
+PASS verdict" is vacuously satisfiable when no verdict exists at all.
+
+This ticket is written after the fact: the fixes were applied during wave 1 because every
+subsequent wave pays the same cost otherwise. It is raised for ratification at the code-audit
+convergence gate, the same way `EDMV4-60`/`EDMV4-T54` was raised at Gate 3.
+
+### Acceptance Criteria
+
+- [ ] AC1: `edm-implementer`'s `maxTurns` is raised to a value justified by measured wave-1 usage,
+      and the justification is recorded. (Applied: 60 -> 200; wave 1 measured single agents using
+      148-155 tool calls across resumptions.)
+- [ ] AC2: `edm-qc-auditor`'s `maxTurns` is raised on the same basis. (Applied: 50 -> 150; wave-1
+      auditors used 69-90 tool calls for four tickets each, two of three exhausting 50.)
+- [ ] AC3: `qc_shard_threshold`'s default is consistent with AC2's ceiling, and its description
+      states the calibration basis and the ceiling it depends on, not a bare number. (Applied:
+      20 -> 6.)
+- [ ] AC4: The `SubagentStop` matcher matches the agent name as actually spawned, in both the bare
+      and plugin-namespaced forms, and `hooks.json` still parses as valid JSON.
+- [ ] AC5: `skills/implement/SKILL.md` requires the orchestrator to count `qc/qc-shard-impl-*.md`
+      after each wave **before** the merge step, to state explicitly when the count is zero, and to
+      spawn auditors manually in that case. The text must forbid reading an empty `qc/` as
+      "nothing to merge".
+- [ ] AC6: `skills/implement/SKILL.md` forbids implementers from running `bin/tests/run-all.sh`,
+      names the single-suite alternative, and states the contention mechanism (a whole-tree run
+      spawning every sub-suite, multiplied by 6-10 parallel agents) so the rule is understood
+      rather than cargo-culted.
+- [ ] AC7: `skills/implement/SKILL.md` requires implementer prompts to instruct a rebase onto the
+      initiative branch before the first commit, and requires
+      `git merge-base --is-ancestor <initiative-branch> <worktree-branch>` before any worktree
+      branch is merged.
+- [ ] AC8: `shellcheck` parses `bin/edm-state` and `bin/edm-check-grants` with zero error-level
+      findings. Every `# shellcheck disable=` directive in the tree uses valid syntax -- prose is
+      separated by `#`, never by ` -- `, which aborts the parse and silently skips the whole file.
+- [ ] AC9: A smoke assertion fails if any `# shellcheck disable=` directive under `bin/` reverts to
+      the ` -- ` prose form, so the class cannot silently return.
+- [ ] AC10: `bash plugins/edm/bin/tests/run-all.sh` passes with zero failures, excepting only
+      assertions a later ticket explicitly owns (currently `wave6-smoke.sh`'s `T27 AC1`, owned by
+      `EDMV4-T30`).
+
+### Technical Notes
+
+- **An eighth candidate defect was investigated and rejected.** `run-all.sh` was reported as
+  classifying a truncated suite as "1 failed" rather than aborted. It does not: it prints
+  `CRASH <suite>`, shows `0 1 CRASH` in the per-suite table, and notes "suite crashed before
+  emitting Results summary". The original report was a misreading of the aggregate `Total:` line
+  while the correct classification sat directly above it. Recorded here so a later reader does not
+  "fix" working code.
+- The `maxTurns` values are calibrated, not doubled arbitrarily. VERIF raised the four read-only
+  verifiers 25 -> 50 for exactly this failure mode but never reviewed `edm-implementer`, which does
+  strictly heavier work -- read, edit, test, fix, commit.
+- AC5 is the highest-value criterion. Raising ceilings makes agents finish; only the shard count
+  makes a *missing* QC layer visible. A silent absence is worse than a loud failure.
+- Do not fix the contention by lowering implementer parallelism. The parallelism is the point; the
+  defect is each agent independently running a whole-tree suite.
+
+### Out of Scope
+
+- Changing the wave-sizing guidance (6-10 implementers per wave). The count is not the defect.
+- `bin/tests/run-all.sh`'s CRASH accounting -- verified correct, see Technical Notes.
+- Any change to the four read-only verifier agents VERIF already retuned.
+- The pre-existing shellcheck findings that become *visible* once the files parse; this ticket
+  requires zero error-level findings, not a broader cleanup.

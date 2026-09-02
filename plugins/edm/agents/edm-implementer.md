@@ -9,7 +9,7 @@ description: |
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: sonnet
 effort: high
-maxTurns: 60
+maxTurns: 200
 color: green
 isolation: worktree
 ---

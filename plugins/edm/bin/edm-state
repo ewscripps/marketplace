@@ -135,7 +135,7 @@ list_state_files() {
   local include_archived="${1:-}"
   local _lsf_seen=()
   local _lsf_f _lsf_already _lsf_s
-  # shellcheck disable=SC2086 -- deliberate glob expansion; quoting would prevent the archived-state glob from expanding
+  # shellcheck disable=SC2086 # deliberate glob expansion; quoting would prevent the archived-state glob from expanding
   for _lsf_f in \
       "$SRD_ROOT"/*/.edm-state.json \
       "$SRD_ROOT"/*/*/.edm-state.json \
@@ -1618,7 +1618,7 @@ schema_at_least() {
 # functions, so this follows the identical space-separated-string + word-membership pattern
 # MODE_ENUM_LIST/LIFECYCLE_MODE_ENUM_LIST use above, for the same reason.
 ALL_LENS_IDS="L1 L2 L3 L4 L5 L6 L7 L8 L9 L10 L11 L12 L13 L14"
-# shellcheck disable=SC2086 -- deliberate word-splitting; bash 3.2 has no arrays-as-constants
+# shellcheck disable=SC2086 # deliberate word-splitting; bash 3.2 has no arrays-as-constants
 [[ "$(echo $ALL_LENS_IDS | wc -w | tr -d ' ')" -eq 14 ]] || die "internal: ALL_LENS_IDS must enumerate exactly 14 lenses"
 
 # CONDITIONAL_LENS_IDS -- the subset of ALL_LENS_IDS that may legitimately be auto-N/A on a
@@ -1630,12 +1630,12 @@ ALL_LENS_IDS="L1 L2 L3 L4 L5 L6 L7 L8 L9 L10 L11 L12 L13 L14"
 # gap it used to catch ships. Today's sole member is L13 (Type Design), which is meaningless on
 # an untyped stack; every other lens is unconditional and has no N/A exit.
 CONDITIONAL_LENS_IDS="L13"
-# shellcheck disable=SC2086 -- deliberate word-splitting; bash 3.2 has no arrays-as-constants
+# shellcheck disable=SC2086 # deliberate word-splitting; bash 3.2 has no arrays-as-constants
 [[ "$(echo $CONDITIONAL_LENS_IDS | wc -w | tr -d ' ')" -eq 1 ]] || die "internal: CONDITIONAL_LENS_IDS must enumerate exactly 1 lens"
 # Every member of CONDITIONAL_LENS_IDS must also be a member of ALL_LENS_IDS -- a conditional
 # lens ID that names nothing real would let the round-type union rule and the CA-471 backstop
 # silently accept an ID with no corresponding lens agent.
-# shellcheck disable=SC2086 -- deliberate word-splitting; bash 3.2 has no arrays-as-constants
+# shellcheck disable=SC2086 # deliberate word-splitting; bash 3.2 has no arrays-as-constants
 for _cond_lens_id in $CONDITIONAL_LENS_IDS; do
   case " $ALL_LENS_IDS " in
     *" $_cond_lens_id "*) ;;
@@ -2132,7 +2132,7 @@ cmd_set() {
   case " $SETTABLE_KEYS " in
     *" $key "*) ;;
     *)
-      # shellcheck disable=SC2086 -- deliberate word-splitting; bash 3.2 has no arrays-as-constants
+      # shellcheck disable=SC2086 # deliberate word-splitting; bash 3.2 has no arrays-as-constants
       die "set: unknown key '$key'. Valid keys: $(printf '%s\n' $SETTABLE_KEYS | sort | tr '\n' ' ' | sed 's/ *$//')"
       ;;
   esac
@@ -3193,7 +3193,7 @@ cmd_archive() {
         # directly instead of the composing wrapper.
         local required_gates_list_arch missing_gates="" g
         required_gates_list_arch="$(required_gates_for_mode "$mode" "$lifecycle_mode" "$(skipped_phases_str "$state_json")")"
-        # shellcheck disable=SC2086 -- deliberate word-splitting; result is a space-separated list of gate numbers
+        # shellcheck disable=SC2086 # deliberate word-splitting; result is a space-separated list of gate numbers
         for g in $required_gates_list_arch; do
           [[ "$(gate_is_approved "$state_json" "$g")" == "true" ]] || missing_gates="${missing_gates}${missing_gates:+, }${g}"
         done
@@ -4605,7 +4605,7 @@ cmd_audit_round_start() {
     lenses_json="$(printf '%s\n' "$normalized_lenses" | jq -R . | jq -s .)"
     local given_sorted all_sorted
     given_sorted="$(printf '%s' "$lenses_json" | jq -r 'sort | join(",")')"
-    # shellcheck disable=SC2086 -- deliberate word-splitting; bash 3.2 has no arrays-as-constants
+    # shellcheck disable=SC2086 # deliberate word-splitting; bash 3.2 has no arrays-as-constants
     all_sorted="$(printf '%s\n' $ALL_LENS_IDS | sort | tr '\n' ',' | sed 's/,$//')"
     if [[ "$given_sorted" == "$all_sorted" ]]; then
       round_type="full"
@@ -6239,7 +6239,7 @@ _write_handoff_body() {
       fi
       if [[ -n "$related_prefixes_val" ]]; then
         local rp
-        # shellcheck disable=SC2086 -- deliberate word-splitting; value is a space-separated prefix list
+        # shellcheck disable=SC2086 # deliberate word-splitting; value is a space-separated prefix list
         for rp in $related_prefixes_val; do
           local rp_dir
           rp_dir="$(state_file_for "$rp" 2>/dev/null || true)"

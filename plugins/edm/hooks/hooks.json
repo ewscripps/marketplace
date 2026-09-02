@@ -110,7 +110,7 @@
     ],
     "SubagentStop": [
       {
-        "matcher": "edm-implementer",
+        "matcher": "edm-implementer|edm:edm-implementer",
         "hooks": [
           {
             "type": "prompt",
