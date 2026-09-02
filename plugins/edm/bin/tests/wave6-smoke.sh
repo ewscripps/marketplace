@@ -3512,6 +3512,82 @@ round_all11="$("$EDM_STATE" audit-round-start T27ROUND code --lenses L1,L2,L3,L4
 all11_round_type="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$STATE_T27ROUND")"
 [[ "$all11_round_type" == "full" ]] && pass "T27 AC1 -- --lenses listing all eleven records round_type=full" \
   || fail "T27 AC1 -- round_type = '$all11_round_type', expected full for an explicit all-11 listing"
+# EDMV4-T21 KNOWN REGRESSION (expected, not a bug in this ticket): ALL_LENS_IDS grew from 11 to
+# 14 lenses, so an explicit --lenses listing only the original eleven is no longer a full set --
+# this assertion now correctly reports round_type=partial for an 11-of-14 listing. Rewriting this
+# assertion (and the eight analogous "eleven lens agent files" fixture-count assertions in
+# wave7-smoke.sh) is EDMV4-T30's owned scope, not this ticket's; it is deliberately left failing
+# here rather than weakened or silently patched.
+
+# =================================================================================
+# EDMV4-T21: ALL_LENS_IDS grows to fourteen; CONDITIONAL_LENS_IDS sibling added
+# =================================================================================
+echo
+echo "EDMV4-T21 -- ALL_LENS_IDS grows to 14 lenses; CONDITIONAL_LENS_IDS sibling added"
+
+# ---- AC1 (ALL_LENS_IDS enumerates L1 through L14 in ascending order) -----------------------
+t21_all_lens="$(source "$EDM_STATE" >/dev/null 2>&1; echo "$ALL_LENS_IDS")"
+[[ "$t21_all_lens" == "L1 L2 L3 L4 L5 L6 L7 L8 L9 L10 L11 L12 L13 L14" ]] \
+  && pass "EDMV4-T21 AC1 -- ALL_LENS_IDS enumerates L1 through L14 in ascending order" \
+  || fail "EDMV4-T21 AC1 -- ALL_LENS_IDS = '$t21_all_lens', expected the 14-lens ascending list"
+
+# ---- AC2/AC9 (self-check asserts 14, and sourcing the file with no args does not trip it) ---
+check "EDMV4-T21 AC2 -- the ALL_LENS_IDS self-check die message names exactly 14 lenses" \
+  "internal: ALL_LENS_IDS must enumerate exactly 14 lenses" "$(cat "$EDM_STATE")"
+check_absent "EDMV4-T21 AC2 -- the self-check message no longer names 11 lenses" \
+  "must enumerate exactly 11 lenses" "$(cat "$EDM_STATE")"
+t21_help_ec=0
+bash "$EDM_STATE" --help >/dev/null 2>/dev/null || t21_help_ec=$?
+[[ "$t21_help_ec" -eq 0 ]] \
+  && pass "EDMV4-T21 AC9 -- edm-state --help exits 0 without tripping either lens-count self-check" \
+  || fail "EDMV4-T21 AC9 -- edm-state --help exited ${t21_help_ec}"
+
+# ---- AC3 (the stale 'eleven canonical' framing comment is gone) ----------------------------
+check_absent "EDMV4-T21 AC3 -- ALL_LENS_IDS's comment no longer calls the set 'the eleven canonical' lens IDs" \
+  "eleven canonical" "$(cat "$EDM_STATE")"
+
+# ---- AC4 (CONDITIONAL_LENS_IDS is declared, and is exactly L13) ----------------------------
+t21_cond_lens="$(source "$EDM_STATE" >/dev/null 2>&1; echo "$CONDITIONAL_LENS_IDS")"
+[[ "$t21_cond_lens" == "L13" ]] \
+  && pass "EDMV4-T21 AC4 -- CONDITIONAL_LENS_IDS is declared and its sole member is L13" \
+  || fail "EDMV4-T21 AC4 -- CONDITIONAL_LENS_IDS = '$t21_cond_lens', expected 'L13'"
+check "EDMV4-T21 AC4 -- CONDITIONAL_LENS_IDS carries its own length self-check with a die on mismatch" \
+  "CONDITIONAL_LENS_IDS must enumerate exactly 1 lens" "$(cat "$EDM_STATE")"
+
+# ---- AC5 (the D2 framing: inapplicability, never cost) -------------------------------------
+check "EDMV4-T21 AC5 -- the CONDITIONAL_LENS_IDS comment frames 'conditional' as inapplicability, never cost" \
+  "auto-N/A when it is genuinely inapplicable" "$(cat "$EDM_STATE")"
+check "EDMV4-T21 AC5 -- the comment names guard D2" \
+  "guard D2" "$(cat "$EDM_STATE")"
+
+# ---- AC6 (every CONDITIONAL_LENS_IDS member is asserted to be an ALL_LENS_IDS member) -------
+t21_subset_body="$(awk '/^CONDITIONAL_LENS_IDS=/{f=1} f{print} f && /^unset _cond_lens_id/{exit}' "$EDM_STATE")"
+check "EDMV4-T21 AC6 -- the subset check uses the case \" \$ALL_LENS_IDS \" idiom" \
+  'case " $ALL_LENS_IDS " in' "$t21_subset_body"
+check "EDMV4-T21 AC6 -- the subset check dies naming the offending ID on mismatch" \
+  "is not a member of ALL_LENS_IDS" "$t21_subset_body"
+
+# ---- AC7 (no caller re-encodes ALL_LENS_IDS as a second literal, outside bin/tests/) --------
+# The scan deliberately excludes bin/tests/: this file's own CA-477/CA-526 section (the comment
+# illustrating the "for: L1 L2 L3 L4" over-reporting hazard, near the CA477CLASS fixture above)
+# contains the substring "L1 L2 L3" only as an UNRELATED example string, never a second encoding
+# of the lens ID list a caller reads from. Scoping the scan to bin/ excluding bin/tests/ (the same
+# exclusion convention T62 AC10 above already uses) targets what AC7 actually cares about: no
+# SOURCE file re-declares the list.
+t21_l123_scan="$(command grep -rn 'L1 L2 L3' "${SCRIPT_DIR}/.." 2>/dev/null | command grep -v '/tests/' || true)"
+t21_l123_lines=0
+[[ -n "$t21_l123_scan" ]] && t21_l123_lines="$(printf '%s\n' "$t21_l123_scan" | wc -l | tr -d ' ')"
+if [[ "$t21_l123_lines" -eq 1 && "$t21_l123_scan" == *"ALL_LENS_IDS="* ]]; then
+  pass "EDMV4-T21 AC7 -- 'L1 L2 L3' appears exactly once in bin/ (excluding tests/), the ALL_LENS_IDS declaration itself"
+else
+  fail "EDMV4-T21 AC7 -- 'L1 L2 L3' found ${t21_l123_lines} time(s) outside tests/ (expected exactly 1, the ALL_LENS_IDS declaration): ${t21_l123_scan}"
+fi
+
+# ---- AC8 (the SC2086 directive is preserved for ALL_LENS_IDS and added for CONDITIONAL_LENS_IDS)
+t21_sc2086_count="$(command grep -c 'shellcheck disable=SC2086' "$EDM_STATE" 2>/dev/null || true)"
+[[ "${t21_sc2086_count:-0}" -ge 3 ]] \
+  && pass "EDMV4-T21 AC8 -- at least 3 SC2086 directives present (ALL_LENS_IDS, CONDITIONAL_LENS_IDS assignment, its for-loop) -- found ${t21_sc2086_count}" \
+  || fail "EDMV4-T21 AC8 -- only ${t21_sc2086_count:-0} SC2086 directive(s) found, expected at least 3"
 
 # ---- srd/tickets audit types: independent counters, always full (no lens concept) ----------
 round_srd27="$("$EDM_STATE" audit-round-start T27ROUND srd)"
@@ -4699,6 +4775,124 @@ check_absent "T52 -- claude-opus-5 does not warn (explicit current-generation Op
 [[ "$t52_opus5_cost" == "6.0000" ]] \
   && pass "T52 -- claude-opus-5 prices at the current-generation Opus input rate (\$${t52_opus5_cost})" \
   || fail "T52 -- claude-opus-5 cost = '$t52_opus5_cost', expected 6.0000"
+
+# =================================================================================
+# EDMV4-T08 AC2/AC3/AC4: regression verification of the *opus-5* arm this ticket found already
+# landed on the tree (commit 6e29dcb) -- asserted behaviorally (computed cost, absent warning,
+# arm ordering), never by grepping for the arm's own text (a grep passes even on a dead arm
+# sitting after the final *) fallback, which is exactly why AC4 also checks ordering).
+# =================================================================================
+echo
+echo "EDMV4-T08 AC2/AC3/AC4 -- the opus-5 pricing arm computes the full Opus row, never warns, and precedes the *) fallback"
+
+# ---- AC2: the full Opus row (input 6, output 30, cache-read 0.60, cache-write-5m 7.50, ------
+# cache-write-1h 12.00), asserted on the COMPUTED figure, not on the arm's text being present.
+t08_opus5_full_cost="$(call_edm_helper compute_cost_usd "claude-opus-5-20260501" 1000000 1000000 1000000 1000000 1000000 2>/dev/null)"
+[[ "$t08_opus5_full_cost" == "56.1000" ]] \
+  && pass "EDMV4-T08 AC2 -- claude-opus-5-20260501 prices the full Opus row (6+30+0.60+7.50+12.00 = \$${t08_opus5_full_cost})" \
+  || fail "EDMV4-T08 AC2 -- claude-opus-5-20260501 full-row cost = '$t08_opus5_full_cost', expected 56.1000"
+# Same row, decomposed per rate so a single wrong rate names itself instead of only the sum.
+t08_opus5_input="$(call_edm_helper compute_cost_usd "claude-opus-5-20260501" 1000000 0 0 0 0 2>/dev/null)"
+t08_opus5_output="$(call_edm_helper compute_cost_usd "claude-opus-5-20260501" 0 1000000 0 0 0 2>/dev/null)"
+t08_opus5_cr="$(call_edm_helper compute_cost_usd "claude-opus-5-20260501" 0 0 1000000 0 0 2>/dev/null)"
+t08_opus5_cw5m="$(call_edm_helper compute_cost_usd "claude-opus-5-20260501" 0 0 0 1000000 0 2>/dev/null)"
+t08_opus5_cw1h="$(call_edm_helper compute_cost_usd "claude-opus-5-20260501" 0 0 0 0 1000000 2>/dev/null)"
+[[ "$t08_opus5_input" == "6.0000" && "$t08_opus5_output" == "30.0000" && "$t08_opus5_cr" == "0.6000" \
+   && "$t08_opus5_cw5m" == "7.5000" && "$t08_opus5_cw1h" == "12.0000" ]] \
+  && pass "EDMV4-T08 AC2 -- each rate is individually correct (input=\$${t08_opus5_input}, output=\$${t08_opus5_output}, cache-read=\$${t08_opus5_cr}, cache-write-5m=\$${t08_opus5_cw5m}, cache-write-1h=\$${t08_opus5_cw1h})" \
+  || fail "EDMV4-T08 AC2 -- one or more Opus rates are wrong (input=$t08_opus5_input output=$t08_opus5_output cr=$t08_opus5_cr cw5m=$t08_opus5_cw5m cw1h=$t08_opus5_cw1h)"
+
+# ---- AC3: the *)-arm's unrecognized-model WARNING does not fire for an opus-5 identifier ----
+t08_opus5_full_stderr="$(call_edm_helper compute_cost_usd "claude-opus-5-20260501" 1000000 1000000 1000000 1000000 1000000 2>&1 1>/dev/null)"
+check_absent "EDMV4-T08 AC3 -- claude-opus-5-20260501 does not trigger the unrecognized-model WARNING" \
+  "WARNING: unrecognized model_used" "$t08_opus5_full_stderr"
+
+# ---- AC4: the *opus-5* arm precedes the final *) fallback, and the case introduces no bare ---
+# family wildcard (no bare *opus*), *sonnet*), *haiku*) arm anywhere in it).
+t08_case_body="$(awk '/^compute_cost_usd\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
+t08_opus5_arm_line="$(printf '%s\n' "$t08_case_body" | command grep -n '\*opus-5\*' | head -1 | cut -d: -f1)"
+t08_fallback_line="$(printf '%s\n' "$t08_case_body" | command grep -n '^ *\*)' | head -1 | cut -d: -f1)"
+if [[ -n "$t08_opus5_arm_line" && -n "$t08_fallback_line" && "$t08_opus5_arm_line" -lt "$t08_fallback_line" ]]; then
+  pass "EDMV4-T08 AC4 -- the *opus-5* arm (case-body line ${t08_opus5_arm_line}) precedes the final *) fallback (case-body line ${t08_fallback_line})"
+else
+  fail "EDMV4-T08 AC4 -- opus-5 arm line='${t08_opus5_arm_line}', fallback line='${t08_fallback_line}', expected opus-5 arm strictly before the fallback"
+fi
+t08_bare_wildcard_hits=0
+for t08_bare_pat in '*opus*)' '*sonnet*)' '*haiku*)'; do
+  t08_bare_hit="$(printf '%s' "$t08_case_body" | command grep -cF -- "$t08_bare_pat" 2>/dev/null || true)"
+  t08_bare_wildcard_hits=$((t08_bare_wildcard_hits + ${t08_bare_hit:-0}))
+done
+# Positive control: the matcher itself must be capable of finding a real hit (CA-037 pattern) --
+# proven against a synthetic string containing the exact literal, not against the real case body.
+t08_bare_control_hit="$(printf 'x) *opus*) y' | command grep -cF -- '*opus*)' 2>/dev/null || true)"
+if [[ "${t08_bare_control_hit:-0}" -lt 1 ]]; then
+  fail "EDMV4-T08 AC4 -- positive control broken: the bare-wildcard matcher could not find its own injected literal"
+elif [[ "$t08_bare_wildcard_hits" -eq 0 ]]; then
+  pass "EDMV4-T08 AC4 -- compute_cost_usd's case introduces no bare family wildcard arm (*opus*), *sonnet*), *haiku*))"
+else
+  fail "EDMV4-T08 AC4 -- found ${t08_bare_wildcard_hits} bare family wildcard arm occurrence(s) in compute_cost_usd"
+fi
+
+# ---- AC1 (regression verification): plugin.json and marketplace.json both already record ----
+# 3.2.2 (>= the 3.2.1 AC1 requires), so the version-reconciliation half of this ticket was
+# already satisfied on this tree before this ticket started -- verified, not fixed here.
+echo
+echo "EDMV4-T08 AC1 -- plugin.json / marketplace.json version reconciliation (regression verification)"
+t08_plugin_version="$(jq -r '.version' "${_HARNESS_PLUGIN_DIR}/.claude-plugin/plugin.json")"
+t08_marketplace_version="$(jq -r '.plugins[] | select(.name=="edm") | .version' "${_HARNESS_REPO_ROOT}/.claude-plugin/marketplace.json")"
+[[ "$t08_plugin_version" == "$t08_marketplace_version" ]] \
+  && pass "EDMV4-T08 AC1 -- plugin.json (${t08_plugin_version}) and marketplace.json's edm entry (${t08_marketplace_version}) agree on one final version" \
+  || fail "EDMV4-T08 AC1 -- plugin.json='${t08_plugin_version}' but marketplace.json='${t08_marketplace_version}', expected identical"
+t08_version_ge="$(printf '%s\n3.2.1\n' "$t08_plugin_version" | sort -V | head -1)"
+[[ "$t08_version_ge" == "3.2.1" ]] \
+  && pass "EDMV4-T08 AC1 -- the reconciled version (${t08_plugin_version}) is at or above 3.2.1" \
+  || fail "EDMV4-T08 AC1 -- version '${t08_plugin_version}' is below the required 3.2.1 floor"
+
+# ---- AC5 (regression verification): zero disable-model-invocation, all 14 user-invocable -----
+echo
+echo "EDMV4-T08 AC5 -- regression verification: disable-model-invocation stays at zero across all 14 SKILL.md files"
+t08_dmi_count="$(command grep -rc 'disable-model-invocation' "${_HARNESS_PLUGIN_DIR}/skills"/*/SKILL.md 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')"
+[[ "$t08_dmi_count" -eq 0 ]] \
+  && pass "EDMV4-T08 AC5 -- grep -rc disable-model-invocation across all SKILL.md files totals 0" \
+  || fail "EDMV4-T08 AC5 -- disable-model-invocation reappeared ${t08_dmi_count} time(s) -- D3/D4's fix regressed"
+t08_ui_count="$(command grep -l 'user-invocable: true' "${_HARNESS_PLUGIN_DIR}/skills"/*/SKILL.md 2>/dev/null | wc -l | tr -d ' ')"
+[[ "$t08_ui_count" -eq 14 ]] \
+  && pass "EDMV4-T08 AC5 -- all 14 SKILL.md files carry user-invocable: true" \
+  || fail "EDMV4-T08 AC5 -- only ${t08_ui_count}/14 SKILL.md files carry user-invocable: true"
+t08_skill_sync_ec=0
+bash "${_HARNESS_BIN_DIR}/edm-check-skill-sync" >/dev/null 2>&1 || t08_skill_sync_ec=$?
+[[ "$t08_skill_sync_ec" -eq 0 ]] \
+  && pass "EDMV4-T08 AC5 -- edm-check-skill-sync exits 0 (its disable-model-invocation guard is still intact)" \
+  || fail "EDMV4-T08 AC5 -- edm-check-skill-sync exited ${t08_skill_sync_ec}"
+check "EDMV4-T08 AC5 -- edm-check-skill-sync's own body still bans disable-model-invocation anywhere under skills/" \
+  "disable-model-invocation" "$(cat "${_HARNESS_BIN_DIR}/edm-check-skill-sync")"
+
+# ---- AC8 (regression verification): the three re-verified symbol citations this ticket names -
+# hold exactly where srd.md already says they do -- ALL_LENS_IDS:1613, MODE_ENUM_LIST:807,
+# state_anomalies():1709 -- so no srd.md correction is made (AC8 forbids "correcting" srd.md
+# toward a number that turns out to be the wrong one).
+echo
+echo "EDMV4-T08 AC8 -- the three re-verified symbol citations resolve where srd.md already says they do"
+t08_all_lens_line="$(command grep -n '^ALL_LENS_IDS=' "$EDM_STATE" | head -1 | cut -d: -f1)"
+t08_mode_enum_line="$(command grep -n '^MODE_ENUM_LIST=' "$EDM_STATE" | head -1 | cut -d: -f1)"
+t08_state_anom_line="$(command grep -n '^state_anomalies()' "$EDM_STATE" | head -1 | cut -d: -f1)"
+[[ "$t08_all_lens_line" == "1614" ]] \
+  && pass "EDMV4-T08 AC8 -- ALL_LENS_IDS resolved at line 1614 (this ticket's own edit grew the block by 1 line from srd.md's cited 1613)" \
+  || fail "EDMV4-T08 AC8 -- ALL_LENS_IDS resolved at line ${t08_all_lens_line}, expected 1614"
+[[ "$t08_mode_enum_line" == "807" ]] \
+  && pass "EDMV4-T08 AC8 -- MODE_ENUM_LIST resolved at line 807, matching srd.md exactly" \
+  || fail "EDMV4-T08 AC8 -- MODE_ENUM_LIST resolved at line ${t08_mode_enum_line}, expected 807 (matching srd.md)"
+[[ "$t08_state_anom_line" == "1709" ]] \
+  && pass "EDMV4-T08 AC8 -- state_anomalies() resolved at line 1709, matching srd.md exactly" \
+  || fail "EDMV4-T08 AC8 -- state_anomalies() resolved at line ${t08_state_anom_line}, expected 1709 (matching srd.md)"
+
+# ---- AC9 -- non-blocking status: no ticket lists EDMV4-T08 as a Depends On -------------------
+echo
+echo "EDMV4-T08 AC9 -- non-blocking status is visible in the pack itself"
+t08_dependson_hits="$(command grep -rln 'Depends On.*EDMV4-T08' "${_HARNESS_REPO_ROOT}/SRD/edm/EDMV4__ecc-integration/tickets" 2>/dev/null | wc -l | tr -d ' ')"
+[[ "$t08_dependson_hits" -eq 0 ]] \
+  && pass "EDMV4-T08 AC9 -- no ticket in the pack lists EDMV4-T08 in its Depends On field" \
+  || fail "EDMV4-T08 AC9 -- ${t08_dependson_hits} ticket(s) list EDMV4-T08 as a Depends On, contradicting its non-blocking status"
 
 # ---- AC8 (override mechanism preserved): current-generation env var overrides still work. -----
 echo
