@@ -1,0 +1,262 @@
+#!/usr/bin/env bash
+# EDMV4-T43: the block between EDM-HELP-BEGIN and EDM-HELP-END below is sentinel-delimited, not a
+# hardcoded numeric-line-range extraction -- usage() calls the shared print_help (CA-005,
+# _edm-cli-lib.sh), the same convention every other bin/ helper uses.
+# EDM-HELP-BEGIN
+# edm-hookify -- evaluate the JSON hookify rule set defined in plugins/edm/CLAUDE.md's
+# "Hookify rule format (canonical)" section (EDMV4-T42 built the format; this ticket, EDMV4-T43,
+# builds the evaluator that consumes it). There is no existing evaluator anywhere in ECC to port
+# from -- explorer 04 found only prose documentation of the condition engine, no code -- so this
+# is written from nothing, deliberately in a single-classify-pass shape (one jq invocation per
+# call, regardless of how many rule files are enabled) rather than one jq call per rule, matching
+# the cost-model fix bin/edm-lint-artifacts already applied once (its own multi-class scan runs
+# one classification pass per file, then projects N violation classes from that one table).
+#
+# Usage:
+#   edm-hookify list                    # enumerate enabled rule names, one per line
+#   edm-hookify eval <file|bash|stop>    # evaluate enabled rules for one event; reads a JSON
+#                                        # payload object on stdin (fields per CLAUDE.md's
+#                                        # per-event field table: file_path/new_text/old_text/
+#                                        # content for `file`, command for `bash`, none for `stop`)
+#   edm-hookify -h|--help                # show this help
+#
+# Rule discovery: .claude/edm-hookify/*.json under the project root, resolved the same way
+# check_permission_rules() resolves it in bin/edm-state (CA-448 baseline): CLAUDE_PROJECT_DIR
+# when it names a directory, else `git rev-parse --show-toplevel`, else `.`.
+#
+# Payload field truncation (AC6): each field value a rule's conditions are matched against is
+# truncated to 65536 characters (64 KiB for single-byte/ASCII content, which is the overwhelming
+# majority of source-code and diff text) before any operator runs. This is a documented INPUT-SIZE
+# CAP, not a timeout -- `timeout(1)` is a GNU coreutils binary absent from stock macOS, this
+# plugin's primary development platform, so depending on it would either add a required binary
+# outside the bash/jq/git set this plugin pins, or silently do nothing on the platform where a
+# runaway regex_match against a multi-megabyte payload is most likely. Bounding the INPUT bounds
+# the cost of Oniguruma's regex_match (jq's test()) regardless of how large a single edit's
+# new_text/content/command field is.
+#
+# Output format (`eval`, one line per matched rule): "<rule_id> <action> <message>" -- single-space
+# separated, message last so it may itself contain spaces.
+#
+# Exit codes:
+#   0  clean -- no enabled rule matched (or, for `list`, the rule set was enumerated), including
+#      the case where zero rule files exist at all (an absent .claude/edm-hookify/ directory).
+#   1  setup error -- malformed rule file (invalid JSON, missing required key, unknown operator,
+#      out-of-event field), or a required binary (jq) not found on PATH. A malformed rule file
+#      never blocks and never disables the rest of the rule set: its path and reason are named on
+#      stderr, that file alone is skipped, and every other valid, enabled rule for the requested
+#      event is still evaluated in the same run.
+# `action: block` semantics and the resulting exit 2 are EDMV4-T44's two-tier exit contract, built
+# on top of this ticket's 0/1 evaluator -- not implemented here. `EDMV4-T44` and `EDMV4-T45` are
+# the two consumers (edm-gateguard, edm-stop-gate) that translate a match into a real refusal; this
+# script only classifies and reports.
+# EDM-HELP-END
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/_edm-cli-lib.sh"
+
+die() {
+  local msg="$1" code="${2:-1}"
+  echo "edm-hookify: $msg" >&2
+  exit "$code"
+}
+
+usage() {
+  print_help "${BASH_SOURCE[0]:-$0}"
+  exit 0
+}
+
+case "${1:-}" in
+  -h|--help) usage ;;
+esac
+
+SUBCOMMAND="${1:-}"
+[[ -n "$SUBCOMMAND" ]] || die "usage: edm-hookify list | eval <file|bash|stop>"
+
+EVENT=""
+case "$SUBCOMMAND" in
+  list) ;;
+  eval)
+    EVENT="${2:-}"
+    case "$EVENT" in
+      file|bash|stop) ;;
+      *) die "usage: edm-hookify eval <file|bash|stop>" ;;
+    esac
+    ;;
+  *)
+    die "unknown subcommand: ${SUBCOMMAND} (expected list or eval)"
+    ;;
+esac
+
+# ---- Resolve project root and rule directory (CA-448 baseline; CLAUDE.md "Rule directory and
+# discovery"): CLAUDE_PROJECT_DIR when it names a directory, else git toplevel, else `.`. -------
+resolve_project_root() {
+  if [[ -n "${CLAUDE_PROJECT_DIR:-}" && -d "${CLAUDE_PROJECT_DIR}" ]]; then
+    printf '%s\n' "$CLAUDE_PROJECT_DIR"
+    return 0
+  fi
+  local gt
+  gt="$(git rev-parse --show-toplevel 2>/dev/null)" || gt=""
+  if [[ -n "$gt" ]]; then
+    printf '%s\n' "$gt"
+    return 0
+  fi
+  printf '%s\n' "."
+}
+
+PROJECT_ROOT="$(resolve_project_root)"
+RULE_DIR="${PROJECT_ROOT}/.claude/edm-hookify"
+
+# ---- Collect rule files. Bash 3.2 (C1): no mapfile/readarray -- a NUL-delimited find loop,
+# matching _collect_md_files_into's idiom in edm-lint-artifacts. --------------------------------
+RULE_FILES=()
+if [[ -d "$RULE_DIR" ]]; then
+  while IFS= read -r -d "" _hf; do
+    RULE_FILES+=("$_hf")
+  done < <(find "$RULE_DIR" -maxdepth 1 -type f -name '*.json' -print0 2>/dev/null)
+fi
+
+# AC10: zero rule files -- including the common case of an absent .claude/edm-hookify/ directory
+# entirely -- exits 0 immediately, before jq's presence is even checked. Nothing to evaluate means
+# nothing needs jq, so a machine missing jq is not penalized for a repository with no rules yet.
+if [[ ${#RULE_FILES[@]} -eq 0 ]]; then
+  exit 0
+fi
+
+command -v jq >/dev/null 2>&1 || die "required binary not found on PATH: jq"
+
+# `eval` reads its JSON payload from the real invocation's stdin (AC1). Drain it into a bash
+# variable BEFORE jq's own stdin is repurposed below for the rule-content stream -- the
+# one-classify-pass design (AC2/AC3) needs jq's stdin free to carry the NUL-joined rule bytes, so
+# the payload travels in as a --arg instead.
+PAYLOAD_RAW=""
+if [[ "$SUBCOMMAND" == "eval" ]]; then
+  PAYLOAD_RAW="$(cat)"
+fi
+
+# 65536 chars (64 KiB for single-byte/ASCII content -- see the EDM-HELP block above for the
+# rationale and its documented approximation for multi-byte UTF-8 text).
+HOOKIFY_MAX_FIELD_CHARS=65536
+
+# ---- One classify pass (AC2/AC3): every rule file's raw bytes, NUL-joined, stream into exactly
+# ONE jq invocation regardless of how many files there are. A malformed file (invalid JSON, a
+# missing required key, an unknown operator, an out-of-event field) is caught INSIDE this single
+# jq program via try/catch per rule, not by a separate jq call per file -- a per-file jq call is
+# precisely the multiplying cost this design exists to avoid. No temp files are used anywhere
+# (AC9): the rule bytes travel over a pipe, never through disk. -------------------------------
+build_rule_stream() {
+  local f
+  for f in "${RULE_FILES[@]}"; do
+    cat "$f"
+    printf '\0'
+  done
+}
+
+# shellcheck disable=SC2016 # the single-quoted jq program below intentionally holds literal $vars
+JQ_PROGRAM='
+def allowed_keys: ["name","enabled","event","action","conditions","message"];
+def allowed_events: ["file","stop","bash"];
+def allowed_ops: ["regex_match","contains","equals","not_contains","starts_with","ends_with"];
+def fields_for_event($e):
+  if $e == "file" then ["file_path","new_text","old_text","content"]
+  elif $e == "bash" then ["command"]
+  else [] end;
+def cap($s): if ($s|type) == "string" then $s[0:$maxchars] else $s end;
+def validate($r):
+  ($r|keys) as $ks
+  | ($ks - allowed_keys) as $unknown
+  | if ($unknown|length) > 0 then {ok:false, error:("unknown top-level key: " + $unknown[0])}
+    elif (([$r|has("name"),has("enabled"),has("event"),has("conditions"),has("message")]) | all) | not
+      then {ok:false, error:"missing required key"}
+    elif (allowed_events | index($r.event)) == null
+      then {ok:false, error:("unknown event: " + ($r.event|tostring))}
+    else
+      (fields_for_event($r.event)) as $ff
+      | ([$r.conditions[]? | select(.operator as $op | (allowed_ops|index($op)) == null)]) as $bad_ops
+      | if ($bad_ops|length) > 0 then
+          {ok:false, error:("unknown operator: " + $bad_ops[0].operator)}
+        else
+          ([$r.conditions[]? | select(.field as $fld | ($ff|index($fld)) == null)]) as $bad_fields
+          | if ($bad_fields|length) > 0 then
+              {ok:false, error:("field \"" + $bad_fields[0].field + "\" does not belong to event " + $r.event)}
+            else {ok:true}
+            end
+        end
+    end;
+def op_match($op; $val; $pattern):
+  if $op == "contains" then ($val|contains($pattern))
+  elif $op == "not_contains" then (($val|contains($pattern))|not)
+  elif $op == "equals" then ($val == $pattern)
+  elif $op == "starts_with" then ($val|startswith($pattern))
+  elif $op == "ends_with" then ($val|endswith($pattern))
+  elif $op == "regex_match" then ($val|test($pattern))
+  else false end;
+def conds_match($r; $payload):
+  (($r.conditions // [])) as $cs
+  | ($cs|length) == 0 or
+    (all($cs[]; . as $c
+      | (($payload[$c.field] // "") | tostring | cap(.)) as $val
+      | op_match($c.operator; $val; $c.pattern)));
+(split("\u0000")) as $raw_all
+| $raw_all[0:-1] as $raws
+| ($ARGS.positional) as $ps
+| ($payload_raw | try fromjson catch {}) as $payload
+| range(0; ($ps|length)) as $i
+| ($ps[$i]) as $path
+| ($raws[$i]) as $raw
+| (try ($raw|fromjson) catch null) as $parsed
+| if $parsed == null then
+    "E\t" + $path + "\tinvalid JSON"
+  else
+    (validate($parsed)) as $v
+    | if ($v.ok|not) then
+        "E\t" + $path + "\t" + $v.error
+      elif ($parsed.enabled != true) then
+        empty
+      elif ($mode == "list") then
+        "L\t" + ($parsed.name // $path)
+      elif ($parsed.event != $event) then
+        empty
+      elif (conds_match($parsed; $payload)) then
+        "M\t" + ($parsed.name // "unnamed") + "\t" + ($parsed.action // "warn") + "\t" + ($parsed.message // "")
+      else
+        empty
+      end
+  end
+'
+
+RESULT="$(build_rule_stream | jq -R -s -r \
+  --argjson maxchars "$HOOKIFY_MAX_FIELD_CHARS" \
+  --arg payload_raw "$PAYLOAD_RAW" \
+  --arg event "$EVENT" \
+  --arg mode "$SUBCOMMAND" \
+  "$JQ_PROGRAM" \
+  --args "${RULE_FILES[@]}")" || die "jq evaluation failed"
+
+HAD_ERROR=0
+while IFS= read -r _line; do
+  [[ -z "$_line" ]] && continue
+  _tag="${_line%%$'\t'*}"
+  _rest="${_line#*$'\t'}"
+  case "$_tag" in
+    E)
+      _epath="${_rest%%$'\t'*}"
+      _ereason="${_rest#*$'\t'}"
+      echo "edm-hookify: setup error: ${_epath}: ${_ereason}" >&2
+      HAD_ERROR=1
+      ;;
+    L)
+      echo "$_rest"
+      ;;
+    M)
+      _mname="${_rest%%$'\t'*}"
+      _mrest="${_rest#*$'\t'}"
+      _maction="${_mrest%%$'\t'*}"
+      _mmessage="${_mrest#*$'\t'}"
+      echo "${_mname} ${_maction} ${_mmessage}"
+      ;;
+  esac
+done <<< "$RESULT"
+
+[[ "$HAD_ERROR" -eq 1 ]] && exit 1
+exit 0

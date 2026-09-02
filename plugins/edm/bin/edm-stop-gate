@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# EDMV4-T46: the block between EDM-HELP-BEGIN and EDM-HELP-END below is sentinel-delimited, not a
+# hardcoded numeric-line-range extraction -- usage() calls the shared print_help (CA-005,
+# _edm-cli-lib.sh), the same convention every other bin/ helper uses.
+# EDM-HELP-BEGIN
+# edm-stop-gate -- Stop-hook completion gate (EDMV4-T46). Surfaces blocking-class state anomalies
+# at Stop time instead of waiting for edm-state archive at the very end of an initiative.
+#
+# This ticket is VALIDATE-ONLY: it runs `edm-state validate <PREFIX>` for every active initiative
+# and honours only blocking-class anomalies. Hookify `stop`-rule evaluation is NOT wired here --
+# EDMV4-T45 owns that wiring and EDMV4-T44 owns the exit-2 translation for a matched `block` rule,
+# both landing in a later wave. Keeping that clause in this ticket made EDMV4-T44 and this ticket
+# mutually blocking (wave-1 ticket-pack audit, P0-2), so it was cut.
+#
+# Usage:
+#   edm-stop-gate            # run from a Stop hook; no arguments
+#   edm-stop-gate -h|--help  # show this help
+#
+# Prefix resolution: this gate calls `edm-state active-initiatives` (no argument, lists every
+# initiative with current_phase in 1-6) rather than guessing a prefix from the working directory
+# or re-implementing the sweep. When more than one initiative is active, `edm-state validate` runs
+# for EACH and the gate blocks if ANY returns a blocking-class anomaly, naming the offending
+# initiative. When active-initiatives lists none, this gate exits 0 with zero bytes on stdout and
+# stderr -- a repository with no active initiative has nothing to say at every Stop.
+#
+# Noise control: only blocking-class anomaly text reaches stderr, verbatim. Every other
+# (informational) anomaly `edm-state validate` reports is replaced with one summary line per
+# initiative: "[EDM] <N> informational anomalies (run: edm-state validate <PREFIX>)". Printing
+# every informational anomaly individually would fire on essentially every Stop, and noise on a
+# gate is how a gate gets disabled.
+#
+# Exit codes:
+#   0  continue -- no active initiative, or every active initiative's `edm-state validate` run
+#      returned no blocking-class anomaly. Every internal/setup condition also lands here and
+#      NEVER blocks: edm-state absent from PATH, jq missing, no resolvable initiative, or
+#      `edm-state validate` itself failing/dying for a given prefix (its own setup-error exit,
+#      distinct from the blocking-class exit 3 it uses on a real anomaly).
+#   2  block -- at least one active initiative's `edm-state validate` run reported a blocking-class
+#      anomaly (`edm-state validate` itself exits 3 for that condition; this gate never confuses
+#      that with any other non-zero exit code from `validate`).
+# All operator-facing text goes to stderr, never stdout -- a raw JSON echo to stdout is the
+# documented failure mode for a Stop hook.
+# EDM-HELP-END
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/_edm-cli-lib.sh"
+
+usage() {
+  print_help "${BASH_SOURCE[0]:-$0}"
+  exit 0
+}
+
+case "${1:-}" in
+  -h|--help) usage ;;
+esac
+
+# soft_exit: every internal/setup-error path exits 0 -- this gate's own contract has no
+# non-blocking failure code other than 0 (unlike bin/'s usual two-code die(), which defaults to a
+# nonzero setup-error exit). Optionally names the problem on stderr; the caller decides whether a
+# message is appropriate for the specific internal condition (AC3 requires total silence for the
+# "no active initiatives" path specifically).
+soft_exit() {
+  local msg="${1:-}"
+  [[ -n "$msg" ]] && echo "edm-stop-gate: $msg" >&2
+  exit 0
+}
+
+command -v edm-state >/dev/null 2>&1 || exit 0
+
+ACTIVE_OUTPUT=""
+ACTIVE_RC=0
+ACTIVE_OUTPUT="$(edm-state active-initiatives 2>/dev/null)" || ACTIVE_RC=$?
+[[ "$ACTIVE_RC" -eq 0 ]] || soft_exit "edm-state active-initiatives exited ${ACTIVE_RC}"
+
+# AC1: parse the human-readable "  <PREFIX>  phase=N  last_updated=..." lines, ignoring the
+# "(no active initiatives)" / "(no SRD/ directory)" sentinel lines. Bash 3.2 (C1): a plain
+# `while IFS= read -r` loop, no mapfile/readarray.
+ACTIVE_PREFIXES=()
+while IFS= read -r _line; do
+  case "$_line" in
+    *"phase="*)
+      _prefix="$(awk '{print $1}' <<< "$_line")"
+      [[ -n "$_prefix" ]] && ACTIVE_PREFIXES+=("$_prefix")
+      ;;
+    *) ;;
+  esac
+done <<< "$ACTIVE_OUTPUT"
+
+# AC3: zero active initiatives -- exit 0 silently, zero bytes on stdout and stderr. This also
+# covers the "no resolvable initiative" internal-error case (AC9): there is nothing to validate.
+[[ ${#ACTIVE_PREFIXES[@]} -eq 0 ]] && exit 0
+
+ANY_BLOCKING=0
+
+for _prefix in "${ACTIVE_PREFIXES[@]}"; do
+  _validate_out=""
+  _validate_rc=0
+  _validate_out="$(edm-state validate "$_prefix" 2>&1)" || _validate_rc=$?
+
+  # cmd_validate exits 3 (not 1) on a blocking anomaly (bin/edm-state's cmd_validate). Any other
+  # non-zero exit (a setup error / `die`) is an internal error for THIS prefix -- never treated as
+  # blocking (AC9) -- so this initiative is skipped and the loop continues to the next one.
+  case "$_validate_rc" in
+    0|3) ;;
+    *) continue ;;
+  esac
+
+  _blocking_text=""
+  _info_count=0
+  while IFS= read -r _aline; do
+    [[ -z "$_aline" ]] && continue
+    case "$_aline" in
+      \#*) continue ;;
+    esac
+    _class="${_aline%% *}"
+    case "$_class" in
+      blocking)
+        _blocking_text="${_blocking_text}${_blocking_text:+$'\n'}${_aline}"
+        ;;
+      info)
+        _info_count=$((_info_count + 1))
+        ;;
+      *) ;;
+    esac
+  done <<< "$_validate_out"
+
+  if [[ -n "$_blocking_text" ]]; then
+    ANY_BLOCKING=1
+    echo "[EDM] blocking anomaly for initiative ${_prefix}:" >&2
+    printf '%s\n' "$_blocking_text" >&2
+  fi
+
+  if [[ "$_info_count" -gt 0 ]]; then
+    echo "[EDM] ${_info_count} informational anomalies (run: edm-state validate ${_prefix})" >&2
+  fi
+done
+
+[[ "$ANY_BLOCKING" -eq 1 ]] && exit 2
+exit 0
