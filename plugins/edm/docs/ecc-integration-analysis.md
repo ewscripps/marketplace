@@ -34,7 +34,7 @@ Measured directly from the checkout:
 | Subagents | 68 | `agents/*.md` |
 | Skills | 286 | `skills/<name>/SKILL.md` |
 | Slash commands | 94 | `commands/*.md` |
-| Hook registrations | 25 | `hooks/hooks.json` |
+| Hook registrations | 23 | `hooks/hooks.json` |
 | Hook implementation scripts | ~55 | `scripts/hooks/` |
 | Shared Node libraries | ~70 | `scripts/lib/` |
 | CI validators | 13 | `scripts/ci/` |
@@ -115,7 +115,7 @@ list of harness `targets` it can install into, `dependencies`, `defaultInstall`,
 
 ### 1.6 The hook architecture
 
-`hooks/hooks.json` registers 25 hooks across eight events. Summarized:
+`hooks/hooks.json` registers 23 hooks across seven events. Summarized:
 
 | Event | Hooks | What they do |
 |---|---|---|
@@ -293,7 +293,10 @@ file" and "confirm no existing file serves the same purpose". For destructive `B
 the blast radius, a one-line rollback procedure, and the quoted instruction. Routine `Bash` is
 gated **once per session** only -- ECC calls out over-gating as an anti-pattern explicitly.
 
-`MultiEdit` is handled per-file, not per-call.
+`MultiEdit` is handled per-file, not per-call: it denies on the first still-unchecked file in the
+batch, and a batch of three unchecked files needs **one retry per still-unchecked file**, not one
+retry total (`gateguard-fact-force.js:1234-1256`) -- a mechanical subtlety an earlier reading of
+this document omitted.
 
 **Engineering quality.** This is one of the better-built files in ECC. Session state lives in
 `~/.gateguard` scoped per session with a 30-minute inactivity timeout and a 500-entry cap.
@@ -316,6 +319,7 @@ one behaviour while leaving the load-bearing checks running:
 | `GATEGUARD_FACT_FORCE_FULL_DENIALS` | `3` | Full-block denials before condensing |
 | `GATEGUARD_STATE_DIR` | `~/.gateguard` | Per-session state location |
 | `ECC_GATEGUARD=off` | -- | Disables entirely |
+| `GATEGUARD_DISABLED=1` | -- | A second, independent kill switch alongside `ECC_GATEGUARD=off` (`gateguard-fact-force.js:732-734`); this table originally omitted it. It recognizes only the literal `'1'`, not the word-forms `ECC_GATEGUARD` accepts |
 
 Note a documented glob gotcha: a leading `**/` compiles to `.*/` and so requires at least one
 preceding separator. `**/tests/**` matches `/repo/tests/foo.js` but not a bare relative
@@ -356,8 +360,8 @@ solved**, and it is the finding with the clearest immediate payoff.
 
 **The defect.** `edm-state update-patterns <PREFIX> <srd|ticket|qc|code|test-coverage>` exists to
 harvest novel audit findings out of a completed audit report and append them to EDM's shipped
-pattern library, so future audits get smarter. It is called mid-phase by four skills. At
-`bin/edm-state:5577` the target directory is computed as:
+pattern library, so future audits get smarter. It is called mid-phase by six skills (`implement`, `code-audit`, `audit-tickets`, `audit-srd`,
+`test`, `test-coverage`). At `bin/edm-state:5607` the target directory is computed as:
 
 ```bash
 local patterns_dir="${SCRIPT_DIR}/../docs/audit-patterns"
@@ -365,7 +369,7 @@ local patterns_dir="${SCRIPT_DIR}/../docs/audit-patterns"
 
 `SCRIPT_DIR` is the plugin's own `bin/`. So the write target is
 `plugins/edm/docs/audit-patterns/*.md` -- **inside the plugin's installed tree**. At
-`bin/edm-state:5624`:
+`bin/edm-state:5640`:
 
 ```bash
 echo "update-patterns: pattern directory is not writable at ${pattern_dir} \
@@ -446,7 +450,9 @@ reaches wins, and the result is stated in one line so the user can override:
 | large | many / cross-cutting | new external dep, public API, or a spec doc | multiple open questions | 1, 2, (3), 4, 5, 6 |
 
 With a tie-breaker: anything touching a security trigger or a public API/contract is **at least**
-standard regardless of file count. ECC's security triggers, from `rules/common/security.md`, are:
+standard regardless of file count. ECC's security triggers, from `orch-pipeline/SKILL.md:100-104`
+(not `rules/common/security.md`, which holds an unrelated 8-item pre-commit checklist -- see the
+Part 8.2 correction), are:
 authentication or authorization, user-input handling, database queries, filesystem paths, external
 API calls, cryptography, secrets or credentials.
 
@@ -511,8 +517,9 @@ critical/important/nice-to-have.
 test. `edm-test-coverage-auditor` reports *percentages* against configured thresholds. Neither
 asks the question "would these tests catch a real bug in this change?"
 
-**Important caveat on quality.** All three ECC agents are thin -- roughly 30 lines of body after
-the boilerplate defense block, with output formats given as four-item bullet lists. EDM's lens
+**Important caveat on quality.** All three ECC agents are thin -- `silent-failure-hunter`'s body is
+44 lines after the boilerplate defense block, not "~30" (the other two are 35 and 39) -- with
+output formats given as four-item bullet lists. EDM's lens
 agents run 130-200 lines with structured JSONL output contracts, explicit false-alarm guidance,
 and defined severity vocabulary. **Take the taxonomy, not the prompts.**
 
@@ -579,8 +586,10 @@ forms, hitting endpoints -- rather than reading code.
 Scoring is a weighted rubric, each criterion 1-10 with explicit band descriptions, defaults being
 Design Quality (0.3), Originality (0.2), Craft (0.3), Functionality (0.2). Weighted score = sum of
 score x weight. **Pass threshold 7.0, max iterations 15**, both configurable
-(`GAN_PASS_THRESHOLD`, `GAN_MAX_ITERATIONS`, `GAN_EVAL_CRITERIA`), with per-role model overrides
+(`GAN_PASS_THRESHOLD`, `GAN_MAX_ITERATIONS`), with per-role model overrides
 (`GAN_GENERATOR_MODEL=opus` etc.). The loop terminates on threshold or plateau.
+**`GAN_EVAL_CRITERIA` is documented but dead code** -- `scripts/gan-harness.sh` never reads it, so
+it is not a real knob and should not be ported as one.
 
 **Where EDM stands.** EDM already has the hard part: genuine generator/evaluator separation, with
 `edm-implementer` producing and `edm-qc-auditor` judging, the latter auto-spawned by a
@@ -642,7 +651,8 @@ against ECC's own paths** -- it scores you on whether you have `skills/strategic
 and `commands/model-route.md`. That is not a readiness rubric; it is an ECC installation
 completeness check.
 
-Consumer mode is more honest but shallow -- 11 checks worth ~29 points: is ECC installed (4
+Consumer mode is more honest but shallow -- 16 checks worth 39 points once the
+unconditionally-appended GitHub checks are counted: is ECC installed (4
 points, self-serving), does `.claude/` carry project overrides, is there an `AGENTS.md` or
 `CLAUDE.md`, is there `.mcp.json` or `.claude/settings.json`, is there a test entrypoint, is there
 a CI workflow, is there `.claude/memory.md` or `docs/adr/`, are there evals or 3+ tests, is there
@@ -726,7 +736,12 @@ directory) has no way to add enforcement without editing the plugin and carrying
 fits EDM's "source control IS the feature" principle better than ECC's `.local.md` +
 gitignore convention. The conversation-analyzer half is optional and can come later.
 
-**Effort**: medium. **Risk**: low, if `action: block` requires explicit opt-in per rule.
+**Effort**: medium -- and this estimate assumes no evaluator exists to adapt. **ECC has no rule
+evaluator at all**: `/hookify*` commands write, list and toggle rule files, but nothing evaluates
+them at tool-call time -- the condition/operator engine described above is documentation with no
+corresponding code (exhaustive search of `scripts/`, `hooks/hooks.json` and all six operator
+names). EDM therefore builds the evaluator entirely from scratch; only the JSON rule-file *format*
+is reusable. **Risk**: low, if `action: block` requires explicit opt-in per rule.
 **Value**: medium-high, mostly for team adoption.
 
 ### 5.4 A Stop hook that blocks premature completion claims
@@ -743,6 +758,7 @@ transcript tail. No AI inference anywhere.
 | Rationalization patterns | Regex on transcript tail | **Warning only, never blocks** |
 | Stale learning libraries | mtime on 5 configurable paths | Warn if some stale; **block** if >=3 stale, or the growth log is stale on a complex task |
 | Disk space < 50 GB | `shutil.disk_usage` | Warning |
+| Disk space < 30 GB | `shutil.disk_usage` | Warning (undocumented third tier, present in code between the 50GB and 15GB tiers but absent from `SKILL.md`) |
 | Disk space < 15 GB | `shutil.disk_usage` | **Block** (exit 2) |
 
 ECC positions it explicitly against reasoning-based gates: *delivery-gate checks
@@ -970,12 +986,57 @@ Enumerated by name and frontmatter only: the remaining ~261 skills, ~57 agents, 
   the check table and `detectTargetMode()`. **This corrects an earlier assessment of mine that
   treated it as a neutral readiness rubric.**
 - The codemap generator's placeholder Data Flow and External Dependencies sections (5.5) --
-  confirmed by reading the output template at `scripts/codemaps/generate.ts:200-240`. **This also
+  confirmed by reading the output template at `scripts/codemaps/generate.ts:225-231`. **This also
   corrects an earlier assessment that credited it with producing call chains.**
 - GateGuard's deny mechanism -- confirmed as `permissionDecision: 'deny'` with the fact list
   carried in `permissionDecisionReason`.
 - ECC's own headline counts in `SOUL.md` (30 agents / 135 skills / 60 commands) are stale; the
   tree contains 68 / 286 / 94.
+
+**Eleven further corrections, verified during EDMV4 Phase 1 (2026-09-02) and applied in place at
+their own sites in Parts 1, 4 and 5:**
+
+1. **Hook count.** Part 1.2 and Part 1.6 said 25 hooks across eight events. **This corrects that
+   summary total**: it is 23 registrations across seven events. The per-event table's own rows were
+   already correct; only the summary total and event-type count were wrong.
+2. **Security-trigger citation.** Part 4.3 cited `rules/common/security.md` for the seven security
+   triggers. **This corrects a citation the document repeated from ECC without checking**: that
+   file holds an unrelated 8-item pre-commit checklist. The triggers live at
+   `orch-pipeline/SKILL.md:100-104`, which itself miscites `security.md` -- that miscitation is how
+   the error propagated here.
+3. **Hookify evaluator.** Part 5.3's effort estimate implicitly assumed there was existing
+   evaluator logic to adapt. **This corrects that assumption**: ECC has no evaluator at all: the
+   `/hookify*` commands manage rule files, but nothing evaluates them at tool-call time. Only the
+   rule-file *format* is reusable.
+4. **`GAN_EVAL_CRITERIA`.** Part 5.1 listed it alongside two real, code-read configuration knobs.
+   **This corrects that listing**: `scripts/gan-harness.sh` never reads it, so it is documented but
+   dead code, not a real knob to port.
+5. **`delivery-gate` disk tiers.** Part 5.4's table listed two disk-space tiers (50GB warning,
+   15GB block). **This corrects an incomplete table**: the code carries an undocumented third tier,
+   a 30GB warning, between the two.
+6. **`silent-failure-hunter` body length.** Part 4.4 described all three ECC agents as "roughly 30
+   lines" of body. **This corrects that figure for `silent-failure-hunter` specifically**: its body
+   is 44 lines, 47% higher than stated; the other two are 35 and 39.
+7. **`harness-audit.js` consumer-mode scoring.** Part 5.2 stated 11 checks worth ~29 points.
+   **This corrects that count**: it is 16 checks worth 39 points once the unconditionally-appended
+   GitHub checks are counted.
+8. **`update-patterns` citations and caller count.** Part 4.2 cited `bin/edm-state:5577` and
+   `:5624`, and said the function is called mid-phase by four skills. **This corrects both**: the
+   current-tree citations are `:5607` (target-directory computation) and `:5640` (the read-only
+   skip message), and the verified caller set is six skills (`implement`, `code-audit`,
+   `audit-tickets`, `audit-srd`, `test`, `test-coverage`).
+9. **GateGuard kill switches.** Part 4.1's environment-variable table listed only
+   `ECC_GATEGUARD=off`. **This corrects an incomplete table**: `GATEGUARD_DISABLED=1` is a second,
+   independent kill switch (`gateguard-fact-force.js:732-734`), recognizing only the literal `'1'`
+   and not the word-forms `ECC_GATEGUARD` accepts.
+10. **`MultiEdit` retry semantics.** Part 4.1 said `MultiEdit` is handled per-file, not per-call,
+    without stating what that means for retries. **This corrects the omission**: it denies on the
+    first still-unchecked file in the batch, so a batch with three unchecked files needs one retry
+    per still-unchecked file, not one retry total (`gateguard-fact-force.js:1234-1256`).
+11. **Codemaps placeholder citation.** This section's own earlier entry cited
+    `scripts/codemaps/generate.ts:200-240` for the placeholder Data Flow and External Dependencies
+    sections. **This corrects that line range**: the placeholders are at `:225-231`; the substance
+    of the original claim (that they are literal template placeholders) is confirmed unchanged.
 
 ### 8.3 Claims NOT verified
 
@@ -986,6 +1047,11 @@ Enumerated by name and frontmatter only: the remaining ~261 skills, ~57 agents, 
 - **ECC's claim that `orch-*` wrappers do not reimplement work.** The five wrapper skills were not
   read individually.
 - **Whether ECC's test suite passes.** `node tests/run-all.js` was not executed.
+
+**Resolved and moved out of this list (2026-09-02):** GateGuard's upstream `zunoworks/gateguard`
+licence is now verified MIT ("MIT License / Copyright (c) 2026 Hirokazu Seto / ZUNO WORKS K.K."),
+verified by direct inspection of the upstream `LICENSE` (`SRD/edm/EDMV4__ecc-integration/decisions.md`
+D13). It no longer belongs among the claims not verified.
 
 ### 8.3.1 Claims about EDM's users, demand, or reception -- none are supported
 
