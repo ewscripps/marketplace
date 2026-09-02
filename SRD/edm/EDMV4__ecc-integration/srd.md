@@ -7,13 +7,13 @@
 | Initiative | EDMV4 -- ECC Integration |
 | Prefix | `EDMV4` |
 | Product | `edm` |
-| Version | 1.1.0 |
+| Version | 1.2.0 |
 | Status | Draft |
 | Owner | darryl.porter |
 | Mode | `standard` (`lifecycle_mode: standard`, `compliance_enabled: false`) |
 | Estimated Size | Large (50-85 tickets) |
 | Branch | `edm/edmv4-ecc-integration` |
-| Last Updated | 2026-08-31 |
+| Last Updated | 2026-09-02 |
 
 ### Revision History
 
@@ -21,6 +21,7 @@
 |---|---|---|---|
 | 1.0.0 | 2026-08-30 | `edm-srd-writer` | Initial SRD from the Gate-1-approved `planning.md` and `decisions.md` D1-D13. Fifty-eight requirements across eleven scope items plus two blocking spikes. |
 | 1.1.0 | 2026-08-31 | `edm-srd-writer` | Remediation against `audit-srd.md` (5 P0, 44 P1). **AD5 round-type design**: `audit-round-start` now materializes `lenses = ALL_LENS_IDS` when `--lenses` is omitted, so the union derivation is correct in both branches and the CA-471 backstop stays meaningful (`EDMV4-24`, `EDMV4-25`). **`EDMV4-T04`**: `EDMV4-51` raised to Must Have and the `EDMV4-49` dependency inverted so orphan enumeration completes before anything is anchored; `EDMV4-50` restated against the verified 8-site / 6-section orphan table. **D4**: `EDMV4-03` and Sec.4.6 C9 rewritten against D4 as amended -- the revert hazard is gone, the residual is a `plugin.json` version reconciliation and is non-blocking. **Dependency cycles**: `EDMV4-14`/`15`/`16` folded into `EDMV4-14` (15 and 16 retained as merged pointers); `EDMV4-07` <-> `EDMV4-09` inverted. **Gate 2 accuracy**: `EDMV4-05`'s saving corrected to 150-250 lines of bash plus the un-ported tokenizer, and the false "`git commit` bounds the residual exposure" claim replaced with the enumerated unguarded classes. **New `EDMV4-59`** ratifies AD1 itself, which is the decision the licence posture actually depends on. Sec.4.6, Sec.4.4, Sec.4.5 and Sec.3.4 cross-references re-derived. Lens-count sweep extended with every missed name-list, non-`-eq 11` count and prose site -- notably `wave7-smoke.sh:5386`, which counts a hardcoded list and so stays green while silently dropping the three new lenses from the D16 opus/max assertion. Sec.10 R5 figures corrected to 90 tokens across 16 files and 10 exact-integer sites. Linux recorded as untested rather than claimed. **Requirement count: 59 IDs (`EDMV4-01` .. `EDMV4-59`), 57 substantive (41 Must / 15 Should / 1 Could) plus 2 merged.** |
+| 1.2.0 | 2026-09-02 | orchestrator | **Scope addition discovered at this initiative's own Phase 5 preflight, raised for Gate 3 ratification.** New `EDMV4-60`: `cmd_gate_check` mapped `audit-tickets` to Gate 3 -- the gate that phase **presents** -- making Phase 5 unreachable for every standard-lifecycle initiative through both enforcement layers (Step 0 preflight and the `edm:audit-tickets` `UserPromptExpansion` hook). `bin/tests/wave6-smoke.sh`'s EDMV3-T13 AC3 loop asserted only that *a* gate was named, never the right one, so the suite stayed green; the loop is now pinned per token and a direct producer/consumer assertion added. Also records the branch reconciliation: the tree described by Sec.4.6 C9 and `decisions.md` D4 as "3 commits behind `origin/main`" was in fact 25 behind and missing `plugins/edm/docs/ecc-integration-analysis.md` entirely -- the document `EDMV4-54` exists to correct. Branch fast-forwarded to `origin/main` (plugin 3.2.2); `file:line` citations throughout Sec.6 shifted again and are advisory, with each ticket carrying its own verified anchors. **Requirement count: 60 IDs (`EDMV4-01` .. `EDMV4-60`), 58 substantive (42 Must / 15 Should / 1 Could) plus 2 merged.** |
 
 ### Source documents
 
@@ -696,6 +697,63 @@ retained rather than reused so every existing cross-reference still resolves.
   `plugins/edm/skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`,
   `plugins/edm/CLAUDE.md Sec."Prompt conventions (house style)"` (where the provenance entry lands),
   `plugins/edm/CLAUDE.md Sec."Testing changes"` (the required-binary statement).
+
+#### EDMV4-60: `cmd_gate_check` maps `audit-tickets` to the gate it produces, deadlocking Phase 5
+
+- **Priority**: Must Have
+- **Description**: `cmd_gate_check` in `bin/edm-state` maps each phase-skill token to the HITL gate
+  that skill must **consume** before it may run. Every row holds that meaning except one:
+  `audit-tickets` was grouped with `implement` on the `required_gate=3` arm. But `audit-tickets`
+  is Phase 5, the phase that **presents** Gate 3 (`skills/audit-tickets/SKILL.md Sec."HITL Gate
+  3"`). Requiring Gate 3 to run the only thing that can approve Gate 3 is circular, and Phase 5
+  is unreachable for every initiative whose mode does not skip it.
+
+  **Both enforcement layers deadlock, not one.** The `edm:audit-tickets` `UserPromptExpansion`
+  hook in `hooks/hooks.json` runs the same `gate-check` and blocks expansion on its exit-3
+  refusal status, so invoking the slash command directly fails identically to the Step 0
+  preflight path. Neither escape in `cmd_gate_check` applies: the legacy warn-and-proceed branch
+  needs an absent `schema_version`, and `gate_required_and_approved` returns `not-required` only
+  when the feeding phase is skipped or past the mode's terminal phase. A standard-lifecycle
+  initiative satisfies neither.
+
+  **Why the suite stayed green.** `bin/tests/wave6-smoke.sh` (EDMV3-T13 AC3) looped all eight
+  tokens asserting only `"$tok_out" == *"Gate "*` -- that *a* gate number is named, never that it
+  is the *correct* one. `audit-tickets` printing "Gate 3" satisfied it exactly. This is the
+  harvested SRD-audit pattern "an anti-regression assertion counts a hardcoded name list rather
+  than the live set, so it stays green while newly added members silently escape the property it
+  exists to enforce", recurring on a different surface.
+
+  **Why it went unnoticed until now.** The Step 0 preflight and kernel gate enforcement are
+  recent (EDMV3-T13); EDMV3's own Phase 5 predates them, and VERIF ran `lifecycle_mode=fix-pack`,
+  which skips Phase 5. EDMV4 is the first standard-lifecycle initiative to reach the check.
+
+  Discovered during this initiative's own Phase 5 preflight and scoped in at Gate 3 as an
+  addition to the Gate-2-approved requirement set, per the change-control principle in
+  `CLAUDE.md Sec."Unverifiable acceptance criteria (D15)"`.
+- **Acceptance Criteria**:
+  - [ ] `cmd_gate_check`'s `case` maps `audit-tickets` to `required_gate=2`, grouped with
+        `tickets`, and `implement` retains `required_gate=3` on its own arm.
+  - [ ] `edm-state gate-check <PREFIX> audit-tickets` exits 0 on an initiative whose Gate 2 is
+        approved and Gate 3 is not.
+  - [ ] `edm-state gate-check <PREFIX> implement` still exits 3 on that same initiative, proving
+        the fix narrowed only the intended token and did not weaken Phase 6's gate.
+  - [ ] The `Gated commands and their required gates` docstring above `cmd_gate_check` states the
+        corrected mapping and records that a token names the gate a phase **consumes**, never the
+        one it **produces**.
+  - [ ] `bin/tests/wave6-smoke.sh`'s EDMV3-T13 AC3 loop pins every token to its exact expected
+        gate number and fails on a wrong-but-present gate, not merely on an absent one.
+  - [ ] A dedicated assertion states the producer/consumer invariant directly: neither
+        `audit-srd` (presents Gate 2) nor `audit-tickets` (presents Gate 3) may require the gate
+        it presents.
+  - [ ] `bash bin/tests/run-all.sh` passes with zero failures after the change.
+  - [ ] `CHANGELOG.md` records the fix as a user-visible bug fix, since it unblocks a phase that
+        could not previously run.
+- **Dependencies**: none. It blocks `EDMV4`'s own Phase 5 and every future standard-lifecycle
+  initiative's Phase 5, so it is fixed before the ticket-pack audit runs rather than scheduled
+  into an implementation wave.
+- **Target Components**: `plugins/edm/bin/edm-state` (`cmd_gate_check` and its docstring),
+  `plugins/edm/bin/tests/wave6-smoke.sh` (EDMV3-T13 AC3 block),
+  `plugins/edm/CHANGELOG.md`.
 
 ---
 
@@ -3700,12 +3758,12 @@ is a design target, not a measured result, and must be described that way.
 
 | Priority | Count | IDs |
 |---|---|---|
-| **Must Have** | **41** | `EDMV4-01` .. `EDMV4-11`, `EDMV4-13`, `EDMV4-14`, `EDMV4-18` .. `EDMV4-20`, `EDMV4-22` .. `EDMV4-35`, `EDMV4-49` .. `EDMV4-51`, `EDMV4-52` .. `EDMV4-59` |
+| **Must Have** | **42** | `EDMV4-01` .. `EDMV4-11`, `EDMV4-13`, `EDMV4-14`, `EDMV4-18` .. `EDMV4-20`, `EDMV4-22` .. `EDMV4-35`, `EDMV4-49` .. `EDMV4-51`, `EDMV4-52` .. `EDMV4-60` |
 | **Should Have** | **15** | `EDMV4-12`, `EDMV4-17`, `EDMV4-21`, `EDMV4-36` .. `EDMV4-38`, `EDMV4-40` .. `EDMV4-48` |
 | **Could Have** | **1** | `EDMV4-39` |
 | **Merged** | **2** | `EDMV4-15`, `EDMV4-16` -- absorbed into `EDMV4-14`. No independent priority, no independent acceptance criteria. IDs retained so existing cross-references resolve |
-| **Substantive total** | **57** | 41 Must + 15 Should + 1 Could |
-| **ID range** | **59** | `EDMV4-01` .. `EDMV4-59`, no gaps, no duplicates |
+| **Substantive total** | **58** | 42 Must + 15 Should + 1 Could |
+| **ID range** | **60** | `EDMV4-01` .. `EDMV4-60`, no gaps, no duplicates |
 
 **Changes from v1.0.0's counts.** `EDMV4-59` (ratify AD1) is new. `EDMV4-51` is raised from Should
 Have to Must Have (P0-3: it gates whether `EDMV4-49` and `EDMV4-50` can be executed correctly).
@@ -3717,7 +3775,7 @@ their single-commit constraint was unenforceable while split). Net: Must Have un
 
 | Scope item | Requirements | Must | Should | Could |
 |---|---|---|---|---|
-| Preconditions and change control | `EDMV4-01` .. `EDMV4-06`, `EDMV4-59` | 7 | 0 | 0 |
+| Preconditions and change control | `EDMV4-01` .. `EDMV4-06`, `EDMV4-59`, `EDMV4-60` | 8 | 0 | 0 |
 | 4.1 GateGuard | `EDMV4-07` .. `EDMV4-12` | 5 | 1 | 0 |
 | 4.2 `update-patterns` | `EDMV4-13`, `EDMV4-14`, `EDMV4-17`, `EDMV4-18` (plus merged `EDMV4-15`, `EDMV4-16`) | 3 | 1 | 0 |
 | 4.3 Size classifier | `EDMV4-19` .. `EDMV4-22` | 3 | 1 | 0 |

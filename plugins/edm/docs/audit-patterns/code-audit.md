@@ -127,7 +127,6 @@ date: 2026-08-21
 
 ### CA-509 (P1, lens L9): the ticket pack asserts an SRD amendment that does not exist (EDMV3, 2026-08-21, P2)
 
-status: pending-review
 source: EDMV3
 audit-type: code
 date: 2026-08-21
@@ -137,7 +136,6 @@ date: 2026-08-21
 
 ### CA-510 (P1, lens L9): the CA-471 `round_type` gate has neither a positive nor a negative AC (EDMV3, 2026-08-21, P2)
 
-status: pending-review
 source: EDMV3
 audit-type: code
 date: 2026-08-21
@@ -147,7 +145,6 @@ date: 2026-08-21
 
 ### CA-106 (P1, lens L9; consequence corroborated by L2 and L11): EDMV3-28 is an undelivered Must Have (EDMV3, 2026-08-21, P2)
 
-status: pending-review
 source: EDMV3
 audit-type: code
 date: 2026-08-21
@@ -177,7 +174,6 @@ date: 2026-08-21
 
 ### CA-493 (P2, lenses L4 + L8): a blocking CI gate reports green having validated nothing (EDMV3, 2026-08-21, P2)
 
-status: pending-review
 source: EDMV3
 audit-type: code
 date: 2026-08-21
@@ -187,7 +183,6 @@ date: 2026-08-21
 
 ### CA-481 (P2, lenses L3 + L5 + L7 + L8): the highest-corroboration finding of the round (EDMV3, 2026-08-21, P2)
 
-status: pending-review
 source: EDMV3
 audit-type: code
 date: 2026-08-21
@@ -197,7 +192,6 @@ date: 2026-08-21
 
 ### CA-495 (P2, lens L5): a scratch tree removed on no path, leaking on the success path every run (EDMV3, 2026-08-21, P2)
 
-status: pending-review
 source: EDMV3
 audit-type: code
 date: 2026-08-21

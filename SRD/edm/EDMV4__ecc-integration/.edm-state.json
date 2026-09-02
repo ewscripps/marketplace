@@ -1,11 +1,23 @@
 {
   "prefix": "EDMV4",
   "schema_version": 1,
-  "current_phase": 3,
+  "current_phase": 5,
   "gates_approved": [
     {
       "gate": 1,
       "approved_at": "2026-08-31T01:37:17Z",
+      "approver": "darryl.porter",
+      "enforcement": "permission-ask"
+    },
+    {
+      "gate": 2,
+      "approved_at": "2026-09-02T03:18:49Z",
+      "approver": "darryl.porter",
+      "enforcement": "permission-ask"
+    },
+    {
+      "gate": 3,
+      "approved_at": "2026-09-02T16:26:25Z",
       "approver": "darryl.porter",
       "enforcement": "permission-ask"
     }
@@ -16,9 +28,14 @@
       "hash": "a7ff55a5994a4a9ebdc89417c971334f56167f8dd70a26ea05e8848ea810a01e",
       "path": "./SRD/edm/EDMV4__ecc-integration/srd.md",
       "recorded_at": "2026-08-31T03:05:03Z"
+    },
+    "tickets": {
+      "hash": "3aeb4a4d13b81098a97caabb07f3b194c1230a585736312241649c381d3755b9",
+      "path": "./SRD/edm/EDMV4__ecc-integration/tickets/README.md",
+      "recorded_at": "2026-09-02T13:25:31Z"
     }
   },
-  "srd_version": "1.1.0",
+  "srd_version": "1.2.0",
   "estimated_size": "Large",
   "initiative_branch": "edm/edmv4-ecc-integration",
   "product_name": "edm",
@@ -74,6 +91,40 @@
       "human_baseline_usd": 600.00,
       "attribution_mode": "scoped",
       "unparseable_lines": 0
+    },
+    "4_phase": {
+      "started_at": "2026-09-02T03:19:48Z",
+      "completed_at": "2026-09-02T03:38:44Z",
+      "duration_seconds": 1136,
+      "tokens": {
+        "input": 152,
+        "output": 271559,
+        "cache_read": 16439323,
+        "cache_write_5m": 0,
+        "cache_write_1h": 942047
+      },
+      "model_used": "claude-opus-5",
+      "estimated_cost_usd": 29.3158,
+      "human_baseline_usd": 900.00,
+      "attribution_mode": "scoped",
+      "unparseable_lines": 0
+    },
+    "5_phase": {
+      "started_at": "2026-09-02T12:36:33Z",
+      "completed_at": "2026-09-02T13:25:31Z",
+      "duration_seconds": 2938,
+      "tokens": {
+        "input": 250,
+        "output": 134257,
+        "cache_read": 54899034,
+        "cache_write_5m": 0,
+        "cache_write_1h": 294246
+      },
+      "model_used": "claude-opus-5",
+      "estimated_cost_usd": 40.4996,
+      "human_baseline_usd": 300.00,
+      "attribution_mode": "scoped",
+      "unparseable_lines": 0
     }
   },
   "test_frameworks_detected": {},
@@ -97,15 +148,21 @@
   "forked_from": "",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-08-31T03:05:56Z",
-  "current_step": 3,
-  "patterns_last_updated": "2026-08-31T03:05:56Z",
+  "last_updated": "2026-09-02T16:26:25Z",
+  "current_step": 5,
+  "patterns_last_updated": "2026-09-02T13:25:32Z",
   "patterns_updates": {
     "srd": {
-      "updated_at": "2026-08-31T03:05:56Z",
+      "updated_at": "2026-09-02T03:15:36Z",
       "new_findings": 11,
       "extracted_titles": 11,
       "extraction_status": "ok"
+    },
+    "ticket": {
+      "updated_at": "2026-09-02T13:25:32Z",
+      "new_findings": 0,
+      "extracted_titles": 0,
+      "extraction_status": "unsupported-format"
     }
   }
 }
