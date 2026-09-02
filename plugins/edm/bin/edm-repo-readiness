@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# EDMV4-T38 AC2: the block between EDM-HELP-BEGIN and EDM-HELP-END below is sentinel-delimited,
+# not a hardcoded numeric-line-range extraction -- `usage()` calls the shared `print_help`
+# (CA-005, `_edm-cli-lib.sh`) which extracts between the sentinels with awk, exactly the form
+# `edm-lint-artifacts` and `edm-compare-eval` already use. (Deliberately not spelling out the
+# hardcoded form's literal syntax here -- EDMV4-T38 AC2's smoke test greps this file for it and
+# must fail only on real usage, never on this sentence describing the rule.)
+# EDM-HELP-BEGIN
+# edm-repo-readiness -- score a repository's readiness for EDM-driven work (EDMV4-T38).
+#
+# EDM measures *itself* via `/edm:metrics` -- time and cost per phase -- but never scored the
+# *repository it is about to work in*. This script is that scorecard's `bin/` scaffold: the
+# conventions surface (this help block, SCRIPT_DIR, die(), the exit-code contract, the
+# text-to-stdout / JSON-to-file split) land here. The six-category, 0-10-normalized rubric and
+# READINESS_RUBRIC_VERSION land in EDMV4-T39; wiring each category to the signals edm-state
+# already computes (validate/session-start/get-coverage/metrics-report) lands in EDMV4-T40.
+#
+# Usage:
+#   edm-repo-readiness [<PREFIX>] [--json <path>]
+#   edm-repo-readiness -h|--help
+#
+#   <PREFIX>        optional; scopes the score to one initiative once EDMV4-T40 lands. Until
+#                   then it is accepted and validated as a bare positional argument but does not
+#                   change which checks run -- the repository is always scored as a whole.
+#   --json <path>   write the machine-readable score report as JSON to <path>. Human-readable
+#                   text always goes to stdout; there is no --json-to-stdout form.
+#
+# Exit codes:
+#   0  the repository was scored, regardless of how low the score is.
+#   2  usage or setup error (unknown flag, --json with no path, an extra positional argument,
+#      or a required binary -- jq -- not found on PATH).
+# EDM-HELP-END
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/_edm-cli-lib.sh"
+
+# EDMV4-T38 AC5: local two-argument die() -- matches edm-compare-eval:44-48 and evals/run-eval.sh
+# exactly (msg, code="${2:-2}"). Family-standard default of 2 (usage/setup error).
+die() {
+  local msg="$1" code="${2:-2}"
+  echo "edm-repo-readiness: $msg" >&2
+  exit "$code"
+}
+
+usage() {
+  print_help "${BASH_SOURCE[0]:-$0}"
+  exit 0
+}
+
+case "${1:-}" in
+  -h|--help) usage ;;
+esac
+
+command -v jq >/dev/null 2>&1 || die "required binary not found on PATH: jq"
+
+# ---- Argument parsing: [<PREFIX>] [--json <path>] --------------------------------------------
+PREFIX=""
+JSON_OUT=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      ;;
+    --json)
+      [[ $# -ge 2 ]] || die "--json requires a <path> argument"
+      [[ -n "$2" ]] || die "--json requires a non-empty <path> argument"
+      JSON_OUT="$2"
+      shift 2
+      ;;
+    -*)
+      die "unknown flag: $1"
+      ;;
+    *)
+      [[ -z "$PREFIX" ]] || die "unexpected extra argument: $1"
+      PREFIX="$1"
+      shift
+      ;;
+  esac
+done
+
+# ---- Checks --------------------------------------------------------------------------------
+# EDMV4-T38 out of scope: the six-category rubric, point budgets, 0-10 normalization and
+# READINESS_RUBRIC_VERSION are EDMV4-T39's; wiring categories to edm-state's own signals is
+# EDMV4-T40's. What ships in this ticket is one real, minimal, deterministic check -- not a
+# stub -- so the exit-code and stdout/JSON-file contract below is genuinely exercised end to
+# end: whether the scored target is a git working tree at all, since every readiness signal
+# EDMV4-T39/T40 will add (methodology setup, state health, coverage posture) presupposes one.
+# No check here scores whether EDM itself is installed (the ECC "harness-audit.js" self-serving
+# pattern this initiative's analysis calls out); this measures the target repository only.
+GIT_REPO_PRESENT="false"
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  GIT_REPO_PRESENT="true"
+fi
+
+CHECKS_JSON="$(jq -n \
+  --arg id "git-repo-present" \
+  --arg category "Overall" \
+  --argjson points 10 \
+  --arg description "The scored target is a git working tree." \
+  --argjson pass "$GIT_REPO_PRESENT" \
+  --arg fix "Run 'git init' in the target directory before using EDM -- EDM's artifact-commit model (SRD/ under git) assumes a git repository." \
+  '[{id: $id, category: $category, points: $points, description: $description, pass: $pass, fix: $fix}]')"
+
+RAW_EARNED="$(printf '%s' "$CHECKS_JSON" | jq '[.[] | select(.pass) | .points] | add // 0')"
+RAW_MAX="$(printf '%s' "$CHECKS_JSON" | jq '[.[] | .points] | add // 0')"
+SCORE_0_10="$(jq -n --argjson e "$RAW_EARNED" --argjson m "$RAW_MAX" \
+  'if $m == 0 then 0 else (($e / $m * 10) * 10 | round / 10) end')"
+
+# ---- Human-readable report: stdout only (AC7 -- no JSON on stdout, ever) ---------------------
+echo "EDM repository readiness"
+echo "========================="
+if [[ -n "$PREFIX" ]]; then
+  echo "Scope: whole repository (per-initiative scoping for <PREFIX>=${PREFIX} lands in EDMV4-T40)"
+else
+  echo "Scope: whole repository"
+fi
+echo
+printf '%s\n' "$CHECKS_JSON" | jq -r '.[] | (if .pass then "[PASS]" else "[FAIL]" end) + " " + .id + " (" + (.points|tostring) + " pts) -- " + .description + (if (.pass|not) then "  FIX: " + .fix else "" end)'
+echo
+echo "Overall score: ${SCORE_0_10} / 10"
+
+# ---- Machine-readable report: file only, via --json <path> (AC7) ----------------------------
+if [[ -n "$JSON_OUT" ]]; then
+  jq -n \
+    --argjson checks "$CHECKS_JSON" \
+    --argjson score "$SCORE_0_10" \
+    --arg prefix "$PREFIX" \
+    '{checks: $checks, score: $score, prefix: (if $prefix == "" then null else $prefix end)}' \
+    > "$JSON_OUT" || die "could not write JSON report to $JSON_OUT"
+fi
+
+exit 0

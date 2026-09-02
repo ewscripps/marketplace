@@ -294,6 +294,320 @@ check "EDMV4-T48 AC9 -- Canonical artifact homes documents the current-versus-ta
   "distinct from any one" \
   "$(cat "$CLAUDE_MD")"
 
+# =================================================================================================
+# EDMV4-T17 / EDMV4-T38 -- shared data-directory resolver, repo-readiness scorecard scaffold
+# =================================================================================================
+# Appended below the three sections above (EDMV4-T05 / EDMV4-T34 / EDMV4-T48), which this ticket
+# leaves untouched, per this file's own "append a banner section, never overwrite" contract.
+
+EDM_STATE="${SCRIPT_DIR}/../edm-state"
+DATADIR_LIB="${SCRIPT_DIR}/../_edm-datadir-lib.sh"
+REPO_READINESS="${SCRIPT_DIR}/../edm-repo-readiness"
+REPO_ROOT="$_HARNESS_REPO_ROOT"
+
+# CA-005: shared --help extractor, needed by the EDMV4-T38 section's print_help() sanity checks.
+source "${SCRIPT_DIR}/../_edm-cli-lib.sh"
+
+harness_scratch_dir TMP
+
+echo
+echo "wave8 smoke check (continued) -- EDMV4-T17 data-directory resolver, EDMV4-T38 repo-readiness scaffold"
+echo
+
+# =================================================================================================
+# EDMV4-T17: bin/_edm-datadir-lib.sh -- shared data-directory resolver
+# =================================================================================================
+echo "-- EDMV4-T17: _edm-datadir-lib.sh --"
+
+# ---- AC1: bash -n under /bin/bash; sourcing defines the three functions, exits 0, no
+# stdout/stderr, creates no files. --------------------------------------------------------------
+if /bin/bash -n "$DATADIR_LIB" >/dev/null 2>&1; then
+  pass "EDMV4-T17 AC1 -- bash -n passes under /bin/bash"
+else
+  fail "EDMV4-T17 AC1 -- bash -n failed under /bin/bash"
+fi
+
+T17_AC1_DIR="${TMP}/t17-ac1"
+mkdir -p "$T17_AC1_DIR"
+T17_AC1_STDERR_FILE="${TMP}/t17-ac1.stderr"
+T17_AC1_RC=0
+T17_AC1_STDOUT="$(cd "$T17_AC1_DIR" && /bin/bash -c "source '$DATADIR_LIB' && declare -F edm_data_dir >/dev/null && declare -F edm_project_key >/dev/null && declare -F edm_marker_path >/dev/null" 2>"$T17_AC1_STDERR_FILE")" || T17_AC1_RC=$?
+T17_AC1_STDERR="$(cat "$T17_AC1_STDERR_FILE" 2>/dev/null || true)"
+T17_AC1_FILECOUNT="$(find "$T17_AC1_DIR" -mindepth 1 2>/dev/null | wc -l | tr -d ' ')"
+if [[ "$T17_AC1_RC" -eq 0 && -z "$T17_AC1_STDOUT" && -z "$T17_AC1_STDERR" && "$T17_AC1_FILECOUNT" -eq 0 ]]; then
+  pass "EDMV4-T17 AC1 -- sourcing defines all three functions, exits 0, no stdout/stderr, creates no files"
+else
+  fail "EDMV4-T17 AC1 -- rc=${T17_AC1_RC} stdout=[${T17_AC1_STDOUT}] stderr=[${T17_AC1_STDERR}] files=${T17_AC1_FILECOUNT}"
+fi
+
+# ---- AC2: guarded sourcing -- deleting the library degrades edm-state to today's behaviour. ----
+T17_AC2_PRESENT_LIST_RC=0
+"$EDM_STATE" list --paths >/dev/null 2>&1 || T17_AC2_PRESENT_LIST_RC=$?
+T17_AC2_PRESENT_VALIDATE_RC=0
+"$EDM_STATE" validate EDMV4 >/dev/null 2>&1 || T17_AC2_PRESENT_VALIDATE_RC=$?
+
+T17_AC2_BINDIR="${TMP}/t17-ac2-bin"
+mkdir -p "$T17_AC2_BINDIR"
+cp "${PLUGIN_DIR}/bin/edm-state" "${T17_AC2_BINDIR}/edm-state"
+cp "${PLUGIN_DIR}/bin/_edm-cli-lib.sh" "${T17_AC2_BINDIR}/_edm-cli-lib.sh"
+cp "${PLUGIN_DIR}/bin/_edm-lint-lib.sh" "${T17_AC2_BINDIR}/_edm-lint-lib.sh"
+chmod +x "${T17_AC2_BINDIR}/edm-state"
+# Deliberately NOT copying _edm-datadir-lib.sh -- this is the "library removed" scenario.
+
+T17_AC2_ABSENT_LIST_RC=0
+(cd "$REPO_ROOT" && "${T17_AC2_BINDIR}/edm-state" list --paths >/dev/null 2>&1) || T17_AC2_ABSENT_LIST_RC=$?
+T17_AC2_ABSENT_VALIDATE_RC=0
+(cd "$REPO_ROOT" && "${T17_AC2_BINDIR}/edm-state" validate EDMV4 >/dev/null 2>&1) || T17_AC2_ABSENT_VALIDATE_RC=$?
+
+if [[ "$T17_AC2_PRESENT_LIST_RC" -eq "$T17_AC2_ABSENT_LIST_RC" && "$T17_AC2_PRESENT_VALIDATE_RC" -eq "$T17_AC2_ABSENT_VALIDATE_RC" ]]; then
+  pass "EDMV4-T17 AC2 -- edm-state list/validate exit identically with the library removed (list rc=${T17_AC2_PRESENT_LIST_RC}, validate rc=${T17_AC2_PRESENT_VALIDATE_RC})"
+else
+  fail "EDMV4-T17 AC2 -- exit codes diverged with library removed: list present=${T17_AC2_PRESENT_LIST_RC} absent=${T17_AC2_ABSENT_LIST_RC}; validate present=${T17_AC2_PRESENT_VALIDATE_RC} absent=${T17_AC2_ABSENT_VALIDATE_RC}"
+fi
+
+# ---- AC3: exactly three public functions plus underscore-prefixed helpers, no global vars, no
+# redefinition against edm-state's own constant block. -------------------------------------------
+T17_AC3_STATIC_HIT="$(grep -nE '^(edm_data_dir|edm_project_key|edm_marker_path|_edm_datadir_creatable)\(\)' "${PLUGIN_DIR}/bin/edm-state" || true)"
+if [[ -z "$T17_AC3_STATIC_HIT" ]]; then
+  pass "EDMV4-T17 AC3 -- none of the library's three public functions or its internal helper are redefined in edm-state"
+else
+  fail "EDMV4-T17 AC3 -- collision found in edm-state: ${T17_AC3_STATIC_HIT}"
+fi
+
+T17_AC3_BEFORE="${TMP}/t17-ac3-before.txt"
+T17_AC3_AFTER="${TMP}/t17-ac3-after.txt"
+
+# Note: a no-op ':' runs first in BOTH invocations below so PIPESTATUS (which bash only
+# populates after some command has completed) is already defined identically going into the
+# diff -- otherwise it would appear as a spurious "new" variable purely because sourcing the
+# library is itself the first completed command in the "after" shell.
+/bin/bash -c ': ; compgen -v' | sort > "$T17_AC3_BEFORE"
+/bin/bash -c ": ; source '$DATADIR_LIB'; compgen -v" | sort > "$T17_AC3_AFTER"
+T17_AC3_NEWVARS="$(comm -13 "$T17_AC3_BEFORE" "$T17_AC3_AFTER")"
+if [[ -z "$T17_AC3_NEWVARS" ]]; then
+  pass "EDMV4-T17 AC3 -- sourcing the library declares zero new global variables"
+else
+  fail "EDMV4-T17 AC3 -- sourcing the library introduced global variable(s): ${T17_AC3_NEWVARS}"
+fi
+
+T17_AC3_COMBO_RC=0
+T17_AC3_COMBO_OUT="$(/bin/bash -c "
+  source '$DATADIR_LIB'
+  source '$EDM_STATE' >/dev/null 2>&1
+  [[ \"\$PATTERN_AUDIT_TYPE_ENUM_LIST\" == 'srd ticket qc code test-coverage' ]] || exit 1
+  edm_data_dir >/dev/null
+  edm_project_key >/dev/null
+  edm_marker_path >/dev/null
+  echo BOTH_SIDES_INTACT
+")" || T17_AC3_COMBO_RC=$?
+if [[ "$T17_AC3_COMBO_RC" -eq 0 && "$T17_AC3_COMBO_OUT" == "BOTH_SIDES_INTACT" ]]; then
+  pass "EDMV4-T17 AC3 -- sourcing both files together leaves edm-state's constants and the library's functions intact"
+else
+  fail "EDMV4-T17 AC3 -- combined sourcing failed (rc=${T17_AC3_COMBO_RC} out=[${T17_AC3_COMBO_OUT}])"
+fi
+
+# ---- AC4: edm_data_dir()'s four-step order, including relative fall-through and the empty
+# terminal case. ----------------------------------------------------------------------------------
+T17_AC4_A="$(/bin/bash -c "export CLAUDE_PLUGIN_DATA='${TMP}/t17-ac4-a'; unset XDG_DATA_HOME; export HOME='${TMP}/t17-ac4-a-home'; source '$DATADIR_LIB'; edm_data_dir")"
+check "EDMV4-T17 AC4 -- step 1: absolute+creatable CLAUDE_PLUGIN_DATA wins" "${TMP}/t17-ac4-a" "$T17_AC4_A"
+
+T17_AC4_B="$(/bin/bash -c "export CLAUDE_PLUGIN_DATA='relative/path'; unset XDG_DATA_HOME; export HOME='${TMP}/t17-ac4-b-home'; source '$DATADIR_LIB'; edm_data_dir")"
+check "EDMV4-T17 AC4 -- relative CLAUDE_PLUGIN_DATA is skipped, falls through to HOME" "${TMP}/t17-ac4-b-home/.local/share/edm" "$T17_AC4_B"
+
+T17_AC4_C="$(/bin/bash -c "unset CLAUDE_PLUGIN_DATA; export XDG_DATA_HOME='${TMP}/t17-ac4-c-xdg'; unset HOME; source '$DATADIR_LIB'; edm_data_dir")"
+check "EDMV4-T17 AC4 -- step 2: absolute XDG_DATA_HOME/edm used when CLAUDE_PLUGIN_DATA absent" "${TMP}/t17-ac4-c-xdg/edm" "$T17_AC4_C"
+
+T17_AC4_D="$(/bin/bash -c "unset CLAUDE_PLUGIN_DATA; export XDG_DATA_HOME='relative/xdg'; export HOME='${TMP}/t17-ac4-d-home'; source '$DATADIR_LIB'; edm_data_dir")"
+check "EDMV4-T17 AC4 -- relative XDG_DATA_HOME is skipped, falls through to HOME" "${TMP}/t17-ac4-d-home/.local/share/edm" "$T17_AC4_D"
+
+T17_AC4_E="$(/bin/bash -c "unset CLAUDE_PLUGIN_DATA; unset XDG_DATA_HOME; export HOME='${TMP}/t17-ac4-e-home'; source '$DATADIR_LIB'; edm_data_dir")"
+check "EDMV4-T17 AC4 -- step 3: HOME/.local/share/edm used when both prior candidates absent" "${TMP}/t17-ac4-e-home/.local/share/edm" "$T17_AC4_E"
+
+T17_AC4_ROBLOCK="${TMP}/t17-ac4-roblock"
+mkdir -p "$T17_AC4_ROBLOCK"
+chmod 555 "$T17_AC4_ROBLOCK"
+T17_AC4_F="$(/bin/bash -c "export CLAUDE_PLUGIN_DATA='${T17_AC4_ROBLOCK}/pd'; export XDG_DATA_HOME='${T17_AC4_ROBLOCK}/xdg'; export HOME='${T17_AC4_ROBLOCK}/home'; source '$DATADIR_LIB'; d=\$(edm_data_dir); rc=\$?; printf '%s|%s' \"\$d\" \"\$rc\"")"
+chmod 755 "$T17_AC4_ROBLOCK"
+if [[ "$T17_AC4_F" == "|0" ]]; then
+  pass "EDMV4-T17 AC4 -- step 4: all three candidates unresolvable returns empty string with exit 0"
+else
+  fail "EDMV4-T17 AC4 -- terminal case did not return empty+exit0: got [${T17_AC4_F}]"
+fi
+
+# ---- AC5: patterns/ and run/ are disjoint siblings, never conflated. ----------------------------
+T17_AC5_DATADIR="${TMP}/t17-ac5-data"
+mkdir -p "${T17_AC5_DATADIR}/patterns" "${T17_AC5_DATADIR}/run"
+echo "pattern content" > "${T17_AC5_DATADIR}/patterns/srd-audit.md"
+echo "marker content" > "${T17_AC5_DATADIR}/run/some-key.phase6"
+T17_AC5_PATTERNS_LS="$(ls "${T17_AC5_DATADIR}/patterns")"
+T17_AC5_RUN_LS="$(ls "${T17_AC5_DATADIR}/run")"
+if [[ "$T17_AC5_PATTERNS_LS" == "srd-audit.md" && "$T17_AC5_RUN_LS" == "some-key.phase6" ]]; then
+  pass "EDMV4-T17 AC5 -- a patterns/ write does not appear under run/ and vice versa"
+else
+  fail "EDMV4-T17 AC5 -- patterns/=[${T17_AC5_PATTERNS_LS}] run/=[${T17_AC5_RUN_LS}]"
+fi
+
+# ---- AC6: bash 3.2 floor -- no bash-4-only constructs. ------------------------------------------
+T17_AC6_HIT="$(grep -nE 'declare -A|readarray|mapfile' "$DATADIR_LIB" || true)"
+T17_AC6_CARET_HIT="$(grep -n '\^\^' "$DATADIR_LIB" || true)"
+if [[ -z "$T17_AC6_HIT" && -z "$T17_AC6_CARET_HIT" ]]; then
+  pass "EDMV4-T17 AC6 -- no associative-array, upper-case-expansion, mapfile or readarray usage"
+else
+  fail "EDMV4-T17 AC6 -- bash-4-only construct found: ${T17_AC6_HIT}${T17_AC6_CARET_HIT}"
+fi
+
+# ---- AC7: edm_data_dir()/edm_marker_path() spawn zero external binaries; edm_project_key() only
+# spawns git when CLAUDE_PROJECT_DIR is unset or not a directory. --------------------------------
+T17_AC7_FAKEBIN="${TMP}/t17-ac7-fakebin"
+mkdir -p "$T17_AC7_FAKEBIN"
+cat > "${T17_AC7_FAKEBIN}/git" <<'FAKEGIT'
+#!/bin/sh
+echo "fake git invoked -- should never happen when CLAUDE_PROJECT_DIR names a directory" >&2
+exit 1
+FAKEGIT
+chmod +x "${T17_AC7_FAKEBIN}/git"
+T17_AC7_PROJDIR="${TMP}/t17-ac7-projdir"
+mkdir -p "$T17_AC7_PROJDIR"
+
+T17_AC7_RC=0
+T17_AC7_OUT="$(/bin/bash -c "export PATH='${T17_AC7_FAKEBIN}:\$PATH'; export CLAUDE_PROJECT_DIR='${T17_AC7_PROJDIR}'; source '$DATADIR_LIB'; edm_data_dir >/dev/null && edm_project_key >/dev/null && edm_marker_path >/dev/null && echo ALL_OK")" || T17_AC7_RC=$?
+if [[ "$T17_AC7_RC" -eq 0 && "$T17_AC7_OUT" == "ALL_OK" ]]; then
+  pass "EDMV4-T17 AC7 -- all three functions succeed with a failing git stub on PATH when CLAUDE_PROJECT_DIR names a directory"
+else
+  fail "EDMV4-T17 AC7 -- rc=${T17_AC7_RC} out=[${T17_AC7_OUT}]"
+fi
+
+# ---- AC8: exercise all four edm_data_dir() branches (already covered individually by AC4's five
+# cases above -- this asserts the all-three-unresolvable terminal case is reachable via
+# manipulating all three env vars together, distinct from AC4's per-step isolation). -------------
+if [[ "$T17_AC4_F" == "|0" ]]; then
+  pass "EDMV4-T17 AC8 -- all four edm_data_dir() branches exercised (steps 1-3 in AC4, terminal empty-string case above)"
+else
+  fail "EDMV4-T17 AC8 -- terminal branch not reached cleanly"
+fi
+
+# ---- AC9: with CLAUDE_PLUGIN_DATA unset, no call writes inside the repository working tree. ----
+T17_AC9_BEFORE="$(git -C "$REPO_ROOT" status --porcelain)"
+/bin/bash -c "unset CLAUDE_PLUGIN_DATA; source '$DATADIR_LIB'; edm_data_dir >/dev/null; edm_marker_path >/dev/null"
+T17_AC9_AFTER="$(git -C "$REPO_ROOT" status --porcelain)"
+if [[ "$T17_AC9_BEFORE" == "$T17_AC9_AFTER" ]]; then
+  pass "EDMV4-T17 AC9 -- edm_data_dir()/edm_marker_path() write nothing inside the repository working tree"
+else
+  fail "EDMV4-T17 AC9 -- git status --porcelain changed: before=[${T17_AC9_BEFORE}] after=[${T17_AC9_AFTER}]"
+fi
+
+echo
+
+# =================================================================================================
+# EDMV4-T38: bin/edm-repo-readiness -- repo-readiness scorecard, bin/ scaffold
+# =================================================================================================
+echo "-- EDMV4-T38: edm-repo-readiness --"
+
+# ---- AC1: executable bit set; CLAUDE.md gains a row. --------------------------------------------
+if [[ -x "$REPO_READINESS" ]]; then
+  pass "EDMV4-T38 AC1 -- edm-repo-readiness has the executable bit set"
+else
+  fail "EDMV4-T38 AC1 -- edm-repo-readiness is not executable"
+fi
+if grep -q '`edm-repo-readiness`' "${PLUGIN_DIR}/CLAUDE.md"; then
+  pass "EDMV4-T38 AC1 -- CLAUDE.md's bin/ helper table names edm-repo-readiness"
+else
+  fail "EDMV4-T38 AC1 -- CLAUDE.md's bin/ helper table has no row for edm-repo-readiness"
+fi
+
+# ---- AC2: sources _edm-cli-lib.sh, implements --help via the shared print_help() against its
+# own sentinel block, no hardcoded sed -n line range. ---------------------------------------------
+check "EDMV4-T38 AC2 -- sources _edm-cli-lib.sh" "source \"\${SCRIPT_DIR}/_edm-cli-lib.sh\"" "$(cat "$REPO_READINESS")"
+check "EDMV4-T38 AC2 -- calls the shared print_help()" "print_help \"\${BASH_SOURCE[0]:-\$0}\"" "$(cat "$REPO_READINESS")"
+check "EDMV4-T38 AC2 -- carries EDM-HELP-BEGIN/END sentinels" "EDM-HELP-BEGIN" "$(cat "$REPO_READINESS")"
+check_absent "EDMV4-T38 AC2 -- no hardcoded sed -n line-range help extraction" "sed -n '" "$(cat "$REPO_READINESS")"
+
+# ---- AC3: --help exits 0 and prints the sentinel block, including the usage line. ---------------
+T38_AC3_RC=0
+T38_AC3_OUT="$("$REPO_READINESS" --help)" || T38_AC3_RC=$?
+if [[ "$T38_AC3_RC" -eq 0 ]]; then
+  pass "EDMV4-T38 AC3 -- --help exits 0"
+else
+  fail "EDMV4-T38 AC3 -- --help exited ${T38_AC3_RC}"
+fi
+check "EDMV4-T38 AC3 -- --help prints the usage line" "edm-repo-readiness [<PREFIX>] [--json <path>]" "$T38_AC3_OUT"
+
+# ---- AC4: SCRIPT_DIR idiom byte-matches the house convention shared with the other bin/ scripts
+# (edm-lint-artifacts, edm-compare-eval, edm-state each carry this exact line -- cited by symbol,
+# not by line number, since line numbers drift). --------------------------------------------------
+T38_AC4_EXPECTED='SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"'
+T38_AC4_ACTUAL="$(grep -m1 '^SCRIPT_DIR=' "$REPO_READINESS" || true)"
+if [[ "$T38_AC4_ACTUAL" == "$T38_AC4_EXPECTED" ]]; then
+  pass "EDMV4-T38 AC4 -- SCRIPT_DIR idiom byte-matches the house convention"
+else
+  fail "EDMV4-T38 AC4 -- SCRIPT_DIR line differs: got [${T38_AC4_ACTUAL}]"
+fi
+
+# ---- AC5: local two-argument die() helper, matching the edm-compare-eval / evals/run-eval.sh form.
+check "EDMV4-T38 AC5 -- die() takes (msg, code=\"\${2:-2}\")" 'local msg="$1" code="${2:-2}"' "$(cat "$REPO_READINESS")"
+
+# ---- AC6: exit codes -- 0 when scored at any score, 2 for usage/setup errors. -------------------
+T38_AC6_NOGIT_DIR="${TMP}/t38-ac6-nogit"
+mkdir -p "$T38_AC6_NOGIT_DIR"
+T38_AC6_RC=0
+T38_AC6_OUT="$(cd "$T38_AC6_NOGIT_DIR" && "$REPO_READINESS")" || T38_AC6_RC=$?
+if [[ "$T38_AC6_RC" -eq 0 ]]; then
+  pass "EDMV4-T38 AC6 -- a deliberately low-scoring fixture (non-git directory) still exits 0"
+else
+  fail "EDMV4-T38 AC6 -- low-scoring fixture exited ${T38_AC6_RC}, expected 0"
+fi
+check "EDMV4-T38 AC6 -- low-scoring fixture reports a low score" "Overall score: 0" "$T38_AC6_OUT"
+
+T38_AC6_BADFLAG_RC=0
+"$REPO_READINESS" --this-flag-does-not-exist >/dev/null 2>&1 || T38_AC6_BADFLAG_RC=$?
+if [[ "$T38_AC6_BADFLAG_RC" -eq 2 ]]; then
+  pass "EDMV4-T38 AC6 -- an unknown flag exits 2"
+else
+  fail "EDMV4-T38 AC6 -- unknown flag exited ${T38_AC6_BADFLAG_RC}, expected 2"
+fi
+
+T38_AC6_NOPATH_RC=0
+"$REPO_READINESS" --json >/dev/null 2>&1 || T38_AC6_NOPATH_RC=$?
+if [[ "$T38_AC6_NOPATH_RC" -eq 2 ]]; then
+  pass "EDMV4-T38 AC6 -- --json with no path exits 2"
+else
+  fail "EDMV4-T38 AC6 -- --json with no path exited ${T38_AC6_NOPATH_RC}, expected 2"
+fi
+
+# ---- AC7: human text to stdout, JSON only to a file via --json <path>. --------------------------
+T38_AC7_STDOUT="$("$REPO_READINESS")"
+check_absent "EDMV4-T38 AC7 -- stdout carries no JSON document" "{" "$T38_AC7_STDOUT"
+if grep -qE -- '--json-to-stdout\)' "$REPO_READINESS"; then
+  fail "EDMV4-T38 AC7 -- a --json-to-stdout flag is actually implemented (case arm found)"
+else
+  pass "EDMV4-T38 AC7 -- no --json-to-stdout flag is implemented (no matching case arm)"
+fi
+
+T38_AC7_JSON="${TMP}/t38-ac7-report.json"
+"$REPO_READINESS" --json "$T38_AC7_JSON" >/dev/null
+if [[ -f "$T38_AC7_JSON" ]] && jq -e . "$T38_AC7_JSON" >/dev/null 2>&1; then
+  pass "EDMV4-T38 AC7 -- --json <path> writes a valid JSON document to the file"
+else
+  fail "EDMV4-T38 AC7 -- --json <path> did not produce a valid JSON file at ${T38_AC7_JSON}"
+fi
+
+# ---- AC8: set -euo pipefail present. -------------------------------------------------------------
+check "EDMV4-T38 AC8 -- set -euo pipefail is present" "set -euo pipefail" "$(cat "$REPO_READINESS")"
+
+# ---- AC9: bash 3.2 floor -- no bash-4-only constructs; required binaries stay bash/jq/git. ------
+T38_AC9_HIT="$(grep -nE 'declare -A|readarray|mapfile' "$REPO_READINESS" || true)"
+T38_AC9_CARET_HIT="$(grep -n '\^\^' "$REPO_READINESS" || true)"
+if [[ -z "$T38_AC9_HIT" && -z "$T38_AC9_CARET_HIT" ]]; then
+  pass "EDMV4-T38 AC9 -- no associative-array, upper-case-expansion, mapfile or readarray usage"
+else
+  fail "EDMV4-T38 AC9 -- bash-4-only construct found: ${T38_AC9_HIT}${T38_AC9_CARET_HIT}"
+fi
+if /bin/bash -n "$REPO_READINESS" >/dev/null 2>&1; then
+  pass "EDMV4-T38 AC9 -- bash -n passes under /bin/bash"
+else
+  fail "EDMV4-T38 AC9 -- bash -n failed under /bin/bash"
+fi
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

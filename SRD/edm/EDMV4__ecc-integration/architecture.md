@@ -93,8 +93,12 @@ test failure rather than a silently-unenforced gate.
 
 4.1's marker and 4.2's harvested pattern delta both need a writable, plugin-owned, outside-the-repo
 directory. Nothing in `bin/` has ever resolved one (`CLAUDE_PLUGIN_DATA` appears only in
-`CLAUDE.md:71` prose and in the analysis document). A new `bin/_edm-datadir-lib.sh`, sourced by
-`edm-state`, `edm-gateguard` and `edm-hookify`, owns the whole question:
+`CLAUDE.md:77` prose -- the only prose reference that survives verification; no
+`docs/ecc-integration-analysis.md` exists anywhere in this repository on this branch, EDMV4-T17).
+A new `bin/_edm-datadir-lib.sh`, sourced by its two consumers, `edm-state` and `edm-gateguard`,
+owns the whole question. `edm-hookify` does not source it -- its rule files are project-relative
+and source-controlled per D7, and `EDMV4-41` requires it be read-only, so it never needs the data
+directory (EDMV4-T17):
 
 ```
 edm_data_dir()      ${CLAUDE_PLUGIN_DATA} if absolute and creatable

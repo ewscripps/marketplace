@@ -61,6 +61,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "${SCRIPT_DIR}/_edm-cli-lib.sh"
 source "${SCRIPT_DIR}/_edm-lint-lib.sh"
+# EDMV4-T17 AC2: guarded sourcing -- deleting _edm-datadir-lib.sh must degrade edm-state to
+# today's behaviour (no edm_data_dir/edm_project_key/edm_marker_path defined) rather than
+# failing every subcommand under set -euo pipefail. Nothing in edm-state calls these three
+# functions yet (EDMV4-08 and EDMV4-T18 are the first callers), so this guarded source is a
+# no-op today either way; it exists so those later tickets have a library to call into.
+[[ -r "${SCRIPT_DIR}/_edm-datadir-lib.sh" ]] && source "${SCRIPT_DIR}/_edm-datadir-lib.sh"
 
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
 SRD_FILENAME="${EDM_SRD_FILENAME:-${CLAUDE_PLUGIN_OPTION_SRD_FILENAME:-srd.md}}"
