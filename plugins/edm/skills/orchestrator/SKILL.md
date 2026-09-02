@@ -118,15 +118,11 @@ of the mode matrix with `fix-pack` and the two are documented as behaviourally i
 (`CLAUDE.md Sec."EDM mode matrix (EDMV3-T38)"`), so distinguishing them would require splitting that row,
 which is out of scope here.
 
-State the computed recommendation in one line inside Step 1c's `AskUserQuestion` body, naming
-both members of the pair and which signal scored what tier -- never the destination's
-behaviour (`CLAUDE.md Sec."EDM mode matrix (EDMV3-T38)"` covers that; consult it, do not restate it here).
+Security-trigger tie-breaker: a hit on any of the seven triggers -- authentication or authorization, user-input handling, database queries, filesystem paths, external API calls, cryptography, secrets or credentials (source: ECC's `orch-pipeline/SKILL.md`) -- or on a public API or contract change, forces the recommendation to **at least** `standard`, overriding a lower tier from the three signals above; even when all three signals score trivial, a trigger hit overrides the trivial tier's `(standard, fix-pack)` recommendation with `(standard, standard)`. It is a floor, never a ceiling: it never lowers a `standard` recommendation and never changes `mode` to anything but `standard`. When it fires, it also pre-selects **On** for Step 1c's compliance toggle, moving "(Recommended)" from Off to On for this run.
 
-This step only marks which existing Step 1c option carries "(Recommended)". It never
-auto-applies a mode and never calls `set-mode` itself -- the classifier is a default, not an
-enforcement. The user always confirms or overrides via Step 1c, and whatever is selected
-(recommended or not) is recorded through the same `edm-state set-mode <PREFIX>
-mode|lifecycle_mode <value>` path described there.
+State the computed recommendation in one line inside Step 1c's `AskUserQuestion` body, naming both members of the pair and which signal scored what tier, or naming the trigger that fired -- never the destination's behaviour (`CLAUDE.md Sec."EDM mode matrix (EDMV3-T38)"` covers that; consult it, do not restate it here). Per guard D6, this step names values only and never restates any mode's or lifecycle_mode's behaviour.
+
+This step only marks which existing Step 1c option carries "(Recommended)" (mode, lifecycle_mode, and compliance). It never auto-applies a mode and never calls `set-mode` itself -- the classifier is a default, not an enforcement. The user always confirms or overrides via Step 1c, and whatever is selected (recommended or not) is recorded through the same `edm-state set-mode <PREFIX> mode|lifecycle_mode <value>` path described there.
 
 **Step 1c -- Mode and profile selection**
 
@@ -137,8 +133,7 @@ Skipped on resume (Step 1b already read a recorded non-default mode).
 2. `AskUserQuestion` header `"Lifecycle"` (<=12 chars): **Standard** (Recommended) / **fast-track** /
    **fix-pack**. Step 1b.5's recommendation, when present, moves "(Recommended)" onto its
    recommended value for both this question and the mode question above.
-3. Present a compliance toggle via `AskUserQuestion` header `"Compliance"`: **Off** (Recommended) /
-   **On**.
+3. Present a compliance toggle via `AskUserQuestion` header `"Compliance"`: **Off** (Recommended) / **On**. Step 1b.5's security-trigger tie-breaker, when it fires, moves "(Recommended)" onto **On** for this run only; when it does not fire, this default is unchanged. The user may still choose Off, and either way the choice is recorded only through step 4's existing `set-mode <PREFIX> compliance_enabled true` write (only if On) -- no new write path.
 4. Record: `edm-state set-mode <PREFIX> mode <value>`;
    `edm-state set-mode <PREFIX> lifecycle_mode <value>` (only if not the `standard` default);
    `edm-state set-mode <PREFIX> compliance_enabled true` (only if On).
