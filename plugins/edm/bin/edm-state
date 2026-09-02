@@ -1604,15 +1604,39 @@ schema_at_least() {
   fi
 }
 
-# ---- Audit round shared definitions (EDMV3-T27) -----------------------------
-# ALL_LENS_IDS -- the eleven canonical code-audit lens IDs, single source (EDMV3-T27 Technical
-# Notes: "Hardcode the list once next to the derivation and assert its length is 11"). bash 3.2
-# has no portable array-as-constant idiom usable across functions, so this follows the identical
-# space-separated-string + word-membership pattern MODE_ENUM_LIST/LIFECYCLE_MODE_ENUM_LIST use
-# above, for the same reason.
-ALL_LENS_IDS="L1 L2 L3 L4 L5 L6 L7 L8 L9 L10 L11"
+# ---- Audit round shared definitions (EDMV3-T27; grown to 14 lenses by EDMV4-T21) -------------
+# ALL_LENS_IDS -- the fourteen canonical code-audit lens IDs, single source (EDMV3-T27 Technical
+# Notes: "Hardcode the list once next to the derivation and assert its length is 11" -- superseded
+# by EDMV4-T21, which added L12 Silent Failures, L13 Type Design and L14 Behavioral Test Coverage
+# and re-asserts the count at 14). bash 3.2 has no portable array-as-constant idiom usable across
+# functions, so this follows the identical space-separated-string + word-membership pattern
+# MODE_ENUM_LIST/LIFECYCLE_MODE_ENUM_LIST use above, for the same reason.
+ALL_LENS_IDS="L1 L2 L3 L4 L5 L6 L7 L8 L9 L10 L11 L12 L13 L14"
 # shellcheck disable=SC2086 -- deliberate word-splitting; bash 3.2 has no arrays-as-constants
-[[ "$(echo $ALL_LENS_IDS | wc -w | tr -d ' ')" -eq 11 ]] || die "internal: ALL_LENS_IDS must enumerate exactly 11 lenses"
+[[ "$(echo $ALL_LENS_IDS | wc -w | tr -d ' ')" -eq 14 ]] || die "internal: ALL_LENS_IDS must enumerate exactly 14 lenses"
+
+# CONDITIONAL_LENS_IDS -- the subset of ALL_LENS_IDS that may legitimately be auto-N/A on a
+# codebase where the lens is genuinely inapplicable (EDMV4-T21; guard D2,
+# CLAUDE.md Sec."Prompt conventions (house style)"). "Conditional" means a lens that may be
+# auto-N/A when it is genuinely inapplicable to the target stack -- it is NEVER a lens excluded
+# to save audit cost. Guard D2's stated cost of ignoring that distinction is coverage loss
+# disguised as an efficiency gain: a lens silently stops existing and nobody notices until the
+# gap it used to catch ships. Today's sole member is L13 (Type Design), which is meaningless on
+# an untyped stack; every other lens is unconditional and has no N/A exit.
+CONDITIONAL_LENS_IDS="L13"
+# shellcheck disable=SC2086 -- deliberate word-splitting; bash 3.2 has no arrays-as-constants
+[[ "$(echo $CONDITIONAL_LENS_IDS | wc -w | tr -d ' ')" -eq 1 ]] || die "internal: CONDITIONAL_LENS_IDS must enumerate exactly 1 lens"
+# Every member of CONDITIONAL_LENS_IDS must also be a member of ALL_LENS_IDS -- a conditional
+# lens ID that names nothing real would let the round-type union rule and the CA-471 backstop
+# silently accept an ID with no corresponding lens agent.
+# shellcheck disable=SC2086 -- deliberate word-splitting; bash 3.2 has no arrays-as-constants
+for _cond_lens_id in $CONDITIONAL_LENS_IDS; do
+  case " $ALL_LENS_IDS " in
+    *" $_cond_lens_id "*) ;;
+    *) die "internal: CONDITIONAL_LENS_IDS member '${_cond_lens_id}' is not a member of ALL_LENS_IDS" ;;
+  esac
+done
+unset _cond_lens_id
 
 # AUDIT_ROUND_COERCE_JQ_DEF -- the single C-4 coercion for audit_rounds.<type> (EDMV3-T27 AC1a).
 # Every state file written before this ticket (and the archived EDMV2 fixture literally) stores
