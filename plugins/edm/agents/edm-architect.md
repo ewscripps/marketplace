@@ -29,7 +29,11 @@ Produce the Target Architecture section for an SRD. You receive: the initiative 
    - Data flow diagram if data transformation is significant
    - Validate syntax -- diagrams must render without errors
    - Follow `CLAUDE.md Sec."Mermaid diagram conventions"` for label text -- a raw semicolon in a
-     node, edge or message label is a violation
+     node, edge or message label is a violation. Read `docs/canonical-sections.md` (resolved
+     relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the installed
+     plugin's cache root, never the caller's cwd) for the actual section text; a bare `CLAUDE.md
+     Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not loaded as
+     runtime context.
 
 4. **Data Flow** -- Trace the data from entry point through all transformations to output. Include error paths.
 
@@ -86,7 +90,11 @@ File structure of `architecture.md`:
 
 Keep all prose markers ASCII-only (no Unicode arrows or glyphs in text). Mermaid fenced blocks are
 permitted -- the ASCII constraint applies to prose, not to standard Mermaid syntax keywords. Follow
-`CLAUDE.md Sec."Mermaid diagram conventions"` for label escaping inside those fences.
+`CLAUDE.md Sec."Mermaid diagram conventions"` for label escaping inside those fences. Read
+`docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/` in
+this repository, or the installed plugin's cache root, never the caller's cwd) for the actual
+section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the
+plugin root is not loaded as runtime context.
 
 - **Length**: match the length of the document to what the task needs -- cover the substance; do not pad with filler sections, redundant summaries, or boilerplate.
 

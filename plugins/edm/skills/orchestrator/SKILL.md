@@ -24,8 +24,7 @@ EDM is a six-phase process for shipping complex software with high confidence: P
 Audit -> Tickets -> Ticket Audit -> Implementation, gated by three HITL approvals. The core insight:
 **the cost of planning is always lower than the cost of rework**. Each phase's complete procedure
 lives in that phase's own skill (`skills/{phase}/SKILL.md`) -- **this dispatcher invokes each phase
-via the `Skill` tool and presents its gate; it contains no phase procedure itself**
-(`CLAUDE.md Sec."Skill-tool composition"`).
+via the `Skill` tool and presents its gate; it contains no phase procedure itself**.
 
 | Scenario                       | Use EDM?                 |
 |--------------------------------|--------------------------|
@@ -110,8 +109,12 @@ Skipped on resume (Step 1b already read a recorded non-default mode).
    **On**.
 3. Record: `edm-state set-mode <PREFIX> mode <value>`;
    `edm-state set-mode <PREFIX> compliance_enabled true` (only if On).
-4. Mode-family fields and each mode's full behavior are `CLAUDE.md Sec."EDM mode matrix"` --
-   consult it before dispatching; do not restate the sub-flows here.
+4. Mode-family fields and each mode's full behavior are `CLAUDE.md Sec."EDM mode matrix (EDMV3-T38)"` --
+   consult it before dispatching; do not restate the sub-flows here. Read `docs/canonical-sections.md`
+   (resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the
+   installed plugin's cache root, never the caller's cwd) for the actual section text; a bare
+   `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not
+   loaded as runtime context.
 
 **Step 1d -- Concurrency & branch safety check**
 
@@ -149,7 +152,7 @@ dispatcher never restates a phase's steps, agent-spawn templates, or artifact te
 **Graceful degradation**: if a `Skill`-tool invocation fails with `tool_use_error: Unknown skill:
 <name>`, report to the user exactly which skill is unavailable and what plugin/skill to enable.
 This dispatcher does not fall back to inlining that phase's procedure, and does not silently
-continue (`CLAUDE.md Sec."Skill-tool composition"`).
+continue.
 
 1. **Phase 1 (Planning)**: invoke `/edm:plan <PREFIX>` `<INITIATIVE>`. Presents Gate 1.
 2. **Phase 2 (SRD)**: invoke `/edm:srd <PREFIX>`. Runs its own Phase 3 handoff automatically (no
@@ -192,13 +195,16 @@ phase skill or `edm-state write-handoff` directly.
   than after implementation.
 - **One monolithic implementation pass** -- context exhaustion, no parallelism.
 - **XL tickets** -- must be decomposed before starting.
-- **Inline a phase's procedure here "just this once"** -- the dispatcher only invokes and gates; see
-  `CLAUDE.md Sec."Skill-tool composition"`.
+- **Inline a phase's procedure here "just this once"** -- the dispatcher only invokes and gates.
 
 Never auto-approve a HITL gate. Never skip a phase. Always record state via `edm-state`. Artifact
 layout, phase timing guidance, and the full mode matrix are `CLAUDE.md Sec."Project artifact
-layout"`, Sec."Phase Timing Guidelines"`, and Sec."EDM mode matrix"` respectively -- referenced by
-name here, not duplicated.
+layout"`, `CLAUDE.md Sec."Phase Timing Guidelines (EDMV3-T38)"`, and
+`CLAUDE.md Sec."EDM mode matrix (EDMV3-T38)"` respectively -- referenced by name here, not
+duplicated. Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root --
+`plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd)
+for the actual section text of each; a bare `CLAUDE.md Sec."..."` reference does not resolve
+because CLAUDE.md at the plugin root is not loaded as runtime context.
 
 <tone_preference>
 Be direct and concise: lead with the outcome, skip preamble, and never pad a reply for length.

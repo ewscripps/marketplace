@@ -103,7 +103,10 @@ Wrong API names, incorrect library references, impossible claims, version mismat
 ### 3. Diagram Errors
 Mermaid syntax errors, logical flow errors, missing edges, orphan nodes. Follows
 `CLAUDE.md Sec."Mermaid diagram conventions"` -- a raw `;` inside label/edge/message text is a
-violation.
+violation. Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root --
+`plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd)
+for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because
+CLAUDE.md at the plugin root is not loaded as runtime context.
 
 ### 4. Competing Requirements
 Conflicts with current codebase, existing features, other specs, internal contradictions.
@@ -119,7 +122,7 @@ Licensing, accessibility (WCAG), i18n, backward compatibility, deployment impact
 
 ## Severity Levels
 
-Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabulary"` -- no divergent local scale or local restatement.
+Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabulary"` -- no divergent local scale or local restatement. Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd) for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not loaded as runtime context.
 
 ## Finding Format
 

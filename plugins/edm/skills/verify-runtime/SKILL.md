@@ -29,7 +29,11 @@ time, and D15 forbids inventing a third verdict when the runtime check is hard t
 There is no third value of any kind anywhere in `partial_verdict_map`, in
 `post-deploy/verification.md`, or in this skill's prompts -- only the two named above. See
 `CLAUDE.md Sec."Unverifiable acceptance criteria (D15)"` for the full policy (including the
-specific abolished tokens this methodology never uses): when the runtime
+specific abolished tokens this methodology never uses). Read `docs/canonical-sections.md`
+(resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the
+installed plugin's cache root, never the caller's cwd) for the actual section text; a bare
+`CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not
+loaded as runtime context. When the runtime
 environment an AC assumes genuinely does not exist, that is a specification defect, not a
 verification outcome. The correct response is to rework the AC or move it out of scope --
 **never** to record a third verdict here. Both routes are a scope change to an approved ticket, so
@@ -37,7 +41,11 @@ both go through gate change control, not this skill: **the implementer cannot de
 declaring it unverifiable here**. If you reach that situation while running this skill, stop,
 name the AC, and tell the user it needs to go back through the ticket/gate change-control path
 described in `CLAUDE.md Sec."Unverifiable acceptance criteria (D15)"` before verification can
-close it -- do not invent a verdict to unblock yourself.
+close it -- do not invent a verdict to unblock yourself. Read `docs/canonical-sections.md`
+(resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the
+installed plugin's cache root, never the caller's cwd) for the actual section text; a bare
+`CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not
+loaded as runtime context.
 
 ## Operational Orchestration
 
@@ -144,7 +152,11 @@ This file is appended to, never rewritten -- each verify-runtime run adds new cl
   any other FAIL, then re-verified.
 - An AC that cannot be verified because its runtime environment does not exist is not this
   skill's problem to solve by inventing a verdict -- it is a specification defect, routed through
-  gate change control per `CLAUDE.md Sec."Unverifiable acceptance criteria (D15)"`.
+  gate change control per `CLAUDE.md Sec."Unverifiable acceptance criteria (D15)"`. Read
+  `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/`
+  in this repository, or the installed plugin's cache root, never the caller's cwd) for the
+  actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md
+  at the plugin root is not loaded as runtime context.
 
 This skill presents no HITL gate of its own -- its per-entry PASS/FAIL prompts (Two-Verdict Policy
 above) are a distinct, two-option pattern, not the three-option Approve/Revise/No-Go gate defined in

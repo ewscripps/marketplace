@@ -41,7 +41,7 @@ Guidance loads at write time so library updates improve output automatically wit
 2. **Legend** -- Read from the plugin-root-relative `docs/templates/ticket-size-legend.md` and inline verbatim (single source of truth; never re-author). If it cannot be resolved, stop and report; do not re-author it.
 3. **Cross-Cutting Requirements** -- Read from the plugin-root-relative `docs/templates/cross-cutting-ac.md` and inline verbatim (single source of truth). If it cannot be resolved, stop and report; do not re-author it.
 4. **Ticket Index** -- one table per phase: ID | Title | Epic | Size | Priority | Depends On | SRD Refs
-5. **Critical Path** -- Mermaid diagram, every node colored, following `CLAUDE.md Sec."Mermaid diagram conventions"` for label text
+5. **Critical Path** -- Mermaid diagram, every node colored, following `CLAUDE.md Sec."Mermaid diagram conventions"` for label text. Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd) for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not loaded as runtime context.
 6. **Epics Summary** -- table mapping epic numbers to ticket counts and file links
 7. **SRD Coverage Map** -- every `{PREFIX}-NN` requirement mapped to ticket(s) -- no orphans
 
@@ -101,7 +101,7 @@ Guidance loads at write time so library updates improve output automatically wit
 5. Write the README.md with the version-linkage header `Generated From: srd.md v{srd_version}` as the first line of the body
 6. Write tickets starting with Phase 1 (foundation), using `{PREFIX}-T{NN}` IDs
 7. Verify SRD coverage -- every `{PREFIX}-NN` requirement must appear in at least one ticket
-8. Draw the critical path Mermaid diagram with colored nodes, following `CLAUDE.md Sec."Mermaid diagram conventions"` for label text -- a raw semicolon in a label is a violation
+8. Draw the critical path Mermaid diagram with colored nodes, following `CLAUDE.md Sec."Mermaid diagram conventions"` for label text -- a raw semicolon in a label is a violation. Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd) for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not loaded as runtime context.
 
 ## Output
 

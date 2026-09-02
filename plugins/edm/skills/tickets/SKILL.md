@@ -51,7 +51,7 @@ using `<gated-command>` = `tickets` and `<phase-num>` = `4`.
 2. **Legend** -- Read plugin-root-relative `docs/templates/ticket-size-legend.md` and inline it verbatim (single source of truth; never re-author inline)
 3. **Cross-Cutting Requirements** -- Read plugin-root-relative `docs/templates/cross-cutting-ac.md` and inline it verbatim (single source of truth)
 4. **Ticket Index** -- one table per phase: ID, Title, Epic, Size, Priority, Depends On, SRD Refs
-5. **Critical Path** -- Mermaid diagram, every node colored, following `CLAUDE.md Sec."Mermaid diagram conventions"` for label text (a raw semicolon in a label is a violation)
+5. **Critical Path** -- Mermaid diagram, every node colored, following `CLAUDE.md Sec."Mermaid diagram conventions"` for label text (a raw semicolon in a label is a violation). Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd) for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not loaded as runtime context.
 6. **Epics Summary** -- table mapping epic numbers to ticket counts and file links
 7. **SRD Coverage Map** -- every `{PREFIX}-NN` requirement -> implementing ticket(s); no orphans
 

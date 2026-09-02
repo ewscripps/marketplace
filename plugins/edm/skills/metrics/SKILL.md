@@ -71,7 +71,7 @@ in `${user_config.srd_root}/` (active and `.archived/`) and prints one row per i
 Calls `edm-state metrics-report --calibrate`. Outputs per (size, phase) aggregate rows from all completed initiatives (active and archived):
 - For each (size, phase) combination: sample count, median duration in seconds, median Claude cost
 
-Useful for retrospectives. The team can then update the Phase Timing Guidelines table in `CLAUDE.md Sec."Phase Timing Guidelines"` based on the observed medians. `--calibrate` ignores `--with-human-baseline` -- there is no baseline concept at this granularity.
+Useful for retrospectives. The team can then update the Phase Timing Guidelines table in `CLAUDE.md Sec."Phase Timing Guidelines (EDMV3-T38)"` based on the observed medians. Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd) for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not loaded as runtime context. `--calibrate` ignores `--with-human-baseline` -- there is no baseline concept at this granularity.
 
 ## Interpretation Notes
 

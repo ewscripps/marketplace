@@ -386,11 +386,15 @@ Synthesizer responsibilities:
 
 ## Severity Reference
 
-Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabulary"` -- no local restatement or legacy relabeling.
+Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabulary"` -- no local restatement or legacy relabeling. Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd) for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not loaded as runtime context.
 
 **Convergence blocking set**: open P0, P1 **and P2** findings from the ledger. `NOTED` is the only
 status that closes a finding without a fix, because it is non-actionable rather than postponed
-(`CLAUDE.md Sec."Severity vocabulary"`, decisions.md D13). This is not a prose claim: it is
+(`CLAUDE.md Sec."Severity vocabulary"`, decisions.md D13; read `docs/canonical-sections.md`,
+resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the
+installed plugin's cache root, never the caller's cwd, for the actual section text, since a bare
+`CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not
+loaded as runtime context). This is not a prose claim: it is
 `BLOCKING_FILTER` in `bin/edm-state`, which every consumer of the blocking set references by name,
 and `edm-state audit-converged` refuses convergence while any of the three remain open. Legacy
 per-finding statuses that a pre-EDMV3 ledger may still carry are coerced to open on read by that

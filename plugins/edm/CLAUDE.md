@@ -434,29 +434,35 @@ runtime context ("use a skill instead"), and an installed plugin's cache directo
 path-adjacent to whatever project it is installed into, so a bare `` `CLAUDE.md Sec."..."` ``
 reference in a prompt has no plugin-relative anchor to resolve against from there -- it either
 fails to resolve, or (since "CLAUDE.md" is itself a common convention) silently resolves to the
-target project's own unrelated `CLAUDE.md` instead. Both the Severity vocabulary section and
-the Mermaid diagram conventions section above are additionally generated, byte-identical, into
-`docs/canonical-sections.md` (regenerate via `edm-sync-canonical-sections` after editing either
-section above) -- the plugin-relative path new prompt-surface references point at instead of the
-bare `CLAUDE.md Sec."..."` form.
+target project's own unrelated `CLAUDE.md` instead. The Severity vocabulary section, the Mermaid
+diagram conventions section, the Unverifiable acceptance criteria (D15) section above, and four
+more sections resolved by `EDMV4-T04` (`Project artifact layout`, `Optional: Jira
+synchronization`, `EDM mode matrix (EDMV3-T38)`, `Phase Timing Guidelines (EDMV3-T38)`) -- seven
+sections total, derived from `edm-sync-canonical-sections`' own generation block at edit time, not
+assumed -- are additionally generated, byte-identical, into `docs/canonical-sections.md`
+(regenerate via `edm-sync-canonical-sections` after editing any section above) -- the
+plugin-relative path new prompt-surface references point at instead of the bare
+`CLAUDE.md Sec."..."` form. The `Verifier completion sentinel (canonical)` section above is the
+sole deliberate exception: it documents, in its own "Scope of this section" paragraph, why it is
+never added to this generated set.
 
-**Current position (decisions.md D34): the negative branch is now the shipped default, not a
-future one -- for the code-audit consumer set specifically, not for every EDMV3-T42 touch point.**
-`agents/edm-audit-synthesizer.md`, `agents/edm-srd-auditor.md`, and all eleven
-`agents/edm-audit-*.md` lens definitions now carry an explicit `Read docs/canonical-sections.md`
-instruction anchored to the plugin's own root (never the caller's cwd) alongside their
-`CLAUDE.md Sec."..."` citation, so both forms resolve for a consumer reading one of these thirteen
-files. **That is a different, narrower set than the nine prompt-surface touch points
-`srd.md`'s EDMV3-54 originally named** (`agents/edm-architect.md`, `agents/edm-srd-writer.md`,
-`agents/edm-ticket-writer.md`, `agents/edm-ticket-auditor.md`, `skills/srd/SKILL.md`,
-`skills/tickets/SKILL.md`, `skills/audit-srd/SKILL.md`, `skills/audit-tickets/SKILL.md`, plus
-`agents/edm-srd-auditor.md` which the two sets happen to share) -- of those nine, only
-`edm-srd-auditor.md` overlaps with what D34 actually anchored, so the "ordering gap is now
-closed" framing holds for the lens/synthesizer set only, not for the other eight EDMV3-54 touch
-points, which still carry the bare form alone. Auditing and anchoring those eight is the residual
-scope opened as a named follow-on ticket, `EDMV4-T04` (the next unused ticket number in
-`EDMV4__lint-and-pipeline-budgets`; `EDMV4-T02` and `EDMV4-T03` are already closed per
-decisions.md D29), rather than left as an unnamed candidate (D34).
+**Current position (decisions.md D34, extended by `EDMV4-T04`): the negative branch is now the
+shipped default across the full verified set, not a narrower one.** `agents/edm-audit-synthesizer.md`,
+`agents/edm-srd-auditor.md`, all eleven `agents/edm-audit-*.md` lens definitions, and all
+fourteen files `EDMV4-T04` anchored (`agents/edm-architect.md`, `agents/edm-srd-writer.md`,
+`agents/edm-ticket-writer.md`, `agents/edm-ticket-auditor.md`, `agents/edm-qc-auditor.md`,
+`skills/srd/SKILL.md`, `skills/tickets/SKILL.md`, `skills/audit-srd/SKILL.md`,
+`skills/audit-tickets/SKILL.md`, `skills/verify-runtime/SKILL.md`, `skills/push-jira/SKILL.md`,
+`skills/orchestrator/SKILL.md`, `skills/metrics/SKILL.md`, `skills/code-audit/SKILL.md`) now carry
+an explicit `Read docs/canonical-sections.md` instruction anchored to the plugin's own root (never
+the caller's cwd) alongside their `CLAUDE.md Sec."..."` citation, so both forms resolve for a
+consumer reading any of these files. **`EDMV4-T04` has landed**: the residual scope opened as a
+named follow-on ticket by D34 (originally the eight-file subset of `srd.md`'s nine EDMV3-54
+prompt-surface touch points not already covered by the lens/synthesizer set) is closed, and the
+verified set turned out to be fourteen files (5 agents + 9 skills), not eight -- `CLAUDE.md`'s own
+prior list missed `edm-qc-auditor.md`, `verify-runtime/`, `push-jira/`, `orchestrator/`,
+`metrics/` and `code-audit/SKILL.md`, all of which carried the identical D22 defect
+(decisions.md D10).
 
 ## Model and effort assignments
 

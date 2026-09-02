@@ -124,7 +124,7 @@ using `<gated-command>` = `audit-tickets` and `<phase-num>` = `5`.
 - Mermaid diagram syntactically valid?
 - Diagram matches declared Depends On values?
 - Every node colored?
-- Follows `CLAUDE.md Sec."Mermaid diagram conventions"` for label text?
+- Follows `CLAUDE.md Sec."Mermaid diagram conventions"` for label text? Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd) for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not loaded as runtime context.
 
 ### 5. Acceptance Criteria Quality
 - Every AC specific and testable?
@@ -137,7 +137,11 @@ using `<gated-command>` = `audit-tickets` and `<phase-num>` = `5`.
 - All nodes colored and labeled?
 - No orphan nodes?
 - Per `CLAUDE.md Sec."Mermaid diagram conventions"`: a raw `;` inside `[...]`, `(...)`, `{...}`,
-  `|...|`, `"..."`, or after the `:` in a sequenceDiagram message is a violation -- flag it.
+  `|...|`, `"..."`, or after the `:` in a sequenceDiagram message is a violation -- flag it. Read
+  `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/`
+  in this repository, or the installed plugin's cache root, never the caller's cwd) for the
+  actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md
+  at the plugin root is not loaded as runtime context.
 
 ### 7. Consistency
 - Ticket IDs in README tables match IDs in epic files?

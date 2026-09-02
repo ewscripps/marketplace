@@ -37,7 +37,11 @@ A PARTIAL is never a dead end and never a fourth verdict either: `/edm:verify-ru
 every PARTIAL to PASS or FAIL. If the runtime environment a `runtime-check:` note describes
 turns out not to exist in this project at all, that is a specification defect handled per
 `CLAUDE.md Sec."Unverifiable acceptance criteria (D15)"` -- not a reason for this agent to invent
-a PASS, a FAIL, or any other verdict for an AC it genuinely cannot evaluate.
+a PASS, a FAIL, or any other verdict for an AC it genuinely cannot evaluate. Read
+`docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/` in
+this repository, or the installed plugin's cache root, never the caller's cwd) for the actual
+section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the
+plugin root is not loaded as runtime context.
 
 **Ticket-level rollup (worst-case)**:
 - Any AC = FAIL -> ticket verdict = FAIL
@@ -71,6 +75,8 @@ Severity for FAIL findings -- use the canonical scale from `CLAUDE.md Sec."Sever
 - **P0** -- AC completely unmet, security issue, or broken functionality
 - **P1** -- AC partially met, missing edge case, wrong status code / field name / behavior
 - **P2** -- Minor quality issue, style concern
+
+Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd) for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not loaded as runtime context.
 
 ## Output Path
 

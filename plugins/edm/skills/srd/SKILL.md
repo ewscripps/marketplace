@@ -77,7 +77,7 @@ All requirements get sequential IDs: `{PREFIX}-01`, `{PREFIX}-02`, ...
 
 1. **Unique IDs** -- every requirement has `{PREFIX}-NN`
 2. **Testable** -- every requirement has clear pass/fail acceptance criteria
-3. **Illustrated** -- architecture shown with Mermaid diagrams (system context + sequence), following `CLAUDE.md Sec."Mermaid diagram conventions"` for label text
+3. **Illustrated** -- architecture shown with Mermaid diagrams (system context + sequence), following `CLAUDE.md Sec."Mermaid diagram conventions"` for label text. Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd) for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not loaded as runtime context.
 4. **Prioritized** -- Must Have / Should Have / Could Have
 5. **No vague language** -- "fast" -> "< 200ms p95 at 1000 QPS"
 6. **Cross-referenced** -- actual file paths, API names, library versions
@@ -180,7 +180,11 @@ Prompt: "Write the Target Architecture document for {PREFIX}. First resolve the 
          Include Mermaid diagrams (system context + sequence) and component design grounded in
          the existing codebase. The SRD Section 5 references this file -- do not duplicate content.
          Follow CLAUDE.md Sec."Mermaid diagram conventions" for label text -- a raw semicolon
-         in a label is a violation."
+         in a label is a violation. Read docs/canonical-sections.md (resolved relative to the
+         EDM plugin's own root -- plugins/edm/ in this repository, or the installed plugin's
+         cache root, never the caller's cwd) for the actual section text; a bare CLAUDE.md
+         Sec."..." reference does not resolve because CLAUDE.md at the plugin root is not
+         loaded as runtime context."
 ```
 
 For large SRDs, run multiple `edm-srd-writer` agents in parallel (one per section group). Always run `edm-architect` separately -- it writes `architecture.md`, not the SRD body.

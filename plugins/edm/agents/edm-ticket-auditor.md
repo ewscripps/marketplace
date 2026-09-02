@@ -53,7 +53,11 @@ Cross-reference the ticket pack against the SRD. Audit across all **8 dimensions
   this here is the cheap fix -- discovered instead at Phase 6's `/edm:verify-runtime`, it is a
   specification defect resolved only through gate change control (`CLAUDE.md
   Sec."Unverifiable acceptance criteria (D15)"`). Flag as P1: rework the AC to something verifiable
-  in the environment that does exist, or move it out of scope.
+  in the environment that does exist, or move it out of scope. Read `docs/canonical-sections.md`
+  (resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the
+  installed plugin's cache root, never the caller's cwd) for the actual section text; a bare
+  `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not
+  loaded as runtime context.
 
 ### 6. Diagram Correctness
 - Mermaid syntax valid throughout?
@@ -61,7 +65,11 @@ Cross-reference the ticket pack against the SRD. Audit across all **8 dimensions
 - No orphan nodes?
 - Flow matches dependency declarations?
 - Follows `CLAUDE.md Sec."Mermaid diagram conventions"`: a raw `;` inside `[...]`, `(...)`,
-  `{...}`, `|...|`, `"..."`, or after the `:` in a sequenceDiagram message is a violation
+  `{...}`, `|...|`, `"..."`, or after the `:` in a sequenceDiagram message is a violation. Read
+  `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/`
+  in this repository, or the installed plugin's cache root, never the caller's cwd) for the
+  actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md
+  at the plugin root is not loaded as runtime context.
 
 ### 7. Consistency
 - Ticket IDs in README tables match IDs in epic files?
@@ -78,7 +86,7 @@ Cross-reference the ticket pack against the SRD. Audit across all **8 dimensions
 
 ## Output
 
-Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabulary"` as the only severity source for this agent. Do not restate or adapt a local scale.
+Use the canonical P0/P1/P2/NOTED vocabulary from `CLAUDE.md Sec."Severity vocabulary"` as the only severity source for this agent. Do not restate or adapt a local scale. Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd) for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not loaded as runtime context.
 
 You are dispatched as one of exactly two lanes -- `structural` (dimensions 1-4) or
 `content-quality` (dimensions 5-8) -- and return your findings as text to the orchestrating skill;
@@ -175,7 +183,11 @@ plugin cache, so the literal string is what this agent actually follows, not a p
 2. Read each epic file -- compare against README
 3. Read the SRD -- cross-reference every requirement ID
 4. Check every Mermaid block for syntax and for `CLAUDE.md Sec."Mermaid diagram conventions"`
-   compliance -- a raw `;` inside a label or after a sequenceDiagram message's `:` is a violation
+   compliance -- a raw `;` inside a label or after a sequenceDiagram message's `:` is a violation.
+   Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root --
+   `plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's
+   cwd) for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve
+   because CLAUDE.md at the plugin root is not loaded as runtime context.
 5. Trace the dependency chain end-to-end
 6. Check every AC for testability -- would you be able to pass/fail it from code alone?
 

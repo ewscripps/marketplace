@@ -34,7 +34,7 @@ If any prerequisite is missing, the skill prints a clear "skipping -- Jira not a
      ```
 2. Verify Atlassian MCP is reachable: call `mcp__{jira_mcp_namespace}__atlassianUserInfo`. If it fails, print:
    > "Jira MCP not available (tried {jira_mcp_namespace}__atlassianUserInfo). To enable Jira sync: configure the MCP server with namespace '{jira_mcp_namespace}' (see `CLAUDE.md Sec."Optional: Jira synchronization"` for the `jira_mcp_namespace` userConfig option). Skipping."
-   > and exit successfully (this is not an error -- the skill is optional). This applies even in `--dry-run` mode.
+   > and exit successfully (this is not an error -- the skill is optional). This applies even in `--dry-run` mode. (Read `docs/canonical-sections.md`, resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd, for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not loaded as runtime context.)
 3. Resolve `cloudId` via `mcp__{jira_mcp_namespace}__getAccessibleAtlassianResources`. Use the first one; if multiple, ask the user.
 4. Verify the project key exists via `mcp__{jira_mcp_namespace}__getVisibleJiraProjects` (filter by `query: <JIRA_PROJECT_KEY>`).
 5. Resolve the issue type for tickets: call `mcp__{jira_mcp_namespace}__getJiraProjectIssueTypesMetadata` and pick `Task` (or `Story` if `Task` isn't available).

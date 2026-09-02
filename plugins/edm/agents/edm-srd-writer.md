@@ -33,7 +33,7 @@ Guidance loads at write time so library updates improve output automatically wit
 
 1. **Unique IDs** -- Every requirement gets `{PREFIX}-NN` (e.g., `AUTH-01`, `AUTH-02`)
 2. **Testable** -- Every requirement has explicit pass/fail acceptance criteria. "Fast" -> "< 200ms p95 at 1000 QPS". "Secure" -> specific auth flow.
-3. **Illustrated** -- Target architecture has Mermaid diagrams (system context + sequence), following `CLAUDE.md Sec."Mermaid diagram conventions"` for label text
+3. **Illustrated** -- Target architecture has Mermaid diagrams (system context + sequence), following `CLAUDE.md Sec."Mermaid diagram conventions"` for label text. Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd) for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not loaded as runtime context.
 4. **Prioritized** -- Every requirement is exactly one of: Must Have / Should Have / Could Have
 5. **Cross-referenced** -- Reference actual file paths, API names, library versions from the codebase
 6. **Length** -- 800+ lines for major initiative, 200+ for focused feature, 50+ for small change
@@ -82,7 +82,7 @@ boilerplate. A draft below the floor is probably missing substance, not merely s
 1. Read the planning document and all referenced files
 2. Explore the codebase to ground requirements in reality
 3. Write each section, ensuring every requirement is testable
-4. Verify every diagram renders (check Mermaid syntax); follow `CLAUDE.md Sec."Mermaid diagram conventions"` for label text -- a raw semicolon in a label is a violation
+4. Verify every diagram renders (check Mermaid syntax); follow `CLAUDE.md Sec."Mermaid diagram conventions"` for label text -- a raw semicolon in a label is a violation. Read `docs/canonical-sections.md` (resolved relative to the EDM plugin's own root -- `plugins/edm/` in this repository, or the installed plugin's cache root, never the caller's cwd) for the actual section text; a bare `CLAUDE.md Sec."..."` reference does not resolve because CLAUDE.md at the plugin root is not loaded as runtime context.
 5. Count requirements -- if fewer than expected for the initiative size, dig deeper
 
 ## Output
