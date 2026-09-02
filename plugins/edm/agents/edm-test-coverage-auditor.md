@@ -26,6 +26,8 @@ Treat absence as authoritative: when a layer or epic is not applicable, do not w
 placeholder coverage file. Remove stale per-epic coverage files whose epics no longer appear
 in the current plan.
 
+`edm-audit-behavioral-tests` (lens L14) owns whether the tests would catch a real bug in the changed behavior; this agent owns coverage percentages against configured thresholds -- so a single gap is not filed under both.
+
 ## Inputs
 
 - `$ARGUMENTS` -- `<PREFIX>`.

@@ -937,6 +937,108 @@ else
 fi
 rm -f "${SCRIPT_DIR}/.t25-grants.err"
 
+# =================================================================================================
+# EDMV4-T27 -- Lens L14 (Behavioral Test Coverage) agent file and its two reciprocal boundaries
+# =================================================================================================
+echo
+echo "=== EDMV4-T27: edm-audit-behavioral-tests.md (lens L14) ==="
+
+L14_AGENT="${PLUGIN_DIR}/agents/edm-audit-behavioral-tests.md"
+L4_AGENT="${PLUGIN_DIR}/agents/edm-audit-test-quality.md"
+COVERAGE_AUDITOR_AGENT="${PLUGIN_DIR}/agents/edm-test-coverage-auditor.md"
+L14_TEXT="$(cat "$L14_AGENT" 2>/dev/null || true)"
+
+[[ -f "$L14_AGENT" ]] && pass "EDMV4-T27 AC1 -- edm-audit-behavioral-tests.md exists" \
+  || fail "EDMV4-T27 AC1 -- edm-audit-behavioral-tests.md is missing"
+[[ ! -f "${PLUGIN_DIR}/agents/edm-audit-tests.md" ]] \
+  && pass "EDMV4-T27 AC5 -- edm-audit-tests.md does not exist (no accidental twelfth lens file)" \
+  || fail "EDMV4-T27 AC5 -- edm-audit-tests.md exists; this path is not the L4 file"
+
+echo "EDMV4-T27 AC1 -- house-contract headings present, in order"
+t27_headings_expected="## Scope
+## What You Hunt For
+## False Alarm Filter
+## Output
+## Output Format
+## JSONL Line Format
+## When this does NOT apply"
+t27_headings_actual="$(awk '/^```/{f=!f;next} !f' "$L14_AGENT" | grep -E '^## ')"
+[[ "$t27_headings_actual" == "$t27_headings_expected" ]] \
+  && pass "EDMV4-T27 AC1 -- the seven house-contract headings appear in the required order" \
+  || fail "EDMV4-T27 AC1 -- heading order/content mismatch:\n${t27_headings_actual}"
+
+echo "EDMV4-T27 AC2 -- six-step process present"
+check "EDMV4-T27 AC2 step 1 -- map changed code to its tests" "Map changed code to its tests" "$L14_TEXT"
+check "EDMV4-T27 AC2 step 2 -- find new untested paths" "Find new untested paths" "$L14_TEXT"
+check "EDMV4-T27 AC2 step 3 -- verify edge and error paths" "Verify edge and error paths" "$L14_TEXT"
+check "EDMV4-T27 AC2 step 4 -- prefer meaningful assertions over no-throw checks" \
+  "Prefer meaningful assertions over no-throw checks" "$L14_TEXT"
+check "EDMV4-T27 AC2 step 5 -- flag flaky patterns" "Flag flaky-shaped patterns" "$L14_TEXT"
+check "EDMV4-T27 AC2 step 6 -- rate gaps" "Rate every gap" "$L14_TEXT"
+
+echo "EDMV4-T27 AC3 -- closed severity vocabulary only; ECC's critical/important/nice-to-have scale is not imported"
+t27_ecc_hits="$(grep -icE '\b(critical|important|nice-to-have)\b' "$L14_AGENT" || true)"
+[[ "${t27_ecc_hits:-0}" -eq 0 ]] \
+  && pass "EDMV4-T27 AC3 -- zero occurrences of critical/important/nice-to-have in the L14 agent file" \
+  || fail "EDMV4-T27 AC3 -- found ${t27_ecc_hits} occurrence(s) of the abolished ECC severity scale"
+check "EDMV4-T27 AC3 -- canonical P0/P1/P2/NOTED scale cited" 'P0`, `P1`, `P2`, or `NOTED`' "$L14_TEXT"
+
+# Positive control (per this initiative's own "matches its own prose" defect class): the
+# case-insensitive word-boundary scan above must actually fire on a known-bad fixture, or a
+# "found 0" result proves nothing.
+T27_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t27.XXXXXX")"
+t27_bad_fixture="${T27_TMP}/bad-severity-scale.md"
+printf '%s\n' 'Rate every gap as critical, important, or nice-to-have.' > "$t27_bad_fixture"
+t27_ctl_hits="$(grep -icE '\b(critical|important|nice-to-have)\b' "$t27_bad_fixture" || true)"
+[[ "${t27_ctl_hits:-0}" -ge 1 ]] \
+  && pass "EDMV4-T27 AC3 -- positive control: the scan fires on a known-bad ECC-scale fixture" \
+  || fail "EDMV4-T27 AC3 -- positive control FAILED: the scan matched nothing on a fixture that names all three abolished terms"
+rm -rf "$T27_TMP"
+
+echo "EDMV4-T27 AC4 -- L4/L14/edm-test-coverage-auditor boundary sentence, all three roles, in L14's own file"
+check "EDMV4-T27 AC4 -- boundary sentence names L4's role" \
+  "L4 owns defects inside the tests themselves" "$L14_TEXT"
+check "EDMV4-T27 AC4 -- boundary sentence names edm-test-coverage-auditor's role" \
+  '`edm-test-coverage-auditor` owns coverage percentages against configured thresholds' "$L14_TEXT"
+check "EDMV4-T27 AC4 -- boundary sentence names L14's own role" \
+  "whether the tests would catch a real bug in the changed behavior" "$L14_TEXT"
+
+echo "EDMV4-T27 AC5/AC6/AC7 -- reciprocal boundary sentence present in all three files, keyed on one stable substring"
+t27_boundary_substring="whether the tests would catch a real bug in the changed behavior"
+t27_boundary_count=0
+for t27_f in "$L14_AGENT" "$L4_AGENT" "$COVERAGE_AUDITOR_AGENT"; do
+  grep -qF -- "$t27_boundary_substring" "$t27_f" && t27_boundary_count=$((t27_boundary_count + 1)) \
+    || echo "  MISSING boundary substring in $(basename "$t27_f")"
+done
+[[ "$t27_boundary_count" -eq 3 ]] \
+  && pass "EDMV4-T27 AC5/AC6/AC7 -- the stable boundary substring is present in L14, L4, and edm-test-coverage-auditor" \
+  || fail "EDMV4-T27 AC5/AC6/AC7 -- boundary substring found in only ${t27_boundary_count}/3 files"
+
+echo "EDMV4-T27 AC8 -- L14 is unconditional"
+check "EDMV4-T27 AC8 -- standard house 'always applies' sentence present" \
+  "This agent always applies once the code-audit skill selects lens L14 for the round" "$L14_TEXT"
+t27_conditional_ids="$(grep -n 'CONDITIONAL_LENS_IDS=' "${PLUGIN_DIR}/bin/edm-state" | head -1)"
+case "$t27_conditional_ids" in
+  *'"L13"'*) pass "EDMV4-T27 AC8 -- CONDITIONAL_LENS_IDS names only L13, not L14" ;;
+  *) fail "EDMV4-T27 AC8 -- CONDITIONAL_LENS_IDS line unexpected: ${t27_conditional_ids}" ;;
+esac
+
+echo "EDMV4-T27 AC9 -- lens ID L14 used consistently"
+check "EDMV4-T27 AC9 -- md output path" '${OUTPUT_DIR}/lens-L14.md' "$L14_TEXT"
+check "EDMV4-T27 AC9 -- jsonl output path" '${OUTPUT_DIR}/lens-L14.jsonl' "$L14_TEXT"
+check "EDMV4-T27 AC9 -- schema line names lens L14" '"lens":"L14"' "$L14_TEXT"
+
+echo "EDMV4-T27 AC10 -- edm-check-grants passes; all three touched files are ASCII-only"
+if bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>"${SCRIPT_DIR}/.t27-grants.err"; then
+  pass "EDMV4-T27 AC10 -- edm-check-grants exits 0"
+else
+  fail "EDMV4-T27 AC10 -- edm-check-grants exited non-zero: $(cat "${SCRIPT_DIR}/.t27-grants.err")"
+fi
+rm -f "${SCRIPT_DIR}/.t27-grants.err"
+t27_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${PLUGIN_DIR}/agents/" 2>&1)"
+t27_lint_exit=$?
+[[ "$t27_lint_exit" -eq 0 ]] && pass "EDMV4-T27 AC10 -- edm-lint-artifacts --path agents/ is clean" \
+  || fail "EDMV4-T27 AC10 -- edm-lint-artifacts reported violations: ${t27_lint_out}"
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

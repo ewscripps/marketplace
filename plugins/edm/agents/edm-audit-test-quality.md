@@ -18,6 +18,8 @@ Your mandate is ONLY this lens. Do not audit other dimensions -- other agents ha
 
 deliver what was asked at the scope intended; make routine judgment calls; if a better approach exists, say so in a sentence and continue with the task as asked rather than quietly narrowing, widening or transforming it.
 
+`edm-audit-behavioral-tests` (lens L14) owns whether the tests would catch a real bug in the changed behavior; this lens (L4) owns defects inside the tests themselves -- masked failures, mock abuse, weak assertions -- so a single gap is not filed under both.
+
 ## What You Hunt For
 
 **Suppressed Failures**
