@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **Mermaid lint budget re-derived as a conditional, not a bare ratio (EDMV4-47/48, EDMV4-T01).**
+  EDMV3-T67 AC6's `1.40x` ratio had no stated input size and no absolute floor, so it read
+  differently on every machine and moved when unrelated code got faster -- the same defect the
+  commit-path and full-repo-sweep budgets above it were already careful to avoid. `CLAUDE.md`'s
+  "edm-lint-artifacts latency budgets" table gains a third row: below **30 files / 9,990 lines**
+  (the same reference fixture the commit-path row uses), only an absolute added-overhead ceiling
+  of **<= 1,000 ms** p95 applies, since a small corpus is dominated by fixed bash/awk fork-exec
+  cost rather than per-line Mermaid scanning; at or above that floor, the **<= 1.40x** ratio
+  ceiling is the binding constraint. `bin/tests/timing.sh`'s `--mermaid-ratio` mode now prints
+  both halves of the conditional (`fixture=...lines`, and which half bound) in place of the bare
+  `(budget: <= 1.40x)` string. Re-measured against this reference fixture: a median of **1.21x**
+  across three 20-sample nearest-rank p95 runs (1.10x, 1.21x, 1.25x) -- comfortably inside the
+  ratio ceiling, and superseding EDMV3-T67 AC6's 1.12x figure (host/run variance on this
+  measuring environment, not a regression: `bin/edm-lint-artifacts` is untouched by this change).
+  No optimization work was performed -- this ticket measures and records the fixture-sized budget,
+  per its own Out of Scope.
+
 ### Fixed
 
 - **Phase 5 was unreachable: `audit-tickets` required the gate it produces (EDMV4-60/EDMV4-T54).**
@@ -535,14 +554,20 @@ marginal one. Optimizing class 4 in turn (`ea31ce8`, the same one-process-per-fi
 class 1 got) brought it to 1.12x. So the same budget read miss, worse-miss, then pass across
 three commits, only one of which touched the code it is supposed to be measuring.
 
-The number now passes and the budget is still wrong. It needs re-deriving as a conditional --
-"the ratio applies only above N lines / N ms", with an absolute floor below which it does not
-bind -- and re-measuring on the 50-initiative fixture the AC actually names; the recorded 2.26x
-was taken on a 5-file fixture, so the original figure never answered the AC either way. A green
-number against an unstated fixture size recreates the same defect in the opposite direction,
-which is why this row reads "PASS on the number" rather than PASS. The re-derivation is the one
-piece of EDMV3-T67's budget work that remains open; the Mermaid-class optimization it used to
-be paired with has landed.
+The number passed and the budget was still wrong until the re-derivation landed under
+`EDMV4-T01` (see this file's `[Unreleased]` entry above and `CLAUDE.md`'s "edm-lint-artifacts
+latency budgets" section): the ratio now applies only at or above a stated floor of 30 files /
+9,990 lines -- the same fixture already used elsewhere in this table, not the 50-initiative
+fixture this note originally named, since `--mermaid-ratio` builds its own single-initiative
+scratch tree and never reads `--dir` (a trap `EDMV4-T01`'s own Technical Notes record explicitly)
+-- with an absolute added-overhead ceiling of <= 1,000 ms below that floor. **Nothing addressed
+the "budget is still malformed" objection between this entry and `EDMV4-T01`: it stayed open,
+named but unfixed, from decisions.md D26/D29 straight through to the initiative that inherited it
+as `EDMV4-T01`, until that initiative's re-derivation closed it.** The recorded 2.26x was taken on
+a 5-file fixture, so the original figure never answered AC6 either way; the 1.12x figure recorded
+above is superseded by `EDMV4-T01`'s re-measurement (see the `[Unreleased]` entry). The
+Mermaid-class optimization this row's number measures (`ea31ce8`) is unchanged and was not
+re-touched by `EDMV4-T01` -- only the budget's shape and its stated fixture were re-derived.
 
 AC10's gap was structural, not a speed problem, and it is now closed: `lint:shell-and-artifacts`
 ran the four checks as sequential script lines in one job, so their wall-clock times summed and

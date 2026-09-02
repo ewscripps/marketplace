@@ -455,7 +455,7 @@ files. **That is a different, narrower set than the nine prompt-surface touch po
 closed" framing holds for the lens/synthesizer set only, not for the other eight EDMV3-54 touch
 points, which still carry the bare form alone. Auditing and anchoring those eight is the residual
 scope opened as a named follow-on ticket, `EDMV4-T04` (the next unused ticket number in
-`EDMV4__lint-and-pipeline-budgets`; `EDMV4-T02` and `EDMV4-T03` are already closed per
+`SRD/edm/EDMV4__ecc-integration/`; `EDMV4-T02` and `EDMV4-T03` are already closed per
 decisions.md D29), rather than left as an unnamed candidate (D34).
 
 ## Model and effort assignments
@@ -931,11 +931,31 @@ contributor who changes its scanning cost needs both numbers in one place.
 |---|---|---|---|---|
 | **Commit-path** | `edm-lint-artifacts <PREFIX>`, from the `PreToolUse` git-commit hook | **3,000 ms** p95 | one initiative directory of 30 `.md` files / 9,990 lines | Every `git commit` that stages anything under the hook's derived `srd_root` scope (CA-023). A human is waiting on this one, so it is the budget that must stay small |
 | **Full-repo sweep** | `edm-lint-artifacts --all`, run manually | **60,000 ms** | a 50-initiative repository | A manual sweep across every active initiative directory `edm-state list --paths` returns. `--all` is roughly 50x the work at 20x the commit-path ceiling -- the two numbers must never be compared against each other |
+| **Mermaid-class overhead** | `edm-lint-artifacts`'s Mermaid class, cross-checked via `timing.sh --mermaid-ratio` | **Conditional (EDMV4-T01):** below the floor, **<= 1,000 ms** absolute added overhead (p95, with-Mermaid minus no-Mermaid baseline); at or above the floor, **<= 1.40x** ratio (with-Mermaid p95 / baseline p95) | 30 `.md` files / 9,990 lines, single initiative, 20-sample nearest-rank p95 -- the same fixture the commit-path row above already uses | Every manual `--mermaid-ratio` re-measurement. The floor **is** this row's own fixture size (30 files / 9,990 lines): at or above it the ratio binds; below it only the absolute ceiling applies |
 
-Both are measured by `bin/tests/timing.sh` (`--lint` and `--all-lint`) against generated fixtures,
-never by an ad hoc one-off number. **Always quote a budget together with its input size.** A bare
-millisecond ceiling (or a bare ratio) with no stated fixture is dominated by fixed process
-overhead: it reads differently on every machine, and it moves when unrelated code gets faster.
+Both of the first two are measured by `bin/tests/timing.sh` (`--lint` and `--all-lint`) against
+generated fixtures, never by an ad hoc one-off number. **Always quote a budget together with its
+input size.** A bare millisecond ceiling (or a bare ratio) with no stated fixture is dominated by
+fixed process overhead: it reads differently on every machine, and it moves when unrelated code
+gets faster.
+
+**Why the Mermaid row is a conditional, not a single number (EDMV4-T01).** A bare ratio is
+dominated by fixed process overhead below **30 files / 9,990 lines** -- the reference fixture size
+stated above, in both files and lines -- because a small corpus is mostly bash/awk fork-exec cost
+rather than per-line Mermaid scanning; the `ratio=UNMEASURABLE` refusal at `timing.sh:419-423`
+(G37/CA-197) is the extreme case of exactly this, where a 1-file/1-line fixture can measure 0 ms on
+either side and a ratio computed from it is meaningless. Below that floor, only the absolute
+added-overhead ceiling (<= 1,000 ms p95) applies; at or above it, the corpus is large enough that
+per-line Mermaid scanning is the dominant cost and the ratio ceiling (<= 1.40x, unchanged from its
+prior value -- it was never the number that was wrong) becomes the meaningful, binding constraint.
+`timing.sh --mermaid-ratio` measures against exactly this reference fixture size and prints both
+halves of the conditional so a reader never has to guess which one bound. Re-measured under this
+ticket at a median of **1.21x** (three runs: 1.10x, 1.21x, 1.25x) against the 30-file / 9,990-line
+fixture -- comfortably inside the 1.40x ratio ceiling. This differs from the EDMV3-T67 AC6 figure
+of 1.12x; the difference reflects host-to-host and run-to-run variance on this measuring
+environment (the Mermaid class itself is unchanged -- `git diff --stat` against
+`bin/edm-lint-artifacts` across this ticket's commits is empty), not a regression, and the
+1.12x figure should be treated as superseded rather than still current.
 
 ### `.edm-state.json` mode-family fields
 
