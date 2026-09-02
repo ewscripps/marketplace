@@ -390,10 +390,13 @@ case "$MODE" in
     # gets exactly one small mermaid fence appended below (see the loop a few lines down), so the
     # no-fence short-circuit (T43) that would keep the ratio near 1.0x for a corpus with few or no
     # diagrams is deliberately NOT exercised here -- this mode measures the per-line Mermaid scan
-    # cost on every file, not the short-circuit's savings on a mixed corpus. The mode reports the
-    # measured ratio against the actual printed budget (see below, "<= 1.40x"), not an assumed
+    # cost on every file, not the short-circuit's savings on a mixed corpus. EDMV4-T01: the budget
+    # this mode reports against is now a CONDITIONAL (CLAUDE.md's "edm-lint-artifacts latency
+    # budgets" section) -- below the 30-file / 9,990-line reference fixture floor, fixed process
+    # overhead dominates and only the absolute added-overhead ceiling (<= 1000 ms) applies; at or
+    # above that floor, the ratio ceiling (<= 1.40x) is the binding constraint. Not an assumed
     # near-1.0x number; CHANGELOG.md separately records a real sample from this same mode
-    # (G5/CA-302: re-measured against the 20-sample harness).
+    # (G5/CA-302: re-measured against the 20-sample harness; EDMV4-T01 re-measured again).
     TMP_MR="$(mktemp -d "${TMPDIR:-/tmp}/edm-timing-mermaid.XXXXXX")"
     export EDM_SRD_ROOT="${TMP_MR}/SRD"
     mkdir -p "${EDM_SRD_ROOT}/TIMMR"
@@ -405,6 +408,11 @@ case "$MODE" in
         echo "Line ${l} of fixture file ${f} -- ordinary ASCII prose content, no diagrams." >> "$target"
       done
     done
+    # EDMV4-T01 AC4/AC7: the prose-only line count is captured here, before the Mermaid fences are
+    # appended below, so the printed fixture size (and the floor comparison) reflects the same
+    # 30-file / 9,990-line reference fixture the commit-path budget already states, not the
+    # slightly larger with-Mermaid file sizes.
+    total_lines="$(cat "${EDM_SRD_ROOT}/TIMMR"/fixture-*.md | wc -l | tr -d ' ')"
     _measure_p95 "$_P95_SAMPLE_COUNT" p95_base -- "$EDM_LINT" TIMMR
     # Add one small mermaid fence per file (a realistic ratio: most files carry zero or one).
     for f in $(seq 1 "$N_FILES"); do
@@ -423,7 +431,17 @@ case "$MODE" in
     fi
     # CA-084/CA-158: no perl dependency here -- awk is already required by --lint's own callers.
     ratio="$(awk -v a="$p95_base" -v b="$p95_mermaid" 'BEGIN{printf "%.2f", b/a}')"
-    echo "TIMING mermaid_ratio baseline_p95_ms=${p95_base} with_mermaid_p95_ms=${p95_mermaid} ratio=${ratio}x (budget: <= 1.40x)"
+    delta_ms=$((p95_mermaid - p95_base))
+    # EDMV4-T01: the budget is a CONDITIONAL, never a bare ratio (CLAUDE.md's "edm-lint-artifacts
+    # latency budgets" section) -- below the 30-file / 9,990-line reference fixture floor, fixed
+    # process overhead (bash/awk fork-exec cost) dominates and a ratio reads differently on every
+    # machine, so only the absolute added-overhead ceiling (<= 1000 ms) applies there; at or above
+    # the floor the ratio ceiling (<= 1.40x) is the binding constraint instead.
+    if [[ "$N_FILES" -ge 30 && "$total_lines" -ge 9990 ]]; then
+      echo "TIMING mermaid_ratio baseline_p95_ms=${p95_base} with_mermaid_p95_ms=${p95_mermaid} ratio=${ratio}x delta_ms=${delta_ms} fixture=${N_FILES}files/${total_lines}lines (at/above the 30-file/9,990-line floor: ratio budget <= 1.40x binds)"
+    else
+      echo "TIMING mermaid_ratio baseline_p95_ms=${p95_base} with_mermaid_p95_ms=${p95_mermaid} ratio=${ratio}x delta_ms=${delta_ms} fixture=${N_FILES}files/${total_lines}lines (below the 30-file/9,990-line floor: absolute budget <= 1000ms added overhead binds, ratio not meaningful at this size)"
+    fi
     rm -rf "$TMP_MR"
     ;;
 
