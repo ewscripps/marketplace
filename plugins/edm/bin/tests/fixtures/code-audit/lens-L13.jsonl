@@ -1,0 +1,2 @@
+{"schema":1,"id":null,"lens":"L13","round":1,"round_type":"full","sev":"P2","confidence":"medium","file":"src/domain/order.ts","line":14,"title":"OrderStatus is typed as a bare string, so an illegal status value compiles cleanly","status":"open"}
+{"schema":1,"id":null,"lens":"L13","round":1,"round_type":"full","sev":"NOTED","confidence":"high","file":"src/domain/money.ts","line":5,"title":"Money type already encodes currency and amount together, preventing a bare-number mixing bug","status":"noted"}

@@ -1083,6 +1083,155 @@ else
   check "EDMV4-T16 -- positive control: extracted section also contains the pre-existing caveman entry" "caveman" "$T16_SECTION"
 fi
 
+# EDMV4-T32: grow the code-audit test fixtures from 11 to 14 lens pairs
+# =================================================================================================
+# Scope note (wave-1 QC dependency reality check, per this ticket's own Technical Notes): AC1, AC2,
+# AC5, AC6, AC7 and AC9 depend on EDMV4-T21 alone (the fourteen-ID ALL_LENS_IDS constant, landed)
+# and are asserted here. AC3 (the 13-plus-N/A composition fixture) and AC4 (the contract-violation
+# negative fixture) encode EDMV4-T22's round-record shape (`lenses`/`lenses_na` materialized in
+# .edm-state.json) and exercise EDMV4-T23's third downgrade reason, neither of which has landed on
+# this branch as of this wave -- authoring them now would mean guessing a state shape rather than
+# copying it from real output, which this ticket's own Technical Notes calls out as the wrong
+# order. They are deliberately NOT asserted here; a later ticket (after EDMV4-T22/T23 land) adds
+# them. AC8 (wave7-smoke.sh's :1627/:1630 count assertions reading 14) is EDMV4-T30's alone --
+# wave7-smoke.sh is under a file lock this ticket must not cross, and growing this fixture to 14
+# files is EXPECTED to leave wave7-smoke.sh's `-eq 11` assertions red until T30 rewrites them,
+# exactly as this ticket's Technical Notes states.
+
+echo
+echo "=== EDMV4-T32: code-audit fixtures grown from 11 to 14 lens pairs ==="
+
+T32_FIXTURE_DIR="${PLUGIN_DIR}/bin/tests/fixtures/code-audit"
+T32_README="${T32_FIXTURE_DIR}/README.md"
+T32_LENSES_RUN="${T32_FIXTURE_DIR}/lenses-run.txt"
+T32_ALL_LENS_IDS="L1 L2 L3 L4 L5 L6 L7 L8 L9 L10 L11 L12 L13 L14"
+
+# ---- AC1: fourteen lens-L{N}.jsonl and fourteen lens-L{N}.md files; lenses-run.txt lists all 14 --
+t32_ac1_missing=""
+for t32_lens in $T32_ALL_LENS_IDS; do
+  [[ -f "${T32_FIXTURE_DIR}/lens-${t32_lens}.jsonl" ]] || t32_ac1_missing="${t32_ac1_missing} lens-${t32_lens}.jsonl"
+  [[ -f "${T32_FIXTURE_DIR}/lens-${t32_lens}.md" ]] || t32_ac1_missing="${t32_ac1_missing} lens-${t32_lens}.md"
+done
+if [[ -z "$t32_ac1_missing" ]]; then
+  pass "T32 AC1 -- all fourteen lens-L{N}.jsonl and lens-L{N}.md fixture files (L1-L14) are present"
+else
+  fail "T32 AC1 -- missing fixture file(s):${t32_ac1_missing}"
+fi
+
+t32_jsonl_count="$(ls "${T32_FIXTURE_DIR}"/lens-L*.jsonl 2>/dev/null | wc -l | tr -d '[:space:]')"
+[[ "$t32_jsonl_count" -eq 14 ]] && pass "T32 AC1 -- exactly fourteen lens-L*.jsonl files on disk (no stray leftovers)" \
+  || fail "T32 AC1 -- found ${t32_jsonl_count} lens-L*.jsonl file(s), expected exactly 14"
+t32_md_count="$(ls "${T32_FIXTURE_DIR}"/lens-L*.md 2>/dev/null | wc -l | tr -d '[:space:]')"
+[[ "$t32_md_count" -eq 14 ]] && pass "T32 AC1 -- exactly fourteen lens-L*.md files on disk (no stray leftovers)" \
+  || fail "T32 AC1 -- found ${t32_md_count} lens-L*.md file(s), expected exactly 14"
+
+t32_lenses_run_text="$(cat "$T32_LENSES_RUN" 2>/dev/null)"
+check "T32 AC1 -- lenses-run.txt still carries the existing 'Round type: full' header" \
+  "Round type: full" "$t32_lenses_run_text"
+t32_lenses_run_missing=""
+for t32_lens in $T32_ALL_LENS_IDS; do
+  printf '%s\n' "$t32_lenses_run_text" | grep -qx "$t32_lens" || t32_lenses_run_missing="${t32_lenses_run_missing} ${t32_lens}"
+done
+if [[ -z "$t32_lenses_run_missing" ]]; then
+  pass "T32 AC1 -- lenses-run.txt lists all 14 lens IDs, one per line"
+else
+  fail "T32 AC1 -- lenses-run.txt is missing lens ID(s):${t32_lenses_run_missing}"
+fi
+t32_lenses_run_line_count="$(printf '%s\n' "$t32_lenses_run_text" | grep -cE '^L[0-9]+$')"
+[[ "$t32_lenses_run_line_count" -eq 14 ]] \
+  && pass "T32 AC1 -- lenses-run.txt carries exactly 14 lens-ID lines (no stray extras)" \
+  || fail "T32 AC1 -- lenses-run.txt carries ${t32_lenses_run_line_count} lens-ID line(s), expected exactly 14"
+
+# ---- AC2: README.md documents 14, not 11; the lens-L11 references now read lens-L14 -------------
+t32_readme_text="$(cat "$T32_README" 2>/dev/null)"
+check "T32 AC2 -- README documents lens-L1 .. lens-L14 range (JSONL sentence)" \
+  '`lens-L1.jsonl` .. `lens-L14.jsonl`' "$t32_readme_text"
+check "T32 AC2 -- README documents lens-L2 .. lens-L14 two-finding sentence" \
+  '`lens-L2.jsonl` .. `lens-L14.jsonl`' "$t32_readme_text"
+check "T32 AC2 -- README documents lens-L1 .. lens-L14 range (prose reports sentence)" \
+  '`lens-L1.md` .. `lens-L14.md`' "$t32_readme_text"
+check "T32 AC2 -- README's lenses-run.txt line now says 'fourteen lens IDs'" \
+  "the fourteen lens IDs" "$t32_readme_text"
+
+# Positive control (QC pattern: pair every zero-count assertion with a control against known-bad
+# content, so "found 0" is proven to mean "matched nothing ever wrote this", not "the check itself
+# never fires"): a scratch copy carrying the literal word "eleven" must be caught by the same scan.
+t32_eleven_count="$(printf '%s\n' "$t32_readme_text" | grep -c 'eleven' || true)"
+t32_eleven_control="$(printf 'a fixture with eleven lens files\n' | grep -c 'eleven' || true)"
+if [[ "${t32_eleven_control:-0}" -ge 1 ]]; then
+  [[ "${t32_eleven_count:-0}" -eq 0 ]] \
+    && pass "T32 AC2 -- README.md no longer contains the word 'eleven' (positive control confirmed the scan can detect it)" \
+    || fail "T32 AC2 -- README.md still contains 'eleven' ${t32_eleven_count} time(s)"
+else
+  fail "T32 AC2 -- positive control broken: the 'eleven' scan matched nothing on a known-bad string"
+fi
+
+# ---- AC5/AC6: schema conformance + two-finding (open + NOTED) shape for the three new fixtures --
+for t32_new_lens in L12 L13 L14; do
+  t32_new_jsonl="${T32_FIXTURE_DIR}/lens-${t32_new_lens}.jsonl"
+  t32_new_md="${T32_FIXTURE_DIR}/lens-${t32_new_lens}.md"
+
+  if jq empty "$t32_new_jsonl" >/dev/null 2>&1; then
+    pass "T32 AC5 -- lens-${t32_new_lens}.jsonl is valid JSONL (jq empty exits 0)"
+  else
+    fail "T32 AC5 -- lens-${t32_new_lens}.jsonl failed jq empty"
+  fi
+
+  # Every required schema key present with the expected fixed-shape values, driven straight
+  # through jq against the real file rather than a re-typed string comparison.
+  t32_schema_bad="$(jq -r --arg lens "$t32_new_lens" '
+    select(
+      (.schema != 1) or (.id != null) or (.lens != $lens) or
+      (.round | type) != "number" or
+      (.round_type != "full" and .round_type != "partial") or
+      (.sev | type) != "string" or (.confidence | type) != "string" or
+      (.file | type) != "string" or (.line | type) != "number" or
+      (.title | type) != "string" or (.status | type) != "string"
+    ) | .title
+  ' "$t32_new_jsonl" 2>/dev/null || true)"
+  [[ -z "$t32_schema_bad" ]] \
+    && pass "T32 AC5 -- every lens-${t32_new_lens}.jsonl line carries the fixed schema shape exactly" \
+    || fail "T32 AC5 -- lens-${t32_new_lens}.jsonl line(s) violate the fixed schema shape: ${t32_schema_bad}"
+
+  t32_line_count="$(grep -c . "$t32_new_jsonl" 2>/dev/null || true)"
+  [[ "${t32_line_count:-0}" -eq 2 ]] \
+    && pass "T32 AC6 -- lens-${t32_new_lens}.jsonl carries exactly two findings" \
+    || fail "T32 AC6 -- lens-${t32_new_lens}.jsonl carries ${t32_line_count:-0} finding(s), expected 2"
+
+  t32_statuses="$(jq -sr '[.[].status] | sort | join(",")' "$t32_new_jsonl" 2>/dev/null)"
+  [[ "$t32_statuses" == "noted,open" ]] \
+    && pass "T32 AC6 -- lens-${t32_new_lens}.jsonl carries exactly one 'open' and one 'noted' finding" \
+    || fail "T32 AC6 -- lens-${t32_new_lens}.jsonl statuses were '${t32_statuses}', expected 'noted,open'"
+
+  [[ -f "$t32_new_md" ]] || fail "T32 AC6 -- lens-${t32_new_lens}.md sibling prose file is missing"
+  check "T32 AC6 -- lens-${t32_new_lens}.md carries the matching -001 finding ID" \
+    "${t32_new_lens}-001" "$(cat "$t32_new_md" 2>/dev/null)"
+  check "T32 AC6 -- lens-${t32_new_lens}.md carries the matching -002 finding ID" \
+    "${t32_new_lens}-002" "$(cat "$t32_new_md" 2>/dev/null)"
+done
+
+# ---- AC7: fixture content is ASCII-only ---------------------------------------------------------
+t32_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "$T32_FIXTURE_DIR" 2>&1)"
+t32_lint_status=$?
+[[ "$t32_lint_status" -eq 0 ]] \
+  && pass "T32 AC7 -- edm-lint-artifacts --path over the fixture directory exits 0" \
+  || fail "T32 AC7 -- edm-lint-artifacts --path exited ${t32_lint_status}: ${t32_lint_out}"
+check "T32 AC7 -- edm-lint-artifacts reports no unicode-class violation" "CLEAN" "$t32_lint_out"
+# edm-lint-artifacts only scans *.md (CLAUDE.md's own documented reach); the .jsonl fixtures and
+# lenses-run.txt need a direct byte-level scan of their own to back the ASCII-only claim.
+t32_nonascii="$(LC_ALL=C grep -l -P '[^\x00-\x7F]' \
+  "${T32_FIXTURE_DIR}"/lens-L12.jsonl "${T32_FIXTURE_DIR}"/lens-L13.jsonl "${T32_FIXTURE_DIR}"/lens-L14.jsonl \
+  "$T32_LENSES_RUN" 2>/dev/null || true)"
+[[ -z "$t32_nonascii" ]] \
+  && pass "T32 AC7 -- new .jsonl fixtures and lenses-run.txt contain no non-ASCII bytes" \
+  || fail "T32 AC7 -- non-ASCII byte(s) found in: ${t32_nonascii}"
+
+# ---- AC9: the existing lens-L1.jsonl widest-fixture role (all four severities) is undisturbed ----
+t32_l1_sevs="$(jq -sr '[.[].sev] | sort | unique | join(",")' "${T32_FIXTURE_DIR}/lens-L1.jsonl" 2>/dev/null)"
+[[ "$t32_l1_sevs" == "NOTED,P0,P1,P2" ]] \
+  && pass "T32 AC9 -- lens-L1.jsonl still covers every severity (NOTED,P0,P1,P2), undisturbed by the new fixtures" \
+  || fail "T32 AC9 -- lens-L1.jsonl severities were '${t32_l1_sevs}', expected 'NOTED,P0,P1,P2'"
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

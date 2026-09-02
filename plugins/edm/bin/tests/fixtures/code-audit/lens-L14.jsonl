@@ -1,0 +1,2 @@
+{"schema":1,"id":null,"lens":"L14","round":1,"round_type":"full","sev":"P1","confidence":"medium","file":"src/api/routes.js","line":40,"title":"new DELETE /users/:id handler has no test covering the not-found or unauthorized error paths","status":"open"}
+{"schema":1,"id":null,"lens":"L14","round":1,"round_type":"full","sev":"NOTED","confidence":"high","file":"src/worker/queue.js","line":15,"title":"dequeue() branch coverage already exercises both the empty-queue and populated-queue paths with real assertions","status":"noted"}
