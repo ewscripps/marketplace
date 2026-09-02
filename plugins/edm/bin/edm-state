@@ -3933,9 +3933,19 @@ cmd_active_initiatives() {
 # EDMV3-T13 AC3):
 #   plan                       -> no prerequisite gate (first phase-skill in the lifecycle)
 #   srd | audit-srd            -> Gate 1 must be approved
-#   tickets                    -> Gate 2 must be approved
-#   audit-tickets | implement  -> Gate 3 must be approved
+#   tickets | audit-tickets    -> Gate 2 must be approved
+#   implement                  -> Gate 3 must be approved
 #   code-audit | verify-runtime -> Gate 3 must be approved
+#
+# EDMV4-60/CA-540: the token maps to the gate a phase skill CONSUMES, never the one it
+# PRODUCES. `audit-tickets` is Phase 5, which PRESENTS Gate 3 (skills/audit-tickets/SKILL.md
+# Sec."HITL Gate 3"), so requiring Gate 3 to run it was circular -- Gate 3 can only be approved
+# by the phase the check was blocking, deadlocking Phase 5 for every standard-lifecycle
+# initiative through BOTH enforcement layers (this check via Step 0 preflight, and the
+# `edm:audit-tickets` UserPromptExpansion hook at hooks/hooks.json, which greps the same exit
+# code). It consumes Gate 2, exactly as `tickets` does. The producer/consumer distinction is
+# the invariant to preserve when adding a token here: `audit-srd` presents Gate 2 and consumes
+# Gate 1 for the same reason.
 # Any other token is a hard error (EDMV3-T13 AC4) -- a typo in a hook or a Step 0
 # block must not silently disable enforcement, which `*) return 0` did before this ticket.
 #
@@ -3965,8 +3975,10 @@ cmd_gate_check() {
       return 0
       ;;
     srd|audit-srd)    required_gate=1 ;;
-    tickets)          required_gate=2 ;;
-    audit-tickets|implement) required_gate=3 ;;
+    # EDMV4-60/CA-540: `audit-tickets` consumes Gate 2 and PRODUCES Gate 3 -- it sits with
+    # `tickets`, not with `implement`. Grouping it with `implement` made Phase 5 unreachable.
+    tickets|audit-tickets) required_gate=2 ;;
+    implement)        required_gate=3 ;;
     code-audit|verify-runtime) required_gate=3 ;;
     *)
       echo "edm-state gate-check: unknown gated command '${gated_cmd}'." >&2

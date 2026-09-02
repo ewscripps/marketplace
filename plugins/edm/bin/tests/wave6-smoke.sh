@@ -1147,26 +1147,81 @@ echo
 echo "T13 AC3 -- each of the eight phase-skill tokens resolves"
 "$EDM_STATE" init T13TOK >/dev/null
 tok_resolved=0
-for tok in plan srd audit-srd tickets audit-tickets implement code-audit verify-runtime; do
+# EDMV4-60/CA-540: each token is pinned to the EXACT gate number it must consume, not merely
+# to "some gate". The pre-EDMV4-60 form asserted `"$tok_out" == *"Gate "*`, which stayed green
+# while `audit-tickets` demanded the very gate it produces -- a circular mapping that made
+# Phase 5 unreachable. An assertion that accepts any gate number cannot catch a wrong one.
+# Format is `<token>:<expected-gate>`, `plan` carrying 0 for "no prerequisite gate".
+for tok_spec in plan:0 srd:1 audit-srd:1 tickets:2 audit-tickets:2 implement:3 \
+                code-audit:3 verify-runtime:3; do
+  tok="${tok_spec%%:*}"
+  tok_want="${tok_spec##*:}"
   set +e
   tok_ec=0
   tok_out="$("$EDM_STATE" gate-check T13TOK "$tok" 2>&1)" || tok_ec=$?
   set -e
-  # A resolved token either passes (plan, no prerequisite) or fails naming a specific numeric
+  # A resolved token either passes (plan, no prerequisite) or fails naming its specific numeric
   # Gate -- neither is the old silent `*) return 0` fall-through this ticket removes.
-  if [[ "$tok" == "plan" ]]; then
+  if [[ "$tok_want" == "0" ]]; then
     [[ $tok_ec -eq 0 ]] && tok_resolved=$((tok_resolved + 1)) \
-      || fail "gate-check plan should pass (no prerequisite gate), exited $tok_ec"
+      || fail "gate-check ${tok} should pass (no prerequisite gate), exited $tok_ec"
   else
-    if [[ $tok_ec -ne 0 && "$tok_out" == *"Gate "* ]]; then
+    if [[ $tok_ec -ne 0 && "$tok_out" == *"Gate ${tok_want} has not been approved"* ]]; then
       tok_resolved=$((tok_resolved + 1))
     else
-      fail "gate-check ${tok} did not resolve to a documented gate (exit=$tok_ec, out='$tok_out')"
+      fail "gate-check ${tok} must consume Gate ${tok_want} (exit=$tok_ec, out='$tok_out')"
     fi
   fi
 done
-[[ "$tok_resolved" -eq 8 ]] && pass "all eight phase-skill tokens resolve (plan + 7 gated tokens)" \
-  || fail "only $tok_resolved/8 phase-skill tokens resolved"
+[[ "$tok_resolved" -eq 8 ]] && pass "all eight phase-skill tokens resolve to their exact required gate" \
+  || fail "only $tok_resolved/8 phase-skill tokens resolved to the expected gate"
+
+# ---- EDMV4-60/CA-540: no phase skill may consume the gate it produces -----------------
+# The producer/consumer invariant, asserted as a PROPERTY over a live-derived token set rather
+# than over a hardcoded list. Both sides are derived, so a ninth phase skill added later is
+# covered automatically and cannot reintroduce the circularity while this suite stays green:
+#   - the token set comes from cmd_gate_check's own `Valid tokens:` line, which is already the
+#     single enumeration the hard-error default branch prints (EDMV3-T13 AC4);
+#   - the gate each token PRODUCES comes from that skill's own `## HITL Gate N` heading in
+#     skills/<token>/SKILL.md, which is where a phase declares the gate it presents.
+# A hardcoded pair list here would be a second independent encoding of one predicate -- the
+# CA-409 class this ticket's own reasoning cites when it leaves hooks/hooks.json untouched.
+echo
+echo "EDMV4-60/CA-540 -- no phase skill consumes the gate it produces"
+gc_circular=0
+gc_pairs_checked=0
+# `Valid tokens: plan srd audit-srd ...` -- strip the label, keep the tokens.
+gc_valid_line="$("$EDM_STATE" gate-check T13TOK bogus-token 2>&1 | grep -m1 'Valid tokens:' || true)"
+gc_tokens="${gc_valid_line#*Valid tokens: }"
+[[ -n "$gc_tokens" && "$gc_tokens" != "$gc_valid_line" ]] \
+  || fail "could not derive the token set from cmd_gate_check's 'Valid tokens:' line"
+# PLUGIN_DIR is not assigned until the harness block far below, so derive the root here from
+# SCRIPT_DIR (bin/tests) rather than depending on assignment order.
+gc_plugin_root="${SCRIPT_DIR}/../.."
+for gc_tok in $gc_tokens; do
+  gc_skill="${gc_plugin_root}/skills/${gc_tok}/SKILL.md"
+  [[ -f "$gc_skill" ]] || continue
+  # The gate this phase PRESENTS, declared by its own heading. Absent = presents no gate.
+  gc_produces="$(grep -oE '^## HITL Gate [0-9]+' "$gc_skill" 2>/dev/null | head -1 | grep -oE '[0-9]+$' || true)"
+  [[ -n "$gc_produces" ]] || continue
+  gc_pairs_checked=$((gc_pairs_checked + 1))
+  set +e
+  gc_prod_out="$("$EDM_STATE" gate-check T13TOK "$gc_tok" 2>&1)"
+  set -e
+  # On a fresh initiative no gate is approved, so the refusal names exactly the gate consumed.
+  gc_consumes="$(printf '%s\n' "$gc_prod_out" | grep -oE 'Gate [0-9]+ has not been approved' | grep -oE '[0-9]+' | head -1 || true)"
+  # `plan` consumes nothing and exits 0 -- no refusal line, nothing to compare.
+  [[ -n "$gc_consumes" ]] || continue
+  if [[ "$gc_consumes" -ge "$gc_produces" ]]; then
+    fail "${gc_tok} presents Gate ${gc_produces} but consumes Gate ${gc_consumes} -- must be strictly lower, or the phase deadlocks against its own output"
+    gc_circular=$((gc_circular + 1))
+  fi
+done
+[[ "$gc_pairs_checked" -ge 2 ]] \
+  || fail "producer/consumer sweep found only $gc_pairs_checked gate-presenting skill(s); expected at least 2 (audit-srd, audit-tickets) -- derivation is broken, not the invariant"
+[[ "$gc_circular" -eq 0 ]] \
+  && pass "no phase skill consumes the gate it produces ($gc_pairs_checked gate-presenting skill(s) checked, derived live)" \
+  || fail "$gc_circular phase skill(s) consume a gate they themselves produce"
 
 # ---- AC4: unknown gate-check token is a hard error, not a silent pass-through ---------
 echo

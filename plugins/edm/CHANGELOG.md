@@ -4,6 +4,33 @@ All notable changes to the EDM plugin are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Phase 5 was unreachable: `audit-tickets` required the gate it produces (EDMV4-60/EDMV4-T54).**
+  `cmd_gate_check` maps each phase-skill token to the HITL gate that skill must **consume**
+  before running. `audit-tickets` was grouped with `implement` on the `required_gate=3` arm --
+  but `audit-tickets` is Phase 5, the phase that **presents** Gate 3. Requiring Gate 3 to run the
+  only thing that can approve Gate 3 is circular, and `/edm:audit-tickets` was blocked for every
+  initiative whose `mode`/`lifecycle_mode` does not skip Phase 5. Both enforcement layers
+  deadlocked: the Step 0 preflight and the `edm:audit-tickets` `UserPromptExpansion` hook, which
+  greps the same exit-3 refusal status. `audit-tickets` now sits with `tickets` on
+  `required_gate=2`; `implement` keeps `required_gate=3` on its own arm. `hooks/hooks.json` and
+  `skills/audit-tickets/SKILL.md` are deliberately unchanged -- both delegate to the binary, and
+  editing either would create a second place where the gate number is decided (the CA-409
+  drift class).
+
+  Escaped detection because `bin/tests/wave6-smoke.sh`'s EDMV3-T13 AC3 loop asserted only that
+  *a* gate number was named (`"$tok_out" == *"Gate "*`), never the correct one, so
+  `audit-tickets` printing "Gate 3" passed. The loop now pins all eight tokens to their exact
+  expected gate, and a new assertion states the producer/consumer invariant directly, so neither
+  `audit-srd` nor `audit-tickets` may require the gate it presents.
+
+  Unnoticed until now because Step 0 preflight and kernel gate enforcement are recent
+  (EDMV3-T13): EDMV3's own Phase 5 predates them, and VERIF ran `lifecycle_mode=fix-pack`, which
+  skips Phase 5. EDMV4 is the first standard-lifecycle initiative to reach the check.
+
 ## [3.2.2] -- 2026-08-31
 
 The verifier completion-sentinel contract (VERIF initiative) and a manifest-version drift fix.
