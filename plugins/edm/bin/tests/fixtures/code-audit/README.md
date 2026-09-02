@@ -18,19 +18,19 @@ against, not a snapshot of current model behavior.
 
 ## Contents
 
-- `lens-L1.jsonl` .. `lens-L11.jsonl` -- one JSON object per line per finding, per the schema in
+- `lens-L1.jsonl` .. `lens-L14.jsonl` -- one JSON object per line per finding, per the schema in
   each lens agent's `## JSONL Line Format` section (`{"schema":1,"id":null,"lens":"L{N}",...}`).
   `lens-L1.jsonl` is the widest fixture: it carries all four severities (`P0`, `P1`, `P2` at
   `status: "open"`, plus `NOTED` at `status: "noted"`), one `status: "fixed"` line, and one legacy
   `status: "deferred"` line -- the one the re-open path (EDMV3-T25 AC4, EDMV3-T28 AC5) exercises.
-  `lens-L2.jsonl` .. `lens-L11.jsonl` each carry two findings (one open, one `NOTED`) -- enough to
+  `lens-L2.jsonl` .. `lens-L14.jsonl` each carry two findings (one open, one `NOTED`) -- enough to
   prove the shape without repeating the full severity sweep in every file.
-- `lens-L1.md` .. `lens-L11.md` -- the matching prose reports. Each finding in the JSONL has a
+- `lens-L1.md` .. `lens-L14.md` -- the matching prose reports. Each finding in the JSONL has a
   corresponding row in the prose table, identified by a local `L{N}-NNN` ID in the same order as
   the JSONL lines -- this is what lets `score-artifacts.sh`'s dimension 5
   (`lens-jsonl-prose-agreement`) compute a real per-lens count comparison against this fixture
   instead of scoring null.
-- `lenses-run.txt` -- the eleven lens IDs, one per line, with the `Round type: full` header the
+- `lenses-run.txt` -- the fourteen lens IDs, one per line, with the `Round type: full` header the
   synthesizer and `edm-state audit-round-start` both read.
 - This `README.md`.
 
