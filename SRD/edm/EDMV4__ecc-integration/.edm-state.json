@@ -1,7 +1,7 @@
 {
   "prefix": "EDMV4",
   "schema_version": 1,
-  "current_phase": 5,
+  "current_phase": 6,
   "gates_approved": [
     {
       "gate": 1,
@@ -35,7 +35,7 @@
       "recorded_at": "2026-09-02T13:25:31Z"
     }
   },
-  "srd_version": "1.2.0",
+  "srd_version": "1.3.0",
   "estimated_size": "Large",
   "initiative_branch": "edm/edmv4-ecc-integration",
   "product_name": "edm",
@@ -125,6 +125,9 @@
       "human_baseline_usd": 300.00,
       "attribution_mode": "scoped",
       "unparseable_lines": 0
+    },
+    "6_phase": {
+      "started_at": "2026-09-02T16:37:12Z"
     }
   },
   "test_frameworks_detected": {},
@@ -148,8 +151,8 @@
   "forked_from": "",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-09-02T16:26:25Z",
-  "current_step": 5,
+  "last_updated": "2026-09-02T18:41:15Z",
+  "current_step": 6,
   "patterns_last_updated": "2026-09-02T13:25:32Z",
   "patterns_updates": {
     "srd": {

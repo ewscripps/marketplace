@@ -1,11 +1,11 @@
 # EDMV4 -- ECC Integration: Ticket Pack
 
-Generated From: srd.md v1.2.0
+Generated From: srd.md v1.3.0
 
 **Initiative**: EDMV4 -- ECC Integration
-**Tickets**: 52 (`EDMV4-T01`, `EDMV4-T04`, `EDMV4-T05`, `EDMV4-T06` .. `EDMV4-T54`)
+**Tickets**: 53 (`EDMV4-T01`, `EDMV4-T04`, `EDMV4-T05`, `EDMV4-T06` .. `EDMV4-T55`)
 **Epics**: 8
-**Requirements covered**: 60 IDs (`EDMV4-01` .. `EDMV4-60`), 58 substantive plus 2 merged
+**Requirements covered**: 61 IDs (`EDMV4-01` .. `EDMV4-61`), 59 substantive plus 2 merged
 **Mode**: standard / lifecycle standard / compliance off
 
 ---
@@ -105,6 +105,7 @@ and see `EDMV4-T53`.
 | `EDMV4-T10` | Record and propagate the three Gate 2 ratifications (D14, D15, D16) | 01 Preconditions | S | Must Have | none | `EDMV4-05`, `EDMV4-06`, `EDMV4-59` |
 | `EDMV4-T49` | Write the eleven verified corrections back into `ecc-integration-analysis.md` | 07 Inherited Tickets | S | Must Have | none | `EDMV4-54` |
 | `EDMV4-T54` | Map `audit-tickets` to the gate it consumes, not the one it produces | 01 Preconditions | XS | Must Have | none | `EDMV4-60` |
+| `EDMV4-T55` | Fix Phase 6's agent capacity and QC wiring, found by running EDM on itself | 01 Preconditions | S | Must Have | none | `EDMV4-61` |
 
 ### Phase 2 -- GateGuard and the pattern-harvest fix
 
@@ -398,7 +399,7 @@ SRD v1.0.0 claimed it blocked "everything"; that was wrong and is corrected here
 
 | # | Epic | Tickets | Count | Scope items |
 |---|---|---|---|---|
-| 01 | [Preconditions and Change Control](epics/01-preconditions-and-change-control.md) | `T06` .. `T10`, `T54` | 6 | Spikes A/B, D4 residual, ID constraint, Gate 2 ratifications, circular gate mapping |
+| 01 | [Preconditions and Change Control](epics/01-preconditions-and-change-control.md) | `T06` .. `T10`, `T54`, `T55` | 7 | Spikes A/B, D4 residual, ID constraint, Gate 2 ratifications, circular gate mapping, Phase 6 agent capacity |
 | 02 | [GateGuard](epics/02-gateguard.md) | `T11` .. `T16` | 6 | 4.1 fact-forcing edit gate |
 | 03 | [Pattern Harvest](epics/03-pattern-harvest.md) | `T17` .. `T20` | 4 | 4.2 `update-patterns` read-only-install defect |
 | 04 | [Audit Lenses](epics/04-audit-lenses.md) | `T21` .. `T33` | 13 | 4.4 lenses L12, L13, L14 |
@@ -406,14 +407,14 @@ SRD v1.0.0 claimed it blocked "everything"; that was wrong and is corrected here
 | 06 | [Hooks and Codemaps](epics/06-hooks-and-codemaps.md) | `T42` .. `T48` | 7 | 5.3 hookify, 5.4 Stop-hook gate, 5.5 codemaps |
 | 07 | [Inherited Tickets](epics/07-inherited-tickets.md) | `T01`, `T04`, `T05`, `T49` | 4 | `EDMV4-T01`/`T04`/`T05` inherited scope, D12 source correction |
 | 08 | [Cross-Cutting](epics/08-cross-cutting.md) | `T50` .. `T53` | 4 | bash floor, binary set, ASCII, smoke coverage |
-| | **Total** | | **52** | |
+| | **Total** | | **53** | |
 
 ### Size distribution
 
 | Size | Count |
 |---|---|
 | XS | 6 |
-| S | 31 |
+| S | 32 |
 | M | 13 |
 | L | 2 |
 | XL | **0** |
@@ -426,7 +427,7 @@ requirements cannot be scheduled apart (risk R9), and `EDMV4-T30` because it hol
 
 | Priority | Count |
 |---|---|
-| Must Have | 37 |
+| Must Have | 38 |
 | Should Have | 14 |
 | Could Have | 1 |
 
@@ -434,7 +435,7 @@ requirements cannot be scheduled apart (risk R9), and `EDMV4-T30` because it hol
 
 ## SRD Coverage Map
 
-Every requirement `EDMV4-01` .. `EDMV4-60` maps to at least one ticket. No orphans, no gaps.
+Every requirement `EDMV4-01` .. `EDMV4-61` maps to at least one ticket. No orphans, no gaps.
 
 | Requirement | Ticket | Scope item |
 |---|---|---|
@@ -498,8 +499,9 @@ Every requirement `EDMV4-01` .. `EDMV4-60` maps to at least one ticket. No orpha
 | `EDMV4-58` | `EDMV4-T53` | Cross-cutting |
 | `EDMV4-59` | `EDMV4-T10` | Preconditions (Gate 2 ratification, AD1) |
 | `EDMV4-60` | `EDMV4-T54` | Preconditions (Gate 3 scope addition -- circular gate mapping) |
+| `EDMV4-61` | `EDMV4-T55` | Preconditions (Phase 6 wave-1 scope addition -- agent capacity and QC wiring) |
 
-**Reverse check**: all 52 tickets carry at least one SRD Ref. No ticket exists without a
+**Reverse check**: all 53 tickets carry at least one SRD Ref. No ticket exists without a
 requirement behind it.
 
 ---
