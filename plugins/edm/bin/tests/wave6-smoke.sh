@@ -5122,7 +5122,7 @@ t08_dmi_count="$( { command grep -rc 'disable-model-invocation' "${_HARNESS_PLUG
 [[ "$t08_dmi_count" -eq 0 ]] \
   && pass "EDMV4-T08 AC5 -- grep -rc disable-model-invocation across all SKILL.md files totals 0" \
   || fail "EDMV4-T08 AC5 -- disable-model-invocation reappeared ${t08_dmi_count} time(s) -- D3/D4's fix regressed"
-t08_ui_count="$(command grep -l 'user-invocable: true' "${_HARNESS_PLUGIN_DIR}/skills"/*/SKILL.md 2>/dev/null | wc -l | tr -d ' ')"
+t08_ui_count="$( { command grep -l 'user-invocable: true' "${_HARNESS_PLUGIN_DIR}/skills"/*/SKILL.md 2>/dev/null || true; } | wc -l | tr -d ' ')"
 [[ "$t08_ui_count" -eq 14 ]] \
   && pass "EDMV4-T08 AC5 -- all 14 SKILL.md files carry user-invocable: true" \
   || fail "EDMV4-T08 AC5 -- only ${t08_ui_count}/14 SKILL.md files carry user-invocable: true"
@@ -5141,9 +5141,9 @@ check "EDMV4-T08 AC5 -- edm-check-skill-sync's own body still bans disable-model
 # the ticket pack -- only toward one re-derived from the tree.
 echo
 echo "EDMV4-T08 AC8 -- the three re-verified symbols still resolve by name (line numbers advisory)"
-t08_all_lens_line="$(command grep -n '^ALL_LENS_IDS=' "$EDM_STATE" | head -1 | cut -d: -f1)"
-t08_mode_enum_line="$(command grep -n '^MODE_ENUM_LIST=' "$EDM_STATE" | head -1 | cut -d: -f1)"
-t08_state_anom_line="$(command grep -n '^state_anomalies()' "$EDM_STATE" | head -1 | cut -d: -f1)"
+t08_all_lens_line="$( { command grep -n '^ALL_LENS_IDS=' "$EDM_STATE" || true; } | head -1 | cut -d: -f1)"
+t08_mode_enum_line="$( { command grep -n '^MODE_ENUM_LIST=' "$EDM_STATE" || true; } | head -1 | cut -d: -f1)"
+t08_state_anom_line="$( { command grep -n '^state_anomalies()' "$EDM_STATE" || true; } | head -1 | cut -d: -f1)"
 # EDMV4 wave-1 QC P1 fix: these three assertions used to hardcode the expected line number, so
 # ANY later edit to bin/edm-state failed them -- re-encoding the exact line-number fragility the
 # ticket-pack audit's P1-2 finding exists to remove. They also never ran: T08's own inverted
@@ -5179,7 +5179,7 @@ t08_ac8_resolves "state_anomalies()" "$t08_state_anom_line"
 # ---- AC9 -- non-blocking status: no ticket lists EDMV4-T08 as a Depends On -------------------
 echo
 echo "EDMV4-T08 AC9 -- non-blocking status is visible in the pack itself"
-t08_dependson_hits="$(command grep -rln 'Depends On.*EDMV4-T08' "${_HARNESS_REPO_ROOT}/SRD/edm/EDMV4__ecc-integration/tickets" 2>/dev/null | wc -l | tr -d ' ')"
+t08_dependson_hits="$( { command grep -rln 'Depends On.*EDMV4-T08' "${_HARNESS_REPO_ROOT}/SRD/edm/EDMV4__ecc-integration/tickets" 2>/dev/null || true; } | wc -l | tr -d ' ')"
 [[ "$t08_dependson_hits" -eq 0 ]] \
   && pass "EDMV4-T08 AC9 -- no ticket in the pack lists EDMV4-T08 in its Depends On field" \
   || fail "EDMV4-T08 AC9 -- ${t08_dependson_hits} ticket(s) list EDMV4-T08 as a Depends On, contradicting its non-blocking status"
