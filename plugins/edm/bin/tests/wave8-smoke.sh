@@ -867,5 +867,48 @@ fi
 rm -f "$t55_ctl"
 
 echo
+
+# =================================================================================================
+# EDMV4-T16 -- ECC and GateGuard provenance recorded in the house-style attribution section
+# =================================================================================================
+# AC6: `zunoworks` and `MIT` must both appear WITHIN the "Prompt conventions (house style)"
+# section specifically, not merely somewhere in CLAUDE.md, so a later edit that drops the
+# attribution while leaving an unrelated "MIT" elsewhere in the file cannot pass silently.
+echo "=== EDMV4-T16: ECC/GateGuard provenance in house-style attribution ==="
+echo
+
+T16_CLAUDE_MD="${PLUGIN_DIR}/CLAUDE.md"
+# Extract the section body: from the "### Prompt conventions (house style)" heading up to (but
+# not including) the next "## " heading. Anchored on the literal heading text, not a line number,
+# per this ticket's advisory-line-numbers convention.
+T16_SECTION="$(awk '
+  /^### Prompt conventions \(house style\)/ { found=1 }
+  found && /^## / && !/^### Prompt conventions/ { if (started) exit }
+  found { started=1; print }
+' "$T16_CLAUDE_MD")"
+
+if [[ -z "$T16_SECTION" ]]; then
+  fail "EDMV4-T16 -- could not locate the 'Prompt conventions (house style)' section in CLAUDE.md at all"
+else
+  check "EDMV4-T16 AC2/AC6 -- 'zunoworks' appears within the house-style attribution section" "zunoworks" "$T16_SECTION"
+  check "EDMV4-T16 AC6 -- 'MIT' appears within the house-style attribution section" "MIT" "$T16_SECTION"
+  check "EDMV4-T16 AC1 -- ECC entry present, naming everything-claude-code" "everything-claude-code" "$T16_SECTION"
+  check "EDMV4-T16 AC1 -- ECC copyright holder recorded" "Affaan Mustafa" "$T16_SECTION"
+  check "EDMV4-T16 AC2 -- GateGuard entry present, naming zunoworks/gateguard" "zunoworks/gateguard" "$T16_SECTION"
+  check "EDMV4-T16 AC2 -- GateGuard copyright holder recorded" "Hirokazu Seto" "$T16_SECTION"
+  check "EDMV4-T16 AC2 -- vendored-JS-port evidence cited" "gateguard-fact-force.js" "$T16_SECTION"
+  check "EDMV4-T16 AC4 -- ECC means-of-verification is explicit ('verified ... by direct inspection')" "verified 2026-08-31 by direct inspection" "$T16_SECTION"
+  check "EDMV4-T16 AC4 -- GateGuard means-of-verification names the fetched URL, not a local clone" "raw.githubusercontent.com/zunoworks/gateguard" "$T16_SECTION"
+  check "EDMV4-T16 AC3 -- clean-room note states mechanism-level adoption" "deny first touch, demand facts, allow on retry" "$T16_SECTION"
+  check "EDMV4-T16 AC5 -- enumeration count updated to six" "Six sources" "$T16_SECTION"
+  check "EDMV4-T16 AC7 -- dormant NOTICE-obligation clause present" "dormant" "$T16_SECTION"
+  check "EDMV4-T16 AC7 -- dormant clause names the NOTICE file" "plugins/edm/NOTICE" "$T16_SECTION"
+
+  # Positive control: prove the extraction actually found section content and is not silently
+  # empty-but-truthy (bash treats a non-empty string as -n true even if it is just whitespace).
+  check "EDMV4-T16 -- positive control: extracted section also contains the pre-existing caveman entry" "caveman" "$T16_SECTION"
+fi
+
+echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

@@ -509,7 +509,7 @@ for this plugin: an agent or skill added later inherits them rather than redisco
 scratch. The adoptions are **structural** (instruction-design patterns -- a shape of section, a
 kind of clause) and never verbatim text lifted from a source.
 
-**Four sources, with licence and location, matching the enumeration this subsection uses**:
+**Six sources, with licence and location, matching the enumeration this subsection uses**:
 
 - **opus-5** -- the Opus 5 prompting guide:
   `https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5`
@@ -535,9 +535,36 @@ kind of clause) and never verbatim text lifted from a source.
   ladder, the "when NOT to" carve-out, the "cost of ignoring this" clause) -- no text was copied
   from either file.
 
-The clean-room posture on both is deliberately unchanged now that the licences are known: MIT
-would have permitted verbatim reuse with attribution, but structural adoption was what this
-initiative actually did, and restating it as a licence consequence would misdescribe the work.
+- **ECC** -- `everything-claude-code`: `https://github.com/affaan-m/everything-claude-code`
+  (**MIT**). Licence verified 2026-08-31 by direct inspection of the local clone's `LICENSE:1-3`
+  ("MIT License / Copyright (c) 2026 Affaan Mustafa"), clone revision `ca185ef5` (re-confirmed
+  2026-09-02). Clean-room note: L12's taxonomy source (`ECC/agents/silent-failure-hunter.md`) was
+  read for its five-category structure only, per `EDMV4-T25` -- no text was copied.
+- **GateGuard** -- `https://github.com/zunoworks/gateguard` (**MIT**, upstream is Python). ECC
+  vendored a JavaScript port of it at `scripts/hooks/gateguard-fact-force.js`, evidenced by that
+  file's own header at `:19-20` ("Full package with config support: pip install gateguard-ai" /
+  "Repo: https://github.com/zunoworks/gateguard") and by `ECC/skills/gateguard/SKILL.md:5` marking
+  `metadata: origin: community`. Licence verified 2026-08-31 by direct inspection of
+  `https://raw.githubusercontent.com/zunoworks/gateguard/main/LICENSE` -- a fetched URL, not a
+  local clone -- which reads "MIT License / Copyright (c) 2026 Hirokazu Seto / ZUNO WORKS K.K."
+  (decisions.md D13). Clean-room note: per AD1 as ratified at Gate 2 (decisions.md D14,
+  2026-09-02), EDM's `bin/edm-gateguard` is a bash rewrite, not a vendoring of either upstream --
+  what carries over is the mechanism (deny first touch, demand facts, allow on retry), the same
+  pattern-level adoption posture recorded above for `caveman` and `ponytail`; no text was copied
+  from either the Python upstream or ECC's JavaScript port.
+
+The strict MIT NOTICE obligation these two entries would otherwise carry is **dormant**: it binds
+only on verbatim reuse, and AD1's ratified bash rewrite produces none. It is re-raised to Must
+Have if AD1 is ever reversed to vendoring **by any route** -- `EDMV4-59` rejected at a later gate,
+or any subsequent decision directing vendoring -- and on that reversal three things bind together:
+the vendored files retain their original copyright headers unmodified; a new `plugins/edm/NOTICE`
+file names ZUNO WORKS K.K. and Affaan Mustafa with their MIT licence texts; and `EDMV4-56`'s
+required-binary set is re-presented at the gate as an explicit dependency addition.
+
+The clean-room posture on `caveman`, `ponytail`, ECC and GateGuard is deliberately unchanged now
+that all four licences are known: MIT would have permitted verbatim reuse with attribution, but
+structural adoption was what this initiative actually did, and restating it as a licence
+consequence would misdescribe the work.
 
 #### Do-NOT-adopt guards
 
