@@ -866,6 +866,78 @@ else
 fi
 rm -f "$t55_ctl"
 
+
+# =================================================================================================
+# EDMV4-T25 -- Lens L12 (Silent Failures) agent file
+# =================================================================================================
+echo
+echo "=== EDMV4-T25: edm-audit-silent-failures.md (lens L12) ==="
+
+L12_AGENT="${PLUGIN_DIR}/agents/edm-audit-silent-failures.md"
+L12_TEXT="$(cat "$L12_AGENT" 2>/dev/null || true)"
+
+[[ -f "$L12_AGENT" ]] && pass "EDMV4-T25 AC1 -- edm-audit-silent-failures.md exists" \
+  || fail "EDMV4-T25 AC1 -- edm-audit-silent-failures.md is missing"
+
+echo "EDMV4-T25 AC1 -- house-contract headings present, in order"
+t25_headings_expected="## Scope
+## What You Hunt For
+## False Alarm Filter
+## Output
+## Output Format
+## JSONL Line Format
+## When this does NOT apply"
+t25_headings_actual="$(awk '/^```/{f=!f;next} !f' "$L12_AGENT" | grep -E '^## ')"
+[[ "$t25_headings_actual" == "$t25_headings_expected" ]] \
+  && pass "EDMV4-T25 AC1 -- the seven house-contract headings appear in the required order" \
+  || fail "EDMV4-T25 AC1 -- heading order/content mismatch:\n${t25_headings_actual}"
+
+echo "EDMV4-T25 AC2 -- five hunt categories present"
+check "EDMV4-T25 AC2a -- errors converted to silence" "Errors Converted to Silence" "$L12_TEXT"
+check "EDMV4-T25 AC2b -- inadequate logging" "Inadequate Logging" "$L12_TEXT"
+check "EDMV4-T25 AC2c -- dangerous fallbacks" "Dangerous Fallbacks" "$L12_TEXT"
+check "EDMV4-T25 AC2d -- error propagation problems" "Error Propagation Problems" "$L12_TEXT"
+check "EDMV4-T25 AC2e -- missing handling entirely" "Missing Handling Entirely" "$L12_TEXT"
+
+echo "EDMV4-T25 AC3 -- dangerous-fallback category carries a concrete code-shape example"
+check "EDMV4-T25 AC3 -- concrete .catch(() => []) example present" '.catch(() => [])' "$L12_TEXT"
+
+echo "EDMV4-T25 AC4 -- L12 is unconditional"
+check_absent "EDMV4-T25 AC4 -- no N/A-exit filesystem-marker language in the L12 agent file" \
+  "the repository contains at least one of" "$L12_TEXT"
+check "EDMV4-T25 AC4 -- standard house 'always applies' sentence present" \
+  "This agent always applies once the code-audit skill selects lens L12 for the round" "$L12_TEXT"
+t25_conditional_ids="$(grep -n 'CONDITIONAL_LENS_IDS=' "${PLUGIN_DIR}/bin/edm-state" | head -1)"
+case "$t25_conditional_ids" in
+  *'"L13"'*) pass "EDMV4-T25 AC4 -- CONDITIONAL_LENS_IDS names only L13, not L12" ;;
+  *) fail "EDMV4-T25 AC4 -- CONDITIONAL_LENS_IDS line unexpected: ${t25_conditional_ids}" ;;
+esac
+
+echo "EDMV4-T25 AC5 -- L1/L12 boundary sentence present in the L12 file"
+check "EDMV4-T25 AC5 -- boundary sentence bounding L12 against L1" \
+  "L1 owns the empty catch block as a correctness defect; L12 owns the handler that succeeds while concealing the failure" \
+  "$L12_TEXT"
+
+echo "EDMV4-T25 AC7 -- lens ID L12 used consistently"
+check "EDMV4-T25 AC7 -- md output path" '${OUTPUT_DIR}/lens-L12.md' "$L12_TEXT"
+check "EDMV4-T25 AC7 -- jsonl output path" '${OUTPUT_DIR}/lens-L12.jsonl' "$L12_TEXT"
+check "EDMV4-T25 AC7 -- schema line names lens L12" '"lens":"L12"' "$L12_TEXT"
+
+echo "EDMV4-T25 AC8 -- ASCII-only (edm-lint-artifacts clean over agents/)"
+t25_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${PLUGIN_DIR}/agents/" 2>&1)"
+t25_lint_exit=$?
+[[ "$t25_lint_exit" -eq 0 ]] && pass "EDMV4-T25 AC8 -- edm-lint-artifacts --path agents/ is clean" \
+  || fail "EDMV4-T25 AC8 -- edm-lint-artifacts reported violations: ${t25_lint_out}"
+
+echo "EDMV4-T25 AC9 -- edm-check-grants passes with the new file present"
+if bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>"${SCRIPT_DIR}/.t25-grants.err"; then
+  pass "EDMV4-T25 AC9 -- edm-check-grants exits 0"
+else
+  fail "EDMV4-T25 AC9 -- edm-check-grants exited non-zero: $(cat "${SCRIPT_DIR}/.t25-grants.err")"
+fi
+rm -f "${SCRIPT_DIR}/.t25-grants.err"
+
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
