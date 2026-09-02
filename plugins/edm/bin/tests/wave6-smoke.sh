@@ -4146,6 +4146,19 @@ check "T41 AC4 -- generated file carries the Mermaid diagram conventions section
 check "EDMV4-50 -- generated file carries the Unverifiable acceptance criteria (D15) section" \
   "## Unverifiable acceptance criteria (D15)" "$(cat "$CANONICAL_SECTIONS_MD" 2>/dev/null)"
 
+# ---- EDMV4-51 (EDMV4-T04) AC4 -- one further presence check per section added by an AC7
+# route-1 resolution (Project artifact layout, Optional: Jira synchronization -- exact heading
+# match; EDM mode matrix / Phase Timing Guidelines -- route 2a, citation text fixed to the real
+# heading's (EDMV3-T38) suffix, which then IS an exact heading match, resolved the same way). -----
+check "EDMV4-51 -- generated file carries the Project artifact layout section" \
+  "## Project artifact layout" "$(cat "$CANONICAL_SECTIONS_MD" 2>/dev/null)"
+check "EDMV4-51 -- generated file carries the Optional: Jira synchronization section" \
+  "## Optional: Jira synchronization" "$(cat "$CANONICAL_SECTIONS_MD" 2>/dev/null)"
+check "EDMV4-51 -- generated file carries the EDM mode matrix (EDMV3-T38) section" \
+  "## EDM mode matrix (EDMV3-T38)" "$(cat "$CANONICAL_SECTIONS_MD" 2>/dev/null)"
+check "EDMV4-51 -- generated file carries the Phase Timing Guidelines (EDMV3-T38) section" \
+  "## Phase Timing Guidelines (EDMV3-T38)" "$(cat "$CANONICAL_SECTIONS_MD" 2>/dev/null)"
+
 # ---- AC5: byte-identity guard -- committed copy matches a fresh --check run, and a hand-edit
 # to the copy (without re-running the generator) is caught. ---------------------------------
 echo
@@ -4196,6 +4209,32 @@ t50_d15_dst="$(awk '/^## Unverifiable acceptance criteria \(D15\)$/{f=1;print;ne
 [[ "$t50_d15_src" == "$t50_d15_dst" ]] \
   && pass "EDMV4-50 -- Unverifiable acceptance criteria (D15) section is byte-identical between CLAUDE.md and the generated copy" \
   || fail "EDMV4-50 -- Unverifiable acceptance criteria (D15) section diverged between CLAUDE.md and the generated copy"
+
+# ---- EDMV4-51 (EDMV4-T04) AC4 -- one further byte-identity diff per section added by an AC7
+# route-1 resolution, same awk idiom as above. -----------------------------------------------
+t51_pal_src="$(awk '/^## Project artifact layout$/{f=1;print;next} f && /^## /{exit} f{print}' "$t41_claude_md")"
+t51_pal_dst="$(awk '/^## Project artifact layout$/{f=1;print;next} f && /^## /{exit} f{print}' "$CANONICAL_SECTIONS_MD")"
+[[ "$t51_pal_src" == "$t51_pal_dst" ]] \
+  && pass "EDMV4-51 -- Project artifact layout section is byte-identical between CLAUDE.md and the generated copy" \
+  || fail "EDMV4-51 -- Project artifact layout section diverged between CLAUDE.md and the generated copy"
+
+t51_jira_src="$(awk '/^## Optional: Jira synchronization$/{f=1;print;next} f && /^## /{exit} f{print}' "$t41_claude_md")"
+t51_jira_dst="$(awk '/^## Optional: Jira synchronization$/{f=1;print;next} f && /^## /{exit} f{print}' "$CANONICAL_SECTIONS_MD")"
+[[ "$t51_jira_src" == "$t51_jira_dst" ]] \
+  && pass "EDMV4-51 -- Optional: Jira synchronization section is byte-identical between CLAUDE.md and the generated copy" \
+  || fail "EDMV4-51 -- Optional: Jira synchronization section diverged between CLAUDE.md and the generated copy"
+
+t51_mode_src="$(awk '/^## EDM mode matrix \(EDMV3-T38\)$/{f=1;print;next} f && /^## /{exit} f{print}' "$t41_claude_md")"
+t51_mode_dst="$(awk '/^## EDM mode matrix \(EDMV3-T38\)$/{f=1;print;next} f && /^## /{exit} f{print}' "$CANONICAL_SECTIONS_MD")"
+[[ "$t51_mode_src" == "$t51_mode_dst" ]] \
+  && pass "EDMV4-51 -- EDM mode matrix (EDMV3-T38) section is byte-identical between CLAUDE.md and the generated copy" \
+  || fail "EDMV4-51 -- EDM mode matrix (EDMV3-T38) section diverged between CLAUDE.md and the generated copy"
+
+t51_timing_src="$(awk '/^## Phase Timing Guidelines \(EDMV3-T38\)$/{f=1;print;next} f && /^## /{exit} f{print}' "$t41_claude_md")"
+t51_timing_dst="$(awk '/^## Phase Timing Guidelines \(EDMV3-T38\)$/{f=1;print;next} f && /^## /{exit} f{print}' "$CANONICAL_SECTIONS_MD")"
+[[ "$t51_timing_src" == "$t51_timing_dst" ]] \
+  && pass "EDMV4-51 -- Phase Timing Guidelines (EDMV3-T38) section is byte-identical between CLAUDE.md and the generated copy" \
+  || fail "EDMV4-51 -- Phase Timing Guidelines (EDMV3-T38) section diverged between CLAUDE.md and the generated copy"
 
 # ---- AC2/AC6: the resolvability finding, install method, Claude Code version and date are
 # recorded in decisions.md as D22, naming which branch (negative) was taken. ------------------

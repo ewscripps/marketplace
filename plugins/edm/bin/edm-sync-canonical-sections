@@ -112,6 +112,14 @@ trap 'rm -f "$tmp"; exit 129' HUP
   extract_section "Mermaid diagram conventions (canonical)" "$SRC"
   echo
   extract_section "Unverifiable acceptance criteria (D15)" "$SRC"
+  echo
+  extract_section "Project artifact layout" "$SRC"
+  echo
+  extract_section "Optional: Jira synchronization" "$SRC"
+  echo
+  extract_section "EDM mode matrix (EDMV3-T38)" "$SRC"
+  echo
+  extract_section "Phase Timing Guidelines (EDMV3-T38)" "$SRC"
 } > "$tmp"
 
 if [[ "$mode" == "--check" ]]; then
