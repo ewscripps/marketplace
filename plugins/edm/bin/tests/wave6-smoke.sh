@@ -3644,6 +3644,257 @@ t27_help_line="$("$EDM_STATE" --help 2>&1 | grep 'audit-round-start' || true)"
 check "T27 -- --lenses documented on the audit-round-start help line" "--lenses" "$t27_help_line"
 
 # =================================================================================
+# EDMV4-T22: materialize `lenses` and derive round_type from the lenses-union-lenses_na rule
+# =================================================================================
+echo
+echo "EDMV4-T22 -- audit-round-start materializes lenses and derives round_type via the union rule"
+
+"$EDM_STATE" init T22ROUND >/dev/null
+STATE_T22ROUND="$TMP/SRD/T22ROUND/.edm-state.json"
+
+# ---- AC1 (state shape): --lenses omitted materializes lenses = ALL_LENS_IDS, not [] ----------
+"$EDM_STATE" audit-round-start T22ROUND code >/dev/null
+t22_lenses_len="$(jq '.audit_rounds.code.rounds[-1].lenses | length' "$STATE_T22ROUND")"
+[[ "$t22_lenses_len" == "14" ]] \
+  && pass "EDMV4-T22 AC1 -- --lenses omitted materializes lenses to all 14 IDs (not [])" \
+  || fail "EDMV4-T22 AC1 -- lenses length = '$t22_lenses_len', expected 14"
+t22_lenses_order="$(jq -r '.audit_rounds.code.rounds[-1].lenses | join(",")' "$STATE_T22ROUND")"
+[[ "$t22_lenses_order" == "L1,L2,L3,L4,L5,L6,L7,L8,L9,L10,L11,L12,L13,L14" ]] \
+  && pass "EDMV4-T22 AC1 -- the materialized lenses are in ALL_LENS_IDS order" \
+  || fail "EDMV4-T22 AC1 -- materialized lenses = '$t22_lenses_order', expected ascending L1..L14"
+t22_round_type1="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$STATE_T22ROUND")"
+[[ "$t22_round_type1" == "full" ]] \
+  && pass "EDMV4-T22 AC1 -- the materialized round still records round_type=full" \
+  || fail "EDMV4-T22 AC1 -- round_type = '$t22_round_type1', expected full"
+
+# ---- AC2 (the same materialization applies to srd and tickets rounds, which never pass
+# --lenses at all) ------------------------------------------------------------------------------
+"$EDM_STATE" audit-round-start T22ROUND srd >/dev/null
+t22_srd_lenses_len="$(jq '.audit_rounds.srd.rounds[-1].lenses | length' "$STATE_T22ROUND")"
+[[ "$t22_srd_lenses_len" == "14" ]] \
+  && pass "EDMV4-T22 AC2 -- srd rounds materialize lenses to all 14 IDs too" \
+  || fail "EDMV4-T22 AC2 -- srd lenses length = '$t22_srd_lenses_len', expected 14"
+t22_srd_rt="$(jq -r '.audit_rounds.srd.rounds[-1].round_type' "$STATE_T22ROUND")"
+[[ "$t22_srd_rt" == "full" ]] \
+  && pass "EDMV4-T22 AC2 -- srd round_type is still full after materialization" \
+  || fail "EDMV4-T22 AC2 -- srd round_type = '$t22_srd_rt', expected full"
+"$EDM_STATE" audit-round-start T22ROUND tickets >/dev/null
+t22_tix_lenses_len="$(jq '.audit_rounds.tickets.rounds[-1].lenses | length' "$STATE_T22ROUND")"
+[[ "$t22_tix_lenses_len" == "14" ]] \
+  && pass "EDMV4-T22 AC2 -- tickets rounds materialize lenses to all 14 IDs too" \
+  || fail "EDMV4-T22 AC2 -- tickets lenses length = '$t22_tix_lenses_len', expected 14"
+t22_tix_rt="$(jq -r '.audit_rounds.tickets.rounds[-1].round_type' "$STATE_T22ROUND")"
+[[ "$t22_tix_rt" == "full" ]] \
+  && pass "EDMV4-T22 AC2 -- tickets round_type is still full after materialization" \
+  || fail "EDMV4-T22 AC2 -- tickets round_type = '$t22_tix_rt', expected full"
+
+# ---- AC3 (--na-lenses is a new optional flag, same CSV normalization as --lenses, either
+# flag order) -------------------------------------------------------------------------------
+"$EDM_STATE" audit-round-start T22ROUND code --lenses "L1,L2,L3,L4,L5,L6,L7,L8,L9,L10,L11,L12,L14" --na-lenses "L13" >/dev/null
+t22_ac3_a_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$STATE_T22ROUND")"
+[[ "$t22_ac3_a_rt" == "full" ]] \
+  && pass "EDMV4-T22 AC3 -- --lenses then --na-lenses: 13-of-14 plus L13 declared N/A is full" \
+  || fail "EDMV4-T22 AC3 -- round_type = '$t22_ac3_a_rt', expected full"
+t22_ac3_a_na="$(jq -r '.audit_rounds.code.rounds[-1].lenses_na | join(",")' "$STATE_T22ROUND")"
+[[ "$t22_ac3_a_na" == "L13" ]] \
+  && pass "EDMV4-T22 AC3 -- lenses_na is recorded as [\"L13\"]" \
+  || fail "EDMV4-T22 AC3 -- lenses_na = '$t22_ac3_a_na', expected L13"
+
+"$EDM_STATE" audit-round-start T22ROUND code --na-lenses "L13" --lenses "L1,L2,L3,L4,L5,L6,L7,L8,L9,L10,L11,L12,L14" >/dev/null
+t22_ac3_b_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$STATE_T22ROUND")"
+[[ "$t22_ac3_b_rt" == "full" ]] \
+  && pass "EDMV4-T22 AC3 -- flag order reversed (--na-lenses before --lenses) produces the identical result" \
+  || fail "EDMV4-T22 AC3 -- round_type = '$t22_ac3_b_rt', expected full"
+t22_ac3_b_lenses="$(jq -r '.audit_rounds.code.rounds[-1].lenses | join(",")' "$STATE_T22ROUND")"
+[[ "$t22_ac3_b_lenses" == "L1,L2,L3,L4,L5,L6,L7,L8,L9,L10,L11,L12,L14" ]] \
+  && pass "EDMV4-T22 AC3 -- lenses recorded correctly regardless of flag order" \
+  || fail "EDMV4-T22 AC3 -- lenses = '$t22_ac3_b_lenses'"
+
+# ---- AC4 (round_type derived uniformly by the union rule in both branches -- a direct
+# partial case where the union does not cover ALL_LENS_IDS at all, no lenses_na involved) -------
+"$EDM_STATE" audit-round-start T22ROUND code --lenses "L1,L9,L11" >/dev/null
+t22_ac4_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$STATE_T22ROUND")"
+[[ "$t22_ac4_rt" == "partial" ]] \
+  && pass "EDMV4-T22 AC4 -- a 3-of-14 explicit lens list with no lenses_na is partial" \
+  || fail "EDMV4-T22 AC4 -- round_type = '$t22_ac4_rt', expected partial"
+
+# ---- AC5 (--na-lenses naming a lens outside CONDITIONAL_LENS_IDS is a hard die; writes no
+# round record) -----------------------------------------------------------------------------
+t22_pre_count="$(jq '.audit_rounds.code.count' "$STATE_T22ROUND")"
+check_fails "EDMV4-T22 AC5 -- --na-lenses L8 (not in CONDITIONAL_LENS_IDS) is a hard die" \
+  "not a member of CONDITIONAL_LENS_IDS" \
+  "$EDM_STATE" audit-round-start T22ROUND code --na-lenses L8
+t22_post_count="$(jq '.audit_rounds.code.count' "$STATE_T22ROUND")"
+[[ "$t22_pre_count" == "$t22_post_count" ]] \
+  && pass "EDMV4-T22 AC5 -- the refused --na-lenses call wrote no round record (count stayed $t22_post_count)" \
+  || fail "EDMV4-T22 AC5 -- round count changed from $t22_pre_count to $t22_post_count despite the refusal"
+
+# ---- AC6 (pass-7 regression test): a code round started with --lenses omitted (which now
+# materializes 14 lenses), N prose lens-L{N}.md files worth of manifest entries, and ZERO
+# lens-L{N}.jsonl files landed -- the CA-471 downgrade must still fire and the round must still
+# close partial. This is the exact founding CA-471 shape and fails against a design that leaves
+# `lenses` empty for the omitted-`--lenses` branch. --------------------------------------------
+"$EDM_STATE" init T22AC6 >/dev/null
+T22AC6_DIR="$TMP/SRD/T22AC6"
+mkdir -p "${T22AC6_DIR}/code-audit/pass-1_2026-08-16"
+printf 'Round type: full\nL1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12\nL13\nL14\n' \
+  > "${T22AC6_DIR}/code-audit/pass-1_2026-08-16/lenses-run.txt"
+"$EDM_STATE" audit-round-start T22AC6 code >/dev/null
+t22ac6_lenses_len="$(jq '.audit_rounds.code.rounds[-1].lenses | length' "${T22AC6_DIR}/.edm-state.json")"
+[[ "$t22ac6_lenses_len" == "14" ]] \
+  && pass "EDMV4-T22 AC6 -- the pass-7 fixture's round (--lenses omitted) still materializes 14 lenses" \
+  || fail "EDMV4-T22 AC6 -- materialized lenses length = '$t22ac6_lenses_len', expected 14"
+t22ac6_out="$("$EDM_STATE" audit-round-complete T22AC6 code 2>&1)"
+check "EDMV4-T22 AC6 -- the CA-471 completeness gate still fires with zero landed JSONL files" \
+  "CA-471" "$t22ac6_out"
+t22ac6_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "${T22AC6_DIR}/.edm-state.json")"
+[[ "$t22ac6_rt" == "partial" ]] \
+  && pass "EDMV4-T22 AC6 -- the pass-7 replay still closes round_type=partial" \
+  || fail "EDMV4-T22 AC6 -- round_type = '$t22ac6_rt', expected partial"
+
+# ---- AC7 (--na-lenses omitted produces lenses_na: []; the pre-existing T27 AC1 fixtures'
+# derived round_type is unchanged from today's recorded expectation, holding ALL_LENS_IDS at its
+# post-EDMV4-T21 value -- NOT byte-identity of the round record, which now additionally carries
+# a materialized `lenses` array and a `lenses_na` key) ------------------------------------------
+t22ac7_na="$(jq -r '.audit_rounds.code.rounds[-1].lenses_na | length' "${T22AC6_DIR}/.edm-state.json")"
+[[ "$t22ac7_na" == "0" ]] \
+  && pass "EDMV4-T22 AC7 -- --na-lenses omitted produces lenses_na: []" \
+  || fail "EDMV4-T22 AC7 -- lenses_na length = '$t22ac7_na', expected 0"
+[[ "$full_round_type" == "full" ]] \
+  && pass "EDMV4-T22 AC7 -- T27ROUND's omitted---lenses round (round 1) still derives round_type=full" \
+  || fail "EDMV4-T22 AC7 -- T27ROUND round 1 round_type = '$full_round_type', expected full"
+t22ac7_partial_rt="$(jq -r '.audit_rounds.code.rounds[1].round_type' "$STATE_T27ROUND")"
+[[ "$t22ac7_partial_rt" == "partial" ]] \
+  && pass "EDMV4-T22 AC7 -- T27ROUND's --lenses L1,L9,L11 round (round 2) still derives round_type=partial" \
+  || fail "EDMV4-T22 AC7 -- T27ROUND round 2 round_type = '$t22ac7_partial_rt', expected partial"
+# The all-eleven case is DELIBERATELY asserted at its NEW expected value, not its pre-EDMV4-T21
+# one: ALL_LENS_IDS grew from 11 to 14 members, so an explicit 11-of-11 listing is now 11-of-14,
+# and the union rule correctly derives partial for it. Rewriting wave6-smoke.sh's own stale
+# "T27 AC1 -- --lenses listing all eleven records round_type=full" assertion above to match is
+# EDMV4-T30's owned scope (see the "EDMV4-T21 KNOWN REGRESSION" comment above); this assertion
+# does not touch that one, it independently confirms the new, correct value.
+[[ "$all11_round_type" == "partial" ]] \
+  && pass "EDMV4-T22 AC7 -- T27ROUND's all-eleven-of-14 round (round 3) now derives round_type=partial (the post-EDMV4-T21 expected value)" \
+  || fail "EDMV4-T22 AC7 -- T27ROUND round 3 round_type = '$all11_round_type', expected partial"
+
+# ---- AC8 (lenses_na written alongside lenses in the same _rmw_state_body write, under the
+# existing with_state_lock acquisition -- observable as both keys present on the same record) ---
+t22ac8_keys="$(jq -r '.audit_rounds.code.rounds[-1] | (has("lenses") and has("lenses_na"))' "$STATE_T22ROUND")"
+[[ "$t22ac8_keys" == "true" ]] \
+  && pass "EDMV4-T22 AC8 -- lenses and lenses_na are both present on the same round record" \
+  || fail "EDMV4-T22 AC8 -- round record is missing lenses or lenses_na: $(jq -c '.audit_rounds.code.rounds[-1]' "$STATE_T22ROUND")"
+
+# ---- AC9 (audit-round-start is the SOLE writer of lenses_na anywhere in bin/edm-state) --------
+# Anchored to the two literal write shapes a real write can have (a bash assignment
+# `lenses_na_json=`, and the jq object-key write `lenses_na: $lenses_na`) rather than a bare
+# `lenses_na` substring scan, which would also match LENS_READ_JQ_DEF's `read_round_lenses_na:`
+# function declaration -- a read helper, not a write (the "scan matches its own description"
+# class of defect this suite has been bitten by before). Function boundaries are computed by awk
+# from the symbol names, not a hand-maintained line range, so a later edit that moves either
+# function does not silently stop being checked.
+t22ac9_body_range="$(awk '
+  /^_cmd_audit_round_start_body\(\)/ { start=NR }
+  start && /^}/ { print start","NR; exit }
+' "$EDM_STATE")"
+t22ac9_cmd_range="$(awk '
+  /^cmd_audit_round_start\(\)/ { start=NR }
+  start && /^}/ { print start","NR; exit }
+' "$EDM_STATE")"
+t22ac9_body_start="${t22ac9_body_range%,*}"; t22ac9_body_end="${t22ac9_body_range#*,}"
+t22ac9_cmd_start="${t22ac9_cmd_range%,*}"; t22ac9_cmd_end="${t22ac9_cmd_range#*,}"
+[[ -n "$t22ac9_body_start" && -n "$t22ac9_cmd_start" ]] \
+  || fail "EDMV4-T22 AC9 -- could not locate cmd_audit_round_start / _cmd_audit_round_start_body boundaries via awk"
+
+t22ac9_outside=0
+t22ac9_sites="$(command grep -n 'lenses_na_json=' "$EDM_STATE" 2>/dev/null || true)"
+t22ac9_sites="${t22ac9_sites}
+$(command grep -n 'lenses_na: \\\$lenses_na' "$EDM_STATE" 2>/dev/null || true)"
+while IFS=: read -r t22ac9_line t22ac9_text; do
+  [[ -n "$t22ac9_line" ]] || continue
+  if { [[ "$t22ac9_line" -ge "$t22ac9_body_start" && "$t22ac9_line" -le "$t22ac9_body_end" ]] || \
+       [[ "$t22ac9_line" -ge "$t22ac9_cmd_start" && "$t22ac9_line" -le "$t22ac9_cmd_end" ]]; }; then
+    continue
+  fi
+  t22ac9_outside=$((t22ac9_outside + 1))
+done <<< "$t22ac9_sites"
+[[ "$t22ac9_outside" -eq 0 ]] \
+  && pass "EDMV4-T22 AC9 -- every write-shaped lenses_na occurrence sits inside cmd_audit_round_start / _cmd_audit_round_start_body" \
+  || fail "EDMV4-T22 AC9 -- found $t22ac9_outside write-shaped lenses_na occurrence(s) outside those two functions"
+
+# Behavioural half of AC9: audit-round-complete's argument surface takes only <PREFIX>
+# <audit-type> and refuses any additional token -- there is no flag through which an N/A
+# declaration could be accepted at completion time, from any source.
+check_fails "EDMV4-T22 AC9 -- audit-round-complete has no flag surface at all, so it cannot accept an N/A declaration at completion time" \
+  "usage: edm-state audit-round-complete" \
+  "$EDM_STATE" audit-round-complete T22ROUND code --na-lenses L13
+
+# ---- AC10 (C-4 read rules, both directions) ---------------------------------------------------
+t22ac10_all_ids="$(source "$EDM_STATE" >/dev/null 2>&1; echo "$ALL_LENS_IDS")"
+# shellcheck disable=SC2086 # deliberate word-splitting; test-only, reused from the sourced value
+t22ac10_all_json="$(printf '%s\n' $t22ac10_all_ids | jq -R . | jq -s .)"
+t22ac10_def="$(source "$EDM_STATE" >/dev/null 2>&1; printf '%s' "$LENS_READ_JQ_DEF")"
+
+# (a) lenses: [] + round_type: full reads as ALL_LENS_IDS, never as "no lenses required". Proven
+# directly against a fixture, not through the CA-471 backstop's own consumption of this rule,
+# which is EDMV4-T23's scope.
+t22ac10a_len="$(jq -n --argjson all "$t22ac10_all_json" "$t22ac10_def
+  {lenses: [], lenses_na: [], round_type: \"full\"} | read_round_lenses(\$all) | length")"
+[[ "$t22ac10a_len" == "14" ]] \
+  && pass "EDMV4-T22 AC10a -- a round record with lenses:[] and round_type:full reads as all 14 lens IDs" \
+  || fail "EDMV4-T22 AC10a -- read_round_lenses returned length '$t22ac10a_len', expected 14"
+# Positive control: a round already carrying real lenses is passed through unchanged, whether
+# full or partial -- proves the substitution fires ONLY on the empty+full combination, not on
+# every full round or every empty-lenses input.
+t22ac10a_ctrl1="$(jq -n --argjson all "$t22ac10_all_json" "$t22ac10_def
+  {lenses: [\"L1\",\"L2\"], lenses_na: [], round_type: \"partial\"} | read_round_lenses(\$all) | length")"
+[[ "$t22ac10a_ctrl1" == "2" ]] \
+  && pass "EDMV4-T22 AC10a control -- a round with real lenses and round_type:partial passes through unchanged" \
+  || fail "EDMV4-T22 AC10a control -- read_round_lenses returned length '$t22ac10a_ctrl1', expected 2"
+t22ac10a_ctrl2="$(jq -n --argjson all "$t22ac10_all_json" "$t22ac10_def
+  {lenses: [\"L1\"], lenses_na: [], round_type: \"full\"} | read_round_lenses(\$all) | length")"
+[[ "$t22ac10a_ctrl2" == "1" ]] \
+  && pass "EDMV4-T22 AC10a control -- a full round with non-empty lenses is not substituted either" \
+  || fail "EDMV4-T22 AC10a control -- read_round_lenses returned length '$t22ac10a_ctrl2', expected 1"
+
+# (b) a round record with no lenses_na key at all reads as [].
+t22ac10b_absent="$(jq -n "$t22ac10_def {round_type: \"full\"} | read_round_lenses_na")"
+[[ "$t22ac10b_absent" == "[]" ]] \
+  && pass "EDMV4-T22 AC10b -- a round record with no lenses_na key reads as []" \
+  || fail "EDMV4-T22 AC10b -- read_round_lenses_na returned '$t22ac10b_absent', expected []"
+# Positive control: a round that DOES carry lenses_na reads that value, not the default.
+t22ac10b_present="$(jq -nc "$t22ac10_def {lenses_na: [\"L13\"]} | read_round_lenses_na")"
+[[ "$t22ac10b_present" == '["L13"]' ]] \
+  && pass "EDMV4-T22 AC10b control -- a round record that carries lenses_na reads that value" \
+  || fail "EDMV4-T22 AC10b control -- read_round_lenses_na returned '$t22ac10b_present', expected [\"L13\"]"
+
+# ---- AC11 (untyped-stack conservatism): omitting --na-lenses when a lens is genuinely missing
+# from --lenses records partial, never a silent full, and audit-converged refuses -------------
+"$EDM_STATE" init T22AC11 >/dev/null
+T22AC11_DIR="$TMP/SRD/T22AC11"
+"$EDM_STATE" audit-round-start T22AC11 code --lenses "L1,L2,L3,L4,L5,L6,L7,L8,L9,L10,L11,L12,L14" >/dev/null
+t22ac11_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "${T22AC11_DIR}/.edm-state.json")"
+[[ "$t22ac11_rt" == "partial" ]] \
+  && pass "EDMV4-T22 AC11 -- 13-of-14 lenses with --na-lenses omitted records partial, not a silent full" \
+  || fail "EDMV4-T22 AC11 -- round_type = '$t22ac11_rt', expected partial"
+mkdir -p "${T22AC11_DIR}/code-audit"
+printf '{"id":"CA-X22","status":"fixed","sev":"P2","title":"all clear"}\n' \
+  > "${T22AC11_DIR}/code-audit/findings-ledger.jsonl"
+t22ac11_conv_ec=0
+"$EDM_STATE" audit-converged T22AC11 >/dev/null 2>&1 || t22ac11_conv_ec=$?
+[[ "$t22ac11_conv_ec" -eq 1 ]] \
+  && pass "EDMV4-T22 AC11 -- audit-converged refuses on the untyped-stack partial round even with a clean ledger" \
+  || fail "EDMV4-T22 AC11 -- audit-converged exited ${t22ac11_conv_ec}, expected 1"
+
+# ---- AC12 (CLAUDE.md documents lenses_na and both C-4 read rules) -----------------------------
+t22ac12_claude="${REPO_ROOT}/plugins/edm/CLAUDE.md"
+check "EDMV4-T22 AC12 -- CLAUDE.md's mode-family fields table gains a lenses_na row" \
+  'audit_rounds.<type>.rounds[].lenses_na' "$(cat "$t22ac12_claude")"
+check "EDMV4-T22 AC12 -- CLAUDE.md documents the lenses C-4 read rule (empty+full substitutes ALL_LENS_IDS)" \
+  "C-4 read rule" "$(cat "$t22ac12_claude")"
+check "EDMV4-T22 AC12 -- CLAUDE.md documents the lenses_na union derivation (AD5)" \
+  "lenses-union" "$(cat "$t22ac12_claude")"
+
+# =================================================================================
 # EDMV3-T28: edm-state audit-converged computes convergence over one blocking predicate
 # =================================================================================
 echo
