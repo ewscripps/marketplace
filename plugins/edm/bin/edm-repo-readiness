@@ -6,29 +6,39 @@
 # hardcoded form's literal syntax here -- EDMV4-T38 AC2's smoke test greps this file for it and
 # must fail only on real usage, never on this sentence describing the rule.)
 # EDM-HELP-BEGIN
-# edm-repo-readiness -- score a repository's readiness for EDM-driven work (EDMV4-T38).
+# edm-repo-readiness -- score a repository's readiness for EDM-driven work (EDMV4-T38/T39/T40).
 #
 # EDM measures *itself* via `/edm:metrics` -- time and cost per phase -- but never scored the
-# *repository it is about to work in*. This script is that scorecard's `bin/` scaffold: the
-# conventions surface (this help block, SCRIPT_DIR, die(), the exit-code contract, the
-# text-to-stdout / JSON-to-file split) land here. The six-category, 0-10-normalized rubric and
-# READINESS_RUBRIC_VERSION land in EDMV4-T39; wiring each category to the signals edm-state
-# already computes (validate/session-start/get-coverage/metrics-report) lands in EDMV4-T40.
+# *repository it is about to work in*. This is that scorecard: a six-category, 0-10-normalized
+# rubric (Methodology setup, State health, Test stack, Coverage posture, Convergence history,
+# Artifact hygiene) under a versioned rubric string (READINESS_RUBRIC_VERSION). Three categories
+# are conditional (Test stack on a detected test framework; Coverage posture on Test stack being
+# applicable; Convergence history on at least one archived initiative existing) and are excluded
+# from the overall mean, not scored as zero, when inapplicable. Every category aggregates signals
+# EDM already computes (edm-state validate/get-coverage/metrics-report, edm-lint-artifacts)
+# rather than re-detecting them -- this script never scans .claude/settings*.json, test-framework
+# config files, or .edm-state.json directly for anything an edm-state subcommand already exposes.
+#
+# Feeding this score into the 4.3 size classifier and into planning.md is EDMV4-T41's job, not
+# this script's own.
 #
 # Usage:
 #   edm-repo-readiness [<PREFIX>] [--json <path>]
 #   edm-repo-readiness -h|--help
 #
-#   <PREFIX>        optional; scopes the score to one initiative once EDMV4-T40 lands. Until
-#                   then it is accepted and validated as a bare positional argument but does not
-#                   change which checks run -- the repository is always scored as a whole.
+#   <PREFIX>        optional; scopes the per-initiative categories (State health, Test stack,
+#                   Coverage posture, and Artifact hygiene's lint scan) to one initiative.
+#                   Repository-wide categories (Methodology setup's git/SRD checks, Convergence
+#                   history) are unaffected by <PREFIX> -- they describe the repository as a
+#                   whole regardless of which initiative was named. An unresolvable <PREFIX> is
+#                   a usage error (exit 2).
 #   --json <path>   write the machine-readable score report as JSON to <path>. Human-readable
 #                   text always goes to stdout; there is no --json-to-stdout form.
 #
 # Exit codes:
 #   0  the repository was scored, regardless of how low the score is.
 #   2  usage or setup error (unknown flag, --json with no path, an extra positional argument,
-#      or a required binary -- jq -- not found on PATH).
+#      an unresolvable <PREFIX>, or a required binary -- jq -- not found on PATH).
 # EDM-HELP-END
 set -euo pipefail
 
@@ -53,6 +63,8 @@ case "${1:-}" in
 esac
 
 command -v jq >/dev/null 2>&1 || die "required binary not found on PATH: jq"
+
+SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
 
 # ---- Argument parsing: [<PREFIX>] [--json <path>] --------------------------------------------
 PREFIX=""
@@ -80,55 +92,409 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# ---- Checks --------------------------------------------------------------------------------
-# EDMV4-T38 out of scope: the six-category rubric, point budgets, 0-10 normalization and
-# READINESS_RUBRIC_VERSION are EDMV4-T39's; wiring categories to edm-state's own signals is
-# EDMV4-T40's. What ships in this ticket is one real, minimal, deterministic check -- not a
-# stub -- so the exit-code and stdout/JSON-file contract below is genuinely exercised end to
-# end: whether the scored target is a git working tree at all, since every readiness signal
-# EDMV4-T39/T40 will add (methodology setup, state health, coverage posture) presupposes one.
-# No check here scores whether EDM itself is installed (the ECC "harness-audit.js" self-serving
-# pattern this initiative's analysis calls out); this measures the target repository only.
+# ---- Sibling bin/ scripts, resolved next to THIS script rather than via PATH (EDMV4-T40) -----
+# edm-lint-artifacts already resolves edm-state via a bare `command -v edm-state` PATH lookup for
+# its own --all mode (an existing bin/ convention). This script deliberately does NOT follow that
+# convention for its own edm-state/edm-lint-artifacts calls: a bin/ script under active
+# development can sit lower on PATH than an already-installed copy of the same plugin (a stale
+# cached edm-state resolving ahead of this worktree's own), which would silently score a
+# repository against the wrong version's behavior. Resolving both siblings via SCRIPT_DIR instead
+# guarantees this script always calls the edm-state/edm-lint-artifacts shipped beside it.
+EDM_STATE_BIN="${SCRIPT_DIR}/edm-state"
+EDM_LINT_BIN="${SCRIPT_DIR}/edm-lint-artifacts"
+[[ -x "$EDM_STATE_BIN" ]] || die "required sibling script missing or not executable: $EDM_STATE_BIN"
+[[ -x "$EDM_LINT_BIN" ]] || die "required sibling script missing or not executable: $EDM_LINT_BIN"
+
+if [[ -n "$PREFIX" ]]; then
+  "$EDM_STATE_BIN" get "$PREFIX" >/dev/null 2>&1 || die "prefix not found or unresolvable: $PREFIX"
+fi
+
+# EDMV4-T39 AC6: bare top-level version constant, following evals/score-artifacts.sh:139's
+# SCORER_VERSION precedent exactly. No new versioning scheme is invented.
+READINESS_RUBRIC_VERSION="1.0.0"
+
+# EDMV4-T40 AC5: coverage targets are read from configuration, never hardcoded -- the same
+# EDM_<NAME> / CLAUDE_PLUGIN_OPTION_<NAME> / default fallback chain bin/edm-state's own
+# SRD_ROOT/SRD_FILENAME/HUMAN_HOURLY_RATE_USD already use.
+COVERAGE_TARGET_UNIT_PCT="${EDM_COVERAGE_TARGET_UNIT_PCT:-${CLAUDE_PLUGIN_OPTION_COVERAGE_TARGET_UNIT_PCT:-80}}"
+COVERAGE_TARGET_COMPONENT_PCT="${EDM_COVERAGE_TARGET_COMPONENT_PCT:-${CLAUDE_PLUGIN_OPTION_COVERAGE_TARGET_COMPONENT_PCT:-70}}"
+COVERAGE_TARGET_INTEGRATION_PCT="${EDM_COVERAGE_TARGET_INTEGRATION_PCT:-${CLAUDE_PLUGIN_OPTION_COVERAGE_TARGET_INTEGRATION_PCT:-60}}"
+
+# ---- Shared helpers -----------------------------------------------------------------------------
+
+# _rr_active_prefixes: one active (non-archived) initiative PREFIX per line. Scoped to a single
+# <PREFIX> when one was given on the command line; otherwise every active initiative `edm-state
+# list` itself already resolves, across both the flat and product-scoped layouts (EDMV4-T40
+# AC2/AC7: layout resolution has exactly one owner, edm-state, never re-derived here).
+_rr_active_prefixes() {
+  if [[ -n "$PREFIX" ]]; then
+    printf '%s\n' "$PREFIX"
+    return 0
+  fi
+  "$EDM_STATE_BIN" list 2>/dev/null | awk '/phase=/{print $1}'
+}
+
+# _rr_validate_output <prefix>: prints `edm-state validate <prefix>`'s full output. MUST be
+# invoked exactly this way -- as a process, with its exit captured explicitly -- never sourced.
+# `validate` exits 3 on a BLOCKING anomaly (not on any informational one), and this script runs
+# under `set -euo pipefail`; an unguarded call would abort the whole scorecard the first time it
+# scored a repository with even one routine, informational anomaly (EDMV4-T40 Technical Notes).
+_rr_validate_output() {
+  local prefix="$1" out rc=0
+  out="$("$EDM_STATE_BIN" validate "$prefix" 2>/dev/null)" || rc=$?
+  printf '%s\n' "$out"
+  return 0
+}
+
+# _rr_any_prefix_validate_has <anomaly-type>: prints "true" if ANY prefix `_rr_active_prefixes`
+# yields has an anomaly line naming <anomaly-type> (matched as a whole token so e.g.
+# "OPEN_PARTIALS" never matches "OPEN_AUDIT_ROUND"); "false" otherwise. Vacuously "false" when
+# there are no active prefixes -- there is nothing recorded to be unhealthy about (State health
+# is an UNCONDITIONAL category per EDMV4-T39 AC1: "nothing recorded" is itself a real, clean
+# health signal, not a missing one).
+_rr_any_prefix_validate_has() {
+  local needle="$1" p out
+  while IFS= read -r p; do
+    [[ -n "$p" ]] || continue
+    out="$(_rr_validate_output "$p")"
+    if printf '%s\n' "$out" | grep -qE "^(blocking|info)[[:space:]]+${needle}([[:space:]]|\$)"; then
+      printf 'true\n'
+      return 0
+    fi
+  done < <(_rr_active_prefixes)
+  printf 'false\n'
+}
+
+# _rr_any_other_blocking_anomaly: "true" if any active prefix reports a BLOCKING anomaly whose
+# type is neither OPEN_PARTIALS nor CONVERGED_NO_APPROVAL (each already its own named check
+# below) -- catching TIME_ORDER, ZERO_TOKENS, or any future blocking type without hardcoding an
+# exhaustive list that would drift the moment state_anomalies() grows a new one.
+_rr_any_other_blocking_anomaly() {
+  local p out line class type
+  while IFS= read -r p; do
+    [[ -n "$p" ]] || continue
+    out="$(_rr_validate_output "$p")"
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      class="$(printf '%s' "$line" | awk '{print $1}')"
+      [[ "$class" == "blocking" ]] || continue
+      type="$(printf '%s' "$line" | awk '{print $2}')"
+      case "$type" in
+        OPEN_PARTIALS|CONVERGED_NO_APPROVAL) continue ;;
+        *) printf 'true\n'; return 0 ;;
+      esac
+    done <<< "$out"
+  done < <(_rr_active_prefixes)
+  printf 'false\n'
+}
+
+# ---- Signal collection: one pass over all active prefixes for the Test stack / Coverage
+# posture categories (EDMV4-T40 AC4/AC5: sourced from test_frameworks_detected/get-coverage via
+# edm-state get-coverage, never a framework-config-file scan of our own). --------------------------
+_RR_FRAMEWORK_LINES=""
+_RR_COVERAGE_LINES=""
+while IFS= read -r _rr_p; do
+  [[ -n "$_rr_p" ]] || continue
+  _rr_cov_out="$("$EDM_STATE_BIN" get-coverage "$_rr_p" 2>/dev/null || true)"
+  # "## Detected Frameworks" lines render as "  key = value" (flat) or "  epic: key = value"
+  # (per-epic, EDMV3-T25/CA-421). Split on " = " first, then take the last ": "-delimited token
+  # of the left side as the layer key -- this handles both shapes with one rule.
+  _rr_fw="$(printf '%s\n' "$_rr_cov_out" | awk -F' = ' '
+    NF==2 {
+      n = split($1, arr, ": ")
+      key = arr[n]
+      gsub(/^[ \t]+|[ \t]+$/, "", key)
+      print key, $2
+    }
+  ')"
+  [[ -n "$_rr_fw" ]] && _RR_FRAMEWORK_LINES="${_RR_FRAMEWORK_LINES}${_RR_FRAMEWORK_LINES:+$'\n'}${_rr_fw}"
+  # Coverage rows render as "<layer>  NN.N%  <measured_at>" (whole-initiative, pct is field 2) or
+  # "<epic>  <layer>  NN.N%  <measured_at>" (per-epic, pct is field 3) -- COVERAGE_LAYER_ROW_JQ_DEF
+  # / COVERAGE_EPIC_ROW_JQ_DEF in bin/edm-state. Locate the field matching NN.N%, not a fixed
+  # column position, so a padding-width change there never silently breaks this.
+  _rr_cv="$(printf '%s\n' "$_rr_cov_out" | awk '
+    {
+      pf = 0
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^[0-9]+(\.[0-9]+)?%$/) { pf = i; break }
+      }
+      if (pf == 2) { p = $2; sub(/%$/, "", p); print $1, p }
+      else if (pf == 3) { p = $3; sub(/%$/, "", p); print $2, p }
+    }
+  ')"
+  [[ -n "$_rr_cv" ]] && _RR_COVERAGE_LINES="${_RR_COVERAGE_LINES}${_RR_COVERAGE_LINES:+$'\n'}${_rr_cv}"
+done < <(_rr_active_prefixes)
+
+# _rr_layer_max_pct <layer>: highest recorded coverage pct for <layer> across every collected
+# row, or the literal string "null" when no row named that layer exists.
+_rr_layer_max_pct() {
+  local layer="$1"
+  printf '%s\n' "$_RR_COVERAGE_LINES" | awk -v want="$layer" '$1==want{print $2}' | \
+    jq -Rn '[inputs | select(length>0) | tonumber] | if length==0 then "null" else (max|tostring) end' | tr -d '"'
+}
+
+# _rr_layer_meets_target <layer> <target-pct>: "true"/"false".
+_rr_layer_meets_target() {
+  local layer="$1" target="$2" pct
+  pct="$(_rr_layer_max_pct "$layer")"
+  jq -n --arg p "$pct" --arg t "$target" 'if $p == "null" then false else (($p|tonumber) >= ($t|tonumber)) end'
+}
+
+TESTSTACK_UNIT_FOUND="false"
+if printf '%s\n' "$_RR_FRAMEWORK_LINES" | awk '$1=="unit" && $2!="none" && $2!=""{f=1} END{exit !f}'; then
+  TESTSTACK_UNIT_FOUND="true"
+fi
+TESTSTACK_OTHER_FOUND="false"
+if printf '%s\n' "$_RR_FRAMEWORK_LINES" | awk '($1=="component"||$1=="integration"||$1=="e2e"||$1=="contract"||$1=="composable"||$1=="a11y") && $2!="none" && $2!=""{f=1} END{exit !f}'; then
+  TESTSTACK_OTHER_FOUND="true"
+fi
+# EDMV4-T39 Description: "Test stack (10, conditional on any test framework being detected at
+# all)". EDMV4-T40 shares this SAME predicate as Coverage posture's own conditional gate (the
+# SRD: "Coverage posture (10, conditional on Test stack being applicable)") -- computed once
+# here so the two categories can never disagree about applicability.
+TESTSTACK_APPLICABLE="false"
+if [[ "$TESTSTACK_UNIT_FOUND" == "true" || "$TESTSTACK_OTHER_FOUND" == "true" ]]; then
+  TESTSTACK_APPLICABLE="true"
+fi
+
+# ---- Methodology setup signals -------------------------------------------------------------------
+# EDMV4-T38 out of scope note (kept for continuity): no check here scores whether EDM itself is
+# installed (correction 7's self-serving "harness-audit.js" pattern this initiative calls out
+# and EDMV4-T39 AC10 forbids) -- these measure the TARGET repository only.
 GIT_REPO_PRESENT="false"
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   GIT_REPO_PRESENT="true"
 fi
 
-CHECKS_JSON="$(jq -n \
-  --arg id "git-repo-present" \
-  --arg category "Overall" \
-  --argjson points 10 \
-  --arg description "The scored target is a git working tree." \
-  --argjson pass "$GIT_REPO_PRESENT" \
-  --arg fix "Run 'git init' in the target directory before using EDM -- EDM's artifact-commit model (SRD/ under git) assumes a git repository." \
-  '[{id: $id, category: $category, points: $points, description: $description, pass: $pass, fix: $fix}]')"
+SRD_DIR_PRESENT="false"
+[[ -d "$SRD_ROOT" ]] && SRD_DIR_PRESENT="true"
 
-RAW_EARNED="$(printf '%s' "$CHECKS_JSON" | jq '[.[] | select(.pass) | .points] | add // 0')"
-RAW_MAX="$(printf '%s' "$CHECKS_JSON" | jq '[.[] | .points] | add // 0')"
-SCORE_0_10="$(jq -n --argjson e "$RAW_EARNED" --argjson m "$RAW_MAX" \
-  'if $m == 0 then 0 else (($e / $m * 10) * 10 | round / 10) end')"
+# EDMV4-T40 AC1: permission-rule presence is read from check_permission_rules()'s result as
+# surfaced by the PERM_RULES_MISSING anomaly in edm-state validate's output -- this script never
+# scans .claude settings files a second time.
+PERM_RULES_OK="true"
+[[ "$(_rr_any_prefix_validate_has "PERM_RULES_MISSING")" == "true" ]] && PERM_RULES_OK="false"
+
+# ---- State health signals. EDMV4-T40 AC3: blocking-class anomalies cost more per hit than
+# informational ones -- declared as each check's own point value below, alongside the check it
+# belongs to, rather than as a separate formula elsewhere. --------------------------------------
+SH_NO_OPEN_PARTIALS="true"
+[[ "$(_rr_any_prefix_validate_has "OPEN_PARTIALS")" == "true" ]] && SH_NO_OPEN_PARTIALS="false"
+SH_NO_CONVERGED_NO_APPROVAL="true"
+[[ "$(_rr_any_prefix_validate_has "CONVERGED_NO_APPROVAL")" == "true" ]] && SH_NO_CONVERGED_NO_APPROVAL="false"
+SH_NO_OTHER_BLOCKING="true"
+[[ "$(_rr_any_other_blocking_anomaly)" == "true" ]] && SH_NO_OTHER_BLOCKING="false"
+SH_NO_OPEN_AUDIT_ROUND="true"
+[[ "$(_rr_any_prefix_validate_has "OPEN_AUDIT_ROUND")" == "true" ]] && SH_NO_OPEN_AUDIT_ROUND="false"
+SH_NO_TORN_TOKEN_LINES="true"
+[[ "$(_rr_any_prefix_validate_has "TORN_TOKEN_LINES")" == "true" ]] && SH_NO_TORN_TOKEN_LINES="false"
+SH_NO_SPEC_SWEEP_PENDING="true"
+[[ "$(_rr_any_prefix_validate_has "SPEC_SWEEP_PENDING")" == "true" ]] && SH_NO_SPEC_SWEEP_PENDING="false"
+
+# ---- Convergence history signals -----------------------------------------------------------------
+# _rr_archived_count: count of archived initiatives under SRD_ROOT/.archived.
+# EDMV4-T40 AC7: no edm-state subcommand exposes archived-initiative existence directly --
+# `edm-state list`/`list --paths` deliberately excludes .archived/ (EDMV3-111), and
+# `metrics-report --all`/`--calibrate` mix active+archived rows without labeling which is which.
+# This is the one signal in this script genuinely self-detected: a read-only directory count over
+# the exact flat (.archived/PREFIX/) and product-scoped (.archived/PRODUCT/PREFIX__desc/) shapes
+# edm-state's own list_state_files() already recognizes.
+_rr_archived_count() {
+  local c
+  c="$(find "${SRD_ROOT}/.archived" -maxdepth 3 -name ".edm-state.json" 2>/dev/null | wc -l | tr -d ' ')" || c=0
+  printf '%s\n' "${c:-0}"
+}
+ARCHIVED_COUNT="$(_rr_archived_count)"
+CONVERGENCE_APPLICABLE="false"
+[[ "$ARCHIVED_COUNT" -ge 1 ]] && CONVERGENCE_APPLICABLE="true"
+
+# EDMV4-T40 AC6: cost and duration history, where scored, is read from edm-state metrics-report.
+CALIB_OUT="$("$EDM_STATE_BIN" metrics-report --calibrate 2>/dev/null || true)"
+CH_CALIBRATION_AVAILABLE="true"
+printf '%s\n' "$CALIB_OUT" | grep -q "insufficient data" && CH_CALIBRATION_AVAILABLE="false"
+
+METRICS_ALL_OUT="$("$EDM_STATE_BIN" metrics-report --all 2>/dev/null || true)"
+CH_COST_HISTORY="false"
+if printf '%s\n' "$METRICS_ALL_OUT" | awk '{for(i=1;i<=NF;i++) if ($i ~ /^\$[0-9]/) print $i}' | \
+   tr -d '$' | jq -Rn '[inputs | select(length>0) | tonumber] | any(. > 0)' | grep -q true; then
+  CH_COST_HISTORY="true"
+fi
+
+CH_MULTIPLE_ARCHIVED="false"
+[[ "$ARCHIVED_COUNT" -ge 2 ]] && CH_MULTIPLE_ARCHIVED="true"
+
+# ---- Artifact hygiene signals. EDMV4-T40 Description: this is categorization of an existing
+# signal, not new detection logic -- edm-lint-artifacts is already the plugin's own artifact-
+# hygiene scanner (unicode, attribution trailers, leaked tool tags, mermaid semicolons). --------
+LINT_TARGET_ARGS=(--all)
+[[ -n "$PREFIX" ]] && LINT_TARGET_ARGS=("$PREFIX")
+LINT_RC=0
+"$EDM_LINT_BIN" "${LINT_TARGET_ARGS[@]}" >/dev/null 2>&1 || LINT_RC=$?
+ARTIFACT_LINT_CLEAN="true"
+[[ "$LINT_RC" -eq 0 ]] || ARTIFACT_LINT_CLEAN="false"
+
+# ---- Checks --------------------------------------------------------------------------------------
+# EDMV4-T39 AC2: each category's checks, raw total and conditional predicate are declared
+# together, in one place, below -- a reader can see the whole definition of one category without
+# scrolling elsewhere. EDMV4-T39 AC8: every check carries id/category/points/description/pass/fix,
+# and fix is mandatory on every check, not only failing ones.
+_rr_mk_check() {
+  jq -nc \
+    --arg id "$1" --arg category "$2" --argjson points "$3" \
+    --arg description "$4" --argjson pass "$5" --arg fix "$6" \
+    '{id: $id, category: $category, points: $points, description: $description, pass: $pass, fix: $fix}'
+}
+
+ALL_CHECKS=()
+
+# ---- Methodology setup (10 pts, unconditional) ----------------------------------------------
+ALL_CHECKS+=("$(_rr_mk_check "git-repo-present" "Methodology setup" 3 \
+  "The scored target is a git working tree." "$GIT_REPO_PRESENT" \
+  "Run 'git init' in the target directory before using EDM -- EDM's artifact-commit model (SRD/ under git) assumes a git repository.")")
+ALL_CHECKS+=("$(_rr_mk_check "srd-directory-present" "Methodology setup" 2 \
+  "The configured srd_root (${SRD_ROOT}) exists." "$SRD_DIR_PRESENT" \
+  "Run edm-init to scaffold an initiative, or create ${SRD_ROOT} by hand, before using EDM against this repository.")")
+ALL_CHECKS+=("$(_rr_mk_check "permission-ask-rules-configured" "Methodology setup" 5 \
+  "No active initiative reports the PERM_RULES_MISSING anomaly from edm-state validate." "$PERM_RULES_OK" \
+  "Add the required permissions.ask block (Bash(edm-state approve-gate*), Bash(edm-state archive*)) documented in CLAUDE.md's Required setup section to your project's Claude Code settings.")")
+
+# ---- State health (10 pts, unconditional) -----------------------------------------------------
+ALL_CHECKS+=("$(_rr_mk_check "state-health-no-open-partials" "State health" 3 \
+  "No active initiative reports an unclosed or FAIL-closed OPEN_PARTIALS verdict (blocking, 3pt cost)." "$SH_NO_OPEN_PARTIALS" \
+  "Run /edm:verify-runtime <PREFIX> to close every open or FAIL-closed PARTIAL verdict before archiving.")")
+ALL_CHECKS+=("$(_rr_mk_check "state-health-no-converged-no-approval" "State health" 2 \
+  "No active initiative reports code_audit_converged=true with no recorded gate approval (blocking, 2pt cost)." "$SH_NO_CONVERGED_NO_APPROVAL" \
+  "Run edm-state approve-gate <PREFIX> code-audit, or investigate a hand-edited state file.")")
+ALL_CHECKS+=("$(_rr_mk_check "state-health-no-other-blocking-anomalies" "State health" 2 \
+  "No active initiative reports any other blocking anomaly, e.g. TIME_ORDER or ZERO_TOKENS (blocking, 2pt cost)." "$SH_NO_OTHER_BLOCKING" \
+  "Run edm-state validate <PREFIX> on the named initiative and follow its remediation for the reported blocking anomaly.")")
+ALL_CHECKS+=("$(_rr_mk_check "state-health-no-open-audit-round" "State health" 1 \
+  "No active initiative reports an audit round started but never completed (informational, 1pt cost)." "$SH_NO_OPEN_AUDIT_ROUND" \
+  "Run edm-state audit-round-complete <PREFIX> <type> to close the open round, or continue the round in progress.")")
+ALL_CHECKS+=("$(_rr_mk_check "state-health-no-torn-token-lines" "State health" 1 \
+  "No active initiative reports session-JSONL lines that failed to parse while summing tokens (informational, 1pt cost)." "$SH_NO_TORN_TOKEN_LINES" \
+  "Usually transient (a session file still being appended to); re-run edm-state validate <PREFIX> later if it persists.")")
+ALL_CHECKS+=("$(_rr_mk_check "state-health-no-spec-sweep-pending" "State health" 1 \
+  "No active initiative has a fixed code-audit finding still owing its same-commit documentation sweep (informational, 1pt cost)." "$SH_NO_SPEC_SWEEP_PENDING" \
+  "Sweep the named finding's documentation and set spec_swept to yes or n/a in the findings ledger.")")
+
+# ---- Test stack (10 pts, conditional on any detected test framework) --------------------------
+ALL_CHECKS+=("$(_rr_mk_check "unit-test-framework-detected" "Test stack" 6 \
+  "test_frameworks_detected (via edm-state get-coverage) names a unit test framework for at least one active initiative." "$TESTSTACK_UNIT_FOUND" \
+  "Run /edm:test <PREFIX> so edm-test-planner records a detected unit test framework.")")
+ALL_CHECKS+=("$(_rr_mk_check "additional-layer-framework-detected" "Test stack" 4 \
+  "test_frameworks_detected names a framework for at least one non-unit layer (component, integration, e2e, contract, composable, or a11y)." "$TESTSTACK_OTHER_FOUND" \
+  "Run /edm:test <PREFIX> and let edm-test-planner/edm-test-scaffold detect and record additional test layers as they become applicable.")")
+
+# ---- Coverage posture (10 pts, conditional on Test stack being applicable) ---------------------
+ALL_CHECKS+=("$(_rr_mk_check "unit-coverage-meets-target" "Coverage posture" 4 \
+  "The highest recorded unit coverage pct meets coverage_target_unit_pct (${COVERAGE_TARGET_UNIT_PCT}%)." "$(_rr_layer_meets_target unit "$COVERAGE_TARGET_UNIT_PCT")" \
+  "Run /edm:test <PREFIX> to raise unit coverage to at least ${COVERAGE_TARGET_UNIT_PCT}%, or record it via edm-state record-test-coverage.")")
+ALL_CHECKS+=("$(_rr_mk_check "component-coverage-meets-target" "Coverage posture" 3 \
+  "The highest recorded component coverage pct meets coverage_target_component_pct (${COVERAGE_TARGET_COMPONENT_PCT}%)." "$(_rr_layer_meets_target component "$COVERAGE_TARGET_COMPONENT_PCT")" \
+  "Run /edm:test <PREFIX> to raise component coverage to at least ${COVERAGE_TARGET_COMPONENT_PCT}%, or record it via edm-state record-test-coverage.")")
+ALL_CHECKS+=("$(_rr_mk_check "integration-coverage-meets-target" "Coverage posture" 3 \
+  "The highest recorded integration coverage pct meets coverage_target_integration_pct (${COVERAGE_TARGET_INTEGRATION_PCT}%)." "$(_rr_layer_meets_target integration "$COVERAGE_TARGET_INTEGRATION_PCT")" \
+  "Run /edm:test <PREFIX> to raise integration coverage to at least ${COVERAGE_TARGET_INTEGRATION_PCT}%, or record it via edm-state record-test-coverage.")")
+
+# ---- Convergence history (10 pts, conditional on at least one archived initiative) -------------
+ALL_CHECKS+=("$(_rr_mk_check "convergence-calibration-data-available" "Convergence history" 4 \
+  "edm-state metrics-report --calibrate produces at least one (size, phase) median row." "$CH_CALIBRATION_AVAILABLE" \
+  "Complete and archive at least one initiative with estimated_size set so /edm:metrics --calibrate has data to compute medians from.")")
+ALL_CHECKS+=("$(_rr_mk_check "convergence-cost-history-recorded" "Convergence history" 3 \
+  "edm-state metrics-report --all reports a nonzero Claude cost for at least one initiative." "$CH_COST_HISTORY" \
+  "Run phases through to completion with edm-state phase-complete so cost/duration are recorded per phase.")")
+ALL_CHECKS+=("$(_rr_mk_check "convergence-multiple-archived-initiatives" "Convergence history" 3 \
+  "More than one archived initiative exists under ${SRD_ROOT}/.archived (found: ${ARCHIVED_COUNT})." "$CH_MULTIPLE_ARCHIVED" \
+  "Archive additional completed initiatives with edm-state archive as they converge, to establish a repeatable rhythm.")")
+
+# ---- Artifact hygiene (10 pts, unconditional) --------------------------------------------------
+ALL_CHECKS+=("$(_rr_mk_check "artifact-lint-clean" "Artifact hygiene" 10 \
+  "edm-lint-artifacts reports zero violations across the scored scope (exit 0)." "$ARTIFACT_LINT_CLEAN" \
+  "Run edm-lint-artifacts --all (or edm-lint-artifacts <PREFIX>) to see and fix the reported violations.")")
+
+CHECKS_JSON="$(printf '%s\n' "${ALL_CHECKS[@]}" | jq -s '.')"
+
+# EDMV4-T39 AC4: an explicit applicability field per category, so a consumer can distinguish
+# "scored 0" from "not applicable" without re-deriving the predicate.
+CATEGORY_APPLICABILITY_JSON="$(jq -n \
+  --argjson teststack "$TESTSTACK_APPLICABLE" \
+  --argjson coverage "$TESTSTACK_APPLICABLE" \
+  --argjson convergence "$CONVERGENCE_APPLICABLE" \
+  '{
+    "Methodology setup": true,
+    "State health": true,
+    "Test stack": $teststack,
+    "Coverage posture": $coverage,
+    "Convergence history": $convergence,
+    "Artifact hygiene": true
+  }')"
+
+# EDMV4-T39 AC3/AC5: each category normalized to 0-10; overall score is the arithmetic mean of
+# APPLICABLE categories only (inapplicable categories are excluded from the denominator, never
+# scored as zero).
+REPORT_JSON="$(jq -n \
+  --argjson checks "$CHECKS_JSON" \
+  --argjson applicability "$CATEGORY_APPLICABILITY_JSON" \
+  --arg version "$READINESS_RUBRIC_VERSION" \
+  --arg prefix "$PREFIX" \
+  '
+  def fmt1: (. * 10 | round) as $t | (($t / 10 | floor) | tostring) + "." + (($t % 10) | tostring);
+  # NOTE: jq // treats false (not only null) as absent -- $applicability[...] // true would
+  # silently turn a real, computed false back into true here, the same trap the cand_complete
+  # comment in edm-compare-eval already flags for a different boolean. Test presence with has()
+  # explicitly instead of relying on //.
+  ($checks
+    | group_by(.category)
+    | map(.[0].category as $catname | {
+        name: $catname,
+        applicable: (if ($applicability | has($catname)) then $applicability[$catname] else true end),
+        raw_earned: ([.[] | select(.pass) | .points] | add // 0),
+        raw_max: ([.[] | .points] | add // 0)
+      })
+    | map(. + {
+        score_0_10: (if .raw_max == 0 then "0.0" else ((.raw_earned / .raw_max * 10) | fmt1) end)
+      })
+  ) as $cats
+  | ($cats | map(select(.applicable))) as $applicable_cats
+  | (if ($applicable_cats | length) == 0 then "0.0"
+     else (($applicable_cats | map(.score_0_10 | tonumber) | add) / ($applicable_cats | length) | fmt1)
+     end) as $overall
+  | {
+      readiness_rubric_version: $version,
+      prefix: (if $prefix == "" then null else $prefix end),
+      score: $overall,
+      categories: $cats,
+      checks: $checks
+    }
+  ')"
 
 # ---- Human-readable report: stdout only (AC7 -- no JSON on stdout, ever) ---------------------
 echo "EDM repository readiness"
 echo "========================="
+echo "Rubric version: ${READINESS_RUBRIC_VERSION}"
 if [[ -n "$PREFIX" ]]; then
-  echo "Scope: whole repository (per-initiative scoping for <PREFIX>=${PREFIX} lands in EDMV4-T40)"
+  echo "Scope: initiative ${PREFIX} (Methodology setup's git/SRD checks and Convergence history remain repository-wide)"
 else
   echo "Scope: whole repository"
 fi
 echo
-printf '%s\n' "$CHECKS_JSON" | jq -r '.[] | (if .pass then "[PASS]" else "[FAIL]" end) + " " + .id + " (" + (.points|tostring) + " pts) -- " + .description + (if (.pass|not) then "  FIX: " + .fix else "" end)'
+
+printf '%s' "$REPORT_JSON" | jq -r '
+  . as $root
+  | $root.categories[] as $cat
+  | "", ("## " + $cat.name + (if $cat.applicable then " -- " + $cat.score_0_10 + " / 10" else " -- N/A (not applicable)" end)),
+    ($root.checks[] | select(.category == $cat.name) |
+      (if .pass then "  [PASS] " else "  [FAIL] " end) + .id + " (" + (.points|tostring) + " pts) -- " + .description +
+      (if (.pass | not) then "  FIX: " + .fix else "" end))
+'
+
 echo
-echo "Overall score: ${SCORE_0_10} / 10"
+printf 'Overall score: %s / 10\n' "$(printf '%s' "$REPORT_JSON" | jq -r '.score')"
 
 # ---- Machine-readable report: file only, via --json <path> (AC7) ----------------------------
 if [[ -n "$JSON_OUT" ]]; then
-  jq -n \
-    --argjson checks "$CHECKS_JSON" \
-    --argjson score "$SCORE_0_10" \
-    --arg prefix "$PREFIX" \
-    '{checks: $checks, score: $score, prefix: (if $prefix == "" then null else $prefix end)}' \
-    > "$JSON_OUT" || die "could not write JSON report to $JSON_OUT"
+  printf '%s' "$REPORT_JSON" > "$JSON_OUT" || die "could not write JSON report to $JSON_OUT"
 fi
 
 exit 0
