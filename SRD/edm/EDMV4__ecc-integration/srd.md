@@ -163,7 +163,8 @@ EDMV4 is complete when all of the following hold:
    any other requirement.
 7. Spikes A and B are executed and their outcomes recorded as numbered decisions in
    `decisions.md` (`EDMV4-01`, `EDMV4-02`), and all three architecture/scope ratifications are
-   accepted or rejected at Gate 2 (`EDMV4-05`, `EDMV4-06`, `EDMV4-59`).
+   accepted or rejected at Gate 2 (`EDMV4-05`, `EDMV4-06`, `EDMV4-59`) -- **done**: all three were
+   ratified 2026-09-02, `decisions.md` D14/D15/D16.
 8. `plugins/edm/CHANGELOG.md` carries a new entry documenting the 11-to-14 lens change and every
    other user-visible change in this initiative. No historical CHANGELOG entry is edited.
 9. `plugins/edm/docs/ecc-integration-analysis.md` carries the eleven corrections in its own Part 8.2
@@ -310,6 +311,10 @@ principle in `CLAUDE.md Sec."Unverifiable acceptance criteria (D15)"` applies by
 implementer cannot descope approved scope. The third is the architecture decision the other two and
 the entire licence posture rest on, and nothing in v1.0.0 ratified it.
 
+**All three were ratified at Gate 2 on 2026-09-02** (`decisions.md` D14, D15, D16). This section is
+retained as the record of what was presented and why -- not as an open question a later reader
+re-runs the gate to answer.
+
 | ID | What is presented | Why it cannot be absorbed |
 |---|---|---|
 | `EDMV4-05` | Descoping GateGuard's destructive-`Bash` arm | Reduction against Gate-1-approved 4.1 |
@@ -320,6 +325,13 @@ the entire licence posture rest on, and nothing in v1.0.0 ratified it.
 vendoring -- it does not reverse AD1. Only `EDMV4-59` can reverse AD1. Wiring the licence
 obligation to `EDMV4-05`, as v1.0.0 did, was a live exposure and is corrected in Sec.7.3,
 `EDMV4-12` and `EDMV4-56`.
+
+**Outcome, recorded 2026-09-02:** all three were ratified at Gate 2 -- `EDMV4-59` as AD1 (bash
+rewrite, not a vendoring; `decisions.md` D14), `EDMV4-05` as the destructive-`Bash` descope
+(`decisions.md` D15), and `EDMV4-06` as the "phase started with no `completed_at`" descope
+(`decisions.md` D16). Each requirement's own "On accept" branch below is therefore the branch that
+applies; the "On reject" branches are retained as the record of what was decided against, not as an
+open path.
 
 Note on the cited authority: `CLAUDE.md Sec."Unverifiable acceptance criteria (D15)"` is scoped to
 unverifiable acceptance criteria on **tickets**, not to reductions against Gate-1-approved **SRD**
@@ -560,6 +572,10 @@ retained rather than reused so every existing cross-reference still resolves.
   destructive, and it does not fire at all unless something under the derived `srd_root` is staged.
   The residual exposure is therefore **unbounded by anything in this plugin**, and the Gate 2
   presentation must say so.
+
+  **Ratified 2026-09-02 (see `decisions.md` D15): descope approved.** 4.1 ships as an edit gate
+  over `Edit`/`Write`/`MultiEdit` only. The "On accept" branch below is the branch that applied;
+  the "On reject" branch is retained as the record of what was decided against.
 - **Acceptance Criteria**:
   - [ ] The reduction is presented at Gate 2 via the canonical
         `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`, stating what is lost, what remains, and
@@ -583,7 +599,7 @@ retained rather than reused so every existing cross-reference still resolves.
   - [ ] The human's decision -- accept or reject -- is recorded in `decisions.md` as a numbered
         decision with rationale, not inferred from silence.
   - [ ] On **accept**: `EDMV4-07`'s scope is `Edit`/`Write`/`MultiEdit` only, and the ticket pack
-        carries no destructive-`Bash` ticket. The boundary is recorded using the D14
+        carries no destructive-`Bash` ticket. The boundary is recorded using the EDMV3 D14
         scope-boundary framing, naming a follow-on vehicle (5.3's rule files) rather than being
         silently dropped.
   - [ ] On **reject**: `EDMV4-07` is re-scoped to include the destructive-`Bash` arm, the estimate
@@ -614,6 +630,10 @@ retained rather than reused so every existing cross-reference still resolves.
   block on ordinary long-running work and would need a time threshold or an explicit
   "wave in progress" carve-out. `architecture.md` descopes it. As with `EDMV4-05`, that is a
   reduction against approved scope and needs human ratification.
+
+  **Ratified 2026-09-02 (see `decisions.md` D16): descope approved.** The "On accept" branch below
+  is the branch that applied; the "On reject" branch is retained as the record of what was decided
+  against.
 - **Acceptance Criteria**:
   - [ ] The reduction is presented at Gate 2 via the canonical Gate PROTOCOL, stating that 3 of the
         analysis's 4 named anomalies are delivered and naming the fourth precisely.
@@ -625,9 +645,9 @@ retained rather than reused so every existing cross-reference still resolves.
         when the **terminal** phase has no `completed_at` (`bin/edm-state:3185`), so the exposure is
         non-terminal phases only.
   - [ ] The human's decision is recorded in `decisions.md` as a numbered decision.
-  - [ ] On **accept**: the boundary is recorded using the D14 scope-boundary framing, naming what a
-        future design would need (a threshold or a wave-in-progress carve-out), and `EDMV4-45` ships
-        the three verified anomalies only.
+  - [ ] On **accept**: the boundary is recorded using the EDMV3 D14 scope-boundary framing, naming
+        what a future design would need (a threshold or a wave-in-progress carve-out), and
+        `EDMV4-45` ships the three verified anomalies only.
   - [ ] On **reject**: a new requirement is added for the anomaly's design, including its threshold
         semantics and its `blocking`-versus-`info` classification, and `EDMV4-45` gains a dependency
         on it.
@@ -660,6 +680,10 @@ retained rather than reused so every existing cross-reference still resolves.
   ratifies the destructive-`Bash` **descope**, and rejecting it yields a *larger bash rewrite*, not
   a vendoring. A Gate 2 that approves `EDMV4-05` while separately directing vendoring would leave
   the NOTICE obligation dormant with nothing to wake it.
+
+  **Ratified 2026-09-02 (see `decisions.md` D14): bash rewrite confirmed, not a vendoring.** The
+  "On accept" branch below is the branch that applied; the "On reject" branch is retained as the
+  record of what was decided against.
 - **Acceptance Criteria**:
   - [ ] AD1 is presented at Gate 2 via the canonical
         `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"` as its own decision, distinct from

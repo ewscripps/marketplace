@@ -42,11 +42,22 @@ destructive-Bash arm deletes the entire recursive-BFS shell tokenizer that explo
 fact-forcing state machine plus glob exemption plus session state, which is 250-350 lines of
 bash 3.2.
 
-Accepted trade-off: EDM does not get a destructive-Bash gate. That is a real coverage gap, and it
-is bounded -- EDM already blocks the one destructive Bash operation its methodology cares about
-(`git commit`, via `edm-lint-staged-artifacts`), and a general destructive-command detector is
-better served later by 5.3's rule files than by 741 lines of vendored tokenizer nobody in this
-plugin can maintain in bash.
+**Ratified at Gate 2 on 2026-09-02.** Two separate decisions ratify this section, and they stay
+independent in the record: `decisions.md` D14 ratifies AD1 itself -- bash rewrite, roughly 250-350
+lines, not a vendoring -- and `decisions.md` D15 ratifies the destructive-`Bash` arm's descope as a
+reduction against Gate-1-approved 4.1 scope. Rejecting D15 alone would have yielded a larger bash
+rewrite (400-600 lines, restoring the tokenizer), never a vendoring; only D14 could have reversed
+AD1 to vendoring.
+
+Accepted trade-off: EDM does not get a destructive-Bash gate. That is a real coverage gap, and it is
+**not** bounded by anything in this plugin. `bin/edm-lint-staged-artifacts:146-159` blocks only on
+artifact lint violations -- a non-ASCII byte, an attribution trailer, a raw semicolon in a Mermaid
+label -- and fires only when something under the derived `srd_root` is staged; it guards nothing
+destructive. The command classes left entirely unguarded, named rather than categorized: `rm -rf`,
+`git reset --hard`, `git clean -fd`, a force-push (`git push --force` / `--force-with-lease`), and
+destructive SQL such as `DROP TABLE`. A general destructive-command detector is better served later
+by 5.3's rule files (`EDMV4-43`) than by 741 lines of vendored tokenizer nobody in this plugin can
+maintain in bash -- and that follow-on ships only if Spike A (`EDMV4-T06`) clears.
 
 Three consequences fall out and each is a benefit: Node never becomes a Phase 6 runtime dependency
 (the required-binary list stays `bash`/`jq`/`git`); **DECISION F is closed, not merely deferred** --
