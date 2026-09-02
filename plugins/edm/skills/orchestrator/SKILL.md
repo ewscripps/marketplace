@@ -100,17 +100,50 @@ Call the resolved value **`INITIATIVE`** -- all subsequent steps use `INITIATIVE
    `edm-state write-handoff <PREFIX>`. Flat fallback (legacy/explicit user request only):
    `edm-init <PREFIX>`.
 
+**Step 1b.5 -- Size classifier (recommendation only)**
+
+Skipped on resume (Step 1b already read a recorded non-default mode).
+
+Scores exactly three signals -- files touched, new dependency or contract, and design
+ambiguity -- and takes the **highest** tier any single signal reaches; this is not an
+average.
+
+| Tier    | Recommends (mode, lifecycle_mode) |
+|---------|------------------------------------|
+| trivial | (standard, fix-pack) |
+| small   | (mini-srd, standard) |
+| full    | (standard, standard) |
+
+These are the only three pairs emitted. `fast-track` is never recommended: it shares one row
+of the mode matrix with `fix-pack` and the two are documented as behaviourally identical
+(`CLAUDE.md Sec."EDM mode matrix"`), so distinguishing them would require splitting that row,
+which is out of scope here.
+
+State the computed recommendation in one line inside Step 1c's `AskUserQuestion` body, naming
+both members of the pair and which signal scored what tier -- never the destination's
+behaviour (`CLAUDE.md Sec."EDM mode matrix"` covers that; consult it, do not restate it here).
+
+This step only marks which existing Step 1c option carries "(Recommended)". It never
+auto-applies a mode and never calls `set-mode` itself -- the classifier is a default, not an
+enforcement. The user always confirms or overrides via Step 1c, and whatever is selected
+(recommended or not) is recorded through the same `edm-state set-mode <PREFIX>
+mode|lifecycle_mode <value>` path described there.
+
 **Step 1c -- Mode and profile selection**
 
 Skipped on resume (Step 1b already read a recorded non-default mode).
 
 1. `AskUserQuestion` header `"EDM mode"` (<=12 chars): **Standard** (Recommended) / **mini-SRD** /
    **IaC** / **Data/ML** / **Prototype**.
-2. Present a compliance toggle via `AskUserQuestion` header `"Compliance"`: **Off** (Recommended) /
+2. `AskUserQuestion` header `"Lifecycle"` (<=12 chars): **Standard** (Recommended) / **fast-track** /
+   **fix-pack**. Step 1b.5's recommendation, when present, moves "(Recommended)" onto its
+   recommended value for both this question and the mode question above.
+3. Present a compliance toggle via `AskUserQuestion` header `"Compliance"`: **Off** (Recommended) /
    **On**.
-3. Record: `edm-state set-mode <PREFIX> mode <value>`;
+4. Record: `edm-state set-mode <PREFIX> mode <value>`;
+   `edm-state set-mode <PREFIX> lifecycle_mode <value>` (only if not the `standard` default);
    `edm-state set-mode <PREFIX> compliance_enabled true` (only if On).
-4. Mode-family fields and each mode's full behavior are `CLAUDE.md Sec."EDM mode matrix"` --
+5. Mode-family fields and each mode's full behavior are `CLAUDE.md Sec."EDM mode matrix"` --
    consult it before dispatching; do not restate the sub-flows here.
 
 **Step 1d -- Concurrency & branch safety check**
