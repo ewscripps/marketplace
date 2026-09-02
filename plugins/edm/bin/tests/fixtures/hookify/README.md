@@ -9,9 +9,13 @@ directly with `jq`.
 
 ## Valid rules (one per event, AC10)
 
-- `warn-no-console-log.json` -- `event: file`, `action: warn` (implicit-default form is
-  demonstrated by omitting the key entirely in a malformed fixture below, but this file states
-  `warn` explicitly as the canonical worked example CLAUDE.md quotes). Two AND'd conditions.
+- `warn-no-console-log.json` -- `event: file`, `action: warn`, stated explicitly as the canonical
+  worked example CLAUDE.md quotes. Two AND'd conditions. **Note (wave-1 QC):** an earlier revision
+  of this line claimed the implicit-default form was "demonstrated by omitting the key entirely in
+  a malformed fixture below". No fixture omits `action` -- all eight carry it explicitly. The
+  default-to-`warn` behaviour is a property of the FORMAT, specified in CLAUDE.md and consumed by
+  `EDMV4-T43`; it is deliberately not exercised by a fixture here, and the false claim mattered
+  because this README names T43 as the directory's consumer.
 - `require-ticket-id-reference.json` -- `event: file`, demonstrates the `require-*` naming
   convention: a `.md` file edited without a ticket ID reference.
 - `block-rm-rf-bash.json` -- `event: bash`, `action: block`. Demonstrates `regex_match` and the

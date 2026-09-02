@@ -842,13 +842,23 @@ a future consumer never has to invent a second resolution procedure:
 2. Otherwise, `git rev-parse --show-toplevel`.
 3. Otherwise, `.` (the current working directory).
 
-The rule directory is **source-controlled**, never gitignored. This is a deliberate divergence
-from a `.local.md`-plus-gitignore convention: a rule file changes what gets enforced for every
-teammate, so it is reviewed in a merge request the same way an SRD is -- source control IS the
+The rule directory is **source-controlled, not gitignored, in the project that adopts it**. This
+is a deliberate divergence from a `.local.md`-plus-gitignore convention: a rule file changes what
+gets enforced for every teammate, so it is reviewed in a merge request the same way an SRD is --
+source control IS the
 feature (see "Artifacts live in the project's `SRD/` directory and are committed to git" above,
 the same principle applied to a second artifact class). The plugin ships the format and (in a
 later initiative) the reader; it does not ship any default rule file. `.claude/edm-hookify/` is a
 project-owned directory that does not exist until a project's own team adds a rule to it.
+
+**Precision on "not gitignored" (wave-1 QC, `EDMV4-T42` AC6).** The obligation binds the
+**consuming** project, which is where rule files actually live and where losing one to
+`.gitignore` would silently disable enforcement. It does not bind this marketplace repository,
+whose own `.gitignore` excludes `.claude/` for local Claude Code configuration and which ships no
+rule files. A reader running `git check-ignore -v .claude/edm-hookify/x.json` here gets a hit, and
+that is correct rather than a contradiction -- but the earlier absolute wording ("never
+gitignored") made it read as one. Adopting projects must ensure their own `.gitignore` does not
+swallow the directory; `.claude/` blanket-ignores are the common way it happens.
 
 ### Schema
 

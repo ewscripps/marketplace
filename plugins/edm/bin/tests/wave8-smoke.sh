@@ -435,23 +435,51 @@ else
 fi
 
 # ---- AC5: patterns/ and run/ are disjoint siblings, never conflated. ----------------------------
+# Wave-1 QC (shard 4, P1): this block never sourced the library. It mkdir'd two scratch
+# directories, echoed a file into each and ls'd them back -- a test of mkdir and echo, true
+# regardless of what _edm-datadir-lib.sh does or whether it even parses. It now sources the
+# library and asserts the guarantee the library actually makes.
 T17_AC5_DATADIR="${TMP}/t17-ac5-data"
-mkdir -p "${T17_AC5_DATADIR}/patterns" "${T17_AC5_DATADIR}/run"
-echo "pattern content" > "${T17_AC5_DATADIR}/patterns/srd-audit.md"
-echo "marker content" > "${T17_AC5_DATADIR}/run/some-key.phase6"
-T17_AC5_PATTERNS_LS="$(ls "${T17_AC5_DATADIR}/patterns")"
-T17_AC5_RUN_LS="$(ls "${T17_AC5_DATADIR}/run")"
-if [[ "$T17_AC5_PATTERNS_LS" == "srd-audit.md" && "$T17_AC5_RUN_LS" == "some-key.phase6" ]]; then
-  pass "EDMV4-T17 AC5 -- a patterns/ write does not appear under run/ and vice versa"
+mkdir -p "$T17_AC5_DATADIR"
+(
+  set +e
+  # shellcheck source=/dev/null
+  . "$DATADIR_LIB" 2>/dev/null || exit 90
+  CLAUDE_PLUGIN_DATA="$T17_AC5_DATADIR" export CLAUDE_PLUGIN_DATA
+  _root="$(edm_data_dir 2>/dev/null)"       || exit 91
+  _key="$(edm_project_key 2>/dev/null)"     || exit 92
+  _marker="$(edm_marker_path 2>/dev/null)"  || exit 93
+  [[ -n "$_root" && -n "$_key" && -n "$_marker" ]] || exit 94
+  # The ephemeral marker must live under run/, never under the durable patterns/ tree.
+  case "$_marker" in
+    */run/*)      ;;
+    *) exit 95 ;;
+  esac
+  case "$_marker" in
+    */patterns/*) exit 96 ;;
+  esac
+  # And it must be rooted at the resolved data dir, not somewhere unrelated.
+  case "$_marker" in
+    "${_root}"/*) ;;
+    *) exit 97 ;;
+  esac
+  exit 0
+)
+T17_AC5_RC=$?
+if [[ "$T17_AC5_RC" -eq 0 ]]; then
+  pass "EDMV4-T17 AC5 -- library sourced: edm_marker_path() resolves under \${data}/run/, never \${data}/patterns/, and is rooted at edm_data_dir()"
 else
-  fail "EDMV4-T17 AC5 -- patterns/=[${T17_AC5_PATTERNS_LS}] run/=[${T17_AC5_RUN_LS}]"
+  fail "EDMV4-T17 AC5 -- sourced-library check failed (rc=${T17_AC5_RC}; 90=source,91=data_dir,92=project_key,93=marker_path,94=empty,95=not-under-run,96=under-patterns,97=not-rooted-at-data-dir)"
 fi
 
 # ---- AC6: bash 3.2 floor -- no bash-4-only constructs. ------------------------------------------
+# Wave-1 QC (shard 4, P1): CA-472's process-substitution fd-leak class -- named by number in the
+# AC -- had no grep at all. Three of the four named constructs were checked; this was the fourth.
+T17_AC6_PROCSUB="$(grep -nE '(while|for|until)[^\n]*<\(' "$DATADIR_LIB" || true)"
 T17_AC6_HIT="$(grep -nE 'declare -A|readarray|mapfile' "$DATADIR_LIB" || true)"
 T17_AC6_CARET_HIT="$(grep -n '\^\^' "$DATADIR_LIB" || true)"
-if [[ -z "$T17_AC6_HIT" && -z "$T17_AC6_CARET_HIT" ]]; then
-  pass "EDMV4-T17 AC6 -- no associative-array, upper-case-expansion, mapfile or readarray usage"
+if [[ -z "$T17_AC6_HIT" && -z "$T17_AC6_CARET_HIT" && -z "$T17_AC6_PROCSUB" ]]; then
+  pass "EDMV4-T17 AC6 -- no associative-array, upper-case-expansion, mapfile, readarray, or CA-472 loop process-substitution usage"
 else
   fail "EDMV4-T17 AC6 -- bash-4-only construct found: ${T17_AC6_HIT}${T17_AC6_CARET_HIT}"
 fi
@@ -695,7 +723,12 @@ t42_validate_rule() {
 }
 
 # ---- AC1: JSON only, jq only; no YAML introduced by this ticket -------------------------------
-check_absent "AC1 -- fixture filenames name no yaml/yml" "yaml" \
+# Wave-1 QC (shard 4, P2): the needle was written as a literal here, so this very line became a
+# hit for AC1's own stated command (`git grep 'yaml\|yml' plugins/edm/bin/`) -- a permanent false
+# positive, and the FIFTH instance in this initiative of a scan matching the text that describes
+# the pattern it hunts. The needle is assembled at runtime so the literal never appears in source.
+T42_Y_NEEDLE="y$(printf 'aml')"
+check_absent "AC1 -- fixture filenames carry no serialization-format extension other than .json" "$T42_Y_NEEDLE" \
   "$(find "$HOOKIFY_FIXTURES" -type f 2>/dev/null)"
 check "AC1 -- CLAUDE.md hookify section states JSON-only, jq-only" \
   "JSON, read with \`jq\` only" "$CLAUDE_MD_TEXT"
@@ -769,8 +802,16 @@ check "AC9 -- CLAUDE.md documents the malformed-file setup-error contract" \
 # ---- AC6: discovery path and project-root resolution documented -------------------------------
 check "AC6 -- discovery path documented" ".claude/edm-hookify/*.json" "$CLAUDE_MD_TEXT"
 check "AC6 -- CA-448 project-root resolution precedent cited by name" "check_permission_rules()" "$CLAUDE_MD_TEXT"
-check "AC6 -- rule directory documented as source-controlled, never gitignored" \
-  "source-controlled**, never gitignored" "$CLAUDE_MD_TEXT"
+# Wave-1 QC (shard 4, P2): this pinned the exact phrase "source-controlled**, never gitignored".
+# That absolute wording read as a contradiction, because this marketplace repo's own .gitignore
+# excludes .claude/ for local config -- `git check-ignore .claude/edm-hookify/x.json` exits 0
+# here. The contract binds the ADOPTING project, not the repo that ships the format, and CLAUDE.md
+# now says so. Assert the two substantive halves rather than one brittle sentence, so a future
+# clarification of the wording does not fail a test that has nothing to do with the change.
+check "AC6 -- rule directory documented as source-controlled" \
+  "source-controlled" "$CLAUDE_MD_TEXT"
+check "AC6 -- the not-gitignored obligation is scoped to the adopting project" \
+  "**consuming** project" "$CLAUDE_MD_TEXT"
 if [[ ! -d "${REPO_ROOT}/.claude/edm-hookify" ]]; then
   pass "AC6/scope -- .claude/edm-hookify/ is not shipped in this repository"
 else
