@@ -63,10 +63,61 @@ source "${SCRIPT_DIR}/_edm-cli-lib.sh"
 source "${SCRIPT_DIR}/_edm-lint-lib.sh"
 # EDMV4-T17 AC2: guarded sourcing -- deleting _edm-datadir-lib.sh must degrade edm-state to
 # today's behaviour (no edm_data_dir/edm_project_key/edm_marker_path defined) rather than
-# failing every subcommand under set -euo pipefail. Nothing in edm-state calls these three
-# functions yet (EDMV4-08 and EDMV4-T18 are the first callers), so this guarded source is a
-# no-op today either way; it exists so those later tickets have a library to call into.
+# failing every subcommand under set -euo pipefail. EDMV4-08 (EDMV4-T12, below) is the first
+# caller: cmd_phase_start, cmd_phase_complete, cmd_archive, cmd_skip_phase and cmd_session_start
+# all guard every call through the two marker helpers immediately below with `declare -f
+# edm_marker_path`, so a missing library still degrades every one of them to a silent no-op
+# rather than failing under set -euo pipefail.
 [[ -r "${SCRIPT_DIR}/_edm-datadir-lib.sh" ]] && source "${SCRIPT_DIR}/_edm-datadir-lib.sh"
+
+# ---- Phase-6 marker primitive (EDMV4-T12; architecture.md AD3) ---------------------------------
+# The marker is a derived cache of "is some initiative in this project currently in Phase 6",
+# consulted by edm-gateguard (EDMV4-T11) so GateGuard's common case costs one process exec and
+# one `test -f`, never an edm-state invocation. It is never a second source of truth: every write
+# and removal below is best-effort, and cmd_session_start's reconciliation (further down this
+# file) reconciles it against .edm-state.json in both directions, never the reverse. Both
+# functions degrade to a silent no-op when _edm-datadir-lib.sh did not load, matching "an
+# unresolvable data directory degrades to today's behaviour (no gate at all), never to a deny"
+# (Description).
+
+# _edm_marker_write <prefix> <initiative-dir>
+#   Writes "PREFIX<TAB>initiative_dir<TAB>started_at\n" (AC6: a literal tab, UTC ISO-8601) to the
+#   marker path. Best-effort: a missing library, an unresolvable data directory, or an unwritable
+#   marker directory is a stderr warning, never a failure of the caller (AC2).
+_edm_marker_write() {
+  local prefix="$1" dir="$2"
+  declare -f edm_marker_path >/dev/null 2>&1 || return 0
+  local marker
+  marker="$(edm_marker_path)"
+  [[ -n "$marker" ]] || return 0
+  if ! mkdir -p "$(dirname "$marker")" 2>/dev/null; then
+    echo "edm-state: [warn] could not create Phase-6 marker directory for ${prefix}; marker not written (gate degrades to no-op)" >&2
+    return 0
+  fi
+  if ! printf '%s\t%s\t%s\n' "$prefix" "$dir" "$(now_utc)" > "$marker" 2>/dev/null; then
+    echo "edm-state: [warn] could not write Phase-6 marker for ${prefix} at ${marker} (gate degrades to no-op)" >&2
+  fi
+  return 0
+}
+
+# _edm_marker_remove_if_matches <prefix>
+#   Removes the marker only when it exists and its recorded PREFIX field equals <prefix> (AC3) --
+#   a marker naming a different initiative is left untouched; cmd_session_start's reconciliation
+#   (AC5), not this function, is R6's mitigation for two initiatives at Phase 6 simultaneously.
+#   Best-effort (AC4's "defensively"): any read/removal failure is silently ignored and never
+#   changes the caller's exit status, including the "no marker present" case.
+_edm_marker_remove_if_matches() {
+  local prefix="$1"
+  declare -f edm_marker_path >/dev/null 2>&1 || return 0
+  local marker
+  marker="$(edm_marker_path)"
+  [[ -n "$marker" && -f "$marker" ]] || return 0
+  local marker_prefix _marker_rest
+  IFS=$'\t' read -r marker_prefix _marker_rest < "$marker" 2>/dev/null || return 0
+  [[ "$marker_prefix" == "$prefix" ]] || return 0
+  rm -f "$marker" 2>/dev/null
+  return 0
+}
 
 SRD_ROOT="${EDM_SRD_ROOT:-${CLAUDE_PLUGIN_OPTION_SRD_ROOT:-./SRD}}"
 SRD_FILENAME="${EDM_SRD_FILENAME:-${CLAUDE_PLUGIN_OPTION_SRD_FILENAME:-srd.md}}"
@@ -2588,6 +2639,9 @@ cmd_phase_start() {
   rmw_state "$prefix" \
     '.current_phase = ($p|tonumber) | .phase_durations[$k] = ((.phase_durations[$k] // {}) + {started_at: $t}) | .last_updated = $t' \
     --arg k "$key" --arg p "$phase" --arg t "$(now_utc)"
+  # EDMV4-T12 AC2: write the Phase-6 marker after the rmw_state above has already succeeded, so a
+  # marker-write failure (unwritable data dir, etc.) never fails the phase transition itself.
+  [[ "$phase" == "6" ]] && _edm_marker_write "$prefix" "$(initiative_dir_for "$prefix")"
   write_handoff_internal "$prefix"
 }
 
@@ -2757,6 +2811,10 @@ cmd_phase_complete() {
     4|5)
       local tickets_path="${_dir}/${TICKET_PACK_DIRNAME}/README.md"
       [[ -f "$tickets_path" ]] && record_artifact_hash "$prefix" "tickets" "$tickets_path" ;;
+    6)
+      # EDMV4-T12 AC3: remove the Phase-6 marker only when it names THIS initiative -- a marker
+      # left behind by a different, still-active Phase-6 initiative (R6) is untouched here.
+      _edm_marker_remove_if_matches "$prefix" ;;
   esac
 
   write_handoff_internal "$prefix"
@@ -3352,6 +3410,10 @@ ${open_partials_list}"
   # NOT call rmw_state or take a second, nested lock (with_state_lock is not reentrant).
   # Use git mv when inside a git worktree so the move is tracked; fall back to plain mv. (CA-015)
   with_state_lock "${state_file%.json}" _cmd_archive_move_body "$src" "$dst" "${state_file%.json}"
+  # EDMV4-T12 AC4: remove the Phase-6 marker defensively (best-effort, matched by PREFIX like
+  # AC3 above) now that the archive itself has succeeded -- a refused archive above never
+  # reaches this line, so a failed archive never discards another initiative's live marker.
+  _edm_marker_remove_if_matches "$prefix"
   echo "archived $prefix -> $dst"
 }
 
@@ -4391,6 +4453,11 @@ cmd_session_start() {
   require_jq
   local active_count=0
   local seen_prefixes=()
+  # EDMV4-T12 AC5: accumulated during the scan below so the Phase-6 marker reconciliation after
+  # the loop needs no second pass over list_state_files. _ss_phase6_prefixes is a space-joined
+  # membership string (bash 3.2 has no associative arrays) tested with the same
+  # `case " $x " in *" $y "*)` idiom skipped_phases_str already uses elsewhere in this file.
+  local _ss_phase6_prefixes="" _ss_phase6_first_prefix="" _ss_phase6_first_dir=""
   # Enumerate both layouts via the single shared helper (CA-011); dedup by prefix below.
   while IFS= read -r state; do
     [[ -f "$state" ]] || continue
@@ -4406,6 +4473,13 @@ cmd_session_start() {
     [[ $already -eq 1 ]] && continue
     [[ "$phase" -ge 1 && "$phase" -le 6 ]] || continue
     seen_prefixes+=("$prefix")
+    if [[ "$phase" -eq 6 ]]; then
+      _ss_phase6_prefixes="${_ss_phase6_prefixes} ${prefix}"
+      if [[ -z "$_ss_phase6_first_prefix" ]]; then
+        _ss_phase6_first_prefix="$prefix"
+        _ss_phase6_first_dir="${state%/.edm-state.json}"
+      fi
+    fi
     active_count=$((active_count + 1))
     if [[ $active_count -eq 1 ]]; then
       echo "# EDM Active Initiative(s) -- Session Resume"
@@ -4433,6 +4507,33 @@ cmd_session_start() {
     printf '  Resume:        /edm:orchestrator %s\n' "$prefix"
     echo
   done < <(list_state_files)
+
+  # ---- Phase-6 marker SessionStart reconciliation (EDMV4-T12 AC5) ------------------------------
+  # Best-effort, both directions, and only in this direction (the marker is a derived cache --
+  # Description): a marker whose named initiative is not (or no longer, e.g. after a branch
+  # switch or an unmatched PREFIX) at current_phase == 6 is removed with exactly one line of
+  # operator output; an absent marker is recreated when some initiative genuinely is at phase 6.
+  if declare -f edm_marker_path >/dev/null 2>&1; then
+    local _ss_marker
+    _ss_marker="$(edm_marker_path)"
+    if [[ -n "$_ss_marker" ]]; then
+      if [[ -f "$_ss_marker" ]]; then
+        local _ss_marker_prefix _ss_marker_rest _ss_marker_valid=0
+        IFS=$'\t' read -r _ss_marker_prefix _ss_marker_rest < "$_ss_marker" 2>/dev/null || _ss_marker_prefix=""
+        if [[ -n "$_ss_marker_prefix" ]]; then
+          case " ${_ss_phase6_prefixes} " in
+            *" ${_ss_marker_prefix} "*) _ss_marker_valid=1 ;;
+          esac
+        fi
+        if [[ $_ss_marker_valid -eq 0 ]]; then
+          rm -f "$_ss_marker" 2>/dev/null
+          echo "edm-state session-start: [info] removed stale Phase-6 marker for ${_ss_marker_prefix:-unknown} (not at current_phase == 6)"
+        fi
+      elif [[ -n "$_ss_phase6_first_prefix" ]]; then
+        _edm_marker_write "$_ss_phase6_first_prefix" "$_ss_phase6_first_dir"
+      fi
+    fi
+  fi
 }
 
 # ---- Findings ledger rendering (EDMV3-T26) ----------------------------------
@@ -5182,6 +5283,10 @@ cmd_skip_phase() {
     )
     | .last_updated = $ts
   ' --arg p "$phase_num" --arg r "$rationale" --arg ts "$(now_utc)"
+  # EDMV4-T12 AC4: remove the Phase-6 marker defensively (best-effort, matched by PREFIX like
+  # AC3) when phase 6 itself is the one being skipped -- skipping an earlier phase leaves any
+  # live Phase-6 marker untouched.
+  [[ "$phase_num" == "6" ]] && _edm_marker_remove_if_matches "$prefix"
   echo "recorded phase $phase_num as skipped for $prefix"
 }
 
