@@ -2554,6 +2554,69 @@ t18_check_skill_paths "EDMV4-T18 AC9 -- skills/test-coverage/SKILL.md interpolat
 # ---- AC10: no agent gains a new Bash grant -------------------------------------------------------
 T18_SRD_WRITER_TOOLS="$(grep -m1 '^tools:' "${PLUGIN_DIR}/agents/edm-srd-writer.md" 2>/dev/null)"
 check_absent "EDMV4-T18 AC10 -- edm-srd-writer.md still carries no Bash grant" "Bash" "$T18_SRD_WRITER_TOOLS"
+
+# =================================================================================================
+# EDMV4-T19 -- correct the stale caller-count comment in cmd_update_patterns
+# =================================================================================================
+echo
+echo "-- EDMV4-T19: CA-476 caller-count comment corrected --"
+
+T19_CA476_BLOCK="$(awk '/^  # CA-476: resolve HOW MANY findings/{f=1} f{print} f && /report-format gap would be worse than the gap\.$/{exit}' "$EDM_STATE")"
+
+# ---- AC1/AC3: the count-free wording lands, and the comment's substantive point (neither
+# "nothing harvested" outcome is a die) survives completely unchanged. -----------------------------
+check "EDMV4-T19 AC1 -- the comment states the property that matters instead of a maintained count" \
+  "called mid-phase by the audit and implementation skills" "$T19_CA476_BLOCK"
+check "EDMV4-T19 AC3 -- the comment's substantive point survives unchanged (neither nothing-harvested outcome is a die)" \
+  "aborting the phase over a report-format gap would be worse than the gap" "$T19_CA476_BLOCK"
+
+# ---- AC6: number-word tripwire -- the count can never drift back in, whether restated as "four"
+# (still stale) or re-stated as the now-correct "six" (still a maintained count that will drift
+# again the moment a seventh caller is added). -----------------------------------------------------
+if printf '%s\n' "$T19_CA476_BLOCK" | grep -qiw 'four'; then
+  fail "EDMV4-T19 AC6 -- CA-476 comment block still contains the word 'four'"
+else
+  pass "EDMV4-T19 AC6 -- CA-476 comment block contains no word 'four'"
+fi
+if printf '%s\n' "$T19_CA476_BLOCK" | grep -qiw 'six'; then
+  fail "EDMV4-T19 AC6 -- CA-476 comment block still contains the word 'six'"
+else
+  pass "EDMV4-T19 AC6 -- CA-476 comment block contains no word 'six'"
+fi
+
+# ---- AC2: the six real call sites, verified against the tree at test time (not copied from the
+# ticket) -- each names the skill file and the exact edm-state update-patterns <PREFIX> ... call. -
+T19_CALL_SITES="skills/implement/SKILL.md skills/code-audit/SKILL.md skills/audit-tickets/SKILL.md skills/audit-srd/SKILL.md skills/test/SKILL.md skills/test-coverage/SKILL.md"
+T19_CALL_SITE_COUNT=0
+for t19_f in $T19_CALL_SITES; do
+  if grep -q 'edm-state update-patterns <PREFIX>' "${PLUGIN_DIR}/${t19_f}" 2>/dev/null; then
+    T19_CALL_SITE_COUNT=$((T19_CALL_SITE_COUNT + 1))
+  else
+    fail "EDMV4-T19 AC2 -- ${t19_f} does not call 'edm-state update-patterns <PREFIX> ...'"
+  fi
+done
+check "EDMV4-T19 AC2 -- exactly six skills call edm-state update-patterns <PREFIX> ..." "6" "$T19_CALL_SITE_COUNT"
+
+# ---- AC4: the second copy of the same stale claim, in docs/audit-patterns/README.md, is
+# corrected the same way in the same commit -- its own Consumers section already lists all six
+# call sites, so the file no longer contradicts itself. --------------------------------------------
+# The file hard-wraps long paragraphs at its own column width, so the corrected sentence may
+# itself land across two physical lines (it does, today) -- normalize newlines to spaces before
+# substring-matching so this assertion does not depend on exactly where the file wraps.
+T19_README_TEXT="$(cat "${PLUGIN_DIR}/docs/audit-patterns/README.md" | tr '\n' ' ')"
+check_absent "EDMV4-T19 AC4 -- docs/audit-patterns/README.md no longer says 'four skills'" \
+  "four skills" "$T19_README_TEXT"
+check "EDMV4-T19 AC4 -- docs/audit-patterns/README.md restates the property instead of a maintained count" \
+  "called mid-phase by the audit and implementation skills" "$T19_README_TEXT"
+
+# ---- AC5: comment-only/prose-only -- the executable script still parses cleanly. -----------------
+if bash -n "$EDM_STATE" 2>/dev/null; then
+  pass "EDMV4-T19 AC5 -- bash -n plugins/edm/bin/edm-state passes after the comment-only edit"
+else
+  fail "EDMV4-T19 AC5 -- bash -n plugins/edm/bin/edm-state failed after the comment-only edit"
+fi
+
+
 T18_TICKET_WRITER_TOOLS="$(grep -m1 '^tools:' "${PLUGIN_DIR}/agents/edm-ticket-writer.md" 2>/dev/null)"
 check_absent "EDMV4-T18 AC10 -- edm-ticket-writer.md still carries no Bash grant" "Bash" "$T18_TICKET_WRITER_TOOLS"
 # =================================================================================================

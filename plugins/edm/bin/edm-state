@@ -6034,8 +6034,8 @@ cmd_update_patterns() {
   # out loud when the answer is "none". The extraction is read-only on the report, so running it
   # here (outside the lock) costs nothing and lets the two "nothing harvested" outcomes be named
   # separately in both the operator-facing output and the persisted state record. Neither is a
-  # `die`: update-patterns is called mid-phase by four skills, and aborting the phase over a
-  # report-format gap would be worse than the gap.
+  # `die`: update-patterns is called mid-phase by the audit and implementation skills, and
+  # aborting the phase over a report-format gap would be worse than the gap.
   local extracted_count extraction_status
   extracted_count="$(pattern_extract_titles "$audit_type" "$audit_report_path" | grep -c '.' || true)"
   extracted_count="$(printf '%s' "${extracted_count:-0}" | tr -d '[:space:]')"
