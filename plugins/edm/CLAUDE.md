@@ -1442,10 +1442,61 @@ longer exists. After modifying any plugin component:
 
 1. `claude plugin validate plugins/edm/` -- schema and frontmatter check
 2. Test in a sandbox: `claude --plugin-dir ./plugins/edm`
-3. Run `/reload-plugins` to pick up changes without restarting
+3. Run `/reload-plugins` to pick up changes without restarting -- but see "Plugin distribution:
+   three locations and the push-to-observe constraint" immediately below before trusting this on
+   an unpushed branch
 4. Verify agents appear in `/agents`, skills in `/help`
 5. Run `bash plugins/edm/bin/tests/run-all.sh` before pushing -- the full smoke suite, and the
    fastest way to catch a regression before opening an MR.
+
+### Plugin distribution: three locations and the push-to-observe constraint (EDMV4-T56)
+
+Step 3 above (`/reload-plugins`) and `/plugin update` each read a different on-disk copy of this
+plugin, and **neither one is the working tree** steps 1-5 above operate on. This is worth stating
+plainly because it has already cost real debugging time once: a defect was fixed in
+`bin/edm-state` on this initiative's branch, committed, and the running session kept exhibiting
+it. `/plugin update` answered "edm is already at the latest version" while the corrected code sat,
+committed, in the very working tree the session was editing.
+
+Three separate locations are in play:
+
+| Location | Path | Read by |
+|---|---|---|
+| Working tree | this repository (`plugins/edm/`) | nothing at runtime |
+| Marketplace clone | `~/.claude/plugins/marketplaces/stg-marketplace` | `/plugin update` |
+| Unpacked cache | `~/.claude/plugins/cache/stg-marketplace/edm/<version>/` | `/reload-plugins` |
+
+`<version>` above is a directory per installed version, not a specific number to pin -- read the
+"Unpacked cache" path as a pattern, not a frozen literal.
+
+The marketplace clone is a git clone of `https://gitlab.com/scripps/public/marketplace.git`,
+confirmed by running the command directly against the clone rather than assuming it, and
+repeatable the same way by any later reader:
+
+```
+git -C ~/.claude/plugins/marketplaces/stg-marketplace remote get-url origin
+```
+
+It is not a symlink to this working tree and not any local path. **Neither `/plugin update` nor
+`/reload-plugins` reads the working tree at any point.** A working-tree change therefore reaches
+the running session only after it is committed AND pushed to that remote -- an author on an
+unpushed branch has no refresh path at all. The failure mode is silent and actively misleading:
+`/plugin update`'s "already at the latest version" is true of the remote and false of the change
+just made, so the natural reading -- "my fix is live" -- is exactly wrong, and the next stretch of
+work goes into debugging code that was never loaded.
+
+**While developing against an unpushed branch, do not rely on either refresh command.** Invoke
+this plugin's own scripts by explicit repo-relative path instead of a bare name on PATH -- `bash
+plugins/edm/bin/edm-state ...`, `bash plugins/edm/bin/edm-lint-artifacts --all`, and so on -- so
+the command under test runs the code just changed, not whatever last reached the marketplace
+clone by a push.
+
+This section is documentation and diagnosability only; it changes nothing about how plugin loading
+works. It sits beside `decisions.md` D37's record of the same underlying hazard seen from its
+other side: D37 tracks two facts about this plugin (its version number, its lens count) that went
+stale in the repository root `CLAUDE.md` precisely because the marketplace clone and this working
+tree can silently disagree -- this section names that gap directly, once, rather than leaving each
+future instance of it to be rediscovered fact by fact.
 
 **`EDM_RUN_ALL_*` and `EDM_EVAL_*` knob families (G30/CA-275).** Two small families of
 environment-variable overrides exist for the test/eval tooling itself, distinct from the
