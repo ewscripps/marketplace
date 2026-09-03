@@ -2336,7 +2336,15 @@ T39_APPLICABLE_MEAN="$(jq -r '
   ([.categories[] | select(.applicable) | .score_0_10 | tonumber] | add) / ([.categories[] | select(.applicable)] | length)
 ' "$T39_JSON")"
 T39_SCORE="$(jq -r '.score' "$T39_JSON")"
-T39_MEAN_MATCHES="$(jq -n --argjson a "$T39_APPLICABLE_MEAN" --argjson b "$T39_SCORE" '(($a - $b) | fabs) < 0.05')"
+# Wave-2 merge fix: this compared |mean - score| < 0.05, a tolerance exactly equal to the
+# rounding granularity the script uses (fmt1, one decimal). On any exact-half mean the test is
+# 0.05 < 0.05 -> false, so a CORRECTLY rounded score fails. It surfaced the moment EDMV4-T11
+# merged and moved a category score onto the boundary: true mean 9.25, reported "9.3", assertion
+# red. Compare against the same fmt1 rounding the script applies -- exact, not tolerance-based,
+# and immune to wherever the live repo's score happens to land.
+T39_MEAN_MATCHES="$(jq -n --argjson a "$T39_APPLICABLE_MEAN" --argjson b "$T39_SCORE" '
+  def fmt1: (. * 10 | round) as $t | ($t / 10);
+  ($a | fmt1) == ($b | fmt1)')"
 check "EDMV4-T39 AC3 -- overall score is the mean of only the applicable categories' scores (${T39_APPLICABLE_COUNT} applicable)" \
   "true" "$T39_MEAN_MATCHES"
 
