@@ -1705,20 +1705,23 @@ unset _cond_lens_id
 # gates audit-converged, which gates archive; a non-deterministic input to a convergence gate is
 # not acceptable.
 #
-# _l13_applies <tracked-files-newline-list> -- returns 0 (true: L13 APPLIES, i.e. is NOT N/A) if
-# the tracked file set carries a typed-stack marker; returns 1 (L13 is N/A -- untyped stack)
-# otherwise. Every predicate below is a pure filesystem check over TRACKED files only (git
-# ls-files), so an untracked scratch marker can never flip a convergence-gating answer, and every
-# check is guarded inside an `if` so a non-matching grep never trips `set -e` (EDMV4 defect class
-# 1). L13 APPLIES when the tracked set includes at least one of: tsconfig.json; any *.kt or *.kts
-# file; any *.swift file; Cargo.toml; go.mod; any *.java file; any *.scala file; any *.hs file; or
-# pyproject.toml TOGETHER WITH a typed-checker configuration (a [tool.mypy] or [tool.pyright]
-# table inside pyproject.toml, or a sibling mypy.ini or pyrightconfig.json file) -- a bare
-# pyproject.toml alone is NOT sufficient, since an untyped Python project has one too (EDMV4-T24
-# AC2). This marker list lives in exactly this one place; it is not restated in
-# skills/code-audit/SKILL.md or agents/edm-audit-type-design.md (AC3).
+# _l13_applies <tracked-files-newline-list> <project-root> -- returns 0 (true: L13 APPLIES, i.e.
+# is NOT N/A) if the tracked file set carries a typed-stack marker; returns 1 (L13 is N/A --
+# untyped stack) otherwise. Every predicate below is a pure filesystem check over TRACKED files
+# only (git ls-files), so an untracked scratch marker can never flip a convergence-gating answer,
+# and every check is guarded inside an `if` so a non-matching grep never trips `set -e` (EDMV4
+# defect class 1). L13 APPLIES when the tracked set includes at least one of: tsconfig.json; any
+# *.kt or *.kts file; any *.swift file; Cargo.toml; go.mod; any *.java file; any *.scala file; any
+# *.hs file; or pyproject.toml TOGETHER WITH a typed-checker configuration (a [tool.mypy] or
+# [tool.pyright] table inside pyproject.toml, or a sibling mypy.ini or pyrightconfig.json file) --
+# a bare pyproject.toml alone is NOT sufficient, since an untyped Python project has one too
+# (EDMV4-T24 AC2). This marker list lives in exactly this one place; it is not restated in
+# skills/code-audit/SKILL.md or agents/edm-audit-type-design.md (AC3). <project-root> is the
+# resolved repository root (never the caller's cwd, wave-3 QC P1 fix): the pyproject.toml content
+# probe reads "${project-root}/pyproject.toml", never the bare cwd-relative filename, so an
+# invocation from a subdirectory reads the same file an invocation from the root would.
 _l13_applies() {
-  local files="$1"
+  local files="$1" proj_root="$2"
   if printf '%s\n' "$files" | grep -qx 'tsconfig.json'; then return 0; fi
   if printf '%s\n' "$files" | grep -q '\.kts\{0,1\}$'; then return 0; fi
   if printf '%s\n' "$files" | grep -q '\.swift$'; then return 0; fi
@@ -1728,7 +1731,7 @@ _l13_applies() {
   if printf '%s\n' "$files" | grep -q '\.scala$'; then return 0; fi
   if printf '%s\n' "$files" | grep -q '\.hs$'; then return 0; fi
   if printf '%s\n' "$files" | grep -qx 'pyproject.toml'; then
-    if grep -q '^\[tool\.\(mypy\|pyright\)\]' pyproject.toml 2>/dev/null; then return 0; fi
+    if grep -q '^\[tool\.\(mypy\|pyright\)\]' "${proj_root}/pyproject.toml" 2>/dev/null; then return 0; fi
     if printf '%s\n' "$files" | grep -qx 'mypy.ini'; then return 0; fi
     if printf '%s\n' "$files" | grep -qx 'pyrightconfig.json'; then return 0; fi
   fi
@@ -1742,16 +1745,27 @@ _l13_applies() {
 # property of the repository's tracked-file set, not of any one initiative's state, so it is
 # deterministic across initiatives too (EDMV4-T24 AC4: two runs against the same tree produce
 # byte-identical output). Always exits 0 -- a query, not a validation gate (AC1).
+#
+# Wave-3 QC P1 fix: this used to call bare `git ls-files` and open a cwd-relative
+# `pyproject.toml`, both of which are scoped to the CALLER'S CWD rather than the repository root
+# -- a `/edm:code-audit` invoked from a subdirectory enumerated only the subtree below it and
+# silently reported L13 N/A on a typed codebase whose typed-stack marker lived above that cwd.
+# Both the tracked-file listing and the pyproject.toml probe are now anchored to the resolved
+# project root, via the same CLAUDE_PROJECT_DIR -> git-toplevel -> cwd idiom
+# `_resolve_permcheck_project_root` (CA-448) already applies for permission-rule scanning, so this
+# subcommand's answer is invariant to the caller's working directory.
 cmd_detect_conditional_lenses() {
   [[ $# -le 1 ]] || die "usage: edm-state detect-conditional-lenses [<PREFIX>]"
+  local _dcl_proj_root
+  _dcl_proj_root="$(_resolve_permcheck_project_root)"
   local tracked
-  tracked="$(git ls-files 2>/dev/null || true)"
+  tracked="$(git -C "$_dcl_proj_root" ls-files 2>/dev/null || true)"
   local na_list="" _lens
   # shellcheck disable=SC2086 # deliberate word-splitting; bash 3.2 has no arrays-as-constants
   for _lens in $CONDITIONAL_LENS_IDS; do
     case "$_lens" in
       L13)
-        if ! _l13_applies "$tracked"; then
+        if ! _l13_applies "$tracked" "$_dcl_proj_root"; then
           na_list="${na_list:+${na_list},}${_lens}"
         fi
         ;;
