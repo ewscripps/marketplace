@@ -5305,6 +5305,371 @@ fi
 rm -rf "$T51_TMP"
 
 echo
+# =================================================================================================
+# EDMV4-T52: Verify ASCII-only artifacts by a manual --path sweep plus an explicit byte scan
+# =================================================================================================
+# Own banded section, appended last (after EDMV4-T28's own append above), so a concurrent agent's
+# own append to this file does not interleave with it. GATEGUARD/DATADIR_LIB/EDM_STOP_GATE/TMP are
+# already set by the EDMV4-T11/T12/T46 sections above; t14_fresh_marker_env, t14_run and
+# t46_isolate_and_run are already defined by their own sections above and are reused here unchanged.
+#
+# Coverage assignment (AC4) -- which mechanism owns which new file this initiative adds, so no
+# file is asserted by both and none is asserted by neither:
+#   AC1's --path sweep (collect_md_files, `.md` only) owns: the three new lens agent prompts
+#     (agents/edm-audit-silent-failures.md, edm-audit-type-design.md, edm-audit-behavioral-tests.md),
+#     every edited SKILL.md, and every edited CLAUDE.md.
+#   AC2's byte scan (this section) owns: the four new bin/ scripts (edm-gateguard, edm-hookify,
+#     edm-stop-gate, edm-bash-gate), the shared _edm-datadir-lib.sh, and the two JSON config files
+#     (hooks/hooks.json, monitors/monitors.json) -- collect_md_files's `-name '*.md'` filter never
+#     collects any of these six, in any mode, --path included (CLAUDE.md's "Artifact content
+#     conventions" now documents this as a standing, second gap on top of the reach gap AC1 closes).
+echo "=== EDMV4-T52: ASCII-only artifacts -- manual --path sweep plus explicit byte scan ==="
+echo
+
+# ---- AC2/AC3 shared scanner. Mirrors edm-lint-artifacts' own PCRE-vs-fallback split (its
+# argument-parsing section) rather than assuming -P is available: BSD grep on macOS has no -P at
+# all, and a bare `grep -nP` there errors out -- which, captured under `|| true`, reads as a false
+# "clean" scan rather than a real zero-count. LC_ALL=C on both branches (Technical Notes: a UTF-8
+# locale can make grep interpret the byte range differently across BSD and GNU). ------------------
+T52_HAS_PCRE=0
+{ echo "" | grep -qP '' 2>/dev/null && T52_HAS_PCRE=1; } || true
+
+# t52_ascii_scan <file...> -- prints "<file>:<line>:<content>" for every line in every <file>
+# carrying at least one byte outside 0x00-0x7F; prints nothing if every file is clean.
+t52_ascii_scan() {
+  local f hits
+  for f in "$@"; do
+    [[ -f "$f" ]] || continue
+    if [[ "$T52_HAS_PCRE" -eq 1 ]]; then
+      hits="$(LC_ALL=C grep -nP '[^\x00-\x7F]' "$f" 2>/dev/null || true)"
+    else
+      hits="$(LC_ALL=C grep -nv '^[[:print:][:space:]]*$' "$f" 2>/dev/null || true)"
+    fi
+    [[ -n "$hits" ]] && printf '%s\n' "$hits" | sed "s#^#${f}:#"
+  done
+}
+
+# ---- AC2: file set derived LIVE (find plugins/edm/bin -type f), so a script added after this
+# ticket lands is covered automatically without a second edit here -- the same anti-hardcoding
+# property EDMV4-T50 AC1 already requires of its own sibling sweep. bin/tests/ is included by
+# design (AC2's own text): the smoke suites themselves are exactly the kind of extensionless-or-
+# not-`.md` file collect_md_files would otherwise never reach.
+#
+# One exclusion, recorded with its reason rather than silently applied: bin/tests/fixtures/ is
+# EXCLUDED from this live scan. That tree is edm-lint-artifacts' own test corpus -- it exists
+# specifically to prove the class-2 (unicode) checker fires and correctly SKIPS fenced code
+# blocks, so at least one fixture there (mermaid/valid/v12-indented-fence.md) legitimately embeds
+# a real non-ASCII byte inside a code fence on purpose. `-not -path` is applied against
+# ${PLUGIN_DIR} directly, which is already a `cd ... && pwd`-resolved absolute path (no `..`
+# component for a substring exclusion to be fooled by), per this initiative's own recorded
+# self-matching trap about normalizing a path root before a path-based exclusion. -----------------
+T52_BIN_FILES=()
+while IFS= read -r -d "" _t52_f; do
+  T52_BIN_FILES+=("$_t52_f")
+done < <(find "${PLUGIN_DIR}/bin" -type f -not -path "${PLUGIN_DIR}/bin/tests/fixtures/*" -print0 2>/dev/null)
+
+T52_SCAN_TARGETS=("${T52_BIN_FILES[@]}" "${PLUGIN_DIR}/hooks/hooks.json" "${PLUGIN_DIR}/monitors/monitors.json")
+
+T52_AC2_HITS="$(t52_ascii_scan "${T52_SCAN_TARGETS[@]}" || true)"
+if [[ -z "$T52_AC2_HITS" ]]; then
+  pass "EDMV4-T52 AC2 -- byte scan over ${#T52_SCAN_TARGETS[@]} files (live plugins/edm/bin/ set, bin/tests/ included, plus hooks.json/monitors.json) finds zero non-ASCII bytes"
+else
+  fail "EDMV4-T52 AC2 -- non-ASCII byte(s) found: ${T52_AC2_HITS}"
+fi
+
+# ---- AC3: positive control. A scratch file OUTSIDE plugins/edm/bin/ (so it can never become a
+# real AC2 finding) carries one real non-ASCII byte, assembled at runtime via a printf hex escape
+# -- the needle is never a literal non-ASCII byte in this suite's own source, per this
+# initiative's own recorded self-matching trap (docs/audit-patterns/code-audit.md: "A verification
+# scan matches the prose that describes the pattern it hunts"). -----------------------------------
+harness_scratch_dir T52_SCRATCH
+T52_CONTROL_FILE="${T52_SCRATCH}/nonascii-control.txt"
+printf 'safe line one\nline with a byte: \xc3\xa9 end\nsafe line three\n' > "$T52_CONTROL_FILE"
+T52_AC3_HITS="$(t52_ascii_scan "$T52_CONTROL_FILE" || true)"
+if [[ -n "$T52_AC3_HITS" ]]; then
+  pass "EDMV4-T52 AC3 -- positive control: a scratch file carrying one real non-ASCII byte IS detected, so the AC2 zero-count above is not vacuous"
+else
+  fail "EDMV4-T52 AC3 -- positive control FAILED: a real non-ASCII byte was not detected, so AC2's zero-count proves nothing"
+fi
+
+# ---- AC1: the manual `--path` sweep over the plugin's whole source tree (Definition of Done item
+# 5 -- run by hand and recorded as a regression check here too, mirroring EDMV4-T28's own
+# `--path agents/` precedent above). Two categories are excluded from the zero-count, each named
+# with its own reason rather than silently filtered:
+#   plugins/edm/CHANGELOG.md -- historical entries predate the ASCII convention and are never
+#     edited (project convention; normalizing history is explicitly out of this ticket's scope).
+#   plugins/edm/bin/tests/fixtures/** -- the mermaid-semicolon NEGATIVE-test corpus, deliberately
+#     invalid by design (it exists to prove edm-lint-artifacts' own class-4 checker fires); a clean
+#     fixture tree would mean that checker has nothing left to detect.
+# Every other file under plugins/edm/ -- skills/, agents/, docs/, evals/, this file, README.md, and
+# every other .md file --path mode collects under bin/ -- must be clean. ---------------------------
+T52_AC1_OUT=""
+T52_AC1_RC=0
+T52_AC1_OUT="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "$PLUGIN_DIR" 2>&1)" || T52_AC1_RC=$?
+T52_AC1_REAL_HITS="$(printf '%s\n' "$T52_AC1_OUT" \
+  | grep -v "^${PLUGIN_DIR}/CHANGELOG.md:" \
+  | grep -v "^${PLUGIN_DIR}/bin/tests/fixtures/" \
+  | grep -v "^edm-lint-artifacts: " || true)"
+if [[ -z "$T52_AC1_REAL_HITS" ]]; then
+  pass "EDMV4-T52 AC1 -- edm-lint-artifacts --path plugins/edm/ is clean outside the two recorded exclusions (CHANGELOG.md history, bin/tests/fixtures/ negative corpus)"
+else
+  fail "EDMV4-T52 AC1 -- unexpected violation(s) outside the recorded exclusions: ${T52_AC1_REAL_HITS}"
+fi
+
+# ---- AC5/AC9: edm-lint-artifacts EDMV4 (prefix mode, the real repository's own initiative
+# directory) reports zero violations across every artifact this initiative writes, including every
+# Mermaid diagram it added or edited (class 4, mermaid-semicolon, is one of the five classes this
+# same invocation runs). -----------------------------------------------------------------------
+T52_AC5_OUT=""
+T52_AC5_RC=0
+T52_AC5_OUT="$(EDM_SRD_ROOT="${_HARNESS_REPO_ROOT}/SRD" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+  bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" EDMV4 2>&1)" || T52_AC5_RC=$?
+if [[ "$T52_AC5_RC" -eq 0 ]]; then
+  pass "EDMV4-T52 AC5/AC9 -- edm-lint-artifacts EDMV4 reports zero violations across the initiative's own artifacts (mermaid-semicolon class included)"
+else
+  fail "EDMV4-T52 AC5/AC9 -- edm-lint-artifacts EDMV4 reported violations (rc=${T52_AC5_RC}): ${T52_AC5_OUT}"
+fi
+
+# ---- AC8: edm-check-vocabulary exits 0 over its full scan set (skills/, agents/, docs/,
+# hooks/hooks.json, monitors/monitors.json, CLAUDE.md, README.md, bin/). ---------------------------
+T52_AC8_RC=0
+T52_AC8_OUT="$(bash "${PLUGIN_DIR}/bin/edm-check-vocabulary" 2>&1)" || T52_AC8_RC=$?
+[[ "$T52_AC8_RC" -eq 0 ]] && pass "EDMV4-T52 AC8 -- edm-check-vocabulary exits 0 over its full scan set" \
+  || fail "EDMV4-T52 AC8 -- edm-check-vocabulary exited ${T52_AC8_RC}: ${T52_AC8_OUT}"
+
+# ---- AC7: drive a denial through each of the three emit points on content containing a real
+# non-ASCII byte, asserting (a) the emitted output is pure ASCII (the same t52_ascii_scan as AC2)
+# and (b) it still parses as JSON under jq -e . where the emit point in question actually produces
+# JSON at all. ---------------------------------------------------------------------------------
+
+# AC7a: edm-gateguard's emit_decision -- a first-touch Edit on a path containing a real non-ASCII
+# byte (assembled via printf hex escape, never a literal byte in this suite's own source).
+T52_AC7A_PROJ="" T52_AC7A_DATA=""
+t14_fresh_marker_env T52_AC7A_PROJ T52_AC7A_DATA
+T52_AC7A_PATH="$(printf 'src/caf\xc3\xa9.js')"
+T52_AC7A_PAYLOAD="$(jq -cn --arg p "$T52_AC7A_PATH" '{tool_name:"Edit", tool_input:{file_path:$p}}')"
+T52_AC7A_RC=0
+T52_AC7A_OUT="$(printf '%s' "$T52_AC7A_PAYLOAD" | CLAUDE_PROJECT_DIR="$T52_AC7A_PROJ" CLAUDE_PLUGIN_DATA="$T52_AC7A_DATA" \
+  EDM_GATEGUARD_DENY_MODE=json bash "$GATEGUARD" 2>"${TMP}/t52-ac7a.stderr")" || T52_AC7A_RC=$?
+printf '%s' "$T52_AC7A_OUT" > "${T52_SCRATCH}/ac7a-gateguard.out"
+T52_AC7A_ASCII_HITS="$(t52_ascii_scan "${T52_SCRATCH}/ac7a-gateguard.out" || true)"
+if [[ -z "$T52_AC7A_ASCII_HITS" ]]; then
+  pass "EDMV4-T52 AC7 -- edm-gateguard's emit_decision: denial output for a non-ASCII file path is pure ASCII"
+else
+  fail "EDMV4-T52 AC7 -- edm-gateguard emitted a non-ASCII byte: ${T52_AC7A_ASCII_HITS}"
+fi
+if printf '%s' "$T52_AC7A_OUT" | jq -e . >/dev/null 2>&1; then
+  pass "EDMV4-T52 AC7 -- edm-gateguard's sanitized denial output still parses as JSON under jq -e ."
+else
+  fail "EDMV4-T52 AC7 -- edm-gateguard's denial output does not parse as JSON: ${T52_AC7A_OUT}"
+fi
+
+# AC7b: edm-hookify's matched-rule emission -- exercised END-TO-END through edm-gateguard, since
+# edm-hookify's own block line becomes edm-gateguard's `reason` (its allow-path wiring). A rule
+# author's own non-ASCII message text is the ONLY non-ASCII byte anywhere in this fixture -- the
+# target file path stays plain ASCII, isolating this emit point from AC7a's.
+harness_scratch_dir T52_AC7B_TMP
+mkdir -p "${T52_AC7B_TMP}/proj/.claude/edm-hookify" "${T52_AC7B_TMP}/data/run"
+T52_AC7B_MSG="$(printf 'blocked: rule message with a byte \xc3\xa9 embedded')"
+jq -n --arg msg "$T52_AC7B_MSG" '{
+  name: "t52-nonascii-rule", enabled: true, event: "file", action: "block",
+  conditions: [{field: "file_path", operator: "contains", pattern: "safe"}],
+  message: $msg
+}' > "${T52_AC7B_TMP}/proj/.claude/edm-hookify/rule.json"
+T52_AC7B_KEY="$(CLAUDE_PROJECT_DIR="${T52_AC7B_TMP}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+printf 'T52PFX\t%s\t2026-09-02T00:00:00Z\n' "${T52_AC7B_TMP}/proj" > "${T52_AC7B_TMP}/data/run/${T52_AC7B_KEY}.phase6"
+# Pre-seed the path already-checked so gg_maybe_deny falls through silently and the allow-path
+# hookify evaluation (the only place this rule can fire) is actually reached -- the same technique
+# EDMV4-T14 AC5 uses to reach past the fact-forcing denial.
+printf 'safe.js\n' > "${T52_AC7B_TMP}/data/run/${T52_AC7B_KEY}.checked"
+
+T52_AC7B_RC=0
+T52_AC7B_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"safe.js"}}' | \
+  CLAUDE_PROJECT_DIR="${T52_AC7B_TMP}/proj" CLAUDE_PLUGIN_DATA="${T52_AC7B_TMP}/data" \
+  EDM_GATEGUARD_DENY_MODE=json PATH="${PLUGIN_DIR}/bin:${PATH}" bash "$GATEGUARD" 2>"${TMP}/t52-ac7b.stderr")" || T52_AC7B_RC=$?
+printf '%s' "$T52_AC7B_OUT" > "${T52_SCRATCH}/ac7b-hookify.out"
+T52_AC7B_ASCII_HITS="$(t52_ascii_scan "${T52_SCRATCH}/ac7b-hookify.out" || true)"
+check "EDMV4-T52 AC7 -- the fixture genuinely matched the hookify rule (a real denial, not an empty allow)" \
+  '"permissionDecision":"deny"' "$T52_AC7B_OUT"
+if [[ -z "$T52_AC7B_ASCII_HITS" ]]; then
+  pass "EDMV4-T52 AC7 -- edm-hookify's matched-rule message (a rule-author-supplied non-ASCII byte) reaches edm-gateguard's stdout as pure ASCII"
+else
+  fail "EDMV4-T52 AC7 -- edm-hookify's rule message leaked a non-ASCII byte into edm-gateguard's stdout: ${T52_AC7B_ASCII_HITS}"
+fi
+if printf '%s' "$T52_AC7B_OUT" | jq -e . >/dev/null 2>&1; then
+  pass "EDMV4-T52 AC7 -- the sanitized output carrying edm-hookify's rule message still parses as JSON under jq -e ."
+else
+  fail "EDMV4-T52 AC7 -- output carrying edm-hookify's rule message does not parse as JSON: ${T52_AC7B_OUT}"
+fi
+
+# AC7c: edm-stop-gate's blocking-anomaly emission -- an OPEN_PARTIALS anomaly whose ticket-id key
+# carries a real non-ASCII byte (edm-state's partial_verdict_map keys are free-form text, not
+# ASCII-restricted). Only half (a) of AC7 applies to this consumer: edm-stop-gate's own documented
+# contract is stderr-only text, NEVER JSON ("a raw JSON echo to stdout is the documented failure
+# mode for a Stop hook" -- its own EDM-HELP block) -- there is no JSON control channel at this emit
+# point for (b) to apply to, which is recorded explicitly below rather than silently skipped.
+t52_ac7c_case() {
+  edm-state init T52NA >/dev/null
+  edm-state set T52NA current_phase 1 >/dev/null
+  edm-state set T52NA estimated_size Small >/dev/null
+  edm-state record-partial-verdict T52NA T52NA-T01 PARTIAL "needs runtime check" >/dev/null
+  local state; state="$(edm-state resolve-dir T52NA)/.edm-state.json"
+  # Rename the ticket-id key to embed a real non-ASCII byte via jq's own \u00e9 escape sequence
+  # (valid UTF-8, never a literal non-ASCII byte in this suite's own source -- the exact
+  # self-matching trap this ticket's own patterns doc warns against) -- a direct state-file patch
+  # (matching this suite's own T46 AC4 precedent), bypassing edm-state's CLI since
+  # record-partial-verdict's ticket argument is not the property under test here.
+  jq '.partial_verdict_map = (.partial_verdict_map
+        | to_entries | map(.key = "T52NA-T\u00e901") | from_entries)' \
+    "$state" > "${state}.tmp" && mv "${state}.tmp" "$state"
+
+  local out rc=0
+  out="$(edm-stop-gate 2>&1)" || rc=$?
+  printf '%s' "$out" > "${TMP}/t52-ac7c.out"
+  local ascii_hits; ascii_hits="$(t52_ascii_scan "${TMP}/t52-ac7c.out" || true)"
+  [[ "$rc" -eq 2 ]] && pass "EDMV4-T52 AC7 -- edm-stop-gate blocks on the non-ASCII OPEN_PARTIALS anomaly (exit 2)" \
+    || fail "EDMV4-T52 AC7 -- expected exit 2 for the non-ASCII OPEN_PARTIALS anomaly, got ${rc}"
+  check "EDMV4-T52 AC7 -- the fixture genuinely carries the anomaly this test targets" "OPEN_PARTIALS" "$out"
+  if [[ -z "$ascii_hits" ]]; then
+    pass "EDMV4-T52 AC7 -- edm-stop-gate's blocking-anomaly text (a non-ASCII ticket key from edm-state validate) reaches stderr as pure ASCII"
+  else
+    fail "EDMV4-T52 AC7 -- edm-stop-gate leaked a non-ASCII byte into its blocking output: ${ascii_hits}"
+  fi
+}
+t46_isolate_and_run t52_ac7c_case
+pass "EDMV4-T52 AC7 -- (b) recorded as Not Applicable to edm-stop-gate: its own EDM-HELP block documents a stderr-only, never-JSON contract, so there is no JSON control channel at this emit point for (b) to protect"
+
+# ---- AC6 (single-site property): each script's sanitization is not merely present, it is the
+# ONLY path decision/message content can reach output through -- verified structurally, with a
+# positive control proving a later-added bypass would be caught (a bare "the sanitizer exists"
+# check would pass against a broken one that a second, unsanitized emit call quietly bypasses).
+
+# t52_ordering_ok <file> <func_name> <sanitize_marker> <emit_marker> -- prints nothing and returns
+# 0 iff every line inside <func_name>'s body (extracted between its opening and the next bare
+# "}") matching <emit_marker> occurs strictly AFTER the LAST line matching <sanitize_marker>;
+# otherwise prints one diagnostic line and returns 1 (including when the sanitizer is absent
+# entirely). Fixed-string matching throughout (grep -F) -- no regex-metacharacter escaping risk
+# in either marker argument.
+t52_ordering_ok() {
+  local file="$1" func="$2" sanitize_marker="$3" emit_marker="$4"
+  local body sanitize_ln emit_lns ln bad=0
+  body="$(_wave7_extract_between "$file" "^${func}\\(\\)" '^}$')"
+  sanitize_ln="$(printf '%s\n' "$body" | grep -nF -- "$sanitize_marker" | tail -1 | cut -d: -f1)"
+  if [[ -z "$sanitize_ln" ]]; then
+    echo "sanitizer marker not found in ${func}"
+    return 1
+  fi
+  # The sanitizer line itself legitimately READS the pre-sanitize value as $sanitize_marker's own
+  # input (e.g. `reason="$(printf '%s' "$reason" | ...)"`), which also matches <emit_marker> --
+  # excluded here by line number so that read is never counted as a violating emission of its own
+  # output.
+  emit_lns="$(printf '%s\n' "$body" | grep -nF -- "$emit_marker" | cut -d: -f1 | grep -vxF -- "$sanitize_ln" || true)"
+  while IFS= read -r ln; do
+    [[ -z "$ln" ]] && continue
+    [[ "$ln" -gt "$sanitize_ln" ]] || bad=1
+  done <<< "$emit_lns"
+  [[ "$bad" -eq 0 ]] && return 0
+  echo "an emission at or before the sanitizer line (line ${sanitize_ln}) in ${func}"
+  return 1
+}
+
+# t52_raw_var_only_via_func <file> <func_name> <var...> -- prints nothing and implies the
+# single-site property holds when every quoted reference "$var" anywhere in <file> either (a)
+# appears on the same line as <func_name> (a call passing the raw value INTO the sanitizing
+# function) or (b) is a plain conditional test (`if [[ ... ]]`), never an emission. Prints the
+# offending line(s) otherwise.
+t52_raw_var_only_via_func() {
+  local file="$1" func="$2"
+  shift 2
+  local var pattern line
+  for var in "$@"; do
+    pattern='"$'"${var}"'"'
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      case "$line" in
+        *"$func"*) ;;
+        *"if [["*) ;;
+        *) printf '%s\n' "$line" ;;
+      esac
+    done < <(grep -nF -- "$pattern" "$file" 2>/dev/null || true)
+  done
+}
+
+# ---- edm-gateguard: emit_decision is the sole function (grep -c == 1), and every emission of
+# "$reason" inside it occurs strictly after the one sanitizer line. -------------------------------
+T52_GG_FUNC_COUNT="$(grep -c '^emit_decision() {' "$GATEGUARD" || true)"
+check "EDMV4-T52 AC6 -- edm-gateguard: emit_decision is defined exactly once" "1" "$T52_GG_FUNC_COUNT"
+
+T52_GG_ORDER_RC=0
+T52_GG_ORDER_MSG="$(t52_ordering_ok "$GATEGUARD" "emit_decision" "LC_ALL=C tr -c" '"$reason"')" || T52_GG_ORDER_RC=$?
+if [[ "$T52_GG_ORDER_RC" -eq 0 ]]; then
+  pass "EDMV4-T52 AC6 -- edm-gateguard: every emission of \$reason inside emit_decision occurs after the one sanitizer line (single-site property holds)"
+else
+  fail "EDMV4-T52 AC6 -- edm-gateguard: single-site property violated: ${T52_GG_ORDER_MSG}"
+fi
+
+# Positive control: a scratch copy with a second, unsanitized emission of the raw $reason injected
+# BEFORE the sanitizer line (simulating a later change that adds a bypass) must make the identical
+# ordering check fail -- proving the check is not permanently satisfied by construction.
+T52_GG_BYPASS="${T52_SCRATCH}/edm-gateguard-bypass"
+awk -v marker='local reason="${2:-}"' \
+  '{print; if (index($0, marker) > 0) print "  echo \"$reason\" >&2  # BYPASS-LEAK injected for EDMV4-T52 AC6 positive control"}' \
+  "$GATEGUARD" > "$T52_GG_BYPASS"
+if ! t52_ordering_ok "$T52_GG_BYPASS" "emit_decision" "LC_ALL=C tr -c" '"$reason"' >/dev/null; then
+  pass "EDMV4-T52 AC6 -- positive control: an injected second, unsanitized \$reason emission (before the sanitizer) IS detected"
+else
+  fail "EDMV4-T52 AC6 -- positive control FAILED: an injected bypass was not detected, so the single-site pass above proves nothing"
+fi
+
+# ---- edm-hookify: hookify_emit_match is the sole function, and the three raw fields it sanitizes
+# are never referenced anywhere else in the file except as arguments passed INTO it. -------------
+T52_HF_FUNC_COUNT="$(grep -c '^hookify_emit_match() {' "$EDM_HOOKIFY" || true)"
+check "EDMV4-T52 AC6 -- edm-hookify: hookify_emit_match is defined exactly once" "1" "$T52_HF_FUNC_COUNT"
+
+T52_HF_RAW_HITS="$(t52_raw_var_only_via_func "$EDM_HOOKIFY" "hookify_emit_match" _mname _maction _mmessage)"
+if [[ -z "$T52_HF_RAW_HITS" ]]; then
+  pass "EDMV4-T52 AC6 -- edm-hookify: the raw matched-rule fields are never referenced outside a call into hookify_emit_match (single-site property holds)"
+else
+  fail "EDMV4-T52 AC6 -- edm-hookify: single-site property violated -- raw field referenced outside hookify_emit_match: ${T52_HF_RAW_HITS}"
+fi
+
+# Positive control: a scratch copy with a rogue direct echo of $_mmessage (bypassing the function)
+# injected right after its own assignment must make the identical scan report a hit.
+T52_HF_BYPASS="${T52_SCRATCH}/edm-hookify-bypass"
+awk -v marker='_mmessage="${_mrest#*$'"'"'\\t'"'"'}"' \
+  '{print; if (index($0, marker) > 0) print "      echo \"$_mmessage\" >&2  # BYPASS-LEAK injected for EDMV4-T52 AC6 positive control"}' \
+  "$EDM_HOOKIFY" > "$T52_HF_BYPASS"
+T52_HF_BYPASS_HITS="$(t52_raw_var_only_via_func "$T52_HF_BYPASS" "hookify_emit_match" _mname _maction _mmessage)"
+if [[ -n "$T52_HF_BYPASS_HITS" ]]; then
+  pass "EDMV4-T52 AC6 -- positive control: an injected direct echo of \$_mmessage (bypassing hookify_emit_match) IS detected"
+else
+  fail "EDMV4-T52 AC6 -- positive control FAILED: an injected bypass was not detected, so the single-site pass above proves nothing"
+fi
+
+# ---- edm-stop-gate: stop_gate_emit_blocking is the sole function, and the two untrusted-text
+# variables it sanitizes are never referenced anywhere else except as call arguments. -------------
+T52_SG_FUNC_COUNT="$(grep -c '^stop_gate_emit_blocking() {' "$EDM_STOP_GATE" || true)"
+check "EDMV4-T52 AC6 -- edm-stop-gate: stop_gate_emit_blocking is defined exactly once" "1" "$T52_SG_FUNC_COUNT"
+
+T52_SG_RAW_HITS="$(t52_raw_var_only_via_func "$EDM_STOP_GATE" "stop_gate_emit_blocking" _blocking_text _hookify_out)"
+if [[ -z "$T52_SG_RAW_HITS" ]]; then
+  pass "EDMV4-T52 AC6 -- edm-stop-gate: the two untrusted-text variables are never referenced outside a call into stop_gate_emit_blocking (single-site property holds)"
+else
+  fail "EDMV4-T52 AC6 -- edm-stop-gate: single-site property violated -- variable referenced outside stop_gate_emit_blocking: ${T52_SG_RAW_HITS}"
+fi
+
+# Positive control: a scratch copy with a rogue direct echo of $_blocking_text (bypassing the
+# function) injected right after its own assignment must make the identical scan report a hit.
+T52_SG_BYPASS="${T52_SCRATCH}/edm-stop-gate-bypass"
+awk -v marker='_blocking_text="${_blocking_text}${_blocking_text:+$'"'"'\\n'"'"'}${_aline}"' \
+  '{print; if (index($0, marker) > 0) print "        echo \"$_blocking_text\" >&2  # BYPASS-LEAK injected for EDMV4-T52 AC6 positive control"}' \
+  "$EDM_STOP_GATE" > "$T52_SG_BYPASS"
+T52_SG_BYPASS_HITS="$(t52_raw_var_only_via_func "$T52_SG_BYPASS" "stop_gate_emit_blocking" _blocking_text _hookify_out)"
+if [[ -n "$T52_SG_BYPASS_HITS" ]]; then
+  pass "EDMV4-T52 AC6 -- positive control: an injected direct echo of \$_blocking_text (bypassing stop_gate_emit_blocking) IS detected"
+else
+  fail "EDMV4-T52 AC6 -- positive control FAILED: an injected bypass was not detected, so the single-site pass above proves nothing"
+fi
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

@@ -1173,9 +1173,24 @@ check, but its reach is narrower than the rule:
   `README.md`. Em dashes have in fact landed in `skills/` and `agents/` and survived there
   undetected, found only by hand -- the rule holds for the plugin's own prose, but nothing
   automatic is checking it.
+- **`collect_md_files` filters to `-name '*.md'`, so this is a second, independent gap on top of
+  the reach gap above -- present in every mode INCLUDING the manual `--path` sweep just below.**
+  A `.sh` file or an extensionless `bin/` helper is never collected, regardless of which directory
+  it lives under or which mode collects it. `edm-lint-artifacts --path plugins/edm/` therefore
+  cannot see `bin/edm-gateguard`, `bin/edm-hookify`, `bin/edm-stop-gate`, `bin/edm-bash-gate`,
+  `bin/_edm-datadir-lib.sh`, or any other non-`.md` file under `bin/` -- not because they are
+  out of scope for the ASCII rule, but because the collector's own file-type filter excludes
+  them. `bin/tests/wave8-smoke.sh` closes this half with a direct `LC_ALL=C` byte scan over
+  `find plugins/edm/bin -type f` (EDMV4-T52) instead of widening `collect_md_files` itself, which
+  would add a per-commit cost to a scanner every `git commit` already runs (see this ticket's own
+  "Out of Scope"). The `--path` sweep and the byte scan are deliberately two separate mechanisms
+  covering two disjoint file sets, not one mechanism with two modes -- do not assume a clean
+  `--path plugins/edm/` run says anything about `bin/`'s own scripts.
 
 To check a tree the automatic invocations miss, run `edm-lint-artifacts --path <dir>` by hand; it
-is read-only and calls no state resolution.
+is read-only and calls no state resolution. This sweep is **manual** -- no hook or CI step runs
+it -- so a later reader must not assume the commit-path hook's own prefix-mode scan already covers
+`plugins/edm/`'s own source tree just because a commit succeeded.
 
 **Hookify rule files (`.claude/edm-hookify/*.json`) are ASCII-only by the same rule above, and the
 gap in their automatic coverage is a stated fact, not an assumption of closure (EDMV4-T44).**
