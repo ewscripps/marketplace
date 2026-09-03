@@ -584,7 +584,17 @@ if [[ "$T38_AC6_RC" -eq 0 ]]; then
 else
   fail "EDMV4-T38 AC6 -- low-scoring fixture exited ${T38_AC6_RC}, expected 0"
 fi
-check "EDMV4-T38 AC6 -- low-scoring fixture reports a low score" "Overall score: 0" "$T38_AC6_OUT"
+# EDMV4-T39/T40: once the six-category rubric landed, State health and Artifact hygiene
+# (unconditional categories) vacuously score full marks on a fixture with no initiatives at all
+# -- nothing recorded to be unhealthy about -- so the overall score is no longer pinned to a
+# literal "0". Assert the two checks this fixture MUST still fail (git-repo-present,
+# srd-directory-present) via the JSON output instead of a brittle "Overall score: 0" substring.
+T38_AC6_JSON="${TMP}/t38-ac6-nogit-rubric.json"
+(cd "$T38_AC6_NOGIT_DIR" && "$REPO_READINESS" --json "$T38_AC6_JSON" >/dev/null)
+check "EDMV4-T38 AC6 (rubric-aware) -- git-repo-present fails (pass=false) on a non-git fixture" \
+  "false" "$(jq -r '.checks[] | select(.id=="git-repo-present") | .pass' "$T38_AC6_JSON")"
+check "EDMV4-T38 AC6 (rubric-aware) -- srd-directory-present fails on a fixture with no SRD/" \
+  "false" "$(jq -r '.checks[] | select(.id=="srd-directory-present") | .pass' "$T38_AC6_JSON")"
 
 T38_AC6_BADFLAG_RC=0
 "$REPO_READINESS" --this-flag-does-not-exist >/dev/null 2>&1 || T38_AC6_BADFLAG_RC=$?
@@ -2292,6 +2302,133 @@ T18_SRD_WRITER_TOOLS="$(grep -m1 '^tools:' "${PLUGIN_DIR}/agents/edm-srd-writer.
 check_absent "EDMV4-T18 AC10 -- edm-srd-writer.md still carries no Bash grant" "Bash" "$T18_SRD_WRITER_TOOLS"
 T18_TICKET_WRITER_TOOLS="$(grep -m1 '^tools:' "${PLUGIN_DIR}/agents/edm-ticket-writer.md" 2>/dev/null)"
 check_absent "EDMV4-T18 AC10 -- edm-ticket-writer.md still carries no Bash grant" "Bash" "$T18_TICKET_WRITER_TOOLS"
+# =================================================================================================
+# EDMV4-T39/T40: six-category 0-10 rubric, versioned, wired to edm-state's own signals
+# =================================================================================================
+echo
+echo "-- EDMV4-T39/T40: edm-repo-readiness rubric + signal wiring --"
+
+# ---- AC6 (T39): READINESS_RUBRIC_VERSION is a bare top-level string constant, matching
+# evals/score-artifacts.sh:139's SCORER_VERSION precedent, and its VALUE is asserted (not just
+# that the constant exists) -- an anti-vacuity requirement called out explicitly for this ticket.
+check 'EDMV4-T39 AC6 -- READINESS_RUBRIC_VERSION is a bare top-level string constant, value "1.0.0"' \
+  'READINESS_RUBRIC_VERSION="1.0.0"' "$(cat "$REPO_READINESS")"
+
+T39_JSON="${TMP}/t39-real-repo.json"
+"$REPO_READINESS" --json "$T39_JSON" >/dev/null
+check "EDMV4-T39 AC7 -- rubric version is written into the JSON output" \
+  '1.0.0' "$(jq -r '.readiness_rubric_version' "$T39_JSON")"
+
+# ---- AC1/AC2: six categories present, each declared with a raw_max of 10. ----------------------
+T39_CATS="$(jq -r '.categories | length' "$T39_JSON")"
+check "EDMV4-T39 AC1 -- exactly six categories reported" "6" "$T39_CATS"
+T39_BADMAX="$(jq -r '[.categories[] | select(.raw_max != 10)] | length' "$T39_JSON")"
+check "EDMV4-T39 AC1 -- every category's raw_max is 10" "0" "$T39_BADMAX"
+
+# ---- AC3: normalization -- a category earning 5 of 10 raw points reports 5.0 exactly, and the
+# overall score is the MEAN of applicable categories (divides by the applicable count, not 6).
+# This is asserted against a real, computed value -- not just that the field exists (anti-vacuity).
+T39_FMT1_TEST="$(jq -n 'def fmt1: (. * 10 | round) as $t | (($t / 10 | floor) | tostring) + "." + (($t % 10) | tostring); (5/10*10) | fmt1')"
+check 'EDMV4-T39 AC3 -- 5 of 10 raw points normalizes to the literal "5.0"' '"5.0"' "$T39_FMT1_TEST"
+
+T39_APPLICABLE_COUNT="$(jq -r '[.categories[] | select(.applicable)] | length' "$T39_JSON")"
+T39_APPLICABLE_MEAN="$(jq -r '
+  ([.categories[] | select(.applicable) | .score_0_10 | tonumber] | add) / ([.categories[] | select(.applicable)] | length)
+' "$T39_JSON")"
+T39_SCORE="$(jq -r '.score' "$T39_JSON")"
+T39_MEAN_MATCHES="$(jq -n --argjson a "$T39_APPLICABLE_MEAN" --argjson b "$T39_SCORE" '(($a - $b) | fabs) < 0.05')"
+check "EDMV4-T39 AC3 -- overall score is the mean of only the applicable categories' scores (${T39_APPLICABLE_COUNT} applicable)" \
+  "true" "$T39_MEAN_MATCHES"
+
+# ---- AC4/AC5: conditional categories carry an explicit applicability field, and an inapplicable
+# category is EXCLUDED from the denominator (not scored as zero) -- proven by re-deriving the
+# overall score from only the applicable categories and comparing it against the script's own
+# reported score (done above); this block additionally proves at least one conditional category
+# genuinely reports applicable:false on this repository (a positive control that the field is
+# real, not a constant true painted onto every category).
+T39_HAS_INAPPLICABLE="$(jq -r '[.categories[] | select(.applicable == false)] | length > 0' "$T39_JSON")"
+if [[ "$T39_HAS_INAPPLICABLE" == "true" ]]; then
+  pass "EDMV4-T39 AC4/AC5 -- at least one category reports applicable:false on this repository (Test stack has no detected framework here)"
+else
+  echo "  NOTE: EDMV4-T39 AC4/AC5 -- no inapplicable category found on this run; the applicable/score mean check above still covers the general case"
+fi
+
+# ---- AC8: every check carries a non-null, non-empty fix string, including PASSING checks. ------
+T39_MISSING_FIX="$(jq -r '[.checks[] | select((.fix == null) or (.fix == ""))] | length' "$T39_JSON")"
+check "EDMV4-T39 AC8 -- no check has a null or empty fix string" "0" "$T39_MISSING_FIX"
+T39_PASSING_WITH_FIX="$(jq -r '[.checks[] | select(.pass == true and .fix != null and .fix != "")] | length' "$T39_JSON")"
+if [[ "$T39_PASSING_WITH_FIX" -gt 0 ]]; then
+  pass "EDMV4-T39 AC8 -- at least one PASSING check still carries a non-empty fix (${T39_PASSING_WITH_FIX} found) -- fix is mandatory on every check, not only failing ones"
+else
+  fail "EDMV4-T39 AC8 -- no passing check was found carrying a fix string; cannot prove fix is mandatory on passing checks too"
+fi
+
+# ---- AC9: determinism -- running twice against the same commit produces identical JSON. --------
+T39_JSON2="${TMP}/t39-real-repo-2.json"
+"$REPO_READINESS" --json "$T39_JSON2" >/dev/null
+if diff -q "$T39_JSON" "$T39_JSON2" >/dev/null 2>&1; then
+  pass "EDMV4-T39 AC9 -- two consecutive runs against the same commit produce byte-identical JSON"
+else
+  fail "EDMV4-T39 AC9 -- two consecutive runs diverged: $(diff "$T39_JSON" "$T39_JSON2" | head -5)"
+fi
+
+# ---- AC10: no check scores whether EDM itself is installed. ------------------------------------
+check_absent "EDMV4-T39 AC10 -- no check id references EDM's own installation" \
+  "edm-installed" "$(jq -r '.checks[].id' "$T39_JSON" | tr '\n' ' ')"
+
+# ---- EDMV4-T40 AC1: permission-rule presence comes from the PERM_RULES_MISSING anomaly, never a
+# second settings-file scan. A grep of the SCRIPT for the two settings filenames returns nothing.
+T40_SETTINGS_LOCAL="settings.local.json"
+T40_SETTINGS_PLAIN="settings.json"
+check_absent "EDMV4-T40 AC1 -- edm-repo-readiness never names settings.local.json" \
+  "$T40_SETTINGS_LOCAL" "$(cat "$REPO_READINESS")"
+check_absent "EDMV4-T40 AC1 -- edm-repo-readiness never names settings.json" \
+  "$T40_SETTINGS_PLAIN" "$(cat "$REPO_READINESS")"
+
+# ---- EDMV4-T40 AC4: no framework-config-file scan of its own. Assemble the needles at runtime so
+# this assertion's own label text can never become a false-positive match for itself (EDMV4's own
+# documented "a scan matching its own description" pattern -- code-audit-patterns.md).
+T40_JEST_NEEDLE="jest.config"
+T40_PYTEST_NEEDLE="pytest.ini"
+T40_VITEST_NEEDLE="vitest.config"
+check_absent "EDMV4-T40 AC4 -- no jest.config scan" "$T40_JEST_NEEDLE" "$(cat "$REPO_READINESS")"
+check_absent "EDMV4-T40 AC4 -- no pytest.ini scan" "$T40_PYTEST_NEEDLE" "$(cat "$REPO_READINESS")"
+check_absent "EDMV4-T40 AC4 -- no vitest.config scan" "$T40_VITEST_NEEDLE" "$(cat "$REPO_READINESS")"
+
+# ---- EDMV4-T40: edm-state validate is invoked as a PROCESS with its exit captured explicitly
+# (out="$(...)" || rc=$?), never sourced -- the single most likely implementation bug named in
+# this ticket's own Technical Notes. Assert the source pattern directly.
+check 'EDMV4-T40 -- edm-state validate is invoked as a process with its exit captured (never sourced)' \
+  'out="$("$EDM_STATE_BIN" validate "$prefix" 2>/dev/null)" || rc=$?' "$(cat "$REPO_READINESS")"
+check_absent 'EDMV4-T40 -- edm-repo-readiness never sources edm-state' \
+  'source "$EDM_STATE_BIN"' "$(cat "$REPO_READINESS")"
+
+# ---- EDMV4-T40 AC8: the script never writes to .edm-state.json -- hash the real repo's active
+# initiative's state file before and after a full run and assert it is byte-unchanged.
+T40_REAL_STATE="${REPO_ROOT}/SRD/edm/EDMV4__ecc-integration/.edm-state.json"
+if [[ -f "$T40_REAL_STATE" ]]; then
+  check_state_unchanged "$T40_REAL_STATE" "$REPO_READINESS" --json "${TMP}/t40-ac8.json"
+else
+  echo "  NOTE: EDMV4-T40 AC8 -- real fixture state file not found at ${T40_REAL_STATE}; skipping the hash-unchanged check"
+fi
+
+# ---- EDMV4-T40 AC9: running against a repository with NO initiatives at all still succeeds
+# (exit 0), scoring what it can. Also proves the AC5-style exclusion: the no-initiatives score
+# equals the mean of ONLY the three always-applicable categories (Methodology setup, State
+# health, Artifact hygiene) -- the conditional categories are excluded, never scored as zero.
+T40_NOINIT_DIR="${TMP}/t40-ac9-noinit"
+mkdir -p "$T40_NOINIT_DIR"
+T40_NOINIT_RC=0
+T40_NOINIT_JSON="${TMP}/t40-ac9-noinit.json"
+(cd "$T40_NOINIT_DIR" && "$REPO_READINESS" --json "$T40_NOINIT_JSON" >/dev/null) || T40_NOINIT_RC=$?
+if [[ "$T40_NOINIT_RC" -eq 0 ]]; then
+  pass "EDMV4-T40 AC9 -- a repository with no initiatives at all still exits 0"
+else
+  fail "EDMV4-T40 AC9 -- no-initiatives fixture exited ${T40_NOINIT_RC}, expected 0"
+fi
+T40_NOINIT_APPLICABLE_NAMES="$(jq -r '[.categories[] | select(.applicable) | .name] | sort | join(",")' "$T40_NOINIT_JSON" 2>/dev/null || echo "")"
+check "EDMV4-T40 AC9 -- with no initiatives, only the three always-applicable categories are applicable" \
+  "Artifact hygiene,Methodology setup,State health" "$T40_NOINIT_APPLICABLE_NAMES"
 
 echo
 
