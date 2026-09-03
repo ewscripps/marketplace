@@ -109,7 +109,7 @@ if [[ -n "$PREFIX" ]]; then
   "$EDM_STATE_BIN" get "$PREFIX" >/dev/null 2>&1 || die "prefix not found or unresolvable: $PREFIX"
 fi
 
-# EDMV4-T39 AC6: bare top-level version constant, following evals/score-artifacts.sh:139's
+# EDMV4-T39 AC6: bare top-level version constant, following evals/score-artifacts.sh's
 # SCORER_VERSION precedent exactly. No new versioning scheme is invented.
 READINESS_RUBRIC_VERSION="1.0.0"
 

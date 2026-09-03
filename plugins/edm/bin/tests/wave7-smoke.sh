@@ -1030,12 +1030,17 @@ echo "T61 AC5 -- every dispatch entry that requires arguments emits a usage: lin
 #     args is a valid "no scope" invocation path handled inside the command itself.
 #   - watch-impl: an intentional infinite loop (tails git log until interrupted) -- it has no
 #     usage-line concept and invoking it in a test would hang forever, not fail fast.
+#   - detect-conditional-lenses (EDMV4-T24): signature is `detect-conditional-lenses [<PREFIX>]`
+#     -- the prefix is optional, and a zero-arg call is the normal invocation from
+#     skills/code-audit/SKILL.md Step 1. It answers with the N/A lens list (or empty) rather than
+#     a usage line, which is correct for an optional argument, so demanding a usage: line here
+#     would assert a contract the subcommand deliberately does not have.
 # Every name below must correspond to a live dispatch label. The duration-recording subcommand
 # EDMV3-T58 deleted was listed here until that deletion landed; the entry then matched nothing
 # and was removed with it (the deletion itself stays pinned by the T66 AC3 --help case further
 # down, which is why that case names it and this comment does not). A name with no live
 # dispatch entry is dead weight that also silently pre-exempts a future subcommand reusing it.
-T61_ZERO_ARG_SAFE="list active-initiatives checkpoint-if-active git-lock-check session-start metrics-report watch-impl"
+T61_ZERO_ARG_SAFE="list active-initiatives checkpoint-if-active git-lock-check session-start metrics-report watch-impl detect-conditional-lenses"
 t61_usage_fail=0
 t61_usage_names=""
 while IFS= read -r t61_sub; do

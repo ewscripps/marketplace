@@ -3041,7 +3041,7 @@ echo
 echo "-- EDMV4-T39/T40: edm-repo-readiness rubric + signal wiring --"
 
 # ---- AC6 (T39): READINESS_RUBRIC_VERSION is a bare top-level string constant, matching
-# evals/score-artifacts.sh:139's SCORER_VERSION precedent, and its VALUE is asserted (not just
+# evals/score-artifacts.sh's SCORER_VERSION precedent, and its VALUE is asserted (not just
 # that the constant exists) -- an anti-vacuity requirement called out explicitly for this ticket.
 check 'EDMV4-T39 AC6 -- READINESS_RUBRIC_VERSION is a bare top-level string constant, value "1.0.0"' \
   'READINESS_RUBRIC_VERSION="1.0.0"' "$(cat "$REPO_READINESS")"

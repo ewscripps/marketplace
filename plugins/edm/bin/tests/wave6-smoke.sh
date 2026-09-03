@@ -4282,10 +4282,10 @@ t24ac2_pytyped_out="$(cd "$T24_PY_REPO" && bash "$EDM_STATE" detect-conditional-
 
 # ---- AC4 (wave-3 QC P1 fix): detect-conditional-lenses must give the SAME answer whether it is
 # invoked from the repository root or from a subdirectory. This is the exact shape wave-3 QC
-# demonstrated as broken: a bare `git ls-files` (bin/edm-state:1748 pre-fix) and a bare
-# cwd-relative `pyproject.toml` open (bin/edm-state:1731 pre-fix) are both scoped to the CALLER'S
+# demonstrated as broken: a bare `git ls-files` (pre-fix, in bin/edm-state's cmd_detect_conditional_lenses) and a bare
+# cwd-relative `pyproject.toml` open (pre-fix, in its _l13_applies helper) are both scoped to the CALLER'S
 # cwd rather than the repository root, so "from repo root" and "from sub/" disagreed on a tracked
-# root-level tsconfig.json. The earlier AC4 check at :4214-4216 above cannot see this class of
+# root-level tsconfig.json. The earlier AC4 check above cannot see this class of
 # regression -- it runs both invocations from the SAME cwd, so a cwd-scoping bug is invisible to
 # it by construction.
 mkdir -p "${T24_MARKER_REPO}/sub"
@@ -4328,7 +4328,7 @@ t24ac4_nested_sub_out="$(cd "${T24_NESTED_REPO}/sub" && bash "$EDM_STATE" detect
   && pass "EDMV4-T24 AC4 -- a nested (non-root) tsconfig.json correctly stays L13 N/A from BOTH the root and the subdirectory" \
   || fail "EDMV4-T24 AC4 -- nested-marker case: root gave '${t24ac4_nested_root_out}', sub gave '${t24ac4_nested_sub_out}', expected 'L13' from both"
 
-# Same determinism requirement for the OTHER cwd-relative site pre-fix (bin/edm-state:1731, the
+# Same determinism requirement for the OTHER cwd-relative site pre-fix (the
 # pyproject.toml [tool.mypy]/[tool.pyright] content probe): a typed pyproject.toml at the repo
 # root must be read the same way from a subdirectory as from the root.
 mkdir -p "${T24_PY_REPO}/sub"
