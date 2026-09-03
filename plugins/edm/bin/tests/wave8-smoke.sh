@@ -4959,8 +4959,8 @@ else
   fail "EDMV4-T28 -- edm-check-grants exited non-zero: $(cat "${SCRIPT_DIR}/.t28-grants.err")"
 fi
 rm -f "${SCRIPT_DIR}/.t28-grants.err"
-t28_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${T28_AGENTS_DIR}" 2>&1)"
-t28_lint_exit=$?
+t28_lint_exit=0
+t28_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${T28_AGENTS_DIR}" 2>&1)" || t28_lint_exit=$?
 [[ "$t28_lint_exit" -eq 0 ]] && pass "EDMV4-T28 -- edm-lint-artifacts --path agents/ is clean" \
   || fail "EDMV4-T28 -- edm-lint-artifacts reported violations: ${t28_lint_out}"
 
