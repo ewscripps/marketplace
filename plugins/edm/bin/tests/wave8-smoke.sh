@@ -1097,8 +1097,13 @@ check "EDMV4-T26 AC4 -- 'agrees with that determination and never substitutes' p
   "This agent's N/A exit agrees with that determination and never substitutes" "$L13_TEXT"
 check "EDMV4-T26 AC4 -- mismatch-is-a-contract-violation sentence present, test-integration form" \
   "a mismatch between this agent's exit and Step 1's determination" "$L13_TEXT"
+# The citation is asserted by filename only, deliberately. The first draft of this assertion
+# pinned "agents/edm-test-integration.md:21-25" -- a line-range citation of exactly the kind
+# G10/CA-340 bans, and one that would have gone stale the first time that file was edited. The
+# precedent being cited does not use line numbers either: it names edm-test-planner.md's
+# enumeration by file. Asserting the filename keeps the check meaningful without pinning a range.
 check "EDMV4-T26 AC4 -- cites the edm-test-integration.md N/A-agreement precedent" \
-  "agents/edm-test-integration.md:21-25" "$L13_TEXT"
+  "agents/edm-test-integration.md" "$L13_TEXT"
 
 echo "EDMV4-T26 AC5 -- absence is authoritative; nothing written on N/A"
 check "EDMV4-T26 AC5 -- explicit no-lens-L13.md/.jsonl/placeholder sentence" \
