@@ -37,18 +37,31 @@
 # Output format (`eval`, one line per matched rule): "<rule_id> <action> <message>" -- single-space
 # separated, message last so it may itself contain spaces.
 #
-# Exit codes:
-#   0  clean -- no enabled rule matched (or, for `list`, the rule set was enumerated), including
-#      the case where zero rule files exist at all (an absent .claude/edm-hookify/ directory).
+# Exit codes -- exactly three, EDMV4-T44's two-tier exit contract (the same violation-versus-
+# setup-error split edm-lint-staged-artifacts already applies to `git commit`; see this plugin's
+# CLAUDE.md "Hooks behavior" section for the cross-reference by name):
+#   0  clean -- no enabled rule matched, or only `warn` rules matched (or, for `list`, the rule
+#      set was enumerated), including the case where zero rule files exist at all (an absent
+#      .claude/edm-hookify/ directory).
 #   1  setup error -- malformed rule file (invalid JSON, missing required key, unknown operator,
 #      out-of-event field), or a required binary (jq) not found on PATH. A malformed rule file
 #      never blocks and never disables the rest of the rule set: its path and reason are named on
 #      stderr, that file alone is skipped, and every other valid, enabled rule for the requested
 #      event is still evaluated in the same run.
-# `action: block` semantics and the resulting exit 2 are EDMV4-T44's two-tier exit contract, built
-# on top of this ticket's 0/1 evaluator -- not implemented here. `EDMV4-T44` and `EDMV4-T45` are
-# the two consumers (edm-gateguard, edm-stop-gate) that translate a match into a real refusal; this
-# script only classifies and reports.
+#   2  block -- at least one enabled rule matched carrying the literal `"action": "block"` (the
+#      format defaults an absent `action` key to `warn`, EDMV4-T42 AC2 -- a rule blocks only by
+#      explicit opt-in, never by default). Precedence: a block match always wins the exit code
+#      over a concurrent, unrelated setup error in a DIFFERENT rule file -- one contributor's
+#      typo in one rule file must never mask another rule's legitimate block -- and a block match
+#      is reported alongside every concurrent warn match rather than suppressing it (a block never
+#      hides a warning that fired in the same run).
+# There is no fourth code. A `warn` match's `<rule_id> warn <message>` line is written to STDERR
+# and never raises the exit code above 0 on its own. A `block` match's `<rule_id> block <message>`
+# line stays on STDOUT -- the stream EDMV4-T43 already used for every matched-rule line -- since
+# it is the payload a consumer reads to build its own refusal message: `edm-gateguard` translates
+# this exit 2 into a refusal through its own `emit_decision deny` function (AD2); `edm-stop-gate`
+# translates it into its own exit 2. Wiring either consumer to actually call this evaluator on its
+# gated path (and stop-event path) is `EDMV4-T45`'s, not built here.
 # EDM-HELP-END
 set -uo pipefail
 
@@ -234,6 +247,7 @@ RESULT="$(build_rule_stream | jq -R -s -r \
   --args "${RULE_FILES[@]}")" || die "jq evaluation failed"
 
 HAD_ERROR=0
+HAD_BLOCK=0
 while IFS= read -r _line; do
   [[ -z "$_line" ]] && continue
   _tag="${_line%%$'\t'*}"
@@ -253,10 +267,29 @@ while IFS= read -r _line; do
       _mrest="${_rest#*$'\t'}"
       _maction="${_mrest%%$'\t'*}"
       _mmessage="${_mrest#*$'\t'}"
-      echo "${_mname} ${_maction} ${_mmessage}"
+      # EDMV4-T44 two-tier exit contract: a rule blocks ONLY on the literal action "block" (the
+      # format's own default-to-warn rule, EDMV4-T42 AC2) -- anything else (an absent action, or
+      # any other value) is treated as warn, fail-safe toward non-blocking. A warn match is
+      # diagnostic text: it goes to STDERR and never raises the exit code above 0 on its own
+      # (AC3). A block match's line stays on STDOUT -- the same stream EDMV4-T43 already used for
+      # every matched-rule line -- since it is the payload a future consumer (edm-gateguard's
+      # emit_decision deny, per AD2; edm-stop-gate's own exit 2) reads to build its refusal
+      # message. A block match and a setup error are independent per-rule-file signals from the
+      # same one-classify-pass run; AC6's "a block never suppresses a concurrent warning" extends
+      # the same way to a concurrent, unrelated setup error in a DIFFERENT rule file -- one
+      # contributor's typo must never mask another rule's legitimate block.
+      if [[ "$_maction" == "block" ]]; then
+        echo "${_mname} ${_maction} ${_mmessage}"
+        HAD_BLOCK=1
+      else
+        echo "${_mname} ${_maction} ${_mmessage}" >&2
+      fi
       ;;
   esac
 done <<< "$RESULT"
 
+# Exactly three exit codes -- precedence block > error > clean (see the M-tag comment above for
+# why a block outranks a concurrent, unrelated setup error). There is no fourth code.
+[[ "$HAD_BLOCK" -eq 1 ]] && exit 2
 [[ "$HAD_ERROR" -eq 1 ]] && exit 1
 exit 0

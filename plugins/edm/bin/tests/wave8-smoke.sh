@@ -1923,10 +1923,15 @@ cp "${HOOKIFY_FIXTURES}/warn-stop-placeholder.json" "${T43_PROJ}/.claude/edm-hoo
 
 t43_run() {
   # t43_run <event> <payload-json>
+  # EDMV4-T44 note: combines stdout+stderr (2>&1). AC4 asserts the matched-rule line's exact
+  # FORMAT, which is independent of which stream it lands on -- T44's own AC3 is what routes a
+  # `warn` match to stderr and a `block` match to stdout, and is asserted separately (by stream)
+  # in this file's own EDMV4-T44 section below. Splitting streams here would make this AC4 format
+  # assertion couple to a later ticket's stream-routing decision, which is not what AC4 states.
   (
     cd "$T43_PROJ" || exit 99
     CLAUDE_PROJECT_DIR="$T43_PROJ" PATH="${PLUGIN_DIR}/bin:${PATH}" \
-      bash -c "echo '$2' | edm-hookify eval $1"
+      bash -c "echo '$2' | edm-hookify eval $1" 2>&1
   )
 }
 
@@ -2069,11 +2074,14 @@ T43_HUGE_PAYLOAD="$(jq -cn --arg t "${T43_FILLER}TRUNC_MARKER" '{file_path:"x",n
 T43_NORMAL_PAYLOAD='{"file_path":"x","new_text":"short TRUNC_MARKER text"}'
 
 T43_T0=$(date +%s)
+# EDMV4-T44 note: 2>&1 -- trunc-marker's action is "warn", which T44's AC3 routes to stderr; this
+# AC6/AC8 assertion is about whether the marker fires at all (a content question), not which
+# stream it lands on, so both streams are combined here exactly like t43_run above.
 T43_HUGE_OUT="$(cd "$T43_TRUNC_PROJ" && CLAUDE_PROJECT_DIR="$T43_TRUNC_PROJ" PATH="${PLUGIN_DIR}/bin:${PATH}" \
-  bash -c "echo '${T43_HUGE_PAYLOAD}' | edm-hookify eval file")"
+  bash -c "echo '${T43_HUGE_PAYLOAD}' | edm-hookify eval file" 2>&1)"
 T43_T1=$(date +%s)
 T43_NORMAL_OUT="$(cd "$T43_TRUNC_PROJ" && CLAUDE_PROJECT_DIR="$T43_TRUNC_PROJ" PATH="${PLUGIN_DIR}/bin:${PATH}" \
-  bash -c "echo '${T43_NORMAL_PAYLOAD}' | edm-hookify eval file")"
+  bash -c "echo '${T43_NORMAL_PAYLOAD}' | edm-hookify eval file" 2>&1)"
 T43_T2=$(date +%s)
 T43_HUGE_MS=$(( (T43_T1 - T43_T0) ))
 T43_NORMAL_MS=$(( (T43_T2 - T43_T1) ))
@@ -2241,6 +2249,180 @@ FAKEJQ
     || fail "EDMV4-T46 AC9 -- broken jq case exited ${rc2}, expected 0"
 }
 t46_isolate_and_run t46_ac9_case
+
+# =================================================================================================
+# EDMV4-T44: Make action: block an explicit opt-in behind a two-tier exit contract
+# =================================================================================================
+# Scope note (read before extending this section): edm-gateguard and edm-stop-gate do not invoke
+# edm-hookify yet -- wiring either consumer's gated path to actually call this evaluator is
+# EDMV4-T45's job (see the "AC5 -- edm-stop-gate does not invoke edm-hookify" assertion in the
+# T46 section above, which stays true here). This ticket also may NOT edit bin/edm-gateguard: it
+# is EDMV4-T13's file this wave (adding emit_decision). Every assertion below therefore exercises
+# edm-hookify's own two-tier exit contract directly -- the file/stop malformed-rule case an Edit-
+# through-edm-gateguard and a Stop-through-edm-stop-gate will each eventually reach once T45
+# lands, per the classify pass validating every rule file identically regardless of which event is
+# requested.
+echo
+echo "=== EDMV4-T44: edm-hookify two-tier exit contract ==="
+echo
+
+CLAUDE_MD_TEXT_T44="$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+
+# ---- AC1: action defaults to warn when the key is absent, with a matching condition -----------
+T44_AC1_DIR="${TMP}/t44-ac1"
+mkdir -p "${T44_AC1_DIR}/.claude/edm-hookify"
+jq 'del(.action)' "${HOOKIFY_FIXTURES}/warn-no-console-log.json" \
+  > "${T44_AC1_DIR}/.claude/edm-hookify/warn-no-console-log.json"
+
+T44_AC1_OUT="${TMP}/t44-ac1.stdout"
+T44_AC1_ERR="${TMP}/t44-ac1.stderr"
+T44_AC1_RC=0
+( cd "$T44_AC1_DIR" && CLAUDE_PROJECT_DIR="$T44_AC1_DIR" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+    bash -c 'echo "{\"file_path\":\"src/foo.js\",\"new_text\":\"console.log(1)\"}" | edm-hookify eval file' \
+    >"$T44_AC1_OUT" 2>"$T44_AC1_ERR" ) || T44_AC1_RC=$?
+
+[[ "$T44_AC1_RC" -eq 0 ]] && pass "EDMV4-T44 AC1 -- a rule with no action key, matching, exits 0 (defaults to warn)" \
+  || fail "EDMV4-T44 AC1 -- expected exit 0 for a default (absent-action) match, got ${T44_AC1_RC}"
+check "EDMV4-T44 AC1 -- the default-to-warn match reports action 'warn' by name" \
+  "warn-no-console-log warn Avoid leaving console.log statements in non-test source files." "$(cat "$T44_AC1_ERR")"
+
+# ---- AC3: a warn match writes to stderr and leaves the exit code at 0 (isolated, no block rule) -
+T44_AC3_DIR="${TMP}/t44-ac3"
+mkdir -p "${T44_AC3_DIR}/.claude/edm-hookify"
+cp "${HOOKIFY_FIXTURES}/warn-no-console-log.json" "${T44_AC3_DIR}/.claude/edm-hookify/"
+
+T44_AC3_OUT="${TMP}/t44-ac3.stdout"
+T44_AC3_ERR="${TMP}/t44-ac3.stderr"
+T44_AC3_RC=0
+( cd "$T44_AC3_DIR" && CLAUDE_PROJECT_DIR="$T44_AC3_DIR" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+    bash -c 'echo "{\"file_path\":\"src/foo.js\",\"new_text\":\"console.log(1)\"}" | edm-hookify eval file' \
+    >"$T44_AC3_OUT" 2>"$T44_AC3_ERR" ) || T44_AC3_RC=$?
+
+[[ "$T44_AC3_RC" -eq 0 ]] && pass "EDMV4-T44 AC3 -- a lone warn match leaves the exit code at 0" \
+  || fail "EDMV4-T44 AC3 -- expected exit 0 for a lone warn match, got ${T44_AC3_RC}"
+check_absent "EDMV4-T44 AC3 -- stdout carries no matched-rule text for a warn-only run" \
+  "warn-no-console-log" "$(cat "$T44_AC3_OUT")"
+check "EDMV4-T44 AC3 -- stderr carries the warn match's rule_id/action/message line" \
+  "warn-no-console-log warn Avoid leaving console.log statements in non-test source files." "$(cat "$T44_AC3_ERR")"
+
+# ---- AC2 (clean): an enabled rule present but not matching the payload exits 0 -----------------
+T44_AC2CLEAN_DIR="${TMP}/t44-ac2-clean"
+mkdir -p "${T44_AC2CLEAN_DIR}/.claude/edm-hookify"
+cp "${HOOKIFY_FIXTURES}/warn-no-console-log.json" "${T44_AC2CLEAN_DIR}/.claude/edm-hookify/"
+T44_AC2CLEAN_RC=0
+( cd "$T44_AC2CLEAN_DIR" && CLAUDE_PROJECT_DIR="$T44_AC2CLEAN_DIR" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+    bash -c 'echo "{\"file_path\":\"src/foo.js\",\"new_text\":\"nothing interesting here\"}" | edm-hookify eval file' \
+    >/dev/null 2>/dev/null ) || T44_AC2CLEAN_RC=$?
+[[ "$T44_AC2CLEAN_RC" -eq 0 ]] && pass "EDMV4-T44 AC2 -- an enabled rule that does not match the payload exits 0" \
+  || fail "EDMV4-T44 AC2 -- expected exit 0 for a non-matching payload, got ${T44_AC2CLEAN_RC}"
+
+# ---- AC2/AC6: one matching warn rule + one matching block rule -> exit 2, both lines printed ---
+T44_AC6_DIR="${TMP}/t44-ac6"
+mkdir -p "${T44_AC6_DIR}/.claude/edm-hookify"
+cp "${HOOKIFY_FIXTURES}/warn-no-console-log.json" "${T44_AC6_DIR}/.claude/edm-hookify/"
+jq '.action = "block" | .name = "block-no-console-log" | .message = "Blocking a console.log left in non-test source."' \
+  "${HOOKIFY_FIXTURES}/warn-no-console-log.json" > "${T44_AC6_DIR}/.claude/edm-hookify/block-no-console-log.json"
+
+T44_AC6_OUT="${TMP}/t44-ac6.stdout"
+T44_AC6_ERR="${TMP}/t44-ac6.stderr"
+T44_AC6_RC=0
+( cd "$T44_AC6_DIR" && CLAUDE_PROJECT_DIR="$T44_AC6_DIR" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+    bash -c 'echo "{\"file_path\":\"src/foo.js\",\"new_text\":\"console.log(1)\"}" | edm-hookify eval file' \
+    >"$T44_AC6_OUT" 2>"$T44_AC6_ERR" ) || T44_AC6_RC=$?
+
+[[ "$T44_AC6_RC" -eq 2 ]] && pass "EDMV4-T44 AC2/AC6 -- a matching warn rule together with a matching block rule exits 2" \
+  || fail "EDMV4-T44 AC2/AC6 -- expected exit 2, got ${T44_AC6_RC}"
+check "EDMV4-T44 AC6 -- the block match's line reaches stdout" \
+  "block-no-console-log block Blocking a console.log left in non-test source." "$(cat "$T44_AC6_OUT")"
+check "EDMV4-T44 AC6 -- the concurrent warn match's line is STILL present, on stderr (a block never suppresses a warn)" \
+  "warn-no-console-log warn Avoid leaving console.log statements in non-test source files." "$(cat "$T44_AC6_ERR")"
+check_absent "EDMV4-T44 AC3 -- the warn line does not also leak onto stdout in the combined case" \
+  "warn-no-console-log" "$(cat "$T44_AC6_OUT")"
+
+# ---- AC2 (precedence): a block match co-occurring with an UNRELATED setup error still exits 2 --
+T44_AC2PREC_DIR="${TMP}/t44-ac2-precedence"
+mkdir -p "${T44_AC2PREC_DIR}/.claude/edm-hookify"
+cp "${HOOKIFY_FIXTURES}/malformed-invalid-json.json" "${T44_AC2PREC_DIR}/.claude/edm-hookify/"
+jq '.action = "block" | .name = "block-no-console-log" | .message = "Blocking a console.log left in non-test source."' \
+  "${HOOKIFY_FIXTURES}/warn-no-console-log.json" > "${T44_AC2PREC_DIR}/.claude/edm-hookify/block-no-console-log.json"
+
+T44_AC2PREC_OUT="${TMP}/t44-ac2-precedence.stdout"
+T44_AC2PREC_ERR="${TMP}/t44-ac2-precedence.stderr"
+T44_AC2PREC_RC=0
+( cd "$T44_AC2PREC_DIR" && CLAUDE_PROJECT_DIR="$T44_AC2PREC_DIR" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+    bash -c 'echo "{\"file_path\":\"src/foo.js\",\"new_text\":\"console.log(1)\"}" | edm-hookify eval file' \
+    >"$T44_AC2PREC_OUT" 2>"$T44_AC2PREC_ERR" ) || T44_AC2PREC_RC=$?
+
+[[ "$T44_AC2PREC_RC" -eq 2 ]] && pass "EDMV4-T44 AC2 -- a block match co-occurring with an unrelated setup error still exits 2 (block outranks error)" \
+  || fail "EDMV4-T44 AC2 -- expected exit 2 when a block match and an unrelated setup error co-occur, got ${T44_AC2PREC_RC}"
+check "EDMV4-T44 AC2 -- the unrelated setup error is still named on stderr even though block won the exit code" \
+  "malformed-invalid-json" "$(cat "$T44_AC2PREC_ERR")"
+check "EDMV4-T44 AC2 -- the block match's line still reaches stdout" \
+  "block-no-console-log block" "$(cat "$T44_AC2PREC_OUT")"
+
+# ---- AC5: a malformed rule file (no block anywhere) exits 1, never 2 -- for BOTH file and stop --
+# events, since the classify pass validates every rule file before checking its requested event.
+T44_AC5_DIR="${TMP}/t44-ac5"
+mkdir -p "${T44_AC5_DIR}/.claude/edm-hookify"
+cp "${HOOKIFY_FIXTURES}/malformed-invalid-json.json" "${T44_AC5_DIR}/.claude/edm-hookify/"
+
+T44_AC5_FILE_RC=0
+T44_AC5_FILE_OUT="$( cd "$T44_AC5_DIR" && CLAUDE_PROJECT_DIR="$T44_AC5_DIR" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+    bash -c 'echo "{\"file_path\":\"x\",\"new_text\":\"y\"}" | edm-hookify eval file' 2>&1 )" || T44_AC5_FILE_RC=$?
+
+T44_AC5_STOP_RC=0
+T44_AC5_STOP_OUT="$( cd "$T44_AC5_DIR" && CLAUDE_PROJECT_DIR="$T44_AC5_DIR" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+    bash -c 'echo "{}" | edm-hookify eval stop' 2>&1 )" || T44_AC5_STOP_RC=$?
+
+[[ "$T44_AC5_FILE_RC" -eq 1 ]] && pass "EDMV4-T44 AC5 -- a malformed rule file (file event) exits 1, not 2 -- never escalates to a block" \
+  || fail "EDMV4-T44 AC5 -- eval file expected exit 1, got ${T44_AC5_FILE_RC}"
+[[ "$T44_AC5_STOP_RC" -eq 1 ]] && pass "EDMV4-T44 AC5 -- the same malformed rule file (stop event) also exits 1, not 2" \
+  || fail "EDMV4-T44 AC5 -- eval stop expected exit 1, got ${T44_AC5_STOP_RC}"
+check "EDMV4-T44 AC5 -- the malformed file is named on stderr for the file-event run" \
+  "malformed-invalid-json" "$T44_AC5_FILE_OUT"
+check "EDMV4-T44 AC5 -- the malformed file is named on stderr for the stop-event run too" \
+  "malformed-invalid-json" "$T44_AC5_STOP_OUT"
+
+# ---- AC2: "no fourth code" -- every exit code observed across this section's scenarios is in ----
+# {0,1,2}. Pairs the individual exact-value assertions above with one aggregate, computed check.
+T44_ALL_RCS="$T44_AC1_RC $T44_AC3_RC $T44_AC2CLEAN_RC $T44_AC6_RC $T44_AC2PREC_RC $T44_AC5_FILE_RC $T44_AC5_STOP_RC"
+T44_BAD_RC=""
+for _t44_rc in $T44_ALL_RCS; do
+  case "$_t44_rc" in
+    0|1|2) ;;
+    *) T44_BAD_RC="${T44_BAD_RC} ${_t44_rc}" ;;
+  esac
+done
+if [[ -z "$T44_BAD_RC" ]]; then
+  pass "EDMV4-T44 AC2 -- every exit code observed across this section is in {0,1,2} (no fourth code)"
+else
+  fail "EDMV4-T44 AC2 -- observed an exit code outside {0,1,2}:${T44_BAD_RC}"
+fi
+
+# ---- AC4: the exit-2 translation contract is documented by name for both consumers -------------
+check "EDMV4-T44 AC4 -- CLAUDE.md documents edm-gateguard's emit_decision deny translation by name" \
+  "own \`emit_decision deny\` function (AD2)" "$CLAUDE_MD_TEXT_T44"
+check "EDMV4-T44 AC4 -- CLAUDE.md documents edm-stop-gate translating into its own exit 2" \
+  "translates it into its own exit 2" "$CLAUDE_MD_TEXT_T44"
+check_absent "EDMV4-T44 AC5 -- edm-stop-gate still does not invoke edm-hookify (T45's wiring, not this ticket's)" \
+  "edm-hookify" "$(cat "$EDM_STOP_GATE")"
+
+# ---- AC7: Hooks behavior documents the exit-code contract in table form, cross-referencing ------
+# edm-lint-staged-artifacts's identical split by name.
+check "EDMV4-T44 AC7 -- Hooks behavior gains a dedicated two-tier exit contract subsection" \
+  "edm-hookify\`'s two-tier exit contract (EDMV4-T44)" "$CLAUDE_MD_TEXT_T44"
+check "EDMV4-T44 AC7 -- cross-references edm-lint-staged-artifacts's identical split by name" \
+  "edm-lint-staged-artifacts\` already applies to \`git" "$CLAUDE_MD_TEXT_T44"
+check "EDMV4-T44 AC7 -- states the exit-code table has no fourth code" \
+  "There is no fourth code." "$CLAUDE_MD_TEXT_T44"
+
+# ---- AC8: rule files' ASCII gap is stated as fact (both reasons) in Artifact content conventions
+check "EDMV4-T44 AC8 -- Artifact content conventions names the edm-lint-artifacts *.md filter reason" \
+  "collect_md_files\` (\`bin/edm-lint-artifacts:251-260\`) is a plain" "$CLAUDE_MD_TEXT_T44"
+check "EDMV4-T44 AC8 -- names the edm-check-vocabulary PLUGIN_ROOT-anchored SCOPE_ROOTS reason" \
+  "SCOPE_ROOTS\` (\`bin/edm-check-vocabulary:98-107\`) are all" "$CLAUDE_MD_TEXT_T44"
+check "EDMV4-T44 AC8 -- points at EDMV4-57 as the ticket that would close this gap" \
+  "EDMV4-57\`'s to close, not closed here." "$CLAUDE_MD_TEXT_T44"
 
 # =================================================================================================
 # EDMV4-T18 -- writable harvested delta, get-patterns read side, and the single-commit coupling
