@@ -6,11 +6,12 @@
 # edm-stop-gate -- Stop-hook completion gate (EDMV4-T46). Surfaces blocking-class state anomalies
 # at Stop time instead of waiting for edm-state archive at the very end of an initiative.
 #
-# This ticket is VALIDATE-ONLY: it runs `edm-state validate <PREFIX>` for every active initiative
-# and honours only blocking-class anomalies. Hookify `stop`-rule evaluation is NOT wired here --
-# EDMV4-T45 owns that wiring and EDMV4-T44 owns the exit-2 translation for a matched `block` rule,
-# both landing in a later wave. Keeping that clause in this ticket made EDMV4-T44 and this ticket
-# mutually blocking (wave-1 ticket-pack audit, P0-2), so it was cut.
+# It runs `edm-state validate <PREFIX>` for every active initiative and honours only
+# blocking-class anomalies, then evaluates enabled `stop`-event hookify rules exactly once per
+# invocation (EDMV4-T45) -- not once per initiative, since a stop-event rule's `conditions` carry
+# no per-initiative field to match against (the `stop` event currently defines none). A matched
+# `block` rule translates into this gate's own blocking exit status, the same one the validate
+# path already spends (EDMV4-T44's translation contract) -- see "Exit codes" below for the value.
 #
 # Usage:
 #   edm-stop-gate            # run from a Stop hook; no arguments
@@ -37,7 +38,9 @@
 #      distinct from the blocking-class exit 3 it uses on a real anomaly).
 #   2  block -- at least one active initiative's `edm-state validate` run reported a blocking-class
 #      anomaly (`edm-state validate` itself exits 3 for that condition; this gate never confuses
-#      that with any other non-zero exit code from `validate`).
+#      that with any other non-zero exit code from `validate`), OR an enabled `stop`-event hookify
+#      rule matched with `"action": "block"` (translated from `edm-hookify eval stop`'s own block
+#      status; its setup-error status never escalates here either).
 # All operator-facing text goes to stderr, never stdout -- a raw JSON echo to stdout is the
 # documented failure mode for a Stop hook.
 # EDM-HELP-END
@@ -135,6 +138,23 @@ for _prefix in "${ACTIVE_PREFIXES[@]}"; do
     echo "[EDM] ${_info_count} informational anomalies (run: edm-state validate ${_prefix})" >&2
   fi
 done
+
+# EDMV4-T45: stop-event hookify rules, evaluated exactly ONCE per invocation (not once per active
+# initiative -- the `stop` event defines no per-initiative field to vary the payload on). Only
+# reached when at least one initiative was active above; a repository with none already exited 0
+# silently at AC3's own check, and hookify's own overhead is skipped for the identical reason.
+if command -v edm-hookify >/dev/null 2>&1; then
+  _hookify_rc=0
+  _hookify_out="$(printf '{}' | edm-hookify eval stop 2>&1)" || _hookify_rc=$?
+  # T44 AC4/AC5: a hookify block status sets the SAME flag the blocking-class validate path above
+  # already sets, so both routes share the one exit line at the bottom of this file; a hookify
+  # setup-error status never escalates -- edm-hookify already warned on stderr for that case.
+  if [[ "$_hookify_rc" -eq 2 ]]; then
+    ANY_BLOCKING=1
+    echo "[EDM] a stop-event hookify rule matched:" >&2
+    printf '%s\n' "$_hookify_out" >&2
+  fi
+fi
 
 [[ "$ANY_BLOCKING" -eq 1 ]] && exit 2
 exit 0

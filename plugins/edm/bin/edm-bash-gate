@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# EDMV4-T45: the block between EDM-HELP-BEGIN and EDM-HELP-END below is sentinel-delimited, not a
+# hardcoded numeric-line-range extraction -- usage() calls the shared print_help (CA-005,
+# _edm-cli-lib.sh), the same convention every other bin/ helper uses.
+# EDM-HELP-BEGIN
+# edm-bash-gate -- PreToolUse `bash`-event hookify consumer (EDMV4-T45). The sole owner of
+# hookify's `bash` event: translates a matched `"action": "block"` rule into a refusal, the same
+# violation-versus-setup-error split `edm-lint-staged-artifacts` already applies to `git commit`.
+#
+# This block ships only because Spike A (EDMV4-T06, decisions.md D25) recorded a positive result:
+# a second `PreToolUse` matcher registered for `Bash` runs alongside the existing `git commit`
+# matcher block with no suppression in either direction, and a deny from either always wins
+# regardless of registration order. The existing `git commit` block is never modified by this
+# ticket -- this is an entirely separate, matcher-disjoint block (`hooks.json`'s own `matcher`
+# field is `Bash` here, `git commit` there), per AD4's design.
+#
+# Usage:
+#   edm-bash-gate              # reads the host's PreToolUse JSON payload from stdin; no arguments
+#   edm-bash-gate -h|--help    # show this help
+#
+# Registration: `hooks/hooks.json`'s `PreToolUse` array carries a matcher block for `Bash` whose
+# command guards on this binary's presence (`command -v edm-bash-gate >/dev/null 2>&1 || exit 0`
+# before exec), exactly like every other guarded hook body in this plugin.
+#
+# What runs: absent `edm-hookify` on PATH, or no payload, or `jq` missing, or an unparseable
+# payload -- allow (exit 0), never a setup-error exit that could be mistaken for a refusal on a
+# hook this conservative. Otherwise the host's `tool_input.command` projects into hookify's
+# `{"command": "..."}` `bash`-event field shape and evaluates via `edm-hookify eval bash`.
+#
+# Exit codes:
+#   0  allowed -- no rule matched, only `warn` rules matched, or any internal/setup condition
+#      (edm-hookify or jq absent, no payload, unparseable payload). Never a fourth code.
+#   2  block -- `edm-hookify eval bash` matched an enabled rule with `"action": "block"`
+#      (`edm-hookify`'s own exit 2); the matched-rule line(s) are printed to stderr, the
+#      convention `edm-gateguard`'s own exit-code deny mode and `edm-lint-staged-artifacts`
+#      already use for a blocking `PreToolUse` refusal.
+# EDM-HELP-END
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/_edm-cli-lib.sh"
+
+usage() {
+  print_help "${BASH_SOURCE[0]:-$0}"
+  exit 0
+}
+
+case "${1:-}" in
+  -h|--help) usage ;;
+esac
+
+# Every guard below allows rather than dies: this is an additive, opt-in consumer of a rules
+# format a project may not have adopted at all, so any condition short of a real block must never
+# read as a setup error a future contributor is tempted to escalate.
+command -v edm-hookify >/dev/null 2>&1 || exit 0
+command -v jq >/dev/null 2>&1 || exit 0
+
+PAYLOAD=""
+IFS= read -r -d '' PAYLOAD || true
+[[ -n "$PAYLOAD" ]] || exit 0
+
+BASH_PAYLOAD=""
+BASH_PAYLOAD="$(printf '%s' "$PAYLOAD" | jq -c '{command: (.tool_input.command // "")}' 2>/dev/null)" || exit 0
+[[ -n "$BASH_PAYLOAD" ]] || exit 0
+
+HOOKIFY_RC=0
+HOOKIFY_OUT="$(printf '%s' "$BASH_PAYLOAD" | edm-hookify eval bash)" || HOOKIFY_RC=$?
+
+# T44 AC4/AC5: exit 2 -> this gate's own exit 2 (the block message on stderr, exit-code
+# convention); exit 1 (setup error) and exit 0 (clean/warn-only) both allow.
+if [[ "$HOOKIFY_RC" -eq 2 ]]; then
+  printf '%s\n' "$HOOKIFY_OUT" >&2
+  exit 2
+fi
+exit 0

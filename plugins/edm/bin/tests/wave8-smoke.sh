@@ -2203,14 +2203,15 @@ echo
 EDM_STOP_GATE="${PLUGIN_DIR}/bin/edm-stop-gate"
 HOOKS_JSON="${PLUGIN_DIR}/hooks/hooks.json"
 
-# ---- AC5: exists, executable, validate-only (no hookify stop-rule wiring in this ticket) -------
+# ---- AC5: exists, executable, and (as of this wave) runs edm-state validate. Hookify stop-rule
+# wiring was NOT this ticket's own scope (EDMV4-T46) -- EDMV4-T45 added it later, in the same
+# wave; see that ticket's own dedicated section below for its coverage, since asserting its
+# absence here would now be a stale, false claim rather than a scope boundary. -------------------
 if [[ -x "$EDM_STOP_GATE" ]]; then
   pass "EDMV4-T46 AC5 -- edm-stop-gate exists and is executable"
 else
   fail "EDMV4-T46 AC5 -- edm-stop-gate missing or not executable"
 fi
-check_absent "EDMV4-T46 AC5 -- edm-stop-gate does not invoke edm-hookify (validate-only this ticket)" \
-  "edm-hookify" "$(cat "$EDM_STOP_GATE")"
 check "EDMV4-T46 AC5 -- edm-stop-gate runs edm-state validate" \
   "edm-state validate" "$(cat "$EDM_STOP_GATE")"
 
@@ -2349,15 +2350,12 @@ t46_isolate_and_run t46_ac9_case
 # =================================================================================================
 # EDMV4-T44: Make action: block an explicit opt-in behind a two-tier exit contract
 # =================================================================================================
-# Scope note (read before extending this section): edm-gateguard and edm-stop-gate do not invoke
-# edm-hookify yet -- wiring either consumer's gated path to actually call this evaluator is
-# EDMV4-T45's job (see the "AC5 -- edm-stop-gate does not invoke edm-hookify" assertion in the
-# T46 section above, which stays true here). This ticket also may NOT edit bin/edm-gateguard: it
-# is EDMV4-T13's file this wave (adding emit_decision). Every assertion below therefore exercises
-# edm-hookify's own two-tier exit contract directly -- the file/stop malformed-rule case an Edit-
-# through-edm-gateguard and a Stop-through-edm-stop-gate will each eventually reach once T45
-# lands, per the classify pass validating every rule file identically regardless of which event is
-# requested.
+# Scope note: at the time this ticket (EDMV4-T44) was implemented, neither edm-gateguard nor
+# edm-stop-gate invoked edm-hookify yet -- that wiring was EDMV4-T45's job, and this ticket could
+# not edit bin/edm-gateguard (EDMV4-T13's file that same wave). Every assertion below therefore
+# exercises edm-hookify's own two-tier exit contract directly, independent of either consumer.
+# EDMV4-T45 has since landed and wired both consumers -- see its own dedicated section below for
+# the end-to-end coverage of the translation this section proves in isolation.
 echo
 echo "=== EDMV4-T44: edm-hookify two-tier exit contract ==="
 echo
@@ -2500,8 +2498,8 @@ check "EDMV4-T44 AC4 -- CLAUDE.md documents edm-gateguard's emit_decision deny t
   "own \`emit_decision deny\` function (AD2)" "$CLAUDE_MD_TEXT_T44"
 check "EDMV4-T44 AC4 -- CLAUDE.md documents edm-stop-gate translating into its own exit 2" \
   "translates it into its own exit 2" "$CLAUDE_MD_TEXT_T44"
-check_absent "EDMV4-T44 AC5 -- edm-stop-gate still does not invoke edm-hookify (T45's wiring, not this ticket's)" \
-  "edm-hookify" "$(cat "$EDM_STOP_GATE")"
+# EDMV4-T45 has since wired edm-stop-gate to invoke edm-hookify (same wave); see its own section
+# below for that wiring's coverage -- asserting absence here would now be a stale, false claim.
 
 # ---- Wave-3 QC remediation (P2): AC4/AC5 above were proven only via CLAUDE.md's prose plus
 # edm-hookify's own exit codes in isolation -- neither exercised the TRANSLATION a consumer
@@ -3298,9 +3296,18 @@ check "EDMV4-T11 AC2 -- carries EDM-HELP-BEGIN/END sentinels" "EDM-HELP-BEGIN" "
 check_absent "EDMV4-T11 AC2 -- no hardcoded sed -n 'A,Bp' help-range extraction" "sed -n '" "$(cat "$GATEGUARD")"
 
 # ---- AC3: hooks.json gains exactly one new PreToolUse matcher block for Edit/Write/MultiEdit,
-# whose command begins with the same guard the git-commit block uses. -----------------------------
+# whose command begins with the same guard the git-commit block uses. This ticket's own count was
+# 2; EDMV4-T45 legitimately grows it to 3 by adding a matcher-disjoint `Bash` block once Spike A
+# (decisions.md D25) recorded a positive multi-hook-per-event result -- see the EDMV4-T45 section
+# below for that block's own dedicated count assertion. Asserting "at least 2, including this
+# ticket's own Edit|Write|MultiEdit block" here keeps this AC's own claim true without hardcoding
+# a total this ticket does not own. -------------------------------------------------------------
 t11_pretooluse_len="$(jq '.hooks.PreToolUse | length' "$HOOKS_JSON")"
-check "EDMV4-T11 AC3 -- hooks.json PreToolUse array has exactly 2 entries" "2" "$t11_pretooluse_len"
+if [[ "$t11_pretooluse_len" -ge 2 ]]; then
+  pass "EDMV4-T11 AC3 -- hooks.json PreToolUse array has at least 2 entries (${t11_pretooluse_len} total)"
+else
+  fail "EDMV4-T11 AC3 -- expected at least 2 PreToolUse entries, got ${t11_pretooluse_len}"
+fi
 
 t11_gg_command="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Edit|Write|MultiEdit") | .hooks[0].command' "$HOOKS_JSON")"
 case "$t11_gg_command" in
@@ -4012,6 +4019,693 @@ else
 fi
 
 rm -rf "$T56_TMP"
+
+echo
+
+# =================================================================================================
+# EDMV4-T14: Write the fact-forcing denial content and the per-file MultiEdit loop
+# =================================================================================================
+# Own banded section, appended last (matching EDMV4-T18's and EDMV4-T47's own precedent above), so
+# a concurrent agent's own append to this file does not interleave with it. GATEGUARD/DATADIR_LIB
+# are already set by the EDMV4-T11/T12 sections above.
+echo "=== EDMV4-T14: fact-forcing denial content and the per-file MultiEdit loop ==="
+echo
+
+# t14_fresh_marker_env <outvar_proj> <outvar_data> -- stands up a scratch project directory and a
+# scratch CLAUDE_PLUGIN_DATA tree with a Phase 6 marker already written for that project, so every
+# case below starts from a clean "marker present, nothing checked yet" state.
+t14_fresh_marker_env() {
+  local __proj_out="$1" __data_out="$2"
+  local dir; dir="$(mktemp -d "${TMP}/t14-env.XXXXXX")"
+  mkdir -p "${dir}/proj" "${dir}/data/run"
+  local key
+  key="$(CLAUDE_PROJECT_DIR="${dir}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+  printf 'T14PFX\t%s\t2026-09-02T00:00:00Z\n' "${dir}/proj" > "${dir}/data/run/${key}.phase6"
+  printf -v "$__proj_out" '%s' "${dir}/proj"
+  printf -v "$__data_out" '%s' "${dir}/data"
+}
+
+# t14_run <proj> <data> <payload> [<mode>] -- runs edm-gateguard once against a fresh marker
+# environment already stood up by t14_fresh_marker_env, capturing stdout/stderr/rc into the
+# T14_RUN_* globals. Session state (the checked-file) persists across calls sharing the same
+# <data>, which is what lets a caller assert "deny once, allow on retry" across two invocations.
+t14_run() {
+  local proj="$1" data="$2" payload="$3" mode="${4:-exit-code}"
+  T14_RUN_RC=0
+  T14_RUN_OUT="$(printf '%s' "$payload" | CLAUDE_PROJECT_DIR="$proj" CLAUDE_PLUGIN_DATA="$data" \
+    EDM_GATEGUARD_DENY_MODE="$mode" bash "$GATEGUARD" 2>"${TMP}/t14-run.stderr")" || T14_RUN_RC=$?
+  T14_RUN_ERR="$(cat "${TMP}/t14-run.stderr" 2>/dev/null || true)"
+}
+
+# ---- AC1: an Edit denial emits exactly the four numbered facts, in order, each on a distinctive
+# substring rather than the whole block (AC8). exit-code mode puts the fact list on stderr. -------
+T14_AC1_PROJ="" T14_AC1_DATA=""
+t14_fresh_marker_env T14_AC1_PROJ T14_AC1_DATA
+t14_run "$T14_AC1_PROJ" "$T14_AC1_DATA" '{"tool_name":"Edit","tool_input":{"file_path":"src/foo.js"}}'
+[[ "$T14_RUN_RC" -eq 2 ]] && pass "EDMV4-T14 AC1 -- a first-touch Edit denies (exit 2 in exit-code mode)" \
+  || fail "EDMV4-T14 AC1 -- expected exit 2 for a first-touch Edit, got ${T14_RUN_RC}"
+check "EDMV4-T14 AC1/AC8 -- Edit fact 1 (import/require search) names the target path" \
+  "import or require this file (src/foo.js), searching the tree" "$T14_RUN_ERR"
+check "EDMV4-T14 AC1/AC8 -- Edit fact 2 (public functions/classes affected)" \
+  "public functions or classes affected by this change" "$T14_RUN_ERR"
+check "EDMV4-T14 AC1/AC8 -- Edit fact 3 (data-file field/structure/date-format disclosure)" \
+  "field names, structure and date format using redacted or synthetic values" "$T14_RUN_ERR"
+check "EDMV4-T14 AC1/AC8 -- Edit fact 4 (ticket AC quote, by {PREFIX}-T{NN} ID)" \
+  "acceptance criteria of the ticket being implemented, by its {PREFIX}-T{NN} ID" "$T14_RUN_ERR"
+T14_AC1_DENY_TEXT="$T14_RUN_ERR"
+
+# ---- Retry allows: the SAME path, same session (same data dir), on a second call allows silently.
+t14_run "$T14_AC1_PROJ" "$T14_AC1_DATA" '{"tool_name":"Edit","tool_input":{"file_path":"src/foo.js"}}'
+if [[ "$T14_RUN_RC" -eq 0 && -z "$T14_RUN_OUT" && -z "$T14_RUN_ERR" ]]; then
+  pass "EDMV4-T14 -- a retry on the SAME path in the same session allows silently (deny once, allow on retry)"
+else
+  fail "EDMV4-T14 -- retry mismatch: rc=${T14_RUN_RC} stdout=[${T14_RUN_OUT}] stderr=[${T14_RUN_ERR}]"
+fi
+
+# ---- AC2: a Write denial swaps facts 1/2 for the new-file variant; facts 3/4 are byte-identical --
+T14_AC2_PROJ="" T14_AC2_DATA=""
+t14_fresh_marker_env T14_AC2_PROJ T14_AC2_DATA
+t14_run "$T14_AC2_PROJ" "$T14_AC2_DATA" '{"tool_name":"Write","tool_input":{"file_path":"new-thing.js"}}'
+[[ "$T14_RUN_RC" -eq 2 ]] && pass "EDMV4-T14 AC2 -- a first-touch Write denies (exit 2 in exit-code mode)" \
+  || fail "EDMV4-T14 AC2 -- expected exit 2 for a first-touch Write, got ${T14_RUN_RC}"
+check "EDMV4-T14 AC2/AC8 -- Write fact 1 (name callers of the new file) names the target path" \
+  "call this new file (new-thing.js)" "$T14_RUN_ERR"
+check "EDMV4-T14 AC2/AC8 -- Write fact 2 (confirm no existing file serves the same purpose)" \
+  "Confirm no existing file already serves the same purpose" "$T14_RUN_ERR"
+check "EDMV4-T14 AC2 -- Write fact 3 is byte-identical to the Edit variant's fact 3" \
+  "field names, structure and date format using redacted or synthetic values" "$T14_RUN_ERR"
+check "EDMV4-T14 AC2 -- Write fact 4 is byte-identical to the Edit variant's fact 4" \
+  "acceptance criteria of the ticket being implemented, by its {PREFIX}-T{NN} ID" "$T14_RUN_ERR"
+check_absent "EDMV4-T14 AC2 -- Write denial does not carry the Edit variant's import-search fact" \
+  "import or require this file" "$T14_RUN_ERR"
+
+# ---- AC3: fact 4 is the ticket-AC form, never a restatement of the user's current instruction ----
+T14_AC3_COUNT="$(count_matches "quote the user.s current instruction" "$GATEGUARD")"
+check "EDMV4-T14 AC3 -- edm-gateguard never asks the agent to quote the user's current instruction" "0" "$T14_AC3_COUNT"
+T14_AC3_CONTROL="$(printf "%s\nquote the user's current instruction\n" "$(cat "$GATEGUARD")")"
+T14_AC3_CONTROL_COUNT="$(printf '%s\n' "$T14_AC3_CONTROL" | count_matches "quote the user.s current instruction")"
+[[ "$T14_AC3_CONTROL_COUNT" -ge 1 ]] \
+  && pass "EDMV4-T14 AC3 -- positive control: an injected 'quote the users current instruction' line IS detected" \
+  || fail "EDMV4-T14 AC3 -- positive control FAILED: the injected phrase was not detected, so the zero-count above proves nothing"
+
+# ---- AC4: MultiEdit iterates a three-file batch and denies on the first still-unchecked path,
+# returning immediately -- three successive calls each name a DIFFERENT path, and a fourth call
+# (every path now checked) allows. Tolerant-extraction synthetic fixture (edits[].file_path), per
+# this ticket's own Technical Notes: this proves the SCRIPT's own iteration/dedup logic against a
+# constructed payload, not a claim about what a live host's own MultiEdit tool call shape is --
+# that shape is UNTESTABLE from this environment (Spike B), and no assertion here claims otherwise.
+T14_AC4_PROJ="" T14_AC4_DATA=""
+t14_fresh_marker_env T14_AC4_PROJ T14_AC4_DATA
+T14_AC4_PAYLOAD='{"tool_name":"MultiEdit","tool_input":{"edits":[{"file_path":"a.js"},{"file_path":"b.js"},{"file_path":"c.js"}]}}'
+t14_run "$T14_AC4_PROJ" "$T14_AC4_DATA" "$T14_AC4_PAYLOAD"
+T14_AC4_RC1="$T14_RUN_RC" T14_AC4_ERR1="$T14_RUN_ERR"
+t14_run "$T14_AC4_PROJ" "$T14_AC4_DATA" "$T14_AC4_PAYLOAD"
+T14_AC4_RC2="$T14_RUN_RC" T14_AC4_ERR2="$T14_RUN_ERR"
+t14_run "$T14_AC4_PROJ" "$T14_AC4_DATA" "$T14_AC4_PAYLOAD"
+T14_AC4_RC3="$T14_RUN_RC" T14_AC4_ERR3="$T14_RUN_ERR"
+t14_run "$T14_AC4_PROJ" "$T14_AC4_DATA" "$T14_AC4_PAYLOAD"
+T14_AC4_RC4="$T14_RUN_RC" T14_AC4_OUT4="$T14_RUN_OUT" T14_AC4_ERR4="$T14_RUN_ERR"
+
+if [[ "$T14_AC4_RC1" -eq 2 && "$T14_AC4_RC2" -eq 2 && "$T14_AC4_RC3" -eq 2 ]]; then
+  pass "EDMV4-T14 AC4 -- three successive MultiEdit calls against an all-unchecked batch each deny (exit 2)"
+else
+  fail "EDMV4-T14 AC4 -- expected three exit-2 denials, got rc1=${T14_AC4_RC1} rc2=${T14_AC4_RC2} rc3=${T14_AC4_RC3}"
+fi
+check "EDMV4-T14 AC4 -- call 1 names a.js" "(a.js)" "$T14_AC4_ERR1"
+check "EDMV4-T14 AC4 -- call 2 names a DIFFERENT path, b.js" "(b.js)" "$T14_AC4_ERR2"
+check "EDMV4-T14 AC4 -- call 3 names the third, distinct path, c.js" "(c.js)" "$T14_AC4_ERR3"
+check_absent "EDMV4-T14 AC4 -- call 2 does not re-deny the already-checked a.js" "(a.js)" "$T14_AC4_ERR2"
+check_absent "EDMV4-T14 AC4 -- call 3 does not re-deny either already-checked path" "(b.js)" "$T14_AC4_ERR3"
+if [[ "$T14_AC4_RC4" -eq 0 && -z "$T14_AC4_OUT4" && -z "$T14_AC4_ERR4" ]]; then
+  pass "EDMV4-T14 AC4 -- the fourth call, every path now checked, allows silently (exit 0, empty output)"
+else
+  fail "EDMV4-T14 AC4 -- expected the fourth call to allow silently, got rc=${T14_AC4_RC4} stdout=[${T14_AC4_OUT4}] stderr=[${T14_AC4_ERR4}]"
+fi
+
+# ---- AC5: a MultiEdit batch where every file is ALREADY recorded checked allows on the first call,
+# exit 0, empty stdout -- pre-seed the checked-file directly rather than replaying three denials. --
+T14_AC5_PROJ="" T14_AC5_DATA=""
+t14_fresh_marker_env T14_AC5_PROJ T14_AC5_DATA
+T14_AC5_KEY="$(CLAUDE_PROJECT_DIR="$T14_AC5_PROJ" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+printf 'x.js\ny.js\nz.js\n' > "${T14_AC5_DATA}/run/${T14_AC5_KEY}.checked"
+T14_AC5_PAYLOAD='{"tool_name":"MultiEdit","tool_input":{"edits":[{"file_path":"x.js"},{"file_path":"y.js"},{"file_path":"z.js"}]}}'
+t14_run "$T14_AC5_PROJ" "$T14_AC5_DATA" "$T14_AC5_PAYLOAD" json
+if [[ "$T14_RUN_RC" -eq 0 && -z "$T14_RUN_OUT" && -z "$T14_RUN_ERR" ]]; then
+  pass "EDMV4-T14 AC5 -- a MultiEdit batch already fully checked allows on the first call (exit 0, empty stdout)"
+else
+  fail "EDMV4-T14 AC5 -- expected exit 0 with empty output, got rc=${T14_RUN_RC} stdout=[${T14_RUN_OUT}] stderr=[${T14_RUN_ERR}]"
+fi
+
+# ---- AC6: the denial text is plain ASCII -- no em dash, arrow, smart quote or emoji. Checked
+# against AC1's own real, captured denial output rather than a re-typed copy. grep tokenizes on
+# newline before matching each line against the bracket expression, so a plain multi-line ASCII
+# string never trips '[^ -~]' on its own line-separator bytes -- the T13 AC9 section above already
+# relies on this same idiom for a (single-line) payload; this reuses it for a multi-line one. -----
+if [[ -n "$T14_AC1_DENY_TEXT" ]] && ! printf '%s' "$T14_AC1_DENY_TEXT" | LC_ALL=C grep -q '[^ -~]'; then
+  pass "EDMV4-T14 AC6 -- the emitted fact text is plain ASCII (LC_ALL=C scan for bytes outside the printable range finds nothing)"
+else
+  fail "EDMV4-T14 AC6 -- the emitted fact text is empty or contains a non-ASCII byte: [${T14_AC1_DENY_TEXT}]"
+fi
+# Positive control: injecting a real (non-ASCII) em dash into the same text trips the same
+# detector, so the pass above is not vacuous -- "found 0 bytes outside range" and "the detector
+# can never fire" are otherwise indistinguishable.
+T14_AC6_UNICODE_CONTROL="$(printf '%s \xe2\x80\x94 real em dash\n' "$T14_AC1_DENY_TEXT")"
+if printf '%s' "$T14_AC6_UNICODE_CONTROL" | LC_ALL=C grep -q '[^ -~]'; then
+  pass "EDMV4-T14 AC6 -- positive control: injecting a real UTF-8 em dash into the fact text IS detected"
+else
+  fail "EDMV4-T14 AC6 -- positive control FAILED: an injected real em dash was not detected, so the ASCII-only pass above proves nothing"
+fi
+
+echo
+
+# =================================================================================================
+# EDMV4-T15: GateGuard's operational safety controls
+# =================================================================================================
+# Own banded section, appended last, so a concurrent agent's own append does not interleave with
+# it. GATEGUARD/DATADIR_LIB are already set by the EDMV4-T11/T12 sections above; t14_fresh_marker_env
+# and t14_run are already defined by the EDMV4-T14 section above and are reused here unchanged.
+#
+# Every kill-switch/exemption/budget/fail-open assertion below is paired: a fixture that WOULD
+# deny with the control disengaged, run both with the control engaged (must allow/warn/degrade)
+# and with it disengaged (must still deny) -- so "the gate stayed quiet" is never asserted against
+# a gate that could not have fired in the first place (this initiative's own recorded vacuity trap).
+echo "=== EDMV4-T15: kill switches, exemptions, session state, denial budget, fail-open ==="
+echo
+
+# ---- AC1: five kill-switch spellings for EDM_GATEGUARD, each proven against a fixture that
+# denies with no switch set (the paired negative), one call per spelling. --------------------------
+T15_AC1_BASE_PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"kill-switch.js"}}'
+T15_AC1_PROJ="" T15_AC1_DATA=""
+t14_fresh_marker_env T15_AC1_PROJ T15_AC1_DATA
+t14_run "$T15_AC1_PROJ" "$T15_AC1_DATA" "$T15_AC1_BASE_PAYLOAD"
+[[ "$T14_RUN_RC" -eq 2 ]] && pass "EDMV4-T15 AC1 -- paired negative: with no kill switch set, the fixture denies (proves the fixture is capable of firing)" \
+  || fail "EDMV4-T15 AC1 -- paired negative FAILED: expected the unswitched fixture to deny, got ${T14_RUN_RC}"
+
+for _t15_spelling in 0 false off disabled disable; do
+  T15_AC1_PROJ2="" T15_AC1_DATA2=""
+  t14_fresh_marker_env T15_AC1_PROJ2 T15_AC1_DATA2
+  T15_AC1_RC=0
+  T15_AC1_OUT="$(printf '%s' "$T15_AC1_BASE_PAYLOAD" | CLAUDE_PROJECT_DIR="$T15_AC1_PROJ2" CLAUDE_PLUGIN_DATA="$T15_AC1_DATA2" \
+    EDM_GATEGUARD="$_t15_spelling" EDM_GATEGUARD_DENY_MODE=exit-code bash "$GATEGUARD" 2>"${TMP}/t15-ac1-${_t15_spelling}.stderr")" || T15_AC1_RC=$?
+  T15_AC1_ERR="$(cat "${TMP}/t15-ac1-${_t15_spelling}.stderr" 2>/dev/null || true)"
+  if [[ "$T15_AC1_RC" -eq 0 && -z "$T15_AC1_OUT" && -z "$T15_AC1_ERR" ]]; then
+    pass "EDMV4-T15 AC1 -- EDM_GATEGUARD=${_t15_spelling} exits 0 with no output on a fixture that would otherwise deny"
+  else
+    fail "EDMV4-T15 AC1 -- EDM_GATEGUARD=${_t15_spelling} mismatch: rc=${T15_AC1_RC} stdout=[${T15_AC1_OUT}] stderr=[${T15_AC1_ERR}]"
+  fi
+done
+
+# ---- AC2: EDM_GATEGUARD_DISABLED=1 disables (paired against the same denying fixture); "true"
+# and "yes" do NOT disable -- the denial must still actually fire, not merely "not silently pass".
+T15_AC2_PROJ="" T15_AC2_DATA=""
+t14_fresh_marker_env T15_AC2_PROJ T15_AC2_DATA
+T15_AC2_RC=0
+T15_AC2_OUT="$(printf '%s' "$T15_AC1_BASE_PAYLOAD" | CLAUDE_PROJECT_DIR="$T15_AC2_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC2_DATA" \
+  EDM_GATEGUARD_DISABLED=1 EDM_GATEGUARD_DENY_MODE=exit-code bash "$GATEGUARD" 2>"${TMP}/t15-ac2-1.stderr")" || T15_AC2_RC=$?
+T15_AC2_ERR="$(cat "${TMP}/t15-ac2-1.stderr" 2>/dev/null || true)"
+if [[ "$T15_AC2_RC" -eq 0 && -z "$T15_AC2_OUT" && -z "$T15_AC2_ERR" ]]; then
+  pass "EDMV4-T15 AC2 -- EDM_GATEGUARD_DISABLED=1 exits 0 with no output on a fixture that would otherwise deny"
+else
+  fail "EDMV4-T15 AC2 -- EDM_GATEGUARD_DISABLED=1 mismatch: rc=${T15_AC2_RC} stdout=[${T15_AC2_OUT}] stderr=[${T15_AC2_ERR}]"
+fi
+
+for _t15_bad in true yes; do
+  T15_AC2B_PROJ="" T15_AC2B_DATA=""
+  t14_fresh_marker_env T15_AC2B_PROJ T15_AC2B_DATA
+  T15_AC2B_RC=0
+  T15_AC2B_ERR="$(printf '%s' "$T15_AC1_BASE_PAYLOAD" | CLAUDE_PROJECT_DIR="$T15_AC2B_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC2B_DATA" \
+    EDM_GATEGUARD_DISABLED="$_t15_bad" EDM_GATEGUARD_DENY_MODE=exit-code bash "$GATEGUARD" 2>&1 >/dev/null)" || T15_AC2B_RC=$?
+  if [[ "$T15_AC2B_RC" -eq 2 ]]; then
+    pass "EDMV4-T15 AC2 -- EDM_GATEGUARD_DISABLED=${_t15_bad} does NOT disable the gate -- the denial still fires (exit 2)"
+  else
+    fail "EDMV4-T15 AC2 -- EDM_GATEGUARD_DISABLED=${_t15_bad} unexpectedly suppressed the denial: rc=${T15_AC2B_RC}"
+  fi
+done
+
+# ---- AC3: with a kill switch engaged, zero filesystem reads beyond environment -- proven two
+# ways. (a) code position: the kill-switch case/if block sits strictly before the first reference
+# to the datadir-lib source, the marker path, or a `stat` invocation, mirroring the T11 AC8
+# line-number-ordering technique. (b) runtime, with a stat SPY on PATH: the spy fires when the
+# switch is OFF and a fixture reaches gg_fresh_lines (a pre-existing checked-file read), and does
+# NOT fire when the switch is ON against the identical fixture -- so the zero-count is paired
+# against a fixture proven capable of invoking `stat`, not merely a fixture that never would have. -
+T15_AC3_KILLSWITCH_LINE="$(grep -n 'case "\${EDM_GATEGUARD:-}" in' "$GATEGUARD" | head -1 | cut -d: -f1)"
+T15_AC3_DATADIRLIB_LINE="$(grep -n '_edm-datadir-lib.sh' "$GATEGUARD" | head -1 | cut -d: -f1)"
+if [[ -n "$T15_AC3_KILLSWITCH_LINE" && -n "$T15_AC3_DATADIRLIB_LINE" && "$T15_AC3_KILLSWITCH_LINE" -lt "$T15_AC3_DATADIRLIB_LINE" ]]; then
+  pass "EDMV4-T15 AC3 -- the kill-switch block (line ${T15_AC3_KILLSWITCH_LINE}) precedes the datadir-lib source (line ${T15_AC3_DATADIRLIB_LINE})"
+else
+  fail "EDMV4-T15 AC3 -- kill-switch line=[${T15_AC3_KILLSWITCH_LINE}] datadir-lib line=[${T15_AC3_DATADIRLIB_LINE}] -- ordering not satisfied"
+fi
+
+harness_scratch_dir T15_AC3_TMP
+T15_AC3_FAKEBIN="${T15_AC3_TMP}/fakebin"
+mkdir -p "$T15_AC3_FAKEBIN"
+ln -s "$(command -v dirname)" "${T15_AC3_FAKEBIN}/dirname"
+ln -s "$(command -v bash)" "${T15_AC3_FAKEBIN}/bash"
+ln -s "$(command -v grep)" "${T15_AC3_FAKEBIN}/grep"
+ln -s "$(command -v date)" "${T15_AC3_FAKEBIN}/date"
+ln -s "$(command -v mkdir)" "${T15_AC3_FAKEBIN}/mkdir"
+ln -s "$(command -v mv)" "${T15_AC3_FAKEBIN}/mv"
+ln -s "$(command -v rm)" "${T15_AC3_FAKEBIN}/rm"
+ln -s "$(command -v cat)" "${T15_AC3_FAKEBIN}/cat"
+ln -s "$(command -v git)" "${T15_AC3_FAKEBIN}/git"
+ln -s "$(command -v jq)" "${T15_AC3_FAKEBIN}/jq"
+cat > "${T15_AC3_FAKEBIN}/stat" <<T15STATSPY
+#!/bin/sh
+: > "${T15_AC3_FAKEBIN}/.stat_invoked"
+exit 1
+T15STATSPY
+chmod +x "${T15_AC3_FAKEBIN}/stat"
+
+T15_AC3_PROJ="${T15_AC3_TMP}/proj" T15_AC3_DATA="${T15_AC3_TMP}/data"
+mkdir -p "${T15_AC3_PROJ}" "${T15_AC3_DATA}/run"
+T15_AC3_KEY="$(CLAUDE_PROJECT_DIR="$T15_AC3_PROJ" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+printf 'T15PFX\t%s\t2026-09-02T00:00:00Z\n' "$T15_AC3_PROJ" > "${T15_AC3_DATA}/run/${T15_AC3_KEY}.phase6"
+printf 'already-seen.js\n' > "${T15_AC3_DATA}/run/${T15_AC3_KEY}.checked"
+
+# Positive control: switch OFF, path already checked -- gg_is_checked reads the checked-file via
+# gg_fresh_lines, which spawns the stat spy.
+rm -f "${T15_AC3_FAKEBIN}/.stat_invoked"
+printf '{"tool_name":"Edit","tool_input":{"file_path":"already-seen.js"}}' | \
+  CLAUDE_PROJECT_DIR="$T15_AC3_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC3_DATA" PATH="$T15_AC3_FAKEBIN" \
+  bash "$GATEGUARD" >/dev/null 2>&1 || true
+if [[ -f "${T15_AC3_FAKEBIN}/.stat_invoked" ]]; then
+  pass "EDMV4-T15 AC3 -- positive control: the stat spy DOES fire on a real checked-file read with no kill switch set"
+else
+  fail "EDMV4-T15 AC3 -- positive control FAILED: the stat spy never fired even with a real checked-file read, so the switch-engaged zero-count below proves nothing"
+fi
+
+# Kill switch ON, identical fixture: the spy must NOT fire, and the call must exit 0 with empty
+# stdout/stderr even though EDM_GATEGUARD_STATE_DIR/CLAUDE_PLUGIN_DATA both resolve to a path
+# whose parent directory has mode 000 (so any read attempt beyond the environment would surface).
+rm -f "${T15_AC3_FAKEBIN}/.stat_invoked"
+T15_AC3_LOCKED="${T15_AC3_TMP}/locked"
+mkdir -p "$T15_AC3_LOCKED"
+chmod 000 "$T15_AC3_LOCKED"
+T15_AC3_RC=0
+T15_AC3_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"already-seen.js"}}' | \
+  EDM_GATEGUARD=0 CLAUDE_PLUGIN_DATA="${T15_AC3_LOCKED}/data" EDM_GATEGUARD_STATE_DIR="${T15_AC3_LOCKED}/state" \
+  PATH="$T15_AC3_FAKEBIN" bash "$GATEGUARD" 2>"${T15_AC3_TMP}/ac3-locked.stderr")" || T15_AC3_RC=$?
+T15_AC3_ERR="$(cat "${T15_AC3_TMP}/ac3-locked.stderr" 2>/dev/null || true)"
+chmod 755 "$T15_AC3_LOCKED"
+if [[ "$T15_AC3_RC" -eq 0 && -z "$T15_AC3_OUT" && -z "$T15_AC3_ERR" ]]; then
+  pass "EDMV4-T15 AC3 -- kill switch engaged with unreadable state/data paths: exit 0, empty stdout, empty stderr"
+else
+  fail "EDMV4-T15 AC3 -- kill switch engaged mismatch: rc=${T15_AC3_RC} stdout=[${T15_AC3_OUT}] stderr=[${T15_AC3_ERR}]"
+fi
+if [[ ! -f "${T15_AC3_FAKEBIN}/.stat_invoked" ]]; then
+  pass "EDMV4-T15 AC3 -- the stat spy was NEVER invoked with the kill switch engaged (zero filesystem reads beyond environment)"
+else
+  fail "EDMV4-T15 AC3 -- the stat spy WAS invoked despite the kill switch -- a filesystem read reached beyond the environment"
+fi
+
+# ---- AC4: EDM_GATEGUARD_EXEMPT_GLOBS='**/tests/**' exempts BOTH the absolute and the bare
+# relative form; a NON-matching path under the same rule is NOT exempted (positive control that
+# the matcher discriminates rather than matching everything). -------------------------------------
+for _t15_ac4_path in /repo/tests/x.js tests/x.js; do
+  T15_AC4_PROJ="" T15_AC4_DATA=""
+  t14_fresh_marker_env T15_AC4_PROJ T15_AC4_DATA
+  T15_AC4_RC=0
+  T15_AC4_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$_t15_ac4_path" | \
+    CLAUDE_PROJECT_DIR="$T15_AC4_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC4_DATA" EDM_GATEGUARD_EXEMPT_GLOBS='**/tests/**' \
+    EDM_GATEGUARD_DENY_MODE=exit-code bash "$GATEGUARD" 2>"${TMP}/t15-ac4.stderr")" || T15_AC4_RC=$?
+  T15_AC4_ERR="$(cat "${TMP}/t15-ac4.stderr" 2>/dev/null || true)"
+  if [[ "$T15_AC4_RC" -eq 0 && -z "$T15_AC4_OUT" && -z "$T15_AC4_ERR" ]]; then
+    pass "EDMV4-T15 AC4 -- '${_t15_ac4_path}' is exempted by EDM_GATEGUARD_EXEMPT_GLOBS='**/tests/**' (exit 0, no output)"
+  else
+    fail "EDMV4-T15 AC4 -- '${_t15_ac4_path}' expected exempt: rc=${T15_AC4_RC} stdout=[${T15_AC4_OUT}] stderr=[${T15_AC4_ERR}]"
+  fi
+done
+
+T15_AC4B_PROJ="" T15_AC4B_DATA=""
+t14_fresh_marker_env T15_AC4B_PROJ T15_AC4B_DATA
+T15_AC4B_RC=0
+printf '{"tool_name":"Edit","tool_input":{"file_path":"src/unrelated.js"}}' | \
+  CLAUDE_PROJECT_DIR="$T15_AC4B_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC4B_DATA" EDM_GATEGUARD_EXEMPT_GLOBS='**/tests/**' \
+  EDM_GATEGUARD_DENY_MODE=exit-code bash "$GATEGUARD" >/dev/null 2>&1 || T15_AC4B_RC=$?
+[[ "$T15_AC4B_RC" -eq 2 ]] \
+  && pass "EDMV4-T15 AC4 -- positive control: a NON-matching path under the same '**/tests/**' rule still denies (the matcher discriminates)" \
+  || fail "EDMV4-T15 AC4 -- positive control FAILED: 'src/unrelated.js' was unexpectedly exempted (rc=${T15_AC4B_RC})"
+
+# ---- AC5: the shipped DEFAULT exempts the SRD/ tree with no variable set; a non-SRD path under
+# the default is NOT exempted (positive control). --------------------------------------------------
+T15_AC5_PROJ="" T15_AC5_DATA=""
+t14_fresh_marker_env T15_AC5_PROJ T15_AC5_DATA
+T15_AC5_RC=0
+T15_AC5_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"/repo/SRD/edm/EDMV4__x/srd.md"}}' | \
+  CLAUDE_PROJECT_DIR="$T15_AC5_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC5_DATA" EDM_GATEGUARD_DENY_MODE=exit-code bash "$GATEGUARD" 2>&1)" || T15_AC5_RC=$?
+if [[ "$T15_AC5_RC" -eq 0 && -z "$T15_AC5_OUT" ]]; then
+  pass "EDMV4-T15 AC5 -- a path under SRD/ is exempt by the shipped default with no variable set"
+else
+  fail "EDMV4-T15 AC5 -- expected the default to exempt an SRD/ path, got rc=${T15_AC5_RC} out=[${T15_AC5_OUT}]"
+fi
+
+T15_AC5B_PROJ="" T15_AC5B_DATA=""
+t14_fresh_marker_env T15_AC5B_PROJ T15_AC5B_DATA
+T15_AC5B_RC=0
+printf '{"tool_name":"Edit","tool_input":{"file_path":"/repo/src/main.js"}}' | \
+  CLAUDE_PROJECT_DIR="$T15_AC5B_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC5B_DATA" EDM_GATEGUARD_DENY_MODE=exit-code bash "$GATEGUARD" >/dev/null 2>&1 || T15_AC5B_RC=$?
+[[ "$T15_AC5B_RC" -eq 2 ]] \
+  && pass "EDMV4-T15 AC5 -- positive control: a non-SRD path under the same default still denies" \
+  || fail "EDMV4-T15 AC5 -- positive control FAILED: '/repo/src/main.js' was unexpectedly exempted (rc=${T15_AC5B_RC})"
+
+# ---- AC6: a 501st append leaves exactly 500 lines with the oldest gone; a state file backdated
+# past 30 minutes produces a DENIAL (not an allow) on a path it previously recorded. --------------
+T15_AC6_PROJ="" T15_AC6_DATA=""
+t14_fresh_marker_env T15_AC6_PROJ T15_AC6_DATA
+T15_AC6_KEY="$(CLAUDE_PROJECT_DIR="$T15_AC6_PROJ" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+T15_AC6_CHECKED="${T15_AC6_DATA}/run/${T15_AC6_KEY}.checked"
+_t15_ac6_i=1
+: > "$T15_AC6_CHECKED"
+while [[ "$_t15_ac6_i" -le 500 ]]; do
+  printf 'old-file-%d.js\n' "$_t15_ac6_i" >> "$T15_AC6_CHECKED"
+  _t15_ac6_i=$((_t15_ac6_i + 1))
+done
+t14_run "$T15_AC6_PROJ" "$T15_AC6_DATA" '{"tool_name":"Edit","tool_input":{"file_path":"the-501st.js"}}'
+T15_AC6_LINE_COUNT="$(wc -l < "$T15_AC6_CHECKED" | tr -d ' ')"
+check "EDMV4-T15 AC6 -- after a 501st append, the checked-file holds exactly 500 lines" "500" "$T15_AC6_LINE_COUNT"
+if grep -Fxq 'old-file-1.js' "$T15_AC6_CHECKED"; then
+  fail "EDMV4-T15 AC6 -- the oldest entry (old-file-1.js) is still present; pruning did not remove the oldest first"
+else
+  pass "EDMV4-T15 AC6 -- the oldest entry (old-file-1.js) was pruned first"
+fi
+if grep -Fxq 'the-501st.js' "$T15_AC6_CHECKED"; then
+  pass "EDMV4-T15 AC6 -- the newest entry (the-501st.js) is present after pruning"
+else
+  fail "EDMV4-T15 AC6 -- the newest entry (the-501st.js) is missing after pruning"
+fi
+
+# Staleness: a checked-file recording a path, backdated past 30 minutes, must produce a DENIAL
+# (not a silent allow) the next time that same path is touched -- the failure mode this half of
+# AC6 exists to prevent is "stale state reads as still-checked forever".
+T15_AC6B_PROJ="" T15_AC6B_DATA=""
+t14_fresh_marker_env T15_AC6B_PROJ T15_AC6B_DATA
+T15_AC6B_KEY="$(CLAUDE_PROJECT_DIR="$T15_AC6B_PROJ" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+T15_AC6B_CHECKED="${T15_AC6B_DATA}/run/${T15_AC6B_KEY}.checked"
+printf 'stale-recorded.js\n' > "$T15_AC6B_CHECKED"
+# Backdate past 30 minutes (2000 seconds) using touch -t if available, else a portable fallback.
+T15_AC6B_BACKDATE="$(date -v-2000S +%Y%m%d%H%M.%S 2>/dev/null || date -d '-2000 seconds' +%Y%m%d%H%M.%S 2>/dev/null || true)"
+if [[ -n "$T15_AC6B_BACKDATE" ]]; then
+  touch -t "$T15_AC6B_BACKDATE" "$T15_AC6B_CHECKED" 2>/dev/null || true
+fi
+T15_AC6B_RC=0
+T15_AC6B_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"stale-recorded.js"}}' | \
+  CLAUDE_PROJECT_DIR="$T15_AC6B_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC6B_DATA" EDM_GATEGUARD_DENY_MODE=exit-code bash "$GATEGUARD" 2>&1)" || T15_AC6B_RC=$?
+if [[ "$T15_AC6B_RC" -eq 2 ]]; then
+  pass "EDMV4-T15 AC6 -- a checked-file backdated past 30 minutes produces a DENIAL on a path it previously recorded (stale state is not still-checked)"
+else
+  fail "EDMV4-T15 AC6 -- expected a denial (exit 2) on a stale-recorded path, got rc=${T15_AC6B_RC} out=[${T15_AC6B_OUT}]"
+fi
+
+# ---- AC7: every state-write failure path allows, with a stderr warning naming
+# EDM_GATEGUARD_STATE_DIR -- never a deny. Read-only data directory. --------------------------------
+T15_AC7_PROJ="" T15_AC7_DATA=""
+t14_fresh_marker_env T15_AC7_PROJ T15_AC7_DATA
+chmod 555 "${T15_AC7_DATA}/run"
+T15_AC7_RC=0
+T15_AC7_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"readonly-target.js"}}' | \
+  CLAUDE_PROJECT_DIR="$T15_AC7_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC7_DATA" EDM_GATEGUARD_DENY_MODE=json bash "$GATEGUARD" 2>"${TMP}/t15-ac7.stderr")" || T15_AC7_RC=$?
+T15_AC7_ERR="$(cat "${TMP}/t15-ac7.stderr" 2>/dev/null || true)"
+chmod 755 "${T15_AC7_DATA}/run"
+if printf '%s' "$T15_AC7_OUT" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1; then
+  pass "EDMV4-T15 AC7 -- a state-write failure still denies (facts are the point of first touch) rather than silently allowing"
+else
+  fail "EDMV4-T15 AC7 -- expected the first-touch denial to still fire despite the state-write failure, got rc=${T15_AC7_RC} out=[${T15_AC7_OUT}]"
+fi
+check "EDMV4-T15 AC7 -- the write failure warns on stderr naming EDM_GATEGUARD_STATE_DIR" "EDM_GATEGUARD_STATE_DIR" "$T15_AC7_ERR"
+[[ "$T15_AC7_RC" -eq 0 ]] \
+  && pass "EDMV4-T15 AC7 -- json-mode deny still exits 0 (the payload IS the deny signal) even though the mark-checked write failed" \
+  || fail "EDMV4-T15 AC7 -- expected exit 0, got ${T15_AC7_RC}"
+
+# ---- AC8: EDM_GATEGUARD_MAX_DENIALS (default 3) bounds full denials per session -- four
+# unchecked paths in one session deny on the first three and allow with an advisory on the fourth.
+T15_AC8_PROJ="" T15_AC8_DATA=""
+t14_fresh_marker_env T15_AC8_PROJ T15_AC8_DATA
+T15_AC8_RCS=""
+for _t15_ac8_f in budget-a.js budget-b.js budget-c.js budget-d.js; do
+  t14_run "$T15_AC8_PROJ" "$T15_AC8_DATA" "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"${_t15_ac8_f}\"}}"
+  T15_AC8_RCS="${T15_AC8_RCS} ${T14_RUN_RC}"
+  if [[ "$_t15_ac8_f" == "budget-d.js" ]]; then
+    T15_AC8_FOURTH_ERR="$T14_RUN_ERR"
+  fi
+done
+check "EDMV4-T15 AC8 -- four unchecked paths deny on the first three and allow on the fourth" " 2 2 2 0" "$T15_AC8_RCS"
+check "EDMV4-T15 AC8 -- the fourth call's stderr carries the denial-budget advisory naming the limit (3)" \
+  "denial budget (3) reached" "$T15_AC8_FOURTH_ERR"
+
+# ---- AC9: jq missing exits 1 on the GATED path (never 2); with the marker absent, jq missing
+# exits 0 having never been referenced (T11's own AC9 already proves the zero-jq shape; this
+# re-asserts the gated-path half and the documented distinction). ----------------------------------
+harness_scratch_dir T15_AC9_TMP
+T15_AC9_FAKEBIN="${T15_AC9_TMP}/fakebin"
+mkdir -p "$T15_AC9_FAKEBIN"
+for _t15_bin in dirname bash grep date mkdir mv rm cat git stat; do
+  ln -s "$(command -v "$_t15_bin")" "${T15_AC9_FAKEBIN}/${_t15_bin}"
+done
+T15_AC9_PROJ="${T15_AC9_TMP}/proj" T15_AC9_DATA="${T15_AC9_TMP}/data"
+mkdir -p "$T15_AC9_PROJ" "${T15_AC9_DATA}/run"
+T15_AC9_KEY="$(CLAUDE_PROJECT_DIR="$T15_AC9_PROJ" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+printf 'T15PFX\t%s\t2026-09-02T00:00:00Z\n' "$T15_AC9_PROJ" > "${T15_AC9_DATA}/run/${T15_AC9_KEY}.phase6"
+T15_AC9_RC=0
+printf '{"tool_name":"Edit"}' | CLAUDE_PROJECT_DIR="$T15_AC9_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC9_DATA" PATH="$T15_AC9_FAKEBIN" bash "$GATEGUARD" >/dev/null 2>&1 || T15_AC9_RC=$?
+check "EDMV4-T15 AC9 -- jq missing on the GATED path (marker present) exits 1, never 2" "1" "$T15_AC9_RC"
+
+check "EDMV4-T15 AC9 -- the EDM-HELP block states the jq-missing distinction" \
+  "once a marker is present" "$(cat "$GATEGUARD")"
+
+# ---- AC10: an unparseable stdin payload exits 1 with empty stdout, never blocks. -----------------
+T15_AC10_PROJ="" T15_AC10_DATA=""
+t14_fresh_marker_env T15_AC10_PROJ T15_AC10_DATA
+T15_AC10_RC=0
+T15_AC10_OUT="$(printf 'not json' | CLAUDE_PROJECT_DIR="$T15_AC10_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC10_DATA" bash "$GATEGUARD" 2>/dev/null)" || T15_AC10_RC=$?
+check "EDMV4-T15 AC10 -- an unparseable stdin payload exits 1" "1" "$T15_AC10_RC"
+check "EDMV4-T15 AC10 -- an unparseable stdin payload's stdout is empty" "" "$T15_AC10_OUT"
+
+# ---- AC11: a marker present whose named initiative directory no longer exists allows. -----------
+T15_AC11_TMP=""
+harness_scratch_dir T15_AC11_TMP
+mkdir -p "${T15_AC11_TMP}/data/run" "${T15_AC11_TMP}/proj"
+T15_AC11_KEY="$(CLAUDE_PROJECT_DIR="${T15_AC11_TMP}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+printf 'T15PFX\t%s/deleted-initiative\t2026-09-02T00:00:00Z\n' "$T15_AC11_TMP" > "${T15_AC11_TMP}/data/run/${T15_AC11_KEY}.phase6"
+T15_AC11_RC=0
+T15_AC11_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"a.js"}}' | \
+  CLAUDE_PROJECT_DIR="${T15_AC11_TMP}/proj" CLAUDE_PLUGIN_DATA="${T15_AC11_TMP}/data" EDM_GATEGUARD_DENY_MODE=exit-code \
+  bash "$GATEGUARD" 2>&1)" || T15_AC11_RC=$?
+if [[ "$T15_AC11_RC" -eq 0 && -z "$T15_AC11_OUT" ]]; then
+  pass "EDMV4-T15 AC11 -- a marker naming a deleted initiative directory allows (exit 0, empty output)"
+else
+  fail "EDMV4-T15 AC11 -- expected exit 0 with empty output for a deleted-initiative-dir marker, got rc=${T15_AC11_RC} out=[${T15_AC11_OUT}]"
+fi
+# Positive control: the SAME marker file, pointed at an initiative dir that DOES exist, denies --
+# proving the AC11 allow above is attributable to the missing directory, not to some other defect.
+T15_AC11B_TMP=""
+harness_scratch_dir T15_AC11B_TMP
+mkdir -p "${T15_AC11B_TMP}/data/run" "${T15_AC11B_TMP}/proj"
+T15_AC11B_KEY="$(CLAUDE_PROJECT_DIR="${T15_AC11B_TMP}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+printf 'T15PFX\t%s\t2026-09-02T00:00:00Z\n' "${T15_AC11B_TMP}/proj" > "${T15_AC11B_TMP}/data/run/${T15_AC11B_KEY}.phase6"
+T15_AC11B_RC=0
+printf '{"tool_name":"Edit","tool_input":{"file_path":"a.js"}}' | \
+  CLAUDE_PROJECT_DIR="${T15_AC11B_TMP}/proj" CLAUDE_PLUGIN_DATA="${T15_AC11B_TMP}/data" EDM_GATEGUARD_DENY_MODE=exit-code \
+  bash "$GATEGUARD" >/dev/null 2>&1 || T15_AC11B_RC=$?
+[[ "$T15_AC11B_RC" -eq 2 ]] \
+  && pass "EDMV4-T15 AC11 -- positive control: the identical marker shape naming an EXISTING initiative dir still denies" \
+  || fail "EDMV4-T15 AC11 -- positive control FAILED: expected a denial when the initiative dir exists, got rc=${T15_AC11B_RC}"
+
+# ---- AC12: all six env vars are documented in CLAUDE.md's Testing changes section. ---------------
+T15_CLAUDE_MD_TEXT="$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+for _t15_var in EDM_GATEGUARD EDM_GATEGUARD_DISABLED EDM_GATEGUARD_DENY_MODE EDM_GATEGUARD_EXEMPT_GLOBS EDM_GATEGUARD_STATE_DIR EDM_GATEGUARD_MAX_DENIALS; do
+  check "EDMV4-T15 AC12 -- CLAUDE.md documents ${_t15_var}" "${_t15_var}" "$T15_CLAUDE_MD_TEXT"
+done
+check "EDMV4-T15 AC12 -- the knob family is introduced by name in the same bullet form as the existing families" \
+  "EDM_GATEGUARD_*\` knob family (EDMV4-T15)" "$T15_CLAUDE_MD_TEXT"
+
+echo
+
+# =================================================================================================
+# EDMV4-T45: Wire hookify events to their single owners, with bash gated on Spike A
+# =================================================================================================
+# Own banded section, appended last. GATEGUARD/EDM_STOP_GATE/DATADIR_LIB/HOOKIFY_FIXTURES are
+# already set by the EDMV4-T11/T12/T42/T46 sections above; t14_fresh_marker_env is reused unchanged.
+echo "=== EDMV4-T45: hookify event wiring (file/stop/bash), bash gated on Spike A ==="
+echo
+
+EDM_BASH_GATE="${PLUGIN_DIR}/bin/edm-bash-gate"
+BASH_DECISIONS_MD="${PLUGIN_DIR}/../../SRD/edm/EDMV4__ecc-integration/decisions.md"
+
+# ---- AC3: bash-event rules ship only because decisions.md records a positive Spike A result --
+# checked before anything else in this section, matching the AC's own reading-order requirement. -
+if [[ -f "$BASH_DECISIONS_MD" ]]; then
+  T45_D25_TEXT="$(grep -A2 '| D25 |' "$BASH_DECISIONS_MD" 2>/dev/null || true)"
+  check "EDMV4-T45 AC3 -- decisions.md D25 records that every registered PreToolUse block runs" \
+    "every registered command runs" "$T45_D25_TEXT"
+  check "EDMV4-T45 AC3 -- decisions.md D25 records a deny always wins regardless of order" \
+    "a deny always wins" "$T45_D25_TEXT"
+else
+  fail "EDMV4-T45 AC3 -- decisions.md not found at the expected path; cannot verify the Spike A precondition"
+fi
+if [[ -x "$EDM_BASH_GATE" ]]; then
+  pass "EDMV4-T45 AC3/AC4 -- bash events shipped: bin/edm-bash-gate exists and is executable, matching the positive Spike A result above"
+else
+  fail "EDMV4-T45 AC3/AC4 -- bin/edm-bash-gate is missing or not executable"
+fi
+
+# ---- AC5: the existing git-commit matcher block is byte-identical; pinned at its exact command
+# string (GATEGUARD/HOOKS_JSON already point at the real files from the EDMV4-T11 section). -------
+T45_GITCOMMIT_CMD="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' "$HOOKS_JSON")"
+check "EDMV4-T45 AC5 -- git-commit matcher's command is still byte-identical after this ticket" \
+  "command -v edm-lint-staged-artifacts >/dev/null 2>&1 || exit 0; edm-lint-staged-artifacts" "$T45_GITCOMMIT_CMD"
+
+# ---- AC1 (structural): no second PreToolUse block registered for file events -- exactly one
+# matcher block names Edit|Write|MultiEdit, and the new Bash block is matcher-disjoint from it. --
+T45_FILE_MATCHER_COUNT="$(jq '[.hooks.PreToolUse[] | select(.matcher == "Edit|Write|MultiEdit")] | length' "$HOOKS_JSON")"
+check "EDMV4-T45 AC1 -- exactly one PreToolUse block matches Edit|Write|MultiEdit (no second file-event block)" \
+  "1" "$T45_FILE_MATCHER_COUNT"
+T45_BASH_MATCHER_CMD="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[0].command' "$HOOKS_JSON")"
+check "EDMV4-T45 AC4 -- the new Bash matcher's command begins with the edm-bash-gate presence guard" \
+  "command -v edm-bash-gate >/dev/null 2>&1 || exit 0" "$T45_BASH_MATCHER_CMD"
+
+# ---- AC2 (structural): no second Stop matcher block registered -- still exactly one, two entries.
+T45_STOP_LEN="$(jq '.hooks.Stop | length' "$HOOKS_JSON")"
+check "EDMV4-T45 AC2 -- Stop still has exactly one matcher block (stop-event rules are evaluated IN it, not via a second block)" \
+  "1" "$T45_STOP_LEN"
+
+# ---- AC6: with hookify present (a rule directory exists and is enabled) and the Phase 6 marker
+# ABSENT, an Edit is allowed with ZERO rule evaluation -- reusing the jq-counting-shim technique
+# EDMV4-T11 AC9 already established for the identical claim (zero jq on the allow path applies to
+# hookify's own jq usage too, since the hookify call never happens before the marker is present). -
+harness_scratch_dir T45_AC6_TMP
+T45_AC6_FAKEBIN="${T45_AC6_TMP}/fakebin"
+mkdir -p "$T45_AC6_FAKEBIN" "${T45_AC6_TMP}/proj/.claude/edm-hookify"
+cp "${HOOKIFY_FIXTURES}/warn-no-console-log.json" "${T45_AC6_TMP}/proj/.claude/edm-hookify/"
+for _t45_bin in dirname bash grep date mkdir mv rm cat git; do
+  ln -s "$(command -v "$_t45_bin")" "${T45_AC6_FAKEBIN}/${_t45_bin}"
+done
+cat > "${T45_AC6_FAKEBIN}/jq" <<T45JQSPY
+#!/bin/sh
+: > "${T45_AC6_FAKEBIN}/.jq_invoked"
+exit 99
+T45JQSPY
+chmod +x "${T45_AC6_FAKEBIN}/jq"
+cat > "${T45_AC6_FAKEBIN}/edm-hookify" <<T45HFSPY
+#!/bin/sh
+: > "${T45_AC6_FAKEBIN}/.hookify_invoked"
+exit 99
+T45HFSPY
+chmod +x "${T45_AC6_FAKEBIN}/edm-hookify"
+
+T45_AC6_DATA_ABSENT="${T45_AC6_TMP}/data-absent"
+mkdir -p "$T45_AC6_DATA_ABSENT"
+T45_AC6_RC=0
+T45_AC6_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"src/foo.js","new_text":"console.log(1)"}}' | \
+  CLAUDE_PROJECT_DIR="${T45_AC6_TMP}/proj" CLAUDE_PLUGIN_DATA="$T45_AC6_DATA_ABSENT" PATH="$T45_AC6_FAKEBIN" bash "$GATEGUARD" 2>"${T45_AC6_TMP}/ac6.stderr")" || T45_AC6_RC=$?
+T45_AC6_STDERR="$(cat "${T45_AC6_TMP}/ac6.stderr" 2>/dev/null || true)"
+if [[ "$T45_AC6_RC" -eq 0 && -z "$T45_AC6_OUT" && -z "$T45_AC6_STDERR" ]]; then
+  pass "EDMV4-T45 AC6 -- marker absent, hookify present with an enabled rule: still exit 0, empty output"
+else
+  fail "EDMV4-T45 AC6 -- rc=${T45_AC6_RC} stdout=[${T45_AC6_OUT}] stderr=[${T45_AC6_STDERR}]"
+fi
+if [[ ! -f "${T45_AC6_FAKEBIN}/.hookify_invoked" ]]; then
+  pass "EDMV4-T45 AC6 -- edm-hookify was never invoked on the marker-absent path (zero hookify-attributable spawns)"
+else
+  fail "EDMV4-T45 AC6 -- edm-hookify WAS invoked despite the marker being absent"
+fi
+
+# Positive control: the identical fixture, marker PRESENT, DOES invoke edm-hookify -- proving the
+# spy is capable of firing and the zero-count above is not vacuous. Uses a SEPARATE fakebin with a
+# REAL jq (the marker-present gated path legitimately needs one to parse tool_name) plus only the
+# edm-hookify spy, placed ahead of the real bin/ in PATH so the spy shadows the real binary
+# without a fake jq breaking the JSON parse the gated path depends on.
+T45_AC6B_FAKEBIN="${T45_AC6_TMP}/fakebin-control"
+mkdir -p "$T45_AC6B_FAKEBIN"
+for _t45b_bin in dirname bash grep date mkdir mv rm cat git jq; do
+  ln -s "$(command -v "$_t45b_bin")" "${T45_AC6B_FAKEBIN}/${_t45b_bin}"
+done
+cat > "${T45_AC6B_FAKEBIN}/edm-hookify" <<T45HFSPY2
+#!/bin/sh
+: > "${T45_AC6B_FAKEBIN}/.hookify_invoked"
+exit 99
+T45HFSPY2
+chmod +x "${T45_AC6B_FAKEBIN}/edm-hookify"
+
+T45_AC6_DATA_PRESENT="${T45_AC6_TMP}/data-present"
+mkdir -p "${T45_AC6_DATA_PRESENT}/run"
+T45_AC6_KEY="$(CLAUDE_PROJECT_DIR="${T45_AC6_TMP}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+printf 'T45PFX\t%s\t2026-09-02T00:00:00Z\n' "${T45_AC6_TMP}/proj" > "${T45_AC6_DATA_PRESENT}/run/${T45_AC6_KEY}.phase6"
+printf 'src/foo.js\n' > "${T45_AC6_DATA_PRESENT}/run/${T45_AC6_KEY}.checked"
+printf '{"tool_name":"Edit","tool_input":{"file_path":"src/foo.js","new_text":"console.log(1)"}}' | \
+  CLAUDE_PROJECT_DIR="${T45_AC6_TMP}/proj" CLAUDE_PLUGIN_DATA="$T45_AC6_DATA_PRESENT" PATH="${T45_AC6B_FAKEBIN}:${PLUGIN_DIR}/bin:${PATH}" bash "$GATEGUARD" >/dev/null 2>&1 || true
+if [[ -f "${T45_AC6B_FAKEBIN}/.hookify_invoked" ]]; then
+  pass "EDMV4-T45 AC6 -- positive control: edm-hookify DOES fire once the marker is present, so the absent-case zero-count is not vacuous"
+else
+  fail "EDMV4-T45 AC6 -- positive control FAILED: edm-hookify never fired even with a marker present"
+fi
+
+# ---- AC7: with the marker present and a matching file rule enabled, the rule evaluates EXACTLY
+# ONCE per gated edit -- a real edm-hookify call-count spy (not jq), against a rule carrying TWO
+# AND'd conditions, so "once per condition" would visibly diverge from "once per call" if it
+# occurred. --------------------------------------------------------------------------------------
+harness_scratch_dir T45_AC7_TMP
+mkdir -p "${T45_AC7_TMP}/proj/.claude/edm-hookify" "${T45_AC7_TMP}/data/run"
+cat > "${T45_AC7_TMP}/proj/.claude/edm-hookify/two-conditions.json" <<'EOF'
+{
+  "name": "two-cond-rule",
+  "enabled": true,
+  "event": "file",
+  "action": "warn",
+  "conditions": [
+    { "field": "file_path", "operator": "contains", "pattern": "foo" },
+    { "field": "new_text", "operator": "contains", "pattern": "console.log" }
+  ],
+  "message": "two conditions matched"
+}
+EOF
+T45_AC7_KEY="$(CLAUDE_PROJECT_DIR="${T45_AC7_TMP}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+printf 'T45PFX\t%s\t2026-09-02T00:00:00Z\n' "${T45_AC7_TMP}/proj" > "${T45_AC7_TMP}/data/run/${T45_AC7_KEY}.phase6"
+printf 'src/foo.js\n' > "${T45_AC7_TMP}/data/run/${T45_AC7_KEY}.checked"
+
+T45_AC7_SPYBIN="${T45_AC7_TMP}/spybin"
+mkdir -p "$T45_AC7_SPYBIN"
+T45_REAL_HOOKIFY="$(command -v edm-hookify 2>/dev/null || echo "${PLUGIN_DIR}/bin/edm-hookify")"
+cat > "${T45_AC7_SPYBIN}/edm-hookify" <<T45HFCOUNT
+#!/bin/sh
+count_file="${T45_AC7_TMP}/.hookify_call_count"
+n=\$(cat "\$count_file" 2>/dev/null || echo 0)
+echo \$((n + 1)) > "\$count_file"
+exec "${T45_REAL_HOOKIFY}" "\$@"
+T45HFCOUNT
+chmod +x "${T45_AC7_SPYBIN}/edm-hookify"
+
+printf '{"tool_name":"Edit","tool_input":{"file_path":"src/foo.js","new_text":"console.log(1)"}}' | \
+  CLAUDE_PROJECT_DIR="${T45_AC7_TMP}/proj" CLAUDE_PLUGIN_DATA="${T45_AC7_TMP}/data" \
+  PATH="${T45_AC7_SPYBIN}:${PLUGIN_DIR}/bin:${PATH}" bash "$GATEGUARD" >/dev/null 2>&1 || true
+T45_AC7_COUNT="$(cat "${T45_AC7_TMP}/.hookify_call_count" 2>/dev/null || echo 0)"
+check "EDMV4-T45 AC7 -- a two-condition rule is evaluated via exactly one edm-hookify call, not once per condition" \
+  "1" "$T45_AC7_COUNT"
+
+# ---- AC8: CLAUDE.md's Hooks behavior documents which events hookify serves and which owns each --
+T45_CLAUDE_MD_TEXT="$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check "EDMV4-T45 AC8 -- documents file events owned by edm-gateguard's allow path" \
+  "evaluates enabled \`file\`-event hookify rules exactly once, on the allow path" "$T45_CLAUDE_MD_TEXT"
+check "EDMV4-T45 AC8 -- documents stop events owned by edm-stop-gate" \
+  "evaluates enabled \`stop\`-event hookify rules exactly once per invocation" "$T45_CLAUDE_MD_TEXT"
+check "EDMV4-T45 AC8 -- documents the new PreToolUse Bash row and its owner (edm-bash-gate)" \
+  "Delegates to \`bin/edm-bash-gate\`" "$T45_CLAUDE_MD_TEXT"
+check "EDMV4-T45 AC8 -- states hookify registers no PreToolUse/Stop block of its own for file/stop" \
+  "hookify registers no" "$T45_CLAUDE_MD_TEXT"
+
+# ---- AC9: hooks.json (carrying the new Bash block's command string) still parses as valid JSON,
+# and edm-check-vocabulary -- which hard-dies on invalid JSON in that file before scanning it --
+# still passes over the whole plugin tree. --------------------------------------------------------
+if jq . "$HOOKS_JSON" >/dev/null 2>&1; then
+  pass "EDMV4-T45 AC9 -- hooks.json (including the new Bash block) still parses as valid JSON"
+else
+  fail "EDMV4-T45 AC9 -- hooks.json failed to parse as JSON after adding the Bash block"
+fi
+T45_VOCAB_RC=0
+(cd "$PLUGIN_DIR" && bash bin/edm-check-vocabulary >/dev/null 2>&1) || T45_VOCAB_RC=$?
+check "EDMV4-T45 AC9 -- edm-check-vocabulary passes over the updated hooks.json and the new edm-bash-gate" "0" "$T45_VOCAB_RC"
+
+echo
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
