@@ -156,6 +156,16 @@
       "verdict": "PARTIAL",
       "note": "runtime-check: exercise the size-classifier pre-step through a real /edm:orchestrator Step 1c dialog",
       "recorded_at": "2026-09-02T19:52:55Z"
+    },
+    "EDMV4-T19": {
+      "verdict": "PARTIAL",
+      "note": "runtime-check: AC7 -- re-run bash plugins/edm/bin/tests/run-all.sh once EDMV4-T26 has landed and the ~35 wave7 assertions stale against EDMV4-T18 have an owner; confirm a green aggregate. No wave7 assertion references the CA-476 comment text, so no current failure is T19-attributable",
+      "recorded_at": "2026-09-03T04:57:05Z"
+    },
+    "EDMV4-T20": {
+      "verdict": "PARTIAL",
+      "note": "runtime-check: AC9 second/third clauses -- run bash plugins/edm/bin/tests/run-all.sh twice in a row from a clean tree and confirm both runs are green and produce the same result. Blocked today by the 65 non-T20 wave7 failures. AC9 first clause (scratch HOME/CLAUDE_PLUGIN_DATA/XDG_DATA_HOME, no repo mutation) is already PASS; the ticket rollup is FAIL on AC8, tracked separately",
+      "recorded_at": "2026-09-03T04:57:12Z"
     }
   },
   "mode": "standard",
@@ -167,7 +177,7 @@
   "forked_from": "",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-09-03T01:51:55Z",
+  "last_updated": "2026-09-03T04:57:12Z",
   "current_step": 6,
   "patterns_last_updated": "2026-09-02T13:25:32Z",
   "patterns_updates": {

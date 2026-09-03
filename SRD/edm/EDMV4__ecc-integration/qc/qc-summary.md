@@ -1,4 +1,4 @@
-# QC Audit Summary: EDMV4 -- ECC Integration, Phase 6 Wave 1
+# QC Audit Summary: EDMV4 -- ECC Integration, Phase 6 Waves 1-3
 
 **Date**: 2026-09-02
 **Tickets audited**: 15 of 15 (`EDMV4-T01`, `T04`..`T10`, `T17`, `T21`, `T34`, `T38`, `T42`, `T48`, `T49`)
@@ -64,4 +64,106 @@ the suite itself:
 It also caught four orchestrator errors: an unmerged branch reported as merged, two misread
 pipeline exit codes, and a QC report written into a worktree.
 
-<!-- QC-SUMMARY-COMPLETE wave=01 shards=4 tickets=15 -->
+---
+
+## Wave 2 -- 14 tickets, 4 shards
+
+Merged from `qc-shard-pass-w02-01.md` .. `qc-shard-pass-w02-04.md`. This merge did not run when
+wave 2 drained; it is being run now, with wave 3, per `skills/implement/SKILL.md` Step 4's rule that
+the merge re-runs after every wave so the summary always reflects every shard written so far.
+
+| Ticket | Title | Verdict |
+|---|---|---|
+| `EDMV4-T12` | Add the Phase-6 marker primitive with SessionStart reconciliation | FAIL |
+| `EDMV4-T16` | Record ECC and GateGuard provenance in the house-style attribution section | FAIL |
+| `EDMV4-T18` | Land the 4.2 fix -- writable harvested delta and `get-patterns` read side | FAIL |
+| `EDMV4-T22` | Materialize lenses and derive round_type from the union rule | PASS |
+| `EDMV4-T25` | Write lens L12 -- Silent Failures | PASS |
+| `EDMV4-T27` | Write lens L14 -- Behavioral Test Coverage | PASS |
+| `EDMV4-T29` | Sweep `skills/code-audit/SKILL.md`'s twelve lens-count sites | FAIL |
+| `EDMV4-T32` | Grow the code-audit test fixtures from 11 to 14 lens pairs | FAIL |
+| `EDMV4-T33` | Sweep the documentation and user-facing surfaces for the lens count | PASS |
+| `EDMV4-T35` | Pin the classifier to the eight existing mode enum values | PARTIAL |
+| `EDMV4-T36` | Implement the security-trigger tie-breaker | PARTIAL |
+| `EDMV4-T37` | Enforce guard D6 so the classifier never restates the mode matrix | PARTIAL |
+| `EDMV4-T43` | Build the hookify evaluator, one classify pass and N projections | FAIL |
+| `EDMV4-T46` | Build `edm-stop-gate` and add it as a second `Stop` entry | FAIL |
+
+All wave-2 FAIL findings were remediated in-wave before wave 3 launched. The three PARTIALs
+(`T35`, `T36`, `T37`) are persisted via `record-partial-verdict` and remain open pending
+`/edm:verify-runtime`.
+
+---
+
+## Wave 3 -- 10 tickets, 2 shards
+
+Merged from `qc-shard-pass-w03-01.md` and `qc-shard-pass-w03-02.md`.
+
+| Ticket | Title | Verdict | Remediated |
+|---|---|---|---|
+| `EDMV4-T13` | Route every GateGuard decision through one `emit_decision` | PASS | -- |
+| `EDMV4-T19` | Correct the stale caller-count comment in `cmd_update_patterns` | PARTIAL | open |
+| `EDMV4-T20` | Regression coverage over every branch of the 4.2 write and read paths | FAIL | `f9bbd35` |
+| `EDMV4-T23` | Teach the CA-471 backstop to distinguish N/A from missing JSONL | FAIL | `7cd7c6a` |
+| `EDMV4-T24` | Make code-audit Step 1 the sole authority for L13 applicability | FAIL | `18c00c9` |
+| `EDMV4-T30` | Rewrite the smoke-suite lens-count assertions for 14 lenses | FAIL | `2f3e588` |
+| `EDMV4-T31` | Re-inventory the lens-count sites, close the do-not-touch list | FAIL | `fdb5ae3` |
+| `EDMV4-T41` | Feed the readiness score into the classifier and into planning.md | PASS | -- |
+| `EDMV4-T44` | Make `action: block` explicit opt-in behind a two-tier exit contract | FAIL | `8ea5aeb` |
+| `EDMV4-T47` | Block only on the unambiguous subset, read from the class field | PASS | -- |
+
+### The two findings that mattered
+
+**`EDMV4-T24` AC4 (P1) -- a real functional bug, found by execution rather than inspection.**
+`detect-conditional-lenses` was cwd-sensitive: `bin/edm-state` called a bare `git ls-files`, which
+enumerates only the subtree below the current directory, and probed a cwd-relative
+`pyproject.toml`. In a scratch repo with a tracked root-level `tsconfig.json`, the answer was
+`""` (L13 applies) from the root and `"L13"` (L13 N/A) from a subdirectory. That answer gates
+`round_type=full` -> `audit-converged` -> `archive`, so a code audit run from a subdirectory would
+silently declare L13 inapplicable and let an initiative archive without a lens it needed -- exactly
+what Guard D2 exists to prevent. Fixed by resolving the project root once via the existing CA-448
+idiom and running `git -C "$root" ls-files`. Verified independently by the orchestrator: both
+invocations now agree.
+
+**`EDMV4-T30` AC10 (P1 x2) -- the ticket reintroduced the vacuity it was written to remove.**
+Deriving `WAVE7_LENS_COUNT` from `LENS_AGENTS` was correct, but it made every assertion comparing
+the two a tautology: both operands were the member count of one string, so no input could fail
+them. The pre-T30 `-eq 11` / `-eq 15` literals were vacuous against the *tree* yet were still real
+tripwires against the *list* -- drop a name and they fired. Computing the count away removed the
+only thing checking the list at all, and both sites kept comments asserting a tripwire that no
+longer existed. The `T48 AC1` site is the one the ticket itself flagged as "the dangerous
+instance", where a dropped lens vanishes from the D16 opus/max assertion. Both now anchor to
+`bin/edm-state`'s `ALL_LENS_IDS` -- an independent definition, in another file, maintained by
+different tickets -- each with a positive control.
+
+### Confirmed clean under specific challenge
+
+- `EDMV4-T23` AC2's proof is genuinely non-vacuous: the fixture writes a `lenses-run.txt`
+  containing no lens IDs, so a manifest-iterating implementation would stay `full`; only a state
+  read with the C-4 substitution downgrades.
+- `EDMV4-T20`'s three write branches are each really exercised -- branch (b) forces
+  `edm_data_dir()` empty via `chmod 555` over all three candidates against a `cp -R` scratch tree;
+  branch (c) additionally locks the copied docs dir and asserts SHA-256 equality.
+- `EDMV4-T47`'s "no production change was needed" claim holds: `git log --all` on
+  `bin/edm-stop-gate` returns exactly one commit, T46's.
+- `EDMV4-T44`'s `2>&1` widening of two pre-existing `T43` assertions hides nothing; the dropped
+  stream distinction is covered by a separate `check` on stderr plus `check_absent` on stdout.
+- `EDMV4-T30`'s five `set -e` guard additions are genuine `|| true` wrappers, with no assertion
+  deleted or neutered.
+
+### Suite state at wave-3 close
+
+| Suite | Result |
+|---|---|
+| `wave6-smoke.sh` | 795 passed, 0 failed |
+| `wave8-smoke.sh` | 515 passed, 0 failed |
+| `wave7-smoke.sh` | 1387 passed, 65 failed -- see below |
+
+`wave7`'s 65 failures are attributed, not unexplained: the L13/L14 lens agents pending
+`EDMV4-T26`; roughly 35 assertions gone stale against `EDMV4-T18`'s relocation of harvested
+patterns to a data-dir delta, which **no ticket currently owns**; and two pending cross-cutting
+version bumps. `wave7` also ran to completion for the first time since `T18` landed -- a stale
+6-argument call left `$7` unbound and `set -u` killed the suite mid-run, hiding roughly 500 passing
+assertions behind a suite that was already red by design (fixed in `9a4a7f0`).
+
+<!-- QC-SUMMARY-COMPLETE wave=03 shards=10 tickets=39 -->
