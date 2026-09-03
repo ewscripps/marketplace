@@ -2556,6 +2556,373 @@ T18_SRD_WRITER_TOOLS="$(grep -m1 '^tools:' "${PLUGIN_DIR}/agents/edm-srd-writer.
 check_absent "EDMV4-T18 AC10 -- edm-srd-writer.md still carries no Bash grant" "Bash" "$T18_SRD_WRITER_TOOLS"
 T18_TICKET_WRITER_TOOLS="$(grep -m1 '^tools:' "${PLUGIN_DIR}/agents/edm-ticket-writer.md" 2>/dev/null)"
 check_absent "EDMV4-T18 AC10 -- edm-ticket-writer.md still carries no Bash grant" "Bash" "$T18_TICKET_WRITER_TOOLS"
+
+# =================================================================================================
+# EDMV4-T19 -- correct the stale caller-count comment in cmd_update_patterns
+# =================================================================================================
+echo
+echo "-- EDMV4-T19: CA-476 caller-count comment corrected --"
+
+T19_CA476_BLOCK="$(awk '/^  # CA-476: resolve HOW MANY findings/{f=1} f{print} f && /report-format gap would be worse than the gap\.$/{exit}' "$EDM_STATE")"
+
+# ---- AC1/AC3: the count-free wording lands, and the comment's substantive point (neither
+# "nothing harvested" outcome is a die) survives completely unchanged. -----------------------------
+check "EDMV4-T19 AC1 -- the comment states the property that matters instead of a maintained count" \
+  "called mid-phase by the audit and implementation skills" "$T19_CA476_BLOCK"
+check "EDMV4-T19 AC3 -- the comment's substantive point survives unchanged (neither nothing-harvested outcome is a die)" \
+  "aborting the phase over a report-format gap would be worse than the gap" "$T19_CA476_BLOCK"
+
+# ---- AC6: number-word tripwire -- the count can never drift back in, whether restated as "four"
+# (still stale) or re-stated as the now-correct "six" (still a maintained count that will drift
+# again the moment a seventh caller is added). -----------------------------------------------------
+if printf '%s\n' "$T19_CA476_BLOCK" | grep -qiw 'four'; then
+  fail "EDMV4-T19 AC6 -- CA-476 comment block still contains the word 'four'"
+else
+  pass "EDMV4-T19 AC6 -- CA-476 comment block contains no word 'four'"
+fi
+if printf '%s\n' "$T19_CA476_BLOCK" | grep -qiw 'six'; then
+  fail "EDMV4-T19 AC6 -- CA-476 comment block still contains the word 'six'"
+else
+  pass "EDMV4-T19 AC6 -- CA-476 comment block contains no word 'six'"
+fi
+
+# ---- AC2: the six real call sites, verified against the tree at test time (not copied from the
+# ticket) -- each names the skill file and the exact edm-state update-patterns <PREFIX> ... call. -
+T19_CALL_SITES="skills/implement/SKILL.md skills/code-audit/SKILL.md skills/audit-tickets/SKILL.md skills/audit-srd/SKILL.md skills/test/SKILL.md skills/test-coverage/SKILL.md"
+T19_CALL_SITE_COUNT=0
+for t19_f in $T19_CALL_SITES; do
+  if grep -q 'edm-state update-patterns <PREFIX>' "${PLUGIN_DIR}/${t19_f}" 2>/dev/null; then
+    T19_CALL_SITE_COUNT=$((T19_CALL_SITE_COUNT + 1))
+  else
+    fail "EDMV4-T19 AC2 -- ${t19_f} does not call 'edm-state update-patterns <PREFIX> ...'"
+  fi
+done
+check "EDMV4-T19 AC2 -- exactly six skills call edm-state update-patterns <PREFIX> ..." "6" "$T19_CALL_SITE_COUNT"
+
+# ---- AC4: the second copy of the same stale claim, in docs/audit-patterns/README.md, is
+# corrected the same way in the same commit -- its own Consumers section already lists all six
+# call sites, so the file no longer contradicts itself. --------------------------------------------
+# The file hard-wraps long paragraphs at its own column width, so the corrected sentence may
+# itself land across two physical lines (it does, today) -- normalize newlines to spaces before
+# substring-matching so this assertion does not depend on exactly where the file wraps.
+T19_README_TEXT="$(cat "${PLUGIN_DIR}/docs/audit-patterns/README.md" | tr '\n' ' ')"
+check_absent "EDMV4-T19 AC4 -- docs/audit-patterns/README.md no longer says 'four skills'" \
+  "four skills" "$T19_README_TEXT"
+check "EDMV4-T19 AC4 -- docs/audit-patterns/README.md restates the property instead of a maintained count" \
+  "called mid-phase by the audit and implementation skills" "$T19_README_TEXT"
+
+# ---- AC5: comment-only/prose-only -- the executable script still parses cleanly. -----------------
+if bash -n "$EDM_STATE" 2>/dev/null; then
+  pass "EDMV4-T19 AC5 -- bash -n plugins/edm/bin/edm-state passes after the comment-only edit"
+else
+  fail "EDMV4-T19 AC5 -- bash -n plugins/edm/bin/edm-state failed after the comment-only edit"
+fi
+
+# =================================================================================================
+# EDMV4-T20 -- regression coverage over every branch of the 4.2 write and read paths
+# =================================================================================================
+echo
+echo "-- EDMV4-T20: regression coverage over every branch of the 4.2 write and read paths --"
+
+# AC9's own working tree may already carry this ticket's own legitimate, not-yet-committed
+# changes (this test file, edm-state, the fixtures) -- asserting a globally EMPTY porcelain would
+# fail on every uncommitted-but-legitimate tree, which is not what AC9 is checking. Capture a
+# BEFORE snapshot here and diff against an AFTER snapshot at the end of this section instead, the
+# same before/after idiom EDMV4-T17 AC9 already uses above.
+T20_GIT_BEFORE="$(git -C "$REPO_ROOT" status --porcelain)"
+
+T20_PATTERNS_FIXTURES="${PLUGIN_DIR}/bin/tests/fixtures/patterns"
+
+# ---- AC1: writable-data-directory path (branch a) end to end, own fixture and own scratch env --
+T20_AC1_ROOT="${TMP}/t20-ac1"
+T20_AC1_DATA="${T20_AC1_ROOT}/data"
+T20_AC1_HOME="${T20_AC1_ROOT}/home"
+T20_AC1_SRD="${T20_AC1_ROOT}/SRD"
+mkdir -p "$T20_AC1_DATA" "$T20_AC1_HOME" "${T20_AC1_SRD}/edm/EDMV4T20AC1__x/code-audit/pass-1_2026-09-02"
+cat > "${T20_AC1_SRD}/edm/EDMV4T20AC1__x/.edm-state.json" <<'EOF'
+{"prefix":"EDMV4T20AC1","current_phase":6,"product_name":"edm","initiative_description":"x"}
+EOF
+cp "${T20_PATTERNS_FIXTURES}/code-fixture.md" \
+  "${T20_AC1_SRD}/edm/EDMV4T20AC1__x/code-audit/pass-1_2026-09-02/REMEDIATION.md"
+
+t20_ac1_update() {
+  ( export CLAUDE_PLUGIN_DATA="$T20_AC1_DATA" HOME="$T20_AC1_HOME" XDG_DATA_HOME="" CLAUDE_PROJECT_DIR="$T20_AC1_ROOT" EDM_SRD_ROOT="$T20_AC1_SRD"
+    "$EDM_STATE" update-patterns "$@" )
+}
+
+T20_AC1_OUT="$(t20_ac1_update EDMV4T20AC1 code)"
+check "EDMV4-T20 AC1 -- branch (a) writable-data-directory: update-patterns reports a new finding appended" \
+  "1 new finding(s) appended" "$T20_AC1_OUT"
+
+T20_AC1_DELTA="${T20_AC1_DATA}/patterns/code-audit.md"
+if [[ -f "$T20_AC1_DELTA" ]]; then
+  pass "EDMV4-T20 AC1 -- delta file created under \${data}/patterns/"
+else
+  fail "EDMV4-T20 AC1 -- expected delta at ${T20_AC1_DELTA}, not found"
+fi
+
+T20_AC1_H1="$(grep -n '^## Top Recurring Findings$' "$T20_AC1_DELTA" 2>/dev/null | head -1 | cut -d: -f1)"
+T20_AC1_H2="$(grep -n '^## Anti-Patterns$' "$T20_AC1_DELTA" 2>/dev/null | head -1 | cut -d: -f1)"
+T20_AC1_H3="$(grep -n '^## Pre-Flight Checklist$' "$T20_AC1_DELTA" 2>/dev/null | head -1 | cut -d: -f1)"
+T20_AC1_H4="$(grep -n '^## What Passing Code Looks Like$' "$T20_AC1_DELTA" 2>/dev/null | head -1 | cut -d: -f1)"
+if [[ -n "$T20_AC1_H1" && -n "$T20_AC1_H2" && -n "$T20_AC1_H3" && -n "$T20_AC1_H4" \
+      && "$T20_AC1_H1" -lt "$T20_AC1_H2" && "$T20_AC1_H2" -lt "$T20_AC1_H3" && "$T20_AC1_H3" -lt "$T20_AC1_H4" ]]; then
+  pass "EDMV4-T20 AC1 -- fresh delta stub carries the four Living-Library headings in contract order"
+else
+  fail "EDMV4-T20 AC1 -- stub headings missing or out of order (h1=${T20_AC1_H1} h2=${T20_AC1_H2} h3=${T20_AC1_H3} h4=${T20_AC1_H4})"
+fi
+
+T20_AC1_SECTION="$(awk '/^## Anti-Patterns$/{f=1; next} /^## /{f=0} f' "$T20_AC1_DELTA")"
+check "EDMV4-T20 AC1 -- the harvested finding is spliced under the correct insertion target (## Anti-Patterns)" \
+  "CA-9001" "$T20_AC1_SECTION"
+
+# ---- AC5: re-running update-patterns against the same fixture/delta appends the finding exactly
+# once -- de-duplication against the DELTA (distinct from AC4's de-duplication against the SEED). -
+t20_ac1_update EDMV4T20AC1 code >/dev/null
+T20_AC5_COUNT="$(grep -c '### CA-9001' "$T20_AC1_DELTA" 2>/dev/null || echo 0)"
+check "EDMV4-T20 AC5 -- running update-patterns twice against the same fixture appends the finding exactly once" \
+  "1" "$T20_AC5_COUNT"
+
+# ---- AC2: shipped-tree-writable fallback (branch b) reproduces TODAY'S EXACT behaviour: with
+# edm_data_dir() forced empty (a chmod-555 ancestor blocks all three candidates, T17's own AC4
+# technique) and the shipped tree writable, the finding lands in docs/audit-patterns/{type}.md and
+# patterns_updates is recorded with the same shape as before EDMV4-T18. Runs against a SCRATCH
+# COPY of the whole plugin tree (wave7-smoke.sh's G39 case's own cp -R precedent) -- the real
+# docs/audit-patterns/ is never written to by this suite. ------------------------------------------
+T20_AC2_ROOT="${TMP}/t20-ac2"
+mkdir -p "${T20_AC2_ROOT}/plugins/edm"
+cp -R "${PLUGIN_DIR}/." "${T20_AC2_ROOT}/plugins/edm/"
+T20_AC2_EDM_STATE="${T20_AC2_ROOT}/plugins/edm/bin/edm-state"
+T20_AC2_SEED="${T20_AC2_ROOT}/plugins/edm/docs/audit-patterns/srd-audit.md"
+
+T20_AC2_ROBLOCK="${T20_AC2_ROOT}/roblock"
+mkdir -p "$T20_AC2_ROBLOCK"
+chmod 555 "$T20_AC2_ROBLOCK"
+
+T20_AC2_SRD="${T20_AC2_ROOT}/SRD"
+mkdir -p "${T20_AC2_SRD}/edm/EDMV4T20AC2__x"
+cat > "${T20_AC2_SRD}/edm/EDMV4T20AC2__x/.edm-state.json" <<'EOF'
+{"prefix":"EDMV4T20AC2","current_phase":3,"product_name":"edm","initiative_description":"x"}
+EOF
+cp "${T20_PATTERNS_FIXTURES}/srd-fixture.md" "${T20_AC2_SRD}/edm/EDMV4T20AC2__x/audit-srd.md"
+
+T20_AC2_OUT="$(
+  export CLAUDE_PLUGIN_DATA="${T20_AC2_ROBLOCK}/pd" XDG_DATA_HOME="${T20_AC2_ROBLOCK}/xdg" HOME="${T20_AC2_ROBLOCK}/home"
+  export EDM_SRD_ROOT="$T20_AC2_SRD"
+  bash "$T20_AC2_EDM_STATE" update-patterns EDMV4T20AC2 srd
+)"
+chmod 755 "$T20_AC2_ROBLOCK"
+
+check "EDMV4-T20 AC2 -- branch (b) shipped-tree-writable fallback: update-patterns still reports a new finding appended" \
+  "1 new finding(s) appended" "$T20_AC2_OUT"
+check "EDMV4-T20 AC2 -- the finding lands directly in the shipped seed file (today's pre-EDMV4-T18 target), not a delta" \
+  "EDMV4-T20 branch (b) positive-control finding" "$(cat "$T20_AC2_SEED" 2>/dev/null)"
+
+T20_AC2_STATE="${T20_AC2_SRD}/edm/EDMV4T20AC2__x/.edm-state.json"
+T20_AC2_SHAPE_OK="$(jq -r '.patterns_updates.srd | (.new_findings == 1) and (.extraction_status == "ok") and (has("extracted_titles")) and (has("updated_at"))' "$T20_AC2_STATE" 2>/dev/null || echo false)"
+check "EDMV4-T20 AC2 -- patterns_updates is recorded with the same shape as before this ticket's change" \
+  "true" "$T20_AC2_SHAPE_OK"
+
+# ---- AC3: all-unwritable path (branch c) warns on stderr naming the directory, exits 0, and
+# appends nothing -- the target file is byte-identical before and after, proven by SHA-256
+# checksum (not line count), per _harness_hash_file. Reuses the scratch-plugin-copy technique from
+# AC2, additionally chmodding the copied docs/audit-patterns/ tree read-only so branch (b) fails
+# too. -----------------------------------------------------------------------------------------------
+T20_AC3_ROOT="${TMP}/t20-ac3"
+mkdir -p "${T20_AC3_ROOT}/plugins/edm"
+# Normalize away any double slash TMPDIR itself may carry (macOS's default TMPDIR ends in "/") --
+# edm-state's own SCRIPT_DIR is resolved via cd+pwd and never carries one, so the literal warning
+# text below must be built from the same normalized root or the substring match never lines up.
+T20_AC3_ROOT="$(cd "$T20_AC3_ROOT" && pwd)"
+cp -R "${PLUGIN_DIR}/." "${T20_AC3_ROOT}/plugins/edm/"
+T20_AC3_EDM_STATE="${T20_AC3_ROOT}/plugins/edm/bin/edm-state"
+T20_AC3_PATTERNS_DIR="${T20_AC3_ROOT}/plugins/edm/docs/audit-patterns"
+T20_AC3_SEED="${T20_AC3_PATTERNS_DIR}/code-audit.md"
+# cmd_update_patterns builds its warning path via plain string concatenation off SCRIPT_DIR
+# ("${SCRIPT_DIR}/../docs/audit-patterns"), never a cd+pwd normalization, so the literal message
+# names the unnormalized "bin/../docs/audit-patterns" form -- match that literal, not the
+# normalized physical path used for chmod above.
+T20_AC3_PATTERNS_DIR_LITERAL="${T20_AC3_ROOT}/plugins/edm/bin/../docs/audit-patterns"
+
+T20_AC3_ROBLOCK="${T20_AC3_ROOT}/roblock"
+mkdir -p "$T20_AC3_ROBLOCK"
+chmod 555 "$T20_AC3_ROBLOCK"
+chmod 555 "$T20_AC3_PATTERNS_DIR"
+
+T20_AC3_SRD="${T20_AC3_ROOT}/SRD"
+mkdir -p "${T20_AC3_SRD}/edm/EDMV4T20AC3__x"
+cat > "${T20_AC3_SRD}/edm/EDMV4T20AC3__x/.edm-state.json" <<'EOF'
+{"prefix":"EDMV4T20AC3","current_phase":6,"product_name":"edm","initiative_description":"x"}
+EOF
+
+T20_AC3_BEFORE_HASH="$(_harness_hash_file "$T20_AC3_SEED")"
+
+T20_AC3_RC=0
+T20_AC3_OUT="$(
+  export CLAUDE_PLUGIN_DATA="${T20_AC3_ROBLOCK}/pd" XDG_DATA_HOME="${T20_AC3_ROBLOCK}/xdg" HOME="${T20_AC3_ROBLOCK}/home"
+  export EDM_SRD_ROOT="$T20_AC3_SRD"
+  bash "$T20_AC3_EDM_STATE" update-patterns EDMV4T20AC3 code 2>&1
+)" || T20_AC3_RC=$?
+
+chmod 755 "$T20_AC3_PATTERNS_DIR"
+chmod 755 "$T20_AC3_ROBLOCK"
+
+T20_AC3_AFTER_HASH="$(_harness_hash_file "$T20_AC3_SEED")"
+
+if [[ "$T20_AC3_RC" -eq 0 ]]; then
+  pass "EDMV4-T20 AC3 -- branch (c) all-unwritable: update-patterns exits 0"
+else
+  fail "EDMV4-T20 AC3 -- branch (c) all-unwritable: expected exit 0, got ${T20_AC3_RC} (output: ${T20_AC3_OUT})"
+fi
+check "EDMV4-T20 AC3 -- branch (c) warns on stderr, naming the unwritable directory" \
+  "pattern directory is not writable at" "$T20_AC3_OUT"
+check "EDMV4-T20 AC3 -- the stderr warning names the actual unwritable path" \
+  "$T20_AC3_PATTERNS_DIR_LITERAL" "$T20_AC3_OUT"
+if [[ "$T20_AC3_BEFORE_HASH" == "$T20_AC3_AFTER_HASH" && "$T20_AC3_BEFORE_HASH" != "unhashable" ]]; then
+  pass "EDMV4-T20 AC3 -- the target file is byte-identical before and after (sha256 checksum, not line count)"
+else
+  fail "EDMV4-T20 AC3 -- target file hash changed or unhashable: before=${T20_AC3_BEFORE_HASH} after=${T20_AC3_AFTER_HASH}"
+fi
+
+# ---- AC4: de-duplication against the SEED -- a fixture finding whose title already exists in the
+# shipped seed produces no append to a fresh, EMPTY delta, and new_findings: 0 (distinct from
+# AC5's dedup-against-the-DELTA case above). ---------------------------------------------------------
+T20_AC4_ROOT="${TMP}/t20-ac4"
+T20_AC4_DATA="${T20_AC4_ROOT}/data"
+T20_AC4_HOME="${T20_AC4_ROOT}/home"
+T20_AC4_SRD="${T20_AC4_ROOT}/SRD"
+mkdir -p "$T20_AC4_DATA" "$T20_AC4_HOME" "${T20_AC4_SRD}/edm/EDMV4T20AC4__x/qc"
+cat > "${T20_AC4_SRD}/edm/EDMV4T20AC4__x/.edm-state.json" <<'EOF'
+{"prefix":"EDMV4T20AC4","current_phase":6,"product_name":"edm","initiative_description":"x"}
+EOF
+cp "${T20_PATTERNS_FIXTURES}/qc-seed-duplicate.md" "${T20_AC4_SRD}/edm/EDMV4T20AC4__x/qc/qc-summary.md"
+
+T20_AC4_SEED_HAS_TITLE="$(grep -c '^### PASS based on code structure, not behavior$' "${PLUGIN_DIR}/docs/audit-patterns/qc-audit.md" 2>/dev/null || echo 0)"
+if [[ "$T20_AC4_SEED_HAS_TITLE" -ge 1 ]]; then
+  pass "EDMV4-T20 AC4 positive control -- the shipped qc-audit.md seed genuinely carries the title this fixture reuses"
+else
+  fail "EDMV4-T20 AC4 positive control -- the shipped seed no longer carries 'PASS based on code structure, not behavior'; the dedup-against-seed assertion below would prove nothing"
+fi
+
+T20_AC4_OUT="$(
+  export CLAUDE_PLUGIN_DATA="$T20_AC4_DATA" HOME="$T20_AC4_HOME" XDG_DATA_HOME="" CLAUDE_PROJECT_DIR="$T20_AC4_ROOT" EDM_SRD_ROOT="$T20_AC4_SRD"
+  "$EDM_STATE" update-patterns EDMV4T20AC4 qc
+)"
+check "EDMV4-T20 AC4 -- a title already present in the shipped seed produces no append (no novel findings)" \
+  "no novel findings to append" "$T20_AC4_OUT"
+
+T20_AC4_STATE="${T20_AC4_SRD}/edm/EDMV4T20AC4__x/.edm-state.json"
+T20_AC4_NEWFINDINGS="$(jq -r '.patterns_updates.qc.new_findings' "$T20_AC4_STATE" 2>/dev/null)"
+check "EDMV4-T20 AC4 -- new_findings is recorded as 0" "0" "$T20_AC4_NEWFINDINGS"
+
+T20_AC4_DELTA="${T20_AC4_DATA}/patterns/qc-audit.md"
+T20_AC4_DELTA_HEADINGS="$(grep -c '^### ' "$T20_AC4_DELTA" 2>/dev/null || echo 0)"
+check "EDMV4-T20 AC4 -- the fresh delta still carries zero ### entries (nothing was appended)" "0" "$T20_AC4_DELTA_HEADINGS"
+
+# ---- AC6: get-patterns --paths prints exactly 2 lines with an EMPTY second line, in BOTH: (i) no
+# delta exists yet under a resolvable data directory, and (ii) the data directory is itself
+# unresolvable. wc -l is piped DIRECTLY from the command's own stdout in both cases (never from a
+# $()-captured copy, which strips trailing newlines and would misreport a genuinely-empty second
+# line as a missing one -- the CA-145-class caveat T18's own AC8 test documents). -------------------
+T20_AC6_DATA="${TMP}/t20-ac6-data"
+mkdir -p "$T20_AC6_DATA"
+T20_AC6_HOME="${TMP}/t20-ac6-home"
+mkdir -p "$T20_AC6_HOME"
+T20_AC6_NODELTA_LINES="$(CLAUDE_PLUGIN_DATA="$T20_AC6_DATA" HOME="$T20_AC6_HOME" XDG_DATA_HOME="" "$EDM_STATE" get-patterns test-coverage --paths | wc -l | tr -d ' ')"
+T20_AC6_NODELTA_OUT="$(CLAUDE_PLUGIN_DATA="$T20_AC6_DATA" HOME="$T20_AC6_HOME" XDG_DATA_HOME="" "$EDM_STATE" get-patterns test-coverage --paths)"
+T20_AC6_NODELTA_LINE2="$(printf '%s\n' "$T20_AC6_NODELTA_OUT" | sed -n '2p')"
+if [[ "$T20_AC6_NODELTA_LINES" -eq 2 && -z "$T20_AC6_NODELTA_LINE2" ]]; then
+  pass "EDMV4-T20 AC6 -- get-patterns --paths prints exactly 2 lines with an empty second line when no delta exists"
+else
+  fail "EDMV4-T20 AC6 -- expected 2 lines with empty 2nd (no delta case), got lines=${T20_AC6_NODELTA_LINES} line2=[${T20_AC6_NODELTA_LINE2}]"
+fi
+
+T20_AC6_ROBLOCK="${TMP}/t20-ac6-roblock"
+mkdir -p "$T20_AC6_ROBLOCK"
+chmod 555 "$T20_AC6_ROBLOCK"
+T20_AC6_UNRESOLVABLE_LINES="$(CLAUDE_PLUGIN_DATA="${T20_AC6_ROBLOCK}/pd" XDG_DATA_HOME="${T20_AC6_ROBLOCK}/xdg" HOME="${T20_AC6_ROBLOCK}/home" "$EDM_STATE" get-patterns test-coverage --paths | wc -l | tr -d ' ')"
+T20_AC6_UNRESOLVABLE_OUT="$(CLAUDE_PLUGIN_DATA="${T20_AC6_ROBLOCK}/pd" XDG_DATA_HOME="${T20_AC6_ROBLOCK}/xdg" HOME="${T20_AC6_ROBLOCK}/home" "$EDM_STATE" get-patterns test-coverage --paths)"
+chmod 755 "$T20_AC6_ROBLOCK"
+T20_AC6_UNRESOLVABLE_LINE2="$(printf '%s\n' "$T20_AC6_UNRESOLVABLE_OUT" | sed -n '2p')"
+if [[ "$T20_AC6_UNRESOLVABLE_LINES" -eq 2 && -z "$T20_AC6_UNRESOLVABLE_LINE2" ]]; then
+  pass "EDMV4-T20 AC6 -- get-patterns --paths prints exactly 2 lines with an empty second line when the data directory is itself unresolvable"
+else
+  fail "EDMV4-T20 AC6 -- expected 2 lines with empty 2nd (unresolvable data dir case), got lines=${T20_AC6_UNRESOLVABLE_LINES} line2=[${T20_AC6_UNRESOLVABLE_LINE2}]"
+fi
+
+# ---- AC7: the fence-aware refusal (G16/CA-355) still fires on the NEW write path -- a delta whose
+# target heading exists only inside a fenced code block dies loudly, appends nothing, and records
+# no patterns_updates. The fence lives in the delta itself (branch a), so no scratch plugin copy is
+# needed here. -----------------------------------------------------------------------------------
+T20_AC7_DATA="${TMP}/t20-ac7-data"
+mkdir -p "${T20_AC7_DATA}/patterns"
+cat > "${T20_AC7_DATA}/patterns/code-audit.md" <<'FENCEDDELTA'
+# code Audit Patterns (Harvested Delta)
+
+## Top Recurring Findings
+
+The target heading is shown here only as a literal fenced example, never as a real heading:
+
+```
+## Anti-Patterns
+```
+
+## Pre-Flight Checklist
+
+## What Passing Code Looks Like
+FENCEDDELTA
+T20_AC7_HOME="${TMP}/t20-ac7-home"
+mkdir -p "$T20_AC7_HOME"
+T20_AC7_DELTA="${T20_AC7_DATA}/patterns/code-audit.md"
+T20_AC7_BEFORE_HASH="$(_harness_hash_file "$T20_AC7_DELTA")"
+
+T20_AC7_RC=0
+T20_AC7_OUT="$(CLAUDE_PLUGIN_DATA="$T20_AC7_DATA" HOME="$T20_AC7_HOME" XDG_DATA_HOME="" "$EDM_STATE" update-patterns EDMV4T20AC7 code 2>&1)" || T20_AC7_RC=$?
+
+T20_AC7_AFTER_HASH="$(_harness_hash_file "$T20_AC7_DELTA")"
+
+if [[ "$T20_AC7_RC" -ne 0 ]]; then
+  pass "EDMV4-T20 AC7 -- fence-aware refusal (G16/CA-355) still fires on the new write path: exits non-zero"
+else
+  fail "EDMV4-T20 AC7 -- expected a non-zero exit when the target heading exists only inside a fence, got 0"
+fi
+check "EDMV4-T20 AC7 -- the refusal names the fenced-only heading condition" "occurs in" "$T20_AC7_OUT"
+check "EDMV4-T20 AC7 -- the refusal message states nothing was appended" "nothing appended" "$T20_AC7_OUT"
+if [[ "$T20_AC7_BEFORE_HASH" == "$T20_AC7_AFTER_HASH" && "$T20_AC7_BEFORE_HASH" != "unhashable" ]]; then
+  pass "EDMV4-T20 AC7 -- the delta is byte-identical before and after the refusal"
+else
+  fail "EDMV4-T20 AC7 -- delta hash changed: before=${T20_AC7_BEFORE_HASH} after=${T20_AC7_AFTER_HASH}"
+fi
+
+# ---- AC8: wave8-smoke.sh is reachable via run-all.sh's glob-driven discovery, independent of the
+# separate _PREFERRED_ORDER / _MIN_SUITE_COUNT registration EDMV4-T53 AC2 owns solely (audit
+# P1-3). This asserts DISCOVERY only, via the identical find invocation run-all.sh itself uses --
+# it never invokes run-all.sh, so this suite's own execution never nests a full aggregator run. ---
+T20_RUNALL="${PLUGIN_DIR}/bin/tests/run-all.sh"
+T20_DISCOVERED="$(find "${PLUGIN_DIR}/bin/tests" -maxdepth 1 -name '*-smoke.sh' -type f 2>/dev/null | xargs -n1 basename | grep -x 'wave8-smoke.sh' || true)"
+check "EDMV4-T20 AC8 -- wave8-smoke.sh is discovered by run-all.sh's own *-smoke.sh glob (find -maxdepth 1)" \
+  "wave8-smoke.sh" "$T20_DISCOVERED"
+
+if grep -qF 'wave8-smoke.sh' "$T20_RUNALL" 2>/dev/null; then
+  pass "EDMV4-T20 AC8 -- wave8-smoke.sh is also present in run-all.sh's _PREFERRED_ORDER/_MIN_SUITE_COUNT registration"
+else
+  echo "  NOTE: EDMV4-T20 AC8 -- wave8-smoke.sh is NOT YET present in run-all.sh's _PREFERRED_ORDER /" \
+       "_MIN_SUITE_COUNT (owned solely by EDMV4-T53 AC2, per this ticket's own scope carve-out);" \
+       "glob discovery above already makes it reachable and executing in an aggregate run."
+fi
+
+# ---- AC9: every case above ran against a scratch HOME/CLAUDE_PLUGIN_DATA/XDG_DATA_HOME, and the
+# real repository's working tree is untouched BY THIS SECTION (before/after diff, not a bare
+# emptiness check -- this ticket's own not-yet-committed changes are legitimately present). -------
+T20_GIT_AFTER="$(git -C "$REPO_ROOT" status --porcelain)"
+if [[ "$T20_GIT_BEFORE" == "$T20_GIT_AFTER" ]]; then
+  pass "EDMV4-T20 AC9 -- git status --porcelain is unchanged across the full EDMV4-T20 section (no scratch state leaked into the real repo)"
+else
+  fail "EDMV4-T20 AC9 -- git status --porcelain changed during the EDMV4-T20 section: before=[${T20_GIT_BEFORE}] after=[${T20_GIT_AFTER}]"
+fi
+
+echo
+
 # =================================================================================================
 # EDMV4-T39/T40: six-category 0-10 rubric, versioned, wired to edm-state's own signals
 # =================================================================================================

@@ -82,8 +82,8 @@ Every `update-patterns` run records `extraction_status` alongside `new_findings`
 | `no-recognized-findings` | The arm has an extractor, but the report contained no line matching the documented shape. | No -- either the report does not follow its own format, or it genuinely records nothing. |
 | `unsupported-format` | The arm has no extractor because the report format has no machine-readable finding shape. | No -- nothing was read at all. |
 
-Neither warning status is a failure: `update-patterns` is called mid-phase by four skills, so it
-warns and continues rather than aborting the phase.
+Neither warning status is a failure: `update-patterns` is called mid-phase by the audit and
+implementation skills, so it warns and continues rather than aborting the phase.
 
 **Curation lifecycle** (EDMV3-77/78): every auto-appended entry carries `status: pending-review` on its own line, plus its provenance (`source`, `audit-type`, `date`). Pending entries are surfaced for human curation at the audit gates -- see "Curation at Gates" below. Removing the `status: pending-review` line marks an entry curated; curation is one-way -- nothing re-adds the marker, and de-duplication prevents the same title being re-appended. The pending count is always `grep -o 'status: pending-review' docs/audit-patterns/*.md | wc -l` computed at read time -- there is no mirrored count in `.edm-state.json`. (CA-489: `grep -c` against this multi-file glob prints one file-and-count line PER FILE, not a total -- it only ever looks correct against a single file.)
 
