@@ -141,17 +141,88 @@ if ! TOOL_NAME="$(printf '%s' "$PAYLOAD" | jq -r '.tool_name // empty' 2>/dev/nu
   die "could not parse the JSON payload delivered on stdin"
 fi
 
+# ---- EDMV4-T13: the single decision-emitting function, with two selectable back-ends. Every
+# deny and every allow on this gated path is emitted from here and nowhere else in this file --
+# no other printf/echo prints a decision payload or a fact list, and no other line exits with a
+# decision-carrying status. A later ticket's fact content (EDMV4-T14) and operational controls
+# (EDMV4-T15) both call INTO this function; neither grows a second, competing decision site. -----
+
+# EDM_GATEGUARD_DENY_MODE_DEFAULT: set from Spike B's recorded outcome (decisions.md D26, run live
+# against `claude --version` 2.1.246, disposable mktemp -d repositories). The JSON
+# hookSpecificOutput mechanism denied both `Edit` and `Write` cleanly, with the reason surfaced to
+# the agent as a clean tool-result string; the exit-2-plus-stderr mechanism also denied both but
+# leaked the hook's own shell command text into the agent's transcript. `MultiEdit` itself was
+# UNTESTABLE on that host (the tool never loaded into the session's toolset) and is not evidence
+# either way. This single named constant is the whole lever if that evidence is ever superseded --
+# flip this one line and the smoke assertion that pins its value fails a test, not a wave; neither
+# back-end below is rewritten.
+EDM_GATEGUARD_DENY_MODE_DEFAULT="json"
+
+# emit_decision <allow|deny> [<reason>] -- the ONLY place in this script that ever prints a
+# decision payload or exits with a decision-carrying status (0 for allow and for a json-mode
+# deny -- the JSON payload IS the deny signal the host reads; 2 for an exit-code-mode deny, the
+# same code `edm-lint-staged-artifacts:7-10,150-158` already spends to mean "block"). <reason> is
+# ignored for "allow": AC2 requires nothing be written to stdout on an allow, in either mode.
+# EDM_GATEGUARD_DENY_MODE selects the back-end; any value other than the two legal ones below is a
+# setup error (CA-298 -- a setup condition never blocks, matching this file's own `die()`
+# contract) regardless of which decision was requested, so a misconfigured mode is caught the
+# first time this function runs rather than only on the next real denial.
+emit_decision() {
+  local decision="$1"
+  local reason="${2:-}"
+  local mode="${EDM_GATEGUARD_DENY_MODE:-$EDM_GATEGUARD_DENY_MODE_DEFAULT}"
+
+  case "$mode" in
+    json|exit-code) : ;;
+    *)
+      die "EDM_GATEGUARD_DENY_MODE must be 'json' or 'exit-code' (got: '${mode}')"
+      ;;
+  esac
+
+  case "$decision" in
+    allow)
+      exit 0
+      ;;
+    deny)
+      case "$mode" in
+        json)
+          # AC8: the payload is built with `jq -cn`, never string concatenation -- a quote, a
+          # backslash or an embedded newline in $reason is escaped correctly by jq's own --arg
+          # handling, the exact class of bug a hand-rolled escaper would reintroduce. `-c`
+          # (compact) is required: jq's default pretty-printed multi-line form would not match
+          # AC2's single-line literal.
+          jq -cn --arg reason "$reason" \
+            '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":$reason}}'
+          exit 0
+          ;;
+        exit-code)
+          # AC3: the fact list goes to stderr as plain text -- no JSON, so no escaping concern
+          # applies to this back-end at all.
+          printf '%s\n' "$reason" >&2
+          exit 2
+          ;;
+      esac
+      ;;
+    *)
+      die "emit_decision: unknown decision '${decision}' (expected 'allow' or 'deny')"
+      ;;
+  esac
+}
+
 # ---- Dispatch on tool name. Bash 3.2 floor (C1): a `case` over a small, fixed name set is the
 # portable form here, not an associative array keyed by tool name -- the same idiom the fact-list
 # and per-file MultiEdit loop (EDMV4-T14) will extend rather than replace. -------------------------
 case "$TOOL_NAME" in
   Edit)
-    # Extension point: EDMV4-T13's decision-emitting function evaluates a single-file edit here.
+    # Extension point: EDMV4-T14 wires the four-fact Edit denial here, calling emit_decision deny
+    # with that content. emit_decision itself (EDMV4-T13) already exists above; what is still
+    # missing is the fact text and the decision of WHETHER to deny (EDMV4-T15's kill switches,
+    # exemption globs and session state) -- neither is this ticket's scope.
     : ;;
   Write)
-    # Extension point: EDMV4-T13's decision-emitting function evaluates a new-file write here,
-    # with EDMV4-T14's swapped fact pair (name the caller, confirm no existing file already
-    # serves the same purpose) in place of the Edit variant's import-search facts.
+    # Extension point: EDMV4-T14 wires the swapped-fact Write denial here (name the caller, confirm
+    # no existing file already serves the same purpose, in place of the Edit variant's import-
+    # search facts) the same way.
     : ;;
   MultiEdit)
     # Extension point: EDMV4-T14's per-file loop iterates the batch here and denies on the first
@@ -165,11 +236,12 @@ case "$TOOL_NAME" in
     : ;;
 esac
 
-# Every branch above currently falls through to here: this build's own scope is the marker check,
-# the allow path, and the host registration -- not a decision. Once EDMV4-T13's single decision-
-# emitting function exists, it becomes the one place in this file that ever prints anything or
-# exits non-zero on the gated path; nothing above this line is a second, competing decision site.
-exit 0
+# Every branch above currently falls through to here: no ticket has yet wired a real deny
+# condition into any of the three cases (that is EDMV4-T14's fact content and EDMV4-T15's
+# operational controls), so this build's own behavior is still an unconditional allow -- but it is
+# now emitted through the single decision-emitting function above rather than a bare `exit 0`,
+# so AC1 holds even before a real denial exists anywhere in this file.
+emit_decision allow ""
 
 # =====================================================================================================
 # Reference for the follow-on tickets that build on this file (not executed -- documentation only).

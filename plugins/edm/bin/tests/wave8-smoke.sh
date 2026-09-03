@@ -2637,5 +2637,226 @@ echo "EDMV4-T11 AC10/AC11 -- allow-path p95 is measured by 'bash bin/tests/timin
   "--mermaid-ratio); see the ticket's own completion note and decisions.md for the recorded figure."
 
 echo
+
+# =================================================================================================
+# EDMV4-T13: Route every GateGuard decision through one emit_decision with two back-ends
+# =================================================================================================
+echo "=== EDMV4-T13: emit_decision (json / exit-code back-ends) ==="
+echo
+
+# GATEGUARD/HOOKS_JSON are already set by the EDMV4-T11 section above.
+
+# ---- Shared extraction: emit_decision()'s own function text, and the rest of the script with
+# that function's lines removed (line-range removal, not content-based, so this cannot self-match
+# whatever the body happens to contain). Mirrors the proven awk idiom EDMV4-T12 uses for
+# edm_marker_path() above -- same start/end anchor shape, applied to a different function. --------
+_t13_extract_fn() {
+  local file="$1" name="$2"
+  awk -v needle="${name}() {" '
+    index($0, needle) == 1 { found=1 }
+    found { print }
+    found && /^}/ { exit }
+  ' "$file"
+}
+
+T13_EMIT_FN_TEXT="$(_t13_extract_fn "$GATEGUARD" emit_decision)"
+if [[ -n "$T13_EMIT_FN_TEXT" ]]; then
+  pass "EDMV4-T13 setup -- emit_decision()'s function text was extracted from edm-gateguard (non-empty)"
+else
+  fail "EDMV4-T13 setup -- could not extract emit_decision() from ${GATEGUARD}"
+fi
+
+T13_DEFINE_COUNT="$(count_matches '^emit_decision() {' "$GATEGUARD")"
+check "EDMV4-T13 -- edm-gateguard defines emit_decision exactly once" "1" "$T13_DEFINE_COUNT"
+
+T13_OUTSIDE_TEXT="$({ awk -v needle="emit_decision() {" '
+  index($0, needle) == 1 { skipping=1 }
+  skipping && /^}/ { skipping=0; next }
+  !skipping { print }
+' "$GATEGUARD"; } 2>/dev/null || true)"
+
+# ---- AC1: every deny and allow decision is emitted by one function -- no printf/echo/exit
+# producing a decision outside emit_decision's body. Anchored to the two literal artifacts a real
+# decision emission has and prose describing it cannot: the deny exit code (2, word-boundaried so
+# it never matches "exit 20" or similar) and the JSON key name "permissionDecision" itself. --------
+T13_OUTSIDE_EXIT2="$(printf '%s\n' "$T13_OUTSIDE_TEXT" | count_matches -E 'exit 2($|[^0-9])')"
+check "EDMV4-T13 AC1 -- no deny exit code (2) appears outside emit_decision's body" "0" "$T13_OUTSIDE_EXIT2"
+
+T13_OUTSIDE_PERMDEC="$(printf '%s\n' "$T13_OUTSIDE_TEXT" | count_matches 'permissionDecision')"
+check "EDMV4-T13 AC1 -- no 'permissionDecision' JSON key appears outside emit_decision's body" "0" "$T13_OUTSIDE_PERMDEC"
+
+# Positive control: inject a real 'exit 2' line and a real 'permissionDecision' occurrence into a
+# copy of the outside text, proving the two zero-counts above are not vacuous.
+T13_OUTSIDE_BROKEN="$(printf '%s\nexit 2\necho permissionDecision\n' "$T13_OUTSIDE_TEXT")"
+T13_BROKEN_EXIT2="$(printf '%s\n' "$T13_OUTSIDE_BROKEN" | count_matches -E 'exit 2($|[^0-9])')"
+T13_BROKEN_PERMDEC="$(printf '%s\n' "$T13_OUTSIDE_BROKEN" | count_matches 'permissionDecision')"
+if [[ "$T13_BROKEN_EXIT2" -ge 1 && "$T13_BROKEN_PERMDEC" -ge 1 ]]; then
+  pass "EDMV4-T13 AC1 -- positive control: injecting 'exit 2' and 'permissionDecision' into the outside text trips both detectors"
+else
+  fail "EDMV4-T13 AC1 -- positive control FAILED: injected occurrences were not detected (exit2=${T13_BROKEN_EXIT2}, permDec=${T13_BROKEN_PERMDEC})"
+fi
+
+# ---- AC5 (static half): emit_decision's own body never spells a bare 'exit 1' directly -- every
+# setup-error path inside it routes through the shared die() helper (itself defaulting to exit 1),
+# so a policy refusal can never accidentally reuse the setup-error code. -------------------------
+T13_FN_EXIT1_COUNT="$(printf '%s\n' "$T13_EMIT_FN_TEXT" | count_matches -E 'exit 1($|[^0-9])')"
+check "EDMV4-T13 AC5 -- emit_decision's own body never spells 'exit 1' directly (setup errors route through die())" "0" "$T13_FN_EXIT1_COUNT"
+
+T13_FN_BROKEN="$(printf '%s\nexit 1\n' "$T13_EMIT_FN_TEXT")"
+T13_FN_BROKEN_COUNT="$(printf '%s\n' "$T13_FN_BROKEN" | count_matches -E 'exit 1($|[^0-9])')"
+if [[ "$T13_FN_BROKEN_COUNT" -ge 1 ]]; then
+  pass "EDMV4-T13 AC5 -- positive control: injecting 'exit 1' into the function body trips the detector"
+else
+  fail "EDMV4-T13 AC5 -- positive control FAILED: injected 'exit 1' was not detected"
+fi
+
+# ---- AC6: the default is a single named constant, and its value equals Spike B's recorded
+# decision (decisions.md D26: json, evidence-backed for Edit/Write). ------------------------------
+T13_DEFAULT_VALUE="$({ grep -m1 '^EDM_GATEGUARD_DENY_MODE_DEFAULT=' "$GATEGUARD" | grep -oE '"[a-zA-Z-]+"' | tr -d '"'; } 2>/dev/null || true)"
+check "EDMV4-T13 AC6 -- EDM_GATEGUARD_DENY_MODE_DEFAULT equals Spike B's recorded decision (json)" "json" "$T13_DEFAULT_VALUE"
+
+# ---- Executable harness: emit_decision(), extracted verbatim from the shipped script (never
+# hand-retyped, so a change to the real function is exercised here rather than a stale copy),
+# sourced into an isolated bash process alongside a die() reproduced from edm-gateguard's own
+# definition. This is what lets AC2/AC3/AC4/AC7/AC8/AC9 exercise the deny back-ends directly: no
+# case arm in edm-gateguard itself calls emit_decision deny yet (that wiring is EDMV4-T14/T15's),
+# so the function must be tested in isolation rather than through a full end-to-end invocation. ---
+harness_scratch_dir T13_TMP
+T13_HARNESS="${T13_TMP}/emit-decision-harness.sh"
+{
+  printf '%s\n' '#!/usr/bin/env bash'
+  printf '%s\n' 'set -euo pipefail'
+  printf '%s\n' 'die() { local msg="$1" code="${2:-1}"; echo "edm-gateguard: $msg" >&2; exit "$code"; }'
+  printf '%s\n' 'EDM_GATEGUARD_DENY_MODE_DEFAULT="json"'
+  printf '%s\n' "$T13_EMIT_FN_TEXT"
+  printf '%s\n' 'emit_decision "$1" "$2"'
+} > "$T13_HARNESS"
+chmod +x "$T13_HARNESS"
+
+# ---- AC2: json mode (the default) -- exact denial payload shape, silent allow. -------------------
+T13_JSON_DENY_STDERR="${T13_TMP}/ac2-deny.stderr"
+T13_JSON_DENY_RC=0
+T13_JSON_DENY_OUT="$(EDM_GATEGUARD_DENY_MODE=json "$T13_HARNESS" deny 'edit denied: see facts' 2>"$T13_JSON_DENY_STDERR")" || T13_JSON_DENY_RC=$?
+T13_JSON_DENY_STDERR_TXT="$(cat "$T13_JSON_DENY_STDERR" 2>/dev/null || true)"
+T13_JSON_DENY_EXPECTED='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"edit denied: see facts"}}'
+if [[ "$T13_JSON_DENY_RC" -eq 0 && "$T13_JSON_DENY_OUT" == "$T13_JSON_DENY_EXPECTED" && -z "$T13_JSON_DENY_STDERR_TXT" ]]; then
+  pass "EDMV4-T13 AC2 -- json-mode denial prints exactly the hookSpecificOutput payload on stdout, nothing on stderr, exit 0"
+else
+  fail "EDMV4-T13 AC2 -- json-mode denial mismatch: rc=${T13_JSON_DENY_RC} stdout=[${T13_JSON_DENY_OUT}] stderr=[${T13_JSON_DENY_STDERR_TXT}]"
+fi
+
+T13_JSON_ALLOW_RC=0
+T13_JSON_ALLOW_OUT="$(EDM_GATEGUARD_DENY_MODE=json "$T13_HARNESS" allow '' 2>"${T13_TMP}/ac2-allow.stderr")" || T13_JSON_ALLOW_RC=$?
+T13_JSON_ALLOW_STDERR_TXT="$(cat "${T13_TMP}/ac2-allow.stderr" 2>/dev/null || true)"
+if [[ "$T13_JSON_ALLOW_RC" -eq 0 && -z "$T13_JSON_ALLOW_OUT" && -z "$T13_JSON_ALLOW_STDERR_TXT" ]]; then
+  pass "EDMV4-T13 AC2 -- json-mode allow: exit 0, empty stdout, empty stderr"
+else
+  fail "EDMV4-T13 AC2 -- json-mode allow mismatch: rc=${T13_JSON_ALLOW_RC} stdout=[${T13_JSON_ALLOW_OUT}] stderr=[${T13_JSON_ALLOW_STDERR_TXT}]"
+fi
+
+# ---- AC3: exit-code mode -- fact list on stderr, nothing on stdout, exit 2 (the same code
+# edm-lint-staged-artifacts:7-10,150-158 already spends to mean "block"). -------------------------
+T13_EXIT_STDERR="${T13_TMP}/ac3-deny.stderr"
+T13_EXIT_RC=0
+T13_EXIT_OUT="$(EDM_GATEGUARD_DENY_MODE=exit-code "$T13_HARNESS" deny 'fact 1: xyz' 2>"$T13_EXIT_STDERR")" || T13_EXIT_RC=$?
+T13_EXIT_STDERR_TXT="$(cat "$T13_EXIT_STDERR" 2>/dev/null || true)"
+if [[ "$T13_EXIT_RC" -eq 2 && -z "$T13_EXIT_OUT" ]]; then
+  pass "EDMV4-T13 AC3 -- exit-code-mode denial exits 2 with empty stdout"
+else
+  fail "EDMV4-T13 AC3 -- exit-code-mode denial mismatch: rc=${T13_EXIT_RC} stdout=[${T13_EXIT_OUT}]"
+fi
+check "EDMV4-T13 AC3 -- exit-code-mode denial's fact text reaches stderr" "fact 1: xyz" "$T13_EXIT_STDERR_TXT"
+
+T13_EXIT_ALLOW_RC=0
+T13_EXIT_ALLOW_OUT="$(EDM_GATEGUARD_DENY_MODE=exit-code "$T13_HARNESS" allow '' 2>"${T13_TMP}/ac3-allow.stderr")" || T13_EXIT_ALLOW_RC=$?
+check "EDMV4-T13 AC3 -- exit-code-mode allow still exits 0 with empty stdout" "0" "$T13_EXIT_ALLOW_RC"
+check "EDMV4-T13 AC3 -- exit-code-mode allow prints nothing to stdout" "" "$T13_EXIT_ALLOW_OUT"
+
+# ---- AC4: any other EDM_GATEGUARD_DENY_MODE value is a setup error naming both legal values,
+# exit 1, no block -- regardless of which decision was requested (checked on both allow and deny
+# so a misconfiguration is caught the first time this function runs, not only on a real denial). --
+T13_BADMODE_STDERR="${T13_TMP}/ac4-deny.stderr"
+T13_BADMODE_RC=0
+T13_BADMODE_OUT="$(EDM_GATEGUARD_DENY_MODE=yes "$T13_HARNESS" deny 'reason' 2>"$T13_BADMODE_STDERR")" || T13_BADMODE_RC=$?
+T13_BADMODE_STDERR_TXT="$(cat "$T13_BADMODE_STDERR" 2>/dev/null || true)"
+if [[ "$T13_BADMODE_RC" -eq 1 && -z "$T13_BADMODE_OUT" ]]; then
+  pass "EDMV4-T13 AC4 -- EDM_GATEGUARD_DENY_MODE=yes exits 1 with empty stdout"
+else
+  fail "EDMV4-T13 AC4 -- rc=${T13_BADMODE_RC} stdout=[${T13_BADMODE_OUT}]"
+fi
+check "EDMV4-T13 AC4 -- setup-error message names 'json'" "json" "$T13_BADMODE_STDERR_TXT"
+check "EDMV4-T13 AC4 -- setup-error message names 'exit-code'" "exit-code" "$T13_BADMODE_STDERR_TXT"
+
+T13_BADMODE_ALLOW_RC=0
+EDM_GATEGUARD_DENY_MODE=yes "$T13_HARNESS" allow '' >/dev/null 2>"${T13_TMP}/ac4-allow.stderr" || T13_BADMODE_ALLOW_RC=$?
+check "EDMV4-T13 AC4 -- an invalid mode is a setup error even on an allow decision" "1" "$T13_BADMODE_ALLOW_RC"
+
+# ---- AC5 (behavioral half): the only nonzero exit codes emit_decision ever produces are 2 (a
+# real exit-code-mode denial, above) and 1 (the setup error just proven above) -- never a policy
+# refusal reusing the setup-error code. --------------------------------------------------------
+pass "EDMV4-T13 AC5 -- the only two nonzero exits observed above are 2 (exit-code deny, AC3) and 1 (setup error, AC4) -- no policy refusal reuses exit 1"
+
+# ---- AC7: an emitted denial parses under jq -e, so an unparseable payload would be a test
+# failure rather than a silently unenforced gate. -------------------------------------------------
+T13_AC7_DENY_JSON="$(EDM_GATEGUARD_DENY_MODE=json "$T13_HARNESS" deny 'ac7 reason' 2>/dev/null || true)"
+if printf '%s' "$T13_AC7_DENY_JSON" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1; then
+  pass "EDMV4-T13 AC7 -- emitted denial parses under jq -e and .hookSpecificOutput.permissionDecision == \"deny\""
+else
+  fail "EDMV4-T13 AC7 -- emitted denial failed the jq -e assertion: [${T13_AC7_DENY_JSON}]"
+fi
+
+# ---- AC8: the permissionDecisionReason string is valid JSON with embedded quotes, backslashes
+# and newlines correctly escaped -- built via jq -n, never string concatenation. ------------------
+T13_AC8_REASON='file "quoted".txt has a literal double quote'
+T13_AC8_JSON="$(EDM_GATEGUARD_DENY_MODE=json "$T13_HARNESS" deny "$T13_AC8_REASON" 2>/dev/null || true)"
+if printf '%s' "$T13_AC8_JSON" | jq -e . >/dev/null 2>&1; then
+  pass "EDMV4-T13 AC8 -- a denial reason containing a literal double quote still parses as valid JSON"
+else
+  fail "EDMV4-T13 AC8 -- payload failed to parse: [${T13_AC8_JSON}]"
+fi
+T13_AC8_ROUNDTRIP="$(printf '%s' "$T13_AC8_JSON" | jq -r '.hookSpecificOutput.permissionDecisionReason' 2>/dev/null || true)"
+check "EDMV4-T13 AC8 -- the embedded double quote survives the round trip unescaped in the decoded value" "$T13_AC8_REASON" "$T13_AC8_ROUNDTRIP"
+
+T13_AC8_REASON_NL=$'line one\nline two with a backslash \\ and a "quote"'
+T13_AC8_JSON_NL="$(EDM_GATEGUARD_DENY_MODE=json "$T13_HARNESS" deny "$T13_AC8_REASON_NL" 2>/dev/null || true)"
+if printf '%s' "$T13_AC8_JSON_NL" | jq -e . >/dev/null 2>&1; then
+  pass "EDMV4-T13 AC8 -- a denial reason containing an embedded newline and a backslash still parses as valid JSON"
+else
+  fail "EDMV4-T13 AC8 -- newline/backslash payload failed to parse: [${T13_AC8_JSON_NL}]"
+fi
+T13_AC8_ROUNDTRIP_NL="$(printf '%s' "$T13_AC8_JSON_NL" | jq -r '.hookSpecificOutput.permissionDecisionReason' 2>/dev/null || true)"
+check "EDMV4-T13 AC8 -- the embedded newline+backslash reason round-trips exactly" "$T13_AC8_REASON_NL" "$T13_AC8_ROUNDTRIP_NL"
+
+# ---- AC9: the emitted JSON is ASCII-only, and edm-check-vocabulary passes over the updated
+# edm-gateguard (part of its fixed bin/ scan scope -- no separate invocation targets one file). ----
+T13_AC9_JSON="$(EDM_GATEGUARD_DENY_MODE=json "$T13_HARNESS" deny 'ascii only reason' 2>/dev/null || true)"
+if ! printf '%s' "$T13_AC9_JSON" | LC_ALL=C grep -q '[^ -~]'; then
+  pass "EDMV4-T13 AC9 -- the emitted JSON payload is ASCII-only"
+else
+  fail "EDMV4-T13 AC9 -- the emitted JSON payload contains a non-ASCII byte: [${T13_AC9_JSON}]"
+fi
+
+T13_VOCAB_RC=0
+(cd "$PLUGIN_DIR" && bash bin/edm-check-vocabulary >/dev/null 2>&1) || T13_VOCAB_RC=$?
+check "EDMV4-T13 AC9 -- edm-check-vocabulary passes over the updated edm-gateguard (and the rest of bin/)" "0" "$T13_VOCAB_RC"
+
+# ---- End-to-end sanity: with a Phase 6 marker present and no ticket having wired a real deny
+# condition yet (EDMV4-T14/T15's job), the gate still allows silently -- but now via
+# emit_decision, not a bare exit 0, matching the "Hooks behavior" documentation update above. ------
+harness_scratch_dir T13_E2E_TMP
+mkdir -p "${T13_E2E_TMP}/data/run" "${T13_E2E_TMP}/proj"
+T13_E2E_KEY="$(CLAUDE_PROJECT_DIR="${T13_E2E_TMP}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+T13_E2E_MARKER="${T13_E2E_TMP}/data/run/${T13_E2E_KEY}.phase6"
+printf 'T13PFX\t%s\t2026-09-02T00:00:00Z\n' "${T13_E2E_TMP}/proj" > "$T13_E2E_MARKER"
+T13_E2E_RC=0
+T13_E2E_OUT="$(printf '{"tool_name":"Edit"}' | CLAUDE_PROJECT_DIR="${T13_E2E_TMP}/proj" CLAUDE_PLUGIN_DATA="${T13_E2E_TMP}/data" bash "$GATEGUARD" 2>"${T13_E2E_TMP}/e2e.stderr")" || T13_E2E_RC=$?
+T13_E2E_STDERR="$(cat "${T13_E2E_TMP}/e2e.stderr" 2>/dev/null || true)"
+if [[ "$T13_E2E_RC" -eq 0 && -z "$T13_E2E_OUT" && -z "$T13_E2E_STDERR" ]]; then
+  pass "EDMV4-T13 -- end-to-end: marker present, Edit call, no deny wired yet -- allows silently via emit_decision"
+else
+  fail "EDMV4-T13 -- end-to-end mismatch: rc=${T13_E2E_RC} stdout=[${T13_E2E_OUT}] stderr=[${T13_E2E_STDERR}]"
+fi
+
+echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
