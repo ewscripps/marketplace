@@ -2407,6 +2407,113 @@ check "EDMV4-T44 AC4 -- CLAUDE.md documents edm-stop-gate translating into its o
 check_absent "EDMV4-T44 AC5 -- edm-stop-gate still does not invoke edm-hookify (T45's wiring, not this ticket's)" \
   "edm-hookify" "$(cat "$EDM_STOP_GATE")"
 
+# ---- Wave-3 QC remediation (P2): AC4/AC5 above were proven only via CLAUDE.md's prose plus
+# edm-hookify's own exit codes in isolation -- neither exercised the TRANSLATION a consumer
+# performs. Building that translation for real (a case arm in edm-gateguard's dispatch, or a call
+# from edm-stop-gate) is EDMV4-T45's wiring, and bin/edm-gateguard is off limits to this ticket
+# (both restated in the scope note at the top of this section) -- so this block does not add
+# either. What it adds instead is an executable proof that the translation CONTRACT holds, using
+# the same extract-verbatim-then-harness technique the EDMV4-T13 section below already
+# establishes for emit_decision() itself: proving a function's behavior before any case arm calls
+# it for real is not a new technique in this file. This section runs before EDMV4-T13's own
+# (GATEGUARD/count_matches setup happens there), so it extracts independently rather than reusing
+# variables not yet in scope. ---------------------------------------------------------------------
+_t44_extract_emit_decision() {
+  local file="$1"
+  awk -v needle="emit_decision() {" '
+    index($0, needle) == 1 { found=1 }
+    found { print }
+    found && /^}/ { exit }
+  ' "$file"
+}
+T44_EMIT_FN_TEXT="$(_t44_extract_emit_decision "${PLUGIN_DIR}/bin/edm-gateguard")"
+if [[ -n "$T44_EMIT_FN_TEXT" ]]; then
+  pass "EDMV4-T44 AC4 setup -- emit_decision()'s function text was extracted from edm-gateguard (non-empty)"
+else
+  fail "EDMV4-T44 AC4 setup -- could not extract emit_decision() from bin/edm-gateguard"
+fi
+
+harness_scratch_dir T44_HARNESS_TMP
+T44_HARNESS="${T44_HARNESS_TMP}/gateguard-hookify-translation.sh"
+{
+  printf '%s\n' '#!/usr/bin/env bash'
+  printf '%s\n' 'set -euo pipefail'
+  printf '%s\n' 'die() { local msg="$1" code="${2:-1}"; echo "edm-gateguard: $msg" >&2; exit "$code"; }'
+  printf '%s\n' 'EDM_GATEGUARD_DENY_MODE_DEFAULT="json"'
+  printf '%s\n' "$T44_EMIT_FN_TEXT"
+  # The translation AC4 describes, and AC5's "never escalates" clause depends on: edm-hookify
+  # exit 2 -> deny; anything else (a clean 0, or edm-hookify's own setup-error 1) -> allow.
+  printf '%s\n' 'hookify_rc="$1"'
+  printf '%s\n' 'hookify_reason="$2"'
+  printf '%s\n' 'if [[ "$hookify_rc" -eq 2 ]]; then emit_decision deny "$hookify_reason"; else emit_decision allow ""; fi'
+} > "$T44_HARNESS"
+chmod +x "$T44_HARNESS"
+
+# AC4: T44_AC6_RC above is a REAL edm-hookify exit code (2) from a genuine block-rule match
+# (T44_AC6_DIR). Fed through the extracted emit_decision, it must produce a genuine deny.
+T44_TRANS_JSON_RC=0
+T44_TRANS_JSON_OUT="$(EDM_GATEGUARD_DENY_MODE=json "$T44_HARNESS" "$T44_AC6_RC" \
+  'block-no-console-log block Blocking a console.log left in non-test source.' 2>/dev/null)" \
+  || T44_TRANS_JSON_RC=$?
+if [[ "$T44_TRANS_JSON_RC" -eq 0 && "$T44_TRANS_JSON_OUT" == *'"permissionDecision":"deny"'* ]]; then
+  pass "EDMV4-T44 AC4 -- edm-hookify's real exit-2 block, through the extracted emit_decision, produces a genuine json-mode deny"
+else
+  fail "EDMV4-T44 AC4 -- expected a deny payload from a real hookify exit 2, got rc=${T44_TRANS_JSON_RC} out=[${T44_TRANS_JSON_OUT}]"
+fi
+
+T44_TRANS_EXITCODE_RC=0
+EDM_GATEGUARD_DENY_MODE=exit-code "$T44_HARNESS" "$T44_AC6_RC" \
+  'block-no-console-log block Blocking a console.log left in non-test source.' >/dev/null 2>/dev/null \
+  || T44_TRANS_EXITCODE_RC=$?
+[[ "$T44_TRANS_EXITCODE_RC" -eq 2 ]] \
+  && pass "EDMV4-T44 AC4 -- the same real block, in exit-code mode, exits 2 -- the same code edm-stop-gate's own blocking path spends (checked below)" \
+  || fail "EDMV4-T44 AC4 -- expected exit 2 from exit-code-mode deny, got ${T44_TRANS_EXITCODE_RC}"
+
+# AC5: T44_AC5_FILE_RC above is a REAL edm-hookify exit code (1) from a genuine malformed-rule
+# setup error (T44_AC5_DIR). Fed through the identical translation, it must never escalate to a
+# deny in either back-end -- the negative control paired with AC4's positive one above.
+T44_TRANS_SETUP_JSON_RC=0
+T44_TRANS_SETUP_JSON_OUT="$(EDM_GATEGUARD_DENY_MODE=json "$T44_HARNESS" "$T44_AC5_FILE_RC" \
+  'irrelevant -- never reached when hookify_rc is not 2' 2>/dev/null)" || T44_TRANS_SETUP_JSON_RC=$?
+if [[ "$T44_TRANS_SETUP_JSON_RC" -eq 0 && -z "$T44_TRANS_SETUP_JSON_OUT" ]]; then
+  pass "EDMV4-T44 AC5 -- edm-hookify's real exit-1 setup error, through the same translation, allows (json mode: exit 0, empty stdout)"
+else
+  fail "EDMV4-T44 AC5 -- a real hookify exit 1 escalated through the translation: rc=${T44_TRANS_SETUP_JSON_RC} out=[${T44_TRANS_SETUP_JSON_OUT}]"
+fi
+
+T44_TRANS_SETUP_EXITCODE_RC=0
+EDM_GATEGUARD_DENY_MODE=exit-code "$T44_HARNESS" "$T44_AC5_FILE_RC" 'irrelevant' >/dev/null 2>/dev/null \
+  || T44_TRANS_SETUP_EXITCODE_RC=$?
+[[ "$T44_TRANS_SETUP_EXITCODE_RC" -eq 0 ]] \
+  && pass "EDMV4-T44 AC5 -- the same real setup error, in exit-code mode, also allows (exit 0) -- never reuses the block code 2" \
+  || fail "EDMV4-T44 AC5 -- expected exit 0 from exit-code-mode allow on a real hookify exit 1, got ${T44_TRANS_SETUP_EXITCODE_RC}"
+
+# ---- AC4 (edm-stop-gate side): no callable function exists there to extract -- its translation is
+# a single inline exit, so the checkable claim is numeric compatibility: the blocking exit code
+# edm-stop-gate already spends for its own edm-state-validate anomaly path must be byte-identical
+# to the code edm-hookify assigns a block match (T44_AC6_RC, captured above from a REAL run, not
+# assumed), since EDMV4-T45's wiring will reuse this exact literal rather than introduce a second
+# one. -----------------------------------------------------------------------------------------
+T44_STOPGATE_BLOCK_LINE="$(grep 'ANY_BLOCKING' "$EDM_STOP_GATE" | grep 'exit' | head -1)"
+T44_STOPGATE_BLOCK_EXIT="$(printf '%s\n' "$T44_STOPGATE_BLOCK_LINE" | grep -oE 'exit [0-9]+' | grep -oE '[0-9]+' || true)"
+if [[ -n "$T44_STOPGATE_BLOCK_EXIT" && "$T44_STOPGATE_BLOCK_EXIT" -eq "$T44_AC6_RC" ]]; then
+  pass "EDMV4-T44 AC4 -- edm-stop-gate's own blocking exit code (${T44_STOPGATE_BLOCK_EXIT}) is byte-identical to edm-hookify's real block exit code (${T44_AC6_RC})"
+else
+  fail "EDMV4-T44 AC4 -- edm-stop-gate's blocking exit code (${T44_STOPGATE_BLOCK_EXIT:-<not found>}) does not match edm-hookify's real block exit code (${T44_AC6_RC})"
+fi
+
+# AC5 (edm-stop-gate side): the blocking code (2) is spent exactly once in the file -- no
+# internal/setup path (the shape edm-hookify's exit 1 maps to) could ever be mistaken for a block.
+# Positive control: a copy with a second, injected 'exit 2' must trip the same count.
+T44_STOPGATE_EXIT2_COUNT="$(count_matches -E 'exit 2($|[^0-9])' "$EDM_STOP_GATE")"
+check "EDMV4-T44 AC5 -- edm-stop-gate spends its blocking exit code (2) exactly once -- no internal/setup path could be mistaken for a block" \
+  "1" "$T44_STOPGATE_EXIT2_COUNT"
+T44_STOPGATE_BROKEN="$(printf '%s\nexit 2\n' "$(cat "$EDM_STOP_GATE")")"
+T44_STOPGATE_BROKEN_COUNT="$(printf '%s\n' "$T44_STOPGATE_BROKEN" | count_matches -E 'exit 2($|[^0-9])')"
+[[ "$T44_STOPGATE_BROKEN_COUNT" -ge 2 ]] \
+  && pass "EDMV4-T44 AC5 -- positive control: injecting a second 'exit 2' trips the count above 1" \
+  || fail "EDMV4-T44 AC5 -- positive control FAILED: injected second 'exit 2' was not detected"
+
 # ---- AC7: Hooks behavior documents the exit-code contract in table form, cross-referencing ------
 # edm-lint-staged-artifacts's identical split by name.
 check "EDMV4-T44 AC7 -- Hooks behavior gains a dedicated two-tier exit contract subsection" \
