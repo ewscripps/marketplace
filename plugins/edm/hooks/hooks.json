@@ -95,6 +95,15 @@
             "command": "command -v edm-gateguard >/dev/null 2>&1 || exit 0; edm-gateguard"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v edm-bash-gate >/dev/null 2>&1 || exit 0; edm-bash-gate"
+          }
+        ]
       }
     ],
     "Stop": [

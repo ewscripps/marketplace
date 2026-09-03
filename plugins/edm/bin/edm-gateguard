@@ -1,22 +1,17 @@
 #!/usr/bin/env bash
 # edm-gateguard -- PreToolUse fact-forcing edit gate for Phase 6 (EDMV4-T11).
 #
-# Why this exists: `PreToolUse` fires exactly once per `git commit`, where a 3,000 ms budget is
-# fine because a human is waiting. This hook fires on every Edit/Write/MultiEdit call instead --
-# tens to hundreds of times per Phase 6 wave -- so every design choice below optimizes the common
-# case: a repository with no active Phase 6 initiative pays one process exec and one marker file
-# test, no other filesystem read, no parser subprocess. Rejected: re-deriving "which initiative is
-# active" from a fresh sweep costs one parser subprocess per active initiative PER EDIT.
+# Why this exists: `PreToolUse` fires exactly once per `git commit` (a 3,000 ms budget is fine
+# with a human waiting); this hook fires on every Edit/Write/MultiEdit call instead -- tens to
+# hundreds of times per wave -- so every design choice optimizes the common case: no active
+# Phase 6 initiative pays one exec, one marker test, no parser subprocess. Provenance
+# (decisions.md D14): a from-scratch rewrite, not a port -- see CLAUDE.md's "Prompt conventions
+# (house style)" section for the recorded attribution.
 #
-# Provenance (decisions.md D14, ratified at Gate 2): a from-scratch rewrite, not a port or a
-# vendored copy of either upstream implementation -- see CLAUDE.md's "Prompt conventions (house
-# style)" section for the recorded attribution.
-#
-# Scope history: EDMV4-T11 built the marker check, the allow path, and the host registration.
-# EDMV4-T13 added emit_decision with its two selectable back-ends. EDMV4-T14 wired the
-# fact-forcing denial content into the Edit/Write/MultiEdit case arms and the MultiEdit loop.
-# EDMV4-T15 (this build) adds the kill switches, exemption globs, session-state cap/staleness, and
-# the denial budget.
+# Scope history: EDMV4-T11 built the marker check/allow path/host registration; EDMV4-T13 added
+# emit_decision; EDMV4-T14 wired the fact-forcing denial content and the MultiEdit loop; EDMV4-T15
+# added the kill switches/exemptions/session state/denial budget; EDMV4-T45 (this build) wires
+# file-event hookify rule evaluation into the allow path.
 #
 # EDM-HELP-BEGIN
 # edm-gateguard - PreToolUse fact-forcing edit gate for Phase 6 (structural build).
@@ -31,27 +26,24 @@
 # `git commit` block does (`command -v edm-gateguard >/dev/null 2>&1 || exit 0` before exec), so an
 # uninstalled or partially-installed plugin never blocks a tool call it cannot evaluate.
 #
-# What runs today: a repository with no active Phase 6 marker allows immediately -- one process
-# exec, one marker file test, no other filesystem read, no parser subprocess. Either
-# EDM_GATEGUARD=0|false|off|disabled|disable or EDM_GATEGUARD_DISABLED=1 (literal "1" only) exits
-# 0 before that marker test even runs. With a marker present, an Edit/Write/MultiEdit call on a
-# path not yet recorded checked this session is denied with a numbered fact list, UNLESS the path
-# matches EDM_GATEGUARD_EXEMPT_GLOBS (default covers SRD/, test trees, dist/build, node_modules,
-# .git) or the per-session denial budget (EDM_GATEGUARD_MAX_DENIALS, default 3) is spent, in which
-# case it allows with a stderr advisory. A path once denied allows on any later call in the same
-# session (session state at EDM_GATEGUARD_STATE_DIR, or the resolved plugin data dir's run/
-# subdirectory, capped at 500 entries and treated as stale, and truncated, past 30 minutes idle).
+# What runs today: no active Phase 6 marker allows immediately -- one exec, one marker test, no
+# parser subprocess. Either EDM_GATEGUARD=0|false|off|disabled|disable or
+# EDM_GATEGUARD_DISABLED=1 (literal "1" only) exits 0 before that marker test even runs. With a
+# marker present, an Edit/Write/MultiEdit call on a path not yet checked this session denies with
+# a numbered fact list, UNLESS EDM_GATEGUARD_EXEMPT_GLOBS matches (default: SRD/, test trees,
+# dist/build, node_modules, .git) or the denial budget (EDM_GATEGUARD_MAX_DENIALS, default 3) is
+# spent, in which case it allows with a stderr advisory. A denied path allows on any later call
+# in the same session (state at EDM_GATEGUARD_STATE_DIR or the plugin data dir's run/
+# subdirectory, capped at 500 entries, stale past 30 minutes idle). On the allow path, enabled
+# `file`-event hookify rules (see CLAUDE.md's "Hookify rule format") evaluate once per call.
 #
 # Exit codes:
-#   0  the tool call is allowed (including every kill-switch and every fail-open path), or
-#      -h/--help was requested.
-#   1  a setup error (unexpected argument, an unparseable stdin payload, or a required parser
-#      missing once a marker is present). Never blocks -- the same non-blocking convention every
-#      other hook in this plugin applies (CLAUDE.md's "Hooks behavior" section), and deliberately
-#      differs from this family of scripts' usual default of 2, which on this hook means "deny".
-#   2  (exit-code deny mode only) a real refusal -- the fact list is on stderr. In the default
-#      json deny mode, a refusal instead exits 0 with a hookSpecificOutput payload on stdout; see
-#      emit_decision() below for the full contract.
+#   0  allowed (every kill-switch and fail-open path included), or -h/--help was requested.
+#   1  a setup error: a bad argument, an unparseable stdin payload, or a required parser missing
+#      once a marker is present -- absent a marker, no parser is ever referenced. Never blocks
+#      (CLAUDE.md's "Hooks behavior") -- differs from this family's usual default of 2, "deny" here.
+#   2  (exit-code deny mode only) a real refusal, fact list on stderr. json deny mode (the
+#      default) instead exits 0 with a hookSpecificOutput payload on stdout; see emit_decision().
 # EDM-HELP-END
 set -euo pipefail
 
@@ -382,6 +374,24 @@ case "$TOOL_NAME" in
     # case this gate was never registered against.
     : ;;
 esac
+
+# EDMV4-T45 AC1/AC7: file-event hookify rules evaluate ONLY here, on the allow path, reusing
+# $PAYLOAD already parsed -- no second stdin read -- projected into the file-event field shape
+# once per gated call regardless of tool name. Absent edm-hookify is a silent allow.
+if command -v edm-hookify >/dev/null 2>&1; then
+  GG_HOOKIFY_PAYLOAD="$(printf '%s' "$PAYLOAD" | jq -c '{
+    file_path: (.tool_input.file_path // (.tool_input.edits[0].file_path // "")),
+    old_text: (.tool_input.old_string // ([.tool_input.edits[]?.old_string?] | map(select(.!=null)) | join("\n"))),
+    new_text: (.tool_input.new_string // .tool_input.content // ([.tool_input.edits[]?.new_string?] | map(select(.!=null)) | join("\n"))),
+    content: (.tool_input.content // "")
+  }' 2>/dev/null)"
+  GG_HOOKIFY_RC=0
+  GG_HOOKIFY_OUT="$(printf '%s' "$GG_HOOKIFY_PAYLOAD" | edm-hookify eval file)" || GG_HOOKIFY_RC=$?
+  # T44 AC4/AC5: hookify's block code becomes a refusal through THIS script's own emit_decision
+  # (AD2); hookify's setup-error code never escalates (it already warned on stderr); a clean run
+  # falls through unchanged.
+  [[ "$GG_HOOKIFY_RC" -eq 2 ]] && emit_decision deny "$GG_HOOKIFY_OUT"
+fi
 
 # Every branch above allows silently once every path in scope is already checked (or exempt, or
 # budget-exhausted, or the tool name is one this gate does not target) -- via emit_decision, not a

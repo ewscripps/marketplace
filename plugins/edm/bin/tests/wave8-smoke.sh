@@ -2203,14 +2203,15 @@ echo
 EDM_STOP_GATE="${PLUGIN_DIR}/bin/edm-stop-gate"
 HOOKS_JSON="${PLUGIN_DIR}/hooks/hooks.json"
 
-# ---- AC5: exists, executable, validate-only (no hookify stop-rule wiring in this ticket) -------
+# ---- AC5: exists, executable, and (as of this wave) runs edm-state validate. Hookify stop-rule
+# wiring was NOT this ticket's own scope (EDMV4-T46) -- EDMV4-T45 added it later, in the same
+# wave; see that ticket's own dedicated section below for its coverage, since asserting its
+# absence here would now be a stale, false claim rather than a scope boundary. -------------------
 if [[ -x "$EDM_STOP_GATE" ]]; then
   pass "EDMV4-T46 AC5 -- edm-stop-gate exists and is executable"
 else
   fail "EDMV4-T46 AC5 -- edm-stop-gate missing or not executable"
 fi
-check_absent "EDMV4-T46 AC5 -- edm-stop-gate does not invoke edm-hookify (validate-only this ticket)" \
-  "edm-hookify" "$(cat "$EDM_STOP_GATE")"
 check "EDMV4-T46 AC5 -- edm-stop-gate runs edm-state validate" \
   "edm-state validate" "$(cat "$EDM_STOP_GATE")"
 
@@ -2349,15 +2350,12 @@ t46_isolate_and_run t46_ac9_case
 # =================================================================================================
 # EDMV4-T44: Make action: block an explicit opt-in behind a two-tier exit contract
 # =================================================================================================
-# Scope note (read before extending this section): edm-gateguard and edm-stop-gate do not invoke
-# edm-hookify yet -- wiring either consumer's gated path to actually call this evaluator is
-# EDMV4-T45's job (see the "AC5 -- edm-stop-gate does not invoke edm-hookify" assertion in the
-# T46 section above, which stays true here). This ticket also may NOT edit bin/edm-gateguard: it
-# is EDMV4-T13's file this wave (adding emit_decision). Every assertion below therefore exercises
-# edm-hookify's own two-tier exit contract directly -- the file/stop malformed-rule case an Edit-
-# through-edm-gateguard and a Stop-through-edm-stop-gate will each eventually reach once T45
-# lands, per the classify pass validating every rule file identically regardless of which event is
-# requested.
+# Scope note: at the time this ticket (EDMV4-T44) was implemented, neither edm-gateguard nor
+# edm-stop-gate invoked edm-hookify yet -- that wiring was EDMV4-T45's job, and this ticket could
+# not edit bin/edm-gateguard (EDMV4-T13's file that same wave). Every assertion below therefore
+# exercises edm-hookify's own two-tier exit contract directly, independent of either consumer.
+# EDMV4-T45 has since landed and wired both consumers -- see its own dedicated section below for
+# the end-to-end coverage of the translation this section proves in isolation.
 echo
 echo "=== EDMV4-T44: edm-hookify two-tier exit contract ==="
 echo
@@ -2500,8 +2498,8 @@ check "EDMV4-T44 AC4 -- CLAUDE.md documents edm-gateguard's emit_decision deny t
   "own \`emit_decision deny\` function (AD2)" "$CLAUDE_MD_TEXT_T44"
 check "EDMV4-T44 AC4 -- CLAUDE.md documents edm-stop-gate translating into its own exit 2" \
   "translates it into its own exit 2" "$CLAUDE_MD_TEXT_T44"
-check_absent "EDMV4-T44 AC5 -- edm-stop-gate still does not invoke edm-hookify (T45's wiring, not this ticket's)" \
-  "edm-hookify" "$(cat "$EDM_STOP_GATE")"
+# EDMV4-T45 has since wired edm-stop-gate to invoke edm-hookify (same wave); see its own section
+# below for that wiring's coverage -- asserting absence here would now be a stale, false claim.
 
 # ---- Wave-3 QC remediation (P2): AC4/AC5 above were proven only via CLAUDE.md's prose plus
 # edm-hookify's own exit codes in isolation -- neither exercised the TRANSLATION a consumer
@@ -3298,9 +3296,18 @@ check "EDMV4-T11 AC2 -- carries EDM-HELP-BEGIN/END sentinels" "EDM-HELP-BEGIN" "
 check_absent "EDMV4-T11 AC2 -- no hardcoded sed -n 'A,Bp' help-range extraction" "sed -n '" "$(cat "$GATEGUARD")"
 
 # ---- AC3: hooks.json gains exactly one new PreToolUse matcher block for Edit/Write/MultiEdit,
-# whose command begins with the same guard the git-commit block uses. -----------------------------
+# whose command begins with the same guard the git-commit block uses. This ticket's own count was
+# 2; EDMV4-T45 legitimately grows it to 3 by adding a matcher-disjoint `Bash` block once Spike A
+# (decisions.md D25) recorded a positive multi-hook-per-event result -- see the EDMV4-T45 section
+# below for that block's own dedicated count assertion. Asserting "at least 2, including this
+# ticket's own Edit|Write|MultiEdit block" here keeps this AC's own claim true without hardcoding
+# a total this ticket does not own. -------------------------------------------------------------
 t11_pretooluse_len="$(jq '.hooks.PreToolUse | length' "$HOOKS_JSON")"
-check "EDMV4-T11 AC3 -- hooks.json PreToolUse array has exactly 2 entries" "2" "$t11_pretooluse_len"
+if [[ "$t11_pretooluse_len" -ge 2 ]]; then
+  pass "EDMV4-T11 AC3 -- hooks.json PreToolUse array has at least 2 entries (${t11_pretooluse_len} total)"
+else
+  fail "EDMV4-T11 AC3 -- expected at least 2 PreToolUse entries, got ${t11_pretooluse_len}"
+fi
 
 t11_gg_command="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Edit|Write|MultiEdit") | .hooks[0].command' "$HOOKS_JSON")"
 case "$t11_gg_command" in
@@ -4511,6 +4518,192 @@ for _t15_var in EDM_GATEGUARD EDM_GATEGUARD_DISABLED EDM_GATEGUARD_DENY_MODE EDM
 done
 check "EDMV4-T15 AC12 -- the knob family is introduced by name in the same bullet form as the existing families" \
   "EDM_GATEGUARD_*\` knob family (EDMV4-T15)" "$T15_CLAUDE_MD_TEXT"
+
+echo
+
+# =================================================================================================
+# EDMV4-T45: Wire hookify events to their single owners, with bash gated on Spike A
+# =================================================================================================
+# Own banded section, appended last. GATEGUARD/EDM_STOP_GATE/DATADIR_LIB/HOOKIFY_FIXTURES are
+# already set by the EDMV4-T11/T12/T42/T46 sections above; t14_fresh_marker_env is reused unchanged.
+echo "=== EDMV4-T45: hookify event wiring (file/stop/bash), bash gated on Spike A ==="
+echo
+
+EDM_BASH_GATE="${PLUGIN_DIR}/bin/edm-bash-gate"
+BASH_DECISIONS_MD="${PLUGIN_DIR}/../../SRD/edm/EDMV4__ecc-integration/decisions.md"
+
+# ---- AC3: bash-event rules ship only because decisions.md records a positive Spike A result --
+# checked before anything else in this section, matching the AC's own reading-order requirement. -
+if [[ -f "$BASH_DECISIONS_MD" ]]; then
+  T45_D25_TEXT="$(grep -A2 '| D25 |' "$BASH_DECISIONS_MD" 2>/dev/null || true)"
+  check "EDMV4-T45 AC3 -- decisions.md D25 records that every registered PreToolUse block runs" \
+    "every registered command runs" "$T45_D25_TEXT"
+  check "EDMV4-T45 AC3 -- decisions.md D25 records a deny always wins regardless of order" \
+    "a deny always wins" "$T45_D25_TEXT"
+else
+  fail "EDMV4-T45 AC3 -- decisions.md not found at the expected path; cannot verify the Spike A precondition"
+fi
+if [[ -x "$EDM_BASH_GATE" ]]; then
+  pass "EDMV4-T45 AC3/AC4 -- bash events shipped: bin/edm-bash-gate exists and is executable, matching the positive Spike A result above"
+else
+  fail "EDMV4-T45 AC3/AC4 -- bin/edm-bash-gate is missing or not executable"
+fi
+
+# ---- AC5: the existing git-commit matcher block is byte-identical; pinned at its exact command
+# string (GATEGUARD/HOOKS_JSON already point at the real files from the EDMV4-T11 section). -------
+T45_GITCOMMIT_CMD="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' "$HOOKS_JSON")"
+check "EDMV4-T45 AC5 -- git-commit matcher's command is still byte-identical after this ticket" \
+  "command -v edm-lint-staged-artifacts >/dev/null 2>&1 || exit 0; edm-lint-staged-artifacts" "$T45_GITCOMMIT_CMD"
+
+# ---- AC1 (structural): no second PreToolUse block registered for file events -- exactly one
+# matcher block names Edit|Write|MultiEdit, and the new Bash block is matcher-disjoint from it. --
+T45_FILE_MATCHER_COUNT="$(jq '[.hooks.PreToolUse[] | select(.matcher == "Edit|Write|MultiEdit")] | length' "$HOOKS_JSON")"
+check "EDMV4-T45 AC1 -- exactly one PreToolUse block matches Edit|Write|MultiEdit (no second file-event block)" \
+  "1" "$T45_FILE_MATCHER_COUNT"
+T45_BASH_MATCHER_CMD="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[0].command' "$HOOKS_JSON")"
+check "EDMV4-T45 AC4 -- the new Bash matcher's command begins with the edm-bash-gate presence guard" \
+  "command -v edm-bash-gate >/dev/null 2>&1 || exit 0" "$T45_BASH_MATCHER_CMD"
+
+# ---- AC2 (structural): no second Stop matcher block registered -- still exactly one, two entries.
+T45_STOP_LEN="$(jq '.hooks.Stop | length' "$HOOKS_JSON")"
+check "EDMV4-T45 AC2 -- Stop still has exactly one matcher block (stop-event rules are evaluated IN it, not via a second block)" \
+  "1" "$T45_STOP_LEN"
+
+# ---- AC6: with hookify present (a rule directory exists and is enabled) and the Phase 6 marker
+# ABSENT, an Edit is allowed with ZERO rule evaluation -- reusing the jq-counting-shim technique
+# EDMV4-T11 AC9 already established for the identical claim (zero jq on the allow path applies to
+# hookify's own jq usage too, since the hookify call never happens before the marker is present). -
+harness_scratch_dir T45_AC6_TMP
+T45_AC6_FAKEBIN="${T45_AC6_TMP}/fakebin"
+mkdir -p "$T45_AC6_FAKEBIN" "${T45_AC6_TMP}/proj/.claude/edm-hookify"
+cp "${HOOKIFY_FIXTURES}/warn-no-console-log.json" "${T45_AC6_TMP}/proj/.claude/edm-hookify/"
+for _t45_bin in dirname bash grep date mkdir mv rm cat git; do
+  ln -s "$(command -v "$_t45_bin")" "${T45_AC6_FAKEBIN}/${_t45_bin}"
+done
+cat > "${T45_AC6_FAKEBIN}/jq" <<T45JQSPY
+#!/bin/sh
+: > "${T45_AC6_FAKEBIN}/.jq_invoked"
+exit 99
+T45JQSPY
+chmod +x "${T45_AC6_FAKEBIN}/jq"
+cat > "${T45_AC6_FAKEBIN}/edm-hookify" <<T45HFSPY
+#!/bin/sh
+: > "${T45_AC6_FAKEBIN}/.hookify_invoked"
+exit 99
+T45HFSPY
+chmod +x "${T45_AC6_FAKEBIN}/edm-hookify"
+
+T45_AC6_DATA_ABSENT="${T45_AC6_TMP}/data-absent"
+mkdir -p "$T45_AC6_DATA_ABSENT"
+T45_AC6_RC=0
+T45_AC6_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"src/foo.js","new_text":"console.log(1)"}}' | \
+  CLAUDE_PROJECT_DIR="${T45_AC6_TMP}/proj" CLAUDE_PLUGIN_DATA="$T45_AC6_DATA_ABSENT" PATH="$T45_AC6_FAKEBIN" bash "$GATEGUARD" 2>"${T45_AC6_TMP}/ac6.stderr")" || T45_AC6_RC=$?
+T45_AC6_STDERR="$(cat "${T45_AC6_TMP}/ac6.stderr" 2>/dev/null || true)"
+if [[ "$T45_AC6_RC" -eq 0 && -z "$T45_AC6_OUT" && -z "$T45_AC6_STDERR" ]]; then
+  pass "EDMV4-T45 AC6 -- marker absent, hookify present with an enabled rule: still exit 0, empty output"
+else
+  fail "EDMV4-T45 AC6 -- rc=${T45_AC6_RC} stdout=[${T45_AC6_OUT}] stderr=[${T45_AC6_STDERR}]"
+fi
+if [[ ! -f "${T45_AC6_FAKEBIN}/.hookify_invoked" ]]; then
+  pass "EDMV4-T45 AC6 -- edm-hookify was never invoked on the marker-absent path (zero hookify-attributable spawns)"
+else
+  fail "EDMV4-T45 AC6 -- edm-hookify WAS invoked despite the marker being absent"
+fi
+
+# Positive control: the identical fixture, marker PRESENT, DOES invoke edm-hookify -- proving the
+# spy is capable of firing and the zero-count above is not vacuous. Uses a SEPARATE fakebin with a
+# REAL jq (the marker-present gated path legitimately needs one to parse tool_name) plus only the
+# edm-hookify spy, placed ahead of the real bin/ in PATH so the spy shadows the real binary
+# without a fake jq breaking the JSON parse the gated path depends on.
+T45_AC6B_FAKEBIN="${T45_AC6_TMP}/fakebin-control"
+mkdir -p "$T45_AC6B_FAKEBIN"
+for _t45b_bin in dirname bash grep date mkdir mv rm cat git jq; do
+  ln -s "$(command -v "$_t45b_bin")" "${T45_AC6B_FAKEBIN}/${_t45b_bin}"
+done
+cat > "${T45_AC6B_FAKEBIN}/edm-hookify" <<T45HFSPY2
+#!/bin/sh
+: > "${T45_AC6B_FAKEBIN}/.hookify_invoked"
+exit 99
+T45HFSPY2
+chmod +x "${T45_AC6B_FAKEBIN}/edm-hookify"
+
+T45_AC6_DATA_PRESENT="${T45_AC6_TMP}/data-present"
+mkdir -p "${T45_AC6_DATA_PRESENT}/run"
+T45_AC6_KEY="$(CLAUDE_PROJECT_DIR="${T45_AC6_TMP}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+printf 'T45PFX\t%s\t2026-09-02T00:00:00Z\n' "${T45_AC6_TMP}/proj" > "${T45_AC6_DATA_PRESENT}/run/${T45_AC6_KEY}.phase6"
+printf 'src/foo.js\n' > "${T45_AC6_DATA_PRESENT}/run/${T45_AC6_KEY}.checked"
+printf '{"tool_name":"Edit","tool_input":{"file_path":"src/foo.js","new_text":"console.log(1)"}}' | \
+  CLAUDE_PROJECT_DIR="${T45_AC6_TMP}/proj" CLAUDE_PLUGIN_DATA="$T45_AC6_DATA_PRESENT" PATH="${T45_AC6B_FAKEBIN}:${PLUGIN_DIR}/bin:${PATH}" bash "$GATEGUARD" >/dev/null 2>&1 || true
+if [[ -f "${T45_AC6B_FAKEBIN}/.hookify_invoked" ]]; then
+  pass "EDMV4-T45 AC6 -- positive control: edm-hookify DOES fire once the marker is present, so the absent-case zero-count is not vacuous"
+else
+  fail "EDMV4-T45 AC6 -- positive control FAILED: edm-hookify never fired even with a marker present"
+fi
+
+# ---- AC7: with the marker present and a matching file rule enabled, the rule evaluates EXACTLY
+# ONCE per gated edit -- a real edm-hookify call-count spy (not jq), against a rule carrying TWO
+# AND'd conditions, so "once per condition" would visibly diverge from "once per call" if it
+# occurred. --------------------------------------------------------------------------------------
+harness_scratch_dir T45_AC7_TMP
+mkdir -p "${T45_AC7_TMP}/proj/.claude/edm-hookify" "${T45_AC7_TMP}/data/run"
+cat > "${T45_AC7_TMP}/proj/.claude/edm-hookify/two-conditions.json" <<'EOF'
+{
+  "name": "two-cond-rule",
+  "enabled": true,
+  "event": "file",
+  "action": "warn",
+  "conditions": [
+    { "field": "file_path", "operator": "contains", "pattern": "foo" },
+    { "field": "new_text", "operator": "contains", "pattern": "console.log" }
+  ],
+  "message": "two conditions matched"
+}
+EOF
+T45_AC7_KEY="$(CLAUDE_PROJECT_DIR="${T45_AC7_TMP}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+printf 'T45PFX\t%s\t2026-09-02T00:00:00Z\n' "${T45_AC7_TMP}/proj" > "${T45_AC7_TMP}/data/run/${T45_AC7_KEY}.phase6"
+printf 'src/foo.js\n' > "${T45_AC7_TMP}/data/run/${T45_AC7_KEY}.checked"
+
+T45_AC7_SPYBIN="${T45_AC7_TMP}/spybin"
+mkdir -p "$T45_AC7_SPYBIN"
+T45_REAL_HOOKIFY="$(command -v edm-hookify 2>/dev/null || echo "${PLUGIN_DIR}/bin/edm-hookify")"
+cat > "${T45_AC7_SPYBIN}/edm-hookify" <<T45HFCOUNT
+#!/bin/sh
+count_file="${T45_AC7_TMP}/.hookify_call_count"
+n=\$(cat "\$count_file" 2>/dev/null || echo 0)
+echo \$((n + 1)) > "\$count_file"
+exec "${T45_REAL_HOOKIFY}" "\$@"
+T45HFCOUNT
+chmod +x "${T45_AC7_SPYBIN}/edm-hookify"
+
+printf '{"tool_name":"Edit","tool_input":{"file_path":"src/foo.js","new_text":"console.log(1)"}}' | \
+  CLAUDE_PROJECT_DIR="${T45_AC7_TMP}/proj" CLAUDE_PLUGIN_DATA="${T45_AC7_TMP}/data" \
+  PATH="${T45_AC7_SPYBIN}:${PLUGIN_DIR}/bin:${PATH}" bash "$GATEGUARD" >/dev/null 2>&1 || true
+T45_AC7_COUNT="$(cat "${T45_AC7_TMP}/.hookify_call_count" 2>/dev/null || echo 0)"
+check "EDMV4-T45 AC7 -- a two-condition rule is evaluated via exactly one edm-hookify call, not once per condition" \
+  "1" "$T45_AC7_COUNT"
+
+# ---- AC8: CLAUDE.md's Hooks behavior documents which events hookify serves and which owns each --
+T45_CLAUDE_MD_TEXT="$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check "EDMV4-T45 AC8 -- documents file events owned by edm-gateguard's allow path" \
+  "evaluates enabled \`file\`-event hookify rules exactly once, on the allow path" "$T45_CLAUDE_MD_TEXT"
+check "EDMV4-T45 AC8 -- documents stop events owned by edm-stop-gate" \
+  "evaluates enabled \`stop\`-event hookify rules exactly once per invocation" "$T45_CLAUDE_MD_TEXT"
+check "EDMV4-T45 AC8 -- documents the new PreToolUse Bash row and its owner (edm-bash-gate)" \
+  "Delegates to \`bin/edm-bash-gate\`" "$T45_CLAUDE_MD_TEXT"
+check "EDMV4-T45 AC8 -- states hookify registers no PreToolUse/Stop block of its own for file/stop" \
+  "hookify registers no" "$T45_CLAUDE_MD_TEXT"
+
+# ---- AC9: hooks.json (carrying the new Bash block's command string) still parses as valid JSON,
+# and edm-check-vocabulary -- which hard-dies on invalid JSON in that file before scanning it --
+# still passes over the whole plugin tree. --------------------------------------------------------
+if jq . "$HOOKS_JSON" >/dev/null 2>&1; then
+  pass "EDMV4-T45 AC9 -- hooks.json (including the new Bash block) still parses as valid JSON"
+else
+  fail "EDMV4-T45 AC9 -- hooks.json failed to parse as JSON after adding the Bash block"
+fi
+T45_VOCAB_RC=0
+(cd "$PLUGIN_DIR" && bash bin/edm-check-vocabulary >/dev/null 2>&1) || T45_VOCAB_RC=$?
+check "EDMV4-T45 AC9 -- edm-check-vocabulary passes over the updated hooks.json and the new edm-bash-gate" "0" "$T45_VOCAB_RC"
 
 echo
 
