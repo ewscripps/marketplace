@@ -4127,20 +4127,48 @@ check "EDMV4-T23 AC7 -- reason 1 (missing run-lens JSONL) has its own distinct p
   "missing/empty/unparseable for:" "$t23ac2_zero_out"
 check "EDMV4-T23 AC7 -- reason 2 (unexpected N/A-lens JSONL) has its own distinct prefix" \
   "lens JSONL present for lens(es) declared N/A" "$t23ac4_out"
-# Reason 3 (coverage incomplete) is exercised structurally in bin/edm-state's own coverage-check
-# block (AC5/AC6 above prove it never fires on a legitimate partial round); a positive trigger
-# requires simulating ALL_LENS_IDS growing between round-start and completion, which is exercised
-# by direct code inspection of the "$_union_covers" == "no" branch rather than a live fixture,
-# since ALL_LENS_IDS is a load-time constant this suite cannot safely mutate mid-run.
-check "EDMV4-T23 AC7 -- reason 3 (coverage incomplete) has its own distinct message text in the source" \
-  "lens coverage incomplete:" "$(cat "$EDM_STATE")"
+# Reason 3 (coverage incomplete) IS triggerable without touching ALL_LENS_IDS -- wave-3 QC
+# reproduced it live, using the same hand-patch technique AC2's own case uses ~100 lines above:
+# start a genuinely PARTIAL round (--lenses L1,L2, so ALL_LENS_IDS is never touched), then
+# hand-patch round_type alone to "full". Since `lenses` stays the non-empty ["L1","L2"],
+# read_round_lenses($all) does NOT apply its C-4 substitution (that only fires when `lenses` is
+# EMPTY), so the union {L1,L2} (lenses_na stays [] by default) genuinely does not cover
+# ALL_LENS_IDS at completion time -- exactly the shape check (3) exists to catch. The prior
+# comment here claiming this "cannot safely" be triggered without mutating ALL_LENS_IDS was
+# factually wrong, and left reason 3 as the only one of the three downgrade paths with zero
+# executing coverage.
+"$EDM_STATE" init T23AC7R3 >/dev/null
+T23AC7R3_DIR="$TMP/SRD/T23AC7R3"
+"$EDM_STATE" audit-round-start T23AC7R3 code --lenses L1,L2 >/dev/null
+jq '.audit_rounds.code.rounds[-1].round_type = "full"' \
+  "${T23AC7R3_DIR}/.edm-state.json" > "${T23AC7R3_DIR}/.edm-state.json.tmp" \
+  && mv "${T23AC7R3_DIR}/.edm-state.json.tmp" "${T23AC7R3_DIR}/.edm-state.json"
+t23ac7r3_patched_lenses="$(jq -c '.audit_rounds.code.rounds[-1].lenses' "${T23AC7R3_DIR}/.edm-state.json")"
+[[ "$t23ac7r3_patched_lenses" == '["L1","L2"]' ]] \
+  && pass "EDMV4-T23 AC7 reason-3 setup -- the round record carries lenses:[\"L1\",\"L2\"]+round_type:full (non-empty lenses, so no C-4 substitution applies)" \
+  || fail "EDMV4-T23 AC7 reason-3 setup -- lenses = '$t23ac7r3_patched_lenses', expected [\"L1\",\"L2\"]"
+mkdir -p "${T23AC7R3_DIR}/code-audit/pass-1_2026-09-02"
+printf 'Round type: full\nL1\nL2\n' > "${T23AC7R3_DIR}/code-audit/pass-1_2026-09-02/lenses-run.txt"
+printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
+  > "${T23AC7R3_DIR}/code-audit/pass-1_2026-09-02/lens-L1.jsonl"
+printf '{"schema":"lens","lens":"L2","sev":"P2","status":"open","id":null}\n' \
+  > "${T23AC7R3_DIR}/code-audit/pass-1_2026-09-02/lens-L2.jsonl"
+t23ac7r3_out="$("$EDM_STATE" audit-round-complete T23AC7R3 code 2>&1)"
+check "EDMV4-T23 AC7/AC11 -- reason 3 (coverage incomplete) is fired by a REAL executing case, not just present in source" \
+  "lens coverage incomplete:" "$t23ac7r3_out"
+t23ac7r3_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "${T23AC7R3_DIR}/.edm-state.json")"
+[[ "$t23ac7r3_rt" == "partial" ]] \
+  && pass "EDMV4-T23 AC11 -- reason 3's downgrade actually mutates round_type to partial" \
+  || fail "EDMV4-T23 AC11 -- round_type = '$t23ac7r3_rt', expected partial (reason 3 fired but did not downgrade)"
 
-# ---- AC8: the downgrade stays irreversible; a second completion is refused and mutates nothing
-t23ac8_second_ec=0
-"$EDM_STATE" audit-round-complete T23AC2 code >/dev/null 2>&1 || t23ac8_second_ec=$?
-[[ "$t23ac8_second_ec" -ne 0 ]] \
-  && pass "EDMV4-T23 AC8 -- a second audit-round-complete on the same (already-downgraded) round is refused" \
-  || fail "EDMV4-T23 AC8 -- second completion exited 0, expected non-zero"
+# ---- AC8: the downgrade stays irreversible; a second completion is refused AND mutates nothing.
+# check_refuses_and_leaves_state is the shared harness helper for exactly this combined proof
+# (non-zero exit + byte-identical state before/after), rather than checking the exit code alone.
+check_refuses_and_leaves_state \
+  "EDMV4-T23 AC8 -- a second audit-round-complete on the same (already-downgraded) round is refused AND mutates nothing" \
+  "already completed" \
+  "${T23AC2_DIR}/.edm-state.json" \
+  "$EDM_STATE" audit-round-complete T23AC2 code
 
 # ---- AC9: a round with no pass directory is left unchanged (C-4) -- unaffected by the state-
 # authoritative rewrite, replayed here to pin it post-EDMV4-T23 -------------------------------
@@ -4251,6 +4279,64 @@ t24ac2_pytyped_out="$(cd "$T24_PY_REPO" && bash "$EDM_STATE" detect-conditional-
 [[ -z "$t24ac2_pytyped_out" ]] \
   && pass "EDMV4-T24 AC2 -- pyproject.toml WITH a [tool.mypy] table satisfies the marker (L13 applies)" \
   || fail "EDMV4-T24 AC2 -- typed-pyproject case reported '${t24ac2_pytyped_out}', expected empty"
+
+# ---- AC4 (wave-3 QC P1 fix): detect-conditional-lenses must give the SAME answer whether it is
+# invoked from the repository root or from a subdirectory. This is the exact shape wave-3 QC
+# demonstrated as broken: a bare `git ls-files` (bin/edm-state:1748 pre-fix) and a bare
+# cwd-relative `pyproject.toml` open (bin/edm-state:1731 pre-fix) are both scoped to the CALLER'S
+# cwd rather than the repository root, so "from repo root" and "from sub/" disagreed on a tracked
+# root-level tsconfig.json. The earlier AC4 check at :4214-4216 above cannot see this class of
+# regression -- it runs both invocations from the SAME cwd, so a cwd-scoping bug is invisible to
+# it by construction.
+mkdir -p "${T24_MARKER_REPO}/sub"
+t24ac4_root_out="$(cd "$T24_MARKER_REPO" && bash "$EDM_STATE" detect-conditional-lenses 2>&1)"
+t24ac4_sub_out="$(cd "${T24_MARKER_REPO}/sub" && bash "$EDM_STATE" detect-conditional-lenses 2>&1)"
+[[ "$t24ac4_root_out" == "$t24ac4_sub_out" ]] \
+  && pass "EDMV4-T24 AC4 -- detect-conditional-lenses gives the SAME answer from the repo root and from a subdirectory (tsconfig.json marker)" \
+  || fail "EDMV4-T24 AC4 -- root gave '${t24ac4_root_out}', subdirectory gave '${t24ac4_sub_out}' -- cwd-sensitive regression"
+
+# Positive control: proves the check above is not vacuous. A tracked tsconfig.json that lives
+# INSIDE a subdirectory (never at the repository root) is a case where an unanchored, caller-cwd-
+# scoped `git ls-files` (the pre-fix bug) genuinely reports a DIFFERENT result depending on cwd:
+# from the root, `git ls-files` reports the path as "sub/tsconfig.json" (does not match the
+# exact-filename predicate, so L13 stays N/A); from inside "sub/" itself, the unanchored form
+# (`cd sub && git ls-files`) reports the SAME on-disk file as the bare relative path
+# "tsconfig.json" (DOES match). This is verified directly against git itself, independent of
+# edm-state, so the control cannot be satisfied by two values that would always compare equal
+# regardless of whether the anchoring fix is present.
+T24_NESTED_REPO="${T24_TS}/nested-marker-repo"
+mkdir -p "${T24_NESTED_REPO}/sub"
+(
+  cd "$T24_NESTED_REPO" || exit 1
+  git init -q
+  git config user.email "t24@example.com"
+  git config user.name "t24"
+)
+touch "${T24_NESTED_REPO}/sub/tsconfig.json"
+(cd "$T24_NESTED_REPO" && git add sub/tsconfig.json)
+t24ac4_ctrl_root_gitls="$(cd "$T24_NESTED_REPO" && git ls-files)"
+t24ac4_ctrl_unanchored_sub_gitls="$(cd "${T24_NESTED_REPO}/sub" && git ls-files)"
+[[ "$t24ac4_ctrl_root_gitls" != "$t24ac4_ctrl_unanchored_sub_gitls" ]] \
+  && pass "EDMV4-T24 AC4 control -- an unanchored 'git ls-files' genuinely differs by cwd (root: '${t24ac4_ctrl_root_gitls}', cwd-scoped from sub: '${t24ac4_ctrl_unanchored_sub_gitls}'), proving the equality check above can catch a real regression" \
+  || fail "EDMV4-T24 AC4 control -- unanchored git ls-files did not differ by cwd; the positive-control fixture is broken"
+# The FIXED subcommand (anchored to the repo root via _resolve_permcheck_project_root) must still
+# agree from both directories against this nested-marker repo: a nested (non-root) tsconfig.json
+# is not a root-level marker, so L13 correctly stays N/A either way.
+t24ac4_nested_root_out="$(cd "$T24_NESTED_REPO" && bash "$EDM_STATE" detect-conditional-lenses 2>&1)"
+t24ac4_nested_sub_out="$(cd "${T24_NESTED_REPO}/sub" && bash "$EDM_STATE" detect-conditional-lenses 2>&1)"
+[[ "$t24ac4_nested_root_out" == "L13" && "$t24ac4_nested_sub_out" == "L13" ]] \
+  && pass "EDMV4-T24 AC4 -- a nested (non-root) tsconfig.json correctly stays L13 N/A from BOTH the root and the subdirectory" \
+  || fail "EDMV4-T24 AC4 -- nested-marker case: root gave '${t24ac4_nested_root_out}', sub gave '${t24ac4_nested_sub_out}', expected 'L13' from both"
+
+# Same determinism requirement for the OTHER cwd-relative site pre-fix (bin/edm-state:1731, the
+# pyproject.toml [tool.mypy]/[tool.pyright] content probe): a typed pyproject.toml at the repo
+# root must be read the same way from a subdirectory as from the root.
+mkdir -p "${T24_PY_REPO}/sub"
+t24ac4_py_root_out="$(cd "$T24_PY_REPO" && bash "$EDM_STATE" detect-conditional-lenses 2>&1)"
+t24ac4_py_sub_out="$(cd "${T24_PY_REPO}/sub" && bash "$EDM_STATE" detect-conditional-lenses 2>&1)"
+[[ "$t24ac4_py_root_out" == "$t24ac4_py_sub_out" && -z "$t24ac4_py_root_out" ]] \
+  && pass "EDMV4-T24 AC4 -- the pyproject.toml [tool.mypy] probe gives the SAME answer from the root and a subdirectory" \
+  || fail "EDMV4-T24 AC4 -- pyproject.toml probe: root gave '${t24ac4_py_root_out}', subdirectory gave '${t24ac4_py_sub_out}', expected matching empty output"
 
 # ---- AC3: the marker list lives in exactly one place -- not restated in SKILL.md -------------
 t24_skill_md="${_HARNESS_PLUGIN_DIR}/skills/code-audit/SKILL.md"
