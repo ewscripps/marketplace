@@ -885,24 +885,73 @@ check_absent "CA-471 -- a fully-backed manifest completes with no warn" "CA-471"
 # CA-479: two pass-1_<date> directories for the SAME round number (a re-run across a date
 # boundary, or a hand-copied scratch directory) must not resolve silently -- the prior code kept
 # whichever the glob happened to yield last, with no diagnostic. Here the STALE scratch copy
-# (no lens-L2.jsonl) is touched OLDER, and the fully-backed real copy is touched NEWER, so
+# (missing lens-L2.jsonl) is touched OLDER, and the fully-backed real copy is touched NEWER, so
 # selecting by mtime should pick the real one and complete with no downgrade -- while still
-# warning that the ambiguity existed.
+# warning that the ambiguity existed. EDMV4-T23: a genuinely FULL round now needs state's
+# materialized `lenses` fully backed, so this uses the same 13-of-14-plus-N/A(L13) composition
+# CA477FULL above uses, in BOTH candidate directories.
 "$EDM_STATE" init CA479AMBIG >/dev/null
 mkdir -p "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15" "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16"
-printf 'Round type: full\nL1\nL2\n' > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lenses-run.txt"
+printf 'Round type: full\nLenses N/A: L13\nL1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12\nL14\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lenses-run.txt"
 printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L1.jsonl"
 # CA479AMBIG's stale copy deliberately has NO lens-L2.jsonl -- if this were selected, the round
 # would downgrade to partial.
-printf 'Round type: full\nL1\nL2\n' > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lenses-run.txt"
+printf '{"schema":"lens","lens":"L3","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L3.jsonl"
+printf '{"schema":"lens","lens":"L4","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L4.jsonl"
+printf '{"schema":"lens","lens":"L5","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L5.jsonl"
+printf '{"schema":"lens","lens":"L6","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L6.jsonl"
+printf '{"schema":"lens","lens":"L7","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L7.jsonl"
+printf '{"schema":"lens","lens":"L8","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L8.jsonl"
+printf '{"schema":"lens","lens":"L9","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L9.jsonl"
+printf '{"schema":"lens","lens":"L10","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L10.jsonl"
+printf '{"schema":"lens","lens":"L11","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L11.jsonl"
+printf '{"schema":"lens","lens":"L12","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L12.jsonl"
+printf '{"schema":"lens","lens":"L14","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L14.jsonl"
+printf 'Round type: full\nLenses N/A: L13\nL1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12\nL14\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lenses-run.txt"
 printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L1.jsonl"
 printf '{"schema":"lens","lens":"L2","sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L2.jsonl"
+printf '{"schema":"lens","lens":"L3","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L3.jsonl"
+printf '{"schema":"lens","lens":"L4","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L4.jsonl"
+printf '{"schema":"lens","lens":"L5","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L5.jsonl"
+printf '{"schema":"lens","lens":"L6","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L6.jsonl"
+printf '{"schema":"lens","lens":"L7","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L7.jsonl"
+printf '{"schema":"lens","lens":"L8","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L8.jsonl"
+printf '{"schema":"lens","lens":"L9","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L9.jsonl"
+printf '{"schema":"lens","lens":"L10","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L10.jsonl"
+printf '{"schema":"lens","lens":"L11","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L11.jsonl"
+printf '{"schema":"lens","lens":"L12","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L12.jsonl"
+printf '{"schema":"lens","lens":"L14","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L14.jsonl"
 touch -t 202608150000 "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15"
 touch -t 202608160000 "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16"
-"$EDM_STATE" audit-round-start CA479AMBIG code >/dev/null
+"$EDM_STATE" audit-round-start CA479AMBIG code \
+  --lenses L1,L2,L3,L4,L5,L6,L7,L8,L9,L10,L11,L12,L14 --na-lenses L13 >/dev/null
 ca479_out="$("$EDM_STATE" audit-round-complete CA479AMBIG code 2>&1)"
 check "CA-479 -- ambiguous pass directories produce a named warning" "CA-479" "$ca479_out"
 check "CA-479 -- the warning names both candidate directories" "pass-1_2026-08-15" "$ca479_out"
@@ -916,16 +965,43 @@ ca479_round_type="$("$EDM_STATE" get CA479AMBIG | jq -r '.audit_rounds.code.roun
 
 # CA-477: the CA471OK case above starts its round with --lenses L1,L2, so its round_type is
 # ALREADY partial and its only assertion is a check_absent -- moving the downgrade out of its
-# miss guard would go unnoticed. This case runs a FULL round (no --lenses), lands every lens the
-# manifest names, and asserts round_type is still full AFTER audit-round-complete.
+# miss guard would go unnoticed. This case runs a genuinely FULL round and asserts round_type is
+# still full AFTER audit-round-complete. EDMV4-T23: since the backstop now requires state's
+# `lenses` (materialized to all 14 when --lenses is omitted, EDMV4-T22) to be fully backed, a
+# "full round, minimal fixture" case uses the 13-of-14-plus-N/A(L13) composition instead of an
+# omitted --lenses -- exactly the EDMV4-T23 AC11 clean-N/A shape, at a second, independent site.
 "$EDM_STATE" init CA477FULL >/dev/null
 mkdir -p "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16"
-printf 'Round type: full\nL1\nL2\n' > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lenses-run.txt"
+printf 'Round type: full\nLenses N/A: L13\nL1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12\nL14\n' \
+  > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lenses-run.txt"
 printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L1.jsonl"
 printf '{"schema":"lens","lens":"L2","sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L2.jsonl"
-"$EDM_STATE" audit-round-start CA477FULL code >/dev/null
+printf '{"schema":"lens","lens":"L3","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L3.jsonl"
+printf '{"schema":"lens","lens":"L4","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L4.jsonl"
+printf '{"schema":"lens","lens":"L5","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L5.jsonl"
+printf '{"schema":"lens","lens":"L6","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L6.jsonl"
+printf '{"schema":"lens","lens":"L7","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L7.jsonl"
+printf '{"schema":"lens","lens":"L8","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L8.jsonl"
+printf '{"schema":"lens","lens":"L9","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L9.jsonl"
+printf '{"schema":"lens","lens":"L10","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L10.jsonl"
+printf '{"schema":"lens","lens":"L11","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L11.jsonl"
+printf '{"schema":"lens","lens":"L12","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L12.jsonl"
+printf '{"schema":"lens","lens":"L14","sev":"P2","status":"open","id":null}\n' \
+  > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L14.jsonl"
+"$EDM_STATE" audit-round-start CA477FULL code \
+  --lenses L1,L2,L3,L4,L5,L6,L7,L8,L9,L10,L11,L12,L14 --na-lenses L13 >/dev/null
 ca477full_out="$("$EDM_STATE" audit-round-complete CA477FULL code 2>&1)"
 check_absent "CA-477 -- a fully-backed full round completes with no warn" "CA-471" "$ca477full_out"
 ca477full_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$TMP/SRD/CA477FULL/.edm-state.json")"
@@ -951,7 +1027,12 @@ printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
 # L2: absent entirely (the pass-7 regression class). L3: empty. L4: present but not JSON.
 : > "$TMP/SRD/CA477CLASS/code-audit/pass-1_2026-08-16/lens-L3.jsonl"
 printf 'not json\n' > "$TMP/SRD/CA477CLASS/code-audit/pass-1_2026-08-16/lens-L4.jsonl"
-"$EDM_STATE" audit-round-start CA477CLASS code >/dev/null
+# EDMV4-T23: the backstop now reads the REQUIRED lens set from the round record in state, not
+# from this manifest -- so the round must be started with --lenses L1,L2,L3,L4 explicitly
+# (matching exactly what this fixture provides) or the post-EDMV4-T21 materialization would
+# require all 14 lenses' JSONL and the "for: " list below would include the 10 genuinely-absent
+# lenses this fixture never intended to exercise.
+"$EDM_STATE" audit-round-start CA477CLASS code --lenses L1,L2,L3,L4 >/dev/null
 ca477class_out="$("$EDM_STATE" audit-round-complete CA477CLASS code 2>&1)"
 # CA-526: `check` is documented substring containment (_harness.sh:26-34), so asserting the
 # substring "for: L2 L3 L4" also passes on a warn that OVER-reports, e.g. "for: L1 L2 L3 L4" --
@@ -3912,6 +3993,154 @@ check "EDMV4-T22 AC12 -- CLAUDE.md documents the lenses C-4 read rule (empty+ful
   "C-4 read rule" "$(cat "$t22ac12_claude")"
 check "EDMV4-T22 AC12 -- CLAUDE.md documents the lenses_na union derivation (AD5)" \
   "lenses-union" "$(cat "$t22ac12_claude")"
+
+# =================================================================================
+# EDMV4-T24: edm-state detect-conditional-lenses -- code-audit Step 1 is the sole authority
+# for L13 applicability
+# =================================================================================
+echo
+echo "EDMV4-T24 -- detect-conditional-lenses: deterministic, marker-based L13 applicability"
+
+# ---- AC1: subcommand exists, exits 0 whether or not it finds markers -------------------------
+t24_help_out="$(bash "$EDM_STATE" --help 2>&1)"
+check "EDMV4-T24 AC1 -- detect-conditional-lenses is documented in --help" \
+  "detect-conditional-lenses" "$t24_help_out"
+
+# Positive control (this repo's own tree is untyped -- no tracked TypeScript/Kotlin/Swift/Rust/
+# Go/Java/Scala/Haskell/typed-Python files): L13 is genuinely N/A here.
+t24ac1_repo_ec=0
+t24ac1_repo_out="$(bash "$EDM_STATE" detect-conditional-lenses 2>&1)" || t24ac1_repo_ec=$?
+[[ "$t24ac1_repo_ec" -eq 0 ]] \
+  && pass "EDMV4-T24 AC1 -- detect-conditional-lenses exits 0 against this repo's own tree" \
+  || fail "EDMV4-T24 AC1 -- detect-conditional-lenses exited ${t24ac1_repo_ec}"
+[[ "$t24ac1_repo_out" == "L13" ]] \
+  && pass "EDMV4-T24 AC1 -- L13 is reported N/A against this repo's own untyped tree" \
+  || fail "EDMV4-T24 AC1 -- expected 'L13', got '${t24ac1_repo_out}'"
+
+# ---- AC2/AC4: marker predicates are pure, TRACKED-file-only, and each independently flips
+# the answer -- one scratch git repo per marker, plus a no-marker control, plus determinism ----
+harness_scratch_dir T24_TS
+T24_MARKER_REPO="${T24_TS}/marker-repo"
+mkdir -p "$T24_MARKER_REPO"
+(
+  cd "$T24_MARKER_REPO" || exit 1
+  git init -q
+  git config user.email "t24@example.com"
+  git config user.name "t24"
+)
+
+# No marker at all -> N/A (L13).
+t24ac2_none_out="$(cd "$T24_MARKER_REPO" && bash "$EDM_STATE" detect-conditional-lenses 2>&1)"
+[[ "$t24ac2_none_out" == "L13" ]] \
+  && pass "EDMV4-T24 AC2 -- no typed-stack marker present: L13 reported N/A" \
+  || fail "EDMV4-T24 AC2 -- no-marker case reported '${t24ac2_none_out}', expected L13"
+
+# tsconfig.json marker -> L13 applies (empty output). This is also the AC4 determinism check:
+# run it twice and diff.
+touch "${T24_MARKER_REPO}/tsconfig.json"
+(cd "$T24_MARKER_REPO" && git add tsconfig.json)
+t24ac2_ts_out1="$(cd "$T24_MARKER_REPO" && bash "$EDM_STATE" detect-conditional-lenses 2>&1)"
+t24ac2_ts_out2="$(cd "$T24_MARKER_REPO" && bash "$EDM_STATE" detect-conditional-lenses 2>&1)"
+[[ -z "$t24ac2_ts_out1" ]] \
+  && pass "EDMV4-T24 AC2 -- a tracked tsconfig.json flips L13 to APPLIES (empty output)" \
+  || fail "EDMV4-T24 AC2 -- tsconfig.json case reported '${t24ac2_ts_out1}', expected empty"
+[[ "$t24ac2_ts_out1" == "$t24ac2_ts_out2" ]] \
+  && pass "EDMV4-T24 AC4 -- two runs against the same tree produce byte-identical output" \
+  || fail "EDMV4-T24 AC4 -- run 1 gave '${t24ac2_ts_out1}', run 2 gave '${t24ac2_ts_out2}'"
+
+# An UNTRACKED tsconfig.json in a fresh repo must NOT flip the answer (tracked-files-only, AC2).
+T24_UNTRACKED_REPO="${T24_TS}/untracked-repo"
+mkdir -p "$T24_UNTRACKED_REPO"
+(
+  cd "$T24_UNTRACKED_REPO" || exit 1
+  git init -q
+  git config user.email "t24@example.com"
+  git config user.name "t24"
+)
+touch "${T24_UNTRACKED_REPO}/tsconfig.json"
+t24ac2_untracked_out="$(cd "$T24_UNTRACKED_REPO" && bash "$EDM_STATE" detect-conditional-lenses 2>&1)"
+[[ "$t24ac2_untracked_out" == "L13" ]] \
+  && pass "EDMV4-T24 AC2 -- an UNTRACKED tsconfig.json does not flip the answer (git ls-files scoping)" \
+  || fail "EDMV4-T24 AC2 -- untracked-marker case reported '${t24ac2_untracked_out}', expected L13 (unaffected)"
+
+# pyproject.toml alone is NOT sufficient (bare Python project); adding a [tool.mypy] table flips it.
+T24_PY_REPO="${T24_TS}/py-repo"
+mkdir -p "$T24_PY_REPO"
+(
+  cd "$T24_PY_REPO" || exit 1
+  git init -q
+  git config user.email "t24@example.com"
+  git config user.name "t24"
+)
+touch "${T24_PY_REPO}/pyproject.toml"
+(cd "$T24_PY_REPO" && git add pyproject.toml)
+t24ac2_pybare_out="$(cd "$T24_PY_REPO" && bash "$EDM_STATE" detect-conditional-lenses 2>&1)"
+[[ "$t24ac2_pybare_out" == "L13" ]] \
+  && pass "EDMV4-T24 AC2 -- a bare pyproject.toml (no typed-checker config) does NOT satisfy the marker" \
+  || fail "EDMV4-T24 AC2 -- bare-pyproject case reported '${t24ac2_pybare_out}', expected L13"
+printf '[tool.mypy]\nstrict = true\n' > "${T24_PY_REPO}/pyproject.toml"
+(cd "$T24_PY_REPO" && git add pyproject.toml)
+t24ac2_pytyped_out="$(cd "$T24_PY_REPO" && bash "$EDM_STATE" detect-conditional-lenses 2>&1)"
+[[ -z "$t24ac2_pytyped_out" ]] \
+  && pass "EDMV4-T24 AC2 -- pyproject.toml WITH a [tool.mypy] table satisfies the marker (L13 applies)" \
+  || fail "EDMV4-T24 AC2 -- typed-pyproject case reported '${t24ac2_pytyped_out}', expected empty"
+
+# ---- AC3: the marker list lives in exactly one place -- not restated in SKILL.md -------------
+t24_skill_md="${_HARNESS_PLUGIN_DIR}/skills/code-audit/SKILL.md"
+t24ac3_hits=0
+for t24_marker_str in tsconfig.json Cargo.toml go.mod pyrightconfig.json mypy.ini; do
+  if grep -q "$t24_marker_str" "$t24_skill_md" 2>/dev/null; then
+    t24ac3_hits=$((t24ac3_hits + 1))
+  fi
+done
+[[ "$t24ac3_hits" -eq 0 ]] \
+  && pass "EDMV4-T24 AC3 -- skills/code-audit/SKILL.md does not restate any L13 marker filename" \
+  || fail "EDMV4-T24 AC3 -- SKILL.md restates ${t24ac3_hits} of the 5 sampled marker filenames"
+# Positive control: the marker list IS present in bin/edm-state (proves the grep loop above can
+# actually match a real occurrence rather than vacuously finding zero everywhere).
+check "EDMV4-T24 AC3 control -- the marker list DOES live in bin/edm-state" \
+  "tsconfig.json" "$(cat "$EDM_STATE")"
+
+# ---- AC5: no new shellcheck warning (skipped here -- run once per implementation turn via
+# `shellcheck plugins/edm/bin/edm-state`; not re-run per smoke invocation for speed) -----------
+
+# ---- AC6/AC9/AC10: SKILL.md Step 1 calls the helper, states sole authority, honors an explicit
+# operator --lenses override, and states the agent must agree rather than form its own ---------
+t24_skill_text="$(cat "$t24_skill_md")"
+check "EDMV4-T24 AC6 -- SKILL.md Step 1 calls detect-conditional-lenses" \
+  "edm-state detect-conditional-lenses" "$t24_skill_text"
+check "EDMV4-T24 AC6 -- SKILL.md states Step 1 is the SOLE authority for L13 applicability" \
+  "SOLE authority for L13" "$t24_skill_text"
+check "EDMV4-T24 AC9 -- SKILL.md documents the operator-override carve-out" \
+  "operator DID pass an explicit" "$t24_skill_text"
+check "EDMV4-T24 AC10 -- SKILL.md states every lens agent must agree rather than form its own" \
+  "must **agree**" "$t24_skill_text"
+
+# ---- AC8: the 'Lenses N/A:' header line does not match the ^L[0-9]+$ manifest-line filter ----
+check "EDMV4-T24 AC8 -- SKILL.md documents the 'Lenses N/A:' header line" \
+  "Lenses N/A:" "$t24_skill_text"
+t24ac8_header_sample="Lenses N/A: L13"
+if [[ "$t24ac8_header_sample" =~ ^L[0-9]+$ ]]; then
+  fail "EDMV4-T24 AC8 -- 'Lenses N/A: L13' unexpectedly matches the ^L[0-9]+\$ lens-ID filter"
+else
+  pass "EDMV4-T24 AC8 -- 'Lenses N/A: L13' does not match the ^L[0-9]+\$ lens-ID filter"
+fi
+# Positive control: a real lens-ID line DOES match the filter (proves the regex actually
+# discriminates rather than never matching anything).
+if [[ "L13" =~ ^L[0-9]+$ ]]; then
+  pass "EDMV4-T24 AC8 control -- a bare lens ID ('L13') DOES match the filter"
+else
+  fail "EDMV4-T24 AC8 control -- 'L13' failed to match ^L[0-9]+\$; the filter itself is broken"
+fi
+
+# ---- AC11/AC12: CLAUDE.md documents the new subcommand and cross-references the N/A precedent -
+t24ac11_claude="$(cat "$t22ac12_claude")"
+check "EDMV4-T24 AC11 -- CLAUDE.md documents detect-conditional-lenses in the bin/ table" \
+  "detect-conditional-lenses" "$t24ac11_claude"
+check "EDMV4-T24 AC11 -- CLAUDE.md's edm-state subcommand count is updated to 41" \
+  "41 subcommands" "$t24ac11_claude"
+check "EDMV4-T24 AC12 -- CLAUDE.md cross-references the N/A-determination precedent section" \
+  "Layers that are N/A and per-epic test plans" "$t24ac11_claude"
 
 # =================================================================================
 # EDMV3-T28: edm-state audit-converged computes convergence over one blocking predicate

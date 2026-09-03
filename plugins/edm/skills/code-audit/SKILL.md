@@ -36,13 +36,28 @@ using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
    - `--lenses L1,L3` runs only those lens agents (comma-separated, with or without spaces).
    - Validate lens tokens against L1-L14; reject unknown tokens (including `L15` and above) with a
      clear message naming the accepted range.
-   - If `--lenses` is omitted, run all 14 (full round).
-   - Set `LENS_SET` = the list to run; set `ROUND_TYPE` = `full` when the union of the lenses run
-     and any lenses legitimately marked N/A (Step 1's stack detection) covers all 14 lens IDs, or
-     `partial` otherwise.
-   - Set `LENS_SET_CSV` = `LENS_SET` joined with commas (e.g. `L1,L9,L11`, or all fourteen on a full
-     round). Step 4 **must** pass this to `audit-round-start`, or the round is recorded as `full`
-     whatever you actually ran, and the never-convergent guarantee below silently stops applying.
+   - **Stack detection (EDMV4-T24) -- Step 1 is the SOLE authority for L13's applicability.**
+     When the operator did **not** pass an explicit `--lenses` list to `/edm:code-audit`, run
+     `edm-state detect-conditional-lenses <PREFIX>` and record its CSV output (possibly empty) as
+     `NA_LENSES`. This determination is a deterministic filesystem predicate over the repository's
+     tracked files, computed fresh every round -- never inherited from a previous round, never
+     re-derived or second-guessed by a lens agent. Every lens agent must **agree** with this
+     determination rather than form its own; `agents/edm-audit-type-design.md`'s own N/A exit
+     agrees with Step 1's determination and never substitutes for it (`EDMV4-T26`) -- a mismatch
+     between the two is a contract violation, in the `agents/edm-test-integration.md:21-25` shape.
+     **Operator override:** when the operator DID pass an explicit `--lenses` list, `NA_LENSES` is
+     always empty and this auto-N/A path does not run at all -- an explicit human request is
+     honored exactly as given, never silently rewritten.
+   - If `--lenses` is omitted, run all 14 lenses **minus** any named in `NA_LENSES` (a lens marked
+     N/A is never launched -- absence is authoritative; no placeholder `.md` or `.jsonl` is ever
+     written for it).
+   - Set `LENS_SET` = the list to run; set `ROUND_TYPE` = `full` when the union of `LENS_SET` and
+     `NA_LENSES` covers all 14 lens IDs, or `partial` otherwise.
+   - Set `LENS_SET_CSV` = `LENS_SET` joined with commas (e.g. `L1,L9,L11`, or all fourteen minus
+     any N/A lens on a full round). Set `NA_LENSES_CSV` = `NA_LENSES` joined with commas (empty
+     when `NA_LENSES` is empty). Step 4 **must** pass `LENS_SET_CSV` to `audit-round-start`, or the
+     round is recorded as `full` whatever you actually ran, and the never-convergent guarantee
+     below silently stops applying.
 2. Determine scope: files / commits / branch. Read critical files yourself first to write sharp agent prompts.
 3. Resolve the initiative directory from state (handles both flat and product-scoped layouts):
    ```bash
@@ -52,10 +67,12 @@ using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
    - Ticket pack: `${INIT_DIR}/${user_config.ticket_pack_dirname}/`
    - Ledger: `${INIT_DIR}/code-audit/findings-ledger.jsonl`  (authoritative cross-round path;
      `findings-ledger.md` is its rendered copy, written separately by `edm-state render-ledger`)
-4. Obtain the pass number, passing the lens set so the round records what actually ran:
+4. Obtain the pass number, passing both the lens set AND the N/A set so the round records what
+   actually ran and what Step 1 determined was inapplicable:
    ```bash
-   N=$(edm-state audit-round-start <PREFIX> code --lenses "${LENS_SET_CSV}")
+   N=$(edm-state audit-round-start <PREFIX> code --lenses "${LENS_SET_CSV}" --na-lenses "${NA_LENSES_CSV}")
    ```
+   Omit `--na-lenses` entirely when `NA_LENSES_CSV` is empty (the flag requires a non-empty value).
    `--lenses` is not optional here even on a full round. `cmd_audit_round_start` derives
    `round_type` from the union rule: `full` when the union of `lenses` and any lens legitimately
    recorded as N/A (`lenses_na`) covers all 14 lens IDs and `lenses_na` is a subset of the
@@ -63,7 +80,8 @@ using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
    14-lens set rather than recording an empty array, so a call that omits the flag still records
    `full` rather than silently satisfying `audit-converged` on a smoke round -- exactly what step
    10's never-convergent rule exists to prevent. Passing all fourteen explicitly on a full round
-   is deliberate and self-documenting.
+   is deliberate and self-documenting. `lenses_na` is committed to state under lock here, before
+   step 7 launches any agent, so a lens can never retroactively excuse its own non-delivery.
 5. Set `OUTPUT_DIR="${INIT_DIR}/code-audit/pass-${N}_$(date +%Y-%m-%d)/"` and `mkdir -p "${OUTPUT_DIR}"`
 6. Read the prior `findings-ledger.jsonl` if it exists (or the legacy `findings-ledger.md` if
    only that exists) -- prior round context for the synthesizer, and for briefing each lens
@@ -80,7 +98,7 @@ using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
      constructing the actual Task call; the schema and fallback live inside the template's own
      fenced body precisely so they travel with the interpolated prompt rather than being read as
      prose about the template.
-8. Write `${OUTPUT_DIR}/lenses-run.txt` -- one lens ID per line (e.g., `L1`, `L2`, ... for a full round, or `L1`, `L3` for a partial). Add a `Round type: full` or `Round type: partial` header line.
+8. Write `${OUTPUT_DIR}/lenses-run.txt` -- one lens ID per line (e.g., `L1`, `L2`, ... for a full round, or `L1`, `L3` for a partial). Add a `Round type: full` or `Round type: partial` header line, plus a `Lenses N/A: L13` (or `Lenses N/A: (none)` when `NA_LENSES` is empty) header line (`EDMV4-T24`). This header format does NOT match the `^L[0-9]+$` filter `bin/edm-state`'s completeness backstop uses to recognize a lens-ID line, so no existing or future consumer of this manifest mis-reads it as a lens ID. (`bin/edm-state`'s completeness backstop no longer reads this manifest's content at all -- EDMV4-T23 moved that source of truth to the round record in state -- but the manifest's mere EXISTENCE remains the gate trigger, C-4, so this header still needs to be safe for any reader that does inspect the file.)
 8a. **Checked precondition -- do not proceed to step 9 until it holds**: `Glob`
     `${OUTPUT_DIR}/lens-L*.jsonl` and count the matches. Compare that count against `|LENS_SET|`
     (the number of lenses actually run this round, e.g. 14 on a full round). If the counts are

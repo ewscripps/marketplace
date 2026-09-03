@@ -51,6 +51,7 @@
 #   edm-state add-related <PREFIX> <RELATED>                         # append to related_prefixes (idempotent)
 #   edm-state update-patterns <PREFIX> <srd|ticket|qc|code|test-coverage>  # append novel audit findings to pattern library (T121)
 #   edm-state get-patterns <srd|ticket|qc|code|test-coverage> --paths  # print seed path then delta path, one per line; delta line is EMPTY (not absent) when no delta exists
+#   edm-state detect-conditional-lenses [<PREFIX>]      # print CSV of CONDITIONAL_LENS_IDS members genuinely N/A (inapplicable) for this repo's TRACKED files (empty = none, exit 0 either way); L13 (Type Design) APPLIES when tracked files include tsconfig.json, any *.kt/*.kts, *.swift, Cargo.toml, go.mod, any *.java, *.scala, *.hs, or pyproject.toml WITH a [tool.mypy]/[tool.pyright] table or sibling mypy.ini/pyrightconfig.json -- absence of every marker means L13 is N/A (untyped stack)
 # EDM-HELP-END
 set -euo pipefail
 
@@ -1695,6 +1696,72 @@ for _cond_lens_id in $CONDITIONAL_LENS_IDS; do
   esac
 done
 unset _cond_lens_id
+
+# ---- detect-conditional-lenses (EDMV4-T24) ----------------------------------------------------
+# Step 1 of skills/code-audit/SKILL.md is the SOLE authority for a conditional lens's
+# applicability (guard D2: conditionality means genuine inapplicability, never a way to skip a
+# lens for cost). This helper is the deterministic, auditable predicate that authority calls --
+# never restated as prose an LLM interprets, because the answer gates round_type=full, which
+# gates audit-converged, which gates archive; a non-deterministic input to a convergence gate is
+# not acceptable.
+#
+# _l13_applies <tracked-files-newline-list> -- returns 0 (true: L13 APPLIES, i.e. is NOT N/A) if
+# the tracked file set carries a typed-stack marker; returns 1 (L13 is N/A -- untyped stack)
+# otherwise. Every predicate below is a pure filesystem check over TRACKED files only (git
+# ls-files), so an untracked scratch marker can never flip a convergence-gating answer, and every
+# check is guarded inside an `if` so a non-matching grep never trips `set -e` (EDMV4 defect class
+# 1). L13 APPLIES when the tracked set includes at least one of: tsconfig.json; any *.kt or *.kts
+# file; any *.swift file; Cargo.toml; go.mod; any *.java file; any *.scala file; any *.hs file; or
+# pyproject.toml TOGETHER WITH a typed-checker configuration (a [tool.mypy] or [tool.pyright]
+# table inside pyproject.toml, or a sibling mypy.ini or pyrightconfig.json file) -- a bare
+# pyproject.toml alone is NOT sufficient, since an untyped Python project has one too (EDMV4-T24
+# AC2). This marker list lives in exactly this one place; it is not restated in
+# skills/code-audit/SKILL.md or agents/edm-audit-type-design.md (AC3).
+_l13_applies() {
+  local files="$1"
+  if printf '%s\n' "$files" | grep -qx 'tsconfig.json'; then return 0; fi
+  if printf '%s\n' "$files" | grep -q '\.kts\{0,1\}$'; then return 0; fi
+  if printf '%s\n' "$files" | grep -q '\.swift$'; then return 0; fi
+  if printf '%s\n' "$files" | grep -qx 'Cargo.toml'; then return 0; fi
+  if printf '%s\n' "$files" | grep -qx 'go.mod'; then return 0; fi
+  if printf '%s\n' "$files" | grep -q '\.java$'; then return 0; fi
+  if printf '%s\n' "$files" | grep -q '\.scala$'; then return 0; fi
+  if printf '%s\n' "$files" | grep -q '\.hs$'; then return 0; fi
+  if printf '%s\n' "$files" | grep -qx 'pyproject.toml'; then
+    if grep -q '^\[tool\.\(mypy\|pyright\)\]' pyproject.toml 2>/dev/null; then return 0; fi
+    if printf '%s\n' "$files" | grep -qx 'mypy.ini'; then return 0; fi
+    if printf '%s\n' "$files" | grep -qx 'pyrightconfig.json'; then return 0; fi
+  fi
+  return 1
+}
+
+# detect-conditional-lenses [<PREFIX>] -- prints a CSV of CONDITIONAL_LENS_IDS members that are
+# genuinely N/A (inapplicable) for the current repository (empty output, exit 0, means none are
+# N/A -- an empty result is a valid answer, not an error). `[<PREFIX>]` is accepted for call-site
+# symmetry with the other audit-round subcommands but is not read: this determination is a
+# property of the repository's tracked-file set, not of any one initiative's state, so it is
+# deterministic across initiatives too (EDMV4-T24 AC4: two runs against the same tree produce
+# byte-identical output). Always exits 0 -- a query, not a validation gate (AC1).
+cmd_detect_conditional_lenses() {
+  [[ $# -le 1 ]] || die "usage: edm-state detect-conditional-lenses [<PREFIX>]"
+  local tracked
+  tracked="$(git ls-files 2>/dev/null || true)"
+  local na_list="" _lens
+  # shellcheck disable=SC2086 # deliberate word-splitting; bash 3.2 has no arrays-as-constants
+  for _lens in $CONDITIONAL_LENS_IDS; do
+    case "$_lens" in
+      L13)
+        if ! _l13_applies "$tracked"; then
+          na_list="${na_list:+${na_list},}${_lens}"
+        fi
+        ;;
+      *)
+        die "internal: detect-conditional-lenses has no marker predicate for CONDITIONAL_LENS_IDS member '${_lens}'"
+        ;;
+    esac
+  done
+  [[ -z "$na_list" ]] || echo "$na_list"
+}
 
 # AUDIT_ROUND_COERCE_JQ_DEF -- the single C-4 coercion for audit_rounds.<type> (EDMV3-T27 AC1a).
 # Every state file written before this ticket (and the archived EDMV2 fixture literally) stores
@@ -4925,10 +4992,10 @@ _cmd_audit_round_complete_body() {
       # ---- (3) full-round-only: lenses UNION lenses_na must still cover the CURRENT
       #      ALL_LENS_IDS at completion time (ALL_LENS_IDS may have grown since round-start) ----
       if [[ "$_recorded_round_type" == "full" ]]; then
-        local _lenses_json _lenses_na_json _union_covers
+        local _lenses_json _na_state_json _union_covers
         _lenses_json="$(echo "$last_round" | jq -c --argjson all "$_all_lens_json" "${LENS_READ_JQ_DEF} read_round_lenses(\$all)")"
-        _lenses_na_json="$(echo "$last_round" | jq -c "${LENS_READ_JQ_DEF} read_round_lenses_na")"
-        _union_covers="$(jq -nr --argjson lenses "$_lenses_json" --argjson na "$_lenses_na_json" --argjson all "$_all_lens_json" '
+        _na_state_json="$(echo "$last_round" | jq -c "${LENS_READ_JQ_DEF} read_round_lenses_na")"
+        _union_covers="$(jq -nr --argjson lenses "$_lenses_json" --argjson na "$_na_state_json" --argjson all "$_all_lens_json" '
             (($lenses + $na) | unique | sort) as $union
           | ($all | sort) as $allsorted
           | if $union == $allsorted then "yes" else "no" end
@@ -6722,6 +6789,7 @@ case "$cmd" in
   add-related)          cmd_add_related "$@" ;;
   update-patterns)      cmd_update_patterns "$@" ;;
   get-patterns)         cmd_get_patterns "$@" ;;
+  detect-conditional-lenses) cmd_detect_conditional_lenses "$@" ;;
   ""|-h|--help|help)
     print_help "${BASH_SOURCE[0]:-$0}"
     ;;
