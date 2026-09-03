@@ -305,6 +305,54 @@ The following remain legal and are **not** violations of this rule:
 Other entity codes follow the same form, so the rule generalizes: `#quot;` (double quote), `#35;` (`#`), and so on.
 
 This section's heading string, `## Mermaid diagram conventions (canonical)`, is referenced by name from the eleven touch points inventoried in `architecture.md` and asserted by a smoke test -- do not rename it without updating every reference.
+## Audit lens house contract (canonical, EDMV4-T28)
+
+Every `agents/edm-audit-*.md` lens file -- the eleven pre-EDMV4 lenses and the three EDMV4 lenses
+alike (L12 Silent Failures, L13 Type Design, L14 Behavioral Test Coverage) -- shares one
+structural contract, verified in full against `edm-audit-logic.md` (L1) and
+`edm-audit-security.md` (L8). A new lens agent conforms to all nine parts below, not most of them;
+several are **machine-enforced**, not merely conventional, by the "EDMV4-T28: house lens contract"
+banded section in `bin/tests/wave8-smoke.sh`, which derives the lens file set **live** (a glob
+over `agents/edm-audit-*.md` excluding the synthesizer) rather than from a hardcoded name list, so
+a fifteenth lens is checked automatically rather than silently escaping coverage the way a fourth
+hardcoded list would (the exact defect `EDMV4-T30`'s own Technical Notes record having to
+re-inventory once already).
+
+1. **Frontmatter**, byte-identical apart from `name`/`description`: `tools: Glob, Grep, LS, Read,
+   NotebookRead, WebFetch, TodoWrite, WebSearch, Write`, `model: opus`, `effort: max`,
+   `maxTurns: 30`, `color: cyan`, `disallowedTools: Edit, NotebookEdit` -- structurally read-only
+   apart from `Write`, matching the "Contested audit set" row of "Model and effort assignments"
+   above. No hand-picked downgrade is taken; only a measured, mechanical promotion may retier it.
+2. **Opening frame**: `You are executing **EDM Code Audit Lens L{N}: {Name}**.` immediately
+   followed by the mandate-narrowing sentence, `Your mandate is ONLY this lens. Do not audit other
+   dimensions -- other agents handle those.`
+3. **`## Scope`** carries the verbatim house scope-statement paragraph, byte-identical across
+   every lens.
+4. **`## What You Hunt For`** -- the lens-specific hunt taxonomy; this is the one section every
+   lens's content is unique.
+5. **`## False Alarm Filter`** carries the identical framing sentence plus exactly three numbered,
+   lens-specific criteria -- never more, never fewer.
+6. **`## Output`** states the two permitted write paths (`${OUTPUT_DIR}/lens-L{N}.md` and
+   `${OUTPUT_DIR}/lens-L{N}.jsonl`), the ASCII-only reminder, the `mkdir -p` rationale for why
+   `Write` is granted without `Bash(mkdir *)`, and the "JSONL file is authoritative on conflict"
+   sentence.
+7. **`## Output Format`** cites `CLAUDE.md Sec."Severity vocabulary"` and carries the
+   `Read docs/canonical-sections.md` anchoring instruction verbatim, including the "resolved
+   relative to the EDM plugin's own root ... never the caller's cwd" qualifier -- the C6
+   enforcement point that keeps every lens citing the one closed severity scale.
+8. **`## JSONL Line Format`** restates the fixed schema verbatim (modulo the lens ID), the five
+   field-rule bullets (`id`, `round`/`round_type`, `sev`, `confidence`, `status`), and the
+   residual-risk paragraph.
+9. **`## When this does NOT apply`** is present in every lens. An unconditional lens (every member
+   outside `CONDITIONAL_LENS_IDS`) uses the standard sentence, "This agent always applies once the
+   code-audit skill selects lens L{N} for the round." The sole conditional lens (`L13`) carries the
+   `EDMV4-T26` exception form instead: inapplicability framed explicitly, cost named as never a
+   legitimate reason to skip (guard D2), and an explicit agreement clause with
+   `skills/code-audit/SKILL.md` Step 1's determination rather than a self-declared exemption.
+
+Diff a new lens file against `edm-audit-logic.md` section-by-section -- every heading, in order,
+must match -- rather than re-authoring this contract from memory.
+
 ## Verifier completion sentinel (canonical)
 
 Every read-only verifier agent in this plugin -- `edm-srd-auditor`, `edm-ticket-auditor`,
