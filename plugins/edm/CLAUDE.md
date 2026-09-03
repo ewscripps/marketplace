@@ -1528,6 +1528,26 @@ See `CHANGELOG.md`'s `[3.1.0]` entry (G44/CA-275, G30/CA-275) for the full recor
 under "Hooks behavior" and "Artifact content conventions") rather than a member of either family
 here.
 
+**`EDM_GATEGUARD_*` knob family (EDMV4-T15).** Six environment variables tune `bin/edm-gateguard`'s
+operational safety controls, distinct from both families above (these are plugin-runtime knobs,
+not test-harness knobs). Each is genuinely optional -- leaving it unset means the shipped default
+below applies, not that the corresponding control is absent:
+
+- `EDM_GATEGUARD` -- kill switch; any of `0`, `false`, `off`, `disabled`, `disable` exits the gate
+  before anything else runs. Unset (the default) leaves the gate active.
+- `EDM_GATEGUARD_DISABLED` -- a second, independent kill switch recognizing the literal `1` only
+  (`true`/`yes` do NOT disable it). Unset (the default) leaves the gate active.
+- `EDM_GATEGUARD_DENY_MODE` -- selects the deny back-end, `json` or `exit-code`; defaults to
+  `json` (Spike B's recorded outcome, decisions.md D26). Unset uses the default.
+- `EDM_GATEGUARD_EXEMPT_GLOBS` -- comma-separated glob list tested against the target path;
+  defaults to a set covering `SRD/`, common test trees, and generated output (`dist`, `build`,
+  `node_modules`, `.git`). Unset uses the shipped default list, never an empty list.
+- `EDM_GATEGUARD_STATE_DIR` -- overrides where session state (the checked-file and the denial
+  budget counter) is written; defaults to the resolved plugin data directory's `run/`
+  subdirectory. Unset uses that resolved default.
+- `EDM_GATEGUARD_MAX_DENIALS` -- caps full denials per session; defaults to `3`. Past the budget
+  the gate allows with a stderr advisory rather than denying forever. Unset uses the default of 3.
+
 ## Related documentation
 
 - `README.md` -- user-facing install + usage

@@ -4171,6 +4171,349 @@ fi
 
 echo
 
+# =================================================================================================
+# EDMV4-T15: GateGuard's operational safety controls
+# =================================================================================================
+# Own banded section, appended last, so a concurrent agent's own append does not interleave with
+# it. GATEGUARD/DATADIR_LIB are already set by the EDMV4-T11/T12 sections above; t14_fresh_marker_env
+# and t14_run are already defined by the EDMV4-T14 section above and are reused here unchanged.
+#
+# Every kill-switch/exemption/budget/fail-open assertion below is paired: a fixture that WOULD
+# deny with the control disengaged, run both with the control engaged (must allow/warn/degrade)
+# and with it disengaged (must still deny) -- so "the gate stayed quiet" is never asserted against
+# a gate that could not have fired in the first place (this initiative's own recorded vacuity trap).
+echo "=== EDMV4-T15: kill switches, exemptions, session state, denial budget, fail-open ==="
+echo
+
+# ---- AC1: five kill-switch spellings for EDM_GATEGUARD, each proven against a fixture that
+# denies with no switch set (the paired negative), one call per spelling. --------------------------
+T15_AC1_BASE_PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"kill-switch.js"}}'
+T15_AC1_PROJ="" T15_AC1_DATA=""
+t14_fresh_marker_env T15_AC1_PROJ T15_AC1_DATA
+t14_run "$T15_AC1_PROJ" "$T15_AC1_DATA" "$T15_AC1_BASE_PAYLOAD"
+[[ "$T14_RUN_RC" -eq 2 ]] && pass "EDMV4-T15 AC1 -- paired negative: with no kill switch set, the fixture denies (proves the fixture is capable of firing)" \
+  || fail "EDMV4-T15 AC1 -- paired negative FAILED: expected the unswitched fixture to deny, got ${T14_RUN_RC}"
+
+for _t15_spelling in 0 false off disabled disable; do
+  T15_AC1_PROJ2="" T15_AC1_DATA2=""
+  t14_fresh_marker_env T15_AC1_PROJ2 T15_AC1_DATA2
+  T15_AC1_RC=0
+  T15_AC1_OUT="$(printf '%s' "$T15_AC1_BASE_PAYLOAD" | CLAUDE_PROJECT_DIR="$T15_AC1_PROJ2" CLAUDE_PLUGIN_DATA="$T15_AC1_DATA2" \
+    EDM_GATEGUARD="$_t15_spelling" EDM_GATEGUARD_DENY_MODE=exit-code bash "$GATEGUARD" 2>"${TMP}/t15-ac1-${_t15_spelling}.stderr")" || T15_AC1_RC=$?
+  T15_AC1_ERR="$(cat "${TMP}/t15-ac1-${_t15_spelling}.stderr" 2>/dev/null || true)"
+  if [[ "$T15_AC1_RC" -eq 0 && -z "$T15_AC1_OUT" && -z "$T15_AC1_ERR" ]]; then
+    pass "EDMV4-T15 AC1 -- EDM_GATEGUARD=${_t15_spelling} exits 0 with no output on a fixture that would otherwise deny"
+  else
+    fail "EDMV4-T15 AC1 -- EDM_GATEGUARD=${_t15_spelling} mismatch: rc=${T15_AC1_RC} stdout=[${T15_AC1_OUT}] stderr=[${T15_AC1_ERR}]"
+  fi
+done
+
+# ---- AC2: EDM_GATEGUARD_DISABLED=1 disables (paired against the same denying fixture); "true"
+# and "yes" do NOT disable -- the denial must still actually fire, not merely "not silently pass".
+T15_AC2_PROJ="" T15_AC2_DATA=""
+t14_fresh_marker_env T15_AC2_PROJ T15_AC2_DATA
+T15_AC2_RC=0
+T15_AC2_OUT="$(printf '%s' "$T15_AC1_BASE_PAYLOAD" | CLAUDE_PROJECT_DIR="$T15_AC2_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC2_DATA" \
+  EDM_GATEGUARD_DISABLED=1 EDM_GATEGUARD_DENY_MODE=exit-code bash "$GATEGUARD" 2>"${TMP}/t15-ac2-1.stderr")" || T15_AC2_RC=$?
+T15_AC2_ERR="$(cat "${TMP}/t15-ac2-1.stderr" 2>/dev/null || true)"
+if [[ "$T15_AC2_RC" -eq 0 && -z "$T15_AC2_OUT" && -z "$T15_AC2_ERR" ]]; then
+  pass "EDMV4-T15 AC2 -- EDM_GATEGUARD_DISABLED=1 exits 0 with no output on a fixture that would otherwise deny"
+else
+  fail "EDMV4-T15 AC2 -- EDM_GATEGUARD_DISABLED=1 mismatch: rc=${T15_AC2_RC} stdout=[${T15_AC2_OUT}] stderr=[${T15_AC2_ERR}]"
+fi
+
+for _t15_bad in true yes; do
+  T15_AC2B_PROJ="" T15_AC2B_DATA=""
+  t14_fresh_marker_env T15_AC2B_PROJ T15_AC2B_DATA
+  T15_AC2B_RC=0
+  T15_AC2B_ERR="$(printf '%s' "$T15_AC1_BASE_PAYLOAD" | CLAUDE_PROJECT_DIR="$T15_AC2B_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC2B_DATA" \
+    EDM_GATEGUARD_DISABLED="$_t15_bad" EDM_GATEGUARD_DENY_MODE=exit-code bash "$GATEGUARD" 2>&1 >/dev/null)" || T15_AC2B_RC=$?
+  if [[ "$T15_AC2B_RC" -eq 2 ]]; then
+    pass "EDMV4-T15 AC2 -- EDM_GATEGUARD_DISABLED=${_t15_bad} does NOT disable the gate -- the denial still fires (exit 2)"
+  else
+    fail "EDMV4-T15 AC2 -- EDM_GATEGUARD_DISABLED=${_t15_bad} unexpectedly suppressed the denial: rc=${T15_AC2B_RC}"
+  fi
+done
+
+# ---- AC3: with a kill switch engaged, zero filesystem reads beyond environment -- proven two
+# ways. (a) code position: the kill-switch case/if block sits strictly before the first reference
+# to the datadir-lib source, the marker path, or a `stat` invocation, mirroring the T11 AC8
+# line-number-ordering technique. (b) runtime, with a stat SPY on PATH: the spy fires when the
+# switch is OFF and a fixture reaches gg_fresh_lines (a pre-existing checked-file read), and does
+# NOT fire when the switch is ON against the identical fixture -- so the zero-count is paired
+# against a fixture proven capable of invoking `stat`, not merely a fixture that never would have. -
+T15_AC3_KILLSWITCH_LINE="$(grep -n 'case "\${EDM_GATEGUARD:-}" in' "$GATEGUARD" | head -1 | cut -d: -f1)"
+T15_AC3_DATADIRLIB_LINE="$(grep -n '_edm-datadir-lib.sh' "$GATEGUARD" | head -1 | cut -d: -f1)"
+if [[ -n "$T15_AC3_KILLSWITCH_LINE" && -n "$T15_AC3_DATADIRLIB_LINE" && "$T15_AC3_KILLSWITCH_LINE" -lt "$T15_AC3_DATADIRLIB_LINE" ]]; then
+  pass "EDMV4-T15 AC3 -- the kill-switch block (line ${T15_AC3_KILLSWITCH_LINE}) precedes the datadir-lib source (line ${T15_AC3_DATADIRLIB_LINE})"
+else
+  fail "EDMV4-T15 AC3 -- kill-switch line=[${T15_AC3_KILLSWITCH_LINE}] datadir-lib line=[${T15_AC3_DATADIRLIB_LINE}] -- ordering not satisfied"
+fi
+
+harness_scratch_dir T15_AC3_TMP
+T15_AC3_FAKEBIN="${T15_AC3_TMP}/fakebin"
+mkdir -p "$T15_AC3_FAKEBIN"
+ln -s "$(command -v dirname)" "${T15_AC3_FAKEBIN}/dirname"
+ln -s "$(command -v bash)" "${T15_AC3_FAKEBIN}/bash"
+ln -s "$(command -v grep)" "${T15_AC3_FAKEBIN}/grep"
+ln -s "$(command -v date)" "${T15_AC3_FAKEBIN}/date"
+ln -s "$(command -v mkdir)" "${T15_AC3_FAKEBIN}/mkdir"
+ln -s "$(command -v mv)" "${T15_AC3_FAKEBIN}/mv"
+ln -s "$(command -v rm)" "${T15_AC3_FAKEBIN}/rm"
+ln -s "$(command -v cat)" "${T15_AC3_FAKEBIN}/cat"
+ln -s "$(command -v git)" "${T15_AC3_FAKEBIN}/git"
+ln -s "$(command -v jq)" "${T15_AC3_FAKEBIN}/jq"
+cat > "${T15_AC3_FAKEBIN}/stat" <<T15STATSPY
+#!/bin/sh
+: > "${T15_AC3_FAKEBIN}/.stat_invoked"
+exit 1
+T15STATSPY
+chmod +x "${T15_AC3_FAKEBIN}/stat"
+
+T15_AC3_PROJ="${T15_AC3_TMP}/proj" T15_AC3_DATA="${T15_AC3_TMP}/data"
+mkdir -p "${T15_AC3_PROJ}" "${T15_AC3_DATA}/run"
+T15_AC3_KEY="$(CLAUDE_PROJECT_DIR="$T15_AC3_PROJ" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+printf 'T15PFX\t%s\t2026-09-02T00:00:00Z\n' "$T15_AC3_PROJ" > "${T15_AC3_DATA}/run/${T15_AC3_KEY}.phase6"
+printf 'already-seen.js\n' > "${T15_AC3_DATA}/run/${T15_AC3_KEY}.checked"
+
+# Positive control: switch OFF, path already checked -- gg_is_checked reads the checked-file via
+# gg_fresh_lines, which spawns the stat spy.
+rm -f "${T15_AC3_FAKEBIN}/.stat_invoked"
+printf '{"tool_name":"Edit","tool_input":{"file_path":"already-seen.js"}}' | \
+  CLAUDE_PROJECT_DIR="$T15_AC3_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC3_DATA" PATH="$T15_AC3_FAKEBIN" \
+  bash "$GATEGUARD" >/dev/null 2>&1 || true
+if [[ -f "${T15_AC3_FAKEBIN}/.stat_invoked" ]]; then
+  pass "EDMV4-T15 AC3 -- positive control: the stat spy DOES fire on a real checked-file read with no kill switch set"
+else
+  fail "EDMV4-T15 AC3 -- positive control FAILED: the stat spy never fired even with a real checked-file read, so the switch-engaged zero-count below proves nothing"
+fi
+
+# Kill switch ON, identical fixture: the spy must NOT fire, and the call must exit 0 with empty
+# stdout/stderr even though EDM_GATEGUARD_STATE_DIR/CLAUDE_PLUGIN_DATA both resolve to a path
+# whose parent directory has mode 000 (so any read attempt beyond the environment would surface).
+rm -f "${T15_AC3_FAKEBIN}/.stat_invoked"
+T15_AC3_LOCKED="${T15_AC3_TMP}/locked"
+mkdir -p "$T15_AC3_LOCKED"
+chmod 000 "$T15_AC3_LOCKED"
+T15_AC3_RC=0
+T15_AC3_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"already-seen.js"}}' | \
+  EDM_GATEGUARD=0 CLAUDE_PLUGIN_DATA="${T15_AC3_LOCKED}/data" EDM_GATEGUARD_STATE_DIR="${T15_AC3_LOCKED}/state" \
+  PATH="$T15_AC3_FAKEBIN" bash "$GATEGUARD" 2>"${T15_AC3_TMP}/ac3-locked.stderr")" || T15_AC3_RC=$?
+T15_AC3_ERR="$(cat "${T15_AC3_TMP}/ac3-locked.stderr" 2>/dev/null || true)"
+chmod 755 "$T15_AC3_LOCKED"
+if [[ "$T15_AC3_RC" -eq 0 && -z "$T15_AC3_OUT" && -z "$T15_AC3_ERR" ]]; then
+  pass "EDMV4-T15 AC3 -- kill switch engaged with unreadable state/data paths: exit 0, empty stdout, empty stderr"
+else
+  fail "EDMV4-T15 AC3 -- kill switch engaged mismatch: rc=${T15_AC3_RC} stdout=[${T15_AC3_OUT}] stderr=[${T15_AC3_ERR}]"
+fi
+if [[ ! -f "${T15_AC3_FAKEBIN}/.stat_invoked" ]]; then
+  pass "EDMV4-T15 AC3 -- the stat spy was NEVER invoked with the kill switch engaged (zero filesystem reads beyond environment)"
+else
+  fail "EDMV4-T15 AC3 -- the stat spy WAS invoked despite the kill switch -- a filesystem read reached beyond the environment"
+fi
+
+# ---- AC4: EDM_GATEGUARD_EXEMPT_GLOBS='**/tests/**' exempts BOTH the absolute and the bare
+# relative form; a NON-matching path under the same rule is NOT exempted (positive control that
+# the matcher discriminates rather than matching everything). -------------------------------------
+for _t15_ac4_path in /repo/tests/x.js tests/x.js; do
+  T15_AC4_PROJ="" T15_AC4_DATA=""
+  t14_fresh_marker_env T15_AC4_PROJ T15_AC4_DATA
+  T15_AC4_RC=0
+  T15_AC4_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$_t15_ac4_path" | \
+    CLAUDE_PROJECT_DIR="$T15_AC4_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC4_DATA" EDM_GATEGUARD_EXEMPT_GLOBS='**/tests/**' \
+    EDM_GATEGUARD_DENY_MODE=exit-code bash "$GATEGUARD" 2>"${TMP}/t15-ac4.stderr")" || T15_AC4_RC=$?
+  T15_AC4_ERR="$(cat "${TMP}/t15-ac4.stderr" 2>/dev/null || true)"
+  if [[ "$T15_AC4_RC" -eq 0 && -z "$T15_AC4_OUT" && -z "$T15_AC4_ERR" ]]; then
+    pass "EDMV4-T15 AC4 -- '${_t15_ac4_path}' is exempted by EDM_GATEGUARD_EXEMPT_GLOBS='**/tests/**' (exit 0, no output)"
+  else
+    fail "EDMV4-T15 AC4 -- '${_t15_ac4_path}' expected exempt: rc=${T15_AC4_RC} stdout=[${T15_AC4_OUT}] stderr=[${T15_AC4_ERR}]"
+  fi
+done
+
+T15_AC4B_PROJ="" T15_AC4B_DATA=""
+t14_fresh_marker_env T15_AC4B_PROJ T15_AC4B_DATA
+T15_AC4B_RC=0
+printf '{"tool_name":"Edit","tool_input":{"file_path":"src/unrelated.js"}}' | \
+  CLAUDE_PROJECT_DIR="$T15_AC4B_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC4B_DATA" EDM_GATEGUARD_EXEMPT_GLOBS='**/tests/**' \
+  EDM_GATEGUARD_DENY_MODE=exit-code bash "$GATEGUARD" >/dev/null 2>&1 || T15_AC4B_RC=$?
+[[ "$T15_AC4B_RC" -eq 2 ]] \
+  && pass "EDMV4-T15 AC4 -- positive control: a NON-matching path under the same '**/tests/**' rule still denies (the matcher discriminates)" \
+  || fail "EDMV4-T15 AC4 -- positive control FAILED: 'src/unrelated.js' was unexpectedly exempted (rc=${T15_AC4B_RC})"
+
+# ---- AC5: the shipped DEFAULT exempts the SRD/ tree with no variable set; a non-SRD path under
+# the default is NOT exempted (positive control). --------------------------------------------------
+T15_AC5_PROJ="" T15_AC5_DATA=""
+t14_fresh_marker_env T15_AC5_PROJ T15_AC5_DATA
+T15_AC5_RC=0
+T15_AC5_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"/repo/SRD/edm/EDMV4__x/srd.md"}}' | \
+  CLAUDE_PROJECT_DIR="$T15_AC5_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC5_DATA" EDM_GATEGUARD_DENY_MODE=exit-code bash "$GATEGUARD" 2>&1)" || T15_AC5_RC=$?
+if [[ "$T15_AC5_RC" -eq 0 && -z "$T15_AC5_OUT" ]]; then
+  pass "EDMV4-T15 AC5 -- a path under SRD/ is exempt by the shipped default with no variable set"
+else
+  fail "EDMV4-T15 AC5 -- expected the default to exempt an SRD/ path, got rc=${T15_AC5_RC} out=[${T15_AC5_OUT}]"
+fi
+
+T15_AC5B_PROJ="" T15_AC5B_DATA=""
+t14_fresh_marker_env T15_AC5B_PROJ T15_AC5B_DATA
+T15_AC5B_RC=0
+printf '{"tool_name":"Edit","tool_input":{"file_path":"/repo/src/main.js"}}' | \
+  CLAUDE_PROJECT_DIR="$T15_AC5B_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC5B_DATA" EDM_GATEGUARD_DENY_MODE=exit-code bash "$GATEGUARD" >/dev/null 2>&1 || T15_AC5B_RC=$?
+[[ "$T15_AC5B_RC" -eq 2 ]] \
+  && pass "EDMV4-T15 AC5 -- positive control: a non-SRD path under the same default still denies" \
+  || fail "EDMV4-T15 AC5 -- positive control FAILED: '/repo/src/main.js' was unexpectedly exempted (rc=${T15_AC5B_RC})"
+
+# ---- AC6: a 501st append leaves exactly 500 lines with the oldest gone; a state file backdated
+# past 30 minutes produces a DENIAL (not an allow) on a path it previously recorded. --------------
+T15_AC6_PROJ="" T15_AC6_DATA=""
+t14_fresh_marker_env T15_AC6_PROJ T15_AC6_DATA
+T15_AC6_KEY="$(CLAUDE_PROJECT_DIR="$T15_AC6_PROJ" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+T15_AC6_CHECKED="${T15_AC6_DATA}/run/${T15_AC6_KEY}.checked"
+_t15_ac6_i=1
+: > "$T15_AC6_CHECKED"
+while [[ "$_t15_ac6_i" -le 500 ]]; do
+  printf 'old-file-%d.js\n' "$_t15_ac6_i" >> "$T15_AC6_CHECKED"
+  _t15_ac6_i=$((_t15_ac6_i + 1))
+done
+t14_run "$T15_AC6_PROJ" "$T15_AC6_DATA" '{"tool_name":"Edit","tool_input":{"file_path":"the-501st.js"}}'
+T15_AC6_LINE_COUNT="$(wc -l < "$T15_AC6_CHECKED" | tr -d ' ')"
+check "EDMV4-T15 AC6 -- after a 501st append, the checked-file holds exactly 500 lines" "500" "$T15_AC6_LINE_COUNT"
+if grep -Fxq 'old-file-1.js' "$T15_AC6_CHECKED"; then
+  fail "EDMV4-T15 AC6 -- the oldest entry (old-file-1.js) is still present; pruning did not remove the oldest first"
+else
+  pass "EDMV4-T15 AC6 -- the oldest entry (old-file-1.js) was pruned first"
+fi
+if grep -Fxq 'the-501st.js' "$T15_AC6_CHECKED"; then
+  pass "EDMV4-T15 AC6 -- the newest entry (the-501st.js) is present after pruning"
+else
+  fail "EDMV4-T15 AC6 -- the newest entry (the-501st.js) is missing after pruning"
+fi
+
+# Staleness: a checked-file recording a path, backdated past 30 minutes, must produce a DENIAL
+# (not a silent allow) the next time that same path is touched -- the failure mode this half of
+# AC6 exists to prevent is "stale state reads as still-checked forever".
+T15_AC6B_PROJ="" T15_AC6B_DATA=""
+t14_fresh_marker_env T15_AC6B_PROJ T15_AC6B_DATA
+T15_AC6B_KEY="$(CLAUDE_PROJECT_DIR="$T15_AC6B_PROJ" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+T15_AC6B_CHECKED="${T15_AC6B_DATA}/run/${T15_AC6B_KEY}.checked"
+printf 'stale-recorded.js\n' > "$T15_AC6B_CHECKED"
+# Backdate past 30 minutes (2000 seconds) using touch -t if available, else a portable fallback.
+T15_AC6B_BACKDATE="$(date -v-2000S +%Y%m%d%H%M.%S 2>/dev/null || date -d '-2000 seconds' +%Y%m%d%H%M.%S 2>/dev/null || true)"
+if [[ -n "$T15_AC6B_BACKDATE" ]]; then
+  touch -t "$T15_AC6B_BACKDATE" "$T15_AC6B_CHECKED" 2>/dev/null || true
+fi
+T15_AC6B_RC=0
+T15_AC6B_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"stale-recorded.js"}}' | \
+  CLAUDE_PROJECT_DIR="$T15_AC6B_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC6B_DATA" EDM_GATEGUARD_DENY_MODE=exit-code bash "$GATEGUARD" 2>&1)" || T15_AC6B_RC=$?
+if [[ "$T15_AC6B_RC" -eq 2 ]]; then
+  pass "EDMV4-T15 AC6 -- a checked-file backdated past 30 minutes produces a DENIAL on a path it previously recorded (stale state is not still-checked)"
+else
+  fail "EDMV4-T15 AC6 -- expected a denial (exit 2) on a stale-recorded path, got rc=${T15_AC6B_RC} out=[${T15_AC6B_OUT}]"
+fi
+
+# ---- AC7: every state-write failure path allows, with a stderr warning naming
+# EDM_GATEGUARD_STATE_DIR -- never a deny. Read-only data directory. --------------------------------
+T15_AC7_PROJ="" T15_AC7_DATA=""
+t14_fresh_marker_env T15_AC7_PROJ T15_AC7_DATA
+chmod 555 "${T15_AC7_DATA}/run"
+T15_AC7_RC=0
+T15_AC7_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"readonly-target.js"}}' | \
+  CLAUDE_PROJECT_DIR="$T15_AC7_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC7_DATA" EDM_GATEGUARD_DENY_MODE=json bash "$GATEGUARD" 2>"${TMP}/t15-ac7.stderr")" || T15_AC7_RC=$?
+T15_AC7_ERR="$(cat "${TMP}/t15-ac7.stderr" 2>/dev/null || true)"
+chmod 755 "${T15_AC7_DATA}/run"
+if printf '%s' "$T15_AC7_OUT" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1; then
+  pass "EDMV4-T15 AC7 -- a state-write failure still denies (facts are the point of first touch) rather than silently allowing"
+else
+  fail "EDMV4-T15 AC7 -- expected the first-touch denial to still fire despite the state-write failure, got rc=${T15_AC7_RC} out=[${T15_AC7_OUT}]"
+fi
+check "EDMV4-T15 AC7 -- the write failure warns on stderr naming EDM_GATEGUARD_STATE_DIR" "EDM_GATEGUARD_STATE_DIR" "$T15_AC7_ERR"
+[[ "$T15_AC7_RC" -eq 0 ]] \
+  && pass "EDMV4-T15 AC7 -- json-mode deny still exits 0 (the payload IS the deny signal) even though the mark-checked write failed" \
+  || fail "EDMV4-T15 AC7 -- expected exit 0, got ${T15_AC7_RC}"
+
+# ---- AC8: EDM_GATEGUARD_MAX_DENIALS (default 3) bounds full denials per session -- four
+# unchecked paths in one session deny on the first three and allow with an advisory on the fourth.
+T15_AC8_PROJ="" T15_AC8_DATA=""
+t14_fresh_marker_env T15_AC8_PROJ T15_AC8_DATA
+T15_AC8_RCS=""
+for _t15_ac8_f in budget-a.js budget-b.js budget-c.js budget-d.js; do
+  t14_run "$T15_AC8_PROJ" "$T15_AC8_DATA" "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"${_t15_ac8_f}\"}}"
+  T15_AC8_RCS="${T15_AC8_RCS} ${T14_RUN_RC}"
+  if [[ "$_t15_ac8_f" == "budget-d.js" ]]; then
+    T15_AC8_FOURTH_ERR="$T14_RUN_ERR"
+  fi
+done
+check "EDMV4-T15 AC8 -- four unchecked paths deny on the first three and allow on the fourth" " 2 2 2 0" "$T15_AC8_RCS"
+check "EDMV4-T15 AC8 -- the fourth call's stderr carries the denial-budget advisory naming the limit (3)" \
+  "denial budget (3) reached" "$T15_AC8_FOURTH_ERR"
+
+# ---- AC9: jq missing exits 1 on the GATED path (never 2); with the marker absent, jq missing
+# exits 0 having never been referenced (T11's own AC9 already proves the zero-jq shape; this
+# re-asserts the gated-path half and the documented distinction). ----------------------------------
+harness_scratch_dir T15_AC9_TMP
+T15_AC9_FAKEBIN="${T15_AC9_TMP}/fakebin"
+mkdir -p "$T15_AC9_FAKEBIN"
+for _t15_bin in dirname bash grep date mkdir mv rm cat git stat; do
+  ln -s "$(command -v "$_t15_bin")" "${T15_AC9_FAKEBIN}/${_t15_bin}"
+done
+T15_AC9_PROJ="${T15_AC9_TMP}/proj" T15_AC9_DATA="${T15_AC9_TMP}/data"
+mkdir -p "$T15_AC9_PROJ" "${T15_AC9_DATA}/run"
+T15_AC9_KEY="$(CLAUDE_PROJECT_DIR="$T15_AC9_PROJ" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+printf 'T15PFX\t%s\t2026-09-02T00:00:00Z\n' "$T15_AC9_PROJ" > "${T15_AC9_DATA}/run/${T15_AC9_KEY}.phase6"
+T15_AC9_RC=0
+printf '{"tool_name":"Edit"}' | CLAUDE_PROJECT_DIR="$T15_AC9_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC9_DATA" PATH="$T15_AC9_FAKEBIN" bash "$GATEGUARD" >/dev/null 2>&1 || T15_AC9_RC=$?
+check "EDMV4-T15 AC9 -- jq missing on the GATED path (marker present) exits 1, never 2" "1" "$T15_AC9_RC"
+
+check "EDMV4-T15 AC9 -- the EDM-HELP block states the jq-missing distinction" \
+  "once a marker is present" "$(cat "$GATEGUARD")"
+
+# ---- AC10: an unparseable stdin payload exits 1 with empty stdout, never blocks. -----------------
+T15_AC10_PROJ="" T15_AC10_DATA=""
+t14_fresh_marker_env T15_AC10_PROJ T15_AC10_DATA
+T15_AC10_RC=0
+T15_AC10_OUT="$(printf 'not json' | CLAUDE_PROJECT_DIR="$T15_AC10_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC10_DATA" bash "$GATEGUARD" 2>/dev/null)" || T15_AC10_RC=$?
+check "EDMV4-T15 AC10 -- an unparseable stdin payload exits 1" "1" "$T15_AC10_RC"
+check "EDMV4-T15 AC10 -- an unparseable stdin payload's stdout is empty" "" "$T15_AC10_OUT"
+
+# ---- AC11: a marker present whose named initiative directory no longer exists allows. -----------
+T15_AC11_TMP=""
+harness_scratch_dir T15_AC11_TMP
+mkdir -p "${T15_AC11_TMP}/data/run" "${T15_AC11_TMP}/proj"
+T15_AC11_KEY="$(CLAUDE_PROJECT_DIR="${T15_AC11_TMP}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+printf 'T15PFX\t%s/deleted-initiative\t2026-09-02T00:00:00Z\n' "$T15_AC11_TMP" > "${T15_AC11_TMP}/data/run/${T15_AC11_KEY}.phase6"
+T15_AC11_RC=0
+T15_AC11_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"a.js"}}' | \
+  CLAUDE_PROJECT_DIR="${T15_AC11_TMP}/proj" CLAUDE_PLUGIN_DATA="${T15_AC11_TMP}/data" EDM_GATEGUARD_DENY_MODE=exit-code \
+  bash "$GATEGUARD" 2>&1)" || T15_AC11_RC=$?
+if [[ "$T15_AC11_RC" -eq 0 && -z "$T15_AC11_OUT" ]]; then
+  pass "EDMV4-T15 AC11 -- a marker naming a deleted initiative directory allows (exit 0, empty output)"
+else
+  fail "EDMV4-T15 AC11 -- expected exit 0 with empty output for a deleted-initiative-dir marker, got rc=${T15_AC11_RC} out=[${T15_AC11_OUT}]"
+fi
+# Positive control: the SAME marker file, pointed at an initiative dir that DOES exist, denies --
+# proving the AC11 allow above is attributable to the missing directory, not to some other defect.
+T15_AC11B_TMP=""
+harness_scratch_dir T15_AC11B_TMP
+mkdir -p "${T15_AC11B_TMP}/data/run" "${T15_AC11B_TMP}/proj"
+T15_AC11B_KEY="$(CLAUDE_PROJECT_DIR="${T15_AC11B_TMP}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+printf 'T15PFX\t%s\t2026-09-02T00:00:00Z\n' "${T15_AC11B_TMP}/proj" > "${T15_AC11B_TMP}/data/run/${T15_AC11B_KEY}.phase6"
+T15_AC11B_RC=0
+printf '{"tool_name":"Edit","tool_input":{"file_path":"a.js"}}' | \
+  CLAUDE_PROJECT_DIR="${T15_AC11B_TMP}/proj" CLAUDE_PLUGIN_DATA="${T15_AC11B_TMP}/data" EDM_GATEGUARD_DENY_MODE=exit-code \
+  bash "$GATEGUARD" >/dev/null 2>&1 || T15_AC11B_RC=$?
+[[ "$T15_AC11B_RC" -eq 2 ]] \
+  && pass "EDMV4-T15 AC11 -- positive control: the identical marker shape naming an EXISTING initiative dir still denies" \
+  || fail "EDMV4-T15 AC11 -- positive control FAILED: expected a denial when the initiative dir exists, got rc=${T15_AC11B_RC}"
+
+# ---- AC12: all six env vars are documented in CLAUDE.md's Testing changes section. ---------------
+T15_CLAUDE_MD_TEXT="$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+for _t15_var in EDM_GATEGUARD EDM_GATEGUARD_DISABLED EDM_GATEGUARD_DENY_MODE EDM_GATEGUARD_EXEMPT_GLOBS EDM_GATEGUARD_STATE_DIR EDM_GATEGUARD_MAX_DENIALS; do
+  check "EDMV4-T15 AC12 -- CLAUDE.md documents ${_t15_var}" "${_t15_var}" "$T15_CLAUDE_MD_TEXT"
+done
+check "EDMV4-T15 AC12 -- the knob family is introduced by name in the same bullet form as the existing families" \
+  "EDM_GATEGUARD_*\` knob family (EDMV4-T15)" "$T15_CLAUDE_MD_TEXT"
+
+echo
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
