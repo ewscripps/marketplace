@@ -500,8 +500,12 @@ check "CLAUDE.md documents the lens class as \"all N \`edm-audit-*\`\"" "edm-aud
 [[ "$t03_documented_total" -eq "$t03_disk_count" ]] \
   && pass "documented agent count ($t03_documented_total) matches disk ($t03_disk_count)" \
   || fail "documented agent count ($t03_named_count individually-named + $t03_wildcard_count lens wildcard = $t03_documented_total) does not match disk ($t03_disk_count)"
-[[ "$t03_disk_count" -eq 30 ]] && pass "disk agent count is 30 (baseline: ls \$PLUGIN_DIR/agents/*.md, EDMV3-T03)" \
-  || fail "disk agent count is $t03_disk_count, expected 30 (source of truth: ls \$PLUGIN_DIR/agents/*.md)"
+# EDMV4-T30/T31: the baseline grew from 30 to 33 (three new lens agents, L12/L13/L14) -- this is
+# a "30" literal the -eq 11/12/13/15 sweep cannot find (it is a total-agent-file count, not a lens
+# count), discovered by re-deriving what this assertion actually counts rather than trusting its
+# label.
+[[ "$t03_disk_count" -eq 33 ]] && pass "disk agent count is 33 (baseline: ls \$PLUGIN_DIR/agents/*.md, EDMV3-T03)" \
+  || fail "disk agent count is $t03_disk_count, expected 33 (source of truth: ls \$PLUGIN_DIR/agents/*.md)"
 
 echo
 echo "T03 AC10 -- bash 3.2 compatible (no associative arrays/mapfile) and referenced by run-all.sh"
@@ -1149,8 +1153,15 @@ check "CA-533 -- update-patterns validates against PATTERN_AUDIT_TYPE_ENUM_LIST,
 # resolving an empty pattern_file/audit_report_path for the new type.
 ca533_expected_arms="$(printf '%s\n' "$ca533_pattern_type_list" | wc -w | tr -d ' ')"
 ca533_cmd_body="$(awk '/^cmd_update_patterns\(\)/{f=1} f{print} f && /^}$/{exit}' "$EDM_STATE")"
-ca533_pattern_file_arms="$(printf '%s\n' "$ca533_cmd_body" | grep -cE '^[[:space:]]*(srd|ticket|qc|code|test-coverage)\)[[:space:]]*pattern_file=')"
-ca533_report_path_arms="$(printf '%s\n' "$ca533_cmd_body" | grep -cE '^[[:space:]]*(srd|ticket|qc|code|test-coverage)\)[[:space:]]*(audit_report_path=|$)')"
+# Pre-existing set -e/pipefail hazard, unrelated to lens counts, found while verifying this
+# ticket's own changes: `grep -c` exits 1 (and pipefail propagates it) when a pattern legitimately
+# matches zero lines, and this is a bare `var="$(cmd | ...)"` assignment with no guard -- exactly
+# the class this initiative's own risk register warns against. It silently killed the entire suite
+# after this point (no FAIL printed, no Results: line), so every assertion below it -- including
+# every EDMV4-T30 lens-count assertion in this file -- was never actually exercised. Guarded here
+# so a real zero-arm regression prints a FAIL instead of aborting the whole run.
+ca533_pattern_file_arms="$(printf '%s\n' "$ca533_cmd_body" | { grep -cE '^[[:space:]]*(srd|ticket|qc|code|test-coverage)\)[[:space:]]*pattern_file=' || true; })"
+ca533_report_path_arms="$(printf '%s\n' "$ca533_cmd_body" | { grep -cE '^[[:space:]]*(srd|ticket|qc|code|test-coverage)\)[[:space:]]*(audit_report_path=|$)' || true; })"
 [[ "${ca533_pattern_file_arms:-0}" -eq "$ca533_expected_arms" ]] \
   && pass "CA-533 -- pattern_file mapping covers exactly ${ca533_expected_arms} arm(s), matching PATTERN_AUDIT_TYPE_ENUM_LIST" \
   || fail "CA-533 -- pattern_file mapping has ${ca533_pattern_file_arms:-0} arm(s), expected ${ca533_expected_arms} (matching PATTERN_AUDIT_TYPE_ENUM_LIST word count)"
@@ -1468,9 +1479,9 @@ echo
 echo "T66 AC6 -- documented agent and skill counts match reality"
 t66ac6_agent_disk="$(ls "${PLUGIN_DIR}/agents/"*.md | wc -l | tr -d ' ')"
 t66ac6_skill_manifest="$(jq -r '.plugins[] | select(.name=="edm") | .skills | length' "$(cd "$PLUGIN_DIR/../.." && pwd)/.claude-plugin/marketplace.json")"
-[[ "$t66ac6_agent_disk" -eq 30 ]] \
-  && pass "T66 AC6 -- 30 agent files on disk (source of truth: ls \$PLUGIN_DIR/agents/*.md, same baseline as T03 AC9)" \
-  || fail "T66 AC6 -- found $t66ac6_agent_disk agent file(s) on disk, expected 30 (source of truth: ls \$PLUGIN_DIR/agents/*.md)"
+[[ "$t66ac6_agent_disk" -eq 33 ]] \
+  && pass "T66 AC6 -- 33 agent files on disk (source of truth: ls \$PLUGIN_DIR/agents/*.md, same baseline as T03 AC9)" \
+  || fail "T66 AC6 -- found $t66ac6_agent_disk agent file(s) on disk, expected 33 (source of truth: ls \$PLUGIN_DIR/agents/*.md)"
 [[ "$t66ac6_skill_manifest" -eq 14 ]] \
   && pass "T66 AC6 -- 14 skills declared in marketplace.json (post verify-runtime; source of truth: .claude-plugin/marketplace.json .plugins[].skills)" \
   || fail "T66 AC6 -- marketplace.json declares $t66ac6_skill_manifest skill(s), expected 14 (source of truth: .claude-plugin/marketplace.json .plugins[].skills)"
@@ -1586,28 +1597,37 @@ rm -f "$t66ac12_force_control" "$t66ac12_accept_control"
 
 # =================================================================================
 # EDMV3-T24: every lens emits JSONL with confidence under a two-path output contract.
-# This block asserts the eleven lens agent prompts (agents/edm-audit-*.md, excluding the
+# This block asserts the fourteen lens agent prompts (agents/edm-audit-*.md, excluding the
 # synthesizer, which is not a lens) and the committed AC0 fixture at
 # bin/tests/fixtures/code-audit/. Batch scope note: this agent's remit for this batch is
 # agents/edm-audit-*.md, skills/code-audit/SKILL.md, and this wave7-smoke.sh append block --
 # bin/edm-state, bin/edm-lint-artifacts and plugins/edm/CLAUDE.md are out of scope and are not
 # touched here (owned by other agents this batch).
+# EDMV4-T30: grown from eleven to fourteen lenses (L12 silent-failures, L13 type-design, L14
+# behavioral-tests) -- see plugins/edm/CLAUDE.md Sec."Model and effort assignments" and
+# skills/code-audit/SKILL.md Sec."The 14 Audit Lenses".
 # =================================================================================
-LENS_AGENTS="edm-audit-logic edm-audit-dead-code edm-audit-edge-cases edm-audit-test-quality edm-audit-runtime edm-audit-docs edm-audit-consistency edm-audit-security edm-audit-spec edm-audit-dry edm-audit-wiring"
+LENS_AGENTS="edm-audit-logic edm-audit-dead-code edm-audit-edge-cases edm-audit-test-quality edm-audit-runtime edm-audit-docs edm-audit-consistency edm-audit-security edm-audit-spec edm-audit-dry edm-audit-wiring edm-audit-silent-failures edm-audit-type-design edm-audit-behavioral-tests"
 
-# CA-529: the twelve agents/edm-audit-*.md files (eleven lenses + the synthesizer) are a single
+# EDMV4-T30 AC10: a single count computed once from LENS_AGENTS (the same list every lens-count
+# assertion below already iterates), used everywhere this file used to spell out an independent
+# "-eq 11" (now 14) literal. Growing LENS_AGENTS above is the only edit a future lens addition
+# needs -- there is no second number to remember to bump in lockstep.
+WAVE7_LENS_COUNT="$(printf '%s\n' $LENS_AGENTS | grep -c '.')"
+
+# CA-529: the fifteen agents/edm-audit-*.md files (fourteen lenses + the synthesizer) are a single
 # sibling family launched by one skill in one wave and maintained as a block, but the
-# synthesizer's `tools:` grant had silently diverged from the eleven lenses' (two extra, inert
+# synthesizer's `tools:` grant had silently diverged from the fourteen lenses' (two extra, inert
 # grants -- KillShell/BashOutput, which only operate on a shell started by Bash, a tool none of
-# the twelve carries -- plus a different order). Round 9's L7 sweep had recorded this family as
+# the fifteen carries -- plus a different order). Round 9's L7 sweep had recorded this family as
 # byte-identical on tools, which was false; pin the real invariant here so that claim cannot go
 # stale silently again.
 echo
-echo "=== CA-529: all twelve agents/edm-audit-*.md 'tools:' frontmatter lines are byte-identical ==="
+echo "=== CA-529: all fifteen agents/edm-audit-*.md 'tools:' frontmatter lines are byte-identical ==="
 ca529_tools_lines="$(grep -h '^tools:' "${PLUGIN_DIR}"/agents/edm-audit-*.md | sort -u)"
 ca529_tools_line_count="$(printf '%s\n' "$ca529_tools_lines" | grep -c . || true)"
 [[ "${ca529_tools_line_count:-0}" -eq 1 ]] \
-  && pass "CA-529 -- all twelve agents/edm-audit-*.md tools: lines are byte-identical" \
+  && pass "CA-529 -- all fifteen agents/edm-audit-*.md tools: lines are byte-identical" \
   || fail "CA-529 -- agents/edm-audit-*.md tools: lines have diverged (${ca529_tools_line_count:-0} distinct value(s)):\n${ca529_tools_lines}"
 check_absent "CA-529 -- the shared tools: line grants neither KillShell nor BashOutput (inert without Bash)" \
   "KillShell" "$ca529_tools_lines"
@@ -1631,11 +1651,11 @@ ARCHITECTURE_MD="$(cd "$PLUGIN_DIR/../.." && pwd)/SRD/.archived/edm/EDMV3__promp
 echo
 echo "T24 AC0 -- committed synthetic code-audit pass fixture exists with the required shape"
 t24_jsonl_count="$(ls "${CODE_AUDIT_FIXTURE_DIR}"/lens-L*.jsonl 2>/dev/null | wc -l | tr -d '[:space:]')"
-[[ "$t24_jsonl_count" -eq 11 ]] && pass "T24 AC0 -- eleven lens-L*.jsonl fixture files present" \
-  || fail "T24 AC0 -- found $t24_jsonl_count lens-L*.jsonl fixture file(s), expected 11"
+[[ "$t24_jsonl_count" -eq "$WAVE7_LENS_COUNT" ]] && pass "T24 AC0 -- fourteen lens-L*.jsonl fixture files present" \
+  || fail "T24 AC0 -- found $t24_jsonl_count lens-L*.jsonl fixture file(s), expected $WAVE7_LENS_COUNT"
 t24_md_count="$(ls "${CODE_AUDIT_FIXTURE_DIR}"/lens-L*.md 2>/dev/null | wc -l | tr -d '[:space:]')"
-[[ "$t24_md_count" -eq 11 ]] && pass "T24 AC0 -- eleven lens-L*.md fixture prose reports present" \
-  || fail "T24 AC0 -- found $t24_md_count lens-L*.md fixture file(s), expected 11"
+[[ "$t24_md_count" -eq "$WAVE7_LENS_COUNT" ]] && pass "T24 AC0 -- fourteen lens-L*.md fixture prose reports present" \
+  || fail "T24 AC0 -- found $t24_md_count lens-L*.md fixture file(s), expected $WAVE7_LENS_COUNT"
 [[ -f "${CODE_AUDIT_FIXTURE_DIR}/lenses-run.txt" ]] && pass "T24 AC0 -- lenses-run.txt present" \
   || fail "T24 AC0 -- lenses-run.txt missing"
 check "T24 AC0 -- lenses-run.txt carries the Round type: header" "Round type: full" \
@@ -1654,35 +1674,40 @@ check "T24 AC0 -- lens-L1.jsonl carries a legacy deferred-status line for the re
   "$(cat "${CODE_AUDIT_FIXTURE_DIR}/lens-L1.jsonl" 2>/dev/null)"
 
 echo
-echo "T24 AC1 -- eleven lens prompts instruct a JSONL sibling"
+echo "T24 AC1 -- fourteen lens prompts instruct a JSONL sibling"
 t24_ac1_count=0
 for t24_agent in $LENS_AGENTS; do
   grep -q "one JSON object per line, one line for every finding" "${PLUGIN_DIR}/agents/${t24_agent}.md" \
     && t24_ac1_count=$((t24_ac1_count + 1))
 done
-[[ "$t24_ac1_count" -eq 11 ]] && pass "T24 AC1 -- eleven lens prompts instruct a JSONL sibling" \
-  || fail "T24 AC1 -- only $t24_ac1_count/11 lens prompts instruct a JSONL sibling"
+[[ "$t24_ac1_count" -eq "$WAVE7_LENS_COUNT" ]] && pass "T24 AC1 -- fourteen lens prompts instruct a JSONL sibling" \
+  || fail "T24 AC1 -- only $t24_ac1_count/$WAVE7_LENS_COUNT lens prompts instruct a JSONL sibling"
 
 echo
-echo "T24 AC2 -- lens JSONL schema text present in eleven files"
+echo "T24 AC2 -- lens JSONL schema text present in fourteen files"
 t24_ac2_count=0
 for t24_agent in $LENS_AGENTS; do
   t24_hits="$(grep -c '"schema":1' "${PLUGIN_DIR}/agents/${t24_agent}.md" 2>/dev/null || true)"
   [[ "${t24_hits:-0}" -ge 1 ]] && t24_ac2_count=$((t24_ac2_count + 1))
 done
-[[ "$t24_ac2_count" -eq 11 ]] && pass "T24 AC2 -- eleven lens files carry the fixed schema text" \
-  || fail "T24 AC2 -- only $t24_ac2_count/11 lens files carry '\"schema\":1'"
+[[ "$t24_ac2_count" -eq "$WAVE7_LENS_COUNT" ]] && pass "T24 AC2 -- fourteen lens files carry the fixed schema text" \
+  || fail "T24 AC2 -- only $t24_ac2_count/$WAVE7_LENS_COUNT lens files carry '\"schema\":1'"
 
-# CA-467: identity check, not just the presence count above -- the twelve hand-maintained copies
+# CA-467: identity check, not just the presence count above -- the fifteen hand-maintained copies
 # of the lens JSONL schema line (deliberate duplication, D22/CA-130: the schema must survive a
 # stale plugin cache that breaks by-name resolution) had NO drift guard; divergence here is
 # silent by construction (a lens emitting the wrong field set is a recall loss invisible to every
-# downstream gate). Extract the lens-schema line from all 11 agents + the SKILL, normalize the
+# downstream gate). Extract the lens-schema line from all 14 agents + the SKILL, normalize the
 # lens token, and require exactly one deduplicated line.
 echo
-echo "CA-467 -- the twelve lens JSONL schema copies are byte-identical modulo the lens token"
+echo "CA-467 -- the fifteen lens JSONL schema copies are byte-identical modulo the lens token"
 _ca467_extract() {  # _ca467_extract <file> -- print that file's lens-schema line, lens-normalized
-  grep -o '{"schema":1,"id":null[^`]*}' "$1" 2>/dev/null | head -1 \
+  # Guarded (found while verifying EDMV4-T30, unrelated to lens counts): `grep -o` on a file that
+  # does not exist yet (e.g. L13's agent file, pending EDMV4-T26) exits non-zero with pipefail
+  # active, and the caller's `var="$(_ca467_extract ...)"` assignment is a bare statement `set -e`
+  # would otherwise kill the whole suite over -- the missing file should surface as one CA-467
+  # count mismatch below, not a silent full-suite abort.
+  { grep -o '{"schema":1,"id":null[^`]*}' "$1" 2>/dev/null || true; } | head -1 \
     | sed -E 's/"lens":"L(\{N\}|[0-9]+)"/"lens":"LENS"/'
 }
 ca467_lines=""
@@ -1692,12 +1717,13 @@ done
 ca467_lines="${ca467_lines}$(_ca467_extract "${PLUGIN_DIR}/skills/code-audit/SKILL.md")"$'\n'
 ca467_total="$(printf '%s' "$ca467_lines" | grep -c . || true)"
 ca467_unique="$(printf '%s' "$ca467_lines" | grep . | sort -u | wc -l | tr -d '[:space:]')"
-[[ "$ca467_total" -eq 12 ]] \
-  && pass "CA-467 -- all 12 files yield a lens-schema line" \
-  || fail "CA-467 -- extracted only ${ca467_total}/12 lens-schema lines (extraction pattern or a copy has drifted)"
+ca467_expected="$((WAVE7_LENS_COUNT + 1))"
+[[ "$ca467_total" -eq "$ca467_expected" ]] \
+  && pass "CA-467 -- all $ca467_expected files yield a lens-schema line" \
+  || fail "CA-467 -- extracted only ${ca467_total}/${ca467_expected} lens-schema lines (extraction pattern or a copy has drifted)"
 [[ "$ca467_unique" -eq 1 ]] \
-  && pass "CA-467 -- the 12 copies deduplicate to exactly one line (byte-identical modulo lens token)" \
-  || fail "CA-467 -- the 12 copies deduplicate to ${ca467_unique} distinct lines -- a copy has silently diverged:\n$(printf '%s' "$ca467_lines" | grep . | sort -u)"
+  && pass "CA-467 -- the $ca467_expected copies deduplicate to exactly one line (byte-identical modulo lens token)" \
+  || fail "CA-467 -- the $ca467_expected copies deduplicate to ${ca467_unique} distinct lines -- a copy has silently diverged:\n$(printf '%s' "$ca467_lines" | grep . | sort -u)"
 # Positive control: a mutated copy must produce a second distinct line, proving the normalization
 # cannot collapse a real divergence.
 ca467_ctl="$(printf '%s' "$ca467_lines" | grep . | head -1 | sed 's/"status":"open"/"status":"opened"/')"
@@ -1710,7 +1736,11 @@ echo
 echo "T24 AC3 -- no lens declares a deferred status (scoped to this ticket's own JSONL Line Format section)"
 t24_ac3_fail=0
 for t24_agent in $LENS_AGENTS; do
-  t24_section="$(awk '/^## JSONL Line Format/{f=1} f' "${PLUGIN_DIR}/agents/${t24_agent}.md")"
+  # Guarded (found while verifying EDMV4-T30, unrelated to lens counts): a bare `var="$(cmd)"`
+  # assignment against a lens file that does not exist yet (e.g. L13's, pending EDMV4-T26) makes
+  # awk exit non-zero, which set -e would otherwise treat as a full-suite abort rather than one
+  # missing-section report below.
+  t24_section="$(awk '/^## JSONL Line Format/{f=1} f' "${PLUGIN_DIR}/agents/${t24_agent}.md" 2>/dev/null || true)"
   if printf '%s' "$t24_section" | grep -qi 'deferred'; then
     t24_ac3_fail=1
     echo "  FOUND 'deferred' in ${t24_agent}.md JSONL Line Format section"
@@ -1726,8 +1756,8 @@ for t24_agent in $LENS_AGENTS; do
   t24_hits="$(grep -c 'confidence' "${PLUGIN_DIR}/agents/${t24_agent}.md" 2>/dev/null || true)"
   [[ "${t24_hits:-0}" -ge 1 ]] && t24_ac4_count=$((t24_ac4_count + 1))
 done
-[[ "$t24_ac4_count" -eq 11 ]] && pass "T24 AC4 -- eleven lens files mandate confidence" \
-  || fail "T24 AC4 -- only $t24_ac4_count/11 lens files mention confidence"
+[[ "$t24_ac4_count" -eq "$WAVE7_LENS_COUNT" ]] && pass "T24 AC4 -- fourteen lens files mandate confidence" \
+  || fail "T24 AC4 -- only $t24_ac4_count/$WAVE7_LENS_COUNT lens files mention confidence"
 
 echo
 echo "T24 AC5 -- scope stated literally: 'every finding' in every lens prompt"
@@ -1736,26 +1766,27 @@ for t24_agent in $LENS_AGENTS; do
   t24_hits="$(grep -c 'every finding' "${PLUGIN_DIR}/agents/${t24_agent}.md" 2>/dev/null || true)"
   [[ "${t24_hits:-0}" -ge 1 ]] && t24_ac5_count=$((t24_ac5_count + 1))
 done
-[[ "$t24_ac5_count" -eq 11 ]] && pass "T24 AC5 -- eleven lens files state 'every finding'" \
-  || fail "T24 AC5 -- only $t24_ac5_count/11 lens files state 'every finding'"
+[[ "$t24_ac5_count" -eq "$WAVE7_LENS_COUNT" ]] && pass "T24 AC5 -- fourteen lens files state 'every finding'" \
+  || fail "T24 AC5 -- only $t24_ac5_count/$WAVE7_LENS_COUNT lens files state 'every finding'"
 
 echo
-echo "T24 AC6/AC8 -- eleven lens files contain the two-path contract text"
+echo "T24 AC6/AC8 -- fourteen lens files contain the two-path contract text"
 t24_ac6_count=0
 for t24_agent in $LENS_AGENTS; do
-  t24_output_section="$(awk '/^## Output$/{f=1} f && /^## Output Format/{exit} f' "${PLUGIN_DIR}/agents/${t24_agent}.md")"
+  # Guarded, same hazard and reason as T24 AC3 above.
+  t24_output_section="$(awk '/^## Output$/{f=1} f && /^## Output Format/{exit} f' "${PLUGIN_DIR}/agents/${t24_agent}.md" 2>/dev/null || true)"
   if printf '%s' "$t24_output_section" | grep -q "authoritative on conflict" \
     && printf '%s' "$t24_output_section" | grep -q "exactly one corresponding"; then
     t24_ac6_count=$((t24_ac6_count + 1))
   fi
 done
-[[ "$t24_ac6_count" -eq 11 ]] && pass "T24 AC6/AC8 -- eleven lens '## Output' sections state the JSONL-authoritative, one-line-per-finding contract" \
-  || fail "T24 AC6/AC8 -- only $t24_ac6_count/11 lens '## Output' sections state the two-path contract"
+[[ "$t24_ac6_count" -eq "$WAVE7_LENS_COUNT" ]] && pass "T24 AC6/AC8 -- fourteen lens '## Output' sections state the JSONL-authoritative, one-line-per-finding contract" \
+  || fail "T24 AC6/AC8 -- only $t24_ac6_count/$WAVE7_LENS_COUNT lens '## Output' sections state the two-path contract"
 
 echo
 echo "T24 AC7 -- every emitted line of every fixture JSONL file is valid JSON"
 t24_ac7_bad=0
-for t24_n in 1 2 3 4 5 6 7 8 9 10 11; do
+for t24_n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do
   t24_f="${CODE_AUDIT_FIXTURE_DIR}/lens-L${t24_n}.jsonl"
   [[ -f "$t24_f" ]] || { t24_ac7_bad=1; echo "  MISSING: $t24_f"; continue; }
   while IFS= read -r t24_line; do
@@ -1906,17 +1937,17 @@ check "T25 AC7 -- substantive false-alarm criteria (documented trade-off) preser
   "known trade-off explicitly accepted" "$SYNTH_CONTENT"
 
 echo
-echo "T25 AC8 -- all eleven lens agents carry an identical False Alarm Filter framing sentence, no criterion removed"
+echo "T25 AC8 -- all fourteen lens agents carry an identical False Alarm Filter framing sentence, no criterion removed"
 t25_ac8_framing="Report every finding at your best-effort confidence level rather than self-suppressing on uncertainty: this filter demotes a finding to \`## Noted / Not Actionable\` with a documented rationale and never deletes it outright, and ranking by confidence and cross-lens corroboration is the synthesizer's job, not this lens's."
 t25_ac8_case() {
-  local lens_files="edm-audit-logic.md edm-audit-dead-code.md edm-audit-edge-cases.md edm-audit-test-quality.md edm-audit-runtime.md edm-audit-docs.md edm-audit-consistency.md edm-audit-security.md edm-audit-spec.md edm-audit-dry.md edm-audit-wiring.md"
+  local lens_files="edm-audit-logic.md edm-audit-dead-code.md edm-audit-edge-cases.md edm-audit-test-quality.md edm-audit-runtime.md edm-audit-docs.md edm-audit-consistency.md edm-audit-security.md edm-audit-spec.md edm-audit-dry.md edm-audit-wiring.md edm-audit-silent-failures.md edm-audit-type-design.md edm-audit-behavioral-tests.md"
   local count=0 f
   for f in $lens_files; do
     grep -qF "$t25_ac8_framing" "${PLUGIN_DIR}/agents/${f}" && count=$((count+1)) \
       || echo "  MISSING framing sentence in ${f}"
   done
-  [[ "$count" -eq 11 ]] && pass "T25 AC8 -- eleven occurrences of the framing sentence" \
-    || fail "T25 AC8 -- found framing sentence in only ${count}/11 lens agent files"
+  [[ "$count" -eq "$WAVE7_LENS_COUNT" ]] && pass "T25 AC8 -- fourteen occurrences of the framing sentence" \
+    || fail "T25 AC8 -- found framing sentence in only ${count}/${WAVE7_LENS_COUNT} lens agent files"
 }
 t25_ac8_case
 
@@ -4751,12 +4782,17 @@ echo "T45 -- full suite stays green with the cadence/length additions in place"
 echo
 echo "=== EDMV3-T46: agent scope, output contracts, decision ladder, and N/A carve-outs ==="
 
-T46_LENSES="edm-audit-consistency edm-audit-dead-code edm-audit-docs edm-audit-dry edm-audit-edge-cases edm-audit-logic edm-audit-runtime edm-audit-security edm-audit-spec edm-audit-test-quality edm-audit-wiring"
+T46_LENSES="edm-audit-behavioral-tests edm-audit-consistency edm-audit-dead-code edm-audit-docs edm-audit-dry edm-audit-edge-cases edm-audit-logic edm-audit-runtime edm-audit-security edm-audit-silent-failures edm-audit-spec edm-audit-test-quality edm-audit-type-design edm-audit-wiring"
 T46_SCOPE13="edm-explorer edm-audit-synthesizer $T46_LENSES"
+# EDMV4-T30 AC10: computed once from T46_SCOPE13 itself rather than a second hardcoded "16"
+# literal alongside the "13" this variable's own name still carries (kept per EDMV4-T30's
+# Technical Notes: T46_SCOPE13 is a derived string and needs no name edit once T46_LENSES grows).
+# shellcheck disable=SC2086 # deliberate word-splitting to count space-separated members
+T46_SCOPE13_COUNT="$(printf '%s\n' $T46_SCOPE13 | grep -c '.')"
 T46_OUTPUT10="edm-implementer edm-test-unit edm-test-component edm-test-composable edm-test-integration edm-test-contract edm-test-e2e edm-test-a11y edm-test-scaffold edm-test-planner"
 
 echo
-echo "T46 AC1 -- thirteen occurrences of the scope line"
+echo "T46 AC1 -- ${T46_SCOPE13_COUNT} occurrences of the scope line"
 t46_scope_count=0
 t46_scope_missing=""
 for t46_a in $T46_SCOPE13; do
@@ -4766,20 +4802,20 @@ for t46_a in $T46_SCOPE13; do
     t46_scope_missing="${t46_scope_missing} ${t46_a}"
   fi
 done
-[[ "$t46_scope_count" -eq 13 && -z "$t46_scope_missing" ]] && pass "T46 AC1 -- thirteen occurrences of the scope line (all thirteen agents)" \
-  || fail "T46 AC1 -- found ${t46_scope_count}/13, missing:${t46_scope_missing}"
+[[ "$t46_scope_count" -eq "$T46_SCOPE13_COUNT" && -z "$t46_scope_missing" ]] && pass "T46 AC1 -- ${T46_SCOPE13_COUNT} occurrences of the scope line (all ${T46_SCOPE13_COUNT} agents)" \
+  || fail "T46 AC1 -- found ${t46_scope_count}/${T46_SCOPE13_COUNT}, missing:${t46_scope_missing}"
 t46_scope_unique="$(grep -rho 'deliver what was asked at the scope intended' "${PLUGIN_DIR}/agents/" | sort -u | wc -l | tr -d ' ')" || true
 [[ "$t46_scope_unique" -eq 1 ]] && pass "T46 AC1 -- exactly one unique phrasing of the scope line" \
   || fail "T46 AC1 -- ${t46_scope_unique} unique phrasings found, expected 1"
 
 echo
-echo "T46 AC2 -- False Alarm Filter criteria count unchanged (three per lens, all eleven lenses)"
+echo "T46 AC2 -- False Alarm Filter criteria count unchanged (three per lens, all fourteen lenses)"
 t46_faf_bad=""
 for t46_l in $T46_LENSES; do
   t46_faf_cnt="$(awk '/^## False Alarm Filter/{f=1;next} /^## /{f=0} f' "${PLUGIN_DIR}/agents/${t46_l}.md" | grep -c '^[0-9]\+\.' || true)"
   [[ "${t46_faf_cnt:-0}" -eq 3 ]] || t46_faf_bad="${t46_faf_bad} ${t46_l}=${t46_faf_cnt:-0}"
 done
-[[ -z "$t46_faf_bad" ]] && pass "T46 AC2 -- all eleven lenses still carry exactly three False Alarm Filter criteria" \
+[[ -z "$t46_faf_bad" ]] && pass "T46 AC2 -- all fourteen lenses still carry exactly three False Alarm Filter criteria" \
   || fail "T46 AC2 -- unexpected criteria count(s):${t46_faf_bad}"
 
 echo
@@ -4822,7 +4858,7 @@ check "T46 AC8 -- 'never a rung' present" "never a rung" \
   "$(cat "${PLUGIN_DIR}/agents/edm-implementer.md")"
 
 echo
-echo "T46 AC10 -- carve-out section present in all 30 agent files, exact heading and file count"
+echo "T46 AC10 -- carve-out section present in all 33 agent files, exact heading and file count"
 t46_ac10_missing=""
 t46_ac10_count=0
 for t46_f in "${PLUGIN_DIR}"/agents/*.md; do
@@ -4833,7 +4869,7 @@ for t46_f in "${PLUGIN_DIR}"/agents/*.md; do
   fi
 done
 t46_ac10_total="$(ls "${PLUGIN_DIR}"/agents/*.md | wc -l | tr -d ' ')"
-[[ "$t46_ac10_count" -eq 30 && "$t46_ac10_total" -eq 30 && -z "$t46_ac10_missing" ]] && pass "T46 AC10 -- all 30 agent files carry the carve-out heading" \
+[[ "$t46_ac10_count" -eq 33 && "$t46_ac10_total" -eq 33 && -z "$t46_ac10_missing" ]] && pass "T46 AC10 -- all 33 agent files carry the carve-out heading" \
   || fail "T46 AC10 -- ${t46_ac10_count}/${t46_ac10_total} carry it, missing:${t46_ac10_missing}"
 
 echo
@@ -4919,7 +4955,10 @@ check "T47 AC6 -- SRD-auditor cap surviving unchanged" "Spawn 2-3 \`edm-srd-audi
   "$(cat "${PLUGIN_DIR}/skills/audit-srd/SKILL.md")"
 check "T47 AC6 -- implementer cap surviving unchanged" "6-10 parallel" \
   "$(cat "${PLUGIN_DIR}/skills/implement/SKILL.md")"
-check "T47 AC6 -- lens cap surviving unchanged" "run all 11" \
+# EDMV4-T30 AC1: deliberate anti-regression revision -- this used to protect the invariant that
+# the omitted-`--lenses` default runs all eleven; it is rewritten to protect the new invariant,
+# fourteen, not incremented as a side effect of an unrelated edit.
+check "T47 AC6 -- lens cap surviving unchanged (fourteen is the invariant now protected)" "run all 14" \
   "$(cat "${PLUGIN_DIR}/skills/code-audit/SKILL.md")"
 
 echo
@@ -5402,8 +5441,15 @@ echo "=== EDMV3-T48: tiering matrix (D16) -- contested set unchanged, promotion 
 _wave7_assert_shared_lint_fresh "T48 (pre-block)"
 
 echo
-echo "T48 AC1 -- nothing pre-tiered: the 15 contested agents are still opus/max"
-T48_CONTESTED_AGENTS="edm-audit-consistency edm-audit-dead-code edm-audit-docs edm-audit-dry edm-audit-edge-cases edm-audit-logic edm-audit-runtime edm-audit-security edm-audit-spec edm-audit-test-quality edm-audit-wiring edm-audit-synthesizer edm-srd-auditor edm-ticket-auditor edm-qc-auditor"
+echo "T48 AC1 -- nothing pre-tiered: the 18 contested agents are still opus/max"
+# EDMV4-T30 AC4: the dangerous instance -- this hardcoded list is what t48_contested_count below
+# actually counts, so an unswept list would stay green (counting only itself) while silently
+# dropping the three new lenses from the D16 opus/max assertion. Grown from 15 to 18 names.
+T48_CONTESTED_AGENTS="edm-audit-behavioral-tests edm-audit-consistency edm-audit-dead-code edm-audit-docs edm-audit-dry edm-audit-edge-cases edm-audit-logic edm-audit-runtime edm-audit-security edm-audit-silent-failures edm-audit-spec edm-audit-test-quality edm-audit-type-design edm-audit-wiring edm-audit-synthesizer edm-srd-auditor edm-ticket-auditor edm-qc-auditor"
+# EDMV4-T30 AC10: computed once from T48_CONTESTED_AGENTS itself rather than a hardcoded "18"
+# literal duplicating the list's own length.
+# shellcheck disable=SC2086 # deliberate word-splitting to count space-separated members
+T48_CONTESTED_TOTAL="$(printf '%s\n' $T48_CONTESTED_AGENTS | grep -c '.')"
 t48_contested_count=0
 t48_bad=""
 for t48_agent in $T48_CONTESTED_AGENTS; do
@@ -5419,9 +5465,9 @@ for t48_agent in $T48_CONTESTED_AGENTS; do
     t48_bad="${t48_bad} ${t48_agent}(${t48_model}/${t48_effort})"
   fi
 done
-[[ "$t48_contested_count" -eq 15 ]] && pass "T48 AC1 -- exactly 15 contested agents enumerated" \
-  || fail "T48 AC1 -- enumerated ${t48_contested_count} contested agents, expected 15"
-[[ -z "$t48_bad" ]] && pass "T48 AC1 -- all 15 contested agents are opus/max (no hand-tiering slipped in)" \
+[[ "$t48_contested_count" -eq "$T48_CONTESTED_TOTAL" ]] && pass "T48 AC1 -- exactly ${T48_CONTESTED_TOTAL} contested agents enumerated" \
+  || fail "T48 AC1 -- enumerated ${t48_contested_count} contested agents, expected ${T48_CONTESTED_TOTAL}"
+[[ -z "$t48_bad" ]] && pass "T48 AC1 -- all ${T48_CONTESTED_TOTAL} contested agents are opus/max (no hand-tiering slipped in)" \
   || fail "T48 AC1 -- non-opus/max contested agent(s) found, D16 violation:${t48_bad}"
 
 echo
@@ -5434,10 +5480,13 @@ t48_architect="$({ grep -m1 '^model:' "${PLUGIN_DIR}/agents/edm-architect.md" ||
 [[ "$t48_architect" == "opus/high" ]] && pass "T48 AC5 -- edm-architect stays opus/high" || fail "T48 AC5 -- edm-architect is ${t48_architect}, expected opus/high"
 
 echo
-echo "T48 AC6 -- lens fan-out unchanged: eleven lenses, none merged or removed"
+# EDMV4-T30 AC2: deliberate anti-regression revision -- this used to protect "eleven lenses, none
+# merged or removed" as a permanent invariant; it is rewritten to state fourteen as the new
+# invariant, not incremented as a side effect of an unrelated edit.
+echo "T48 AC6 -- lens fan-out unchanged: fourteen lenses, none merged or removed"
 t48_lens_count="$(ls "${PLUGIN_DIR}"/agents/edm-audit-*.md | grep -vc synthesizer)"
-[[ "$t48_lens_count" -eq 11 ]] && pass "T48 AC6 -- eleven code-audit lens agent files present" \
-  || fail "T48 AC6 -- found ${t48_lens_count} lens agent files, expected 11"
+[[ "$t48_lens_count" -eq "$WAVE7_LENS_COUNT" ]] && pass "T48 AC6 -- fourteen code-audit lens agent files present" \
+  || fail "T48 AC6 -- found ${t48_lens_count} lens agent files, expected $WAVE7_LENS_COUNT"
 
 echo
 echo "T48 -- the tiering-matrix promotion rule is unit-verified against synthetic fixtures"
@@ -7582,8 +7631,8 @@ ca507_synth_fence_body="$(awk '
 check "CA-507 -- the Synthesizer Phase FENCE BODY instructs reading tooling-notes.md if present" \
   "tooling-notes.md if it exists" "$ca507_synth_fence_body"
 
-# G6/CA-193 (round 5): the count check alone cannot tell eleven correctly-schema'd files from
-# eleven files carrying an invented schema. Step 8a now also validates CONTENT.
+# G6/CA-193 (round 5): the count check alone cannot tell fourteen correctly-schema'd files from
+# fourteen files carrying an invented schema. Step 8a now also validates CONTENT.
 check "G6/CA-193 -- step 8a's precondition includes a content check beyond the count check" \
   "Content check (CA-193, fifth recurrence)" "$g13_code_audit_skill"
 check "G6/CA-193 -- the content check names the required lens-schema keys" \
@@ -9511,17 +9560,19 @@ for verif_t09_fname in $VERIF_T09_RAISED; do
     || fail "VERIF-T09 AC2 -- ${verif_t09_fname} still contains maxTurns: 25 (${verif_t09_still25} occurrence(s))"
 done
 
-# AC3 -- the eleven code-audit lens agents are untouched, still maxTurns: 30. Reuses the
+# AC3 -- the fourteen code-audit lens agents are untouched, still maxTurns: 30. Reuses the
 # already-established LENS_AGENTS enumeration (EDMV3-T24 above) rather than a bare
 # agents/edm-audit-*.md glob: that glob also matches edm-audit-synthesizer.md, which is not a
-# lens (CA-529 documents the twelve-vs-eleven distinction), and would silently miscount 12 as the
-# expected total. LENS_AGENTS is asserted to still be exactly eleven names, so a future edit that
-# adds a twelfth real lens must update that shared variable consciously rather than this ticket's
-# count silently drifting out of sync with it.
+# lens (CA-529 documents the fifteen-vs-fourteen distinction), and would silently miscount 15 as
+# the expected total. LENS_AGENTS is asserted to still enumerate WAVE7_LENS_COUNT names (EDMV4-T30:
+# this bare "-eq 11" was itself found only by re-inventorying the file's own -eq counts, not by
+# name -- it carries no "eleven"/"twelve" token discoverable from its own label alone), so a future
+# edit that adds a fifteenth real lens must update that shared variable consciously rather than
+# this ticket's count silently drifting out of sync with it.
 verif_t09_lens_name_count="$(printf '%s\n' $LENS_AGENTS | grep -c '.')"
-[[ "$verif_t09_lens_name_count" -eq 11 ]] \
-  && pass "VERIF-T09 AC3 -- LENS_AGENTS still enumerates eleven lens names" \
-  || fail "VERIF-T09 AC3 -- LENS_AGENTS enumerates ${verif_t09_lens_name_count} names, expected 11"
+[[ "$verif_t09_lens_name_count" -eq "$WAVE7_LENS_COUNT" ]] \
+  && pass "VERIF-T09 AC3 -- LENS_AGENTS still enumerates fourteen lens names" \
+  || fail "VERIF-T09 AC3 -- LENS_AGENTS enumerates ${verif_t09_lens_name_count} names, expected $WAVE7_LENS_COUNT"
 verif_t09_lens_30_count=0
 verif_t09_lens_checked=0
 for verif_t09_lname in $LENS_AGENTS; do
