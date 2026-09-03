@@ -51,6 +51,7 @@
 #   edm-state add-related <PREFIX> <RELATED>                         # append to related_prefixes (idempotent)
 #   edm-state update-patterns <PREFIX> <srd|ticket|qc|code|test-coverage>  # append novel audit findings to pattern library (T121)
 #   edm-state get-patterns <srd|ticket|qc|code|test-coverage> --paths  # print seed path then delta path, one per line; delta line is EMPTY (not absent) when no delta exists
+#   edm-state detect-conditional-lenses [<PREFIX>]      # print CSV of CONDITIONAL_LENS_IDS members genuinely N/A (inapplicable) for this repo's TRACKED files (empty = none, exit 0 either way); L13 (Type Design) APPLIES when tracked files include tsconfig.json, any *.kt/*.kts, *.swift, Cargo.toml, go.mod, any *.java, *.scala, *.hs, or pyproject.toml WITH a [tool.mypy]/[tool.pyright] table or sibling mypy.ini/pyrightconfig.json -- absence of every marker means L13 is N/A (untyped stack)
 # EDM-HELP-END
 set -euo pipefail
 
@@ -1695,6 +1696,72 @@ for _cond_lens_id in $CONDITIONAL_LENS_IDS; do
   esac
 done
 unset _cond_lens_id
+
+# ---- detect-conditional-lenses (EDMV4-T24) ----------------------------------------------------
+# Step 1 of skills/code-audit/SKILL.md is the SOLE authority for a conditional lens's
+# applicability (guard D2: conditionality means genuine inapplicability, never a way to skip a
+# lens for cost). This helper is the deterministic, auditable predicate that authority calls --
+# never restated as prose an LLM interprets, because the answer gates round_type=full, which
+# gates audit-converged, which gates archive; a non-deterministic input to a convergence gate is
+# not acceptable.
+#
+# _l13_applies <tracked-files-newline-list> -- returns 0 (true: L13 APPLIES, i.e. is NOT N/A) if
+# the tracked file set carries a typed-stack marker; returns 1 (L13 is N/A -- untyped stack)
+# otherwise. Every predicate below is a pure filesystem check over TRACKED files only (git
+# ls-files), so an untracked scratch marker can never flip a convergence-gating answer, and every
+# check is guarded inside an `if` so a non-matching grep never trips `set -e` (EDMV4 defect class
+# 1). L13 APPLIES when the tracked set includes at least one of: tsconfig.json; any *.kt or *.kts
+# file; any *.swift file; Cargo.toml; go.mod; any *.java file; any *.scala file; any *.hs file; or
+# pyproject.toml TOGETHER WITH a typed-checker configuration (a [tool.mypy] or [tool.pyright]
+# table inside pyproject.toml, or a sibling mypy.ini or pyrightconfig.json file) -- a bare
+# pyproject.toml alone is NOT sufficient, since an untyped Python project has one too (EDMV4-T24
+# AC2). This marker list lives in exactly this one place; it is not restated in
+# skills/code-audit/SKILL.md or agents/edm-audit-type-design.md (AC3).
+_l13_applies() {
+  local files="$1"
+  if printf '%s\n' "$files" | grep -qx 'tsconfig.json'; then return 0; fi
+  if printf '%s\n' "$files" | grep -q '\.kts\{0,1\}$'; then return 0; fi
+  if printf '%s\n' "$files" | grep -q '\.swift$'; then return 0; fi
+  if printf '%s\n' "$files" | grep -qx 'Cargo.toml'; then return 0; fi
+  if printf '%s\n' "$files" | grep -qx 'go.mod'; then return 0; fi
+  if printf '%s\n' "$files" | grep -q '\.java$'; then return 0; fi
+  if printf '%s\n' "$files" | grep -q '\.scala$'; then return 0; fi
+  if printf '%s\n' "$files" | grep -q '\.hs$'; then return 0; fi
+  if printf '%s\n' "$files" | grep -qx 'pyproject.toml'; then
+    if grep -q '^\[tool\.\(mypy\|pyright\)\]' pyproject.toml 2>/dev/null; then return 0; fi
+    if printf '%s\n' "$files" | grep -qx 'mypy.ini'; then return 0; fi
+    if printf '%s\n' "$files" | grep -qx 'pyrightconfig.json'; then return 0; fi
+  fi
+  return 1
+}
+
+# detect-conditional-lenses [<PREFIX>] -- prints a CSV of CONDITIONAL_LENS_IDS members that are
+# genuinely N/A (inapplicable) for the current repository (empty output, exit 0, means none are
+# N/A -- an empty result is a valid answer, not an error). `[<PREFIX>]` is accepted for call-site
+# symmetry with the other audit-round subcommands but is not read: this determination is a
+# property of the repository's tracked-file set, not of any one initiative's state, so it is
+# deterministic across initiatives too (EDMV4-T24 AC4: two runs against the same tree produce
+# byte-identical output). Always exits 0 -- a query, not a validation gate (AC1).
+cmd_detect_conditional_lenses() {
+  [[ $# -le 1 ]] || die "usage: edm-state detect-conditional-lenses [<PREFIX>]"
+  local tracked
+  tracked="$(git ls-files 2>/dev/null || true)"
+  local na_list="" _lens
+  # shellcheck disable=SC2086 # deliberate word-splitting; bash 3.2 has no arrays-as-constants
+  for _lens in $CONDITIONAL_LENS_IDS; do
+    case "$_lens" in
+      L13)
+        if ! _l13_applies "$tracked"; then
+          na_list="${na_list:+${na_list},}${_lens}"
+        fi
+        ;;
+      *)
+        die "internal: detect-conditional-lenses has no marker predicate for CONDITIONAL_LENS_IDS member '${_lens}'"
+        ;;
+    esac
+  done
+  [[ -z "$na_list" ]] || echo "$na_list"
+}
 
 # AUDIT_ROUND_COERCE_JQ_DEF -- the single C-4 coercion for audit_rounds.<type> (EDMV3-T27 AC1a).
 # Every state file written before this ticket (and the archived EDMV2 fixture literally) stores
@@ -4830,13 +4897,32 @@ _cmd_audit_round_complete_body() {
   # CA-471: JSONL-landed completeness gate for code rounds. Before this, nothing verified that
   # each lens's authoritative lens-L{N}.jsonl actually landed on disk -- pass-7 of this plugin's
   # own EDMV3 initiative shipped eleven prose reports and ZERO JSONL files, and the round still
-  # closed and counted as full. For every lens named in the round's lenses-run.txt, require a
-  # matching lens-L{N}.jsonl that is non-empty and parses as JSON lines; on any miss, warn naming
-  # the lenses and DOWNGRADE this round's recorded round_type to "partial" (a partial round is
-  # never convergent, so a round whose authoritative artifacts are missing cannot converge).
-  # C-4: a round with no pass directory or no lenses-run.txt (legacy rounds, srd/tickets types,
-  # test scratch states) is left exactly as before -- the gate only fires when the round's own
-  # manifest exists to verify against.
+  # closed and counted as full. EDMV4-T23 moves the source of truth from lenses-run.txt (a
+  # RENDERING) to the round record IN STATE (`lenses` / `lenses_na`, materialized by
+  # EDMV4-T22 at round-start, before any lens agent launches -- so a lens cannot retroactively
+  # excuse its own non-delivery). The manifest keeps exactly one role: its existence is still the
+  # GATE TRIGGER (C-4: a round with no pass directory or no lenses-run.txt -- legacy rounds,
+  # srd/tickets types, test scratch states -- is left exactly as before). Its CONTENT is no longer
+  # read; the ^L[0-9]+$-filtered, CRLF/trailing-newline-defensive line parsing this loop used to do
+  # is retired along with that read, since there is no longer any manifest content to parse
+  # defensively against (EDMV4-T24 AC8's "Lenses N/A:" header line is safe to add to
+  # lenses-run.txt for exactly this reason -- nothing here parses it as a lens ID any more).
+  # Three checks run, each with its own distinguishable warn prefix, and any one DOWNGRADES this
+  # round's recorded round_type to "partial" (a partial round is never convergent):
+  #   (1) every lens in `lenses` (state) requires a non-empty, parseable lens-L{N}.jsonl -- the
+  #       original CA-471 check, unchanged in substance, only its source moved.
+  #   (2) every lens in `lenses_na` (state) must have NO lens-L{N}.jsonl on disk -- a JSONL
+  #       present for a lens Step 1 declared inapplicable is a contract violation between that
+  #       determination and the agent's own behaviour (the agents/edm-test-integration.md:21-25
+  #       shape).
+  #   (3) scoped to round_type=="full" rounds ONLY: `lenses UNION lenses_na` must still cover the
+  #       CURRENT ALL_LENS_IDS at completion time (guards against ALL_LENS_IDS growing between
+  #       round-start and completion). Never fires on a legitimate operator-requested partial
+  #       round (e.g. --lenses L1,L9,L11), whose union is not ALL_LENS_IDS by construction.
+  # All three apply read_round_lenses($all)'s C-4 substitution first (EDMV4-T22 AC10a): a
+  # historical round record carrying lenses:[] with round_type:"full" reads as the FULL
+  # ALL_LENS_IDS set, never as "no lenses required" -- exactly the pass-7 shape this backstop
+  # exists to catch.
   local ca471_downgrade=""
   if [[ "$audit_type" == "code" ]]; then
     local _init_dir _pass_dir _cand _manifest
@@ -4867,22 +4953,57 @@ _cmd_audit_round_complete_body() {
     fi
     _manifest="${_pass_dir}/lenses-run.txt"
     if [[ -n "$_pass_dir" && -f "$_manifest" ]]; then
-      local _lens _lens_file _missing=""
-      # CA-478: lenses-run.txt is agent-authored via Write (skills/code-audit/SKILL.md), so it may
-      # arrive without a trailing newline (bare `read` drops that last line -- on a full round that
-      # is L14) or with CRLF line endings (every line would fail the ^L[0-9]+$ test and silently
-      # disable the gate). Handle both so a truncated delivery cannot pass as complete.
-      while IFS= read -r _lens || [[ -n "$_lens" ]]; do
-        _lens="${_lens%$'\r'}"
-        [[ "$_lens" =~ ^L[0-9]+$ ]] || continue
+      local _all_lens_json _state_lenses _state_lenses_na _recorded_round_type
+      # shellcheck disable=SC2086 # deliberate word-splitting; bash 3.2 has no arrays-as-constants
+      _all_lens_json="$(printf '%s\n' $ALL_LENS_IDS | jq -R . | jq -s .)"
+      _state_lenses="$(echo "$last_round" | jq -r --argjson all "$_all_lens_json" \
+        "${LENS_READ_JQ_DEF} read_round_lenses(\$all) | .[]")"
+      _state_lenses_na="$(echo "$last_round" | jq -r "${LENS_READ_JQ_DEF} read_round_lenses_na | .[]")"
+      _recorded_round_type="$(echo "$last_round" | jq -r '.round_type // "unknown"')"
+
+      # ---- (1) every state-recorded `lenses` member requires a landed, valid JSONL -----------
+      local _lens _lens_file _missing_run=""
+      while IFS= read -r _lens; do
+        [[ -n "$_lens" ]] || continue
         _lens_file="${_pass_dir}/lens-${_lens}.jsonl"
         if [[ ! -s "$_lens_file" ]] || ! jq empty "$_lens_file" >/dev/null 2>&1; then
-          _missing="${_missing:+$_missing }${_lens}"
+          _missing_run="${_missing_run:+$_missing_run }${_lens}"
         fi
-      done < "$_manifest"
-      if [[ -n "$_missing" ]]; then
-        echo "audit-round-complete: [warn] CA-471: round ${round_num} lens JSONL missing/empty/unparseable for: ${_missing} (${_pass_dir}) -- recording round_type=partial (non-convergent); persist the missing lens-L{N}.jsonl halves and note the miss in tooling-notes.md, then run a NEW round to converge -- this round cannot be re-completed, so persisting the halves does not restore round_type=full" >&2
+      done <<< "$_state_lenses"
+      if [[ -n "$_missing_run" ]]; then
+        echo "audit-round-complete: [warn] CA-471: round ${round_num} lens JSONL missing/empty/unparseable for: ${_missing_run} (${_pass_dir}) -- recording round_type=partial (non-convergent); persist the missing lens-L{N}.jsonl halves and note the miss in tooling-notes.md, then run a NEW round to converge -- this round cannot be re-completed, so persisting the halves does not restore round_type=full" >&2
         ca471_downgrade="partial"
+      fi
+
+      # ---- (2) every state-recorded `lenses_na` member must have NO landed JSONL -------------
+      local _unexpected_na=""
+      while IFS= read -r _lens; do
+        [[ -n "$_lens" ]] || continue
+        _lens_file="${_pass_dir}/lens-${_lens}.jsonl"
+        if [[ -e "$_lens_file" ]]; then
+          _unexpected_na="${_unexpected_na:+$_unexpected_na }${_lens}"
+        fi
+      done <<< "$_state_lenses_na"
+      if [[ -n "$_unexpected_na" ]]; then
+        echo "audit-round-complete: [warn] CA-471: round ${round_num} lens JSONL present for lens(es) declared N/A at round-start: ${_unexpected_na} (${_pass_dir}) -- this disagrees with skills/code-audit/SKILL.md Step 1's applicability determination (the agent produced output for a lens the round record declared inapplicable, the agents/edm-test-integration.md:21-25 contract-violation shape); recording round_type=partial (non-convergent); this round cannot be re-completed" >&2
+        ca471_downgrade="partial"
+      fi
+
+      # ---- (3) full-round-only: lenses UNION lenses_na must still cover the CURRENT
+      #      ALL_LENS_IDS at completion time (ALL_LENS_IDS may have grown since round-start) ----
+      if [[ "$_recorded_round_type" == "full" ]]; then
+        local _lenses_json _na_state_json _union_covers
+        _lenses_json="$(echo "$last_round" | jq -c --argjson all "$_all_lens_json" "${LENS_READ_JQ_DEF} read_round_lenses(\$all)")"
+        _na_state_json="$(echo "$last_round" | jq -c "${LENS_READ_JQ_DEF} read_round_lenses_na")"
+        _union_covers="$(jq -nr --argjson lenses "$_lenses_json" --argjson na "$_na_state_json" --argjson all "$_all_lens_json" '
+            (($lenses + $na) | unique | sort) as $union
+          | ($all | sort) as $allsorted
+          | if $union == $allsorted then "yes" else "no" end
+        ')"
+        if [[ "$_union_covers" == "no" ]]; then
+          echo "audit-round-complete: [warn] CA-471: round ${round_num} lens coverage incomplete: this round's recorded lenses+N/A no longer cover the current ALL_LENS_IDS set (${_pass_dir}) -- recording round_type=partial (non-convergent); this round cannot be re-completed" >&2
+          ca471_downgrade="partial"
+        fi
       fi
     fi
   fi
@@ -6668,6 +6789,7 @@ case "$cmd" in
   add-related)          cmd_add_related "$@" ;;
   update-patterns)      cmd_update_patterns "$@" ;;
   get-patterns)         cmd_get_patterns "$@" ;;
+  detect-conditional-lenses) cmd_detect_conditional_lenses "$@" ;;
   ""|-h|--help|help)
     print_help "${BASH_SOURCE[0]:-$0}"
     ;;

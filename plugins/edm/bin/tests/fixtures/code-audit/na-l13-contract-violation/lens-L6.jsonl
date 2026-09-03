@@ -1,0 +1,2 @@
+{"schema":1,"id":null,"lens":"L6","round":1,"round_type":"full","sev":"P1","confidence":"medium","file":"src/worker/processor.js","line":1,"title":"docstring claims synchronous processing but the function is async","status":"open"}
+{"schema":1,"id":null,"lens":"L6","round":1,"round_type":"full","sev":"NOTED","confidence":"high","file":"README.md","line":5,"title":"simplified explanation is intentional for onboarding readers","status":"noted"}

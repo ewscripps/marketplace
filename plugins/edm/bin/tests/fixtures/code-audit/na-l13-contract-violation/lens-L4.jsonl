@@ -1,0 +1,2 @@
+{"schema":1,"id":null,"lens":"L4","round":1,"round_type":"full","sev":"P1","confidence":"medium","file":"tests/worker.test.js","line":10,"title":"assertion checks status code only, never the response body","status":"open"}
+{"schema":1,"id":null,"lens":"L4","round":1,"round_type":"full","sev":"NOTED","confidence":"low","file":"tests/api.test.js","line":5,"title":"skip has a linked issue and timeline, documented","status":"noted"}

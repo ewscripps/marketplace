@@ -1,0 +1,2 @@
+{"schema":1,"id":null,"lens":"L12","round":1,"round_type":"full","sev":"P1","confidence":"medium","file":"src/api/fetch-user.js","line":22,"title":"catch block converts a network failure into an empty array with no logging","status":"open"}
+{"schema":1,"id":null,"lens":"L12","round":1,"round_type":"full","sev":"NOTED","confidence":"high","file":"src/worker/retry.js","line":9,"title":"fallback to a cached snapshot on timeout is documented and alarmed on elsewhere","status":"noted"}
