@@ -4966,6 +4966,160 @@ t28_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${T28_AGENTS
 
 echo
 
+# =================================================================================================
+# EDMV4-T50 -- Extend the tree-wide bash-4 construct ban to cover every new script and wave8-smoke.sh
+# =================================================================================================
+# T61 AC9 (wave7-smoke.sh) already sweeps every top-level plugins/edm/bin/ file live via
+# `find "$PLUGIN_DIR/bin" -maxdepth 1 -type f`, so the five new files (_edm-datadir-lib.sh,
+# edm-gateguard, edm-hookify, edm-stop-gate, edm-repo-readiness) fall under it automatically. The
+# one real gap T61 AC9 deliberately leaves is bin/tests/ (test-fixture/assertion surface) -- this
+# section closes it for the new suite itself, plus recomputes the same construct ban directly
+# against bin/ and evals/ as this ticket's own evidence trail. $PLUGIN_DIR is already an absolute,
+# `cd .. && pwd`-normalized path (via _harness.sh's _HARNESS_PLUGIN_DIR), so the `/tests/`
+# exclusion below is applied to an already-normalized root, not a raw `..`-bearing string.
+echo "=== EDMV4-T50: bash 3.2 floor -- no bash-4-only construct in bin/, evals/, or wave8-smoke.sh ==="
+
+# A real alternation built here (not sourced from wave7-smoke.sh's own $T61_BASH4_RE): each half
+# is independently useful evidence for this ticket, and referencing wave7's private variable would
+# couple this suite's own correctness to wave7-smoke.sh's internal naming.
+T50_BASH4_RE='declare[[:space:]]+-A|local[[:space:]]+-A|mapfile|readarray|\$\{[a-zA-Z_]+\^\^\}|\$\{[a-zA-Z_]+,,\}'
+
+# ---- Zero bash-4-only constructs across bin/ and evals/ (bin/tests/ excluded -- matching T61
+# AC9's own convention); comment-only lines excluded (a prose reference to why a construct is
+# avoided is not a use of it).
+t50_scan() {
+  { grep -rnE "$T50_BASH4_RE" "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/evals" 2>/dev/null || true; } \
+    | grep -v '/tests/' \
+    | grep -vE ':[[:space:]]*#'
+}
+T50_HITS="$(t50_scan || true)"
+if [[ -z "$T50_HITS" ]]; then
+  pass "EDMV4-T50 -- zero bash-4-only constructs (declare -A/local -A, mapfile, readarray, \${v^^}, \${v,,}) across bin/ and evals/ (bin/tests/ excluded)"
+else
+  fail "EDMV4-T50 -- bash-4-only construct(s) found:\n${T50_HITS}"
+fi
+
+# Positive control: a scratch fixture (OUTSIDE the repo tree, under mktemp) with a real
+# 'declare -A' AND a real 'mapfile' usage must both be caught, proving the sweep can fire rather
+# than matching nothing -- the exact anti-pattern named in docs/audit-patterns/code-audit.md.
+T50_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t50.XXXXXX")"
+T50_FIXTURE="${T50_TMP}/fake-script.sh"
+{
+  printf '%s\n' '#!/usr/bin/env bash'
+  printf '%s\n' 'declare -A T50_CONTROL_ARR'
+  printf '%s\n' 'mapfile -t T50_CONTROL_LINES < /dev/null'
+} > "$T50_FIXTURE"
+T50_CONTROL_HITS="$({ grep -nE "$T50_BASH4_RE" "$T50_FIXTURE" 2>/dev/null || true; } | grep -vE ':[[:space:]]*#' || true)"
+if [[ -n "$T50_CONTROL_HITS" ]]; then
+  T50_CONTROL_COUNT="$(printf '%s\n' "$T50_CONTROL_HITS" | grep -c .)"
+  [[ "$T50_CONTROL_COUNT" -ge 2 ]] \
+    && pass "EDMV4-T50 -- positive control: both a synthetic 'declare -A' and 'mapfile' usage are caught (${T50_CONTROL_COUNT} hits)" \
+    || fail "EDMV4-T50 -- positive control incomplete: expected 2 hits (declare -A + mapfile), got ${T50_CONTROL_COUNT}"
+else
+  fail "EDMV4-T50 -- positive control broken: a synthetic 'declare -A'/'mapfile' fixture produced zero hits"
+fi
+
+# ---- Self-check: apply the same ban to wave8-smoke.sh itself (the bin/tests/ gap T61 AC9 leaves
+# open). This file legitimately CONTAINS the construct names as data -- inside a grep-pattern
+# argument scanning some OTHER file (see the EDMV4-T17/T38 sections above), or inside a pass()/
+# fail() message describing the rule -- neither of which is a real bash-4 USE in this file's own
+# control flow. Excluded narrowly, by shape, not by a broad path exclusion: comment-only lines;
+# any line invoking `grep` (a meta-check's pattern argument, never real usage); any line invoking
+# `printf` (this section's OWN positive-control fixtures write the construct names as literal
+# scratch-file DATA via printf, e.g. `printf '%s\n' 'declare -A ...'` -- not a real use in this
+# file's own control flow); the T50_BASH4_RE= definition line itself (its own alternation text
+# contains the bare words "mapfile"/"readarray" as plain data -- the exact self-match-by-label
+# class named in docs/audit-patterns/code-audit.md); and any pass/fail/echo/check/check_absent/
+# check_fails CALL, matched by shape (`keyword` immediately followed by a quoted argument, not
+# anchored to start-of-line, since several call sites here are the right-hand side of a `&&`/`||`
+# continuation) -- a descriptive message argument, never real usage.
+T50_SELF="${SCRIPT_DIR}/wave8-smoke.sh"
+t50_self_scan() {
+  local target="$1"
+  grep -nE "$T50_BASH4_RE" "$target" 2>/dev/null \
+    | grep -vE ':[[:space:]]*#' \
+    | grep -v 'grep' \
+    | grep -v 'printf' \
+    | grep -v 'T50_BASH4_RE=' \
+    | grep -vE '\b(pass|fail|echo|check|check_absent|check_fails)[[:space:]]*"'
+}
+T50_SELF_HITS="$(t50_self_scan "$T50_SELF" || true)"
+if [[ -z "$T50_SELF_HITS" ]]; then
+  pass "EDMV4-T50 -- bin/tests/wave8-smoke.sh itself carries no real bash-4-only construct usage (the bin/tests/ gap T61 AC9 leaves open, closed here)"
+else
+  fail "EDMV4-T50 -- bash-4-only construct found in wave8-smoke.sh:\n${T50_SELF_HITS}"
+fi
+
+# Positive control for the self-check: a scratch copy with a genuine (non-comment, non-grep,
+# non-message) usage line appended must still be caught despite the three exclusions above.
+T50_SELF_CONTROL="${T50_TMP}/wave8-ac2-control.sh"
+cp "$T50_SELF" "$T50_SELF_CONTROL"
+printf '\ndeclare -A T50_SELFCONTROL_ARR\n' >> "$T50_SELF_CONTROL"
+T50_SELF_CONTROL_HITS="$(t50_self_scan "$T50_SELF_CONTROL" || true)"
+if [[ -n "$T50_SELF_CONTROL_HITS" ]]; then
+  pass "EDMV4-T50 -- positive control: a real 'declare -A' usage appended to a scratch copy of wave8-smoke.sh is still caught"
+else
+  fail "EDMV4-T50 -- positive control broken: a real 'declare -A' usage was not caught despite the self-check's exclusions"
+fi
+rm -rf "$T50_TMP"
+
+# ---- Process substitution in a loop CONDITION (CA-472 fd-leak class): distinct from the safe,
+# tree-wide `done < <(cmd)` idiom (loop-level input redirection, used throughout this codebase,
+# including several of the new files), which this pattern does NOT match since "while"/"for"/
+# "until" never appear on that same line. Anchored with a non-alpha boundary so "for" cannot match
+# inside "before"/"format" -- a real self-match this exact pattern produced against this exact
+# file before landing, not a hypothetical risk.
+T50_PROCSUB_RE='(^|[^a-zA-Z_])(while|for|until)[^a-zA-Z_][^\n]*<[[:space:]]*\('
+T50_PROCSUB_HITS="$({ grep -rnE "$T50_PROCSUB_RE" "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/evals" 2>/dev/null || true; } | grep -v '/tests/' | grep -vE ':[[:space:]]*#' || true)"
+if [[ -z "$T50_PROCSUB_HITS" ]]; then
+  pass "EDMV4-T50 -- zero process-substitution-in-loop-condition (CA-472 class) hits across bin/ and evals/"
+else
+  fail "EDMV4-T50 -- process substitution in a loop condition found:\n${T50_PROCSUB_HITS}"
+fi
+
+T50_PROCSUB_CONTROL="$(printf '%s\n' 'while read -r x < <(cmd); do' | grep -cE "$T50_PROCSUB_RE" || true)"
+[[ "$T50_PROCSUB_CONTROL" -ge 1 ]] \
+  && pass "EDMV4-T50 -- positive control: a real condition-position process substitution is caught" \
+  || fail "EDMV4-T50 -- positive control broken: synthetic 'while ... < <(...)' was not caught"
+
+T50_PROCSUB_NEG="$(printf '%s\n' 'done < <(find . -type f)' | grep -cE "$T50_PROCSUB_RE" || true)"
+[[ "$T50_PROCSUB_NEG" -eq 0 ]] \
+  && pass "EDMV4-T50 -- negative control: the safe 'done < <(...)' loop-input idiom is correctly NOT flagged" \
+  || fail "EDMV4-T50 -- over-broad: the safe 'done < <(...)' idiom was incorrectly flagged"
+
+# ---- /bin/bash -n parses each of the five new files (plus wave8-smoke.sh) cleanly, invoked as
+# literal /bin/bash -- a developer's PATH bash is routinely 5.x from Homebrew and proves nothing
+# about the bash 3.2 floor this plugin actually ships against on macOS.
+T50_PARSE_TARGETS="${PLUGIN_DIR}/bin/_edm-datadir-lib.sh ${PLUGIN_DIR}/bin/edm-gateguard ${PLUGIN_DIR}/bin/edm-hookify ${PLUGIN_DIR}/bin/edm-stop-gate ${PLUGIN_DIR}/bin/edm-repo-readiness ${PLUGIN_DIR}/bin/edm-bash-gate ${T50_SELF}"
+for _t50_f in $T50_PARSE_TARGETS; do
+  _t50_parse_err="$(/bin/bash -n "$_t50_f" 2>&1 >/dev/null || true)"
+  if [[ -z "$_t50_parse_err" ]]; then
+    pass "EDMV4-T50 -- /bin/bash -n parses $(basename "$_t50_f") cleanly"
+  else
+    fail "EDMV4-T50 -- /bin/bash -n failed on $(basename "$_t50_f"): ${_t50_parse_err}"
+  fi
+done
+
+# ---- Each new EXECUTABLE script (the shared library is sourced-only, never chmod +x, per its own
+# file header) runs under literal /bin/bash <script> --help and exits 0 with non-empty output.
+T50_EXEC_TARGETS="${PLUGIN_DIR}/bin/edm-gateguard ${PLUGIN_DIR}/bin/edm-hookify ${PLUGIN_DIR}/bin/edm-stop-gate ${PLUGIN_DIR}/bin/edm-repo-readiness ${PLUGIN_DIR}/bin/edm-bash-gate"
+for _t50_ef in $T50_EXEC_TARGETS; do
+  _t50_help_rc=0
+  _t50_help_out="$(/bin/bash "$_t50_ef" --help 2>&1)" || _t50_help_rc=$?
+  if [[ "$_t50_help_rc" -eq 0 && -n "$_t50_help_out" ]]; then
+    pass "EDMV4-T50 -- /bin/bash $(basename "$_t50_ef") --help exits 0 with non-empty output"
+  else
+    fail "EDMV4-T50 -- /bin/bash $(basename "$_t50_ef") --help exited ${_t50_help_rc}: ${_t50_help_out}"
+  fi
+done
+
+# ---- /bin/bash --version recorded in suite output, so a run on a host whose /bin/bash is not 3.2
+# is visible in the log rather than silently vacuous.
+T50_BASH_VERSION="$(/bin/bash --version | head -1)"
+pass "EDMV4-T50 -- /bin/bash --version recorded: ${T50_BASH_VERSION}"
+
+echo
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
