@@ -1165,7 +1165,13 @@ ca533_cmd_body="$(awk '/^cmd_update_patterns\(\)/{f=1} f{print} f && /^}$/{exit}
 # after this point (no FAIL printed, no Results: line), so every assertion below it -- including
 # every EDMV4-T30 lens-count assertion in this file -- was never actually exercised. Guarded here
 # so a real zero-arm regression prints a FAIL instead of aborting the whole run.
-ca533_pattern_file_arms="$(printf '%s\n' "$ca533_cmd_body" | { grep -cE '^[[:space:]]*(srd|ticket|qc|code|test-coverage)\)[[:space:]]*pattern_file=' || true; })"
+# EDMV4-T18/T57: the per-type SEED-FILE mapping moved out of cmd_update_patterns' own body (where
+# it lived as an inline `pattern_file=` case) into the single-sourced pattern_seed_file_for()
+# helper, shared with the read-side get-patterns -- retarget the arm count at that function's real,
+# current shape instead of the pre-T18 inline case. audit_report_path stays inside
+# cmd_update_patterns' own body, unaffected by the T18 write-target refactor.
+ca533_psf_body="$(awk '/^pattern_seed_file_for\(\)/{f=1} f{print} f && /^}$/{exit}' "$EDM_STATE")"
+ca533_pattern_file_arms="$(printf '%s\n' "$ca533_psf_body" | { grep -cE '^[[:space:]]*(srd|ticket|qc|code|test-coverage)\)[[:space:]]*printf' || true; })"
 ca533_report_path_arms="$(printf '%s\n' "$ca533_cmd_body" | { grep -cE '^[[:space:]]*(srd|ticket|qc|code|test-coverage)\)[[:space:]]*(audit_report_path=|$)' || true; })"
 [[ "${ca533_pattern_file_arms:-0}" -eq "$ca533_expected_arms" ]] \
   && pass "CA-533 -- pattern_file mapping covers exactly ${ca533_expected_arms} arm(s), matching PATTERN_AUDIT_TYPE_ENUM_LIST" \
@@ -3628,6 +3634,14 @@ echo
 echo "=== EDMV3-T56: four-'##' Living-Library contract as a CI regression guard ==="
 DOCS_DIR_T56="${PLUGIN_DIR}/docs/audit-patterns"
 
+# NEEDS-NEW-TICKET (found while implementing EDMV4-T57, out of that ticket's Target Components):
+# if the block below reports CONTRACT-FAIL against docs/audit-patterns/code-audit.md, that is a
+# genuine, currently-shipped defect in the committed file itself (a "### " entry landed after the
+# 4th "## What Passing Code Looks Like" heading) -- NOT an EDMV4-T18 delta-relocation issue, since
+# this check reads the real shipped tree directly and update-patterns has not touched that file
+# since T18 landed. EDMV4-T57's Target Components is bin/tests/wave7-smoke.sh only, so the doc
+# content fix belongs to a new, not-yet-filed ticket; this comment exists so a reader does not
+# mistake it for one of T57's ~35 stale-location assertions.
 echo "T56 AC1/AC7 -- five pattern docs carry four headings in contract order (also re-verifies"
 echo "  this initiative's own T42 Mermaid entries and T33 D15 entries did not break it)"
 set +e
@@ -3749,12 +3763,22 @@ t56_ac8_case() {
   cp -R "${PLUGIN_DIR}/." "$scratch/plugins/edm/"
   local scratch_docs="$scratch/plugins/edm/docs/audit-patterns"
   local scratch_code="$scratch_docs/code-audit.md"
+  # EDMV4-T18/T57: isolate CLAUDE_PLUGIN_DATA/HOME from the ambient environment so this case's
+  # own delta lands in a scratch data directory rather than whatever real plugin-data root the
+  # host happens to have configured for an unrelated plugin -- edm_data_dir() would otherwise
+  # silently win branch (a) against it, and repeated suite runs would accumulate findings across
+  # invocations instead of starting clean each time.
+  local scratch_data="$scratch/data" scratch_home="$scratch/home"
+  mkdir -p "$scratch_data" "$scratch_home"
 
   mkdir -p "$scratch/work/SRD/ZCA8"
   echo '{}' > "$scratch/work/SRD/ZCA8/.edm-state.json"
   mkdir -p "$scratch/work/SRD/ZCA8/code-audit/pass-1_2026-07-31"
 
-  local i out ec all_ok=1
+  local before_seed_headings
+  before_seed_headings="$(grep -c '^### ' "$scratch_code" || true)"
+
+  local i out ec all_ok=1 delta=""
   for i in 1 2 3 4 5 6 7 8 9 10; do
     {
       echo "# Mock Code Audit REMEDIATION"
@@ -3765,11 +3789,20 @@ t56_ac8_case() {
       echo "Run ${i} of ten, proving repeated insertion never regresses the contract."
     } > "$scratch/work/SRD/ZCA8/code-audit/pass-1_2026-07-31/REMEDIATION.md"
 
-    out="$(EDM_SRD_ROOT="$scratch/work/SRD" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZCA8 code 2>&1)"
+    out="$(CLAUDE_PLUGIN_DATA="$scratch_data" HOME="$scratch_home" XDG_DATA_HOME="" EDM_SRD_ROOT="$scratch/work/SRD" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZCA8 code 2>&1)"
     [[ "$out" == *"1 new finding(s) appended"* ]] || { fail "T56 AC8 -- run ${i} did not append its novel finding (got: $out)"; all_ok=0; }
 
+    # EDMV4-T18: the write lands in the writable data-dir delta, not the shipped seed above --
+    # resolve it via the real get-patterns read path (never a hardcoded formula, EDMV4-T57 AC2).
+    delta="$(CLAUDE_PLUGIN_DATA="$scratch_data" HOME="$scratch_home" XDG_DATA_HOME="" bash "$scratch/plugins/edm/bin/edm-state" get-patterns code --paths | sed -n '2p')"
+    if [[ -z "$delta" || ! -f "$delta" ]]; then
+      fail "T56 AC8 -- run ${i} produced no resolvable delta path"
+      all_ok=0
+      continue
+    fi
+
     set +e
-    _t56_four_heading_contract_check "$scratch_docs" >/dev/null 2>&1
+    _t56_four_heading_contract_check "$(dirname "$delta")" >/dev/null 2>&1
     ec=$?
     set -e
     [[ $ec -eq 0 ]] || { fail "T56 AC8 -- four-heading contract violated after run ${i}"; all_ok=0; }
@@ -3780,10 +3813,16 @@ t56_ac8_case() {
     || fail "T56 AC8 -- at least one of the ten runs failed (see FAIL lines above)"
 
   local final_heading_count
-  final_heading_count="$(grep -c '^### CA-9[0-9]* (P2, lens L1): T56 AC8 run ' "$scratch_code" || true)"
+  final_heading_count="$(grep -c '^### CA-9[0-9]* (P2, lens L1): T56 AC8 run ' "$delta" 2>/dev/null || true)"
   [[ "${final_heading_count:-0}" -eq 10 ]] \
-    && pass "T56 AC8 -- all ten distinct entries are present in the final document" \
-    || fail "T56 AC8 -- expected 10 distinct run entries, found ${final_heading_count:-0}"
+    && pass "T56 AC8 -- all ten distinct entries are present in the final delta document" \
+    || fail "T56 AC8 -- expected 10 distinct run entries in the delta, found ${final_heading_count:-0}"
+
+  local after_seed_headings
+  after_seed_headings="$(grep -c '^### ' "$scratch_code" || true)"
+  [[ "${after_seed_headings:-0}" -eq "${before_seed_headings:-0}" ]] \
+    && pass "T56 AC8 -- EDMV4-T18 discriminator: the shipped seed's own heading count is unchanged by all ten runs (proves the writes really landed in the delta, not the seed)" \
+    || fail "T56 AC8 -- shipped seed heading count changed (${before_seed_headings:-0} -> ${after_seed_headings:-0}); the ten runs wrote into the seed, not the delta"
 
   rm -rf "$scratch"
 }
@@ -3815,6 +3854,13 @@ ca002_insertion_case() {
   local scratch_docs="$scratch/plugins/edm/docs/audit-patterns"
   local scratch_srd="$scratch_docs/srd-audit.md"
   local scratch_srd_root="$scratch/work/SRD"
+  # EDMV4-T18/T57: isolate CLAUDE_PLUGIN_DATA/HOME from the ambient environment so this case's
+  # own delta lands in a scratch data directory, not whatever real plugin-data root the host
+  # happens to have configured for an unrelated plugin (edm_data_dir() would otherwise silently
+  # win branch (a) against it, and repeated suite runs would accumulate findings across
+  # invocations via a persistent real delta instead of starting clean each time).
+  local scratch_data="$scratch/data" scratch_home="$scratch/home"
+  mkdir -p "$scratch_data" "$scratch_home"
 
   mkdir -p "${scratch_srd_root}/ZCA2"
   # CA-476: the mock uses the SRD auditor's real, documented finding-line format
@@ -3834,69 +3880,77 @@ ca002_insertion_case() {
   } > "${scratch_srd_root}/ZCA2/audit-srd.md"
   echo '{}' > "${scratch_srd_root}/ZCA2/.edm-state.json"
 
-  local before_heading_count after_heading_count out1 out2
-  local before_pending_count after_pending_count
-  before_heading_count="$(grep -c '^### ' "$scratch_srd")"
-  # Count pending markers as a DELTA, not an absolute. $scratch_srd is a copy of the shipped
-  # docs/audit-patterns/srd-audit.md, which `edm-state update-patterns` appends to as a documented
-  # part of normal operation -- so any absolute expectation here goes stale the first time a real
-  # initiative harvests a finding, and the test then fails for a reason unrelated to what it checks.
-  before_pending_count="$(grep -c 'status: pending-review' "$scratch_srd" || true)"
+  local before_seed_headings out1 out2
+  before_seed_headings="$(grep -c '^### ' "$scratch_srd")"
 
-  out1="$(EDM_SRD_ROOT="$scratch_srd_root" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZCA2 srd 2>&1)"
+  out1="$(CLAUDE_PLUGIN_DATA="$scratch_data" HOME="$scratch_home" XDG_DATA_HOME="" EDM_SRD_ROOT="$scratch_srd_root" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZCA2 srd 2>&1)"
   [[ "$out1" == *"2 new finding(s) appended"* ]] \
     && pass "CA-002 AC1 -- two novel findings are appended through the real insertion path" \
     || fail "CA-002 AC1 -- expected '2 new finding(s) appended', got: $out1"
 
-  after_heading_count="$(grep -c '^### ' "$scratch_srd")"
-  [[ "$((after_heading_count - before_heading_count))" -eq 2 ]] \
-    && pass "CA-002 AC1 -- exactly two '### ' headings were added (${before_heading_count} -> ${after_heading_count})" \
-    || fail "CA-002 AC1 -- expected +2 '### ' headings, got ${before_heading_count} -> ${after_heading_count}"
+  # EDMV4-T18: the write lands in the writable data-dir delta, never the shipped seed above --
+  # resolve it via the real get-patterns read path (never a hardcoded formula, EDMV4-T57 AC2).
+  local delta
+  delta="$(CLAUDE_PLUGIN_DATA="$scratch_data" HOME="$scratch_home" XDG_DATA_HOME="" bash "$scratch/plugins/edm/bin/edm-state" get-patterns srd --paths | sed -n '2p')"
+  if [[ -n "$delta" && -f "$delta" ]]; then
+    pass "CA-002 AC1 -- get-patterns reports a real, existing delta path after the insertion"
+  else
+    fail "CA-002 AC1 -- delta path missing or not a real file after the insertion: [${delta}]"
+    rm -rf "$scratch"
+    return 1
+  fi
 
-  check "CA-002 AC1 -- first novel title landed as a '### ' heading" \
-    "### CA002 novel finding one" "$(cat "$scratch_srd")"
-  check "CA-002 AC1 -- second novel title landed as a '### ' heading" \
-    "### CA002 novel finding two" "$(cat "$scratch_srd")"
+  local after_heading_count
+  after_heading_count="$(grep -c '^### ' "$delta")"
+  [[ "$after_heading_count" -eq 2 ]] \
+    && pass "CA-002 AC1 -- exactly two '### ' headings exist in the fresh delta (0 -> 2)" \
+    || fail "CA-002 AC1 -- expected exactly 2 '### ' headings in the fresh delta, found ${after_heading_count}"
+
+  check "CA-002 AC1 -- first novel title landed as a '### ' heading in the delta" \
+    "### CA002 novel finding one" "$(cat "$delta")"
+  check "CA-002 AC1 -- second novel title landed as a '### ' heading in the delta" \
+    "### CA002 novel finding two" "$(cat "$delta")"
 
   local anti_patterns_section
-  anti_patterns_section="$(awk '/^## Anti-Patterns$/{f=1;next} /^## /{f=0} f' "$scratch_srd")"
-  check "CA-002 AC1 -- first novel entry lands inside '## Anti-Patterns', not some other section" \
+  anti_patterns_section="$(awk '/^## Anti-Patterns$/{f=1;next} /^## /{f=0} f' "$delta")"
+  check "CA-002 AC1 -- first novel entry lands inside the delta's '## Anti-Patterns', not some other section" \
     "### CA002 novel finding one" "$anti_patterns_section"
-  check "CA-002 AC1 -- second novel entry lands inside '## Anti-Patterns', not some other section" \
+  check "CA-002 AC1 -- second novel entry lands inside the delta's '## Anti-Patterns', not some other section" \
     "### CA002 novel finding two" "$anti_patterns_section"
 
   local dup_original_count
   dup_original_count="$(grep -c '^### Literal semicolon inside a Mermaid label$' "$scratch_srd" || true)"
   [[ "${dup_original_count:-0}" -eq 1 ]] \
-    && pass "CA-002 AC5 -- the pre-existing entry the mock report duplicates still appears exactly once" \
-    || fail "CA-002 AC5 -- pre-existing duplicate-titled entry appears ${dup_original_count:-0} time(s), expected 1"
-  check_absent "CA-002 AC5 -- the duplicate was skipped, not re-appended under its report-side casing" \
-    "### literal semicolon inside a mermaid label" "$(cat "$scratch_srd")"
+    && pass "CA-002 AC5 -- the pre-existing entry the mock report duplicates still appears exactly once in the shipped seed, untouched" \
+    || fail "CA-002 AC5 -- pre-existing duplicate-titled entry appears ${dup_original_count:-0} time(s) in the seed, expected 1"
+  check_absent "CA-002 AC5 -- the duplicate was skipped, not appended into the delta under its report-side casing" \
+    "### literal semicolon inside a mermaid label" "$(cat "$delta")"
 
-  after_pending_count="$(grep -c 'status: pending-review' "$scratch_srd" || true)"
-  [[ "$((after_pending_count - before_pending_count))" -eq 2 ]] \
-    && pass "CA-002 AC9 -- both auto-appended entries carry the pending-review marker (${before_pending_count} -> ${after_pending_count})" \
-    || fail "CA-002 AC9 -- expected +2 pending-review marker(s), got ${before_pending_count} -> ${after_pending_count}"
+  local after_pending_count
+  after_pending_count="$(grep -c 'status: pending-review' "$delta" || true)"
+  [[ "${after_pending_count:-0}" -eq 2 ]] \
+    && pass "CA-002 AC9 -- both auto-appended entries in the fresh delta carry the pending-review marker (0 -> 2)" \
+    || fail "CA-002 AC9 -- expected 2 pending-review marker(s) in the fresh delta, got ${after_pending_count:-0}"
 
   check "CA-002 AC10 -- appended stub text is delimited, not disguised as curated prose" \
-    "delimited stub text pending human curation; not yet curated prose" "$(cat "$scratch_srd")"
+    "delimited stub text pending human curation; not yet curated prose" "$(cat "$delta")"
 
   # Byte-content assertion (CA-002's central point): a presence-only check is exactly what let
   # CA-133's concatenation-merge regression ship undetected. Reuse the authoritative four-heading
-  # contract check (_t56_four_heading_contract_check, defined above under EDMV3-T56) against this
-  # scratch docs dir -- it fails loudly if the appended block ran the trailing '## Pre-Flight
+  # contract check (_t56_four_heading_contract_check, defined above under EDMV3-T56) against the
+  # delta's own directory -- it fails loudly if the appended block ran the trailing '## Pre-Flight
   # Checklist' boundary heading onto the same physical line as an entry's last line (heading
   # count drops below 4) or left an orphan '### ' heading stranded past the fourth section.
   local t_ca002_contract_out t_ca002_contract_ec
   set +e
   t_ca002_contract_ec=0
-  t_ca002_contract_out="$(_t56_four_heading_contract_check "$scratch_docs" 2>&1)" || t_ca002_contract_ec=$?
+  t_ca002_contract_out="$(_t56_four_heading_contract_check "$(dirname "$delta")" 2>&1)" || t_ca002_contract_ec=$?
   set -e
   [[ $t_ca002_contract_ec -eq 0 ]] \
-    && pass "CA-002 AC3 -- the four-heading contract still holds after insertion (no heading/content concatenation-merge, no orphan section)" \
-    || fail "CA-002 AC3 -- four-heading contract violated after insertion: $t_ca002_contract_out"
+    && pass "CA-002 AC3 -- the four-heading contract still holds in the delta after insertion (no heading/content concatenation-merge, no orphan section)" \
+    || fail "CA-002 AC3 -- four-heading contract violated in the delta after insertion: $t_ca002_contract_out"
   check_absent "CA-002 -- appended prose never runs directly into the next '##' boundary heading (no dropped newline)" \
-    "curated prose.## " "$(cat "$scratch_srd")"
+    "curated prose.## " "$(cat "$delta")"
 
   check "CA-002 AC8 -- patterns_updates records this audit type in state on the insertion path" \
     '"srd"' "$(cat "${scratch_srd_root}/ZCA2/.edm-state.json")"
@@ -3907,26 +3961,32 @@ ca002_insertion_case() {
     || fail "CA-002 AC8 -- state's patterns_updates.srd.new_findings is '${ca002_new_findings_recorded}', expected '2'"
 
   # AC4: idempotent under repetition -- an immediate second run against the SAME audit report
-  # (all three titles are now already present as '### ' headings: two from this run, one
-  # pre-existing) appends nothing further.
-  out2="$(EDM_SRD_ROOT="$scratch_srd_root" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZCA2 srd 2>&1)"
+  # (all three titles are now already present: two from this run in the delta, one pre-existing
+  # in the seed) appends nothing further.
+  out2="$(CLAUDE_PLUGIN_DATA="$scratch_data" HOME="$scratch_home" XDG_DATA_HOME="" EDM_SRD_ROOT="$scratch_srd_root" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZCA2 srd 2>&1)"
   [[ "$out2" == *"no novel findings to append"* ]] \
     && pass "CA-002 AC4 -- a second identical run appends nothing further (idempotent)" \
     || fail "CA-002 AC4 -- second run did not report 'no novel findings to append' (got: $out2)"
 
   local after_second_heading_count
-  after_second_heading_count="$(grep -c '^### ' "$scratch_srd")"
+  after_second_heading_count="$(grep -c '^### ' "$delta")"
   [[ "$after_second_heading_count" -eq "$after_heading_count" ]] \
-    && pass "CA-002 AC4 -- '### ' heading count is unchanged by the second run (${after_second_heading_count})" \
-    || fail "CA-002 AC4 -- '### ' heading count changed on the second run (${after_heading_count} -> ${after_second_heading_count})"
+    && pass "CA-002 AC4 -- '### ' heading count in the delta is unchanged by the second run (${after_second_heading_count})" \
+    || fail "CA-002 AC4 -- '### ' heading count in the delta changed on the second run (${after_heading_count} -> ${after_second_heading_count})"
 
   set +e
   t_ca002_contract_ec=0
-  t_ca002_contract_out="$(_t56_four_heading_contract_check "$scratch_docs" 2>&1)" || t_ca002_contract_ec=$?
+  t_ca002_contract_out="$(_t56_four_heading_contract_check "$(dirname "$delta")" 2>&1)" || t_ca002_contract_ec=$?
   set -e
   [[ $t_ca002_contract_ec -eq 0 ]] \
-    && pass "CA-002 AC3/T56 AC6 -- four-heading contract still holds after the repeat run" \
-    || fail "CA-002 AC3/T56 AC6 -- four-heading contract violated after the repeat run: $t_ca002_contract_out"
+    && pass "CA-002 AC3/T56 AC6 -- four-heading contract still holds in the delta after the repeat run" \
+    || fail "CA-002 AC3/T56 AC6 -- four-heading contract violated in the delta after the repeat run: $t_ca002_contract_out"
+
+  local after_seed_headings
+  after_seed_headings="$(grep -c '^### ' "$scratch_srd")"
+  [[ "$after_seed_headings" -eq "$before_seed_headings" ]] \
+    && pass "CA-002 -- EDMV4-T18 discriminator: the shipped seed's own '### ' heading count is unchanged by either run (proves the writes really landed in the delta, not the seed)" \
+    || fail "CA-002 -- shipped seed heading count changed (${before_seed_headings} -> ${after_seed_headings}); the runs wrote into the seed, not the delta"
 
   rm -rf "$scratch"
 }
@@ -3955,11 +4015,26 @@ ca002_missing_heading_case() {
   } > "${scratch_srd_root}/ZCA4/audit-srd.md"
   echo '{}' > "${scratch_srd_root}/ZCA4/.edm-state.json"
 
+  # EDMV4-T18/T57: this case's premise -- the target heading is genuinely absent from the write
+  # target -- only holds if the write target IS the mutated seed above. A freshly-stubbed
+  # writable-data-directory delta (branch (a)) always carries '## Anti-Patterns' regardless of
+  # what this case does to the seed, so branch (b) (shipped-tree-writable) must be forced by
+  # making every edm_data_dir() candidate unresolvable -- the same chmod-555-ancestor technique
+  # EDMV4-T20 AC2 uses for the identical purpose.
+  local roblock="$scratch/roblock"
+  mkdir -p "$roblock"
+  chmod 555 "$roblock"
+
   local before_hash after_hash out status
   before_hash="$(_harness_hash_file "$scratch_srd")"
 
   status=0
-  out="$(EDM_SRD_ROOT="$scratch_srd_root" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZCA4 srd 2>&1)" || status=$?
+  out="$(
+    export CLAUDE_PLUGIN_DATA="${roblock}/pd" XDG_DATA_HOME="${roblock}/xdg" HOME="${roblock}/home"
+    export EDM_SRD_ROOT="$scratch_srd_root"
+    bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZCA4 srd 2>&1
+  )" || status=$?
+  chmod 755 "$roblock"
   after_hash="$(_harness_hash_file "$scratch_srd")"
 
   [[ "$status" -eq 0 ]] \
@@ -4008,11 +4083,25 @@ g16_fenced_heading_only_case() {
   } > "${scratch_srd_root}/ZG16/audit-srd.md"
   echo '{}' > "${scratch_srd_root}/ZG16/.edm-state.json"
 
+  # EDMV4-T18/T57: this case's premise -- the target heading resolves only inside a fence, IN THE
+  # WRITE TARGET -- only holds if the write target is the mutated seed above. A freshly-stubbed
+  # writable-data-directory delta (branch (a)) always carries a real, unfenced '## Anti-Patterns',
+  # so branch (b) (shipped-tree-writable) must be forced the same way EDMV4-T20 AC2/CA-002 AC2
+  # above force it: make every edm_data_dir() candidate unresolvable via a chmod-555 ancestor.
+  local roblock="$scratch/roblock"
+  mkdir -p "$roblock"
+  chmod 555 "$roblock"
+
   local before_hash after_hash out status
   before_hash="$(_harness_hash_file "$scratch_srd")"
 
   status=0
-  out="$(EDM_SRD_ROOT="$scratch_srd_root" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZG16 srd 2>&1)" || status=$?
+  out="$(
+    export CLAUDE_PLUGIN_DATA="${roblock}/pd" XDG_DATA_HOME="${roblock}/xdg" HOME="${roblock}/home"
+    export EDM_SRD_ROOT="$scratch_srd_root"
+    bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZG16 srd 2>&1
+  )" || status=$?
+  chmod 755 "$roblock"
   after_hash="$(_harness_hash_file "$scratch_srd")"
 
   [[ "$status" -ne 0 ]] \
@@ -4494,7 +4583,10 @@ ca476_loud_diagnostic_case() {
     echo "### CA-476 control finding that is genuinely novel"
   } > "${scratch_srd_root}/ZC477/code-audit/pass-1_2026-08-16/REMEDIATION.md"
   echo '{}' > "${scratch_srd_root}/ZC477/.edm-state.json"
-  out="$(EDM_SRD_ROOT="$scratch_srd_root" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZC477 code 2>&1)"
+  # EDMV4-T18/T57: isolate CLAUDE_PLUGIN_DATA/HOME so this positive control's finding is judged
+  # novel against a fresh scratch delta rather than an ambient, persistent one that may already
+  # carry this exact title from a prior suite run on the same host.
+  out="$(CLAUDE_PLUGIN_DATA="$scratch/data" HOME="$scratch/home" XDG_DATA_HOME="" EDM_SRD_ROOT="$scratch_srd_root" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZC477 code 2>&1)"
   check "CA-476 loud -- positive control: a well-formed code report appends normally" \
     "1 new finding(s) appended" "$out"
   check_absent "CA-476 loud -- positive control: a well-formed code report emits no WARNING" \
@@ -4553,6 +4645,10 @@ ca476_library_hygiene_case() {
   # expose per entry); the drain mechanism itself (three-per-gate, oldest-by-date-first) is what
   # bounds that, per skills/code-audit/SKILL.md's own "drain is only as good as what enters it".
 
+  # NEEDS-NEW-TICKET (see the identical note above T56 AC1/AC7): this reads the real shipped
+  # docs/audit-patterns/ tree, so a CONTRACT-FAIL here is the same genuine, pre-existing
+  # code-audit.md defect T56 AC1/AC4 already name -- not an EDMV4-T18 relocation issue, and out of
+  # EDMV4-T57's Target Components (bin/tests/wave7-smoke.sh only).
   local ca476_contract_out ca476_contract_ec
   set +e
   ca476_contract_ec=0
@@ -7857,8 +7953,13 @@ echo "=== G35: cmd_update_patterns gains a test-coverage arm, wired from test-co
 g35_edm_state="$(cat "${PLUGIN_DIR}/bin/edm-state" 2>/dev/null)"
 check "G35 -- cmd_update_patterns accepts the test-coverage audit type" \
   "srd|ticket|qc|code|test-coverage" "$g35_edm_state"
-check "G35 -- cmd_update_patterns maps test-coverage to test-coverage-audit.md" \
-  "test-coverage) pattern_file=\"\${patterns_dir}/test-coverage-audit.md\"" "$g35_edm_state"
+# EDMV4-T18/T57: the per-type seed-file mapping this check pins moved out of cmd_update_patterns'
+# own body (where it lived as an inline `pattern_file=` case) into the single-sourced
+# pattern_seed_file_for() helper (shared with the read-side get-patterns, CA-533's own read-side
+# rationale) -- retargeted at that function's real, current shape rather than the pre-T18 one.
+check "G35 -- pattern_seed_file_for maps test-coverage to test-coverage-audit.md" \
+  'test-coverage) printf '"'"'%s\n'"'"' "${_psf_dir}/test-coverage-audit.md" ;;' \
+  "$(awk '/^pattern_seed_file_for\(\)/{f=1} f{print} f && /^}$/{exit}' "${PLUGIN_DIR}/bin/edm-state")"
 check "G35 -- cmd_update_patterns maps test-coverage's audit report to test-coverage.md" \
   'test-coverage) audit_report_path="${_dir}/test-coverage.md"' "$g35_edm_state"
 check "G35 -- test-coverage/SKILL.md calls update-patterns test-coverage after the auditor returns" \
@@ -8083,8 +8184,13 @@ g39_source_case() {
   } > "$wrapper"
   chmod +x "$wrapper"
 
+  # EDMV4-T18/T57: isolate CLAUDE_PLUGIN_DATA/HOME so this finding is judged novel against a
+  # fresh scratch delta rather than an ambient, persistent one that may already carry this exact
+  # title from a prior suite run on the same host -- G39's own point (SCRIPT_DIR resolution under
+  # sourcing) is orthogonal to which write branch fires, so isolating the data dir does not affect
+  # what this case is actually proving.
   local out
-  out="$(EDM_SRD_ROOT="$scratch_srd_root" bash "$wrapper" ZG39 srd 2>&1)" || true
+  out="$(CLAUDE_PLUGIN_DATA="$scratch/data" HOME="$scratch/home" XDG_DATA_HOME="" EDM_SRD_ROOT="$scratch_srd_root" bash "$wrapper" ZG39 srd 2>&1)" || true
   check "G39 -- cmd_update_patterns still finds the plugin's own docs/audit-patterns/ when sourced from a wrapper with a different \$0" \
     "1 new finding(s) appended" "$out"
   rm -rf "$scratch"
@@ -9228,6 +9334,9 @@ check "CA-416 -- positive control: the neutralized copy reports converged" \
 # through the 3.2.0 release (CA-127, then CA-483). CA-483's tripwire read only three of the
 # four -- CHANGELOG.md was never compared -- which is why this went stale a second time; this
 # tripwire now reads and compares all four, matching the count this comment states.
+# NOT EDMV4-T57's: a CA-531/plugin.json-vs-CHANGELOG.md failure here is the same version-drift
+# condition T64 AC1 already names below (plugin.json v3.3.0, CHANGELOG.md still v3.2.2) -- pending
+# cross-cutting version-bump work, unrelated to EDMV4-T18's pattern-delta relocation.
 # ---------------------------------------------------------------------------
 ca431_repo_root="$_HARNESS_REPO_ROOT"
 ca431_plugin_ver="$(jq -r '.version' "$ca431_repo_root/plugins/edm/.claude-plugin/plugin.json" 2>/dev/null || echo MISSING)"
