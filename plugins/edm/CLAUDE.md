@@ -1041,6 +1041,35 @@ contributor's rules.
 
 These are part of the methodology -- do not disable them in normal operation.
 
+### `edm-hookify`'s two-tier exit contract (EDMV4-T44)
+
+`edm-hookify eval` (see "Hookify rule format (canonical)" above for the rule schema it reads) uses
+the same violation-versus-setup-error split `edm-lint-staged-artifacts` already applies to `git
+commit`: a rule that fires and says "block" is a categorically different event from a rule file
+that is malformed or unreadable, and conflating them would let one team's typo silently block
+another team's commits.
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Clean -- no enabled rule matched, or only `warn` rules matched |
+| `1` | Setup error (malformed rule file, unknown operator, out-of-event field, or `jq` missing) -- **never blocking** |
+| `2` | At least one enabled rule matched with the literal `"action": "block"` |
+
+There is no fourth code. `action` defaults to `warn` when absent (EDMV4-T42 AC2), so a rule blocks
+only by explicit opt-in. A `warn` match's `<rule_id> warn <message>` line goes to stderr and never
+raises the exit code above 0 on its own; a `block` match's `<rule_id> block <message>` line stays
+on stdout, and a block always wins the exit code over a concurrent, unrelated setup error in a
+different rule file, without suppressing a concurrent warn.
+
+The two consumers this contract feeds translate exit 2 through their own existing mechanism --
+neither introduces a third refusal path: `edm-gateguard` translates it into a refusal through its
+own `emit_decision deny` function (AD2); `edm-stop-gate` translates it into its own exit 2 (the
+same code its `edm-state validate` blocking-class path already uses -- see the `Stop` row above).
+Exit 1 never escalates to a block in either consumer. Wiring either consumer to actually invoke
+`edm-hookify` on its gated path (file events on `edm-gateguard`'s allow path, stop events on
+`edm-stop-gate`) is `EDMV4-T45`'s; this section documents the contract those two call sites
+translate, built entirely inside the evaluator itself.
+
 `edm-lint-artifacts` and the git-commit hook now both honor `${user_config.srd_root}` through
 `EDM_SRD_ROOT` / `CLAUDE_PLUGIN_OPTION_SRD_ROOT` (CA-023) -- a relocated `srd_root` scopes the
 automatic commit-path enforcement the same way it scopes a direct `edm-lint-artifacts`
@@ -1094,6 +1123,17 @@ check, but its reach is narrower than the rule:
 
 To check a tree the automatic invocations miss, run `edm-lint-artifacts --path <dir>` by hand; it
 is read-only and calls no state resolution.
+
+**Hookify rule files (`.claude/edm-hookify/*.json`) are ASCII-only by the same rule above, and the
+gap in their automatic coverage is a stated fact, not an assumption of closure (EDMV4-T44).**
+Nothing reaches `.claude/edm-hookify/` through any automatic invocation, for two independent
+reasons: `edm-lint-artifacts`'s `collect_md_files` (`bin/edm-lint-artifacts:251-260`) is a plain
+`find` for `-name '*.md'`, so a `.json` rule file is skipped in every mode this plugin runs
+automatically, including the manual `--path` sweep named just above; and `edm-check-vocabulary`'s
+`SCOPE_ROOTS` (`bin/edm-check-vocabulary:98-107`) are all `${PLUGIN_ROOT}`-anchored, so a
+project's own rule directory sits outside its scope entirely regardless of file extension. A rule
+author must keep a rule file's `name`, `message`, and `pattern` values ASCII by hand; this gap is
+`EDMV4-57`'s to close, not closed here.
 
 **Imported third-party documents are ASCII-normalized on import** -- when an external document (a design review, a
 vendor report, a pasted analysis) is copied into an initiative's directory, the person or agent performing the
@@ -1153,7 +1193,7 @@ Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call the
 | `edm-check-skill-sync` | Regression tripwire (EDMV3-T39 AC7, amended per CA-089) run unconditionally by `bin/tests/run-all.sh`: asserts the dispatcher (`skills/orchestrator/SKILL.md`) holds no phase procedure body, that every phase skill still owns its own `## Operational Orchestration` section, and that no skill carries `disable-model-invocation: true` (which would block the dispatcher's Skill-tool call to it). |
 | `edm-check-verifier-sentinel` | Consumer-side check (VERIF-T03) for the completion-sentinel contract in this file's "Verifier completion sentinel (canonical)" section: `edm-check-verifier-sentinel <MARKER> <file> [expected-count]` reads only `tail -1` of `<file>` and refuses (exit 2) when the marker is missing/misplaced/malformed, or when `audited=` is below the expected count (from the sentinel's own `assigned=` field, an explicit `[expected-count]` argument, or a parsed `T{a}-T{b}` range). Exit 0 = complete; exit 2 = refusal; exit 1 = usage/setup error. Invoked from `skills/implement/SKILL.md`'s QC-shard merge step over every `qc/qc-shard-impl-*.md` and `qc/qc-shard-pass-*.md` before any content is written to `qc/qc-summary.md`. |
 | `edm-repo-readiness`  | `edm-repo-readiness [<PREFIX>] [--json <path>]` (EDMV4-T38) -- scores the repository EDM is about to work in, aggregating signals `edm-state` already computes into named, versioned readiness categories, feeding the 4.3 size classifier. This ticket landed the `bin/` scaffold only (`--help`, `SCRIPT_DIR`, `die()`, the exit-code contract, the text-to-stdout / JSON-to-file split, one real deterministic check); the six-category 0-10 rubric and `READINESS_RUBRIC_VERSION` are `EDMV4-T39`'s, wiring categories to `edm-state validate`/`session-start`/`get-coverage`/`metrics-report` is `EDMV4-T40`'s, and `EDMV4-T41` feeds the score into `skills/plan/SKILL.md`'s optional Phase 1 step and into the Step 1b.5 classifier -- see "Repository readiness feeds planning.md and the classifier (EDMV4-T41)" below. Exit 0 = repository scored (at any score); exit 2 = usage or setup error (unknown flag, `--json` with no path, `jq` missing). |
-| `edm-hookify`         | `edm-hookify list` \| `edm-hookify eval <file\|bash\|stop>` (EDMV4-T43) -- the evaluator for the hookify rule format ("Hookify rule format (canonical)" above). `eval` reads a JSON payload on stdin and evaluates every enabled rule for the named event in a single `jq` invocation (one classify pass, N per-rule projections from it) so per-call cost never multiplies with rule count. Each field a rule's conditions are matched against is truncated to 65536 characters (64 KiB for ASCII content) before evaluation -- a documented input-size cap, not a `timeout(1)` call (absent on stock macOS). Prints one `<rule_id> <action> <message>` line per matched rule. Exit 0 = clean (including zero rule files, e.g. an absent `.claude/edm-hookify/`); exit 1 = setup error (malformed rule file, unknown operator, out-of-event field, or `jq` missing) -- a malformed file is skipped and named on stderr, never blocking and never disabling the rest of the rule set. `action: block`'s exit-2 semantics land in `EDMV4-T44`, built on top of this evaluator. |
+| `edm-hookify`         | `edm-hookify list` \| `edm-hookify eval <file\|bash\|stop>` (EDMV4-T43; two-tier exit contract EDMV4-T44) -- the evaluator for the hookify rule format ("Hookify rule format (canonical)" above). `eval` reads a JSON payload on stdin and evaluates every enabled rule for the named event in a single `jq` invocation (one classify pass, N per-rule projections from it) so per-call cost never multiplies with rule count. Each field a rule's conditions are matched against is truncated to 65536 characters (64 KiB for ASCII content) before evaluation -- a documented input-size cap, not a `timeout(1)` call (absent on stock macOS). Prints one `<rule_id> <action> <message>` line per matched rule: a `warn` match's line goes to stderr and never raises the exit code on its own; a `block` match's line stays on stdout. Exit 0 = clean (no rule matched, or only `warn` rules matched, including zero rule files, e.g. an absent `.claude/edm-hookify/`); exit 1 = setup error (malformed rule file, unknown operator, out-of-event field, or `jq` missing) -- a malformed file is skipped and named on stderr, never blocking and never disabling the rest of the rule set; exit 2 = at least one enabled rule matched with the literal `"action": "block"` (a rule blocks only by explicit opt-in -- an absent `action` key defaults to `warn`, EDMV4-T42 AC2). A block always outranks a concurrent, unrelated setup error in the exit code (one contributor's typo must never mask another rule's legitimate block), and a block is reported alongside any concurrent warn rather than suppressing it. See "Hooks behavior" below for how `edm-gateguard` and `edm-stop-gate` translate this contract; wiring either consumer to actually call this evaluator is `EDMV4-T45`'s. |
 | `edm-stop-gate`       | Stop-hook completion gate (`EDMV4-T46`), the second entry in the `Stop` block's `hooks` array -- see "Hooks behavior" below for its full exit-code and noise-suppression contract. |
 
 ### Repository readiness feeds planning.md and the classifier (EDMV4-T41)
