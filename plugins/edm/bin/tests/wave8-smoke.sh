@@ -1365,7 +1365,16 @@ t35_functional_case
 
 # ---- AC8: these assertions live in wave8-smoke.sh, a suite bin/tests/run-all.sh discovers via
 # its *-smoke.sh glob (registration in _PREFERRED_ORDER is EDMV4-T53's separate concern). --------
-pass "EDMV4-T35 AC8 -- these assertions live in wave8-smoke.sh, discovered by run-all.sh's *-smoke.sh glob"
+# Wave-2 QC (shard 3): this was an UNCONDITIONAL pass -- no assertion behind it, incapable of
+# failing, counted as green. AC8's claim is checkable: this file must match the glob run-all.sh
+# discovers with, and must actually sit in the directory it sweeps.
+t35_ac8_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
+t35_ac8_self="$(basename "${BASH_SOURCE[0]:-$0}")"
+if [[ "$t35_ac8_self" == *-smoke.sh && -f "${t35_ac8_dir}/run-all.sh" && -f "${t35_ac8_dir}/${t35_ac8_self}" ]]; then
+  pass "EDMV4-T35 AC8 -- ${t35_ac8_self} matches run-all.sh's *-smoke.sh glob and sits beside it in ${t35_ac8_dir}"
+else
+  fail "EDMV4-T35 AC8 -- ${t35_ac8_self} is not discoverable by run-all.sh's *-smoke.sh sweep in ${t35_ac8_dir}"
+fi
 
 echo
 
@@ -1433,7 +1442,19 @@ check_absent "EDMV4-T36 AC7 -- no new write path introduced (no compliance_enabl
 # with (standard, standard) -- exactly the scenario AC8 describes -- rather than merely gesturing
 # at "at least standard" in the abstract, which would leave the trivial-tier-override case
 # untested. Already asserted above; not repeated here.
-pass "EDMV4-T36 AC8 -- trigger-hit-overrides-trivial-tier scenario is pinned by the check above (Step 1b.5 is prose, not an executable classifier -- see comment)"
+# Wave-2 QC (shard 3): this was an UNCONDITIONAL pass. The disclosure it carried is correct and
+# worth keeping -- Step 1b.5 is prose an LLM consumes, not an executable classifier, so the
+# runtime behaviour cannot be driven with synthetic signals here. But "cannot verify the
+# behaviour" does not license an assertion that cannot fail. QC adjudicated this PARTIAL, not a
+# D15 rework, because the runtime environment DOES exist (evals/run-eval.sh drives claude -p, and
+# /edm:verify-runtime is the sanctioned closer). So: assert the specification clause that IS
+# checkable, and leave the behaviour to /edm:verify-runtime.
+T36_AC8_BLOCK="$(_t34_extract_between "$ORCH_SKILL" '^\*\*Step 1b\.5' '^\*\*Step 1c')"
+if printf '%s\n' "$T36_AC8_BLOCK" | command grep -q "overrides the trivial tier's"; then
+  pass "EDMV4-T36 AC8 -- Step 1b.5 pins the trigger-hit-overrides-trivial-tier rule in prose (behaviour itself is runtime-only; closed by /edm:verify-runtime)"
+else
+  fail "EDMV4-T36 AC8 -- Step 1b.5 does not state the trigger-hit-overrides-trivial-tier rule"
+fi
 
 echo
 
@@ -1518,7 +1539,16 @@ check "EDMV4-T37 AC7 -- Step 1b.5 states the no-restatement requirement, citing 
   'Per guard D6, this step names values only and never restates' "$T36_BLOCK"
 
 # ---- AC8: these assertions live in wave8-smoke.sh, a suite bin/tests/run-all.sh discovers -------
-pass "EDMV4-T37 AC8 -- these assertions live in wave8-smoke.sh, discovered by run-all.sh's *-smoke.sh glob"
+# Wave-2 QC (shard 3): this was an UNCONDITIONAL pass -- no assertion behind it, incapable of
+# failing, counted as green. AC8's claim is checkable: this file must match the glob run-all.sh
+# discovers with, and must actually sit in the directory it sweeps.
+t37_ac8_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
+t37_ac8_self="$(basename "${BASH_SOURCE[0]:-$0}")"
+if [[ "$t37_ac8_self" == *-smoke.sh && -f "${t37_ac8_dir}/run-all.sh" && -f "${t37_ac8_dir}/${t37_ac8_self}" ]]; then
+  pass "EDMV4-T37 AC8 -- ${t37_ac8_self} matches run-all.sh's *-smoke.sh glob and sits beside it in ${t37_ac8_dir}"
+else
+  fail "EDMV4-T37 AC8 -- ${t37_ac8_self} is not discoverable by run-all.sh's *-smoke.sh sweep in ${t37_ac8_dir}"
+fi
 
 echo
 
@@ -1915,14 +1945,53 @@ T43_AC5_OUT="$(cd "$T43_DISABLED_DIR" && CLAUDE_PROJECT_DIR="$T43_DISABLED_DIR" 
 check_absent "EDMV4-T43 AC5 -- a disabled rule that would otherwise match produces no output" \
   "warn-no-console-log" "$T43_AC5_OUT"
 
-# ---- AC9: no file writes -- only stdout/stderr redirection appears in the script ---------------
-T43_AC9_HIT="$(grep -nE '>>|>[[:space:]]*"?\$[A-Za-z_]|[^a-zA-Z]tee[[:space:]]|mktemp' "$EDM_HOOKIFY" \
-  | grep -v '2>/dev/null\|>&2\|2>&1' || true)"
-if [[ -z "$T43_AC9_HIT" ]]; then
-  pass "EDMV4-T43 AC9 -- no file-write redirection, tee or mktemp found in edm-hookify"
+# ---- AC9: no file writes -- proven BEHAVIOURALLY, by running the script ------------------------
+# This was a static regex scan over edm-hookify's source. It produced five distinct false
+# positives in a row, each fixed by widening the scrub, each followed by another: the help
+# comment's `<file|bash|stop>`, that same token inside a quoted `die "usage: ..."`, a bare
+# `>/dev/null`, an fd-duplication form, and finally a jq GREATER-THAN comparison inside an
+# embedded jq program (`if ($unknown|length) > 0 then`). A regex cannot tell a shell redirect
+# from a `>` in embedded jq, a usage string, or a comment -- and each widening risked silencing
+# a real write (stripping quoted strings would have hidden `> "$VAR"` entirely).
+#
+# "Writes no files" is a BEHAVIOURAL property. Run the script and look at the filesystem: no
+# taxonomy of safe redirect forms, and no form nobody thought of can defeat it.
+T43_AC9_SANDBOX="${TMP}/t43-ac9-sandbox"
+rm -rf "$T43_AC9_SANDBOX"; mkdir -p "$T43_AC9_SANDBOX/.claude/edm-hookify"
+cp "${PLUGIN_DIR}/bin/tests/fixtures/hookify/warn-no-console-log.json" \
+   "$T43_AC9_SANDBOX/.claude/edm-hookify/" 2>/dev/null || true
+
+# Snapshot every path under the sandbox with its size and mtime.
+t43_ac9_snapshot() { ( cd "$1" && find . -type f -exec stat -f '%N %z %m' {} \; 2>/dev/null | sort ); }
+
+T43_AC9_BEFORE="$(t43_ac9_snapshot "$T43_AC9_SANDBOX")"
+( cd "$T43_AC9_SANDBOX" && CLAUDE_PROJECT_DIR="$T43_AC9_SANDBOX" "$EDM_HOOKIFY" list >/dev/null 2>&1 ) || true
+( cd "$T43_AC9_SANDBOX" && CLAUDE_PROJECT_DIR="$T43_AC9_SANDBOX" \
+    printf '%s' '{"tool_name":"Edit","tool_input":{"file_path":"x.js","new_text":"console.log(1)"}}' \
+    | "$EDM_HOOKIFY" eval file >/dev/null 2>&1 ) || true
+T43_AC9_AFTER="$(t43_ac9_snapshot "$T43_AC9_SANDBOX")"
+
+if [[ "$T43_AC9_BEFORE" == "$T43_AC9_AFTER" ]]; then
+  pass "EDMV4-T43 AC9 -- edm-hookify wrote no file: sandbox filesystem byte-identical after list and eval"
 else
-  fail "EDMV4-T43 AC9 -- found a possible file write in edm-hookify: ${T43_AC9_HIT}"
+  fail "EDMV4-T43 AC9 -- edm-hookify changed the filesystem. Before/after diff: $(diff <(printf '%s' "$T43_AC9_BEFORE") <(printf '%s' "$T43_AC9_AFTER") | head -5)"
 fi
+
+# Positive control: a script that DOES write must be caught, or the check above proves nothing.
+T43_AC9_WRITER="${TMP}/t43-ac9-writer.sh"
+# Take the target as $1 rather than deriving it: an earlier revision computed
+# "$(dirname "$0")/../t43-ac9-sandbox", which resolves one level ABOVE the sandbox, so the
+# control wrote nothing and reported the detector broken. The control catching its own path bug
+# is exactly why it exists -- without it, the clean PASS above would have been unearned.
+printf '%s\n' '#!/usr/bin/env bash' 'echo leaked > "$1/leak.txt"' > "$T43_AC9_WRITER"
+chmod +x "$T43_AC9_WRITER"
+T43_AC9_CTL_BEFORE="$(t43_ac9_snapshot "$T43_AC9_SANDBOX")"
+"$T43_AC9_WRITER" "$T43_AC9_SANDBOX" >/dev/null 2>&1 || true
+T43_AC9_CTL_AFTER="$(t43_ac9_snapshot "$T43_AC9_SANDBOX")"
+[[ "$T43_AC9_CTL_BEFORE" != "$T43_AC9_CTL_AFTER" ]] \
+  && pass "EDMV4-T43 AC9 -- positive control: the snapshot comparison detects a script that does write a file" \
+  || fail "EDMV4-T43 AC9 -- positive control FAILED: a known file write was not detected, so the clean result above proves nothing"
+rm -f "$T43_AC9_WRITER"; rm -rf "$T43_AC9_SANDBOX"
 
 # ---- AC7: no real `timeout` invocation -- every occurrence of the word is inside a comment -----
 T43_AC7_BAD="$(grep -nE '^[^#]*[^#[:alnum:]_]timeout[[:space:]]' "$EDM_HOOKIFY" | grep -vE '^\s*[0-9]+:\s*#' || true)"
@@ -2107,7 +2176,10 @@ t46_ac4_case() {
 
   local out rc=0
   out="$(edm-stop-gate 2>&1)" || rc=$?
-  local stdout_only; stdout_only="$(edm-stop-gate 2>/dev/null)"
+  # Wave-2 QC (shard 4): unguarded under `set -euo pipefail` -- edm-stop-gate exits 2 on a
+  # blocking anomaly, which killed the suite silently. The identical call below already carried
+  # `|| true`; this one did not. Eighth instance of the abort class commit bd582cc swept for.
+  local stdout_only; stdout_only="$(edm-stop-gate 2>/dev/null)" || true
   local line_count; line_count="$(printf '%s\n' "$out" | grep -c . || true)"
 
   [[ "$rc" -eq 0 ]] && pass "EDMV4-T46 AC4 -- informational-only case exits 0" \
