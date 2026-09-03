@@ -4014,5 +4014,163 @@ fi
 rm -rf "$T56_TMP"
 
 echo
+
+# =================================================================================================
+# EDMV4-T14: Write the fact-forcing denial content and the per-file MultiEdit loop
+# =================================================================================================
+# Own banded section, appended last (matching EDMV4-T18's and EDMV4-T47's own precedent above), so
+# a concurrent agent's own append to this file does not interleave with it. GATEGUARD/DATADIR_LIB
+# are already set by the EDMV4-T11/T12 sections above.
+echo "=== EDMV4-T14: fact-forcing denial content and the per-file MultiEdit loop ==="
+echo
+
+# t14_fresh_marker_env <outvar_proj> <outvar_data> -- stands up a scratch project directory and a
+# scratch CLAUDE_PLUGIN_DATA tree with a Phase 6 marker already written for that project, so every
+# case below starts from a clean "marker present, nothing checked yet" state.
+t14_fresh_marker_env() {
+  local __proj_out="$1" __data_out="$2"
+  local dir; dir="$(mktemp -d "${TMP}/t14-env.XXXXXX")"
+  mkdir -p "${dir}/proj" "${dir}/data/run"
+  local key
+  key="$(CLAUDE_PROJECT_DIR="${dir}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+  printf 'T14PFX\t%s\t2026-09-02T00:00:00Z\n' "${dir}/proj" > "${dir}/data/run/${key}.phase6"
+  printf -v "$__proj_out" '%s' "${dir}/proj"
+  printf -v "$__data_out" '%s' "${dir}/data"
+}
+
+# t14_run <proj> <data> <payload> [<mode>] -- runs edm-gateguard once against a fresh marker
+# environment already stood up by t14_fresh_marker_env, capturing stdout/stderr/rc into the
+# T14_RUN_* globals. Session state (the checked-file) persists across calls sharing the same
+# <data>, which is what lets a caller assert "deny once, allow on retry" across two invocations.
+t14_run() {
+  local proj="$1" data="$2" payload="$3" mode="${4:-exit-code}"
+  T14_RUN_RC=0
+  T14_RUN_OUT="$(printf '%s' "$payload" | CLAUDE_PROJECT_DIR="$proj" CLAUDE_PLUGIN_DATA="$data" \
+    EDM_GATEGUARD_DENY_MODE="$mode" bash "$GATEGUARD" 2>"${TMP}/t14-run.stderr")" || T14_RUN_RC=$?
+  T14_RUN_ERR="$(cat "${TMP}/t14-run.stderr" 2>/dev/null || true)"
+}
+
+# ---- AC1: an Edit denial emits exactly the four numbered facts, in order, each on a distinctive
+# substring rather than the whole block (AC8). exit-code mode puts the fact list on stderr. -------
+T14_AC1_PROJ="" T14_AC1_DATA=""
+t14_fresh_marker_env T14_AC1_PROJ T14_AC1_DATA
+t14_run "$T14_AC1_PROJ" "$T14_AC1_DATA" '{"tool_name":"Edit","tool_input":{"file_path":"src/foo.js"}}'
+[[ "$T14_RUN_RC" -eq 2 ]] && pass "EDMV4-T14 AC1 -- a first-touch Edit denies (exit 2 in exit-code mode)" \
+  || fail "EDMV4-T14 AC1 -- expected exit 2 for a first-touch Edit, got ${T14_RUN_RC}"
+check "EDMV4-T14 AC1/AC8 -- Edit fact 1 (import/require search) names the target path" \
+  "import or require this file (src/foo.js), searching the tree" "$T14_RUN_ERR"
+check "EDMV4-T14 AC1/AC8 -- Edit fact 2 (public functions/classes affected)" \
+  "public functions or classes affected by this change" "$T14_RUN_ERR"
+check "EDMV4-T14 AC1/AC8 -- Edit fact 3 (data-file field/structure/date-format disclosure)" \
+  "field names, structure and date format using redacted or synthetic values" "$T14_RUN_ERR"
+check "EDMV4-T14 AC1/AC8 -- Edit fact 4 (ticket AC quote, by {PREFIX}-T{NN} ID)" \
+  "acceptance criteria of the ticket being implemented, by its {PREFIX}-T{NN} ID" "$T14_RUN_ERR"
+T14_AC1_DENY_TEXT="$T14_RUN_ERR"
+
+# ---- Retry allows: the SAME path, same session (same data dir), on a second call allows silently.
+t14_run "$T14_AC1_PROJ" "$T14_AC1_DATA" '{"tool_name":"Edit","tool_input":{"file_path":"src/foo.js"}}'
+if [[ "$T14_RUN_RC" -eq 0 && -z "$T14_RUN_OUT" && -z "$T14_RUN_ERR" ]]; then
+  pass "EDMV4-T14 -- a retry on the SAME path in the same session allows silently (deny once, allow on retry)"
+else
+  fail "EDMV4-T14 -- retry mismatch: rc=${T14_RUN_RC} stdout=[${T14_RUN_OUT}] stderr=[${T14_RUN_ERR}]"
+fi
+
+# ---- AC2: a Write denial swaps facts 1/2 for the new-file variant; facts 3/4 are byte-identical --
+T14_AC2_PROJ="" T14_AC2_DATA=""
+t14_fresh_marker_env T14_AC2_PROJ T14_AC2_DATA
+t14_run "$T14_AC2_PROJ" "$T14_AC2_DATA" '{"tool_name":"Write","tool_input":{"file_path":"new-thing.js"}}'
+[[ "$T14_RUN_RC" -eq 2 ]] && pass "EDMV4-T14 AC2 -- a first-touch Write denies (exit 2 in exit-code mode)" \
+  || fail "EDMV4-T14 AC2 -- expected exit 2 for a first-touch Write, got ${T14_RUN_RC}"
+check "EDMV4-T14 AC2/AC8 -- Write fact 1 (name callers of the new file) names the target path" \
+  "call this new file (new-thing.js)" "$T14_RUN_ERR"
+check "EDMV4-T14 AC2/AC8 -- Write fact 2 (confirm no existing file serves the same purpose)" \
+  "Confirm no existing file already serves the same purpose" "$T14_RUN_ERR"
+check "EDMV4-T14 AC2 -- Write fact 3 is byte-identical to the Edit variant's fact 3" \
+  "field names, structure and date format using redacted or synthetic values" "$T14_RUN_ERR"
+check "EDMV4-T14 AC2 -- Write fact 4 is byte-identical to the Edit variant's fact 4" \
+  "acceptance criteria of the ticket being implemented, by its {PREFIX}-T{NN} ID" "$T14_RUN_ERR"
+check_absent "EDMV4-T14 AC2 -- Write denial does not carry the Edit variant's import-search fact" \
+  "import or require this file" "$T14_RUN_ERR"
+
+# ---- AC3: fact 4 is the ticket-AC form, never a restatement of the user's current instruction ----
+T14_AC3_COUNT="$(count_matches "quote the user.s current instruction" "$GATEGUARD")"
+check "EDMV4-T14 AC3 -- edm-gateguard never asks the agent to quote the user's current instruction" "0" "$T14_AC3_COUNT"
+T14_AC3_CONTROL="$(printf "%s\nquote the user's current instruction\n" "$(cat "$GATEGUARD")")"
+T14_AC3_CONTROL_COUNT="$(printf '%s\n' "$T14_AC3_CONTROL" | count_matches "quote the user.s current instruction")"
+[[ "$T14_AC3_CONTROL_COUNT" -ge 1 ]] \
+  && pass "EDMV4-T14 AC3 -- positive control: an injected 'quote the users current instruction' line IS detected" \
+  || fail "EDMV4-T14 AC3 -- positive control FAILED: the injected phrase was not detected, so the zero-count above proves nothing"
+
+# ---- AC4: MultiEdit iterates a three-file batch and denies on the first still-unchecked path,
+# returning immediately -- three successive calls each name a DIFFERENT path, and a fourth call
+# (every path now checked) allows. Tolerant-extraction synthetic fixture (edits[].file_path), per
+# this ticket's own Technical Notes: this proves the SCRIPT's own iteration/dedup logic against a
+# constructed payload, not a claim about what a live host's own MultiEdit tool call shape is --
+# that shape is UNTESTABLE from this environment (Spike B), and no assertion here claims otherwise.
+T14_AC4_PROJ="" T14_AC4_DATA=""
+t14_fresh_marker_env T14_AC4_PROJ T14_AC4_DATA
+T14_AC4_PAYLOAD='{"tool_name":"MultiEdit","tool_input":{"edits":[{"file_path":"a.js"},{"file_path":"b.js"},{"file_path":"c.js"}]}}'
+t14_run "$T14_AC4_PROJ" "$T14_AC4_DATA" "$T14_AC4_PAYLOAD"
+T14_AC4_RC1="$T14_RUN_RC" T14_AC4_ERR1="$T14_RUN_ERR"
+t14_run "$T14_AC4_PROJ" "$T14_AC4_DATA" "$T14_AC4_PAYLOAD"
+T14_AC4_RC2="$T14_RUN_RC" T14_AC4_ERR2="$T14_RUN_ERR"
+t14_run "$T14_AC4_PROJ" "$T14_AC4_DATA" "$T14_AC4_PAYLOAD"
+T14_AC4_RC3="$T14_RUN_RC" T14_AC4_ERR3="$T14_RUN_ERR"
+t14_run "$T14_AC4_PROJ" "$T14_AC4_DATA" "$T14_AC4_PAYLOAD"
+T14_AC4_RC4="$T14_RUN_RC" T14_AC4_OUT4="$T14_RUN_OUT" T14_AC4_ERR4="$T14_RUN_ERR"
+
+if [[ "$T14_AC4_RC1" -eq 2 && "$T14_AC4_RC2" -eq 2 && "$T14_AC4_RC3" -eq 2 ]]; then
+  pass "EDMV4-T14 AC4 -- three successive MultiEdit calls against an all-unchecked batch each deny (exit 2)"
+else
+  fail "EDMV4-T14 AC4 -- expected three exit-2 denials, got rc1=${T14_AC4_RC1} rc2=${T14_AC4_RC2} rc3=${T14_AC4_RC3}"
+fi
+check "EDMV4-T14 AC4 -- call 1 names a.js" "(a.js)" "$T14_AC4_ERR1"
+check "EDMV4-T14 AC4 -- call 2 names a DIFFERENT path, b.js" "(b.js)" "$T14_AC4_ERR2"
+check "EDMV4-T14 AC4 -- call 3 names the third, distinct path, c.js" "(c.js)" "$T14_AC4_ERR3"
+check_absent "EDMV4-T14 AC4 -- call 2 does not re-deny the already-checked a.js" "(a.js)" "$T14_AC4_ERR2"
+check_absent "EDMV4-T14 AC4 -- call 3 does not re-deny either already-checked path" "(b.js)" "$T14_AC4_ERR3"
+if [[ "$T14_AC4_RC4" -eq 0 && -z "$T14_AC4_OUT4" && -z "$T14_AC4_ERR4" ]]; then
+  pass "EDMV4-T14 AC4 -- the fourth call, every path now checked, allows silently (exit 0, empty output)"
+else
+  fail "EDMV4-T14 AC4 -- expected the fourth call to allow silently, got rc=${T14_AC4_RC4} stdout=[${T14_AC4_OUT4}] stderr=[${T14_AC4_ERR4}]"
+fi
+
+# ---- AC5: a MultiEdit batch where every file is ALREADY recorded checked allows on the first call,
+# exit 0, empty stdout -- pre-seed the checked-file directly rather than replaying three denials. --
+T14_AC5_PROJ="" T14_AC5_DATA=""
+t14_fresh_marker_env T14_AC5_PROJ T14_AC5_DATA
+T14_AC5_KEY="$(CLAUDE_PROJECT_DIR="$T14_AC5_PROJ" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+printf 'x.js\ny.js\nz.js\n' > "${T14_AC5_DATA}/run/${T14_AC5_KEY}.checked"
+T14_AC5_PAYLOAD='{"tool_name":"MultiEdit","tool_input":{"edits":[{"file_path":"x.js"},{"file_path":"y.js"},{"file_path":"z.js"}]}}'
+t14_run "$T14_AC5_PROJ" "$T14_AC5_DATA" "$T14_AC5_PAYLOAD" json
+if [[ "$T14_RUN_RC" -eq 0 && -z "$T14_RUN_OUT" && -z "$T14_RUN_ERR" ]]; then
+  pass "EDMV4-T14 AC5 -- a MultiEdit batch already fully checked allows on the first call (exit 0, empty stdout)"
+else
+  fail "EDMV4-T14 AC5 -- expected exit 0 with empty output, got rc=${T14_RUN_RC} stdout=[${T14_RUN_OUT}] stderr=[${T14_RUN_ERR}]"
+fi
+
+# ---- AC6: the denial text is plain ASCII -- no em dash, arrow, smart quote or emoji. Checked
+# against AC1's own real, captured denial output rather than a re-typed copy. grep tokenizes on
+# newline before matching each line against the bracket expression, so a plain multi-line ASCII
+# string never trips '[^ -~]' on its own line-separator bytes -- the T13 AC9 section above already
+# relies on this same idiom for a (single-line) payload; this reuses it for a multi-line one. -----
+if [[ -n "$T14_AC1_DENY_TEXT" ]] && ! printf '%s' "$T14_AC1_DENY_TEXT" | LC_ALL=C grep -q '[^ -~]'; then
+  pass "EDMV4-T14 AC6 -- the emitted fact text is plain ASCII (LC_ALL=C scan for bytes outside the printable range finds nothing)"
+else
+  fail "EDMV4-T14 AC6 -- the emitted fact text is empty or contains a non-ASCII byte: [${T14_AC1_DENY_TEXT}]"
+fi
+# Positive control: injecting a real (non-ASCII) em dash into the same text trips the same
+# detector, so the pass above is not vacuous -- "found 0 bytes outside range" and "the detector
+# can never fire" are otherwise indistinguishable.
+T14_AC6_UNICODE_CONTROL="$(printf '%s \xe2\x80\x94 real em dash\n' "$T14_AC1_DENY_TEXT")"
+if printf '%s' "$T14_AC6_UNICODE_CONTROL" | LC_ALL=C grep -q '[^ -~]'; then
+  pass "EDMV4-T14 AC6 -- positive control: injecting a real UTF-8 em dash into the fact text IS detected"
+else
+  fail "EDMV4-T14 AC6 -- positive control FAILED: an injected real em dash was not detected, so the ASCII-only pass above proves nothing"
+fi
+
+echo
+
+echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

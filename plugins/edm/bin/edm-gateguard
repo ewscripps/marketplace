@@ -1,33 +1,24 @@
 #!/usr/bin/env bash
 # edm-gateguard -- PreToolUse fact-forcing edit gate for Phase 6 (EDMV4-T11).
 #
-# Why this exists: every other EDM hook fires a handful of times per conversation. `PreToolUse`
-# fires exactly once per `git commit`, where a 3,000 ms budget is acceptable because a human is
-# already waiting on it. This hook fires on every Edit, Write and MultiEdit call -- tens to
-# hundreds of times per Phase 6 wave -- a different order of magnitude entirely, and the reason
-# every design choice below optimizes for the common case rather than the gated one:
+# Why this exists: `PreToolUse` fires exactly once per `git commit`, where a 3,000 ms budget is
+# fine because a human is waiting. This hook fires on every Edit/Write/MultiEdit call instead --
+# tens to hundreds of times per Phase 6 wave -- so every design choice below optimizes the common
+# case: a repository with no active Phase 6 initiative pays one process exec and one marker file
+# test, no other filesystem read, no parser subprocess. Two rejected designs: re-deriving "which
+# initiative is active" from a fresh sweep costs one parser subprocess per active initiative PER
+# EDIT (fifty at the plugin's own 50-initiative fixture); a full state checkpoint (write lock plus
+# a hash over every tracked artifact) is Stop/PreCompact-cadence work, not per-edit work.
 #
-#   * A repository with no active Phase 6 initiative pays exactly one process exec and one marker
-#     file test. No other filesystem read happens, and no parser subprocess is ever spawned.
-#   * Two rejected designs, recorded for anyone tempted to reach for them later: re-deriving "which
-#     initiative is active" from a fresh sweep on every call costs one interpreter startup plus one
-#     parser subprocess per active initiative (at a 50-initiative fixture, fifty subprocesses PER
-#     EDIT); anything shaped like a full state checkpoint (a write lock plus a hash over every
-#     tracked artifact) is Stop/PreCompact-cadence work, not per-edit work. Both are the failure
-#     mode the marker file exists to avoid, not an optimization left on the table.
+# Provenance (decisions.md D14, ratified at Gate 2): a from-scratch rewrite, not a port or a
+# vendored copy of either upstream implementation -- see CLAUDE.md's "Prompt conventions (house
+# style)" section for the recorded attribution.
 #
-# Provenance (decisions.md D14, ratified at Gate 2): this is a from-scratch rewrite, not a port or
-# a vendored copy of either upstream implementation -- see plugins/edm/CLAUDE.md's "Prompt
-# conventions (house style)" section for the recorded attribution once EDMV4-T16 lands.
-#
-# Scope of THIS build: the marker check, the allow path, and the host registration only. Decision
-# emission and its two selectable back-ends (EDMV4-T13), the fact-forcing denial content and the
-# per-file MultiEdit loop (EDMV4-T14), and the operational safety controls -- kill switches,
-# exemption globs, session state, the denial budget (EDMV4-T15) -- all land in follow-on tickets.
-# Every call that reaches the gated path below still allows today; that is deliberate, not a bug --
-# every acceptance criterion this build satisfies is independently completable without a working
-# deny path, because the function that will eventually deny anything lives inside this very file
-# and cannot exist before the file itself does.
+# Scope history: EDMV4-T11 built the marker check, the allow path, and the host registration.
+# EDMV4-T13 added the single emit_decision function with its two selectable back-ends. EDMV4-T14
+# wired the fact-forcing denial content into the Edit/Write/MultiEdit case arms and the per-file
+# MultiEdit loop. EDMV4-T15's operational safety controls -- kill switches, exemption globs, the
+# session-state cap/staleness rule, and the denial budget -- still land in a follow-on ticket.
 #
 # EDM-HELP-BEGIN
 # edm-gateguard - PreToolUse fact-forcing edit gate for Phase 6 (structural build).
@@ -43,21 +34,22 @@
 # uninstalled or partially-installed plugin never blocks a tool call it cannot evaluate.
 #
 # What runs today: a repository with no active Phase 6 marker allows immediately -- one process
-# exec, one marker file test, no other filesystem read, no parser subprocess. A repository WITH an
-# active Phase 6 marker also allows today (the deny mechanism is a follow-on ticket's own build),
-# but the gated code path is exercised so its cost is measurable ahead of that ticket landing.
+# exec, one marker file test, no other filesystem read, no parser subprocess. With a marker
+# present, an Edit/Write/MultiEdit call on a path not yet recorded checked this session is denied
+# with a numbered fact list and recorded checked; the identical path on a later call in the same
+# session allows. No kill switch, exemption glob or denial budget exists yet (EDMV4-T15).
 #
 # Exit codes:
-#   0  the tool call is allowed (the only outcome this build produces on the gated path), or
-#      -h/--help was requested.
+#   0  the tool call is allowed, or -h/--help was requested.
 #   1  a setup error (unexpected argument, an unparseable stdin payload, or a required parser
-#      missing once a marker is present). A setup error never blocks the tool call -- this is the
-#      same non-blocking convention every other hook in this plugin already applies (see
-#      plugins/edm/CLAUDE.md's "Hooks behavior" section), and it deliberately differs from this
-#      family of scripts' usual default of 2: on a PreToolUse hook, exit code 2 is how a real
-#      policy refusal blocks a call, so a plain setup error here must never reuse that code by
-#      accident. A later ticket's own decision-emitting function is what actually spends exit
-#      code 2, and only for a real refusal, never for a setup condition.
+#      missing once a marker is present). A setup error never blocks the tool call -- the same
+#      non-blocking convention every other hook in this plugin applies (CLAUDE.md's "Hooks
+#      behavior" section) -- and deliberately differs from this family of scripts' usual default
+#      of 2: on a PreToolUse hook, that code is how a real policy refusal blocks a call in
+#      exit-code deny mode, so a setup error here must never reuse it by accident.
+#   2  (exit-code deny mode only) a real refusal -- the fact list is on stderr. In the default
+#      json deny mode, a refusal instead exits 0 with a hookSpecificOutput payload on stdout; see
+#      emit_decision() below for the full contract.
 # EDM-HELP-END
 set -euo pipefail
 
@@ -209,25 +201,104 @@ emit_decision() {
   esac
 }
 
+# ---- EDMV4-T14: per-file "checked" session state -- deny first touch, allow on retry. A minimal,
+# append-only form lives here; EDMV4-T15 upgrades this exact surface with a 500-entry cap and a
+# 30-minute staleness/truncation rule ("Session state lives at ${data}/run/<project-key>.checked").
+# No kill switch, exemption glob or denial budget exists yet -- every call below denies once per
+# path and allows thereafter, unconditionally, until EDMV4-T15 lands.
+GG_STATE_DIR=""
+if declare -F edm_data_dir >/dev/null 2>&1; then
+  GG_STATE_DIR="$(edm_data_dir)"
+  [[ -n "$GG_STATE_DIR" ]] && GG_STATE_DIR="${GG_STATE_DIR}/run"
+fi
+GG_CHECKED_FILE=""
+if [[ -n "$GG_STATE_DIR" ]]; then
+  GG_CHECKED_FILE="${GG_STATE_DIR}/$(edm_project_key).checked"
+fi
+
+# gg_is_checked <file_path> -- true if <file_path> was already recorded checked this session.
+gg_is_checked() {
+  local target="$1"
+  [[ -n "$GG_CHECKED_FILE" && -f "$GG_CHECKED_FILE" ]] || return 1
+  grep -Fxq -- "$target" "$GG_CHECKED_FILE" 2>/dev/null
+}
+
+# gg_mark_checked <file_path> -- records <file_path> as checked so a retry on the same path
+# allows. Best-effort: a write failure here is never a reason to deny -- the caller has already
+# decided to deny with facts by the time this runs, and EDMV4-T15 is what makes every state-write
+# failure path explicitly non-blocking end to end (its own AC7); this build already never treats
+# a failed mark as a reason to change the decision just made.
+gg_mark_checked() {
+  local target="$1"
+  [[ -n "$GG_CHECKED_FILE" ]] || return 0
+  mkdir -p "$(dirname "$GG_CHECKED_FILE")" 2>/dev/null || return 0
+  printf '%s\n' "$target" >> "$GG_CHECKED_FILE" 2>/dev/null || true
+}
+
+# gg_build_facts <edit|write> <path> -- the four numbered facts a denial forces the agent to
+# produce (EDMV4-T14 AC1/AC2). Facts 3 and 4 are byte-identical between the two variants; only
+# facts 1 and 2 swap (AC2). Fact 4 deliberately asks for the ticket's own acceptance criteria, by
+# ID, never the user's current instruction (AC3): EDM substitutes a fact it already has for a
+# better one, reinforcing ticket traceability instead of re-narrating a prompt the agent holds.
+# This wording is EDM's own -- no text is copied from either upstream source (AC7).
+gg_build_facts() {
+  local kind="$1" path="$2"
+  local fact1 fact2
+  if [[ "$kind" == "write" ]]; then
+    fact1="1. Name the file(s) and line(s) that will call this new file (${path})."
+    fact2="2. Confirm no existing file already serves the same purpose as this new file."
+  else
+    fact1="1. List all files that import or require this file (${path}), searching the tree."
+    fact2="2. List the public functions or classes affected by this change."
+  fi
+  printf '%s\n%s\n%s\n%s' \
+    "$fact1" \
+    "$fact2" \
+    "3. If this file reads or writes data files, show field names, structure and date format using redacted or synthetic values -- never raw production data." \
+    "4. Quote the acceptance criteria of the ticket being implemented, by its {PREFIX}-T{NN} ID."
+}
+
 # ---- Dispatch on tool name. Bash 3.2 floor (C1): a `case` over a small, fixed name set is the
-# portable form here, not an associative array keyed by tool name -- the same idiom the fact-list
-# and per-file MultiEdit loop (EDMV4-T14) will extend rather than replace. -------------------------
+# portable form here, not an associative array keyed by tool name. -------------------------------
 case "$TOOL_NAME" in
   Edit)
-    # Extension point: EDMV4-T14 wires the four-fact Edit denial here, calling emit_decision deny
-    # with that content. emit_decision itself (EDMV4-T13) already exists above; what is still
-    # missing is the fact text and the decision of WHETHER to deny (EDMV4-T15's kill switches,
-    # exemption globs and session state) -- neither is this ticket's scope.
-    : ;;
+    GG_TARGET="$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.file_path // empty' 2>/dev/null)"
+    if [[ -n "$GG_TARGET" ]] && ! gg_is_checked "$GG_TARGET"; then
+      gg_mark_checked "$GG_TARGET"
+      emit_decision deny "$(gg_build_facts edit "$GG_TARGET")"
+    fi
+    ;;
   Write)
-    # Extension point: EDMV4-T14 wires the swapped-fact Write denial here (name the caller, confirm
-    # no existing file already serves the same purpose, in place of the Edit variant's import-
-    # search facts) the same way.
-    : ;;
+    GG_TARGET="$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.file_path // empty' 2>/dev/null)"
+    if [[ -n "$GG_TARGET" ]] && ! gg_is_checked "$GG_TARGET"; then
+      gg_mark_checked "$GG_TARGET"
+      emit_decision deny "$(gg_build_facts write "$GG_TARGET")"
+    fi
+    ;;
   MultiEdit)
-    # Extension point: EDMV4-T14's per-file loop iterates the batch here and denies on the first
-    # still-unchecked path, returning immediately rather than evaluating the rest of the batch.
-    : ;;
+    # EDMV4-T14 AC4/AC5. Tolerant of both the SRD's assumed multi-file batch shape
+    # (edits[].file_path) and Claude Code's own documented single-file MultiEdit shape
+    # (tool_input.file_path plus edits[] of old_string/new_string, with no per-edit file_path) --
+    # collected into one de-duplicated, sorted list rather than assuming either. This could not be
+    # confirmed against a live host from this environment (decisions.md records the restraint);
+    # the extraction degrades to a one-element list under the single-file shape, which behaves
+    # exactly like a normal Edit denial on that one path. Denies on the first still-unchecked path
+    # and returns immediately via emit_decision's own exit, never evaluating the rest of the batch
+    # in the same call. Reuses the Edit fact set -- MultiEdit only ever touches files that already
+    # exist, never a new file, so the Write variant's facts do not apply here.
+    GG_MULTI_FILES="$(printf '%s' "$PAYLOAD" | jq -r '
+      ([.tool_input.file_path] + [.tool_input.edits[]?.file_path?])
+      | map(select(. != null and . != ""))
+      | unique[]
+    ' 2>/dev/null)"
+    while IFS= read -r GG_TARGET; do
+      [[ -z "$GG_TARGET" ]] && continue
+      if ! gg_is_checked "$GG_TARGET"; then
+        gg_mark_checked "$GG_TARGET"
+        emit_decision deny "$(gg_build_facts edit "$GG_TARGET")"
+      fi
+    done <<< "$GG_MULTI_FILES"
+    ;;
   *)
     # A tool name reached the gated path that this gate does not target (a future matcher change,
     # or a payload this build did not anticipate). Allow rather than guess at a decision for a
@@ -236,39 +307,16 @@ case "$TOOL_NAME" in
     : ;;
 esac
 
-# Every branch above currently falls through to here: no ticket has yet wired a real deny
-# condition into any of the three cases (that is EDMV4-T14's fact content and EDMV4-T15's
-# operational controls), so this build's own behavior is still an unconditional allow -- but it is
-# now emitted through the single decision-emitting function above rather than a bare `exit 0`,
-# so AC1 holds even before a real denial exists anywhere in this file.
+# Every branch above allows silently once every path in scope for this call is already checked
+# (or the tool name is one this gate does not target, or no file_path could be extracted at all)
+# -- emitted through the single decision-emitting function above rather than a bare `exit 0`.
 emit_decision allow ""
 
 # =====================================================================================================
-# Reference for the follow-on tickets that build on this file (not executed -- documentation only).
-#
-# The performance target table this build's own allow path is measured against names two rows:
-#   * allow path (marker absent):            50 ms p95, one repository with no active Phase 6
-#                                             initiative, over 20 samples -- `timing.sh --gateguard`.
-#   * gated path (marker present, first touch): 1 exec, 2-3 stat, 1 parser invocation, 1 small
-#                                             append -- the cumulative shape across every ticket that
-#                                             touches this file, not a single ticket's own budget.
-#
-# What accrues where, so a future contributor does not re-derive the split from scratch:
-#   * This ticket (T11) spends: 1 exec, 1 stat (the marker test above), 1 parser invocation (the
-#     tool_name parse above) once the marker is present -- and zero of either on the allow path.
-#   * EDMV4-T15's session-state file (`${data}/run/<project-key>.checked`) is where the remaining
-#     1-2 stat calls (reading, then checking the state file's own mtime for the 30-minute staleness
-#     rule) and the 1 small append land -- neither exists in this build, by design (Out of Scope).
-#   * EDMV4-T13's decision-emitting function and EDMV4-T14's fact content are what turn today's
-#     unconditional allow on the gated path into an actual first-touch denial; neither changes the
-#     op-count shape above, since the marker test, the parser invocation, and the state-file work
-#     are the operations the table already accounts for.
-#
-# None of the above is invoked from this file today. It is recorded here, rather than only in the
-# ticket pack, because the next contributor to touch this file is more likely to open it than to
-# re-read `srd.md` Sec.9.1 first.
-#
-# `bin/tests/timing.sh --gateguard` measures both branches -- marker-absent and marker-present --
-# against a generated fixture, so a change to either branch's cost shows up as a real number the
-# next time that mode runs, rather than as an assumption nobody re-checked.
+# Performance reference (not executed -- documentation only). Allow path (marker absent): 50 ms p95,
+# one repository with no active Phase 6 initiative, over 20 samples -- `timing.sh --gateguard`. Gated
+# path (marker present, first touch): 1 exec, a handful of stat calls plus the session-state read/
+# append EDMV4-T15 adds, 1 parser invocation -- measured by the same `--gateguard` mode's other
+# branch, against a generated fixture, so a change to either branch's cost shows up as a real number
+# rather than an assumption nobody re-checked.
 # =====================================================================================================
