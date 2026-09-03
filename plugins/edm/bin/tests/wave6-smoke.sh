@@ -3502,22 +3502,41 @@ round_partial="$("$EDM_STATE" audit-round-start T27ROUND code --lenses L1,L9,L11
   || fail "T27 AC1 -- audit-round-start echoed '$round_partial', expected 2"
 "$EDM_STATE" get T27ROUND | jq -e '.audit_rounds.code.rounds[-1].round_type == "partial"' >/dev/null \
   && pass "T27 AC1 -- --lenses L1,L9,L11 records round_type=partial" \
-  || fail "T27 AC1 -- round_type is not 'partial' after a 3-of-11 lens round"
+  || fail "T27 AC1 -- round_type is not 'partial' after a 3-of-14 lens round"
 partial_lenses="$(jq -r '.audit_rounds.code.rounds[-1].lenses | join(",")' "$STATE_T27ROUND")"
 [[ "$partial_lenses" == "L1,L9,L11" ]] && pass "T27 AC1 -- the recorded lens set matches --lenses exactly" \
   || fail "T27 AC1 -- recorded lenses = '$partial_lenses', expected L1,L9,L11"
 
-# ---- AC1 (full round via an explicit --lenses listing all eleven) --------------------------
+# ---- AC1 (an explicit --lenses listing of the original eleven is no longer a full set at 14 --
+# EDMV4-T30: this assertion used to claim round_type=full here, which was correct only against
+# the pre-EDMV4-T21 ALL_LENS_IDS (11 members). EDMV4-T21 grew ALL_LENS_IDS to 14, so an 11-of-14
+# listing genuinely IS partial now -- the assertion is corrected to its new true value rather than
+# weakened or removed. EDMV4-T22 AC7 below independently re-confirms the identical value from the
+# same round via `$all11_round_type`; the two checks are deliberately redundant, not duplicative --
+# each landed under a different ticket's scope.) -----------------------------------------------
 round_all11="$("$EDM_STATE" audit-round-start T27ROUND code --lenses L1,L2,L3,L4,L5,L6,L7,L8,L9,L10,L11)"
 all11_round_type="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$STATE_T27ROUND")"
-[[ "$all11_round_type" == "full" ]] && pass "T27 AC1 -- --lenses listing all eleven records round_type=full" \
-  || fail "T27 AC1 -- round_type = '$all11_round_type', expected full for an explicit all-11 listing"
-# EDMV4-T21 KNOWN REGRESSION (expected, not a bug in this ticket): ALL_LENS_IDS grew from 11 to
-# 14 lenses, so an explicit --lenses listing only the original eleven is no longer a full set --
-# this assertion now correctly reports round_type=partial for an 11-of-14 listing. Rewriting this
-# assertion (and the eight analogous "eleven lens agent files" fixture-count assertions in
-# wave7-smoke.sh) is EDMV4-T30's owned scope, not this ticket's; it is deliberately left failing
-# here rather than weakened or silently patched.
+[[ "$all11_round_type" == "partial" ]] && pass "T27 AC1 -- --lenses listing the original eleven (11-of-14) now records round_type=partial" \
+  || fail "T27 AC1 -- round_type = '$all11_round_type', expected partial for an 11-of-14 listing"
+
+# ---- AC1 (full round via an explicit --lenses listing all fourteen) ------------------------
+round_all14="$("$EDM_STATE" audit-round-start T27ROUND code --lenses L1,L2,L3,L4,L5,L6,L7,L8,L9,L10,L11,L12,L13,L14)"
+all14_round_type="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$STATE_T27ROUND")"
+[[ "$all14_round_type" == "full" ]] && pass "T27 AC1 -- --lenses listing all fourteen records round_type=full" \
+  || fail "T27 AC1 -- round_type = '$all14_round_type', expected full for an explicit all-14 listing"
+
+# ---- AC1 (N/A composition: 13-of-14 plus --na-lenses L13 records full; the identical 13-of-14
+# listing with --na-lenses omitted records partial -- the L13-conditional lens legitimately
+# closes the coverage gap only when explicitly declared N/A) ---------------------------------
+round_13na="$("$EDM_STATE" audit-round-start T27ROUND code --lenses L1,L2,L3,L4,L5,L6,L7,L8,L9,L10,L11,L12,L14 --na-lenses L13)"
+t27_13na_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$STATE_T27ROUND")"
+[[ "$t27_13na_rt" == "full" ]] && pass "T27 AC1 -- --lenses naming 13 IDs plus --na-lenses L13 records round_type=full" \
+  || fail "T27 AC1 -- round_type = '$t27_13na_rt', expected full for 13-of-14 plus L13 declared N/A"
+
+round_13no_na="$("$EDM_STATE" audit-round-start T27ROUND code --lenses L1,L2,L3,L4,L5,L6,L7,L8,L9,L10,L11,L12,L14)"
+t27_13no_na_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$STATE_T27ROUND")"
+[[ "$t27_13no_na_rt" == "partial" ]] && pass "T27 AC1 -- --lenses naming 13 IDs with --na-lenses omitted records round_type=partial" \
+  || fail "T27 AC1 -- round_type = '$t27_13no_na_rt', expected partial for a 13-of-14 listing with no N/A declared"
 
 # =================================================================================
 # EDMV4-T21: ALL_LENS_IDS grows to fourteen; CONDITIONAL_LENS_IDS sibling added
