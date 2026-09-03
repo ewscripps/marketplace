@@ -477,7 +477,7 @@ done
 echo
 echo "T03 AC9 -- documented agent count matches disk (count-drift guard)"
 t03_disk_count="$(ls "$PLUGIN_DIR"/agents/*.md 2>/dev/null | wc -l | tr -d '[:space:]')"
-# CLAUDE.md documents the 11 edm-audit-* lenses collectively ("all 11 `edm-audit-*` lenses"), not
+# CLAUDE.md documents the 14 edm-audit-* lenses collectively ("all 14 `edm-audit-*` lenses"), not
 # by individual backtick mention (unlike every other agent) -- so the drift guard is two parts:
 # every OTHER agent named individually by backtick token that matches a real agents/*.md file,
 # plus the wildcard-with-explicit-count phrase for the lens class.
@@ -1488,7 +1488,7 @@ t66ac6_skill_manifest="$(jq -r '.plugins[] | select(.name=="edm") | .skills | le
 
 echo
 echo "T66 AC7 -- lens tiering table update: BLOCKED on EDMV3-T48 (out of this ticket's scope, not"
-echo "  yet run -- all 11 lens agents remain opus/max on disk). Recorded honestly in CHANGELOG.md"
+echo "  yet run -- all 14 lens agents remain opus/max on disk). Recorded honestly in CHANGELOG.md"
 echo "  rather than asserted here as a passing case (D15: an unmet precondition is not faked)."
 
 echo
