@@ -1056,6 +1056,97 @@ t27_lint_exit=$?
 echo
 
 # =================================================================================================
+# EDMV4-T26 -- Lens L13 (Type Design) agent file -- the sole conditional lens
+# =================================================================================================
+echo
+echo "=== EDMV4-T26: edm-audit-type-design.md (lens L13, conditional) ==="
+
+L13_AGENT="${PLUGIN_DIR}/agents/edm-audit-type-design.md"
+L13_TEXT="$(cat "$L13_AGENT" 2>/dev/null || true)"
+
+[[ -f "$L13_AGENT" ]] && pass "EDMV4-T26 AC1 -- edm-audit-type-design.md exists" \
+  || fail "EDMV4-T26 AC1 -- edm-audit-type-design.md is missing"
+
+echo "EDMV4-T26 AC1 -- house-contract headings present, in order"
+t26_headings_expected="## Scope
+## What You Hunt For
+## False Alarm Filter
+## Output
+## Output Format
+## JSONL Line Format
+## When this does NOT apply"
+t26_headings_actual="$(awk '/^```/{f=!f;next} !f' "$L13_AGENT" | grep -E '^## ')"
+[[ "$t26_headings_actual" == "$t26_headings_expected" ]] \
+  && pass "EDMV4-T26 AC1 -- the seven house-contract headings appear in the required order" \
+  || fail "EDMV4-T26 AC1 -- heading order/content mismatch:\n${t26_headings_actual}"
+
+echo "EDMV4-T26 AC2 -- four type-design dimensions present"
+check "EDMV4-T26 AC2a -- encapsulation" "Encapsulation" "$L13_TEXT"
+check "EDMV4-T26 AC2b -- invariant expression" "Invariant Expression" "$L13_TEXT"
+check "EDMV4-T26 AC2c -- invariant usefulness" "Invariant Usefulness" "$L13_TEXT"
+check "EDMV4-T26 AC2d -- enforcement" "Enforcement" "$L13_TEXT"
+
+echo "EDMV4-T26 AC3 -- N/A framed as inapplicability; cost is never a reason to skip"
+check "EDMV4-T26 AC3 -- 'inapplicability' framing present" "inapplicability" "$L13_TEXT"
+check "EDMV4-T26 AC3 -- cost-is-never-a-reason sentence present" "cost is never a reason to skip this lens" "$L13_TEXT"
+
+echo "EDMV4-T26 AC4 -- agrees with Step 1's determination, never re-derives; mismatch is a contract violation"
+check "EDMV4-T26 AC4 -- agrees with Step 1, does not decide applicability itself" \
+  "This agent does not decide that inapplicability itself" "$L13_TEXT"
+check "EDMV4-T26 AC4 -- 'agrees with that determination and never substitutes' present" \
+  "This agent's N/A exit agrees with that determination and never substitutes" "$L13_TEXT"
+check "EDMV4-T26 AC4 -- mismatch-is-a-contract-violation sentence present, test-integration form" \
+  "a mismatch between this agent's exit and Step 1's determination" "$L13_TEXT"
+check "EDMV4-T26 AC4 -- cites the edm-test-integration.md N/A-agreement precedent" \
+  "agents/edm-test-integration.md:21-25" "$L13_TEXT"
+
+echo "EDMV4-T26 AC5 -- absence is authoritative; nothing written on N/A"
+check "EDMV4-T26 AC5 -- explicit no-lens-L13.md/.jsonl/placeholder sentence" \
+  "no \`lens-L13.md\`, no \`lens-L13.jsonl\`, no placeholder" "$L13_TEXT"
+check "EDMV4-T26 AC5 -- 'Absence is authoritative' stated" "Absence is authoritative" "$L13_TEXT"
+
+echo "EDMV4-T26 AC6 -- L13 is the sole member of CONDITIONAL_LENS_IDS"
+# shellcheck disable=SC2034 # sourced only for its CONDITIONAL_LENS_IDS side effect
+t26_cond_lens_ids="$(source "$EDM_STATE" >/dev/null 2>&1; echo "$CONDITIONAL_LENS_IDS")"
+t26_cond_lens_count="$(printf '%s\n' $t26_cond_lens_ids | grep -c '.')" || true
+[[ "$t26_cond_lens_ids" == "L13" && "${t26_cond_lens_count:-0}" -eq 1 ]] \
+  && pass "EDMV4-T26 AC6 -- CONDITIONAL_LENS_IDS has exactly one member and it is L13" \
+  || fail "EDMV4-T26 AC6 -- CONDITIONAL_LENS_IDS = '${t26_cond_lens_ids}' (count ${t26_cond_lens_count:-0}), expected exactly 'L13'"
+
+echo "EDMV4-T26 AC8 -- no GateGuard or other self-reported effect-size number cited as a target"
+check_absent "EDMV4-T26 AC8 -- no GateGuard citation in the L13 agent file" "GateGuard" "$L13_TEXT"
+
+echo "EDMV4-T26 AC9 -- lens ID L13 used consistently; Output Format anchors to canonical-sections"
+check "EDMV4-T26 AC9 -- md output path" '${OUTPUT_DIR}/lens-L13.md' "$L13_TEXT"
+check "EDMV4-T26 AC9 -- jsonl output path" '${OUTPUT_DIR}/lens-L13.jsonl' "$L13_TEXT"
+check "EDMV4-T26 AC9 -- schema line names lens L13" '"lens":"L13"' "$L13_TEXT"
+check "EDMV4-T26 AC9 -- cites CLAUDE.md Sec.\"Severity vocabulary\"" 'CLAUDE.md Sec."Severity vocabulary"' "$L13_TEXT"
+check "EDMV4-T26 AC9 -- Read docs/canonical-sections.md anchoring instruction present" \
+  'Read `docs/canonical-sections.md`' "$L13_TEXT"
+check "EDMV4-T26 AC9 -- anchoring qualifier (never the caller's cwd) present" \
+  "never the caller's cwd" "$L13_TEXT"
+
+echo "EDMV4-T26 AC10 -- does not restate EDMV4-T24 AC2's stack-marker filenames"
+for t26_marker in tsconfig.json Cargo.toml go.mod pyproject.toml mypy.ini pyrightconfig.json; do
+  check_absent "EDMV4-T26 AC10 -- marker filename '${t26_marker}' absent from the L13 agent file" \
+    "$t26_marker" "$L13_TEXT"
+done
+
+echo "EDMV4-T26 AC11 -- edm-check-grants passes; edm-lint-artifacts is clean"
+if bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>"${SCRIPT_DIR}/.t26-grants.err"; then
+  pass "EDMV4-T26 AC11 -- edm-check-grants exits 0"
+else
+  fail "EDMV4-T26 AC11 -- edm-check-grants exited non-zero: $(cat "${SCRIPT_DIR}/.t26-grants.err")"
+fi
+rm -f "${SCRIPT_DIR}/.t26-grants.err"
+t26_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${PLUGIN_DIR}/agents/" 2>&1)"
+t26_lint_exit=$?
+[[ "$t26_lint_exit" -eq 0 ]] && pass "EDMV4-T26 AC11 -- edm-lint-artifacts --path agents/ is clean" \
+  || fail "EDMV4-T26 AC11 -- edm-lint-artifacts reported violations: ${t26_lint_out}"
+
+echo
+
+# =================================================================================================
 # EDMV4-T16 -- ECC and GateGuard provenance recorded in the house-style attribution section
 # =================================================================================================
 # AC6: `zunoworks` and `MIT` must both appear WITHIN the "Prompt conventions (house style)"
