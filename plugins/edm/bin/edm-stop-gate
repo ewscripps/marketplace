@@ -69,6 +69,19 @@ soft_exit() {
   exit 0
 }
 
+# stop_gate_emit_blocking <label> <text> -- the single point this gate writes untrusted,
+# interpolated text to stderr (EDMV4-T52 AC6). Both call sites below (a blocking `edm-state
+# validate` anomaly line, which can name a repository path, and a matched stop-event hookify
+# rule's own message text) route through here, so the sanitization has exactly one site. <label>
+# is this script's own literal text and is never sanitized; <text> is the untrusted half. Every
+# byte outside tab/CR/LF and the printable ASCII range 0x20-0x7E is replaced with '?' rather than
+# dropped, preserving <text>'s line structure.
+stop_gate_emit_blocking() {
+  local label="$1" text="$2"
+  echo "$label" >&2
+  printf '%s\n' "$text" | LC_ALL=C tr -c '\011\012\015\040-\176' '?' >&2
+}
+
 command -v edm-state >/dev/null 2>&1 || exit 0
 
 ACTIVE_OUTPUT=""
@@ -130,8 +143,7 @@ for _prefix in "${ACTIVE_PREFIXES[@]}"; do
 
   if [[ -n "$_blocking_text" ]]; then
     ANY_BLOCKING=1
-    echo "[EDM] blocking anomaly for initiative ${_prefix}:" >&2
-    printf '%s\n' "$_blocking_text" >&2
+    stop_gate_emit_blocking "[EDM] blocking anomaly for initiative ${_prefix}:" "$_blocking_text"
   fi
 
   if [[ "$_info_count" -gt 0 ]]; then
@@ -151,8 +163,7 @@ if command -v edm-hookify >/dev/null 2>&1; then
   # setup-error status never escalates -- edm-hookify already warned on stderr for that case.
   if [[ "$_hookify_rc" -eq 2 ]]; then
     ANY_BLOCKING=1
-    echo "[EDM] a stop-event hookify rule matched:" >&2
-    printf '%s\n' "$_hookify_out" >&2
+    stop_gate_emit_blocking "[EDM] a stop-event hookify rule matched:" "$_hookify_out"
   fi
 fi
 

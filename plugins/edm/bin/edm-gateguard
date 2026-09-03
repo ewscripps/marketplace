@@ -149,6 +149,18 @@ EDM_GATEGUARD_DENY_MODE_DEFAULT="json"
 emit_decision() {
   local decision="$1"
   local reason="${2:-}"
+  # EDMV4-T52 AC6: sanitize BEFORE anything else touches $reason, including the `jq -cn --arg`
+  # call the json back-end makes below. $reason is built from gg_build_facts() (which
+  # interpolates the target file path verbatim) and/or a matched hookify rule's own message text
+  # (EDMV4-T45's allow-path wiring) -- both originate outside this plugin, from a repository or a
+  # rule author this gate has no control over, and a repository path may legitimately contain a
+  # non-ASCII byte. Every byte outside tab/CR/LF and the printable ASCII range 0x20-0x7E is
+  # replaced with '?' rather than dropped, so the fact count and line structure of the surrounding
+  # denial text is unchanged. Sanitizing FIRST also protects the JSON control channel (AC7): jq
+  # requires valid UTF-8 input, so a raw non-ASCII byte reaching `jq -cn --arg` risks the whole
+  # emission failing outright -- a broken control channel is a worse defect than the byte it would
+  # have removed, per this ticket's own Description.
+  reason="$(printf '%s' "$reason" | LC_ALL=C tr -c '\011\012\015\040-\176' '?')"
   local mode="${EDM_GATEGUARD_DENY_MODE:-$EDM_GATEGUARD_DENY_MODE_DEFAULT}"
 
   case "$mode" in

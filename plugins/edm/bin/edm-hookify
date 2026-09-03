@@ -246,6 +246,29 @@ RESULT="$(build_rule_stream | jq -R -s -r \
   "$JQ_PROGRAM" \
   --args "${RULE_FILES[@]}")" || die "jq evaluation failed"
 
+# hookify_emit_match <rule_id> <action> <message> -- the single point this evaluator prints a
+# matched-rule line (EDMV4-T52 AC6). All three fields are rule-author-supplied content read
+# straight from a project's own .claude/edm-hookify/*.json files (`name`, `action`, `message`),
+# which this plugin's automatic ASCII enforcement does not reach (see CLAUDE.md's "Artifact
+# content conventions" -- the hookify-file gap this same ticket documents), so a non-ASCII byte
+# in any of the three can reach here unfiltered. Every byte outside tab/CR/LF and the printable
+# ASCII range 0x20-0x7E is replaced with '?' before the line is written, on either stream --
+# stdout for a block (the payload a consumer like edm-gateguard's emit_decision folds into its
+# own JSON emission) or stderr for a warn -- so neither downstream consumer ever has to sanitize
+# a second time.
+hookify_emit_match() {
+  local rule_id="$1" action="$2" message="$3" stream="$4"
+  local clean_id clean_action clean_message
+  clean_id="$(printf '%s' "$rule_id" | LC_ALL=C tr -c '\011\012\015\040-\176' '?')"
+  clean_action="$(printf '%s' "$action" | LC_ALL=C tr -c '\011\012\015\040-\176' '?')"
+  clean_message="$(printf '%s' "$message" | LC_ALL=C tr -c '\011\012\015\040-\176' '?')"
+  if [[ "$stream" == "stdout" ]]; then
+    echo "${clean_id} ${clean_action} ${clean_message}"
+  else
+    echo "${clean_id} ${clean_action} ${clean_message}" >&2
+  fi
+}
+
 HAD_ERROR=0
 HAD_BLOCK=0
 while IFS= read -r _line; do
@@ -279,10 +302,10 @@ while IFS= read -r _line; do
       # the same way to a concurrent, unrelated setup error in a DIFFERENT rule file -- one
       # contributor's typo must never mask another rule's legitimate block.
       if [[ "$_maction" == "block" ]]; then
-        echo "${_mname} ${_maction} ${_mmessage}"
+        hookify_emit_match "$_mname" "$_maction" "$_mmessage" stdout
         HAD_BLOCK=1
       else
-        echo "${_mname} ${_maction} ${_mmessage}" >&2
+        hookify_emit_match "$_mname" "$_maction" "$_mmessage" stderr
       fi
       ;;
   esac
