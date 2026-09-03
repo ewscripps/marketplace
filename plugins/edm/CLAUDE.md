@@ -271,6 +271,40 @@ REMEDIATION.md prescription is a single self-contained change, then re-present t
 smaller remaining set -- a middle ground between converging immediately and re-treating every
 open P2 as blocking.
 
+## Mermaid diagram conventions (canonical)
+
+All EDM agents that author or audit Mermaid diagrams follow these conventions. No agent may define a divergent local rule.
+
+Mermaid's `;` is a lexer-level statement separator, and this is reserved even where the `;` appears inside label text -- the parser does not distinguish "inside a label" from "between statements," so a literal semicolon inside a node, edge or message label breaks the diagram.
+
+**The rule:** a literal semicolon in Mermaid label, node, edge or message text is written as the entity code `#59;` -- `#` followed by either a base-10 code point or an entity name, then `;`, with no leading ampersand. `&#59;` is not this project's convention; `#59;` is correct.
+
+Before (raw semicolon inside a label -- breaks the diagram):
+
+<!-- edm-lint-ignore-start -->
+```mermaid
+flowchart TD
+    A[Wait; then retry] --> B[Done]
+```
+<!-- edm-lint-ignore-end -->
+
+After (entity code, no leading ampersand -- renders correctly):
+
+```mermaid
+flowchart TD
+    A[Wait#59; then retry] --> B[Done]
+```
+
+Quoting label text is not a reliable substitute for the entity code across every diagram type. A `sequenceDiagram` message's text after the `:` is unquoted, so it is especially exposed to this failure -- there is no quote to protect it there.
+
+The following remain legal and are **not** violations of this rule:
+- A statement-terminating `;` at the end of a line, outside any label.
+- `;` on a `%%` comment line.
+- `;` terminating a `classDef`, `style`, or `linkStyle` directive.
+
+Other entity codes follow the same form, so the rule generalizes: `#quot;` (double quote), `#35;` (`#`), and so on.
+
+This section's heading string, `## Mermaid diagram conventions (canonical)`, is referenced by name from the eleven touch points inventoried in `architecture.md` and asserted by a smoke test -- do not rename it without updating every reference.
 ## Audit lens house contract (canonical, EDMV4-T28)
 
 Every `agents/edm-audit-*.md` lens file -- the eleven pre-EDMV4 lenses and the three EDMV4 lenses
@@ -319,40 +353,6 @@ re-inventory once already).
 Diff a new lens file against `edm-audit-logic.md` section-by-section -- every heading, in order,
 must match -- rather than re-authoring this contract from memory.
 
-## Mermaid diagram conventions (canonical)
-
-All EDM agents that author or audit Mermaid diagrams follow these conventions. No agent may define a divergent local rule.
-
-Mermaid's `;` is a lexer-level statement separator, and this is reserved even where the `;` appears inside label text -- the parser does not distinguish "inside a label" from "between statements," so a literal semicolon inside a node, edge or message label breaks the diagram.
-
-**The rule:** a literal semicolon in Mermaid label, node, edge or message text is written as the entity code `#59;` -- `#` followed by either a base-10 code point or an entity name, then `;`, with no leading ampersand. `&#59;` is not this project's convention; `#59;` is correct.
-
-Before (raw semicolon inside a label -- breaks the diagram):
-
-<!-- edm-lint-ignore-start -->
-```mermaid
-flowchart TD
-    A[Wait; then retry] --> B[Done]
-```
-<!-- edm-lint-ignore-end -->
-
-After (entity code, no leading ampersand -- renders correctly):
-
-```mermaid
-flowchart TD
-    A[Wait#59; then retry] --> B[Done]
-```
-
-Quoting label text is not a reliable substitute for the entity code across every diagram type. A `sequenceDiagram` message's text after the `:` is unquoted, so it is especially exposed to this failure -- there is no quote to protect it there.
-
-The following remain legal and are **not** violations of this rule:
-- A statement-terminating `;` at the end of a line, outside any label.
-- `;` on a `%%` comment line.
-- `;` terminating a `classDef`, `style`, or `linkStyle` directive.
-
-Other entity codes follow the same form, so the rule generalizes: `#quot;` (double quote), `#35;` (`#`), and so on.
-
-This section's heading string, `## Mermaid diagram conventions (canonical)`, is referenced by name from the eleven touch points inventoried in `architecture.md` and asserted by a smoke test -- do not rename it without updating every reference.
 ## Verifier completion sentinel (canonical)
 
 Every read-only verifier agent in this plugin -- `edm-srd-auditor`, `edm-ticket-auditor`,
