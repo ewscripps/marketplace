@@ -1,11 +1,11 @@
 # EDMV4 -- ECC Integration: Ticket Pack
 
-Generated From: srd.md v1.4.0
+Generated From: srd.md v1.5.0
 
 **Initiative**: EDMV4 -- ECC Integration
-**Tickets**: 54 (`EDMV4-T01`, `EDMV4-T04`, `EDMV4-T05`, `EDMV4-T06` .. `EDMV4-T56`)
+**Tickets**: 55 (`EDMV4-T01`, `EDMV4-T04`, `EDMV4-T05`, `EDMV4-T06` .. `EDMV4-T57`)
 **Epics**: 8
-**Requirements covered**: 61 IDs (`EDMV4-01` .. `EDMV4-61`), 59 substantive plus 2 merged
+**Requirements covered**: 63 IDs (`EDMV4-01` .. `EDMV4-63`), 61 substantive plus 2 merged
 **Mode**: standard / lifecycle standard / compliance off
 
 ---
@@ -169,6 +169,7 @@ and see `EDMV4-T53`.
 | `EDMV4-T51` | Verify the required-binary set is still `bash`, `jq`, `git` | 08 Cross-Cutting | S | Must Have | `EDMV4-T10`, `EDMV4-T13`, `EDMV4-T15`, `EDMV4-T20`, `EDMV4-T28`, `EDMV4-T30`, `EDMV4-T33`, `EDMV4-T41`, `EDMV4-T44`, `EDMV4-T47`, `EDMV4-T04`, `EDMV4-T05`, `EDMV4-T49` | `EDMV4-56` |
 | `EDMV4-T52` | Verify ASCII-only artifacts by a manual `--path` sweep plus an explicit byte scan | 08 Cross-Cutting | M | Must Have | `EDMV4-T13`, `EDMV4-T15`, `EDMV4-T20`, `EDMV4-T28`, `EDMV4-T30`, `EDMV4-T33`, `EDMV4-T41`, `EDMV4-T44`, `EDMV4-T47`, `EDMV4-T04`, `EDMV4-T05`, `EDMV4-T49` | `EDMV4-57` |
 | `EDMV4-T53` | Land `wave8-smoke.sh` in `run-all.sh` and run the Definition-of-Done verification pass | 08 Cross-Cutting | M | Must Have | `EDMV4-T13`, `EDMV4-T15`, `EDMV4-T20`, `EDMV4-T28`, `EDMV4-T30`, `EDMV4-T33`, `EDMV4-T41`, `EDMV4-T44`, `EDMV4-T47`, `EDMV4-T04`, `EDMV4-T05`, `EDMV4-T49` | `EDMV4-58` |
+| `EDMV4-T57` | Retarget wave7's pattern-harvest assertions at the delta `EDMV4-T18` introduced | 08 Cross-Cutting | M | Must Have | none | `EDMV4-63` |
 
 ---
 
@@ -407,8 +408,8 @@ SRD v1.0.0 claimed it blocked "everything"; that was wrong and is corrected here
 | 05 | [Classifier and Scorecard](epics/05-classifier-and-scorecard.md) | `T34` .. `T41` | 8 | 4.3 size classifier, 5.2 repo-readiness scorecard |
 | 06 | [Hooks and Codemaps](epics/06-hooks-and-codemaps.md) | `T42` .. `T48` | 7 | 5.3 hookify, 5.4 Stop-hook gate, 5.5 codemaps |
 | 07 | [Inherited Tickets](epics/07-inherited-tickets.md) | `T01`, `T04`, `T05`, `T49` | 4 | `EDMV4-T01`/`T04`/`T05` inherited scope, D12 source correction |
-| 08 | [Cross-Cutting](epics/08-cross-cutting.md) | `T50` .. `T53` | 4 | bash floor, binary set, ASCII, smoke coverage |
-| | **Total** | | **54** | |
+| 08 | [Cross-Cutting](epics/08-cross-cutting.md) | `T50` .. `T53`, `T57` | 5 | bash floor, binary set, ASCII, smoke coverage, wave7 pattern-assertion retarget |
+| | **Total** | | **55** | |
 
 ### Size distribution
 
@@ -416,7 +417,7 @@ SRD v1.0.0 claimed it blocked "everything"; that was wrong and is corrected here
 |---|---|
 | XS | 7 |
 | S | 32 |
-| M | 13 |
+| M | 14 |
 | L | 2 |
 | XL | **0** |
 
@@ -502,8 +503,9 @@ Every requirement `EDMV4-01` .. `EDMV4-61` maps to at least one ticket. No orpha
 | `EDMV4-60` | `EDMV4-T54` | Preconditions (Gate 3 scope addition -- circular gate mapping) |
 | `EDMV4-61` | `EDMV4-T55` | Preconditions (Phase 6 wave-1 scope addition -- agent capacity and QC wiring) |
 | `EDMV4-62` | `EDMV4-T56` | Preconditions (Phase 6 wave-2 scope addition -- plugin refresh reaches no working tree) |
+| `EDMV4-63` | `EDMV4-T57` | Cross-cutting (Phase 6 wave-3 scope addition -- wave7 pattern assertions stale against T18) |
 
-**Reverse check**: all 54 tickets carry at least one SRD Ref. No ticket exists without a
+**Reverse check**: all 55 tickets carry at least one SRD Ref. No ticket exists without a
 requirement behind it.
 
 ---

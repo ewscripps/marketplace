@@ -488,3 +488,79 @@ initiative.
 - Restructuring `run-all.sh`'s discovery, ordering or accounting logic. AC2's two line edits are
   the only changes it receives.
 - Reordering or renaming any existing suite.
+
+---
+
+## EDMV4-T57: Retarget wave7's pattern-harvest assertions at the delta EDMV4-T18 introduced
+
+| Field | Value |
+|---|---|
+| Epic | Cross-Cutting |
+| Phase | 6 |
+| Priority | Must Have |
+| Size | M |
+| SRD Refs | EDMV4-63 |
+| Depends On | none (`EDMV4-T18` already landed) |
+| Blocks | `/edm:verify-runtime` closure of the `EDMV4-T19` and `EDMV4-T20` PARTIALs |
+| Target Components | `plugins/edm/bin/tests/wave7-smoke.sh` |
+
+### Description
+
+`EDMV4-T18` moved harvested pattern entries out of the shipped `docs/audit-patterns/*.md` files
+and into a delta under the resolved data directory, because the shipped plugin tree is read-only
+once a plugin is installed. That was the ticket's entire purpose and the behaviour is correct.
+
+Roughly 35 assertions in `wave7-smoke.sh` predate that move and still look in the shipped tree.
+`update-patterns` now reports `no novel findings to append` for those fixtures -- accurately -- and
+the assertions treat that as a failure. Nothing is broken. The assertions are looking in the old
+place.
+
+No ticket owns them. `EDMV4-T18` did not scope updating the old suite, and `EDMV4-T20` wrote fresh
+coverage for the new behaviour in `wave8-smoke.sh` rather than retargeting `wave7`. The gap was
+found only after a separate `set -u` abort was fixed and `wave7` ran to completion for the first
+time since `T18` landed.
+
+This is on the critical path. `EDMV4-T19` and `EDMV4-T20` both carry PARTIAL verdicts whose
+recorded runtime-check is a green `run-all.sh`; that cannot happen while these fail,
+`/edm:verify-runtime` cannot close the PARTIALs, and `phase-complete 6` refuses while one remains
+open.
+
+### Acceptance Criteria
+
+- [ ] AC1: Every failing assertion in these groups is retargeted at the delta location:
+      `CA-002` (AC1, AC2, AC3, AC8, AC9), `T56` (AC1, AC4, and the 22 AC8 run assertions),
+      `G16/CA-355`, `G35`, `CA-476`, `CA-531`, `CA-533`.
+- [ ] AC2: The delta path is resolved the way the production code resolves it, never hardcoded --
+      a test that hardcodes the path passes while the resolution logic is broken.
+- [ ] AC3: Each retargeted assertion is proven to still discriminate: a fixture in which the
+      harvested entry is absent from the new location must fail it. Passing after the retarget is
+      not evidence on its own.
+- [ ] AC4: Any assertion genuinely obsolete rather than misdirected is deleted with its reason
+      recorded in the commit, not left passing vacuously. Deleting dead coverage is preferred to
+      keeping a check that cannot fail.
+- [ ] AC5: The three-branch write matrix is NOT re-proven here -- `EDMV4-T20` already covers it in
+      `wave8-smoke.sh`. This ticket touches the pre-existing `wave7` assertions only.
+- [ ] AC6: `bash plugins/edm/bin/tests/wave7-smoke.sh` reports zero failures except those owned by
+      a named, still-open ticket, and every remaining failure names its owning ticket in its
+      message or an adjacent comment.
+- [ ] AC7: `bash plugins/edm/bin/tests/wave6-smoke.sh` and `wave8-smoke.sh` are unaffected -- 795/0
+      and 515/0 respectively still hold.
+- [ ] AC8: `bash plugins/edm/bin/tests/run-all.sh` passes with zero failures, so
+      `/edm:verify-runtime` can close the `EDMV4-T19` and `EDMV4-T20` PARTIALs.
+
+### Technical Notes
+
+- `EDMV4-T20`'s `wave8-smoke.sh` section is the reference for how the delta is resolved and
+  asserted correctly; read it before writing anything here.
+- The `T56 AC8` group is 22 of the ~35 and is one loop over ten runs -- fixing the loop's target
+  fixes most of the count at once. Do not mistake the assertion count for the work count.
+- Line numbers in this ticket are deliberately absent. `wave7-smoke.sh` has been edited by four
+  tickets this initiative; locate every site by the literal assertion string.
+- `wave7` also carries failures that are NOT yours: the L13/L14 lens agents pending `EDMV4-T26`,
+  and `T64 AC1`/`T66 AC3` pending the version and bin/-table cross-cutting work. Leave those.
+
+### Out of Scope
+
+- Changing where `update-patterns` writes. `EDMV4-T18`'s behaviour is correct and settled.
+- `EDMV4-T26`'s lens-agent failures in the same suite.
+- `bin/tests/run-all.sh` registration, which `EDMV4-T53` owns.

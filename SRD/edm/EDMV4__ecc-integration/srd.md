@@ -7,7 +7,7 @@
 | Initiative | EDMV4 -- ECC Integration |
 | Prefix | `EDMV4` |
 | Product | `edm` |
-| Version | 1.4.0 |
+| Version | 1.5.0 |
 | Status | Draft |
 | Owner | darryl.porter |
 | Mode | `standard` (`lifecycle_mode: standard`, `compliance_enabled: false`) |
@@ -26,6 +26,8 @@
 | 1.3.0 | 2026-09-02 | orchestrator | **Scope addition from Phase 6 wave 1, raised for ratification at the code-audit convergence gate.** New `EDMV4-61` records seven defects in Phase 6's own agent harness, found by running EDM at full scale on itself: `edm-implementer` `maxTurns: 60` (8/8 wave-1 agents hit it; one left new `bin/` scripts untracked), `edm-qc-auditor` `maxTurns: 50` (2/3 hit it), `qc_shard_threshold: 20` unfittable in any auditor turn budget, the `SubagentStop` matcher naming the bare `edm-implementer` while agents spawn as `edm:edm-implementer` (**the entire automatic QC layer silently did not run** -- only an absent `qc/` directory evidenced it), 6-10 parallel implementers each invoking the whole-tree `run-all.sh` (38 concurrent processes at load 10, producing spurious SIGINT failures), `isolation: worktree` cutting 5/7 worktrees from a base with no `tickets/` directory, and eleven malformed `# shellcheck disable=... -- prose` directives that made shellcheck skip `bin/edm-state` and `bin/edm-check-grants` entirely. An eighth candidate was investigated and **rejected**: `run-all.sh` classifies a truncated suite correctly as `CRASH`; that report was an orchestrator misreading of the aggregate `Total:` line, not a tooling defect. **Requirement count: 61 IDs (`EDMV4-01` .. `EDMV4-61`), 59 substantive (43 Must / 15 Should / 1 Could) plus 2 merged.** |
 
 | 1.4.0 | 2026-09-02 | orchestrator | **Scope addition from Phase 6 wave 2, filed at the user's direction as its own ticket rather than folded into `EDMV4-61`.** New `EDMV4-62` records that a plugin fix committed to the working tree is unreachable by any documented refresh command: `/plugin update` reads the marketplace clone at `~/.claude/plugins/marketplaces/stg-marketplace` (a clone of `https://gitlab.com/scripps/public/marketplace.git`), `/reload-plugins` reads the unpacked cache at `~/.claude/plugins/cache/stg-marketplace/edm/<version>/`, and **neither reads the working tree**. The failure is silent and misleading -- `/plugin update` reported `edm is already at the latest version (3.2.2)` while the corrected `bin/edm-state` sat committed in the tree the session was editing -- and it has no documented workaround for an author on an unpushed branch. Filed as a documentation and diagnosability requirement; it does not ask to change how plugin loading works. **Requirement count: 62 IDs (`EDMV4-01` .. `EDMV4-62`), 60 substantive (43 Must / 16 Should / 1 Could) plus 2 merged.** |
+
+| 1.5.0 | 2026-09-03 | orchestrator | **Scope addition from Phase 6 wave 3, approved by the user at the wave-3 close.** New `EDMV4-63`: roughly 35 `bin/tests/wave7-smoke.sh` assertions still check the shipped `docs/audit-patterns/*.md` tree that `EDMV4-T18` moved harvested patterns away from, so `update-patterns` correctly reports `no novel findings to append` and the assertions read that as failure. No ticket owned them -- `T18` did not scope the update and `EDMV4-T20` wrote fresh coverage in `wave8-smoke.sh` instead of retargeting the old suite. Filed as Must Have because it is on the critical path, not cosmetic: `EDMV4-T19` and `EDMV4-T20` carry PARTIAL verdicts whose runtime-check is a green `run-all.sh`, which cannot go green while these fail, so `/edm:verify-runtime` cannot close them and `phase-complete 6` refuses. A red suite also destroys the signal -- that is how `EDMV4-T18`'s own `$7: unbound` abort survived, sitting below already-expected failures while hiding roughly 500 passing assertions. **Requirement count: 63 IDs (`EDMV4-01` .. `EDMV4-63`), 61 substantive (44 Must / 16 Should / 1 Could) plus 2 merged.** |
 
 ### Source documents
 
@@ -3682,6 +3684,56 @@ smoke suite fail for the wrong reason.
 
 ---
 
+#### EDMV4-63: wave7's pattern-harvest assertions still check the location EDMV4-T18 moved away from
+
+- **Priority**: Must Have
+- **Description**: `EDMV4-T18` relocated harvested pattern entries from the shipped
+  `docs/audit-patterns/*.md` files to a delta under the resolved data directory, because the
+  shipped plugin tree is read-only on an installed plugin. That was the point of the ticket and
+  the behaviour is correct.
+
+  Roughly 35 assertions in `bin/tests/wave7-smoke.sh` predate the move and still assert against
+  the shipped tree. `update-patterns` now correctly reports `no novel findings to append` for
+  those fixtures, and the assertions read that as failure. **Nothing is broken; the assertions
+  are looking in the old place.** `EDMV4-T18` did not scope updating them, and `EDMV4-T20` wrote
+  fresh coverage for the new behaviour in `wave8-smoke.sh` rather than retargeting the old suite,
+  so no ticket in the pack owns them.
+
+  The affected groups, measured on the branch tip: `CA-002` (AC1/AC2/AC3/AC8/AC9), `T56` AC1/AC4
+  and 22 x AC8, `G16/CA-355`, `G35`, `CA-476`, `CA-531`, `CA-533`.
+
+  **This sits on the critical path, not off to the side.** `EDMV4-T19` and `EDMV4-T20` both carry
+  PARTIAL verdicts whose recorded runtime-check is a green `run-all.sh`. `run-all.sh` cannot go
+  green while these assertions fail, `/edm:verify-runtime` cannot close those PARTIALs, and
+  `phase-complete 6` refuses while an open PARTIAL remains. Left unfixed, the initiative can only
+  close under an explicit exemption.
+
+  A red suite also destroys the signal: a later reader cannot distinguish 35 known-stale failures
+  from a genuine new break. That is exactly how `EDMV4-T18`'s own `$7: unbound` abort survived --
+  it sat below failures that were already expected, and hid roughly 500 passing assertions.
+- **Acceptance Criteria**:
+  - [ ] Every assertion in the groups above is retargeted at the delta location `EDMV4-T18`
+        actually writes to, resolved the same way the production code resolves it rather than
+        hardcoded.
+  - [ ] Each retargeted assertion is verified to fail when the harvested entry is absent from the
+        new location -- a fixture proving the check still discriminates, not merely that it now
+        passes.
+  - [ ] Any assertion that is genuinely obsolete rather than misdirected is **deleted with its
+        reason recorded**, not left passing vacuously. Removing dead coverage is preferred to
+        keeping a check that cannot fail.
+  - [ ] The three-branch write behaviour is not re-proven here; `EDMV4-T20` already covers it in
+        `wave8-smoke.sh`. This requirement is about the pre-existing `wave7` assertions only.
+  - [ ] `bash bin/tests/wave7-smoke.sh` reports zero failures except those owned by a named,
+        still-open ticket, and each remaining failure is named with its owning ticket.
+  - [ ] `bash bin/tests/run-all.sh` passes with zero failures, so `/edm:verify-runtime` can close
+        the `EDMV4-T19` and `EDMV4-T20` PARTIALs.
+  - [ ] `wave6-smoke.sh` and `wave8-smoke.sh` are unaffected -- their current counts hold.
+- **Dependencies**: `EDMV4-T18` (landed). Independent of `EDMV4-T26`'s lens-agent work, which owns
+  a different subset of the same suite's failures.
+- **Target Components**: `plugins/edm/bin/tests/wave7-smoke.sh`.
+
+---
+
 ## 7. Security, Licensing and Data-Handling Requirements
 
 This initiative handles no user credentials, opens no network connections, and stores no secrets.
@@ -3898,12 +3950,12 @@ is a design target, not a measured result, and must be described that way.
 
 | Priority | Count | IDs |
 |---|---|---|
-| **Must Have** | **43** | `EDMV4-01` .. `EDMV4-11`, `EDMV4-13`, `EDMV4-14`, `EDMV4-18` .. `EDMV4-20`, `EDMV4-22` .. `EDMV4-35`, `EDMV4-49` .. `EDMV4-51`, `EDMV4-52` .. `EDMV4-61` |
+| **Must Have** | **44** | `EDMV4-01` .. `EDMV4-11`, `EDMV4-13`, `EDMV4-14`, `EDMV4-18` .. `EDMV4-20`, `EDMV4-22` .. `EDMV4-35`, `EDMV4-49` .. `EDMV4-51`, `EDMV4-52` .. `EDMV4-61`, `EDMV4-63` |
 | **Should Have** | **16** | `EDMV4-12`, `EDMV4-17`, `EDMV4-21`, `EDMV4-36` .. `EDMV4-38`, `EDMV4-40` .. `EDMV4-48`, `EDMV4-62` |
 | **Could Have** | **1** | `EDMV4-39` |
 | **Merged** | **2** | `EDMV4-15`, `EDMV4-16` -- absorbed into `EDMV4-14`. No independent priority, no independent acceptance criteria. IDs retained so existing cross-references resolve |
-| **Substantive total** | **60** | 43 Must + 16 Should + 1 Could |
-| **ID range** | **62** | `EDMV4-01` .. `EDMV4-62`, no gaps, no duplicates |
+| **Substantive total** | **61** | 44 Must + 16 Should + 1 Could |
+| **ID range** | **63** | `EDMV4-01` .. `EDMV4-63`, no gaps, no duplicates |
 
 **Changes from v1.0.0's counts.** `EDMV4-59` (ratify AD1) is new. `EDMV4-51` is raised from Should
 Have to Must Have (P0-3: it gates whether `EDMV4-49` and `EDMV4-50` can be executed correctly).

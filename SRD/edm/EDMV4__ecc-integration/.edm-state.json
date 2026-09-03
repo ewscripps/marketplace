@@ -35,7 +35,7 @@
       "recorded_at": "2026-09-02T13:25:31Z"
     }
   },
-  "srd_version": "1.4.0",
+  "srd_version": "1.5.0",
   "estimated_size": "Large",
   "initiative_branch": "edm/edmv4-ecc-integration",
   "product_name": "edm",
@@ -177,7 +177,7 @@
   "forked_from": "",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-09-03T04:57:12Z",
+  "last_updated": "2026-09-03T06:48:09Z",
   "current_step": 6,
   "patterns_last_updated": "2026-09-02T13:25:32Z",
   "patterns_updates": {
