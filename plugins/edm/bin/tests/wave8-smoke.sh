@@ -4707,6 +4707,265 @@ check "EDMV4-T45 AC9 -- edm-check-vocabulary passes over the updated hooks.json 
 
 echo
 
+# =================================================================================================
+# EDMV4-T28 -- Specify and mechanically enforce the house lens contract for the three new lenses
+# =================================================================================================
+# The contract's nine structural parts are documented in CLAUDE.md Sec."Audit lens house
+# contract (canonical, EDMV4-T28)" and verified here against every LIVE agents/edm-audit-*.md
+# lens file: frontmatter, opening frame, '## Scope', '## What You Hunt For', '## False Alarm
+# Filter', '## Output', '## Output Format', '## JSONL Line Format', '## When this does NOT
+# apply'. The lens FILE SET below is derived by globbing agents/edm-audit-*.md and excluding the
+# synthesizer -- never a fourth hardcoded fourteen-name list -- so a future fifteenth lens is
+# checked automatically instead of silently escaping coverage the way a hardcoded list already
+# did once this initiative (see EDMV4-T30's own Technical Notes on re-inventorying stale counts,
+# and docs/audit-patterns/code-audit.md's "verification scan matches the prose it hunts" entry
+# for the general shape of this failure). Per that same entry, every zero-count-style assertion
+# below is paired with a positive control: a scratch fixture that corrupts exactly one contract
+# element and proves the checker actually flags it, so "found 0 violations" here means the
+# checker looked and found nothing, not that it cannot find anything.
+echo "=== EDMV4-T28: house lens contract -- specification and mechanical enforcement ==="
+
+T28_AGENTS_DIR="${PLUGIN_DIR}/agents"
+T28_LENS_FILES="$(cd "$T28_AGENTS_DIR" && ls edm-audit-*.md 2>/dev/null | grep -v '^edm-audit-synthesizer\.md$' | sort)" || true
+# shellcheck disable=SC2086 # deliberate word-splitting to count space-separated members
+T28_LENS_COUNT="$(printf '%s\n' $T28_LENS_FILES | grep -c '.')" || true
+
+# Cross-check the live file-glob count against ALL_LENS_IDS's own count, so the two independently
+# derived numbers (files on disk vs. IDs edm-state knows about) must agree rather than either one
+# being trusted alone.
+# shellcheck disable=SC2034 # sourced only for its ALL_LENS_IDS/CONDITIONAL_LENS_IDS side effect
+T28_ALL_LENS_IDS="$(source "$EDM_STATE" >/dev/null 2>&1; echo "$ALL_LENS_IDS")"
+T28_CONDITIONAL_LENS_IDS="$(source "$EDM_STATE" >/dev/null 2>&1; echo "$CONDITIONAL_LENS_IDS")"
+# shellcheck disable=SC2086 # deliberate word-splitting to count space-separated members
+T28_ALL_LENS_COUNT="$(printf '%s\n' $T28_ALL_LENS_IDS | grep -c '.')" || true
+[[ "$T28_LENS_COUNT" -eq "$T28_ALL_LENS_COUNT" ]] \
+  && pass "EDMV4-T28 -- agents/edm-audit-*.md file count (${T28_LENS_COUNT}, live glob) matches ALL_LENS_IDS's own count (${T28_ALL_LENS_COUNT})" \
+  || fail "EDMV4-T28 -- agents/edm-audit-*.md file count (${T28_LENS_COUNT}) disagrees with ALL_LENS_IDS (${T28_ALL_LENS_COUNT})"
+
+# ---- t28_contract_violations <file> -- prints one tag per violated contract element, or nothing
+# when <file> fully conforms. Every tag traces to one AC of EDMV4-T28. ---------------------------
+t28_contract_violations() {
+  local file="$1"
+  [[ -f "$file" ]] && [[ -s "$file" ]] || { echo "MISSING_OR_EMPTY_FILE"; return 0; }
+
+  # AC1/AC2/AC11: frontmatter -- tool grant, disallowed-tools, model/effort tier, color. Anchored
+  # full-line matches (not bare substrings) so an appended extra tool cannot hide inside a still-
+  # present prefix.
+  grep -qE '^tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, Write$' "$file" \
+    || echo "TOOLS_LINE"
+  grep -qE '^disallowedTools: Edit, NotebookEdit$' "$file" || echo "DISALLOWED_TOOLS"
+  grep -qE '^model: opus$' "$file" || echo "MODEL"
+  grep -qE '^effort: max$' "$file" || echo "EFFORT"
+  grep -qE '^color: cyan$' "$file" || echo "COLOR"
+
+  # AC4: opening frame + adjacent mandate-narrowing sentence.
+  grep -qE '^You are executing \*\*EDM Code Audit Lens L[0-9]+: .+\*\*\.$' "$file" || echo "OPENING_FRAME"
+  grep -qF 'Your mandate is ONLY this lens. Do not audit other dimensions -- other agents handle those.' "$file" \
+    || echo "MANDATE_SENTENCE"
+
+  # AC5: verbatim house Scope paragraph, byte-identical across every lens IN CONTENT -- but not
+  # necessarily in raw line-wrapping: edm-audit-security.md (L8) hard-wraps this same paragraph
+  # across two source lines at a different column than edm-audit-logic.md (L1)'s single-line form
+  # (verified live: both read identically once the wrap's newline is treated as a space). A single
+  # grep -qF spanning the wrap point would therefore false-positive on L8, so this is two short,
+  # wrap-safe substring checks (one from each side of where L8's wrap falls) rather than one long
+  # literal that assumes L1's line width.
+  if grep -qF 'deliver what was asked at the scope intended; make routine judgment calls; if a better approach exists, say so in a' "$file" \
+    && grep -qF 'rather than quietly narrowing, widening or transforming it.' "$file"; then
+    :
+  else
+    echo "SCOPE_PARAGRAPH"
+  fi
+
+  # AC6: identical False Alarm Filter framing sentence, exactly three numbered criteria.
+  grep -qF 'Report every finding at your best-effort confidence level rather than self-suppressing on uncertainty: this filter demotes a finding to `## Noted / Not Actionable` with a documented rationale and never deletes it outright, and ranking by confidence and cross-lens corroboration is the synthesizer'"'"'s job, not this lens'"'"'s.' "$file" \
+    || echo "FAF_FRAMING"
+  local faf_count
+  faf_count="$(awk '/^## False Alarm Filter/{f=1;next} /^## /{f=0} f' "$file" | grep -c '^[0-9]\+\.')" || faf_count=0
+  [[ "${faf_count:-0}" -eq 3 ]] || echo "FAF_CRITERIA_COUNT"
+
+  # AC7: Output section -- two write paths (self-consistent against the lens's OWN opening-frame
+  # ID, not an externally supplied one), ASCII reminder, mkdir-p rationale, JSONL-authoritative.
+  local n
+  n="$(grep -oE '\*\*EDM Code Audit Lens L[0-9]+' "$file" | head -1 | grep -oE '[0-9]+')" || true
+  if [[ -n "$n" ]]; then
+    grep -qF "\${OUTPUT_DIR}/lens-L${n}.md" "$file" || echo "OUTPUT_MD_PATH"
+    grep -qF "\${OUTPUT_DIR}/lens-L${n}.jsonl" "$file" || echo "OUTPUT_JSONL_PATH"
+    grep -qF "\"lens\":\"L${n}\"" "$file" || echo "SCHEMA_LENS_ID"
+  else
+    echo "LENS_ID_UNRESOLVABLE"
+  fi
+  grep -qF 'Report text is ASCII-only -- no Unicode em dashes, arrows, smart quotes, or emoji glyphs.' "$file" \
+    || echo "ASCII_REMINDER"
+  grep -qF 'that is why you are granted' "$file" || echo "MKDIR_RATIONALE"
+  grep -qF 'The JSONL file is authoritative on conflict' "$file" || echo "JSONL_AUTHORITATIVE"
+
+  # AC8: Output Format cites the closed severity scale and the canonical-sections anchor,
+  # including both qualifying clauses (C6 enforcement point).
+  grep -qF 'CLAUDE.md Sec."Severity vocabulary"' "$file" || echo "SEVERITY_CITATION"
+  # Keyed on the backtick-quoted path alone, not "Read `docs/..." together: edm-audit-security.md
+  # (L8) wraps this instruction so "Read" ends one source line and the path starts the next --
+  # exactly the wrapped form EDMV4-T28's own Technical Notes warn a byte-exact assertion must
+  # survive. The path itself does not straddle the wrap in either the L1 or L8 form.
+  grep -qF '`docs/canonical-sections.md`' "$file" || echo "CANONICAL_SECTIONS_ANCHOR"
+  grep -qF "resolved relative to the EDM plugin's own root" "$file" || echo "ANCHOR_QUALIFIER"
+  grep -qF "never the caller's cwd" "$file" || echo "ANCHOR_NEVER_CWD"
+
+  # AC9: JSONL Line Format -- the five field-rule bullets and the residual-risk paragraph.
+  grep -qF 'is always `null` at the lens stage' "$file" || echo "JSONL_ID_RULE"
+  grep -qF 'are supplied by the code-audit skill from the round it actually' "$file" || echo "JSONL_ROUND_RULE"
+  grep -qF 'is exactly one of `P0`, `P1`, `P2`, `NOTED`' "$file" || echo "JSONL_SEV_RULE"
+  grep -qF 'is mandatory on every line and is exactly `high`, `medium`, or `low`' "$file" || echo "JSONL_CONFIDENCE_RULE"
+  grep -qF 'is exactly one of `open`, `fixed`, `noted`' "$file" || echo "JSONL_STATUS_RULE"
+  grep -qF 'a finding present in the prose report with no' "$file" || echo "RESIDUAL_RISK_PARAGRAPH"
+
+  # AC10: '## When this does NOT apply' present; standard sentence for every UNCONDITIONAL lens
+  # (its own ID not a member of CONDITIONAL_LENS_IDS); the EDMV4-T26 exception form for the sole
+  # conditional lens.
+  grep -qE '^## When this does NOT apply$' "$file" || echo "NA_HEADING"
+  if [[ -n "$n" ]]; then
+    case " ${T28_CONDITIONAL_LENS_IDS} " in
+      *" L${n} "*)
+        grep -qF 'inapplicability' "$file" || echo "NA_CONDITIONAL_INAPPLICABILITY"
+        grep -qF 'cost is never a reason to skip this lens' "$file" || echo "NA_CONDITIONAL_COST_NEVER"
+        grep -qF 'agrees with that determination and never substitutes' "$file" || echo "NA_CONDITIONAL_AGREEMENT"
+        ;;
+      *)
+        grep -qF "This agent always applies once the code-audit skill selects lens L${n} for the round" "$file" \
+          || echo "NA_STANDARD_SENTENCE"
+        ;;
+    esac
+  fi
+
+  # Heading order -- the seven REQUIRED headings above frontmatter/opening-frame must all be
+  # present and in this relative order (excluding fenced code-block content, which itself
+  # contains a '## Findings' heading that must NOT be counted as a real section heading). This is
+  # a SUBSEQUENCE check, not full-sequence equality: several pre-EDMV4 lenses legitimately carry
+  # an extra lens-specific heading between 'What You Hunt For' and 'False Alarm Filter' (verified
+  # live: edm-audit-consistency.md and edm-audit-dry.md both add '## Process', edm-audit-dead-code.md
+  # adds '## Key Technique') -- pre-existing, out of this ticket's scope (the three NEW lenses,
+  # per EDMV4-T28's own title), and not itself a contract violation the way a MISSING or
+  # REORDERED required heading is. Filtering the actual heading list down to only the seven
+  # required strings (grep -Fx, which preserves the file's own line order) tolerates that extra
+  # heading while still catching a required heading that is absent or out of order.
+  local expected actual
+  expected="## Scope
+## What You Hunt For
+## False Alarm Filter
+## Output
+## Output Format
+## JSONL Line Format
+## When this does NOT apply"
+  actual="$(awk '/^```/{f=!f;next} !f' "$file" | grep -E '^## ' \
+    | grep -Fx -e '## Scope' -e '## What You Hunt For' -e '## False Alarm Filter' \
+      -e '## Output' -e '## Output Format' -e '## JSONL Line Format' \
+      -e '## When this does NOT apply')" || true
+  [[ "$actual" == "$expected" ]] || echo "HEADING_ORDER"
+  return 0
+}
+
+echo
+echo "EDMV4-T28 AC1-AC11 -- every live lens agent (${T28_LENS_COUNT} files) is checked against the house contract by name"
+for t28_f in $T28_LENS_FILES; do
+  t28_v="$(t28_contract_violations "${T28_AGENTS_DIR}/${t28_f}" | tr '\n' ',')" || true
+  if [[ -z "$t28_v" ]]; then
+    pass "EDMV4-T28 -- ${t28_f} conforms to the house lens contract in full"
+  else
+    fail "EDMV4-T28 -- ${t28_f} violates the house contract: ${t28_v%,}"
+  fi
+done
+
+echo
+echo "EDMV4-T28 -- positive baseline: the reference lens (edm-audit-logic.md, L1) itself carries zero violations"
+T28_REF="${T28_AGENTS_DIR}/edm-audit-logic.md"
+T28_REF_VIOLATIONS="$(t28_contract_violations "$T28_REF" | tr '\n' ',')" || true
+[[ -z "$T28_REF_VIOLATIONS" ]] \
+  && pass "EDMV4-T28 -- edm-audit-logic.md is the clean baseline the negative fixtures below mutate" \
+  || fail "EDMV4-T28 -- edm-audit-logic.md unexpectedly fails its own contract: ${T28_REF_VIOLATIONS%,}"
+
+echo
+echo "EDMV4-T28 -- negative fixtures: each contract element, corrupted in isolation on a scratch copy of L1, is caught"
+harness_scratch_dir T28_TMP
+
+# t28_neg_case <label> <expected-tag> <sed-script> -- writes a scratch copy of the reference lens
+# with <sed-script> applied, runs the checker, and asserts <expected-tag> appears among the
+# violations. This is the positive-control half of every zero-count check above: it proves each
+# tag's grep can actually fail, not merely that it has not failed yet.
+t28_neg_case() {
+  local label="$1" tag="$2" script="$3"
+  local safe_label fixture v
+  safe_label="$(printf '%s' "$label" | tr -c 'A-Za-z0-9' '_')"
+  fixture="${T28_TMP}/${safe_label}.md"
+  sed "$script" "$T28_REF" > "$fixture"
+  v="$(t28_contract_violations "$fixture" | tr '\n' ',')" || true
+  case ",${v}," in
+    *",${tag},"*) pass "EDMV4-T28 -- negative fixture (${label}): checker correctly flags ${tag}" ;;
+    *) fail "EDMV4-T28 -- negative fixture (${label}): checker did NOT flag ${tag} (violations found: ${v%,})" ;;
+  esac
+}
+
+t28_neg_case "tools grant widened past Write" "TOOLS_LINE" \
+  's/^tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, Write$/tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, TodoWrite, WebSearch, Write, Edit/'
+t28_neg_case "model downgraded off opus" "MODEL" 's/^model: opus$/model: sonnet/'
+t28_neg_case "color changed off cyan" "COLOR" 's/^color: cyan$/color: green/'
+t28_neg_case "mandate-narrowing sentence removed" "MANDATE_SENTENCE" '/^Your mandate is ONLY this lens/d'
+t28_neg_case "house Scope paragraph removed" "SCOPE_PARAGRAPH" '/^deliver what was asked at the scope intended/d'
+t28_neg_case "False Alarm Filter framing sentence removed" "FAF_FRAMING" '/^Report every finding at your best-effort confidence level/d'
+t28_neg_case "False Alarm Filter dropped to two criteria" "FAF_CRITERIA_COUNT" \
+  '/^3\. Is this pattern used consistently everywhere in the project?$/d'
+t28_neg_case "Output section md path drifted off its own lens ID" "OUTPUT_MD_PATH" \
+  's/lens-L1\.md` -- your raw findings report/lens-L9.md` -- your raw findings report/'
+t28_neg_case "mkdir-p rationale sentence removed" "MKDIR_RATIONALE" '/that is why you are granted/d'
+t28_neg_case "JSONL-authoritative sentence removed" "JSONL_AUTHORITATIVE" '/The JSONL file is authoritative on conflict/d'
+t28_neg_case "Output Format severity/canonical-sections anchor line removed" "CANONICAL_SECTIONS_ANCHOR" \
+  '/Use the canonical severity scale/d'
+t28_neg_case "JSONL confidence field rule removed" "JSONL_CONFIDENCE_RULE" \
+  '/is mandatory on every line and is exactly/d'
+t28_neg_case "When-this-does-NOT-apply section removed entirely" "NA_HEADING" \
+  '/^## When this does NOT apply$/,$d'
+t28_neg_case "What-You-Hunt-For heading renamed, breaking section order" "HEADING_ORDER" \
+  's/^## What You Hunt For$/## What You Look For/'
+# Discriminates the SUBSEQUENCE tolerance itself: swaps the two heading MARKER lines '## Output'
+# and '## Output Format' (the classic sed hold-space line-swap: hold '## Output' and delete it
+# from the stream, then re-emit it right after '## Output Format' is seen) without deleting or
+# renaming either required heading -- proving the check still catches a REORDERING, not just a
+# removal, even though it now tolerates an unrelated EXTRA heading (see the positive control
+# immediately below).
+t28_neg_case "Output and Output Format headings swapped (reordered, neither removed)" "HEADING_ORDER" \
+  $'/^## Output$/{h;d;}\n/^## Output Format$/{G;}'
+
+echo
+echo 'EDMV4-T28 -- positive control: a harmless EXTRA heading (mirroring pre-existing lenses own "## Process"/"## Key Technique") does not itself trip the contract'
+# This is what justifies the subsequence tolerance in t28_contract_violations' HEADING_ORDER check
+# rather than exact full-list equality: without this control, a checker that tolerates ANY extra
+# heading anywhere could not be told apart from one that tolerates a genuinely missing or
+# reordered required heading. Verified live before this ticket touched anything:
+# edm-audit-consistency.md and edm-audit-dry.md both already carry an extra '## Process' heading
+# in exactly this position, and edm-audit-dead-code.md carries '## Key Technique' -- none of the
+# three is a contract violation, so this fixture reproduces that same shape on a scratch copy.
+T28_EXTRA_HEADING_FIXTURE="${T28_TMP}/extra_heading_tolerated.md"
+awk '{print} /^## What You Hunt For$/{print ""; print "## Process"; print ""; print "This lens-specific extra section mirrors edm-audit-consistency.md and edm-audit-dry.md, both of which already carry an analogous heading here without violating the contract."}' \
+  "$T28_REF" > "$T28_EXTRA_HEADING_FIXTURE"
+T28_EXTRA_HEADING_V="$(t28_contract_violations "$T28_EXTRA_HEADING_FIXTURE" | tr '\n' ',')" || true
+[[ -z "$T28_EXTRA_HEADING_V" ]] \
+  && pass "EDMV4-T28 -- positive control: an extra lens-specific heading does not trip HEADING_ORDER (the tolerance is deliberate, not a hole)" \
+  || fail "EDMV4-T28 -- positive control FAILED: inserting a harmless extra heading incorrectly triggered: ${T28_EXTRA_HEADING_V%,}"
+
+echo
+echo "EDMV4-T28 -- edm-check-grants and edm-lint-artifacts remain clean over the live lens set"
+if bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>"${SCRIPT_DIR}/.t28-grants.err"; then
+  pass "EDMV4-T28 -- edm-check-grants exits 0"
+else
+  fail "EDMV4-T28 -- edm-check-grants exited non-zero: $(cat "${SCRIPT_DIR}/.t28-grants.err")"
+fi
+rm -f "${SCRIPT_DIR}/.t28-grants.err"
+t28_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${T28_AGENTS_DIR}" 2>&1)"
+t28_lint_exit=$?
+[[ "$t28_lint_exit" -eq 0 ]] && pass "EDMV4-T28 -- edm-lint-artifacts --path agents/ is clean" \
+  || fail "EDMV4-T28 -- edm-lint-artifacts reported violations: ${t28_lint_out}"
+
+echo
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
