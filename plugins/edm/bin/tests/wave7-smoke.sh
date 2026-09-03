@@ -1615,6 +1615,30 @@ LENS_AGENTS="edm-audit-logic edm-audit-dead-code edm-audit-edge-cases edm-audit-
 # needs -- there is no second number to remember to bump in lockstep.
 WAVE7_LENS_COUNT="$(printf '%s\n' $LENS_AGENTS | grep -c '.')"
 
+# Wave-3 QC remediation (T30 AC10 follow-on). Deriving WAVE7_LENS_COUNT from LENS_AGENTS is right,
+# but it means any assertion comparing the two is a tautology: both operands are the member count
+# of one string, so no input can fail it. The pre-T30 "-eq 11"/"-eq 15" literals were vacuous
+# against the TREE yet were still real tripwires against the LIST -- drop a name and they fired.
+# Computing the count away removed the only thing checking the list at all.
+#
+# The fix is an anchor the list cannot satisfy by construction: bin/edm-state's ALL_LENS_IDS is an
+# independent definition of the same fact, maintained in a different file by different tickets.
+# Two definitions that must agree is a real constraint; one definition compared to itself is not.
+WAVE7_STATE_LENS_COUNT="$({ grep -m1 '^ALL_LENS_IDS=' "$EDM_STATE" || true; } \
+  | sed -e 's/^ALL_LENS_IDS="//' -e 's/"$//' | tr ' ' '\n' | grep -c '^L[0-9][0-9]*$')"
+[[ "$WAVE7_LENS_COUNT" -eq "$WAVE7_STATE_LENS_COUNT" ]] \
+  && pass "EDMV4-T30 AC10 (QC remediation) -- LENS_AGENTS (${WAVE7_LENS_COUNT}) agrees with bin/edm-state's ALL_LENS_IDS (${WAVE7_STATE_LENS_COUNT})" \
+  || fail "EDMV4-T30 AC10 (QC remediation) -- LENS_AGENTS enumerates ${WAVE7_LENS_COUNT} names but bin/edm-state's ALL_LENS_IDS declares ${WAVE7_STATE_LENS_COUNT} lenses; one of the two drifted"
+
+# Positive control: prove the comparison discriminates. A fifteenth lens added to ALL_LENS_IDS
+# without a matching LENS_AGENTS entry must be caught, which is precisely the drift the tautology
+# stopped catching.
+wave7_lens_anchor_probe="$(printf 'L1 L2 L3 L4 L5 L6 L7 L8 L9 L10 L11 L12 L13 L14 L15\n' \
+  | tr ' ' '\n' | grep -c '^L[0-9][0-9]*$')"
+[[ "$WAVE7_LENS_COUNT" -ne "$wave7_lens_anchor_probe" ]] \
+  && pass "EDMV4-T30 AC10 (QC remediation) -- positive control: an ALL_LENS_IDS grown to 15 would not match LENS_AGENTS' ${WAVE7_LENS_COUNT}" \
+  || fail "EDMV4-T30 AC10 (QC remediation) -- positive control FAILED: a 15-lens ALL_LENS_IDS still compared equal, so the anchor cannot detect drift"
+
 # CA-529: the fifteen agents/edm-audit-*.md files (fourteen lenses + the synthesizer) are a single
 # sibling family launched by one skill in one wave and maintained as a block, but the
 # synthesizer's `tools:` grant had silently diverged from the fourteen lenses' (two extra, inert
@@ -5465,8 +5489,19 @@ for t48_agent in $T48_CONTESTED_AGENTS; do
     t48_bad="${t48_bad} ${t48_agent}(${t48_model}/${t48_effort})"
   fi
 done
-[[ "$t48_contested_count" -eq "$T48_CONTESTED_TOTAL" ]] && pass "T48 AC1 -- exactly ${T48_CONTESTED_TOTAL} contested agents enumerated" \
-  || fail "T48 AC1 -- enumerated ${t48_contested_count} contested agents, expected ${T48_CONTESTED_TOTAL}"
+# Wave-3 QC remediation: this compared t48_contested_count (incremented once per member of
+# T48_CONTESTED_AGENTS) against T48_CONTESTED_TOTAL (the member count of that same string) -- a
+# tautology no input could fail, which is exactly the vacuity the block comment above warns about.
+# The contested set is the fourteen lenses + the synthesizer + the three named auditors, so
+# bin/edm-state's ALL_LENS_IDS + 4 is an independent anchor: a new lens agent that never reaches
+# this list now fails here instead of silently dropping out of the D16 opus/max assertion.
+T48_EXPECTED_TOTAL=$((WAVE7_STATE_LENS_COUNT + 4))
+[[ "$t48_contested_count" -eq "$T48_EXPECTED_TOTAL" ]] \
+  && pass "T48 AC1 -- exactly ${t48_contested_count} contested agents enumerated (14 lenses + synthesizer + 3 auditors, anchored to ALL_LENS_IDS)" \
+  || fail "T48 AC1 -- enumerated ${t48_contested_count} contested agents, expected ${T48_EXPECTED_TOTAL} (bin/edm-state declares ${WAVE7_STATE_LENS_COUNT} lenses; T48_CONTESTED_AGENTS has drifted)"
+[[ "$T48_CONTESTED_TOTAL" -ne $((T48_EXPECTED_TOTAL + 1)) ]] \
+  && pass "T48 AC1 -- positive control: a T48_CONTESTED_AGENTS one name longer than the anchor would be caught" \
+  || fail "T48 AC1 -- positive control FAILED: the anchor does not discriminate on list length"
 [[ -z "$t48_bad" ]] && pass "T48 AC1 -- all ${T48_CONTESTED_TOTAL} contested agents are opus/max (no hand-tiering slipped in)" \
   || fail "T48 AC1 -- non-opus/max contested agent(s) found, D16 violation:${t48_bad}"
 
@@ -9578,10 +9613,15 @@ done
 # name -- it carries no "eleven"/"twelve" token discoverable from its own label alone), so a future
 # edit that adds a fifteenth real lens must update that shared variable consciously rather than
 # this ticket's count silently drifting out of sync with it.
+# Wave-3 QC remediation: this compared LENS_AGENTS' member count against WAVE7_LENS_COUNT, which
+# is DERIVED from LENS_AGENTS -- both operands were the same number and no input could fail it.
+# The comment above still claimed it forced a conscious update on a fifteenth lens; it did not.
+# Anchored instead to bin/edm-state's ALL_LENS_IDS, an independent definition in another file
+# (WAVE7_STATE_LENS_COUNT, derived at the top of this suite alongside its own positive control).
 verif_t09_lens_name_count="$(printf '%s\n' $LENS_AGENTS | grep -c '.')"
-[[ "$verif_t09_lens_name_count" -eq "$WAVE7_LENS_COUNT" ]] \
-  && pass "VERIF-T09 AC3 -- LENS_AGENTS still enumerates fourteen lens names" \
-  || fail "VERIF-T09 AC3 -- LENS_AGENTS enumerates ${verif_t09_lens_name_count} names, expected $WAVE7_LENS_COUNT"
+[[ "$verif_t09_lens_name_count" -eq "$WAVE7_STATE_LENS_COUNT" ]] \
+  && pass "VERIF-T09 AC3 -- LENS_AGENTS enumerates ${verif_t09_lens_name_count} lens names, matching bin/edm-state's ALL_LENS_IDS" \
+  || fail "VERIF-T09 AC3 -- LENS_AGENTS enumerates ${verif_t09_lens_name_count} names but bin/edm-state's ALL_LENS_IDS declares ${WAVE7_STATE_LENS_COUNT}"
 verif_t09_lens_30_count=0
 verif_t09_lens_checked=0
 for verif_t09_lname in $LENS_AGENTS; do
