@@ -3995,6 +3995,173 @@ check "EDMV4-T22 AC12 -- CLAUDE.md documents the lenses_na union derivation (AD5
   "lenses-union" "$(cat "$t22ac12_claude")"
 
 # =================================================================================
+# EDMV4-T23: the CA-471 completeness backstop reads lenses/lenses_na from the round record in
+# state (not lenses-run.txt), applying EDMV4-T22's C-4 read rule
+# =================================================================================
+echo
+echo "EDMV4-T23 -- CA-471 backstop is state-authoritative and applies the C-4 read rule"
+
+# ---- AC2: the sole consumer-side proof that audit-round-complete itself routes a legacy
+# lenses:[]+round_type:full round record through read_round_lenses($all) rather than reading
+# lenses-run.txt or the literal (empty) lenses array. EDMV4-T22 built read_round_lenses and
+# proved it in isolation (AC10a); this is the ONLY place in the tree that proves the BACKSTOP
+# itself applies it -- an assertion that instead iterated lenses-run.txt would exercise the
+# manifest, not the read rule, and would pass identically whether or not the rule exists. -----
+"$EDM_STATE" init T23AC2 >/dev/null
+T23AC2_DIR="$TMP/SRD/T23AC2"
+"$EDM_STATE" audit-round-start T23AC2 code --lenses L1 >/dev/null
+# Hand-patch the just-started round record to the LEGACY pre-EDMV4-T22 shape a real historical
+# state file carries: lenses:[] with round_type already "full" (the exact shape AC10a's fixture
+# uses, but exercised here through the real audit-round-complete code path instead of a
+# synthesized jq call).
+jq '.audit_rounds.code.rounds[-1].lenses = [] | .audit_rounds.code.rounds[-1].round_type = "full"' \
+  "${T23AC2_DIR}/.edm-state.json" > "${T23AC2_DIR}/.edm-state.json.tmp" \
+  && mv "${T23AC2_DIR}/.edm-state.json.tmp" "${T23AC2_DIR}/.edm-state.json"
+t23ac2_patched_lenses="$(jq -c '.audit_rounds.code.rounds[-1].lenses' "${T23AC2_DIR}/.edm-state.json")"
+[[ "$t23ac2_patched_lenses" == "[]" ]] \
+  && pass "EDMV4-T23 AC2 setup -- the round record now carries the legacy lenses:[]+round_type:full shape" \
+  || fail "EDMV4-T23 AC2 setup -- lenses = '$t23ac2_patched_lenses', expected [] before the backstop runs"
+mkdir -p "${T23AC2_DIR}/code-audit/pass-1_2026-09-02"
+printf 'Round type: full\n' > "${T23AC2_DIR}/code-audit/pass-1_2026-09-02/lenses-run.txt"
+# Zero lens-L{N}.jsonl files land. If the backstop read the literal (empty) lenses array, or
+# iterated the near-empty manifest above, it would require ZERO files and pass vacuously.
+t23ac2_zero_out="$("$EDM_STATE" audit-round-complete T23AC2 code 2>&1)"
+check "EDMV4-T23 AC2 -- a legacy lenses:[]+round_type:full round with ZERO landed JSONL still fires the completeness gate" \
+  "CA-471" "$t23ac2_zero_out"
+t23ac2_zero_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "${T23AC2_DIR}/.edm-state.json")"
+[[ "$t23ac2_zero_rt" == "partial" ]] \
+  && pass "EDMV4-T23 AC2 -- the substituted-to-ALL_LENS_IDS read downgrades the round to partial rather than passing vacuously" \
+  || fail "EDMV4-T23 AC2 -- round_type = '$t23ac2_zero_rt', expected partial (a literal-empty-array read would have stayed full)"
+
+# Positive control on the SAME legacy shape: this time all 14 lens-L{N}.jsonl files land. If
+# read_round_lenses were not wired in at all (e.g. the backstop still hardcoded "require zero
+# files for an empty lenses array"), this control would be indistinguishable from a bug that
+# always passes -- pairing it with the zero-count case above is what proves the gate is actually
+# checking something.
+"$EDM_STATE" init T23AC2CTRL >/dev/null
+T23AC2CTRL_DIR="$TMP/SRD/T23AC2CTRL"
+"$EDM_STATE" audit-round-start T23AC2CTRL code --lenses L1 >/dev/null
+jq '.audit_rounds.code.rounds[-1].lenses = [] | .audit_rounds.code.rounds[-1].round_type = "full"' \
+  "${T23AC2CTRL_DIR}/.edm-state.json" > "${T23AC2CTRL_DIR}/.edm-state.json.tmp" \
+  && mv "${T23AC2CTRL_DIR}/.edm-state.json.tmp" "${T23AC2CTRL_DIR}/.edm-state.json"
+mkdir -p "${T23AC2CTRL_DIR}/code-audit/pass-1_2026-09-02"
+printf 'Round type: full\n' > "${T23AC2CTRL_DIR}/code-audit/pass-1_2026-09-02/lenses-run.txt"
+for _t23ctrl_lens in L1 L2 L3 L4 L5 L6 L7 L8 L9 L10 L11 L12 L13 L14; do
+  printf '{"schema":"lens","lens":"%s","sev":"P2","status":"open","id":null}\n' "$_t23ctrl_lens" \
+    > "${T23AC2CTRL_DIR}/code-audit/pass-1_2026-09-02/lens-${_t23ctrl_lens}.jsonl"
+done
+t23ac2_ctrl_out="$("$EDM_STATE" audit-round-complete T23AC2CTRL code 2>&1)"
+check_absent "EDMV4-T23 AC2 control -- the SAME legacy shape with all 14 JSONL landed completes with no warn" \
+  "CA-471" "$t23ac2_ctrl_out"
+t23ac2_ctrl_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "${T23AC2CTRL_DIR}/.edm-state.json")"
+[[ "$t23ac2_ctrl_rt" == "full" ]] \
+  && pass "EDMV4-T23 AC2 control -- round_type stays full when all 14 substituted lenses are backed" \
+  || fail "EDMV4-T23 AC2 control -- round_type = '$t23ac2_ctrl_rt', expected full"
+
+# ---- AC4: a JSONL present for a lens declared N/A downgrades with its own distinct reason,
+# tested against the REAL na-l13-contract-violation fixture (T32 AC4), not a synthesized path --
+T23_FIXTURE_DIR="${_HARNESS_PLUGIN_DIR}/bin/tests/fixtures/code-audit"
+"$EDM_STATE" init T23AC4 >/dev/null
+T23AC4_DIR="$TMP/SRD/T23AC4"
+"$EDM_STATE" audit-round-start T23AC4 code \
+  --lenses L1,L2,L3,L4,L5,L6,L7,L8,L9,L10,L11,L12,L14 --na-lenses L13 >/dev/null
+mkdir -p "${T23AC4_DIR}/code-audit/pass-1_2026-09-02"
+for _t23ac4_lens in L1 L2 L3 L4 L5 L6 L7 L8 L9 L10 L11 L12 L13 L14; do
+  cp "${T23_FIXTURE_DIR}/na-l13-contract-violation/lens-${_t23ac4_lens}.jsonl" \
+    "${T23AC4_DIR}/code-audit/pass-1_2026-09-02/lens-${_t23ac4_lens}.jsonl"
+done
+cp "${T23_FIXTURE_DIR}/na-l13-contract-violation/lenses-run.txt" \
+  "${T23AC4_DIR}/code-audit/pass-1_2026-09-02/lenses-run.txt"
+t23ac4_out="$("$EDM_STATE" audit-round-complete T23AC4 code 2>&1)"
+check "EDMV4-T23 AC4 -- a JSONL present for a lens declared N/A is caught, tested against real fixture files" \
+  "lens(es) declared N/A at round-start: L13" "$t23ac4_out"
+check "EDMV4-T23 AC4 -- the message cites the Step-1-vs-agent-behaviour contract-violation shape" \
+  "agents/edm-test-integration.md:21-25" "$t23ac4_out"
+t23ac4_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "${T23AC4_DIR}/.edm-state.json")"
+[[ "$t23ac4_rt" == "partial" ]] \
+  && pass "EDMV4-T23 AC4 -- the contract-violation round downgrades to partial" \
+  || fail "EDMV4-T23 AC4 -- round_type = '$t23ac4_rt', expected partial"
+
+# ---- AC11: the clean 13-of-14-plus-N/A(L13) composition, tested against the real na-l13-clean
+# fixture (T32 AC3), must remain full with no warning of any of the three kinds -----------------
+"$EDM_STATE" init T23AC11 >/dev/null
+T23AC11_DIR="$TMP/SRD/T23AC11"
+"$EDM_STATE" audit-round-start T23AC11 code \
+  --lenses L1,L2,L3,L4,L5,L6,L7,L8,L9,L10,L11,L12,L14 --na-lenses L13 >/dev/null
+mkdir -p "${T23AC11_DIR}/code-audit/pass-1_2026-09-02"
+for _t23ac11_lens in L1 L2 L3 L4 L5 L6 L7 L8 L9 L10 L11 L12 L14; do
+  cp "${T23_FIXTURE_DIR}/na-l13-clean/lens-${_t23ac11_lens}.jsonl" \
+    "${T23AC11_DIR}/code-audit/pass-1_2026-09-02/lens-${_t23ac11_lens}.jsonl"
+done
+cp "${T23_FIXTURE_DIR}/na-l13-clean/lenses-run.txt" \
+  "${T23AC11_DIR}/code-audit/pass-1_2026-09-02/lenses-run.txt"
+t23ac11_out="$("$EDM_STATE" audit-round-complete T23AC11 code 2>&1)"
+check_absent "EDMV4-T23 AC11 -- the clean 13-of-14-plus-N/A(L13) fixture completes with no warn" \
+  "CA-471" "$t23ac11_out"
+t23ac11_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "${T23AC11_DIR}/.edm-state.json")"
+[[ "$t23ac11_rt" == "full" ]] \
+  && pass "EDMV4-T23 AC11 -- the clean 13-of-14-plus-N/A(L13) round stays round_type=full" \
+  || fail "EDMV4-T23 AC11 -- round_type = '$t23ac11_rt', expected full"
+
+# ---- AC5/AC6: the incomplete-coverage check is scoped to round_type=full rounds only; a
+# legitimate --lenses L1,L9,L11 partial round emits no coverage warning ------------------------
+"$EDM_STATE" init T23AC6 >/dev/null
+T23AC6B_DIR="$TMP/SRD/T23AC6"
+"$EDM_STATE" audit-round-start T23AC6 code --lenses L1,L9,L11 >/dev/null
+mkdir -p "${T23AC6B_DIR}/code-audit/pass-1_2026-09-02"
+printf 'Round type: partial\nL1\nL9\nL11\n' > "${T23AC6B_DIR}/code-audit/pass-1_2026-09-02/lenses-run.txt"
+printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
+  > "${T23AC6B_DIR}/code-audit/pass-1_2026-09-02/lens-L1.jsonl"
+printf '{"schema":"lens","lens":"L9","sev":"P2","status":"open","id":null}\n' \
+  > "${T23AC6B_DIR}/code-audit/pass-1_2026-09-02/lens-L9.jsonl"
+printf '{"schema":"lens","lens":"L11","sev":"P2","status":"open","id":null}\n' \
+  > "${T23AC6B_DIR}/code-audit/pass-1_2026-09-02/lens-L11.jsonl"
+t23ac6_out="$("$EDM_STATE" audit-round-complete T23AC6 code 2>&1)"
+check_absent "EDMV4-T23 AC6 -- a legitimate --lenses L1,L9,L11 partial round emits no coverage warning" \
+  "coverage incomplete" "$t23ac6_out"
+check_absent "EDMV4-T23 AC6 -- and no warning of any CA-471 kind at all" \
+  "CA-471" "$t23ac6_out"
+
+# ---- AC7: the three downgrade reasons are distinguishable by their own distinct prefix strings
+check "EDMV4-T23 AC7 -- reason 1 (missing run-lens JSONL) has its own distinct prefix" \
+  "missing/empty/unparseable for:" "$t23ac2_zero_out"
+check "EDMV4-T23 AC7 -- reason 2 (unexpected N/A-lens JSONL) has its own distinct prefix" \
+  "lens JSONL present for lens(es) declared N/A" "$t23ac4_out"
+# Reason 3 (coverage incomplete) is exercised structurally in bin/edm-state's own coverage-check
+# block (AC5/AC6 above prove it never fires on a legitimate partial round); a positive trigger
+# requires simulating ALL_LENS_IDS growing between round-start and completion, which is exercised
+# by direct code inspection of the "$_union_covers" == "no" branch rather than a live fixture,
+# since ALL_LENS_IDS is a load-time constant this suite cannot safely mutate mid-run.
+check "EDMV4-T23 AC7 -- reason 3 (coverage incomplete) has its own distinct message text in the source" \
+  "lens coverage incomplete:" "$(cat "$EDM_STATE")"
+
+# ---- AC8: the downgrade stays irreversible; a second completion is refused and mutates nothing
+t23ac8_second_ec=0
+"$EDM_STATE" audit-round-complete T23AC2 code >/dev/null 2>&1 || t23ac8_second_ec=$?
+[[ "$t23ac8_second_ec" -ne 0 ]] \
+  && pass "EDMV4-T23 AC8 -- a second audit-round-complete on the same (already-downgraded) round is refused" \
+  || fail "EDMV4-T23 AC8 -- second completion exited 0, expected non-zero"
+
+# ---- AC9: a round with no pass directory is left unchanged (C-4) -- unaffected by the state-
+# authoritative rewrite, replayed here to pin it post-EDMV4-T23 -------------------------------
+"$EDM_STATE" init T23AC9 >/dev/null
+"$EDM_STATE" audit-round-start T23AC9 code >/dev/null
+t23ac9_out="$("$EDM_STATE" audit-round-complete T23AC9 code 2>&1)"
+check_absent "EDMV4-T23 AC9 -- a round with no pass directory at all is left unchanged (C-4)" \
+  "CA-471" "$t23ac9_out"
+t23ac9_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$TMP/SRD/T23AC9/.edm-state.json")"
+[[ "$t23ac9_rt" == "full" ]] \
+  && pass "EDMV4-T23 AC9 -- the manifest-less round keeps its recorded round_type (full)" \
+  || fail "EDMV4-T23 AC9 -- round_type = '$t23ac9_rt', expected full"
+
+# ---- AC12: CLAUDE.md's round_type row describes the three-way check and both C-4 read rules --
+t23ac12_claude="$(cat "${REPO_ROOT}/plugins/edm/CLAUDE.md")"
+check "EDMV4-T23 AC12 -- CLAUDE.md describes the three-way completeness check" \
+  "three-way completeness check" "$t23ac12_claude"
+check "EDMV4-T23 AC12 -- CLAUDE.md names the manifest-trigger residual gap" \
+  "Known residual gap" "$t23ac12_claude"
+
+# =================================================================================
 # EDMV4-T24: edm-state detect-conditional-lenses -- code-audit Step 1 is the sole authority
 # for L13 applicability
 # =================================================================================
