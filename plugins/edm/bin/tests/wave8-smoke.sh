@@ -3847,6 +3847,76 @@ echo "EDMV4-T46 AC9's fourth internal-error path (edm-state validate dying, rc o
   "third code, and that internal-error branch is edm-stop-gate's own construction/prefix-handling" \
   "-- EDMV4-T46's scope, explicitly out of scope for T47 per this epic's own Out of Scope list."
 
+# =================================================================================================
+# EDMV4-T56 -- Document the three plugin locations and the push-to-observe constraint
+# =================================================================================================
+# AC6/AC7/AC8: the detector below fails if the three-location explanation is removed from
+# plugins/edm/CLAUDE.md; it carries a positive control proving it fires when the section is
+# genuinely absent, not merely that it passes against today's tree; and it is keyed on the two
+# literal, stable cache paths rather than on any sentence of the surrounding prose, so a later
+# reword of the paragraph text cannot break it.
+
+T56_CLAUDE_MD="${PLUGIN_DIR}/CLAUDE.md"
+
+# t56_three_location_check <file> -- true iff <file> names both the marketplace-clone path
+# (/plugin update's read target) and the unpacked-cache path prefix (/reload-plugins's read
+# target, minus the <version> component which varies). Both are literal, stable strings that
+# cannot appear by accident of rewording the paragraph around them.
+t56_three_location_check() {
+  local file="$1"
+  grep -qF -- '~/.claude/plugins/marketplaces/stg-marketplace' "$file" || return 1
+  grep -qF -- '~/.claude/plugins/cache/stg-marketplace/edm/' "$file" || return 1
+  return 0
+}
+
+# ---- AC6: the shipped CLAUDE.md names both cache paths today -----------------------------------
+if t56_three_location_check "$T56_CLAUDE_MD"; then
+  pass "EDMV4-T56 AC6 -- plugins/edm/CLAUDE.md names both the marketplace-clone and unpacked-cache paths"
+else
+  fail "EDMV4-T56 AC6 -- plugins/edm/CLAUDE.md is missing the marketplace-clone and/or unpacked-cache path; the three-location section may have been removed"
+fi
+
+T56_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t56.XXXXXX")"
+
+# ---- AC7: positive control -- strip every line naming either literal path from a scratch copy
+# and confirm the detector correctly reports absence. Without this, a "found 0" style detector
+# that can never actually fail would report AC6 as passing forever regardless of the file's real
+# content (the exact defect class this initiative's own patterns doc records under "A
+# verification scan matches the prose that describes the pattern it hunts"). --------------------
+T56_STRIPPED="${T56_TMP}/claude-stripped.md"
+{ grep -v -F -e '~/.claude/plugins/marketplaces/stg-marketplace' \
+             -e '~/.claude/plugins/cache/stg-marketplace/edm/' \
+    "$T56_CLAUDE_MD" || true; } > "$T56_STRIPPED"
+
+if t56_three_location_check "$T56_STRIPPED"; then
+  fail "EDMV4-T56 AC7 -- positive control FAILED: the detector still reported both paths present after every line naming them was stripped -- the detector cannot fail and proves nothing"
+else
+  pass "EDMV4-T56 AC7 -- positive control: the detector correctly reports the three-location section absent once both cache-path lines are stripped"
+fi
+
+# ---- AC8: the detector tolerates a full reword of the surrounding prose, so long as the two
+# literal paths remain -- proving it is keyed on the paths, not on any sentence around them.
+# This is a synthetic fixture written independently of CLAUDE.md's actual wording, not a sed
+# mangling of it, so it cannot accidentally preserve a phrase the real detector secretly needs. --
+T56_REWORDED="${T56_TMP}/claude-reworded.md"
+cat > "$T56_REWORDED" <<'EOF'
+## An entirely different heading and wording, restating the same fact set
+
+To be perfectly explicit about where things live: a teammate's checkout is not what either
+refresh command consults. The command bound to the marketplace mirror at
+~/.claude/plugins/marketplaces/stg-marketplace behaves nothing like the command bound to the
+version-scoped unpack at ~/.claude/plugins/cache/stg-marketplace/edm/9.9.9/ -- and this paragraph
+uses none of the original section's own sentences.
+EOF
+
+if t56_three_location_check "$T56_REWORDED"; then
+  pass "EDMV4-T56 AC8 -- the detector tolerates a full reword of the surrounding prose, keyed only on the two literal cache paths"
+else
+  fail "EDMV4-T56 AC8 -- the detector broke under a reword that kept both literal cache paths intact -- it is keying on prose, not on the paths"
+fi
+
+rm -rf "$T56_TMP"
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
