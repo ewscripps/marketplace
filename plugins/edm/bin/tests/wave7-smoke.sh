@@ -6433,10 +6433,19 @@ cat > "${ca056_scratch}/audit-report.md" <<'EOF'
 Novel finding whose title collides only with a FENCED example in the pattern doc, not a real
 entry -- the fence-aware pre-flight check must still append it once.
 EOF
+# EDMV4-T18 widened _cmd_update_patterns_body from 6 parameters to 8, inserting seed_file and
+# provenance_dir at positions 2 and 3, and did not update this call site. The stale 6-argument
+# call left $7 unbound, and under `set -u` that killed this suite outright at this line -- no
+# failing assertion, just a missing "Results:" summary. It went unnoticed because wave7 was
+# already red by design on the lens-count assertions, so nobody read past them. The seed is
+# empty here on purpose: this assertion is about the fence-aware duplicate scan over the file
+# being appended to, so the fenced example must stay in pattern_file (position 1).
+: > "${ca056_scratch}/seed.md"
+mkdir -p "${ca056_scratch}/provenance"
 ca056_body_out="$(bash -c "
   source '$EDM_STATE' >/dev/null 2>&1
-  _cmd_update_patterns_body '${ca056_scratch}/preflight.md' '${ca056_scratch}/audit-report.md' '## Anti-Patterns' code CA056 2026-08-06
-" 2>&1)"
+  _cmd_update_patterns_body '${ca056_scratch}/preflight.md' '${ca056_scratch}/seed.md' '${ca056_scratch}/provenance' '${ca056_scratch}/audit-report.md' '## Anti-Patterns' code CA056 2026-08-06
+" 2>&1)" || true
 check "CA-056 -- a heading that only textually matches a FENCED example is treated as novel, not a duplicate" \
   "1" "$(printf '%s\n' "$ca056_body_out" | tail -1)"
 
