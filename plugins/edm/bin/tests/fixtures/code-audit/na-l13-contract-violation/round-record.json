@@ -1,0 +1,7 @@
+{
+  "round": 1,
+  "lenses": ["L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8", "L9", "L10", "L11", "L12", "L14"],
+  "lenses_na": ["L13"],
+  "round_type": "full",
+  "started_at": "2026-09-03T02:02:12Z"
+}

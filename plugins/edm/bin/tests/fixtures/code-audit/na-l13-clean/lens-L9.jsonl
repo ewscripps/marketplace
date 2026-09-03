@@ -1,0 +1,2 @@
+{"schema":1,"id":null,"lens":"L9","round":1,"round_type":"full","sev":"P1","confidence":"medium","file":"(missing)","line":1,"title":"AUTH-T07 spec'd a --dry-run flag; no corresponding code found","status":"open"}
+{"schema":1,"id":null,"lens":"L9","round":1,"round_type":"full","sev":"NOTED","confidence":"low","file":"src/api/routes.js","line":1,"title":"extra endpoint is a necessary implementation detail, not ticketed scope creep","status":"noted"}
