@@ -5120,6 +5120,185 @@ pass "EDMV4-T50 -- /bin/bash --version recorded: ${T50_BASH_VERSION}"
 
 echo
 
+# =================================================================================================
+# EDMV4-T51 -- Verify the required-binary set is still bash, jq, git
+# =================================================================================================
+# Two decisions in this initiative (decisions.md D7, D14) turned on the plugin's required binaries
+# staying exactly bash/jq/git. This section records that as a testable requirement over the live
+# tree, the same shape T50's band above uses: a live-derived sweep with a positive control, never a
+# hardcoded file list.
+echo "=== EDMV4-T51: required-binary set -- no node/python/yq/ruby/deno, and perl only where guarded ==="
+
+T51_INTERP_RE='\b(node|python|python3|yq|ruby|deno)\b'
+
+# ---- Zero node/python/python3/yq/ruby/deno references across bin/ and evals/ (bin/tests/
+# excluded, matching T50/T61 AC9's own convention -- test-fixture/assertion surface).
+t51_scan() {
+  { grep -rnE "$T51_INTERP_RE" "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/evals" 2>/dev/null || true; } \
+    | grep -v '/tests/' \
+    | grep -vE ':[[:space:]]*#'
+}
+T51_HITS="$(t51_scan || true)"
+if [[ -z "$T51_HITS" ]]; then
+  pass "EDMV4-T51 -- zero node/python/python3/yq/ruby/deno references across bin/ and evals/ (bin/tests/ excluded)"
+else
+  fail "EDMV4-T51 -- forbidden interpreter reference(s) found:\n${T51_HITS}"
+fi
+
+# Positive control: a scratch fixture with a real 'python3 -c' line must be caught.
+T51_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t51.XXXXXX")"
+T51_FIXTURE="${T51_TMP}/fake-script.sh"
+{
+  printf '%s\n' '#!/usr/bin/env bash'
+  printf '%s\n' "python3 -c 'print(1)'"
+} > "$T51_FIXTURE"
+T51_CONTROL_HITS="$({ grep -nE "$T51_INTERP_RE" "$T51_FIXTURE" 2>/dev/null || true; } | grep -vE ':[[:space:]]*#' || true)"
+if [[ -n "$T51_CONTROL_HITS" ]]; then
+  pass "EDMV4-T51 -- positive control: a synthetic 'python3 -c' line is caught"
+else
+  fail "EDMV4-T51 -- positive control broken: a synthetic 'python3 -c' fixture produced zero hits"
+fi
+
+# ---- perl: forbidden across bin/ (excluding bin/tests/) and evals/, exactly like the interpreter
+# set above. bin/tests/timing.sh's two guarded call sites are the sole sanctioned exception,
+# verified separately below by CONTENT (never by line number, since EDMV4-47 AC4 edits this file).
+# NOTE: bin/tests/wave6-smoke.sh carries a real, UNGUARDED `perl -pe` usage (G18/CA-378, predating
+# EDMV4) -- out of this ticket's Target Components (wave6-smoke.sh is not listed) and out of the
+# bin/tests/-excluded scope below by the same T61 AC9 convention every other section in this suite
+# already relies on; reported here rather than silently fixed, since fixing it means editing a
+# file this ticket does not own.
+T51_PERL_RE='\bperl\b'
+T51_TIMING_SH="${PLUGIN_DIR}/bin/tests/timing.sh"
+
+T51_PERL_HITS="$({ grep -rnE "$T51_PERL_RE" "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/evals" 2>/dev/null || true; } | grep -v '/tests/' | grep -vE ':[[:space:]]*#' || true)"
+if [[ -z "$T51_PERL_HITS" ]]; then
+  pass "EDMV4-T51 -- zero perl references across bin/ (excluding bin/tests/) and evals/"
+else
+  fail "EDMV4-T51 -- perl reference(s) found outside the sanctioned bin/tests/timing.sh sites:\n${T51_PERL_HITS}"
+fi
+
+T51_PERL_CONTROL="$(printf '%s\n' 'perl -e 1' | grep -cE "$T51_PERL_RE" || true)"
+[[ "$T51_PERL_CONTROL" -ge 1 ]] \
+  && pass "EDMV4-T51 -- positive control: a synthetic perl invocation is caught" \
+  || fail "EDMV4-T51 -- positive control broken: a synthetic perl invocation was not caught"
+
+# timing.sh's two guarded sites, resolved by function body CONTENT.
+t51_extract_fn() {
+  local file="$1" name="$2"
+  awk -v needle="${name}() {" '
+    index($0, needle) == 1 { found=1 }
+    found { print }
+    found && /^}/ { exit }
+  ' "$file"
+}
+T51_NOW_BODY="$(t51_extract_fn "$T51_TIMING_SH" _now)"
+T51_MSBETWEEN_BODY="$(t51_extract_fn "$T51_TIMING_SH" _ms_between)"
+
+# t51_check_guarded_perl <body> <label> -- fails unless: a `command -v perl` guard line precedes a
+# real perl invocation line, which precedes an `else` line, which precedes a `fi` line (relative
+# line order within the extracted body, never absolute line numbers), AND the else/fallback branch
+# itself invokes no perl (an `echo` diagnostic naming "perl" in its message text, e.g. _now's own
+# "perl not found -- falling back" warning, is excluded -- prose naming perl is not a perl
+# invocation, the same self-match class T50's band above guards against).
+t51_check_guarded_perl() {
+  local body="$1" label="$2"
+  local if_line perl_line else_line fi_line fallback_perl
+  if_line="$(printf '%s\n' "$body" | grep -n 'command -v perl' | head -1 | cut -d: -f1)"
+  perl_line="$(printf '%s\n' "$body" | grep -n '\bperl\b' | grep -v 'command -v perl' | head -1 | cut -d: -f1)"
+  else_line="$(printf '%s\n' "$body" | grep -n '^[[:space:]]*else[[:space:]]*$' | head -1 | cut -d: -f1)"
+  fi_line="$(printf '%s\n' "$body" | grep -n '^[[:space:]]*fi[[:space:]]*$' | head -1 | cut -d: -f1)"
+  if [[ -z "$if_line" || -z "$perl_line" || -z "$else_line" || -z "$fi_line" ]]; then
+    fail "EDMV4-T51 -- ${label}: could not resolve guard/perl/else/fi structure by content"
+    return
+  fi
+  if [[ "$if_line" -lt "$perl_line" && "$perl_line" -lt "$else_line" && "$else_line" -lt "$fi_line" ]]; then
+    fallback_perl="$(printf '%s\n' "$body" | tail -n +"$((else_line+1))" | grep -v 'echo' | grep -c '\bperl\b' || true)"
+    if [[ "$fallback_perl" -eq 0 ]]; then
+      pass "EDMV4-T51 -- ${label}: perl invocation is guarded by a 'command -v perl' check with a non-perl fallback in the else branch (resolved by content)"
+    else
+      fail "EDMV4-T51 -- ${label}: the else/fallback branch itself invokes perl -- not a genuine non-perl fallback"
+    fi
+  else
+    fail "EDMV4-T51 -- ${label}: guard/perl/else/fi are not in the expected relative order (if=${if_line} perl=${perl_line} else=${else_line} fi=${fi_line})"
+  fi
+}
+t51_check_guarded_perl "$T51_NOW_BODY" "_now"
+t51_check_guarded_perl "$T51_MSBETWEEN_BODY" "_ms_between"
+
+# ---- edm-gateguard's mtime read: a bare 'stat -c' with no BSD arm is a real finding; a line
+# carrying BOTH stat -c and stat -f (the sanctioned portable fallback pair prescribed by EDMV4-T15's
+# own Technical Notes) is exempt by construction (portable regardless of which OS runs it). T61
+# AC11 (wave7-smoke.sh) already sweeps this tree-wide with the identical pair-shape exemption; this
+# is this ticket's own targeted re-check against edm-gateguard specifically. Read-only: this ticket
+# does not modify edm-gateguard.
+T51_GATEGUARD="${PLUGIN_DIR}/bin/edm-gateguard"
+T51_STAT_HITS="$(grep -n 'stat -c' "$T51_GATEGUARD" 2>/dev/null | grep -vE 'stat -c.*stat -f|stat -f.*stat -c' || true)"
+if [[ -z "$T51_STAT_HITS" ]]; then
+  pass "EDMV4-T51 -- edm-gateguard has no unpaired 'stat -c' (GNU-only) mtime read"
+else
+  fail "EDMV4-T51 -- edm-gateguard has an unpaired 'stat -c' with no BSD fallback: ${T51_STAT_HITS}"
+fi
+
+# Positive control: an unpaired 'stat -c' must still be caught; a paired fallback must be exempt --
+# proving the exemption is shape-specific, not a blanket allowance for the whole file.
+T51_STAT_CONTROL_UNPAIRED="$(printf '%s\n' '  mtime="$(stat -c %Y "$f")"' | grep -n 'stat -c' | grep -vE 'stat -c.*stat -f|stat -f.*stat -c' || true)"
+T51_STAT_CONTROL_PAIRED="$(printf '%s\n' '  mtime="$(stat -c %Y "$f" 2>/dev/null)" || mtime="$(stat -f %m "$f" 2>/dev/null)"' | grep -n 'stat -c' | grep -vE 'stat -c.*stat -f|stat -f.*stat -c' || true)"
+if [[ -n "$T51_STAT_CONTROL_UNPAIRED" && -z "$T51_STAT_CONTROL_PAIRED" ]]; then
+  pass "EDMV4-T51 -- positive control: an unpaired 'stat -c' is caught while a paired fallback is exempted"
+else
+  fail "EDMV4-T51 -- positive control broken: unpaired=[${T51_STAT_CONTROL_UNPAIRED}] paired=[${T51_STAT_CONTROL_PAIRED}]"
+fi
+
+# ---- No .js/.ts/.mjs/.cjs/.py file anywhere under plugins/edm/, live-derived via find.
+# evals/fixtures/ is excluded: it holds a synthetic "tiny-svc" JS subject-repository fixture
+# (EDMV3-T22, predating EDMV4) that the eval driver scores EDM's own agents AGAINST -- the
+# fixture's language is the thing under evaluation, not a runtime dependency this plugin adds,
+# the same category distinction bin/tests/fixtures/hookify's *.json rule fixtures already get.
+T51_JS_PY_FIND_EXPR=( -name '*.js' -o -name '*.ts' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.py' )
+T51_JS_PY_HITS="$({ find "${PLUGIN_DIR}" -type f \( "${T51_JS_PY_FIND_EXPR[@]}" \) 2>/dev/null || true; } | grep -v '/evals/fixtures/' || true)"
+if [[ -z "$T51_JS_PY_HITS" ]]; then
+  pass "EDMV4-T51 -- no .js/.ts/.mjs/.cjs/.py file exists anywhere under plugins/edm/ (evals/fixtures/ excluded -- a synthetic subject-repository fixture, not plugin code)"
+else
+  fail "EDMV4-T51 -- forbidden-extension file(s) found:\n${T51_JS_PY_HITS}"
+fi
+
+# Positive control: a scratch .py file must be caught by the same find shape.
+T51_PYSCRATCH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t51-py.XXXXXX")"
+touch "${T51_PYSCRATCH_DIR}/scratch.py"
+T51_PYSCRATCH_HITS="$(find "${T51_PYSCRATCH_DIR}" -type f \( "${T51_JS_PY_FIND_EXPR[@]}" \) 2>/dev/null || true)"
+if [[ -n "$T51_PYSCRATCH_HITS" ]]; then
+  pass "EDMV4-T51 -- positive control: a scratch .py file is caught by the same find shape"
+else
+  fail "EDMV4-T51 -- positive control broken: a scratch .py file was not caught"
+fi
+rm -rf "$T51_PYSCRATCH_DIR"
+
+# ---- 'POSIX coreutils' is not used as the dependency boundary in any new script or CLAUDE.md.
+T51_COREUTILS_HITS="$(grep -rn 'POSIX coreutils' "${PLUGIN_DIR}/bin/_edm-datadir-lib.sh" "${PLUGIN_DIR}/bin/edm-gateguard" "${PLUGIN_DIR}/bin/edm-hookify" "${PLUGIN_DIR}/bin/edm-stop-gate" "${PLUGIN_DIR}/bin/edm-repo-readiness" "${PLUGIN_DIR}/bin/edm-bash-gate" "${PLUGIN_DIR}/CLAUDE.md" 2>/dev/null || true)"
+if [[ -z "$T51_COREUTILS_HITS" ]]; then
+  pass "EDMV4-T51 -- 'POSIX coreutils' is not used as the dependency boundary in any new script or CLAUDE.md"
+else
+  fail "EDMV4-T51 -- 'POSIX coreutils' phrase found: ${T51_COREUTILS_HITS}"
+fi
+
+T51_COREUTILS_CONTROL="$(printf '%s\n' 'this script only needs POSIX coreutils' | grep -c 'POSIX coreutils' || true)"
+[[ "$T51_COREUTILS_CONTROL" -ge 1 ]] \
+  && pass "EDMV4-T51 -- positive control: the 'POSIX coreutils' phrase detector fires on a synthetic line" \
+  || fail "EDMV4-T51 -- positive control broken: the 'POSIX coreutils' phrase detector did not fire"
+
+# ---- CLAUDE.md Sec."Testing changes" still opens with the exact required-binary sentence,
+# unchanged by this initiative. $CLAUDE_MD is already resolved above (EDMV4-T42's section).
+T51_REQUIRED_BINARY_SENTENCE='macOS and Linux only (bash 3.2+, `jq`, `git` required). Windows and WSL are unsupported.'
+if grep -qF "$T51_REQUIRED_BINARY_SENTENCE" "$CLAUDE_MD"; then
+  pass "EDMV4-T51 -- CLAUDE.md still opens Sec.\"Testing changes\" with the exact required-binary sentence"
+else
+  fail "EDMV4-T51 -- CLAUDE.md's required-binary sentence has drifted from the expected exact text"
+fi
+
+rm -rf "$T51_TMP"
+
+echo
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
