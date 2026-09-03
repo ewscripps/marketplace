@@ -80,21 +80,31 @@ itself. Step 0 is a second, defence-in-depth line alongside the `UserPromptExpan
    (The exports are required so subsequent `edm-state` calls resolve the product-scoped directory.)
 4. `edm-state phase-start <PREFIX> 1`
 5. Spawn `edm-explorer` agent(s) -- see "AI Execution Pattern" below.
-6. Synthesize agent output into the planning document at `${user_config.srd_root}/{PREFIX}/planning.md` using the template below.
-7. `edm-state phase-complete <PREFIX> 1`
-8. `edm-state write-handoff <PREFIX>` -- create/refresh HANDOFF.md from the just-written planning.md. This is idempotent; re-running regenerates HANDOFF.md without error.
-9. **Resolve Open Questions interactively** before presenting the gate:
-   a. Read the `## Open Questions` section of `planning.md`.
-   b. Collect all `[DECISION: ...]` questions. Batch them into `AskUserQuestion` calls (up to 4 per call).
-      - Use a <=12-char header that names the decision (e.g., `"Auth method"`, `"DB approach"`).
-      - Parse the options from the tag brackets -- those become the selectable choices.
-      - Always append a `"Resolve in SRD"` option so the user can skip without blocking.
-   c. If any `[OPEN]` questions remain, output them as a numbered list and wait for the user's typed
-      response before continuing.
-   d. Write all answers into the `## Decisions Made` section of `planning.md` (one `- Question: Answer`
-      line each). Strike or remove resolved items from `## Open Questions`.
-10. Present **HITL Gate 1** (see below, per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`) and STOP for sign-off.
-11. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 1`. Then append Gate 1
+6. **Optional repository readiness scorecard** (EDMV4-T41): if `edm-repo-readiness` is on PATH
+   (`command -v edm-repo-readiness >/dev/null 2>&1`), run it and capture its stdout. If the
+   command is not on PATH, or it exits non-zero, skip this step entirely and proceed
+   unchanged -- no error is raised, and no placeholder section is written to planning.md
+   (absence is authoritative, matching how EDM handles N/A test layers; do not write a
+   "readiness: not measured" note). On success, read the `Rubric version:` and
+   `Overall score:` lines from its stdout and record both together in planning.md's optional
+   `## Repository Readiness` section (see the template below) -- a bare score with no rubric
+   version is a defect. This step never blocks Phase 1, and the size classifier
+   (`skills/orchestrator/SKILL.md` Step 1b.5) never waits for it.
+7. Synthesize agent output into the planning document at `${user_config.srd_root}/{PREFIX}/planning.md` using the template below.
+8. `edm-state phase-complete <PREFIX> 1`
+9. `edm-state write-handoff <PREFIX>` -- create/refresh HANDOFF.md from the just-written planning.md. This is idempotent; re-running regenerates HANDOFF.md without error.
+10. **Resolve Open Questions interactively** before presenting the gate:
+    a. Read the `## Open Questions` section of `planning.md`.
+    b. Collect all `[DECISION: ...]` questions. Batch them into `AskUserQuestion` calls (up to 4 per call).
+       - Use a <=12-char header that names the decision (e.g., `"Auth method"`, `"DB approach"`).
+       - Parse the options from the tag brackets -- those become the selectable choices.
+       - Always append a `"Resolve in SRD"` option so the user can skip without blocking.
+    c. If any `[OPEN]` questions remain, output them as a numbered list and wait for the user's typed
+       response before continuing.
+    d. Write all answers into the `## Decisions Made` section of `planning.md` (one `- Question: Answer`
+       line each). Strike or remove resolved items from `## Open Questions`.
+11. Present **HITL Gate 1** (see below, per `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`) and STOP for sign-off.
+12. On **Approve** (explicit selection only): `edm-state approve-gate <PREFIX> 1`. Then append Gate 1
     scope decisions into `decisions.md` in the initiative directory:
     ```
     | Gate 1 | <decision text> | <chosen> | <rationale> | {date} |
@@ -136,6 +146,9 @@ Files affected, new modules, integration points, approximate ticket count (S/M/L
 > - **`## Riskiest Assumptions`** -- pre-empts "requirement assumed but never validated" (top SRD P0/P1 finding).
 > - **`## Open Questions`** -- tag with `[DECISION: A|B|C]` to surface bounded choices at Gate 1; resolves "ambiguous requirement" findings.
 > - **`## Decisions Made`** -- filled at Gate 1; feeds HANDOFF.md and `decisions.md`. Empty section = highest SRD-rewrite rate in the corpus.
+> - **`## Repository Readiness`** -- optional (EDMV4-T41); appended only when Step 6's
+>   `edm-repo-readiness` run succeeded. Names the rubric version alongside the score so a reader
+>   can trace an old planning.md's score to the rubric version that produced it.
 
 ```markdown
 # {Initiative Name} -- Planning & Discovery
@@ -174,6 +187,18 @@ Files affected, new modules, integration points, approximate ticket count (S/M/L
 ## Decisions Made
 {populated interactively at Gate 1 -- leave empty initially}
 ```
+
+**Optional `## Repository Readiness` section** (EDMV4-T41): appended after `## Complexity
+Estimate` only when Step 6's `edm-repo-readiness` run succeeded. Format:
+
+```markdown
+## Repository Readiness
+Rubric version: {readiness_rubric_version, e.g. 1.0.0}
+Overall score: {N.N} / 10
+```
+
+When `edm-repo-readiness` is not on PATH, or exits non-zero, this section is omitted entirely --
+no placeholder, no "not measured" note (matching how EDM handles N/A test layers).
 
 ## AI Execution Pattern
 

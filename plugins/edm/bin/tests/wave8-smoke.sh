@@ -2637,5 +2637,116 @@ echo "EDMV4-T11 AC10/AC11 -- allow-path p95 is measured by 'bash bin/tests/timin
   "--mermaid-ratio); see the ticket's own completion note and decisions.md for the recorded figure."
 
 echo
+
+# =================================================================================================
+# EDMV4-T41 -- Feed the readiness score into the classifier and into planning.md
+# =================================================================================================
+echo "=== EDMV4-T41: readiness score wired to skills/plan/SKILL.md and the classifier ==="
+echo
+
+T41_PLAN_SKILL="${PLUGIN_DIR}/skills/plan/SKILL.md"
+T41_ORCH_SKILL="${PLUGIN_DIR}/skills/orchestrator/SKILL.md"
+T41_CLAUDE_MD="${PLUGIN_DIR}/CLAUDE.md"
+
+# _t41_extract_between <file> <start-regex> <end-regex> -- same sentinel-delimited extraction
+# EDMV4-T34/T37 already use (bin/_edm-cli-lib.sh's print_help precedent), applied here to
+# Step 1b.5's block so this ticket's own assertions never drift from the block those tickets
+# already extract.
+_t41_extract_between() {
+  local file="$1"
+  T41_START="$2" T41_END="$3" awk '
+    $0 ~ ENVIRON["T41_START"] { found=1; next }
+    found && $0 ~ ENVIRON["T41_END"] { exit }
+    found { print }
+  ' "$file"
+}
+
+T41_STEP1B5="$(_t41_extract_between "$T41_ORCH_SKILL" '^\*\*Step 1b\.5' '^\*\*Step 1c')"
+
+if [[ -n "$T41_STEP1B5" ]]; then
+  pass "EDMV4-T41 -- Step 1b.5's block extracted non-empty (extraction not silently vacuous)"
+else
+  fail "EDMV4-T41 -- Step 1b.5's block extraction was empty; nothing below is a meaningful check"
+fi
+
+# ---- AC1: skills/plan/SKILL.md optionally runs edm-repo-readiness during Phase 1 ----------------
+check "EDMV4-T41 AC1 -- plan skill names the optional repository readiness scorecard step" \
+  'Optional repository readiness scorecard' "$(cat "$T41_PLAN_SKILL")"
+check "EDMV4-T41 AC1 -- plan skill guards the call with a PATH presence check" \
+  'command -v edm-repo-readiness >/dev/null 2>&1' "$(cat "$T41_PLAN_SKILL")"
+
+# ---- AC2: the recorded summary names the rubric version alongside the score ---------------------
+check "EDMV4-T41 AC2 -- plan skill records Rubric version and Overall score together" \
+  'read the `Rubric version:` and' "$(cat "$T41_PLAN_SKILL")"
+check "EDMV4-T41 AC2 -- plan skill states a bare score with no rubric version is a defect" \
+  'a bare score with no rubric' "$(cat "$T41_PLAN_SKILL")"
+check "EDMV4-T41 AC2 -- plan template documents the optional Repository Readiness section format" \
+  '## Repository Readiness' "$(cat "$T41_PLAN_SKILL")"
+
+# ---- AC3: Step 1b.5 states the classifier may consult the score for design-ambiguity ONLY -------
+check "EDMV4-T41 AC3 -- Step 1b.5 states the score feeds the design-ambiguity signal specifically" \
+  'additional input to the **design-ambiguity** signal' "$T41_STEP1B5"
+check "EDMV4-T41 AC3 -- Step 1b.5 states the score is never a fourth signal" \
+  'never as a fourth signal' "$T41_STEP1B5"
+
+# ---- AC4: the score never overrides the security-trigger tie-breaker floor ----------------------
+check "EDMV4-T41 AC4 -- Step 1b.5 states the tie-breaker floor always wins over a score-driven adjustment" \
+  'always wins over any score-driven adjustment' "$T41_STEP1B5"
+
+# ---- AC5/AC6: unavailable-on-PATH and non-zero-exit both leave Phase 1 unchanged, no placeholder -
+check "EDMV4-T41 AC5/AC6 -- plan skill states no error and no placeholder on either failure mode" \
+  'no error is raised, and no placeholder section is written to planning.md' "$(cat "$T41_PLAN_SKILL")"
+check "EDMV4-T41 AC5/AC6 -- plan skill names both failure modes (not on PATH, non-zero exit)" \
+  'is not on PATH, or it exits non-zero' "$(cat "$T41_PLAN_SKILL")"
+check "EDMV4-T41 AC5/AC6 -- template addendum repeats the no-placeholder rule for the optional section" \
+  'this section is omitted entirely' "$(cat "$T41_PLAN_SKILL")"
+
+# ---- AC7: the classifier still produces a recommendation from three signals with no score -------
+check "EDMV4-T41 AC7 -- Step 1b.5 states it still produces a recommendation from the three signals alone" \
+  'this step still produces a recommendation from the three signals alone' "$T41_STEP1B5"
+check "EDMV4-T41 AC7 -- Step 1b.5 states it never blocks on, or waits for, the scorecard" \
+  'never blocks on, or waits for, the scorecard' "$T41_STEP1B5"
+check "EDMV4-T41 AC7 -- plan skill states the classifier never waits for the readiness step either" \
+  'never waits for it' "$(cat "$T41_PLAN_SKILL")"
+
+# ---- AC8: CLAUDE.md documents the integration by name, naming both the producing command and
+# the two consumers (planning.md's section and the classifier). ----------------------------------
+check "EDMV4-T41 AC8 -- CLAUDE.md carries a dedicated integration subsection" \
+  '### Repository readiness feeds planning.md and the classifier (EDMV4-T41)' "$(cat "$T41_CLAUDE_MD")"
+check "EDMV4-T41 AC8 -- CLAUDE.md's subsection names the producing command" \
+  'produced by `bin/edm-repo-readiness`' "$(cat "$T41_CLAUDE_MD")"
+check "EDMV4-T41 AC8 -- CLAUDE.md's subsection names where Phase 1 records it" \
+  '`skills/plan/SKILL.md` Step 6' "$(cat "$T41_CLAUDE_MD")"
+
+# ---- Regression: Step 1b.5's block is still under 30 lines after this ticket's addition (EDMV4-T34
+# AC12 pins the ceiling; this reconfirms it holds post-T41, since T41 is the last ticket in this
+# epic to touch that block). ----------------------------------------------------------------------
+T41_STEP1B5_LINES="$(printf '%s\n' "$T41_STEP1B5" | wc -l | tr -d ' ')"
+if [[ "$T41_STEP1B5_LINES" -lt 30 ]]; then
+  pass "EDMV4-T41 -- Step 1b.5's block is still ${T41_STEP1B5_LINES} lines (< 30) after this ticket's addition"
+else
+  fail "EDMV4-T41 -- Step 1b.5's block grew to ${T41_STEP1B5_LINES} lines (expected < 30)"
+fi
+
+# ---- Guard D6 regression: this ticket's own addition to Step 1b.5 introduces no mode/lifecycle
+# sub-flow restatement (EDMV4-T37's phrase list, re-applied here rather than assumed to still hold
+# after new prose was added to the same block). ---------------------------------------------------
+T41_D6_PHRASES="Phases 1, 2, 3, 5 recorded|fuse into one audited file|Tickets generated directly from"
+if printf '%s\n' "$T41_STEP1B5" | grep -qE "$T41_D6_PHRASES"; then
+  fail "EDMV4-T41 -- guard D6: Step 1b.5's block (post-T41) restates a mode/lifecycle sub-flow description"
+else
+  pass "EDMV4-T41 -- guard D6: Step 1b.5's block (post-T41) still contains no mode/lifecycle sub-flow restatement"
+fi
+
+# Positive control for the D6 regression check above: prove it discriminates by injecting a
+# restatement phrase into a scratch copy of the extracted block and confirming the check flips.
+T41_D6_INJECTED="$(printf '%s\nfuse into one audited file\n' "$T41_STEP1B5")"
+if printf '%s\n' "$T41_D6_INJECTED" | grep -qE "$T41_D6_PHRASES"; then
+  pass "EDMV4-T41 -- positive control: the D6 phrase check correctly fires on an injected restatement phrase"
+else
+  fail "EDMV4-T41 -- positive control FAILED: the D6 phrase check did not fire on an injected restatement phrase"
+fi
+
+echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
