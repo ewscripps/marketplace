@@ -3722,7 +3722,7 @@ cmd_metrics_report() {
           select(.completed_at != null) |
           [$t, (.round|tostring), ((.lenses // []) | length | tostring), ((.duration_seconds // 0)|tostring), ((.estimated_cost_usd // 0)|tostring), (.model_used // "?")] | @tsv
         ' "$state" 2>/dev/null)
-        echo "  (lenses per round shown in the Lenses column above; round_type full = all 11 lenses)"
+        echo "  (lenses per round shown in the Lenses column above; round_type full = all 14 lenses)"
         echo
       fi
       # ---- Tiered vs untiered lens cost (EDMV3-T53 AC9) ------------------------------------
@@ -4870,7 +4870,7 @@ _cmd_audit_round_complete_body() {
       local _lens _lens_file _missing=""
       # CA-478: lenses-run.txt is agent-authored via Write (skills/code-audit/SKILL.md), so it may
       # arrive without a trailing newline (bare `read` drops that last line -- on a full round that
-      # is L11) or with CRLF line endings (every line would fail the ^L[0-9]+$ test and silently
+      # is L14) or with CRLF line endings (every line would fail the ^L[0-9]+$ test and silently
       # disable the gate). Handle both so a truncated delivery cannot pass as complete.
       while IFS= read -r _lens || [[ -n "$_lens" ]]; do
         _lens="${_lens%$'\r'}"
@@ -4972,7 +4972,7 @@ cmd_audit_converged() {
 
   # AC6/AC7: missing jsonl -- distinguish "no audit has run" from "legacy markdown-only ledger,
   # not a fresh-audit demand" (a legacy initiative below schema_version 2 degrades per EDMV3-11
-  # rather than being told to run a fresh eleven-lens opus round).
+  # rather than being told to run a fresh fourteen-lens opus round).
   if [[ ! -f "$jsonl_path" ]]; then
     if [[ "$schema_class2" != "2" && -f "$md_path" ]]; then
       echo "edm-state audit-converged: [warn] legacy initiative (schema_version ${schema_version:-absent}) for ${prefix} -- only a markdown ledger found at ${md_path}; this is not a fresh-audit demand, migrate via a normal code-audit round when convenient" >&2
@@ -5037,7 +5037,7 @@ cmd_audit_converged() {
       # "archive:audit-converged-recheck").
       echo "edm-state audit-converged: [warn] no code-audit round has ever been recorded for ${prefix} (schema_version ${schema_version:-absent}) -- proceeding without the round-type gate" >&2
     else
-      echo "edm-state audit-converged: latest code-audit round has an unknown round_type for ${prefix}; run a full (eleven-lens) code-audit round before checking convergence" >&2
+      echo "edm-state audit-converged: latest code-audit round has an unknown round_type for ${prefix}; run a full (fourteen-lens) code-audit round before checking convergence" >&2
       return 1
     fi
   elif [[ "$latest_round_type" == "partial" ]]; then
