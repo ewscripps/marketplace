@@ -2969,5 +2969,224 @@ else
 fi
 
 echo
+
+# =================================================================================================
+# EDMV4-T47: Block only on the unambiguous subset, read from the existing class field
+# =================================================================================================
+# Own banded section, appended last (matching the EDMV4-T18 section's own precedent above), so a
+# concurrent agent's own append to this file does not interleave with it.
+#
+# By the time this ticket landed, edm-stop-gate (EDMV4-T46) already read the "blocking"/"info"
+# class field state_anomalies() emits at the point each anomaly line is written, and already
+# hardcoded no anomaly name -- T46's own AC4 ("only blocking-class anomalies reach stderr, plus
+# one informational count line") required exactly the mechanism this ticket specifies. What this
+# ticket actually contributes on top of that is the coverage T46's own ACs never asked for: the
+# AC4 grep machine-check with a positive control (so a zero-hit result is proven non-vacuous, not
+# just asserted), the three named anomalies exercised INDIVIDUALLY against their own dedicated
+# fixtures (T46's own tests only exercise OPEN_PARTIALS, never OPEN_AUDIT_ROUND or
+# SPEC_SWEEP_PENDING), the AC8 descope proven functionally (a started phase with no completed_at
+# produces no anomaly and does not block) rather than only by absence-of-implementation, and the
+# AC10 same-fixture blocking-vs-informational comparison T46's own tests never construct (T46 AC2
+# compares two DIFFERENT initiatives, not one initiative in two states).
+echo "=== EDMV4-T47: block only on the unambiguous subset ==="
+echo
+
+# ---- AC1/AC2 (code-shape): the blocking test reads the literal class token 'blocking' -- the
+# same token cmd_validate's own exit-3 test uses -- and the gate never derives a prefix from the
+# working directory. Both are read-only inspections of the real edm-stop-gate; every fixture below
+# also proves the same claims behaviorally. ------------------------------------------------------
+check "EDMV4-T47 AC1 -- edm-stop-gate's blocking branch tests the class field against the literal 'blocking'" \
+  'blocking)' "$(cat "$EDM_STOP_GATE")"
+# Note: a bare grep for "pwd" self-matches edm-stop-gate's own SCRIPT_DIR boilerplate
+# (`$(cd ... && pwd)`), the same self-matching-scan trap this initiative's own code-audit
+# patterns warn about -- that usage locates the script file, not a prefix. AC2's actual claim
+# (prefix comes from active-initiatives, never a cwd guess) is proven functionally instead: AC11
+# below shows a repository with no resolvable initiative exits 0 with no output, and AC5/AC6/AC7/
+# AC9/AC10 all resolve their fixture prefixes purely via active-initiatives regardless of cwd.
+check_absent "EDMV4-T47 AC2 -- edm-stop-gate never derives a prefix via \$(basename ...)" \
+  "basename" "$(cat "$EDM_STOP_GATE")"
+
+# ---- AC4: "no per-anomaly logic" is machine-checked, not reviewed once, and the zero-hit result
+# is proven non-vacuous by a positive control that injects a real per-anomaly conditional into a
+# scratch copy and confirms the identical extraction DOES flag it (code-audit.md's own guidance:
+# "found 0" and "matched nothing, ever" are indistinguishable without one). --------------------
+_T47_AC4_PATTERN='OPEN_PARTIALS|OPEN_AUDIT_ROUND|SPEC_SWEEP_PENDING|PERM_RULES_MISSING|SIZE_UNKNOWN'
+# _t47_ac4_nonconditional_hits <file> -- grep -nE matches of the pattern above that are NOT
+# comment-only lines (first non-whitespace character '#'), so a hit inside help text/prose is
+# excluded and only a hit inside real code (a conditional, a case arm, a literal) is flagged.
+_t47_ac4_nonconditional_hits() {
+  local file="$1"
+  grep -nE "$_T47_AC4_PATTERN" "$file" 2>/dev/null | grep -vE '^[0-9]+:[[:space:]]*#' || true
+}
+
+T47_AC4_REAL_HITS="$(_t47_ac4_nonconditional_hits "$EDM_STOP_GATE")"
+if [[ -z "$T47_AC4_REAL_HITS" ]]; then
+  pass "EDMV4-T47 AC4 -- edm-stop-gate contains no per-anomaly conditional logic (grep hits, if any, are comment-only)"
+else
+  fail "EDMV4-T47 AC4 -- anomaly-name reference(s) found outside a comment: ${T47_AC4_REAL_HITS}"
+fi
+
+T47_AC4_CONTROL="${TMP}/t47-ac4-control-stop-gate"
+cp "$EDM_STOP_GATE" "$T47_AC4_CONTROL"
+printf '\n  if [[ "$_class_name" == "OPEN_PARTIALS" ]]; then echo hardcoded_anomaly_name; fi\n' >> "$T47_AC4_CONTROL"
+T47_AC4_CONTROL_HITS="$(_t47_ac4_nonconditional_hits "$T47_AC4_CONTROL")"
+if [[ -n "$T47_AC4_CONTROL_HITS" ]]; then
+  pass "EDMV4-T47 AC4 -- positive control: an injected per-anomaly conditional IS detected, so the zero-hit result above is not vacuous"
+else
+  fail "EDMV4-T47 AC4 -- positive control FAILED: an injected conditional referencing OPEN_PARTIALS was not flagged, so the zero-hit result above proves nothing"
+fi
+rm -f "$T47_AC4_CONTROL"
+
+# ---- AC5: OPEN_PARTIALS (already blocking at validate/archive) blocks at Stop too --------------
+t47_ac5_case() {
+  edm-state init T47PART >/dev/null
+  edm-state set T47PART current_phase 1 >/dev/null
+  edm-state set T47PART estimated_size Small >/dev/null
+  edm-state record-partial-verdict T47PART T47PART-T01 PARTIAL "needs runtime check" >/dev/null
+
+  local rc=0
+  edm-stop-gate >/dev/null 2>&1 || rc=$?
+  [[ "$rc" -eq 2 ]] \
+    && pass "EDMV4-T47 AC5 -- an unclosed partial_verdict_map entry (OPEN_PARTIALS) blocks at Stop (exit 2)" \
+    || fail "EDMV4-T47 AC5 -- expected exit 2 for OPEN_PARTIALS, got ${rc}"
+}
+t46_isolate_and_run t47_ac5_case
+
+# ---- AC6: OPEN_AUDIT_ROUND warns and does not block -- a round genuinely open mid-audit is the
+# ambiguous/ordinary case this ticket must NOT block on. Asserts both the exit code AND that
+# `edm-state validate` really classified it info-class, so the non-blocking result is a positive
+# control on a live anomaly, not an accident of an empty fixture. ---------------------------------
+t47_ac6_case() {
+  edm-state init T47OAR >/dev/null
+  edm-state set T47OAR current_phase 1 >/dev/null
+  edm-state set T47OAR estimated_size Small >/dev/null
+  edm-state audit-round-start T47OAR code >/dev/null
+  # Deliberately never call audit-round-complete -- the round stays open.
+
+  local validate_out
+  validate_out="$(edm-state validate T47OAR 2>&1 || true)"
+  check "EDMV4-T47 AC6 -- the fixture genuinely carries an info-class OPEN_AUDIT_ROUND anomaly" \
+    "info  OPEN_AUDIT_ROUND" "$validate_out"
+
+  local rc=0
+  edm-stop-gate >/dev/null 2>&1 || rc=$?
+  [[ "$rc" -eq 0 ]] \
+    && pass "EDMV4-T47 AC6 -- an open audit round (OPEN_AUDIT_ROUND) does not block at Stop (exit 0)" \
+    || fail "EDMV4-T47 AC6 -- expected exit 0 for OPEN_AUDIT_ROUND, got ${rc}"
+}
+t46_isolate_and_run t47_ac6_case
+
+# ---- AC7: SPEC_SWEEP_PENDING warns and does not block -- its blocking enforcement already lives
+# at audit-converged/approve-gate, so re-blocking it at Stop would be a second, conflicting
+# classification of the same debt. Same both-directions shape as AC6 above. ----------------------
+t47_ac7_case() {
+  edm-state init T47SPEC >/dev/null
+  edm-state set T47SPEC current_phase 1 >/dev/null
+  edm-state set T47SPEC estimated_size Small >/dev/null
+  local t47spec_dir; t47spec_dir="$(edm-state resolve-dir T47SPEC)"
+  mkdir -p "${t47spec_dir}/code-audit"
+  printf '%s\n' '{"id":"CA-9001","status":"fixed","spec_swept":"no"}' \
+    > "${t47spec_dir}/code-audit/findings-ledger.jsonl"
+
+  local validate_out
+  validate_out="$(edm-state validate T47SPEC 2>&1 || true)"
+  check "EDMV4-T47 AC7 -- the fixture genuinely carries an info-class SPEC_SWEEP_PENDING anomaly" \
+    "info  SPEC_SWEEP_PENDING" "$validate_out"
+
+  local rc=0
+  edm-stop-gate >/dev/null 2>&1 || rc=$?
+  [[ "$rc" -eq 0 ]] \
+    && pass "EDMV4-T47 AC7 -- an outstanding spec-sweep (SPEC_SWEEP_PENDING) does not block at Stop (exit 0)" \
+    || fail "EDMV4-T47 AC7 -- expected exit 0 for SPEC_SWEEP_PENDING, got ${rc}"
+}
+t46_isolate_and_run t47_ac7_case
+
+# ---- AC8: the descoped "phase started with no completed_at" anomaly is proven absent
+# FUNCTIONALLY -- a phase with started_at set and completed_at genuinely absent produces no
+# anomaly line at all (not merely "no anomaly is named that in edm-stop-gate's own source"),
+# and the gate does not block on it. Direct state-file patch (precedent: this suite's own T46 AC4
+# fixture), since edm-state phase-start enforces prerequisite gates this fixture has no reason to
+# also stand up. ------------------------------------------------------------------------------
+t47_ac8_case() {
+  edm-state init T47NOCA >/dev/null
+  local state; state="$(edm-state resolve-dir T47NOCA)/.edm-state.json"
+  jq '.current_phase = 6 | .estimated_size = "Small"
+      | .phase_durations["6_phase"] = {started_at: "2026-09-01T00:00:00Z"}' \
+    "$state" > "${state}.tmp" && mv "${state}.tmp" "$state"
+
+  local validate_out
+  validate_out="$(edm-state validate T47NOCA 2>&1 || true)"
+  check_absent "EDMV4-T47 AC8 -- a started phase with no completed_at produces no anomaly naming it (descoped per decisions.md D16)" \
+    "no completed_at" "$validate_out"
+
+  local rc=0
+  edm-stop-gate >/dev/null 2>&1 || rc=$?
+  [[ "$rc" -eq 0 ]] \
+    && pass "EDMV4-T47 AC8 -- edm-stop-gate does not block on a started phase with no completed_at" \
+    || fail "EDMV4-T47 AC8 -- expected exit 0, got ${rc}"
+}
+t46_isolate_and_run t47_ac8_case
+
+# ---- AC9: the blocking stderr message names BOTH the specific anomaly and the initiative -------
+t47_ac9_case() {
+  edm-state init T47NAME >/dev/null
+  edm-state set T47NAME current_phase 1 >/dev/null
+  edm-state set T47NAME estimated_size Small >/dev/null
+  edm-state record-partial-verdict T47NAME T47NAME-T01 PARTIAL "needs runtime check" >/dev/null
+
+  local out rc=0
+  out="$(edm-stop-gate 2>&1)" || rc=$?
+  check "EDMV4-T47 AC9 -- blocking stderr names the specific anomaly (OPEN_PARTIALS)" "OPEN_PARTIALS" "$out"
+  check "EDMV4-T47 AC9 -- blocking stderr names the initiative (T47NAME)" "T47NAME" "$out"
+  [[ "$rc" -eq 2 ]] || fail "EDMV4-T47 AC9 -- fixture setup did not reach the blocking path (rc=${rc})"
+}
+t46_isolate_and_run t47_ac9_case
+
+# ---- AC10: the SAME fixture initiative compared against itself in two states -- informational-
+# only (exit 0), then mutated in place to add a blocking anomaly (exit 2) -- so the two paths are
+# proven against one state file, not two separately-constructed ones (T46 AC2 uses two distinct
+# initiatives; this is the comparison T47 AC10 specifically calls for). --------------------------
+t47_ac10_case() {
+  edm-state init T47SAME >/dev/null
+  edm-state set T47SAME current_phase 2 >/dev/null
+  edm-state set T47SAME estimated_size Small >/dev/null
+
+  local rc1=0 out1
+  out1="$(edm-stop-gate 2>&1)" || rc1=$?
+  [[ "$rc1" -eq 0 ]] \
+    && pass "EDMV4-T47 AC10 -- the fixture's informational-only state exits 0" \
+    || fail "EDMV4-T47 AC10 -- expected exit 0 for the informational-only state, got ${rc1} (out=[${out1}])"
+
+  edm-state record-partial-verdict T47SAME T47SAME-T01 PARTIAL "needs runtime check" >/dev/null
+
+  local rc2=0 out2
+  out2="$(edm-stop-gate 2>&1)" || rc2=$?
+  [[ "$rc2" -eq 2 ]] \
+    && pass "EDMV4-T47 AC10 -- the SAME fixture, once mutated to carry a blocking anomaly, exits 2" \
+    || fail "EDMV4-T47 AC10 -- expected exit 2 once OPEN_PARTIALS was added, got ${rc2}"
+  check "EDMV4-T47 AC10 -- the blocking-state stderr names OPEN_PARTIALS" "OPEN_PARTIALS" "$out2"
+}
+t46_isolate_and_run t47_ac10_case
+
+# ---- AC11: a repository with no active initiative returns 0 and produces no output on either
+# stream. Dedicated T47-banner assertion (T46 AC3 covers the identical scenario for its own
+# ticket; this is the AC11-required assertion for this ticket). ----------------------------------
+t47_ac11_case() {
+  local out rc=0
+  out="$(edm-stop-gate 2>&1)" || rc=$?
+  [[ "$rc" -eq 0 && -z "$out" ]] \
+    && pass "EDMV4-T47 AC11 -- a repository with no active initiative exits 0 with zero bytes on stdout+stderr" \
+    || fail "EDMV4-T47 AC11 -- rc=${rc} out=[${out}] (expected rc=0, empty)"
+}
+t46_isolate_and_run t47_ac11_case
+
+echo
+echo "EDMV4-T46 AC9's fourth internal-error path (edm-state validate dying, rc outside {0,3}, for a" \
+  "prefix active-initiatives already surfaced) is NOT exercised by any T47 fixture above: every" \
+  "fixture here drives edm-state validate to exit 0 (informational) or 3 (blocking), never a" \
+  "third code, and that internal-error branch is edm-stop-gate's own construction/prefix-handling" \
+  "-- EDMV4-T46's scope, explicitly out of scope for T47 per this epic's own Out of Scope list."
+
+echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
