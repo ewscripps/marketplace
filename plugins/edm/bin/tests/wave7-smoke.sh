@@ -1221,10 +1221,37 @@ echo "T61 AC11 -- macOS/Linux divergence points (sed -i, grep -P family, stat -c
 # TMPDIR-bypass behavior and had regressed in score-artifacts.sh's cmd_compare while the -d-only
 # tripwire watched the directory form alone.
 t61_divergence_hits="$(grep -rnE 'sed -i|grep -[a-zA-Z]*P|stat -c|stat -f|XXXXXX[A-Za-z0-9]|mktemp( -d)?\)|date -d|readlink -f|sort -V|head -n -[0-9]|printf %q' "$PLUGIN_DIR/bin/" "$PLUGIN_DIR/evals/" 2>/dev/null | grep -v '/tests/' || true)"
-t61_divergence_outside_branch="$(printf '%s\n' "$t61_divergence_hits" | grep -v 'edm-lint-artifacts:' || true)"
+# EDMV4-T15/T45: a GNU-then-BSD fallback PAIR on one line is portable by construction -- it is the
+# remedy this sweep exists to encourage, not a divergence point. EDMV4-T15's gg_fresh_lines needs a
+# portable mtime read and its ticket's own Technical Notes prescribe exactly this shape, which put
+# a second legitimate call site outside edm-lint-artifacts' branch and failed this assertion.
+# Exempting by SHAPE rather than by filename is deliberate: exempting edm-gateguard wholesale would
+# blanket-hide any genuinely non-portable idiom added to that file later, whereas a line carrying
+# both halves of the pair cannot be non-portable no matter which file it lives in.
+t61_divergence_outside_branch="$(printf '%s\n' "$t61_divergence_hits" \
+  | grep -v 'edm-lint-artifacts:' \
+  | grep -vE 'stat -c.*stat -f|stat -f.*stat -c' || true)"
 [[ -z "$t61_divergence_outside_branch" ]] \
-  && pass "T61 AC11 -- every divergence-point hit (bin/ and evals/) is inside edm-lint-artifacts' detection branch" \
+  && pass "T61 AC11 -- every divergence-point hit (bin/ and evals/) is inside a detection branch or a portable fallback pair" \
   || fail "T61 AC11 -- divergence point(s) found outside the detection branch:\n$t61_divergence_outside_branch"
+
+# Positive control for the pair-shape exemption above: an UNPAIRED `stat -c` must still be caught.
+# Without this, widening the filter to allow the portable pair could silently swallow a real
+# GNU-only usage, which is the failure mode this whole assertion exists to prevent.
+t61_unpaired_probe="$(printf '%s\n' \
+  'bin/fake-script:12:  mtime="$(stat -c %Y "$f")"' \
+  'bin/fake-script:20:  m="$(stat -c %Y "$f")" || m="$(stat -f %m "$f")"' \
+  | grep -v 'edm-lint-artifacts:' \
+  | grep -vE 'stat -c.*stat -f|stat -f.*stat -c' || true)"
+if printf '%s\n' "$t61_unpaired_probe" | grep -q 'fake-script:12'; then
+  if printf '%s\n' "$t61_unpaired_probe" | grep -q 'fake-script:20'; then
+    fail "T61 AC11 -- positive control FAILED: the pair-shape exemption did not exempt a paired fallback"
+  else
+    pass "T61 AC11 -- positive control: an unpaired 'stat -c' is still caught while a paired fallback is exempted"
+  fi
+else
+  fail "T61 AC11 -- positive control FAILED: an unpaired 'stat -c' was wrongly exempted by the pair-shape filter"
+fi
 check "T61 AC11 -- edm-lint-artifacts' PCRE detection uses the documented grep -qP probe" \
   "grep -qP" "$t61_divergence_hits"
 # EDMV3-T61 end
