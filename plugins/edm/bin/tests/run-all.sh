@@ -34,9 +34,11 @@ _SUITE_DIR="${EDM_RUN_ALL_SUITE_DIR:-$SCRIPT_DIR}"
 # glob order.
 # G7/CA-146: EDM_RUN_ALL_PREFERRED_ORDER and EDM_RUN_ALL_MIN_SUITE_COUNT let harness-smoke.sh's
 # scratch-directory cases exercise a single stub suite without also having to satisfy the
-# real seven-suite floor and preferred-name set below -- unset (the default, "${VAR-default}"
+# real eight-suite floor and preferred-name set below -- unset (the default, "${VAR-default}"
 # so an explicitly-empty override is distinct from "unset") preserves prior behavior exactly.
-_PREFERRED_ORDER="${EDM_RUN_ALL_PREFERRED_ORDER-wave3-smoke.sh wave4a-smoke.sh wave4b-smoke.sh wave5-smoke.sh harness-smoke.sh wave6-smoke.sh wave7-smoke.sh}"
+# EDMV4-T53 AC2(a): wave8-smoke.sh is appended here so the missing-preferred tripwire below
+# names it if it ever stops being discovered.
+_PREFERRED_ORDER="${EDM_RUN_ALL_PREFERRED_ORDER-wave3-smoke.sh wave4a-smoke.sh wave4b-smoke.sh wave5-smoke.sh harness-smoke.sh wave6-smoke.sh wave7-smoke.sh wave8-smoke.sh}"
 
 # ---- Discover all suites (AC3: glob-driven, not a hand-kept list) -----------------------------
 _all_suites=()
@@ -93,7 +95,11 @@ else
   _branch_before=unknown
 fi
 
-_MIN_SUITE_COUNT="${EDM_RUN_ALL_MIN_SUITE_COUNT:-7}"
+# EDMV4-T53 AC2(b): bumped from 7 to 8 for wave8-smoke.sh. This default is re-derived at test
+# time (bin/tests/wave8-smoke.sh's own EDMV4-T53 section) against a live `find ... *-smoke.sh`
+# count rather than trusted as a standalone literal, so a ninth suite landing without a matching
+# bump here is caught rather than silently satisfied by an eight-suite floor.
+_MIN_SUITE_COUNT="${EDM_RUN_ALL_MIN_SUITE_COUNT:-8}"
 if [[ ${#_run_order[@]} -lt $_MIN_SUITE_COUNT ]]; then
   echo "run-all: only ${#_run_order[@]} suite(s) discovered, expected at least ${_MIN_SUITE_COUNT}" >&2
   exit 1

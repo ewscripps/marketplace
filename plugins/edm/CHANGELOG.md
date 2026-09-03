@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [3.3.0] -- 2026-09-03
+
+EDMV4 (ECC integration): the code-audit lens set grows from 11 to 14, the Mermaid lint budget is
+re-derived as a measured, fixture-sized conditional, and a Phase 5 deadlock in `edm-state`'s gate
+enforcement is fixed.
+
 ### Added
 
 - **Code-audit grows from 11 to 14 lenses (EDMV4-31 through EDMV4-35, EDMV4-T21/T25/T26/T27/T29/T33).**
