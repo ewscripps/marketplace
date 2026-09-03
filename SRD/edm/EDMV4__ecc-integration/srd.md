@@ -7,7 +7,7 @@
 | Initiative | EDMV4 -- ECC Integration |
 | Prefix | `EDMV4` |
 | Product | `edm` |
-| Version | 1.3.0 |
+| Version | 1.4.0 |
 | Status | Draft |
 | Owner | darryl.porter |
 | Mode | `standard` (`lifecycle_mode: standard`, `compliance_enabled: false`) |
@@ -24,6 +24,8 @@
 | 1.2.0 | 2026-09-02 | orchestrator | **Scope addition discovered at this initiative's own Phase 5 preflight, raised for Gate 3 ratification.** New `EDMV4-60`: `cmd_gate_check` mapped `audit-tickets` to Gate 3 -- the gate that phase **presents** -- making Phase 5 unreachable for every standard-lifecycle initiative through both enforcement layers (Step 0 preflight and the `edm:audit-tickets` `UserPromptExpansion` hook). `bin/tests/wave6-smoke.sh`'s EDMV3-T13 AC3 loop asserted only that *a* gate was named, never the right one, so the suite stayed green; the loop is now pinned per token and a direct producer/consumer assertion added. Also records the branch reconciliation: the tree described by Sec.4.6 C9 and `decisions.md` D4 as "3 commits behind `origin/main`" was in fact 25 behind and missing `plugins/edm/docs/ecc-integration-analysis.md` entirely -- the document `EDMV4-54` exists to correct. Branch fast-forwarded to `origin/main` (plugin 3.2.2); `file:line` citations throughout Sec.6 shifted again and are advisory, with each ticket carrying its own verified anchors. **Requirement count: 60 IDs (`EDMV4-01` .. `EDMV4-60`), 58 substantive (42 Must / 15 Should / 1 Could) plus 2 merged.** |
 
 | 1.3.0 | 2026-09-02 | orchestrator | **Scope addition from Phase 6 wave 1, raised for ratification at the code-audit convergence gate.** New `EDMV4-61` records seven defects in Phase 6's own agent harness, found by running EDM at full scale on itself: `edm-implementer` `maxTurns: 60` (8/8 wave-1 agents hit it; one left new `bin/` scripts untracked), `edm-qc-auditor` `maxTurns: 50` (2/3 hit it), `qc_shard_threshold: 20` unfittable in any auditor turn budget, the `SubagentStop` matcher naming the bare `edm-implementer` while agents spawn as `edm:edm-implementer` (**the entire automatic QC layer silently did not run** -- only an absent `qc/` directory evidenced it), 6-10 parallel implementers each invoking the whole-tree `run-all.sh` (38 concurrent processes at load 10, producing spurious SIGINT failures), `isolation: worktree` cutting 5/7 worktrees from a base with no `tickets/` directory, and eleven malformed `# shellcheck disable=... -- prose` directives that made shellcheck skip `bin/edm-state` and `bin/edm-check-grants` entirely. An eighth candidate was investigated and **rejected**: `run-all.sh` classifies a truncated suite correctly as `CRASH`; that report was an orchestrator misreading of the aggregate `Total:` line, not a tooling defect. **Requirement count: 61 IDs (`EDMV4-01` .. `EDMV4-61`), 59 substantive (43 Must / 15 Should / 1 Could) plus 2 merged.** |
+
+| 1.4.0 | 2026-09-02 | orchestrator | **Scope addition from Phase 6 wave 2, filed at the user's direction as its own ticket rather than folded into `EDMV4-61`.** New `EDMV4-62` records that a plugin fix committed to the working tree is unreachable by any documented refresh command: `/plugin update` reads the marketplace clone at `~/.claude/plugins/marketplaces/stg-marketplace` (a clone of `https://gitlab.com/scripps/public/marketplace.git`), `/reload-plugins` reads the unpacked cache at `~/.claude/plugins/cache/stg-marketplace/edm/<version>/`, and **neither reads the working tree**. The failure is silent and misleading -- `/plugin update` reported `edm is already at the latest version (3.2.2)` while the corrected `bin/edm-state` sat committed in the tree the session was editing -- and it has no documented workaround for an author on an unpushed branch. Filed as a documentation and diagnosability requirement; it does not ask to change how plugin loading works. **Requirement count: 62 IDs (`EDMV4-01` .. `EDMV4-62`), 60 substantive (43 Must / 16 Should / 1 Could) plus 2 merged.** |
 
 ### Source documents
 
@@ -843,6 +845,55 @@ retained rather than reused so every existing cross-reference still resolves.
   `plugins/edm/agents/edm-qc-auditor.md`, `plugins/edm/.claude-plugin/plugin.json`,
   `plugins/edm/hooks/hooks.json`, `plugins/edm/skills/implement/SKILL.md`,
   `plugins/edm/bin/edm-state`, `plugins/edm/bin/edm-check-grants`.
+
+---
+
+#### EDMV4-62: A plugin fix in the working tree is unreachable by any documented refresh command
+
+- **Priority**: Should Have
+- **Description**: Phase 6 wave 1 fixed a defect in `bin/edm-state` on the initiative branch, and
+  the running session kept exhibiting the defect. `/plugin update` reported `edm is already at the
+  latest version (3.2.2)` while the corrected code sat, committed, in the working tree the session
+  was editing.
+
+  The cause is a distribution model no document in this repository states. `/plugin update` reads
+  `~/.claude/plugins/marketplaces/stg-marketplace`, a **git clone of
+  `https://gitlab.com/scripps/public/marketplace.git`** -- not this working tree, and not any local
+  path. `/reload-plugins` reads a third location again, the unpacked
+  `~/.claude/plugins/cache/stg-marketplace/edm/<version>/`. **Neither command reads the working
+  tree at any point.** A working-tree change therefore reaches the running session only after being
+  pushed to GitLab, and a plugin author with an unpushed branch has no refresh path at all.
+
+  The failure is silent and actively misleading: `/plugin update`'s "already at the latest version"
+  is true of the remote and false of the thing the author just changed, so the natural reading --
+  "my fix is live" -- is exactly wrong. The cost compounds in self-referential work like this
+  initiative, where the plugin under development is also the plugin executing the methodology; the
+  resolution here was the standing decision to build EDM v3.3.0 using the shipped v3.2.2 throughout,
+  which is sound but was reached only after the confusion.
+
+  This is a **documentation and diagnosability** requirement, not a request to change how plugin
+  loading works. The three locations and the push-to-observe constraint must be written down, and
+  the version-reporting surface must distinguish "the marketplace clone is current" from "your
+  local edits are live".
+- **Acceptance Criteria**:
+  - [ ] `plugins/edm/CLAUDE.md` documents all three locations by path -- the working tree, the
+        marketplace clone `/plugin update` reads, and the unpacked cache `/reload-plugins` reads --
+        and states plainly that neither refresh command reads the working tree.
+  - [ ] The same section states the practical consequence for a plugin author: a working-tree
+        change is unreachable by the running session until it is pushed to the GitLab remote, and
+        names what to do instead while developing against an unpushed branch.
+  - [ ] The documented remote is verified against the actual `remote.origin.url` of the marketplace
+        clone rather than assumed, and the verification method is recorded so a later reader can
+        repeat it.
+  - [ ] The guidance is reachable from where a plugin author would look -- referenced from the
+        development-workflow material, not filed only under distribution.
+  - [ ] A smoke assertion fails if the three-location explanation is removed, so the class cannot
+        silently regress once the immediate confusion has faded.
+  - [ ] The existing memory note about bare `edm-*` commands resolving to a stale plugin cache is
+        reconciled with this section rather than left to contradict it.
+- **Dependencies**: none. Discovered during Phase 6 wave 2 and filed at the user's direction as
+  its own ticket rather than folded into `EDMV4-61`.
+- **Target Components**: `plugins/edm/CLAUDE.md`, `plugins/edm/bin/tests/wave8-smoke.sh`.
 
 ---
 
@@ -3848,11 +3899,11 @@ is a design target, not a measured result, and must be described that way.
 | Priority | Count | IDs |
 |---|---|---|
 | **Must Have** | **43** | `EDMV4-01` .. `EDMV4-11`, `EDMV4-13`, `EDMV4-14`, `EDMV4-18` .. `EDMV4-20`, `EDMV4-22` .. `EDMV4-35`, `EDMV4-49` .. `EDMV4-51`, `EDMV4-52` .. `EDMV4-61` |
-| **Should Have** | **15** | `EDMV4-12`, `EDMV4-17`, `EDMV4-21`, `EDMV4-36` .. `EDMV4-38`, `EDMV4-40` .. `EDMV4-48` |
+| **Should Have** | **16** | `EDMV4-12`, `EDMV4-17`, `EDMV4-21`, `EDMV4-36` .. `EDMV4-38`, `EDMV4-40` .. `EDMV4-48`, `EDMV4-62` |
 | **Could Have** | **1** | `EDMV4-39` |
 | **Merged** | **2** | `EDMV4-15`, `EDMV4-16` -- absorbed into `EDMV4-14`. No independent priority, no independent acceptance criteria. IDs retained so existing cross-references resolve |
-| **Substantive total** | **59** | 43 Must + 15 Should + 1 Could |
-| **ID range** | **61** | `EDMV4-01` .. `EDMV4-61`, no gaps, no duplicates |
+| **Substantive total** | **60** | 43 Must + 16 Should + 1 Could |
+| **ID range** | **62** | `EDMV4-01` .. `EDMV4-62`, no gaps, no duplicates |
 
 **Changes from v1.0.0's counts.** `EDMV4-59` (ratify AD1) is new. `EDMV4-51` is raised from Should
 Have to Must Have (P0-3: it gates whether `EDMV4-49` and `EDMV4-50` can be executed correctly).
@@ -3864,7 +3915,7 @@ their single-commit constraint was unenforceable while split). Net: Must Have un
 
 | Scope item | Requirements | Must | Should | Could |
 |---|---|---|---|---|
-| Preconditions and change control | `EDMV4-01` .. `EDMV4-06`, `EDMV4-59` .. `EDMV4-61` | 9 | 0 | 0 |
+| Preconditions and change control | `EDMV4-01` .. `EDMV4-06`, `EDMV4-59` .. `EDMV4-62` | 9 | 1 | 0 |
 | 4.1 GateGuard | `EDMV4-07` .. `EDMV4-12` | 5 | 1 | 0 |
 | 4.2 `update-patterns` | `EDMV4-13`, `EDMV4-14`, `EDMV4-17`, `EDMV4-18` (plus merged `EDMV4-15`, `EDMV4-16`) | 3 | 1 | 0 |
 | 4.3 Size classifier | `EDMV4-19` .. `EDMV4-22` | 3 | 1 | 0 |

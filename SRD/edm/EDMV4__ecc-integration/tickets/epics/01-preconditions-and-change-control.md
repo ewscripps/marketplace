@@ -727,3 +727,90 @@ convergence gate, the same way `EDMV4-60`/`EDMV4-T54` was raised at Gate 3.
 - Any change to the four read-only verifier agents VERIF already retuned.
 - The pre-existing shellcheck findings that become *visible* once the files parse; this ticket
   requires zero error-level findings, not a broader cleanup.
+
+---
+
+## EDMV4-T56: Document the three plugin locations and the push-to-observe constraint
+
+| Field | Value |
+|---|---|
+| Epic | Preconditions and Change Control |
+| Phase | 1 |
+| Priority | Should Have |
+| Size | XS |
+| SRD Refs | EDMV4-62 |
+| Depends On | none |
+| Blocks | none |
+| Target Components | `plugins/edm/CLAUDE.md`, `plugins/edm/bin/tests/wave8-smoke.sh` |
+
+### Description
+
+Phase 6 wave 1 fixed a defect in `bin/edm-state`, committed it to the initiative branch, and the
+running session kept exhibiting the defect. `/plugin update` answered
+`edm is already at the latest version (3.2.2)` while the corrected code sat, committed, in the very
+working tree the session was editing.
+
+Three separate locations are in play and no document in this repository names them together:
+
+| Location | Path | Read by |
+|---|---|---|
+| Working tree | this repository | nothing at runtime |
+| Marketplace clone | `~/.claude/plugins/marketplaces/stg-marketplace` | `/plugin update` |
+| Unpacked cache | `~/.claude/plugins/cache/stg-marketplace/edm/<version>/` | `/reload-plugins` |
+
+The marketplace clone is a git clone of `https://gitlab.com/scripps/public/marketplace.git`. It is
+not a symlink to the working tree and not a local path. **Neither refresh command reads the working
+tree at any point**, so a change reaches the running session only after it is pushed to GitLab --
+and an author on an unpushed branch has no refresh path at all.
+
+What makes this worth a ticket rather than a note is that the failure is silent and actively
+misleading. "Already at the latest version" is true of the remote and false of the thing the author
+just changed, so the natural reading -- "my fix is live" -- is precisely wrong, and the next hour
+goes into debugging code that was never loaded. The cost compounds in self-referential work like
+this initiative, where the plugin under development is also the plugin executing the methodology.
+
+This ticket is documentation and diagnosability. It does not ask to change how plugin loading works.
+
+### Acceptance Criteria
+
+- [ ] AC1: `plugins/edm/CLAUDE.md` gains a section naming all three locations by path and stating
+      which command reads each.
+- [ ] AC2: That section states plainly that neither `/plugin update` nor `/reload-plugins` reads the
+      working tree.
+- [ ] AC3: The section states the consequence for a plugin author -- a working-tree change is
+      unreachable by the running session until pushed to the GitLab remote -- and names what to do
+      instead while developing against an unpushed branch (invoke `plugins/edm/bin/*` by explicit
+      path).
+- [ ] AC4: The documented remote URL is verified against the marketplace clone's actual
+      `remote.origin.url` rather than assumed, and the verification command is recorded inline so a
+      later reader can repeat it.
+- [ ] AC5: The section is referenced from wherever this repository's plugin-development workflow is
+      described, so an author encountering the confusion reaches it without knowing to look under
+      distribution.
+- [ ] AC6: A `wave8-smoke.sh` assertion fails if the three-location explanation is removed from
+      `plugins/edm/CLAUDE.md`, anchored on a shape prose cannot accidentally satisfy.
+- [ ] AC7: AC6's assertion is paired with a positive control proving the detector fires when the
+      section is absent -- not merely that it passes today.
+- [ ] AC8: The assertion tolerates rewording. It must key on the two cache paths, which are literal
+      and stable, rather than on any sentence of the surrounding prose.
+
+### Technical Notes
+
+- The root `CLAUDE.md` was found during wave 2 to carry two stale facts about plugin distribution
+  (`decisions.md` D37). Reconcile with that finding rather than adding a third account.
+- A user memory note records that bare `edm-*` commands resolve to a stale plugin cache when
+  developing from this repository, with the remedy of invoking `plugins/edm/bin/*` by explicit
+  path. That note and this section must agree; AC3 is where they meet.
+- Verify the remote with `git -C ~/.claude/plugins/marketplaces/stg-marketplace remote get-url origin`
+  rather than trusting this ticket's transcription of it.
+- The `<version>` component of the cache path is a directory per installed version, so the path is
+  documented with the placeholder, not with `3.2.2` frozen into it.
+
+### Out of Scope
+
+- Changing how Claude Code loads plugins, or adding a working-tree development mode. The
+  distribution model is upstream behaviour; this ticket documents it.
+- Pushing this branch to GitLab. Nothing in this initiative has been pushed, and that remains the
+  user's call.
+- The standing decision to build EDM v3.3.0 using the shipped v3.2.2 throughout. That decision is
+  recorded and is not revisited here.
