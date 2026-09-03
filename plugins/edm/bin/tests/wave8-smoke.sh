@@ -2903,13 +2903,17 @@ T20_DISCOVERED="$(find "${PLUGIN_DIR}/bin/tests" -maxdepth 1 -name '*-smoke.sh' 
 check "EDMV4-T20 AC8 -- wave8-smoke.sh is discovered by run-all.sh's own *-smoke.sh glob (find -maxdepth 1)" \
   "wave8-smoke.sh" "$T20_DISCOVERED"
 
-if grep -qF 'wave8-smoke.sh' "$T20_RUNALL" 2>/dev/null; then
-  pass "EDMV4-T20 AC8 -- wave8-smoke.sh is also present in run-all.sh's _PREFERRED_ORDER/_MIN_SUITE_COUNT registration"
-else
-  echo "  NOTE: EDMV4-T20 AC8 -- wave8-smoke.sh is NOT YET present in run-all.sh's _PREFERRED_ORDER /" \
-       "_MIN_SUITE_COUNT (owned solely by EDMV4-T53 AC2, per this ticket's own scope carve-out);" \
-       "glob discovery above already makes it reachable and executing in an aggregate run."
-fi
+# The registration half of AC8 -- whether wave8-smoke.sh also appears in run-all.sh's separate
+# _PREFERRED_ORDER / _MIN_SUITE_COUNT list -- is NOT asserted here. Wave-3 QC (P1) found the
+# prior code disguised this gap as a passing check: it called pass() when the grep matched
+# and printed an uncounted "NOTE:" line when it did not, so the branch could never fail and
+# never actually verified anything -- the exact vacuous-assertion class wave-3 QC caught
+# twice already in EDMV4-T30. EDMV4-T53 AC2 owns bin/tests/run-all.sh exclusively and this
+# ticket's scope carve-out forbids editing it here, so there is genuinely no file this suite
+# may inspect to make that half of AC8 a real, independently-anchored assertion yet. The gap
+# is stated plainly instead of faked: this suite covers glob-driven discovery only (the check
+# immediately above); _PREFERRED_ORDER/_MIN_SUITE_COUNT registration coverage lands with
+# EDMV4-T53 itself, against the file it alone is permitted to change.
 
 # ---- AC9: every case above ran against a scratch HOME/CLAUDE_PLUGIN_DATA/XDG_DATA_HOME, and the
 # real repository's working tree is untouched BY THIS SECTION (before/after diff, not a bare
