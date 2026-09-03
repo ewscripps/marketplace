@@ -943,12 +943,19 @@ t25_lint_exit=$?
   || fail "EDMV4-T25 AC8 -- edm-lint-artifacts reported violations: ${t25_lint_out}"
 
 echo "EDMV4-T25 AC9 -- edm-check-grants passes with the new file present"
-if bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>"${SCRIPT_DIR}/.t25-grants.err"; then
+# L5/runtime-hygiene: this stderr capture used to land in SCRIPT_DIR and was removed only on the
+# line after the `fi`. Any exit between the two -- a turn ceiling killing the run, a set -e abort,
+# an interrupt -- leaked `.t25-grants.err` into bin/tests/ as an untracked file, which is precisely
+# what the L5 lens hunts and what a clean-tree assertion would then report. Found live in a wave-5
+# worktree. Writing into the EXIT-trapped scratch dir removes the leak on every exit path, not just
+# the happy one; the explicit rm is kept so the file does not persist for the rest of the run.
+t25_grants_err="${T05_TMP}/t25-grants.err"
+if bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>"$t25_grants_err"; then
   pass "EDMV4-T25 AC9 -- edm-check-grants exits 0"
 else
-  fail "EDMV4-T25 AC9 -- edm-check-grants exited non-zero: $(cat "${SCRIPT_DIR}/.t25-grants.err")"
+  fail "EDMV4-T25 AC9 -- edm-check-grants exited non-zero: $(cat "$t25_grants_err")"
 fi
-rm -f "${SCRIPT_DIR}/.t25-grants.err"
+rm -f "$t25_grants_err"
 
 # =================================================================================================
 # EDMV4-T27 -- Lens L14 (Behavioral Test Coverage) agent file and its two reciprocal boundaries
