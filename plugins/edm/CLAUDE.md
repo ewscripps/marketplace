@@ -434,17 +434,26 @@ The check introduces no binary beyond this plugin's existing `bash`, `jq`, `git`
 
 ### Turn budget parity
 
-The four read-only verifiers named at the top of this section -- `edm-srd-auditor`,
-`edm-ticket-auditor`, `edm-qc-auditor`, `edm-test-coverage-auditor` -- run at `maxTurns: 50`, at
-parity with the producer agents whose output they check (`edm-srd-writer`, `edm-ticket-writer`,
-`edm-implementer`). Verification is not cheaper than production: a verifier must read the
+Each of the four read-only verifiers named at the top of this section runs at parity with --
+at least equal to -- the producer agent whose output it checks; parity is a per-pair relationship,
+not one shared literal `maxTurns` value across the whole set of four. `edm-srd-auditor` and
+`edm-ticket-auditor` stay at `maxTurns: 50`, matching `edm-srd-writer`'s and `edm-ticket-writer`'s
+own `maxTurns: 50`. `edm-qc-auditor` runs at `maxTurns: 150`, matching `edm-implementer`'s
+`maxTurns: 200` -- both raised together (from 50 and 60 respectively) by `EDMV4-T55`, calibrated
+against measured Phase 6 wave-1 usage (decisions.md D30), after the pre-raise ceilings proved too
+low at real scale. `edm-test-coverage-auditor` stays at `maxTurns: 50`, at parity with the
+test-writer layer it checks. Verification is not cheaper than production: a verifier must read the
 artifact under audit **and** cross-reference it against the codebase, which is strictly more work
-than writing the artifact in the first place. Do not "tidy" any of these four back down to the
-plugin's `maxTurns: 30` floor (the fourteen code-audit lens agents' own ceiling, which has no
-evidence of truncation and is unrelated to this parity) -- that floor was set once, before this
-contract existed, and never revisited until this section landed. The completion sentinel above is
-what makes a higher budget safe: it is what still catches a truncated run even though truncation
-becomes rarer at 50 turns than it was at 25.
+than writing the artifact in the first place. Do not "tidy" any of these four down toward a lower
+shared number to make them look uniform -- each verifier's parity obligation is with its own
+producer, never with the other three verifiers, and the plugin's `maxTurns: 30` code-audit-lens
+floor (which has no evidence of truncation and is unrelated to this parity) is never the right
+target for any of the four. (CA-032: this section previously asserted a single `maxTurns: 50`
+figure for all four verifiers after `EDMV4-T55` had already raised two of them; it is phrased
+above per-pair, naming each current value, so a future raise to one pair cannot silently falsify
+a blanket claim about the other three.) The completion sentinel above is what makes a higher
+budget safe: it is what still catches a truncated run even though truncation becomes rarer at a
+higher ceiling than at a lower one.
 
 ### Scope of this section
 
@@ -1500,7 +1509,11 @@ Prompted at install time. See `.claude-plugin/plugin.json` for the live schema. 
 - `test_framework_e2e_override` -- pin E2E framework, e.g. `playwright`, `cypress` (default `""`)
 - `mode` -- default initiative mode: `standard`, `mini-srd`, `iac`, `data-ml`, `prototype` (default `standard`)
 - `compliance_enabled` -- enforce compliance checkpoints when true (default `false`)
-- `qc_shard_threshold` -- ticket count above which QC spawns multiple `edm-qc-auditor` shards (default `20`)
+- `qc_shard_threshold` -- ticket count above which QC spawns multiple `edm-qc-auditor` shards
+  (default `6` -- lowered from `20` by decisions.md D30/EDMV4-T55 after Phase 6 wave 1 measured
+  roughly four tickets, about 40 acceptance criteria, as one `edm-qc-auditor`'s realistic budget
+  even after its `maxTurns` raise; a 12-ticket shard had exhausted it. This value must match
+  `plugin.json`'s `qc_shard_threshold.default` -- CA-023 found the two disagreeing 20-vs-6)
 - `implementation_mode` -- Phase 6 mode: `standard` or `tdd` Red-Green-Refactor (default `standard`)
 
 Skills reference values as `${user_config.srd_root}` etc.
