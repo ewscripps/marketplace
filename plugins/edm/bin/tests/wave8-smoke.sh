@@ -3345,8 +3345,22 @@ check "EDMV4-T11 AC4 -- git-commit matcher's command is byte-identical to its pr
   "command -v edm-lint-staged-artifacts >/dev/null 2>&1 || exit 0; edm-lint-staged-artifacts" "$t11_gitcommit_command"
 
 # ---- AC5: zero invocations of the state binary. --------------------------------------------------
-t11_ac5_count="$(grep -c 'edm-state' "$GATEGUARD" || true)"
-check "EDMV4-T11 AC5 -- edm-gateguard invokes the state binary zero times" "0" "$t11_ac5_count"
+# The AC is about INVOCATIONS, but this counted every occurrence of the literal string, including
+# prose. CA-009's fix inlined a numeric guard rather than calling edm-state's to_int() -- exactly
+# what AC5 wants -- and its comment explaining that choice named the binary, which tripped the
+# check. Same self-matching-scan class the audit filed five findings against: a scan that matches
+# the text describing the thing it hunts. Strip comment lines before counting, and keep a positive
+# control so narrowing the pattern cannot silently make the assertion unfailable.
+t11_ac5_body="$({ grep -v '^[[:space:]]*#' "$GATEGUARD" || true; })"
+t11_ac5_count="$({ printf '%s\n' "$t11_ac5_body" | grep -c 'edm-state' || true; })"
+[[ "$t11_ac5_count" -eq 0 ]] \
+  && pass "EDMV4-T11 AC5 -- edm-gateguard invokes the state binary zero times (non-comment lines)" \
+  || fail "EDMV4-T11 AC5 -- edm-gateguard references edm-state on ${t11_ac5_count} non-comment line(s)"
+t11_ac5_probe="$({ printf '%s\n' "$t11_ac5_body" | sed '1a\
+  edm-state get PFX >/dev/null' | grep -c 'edm-state' || true; })"
+[[ "$t11_ac5_probe" -ge 1 ]] \
+  && pass "EDMV4-T11 AC5 -- positive control: an injected edm-state call on a code line is still counted" \
+  || fail "EDMV4-T11 AC5 -- positive control FAILED: the comment-stripped scan no longer detects a real invocation"
 
 # ---- AC6: no shell-command-inspection detection (D15 descope). ----------------------------------
 t11_ac6_count="$(grep -ci 'destructive\|heredoc\|subshell' "$GATEGUARD" || true)"
