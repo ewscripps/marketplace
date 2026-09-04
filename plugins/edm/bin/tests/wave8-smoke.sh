@@ -4728,6 +4728,141 @@ check "EDMV4-T45 AC9 -- edm-check-vocabulary passes over the updated hooks.json 
 echo
 
 # =================================================================================================
+# CA-004 (P0, code-audit pass 1): edm-bash-gate has zero behavioural coverage -- close it here
+# =================================================================================================
+# No suite before this ever piped a payload into bin/edm-bash-gate; it was touched only as a file
+# (an -x check, the hooks.json guard substring, the bash-4 parse list above). This section drives
+# the real binary through six documented cases plus one characterization case for a KNOWN,
+# separately-ticketed gap (CA-039) the remediation plan for this finding names explicitly.
+# HOOKIFY_FIXTURES, EDM_BASH_GATE, PLUGIN_DIR and TMP are already set by the EDMV4-T42/T45/T50
+# sections above.
+echo "=== CA-004: edm-bash-gate behavioural coverage (exit-2 block, fail-open guards, projection, --help) ==="
+echo
+
+# ca004_bash_gate_run <proj-dir> <payload> -- runs the REAL bin/edm-bash-gate once, piping
+# <payload> on stdin with CLAUDE_PROJECT_DIR=<proj-dir> and plugins/edm/bin prepended to PATH (so
+# the real edm-hookify and jq resolve exactly as they would for a live host invocation), capturing
+# stdout/stderr/rc into the CA004_RUN_* globals.
+ca004_bash_gate_run() {
+  local proj="$1" payload="$2"
+  CA004_RUN_RC=0
+  CA004_RUN_OUT="$(printf '%s' "$payload" | CLAUDE_PROJECT_DIR="$proj" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+    bash "$EDM_BASH_GATE" 2>"${TMP}/ca004-run.stderr")" || CA004_RUN_RC=$?
+  CA004_RUN_ERR="$(cat "${TMP}/ca004-run.stderr" 2>/dev/null || true)"
+}
+
+# ---- Case 1: a matching BLOCK bash rule (the shipped block-rm-rf-bash.json fixture) denies -- ----
+# exit 2, the matched rule's line on stderr, empty stdout.
+CA004_C1_DIR="${TMP}/ca004-c1"
+mkdir -p "${CA004_C1_DIR}/.claude/edm-hookify"
+cp "${HOOKIFY_FIXTURES}/block-rm-rf-bash.json" "${CA004_C1_DIR}/.claude/edm-hookify/"
+
+ca004_bash_gate_run "$CA004_C1_DIR" '{"tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/scratch-target"}}'
+[[ "$CA004_RUN_RC" -eq 2 ]] && pass "CA-004 case 1 -- a matching block bash rule (rm -rf) makes edm-bash-gate exit 2" \
+  || fail "CA-004 case 1 -- expected exit 2 for a matching block rule, got ${CA004_RUN_RC}"
+check "CA-004 case 1 -- the matched block rule's line reaches stderr" \
+  "block-rm-rf-bash block Refusing a bash command matching rm -rf" "$CA004_RUN_ERR"
+if [[ -z "$CA004_RUN_OUT" ]]; then
+  pass "CA-004 case 1 -- stdout is empty on a block (the matched line goes to stderr, never stdout)"
+else
+  fail "CA-004 case 1 -- expected empty stdout on a block, got: ${CA004_RUN_OUT}"
+fi
+
+# ---- Case 2: a non-matching bash command, same rule directory -- allows silently. ----------------
+ca004_bash_gate_run "$CA004_C1_DIR" '{"tool_name":"Bash","tool_input":{"command":"ls -la /tmp"}}'
+if [[ "$CA004_RUN_RC" -eq 0 && -z "$CA004_RUN_OUT" && -z "$CA004_RUN_ERR" ]]; then
+  pass "CA-004 case 2 -- a non-matching bash command allows silently (exit 0, empty stdout and stderr)"
+else
+  fail "CA-004 case 2 -- rc=${CA004_RUN_RC} stdout=[${CA004_RUN_OUT}] stderr=[${CA004_RUN_ERR}]"
+fi
+
+# ---- Case 3: a matching WARN bash rule -- exit 0, never 2, with the warn line still visible on ---
+# stderr as proof the rule actually fired rather than silently no-op'ing.
+CA004_C3_DIR="${TMP}/ca004-c3"
+mkdir -p "${CA004_C3_DIR}/.claude/edm-hookify"
+jq '.action = "warn" | .name = "warn-rm-rf-bash"' "${HOOKIFY_FIXTURES}/block-rm-rf-bash.json" \
+  > "${CA004_C3_DIR}/.claude/edm-hookify/warn-rm-rf-bash.json"
+
+ca004_bash_gate_run "$CA004_C3_DIR" '{"tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/scratch-target"}}'
+[[ "$CA004_RUN_RC" -eq 0 ]] && pass "CA-004 case 3 -- a matching WARN bash rule leaves edm-bash-gate at exit 0 (never 2)" \
+  || fail "CA-004 case 3 -- expected exit 0 for a warn-only match, got ${CA004_RUN_RC}"
+check "CA-004 case 3 -- the warn match's line still reaches stderr, proving the rule fired rather than no-op'd" \
+  "warn-rm-rf-bash warn Refusing a bash command matching rm -rf" "$CA004_RUN_ERR"
+
+# ---- Case 4: a malformed rule file (edm-hookify's own setup-error exit 1) must never escalate ----
+# to a block -- exit 0, with the setup-error diagnostic still visible on stderr.
+CA004_C4_DIR="${TMP}/ca004-c4"
+mkdir -p "${CA004_C4_DIR}/.claude/edm-hookify"
+cp "${HOOKIFY_FIXTURES}/malformed-invalid-json.json" "${CA004_C4_DIR}/.claude/edm-hookify/"
+
+ca004_bash_gate_run "$CA004_C4_DIR" '{"tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/scratch-target"}}'
+[[ "$CA004_RUN_RC" -eq 0 ]] && pass "CA-004 case 4 -- a malformed rule file (edm-hookify's setup-error exit 1) never escalates to a block" \
+  || fail "CA-004 case 4 -- expected exit 0 (a setup error must not escalate), got ${CA004_RUN_RC}"
+check "CA-004 case 4 -- edm-hookify's own setup-error diagnostic for the malformed file still reaches stderr" \
+  "malformed-invalid-json" "$CA004_RUN_ERR"
+
+# ---- Case 5: empty stdin -- allows silently (the [[ -n "$PAYLOAD" ]] empty-payload guard fires).
+CA004_C5_DIR="${TMP}/ca004-c5"
+mkdir -p "${CA004_C5_DIR}/.claude/edm-hookify"
+cp "${HOOKIFY_FIXTURES}/block-rm-rf-bash.json" "${CA004_C5_DIR}/.claude/edm-hookify/"
+
+ca004_bash_gate_run "$CA004_C5_DIR" ""
+if [[ "$CA004_RUN_RC" -eq 0 && -z "$CA004_RUN_OUT" && -z "$CA004_RUN_ERR" ]]; then
+  pass "CA-004 case 5 -- empty stdin allows silently (exit 0, empty stdout and stderr)"
+else
+  fail "CA-004 case 5 -- rc=${CA004_RUN_RC} stdout=[${CA004_RUN_OUT}] stderr=[${CA004_RUN_ERR}]"
+fi
+
+# ---- Case 6: unparseable (non-JSON) stdin -- allows silently (the jq -c projection failure guard
+# fires; a real block rule is present so a false clean here would still show up as a missed block).
+ca004_bash_gate_run "$CA004_C5_DIR" "not json at all"
+if [[ "$CA004_RUN_RC" -eq 0 && -z "$CA004_RUN_OUT" && -z "$CA004_RUN_ERR" ]]; then
+  pass "CA-004 case 6 -- unparseable (non-JSON) stdin allows silently (exit 0, empty stdout and stderr)"
+else
+  fail "CA-004 case 6 -- rc=${CA004_RUN_RC} stdout=[${CA004_RUN_OUT}] stderr=[${CA004_RUN_ERR}]"
+fi
+
+# ---- --help: exits 0 with non-empty output. ------------------------------------------------------
+CA004_HELP_RC=0
+CA004_HELP_OUT="$(/bin/bash "$EDM_BASH_GATE" --help 2>&1)" || CA004_HELP_RC=$?
+if [[ "$CA004_HELP_RC" -eq 0 && -n "$CA004_HELP_OUT" ]]; then
+  pass "CA-004 -- edm-bash-gate --help exits 0 with non-empty output"
+else
+  fail "CA-004 -- edm-bash-gate --help exited ${CA004_HELP_RC} with output: ${CA004_HELP_OUT}"
+fi
+
+# ---- Known, separately-ticketed gap (CA-039, not fixed by this finding): the jq projection into
+# hookify's {"command": ...} field shape reads .tool_input.command with a `// ""` fallback, so it
+# always succeeds even when that field is absent under a renamed key -- a payload shaped like this
+# one is therefore indistinguishable from "no rule matched" rather than a distinct, name-able
+# failure mode. This section drives that exact shape explicitly, per this finding's remediation
+# plan, as a characterization test of a known gap -- not a claim that the gap is closed.
+ca004_bash_gate_run "$CA004_C1_DIR" '{"tool_name":"Bash","cmd":"rm -rf /tmp/scratch-target"}'
+if [[ "$CA004_RUN_RC" -eq 0 && -z "$CA004_RUN_OUT" && -z "$CA004_RUN_ERR" ]]; then
+  pass "CA-004 -- characterizes CA-039: a payload carrying a renamed 'cmd' field instead of tool_input.command is indistinguishable from a clean allow (exit 0, empty output) -- a known, separately-ticketed gap, not fixed here"
+else
+  fail "CA-004 -- CA-039 characterization mismatch: rc=${CA004_RUN_RC} stdout=[${CA004_RUN_OUT}] stderr=[${CA004_RUN_ERR}] (if this now fails, CA-039 may have been fixed -- update this comment rather than deleting the case)"
+fi
+
+# ---- Positive control (this finding's own verification clause): a mutant copy of edm-bash-gate
+# with its exit-2 block translation removed must FAIL case 1's block, proving case 1's assertion
+# discriminates a real regression rather than passing regardless of the binary's actual behaviour.
+CA004_MUTANT="${TMP}/ca004-mutant-edm-bash-gate"
+sed 's/^  exit 2$/  exit 0/' "$EDM_BASH_GATE" > "$CA004_MUTANT"
+chmod +x "$CA004_MUTANT"
+
+CA004_MUTANT_RC=0
+CA004_MUTANT_OUT="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/scratch-target"}}' | \
+  CLAUDE_PROJECT_DIR="$CA004_C1_DIR" PATH="${PLUGIN_DIR}/bin:${PATH}" bash "$CA004_MUTANT" 2>&1)" || CA004_MUTANT_RC=$?
+if [[ "$CA004_MUTANT_RC" -ne 2 ]]; then
+  pass "CA-004 -- positive control: a mutant edm-bash-gate with the exit-2 block translation removed no longer denies case 1's matching rule (rc=${CA004_MUTANT_RC}), proving case 1 discriminates rather than passing unconditionally"
+else
+  fail "CA-004 -- positive control broken: the mutant still exited 2 despite its exit-2 translation line being removed"
+fi
+
+echo
+
+# =================================================================================================
 # EDMV4-T28 -- Specify and mechanically enforce the house lens contract for the three new lenses
 # =================================================================================================
 # The contract's nine structural parts are documented in CLAUDE.md Sec."Audit lens house
