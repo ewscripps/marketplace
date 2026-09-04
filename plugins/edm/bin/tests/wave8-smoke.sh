@@ -4728,6 +4728,141 @@ check "EDMV4-T45 AC9 -- edm-check-vocabulary passes over the updated hooks.json 
 echo
 
 # =================================================================================================
+# CA-004 (P0, code-audit pass 1): edm-bash-gate has zero behavioural coverage -- close it here
+# =================================================================================================
+# No suite before this ever piped a payload into bin/edm-bash-gate; it was touched only as a file
+# (an -x check, the hooks.json guard substring, the bash-4 parse list above). This section drives
+# the real binary through six documented cases plus one characterization case for a KNOWN,
+# separately-ticketed gap (CA-039) the remediation plan for this finding names explicitly.
+# HOOKIFY_FIXTURES, EDM_BASH_GATE, PLUGIN_DIR and TMP are already set by the EDMV4-T42/T45/T50
+# sections above.
+echo "=== CA-004: edm-bash-gate behavioural coverage (exit-2 block, fail-open guards, projection, --help) ==="
+echo
+
+# ca004_bash_gate_run <proj-dir> <payload> -- runs the REAL bin/edm-bash-gate once, piping
+# <payload> on stdin with CLAUDE_PROJECT_DIR=<proj-dir> and plugins/edm/bin prepended to PATH (so
+# the real edm-hookify and jq resolve exactly as they would for a live host invocation), capturing
+# stdout/stderr/rc into the CA004_RUN_* globals.
+ca004_bash_gate_run() {
+  local proj="$1" payload="$2"
+  CA004_RUN_RC=0
+  CA004_RUN_OUT="$(printf '%s' "$payload" | CLAUDE_PROJECT_DIR="$proj" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+    bash "$EDM_BASH_GATE" 2>"${TMP}/ca004-run.stderr")" || CA004_RUN_RC=$?
+  CA004_RUN_ERR="$(cat "${TMP}/ca004-run.stderr" 2>/dev/null || true)"
+}
+
+# ---- Case 1: a matching BLOCK bash rule (the shipped block-rm-rf-bash.json fixture) denies -- ----
+# exit 2, the matched rule's line on stderr, empty stdout.
+CA004_C1_DIR="${TMP}/ca004-c1"
+mkdir -p "${CA004_C1_DIR}/.claude/edm-hookify"
+cp "${HOOKIFY_FIXTURES}/block-rm-rf-bash.json" "${CA004_C1_DIR}/.claude/edm-hookify/"
+
+ca004_bash_gate_run "$CA004_C1_DIR" '{"tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/scratch-target"}}'
+[[ "$CA004_RUN_RC" -eq 2 ]] && pass "CA-004 case 1 -- a matching block bash rule (rm -rf) makes edm-bash-gate exit 2" \
+  || fail "CA-004 case 1 -- expected exit 2 for a matching block rule, got ${CA004_RUN_RC}"
+check "CA-004 case 1 -- the matched block rule's line reaches stderr" \
+  "block-rm-rf-bash block Refusing a bash command matching rm -rf" "$CA004_RUN_ERR"
+if [[ -z "$CA004_RUN_OUT" ]]; then
+  pass "CA-004 case 1 -- stdout is empty on a block (the matched line goes to stderr, never stdout)"
+else
+  fail "CA-004 case 1 -- expected empty stdout on a block, got: ${CA004_RUN_OUT}"
+fi
+
+# ---- Case 2: a non-matching bash command, same rule directory -- allows silently. ----------------
+ca004_bash_gate_run "$CA004_C1_DIR" '{"tool_name":"Bash","tool_input":{"command":"ls -la /tmp"}}'
+if [[ "$CA004_RUN_RC" -eq 0 && -z "$CA004_RUN_OUT" && -z "$CA004_RUN_ERR" ]]; then
+  pass "CA-004 case 2 -- a non-matching bash command allows silently (exit 0, empty stdout and stderr)"
+else
+  fail "CA-004 case 2 -- rc=${CA004_RUN_RC} stdout=[${CA004_RUN_OUT}] stderr=[${CA004_RUN_ERR}]"
+fi
+
+# ---- Case 3: a matching WARN bash rule -- exit 0, never 2, with the warn line still visible on ---
+# stderr as proof the rule actually fired rather than silently no-op'ing.
+CA004_C3_DIR="${TMP}/ca004-c3"
+mkdir -p "${CA004_C3_DIR}/.claude/edm-hookify"
+jq '.action = "warn" | .name = "warn-rm-rf-bash"' "${HOOKIFY_FIXTURES}/block-rm-rf-bash.json" \
+  > "${CA004_C3_DIR}/.claude/edm-hookify/warn-rm-rf-bash.json"
+
+ca004_bash_gate_run "$CA004_C3_DIR" '{"tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/scratch-target"}}'
+[[ "$CA004_RUN_RC" -eq 0 ]] && pass "CA-004 case 3 -- a matching WARN bash rule leaves edm-bash-gate at exit 0 (never 2)" \
+  || fail "CA-004 case 3 -- expected exit 0 for a warn-only match, got ${CA004_RUN_RC}"
+check "CA-004 case 3 -- the warn match's line still reaches stderr, proving the rule fired rather than no-op'd" \
+  "warn-rm-rf-bash warn Refusing a bash command matching rm -rf" "$CA004_RUN_ERR"
+
+# ---- Case 4: a malformed rule file (edm-hookify's own setup-error exit 1) must never escalate ----
+# to a block -- exit 0, with the setup-error diagnostic still visible on stderr.
+CA004_C4_DIR="${TMP}/ca004-c4"
+mkdir -p "${CA004_C4_DIR}/.claude/edm-hookify"
+cp "${HOOKIFY_FIXTURES}/malformed-invalid-json.json" "${CA004_C4_DIR}/.claude/edm-hookify/"
+
+ca004_bash_gate_run "$CA004_C4_DIR" '{"tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/scratch-target"}}'
+[[ "$CA004_RUN_RC" -eq 0 ]] && pass "CA-004 case 4 -- a malformed rule file (edm-hookify's setup-error exit 1) never escalates to a block" \
+  || fail "CA-004 case 4 -- expected exit 0 (a setup error must not escalate), got ${CA004_RUN_RC}"
+check "CA-004 case 4 -- edm-hookify's own setup-error diagnostic for the malformed file still reaches stderr" \
+  "malformed-invalid-json" "$CA004_RUN_ERR"
+
+# ---- Case 5: empty stdin -- allows silently (the [[ -n "$PAYLOAD" ]] empty-payload guard fires).
+CA004_C5_DIR="${TMP}/ca004-c5"
+mkdir -p "${CA004_C5_DIR}/.claude/edm-hookify"
+cp "${HOOKIFY_FIXTURES}/block-rm-rf-bash.json" "${CA004_C5_DIR}/.claude/edm-hookify/"
+
+ca004_bash_gate_run "$CA004_C5_DIR" ""
+if [[ "$CA004_RUN_RC" -eq 0 && -z "$CA004_RUN_OUT" && -z "$CA004_RUN_ERR" ]]; then
+  pass "CA-004 case 5 -- empty stdin allows silently (exit 0, empty stdout and stderr)"
+else
+  fail "CA-004 case 5 -- rc=${CA004_RUN_RC} stdout=[${CA004_RUN_OUT}] stderr=[${CA004_RUN_ERR}]"
+fi
+
+# ---- Case 6: unparseable (non-JSON) stdin -- allows silently (the jq -c projection failure guard
+# fires; a real block rule is present so a false clean here would still show up as a missed block).
+ca004_bash_gate_run "$CA004_C5_DIR" "not json at all"
+if [[ "$CA004_RUN_RC" -eq 0 && -z "$CA004_RUN_OUT" && -z "$CA004_RUN_ERR" ]]; then
+  pass "CA-004 case 6 -- unparseable (non-JSON) stdin allows silently (exit 0, empty stdout and stderr)"
+else
+  fail "CA-004 case 6 -- rc=${CA004_RUN_RC} stdout=[${CA004_RUN_OUT}] stderr=[${CA004_RUN_ERR}]"
+fi
+
+# ---- --help: exits 0 with non-empty output. ------------------------------------------------------
+CA004_HELP_RC=0
+CA004_HELP_OUT="$(/bin/bash "$EDM_BASH_GATE" --help 2>&1)" || CA004_HELP_RC=$?
+if [[ "$CA004_HELP_RC" -eq 0 && -n "$CA004_HELP_OUT" ]]; then
+  pass "CA-004 -- edm-bash-gate --help exits 0 with non-empty output"
+else
+  fail "CA-004 -- edm-bash-gate --help exited ${CA004_HELP_RC} with output: ${CA004_HELP_OUT}"
+fi
+
+# ---- Known, separately-ticketed gap (CA-039, not fixed by this finding): the jq projection into
+# hookify's {"command": ...} field shape reads .tool_input.command with a `// ""` fallback, so it
+# always succeeds even when that field is absent under a renamed key -- a payload shaped like this
+# one is therefore indistinguishable from "no rule matched" rather than a distinct, name-able
+# failure mode. This section drives that exact shape explicitly, per this finding's remediation
+# plan, as a characterization test of a known gap -- not a claim that the gap is closed.
+ca004_bash_gate_run "$CA004_C1_DIR" '{"tool_name":"Bash","cmd":"rm -rf /tmp/scratch-target"}'
+if [[ "$CA004_RUN_RC" -eq 0 && -z "$CA004_RUN_OUT" && -z "$CA004_RUN_ERR" ]]; then
+  pass "CA-004 -- characterizes CA-039: a payload carrying a renamed 'cmd' field instead of tool_input.command is indistinguishable from a clean allow (exit 0, empty output) -- a known, separately-ticketed gap, not fixed here"
+else
+  fail "CA-004 -- CA-039 characterization mismatch: rc=${CA004_RUN_RC} stdout=[${CA004_RUN_OUT}] stderr=[${CA004_RUN_ERR}] (if this now fails, CA-039 may have been fixed -- update this comment rather than deleting the case)"
+fi
+
+# ---- Positive control (this finding's own verification clause): a mutant copy of edm-bash-gate
+# with its exit-2 block translation removed must FAIL case 1's block, proving case 1's assertion
+# discriminates a real regression rather than passing regardless of the binary's actual behaviour.
+CA004_MUTANT="${TMP}/ca004-mutant-edm-bash-gate"
+sed 's/^  exit 2$/  exit 0/' "$EDM_BASH_GATE" > "$CA004_MUTANT"
+chmod +x "$CA004_MUTANT"
+
+CA004_MUTANT_RC=0
+CA004_MUTANT_OUT="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/scratch-target"}}' | \
+  CLAUDE_PROJECT_DIR="$CA004_C1_DIR" PATH="${PLUGIN_DIR}/bin:${PATH}" bash "$CA004_MUTANT" 2>&1)" || CA004_MUTANT_RC=$?
+if [[ "$CA004_MUTANT_RC" -ne 2 ]]; then
+  pass "CA-004 -- positive control: a mutant edm-bash-gate with the exit-2 block translation removed no longer denies case 1's matching rule (rc=${CA004_MUTANT_RC}), proving case 1 discriminates rather than passing unconditionally"
+else
+  fail "CA-004 -- positive control broken: the mutant still exited 2 despite its exit-2 translation line being removed"
+fi
+
+echo
+
+# =================================================================================================
 # EDMV4-T28 -- Specify and mechanically enforce the house lens contract for the three new lenses
 # =================================================================================================
 # The contract's nine structural parts are documented in CLAUDE.md Sec."Audit lens house
@@ -4998,6 +5133,67 @@ echo
 # `cd .. && pwd`-normalized path (via _harness.sh's _HARNESS_PLUGIN_DIR), so the `/tests/`
 # exclusion below is applied to an already-normalized root, not a raw `..`-bearing string.
 echo "=== EDMV4-T50: bash 3.2 floor -- no bash-4-only construct in bin/, evals/, or wave8-smoke.sh ==="
+
+# ---- CA-005 (P0, code-audit pass 1): AC1's own live bin/ membership assertion -- cited as
+# precedent later in this file's EDMV4-T52 section but never actually implemented until now. A
+# script placed in a bin/ SUBDIRECTORY silently escapes every check anchored to `-maxdepth 1`
+# (this ticket's own bash-4 sweep below included) with nothing to say so; this assertion recomputes
+# the live top-level set and fails naming any required script missing from it, rather than
+# assuming membership the way every other -maxdepth-1-anchored check in this file already does.
+# The required-name list is AC1's own five plus edm-bash-gate (a sixth top-level script this same
+# code-audit round found unlisted everywhere it should have been named -- CA-063).
+T50_REQUIRED_BIN_FILES="_edm-datadir-lib.sh edm-gateguard edm-hookify edm-stop-gate edm-repo-readiness edm-bash-gate"
+
+# t50_bin_membership_set <bin-dir> -- prints a space-padded string of every top-level regular
+# file's basename directly under <bin-dir> (find -maxdepth 1 -type f), for word-membership testing
+# via `case " $set " in *" $name "*)`, matching bin/edm-state's own MODE_ENUM_LIST/ALL_LENS_IDS
+# idiom (AC4) rather than a bash-4 array.
+t50_bin_membership_set() {
+  local bin_dir="$1" set=""
+  while IFS= read -r -d "" _t50_bf; do
+    set="${set} $(basename "$_t50_bf")"
+  done < <(find "$bin_dir" -maxdepth 1 -type f -print0 2>/dev/null)
+  printf '%s' "$set"
+}
+
+T50_LIVE_BIN_SET="$(t50_bin_membership_set "${PLUGIN_DIR}/bin")"
+T50_AC1_MISSING=""
+for _t50_req in $T50_REQUIRED_BIN_FILES; do
+  case " $T50_LIVE_BIN_SET " in
+    *" ${_t50_req} "*) ;;
+    *) T50_AC1_MISSING="${T50_AC1_MISSING} ${_t50_req}" ;;
+  esac
+done
+if [[ -z "$T50_AC1_MISSING" ]]; then
+  pass "EDMV4-T50 AC1 -- every required top-level bin/ script is present in the live find \"\$PLUGIN_DIR/bin\" -maxdepth 1 -type f set: ${T50_REQUIRED_BIN_FILES}"
+else
+  fail "EDMV4-T50 AC1 -- required bin/ script(s) absent from the live top-level set:${T50_AC1_MISSING}"
+fi
+
+# Positive control: seed a scratch bin/ with every required name present, then relocate ONE of
+# them into a bin/ SUBDIRECTORY -- the exact escape AC1 exists to catch -- and confirm the same
+# membership logic reports it missing from the top-level set. This never touches the real repo
+# tree; the scratch root is discarded afterward.
+harness_scratch_dir T50_AC1_CTRL_TMP
+mkdir -p "${T50_AC1_CTRL_TMP}/bin/subdir"
+for _t50_seed in $T50_REQUIRED_BIN_FILES; do
+  : > "${T50_AC1_CTRL_TMP}/bin/${_t50_seed}"
+done
+mv "${T50_AC1_CTRL_TMP}/bin/edm-repo-readiness" "${T50_AC1_CTRL_TMP}/bin/subdir/edm-repo-readiness"
+
+T50_CTRL_BIN_SET="$(t50_bin_membership_set "${T50_AC1_CTRL_TMP}/bin")"
+T50_CTRL_MISSING=""
+for _t50_req in $T50_REQUIRED_BIN_FILES; do
+  case " $T50_CTRL_BIN_SET " in
+    *" ${_t50_req} "*) ;;
+    *) T50_CTRL_MISSING="${T50_CTRL_MISSING} ${_t50_req}" ;;
+  esac
+done
+if [[ "$T50_CTRL_MISSING" == *"edm-repo-readiness"* ]]; then
+  pass "EDMV4-T50 AC1 -- positive control: relocating a required script into bin/subdir/ is correctly reported missing from the top-level set (reported missing:${T50_CTRL_MISSING})"
+else
+  fail "EDMV4-T50 AC1 -- positive control broken: relocating edm-repo-readiness into bin/subdir/ was NOT detected as missing from the top-level set"
+fi
 
 # A real alternation built here (not sourced from wave7-smoke.sh's own $T61_BASH4_RE): each half
 # is independently useful evidence for this ticket, and referencing wave7's private variable would
