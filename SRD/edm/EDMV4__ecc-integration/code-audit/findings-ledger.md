@@ -62,7 +62,7 @@
 | CA-056 | P1 | open | QC-W05+L8 | plugins/edm/bin/edm-hookify:282,285-287 | EDMV4-T52 AC6: the L) list arm and the setup-error emission bypass hookify_emit_match entirely -- reproduced live, a rule name carrying a non-ASCII byte reaches stdout unmodified | 1 |  |
 | CA-057 | P1 | open | QC-W05 | plugins/edm/bin/tests/wave8-smoke.sh:3332-3341,4584,2234 | EDMV4-T53 AC4: no hook guard is ever executed -- all three assertions are jq-extract-then-string-compare, so a typo'd command -v guard passes every one and then fails open at runtime | 1 |  |
 | CA-058 | P1 | open | QC-W05 | plugins/edm/bin/tests/wave8-smoke.sh (AC7/AC8 runtime checks) | EDMV4-T53's two runtime Definition-of-Done checks were never performed; the recorded 3241-passed evidence binds the aggregate but not the /bin/bash 3.2 interpreter AC8 names | 1 |  |
-| CA-134 | P1 | open | ORCH | plugins/edm/bin/_edm-datadir-lib.sh:0 | edm_data_dir honours an ambient CLAUDE_PLUGIN_DATA unconditionally, so update-patterns writes EDM's pattern library into whichever OTHER plugin's data directory the host happens to have active | 1 |  |
+| CA-134 | P1 | open | ORCH | plugins/edm/CLAUDE.md:0 | EDM inherits another plugin's CLAUDE_PLUGIN_DATA when invoked by explicit path rather than as a plugin, so update-patterns writes its pattern library into a directory it does not own | 1 |  |
 | CA-059 | P2 | open | L6 | plugins/edm/CLAUDE.md:1309; docs/ecc-integration-analysis.md:364,372,1026 | Stale file:line citations in prose -- timing.sh:419-423 is now :429-433, and Part 8.2's own citation correction cites :5607/:5640 for symbols now at edm-state:6070 and :6113 | 1 |  |
 | CA-060 | P2 | open | L6 | plugins/edm/bin/tests/wave7-smoke.sh:8931 | The G10/CA-340 comment claims the citation ban is scoped to this plugin's own bin/tests/evals scripts; the regex names a subset and misses 12 shipped scripts including a live citation at edm-repo-readiness:48 | 1 |  |
 | CA-061 | P2 | open | QC-W04 | plugins/edm/bin/edm-gateguard:324,328,333 | EDMV4-T14 AC7's clean-room claim is provably false and AC2 mandated the verbatim string AC7 forbids; nothing anywhere asserts AC7, and CLAUDE.md's MIT NOTICE dormancy argument rests on it | 1 |  |
@@ -143,7 +143,7 @@
 
 Findings demoted to Not Actionable by the False Alarm Filter. Future audits should NOT re-investigate them.
 
-1. **Lock release rm -rf's the lockdir by path without confirming the pidfile still names this process -- single lens, low confidence, no corroborating evidence** (CA-134, L3) -- plugins/edm/bin/edm-state:1599
+1. **EDM inherits another plugin's CLAUDE_PLUGIN_DATA when invoked by explicit path rather than as a plugin, so update-patterns writes its pattern library into a directory it does not own** (CA-134, L3) -- plugins/edm/CLAUDE.md:0
 2. **T45 AC9's run-all.sh clause is a recorded PARTIAL in partial_verdict_map; it closes via /edm:verify-runtime, not by remediation** (CA-135, QC-W04) -- EDMV4-T45 AC9
 3. **No hookify rule file ships and .claude/edm-hookify/ does not exist -- the specification, not a defect; wave-4 QC ran all four cases and confirmed an enabled block rule produces a real deny payload** (CA-136, L2+L11+QC-W04) -- plugins/edm/CLAUDE.md:925-926
 4. **T50 AC4's prescribed word-membership idiom appears in none of the new scripts, but it structurally cannot express the glob match GG_EXEMPT_GLOBS_DEFAULT needs -- a justified deviation** (CA-137, QC-W05) -- plugins/edm/bin/edm-gateguard:290,299-300

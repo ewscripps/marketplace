@@ -5891,6 +5891,48 @@ else
   fail "EDMV4-T53 AC6 -- wave8-smoke.sh appears to invoke a network/claude operation: ${T53_NETWORK_HITS}"
 fi
 
+# =================================================================================================
+# CA-002 -- marketplace.json's edm `agents` array must list every agent file on disk
+# =================================================================================================
+echo "=== CA-002: marketplace.json agent registration matches the agents/ directory ==="
+echo
+
+# Round-1 code audit found the three lens agents this initiative added (L12/L13/L14) absent from
+# .claude-plugin/marketplace.json: 12 edm-audit-* entries listed against 15 on disk, in the only
+# plugin in the repository with that mismatch. Nothing caught it -- the suite asserts that file's
+# version and its skills array LENGTH, and counts agent files ON DISK, but never compares the two.
+# The manifest is an enumeration, so every new agent must be added by hand; this assertion is what
+# makes forgetting loud instead of silent.
+ca002_manifest="${REPO_ROOT}/.claude-plugin/marketplace.json"
+ca002_listed="$({ jq -r '.plugins[] | select(.name=="edm") | .agents[]' "$ca002_manifest" 2>/dev/null || true; } \
+  | sed 's|^\./agents/||' | sort)"
+ca002_disk="$({ ls -1 "${PLUGIN_DIR}/agents" 2>/dev/null || true; } | grep '\.md$' | sort)"
+ca002_only_disk="$({ comm -13 <(printf '%s\n' "$ca002_listed") <(printf '%s\n' "$ca002_disk") || true; })"
+ca002_only_manifest="$({ comm -23 <(printf '%s\n' "$ca002_listed") <(printf '%s\n' "$ca002_disk") || true; })"
+
+if [[ -z "$ca002_only_disk" ]]; then
+  pass "CA-002 -- every agents/*.md file is listed in marketplace.json's edm agents array"
+else
+  fail "CA-002 -- agent file(s) on disk but NOT registered in marketplace.json (they will not load): $(printf '%s' "$ca002_only_disk" | tr '\n' ' ')"
+fi
+
+if [[ -z "$ca002_only_manifest" ]]; then
+  pass "CA-002 -- marketplace.json lists no agent file that is absent from disk"
+else
+  fail "CA-002 -- marketplace.json lists agent path(s) with no file on disk: $(printf '%s' "$ca002_only_manifest" | tr '\n' ' ')"
+fi
+
+# Positive control: the comparison must actually discriminate. Drop a known name from the listed
+# set and confirm it surfaces as disk-only -- otherwise both assertions above would pass against
+# any manifest at all, which is precisely the shape that let the original defect through.
+ca002_probe_listed="$(printf '%s\n' "$ca002_listed" | grep -v '^edm-audit-logic\.md$' || true)"
+ca002_probe_diff="$({ comm -13 <(printf '%s\n' "$ca002_probe_listed") <(printf '%s\n' "$ca002_disk") || true; })"
+if printf '%s\n' "$ca002_probe_diff" | grep -qx 'edm-audit-logic.md'; then
+  pass "CA-002 -- positive control: an agent removed from the listed set is reported as unregistered"
+else
+  fail "CA-002 -- positive control FAILED: removing edm-audit-logic.md from the listed set was not detected, so the comparison cannot catch a missing registration"
+fi
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
