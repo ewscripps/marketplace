@@ -219,7 +219,23 @@ if [[ -n "$GG_STATE_DIR" && -n "$GG_PROJECT_KEY" ]]; then
   GG_CHECKED_FILE="${GG_STATE_DIR}/${GG_PROJECT_KEY}.checked"
   GG_DENIALS_FILE="${GG_STATE_DIR}/${GG_PROJECT_KEY}.denials"
 fi
-GG_MAX_DENIALS="${EDM_GATEGUARD_MAX_DENIALS:-3}"
+# CA-009: validate rather than let a non-numeric value reach the arithmetic comparison in
+# gg_maybe_deny (`[[ "$(gg_denial_count)" -ge "$GG_MAX_DENIALS" ]]`). Bash arithmetic evaluates a
+# non-numeric operand as 0 -- `[[ "0" -ge "none" ]]` is true -- so an unvalidated
+# EDM_GATEGUARD_MAX_DENIALS=none made the FIRST call read the budget as already spent and allow
+# every edit while printing "denial budget reached", the opposite of the fail-closed default. Same
+# `''|*[!0-9]*` shape edm-state's to_int() uses, but this warns on stderr rather than silently
+# coercing (do not silently coerce -- the operator should know their setting was ignored).
+GG_MAX_DENIALS_RAW="${EDM_GATEGUARD_MAX_DENIALS:-3}"
+case "$GG_MAX_DENIALS_RAW" in
+  ''|*[!0-9]*)
+    echo "edm-gateguard: EDM_GATEGUARD_MAX_DENIALS must be a non-negative integer (got: '${GG_MAX_DENIALS_RAW}') -- falling back to the default of 3" >&2
+    GG_MAX_DENIALS=3
+    ;;
+  *)
+    GG_MAX_DENIALS="$GG_MAX_DENIALS_RAW"
+    ;;
+esac
 GG_STALE_SECONDS=1800
 
 # gg_fresh_lines <path> -- prints <path>'s lines within the last 30 minutes' mtime; otherwise

@@ -1718,22 +1718,31 @@ unset _cond_lens_id
 # (EDMV4-T24 AC2). This marker list lives in exactly this one place; it is not restated in
 # skills/code-audit/SKILL.md or agents/edm-audit-type-design.md (AC3). <project-root> is the
 # resolved repository root (never the caller's cwd, wave-3 QC P1 fix): the pyproject.toml content
-# probe reads "${project-root}/pyproject.toml", never the bare cwd-relative filename, so an
-# invocation from a subdirectory reads the same file an invocation from the root would.
+# probe reads the matched pyproject.toml's own path under <project-root>, never a hardcoded
+# root-relative filename, so an invocation from a subdirectory reads the same file an invocation
+# from the root would.
+#
+# CA-035(b): every bare-filename marker below matches at ANY depth (`(^|/)name$`), the same as the
+# extension markers (`\.ext$`) already did -- `grep -qx` against the exact literal filename only
+# ever matched a root-level path, so a monorepo carrying only `packages/app/tsconfig.json` (no
+# root `tsconfig.json`) was reported L13 N/A. Extension markers were never affected; only the
+# file-name markers were root-anchored.
 _l13_applies() {
   local files="$1" proj_root="$2"
-  if printf '%s\n' "$files" | grep -qx 'tsconfig.json'; then return 0; fi
+  if printf '%s\n' "$files" | grep -qE '(^|/)tsconfig\.json$'; then return 0; fi
   if printf '%s\n' "$files" | grep -q '\.kts\{0,1\}$'; then return 0; fi
   if printf '%s\n' "$files" | grep -q '\.swift$'; then return 0; fi
-  if printf '%s\n' "$files" | grep -qx 'Cargo.toml'; then return 0; fi
-  if printf '%s\n' "$files" | grep -qx 'go.mod'; then return 0; fi
+  if printf '%s\n' "$files" | grep -qE '(^|/)Cargo\.toml$'; then return 0; fi
+  if printf '%s\n' "$files" | grep -qE '(^|/)go\.mod$'; then return 0; fi
   if printf '%s\n' "$files" | grep -q '\.java$'; then return 0; fi
   if printf '%s\n' "$files" | grep -q '\.scala$'; then return 0; fi
   if printf '%s\n' "$files" | grep -q '\.hs$'; then return 0; fi
-  if printf '%s\n' "$files" | grep -qx 'pyproject.toml'; then
-    if grep -q '^\[tool\.\(mypy\|pyright\)\]' "${proj_root}/pyproject.toml" 2>/dev/null; then return 0; fi
-    if printf '%s\n' "$files" | grep -qx 'mypy.ini'; then return 0; fi
-    if printf '%s\n' "$files" | grep -qx 'pyrightconfig.json'; then return 0; fi
+  local _l13_pyproject
+  _l13_pyproject="$(printf '%s\n' "$files" | grep -E '(^|/)pyproject\.toml$' | head -n1)"
+  if [[ -n "$_l13_pyproject" ]]; then
+    if grep -q '^\[tool\.\(mypy\|pyright\)\]' "${proj_root}/${_l13_pyproject}" 2>/dev/null; then return 0; fi
+    if printf '%s\n' "$files" | grep -qE '(^|/)mypy\.ini$'; then return 0; fi
+    if printf '%s\n' "$files" | grep -qE '(^|/)pyrightconfig\.json$'; then return 0; fi
   fi
   return 1
 }
@@ -1744,7 +1753,10 @@ _l13_applies() {
 # symmetry with the other audit-round subcommands but is not read: this determination is a
 # property of the repository's tracked-file set, not of any one initiative's state, so it is
 # deterministic across initiatives too (EDMV4-T24 AC4: two runs against the same tree produce
-# byte-identical output). Always exits 0 -- a query, not a validation gate (AC1).
+# byte-identical output). Exits 0 for a successful query, including the empty-result case (a query,
+# not a validation gate, AC1) -- but dies (non-zero) if `git ls-files` itself fails (CA-035): an
+# empty tracked-file SET and a FAILED listing are not the same fact, and this subcommand's answer
+# gates `round_type=full`, so a failure must never be read as "nothing is a typed-stack marker".
 #
 # Wave-3 QC P1 fix: this used to call bare `git ls-files` and open a cwd-relative
 # `pyproject.toml`, both of which are scoped to the CALLER'S CWD rather than the repository root
@@ -1759,7 +1771,13 @@ cmd_detect_conditional_lenses() {
   local _dcl_proj_root
   _dcl_proj_root="$(_resolve_permcheck_project_root)"
   local tracked
-  tracked="$(git -C "$_dcl_proj_root" ls-files 2>/dev/null || true)"
+  # CA-035(a): no `|| true` here -- a failed listing (not a git repository, corrupt index, etc.)
+  # must `die` loudly rather than read identically to a genuinely empty tracked-file set, which
+  # would silently score every conditional lens N/A on a repository this command could not even
+  # inspect.
+  if ! tracked="$(git -C "$_dcl_proj_root" ls-files 2>/dev/null)"; then
+    die "'git ls-files' failed in '${_dcl_proj_root}' -- is this a git repository?"
+  fi
   local na_list="" _lens
   # shellcheck disable=SC2086 # deliberate word-splitting; bash 3.2 has no arrays-as-constants
   for _lens in $CONDITIONAL_LENS_IDS; do
