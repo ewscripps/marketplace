@@ -641,9 +641,9 @@ pattern, so it survives edge cases its author did not anticipate:
   deterministic, unlike the explorer's uncapped fan-out that EDMV3-T47 just fixed. The cost of
   ignoring this is coverage loss disguised as an efficiency gain -- a lens or audit lane silently
   stops existing and nobody notices until the gap it used to catch ships. (CA-021: this guard's
-  own text still read "11-lens" after the lens set grew to fourteen; it is deliberately phrased
-  above with no lens count at all, so growing or shrinking `ALL_LENS_IDS` again can never make
-  this sentence wrong.)
+  own text pinned a specific lens count that fell out of date the next time `ALL_LENS_IDS` grew;
+  it is deliberately phrased above with no lens count at all, so growing or shrinking
+  `ALL_LENS_IDS` again can never make this sentence wrong.)
 - **(D3)** Do not import terse register into EDM artifacts. SRDs and tickets are read by humans in
   merge requests, not consumed as a single agent's scratch context. The cost of ignoring this is
   reviewer confusion and slower human sign-off -- the opposite of what EDM's gates exist to speed
