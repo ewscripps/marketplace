@@ -1311,8 +1311,10 @@ gets faster.
 **Why the Mermaid row is a conditional, not a single number (EDMV4-T01).** A bare ratio is
 dominated by fixed process overhead below **30 files / 9,990 lines** -- the reference fixture size
 stated above, in both files and lines -- because a small corpus is mostly bash/awk fork-exec cost
-rather than per-line Mermaid scanning; the `ratio=UNMEASURABLE` refusal at `timing.sh:419-423`
-(G37/CA-197) is the extreme case of exactly this, where a 1-file/1-line fixture can measure 0 ms on
+rather than per-line Mermaid scanning; the `ratio=UNMEASURABLE` refusal that `timing.sh`'s
+Mermaid-ratio measurement emits when timer resolution is too coarse to compute either baseline
+(G37/CA-197; cited here by name rather than by line number after CA-059 found the prior line-range
+citation had already drifted) is the extreme case of exactly this, where a 1-file/1-line fixture can measure 0 ms on
 either side and a ratio computed from it is meaningless. Below that floor, only the absolute
 added-overhead ceiling (<= 1,000 ms p95) applies; at or above it, the corpus is large enough that
 per-line Mermaid scanning is the dominant cost and the ratio ceiling (<= 1.40x, unchanged from its

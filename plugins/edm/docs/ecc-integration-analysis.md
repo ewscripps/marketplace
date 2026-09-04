@@ -353,49 +353,35 @@ GateGuard applies that premise earlier in time.
 **Risk**: low, given the graduated controls and fail-open behaviour.
 **Value**: highest of anything in this report.
 
-### 4.2 EDM's pattern-learning loop is inert on installed copies
+### 4.2 EDM's pattern-learning loop was inert on installed copies -- CLOSED by EDMV4-T18
 
-This is not an ECC feature request. It is a **defect in EDM that ECC happens to have already
-solved**, and it is the finding with the clearest immediate payoff.
+**Status: CLOSED (EDMV4-T18).** This was never an ECC feature request; it was a defect in EDM
+that ECC's `continuous-learning-v2` skill happened to have already solved by a different route
+(described below), and it is fixed as of this initiative. The rest of this section records the
+original defect for history, then the fix that closed it -- CA-026 found this section still
+describing the defect as live after the fix shipped.
 
-**The defect.** `edm-state update-patterns <PREFIX> <srd|ticket|qc|code|test-coverage>` exists to
-harvest novel audit findings out of a completed audit report and append them to EDM's shipped
-pattern library, so future audits get smarter. It is called mid-phase by six skills (`implement`, `code-audit`, `audit-tickets`, `audit-srd`,
-`test`, `test-coverage`). At `bin/edm-state:5607` the target directory is computed as:
+**The original defect.** `edm-state update-patterns <PREFIX> <srd|ticket|qc|code|test-coverage>`
+exists to harvest novel audit findings out of a completed audit report and append them to EDM's
+shipped pattern library, so future audits get smarter. It is called mid-phase by six skills
+(`implement`, `code-audit`, `audit-tickets`, `audit-srd`, `test`, `test-coverage`). Before this
+fix, `cmd_update_patterns` in `bin/edm-state` resolved its write target to the plugin's own
+shipped tree only (`${SCRIPT_DIR}/../docs/audit-patterns`, `SCRIPT_DIR` being the plugin's own
+`bin/`) and, when that tree was not writable, warned to stderr and returned success. On any
+plugin-cache install that tree is not writable, so that was the path taken every time: **EDM's
+pattern library only ever grew for people running the plugin from a checkout of this repository**,
+and the learning loop was a silent no-op for every installed user.
 
-```bash
-local patterns_dir="${SCRIPT_DIR}/../docs/audit-patterns"
-```
-
-`SCRIPT_DIR` is the plugin's own `bin/`. So the write target is
-`plugins/edm/docs/audit-patterns/*.md` -- **inside the plugin's installed tree**. At
-`bin/edm-state:5640`:
-
-```bash
-echo "update-patterns: pattern directory is not writable at ${pattern_dir} \
-(plugin may be installed read-only; skipping)" >&2
-return 0
-```
-
-On any plugin-cache install that directory is not writable, so this is the path taken every time.
-The consequence: **EDM's pattern library only ever grows for people running the plugin from a
-checkout of this repository.** For every installed user, the learning loop is a no-op that logs to
-stderr and returns success.
-
-To be fair to the design: the skip is deliberate and graceful (warn, exit 0, never abort the
-phase), and the comment shows the author anticipated read-only installs. What was not followed
-through is where the data should go *instead*.
-
-**ECC's answer to the identical problem.** `skills/continuous-learning-v2/` (v2.1) hit exactly
-this wall -- background writes into `~/.claude` were being blocked by Claude Code's
-sensitive-path guard -- and resolved it with a three-step resolution order documented in the
-skill:
+**ECC's answer to the identical problem**, which shaped the fix below. `skills/continuous-learning-v2/`
+(v2.1) hit exactly this wall -- background writes into `~/.claude` were being blocked by Claude
+Code's sensitive-path guard -- and resolved it with a three-step resolution order documented in
+the skill:
 
 1. `CLV2_HOMUNCULUS_DIR` when set to an absolute path
 2. `$XDG_DATA_HOME/ecc-homunculus`
 3. `$HOME/.local/share/ecc-homunculus`
 
-It also added **project scoping**, which is the second half of the answer. Learned data is keyed
+It also added **project scoping**, which is the second half of its answer. Learned data is keyed
 by a 12-character project hash derived, in priority order, from `CLAUDE_PROJECT_DIR` (honored even
 when not a git repo), then `git remote get-url origin` (hashed, so the same repo on two machines
 yields the same ID), then `git rev-parse --show-toplevel`, then a global fallback. A registry at
@@ -403,29 +389,33 @@ yields the same ID), then `git rev-parse --show-toplevel`, then a global fallbac
 `projects/<hash>/instincts/` rather than a single global pile, so React conventions from one repo
 do not leak into a Python repo.
 
-Their third piece is a **promotion rule**: an instinct observed in 2+ distinct projects becomes a
+Its third piece is a **promotion rule**: an instinct observed in 2+ distinct projects becomes a
 candidate for promotion to global scope, via `/promote` (with `--dry-run` and `--force`), and
 `/prune` deletes pending items older than 30 days that were never promoted.
 
-**Recommendation for EDM.** Fix the write target. EDM's own `CLAUDE.md` already reserves
-`${CLAUDE_PLUGIN_DATA}` for "plugin-internal caches only (convention detection, prefix lookup
-tables)" -- a harvested pattern library is precisely that. So:
+**The fix EDM shipped.** `cmd_update_patterns` now resolves its write target through three
+strictly additive branches, tried in order, each preserving a behaviour that must never break the
+calling phase: (a) the resolved plugin data directory's writable delta
+(`${data}/patterns/{type}-audit.md`, created as a stub on first write) via the shared
+`edm_data_dir()` resolver -- see `CLAUDE.md`'s `bin/` helper table row for `_edm-datadir-lib.sh`;
+(b) the shipped tree, if writable -- the pre-fix behaviour, now a fallback rather than the only
+path; (c) neither writable -- warn to stderr and return 0, unchanged from before. The shipped
+`docs/audit-patterns/*.md` files are the read-only seed; readers concatenate seed plus harvested
+delta, per `docs/audit-patterns/README.md`'s Append Schema. The only remaining silent-no-op case
+is (c): a host whose resolved plugin data directory is *also* unwritable, which is now the rare
+case rather than the default one. The current warning text for that residual case, quoted here by
+its literal string rather than by line number (this section's own prior citations went stale
+twice by line number, CA-059, which is exactly the failure mode a literal-text citation does not
+have): "update-patterns: pattern directory is not writable at ${patterns_dir} and no writable
+plugin data directory is available (plugin may be installed read-only; skipping)".
 
-- Resolve the pattern directory to `${CLAUDE_PLUGIN_DATA}/audit-patterns/`, falling back to
-  `${XDG_DATA_HOME:-$HOME/.local/share}/edm/audit-patterns/`.
-- Treat the shipped `plugins/edm/docs/audit-patterns/*.md` as a **read-only seed**: on first run,
-  copy them out, then append only to the writable copy. Readers concatenate seed + harvested.
-- Consider project scoping later. EDM already has a stronger key than a git-remote hash --
-  the initiative PREFIX and `product_name` -- so per-product pattern files are the natural
-  granularity if cross-project contamination ever becomes a real complaint. Do not build it
-  speculatively.
-- Skip the promotion/prune machinery for now. EDM's audit patterns are curated content reviewed
-  by a human, not confidence-scored observations; the 2+ projects rule solves a problem EDM does
-  not have.
-
-**Effort**: small (a few hours -- one path resolution, one seed-copy, one test).
-**Risk**: low.
-**Value**: high, and it is a bug fix rather than an enhancement.
+**What EDM deliberately did not build**, following this section's own original recommendation:
+project scoping and the promotion/prune machinery `continuous-learning-v2` also has. EDM's audit
+patterns are curated content reviewed by a human, not confidence-scored observations, so the 2+
+projects promotion rule solves a problem EDM does not have; EDM already has a stronger key than a
+git-remote hash (the initiative PREFIX and `product_name`) if per-product pattern files are ever
+warranted. Revisit only if cross-project pattern-file contamination becomes a real complaint --
+do not build either speculatively.
 
 ### 4.3 An automatic size classifier at the orchestrator's front door
 
@@ -1021,11 +1011,14 @@ their own sites in Parts 1, 4 and 5:**
 7. **`harness-audit.js` consumer-mode scoring.** Part 5.2 stated 11 checks worth ~29 points.
    **This corrects that count**: it is 16 checks worth 39 points once the unconditionally-appended
    GitHub checks are counted.
-8. **`update-patterns` citations and caller count.** Part 4.2 cited `bin/edm-state:5577` and
-   `:5624`, and said the function is called mid-phase by four skills. **This corrects both**: the
-   current-tree citations are `:5607` (target-directory computation) and `:5640` (the read-only
-   skip message), and the verified caller set is six skills (`implement`, `code-audit`,
-   `audit-tickets`, `audit-srd`, `test`, `test-coverage`).
+8. **`update-patterns` citations and caller count.** Part 4.2 originally cited `bin/edm-state:5577`
+   and `:5624`, and said the function is called mid-phase by four skills. **This corrected both**
+   at the time: the verified caller set is six skills (`implement`, `code-audit`, `audit-tickets`,
+   `audit-srd`, `test`, `test-coverage`), which still holds. The corrected line-number citations
+   themselves went stale a second time as `bin/edm-state` grew (CA-059, EDMV4 pass-1) -- Part 4.2
+   above now cites the target-directory computation and the read-only-tree warning message by
+   symbol and by their literal warning text respectively, not by line number, so a further
+   `cmd_update_patterns` rewrite cannot repeat this class of drift a third time.
 9. **GateGuard kill switches.** Part 4.1's environment-variable table listed only
    `ECC_GATEGUARD=off`. **This corrects an incomplete table**: `GATEGUARD_DISABLED=1` is a second,
    independent kill switch (`gateguard-fact-force.js:732-734`), recognizing only the literal `'1'`
