@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "ada-tablo": {
+      "type": "http",
+      "url": "https://nuvyyo-gr.ada.support/api/mcp",
+      "headers": {
+        "Authorization": "Bearer ${ADA_API_TOKEN}"
+      }
+    },
+    "ada-scripps": {
+      "type": "http",
+      "url": "https://scripps.ada.support/api/mcp",
+      "headers": {
+        "Authorization": "Bearer ${SCRIPPS_ADA_API_TOKEN}"
+      }
+    }
+  }
+}

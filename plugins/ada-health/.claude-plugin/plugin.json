@@ -1,0 +1,8 @@
+{
+  "name": "ada-health",
+  "version": "1.0.0",
+  "description": "Instance-neutral health check for any Ada AI Agent deployment — recent config changes, action/API failures, handoff and repeat-contact movement, and automated resolution by channel. Read-only, two-tier, token-budgeted.",
+  "author": {
+    "name": "STG Software Engineering Team"
+  }
+}

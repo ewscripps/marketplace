@@ -95,6 +95,15 @@
             ]
         },
         {
+            "name": "ada-health",
+            "source": "./plugins/ada-health",
+            "description": "Instance-neutral health check for any Ada AI Agent deployment — recent config changes, action/API failures, handoff and repeat-contact movement, and automated resolution by channel. Read-only, two-tier, token-budgeted.",
+            "version": "1.0.0",
+            "skills": [
+                "./skills/ada-health"
+            ]
+        },
+        {
             "name": "bruno",
             "source": "./plugins/bruno",
             "description": "Bruno API client skills — scaffold and update collections, run collections with the bru CLI, document endpoints and environments, create new requests, and write or fix tests. Defaults to OpenCollection YAML format.",
