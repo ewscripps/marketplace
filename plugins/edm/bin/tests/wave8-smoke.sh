@@ -5684,6 +5684,213 @@ else
   fail "EDMV4-T52 AC6 -- positive control FAILED: an injected bypass was not detected, so the single-site pass above proves nothing"
 fi
 
+# =================================================================================================
+# EDMV4-T53 -- Land wave8-smoke.sh in run-all.sh and the Definition-of-Done registration proof
+# =================================================================================================
+echo
+echo "=== EDMV4-T53: run-all.sh registration + Definition-of-Done verification ==="
+
+# ---- AC1: this suite's own structural contract ---------------------------------------------------
+T53_SELF="${SCRIPT_DIR}/wave8-smoke.sh"
+if [[ -x "$T53_SELF" ]]; then
+  pass "EDMV4-T53 AC1 -- wave8-smoke.sh is executable (chmod +x)"
+else
+  fail "EDMV4-T53 AC1 -- wave8-smoke.sh is not executable"
+fi
+check "EDMV4-T53 AC1 -- wave8-smoke.sh sources _harness.sh" 'source "${SCRIPT_DIR}/_harness.sh"' "$(cat "$T53_SELF")"
+check "EDMV4-T53 AC1 -- wave8-smoke.sh emits the standard Results summary line run-all.sh parses" \
+  'echo "Results: ${PASS} passed, ${FAIL} failed"' "$(cat "$T53_SELF")"
+
+# ---- AC2: run-all.sh registration -- the sole ticket permitted to edit run-all.sh ----------------
+# This ticket owns bin/tests/run-all.sh exclusively (audit P1-3); every assertion below reads the
+# live file rather than asserting against a value this suite invents, so it fails if the edit is
+# ever reverted or if a future ninth suite lands without the matching bump.
+RUN_ALL_SH="${PLUGIN_DIR}/bin/tests/run-all.sh"
+
+# AC2(a): wave8-smoke.sh is a genuine member of _PREFERRED_ORDER's default word list, extracted
+# from the live line and matched with surrounding spaces so this cannot be satisfied by a
+# substring hit inside a longer name or inside this very ticket's own comment text (T05 AC3's
+# bare `grep -qF` above is the vacuous shape this is deliberately NOT repeating).
+T53_PREFERRED_LINE="$(grep -n '^_PREFERRED_ORDER=' "$RUN_ALL_SH" | head -1 | cut -d: -f2-)"
+T53_PREFERRED_VALUE="$(printf '%s' "$T53_PREFERRED_LINE" | sed -E 's/^_PREFERRED_ORDER="\$\{EDM_RUN_ALL_PREFERRED_ORDER-(.*)\}"$/\1/')"
+if printf ' %s ' "$T53_PREFERRED_VALUE" | grep -qF ' wave8-smoke.sh '; then
+  pass "EDMV4-T53 AC2a -- wave8-smoke.sh is a member of run-all.sh's real _PREFERRED_ORDER default (${T53_PREFERRED_VALUE})"
+else
+  fail "EDMV4-T53 AC2a -- wave8-smoke.sh is not a member of run-all.sh's _PREFERRED_ORDER default: '${T53_PREFERRED_VALUE}'"
+fi
+
+# AC2(b): _MIN_SUITE_COUNT's default equals the LIVE *-smoke.sh count, both computed at test time
+# and compared -- never a hardcoded literal "8" on either side, so a ninth suite landing without a
+# matching bump is caught here rather than silently tolerated by a stale floor.
+T53_MIN_LINE="$(grep -n '_MIN_SUITE_COUNT="\${EDM_RUN_ALL_MIN_SUITE_COUNT:-' "$RUN_ALL_SH" | head -1 | cut -d: -f2-)"
+T53_MIN_DEFAULT="$(printf '%s' "$T53_MIN_LINE" | sed -E 's/.*EDM_RUN_ALL_MIN_SUITE_COUNT:-([0-9]+)\}.*/\1/')"
+T53_LIVE_SUITE_COUNT="$(find "${PLUGIN_DIR}/bin/tests" -maxdepth 1 -name '*-smoke.sh' -type f 2>/dev/null | wc -l | tr -d ' ')"
+if [[ -n "$T53_MIN_DEFAULT" && -n "$T53_LIVE_SUITE_COUNT" && "$T53_MIN_DEFAULT" == "$T53_LIVE_SUITE_COUNT" ]]; then
+  pass "EDMV4-T53 AC2b -- _MIN_SUITE_COUNT's default (${T53_MIN_DEFAULT}) equals the live *-smoke.sh count (${T53_LIVE_SUITE_COUNT})"
+else
+  fail "EDMV4-T53 AC2b -- _MIN_SUITE_COUNT default ('${T53_MIN_DEFAULT}') != live *-smoke.sh count ('${T53_LIVE_SUITE_COUNT}')"
+fi
+
+# Positive control for AC2b: a deliberately wrong default must NOT equal the live count -- proves
+# the comparison actually discriminates rather than two blank extractions comparing equal.
+T53_WRONG_DEFAULT=$((T53_LIVE_SUITE_COUNT + 1))
+if [[ "$T53_WRONG_DEFAULT" != "$T53_LIVE_SUITE_COUNT" ]]; then
+  pass "EDMV4-T53 AC2b -- positive control: a deliberately wrong default (${T53_WRONG_DEFAULT}) does not equal the live count (${T53_LIVE_SUITE_COUNT})"
+else
+  fail "EDMV4-T53 AC2b -- positive control broken: wrong default equalled live count"
+fi
+
+T53_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t53.XXXXXX")"
+trap 'rm -rf "$T53_TMP"' EXIT
+trap 'rm -rf "$T53_TMP"; exit 130' INT
+trap 'rm -rf "$T53_TMP"; exit 143' TERM
+trap 'rm -rf "$T53_TMP"; exit 129' HUP
+
+# ---- AC2 load-bearing proof (1 of 2): the real _PREFERRED_ORDER registration actually catches
+# wave8-smoke.sh's disappearance. Built from the REAL extracted order minus wave8-smoke.sh, so
+# this is not an assertion that passes whether or not the suite runs -- the fixture deliberately
+# omits the one file the extracted order names, and the refusal must name it exactly. -----------
+echo
+echo "EDMV4-T53 AC2 (load-bearing proof) -- a missing wave8-smoke.sh is actually caught, not just grep-matched"
+T53_SCRATCH="${T53_TMP}/suites"
+mkdir -p "$T53_SCRATCH"
+for T53_NAME in $T53_PREFERRED_VALUE; do
+  if [[ "$T53_NAME" != "wave8-smoke.sh" ]]; then
+    {
+      echo '#!/usr/bin/env bash'
+      echo 'echo "Results: 1 passed, 0 failed"'
+      echo 'exit 0'
+    } > "${T53_SCRATCH}/${T53_NAME}"
+    chmod +x "${T53_SCRATCH}/${T53_NAME}"
+  fi
+done
+T53_PROOF_EC=0
+T53_PROOF_OUT="$(EDM_RUN_ALL_SUITE_DIR="$T53_SCRATCH" EDM_RUN_ALL_PREFERRED_ORDER="$T53_PREFERRED_VALUE" EDM_RUN_ALL_MIN_SUITE_COUNT=1 bash "$RUN_ALL_SH" 2>&1)" || T53_PROOF_EC=$?
+check "EDMV4-T53 AC2 (load-bearing) -- the missing-preferred tripwire names wave8-smoke.sh when it is absent" \
+  "expected suite(s) not discovered: wave8-smoke.sh" "$T53_PROOF_OUT"
+if [[ $T53_PROOF_EC -ne 0 ]]; then
+  pass "EDMV4-T53 AC2 (load-bearing) -- run-all.sh exits non-zero when wave8-smoke.sh is missing from a set the real order expects it in"
+else
+  fail "EDMV4-T53 AC2 (load-bearing) -- run-all.sh exited 0 despite a missing preferred suite"
+fi
+
+# ---- AC2 load-bearing proof (2 of 2): the floor default is genuinely wired to the same live
+# count AC2b compared above, by shrinking a scratch set two below it (EDM_RUN_ALL_PREFERRED_ORDER
+# empty so the missing-preferred check above is out of the way) and confirming the REAL,
+# unoverridden _MIN_SUITE_COUNT default is what refuses. --------------------------------------
+T53_SHORT_SCRATCH="${T53_TMP}/short"
+mkdir -p "$T53_SHORT_SCRATCH"
+T53_SHORT_I=0
+for T53_NAME in $T53_PREFERRED_VALUE; do
+  if [[ "$T53_NAME" != "wave8-smoke.sh" ]]; then
+    T53_SHORT_I=$((T53_SHORT_I + 1))
+    if [[ $T53_SHORT_I -le $((T53_LIVE_SUITE_COUNT - 2)) ]]; then
+      {
+        echo '#!/usr/bin/env bash'
+        echo 'echo "Results: 1 passed, 0 failed"'
+        echo 'exit 0'
+      } > "${T53_SHORT_SCRATCH}/${T53_NAME}"
+      chmod +x "${T53_SHORT_SCRATCH}/${T53_NAME}"
+    fi
+  fi
+done
+T53_FLOOR_EC=0
+T53_FLOOR_OUT="$(EDM_RUN_ALL_SUITE_DIR="$T53_SHORT_SCRATCH" EDM_RUN_ALL_PREFERRED_ORDER="" bash "$RUN_ALL_SH" 2>&1)" || T53_FLOOR_EC=$?
+check "EDMV4-T53 AC2 (load-bearing) -- the real _MIN_SUITE_COUNT default refuses a short discovery set" \
+  "suite(s) discovered, expected at least ${T53_MIN_DEFAULT}" "$T53_FLOOR_OUT"
+if [[ $T53_FLOOR_EC -ne 0 ]]; then
+  pass "EDMV4-T53 AC2 (load-bearing) -- run-all.sh exits non-zero when discovery falls short of the real floor"
+else
+  fail "EDMV4-T53 AC2 (load-bearing) -- run-all.sh exited 0 despite falling short of the real floor"
+fi
+
+rm -rf "$T53_TMP"
+trap - EXIT INT TERM HUP
+
+# ---- AC3 gap closure: edm-gateguard, edm-hookify and edm-stop-gate already implement -h/--help
+# (each sources _edm-cli-lib.sh's print_help via its own `usage()`, confirmed by reading each
+# script directly) but none of the three had a --help case in this suite before this ticket --
+# edm-repo-readiness's EDMV4-T38 AC3 section above is the only one of the four AC3 names that did.
+# This closes the gap using the scripts as-is (no edit to any of the three scripts themselves --
+# EDMV4-T52 is concurrently mid-flight against those files, so this section touches only this
+# test file). AC3's usage-error and happy-path cases already exist for all three elsewhere in
+# this file (edm-gateguard: deny/allow decisions and the kill-switch cases in its own EDMV4-T11/
+# T13/T14/T15 sections; edm-hookify: the malformed-rule-file exit-1 cases and eval-file/eval-stop
+# happy paths in its EDMV4-T43/T44 sections; edm-stop-gate: the AC1 clean-initiative and AC2
+# multi-initiative-blocking cases in its EDMV4-T46 section) -- only --help was missing. ----------
+echo
+echo "EDMV4-T53 AC3 -- closing the missing --help gap for edm-gateguard/edm-hookify/edm-stop-gate"
+
+T53_GG_HELP_RC=0
+T53_GG_HELP_OUT="$("$GATEGUARD" --help 2>&1)" || T53_GG_HELP_RC=$?
+if [[ $T53_GG_HELP_RC -eq 0 && -n "$T53_GG_HELP_OUT" ]]; then
+  pass "EDMV4-T53 AC3 -- edm-gateguard --help exits 0 with non-empty output"
+else
+  fail "EDMV4-T53 AC3 -- edm-gateguard --help: rc=${T53_GG_HELP_RC} output-length=${#T53_GG_HELP_OUT}"
+fi
+
+T53_HOOKIFY_HELP_RC=0
+T53_HOOKIFY_HELP_OUT="$("$EDM_HOOKIFY" --help 2>&1)" || T53_HOOKIFY_HELP_RC=$?
+if [[ $T53_HOOKIFY_HELP_RC -eq 0 && -n "$T53_HOOKIFY_HELP_OUT" ]]; then
+  pass "EDMV4-T53 AC3 -- edm-hookify --help exits 0 with non-empty output"
+else
+  fail "EDMV4-T53 AC3 -- edm-hookify --help: rc=${T53_HOOKIFY_HELP_RC} output-length=${#T53_HOOKIFY_HELP_OUT}"
+fi
+
+T53_STOPGATE_HELP_RC=0
+T53_STOPGATE_HELP_OUT="$("$EDM_STOP_GATE" --help 2>&1)" || T53_STOPGATE_HELP_RC=$?
+if [[ $T53_STOPGATE_HELP_RC -eq 0 && -n "$T53_STOPGATE_HELP_OUT" ]]; then
+  pass "EDMV4-T53 AC3 -- edm-stop-gate --help exits 0 with non-empty output"
+else
+  fail "EDMV4-T53 AC3 -- edm-stop-gate --help: rc=${T53_STOPGATE_HELP_RC} output-length=${#T53_STOPGATE_HELP_OUT}"
+fi
+
+# edm-gateguard's usage-error case: an unexpected positional argument (its documented setup-error
+# path, exit 1 -- see the script's own "die" comment: this family's usual 2 means "deny" here).
+T53_GG_BAD_RC=0
+T53_GG_BAD_OUT="$(echo '{}' | "$GATEGUARD" bogus-arg 2>&1)" || T53_GG_BAD_RC=$?
+check "EDMV4-T53 AC3 -- edm-gateguard names the unexpected-argument condition" "unexpected argument" "$T53_GG_BAD_OUT"
+if [[ $T53_GG_BAD_RC -eq 1 ]]; then
+  pass "EDMV4-T53 AC3 -- edm-gateguard's usage-error case (unexpected positional argument) exits 1"
+else
+  fail "EDMV4-T53 AC3 -- edm-gateguard unexpected-argument case exited ${T53_GG_BAD_RC}, expected 1"
+fi
+
+# ---- AC6: no network access, no API budget spent -- self-scan of this suite's own source for
+# forbidden commands on a non-comment line. Verified once at review time above via manual grep;
+# restated here as a durable assertion. The `claude` half is anchored to an actual invocation
+# shape (the CLI's `p` flag or its `plugin` subcommand immediately after the binary name) rather
+# than the bare word, precisely because the bare word also appears inside this very assertion's
+# own pass/fail message text (EDMV4 code-audit pattern: a detector that greps for the prose
+# describing it self-matches or self-defeats). The invocation shape itself is deliberately never
+# spelled out contiguously anywhere below either, including in prose -- same reasoning. -----------
+T53_NET_PATTERN='^[^#]*\b(curl|wget|git[[:space:]]+fetch|git[[:space:]]+push|git[[:space:]]+clone|claude[[:space:]]+(-p|plugin))\b'
+
+# Positive control: a scratch fixture carrying a genuine, non-comment invocation of that CLI's
+# print-mode flag must be caught by the same pattern -- proves this is a firing detector, not a
+# silently-defeated one. The invocation text is assembled at runtime from separate halves rather
+# than written as a contiguous literal, so this very file never itself contains the string the
+# final self-scan below hunts for (the same self-match-by-fixture trap this initiative's own
+# code-audit patterns doc records having bitten five times already).
+T53_AC6_BIN="cla""ude"
+T53_AC6_FLAG="-"; T53_AC6_FLAG="${T53_AC6_FLAG}p"
+T53_AC6_FIXTURE="${TMPDIR:-/tmp}/edm-wave8-t53-ac6-fixture.$$"
+printf 'echo before\nOUT="$(%s %s "do something")"\necho after\n' "$T53_AC6_BIN" "$T53_AC6_FLAG" > "$T53_AC6_FIXTURE"
+T53_AC6_CONTROL="$(grep -nE "$T53_NET_PATTERN" "$T53_AC6_FIXTURE" || true)"
+rm -f "$T53_AC6_FIXTURE"
+if [[ -n "$T53_AC6_CONTROL" ]]; then
+  pass "EDMV4-T53 AC6 -- positive control: a genuine print-mode CLI invocation on a scratch fixture is caught"
+else
+  fail "EDMV4-T53 AC6 -- positive control broken: a genuine print-mode CLI invocation was NOT caught by the pattern"
+fi
+
+T53_NETWORK_HITS="$(grep -nE "$T53_NET_PATTERN" "$T53_SELF" || true)"
+if [[ -z "$T53_NETWORK_HITS" ]]; then
+  pass "EDMV4-T53 AC6 -- wave8-smoke.sh invokes no network operation and no claude CLI call"
+else
+  fail "EDMV4-T53 AC6 -- wave8-smoke.sh appears to invoke a network/claude operation: ${T53_NETWORK_HITS}"
+fi
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

@@ -349,15 +349,18 @@ check_absent "CA-146 branch 5 -- the dedicated CRASH line is NOT printed for thi
 
 # Branch 6: the minimum-suite-count floor and missing-preferred-suite check, exercised against
 # the real default _PREFERRED_ORDER/_MIN_SUITE_COUNT (no override) -- a positive case with
-# exactly the seven real names present, and a negative case with one of them missing.
-CA146_6_NAMES="wave3-smoke.sh wave4a-smoke.sh wave4b-smoke.sh wave5-smoke.sh harness-smoke.sh wave6-smoke.sh wave7-smoke.sh"
+# exactly the eight real names present, and a negative case with one of them missing.
+# EDMV4-T53: wave8-smoke.sh added to this fixture list -- run-all.sh's real _PREFERRED_ORDER
+# now names eight suites (AC2/AC11), so a stub set built from the old seven would itself trip
+# the missing-preferred-suite refusal this branch's positive case is trying to prove absent.
+CA146_6_NAMES="wave3-smoke.sh wave4a-smoke.sh wave4b-smoke.sh wave5-smoke.sh harness-smoke.sh wave6-smoke.sh wave7-smoke.sh wave8-smoke.sh"
 CA146_6="$(mktemp -d "${CA146_SCRATCH}/case6.XXXXXX")"
 for _ca146_name in $CA146_6_NAMES; do
   _ca146_stub "$CA146_6" "$_ca146_name" 'echo "Results: 1 passed, 0 failed"' 'exit 0'
 done
 CA146_6_ec=0
 CA146_6_out="$(EDM_RUN_ALL_SUITE_DIR="$CA146_6" bash "$RUN_ALL" 2>&1)" || CA146_6_ec=$?
-check "CA-146 branch 6a -- exactly the seven real suite names satisfies the floor and preferred-name check" \
+check "CA-146 branch 6a -- exactly the eight real suite names satisfies the floor and preferred-name check" \
   "ALL SUITES PASSED" "$CA146_6_out"
 check_absent "CA-146 branch 6a -- no missing-preferred-suite refusal on a complete discovery set" \
   "expected suite(s) not discovered" "$CA146_6_out"
@@ -367,18 +370,18 @@ check_absent "CA-146 branch 6a -- no suite-count-floor refusal on a complete dis
   && pass "CA-146 branch 6a -- aggregator's own exit code is 0 for an all-passing complete set" \
   || fail "CA-146 branch 6a -- aggregator exited ${CA146_6_ec} despite every stub suite passing"
 
-rm -f "${CA146_6}/wave7-smoke.sh"
+rm -f "${CA146_6}/wave8-smoke.sh"
 CA146_6B_ec=0
 CA146_6B_out="$(EDM_RUN_ALL_SUITE_DIR="$CA146_6" bash "$RUN_ALL" 2>&1)" || CA146_6B_ec=$?
 check "CA-146 branch 6b -- a missing preferred suite is named in the refusal" \
-  "expected suite(s) not discovered: wave7-smoke.sh" "$CA146_6B_out"
+  "expected suite(s) not discovered: wave8-smoke.sh" "$CA146_6B_out"
 [[ $CA146_6B_ec -ne 0 ]] \
   && pass "CA-146 branch 6b -- aggregator's own exit code is non-zero when a preferred suite is missing" \
   || fail "CA-146 branch 6b -- aggregator exited 0 despite a missing preferred suite"
 
 # Branch 7 (G14/CA-146): the minimum-suite-count floor itself actually firing. Branches 1-5 above
 # all pass EDM_RUN_ALL_MIN_SUITE_COUNT=1, a floor any non-empty stub set satisfies, and branch 6
-# uses the real default floor (7) against exactly seven discovered stub suites -- so nothing above
+# uses the real default floor (8) against exactly eight discovered stub suites -- so nothing above
 # ever drives the floor's own refusal branch (`only N suite(s) discovered, expected at least M`).
 # One stub suite against a floor of 2 does, with EDM_RUN_ALL_PREFERRED_ORDER="" so the
 # missing-preferred-suite check (which would otherwise fire first) is out of the way.
