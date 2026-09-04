@@ -6235,6 +6235,150 @@ t_ca003_no_shortcircuit_case() {
 }
 t46_isolate_and_run t_ca003_no_shortcircuit_case
 
+# ============================================================================================
+# Documentation-accuracy P1 batch (code-audit pass-1 2026-09-04): CA-021, CA-023, CA-024,
+# CA-025, CA-026, CA-032. Banded section appended at the tail per this initiative's remediation
+# convention -- touches nothing above this line.
+# ============================================================================================
+echo
+echo "-- Documentation-accuracy P1 batch: CA-021/023/024/025/026/032 --"
+
+DOCBATCH_CLAUDE_MD="${PLUGIN_DIR}/CLAUDE.md"
+DOCBATCH_README_MD="${PLUGIN_DIR}/README.md"
+DOCBATCH_CHANGELOG_MD="${PLUGIN_DIR}/CHANGELOG.md"
+DOCBATCH_IMPLEMENTER_MD="${PLUGIN_DIR}/agents/edm-implementer.md"
+DOCBATCH_PLUGIN_JSON="${PLUGIN_DIR}/.claude-plugin/plugin.json"
+
+# ---- CA-021: guards D1/D2 must never carry a hardcoded lens count again -------------------
+# What would make this fail: the pre-fix text ("11-lens", "11 code-audit lenses") reappearing,
+# OR any future hardcoded count ("14-lens", "15-lens", etc.) being added to the guard text --
+# both are "[0-9]+[- ]?lens", which the fix deliberately removed from D1/D2 entirely.
+ca021_d1d2_block="$(awk '/\*\*\(D1\)\*\*/,/\*\*\(D3\)\*\*/' "$DOCBATCH_CLAUDE_MD")"
+if printf '%s' "$ca021_d1d2_block" | grep -Eiq '[0-9]+[a-zA-Z -]{0,20}lens'; then
+  fail "CA-021 -- guards D1/D2 in CLAUDE.md still carry a hardcoded lens count"
+else
+  pass "CA-021 -- guards D1/D2 in CLAUDE.md carry no hardcoded lens count (old or new)"
+fi
+
+# Positive control: prove the check above is not vacuous by re-injecting the exact stale phrase
+# into a scratch copy and confirming the same grep now fires.
+ca021_scratch="$(printf '%s' "$ca021_d1d2_block" | sed 's/every code-audit lens/the 11 code-audit lens/')"
+if printf '%s' "$ca021_scratch" | grep -Eiq '[0-9]+[a-zA-Z -]{0,20}lens'; then
+  pass "CA-021 -- positive control: re-injecting '11 code-audit lens' into a scratch copy of the D1/D2 block makes the same check fire"
+else
+  fail "CA-021 -- positive control FAILED: injecting the stale phrase did not trip the detector, so the check above proves nothing"
+fi
+
+ca021_implementer_line="$(grep -c 'anti-patterns flagged by the code-audit lenses' "$DOCBATCH_IMPLEMENTER_MD" || true)"
+if grep -Eiq '[0-9]+[a-zA-Z -]{0,20}lens' "$DOCBATCH_IMPLEMENTER_MD"; then
+  fail "CA-021 -- agents/edm-implementer.md still carries a hardcoded lens count"
+elif [[ "${ca021_implementer_line:-0}" -ge 1 ]]; then
+  pass "CA-021 -- agents/edm-implementer.md's pattern-library instruction carries no hardcoded lens count"
+else
+  fail "CA-021 -- agents/edm-implementer.md's pattern-library instruction sentence not found at all"
+fi
+
+echo "  NOTE: CA-021 also names bin/edm-state:2553's '--accept-p2-debt' comment ('a full"
+echo "  eleven-lens round') as a fourth stale site. bin/ is out of this batch's scope (owned by"
+echo "  a sibling agent); reported, not fixed, here."
+
+# ---- CA-023: qc_shard_threshold's documented default must match plugin.json's live default -
+# What would make this fail: either value moving without the other (the exact defect found --
+# CLAUDE.md said 20, plugin.json shipped 6).
+ca023_para="$(awk '/^- `qc_shard_threshold`/{f=1} f{print} f && /^- `implementation_mode`/{exit}' "$DOCBATCH_CLAUDE_MD")"
+ca023_documented="$(printf '%s' "$ca023_para" | grep -o 'default `[0-9]\+`' | head -1 | grep -o '[0-9]\+' || true)"
+ca023_shipped="$(jq -r '.userConfig.qc_shard_threshold.default // .config.qc_shard_threshold.default // empty' "$DOCBATCH_PLUGIN_JSON" 2>/dev/null || true)"
+if [[ -z "$ca023_shipped" ]]; then
+  # Schema key path varies by plugin.json shape; fall back to the raw numeric neighbor of the key.
+  ca023_shipped="$(awk '/"qc_shard_threshold"/,/}/' "$DOCBATCH_PLUGIN_JSON" | grep -o '"default"[[:space:]]*:[[:space:]]*[0-9]\+' | grep -o '[0-9]\+' | head -1 || true)"
+fi
+if [[ -n "$ca023_documented" && -n "$ca023_shipped" && "$ca023_documented" == "$ca023_shipped" ]]; then
+  pass "CA-023 -- CLAUDE.md's documented qc_shard_threshold default (${ca023_documented}) matches plugin.json's shipped default (${ca023_shipped})"
+else
+  fail "CA-023 -- qc_shard_threshold default mismatch: CLAUDE.md says '${ca023_documented:-<none found>}', plugin.json ships '${ca023_shipped:-<none found>}'"
+fi
+
+# ---- CA-024: README's Agents table must list every edm-audit-* lens agent on disk ----------
+# What would make this fail: adding/removing a lens agent file without updating this table --
+# the live count and the brace-list count must agree.
+ca024_live_count="$(find "${PLUGIN_DIR}/agents" -maxdepth 1 -name 'edm-audit-*.md' ! -name 'edm-audit-synthesizer.md' | wc -l | tr -d '[:space:]')"
+ca024_readme_line="$(grep -o 'edm-audit-{[^}]*}' "$DOCBATCH_README_MD" | head -1 || true)"
+ca024_readme_count="$(printf '%s' "$ca024_readme_line" | tr ',' '\n' | grep -c '.' || true)"
+if [[ "$ca024_live_count" == "$ca024_readme_count" ]]; then
+  pass "CA-024 -- README's edm-audit-{...} brace list names ${ca024_readme_count} agents, matching the ${ca024_live_count} edm-audit-*.md lens files on disk"
+else
+  fail "CA-024 -- README's edm-audit-{...} brace list names ${ca024_readme_count:-0} agents but ${ca024_live_count} edm-audit-*.md lens files exist on disk"
+fi
+for ca024_name in silent-failures type-design behavioral-tests; do
+  if printf '%s' "$ca024_readme_line" | grep -q "$ca024_name"; then
+    pass "CA-024 -- README's Agents table names ${ca024_name}"
+  else
+    fail "CA-024 -- README's Agents table is missing ${ca024_name}"
+  fi
+done
+
+# ---- CA-025: the [3.3.0] CHANGELOG entry must name every new blocking hook and executable ---
+# Bound the search to the [3.3.0] section only, so a future version's own entry can never
+# satisfy this by accident.
+ca025_section="$(awk '/^## \[3\.3\.0\]/{f=1} f && /^## \[/ && !/^## \[3\.3\.0\]/{f=0} f' "$DOCBATCH_CHANGELOG_MD")"
+for ca025_term in edm-gateguard edm-bash-gate edm-stop-gate hookify edm-repo-readiness qc_shard_threshold; do
+  if printf '%s' "$ca025_section" | grep -q "$ca025_term"; then
+    pass "CA-025 -- the [3.3.0] CHANGELOG entry names ${ca025_term}"
+  else
+    fail "CA-025 -- the [3.3.0] CHANGELOG entry is missing ${ca025_term}"
+  fi
+done
+
+# ---- CA-026: docs/ecc-integration-analysis.md Part 4.2 must not still read as a live defect --
+DOCBATCH_ECC_MD="${PLUGIN_DIR}/docs/ecc-integration-analysis.md"
+ca026_part42="$(awk '/^### 4\.2 /{f=1} f && /^### 4\.3 /{f=0} f' "$DOCBATCH_ECC_MD")"
+if printf '%s' "$ca026_part42" | grep -q 'is a no-op'; then
+  fail "CA-026 -- docs/ecc-integration-analysis.md Part 4.2 still describes the learning loop as a live no-op"
+else
+  pass "CA-026 -- docs/ecc-integration-analysis.md Part 4.2 no longer describes the learning loop as a live no-op"
+fi
+if printf '%s' "$ca026_part42" | grep -q 'CLOSED by EDMV4-T18'; then
+  pass "CA-026 -- docs/ecc-integration-analysis.md Part 4.2 records the fix as CLOSED by EDMV4-T18"
+else
+  fail "CA-026 -- docs/ecc-integration-analysis.md Part 4.2 does not record closure by EDMV4-T18"
+fi
+
+# ---- CA-059 (folded into the CA-026/CA-021 commits): no reintroduced file:line citation -----
+# in the two prose sites this batch corrected. Absence-only: proves the fix did not silently
+# regress to a fresh, differently-stale line number.
+if grep -Eq 'timing\.sh:[0-9]+' "$DOCBATCH_CLAUDE_MD"; then
+  fail "CA-059 -- CLAUDE.md's Mermaid-conditional paragraph still cites timing.sh by line number"
+else
+  pass "CA-059 -- CLAUDE.md's Mermaid-conditional paragraph cites timing.sh by name, not line number"
+fi
+if grep -Eq 'edm-state:56[0-9]{2}' "$DOCBATCH_ECC_MD"; then
+  fail "CA-059 -- docs/ecc-integration-analysis.md Part 4.2/8.2 still cite bin/edm-state by a live line number"
+else
+  pass "CA-059 -- docs/ecc-integration-analysis.md Part 4.2/8.2 no longer cite bin/edm-state by a live line number"
+fi
+
+echo "  NOTE: CA-022 (edm-sync-canonical-sections' --help claims 'the two' canonical sections; it"
+echo "  extracts seven) and CA-060 (wave7-smoke.sh:8931's G10/CA-340 scope comment overclaims"
+echo "  coverage) both name bin/ or bin/tests/ files outside this batch's scope (sibling-owned);"
+echo "  reported, not fixed, here."
+
+# ---- CA-032: turn-budget parity prose must match the live agent frontmatter, per-pair --------
+# What would make this fail: any of the four verifiers' maxTurns changing without this section's
+# prose being swept in the same commit -- the exact drift CA-032 found (edm-qc-auditor/
+# edm-implementer raised by EDMV4-T55 while the prose still said maxTurns: 50 for all four).
+ca032_get_maxturns() { grep -m1 '^maxTurns:' "${PLUGIN_DIR}/agents/${1}.md" | grep -o '[0-9]\+' || true; }
+ca032_section="$(awk '/^### Turn budget parity/{f=1} f && /^### Scope of this section/{f=0} f' "$DOCBATCH_CLAUDE_MD")"
+for ca032_verifier in edm-srd-auditor edm-ticket-auditor edm-qc-auditor edm-test-coverage-auditor; do
+  ca032_verifier_turns="$(ca032_get_maxturns "$ca032_verifier")"
+  if [[ -z "$ca032_verifier_turns" ]]; then
+    fail "CA-032 -- could not read ${ca032_verifier}'s live maxTurns from its own frontmatter"
+  elif printf '%s' "$ca032_section" | grep -Eq "maxTurns: ${ca032_verifier_turns}([^0-9]|\$)"; then
+    pass "CA-032 -- CLAUDE.md's Turn budget parity section states ${ca032_verifier}'s live maxTurns value (${ca032_verifier_turns})"
+  else
+    fail "CA-032 -- CLAUDE.md's Turn budget parity section does not state ${ca032_verifier}'s live maxTurns value (${ca032_verifier_turns})"
+  fi
+done
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
