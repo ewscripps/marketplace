@@ -6161,5 +6161,80 @@ else
 fi
 
 echo
+
+# =================================================================================================
+# CA-003 -- edm-stop-gate must read stop_hook_active from its own Stop payload
+# =================================================================================================
+echo "=== CA-003: edm-stop-gate honours stop_hook_active (loop breaker) ==="
+echo
+
+# Round-1 code audit found edm-stop-gate never read its own stdin payload at all, so it could never
+# see stop_hook_active -- the boolean the host sets precisely when a Stop hook is already blocking
+# this turn, so a Stop hook can break its own loop. A routine unclosed PARTIAL (the same fixture
+# shape as EDMV4-T46 AC2's own T46BLOCK case above) makes edm-state validate return a blocking
+# anomaly on every single Stop; absent this fix the gate would block forever once the host retried
+# with stop_hook_active: true, since it never had a way to see that signal.
+t_ca003_case() {
+  edm-state init CA003BLOCK >/dev/null
+  edm-state set CA003BLOCK current_phase 1 >/dev/null
+  edm-state set CA003BLOCK estimated_size Small >/dev/null
+  edm-state record-partial-verdict CA003BLOCK CA003BLOCK-T01 PARTIAL "needs runtime check" >/dev/null
+
+  local rc out
+
+  # (a) stop_hook_active: false, with a genuine blocking anomaly present -- still blocks (exit 2).
+  # Proves the new read did not weaken ordinary enforcement.
+  rc=0
+  out="$(printf '{"stop_hook_active": false}' | edm-stop-gate 2>&1)" || rc=$?
+  [[ "$rc" -eq 2 ]] && pass "CA-003 -- stop_hook_active:false with a blocking anomaly still exits 2" \
+    || fail "CA-003 -- expected exit 2 with stop_hook_active:false, got ${rc} out=[${out}]"
+
+  # (b) stop_hook_active: true, with the IDENTICAL blocking anomaly -- exits 0, silently. This is
+  # the loop breaker itself: the host sets this precisely because it is already blocking this turn.
+  rc=0
+  out="$(printf '{"stop_hook_active": true}' | edm-stop-gate 2>&1)" || rc=$?
+  [[ "$rc" -eq 0 && -z "$out" ]] \
+    && pass "CA-003 -- stop_hook_active:true with the same blocking anomaly exits 0, silently" \
+    || fail "CA-003 -- expected exit 0 and empty output with stop_hook_active:true, got rc=${rc} out=[${out}]"
+
+  # (c) no Stop payload at all (immediate EOF on stdin) -- must NOT become a new, fifth silent
+  # bail-out: the blocking anomaly is still present, so this must still block exactly like (a).
+  rc=0
+  out="$(edm-stop-gate < /dev/null 2>&1)" || rc=$?
+  [[ "$rc" -eq 2 ]] && pass "CA-003 -- no Stop payload at all still exits 2 (not a new silent allow)" \
+    || fail "CA-003 -- expected exit 2 with no payload, got ${rc} out=[${out}]"
+
+  # (d) an unparseable Stop payload -- same: must still block, not silently allow.
+  rc=0
+  out="$(printf 'not-json' | edm-stop-gate 2>&1)" || rc=$?
+  [[ "$rc" -eq 2 ]] && pass "CA-003 -- an unparseable Stop payload still exits 2 (not a new silent allow)" \
+    || fail "CA-003 -- expected exit 2 with an unparseable payload, got ${rc} out=[${out}]"
+}
+t46_isolate_and_run t_ca003_case
+
+# Positive control (what would make (a)-(d) above fail): a scratch copy of edm-stop-gate with the
+# stop_hook_active short-circuit removed must FAIL case (b) -- proving (b) is not vacuous the way
+# CA-001's original AC7 band was. Cases (a)/(c)/(d) are unaffected by this removal (they never
+# depend on the short-circuit firing), so only (b) is re-checked here.
+t_ca003_no_shortcircuit_case() {
+  edm-state init CA003NOSC >/dev/null
+  edm-state set CA003NOSC current_phase 1 >/dev/null
+  edm-state set CA003NOSC estimated_size Small >/dev/null
+  edm-state record-partial-verdict CA003NOSC CA003NOSC-T01 PARTIAL "needs runtime check" >/dev/null
+
+  local scratch_gate="${TMP}/edm-stop-gate.no-shortcircuit"
+  sed '/\[\[ "\$STOP_HOOK_ACTIVE" == "true" \]\] && exit 0/d' \
+    "${PLUGIN_DIR}/bin/edm-stop-gate" > "$scratch_gate"
+  chmod +x "$scratch_gate"
+
+  local rc=0 out
+  out="$(printf '{"stop_hook_active": true}' | "$scratch_gate" 2>&1)" || rc=$?
+  [[ "$rc" -eq 2 ]] \
+    && pass "CA-003 -- positive control: removing the stop_hook_active short-circuit makes case (b) block again (exit 2), proving (b) discriminates" \
+    || fail "CA-003 -- positive control FAILED: expected the short-circuit-free copy to still exit 2 on stop_hook_active:true, got rc=${rc} out=[${out}] (if this is 0, case (b) above is not actually testing the short-circuit)"
+}
+t46_isolate_and_run t_ca003_no_shortcircuit_case
+
+echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
