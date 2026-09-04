@@ -32,15 +32,25 @@
 #
 # Exit codes:
 #   0  continue -- no active initiative, or every active initiative's `edm-state validate` run
-#      returned no blocking-class anomaly. Every internal/setup condition also lands here and
-#      NEVER blocks: edm-state absent from PATH, jq missing, no resolvable initiative, or
-#      `edm-state validate` itself failing/dying for a given prefix (its own setup-error exit,
-#      distinct from the blocking-class exit 3 it uses on a real anomaly).
+#      returned no blocking-class anomaly, or the host's own Stop payload carries the literal
+#      `stop_hook_active: true` (CA-003: the host sets this precisely when a Stop hook is already
+#      blocking this turn, so honouring it here is what lets this gate ever release a session it
+#      has blocked, instead of blocking again on the very next Stop for the same still-open
+#      anomaly -- e.g. an initiative carrying a routine unclosed PARTIAL otherwise makes
+#      `edm-state validate` return a blocking anomaly on every single Stop). Every internal/setup
+#      condition also lands here and NEVER blocks: edm-state absent from PATH, jq missing, no
+#      resolvable initiative, or `edm-state validate` itself failing/dying for a given prefix (its
+#      own setup-error exit, distinct from the blocking-class exit 3 it uses on a real anomaly).
 #   2  block -- at least one active initiative's `edm-state validate` run reported a blocking-class
 #      anomaly (`edm-state validate` itself exits 3 for that condition; this gate never confuses
-#      that with any other non-zero exit code from `validate`), OR an enabled `stop`-event hookify
-#      rule matched with `"action": "block"` (translated from `edm-hookify eval stop`'s own block
-#      status; its setup-error status never escalates here either).
+#      that with any other non-zero exit code from `validate`) AND the Stop payload's
+#      `stop_hook_active` is not the literal `true` -- absent, `false`, or unreadable (missing
+#      payload, unparseable JSON, or `jq` unavailable on PATH all read as "not true" and fall
+#      through to this gate's ordinary enforcement rather than silently allowing; CA-003's fix must
+#      not become a fifth silent bail-out on top of the four internal/setup ones above). OR an
+#      enabled `stop`-event hookify rule matched with `"action": "block"` (translated from
+#      `edm-hookify eval stop`'s own block status; its setup-error status never escalates here
+#      either).
 # All operator-facing text goes to stderr, never stdout -- a raw JSON echo to stdout is the
 # documented failure mode for a Stop hook.
 # EDM-HELP-END
@@ -81,6 +91,26 @@ stop_gate_emit_blocking() {
   echo "$label" >&2
   printf '%s\n' "$text" | LC_ALL=C tr -c '\011\012\015\040-\176' '?' >&2
 }
+
+# CA-003: read the Stop payload on stdin using the same idiom edm-bash-gate already uses, BEFORE
+# any potentially-blocking work runs, and honour `stop_hook_active` if the host set it. Without
+# this, a routine unclosed PARTIAL (or any other blocking-class anomaly `edm-state validate`
+# reports on every Stop) wedges the session: Claude tries to stop, this gate blocks, Claude is
+# forced to continue, tries to stop again, and is blocked again -- forever, with no exit but
+# disabling the plugin. `stop_hook_active: true` is the host's own signal that a Stop hook is
+# already blocking this turn, so exiting 0 here is what lets the loop actually terminate.
+STOP_PAYLOAD=""
+IFS= read -r -d '' STOP_PAYLOAD || true
+
+STOP_HOOK_ACTIVE=""
+if [[ -n "$STOP_PAYLOAD" ]] && command -v jq >/dev/null 2>&1; then
+  STOP_HOOK_ACTIVE="$(printf '%s' "$STOP_PAYLOAD" | jq -r '.stop_hook_active // empty' 2>/dev/null)" || STOP_HOOK_ACTIVE=""
+fi
+# Missing payload, unparseable JSON, or jq unavailable all read as "not true" here and fall
+# through to ordinary enforcement below -- this check must never become a new silent bail-out on
+# top of the gate's existing internal/setup ones (an uncertain read is not itself grounds to
+# stop enforcing a real blocking anomaly).
+[[ "$STOP_HOOK_ACTIVE" == "true" ]] && exit 0
 
 command -v edm-state >/dev/null 2>&1 || exit 0
 

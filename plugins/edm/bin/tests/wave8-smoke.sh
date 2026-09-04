@@ -4437,25 +4437,56 @@ else
   fail "EDMV4-T15 AC6 -- expected a denial (exit 2) on a stale-recorded path, got rc=${T15_AC6B_RC} out=[${T15_AC6B_OUT}]"
 fi
 
-# ---- AC7: every state-write failure path allows, with a stderr warning naming
-# EDM_GATEGUARD_STATE_DIR -- never a deny. Read-only data directory. --------------------------------
+# ---- AC7 (CA-001): every state-write failure path ALLOWS, with a stderr warning naming
+# EDM_GATEGUARD_STATE_DIR -- NEVER a deny. This band previously asserted the exact opposite
+# (permissionDecision == "deny"), retrofitted to match the pre-fix implementation rather than the
+# AC it claims to verify -- see CA-001 in code-audit/findings-ledger.jsonl. Read-only data
+# directory: gg_mark_checked cannot record the check, so gg_maybe_deny must fall through to allow
+# BEFORE ever recording a denial or emitting one. The same path is driven six times to prove this
+# is a plain, repeatable allow -- not "denies once then somehow escapes" -- exactly the "deny the
+# same edit forever" failure this ticket's own Description names as the bug to avoid.
 T15_AC7_PROJ="" T15_AC7_DATA=""
 t14_fresh_marker_env T15_AC7_PROJ T15_AC7_DATA
 chmod 555 "${T15_AC7_DATA}/run"
-T15_AC7_RC=0
-T15_AC7_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"readonly-target.js"}}' | \
-  CLAUDE_PROJECT_DIR="$T15_AC7_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC7_DATA" EDM_GATEGUARD_DENY_MODE=json bash "$GATEGUARD" 2>"${TMP}/t15-ac7.stderr")" || T15_AC7_RC=$?
-T15_AC7_ERR="$(cat "${TMP}/t15-ac7.stderr" 2>/dev/null || true)"
+T15_AC7_ALL_ALLOWED=1
+T15_AC7_FIRST_ERR=""
+_t15_ac7_i=1
+while [[ "$_t15_ac7_i" -le 6 ]]; do
+  T15_AC7_RC=0
+  T15_AC7_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"readonly-target.js"}}' | \
+    CLAUDE_PROJECT_DIR="$T15_AC7_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC7_DATA" EDM_GATEGUARD_DENY_MODE=json bash "$GATEGUARD" 2>"${TMP}/t15-ac7.stderr")" || T15_AC7_RC=$?
+  T15_AC7_ERR="$(cat "${TMP}/t15-ac7.stderr" 2>/dev/null || true)"
+  if [[ "$_t15_ac7_i" -eq 1 ]]; then
+    T15_AC7_FIRST_ERR="$T15_AC7_ERR"
+  fi
+  if [[ "$T15_AC7_RC" -ne 0 || -n "$T15_AC7_OUT" ]]; then
+    T15_AC7_ALL_ALLOWED=0
+    fail "EDMV4-T15 AC7 -- call ${_t15_ac7_i} of 6 under a read-only state dir did not allow cleanly (expected exit 0, empty stdout): rc=${T15_AC7_RC} out=[${T15_AC7_OUT}]"
+  fi
+  _t15_ac7_i=$((_t15_ac7_i + 1))
+done
 chmod 755 "${T15_AC7_DATA}/run"
-if printf '%s' "$T15_AC7_OUT" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1; then
-  pass "EDMV4-T15 AC7 -- a state-write failure still denies (facts are the point of first touch) rather than silently allowing"
+[[ "$T15_AC7_ALL_ALLOWED" -eq 1 ]] \
+  && pass "EDMV4-T15 AC7 -- all six repeated calls under a read-only state dir allow (exit 0, empty stdout) -- never a deny"
+check "EDMV4-T15 AC7 -- the state-write failure warns on stderr naming EDM_GATEGUARD_STATE_DIR" "EDM_GATEGUARD_STATE_DIR" "$T15_AC7_FIRST_ERR"
+
+# Positive control (what would make the assertions above fail): the SAME fixture (fresh marker,
+# same payload) with a WRITABLE state dir must still deny on first touch. This proves the allow
+# above is caused specifically by the state-write failure, not by a change that stopped denying
+# altogether -- the vacuity trap in the opposite direction from the one this finding corrects. If
+# gg_maybe_deny's `gg_mark_checked "$path" || return 0` guard above were ever reverted to an
+# unconditional deny, the six-call loop above would fail; if the deny path itself were ever
+# removed, this control would fail instead.
+T15_AC7B_PROJ="" T15_AC7B_DATA=""
+t14_fresh_marker_env T15_AC7B_PROJ T15_AC7B_DATA
+T15_AC7B_RC=0
+T15_AC7B_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"readonly-target.js"}}' | \
+  CLAUDE_PROJECT_DIR="$T15_AC7B_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC7B_DATA" EDM_GATEGUARD_DENY_MODE=json bash "$GATEGUARD" 2>/dev/null)" || T15_AC7B_RC=$?
+if printf '%s' "$T15_AC7B_OUT" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1; then
+  pass "EDMV4-T15 AC7 -- positive control: the same fixture with a WRITABLE state dir still denies on first touch"
 else
-  fail "EDMV4-T15 AC7 -- expected the first-touch denial to still fire despite the state-write failure, got rc=${T15_AC7_RC} out=[${T15_AC7_OUT}]"
+  fail "EDMV4-T15 AC7 -- positive control FAILED: expected a deny with a writable state dir, got rc=${T15_AC7B_RC} out=[${T15_AC7B_OUT}]"
 fi
-check "EDMV4-T15 AC7 -- the write failure warns on stderr naming EDM_GATEGUARD_STATE_DIR" "EDM_GATEGUARD_STATE_DIR" "$T15_AC7_ERR"
-[[ "$T15_AC7_RC" -eq 0 ]] \
-  && pass "EDMV4-T15 AC7 -- json-mode deny still exits 0 (the payload IS the deny signal) even though the mark-checked write failed" \
-  || fail "EDMV4-T15 AC7 -- expected exit 0, got ${T15_AC7_RC}"
 
 # ---- AC8: EDM_GATEGUARD_MAX_DENIALS (default 3) bounds full denials per session -- four
 # unchecked paths in one session deny on the first three and allow with an advisory on the fourth.
@@ -6128,6 +6159,81 @@ if printf '%s\n' "$ca002_probe_diff" | grep -qx 'edm-audit-logic.md'; then
 else
   fail "CA-002 -- positive control FAILED: removing edm-audit-logic.md from the listed set was not detected, so the comparison cannot catch a missing registration"
 fi
+
+echo
+
+# =================================================================================================
+# CA-003 -- edm-stop-gate must read stop_hook_active from its own Stop payload
+# =================================================================================================
+echo "=== CA-003: edm-stop-gate honours stop_hook_active (loop breaker) ==="
+echo
+
+# Round-1 code audit found edm-stop-gate never read its own stdin payload at all, so it could never
+# see stop_hook_active -- the boolean the host sets precisely when a Stop hook is already blocking
+# this turn, so a Stop hook can break its own loop. A routine unclosed PARTIAL (the same fixture
+# shape as EDMV4-T46 AC2's own T46BLOCK case above) makes edm-state validate return a blocking
+# anomaly on every single Stop; absent this fix the gate would block forever once the host retried
+# with stop_hook_active: true, since it never had a way to see that signal.
+t_ca003_case() {
+  edm-state init CA003BLOCK >/dev/null
+  edm-state set CA003BLOCK current_phase 1 >/dev/null
+  edm-state set CA003BLOCK estimated_size Small >/dev/null
+  edm-state record-partial-verdict CA003BLOCK CA003BLOCK-T01 PARTIAL "needs runtime check" >/dev/null
+
+  local rc out
+
+  # (a) stop_hook_active: false, with a genuine blocking anomaly present -- still blocks (exit 2).
+  # Proves the new read did not weaken ordinary enforcement.
+  rc=0
+  out="$(printf '{"stop_hook_active": false}' | edm-stop-gate 2>&1)" || rc=$?
+  [[ "$rc" -eq 2 ]] && pass "CA-003 -- stop_hook_active:false with a blocking anomaly still exits 2" \
+    || fail "CA-003 -- expected exit 2 with stop_hook_active:false, got ${rc} out=[${out}]"
+
+  # (b) stop_hook_active: true, with the IDENTICAL blocking anomaly -- exits 0, silently. This is
+  # the loop breaker itself: the host sets this precisely because it is already blocking this turn.
+  rc=0
+  out="$(printf '{"stop_hook_active": true}' | edm-stop-gate 2>&1)" || rc=$?
+  [[ "$rc" -eq 0 && -z "$out" ]] \
+    && pass "CA-003 -- stop_hook_active:true with the same blocking anomaly exits 0, silently" \
+    || fail "CA-003 -- expected exit 0 and empty output with stop_hook_active:true, got rc=${rc} out=[${out}]"
+
+  # (c) no Stop payload at all (immediate EOF on stdin) -- must NOT become a new, fifth silent
+  # bail-out: the blocking anomaly is still present, so this must still block exactly like (a).
+  rc=0
+  out="$(edm-stop-gate < /dev/null 2>&1)" || rc=$?
+  [[ "$rc" -eq 2 ]] && pass "CA-003 -- no Stop payload at all still exits 2 (not a new silent allow)" \
+    || fail "CA-003 -- expected exit 2 with no payload, got ${rc} out=[${out}]"
+
+  # (d) an unparseable Stop payload -- same: must still block, not silently allow.
+  rc=0
+  out="$(printf 'not-json' | edm-stop-gate 2>&1)" || rc=$?
+  [[ "$rc" -eq 2 ]] && pass "CA-003 -- an unparseable Stop payload still exits 2 (not a new silent allow)" \
+    || fail "CA-003 -- expected exit 2 with an unparseable payload, got ${rc} out=[${out}]"
+}
+t46_isolate_and_run t_ca003_case
+
+# Positive control (what would make (a)-(d) above fail): a scratch copy of edm-stop-gate with the
+# stop_hook_active short-circuit removed must FAIL case (b) -- proving (b) is not vacuous the way
+# CA-001's original AC7 band was. Cases (a)/(c)/(d) are unaffected by this removal (they never
+# depend on the short-circuit firing), so only (b) is re-checked here.
+t_ca003_no_shortcircuit_case() {
+  edm-state init CA003NOSC >/dev/null
+  edm-state set CA003NOSC current_phase 1 >/dev/null
+  edm-state set CA003NOSC estimated_size Small >/dev/null
+  edm-state record-partial-verdict CA003NOSC CA003NOSC-T01 PARTIAL "needs runtime check" >/dev/null
+
+  local scratch_gate="${TMP}/edm-stop-gate.no-shortcircuit"
+  sed '/\[\[ "\$STOP_HOOK_ACTIVE" == "true" \]\] && exit 0/d' \
+    "${PLUGIN_DIR}/bin/edm-stop-gate" > "$scratch_gate"
+  chmod +x "$scratch_gate"
+
+  local rc=0 out
+  out="$(printf '{"stop_hook_active": true}' | "$scratch_gate" 2>&1)" || rc=$?
+  [[ "$rc" -eq 2 ]] \
+    && pass "CA-003 -- positive control: removing the stop_hook_active short-circuit makes case (b) block again (exit 2), proving (b) discriminates" \
+    || fail "CA-003 -- positive control FAILED: expected the short-circuit-free copy to still exit 2 on stop_hook_active:true, got rc=${rc} out=[${out}] (if this is 0, case (b) above is not actually testing the short-circuit)"
+}
+t46_isolate_and_run t_ca003_no_shortcircuit_case
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
