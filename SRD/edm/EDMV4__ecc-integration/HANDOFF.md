@@ -1,6 +1,6 @@
 # EDMV4 - Session Handoff
 
-> **Last updated**: 2026-09-03T22:52:09Z by darryl.porter  
+> **Last updated**: 2026-09-04T01:40:29Z by darryl.porter  
 > **To resume**: `/edm:orchestrator EDMV4`
 
 ## Current Status
@@ -10,7 +10,7 @@
 - **Last gate**: Gate 3 - approved 2026-09-02T16:26:25Z by darryl.porter
 - **Product**: edm
 - **Description**: ecc-integration
-- **Next action**: Phase 6 in progress - awaiting runtime verification of 8 open PARTIAL verdict(s) (see Outstanding PARTIAL Verdicts below)
+- **Next action**: Awaiting the convergence gate - run `/edm:code-audit EDMV4`, then `edm-state approve-gate EDMV4 code-audit`
 
 ## Resume Point
 
@@ -30,17 +30,6 @@ _(implementation in progress -- track individual ticket status)_
 - **Lifecycle mode**: standard
 - **Compliance**: false
 - **Implementation mode**: standard
-
-## Outstanding PARTIAL Verdicts
-
-- **EDMV4-T06**: runtime-check: re-run Spike A two-block PreToolUse/Stop experiments on a live host; confirm D25 holds on current claude --version  _(recorded 2026-09-02T19:52:55Z)_
-- **EDMV4-T07**: runtime-check: re-test MultiEdit denial on a host where the tool is present; absent from this session toolset, reproduced twice  _(recorded 2026-09-02T19:52:55Z)_
-- **EDMV4-T34**: runtime-check: exercise the size-classifier pre-step through a real /edm:orchestrator Step 1c dialog  _(recorded 2026-09-02T19:52:55Z)_
-- **EDMV4-T19**: runtime-check: AC7 -- re-run bash plugins/edm/bin/tests/run-all.sh once EDMV4-T26 has landed and the ~35 wave7 assertions stale against EDMV4-T18 have an owner; confirm a green aggregate. No wave7 assertion references the CA-476 comment text, so no current failure is T19-attributable  _(recorded 2026-09-03T04:57:05Z)_
-- **EDMV4-T20**: runtime-check: AC9 second/third clauses -- run bash plugins/edm/bin/tests/run-all.sh twice in a row from a clean tree and confirm both runs are green and produce the same result. Blocked today by the 65 non-T20 wave7 failures. AC9 first clause (scratch HOME/CLAUDE_PLUGIN_DATA/XDG_DATA_HOME, no repo mutation) is already PASS; the ticket rollup is FAIL on AC8, tracked separately  _(recorded 2026-09-03T04:57:12Z)_
-- **EDMV4-T35**: runtime-check: exercise the size classifier through a real /edm:orchestrator run and confirm it selects only from the eight existing mode enum values; graded PARTIAL by wave-2 QC shard 3 but never persisted at the time  _(recorded 2026-09-03T22:51:58Z)_
-- **EDMV4-T36**: runtime-check: exercise the security-trigger tie-breaker and the pre-selected compliance dialog through a real /edm:orchestrator run; graded PARTIAL by wave-2 QC shard 3 but never persisted at the time  _(recorded 2026-09-03T22:51:59Z)_
-- **EDMV4-T37**: runtime-check: confirm guard D6 holds against a live classifier run -- the Step 1b.5 block must never restate the mode matrix; graded PARTIAL by wave-2 QC shard 3 but never persisted at the time  _(recorded 2026-09-03T22:51:59Z)_
 
 ## Gates
 
