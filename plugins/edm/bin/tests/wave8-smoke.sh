@@ -3288,11 +3288,24 @@ if [[ -x "$GATEGUARD" ]]; then
 else
   fail "EDMV4-T11 AC1 -- edm-gateguard is not executable"
 fi
+# Ceiling raised 400 -> 500 (decisions.md D42). AC1's original band came from AD1's estimate of
+# 250-350 for the INITIAL bash port, sized in Phase 2 when this file was structural only -- it was
+# 202 lines at EDMV4-T11's delivery. Five later tickets then added AC-mandated code to the same
+# file by design: T13's emit_decision, T14's fact-forcing denial content and MultiEdit loop, T15's
+# kill switches / exemptions / staleness cap / denial budget, T45's hookify wiring, and T52's
+# non-ASCII sanitization. Each was required by its own acceptance criteria, so the estimate
+# described a scope that no longer exists.
+#
+# The bound is widened, not removed. A closed range still catches the thing it was written to
+# catch -- a rewrite that balloons the hook, which fires on every Edit/Write in Phase 6 and whose
+# marker-absent fast path must stay cheap. 500 leaves headroom for the two GateGuard tickets not
+# yet written without licensing unbounded growth; the next ticket that needs more must justify it
+# here rather than nudge the number.
 t11_lines="$(wc -l < "$GATEGUARD" | tr -d ' ')"
-if [[ "$t11_lines" -ge 200 && "$t11_lines" -le 400 ]]; then
-  pass "EDMV4-T11 AC1 -- edm-gateguard is ${t11_lines} lines (within the closed range 200-400)"
+if [[ "$t11_lines" -ge 200 && "$t11_lines" -le 500 ]]; then
+  pass "EDMV4-T11 AC1 -- edm-gateguard is ${t11_lines} lines (within the closed range 200-500, D42)"
 else
-  fail "EDMV4-T11 AC1 -- edm-gateguard is ${t11_lines} lines (expected 200-400)"
+  fail "EDMV4-T11 AC1 -- edm-gateguard is ${t11_lines} lines (expected 200-500 per D42)"
 fi
 
 # ---- AC2: sources _edm-cli-lib.sh; usage() calls the shared print_help() sentinel extractor; no
