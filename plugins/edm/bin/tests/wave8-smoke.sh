@@ -5134,6 +5134,67 @@ echo
 # exclusion below is applied to an already-normalized root, not a raw `..`-bearing string.
 echo "=== EDMV4-T50: bash 3.2 floor -- no bash-4-only construct in bin/, evals/, or wave8-smoke.sh ==="
 
+# ---- CA-005 (P0, code-audit pass 1): AC1's own live bin/ membership assertion -- cited as
+# precedent later in this file's EDMV4-T52 section but never actually implemented until now. A
+# script placed in a bin/ SUBDIRECTORY silently escapes every check anchored to `-maxdepth 1`
+# (this ticket's own bash-4 sweep below included) with nothing to say so; this assertion recomputes
+# the live top-level set and fails naming any required script missing from it, rather than
+# assuming membership the way every other -maxdepth-1-anchored check in this file already does.
+# The required-name list is AC1's own five plus edm-bash-gate (a sixth top-level script this same
+# code-audit round found unlisted everywhere it should have been named -- CA-063).
+T50_REQUIRED_BIN_FILES="_edm-datadir-lib.sh edm-gateguard edm-hookify edm-stop-gate edm-repo-readiness edm-bash-gate"
+
+# t50_bin_membership_set <bin-dir> -- prints a space-padded string of every top-level regular
+# file's basename directly under <bin-dir> (find -maxdepth 1 -type f), for word-membership testing
+# via `case " $set " in *" $name "*)`, matching bin/edm-state's own MODE_ENUM_LIST/ALL_LENS_IDS
+# idiom (AC4) rather than a bash-4 array.
+t50_bin_membership_set() {
+  local bin_dir="$1" set=""
+  while IFS= read -r -d "" _t50_bf; do
+    set="${set} $(basename "$_t50_bf")"
+  done < <(find "$bin_dir" -maxdepth 1 -type f -print0 2>/dev/null)
+  printf '%s' "$set"
+}
+
+T50_LIVE_BIN_SET="$(t50_bin_membership_set "${PLUGIN_DIR}/bin")"
+T50_AC1_MISSING=""
+for _t50_req in $T50_REQUIRED_BIN_FILES; do
+  case " $T50_LIVE_BIN_SET " in
+    *" ${_t50_req} "*) ;;
+    *) T50_AC1_MISSING="${T50_AC1_MISSING} ${_t50_req}" ;;
+  esac
+done
+if [[ -z "$T50_AC1_MISSING" ]]; then
+  pass "EDMV4-T50 AC1 -- every required top-level bin/ script is present in the live find \"\$PLUGIN_DIR/bin\" -maxdepth 1 -type f set: ${T50_REQUIRED_BIN_FILES}"
+else
+  fail "EDMV4-T50 AC1 -- required bin/ script(s) absent from the live top-level set:${T50_AC1_MISSING}"
+fi
+
+# Positive control: seed a scratch bin/ with every required name present, then relocate ONE of
+# them into a bin/ SUBDIRECTORY -- the exact escape AC1 exists to catch -- and confirm the same
+# membership logic reports it missing from the top-level set. This never touches the real repo
+# tree; the scratch root is discarded afterward.
+harness_scratch_dir T50_AC1_CTRL_TMP
+mkdir -p "${T50_AC1_CTRL_TMP}/bin/subdir"
+for _t50_seed in $T50_REQUIRED_BIN_FILES; do
+  : > "${T50_AC1_CTRL_TMP}/bin/${_t50_seed}"
+done
+mv "${T50_AC1_CTRL_TMP}/bin/edm-repo-readiness" "${T50_AC1_CTRL_TMP}/bin/subdir/edm-repo-readiness"
+
+T50_CTRL_BIN_SET="$(t50_bin_membership_set "${T50_AC1_CTRL_TMP}/bin")"
+T50_CTRL_MISSING=""
+for _t50_req in $T50_REQUIRED_BIN_FILES; do
+  case " $T50_CTRL_BIN_SET " in
+    *" ${_t50_req} "*) ;;
+    *) T50_CTRL_MISSING="${T50_CTRL_MISSING} ${_t50_req}" ;;
+  esac
+done
+if [[ "$T50_CTRL_MISSING" == *"edm-repo-readiness"* ]]; then
+  pass "EDMV4-T50 AC1 -- positive control: relocating a required script into bin/subdir/ is correctly reported missing from the top-level set (reported missing:${T50_CTRL_MISSING})"
+else
+  fail "EDMV4-T50 AC1 -- positive control broken: relocating edm-repo-readiness into bin/subdir/ was NOT detected as missing from the top-level set"
+fi
+
 # A real alternation built here (not sourced from wave7-smoke.sh's own $T61_BASH4_RE): each half
 # is independently useful evidence for this ticket, and referencing wave7's private variable would
 # couple this suite's own correctness to wave7-smoke.sh's internal naming.
