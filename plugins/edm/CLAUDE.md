@@ -434,17 +434,26 @@ The check introduces no binary beyond this plugin's existing `bash`, `jq`, `git`
 
 ### Turn budget parity
 
-The four read-only verifiers named at the top of this section -- `edm-srd-auditor`,
-`edm-ticket-auditor`, `edm-qc-auditor`, `edm-test-coverage-auditor` -- run at `maxTurns: 50`, at
-parity with the producer agents whose output they check (`edm-srd-writer`, `edm-ticket-writer`,
-`edm-implementer`). Verification is not cheaper than production: a verifier must read the
+Each of the four read-only verifiers named at the top of this section runs at parity with --
+at least equal to -- the producer agent whose output it checks; parity is a per-pair relationship,
+not one shared literal `maxTurns` value across the whole set of four. `edm-srd-auditor` and
+`edm-ticket-auditor` stay at `maxTurns: 50`, matching `edm-srd-writer`'s and `edm-ticket-writer`'s
+own `maxTurns: 50`. `edm-qc-auditor` runs at `maxTurns: 150`, matching `edm-implementer`'s
+`maxTurns: 200` -- both raised together (from 50 and 60 respectively) by `EDMV4-T55`, calibrated
+against measured Phase 6 wave-1 usage (decisions.md D30), after the pre-raise ceilings proved too
+low at real scale. `edm-test-coverage-auditor` stays at `maxTurns: 50`, at parity with the
+test-writer layer it checks. Verification is not cheaper than production: a verifier must read the
 artifact under audit **and** cross-reference it against the codebase, which is strictly more work
-than writing the artifact in the first place. Do not "tidy" any of these four back down to the
-plugin's `maxTurns: 30` floor (the fourteen code-audit lens agents' own ceiling, which has no
-evidence of truncation and is unrelated to this parity) -- that floor was set once, before this
-contract existed, and never revisited until this section landed. The completion sentinel above is
-what makes a higher budget safe: it is what still catches a truncated run even though truncation
-becomes rarer at 50 turns than it was at 25.
+than writing the artifact in the first place. Do not "tidy" any of these four down toward a lower
+shared number to make them look uniform -- each verifier's parity obligation is with its own
+producer, never with the other three verifiers, and the plugin's `maxTurns: 30` code-audit-lens
+floor (which has no evidence of truncation and is unrelated to this parity) is never the right
+target for any of the four. (CA-032: this section previously asserted a single `maxTurns: 50`
+figure for all four verifiers after `EDMV4-T55` had already raised two of them; it is phrased
+above per-pair, naming each current value, so a future raise to one pair cannot silently falsify
+a blanket claim about the other three.) The completion sentinel above is what makes a higher
+budget safe: it is what still catches a truncated run even though truncation becomes rarer at a
+higher ceiling than at a lower one.
 
 ### Scope of this section
 
@@ -623,13 +632,18 @@ pattern, so it survives edge cases its author did not anticipate:
 
 - **(D1)** Do not strip the audit or QC architecture in the name of over-verification guidance.
   EDM contains no *self*-verification -- its independent-agent auditing (writer/verifier
-  separation across `edm-implementer` -> `edm-qc-auditor` -> the 11 code-audit lenses) is exactly
-  the pattern the guide praises, not the anti-pattern it warns against. The cost of ignoring this is
-  silent regression of the initiative's entire quality gate -- FAIL findings ship undetected.
-- **(D2)** Do not reduce the 11-lens or 2-auditor fan-out to keep spawn counts low. Those counts
-  are already deterministic, unlike the explorer's uncapped fan-out that EDMV3-T47 just fixed. The
-  cost of ignoring this is coverage loss disguised as an efficiency gain -- a lens or audit lane
-  silently stops existing and nobody notices until the gap it used to catch ships.
+  separation across `edm-implementer` -> `edm-qc-auditor` -> every code-audit lens, enumerated
+  live by `ALL_LENS_IDS` in `bin/edm-state`) is exactly the pattern the guide praises, not the
+  anti-pattern it warns against. The cost of ignoring this is silent regression of the
+  initiative's entire quality gate -- FAIL findings ship undetected.
+- **(D2)** Do not reduce the code-audit lens fan-out (every ID in `ALL_LENS_IDS`, `bin/edm-state`)
+  or the SRD/ticket 2-auditor fan-out to keep spawn counts low. Those counts are already
+  deterministic, unlike the explorer's uncapped fan-out that EDMV3-T47 just fixed. The cost of
+  ignoring this is coverage loss disguised as an efficiency gain -- a lens or audit lane silently
+  stops existing and nobody notices until the gap it used to catch ships. (CA-021: this guard's
+  own text pinned a specific lens count that fell out of date the next time `ALL_LENS_IDS` grew;
+  it is deliberately phrased above with no lens count at all, so growing or shrinking
+  `ALL_LENS_IDS` again can never make this sentence wrong.)
 - **(D3)** Do not import terse register into EDM artifacts. SRDs and tickets are read by humans in
   merge requests, not consumed as a single agent's scratch context. The cost of ignoring this is
   reviewer confusion and slower human sign-off -- the opposite of what EDM's gates exist to speed
@@ -1306,8 +1320,10 @@ gets faster.
 **Why the Mermaid row is a conditional, not a single number (EDMV4-T01).** A bare ratio is
 dominated by fixed process overhead below **30 files / 9,990 lines** -- the reference fixture size
 stated above, in both files and lines -- because a small corpus is mostly bash/awk fork-exec cost
-rather than per-line Mermaid scanning; the `ratio=UNMEASURABLE` refusal at `timing.sh:419-423`
-(G37/CA-197) is the extreme case of exactly this, where a 1-file/1-line fixture can measure 0 ms on
+rather than per-line Mermaid scanning; the `ratio=UNMEASURABLE` refusal that `timing.sh`'s
+Mermaid-ratio measurement emits when timer resolution is too coarse to compute either baseline
+(G37/CA-197; cited here by name rather than by line number after CA-059 found the prior line-range
+citation had already drifted) is the extreme case of exactly this, where a 1-file/1-line fixture can measure 0 ms on
 either side and a ratio computed from it is meaningless. Below that floor, only the absolute
 added-overhead ceiling (<= 1,000 ms p95) applies; at or above it, the corpus is large enough that
 per-line Mermaid scanning is the dominant cost and the ratio ceiling (<= 1.40x, unchanged from its
@@ -1493,7 +1509,11 @@ Prompted at install time. See `.claude-plugin/plugin.json` for the live schema. 
 - `test_framework_e2e_override` -- pin E2E framework, e.g. `playwright`, `cypress` (default `""`)
 - `mode` -- default initiative mode: `standard`, `mini-srd`, `iac`, `data-ml`, `prototype` (default `standard`)
 - `compliance_enabled` -- enforce compliance checkpoints when true (default `false`)
-- `qc_shard_threshold` -- ticket count above which QC spawns multiple `edm-qc-auditor` shards (default `20`)
+- `qc_shard_threshold` -- ticket count above which QC spawns multiple `edm-qc-auditor` shards
+  (default `6` -- lowered from `20` by decisions.md D30/EDMV4-T55 after Phase 6 wave 1 measured
+  roughly four tickets, about 40 acceptance criteria, as one `edm-qc-auditor`'s realistic budget
+  even after its `maxTurns` raise; a 12-ticket shard had exhausted it. This value must match
+  `plugin.json`'s `qc_shard_threshold.default` -- CA-023 found the two disagreeing 20-vs-6)
 - `implementation_mode` -- Phase 6 mode: `standard` or `tdd` Red-Green-Refactor (default `standard`)
 
 Skills reference values as `${user_config.srd_root}` etc.

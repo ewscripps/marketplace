@@ -28,7 +28,7 @@ first (`QC_PATTERN_SEED`, `CODE_PATTERN_SEED`), then the matching delta if its p
 and the file exists (`QC_PATTERN_DELTA`, `CODE_PATTERN_DELTA`), treating each pair as one
 document in that order per `docs/audit-patterns/README.md`'s Append Schema. Apply both:
 1. The qc pair -- apply the pre-flight checklist; pre-empt the top recurring QC findings.
-2. The code pair -- apply the pre-flight checklist; avoid the top anti-patterns flagged by the 11 code-audit lenses.
+2. The code pair -- apply the pre-flight checklist; avoid the top anti-patterns flagged by the code-audit lenses.
 
 Guidance loads at write time so library updates improve output automatically without editing this file.
 

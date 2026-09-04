@@ -146,7 +146,7 @@ prompts; invoke them with the slash commands.
 | `edm-ticket-auditor` | 5 -- Ticket audit | opus / max (read-only) |
 | `edm-implementer` | 6 -- Code | sonnet / high (worktree-isolated) |
 | `edm-qc-auditor` | 6 -- QC | opus / max (read-only, auto-spawned) |
-| `edm-audit-{logic,dead-code,edge-cases,test-quality,runtime,docs,consistency,security,spec,dry,wiring}` | Code audit | opus / max (read-only, parallel) |
+| `edm-audit-{logic,dead-code,edge-cases,test-quality,runtime,docs,consistency,security,spec,dry,wiring,silent-failures,type-design,behavioral-tests}` | Code audit | opus / max (read-only, parallel) |
 | `edm-audit-synthesizer` | Code audit | opus / max |
 | `edm-test-planner` | Testing | opus / high (yellow) -- stack detection, AC<->layer mapping |
 | `edm-test-scaffold` | Testing | sonnet / high (blue) -- install missing test infra |

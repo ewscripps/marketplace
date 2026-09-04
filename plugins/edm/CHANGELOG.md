@@ -8,9 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [3.3.0] -- 2026-09-03
 
-EDMV4 (ECC integration): the code-audit lens set grows from 11 to 14, the Mermaid lint budget is
-re-derived as a measured, fixture-sized conditional, and a Phase 5 deadlock in `edm-state`'s gate
-enforcement is fixed.
+EDMV4 (ECC integration): the code-audit lens set grows from 11 to 14; three new blocking hooks
+(`edm-gateguard`, `edm-bash-gate`, `edm-stop-gate`) ship for the first time, backed by a new JSON
+hookify rules-as-data layer a project can extend without forking the plugin; a repository-readiness
+scorer (`edm-repo-readiness`) feeds a new optional Phase-1 size-classifier dialog; the Mermaid lint
+budget is re-derived as a measured, fixture-sized conditional; and a Phase 5 deadlock in
+`edm-state`'s gate enforcement is fixed.
 
 ### Added
 
@@ -32,7 +35,77 @@ enforcement is fixed.
   user-facing surfaces are updated throughout to read 14 lenses / 18 contested agents in place of
   11 lenses / 15 agents.
 
+- **Three new blocking hooks ship for the first time: `edm-gateguard`, `edm-bash-gate`,
+  `edm-stop-gate` (EDMV4-T11 through EDMV4-T16, EDMV4-T45 through EDMV4-T47).** A user upgrading
+  to 3.3.0 gains three additional ways a tool call can now be refused mid-session, none present in
+  3.2.x:
+  - **`edm-gateguard`** (`PreToolUse` `Edit|Write|MultiEdit`) implements GateGuard's
+    deny-first-touch/demand-facts/allow-on-retry pattern as a bash rewrite (AD1), active only
+    while a Phase-6 marker is present: the first edit to a given file during an active
+    implementation wave is denied with a fact list demanding a rationale; a retry after the fact
+    is recorded is allowed. Six `EDM_GATEGUARD_*` environment variables tune it -- `EDM_GATEGUARD`
+    and `EDM_GATEGUARD_DISABLED` (two independent kill switches), `EDM_GATEGUARD_DENY_MODE`
+    (`json` default or `exit-code`), `EDM_GATEGUARD_EXEMPT_GLOBS`, `EDM_GATEGUARD_STATE_DIR`, and
+    `EDM_GATEGUARD_MAX_DENIALS` (a per-session denial budget, default `3`, past which the gate
+    allows with a stderr advisory rather than denying forever). See `CLAUDE.md`'s
+    "`EDM_GATEGUARD_*` knob family" section.
+  - **`edm-bash-gate`** (`PreToolUse` `Bash`) evaluates enabled `bash`-event hookify rules against
+    every Bash tool call; a matched `block` rule exits 2 and refuses the command, matcher-disjoint
+    from the existing `git commit` block.
+  - **`edm-stop-gate`** (a second entry in the existing `Stop` hook block) resolves every active
+    initiative, runs `edm-state validate` against each, and exits 2 if any carries a
+    blocking-class anomaly, plus evaluates `stop`-event hookify rules once per invocation.
+  All three degrade to allow (exit 0) on any setup condition -- the binary or `jq` absent, an
+  unparseable payload -- so only a genuine refusal blocks. See `CLAUDE.md`'s "Hooks behavior"
+  table for the full exit-code contract of each.
+
+- **Hookify: a JSON rules-as-data enforcement layer (EDMV4-T42 through EDMV4-T45).** A project can
+  now add its own enforcement rules without forking the plugin, via `.claude/edm-hookify/*.json`
+  rule files evaluated by the new `edm-hookify` CLI (`edm-hookify list` / `edm-hookify eval
+  <file|bash|stop>`). Each rule is a JSON object naming an `event` (`file`, `bash`, or `stop`), a
+  list of AND-combined `conditions` (six operators: `regex_match`, `contains`, `not_contains`,
+  `equals`, `starts_with`, `ends_with`), and an `action` that defaults to `warn` and blocks only on
+  the explicit `"action": "block"`. A malformed rule file is a setup error (exit 1), skipped
+  without disabling any other rule in the directory; a matched `block` rule exits 2. See
+  `CLAUDE.md`'s "Hookify rule format (canonical)" and "`edm-hookify`'s two-tier exit contract"
+  sections for the full schema and exit-code table.
+
+- **`bin/edm-repo-readiness` and the optional Step 1b.5 size-classifier dialog (EDMV4-T34 through
+  EDMV4-T41).** A new `edm-repo-readiness [<PREFIX>] [--json <path>]` command scores the
+  repository across six named readiness categories on a 0-10 rubric
+  (`READINESS_RUBRIC_VERSION`), aggregating signals `edm-state` already computes.
+  `skills/plan/SKILL.md` Step 6 runs it optionally and, when present, records the score in
+  `planning.md`'s new "## Repository Readiness" section; `skills/orchestrator/SKILL.md` Step 1b.5
+  may consult a recorded score as one additional input to the pre-existing three-signal size
+  classifier's design-ambiguity signal only, never overriding the security-trigger tie-breaker's
+  `standard` floor.
+
+- **`_edm-datadir-lib.sh`, a shared writable-data-directory resolver (EDMV4-T17).** Sourced, never
+  executed, by `edm-state` and `edm-gateguard`, it resolves a writable plugin data root
+  (`${CLAUDE_PLUGIN_DATA}` if absolute and creatable, else `${XDG_DATA_HOME}/edm`, else
+  `${HOME}/.local/share/edm`, else the empty string) in one place instead of two divergent copies.
+
+- **`SRD/.codemap.md`, a shared current-architecture map (EDMV4-T48).** Written and refreshed by
+  the first explorer of each initiative; distinct from any one initiative's own target-state
+  `architecture.md`, and shared across initiatives rather than scoped to one.
+
+- **`edm-state detect-conditional-lenses [<PREFIX>]` (EDMV4-T24).** Prints a CSV of
+  `CONDITIONAL_LENS_IDS` members genuinely inapplicable -- never skipped for cost, guard D2 -- to
+  the current repository's tracked files, for `skills/code-audit/SKILL.md` Step 1 to consult
+  before a round.
+
 ### Changed
+
+- **`qc_shard_threshold`'s shipped default drops from `20` to `6` (decisions.md D30,
+  EDMV4-T55).** Phase 6 wave 1 measured roughly four tickets (about 40 acceptance criteria) as
+  one `edm-qc-auditor`'s realistic budget even after its `maxTurns` raise below; a 12-ticket shard
+  had already exhausted it. QC sharding now engages far earlier by default. Set it to a large
+  value (e.g. `999`) to force single-auditor mode.
+
+- **`edm-implementer`'s `maxTurns` raised from 60 to 200, and `edm-qc-auditor`'s from 50 to 150
+  (decisions.md D30, EDMV4-T55).** Both raises are calibrated against measured Phase 6 wave-1
+  usage, not chosen speculatively; see `CLAUDE.md`'s "Turn budget parity" section for the
+  per-verifier pairing this restores.
 
 - **Mermaid lint budget re-derived as a conditional, not a bare ratio (EDMV4-47/48, EDMV4-T01).**
   EDMV3-T67 AC6's `1.40x` ratio had no stated input size and no absolute floor, so it read
