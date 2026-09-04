@@ -247,14 +247,18 @@ gg_is_checked() {
 }
 
 # gg_mark_checked <file_path> -- records <file_path> checked so a retry allows, capped at 500
-# entries oldest-first (AC6). A write failure warns on stderr naming EDM_GATEGUARD_STATE_DIR but
-# never changes the decision already made and never denies again for lack of a mark (AC7).
+# entries oldest-first (AC6). A write failure warns on stderr naming EDM_GATEGUARD_STATE_DIR and
+# returns non-zero so the caller (gg_maybe_deny) allows this call rather than denying it (AC7,
+# CA-001) -- a gate that cannot record what it has already asked for must not deny the same edit
+# forever. An unresolvable session-state location ($GG_CHECKED_FILE empty -- no data directory at
+# all, not a write failure against one that exists) is a distinct, pre-existing case and stays a
+# silent no-op return 0: there is nothing to warn about naming a variable that resolved to nothing.
 gg_mark_checked() {
   local target="$1"
   [[ -n "$GG_CHECKED_FILE" ]] || return 0
   if ! mkdir -p "$(dirname "$GG_CHECKED_FILE")" 2>/dev/null; then
-    echo "edm-gateguard: could not create the session-state directory (EDM_GATEGUARD_STATE_DIR=${EDM_GATEGUARD_STATE_DIR:-<unset>}) -- continuing without recording this check" >&2
-    return 0
+    echo "edm-gateguard: could not create the session-state directory (EDM_GATEGUARD_STATE_DIR=${EDM_GATEGUARD_STATE_DIR:-<unset>}) -- allowing this call rather than denying with nothing recorded" >&2
+    return 1
   fi
   local existing tmp
   existing="$(gg_fresh_lines "$GG_CHECKED_FILE")"
@@ -264,7 +268,8 @@ gg_mark_checked() {
     :
   else
     rm -f "$tmp" 2>/dev/null || true
-    echo "edm-gateguard: could not write session state (EDM_GATEGUARD_STATE_DIR=${EDM_GATEGUARD_STATE_DIR:-<unset>}) -- continuing without recording this check" >&2
+    echo "edm-gateguard: could not write session state (EDM_GATEGUARD_STATE_DIR=${EDM_GATEGUARD_STATE_DIR:-<unset>}) -- allowing this call rather than denying with nothing recorded" >&2
+    return 1
   fi
 }
 
@@ -275,13 +280,24 @@ gg_denial_count() {
 }
 
 # gg_record_denial -- appends one denial record, best-effort (AC8's budget counter). Shares the
-# checked-file's 30-minute staleness rule, so the budget cannot outlive the wave it bounds.
+# checked-file's 30-minute staleness rule, so the budget cannot outlive the wave it bounds. A
+# write failure here warns on stderr naming EDM_GATEGUARD_STATE_DIR but never changes the
+# decision already made (unlike gg_mark_checked, this only runs after gg_maybe_deny has already
+# committed to denying) -- it just means the budget undercounts for this call.
 gg_record_denial() {
   [[ -n "$GG_DENIALS_FILE" ]] || return 0
-  mkdir -p "$(dirname "$GG_DENIALS_FILE")" 2>/dev/null || return 0
+  if ! mkdir -p "$(dirname "$GG_DENIALS_FILE")" 2>/dev/null; then
+    echo "edm-gateguard: could not create the session-state directory (EDM_GATEGUARD_STATE_DIR=${EDM_GATEGUARD_STATE_DIR:-<unset>}) -- the denial budget will not be counted for this call" >&2
+    return 0
+  fi
   local tmp="${GG_DENIALS_FILE}.tmp.$$"
-  { gg_fresh_lines "$GG_DENIALS_FILE"; printf 'x\n'; } > "$tmp" 2>/dev/null \
-    && mv "$tmp" "$GG_DENIALS_FILE" 2>/dev/null || rm -f "$tmp" 2>/dev/null || true
+  if { gg_fresh_lines "$GG_DENIALS_FILE"; printf 'x\n'; } > "$tmp" 2>/dev/null \
+      && mv "$tmp" "$GG_DENIALS_FILE" 2>/dev/null; then
+    :
+  else
+    rm -f "$tmp" 2>/dev/null || true
+    echo "edm-gateguard: could not write session state (EDM_GATEGUARD_STATE_DIR=${EDM_GATEGUARD_STATE_DIR:-<unset>}) -- the denial budget will not be counted for this call" >&2
+  fi
 }
 
 # ---- EDMV4-T15 AC4/AC5: exempt-glob matching. ECC's unanchored substring matcher makes
@@ -339,7 +355,10 @@ gg_build_facts() {
 # through silently. A first-touch path denies UNLESS the denial budget is spent (AC8), in which
 # case a stderr advisory prints and this falls through to allow -- deliberately without marking
 # the path checked, so the next call still advises rather than treating budget exhaustion as an
-# earned investigation pass.
+# earned investigation pass. CA-001/AC7: a state-write failure (gg_mark_checked returning
+# non-zero) also falls through to allow, BEFORE gg_record_denial or emit_decision deny run -- a
+# gate that cannot record what it has already asked for must not deny the same edit forever.
+# gg_mark_checked has already printed its own stderr warning naming EDM_GATEGUARD_STATE_DIR.
 gg_maybe_deny() {
   local kind="$1" path="$2"
   [[ -n "$path" ]] || return 0
@@ -349,7 +368,7 @@ gg_maybe_deny() {
     echo "edm-gateguard: denial budget (${GG_MAX_DENIALS}) reached for this session -- allowing '${path}' without a fresh denial" >&2
     return 0
   fi
-  gg_mark_checked "$path"
+  gg_mark_checked "$path" || return 0
   gg_record_denial
   emit_decision deny "$(gg_build_facts "$kind" "$path")"
 }
