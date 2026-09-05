@@ -5523,6 +5523,67 @@ else
   fail "EDMV4-T50 -- process substitution in a loop condition found:\n${T50_PROCSUB_HITS}"
 fi
 
+# ---- CA-050: AC5 requires this sweep to cover "the five new files PLUS wave8-smoke.sh". The
+# tree-wide sweep above pipes through `grep -v '/tests/'`, which filters out bin/tests/ -- and so
+# filters out the one file the AC names explicitly, from its own check. The substance held (the
+# only match in the file was the positive control's own literal), but the assertion could not have
+# detected a regression in the file it was written to protect.
+#
+# Fixed by scanning $T50_SELF explicitly, mirroring t50_self_scan's shape above: the same narrow,
+# SHAPE-based exclusions (comment lines; any line invoking grep or printf, where the idiom appears
+# as a pattern argument or as scratch-file data; the pattern's own definition line; and any
+# pass/fail/echo/check message argument) rather than a path exclusion that removes the file whole.
+t50_procsub_self_scan() {
+  local target="$1"
+  grep -nE "$T50_PROCSUB_RE" "$target" 2>/dev/null \
+    | grep -vE ':[[:space:]]*#' \
+    | grep -v 'grep' \
+    | grep -v 'printf' \
+    | grep -v 'T50_PROCSUB_RE=' \
+    | grep -vE '\b(pass|fail|echo|check|check_absent|check_fails)[[:space:]]*"'
+}
+T50_PROCSUB_SELF_HITS="$(t50_procsub_self_scan "$T50_SELF" || true)"
+[[ -z "$T50_PROCSUB_SELF_HITS" ]] \
+  && pass "EDMV4-T50 AC5 -- bin/tests/wave8-smoke.sh itself carries no process substitution in a loop condition (the file the AC names, previously filtered out of its own sweep)" \
+  || fail "EDMV4-T50 AC5 -- process substitution in a loop condition found in wave8-smoke.sh:\n${T50_PROCSUB_SELF_HITS}"
+
+# Positive control for the self-scan: a REAL condition-position process substitution appended to a
+# scratch copy of this file must still be caught despite the four exclusions above. A bare
+# synthetic string would not prove the exclusions leave real code lines reachable -- that is the
+# exact way a self-match fix silently disarms the scan it was added to keep honest.
+w8_scratch_dir T50_PROCSUB_TMP
+T50_PROCSUB_SELF_CONTROL="${T50_PROCSUB_TMP}/wave8-ac5-control.sh"
+cp "$T50_SELF" "$T50_PROCSUB_SELF_CONTROL"
+# Written with printf, never echo: a `printf`-bearing line is one of this scan's own shape
+# exclusions, so the control's literal cannot become a hit against the REAL file -- the
+# self-matching-scan trap this initiative has hit six times. Note also that the pattern's
+# `[^\n]*` is a POSIX bracket expression excluding the characters backslash and `n`, so the
+# probe's variable name must carry neither between the loop keyword and the `< (`.
+{
+  printf '%s\n' ''
+  printf '%s\n' 'while read -r _t50_ctl < <(cat /dev/null); do'
+  printf '%s\n' '  :'
+  printf '%s\n' 'done'
+} >> "$T50_PROCSUB_SELF_CONTROL"
+T50_PROCSUB_SELF_CTRL_HITS="$(t50_procsub_self_scan "$T50_PROCSUB_SELF_CONTROL" || true)"
+[[ -n "$T50_PROCSUB_SELF_CTRL_HITS" ]] \
+  && pass "EDMV4-T50 AC5 -- positive control: a real condition-position process substitution appended to a scratch copy of wave8-smoke.sh IS caught" \
+  || fail "EDMV4-T50 AC5 -- positive control broken: an appended real process substitution was not caught, so the clean self-scan proves nothing"
+
+# Negative control for the self-scan: the safe `done < <(cmd)` loop-INPUT idiom, which this file
+# uses throughout, must NOT be flagged even as a real code line -- proving the self-scan
+# discriminates by shape rather than firing on every `< <(`.
+T50_PROCSUB_SELF_NEG_FILE="${T50_PROCSUB_TMP}/wave8-ac5-negative.sh"
+{
+  printf '%s\n' 'while IFS= read -r _t50_neg; do'
+  printf '%s\n' '  :'
+  printf '%s\n' 'done < <(find . -type f)'
+} > "$T50_PROCSUB_SELF_NEG_FILE"
+T50_PROCSUB_SELF_NEG_HITS="$(t50_procsub_self_scan "$T50_PROCSUB_SELF_NEG_FILE" || true)"
+[[ -z "$T50_PROCSUB_SELF_NEG_HITS" ]] \
+  && pass "EDMV4-T50 AC5 -- negative control: the safe 'done < <(...)' loop-input idiom on a real code line is correctly NOT flagged by the self-scan" \
+  || fail "EDMV4-T50 AC5 -- over-broad: the safe 'done < <(...)' idiom was flagged by the self-scan:\n${T50_PROCSUB_SELF_NEG_HITS}"
+
 T50_PROCSUB_CONTROL="$(printf '%s\n' 'while read -r x < <(cmd); do' | grep -cE "$T50_PROCSUB_RE" || true)"
 [[ "$T50_PROCSUB_CONTROL" -ge 1 ]] \
   && pass "EDMV4-T50 -- positive control: a real condition-position process substitution is caught" \
