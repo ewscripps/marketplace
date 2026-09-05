@@ -3498,7 +3498,31 @@ EOF
 g18_row="$(grep '^| CA-901' "$T26PIPE_MD" || true)"
 check "G18 -- pipe-bearing title's literal pipes are escaped (backslash-pipe), not raw" \
   '\|*[!0-9]*' "$g18_row"
-g18_cells="$(printf '%s' "$g18_row" | perl -pe 's/\\\|//g' | awk -F'|' '{print NF-2}')"
+# CA-052: g18_cell_count replaces two unguarded `perl -pe 's/\\\|//g'` invocations. This suite IS
+# the plugin's enforcement (there is no CI), and the plugin's pinned required-binary set is
+# bash/jq/git -- a hard dependency on an interpreter outside that set turns the whole suite into a
+# no-run on a host without it. bin/tests/timing.sh guards its own perl use with `command -v`; these
+# two sites did not. awk already did the second half of both pipelines, so folding the escaped-pipe
+# strip into the same awk removes the dependency outright rather than guarding it: gsub() rewrites
+# $0, which re-splits the record on FS, so NF is recomputed against the stripped row.
+g18_cell_count() {
+  printf '%s' "$1" | awk -F'|' '{ gsub(/\\\|/, ""); print NF - 2 }'
+}
+
+# Equivalence control for the awk replacement: a synthetic row whose cells carry BOTH escaped and
+# real pipes must count the same 8 cells, and a row with one escaped pipe fewer must not -- so a
+# gsub that silently stopped stripping (or started stripping real separators) fails here rather
+# than reading as a legitimately reshaped table downstream.
+g18_probe_row='| ID | a\|b | c | d | e | f | g | h |'
+g18_probe_cells="$(g18_cell_count "$g18_probe_row")"
+g18_probe_unstripped="$(printf '%s' "$g18_probe_row" | awk -F'|' '{print NF-2}')"
+if [[ "$g18_probe_cells" == "8" && "$g18_probe_unstripped" == "9" ]]; then
+  pass "G18/CA-052 -- control: the awk cell counter discounts escaped pipes (8) where a raw field split does not (9), so the strip step is proven to run"
+else
+  fail "G18/CA-052 -- control broken: stripped=${g18_probe_cells} (expected 8), unstripped=${g18_probe_unstripped} (expected 9)"
+fi
+
+g18_cells="$(g18_cell_count "$g18_row")"
 [[ "$g18_cells" == "8" ]] && pass "G18 -- pipe-bearing row still has exactly 8 cells once escaped pipes are discounted" \
   || fail "G18 -- pipe-bearing row has ${g18_cells} cells, expected 8"
 
@@ -3508,7 +3532,7 @@ g18_bad_rows=0
 while IFS= read -r g18_line; do
   case "$g18_line" in
     '| ID '*|'|----'*|'| CA-'*)
-      g18_n="$(printf '%s' "$g18_line" | perl -pe 's/\\\|//g' | awk -F'|' '{print NF-2}')"
+      g18_n="$(g18_cell_count "$g18_line")"
       [[ "$g18_n" == "8" ]] || g18_bad_rows=$((g18_bad_rows + 1))
       ;;
   esac
@@ -4214,7 +4238,16 @@ t24ac1_repo_out="$(bash "$EDM_STATE" detect-conditional-lenses 2>&1)" || t24ac1_
 
 # ---- AC2/AC4: marker predicates are pure, TRACKED-file-only, and each independently flips
 # the answer -- one scratch git repo per marker, plus a no-marker control, plus determinism ----
-harness_scratch_dir T24_TS
+# CA-027: this was `harness_scratch_dir T24_TS`. That helper installs its OWN four-arm
+# EXIT/INT/TERM/HUP trap set in the caller's shell, which REPLACES whatever was installed before it
+# -- here, cleanup_wave6, whose job includes restoring the TRACKED, committed file T41_CANONICAL
+# that the EDMV3-T41 block roughly 800 lines below deliberately mutates. Calling it here therefore
+# disarmed that restore for the remainder of the run: a Ctrl-C anywhere after this point left
+# docs/canonical-sections.md corrupted in the working tree. _harness.sh's own docstring states the
+# once-per-process contract this call violated. A plain subdirectory of $TMP needs no trap of its
+# own -- cleanup_wave6 already removes $TMP wholesale on all four signals.
+T24_TS="${TMP}/t24-ts"
+mkdir -p "$T24_TS"
 T24_MARKER_REPO="${T24_TS}/marker-repo"
 mkdir -p "$T24_MARKER_REPO"
 (
@@ -5020,6 +5053,41 @@ echo "T41 AC5 -- byte-identity guard: committed copy matches CLAUDE.md; a hand-e
 bash "$SYNC_BIN" --check >/dev/null 2>&1 \
   && pass "T41 AC5 -- committed docs/canonical-sections.md is in sync with CLAUDE.md (--check exits 0)" \
   || fail "T41 AC5 -- committed docs/canonical-sections.md is OUT OF SYNC with CLAUDE.md"
+
+# ---- CA-027 regression guard, run IMMEDIATELY before the mutation it protects. The block below
+# deliberately appends to a TRACKED, committed file and relies on cleanup_wave6 (installed at the
+# top of this suite on all four of EXIT/INT/TERM/HUP) to restore it if the run dies part-way. Any
+# helper invoked between there and here that installs its own process-wide trap set REPLACES that
+# restore, silently -- harness_scratch_dir did exactly that roughly 800 lines above until CA-027.
+# The damage is invisible on a clean run and only surfaces as a corrupted working tree after an
+# interrupt, so this asserts the four arms are still wired to cleanup_wave6 at the moment of use.
+t41_trap_arm_missing() {
+  # Prints the signal name when <signal>'s installed trap body does not name cleanup_wave6.
+  local sig="$1" body
+  body="$(trap -p "$sig")"
+  case "$body" in
+    *cleanup_wave6*) ;;
+    *) printf '%s' "$sig" ;;
+  esac
+}
+T41_TRAP_MISSING=""
+for _t41_sig in EXIT INT TERM HUP; do
+  T41_TRAP_MISSING="${T41_TRAP_MISSING}$(t41_trap_arm_missing "$_t41_sig") "
+done
+if [[ -z "${T41_TRAP_MISSING// /}" ]]; then
+  pass "CA-027 -- all four cleanup_wave6 trap arms (EXIT/INT/TERM/HUP) are still installed at the point this suite mutates the tracked docs/canonical-sections.md"
+else
+  fail "CA-027 -- cleanup_wave6 has been disarmed on signal(s): ${T41_TRAP_MISSING% } -- the tracked-file restore this block depends on will not run"
+fi
+
+# Negative control: the same predicate, evaluated in a subshell that has deliberately replaced the
+# EXIT arm with an unrelated body, must report EXIT missing. Without this, a predicate that never
+# matched anything (a renamed function, a `trap -p` that printed nothing) would read identically to
+# a correctly-armed suite. The subshell is discarded, so the real traps above are untouched.
+T41_TRAP_CONTROL="$( trap 'true' EXIT; t41_trap_arm_missing EXIT )"
+[[ "$T41_TRAP_CONTROL" == "EXIT" ]] \
+  && pass "CA-027 -- negative control: the trap-arm predicate reports EXIT missing when cleanup_wave6 is replaced by an unrelated handler" \
+  || fail "CA-027 -- negative control broken: replacing the EXIT trap body was not detected (got '${T41_TRAP_CONTROL}'), so the guard above cannot fail"
 
 T41_CANONICAL="$CANONICAL_SECTIONS_MD"
 T41_BACKUP="$(mktemp "${TMP}/t41-canonical.XXXXXX")"

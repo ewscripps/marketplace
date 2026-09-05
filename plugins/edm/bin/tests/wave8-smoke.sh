@@ -12,6 +12,116 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "${SCRIPT_DIR}/_harness.sh"
 PLUGIN_DIR="$_HARNESS_PLUGIN_DIR"
 
+# ---- CA-027: multi-call-safe scratch directories ------------------------------------------------
+# _harness.sh's harness_scratch_dir installs a process-wide four-arm EXIT/INT/TERM/HUP trap set
+# that REPLACES any previously installed one -- its own docstring pins it at one call per process
+# for exactly that reason. This suite needs a scratch tree per banded section, and calling that
+# helper once per section meant every call but the last had its cleanup silently voided: the
+# directories were never removed, and the first section's own hand-rolled traps went with them.
+#
+# w8_scratch_dir keeps ONE registry of every scratch path this suite creates and ONE trap set that
+# removes all of them, so each call is ADDITIVE rather than destructive. Plain indexed array plus
+# integer indexing only -- no associative array, no mapfile (bash 3.2 floor).
+W8_SCRATCH_DIRS=()
+w8_scratch_cleanup() {
+  local _w8_d
+  # An explicit count guard rather than a "${arr[@]:-}" expansion: the latter injects one empty
+  # element into an empty array, which would make `rm -rf ""` the first thing this ever runs.
+  [[ "${#W8_SCRATCH_DIRS[@]}" -gt 0 ]] || return 0
+  for _w8_d in "${W8_SCRATCH_DIRS[@]}"; do
+    if [[ -n "$_w8_d" ]]; then rm -rf "$_w8_d"; fi
+  done
+  return 0
+}
+# w8_scratch_dir <outvar> -- same out-variable calling convention as harness_scratch_dir (a trap
+# installed inside a $(...) subshell is gone before the caller could ever use the directory, so the
+# path is returned by name rather than printed), honours TMPDIR, and may be called any number of
+# times. CA-482 four-arm split: a single body on all four signals cleans up and RESUMES the caller
+# on INT/TERM/HUP instead of exiting with a signal-shaped code.
+w8_scratch_dir() {
+  local __w8_outvar="$1" _w8_new
+  _w8_new="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8.XXXXXX")" \
+    || { fail "w8_scratch_dir: mktemp failed"; return 1; }
+  W8_SCRATCH_DIRS[${#W8_SCRATCH_DIRS[@]}]="$_w8_new"
+  trap 'w8_scratch_cleanup' EXIT
+  trap 'w8_scratch_cleanup; exit 130' INT
+  trap 'w8_scratch_cleanup; exit 143' TERM
+  trap 'w8_scratch_cleanup; exit 129' HUP
+  printf -v "$__w8_outvar" '%s' "$_w8_new"
+}
+
+# ---- AC2/AC3 shared non-ASCII byte scanner (EDMV4-T52), hoisted here from that section so the
+# EDMV4-T32 band far above can reuse it too (CA-017). ----------------------------------------------
+# Mirrors edm-lint-artifacts' own PCRE-vs-fallback split rather than assuming `-P` is available:
+# BSD grep on macOS -- this plugin's primary supported platform -- has no `-P` at all, and a bare
+# `grep -P` there errors out, which captured under `|| true` reads as a false "clean" scan rather
+# than a real zero-count. That is exactly how T32 AC7's own scan passed unconditionally on every
+# macOS host regardless of content (CA-017). LC_ALL=C on both branches (a UTF-8 locale can make
+# grep interpret the byte range differently across BSD and GNU).
+T52_HAS_PCRE=0
+{ echo "" | grep -qP '' 2>/dev/null && T52_HAS_PCRE=1; } || true
+
+# CA-079: the two branches now enforce the SAME predicate -- a byte outside 0x00-0x7F, and nothing
+# else. The fallback previously used `grep -nv '^[[:print:][:space:]]*$'`, which additionally flags
+# ASCII control bytes, so the identical assertion meant something different on macOS than on GNU
+# grep. Under LC_ALL=C, [:cntrl:] is exactly 0x00-0x1F plus 0x7F and [:print:] is exactly 0x20-0x7E,
+# so their union is exactly 0x00-0x7F and the negated class is exactly the PCRE branch's [^\x00-\x7F].
+T52_ASCII_POSIX_CLASS='[^[:cntrl:][:print:]]'
+
+# t52_ascii_hits -- reads on stdin, prints "<line>:<content>" for every line carrying at least one
+# byte outside 0x00-0x7F. Sole definition of the predicate: every scanner below routes through it,
+# so the two platform branches cannot drift apart again the way CA-079 found them.
+t52_ascii_hits() {
+  if [[ "$T52_HAS_PCRE" -eq 1 ]]; then
+    LC_ALL=C grep -nP '[^\x00-\x7F]' 2>/dev/null || true
+  else
+    LC_ALL=C grep -n "$T52_ASCII_POSIX_CLASS" 2>/dev/null || true
+  fi
+}
+
+# t52_ascii_scan <file...> -- prints "<file>:<line>:<content>" for every line in every <file>
+# carrying at least one byte outside 0x00-0x7F; prints nothing if every file is clean.
+t52_ascii_scan() {
+  local f hits
+  for f in "$@"; do
+    [[ -f "$f" ]] || continue
+    hits="$(t52_ascii_hits < "$f")"
+    [[ -n "$hits" ]] && printf '%s\n' "$hits" | sed "s#^#${f}:#"
+  done
+  return 0
+}
+
+# t52_fenced_strip <file> -- prints <file> with the contents of every fenced code block removed.
+# Fence markers are de-indented before matching, because a fence legitimately opens inside a
+# numbered list item (bin/tests/fixtures/mermaid/valid/v12-indented-fence.md is exactly that case)
+# and a start-of-line-only toggle would silently treat the whole block as prose.
+t52_fenced_strip() {
+  awk '/^[[:space:]]*```/ { f = !f; next } !f' "$1"
+}
+
+# t52_ascii_scan_fenced_aware <file...> -- t52_ascii_scan with ONE structural exemption, applied by
+# SHAPE rather than by any filename or directory list: in a MARKDOWN file, a non-ASCII byte that
+# sits inside a fenced code block is exempt. That is the precise property edm-lint-artifacts' own
+# class-2 (unicode) checker skips, and at least one fixture exists specifically to prove it skips
+# it -- so a corpus that had to be clean there would leave that checker with nothing to detect. The
+# exemption is shape-bound in both directions: a non-ASCII byte in markdown PROSE still fires, and
+# a non-markdown file (a `.jsonl` fixture, a `.txt` manifest) has no fences and is scanned whole.
+t52_ascii_scan_fenced_aware() {
+  local f hits
+  for f in "$@"; do
+    [[ -f "$f" ]] || continue
+    case "$f" in
+      *.md)
+        hits="$(t52_fenced_strip "$f" | t52_ascii_hits)"
+        [[ -n "$hits" ]] && printf '%s\n' "$hits" | sed "s#^#${f} (outside any fenced block, post-strip line):#"
+        ;;
+      *)
+        t52_ascii_scan "$f"
+        ;;
+    esac
+  done
+  return 0
+}
 # CA-016: every count and exit-code assertion in this file goes through check_num (integer
 # comparison), never check (substring). check() accepts "10", "20" and "100" wherever "0" was
 # expected -- thirteen zero-count assertions here read as proofs and were not. Do not add a new
@@ -79,10 +189,11 @@ w8_count_lines() {
 
 # w8_count_lines controls: a real zero is the single character "0" (not "0\n0"), a real count is
 # the count, and a missing file is a named ERROR rather than a passing zero.
-# Scratch here is a self-contained mktemp/rm pair rather than harness_scratch_dir: this block runs
-# before the suite's first real scratch dir is created, and harness_scratch_dir installs
-# process-wide EXIT/INT/TERM/HUP traps that the next caller would immediately overwrite, leaking
-# this directory. Three lines of setup, removed on the spot, is the honest shape here.
+# Scratch here is a self-contained mktemp/rm pair, created and removed within these few lines. It
+# predates CA-027's w8_scratch_dir registry above and does not need it: the directory never
+# outlives this block, so there is nothing for a trap to clean up. (The original rationale here
+# cited harness_scratch_dir's trap-clobbering as the reason -- true of that helper, but CA-027
+# replaced it with an additive registry, so that reason no longer applies and is not restated.)
 W8_COUNT_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-count.XXXXXX")"
 printf '### one\nplain\n### two\n' > "${W8_COUNT_TMP}/probe.md"
 check_num "CA-016 control -- w8_count_lines returns the true count for a matching file" \
@@ -122,11 +233,11 @@ fi
 
 # AC5 positive control for AC1: collapse the array declaration to a space-joined string and
 # confirm the check now fails -- proving the check is not vacuously true.
-T05_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t05.XXXXXX")"
-trap 'rm -rf "$T05_TMP"' EXIT
-trap 'rm -rf "$T05_TMP"; exit 130' INT
-trap 'rm -rf "$T05_TMP"; exit 143' TERM
-trap 'rm -rf "$T05_TMP"; exit 129' HUP
+# CA-027: this was a bare `mktemp -d` plus its own four-arm trap set. The next
+# harness_scratch_dir call in the file replaced all four arms, so T05_TMP -- which has no explicit
+# rm anywhere -- leaked on every single run. Routed through the shared registry instead, so a later
+# scratch directory adds to the cleanup set rather than displacing this one.
+w8_scratch_dir T05_TMP
 
 T05_AC1_BROKEN="${T05_TMP}/run-eval-broken.sh"
 sed -E 's/^CLAUDE_ALLOWED_TOOLS=\(.*\)$/CLAUDE_ALLOWED_TOOLS="Read Write Edit Glob"/' "$RUN_EVAL_SH" > "$T05_AC1_BROKEN"
@@ -407,7 +518,7 @@ REPO_ROOT="$_HARNESS_REPO_ROOT"
 # CA-005: shared --help extractor, needed by the EDMV4-T38 section's print_help() sanity checks.
 source "${SCRIPT_DIR}/../_edm-cli-lib.sh"
 
-harness_scratch_dir TMP
+w8_scratch_dir TMP
 
 echo
 echo "wave8 smoke check (continued) -- EDMV4-T17 data-directory resolver, EDMV4-T38 repo-readiness scaffold"
@@ -1212,7 +1323,7 @@ check "EDMV4-T27 AC3 -- canonical P0/P1/P2/NOTED scale cited" 'P0`, `P1`, `P2`, 
 # Positive control (per this initiative's own "matches its own prose" defect class): the
 # case-insensitive word-boundary scan above must actually fire on a known-bad fixture, or a
 # "found 0" result proves nothing.
-T27_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t27.XXXXXX")"
+w8_scratch_dir T27_TMP
 t27_bad_fixture="${T27_TMP}/bad-severity-scale.md"
 printf '%s\n' 'Rate every gap as critical, important, or nice-to-have.' > "$t27_bad_fixture"
 t27_ctl_hits="$(grep -icE '\b(critical|important|nice-to-have)\b' "$t27_bad_fixture" || true)"
@@ -1255,12 +1366,18 @@ check "EDMV4-T27 AC9 -- jsonl output path" '${OUTPUT_DIR}/lens-L14.jsonl' "$L14_
 check "EDMV4-T27 AC9 -- schema line names lens L14" '"lens":"L14"' "$L14_TEXT"
 
 echo "EDMV4-T27 AC10 -- edm-check-grants passes; all three touched files are ASCII-only"
-if bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>"${SCRIPT_DIR}/.t27-grants.err"; then
+# CA-020: this capture landed in SCRIPT_DIR (bin/tests/, inside the TRACKED tree) and was removed
+# only on the line after the `fi`. Any exit between the two -- a turn ceiling, a set -e abort, an
+# interrupt -- left `.t27-grants.err` behind as an untracked file in the working tree. Written into
+# the EXIT-trapped scratch tree instead, the reference shape EDMV4-T25 AC9 already uses above; the
+# explicit rm is kept so the file does not persist for the rest of the run.
+t27_grants_err="${T05_TMP}/t27-grants.err"
+if bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>"$t27_grants_err"; then
   pass "EDMV4-T27 AC10 -- edm-check-grants exits 0"
 else
-  fail "EDMV4-T27 AC10 -- edm-check-grants exited non-zero: $(cat "${SCRIPT_DIR}/.t27-grants.err")"
+  fail "EDMV4-T27 AC10 -- edm-check-grants exited non-zero: $(cat "$t27_grants_err")"
 fi
-rm -f "${SCRIPT_DIR}/.t27-grants.err"
+rm -f "$t27_grants_err"
 t27_lint_exit=0
 t27_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${PLUGIN_DIR}/agents/" 2>&1)" || t27_lint_exit=$?
 [[ "$t27_lint_exit" -eq 0 ]] && pass "EDMV4-T27 AC10 -- edm-lint-artifacts --path agents/ is clean" \
@@ -1351,12 +1468,15 @@ for t26_marker in tsconfig.json Cargo.toml go.mod pyproject.toml mypy.ini pyrigh
 done
 
 echo "EDMV4-T26 AC11 -- edm-check-grants passes; edm-lint-artifacts is clean"
-if bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>"${SCRIPT_DIR}/.t26-grants.err"; then
+# CA-020: same untracked-leak class as the T27 site above -- redirected into the EXIT-trapped
+# scratch tree so no exit path can leave a stderr capture inside the tracked bin/tests/ directory.
+t26_grants_err="${T05_TMP}/t26-grants.err"
+if bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>"$t26_grants_err"; then
   pass "EDMV4-T26 AC11 -- edm-check-grants exits 0"
 else
-  fail "EDMV4-T26 AC11 -- edm-check-grants exited non-zero: $(cat "${SCRIPT_DIR}/.t26-grants.err")"
+  fail "EDMV4-T26 AC11 -- edm-check-grants exited non-zero: $(cat "$t26_grants_err")"
 fi
-rm -f "${SCRIPT_DIR}/.t26-grants.err"
+rm -f "$t26_grants_err"
 t26_lint_exit=0
 t26_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${PLUGIN_DIR}/agents/" 2>&1)" || t26_lint_exit=$?
 [[ "$t26_lint_exit" -eq 0 ]] && pass "EDMV4-T26 AC11 -- edm-lint-artifacts --path agents/ is clean" \
@@ -1541,12 +1661,38 @@ t32_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "$T32_FIXTURE
 check "T32 AC7 -- edm-lint-artifacts reports no unicode-class violation" "CLEAN" "$t32_lint_out"
 # edm-lint-artifacts only scans *.md (CLAUDE.md's own documented reach); the .jsonl fixtures and
 # lenses-run.txt need a direct byte-level scan of their own to back the ASCII-only claim.
-t32_nonascii="$(LC_ALL=C grep -l -P '[^\x00-\x7F]' \
-  "${T32_FIXTURE_DIR}"/lens-L12.jsonl "${T32_FIXTURE_DIR}"/lens-L13.jsonl "${T32_FIXTURE_DIR}"/lens-L14.jsonl \
-  "$T32_LENSES_RUN" 2>/dev/null || true)"
+#
+# CA-017: this was a bare `LC_ALL=C grep -l -P ... 2>/dev/null || true`. The macOS system grep --
+# this plugin's primary supported platform -- has no `-P` at all, so the command errored on every
+# macOS host, the error went to /dev/null, the non-zero exit was masked by `|| true`, and the
+# result was unconditionally empty. The assertion below therefore passed on every macOS run
+# regardless of what the files actually contained, and this was the SOLE nominal ASCII coverage for
+# these four files (CA-055). It now uses t52_ascii_scan, defined at the top of this file, which
+# probes for PCRE support and falls back to an equivalent POSIX character class when there is none.
+t32_nonascii="$(t52_ascii_scan \
+  "${T32_FIXTURE_DIR}/lens-L12.jsonl" "${T32_FIXTURE_DIR}/lens-L13.jsonl" "${T32_FIXTURE_DIR}/lens-L14.jsonl" \
+  "$T32_LENSES_RUN")"
 [[ -z "$t32_nonascii" ]] \
   && pass "T32 AC7 -- new .jsonl fixtures and lenses-run.txt contain no non-ASCII bytes" \
   || fail "T32 AC7 -- non-ASCII byte(s) found in: ${t32_nonascii}"
+
+# CA-017 positive control, on THIS host: a real non-ASCII byte assembled at runtime via a printf
+# hex escape (never a literal non-ASCII byte in this suite's own source) is written into a scratch
+# copy of one of the four files and must be detected. This is the check that would have failed on
+# macOS before the fix, and it is what stops the zero-count above from ever being vacuous again.
+w8_scratch_dir T32_ASCII_CTRL
+t32_ascii_ctrl_file="${T32_ASCII_CTRL}/lens-L12-control.jsonl"
+cp "${T32_FIXTURE_DIR}/lens-L12.jsonl" "$t32_ascii_ctrl_file"
+printf '{"note":"runtime-assembled \xc3\xa9 byte"}\n' >> "$t32_ascii_ctrl_file"
+t32_ascii_ctrl_hits="$(t52_ascii_scan "$t32_ascii_ctrl_file")"
+[[ -n "$t32_ascii_ctrl_hits" ]] \
+  && pass "T32 AC7 -- positive control: a real non-ASCII byte injected into a scratch copy of lens-L12.jsonl IS detected on this host" \
+  || fail "T32 AC7 -- positive control FAILED: the scan did not detect a real non-ASCII byte, so the clean result above proves nothing (grep -P availability on this host: T52_HAS_PCRE=${T52_HAS_PCRE})"
+
+# The probe result itself is recorded in the suite output, so a run on a host without grep -P is
+# visible in the log rather than silently taking the fallback branch -- the same "record the
+# platform fact" convention EDMV4-T50's /bin/bash --version line already uses.
+pass "T32 AC7 -- non-ASCII scan branch recorded: T52_HAS_PCRE=${T52_HAS_PCRE} (1 = grep -P available, 0 = POSIX-class fallback)"
 
 # ---- AC9: the existing lens-L1.jsonl widest-fixture role (all four severities) is undisturbed ----
 t32_l1_sevs="$(jq -sr '[.[].sev] | sort | unique | join(",")' "${T32_FIXTURE_DIR}/lens-L1.jsonl" 2>/dev/null)"
@@ -2740,7 +2886,7 @@ else
   fail "EDMV4-T44 AC4 setup -- could not extract emit_decision() from bin/edm-gateguard"
 fi
 
-harness_scratch_dir T44_HARNESS_TMP
+w8_scratch_dir T44_HARNESS_TMP
 T44_HARNESS="${T44_HARNESS_TMP}/gateguard-hookify-translation.sh"
 {
   printf '%s\n' '#!/usr/bin/env bash'
@@ -3628,7 +3774,7 @@ fi
 
 # ---- AC9: with the marker absent and jq only reachable via a spy stub, exit 0, empty stdout, and
 # the spy is never invoked (zero jq processes spawned). --------------------------------------------
-harness_scratch_dir T11_TMP
+w8_scratch_dir T11_TMP
 T11_FAKEBIN="${T11_TMP}/fakebin"
 mkdir -p "$T11_FAKEBIN"
 ln -s "$(command -v dirname)" "${T11_FAKEBIN}/dirname"
@@ -3876,7 +4022,7 @@ check "EDMV4-T13 AC6 -- EDM_GATEGUARD_DENY_MODE_DEFAULT equals Spike B's recorde
 # definition. This is what lets AC2/AC3/AC4/AC7/AC8/AC9 exercise the deny back-ends directly: no
 # case arm in edm-gateguard itself calls emit_decision deny yet (that wiring is EDMV4-T14/T15's),
 # so the function must be tested in isolation rather than through a full end-to-end invocation. ---
-harness_scratch_dir T13_TMP
+w8_scratch_dir T13_TMP
 T13_HARNESS="${T13_TMP}/emit-decision-harness.sh"
 {
   printf '%s\n' '#!/usr/bin/env bash'
@@ -4045,7 +4191,7 @@ check_num "EDMV4-T13 AC9 -- edm-check-vocabulary passes over the updated edm-gat
 # ---- End-to-end sanity: with a Phase 6 marker present and no ticket having wired a real deny
 # condition yet (EDMV4-T14/T15's job), the gate still allows silently -- but now via
 # emit_decision, not a bare exit 0, matching the "Hooks behavior" documentation update above. ------
-harness_scratch_dir T13_E2E_TMP
+w8_scratch_dir T13_E2E_TMP
 mkdir -p "${T13_E2E_TMP}/data/run" "${T13_E2E_TMP}/proj"
 T13_E2E_KEY="$(CLAUDE_PROJECT_DIR="${T13_E2E_TMP}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
 T13_E2E_MARKER="${T13_E2E_TMP}/data/run/${T13_E2E_KEY}.phase6"
@@ -4307,7 +4453,7 @@ else
   fail "EDMV4-T56 AC6 -- plugins/edm/CLAUDE.md is missing the marketplace-clone and/or unpacked-cache path; the three-location section may have been removed"
 fi
 
-T56_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t56.XXXXXX")"
+w8_scratch_dir T56_TMP
 
 # ---- AC7: positive control -- strip every line naming either literal path from a scratch copy
 # and confirm the detector correctly reports absence. Without this, a "found 0" style detector
@@ -4585,7 +4731,7 @@ else
   fail "EDMV4-T15 AC3 -- kill-switch line=[${T15_AC3_KILLSWITCH_LINE}] datadir-lib line=[${T15_AC3_DATADIRLIB_LINE}] -- ordering not satisfied"
 fi
 
-harness_scratch_dir T15_AC3_TMP
+w8_scratch_dir T15_AC3_TMP
 T15_AC3_FAKEBIN="${T15_AC3_TMP}/fakebin"
 mkdir -p "$T15_AC3_FAKEBIN"
 ln -s "$(command -v dirname)" "${T15_AC3_FAKEBIN}/dirname"
@@ -4815,7 +4961,7 @@ check "EDMV4-T15 AC8 -- the fourth call's stderr carries the denial-budget advis
 # ---- AC9: jq missing exits 1 on the GATED path (never 2); with the marker absent, jq missing
 # exits 0 having never been referenced (T11's own AC9 already proves the zero-jq shape; this
 # re-asserts the gated-path half and the documented distinction). ----------------------------------
-harness_scratch_dir T15_AC9_TMP
+w8_scratch_dir T15_AC9_TMP
 T15_AC9_FAKEBIN="${T15_AC9_TMP}/fakebin"
 mkdir -p "$T15_AC9_FAKEBIN"
 for _t15_bin in dirname bash grep date mkdir mv rm cat git stat; do
@@ -4844,7 +4990,7 @@ w8_check_empty "EDMV4-T15 AC10 -- an unparseable stdin payload's stdout is empty
 
 # ---- AC11: a marker present whose named initiative directory no longer exists allows. -----------
 T15_AC11_TMP=""
-harness_scratch_dir T15_AC11_TMP
+w8_scratch_dir T15_AC11_TMP
 mkdir -p "${T15_AC11_TMP}/data/run" "${T15_AC11_TMP}/proj"
 T15_AC11_KEY="$(CLAUDE_PROJECT_DIR="${T15_AC11_TMP}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
 printf 'T15PFX\t%s/deleted-initiative\t2026-09-02T00:00:00Z\n' "$T15_AC11_TMP" > "${T15_AC11_TMP}/data/run/${T15_AC11_KEY}.phase6"
@@ -4860,7 +5006,7 @@ fi
 # Positive control: the SAME marker file, pointed at an initiative dir that DOES exist, denies --
 # proving the AC11 allow above is attributable to the missing directory, not to some other defect.
 T15_AC11B_TMP=""
-harness_scratch_dir T15_AC11B_TMP
+w8_scratch_dir T15_AC11B_TMP
 mkdir -p "${T15_AC11B_TMP}/data/run" "${T15_AC11B_TMP}/proj"
 T15_AC11B_KEY="$(CLAUDE_PROJECT_DIR="${T15_AC11B_TMP}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
 printf 'T15PFX\t%s\t2026-09-02T00:00:00Z\n' "${T15_AC11B_TMP}/proj" > "${T15_AC11B_TMP}/data/run/${T15_AC11B_KEY}.phase6"
@@ -4934,7 +5080,7 @@ check_num "EDMV4-T45 AC2 -- Stop still has exactly one matcher block (stop-event
 # ABSENT, an Edit is allowed with ZERO rule evaluation -- reusing the jq-counting-shim technique
 # EDMV4-T11 AC9 already established for the identical claim (zero jq on the allow path applies to
 # hookify's own jq usage too, since the hookify call never happens before the marker is present). -
-harness_scratch_dir T45_AC6_TMP
+w8_scratch_dir T45_AC6_TMP
 T45_AC6_FAKEBIN="${T45_AC6_TMP}/fakebin"
 mkdir -p "$T45_AC6_FAKEBIN" "${T45_AC6_TMP}/proj/.claude/edm-hookify"
 cp "${HOOKIFY_FIXTURES}/warn-no-console-log.json" "${T45_AC6_TMP}/proj/.claude/edm-hookify/"
@@ -5005,7 +5151,7 @@ fi
 # ONCE per gated edit -- a real edm-hookify call-count spy (not jq), against a rule carrying TWO
 # AND'd conditions, so "once per condition" would visibly diverge from "once per call" if it
 # occurred. --------------------------------------------------------------------------------------
-harness_scratch_dir T45_AC7_TMP
+w8_scratch_dir T45_AC7_TMP
 mkdir -p "${T45_AC7_TMP}/proj/.claude/edm-hookify" "${T45_AC7_TMP}/data/run"
 cat > "${T45_AC7_TMP}/proj/.claude/edm-hookify/two-conditions.json" <<'EOF'
 {
@@ -5381,7 +5527,7 @@ T28_REF_VIOLATIONS="$(t28_contract_violations "$T28_REF" | tr '\n' ',')" || true
 
 echo
 echo "EDMV4-T28 -- negative fixtures: each contract element, corrupted in isolation on a scratch copy of L1, is caught"
-harness_scratch_dir T28_TMP
+w8_scratch_dir T28_TMP
 
 # t28_neg_case <label> <expected-tag> <sed-script> -- writes a scratch copy of the reference lens
 # with <sed-script> applied, runs the checker, and asserts <expected-tag> appears among the
@@ -5449,12 +5595,15 @@ T28_EXTRA_HEADING_V="$(t28_contract_violations "$T28_EXTRA_HEADING_FIXTURE" | tr
 
 echo
 echo "EDMV4-T28 -- edm-check-grants and edm-lint-artifacts remain clean over the live lens set"
-if bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>"${SCRIPT_DIR}/.t28-grants.err"; then
+# CA-020: same untracked-leak class as the T26/T27 sites above -- redirected into the EXIT-trapped
+# scratch tree so no exit path can leave a stderr capture inside the tracked bin/tests/ directory.
+t28_grants_err="${T05_TMP}/t28-grants.err"
+if bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>"$t28_grants_err"; then
   pass "EDMV4-T28 -- edm-check-grants exits 0"
 else
-  fail "EDMV4-T28 -- edm-check-grants exited non-zero: $(cat "${SCRIPT_DIR}/.t28-grants.err")"
+  fail "EDMV4-T28 -- edm-check-grants exited non-zero: $(cat "$t28_grants_err")"
 fi
-rm -f "${SCRIPT_DIR}/.t28-grants.err"
+rm -f "$t28_grants_err"
 t28_lint_exit=0
 t28_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${T28_AGENTS_DIR}" 2>&1)" || t28_lint_exit=$?
 [[ "$t28_lint_exit" -eq 0 ]] && pass "EDMV4-T28 -- edm-lint-artifacts --path agents/ is clean" \
@@ -5515,7 +5664,7 @@ fi
 # them into a bin/ SUBDIRECTORY -- the exact escape AC1 exists to catch -- and confirm the same
 # membership logic reports it missing from the top-level set. This never touches the real repo
 # tree; the scratch root is discarded afterward.
-harness_scratch_dir T50_AC1_CTRL_TMP
+w8_scratch_dir T50_AC1_CTRL_TMP
 mkdir -p "${T50_AC1_CTRL_TMP}/bin/subdir"
 for _t50_seed in $T50_REQUIRED_BIN_FILES; do
   : > "${T50_AC1_CTRL_TMP}/bin/${_t50_seed}"
@@ -5536,10 +5685,46 @@ else
   fail "EDMV4-T50 AC1 -- positive control broken: relocating edm-repo-readiness into bin/subdir/ was NOT detected as missing from the top-level set"
 fi
 
-# A real alternation built here (not sourced from wave7-smoke.sh's own $T61_BASH4_RE): each half
-# is independently useful evidence for this ticket, and referencing wave7's private variable would
-# couple this suite's own correctness to wave7-smoke.sh's internal naming.
-T50_BASH4_RE='declare[[:space:]]+-A|local[[:space:]]+-A|mapfile|readarray|\$\{[a-zA-Z_]+\^\^\}|\$\{[a-zA-Z_]+,,\}'
+# CA-049: the alternation is READ OUT of its one definition site at test time, never retyped here.
+# AC2 requires this assertion to REFERENCE T61_BASH4_RE and never re-encode it as a second literal
+# that can drift. It had been retyped -- with a comment arguing the deviation was deliberate -- and
+# it had already drifted in BOTH directions: it omitted the `{fd}` arm T61_BASH4_RE carries, so the
+# bin/tests/ self-check below (the one gap this ticket exists to close) never checked `{fd}`
+# redirection at all, and it added a `local -A` arm T61_BASH4_RE lacks. Deriving it makes both
+# drifts structurally impossible; if the alternation should grow another arm, it grows in
+# wave7-smoke.sh's single definition and every consumer picks it up.
+#
+# Recorded consequence rather than silently absorbed: T61_BASH4_RE carries no `local -A` arm, so
+# this sweep no longer checks that spelling. Nothing under bin/ or evals/ uses it today (verified
+# live), and re-adding it HERE is exactly the second-literal drift this fix removes -- it belongs
+# in wave7-smoke.sh's one definition, where every consumer of the alternation would pick it up.
+T50_W7_SUITE="${SCRIPT_DIR}/wave7-smoke.sh"
+T50_BASH4_RE_RAW="$(grep -m1 '^T61_BASH4_RE=' "$T50_W7_SUITE" | cut -d= -f2-)"
+# Strip the single quotes the source assignment carries. Parameter expansion only (bash 3.2).
+T50_BASH4_RE="${T50_BASH4_RE_RAW#\'}"
+T50_BASH4_RE="${T50_BASH4_RE%\'}"
+
+if [[ -n "$T50_BASH4_RE" && "$T50_BASH4_RE_RAW" == "'${T50_BASH4_RE}'" ]]; then
+  pass "EDMV4-T50 AC2 -- the bash-4 alternation is read live from wave7-smoke.sh's T61_BASH4_RE, byte-identical by construction: ${T50_BASH4_RE}"
+else
+  fail "EDMV4-T50 AC2 -- could not extract T61_BASH4_RE from wave7-smoke.sh (raw=[${T50_BASH4_RE_RAW}]) -- the derivation, not the tree, is broken"
+fi
+
+# The derived value must not ALSO appear as a hardcoded literal anywhere in this file: that is
+# exactly the third-literal shape CA-049 found. The needle is the runtime-derived value, so this
+# check cannot self-match a literal that no longer exists in the source.
+T50_RE_RETYPED="$(grep -cF -- "$T50_BASH4_RE" "${SCRIPT_DIR}/wave8-smoke.sh" || true)"
+[[ "${T50_RE_RETYPED:-0}" -eq 0 ]] \
+  && pass "EDMV4-T50 AC2 -- wave8-smoke.sh carries no retyped copy of the alternation, only the derivation" \
+  || fail "EDMV4-T50 AC2 -- the alternation is retyped as a literal in wave8-smoke.sh on ${T50_RE_RETYPED} line(s), reintroducing the drift CA-049 found"
+
+# The specific arm the retyped literal had dropped. Without this, adopting the derived value would
+# be an untested claim: a future extraction that silently returned a shorter alternation would
+# still satisfy the byte-identity check above against its own truncated result.
+T50_FD_CONTROL="$(printf '%s\n' 'exec {fd}< "$some_file"' | grep -cE "$T50_BASH4_RE" || true)"
+[[ "${T50_FD_CONTROL:-0}" -ge 1 ]] \
+  && pass "EDMV4-T50 AC2 -- the derived alternation catches {fd} redirection, the arm the retyped literal omitted from the bin/tests/ self-check" \
+  || fail "EDMV4-T50 AC2 -- the derived alternation does NOT catch {fd} redirection -- the CA-049 drift has reappeared in the source literal"
 
 # ---- Zero bash-4-only constructs across bin/ and evals/ (bin/tests/ excluded -- matching T61
 # AC9's own convention); comment-only lines excluded (a prose reference to why a construct is
@@ -5551,7 +5736,7 @@ t50_scan() {
 }
 T50_HITS="$(t50_scan || true)"
 if [[ -z "$T50_HITS" ]]; then
-  pass "EDMV4-T50 -- zero bash-4-only constructs (declare -A/local -A, mapfile, readarray, \${v^^}, \${v,,}) across bin/ and evals/ (bin/tests/ excluded)"
+  pass "EDMV4-T50 -- zero bash-4-only constructs across bin/ and evals/, using wave7-smoke.sh's own T61_BASH4_RE alternation (bin/tests/ excluded)"
 else
   fail "EDMV4-T50 -- bash-4-only construct(s) found:\n${T50_HITS}"
 fi
@@ -5559,7 +5744,7 @@ fi
 # Positive control: a scratch fixture (OUTSIDE the repo tree, under mktemp) with a real
 # 'declare -A' AND a real 'mapfile' usage must both be caught, proving the sweep can fire rather
 # than matching nothing -- the exact anti-pattern named in docs/audit-patterns/code-audit.md.
-T50_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t50.XXXXXX")"
+w8_scratch_dir T50_TMP
 T50_FIXTURE="${T50_TMP}/fake-script.sh"
 {
   printf '%s\n' '#!/usr/bin/env bash'
@@ -5634,6 +5819,67 @@ else
   fail "EDMV4-T50 -- process substitution in a loop condition found:\n${T50_PROCSUB_HITS}"
 fi
 
+# ---- CA-050: AC5 requires this sweep to cover "the five new files PLUS wave8-smoke.sh". The
+# tree-wide sweep above pipes through `grep -v '/tests/'`, which filters out bin/tests/ -- and so
+# filters out the one file the AC names explicitly, from its own check. The substance held (the
+# only match in the file was the positive control's own literal), but the assertion could not have
+# detected a regression in the file it was written to protect.
+#
+# Fixed by scanning $T50_SELF explicitly, mirroring t50_self_scan's shape above: the same narrow,
+# SHAPE-based exclusions (comment lines; any line invoking grep or printf, where the idiom appears
+# as a pattern argument or as scratch-file data; the pattern's own definition line; and any
+# pass/fail/echo/check message argument) rather than a path exclusion that removes the file whole.
+t50_procsub_self_scan() {
+  local target="$1"
+  grep -nE "$T50_PROCSUB_RE" "$target" 2>/dev/null \
+    | grep -vE ':[[:space:]]*#' \
+    | grep -v 'grep' \
+    | grep -v 'printf' \
+    | grep -v 'T50_PROCSUB_RE=' \
+    | grep -vE '\b(pass|fail|echo|check|check_absent|check_fails)[[:space:]]*"'
+}
+T50_PROCSUB_SELF_HITS="$(t50_procsub_self_scan "$T50_SELF" || true)"
+[[ -z "$T50_PROCSUB_SELF_HITS" ]] \
+  && pass "EDMV4-T50 AC5 -- bin/tests/wave8-smoke.sh itself carries no process substitution in a loop condition (the file the AC names, previously filtered out of its own sweep)" \
+  || fail "EDMV4-T50 AC5 -- process substitution in a loop condition found in wave8-smoke.sh:\n${T50_PROCSUB_SELF_HITS}"
+
+# Positive control for the self-scan: a REAL condition-position process substitution appended to a
+# scratch copy of this file must still be caught despite the four exclusions above. A bare
+# synthetic string would not prove the exclusions leave real code lines reachable -- that is the
+# exact way a self-match fix silently disarms the scan it was added to keep honest.
+w8_scratch_dir T50_PROCSUB_TMP
+T50_PROCSUB_SELF_CONTROL="${T50_PROCSUB_TMP}/wave8-ac5-control.sh"
+cp "$T50_SELF" "$T50_PROCSUB_SELF_CONTROL"
+# Written with printf, never echo: a `printf`-bearing line is one of this scan's own shape
+# exclusions, so the control's literal cannot become a hit against the REAL file -- the
+# self-matching-scan trap this initiative has hit six times. Note also that the pattern's
+# `[^\n]*` is a POSIX bracket expression excluding the characters backslash and `n`, so the
+# probe's variable name must carry neither between the loop keyword and the `< (`.
+{
+  printf '%s\n' ''
+  printf '%s\n' 'while read -r _t50_ctl < <(cat /dev/null); do'
+  printf '%s\n' '  :'
+  printf '%s\n' 'done'
+} >> "$T50_PROCSUB_SELF_CONTROL"
+T50_PROCSUB_SELF_CTRL_HITS="$(t50_procsub_self_scan "$T50_PROCSUB_SELF_CONTROL" || true)"
+[[ -n "$T50_PROCSUB_SELF_CTRL_HITS" ]] \
+  && pass "EDMV4-T50 AC5 -- positive control: a real condition-position process substitution appended to a scratch copy of wave8-smoke.sh IS caught" \
+  || fail "EDMV4-T50 AC5 -- positive control broken: an appended real process substitution was not caught, so the clean self-scan proves nothing"
+
+# Negative control for the self-scan: the safe `done < <(cmd)` loop-INPUT idiom, which this file
+# uses throughout, must NOT be flagged even as a real code line -- proving the self-scan
+# discriminates by shape rather than firing on every `< <(`.
+T50_PROCSUB_SELF_NEG_FILE="${T50_PROCSUB_TMP}/wave8-ac5-negative.sh"
+{
+  printf '%s\n' 'while IFS= read -r _t50_neg; do'
+  printf '%s\n' '  :'
+  printf '%s\n' 'done < <(find . -type f)'
+} > "$T50_PROCSUB_SELF_NEG_FILE"
+T50_PROCSUB_SELF_NEG_HITS="$(t50_procsub_self_scan "$T50_PROCSUB_SELF_NEG_FILE" || true)"
+[[ -z "$T50_PROCSUB_SELF_NEG_HITS" ]] \
+  && pass "EDMV4-T50 AC5 -- negative control: the safe 'done < <(...)' loop-input idiom on a real code line is correctly NOT flagged by the self-scan" \
+  || fail "EDMV4-T50 AC5 -- over-broad: the safe 'done < <(...)' idiom was flagged by the self-scan:\n${T50_PROCSUB_SELF_NEG_HITS}"
+
 T50_PROCSUB_CONTROL="$(printf '%s\n' 'while read -r x < <(cmd); do' | grep -cE "$T50_PROCSUB_RE" || true)"
 [[ "$T50_PROCSUB_CONTROL" -ge 1 ]] \
   && pass "EDMV4-T50 -- positive control: a real condition-position process substitution is caught" \
@@ -5705,7 +5951,7 @@ else
 fi
 
 # Positive control: a scratch fixture with a real 'python3 -c' line must be caught.
-T51_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t51.XXXXXX")"
+w8_scratch_dir T51_TMP
 T51_FIXTURE="${T51_TMP}/fake-script.sh"
 {
   printf '%s\n' '#!/usr/bin/env bash'
@@ -5822,7 +6068,7 @@ else
 fi
 
 # Positive control: a scratch .py file must be caught by the same find shape.
-T51_PYSCRATCH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t51-py.XXXXXX")"
+w8_scratch_dir T51_PYSCRATCH_DIR
 touch "${T51_PYSCRATCH_DIR}/scratch.py"
 T51_PYSCRATCH_HITS="$(find "${T51_PYSCRATCH_DIR}" -type f \( "${T51_JS_PY_FIND_EXPR[@]}" \) 2>/dev/null || true)"
 if [[ -n "$T51_PYSCRATCH_HITS" ]]; then
@@ -5870,36 +6116,29 @@ echo
 #   AC1's --path sweep (collect_md_files, `.md` only) owns: the three new lens agent prompts
 #     (agents/edm-audit-silent-failures.md, edm-audit-type-design.md, edm-audit-behavioral-tests.md),
 #     every edited SKILL.md, and every edited CLAUDE.md.
-#   AC2's byte scan (this section) owns: the four new bin/ scripts (edm-gateguard, edm-hookify,
-#     edm-stop-gate, edm-bash-gate), the shared _edm-datadir-lib.sh, and the two JSON config files
-#     (hooks/hooks.json, monitors/monitors.json) -- collect_md_files's `-name '*.md'` filter never
-#     collects any of these six, in any mode, --path included (CLAUDE.md's "Artifact content
-#     conventions" now documents this as a standing, second gap on top of the reach gap AC1 closes).
+#   AC2's byte scan (this section) owns: the five new bin/ scripts (edm-gateguard, edm-hookify,
+#     edm-stop-gate, edm-bash-gate, edm-repo-readiness), the shared _edm-datadir-lib.sh, the two
+#     JSON config files (hooks/hooks.json, monitors/monitors.json), AND -- since CA-055 -- every
+#     file under bin/tests/fixtures/, including the four EDMV4-T32 added there
+#     (fixtures/code-audit/lens-L12.jsonl, lens-L13.jsonl, lens-L14.jsonl, lenses-run.txt).
+#     collect_md_files's `-name '*.md'` filter never collects any of the non-`.md` members, in any
+#     mode, --path included (CLAUDE.md's "Artifact content conventions" documents this as a
+#     standing, second gap on top of the reach gap AC1 closes).
+#     CA-055 (a): edm-repo-readiness was missing from this list even though AC2's live `find`
+#     already covered it -- a record defect, corrected above rather than left to read as a gap.
+#     CA-055 (b): the four fixtures/code-audit/ files fell under NEITHER mechanism -- AC1's sweep
+#     cannot collect a `.jsonl` or a `.txt`, and this scan excluded the whole fixtures/ tree. Their
+#     only nominal coverage was T32 AC7's `grep -l -P`, vacuous on macOS (CA-017).
 echo "=== EDMV4-T52: ASCII-only artifacts -- manual --path sweep plus explicit byte scan ==="
 echo
 
-# ---- AC2/AC3 shared scanner. Mirrors edm-lint-artifacts' own PCRE-vs-fallback split (its
-# argument-parsing section) rather than assuming -P is available: BSD grep on macOS has no -P at
-# all, and a bare `grep -nP` there errors out -- which, captured under `|| true`, reads as a false
-# "clean" scan rather than a real zero-count. LC_ALL=C on both branches (Technical Notes: a UTF-8
-# locale can make grep interpret the byte range differently across BSD and GNU). ------------------
-T52_HAS_PCRE=0
-{ echo "" | grep -qP '' 2>/dev/null && T52_HAS_PCRE=1; } || true
-
-# t52_ascii_scan <file...> -- prints "<file>:<line>:<content>" for every line in every <file>
-# carrying at least one byte outside 0x00-0x7F; prints nothing if every file is clean.
-t52_ascii_scan() {
-  local f hits
-  for f in "$@"; do
-    [[ -f "$f" ]] || continue
-    if [[ "$T52_HAS_PCRE" -eq 1 ]]; then
-      hits="$(LC_ALL=C grep -nP '[^\x00-\x7F]' "$f" 2>/dev/null || true)"
-    else
-      hits="$(LC_ALL=C grep -nv '^[[:print:][:space:]]*$' "$f" 2>/dev/null || true)"
-    fi
-    [[ -n "$hits" ]] && printf '%s\n' "$hits" | sed "s#^#${f}:#"
-  done
-}
+# ---- AC2/AC3 shared scanner. The PCRE probe (T52_HAS_PCRE), the single byte predicate
+# (t52_ascii_hits) and the two scanners built on it (t52_ascii_scan, t52_ascii_scan_fenced_aware)
+# are defined ONCE at the top of this file rather than here. CA-017 moved them: the EDMV4-T32 band
+# far above needs the same predicate, and it had a second, hand-rolled `grep -l -P` of its own that
+# matched nothing on every macOS host. One definition, reused by both bands, is what stops a second
+# copy from silently diverging again. CA-079 additionally aligned the two platform branches on one
+# predicate; see the comments at the definition site for both.
 
 # ---- AC2: file set derived LIVE (find plugins/edm/bin -type f), so a script added after this
 # ticket lands is covered automatically without a second edit here -- the same anti-hardcoding
@@ -5907,34 +6146,95 @@ t52_ascii_scan() {
 # design (AC2's own text): the smoke suites themselves are exactly the kind of extensionless-or-
 # not-`.md` file collect_md_files would otherwise never reach.
 #
-# One exclusion, recorded with its reason rather than silently applied: bin/tests/fixtures/ is
-# EXCLUDED from this live scan. That tree is edm-lint-artifacts' own test corpus -- it exists
-# specifically to prove the class-2 (unicode) checker fires and correctly SKIPS fenced code
-# blocks, so at least one fixture there (mermaid/valid/v12-indented-fence.md) legitimately embeds
-# a real non-ASCII byte inside a code fence on purpose. `-not -path` is applied against
-# ${PLUGIN_DIR} directly, which is already a `cd ... && pwd`-resolved absolute path (no `..`
-# component for a substring exclusion to be fooled by), per this initiative's own recorded
-# self-matching trap about normalizing a path root before a path-based exclusion. -----------------
+# CA-055: bin/tests/fixtures/ used to be excluded WHOLESALE from this live scan, which is what left
+# fixtures/code-audit/'s four non-`.md` files covered by nothing at all. The exclusion existed for
+# one real reason -- that tree is edm-lint-artifacts' own test corpus, and at least one fixture
+# (mermaid/valid/v12-indented-fence.md) legitimately embeds a real non-ASCII byte INSIDE a fenced
+# code block on purpose, precisely to prove the class-2 (unicode) checker skips fences.
+#
+# The tree is now scanned, and that one legitimate case is exempted BY SHAPE instead: in a markdown
+# file, a non-ASCII byte inside a fenced code block is exempt (t52_ascii_scan_fenced_aware, defined
+# at the top of this file). This is a structural property, not a directory list -- a new fixture
+# subdirectory is covered automatically, a non-ASCII byte in markdown PROSE anywhere in the tree
+# still fires, and a `.jsonl`/`.txt` fixture has no fences at all so it is scanned whole.
+# ${PLUGIN_DIR} is already a `cd ... && pwd`-resolved absolute path (no `..` component for a
+# path-prefix test to be fooled by), per this initiative's own recorded trap about normalizing a
+# path root before a path-based decision. --------------------------------------------------------
 T52_BIN_FILES=()
 while IFS= read -r -d "" _t52_f; do
   T52_BIN_FILES+=("$_t52_f")
-done < <(find "${PLUGIN_DIR}/bin" -type f -not -path "${PLUGIN_DIR}/bin/tests/fixtures/*" -print0 2>/dev/null)
+done < <(find "${PLUGIN_DIR}/bin" -type f -print0 2>/dev/null)
 
 T52_SCAN_TARGETS=("${T52_BIN_FILES[@]}" "${PLUGIN_DIR}/hooks/hooks.json" "${PLUGIN_DIR}/monitors/monitors.json")
 
-T52_AC2_HITS="$(t52_ascii_scan "${T52_SCAN_TARGETS[@]}" || true)"
+T52_AC2_HITS="$(t52_ascii_scan_fenced_aware "${T52_SCAN_TARGETS[@]}" || true)"
 if [[ -z "$T52_AC2_HITS" ]]; then
-  pass "EDMV4-T52 AC2 -- byte scan over ${#T52_SCAN_TARGETS[@]} files (live plugins/edm/bin/ set, bin/tests/ included, plus hooks.json/monitors.json) finds zero non-ASCII bytes"
+  pass "EDMV4-T52 AC2 -- byte scan over ${#T52_SCAN_TARGETS[@]} files (live plugins/edm/bin/ set, bin/tests/ AND bin/tests/fixtures/ included, plus hooks.json/monitors.json) finds zero non-ASCII bytes outside fenced code blocks"
 else
   fail "EDMV4-T52 AC2 -- non-ASCII byte(s) found: ${T52_AC2_HITS}"
 fi
+
+# CA-055 reach assertion: the four EDMV4-T32 fixture files that fell under NEITHER mechanism must
+# actually be members of the live scan set above. Without this, narrowing the fixtures exclusion
+# could be silently undone later and AC2 would go back to a clean zero-count over a smaller set.
+T52_FIXTURE_REACH_MISSING=""
+for _t52_req in "${PLUGIN_DIR}/bin/tests/fixtures/code-audit/lens-L12.jsonl" \
+                "${PLUGIN_DIR}/bin/tests/fixtures/code-audit/lens-L13.jsonl" \
+                "${PLUGIN_DIR}/bin/tests/fixtures/code-audit/lens-L14.jsonl" \
+                "${PLUGIN_DIR}/bin/tests/fixtures/code-audit/lenses-run.txt"; do
+  _t52_seen=0
+  for _t52_have in "${T52_SCAN_TARGETS[@]}"; do
+    [[ "$_t52_have" == "$_t52_req" ]] && _t52_seen=1
+  done
+  [[ "$_t52_seen" -eq 1 ]] || T52_FIXTURE_REACH_MISSING="${T52_FIXTURE_REACH_MISSING} $(basename "$_t52_req")"
+done
+[[ -z "$T52_FIXTURE_REACH_MISSING" ]] \
+  && pass "EDMV4-T52 AC4/CA-055 -- the four EDMV4-T32 fixture files are members of AC2's live scan set, so they are covered by a mechanism rather than by neither" \
+  || fail "EDMV4-T52 AC4/CA-055 -- fixture file(s) still outside AC2's scan set:${T52_FIXTURE_REACH_MISSING}"
+
+# CA-055 shape control: the deliberate in-fence non-ASCII byte in the mermaid corpus must be
+# exempt, AND the same byte moved out of the fence into prose must NOT be. A blanket directory
+# exclusion passes the first half and fails the second; this proves the exemption is bound to the
+# fenced-block SHAPE, not to where the file happens to live.
+w8_scratch_dir T52_FENCE_CTRL
+T52_FENCE_IN="${T52_FENCE_CTRL}/in-fence.md"
+T52_FENCE_OUT="${T52_FENCE_CTRL}/in-prose.md"
+{
+  printf '%s\n' 'Prose that is clean.'
+  printf '%s\n' '   ```text'
+  printf '   an em dash \xe2\x80\x94 inside an indented fence\n'
+  printf '%s\n' '   ```'
+} > "$T52_FENCE_IN"
+{
+  printf '%s\n' 'Prose that is clean.'
+  printf 'an em dash \xe2\x80\x94 in prose, outside every fence\n'
+} > "$T52_FENCE_OUT"
+T52_FENCE_IN_HITS="$(t52_ascii_scan_fenced_aware "$T52_FENCE_IN" || true)"
+T52_FENCE_OUT_HITS="$(t52_ascii_scan_fenced_aware "$T52_FENCE_OUT" || true)"
+if [[ -z "$T52_FENCE_IN_HITS" && -n "$T52_FENCE_OUT_HITS" ]]; then
+  pass "EDMV4-T52 AC4/CA-055 -- shape control: a non-ASCII byte inside an indented fenced block is exempt while the identical byte in prose is caught"
+else
+  fail "EDMV4-T52 AC4/CA-055 -- shape control broken: in-fence=[${T52_FENCE_IN_HITS}] (expected empty), in-prose=[${T52_FENCE_OUT_HITS}] (expected non-empty)"
+fi
+
+# CA-055 live control: a real non-ASCII byte, assembled at runtime, injected into a scratch COPY of
+# fixtures/code-audit/lens-L12.jsonl must be caught by the same scanner AC2 uses -- the finding's
+# own stated verification. The copy is outside plugins/edm/bin/, so it can never become a real
+# AC2 finding of its own.
+T52_L12_CTRL="${T52_FENCE_CTRL}/lens-L12-control.jsonl"
+cp "${PLUGIN_DIR}/bin/tests/fixtures/code-audit/lens-L12.jsonl" "$T52_L12_CTRL"
+printf '{"note":"injected \xc3\xa9 byte"}\n' >> "$T52_L12_CTRL"
+T52_L12_CTRL_HITS="$(t52_ascii_scan_fenced_aware "$T52_L12_CTRL" || true)"
+[[ -n "$T52_L12_CTRL_HITS" ]] \
+  && pass "EDMV4-T52 AC4/CA-055 -- positive control: a runtime-assembled non-ASCII byte injected into a scratch copy of fixtures/code-audit/lens-L12.jsonl IS caught" \
+  || fail "EDMV4-T52 AC4/CA-055 -- positive control broken: the injected byte was not caught, so the fixtures tree's clean result proves nothing"
 
 # ---- AC3: positive control. A scratch file OUTSIDE plugins/edm/bin/ (so it can never become a
 # real AC2 finding) carries one real non-ASCII byte, assembled at runtime via a printf hex escape
 # -- the needle is never a literal non-ASCII byte in this suite's own source, per this
 # initiative's own recorded self-matching trap (docs/audit-patterns/code-audit.md: "A verification
 # scan matches the prose that describes the pattern it hunts"). -----------------------------------
-harness_scratch_dir T52_SCRATCH
+w8_scratch_dir T52_SCRATCH
 T52_CONTROL_FILE="${T52_SCRATCH}/nonascii-control.txt"
 printf 'safe line one\nline with a byte: \xc3\xa9 end\nsafe line three\n' > "$T52_CONTROL_FILE"
 T52_AC3_HITS="$(t52_ascii_scan "$T52_CONTROL_FILE" || true)"
@@ -6020,7 +6320,7 @@ fi
 # edm-hookify's own block line becomes edm-gateguard's `reason` (its allow-path wiring). A rule
 # author's own non-ASCII message text is the ONLY non-ASCII byte anywhere in this fixture -- the
 # target file path stays plain ASCII, isolating this emit point from AC7a's.
-harness_scratch_dir T52_AC7B_TMP
+w8_scratch_dir T52_AC7B_TMP
 mkdir -p "${T52_AC7B_TMP}/proj/.claude/edm-hookify" "${T52_AC7B_TMP}/data/run"
 T52_AC7B_MSG="$(printf 'blocked: rule message with a byte \xc3\xa9 embedded')"
 jq -n --arg msg "$T52_AC7B_MSG" '{
@@ -6283,7 +6583,7 @@ else
   fail "EDMV4-T53 AC2b -- positive control broken: wrong default equalled live count"
 fi
 
-T53_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t53.XXXXXX")"
+w8_scratch_dir T53_TMP
 trap 'rm -rf "$T53_TMP"' EXIT
 trap 'rm -rf "$T53_TMP"; exit 130' INT
 trap 'rm -rf "$T53_TMP"; exit 143' TERM
@@ -6722,7 +7022,7 @@ echo
 
 CAHK_HOOKIFY="${PLUGIN_DIR}/bin/edm-hookify"
 CAHK_FIX="${PLUGIN_DIR}/bin/tests/fixtures/hookify"
-harness_scratch_dir CAHK_TMP
+w8_scratch_dir CAHK_TMP
 mkdir -p "${CAHK_TMP}/mutants"
 
 # cahk_mutant <name> <sed-arg...> -- print the path of a scratch copy of bin/edm-hookify with the
@@ -7922,6 +8222,130 @@ if printf '%s' "$CA034_CTRL" | grep -qF 'no readiness score exists at this point
 else
   pass "CA-034 negative control -- the ordering check correctly fails on a copy with the paragraph removed"
 fi
+
+echo
+# =================================================================================================
+# CA-020 -- no run-time file is written into the tracked bin/tests/ directory
+# =================================================================================================
+# Three `.tNN-grants.err` stderr captures wrote into SCRIPT_DIR (bin/tests/, inside the tracked
+# tree) before a conditional and were removed only after the `fi`; a fourth instance of the same
+# shape had already been found and fixed in Phase 6. Four sightings of one shape is a class, so it
+# gets a live sweep here rather than a fifth point fix.
+#
+# Self-matching-scan guard (this initiative has hit that trap six times): the needle is ASSEMBLED
+# at runtime from two halves, so the literal redirect-into-the-tests-directory string never appears
+# contiguously on any line of this file -- including the lines below that build and use it -- and
+# comment lines are stripped before the scan so the explanatory prose above cannot match either.
+echo "=== CA-020: no redirect writes into the tracked bin/tests/ directory ==="
+
+CA020_ROOT_TOKEN='SCRIPT'"_DIR"
+CA020_NEEDLE='[12]?>>?[[:space:]]*"?[$]\{?'"${CA020_ROOT_TOKEN}"
+ca020_scan() {
+  # <file> -- comment lines stripped first, then the assembled needle applied.
+  { grep -v '^[[:space:]]*#' "$1" || true; } | { grep -nE "$CA020_NEEDLE" || true; }
+}
+CA020_HITS="$(ca020_scan "$T50_SELF")"
+[[ -z "$CA020_HITS" ]] \
+  && pass "CA-020 -- no code line in wave8-smoke.sh redirects output into the tracked bin/tests/ directory" \
+  || fail "CA-020 -- redirect(s) into the tracked bin/tests/ directory found (comment lines already excluded):\n${CA020_HITS}"
+
+# Positive control: a REAL occurrence on a CODE line, injected into a scratch copy of this file.
+# A control built from a bare synthetic string alone would not prove the comment-stripping step
+# leaves real code lines reachable -- which is exactly how a self-match fix silently disarms the
+# scan it was meant to keep honest.
+w8_scratch_dir CA020_CTRL_TMP
+CA020_CTRL_FILE="${CA020_CTRL_TMP}/wave8-ca020-control.sh"
+cp "$T50_SELF" "$CA020_CTRL_FILE"
+{
+  printf '%s\n' 'ca020_control_probe() {'
+  printf '%s%s%s\n' '  bash /bin/echo hi 2>"${' "$CA020_ROOT_TOKEN" '}/.ca020-control.err"'
+  printf '%s\n' '}'
+} >> "$CA020_CTRL_FILE"
+CA020_CTRL_HITS="$(ca020_scan "$CA020_CTRL_FILE")"
+[[ -n "$CA020_CTRL_HITS" ]] \
+  && pass "CA-020 -- positive control: a real redirect into the tests directory, appended to a scratch copy as a code line, IS caught" \
+  || fail "CA-020 -- positive control broken: an injected real redirect was not caught, so the clean result above proves nothing"
+
+# Negative control: the same needle against the identical text on a COMMENT line must NOT fire --
+# proving the comment-stripping step is doing real work rather than the pattern simply never
+# matching anything.
+CA020_COMMENT_FILE="${CA020_CTRL_TMP}/wave8-ca020-comment.sh"
+printf '%s%s%s\n' '# never do: cmd 2>"${' "$CA020_ROOT_TOKEN" '}/.leak.err"' > "$CA020_COMMENT_FILE"
+CA020_COMMENT_HITS="$(ca020_scan "$CA020_COMMENT_FILE")"
+[[ -z "$CA020_COMMENT_HITS" ]] \
+  && pass "CA-020 -- negative control: the identical text on a comment line is correctly NOT flagged" \
+  || fail "CA-020 -- over-broad: prose describing the leak on a comment line was flagged as a real one"
+
+echo
+# =================================================================================================
+# CA-027 -- scratch-directory registry: every scratch tree is registered, and one trap set clears
+# all of them
+# =================================================================================================
+# Placed last so the live registry is complete by the time it is counted. Three properties, each
+# with a control that proves it can fail.
+echo "=== CA-027: scratch-directory registry (multi-call-safe, one cumulative trap set) ==="
+
+# (a) Nothing in this file may call the once-per-process helper any more. Anchored to start-of-line
+# so this assertion's own grep argument (which is not at start-of-line) and every comment naming
+# the helper are outside the pattern by construction, not by a filename or line-number exclusion.
+CA027_LEGACY_CALLS="$(grep -nE '^[[:space:]]*harness_scratch_dir[[:space:]]+[A-Za-z_]' "$T50_SELF" || true)"
+[[ -z "$CA027_LEGACY_CALLS" ]] \
+  && pass "CA-027 -- wave8-smoke.sh no longer calls the once-per-process harness_scratch_dir helper anywhere" \
+  || fail "CA-027 -- harness_scratch_dir call site(s) survive, each of which voids every trap installed before it:\n${CA027_LEGACY_CALLS}"
+
+# Positive control for (a): the same pattern against a real call line proves it can still fire --
+# without this, narrowing the pattern to dodge a self-match would silently make (a) unfailable.
+CA027_LEGACY_CONTROL="$(printf '%s\n' 'harness_scratch_dir SOME_TMP' | grep -cE '^[[:space:]]*harness_scratch_dir[[:space:]]+[A-Za-z_]' || true)"
+[[ "${CA027_LEGACY_CONTROL:-0}" -ge 1 ]] \
+  && pass "CA-027 -- positive control: the legacy-call detector fires on a real call line" \
+  || fail "CA-027 -- positive control broken: the legacy-call detector matched nothing, so (a) proves nothing"
+
+# (b) The registry holds one entry per w8_scratch_dir call site actually reached this run. The
+# expected count is DERIVED from the file (never re-pinned as a literal that drifts).
+CA027_CALL_SITES="$(grep -cE '^[[:space:]]*w8_scratch_dir[[:space:]]+[A-Z]' "$T50_SELF" || true)"
+if [[ "${CA027_CALL_SITES:-0}" -lt 1 ]]; then
+  fail "CA-027 -- could not derive the w8_scratch_dir call-site count from this file"
+elif [[ "${#W8_SCRATCH_DIRS[@]}" -eq "$CA027_CALL_SITES" ]]; then
+  pass "CA-027 -- the registry holds one live entry per w8_scratch_dir call site (${CA027_CALL_SITES}), so no call displaced an earlier one"
+else
+  fail "CA-027 -- registry holds ${#W8_SCRATCH_DIRS[@]} entries against ${CA027_CALL_SITES} call sites"
+fi
+
+# (c) Behavioural control, in a subshell so the real registry and the real traps are untouched:
+# two consecutive calls must both stay live, and one w8_scratch_cleanup must remove both.
+CA027_ADDITIVE="$(
+  W8_SCRATCH_DIRS=()
+  w8_scratch_dir _CA027_A
+  w8_scratch_dir _CA027_B
+  if [[ -d "$_CA027_A" && -d "$_CA027_B" && "${#W8_SCRATCH_DIRS[@]}" -eq 2 ]]; then
+    w8_scratch_cleanup
+    if [[ ! -d "$_CA027_A" && ! -d "$_CA027_B" ]]; then printf 'ADDITIVE_AND_CLEARED'; else printf 'RESIDUE'; fi
+  else
+    printf 'SECOND_CALL_DISPLACED_FIRST'
+  fi
+)"
+[[ "$CA027_ADDITIVE" == "ADDITIVE_AND_CLEARED" ]] \
+  && pass "CA-027 -- two consecutive w8_scratch_dir calls both stay live and a single cleanup removes both" \
+  || fail "CA-027 -- registry is not additive or does not clear fully: got '${CA027_ADDITIVE}'"
+
+# Negative control for (c): the identical predicate against the SINGLE-SLOT semantics
+# harness_scratch_dir has -- the second call overwrites the one variable the cleanup body reads, so
+# nothing ever removes the first directory. This must report the leak; if it did not, (c) would be
+# passing against a predicate incapable of seeing the defect it exists to catch.
+CA027_SINGLE_SLOT="$(
+  _ca027_slot=""
+  _ca027_single_cleanup() { if [[ -n "$_ca027_slot" ]]; then rm -rf "$_ca027_slot"; fi; return 0; }
+  _ca027_x="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca027a.XXXXXX")"
+  _ca027_slot="$_ca027_x"
+  _ca027_y="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca027b.XXXXXX")"
+  _ca027_slot="$_ca027_y"
+  _ca027_single_cleanup
+  if [[ -d "$_ca027_x" && ! -d "$_ca027_y" ]]; then printf 'FIRST_LEAKED'; else printf 'NO_LEAK'; fi
+  rm -rf "$_ca027_x" "$_ca027_y"
+)"
+[[ "$CA027_SINGLE_SLOT" == "FIRST_LEAKED" ]] \
+  && pass "CA-027 -- negative control: the same predicate reports the leak under single-slot (harness_scratch_dir) semantics, so the additive check discriminates" \
+  || fail "CA-027 -- negative control broken: single-slot semantics reported '${CA027_SINGLE_SLOT}', expected FIRST_LEAKED"
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
