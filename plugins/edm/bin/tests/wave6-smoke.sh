@@ -4295,15 +4295,26 @@ t24ac4_sub_out="$(cd "${T24_MARKER_REPO}/sub" && bash "$EDM_STATE" detect-condit
   && pass "EDMV4-T24 AC4 -- detect-conditional-lenses gives the SAME answer from the repo root and from a subdirectory (tsconfig.json marker)" \
   || fail "EDMV4-T24 AC4 -- root gave '${t24ac4_root_out}', subdirectory gave '${t24ac4_sub_out}' -- cwd-sensitive regression"
 
-# Positive control: proves the check above is not vacuous. A tracked tsconfig.json that lives
-# INSIDE a subdirectory (never at the repository root) is a case where an unanchored, caller-cwd-
-# scoped `git ls-files` (the pre-fix bug) genuinely reports a DIFFERENT result depending on cwd:
-# from the root, `git ls-files` reports the path as "sub/tsconfig.json" (does not match the
-# exact-filename predicate, so L13 stays N/A); from inside "sub/" itself, the unanchored form
-# (`cd sub && git ls-files`) reports the SAME on-disk file as the bare relative path
-# "tsconfig.json" (DOES match). This is verified directly against git itself, independent of
-# edm-state, so the control cannot be satisfied by two values that would always compare equal
-# regardless of whether the anchoring fix is present.
+# Positive control: proves the check above is not vacuous. The marker used here is a tracked
+# pyproject.toml carrying a [tool.mypy] table that lives INSIDE a subdirectory, never at the
+# repository root, and the marker choice is load-bearing rather than incidental.
+#
+# CA-035(b) widened every bare-FILENAME predicate in _l13_applies from a root-anchored exact match
+# to `(^|/)name$`, so a nested tsconfig.json -- which this control used to use -- now matches from
+# either cwd and can no longer discriminate an anchoring regression at all: pre-fix, an unanchored
+# `git ls-files` from the root reports "sub/tsconfig.json" and from inside "sub/" reports
+# "tsconfig.json", and post-CA-035(b) BOTH forms match, so the two answers agree whether or not the
+# anchoring fix is present. That is a genuine widening of the marker set (a monorepo carrying only
+# packages/app/tsconfig.json IS a typed stack; scoring it L13 N/A was coverage loss, guard D2), not
+# a regression -- so the fixture moves rather than the predicate.
+#
+# The pyproject CONTENT probe is the one site the widening did not reach, because it opens a file
+# rather than matching a path: pre-fix it opened a bare cwd-relative "pyproject.toml", post-fix it
+# opens "${proj_root}/${matched-path}". Against a nested marker the two genuinely disagree -- from
+# the root, the pre-fix open looks for a root-level pyproject.toml that does not exist (no match,
+# L13 N/A); from inside "sub/", the same pre-fix open finds the file (match, L13 applies). The
+# `git ls-files` half of that divergence is verified directly against git itself below, independent
+# of edm-state, so the control cannot be satisfied by two values that would always compare equal.
 T24_NESTED_REPO="${T24_TS}/nested-marker-repo"
 mkdir -p "${T24_NESTED_REPO}/sub"
 (
@@ -4312,21 +4323,30 @@ mkdir -p "${T24_NESTED_REPO}/sub"
   git config user.email "t24@example.com"
   git config user.name "t24"
 )
-touch "${T24_NESTED_REPO}/sub/tsconfig.json"
-(cd "$T24_NESTED_REPO" && git add sub/tsconfig.json)
+printf '[tool.mypy]\nstrict = true\n' > "${T24_NESTED_REPO}/sub/pyproject.toml"
+(cd "$T24_NESTED_REPO" && git add sub/pyproject.toml)
 t24ac4_ctrl_root_gitls="$(cd "$T24_NESTED_REPO" && git ls-files)"
 t24ac4_ctrl_unanchored_sub_gitls="$(cd "${T24_NESTED_REPO}/sub" && git ls-files)"
 [[ "$t24ac4_ctrl_root_gitls" != "$t24ac4_ctrl_unanchored_sub_gitls" ]] \
   && pass "EDMV4-T24 AC4 control -- an unanchored 'git ls-files' genuinely differs by cwd (root: '${t24ac4_ctrl_root_gitls}', cwd-scoped from sub: '${t24ac4_ctrl_unanchored_sub_gitls}'), proving the equality check above can catch a real regression" \
   || fail "EDMV4-T24 AC4 control -- unanchored git ls-files did not differ by cwd; the positive-control fixture is broken"
-# The FIXED subcommand (anchored to the repo root via _resolve_permcheck_project_root) must still
-# agree from both directories against this nested-marker repo: a nested (non-root) tsconfig.json
-# is not a root-level marker, so L13 correctly stays N/A either way.
+# Second half of the control, aimed squarely at the content probe rather than the path match: a
+# bare cwd-relative "pyproject.toml" open -- the pre-fix form -- resolves to a real file from
+# inside "sub/" and to nothing from the repository root, so the probe itself is cwd-sensitive
+# unless anchored. Verified against the filesystem directly, not through edm-state.
+[[ ! -f "${T24_NESTED_REPO}/pyproject.toml" && -f "${T24_NESTED_REPO}/sub/pyproject.toml" ]] \
+  && pass "EDMV4-T24 AC4 control -- the pre-fix cwd-relative 'pyproject.toml' open resolves from sub/ but not from the repo root, so the content probe is genuinely cwd-sensitive unless anchored" \
+  || fail "EDMV4-T24 AC4 control -- nested pyproject fixture is not in the expected shape; the positive-control fixture is broken"
+# The FIXED subcommand (tracked-file listing anchored via `git -C "$proj_root" ls-files`, content
+# probe anchored to "${proj_root}/${matched-path}") must agree from both directories: the nested
+# typed pyproject.toml is a real typed-stack marker under CA-035(b), so L13 APPLIES (empty output)
+# from the root and from the subdirectory alike. A revert of either anchoring makes these two
+# disagree, which is exactly what this assertion catches.
 t24ac4_nested_root_out="$(cd "$T24_NESTED_REPO" && bash "$EDM_STATE" detect-conditional-lenses 2>&1)"
 t24ac4_nested_sub_out="$(cd "${T24_NESTED_REPO}/sub" && bash "$EDM_STATE" detect-conditional-lenses 2>&1)"
-[[ "$t24ac4_nested_root_out" == "L13" && "$t24ac4_nested_sub_out" == "L13" ]] \
-  && pass "EDMV4-T24 AC4 -- a nested (non-root) tsconfig.json correctly stays L13 N/A from BOTH the root and the subdirectory" \
-  || fail "EDMV4-T24 AC4 -- nested-marker case: root gave '${t24ac4_nested_root_out}', sub gave '${t24ac4_nested_sub_out}', expected 'L13' from both"
+[[ -z "$t24ac4_nested_root_out" && -z "$t24ac4_nested_sub_out" ]] \
+  && pass "EDMV4-T24 AC4 -- a nested (non-root) typed pyproject.toml reads as L13 APPLIES from BOTH the root and the subdirectory (both anchorings hold)" \
+  || fail "EDMV4-T24 AC4 -- nested-marker case: root gave '${t24ac4_nested_root_out}', sub gave '${t24ac4_nested_sub_out}', expected empty from both"
 
 # Same determinism requirement for the OTHER cwd-relative site pre-fix (the
 # pyproject.toml [tool.mypy]/[tool.pyright] content probe): a typed pyproject.toml at the repo

@@ -5165,9 +5165,31 @@ t49_guard_count="$(grep -c '(D[1-6])' "${PLUGIN_DIR}/CLAUDE.md" || true)"
 
 echo
 echo "T49 AC4 -- each guard carries a 'the cost of ignoring this is' clause"
-t49_cost_count="$(grep -c 'cost of ignoring this is' "${PLUGIN_DIR}/CLAUDE.md" || true)"
+# Counted against a whitespace-NORMALIZED stream, not line by line. A line-oriented `grep -c` here
+# asserts a property nobody is maintaining -- that no guard's cost clause ever straddles a line
+# break -- and reflowing a guard's paragraph for any unrelated reason silently turns the count
+# short. That is not hypothetical: CA-021's rewording of guard D2 wrapped it as "The cost of\n
+# ignoring this is", and this assertion went red against prose that was entirely correct. The
+# clause is a property of the TEXT, so the check reads the text as text.
+# `tr` collapses every whitespace run (newlines included) to a single space, and `grep -o` then
+# counts occurrences rather than matching lines. The nearby "the 'cost of ignoring this' clause"
+# mention in the ponytail source-attribution bullet does not match: it lacks the trailing " is".
+t49_cost_count="$({ tr -s '[:space:]' ' ' < "${PLUGIN_DIR}/CLAUDE.md" \
+  | grep -o 'cost of ignoring this is' || true; } | grep -c . || true)"
 [[ "${t49_cost_count:-0}" -eq 6 ]] && pass "T49 AC4 -- six guards each carry a cost clause" \
   || fail "T49 AC4 -- found ${t49_cost_count:-0} cost clauses, expected 6"
+# Negative control: the normalized count must be reachable-and-falsifiable, not a constant. Strip
+# one guard's clause from a scratch copy and confirm the same pipeline reports 5, so a future edit
+# that deletes a cost clause outright still fails rather than riding on a hardcoded 6.
+t49_ac4_ctrl_file="$(mktemp)"
+sed 's/cost of ignoring this is silent regression/COST CLAUSE REMOVED FOR CONTROL/' \
+  "${PLUGIN_DIR}/CLAUDE.md" > "$t49_ac4_ctrl_file"
+t49_ac4_ctrl_count="$({ tr -s '[:space:]' ' ' < "$t49_ac4_ctrl_file" \
+  | grep -o 'cost of ignoring this is' || true; } | grep -c . || true)"
+rm -f "$t49_ac4_ctrl_file"
+[[ "${t49_ac4_ctrl_count:-0}" -eq 5 ]] \
+  && pass "T49 AC4 control -- removing one guard's cost clause drops the normalized count to 5, so the assertion above can genuinely fail" \
+  || fail "T49 AC4 control -- expected 5 after removing one clause, got ${t49_ac4_ctrl_count:-0}; the assertion above may be vacuous"
 
 echo
 echo "T49 AC5 -- do-NOT-adopt subsection with six identifiers"
