@@ -27,6 +27,14 @@
 # hook this conservative. Otherwise the host's `tool_input.command` projects into hookify's
 # `{"command": "..."}` `bash`-event field shape and evaluates via `edm-hookify eval bash`.
 #
+# Payload-shape guard (CA-039): `.tool_input.command` must be present AND of jq type `string`.
+# An absent field (type `null` -- renamed, re-nested, or a payload with no `tool_input` at all)
+# and an unparseable payload each print ONE line on stderr naming what was seen, then allow.
+# The projection deliberately carries no `// ""` default: with one, a shape drift became the
+# empty string, the guard that followed could never fire, and the gate disabled every
+# bash-event rule while saying nothing. A present-but-empty command (`""`) is NOT drift and
+# evaluates normally.
+#
 # Exit codes:
 #   0  allowed -- no rule matched, only `warn` rules matched, or any internal/setup condition
 #      (edm-hookify or jq absent, no payload, unparseable payload). Never a fourth code.
@@ -59,8 +67,28 @@ PAYLOAD=""
 IFS= read -r -d '' PAYLOAD || true
 [[ -n "$PAYLOAD" ]] || exit 0
 
+# CA-039: the projection used to read `{command: (.tool_input.command // "")}`, which ALWAYS
+# succeeds -- a missing, renamed or re-nested field silently became the empty string, the
+# non-empty guard that followed could therefore never fire, and every bash-event rule was
+# disabled with no signal at all. Probe the field's jq TYPE instead, so "absent" (type `null`)
+# is distinguishable from "present and empty" (type `string`, value ""), and say so on stderr.
+# This is a setup condition, never a refusal: the gate still allows (exit 0), it just stops
+# being silent about the fact that it evaluated nothing.
+BASH_COMMAND_TYPE=""
+BASH_COMMAND_TYPE="$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.command | type' 2>/dev/null)" || BASH_COMMAND_TYPE=""
+
+if [[ -z "$BASH_COMMAND_TYPE" ]]; then
+  echo "edm-bash-gate: the PreToolUse payload on stdin is not parseable JSON -- allowing; NO bash-event hookify rule was evaluated" >&2
+  exit 0
+fi
+
+if [[ "$BASH_COMMAND_TYPE" != "string" ]]; then
+  echo "edm-bash-gate: payload-shape drift -- .tool_input.command is ${BASH_COMMAND_TYPE}, expected string; allowing, but NO bash-event hookify rule was evaluated" >&2
+  exit 0
+fi
+
 BASH_PAYLOAD=""
-BASH_PAYLOAD="$(printf '%s' "$PAYLOAD" | jq -c '{command: (.tool_input.command // "")}' 2>/dev/null)" || exit 0
+BASH_PAYLOAD="$(printf '%s' "$PAYLOAD" | jq -c '{command: .tool_input.command}' 2>/dev/null)" || exit 0
 [[ -n "$BASH_PAYLOAD" ]] || exit 0
 
 HOOKIFY_RC=0

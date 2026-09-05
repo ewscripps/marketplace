@@ -79,15 +79,6 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "git commit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "command -v edm-lint-staged-artifacts >/dev/null 2>&1 || exit 0; edm-lint-staged-artifacts"
-          }
-        ]
-      },
-      {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
           {
@@ -102,6 +93,11 @@
           {
             "type": "command",
             "command": "command -v edm-bash-gate >/dev/null 2>&1 || exit 0; edm-bash-gate"
+          },
+          {
+            "type": "command",
+            "if": "Bash(git commit*)",
+            "command": "command -v edm-lint-staged-artifacts >/dev/null 2>&1 || exit 0; edm-lint-staged-artifacts"
           }
         ]
       }
@@ -136,7 +132,7 @@
         "hooks": [
           {
             "type": "prompt",
-            "prompt": "An edm-implementer subagent just completed. Spawn an edm-qc-auditor agent to verify acceptance criteria for the tickets just implemented in that subagent's work.\n\nInstructions for the spawned edm-qc-auditor:\n0. Derive the initiative PREFIX from the completed implementer's own output: its assigned tickets and commit messages carry `{PREFIX}-T{NN}` ticket IDs that name it directly (this hook context has no $ARGUMENTS to extract from, unlike the gate hooks). If ambiguous, `edm-state active-initiatives` lists the candidates (CA-412).\n1. Read the relevant epic file to get ticket ACs.\n2. For each AC, classify as statically-verifiable or runtime-only before grading.\n3. Assign PASS (statically verified), PARTIAL (runtime-only, with runtime-check: note), or FAIL (statically unmet).\n4. Resolve the initiative directory from state using `edm-state resolve-dir <PREFIX>`.\n5. Write the QC report to `<initiative-dir>/qc/qc-shard-impl-{NN}.md` -- the `qc-shard-impl-` prefix is mandatory and {NN} is the lowest ticket number in this implementer's assigned range, zero-padded (e.g. tickets T07-T09 -> qc-shard-impl-07.md). NEVER write `qc/qc-summary.md` from this hook (CA-440): implementers run 6-10 in parallel and each completion spawns its own auditor, so a shared output file would be overwritten by whichever auditor finishes last, silently discarding every other auditor's FAIL verdicts. NEVER write a bare `qc/qc-shard-{NN}.md` or any `qc-shard-pass-*.md` name either (CA-473): `qc-shard-pass-w{WW}-{NN}.md` is the separate namespace owned by /edm:implement's own post-wave threshold-shard auditors, keyed by wave number and shard ordinal rather than by ticket number, so the two namespaces MUST NOT overlap -- an unprefixed name collides deterministically (threshold shard 1 vs the implementer whose range starts at T01) and the loser's FAIL verdicts are lost silently. `/edm:implement` merges all qc-shard-impl-*.md and qc-shard-pass-*.md into `qc/qc-summary.md` after the wave drains (CA-411). Run `mkdir -p <initiative-dir>/qc` first.\n6. For each PARTIAL verdict, call `edm-state record-partial-verdict <PREFIX> <ticket> PARTIAL '<note>'` to persist it.\n7. Report PASS/PARTIAL/FAIL per ticket with file:line evidence."
+            "prompt": "An edm-implementer subagent just completed. Spawn an edm-qc-auditor agent to verify acceptance criteria for the tickets just implemented in that subagent's work.\n\nInstructions for the spawned edm-qc-auditor:\n0. Derive the initiative PREFIX from the completed implementer's own output: its assigned tickets and commit messages carry `{PREFIX}-T{NN}` ticket IDs that name it directly (this hook context has no $ARGUMENTS to extract from, unlike the gate hooks). If ambiguous, `edm-state active-initiatives` lists the candidates (CA-412).\n1. Read the relevant epic file to get ticket ACs.\n2. For each AC, classify as statically-verifiable or runtime-only before grading.\n3. Assign PASS (statically verified), PARTIAL (runtime-only, with runtime-check: note), or FAIL (statically unmet).\n4. Resolve the initiative directory from state using `edm-state resolve-dir <PREFIX>`.\n5. Write the QC report to `<initiative-dir>/qc/qc-shard-impl-w{WW}-{NN}.md` -- the `qc-shard-impl-w` prefix is mandatory, {WW} is the WAVE number this implementer ran in (1-based, zero-padded) and {NN} is the lowest ticket number in this implementer's assigned range, zero-padded (e.g. wave 2, tickets T07-T09 -> qc-shard-impl-w02-07.md). Derive {WW} from the completed implementer's own assignment -- /edm:implement spawns implementers in numbered waves and names the wave in each implementer's prompt. If the wave number is genuinely unrecoverable, use the LOWEST {WW} for which `qc/qc-shard-impl-w{WW}-{NN}.md` does not already exist, which preserves the same no-overwrite guarantee. The wave component is mandatory (CA-010): a Step 5 remediation loop re-runs an implementer over the SAME ticket range, so a wave-less `qc-shard-impl-{NN}.md` is overwritten by the later run and the original wave's PASS/FAIL verdicts are lost -- they live ONLY in these markdown files (only PARTIAL verdicts survive elsewhere, via the locked `record-partial-verdict`). This is the identical defect CA-515 fixed in the sibling `qc-shard-pass-w{WW}-{NN}` namespace; both namespaces now carry the wave. NEVER write `qc/qc-summary.md` from this hook (CA-440): implementers run 6-10 in parallel and each completion spawns its own auditor, so a shared output file would be overwritten by whichever auditor finishes last, silently discarding every other auditor's FAIL verdicts. NEVER write a bare `qc/qc-shard-{NN}.md` or any `qc-shard-pass-*.md` name either (CA-473): `qc-shard-pass-w{WW}-{NN}.md` is the separate namespace owned by /edm:implement's own post-wave threshold-shard auditors, keyed by wave number and shard ordinal rather than by ticket number, so the two namespaces MUST NOT overlap -- an unprefixed name collides deterministically (threshold shard 1 vs the implementer whose range starts at T01) and the loser's FAIL verdicts are lost silently. `/edm:implement` merges all qc-shard-impl-*.md and qc-shard-pass-*.md into `qc/qc-summary.md` after the wave drains (CA-411). Run `mkdir -p <initiative-dir>/qc` first.\n6. For each PARTIAL verdict, call `edm-state record-partial-verdict <PREFIX> <ticket> PARTIAL '<note>'` to persist it.\n7. Report PASS/PARTIAL/FAIL per ticket with file:line evidence."
           }
         ]
       }

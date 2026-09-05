@@ -141,7 +141,7 @@ SRD/                              <- project root, committed to git
         +-- test-coverage.md          <- /edm:test (coverage by layer + AC<->test cross-ref)
         +-- qc/                       <- Phase 6 QC reports (always-present after first wave)
         |   +-- qc-summary.md         <- merged QC verdict table (single auditor or merged shards)
-        |   +-- qc-shard-impl-{NN}.md <- per-implementer hook shards ({NN} = lowest ticket in range)
+        |   +-- qc-shard-impl-w{WW}-{NN}.md <- per-implementer hook shards ({WW} = wave number, {NN} = lowest ticket in range); wave component mandatory, CA-010
         |   +-- qc-shard-pass-w{WW}-{NN}.md <- post-wave threshold shards ({WW} = wave number, {NN} = shard ordinal within that wave); disjoint from qc-shard-impl-*
         +-- code-audit/               <- /edm:code-audit output
         |   +-- findings-ledger.jsonl <- authoritative cross-round findings ledger (stable CA-NNN IDs)
