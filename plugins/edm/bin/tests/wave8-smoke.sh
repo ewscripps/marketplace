@@ -3801,10 +3801,54 @@ T13_BADMODE_ALLOW_RC=0
 EDM_GATEGUARD_DENY_MODE=yes "$T13_HARNESS" allow '' >/dev/null 2>"${T13_TMP}/ac4-allow.stderr" || T13_BADMODE_ALLOW_RC=$?
 check_num "EDMV4-T13 AC4 -- an invalid mode is a setup error even on an allow decision" "1" "$T13_BADMODE_ALLOW_RC"
 
-# ---- AC5 (behavioral half): the only nonzero exit codes emit_decision ever produces are 2 (a
-# real exit-code-mode denial, above) and 1 (the setup error just proven above) -- never a policy
-# refusal reusing the setup-error code. --------------------------------------------------------
-pass "EDMV4-T13 AC5 -- the only two nonzero exits observed above are 2 (exit-code deny, AC3) and 1 (setup error, AC4) -- no policy refusal reuses exit 1"
+# ---- AC5 (behavioral half): the only exit codes emit_decision ever produces are 0 (allow, and a
+# json-mode denial), 2 (an exit-code-mode denial) and 1 (a setup error) -- never a policy refusal
+# reusing the setup-error code, and never a fourth, undocumented code. ----------------------------
+#
+# CA-013: this was a bare top-level `pass` claiming exactly that taxonomy with NOTHING computed or
+# compared -- an unfalsifiable claim inflating the suite's headline assertion count. The exit
+# codes are now driven for real, across every (deny-mode x decision) combination, and the observed
+# SET compared against the documented one.
+t13_ac5_observed_codes() {
+  local harness="$1" spec mode decision rc
+  {
+    for spec in "json:allow" "json:deny" "exit-code:allow" "exit-code:deny" "yes:allow" "yes:deny"; do
+      mode="${spec%%:*}"
+      decision="${spec##*:}"
+      rc=0
+      EDM_GATEGUARD_DENY_MODE="$mode" "$harness" "$decision" 'ac5 reason' >/dev/null 2>&1 || rc=$?
+      printf '%s\n' "$rc"
+    done
+  } | sort -u | tr '\n' ' ' | sed 's/ *$//'
+}
+
+T13_AC5_CODES="$(t13_ac5_observed_codes "$T13_HARNESS")"
+if [[ "$T13_AC5_CODES" == "0 1 2" ]]; then
+  pass "EDMV4-T13 AC5 -- driving every deny-mode x decision combination yields exactly the documented exit set {0, 1, 2}: no policy refusal reuses exit 1 and no fourth code exists"
+else
+  fail "EDMV4-T13 AC5 -- observed exit set [${T13_AC5_CODES}], expected exactly [0 1 2]"
+fi
+
+# CA-013 negative control: a harness whose emit_decision returns an undocumented code (3) where it
+# should return 0 must make the assertion above FAIL. Every arm of emit_decision exits the process
+# itself, so the code has to be changed INSIDE the extracted function body -- appending to the
+# generated harness would never be reached, which is itself worth stating: an appended `exit 3`
+# was the first shape tried here and the control correctly reported that it proved nothing.
+T13_AC5_BROKEN="${T13_TMP}/emit-decision-harness-undocumented.sh"
+sed 's/^\([[:space:]]*\)exit 0$/\1exit 3/' "$T13_HARNESS" > "$T13_AC5_BROKEN"
+chmod +x "$T13_AC5_BROKEN"
+T13_AC5_BROKEN_SUBS="$(w8_count_lines '^[[:space:]]*exit 3$' "$T13_AC5_BROKEN")"
+if [[ "$T13_AC5_BROKEN_SUBS" -ge 1 ]]; then
+  pass "EDMV4-T13 AC5 negative control setup -- the scratch harness genuinely carries ${T13_AC5_BROKEN_SUBS} substituted 'exit 3' line(s); the control below is not testing an unmodified copy"
+else
+  fail "EDMV4-T13 AC5 negative control setup FAILED -- no 'exit 0' line was substituted in the scratch harness, so the control below would compare two identical harnesses"
+fi
+T13_AC5_BROKEN_CODES="$(t13_ac5_observed_codes "$T13_AC5_BROKEN")"
+if [[ "$T13_AC5_BROKEN_CODES" != "0 1 2" ]]; then
+  pass "EDMV4-T13 AC5 negative control -- a harness returning the undocumented code 3 yields [${T13_AC5_BROKEN_CODES}], which the assertion above rejects"
+else
+  fail "EDMV4-T13 AC5 negative control FAILED -- an undocumented exit code still produced the documented set [0 1 2]; the assertion above proves nothing"
+fi
 
 # ---- AC7: an emitted denial parses under jq -e, so an unparseable payload would be a test
 # failure rather than a silently unenforced gate. -------------------------------------------------
@@ -5481,7 +5525,9 @@ done
 # ---- /bin/bash --version recorded in suite output, so a run on a host whose /bin/bash is not 3.2
 # is visible in the log rather than silently vacuous.
 T50_BASH_VERSION="$(/bin/bash --version | head -1)"
-pass "EDMV4-T50 -- /bin/bash --version recorded: ${T50_BASH_VERSION}"
+# CA-013: this was a `pass`, which counted a log line as a proven assertion. Recording the
+# interpreter version is diagnostic context, not a claim about anything, so it is an echo.
+echo "  NOTE: EDMV4-T50 -- /bin/bash --version recorded: ${T50_BASH_VERSION}"
 
 echo
 
@@ -5895,7 +5941,11 @@ t52_ac7c_case() {
   fi
 }
 t46_isolate_and_run t52_ac7c_case
-pass "EDMV4-T52 AC7 -- (b) recorded as Not Applicable to edm-stop-gate: its own EDM-HELP block documents a stderr-only, never-JSON contract, so there is no JSON control channel at this emit point for (b) to protect"
+# CA-013: this was a `pass` recording an N/A determination -- a note, not a computed claim, and it
+# inflated the assertion count with something no run could falsify. Demoted to an echo. The
+# determination it records is itself asserted, for real, by the T52 AC7 stderr-only assertions
+# above, which is where the falsifiable half of this belongs.
+echo "  NOTE: EDMV4-T52 AC7 -- (b) recorded as Not Applicable to edm-stop-gate: its own EDM-HELP block documents a stderr-only, never-JSON contract, so there is no JSON control channel at this emit point for (b) to protect"
 
 # ---- AC6 (single-site property): each script's sanitization is not merely present, it is the
 # ONLY path decision/message content can reach output through -- verified structurally, with a
