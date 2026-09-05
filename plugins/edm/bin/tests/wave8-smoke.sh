@@ -1087,12 +1087,18 @@ check "EDMV4-T27 AC9 -- jsonl output path" '${OUTPUT_DIR}/lens-L14.jsonl' "$L14_
 check "EDMV4-T27 AC9 -- schema line names lens L14" '"lens":"L14"' "$L14_TEXT"
 
 echo "EDMV4-T27 AC10 -- edm-check-grants passes; all three touched files are ASCII-only"
-if bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>"${SCRIPT_DIR}/.t27-grants.err"; then
+# CA-020: this capture landed in SCRIPT_DIR (bin/tests/, inside the TRACKED tree) and was removed
+# only on the line after the `fi`. Any exit between the two -- a turn ceiling, a set -e abort, an
+# interrupt -- left `.t27-grants.err` behind as an untracked file in the working tree. Written into
+# the EXIT-trapped scratch tree instead, the reference shape EDMV4-T25 AC9 already uses above; the
+# explicit rm is kept so the file does not persist for the rest of the run.
+t27_grants_err="${T05_TMP}/t27-grants.err"
+if bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>"$t27_grants_err"; then
   pass "EDMV4-T27 AC10 -- edm-check-grants exits 0"
 else
-  fail "EDMV4-T27 AC10 -- edm-check-grants exited non-zero: $(cat "${SCRIPT_DIR}/.t27-grants.err")"
+  fail "EDMV4-T27 AC10 -- edm-check-grants exited non-zero: $(cat "$t27_grants_err")"
 fi
-rm -f "${SCRIPT_DIR}/.t27-grants.err"
+rm -f "$t27_grants_err"
 t27_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${PLUGIN_DIR}/agents/" 2>&1)"
 t27_lint_exit=$?
 [[ "$t27_lint_exit" -eq 0 ]] && pass "EDMV4-T27 AC10 -- edm-lint-artifacts --path agents/ is clean" \
@@ -1183,12 +1189,15 @@ for t26_marker in tsconfig.json Cargo.toml go.mod pyproject.toml mypy.ini pyrigh
 done
 
 echo "EDMV4-T26 AC11 -- edm-check-grants passes; edm-lint-artifacts is clean"
-if bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>"${SCRIPT_DIR}/.t26-grants.err"; then
+# CA-020: same untracked-leak class as the T27 site above -- redirected into the EXIT-trapped
+# scratch tree so no exit path can leave a stderr capture inside the tracked bin/tests/ directory.
+t26_grants_err="${T05_TMP}/t26-grants.err"
+if bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>"$t26_grants_err"; then
   pass "EDMV4-T26 AC11 -- edm-check-grants exits 0"
 else
-  fail "EDMV4-T26 AC11 -- edm-check-grants exited non-zero: $(cat "${SCRIPT_DIR}/.t26-grants.err")"
+  fail "EDMV4-T26 AC11 -- edm-check-grants exited non-zero: $(cat "$t26_grants_err")"
 fi
-rm -f "${SCRIPT_DIR}/.t26-grants.err"
+rm -f "$t26_grants_err"
 t26_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${PLUGIN_DIR}/agents/" 2>&1)"
 t26_lint_exit=$?
 [[ "$t26_lint_exit" -eq 0 ]] && pass "EDMV4-T26 AC11 -- edm-lint-artifacts --path agents/ is clean" \
@@ -5191,12 +5200,15 @@ T28_EXTRA_HEADING_V="$(t28_contract_violations "$T28_EXTRA_HEADING_FIXTURE" | tr
 
 echo
 echo "EDMV4-T28 -- edm-check-grants and edm-lint-artifacts remain clean over the live lens set"
-if bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>"${SCRIPT_DIR}/.t28-grants.err"; then
+# CA-020: same untracked-leak class as the T26/T27 sites above -- redirected into the EXIT-trapped
+# scratch tree so no exit path can leave a stderr capture inside the tracked bin/tests/ directory.
+t28_grants_err="${T05_TMP}/t28-grants.err"
+if bash "${PLUGIN_DIR}/bin/edm-check-grants" >/dev/null 2>"$t28_grants_err"; then
   pass "EDMV4-T28 -- edm-check-grants exits 0"
 else
-  fail "EDMV4-T28 -- edm-check-grants exited non-zero: $(cat "${SCRIPT_DIR}/.t28-grants.err")"
+  fail "EDMV4-T28 -- edm-check-grants exited non-zero: $(cat "$t28_grants_err")"
 fi
-rm -f "${SCRIPT_DIR}/.t28-grants.err"
+rm -f "$t28_grants_err"
 t28_lint_exit=0
 t28_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${T28_AGENTS_DIR}" 2>&1)" || t28_lint_exit=$?
 [[ "$t28_lint_exit" -eq 0 ]] && pass "EDMV4-T28 -- edm-lint-artifacts --path agents/ is clean" \
@@ -6430,6 +6442,59 @@ for ca032_verifier in edm-srd-auditor edm-ticket-auditor edm-qc-auditor edm-test
     fail "CA-032 -- CLAUDE.md's Turn budget parity section does not state ${ca032_verifier}'s live maxTurns value (${ca032_verifier_turns})"
   fi
 done
+
+echo
+# =================================================================================================
+# CA-020 -- no run-time file is written into the tracked bin/tests/ directory
+# =================================================================================================
+# Three `.tNN-grants.err` stderr captures wrote into SCRIPT_DIR (bin/tests/, inside the tracked
+# tree) before a conditional and were removed only after the `fi`; a fourth instance of the same
+# shape had already been found and fixed in Phase 6. Four sightings of one shape is a class, so it
+# gets a live sweep here rather than a fifth point fix.
+#
+# Self-matching-scan guard (this initiative has hit that trap six times): the needle is ASSEMBLED
+# at runtime from two halves, so the literal redirect-into-the-tests-directory string never appears
+# contiguously on any line of this file -- including the lines below that build and use it -- and
+# comment lines are stripped before the scan so the explanatory prose above cannot match either.
+echo "=== CA-020: no redirect writes into the tracked bin/tests/ directory ==="
+
+CA020_ROOT_TOKEN='SCRIPT'"_DIR"
+CA020_NEEDLE='[12]?>>?[[:space:]]*"?[$]\{?'"${CA020_ROOT_TOKEN}"
+ca020_scan() {
+  # <file> -- comment lines stripped first, then the assembled needle applied.
+  { grep -v '^[[:space:]]*#' "$1" || true; } | { grep -nE "$CA020_NEEDLE" || true; }
+}
+CA020_HITS="$(ca020_scan "$T50_SELF")"
+[[ -z "$CA020_HITS" ]] \
+  && pass "CA-020 -- no code line in wave8-smoke.sh redirects output into the tracked bin/tests/ directory" \
+  || fail "CA-020 -- redirect(s) into the tracked bin/tests/ directory found (comment lines already excluded):\n${CA020_HITS}"
+
+# Positive control: a REAL occurrence on a CODE line, injected into a scratch copy of this file.
+# A control built from a bare synthetic string alone would not prove the comment-stripping step
+# leaves real code lines reachable -- which is exactly how a self-match fix silently disarms the
+# scan it was meant to keep honest.
+w8_scratch_dir CA020_CTRL_TMP
+CA020_CTRL_FILE="${CA020_CTRL_TMP}/wave8-ca020-control.sh"
+cp "$T50_SELF" "$CA020_CTRL_FILE"
+{
+  printf '%s\n' 'ca020_control_probe() {'
+  printf '%s%s%s\n' '  bash /bin/echo hi 2>"${' "$CA020_ROOT_TOKEN" '}/.ca020-control.err"'
+  printf '%s\n' '}'
+} >> "$CA020_CTRL_FILE"
+CA020_CTRL_HITS="$(ca020_scan "$CA020_CTRL_FILE")"
+[[ -n "$CA020_CTRL_HITS" ]] \
+  && pass "CA-020 -- positive control: a real redirect into the tests directory, appended to a scratch copy as a code line, IS caught" \
+  || fail "CA-020 -- positive control broken: an injected real redirect was not caught, so the clean result above proves nothing"
+
+# Negative control: the same needle against the identical text on a COMMENT line must NOT fire --
+# proving the comment-stripping step is doing real work rather than the pattern simply never
+# matching anything.
+CA020_COMMENT_FILE="${CA020_CTRL_TMP}/wave8-ca020-comment.sh"
+printf '%s%s%s\n' '# never do: cmd 2>"${' "$CA020_ROOT_TOKEN" '}/.leak.err"' > "$CA020_COMMENT_FILE"
+CA020_COMMENT_HITS="$(ca020_scan "$CA020_COMMENT_FILE")"
+[[ -z "$CA020_COMMENT_HITS" ]] \
+  && pass "CA-020 -- negative control: the identical text on a comment line is correctly NOT flagged" \
+  || fail "CA-020 -- over-broad: prose describing the leak on a comment line was flagged as a real one"
 
 echo
 # =================================================================================================
