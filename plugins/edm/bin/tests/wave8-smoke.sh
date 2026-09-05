@@ -540,36 +540,96 @@ fi
 # library and asserts the guarantee the library actually makes.
 T17_AC5_DATADIR="${TMP}/t17-ac5-data"
 mkdir -p "$T17_AC5_DATADIR"
-(
-  set +e
-  # shellcheck source=/dev/null
-  . "$DATADIR_LIB" 2>/dev/null || exit 90
-  CLAUDE_PLUGIN_DATA="$T17_AC5_DATADIR" export CLAUDE_PLUGIN_DATA
-  _root="$(edm_data_dir 2>/dev/null)"       || exit 91
-  _key="$(edm_project_key 2>/dev/null)"     || exit 92
-  _marker="$(edm_marker_path 2>/dev/null)"  || exit 93
-  [[ -n "$_root" && -n "$_key" && -n "$_marker" ]] || exit 94
-  # The ephemeral marker must live under run/, never under the durable patterns/ tree.
-  case "$_marker" in
-    */run/*)      ;;
-    *) exit 95 ;;
-  esac
-  case "$_marker" in
-    */patterns/*) exit 96 ;;
-  esac
-  # And it must be rooted at the resolved data dir, not somewhere unrelated.
-  case "$_marker" in
-    "${_root}"/*) ;;
-    *) exit 97 ;;
-  esac
-  exit 0
-)
-T17_AC5_RC=$?
+
+# CA-015: this probe used to be a bare `( ... )` followed by `T17_AC5_RC=$?`. Under this file's
+# `set -euo pipefail` a subshell exiting non-zero is a failing simple command, so the script died
+# at the subshell and `T17_AC5_RC=$?` was reached only when the probe had already succeeded --
+# reading 0 every time. The `pass` below was therefore unconditional and the 90-97 exit taxonomy
+# unreachable by any run. The probe is now a function whose status is captured with `|| rc=$?`
+# (never `|| true`), and it takes the library path as an argument so the taxonomy can be driven
+# for real from deliberately broken scratch copies.
+#
+# t17_ac5_probe <datadir-lib> <data-dir> -- prints the probe's exit status.
+#   0=ok 90=unsourceable 91=data_dir 92=project_key 93=marker_path 94=empty
+#   95=not-under-run 96=under-patterns 97=not-rooted-at-data-dir
+t17_ac5_probe() {
+  local lib="$1" datadir="$2" rc=0
+  (
+    set +e
+    # shellcheck source=/dev/null
+    . "$lib" 2>/dev/null || exit 90
+    CLAUDE_PLUGIN_DATA="$datadir" export CLAUDE_PLUGIN_DATA
+    _root="$(edm_data_dir 2>/dev/null)"       || exit 91
+    _key="$(edm_project_key 2>/dev/null)"     || exit 92
+    _marker="$(edm_marker_path 2>/dev/null)"  || exit 93
+    [[ -n "$_root" && -n "$_key" && -n "$_marker" ]] || exit 94
+    # The ephemeral marker must live under run/, never under the durable patterns/ tree.
+    case "$_marker" in
+      */run/*)      ;;
+      *) exit 95 ;;
+    esac
+    case "$_marker" in
+      */patterns/*) exit 96 ;;
+    esac
+    # And it must be rooted at the resolved data dir, not somewhere unrelated.
+    case "$_marker" in
+      "${_root}"/*) ;;
+      *) exit 97 ;;
+    esac
+    exit 0
+  ) || rc=$?
+  printf '%s' "$rc"
+}
+
+T17_AC5_RC="$(t17_ac5_probe "$DATADIR_LIB" "$T17_AC5_DATADIR")"
 if [[ "$T17_AC5_RC" -eq 0 ]]; then
   pass "EDMV4-T17 AC5 -- library sourced: edm_marker_path() resolves under \${data}/run/, never \${data}/patterns/, and is rooted at edm_data_dir()"
 else
   fail "EDMV4-T17 AC5 -- sourced-library check failed (rc=${T17_AC5_RC}; 90=source,91=data_dir,92=project_key,93=marker_path,94=empty,95=not-under-run,96=under-patterns,97=not-rooted-at-data-dir)"
 fi
+
+# CA-015 negative controls: force each taxonomy code from a scratch copy of the library and confirm
+# the probe DISTINGUISHES them. Each broken copy is the real library plus one appended function
+# override (a later definition wins), so every control exercises the same source-and-call path the
+# real assertion does rather than a hand-built stand-in.
+T17_AC5_CTRL_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t17ac5.XXXXXX")"
+
+# 90: the library cannot be sourced at all.
+check_num "EDMV4-T17 AC5 control -- an unsourceable library is reported as 90, not as a pass" \
+  "90" "$(t17_ac5_probe "${T17_AC5_CTRL_TMP}/no-such-lib.sh" "$T17_AC5_DATADIR")"
+
+# 91: edm_data_dir() fails.
+cp "$DATADIR_LIB" "${T17_AC5_CTRL_TMP}/lib-91.sh"
+printf '%s\n' 'edm_data_dir() { return 1; }' >> "${T17_AC5_CTRL_TMP}/lib-91.sh"
+check_num "EDMV4-T17 AC5 control -- a failing edm_data_dir() is reported as 91" \
+  "91" "$(t17_ac5_probe "${T17_AC5_CTRL_TMP}/lib-91.sh" "$T17_AC5_DATADIR")"
+
+# 94: edm_marker_path() returns an empty path.
+cp "$DATADIR_LIB" "${T17_AC5_CTRL_TMP}/lib-94.sh"
+printf '%s\n' 'edm_marker_path() { printf "\n"; }' >> "${T17_AC5_CTRL_TMP}/lib-94.sh"
+check_num "EDMV4-T17 AC5 control -- an empty marker path is reported as 94" \
+  "94" "$(t17_ac5_probe "${T17_AC5_CTRL_TMP}/lib-94.sh" "$T17_AC5_DATADIR")"
+
+# 95: the marker escapes run/ entirely.
+cp "$DATADIR_LIB" "${T17_AC5_CTRL_TMP}/lib-95.sh"
+printf '%s\n' 'edm_marker_path() { printf "%s\n" "/nowhere/else/x.phase6"; }' >> "${T17_AC5_CTRL_TMP}/lib-95.sh"
+check_num "EDMV4-T17 AC5 control -- a marker outside run/ is reported as 95" \
+  "95" "$(t17_ac5_probe "${T17_AC5_CTRL_TMP}/lib-95.sh" "$T17_AC5_DATADIR")"
+
+# 96: the ephemeral marker lands inside the durable patterns/ tree -- the exact conflation AC5 exists
+# to forbid.
+cp "$DATADIR_LIB" "${T17_AC5_CTRL_TMP}/lib-96.sh"
+printf '%s\n' 'edm_marker_path() { printf "%s\n" "/nowhere/run/patterns/x.phase6"; }' >> "${T17_AC5_CTRL_TMP}/lib-96.sh"
+check_num "EDMV4-T17 AC5 control -- a marker under patterns/ is reported as 96" \
+  "96" "$(t17_ac5_probe "${T17_AC5_CTRL_TMP}/lib-96.sh" "$T17_AC5_DATADIR")"
+
+# 97: correctly shaped but not rooted at the resolved data dir.
+cp "$DATADIR_LIB" "${T17_AC5_CTRL_TMP}/lib-97.sh"
+printf '%s\n' 'edm_marker_path() { printf "%s\n" "/nowhere/run/x.phase6"; }' >> "${T17_AC5_CTRL_TMP}/lib-97.sh"
+check_num "EDMV4-T17 AC5 control -- a marker not rooted at edm_data_dir() is reported as 97" \
+  "97" "$(t17_ac5_probe "${T17_AC5_CTRL_TMP}/lib-97.sh" "$T17_AC5_DATADIR")"
+
+rm -rf "$T17_AC5_CTRL_TMP"
 
 # ---- AC6: bash 3.2 floor -- no bash-4-only constructs. ------------------------------------------
 # Wave-1 QC (shard 4, P1): CA-472's process-substitution fd-leak class -- named by number in the
