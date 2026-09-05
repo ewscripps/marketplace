@@ -2304,6 +2304,21 @@ cmd_set() {
       rmw_state "$prefix" '.[$k] = ($v|tonumber) | .last_updated = $t' \
         --arg v "$value" --arg k "$key" --arg t "$(now_utc)"
       ;;
+    # CA-215: the two OBJECT-typed members of SETTABLE_KEYS. The generic *) arm below uses
+    # --arg, which makes jq store the value as a STRING -- so
+    # `set <P> test_frameworks_detected '{"unit":"pytest"}'` stored the literal characters
+    # {"unit":"pytest"} rather than an object. Nothing complained: cmd_init seeds both keys
+    # as {}, and get-coverage's Detected Frameworks renderer tests ($tf|length) == 0 -- a
+    # string's length is its CHARACTER COUNT, so a stringified object is non-zero and passes
+    # the guard -- then runs to_entries on it, which errors into a swallowing
+    # `2>/dev/null || true` and renders nothing at all. The section silently disappears and
+    # the command reports success: the absent-renders-as-fine class, same as CA-036/CA-037.
+    coverage_by_epic|test_frameworks_detected)
+      printf '%s' "$value" | jq -e 'type == "object"' >/dev/null 2>&1 \
+        || die "set: field '$key' requires a JSON object; got: $value"
+      rmw_state "$prefix" '.[$k] = $v | .last_updated = $t' \
+        --arg k "$key" --argjson v "$value" --arg t "$(now_utc)"
+      ;;
     *)
       rmw_state "$prefix" '.[$k] = $v | .last_updated = $t' \
         --arg k "$key" --arg v "$value" --arg t "$(now_utc)"

@@ -9580,6 +9580,79 @@ if [[ -f "$CA134_LEDGER" ]]; then
 else
   fail "CA-134 fallout -- findings-ledger.jsonl not found at ${CA134_LEDGER}; the duplicate-id check could not run"
 fi
+
+# =====================================================================================
+# CA-215: edm-state set must store object-typed keys as objects, not as JSON strings
+# =====================================================================================
+# cmd_set's generic *) arm uses --arg, which stores the value as a STRING. Two members of
+# SETTABLE_KEYS are object-typed (test_frameworks_detected, coverage_by_epic) and had no arm of
+# their own, so `set <P> test_frameworks_detected '{"unit":"pytest"}'` stored the literal
+# characters. It reported success, and get-coverage's Detected Frameworks section then rendered
+# NOTHING: its guard tests ($tf|length) == 0, and a string's length is its character count, so a
+# stringified object sails past it into to_entries, which errors into a swallowing
+# `2>/dev/null || true`. Found by a subagent building a fixture, reproduced before filing.
+echo
+echo "-- CA-215: object-typed SETTABLE_KEYS round-trip as objects --"
+
+CA215_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca215.XXXXXX")"
+CA215_REPO="${CA215_TMP}/repo"
+mkdir -p "$CA215_REPO"
+( cd "$CA215_REPO" && git init -q . && git config user.email edm@example.com && git config user.name EDM ) >/dev/null 2>&1
+CA215_STATE_JSON="${CA215_REPO}/SRD/CA215/.edm-state.json"
+(
+  cd "$CA215_REPO" || exit 99
+  export CLAUDE_PROJECT_DIR="$CA215_REPO"
+  bash "${PLUGIN_DIR}/bin/edm-init" CA215 >/dev/null 2>&1
+) >/dev/null 2>&1
+
+# ca215_set <key> <value> -- run `edm-state set` in the fixture, print its exit status.
+ca215_set() {
+  local _rc=0
+  ( cd "$CA215_REPO" && CLAUDE_PROJECT_DIR="$CA215_REPO" \
+      bash "${PLUGIN_DIR}/bin/edm-state" set CA215 "$1" "$2" ) >/dev/null 2>&1 || _rc=$?
+  printf '%s' "$_rc"
+}
+ca215_type() { jq -r ".$1 | type" "$CA215_STATE_JSON" 2>/dev/null; }
+
+# --- both object-typed keys must round-trip as objects ---
+ca215_set test_frameworks_detected '{"unit":"pytest"}' >/dev/null
+check "CA-215 -- test_frameworks_detected stores as an object, not a string" \
+  "object" "$(ca215_type test_frameworks_detected)"
+check "CA-215 -- the object's content survives intact" \
+  "pytest" "$(jq -r '.test_frameworks_detected.unit' "$CA215_STATE_JSON" 2>/dev/null)"
+
+ca215_set coverage_by_epic '{"auth":{"unit":{"pct":84.1}}}' >/dev/null
+check "CA-215 -- coverage_by_epic stores as an object, not a string" \
+  "object" "$(ca215_type coverage_by_epic)"
+check "CA-215 -- a NESTED value survives (a stringified object would flatten to characters)" \
+  "84.1" "$(jq -r '.coverage_by_epic.auth.unit.pct' "$CA215_STATE_JSON" 2>/dev/null)"
+
+# --- NEGATIVE CONTROL: a non-object must be REFUSED, and the stored value left untouched.
+# --- Without this, an arm that accepted anything and called it an object would pass above.
+for ca215_bad in '["pytest"]' '{unit:pytest' 'pytest' '42' 'null'; do
+  ca215_rc="$(ca215_set test_frameworks_detected "$ca215_bad")"
+  [[ "$ca215_rc" -ne 0 ]] \
+    && pass "CA-215 negative control -- 'set test_frameworks_detected ${ca215_bad}' is refused (exit ${ca215_rc})" \
+    || fail "CA-215 negative control -- 'set test_frameworks_detected ${ca215_bad}' was ACCEPTED; the type guard admits non-objects"
+done
+check "CA-215 -- the previously-stored object survived every refusal" \
+  "pytest" "$(jq -r '.test_frameworks_detected.unit' "$CA215_STATE_JSON" 2>/dev/null)"
+
+# --- the downstream symptom: get-coverage renders the section instead of silently dropping it ---
+CA215_COV="$( cd "$CA215_REPO" && CLAUDE_PROJECT_DIR="$CA215_REPO" \
+  bash "${PLUGIN_DIR}/bin/edm-state" get-coverage CA215 2>/dev/null )"
+check "CA-215 -- get-coverage renders the detected framework rather than silently dropping the section" \
+  "pytest" "$CA215_COV"
+
+# --- a STRING-typed key must still round-trip as a string: the new arm is scoped to the two
+# --- object keys and has not turned every set into a JSON parse.
+ca215_set last_decision 'chose option B' >/dev/null
+check "CA-215 -- a string-typed key still stores as a string (the new arm is scoped, not global)" \
+  "string" "$(ca215_type last_decision)"
+check "CA-215 -- and its value is the literal text, not parsed" \
+  "chose option B" "$(jq -r '.last_decision' "$CA215_STATE_JSON" 2>/dev/null)"
+
+rm -rf "$CA215_TMP"
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
 
