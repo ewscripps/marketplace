@@ -329,9 +329,27 @@ check "EDMV4-T48 AC4 -- instruction directs reading and refreshing rather than r
 check 'EDMV4-T48 AC4 -- instruction requires a "Refreshed" note naming touched sections and the prefix' \
   'append a' \
   "$(cat "$EXPLORER_AGENT")"
-check_absent 'EDMV4-T48 -- refresh note requirement is not silently dropped ("Refreshed" string present)' \
-  'MISSING_REFRESHED_NOTE_SENTINEL_NEVER_PRESENT' \
+# CA-012: this asserted the ABSENCE of an invented sentinel
+# ('MISSING_REFRESHED_NOTE_SENTINEL_NEVER_PRESENT') that appears nowhere by construction, so it
+# could never fail -- while its label claimed the opposite property, that the "Refreshed"
+# requirement is PRESENT. Assert the literal the label actually names, and prove the matcher
+# discriminates in both directions against a scratch copy.
+T48_REFRESHED_LITERAL='Refreshed'
+check 'EDMV4-T48 AC4 -- refresh note requirement is not silently dropped ("Refreshed" string present)' \
+  "$T48_REFRESHED_LITERAL" \
   "$(cat "$EXPLORER_AGENT")"
+
+T48_CTRL_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t48.XXXXXX")"
+sed "s/${T48_REFRESHED_LITERAL}/REDACTED/g" "$EXPLORER_AGENT" > "${T48_CTRL_TMP}/stripped.md"
+T48_REFRESHED_CTRL="$(
+  PASS=0; FAIL=0
+  check_absent "probe (real agent)" "$T48_REFRESHED_LITERAL" "$(cat "$EXPLORER_AGENT")" >/dev/null 2>&1
+  check_absent "probe (stripped copy)" "$T48_REFRESHED_LITERAL" "$(cat "${T48_CTRL_TMP}/stripped.md")" >/dev/null 2>&1
+  echo "PASS=$PASS FAIL=$FAIL"
+)"
+check 'EDMV4-T48 AC4 control -- the same matcher FIRES on the real agent (it carries "Refreshed") and reports clean only on a scratch copy with the literal stripped' \
+  "PASS=1 FAIL=1" "$T48_REFRESHED_CTRL"
+rm -rf "$T48_CTRL_TMP"
 check "EDMV4-T48 AC4 -- 'Refreshed' note wording present" \
   'short "Refreshed" note' \
   "$(cat "$EXPLORER_AGENT")"
