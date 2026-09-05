@@ -37,17 +37,48 @@
 # Output format (`eval`, one line per matched rule): "<rule_id> <action> <message>" -- single-space
 # separated, message last so it may itself contain spaces.
 #
+# Internal record encoding (CA-029). The jq pass below hands its results back to bash as a
+# tab-delimited, newline-separated record stream, tagged `E`/`L`/`M` in column 1. Every value
+# interpolated into a record -- the rule file's own PATH, and the rule's `name`, `action`,
+# `message` and error reason -- is passed through `scrub` INSIDE the jq program first, which
+# replaces every C0 control character and DEL (code points < 32, plus 127) with a space. That
+# makes it structurally impossible for any of those values to carry a tab or a newline into the
+# record stream, which is what the bash-side parser splits on. This is deliberately fixed at the
+# ENCODING layer rather than by filtering filenames: `find -name '*.json'` legitimately matches a
+# POSIX-legal filename containing a newline, and before this fix such a file forged an `M` record
+# with `action` = `block` -- exit 2 -- without its content ever being valid JSON, ever setting
+# `enabled: true`, or ever setting `"action": "block"`. The same forge worked from a rule `name`.
+# That defeated the format's load-bearing invariant (CLAUDE.md: "a rules layer that could block by
+# default would hand every contributor the ability to wedge every other contributor's edits with
+# one committed file"). Note `scrub` is about RECORD INTEGRITY only; `hookify_scrub` below is the
+# separate, complementary ASCII filter applied on the way OUT to a consumer.
+#
 # Exit codes -- exactly three, EDMV4-T44's two-tier exit contract (the same violation-versus-
 # setup-error split edm-lint-staged-artifacts already applies to `git commit`; see this plugin's
 # CLAUDE.md "Hooks behavior" section for the cross-reference by name):
 #   0  clean -- no enabled rule matched, or only `warn` rules matched (or, for `list`, the rule
 #      set was enumerated), including the case where zero rule files exist at all (an absent
 #      .claude/edm-hookify/ directory).
-#   1  setup error -- malformed rule file (invalid JSON, missing required key, unknown operator,
-#      out-of-event field), or a required binary (jq) not found on PATH. A malformed rule file
-#      never blocks and never disables the rest of the rule set: its path and reason are named on
-#      stderr, that file alone is skipped, and every other valid, enabled rule for the requested
-#      event is still evaluated in the same run.
+#   1  setup error -- malformed rule file (invalid JSON, a non-object top-level value, missing
+#      required key, wrongly-typed `conditions`, unknown operator, out-of-event field, or a
+#      pattern the regex engine refuses), a missing or unparseable `eval` payload on stdin, or a
+#      required binary (jq) not found on PATH. A malformed rule file never blocks and never
+#      disables the rest of the rule set: its path and reason are named on stderr, that file
+#      alone is skipped, and every other valid, enabled rule for the requested event is still
+#      evaluated in the same run. CA-030: the jq program's per-rule `try/catch` wraps the WHOLE
+#      per-rule projection -- validation and condition matching included -- not just `fromjson`.
+#      Before that, a top-level JSON array (the natural "all my rules in one file" mistake), a
+#      top-level string, a `"conditions": "foo"` typo, or an invalid Oniguruma pattern such as
+#      `[` aborted the single jq invocation outright, which exited 1 for the whole directory and
+#      silently evaluated ZERO rules -- the exact "one contributor's typo cannot take down every
+#      other contributor's rules" contract this paragraph states.
+#      CA-031: an `eval` payload that is empty, or that does not parse as a single JSON OBJECT,
+#      is itself a setup error rather than degrading to `{}`. Degrading made every field read as
+#      the empty string, which made every `not_contains` condition match vacuously (a `block`
+#      rule could fire on a parse failure) while every `contains` condition silently stopped
+#      matching (a `block` rule stopped enforcing, with a clean exit 0). A field genuinely ABSENT
+#      from a well-formed payload is separately treated as non-matching for BOTH polarities, so
+#      absence never satisfies a `not_contains` condition either.
 #   2  block -- at least one enabled rule matched carrying the literal `"action": "block"` (the
 #      format defaults an absent `action` key to `warn`, EDMV4-T42 AC2 -- a rule blocks only by
 #      explicit opt-in, never by default). Precedence: a block match always wins the exit code
@@ -142,9 +173,22 @@ command -v jq >/dev/null 2>&1 || die "required binary not found on PATH: jq"
 # variable BEFORE jq's own stdin is repurposed below for the rule-content stream -- the
 # one-classify-pass design (AC2/AC3) needs jq's stdin free to carry the NUL-joined rule bytes, so
 # the payload travels in as a --arg instead.
+#
+# CA-031: "no payload" and "a payload whose fields are empty" are different facts and must not
+# collapse into the same one. An absent or unparseable payload is a SETUP ERROR (exit 1, never
+# blocking) rather than a silent degradation to `{}`. Both shipped consumers already send a
+# well-formed object -- `edm-gateguard` and `edm-bash-gate` build theirs with `jq -c`, and
+# `edm-stop-gate` sends the literal `{}` -- so this refusal is reachable only through the
+# documented user-facing CLI or through a consumer whose own payload construction failed, which
+# is precisely the case that must not be mistaken for "nothing violated any rule".
 PAYLOAD_RAW=""
 if [[ "$SUBCOMMAND" == "eval" ]]; then
   PAYLOAD_RAW="$(cat)"
+  if [[ -z "$PAYLOAD_RAW" ]]; then
+    die "eval ${EVENT}: no payload on stdin (expected one JSON object; send '{}' for a payload with no fields)"
+  fi
+  printf '%s' "$PAYLOAD_RAW" | jq -e 'type == "object"' >/dev/null 2>&1 \
+    || die "eval ${EVENT}: payload on stdin is not a single JSON object"
 fi
 
 # 65536 chars (64 KiB for single-byte/ASCII content -- see the EDM-HELP block above for the
@@ -175,14 +219,29 @@ def fields_for_event($e):
   elif $e == "bash" then ["command"]
   else [] end;
 def cap($s): if ($s|type) == "string" then $s[0:$maxchars] else $s end;
+# scrub -- CA-029 record-encoding guard. Every C0 control character and DEL becomes a space, so
+# no interpolated value can carry a delimiter of the record stream (tab, newline, CR) and forge
+# a second record. Written with explode/implode rather than a regex character class deliberately:
+# it depends on no Oniguruma bracket-expression support and cannot itself be a source of the
+# "pattern the engine refuses" failure this same commit teaches the program to survive.
+def scrub($s): [ ($s|tostring) | explode[] | if . < 32 or . == 127 then 32 else . end ] | implode;
 def validate($r):
+  if ($r|type) != "object" then
+    {ok:false, error:("rule must be a JSON object, got " + ($r|type))}
+  else
   ($r|keys) as $ks
   | ($ks - allowed_keys) as $unknown
-  | if ($unknown|length) > 0 then {ok:false, error:("unknown top-level key: " + $unknown[0])}
+  | if ($unknown|length) > 0 then {ok:false, error:("unknown top-level key: " + ($unknown[0]|tostring))}
     elif (([$r|has("name"),has("enabled"),has("event"),has("conditions"),has("message")]) | all) | not
       then {ok:false, error:"missing required key"}
     elif (allowed_events | index($r.event)) == null
       then {ok:false, error:("unknown event: " + ($r.event|tostring))}
+    elif ($r.conditions|type) != "array"
+      then {ok:false, error:("conditions must be an array, got " + ($r.conditions|type))}
+    elif ([$r.conditions[] | select(type != "object")] | length) > 0
+      then {ok:false, error:"every entry in conditions must be a JSON object"}
+    elif ([$r.conditions[] | select((.field|type) != "string" or (.operator|type) != "string" or (.pattern|type) != "string")] | length) > 0
+      then {ok:false, error:"every condition needs string field, operator and pattern"}
     else
       (fields_for_event($r.event)) as $ff
       | ([$r.conditions[]? | select(.operator as $op | (allowed_ops|index($op)) == null)]) as $bad_ops
@@ -195,7 +254,8 @@ def validate($r):
             else {ok:true}
             end
         end
-    end;
+    end
+  end;
 def op_match($op; $val; $pattern):
   if $op == "contains" then ($val|contains($pattern))
   elif $op == "not_contains" then (($val|contains($pattern))|not)
@@ -208,8 +268,39 @@ def conds_match($r; $payload):
   (($r.conditions // [])) as $cs
   | ($cs|length) == 0 or
     (all($cs[]; . as $c
-      | (($payload[$c.field] // "") | tostring | cap(.)) as $val
-      | op_match($c.operator; $val; $c.pattern)));
+      | ($payload[$c.field]) as $rawval
+      | if $rawval == null then
+          # CA-031: a field genuinely absent from a well-formed payload is NOT the empty string.
+          # Absence is non-matching for BOTH polarities -- a rule meant to fire on the absence of
+          # a substring must not fire merely because the field it names was never supplied.
+          false
+        else
+          ($rawval | tostring | cap(.)) as $val
+          | op_match($c.operator; $val; $c.pattern)
+        end));
+# project_rule -- one rule file to at most one record. CA-030: every step below (validate and
+# conds_match included, not only fromjson) runs inside the caller try/catch, so a jq runtime error
+# raised by ONE rule file yields an E record for THAT file and leaves every other rule evaluated.
+def project_rule($path; $raw; $payload):
+  (try ($raw|fromjson) catch null) as $parsed
+  | if $parsed == null then
+      "E\t" + scrub($path) + "\tinvalid JSON"
+    else
+      (validate($parsed)) as $v
+      | if ($v.ok|not) then
+          "E\t" + scrub($path) + "\t" + scrub($v.error)
+        elif ($parsed.enabled != true) then
+          empty
+        elif ($mode == "list") then
+          "L\t" + scrub($parsed.name // $path)
+        elif ($parsed.event != $event) then
+          empty
+        elif (conds_match($parsed; $payload)) then
+          "M\t" + scrub($parsed.name // "unnamed") + "\t" + scrub($parsed.action // "warn") + "\t" + scrub($parsed.message // "")
+        else
+          empty
+        end
+    end;
 (split("\u0000")) as $raw_all
 | $raw_all[0:-1] as $raws
 | ($ARGS.positional) as $ps
@@ -217,25 +308,8 @@ def conds_match($r; $payload):
 | range(0; ($ps|length)) as $i
 | ($ps[$i]) as $path
 | ($raws[$i]) as $raw
-| (try ($raw|fromjson) catch null) as $parsed
-| if $parsed == null then
-    "E\t" + $path + "\tinvalid JSON"
-  else
-    (validate($parsed)) as $v
-    | if ($v.ok|not) then
-        "E\t" + $path + "\t" + $v.error
-      elif ($parsed.enabled != true) then
-        empty
-      elif ($mode == "list") then
-        "L\t" + ($parsed.name // $path)
-      elif ($parsed.event != $event) then
-        empty
-      elif (conds_match($parsed; $payload)) then
-        "M\t" + ($parsed.name // "unnamed") + "\t" + ($parsed.action // "warn") + "\t" + ($parsed.message // "")
-      else
-        empty
-      end
-  end
+| (try project_rule($path; $raw; $payload)
+   catch ("E\t" + scrub($path) + "\trule evaluation error: " + scrub(.)))
 '
 
 RESULT="$(build_rule_stream | jq -R -s -r \
@@ -245,6 +319,18 @@ RESULT="$(build_rule_stream | jq -R -s -r \
   --arg mode "$SUBCOMMAND" \
   "$JQ_PROGRAM" \
   --args "${RULE_FILES[@]}")" || die "jq evaluation failed"
+
+# hookify_scrub <text> -- the ONE ASCII filter this script owns (CA-056). Every byte outside
+# tab/CR/LF and the printable ASCII range 0x20-0x7E is replaced with '?'. Extracted from
+# hookify_emit_match so the three emission arms below share one filter rather than one arm
+# carrying a filter and the other two carrying none: before this, EDMV4-T52 AC6's stated
+# single-emit-point premise was false as written -- the `L)` list arm printed the rule's own
+# `name` raw (a non-ASCII byte in a rule name reached stdout unmodified, reproduced live by
+# wave-5 QC), and the setup-error arm interpolated raw rule-file JSON values into stderr, so an
+# ESC in an unknown top-level key survived far enough to rewrite an operator terminal title.
+hookify_scrub() {
+  printf '%s' "$1" | LC_ALL=C tr -c '\011\012\015\040-\176' '?'
+}
 
 # hookify_emit_match <rule_id> <action> <message> -- the single point this evaluator prints a
 # matched-rule line (EDMV4-T52 AC6). All three fields are rule-author-supplied content read
@@ -259,9 +345,9 @@ RESULT="$(build_rule_stream | jq -R -s -r \
 hookify_emit_match() {
   local rule_id="$1" action="$2" message="$3" stream="$4"
   local clean_id clean_action clean_message
-  clean_id="$(printf '%s' "$rule_id" | LC_ALL=C tr -c '\011\012\015\040-\176' '?')"
-  clean_action="$(printf '%s' "$action" | LC_ALL=C tr -c '\011\012\015\040-\176' '?')"
-  clean_message="$(printf '%s' "$message" | LC_ALL=C tr -c '\011\012\015\040-\176' '?')"
+  clean_id="$(hookify_scrub "$rule_id")"
+  clean_action="$(hookify_scrub "$action")"
+  clean_message="$(hookify_scrub "$message")"
   if [[ "$stream" == "stdout" ]]; then
     echo "${clean_id} ${clean_action} ${clean_message}"
   else
@@ -277,13 +363,18 @@ while IFS= read -r _line; do
   _rest="${_line#*$'\t'}"
   case "$_tag" in
     E)
+      # CA-056: both halves are rule-file-derived (the discovered path, and a reason string that
+      # can quote a rule-authored key or event value), so both go through hookify_scrub. printf,
+      # never echo -- a reason or path of exactly "-n" or "-e" is consumed as an option by some
+      # echo implementations.
       _epath="${_rest%%$'\t'*}"
       _ereason="${_rest#*$'\t'}"
-      echo "edm-hookify: setup error: ${_epath}: ${_ereason}" >&2
+      printf '%s\n' "edm-hookify: setup error: $(hookify_scrub "$_epath"): $(hookify_scrub "$_ereason")" >&2
       HAD_ERROR=1
       ;;
     L)
-      echo "$_rest"
+      # CA-056: the listed name is `$parsed.name // $path` -- rule-author content either way.
+      printf '%s\n' "$(hookify_scrub "$_rest")"
       ;;
     M)
       _mname="${_rest%%$'\t'*}"

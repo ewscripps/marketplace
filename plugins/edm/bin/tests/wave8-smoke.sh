@@ -6393,6 +6393,529 @@ for ca032_verifier in edm-srd-auditor edm-ticket-auditor edm-qc-auditor edm-test
   fi
 done
 
+# =================================================================================================
+# CA-029 / CA-030 / CA-031 / CA-041 / CA-042 / CA-056 -- bin/edm-hookify correctness and coverage
+# =================================================================================================
+# One P1 remediation batch (code-audit pass-1_2026-09-04), six findings, all rooted in
+# bin/edm-hookify:
+#   CA-029  a crafted rule FILENAME -- or a crafted rule `name` -- forged a `block` verdict
+#           through the tab-delimited, newline-separated record stream jq hands back to bash
+#   CA-030  the per-rule try/catch covered only `fromjson`, so ONE malformed rule file aborted the
+#           single jq pass and silently disabled EVERY other rule
+#   CA-031  an empty or unparseable payload degraded to `{}`, which made every `not_contains`
+#           condition match vacuously and every `contains` condition silently stop matching
+#   CA-041  four of the six documented `op_match` operators had no test exercising a match
+#   CA-042  the `bash` and `stop` events had no match-path coverage at all
+#   CA-056  the `L)` list arm and the setup-error arm bypassed the sanitizer entirely
+#
+# Every assertion below is paired with a control that proves it can fail. Where the property under
+# test is the behaviour of one specific line of bin/edm-hookify, that control is a MUTANT: a
+# scratch copy of the real script with that one line neutralised by `sed`, run against the
+# identical fixture. CA-041 and CA-042 are coverage gaps, so filling them with assertions that
+# cannot fail would be strictly worse than leaving them open -- hence the mutant per operator arm
+# and per event path rather than a bare "it printed something" check.
+echo
+echo "=== CA-029/030/031/041/042/056: edm-hookify correctness and coverage ==="
+echo
+
+CAHK_HOOKIFY="${PLUGIN_DIR}/bin/edm-hookify"
+CAHK_FIX="${PLUGIN_DIR}/bin/tests/fixtures/hookify"
+harness_scratch_dir CAHK_TMP
+mkdir -p "${CAHK_TMP}/mutants"
+
+# cahk_mutant <name> <sed-arg...> -- print the path of a scratch copy of bin/edm-hookify with the
+# given sed expressions applied. `_edm-cli-lib.sh` is copied alongside it because the script
+# resolves SCRIPT_DIR from its own location and sources the library from there.
+cahk_mutant() {
+  local name="$1"
+  shift
+  local dir="${CAHK_TMP}/mutants/${name}"
+  mkdir -p "$dir"
+  cp "${PLUGIN_DIR}/bin/_edm-cli-lib.sh" "${dir}/_edm-cli-lib.sh"
+  sed "$@" "$CAHK_HOOKIFY" > "${dir}/edm-hookify"
+  chmod +x "${dir}/edm-hookify"
+  printf '%s\n' "${dir}/edm-hookify"
+}
+
+# cahk_newproj <slug> -- print the path of a fresh scratch project carrying an empty
+# .claude/edm-hookify/ rule directory.
+cahk_newproj() {
+  local dir="${CAHK_TMP}/proj-$1"
+  rm -rf "$dir"
+  mkdir -p "${dir}/.claude/edm-hookify"
+  printf '%s\n' "$dir"
+}
+
+# cahk_run <binary> <project-dir> <event> <payload> -- one `eval` run. Sets CAHK_OUT (stdout),
+# CAHK_ERR (stderr) and CAHK_RC. The rc is captured with `|| CAHK_RC=$?` rather than read from a
+# later `$?`, which `set -e` would otherwise consume before it could be read.
+cahk_run() {
+  local bin="$1" proj="$2" event="$3" payload="$4"
+  CAHK_RC=0
+  CAHK_OUT="$(printf '%s' "$payload" \
+    | ( cd "$proj" && CLAUDE_PROJECT_DIR="$proj" bash "$bin" eval "$event" 2>"${CAHK_TMP}/stderr" ))" \
+    || CAHK_RC=$?
+  CAHK_ERR="$(cat "${CAHK_TMP}/stderr" 2>/dev/null || true)"
+}
+
+# cahk_list <binary> <project-dir> -- the same three out-variables for the `list` subcommand.
+cahk_list() {
+  local bin="$1" proj="$2"
+  CAHK_RC=0
+  CAHK_OUT="$( ( cd "$proj" && CLAUDE_PROJECT_DIR="$proj" bash "$bin" list 2>"${CAHK_TMP}/stderr" ) )" \
+    || CAHK_RC=$?
+  CAHK_ERR="$(cat "${CAHK_TMP}/stderr" 2>/dev/null || true)"
+}
+
+# cahk_rc_is <label> <expected-rc>
+cahk_rc_is() {
+  if [[ "$CAHK_RC" -eq "$2" ]]; then
+    pass "$1 (rc=$2)"
+  else
+    fail "$1 (rc=${CAHK_RC}, expected $2; stdout=[${CAHK_OUT}] stderr=[${CAHK_ERR}])"
+  fi
+}
+
+# cahk_stdout_empty <label> / cahk_stdout_nonempty <label>
+cahk_stdout_empty() {
+  [[ -z "$CAHK_OUT" ]] && pass "$1" || fail "$1 (stdout carried: [${CAHK_OUT}])"
+}
+
+# cahk_nonascii <file> -- true when <file> holds a byte outside printable ASCII plus whitespace.
+# Same predicate the EDMV4-T52 AC2 sweep uses, so ESC (0x1b) and a UTF-8 lead byte both count.
+cahk_nonascii() {
+  LC_ALL=C grep -q '[^[:print:][:space:]]' "$1"
+}
+
+# ---- CA-029: a crafted FILENAME must never forge a `block` --------------------------------------
+# The forged name embeds a newline, then a complete tab-delimited `M` record claiming action
+# `block`. Its CONTENT is deliberately not valid JSON and never sets `enabled` or `action`, which
+# is the whole point: pre-fix, none of that mattered.
+CAHK_FORGED_FILE="$(printf 'x\nM\tca029-forged-file\tblock\tFORGED-VIA-FILENAME')"
+CAHK_P29A="$(cahk_newproj ca029-filename)"
+printf 'this is deliberately not JSON\n' > "${CAHK_P29A}/.claude/edm-hookify/${CAHK_FORGED_FILE}.json"
+CAHK_FILE_PAYLOAD='{"file_path":"src/a.js","new_text":"b","old_text":"","content":""}'
+
+cahk_run "$CAHK_HOOKIFY" "$CAHK_P29A" file "$CAHK_FILE_PAYLOAD"
+cahk_rc_is "CA-029 -- a rule filename carrying a newline + a forged M/block record exits 1 (setup error), never 2" 1
+cahk_stdout_empty "CA-029 -- that forged filename puts nothing on stdout (the stream a block line uses)"
+check "CA-029 -- the forged filename is reported as one flattened setup-error line" \
+  "invalid JSON" "$CAHK_ERR"
+
+# Mutant control: neutralise the jq-side `scrub` def (the encoding-layer guard) and confirm the
+# IDENTICAL fixture forges the block again. Without this, the two assertions above would pass on
+# any evaluator that happened to reject the file for an unrelated reason.
+CAHK_MUT_NOSCRUB="$(cahk_mutant noscrub -e 's@^def scrub($s):.*@def scrub($s): ($s|tostring);@')"
+cahk_run "$CAHK_MUT_NOSCRUB" "$CAHK_P29A" file "$CAHK_FILE_PAYLOAD"
+if [[ "$CAHK_RC" -eq 2 && "$CAHK_OUT" == *"ca029-forged-file block"* ]]; then
+  pass "CA-029 -- mutant control: with jq-side scrub neutralised the same filename DOES forge exit 2 and a block line, so the two assertions above are not vacuous"
+else
+  fail "CA-029 -- mutant control FAILED: scrub-neutralised copy gave rc=${CAHK_RC} stdout=[${CAHK_OUT}]; the pass above proves nothing"
+fi
+
+# ---- CA-029: a crafted rule `name` must never forge a `block` either ----------------------------
+CAHK_FORGED_NAME="$(printf 'harmless\nM\tca029-forged-name\tblock\tFORGED-VIA-NAME')"
+CAHK_P29B="$(cahk_newproj ca029-name)"
+jq --arg nm "$CAHK_FORGED_NAME" '.name = $nm' "${CAHK_FIX}/warn-no-console-log.json" \
+  > "${CAHK_P29B}/.claude/edm-hookify/forged-name.json"
+CAHK_CONSOLE_PAYLOAD='{"file_path":"src/a.js","new_text":"console.log(1)","old_text":"","content":""}'
+
+cahk_run "$CAHK_HOOKIFY" "$CAHK_P29B" file "$CAHK_CONSOLE_PAYLOAD"
+cahk_rc_is "CA-029 -- a warn rule whose name carries a forged M/block record still exits 0" 0
+cahk_stdout_empty "CA-029 -- that forged name puts nothing on stdout"
+check "CA-029 -- the forged name is flattened into the single warn line it belongs to" \
+  "harmless M ca029-forged-name block FORGED-VIA-NAME warn" "$CAHK_ERR"
+
+cahk_run "$CAHK_MUT_NOSCRUB" "$CAHK_P29B" file "$CAHK_CONSOLE_PAYLOAD"
+if [[ "$CAHK_RC" -eq 2 ]]; then
+  pass "CA-029 -- mutant control: with scrub neutralised the forged rule name DOES reach exit 2, so the exit-0 assertion above is not vacuous"
+else
+  fail "CA-029 -- mutant control FAILED: scrub-neutralised copy gave rc=${CAHK_RC} for the forged rule name"
+fi
+
+# `list` is the third reachable path for the same forge: one rule file must produce exactly one line.
+cahk_list "$CAHK_HOOKIFY" "$CAHK_P29B"
+CAHK_LIST_LINES="$(printf '%s\n' "$CAHK_OUT" | grep -c . || true)"
+if [[ "$CAHK_LIST_LINES" -eq 1 ]]; then
+  pass "CA-029 -- edm-hookify list emits exactly one line for one rule file, even with a newline in its name"
+else
+  fail "CA-029 -- edm-hookify list emitted ${CAHK_LIST_LINES} lines for one rule file: [${CAHK_OUT}]"
+fi
+cahk_list "$CAHK_MUT_NOSCRUB" "$CAHK_P29B"
+CAHK_LIST_LINES_MUT="$(printf '%s\n' "$CAHK_OUT" | grep -c . || true)"
+if [[ "$CAHK_LIST_LINES_MUT" -gt 1 ]]; then
+  pass "CA-029 -- mutant control: with scrub neutralised the same rule file splits into ${CAHK_LIST_LINES_MUT} list lines"
+else
+  fail "CA-029 -- mutant control FAILED: scrub-neutralised list still emitted ${CAHK_LIST_LINES_MUT} line(s)"
+fi
+
+# ---- CA-030: one malformed rule file must never disable the rest of the set ---------------------
+# Four realistic authoring mistakes, each alongside ONE valid, enabled `block` rule that a matching
+# payload would fire. The contract is: the block still fires (exit 2, line on stdout) AND the bad
+# file is named on stderr.
+CAHK_P30="$(cahk_newproj ca030)"
+cp "${CAHK_FIX}/block-rm-rf-bash.json" "${CAHK_P30}/.claude/edm-hookify/"
+CAHK_BASH_MATCH='{"command":"rm -rf /tmp/scratch"}'
+
+cahk_write_bad_rule() {
+  # cahk_write_bad_rule <trigger> <destination>
+  case "$1" in
+    array)    printf '[{"name":"a","enabled":true}]\n' > "$2" ;;
+    string)   printf '"a bare JSON string, not an object"\n' > "$2" ;;
+    badconds) printf '{"name":"b","enabled":true,"event":"bash","conditions":"oops","message":"m"}\n' > "$2" ;;
+    badregex) printf '{"name":"c","enabled":true,"event":"bash","conditions":[{"field":"command","operator":"regex_match","pattern":"["}],"message":"m"}\n' > "$2" ;;
+  esac
+}
+
+for cahk_trigger in array string badconds badregex; do
+  case "$cahk_trigger" in
+    array)    cahk_expect_reason="rule must be a JSON object, got array" ;;
+    string)   cahk_expect_reason="rule must be a JSON object, got string" ;;
+    badconds) cahk_expect_reason="conditions must be an array, got string" ;;
+    badregex) cahk_expect_reason="rule evaluation error" ;;
+  esac
+  cahk_write_bad_rule "$cahk_trigger" "${CAHK_P30}/.claude/edm-hookify/bad-rule.json"
+  cahk_run "$CAHK_HOOKIFY" "$CAHK_P30" bash "$CAHK_BASH_MATCH"
+  cahk_rc_is "CA-030 (${cahk_trigger}) -- the valid enabled block rule still fires alongside the malformed file" 2
+  check "CA-030 (${cahk_trigger}) -- the block rule's line is on stdout" \
+    "block-rm-rf-bash block" "$CAHK_OUT"
+  check "CA-030 (${cahk_trigger}) -- the malformed file is named on stderr" "bad-rule.json" "$CAHK_ERR"
+  check "CA-030 (${cahk_trigger}) -- stderr states the specific reason" "$cahk_expect_reason" "$CAHK_ERR"
+done
+
+# Discrimination control 1: the exit-2 assertions above must be carried by the VALID rule, not by
+# anything the malformed file does. Disable the valid rule and the same directory must exit 1.
+jq '.enabled = false' "${CAHK_FIX}/block-rm-rf-bash.json" \
+  > "${CAHK_P30}/.claude/edm-hookify/block-rm-rf-bash.json"
+cahk_write_bad_rule badregex "${CAHK_P30}/.claude/edm-hookify/bad-rule.json"
+cahk_run "$CAHK_HOOKIFY" "$CAHK_P30" bash "$CAHK_BASH_MATCH"
+cahk_rc_is "CA-030 -- control: with the valid block rule disabled the same directory exits 1, not 2" 1
+cahk_stdout_empty "CA-030 -- control: nothing reaches stdout when the only enabled rule is malformed"
+cp "${CAHK_FIX}/block-rm-rf-bash.json" "${CAHK_P30}/.claude/edm-hookify/block-rm-rf-bash.json"
+
+# Mutant control 2: remove the outer try/catch around project_rule and confirm the `badregex`
+# trigger once again aborts the whole pass -- exit 1, zero rules evaluated. This is the mutation
+# that isolates the actual CA-030 fix (the type guards alone would not survive it).
+CAHK_MUT_NOCATCH="$(cahk_mutant nocatch \
+  -e 's@| (try project_rule(@| (project_rule(@' \
+  -e 's@^   catch (.*@   )@')"
+cahk_write_bad_rule badregex "${CAHK_P30}/.claude/edm-hookify/bad-rule.json"
+cahk_run "$CAHK_MUT_NOCATCH" "$CAHK_P30" bash "$CAHK_BASH_MATCH"
+if [[ "$CAHK_RC" -eq 1 && -z "$CAHK_OUT" ]]; then
+  pass "CA-030 -- mutant control: without the outer try/catch the invalid-regex file DOES abort the pass (rc=1, zero rules evaluated)"
+else
+  fail "CA-030 -- mutant control FAILED: try/catch-less copy gave rc=${CAHK_RC} stdout=[${CAHK_OUT}]; the isolation passes above prove nothing"
+fi
+
+# Mutant control 3: the object type guard is what produces the specific `got array` reason.
+CAHK_MUT_NOTYPE="$(cahk_mutant notypeguard -e 's@^  if ($r|type) != "object" then@  if false then@')"
+cahk_write_bad_rule array "${CAHK_P30}/.claude/edm-hookify/bad-rule.json"
+cahk_run "$CAHK_MUT_NOTYPE" "$CAHK_P30" bash "$CAHK_BASH_MATCH"
+check_absent "CA-030 -- mutant control: with the object type guard removed the 'got array' reason disappears" \
+  "rule must be a JSON object, got array" "$CAHK_ERR"
+rm -f "${CAHK_P30}/.claude/edm-hookify/bad-rule.json"
+
+# ---- CA-031: "no payload" and "empty field" are different facts --------------------------------
+CAHK_P31="$(cahk_newproj ca031)"
+jq -n '{name:"ca031-contains",enabled:true,event:"file",action:"warn",
+        conditions:[{field:"new_text",operator:"contains",pattern:"console.log"}],
+        message:"contains probe"}' > "${CAHK_P31}/.claude/edm-hookify/ca031-contains.json"
+jq -n '{name:"ca031-not-contains",enabled:true,event:"file",action:"warn",
+        conditions:[{field:"new_text",operator:"not_contains",pattern:"console.log"}],
+        message:"not-contains probe"}' > "${CAHK_P31}/.claude/edm-hookify/ca031-not-contains.json"
+
+cahk_run "$CAHK_HOOKIFY" "$CAHK_P31" file ''
+cahk_rc_is "CA-031 -- empty stdin is a setup error, not an empty-field match" 1
+check "CA-031 -- the empty-stdin setup error says so" "no payload on stdin" "$CAHK_ERR"
+check_absent "CA-031 -- no rule fires on empty stdin" "ca031-not-contains" "$CAHK_ERR"
+
+cahk_run "$CAHK_HOOKIFY" "$CAHK_P31" file '{'
+cahk_rc_is "CA-031 -- an unparseable payload is a setup error" 1
+check "CA-031 -- the unparseable-payload setup error says so" "not a single JSON object" "$CAHK_ERR"
+check_absent "CA-031 -- no rule fires on an unparseable payload" "ca031-not-contains" "$CAHK_ERR"
+
+cahk_run "$CAHK_HOOKIFY" "$CAHK_P31" file '{"file_path":"src/a.js"}'
+cahk_rc_is "CA-031 -- a well-formed payload missing the conditioned field exits 0" 0
+check_absent "CA-031 -- a contains rule does not fire when its field is absent" "ca031-contains" "$CAHK_ERR"
+check_absent "CA-031 -- a not_contains rule does not fire when its field is absent either" \
+  "ca031-not-contains" "$CAHK_ERR"
+
+# Positive controls: both rules DO fire when their field is supplied, so the two silences above
+# are about absence, not about two rules that could never match anything.
+cahk_run "$CAHK_HOOKIFY" "$CAHK_P31" file '{"file_path":"src/a.js","new_text":"console.log(1)"}'
+cahk_rc_is "CA-031 -- control: a supplied field still exits 0 (both rules are warn)" 0
+check "CA-031 -- control: the contains rule DOES fire when new_text is supplied and matches" \
+  "ca031-contains warn" "$CAHK_ERR"
+cahk_run "$CAHK_HOOKIFY" "$CAHK_P31" file '{"file_path":"src/a.js","new_text":"clean code"}'
+check "CA-031 -- control: the not_contains rule DOES fire when new_text is supplied and does not match" \
+  "ca031-not-contains warn" "$CAHK_ERR"
+
+# Mutant control: restore the pre-fix "absent reads as empty" semantics and confirm the
+# `not_contains` rule fires on absence again.
+CAHK_MUT_NULLOK="$(cahk_mutant nullok -e 's@if $rawval == null then@if false then@')"
+cahk_run "$CAHK_MUT_NULLOK" "$CAHK_P31" file '{"file_path":"src/a.js"}'
+if [[ "$CAHK_ERR" == *"ca031-not-contains"* ]]; then
+  pass "CA-031 -- mutant control: with the absent-field guard removed the not_contains rule DOES fire on absence"
+else
+  fail "CA-031 -- mutant control FAILED: guard-removed copy did not fire on absence; the silence above proves nothing"
+fi
+
+# ---- CA-041: the four never-exercised op_match operators ---------------------------------------
+# Each operator gets a matching payload AND a non-matching payload (both truth values of the arm
+# observed), plus a mutant that neutralises that one arm and must make the matching case go quiet.
+cahk_op_case() {
+  # cahk_op_case <op> <pattern> <matching-file_path> <non-matching-file_path> <mutant-sed-expr>
+  local op="$1" pattern="$2" hit="$3" miss="$4" mutexpr="$5"
+  local proj rule mutant
+  proj="$(cahk_newproj "ca041-${op}")"
+  rule="${proj}/.claude/edm-hookify/ca041-${op}.json"
+  jq -n --arg op "$op" --arg pat "$pattern" \
+    '{name:("ca041-" + $op),enabled:true,event:"file",action:"warn",
+      conditions:[{field:"file_path",operator:$op,pattern:$pat}],
+      message:("probe for " + $op)}' > "$rule"
+
+  cahk_run "$CAHK_HOOKIFY" "$proj" file "$(jq -cn --arg p "$hit" '{file_path:$p,new_text:"x"}')"
+  check "CA-041 (${op}) -- matching payload '${hit}' fires the rule" "ca041-${op} warn" "$CAHK_ERR"
+  cahk_rc_is "CA-041 (${op}) -- a warn match still exits 0" 0
+
+  cahk_run "$CAHK_HOOKIFY" "$proj" file "$(jq -cn --arg p "$miss" '{file_path:$p,new_text:"x"}')"
+  check_absent "CA-041 (${op}) -- non-matching payload '${miss}' does not fire the rule" \
+    "ca041-${op}" "$CAHK_ERR"
+
+  mutant="$(cahk_mutant "op-${op}" -e "$mutexpr")"
+  cahk_run "$mutant" "$proj" file "$(jq -cn --arg p "$hit" '{file_path:$p,new_text:"x"}')"
+  if [[ "$CAHK_ERR" != *"ca041-${op}"* ]]; then
+    pass "CA-041 (${op}) -- mutant control: neutralising the ${op} arm makes the matching case go quiet, so the match above is carried by that arm"
+  else
+    fail "CA-041 (${op}) -- mutant control FAILED: the ${op} arm was neutralised and the rule still fired; the match assertion proves nothing"
+  fi
+}
+
+cahk_op_case equals      'src/exact.js' 'src/exact.js' 'src/exact.js.bak' \
+  's@then ($val == $pattern)@then false@'
+cahk_op_case starts_with 'src/'         'src/a.js'     'lib/a.js' \
+  's@then ($val|startswith($pattern))@then false@'
+cahk_op_case ends_with   '.md'          'docs/a.md'    'docs/a.mdx' \
+  's@then ($val|endswith($pattern))@then false@'
+cahk_op_case regex_match '^src/[a-z]+[0-9]+\.js$' 'src/abc123.js' 'src/abc.js' \
+  's@then ($val|test($pattern))@then false@'
+
+# regex_match additionally pins ONIGURUMA semantics, which CLAUDE.md's Hookify section warns about
+# and nothing tested. `\d` is a digit class under Oniguruma (jq's `test()`); under POSIX ERE
+# (`grep -E`) the backslash is dropped and the pattern degrades to the literal `d+`. The
+# non-matching payload below is chosen so the two engines DISAGREE: "abcdef" contains a literal
+# `d`, so an ERE engine would match it, and only an Oniguruma engine leaves it alone.
+CAHK_P41RE="$(cahk_newproj ca041-oniguruma)"
+jq -n '{name:"ca041-oniguruma",enabled:true,event:"file",action:"warn",
+        conditions:[{field:"file_path",operator:"regex_match",pattern:"\\d+"}],
+        message:"oniguruma digit-class probe"}' \
+  > "${CAHK_P41RE}/.claude/edm-hookify/ca041-oniguruma.json"
+cahk_run "$CAHK_HOOKIFY" "$CAHK_P41RE" file '{"file_path":"abc123","new_text":"x"}'
+check "CA-041 -- regex_match treats \\d as a digit class (Oniguruma), matching 'abc123'" \
+  "ca041-oniguruma warn" "$CAHK_ERR"
+cahk_run "$CAHK_HOOKIFY" "$CAHK_P41RE" file '{"file_path":"abcdef","new_text":"x"}'
+check_absent "CA-041 -- ... and does NOT match 'abcdef', which a POSIX-ERE reading of \\d+ (literal d+) would have matched" \
+  "ca041-oniguruma" "$CAHK_ERR"
+
+# ---- CA-042: the bash event's match path -------------------------------------------------------
+CAHK_P42B="$(cahk_newproj ca042-bash)"
+cp "${CAHK_FIX}/block-rm-rf-bash.json" "${CAHK_P42B}/.claude/edm-hookify/"
+
+cahk_run "$CAHK_HOOKIFY" "$CAHK_P42B" bash "$CAHK_BASH_MATCH"
+cahk_rc_is "CA-042 -- eval bash with a matching command exits 2" 2
+check "CA-042 -- the bash block line is on stdout" "block-rm-rf-bash block" "$CAHK_OUT"
+
+cahk_run "$CAHK_HOOKIFY" "$CAHK_P42B" bash '{"command":"ls -la /tmp"}'
+cahk_rc_is "CA-042 -- eval bash with a non-matching command exits 0" 0
+cahk_stdout_empty "CA-042 -- a non-matching bash command puts nothing on stdout"
+
+CAHK_MUT_NOREGEX="$(cahk_mutant bash-noregex -e 's@then ($val|test($pattern))@then false@')"
+cahk_run "$CAHK_MUT_NOREGEX" "$CAHK_P42B" bash "$CAHK_BASH_MATCH"
+if [[ "$CAHK_RC" -eq 0 ]]; then
+  pass "CA-042 -- mutant control: neutralising the regex arm drops the bash block to exit 0, so the exit-2 above is carried by real evaluation"
+else
+  fail "CA-042 -- mutant control FAILED: regex-neutralised copy still exited ${CAHK_RC} on the bash event"
+fi
+
+# ---- CA-042: the stop event's match path (the empty-conditions branch) --------------------------
+# `stop` defines no matchable fields, so a zero-condition rule is the only legal shape it can take
+# and the empty-conditions branch is the only branch it can reach.
+CAHK_P42SW="$(cahk_newproj ca042-stop-warn)"
+cp "${CAHK_FIX}/warn-stop-placeholder.json" "${CAHK_P42SW}/.claude/edm-hookify/"
+cahk_run "$CAHK_HOOKIFY" "$CAHK_P42SW" stop '{}'
+cahk_rc_is "CA-042 -- eval stop with a zero-condition warn rule exits 0" 0
+cahk_stdout_empty "CA-042 -- a stop warn match stays off stdout"
+check "CA-042 -- the stop warn line is on stderr" "warn-stop-placeholder warn" "$CAHK_ERR"
+
+CAHK_P42SB="$(cahk_newproj ca042-stop-block)"
+jq '.name = "ca042-stop-block" | .action = "block" | .message = "stop-event block probe"' \
+  "${CAHK_FIX}/warn-stop-placeholder.json" \
+  > "${CAHK_P42SB}/.claude/edm-hookify/ca042-stop-block.json"
+cahk_run "$CAHK_HOOKIFY" "$CAHK_P42SB" stop '{}'
+cahk_rc_is "CA-042 -- eval stop with a zero-condition block rule exits 2" 2
+check "CA-042 -- the stop block line is on stdout" "ca042-stop-block block stop-event block probe" "$CAHK_OUT"
+
+# The warn/block pair above is one discriminating control (same rule shape, only `action` differs).
+# This mutant is the second: it forces conds_match to return false, so the zero-condition rule
+# stops matching at all -- proving both stop cases reach a real condition evaluation rather than
+# some path that emits regardless.
+#
+# Note on why the mutation is `and` rather than removing the empty-conditions short-circuit: jq's
+# `all` over an EMPTY generator is `true`, so deleting the `($cs|length) == 0 or` disjunct changes
+# nothing for a zero-condition rule. That disjunct is a readability guard, not the deciding branch,
+# and a mutant built on the opposite assumption passed vacuously when first written here.
+CAHK_MUT_NOEMPTY="$(cahk_mutant stop-noempty -e 's@| ($cs|length) == 0 or@| (false) and@')"
+cahk_run "$CAHK_MUT_NOEMPTY" "$CAHK_P42SB" stop '{}'
+if [[ "$CAHK_RC" -eq 0 && -z "$CAHK_OUT" ]]; then
+  pass "CA-042 -- mutant control: forcing conds_match false stops the zero-condition block rule matching at all"
+else
+  fail "CA-042 -- mutant control FAILED: conds_match-neutralised copy still gave rc=${CAHK_RC} stdout=[${CAHK_OUT}]"
+fi
+
+# ---- CA-042: edm-stop-gate's own block translation ---------------------------------------------
+# The consumer half. Runs inside a scratch git repo with an isolated HOME/CLAUDE_PROJECT_DIR via
+# the same t46_isolate_and_run wrapper the EDMV4-T46 cases above use.
+CAHK_SG_ACTION="block"
+cahk_stopgate_case() {
+  edm-state init CAHKSG >/dev/null
+  local state
+  state="$(edm-state resolve-dir CAHKSG)/.edm-state.json"
+  jq '.current_phase = 2
+      | del(.schema_version)
+      | .skipped_phases = [{phase: 3, rationale: "CA-042 stop-gate fixture"}]' \
+    "$state" > "${state}.tmp" && mv "${state}.tmp" "$state"
+
+  mkdir -p ".claude/edm-hookify"
+  jq --arg act "$CAHK_SG_ACTION" \
+    '.name = "ca042-stop-rule" | .action = $act | .message = "CA-042 stop-gate probe"' \
+    "${CAHK_FIX}/warn-stop-placeholder.json" > ".claude/edm-hookify/ca042-stop-rule.json"
+
+  local out rc=0
+  out="$(edm-stop-gate 2>&1)" || rc=$?
+  if [[ "$CAHK_SG_ACTION" == "block" ]]; then
+    [[ "$rc" -eq 2 ]] \
+      && pass "CA-042 -- edm-stop-gate exits 2 when a stop-event block rule matches" \
+      || fail "CA-042 -- edm-stop-gate exited ${rc} with a matching stop block rule (expected 2): [${out}]"
+    check "CA-042 -- edm-stop-gate prints its own hookify label" \
+      "[EDM] a stop-event hookify rule matched:" "$out"
+    check "CA-042 -- edm-stop-gate carries the matched rule's own line" \
+      "ca042-stop-rule block CA-042 stop-gate probe" "$out"
+  else
+    [[ "$rc" -eq 0 ]] \
+      && pass "CA-042 -- control: the identical setup with action=warn exits 0, so the exit-2 above is carried by the block action alone" \
+      || fail "CA-042 -- control FAILED: action=warn exited ${rc} (expected 0): [${out}]"
+    check_absent "CA-042 -- control: no hookify block label is printed for a warn rule" \
+      "a stop-event hookify rule matched" "$out"
+  fi
+  return 0
+}
+t46_isolate_and_run cahk_stopgate_case
+CAHK_SG_ACTION="warn"
+t46_isolate_and_run cahk_stopgate_case
+
+# ---- CA-056: the list arm and the setup-error arm must not bypass the sanitizer ------------------
+# The needle is assembled at runtime from printf hex escapes -- never a literal non-ASCII byte in
+# this suite's own source, which would itself violate the ASCII rule the EDMV4-T52 AC2 sweep
+# enforces over bin/tests/.
+CAHK_NASTY="$(printf 'na\xc3\xa9me\x1b]0;pwned\x07')"
+CAHK_P56="$(cahk_newproj ca056-list)"
+jq --arg nm "$CAHK_NASTY" '.name = $nm' "${CAHK_FIX}/warn-no-console-log.json" \
+  > "${CAHK_P56}/.claude/edm-hookify/nasty-name.json"
+
+cahk_list "$CAHK_HOOKIFY" "$CAHK_P56"
+printf '%s\n' "$CAHK_OUT" > "${CAHK_TMP}/ca056-list.out"
+if cahk_nonascii "${CAHK_TMP}/ca056-list.out"; then
+  fail "CA-056 -- edm-hookify list emitted a non-ASCII or control byte from a rule name"
+else
+  pass "CA-056 -- edm-hookify list output is pure ASCII even when the rule name carries a UTF-8 byte and an ESC sequence"
+fi
+
+CAHK_P56E="$(cahk_newproj ca056-error)"
+jq --arg k "$CAHK_NASTY" '. + {($k): 1}' "${CAHK_FIX}/warn-no-console-log.json" \
+  > "${CAHK_P56E}/.claude/edm-hookify/nasty-key.json"
+cahk_run "$CAHK_HOOKIFY" "$CAHK_P56E" file "$CAHK_FILE_PAYLOAD"
+cahk_rc_is "CA-056 -- an unknown top-level key is a setup error" 1
+cp "${CAHK_TMP}/stderr" "${CAHK_TMP}/ca056-error.err"
+if cahk_nonascii "${CAHK_TMP}/ca056-error.err"; then
+  fail "CA-056 -- edm-hookify's setup-error line emitted a non-ASCII or control byte from a rule file"
+else
+  pass "CA-056 -- edm-hookify's setup-error line is pure ASCII even when the offending key carries a UTF-8 byte and an ESC sequence"
+fi
+
+# Control A: the scanner itself must be able to see these exact bytes, or both passes above are
+# meaningless.
+printf '%s\n' "$CAHK_NASTY" > "${CAHK_TMP}/ca056-control.txt"
+if cahk_nonascii "${CAHK_TMP}/ca056-control.txt"; then
+  pass "CA-056 -- control: the same scanner DOES flag the raw needle, so the two clean results above are not a broken predicate"
+else
+  fail "CA-056 -- control FAILED: the scanner did not flag the raw needle; the two clean results above prove nothing"
+fi
+
+# Control B: neutralise hookify_scrub (the bash-side ASCII filter) and confirm the UTF-8 byte
+# reaches the list arm again. This is the filter CA-056 found the `L)` arm bypassing.
+CAHK_MUT_NOHFSCRUB="$(cahk_mutant nohookifyscrub -e "s@| LC_ALL=C tr -c .*@| cat@")"
+cahk_list "$CAHK_MUT_NOHFSCRUB" "$CAHK_P56"
+printf '%s\n' "$CAHK_OUT" > "${CAHK_TMP}/ca056-list-mut.out"
+if cahk_nonascii "${CAHK_TMP}/ca056-list-mut.out"; then
+  pass "CA-056 -- mutant control: with hookify_scrub neutralised the UTF-8 byte DOES reach list's stdout"
+else
+  fail "CA-056 -- mutant control FAILED: hookify_scrub-neutralised copy still emitted pure ASCII from list"
+fi
+
+# Control C: the same neutralised hookify_scrub against the SETUP-ERROR arm, which is the second
+# of the two arms CA-056 found bypassing the filter. It needs its own run rather than sharing
+# control B's: the two arms are separate call sites, and only a per-arm control proves each one
+# actually routes through the helper.
+cahk_run "$CAHK_MUT_NOHFSCRUB" "$CAHK_P56E" file "$CAHK_FILE_PAYLOAD"
+cp "${CAHK_TMP}/stderr" "${CAHK_TMP}/ca056-error-mut.err"
+if cahk_nonascii "${CAHK_TMP}/ca056-error-mut.err"; then
+  pass "CA-056 -- mutant control: with hookify_scrub neutralised the UTF-8 byte DOES reach the setup-error line"
+else
+  fail "CA-056 -- mutant control FAILED: hookify_scrub-neutralised copy still emitted pure ASCII on the setup-error line"
+fi
+
+# Control D: hookify_scrub is not the only filter in play. The jq-side `scrub` (the CA-029
+# record-encoding guard) already maps every control character to a space, so an ESC never survives
+# even when hookify_scrub is off -- which means controls B and C alone say nothing about the ESC
+# half of the needle. Neutralise BOTH and confirm the raw ESC byte reaches stdout, so the
+# ESC-free outputs above are a property of the filters rather than of a needle that never carried
+# one. (A first draft of this band attributed ESC removal to the jq scrub alone and asserted the
+# converse; the mutant caught it.)
+CAHK_ESC="$(printf '\033')"
+CAHK_MUT_NOFILTER="$(cahk_mutant nofilter \
+  -e 's@^def scrub($s):.*@def scrub($s): ($s|tostring);@' \
+  -e 's@| LC_ALL=C tr -c .*@| cat@')"
+cahk_list "$CAHK_MUT_NOFILTER" "$CAHK_P56"
+printf '%s\n' "$CAHK_OUT" > "${CAHK_TMP}/ca056-list-nofilter.out"
+if LC_ALL=C grep -qF -- "$CAHK_ESC" "${CAHK_TMP}/ca056-list-nofilter.out"; then
+  pass "CA-056 -- mutant control: with BOTH filters neutralised the raw ESC byte DOES reach list's stdout"
+else
+  fail "CA-056 -- mutant control FAILED: with both filters neutralised no ESC byte appeared; the ESC-free results above prove nothing"
+fi
+
+# Static half: CA-056 asked for `_rest` (and the two setup-error halves it splits into) to be
+# covered by the same single-emit-point scan EDMV4-T52 AC6 applies to the matched-rule fields. That
+# ticket's own variable list is owned by its band above and is not edited here; this is the
+# equivalent assertion for the three variables it missed, keyed on hookify_scrub.
+CAHK_RAW_HITS="$(t52_raw_var_only_via_func "$CAHK_HOOKIFY" "hookify_scrub" _rest _epath _ereason)"
+if [[ -z "$CAHK_RAW_HITS" ]]; then
+  pass "CA-056 -- \$_rest, \$_epath and \$_ereason are never emitted except through hookify_scrub"
+else
+  fail "CA-056 -- a raw emission of an unsanitized list/setup-error variable survives: ${CAHK_RAW_HITS}"
+fi
+
+# Positive control for the static half, matching the EDMV4-T52 AC6 injection technique.
+CAHK_BYPASS="${CAHK_TMP}/edm-hookify-listbypass"
+awk -v marker='      HAD_ERROR=1' \
+  '{print; if (index($0, marker) > 0) print "      echo \"$_rest\" >&2  # BYPASS-LEAK injected for the CA-056 positive control"}' \
+  "$CAHK_HOOKIFY" > "$CAHK_BYPASS"
+CAHK_BYPASS_HITS="$(t52_raw_var_only_via_func "$CAHK_BYPASS" "hookify_scrub" _rest _epath _ereason)"
+if [[ -n "$CAHK_BYPASS_HITS" ]]; then
+  pass "CA-056 -- positive control: an injected raw echo of \$_rest IS detected by the same scan"
+else
+  fail "CA-056 -- positive control FAILED: an injected bypass was not detected, so the scan above proves nothing"
+fi
+
 echo
 # =================================================================================================
 # P1 BATCH: CA-036 / CA-037 / CA-038 / CA-046 / CA-047 / CA-022 / CA-028 / CA-033 / CA-034
