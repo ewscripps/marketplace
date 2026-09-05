@@ -2421,8 +2421,31 @@ rm -rf "$T43_AC9_SANDBOX"; mkdir -p "$T43_AC9_SANDBOX/.claude/edm-hookify"
 cp "${PLUGIN_DIR}/bin/tests/fixtures/hookify/warn-no-console-log.json" \
    "$T43_AC9_SANDBOX/.claude/edm-hookify/" 2>/dev/null || true
 
-# Snapshot every path under the sandbox with its size and mtime.
-t43_ac9_snapshot() { ( cd "$1" && find . -type f -exec stat -f '%N %z %m' {} \; 2>/dev/null | sort ); }
+# Snapshot every path under the sandbox with the CONTENT HASH of the file at it.
+#
+# CA-053: this was `find . -type f -exec stat -f '%N %z %m' {} \; 2>/dev/null | sort`. `stat -f`
+# with those specifiers is BSD-only -- on GNU, `-f` means `--file-system` and the format string is
+# consumed as a filename operand, so every invocation errors into the `2>/dev/null` and BOTH
+# snapshots come back equal-and-empty. The no-write assertion below then passed while verifying
+# nothing at all, on every Linux host. Content hashing has no BSD/GNU divergence to get wrong
+# (_harness_hash_file already owns the shasum/sha256sum split) and, unlike size+mtime, detects an
+# in-place MODIFICATION of an existing file -- not only a change in file COUNT, which is the only
+# thing the adjacent add-a-file control can ever exercise.
+t43_ac9_snapshot() {
+  ( cd "$1" || return 1
+    { find . -type f -print 2>/dev/null || true; } | LC_ALL=C sort | while IFS= read -r _t43_ac9_f; do
+      printf '%s %s\n' "$_t43_ac9_f" "$(_harness_hash_file "$_t43_ac9_f")"
+    done )
+}
+
+# Precondition: a content hasher is genuinely on PATH. Without one, _harness_hash_file prints the
+# literal "unhashable" for every file and both snapshots compare equal for that reason alone --
+# the same equal-and-empty vacuity CA-053 found, wearing a different mask.
+if command -v shasum >/dev/null 2>&1 || command -v sha256sum >/dev/null 2>&1; then
+  pass "EDMV4-T43 AC9 / CA-053 -- a content hasher is on PATH, so the snapshots below compare real file content"
+else
+  fail "EDMV4-T43 AC9 / CA-053 -- neither shasum nor sha256sum is on PATH: the snapshot comparison below would be vacuous"
+fi
 
 T43_AC9_BEFORE="$(t43_ac9_snapshot "$T43_AC9_SANDBOX")"
 ( cd "$T43_AC9_SANDBOX" && CLAUDE_PROJECT_DIR="$T43_AC9_SANDBOX" "$EDM_HOOKIFY" list >/dev/null 2>&1 ) || true
@@ -2451,6 +2474,38 @@ T43_AC9_CTL_AFTER="$(t43_ac9_snapshot "$T43_AC9_SANDBOX")"
 [[ "$T43_AC9_CTL_BEFORE" != "$T43_AC9_CTL_AFTER" ]] \
   && pass "EDMV4-T43 AC9 -- positive control: the snapshot comparison detects a script that does write a file" \
   || fail "EDMV4-T43 AC9 -- positive control FAILED: a known file write was not detected, so the clean result above proves nothing"
+
+# ---- CA-053 negative control: an in-place MODIFICATION of an existing file, at identical byte
+# length and identical mtime. This is the case the replaced size+mtime snapshot could not detect
+# even on a BSD host where it ran at all -- the control above adds a file, so it exercises file
+# COUNT only. `tr` preserves the byte count exactly and `touch -r` restores the mtime from a
+# `cp -p` reference, both POSIX, so the assertions below can state size and mtime equality as
+# facts rather than assuming them.
+T43_AC9_MOD_TARGET="${T43_AC9_SANDBOX}/.claude/edm-hookify/warn-no-console-log.json"
+T43_AC9_MTIME_REF="${TMP}/t43-ac9-mtime-ref"
+cp -p "$T43_AC9_MOD_TARGET" "$T43_AC9_MTIME_REF"
+T43_AC9_SIZE_BEFORE="$(wc -c < "$T43_AC9_MOD_TARGET" | tr -d ' ')"
+T43_AC9_MOD_BEFORE="$(t43_ac9_snapshot "$T43_AC9_SANDBOX")"
+tr 'e' 'E' < "$T43_AC9_MOD_TARGET" > "${TMP}/t43-ac9-mutated"
+cat "${TMP}/t43-ac9-mutated" > "$T43_AC9_MOD_TARGET"
+touch -r "$T43_AC9_MTIME_REF" "$T43_AC9_MOD_TARGET"
+T43_AC9_SIZE_AFTER="$(wc -c < "$T43_AC9_MOD_TARGET" | tr -d ' ')"
+T43_AC9_MOD_AFTER="$(t43_ac9_snapshot "$T43_AC9_SANDBOX")"
+
+check_num "EDMV4-T43 AC9 / CA-053 -- the modified file's byte length is unchanged, so a size-based snapshot could not see this edit" \
+  "$T43_AC9_SIZE_BEFORE" "$T43_AC9_SIZE_AFTER"
+if [[ ! "$T43_AC9_MOD_TARGET" -nt "$T43_AC9_MTIME_REF" && ! "$T43_AC9_MTIME_REF" -nt "$T43_AC9_MOD_TARGET" ]]; then
+  pass "EDMV4-T43 AC9 / CA-053 -- the modified file's mtime is unchanged, so an mtime-based snapshot could not see this edit either"
+else
+  fail "EDMV4-T43 AC9 / CA-053 -- the control's mtime restore did not hold, so this case no longer proves the content-hash snapshot is what catches the edit"
+fi
+if [[ "$T43_AC9_MOD_BEFORE" != "$T43_AC9_MOD_AFTER" ]]; then
+  pass "EDMV4-T43 AC9 / CA-053 -- negative control: the content-hash snapshot DOES detect an in-place modification at identical size and mtime (the case the BSD-only stat snapshot missed)"
+else
+  fail "EDMV4-T43 AC9 / CA-053 -- negative control FAILED: an in-place modification produced identical snapshots, so the no-write assertion above is still vacuous"
+fi
+rm -f "$T43_AC9_MTIME_REF" "${TMP}/t43-ac9-mutated"
+
 rm -f "$T43_AC9_WRITER"; rm -rf "$T43_AC9_SANDBOX"
 
 # ---- AC7: no real `timeout` invocation -- every occurrence of the word is inside a comment -----
@@ -6045,6 +6100,45 @@ echo
 # hardcoded file list.
 echo "=== EDMV4-T51: required-binary set -- no node/python/yq/ruby/deno, and perl only where guarded ==="
 
+# ---- Live scan target set: every SHELL SCRIPT under bin/ and evals/, bin/tests/ INCLUDED.
+#
+# Membership is resolved by SHAPE -- a `#!` first line -- never by a name list and never by a path
+# exclusion, so a script added anywhere under either tree lands in scope the moment it exists.
+# Non-script files (the markdown fixture corpora, the JSON rule fixtures, the .jsonl lens corpora)
+# are out of scope by the same shape rule rather than by name: they carry these binary names as
+# English prose or as test data and cannot introduce a runtime dependency on anything.
+t51_script_targets() {
+  local _t51_f
+  while IFS= read -r -d "" _t51_f; do
+    if [[ "$(head -c 2 "$_t51_f" 2>/dev/null)" == '#!' ]]; then
+      printf '%s\n' "$_t51_f"
+    fi
+  done < <(find "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/evals" -type f -print0 2>/dev/null)
+}
+T51_TARGETS="$(t51_script_targets)"
+T51_TARGET_COUNT="$(printf '%s\n' "$T51_TARGETS" | grep -c . || true)"
+T51_TESTDIR_TARGET_COUNT="$(printf '%s\n' "$T51_TARGETS" | grep -c '/bin/tests/' || true)"
+# Coverage assertion for the target set itself: bin/tests/ must actually be in it. CA-051 found
+# both sweeps below filtering `/tests/` out, so the one thing this enumeration must never do
+# silently is go back to excluding it.
+if [[ "$T51_TARGET_COUNT" -ge 20 && "$T51_TESTDIR_TARGET_COUNT" -ge 5 ]]; then
+  pass "EDMV4-T51 AC1 / CA-051 -- the live scan target set covers ${T51_TARGET_COUNT} shell scripts under bin/ and evals/, ${T51_TESTDIR_TARGET_COUNT} of them under bin/tests/ (previously excluded wholesale)"
+else
+  fail "EDMV4-T51 AC1 / CA-051 -- the live scan target set is implausibly small: ${T51_TARGET_COUNT} total, ${T51_TESTDIR_TARGET_COUNT} under bin/tests/"
+fi
+
+# t51_grep_targets <ere> -- applies <ere> to every target, emitting `path:lineno:text`. The
+# `/dev/null` second operand is what makes grep print the filename for a single-file invocation.
+t51_grep_targets() {
+  local re="$1" _t51_t
+  while IFS= read -r _t51_t; do
+    [[ -n "$_t51_t" ]] || continue
+    grep -nE "$re" "$_t51_t" /dev/null 2>/dev/null || true
+  done <<T51_TARGET_EOF
+${T51_TARGETS}
+T51_TARGET_EOF
+}
+
 T51_INTERP_RE='\b(node|python|python3|yq|ruby|deno)\b'
 
 # ---- Zero node/python/python3/yq/ruby/deno references across bin/ and evals/ (bin/tests/
@@ -6164,6 +6258,79 @@ if [[ -n "$T51_STAT_CONTROL_UNPAIRED" && -z "$T51_STAT_CONTROL_PAIRED" ]]; then
 else
   fail "EDMV4-T51 -- positive control broken: unpaired=[${T51_STAT_CONTROL_UNPAIRED}] paired=[${T51_STAT_CONTROL_PAIRED}]"
 fi
+
+# ---- CA-053: the same unpaired-stat rule, widened from edm-gateguard alone to EVERY shell script
+# under bin/ and evals/, bin/tests/ INCLUDED.
+#
+# CA-053 was an unpaired, BSD-only `stat -f` in this file's own EDMV4-T43 AC9 snapshot. It escaped
+# both existing divergence guards for one reason: T51's check above looks only at edm-gateguard,
+# and T61 AC11's tree-wide sweep in wave7-smoke.sh pipes through `grep -v '/tests/'`. A suite is
+# exactly as capable of shipping a GNU-only or BSD-only idiom as a bin/ script is, and when it
+# does, the assertion built on it goes quietly vacuous on the other platform instead of failing.
+#
+# Exemptions are all by SHAPE, never by filename:
+#   (a) a line carrying BOTH `stat -c` and `stat -f` is the sanctioned portable fallback pair and
+#       is portable no matter which file it lives in (the exemption T61 AC11 already uses);
+#   (b) a full-line comment;
+#   (c) a pass/fail/echo/check message argument -- prose describing the rule, never a use of it;
+#   (d) any occurrence inside a SINGLE-QUOTED span, stripped before the test. Every meta-reference
+#       to these idioms in this tree -- grep patterns, fixture literals, quoted words inside a
+#       message -- lives inside single quotes, and a real invocation never can: a command word
+#       inside single quotes is inert data by construction, so this exemption cannot hide a use.
+T51_STAT_SWEEP_RE='stat -[cf]'
+t51_stat_filter() {
+  sed "s/'[^']*'//g" \
+    | grep -vE ':[0-9]+:[[:space:]]*#' \
+    | grep -vE 'stat -c.*stat -f|stat -f.*stat -c' \
+    | grep -vE '\b(pass|fail|echo|check[a-z_]*)[[:space:]]*"' \
+    | grep -E "$T51_STAT_SWEEP_RE" || true
+}
+T51_STAT_SWEEP_HITS="$(t51_grep_targets "$T51_STAT_SWEEP_RE" | t51_stat_filter)"
+if [[ -z "$T51_STAT_SWEEP_HITS" ]]; then
+  pass "EDMV4-T51 / CA-053 -- zero unpaired 'stat -c'/'stat -f' uses across every shell script under bin/ and evals/, bin/tests/ included (${T51_TESTDIR_TARGET_COUNT} suites newly in scope)"
+else
+  fail "EDMV4-T51 / CA-053 -- unpaired platform-specific stat use(s) found:\n${T51_STAT_SWEEP_HITS}"
+fi
+
+# Controls for the widened sweep, run against a scratch copy of a real suite rather than a bare
+# synthetic string -- a synthetic-only control would not prove the four exemptions above leave
+# real code lines reachable, which is precisely how an exemption silently disarms its own scan.
+w8_scratch_dir T51_STAT_TMP
+T51_STAT_SCRATCH="${T51_STAT_TMP}/wave8-stat-control.sh"
+cat "${SCRIPT_DIR}/wave8-smoke.sh" > "$T51_STAT_SCRATCH"
+printf '\n  t51_control_mtime="$(stat %s %sY "$f")"\n' '-c' '%' >> "$T51_STAT_SCRATCH"
+T51_STAT_CTL_HITS="$({ grep -nE "$T51_STAT_SWEEP_RE" "$T51_STAT_SCRATCH" /dev/null 2>/dev/null || true; } | t51_stat_filter)"
+if [[ -n "$T51_STAT_CTL_HITS" ]]; then
+  pass "EDMV4-T51 / CA-053 -- positive control: a REAL unpaired 'stat -c' appended to a scratch copy of wave8-smoke.sh is caught despite the four exemptions"
+else
+  fail "EDMV4-T51 / CA-053 -- positive control broken: a real unpaired stat use on a code line was NOT caught, so the widened sweep is disarmed"
+fi
+
+# Negative control 1: a PAIRED fallback appended to the same scratch copy must NOT be reported --
+# the exemption is shape-specific, not a blanket allowance.
+T51_STAT_SCRATCH2="${T51_STAT_TMP}/wave8-stat-paired.sh"
+cat "${SCRIPT_DIR}/wave8-smoke.sh" > "$T51_STAT_SCRATCH2"
+printf '\n  t51_ctl_m="$(stat %s %sY "$f" 2>/dev/null)" || t51_ctl_m="$(stat %s %sm "$f" 2>/dev/null)"\n' '-c' '%' '-f' '%' >> "$T51_STAT_SCRATCH2"
+T51_STAT_PAIRED_HITS="$({ grep -nE "$T51_STAT_SWEEP_RE" "$T51_STAT_SCRATCH2" /dev/null 2>/dev/null || true; } | t51_stat_filter)"
+if [[ -z "$T51_STAT_PAIRED_HITS" ]]; then
+  pass "EDMV4-T51 / CA-053 -- negative control: a PAIRED stat -c/stat -f fallback appended to the same scratch copy is exempted by shape"
+else
+  fail "EDMV4-T51 / CA-053 -- negative control FAILED: a portable paired fallback was reported as a divergence point:\n${T51_STAT_PAIRED_HITS}"
+fi
+
+# Negative control 2: the single-quote strip must not swallow a real use that merely SITS BESIDE a
+# quoted meta-reference on the same line. Without this, exemption (d) could be over-broad and the
+# positive control above would still pass.
+T51_STAT_SCRATCH3="${T51_STAT_TMP}/wave8-stat-adjacent.sh"
+cat "${SCRIPT_DIR}/wave8-smoke.sh" > "$T51_STAT_SCRATCH3"
+printf '\n  t51_ctl_a="$(grep %s /dev/null; stat %s %sY "$f")"\n' "'stat -f'" '-c' '%' >> "$T51_STAT_SCRATCH3"
+T51_STAT_ADJ_HITS="$({ grep -nE "$T51_STAT_SWEEP_RE" "$T51_STAT_SCRATCH3" /dev/null 2>/dev/null || true; } | t51_stat_filter)"
+if [[ -n "$T51_STAT_ADJ_HITS" ]]; then
+  pass "EDMV4-T51 / CA-053 -- negative control: a real unpaired stat use beside a single-quoted meta-reference on the same line is still caught (the quote strip is not over-broad)"
+else
+  fail "EDMV4-T51 / CA-053 -- negative control FAILED: the single-quote strip swallowed a real stat use that shared a line with a quoted reference"
+fi
+rm -rf "$T51_STAT_TMP"
 
 # ---- No .js/.ts/.mjs/.cjs/.py file anywhere under plugins/edm/, live-derived via find.
 # evals/fixtures/ is excluded: it holds a synthetic "tiny-svc" JS subject-repository fixture
