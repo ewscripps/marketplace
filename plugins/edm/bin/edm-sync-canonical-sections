@@ -12,14 +12,22 @@
 # `find . -iname CLAUDE.md` from an unrelated scratch project resolves to that project's own
 # file, not this plugin's). Full finding recorded in decisions.md as D22.
 #
-# This script deterministically extracts the two by-name-referenced canonical sections out of
+# This script deterministically extracts the by-name-referenced canonical sections out of
 # plugins/edm/CLAUDE.md into docs/canonical-sections.md -- a plugin-relative path under the same
 # docs/ directory already loaded at write time by name (docs/audit-patterns/*.md, EDMV3-T29),
 # rather than a directory Claude Code auto-loads by convention.
 #
+# CA-022: this block deliberately states NO count and names NO section. It used to say "the two
+# by-name-referenced canonical sections", and the generator had grown to seven without anyone
+# noticing -- so an operator editing one of the other five believed it was not covered. Re-pinning
+# the literal to "seven" is the same defect one edit later (that is exactly what CA-021 was), so
+# `--help` instead prints the live inventory below this block, derived at runtime from the
+# generation block's own `extract_section` calls. The list under "Sections extracted" in --help
+# output IS the authoritative answer; nothing here restates it.
+#
 # One-directional and scripted (Technical Notes: never hand-maintained in two places): this
 # script is the ONLY writer of docs/canonical-sections.md. Re-run it (no arguments) after editing
-# either source section in CLAUDE.md. bin/tests/wave6-smoke.sh's "T41 AC5" case asserts the
+# any of the source sections `--help` lists. bin/tests/wave6-smoke.sh's "T41 AC5" case asserts the
 # committed copy is byte-identical to what --check would confirm right now -- a hand-edit to the
 # copy without re-running this script fails that assertion (and --check exits 1) rather than
 # silently drifting. The extracted section TEXT is byte-identical to its CLAUDE.md source (AC5);
@@ -54,11 +62,33 @@ die() {
   exit "$code"
 }
 
+# CA-022: the single source of truth for WHICH sections this generator extracts is the generation
+# block near the bottom of this file. This reads that block back out of this script's own source,
+# so --help can never disagree with what the script actually does -- there is no second list to
+# keep in step, and no literal count anywhere to go stale a third time.
+#
+# The pattern anchors on two leading spaces followed by `extract_section "`, which matches only
+# the calls inside the generation block: this function's own grep line is indented differently,
+# and every prose mention of the helper elsewhere in the file lives behind a `#`.
+canonical_section_headings() {
+  grep -o '^  extract_section "[^"]*"' "${BASH_SOURCE[0]:-$0}" \
+    | sed -e 's/^  extract_section "//' -e 's/"$//'
+}
+
+print_section_inventory() {
+  local headings count
+  headings="$(canonical_section_headings)"
+  count="$(printf '%s\n' "$headings" | grep -c . || true)"
+  echo "# Sections extracted (${count}), derived at runtime from this script's own generation block:"
+  printf '%s\n' "$headings" | sed 's/^/#   - /'
+}
+
 mode="${1:-}"
 case "$mode" in
   ""|--check) ;;
   -h|--help|help)
     print_help "${BASH_SOURCE[0]:-$0}"
+    print_section_inventory
     exit 0
     ;;
   *) die "usage: edm-sync-canonical-sections [--check]" ;;
