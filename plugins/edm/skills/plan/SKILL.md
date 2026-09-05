@@ -5,7 +5,7 @@ user-invocable: true
 model: opus
 effort: max
 argument-hint: <PREFIX> <initiative description>
-allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(edm-init *), Bash(edm-validate-prefix *), Glob, Grep, Task, TodoWrite, AskUserQuestion
+allowed-tools: Read, Write, Edit, Bash(edm-state *), Bash(edm-init *), Bash(edm-validate-prefix *), Bash(edm-repo-readiness *), Glob, Grep, Task, TodoWrite, AskUserQuestion
 ---
 
 # EDM Phase 1: Planning & Discovery
@@ -81,7 +81,10 @@ itself. Step 0 is a second, defence-in-depth line alongside the `UserPromptExpan
 4. `edm-state phase-start <PREFIX> 1`
 5. Spawn `edm-explorer` agent(s) -- see "AI Execution Pattern" below.
 6. **Optional repository readiness scorecard** (EDMV4-T41): if `edm-repo-readiness` is on PATH
-   (`command -v edm-repo-readiness >/dev/null 2>&1`), run it and capture its stdout. If the
+   (`command -v edm-repo-readiness >/dev/null 2>&1`), run it and capture its stdout. Both the
+   probe and the run are covered by this skill's `Bash(edm-repo-readiness *)` grant (CA-033: the
+   grant was missing, so this step could not run at all -- and its own skip-on-failure fallback
+   made that silent, leaving an absent section that reads as authoritative). If the
    command is not on PATH, or it exits non-zero, skip this step entirely and proceed
    unchanged -- no error is raised, and no placeholder section is written to planning.md
    (absence is authoritative, matching how EDM handles N/A test layers; do not write a
