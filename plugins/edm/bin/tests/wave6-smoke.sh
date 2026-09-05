@@ -3498,7 +3498,31 @@ EOF
 g18_row="$(grep '^| CA-901' "$T26PIPE_MD" || true)"
 check "G18 -- pipe-bearing title's literal pipes are escaped (backslash-pipe), not raw" \
   '\|*[!0-9]*' "$g18_row"
-g18_cells="$(printf '%s' "$g18_row" | perl -pe 's/\\\|//g' | awk -F'|' '{print NF-2}')"
+# CA-052: g18_cell_count replaces two unguarded `perl -pe 's/\\\|//g'` invocations. This suite IS
+# the plugin's enforcement (there is no CI), and the plugin's pinned required-binary set is
+# bash/jq/git -- a hard dependency on an interpreter outside that set turns the whole suite into a
+# no-run on a host without it. bin/tests/timing.sh guards its own perl use with `command -v`; these
+# two sites did not. awk already did the second half of both pipelines, so folding the escaped-pipe
+# strip into the same awk removes the dependency outright rather than guarding it: gsub() rewrites
+# $0, which re-splits the record on FS, so NF is recomputed against the stripped row.
+g18_cell_count() {
+  printf '%s' "$1" | awk -F'|' '{ gsub(/\\\|/, ""); print NF - 2 }'
+}
+
+# Equivalence control for the awk replacement: a synthetic row whose cells carry BOTH escaped and
+# real pipes must count the same 8 cells, and a row with one escaped pipe fewer must not -- so a
+# gsub that silently stopped stripping (or started stripping real separators) fails here rather
+# than reading as a legitimately reshaped table downstream.
+g18_probe_row='| ID | a\|b | c | d | e | f | g | h |'
+g18_probe_cells="$(g18_cell_count "$g18_probe_row")"
+g18_probe_unstripped="$(printf '%s' "$g18_probe_row" | awk -F'|' '{print NF-2}')"
+if [[ "$g18_probe_cells" == "8" && "$g18_probe_unstripped" == "9" ]]; then
+  pass "G18/CA-052 -- control: the awk cell counter discounts escaped pipes (8) where a raw field split does not (9), so the strip step is proven to run"
+else
+  fail "G18/CA-052 -- control broken: stripped=${g18_probe_cells} (expected 8), unstripped=${g18_probe_unstripped} (expected 9)"
+fi
+
+g18_cells="$(g18_cell_count "$g18_row")"
 [[ "$g18_cells" == "8" ]] && pass "G18 -- pipe-bearing row still has exactly 8 cells once escaped pipes are discounted" \
   || fail "G18 -- pipe-bearing row has ${g18_cells} cells, expected 8"
 
@@ -3508,7 +3532,7 @@ g18_bad_rows=0
 while IFS= read -r g18_line; do
   case "$g18_line" in
     '| ID '*|'|----'*|'| CA-'*)
-      g18_n="$(printf '%s' "$g18_line" | perl -pe 's/\\\|//g' | awk -F'|' '{print NF-2}')"
+      g18_n="$(g18_cell_count "$g18_line")"
       [[ "$g18_n" == "8" ]] || g18_bad_rows=$((g18_bad_rows + 1))
       ;;
   esac
