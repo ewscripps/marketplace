@@ -50,6 +50,79 @@ w8_scratch_dir() {
   printf -v "$__w8_outvar" '%s' "$_w8_new"
 }
 
+# ---- AC2/AC3 shared non-ASCII byte scanner (EDMV4-T52), hoisted here from that section so the
+# EDMV4-T32 band far above can reuse it too (CA-017). ----------------------------------------------
+# Mirrors edm-lint-artifacts' own PCRE-vs-fallback split rather than assuming `-P` is available:
+# BSD grep on macOS -- this plugin's primary supported platform -- has no `-P` at all, and a bare
+# `grep -P` there errors out, which captured under `|| true` reads as a false "clean" scan rather
+# than a real zero-count. That is exactly how T32 AC7's own scan passed unconditionally on every
+# macOS host regardless of content (CA-017). LC_ALL=C on both branches (a UTF-8 locale can make
+# grep interpret the byte range differently across BSD and GNU).
+T52_HAS_PCRE=0
+{ echo "" | grep -qP '' 2>/dev/null && T52_HAS_PCRE=1; } || true
+
+# CA-079: the two branches now enforce the SAME predicate -- a byte outside 0x00-0x7F, and nothing
+# else. The fallback previously used `grep -nv '^[[:print:][:space:]]*$'`, which additionally flags
+# ASCII control bytes, so the identical assertion meant something different on macOS than on GNU
+# grep. Under LC_ALL=C, [:cntrl:] is exactly 0x00-0x1F plus 0x7F and [:print:] is exactly 0x20-0x7E,
+# so their union is exactly 0x00-0x7F and the negated class is exactly the PCRE branch's [^\x00-\x7F].
+T52_ASCII_POSIX_CLASS='[^[:cntrl:][:print:]]'
+
+# t52_ascii_hits -- reads on stdin, prints "<line>:<content>" for every line carrying at least one
+# byte outside 0x00-0x7F. Sole definition of the predicate: every scanner below routes through it,
+# so the two platform branches cannot drift apart again the way CA-079 found them.
+t52_ascii_hits() {
+  if [[ "$T52_HAS_PCRE" -eq 1 ]]; then
+    LC_ALL=C grep -nP '[^\x00-\x7F]' 2>/dev/null || true
+  else
+    LC_ALL=C grep -n "$T52_ASCII_POSIX_CLASS" 2>/dev/null || true
+  fi
+}
+
+# t52_ascii_scan <file...> -- prints "<file>:<line>:<content>" for every line in every <file>
+# carrying at least one byte outside 0x00-0x7F; prints nothing if every file is clean.
+t52_ascii_scan() {
+  local f hits
+  for f in "$@"; do
+    [[ -f "$f" ]] || continue
+    hits="$(t52_ascii_hits < "$f")"
+    [[ -n "$hits" ]] && printf '%s\n' "$hits" | sed "s#^#${f}:#"
+  done
+  return 0
+}
+
+# t52_fenced_strip <file> -- prints <file> with the contents of every fenced code block removed.
+# Fence markers are de-indented before matching, because a fence legitimately opens inside a
+# numbered list item (bin/tests/fixtures/mermaid/valid/v12-indented-fence.md is exactly that case)
+# and a start-of-line-only toggle would silently treat the whole block as prose.
+t52_fenced_strip() {
+  awk '/^[[:space:]]*```/ { f = !f; next } !f' "$1"
+}
+
+# t52_ascii_scan_fenced_aware <file...> -- t52_ascii_scan with ONE structural exemption, applied by
+# SHAPE rather than by any filename or directory list: in a MARKDOWN file, a non-ASCII byte that
+# sits inside a fenced code block is exempt. That is the precise property edm-lint-artifacts' own
+# class-2 (unicode) checker skips, and at least one fixture exists specifically to prove it skips
+# it -- so a corpus that had to be clean there would leave that checker with nothing to detect. The
+# exemption is shape-bound in both directions: a non-ASCII byte in markdown PROSE still fires, and
+# a non-markdown file (a `.jsonl` fixture, a `.txt` manifest) has no fences and is scanned whole.
+t52_ascii_scan_fenced_aware() {
+  local f hits
+  for f in "$@"; do
+    [[ -f "$f" ]] || continue
+    case "$f" in
+      *.md)
+        hits="$(t52_fenced_strip "$f" | t52_ascii_hits)"
+        [[ -n "$hits" ]] && printf '%s\n' "$hits" | sed "s#^#${f} (outside any fenced block, post-strip line):#"
+        ;;
+      *)
+        t52_ascii_scan "$f"
+        ;;
+    esac
+  done
+  return 0
+}
+
 echo "wave8 smoke check -- EDMV4-T05 / EDMV4-T34 / EDMV4-T48"
 echo
 
@@ -1382,12 +1455,38 @@ t32_lint_status=$?
 check "T32 AC7 -- edm-lint-artifacts reports no unicode-class violation" "CLEAN" "$t32_lint_out"
 # edm-lint-artifacts only scans *.md (CLAUDE.md's own documented reach); the .jsonl fixtures and
 # lenses-run.txt need a direct byte-level scan of their own to back the ASCII-only claim.
-t32_nonascii="$(LC_ALL=C grep -l -P '[^\x00-\x7F]' \
-  "${T32_FIXTURE_DIR}"/lens-L12.jsonl "${T32_FIXTURE_DIR}"/lens-L13.jsonl "${T32_FIXTURE_DIR}"/lens-L14.jsonl \
-  "$T32_LENSES_RUN" 2>/dev/null || true)"
+#
+# CA-017: this was a bare `LC_ALL=C grep -l -P ... 2>/dev/null || true`. The macOS system grep --
+# this plugin's primary supported platform -- has no `-P` at all, so the command errored on every
+# macOS host, the error went to /dev/null, the non-zero exit was masked by `|| true`, and the
+# result was unconditionally empty. The assertion below therefore passed on every macOS run
+# regardless of what the files actually contained, and this was the SOLE nominal ASCII coverage for
+# these four files (CA-055). It now uses t52_ascii_scan, defined at the top of this file, which
+# probes for PCRE support and falls back to an equivalent POSIX character class when there is none.
+t32_nonascii="$(t52_ascii_scan \
+  "${T32_FIXTURE_DIR}/lens-L12.jsonl" "${T32_FIXTURE_DIR}/lens-L13.jsonl" "${T32_FIXTURE_DIR}/lens-L14.jsonl" \
+  "$T32_LENSES_RUN")"
 [[ -z "$t32_nonascii" ]] \
   && pass "T32 AC7 -- new .jsonl fixtures and lenses-run.txt contain no non-ASCII bytes" \
   || fail "T32 AC7 -- non-ASCII byte(s) found in: ${t32_nonascii}"
+
+# CA-017 positive control, on THIS host: a real non-ASCII byte assembled at runtime via a printf
+# hex escape (never a literal non-ASCII byte in this suite's own source) is written into a scratch
+# copy of one of the four files and must be detected. This is the check that would have failed on
+# macOS before the fix, and it is what stops the zero-count above from ever being vacuous again.
+w8_scratch_dir T32_ASCII_CTRL
+t32_ascii_ctrl_file="${T32_ASCII_CTRL}/lens-L12-control.jsonl"
+cp "${T32_FIXTURE_DIR}/lens-L12.jsonl" "$t32_ascii_ctrl_file"
+printf '{"note":"runtime-assembled \xc3\xa9 byte"}\n' >> "$t32_ascii_ctrl_file"
+t32_ascii_ctrl_hits="$(t52_ascii_scan "$t32_ascii_ctrl_file")"
+[[ -n "$t32_ascii_ctrl_hits" ]] \
+  && pass "T32 AC7 -- positive control: a real non-ASCII byte injected into a scratch copy of lens-L12.jsonl IS detected on this host" \
+  || fail "T32 AC7 -- positive control FAILED: the scan did not detect a real non-ASCII byte, so the clean result above proves nothing (grep -P availability on this host: T52_HAS_PCRE=${T52_HAS_PCRE})"
+
+# The probe result itself is recorded in the suite output, so a run on a host without grep -P is
+# visible in the log rather than silently taking the fallback branch -- the same "record the
+# platform fact" convention EDMV4-T50's /bin/bash --version line already uses.
+pass "T32 AC7 -- non-ASCII scan branch recorded: T52_HAS_PCRE=${T52_HAS_PCRE} (1 = grep -P available, 0 = POSIX-class fallback)"
 
 # ---- AC9: the existing lens-L1.jsonl widest-fixture role (all four severities) is undisturbed ----
 t32_l1_sevs="$(jq -sr '[.[].sev] | sort | unique | join(",")' "${T32_FIXTURE_DIR}/lens-L1.jsonl" 2>/dev/null)"
@@ -5622,36 +5721,29 @@ echo
 #   AC1's --path sweep (collect_md_files, `.md` only) owns: the three new lens agent prompts
 #     (agents/edm-audit-silent-failures.md, edm-audit-type-design.md, edm-audit-behavioral-tests.md),
 #     every edited SKILL.md, and every edited CLAUDE.md.
-#   AC2's byte scan (this section) owns: the four new bin/ scripts (edm-gateguard, edm-hookify,
-#     edm-stop-gate, edm-bash-gate), the shared _edm-datadir-lib.sh, and the two JSON config files
-#     (hooks/hooks.json, monitors/monitors.json) -- collect_md_files's `-name '*.md'` filter never
-#     collects any of these six, in any mode, --path included (CLAUDE.md's "Artifact content
-#     conventions" now documents this as a standing, second gap on top of the reach gap AC1 closes).
+#   AC2's byte scan (this section) owns: the five new bin/ scripts (edm-gateguard, edm-hookify,
+#     edm-stop-gate, edm-bash-gate, edm-repo-readiness), the shared _edm-datadir-lib.sh, the two
+#     JSON config files (hooks/hooks.json, monitors/monitors.json), AND -- since CA-055 -- every
+#     file under bin/tests/fixtures/, including the four EDMV4-T32 added there
+#     (fixtures/code-audit/lens-L12.jsonl, lens-L13.jsonl, lens-L14.jsonl, lenses-run.txt).
+#     collect_md_files's `-name '*.md'` filter never collects any of the non-`.md` members, in any
+#     mode, --path included (CLAUDE.md's "Artifact content conventions" documents this as a
+#     standing, second gap on top of the reach gap AC1 closes).
+#     CA-055 (a): edm-repo-readiness was missing from this list even though AC2's live `find`
+#     already covered it -- a record defect, corrected above rather than left to read as a gap.
+#     CA-055 (b): the four fixtures/code-audit/ files fell under NEITHER mechanism -- AC1's sweep
+#     cannot collect a `.jsonl` or a `.txt`, and this scan excluded the whole fixtures/ tree. Their
+#     only nominal coverage was T32 AC7's `grep -l -P`, vacuous on macOS (CA-017).
 echo "=== EDMV4-T52: ASCII-only artifacts -- manual --path sweep plus explicit byte scan ==="
 echo
 
-# ---- AC2/AC3 shared scanner. Mirrors edm-lint-artifacts' own PCRE-vs-fallback split (its
-# argument-parsing section) rather than assuming -P is available: BSD grep on macOS has no -P at
-# all, and a bare `grep -nP` there errors out -- which, captured under `|| true`, reads as a false
-# "clean" scan rather than a real zero-count. LC_ALL=C on both branches (Technical Notes: a UTF-8
-# locale can make grep interpret the byte range differently across BSD and GNU). ------------------
-T52_HAS_PCRE=0
-{ echo "" | grep -qP '' 2>/dev/null && T52_HAS_PCRE=1; } || true
-
-# t52_ascii_scan <file...> -- prints "<file>:<line>:<content>" for every line in every <file>
-# carrying at least one byte outside 0x00-0x7F; prints nothing if every file is clean.
-t52_ascii_scan() {
-  local f hits
-  for f in "$@"; do
-    [[ -f "$f" ]] || continue
-    if [[ "$T52_HAS_PCRE" -eq 1 ]]; then
-      hits="$(LC_ALL=C grep -nP '[^\x00-\x7F]' "$f" 2>/dev/null || true)"
-    else
-      hits="$(LC_ALL=C grep -nv '^[[:print:][:space:]]*$' "$f" 2>/dev/null || true)"
-    fi
-    [[ -n "$hits" ]] && printf '%s\n' "$hits" | sed "s#^#${f}:#"
-  done
-}
+# ---- AC2/AC3 shared scanner. The PCRE probe (T52_HAS_PCRE), the single byte predicate
+# (t52_ascii_hits) and the two scanners built on it (t52_ascii_scan, t52_ascii_scan_fenced_aware)
+# are defined ONCE at the top of this file rather than here. CA-017 moved them: the EDMV4-T32 band
+# far above needs the same predicate, and it had a second, hand-rolled `grep -l -P` of its own that
+# matched nothing on every macOS host. One definition, reused by both bands, is what stops a second
+# copy from silently diverging again. CA-079 additionally aligned the two platform branches on one
+# predicate; see the comments at the definition site for both.
 
 # ---- AC2: file set derived LIVE (find plugins/edm/bin -type f), so a script added after this
 # ticket lands is covered automatically without a second edit here -- the same anti-hardcoding
@@ -5659,27 +5751,88 @@ t52_ascii_scan() {
 # design (AC2's own text): the smoke suites themselves are exactly the kind of extensionless-or-
 # not-`.md` file collect_md_files would otherwise never reach.
 #
-# One exclusion, recorded with its reason rather than silently applied: bin/tests/fixtures/ is
-# EXCLUDED from this live scan. That tree is edm-lint-artifacts' own test corpus -- it exists
-# specifically to prove the class-2 (unicode) checker fires and correctly SKIPS fenced code
-# blocks, so at least one fixture there (mermaid/valid/v12-indented-fence.md) legitimately embeds
-# a real non-ASCII byte inside a code fence on purpose. `-not -path` is applied against
-# ${PLUGIN_DIR} directly, which is already a `cd ... && pwd`-resolved absolute path (no `..`
-# component for a substring exclusion to be fooled by), per this initiative's own recorded
-# self-matching trap about normalizing a path root before a path-based exclusion. -----------------
+# CA-055: bin/tests/fixtures/ used to be excluded WHOLESALE from this live scan, which is what left
+# fixtures/code-audit/'s four non-`.md` files covered by nothing at all. The exclusion existed for
+# one real reason -- that tree is edm-lint-artifacts' own test corpus, and at least one fixture
+# (mermaid/valid/v12-indented-fence.md) legitimately embeds a real non-ASCII byte INSIDE a fenced
+# code block on purpose, precisely to prove the class-2 (unicode) checker skips fences.
+#
+# The tree is now scanned, and that one legitimate case is exempted BY SHAPE instead: in a markdown
+# file, a non-ASCII byte inside a fenced code block is exempt (t52_ascii_scan_fenced_aware, defined
+# at the top of this file). This is a structural property, not a directory list -- a new fixture
+# subdirectory is covered automatically, a non-ASCII byte in markdown PROSE anywhere in the tree
+# still fires, and a `.jsonl`/`.txt` fixture has no fences at all so it is scanned whole.
+# ${PLUGIN_DIR} is already a `cd ... && pwd`-resolved absolute path (no `..` component for a
+# path-prefix test to be fooled by), per this initiative's own recorded trap about normalizing a
+# path root before a path-based decision. --------------------------------------------------------
 T52_BIN_FILES=()
 while IFS= read -r -d "" _t52_f; do
   T52_BIN_FILES+=("$_t52_f")
-done < <(find "${PLUGIN_DIR}/bin" -type f -not -path "${PLUGIN_DIR}/bin/tests/fixtures/*" -print0 2>/dev/null)
+done < <(find "${PLUGIN_DIR}/bin" -type f -print0 2>/dev/null)
 
 T52_SCAN_TARGETS=("${T52_BIN_FILES[@]}" "${PLUGIN_DIR}/hooks/hooks.json" "${PLUGIN_DIR}/monitors/monitors.json")
 
-T52_AC2_HITS="$(t52_ascii_scan "${T52_SCAN_TARGETS[@]}" || true)"
+T52_AC2_HITS="$(t52_ascii_scan_fenced_aware "${T52_SCAN_TARGETS[@]}" || true)"
 if [[ -z "$T52_AC2_HITS" ]]; then
-  pass "EDMV4-T52 AC2 -- byte scan over ${#T52_SCAN_TARGETS[@]} files (live plugins/edm/bin/ set, bin/tests/ included, plus hooks.json/monitors.json) finds zero non-ASCII bytes"
+  pass "EDMV4-T52 AC2 -- byte scan over ${#T52_SCAN_TARGETS[@]} files (live plugins/edm/bin/ set, bin/tests/ AND bin/tests/fixtures/ included, plus hooks.json/monitors.json) finds zero non-ASCII bytes outside fenced code blocks"
 else
   fail "EDMV4-T52 AC2 -- non-ASCII byte(s) found: ${T52_AC2_HITS}"
 fi
+
+# CA-055 reach assertion: the four EDMV4-T32 fixture files that fell under NEITHER mechanism must
+# actually be members of the live scan set above. Without this, narrowing the fixtures exclusion
+# could be silently undone later and AC2 would go back to a clean zero-count over a smaller set.
+T52_FIXTURE_REACH_MISSING=""
+for _t52_req in "${PLUGIN_DIR}/bin/tests/fixtures/code-audit/lens-L12.jsonl" \
+                "${PLUGIN_DIR}/bin/tests/fixtures/code-audit/lens-L13.jsonl" \
+                "${PLUGIN_DIR}/bin/tests/fixtures/code-audit/lens-L14.jsonl" \
+                "${PLUGIN_DIR}/bin/tests/fixtures/code-audit/lenses-run.txt"; do
+  _t52_seen=0
+  for _t52_have in "${T52_SCAN_TARGETS[@]}"; do
+    [[ "$_t52_have" == "$_t52_req" ]] && _t52_seen=1
+  done
+  [[ "$_t52_seen" -eq 1 ]] || T52_FIXTURE_REACH_MISSING="${T52_FIXTURE_REACH_MISSING} $(basename "$_t52_req")"
+done
+[[ -z "$T52_FIXTURE_REACH_MISSING" ]] \
+  && pass "EDMV4-T52 AC4/CA-055 -- the four EDMV4-T32 fixture files are members of AC2's live scan set, so they are covered by a mechanism rather than by neither" \
+  || fail "EDMV4-T52 AC4/CA-055 -- fixture file(s) still outside AC2's scan set:${T52_FIXTURE_REACH_MISSING}"
+
+# CA-055 shape control: the deliberate in-fence non-ASCII byte in the mermaid corpus must be
+# exempt, AND the same byte moved out of the fence into prose must NOT be. A blanket directory
+# exclusion passes the first half and fails the second; this proves the exemption is bound to the
+# fenced-block SHAPE, not to where the file happens to live.
+w8_scratch_dir T52_FENCE_CTRL
+T52_FENCE_IN="${T52_FENCE_CTRL}/in-fence.md"
+T52_FENCE_OUT="${T52_FENCE_CTRL}/in-prose.md"
+{
+  printf '%s\n' 'Prose that is clean.'
+  printf '%s\n' '   ```text'
+  printf '   an em dash \xe2\x80\x94 inside an indented fence\n'
+  printf '%s\n' '   ```'
+} > "$T52_FENCE_IN"
+{
+  printf '%s\n' 'Prose that is clean.'
+  printf 'an em dash \xe2\x80\x94 in prose, outside every fence\n'
+} > "$T52_FENCE_OUT"
+T52_FENCE_IN_HITS="$(t52_ascii_scan_fenced_aware "$T52_FENCE_IN" || true)"
+T52_FENCE_OUT_HITS="$(t52_ascii_scan_fenced_aware "$T52_FENCE_OUT" || true)"
+if [[ -z "$T52_FENCE_IN_HITS" && -n "$T52_FENCE_OUT_HITS" ]]; then
+  pass "EDMV4-T52 AC4/CA-055 -- shape control: a non-ASCII byte inside an indented fenced block is exempt while the identical byte in prose is caught"
+else
+  fail "EDMV4-T52 AC4/CA-055 -- shape control broken: in-fence=[${T52_FENCE_IN_HITS}] (expected empty), in-prose=[${T52_FENCE_OUT_HITS}] (expected non-empty)"
+fi
+
+# CA-055 live control: a real non-ASCII byte, assembled at runtime, injected into a scratch COPY of
+# fixtures/code-audit/lens-L12.jsonl must be caught by the same scanner AC2 uses -- the finding's
+# own stated verification. The copy is outside plugins/edm/bin/, so it can never become a real
+# AC2 finding of its own.
+T52_L12_CTRL="${T52_FENCE_CTRL}/lens-L12-control.jsonl"
+cp "${PLUGIN_DIR}/bin/tests/fixtures/code-audit/lens-L12.jsonl" "$T52_L12_CTRL"
+printf '{"note":"injected \xc3\xa9 byte"}\n' >> "$T52_L12_CTRL"
+T52_L12_CTRL_HITS="$(t52_ascii_scan_fenced_aware "$T52_L12_CTRL" || true)"
+[[ -n "$T52_L12_CTRL_HITS" ]] \
+  && pass "EDMV4-T52 AC4/CA-055 -- positive control: a runtime-assembled non-ASCII byte injected into a scratch copy of fixtures/code-audit/lens-L12.jsonl IS caught" \
+  || fail "EDMV4-T52 AC4/CA-055 -- positive control broken: the injected byte was not caught, so the fixtures tree's clean result proves nothing"
 
 # ---- AC3: positive control. A scratch file OUTSIDE plugins/edm/bin/ (so it can never become a
 # real AC2 finding) carries one real non-ASCII byte, assembled at runtime via a printf hex escape
