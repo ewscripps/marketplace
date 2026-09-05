@@ -14,8 +14,24 @@
 # Artifact hygiene) under a versioned rubric string (READINESS_RUBRIC_VERSION). Three categories
 # are conditional (Test stack on a detected test framework; Coverage posture on Test stack being
 # applicable; Convergence history on at least one archived initiative existing) and are excluded
-# from the overall mean, not scored as zero, when inapplicable. Every category aggregates signals
-# EDM already computes (edm-state validate/get-coverage/metrics-report, edm-lint-artifacts)
+# from the overall mean, not scored as zero, when inapplicable.
+#
+# Three states, never two (CA-036/CA-037/CA-038). "Not applicable" and "could not be measured" are
+# different things and are reported differently:
+#   applicable, measured  -- scored normally and included in the overall mean.
+#   not applicable        -- rendered "N/A (not applicable)", excluded from the mean.
+#   UNMEASURED            -- the underlying probe (edm-state validate / get-coverage /
+#                            metrics-report, or edm-lint-artifacts) did not return a readable
+#                            result. The affected checks score zero, the category is rendered
+#                            "UNMEASURED" with the reason on stdout AND on stderr, and it is
+#                            deliberately KEPT in the overall-score denominator even if its own
+#                            conditional predicate says otherwise. A probe that fails must never
+#                            raise the score by quietly removing itself from the mean, and a
+#                            reader of the score must be able to tell a measured zero from an
+#                            unmeasurable one without re-deriving anything.
+#
+# Every category aggregates signals EDM already computes
+# (edm-state validate/get-coverage/metrics-report, edm-lint-artifacts)
 # rather than re-detecting them -- this script never scans .claude/settings*.json, test-framework
 # config files, or .edm-state.json directly for anything an edm-state subcommand already exposes.
 #
@@ -111,6 +127,32 @@ fi
 
 # EDMV4-T39 AC6: bare top-level version constant, following evals/score-artifacts.sh's
 # SCORER_VERSION precedent exactly. No new versioning scheme is invented.
+#
+# EDMV4-T39 AC7, second conjunct -- the REFUSAL CONTRACT for any future comparator.
+# AC7 requires two things, and only the first was implemented: the version reaches the JSON output
+# (see `readiness_rubric_version` in REPORT_JSON below), AND this script documents what a future
+# comparator must do when it does not match. This block is that second half.
+#
+# The contract, stated once, for whatever later tool compares two readiness reports (a
+# trend line, a regression gate, a before/after in an initiative's own artifacts):
+#
+#   A comparator that finds `readiness_rubric_version` differing between the two reports it was
+#   handed MUST REFUSE the comparison and exit non-zero, naming both versions.
+#   It MUST NOT silently compare them, MUST NOT coerce one version to the other, and MUST NOT
+#   fall back to comparing only the categories the two happen to share. A version bump means the
+#   checks, their point values, or the category set changed, so the two scores are not the same
+#   measurement --
+#   a delta across a version boundary is a number with no meaning, and reporting one anyway is
+#   strictly worse than reporting nothing, because a reader cannot tell it apart from a real
+#   regression. A missing `readiness_rubric_version` field is a mismatch too: it is unset, not
+#   assumed-current.
+#
+#   `bin/edm-compare-eval` is the in-repo precedent this contract is modelled on and the shape to
+#   copy: it REFUSES on a `scorer_version` mismatch and on a `dimensions_scored` mismatch rather
+#   than comparing, printing "REFUSED -- <field> mismatch (baseline X, candidate Y)" on stderr and
+#   exiting 2. A readiness comparator should print and exit the same way. No such comparator
+#   exists yet; this contract exists so the first one is written correctly instead of discovering
+#   the requirement after it has already published a meaningless delta.
 READINESS_RUBRIC_VERSION="1.0.0"
 
 # EDMV4-T40 AC5: coverage targets are read from configuration, never hardcoded -- the same
@@ -134,35 +176,44 @@ _rr_active_prefixes() {
   "$EDM_STATE_BIN" list 2>/dev/null | awk '/phase=/{print $1}'
 }
 
-# _rr_validate_output <prefix>: prints `edm-state validate <prefix>`'s full output. MUST be
-# invoked exactly this way -- as a process, with its exit captured explicitly -- never sourced.
-# `validate` exits 3 on a BLOCKING anomaly (not on any informational one), and this script runs
-# under `set -euo pipefail`; an unguarded call would abort the whole scorecard the first time it
-# scored a repository with even one routine, informational anomaly (EDMV4-T40 Technical Notes).
+# _rr_validate_output <prefix>: prints `edm-state validate <prefix>`'s full output and RETURNS its
+# exit status. MUST be invoked exactly this way -- as a process, with its exit captured explicitly
+# -- never sourced. `validate` exits 3 on a BLOCKING anomaly (not on any informational one), and
+# this script runs under `set -euo pipefail`; an unguarded call would abort the whole scorecard the
+# first time it scored a repository with even one routine, informational anomaly (EDMV4-T40
+# Technical Notes).
+#
+# CA-036: the captured status used to be discarded, so a `validate` that DIED (an unresolvable
+# prefix, an unparseable state file -- anything outside the documented 0/3 contract) printed
+# nothing, matched no anomaly, and scored State health a perfect 10. `edm-stop-gate` switches on
+# the same 0/3/other contract, so the two consumers of one contract disagreed. The status is now
+# propagated to the caller, which classifies it: 0 and 3 are meaningful results, anything else is
+# a setup error that makes every validate-derived check UNMEASURED (see the collection pass below).
 _rr_validate_output() {
   local prefix="$1" out rc=0
   out="$("$EDM_STATE_BIN" validate "$prefix" 2>/dev/null)" || rc=$?
   printf '%s\n' "$out"
-  return 0
+  return "$rc"
 }
 
-# _rr_any_prefix_validate_has <anomaly-type>: prints "true" if ANY prefix `_rr_active_prefixes`
-# yields has an anomaly line naming <anomaly-type> (matched as a whole token so e.g.
-# "OPEN_PARTIALS" never matches "OPEN_AUDIT_ROUND"); "false" otherwise. Vacuously "false" when
-# there are no active prefixes -- there is nothing recorded to be unhealthy about (State health
-# is an UNCONDITIONAL category per EDMV4-T39 AC1: "nothing recorded" is itself a real, clean
-# health signal, not a missing one).
+# _rr_any_prefix_validate_has <anomaly-type>: prints "true" if ANY prefix whose `validate` was
+# READABLE has an anomaly line naming <anomaly-type> (matched as a whole token so e.g.
+# "OPEN_PARTIALS" never matches "OPEN_AUDIT_ROUND"); "false" otherwise. Reads the single
+# collection pass below rather than re-invoking `validate` once per check (eight re-invocations
+# per prefix before CA-036, each of which independently threw its exit status away).
+#
+# Vacuously "false" when there are no active prefixes -- there is nothing recorded to be unhealthy
+# about (State health is an UNCONDITIONAL category per EDMV4-T39 AC1: "nothing recorded" is itself
+# a real, clean health signal, not a missing one). It is NOT vacuously "false" when a validate
+# failed: that case is caught by RR_VALIDATE_UNMEASURED_REASON, which makes the checks UNMEASURED
+# instead of clean.
 _rr_any_prefix_validate_has() {
-  local needle="$1" p out
-  while IFS= read -r p; do
-    [[ -n "$p" ]] || continue
-    out="$(_rr_validate_output "$p")"
-    if printf '%s\n' "$out" | grep -qE "^(blocking|info)[[:space:]]+${needle}([[:space:]]|\$)"; then
-      printf 'true\n'
-      return 0
-    fi
-  done < <(_rr_active_prefixes)
-  printf 'false\n'
+  local needle="$1"
+  if printf '%s\n' "$_RR_VALIDATE_LINES" | grep -qE "^(blocking|info)[[:space:]]+${needle}([[:space:]]|\$)"; then
+    printf 'true\n'
+  else
+    printf 'false\n'
+  fi
 }
 
 # _rr_any_other_blocking_anomaly: "true" if any active prefix reports a BLOCKING anomaly whose
@@ -170,32 +221,55 @@ _rr_any_prefix_validate_has() {
 # below) -- catching TIME_ORDER, ZERO_TOKENS, or any future blocking type without hardcoding an
 # exhaustive list that would drift the moment state_anomalies() grows a new one.
 _rr_any_other_blocking_anomaly() {
-  local p out line class type
-  while IFS= read -r p; do
-    [[ -n "$p" ]] || continue
-    out="$(_rr_validate_output "$p")"
-    while IFS= read -r line; do
-      [[ -n "$line" ]] || continue
-      class="$(printf '%s' "$line" | awk '{print $1}')"
-      [[ "$class" == "blocking" ]] || continue
-      type="$(printf '%s' "$line" | awk '{print $2}')"
-      case "$type" in
-        OPEN_PARTIALS|CONVERGED_NO_APPROVAL) continue ;;
-        *) printf 'true\n'; return 0 ;;
-      esac
-    done <<< "$out"
-  done < <(_rr_active_prefixes)
+  local line class type
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    class="$(printf '%s' "$line" | awk '{print $1}')"
+    [[ "$class" == "blocking" ]] || continue
+    type="$(printf '%s' "$line" | awk '{print $2}')"
+    case "$type" in
+      OPEN_PARTIALS|CONVERGED_NO_APPROVAL) continue ;;
+      *) printf 'true\n'; return 0 ;;
+    esac
+  done <<< "$_RR_VALIDATE_LINES"
   printf 'false\n'
 }
 
-# ---- Signal collection: one pass over all active prefixes for the Test stack / Coverage
-# posture categories (EDMV4-T40 AC4/AC5: sourced from test_frameworks_detected/get-coverage via
-# edm-state get-coverage, never a framework-config-file scan of our own). --------------------------
+# ---- Signal collection: ONE pass over all active prefixes, invoking each edm-state probe exactly
+# once per prefix and reading its exit status (CA-036/CA-037). Two probes run here:
+#   * `edm-state validate`  -- State health, plus Methodology setup's PERM_RULES_MISSING check.
+#   * `edm-state get-coverage` -- Test stack / Coverage posture (EDMV4-T40 AC4/AC5: sourced from
+#     test_frameworks_detected/get-coverage, never a framework-config-file scan of our own).
+# A probe that fails for ANY prefix makes every check derived from it UNMEASURED, conservatively:
+# a partial scan is not a clean one, and the categories stay in the denominator.
+_RR_VALIDATE_LINES=""
+_RR_VALIDATE_FAILURES=""      # "PREFIX (exit N)" entries, comma-joined
 _RR_FRAMEWORK_LINES=""
 _RR_COVERAGE_LINES=""
+_RR_COVERAGE_FAILURES=""      # same shape
 while IFS= read -r _rr_p; do
   [[ -n "$_rr_p" ]] || continue
-  _rr_cov_out="$("$EDM_STATE_BIN" get-coverage "$_rr_p" 2>/dev/null || true)"
+
+  # --- edm-state validate (CA-036): 0 = no blocking anomaly, 3 = at least one blocking anomaly.
+  # Both are real, readable results. Anything else is a setup error and is NEVER scored clean.
+  _rr_vrc=0
+  _rr_vout="$(_rr_validate_output "$_rr_p")" || _rr_vrc=$?
+  if [[ "$_rr_vrc" -eq 0 || "$_rr_vrc" -eq 3 ]]; then
+    [[ -n "$_rr_vout" ]] && _RR_VALIDATE_LINES="${_RR_VALIDATE_LINES}${_RR_VALIDATE_LINES:+$'\n'}${_rr_vout}"
+  else
+    _RR_VALIDATE_FAILURES="${_RR_VALIDATE_FAILURES}${_RR_VALIDATE_FAILURES:+, }${_rr_p} (exit ${_rr_vrc})"
+  fi
+
+  # --- edm-state get-coverage (CA-037): exit 0 with no coverage rows means "no coverage recorded",
+  # a legitimate N/A. A NON-ZERO exit means the read itself failed, which used to empty the
+  # framework signal, mark Test stack and Coverage posture N/A, and drop both out of the
+  # overall-score denominator -- so a broken probe RAISED the score. It is now UNMEASURED instead.
+  _rr_covrc=0
+  _rr_cov_out="$("$EDM_STATE_BIN" get-coverage "$_rr_p" 2>/dev/null)" || _rr_covrc=$?
+  if [[ "$_rr_covrc" -ne 0 ]]; then
+    _RR_COVERAGE_FAILURES="${_RR_COVERAGE_FAILURES}${_RR_COVERAGE_FAILURES:+, }${_rr_p} (exit ${_rr_covrc})"
+    continue
+  fi
   # "## Detected Frameworks" lines render as "  key = value" (flat) or "  epic: key = value"
   # (per-epic, EDMV3-T25/CA-421). Split on " = " first, then take the last ": "-delimited token
   # of the left side as the layer key -- this handles both shapes with one rule.
@@ -224,6 +298,15 @@ while IFS= read -r _rr_p; do
   ')"
   [[ -n "$_rr_cv" ]] && _RR_COVERAGE_LINES="${_RR_COVERAGE_LINES}${_RR_COVERAGE_LINES:+$'\n'}${_rr_cv}"
 done < <(_rr_active_prefixes)
+
+# The two probe-failure reasons, in the exact form every affected check carries as its
+# unmeasured_reason (empty string = measured, which is the overwhelmingly common case).
+RR_VALIDATE_UNMEASURED_REASON=""
+[[ -n "$_RR_VALIDATE_FAILURES" ]] && \
+  RR_VALIDATE_UNMEASURED_REASON="edm-state validate returned a status outside its documented 0/3 contract for: ${_RR_VALIDATE_FAILURES}"
+RR_COVERAGE_UNMEASURED_REASON=""
+[[ -n "$_RR_COVERAGE_FAILURES" ]] && \
+  RR_COVERAGE_UNMEASURED_REASON="edm-state get-coverage could not be read for: ${_RR_COVERAGE_FAILURES}"
 
 # _rr_layer_max_pct <layer>: highest recorded coverage pct for <layer> across every collected
 # row, or the literal string "null" when no row named that layer exists.
@@ -261,11 +344,35 @@ fi
 # EDMV4-T38 out of scope note (kept for continuity): no check here scores whether EDM itself is
 # installed (correction 7's self-serving "harness-audit.js" pattern this initiative calls out
 # and EDMV4-T39 AC10 forbids) -- these measure the TARGET repository only.
+# EDMV4-T40 AC7: every self-detected signal carries a justification comment naming why no
+# edm-state call can supply it. "A check with no such comment and no edm-state call is a defect" --
+# the two below had none, so they are written out here rather than left implicit.
+#
+# GIT_REPO_PRESENT: self-detected, and unavoidably so. No edm-state subcommand answers "is the
+# working directory inside a git work tree": `branch-check` and `record-branch` both take a
+# <PREFIX> and answer a different question (does the recorded initiative_branch match the current
+# one), and both are useless on the repository this check exists to score -- one that may have no
+# initiative at all yet. `git rev-parse --is-inside-work-tree` is the whole probe, read-only, and
+# is not a re-derivation of anything edm-state owns.
 GIT_REPO_PRESENT="false"
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   GIT_REPO_PRESENT="true"
 fi
 
+# SRD_DIR_PRESENT: self-detected because SRD_ROOT is, and that is the honest problem here, not the
+# directory test. SRD_ROOT above is a SECOND COPY of the EDM_SRD_ROOT / CLAUDE_PLUGIN_OPTION_SRD_ROOT
+# / ./SRD chain `bin/edm-state` already owns at its own top-level SRD_ROOT assignment -- the CA-409
+# class this AC's comment requirement exists to force an author to confront rather than paper over.
+# It is not removable from inside this script: no edm-state subcommand exposes the resolved root.
+# `resolve-dir` and `list --paths` both need an initiative to exist, and this scorecard's whole
+# point is to run on a repository that may have none. The residual work is therefore an
+# edm-state-owned accessor -- one subcommand printing edm-state's own resolved SRD_ROOT -- which
+# belongs in `bin/edm-state`, not here.
+#
+# What IS done here, so the duplication cannot drift silently while it survives: the two
+# assignments are byte-identical, and `bin/tests/wave8-smoke.sh` asserts that byte-identity
+# against both live files. A change to either chain that is not made to both fails a test instead
+# of quietly giving the scorer a different srd_root than every other consumer.
 SRD_DIR_PRESENT="false"
 [[ -d "$SRD_ROOT" ]] && SRD_DIR_PRESENT="true"
 
@@ -309,13 +416,34 @@ CONVERGENCE_APPLICABLE="false"
 [[ "$ARCHIVED_COUNT" -ge 1 ]] && CONVERGENCE_APPLICABLE="true"
 
 # EDMV4-T40 AC6: cost and duration history, where scored, is read from edm-state metrics-report.
-CALIB_OUT="$("$EDM_STATE_BIN" metrics-report --calibrate 2>/dev/null || true)"
-CH_CALIBRATION_AVAILABLE="true"
-printf '%s\n' "$CALIB_OUT" | grep -q "insufficient data" && CH_CALIBRATION_AVAILABLE="false"
+#
+# CA-038: CH_CALIBRATION_AVAILABLE used to default to TRUE and flip to false only on a literal
+# "insufficient data" match, so ANY other failure shape -- a non-zero exit, an unparseable state
+# file, the renderer's own "error building the calibration report" fallback -- silently awarded
+# the calibration-data points. It now defaults to FALSE and is set true only on a POSITIVE signal:
+# at least one real "(size, phase)" median row, which `cmd_metrics_report --calibrate` renders as
+# "median_duration=". A non-zero exit, or the renderer's error fallback, is UNMEASURED, not false:
+# "no calibration data recorded" and "the calibration report could not be produced" are different
+# answers and are reported differently.
+CALIB_RC=0
+CALIB_OUT="$("$EDM_STATE_BIN" metrics-report --calibrate 2>/dev/null)" || CALIB_RC=$?
+CH_CALIBRATION_AVAILABLE="false"
+RR_CALIBRATION_UNMEASURED_REASON=""
+if [[ "$CALIB_RC" -ne 0 ]]; then
+  RR_CALIBRATION_UNMEASURED_REASON="edm-state metrics-report --calibrate exited ${CALIB_RC}"
+elif printf '%s\n' "$CALIB_OUT" | grep -q "error building the calibration report"; then
+  RR_CALIBRATION_UNMEASURED_REASON="edm-state metrics-report --calibrate reported an error building the report"
+elif printf '%s\n' "$CALIB_OUT" | grep -q "median_duration="; then
+  CH_CALIBRATION_AVAILABLE="true"
+fi
 
-METRICS_ALL_OUT="$("$EDM_STATE_BIN" metrics-report --all 2>/dev/null || true)"
+METRICS_ALL_RC=0
+METRICS_ALL_OUT="$("$EDM_STATE_BIN" metrics-report --all 2>/dev/null)" || METRICS_ALL_RC=$?
 CH_COST_HISTORY="false"
-if printf '%s\n' "$METRICS_ALL_OUT" | awk '{for(i=1;i<=NF;i++) if ($i ~ /^\$[0-9]/) print $i}' | \
+RR_METRICS_ALL_UNMEASURED_REASON=""
+if [[ "$METRICS_ALL_RC" -ne 0 ]]; then
+  RR_METRICS_ALL_UNMEASURED_REASON="edm-state metrics-report --all exited ${METRICS_ALL_RC}"
+elif printf '%s\n' "$METRICS_ALL_OUT" | awk '{for(i=1;i<=NF;i++) if ($i ~ /^\$[0-9]/) print $i}' | \
    tr -d '$' | jq -Rn '[inputs | select(length>0) | tonumber] | any(. > 0)' | grep -q true; then
   CH_COST_HISTORY="true"
 fi
@@ -330,19 +458,41 @@ LINT_TARGET_ARGS=(--all)
 [[ -n "$PREFIX" ]] && LINT_TARGET_ARGS=("$PREFIX")
 LINT_RC=0
 "$EDM_LINT_BIN" "${LINT_TARGET_ARGS[@]}" >/dev/null 2>&1 || LINT_RC=$?
+# edm-lint-artifacts' documented contract: 0 = clean, 1 = real violations found, 2 = setup/usage
+# error. Only 0 and 1 are measurements of artifact hygiene; a setup error measured nothing and is
+# reported UNMEASURED rather than as "dirty" (same three-state rule as the probes above -- a
+# reader must be able to tell "violations found" from "the scanner could not run").
 ARTIFACT_LINT_CLEAN="true"
-[[ "$LINT_RC" -eq 0 ]] || ARTIFACT_LINT_CLEAN="false"
+RR_LINT_UNMEASURED_REASON=""
+if [[ "$LINT_RC" -eq 1 ]]; then
+  ARTIFACT_LINT_CLEAN="false"
+elif [[ "$LINT_RC" -ne 0 ]]; then
+  ARTIFACT_LINT_CLEAN="false"
+  RR_LINT_UNMEASURED_REASON="edm-lint-artifacts exited ${LINT_RC} (a setup/usage error, not a hygiene measurement)"
+fi
 
 # ---- Checks --------------------------------------------------------------------------------------
 # EDMV4-T39 AC2: each category's checks, raw total and conditional predicate are declared
 # together, in one place, below -- a reader can see the whole definition of one category without
 # scrolling elsewhere. EDMV4-T39 AC8: every check carries id/category/points/description/pass/fix,
 # and fix is mandatory on every check, not only failing ones.
+#
+# CA-036/CA-037/CA-038: the optional SEVENTH argument is the check's unmeasured_reason -- the empty
+# string (the default, and the case for almost every check on almost every run) means the check was
+# really measured. A non-empty reason means the probe behind it did not return a readable result:
+# the check is forced to pass=false so it earns no points, and carries measured:false plus the
+# reason so a consumer -- and the human-readable report below -- can tell a measured zero from an
+# unmeasurable one without re-deriving the probe.
 _rr_mk_check() {
   jq -nc \
     --arg id "$1" --arg category "$2" --argjson points "$3" \
     --arg description "$4" --argjson pass "$5" --arg fix "$6" \
-    '{id: $id, category: $category, points: $points, description: $description, pass: $pass, fix: $fix}'
+    --arg unmeasured "${7:-}" \
+    '{id: $id, category: $category, points: $points, description: $description,
+      pass: (if $unmeasured == "" then $pass else false end),
+      fix: $fix,
+      measured: ($unmeasured == ""),
+      unmeasured_reason: (if $unmeasured == "" then null else $unmeasured end)}'
 }
 
 ALL_CHECKS=()
@@ -356,54 +506,54 @@ ALL_CHECKS+=("$(_rr_mk_check "srd-directory-present" "Methodology setup" 2 \
   "Run edm-init to scaffold an initiative, or create ${SRD_ROOT} by hand, before using EDM against this repository.")")
 ALL_CHECKS+=("$(_rr_mk_check "permission-ask-rules-configured" "Methodology setup" 5 \
   "No active initiative reports the PERM_RULES_MISSING anomaly from edm-state validate." "$PERM_RULES_OK" \
-  "Add the required permissions.ask block (Bash(edm-state approve-gate*), Bash(edm-state archive*)) documented in CLAUDE.md's Required setup section to your project's Claude Code settings.")")
+  "Add the required permissions.ask block (Bash(edm-state approve-gate*), Bash(edm-state archive*)) documented in CLAUDE.md's Required setup section to your project's Claude Code settings." "$RR_VALIDATE_UNMEASURED_REASON")")
 
 # ---- State health (10 pts, unconditional) -----------------------------------------------------
 ALL_CHECKS+=("$(_rr_mk_check "state-health-no-open-partials" "State health" 3 \
   "No active initiative reports an unclosed or FAIL-closed OPEN_PARTIALS verdict (blocking, 3pt cost)." "$SH_NO_OPEN_PARTIALS" \
-  "Run /edm:verify-runtime <PREFIX> to close every open or FAIL-closed PARTIAL verdict before archiving.")")
+  "Run /edm:verify-runtime <PREFIX> to close every open or FAIL-closed PARTIAL verdict before archiving." "$RR_VALIDATE_UNMEASURED_REASON")")
 ALL_CHECKS+=("$(_rr_mk_check "state-health-no-converged-no-approval" "State health" 2 \
   "No active initiative reports code_audit_converged=true with no recorded gate approval (blocking, 2pt cost)." "$SH_NO_CONVERGED_NO_APPROVAL" \
-  "Run edm-state approve-gate <PREFIX> code-audit, or investigate a hand-edited state file.")")
+  "Run edm-state approve-gate <PREFIX> code-audit, or investigate a hand-edited state file." "$RR_VALIDATE_UNMEASURED_REASON")")
 ALL_CHECKS+=("$(_rr_mk_check "state-health-no-other-blocking-anomalies" "State health" 2 \
   "No active initiative reports any other blocking anomaly, e.g. TIME_ORDER or ZERO_TOKENS (blocking, 2pt cost)." "$SH_NO_OTHER_BLOCKING" \
-  "Run edm-state validate <PREFIX> on the named initiative and follow its remediation for the reported blocking anomaly.")")
+  "Run edm-state validate <PREFIX> on the named initiative and follow its remediation for the reported blocking anomaly." "$RR_VALIDATE_UNMEASURED_REASON")")
 ALL_CHECKS+=("$(_rr_mk_check "state-health-no-open-audit-round" "State health" 1 \
   "No active initiative reports an audit round started but never completed (informational, 1pt cost)." "$SH_NO_OPEN_AUDIT_ROUND" \
-  "Run edm-state audit-round-complete <PREFIX> <type> to close the open round, or continue the round in progress.")")
+  "Run edm-state audit-round-complete <PREFIX> <type> to close the open round, or continue the round in progress." "$RR_VALIDATE_UNMEASURED_REASON")")
 ALL_CHECKS+=("$(_rr_mk_check "state-health-no-torn-token-lines" "State health" 1 \
   "No active initiative reports session-JSONL lines that failed to parse while summing tokens (informational, 1pt cost)." "$SH_NO_TORN_TOKEN_LINES" \
-  "Usually transient (a session file still being appended to); re-run edm-state validate <PREFIX> later if it persists.")")
+  "Usually transient (a session file still being appended to); re-run edm-state validate <PREFIX> later if it persists." "$RR_VALIDATE_UNMEASURED_REASON")")
 ALL_CHECKS+=("$(_rr_mk_check "state-health-no-spec-sweep-pending" "State health" 1 \
   "No active initiative has a fixed code-audit finding still owing its same-commit documentation sweep (informational, 1pt cost)." "$SH_NO_SPEC_SWEEP_PENDING" \
-  "Sweep the named finding's documentation and set spec_swept to yes or n/a in the findings ledger.")")
+  "Sweep the named finding's documentation and set spec_swept to yes or n/a in the findings ledger." "$RR_VALIDATE_UNMEASURED_REASON")")
 
 # ---- Test stack (10 pts, conditional on any detected test framework) --------------------------
 ALL_CHECKS+=("$(_rr_mk_check "unit-test-framework-detected" "Test stack" 6 \
   "test_frameworks_detected (via edm-state get-coverage) names a unit test framework for at least one active initiative." "$TESTSTACK_UNIT_FOUND" \
-  "Run /edm:test <PREFIX> so edm-test-planner records a detected unit test framework.")")
+  "Run /edm:test <PREFIX> so edm-test-planner records a detected unit test framework." "$RR_COVERAGE_UNMEASURED_REASON")")
 ALL_CHECKS+=("$(_rr_mk_check "additional-layer-framework-detected" "Test stack" 4 \
   "test_frameworks_detected names a framework for at least one non-unit layer (component, integration, e2e, contract, composable, or a11y)." "$TESTSTACK_OTHER_FOUND" \
-  "Run /edm:test <PREFIX> and let edm-test-planner/edm-test-scaffold detect and record additional test layers as they become applicable.")")
+  "Run /edm:test <PREFIX> and let edm-test-planner/edm-test-scaffold detect and record additional test layers as they become applicable." "$RR_COVERAGE_UNMEASURED_REASON")")
 
 # ---- Coverage posture (10 pts, conditional on Test stack being applicable) ---------------------
 ALL_CHECKS+=("$(_rr_mk_check "unit-coverage-meets-target" "Coverage posture" 4 \
   "The highest recorded unit coverage pct meets coverage_target_unit_pct (${COVERAGE_TARGET_UNIT_PCT}%)." "$(_rr_layer_meets_target unit "$COVERAGE_TARGET_UNIT_PCT")" \
-  "Run /edm:test <PREFIX> to raise unit coverage to at least ${COVERAGE_TARGET_UNIT_PCT}%, or record it via edm-state record-test-coverage.")")
+  "Run /edm:test <PREFIX> to raise unit coverage to at least ${COVERAGE_TARGET_UNIT_PCT}%, or record it via edm-state record-test-coverage." "$RR_COVERAGE_UNMEASURED_REASON")")
 ALL_CHECKS+=("$(_rr_mk_check "component-coverage-meets-target" "Coverage posture" 3 \
   "The highest recorded component coverage pct meets coverage_target_component_pct (${COVERAGE_TARGET_COMPONENT_PCT}%)." "$(_rr_layer_meets_target component "$COVERAGE_TARGET_COMPONENT_PCT")" \
-  "Run /edm:test <PREFIX> to raise component coverage to at least ${COVERAGE_TARGET_COMPONENT_PCT}%, or record it via edm-state record-test-coverage.")")
+  "Run /edm:test <PREFIX> to raise component coverage to at least ${COVERAGE_TARGET_COMPONENT_PCT}%, or record it via edm-state record-test-coverage." "$RR_COVERAGE_UNMEASURED_REASON")")
 ALL_CHECKS+=("$(_rr_mk_check "integration-coverage-meets-target" "Coverage posture" 3 \
   "The highest recorded integration coverage pct meets coverage_target_integration_pct (${COVERAGE_TARGET_INTEGRATION_PCT}%)." "$(_rr_layer_meets_target integration "$COVERAGE_TARGET_INTEGRATION_PCT")" \
-  "Run /edm:test <PREFIX> to raise integration coverage to at least ${COVERAGE_TARGET_INTEGRATION_PCT}%, or record it via edm-state record-test-coverage.")")
+  "Run /edm:test <PREFIX> to raise integration coverage to at least ${COVERAGE_TARGET_INTEGRATION_PCT}%, or record it via edm-state record-test-coverage." "$RR_COVERAGE_UNMEASURED_REASON")")
 
 # ---- Convergence history (10 pts, conditional on at least one archived initiative) -------------
 ALL_CHECKS+=("$(_rr_mk_check "convergence-calibration-data-available" "Convergence history" 4 \
   "edm-state metrics-report --calibrate produces at least one (size, phase) median row." "$CH_CALIBRATION_AVAILABLE" \
-  "Complete and archive at least one initiative with estimated_size set so /edm:metrics --calibrate has data to compute medians from.")")
+  "Complete and archive at least one initiative with estimated_size set so /edm:metrics --calibrate has data to compute medians from." "$RR_CALIBRATION_UNMEASURED_REASON")")
 ALL_CHECKS+=("$(_rr_mk_check "convergence-cost-history-recorded" "Convergence history" 3 \
   "edm-state metrics-report --all reports a nonzero Claude cost for at least one initiative." "$CH_COST_HISTORY" \
-  "Run phases through to completion with edm-state phase-complete so cost/duration are recorded per phase.")")
+  "Run phases through to completion with edm-state phase-complete so cost/duration are recorded per phase." "$RR_METRICS_ALL_UNMEASURED_REASON")")
 ALL_CHECKS+=("$(_rr_mk_check "convergence-multiple-archived-initiatives" "Convergence history" 3 \
   "More than one archived initiative exists under ${SRD_ROOT}/.archived (found: ${ARCHIVED_COUNT})." "$CH_MULTIPLE_ARCHIVED" \
   "Archive additional completed initiatives with edm-state archive as they converge, to establish a repeatable rhythm.")")
@@ -411,7 +561,7 @@ ALL_CHECKS+=("$(_rr_mk_check "convergence-multiple-archived-initiatives" "Conver
 # ---- Artifact hygiene (10 pts, unconditional) --------------------------------------------------
 ALL_CHECKS+=("$(_rr_mk_check "artifact-lint-clean" "Artifact hygiene" 10 \
   "edm-lint-artifacts reports zero violations across the scored scope (exit 0)." "$ARTIFACT_LINT_CLEAN" \
-  "Run edm-lint-artifacts --all (or edm-lint-artifacts <PREFIX>) to see and fix the reported violations.")")
+  "Run edm-lint-artifacts --all (or edm-lint-artifacts <PREFIX>) to see and fix the reported violations." "$RR_LINT_UNMEASURED_REASON")")
 
 CHECKS_JSON="$(printf '%s\n' "${ALL_CHECKS[@]}" | jq -s '.')"
 
@@ -444,11 +594,22 @@ REPORT_JSON="$(jq -n \
   # silently turn a real, computed false back into true here, the same trap the cand_complete
   # comment in edm-compare-eval already flags for a different boolean. Test presence with has()
   # explicitly instead of relying on //.
+  # CA-036/CA-037/CA-038: a category is `measured` only when every one of its checks is. An
+  # UNMEASURED category is FORCED applicable regardless of its own conditional predicate, so it
+  # stays in the $applicable_cats denominator below -- otherwise a failed probe removes the
+  # category it broke from the mean and the read failure RAISES the score, which is precisely
+  # backwards. `applicable:false` therefore keeps meaning exactly one thing: genuinely N/A.
   ($checks
     | group_by(.category)
-    | map(.[0].category as $catname | {
+    | map(.[0].category as $catname
+      | ([.[] | .measured] | all) as $catmeasured
+      | {
         name: $catname,
-        applicable: (if ($applicability | has($catname)) then $applicability[$catname] else true end),
+        measured: $catmeasured,
+        unmeasured_reasons: ([.[] | select(.measured | not) | .unmeasured_reason] | unique),
+        applicable: (if ($catmeasured | not) then true
+                     elif ($applicability | has($catname)) then $applicability[$catname]
+                     else true end),
         raw_earned: ([.[] | select(.pass) | .points] | add // 0),
         raw_max: ([.[] | .points] | add // 0)
       })
@@ -483,14 +644,35 @@ echo
 printf '%s' "$REPORT_JSON" | jq -r '
   . as $root
   | $root.categories[] as $cat
-  | "", ("## " + $cat.name + (if $cat.applicable then " -- " + $cat.score_0_10 + " / 10" else " -- N/A (not applicable)" end)),
+  | "", ("## " + $cat.name +
+      (if ($cat.measured | not) then
+         " -- " + $cat.score_0_10 + " / 10  UNMEASURED: " + ($cat.unmeasured_reasons | join("; ")) +
+         " (scored zero and KEPT in the overall mean -- this is not a measured zero)"
+       elif $cat.applicable then " -- " + $cat.score_0_10 + " / 10"
+       else " -- N/A (not applicable)" end)),
     ($root.checks[] | select(.category == $cat.name) |
-      (if .pass then "  [PASS] " else "  [FAIL] " end) + .id + " (" + (.points|tostring) + " pts) -- " + .description +
-      (if (.pass | not) then "  FIX: " + .fix else "" end))
+      (if (.measured | not) then "  [UNMEASURED] " elif .pass then "  [PASS] " else "  [FAIL] " end) +
+      .id + " (" + (.points|tostring) + " pts) -- " + .description +
+      (if (.measured | not) then "  WHY UNMEASURED: " + .unmeasured_reason + "  FIX: " + .fix
+       elif (.pass | not) then "  FIX: " + .fix
+       else "" end))
 '
+
+# Same reasons, once per unmeasured category, on stderr: stdout is a report a caller may capture
+# and parse, and a probe failure must be visible to a caller that only watches stderr too
+# (CA-036/CA-037/CA-038 all require the reason to be PRINTED, not merely encoded in the JSON).
+printf '%s' "$REPORT_JSON" | jq -r '
+  .categories[] | select(.measured | not)
+  | "edm-repo-readiness: " + .name + " could not be measured: " + (.unmeasured_reasons | join("; "))
+' >&2
 
 echo
 printf 'Overall score: %s / 10\n' "$(printf '%s' "$REPORT_JSON" | jq -r '.score')"
+RR_UNMEASURED_COUNT="$(printf '%s' "$REPORT_JSON" | jq -r '[.categories[] | select(.measured | not)] | length')"
+if [[ "$RR_UNMEASURED_COUNT" -gt 0 ]]; then
+  printf 'WARNING: %s of %s categories could not be measured and were scored zero (see UNMEASURED above). The overall score is a FLOOR, not a measurement.\n' \
+    "$RR_UNMEASURED_COUNT" "$(printf '%s' "$REPORT_JSON" | jq -r '.categories | length')"
+fi
 
 # ---- Machine-readable report: file only, via --json <path> (AC7) ----------------------------
 if [[ -n "$JSON_OUT" ]]; then
