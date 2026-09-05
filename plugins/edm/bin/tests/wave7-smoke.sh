@@ -3783,6 +3783,25 @@ echo "  update-patterns invocation, per this AC6 coordination point."
 echo
 echo "T56 AC8 -- the ten-update-patterns-runs case: repeated insertion never regresses the"
 echo "  four-heading contract, checked after every single run rather than only at the end"
+# CA-048 (P1, code-audit pass 1) -- EDMV4-T57 AC3: "a fixture in which the harvested entry is
+# absent from the new location must fail it. Passing after the retarget is not evidence on its
+# own." No such fixture existed for any retargeted group. What shipped instead was a
+# seed-UNCHANGED discriminator (kept, in both groups -- it controls a different risk and is not a
+# substitute), which points the opposite way: it proves the write did not land in the shipped
+# seed, never that the retargeted assertions can tell whether it landed in the delta.
+#
+# t57_ac3_t56ac8_predicate <delta> -- the substance of the T56 AC8 group's delta assertions, as a
+# SILENT predicate (0 = the block would pass, non-zero = it would fail). It emits nothing and
+# touches no counter, so the same code path that judges the real delta can be re-run against a
+# deliberately broken fixture -- which is the only way to show the block discriminates.
+t57_ac3_t56ac8_predicate() {
+  local d="$1" n
+  [[ -s "$d" ]] || return 1
+  n="$(grep -c '^### CA-9[0-9]* (P2, lens L1): T56 AC8 run ' "$d" 2>/dev/null || true)"
+  [[ "${n:-0}" -eq 10 ]] || return 1
+  return 0
+}
+
 t56_ac8_case() {
   local scratch
   scratch="$(mktemp -d "${TMP}/edm-t56-ac8.XXXXXX")" || { fail "T56 AC8 -- mktemp failed"; return 1; }
@@ -3851,6 +3870,33 @@ t56_ac8_case() {
     && pass "T56 AC8 -- EDMV4-T18 discriminator: the shipped seed's own heading count is unchanged by all ten runs (proves the writes really landed in the delta, not the seed)" \
     || fail "T56 AC8 -- shipped seed heading count changed (${before_seed_headings:-0} -> ${after_seed_headings:-0}); the ten runs wrote into the seed, not the delta"
 
+  # ---- CA-048 / EDMV4-T57 AC3: negative fixtures for this group's retargeted delta assertions.
+  local t57_neg
+  if t57_ac3_t56ac8_predicate "$delta"; then
+    pass "CA-048/T57 AC3 -- the T56 AC8 delta predicate passes against the REAL, populated delta"
+  else
+    fail "CA-048/T57 AC3 -- the T56 AC8 delta predicate does not pass against the real delta, so the fixtures below cannot be interpreted"
+  fi
+
+  t57_neg="${scratch}/t57-t56ac8-empty.md"
+  : > "$t57_neg"
+  if t57_ac3_t56ac8_predicate "$t57_neg"; then
+    fail "CA-048/T57 AC3 -- negative fixture FAILED: the T56 AC8 delta predicate passed against a TRUNCATED delta, so its clean result above proves nothing"
+  else
+    pass "CA-048/T57 AC3 -- negative fixture: a truncated delta is rejected by the T56 AC8 assertions"
+  fi
+
+  # An entry-level fixture, not just an emptiness one: AC3 names the harvested entry being ABSENT
+  # from the new location, which an emptiness check alone would never distinguish from a delta
+  # that is populated but short one entry.
+  t57_neg="${scratch}/t57-t56ac8-missing-run.md"
+  grep -v 'T56 AC8 run 7' "$delta" > "$t57_neg" || true
+  if t57_ac3_t56ac8_predicate "$t57_neg"; then
+    fail "CA-048/T57 AC3 -- negative fixture FAILED: a populated delta with ONE harvested run entry removed still passed the T56 AC8 assertions"
+  else
+    pass "CA-048/T57 AC3 -- negative fixture: a populated delta with ONE harvested run entry removed is rejected"
+  fi
+
   rm -rf "$scratch"
 }
 t56_ac8_case
@@ -3872,6 +3918,27 @@ t56_ac8_case
 # under with_scratch_repo would write into this repository's own committed pattern-library docs.
 echo
 echo "=== CA-002 remediation: cmd_update_patterns insertion path (T54 AC1/AC2/AC3/AC4/AC5/AC8/AC9/AC10) ==="
+
+# CA-048 / EDMV4-T57 AC3, second retargeted group. This one is the priority the finding names:
+# the two `check_absent` calls in the block below run against `$(cat "$delta")`, and "needle
+# absent" is trivially TRUE of an empty file -- so both pass vacuously on a delta that was never
+# written at all. They survive today only because an adjacent assertion happens to prove the delta
+# is populated, an inherited property rather than a demonstrated one, which is exactly the
+# distinction AC3 exists to force.
+#
+# t57_ac3_ca002_predicate <delta> -- the substance of this group's delta assertions as a SILENT
+# predicate (0 = the block would pass, non-zero = it would fail). Every clause below is a real
+# assertion from the block, plus the non-emptiness precondition the two absence checks lacked.
+t57_ac3_ca002_predicate() {
+  local d="$1" body
+  [[ -s "$d" ]] || return 1
+  body="$(cat "$d")"
+  case "$body" in *'### CA002 novel finding one'*) ;; *) return 1 ;; esac
+  case "$body" in *'### CA002 novel finding two'*) ;; *) return 1 ;; esac
+  case "$body" in *'### literal semicolon inside a mermaid label'*) return 1 ;; esac
+  case "$body" in *'curated prose.## '*) return 1 ;; esac
+  return 0
+}
 
 ca002_insertion_case() {
   local scratch
@@ -3950,6 +4017,12 @@ ca002_insertion_case() {
   [[ "${dup_original_count:-0}" -eq 1 ]] \
     && pass "CA-002 AC5 -- the pre-existing entry the mock report duplicates still appears exactly once in the shipped seed, untouched" \
     || fail "CA-002 AC5 -- pre-existing duplicate-titled entry appears ${dup_original_count:-0} time(s) in the seed, expected 1"
+  # CA-048: an explicit non-emptiness precondition for the absence checks in this block. "Needle
+  # absent" is trivially true of an empty file, so without this the two check_absent calls against
+  # $(cat "$delta") would pass on a delta that was never written at all.
+  [[ -s "$delta" ]] \
+    && pass "CA-048 -- the delta is non-empty, so the absence checks in this block are evaluated against real content" \
+    || fail "CA-048 -- the delta is EMPTY; the absence checks in this block would pass vacuously"
   check_absent "CA-002 AC5 -- the duplicate was skipped, not appended into the delta under its report-side casing" \
     "### literal semicolon inside a mermaid label" "$(cat "$delta")"
 
@@ -4014,6 +4087,57 @@ ca002_insertion_case() {
   [[ "$after_seed_headings" -eq "$before_seed_headings" ]] \
     && pass "CA-002 -- EDMV4-T18 discriminator: the shipped seed's own '### ' heading count is unchanged by either run (proves the writes really landed in the delta, not the seed)" \
     || fail "CA-002 -- shipped seed heading count changed (${before_seed_headings} -> ${after_seed_headings}); the runs wrote into the seed, not the delta"
+
+  # ---- CA-048 / EDMV4-T57 AC3: four negative fixtures for this group. Each breaks the delta in
+  # ONE way that a real regression could break it, and requires the same predicate that judged the
+  # real delta to reject it.
+  local t57_neg
+  if t57_ac3_ca002_predicate "$delta"; then
+    pass "CA-048/T57 AC3 -- the CA-002 delta predicate passes against the REAL, populated delta"
+  else
+    fail "CA-048/T57 AC3 -- the CA-002 delta predicate does not pass against the real delta, so the fixtures below cannot be interpreted"
+  fi
+
+  # (a) truncated delta -- the shape both check_absent calls above pass vacuously on.
+  t57_neg="${scratch}/t57-ca002-empty.md"
+  : > "$t57_neg"
+  if t57_ac3_ca002_predicate "$t57_neg"; then
+    fail "CA-048/T57 AC3 -- negative fixture FAILED: the CA-002 delta predicate passed against a TRUNCATED delta, which is precisely the vacuous pass the two absence checks carried"
+  else
+    pass "CA-048/T57 AC3 -- negative fixture: a truncated delta is rejected (the vacuous-pass shape the two absence checks carried)"
+  fi
+
+  # (b) the harvested entry absent from an otherwise fully-populated delta -- AC3's own wording,
+  # and the case an emptiness check alone would never distinguish.
+  t57_neg="${scratch}/t57-ca002-missing-entry.md"
+  grep -v 'CA002 novel finding two' "$delta" > "$t57_neg" || true
+  if t57_ac3_ca002_predicate "$t57_neg"; then
+    fail "CA-048/T57 AC3 -- negative fixture FAILED: a delta with ONE harvested entry removed still passed the CA-002 assertions"
+  else
+    pass "CA-048/T57 AC3 -- negative fixture: a populated delta with ONE harvested entry removed is rejected"
+  fi
+
+  # (c) the de-duplicated entry wrongly appended -- proves the first check_absent discriminates on
+  # CONTENT, not merely on the delta being non-empty.
+  t57_neg="${scratch}/t57-ca002-dup-appended.md"
+  cat "$delta" > "$t57_neg"
+  printf '\n### literal semicolon inside a mermaid label\nStub.\n' >> "$t57_neg"
+  if t57_ac3_ca002_predicate "$t57_neg"; then
+    fail "CA-048/T57 AC3 -- negative fixture FAILED: a delta carrying the skipped duplicate still passed, so the de-duplication absence check cannot fire"
+  else
+    pass "CA-048/T57 AC3 -- negative fixture: a delta into which the skipped duplicate WAS appended is rejected"
+  fi
+
+  # (d) the dropped-newline concatenation (CA-133's own regression shape) -- proves the second
+  # check_absent discriminates.
+  t57_neg="${scratch}/t57-ca002-concat.md"
+  cat "$delta" > "$t57_neg"
+  printf '\ncurated prose.## Pre-Flight Checklist\n' >> "$t57_neg"
+  if t57_ac3_ca002_predicate "$t57_neg"; then
+    fail "CA-048/T57 AC3 -- negative fixture FAILED: a delta with appended prose run into the next boundary heading still passed, so the dropped-newline absence check cannot fire"
+  else
+    pass "CA-048/T57 AC3 -- negative fixture: a delta whose appended prose runs into the next '##' boundary heading is rejected"
+  fi
 
   rm -rf "$scratch"
 }
