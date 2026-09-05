@@ -6140,51 +6140,155 @@ T51_TARGET_EOF
 }
 
 T51_INTERP_RE='\b(node|python|python3|yq|ruby|deno)\b'
-
-# ---- Zero node/python/python3/yq/ruby/deno references across bin/ and evals/ (bin/tests/
-# excluded, matching T50/T61 AC9's own convention -- test-fixture/assertion surface).
-t51_scan() {
-  { grep -rnE "$T51_INTERP_RE" "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/evals" 2>/dev/null || true; } \
-    | grep -v '/tests/' \
-    | grep -vE ':[[:space:]]*#'
-}
-T51_HITS="$(t51_scan || true)"
-if [[ -z "$T51_HITS" ]]; then
-  pass "EDMV4-T51 -- zero node/python/python3/yq/ruby/deno references across bin/ and evals/ (bin/tests/ excluded)"
-else
-  fail "EDMV4-T51 -- forbidden interpreter reference(s) found:\n${T51_HITS}"
-fi
-
-# Positive control: a scratch fixture with a real 'python3 -c' line must be caught.
-w8_scratch_dir T51_TMP
-T51_FIXTURE="${T51_TMP}/fake-script.sh"
-{
-  printf '%s\n' '#!/usr/bin/env bash'
-  printf '%s\n' "python3 -c 'print(1)'"
-} > "$T51_FIXTURE"
-T51_CONTROL_HITS="$({ grep -nE "$T51_INTERP_RE" "$T51_FIXTURE" 2>/dev/null || true; } | grep -vE ':[[:space:]]*#' || true)"
-if [[ -n "$T51_CONTROL_HITS" ]]; then
-  pass "EDMV4-T51 -- positive control: a synthetic 'python3 -c' line is caught"
-else
-  fail "EDMV4-T51 -- positive control broken: a synthetic 'python3 -c' fixture produced zero hits"
-fi
-
-# ---- perl: forbidden across bin/ (excluding bin/tests/) and evals/, exactly like the interpreter
-# set above. bin/tests/timing.sh's two guarded call sites are the sole sanctioned exception,
-# verified separately below by CONTENT (never by line number, since EDMV4-47 AC4 edits this file).
-# NOTE: bin/tests/wave6-smoke.sh carries a real, UNGUARDED `perl -pe` usage (G18/CA-378, predating
-# EDMV4) -- out of this ticket's Target Components (wave6-smoke.sh is not listed) and out of the
-# bin/tests/-excluded scope below by the same T61 AC9 convention every other section in this suite
-# already relies on; reported here rather than silently fixed, since fixing it means editing a
-# file this ticket does not own.
 T51_PERL_RE='\bperl\b'
 T51_TIMING_SH="${PLUGIN_DIR}/bin/tests/timing.sh"
+w8_scratch_dir T51_TMP
 
-T51_PERL_HITS="$({ grep -rnE "$T51_PERL_RE" "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/evals" 2>/dev/null || true; } | grep -v '/tests/' | grep -vE ':[[:space:]]*#' || true)"
-if [[ -z "$T51_PERL_HITS" ]]; then
-  pass "EDMV4-T51 -- zero perl references across bin/ (excluding bin/tests/) and evals/"
+# ---- CA-051: AC1's scope is "every file under plugins/edm/bin/". Both sweeps below used to pipe
+# through a path filter that removed bin/tests/ -- eleven files, including three smoke suites,
+# timing.sh, the harness and run-all.sh -- from a check written against every one of them, so an
+# interpreter line added to any suite was invisible. AC2's own timing.sh exemption is the proof
+# bin/tests/ was always meant to be in scope: an exemption is only ever needed for something that
+# would otherwise be caught. Both sweeps now run over the shape-derived target set above.
+#
+# Shared shape-based exclusions, the same kind the widened stat sweep and EDMV4-T50's own
+# self-scan already use:
+#   (a) a full-line comment;
+#   (b) a continuation line that is a quoted ARGUMENT rather than a command -- it begins with a
+#       double quote, so nothing on it can be a command word;
+#   (c) a pass/fail/echo/check message argument -- prose describing the rule, never a use of it;
+#   (d) any occurrence inside a SINGLE-QUOTED span, stripped before the test. Every meta-reference
+#       in this tree (grep patterns, fixture literals, a quoted word inside a message) lives
+#       inside single quotes, and a real invocation cannot: a command word inside single quotes is
+#       inert data by construction, so this exclusion cannot hide a use.
+# The self-matching-scan trap is unavoidable here -- these sweeps live in a file that has to name
+# the very binaries it bans -- so both controls below inject a REAL occurrence on a CODE line of a
+# scratch copy of a real suite, which is the only thing that proves the four exclusions above
+# leave real code reachable.
+t51_shape_filter() {
+  sed "s/'[^']*'//g" \
+    | grep -vE ':[0-9]+:[[:space:]]*#' \
+    | grep -vE ':[0-9]+:[[:space:]]*"' \
+    | grep -vE '\b(pass|fail|echo|check[a-z_]*)[[:space:]]*"'
+}
+
+# ---- Zero node/python/python3/yq/ruby/deno references across every shell script under bin/ and
+# evals/, bin/tests/ INCLUDED.
+# The final content test is anchored PAST the `path:lineno:` prefix grep emits. Without that
+# anchor a scan target whose own PATH carries a banned token (a scratch fixture named for what it
+# injects is the obvious way that happens) reports a hit on every line of that file, and a control
+# built on it would pass for the wrong reason -- observed live while writing these controls.
+t51_interp_filter() { t51_shape_filter | { grep -E ':[0-9]+:.*'"$T51_INTERP_RE" || true; }; }
+T51_HITS="$(t51_grep_targets "$T51_INTERP_RE" | t51_interp_filter)"
+if [[ -z "$T51_HITS" ]]; then
+  pass "EDMV4-T51 AC1 / CA-051 -- zero node/python/python3/yq/ruby/deno references across every shell script under bin/ and evals/, bin/tests/ included"
 else
-  fail "EDMV4-T51 -- perl reference(s) found outside the sanctioned bin/tests/timing.sh sites:\n${T51_PERL_HITS}"
+  fail "EDMV4-T51 AC1 / CA-051 -- forbidden interpreter reference(s) found:\n${T51_HITS}"
+fi
+
+# Positive control (AC3): the banned token is assembled at runtime from two halves, so this file
+# never itself carries the contiguous literal on a code line -- the sweep covers wave8-smoke.sh
+# now, and a control fixture whose own writer line matched would make the tree-wide assertion
+# above fail on the control that exists to keep it honest.
+T51_CTRL_INTERP="pyth""on3"
+T51_CTRL_SUITE="${T51_TMP}/wave8-interp-control.sh"
+cat "${SCRIPT_DIR}/wave8-smoke.sh" > "$T51_CTRL_SUITE"
+printf '\n%s -c "print(1)"\n' "$T51_CTRL_INTERP" >> "$T51_CTRL_SUITE"
+T51_CONTROL_HITS="$({ grep -nE "$T51_INTERP_RE" "$T51_CTRL_SUITE" /dev/null 2>/dev/null || true; } | t51_interp_filter)"
+if [[ -n "$T51_CONTROL_HITS" ]]; then
+  pass "EDMV4-T51 AC3 / CA-051 -- positive control: a real interpreter invocation appended to a scratch copy of a suite IS caught, so the newly-covered bin/tests/ files are genuinely scanned"
+else
+  fail "EDMV4-T51 AC3 / CA-051 -- positive control broken: a real interpreter invocation on a suite's own code line produced zero hits"
+fi
+
+# Negative control: the SAME scratch copy without the injected line must be clean. Paired with the
+# control above, this is what separates "the exclusions discriminate" from "the scan reports
+# everything" and from "the scan reports nothing".
+T51_CTRL_CLEAN="${T51_TMP}/wave8-interp-clean.sh"
+cat "${SCRIPT_DIR}/wave8-smoke.sh" > "$T51_CTRL_CLEAN"
+T51_CLEAN_HITS="$({ grep -nE "$T51_INTERP_RE" "$T51_CTRL_CLEAN" /dev/null 2>/dev/null || true; } | t51_interp_filter)"
+if [[ -z "$T51_CLEAN_HITS" ]]; then
+  pass "EDMV4-T51 AC3 / CA-051 -- negative control: the same scratch copy WITHOUT the injected line is clean, so the exclusions are not simply reporting every line"
+else
+  fail "EDMV4-T51 AC3 / CA-051 -- negative control FAILED: an unmodified copy of wave8-smoke.sh reported hits:\n${T51_CLEAN_HITS}"
+fi
+
+# ---- perl: AC1 names it in the same banned set, and AC2 grants exactly one exemption -- the two
+# guarded call sites in bin/tests/timing.sh. That exemption is resolved by SHAPE, never by
+# filename and never by line number (EDMV4-47 AC4 edits timing.sh): an invocation is exempt only
+# when the line IMMEDIATELY ABOVE it carries a `command -v perl` guard, which is AC2's own
+# wording. A `command -v perl` line is itself a presence probe rather than an invocation, and an
+# equality comparison against the literal name (timing.sh's own command-shadow self-test) is a
+# string test, never a call -- both excluded by those shapes. The guard's other half, a genuinely
+# non-perl fallback in the else branch, is proven separately below by t51_check_guarded_perl
+# against the two function bodies.
+#
+# CA-052 already removed wave6-smoke.sh's two unguarded invocations, so the note that used to
+# stand here -- recording them as a known violation deliberately left outside this sweep's scope
+# -- is gone with them. Documenting a known violation inside the assertion that exists to catch it
+# converts the assertion into a note, which is what CA-052 itself found.
+t51_perl_unguarded() {
+  # Drops any hit whose immediately preceding SOURCE line carries the presence guard.
+  local line f n prev
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    f="${line%%:*}"
+    n="${line#*:}"; n="${n%%:*}"
+    prev=""
+    if [[ "$n" -gt 1 ]]; then prev="$(sed -n "$((n-1))p" "$f" 2>/dev/null || true)"; fi
+    case "$prev" in
+      *"command -v perl"*) continue ;;
+    esac
+    printf '%s\n' "$line"
+  done
+}
+t51_perl_filter() {
+  t51_shape_filter \
+    | grep -v 'command -v perl' \
+    | grep -vE '==[[:space:]]*"perl"' \
+    | { grep -E ':[0-9]+:.*'"$T51_PERL_RE" || true; } \
+    | t51_perl_unguarded
+}
+T51_PERL_HITS="$(t51_grep_targets "$T51_PERL_RE" | t51_perl_filter)"
+if [[ -z "$T51_PERL_HITS" ]]; then
+  pass "EDMV4-T51 AC1/AC2 / CA-051 -- zero UNGUARDED perl invocations across every shell script under bin/ and evals/, bin/tests/ included"
+else
+  fail "EDMV4-T51 AC1/AC2 / CA-051 -- unguarded perl invocation(s) found:\n${T51_PERL_HITS}"
+fi
+
+# Positive control for the perl sweep: a real UNGUARDED invocation appended to a scratch copy of a
+# real suite must be caught. Token assembled at runtime for the same self-match reason as above.
+T51_CTRL_PERL="pe""rl"
+# The scratch fixtures are named `wave8-pl-*` rather than spelling the binary out: this file is
+# itself a scan target now, and a double-quoted path literal is not inside a single-quoted span,
+# so a self-descriptive filename here would be reported as a real hit by the sweep two blocks up.
+T51_PERL_CTRL_SUITE="${T51_TMP}/wave8-pl-unguarded.sh"
+cat "${SCRIPT_DIR}/wave8-smoke.sh" > "$T51_PERL_CTRL_SUITE"
+printf '\n%s -e 1\n' "$T51_CTRL_PERL" >> "$T51_PERL_CTRL_SUITE"
+T51_PERL_CTRL_HITS="$({ grep -nE "$T51_PERL_RE" "$T51_PERL_CTRL_SUITE" /dev/null 2>/dev/null || true; } | t51_perl_filter)"
+if [[ -n "$T51_PERL_CTRL_HITS" ]]; then
+  pass "EDMV4-T51 AC2 / CA-051 -- positive control: a real UNGUARDED perl invocation appended to a scratch copy of a suite IS caught"
+else
+  fail "EDMV4-T51 AC2 / CA-051 -- positive control broken: a real unguarded perl invocation on a suite's own code line produced zero hits"
+fi
+
+# Negative control: the same invocation, this time immediately preceded by a real presence guard,
+# must be exempt -- proving the exemption is the guard's SHAPE and not the word perl itself.
+T51_PERL_GUARD_SUITE="${T51_TMP}/wave8-pl-guarded.sh"
+cat "${SCRIPT_DIR}/wave8-smoke.sh" > "$T51_PERL_GUARD_SUITE"
+{
+  printf '%s\n' ""
+  printf '%s\n' "if command -v ${T51_CTRL_PERL} >/dev/null 2>&1; then"
+  printf '%s\n' "  ${T51_CTRL_PERL} -e 1"
+  printf '%s\n' "else"
+  printf '%s\n' "  awk 'BEGIN{print 1}'"
+  printf '%s\n' "fi"
+} >> "$T51_PERL_GUARD_SUITE"
+T51_PERL_GUARD_HITS="$({ grep -nE "$T51_PERL_RE" "$T51_PERL_GUARD_SUITE" /dev/null 2>/dev/null || true; } | t51_perl_filter)"
+if [[ -z "$T51_PERL_GUARD_HITS" ]]; then
+  pass "EDMV4-T51 AC2 / CA-051 -- negative control: the same invocation immediately preceded by a real presence guard is exempted by shape"
+else
+  fail "EDMV4-T51 AC2 / CA-051 -- negative control FAILED: a properly guarded perl invocation was reported as unguarded:\n${T51_PERL_GUARD_HITS}"
 fi
 
 T51_PERL_CONTROL="$(printf '%s\n' 'perl -e 1' | grep -cE "$T51_PERL_RE" || true)"

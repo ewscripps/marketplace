@@ -1888,17 +1888,14 @@ echo "T17 AC5 -- Notes section preserved across HANDOFF regeneration"
 "$EDM_STATE" init T17NOTES >/dev/null
 "$EDM_STATE" write-handoff T17NOTES >/dev/null
 notes_path="$TMP/SRD/T17NOTES/HANDOFF.md"
-python3 -c "
-import re
-with open('$notes_path') as f:
-    content = f.read()
-content = content.replace('## Notes', '## Notes' + chr(10) + 'A teammate note that must survive regeneration.', 1)
-with open('$notes_path', 'w') as f:
-    f.write(content)
-" 2>/dev/null || {
-  awk '{print} /^## Notes$/{print "A teammate note that must survive regeneration."}' "$notes_path" > "$notes_path.tmp" \
-    && mv "$notes_path.tmp" "$notes_path"
-}
+# CA-051: this used to prefer an inline interpreter heredoc with the awk below only as its
+# fallback arm, so on any host that had that interpreter the awk path never ran -- and the
+# interpreter itself is outside this plugin's pinned bash/jq/git binary set (EDMV4-T51 AC1). The
+# awk was already an exact equivalent (print every line; after a line that is exactly `## Notes`,
+# print the teammate note), so the preferred arm is deleted rather than guarded: one code path,
+# always taken, no dependency on anything outside the pinned set.
+awk '{print} /^## Notes$/{print "A teammate note that must survive regeneration."}' "$notes_path" > "$notes_path.tmp"
+mv "$notes_path.tmp" "$notes_path"
 "$EDM_STATE" write-handoff T17NOTES >/dev/null
 check "AC5 -- Notes content preserved across regeneration" \
   "A teammate note that must survive regeneration." "$(cat "$notes_path")"
