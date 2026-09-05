@@ -77,6 +77,27 @@ the feature:
 `${CLAUDE_PLUGIN_DATA}` is reserved for plugin-internal caches only (convention detection, prefix lookup tables). It
 does NOT hold initiative artifacts or initiative state.
 
+**EDM verifies it owns that directory before writing to it (CA-134, decision D46).** The variable is
+plugin-specific by contract and the host sets it correctly when EDM runs as an installed plugin --
+but EDM is routinely invoked by explicit path (`bash plugins/edm/bin/edm-state ...`, and every hook
+consumer), and in those contexts the host has no reason to have pointed it at EDM. EDM therefore
+inherited whatever plugin happened to be active. This was not theoretical: 133 EDM code-audit
+findings were harvested into
+`.../plugins/data/copilot-studio-skills-for-copilot-studio/patterns/code-audit.md` while three
+correctly-named `edm-*` directories sat unused.
+
+`edm_data_dir()` now accepts `${CLAUDE_PLUGIN_DATA}` only when the directory does not yet exist, is
+empty, carries EDM's own `run/` or `patterns/` footprint (C-4: every install predating this change
+is exactly that shape), or carries the `.edm-owned` sentinel `edm_data_dir_claim()` writes on first
+use. Anything else is another plugin's, and resolution falls through to `${XDG_DATA_HOME}/edm` as
+if the variable were unset.
+
+Namespacing the path was tried first and is **wrong**: `${CLAUDE_PLUGIN_DATA}/edm` still lands
+inside the foreign plugin's tree, so it tidies the path without changing who owns it. The condition
+has to be ownership, not shape. One residual is stated rather than hidden: a directory EDM has
+ALREADY polluted carries `patterns/`, so it keeps being accepted until a human deletes it -- this
+stops the spread, it does not undo what already landed.
+
 ### 4. State is in the project, not the plugin
 
 `SRD/{PRODUCT}/{PREFIX}__{DESCRIPTION}/.edm-state.json` (or `SRD/{PREFIX}/.edm-state.json` for legacy flat initiatives)
@@ -1277,7 +1298,7 @@ Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call the
 | Script                | Purpose                                                                                                                                                                                                                                     |
 |-----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `edm-state`           | Read/write `.edm-state.json` files; 41 subcommands: `init`, `get`, `set`, `list`, `active-initiatives`, `migrate-path`, `migrate-schema`, `approve-gate`, `phase-start`, `phase-complete`, `checkpoint-if-active`, `record-test-coverage`, `record-tests-added`, `get-coverage`, `srd-version`, `archive`, `write-handoff`, `watch-impl`, `metrics-report`, `validate`, `gate-check`, `branch-check`, `record-branch`, `git-lock-check`, `current-step`, `session-start`, `audit-round-start`, `audit-round-complete`, `render-ledger`, `audit-converged`, `record-partial-verdict`, `set-mode`, `skip-phase`, `set-supersedes`, `set-forked-from`, `resolve-dir`, `set-parent`, `add-related`, `update-patterns`, `get-patterns`, `detect-conditional-lenses` (`EDMV4-T24`: `detect-conditional-lenses [<PREFIX>]` prints a CSV of `CONDITIONAL_LENS_IDS` members genuinely N/A -- inapplicable, never skipped for cost, guard D2 -- for the current repository's TRACKED files; empty output, exit 0, means none are N/A. A genuinely empty tracked-file set and a FAILED `git ls-files` are not the same fact, so a failed listing **dies** non-zero rather than reading as "nothing is a typed-stack marker" (CA-035a) -- this subcommand's answer gates `round_type=full`, and the pre-fix `|| true` scored every conditional lens N/A on a repository it could not even inspect. Marker predicates match at ANY depth, not only at the repository root (CA-035b): a monorepo carrying only `packages/app/tsconfig.json` is a typed stack, and the pre-fix root-anchored exact match reported it L13 N/A -- coverage loss disguised as an efficiency gain, guard D2's own failure mode. `skills/code-audit/SKILL.md` Step 1 is the sole authority that calls it, per the same N/A-determination precedent this file's "Layers that are N/A and per-epic test plans" section documents for the test layer; the marker list itself lives only in `bin/edm-state`, never restated here) |
-| `_edm-datadir-lib.sh` | Sourced-only shared data-directory resolver (EDMV4-T17, architecture.md AD3), never executed directly. Three functions: `edm_data_dir()` (resolves a writable plugin data root: `${CLAUDE_PLUGIN_DATA}` if absolute and creatable, else `${XDG_DATA_HOME}/edm` if absolute, else `${HOME}/.local/share/edm`, else the empty string), `edm_project_key()` (encodes the current project root -- `${CLAUDE_PROJECT_DIR}`, else `git rev-parse --show-toplevel`, else `pwd` -- replacing `/` and `.` with `-`), and `edm_marker_path()` (prints `${data}/run/<key>.phase6`). Sourced by its two consumers, `edm-state` and `edm-gateguard`, guarded so a missing file degrades the sourcing script rather than aborting it. |
+| `_edm-datadir-lib.sh` | Sourced-only shared data-directory resolver (EDMV4-T17, architecture.md AD3), never executed directly. Four functions: `edm_data_dir()` (resolves a writable plugin data root: `${CLAUDE_PLUGIN_DATA}` if absolute, creatable **and EDM-owned**, else `${XDG_DATA_HOME}/edm` if absolute, else `${HOME}/.local/share/edm`, else the empty string), `edm_data_dir_claim()` (creates the resolved root and drops the `.edm-owned` sentinel -- the ONLY writing function in the file; `edm_data_dir()` itself still writes nothing, EDMV4-T17 AC9), `edm_project_key()` (encodes the current project root -- `${CLAUDE_PROJECT_DIR}`, else `git rev-parse --show-toplevel`, else `pwd` -- replacing `/` and `.` with `-`), and `edm_marker_path()` (prints `${data}/run/<key>.phase6`). Sourced by its two consumers, `edm-state` and `edm-gateguard`, guarded so a missing file degrades the sourcing script rather than aborting it. |
 | `edm-init`            | Scaffold a new initiative directory (`SRD/{PREFIX}/` or `SRD/{PRODUCT}/{PREFIX}__{desc}/`) with empty state file |
 | `edm-validate-prefix` | Verify a proposed prefix doesn't collide with existing initiatives across all product subdirectories |
 | `edm-lint-artifacts`  | Scan initiative artifact markdown for violation classes including attribution trailers, non-ASCII bytes, leaked tool-invocation tags, and a literal `;` inside Mermaid label/edge/message text; run `edm-lint-artifacts --help` for the authoritative, current class list rather than a count hardcoded here (a count drifts as classes are added). Called per resolved prefix by `edm-lint-staged-artifacts` |

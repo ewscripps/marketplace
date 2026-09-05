@@ -2125,6 +2125,13 @@ echo "-- EDMV4-T12 AC2 negative: marker write failure degrades to a warning, nev
 T12_AC2_NEG_DATA="${TMP}/t12-ac2-neg-data"
 mkdir -p "$T12_AC2_NEG_DATA"
 touch "${T12_AC2_NEG_DATA}/run"
+# CA-134/D46: declare the fixture directory EDM-owned. The ownership test edm_data_dir()
+# now applies would otherwise read this dir as a FOREIGN plugin's -- it holds a stray
+# file named `run` and no EDM structure -- and fall through to XDG, where mkdir succeeds
+# and no warning is emitted. That would silently convert this into a test of the wrong
+# thing. The sentinel keeps the directory EDM's so the unwritable-marker path is still
+# what gets exercised.
+touch "${T12_AC2_NEG_DATA}/.edm-owned"
 
 T12_AC2_NEG_REPO="${TMP}/t12-ac2-neg-repo"
 mkdir -p "$T12_AC2_NEG_REPO"
@@ -9438,6 +9445,141 @@ CA027_SINGLE_SLOT="$(
   && pass "CA-027 -- negative control: the same predicate reports the leak under single-slot (harness_scratch_dir) semantics, so the additive check discriminates" \
   || fail "CA-027 -- negative control broken: single-slot semantics reported '${CA027_SINGLE_SLOT}', expected FIRST_LEAKED"
 
+# =====================================================================================
+# CA-134 / D46: edm_data_dir() must not adopt another plugin's data directory
+# =====================================================================================
+# The defect this covers was observed in production, not hypothesised: 133 EDM findings were
+# harvested into `.../plugins/data/copilot-studio-skills-for-copilot-studio/patterns/code-audit.md`
+# because EDM, invoked by explicit path, inherited whatever plugin's CLAUDE_PLUGIN_DATA was set.
+# EDMV4-T17 AC8 was amended (D46) to require an ownership condition, not just creatability.
 echo
+echo "-- CA-134/D46: edm_data_dir() ownership test --"
+
+# Self-contained mktemp/rm pair rather than w8_scratch_dir, and the reason is structural:
+# CA-027's registry assertion compares a STATIC grep of w8_scratch_dir call sites against
+# the registry's RUNTIME length at the point it runs, so any call site appearing after it
+# fails the count. This band is appended at the tail, which is after it. Removed explicitly
+# at the end of the band.
+CA134_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca134.XXXXXX")"
+CA134_LIB="${PLUGIN_DIR}/bin/_edm-datadir-lib.sh"
+
+# ca134_resolve <plugin-data> -- resolve edm_data_dir() in a CHILD shell with a controlled
+# environment, printing the result. A child shell rather than an in-process source: this suite
+# has already sourced its own helpers, and re-sourcing the library here would redefine them.
+ca134_resolve() {
+  CLAUDE_PLUGIN_DATA="$1" XDG_DATA_HOME="${CA134_TMP}/xdg" HOME="${CA134_TMP}/home" \
+    bash -c '. "$0"; edm_data_dir' "$CA134_LIB" 2>/dev/null
+}
+
+# --- the defect case: a foreign plugin's populated directory is REFUSED ---
+CA134_FOREIGN="${CA134_TMP}/plugins/data/copilot-studio-skills"
+mkdir -p "${CA134_FOREIGN}/knowledge"
+printf '%s\n' "# another plugin's file" > "${CA134_FOREIGN}/knowledge/sources.md"
+CA134_GOT="$(ca134_resolve "$CA134_FOREIGN")"
+[[ "$CA134_GOT" != "$CA134_FOREIGN" ]] \
+  && pass "CA-134 -- a foreign plugin's populated data directory is NOT adopted (got '${CA134_GOT}')" \
+  || fail "CA-134 -- edm_data_dir() adopted the foreign directory '${CA134_FOREIGN}'"
+[[ "$CA134_GOT" == "${CA134_TMP}/xdg/edm" ]] \
+  && pass "CA-134 -- refusal falls through to \${XDG_DATA_HOME}/edm, exactly as if the variable were unset" \
+  || fail "CA-134 -- expected fall-through to '${CA134_TMP}/xdg/edm', got '${CA134_GOT}'"
+
+# --- NEGATIVE CONTROL: the same directory IS adopted once EDM has claimed it. Without this,
+# --- an edm_data_dir() that refused everything would pass the assertion above.
+touch "${CA134_FOREIGN}/.edm-owned"
+CA134_CLAIMED="$(ca134_resolve "$CA134_FOREIGN")"
+[[ "$CA134_CLAIMED" == "$CA134_FOREIGN" ]] \
+  && pass "CA-134 negative control -- the SAME directory is adopted once it carries .edm-owned, so the refusal above is ownership-driven and not blanket" \
+  || fail "CA-134 negative control -- a sentinel-bearing directory was still refused (got '${CA134_CLAIMED}'); the check refuses everything and proves nothing"
+rm -f "${CA134_FOREIGN}/.edm-owned"
+
+# --- C-4 backward compatibility: a pre-sentinel EDM directory (its own footprint, no sentinel)
+# --- must still be adopted, or every existing install silently loses its pattern library.
+CA134_LEGACY="${CA134_TMP}/legacy-edm-data"
+mkdir -p "${CA134_LEGACY}/patterns"
+printf '%s\n' "## harvested" > "${CA134_LEGACY}/patterns/code-audit.md"
+CA134_LEGACY_GOT="$(ca134_resolve "$CA134_LEGACY")"
+[[ "$CA134_LEGACY_GOT" == "$CA134_LEGACY" ]] \
+  && pass "CA-134 / C-4 -- a pre-sentinel directory carrying EDM's own patterns/ footprint is still adopted" \
+  || fail "CA-134 / C-4 -- a legacy EDM data directory was abandoned (got '${CA134_LEGACY_GOT}'); every existing install would lose its harvested library"
+
+# --- an unclaimed EMPTY directory is adoptable (the ordinary first-run case) ---
+CA134_EMPTY="${CA134_TMP}/empty-data"
+mkdir -p "$CA134_EMPTY"
+[[ "$(ca134_resolve "$CA134_EMPTY")" == "$CA134_EMPTY" ]] \
+  && pass "CA-134 -- an existing but empty directory is adoptable" \
+  || fail "CA-134 -- an empty directory was refused"
+
+# --- a directory that does not exist yet is adoptable (normal first run) ---
+[[ "$(ca134_resolve "${CA134_TMP}/not-yet")" == "${CA134_TMP}/not-yet" ]] \
+  && pass "CA-134 -- a not-yet-created directory is adoptable" \
+  || fail "CA-134 -- a not-yet-created directory was refused"
+
+# --- a foreign directory whose only content is a DOTFILE is still refused. The emptiness probe
+# --- globs "$p"/* only by default; without the dotfile patterns this case would read as empty.
+CA134_DOT="${CA134_TMP}/dot-only"
+mkdir -p "$CA134_DOT"
+touch "${CA134_DOT}/.some-other-plugin-state"
+[[ "$(ca134_resolve "$CA134_DOT")" != "$CA134_DOT" ]] \
+  && pass "CA-134 -- a directory holding only a dotfile is refused (the emptiness probe sees dotfiles)" \
+  || fail "CA-134 -- a dotfile-only foreign directory was adopted; the emptiness probe is missing its dotfile globs"
+
+# --- edm_data_dir_claim writes the sentinel, is idempotent, and edm_data_dir itself writes NOTHING
+# --- (EDMV4-T17 AC9 -- resolution runs on gateguard's marker-absent fast path).
+CA134_CLAIM_DIR="${CA134_TMP}/claim-target"
+CLAUDE_PLUGIN_DATA="$CA134_CLAIM_DIR" XDG_DATA_HOME="${CA134_TMP}/xdg" HOME="${CA134_TMP}/home" \
+  bash -c '. "$0"; edm_data_dir >/dev/null' "$CA134_LIB" 2>/dev/null
+[[ ! -e "$CA134_CLAIM_DIR" ]] \
+  && pass "CA-134 / T17 AC9 -- edm_data_dir() alone creates nothing on disk" \
+  || fail "CA-134 / T17 AC9 -- edm_data_dir() created '${CA134_CLAIM_DIR}'; resolution must not write"
+CLAUDE_PLUGIN_DATA="$CA134_CLAIM_DIR" XDG_DATA_HOME="${CA134_TMP}/xdg" HOME="${CA134_TMP}/home" \
+  bash -c '. "$0"; edm_data_dir_claim' "$CA134_LIB" 2>/dev/null
+[[ -f "${CA134_CLAIM_DIR}/.edm-owned" ]] \
+  && pass "CA-134 -- edm_data_dir_claim writes the .edm-owned sentinel" \
+  || fail "CA-134 -- edm_data_dir_claim did not write the sentinel"
+CA134_SENTINEL_BYTES="$(wc -c < "${CA134_CLAIM_DIR}/.edm-owned" | tr -d ' ')"
+CLAUDE_PLUGIN_DATA="$CA134_CLAIM_DIR" XDG_DATA_HOME="${CA134_TMP}/xdg" HOME="${CA134_TMP}/home" \
+  bash -c '. "$0"; edm_data_dir_claim' "$CA134_LIB" 2>/dev/null
+check_num "CA-134 -- edm_data_dir_claim is idempotent (sentinel unchanged on a second call)" \
+  "$CA134_SENTINEL_BYTES" "$(wc -c < "${CA134_CLAIM_DIR}/.edm-owned" | tr -d ' ')"
+
+rm -rf "$CA134_TMP"
+echo
+
+# =====================================================================================
+# CA-134 fallout: the findings ledger must carry no duplicate CA-NNN id
+# =====================================================================================
+# CA-134 existed TWICE in findings-ledger.jsonl with contradictory severities -- one row
+# NOTED/noted, one P1/open. audit-converged counts the P1 row, so the finding read as blocking
+# while a reader inspecting the ledger by eye could equally have found the noted row and concluded
+# it was closed. Nothing detected it; it surfaced only because a human asked what CA-134 was.
+#
+# The id is the ledger's primary key: every downstream consumer (audit-converged's blocking set,
+# render-ledger, the synthesizer's fixed/re-opened merge) assumes one row per id. A duplicate is a
+# silent integrity failure, not a cosmetic one.
+echo
+echo "-- Ledger integrity: no duplicate CA-NNN ids --"
+
+CA134_LEDGER="${PLUGIN_DIR}/../../SRD/edm/EDMV4__ecc-integration/code-audit/findings-ledger.jsonl"
+if [[ -f "$CA134_LEDGER" ]]; then
+  CA134_DUPES="$(jq -r '.id' "$CA134_LEDGER" 2>/dev/null | sort | uniq -d | tr '\n' ' ')"
+  [[ -z "${CA134_DUPES// /}" ]] \
+    && pass "CA-134 fallout -- findings-ledger.jsonl carries no duplicate finding id" \
+    || fail "CA-134 fallout -- duplicate finding id(s) in findings-ledger.jsonl: ${CA134_DUPES}"
+
+  # Negative control: the same predicate MUST report a duplicate when one is present. Without it
+  # a jq failure (or an empty file) would satisfy the assertion above by producing no output --
+  # exactly the absent-renders-as-clean shape this initiative has now fixed fifteen times.
+  CA134_DUP_FIXTURE="$(mktemp "${TMPDIR:-/tmp}/edm-ledger-dup.XXXXXX")"
+  head -1 "$CA134_LEDGER" > "$CA134_DUP_FIXTURE"
+  head -1 "$CA134_LEDGER" >> "$CA134_DUP_FIXTURE"
+  CA134_CTRL="$(jq -r '.id' "$CA134_DUP_FIXTURE" 2>/dev/null | sort | uniq -d | tr -d '[:space:]')"
+  rm -f "$CA134_DUP_FIXTURE"
+  [[ -n "$CA134_CTRL" ]] \
+    && pass "CA-134 fallout -- negative control: the duplicate-id predicate reports a planted duplicate (${CA134_CTRL}), so the assertion above can genuinely fail" \
+    || fail "CA-134 fallout -- negative control: the duplicate-id predicate reported nothing on a file with a planted duplicate; the check above is vacuous"
+else
+  fail "CA-134 fallout -- findings-ledger.jsonl not found at ${CA134_LEDGER}; the duplicate-id check could not run"
+fi
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
+

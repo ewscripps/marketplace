@@ -92,6 +92,9 @@ _edm_marker_write() {
   local marker
   marker="$(edm_marker_path)"
   [[ -n "$marker" ]] || return 0
+  # CA-134/D46: claim the data directory as EDM's on first write, so a later run can
+  # tell EDM's own directory from a foreign plugin's inherited one.
+  declare -F edm_data_dir_claim >/dev/null 2>&1 && edm_data_dir_claim
   if ! mkdir -p "$(dirname "$marker")" 2>/dev/null; then
     echo "edm-state: [warn] could not create Phase-6 marker directory for ${prefix}; marker not written (gate degrades to no-op)" >&2
     return 0
@@ -6080,6 +6083,12 @@ cmd_update_patterns() {
     *" $audit_type "*) ;;
     *) die "update-patterns: unknown audit type '$audit_type' (expected: ${PATTERN_AUDIT_TYPE_ENUM_LIST// /|})" ;;
   esac
+
+  # CA-134/D46: this command is the one that exposed the defect -- 133 EDM findings were
+  # harvested into another plugin's patterns/ directory because EDM had inherited that
+  # plugin's CLAUDE_PLUGIN_DATA. Claim the resolved data directory before writing into it,
+  # so every later run can tell EDM's own directory from an inherited one.
+  declare -F edm_data_dir_claim >/dev/null 2>&1 && edm_data_dir_claim
 
   # G39: use the existing BASH_SOURCE-derived SCRIPT_DIR global (computed once near the top
   # of this file) instead of re-deriving the plugin root from $0. A local $0-based

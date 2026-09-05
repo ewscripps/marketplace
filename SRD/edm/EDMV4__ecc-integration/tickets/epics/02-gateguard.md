@@ -203,10 +203,24 @@ all), never to a deny.
 - [ ] AC7: The marker path is outside the repository. A smoke assertion runs `phase-start <PREFIX> 6`
       in a fixture repo and asserts `git status --porcelain` is empty and that no file exists under
       `${EDM_SRD_ROOT}`.
-- [ ] AC8: `edm_data_dir()` resolves `${CLAUDE_PLUGIN_DATA}` when absolute and creatable, then
-      `${XDG_DATA_HOME}/edm` when `XDG_DATA_HOME` is absolute, then `${HOME}/.local/share/edm`, then
-      prints an empty string. A relative value at any step falls through with a stderr warning and a
-      zero exit status rather than erroring.
+- [ ] AC8: `edm_data_dir()` resolves `${CLAUDE_PLUGIN_DATA}` when absolute, creatable **and
+      EDM-owned**, then `${XDG_DATA_HOME}/edm` when `XDG_DATA_HOME` is absolute, then
+      `${HOME}/.local/share/edm`, then prints an empty string. A relative value at any step falls
+      through with a stderr warning and a zero exit status rather than erroring.
+      **EDM-owned** means the directory does not yet exist, is empty, or carries an `.edm-owned`
+      sentinel file. A directory that exists, holds other content, and carries no sentinel belongs
+      to some other plugin and is skipped -- the resolver falls through to `${XDG_DATA_HOME}/edm`
+      as if the variable were unset. `edm_data_dir()` still writes nothing (AC9); the sentinel is
+      created by the first consumer that actually writes, alongside the `patterns/` and `run/`
+      directories it already creates.
+      *(Amended 2026-09-05 per CA-134 and decision D46. The original text pinned the chain without
+      an ownership condition, which is correct only when the host sets `CLAUDE_PLUGIN_DATA` for
+      EDM. EDM is routinely invoked by explicit path -- `bash plugins/edm/bin/edm-state ...` and
+      the hook consumers -- where the host has no reason to have set it to EDM's directory, so EDM
+      inherited whatever plugin was active and wrote its pattern library into that plugin's tree.
+      Reproduced live: 133 findings landed in `copilot-studio-skills-for-copilot-studio/patterns/`.
+      Namespacing the path was tried first and REJECTED -- `${CLAUDE_PLUGIN_DATA}/edm` is still
+      inside the foreign plugin's tree. The condition has to be ownership, not shape.)*
 - [ ] AC9: When `edm_data_dir()` returns empty, `edm_marker_path()` returns empty and
       `edm-gateguard` treats that as "marker absent" and allows. A smoke test unsets all three
       variables (or points them at relative paths) and asserts the gate exits 0 with no output.

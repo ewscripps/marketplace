@@ -80,12 +80,71 @@ _edm_datadir_creatable() {
   [[ -w "$p" ]]
 }
 
+# EDM_DATA_OWNER_SENTINEL -- the basename of the file that marks a data directory as EDM's own.
+# Deliberately a constant expression used inline below rather than a global variable: this file
+# declares NO globals (EDMV4-T17 AC3), so the name is repeated in the two places that need it and
+# named here in prose instead.
+#
+# _edm_datadir_owned <absolute-path>
+#   True if <absolute-path> is EDM's to write into: it does not exist yet, OR it is empty, OR it
+#   carries an `.edm-owned` sentinel. False when it exists, holds other content, and has no
+#   sentinel -- that directory belongs to some other plugin.
+#
+#   Why this exists (CA-134, decision D46): `${CLAUDE_PLUGIN_DATA}` is plugin-specific BY CONTRACT,
+#   and when EDM runs as an installed plugin the host sets it correctly. But EDM is routinely
+#   invoked by explicit path -- `bash plugins/edm/bin/edm-state ...`, and every hook consumer --
+#   and in those contexts the host has no reason to have pointed it at EDM. EDM therefore inherited
+#   whatever plugin happened to be active and wrote its harvested pattern library into that
+#   plugin's directory. Reproduced live: 133 EDM findings landed in
+#   `.../plugins/data/copilot-studio-skills-for-copilot-studio/patterns/code-audit.md` while three
+#   correctly-named edm-* directories sat unused.
+#
+#   Namespacing was tried first and is WRONG: `${CLAUDE_PLUGIN_DATA}/edm` is still inside the
+#   foreign plugin's tree, so it tidies the path without fixing ownership. The test has to be
+#   "is this mine", which a path shape cannot answer and a sentinel can.
+#
+#   Pure bash, no subprocess, and NO WRITES (AC9: with CLAUDE_PLUGIN_DATA unset this must not touch
+#   anything). Creating the sentinel is the first writing consumer's job, alongside the
+#   `patterns/` and `run/` directories it already creates -- exactly the split this file already
+#   uses for directory creation.
+_edm_datadir_owned() {
+  local p="$1" entry
+  # Does not exist yet -> nobody owns it, EDM will create it.
+  [[ -d "$p" ]] || return 0
+  # Already claimed by EDM.
+  [[ -e "${p}/.edm-owned" ]] && return 0
+  # C-4 backward compatibility: a directory carrying EDM's OWN footprint is EDM's, even
+  # with no sentinel. Every data directory that predates this change is exactly that shape,
+  # and a strict sentinel-only test would silently abandon all of them -- a user would find
+  # their harvested pattern library apparently empty because EDM had quietly moved to a new
+  # root. run/ holds <project-key>.phase6 markers and patterns/ holds <type>-audit.md; both
+  # are names this plugin creates and nothing else does.
+  #
+  # Residual, stated rather than hidden: a foreign directory EDM has ALREADY polluted
+  # carries patterns/ too, so it keeps being accepted until a human deletes it. This test
+  # stops the pollution spreading to new directories; it cannot un-write what already
+  # landed. The sentinel is what makes future ownership unambiguous.
+  [[ -d "${p}/run" || -d "${p}/patterns" ]] && return 0
+
+  # Exists but empty -> unclaimed, safe to adopt. Globs rather than `ls` (no subprocess). With
+  # nullglob off, a non-matching pattern expands to itself, which -e/-L correctly reject.
+  for entry in "$p"/* "$p"/.[!.]* "$p"/..?*; do
+    if [[ -e "$entry" || -L "$entry" ]]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
 # edm_data_dir -- see file header. Always exits 0.
 edm_data_dir() {
   local candidate
 
   candidate="${CLAUDE_PLUGIN_DATA:-}"
-  if [[ "$candidate" == /* ]] && _edm_datadir_creatable "$candidate"; then
+  # CA-134/D46: creatable is not sufficient -- a foreign plugin's data directory is
+  # perfectly writable. The ownership test is what keeps EDM out of it.
+  if [[ "$candidate" == /* ]] && _edm_datadir_creatable "$candidate" \
+     && _edm_datadir_owned "$candidate"; then
     printf '%s\n' "$candidate"
     return 0
   fi
@@ -138,4 +197,32 @@ edm_marker_path() {
   [[ -n "$data" ]] || { printf '%s\n' ""; return 0; }
   key="$(edm_project_key)"
   printf '%s\n' "${data}/run/${key}.phase6"
+}
+
+# edm_data_dir_claim -- create the resolved data directory if needed and drop the `.edm-owned`
+# sentinel that _edm_datadir_owned() reads on every later run.
+#
+# This is the ONLY function in this file that writes anything. edm_data_dir() itself still writes
+# nothing (EDMV4-T17 AC9), which is why the claim is a separate, explicitly-called function rather
+# than a side effect of resolution: resolution happens on every gateguard invocation including the
+# marker-absent fast path, and that path must stay at one exec and zero writes (EDMV4-T07 AC8).
+# Consumers call this at their first genuine write, alongside the patterns/ and run/ directories
+# they already create.
+#
+# Idempotent, and never fails its caller: a claim that cannot be written degrades to silence and
+# the caller proceeds, matching the posture every other data-dir consumer already uses. The cost of
+# a failed claim is only that the next run re-evaluates ownership from scratch.
+edm_data_dir_claim() {
+  local data
+  data="$(edm_data_dir)"
+  [[ -n "$data" ]] || return 0
+  [[ -e "${data}/.edm-owned" ]] && return 0
+  mkdir -p "$data" 2>/dev/null || return 0
+  {
+    printf '%s\n' "EDM plugin data directory."
+    printf '%s\n' "Do not remove: bin/_edm-datadir-lib.sh reads this file to confirm the directory"
+    printf '%s\n' "is EDM-owned before writing here, so EDM never writes into another plugin's"
+    printf '%s\n' "data directory when it inherits that plugin's CLAUDE_PLUGIN_DATA (CA-134)."
+  } > "${data}/.edm-owned" 2>/dev/null || true
+  return 0
 }
