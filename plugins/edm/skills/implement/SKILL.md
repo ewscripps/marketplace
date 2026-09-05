@@ -34,7 +34,7 @@ using `<gated-command>` = `implement` and `<phase-num>` = `6`.
 4. Read the ticket pack. Group tickets by file/component independence into parallel waves.
 5. **For each wave**: spawn `edm-implementer` agents (6-10 parallel). Each gets `isolation: worktree` automatically.
    - In TDD mode, pass `implementation_mode=tdd` instruction to each implementer (Red-Green-Refactor per ticket).
-6. After each implementer completes, the `SubagentStop` hook automatically spawns `edm-qc-auditor` to verify the ticket's acceptance criteria against the implemented code. (The hook is configured in `hooks/hooks.json`.) Each hook-spawned auditor writes its own per-implementer shard, `qc/qc-shard-impl-{NN}.md` -- never the shared `qc/qc-summary.md` (CA-440: 6-10 auditors finishing concurrently on one file would silently overwrite one another's FAIL verdicts), and never a `qc-shard-pass-*.md` name, which belongs to this skill's own threshold-shard namespace (CA-473).
+6. After each implementer completes, the `SubagentStop` hook automatically spawns `edm-qc-auditor` to verify the ticket's acceptance criteria against the implemented code. (The hook is configured in `hooks/hooks.json`.) Each hook-spawned auditor writes its own per-implementer shard, `qc/qc-shard-impl-w{WW}-{NN}.md` (wave number then lowest ticket in range -- the wave component is mandatory, CA-010) -- never the shared `qc/qc-summary.md` (CA-440: 6-10 auditors finishing concurrently on one file would silently overwrite one another's FAIL verdicts), and never a `qc-shard-pass-*.md` name, which belongs to this skill's own threshold-shard namespace (CA-473).
    - In TDD mode, the QC auditor also runs the TDD compliance pass.
 6a. **Assert the hook actually fired -- absence is silent otherwise (EDMV4 wave-1 defect).** The
    `SubagentStop` hook in step 6 is a `prompt`-type hook: it asks the orchestrator to spawn the
@@ -110,9 +110,18 @@ Resolve merge conflicts -> run existing tests -> launch next wave.
 `edm-qc-auditor` which writes its report to the canonical qc/ home under the initiative directory.
 
 **QC output paths** (resolved via `edm-state get <PREFIX>`):
-- Hook-spawned (per-implementer) auditor: `<initiative-dir>/qc/qc-shard-impl-{NN}.md`, where `{NN}` is
-  the lowest ticket number in that implementer's assigned range, zero-padded (e.g. tickets
-  T07-T09 -> `qc-shard-impl-07.md`). The hook path NEVER writes `qc-summary.md` directly (CA-440).
+- Hook-spawned (per-implementer) auditor:
+  `<initiative-dir>/qc/qc-shard-impl-w{WW}-{NN}.md`, where `{WW}` is the **wave number** the
+  implementer ran in and `{NN}` is the lowest ticket number in that implementer's assigned range,
+  both 1-based and zero-padded (e.g. wave 2, tickets T07-T09 -> `qc-shard-impl-w02-07.md`). The
+  hook path NEVER writes `qc-summary.md` directly (CA-440). **The wave component is mandatory
+  (CA-010)**: CA-515's fix reached only the sibling `qc-shard-pass-` namespace, leaving this one
+  wave-less, so a Step 5 remediation loop -- which re-runs an implementer over the SAME ticket
+  range -- produced a shard with the identical name and silently overwrote the original wave's,
+  taking its PASS and FAIL verdicts with it. Those verdicts live ONLY in these markdown files;
+  only PARTIAL survives elsewhere, via the locked `record-partial-verdict`. When the wave number
+  is genuinely unrecoverable the auditor uses the lowest `{WW}` for which the file does not yet
+  exist, which preserves the same no-overwrite guarantee.
 - Threshold-shard (this skill's post-wave QC) auditor:
   `<initiative-dir>/qc/qc-shard-pass-w{WW}-{NN}.md`, where `{WW}` is the **wave number** (1-based,
   zero-padded) and `{NN}` is the **shard ordinal within that wave** (1-based, zero-padded), not a
@@ -150,7 +159,7 @@ else:
 # filename wave 1's did (qc-shard-pass-01.md) and silently overwrites wave 1's PASS/FAIL verdicts,
 # which (like CA-473's hook-vs-threshold collision) are never persisted anywhere else. Both
 # branches still key on {shard ordinal} within a wave, never on a ticket number, so they still
-# cannot collide with the hook's qc-shard-impl-{lowest-ticket:02d}.md namespace (CA-473); the
+# cannot collide with the hook's qc-shard-impl-w{wave:02d}-{lowest-ticket:02d}.md namespace (CA-473); the
 # `qc-shard-pass-*.md` glob below already matches the wave-prefixed name unchanged, so the merge
 # step needs no widening.
 # either way, exactly one merge step owns qc-summary.md, re-run after every wave drains so it
