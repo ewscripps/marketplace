@@ -60,30 +60,73 @@ rm -f "$_ac2_failpath"
 # concurrent worktree agents) legitimately have their own scratch dirs in flight, so the test
 # failed on their existence rather than on a real cleanup miss. Scope the check, and poll for
 # the child to actually reach its sleep instead of assuming a fixed 0.5s is long enough.
+#
+# CA-018: this case swallowed the `kill` failure (`2>/dev/null || true`) and never asserted the
+# child's exit status, so it passed when the signal NEVER ARRIVED and with_scratch_repo's cleanup
+# simply ran on normal return -- proving nothing about the INT arm of its four-way trap split.
+# That was not hypothetical here. `cmd &` in a non-interactive shell with job control OFF runs the
+# child with SIGINT set to SIG_IGN, and an inherited-ignored SIGINT cannot be re-trapped, so
+# with_scratch_repo's `trap ... INT` never fired and the child ran its full sleep to completion.
+# The fix is `set -m` around the spawn (giving the child its own process group and the default
+# SIGINT disposition, exactly as wave7-smoke.sh's own SIGINT case does), plus assertions on both
+# the kill's status and the child's exit code -- 128+2 = 130, with_scratch_repo's documented INT
+# arm. This is what wave7-smoke.sh:6249 has and this suite did not, which is why L3 recorded
+# wave7's sibling case as sound and this one as silently passing.
+#
+# _ac2_sigint_probe <job-control:on|off> -- spawns the child, signals it, and prints
+# "<kill-rc>|<child-exit>|<scratch-path>". The job-control argument exists so the negative control
+# below can reproduce the pre-fix spawn shape and prove these assertions discriminate.
+_ac2_sigint_probe() {
+  local jobctl="$1" pathfile="$2"
+  local child_pid waited=0 kill_rc=0 child_ec=0 scratch=""
+
+  # shellcheck disable=SC2317
+  _ac2_probe_fn() { pwd > "$pathfile"; sleep 3; }
+
+  if [ "$jobctl" = "on" ]; then set -m; fi
+  (
+    source "${SCRIPT_DIR}/_harness.sh"
+    with_scratch_repo _ac2_probe_fn
+  ) &
+  child_pid=$!
+  set +m
+
+  # Wait (bounded) for the child to have created its scratch dir and entered the function.
+  while [ ! -s "$pathfile" ] && [ "$waited" -lt 100 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  scratch="$(cat "$pathfile" 2>/dev/null)"
+  # Small safety margin past the pathfile signal, matching wave7's own SIGINT case.
+  sleep 0.1
+
+  # Negative PID targets the whole process group `set -m` gave this job, so the nested `sleep`
+  # dies with its parent instead of lingering. Status captured, never discarded.
+  kill -INT -- "-${child_pid}" 2>/dev/null || kill_rc=$?
+  wait "$child_pid" 2>/dev/null || child_ec=$?
+
+  # Bounded poll for cleanup rather than a fixed sleep -- under concurrent load the trap can take
+  # longer than any single hardcoded interval.
+  waited=0
+  while [ -n "$scratch" ] && [ -d "$scratch" ] && [ "$waited" -lt 50 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+
+  printf '%s|%s|%s' "$kill_rc" "$child_ec" "$scratch"
+}
+
 _ac2_pathfile="$(mktemp -t edm-harness-ac2.XXXXXX)"
-_ac2_sleep_fn() { pwd > "$_ac2_pathfile"; sleep 5; }
-(
-  source "${SCRIPT_DIR}/_harness.sh"
-  _ac2_pathfile="$_ac2_pathfile"
-  with_scratch_repo _ac2_sleep_fn
-) &
-_child_pid=$!
-# Wait (bounded) for the child to have created its scratch dir and entered the function.
-_waited=0
-while [ ! -s "$_ac2_pathfile" ] && [ "$_waited" -lt 100 ]; do
-  sleep 0.1
-  _waited=$((_waited + 1))
-done
-_ac2_scratch="$(cat "$_ac2_pathfile" 2>/dev/null)"
-kill -INT "$_child_pid" 2>/dev/null || true
-wait "$_child_pid" 2>/dev/null || true
-# Bounded poll for cleanup rather than a fixed sleep -- under concurrent load the trap can take
-# longer than any single hardcoded interval.
-_waited=0
-while [ -n "$_ac2_scratch" ] && [ -d "$_ac2_scratch" ] && [ "$_waited" -lt 50 ]; do
-  sleep 0.1
-  _waited=$((_waited + 1))
-done
+_ac2_probe_out="$(_ac2_sigint_probe on "$_ac2_pathfile")"
+_ac2_kill_rc="${_ac2_probe_out%%|*}"
+_ac2_rest="${_ac2_probe_out#*|}"
+_ac2_child_ec="${_ac2_rest%%|*}"
+_ac2_scratch="${_ac2_rest#*|}"
+
+check_num "SIGINT case: the kill itself succeeded (a swallowed kill failure used to read as a pass)" \
+  "0" "$_ac2_kill_rc"
+check_num "SIGINT case: the child actually died from the signal (with_scratch_repo's INT arm, 128+2)" \
+  "130" "$_ac2_child_ec"
 if [ -z "$_ac2_scratch" ]; then
   fail "SIGINT case: child never reported its scratch path (could not run the assertion)"
 elif [ -d "$_ac2_scratch" ]; then
@@ -92,6 +135,28 @@ else
   pass "scratch dir removed after SIGINT"
 fi
 rm -f "$_ac2_pathfile"
+
+# CA-018 negative control: reproduce the pre-fix spawn shape (job control OFF, so the child
+# inherits SIG_IGN for SIGINT and with_scratch_repo's INT trap never fires) and confirm the
+# exit-130 assertion above REJECTS it. The scratch dir is still cleaned up on that path -- by the
+# EXIT arm, on normal return -- which is exactly why the old cleanup-only assertion passed while
+# proving nothing about SIGINT.
+_ac2_neg_pathfile="$(mktemp -t edm-harness-ac2neg.XXXXXX)"
+_ac2_neg_out="$(_ac2_sigint_probe off "$_ac2_neg_pathfile")"
+_ac2_neg_rest="${_ac2_neg_out#*|}"
+_ac2_neg_child_ec="${_ac2_neg_rest%%|*}"
+_ac2_neg_scratch="${_ac2_neg_rest#*|}"
+if [ "$_ac2_neg_child_ec" != "130" ]; then
+  pass "CA-018 negative control: with the pre-fix spawn shape the signal never reaches the child (exit ${_ac2_neg_child_ec}, not 130) -- the assertion above discriminates"
+else
+  fail "CA-018 negative control FAILED: the pre-fix spawn shape also produced exit 130, so the exit-130 assertion above proves nothing"
+fi
+if [ -n "$_ac2_neg_scratch" ] && [ ! -d "$_ac2_neg_scratch" ]; then
+  pass "CA-018 negative control: the scratch dir is cleaned up on that path too -- which is precisely why the cleanup-only assertion could not tell the two cases apart"
+else
+  fail "CA-018 negative control: expected the pre-fix path to still clean up its scratch dir (path: ${_ac2_neg_scratch})"
+fi
+rm -f "$_ac2_neg_pathfile"
 
 # ---- AC4: check_fails -----------------------------------------------------------------------
 echo
