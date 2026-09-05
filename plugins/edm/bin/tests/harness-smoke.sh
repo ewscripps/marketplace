@@ -174,6 +174,57 @@ _neg_out="$(
 )"
 check "check_fails correctly fails on a non-matching substring" "PASS=0 FAIL=1" "$_neg_out"
 
+# ---- CA-011 / CA-016: the two assertion-helper contracts added to _harness.sh ------------------
+# This is _harness.sh's own suite, so the guards that exist to stop the "assertion that cannot
+# fail" class recurring anywhere are asserted here rather than only at the call sites that
+# prompted them. Every probe runs in a command substitution with its own PASS/FAIL counters, so
+# the deliberate FAIL lines never reach this suite's tally.
+echo
+echo "CA-011/CA-016 -- check() empty-needle guard and check_num integer comparison"
+
+# CA-011: check() must REFUSE an empty expected substring rather than pass on any haystack at all.
+_neg_empty_needle="$(
+  PASS=0; FAIL=0
+  check "probe" "" "literally any output at all" >/dev/null 2>&1
+  check "probe" "" "" >/dev/null 2>&1
+  echo "PASS=$PASS FAIL=$FAIL"
+)"
+check "CA-011 -- check() refuses an empty expected substring on every haystack, empty or not" \
+  "PASS=0 FAIL=2" "$_neg_empty_needle"
+_pos_real_needle="$(
+  PASS=0; FAIL=0
+  check "probe" "needle" "a haystack with a needle in it" >/dev/null 2>&1
+  check "probe" "needle" "a haystack with nothing in it" >/dev/null 2>&1
+  echo "PASS=$PASS FAIL=$FAIL"
+)"
+check "CA-011 -- and the guard did not break check()'s real substring behaviour" \
+  "PASS=1 FAIL=1" "$_pos_real_needle"
+
+# CA-016: check_num compares integers, so the substring false-passes check() allowed ("0" matched
+# by "10"/"20"/"100", "1" by "11") are rejected, and a non-integer actual is a NAMED failure
+# rather than a silent pass.
+_neg_check_num="$(
+  PASS=0; FAIL=0
+  check_num "probe" "0" "10"    >/dev/null 2>&1
+  check_num "probe" "0" "100"   >/dev/null 2>&1
+  check_num "probe" "1" "11"    >/dev/null 2>&1
+  check_num "probe" "0" ""      >/dev/null 2>&1
+  check_num "probe" "0" "ERROR" >/dev/null 2>&1
+  check_num "probe" "0" "0"     >/dev/null 2>&1
+  check_num "probe" "1" "1"     >/dev/null 2>&1
+  check_num "probe" "0" "-0"    >/dev/null 2>&1
+  echo "PASS=$PASS FAIL=$FAIL"
+)"
+check "CA-016 -- check_num rejects 10/100/11 and non-integer actuals, accepting only true integer equality" \
+  "PASS=3 FAIL=5" "$_neg_check_num"
+_neg_check_num_misuse="$(
+  PASS=0; FAIL=0
+  check_num "probe" "not-a-number" "0" >/dev/null 2>&1
+  echo "PASS=$PASS FAIL=$FAIL"
+)"
+check "CA-016 -- check_num names a non-integer EXPECTED value as misuse instead of comparing it" \
+  "PASS=0 FAIL=1" "$_neg_check_num_misuse"
+
 # ---- AC5: check_state_unchanged --------------------------------------------------------------
 echo
 echo "AC5 -- check_state_unchanged (positive and negative)"
