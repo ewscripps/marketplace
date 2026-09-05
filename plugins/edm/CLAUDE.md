@@ -1291,6 +1291,19 @@ the command is not on PATH, or exits non-zero, Phase 1 proceeds unchanged: no er
 no placeholder section is written -- absence is authoritative, matching how EDM handles N/A test
 layers.
 
+**A score can be a FLOOR rather than a measurement, and the output says which (CA-036/037/038).**
+Three states exist per category, not two. `applicable: false` means the category is genuinely N/A
+for this repository and is excluded from the mean. A category whose probe could not be READ is
+different: it is marked `measured: false`, scores zero, and is **forced into the denominator**
+anyway, rendered as `UNMEASURED: <reason>` on stdout with a
+`WARNING: N of 6 ... the overall score is a FLOOR` line. Before this, a failed `edm-state
+get-coverage` marked its two categories N/A and dropped them out of the mean entirely, so a broken
+probe RAISED the score -- measured on a fixture, the same repository scored 8.5 healthy and would
+have scored higher with the probe broken; it now scores 5.7. Excluding what you could not measure
+is the "absent renders as fine" class, and it is exactly backwards for a readiness score whose
+whole purpose is to be pessimistic about an unknown repository. When quoting a score, quote whether
+it was a floor.
+
 The score is advisory in both directions. `skills/orchestrator/SKILL.md` Step 1b.5 (the 4.3 size
 classifier) may consult a recorded score only as an additional input to its **design-ambiguity**
 signal -- never as a fourth signal, and never as an input to the files-touched or
