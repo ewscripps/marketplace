@@ -6810,6 +6810,126 @@ else
   fail "EDMV4-T53 AC3 -- edm-gateguard unexpected-argument case exited ${T53_GG_BAD_RC}, expected 1"
 fi
 
+# =================================================================================================
+# CA-057 (P1, code-audit pass 1) -- EDMV4-T53 AC4: RUN the hook presence guards, never just read
+# =================================================================================================
+# AC4 requires a case "asserting its `command -v` guard EXITS 0 when the delegate script is off
+# PATH". All three guards were asserted by extracting the command string from hooks.json with jq
+# and string-comparing it (edm-gateguard's in the EDMV4-T11 section, edm-bash-gate's in EDMV4-T45,
+# edm-stop-gate's in EDMV4-T46). Those verify the guard's TEXT and never its BEHAVIOUR: a guard
+# with a mistyped builtin name, or one whose delegate name no longer matches the installed binary,
+# satisfies every string compare and then fails open -- or blocks -- at runtime.
+#
+# The block below takes each guard's command string straight out of hooks.json (never a retyped
+# literal) and EXECUTES it under /bin/bash with a PATH that contains no delegate at all, asserting
+# exit 0, empty stdout and empty stderr. Delegate presence, not the delegate's own behaviour, is
+# what is under test here; every gate's real decision logic is covered by its own section above.
+echo
+echo "EDMV4-T53 AC4 / CA-057 -- the three hook presence guards are EXECUTED, not string-compared"
+
+w8_scratch_dir T53_AC4_TMP
+T53_AC4_EMPTYBIN="${T53_AC4_TMP}/emptybin"
+mkdir -p "$T53_AC4_EMPTYBIN"
+
+# t53_ac4_run <command-string> -- runs <command-string> under /bin/bash with a PATH holding no
+# delegate, with stdin closed (a hook whose delegate is absent must never read the payload).
+# Sets T53_AC4_RC / T53_AC4_OUT / T53_AC4_ERR. /bin/bash is invoked by absolute path so the empty
+# PATH cannot affect which interpreter runs.
+t53_ac4_run() {
+  local cmd="$1"
+  T53_AC4_RC=0
+  T53_AC4_OUT="$(PATH="$T53_AC4_EMPTYBIN" /bin/bash -c "$cmd" </dev/null 2>"${T53_AC4_TMP}/guard.stderr")" || T53_AC4_RC=$?
+  T53_AC4_ERR="$(cat "${T53_AC4_TMP}/guard.stderr" 2>/dev/null || true)"
+}
+
+# t53_ac4_assert_fails_open <label> <command-string> -- the contract: delegate off PATH means
+# exit 0 and total silence.
+t53_ac4_assert_fails_open() {
+  local label="$1" cmd="$2"
+  t53_ac4_run "$cmd"
+  if [[ "$T53_AC4_RC" -eq 0 && -z "$T53_AC4_OUT" && -z "$T53_AC4_ERR" ]]; then
+    pass "EDMV4-T53 AC4 / CA-057 -- ${label}: guard EXECUTED with the delegate off PATH exits 0 with no output"
+  else
+    fail "EDMV4-T53 AC4 / CA-057 -- ${label}: guard executed with the delegate off PATH gave rc=${T53_AC4_RC} stdout=[${T53_AC4_OUT}] stderr=[${T53_AC4_ERR}]"
+  fi
+}
+
+T53_AC4_GG_CMD="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Edit|Write|MultiEdit") | .hooks[0].command' "$HOOKS_JSON")"
+T53_AC4_BG_CMD="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[0].command' "$HOOKS_JSON")"
+T53_AC4_SG_CMD="$(jq -r '.hooks.Stop[0].hooks[1].command' "$HOOKS_JSON")"
+
+t53_ac4_assert_fails_open "edm-gateguard (PreToolUse Edit|Write|MultiEdit)" "$T53_AC4_GG_CMD"
+t53_ac4_assert_fails_open "edm-bash-gate (PreToolUse Bash)" "$T53_AC4_BG_CMD"
+t53_ac4_assert_fails_open "edm-stop-gate (Stop)" "$T53_AC4_SG_CMD"
+
+# ---- Negative control 1: the guard removed outright. The runner must reject the unguarded
+# command, or the three clean results above prove only that /bin/bash can exit 0.
+T53_AC4_UNGUARDED="${T53_AC4_GG_CMD##*; }"
+t53_ac4_run "$T53_AC4_UNGUARDED"
+if [[ "$T53_AC4_RC" -ne 0 ]]; then
+  pass "EDMV4-T53 AC4 / CA-057 -- negative control: the same command with its presence guard STRIPPED is rejected (rc=${T53_AC4_RC})"
+else
+  fail "EDMV4-T53 AC4 / CA-057 -- negative control FAILED: an unguarded delegate invocation exited 0 with the delegate off PATH, so the runner cannot discriminate"
+fi
+
+# ---- Negative control 2: the guard tests a name that IS on PATH while the command invokes a
+# delegate that is not -- the "guard name no longer matches the installed binary" defect CA-057
+# names, which every string compare above passes. The probe binary is created in the otherwise
+# empty PATH dir so the guard genuinely succeeds.
+# Interpreter pinned to an absolute /bin/bash rather than /usr/bin/env bash: this stub lives on a
+# deliberately empty PATH, and `env bash` would resolve `bash` through that same empty PATH and
+# die 127 -- a stub failure indistinguishable from the guard defect the controls exist to detect.
+printf '%s\n' '#!/bin/bash' 'exit 0' > "${T53_AC4_EMPTYBIN}/edm-ca057-probe"
+chmod +x "${T53_AC4_EMPTYBIN}/edm-ca057-probe"
+T53_AC4_MISMATCH="command -v edm-ca057-probe >/dev/null 2>&1 || exit 0; ${T53_AC4_UNGUARDED}"
+t53_ac4_run "$T53_AC4_MISMATCH"
+if [[ "$T53_AC4_RC" -ne 0 ]]; then
+  pass "EDMV4-T53 AC4 / CA-057 -- negative control: a guard naming a DIFFERENT binary from the one invoked is rejected (rc=${T53_AC4_RC})"
+else
+  fail "EDMV4-T53 AC4 / CA-057 -- negative control FAILED: a guard/delegate name mismatch exited 0, so the runner cannot discriminate"
+fi
+
+rm -f "${T53_AC4_EMPTYBIN}/edm-ca057-probe"
+
+# ---- Positive control, run for all three guards: with the delegate actually present, the guard
+# must fall THROUGH and the delegate must run. This is the half that catches a mistyped builtin
+# name -- `comand -v edm-gateguard ... || exit 0` still exits 0 silently with the delegate absent
+# (measured, not assumed), so the fails-open assertions above cannot see it; what a typo really
+# destroys is the fall-through, and the hook then silently does nothing on every tool call
+# forever. Without this control the three assertions above would also be satisfied by a command
+# that short-circuits unconditionally and never reaches its delegate at all.
+t53_ac4_assert_reaches_delegate() {
+  local label="$1" cmd="$2" delegate
+  delegate="${cmd##*; }"
+  delegate="${delegate%% *}"
+  printf '%s\n' '#!/bin/bash' 'echo ran-delegate' > "${T53_AC4_EMPTYBIN}/${delegate}"
+  chmod +x "${T53_AC4_EMPTYBIN}/${delegate}"
+  t53_ac4_run "$cmd"
+  if [[ "$T53_AC4_RC" -eq 0 && "$T53_AC4_OUT" == "ran-delegate" ]]; then
+    pass "EDMV4-T53 AC4 / CA-057 -- positive control: ${label}'s guard falls THROUGH to ${delegate} when it is present (a mistyped guard would silently skip it)"
+  else
+    fail "EDMV4-T53 AC4 / CA-057 -- positive control FAILED for ${label}: rc=${T53_AC4_RC} stdout=[${T53_AC4_OUT}] -- the guard never reaches ${delegate}"
+  fi
+  rm -f "${T53_AC4_EMPTYBIN}/${delegate}"
+}
+t53_ac4_assert_reaches_delegate "edm-gateguard (PreToolUse Edit|Write|MultiEdit)" "$T53_AC4_GG_CMD"
+t53_ac4_assert_reaches_delegate "edm-bash-gate (PreToolUse Bash)" "$T53_AC4_BG_CMD"
+t53_ac4_assert_reaches_delegate "edm-stop-gate (Stop)" "$T53_AC4_SG_CMD"
+
+# ---- Negative control 3: the same fall-through predicate applied to a guard whose builtin name
+# is mistyped. It must report the delegate was NOT reached, or the three controls above prove
+# nothing about the defect CA-057 names.
+T53_AC4_TYPO_CMD="comand -v edm-gateguard >/dev/null 2>&1 || exit 0; ${T53_AC4_UNGUARDED}"
+printf '%s\n' '#!/bin/bash' 'echo ran-delegate' > "${T53_AC4_EMPTYBIN}/${T53_AC4_UNGUARDED%% *}"
+chmod +x "${T53_AC4_EMPTYBIN}/${T53_AC4_UNGUARDED%% *}"
+t53_ac4_run "$T53_AC4_TYPO_CMD"
+if [[ "$T53_AC4_OUT" != "ran-delegate" ]]; then
+  pass "EDMV4-T53 AC4 / CA-057 -- negative control: a guard with a mistyped builtin name never reaches its delegate, and the fall-through control detects it (stdout=[${T53_AC4_OUT}])"
+else
+  fail "EDMV4-T53 AC4 / CA-057 -- negative control FAILED: a mistyped guard still reached its delegate, so the fall-through controls above cannot discriminate"
+fi
+rm -f "${T53_AC4_EMPTYBIN}/${T53_AC4_UNGUARDED%% *}"
+
 # ---- AC6: no network access, no API budget spent -- self-scan of this suite's own source for
 # forbidden commands on a non-comment line. Verified once at review time above via manual grep;
 # restated here as a durable assertion. The `claude` half is anchored to an actual invocation
