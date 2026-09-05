@@ -107,10 +107,40 @@ fi
 # extraction (no cut/awk); marker format is PREFIX<TAB>initiative_dir<TAB>started_at (T12 AC6).
 MARKER_LINE=""
 IFS= read -r MARKER_LINE < "$MARKER_PATH" 2>/dev/null || true
-MARKER_REST="${MARKER_LINE#*$'\t'}"
-MARKER_INITIATIVE_DIR="${MARKER_REST%%$'\t'*}"
-if [[ -n "$MARKER_INITIATIVE_DIR" ]] && [[ ! -d "$MARKER_INITIATIVE_DIR" ]]; then
-  exit 0
+
+# CA-045: the stale test above is only meaningful on a marker that actually parses. The marker's
+# contract is exactly three tab-separated fields (bin/edm-state's _edm_marker_write:
+# PREFIX<TAB>initiative_dir<TAB>started_at), and `${MARKER_LINE#*$'\t'}` returns the WHOLE line
+# unchanged when there is no tab -- so a truncated or corrupted marker used to land in
+# MARKER_INITIATIVE_DIR as a single token, fail `[[ -d ]]`, and take the stale-marker `exit 0`.
+# That silently disabled Phase 6 fact-forcing for the entire session, read identically to the
+# legitimate branch-switch case, and printed nothing.
+#
+# The contract, decided here rather than left implicit: a marker that does not parse into three
+# tab-separated fields is a SETUP condition, not a stale marker. It fails CLOSED -- the gate
+# continues to the gated path below and applies its ordinary allow/deny -- and it names itself on
+# stderr. It is never escalated into a refusal of its own: a setup condition must be visible, not
+# blocking, which is the same rule edm-stop-gate and edm-bash-gate follow. A zero-byte marker
+# file lands here too (zero fields), so its pre-existing deny is now the deliberate, diagnosed
+# outcome rather than an accident of `[[ -n ]]` on an empty string.
+MARKER_MALFORMED=0
+case "$MARKER_LINE" in
+  *$'\t'*$'\t'*) ;;
+  *) MARKER_MALFORMED=1 ;;
+esac
+
+if [[ "$MARKER_MALFORMED" -eq 1 ]]; then
+  # The remediation hint deliberately names the SUBCOMMAND without its binary: EDMV4-T11 AC5
+  # requires this script to invoke the state binary zero times, and the assertion behind it
+  # greps non-comment lines for that binary's name -- a literal mention inside this message
+  # would trip it exactly the way CA-009's explanatory comment once did.
+  echo "edm-gateguard: Phase 6 marker ${MARKER_PATH} is malformed (expected PREFIX<TAB>initiative_dir<TAB>started_at) -- enforcing the gate rather than reading it as stale; re-run 'phase-start <PREFIX> 6' to rewrite it" >&2
+else
+  MARKER_REST="${MARKER_LINE#*$'\t'}"
+  MARKER_INITIATIVE_DIR="${MARKER_REST%%$'\t'*}"
+  if [[ -n "$MARKER_INITIATIVE_DIR" ]] && [[ ! -d "$MARKER_INITIATIVE_DIR" ]]; then
+    exit 0
+  fi
 fi
 
 # Gated path: a Phase 6 marker exists for this project. Everything below this line is the only

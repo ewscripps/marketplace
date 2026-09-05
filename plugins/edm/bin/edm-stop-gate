@@ -147,9 +147,18 @@ for _prefix in "${ACTIVE_PREFIXES[@]}"; do
   # cmd_validate exits 3 (not 1) on a blocking anomaly (bin/edm-state's cmd_validate). Any other
   # non-zero exit (a setup error / `die`) is an internal error for THIS prefix -- never treated as
   # blocking (AC9) -- so this initiative is skipped and the loop continues to the next one.
+  #
+  # CA-040: that skip used to be a bare `continue` with zero output, so a SYSTEMATIC validate
+  # failure -- one that dies for every prefix -- made this gate exit 0 in total silence on every
+  # single Stop, reading exactly like "everything is fine". One stderr line per skipped prefix
+  # naming the prefix and the status; the never-block contract is unchanged, this is a
+  # diagnostic and not a decision.
   case "$_validate_rc" in
     0|3) ;;
-    *) continue ;;
+    *)
+      echo "edm-stop-gate: edm-state validate ${_prefix} exited ${_validate_rc} (a setup error, not the blocking-class 3) -- ${_prefix} was NOT checked this Stop" >&2
+      continue
+      ;;
   esac
 
   _blocking_text=""
@@ -187,7 +196,13 @@ done
 # silently at AC3's own check, and hookify's own overhead is skipped for the identical reason.
 if command -v edm-hookify >/dev/null 2>&1; then
   _hookify_rc=0
-  _hookify_out="$(printf '{}' | edm-hookify eval stop 2>&1)" || _hookify_rc=$?
+  # CA-008: capture ONLY stdout. The `2>&1` this used to carry folded hookify's stderr into the
+  # capture, and the capture is printed only on the block path -- so every `warn` line and every
+  # malformed-rule-file setup error was discarded, and a contributor whose stop rule was a typo
+  # got no diagnostic at all. Letting stderr through unredirected is what edm-bash-gate and
+  # edm-gateguard already do; the two-tier exit contract's promise that a warn line reaches
+  # stderr is only true through this consumer once the streams are split.
+  _hookify_out="$(printf '{}' | edm-hookify eval stop)" || _hookify_rc=$?
   # T44 AC4/AC5: a hookify block status sets the SAME flag the blocking-class validate path above
   # already sets, so both routes share the one exit line at the bottom of this file; a hookify
   # setup-error status never escalates -- edm-hookify already warned on stderr for that case.
