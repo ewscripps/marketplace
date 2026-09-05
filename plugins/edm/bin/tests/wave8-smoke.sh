@@ -3708,19 +3708,102 @@ check "EDMV4-T11 AC2 -- calls the shared print_help()" "print_help \"\${BASH_SOU
 check "EDMV4-T11 AC2 -- carries EDM-HELP-BEGIN/END sentinels" "EDM-HELP-BEGIN" "$(cat "$GATEGUARD")"
 check_absent "EDMV4-T11 AC2 -- no hardcoded sed -n 'A,Bp' help-range extraction" "sed -n '" "$(cat "$GATEGUARD")"
 
-# ---- AC3: hooks.json gains exactly one new PreToolUse matcher block for Edit/Write/MultiEdit,
-# whose command begins with the same guard the git-commit block uses. This ticket's own count was
-# 2; EDMV4-T45 legitimately grows it to 3 by adding a matcher-disjoint `Bash` block once Spike A
-# (decisions.md D25) recorded a positive multi-hook-per-event result -- see the EDMV4-T45 section
-# below for that block's own dedicated count assertion. Asserting "at least 2, including this
-# ticket's own Edit|Write|MultiEdit block" here keeps this AC's own claim true without hardcoding
-# a total this ticket does not own. -------------------------------------------------------------
-t11_pretooluse_len="$(jq '.hooks.PreToolUse | length' "$HOOKS_JSON")"
-if [[ "$t11_pretooluse_len" -ge 2 ]]; then
-  pass "EDMV4-T11 AC3 -- hooks.json PreToolUse array has at least 2 entries (${t11_pretooluse_len} total)"
-else
-  fail "EDMV4-T11 AC3 -- expected at least 2 PreToolUse entries, got ${t11_pretooluse_len}"
-fi
+# ---- AC3: hooks.json's PreToolUse array is EXACTLY the block set this plugin intends, with each
+# block's entry count pinned.
+#
+# CA-007 + EDMV4-T11 AC3: the previous form asserted `-ge 2` against a live value of 3. A LOWER
+# BOUND on an array that only ever grows cannot fail, so it proved nothing; and nothing anywhere
+# asserted that the Edit|Write|MultiEdit block count was exactly 1, so a duplicated gateguard
+# block would have passed in silence. AC3's own text mandates an exact count.
+#
+# The expectation below is DERIVED from the block set this plugin intends, not pinned to whatever
+# number the file happens to hold today:
+#   1. matcher "Edit|Write|MultiEdit" -> edm-gateguard                              (1 entry)
+#   2. matcher "Bash"                 -> edm-bash-gate, then edm-lint-staged-artifacts
+#                                        gated by the per-entry `if` field           (2 entries)
+# CA-007 folded the former THIRD block -- matcher `git commit`, a command string that is not a
+# tool name and therefore never matched any tool call -- into entry 2 of the Bash block. Spike A
+# (decisions.md D25, AC5) recorded that a homogeneous command-plus-command pair in one `hooks`
+# array runs both entries and honours a deny from either, which is what makes that fold safe
+# alongside edm-bash-gate rather than a suppression of it.
+#
+# w8_pretooluse_violations prints one code per departure and nothing for a conforming file, so
+# the same predicate can be run against the live hooks.json AND against deliberately mutated
+# scratch copies -- every assertion it backs therefore has a negative control proving it can
+# fail (this initiative has recorded eight findings of the vacuous-assertion shape).
+w8_pretooluse_violations() {
+  local f="$1" n file_blocks bash_blocks file_entries bash_entries matchers uniq_matchers m
+  n="$(jq '.hooks.PreToolUse | length' "$f" 2>/dev/null)" || { echo "UNPARSEABLE"; return 0; }
+  [[ -n "$n" ]] || { echo "UNPARSEABLE"; return 0; }
+  [[ "$n" == "2" ]] || echo "BLOCK_COUNT_${n}"
+
+  file_blocks="$(jq '[.hooks.PreToolUse[] | select(.matcher == "Edit|Write|MultiEdit")] | length' "$f")"
+  [[ "$file_blocks" == "1" ]] || echo "FILE_BLOCK_COUNT_${file_blocks}"
+  bash_blocks="$(jq '[.hooks.PreToolUse[] | select(.matcher == "Bash")] | length' "$f")"
+  [[ "$bash_blocks" == "1" ]] || echo "BASH_BLOCK_COUNT_${bash_blocks}"
+
+  file_entries="$(jq '[.hooks.PreToolUse[] | select(.matcher == "Edit|Write|MultiEdit") | .hooks | length] | add // 0' "$f")"
+  [[ "$file_entries" == "1" ]] || echo "FILE_ENTRY_COUNT_${file_entries}"
+  bash_entries="$(jq '[.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks | length] | add // 0' "$f")"
+  [[ "$bash_entries" == "2" ]] || echo "BASH_ENTRY_COUNT_${bash_entries}"
+
+  # A duplicated block is invisible to any single `select()`, so compare the matcher list against
+  # its own deduplication.
+  matchers="$(jq -r '.hooks.PreToolUse[] | .matcher // "<absent>"' "$f" | grep -c . || true)"
+  uniq_matchers="$(jq -r '.hooks.PreToolUse[] | .matcher // "<absent>"' "$f" | sort | uniq | grep -c . || true)"
+  [[ "$matchers" == "$uniq_matchers" ]] || echo "DUPLICATE_MATCHER"
+
+  # CA-007's own static invariant: every PreToolUse matcher must be a TOOL-NAME pattern. Tool
+  # names carry no spaces, so a matcher containing one (the shipped `git commit`) is a command
+  # string that can never match a tool. Anything outside the tool-name character set -- letters,
+  # digits, `_`, `.`, and the `*` / `|` regex-alternation punctuation an `mcp__.*` or
+  # `Edit|Write|MultiEdit` matcher legitimately uses -- is flagged the same way.
+  while IFS= read -r m; do
+    [[ -z "$m" ]] && continue
+    case "$m" in
+      *" "*) echo "MATCHER_NOT_A_TOOL_NAME:${m}" ;;
+      *[!A-Za-z0-9_.*|-]*) echo "MATCHER_NOT_A_TOOL_NAME:${m}" ;;
+    esac
+  done <<< "$(jq -r '.hooks.PreToolUse[] | .matcher // "<absent>"' "$f")"
+  return 0
+}
+
+t11_ptu_violations="$(w8_pretooluse_violations "$HOOKS_JSON" | tr '\n' ',')" || true
+[[ -z "$t11_ptu_violations" ]] \
+  && pass "EDMV4-T11 AC3 / CA-007 -- hooks.json's PreToolUse array is exactly the intended block set (2 blocks; Edit|Write|MultiEdit with exactly 1 entry, Bash with exactly 2), no matcher is duplicated, and every matcher is a tool-name pattern" \
+  || fail "EDMV4-T11 AC3 / CA-007 -- hooks.json's PreToolUse array departs from the intended block set: ${t11_ptu_violations%,}"
+
+# Negative controls: each defect the predicate above exists to catch, injected in isolation into a
+# scratch copy of the REAL hooks.json, must be reported. Without these the exact-count assertions
+# would be indistinguishable from the `-ge 2` bound they replace.
+w8_scratch_dir T11_AC3_NEG_TMP
+t11_ac3_neg() {
+  # t11_ac3_neg <label> <expected-violation-code> <jq-mutation>
+  local label="$1" expected="$2" mutation="$3"
+  local scratch="${T11_AC3_NEG_TMP}/neg-$(echo "$label" | tr -c 'A-Za-z0-9' '-').json"
+  jq "$mutation" "$HOOKS_JSON" > "$scratch"
+  local got; got="$(w8_pretooluse_violations "$scratch" | tr '\n' ',')" || true
+  case "$got" in
+    *"$expected"*)
+      pass "EDMV4-T11 AC3 / CA-007 -- negative control: ${label} is rejected (${expected})"
+      ;;
+    *)
+      fail "EDMV4-T11 AC3 / CA-007 -- negative control FAILED: ${label} was NOT rejected (expected ${expected}, got: ${got:-<no violations>})"
+      ;;
+  esac
+}
+t11_ac3_neg "a DUPLICATED Edit|Write|MultiEdit gateguard block" "FILE_BLOCK_COUNT_2" \
+  '.hooks.PreToolUse += [(.hooks.PreToolUse[] | select(.matcher == "Edit|Write|MultiEdit"))]'
+t11_ac3_neg "a duplicated block, seen as a repeated matcher" "DUPLICATE_MATCHER" \
+  '.hooks.PreToolUse += [(.hooks.PreToolUse[] | select(.matcher == "Edit|Write|MultiEdit"))]'
+t11_ac3_neg "a third block restoring the pre-CA-007 'git commit' matcher" "MATCHER_NOT_A_TOOL_NAME:git commit" \
+  '.hooks.PreToolUse += [{matcher: "git commit", hooks: [{type: "command", command: "edm-lint-staged-artifacts"}]}]'
+t11_ac3_neg "an extra entry smuggled into the Bash block" "BASH_ENTRY_COUNT_3" \
+  '(.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks) += [{type: "command", command: "true"}]'
+t11_ac3_neg "the artifact-lint entry dropped from the Bash block" "BASH_ENTRY_COUNT_1" \
+  '(.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks) |= [.[0]]'
+t11_ac3_neg "the Bash block deleted outright" "BLOCK_COUNT_1" \
+  '.hooks.PreToolUse |= map(select(.matcher != "Bash"))'
 
 t11_gg_command="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Edit|Write|MultiEdit") | .hooks[0].command' "$HOOKS_JSON")"
 case "$t11_gg_command" in
@@ -3732,10 +3815,25 @@ case "$t11_gg_command" in
     ;;
 esac
 
-# ---- AC4: the existing git-commit matcher block is byte-identical after the change. -------------
-t11_gitcommit_command="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' "$HOOKS_JSON")"
-check "EDMV4-T11 AC4 -- git-commit matcher's command is byte-identical to its pre-change literal" \
+# ---- AC4: the artifact-lint hook's command is byte-identical after the change.
+#
+# CA-007 moved the SELECTOR, not the command: the entry is no longer keyed by the bogus
+# `git commit` matcher string (which is what made it unreachable) but by its `if` field, under the
+# `Bash` tool-name matcher. AC4's own claim -- the command string is unchanged -- is asserted
+# below against the same literal it always pinned. AC4's `hooks.json:86` line-number wording moves
+# with the block and is escalated in this batch's report rather than nudged here. -----------------
+t11_lint_entry_count="$(jq '[.hooks.PreToolUse[] | .hooks[] | select(.if? == "Bash(git commit*)")] | length' "$HOOKS_JSON")"
+check_num "EDMV4-T11 AC4 / CA-007 -- exactly one PreToolUse hook entry is gated on the git-commit \`if\` pattern" \
+  "1" "$t11_lint_entry_count"
+t11_gitcommit_command="$(jq -r '.hooks.PreToolUse[] | .hooks[] | select(.if? == "Bash(git commit*)") | .command' "$HOOKS_JSON")"
+check "EDMV4-T11 AC4 -- the artifact-lint hook's command is byte-identical to its pre-change literal" \
   "command -v edm-lint-staged-artifacts >/dev/null 2>&1 || exit 0; edm-lint-staged-artifacts" "$t11_gitcommit_command"
+# CA-007's whole point: the entry must sit under the `Bash` TOOL-NAME matcher, which is what makes
+# it reachable at all. Exact equality, not check()'s substring match.
+t11_lint_parent="$(jq -r '.hooks.PreToolUse[] | select([.hooks[] | .if? // empty] | index("Bash(git commit*)")) | .matcher' "$HOOKS_JSON")"
+[[ "$t11_lint_parent" == "Bash" ]] \
+  && pass "EDMV4-T11 AC4 / CA-007 -- the artifact-lint entry sits under the Bash tool-name matcher (proven reachable at runtime; see decisions.md)" \
+  || fail "EDMV4-T11 AC4 / CA-007 -- the artifact-lint entry's parent matcher is '${t11_lint_parent}', expected exactly 'Bash'"
 
 # ---- AC5: zero invocations of the state binary. --------------------------------------------------
 # The AC is about INVOCATIONS, but this counted every occurrence of the literal string, including
@@ -5056,10 +5154,15 @@ else
   fail "EDMV4-T45 AC3/AC4 -- bin/edm-bash-gate is missing or not executable"
 fi
 
-# ---- AC5: the existing git-commit matcher block is byte-identical; pinned at its exact command
-# string (GATEGUARD/HOOKS_JSON already point at the real files from the EDMV4-T11 section). -------
-T45_GITCOMMIT_CMD="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' "$HOOKS_JSON")"
-check "EDMV4-T45 AC5 -- git-commit matcher's command is still byte-identical after this ticket" \
+# ---- AC5: the artifact-lint hook's command is byte-identical; pinned at its exact command string
+# (GATEGUARD/HOOKS_JSON already point at the real files from the EDMV4-T11 section).
+#
+# CA-007 moved this entry's SELECTOR -- it is keyed by its `if` field under the `Bash` tool-name
+# matcher now, not by the unreachable `git commit` matcher string -- while leaving the command
+# byte-identical, which is the property AC5 actually pins. The AC's own "the existing git-commit
+# matcher block" wording is escalated in this batch's report rather than nudged here. -------------
+T45_GITCOMMIT_CMD="$(jq -r '.hooks.PreToolUse[] | .hooks[] | select(.if? == "Bash(git commit*)") | .command' "$HOOKS_JSON")"
+check "EDMV4-T45 AC5 -- the artifact-lint hook's command is still byte-identical after this ticket" \
   "command -v edm-lint-staged-artifacts >/dev/null 2>&1 || exit 0; edm-lint-staged-artifacts" "$T45_GITCOMMIT_CMD"
 
 # ---- AC1 (structural): no second PreToolUse block registered for file events -- exactly one
@@ -5300,14 +5403,18 @@ else
   fail "CA-004 case 5 -- rc=${CA004_RUN_RC} stdout=[${CA004_RUN_OUT}] stderr=[${CA004_RUN_ERR}]"
 fi
 
-# ---- Case 6: unparseable (non-JSON) stdin -- allows silently (the jq -c projection failure guard
-# fires; a real block rule is present so a false clean here would still show up as a missed block).
+# ---- Case 6: unparseable (non-JSON) stdin -- allows, and (since CA-039) SAYS SO. The payload
+# guard fires; a real block rule is present so a false clean here would still show up as a missed
+# block. Before CA-039 this path was silent as well as non-blocking, and this case asserted empty
+# stderr; silence was the defect, not the contract -- the never-block half is unchanged.
 ca004_bash_gate_run "$CA004_C5_DIR" "not json at all"
-if [[ "$CA004_RUN_RC" -eq 0 && -z "$CA004_RUN_OUT" && -z "$CA004_RUN_ERR" ]]; then
-  pass "CA-004 case 6 -- unparseable (non-JSON) stdin allows silently (exit 0, empty stdout and stderr)"
+if [[ "$CA004_RUN_RC" -eq 0 && -z "$CA004_RUN_OUT" ]]; then
+  pass "CA-004 case 6 -- unparseable (non-JSON) stdin allows (exit 0, empty stdout)"
 else
-  fail "CA-004 case 6 -- rc=${CA004_RUN_RC} stdout=[${CA004_RUN_OUT}] stderr=[${CA004_RUN_ERR}]"
+  fail "CA-004 case 6 -- rc=${CA004_RUN_RC} stdout=[${CA004_RUN_OUT}] (expected exit 0 with empty stdout)"
 fi
+check "CA-004 case 6 / CA-039 -- ...and names the unparseable payload on stderr rather than allowing in silence" \
+  "is not parseable JSON" "$CA004_RUN_ERR"
 
 # ---- --help: exits 0 with non-empty output. ------------------------------------------------------
 CA004_HELP_RC=0
@@ -5318,18 +5425,22 @@ else
   fail "CA-004 -- edm-bash-gate --help exited ${CA004_HELP_RC} with output: ${CA004_HELP_OUT}"
 fi
 
-# ---- Known, separately-ticketed gap (CA-039, not fixed by this finding): the jq projection into
-# hookify's {"command": ...} field shape reads .tool_input.command with a `// ""` fallback, so it
-# always succeeds even when that field is absent under a renamed key -- a payload shaped like this
-# one is therefore indistinguishable from "no rule matched" rather than a distinct, name-able
-# failure mode. This section drives that exact shape explicitly, per this finding's remediation
-# plan, as a characterization test of a known gap -- not a claim that the gap is closed.
+# ---- CA-039, now CLOSED (this case was a characterization of the gap when CA-004 landed; it is
+# kept and inverted rather than deleted, per its own instruction). The projection used to read
+# .tool_input.command with a `// ""` fallback, so it always succeeded even when the field was
+# absent under a renamed key, and a shape-drifted payload was indistinguishable from "no rule
+# matched". The gate now probes the field's jq type: a renamed field still ALLOWS (the never-block
+# contract is unchanged) but is named on stderr as drift. The dedicated CA-039 band near the end
+# of this suite carries the full case set and the negative control; this case stays here so the
+# CA-004 band's own claim about this payload shape does not silently go stale.
 ca004_bash_gate_run "$CA004_C1_DIR" '{"tool_name":"Bash","cmd":"rm -rf /tmp/scratch-target"}'
-if [[ "$CA004_RUN_RC" -eq 0 && -z "$CA004_RUN_OUT" && -z "$CA004_RUN_ERR" ]]; then
-  pass "CA-004 -- characterizes CA-039: a payload carrying a renamed 'cmd' field instead of tool_input.command is indistinguishable from a clean allow (exit 0, empty output) -- a known, separately-ticketed gap, not fixed here"
+if [[ "$CA004_RUN_RC" -eq 0 && -z "$CA004_RUN_OUT" ]]; then
+  pass "CA-004 / CA-039 -- a payload carrying a renamed 'cmd' field instead of tool_input.command still ALLOWS (exit 0, empty stdout): a setup condition never blocks"
 else
-  fail "CA-004 -- CA-039 characterization mismatch: rc=${CA004_RUN_RC} stdout=[${CA004_RUN_OUT}] stderr=[${CA004_RUN_ERR}] (if this now fails, CA-039 may have been fixed -- update this comment rather than deleting the case)"
+  fail "CA-004 / CA-039 -- expected exit 0 with empty stdout for a renamed-field payload, got rc=${CA004_RUN_RC} stdout=[${CA004_RUN_OUT}]"
 fi
+check "CA-004 / CA-039 -- ...and is no longer indistinguishable from a clean allow: the drift is named on stderr" \
+  "payload-shape drift" "$CA004_RUN_ERR"
 
 # ---- Positive control (this finding's own verification clause): a mutant copy of edm-bash-gate
 # with its exit-2 block translation removed must FAIL case 1's block, proving case 1's assertion
@@ -8275,6 +8386,447 @@ CA020_COMMENT_HITS="$(ca020_scan "$CA020_COMMENT_FILE")"
 [[ -z "$CA020_COMMENT_HITS" ]] \
   && pass "CA-020 -- negative control: the identical text on a comment line is correctly NOT flagged" \
   || fail "CA-020 -- over-broad: prose describing the leak on a comment line was flagged as a real one"
+
+# =================================================================================================
+# Code-audit pass-1 remediation: the hook wiring and its three gate binaries
+# (CA-007, CA-008, CA-010, CA-039, CA-040, CA-043, CA-044, CA-045)
+# =================================================================================================
+echo
+echo "=== CA-007/008/010/039/040/043/044/045: hook wiring and the three gate binaries ==="
+echo
+
+# w8_mutant_bin <outvar> <real-binary-path> <sed-script> -- write a scratch copy of the REAL gate
+# binary with exactly one defect reintroduced by <sed-script>, alongside copies of the two shared
+# libraries the gates source from their own SCRIPT_DIR, and return the mutated copy's path by name.
+#
+# Every "never exercised" finding in this batch (CA-043, CA-044) is filled with an assertion that
+# is then run against one of these mutants, so a vacuous assertion is caught here rather than
+# shipped. The cmp guard below is the second half of that: a sed script that matches nothing would
+# produce a byte-identical "mutant" and turn the control it backs into a tautology.
+w8_mutant_bin() {
+  local __w8m_outvar="$1" src="$2" script="$3"
+  local dir base
+  dir="$(mktemp -d "${TMP}/w8-mutant.XXXXXX")"
+  base="$(basename "$src")"
+  cp "${PLUGIN_DIR}/bin/_edm-cli-lib.sh" "${dir}/"
+  cp "${PLUGIN_DIR}/bin/_edm-datadir-lib.sh" "${dir}/"
+  sed "$script" "$src" > "${dir}/${base}"
+  chmod +x "${dir}/${base}"
+  if cmp -s "$src" "${dir}/${base}"; then
+    fail "w8_mutant_bin: the mutation [${script}] changed nothing in ${base} -- the negative control it backs would be vacuous"
+  fi
+  printf -v "$__w8m_outvar" '%s' "${dir}/${base}"
+}
+
+# ---- CA-010: the SubagentStop hook prescribes the WAVE-BEARING per-implementer shard name -------
+# CA-515 gave the sibling qc-shard-pass-w{WW}-{NN} namespace a wave component; the implementer
+# namespace never got one, so a Step 5 remediation loop over the same ticket range overwrote the
+# original wave's shard -- and PASS/FAIL verdicts live ONLY in these markdown files (only PARTIAL
+# survives elsewhere, via the locked record-partial-verdict).
+#
+# The predicate deliberately keys on the PRESCRIPTIVE sentence rather than grepping for the absence
+# of the old literal: the prompt's own CA-010 rationale paragraph names the wave-less form in order
+# to explain why it is wrong, and a bare absence scan would match its own explanation. That is the
+# self-matching-scan class this suite has already filed five findings against.
+w8_qc_shard_violations() {
+  local f="$1" prompt
+  prompt="$(jq -r '.hooks.SubagentStop[0].hooks[0].prompt' "$f" 2>/dev/null)" || { echo "UNPARSEABLE"; return 0; }
+  case "$prompt" in
+    *'Write the QC report to `<initiative-dir>/qc/qc-shard-impl-w{WW}-{NN}.md`'*) ;;
+    *) echo "NO_WAVE_BEARING_PRESCRIPTION" ;;
+  esac
+  case "$prompt" in
+    *'{WW} is the WAVE number'*) ;;
+    *) echo "NO_WAVE_DEFINITION" ;;
+  esac
+  case "$prompt" in
+    *'qc-shard-pass-w{WW}-{NN}.md'*) ;;
+    *) echo "NO_SIBLING_NAMESPACE_REFERENCE" ;;
+  esac
+  return 0
+}
+
+CA010_VIOLATIONS="$(w8_qc_shard_violations "$HOOKS_JSON" | tr '\n' ',')" || true
+[[ -z "$CA010_VIOLATIONS" ]] \
+  && pass "CA-010 -- the SubagentStop hook prescribes qc/qc-shard-impl-w{WW}-{NN}.md, defines {WW} as the wave number, and keeps the qc-shard-pass-w{WW}-{NN} namespace disjoint" \
+  || fail "CA-010 -- the SubagentStop hook's shard-name prescription is wrong: ${CA010_VIOLATIONS%,}"
+
+w8_scratch_dir CA010_NEG_TMP
+CA010_NEG_JSON="${CA010_NEG_TMP}/hooks-waveless.json"
+sed 's#qc-shard-impl-w{WW}-{NN}#qc-shard-impl-{NN}#g' "$HOOKS_JSON" > "$CA010_NEG_JSON"
+if cmp -s "$HOOKS_JSON" "$CA010_NEG_JSON"; then
+  fail "CA-010 -- negative control is vacuous: stripping the wave component changed nothing"
+fi
+CA010_NEG_VIOLATIONS="$(w8_qc_shard_violations "$CA010_NEG_JSON" | tr '\n' ',')" || true
+case "$CA010_NEG_VIOLATIONS" in
+  *NO_WAVE_BEARING_PRESCRIPTION*)
+    pass "CA-010 -- negative control: a hooks.json whose prescription reverts to the wave-less qc-shard-impl-{NN}.md is rejected"
+    ;;
+  *)
+    fail "CA-010 -- negative control FAILED: the wave-less prescription was accepted (violations: ${CA010_NEG_VIOLATIONS:-<none>})"
+    ;;
+esac
+
+# ---- CA-039: edm-bash-gate's payload-shape guard can now actually fire ---------------------------
+# The projection was `{command: (.tool_input.command // "")}`, which ALWAYS succeeds -- so the
+# non-empty guard that followed could never fire, and a renamed or re-nested field disabled every
+# bash-event rule with no signal at all. The gate now probes the field's jq TYPE, which
+# distinguishes "absent" (null) from "present and empty" (string "").
+w8_scratch_dir CA039_TMP
+mkdir -p "${CA039_TMP}/proj/.claude/edm-hookify"
+cp "${HOOKIFY_FIXTURES}/block-rm-rf-bash.json" "${CA039_TMP}/proj/.claude/edm-hookify/"
+
+# ca039_run <binary> <payload> -- drive a bash gate once from inside the fixture project, with the
+# real bin/ on PATH so its own `command -v edm-hookify` succeeds. Captures rc/stdout/stderr.
+ca039_run() {
+  local gate="$1" payload="$2"
+  CA039_RC=0
+  CA039_OUT="$(cd "${CA039_TMP}/proj" && printf '%s' "$payload" | \
+    PATH="${PLUGIN_DIR}/bin:${PATH}" CLAUDE_PROJECT_DIR="${CA039_TMP}/proj" \
+    bash "$gate" 2>"${CA039_TMP}/stderr")" || CA039_RC=$?
+  CA039_ERR="$(cat "${CA039_TMP}/stderr" 2>/dev/null || true)"
+}
+
+ca039_run "$EDM_BASH_GATE" '{"tool_input":{}}'
+check_num "CA-039 -- a payload whose tool_input carries no command field still exits 0 (never a refusal)" "0" "$CA039_RC"
+check "CA-039 -- ...and says so: the drift diagnostic names the observed type" \
+  "payload-shape drift -- .tool_input.command is null, expected string" "$CA039_ERR"
+w8_check_empty "CA-039 -- the drift diagnostic goes to stderr, never stdout" "$CA039_OUT"
+
+ca039_run "$EDM_BASH_GATE" '{"tool_input":{"cmd":"x"}}'
+check_num "CA-039 -- a RENAMED command field (tool_input.cmd) still exits 0" "0" "$CA039_RC"
+check "CA-039 -- ...and fires the same drift diagnostic rather than silently evaluating nothing" \
+  "NO bash-event hookify rule was evaluated" "$CA039_ERR"
+
+ca039_run "$EDM_BASH_GATE" 'not json at all'
+check_num "CA-039 -- an unparseable payload still exits 0" "0" "$CA039_RC"
+check "CA-039 -- ...and is reported as unparseable, distinctly from a shape drift" \
+  "is not parseable JSON" "$CA039_ERR"
+
+# A present-but-EMPTY command is not drift -- it is a legal payload and must stay silent. This is
+# the discrimination the `//` default destroyed.
+ca039_run "$EDM_BASH_GATE" '{"tool_input":{"command":""}}'
+check_num "CA-039 -- a present-but-empty command is NOT drift: exit 0" "0" "$CA039_RC"
+w8_check_empty "CA-039 -- ...and emits no diagnostic (an empty command is a legal payload, not a shape drift)" "$CA039_ERR"
+
+# The real block path is untouched by the guard.
+ca039_run "$EDM_BASH_GATE" '{"tool_input":{"command":"rm -rf /"}}'
+check_num "CA-039 -- a matching block rule still refuses (exit 2) through the new projection" "2" "$CA039_RC"
+
+# Negative control: restore the `//` default inside the type probe. That is precisely the defect --
+# the probe then reports "string" for a missing field, so the guard can never fire.
+CA039_MUTANT=""
+w8_mutant_bin CA039_MUTANT "$EDM_BASH_GATE" \
+  "s#jq -r '.tool_input.command | type'#jq -r '(.tool_input.command // \"\") | type'#"
+ca039_run "$CA039_MUTANT" '{"tool_input":{}}'
+w8_check_empty "CA-039 -- negative control: with the \`//\` default restored, the identical payload produces NO diagnostic (the guard cannot fire)" "$CA039_ERR"
+check_num "CA-039 -- negative control: the mutant still exits 0, so the assertion above discriminates on the diagnostic alone" "0" "$CA039_RC"
+
+# ---- CA-045: a malformed Phase 6 marker fails CLOSED and says so --------------------------------
+# A marker line containing no tab byte used to silently ALLOW: ${MARKER_LINE#*$'\t'} returns the
+# whole line unchanged, the whole line then fails [[ -d ]], and the stale-marker branch exited 0 --
+# disabling Phase 6 fact-forcing for the entire session, indistinguishably from a legitimate
+# branch switch. The contract is now explicit: malformed is a setup condition, it fails closed
+# (the gate keeps enforcing) and it is visible on stderr. It is never escalated into a refusal of
+# its own -- the deny below is the ordinary first-touch fact-forcing denial, not a marker error.
+
+# ca045_case <label> <marker-writer-cmd...> -- stand up a fresh project/data pair, write the marker
+# with the caller's own printf, drive one first-touch Edit, and leave rc/out/err in CA045_*.
+ca045_env() {
+  local __proj="$1" __data="$2" __key="$3"
+  local dir; dir="$(mktemp -d "${TMP}/ca045.XXXXXX")"
+  mkdir -p "${dir}/proj" "${dir}/data/run"
+  local key
+  key="$(CLAUDE_PROJECT_DIR="${dir}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+  printf -v "$__proj" '%s' "${dir}/proj"
+  printf -v "$__data" '%s' "${dir}/data"
+  printf -v "$__key" '%s' "$key"
+}
+ca045_run() {
+  local gate="$1" proj="$2" data="$3"
+  CA045_RC=0
+  CA045_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"a.js"}}' | \
+    CLAUDE_PROJECT_DIR="$proj" CLAUDE_PLUGIN_DATA="$data" EDM_GATEGUARD_DENY_MODE=exit-code \
+    bash "$gate" 2>"${TMP}/ca045.stderr")" || CA045_RC=$?
+  CA045_ERR="$(cat "${TMP}/ca045.stderr" 2>/dev/null || true)"
+}
+
+CA045_TABLESS_PROJ="" CA045_TABLESS_DATA="" CA045_TABLESS_KEY=""
+ca045_env CA045_TABLESS_PROJ CA045_TABLESS_DATA CA045_TABLESS_KEY
+printf 'CA45PREFIXONLY\n' > "${CA045_TABLESS_DATA}/run/${CA045_TABLESS_KEY}.phase6"
+ca045_run "$GATEGUARD" "$CA045_TABLESS_PROJ" "$CA045_TABLESS_DATA"
+check_num "CA-045 -- a tab-less marker line fails CLOSED: the gate still enforces (exit 2), it does not silently allow" "2" "$CA045_RC"
+check "CA-045 -- ...and names the malformed marker on stderr with the expected three-field shape" \
+  "is malformed (expected PREFIX<TAB>initiative_dir<TAB>started_at)" "$CA045_ERR"
+check "CA-045 -- ...and the diagnostic states the decision it took, so it cannot be read as a stale marker" \
+  "enforcing the gate rather than reading it as stale" "$CA045_ERR"
+
+CA045_EMPTY_PROJ="" CA045_EMPTY_DATA="" CA045_EMPTY_KEY=""
+ca045_env CA045_EMPTY_PROJ CA045_EMPTY_DATA CA045_EMPTY_KEY
+: > "${CA045_EMPTY_DATA}/run/${CA045_EMPTY_KEY}.phase6"
+ca045_run "$GATEGUARD" "$CA045_EMPTY_PROJ" "$CA045_EMPTY_DATA"
+check_num "CA-045 -- a zero-byte marker file also fails closed (its pre-existing deny is now the deliberate, diagnosed outcome)" "2" "$CA045_RC"
+check "CA-045 -- ...and is reported as malformed rather than denying with no explanation" \
+  "is malformed (expected PREFIX<TAB>initiative_dir<TAB>started_at)" "$CA045_ERR"
+
+# A WELL-FORMED marker naming a deleted initiative directory must still take the stale-marker allow
+# -- the malformed branch must not have swallowed the legitimate case it sits next to.
+CA045_STALE_PROJ="" CA045_STALE_DATA="" CA045_STALE_KEY=""
+ca045_env CA045_STALE_PROJ CA045_STALE_DATA CA045_STALE_KEY
+printf 'CA45PFX\t%s/deleted-initiative\t2026-09-02T00:00:00Z\n' "$CA045_STALE_DATA" \
+  > "${CA045_STALE_DATA}/run/${CA045_STALE_KEY}.phase6"
+ca045_run "$GATEGUARD" "$CA045_STALE_PROJ" "$CA045_STALE_DATA"
+check_num "CA-045 -- a WELL-FORMED marker naming a deleted initiative dir still allows (exit 0): the malformed branch did not swallow the stale-marker case" "0" "$CA045_RC"
+w8_check_empty "CA-045 -- ...silently, with no malformed diagnostic" "$CA045_ERR"
+
+# Negative control: force the malformed classification back to 0, restoring the exact pre-fix
+# behaviour. The tab-less marker must then silently allow -- proving the assertions above are
+# attributable to the fix and not to some other property of the fixture.
+CA045_MUTANT=""
+w8_mutant_bin CA045_MUTANT "$GATEGUARD" 's/^  \*) MARKER_MALFORMED=1 ;;$/  *) MARKER_MALFORMED=0 ;;/'
+ca045_run "$CA045_MUTANT" "$CA045_TABLESS_PROJ" "$CA045_TABLESS_DATA"
+check_num "CA-045 -- negative control: with the malformed classification disabled, the identical tab-less marker silently ALLOWS (exit 0) -- the defect this finding names" "0" "$CA045_RC"
+w8_check_empty "CA-045 -- negative control: ...and prints nothing at all" "$CA045_ERR"
+
+# ---- CA-044: EDM_GATEGUARD_STATE_DIR as a WORKING redirect ---------------------------------------
+# The only test that set this variable also set EDM_GATEGUARD=0, so the script exited at its kill
+# switch before gg_state_dir was ever called: the override was exercised solely as a no-op. T15
+# AC12 asserts only that CLAUDE.md contains the string. Nothing proved the checked-file and
+# denials-file actually land under the override, and nothing proved the trailing-slash strip.
+
+# ca044_case <label> <state-dir-value> -- drive one first-touch denial with the override set to
+# <state-dir-value>, then report where the two session-state files landed.
+ca044_case() {
+  local label="$1" override_value="$2"
+  local dir; dir="$(mktemp -d "${TMP}/ca044.XXXXXX")"
+  mkdir -p "${dir}/proj" "${dir}/data/run" "${dir}/override"
+  local key
+  key="$(CLAUDE_PROJECT_DIR="${dir}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+  printf 'CA44PFX\t%s\t2026-09-02T00:00:00Z\n' "${dir}/proj" > "${dir}/data/run/${key}.phase6"
+
+  local rc=0
+  printf '{"tool_name":"Edit","tool_input":{"file_path":"a.js"}}' | \
+    CLAUDE_PROJECT_DIR="${dir}/proj" CLAUDE_PLUGIN_DATA="${dir}/data" \
+    EDM_GATEGUARD_STATE_DIR="${override_value//@DIR@/${dir}}" EDM_GATEGUARD_DENY_MODE=exit-code \
+    bash "$GATEGUARD" >/dev/null 2>&1 || rc=$?
+  check_num "CA-044 (${label}) -- the run reached a real first-touch denial, so gg_state_dir was actually called" "2" "$rc"
+
+  [[ -f "${dir}/override/${key}.checked" ]] \
+    && pass "CA-044 (${label}) -- the checked-file landed under the override" \
+    || fail "CA-044 (${label}) -- ${dir}/override/${key}.checked does not exist; the override was not honoured"
+  [[ -f "${dir}/override/${key}.denials" ]] \
+    && pass "CA-044 (${label}) -- the denials-file landed under the override" \
+    || fail "CA-044 (${label}) -- ${dir}/override/${key}.denials does not exist; the override was not honoured"
+
+  # ...and NOTHING but the marker landed under the default location. A redirect that also wrote to
+  # the default would satisfy the two existence checks above while proving nothing.
+  local stray
+  stray="$(ls -1 "${dir}/data/run" | grep -v '\.phase6$' | tr '\n' ',')" || true
+  [[ -z "$stray" ]] \
+    && pass "CA-044 (${label}) -- \${CLAUDE_PLUGIN_DATA}/run holds only the marker: no session state leaked to the default location" \
+    || fail "CA-044 (${label}) -- session state also landed under the default location: ${stray%,}"
+}
+ca044_case "plain path" "@DIR@/override"
+ca044_case "trailing slash" "@DIR@/override/"
+
+# Negative control: the identical fixture with the override UNSET must put both files under
+# ${CLAUDE_PLUGIN_DATA}/run instead. Without this, the three assertions above would pass against a
+# gate that ignored the variable and happened to write nowhere at all.
+CA044_NEG_DIR="$(mktemp -d "${TMP}/ca044-neg.XXXXXX")"
+mkdir -p "${CA044_NEG_DIR}/proj" "${CA044_NEG_DIR}/data/run" "${CA044_NEG_DIR}/override"
+CA044_NEG_KEY="$(CLAUDE_PROJECT_DIR="${CA044_NEG_DIR}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+printf 'CA44PFX\t%s\t2026-09-02T00:00:00Z\n' "${CA044_NEG_DIR}/proj" > "${CA044_NEG_DIR}/data/run/${CA044_NEG_KEY}.phase6"
+CA044_NEG_RC=0
+printf '{"tool_name":"Edit","tool_input":{"file_path":"a.js"}}' | \
+  CLAUDE_PROJECT_DIR="${CA044_NEG_DIR}/proj" CLAUDE_PLUGIN_DATA="${CA044_NEG_DIR}/data" \
+  EDM_GATEGUARD_DENY_MODE=exit-code bash "$GATEGUARD" >/dev/null 2>&1 || CA044_NEG_RC=$?
+check_num "CA-044 -- negative control: the same fixture with no override still denies" "2" "$CA044_NEG_RC"
+if [[ -f "${CA044_NEG_DIR}/data/run/${CA044_NEG_KEY}.checked" && ! -f "${CA044_NEG_DIR}/override/${CA044_NEG_KEY}.checked" ]]; then
+  pass "CA-044 -- negative control: with EDM_GATEGUARD_STATE_DIR unset the session state lands under \${CLAUDE_PLUGIN_DATA}/run and NOT under the scratch override -- the redirect assertions above discriminate"
+else
+  fail "CA-044 -- negative control FAILED: with the override unset, state did not land at the default location (the redirect assertions above prove nothing)"
+fi
+
+# ---- CA-043: the FAIL-OPEN half of the hookify wiring, through both real consumers ----------------
+# The deny half is proven by T52 AC7b (a real block rule producing a real permissionDecision:deny).
+# Nothing asserted that a matched `warn` file rule STILL ALLOWS, and nothing asserted that
+# hookify's setup-error exit 1 does not escalate into a denial. A regression that denied on any
+# non-zero hookify status would have left every existing assertion green while wedging every Edit
+# in Phase 6 on one contributor's typo. Both cases run through the REAL edm-gateguard and the REAL
+# edm-stop-gate -- not a hand-retyped translation harness.
+
+# ca043_gateguard_case <label> <rule-fixture> -- marker present, target path PRE-SEEDED as already
+# checked so gg_maybe_deny falls through silently and the allow-path hookify evaluation is actually
+# reached (the technique T14 AC5 and T52 AC7b already use).
+ca043_gateguard_case() {
+  local label="$1" fixture="$2" gate="${3:-$GATEGUARD}"
+  local dir; dir="$(mktemp -d "${TMP}/ca043-gg.XXXXXX")"
+  mkdir -p "${dir}/proj/.claude/edm-hookify" "${dir}/data/run"
+  local key
+  key="$(CLAUDE_PROJECT_DIR="${dir}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+  printf 'CA43PFX\t%s\t2026-09-02T00:00:00Z\n' "${dir}/proj" > "${dir}/data/run/${key}.phase6"
+  printf 'safe.js\n' > "${dir}/data/run/${key}.checked"
+  cp "$fixture" "${dir}/proj/.claude/edm-hookify/"
+
+  CA043_RC=0
+  CA043_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"safe.js","new_string":"console.log(1)"}}' | \
+    CLAUDE_PROJECT_DIR="${dir}/proj" CLAUDE_PLUGIN_DATA="${dir}/data" EDM_GATEGUARD_DENY_MODE=json \
+    PATH="${PLUGIN_DIR}/bin:${PATH}" bash "$gate" 2>"${dir}/stderr")" || CA043_RC=$?
+  CA043_ERR="$(cat "${dir}/stderr" 2>/dev/null || true)"
+}
+
+ca043_gateguard_case "warn rule" "${HOOKIFY_FIXTURES}/warn-no-console-log.json"
+check_num "CA-043 -- edm-gateguard: a MATCHED warn file rule still allows (exit 0)" "0" "$CA043_RC"
+w8_check_empty "CA-043 -- edm-gateguard: ...with empty stdout, so no deny decision is emitted" "$CA043_OUT"
+check "CA-043 -- edm-gateguard: ...and the warn line still reaches the operator on stderr" \
+  "warn-no-console-log warn" "$CA043_ERR"
+
+ca043_gateguard_case "malformed rule file" "${HOOKIFY_FIXTURES}/malformed-invalid-json.json"
+check_num "CA-043 -- edm-gateguard: a malformed rule file (hookify setup error, exit 1) does NOT escalate into a denial (exit 0)" "0" "$CA043_RC"
+w8_check_empty "CA-043 -- edm-gateguard: ...with empty stdout" "$CA043_OUT"
+check "CA-043 -- edm-gateguard: ...and hookify's setup line reaches stderr, so the contributor's typo is visible" \
+  "edm-hookify: setup error" "$CA043_ERR"
+
+# Two mutants, because the two cases fail for different reasons: hookify exits 0 on a warn match
+# and 1 on a setup error, so "deny on any non-zero" catches only the second. The prescription's own
+# control would have left the warn case unproven.
+CA043_GG_MUTANT_NZ=""
+w8_mutant_bin CA043_GG_MUTANT_NZ "$GATEGUARD" 's/-eq 2 ]] && emit_decision deny/-ne 0 ]] \&\& emit_decision deny/'
+ca043_gateguard_case "malformed, mutant denies on any non-zero" "${HOOKIFY_FIXTURES}/malformed-invalid-json.json" "$CA043_GG_MUTANT_NZ"
+check "CA-043 -- negative control: a gateguard that denies on ANY non-zero hookify status DOES refuse the malformed-rule case" \
+  '"permissionDecision":"deny"' "$CA043_OUT"
+
+CA043_GG_MUTANT_ALL=""
+w8_mutant_bin CA043_GG_MUTANT_ALL "$GATEGUARD" 's/-eq 2 ]] && emit_decision deny/-ge 0 ]] \&\& emit_decision deny/'
+ca043_gateguard_case "warn, mutant denies on every status" "${HOOKIFY_FIXTURES}/warn-no-console-log.json" "$CA043_GG_MUTANT_ALL"
+check "CA-043 -- negative control: a gateguard that denies on every hookify status DOES refuse the warn-rule case" \
+  '"permissionDecision":"deny"' "$CA043_OUT"
+
+# ---- CA-008 + CA-043 (edm-stop-gate half) -------------------------------------------------------
+# edm-stop-gate captured edm-hookify with `2>&1` and printed the capture only on the block path, so
+# every warn line AND every malformed-rule setup error was discarded. The setup error is the one
+# that matters: a contributor's typo became invisible.
+
+# ca008_case <inner-fn> -- a scratch repo with ONE clean active initiative and a rules directory,
+# so the stop-event hookify evaluation at the bottom of edm-stop-gate is actually reached (a
+# repository with no active initiative exits 0 before it).
+ca008_seed() {
+  edm-state init CA08OK >/dev/null
+  edm-state set CA08OK current_phase 1 >/dev/null
+  edm-state set CA08OK estimated_size Small >/dev/null
+  mkdir -p "$(pwd)/.claude/edm-hookify"
+}
+ca008_drive() {
+  local gate="$1"
+  CA008_RC=0
+  CA008_OUT="$("$gate" 2>"${TMP}/ca008.stderr")" || CA008_RC=$?
+  CA008_ERR="$(cat "${TMP}/ca008.stderr" 2>/dev/null || true)"
+}
+
+ca008_warn_case() {
+  ca008_seed
+  cp "${HOOKIFY_FIXTURES}/warn-stop-placeholder.json" "$(pwd)/.claude/edm-hookify/"
+  ca008_drive "$EDM_STOP_GATE"
+  check_num "CA-008/CA-043 -- edm-stop-gate: a matched stop-event warn rule still allows (exit 0)" "0" "$CA008_RC"
+  w8_check_empty "CA-008/CA-043 -- edm-stop-gate: ...with stdout empty (a raw echo to stdout is the documented Stop-hook failure mode)" "$CA008_OUT"
+  check "CA-008 -- edm-stop-gate: the warn line reaches stderr instead of being swallowed by the capture" \
+    "warn-stop-placeholder warn" "$CA008_ERR"
+
+  # Negative control: restore the `2>&1` capture. The warn line then disappears entirely, which is
+  # exactly the defect -- and is what makes the assertion above discriminating.
+  local mutant=""
+  w8_mutant_bin mutant "$EDM_STOP_GATE" 's#| edm-hookify eval stop)#| edm-hookify eval stop 2>\&1)#'
+  ca008_drive "$mutant"
+  check_absent "CA-008 -- negative control: with the 2>&1 capture restored, the warn line is swallowed and never reaches stderr" \
+    "warn-stop-placeholder warn" "$CA008_ERR"
+  check_num "CA-008 -- negative control: the mutant still exits 0, so the assertion above discriminates on visibility alone" "0" "$CA008_RC"
+}
+t46_isolate_and_run ca008_warn_case
+
+ca008_malformed_case() {
+  ca008_seed
+  cp "${HOOKIFY_FIXTURES}/malformed-invalid-json.json" "$(pwd)/.claude/edm-hookify/"
+  ca008_drive "$EDM_STOP_GATE"
+  check_num "CA-008/CA-043 -- edm-stop-gate: a malformed rule file (hookify setup error) does NOT escalate into a block (exit 0)" "0" "$CA008_RC"
+  w8_check_empty "CA-008/CA-043 -- edm-stop-gate: ...with stdout empty" "$CA008_OUT"
+  check "CA-008 -- edm-stop-gate: hookify's setup line reaches stderr, so a contributor's malformed stop rule is not invisible" \
+    "edm-hookify: setup error" "$CA008_ERR"
+
+  local mutant=""
+  w8_mutant_bin mutant "$EDM_STOP_GATE" 's#| edm-hookify eval stop)#| edm-hookify eval stop 2>\&1)#'
+  ca008_drive "$mutant"
+  check_absent "CA-008 -- negative control: with the 2>&1 capture restored, the malformed-rule setup error is swallowed" \
+    "edm-hookify: setup error" "$CA008_ERR"
+
+  # CA-043's non-escalation half, through the real stop gate: a stop gate that blocked on any
+  # non-zero hookify status would exit 2 here.
+  local esc_mutant=""
+  w8_mutant_bin esc_mutant "$EDM_STOP_GATE" 's/_hookify_rc" -eq 2 ]]; then/_hookify_rc" -ne 0 ]]; then/'
+  ca008_drive "$esc_mutant"
+  check_num "CA-043 -- negative control: a stop gate that blocks on ANY non-zero hookify status DOES exit 2 on the malformed-rule case" "2" "$CA008_RC"
+}
+t46_isolate_and_run ca008_malformed_case
+
+# ---- CA-040: a dying per-prefix `edm-state validate` is now visible ------------------------------
+# The skip was a bare `continue` with zero output, so a SYSTEMATIC validate failure made the Stop
+# gate exit 0 silently on every Stop -- reading exactly like "everything is fine". CA-132's
+# two-initiative fixture is the only shape that drives this arm: T46 AC9's two internal-error
+# cases both fail `active-initiatives` and soft_exit before the loop is ever reached.
+#
+# `edm-state validate` cannot be pushed into a setup-error exit by data corruption alone (every
+# corruption shape tried either still exits 0 or drops the initiative out of
+# `active-initiatives` entirely), so the collaborator is replaced by a thin DELEGATING shim that
+# forwards every call to the real binary except `validate CA40BREAK`. The code under test is
+# edm-stop-gate, not edm-state; the shim stands in for the collaborator only, exactly as T46 AC9's
+# fake `jq` does.
+ca040_case() {
+  edm-state init CA40OK >/dev/null
+  edm-state set CA40OK current_phase 1 >/dev/null
+  edm-state set CA40OK estimated_size Small >/dev/null
+  edm-state record-partial-verdict CA40OK CA40OK-T01 PARTIAL "needs runtime check" >/dev/null
+
+  edm-state init CA40BREAK >/dev/null
+  edm-state set CA40BREAK current_phase 1 >/dev/null
+
+  local shim_dir; shim_dir="$(mktemp -d "${TMP}/ca040-shim.XXXXXX")"
+  cat > "${shim_dir}/edm-state" <<'CA040SHIM'
+#!/usr/bin/env bash
+if [ "${1:-}" = "validate" ] && [ "${2:-}" = "CA40BREAK" ]; then
+  echo "edm-state: simulated setup error for CA40BREAK" >&2
+  exit 1
+fi
+exec "$CA040_REAL_EDM_STATE" "$@"
+CA040SHIM
+  chmod +x "${shim_dir}/edm-state"
+  export CA040_REAL_EDM_STATE="${PLUGIN_DIR}/bin/edm-state"
+
+  local rc=0 out err
+  out="$(PATH="${shim_dir}:${PATH}" "$EDM_STOP_GATE" 2>"${shim_dir}/stderr")" || rc=$?
+  err="$(cat "${shim_dir}/stderr" 2>/dev/null || true)"
+
+  check_num "CA-040 -- a prefix whose validate dies never blocks: the gate's exit is the HEALTHY sibling's verdict (2, from CA40OK's open PARTIAL)" "2" "$rc"
+  check "CA-040 -- the skipped prefix is named on stderr with the status it exited with" \
+    "edm-state validate CA40BREAK exited 1" "$err"
+  check "CA-040 -- ...and the line says the initiative was not checked, so a systematic failure cannot read as 'everything is fine'" \
+    "CA40BREAK was NOT checked this Stop" "$err"
+  check "CA-040 -- the healthy sibling's blocking anomaly still governs and is still reported" \
+    "[EDM] blocking anomaly for initiative CA40OK:" "$err"
+  w8_check_empty "CA-040 -- stdout stays empty throughout" "$out"
+
+  # Negative control: delete the diagnostic line only, leaving the bare `continue`. The skip then
+  # happens in total silence -- the defect -- while the exit code is unchanged, so the assertions
+  # above are attributable to the diagnostic and nothing else.
+  local mutant=""
+  w8_mutant_bin mutant "$EDM_STOP_GATE" '/was NOT checked this Stop/d'
+  local mrc=0 merr
+  PATH="${shim_dir}:${PATH}" "$mutant" >/dev/null 2>"${shim_dir}/mut-stderr" || mrc=$?
+  merr="$(cat "${shim_dir}/mut-stderr" 2>/dev/null || true)"
+  check_absent "CA-040 -- negative control: with the diagnostic removed, the dying prefix is skipped in total silence" \
+    "CA40BREAK" "$merr"
+  check_num "CA-040 -- negative control: the mutant's exit code is unchanged (2), so the assertions above discriminate on the diagnostic alone" "2" "$mrc"
+  unset CA040_REAL_EDM_STATE
+}
+t46_isolate_and_run ca040_case
 
 echo
 # =================================================================================================

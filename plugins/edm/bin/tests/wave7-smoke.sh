@@ -5453,7 +5453,7 @@ echo "T67 AC8 -- commit-hook scoping (PreToolUse git commit) preserved"
 # the moment anything is committed, whatever the content, and goes red for an unrelated edit like
 # normalizing an em dash in a prompt string. Assert the scoping properties AC8 actually names,
 # read out of the hook command itself, so the check means the same thing before and after a commit.
-t67ac8_cmd="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' \
+t67ac8_cmd="$(jq -r '.hooks.PreToolUse[] | .hooks[] | select(.if? == "Bash(git commit*)") | .command' \
   "${PLUGIN_DIR}/hooks/hooks.json" 2>/dev/null || true)"
 # CA-436/CA-413/CA-414 (round-8 Stage B): the hook body was extracted to
 # bin/edm-lint-staged-artifacts (a JSON-string one-liner had no place for a shellcheck
@@ -5574,7 +5574,7 @@ EOS
   ( cd "$scratch" && git add SRD/FOOCA501B/planning.md bin/edm-state bin/edm-lint-artifacts bin/edm-lint-staged-artifacts )
 
   cmdfile="${scratch}/hook-command.sh"
-  jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' \
+  jq -r '.hooks.PreToolUse[] | .hooks[] | select(.if? == "Bash(git commit*)") | .command' \
     "${PLUGIN_DIR}/hooks/hooks.json" > "$cmdfile" 2>/dev/null
   cmd="$(cat "$cmdfile" 2>/dev/null || true)"
   if [[ -z "$cmd" ]]; then
@@ -7028,7 +7028,7 @@ EOS
   ( cd "$scratch" && git add SRD/FOOG8/planning.md bin/edm-state bin/edm-lint-artifacts )
 
   cmdfile="${scratch}/hook-command.sh"
-  jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' \
+  jq -r '.hooks.PreToolUse[] | .hooks[] | select(.if? == "Bash(git commit*)") | .command' \
     "${PLUGIN_DIR}/hooks/hooks.json" > "$cmdfile" 2>/dev/null
   cmd="$(cat "$cmdfile" 2>/dev/null || true)"
   if [[ -z "$cmd" ]]; then
@@ -7215,7 +7215,7 @@ EOS
   ( cd "$scratch" && git add SRD/FOOCA501/planning.md bin/edm-state bin/edm-lint-artifacts )
 
   cmdfile="${scratch}/hook-command.sh"
-  jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' \
+  jq -r '.hooks.PreToolUse[] | .hooks[] | select(.if? == "Bash(git commit*)") | .command' \
     "${PLUGIN_DIR}/hooks/hooks.json" > "$cmdfile" 2>/dev/null
   cmd="$(cat "$cmdfile" 2>/dev/null || true)"
   if [[ -z "$cmd" ]]; then
@@ -7262,7 +7262,7 @@ EOS
   chmod +x "${scratch}/bin/edm-state" "${scratch}/bin/edm-lint-artifacts"
 
   cmdfile="${scratch}/hook-command.sh"
-  jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' \
+  jq -r '.hooks.PreToolUse[] | .hooks[] | select(.if? == "Bash(git commit*)") | .command' \
     "${PLUGIN_DIR}/hooks/hooks.json" > "$cmdfile" 2>/dev/null
   cmd="$(cat "$cmdfile" 2>/dev/null || true)"
   if [[ -z "$cmd" ]]; then
@@ -7318,7 +7318,7 @@ EOS
   ( cd "$scratch" && git add SRD/FOOG44/planning.md bin/edm-state bin/edm-lint-artifacts )
 
   cmdfile="${scratch}/hook-command.sh"
-  jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' \
+  jq -r '.hooks.PreToolUse[] | .hooks[] | select(.if? == "Bash(git commit*)") | .command' \
     "${PLUGIN_DIR}/hooks/hooks.json" > "$cmdfile" 2>/dev/null
   cmd="$(cat "$cmdfile" 2>/dev/null || true)"
   if [[ -z "$cmd" ]]; then
@@ -7349,7 +7349,7 @@ g44_silent_default_case() {
   ( cd "$scratch" && git add README.md )
 
   cmdfile="${scratch}/hook-command.sh"
-  jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' \
+  jq -r '.hooks.PreToolUse[] | .hooks[] | select(.if? == "Bash(git commit*)") | .command' \
     "${PLUGIN_DIR}/hooks/hooks.json" > "$cmdfile" 2>/dev/null
   cmd="$(cat "$cmdfile" 2>/dev/null || true)"
   if [[ -z "$cmd" ]]; then
@@ -7405,7 +7405,7 @@ g1_ca320_real_violation_case() {
   ( cd "$scratch" && git add SRD/GCA320/violation.md )
 
   cmdfile="${scratch}/hook-command.sh"
-  jq -r '.hooks.PreToolUse[] | select(.matcher == "git commit") | .hooks[0].command' \
+  jq -r '.hooks.PreToolUse[] | .hooks[] | select(.if? == "Bash(git commit*)") | .command' \
     "${PLUGIN_DIR}/hooks/hooks.json" > "$cmdfile" 2>/dev/null
   cmd="$(cat "$cmdfile" 2>/dev/null || true)"
   if [[ -z "$cmd" ]]; then
@@ -9169,8 +9169,23 @@ check "CA-473 -- the merge step globs the threshold-shard namespace" \
   "qc-shard-pass-*.md" "$ca473_skill_all"
 check_absent "CA-473 -- no bare qc-shard-*.md merge glob remains in the pseudo-code" \
   "merge all qc-shard-*.md" "$ca473_skill_all"
+# CA-010 moved this literal: the per-implementer namespace now carries a wave component too, for
+# the same reason CA-515 gave the threshold-shard namespace one. Without it a Step 5 remediation
+# loop re-runs an implementer over the SAME ticket range and the later shard overwrites the
+# original wave's, taking its PASS/FAIL verdicts with it. CA-473's own claim (the two namespaces
+# are disjoint) is unaffected and still asserted by the token comparison above.
+ca010_claude_md="$(cat "${PLUGIN_DIR}/CLAUDE.md" 2>/dev/null)"
 check "CA-473 -- CLAUDE.md's SubagentStop row names the per-implementer prefix" \
-  "qc/qc-shard-impl-{NN}.md" "$(cat "${PLUGIN_DIR}/CLAUDE.md" 2>/dev/null)"
+  "qc/qc-shard-impl-w{WW}-{NN}.md" "$ca010_claude_md"
+check "CA-010 -- CLAUDE.md's per-implementer shard filename carries the wave component" \
+  "qc-shard-impl-w{WW}-{NN}.md" "$ca010_claude_md"
+check "CA-010 -- hooks.json's SubagentStop prompt prescribes the wave-bearing shard filename" \
+  'Write the QC report to `<initiative-dir>/qc/qc-shard-impl-w{WW}-{NN}.md`' "$ca473_hooks_json"
+# Positive control: stripping the wave component reproduces the pre-CA-010 name, confirming the
+# two checks above pin the wave component rather than matching some other substring.
+ca010_control="$(printf '%s\n' "$ca473_hooks_json" | sed 's/qc-shard-impl-w{WW}-/qc-shard-impl-/g')"
+check_absent "CA-010 -- positive control: stripping the wave component reproduces the pre-fix wave-less key" \
+  'qc/qc-shard-impl-w{WW}' "$ca010_control"
 check "CA-473 -- edm-qc-auditor.md names the threshold-shard prefix" \
   "qc/qc-shard-pass-" "$(cat "${PLUGIN_DIR}/agents/edm-qc-auditor.md" 2>/dev/null)"
 check "CA-515 -- edm-qc-auditor.md's threshold-shard filename carries the wave component" \
