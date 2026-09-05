@@ -12,6 +12,44 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "${SCRIPT_DIR}/_harness.sh"
 PLUGIN_DIR="$_HARNESS_PLUGIN_DIR"
 
+# ---- CA-027: multi-call-safe scratch directories ------------------------------------------------
+# _harness.sh's harness_scratch_dir installs a process-wide four-arm EXIT/INT/TERM/HUP trap set
+# that REPLACES any previously installed one -- its own docstring pins it at one call per process
+# for exactly that reason. This suite needs a scratch tree per banded section, and calling that
+# helper once per section meant every call but the last had its cleanup silently voided: the
+# directories were never removed, and the first section's own hand-rolled traps went with them.
+#
+# w8_scratch_dir keeps ONE registry of every scratch path this suite creates and ONE trap set that
+# removes all of them, so each call is ADDITIVE rather than destructive. Plain indexed array plus
+# integer indexing only -- no associative array, no mapfile (bash 3.2 floor).
+W8_SCRATCH_DIRS=()
+w8_scratch_cleanup() {
+  local _w8_d
+  # An explicit count guard rather than a "${arr[@]:-}" expansion: the latter injects one empty
+  # element into an empty array, which would make `rm -rf ""` the first thing this ever runs.
+  [[ "${#W8_SCRATCH_DIRS[@]}" -gt 0 ]] || return 0
+  for _w8_d in "${W8_SCRATCH_DIRS[@]}"; do
+    if [[ -n "$_w8_d" ]]; then rm -rf "$_w8_d"; fi
+  done
+  return 0
+}
+# w8_scratch_dir <outvar> -- same out-variable calling convention as harness_scratch_dir (a trap
+# installed inside a $(...) subshell is gone before the caller could ever use the directory, so the
+# path is returned by name rather than printed), honours TMPDIR, and may be called any number of
+# times. CA-482 four-arm split: a single body on all four signals cleans up and RESUMES the caller
+# on INT/TERM/HUP instead of exiting with a signal-shaped code.
+w8_scratch_dir() {
+  local __w8_outvar="$1" _w8_new
+  _w8_new="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8.XXXXXX")" \
+    || { fail "w8_scratch_dir: mktemp failed"; return 1; }
+  W8_SCRATCH_DIRS[${#W8_SCRATCH_DIRS[@]}]="$_w8_new"
+  trap 'w8_scratch_cleanup' EXIT
+  trap 'w8_scratch_cleanup; exit 130' INT
+  trap 'w8_scratch_cleanup; exit 143' TERM
+  trap 'w8_scratch_cleanup; exit 129' HUP
+  printf -v "$__w8_outvar" '%s' "$_w8_new"
+}
+
 echo "wave8 smoke check -- EDMV4-T05 / EDMV4-T34 / EDMV4-T48"
 echo
 
@@ -41,11 +79,11 @@ fi
 
 # AC5 positive control for AC1: collapse the array declaration to a space-joined string and
 # confirm the check now fails -- proving the check is not vacuously true.
-T05_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t05.XXXXXX")"
-trap 'rm -rf "$T05_TMP"' EXIT
-trap 'rm -rf "$T05_TMP"; exit 130' INT
-trap 'rm -rf "$T05_TMP"; exit 143' TERM
-trap 'rm -rf "$T05_TMP"; exit 129' HUP
+# CA-027: this was a bare `mktemp -d` plus its own four-arm trap set. The next
+# harness_scratch_dir call in the file replaced all four arms, so T05_TMP -- which has no explicit
+# rm anywhere -- leaked on every single run. Routed through the shared registry instead, so a later
+# scratch directory adds to the cleanup set rather than displacing this one.
+w8_scratch_dir T05_TMP
 
 T05_AC1_BROKEN="${T05_TMP}/run-eval-broken.sh"
 sed -E 's/^CLAUDE_ALLOWED_TOOLS=\(.*\)$/CLAUDE_ALLOWED_TOOLS="Read Write Edit Glob"/' "$RUN_EVAL_SH" > "$T05_AC1_BROKEN"
@@ -308,7 +346,7 @@ REPO_ROOT="$_HARNESS_REPO_ROOT"
 # CA-005: shared --help extractor, needed by the EDMV4-T38 section's print_help() sanity checks.
 source "${SCRIPT_DIR}/../_edm-cli-lib.sh"
 
-harness_scratch_dir TMP
+w8_scratch_dir TMP
 
 echo
 echo "wave8 smoke check (continued) -- EDMV4-T17 data-directory resolver, EDMV4-T38 repo-readiness scaffold"
@@ -1006,7 +1044,7 @@ check "EDMV4-T27 AC3 -- canonical P0/P1/P2/NOTED scale cited" 'P0`, `P1`, `P2`, 
 # Positive control (per this initiative's own "matches its own prose" defect class): the
 # case-insensitive word-boundary scan above must actually fire on a known-bad fixture, or a
 # "found 0" result proves nothing.
-T27_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t27.XXXXXX")"
+w8_scratch_dir T27_TMP
 t27_bad_fixture="${T27_TMP}/bad-severity-scale.md"
 printf '%s\n' 'Rate every gap as critical, important, or nice-to-have.' > "$t27_bad_fixture"
 t27_ctl_hits="$(grep -icE '\b(critical|important|nice-to-have)\b' "$t27_bad_fixture" || true)"
@@ -2534,7 +2572,7 @@ else
   fail "EDMV4-T44 AC4 setup -- could not extract emit_decision() from bin/edm-gateguard"
 fi
 
-harness_scratch_dir T44_HARNESS_TMP
+w8_scratch_dir T44_HARNESS_TMP
 T44_HARNESS="${T44_HARNESS_TMP}/gateguard-hookify-translation.sh"
 {
   printf '%s\n' '#!/usr/bin/env bash'
@@ -3381,7 +3419,7 @@ fi
 
 # ---- AC9: with the marker absent and jq only reachable via a spy stub, exit 0, empty stdout, and
 # the spy is never invoked (zero jq processes spawned). --------------------------------------------
-harness_scratch_dir T11_TMP
+w8_scratch_dir T11_TMP
 T11_FAKEBIN="${T11_TMP}/fakebin"
 mkdir -p "$T11_FAKEBIN"
 ln -s "$(command -v dirname)" "${T11_FAKEBIN}/dirname"
@@ -3629,7 +3667,7 @@ check "EDMV4-T13 AC6 -- EDM_GATEGUARD_DENY_MODE_DEFAULT equals Spike B's recorde
 # definition. This is what lets AC2/AC3/AC4/AC7/AC8/AC9 exercise the deny back-ends directly: no
 # case arm in edm-gateguard itself calls emit_decision deny yet (that wiring is EDMV4-T14/T15's),
 # so the function must be tested in isolation rather than through a full end-to-end invocation. ---
-harness_scratch_dir T13_TMP
+w8_scratch_dir T13_TMP
 T13_HARNESS="${T13_TMP}/emit-decision-harness.sh"
 {
   printf '%s\n' '#!/usr/bin/env bash'
@@ -3751,7 +3789,7 @@ check "EDMV4-T13 AC9 -- edm-check-vocabulary passes over the updated edm-gategua
 # ---- End-to-end sanity: with a Phase 6 marker present and no ticket having wired a real deny
 # condition yet (EDMV4-T14/T15's job), the gate still allows silently -- but now via
 # emit_decision, not a bare exit 0, matching the "Hooks behavior" documentation update above. ------
-harness_scratch_dir T13_E2E_TMP
+w8_scratch_dir T13_E2E_TMP
 mkdir -p "${T13_E2E_TMP}/data/run" "${T13_E2E_TMP}/proj"
 T13_E2E_KEY="$(CLAUDE_PROJECT_DIR="${T13_E2E_TMP}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
 T13_E2E_MARKER="${T13_E2E_TMP}/data/run/${T13_E2E_KEY}.phase6"
@@ -4013,7 +4051,7 @@ else
   fail "EDMV4-T56 AC6 -- plugins/edm/CLAUDE.md is missing the marketplace-clone and/or unpacked-cache path; the three-location section may have been removed"
 fi
 
-T56_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t56.XXXXXX")"
+w8_scratch_dir T56_TMP
 
 # ---- AC7: positive control -- strip every line naming either literal path from a scratch copy
 # and confirm the detector correctly reports absence. Without this, a "found 0" style detector
@@ -4291,7 +4329,7 @@ else
   fail "EDMV4-T15 AC3 -- kill-switch line=[${T15_AC3_KILLSWITCH_LINE}] datadir-lib line=[${T15_AC3_DATADIRLIB_LINE}] -- ordering not satisfied"
 fi
 
-harness_scratch_dir T15_AC3_TMP
+w8_scratch_dir T15_AC3_TMP
 T15_AC3_FAKEBIN="${T15_AC3_TMP}/fakebin"
 mkdir -p "$T15_AC3_FAKEBIN"
 ln -s "$(command -v dirname)" "${T15_AC3_FAKEBIN}/dirname"
@@ -4521,7 +4559,7 @@ check "EDMV4-T15 AC8 -- the fourth call's stderr carries the denial-budget advis
 # ---- AC9: jq missing exits 1 on the GATED path (never 2); with the marker absent, jq missing
 # exits 0 having never been referenced (T11's own AC9 already proves the zero-jq shape; this
 # re-asserts the gated-path half and the documented distinction). ----------------------------------
-harness_scratch_dir T15_AC9_TMP
+w8_scratch_dir T15_AC9_TMP
 T15_AC9_FAKEBIN="${T15_AC9_TMP}/fakebin"
 mkdir -p "$T15_AC9_FAKEBIN"
 for _t15_bin in dirname bash grep date mkdir mv rm cat git stat; do
@@ -4548,7 +4586,7 @@ check "EDMV4-T15 AC10 -- an unparseable stdin payload's stdout is empty" "" "$T1
 
 # ---- AC11: a marker present whose named initiative directory no longer exists allows. -----------
 T15_AC11_TMP=""
-harness_scratch_dir T15_AC11_TMP
+w8_scratch_dir T15_AC11_TMP
 mkdir -p "${T15_AC11_TMP}/data/run" "${T15_AC11_TMP}/proj"
 T15_AC11_KEY="$(CLAUDE_PROJECT_DIR="${T15_AC11_TMP}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
 printf 'T15PFX\t%s/deleted-initiative\t2026-09-02T00:00:00Z\n' "$T15_AC11_TMP" > "${T15_AC11_TMP}/data/run/${T15_AC11_KEY}.phase6"
@@ -4564,7 +4602,7 @@ fi
 # Positive control: the SAME marker file, pointed at an initiative dir that DOES exist, denies --
 # proving the AC11 allow above is attributable to the missing directory, not to some other defect.
 T15_AC11B_TMP=""
-harness_scratch_dir T15_AC11B_TMP
+w8_scratch_dir T15_AC11B_TMP
 mkdir -p "${T15_AC11B_TMP}/data/run" "${T15_AC11B_TMP}/proj"
 T15_AC11B_KEY="$(CLAUDE_PROJECT_DIR="${T15_AC11B_TMP}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
 printf 'T15PFX\t%s\t2026-09-02T00:00:00Z\n' "${T15_AC11B_TMP}/proj" > "${T15_AC11B_TMP}/data/run/${T15_AC11B_KEY}.phase6"
@@ -4638,7 +4676,7 @@ check "EDMV4-T45 AC2 -- Stop still has exactly one matcher block (stop-event rul
 # ABSENT, an Edit is allowed with ZERO rule evaluation -- reusing the jq-counting-shim technique
 # EDMV4-T11 AC9 already established for the identical claim (zero jq on the allow path applies to
 # hookify's own jq usage too, since the hookify call never happens before the marker is present). -
-harness_scratch_dir T45_AC6_TMP
+w8_scratch_dir T45_AC6_TMP
 T45_AC6_FAKEBIN="${T45_AC6_TMP}/fakebin"
 mkdir -p "$T45_AC6_FAKEBIN" "${T45_AC6_TMP}/proj/.claude/edm-hookify"
 cp "${HOOKIFY_FIXTURES}/warn-no-console-log.json" "${T45_AC6_TMP}/proj/.claude/edm-hookify/"
@@ -4709,7 +4747,7 @@ fi
 # ONCE per gated edit -- a real edm-hookify call-count spy (not jq), against a rule carrying TWO
 # AND'd conditions, so "once per condition" would visibly diverge from "once per call" if it
 # occurred. --------------------------------------------------------------------------------------
-harness_scratch_dir T45_AC7_TMP
+w8_scratch_dir T45_AC7_TMP
 mkdir -p "${T45_AC7_TMP}/proj/.claude/edm-hookify" "${T45_AC7_TMP}/data/run"
 cat > "${T45_AC7_TMP}/proj/.claude/edm-hookify/two-conditions.json" <<'EOF'
 {
@@ -5085,7 +5123,7 @@ T28_REF_VIOLATIONS="$(t28_contract_violations "$T28_REF" | tr '\n' ',')" || true
 
 echo
 echo "EDMV4-T28 -- negative fixtures: each contract element, corrupted in isolation on a scratch copy of L1, is caught"
-harness_scratch_dir T28_TMP
+w8_scratch_dir T28_TMP
 
 # t28_neg_case <label> <expected-tag> <sed-script> -- writes a scratch copy of the reference lens
 # with <sed-script> applied, runs the checker, and asserts <expected-tag> appears among the
@@ -5219,7 +5257,7 @@ fi
 # them into a bin/ SUBDIRECTORY -- the exact escape AC1 exists to catch -- and confirm the same
 # membership logic reports it missing from the top-level set. This never touches the real repo
 # tree; the scratch root is discarded afterward.
-harness_scratch_dir T50_AC1_CTRL_TMP
+w8_scratch_dir T50_AC1_CTRL_TMP
 mkdir -p "${T50_AC1_CTRL_TMP}/bin/subdir"
 for _t50_seed in $T50_REQUIRED_BIN_FILES; do
   : > "${T50_AC1_CTRL_TMP}/bin/${_t50_seed}"
@@ -5263,7 +5301,7 @@ fi
 # Positive control: a scratch fixture (OUTSIDE the repo tree, under mktemp) with a real
 # 'declare -A' AND a real 'mapfile' usage must both be caught, proving the sweep can fire rather
 # than matching nothing -- the exact anti-pattern named in docs/audit-patterns/code-audit.md.
-T50_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t50.XXXXXX")"
+w8_scratch_dir T50_TMP
 T50_FIXTURE="${T50_TMP}/fake-script.sh"
 {
   printf '%s\n' '#!/usr/bin/env bash'
@@ -5407,7 +5445,7 @@ else
 fi
 
 # Positive control: a scratch fixture with a real 'python3 -c' line must be caught.
-T51_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t51.XXXXXX")"
+w8_scratch_dir T51_TMP
 T51_FIXTURE="${T51_TMP}/fake-script.sh"
 {
   printf '%s\n' '#!/usr/bin/env bash'
@@ -5524,7 +5562,7 @@ else
 fi
 
 # Positive control: a scratch .py file must be caught by the same find shape.
-T51_PYSCRATCH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t51-py.XXXXXX")"
+w8_scratch_dir T51_PYSCRATCH_DIR
 touch "${T51_PYSCRATCH_DIR}/scratch.py"
 T51_PYSCRATCH_HITS="$(find "${T51_PYSCRATCH_DIR}" -type f \( "${T51_JS_PY_FIND_EXPR[@]}" \) 2>/dev/null || true)"
 if [[ -n "$T51_PYSCRATCH_HITS" ]]; then
@@ -5636,7 +5674,7 @@ fi
 # -- the needle is never a literal non-ASCII byte in this suite's own source, per this
 # initiative's own recorded self-matching trap (docs/audit-patterns/code-audit.md: "A verification
 # scan matches the prose that describes the pattern it hunts"). -----------------------------------
-harness_scratch_dir T52_SCRATCH
+w8_scratch_dir T52_SCRATCH
 T52_CONTROL_FILE="${T52_SCRATCH}/nonascii-control.txt"
 printf 'safe line one\nline with a byte: \xc3\xa9 end\nsafe line three\n' > "$T52_CONTROL_FILE"
 T52_AC3_HITS="$(t52_ascii_scan "$T52_CONTROL_FILE" || true)"
@@ -5722,7 +5760,7 @@ fi
 # edm-hookify's own block line becomes edm-gateguard's `reason` (its allow-path wiring). A rule
 # author's own non-ASCII message text is the ONLY non-ASCII byte anywhere in this fixture -- the
 # target file path stays plain ASCII, isolating this emit point from AC7a's.
-harness_scratch_dir T52_AC7B_TMP
+w8_scratch_dir T52_AC7B_TMP
 mkdir -p "${T52_AC7B_TMP}/proj/.claude/edm-hookify" "${T52_AC7B_TMP}/data/run"
 T52_AC7B_MSG="$(printf 'blocked: rule message with a byte \xc3\xa9 embedded')"
 jq -n --arg msg "$T52_AC7B_MSG" '{
@@ -5981,7 +6019,7 @@ else
   fail "EDMV4-T53 AC2b -- positive control broken: wrong default equalled live count"
 fi
 
-T53_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t53.XXXXXX")"
+w8_scratch_dir T53_TMP
 trap 'rm -rf "$T53_TMP"' EXIT
 trap 'rm -rf "$T53_TMP"; exit 130' INT
 trap 'rm -rf "$T53_TMP"; exit 143' TERM
@@ -6392,6 +6430,77 @@ for ca032_verifier in edm-srd-auditor edm-ticket-auditor edm-qc-auditor edm-test
     fail "CA-032 -- CLAUDE.md's Turn budget parity section does not state ${ca032_verifier}'s live maxTurns value (${ca032_verifier_turns})"
   fi
 done
+
+echo
+# =================================================================================================
+# CA-027 -- scratch-directory registry: every scratch tree is registered, and one trap set clears
+# all of them
+# =================================================================================================
+# Placed last so the live registry is complete by the time it is counted. Three properties, each
+# with a control that proves it can fail.
+echo "=== CA-027: scratch-directory registry (multi-call-safe, one cumulative trap set) ==="
+
+# (a) Nothing in this file may call the once-per-process helper any more. Anchored to start-of-line
+# so this assertion's own grep argument (which is not at start-of-line) and every comment naming
+# the helper are outside the pattern by construction, not by a filename or line-number exclusion.
+CA027_LEGACY_CALLS="$(grep -nE '^[[:space:]]*harness_scratch_dir[[:space:]]+[A-Za-z_]' "$T50_SELF" || true)"
+[[ -z "$CA027_LEGACY_CALLS" ]] \
+  && pass "CA-027 -- wave8-smoke.sh no longer calls the once-per-process harness_scratch_dir helper anywhere" \
+  || fail "CA-027 -- harness_scratch_dir call site(s) survive, each of which voids every trap installed before it:\n${CA027_LEGACY_CALLS}"
+
+# Positive control for (a): the same pattern against a real call line proves it can still fire --
+# without this, narrowing the pattern to dodge a self-match would silently make (a) unfailable.
+CA027_LEGACY_CONTROL="$(printf '%s\n' 'harness_scratch_dir SOME_TMP' | grep -cE '^[[:space:]]*harness_scratch_dir[[:space:]]+[A-Za-z_]' || true)"
+[[ "${CA027_LEGACY_CONTROL:-0}" -ge 1 ]] \
+  && pass "CA-027 -- positive control: the legacy-call detector fires on a real call line" \
+  || fail "CA-027 -- positive control broken: the legacy-call detector matched nothing, so (a) proves nothing"
+
+# (b) The registry holds one entry per w8_scratch_dir call site actually reached this run. The
+# expected count is DERIVED from the file (never re-pinned as a literal that drifts).
+CA027_CALL_SITES="$(grep -cE '^[[:space:]]*w8_scratch_dir[[:space:]]+[A-Z]' "$T50_SELF" || true)"
+if [[ "${CA027_CALL_SITES:-0}" -lt 1 ]]; then
+  fail "CA-027 -- could not derive the w8_scratch_dir call-site count from this file"
+elif [[ "${#W8_SCRATCH_DIRS[@]}" -eq "$CA027_CALL_SITES" ]]; then
+  pass "CA-027 -- the registry holds one live entry per w8_scratch_dir call site (${CA027_CALL_SITES}), so no call displaced an earlier one"
+else
+  fail "CA-027 -- registry holds ${#W8_SCRATCH_DIRS[@]} entries against ${CA027_CALL_SITES} call sites"
+fi
+
+# (c) Behavioural control, in a subshell so the real registry and the real traps are untouched:
+# two consecutive calls must both stay live, and one w8_scratch_cleanup must remove both.
+CA027_ADDITIVE="$(
+  W8_SCRATCH_DIRS=()
+  w8_scratch_dir _CA027_A
+  w8_scratch_dir _CA027_B
+  if [[ -d "$_CA027_A" && -d "$_CA027_B" && "${#W8_SCRATCH_DIRS[@]}" -eq 2 ]]; then
+    w8_scratch_cleanup
+    if [[ ! -d "$_CA027_A" && ! -d "$_CA027_B" ]]; then printf 'ADDITIVE_AND_CLEARED'; else printf 'RESIDUE'; fi
+  else
+    printf 'SECOND_CALL_DISPLACED_FIRST'
+  fi
+)"
+[[ "$CA027_ADDITIVE" == "ADDITIVE_AND_CLEARED" ]] \
+  && pass "CA-027 -- two consecutive w8_scratch_dir calls both stay live and a single cleanup removes both" \
+  || fail "CA-027 -- registry is not additive or does not clear fully: got '${CA027_ADDITIVE}'"
+
+# Negative control for (c): the identical predicate against the SINGLE-SLOT semantics
+# harness_scratch_dir has -- the second call overwrites the one variable the cleanup body reads, so
+# nothing ever removes the first directory. This must report the leak; if it did not, (c) would be
+# passing against a predicate incapable of seeing the defect it exists to catch.
+CA027_SINGLE_SLOT="$(
+  _ca027_slot=""
+  _ca027_single_cleanup() { if [[ -n "$_ca027_slot" ]]; then rm -rf "$_ca027_slot"; fi; return 0; }
+  _ca027_x="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca027a.XXXXXX")"
+  _ca027_slot="$_ca027_x"
+  _ca027_y="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca027b.XXXXXX")"
+  _ca027_slot="$_ca027_y"
+  _ca027_single_cleanup
+  if [[ -d "$_ca027_x" && ! -d "$_ca027_y" ]]; then printf 'FIRST_LEAKED'; else printf 'NO_LEAK'; fi
+  rm -rf "$_ca027_x" "$_ca027_y"
+)"
+[[ "$CA027_SINGLE_SLOT" == "FIRST_LEAKED" ]] \
+  && pass "CA-027 -- negative control: the same predicate reports the leak under single-slot (harness_scratch_dir) semantics, so the additive check discriminates" \
+  || fail "CA-027 -- negative control broken: single-slot semantics reported '${CA027_SINGLE_SLOT}', expected FIRST_LEAKED"
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
