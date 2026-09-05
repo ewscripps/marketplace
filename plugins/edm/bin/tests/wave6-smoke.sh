@@ -2224,10 +2224,10 @@ echo
 echo "T11 AC3 -- shard-only phase 6 completes (per real post-CA-473 shard prefix)"
 "$EDM_STATE" init T11SHARDIMPL >/dev/null
 mkdir -p "$TMP/SRD/T11SHARDIMPL/qc"
-echo "# Implementer shard" > "$TMP/SRD/T11SHARDIMPL/qc/qc-shard-impl-07.md"
+echo "# Implementer shard" > "$TMP/SRD/T11SHARDIMPL/qc/qc-shard-impl-w01-07.md"
 "$EDM_STATE" phase-complete T11SHARDIMPL 6 >/dev/null \
-  && pass "T11 AC3 / CA-534 -- qc-shard-impl-{NN}.md alone completes phase 6" \
-  || fail "T11 AC3 / CA-534 -- qc-shard-impl-07.md present, phase 6 still refused"
+  && pass "T11 AC3 / CA-534 -- qc-shard-impl-w{WW}-{NN}.md alone completes phase 6" \
+  || fail "T11 AC3 / CA-534 -- qc-shard-impl-w01-07.md present, phase 6 still refused"
 
 "$EDM_STATE" init T11SHARDPASS >/dev/null
 mkdir -p "$TMP/SRD/T11SHARDPASS/qc"
