@@ -1035,9 +1035,56 @@ check "EDMV4-T25 AC7 -- md output path" '${OUTPUT_DIR}/lens-L12.md' "$L12_TEXT"
 check "EDMV4-T25 AC7 -- jsonl output path" '${OUTPUT_DIR}/lens-L12.jsonl' "$L12_TEXT"
 check "EDMV4-T25 AC7 -- schema line names lens L12" '"lens":"L12"' "$L12_TEXT"
 
+# =================================================================================================
+# CA-014: the four edm-lint-artifacts assertions in this file (T25 AC8, T27 AC10, T26 AC11,
+# T32 AC7) were written as:
+#     out="$(bash .../edm-lint-artifacts --path ...)"
+#     rc=$?
+# Under this file's own `set -euo pipefail`, a non-zero command substitution aborts the script at
+# the assignment, so `rc=$?` was only ever reached on success and read 0 every time. A REAL lint
+# violation therefore ended the suite with no failing assertion at all -- the run just stopped.
+# All four now capture the status with `rc=0` followed by `... || rc=$?`, never `|| true`, which
+# would trade one vacuity for another.
+#
+# Two controls, run once here and covering all four sites, which share the identical shape:
+#   1. The shell semantics: the unguarded form does not survive a failing command; the guarded
+#      form does and carries the real status through.
+#   2. The real command: edm-lint-artifacts genuinely exits non-zero over a fixture carrying a
+#      real violation, so the four guarded assertions have something to catch.
+W8_CA014_UNGUARDED="$(bash -c 'set -euo pipefail; out="$(false)"; rc=$?; echo "reached rc=${rc}"' 2>/dev/null; printf 'exit=%s' "$?")"
+check "CA-014 control (1a) -- the unguarded var=\$(cmd); rc=\$? form dies at the assignment: rc is never read" \
+  "exit=1" "$W8_CA014_UNGUARDED"
+check_absent "CA-014 control (1b) -- and it therefore never reports the failing status it claims to capture" \
+  "reached" "$W8_CA014_UNGUARDED"
+W8_CA014_GUARDED="$(bash -c 'set -euo pipefail; rc=0; out="$(false)" || rc=$?; echo "reached rc=${rc}"' 2>/dev/null; printf 'exit=%s' "$?")"
+check "CA-014 control (1c) -- the guarded form survives and carries the real non-zero status through" \
+  "reached rc=1" "$W8_CA014_GUARDED"
+
+# w8_ca014_lint_violation_rc -- prints edm-lint-artifacts' exit status over a scratch fixture whose
+# only content is a real class-1 violation (an attribution trailer, pure ASCII so this control is
+# not itself testing the unicode class).
+w8_ca014_lint_violation_rc() {
+  local dir rc=0
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca014.XXXXXX")"
+  {
+    printf '%s\n' '# CA-014 control fixture'
+    printf '%s\n' ''
+    printf '%s\n' 'Co-Authored-By: Nobody <nobody@example.com>'
+  } > "${dir}/violation.md"
+  bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "$dir" >/dev/null 2>&1 || rc=$?
+  rm -rf "$dir"
+  printf '%s' "$rc"
+}
+W8_CA014_LINT_RC="$(w8_ca014_lint_violation_rc)"
+if [[ "$W8_CA014_LINT_RC" -ne 0 ]]; then
+  pass "CA-014 control (2) -- edm-lint-artifacts exits ${W8_CA014_LINT_RC} over a fixture carrying a real violation, and this suite is still running to report it"
+else
+  fail "CA-014 control (2) -- edm-lint-artifacts exited 0 over a fixture carrying a real attribution-trailer violation; the four guarded lint assertions below would prove nothing"
+fi
+
 echo "EDMV4-T25 AC8 -- ASCII-only (edm-lint-artifacts clean over agents/)"
-t25_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${PLUGIN_DIR}/agents/" 2>&1)"
-t25_lint_exit=$?
+t25_lint_exit=0
+t25_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${PLUGIN_DIR}/agents/" 2>&1)" || t25_lint_exit=$?
 [[ "$t25_lint_exit" -eq 0 ]] && pass "EDMV4-T25 AC8 -- edm-lint-artifacts --path agents/ is clean" \
   || fail "EDMV4-T25 AC8 -- edm-lint-artifacts reported violations: ${t25_lint_out}"
 
@@ -1154,8 +1201,8 @@ else
   fail "EDMV4-T27 AC10 -- edm-check-grants exited non-zero: $(cat "${SCRIPT_DIR}/.t27-grants.err")"
 fi
 rm -f "${SCRIPT_DIR}/.t27-grants.err"
-t27_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${PLUGIN_DIR}/agents/" 2>&1)"
-t27_lint_exit=$?
+t27_lint_exit=0
+t27_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${PLUGIN_DIR}/agents/" 2>&1)" || t27_lint_exit=$?
 [[ "$t27_lint_exit" -eq 0 ]] && pass "EDMV4-T27 AC10 -- edm-lint-artifacts --path agents/ is clean" \
   || fail "EDMV4-T27 AC10 -- edm-lint-artifacts reported violations: ${t27_lint_out}"
 
@@ -1250,8 +1297,8 @@ else
   fail "EDMV4-T26 AC11 -- edm-check-grants exited non-zero: $(cat "${SCRIPT_DIR}/.t26-grants.err")"
 fi
 rm -f "${SCRIPT_DIR}/.t26-grants.err"
-t26_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${PLUGIN_DIR}/agents/" 2>&1)"
-t26_lint_exit=$?
+t26_lint_exit=0
+t26_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${PLUGIN_DIR}/agents/" 2>&1)" || t26_lint_exit=$?
 [[ "$t26_lint_exit" -eq 0 ]] && pass "EDMV4-T26 AC11 -- edm-lint-artifacts --path agents/ is clean" \
   || fail "EDMV4-T26 AC11 -- edm-lint-artifacts reported violations: ${t26_lint_out}"
 
@@ -1426,8 +1473,8 @@ for t32_new_lens in L12 L13 L14; do
 done
 
 # ---- AC7: fixture content is ASCII-only ---------------------------------------------------------
-t32_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "$T32_FIXTURE_DIR" 2>&1)"
-t32_lint_status=$?
+t32_lint_status=0
+t32_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "$T32_FIXTURE_DIR" 2>&1)" || t32_lint_status=$?
 [[ "$t32_lint_status" -eq 0 ]] \
   && pass "T32 AC7 -- edm-lint-artifacts --path over the fixture directory exits 0" \
   || fail "T32 AC7 -- edm-lint-artifacts --path exited ${t32_lint_status}: ${t32_lint_out}"
