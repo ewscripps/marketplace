@@ -5389,10 +5389,46 @@ else
   fail "EDMV4-T50 AC1 -- positive control broken: relocating edm-repo-readiness into bin/subdir/ was NOT detected as missing from the top-level set"
 fi
 
-# A real alternation built here (not sourced from wave7-smoke.sh's own $T61_BASH4_RE): each half
-# is independently useful evidence for this ticket, and referencing wave7's private variable would
-# couple this suite's own correctness to wave7-smoke.sh's internal naming.
-T50_BASH4_RE='declare[[:space:]]+-A|local[[:space:]]+-A|mapfile|readarray|\$\{[a-zA-Z_]+\^\^\}|\$\{[a-zA-Z_]+,,\}'
+# CA-049: the alternation is READ OUT of its one definition site at test time, never retyped here.
+# AC2 requires this assertion to REFERENCE T61_BASH4_RE and never re-encode it as a second literal
+# that can drift. It had been retyped -- with a comment arguing the deviation was deliberate -- and
+# it had already drifted in BOTH directions: it omitted the `{fd}` arm T61_BASH4_RE carries, so the
+# bin/tests/ self-check below (the one gap this ticket exists to close) never checked `{fd}`
+# redirection at all, and it added a `local -A` arm T61_BASH4_RE lacks. Deriving it makes both
+# drifts structurally impossible; if the alternation should grow another arm, it grows in
+# wave7-smoke.sh's single definition and every consumer picks it up.
+#
+# Recorded consequence rather than silently absorbed: T61_BASH4_RE carries no `local -A` arm, so
+# this sweep no longer checks that spelling. Nothing under bin/ or evals/ uses it today (verified
+# live), and re-adding it HERE is exactly the second-literal drift this fix removes -- it belongs
+# in wave7-smoke.sh's one definition, where every consumer of the alternation would pick it up.
+T50_W7_SUITE="${SCRIPT_DIR}/wave7-smoke.sh"
+T50_BASH4_RE_RAW="$(grep -m1 '^T61_BASH4_RE=' "$T50_W7_SUITE" | cut -d= -f2-)"
+# Strip the single quotes the source assignment carries. Parameter expansion only (bash 3.2).
+T50_BASH4_RE="${T50_BASH4_RE_RAW#\'}"
+T50_BASH4_RE="${T50_BASH4_RE%\'}"
+
+if [[ -n "$T50_BASH4_RE" && "$T50_BASH4_RE_RAW" == "'${T50_BASH4_RE}'" ]]; then
+  pass "EDMV4-T50 AC2 -- the bash-4 alternation is read live from wave7-smoke.sh's T61_BASH4_RE, byte-identical by construction: ${T50_BASH4_RE}"
+else
+  fail "EDMV4-T50 AC2 -- could not extract T61_BASH4_RE from wave7-smoke.sh (raw=[${T50_BASH4_RE_RAW}]) -- the derivation, not the tree, is broken"
+fi
+
+# The derived value must not ALSO appear as a hardcoded literal anywhere in this file: that is
+# exactly the third-literal shape CA-049 found. The needle is the runtime-derived value, so this
+# check cannot self-match a literal that no longer exists in the source.
+T50_RE_RETYPED="$(grep -cF -- "$T50_BASH4_RE" "${SCRIPT_DIR}/wave8-smoke.sh" || true)"
+[[ "${T50_RE_RETYPED:-0}" -eq 0 ]] \
+  && pass "EDMV4-T50 AC2 -- wave8-smoke.sh carries no retyped copy of the alternation, only the derivation" \
+  || fail "EDMV4-T50 AC2 -- the alternation is retyped as a literal in wave8-smoke.sh on ${T50_RE_RETYPED} line(s), reintroducing the drift CA-049 found"
+
+# The specific arm the retyped literal had dropped. Without this, adopting the derived value would
+# be an untested claim: a future extraction that silently returned a shorter alternation would
+# still satisfy the byte-identity check above against its own truncated result.
+T50_FD_CONTROL="$(printf '%s\n' 'exec {fd}< "$some_file"' | grep -cE "$T50_BASH4_RE" || true)"
+[[ "${T50_FD_CONTROL:-0}" -ge 1 ]] \
+  && pass "EDMV4-T50 AC2 -- the derived alternation catches {fd} redirection, the arm the retyped literal omitted from the bin/tests/ self-check" \
+  || fail "EDMV4-T50 AC2 -- the derived alternation does NOT catch {fd} redirection -- the CA-049 drift has reappeared in the source literal"
 
 # ---- Zero bash-4-only constructs across bin/ and evals/ (bin/tests/ excluded -- matching T61
 # AC9's own convention); comment-only lines excluded (a prose reference to why a construct is
@@ -5404,7 +5440,7 @@ t50_scan() {
 }
 T50_HITS="$(t50_scan || true)"
 if [[ -z "$T50_HITS" ]]; then
-  pass "EDMV4-T50 -- zero bash-4-only constructs (declare -A/local -A, mapfile, readarray, \${v^^}, \${v,,}) across bin/ and evals/ (bin/tests/ excluded)"
+  pass "EDMV4-T50 -- zero bash-4-only constructs across bin/ and evals/, using wave7-smoke.sh's own T61_BASH4_RE alternation (bin/tests/ excluded)"
 else
   fail "EDMV4-T50 -- bash-4-only construct(s) found:\n${T50_HITS}"
 fi
