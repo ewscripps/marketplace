@@ -3450,14 +3450,55 @@ check 'EDMV4-T40 -- edm-state validate is invoked as a process with its exit cap
 check_absent 'EDMV4-T40 -- edm-repo-readiness never sources edm-state' \
   'source "$EDM_STATE_BIN"' "$(cat "$REPO_READINESS")"
 
-# ---- EDMV4-T40 AC8: the script never writes to .edm-state.json -- hash the real repo's active
-# initiative's state file before and after a full run and assert it is byte-unchanged.
-T40_REAL_STATE="${REPO_ROOT}/SRD/edm/EDMV4__ecc-integration/.edm-state.json"
-if [[ -f "$T40_REAL_STATE" ]]; then
-  check_state_unchanged "$T40_REAL_STATE" "$REPO_READINESS" --json "${TMP}/t40-ac8.json"
-else
-  echo "  NOTE: EDMV4-T40 AC8 -- real fixture state file not found at ${T40_REAL_STATE}; skipping the hash-unchanged check"
-fi
+# ---- EDMV4-T40 AC8: the script never writes to .edm-state.json -- hash an initiative's state file
+# before and after a full run and assert it is byte-unchanged.
+#
+# CA-019: this used to hash a PINNED live-initiative path
+# (SRD/edm/EDMV4__ecc-integration/.edm-state.json) and, when that path was absent, print an
+# uncounted soft `NOTE` and return. The precondition is precisely the thing that disappears on
+# archive, so AC8 stopped being checked exactly when the tree changed underneath it -- with no
+# failure, no count, and nothing in the totals to show coverage had been lost. The fixture is now
+# BUILT here instead of pinned, so the assertion always runs and never depends on the state of the
+# repository it audits.
+T40_AC8_ROOT="${TMP}/t40-ac8-scratch"
+T40_AC8_SRD="${T40_AC8_ROOT}/SRD"
+mkdir -p "${T40_AC8_SRD}/edm/EDMV4T40AC8__x"
+T40_AC8_DIR="${T40_AC8_SRD}/edm/EDMV4T40AC8__x"
+T40_AC8_STATE="${T40_AC8_DIR}/.edm-state.json"
+cat > "$T40_AC8_STATE" <<'EOF'
+{"prefix":"EDMV4T40AC8","current_phase":6,"product_name":"edm","initiative_description":"x"}
+EOF
+
+# Positive control: the scratch initiative is genuinely discoverable through the same
+# `edm-state list --paths` call edm-repo-readiness resolves its active prefixes with. Without this,
+# a byte-unchanged verdict could equally mean the run never looked at the file at all.
+T40_AC8_LISTED="LIST-FAILED"
+T40_AC8_LISTED="$(EDM_SRD_ROOT="$T40_AC8_SRD" "$EDM_STATE" list --paths 2>/dev/null)" || T40_AC8_LISTED="LIST-FAILED"
+check "EDMV4-T40 AC8 positive control -- the scratch initiative is discoverable via the same edm-state list --paths edm-repo-readiness resolves active prefixes with" \
+  "$T40_AC8_DIR" "$T40_AC8_LISTED"
+
+t40_ac8_run_readiness() {
+  (
+    cd "$T40_AC8_ROOT" || return 1
+    EDM_SRD_ROOT="$T40_AC8_SRD" CLAUDE_PROJECT_DIR="$T40_AC8_ROOT" \
+      "$REPO_READINESS" --json "${TMP}/t40-ac8.json"
+  )
+}
+check_state_unchanged "$T40_AC8_STATE" t40_ac8_run_readiness
+
+# Negative control: check_state_unchanged must FAIL when the state file really is written to.
+# Run against a COPY so the assertion above is not retroactively invalidated, and in a command
+# substitution so the deliberate FAIL line and counters never reach this suite's tally.
+T40_AC8_NEG_STATE="${T40_AC8_ROOT}/neg-state.json"
+cp "$T40_AC8_STATE" "$T40_AC8_NEG_STATE"
+t40_ac8_mutate_state() { printf '\n' >> "$T40_AC8_NEG_STATE"; }
+T40_AC8_NEG="$(
+  PASS=0; FAIL=0
+  check_state_unchanged "$T40_AC8_NEG_STATE" t40_ac8_mutate_state >/dev/null 2>&1
+  echo "PASS=$PASS FAIL=$FAIL"
+)"
+check "EDMV4-T40 AC8 negative control -- the byte-identity assertion FAILS when the command under test does write to the state file" \
+  "PASS=0 FAIL=1" "$T40_AC8_NEG"
 
 # ---- EDMV4-T40 AC9: running against a repository with NO initiatives at all still succeeds
 # (exit 0), scoring what it can. Also proves the AC5-style exclusion: the no-initiatives score
