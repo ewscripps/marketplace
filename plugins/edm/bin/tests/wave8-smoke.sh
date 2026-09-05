@@ -2421,8 +2421,31 @@ rm -rf "$T43_AC9_SANDBOX"; mkdir -p "$T43_AC9_SANDBOX/.claude/edm-hookify"
 cp "${PLUGIN_DIR}/bin/tests/fixtures/hookify/warn-no-console-log.json" \
    "$T43_AC9_SANDBOX/.claude/edm-hookify/" 2>/dev/null || true
 
-# Snapshot every path under the sandbox with its size and mtime.
-t43_ac9_snapshot() { ( cd "$1" && find . -type f -exec stat -f '%N %z %m' {} \; 2>/dev/null | sort ); }
+# Snapshot every path under the sandbox with the CONTENT HASH of the file at it.
+#
+# CA-053: this was `find . -type f -exec stat -f '%N %z %m' {} \; 2>/dev/null | sort`. `stat -f`
+# with those specifiers is BSD-only -- on GNU, `-f` means `--file-system` and the format string is
+# consumed as a filename operand, so every invocation errors into the `2>/dev/null` and BOTH
+# snapshots come back equal-and-empty. The no-write assertion below then passed while verifying
+# nothing at all, on every Linux host. Content hashing has no BSD/GNU divergence to get wrong
+# (_harness_hash_file already owns the shasum/sha256sum split) and, unlike size+mtime, detects an
+# in-place MODIFICATION of an existing file -- not only a change in file COUNT, which is the only
+# thing the adjacent add-a-file control can ever exercise.
+t43_ac9_snapshot() {
+  ( cd "$1" || return 1
+    { find . -type f -print 2>/dev/null || true; } | LC_ALL=C sort | while IFS= read -r _t43_ac9_f; do
+      printf '%s %s\n' "$_t43_ac9_f" "$(_harness_hash_file "$_t43_ac9_f")"
+    done )
+}
+
+# Precondition: a content hasher is genuinely on PATH. Without one, _harness_hash_file prints the
+# literal "unhashable" for every file and both snapshots compare equal for that reason alone --
+# the same equal-and-empty vacuity CA-053 found, wearing a different mask.
+if command -v shasum >/dev/null 2>&1 || command -v sha256sum >/dev/null 2>&1; then
+  pass "EDMV4-T43 AC9 / CA-053 -- a content hasher is on PATH, so the snapshots below compare real file content"
+else
+  fail "EDMV4-T43 AC9 / CA-053 -- neither shasum nor sha256sum is on PATH: the snapshot comparison below would be vacuous"
+fi
 
 T43_AC9_BEFORE="$(t43_ac9_snapshot "$T43_AC9_SANDBOX")"
 ( cd "$T43_AC9_SANDBOX" && CLAUDE_PROJECT_DIR="$T43_AC9_SANDBOX" "$EDM_HOOKIFY" list >/dev/null 2>&1 ) || true
@@ -2451,6 +2474,38 @@ T43_AC9_CTL_AFTER="$(t43_ac9_snapshot "$T43_AC9_SANDBOX")"
 [[ "$T43_AC9_CTL_BEFORE" != "$T43_AC9_CTL_AFTER" ]] \
   && pass "EDMV4-T43 AC9 -- positive control: the snapshot comparison detects a script that does write a file" \
   || fail "EDMV4-T43 AC9 -- positive control FAILED: a known file write was not detected, so the clean result above proves nothing"
+
+# ---- CA-053 negative control: an in-place MODIFICATION of an existing file, at identical byte
+# length and identical mtime. This is the case the replaced size+mtime snapshot could not detect
+# even on a BSD host where it ran at all -- the control above adds a file, so it exercises file
+# COUNT only. `tr` preserves the byte count exactly and `touch -r` restores the mtime from a
+# `cp -p` reference, both POSIX, so the assertions below can state size and mtime equality as
+# facts rather than assuming them.
+T43_AC9_MOD_TARGET="${T43_AC9_SANDBOX}/.claude/edm-hookify/warn-no-console-log.json"
+T43_AC9_MTIME_REF="${TMP}/t43-ac9-mtime-ref"
+cp -p "$T43_AC9_MOD_TARGET" "$T43_AC9_MTIME_REF"
+T43_AC9_SIZE_BEFORE="$(wc -c < "$T43_AC9_MOD_TARGET" | tr -d ' ')"
+T43_AC9_MOD_BEFORE="$(t43_ac9_snapshot "$T43_AC9_SANDBOX")"
+tr 'e' 'E' < "$T43_AC9_MOD_TARGET" > "${TMP}/t43-ac9-mutated"
+cat "${TMP}/t43-ac9-mutated" > "$T43_AC9_MOD_TARGET"
+touch -r "$T43_AC9_MTIME_REF" "$T43_AC9_MOD_TARGET"
+T43_AC9_SIZE_AFTER="$(wc -c < "$T43_AC9_MOD_TARGET" | tr -d ' ')"
+T43_AC9_MOD_AFTER="$(t43_ac9_snapshot "$T43_AC9_SANDBOX")"
+
+check_num "EDMV4-T43 AC9 / CA-053 -- the modified file's byte length is unchanged, so a size-based snapshot could not see this edit" \
+  "$T43_AC9_SIZE_BEFORE" "$T43_AC9_SIZE_AFTER"
+if [[ ! "$T43_AC9_MOD_TARGET" -nt "$T43_AC9_MTIME_REF" && ! "$T43_AC9_MTIME_REF" -nt "$T43_AC9_MOD_TARGET" ]]; then
+  pass "EDMV4-T43 AC9 / CA-053 -- the modified file's mtime is unchanged, so an mtime-based snapshot could not see this edit either"
+else
+  fail "EDMV4-T43 AC9 / CA-053 -- the control's mtime restore did not hold, so this case no longer proves the content-hash snapshot is what catches the edit"
+fi
+if [[ "$T43_AC9_MOD_BEFORE" != "$T43_AC9_MOD_AFTER" ]]; then
+  pass "EDMV4-T43 AC9 / CA-053 -- negative control: the content-hash snapshot DOES detect an in-place modification at identical size and mtime (the case the BSD-only stat snapshot missed)"
+else
+  fail "EDMV4-T43 AC9 / CA-053 -- negative control FAILED: an in-place modification produced identical snapshots, so the no-write assertion above is still vacuous"
+fi
+rm -f "$T43_AC9_MTIME_REF" "${TMP}/t43-ac9-mutated"
+
 rm -f "$T43_AC9_WRITER"; rm -rf "$T43_AC9_SANDBOX"
 
 # ---- AC7: no real `timeout` invocation -- every occurrence of the word is inside a comment -----
@@ -6045,52 +6100,195 @@ echo
 # hardcoded file list.
 echo "=== EDMV4-T51: required-binary set -- no node/python/yq/ruby/deno, and perl only where guarded ==="
 
-T51_INTERP_RE='\b(node|python|python3|yq|ruby|deno)\b'
-
-# ---- Zero node/python/python3/yq/ruby/deno references across bin/ and evals/ (bin/tests/
-# excluded, matching T50/T61 AC9's own convention -- test-fixture/assertion surface).
-t51_scan() {
-  { grep -rnE "$T51_INTERP_RE" "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/evals" 2>/dev/null || true; } \
-    | grep -v '/tests/' \
-    | grep -vE ':[[:space:]]*#'
+# ---- Live scan target set: every SHELL SCRIPT under bin/ and evals/, bin/tests/ INCLUDED.
+#
+# Membership is resolved by SHAPE -- a `#!` first line -- never by a name list and never by a path
+# exclusion, so a script added anywhere under either tree lands in scope the moment it exists.
+# Non-script files (the markdown fixture corpora, the JSON rule fixtures, the .jsonl lens corpora)
+# are out of scope by the same shape rule rather than by name: they carry these binary names as
+# English prose or as test data and cannot introduce a runtime dependency on anything.
+t51_script_targets() {
+  local _t51_f
+  while IFS= read -r -d "" _t51_f; do
+    if [[ "$(head -c 2 "$_t51_f" 2>/dev/null)" == '#!' ]]; then
+      printf '%s\n' "$_t51_f"
+    fi
+  done < <(find "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/evals" -type f -print0 2>/dev/null)
 }
-T51_HITS="$(t51_scan || true)"
-if [[ -z "$T51_HITS" ]]; then
-  pass "EDMV4-T51 -- zero node/python/python3/yq/ruby/deno references across bin/ and evals/ (bin/tests/ excluded)"
+T51_TARGETS="$(t51_script_targets)"
+T51_TARGET_COUNT="$(printf '%s\n' "$T51_TARGETS" | grep -c . || true)"
+T51_TESTDIR_TARGET_COUNT="$(printf '%s\n' "$T51_TARGETS" | grep -c '/bin/tests/' || true)"
+# Coverage assertion for the target set itself: bin/tests/ must actually be in it. CA-051 found
+# both sweeps below filtering `/tests/` out, so the one thing this enumeration must never do
+# silently is go back to excluding it.
+if [[ "$T51_TARGET_COUNT" -ge 20 && "$T51_TESTDIR_TARGET_COUNT" -ge 5 ]]; then
+  pass "EDMV4-T51 AC1 / CA-051 -- the live scan target set covers ${T51_TARGET_COUNT} shell scripts under bin/ and evals/, ${T51_TESTDIR_TARGET_COUNT} of them under bin/tests/ (previously excluded wholesale)"
 else
-  fail "EDMV4-T51 -- forbidden interpreter reference(s) found:\n${T51_HITS}"
+  fail "EDMV4-T51 AC1 / CA-051 -- the live scan target set is implausibly small: ${T51_TARGET_COUNT} total, ${T51_TESTDIR_TARGET_COUNT} under bin/tests/"
 fi
 
-# Positive control: a scratch fixture with a real 'python3 -c' line must be caught.
-w8_scratch_dir T51_TMP
-T51_FIXTURE="${T51_TMP}/fake-script.sh"
-{
-  printf '%s\n' '#!/usr/bin/env bash'
-  printf '%s\n' "python3 -c 'print(1)'"
-} > "$T51_FIXTURE"
-T51_CONTROL_HITS="$({ grep -nE "$T51_INTERP_RE" "$T51_FIXTURE" 2>/dev/null || true; } | grep -vE ':[[:space:]]*#' || true)"
-if [[ -n "$T51_CONTROL_HITS" ]]; then
-  pass "EDMV4-T51 -- positive control: a synthetic 'python3 -c' line is caught"
-else
-  fail "EDMV4-T51 -- positive control broken: a synthetic 'python3 -c' fixture produced zero hits"
-fi
+# t51_grep_targets <ere> -- applies <ere> to every target, emitting `path:lineno:text`. The
+# `/dev/null` second operand is what makes grep print the filename for a single-file invocation.
+t51_grep_targets() {
+  local re="$1" _t51_t
+  while IFS= read -r _t51_t; do
+    [[ -n "$_t51_t" ]] || continue
+    grep -nE "$re" "$_t51_t" /dev/null 2>/dev/null || true
+  done <<T51_TARGET_EOF
+${T51_TARGETS}
+T51_TARGET_EOF
+}
 
-# ---- perl: forbidden across bin/ (excluding bin/tests/) and evals/, exactly like the interpreter
-# set above. bin/tests/timing.sh's two guarded call sites are the sole sanctioned exception,
-# verified separately below by CONTENT (never by line number, since EDMV4-47 AC4 edits this file).
-# NOTE: bin/tests/wave6-smoke.sh carries a real, UNGUARDED `perl -pe` usage (G18/CA-378, predating
-# EDMV4) -- out of this ticket's Target Components (wave6-smoke.sh is not listed) and out of the
-# bin/tests/-excluded scope below by the same T61 AC9 convention every other section in this suite
-# already relies on; reported here rather than silently fixed, since fixing it means editing a
-# file this ticket does not own.
+T51_INTERP_RE='\b(node|python|python3|yq|ruby|deno)\b'
 T51_PERL_RE='\bperl\b'
 T51_TIMING_SH="${PLUGIN_DIR}/bin/tests/timing.sh"
+w8_scratch_dir T51_TMP
 
-T51_PERL_HITS="$({ grep -rnE "$T51_PERL_RE" "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/evals" 2>/dev/null || true; } | grep -v '/tests/' | grep -vE ':[[:space:]]*#' || true)"
-if [[ -z "$T51_PERL_HITS" ]]; then
-  pass "EDMV4-T51 -- zero perl references across bin/ (excluding bin/tests/) and evals/"
+# ---- CA-051: AC1's scope is "every file under plugins/edm/bin/". Both sweeps below used to pipe
+# through a path filter that removed bin/tests/ -- eleven files, including three smoke suites,
+# timing.sh, the harness and run-all.sh -- from a check written against every one of them, so an
+# interpreter line added to any suite was invisible. AC2's own timing.sh exemption is the proof
+# bin/tests/ was always meant to be in scope: an exemption is only ever needed for something that
+# would otherwise be caught. Both sweeps now run over the shape-derived target set above.
+#
+# Shared shape-based exclusions, the same kind the widened stat sweep and EDMV4-T50's own
+# self-scan already use:
+#   (a) a full-line comment;
+#   (b) a continuation line that is a quoted ARGUMENT rather than a command -- it begins with a
+#       double quote, so nothing on it can be a command word;
+#   (c) a pass/fail/echo/check message argument -- prose describing the rule, never a use of it;
+#   (d) any occurrence inside a SINGLE-QUOTED span, stripped before the test. Every meta-reference
+#       in this tree (grep patterns, fixture literals, a quoted word inside a message) lives
+#       inside single quotes, and a real invocation cannot: a command word inside single quotes is
+#       inert data by construction, so this exclusion cannot hide a use.
+# The self-matching-scan trap is unavoidable here -- these sweeps live in a file that has to name
+# the very binaries it bans -- so both controls below inject a REAL occurrence on a CODE line of a
+# scratch copy of a real suite, which is the only thing that proves the four exclusions above
+# leave real code reachable.
+t51_shape_filter() {
+  sed "s/'[^']*'//g" \
+    | grep -vE ':[0-9]+:[[:space:]]*#' \
+    | grep -vE ':[0-9]+:[[:space:]]*"' \
+    | grep -vE '\b(pass|fail|echo|check[a-z_]*)[[:space:]]*"'
+}
+
+# ---- Zero node/python/python3/yq/ruby/deno references across every shell script under bin/ and
+# evals/, bin/tests/ INCLUDED.
+# The final content test is anchored PAST the `path:lineno:` prefix grep emits. Without that
+# anchor a scan target whose own PATH carries a banned token (a scratch fixture named for what it
+# injects is the obvious way that happens) reports a hit on every line of that file, and a control
+# built on it would pass for the wrong reason -- observed live while writing these controls.
+t51_interp_filter() { t51_shape_filter | { grep -E ':[0-9]+:.*'"$T51_INTERP_RE" || true; }; }
+T51_HITS="$(t51_grep_targets "$T51_INTERP_RE" | t51_interp_filter)"
+if [[ -z "$T51_HITS" ]]; then
+  pass "EDMV4-T51 AC1 / CA-051 -- zero node/python/python3/yq/ruby/deno references across every shell script under bin/ and evals/, bin/tests/ included"
 else
-  fail "EDMV4-T51 -- perl reference(s) found outside the sanctioned bin/tests/timing.sh sites:\n${T51_PERL_HITS}"
+  fail "EDMV4-T51 AC1 / CA-051 -- forbidden interpreter reference(s) found:\n${T51_HITS}"
+fi
+
+# Positive control (AC3): the banned token is assembled at runtime from two halves, so this file
+# never itself carries the contiguous literal on a code line -- the sweep covers wave8-smoke.sh
+# now, and a control fixture whose own writer line matched would make the tree-wide assertion
+# above fail on the control that exists to keep it honest.
+T51_CTRL_INTERP="pyth""on3"
+T51_CTRL_SUITE="${T51_TMP}/wave8-interp-control.sh"
+cat "${SCRIPT_DIR}/wave8-smoke.sh" > "$T51_CTRL_SUITE"
+printf '\n%s -c "print(1)"\n' "$T51_CTRL_INTERP" >> "$T51_CTRL_SUITE"
+T51_CONTROL_HITS="$({ grep -nE "$T51_INTERP_RE" "$T51_CTRL_SUITE" /dev/null 2>/dev/null || true; } | t51_interp_filter)"
+if [[ -n "$T51_CONTROL_HITS" ]]; then
+  pass "EDMV4-T51 AC3 / CA-051 -- positive control: a real interpreter invocation appended to a scratch copy of a suite IS caught, so the newly-covered bin/tests/ files are genuinely scanned"
+else
+  fail "EDMV4-T51 AC3 / CA-051 -- positive control broken: a real interpreter invocation on a suite's own code line produced zero hits"
+fi
+
+# Negative control: the SAME scratch copy without the injected line must be clean. Paired with the
+# control above, this is what separates "the exclusions discriminate" from "the scan reports
+# everything" and from "the scan reports nothing".
+T51_CTRL_CLEAN="${T51_TMP}/wave8-interp-clean.sh"
+cat "${SCRIPT_DIR}/wave8-smoke.sh" > "$T51_CTRL_CLEAN"
+T51_CLEAN_HITS="$({ grep -nE "$T51_INTERP_RE" "$T51_CTRL_CLEAN" /dev/null 2>/dev/null || true; } | t51_interp_filter)"
+if [[ -z "$T51_CLEAN_HITS" ]]; then
+  pass "EDMV4-T51 AC3 / CA-051 -- negative control: the same scratch copy WITHOUT the injected line is clean, so the exclusions are not simply reporting every line"
+else
+  fail "EDMV4-T51 AC3 / CA-051 -- negative control FAILED: an unmodified copy of wave8-smoke.sh reported hits:\n${T51_CLEAN_HITS}"
+fi
+
+# ---- perl: AC1 names it in the same banned set, and AC2 grants exactly one exemption -- the two
+# guarded call sites in bin/tests/timing.sh. That exemption is resolved by SHAPE, never by
+# filename and never by line number (EDMV4-47 AC4 edits timing.sh): an invocation is exempt only
+# when the line IMMEDIATELY ABOVE it carries a `command -v perl` guard, which is AC2's own
+# wording. A `command -v perl` line is itself a presence probe rather than an invocation, and an
+# equality comparison against the literal name (timing.sh's own command-shadow self-test) is a
+# string test, never a call -- both excluded by those shapes. The guard's other half, a genuinely
+# non-perl fallback in the else branch, is proven separately below by t51_check_guarded_perl
+# against the two function bodies.
+#
+# CA-052 already removed wave6-smoke.sh's two unguarded invocations, so the note that used to
+# stand here -- recording them as a known violation deliberately left outside this sweep's scope
+# -- is gone with them. Documenting a known violation inside the assertion that exists to catch it
+# converts the assertion into a note, which is what CA-052 itself found.
+t51_perl_unguarded() {
+  # Drops any hit whose immediately preceding SOURCE line carries the presence guard.
+  local line f n prev
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    f="${line%%:*}"
+    n="${line#*:}"; n="${n%%:*}"
+    prev=""
+    if [[ "$n" -gt 1 ]]; then prev="$(sed -n "$((n-1))p" "$f" 2>/dev/null || true)"; fi
+    case "$prev" in
+      *"command -v perl"*) continue ;;
+    esac
+    printf '%s\n' "$line"
+  done
+}
+t51_perl_filter() {
+  t51_shape_filter \
+    | grep -v 'command -v perl' \
+    | grep -vE '==[[:space:]]*"perl"' \
+    | { grep -E ':[0-9]+:.*'"$T51_PERL_RE" || true; } \
+    | t51_perl_unguarded
+}
+T51_PERL_HITS="$(t51_grep_targets "$T51_PERL_RE" | t51_perl_filter)"
+if [[ -z "$T51_PERL_HITS" ]]; then
+  pass "EDMV4-T51 AC1/AC2 / CA-051 -- zero UNGUARDED perl invocations across every shell script under bin/ and evals/, bin/tests/ included"
+else
+  fail "EDMV4-T51 AC1/AC2 / CA-051 -- unguarded perl invocation(s) found:\n${T51_PERL_HITS}"
+fi
+
+# Positive control for the perl sweep: a real UNGUARDED invocation appended to a scratch copy of a
+# real suite must be caught. Token assembled at runtime for the same self-match reason as above.
+T51_CTRL_PERL="pe""rl"
+# The scratch fixtures are named `wave8-pl-*` rather than spelling the binary out: this file is
+# itself a scan target now, and a double-quoted path literal is not inside a single-quoted span,
+# so a self-descriptive filename here would be reported as a real hit by the sweep two blocks up.
+T51_PERL_CTRL_SUITE="${T51_TMP}/wave8-pl-unguarded.sh"
+cat "${SCRIPT_DIR}/wave8-smoke.sh" > "$T51_PERL_CTRL_SUITE"
+printf '\n%s -e 1\n' "$T51_CTRL_PERL" >> "$T51_PERL_CTRL_SUITE"
+T51_PERL_CTRL_HITS="$({ grep -nE "$T51_PERL_RE" "$T51_PERL_CTRL_SUITE" /dev/null 2>/dev/null || true; } | t51_perl_filter)"
+if [[ -n "$T51_PERL_CTRL_HITS" ]]; then
+  pass "EDMV4-T51 AC2 / CA-051 -- positive control: a real UNGUARDED perl invocation appended to a scratch copy of a suite IS caught"
+else
+  fail "EDMV4-T51 AC2 / CA-051 -- positive control broken: a real unguarded perl invocation on a suite's own code line produced zero hits"
+fi
+
+# Negative control: the same invocation, this time immediately preceded by a real presence guard,
+# must be exempt -- proving the exemption is the guard's SHAPE and not the word perl itself.
+T51_PERL_GUARD_SUITE="${T51_TMP}/wave8-pl-guarded.sh"
+cat "${SCRIPT_DIR}/wave8-smoke.sh" > "$T51_PERL_GUARD_SUITE"
+{
+  printf '%s\n' ""
+  printf '%s\n' "if command -v ${T51_CTRL_PERL} >/dev/null 2>&1; then"
+  printf '%s\n' "  ${T51_CTRL_PERL} -e 1"
+  printf '%s\n' "else"
+  printf '%s\n' "  awk 'BEGIN{print 1}'"
+  printf '%s\n' "fi"
+} >> "$T51_PERL_GUARD_SUITE"
+T51_PERL_GUARD_HITS="$({ grep -nE "$T51_PERL_RE" "$T51_PERL_GUARD_SUITE" /dev/null 2>/dev/null || true; } | t51_perl_filter)"
+if [[ -z "$T51_PERL_GUARD_HITS" ]]; then
+  pass "EDMV4-T51 AC2 / CA-051 -- negative control: the same invocation immediately preceded by a real presence guard is exempted by shape"
+else
+  fail "EDMV4-T51 AC2 / CA-051 -- negative control FAILED: a properly guarded perl invocation was reported as unguarded:\n${T51_PERL_GUARD_HITS}"
 fi
 
 T51_PERL_CONTROL="$(printf '%s\n' 'perl -e 1' | grep -cE "$T51_PERL_RE" || true)"
@@ -6165,6 +6363,79 @@ else
   fail "EDMV4-T51 -- positive control broken: unpaired=[${T51_STAT_CONTROL_UNPAIRED}] paired=[${T51_STAT_CONTROL_PAIRED}]"
 fi
 
+# ---- CA-053: the same unpaired-stat rule, widened from edm-gateguard alone to EVERY shell script
+# under bin/ and evals/, bin/tests/ INCLUDED.
+#
+# CA-053 was an unpaired, BSD-only `stat -f` in this file's own EDMV4-T43 AC9 snapshot. It escaped
+# both existing divergence guards for one reason: T51's check above looks only at edm-gateguard,
+# and T61 AC11's tree-wide sweep in wave7-smoke.sh pipes through `grep -v '/tests/'`. A suite is
+# exactly as capable of shipping a GNU-only or BSD-only idiom as a bin/ script is, and when it
+# does, the assertion built on it goes quietly vacuous on the other platform instead of failing.
+#
+# Exemptions are all by SHAPE, never by filename:
+#   (a) a line carrying BOTH `stat -c` and `stat -f` is the sanctioned portable fallback pair and
+#       is portable no matter which file it lives in (the exemption T61 AC11 already uses);
+#   (b) a full-line comment;
+#   (c) a pass/fail/echo/check message argument -- prose describing the rule, never a use of it;
+#   (d) any occurrence inside a SINGLE-QUOTED span, stripped before the test. Every meta-reference
+#       to these idioms in this tree -- grep patterns, fixture literals, quoted words inside a
+#       message -- lives inside single quotes, and a real invocation never can: a command word
+#       inside single quotes is inert data by construction, so this exemption cannot hide a use.
+T51_STAT_SWEEP_RE='stat -[cf]'
+t51_stat_filter() {
+  sed "s/'[^']*'//g" \
+    | grep -vE ':[0-9]+:[[:space:]]*#' \
+    | grep -vE 'stat -c.*stat -f|stat -f.*stat -c' \
+    | grep -vE '\b(pass|fail|echo|check[a-z_]*)[[:space:]]*"' \
+    | grep -E "$T51_STAT_SWEEP_RE" || true
+}
+T51_STAT_SWEEP_HITS="$(t51_grep_targets "$T51_STAT_SWEEP_RE" | t51_stat_filter)"
+if [[ -z "$T51_STAT_SWEEP_HITS" ]]; then
+  pass "EDMV4-T51 / CA-053 -- zero unpaired 'stat -c'/'stat -f' uses across every shell script under bin/ and evals/, bin/tests/ included (${T51_TESTDIR_TARGET_COUNT} suites newly in scope)"
+else
+  fail "EDMV4-T51 / CA-053 -- unpaired platform-specific stat use(s) found:\n${T51_STAT_SWEEP_HITS}"
+fi
+
+# Controls for the widened sweep, run against a scratch copy of a real suite rather than a bare
+# synthetic string -- a synthetic-only control would not prove the four exemptions above leave
+# real code lines reachable, which is precisely how an exemption silently disarms its own scan.
+w8_scratch_dir T51_STAT_TMP
+T51_STAT_SCRATCH="${T51_STAT_TMP}/wave8-stat-control.sh"
+cat "${SCRIPT_DIR}/wave8-smoke.sh" > "$T51_STAT_SCRATCH"
+printf '\n  t51_control_mtime="$(stat %s %sY "$f")"\n' '-c' '%' >> "$T51_STAT_SCRATCH"
+T51_STAT_CTL_HITS="$({ grep -nE "$T51_STAT_SWEEP_RE" "$T51_STAT_SCRATCH" /dev/null 2>/dev/null || true; } | t51_stat_filter)"
+if [[ -n "$T51_STAT_CTL_HITS" ]]; then
+  pass "EDMV4-T51 / CA-053 -- positive control: a REAL unpaired 'stat -c' appended to a scratch copy of wave8-smoke.sh is caught despite the four exemptions"
+else
+  fail "EDMV4-T51 / CA-053 -- positive control broken: a real unpaired stat use on a code line was NOT caught, so the widened sweep is disarmed"
+fi
+
+# Negative control 1: a PAIRED fallback appended to the same scratch copy must NOT be reported --
+# the exemption is shape-specific, not a blanket allowance.
+T51_STAT_SCRATCH2="${T51_STAT_TMP}/wave8-stat-paired.sh"
+cat "${SCRIPT_DIR}/wave8-smoke.sh" > "$T51_STAT_SCRATCH2"
+printf '\n  t51_ctl_m="$(stat %s %sY "$f" 2>/dev/null)" || t51_ctl_m="$(stat %s %sm "$f" 2>/dev/null)"\n' '-c' '%' '-f' '%' >> "$T51_STAT_SCRATCH2"
+T51_STAT_PAIRED_HITS="$({ grep -nE "$T51_STAT_SWEEP_RE" "$T51_STAT_SCRATCH2" /dev/null 2>/dev/null || true; } | t51_stat_filter)"
+if [[ -z "$T51_STAT_PAIRED_HITS" ]]; then
+  pass "EDMV4-T51 / CA-053 -- negative control: a PAIRED stat -c/stat -f fallback appended to the same scratch copy is exempted by shape"
+else
+  fail "EDMV4-T51 / CA-053 -- negative control FAILED: a portable paired fallback was reported as a divergence point:\n${T51_STAT_PAIRED_HITS}"
+fi
+
+# Negative control 2: the single-quote strip must not swallow a real use that merely SITS BESIDE a
+# quoted meta-reference on the same line. Without this, exemption (d) could be over-broad and the
+# positive control above would still pass.
+T51_STAT_SCRATCH3="${T51_STAT_TMP}/wave8-stat-adjacent.sh"
+cat "${SCRIPT_DIR}/wave8-smoke.sh" > "$T51_STAT_SCRATCH3"
+printf '\n  t51_ctl_a="$(grep %s /dev/null; stat %s %sY "$f")"\n' "'stat -f'" '-c' '%' >> "$T51_STAT_SCRATCH3"
+T51_STAT_ADJ_HITS="$({ grep -nE "$T51_STAT_SWEEP_RE" "$T51_STAT_SCRATCH3" /dev/null 2>/dev/null || true; } | t51_stat_filter)"
+if [[ -n "$T51_STAT_ADJ_HITS" ]]; then
+  pass "EDMV4-T51 / CA-053 -- negative control: a real unpaired stat use beside a single-quoted meta-reference on the same line is still caught (the quote strip is not over-broad)"
+else
+  fail "EDMV4-T51 / CA-053 -- negative control FAILED: the single-quote strip swallowed a real stat use that shared a line with a quoted reference"
+fi
+rm -rf "$T51_STAT_TMP"
+
 # ---- No .js/.ts/.mjs/.cjs/.py file anywhere under plugins/edm/, live-derived via find.
 # evals/fixtures/ is excluded: it holds a synthetic "tiny-svc" JS subject-repository fixture
 # (EDMV3-T22, predating EDMV4) that the eval driver scores EDM's own agents AGAINST -- the
@@ -6209,6 +6480,154 @@ if grep -qF "$T51_REQUIRED_BINARY_SENTENCE" "$CLAUDE_MD"; then
   pass "EDMV4-T51 -- CLAUDE.md still opens Sec.\"Testing changes\" with the exact required-binary sentence"
 else
   fail "EDMV4-T51 -- CLAUDE.md's required-binary sentence has drifted from the expected exact text"
+fi
+
+# ---- CA-054 (P1, code-audit pass 1): EDMV4-T51 AC8 -- "one test per script", with three of the
+# five missing. `edm-gateguard` and `edm-stop-gate` already have jq-off-PATH cases elsewhere in
+# this file; `edm-hookify`, `edm-repo-readiness` and `_edm-datadir-lib.sh` had none at all. The
+# CODE is correct in every one of the three -- this was a test gap, but AC8 is an assertion about
+# tests, and two blocking-adjacent scripts had no evidence behind the claim.
+#
+# The two executables are driven through a PATH holding symlinks to the ordinary utilities they
+# use and NOTHING ELSE, so jq is genuinely absent rather than merely unused. The shared library is
+# a different shape: it is SOURCED, never executed, and its own header records that it needs none
+# of bash/jq/git beyond one conditional `git rev-parse` -- so its case proves the three functions
+# still return usable values with jq gone, which is the property that claim actually rests on.
+echo
+echo "EDMV4-T51 AC8 / CA-054 -- jq-off-PATH degradation for edm-hookify, edm-repo-readiness and _edm-datadir-lib.sh"
+
+w8_scratch_dir T51_AC8_TMP
+T51_AC8_FAKEBIN="${T51_AC8_TMP}/fakebin"
+mkdir -p "$T51_AC8_FAKEBIN"
+# Symlink the ordinary utilities the three scripts use. jq is deliberately NOT among them, and no
+# other directory is on the PATH the cases below run under.
+for _t51_ac8_bin in bash dirname basename cat find grep sed awk tr cut sort head tail wc mkdir mv rm ls date git; do
+  if command -v "$_t51_ac8_bin" >/dev/null 2>&1; then
+    ln -sf "$(command -v "$_t51_ac8_bin")" "${T51_AC8_FAKEBIN}/${_t51_ac8_bin}"
+  fi
+done
+
+# Precondition: jq really is off this PATH. Without this the three cases below could pass on a
+# PATH that still resolved jq and prove nothing at all -- the exact vacuity class this batch is.
+# The probe runs in a CHILD shell rather than as `PATH=... command -v jq` in this one: a variable
+# assignment prefixing a bash builtin does not re-drive this shell's own command hash table, so
+# the in-shell form reports the ambient jq and the precondition would be the vacuous check.
+if PATH="$T51_AC8_FAKEBIN" /bin/bash -c 'command -v jq' >/dev/null 2>&1; then
+  fail "EDMV4-T51 AC8 / CA-054 -- precondition FAILED: jq is still resolvable on the isolated PATH, so the three cases below would prove nothing"
+else
+  pass "EDMV4-T51 AC8 / CA-054 -- precondition: jq is genuinely absent from the isolated PATH used by the three cases below"
+fi
+
+# ---- edm-hookify: exit 1 (its die() default), naming the missing binary on stderr.
+# A rule file MUST be present: AC10 exits 0 before jq is even checked when the rule set is empty,
+# so a case run against an empty rule directory would pass while touching no guard at all.
+T51_AC8_HK_PROJ="${T51_AC8_TMP}/hookify-proj"
+mkdir -p "${T51_AC8_HK_PROJ}/.claude/edm-hookify"
+cp "${PLUGIN_DIR}/bin/tests/fixtures/hookify/warn-no-console-log.json" \
+   "${T51_AC8_HK_PROJ}/.claude/edm-hookify/"
+t51_ac8_run_hookify() {
+  # <script-path> -- runs `eval file` with a well-formed payload on the jq-less PATH.
+  # Sets T51_AC8_RC / T51_AC8_ERR.
+  local script="$1"
+  T51_AC8_RC=0
+  printf '%s' '{"tool_name":"Edit","tool_input":{"file_path":"x.js","new_text":"console.log(1)"}}' \
+    | CLAUDE_PROJECT_DIR="$T51_AC8_HK_PROJ" PATH="$T51_AC8_FAKEBIN" \
+      /bin/bash "$script" eval file >/dev/null 2>"${T51_AC8_TMP}/hk.err" || T51_AC8_RC=$?
+  T51_AC8_ERR="$(cat "${T51_AC8_TMP}/hk.err" 2>/dev/null || true)"
+}
+t51_ac8_run_hookify "$EDM_HOOKIFY"
+check_num "EDMV4-T51 AC8 / CA-054 -- edm-hookify with jq off PATH exits 1 (setup error, never a block)" "1" "$T51_AC8_RC"
+check "EDMV4-T51 AC8 / CA-054 -- edm-hookify names the missing binary on stderr" \
+  "required binary not found on PATH: jq" "$T51_AC8_ERR"
+
+# Negative control: the same case against a scratch copy whose require-jq guard line is deleted.
+# It must NOT produce the named setup error -- otherwise the assertion above would pass whether
+# or not the guard exists, which is exactly the defect this batch is remediating.
+T51_AC8_HK_MUTANT="${T51_AC8_TMP}/edm-hookify-noguard"
+grep -v 'command -v jq >/dev/null 2>&1 || die' "$EDM_HOOKIFY" > "$T51_AC8_HK_MUTANT"
+chmod +x "$T51_AC8_HK_MUTANT"
+t51_ac8_run_hookify "$T51_AC8_HK_MUTANT"
+case "$T51_AC8_ERR" in
+  *"required binary not found on PATH: jq"*)
+    fail "EDMV4-T51 AC8 / CA-054 -- negative control FAILED: the guard-less edm-hookify still emitted the named setup error, so the assertion above does not depend on the guard"
+    ;;
+  *)
+    pass "EDMV4-T51 AC8 / CA-054 -- negative control: with the require-jq guard removed, edm-hookify emits no named setup error (rc=${T51_AC8_RC}), so the assertion above discriminates on the guard"
+    ;;
+esac
+
+# ---- edm-repo-readiness: exit 2 (its die() default -- the CLI-family setup/usage code), naming
+# the missing binary on stderr.
+t51_ac8_run_readiness() {
+  local script="$1"
+  T51_AC8_RC=0
+  PATH="$T51_AC8_FAKEBIN" /bin/bash "$script" >/dev/null 2>"${T51_AC8_TMP}/rr.err" </dev/null || T51_AC8_RC=$?
+  T51_AC8_ERR="$(cat "${T51_AC8_TMP}/rr.err" 2>/dev/null || true)"
+}
+t51_ac8_run_readiness "$REPO_READINESS"
+check_num "EDMV4-T51 AC8 / CA-054 -- edm-repo-readiness with jq off PATH exits 2 (usage/setup error)" "2" "$T51_AC8_RC"
+check "EDMV4-T51 AC8 / CA-054 -- edm-repo-readiness names the missing binary on stderr" \
+  "required binary not found on PATH: jq" "$T51_AC8_ERR"
+
+T51_AC8_RR_MUTANT="${T51_AC8_TMP}/edm-repo-readiness-noguard"
+grep -v 'command -v jq >/dev/null 2>&1 || die' "$REPO_READINESS" > "$T51_AC8_RR_MUTANT"
+chmod +x "$T51_AC8_RR_MUTANT"
+t51_ac8_run_readiness "$T51_AC8_RR_MUTANT"
+case "$T51_AC8_ERR" in
+  *"required binary not found on PATH: jq"*)
+    fail "EDMV4-T51 AC8 / CA-054 -- negative control FAILED: the guard-less edm-repo-readiness still emitted the named setup error, so the assertion above does not depend on the guard"
+    ;;
+  *)
+    pass "EDMV4-T51 AC8 / CA-054 -- negative control: with the require-jq guard removed, edm-repo-readiness emits no named setup error (rc=${T51_AC8_RC}), so the assertion above discriminates on the guard"
+    ;;
+esac
+
+# ---- _edm-datadir-lib.sh: SOURCED, never executed, and specified to need no jq at all. Its
+# degradation case therefore asserts the opposite shape from the two above: all three functions
+# must still return usable values with jq gone. A probe script is written to the scratch tree so
+# the library is sourced exactly the way its two real consumers source it.
+T51_AC8_LIB_PROBE="${T51_AC8_TMP}/datadir-probe.sh"
+T51_AC8_LIB_PROJ="${T51_AC8_TMP}/lib-proj"
+T51_AC8_LIB_DATA="${T51_AC8_TMP}/lib-data"
+mkdir -p "$T51_AC8_LIB_PROJ" "$T51_AC8_LIB_DATA"
+{
+  printf '%s\n' '#!/bin/bash'
+  printf '%s\n' 'set -uo pipefail'
+  printf '%s\n' '. "$1"'
+  printf '%s\n' 'printf "data=%s\n" "$(edm_data_dir)"'
+  printf '%s\n' 'printf "key=%s\n" "$(edm_project_key)"'
+  printf '%s\n' 'printf "marker=%s\n" "$(edm_marker_path)"'
+} > "$T51_AC8_LIB_PROBE"
+t51_ac8_run_lib() {
+  local lib="$1"
+  T51_AC8_RC=0
+  T51_AC8_OUT="$(CLAUDE_PROJECT_DIR="$T51_AC8_LIB_PROJ" CLAUDE_PLUGIN_DATA="$T51_AC8_LIB_DATA" \
+    PATH="$T51_AC8_FAKEBIN" /bin/bash "$T51_AC8_LIB_PROBE" "$lib" 2>"${T51_AC8_TMP}/lib.err")" || T51_AC8_RC=$?
+  T51_AC8_ERR="$(cat "${T51_AC8_TMP}/lib.err" 2>/dev/null || true)"
+}
+t51_ac8_run_lib "$DATADIR_LIB"
+check_num "EDMV4-T51 AC8 / CA-054 -- _edm-datadir-lib.sh sources and runs cleanly with jq off PATH (exit 0)" "0" "$T51_AC8_RC"
+check "EDMV4-T51 AC8 / CA-054 -- edm_data_dir() still resolves the writable data root with jq off PATH" \
+  "data=${T51_AC8_LIB_DATA}" "$T51_AC8_OUT"
+check "EDMV4-T51 AC8 / CA-054 -- edm_marker_path() still builds a usable marker path with jq off PATH" \
+  "marker=${T51_AC8_LIB_DATA}/run/" "$T51_AC8_OUT"
+w8_check_empty "EDMV4-T51 AC8 / CA-054 -- _edm-datadir-lib.sh writes nothing to stderr with jq off PATH" "$T51_AC8_ERR"
+
+# Negative control for the library case: a scratch copy whose edm_data_dir() reaches for jq must
+# be caught by the SAME probe. Without this, the clean result above would be equally consistent
+# with a probe that never actually exercised the library.
+T51_AC8_LIB_MUTANT="${T51_AC8_TMP}/_edm-datadir-lib-needsjq.sh"
+cat "$DATADIR_LIB" > "$T51_AC8_LIB_MUTANT"
+{
+  printf '%s\n' 'edm_data_dir() {'
+  printf '%s\n' '  jq -rn "\"/tmp/x\""'
+  printf '%s\n' '}'
+} >> "$T51_AC8_LIB_MUTANT"
+t51_ac8_run_lib "$T51_AC8_LIB_MUTANT"
+if [[ -n "$T51_AC8_ERR" ]]; then
+  pass "EDMV4-T51 AC8 / CA-054 -- negative control: a library variant that DOES reach for jq is caught by the same probe (stderr non-empty)"
+else
+  fail "EDMV4-T51 AC8 / CA-054 -- negative control FAILED: a library variant reaching for jq produced no stderr, so the clean result above proves nothing"
 fi
 
 rm -rf "$T51_TMP"
@@ -6809,6 +7228,126 @@ if [[ $T53_GG_BAD_RC -eq 1 ]]; then
 else
   fail "EDMV4-T53 AC3 -- edm-gateguard unexpected-argument case exited ${T53_GG_BAD_RC}, expected 1"
 fi
+
+# =================================================================================================
+# CA-057 (P1, code-audit pass 1) -- EDMV4-T53 AC4: RUN the hook presence guards, never just read
+# =================================================================================================
+# AC4 requires a case "asserting its `command -v` guard EXITS 0 when the delegate script is off
+# PATH". All three guards were asserted by extracting the command string from hooks.json with jq
+# and string-comparing it (edm-gateguard's in the EDMV4-T11 section, edm-bash-gate's in EDMV4-T45,
+# edm-stop-gate's in EDMV4-T46). Those verify the guard's TEXT and never its BEHAVIOUR: a guard
+# with a mistyped builtin name, or one whose delegate name no longer matches the installed binary,
+# satisfies every string compare and then fails open -- or blocks -- at runtime.
+#
+# The block below takes each guard's command string straight out of hooks.json (never a retyped
+# literal) and EXECUTES it under /bin/bash with a PATH that contains no delegate at all, asserting
+# exit 0, empty stdout and empty stderr. Delegate presence, not the delegate's own behaviour, is
+# what is under test here; every gate's real decision logic is covered by its own section above.
+echo
+echo "EDMV4-T53 AC4 / CA-057 -- the three hook presence guards are EXECUTED, not string-compared"
+
+w8_scratch_dir T53_AC4_TMP
+T53_AC4_EMPTYBIN="${T53_AC4_TMP}/emptybin"
+mkdir -p "$T53_AC4_EMPTYBIN"
+
+# t53_ac4_run <command-string> -- runs <command-string> under /bin/bash with a PATH holding no
+# delegate, with stdin closed (a hook whose delegate is absent must never read the payload).
+# Sets T53_AC4_RC / T53_AC4_OUT / T53_AC4_ERR. /bin/bash is invoked by absolute path so the empty
+# PATH cannot affect which interpreter runs.
+t53_ac4_run() {
+  local cmd="$1"
+  T53_AC4_RC=0
+  T53_AC4_OUT="$(PATH="$T53_AC4_EMPTYBIN" /bin/bash -c "$cmd" </dev/null 2>"${T53_AC4_TMP}/guard.stderr")" || T53_AC4_RC=$?
+  T53_AC4_ERR="$(cat "${T53_AC4_TMP}/guard.stderr" 2>/dev/null || true)"
+}
+
+# t53_ac4_assert_fails_open <label> <command-string> -- the contract: delegate off PATH means
+# exit 0 and total silence.
+t53_ac4_assert_fails_open() {
+  local label="$1" cmd="$2"
+  t53_ac4_run "$cmd"
+  if [[ "$T53_AC4_RC" -eq 0 && -z "$T53_AC4_OUT" && -z "$T53_AC4_ERR" ]]; then
+    pass "EDMV4-T53 AC4 / CA-057 -- ${label}: guard EXECUTED with the delegate off PATH exits 0 with no output"
+  else
+    fail "EDMV4-T53 AC4 / CA-057 -- ${label}: guard executed with the delegate off PATH gave rc=${T53_AC4_RC} stdout=[${T53_AC4_OUT}] stderr=[${T53_AC4_ERR}]"
+  fi
+}
+
+T53_AC4_GG_CMD="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Edit|Write|MultiEdit") | .hooks[0].command' "$HOOKS_JSON")"
+T53_AC4_BG_CMD="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[0].command' "$HOOKS_JSON")"
+T53_AC4_SG_CMD="$(jq -r '.hooks.Stop[0].hooks[1].command' "$HOOKS_JSON")"
+
+t53_ac4_assert_fails_open "edm-gateguard (PreToolUse Edit|Write|MultiEdit)" "$T53_AC4_GG_CMD"
+t53_ac4_assert_fails_open "edm-bash-gate (PreToolUse Bash)" "$T53_AC4_BG_CMD"
+t53_ac4_assert_fails_open "edm-stop-gate (Stop)" "$T53_AC4_SG_CMD"
+
+# ---- Negative control 1: the guard removed outright. The runner must reject the unguarded
+# command, or the three clean results above prove only that /bin/bash can exit 0.
+T53_AC4_UNGUARDED="${T53_AC4_GG_CMD##*; }"
+t53_ac4_run "$T53_AC4_UNGUARDED"
+if [[ "$T53_AC4_RC" -ne 0 ]]; then
+  pass "EDMV4-T53 AC4 / CA-057 -- negative control: the same command with its presence guard STRIPPED is rejected (rc=${T53_AC4_RC})"
+else
+  fail "EDMV4-T53 AC4 / CA-057 -- negative control FAILED: an unguarded delegate invocation exited 0 with the delegate off PATH, so the runner cannot discriminate"
+fi
+
+# ---- Negative control 2: the guard tests a name that IS on PATH while the command invokes a
+# delegate that is not -- the "guard name no longer matches the installed binary" defect CA-057
+# names, which every string compare above passes. The probe binary is created in the otherwise
+# empty PATH dir so the guard genuinely succeeds.
+# Interpreter pinned to an absolute /bin/bash rather than /usr/bin/env bash: this stub lives on a
+# deliberately empty PATH, and `env bash` would resolve `bash` through that same empty PATH and
+# die 127 -- a stub failure indistinguishable from the guard defect the controls exist to detect.
+printf '%s\n' '#!/bin/bash' 'exit 0' > "${T53_AC4_EMPTYBIN}/edm-ca057-probe"
+chmod +x "${T53_AC4_EMPTYBIN}/edm-ca057-probe"
+T53_AC4_MISMATCH="command -v edm-ca057-probe >/dev/null 2>&1 || exit 0; ${T53_AC4_UNGUARDED}"
+t53_ac4_run "$T53_AC4_MISMATCH"
+if [[ "$T53_AC4_RC" -ne 0 ]]; then
+  pass "EDMV4-T53 AC4 / CA-057 -- negative control: a guard naming a DIFFERENT binary from the one invoked is rejected (rc=${T53_AC4_RC})"
+else
+  fail "EDMV4-T53 AC4 / CA-057 -- negative control FAILED: a guard/delegate name mismatch exited 0, so the runner cannot discriminate"
+fi
+
+rm -f "${T53_AC4_EMPTYBIN}/edm-ca057-probe"
+
+# ---- Positive control, run for all three guards: with the delegate actually present, the guard
+# must fall THROUGH and the delegate must run. This is the half that catches a mistyped builtin
+# name -- `comand -v edm-gateguard ... || exit 0` still exits 0 silently with the delegate absent
+# (measured, not assumed), so the fails-open assertions above cannot see it; what a typo really
+# destroys is the fall-through, and the hook then silently does nothing on every tool call
+# forever. Without this control the three assertions above would also be satisfied by a command
+# that short-circuits unconditionally and never reaches its delegate at all.
+t53_ac4_assert_reaches_delegate() {
+  local label="$1" cmd="$2" delegate
+  delegate="${cmd##*; }"
+  delegate="${delegate%% *}"
+  printf '%s\n' '#!/bin/bash' 'echo ran-delegate' > "${T53_AC4_EMPTYBIN}/${delegate}"
+  chmod +x "${T53_AC4_EMPTYBIN}/${delegate}"
+  t53_ac4_run "$cmd"
+  if [[ "$T53_AC4_RC" -eq 0 && "$T53_AC4_OUT" == "ran-delegate" ]]; then
+    pass "EDMV4-T53 AC4 / CA-057 -- positive control: ${label}'s guard falls THROUGH to ${delegate} when it is present (a mistyped guard would silently skip it)"
+  else
+    fail "EDMV4-T53 AC4 / CA-057 -- positive control FAILED for ${label}: rc=${T53_AC4_RC} stdout=[${T53_AC4_OUT}] -- the guard never reaches ${delegate}"
+  fi
+  rm -f "${T53_AC4_EMPTYBIN}/${delegate}"
+}
+t53_ac4_assert_reaches_delegate "edm-gateguard (PreToolUse Edit|Write|MultiEdit)" "$T53_AC4_GG_CMD"
+t53_ac4_assert_reaches_delegate "edm-bash-gate (PreToolUse Bash)" "$T53_AC4_BG_CMD"
+t53_ac4_assert_reaches_delegate "edm-stop-gate (Stop)" "$T53_AC4_SG_CMD"
+
+# ---- Negative control 3: the same fall-through predicate applied to a guard whose builtin name
+# is mistyped. It must report the delegate was NOT reached, or the three controls above prove
+# nothing about the defect CA-057 names.
+T53_AC4_TYPO_CMD="comand -v edm-gateguard >/dev/null 2>&1 || exit 0; ${T53_AC4_UNGUARDED}"
+printf '%s\n' '#!/bin/bash' 'echo ran-delegate' > "${T53_AC4_EMPTYBIN}/${T53_AC4_UNGUARDED%% *}"
+chmod +x "${T53_AC4_EMPTYBIN}/${T53_AC4_UNGUARDED%% *}"
+t53_ac4_run "$T53_AC4_TYPO_CMD"
+if [[ "$T53_AC4_OUT" != "ran-delegate" ]]; then
+  pass "EDMV4-T53 AC4 / CA-057 -- negative control: a guard with a mistyped builtin name never reaches its delegate, and the fall-through control detects it (stdout=[${T53_AC4_OUT}])"
+else
+  fail "EDMV4-T53 AC4 / CA-057 -- negative control FAILED: a mistyped guard still reached its delegate, so the fall-through controls above cannot discriminate"
+fi
+rm -f "${T53_AC4_EMPTYBIN}/${T53_AC4_UNGUARDED%% *}"
 
 # ---- AC6: no network access, no API budget spent -- self-scan of this suite's own source for
 # forbidden commands on a non-comment line. Verified once at review time above via manual grep;
