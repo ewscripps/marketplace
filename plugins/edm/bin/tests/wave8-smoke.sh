@@ -6211,6 +6211,154 @@ else
   fail "EDMV4-T51 -- CLAUDE.md's required-binary sentence has drifted from the expected exact text"
 fi
 
+# ---- CA-054 (P1, code-audit pass 1): EDMV4-T51 AC8 -- "one test per script", with three of the
+# five missing. `edm-gateguard` and `edm-stop-gate` already have jq-off-PATH cases elsewhere in
+# this file; `edm-hookify`, `edm-repo-readiness` and `_edm-datadir-lib.sh` had none at all. The
+# CODE is correct in every one of the three -- this was a test gap, but AC8 is an assertion about
+# tests, and two blocking-adjacent scripts had no evidence behind the claim.
+#
+# The two executables are driven through a PATH holding symlinks to the ordinary utilities they
+# use and NOTHING ELSE, so jq is genuinely absent rather than merely unused. The shared library is
+# a different shape: it is SOURCED, never executed, and its own header records that it needs none
+# of bash/jq/git beyond one conditional `git rev-parse` -- so its case proves the three functions
+# still return usable values with jq gone, which is the property that claim actually rests on.
+echo
+echo "EDMV4-T51 AC8 / CA-054 -- jq-off-PATH degradation for edm-hookify, edm-repo-readiness and _edm-datadir-lib.sh"
+
+w8_scratch_dir T51_AC8_TMP
+T51_AC8_FAKEBIN="${T51_AC8_TMP}/fakebin"
+mkdir -p "$T51_AC8_FAKEBIN"
+# Symlink the ordinary utilities the three scripts use. jq is deliberately NOT among them, and no
+# other directory is on the PATH the cases below run under.
+for _t51_ac8_bin in bash dirname basename cat find grep sed awk tr cut sort head tail wc mkdir mv rm ls date git; do
+  if command -v "$_t51_ac8_bin" >/dev/null 2>&1; then
+    ln -sf "$(command -v "$_t51_ac8_bin")" "${T51_AC8_FAKEBIN}/${_t51_ac8_bin}"
+  fi
+done
+
+# Precondition: jq really is off this PATH. Without this the three cases below could pass on a
+# PATH that still resolved jq and prove nothing at all -- the exact vacuity class this batch is.
+# The probe runs in a CHILD shell rather than as `PATH=... command -v jq` in this one: a variable
+# assignment prefixing a bash builtin does not re-drive this shell's own command hash table, so
+# the in-shell form reports the ambient jq and the precondition would be the vacuous check.
+if PATH="$T51_AC8_FAKEBIN" /bin/bash -c 'command -v jq' >/dev/null 2>&1; then
+  fail "EDMV4-T51 AC8 / CA-054 -- precondition FAILED: jq is still resolvable on the isolated PATH, so the three cases below would prove nothing"
+else
+  pass "EDMV4-T51 AC8 / CA-054 -- precondition: jq is genuinely absent from the isolated PATH used by the three cases below"
+fi
+
+# ---- edm-hookify: exit 1 (its die() default), naming the missing binary on stderr.
+# A rule file MUST be present: AC10 exits 0 before jq is even checked when the rule set is empty,
+# so a case run against an empty rule directory would pass while touching no guard at all.
+T51_AC8_HK_PROJ="${T51_AC8_TMP}/hookify-proj"
+mkdir -p "${T51_AC8_HK_PROJ}/.claude/edm-hookify"
+cp "${PLUGIN_DIR}/bin/tests/fixtures/hookify/warn-no-console-log.json" \
+   "${T51_AC8_HK_PROJ}/.claude/edm-hookify/"
+t51_ac8_run_hookify() {
+  # <script-path> -- runs `eval file` with a well-formed payload on the jq-less PATH.
+  # Sets T51_AC8_RC / T51_AC8_ERR.
+  local script="$1"
+  T51_AC8_RC=0
+  printf '%s' '{"tool_name":"Edit","tool_input":{"file_path":"x.js","new_text":"console.log(1)"}}' \
+    | CLAUDE_PROJECT_DIR="$T51_AC8_HK_PROJ" PATH="$T51_AC8_FAKEBIN" \
+      /bin/bash "$script" eval file >/dev/null 2>"${T51_AC8_TMP}/hk.err" || T51_AC8_RC=$?
+  T51_AC8_ERR="$(cat "${T51_AC8_TMP}/hk.err" 2>/dev/null || true)"
+}
+t51_ac8_run_hookify "$EDM_HOOKIFY"
+check_num "EDMV4-T51 AC8 / CA-054 -- edm-hookify with jq off PATH exits 1 (setup error, never a block)" "1" "$T51_AC8_RC"
+check "EDMV4-T51 AC8 / CA-054 -- edm-hookify names the missing binary on stderr" \
+  "required binary not found on PATH: jq" "$T51_AC8_ERR"
+
+# Negative control: the same case against a scratch copy whose require-jq guard line is deleted.
+# It must NOT produce the named setup error -- otherwise the assertion above would pass whether
+# or not the guard exists, which is exactly the defect this batch is remediating.
+T51_AC8_HK_MUTANT="${T51_AC8_TMP}/edm-hookify-noguard"
+grep -v 'command -v jq >/dev/null 2>&1 || die' "$EDM_HOOKIFY" > "$T51_AC8_HK_MUTANT"
+chmod +x "$T51_AC8_HK_MUTANT"
+t51_ac8_run_hookify "$T51_AC8_HK_MUTANT"
+case "$T51_AC8_ERR" in
+  *"required binary not found on PATH: jq"*)
+    fail "EDMV4-T51 AC8 / CA-054 -- negative control FAILED: the guard-less edm-hookify still emitted the named setup error, so the assertion above does not depend on the guard"
+    ;;
+  *)
+    pass "EDMV4-T51 AC8 / CA-054 -- negative control: with the require-jq guard removed, edm-hookify emits no named setup error (rc=${T51_AC8_RC}), so the assertion above discriminates on the guard"
+    ;;
+esac
+
+# ---- edm-repo-readiness: exit 2 (its die() default -- the CLI-family setup/usage code), naming
+# the missing binary on stderr.
+t51_ac8_run_readiness() {
+  local script="$1"
+  T51_AC8_RC=0
+  PATH="$T51_AC8_FAKEBIN" /bin/bash "$script" >/dev/null 2>"${T51_AC8_TMP}/rr.err" </dev/null || T51_AC8_RC=$?
+  T51_AC8_ERR="$(cat "${T51_AC8_TMP}/rr.err" 2>/dev/null || true)"
+}
+t51_ac8_run_readiness "$REPO_READINESS"
+check_num "EDMV4-T51 AC8 / CA-054 -- edm-repo-readiness with jq off PATH exits 2 (usage/setup error)" "2" "$T51_AC8_RC"
+check "EDMV4-T51 AC8 / CA-054 -- edm-repo-readiness names the missing binary on stderr" \
+  "required binary not found on PATH: jq" "$T51_AC8_ERR"
+
+T51_AC8_RR_MUTANT="${T51_AC8_TMP}/edm-repo-readiness-noguard"
+grep -v 'command -v jq >/dev/null 2>&1 || die' "$REPO_READINESS" > "$T51_AC8_RR_MUTANT"
+chmod +x "$T51_AC8_RR_MUTANT"
+t51_ac8_run_readiness "$T51_AC8_RR_MUTANT"
+case "$T51_AC8_ERR" in
+  *"required binary not found on PATH: jq"*)
+    fail "EDMV4-T51 AC8 / CA-054 -- negative control FAILED: the guard-less edm-repo-readiness still emitted the named setup error, so the assertion above does not depend on the guard"
+    ;;
+  *)
+    pass "EDMV4-T51 AC8 / CA-054 -- negative control: with the require-jq guard removed, edm-repo-readiness emits no named setup error (rc=${T51_AC8_RC}), so the assertion above discriminates on the guard"
+    ;;
+esac
+
+# ---- _edm-datadir-lib.sh: SOURCED, never executed, and specified to need no jq at all. Its
+# degradation case therefore asserts the opposite shape from the two above: all three functions
+# must still return usable values with jq gone. A probe script is written to the scratch tree so
+# the library is sourced exactly the way its two real consumers source it.
+T51_AC8_LIB_PROBE="${T51_AC8_TMP}/datadir-probe.sh"
+T51_AC8_LIB_PROJ="${T51_AC8_TMP}/lib-proj"
+T51_AC8_LIB_DATA="${T51_AC8_TMP}/lib-data"
+mkdir -p "$T51_AC8_LIB_PROJ" "$T51_AC8_LIB_DATA"
+{
+  printf '%s\n' '#!/bin/bash'
+  printf '%s\n' 'set -uo pipefail'
+  printf '%s\n' '. "$1"'
+  printf '%s\n' 'printf "data=%s\n" "$(edm_data_dir)"'
+  printf '%s\n' 'printf "key=%s\n" "$(edm_project_key)"'
+  printf '%s\n' 'printf "marker=%s\n" "$(edm_marker_path)"'
+} > "$T51_AC8_LIB_PROBE"
+t51_ac8_run_lib() {
+  local lib="$1"
+  T51_AC8_RC=0
+  T51_AC8_OUT="$(CLAUDE_PROJECT_DIR="$T51_AC8_LIB_PROJ" CLAUDE_PLUGIN_DATA="$T51_AC8_LIB_DATA" \
+    PATH="$T51_AC8_FAKEBIN" /bin/bash "$T51_AC8_LIB_PROBE" "$lib" 2>"${T51_AC8_TMP}/lib.err")" || T51_AC8_RC=$?
+  T51_AC8_ERR="$(cat "${T51_AC8_TMP}/lib.err" 2>/dev/null || true)"
+}
+t51_ac8_run_lib "$DATADIR_LIB"
+check_num "EDMV4-T51 AC8 / CA-054 -- _edm-datadir-lib.sh sources and runs cleanly with jq off PATH (exit 0)" "0" "$T51_AC8_RC"
+check "EDMV4-T51 AC8 / CA-054 -- edm_data_dir() still resolves the writable data root with jq off PATH" \
+  "data=${T51_AC8_LIB_DATA}" "$T51_AC8_OUT"
+check "EDMV4-T51 AC8 / CA-054 -- edm_marker_path() still builds a usable marker path with jq off PATH" \
+  "marker=${T51_AC8_LIB_DATA}/run/" "$T51_AC8_OUT"
+w8_check_empty "EDMV4-T51 AC8 / CA-054 -- _edm-datadir-lib.sh writes nothing to stderr with jq off PATH" "$T51_AC8_ERR"
+
+# Negative control for the library case: a scratch copy whose edm_data_dir() reaches for jq must
+# be caught by the SAME probe. Without this, the clean result above would be equally consistent
+# with a probe that never actually exercised the library.
+T51_AC8_LIB_MUTANT="${T51_AC8_TMP}/_edm-datadir-lib-needsjq.sh"
+cat "$DATADIR_LIB" > "$T51_AC8_LIB_MUTANT"
+{
+  printf '%s\n' 'edm_data_dir() {'
+  printf '%s\n' '  jq -rn "\"/tmp/x\""'
+  printf '%s\n' '}'
+} >> "$T51_AC8_LIB_MUTANT"
+t51_ac8_run_lib "$T51_AC8_LIB_MUTANT"
+if [[ -n "$T51_AC8_ERR" ]]; then
+  pass "EDMV4-T51 AC8 / CA-054 -- negative control: a library variant that DOES reach for jq is caught by the same probe (stderr non-empty)"
+else
+  fail "EDMV4-T51 AC8 / CA-054 -- negative control FAILED: a library variant reaching for jq produced no stderr, so the clean result above proves nothing"
+fi
+
 rm -rf "$T51_TMP"
 
 echo
