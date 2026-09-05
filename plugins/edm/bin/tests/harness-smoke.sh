@@ -70,8 +70,10 @@ rm -f "$_ac2_failpath"
 # The fix is `set -m` around the spawn (giving the child its own process group and the default
 # SIGINT disposition, exactly as wave7-smoke.sh's own SIGINT case does), plus assertions on both
 # the kill's status and the child's exit code -- 128+2 = 130, with_scratch_repo's documented INT
-# arm. This is what wave7-smoke.sh:6249 has and this suite did not, which is why L3 recorded
-# wave7's sibling case as sound and this one as silently passing.
+# arm. This is what wave7-smoke.sh's own `ca_wave7a_sigint_case` has and this suite did not, which
+# is why L3 recorded wave7's sibling case as sound and this one as silently passing. (Cited by
+# function name, never file:line -- G10/CA-340 bans the line-number citation shape outright,
+# because it is the one that goes stale silently.)
 #
 # _ac2_sigint_probe <job-control:on|off> -- spawns the child, signals it, and prints
 # "<kill-rc>|<child-exit>|<scratch-path>". The job-control argument exists so the negative control
