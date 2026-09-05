@@ -366,7 +366,13 @@ Before reporting any finding, the lens agent applies:
 2. Is there a comment explaining why this looks wrong but is correct?
 3. Is this pattern used consistently everywhere in the file or project?
 
-If yes to any -> record as "Noted / Not Actionable" with one-line rationale, do not report as a finding.
+**The filter demotes and never deletes (CA-028).** If yes to any: record the finding under
+`## Noted / Not Actionable` with a one-line rationale, AND still emit its JSONL line at
+`sev: "NOTED"` / `status: "noted"`, so the demotion is recorded as data rather than lost. This
+paragraph used to instruct the lens to drop such a finding entirely, which contradicted all fourteen
+`agents/edm-audit-*.md` lens definitions and the synthesizer's own contract, and authorized
+exactly the data loss the ledger exists to prevent. The lens agents are authoritative on this;
+if the two ever diverge again, correct this paragraph, never the fourteen agents.
 
 ## Synthesizer Phase
 
