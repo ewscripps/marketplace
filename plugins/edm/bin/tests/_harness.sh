@@ -24,12 +24,62 @@ pass() { echo "  PASS: $*"; PASS=$((PASS+1)); }
 fail() { echo "  FAIL: $*" >&2; FAIL=$((FAIL+1)); }
 
 # check <label> <expected-substring> <actual> -- pass when <actual> contains <expected-substring>.
+#
+# CA-011: an EMPTY <expected-substring> is a substring of every string, so `check "..." "" "$out"`
+# passes on any output at all -- an assertion that cannot fail, reported as a PASS and counted in
+# the suite total. Two wave8 sites shipped exactly that shape while their labels claimed "stdout is
+# empty". The guard below refuses the call itself, naming the label, so the shape cannot recur
+# anywhere in any suite: to assert emptiness, test `-z "$actual"` directly (or use check_num for a
+# count), never a substring match against "".
 check() {
   local label="$1" expected="$2" actual="$3"
+  if [[ -z "$expected" ]]; then
+    fail "$label (check misuse: empty expected substring -- every string contains \"\", so this assertion could never fail; assert emptiness with [[ -z ... ]] instead)"
+    return
+  fi
   if [[ "$actual" == *"$expected"* ]]; then
     pass "$label"
   else
     fail "$label (expected to contain: '$expected', got: '$actual')"
+  fi
+}
+
+# _harness_is_int <value> -- true when <value> is a base-10 integer, optionally sign-prefixed.
+# bash 3.2 floor: plain `case` globbing, no [[ =~ ]] portability assumptions.
+_harness_is_int() {
+  local v="$1"
+  case "$v" in
+    -*|+*) v="${v#[-+]}" ;;
+  esac
+  case "$v" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  return 0
+}
+
+# check_num <label> <expected-integer> <actual> -- pass when <actual> is an integer EQUAL to
+# <expected-integer>.
+#
+# CA-016: numeric counts and exit codes must never be routed through check() above. check() is a
+# SUBSTRING match, so an expected "0" is satisfied by "10", "20" and "100", an expected "1" by
+# "11", and an expected "2" by "20" -- thirteen wave8 zero-count assertions were weaker than they
+# read for exactly this reason. A non-integer <actual> (an empty capture from a command that never
+# ran, count_matches_strict's "ERROR" sentinel, a float) is a NAMED failure here rather than a
+# silent pass, which is the other half of what the substring form got wrong.
+check_num() {
+  local label="$1" expected="$2" actual="$3"
+  if ! _harness_is_int "$expected"; then
+    fail "$label (check_num misuse: expected value '$expected' is not an integer)"
+    return
+  fi
+  if ! _harness_is_int "$actual"; then
+    fail "$label (expected the integer $expected, got a non-integer value: '$actual')"
+    return
+  fi
+  if [[ "$actual" -eq "$expected" ]]; then
+    pass "$label"
+  else
+    fail "$label (expected $expected, got $actual)"
   fi
 }
 

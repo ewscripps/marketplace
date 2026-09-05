@@ -12,6 +12,87 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "${SCRIPT_DIR}/_harness.sh"
 PLUGIN_DIR="$_HARNESS_PLUGIN_DIR"
 
+# CA-016: every count and exit-code assertion in this file goes through check_num (integer
+# comparison), never check (substring). check() accepts "10", "20" and "100" wherever "0" was
+# expected -- thirteen zero-count assertions here read as proofs and were not. Do not add a new
+# `check "..." "<digits>" "$count"` site; _harness.sh's check_num is the numeric assertion.
+# CA-011: check() now refuses an empty expected substring outright, so an "output is empty" claim
+# must be written as a direct [[ -z ... ]] test rather than a substring match against "".
+
+# w8_check_empty <label> <actual> -- the one emptiness assertion this file uses, so the two CA-011
+# sites share a single predicate that is proven falsifiable once (immediately below) rather than
+# each hand-rolling its own untested `if [[ -z ... ]]`.
+w8_check_empty() {
+  local label="$1" actual="$2"
+  if [[ -z "$actual" ]]; then
+    pass "$label"
+  else
+    fail "$label (expected empty output, got: [${actual}])"
+  fi
+}
+
+# CA-011 negative control: fed non-empty text, w8_check_empty must report exactly one FAIL and no
+# PASS. Run in a command substitution (its own subshell, so the deliberate "FAIL:" line and the
+# mutated counters never reach this suite's tally), matching harness-smoke.sh's own idiom.
+W8_EMPTY_CONTROL="$(
+  PASS=0; FAIL=0
+  w8_check_empty "probe" "unexpected stdout" >/dev/null 2>&1
+  echo "PASS=$PASS FAIL=$FAIL"
+)"
+check "CA-011 negative control -- the emptiness assertion used by T13 AC3 and T15 AC10 FAILS when fed non-empty stdout" \
+  "PASS=0 FAIL=1" "$W8_EMPTY_CONTROL"
+W8_EMPTY_CONTROL_OK="$(
+  PASS=0; FAIL=0
+  w8_check_empty "probe" "" >/dev/null 2>&1
+  echo "PASS=$PASS FAIL=$FAIL"
+)"
+check "CA-011 negative control -- the same assertion still PASSES on genuinely empty stdout" \
+  "PASS=1 FAIL=0" "$W8_EMPTY_CONTROL_OK"
+
+# CA-016 negative control: check_num must reject "10" where "0" was expected -- the exact value the
+# substring check() it replaces accepted. Both arms asserted, so a check_num that failed everything
+# would not read as a fix either.
+W8_NUM_CONTROL="$(
+  PASS=0; FAIL=0
+  check_num "probe" "0" "10" >/dev/null 2>&1
+  check_num "probe" "0" "0" >/dev/null 2>&1
+  check_num "probe" "0" "" >/dev/null 2>&1
+  echo "PASS=$PASS FAIL=$FAIL"
+)"
+check "CA-016 negative control -- check_num rejects 10 (and an empty capture) where 0 is expected, and accepts only 0" \
+  "PASS=1 FAIL=2" "$W8_NUM_CONTROL"
+
+# w8_count_lines <pattern> <file> -- ONE integer: the number of lines in <file> matching <pattern>,
+# or the literal "ERROR" when <file> is missing/unreadable or <pattern> is malformed (check_num
+# then names it rather than reading it as a passing zero).
+#
+# CA-016 fallout: the `grep -c ... 2>/dev/null || echo 0` idiom this replaces emits "0\n0" on a
+# genuine zero -- grep -c prints its own "0" AND exits 1, so the `||` arm fires too. The substring
+# check() those counts fed accepted the two-line value silently; converting the call sites to
+# check_num surfaced it immediately at EDMV4-T20 AC4. A count is one integer, never two.
+w8_count_lines() {
+  local pattern="$1" file="$2" out
+  [[ -f "$file" ]] || { printf '%s' "ERROR"; return 0; }
+  out="$(count_matches_strict -- "$pattern" "$file")" || { printf '%s' "ERROR"; return 0; }
+  printf '%s' "$out"
+}
+
+# w8_count_lines controls: a real zero is the single character "0" (not "0\n0"), a real count is
+# the count, and a missing file is a named ERROR rather than a passing zero.
+# Scratch here is a self-contained mktemp/rm pair rather than harness_scratch_dir: this block runs
+# before the suite's first real scratch dir is created, and harness_scratch_dir installs
+# process-wide EXIT/INT/TERM/HUP traps that the next caller would immediately overwrite, leaking
+# this directory. Three lines of setup, removed on the spot, is the honest shape here.
+W8_COUNT_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-count.XXXXXX")"
+printf '### one\nplain\n### two\n' > "${W8_COUNT_TMP}/probe.md"
+check_num "CA-016 control -- w8_count_lines returns the true count for a matching file" \
+  "2" "$(w8_count_lines '^### ' "${W8_COUNT_TMP}/probe.md")"
+check_num "CA-016 control -- w8_count_lines returns a single 0 (never a two-line 0) when nothing matches" \
+  "0" "$(w8_count_lines '^#### ' "${W8_COUNT_TMP}/probe.md")"
+check "CA-016 control -- w8_count_lines reports ERROR for a missing file instead of a passing zero" \
+  "ERROR" "$(w8_count_lines '^### ' "${W8_COUNT_TMP}/absent.md")"
+rm -rf "$W8_COUNT_TMP"
+
 echo "wave8 smoke check -- EDMV4-T05 / EDMV4-T34 / EDMV4-T48"
 echo
 
@@ -248,9 +329,27 @@ check "EDMV4-T48 AC4 -- instruction directs reading and refreshing rather than r
 check 'EDMV4-T48 AC4 -- instruction requires a "Refreshed" note naming touched sections and the prefix' \
   'append a' \
   "$(cat "$EXPLORER_AGENT")"
-check_absent 'EDMV4-T48 -- refresh note requirement is not silently dropped ("Refreshed" string present)' \
-  'MISSING_REFRESHED_NOTE_SENTINEL_NEVER_PRESENT' \
+# CA-012: this asserted the ABSENCE of an invented sentinel
+# ('MISSING_REFRESHED_NOTE_SENTINEL_NEVER_PRESENT') that appears nowhere by construction, so it
+# could never fail -- while its label claimed the opposite property, that the "Refreshed"
+# requirement is PRESENT. Assert the literal the label actually names, and prove the matcher
+# discriminates in both directions against a scratch copy.
+T48_REFRESHED_LITERAL='Refreshed'
+check 'EDMV4-T48 AC4 -- refresh note requirement is not silently dropped ("Refreshed" string present)' \
+  "$T48_REFRESHED_LITERAL" \
   "$(cat "$EXPLORER_AGENT")"
+
+T48_CTRL_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t48.XXXXXX")"
+sed "s/${T48_REFRESHED_LITERAL}/REDACTED/g" "$EXPLORER_AGENT" > "${T48_CTRL_TMP}/stripped.md"
+T48_REFRESHED_CTRL="$(
+  PASS=0; FAIL=0
+  check_absent "probe (real agent)" "$T48_REFRESHED_LITERAL" "$(cat "$EXPLORER_AGENT")" >/dev/null 2>&1
+  check_absent "probe (stripped copy)" "$T48_REFRESHED_LITERAL" "$(cat "${T48_CTRL_TMP}/stripped.md")" >/dev/null 2>&1
+  echo "PASS=$PASS FAIL=$FAIL"
+)"
+check 'EDMV4-T48 AC4 control -- the same matcher FIRES on the real agent (it carries "Refreshed") and reports clean only on a scratch copy with the literal stripped' \
+  "PASS=1 FAIL=1" "$T48_REFRESHED_CTRL"
+rm -rf "$T48_CTRL_TMP"
 check "EDMV4-T48 AC4 -- 'Refreshed' note wording present" \
   'short "Refreshed" note' \
   "$(cat "$EXPLORER_AGENT")"
@@ -441,36 +540,96 @@ fi
 # library and asserts the guarantee the library actually makes.
 T17_AC5_DATADIR="${TMP}/t17-ac5-data"
 mkdir -p "$T17_AC5_DATADIR"
-(
-  set +e
-  # shellcheck source=/dev/null
-  . "$DATADIR_LIB" 2>/dev/null || exit 90
-  CLAUDE_PLUGIN_DATA="$T17_AC5_DATADIR" export CLAUDE_PLUGIN_DATA
-  _root="$(edm_data_dir 2>/dev/null)"       || exit 91
-  _key="$(edm_project_key 2>/dev/null)"     || exit 92
-  _marker="$(edm_marker_path 2>/dev/null)"  || exit 93
-  [[ -n "$_root" && -n "$_key" && -n "$_marker" ]] || exit 94
-  # The ephemeral marker must live under run/, never under the durable patterns/ tree.
-  case "$_marker" in
-    */run/*)      ;;
-    *) exit 95 ;;
-  esac
-  case "$_marker" in
-    */patterns/*) exit 96 ;;
-  esac
-  # And it must be rooted at the resolved data dir, not somewhere unrelated.
-  case "$_marker" in
-    "${_root}"/*) ;;
-    *) exit 97 ;;
-  esac
-  exit 0
-)
-T17_AC5_RC=$?
+
+# CA-015: this probe used to be a bare `( ... )` followed by `T17_AC5_RC=$?`. Under this file's
+# `set -euo pipefail` a subshell exiting non-zero is a failing simple command, so the script died
+# at the subshell and `T17_AC5_RC=$?` was reached only when the probe had already succeeded --
+# reading 0 every time. The `pass` below was therefore unconditional and the 90-97 exit taxonomy
+# unreachable by any run. The probe is now a function whose status is captured with `|| rc=$?`
+# (never `|| true`), and it takes the library path as an argument so the taxonomy can be driven
+# for real from deliberately broken scratch copies.
+#
+# t17_ac5_probe <datadir-lib> <data-dir> -- prints the probe's exit status.
+#   0=ok 90=unsourceable 91=data_dir 92=project_key 93=marker_path 94=empty
+#   95=not-under-run 96=under-patterns 97=not-rooted-at-data-dir
+t17_ac5_probe() {
+  local lib="$1" datadir="$2" rc=0
+  (
+    set +e
+    # shellcheck source=/dev/null
+    . "$lib" 2>/dev/null || exit 90
+    CLAUDE_PLUGIN_DATA="$datadir" export CLAUDE_PLUGIN_DATA
+    _root="$(edm_data_dir 2>/dev/null)"       || exit 91
+    _key="$(edm_project_key 2>/dev/null)"     || exit 92
+    _marker="$(edm_marker_path 2>/dev/null)"  || exit 93
+    [[ -n "$_root" && -n "$_key" && -n "$_marker" ]] || exit 94
+    # The ephemeral marker must live under run/, never under the durable patterns/ tree.
+    case "$_marker" in
+      */run/*)      ;;
+      *) exit 95 ;;
+    esac
+    case "$_marker" in
+      */patterns/*) exit 96 ;;
+    esac
+    # And it must be rooted at the resolved data dir, not somewhere unrelated.
+    case "$_marker" in
+      "${_root}"/*) ;;
+      *) exit 97 ;;
+    esac
+    exit 0
+  ) || rc=$?
+  printf '%s' "$rc"
+}
+
+T17_AC5_RC="$(t17_ac5_probe "$DATADIR_LIB" "$T17_AC5_DATADIR")"
 if [[ "$T17_AC5_RC" -eq 0 ]]; then
   pass "EDMV4-T17 AC5 -- library sourced: edm_marker_path() resolves under \${data}/run/, never \${data}/patterns/, and is rooted at edm_data_dir()"
 else
   fail "EDMV4-T17 AC5 -- sourced-library check failed (rc=${T17_AC5_RC}; 90=source,91=data_dir,92=project_key,93=marker_path,94=empty,95=not-under-run,96=under-patterns,97=not-rooted-at-data-dir)"
 fi
+
+# CA-015 negative controls: force each taxonomy code from a scratch copy of the library and confirm
+# the probe DISTINGUISHES them. Each broken copy is the real library plus one appended function
+# override (a later definition wins), so every control exercises the same source-and-call path the
+# real assertion does rather than a hand-built stand-in.
+T17_AC5_CTRL_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t17ac5.XXXXXX")"
+
+# 90: the library cannot be sourced at all.
+check_num "EDMV4-T17 AC5 control -- an unsourceable library is reported as 90, not as a pass" \
+  "90" "$(t17_ac5_probe "${T17_AC5_CTRL_TMP}/no-such-lib.sh" "$T17_AC5_DATADIR")"
+
+# 91: edm_data_dir() fails.
+cp "$DATADIR_LIB" "${T17_AC5_CTRL_TMP}/lib-91.sh"
+printf '%s\n' 'edm_data_dir() { return 1; }' >> "${T17_AC5_CTRL_TMP}/lib-91.sh"
+check_num "EDMV4-T17 AC5 control -- a failing edm_data_dir() is reported as 91" \
+  "91" "$(t17_ac5_probe "${T17_AC5_CTRL_TMP}/lib-91.sh" "$T17_AC5_DATADIR")"
+
+# 94: edm_marker_path() returns an empty path.
+cp "$DATADIR_LIB" "${T17_AC5_CTRL_TMP}/lib-94.sh"
+printf '%s\n' 'edm_marker_path() { printf "\n"; }' >> "${T17_AC5_CTRL_TMP}/lib-94.sh"
+check_num "EDMV4-T17 AC5 control -- an empty marker path is reported as 94" \
+  "94" "$(t17_ac5_probe "${T17_AC5_CTRL_TMP}/lib-94.sh" "$T17_AC5_DATADIR")"
+
+# 95: the marker escapes run/ entirely.
+cp "$DATADIR_LIB" "${T17_AC5_CTRL_TMP}/lib-95.sh"
+printf '%s\n' 'edm_marker_path() { printf "%s\n" "/nowhere/else/x.phase6"; }' >> "${T17_AC5_CTRL_TMP}/lib-95.sh"
+check_num "EDMV4-T17 AC5 control -- a marker outside run/ is reported as 95" \
+  "95" "$(t17_ac5_probe "${T17_AC5_CTRL_TMP}/lib-95.sh" "$T17_AC5_DATADIR")"
+
+# 96: the ephemeral marker lands inside the durable patterns/ tree -- the exact conflation AC5 exists
+# to forbid.
+cp "$DATADIR_LIB" "${T17_AC5_CTRL_TMP}/lib-96.sh"
+printf '%s\n' 'edm_marker_path() { printf "%s\n" "/nowhere/run/patterns/x.phase6"; }' >> "${T17_AC5_CTRL_TMP}/lib-96.sh"
+check_num "EDMV4-T17 AC5 control -- a marker under patterns/ is reported as 96" \
+  "96" "$(t17_ac5_probe "${T17_AC5_CTRL_TMP}/lib-96.sh" "$T17_AC5_DATADIR")"
+
+# 97: correctly shaped but not rooted at the resolved data dir.
+cp "$DATADIR_LIB" "${T17_AC5_CTRL_TMP}/lib-97.sh"
+printf '%s\n' 'edm_marker_path() { printf "%s\n" "/nowhere/run/x.phase6"; }' >> "${T17_AC5_CTRL_TMP}/lib-97.sh"
+check_num "EDMV4-T17 AC5 control -- a marker not rooted at edm_data_dir() is reported as 97" \
+  "97" "$(t17_ac5_probe "${T17_AC5_CTRL_TMP}/lib-97.sh" "$T17_AC5_DATADIR")"
+
+rm -rf "$T17_AC5_CTRL_TMP"
 
 # ---- AC6: bash 3.2 floor -- no bash-4-only constructs. ------------------------------------------
 # Wave-1 QC (shard 4, P1): CA-472's process-substitution fd-leak class -- named by number in the
@@ -789,13 +948,13 @@ done
 
 # ---- AC3: AND semantics -- the worked example carries two conditions, both required -----------
 warn_console_conditions="$(jq '.conditions | length' "${HOOKIFY_FIXTURES}/warn-no-console-log.json")"
-check "AC3 -- worked example carries 2 AND'd conditions" "2" "$warn_console_conditions"
+check_num "AC3 -- worked example carries 2 AND'd conditions" "2" "$warn_console_conditions"
 check "AC3 -- AND semantics stated in one explicit sentence in CLAUDE.md" \
   "must match for the rule to fire (AND semantics)" "$CLAUDE_MD_TEXT"
 
 # ---- AC4: exactly six operators, unknown operator is a named setup error ----------------------
 op_count="$(echo "$T42_ALLOWED_OPERATORS" | wc -w | tr -d ' ')"
-check "AC4 -- exactly six operators enumerated" "6" "$op_count"
+check_num "AC4 -- exactly six operators enumerated" "6" "$op_count"
 result="$(t42_validate_rule "${HOOKIFY_FIXTURES}/malformed-unknown-operator.json")"
 check "AC4 -- malformed-unknown-operator.json fails as bad-operator" "bad-operator:matches" "$result"
 
@@ -834,7 +993,7 @@ fi
 
 # ---- AC7: format documented once, naming convention + worked example --------------------------
 hookify_section_count="$(grep -c '^## Hookify rule format (canonical)$' "$CLAUDE_MD")"
-check "AC7 -- hookify format section appears exactly once" "1" "$hookify_section_count"
+check_num "AC7 -- hookify format section appears exactly once" "1" "$hookify_section_count"
 check "AC7 -- verb-first naming convention documented (warn-*)" '`warn-*.json`' "$CLAUDE_MD_TEXT"
 check "AC7 -- verb-first naming convention documented (block-*)" '`block-*.json`' "$CLAUDE_MD_TEXT"
 check "AC7 -- verb-first naming convention documented (require-*)" '`require-*.json`' "$CLAUDE_MD_TEXT"
@@ -936,9 +1095,56 @@ check "EDMV4-T25 AC7 -- md output path" '${OUTPUT_DIR}/lens-L12.md' "$L12_TEXT"
 check "EDMV4-T25 AC7 -- jsonl output path" '${OUTPUT_DIR}/lens-L12.jsonl' "$L12_TEXT"
 check "EDMV4-T25 AC7 -- schema line names lens L12" '"lens":"L12"' "$L12_TEXT"
 
+# =================================================================================================
+# CA-014: the four edm-lint-artifacts assertions in this file (T25 AC8, T27 AC10, T26 AC11,
+# T32 AC7) were written as:
+#     out="$(bash .../edm-lint-artifacts --path ...)"
+#     rc=$?
+# Under this file's own `set -euo pipefail`, a non-zero command substitution aborts the script at
+# the assignment, so `rc=$?` was only ever reached on success and read 0 every time. A REAL lint
+# violation therefore ended the suite with no failing assertion at all -- the run just stopped.
+# All four now capture the status with `rc=0` followed by `... || rc=$?`, never `|| true`, which
+# would trade one vacuity for another.
+#
+# Two controls, run once here and covering all four sites, which share the identical shape:
+#   1. The shell semantics: the unguarded form does not survive a failing command; the guarded
+#      form does and carries the real status through.
+#   2. The real command: edm-lint-artifacts genuinely exits non-zero over a fixture carrying a
+#      real violation, so the four guarded assertions have something to catch.
+W8_CA014_UNGUARDED="$(bash -c 'set -euo pipefail; out="$(false)"; rc=$?; echo "reached rc=${rc}"' 2>/dev/null; printf 'exit=%s' "$?")"
+check "CA-014 control (1a) -- the unguarded var=\$(cmd); rc=\$? form dies at the assignment: rc is never read" \
+  "exit=1" "$W8_CA014_UNGUARDED"
+check_absent "CA-014 control (1b) -- and it therefore never reports the failing status it claims to capture" \
+  "reached" "$W8_CA014_UNGUARDED"
+W8_CA014_GUARDED="$(bash -c 'set -euo pipefail; rc=0; out="$(false)" || rc=$?; echo "reached rc=${rc}"' 2>/dev/null; printf 'exit=%s' "$?")"
+check "CA-014 control (1c) -- the guarded form survives and carries the real non-zero status through" \
+  "reached rc=1" "$W8_CA014_GUARDED"
+
+# w8_ca014_lint_violation_rc -- prints edm-lint-artifacts' exit status over a scratch fixture whose
+# only content is a real class-1 violation (an attribution trailer, pure ASCII so this control is
+# not itself testing the unicode class).
+w8_ca014_lint_violation_rc() {
+  local dir rc=0
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca014.XXXXXX")"
+  {
+    printf '%s\n' '# CA-014 control fixture'
+    printf '%s\n' ''
+    printf '%s\n' 'Co-Authored-By: Nobody <nobody@example.com>'
+  } > "${dir}/violation.md"
+  bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "$dir" >/dev/null 2>&1 || rc=$?
+  rm -rf "$dir"
+  printf '%s' "$rc"
+}
+W8_CA014_LINT_RC="$(w8_ca014_lint_violation_rc)"
+if [[ "$W8_CA014_LINT_RC" -ne 0 ]]; then
+  pass "CA-014 control (2) -- edm-lint-artifacts exits ${W8_CA014_LINT_RC} over a fixture carrying a real violation, and this suite is still running to report it"
+else
+  fail "CA-014 control (2) -- edm-lint-artifacts exited 0 over a fixture carrying a real attribution-trailer violation; the four guarded lint assertions below would prove nothing"
+fi
+
 echo "EDMV4-T25 AC8 -- ASCII-only (edm-lint-artifacts clean over agents/)"
-t25_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${PLUGIN_DIR}/agents/" 2>&1)"
-t25_lint_exit=$?
+t25_lint_exit=0
+t25_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${PLUGIN_DIR}/agents/" 2>&1)" || t25_lint_exit=$?
 [[ "$t25_lint_exit" -eq 0 ]] && pass "EDMV4-T25 AC8 -- edm-lint-artifacts --path agents/ is clean" \
   || fail "EDMV4-T25 AC8 -- edm-lint-artifacts reported violations: ${t25_lint_out}"
 
@@ -1055,8 +1261,8 @@ else
   fail "EDMV4-T27 AC10 -- edm-check-grants exited non-zero: $(cat "${SCRIPT_DIR}/.t27-grants.err")"
 fi
 rm -f "${SCRIPT_DIR}/.t27-grants.err"
-t27_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${PLUGIN_DIR}/agents/" 2>&1)"
-t27_lint_exit=$?
+t27_lint_exit=0
+t27_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${PLUGIN_DIR}/agents/" 2>&1)" || t27_lint_exit=$?
 [[ "$t27_lint_exit" -eq 0 ]] && pass "EDMV4-T27 AC10 -- edm-lint-artifacts --path agents/ is clean" \
   || fail "EDMV4-T27 AC10 -- edm-lint-artifacts reported violations: ${t27_lint_out}"
 
@@ -1151,8 +1357,8 @@ else
   fail "EDMV4-T26 AC11 -- edm-check-grants exited non-zero: $(cat "${SCRIPT_DIR}/.t26-grants.err")"
 fi
 rm -f "${SCRIPT_DIR}/.t26-grants.err"
-t26_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${PLUGIN_DIR}/agents/" 2>&1)"
-t26_lint_exit=$?
+t26_lint_exit=0
+t26_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "${PLUGIN_DIR}/agents/" 2>&1)" || t26_lint_exit=$?
 [[ "$t26_lint_exit" -eq 0 ]] && pass "EDMV4-T26 AC11 -- edm-lint-artifacts --path agents/ is clean" \
   || fail "EDMV4-T26 AC11 -- edm-lint-artifacts reported violations: ${t26_lint_out}"
 
@@ -1327,8 +1533,8 @@ for t32_new_lens in L12 L13 L14; do
 done
 
 # ---- AC7: fixture content is ASCII-only ---------------------------------------------------------
-t32_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "$T32_FIXTURE_DIR" 2>&1)"
-t32_lint_status=$?
+t32_lint_status=0
+t32_lint_out="$(bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" --path "$T32_FIXTURE_DIR" 2>&1)" || t32_lint_status=$?
 [[ "$t32_lint_status" -eq 0 ]] \
   && pass "T32 AC7 -- edm-lint-artifacts --path over the fixture directory exits 0" \
   || fail "T32 AC7 -- edm-lint-artifacts --path exited ${t32_lint_status}: ${t32_lint_out}"
@@ -1841,7 +2047,7 @@ t12_marker_lifecycle_tests() {
 
   # AC6: exactly one line, PREFIX<TAB>initiative_dir<TAB>UTC-ISO-8601, a literal tab separator.
   T12_MARKER_LINES="$(wc -l < "$T12_MARKER" | tr -d ' ')"
-  check "EDMV4-T12 AC6 -- marker holds exactly one line" "1" "$T12_MARKER_LINES"
+  check_num "EDMV4-T12 AC6 -- marker holds exactly one line" "1" "$T12_MARKER_LINES"
 
   IFS=$'\t' read -r T12_A_PREFIX T12_A_DIR T12_A_TS < "$T12_MARKER"
   check "EDMV4-T12 AC6 -- marker field 1 is the PREFIX" "T12MKA" "$T12_A_PREFIX"
@@ -1853,7 +2059,7 @@ t12_marker_lifecycle_tests() {
     fail "EDMV4-T12 AC6 -- marker field 3 is not UTC ISO-8601: got [${T12_A_TS}]"
   fi
   T12_TAB_LINES="$(grep -c "$(printf '\t')" "$T12_MARKER" || true)"
-  check "EDMV4-T12 AC6 -- marker line contains a literal tab byte" "1" "$T12_TAB_LINES"
+  check_num "EDMV4-T12 AC6 -- marker line contains a literal tab byte" "1" "$T12_TAB_LINES"
 
   # AC7: the marker lives outside the repository -- no working-tree change, nothing under SRD_ROOT.
   T12_GIT_AFTER="$(git status --porcelain)"
@@ -1966,7 +2172,7 @@ t12_marker_lifecycle_tests() {
     pass "EDMV4-T12 AC5 -- stale marker for T12MKB removed by session-start"
   fi
   T12_SS_REMOVAL_LINES="$(printf '%s\n' "$T12_SS_OUT" | grep -c 'removed stale Phase-6 marker' || true)"
-  check "EDMV4-T12 AC5 -- exactly one removal line printed" "1" "$T12_SS_REMOVAL_LINES"
+  check_num "EDMV4-T12 AC5 -- exactly one removal line printed" "1" "$T12_SS_REMOVAL_LINES"
 
   # (b) an absent marker is recreated when some initiative genuinely IS at phase 6.
   T12MKB_STATE="${T12MKB_DIR}/.edm-state.json"
@@ -2225,8 +2431,8 @@ check "EDMV4-T46 AC5 -- edm-stop-gate runs edm-state validate" \
 # ---- AC6/AC7: Stop array length 1, its hooks array length 2, checkpoint entry byte-identical ----
 T46_STOP_LEN="$(jq '.hooks.Stop | length' "$HOOKS_JSON")"
 T46_STOP_HOOKS_LEN="$(jq '.hooks.Stop[0].hooks | length' "$HOOKS_JSON")"
-check "EDMV4-T46 AC6 -- Stop still has exactly one matcher block" "1" "$T46_STOP_LEN"
-check "EDMV4-T46 AC6 -- that block's hooks array now has exactly two entries" "2" "$T46_STOP_HOOKS_LEN"
+check_num "EDMV4-T46 AC6 -- Stop still has exactly one matcher block" "1" "$T46_STOP_LEN"
+check_num "EDMV4-T46 AC6 -- that block's hooks array now has exactly two entries" "2" "$T46_STOP_HOOKS_LEN"
 T46_CHECKPOINT_CMD="$(jq -r '.hooks.Stop[0].hooks[0].command' "$HOOKS_JSON")"
 check "EDMV4-T46 AC7 -- checkpoint-if-active entry is byte-identical" \
   "command -v edm-state >/dev/null 2>&1 && edm-state checkpoint-if-active || true" "$T46_CHECKPOINT_CMD"
@@ -2607,7 +2813,7 @@ fi
 # internal/setup path (the shape edm-hookify's exit 1 maps to) could ever be mistaken for a block.
 # Positive control: a copy with a second, injected 'exit 2' must trip the same count.
 T44_STOPGATE_EXIT2_COUNT="$(count_matches -E 'exit 2($|[^0-9])' "$EDM_STOP_GATE")"
-check "EDMV4-T44 AC5 -- edm-stop-gate spends its blocking exit code (2) exactly once -- no internal/setup path could be mistaken for a block" \
+check_num "EDMV4-T44 AC5 -- edm-stop-gate spends its blocking exit code (2) exactly once -- no internal/setup path could be mistaken for a block" \
   "1" "$T44_STOPGATE_EXIT2_COUNT"
 T44_STOPGATE_BROKEN="$(printf '%s\nexit 2\n' "$(cat "$EDM_STOP_GATE")")"
 T44_STOPGATE_BROKEN_COUNT="$(printf '%s\n' "$T44_STOPGATE_BROKEN" | count_matches -E 'exit 2($|[^0-9])')"
@@ -2696,7 +2902,7 @@ else
   fail "EDMV4-T18 AC1(a)/AC8 -- delta path missing or not a real file after a successful write: [${T18_AFTER_DELTA}]"
 fi
 
-T18_DELTA_HEADINGS="$(grep -c '^### ' "$T18_AFTER_DELTA" 2>/dev/null || echo 0)"
+T18_DELTA_HEADINGS="$(w8_count_lines '^### ' "$T18_AFTER_DELTA")"
 check "EDMV4-T18 AC2 -- fresh delta stub carries the four Living-Library contract headings" \
   "## Anti-Patterns" "$(cat "$T18_AFTER_DELTA" 2>/dev/null)"
 check "EDMV4-T18 AC2 -- delta stub's fourth heading matches the qc-specific wording" \
@@ -2709,8 +2915,8 @@ fi
 
 # ---- AC3/dedup: re-running does not re-append (dedup against the delta) -------------------------
 t18_run_update_patterns EDMV4T18 qc >/dev/null
-T18_DEDUP_COUNT="$(grep -c '### A brand new synthetic QC finding for the T18 smoke check' "$T18_AFTER_DELTA" 2>/dev/null || echo 0)"
-check "EDMV4-T18 AC3 -- re-running update-patterns does not duplicate the entry in the delta" "1" "$T18_DEDUP_COUNT"
+T18_DEDUP_COUNT="$(w8_count_lines '### A brand new synthetic QC finding for the T18 smoke check' "$T18_AFTER_DELTA")"
+check_num "EDMV4-T18 AC3 -- re-running update-patterns does not duplicate the entry in the delta" "1" "$T18_DEDUP_COUNT"
 
 # ---- AC5: harvest-provenance.json records write_count and a first-write timestamp ----------------
 T18_PROV="${T18_DATA}/patterns/harvest-provenance.json"
@@ -2805,7 +3011,7 @@ for t19_f in $T19_CALL_SITES; do
     fail "EDMV4-T19 AC2 -- ${t19_f} does not call 'edm-state update-patterns <PREFIX> ...'"
   fi
 done
-check "EDMV4-T19 AC2 -- exactly six skills call edm-state update-patterns <PREFIX> ..." "6" "$T19_CALL_SITE_COUNT"
+check_num "EDMV4-T19 AC2 -- exactly six skills call edm-state update-patterns <PREFIX> ..." "6" "$T19_CALL_SITE_COUNT"
 
 # ---- AC4: the second copy of the same stale claim, in docs/audit-patterns/README.md, is
 # corrected the same way in the same commit -- its own Consumers section already lists all six
@@ -2887,8 +3093,8 @@ check "EDMV4-T20 AC1 -- the harvested finding is spliced under the correct inser
 # ---- AC5: re-running update-patterns against the same fixture/delta appends the finding exactly
 # once -- de-duplication against the DELTA (distinct from AC4's de-duplication against the SEED). -
 t20_ac1_update EDMV4T20AC1 code >/dev/null
-T20_AC5_COUNT="$(grep -c '### CA-9001' "$T20_AC1_DELTA" 2>/dev/null || echo 0)"
-check "EDMV4-T20 AC5 -- running update-patterns twice against the same fixture appends the finding exactly once" \
+T20_AC5_COUNT="$(w8_count_lines '### CA-9001' "$T20_AC1_DELTA")"
+check_num "EDMV4-T20 AC5 -- running update-patterns twice against the same fixture appends the finding exactly once" \
   "1" "$T20_AC5_COUNT"
 
 # ---- AC2: shipped-tree-writable fallback (branch b) reproduces TODAY'S EXACT behaviour: with
@@ -3005,7 +3211,7 @@ cat > "${T20_AC4_SRD}/edm/EDMV4T20AC4__x/.edm-state.json" <<'EOF'
 EOF
 cp "${T20_PATTERNS_FIXTURES}/qc-seed-duplicate.md" "${T20_AC4_SRD}/edm/EDMV4T20AC4__x/qc/qc-summary.md"
 
-T20_AC4_SEED_HAS_TITLE="$(grep -c '^### PASS based on code structure, not behavior$' "${PLUGIN_DIR}/docs/audit-patterns/qc-audit.md" 2>/dev/null || echo 0)"
+T20_AC4_SEED_HAS_TITLE="$(w8_count_lines '^### PASS based on code structure, not behavior$' "${PLUGIN_DIR}/docs/audit-patterns/qc-audit.md")"
 if [[ "$T20_AC4_SEED_HAS_TITLE" -ge 1 ]]; then
   pass "EDMV4-T20 AC4 positive control -- the shipped qc-audit.md seed genuinely carries the title this fixture reuses"
 else
@@ -3021,11 +3227,11 @@ check "EDMV4-T20 AC4 -- a title already present in the shipped seed produces no 
 
 T20_AC4_STATE="${T20_AC4_SRD}/edm/EDMV4T20AC4__x/.edm-state.json"
 T20_AC4_NEWFINDINGS="$(jq -r '.patterns_updates.qc.new_findings' "$T20_AC4_STATE" 2>/dev/null)"
-check "EDMV4-T20 AC4 -- new_findings is recorded as 0" "0" "$T20_AC4_NEWFINDINGS"
+check_num "EDMV4-T20 AC4 -- new_findings is recorded as 0" "0" "$T20_AC4_NEWFINDINGS"
 
 T20_AC4_DELTA="${T20_AC4_DATA}/patterns/qc-audit.md"
-T20_AC4_DELTA_HEADINGS="$(grep -c '^### ' "$T20_AC4_DELTA" 2>/dev/null || echo 0)"
-check "EDMV4-T20 AC4 -- the fresh delta still carries zero ### entries (nothing was appended)" "0" "$T20_AC4_DELTA_HEADINGS"
+T20_AC4_DELTA_HEADINGS="$(w8_count_lines '^### ' "$T20_AC4_DELTA")"
+check_num "EDMV4-T20 AC4 -- the fresh delta still carries zero ### entries (nothing was appended)" "0" "$T20_AC4_DELTA_HEADINGS"
 
 # ---- AC6: get-patterns --paths prints exactly 2 lines with an EMPTY second line, in BOTH: (i) no
 # delta exists yet under a resolvable data directory, and (ii) the data directory is itself
@@ -3154,9 +3360,9 @@ check "EDMV4-T39 AC7 -- rubric version is written into the JSON output" \
 
 # ---- AC1/AC2: six categories present, each declared with a raw_max of 10. ----------------------
 T39_CATS="$(jq -r '.categories | length' "$T39_JSON")"
-check "EDMV4-T39 AC1 -- exactly six categories reported" "6" "$T39_CATS"
+check_num "EDMV4-T39 AC1 -- exactly six categories reported" "6" "$T39_CATS"
 T39_BADMAX="$(jq -r '[.categories[] | select(.raw_max != 10)] | length' "$T39_JSON")"
-check "EDMV4-T39 AC1 -- every category's raw_max is 10" "0" "$T39_BADMAX"
+check_num "EDMV4-T39 AC1 -- every category's raw_max is 10" "0" "$T39_BADMAX"
 
 # ---- AC3: normalization -- a category earning 5 of 10 raw points reports 5.0 exactly, and the
 # overall score is the MEAN of applicable categories (divides by the applicable count, not 6).
@@ -3196,7 +3402,7 @@ fi
 
 # ---- AC8: every check carries a non-null, non-empty fix string, including PASSING checks. ------
 T39_MISSING_FIX="$(jq -r '[.checks[] | select((.fix == null) or (.fix == ""))] | length' "$T39_JSON")"
-check "EDMV4-T39 AC8 -- no check has a null or empty fix string" "0" "$T39_MISSING_FIX"
+check_num "EDMV4-T39 AC8 -- no check has a null or empty fix string" "0" "$T39_MISSING_FIX"
 T39_PASSING_WITH_FIX="$(jq -r '[.checks[] | select(.pass == true and .fix != null and .fix != "")] | length' "$T39_JSON")"
 if [[ "$T39_PASSING_WITH_FIX" -gt 0 ]]; then
   pass "EDMV4-T39 AC8 -- at least one PASSING check still carries a non-empty fix (${T39_PASSING_WITH_FIX} found) -- fix is mandatory on every check, not only failing ones"
@@ -3244,14 +3450,55 @@ check 'EDMV4-T40 -- edm-state validate is invoked as a process with its exit cap
 check_absent 'EDMV4-T40 -- edm-repo-readiness never sources edm-state' \
   'source "$EDM_STATE_BIN"' "$(cat "$REPO_READINESS")"
 
-# ---- EDMV4-T40 AC8: the script never writes to .edm-state.json -- hash the real repo's active
-# initiative's state file before and after a full run and assert it is byte-unchanged.
-T40_REAL_STATE="${REPO_ROOT}/SRD/edm/EDMV4__ecc-integration/.edm-state.json"
-if [[ -f "$T40_REAL_STATE" ]]; then
-  check_state_unchanged "$T40_REAL_STATE" "$REPO_READINESS" --json "${TMP}/t40-ac8.json"
-else
-  echo "  NOTE: EDMV4-T40 AC8 -- real fixture state file not found at ${T40_REAL_STATE}; skipping the hash-unchanged check"
-fi
+# ---- EDMV4-T40 AC8: the script never writes to .edm-state.json -- hash an initiative's state file
+# before and after a full run and assert it is byte-unchanged.
+#
+# CA-019: this used to hash a PINNED live-initiative path
+# (SRD/edm/EDMV4__ecc-integration/.edm-state.json) and, when that path was absent, print an
+# uncounted soft `NOTE` and return. The precondition is precisely the thing that disappears on
+# archive, so AC8 stopped being checked exactly when the tree changed underneath it -- with no
+# failure, no count, and nothing in the totals to show coverage had been lost. The fixture is now
+# BUILT here instead of pinned, so the assertion always runs and never depends on the state of the
+# repository it audits.
+T40_AC8_ROOT="${TMP}/t40-ac8-scratch"
+T40_AC8_SRD="${T40_AC8_ROOT}/SRD"
+mkdir -p "${T40_AC8_SRD}/edm/EDMV4T40AC8__x"
+T40_AC8_DIR="${T40_AC8_SRD}/edm/EDMV4T40AC8__x"
+T40_AC8_STATE="${T40_AC8_DIR}/.edm-state.json"
+cat > "$T40_AC8_STATE" <<'EOF'
+{"prefix":"EDMV4T40AC8","current_phase":6,"product_name":"edm","initiative_description":"x"}
+EOF
+
+# Positive control: the scratch initiative is genuinely discoverable through the same
+# `edm-state list --paths` call edm-repo-readiness resolves its active prefixes with. Without this,
+# a byte-unchanged verdict could equally mean the run never looked at the file at all.
+T40_AC8_LISTED="LIST-FAILED"
+T40_AC8_LISTED="$(EDM_SRD_ROOT="$T40_AC8_SRD" "$EDM_STATE" list --paths 2>/dev/null)" || T40_AC8_LISTED="LIST-FAILED"
+check "EDMV4-T40 AC8 positive control -- the scratch initiative is discoverable via the same edm-state list --paths edm-repo-readiness resolves active prefixes with" \
+  "$T40_AC8_DIR" "$T40_AC8_LISTED"
+
+t40_ac8_run_readiness() {
+  (
+    cd "$T40_AC8_ROOT" || return 1
+    EDM_SRD_ROOT="$T40_AC8_SRD" CLAUDE_PROJECT_DIR="$T40_AC8_ROOT" \
+      "$REPO_READINESS" --json "${TMP}/t40-ac8.json"
+  )
+}
+check_state_unchanged "$T40_AC8_STATE" t40_ac8_run_readiness
+
+# Negative control: check_state_unchanged must FAIL when the state file really is written to.
+# Run against a COPY so the assertion above is not retroactively invalidated, and in a command
+# substitution so the deliberate FAIL line and counters never reach this suite's tally.
+T40_AC8_NEG_STATE="${T40_AC8_ROOT}/neg-state.json"
+cp "$T40_AC8_STATE" "$T40_AC8_NEG_STATE"
+t40_ac8_mutate_state() { printf '\n' >> "$T40_AC8_NEG_STATE"; }
+T40_AC8_NEG="$(
+  PASS=0; FAIL=0
+  check_state_unchanged "$T40_AC8_NEG_STATE" t40_ac8_mutate_state >/dev/null 2>&1
+  echo "PASS=$PASS FAIL=$FAIL"
+)"
+check "EDMV4-T40 AC8 negative control -- the byte-identity assertion FAILS when the command under test does write to the state file" \
+  "PASS=0 FAIL=1" "$T40_AC8_NEG"
 
 # ---- EDMV4-T40 AC9: running against a repository with NO initiatives at all still succeeds
 # (exit 0), scoring what it can. Also proves the AC5-style exclusion: the no-initiatives score
@@ -3364,11 +3611,11 @@ t11_ac5_probe="$({ printf '%s\n' "$t11_ac5_body" | sed '1a\
 
 # ---- AC6: no shell-command-inspection detection (D15 descope). ----------------------------------
 t11_ac6_count="$(grep -ci 'destructive\|heredoc\|subshell' "$GATEGUARD" || true)"
-check "EDMV4-T11 AC6 -- edm-gateguard carries no destructive/heredoc/subshell detection" "0" "$t11_ac6_count"
+check_num "EDMV4-T11 AC6 -- edm-gateguard carries no destructive/heredoc/subshell detection" "0" "$t11_ac6_count"
 
 # ---- AC7: required-binary set unchanged -- no node/python/npx/pip. -------------------------------
 t11_ac7_count="$(grep -cE '\b(node|python3?|npx|pip)\b' "$GATEGUARD" || true)"
-check "EDMV4-T11 AC7 -- edm-gateguard references no node/python/npx/pip" "0" "$t11_ac7_count"
+check_num "EDMV4-T11 AC7 -- edm-gateguard references no node/python/npx/pip" "0" "$t11_ac7_count"
 
 # ---- AC8: the marker `test -f` check precedes the first jq reference, by line number. ------------
 t11_marker_line="$(grep -n 'test -f' "$GATEGUARD" | head -1 | cut -d: -f1)"
@@ -3575,7 +3822,7 @@ else
 fi
 
 T13_DEFINE_COUNT="$(count_matches '^emit_decision() {' "$GATEGUARD")"
-check "EDMV4-T13 -- edm-gateguard defines emit_decision exactly once" "1" "$T13_DEFINE_COUNT"
+check_num "EDMV4-T13 -- edm-gateguard defines emit_decision exactly once" "1" "$T13_DEFINE_COUNT"
 
 T13_OUTSIDE_TEXT="$({ awk -v needle="emit_decision() {" '
   index($0, needle) == 1 { skipping=1 }
@@ -3588,10 +3835,10 @@ T13_OUTSIDE_TEXT="$({ awk -v needle="emit_decision() {" '
 # decision emission has and prose describing it cannot: the deny exit code (2, word-boundaried so
 # it never matches "exit 20" or similar) and the JSON key name "permissionDecision" itself. --------
 T13_OUTSIDE_EXIT2="$(printf '%s\n' "$T13_OUTSIDE_TEXT" | count_matches -E 'exit 2($|[^0-9])')"
-check "EDMV4-T13 AC1 -- no deny exit code (2) appears outside emit_decision's body" "0" "$T13_OUTSIDE_EXIT2"
+check_num "EDMV4-T13 AC1 -- no deny exit code (2) appears outside emit_decision's body" "0" "$T13_OUTSIDE_EXIT2"
 
 T13_OUTSIDE_PERMDEC="$(printf '%s\n' "$T13_OUTSIDE_TEXT" | count_matches 'permissionDecision')"
-check "EDMV4-T13 AC1 -- no 'permissionDecision' JSON key appears outside emit_decision's body" "0" "$T13_OUTSIDE_PERMDEC"
+check_num "EDMV4-T13 AC1 -- no 'permissionDecision' JSON key appears outside emit_decision's body" "0" "$T13_OUTSIDE_PERMDEC"
 
 # Positive control: inject a real 'exit 2' line and a real 'permissionDecision' occurrence into a
 # copy of the outside text, proving the two zero-counts above are not vacuous.
@@ -3608,7 +3855,7 @@ fi
 # setup-error path inside it routes through the shared die() helper (itself defaulting to exit 1),
 # so a policy refusal can never accidentally reuse the setup-error code. -------------------------
 T13_FN_EXIT1_COUNT="$(printf '%s\n' "$T13_EMIT_FN_TEXT" | count_matches -E 'exit 1($|[^0-9])')"
-check "EDMV4-T13 AC5 -- emit_decision's own body never spells 'exit 1' directly (setup errors route through die())" "0" "$T13_FN_EXIT1_COUNT"
+check_num "EDMV4-T13 AC5 -- emit_decision's own body never spells 'exit 1' directly (setup errors route through die())" "0" "$T13_FN_EXIT1_COUNT"
 
 T13_FN_BROKEN="$(printf '%s\nexit 1\n' "$T13_EMIT_FN_TEXT")"
 T13_FN_BROKEN_COUNT="$(printf '%s\n' "$T13_FN_BROKEN" | count_matches -E 'exit 1($|[^0-9])')"
@@ -3677,8 +3924,11 @@ check "EDMV4-T13 AC3 -- exit-code-mode denial's fact text reaches stderr" "fact 
 
 T13_EXIT_ALLOW_RC=0
 T13_EXIT_ALLOW_OUT="$(EDM_GATEGUARD_DENY_MODE=exit-code "$T13_HARNESS" allow '' 2>"${T13_TMP}/ac3-allow.stderr")" || T13_EXIT_ALLOW_RC=$?
-check "EDMV4-T13 AC3 -- exit-code-mode allow still exits 0 with empty stdout" "0" "$T13_EXIT_ALLOW_RC"
-check "EDMV4-T13 AC3 -- exit-code-mode allow prints nothing to stdout" "" "$T13_EXIT_ALLOW_OUT"
+check_num "EDMV4-T13 AC3 -- exit-code-mode allow still exits 0 with empty stdout" "0" "$T13_EXIT_ALLOW_RC"
+# CA-011: this was `check "..." "" "$T13_EXIT_ALLOW_OUT"` -- an empty needle is a substring of
+# every string, so it passed on any stdout at all while its label claimed the opposite. Assert
+# emptiness directly, and name what was actually printed when it is not empty.
+w8_check_empty "EDMV4-T13 AC3 -- exit-code-mode allow prints nothing to stdout" "$T13_EXIT_ALLOW_OUT"
 
 # ---- AC4: any other EDM_GATEGUARD_DENY_MODE value is a setup error naming both legal values,
 # exit 1, no block -- regardless of which decision was requested (checked on both allow and deny
@@ -3697,12 +3947,56 @@ check "EDMV4-T13 AC4 -- setup-error message names 'exit-code'" "exit-code" "$T13
 
 T13_BADMODE_ALLOW_RC=0
 EDM_GATEGUARD_DENY_MODE=yes "$T13_HARNESS" allow '' >/dev/null 2>"${T13_TMP}/ac4-allow.stderr" || T13_BADMODE_ALLOW_RC=$?
-check "EDMV4-T13 AC4 -- an invalid mode is a setup error even on an allow decision" "1" "$T13_BADMODE_ALLOW_RC"
+check_num "EDMV4-T13 AC4 -- an invalid mode is a setup error even on an allow decision" "1" "$T13_BADMODE_ALLOW_RC"
 
-# ---- AC5 (behavioral half): the only nonzero exit codes emit_decision ever produces are 2 (a
-# real exit-code-mode denial, above) and 1 (the setup error just proven above) -- never a policy
-# refusal reusing the setup-error code. --------------------------------------------------------
-pass "EDMV4-T13 AC5 -- the only two nonzero exits observed above are 2 (exit-code deny, AC3) and 1 (setup error, AC4) -- no policy refusal reuses exit 1"
+# ---- AC5 (behavioral half): the only exit codes emit_decision ever produces are 0 (allow, and a
+# json-mode denial), 2 (an exit-code-mode denial) and 1 (a setup error) -- never a policy refusal
+# reusing the setup-error code, and never a fourth, undocumented code. ----------------------------
+#
+# CA-013: this was a bare top-level `pass` claiming exactly that taxonomy with NOTHING computed or
+# compared -- an unfalsifiable claim inflating the suite's headline assertion count. The exit
+# codes are now driven for real, across every (deny-mode x decision) combination, and the observed
+# SET compared against the documented one.
+t13_ac5_observed_codes() {
+  local harness="$1" spec mode decision rc
+  {
+    for spec in "json:allow" "json:deny" "exit-code:allow" "exit-code:deny" "yes:allow" "yes:deny"; do
+      mode="${spec%%:*}"
+      decision="${spec##*:}"
+      rc=0
+      EDM_GATEGUARD_DENY_MODE="$mode" "$harness" "$decision" 'ac5 reason' >/dev/null 2>&1 || rc=$?
+      printf '%s\n' "$rc"
+    done
+  } | sort -u | tr '\n' ' ' | sed 's/ *$//'
+}
+
+T13_AC5_CODES="$(t13_ac5_observed_codes "$T13_HARNESS")"
+if [[ "$T13_AC5_CODES" == "0 1 2" ]]; then
+  pass "EDMV4-T13 AC5 -- driving every deny-mode x decision combination yields exactly the documented exit set {0, 1, 2}: no policy refusal reuses exit 1 and no fourth code exists"
+else
+  fail "EDMV4-T13 AC5 -- observed exit set [${T13_AC5_CODES}], expected exactly [0 1 2]"
+fi
+
+# CA-013 negative control: a harness whose emit_decision returns an undocumented code (3) where it
+# should return 0 must make the assertion above FAIL. Every arm of emit_decision exits the process
+# itself, so the code has to be changed INSIDE the extracted function body -- appending to the
+# generated harness would never be reached, which is itself worth stating: an appended `exit 3`
+# was the first shape tried here and the control correctly reported that it proved nothing.
+T13_AC5_BROKEN="${T13_TMP}/emit-decision-harness-undocumented.sh"
+sed 's/^\([[:space:]]*\)exit 0$/\1exit 3/' "$T13_HARNESS" > "$T13_AC5_BROKEN"
+chmod +x "$T13_AC5_BROKEN"
+T13_AC5_BROKEN_SUBS="$(w8_count_lines '^[[:space:]]*exit 3$' "$T13_AC5_BROKEN")"
+if [[ "$T13_AC5_BROKEN_SUBS" -ge 1 ]]; then
+  pass "EDMV4-T13 AC5 negative control setup -- the scratch harness genuinely carries ${T13_AC5_BROKEN_SUBS} substituted 'exit 3' line(s); the control below is not testing an unmodified copy"
+else
+  fail "EDMV4-T13 AC5 negative control setup FAILED -- no 'exit 0' line was substituted in the scratch harness, so the control below would compare two identical harnesses"
+fi
+T13_AC5_BROKEN_CODES="$(t13_ac5_observed_codes "$T13_AC5_BROKEN")"
+if [[ "$T13_AC5_BROKEN_CODES" != "0 1 2" ]]; then
+  pass "EDMV4-T13 AC5 negative control -- a harness returning the undocumented code 3 yields [${T13_AC5_BROKEN_CODES}], which the assertion above rejects"
+else
+  fail "EDMV4-T13 AC5 negative control FAILED -- an undocumented exit code still produced the documented set [0 1 2]; the assertion above proves nothing"
+fi
 
 # ---- AC7: an emitted denial parses under jq -e, so an unparseable payload would be a test
 # failure rather than a silently unenforced gate. -------------------------------------------------
@@ -3746,7 +4040,7 @@ fi
 
 T13_VOCAB_RC=0
 (cd "$PLUGIN_DIR" && bash bin/edm-check-vocabulary >/dev/null 2>&1) || T13_VOCAB_RC=$?
-check "EDMV4-T13 AC9 -- edm-check-vocabulary passes over the updated edm-gateguard (and the rest of bin/)" "0" "$T13_VOCAB_RC"
+check_num "EDMV4-T13 AC9 -- edm-check-vocabulary passes over the updated edm-gateguard (and the rest of bin/)" "0" "$T13_VOCAB_RC"
 
 # ---- End-to-end sanity: with a Phase 6 marker present and no ticket having wired a real deny
 # condition yet (EDMV4-T14/T15's job), the gate still allows silently -- but now via
@@ -4135,7 +4429,7 @@ check_absent "EDMV4-T14 AC2 -- Write denial does not carry the Edit variant's im
 
 # ---- AC3: fact 4 is the ticket-AC form, never a restatement of the user's current instruction ----
 T14_AC3_COUNT="$(count_matches "quote the user.s current instruction" "$GATEGUARD")"
-check "EDMV4-T14 AC3 -- edm-gateguard never asks the agent to quote the user's current instruction" "0" "$T14_AC3_COUNT"
+check_num "EDMV4-T14 AC3 -- edm-gateguard never asks the agent to quote the user's current instruction" "0" "$T14_AC3_COUNT"
 T14_AC3_CONTROL="$(printf "%s\nquote the user's current instruction\n" "$(cat "$GATEGUARD")")"
 T14_AC3_CONTROL_COUNT="$(printf '%s\n' "$T14_AC3_CONTROL" | count_matches "quote the user.s current instruction")"
 [[ "$T14_AC3_CONTROL_COUNT" -ge 1 ]] \
@@ -4417,7 +4711,7 @@ while [[ "$_t15_ac6_i" -le 500 ]]; do
 done
 t14_run "$T15_AC6_PROJ" "$T15_AC6_DATA" '{"tool_name":"Edit","tool_input":{"file_path":"the-501st.js"}}'
 T15_AC6_LINE_COUNT="$(wc -l < "$T15_AC6_CHECKED" | tr -d ' ')"
-check "EDMV4-T15 AC6 -- after a 501st append, the checked-file holds exactly 500 lines" "500" "$T15_AC6_LINE_COUNT"
+check_num "EDMV4-T15 AC6 -- after a 501st append, the checked-file holds exactly 500 lines" "500" "$T15_AC6_LINE_COUNT"
 if grep -Fxq 'old-file-1.js' "$T15_AC6_CHECKED"; then
   fail "EDMV4-T15 AC6 -- the oldest entry (old-file-1.js) is still present; pruning did not remove the oldest first"
 else
@@ -4533,7 +4827,7 @@ T15_AC9_KEY="$(CLAUDE_PROJECT_DIR="$T15_AC9_PROJ" bash -c ". '${DATADIR_LIB}'; e
 printf 'T15PFX\t%s\t2026-09-02T00:00:00Z\n' "$T15_AC9_PROJ" > "${T15_AC9_DATA}/run/${T15_AC9_KEY}.phase6"
 T15_AC9_RC=0
 printf '{"tool_name":"Edit"}' | CLAUDE_PROJECT_DIR="$T15_AC9_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC9_DATA" PATH="$T15_AC9_FAKEBIN" bash "$GATEGUARD" >/dev/null 2>&1 || T15_AC9_RC=$?
-check "EDMV4-T15 AC9 -- jq missing on the GATED path (marker present) exits 1, never 2" "1" "$T15_AC9_RC"
+check_num "EDMV4-T15 AC9 -- jq missing on the GATED path (marker present) exits 1, never 2" "1" "$T15_AC9_RC"
 
 check "EDMV4-T15 AC9 -- the EDM-HELP block states the jq-missing distinction" \
   "once a marker is present" "$(cat "$GATEGUARD")"
@@ -4543,8 +4837,10 @@ T15_AC10_PROJ="" T15_AC10_DATA=""
 t14_fresh_marker_env T15_AC10_PROJ T15_AC10_DATA
 T15_AC10_RC=0
 T15_AC10_OUT="$(printf 'not json' | CLAUDE_PROJECT_DIR="$T15_AC10_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC10_DATA" bash "$GATEGUARD" 2>/dev/null)" || T15_AC10_RC=$?
-check "EDMV4-T15 AC10 -- an unparseable stdin payload exits 1" "1" "$T15_AC10_RC"
-check "EDMV4-T15 AC10 -- an unparseable stdin payload's stdout is empty" "" "$T15_AC10_OUT"
+check_num "EDMV4-T15 AC10 -- an unparseable stdin payload exits 1" "1" "$T15_AC10_RC"
+# CA-011 (second site): same empty-needle shape as EDMV4-T13 AC3 above -- rewritten as a direct
+# emptiness test so a gate that started printing on the unparseable-payload path fails here.
+w8_check_empty "EDMV4-T15 AC10 -- an unparseable stdin payload's stdout is empty" "$T15_AC10_OUT"
 
 # ---- AC11: a marker present whose named initiative directory no longer exists allows. -----------
 T15_AC11_TMP=""
@@ -4623,7 +4919,7 @@ check "EDMV4-T45 AC5 -- git-commit matcher's command is still byte-identical aft
 # ---- AC1 (structural): no second PreToolUse block registered for file events -- exactly one
 # matcher block names Edit|Write|MultiEdit, and the new Bash block is matcher-disjoint from it. --
 T45_FILE_MATCHER_COUNT="$(jq '[.hooks.PreToolUse[] | select(.matcher == "Edit|Write|MultiEdit")] | length' "$HOOKS_JSON")"
-check "EDMV4-T45 AC1 -- exactly one PreToolUse block matches Edit|Write|MultiEdit (no second file-event block)" \
+check_num "EDMV4-T45 AC1 -- exactly one PreToolUse block matches Edit|Write|MultiEdit (no second file-event block)" \
   "1" "$T45_FILE_MATCHER_COUNT"
 T45_BASH_MATCHER_CMD="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[0].command' "$HOOKS_JSON")"
 check "EDMV4-T45 AC4 -- the new Bash matcher's command begins with the edm-bash-gate presence guard" \
@@ -4631,7 +4927,7 @@ check "EDMV4-T45 AC4 -- the new Bash matcher's command begins with the edm-bash-
 
 # ---- AC2 (structural): no second Stop matcher block registered -- still exactly one, two entries.
 T45_STOP_LEN="$(jq '.hooks.Stop | length' "$HOOKS_JSON")"
-check "EDMV4-T45 AC2 -- Stop still has exactly one matcher block (stop-event rules are evaluated IN it, not via a second block)" \
+check_num "EDMV4-T45 AC2 -- Stop still has exactly one matcher block (stop-event rules are evaluated IN it, not via a second block)" \
   "1" "$T45_STOP_LEN"
 
 # ---- AC6: with hookify present (a rule directory exists and is enabled) and the Phase 6 marker
@@ -4744,7 +5040,7 @@ printf '{"tool_name":"Edit","tool_input":{"file_path":"src/foo.js","new_text":"c
   CLAUDE_PROJECT_DIR="${T45_AC7_TMP}/proj" CLAUDE_PLUGIN_DATA="${T45_AC7_TMP}/data" \
   PATH="${T45_AC7_SPYBIN}:${PLUGIN_DIR}/bin:${PATH}" bash "$GATEGUARD" >/dev/null 2>&1 || true
 T45_AC7_COUNT="$(cat "${T45_AC7_TMP}/.hookify_call_count" 2>/dev/null || echo 0)"
-check "EDMV4-T45 AC7 -- a two-condition rule is evaluated via exactly one edm-hookify call, not once per condition" \
+check_num "EDMV4-T45 AC7 -- a two-condition rule is evaluated via exactly one edm-hookify call, not once per condition" \
   "1" "$T45_AC7_COUNT"
 
 # ---- AC8: CLAUDE.md's Hooks behavior documents which events hookify serves and which owns each --
@@ -4768,7 +5064,7 @@ else
 fi
 T45_VOCAB_RC=0
 (cd "$PLUGIN_DIR" && bash bin/edm-check-vocabulary >/dev/null 2>&1) || T45_VOCAB_RC=$?
-check "EDMV4-T45 AC9 -- edm-check-vocabulary passes over the updated hooks.json and the new edm-bash-gate" "0" "$T45_VOCAB_RC"
+check_num "EDMV4-T45 AC9 -- edm-check-vocabulary passes over the updated hooks.json and the new edm-bash-gate" "0" "$T45_VOCAB_RC"
 
 echo
 
@@ -5377,7 +5673,9 @@ done
 # ---- /bin/bash --version recorded in suite output, so a run on a host whose /bin/bash is not 3.2
 # is visible in the log rather than silently vacuous.
 T50_BASH_VERSION="$(/bin/bash --version | head -1)"
-pass "EDMV4-T50 -- /bin/bash --version recorded: ${T50_BASH_VERSION}"
+# CA-013: this was a `pass`, which counted a log line as a proven assertion. Recording the
+# interpreter version is diagnostic context, not a claim about anything, so it is an echo.
+echo "  NOTE: EDMV4-T50 -- /bin/bash --version recorded: ${T50_BASH_VERSION}"
 
 echo
 
@@ -5791,7 +6089,11 @@ t52_ac7c_case() {
   fi
 }
 t46_isolate_and_run t52_ac7c_case
-pass "EDMV4-T52 AC7 -- (b) recorded as Not Applicable to edm-stop-gate: its own EDM-HELP block documents a stderr-only, never-JSON contract, so there is no JSON control channel at this emit point for (b) to protect"
+# CA-013: this was a `pass` recording an N/A determination -- a note, not a computed claim, and it
+# inflated the assertion count with something no run could falsify. Demoted to an echo. The
+# determination it records is itself asserted, for real, by the T52 AC7 stderr-only assertions
+# above, which is where the falsifiable half of this belongs.
+echo "  NOTE: EDMV4-T52 AC7 -- (b) recorded as Not Applicable to edm-stop-gate: its own EDM-HELP block documents a stderr-only, never-JSON contract, so there is no JSON control channel at this emit point for (b) to protect"
 
 # ---- AC6 (single-site property): each script's sanitization is not merely present, it is the
 # ONLY path decision/message content can reach output through -- verified structurally, with a
@@ -5852,7 +6154,7 @@ t52_raw_var_only_via_func() {
 # ---- edm-gateguard: emit_decision is the sole function (grep -c == 1), and every emission of
 # "$reason" inside it occurs strictly after the one sanitizer line. -------------------------------
 T52_GG_FUNC_COUNT="$(grep -c '^emit_decision() {' "$GATEGUARD" || true)"
-check "EDMV4-T52 AC6 -- edm-gateguard: emit_decision is defined exactly once" "1" "$T52_GG_FUNC_COUNT"
+check_num "EDMV4-T52 AC6 -- edm-gateguard: emit_decision is defined exactly once" "1" "$T52_GG_FUNC_COUNT"
 
 T52_GG_ORDER_RC=0
 T52_GG_ORDER_MSG="$(t52_ordering_ok "$GATEGUARD" "emit_decision" "LC_ALL=C tr -c" '"$reason"')" || T52_GG_ORDER_RC=$?
@@ -5878,7 +6180,7 @@ fi
 # ---- edm-hookify: hookify_emit_match is the sole function, and the three raw fields it sanitizes
 # are never referenced anywhere else in the file except as arguments passed INTO it. -------------
 T52_HF_FUNC_COUNT="$(grep -c '^hookify_emit_match() {' "$EDM_HOOKIFY" || true)"
-check "EDMV4-T52 AC6 -- edm-hookify: hookify_emit_match is defined exactly once" "1" "$T52_HF_FUNC_COUNT"
+check_num "EDMV4-T52 AC6 -- edm-hookify: hookify_emit_match is defined exactly once" "1" "$T52_HF_FUNC_COUNT"
 
 T52_HF_RAW_HITS="$(t52_raw_var_only_via_func "$EDM_HOOKIFY" "hookify_emit_match" _mname _maction _mmessage)"
 if [[ -z "$T52_HF_RAW_HITS" ]]; then
@@ -5903,7 +6205,7 @@ fi
 # ---- edm-stop-gate: stop_gate_emit_blocking is the sole function, and the two untrusted-text
 # variables it sanitizes are never referenced anywhere else except as call arguments. -------------
 T52_SG_FUNC_COUNT="$(grep -c '^stop_gate_emit_blocking() {' "$EDM_STOP_GATE" || true)"
-check "EDMV4-T52 AC6 -- edm-stop-gate: stop_gate_emit_blocking is defined exactly once" "1" "$T52_SG_FUNC_COUNT"
+check_num "EDMV4-T52 AC6 -- edm-stop-gate: stop_gate_emit_blocking is defined exactly once" "1" "$T52_SG_FUNC_COUNT"
 
 T52_SG_RAW_HITS="$(t52_raw_var_only_via_func "$EDM_STOP_GATE" "stop_gate_emit_blocking" _blocking_text _hookify_out)"
 if [[ -z "$T52_SG_RAW_HITS" ]]; then
