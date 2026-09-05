@@ -4238,7 +4238,16 @@ t24ac1_repo_out="$(bash "$EDM_STATE" detect-conditional-lenses 2>&1)" || t24ac1_
 
 # ---- AC2/AC4: marker predicates are pure, TRACKED-file-only, and each independently flips
 # the answer -- one scratch git repo per marker, plus a no-marker control, plus determinism ----
-harness_scratch_dir T24_TS
+# CA-027: this was `harness_scratch_dir T24_TS`. That helper installs its OWN four-arm
+# EXIT/INT/TERM/HUP trap set in the caller's shell, which REPLACES whatever was installed before it
+# -- here, cleanup_wave6, whose job includes restoring the TRACKED, committed file T41_CANONICAL
+# that the EDMV3-T41 block roughly 800 lines below deliberately mutates. Calling it here therefore
+# disarmed that restore for the remainder of the run: a Ctrl-C anywhere after this point left
+# docs/canonical-sections.md corrupted in the working tree. _harness.sh's own docstring states the
+# once-per-process contract this call violated. A plain subdirectory of $TMP needs no trap of its
+# own -- cleanup_wave6 already removes $TMP wholesale on all four signals.
+T24_TS="${TMP}/t24-ts"
+mkdir -p "$T24_TS"
 T24_MARKER_REPO="${T24_TS}/marker-repo"
 mkdir -p "$T24_MARKER_REPO"
 (
@@ -5044,6 +5053,41 @@ echo "T41 AC5 -- byte-identity guard: committed copy matches CLAUDE.md; a hand-e
 bash "$SYNC_BIN" --check >/dev/null 2>&1 \
   && pass "T41 AC5 -- committed docs/canonical-sections.md is in sync with CLAUDE.md (--check exits 0)" \
   || fail "T41 AC5 -- committed docs/canonical-sections.md is OUT OF SYNC with CLAUDE.md"
+
+# ---- CA-027 regression guard, run IMMEDIATELY before the mutation it protects. The block below
+# deliberately appends to a TRACKED, committed file and relies on cleanup_wave6 (installed at the
+# top of this suite on all four of EXIT/INT/TERM/HUP) to restore it if the run dies part-way. Any
+# helper invoked between there and here that installs its own process-wide trap set REPLACES that
+# restore, silently -- harness_scratch_dir did exactly that roughly 800 lines above until CA-027.
+# The damage is invisible on a clean run and only surfaces as a corrupted working tree after an
+# interrupt, so this asserts the four arms are still wired to cleanup_wave6 at the moment of use.
+t41_trap_arm_missing() {
+  # Prints the signal name when <signal>'s installed trap body does not name cleanup_wave6.
+  local sig="$1" body
+  body="$(trap -p "$sig")"
+  case "$body" in
+    *cleanup_wave6*) ;;
+    *) printf '%s' "$sig" ;;
+  esac
+}
+T41_TRAP_MISSING=""
+for _t41_sig in EXIT INT TERM HUP; do
+  T41_TRAP_MISSING="${T41_TRAP_MISSING}$(t41_trap_arm_missing "$_t41_sig") "
+done
+if [[ -z "${T41_TRAP_MISSING// /}" ]]; then
+  pass "CA-027 -- all four cleanup_wave6 trap arms (EXIT/INT/TERM/HUP) are still installed at the point this suite mutates the tracked docs/canonical-sections.md"
+else
+  fail "CA-027 -- cleanup_wave6 has been disarmed on signal(s): ${T41_TRAP_MISSING% } -- the tracked-file restore this block depends on will not run"
+fi
+
+# Negative control: the same predicate, evaluated in a subshell that has deliberately replaced the
+# EXIT arm with an unrelated body, must report EXIT missing. Without this, a predicate that never
+# matched anything (a renamed function, a `trap -p` that printed nothing) would read identically to
+# a correctly-armed suite. The subshell is discarded, so the real traps above are untouched.
+T41_TRAP_CONTROL="$( trap 'true' EXIT; t41_trap_arm_missing EXIT )"
+[[ "$T41_TRAP_CONTROL" == "EXIT" ]] \
+  && pass "CA-027 -- negative control: the trap-arm predicate reports EXIT missing when cleanup_wave6 is replaced by an unrelated handler" \
+  || fail "CA-027 -- negative control broken: replacing the EXIT trap body was not detected (got '${T41_TRAP_CONTROL}'), so the guard above cannot fail"
 
 T41_CANONICAL="$CANONICAL_SECTIONS_MD"
 T41_BACKUP="$(mktemp "${TMP}/t41-canonical.XXXXXX")"
