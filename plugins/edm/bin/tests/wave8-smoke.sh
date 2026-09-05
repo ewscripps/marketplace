@@ -6394,5 +6394,710 @@ for ca032_verifier in edm-srd-auditor edm-ticket-auditor edm-qc-auditor edm-test
 done
 
 echo
+# =================================================================================================
+# P1 BATCH: CA-036 / CA-037 / CA-038 / CA-046 / CA-047 / CA-022 / CA-028 / CA-033 / CA-034
+# "Absent renders as zero, or as fine" -- edm-repo-readiness -- plus three prose-contract fixes.
+#
+# Every assertion below is paired with a NEGATIVE CONTROL: a fixture in which the same assertion
+# must fail. CA-046 and CA-047 are "never exercised" findings, so an assertion that cannot fail
+# would be strictly worse than leaving them open.
+# =================================================================================================
+echo
+echo "-- CA-036/037/038/046/047: edm-repo-readiness -- unmeasurable is not clean, and not zero --"
+
+CA036_TMP="$(mktemp -d "${TMP}/ca036.XXXXXX")"
+CA036_BIN="${CA036_TMP}/bin"
+mkdir -p "$CA036_BIN"
+
+# The scorer resolves edm-state / edm-lint-artifacts as SIBLINGS via SCRIPT_DIR (never via PATH),
+# so a scratch bin/ holding a copy of the scorer plus two shims is the only way to drive its probe
+# failure paths. The shims answer exactly the four subcommands the scorer calls, and each arm's
+# exit status is driven by an env knob so one fixture covers every probe.
+cp "$REPO_READINESS" "${PLUGIN_DIR}/bin/_edm-cli-lib.sh" "$CA036_BIN/"
+cat > "${CA036_BIN}/edm-state" <<'CA036_SHIM'
+#!/usr/bin/env bash
+case "$1" in
+  list) printf 'SHIMP          phase=1  gates_approved=0\n'; exit 0 ;;
+  get) exit 0 ;;
+  validate)
+    case "${EDM_SHIM_VALIDATE_RC:-0}" in
+      0) echo "# State OK: no anomalies found for $2"; exit 0 ;;
+      3) echo "# State anomalies for $2:"; echo; echo "blocking TIME_ORDER phase_2 ends before it starts"; exit 3 ;;
+      *) exit "${EDM_SHIM_VALIDATE_RC}" ;;
+    esac ;;
+  get-coverage)
+    [ "${EDM_SHIM_COVERAGE_RC:-0}" -eq 0 ] || exit "${EDM_SHIM_COVERAGE_RC}"
+    exit 0 ;;
+  metrics-report)
+    case "$2" in
+      --calibrate)
+        [ "${EDM_SHIM_CALIB_RC:-0}" -eq 0 ] || exit "${EDM_SHIM_CALIB_RC}"
+        printf '%s\n' "${EDM_SHIM_CALIB_OUT-  Small_phase_1: n=2, median_duration=120s, median_cost=\$1.5}"
+        exit 0 ;;
+      --all)
+        [ "${EDM_SHIM_METRICS_ALL_RC:-0}" -eq 0 ] || exit "${EDM_SHIM_METRICS_ALL_RC}"
+        printf '%s\n' "  SHIMP  Small  10s  \$2.50"
+        exit 0 ;;
+    esac
+    exit 0 ;;
+esac
+exit 0
+CA036_SHIM
+cat > "${CA036_BIN}/edm-lint-artifacts" <<'CA036_LINT_SHIM'
+#!/usr/bin/env bash
+exit "${EDM_SHIM_LINT_RC:-0}"
+CA036_LINT_SHIM
+chmod +x "${CA036_BIN}/edm-state" "${CA036_BIN}/edm-lint-artifacts" "${CA036_BIN}/edm-repo-readiness"
+
+CA036_WORK="${CA036_TMP}/work"
+mkdir -p "${CA036_WORK}/SRD/.archived/OLDX"
+echo '{}' > "${CA036_WORK}/SRD/.archived/OLDX/.edm-state.json"
+
+# _ca036_run <tag> [VAR=VALUE ...] -- run the shimmed scorer, capturing JSON, stdout and stderr.
+# Records the exit status in _CA036_RC so the exit contract stays assertable on every fixture.
+_CA036_RC=0
+_ca036_run() {
+  local tag="$1"; shift
+  _CA036_RC=0
+  ( cd "$CA036_WORK" && env "EDM_SRD_ROOT=${CA036_WORK}/SRD" "$@" \
+      "${CA036_BIN}/edm-repo-readiness" --json "${CA036_TMP}/${tag}.json" \
+      >"${CA036_TMP}/${tag}.txt" 2>"${CA036_TMP}/${tag}.err" ) || _CA036_RC=$?
+}
+_ca036_cat() { jq -r "$2" "${CA036_TMP}/${1}.json"; }
+
+# ---- Baseline: every probe healthy. This run is the negative control for all six probe-failure
+# assertions below -- if the fixture could not produce a fully measured, high-scoring run, none of
+# those assertions would be evidence of anything. ------------------------------------------------
+_ca036_run base
+if [[ "$_CA036_RC" -eq 0 ]]; then
+  pass "CA-036/037/038 baseline -- the shimmed scorer exits 0 with every probe healthy"
+else
+  fail "CA-036/037/038 baseline -- the shimmed scorer exited ${_CA036_RC}; every assertion below would be meaningless"
+fi
+CA036_BASE_UNMEASURED="$(_ca036_cat base '[.categories[] | select(.measured | not)] | length')"
+if [[ "$CA036_BASE_UNMEASURED" == "0" ]]; then
+  pass "CA-036/037/038 baseline -- all six categories report measured:true when every probe answers"
+else
+  fail "CA-036/037/038 baseline -- ${CA036_BASE_UNMEASURED} categories were UNMEASURED on the healthy fixture; the negative control is broken"
+fi
+CA036_BASE_SCORE="$(_ca036_cat base '.score | tonumber')"
+
+# ---- CA-036: `edm-state validate` exiting outside its documented 0/3 contract must NOT score
+# State health clean. -----------------------------------------------------------------------------
+_ca036_run vfail EDM_SHIM_VALIDATE_RC=1
+check "CA-036 -- a validate that dies makes State health UNMEASURED, not perfect" \
+  "false" "$(_ca036_cat vfail '.categories[] | select(.name=="State health") | .measured | tostring')"
+check "CA-036 -- the UNMEASURED State health category stays in the overall-score denominator" \
+  "true" "$(_ca036_cat vfail '.categories[] | select(.name=="State health") | .applicable | tostring')"
+check "CA-036 -- a validate that dies scores State health 0.0, never 10.0" \
+  "0.0" "$(_ca036_cat vfail '.categories[] | select(.name=="State health") | .score_0_10')"
+check "CA-036 -- the reason names the command and the offending exit status on stdout" \
+  "edm-state validate returned a status outside its documented 0/3 contract for: SHIMP (exit 1)" \
+  "$(cat "${CA036_TMP}/vfail.txt")"
+check "CA-036 -- the same reason is printed on stderr, for a caller that only captures stdout" \
+  "State health could not be measured" "$(cat "${CA036_TMP}/vfail.err")"
+if [[ "$_CA036_RC" -eq 0 ]]; then
+  pass "CA-036 -- a broken validate still exits 0 (the exit contract is 0 = scored at ANY score)"
+else
+  fail "CA-036 -- a broken validate exited ${_CA036_RC}; exit 0 is the contract for a scored repository"
+fi
+CA036_VFAIL_SCORE="$(_ca036_cat vfail '.score | tonumber')"
+if jq -n --argjson a "$CA036_VFAIL_SCORE" --argjson b "$CA036_BASE_SCORE" -e '$a < $b' >/dev/null; then
+  pass "CA-036 -- the broken-validate score (${CA036_VFAIL_SCORE}) is BELOW the healthy baseline (${CA036_BASE_SCORE})"
+else
+  fail "CA-036 -- the broken-validate score (${CA036_VFAIL_SCORE}) did not fall below the healthy baseline (${CA036_BASE_SCORE})"
+fi
+
+# NEGATIVE CONTROL for CA-036: exit 3 is a DOCUMENTED validate result (at least one blocking
+# anomaly), not a setup error. It must stay measured and must cost points -- which is what proves
+# the fix reads and CLASSIFIES the status rather than treating every non-zero as a failure.
+_ca036_run v3 EDM_SHIM_VALIDATE_RC=3
+check "CA-036 negative control -- validate exit 3 stays MEASURED (it is a real result, not a setup error)" \
+  "true" "$(_ca036_cat v3 '.categories[] | select(.name=="State health") | .measured | tostring')"
+check "CA-036 negative control -- validate exit 3's blocking anomaly costs the other-blocking check" \
+  "false" "$(_ca036_cat v3 '.checks[] | select(.id=="state-health-no-other-blocking-anomalies") | .pass | tostring')"
+if [[ -s "${CA036_TMP}/v3.err" ]]; then
+  fail "CA-036 negative control -- validate exit 3 wrongly emitted an unmeasured diagnostic: $(cat "${CA036_TMP}/v3.err")"
+else
+  pass "CA-036 negative control -- validate exit 3 emits no unmeasured diagnostic"
+fi
+
+# ---- CA-037: a failed get-coverage must not RAISE the score by removing Test stack and Coverage
+# posture from the denominator. -------------------------------------------------------------------
+_ca036_run covfail EDM_SHIM_COVERAGE_RC=1
+check "CA-037 -- a failed get-coverage makes Test stack UNMEASURED" \
+  "false" "$(_ca036_cat covfail '.categories[] | select(.name=="Test stack") | .measured | tostring')"
+check "CA-037 -- a failed get-coverage makes Coverage posture UNMEASURED" \
+  "false" "$(_ca036_cat covfail '.categories[] | select(.name=="Coverage posture") | .measured | tostring')"
+CA037_DENOM="$(_ca036_cat covfail '[.categories[] | select(.applicable)] | length')"
+check "CA-037 -- both unmeasurable categories stay IN the denominator (6 applicable, not 4)" \
+  "6" "$CA037_DENOM"
+CA037_SCORE="$(_ca036_cat covfail '.score | tonumber')"
+if jq -n --argjson a "$CA037_SCORE" --argjson b "$CA036_BASE_SCORE" -e '$a < $b' >/dev/null; then
+  pass "CA-037 -- the broken-get-coverage score (${CA037_SCORE}) FALLS below the baseline (${CA036_BASE_SCORE}) instead of rising"
+else
+  fail "CA-037 -- the broken-get-coverage score (${CA037_SCORE}) did not fall below the baseline (${CA036_BASE_SCORE}); the read failure still pays"
+fi
+# NEGATIVE CONTROL for CA-037: the baseline's get-coverage SUCCEEDS and simply has no coverage
+# recorded. That is a legitimate N/A -- excluded from the denominator, measured:true -- and it is
+# the case the broken one must be distinguishable from.
+CA037_BASE_DENOM="$(_ca036_cat base '[.categories[] | select(.applicable)] | length')"
+check "CA-037 negative control -- a SUCCESSFUL get-coverage with no rows is N/A and leaves the denominator at 4" \
+  "4" "$CA037_BASE_DENOM"
+check "CA-037 negative control -- that legitimately-N/A Test stack is still measured:true" \
+  "true" "$(_ca036_cat base '.categories[] | select(.name=="Test stack") | .measured | tostring')"
+check "CA-037 -- the human report distinguishes UNMEASURED from N/A in the category header" \
+  "## Test stack -- 0.0 / 10  UNMEASURED:" "$(cat "${CA036_TMP}/covfail.txt")"
+check "CA-037 negative control -- the N/A header is a different string entirely" \
+  "## Test stack -- N/A (not applicable)" "$(cat "${CA036_TMP}/base.txt")"
+
+# ---- CA-038: CH_CALIBRATION_AVAILABLE must default false and require a positive signal. ----------
+_ca036_run calfail EDM_SHIM_CALIB_RC=1
+check "CA-038 -- a metrics-report --calibrate that exits non-zero does not award the calibration points" \
+  "false" "$(_ca036_cat calfail '.checks[] | select(.id=="convergence-calibration-data-available") | .pass | tostring')"
+check "CA-038 -- and it is reported UNMEASURED, not as a measured absence" \
+  "false" "$(_ca036_cat calfail '.checks[] | select(.id=="convergence-calibration-data-available") | .measured | tostring')"
+check "CA-038 -- the printed reason names the failing command and its status" \
+  "edm-state metrics-report --calibrate exited 1" "$(cat "${CA036_TMP}/calfail.err")"
+
+# The exact shape CA-038 names: --calibrate SUCCEEDS but says something that is not the literal
+# "insufficient data" the old code matched on. Before the fix this awarded full calibration points.
+_ca036_run calweird EDM_SHIM_CALIB_OUT="  (error building the calibration report -- check for malformed state files)"
+check "CA-038 -- an unrelated --calibrate failure message does not award the calibration points" \
+  "false" "$(_ca036_cat calweird '.checks[] | select(.id=="convergence-calibration-data-available") | .pass | tostring')"
+_ca036_run calempty EDM_SHIM_CALIB_OUT="  (insufficient data - need at least one completed initiative with estimated_size set)"
+check "CA-038 -- a genuine 'insufficient data' answer is MEASURED (the data really is absent)" \
+  "true" "$(_ca036_cat calempty '.checks[] | select(.id=="convergence-calibration-data-available") | .measured | tostring')"
+check "CA-038 -- and still scores false" \
+  "false" "$(_ca036_cat calempty '.checks[] | select(.id=="convergence-calibration-data-available") | .pass | tostring')"
+# NEGATIVE CONTROL for CA-038: the baseline emits a real median row, so the check MUST pass there.
+# Without this, "pass:false" above would be satisfied by a check that can never pass at all.
+check "CA-038 negative control -- a real median_duration row DOES award the calibration points" \
+  "true" "$(_ca036_cat base '.checks[] | select(.id=="convergence-calibration-data-available") | .pass | tostring')"
+
+# ---- Same three-state rule applied to edm-lint-artifacts: exit 1 is a hygiene measurement,
+# anything else is a setup error that measured nothing. -------------------------------------------
+_ca036_run lint1 EDM_SHIM_LINT_RC=1
+_ca036_run lint2 EDM_SHIM_LINT_RC=2
+check "CA-036 (same class) -- edm-lint-artifacts exit 1 is a MEASURED hygiene failure" \
+  "true" "$(_ca036_cat lint1 '.categories[] | select(.name=="Artifact hygiene") | .measured | tostring')"
+check "CA-036 (same class) -- edm-lint-artifacts exit 2 (setup error) is UNMEASURED, not 'dirty'" \
+  "false" "$(_ca036_cat lint2 '.categories[] | select(.name=="Artifact hygiene") | .measured | tostring')"
+
+# ---- The overall-score warning line only appears when something really was unmeasurable. --------
+check "CA-036/037/038 -- an unmeasurable run warns that the overall score is a floor" \
+  "WARNING: 2 of 6 categories could not be measured" "$(cat "${CA036_TMP}/covfail.txt")"
+check_absent "CA-036/037/038 negative control -- a fully measured run prints no such warning" \
+  "categories could not be measured" "$(cat "${CA036_TMP}/base.txt")"
+
+# =================================================================================================
+# CA-046 / CA-047: the [<PREFIX>] argument and the APPLICABLE arm of Test stack / Coverage posture
+# =================================================================================================
+# Both findings are "this code path is never executed by any test". The fixture below is a real
+# initiative directory scored by the real edm-repo-readiness against the real edm-state, with
+# coverage recorded through the real `record-test-coverage` subcommand. Only the initial state
+# scaffold is hand-built (with jq), deliberately: `edm-init` creates and checks out a git branch,
+# which a smoke suite must never do (commit 5f90001), and `edm-state set` stores an object-valued
+# key as a JSON *string*, so it cannot produce the `test_frameworks_detected` object shape that
+# `get-coverage`'s Detected Frameworks renderer -- the signal under test -- actually reads.
+CA047_TMP="$(mktemp -d "${TMP}/ca047.XXXXXX")"
+CA047_SRD="${CA047_TMP}/SRD"
+mkdir -p "${CA047_SRD}/TSTK" "${CA047_SRD}/.archived/OLDX"
+jq -n '{prefix:"TSTK",schema_version:1,current_phase:1,gates_approved:[],artifacts:{},
+  artifact_hashes:{},srd_version:"0.0.0",estimated_size:"Unknown",initiative_branch:"",
+  product_name:"",initiative_description:"",phase_durations:{},test_frameworks_detected:{},
+  coverage_by_layer:{},coverage_by_epic:{},code_audit_converged:false,
+  code_audit_gate_approved_at:"",code_audit_gate_approver:"",code_audit_gate_enforcement:"",
+  code_audit_gate_ledger:"",compliance_gate_approved:false,last_decision:"",audit_rounds:{},
+  partial_verdict_map:{},mode:"standard",lifecycle_mode:"standard",compliance_enabled:false,
+  implementation_mode:"standard",skipped_phases:[],supersedes:"",forked_from:"",parent_prefix:"",
+  related_prefixes:[],last_updated:"2026-01-01T00:00:00Z"}' > "${CA047_SRD}/TSTK/.edm-state.json"
+cp "${CA047_SRD}/TSTK/.edm-state.json" "${CA047_SRD}/.archived/OLDX/.edm-state.json"
+
+_CA047_RC=0
+_ca047_run() {
+  local tag="$1"; shift
+  _CA047_RC=0
+  ( cd "$CA047_TMP" && env "EDM_SRD_ROOT=${CA047_SRD}" "$REPO_READINESS" "$@" \
+      --json "${CA047_TMP}/${tag}.json" >"${CA047_TMP}/${tag}.txt" 2>"${CA047_TMP}/${tag}.err" ) || _CA047_RC=$?
+}
+_ca047_cat() { jq -r "$2" "${CA047_TMP}/${1}.json"; }
+
+# NEGATIVE CONTROL, taken FIRST: with no frameworks and no coverage recorded, both categories must
+# report applicable:false and the denominator must be 4. Everything below is only evidence because
+# this run proves the two categories can be inapplicable on this very fixture.
+_ca047_run before
+check "CA-047 negative control -- Test stack is applicable:false before any framework is recorded" \
+  "false" "$(_ca047_cat before '.categories[] | select(.name=="Test stack") | .applicable | tostring')"
+check "CA-047 negative control -- Coverage posture is applicable:false before any coverage is recorded" \
+  "false" "$(_ca047_cat before '.categories[] | select(.name=="Coverage posture") | .applicable | tostring')"
+check "CA-047 negative control -- the overall mean divides by 4 in that state" \
+  "4" "$(_ca047_cat before '[.categories[] | select(.applicable)] | length')"
+
+# Record coverage through the real subcommand, in BOTH shapes get-coverage renders: whole-initiative
+# rows (pct in field 2) and per-epic rows (pct in field 3). Both awk parsers in the scorer are dead
+# code until a run sees each shape.
+_ca047_state() { env "EDM_SRD_ROOT=${CA047_SRD}" "$EDM_STATE" "$@" >/dev/null; }
+_ca047_state record-test-coverage TSTK unit 91.0
+_ca047_state record-test-coverage TSTK component 75.0
+_ca047_state record-test-coverage TSTK integration 65.0
+_ca047_state record-test-coverage TSTK unit 42.0 authepic
+CA047_STATE="${CA047_SRD}/TSTK/.edm-state.json"
+jq '.test_frameworks_detected = {"unit":"pytest","component":"vitest"}' "$CA047_STATE" > "${CA047_STATE}.new"
+mv "${CA047_STATE}.new" "$CA047_STATE"
+
+_ca047_run after
+check "CA-047 -- Test stack flips to applicable:true once a framework is recorded" \
+  "true" "$(_ca047_cat after '.categories[] | select(.name=="Test stack") | .applicable | tostring')"
+check "CA-047 -- Coverage posture flips to applicable:true with it (one shared predicate)" \
+  "true" "$(_ca047_cat after '.categories[] | select(.name=="Coverage posture") | .applicable | tostring')"
+check "CA-047 -- the overall mean now divides by 6, not 4" \
+  "6" "$(_ca047_cat after '[.categories[] | select(.applicable)] | length')"
+check "CA-047 -- TESTSTACK_UNIT_FOUND is exercised true (unit framework detected)" \
+  "true" "$(_ca047_cat after '.checks[] | select(.id=="unit-test-framework-detected") | .pass | tostring')"
+check "CA-047 -- TESTSTACK_OTHER_FOUND is exercised true (component framework detected)" \
+  "true" "$(_ca047_cat after '.checks[] | select(.id=="additional-layer-framework-detected") | .pass | tostring')"
+check "CA-047 -- _rr_layer_meets_target returns true for unit (91.0 >= 80)" \
+  "true" "$(_ca047_cat after '.checks[] | select(.id=="unit-coverage-meets-target") | .pass | tostring')"
+check "CA-047 -- and for component (75.0 >= 70)" \
+  "true" "$(_ca047_cat after '.checks[] | select(.id=="component-coverage-meets-target") | .pass | tostring')"
+check "CA-047 -- and for integration (65.0 >= 60)" \
+  "true" "$(_ca047_cat after '.checks[] | select(.id=="integration-coverage-meets-target") | .pass | tostring')"
+check "CA-047 -- the applicable:true arm of the category mean is taken (Test stack scores 10.0)" \
+  "10.0" "$(_ca047_cat after '.categories[] | select(.name=="Test stack") | .score_0_10')"
+
+# NEGATIVE CONTROL for the coverage-target assertions: drop whole-initiative unit coverage below
+# the 80% target and confirm ONLY that one check flips. The per-epic unit row (42.0%) is left in
+# place, so this also proves _rr_layer_max_pct is taking the max across both shapes rather than
+# whichever row it happened to see last.
+_ca047_state record-test-coverage TSTK unit 10.0
+_ca047_run below
+check "CA-047 negative control -- unit-coverage-meets-target flips to false when unit drops to 10.0" \
+  "false" "$(_ca047_cat below '.checks[] | select(.id=="unit-coverage-meets-target") | .pass | tostring')"
+check "CA-047 negative control -- component-coverage-meets-target is unaffected (still true)" \
+  "true" "$(_ca047_cat below '.checks[] | select(.id=="component-coverage-meets-target") | .pass | tostring')"
+check "CA-047 negative control -- Coverage posture is still applicable:true, just lower" \
+  "true" "$(_ca047_cat below '.categories[] | select(.name=="Coverage posture") | .applicable | tostring')"
+check "CA-047 negative control -- Coverage posture scores 6.0 of 10 (component + integration only)" \
+  "6.0" "$(_ca047_cat below '.categories[] | select(.name=="Coverage posture") | .score_0_10')"
+
+# ---- CA-046: the documented [<PREFIX>] argument, never passed by any test before this. ----------
+_ca047_state record-test-coverage TSTK unit 91.0
+_ca047_run scoped TSTK
+if [[ "$_CA047_RC" -eq 0 ]]; then
+  pass "CA-046 -- a resolvable <PREFIX> is accepted and exits 0"
+else
+  fail "CA-046 -- a resolvable <PREFIX> exited ${_CA047_RC}: $(cat "${CA047_TMP}/scoped.err")"
+fi
+check "CA-046 -- the prefix-scoped header names the initiative on stdout" \
+  "Scope: initiative TSTK" "$(cat "${CA047_TMP}/scoped.txt")"
+check "CA-046 -- the JSON carries the non-null prefix field" "TSTK" "$(_ca047_cat scoped '.prefix')"
+check "CA-046 negative control -- the whole-repository run leaves .prefix null and says so" \
+  "null" "$(_ca047_cat after '.prefix | tostring')"
+check "CA-046 negative control -- and prints the whole-repository header instead" \
+  "Scope: whole repository" "$(cat "${CA047_TMP}/after.txt")"
+
+# The exit-2 arm: an unresolvable prefix is a usage error, not a zero score.
+CA046_BAD_RC=0
+( cd "$CA047_TMP" && env "EDM_SRD_ROOT=${CA047_SRD}" "$REPO_READINESS" NOSUCHPFX \
+    >/dev/null 2>"${CA047_TMP}/badprefix.err" ) || CA046_BAD_RC=$?
+if [[ "$CA046_BAD_RC" -eq 2 ]]; then
+  pass "CA-046 -- an unresolvable <PREFIX> exits 2 (usage/setup error), never 0 with a low score"
+else
+  fail "CA-046 -- an unresolvable <PREFIX> exited ${CA046_BAD_RC}, expected 2"
+fi
+check "CA-046 -- the exit-2 diagnostic names the offending prefix" \
+  "prefix not found or unresolvable: NOSUCHPFX" "$(cat "${CA047_TMP}/badprefix.err")"
+# NEGATIVE CONTROL: the same invocation shape with a RESOLVABLE prefix exits 0, proving the exit-2
+# assertion above discriminates on prefix resolvability and not on the argument being present.
+CA046_OK_RC=0
+( cd "$CA047_TMP" && env "EDM_SRD_ROOT=${CA047_SRD}" "$REPO_READINESS" TSTK >/dev/null 2>&1 ) || CA046_OK_RC=$?
+if [[ "$CA046_OK_RC" -eq 0 ]]; then
+  pass "CA-046 negative control -- the identical invocation with a resolvable prefix exits 0"
+else
+  fail "CA-046 negative control -- a resolvable prefix exited ${CA046_OK_RC}; the exit-2 check above proves nothing"
+fi
+# The second positional argument's die, also never exercised before.
+CA046_EXTRA_RC=0
+( cd "$CA047_TMP" && env "EDM_SRD_ROOT=${CA047_SRD}" "$REPO_READINESS" TSTK EXTRA \
+    >/dev/null 2>"${CA047_TMP}/extra.err" ) || CA046_EXTRA_RC=$?
+if [[ "$CA046_EXTRA_RC" -eq 2 ]]; then
+  pass "CA-046 -- a second positional argument exits 2"
+else
+  fail "CA-046 -- a second positional argument exited ${CA046_EXTRA_RC}, expected 2"
+fi
+check "CA-046 -- the extra-argument diagnostic names the argument" \
+  "unexpected extra argument: EXTRA" "$(cat "${CA047_TMP}/extra.err")"
+
+# CA-047's other half: the "at least one category is genuinely inapplicable" positive control is
+# asserted here as a HARD check against a deterministic fixture (a directory with no initiatives at
+# all always yields exactly three), rather than left as a soft NOTE that passes either way.
+CA047_NOINIT="${CA047_TMP}/noinit"
+mkdir -p "$CA047_NOINIT"
+( cd "$CA047_NOINIT" && "$REPO_READINESS" --json "${CA047_TMP}/noinit.json" >/dev/null 2>&1 )
+CA047_NOINIT_NA="$(jq -r '[.categories[] | select(.applicable == false)] | length' "${CA047_TMP}/noinit.json")"
+if [[ "$CA047_NOINIT_NA" -eq 3 ]]; then
+  pass "CA-047 -- a repository with no initiatives reports exactly three inapplicable categories (hard assertion, not a soft NOTE)"
+else
+  fail "CA-047 -- a repository with no initiatives reported ${CA047_NOINIT_NA} inapplicable categories, expected 3"
+fi
+CA047_NOINIT_UNMEASURED="$(jq -r '[.categories[] | select(.measured | not)] | length' "${CA047_TMP}/noinit.json")"
+if [[ "$CA047_NOINIT_UNMEASURED" -eq 0 ]]; then
+  pass "CA-047 negative control -- those three are inapplicable, NOT unmeasured (the two states stay distinct)"
+else
+  fail "CA-047 negative control -- ${CA047_NOINIT_UNMEASURED} categories were UNMEASURED on a no-initiatives fixture"
+fi
+
+echo
+echo "-- EDMV4-T39 AC7 / EDMV4-T40 AC7: the two retroactive-QC FAIL verdicts on edm-repo-readiness --"
+
+# =================================================================================================
+# EDMV4-T39 AC7 -- BOTH conjuncts. The pre-existing assertion covered only the first, so the
+# missing half was invisible to the suite; asserting only the half that exists moves a blind spot
+# rather than closing one.
+# =================================================================================================
+T39AC7_SRC="$(cat "$REPO_READINESS")"
+T39AC7_JSON="${TMP}/t39ac7.json"
+"$REPO_READINESS" --json "$T39AC7_JSON" >/dev/null
+
+# Conjunct 1: the version constant reaches the JSON output.
+check "EDMV4-T39 AC7 conjunct 1 -- readiness_rubric_version reaches the JSON output" \
+  "1.0.0" "$(jq -r '.readiness_rubric_version' "$T39AC7_JSON")"
+# NEGATIVE CONTROL for conjunct 1: the field must be a real key, not a jq default. Ask for a
+# neighbouring key that does not exist and confirm the same expression yields null there.
+check "EDMV4-T39 AC7 conjunct 1 negative control -- a non-existent sibling key reads null, so the value above is real" \
+  "null" "$(jq -r '.readiness_rubric_version_not_a_real_key | tostring' "$T39AC7_JSON")"
+
+# Conjunct 2: the file documents that a future comparator must REFUSE on a version mismatch.
+# Four independent content requirements, so a one-word mention cannot satisfy this.
+t39ac7_conjunct2() {
+  local src="$1"
+  printf '%s' "$src" | grep -qF 'MUST REFUSE the comparison' || return 1
+  printf '%s' "$src" | grep -qF 'readiness_rubric_version' || return 1
+  printf '%s' "$src" | grep -qF 'MUST NOT' || return 1
+  printf '%s' "$src" | grep -qF 'edm-compare-eval' || return 1
+  return 0
+}
+if t39ac7_conjunct2 "$T39AC7_SRC"; then
+  pass "EDMV4-T39 AC7 conjunct 2 -- the script documents the comparator refusal contract, modelled on edm-compare-eval"
+else
+  fail "EDMV4-T39 AC7 conjunct 2 -- the comparator refusal contract is not documented in edm-repo-readiness"
+fi
+check "EDMV4-T39 AC7 conjunct 2 -- the contract forbids a silent comparison explicitly" \
+  "MUST NOT silently compare them" "$T39AC7_SRC"
+check "EDMV4-T39 AC7 conjunct 2 -- and forbids the compare-what-they-share fallback" \
+  "only the categories the two happen to share" "$T39AC7_SRC"
+check "EDMV4-T39 AC7 conjunct 2 -- and treats a missing version field as a mismatch, not as current" \
+  "it is unset, not" "$T39AC7_SRC"
+check "EDMV4-T39 AC7 conjunct 2 -- and names the in-repo precedent's own refusal fields" \
+  "scorer_version" "$T39AC7_SRC"
+# NEGATIVE CONTROL for conjunct 2: strip the refusal contract from a scratch copy and confirm the
+# same predicate reports it missing. Without this, conjunct 2 could be satisfied by any file that
+# happens to contain the word "refuse" somewhere -- which is exactly how the original AC7 gap
+# survived (a whole-file scan for refus/mismatch/comparator returned four unrelated hits).
+T39AC7_TMP="$(mktemp -d "${TMP}/t39ac7.XXXXXX")"
+sed '/MUST REFUSE the comparison/d' "$REPO_READINESS" > "${T39AC7_TMP}/stripped"
+if t39ac7_conjunct2 "$(cat "${T39AC7_TMP}/stripped")"; then
+  fail "EDMV4-T39 AC7 negative control -- the conjunct-2 predicate still passed on a copy with the refusal contract removed"
+else
+  pass "EDMV4-T39 AC7 negative control -- the conjunct-2 predicate correctly fails on a copy with the refusal contract removed"
+fi
+# And prove the predicate is not simply always-false: a copy with only an UNRELATED refusal word
+# added must still fail it (the four unrelated hits the QC auditor found were exactly this shape).
+printf '%s\n# this comment mentions refuse and mismatch and a comparator, and nothing else\n' \
+  "$(cat "${T39AC7_TMP}/stripped")" > "${T39AC7_TMP}/decoy"
+if t39ac7_conjunct2 "$(cat "${T39AC7_TMP}/decoy")"; then
+  fail "EDMV4-T39 AC7 negative control -- a decoy comment mentioning refuse/mismatch/comparator satisfied the predicate"
+else
+  pass "EDMV4-T39 AC7 negative control -- a decoy comment mentioning refuse/mismatch/comparator does NOT satisfy the predicate"
+fi
+
+# =================================================================================================
+# EDMV4-T40 AC7 -- every self-detected signal carries its justification comment, and the one
+# genuine re-derivation of an edm-state-owned value is pinned byte-identical to edm-state's own.
+# =================================================================================================
+T40AC7_STATE_SRC="${PLUGIN_DIR}/bin/edm-state"
+# _t40ac7_comment_above <needle> <lines> -- prints the <lines> source lines immediately preceding
+# the first line matching <needle>, so "does this check carry a justification comment" is answered
+# from position, not from the file containing the words somewhere.
+_t40ac7_comment_above() {
+  local needle="$1" lines="$2" ln
+  ln="$(grep -n -m1 -F -- "$needle" "$REPO_READINESS" | cut -d: -f1)"
+  [[ -n "$ln" ]] || return 1
+  local start=$(( ln - lines ))
+  [[ "$start" -lt 1 ]] && start=1
+  sed -n "${start},$(( ln - 1 ))p" "$REPO_READINESS"
+}
+T40AC7_GIT_CTX="$(_t40ac7_comment_above 'GIT_REPO_PRESENT="false"' 12 || true)"
+T40AC7_SRD_CTX="$(_t40ac7_comment_above 'SRD_DIR_PRESENT="false"' 22 || true)"
+check "EDMV4-T40 AC7 -- GIT_REPO_PRESENT carries a justification comment naming its check id" \
+  "GIT_REPO_PRESENT:" "$T40AC7_GIT_CTX"
+check "EDMV4-T40 AC7 -- and names why no edm-state call can supply it" \
+  "branch-check" "$T40AC7_GIT_CTX"
+check "EDMV4-T40 AC7 -- SRD_DIR_PRESENT carries a justification comment naming its check id" \
+  "SRD_DIR_PRESENT:" "$T40AC7_SRD_CTX"
+check "EDMV4-T40 AC7 -- and names the duplication class by ID rather than describing it vaguely" \
+  "CA-409" "$T40AC7_SRD_CTX"
+check "EDMV4-T40 AC7 -- and records the residual work as edm-state-owned, not silently accepted" \
+  "edm-state-owned accessor" "$T40AC7_SRD_CTX"
+# NEGATIVE CONTROL for the position-sensitive extraction: the same helper must find NOTHING
+# above a line that carries no comment, so a pass above is about position and not about the file
+# containing the words anywhere.
+T40AC7_NOCOMMENT="$(_t40ac7_comment_above 'CHECKS_JSON="$(printf' 1 || true)"
+if printf '%s' "$T40AC7_NOCOMMENT" | grep -q 'SRD_DIR_PRESENT:'; then
+  fail "EDMV4-T40 AC7 negative control -- the comment-above extraction is not position-sensitive"
+else
+  pass "EDMV4-T40 AC7 negative control -- the comment-above extraction is position-sensitive (an unrelated line yields no justification text)"
+fi
+
+# The duplication that could not be removed from inside this script is pinned instead: the scorer's
+# SRD_ROOT derivation must stay byte-identical to bin/edm-state's own, so a change to one that is
+# not made to the other fails here rather than silently giving the scorer a different root.
+T40AC7_RR_LINE="$(grep -m1 '^SRD_ROOT=' "$REPO_READINESS" || true)"
+T40AC7_ES_LINE="$(grep -m1 '^SRD_ROOT=' "$T40AC7_STATE_SRC" || true)"
+if [[ -n "$T40AC7_RR_LINE" && -n "$T40AC7_ES_LINE" ]]; then
+  pass "EDMV4-T40 AC7 -- both SRD_ROOT derivation lines were located (the comparison below is meaningful)"
+else
+  fail "EDMV4-T40 AC7 -- could not locate one of the SRD_ROOT lines: scorer=[${T40AC7_RR_LINE}] edm-state=[${T40AC7_ES_LINE}]"
+fi
+if [[ "$T40AC7_RR_LINE" == "$T40AC7_ES_LINE" ]]; then
+  pass "EDMV4-T40 AC7 -- edm-repo-readiness' SRD_ROOT chain is byte-identical to bin/edm-state's own"
+else
+  fail "EDMV4-T40 AC7 -- SRD_ROOT chains have drifted: scorer=[${T40AC7_RR_LINE}] edm-state=[${T40AC7_ES_LINE}]"
+fi
+# NEGATIVE CONTROL: perturb one copy and confirm the comparison reports drift.
+T40AC7_DRIFTED="${T40AC7_RR_LINE%\"}-drifted\""
+if [[ "$T40AC7_DRIFTED" == "$T40AC7_ES_LINE" ]]; then
+  fail "EDMV4-T40 AC7 negative control -- a deliberately perturbed SRD_ROOT line still compared equal"
+else
+  pass "EDMV4-T40 AC7 negative control -- a deliberately perturbed SRD_ROOT line is detected as drift"
+fi
+
+echo
+echo "-- CA-022/028/033/034: stale and contradictory prose --"
+
+# =================================================================================================
+# CA-022: the canonical-section count is DERIVED, never restated
+# =================================================================================================
+CA022_SYNC="${PLUGIN_DIR}/bin/edm-sync-canonical-sections"
+CA022_TMP="$(mktemp -d "${TMP}/ca022.XXXXXX")"
+
+# The generation block's own list, computed here at test time by a DIFFERENT expression than the
+# script's (awk over the extract_section calls between the `{` and `} > "$tmp"` fence), so the two
+# agreeing is evidence rather than a tautology.
+CA022_GEN_COUNT="$(awk '/^\{$/{f=1} f && /^\} > "\$tmp"$/{f=0} f && /^  extract_section "/' "$CA022_SYNC" | grep -c . || true)"
+if [[ "$CA022_GEN_COUNT" -ge 2 ]]; then
+  pass "CA-022 -- the generation block's extract_section list was located (${CA022_GEN_COUNT} sections); the checks below are meaningful"
+else
+  fail "CA-022 -- could not locate the generation block's extract_section list (found ${CA022_GEN_COUNT}); every check below is vacuous"
+fi
+
+CA022_HELP="$("$CA022_SYNC" --help)"
+CA022_HELP_COUNT="$(printf '%s\n' "$CA022_HELP" | grep -c '^#   - ' || true)"
+if [[ "$CA022_HELP_COUNT" -eq "$CA022_GEN_COUNT" ]]; then
+  pass "CA-022 -- --help lists exactly the generation block's ${CA022_GEN_COUNT} sections, both computed at test time"
+else
+  fail "CA-022 -- --help listed ${CA022_HELP_COUNT} sections but the generation block extracts ${CA022_GEN_COUNT}"
+fi
+check "CA-022 -- --help prints the derived count in its inventory header" \
+  "# Sections extracted (${CA022_GEN_COUNT})," "$CA022_HELP"
+# Every heading the generator names must appear in the inventory, by name (a count alone would let
+# a renamed section pass).
+CA022_MISSING=""
+while IFS= read -r ca022_h; do
+  [[ -n "$ca022_h" ]] || continue
+  printf '%s\n' "$CA022_HELP" | grep -qF -- "#   - ${ca022_h}" || CA022_MISSING="${CA022_MISSING}${CA022_MISSING:+, }${ca022_h}"
+done < <(awk '/^\{$/{f=1} f && /^\} > "\$tmp"$/{f=0} f && /^  extract_section "/' "$CA022_SYNC" | sed -e 's/^  extract_section "//' -e 's/".*$//')
+if [[ -z "$CA022_MISSING" ]]; then
+  pass "CA-022 -- every extracted section is named in --help's inventory, not just counted"
+else
+  fail "CA-022 -- --help's inventory omits: ${CA022_MISSING}"
+fi
+
+# NEGATIVE CONTROL: add an eighth extract_section call to a scratch copy and confirm --help's
+# derived count MOVES WITH IT. A re-pinned literal would stay at seven and fail this.
+CA022_SCRATCH="${CA022_TMP}/edm-sync-canonical-sections"
+awk '{print} /^  extract_section "Phase Timing Guidelines \(EDMV3-T38\)" "\$SRC"$/{print "  echo"; print "  extract_section \"Cost tracking\" \"$SRC\""}' \
+  "$CA022_SYNC" > "$CA022_SCRATCH"
+cp "${PLUGIN_DIR}/bin/_edm-cli-lib.sh" "${CA022_TMP}/_edm-cli-lib.sh"
+chmod +x "$CA022_SCRATCH"
+CA022_SCRATCH_COUNT="$("$CA022_SCRATCH" --help | grep -c '^#   - ' || true)"
+if [[ "$CA022_SCRATCH_COUNT" -eq $((CA022_GEN_COUNT + 1)) ]]; then
+  pass "CA-022 negative control -- adding an eighth extract_section call moves --help's count to ${CA022_SCRATCH_COUNT} (it is derived, not pinned)"
+else
+  fail "CA-022 negative control -- --help still reported ${CA022_SCRATCH_COUNT} after an extra extract_section call was added; the count is pinned, not derived"
+fi
+check "CA-022 negative control -- and the newly added section is named in the scratch copy's inventory" \
+  "#   - Cost tracking" "$("$CA022_SCRATCH" --help)"
+
+# Neither the script's help block nor CLAUDE.md's bin/ row may restate a literal count.
+CA022_HELP_BLOCK="$(awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$CA022_SYNC")"
+check_absent "CA-022 -- the --help block no longer claims 'the two by-name-referenced canonical sections'" \
+  "the two by-name-referenced canonical sections" "$CA022_HELP_BLOCK"
+check_absent "CA-022 -- nor tells the operator to re-run after editing 'either source section'" \
+  "either source section" "$CA022_HELP_BLOCK"
+CA022_CLAUDE_ROW="$(grep -F '| `edm-sync-canonical-sections` |' "${PLUGIN_DIR}/CLAUDE.md")"
+if [[ -n "$CA022_CLAUDE_ROW" ]]; then
+  pass "CA-022 -- CLAUDE.md's bin/ table row for edm-sync-canonical-sections was located"
+else
+  fail "CA-022 -- CLAUDE.md's bin/ table has no row for edm-sync-canonical-sections; the checks below are vacuous"
+fi
+check_absent "CA-022 -- CLAUDE.md's bin/ row no longer names the two sections it used to claim" \
+  '"Severity vocabulary" and "Mermaid diagram conventions" sections' "$CA022_CLAUDE_ROW"
+check "CA-022 -- CLAUDE.md's bin/ row points the reader at --help for the live inventory instead" \
+  'edm-sync-canonical-sections --help' "$CA022_CLAUDE_ROW"
+if printf '%s' "$CA022_CLAUDE_ROW" | grep -qiE '\b(two|three|four|five|six|seven|eight|nine|ten|[0-9]+)\b canonical sections'; then
+  fail "CA-022 -- CLAUDE.md's bin/ row re-pins a literal canonical-section count: ${CA022_CLAUDE_ROW}"
+else
+  pass "CA-022 -- CLAUDE.md's bin/ row restates no literal canonical-section count (a re-pinned count is the defect, per CA-021)"
+fi
+
+# =================================================================================================
+# CA-028: the code-audit skill's False Alarm Filter must agree with the 14 lens agents
+# =================================================================================================
+CA028_SKILL="${PLUGIN_DIR}/skills/code-audit/SKILL.md"
+CA028_FILTER="$(awk '/^## False Alarm Filter/{f=1;next} f && /^## /{f=0} f' "$CA028_SKILL")"
+if [[ -n "$CA028_FILTER" ]]; then
+  pass "CA-028 -- the code-audit skill's False Alarm Filter section extracted non-empty"
+else
+  fail "CA-028 -- the code-audit skill's False Alarm Filter section extraction was empty; nothing below is meaningful"
+fi
+check_absent "CA-028 -- the skill no longer says a filtered finding is not reported at all" \
+  "do not report as a finding" "$CA028_FILTER"
+check "CA-028 -- the skill now uses the lens agents' demote-never-delete formulation" \
+  "demotes and never deletes" "$CA028_FILTER"
+check "CA-028 -- and states that a NOTED item still gets its JSONL line" \
+  'sev: "NOTED"' "$CA028_FILTER"
+check "CA-028 -- naming the paired status token as well" 'status: "noted"' "$CA028_FILTER"
+check "CA-028 -- and names the demotion target section" '## Noted / Not Actionable' "$CA028_FILTER"
+
+# The claim this fix rests on -- "all fourteen lens agents already say this" -- is verified against
+# the live agent files, not asserted. It is also the NEGATIVE CONTROL: if the lens agents ever
+# stopped carrying the demote-never-delete sentence, the skill would be the wrong thing to pin to.
+CA028_LENSES=""
+CA028_LENS_COUNT=0
+CA028_LENS_BAD=""
+while IFS= read -r ca028_f; do
+  [[ -n "$ca028_f" ]] || continue
+  CA028_LENS_COUNT=$((CA028_LENS_COUNT + 1))
+  ca028_sec="$(awk '/^## False Alarm Filter/{f=1;next} f && /^## /{f=0} f' "$ca028_f")"
+  printf '%s' "$ca028_sec" | grep -qF 'demotes a finding to `## Noted / Not Actionable`' \
+    || CA028_LENS_BAD="${CA028_LENS_BAD}${CA028_LENS_BAD:+, }$(basename "$ca028_f")"
+done < <(ls "${PLUGIN_DIR}"/agents/edm-audit-*.md | grep -v 'edm-audit-synthesizer')
+CA028_LENSES="$CA028_LENS_COUNT"
+if [[ "$CA028_LENSES" -eq 14 ]]; then
+  pass "CA-028 -- all 14 lens agent files were found (the set the skill is being aligned to)"
+else
+  fail "CA-028 -- found ${CA028_LENSES} lens agent files, expected 14"
+fi
+if [[ -z "$CA028_LENS_BAD" ]]; then
+  pass "CA-028 -- every lens agent still carries the demote-never-delete sentence the skill now matches"
+else
+  fail "CA-028 -- these lens agents no longer carry the demote-never-delete sentence: ${CA028_LENS_BAD}"
+fi
+# NEGATIVE CONTROL for the skill-side checks: strip the new formulation from a scratch copy and
+# confirm the two content checks above would fail on it.
+CA028_TMP="$(mktemp -d "${TMP}/ca028.XXXXXX")"
+sed -e '/demotes and never deletes/d' -e '/sev: "NOTED"/d' "$CA028_SKILL" > "${CA028_TMP}/SKILL.md"
+CA028_BROKEN="$(awk '/^## False Alarm Filter/{f=1;next} f && /^## /{f=0} f' "${CA028_TMP}/SKILL.md")"
+if printf '%s' "$CA028_BROKEN" | grep -qF 'demotes and never deletes'; then
+  fail "CA-028 negative control -- the demote-never-delete check did not discriminate against a stripped copy"
+else
+  pass "CA-028 negative control -- the demote-never-delete check correctly fails on a copy with the sentence removed"
+fi
+
+# =================================================================================================
+# CA-033: skills/plan's Step 6 instruction now has a matching scoped Bash grant
+# =================================================================================================
+CA033_PLAN="${PLUGIN_DIR}/skills/plan/SKILL.md"
+CA033_TOOLS="$(grep -m1 '^allowed-tools:' "$CA033_PLAN")"
+if [[ -n "$CA033_TOOLS" ]]; then
+  pass "CA-033 -- skills/plan/SKILL.md's allowed-tools line was located"
+else
+  fail "CA-033 -- skills/plan/SKILL.md has no allowed-tools line; the checks below are vacuous"
+fi
+check "CA-033 -- plan's allowed-tools grants Bash(edm-repo-readiness *)" \
+  "Bash(edm-repo-readiness *)" "$CA033_TOOLS"
+# The instruction the grant exists for must still be there -- a grant with no instruction is the
+# opposite defect and is what edm-check-grants' Source 4 already warns about.
+check "CA-033 -- Step 6 still instructs the skill to run edm-repo-readiness" \
+  "edm-repo-readiness" "$(cat "$CA033_PLAN")"
+# NEGATIVE CONTROL: every OTHER edm-* binary named in a run instruction in this skill body must
+# also carry a scoped grant. Computed from the file, so a future step that adds an ungranted
+# binary fails here instead of failing silently at runtime the way Step 6 did.
+CA033_UNGRANTED=""
+for ca033_bin in edm-state edm-init edm-validate-prefix edm-repo-readiness; do
+  grep -qF -- "$ca033_bin" "$CA033_PLAN" || continue
+  printf '%s' "$CA033_TOOLS" | grep -qF -- "Bash(${ca033_bin} *)" \
+    || CA033_UNGRANTED="${CA033_UNGRANTED}${CA033_UNGRANTED:+, }${ca033_bin}"
+done
+if [[ -z "$CA033_UNGRANTED" ]]; then
+  pass "CA-033 -- every edm-* binary named in skills/plan/SKILL.md's body carries a matching scoped Bash grant"
+else
+  fail "CA-033 -- these edm-* binaries are named in skills/plan/SKILL.md but have no scoped Bash grant: ${CA033_UNGRANTED}"
+fi
+# Proof the loop above discriminates: run the same rule against a scratch copy with the grant
+# removed and confirm it reports edm-repo-readiness as ungranted.
+CA033_TMP="$(mktemp -d "${TMP}/ca033.XXXXXX")"
+sed 's/, Bash(edm-repo-readiness \*)//' "$CA033_PLAN" > "${CA033_TMP}/SKILL.md"
+CA033_CTRL_TOOLS="$(grep -m1 '^allowed-tools:' "${CA033_TMP}/SKILL.md")"
+CA033_CTRL_UNGRANTED=""
+for ca033_bin in edm-state edm-init edm-validate-prefix edm-repo-readiness; do
+  grep -qF -- "$ca033_bin" "${CA033_TMP}/SKILL.md" || continue
+  printf '%s' "$CA033_CTRL_TOOLS" | grep -qF -- "Bash(${ca033_bin} *)" \
+    || CA033_CTRL_UNGRANTED="${CA033_CTRL_UNGRANTED}${CA033_CTRL_UNGRANTED:+, }${ca033_bin}"
+done
+if [[ "$CA033_CTRL_UNGRANTED" == "edm-repo-readiness" ]]; then
+  pass "CA-033 negative control -- removing the grant from a scratch copy makes the same rule report edm-repo-readiness ungranted"
+else
+  fail "CA-033 negative control -- the rule did not discriminate: got [${CA033_CTRL_UNGRANTED}], expected [edm-repo-readiness]"
+fi
+
+# =================================================================================================
+# CA-034: Step 1b.5's readiness coupling states its own ordering instead of dangling
+# =================================================================================================
+CA034_STEP="$(_t41_extract_between "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" '^\*\*Step 1b\.5' '^\*\*Step 1c')"
+if [[ -n "$CA034_STEP" ]]; then
+  pass "CA-034 -- Step 1b.5's block extracted non-empty"
+else
+  fail "CA-034 -- Step 1b.5's block extraction was empty; nothing below is meaningful"
+fi
+check "CA-034 -- Step 1b.5 states that no score exists at this point on any run that reaches it" \
+  "no readiness score exists at this point on any run that reaches this step" "$CA034_STEP"
+check "CA-034 -- and names the producer and WHEN it runs, relative to this step" \
+  "runs inside Phase 1 -- dispatched later, at Step 2" "$CA034_STEP"
+check "CA-034 -- and names the skipped-on-resume half that makes the two cases disjoint" \
+  "skipped on resume" "$CA034_STEP"
+check "CA-034 -- the previously-unresolvable reference now names a concrete read path" \
+  '`Overall score:` line of `planning.md`' "$CA034_STEP"
+check "CA-034 -- the advisory contract is restated: three signals alone, no waiting" \
+  "never blocks on, or waits for, the scorecard" "$CA034_STEP"
+# The orchestrator does NOT acquire the score itself, so it must NOT carry a Bash grant for the
+# scorecard -- a grant with no instruction is the defect edm-check-grants Source 4 warns about.
+CA034_ORCH_TOOLS="$(grep -m1 '^allowed-tools:' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md")"
+if printf '%s' "$CA034_ORCH_TOOLS" | grep -qF -- 'Bash(edm-repo-readiness'; then
+  fail "CA-034 -- the orchestrator carries a Bash(edm-repo-readiness ...) grant but Step 1b.5 runs nothing; that is a grant without an instruction"
+else
+  pass "CA-034 -- the orchestrator carries no Bash(edm-repo-readiness ...) grant, matching a step that acquires nothing"
+fi
+# Regression: the block must stay under the EDMV4-T34 AC12 ceiling after this rewrite.
+CA034_LINES="$(printf '%s\n' "$CA034_STEP" | wc -l | tr -d ' ')"
+if [[ "$CA034_LINES" -lt 30 ]]; then
+  pass "CA-034 -- Step 1b.5's block is still ${CA034_LINES} lines (< 30) after the ordering rewrite"
+else
+  fail "CA-034 -- Step 1b.5's block grew to ${CA034_LINES} lines (expected < 30)"
+fi
+# NEGATIVE CONTROL: strip the ordering paragraph from a scratch copy and confirm the ordering
+# checks above would fail on it -- they are content checks, not "the section is non-empty" checks.
+CA034_TMP="$(mktemp -d "${TMP}/ca034.XXXXXX")"
+sed '/no readiness score exists at this point/d' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" > "${CA034_TMP}/SKILL.md"
+CA034_CTRL="$(_t41_extract_between "${CA034_TMP}/SKILL.md" '^\*\*Step 1b\.5' '^\*\*Step 1c')"
+if printf '%s' "$CA034_CTRL" | grep -qF 'no readiness score exists at this point on any run that reaches this step'; then
+  fail "CA-034 negative control -- the ordering check did not discriminate against a copy with the paragraph removed"
+else
+  pass "CA-034 negative control -- the ordering check correctly fails on a copy with the paragraph removed"
+fi
+
+echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
