@@ -1034,7 +1034,8 @@ printf 'not json\n' > "$TMP/SRD/CA477CLASS/code-audit/pass-1_2026-08-16/lens-L4.
 # lenses this fixture never intended to exercise.
 "$EDM_STATE" audit-round-start CA477CLASS code --lenses L1,L2,L3,L4 >/dev/null
 ca477class_out="$("$EDM_STATE" audit-round-complete CA477CLASS code 2>&1)"
-# CA-526: `check` is documented substring containment (_harness.sh:26-34), so asserting the
+# CA-526: `check` is documented substring containment (see its own docstring in _harness.sh --
+# cited by name, not by line, per CA-060), so asserting the
 # substring "for: L2 L3 L4" also passes on a warn that OVER-reports, e.g. "for: L1 L2 L3 L4" --
 # which would also flag the one lens (L1) whose JSONL is present and valid, the exact
 # false-positive-downgrade harm CA-477(a) names and CA-506 confirms is irreversible. Extract the

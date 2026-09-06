@@ -19,7 +19,8 @@
 # Usage:
 #   edm-gateguard              # normal invocation: reads the host's PreToolUse JSON payload from
 #                               # stdin (tool_name, tool_input, ...) and never takes arguments
-#   edm-gateguard -h|--help    # show this help
+#   edm-gateguard -h|--help|help  # show this help (CA-107: this documented alias set is exactly
+#                               # what the `case` below accepts, and matches the whole hook family)
 #
 # Registration: plugins/edm/hooks/hooks.json's PreToolUse array carries a matcher block for
 # Edit|Write|MultiEdit whose command guards on this binary's presence exactly like the existing
@@ -85,7 +86,7 @@ if [[ "${EDM_GATEGUARD_DISABLED:-}" == "1" ]]; then
 fi
 
 # Guarded sourcing (EDMV4-T17's contract): a missing/partial library degrades to no gate at all.
-if [[ -f "${SCRIPT_DIR}/_edm-datadir-lib.sh" ]]; then
+if [[ -r "${SCRIPT_DIR}/_edm-datadir-lib.sh" ]]; then
   # shellcheck source=/dev/null
   source "${SCRIPT_DIR}/_edm-datadir-lib.sh"
 fi

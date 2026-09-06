@@ -4226,7 +4226,8 @@ else
 fi
 
 # ---- AC3: exit-code mode -- fact list on stderr, nothing on stdout, exit 2 (the same code
-# edm-lint-staged-artifacts:7-10,150-158 already spends to mean "block"). -------------------------
+# edm-lint-staged-artifacts already spends to mean "block" -- see its own EDM-HELP block and its
+# exit-code arms; cited by name, not by line range, per CA-060). ---------------------------------
 T13_EXIT_STDERR="${T13_TMP}/ac3-deny.stderr"
 T13_EXIT_RC=0
 T13_EXIT_OUT="$(EDM_GATEGUARD_DENY_MODE=exit-code "$T13_HARNESS" deny 'fact 1: xyz' 2>"$T13_EXIT_STDERR")" || T13_EXIT_RC=$?
@@ -4892,13 +4893,76 @@ done
 # line-number-ordering technique. (b) runtime, with a stat SPY on PATH: the spy fires when the
 # switch is OFF and a fixture reaches gg_fresh_lines (a pre-existing checked-file read), and does
 # NOT fire when the switch is ON against the identical fixture -- so the zero-count is paired
-# against a fixture proven capable of invoking `stat`, not merely a fixture that never would have. -
+# against a fixture proven capable of invoking `stat`, not merely a fixture that never would have.
+#
+# CA-064: AC3's "zero filesystem reads beyond its own environment" is IMPRECISE as literally
+# written, and the ordering half only ever compared the switch against the datadir-lib source.
+# Two things genuinely run BEFORE either switch: a `dirname` spawn and the `_edm-cli-lib.sh`
+# source, both at the top of the script -- which is why the fakebin below has to stub `dirname`
+# at all. That is deliberate (the switch cannot be evaluated before the script knows where it
+# lives) and unavoidable, so it is asserted as a NAMED, bounded exception instead of being
+# quietly excluded from the check. The precise, checkable claim is:
+#   (i)  the ONLY thing preceding the kill switches is the cli-lib source line, and
+#   (ii) NOTHING else that touches the filesystem does -- no datadir-lib source, no marker
+#        resolution, no `stat`, no state read.
+# Clause (ii) is derived by scanning the lines BEFORE the switch for a pinned token set, so a
+# future edit that hoists any of them above the switch fails here rather than silently widening
+# what a kill-switched invocation costs.
 T15_AC3_KILLSWITCH_LINE="$(grep -n 'case "\${EDM_GATEGUARD:-}" in' "$GATEGUARD" | head -1 | cut -d: -f1)"
 T15_AC3_DATADIRLIB_LINE="$(grep -n '_edm-datadir-lib.sh' "$GATEGUARD" | head -1 | cut -d: -f1)"
+# The SOURCE statement specifically, not the first mention of the filename (which is a header
+# comment) -- an assertion keyed on the comment would pass no matter where the source moved to.
+T15_AC3_CLILIB_LINE="$(grep -nE '^source .*_edm-cli-lib\.sh' "$GATEGUARD" | head -1 | cut -d: -f1)"
 if [[ -n "$T15_AC3_KILLSWITCH_LINE" && -n "$T15_AC3_DATADIRLIB_LINE" && "$T15_AC3_KILLSWITCH_LINE" -lt "$T15_AC3_DATADIRLIB_LINE" ]]; then
   pass "EDMV4-T15 AC3 -- the kill-switch block (line ${T15_AC3_KILLSWITCH_LINE}) precedes the datadir-lib source (line ${T15_AC3_DATADIRLIB_LINE})"
 else
   fail "EDMV4-T15 AC3 -- kill-switch line=[${T15_AC3_KILLSWITCH_LINE}] datadir-lib line=[${T15_AC3_DATADIRLIB_LINE}] -- ordering not satisfied"
+fi
+
+# CA-064 (i): the cli-lib source is the ONE documented pre-switch filesystem read. Asserted
+# positively rather than left implicit, so its position is a recorded fact and not an accident.
+if [[ -n "$T15_AC3_CLILIB_LINE" && -n "$T15_AC3_KILLSWITCH_LINE" && "$T15_AC3_CLILIB_LINE" -lt "$T15_AC3_KILLSWITCH_LINE" ]]; then
+  pass "EDMV4-T15 AC3 / CA-064 -- the _edm-cli-lib.sh source (line ${T15_AC3_CLILIB_LINE}) is the single documented read that PRECEDES the kill switches (line ${T15_AC3_KILLSWITCH_LINE}); AC3's 'zero filesystem reads' means zero BEYOND it"
+else
+  fail "EDMV4-T15 AC3 / CA-064 -- expected the _edm-cli-lib.sh source to precede the kill switches; cli-lib line=[${T15_AC3_CLILIB_LINE}] switch line=[${T15_AC3_KILLSWITCH_LINE}]"
+fi
+
+# CA-064 (ii): nothing ELSE that touches the filesystem may precede the switches. The token set
+# is pinned here, the line range is derived from the switch position above, and the cli-lib line
+# is the only exempt hit. t15_ac3_pre_switch_reads <file> prints one "line:token" per offender.
+# Comment lines are stripped before scanning so this explanatory block -- which names every token
+# it hunts -- cannot match itself; the positive control below proves the scan still fires on a
+# real code line.
+# No `\b` anywhere: BSD grep -E has no GNU word-boundary escape, and a pattern that silently
+# never matches on macOS is the exact shape CA-017 already found once in this suite.
+T15_AC3_PRESWITCH_TOKENS='_edm-datadir-lib\.sh|edm_marker_path|stat -|test -f |\[\[ -f |\[\[ -r |\[\[ -d |cat "'
+t15_ac3_pre_switch_reads() {
+  local f="$1" switch_line="$2" exempt_line="$3"
+  awk -v last="$((switch_line - 1))" -v exempt="$exempt_line" \
+    'NR<=last && NR!=exempt && $0 !~ /^[[:space:]]*#/ {print NR ":" $0}' "$f" \
+    | grep -E "$T15_AC3_PRESWITCH_TOKENS" || true
+}
+T15_AC3_PRESWITCH_HITS="$(t15_ac3_pre_switch_reads "$GATEGUARD" "$T15_AC3_KILLSWITCH_LINE" "$T15_AC3_CLILIB_LINE")"
+if [[ -z "$T15_AC3_PRESWITCH_HITS" ]]; then
+  pass "EDMV4-T15 AC3 / CA-064 -- no OTHER filesystem-touching construct precedes the kill switches (scanned lines 1-$((T15_AC3_KILLSWITCH_LINE - 1)), cli-lib source exempt)"
+else
+  fail "EDMV4-T15 AC3 / CA-064 -- a filesystem read was hoisted above the kill switches, so a kill-switched invocation no longer costs zero:\n${T15_AC3_PRESWITCH_HITS}"
+fi
+
+# Negative control for CA-064 (ii): inject a real `stat` call on a CODE line above the switch in a
+# scratch copy and prove the scan rejects it. Without this the zero-hit pass above proves nothing.
+w8_scratch_dir T15_AC3_NEG_TMP
+T15_AC3_NEG_COPY="${T15_AC3_NEG_TMP}/gateguard-preswitch-mutant"
+awk -v inject="$((T15_AC3_KILLSWITCH_LINE - 1))" \
+  '{print} NR==inject {print "MARKER_MTIME=\"$(stat -f %m \"${SCRIPT_DIR}\" 2>/dev/null)\""}' \
+  "$GATEGUARD" > "$T15_AC3_NEG_COPY"
+T15_AC3_NEG_SWITCH="$(grep -n 'case "\${EDM_GATEGUARD:-}" in' "$T15_AC3_NEG_COPY" | head -1 | cut -d: -f1)"
+T15_AC3_NEG_CLILIB="$(grep -n '_edm-cli-lib.sh' "$T15_AC3_NEG_COPY" | head -1 | cut -d: -f1)"
+T15_AC3_NEG_HITS="$(t15_ac3_pre_switch_reads "$T15_AC3_NEG_COPY" "$T15_AC3_NEG_SWITCH" "$T15_AC3_NEG_CLILIB")"
+if [[ -n "$T15_AC3_NEG_HITS" ]]; then
+  pass "EDMV4-T15 AC3 / CA-064 -- negative control: a \`stat\` call injected above the kill switch on a code line IS caught, so the zero-hit result above is a real scan"
+else
+  fail "EDMV4-T15 AC3 / CA-064 -- negative control BROKEN: an injected pre-switch \`stat\` call was not caught, so the clean scan above proves nothing"
 fi
 
 w8_scratch_dir T15_AC3_TMP
@@ -5548,6 +5612,14 @@ echo
 # below is paired with a positive control: a scratch fixture that corrupts exactly one contract
 # element and proves the checker actually flags it, so "found 0 violations" here means the
 # checker looked and found nothing, not that it cannot find anything.
+#
+# CA-071: that last sentence was PROSE, and it was false -- nine of the checker's tags had no
+# fixture at all, three of them (`NA_CONDITIONAL_*`) the sole machine enforcement of L13's
+# conditional-lens carve-out and guard D2. It is now a MACHINE-CHECKED claim: the
+# `EDMV4-T28 / CA-071` band below derives the full tag set from `t28_contract_violations`' own
+# body and asserts every one of them was observed firing on at least one fixture. A tag added to
+# the checker without a fixture fails that assertion on the next run. Do not restate a tag count
+# here -- the band prints the derived number.
 echo "=== EDMV4-T28: house lens contract -- specification and mechanical enforcement ==="
 
 T28_AGENTS_DIR="${PLUGIN_DIR}/agents"
@@ -5588,19 +5660,15 @@ t28_contract_violations() {
   grep -qF 'Your mandate is ONLY this lens. Do not audit other dimensions -- other agents handle those.' "$file" \
     || echo "MANDATE_SENTENCE"
 
-  # AC5: verbatim house Scope paragraph, byte-identical across every lens IN CONTENT -- but not
-  # necessarily in raw line-wrapping: edm-audit-security.md (L8) hard-wraps this same paragraph
-  # across two source lines at a different column than edm-audit-logic.md (L1)'s single-line form
-  # (verified live: both read identically once the wrap's newline is treated as a space). A single
-  # grep -qF spanning the wrap point would therefore false-positive on L8, so this is two short,
-  # wrap-safe substring checks (one from each side of where L8's wrap falls) rather than one long
-  # literal that assumes L1's line width.
-  if grep -qF 'deliver what was asked at the scope intended; make routine judgment calls; if a better approach exists, say so in a' "$file" \
-    && grep -qF 'rather than quietly narrowing, widening or transforming it.' "$file"; then
-    :
-  else
-    echo "SCOPE_PARAGRAPH"
-  fi
+  # AC5: verbatim house Scope paragraph, byte-identical across every lens -- now a SINGLE
+  # anchored full-line match (`grep -qxF`), not the two-sided approximation this check used to be.
+  # CA-110: edm-audit-security.md (L8) was the sole lens of fifteen that hard-wrapped this
+  # paragraph across two source lines, which is what forced the two-grep shape; the T28 contract
+  # says byte-identical, so the file was unwrapped rather than the checker further loosened.
+  # The two-grep form left a 44-character hole between its two needles (CA-069) that an edit
+  # could pass through unnoticed: the exact-line form has no interior at all.
+  grep -qxF 'deliver what was asked at the scope intended; make routine judgment calls; if a better approach exists, say so in a sentence and continue with the task as asked rather than quietly narrowing, widening or transforming it.' "$file" \
+    || echo "SCOPE_PARAGRAPH"
 
   # AC6: identical False Alarm Filter framing sentence, exactly three numbered criteria.
   grep -qF 'Report every finding at your best-effort confidence level rather than self-suppressing on uncertainty: this filter demotes a finding to `## Noted / Not Actionable` with a documented rationale and never deletes it outright, and ranking by confidence and cross-lens corroboration is the synthesizer'"'"'s job, not this lens'"'"'s.' "$file" \
@@ -5665,14 +5733,20 @@ t28_contract_violations() {
   # Heading order -- the seven REQUIRED headings above frontmatter/opening-frame must all be
   # present and in this relative order (excluding fenced code-block content, which itself
   # contains a '## Findings' heading that must NOT be counted as a real section heading). This is
-  # a SUBSEQUENCE check, not full-sequence equality: several pre-EDMV4 lenses legitimately carry
-  # an extra lens-specific heading between 'What You Hunt For' and 'False Alarm Filter' (verified
-  # live: edm-audit-consistency.md and edm-audit-dry.md both add '## Process', edm-audit-dead-code.md
-  # adds '## Key Technique') -- pre-existing, out of this ticket's scope (the three NEW lenses,
-  # per EDMV4-T28's own title), and not itself a contract violation the way a MISSING or
-  # REORDERED required heading is. Filtering the actual heading list down to only the seven
-  # required strings (grep -Fx, which preserves the file's own line order) tolerates that extra
-  # heading while still catching a required heading that is absent or out of order.
+  # a SUBSEQUENCE check, not full-sequence equality: several lenses legitimately carry an extra
+  # lens-specific heading -- pre-existing, out of EDMV4-T28's scope (the three NEW lenses, per
+  # that ticket's own title), and not itself a contract violation the way a MISSING or REORDERED
+  # required heading is. Filtering the actual heading list down to only the seven required
+  # strings (grep -Fx, which preserves the file's own line order) tolerates the extras while
+  # still catching a required heading that is absent or out of order.
+  #
+  # CA-070: this comment used to ENUMERATE the waiver's extent -- "3 files, 2 heading strings",
+  # naming edm-audit-consistency.md, edm-audit-dry.md and edm-audit-dead-code.md. It was wrong by
+  # the time it was read: the live extent is larger and in more than one position. No corrected
+  # list is written here, because re-pinning a list is how this went stale the first time. The
+  # `EDMV4-T28 / CA-070` band immediately after the negative fixtures below DERIVES the extent
+  # live from the lens set and prints it, so the justification is recomputed on every run rather
+  # than transcribed once.
   local expected actual
   expected="## Scope
 ## What You Hunt For
@@ -5716,6 +5790,15 @@ w8_scratch_dir T28_TMP
 # with <sed-script> applied, runs the checker, and asserts <expected-tag> appears among the
 # violations. This is the positive-control half of every zero-count check above: it proves each
 # tag's grep can actually fail, not merely that it has not failed yet.
+#
+# CA-071: every tag OBSERVED across the whole fixture corpus is recorded in T28_TAGS_OBSERVED, not
+# just the one tag each case names. Some tags are exercised as a side effect of another case's
+# mutation (deleting the '## When this does NOT apply' section to EOF trips NA_HEADING,
+# NA_STANDARD_SENTENCE and HEADING_ORDER at once), and counting only the NAMED tag understated
+# the corpus. The band after the fixtures compares this observed set against the tag universe
+# derived from the checker's own body, which is what makes the preamble's control-backed claim
+# machine-checked instead of prose.
+T28_TAGS_OBSERVED=""
 t28_neg_case() {
   local label="$1" tag="$2" script="$3"
   local safe_label fixture v
@@ -5723,6 +5806,26 @@ t28_neg_case() {
   fixture="${T28_TMP}/${safe_label}.md"
   sed "$script" "$T28_REF" > "$fixture"
   v="$(t28_contract_violations "$fixture" | tr '\n' ',')" || true
+  T28_TAGS_OBSERVED="${T28_TAGS_OBSERVED}$(printf '%s' "${v%,}" | tr ',' '\n')
+"
+  case ",${v}," in
+    *",${tag},"*) pass "EDMV4-T28 -- negative fixture (${label}): checker correctly flags ${tag}" ;;
+    *) fail "EDMV4-T28 -- negative fixture (${label}): checker did NOT flag ${tag} (violations found: ${v%,})" ;;
+  esac
+}
+
+# t28_neg_file_case <label> <expected-tag> <awk-program> -- same contract as t28_neg_case, but
+# builds the fixture with awk rather than sed, for mutations sed cannot express cleanly (whole
+# frontmatter lines, or a fixture derived from a lens other than the L1 reference).
+t28_neg_file_case() {
+  local label="$1" tag="$2" prog="$3" src="${4:-$T28_REF}"
+  local safe_label fixture v
+  safe_label="$(printf '%s' "$label" | tr -c 'A-Za-z0-9' '_')"
+  fixture="${T28_TMP}/${safe_label}.md"
+  awk "$prog" "$src" > "$fixture"
+  v="$(t28_contract_violations "$fixture" | tr '\n' ',')" || true
+  T28_TAGS_OBSERVED="${T28_TAGS_OBSERVED}$(printf '%s' "${v%,}" | tr ',' '\n')
+"
   case ",${v}," in
     *",${tag},"*) pass "EDMV4-T28 -- negative fixture (${label}): checker correctly flags ${tag}" ;;
     *) fail "EDMV4-T28 -- negative fixture (${label}): checker did NOT flag ${tag} (violations found: ${v%,})" ;;
@@ -5759,6 +5862,69 @@ t28_neg_case "What-You-Hunt-For heading renamed, breaking section order" "HEADIN
 t28_neg_case "Output and Output Format headings swapped (reordered, neither removed)" "HEADING_ORDER" \
   $'/^## Output$/{h;d;}\n/^## Output Format$/{G;}'
 
+# ---- CA-071: fixtures for the tags the corpus above never exercised ------------------------------
+# The T28 preamble claimed every contract check was control-backed. L4 counted 18 of 33 tags with
+# no fixture; wave-5 QC executed the checker and narrowed the genuinely unexercised set to nine --
+# DISALLOWED_TOOLS, EFFORT, OUTPUT_JSONL_PATH, SCHEMA_LENS_ID, ASCII_REMINDER, JSONL_STATUS_RULE
+# and all three NA_CONDITIONAL_*. The three NA_CONDITIONAL_* tags matter most: they are the SOLE
+# machine enforcement of L13's conditional-lens carve-out, including guard D2's "cost is never a
+# reason to skip this lens", and nothing proved they could fire. The set below covers every
+# remaining tag rather than only those nine, so the coverage assertion after it is total; the
+# three L13 tags come first because they are the ones with no other backstop anywhere.
+echo
+echo "EDMV4-T28 / CA-071 -- the previously-unexercised contract tags, each with its own negative fixture"
+
+# The three L13 conditional-lens tags, mutated on a scratch copy of the real L13 lens (the only
+# member of CONDITIONAL_LENS_IDS -- mutating L1 could not reach this branch of the checker at all).
+T28_L13_REF="${T28_AGENTS_DIR}/edm-audit-type-design.md"
+if [[ -f "$T28_L13_REF" ]]; then
+  t28_neg_file_case "L13 inapplicability framing removed" "NA_CONDITIONAL_INAPPLICABILITY" \
+    '{gsub(/inapplicability/, "optionality"); print}' "$T28_L13_REF"
+  t28_neg_file_case "L13 guard-D2 cost sentence removed" "NA_CONDITIONAL_COST_NEVER" \
+    '{gsub(/cost is never a reason to skip this lens/, "cost may be weighed against coverage"); print}' "$T28_L13_REF"
+  t28_neg_file_case "L13 Step-1 agreement clause removed" "NA_CONDITIONAL_AGREEMENT" \
+    '{gsub(/agrees with that determination and never substitutes/, "is decided by this agent alone"); print}' "$T28_L13_REF"
+else
+  fail "EDMV4-T28 / CA-071 -- edm-audit-type-design.md (L13) not found, so the three NA_CONDITIONAL_* tags cannot be control-backed"
+fi
+
+t28_neg_case "disallowedTools narrowed off the contract line" "DISALLOWED_TOOLS" \
+  's/^disallowedTools: Edit, NotebookEdit$/disallowedTools: NotebookEdit/'
+t28_neg_case "effort downgraded off max" "EFFORT" 's/^effort: max$/effort: high/'
+# Global, unlike the sibling OUTPUT_MD_PATH fixture: the `${OUTPUT_DIR}/lens-L{N}.jsonl` string
+# appears in BOTH the Output section and the JSONL Line Format section, and the checker's grep is
+# satisfied by either, so a single-occurrence edit leaves the tag unflagged. Found by the CA-071
+# coverage assertion below, which is exactly the class of hole it exists to catch.
+t28_neg_case "Output section jsonl path drifted off its own lens ID" "OUTPUT_JSONL_PATH" \
+  's/lens-L1\.jsonl/lens-L9.jsonl/g'
+t28_neg_case "JSONL schema line lens ID drifted off its own opening frame" "SCHEMA_LENS_ID" \
+  's/"lens":"L1"/"lens":"L9"/'
+t28_neg_case "ASCII-only reminder removed from the Output section" "ASCII_REMINDER" \
+  '/^Report text is ASCII-only/d'
+t28_neg_case "JSONL status field rule removed" "JSONL_STATUS_RULE" \
+  '/is exactly one of `open`, `fixed`, `noted`/d'
+t28_neg_case "JSONL id field rule removed" "JSONL_ID_RULE" \
+  '/is always `null` at the lens stage/d'
+t28_neg_case "JSONL round field rule removed" "JSONL_ROUND_RULE" \
+  '/are supplied by the code-audit skill from the round it actually/d'
+t28_neg_case "JSONL sev field rule removed" "JSONL_SEV_RULE" \
+  '/is exactly one of `P0`, `P1`, `P2`, `NOTED`/d'
+t28_neg_case "residual-risk paragraph removed" "RESIDUAL_RISK_PARAGRAPH" \
+  '/a finding present in the prose report with no/d'
+t28_neg_case "Severity vocabulary citation removed from Output Format" "SEVERITY_CITATION" \
+  's/CLAUDE\.md Sec\."Severity vocabulary"/the severity table/g'
+t28_neg_case "plugin-root anchor qualifier removed" "ANCHOR_QUALIFIER" \
+  "s/resolved relative to the EDM plugin's own root/resolved however the reader likes/"
+t28_neg_case "never-the-caller-cwd qualifier removed" "ANCHOR_NEVER_CWD" \
+  "s/never the caller's cwd/or the caller cwd/"
+t28_neg_case "opening frame reworded off the contract sentence" "OPENING_FRAME" \
+  's/^You are executing \*\*EDM Code Audit Lens L1/You are running **EDM Code Audit Lens L1/'
+t28_neg_case "unconditional-lens standard N/A sentence reworded" "NA_STANDARD_SENTENCE" \
+  's/This agent always applies once the code-audit skill selects lens L1 for the round/This agent applies when selected/'
+t28_neg_case "lens ID unresolvable -- the opening frame carries no L{N}" "LENS_ID_UNRESOLVABLE" \
+  's/\*\*EDM Code Audit Lens L1:/**EDM Code Audit Lens:/g'
+t28_neg_case "file emptied entirely" "MISSING_OR_EMPTY_FILE" 'd'
+
 echo
 echo 'EDMV4-T28 -- positive control: a harmless EXTRA heading (mirroring pre-existing lenses own "## Process"/"## Key Technique") does not itself trip the contract'
 # This is what justifies the subsequence tolerance in t28_contract_violations' HEADING_ORDER check
@@ -5775,6 +5941,114 @@ T28_EXTRA_HEADING_V="$(t28_contract_violations "$T28_EXTRA_HEADING_FIXTURE" | tr
 [[ -z "$T28_EXTRA_HEADING_V" ]] \
   && pass "EDMV4-T28 -- positive control: an extra lens-specific heading does not trip HEADING_ORDER (the tolerance is deliberate, not a hole)" \
   || fail "EDMV4-T28 -- positive control FAILED: inserting a harmless extra heading incorrectly triggered: ${T28_EXTRA_HEADING_V%,}"
+
+echo
+echo "EDMV4-T28 / CA-071 -- every tag the checker can emit is proven to fire, derived from the checker's own body"
+# CA-071: the preamble at the top of this band claims "every zero-count-style assertion below is
+# paired with a positive control". That was PROSE, and it was wrong -- nine tags had no fixture,
+# three of them L13's sole machine enforcement. It is a machine-checked claim now.
+#
+# The tag universe is DERIVED from t28_contract_violations' own body, not re-typed: a tag added to
+# the checker without a fixture fails here on the next run, which is the property a written list
+# could never have. The extraction is bounded to the function body by its opening and closing
+# lines, and the emitted-tag list is built from the `echo "TAG"` call form.
+#
+# Self-matching guard: the extraction reads THIS file, and this explanatory block is inside the
+# scan's own file -- but not inside the function's line range, and the awk window ends at the
+# function's closing brace, so no prose here can enter the universe. The positive control below
+# proves the extraction is finding real tags rather than silently returning nothing.
+T28_SELF="${BASH_SOURCE[0]:-$0}"
+t28_tag_universe() {
+  awk '/^t28_contract_violations\(\) \{$/{f=1} f{print} f&&/^\}$/{exit}' "$1" \
+    | grep -oE 'echo "[A-Z][A-Z0-9_]+"' | sed -e 's/^echo "//' -e 's/"$//' | sort -u
+}
+T28_TAG_UNIVERSE="$(t28_tag_universe "$T28_SELF")"
+T28_TAG_UNIVERSE_COUNT="$(printf '%s\n' "$T28_TAG_UNIVERSE" | grep -c '.' || true)"
+T28_TAGS_OBSERVED_SORTED="$(printf '%s\n' "$T28_TAGS_OBSERVED" | grep '.' | sort -u || true)"
+T28_TAGS_OBSERVED_COUNT="$(printf '%s\n' "$T28_TAGS_OBSERVED_SORTED" | grep -c '.' || true)"
+
+# Sanity: the derivation must actually find tags. A silently-empty universe would make the
+# coverage comparison below pass vacuously -- the exact class of defect this band exists to close.
+if [[ "$T28_TAG_UNIVERSE_COUNT" -ge 20 ]]; then
+  pass "EDMV4-T28 / CA-071 -- the tag universe derives ${T28_TAG_UNIVERSE_COUNT} tags live from t28_contract_violations' body (never a re-typed list)"
+else
+  fail "EDMV4-T28 / CA-071 -- the tag-universe derivation returned only ${T28_TAG_UNIVERSE_COUNT} tags, which is too few to be a real extraction: the coverage comparison below would pass vacuously"
+fi
+
+T28_TAGS_UNBACKED="$(comm -23 <(printf '%s\n' "$T28_TAG_UNIVERSE") <(printf '%s\n' "$T28_TAGS_OBSERVED_SORTED") | grep '.' | tr '\n' ' ' || true)"
+if [[ -z "$(printf '%s' "$T28_TAGS_UNBACKED" | tr -d '[:space:]')" ]]; then
+  pass "EDMV4-T28 / CA-071 -- all ${T28_TAG_UNIVERSE_COUNT} contract tags are control-backed: each was observed firing on at least one negative fixture (${T28_TAGS_OBSERVED_COUNT} distinct tags observed)"
+else
+  fail "EDMV4-T28 / CA-071 -- contract tag(s) with NO negative fixture, so nothing proves they can fire: ${T28_TAGS_UNBACKED}"
+fi
+
+# Negative control for the coverage assertion itself: pretend one real tag was never observed and
+# confirm the comparison reports it. Without this, "zero unbacked tags" could be an artifact of a
+# comm invocation that never emits anything.
+T28_CA071_FAKE_OBSERVED="$(printf '%s\n' "$T28_TAGS_OBSERVED_SORTED" | grep -v '^HEADING_ORDER$' || true)"
+T28_CA071_CONTROL="$(comm -23 <(printf '%s\n' "$T28_TAG_UNIVERSE") <(printf '%s\n' "$T28_CA071_FAKE_OBSERVED") | grep '.' | tr '\n' ' ' || true)"
+case " $T28_CA071_CONTROL " in
+  *" HEADING_ORDER "*)
+    pass "EDMV4-T28 / CA-071 -- negative control: withholding one observed tag makes the coverage comparison report it as unbacked, so the clean result above is a real comparison" ;;
+  *)
+    fail "EDMV4-T28 / CA-071 -- negative control BROKEN: withholding HEADING_ORDER did not make it show as unbacked (got: '${T28_CA071_CONTROL}'), so the clean coverage result proves nothing" ;;
+esac
+
+echo
+echo "EDMV4-T28 / CA-070 -- the subsequence tolerance's extent is DERIVED from the live lens set, never enumerated in prose"
+# CA-070: the waiver comment inside t28_contract_violations used to name 3 files and 2 heading
+# strings; the live extent had already grown past that in both dimensions, so a reader could not
+# re-derive the justification from what was written down. Deriving it here does three things a
+# corrected list would not: it stays correct as lenses are added, it PRINTS the extent so the
+# justification is visible in the run output, and it makes "the tolerance is still load-bearing"
+# a falsifiable claim rather than an assumption.
+#
+# t28_extra_headings <file> -- the '## ' headings outside fenced blocks that are NOT one of the
+# seven required strings, i.e. exactly the set t28_contract_violations' HEADING_ORDER filter
+# discards. It is the complement of that filter, so the two cannot disagree about what "extra"
+# means without one of them being edited.
+t28_extra_headings() {
+  awk '/^```/{f=!f;next} !f' "$1" | grep -E '^## ' \
+    | grep -vxF -e '## Scope' -e '## What You Hunt For' -e '## False Alarm Filter' \
+      -e '## Output' -e '## Output Format' -e '## JSONL Line Format' \
+      -e '## When this does NOT apply' || true
+}
+
+T28_EXTRA_FILE_COUNT=0
+T28_EXTRA_NAMES=""
+for t28_f in $T28_LENS_FILES; do
+  t28_extras="$(t28_extra_headings "${T28_AGENTS_DIR}/${t28_f}")"
+  [[ -n "$t28_extras" ]] || continue
+  T28_EXTRA_FILE_COUNT=$((T28_EXTRA_FILE_COUNT + 1))
+  T28_EXTRA_NAMES="${T28_EXTRA_NAMES}${t28_extras}
+"
+  echo "    ${t28_f}: $(printf '%s' "$t28_extras" | tr '\n' '/')"
+done
+T28_EXTRA_NAME_COUNT="$(printf '%s' "$T28_EXTRA_NAMES" | grep -c '^## ' || true)"
+T28_EXTRA_DISTINCT_COUNT="$(printf '%s\n' "$T28_EXTRA_NAMES" | grep '^## ' | sort -u | grep -c '.' || true)"
+
+# The load-bearing claim: the tolerance is justified by lenses that actually carry extra headings.
+# If that set ever empties, the tolerance has become vestigial and the check should tighten to
+# exact equality -- so a zero here is a FAILURE that says exactly that, not a quiet pass.
+if [[ "$T28_EXTRA_FILE_COUNT" -gt 0 ]]; then
+  pass "EDMV4-T28 / CA-070 -- the subsequence tolerance is load-bearing: ${T28_EXTRA_FILE_COUNT} of ${T28_LENS_COUNT} live lenses carry an extra heading (${T28_EXTRA_NAME_COUNT} occurrences, ${T28_EXTRA_DISTINCT_COUNT} distinct strings), all derived live"
+else
+  fail "EDMV4-T28 / CA-070 -- ZERO live lenses carry an extra heading, so HEADING_ORDER's subsequence tolerance is now vestigial: tighten it to exact full-list equality rather than keeping a waiver nothing needs"
+fi
+
+# Negative control for the derivation itself: a scratch copy with every extra heading stripped
+# must report zero extras, proving t28_extra_headings discriminates rather than always finding
+# something. Without this, the count above could be an artifact of the filter never excluding.
+w8_scratch_dir T28_CA070_TMP
+T28_CA070_STRIPPED="${T28_CA070_TMP}/no-extras.md"
+awk '/^```/{f=!f} !f && /^## / && $0 != "## Scope" && $0 != "## What You Hunt For" && $0 != "## False Alarm Filter" && $0 != "## Output" && $0 != "## Output Format" && $0 != "## JSONL Line Format" && $0 != "## When this does NOT apply" {next} {print}' \
+  "$T28_EXTRA_HEADING_FIXTURE" > "$T28_CA070_STRIPPED"
+T28_CA070_STRIPPED_EXTRAS="$(t28_extra_headings "$T28_CA070_STRIPPED")"
+if [[ -z "$T28_CA070_STRIPPED_EXTRAS" ]]; then
+  pass "EDMV4-T28 / CA-070 -- negative control: a scratch lens with its extra heading stripped reports ZERO extras, so the derivation discriminates rather than matching unconditionally"
+else
+  fail "EDMV4-T28 / CA-070 -- negative control BROKEN: a stripped scratch lens still reported extras (${T28_CA070_STRIPPED_EXTRAS}), so the derived counts above prove nothing"
+fi
 
 echo
 echo "EDMV4-T28 -- edm-check-grants and edm-lint-artifacts remain clean over the live lens set"
@@ -10687,6 +10961,368 @@ rm -rf "$CA087_TMP"
 
 # ---- P2 group 1 teardown ------------------------------------------------------------------------
 rm -rf "$P2G1_TMP"
+
+# =================================================================================================
+# P2 groups 3+4 -- stale-claim corrections and hardening one-liners (CA-076, CA-078, CA-093,
+# CA-107, CA-108, CA-111, CA-115, CA-120, CA-125)
+# =================================================================================================
+# Every assertion in this band is paired with a control that proves it can fail. Where the fix is
+# pure prose with no behaviour to drive, no assertion is invented for it -- CA-060, CA-062, CA-067,
+# CA-070, CA-071, CA-110, CA-117 and CA-123 are covered by the bands they live in (CA-070/CA-071 in
+# the EDMV4-T28 band above, CA-060 in wave7's G10/CA-340 band, CA-110 by the tightened
+# SCOPE_PARAGRAPH check above) or are documentation-only.
+echo
+echo "=== P2 groups 3+4: stale-claim corrections and hardening one-liners ==="
+
+# Self-contained mktemp/rm pair rather than w8_scratch_dir: CA-027's registry assertion above
+# compares a STATIC grep of w8_scratch_dir call sites against the registry's RUNTIME length, so a
+# new call placed after that assertion inflates one side only and fails a check that has nothing
+# to do with this band.
+P2G34_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-w8-p2g34.XXXXXX")"
+P2G34_GATEGUARD="${PLUGIN_DIR}/bin/edm-gateguard"
+P2G34_BASHGATE="${PLUGIN_DIR}/bin/edm-bash-gate"
+P2G34_HOOKIFY="${PLUGIN_DIR}/bin/edm-hookify"
+P2G34_GRANTS="${PLUGIN_DIR}/bin/edm-check-grants"
+
+# p2g34_hookify_project <name> -- a scratch project root with an empty rule directory; prints it.
+p2g34_hookify_project() {
+  local d="${P2G34_TMP}/$1"
+  mkdir -p "${d}/.claude/edm-hookify"
+  printf '%s' "$d"
+}
+
+# p2g34_hookify_eval <proj> <event> -- runs the REAL edm-hookify against <proj>, capturing
+# stdout/stderr/rc into P2G34_OUT / P2G34_ERR / P2G34_RC.
+p2g34_hookify_eval() {
+  local proj="$1" ev="$2"
+  P2G34_RC=0
+  P2G34_OUT="$(printf '%s' '{"command":"true"}' | CLAUDE_PROJECT_DIR="$proj" \
+    bash "$P2G34_HOOKIFY" eval "$ev" 2>"${P2G34_TMP}/hookify.stderr")" || P2G34_RC=$?
+  P2G34_ERR="$(cat "${P2G34_TMP}/hookify.stderr" 2>/dev/null || true)"
+}
+
+# ---- CA-076: `enabled` is type-checked and `action` is validated --------------------------------
+echo
+echo "CA-076 -- a non-boolean enabled and an out-of-set action are setup errors, not silent degradations"
+
+# Baseline (the control's other half): a well-formed enabled BLOCK rule really does block, so the
+# two mutants below are shown to differ from a working rule rather than from nothing.
+P2G34_C76_OK="$(p2g34_hookify_project ca076-ok)"
+cat > "${P2G34_C76_OK}/.claude/edm-hookify/block-true.json" <<'CA076OK'
+{"name":"ca076-blocker","enabled":true,"event":"bash","action":"block","conditions":[],"message":"blocked"}
+CA076OK
+p2g34_hookify_eval "$P2G34_C76_OK" bash
+check_num "CA-076 baseline -- a well-formed enabled:true / action:block rule blocks (exit 2)" "2" "$P2G34_RC"
+
+# Mutant 1: enabled is the STRING "true". Before the fix this silently disabled the rule -- exit 0,
+# nothing on either stream, indistinguishable from "no rule violated".
+P2G34_C76_STR="$(p2g34_hookify_project ca076-strenabled)"
+cat > "${P2G34_C76_STR}/.claude/edm-hookify/block-strenabled.json" <<'CA076STR'
+{"name":"ca076-strenabled","enabled":"true","event":"bash","action":"block","conditions":[],"message":"blocked"}
+CA076STR
+p2g34_hookify_eval "$P2G34_C76_STR" bash
+check_num "CA-076 -- a quoted \"true\" enabled is a setup error (exit 1), not a silently disabled rule" "1" "$P2G34_RC"
+check "CA-076 -- ...and the diagnostic names the type it actually saw" "enabled must be a boolean, got string" "$P2G34_ERR"
+
+# Mutant 2: action is "Block". Before the fix this degraded to warn -- exit 0, the line on stderr,
+# and a rule the author believed was blocking silently was not.
+P2G34_C76_ACT="$(p2g34_hookify_project ca076-badaction)"
+cat > "${P2G34_C76_ACT}/.claude/edm-hookify/block-badaction.json" <<'CA076ACT'
+{"name":"ca076-badaction","enabled":true,"event":"bash","action":"Block","conditions":[],"message":"blocked"}
+CA076ACT
+p2g34_hookify_eval "$P2G34_C76_ACT" bash
+check_num "CA-076 -- a mistyped action (\"Block\") is a setup error (exit 1), not a silent downgrade to warn" "1" "$P2G34_RC"
+check "CA-076 -- ...and the diagnostic names the offending value" 'action must be "warn" or "block", got "Block"' "$P2G34_ERR"
+
+# An ABSENT action key is still legal and still defaults to warn -- the fix must not have made the
+# format stricter than it documents. This is the positive control for the action check.
+P2G34_C76_ABS="$(p2g34_hookify_project ca076-noaction)"
+cat > "${P2G34_C76_ABS}/.claude/edm-hookify/warn-noaction.json" <<'CA076ABS'
+{"name":"ca076-noaction","enabled":true,"event":"bash","conditions":[],"message":"warned"}
+CA076ABS
+p2g34_hookify_eval "$P2G34_C76_ABS" bash
+check_num "CA-076 -- an ABSENT action key is still legal and still defaults to warn (exit 0)" "0" "$P2G34_RC"
+check "CA-076 -- ...and the warn line still reaches stderr" "ca076-noaction warn warned" "$P2G34_ERR"
+
+# ---- CA-093: a NUL byte cannot desynchronize the rule stream ------------------------------------
+echo
+echo "CA-093 -- a NUL byte in a rule file is rejected by name instead of misattributing every later rule"
+
+# Two rule files, both enabled: a NUL-bearing one sorted FIRST (so a desync would corrupt the
+# second), and a valid blocking one. The valid rule must still fire, and the broken file must be
+# named as itself -- not as its neighbour, which is exactly what the pre-fix positional pairing did.
+P2G34_C93="$(p2g34_hookify_project ca093)"
+printf '{"name":"ca093-nul","enabled":true,"event":"bash","conditions":[],"message":"x"}\000' \
+  > "${P2G34_C93}/.claude/edm-hookify/aaa-nul.json"
+cat > "${P2G34_C93}/.claude/edm-hookify/zzz-block.json" <<'CA093OK'
+{"name":"ca093-survivor","enabled":true,"event":"bash","action":"block","conditions":[],"message":"still blocking"}
+CA093OK
+p2g34_hookify_eval "$P2G34_C93" bash
+check_num "CA-093 -- a block in a SIBLING rule file still wins the exit code (2) despite the NUL-bearing file beside it" "2" "$P2G34_RC"
+check "CA-093 -- ...the surviving rule still fires by name" "ca093-survivor block still blocking" "$P2G34_OUT"
+check "CA-093 -- ...and the NUL-bearing file is named as ITSELF, not as its neighbour" "aaa-nul.json: rule file contains a NUL byte" "$P2G34_ERR"
+check_absent "CA-093 -- ...and the innocent neighbour is never blamed" "zzz-block.json: rule file contains a NUL byte" "$P2G34_ERR"
+
+# Negative control: the same two files with the NUL removed must both evaluate cleanly, so the
+# rejection above is attributable to the NUL and not to the fixture shape.
+P2G34_C93B="$(p2g34_hookify_project ca093-clean)"
+printf '{"name":"ca093-nul","enabled":true,"event":"bash","conditions":[],"message":"x"}' \
+  > "${P2G34_C93B}/.claude/edm-hookify/aaa-nul.json"
+cp "${P2G34_C93}/.claude/edm-hookify/zzz-block.json" "${P2G34_C93B}/.claude/edm-hookify/zzz-block.json"
+p2g34_hookify_eval "$P2G34_C93B" bash
+check_absent "CA-093 -- negative control: with the NUL removed, the identical fixture pair raises no NUL setup error" \
+  "contains a NUL byte" "$P2G34_ERR"
+
+# ---- CA-107: one --help alias set across the hook-consumer family -------------------------------
+echo
+echo "CA-107 -- the hook-consumer family accepts one alias set, and each help block documents exactly what it accepts"
+for p2g34_alias in -h --help help; do
+  for p2g34_bin in "$P2G34_GATEGUARD" "$P2G34_BASHGATE" "$P2G34_HOOKIFY"; do
+    P2G34_H_RC=0
+    P2G34_H_OUT="$(/bin/bash "$p2g34_bin" "$p2g34_alias" 2>&1 </dev/null)" || P2G34_H_RC=$?
+    if [[ "$P2G34_H_RC" -eq 0 && -n "$P2G34_H_OUT" ]]; then
+      pass "CA-107 -- $(basename "$p2g34_bin") ${p2g34_alias} exits 0 with a non-empty help block"
+    else
+      fail "CA-107 -- $(basename "$p2g34_bin") ${p2g34_alias} exited ${P2G34_H_RC} with output: ${P2G34_H_OUT}"
+    fi
+  done
+done
+
+# The documentation half: each help block must SPELL the alias set it accepts. This is what was
+# actually wrong -- four bin/ scripts accepted `help` while documenting only `-h|--help`.
+for p2g34_bin in "$P2G34_GATEGUARD" "$P2G34_BASHGATE" "$P2G34_HOOKIFY"; do
+  check "CA-107 -- $(basename "$p2g34_bin")'s help block documents the full -h|--help|help set it accepts" \
+    '-h|--help|help' "$(/bin/bash "$p2g34_bin" --help 2>&1 </dev/null)"
+done
+
+# Negative control: an alias the family does NOT accept must not be treated as a help request.
+P2G34_BADALIAS_RC=0
+P2G34_BADALIAS_OUT="$(/bin/bash "$P2G34_GATEGUARD" --halp 2>&1 </dev/null)" || P2G34_BADALIAS_RC=$?
+if [[ "$P2G34_BADALIAS_RC" -ne 0 ]]; then
+  pass "CA-107 -- negative control: an alias outside the set (--halp) is NOT accepted as help (rc=${P2G34_BADALIAS_RC}), so the three passes above discriminate"
+else
+  fail "CA-107 -- negative control BROKEN: --halp was accepted, so the alias assertions above prove nothing"
+fi
+
+# ---- CA-108: edm-bash-gate refuses an unexpected positional -------------------------------------
+echo
+echo "CA-108 -- a typo'd flag on edm-bash-gate is a usage error, not a silent normal hook invocation"
+P2G34_C108_RC=0
+P2G34_C108_OUT="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"true"}}' \
+  | /bin/bash "$P2G34_BASHGATE" --hepl 2>&1)" || P2G34_C108_RC=$?
+check_num "CA-108 -- edm-bash-gate exits 1 (usage error, never 2) on an unexpected argument" "1" "$P2G34_C108_RC"
+check "CA-108 -- ...and names the argument it refused" "unexpected argument: '--hepl'" "$P2G34_C108_OUT"
+
+# Negative control: the SAME payload with no argument is a normal, silent allow, so the refusal
+# above is attributable to the argument rather than to the payload.
+P2G34_C108B_RC=0
+P2G34_C108B_OUT="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"true"}}' \
+  | /bin/bash "$P2G34_BASHGATE" 2>&1)" || P2G34_C108B_RC=$?
+check_num "CA-108 -- negative control: the identical payload with NO argument still allows (exit 0)" "0" "$P2G34_C108B_RC"
+
+# ---- CA-115: edm-bash-gate has a kill switch ----------------------------------------------------
+echo
+echo "CA-115 -- edm-bash-gate honours EDM_HOOKIFY / EDM_HOOKIFY_DISABLED before anything else runs"
+P2G34_C115_DIR="$(p2g34_hookify_project ca115)"
+cp "${HOOKIFY_FIXTURES}/block-rm-rf-bash.json" "${P2G34_C115_DIR}/.claude/edm-hookify/"
+P2G34_C115_PAYLOAD='{"tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/scratch-target"}}'
+
+# Positive control FIRST: with no switch set, this fixture really does block. Without this the
+# exit-0 results below would be indistinguishable from a fixture that never blocked at all.
+P2G34_C115_BASE_RC=0
+printf '%s' "$P2G34_C115_PAYLOAD" | CLAUDE_PROJECT_DIR="$P2G34_C115_DIR" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+  /bin/bash "$P2G34_BASHGATE" >/dev/null 2>&1 || P2G34_C115_BASE_RC=$?
+check_num "CA-115 positive control -- with no kill switch set, the fixture rule DOES block (exit 2)" "2" "$P2G34_C115_BASE_RC"
+
+for p2g34_sw in 0 false off disabled disable; do
+  P2G34_C115_RC=0
+  P2G34_C115_OUT="$(printf '%s' "$P2G34_C115_PAYLOAD" | CLAUDE_PROJECT_DIR="$P2G34_C115_DIR" \
+    PATH="${PLUGIN_DIR}/bin:${PATH}" EDM_HOOKIFY="$p2g34_sw" /bin/bash "$P2G34_BASHGATE" 2>&1)" || P2G34_C115_RC=$?
+  if [[ "$P2G34_C115_RC" -eq 0 && -z "$P2G34_C115_OUT" ]]; then
+    pass "CA-115 -- EDM_HOOKIFY=${p2g34_sw} disables the gate silently (exit 0, no output) against a rule that otherwise blocks"
+  else
+    fail "CA-115 -- EDM_HOOKIFY=${p2g34_sw}: rc=${P2G34_C115_RC} output=[${P2G34_C115_OUT}]"
+  fi
+done
+
+P2G34_C115D_RC=0
+printf '%s' "$P2G34_C115_PAYLOAD" | CLAUDE_PROJECT_DIR="$P2G34_C115_DIR" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+  EDM_HOOKIFY_DISABLED=1 /bin/bash "$P2G34_BASHGATE" >/dev/null 2>&1 || P2G34_C115D_RC=$?
+check_num "CA-115 -- EDM_HOOKIFY_DISABLED=1 disables the gate (exit 0)" "0" "$P2G34_C115D_RC"
+
+# Negative control on the SECOND switch's strictness: it recognizes the literal "1" only, matching
+# EDM_GATEGUARD_DISABLED. A truthy-looking value must NOT disable the gate.
+for p2g34_bad in true yes 0 ""; do
+  P2G34_C115N_RC=0
+  printf '%s' "$P2G34_C115_PAYLOAD" | CLAUDE_PROJECT_DIR="$P2G34_C115_DIR" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+    EDM_HOOKIFY_DISABLED="$p2g34_bad" /bin/bash "$P2G34_BASHGATE" >/dev/null 2>&1 || P2G34_C115N_RC=$?
+  if [[ "$P2G34_C115N_RC" -eq 2 ]]; then
+    pass "CA-115 -- negative control: EDM_HOOKIFY_DISABLED='${p2g34_bad}' does NOT disable the gate (literal \"1\" only) -- the block still fires"
+  else
+    fail "CA-115 -- negative control BROKEN: EDM_HOOKIFY_DISABLED='${p2g34_bad}' suppressed the block (rc=${P2G34_C115N_RC})"
+  fi
+done
+
+# The switches must be checked BEFORE `command -v edm-hookify`, so an operator can escape even on a
+# broken install. Derived by line position, the same technique T15 AC3 uses for edm-gateguard.
+P2G34_C115_SWLINE="$(grep -n 'case "\${EDM_HOOKIFY:-}" in' "$P2G34_BASHGATE" | head -1 | cut -d: -f1)"
+P2G34_C115_CVLINE="$(grep -n 'command -v edm-hookify' "$P2G34_BASHGATE" | head -1 | cut -d: -f1)"
+if [[ -n "$P2G34_C115_SWLINE" && -n "$P2G34_C115_CVLINE" && "$P2G34_C115_SWLINE" -lt "$P2G34_C115_CVLINE" ]]; then
+  pass "CA-115 -- the kill switches (line ${P2G34_C115_SWLINE}) precede the first \`command -v\` (line ${P2G34_C115_CVLINE}), so they work on a broken install too"
+else
+  fail "CA-115 -- kill-switch line=[${P2G34_C115_SWLINE}] command-v line=[${P2G34_C115_CVLINE}] -- the switches must come first"
+fi
+
+# ---- CA-111: both _edm-datadir-lib.sh consumers guard with [[ -r ]] -----------------------------
+echo
+echo "CA-111 -- edm-gateguard and edm-state guard the datadir-lib source with the same readable-file predicate"
+P2G34_C111_GG="$(grep -c 'if \[\[ -r "\${SCRIPT_DIR}/_edm-datadir-lib.sh" \]\]; then' "$P2G34_GATEGUARD" || true)"
+check_num "CA-111 -- edm-gateguard guards the datadir-lib source with [[ -r ]], not [[ -f ]]" "1" "$P2G34_C111_GG"
+P2G34_C111_FGG="$(grep -c 'if \[\[ -f "\${SCRIPT_DIR}/_edm-datadir-lib.sh" \]\]; then' "$P2G34_GATEGUARD" || true)"
+check_num "CA-111 -- ...and the old [[ -f ]] form is gone from edm-gateguard" "0" "$P2G34_C111_FGG"
+
+# Behavioural half: a datadir-lib that EXISTS but is unreadable must degrade to no gate (exit 0),
+# not abort the set -e script. Driven on a scratch copy of the whole bin/ directory so the real
+# tree is never chmod'ed. Skipped when running as root, where mode 000 is not a barrier.
+if [[ "$(id -u)" -ne 0 ]]; then
+  P2G34_C111_BIN="${P2G34_TMP}/ca111-bin"
+  mkdir -p "$P2G34_C111_BIN"
+  cp "${PLUGIN_DIR}/bin/edm-gateguard" "${PLUGIN_DIR}/bin/_edm-cli-lib.sh" \
+     "${PLUGIN_DIR}/bin/_edm-datadir-lib.sh" "$P2G34_C111_BIN/"
+  chmod 000 "${P2G34_C111_BIN}/_edm-datadir-lib.sh"
+  P2G34_C111_RC=0
+  P2G34_C111_OUT="$(printf '%s' '{"tool_name":"Edit","tool_input":{"file_path":"x.js"}}' \
+    | /bin/bash "${P2G34_C111_BIN}/edm-gateguard" 2>&1)" || P2G34_C111_RC=$?
+  chmod 644 "${P2G34_C111_BIN}/_edm-datadir-lib.sh"
+  if [[ "$P2G34_C111_RC" -eq 0 ]]; then
+    pass "CA-111 -- an unreadable _edm-datadir-lib.sh degrades to no gate (exit 0) instead of aborting the set -e script"
+  else
+    fail "CA-111 -- an unreadable _edm-datadir-lib.sh made edm-gateguard exit ${P2G34_C111_RC}: ${P2G34_C111_OUT}"
+  fi
+
+  # Negative control: the SAME scratch copy with the library readable resolves the marker path and
+  # therefore reaches the real gate, proving the exit 0 above came from the guard degrading and
+  # not from a copy that could never do anything at all.
+  P2G34_C111_FN="$(/bin/bash -c ". '${P2G34_C111_BIN}/_edm-datadir-lib.sh'; declare -F edm_marker_path >/dev/null && echo yes || echo no" 2>/dev/null)"
+  check "CA-111 -- negative control: the same scratch library IS sourceable when readable (so the degrade above was the guard, not a broken copy)" \
+    "yes" "$P2G34_C111_FN"
+else
+  echo "  SKIP: CA-111 unreadable-library case -- running as root, where mode 000 is not a barrier"
+fi
+
+# ---- CA-125 / CA-078: the citation-orphan check can no longer report clean while scanning nothing
+echo
+echo "CA-125 / CA-078 -- a missing canonical document and a zero-file scan are setup errors, not clean passes"
+
+# The real invocation still exits 0 (or 1 for real violations), unchanged.
+P2G34_C125_RC=0
+bash "$P2G34_GRANTS" >/dev/null 2>&1 || P2G34_C125_RC=$?
+check_num "CA-125 / CA-078 -- the real edm-check-grants run is unaffected (exit 0)" "0" "$P2G34_C125_RC"
+
+# CA-125: a plugin tree with no docs/canonical-sections.md must DIE (exit 2), not exit 0 clean.
+# Built as a full scratch copy of the plugin so nothing in the real tree is moved.
+P2G34_C125_ROOT="${P2G34_TMP}/ca125-plugin"
+mkdir -p "$P2G34_C125_ROOT"
+cp -R "${PLUGIN_DIR}/bin" "${PLUGIN_DIR}/agents" "${PLUGIN_DIR}/skills" "${PLUGIN_DIR}/hooks" \
+      "${PLUGIN_DIR}/docs" "$P2G34_C125_ROOT/" 2>/dev/null || true
+# Positive control: the untouched scratch copy behaves like the real one.
+P2G34_C125_BASE_RC=0
+bash "${P2G34_C125_ROOT}/bin/edm-check-grants" >/dev/null 2>&1 || P2G34_C125_BASE_RC=$?
+check_num "CA-125 positive control -- the untouched scratch plugin copy also exits 0" "0" "$P2G34_C125_BASE_RC"
+
+rm -f "${P2G34_C125_ROOT}/docs/canonical-sections.md"
+P2G34_C125_MISS_RC=0
+P2G34_C125_MISS_OUT="$(bash "${P2G34_C125_ROOT}/bin/edm-check-grants" 2>&1)" || P2G34_C125_MISS_RC=$?
+check_num "CA-125 -- a MISSING docs/canonical-sections.md is a setup error (exit 2), not a silent clean pass" "2" "$P2G34_C125_MISS_RC"
+check "CA-125 -- ...and it says the check could not run rather than reporting clean" \
+  "canonical sections document not found" "$P2G34_C125_MISS_OUT"
+
+# CA-078: a plugin root whose agents/ and skills/ hold no citable files must also refuse rather
+# than reporting clean over zero scanned files. Restore the canonical doc first so this case is
+# attributable to the empty scan and not to CA-125's guard.
+cp "${PLUGIN_DIR}/docs/canonical-sections.md" "${P2G34_C125_ROOT}/docs/canonical-sections.md"
+rm -f "${P2G34_C125_ROOT}"/agents/*.md
+rm -rf "${P2G34_C125_ROOT}"/skills/*
+P2G34_C078_RC=0
+P2G34_C078_OUT="$(bash "${P2G34_C125_ROOT}/bin/edm-check-grants" 2>&1)" || P2G34_C078_RC=$?
+check "CA-078 -- a scan that reaches ZERO citable files refuses instead of reporting clean" \
+  "scanned ZERO files" "$P2G34_C078_OUT"
+if [[ "$P2G34_C078_RC" -ne 0 ]]; then
+  pass "CA-078 -- ...and exits non-zero (rc=${P2G34_C078_RC}) rather than 0"
+else
+  fail "CA-078 -- a zero-file scan exited 0, which is the vacuous clean this finding exists to close"
+fi
+
+# The static half of CA-078: the unquoted `ls` iteration is gone for good.
+P2G34_C078_LS="$(grep -c '_cite_files' "$P2G34_GRANTS" || true)"
+check_num "CA-078 -- the intermediate \`ls\` capture the word-split came from is gone entirely" "0" "$P2G34_C078_LS"
+
+# ---- CA-120: metrics-report reads the round lens set through read_round_lenses ------------------
+echo
+echo "CA-120 -- metrics-report's Lenses column applies the C-4 substitution instead of reading .lenses inline"
+P2G34_STATE_BIN="${PLUGIN_DIR}/bin/edm-state"
+P2G34_C120_ALL="$(source "$P2G34_STATE_BIN" >/dev/null 2>&1; echo "$ALL_LENS_IDS")"
+# shellcheck disable=SC2086 # deliberate word-splitting to count space-separated members
+P2G34_C120_N="$(printf '%s\n' $P2G34_C120_ALL | grep -c '.')"
+
+P2G34_C120_DIR="${P2G34_TMP}/ca120"
+mkdir -p "${P2G34_C120_DIR}/SRD/CA120"
+# A C-4 legacy FULL round: `lenses: []` with round_type "full" -- the shape every round recorded
+# before EDMV4-T22 materialized the lens set carries.
+cat > "${P2G34_C120_DIR}/SRD/CA120/.edm-state.json" <<CA120STATE
+{
+  "prefix": "CA120",
+  "schema_version": 2,
+  "estimated_size": "Medium",
+  "phase_durations": {},
+  "audit_rounds": {
+    "code": {
+      "count": 1,
+      "rounds": [
+        {"round": 1, "round_type": "full", "lenses": [], "started_at": "2026-09-01T00:00:00Z",
+         "completed_at": "2026-09-01T01:00:00Z", "duration_seconds": 3600,
+         "estimated_cost_usd": 1.23, "model_used": "claude-opus-5"}
+      ]
+    }
+  }
+}
+CA120STATE
+P2G34_C120_OUT="$( cd "$P2G34_C120_DIR" && CLAUDE_PROJECT_DIR="$P2G34_C120_DIR" \
+  bash "$P2G34_STATE_BIN" metrics-report CA120 2>/dev/null || true )"
+P2G34_C120_ROW="$(printf '%s\n' "$P2G34_C120_OUT" | grep -E '^  code ' | head -1)"
+P2G34_C120_LENSCOL="$(printf '%s' "$P2G34_C120_ROW" | awk '{print $3}')"
+check_num "CA-120 -- a C-4 legacy full round renders its Lenses column as the full lens count, not 0" \
+  "$P2G34_C120_N" "$P2G34_C120_LENSCOL"
+check "CA-120 -- ...and the caption's lens count is DERIVED from ALL_LENS_IDS rather than re-typed" \
+  "round_type full = all ${P2G34_C120_N} lenses" "$P2G34_C120_OUT"
+
+# Negative control: a genuine PARTIAL round carrying an explicit two-lens set must still render 2.
+# Without this, "renders the full count" could be a constant rather than a read of the record.
+cat > "${P2G34_C120_DIR}/SRD/CA120/.edm-state.json" <<CA120PARTIAL
+{
+  "prefix": "CA120",
+  "schema_version": 2,
+  "estimated_size": "Medium",
+  "phase_durations": {},
+  "audit_rounds": {
+    "code": {
+      "count": 1,
+      "rounds": [
+        {"round": 1, "round_type": "partial", "lenses": ["L1", "L9"], "started_at": "2026-09-01T00:00:00Z",
+         "completed_at": "2026-09-01T01:00:00Z", "duration_seconds": 3600,
+         "estimated_cost_usd": 1.23, "model_used": "claude-opus-5"}
+      ]
+    }
+  }
+}
+CA120PARTIAL
+P2G34_C120P_OUT="$( cd "$P2G34_C120_DIR" && CLAUDE_PROJECT_DIR="$P2G34_C120_DIR" \
+  bash "$P2G34_STATE_BIN" metrics-report CA120 2>/dev/null || true )"
+P2G34_C120P_LENSCOL="$(printf '%s\n' "$P2G34_C120P_OUT" | grep -E '^  code ' | head -1 | awk '{print $3}')"
+check_num "CA-120 -- negative control: an explicit two-lens PARTIAL round still renders 2, so the substitution is conditional and not a constant" \
+  "2" "$P2G34_C120P_LENSCOL"
+
+rm -rf "$P2G34_TMP"
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
 

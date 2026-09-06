@@ -104,6 +104,17 @@ responses:
    initiative, using the D14 scope-boundary framing -- a decision made on its own merits, not a
    postponed finding.
 
+**A second, distinct unverifiability: an AC that pins an absolute figure another ticket may
+legitimately move (CA-067).** `EDMV4-T57` AC7 pinned a smoke suite at `515/0`; five later tickets
+each appended a banded section to that suite, and the real figure had more than doubled before the
+same initiative closed. Nothing was done wrong -- the AC was simply not re-verifiable after the first
+legitimate change by anyone else. It is verifiable the day it is written and never again, which is
+worse than an openly unverifiable AC because it reads as green until someone re-runs it. **Write
+the delta, not the total**: "this ticket's commits touch neither suite file", or "both suites
+still report zero failures", both of which stay true across every later append. The same rule
+applies to any count an AC does not itself own -- lens counts, file counts, subcommand counts.
+Derive it at read time or assert a property of it; never write today's number into an AC.
+
 Both routes are a scope change to an approved ticket, so both go through gate change control:
 presented at the relevant gate with the rationale, approved or rejected by the human via the
 canonical `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`, and recorded in `decisions.md` and

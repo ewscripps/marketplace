@@ -16,7 +16,23 @@
 #
 # Usage:
 #   edm-bash-gate              # reads the host's PreToolUse JSON payload from stdin; no arguments
-#   edm-bash-gate -h|--help    # show this help
+#   edm-bash-gate -h|--help|help  # show this help
+#
+# CA-107: the alias set above is exactly what the `case` below accepts, and is the same set
+# `edm-gateguard` accepts -- the hook-consumer family shares one alias set rather than four.
+# CA-108: any OTHER argument is a usage error (exit 1, never 2), not a normal hook invocation.
+# Before this, `edm-bash-gate --hepl` read as an ordinary hook call and evaluated the rule set
+# against whatever was on stdin, so a typo'd flag was indistinguishable from correct usage. A
+# real hook invocation never passes an argument at all, so nothing on the hook path can reach it.
+#
+# Kill switches (CA-115). `edm-gateguard` has shipped two documented kill switches since
+# EDMV4-T15; this gate -- registered on the `Bash` PreToolUse matcher, so it sees and can refuse
+# EVERY bash command -- had none, leaving an operator whose rule set is refusing too much with no
+# environment-variable escape at all: the only recovery was editing the rule file through tooling
+# this gate may itself be blocking. Both switches below are checked BEFORE any `command -v`, any
+# stdin read and any rule evaluation, exactly as edm-gateguard checks its own pair:
+#   EDM_HOOKIFY=0|false|off|disabled|disable   -- disable every hookify consumer
+#   EDM_HOOKIFY_DISABLED=1                     -- second, independent switch; literal "1" only
 #
 # Registration: `hooks/hooks.json`'s `PreToolUse` array carries a matcher block for `Bash` whose
 # command guards on this binary's presence (`command -v edm-bash-gate >/dev/null 2>&1 || exit 0`
@@ -36,12 +52,16 @@
 # evaluates normally.
 #
 # Exit codes:
-#   0  allowed -- no rule matched, only `warn` rules matched, or any internal/setup condition
-#      (edm-hookify or jq absent, no payload, unparseable payload). Never a fourth code.
+#   0  allowed -- no rule matched, only `warn` rules matched, either kill switch engaged, or any
+#      internal/setup condition (edm-hookify or jq absent, no payload, unparseable payload).
+#   1  usage error -- an unexpected argument (CA-108). Reachable only from a hand-typed CLI
+#      invocation: the host passes no arguments, so no hook path can produce it. Non-blocking,
+#      matching this plugin's standing rule that a setup condition never blocks.
 #   2  block -- `edm-hookify eval bash` matched an enabled rule with `"action": "block"`
 #      (`edm-hookify`'s own exit 2); the matched-rule line(s) are printed to stderr, the
 #      convention `edm-gateguard`'s own exit-code deny mode and `edm-lint-staged-artifacts`
 #      already use for a blocking `PreToolUse` refusal.
+# There is no fourth code.
 # EDM-HELP-END
 set -uo pipefail
 
@@ -54,8 +74,24 @@ usage() {
 }
 
 case "${1:-}" in
-  -h|--help) usage ;;
+  -h|--help|help) usage ;;
 esac
+
+# CA-108: an unexpected positional is a usage error, not a hook invocation. exit 1, never 2 --
+# 2 means "block" on this matcher and a typo must never read as a refusal.
+if [[ $# -gt 0 ]]; then
+  echo "edm-bash-gate: unexpected argument: '$1' -- edm-bash-gate takes no positional arguments; its payload arrives on stdin as the host's PreToolUse JSON" >&2
+  exit 1
+fi
+
+# CA-115: the two kill switches, checked before ANYTHING else -- no `command -v`, no stdin read,
+# no rule evaluation. Same shape and same fail-open direction as edm-gateguard's own pair.
+case "${EDM_HOOKIFY:-}" in
+  0|false|off|disabled|disable) exit 0 ;;
+esac
+if [[ "${EDM_HOOKIFY_DISABLED:-}" == "1" ]]; then
+  exit 0
+fi
 
 # Every guard below allows rather than dies: this is an additive, opt-in consumer of a rules
 # format a project may not have adopted at all, so any condition short of a real block must never

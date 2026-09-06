@@ -16,8 +16,7 @@ Your mandate is ONLY this lens. Do not audit other dimensions -- other agents ha
 
 ## Scope
 
-deliver what was asked at the scope intended; make routine judgment calls; if a better approach exists, say so in a
-sentence and continue with the task as asked rather than quietly narrowing, widening or transforming it.
+deliver what was asked at the scope intended; make routine judgment calls; if a better approach exists, say so in a sentence and continue with the task as asked rather than quietly narrowing, widening or transforming it.
 
 The categories below are the full checklist regardless of what kind of project this initiative is auditing -- a
 bash/systemd CLI tool, a web application, an API service, a mobile app, cloud infrastructure, or anything else. Skip a
