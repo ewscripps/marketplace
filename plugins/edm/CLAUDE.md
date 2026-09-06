@@ -1690,9 +1690,39 @@ below applies, not that the corresponding control is absent:
   script exited at its kill switch before `gg_state_dir` was ever called and the override was
   exercised solely as a no-op; both properties above are now driven through a real first-touch
   denial, with and without the trailing slash, against a negative control that proves the state
-  lands at the default location when the variable is unset.
+  lands at the default location when the variable is unset. **CA-101 -- this variable, and
+  `CLAUDE_PLUGIN_DATA`/`XDG_DATA_HOME` behind it, can steer session state into a shared `/tmp`,
+  so the staging path must not be guessable.** The checked-file is now staged through
+  `mktemp "${file}.tmp.XXXXXX"` (template form -- BSD `mktemp` rejects a suffix after the X run),
+  matching `bin/edm-state`'s `write_atomic`, the family standard this file had diverged from; the
+  pre-fix `${file}.tmp.$$` was fully predictable and written with a truncating `>`, which FOLLOWS a
+  symlink another local user could pre-plant at that name. The denials file needs no staging path
+  at all any more (see `EDM_GATEGUARD_MAX_DENIALS` below), and a four-arm EXIT/INT/TERM/HUP trap
+  removes both the staging file and the lock directory. **CA-083 -- the checked-file's
+  read-modify-write runs under a `mkdir` lock** (`<checked-file>.lockd`, the same primitive
+  `with_state_lock` falls back to): two parallel Edit hooks previously lost one another's entry, so
+  a path one of them had already forced facts for was denied a second time -- the common case at
+  6-10 implementers, not a corner case. A lock that cannot be taken is never a reason to deny: the
+  gate proceeds unlocked, exactly as it did before. A lock directory older than 60 seconds is
+  broken once, loudly on stderr, so a holder killed mid-write cannot wedge every later hook.
+  **CA-085 -- the 30-minute staleness unlink re-reads the mtime immediately before removing the
+  file**, so a concurrent writer that refreshed it in between is read rather than deleted. That
+  window is narrowed, not closed (an unlink cannot be made atomic against a separate `stat` under
+  this plugin's required-binary set); the residual costs at most one extra denial, never a wrong
+  allow.
 - `EDM_GATEGUARD_MAX_DENIALS` -- caps full denials per session; defaults to `3`. Past the budget
   the gate allows with a stderr advisory rather than denying forever. Unset uses the default of 3.
+  **CA-084 -- "per session" was untrue until this fix.** The budget was keyed per PROJECT, so the
+  6-10 implementers of one Phase 6 wave shared a single 3-denial allowance between them: the fourth
+  agent to touch anything got the advisory instead of a fact list, having never once been asked for
+  facts. The session identity is now the host's `session_id` from the `PreToolUse` payload, falling
+  back to the marker's own `started_at` field when the payload carries none (a hand-driven
+  invocation, a test fixture) -- so one Phase-6 run shares one budget and a later `phase-start 6`
+  starts a fresh one. The counter file's PATH is deliberately unchanged
+  (`<state-dir>/<project-key>.denials`): each record is now the session key on its own line and
+  the count matches only this session's, so sibling sessions coexist in the one file. That same
+  change makes the increment a single atomic APPEND rather than a read-modify-write, which is what
+  stops parallel hooks from losing one another's records and undercounting the budget.
   A **non-numeric** value warns on stderr and falls back to that default (CA-009). It is validated
   with the same `''|*[!0-9]*` shape `bin/edm-state`'s `to_int()` uses, but deliberately warns
   rather than either coercing silently (an operator whose setting was ignored should be told) or

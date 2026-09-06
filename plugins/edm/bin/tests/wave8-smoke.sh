@@ -3757,7 +3757,7 @@ fi
 # yet written without licensing unbounded growth; the next ticket that needs more must justify it
 # here rather than nudge the number.
 #
-# Ceiling raised 500 -> 620 by the P2 group-1 concurrency remediation, justified here as the
+# Ceiling raised 500 -> 660 by the P2 group-1 concurrency remediation, justified here as the
 # paragraph above requires rather than nudged. Six findings landed AC-mandated code in this one
 # file, and every line of it sits BELOW the marker-absent fast path, which is unchanged and still
 # costs one exec plus one `test -f`: CA-081 (resolve a relative recorded initiative directory
@@ -3767,10 +3767,10 @@ fi
 # four-arm trap). The p95 claim the original bound protects is a property of the ALLOW path, which
 # none of these touch -- see the AC10/AC11 note further down for how that figure is measured.
 t11_lines="$(wc -l < "$GATEGUARD" | tr -d ' ')"
-if [[ "$t11_lines" -ge 200 && "$t11_lines" -le 620 ]]; then
-  pass "EDMV4-T11 AC1 -- edm-gateguard is ${t11_lines} lines (within the closed range 200-620, D42 as widened by the P2 group-1 remediation)"
+if [[ "$t11_lines" -ge 200 && "$t11_lines" -le 660 ]]; then
+  pass "EDMV4-T11 AC1 -- edm-gateguard is ${t11_lines} lines (within the closed range 200-660, D42 as widened by the P2 group-1 remediation)"
 else
-  fail "EDMV4-T11 AC1 -- edm-gateguard is ${t11_lines} lines (expected 200-620 per D42 as widened by the P2 group-1 remediation)"
+  fail "EDMV4-T11 AC1 -- edm-gateguard is ${t11_lines} lines (expected 200-660 per D42 as widened by the P2 group-1 remediation)"
 fi
 
 # ---- AC2: sources _edm-cli-lib.sh; usage() calls the shared print_help() sentinel extractor; no
@@ -9953,6 +9953,267 @@ printf 'CA81PFX\t%s/proj/SRD/deleted-initiative\t2026-09-02T00:00:00Z\n' "$CA081
   > "${CA081_GG_TMP}/data/run/${CA081_GG_KEY}.phase6"
 CA081_GG_STALE_RC="$(ca081_gg_run "$GATEGUARD")"
 check_num "CA-081 -- an ABSOLUTE marker naming a deleted initiative dir still allows (exit 0): the stale-marker contract is intact" "0" "$CA081_GG_STALE_RC"
+
+# ---- CA-083 / CA-084 / CA-085 / CA-101: edm-gateguard's session state under real contention -----
+# This hook fires on every Edit and Write, and Phase 6 runs 6-10 implementers in parallel, so the
+# assertions below are driven by ACTUAL concurrent writers (background subshells plus `wait`) and
+# assert that no entry was LOST -- never merely that a command exited 0, which a serialized single
+# run satisfies while proving nothing about contention.
+echo
+echo "--- CA-083/CA-084/CA-085/CA-101: gateguard session state under contention ---"
+
+P2G1_GG_N=12
+
+# p2g1_gg_env <outvar-dir> -- a project + data directory with a live Phase-6 marker, ready for
+# first-touch denials. Echoes nothing; sets <outvar-dir> and P2G1_GG_KEY.
+p2g1_gg_env() {
+  local __p2e_outvar="$1" d
+  d="$(mktemp -d "${P2G1_TMP}/ggenv.XXXXXX")"
+  mkdir -p "${d}/proj/SRD/live" "${d}/data/run"
+  P2G1_GG_KEY="$(CLAUDE_PROJECT_DIR="${d}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+  printf 'P2G1PFX\t%s/proj/SRD/live\t2026-09-02T00:00:00Z\n' "$d" \
+    > "${d}/data/run/${P2G1_GG_KEY}.phase6"
+  printf -v "$__p2e_outvar" '%s' "$d"
+}
+
+# p2g1_gg_call <bin> <dir> <file-path> [<session-id>] -- one gate invocation; echoes its exit code.
+# A distinct session id per caller means each one has its own 3-denial budget, so all N calls
+# really do reach gg_mark_checked instead of some of them short-circuiting on a spent budget.
+p2g1_gg_call() {
+  local bin="$1" d="$2" f="$3" sid="${4:-}" rc=0 payload
+  if [[ -n "$sid" ]]; then
+    payload="$(printf '{"tool_name":"Edit","session_id":"%s","tool_input":{"file_path":"%s"}}' "$sid" "$f")"
+  else
+    payload="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$f")"
+  fi
+  printf '%s' "$payload" | CLAUDE_PROJECT_DIR="${d}/proj" CLAUDE_PLUGIN_DATA="${d}/data" \
+    EDM_GATEGUARD_DENY_MODE=exit-code bash "$bin" >/dev/null 2>&1 || rc=$?
+  printf '%s\n' "$rc"
+}
+
+# p2g1_gg_storm <bin> <dir> -- fire P2G1_GG_N gate invocations CONCURRENTLY (background subshells,
+# then `wait`), each on its own path and its own session, and echo how many distinct paths actually
+# landed in the checked-file. That count is the whole point: an unlocked read-modify-write loses
+# entries under this load, and a lost entry means a repeat denial for a file already investigated.
+p2g1_gg_storm() {
+  local bin="$1" d="$2" i=1
+  while [[ "$i" -le "$P2G1_GG_N" ]]; do
+    ( p2g1_gg_call "$bin" "$d" "conc-${i}.js" "sess-${i}" >/dev/null 2>&1 ) &
+    i=$((i + 1))
+  done
+  wait
+  { sort -u "${d}/data/run/${P2G1_GG_KEY}.checked" 2>/dev/null || true; } | { grep -c '^conc-' || true; }
+}
+
+CA083_DIR=""
+p2g1_gg_env CA083_DIR
+CA083_LANDED="$(p2g1_gg_storm "$GATEGUARD" "$CA083_DIR")"
+check_num "CA-083 -- ${P2G1_GG_N} CONCURRENT gate invocations all land in the checked-file (no entry lost to a racing read-modify-write)" \
+  "$P2G1_GG_N" "$CA083_LANDED"
+CA083_DENIALS="$({ wc -l < "${CA083_DIR}/data/run/${P2G1_GG_KEY}.denials" 2>/dev/null || echo 0; } | tr -d ' ')"
+check_num "CA-084 -- and all ${P2G1_GG_N} denial records survive the same storm (the append cannot lose a sibling's record)" \
+  "$P2G1_GG_N" "$CA083_DENIALS"
+CA083_RESIDUE="$({ ls -1 "${CA083_DIR}/data/run" 2>/dev/null || true; } | { grep -c '\.tmp\.\|\.lockd' || true; })"
+check_num "CA-101 -- the storm left no staging file and no lockdir behind (the four-arm trap and the unlock both fire)" \
+  "0" "$CA083_RESIDUE"
+
+# --- NEGATIVE CONTROL: neuter gg_lock and prove the IDENTICAL storm loses entries. A concurrency
+# --- fix asserted only by "it did not crash" proves nothing, so this drives the defect itself.
+# --- The race is real but not certain on any single attempt, so the control retries a bounded
+# --- number of times and requires at least one attempt to have actually lost an entry. If every
+# --- attempt landed all ${P2G1_GG_N}, the control is reported as INCONCLUSIVE and FAILS -- it
+# --- never silently passes on a run that demonstrated nothing.
+CA083_MUTANT=""
+p2g1_mutant_bin CA083_MUTANT "$GATEGUARD" \
+  's#^  gg_lock "\${GG_CHECKED_FILE}.lockd" || true$#  : ;#'
+CA083_MUT_ATTEMPTS=0
+CA083_MUT_WORST="$P2G1_GG_N"
+while [[ "$CA083_MUT_ATTEMPTS" -lt 6 ]]; do
+  CA083_MUT_ATTEMPTS=$((CA083_MUT_ATTEMPTS + 1))
+  CA083_MUT_DIR=""
+  p2g1_gg_env CA083_MUT_DIR
+  CA083_MUT_LANDED="$(p2g1_gg_storm "$CA083_MUTANT" "$CA083_MUT_DIR")"
+  [[ "$CA083_MUT_LANDED" -lt "$CA083_MUT_WORST" ]] && CA083_MUT_WORST="$CA083_MUT_LANDED"
+  [[ "$CA083_MUT_WORST" -lt "$P2G1_GG_N" ]] && break
+done
+if [[ "$CA083_MUT_WORST" -lt "$P2G1_GG_N" ]]; then
+  pass "CA-083 negative control -- with gg_lock neutered, the identical storm landed only ${CA083_MUT_WORST}/${P2G1_GG_N} entries (attempt ${CA083_MUT_ATTEMPTS}): the locked result above is a real contention result, not a serialized one"
+else
+  fail "CA-083 negative control INCONCLUSIVE -- ${CA083_MUT_ATTEMPTS} unlocked storms all landed ${P2G1_GG_N}/${P2G1_GG_N}; this host did not reproduce the race, so the locked assertion above is unproven rather than passing"
+fi
+
+# ---- CA-084: the denial budget is keyed per SESSION, not per project ----------------------------
+# EDMV4-T15 AC8 and CLAUDE.md's EDM_GATEGUARD_MAX_DENIALS bullet both say "per session". With the
+# budget keyed per project, 6-10 implementers shared one 3-denial budget: the fourth agent to touch
+# anything got an advisory instead of a fact list, having never been asked for facts once.
+echo
+echo "--- CA-084: EDM_GATEGUARD_MAX_DENIALS is a per-SESSION budget ---"
+
+# ca084_rcs <bin> <dir> <session-id> -- four first-touch calls on fresh paths; echo the four codes.
+CA084_SEQ=0
+ca084_rcs() {
+  local bin="$1" d="$2" sid="$3" out="" f
+  for f in w x y z; do
+    CA084_SEQ=$((CA084_SEQ + 1))
+    out="${out} $(p2g1_gg_call "$bin" "$d" "budget-${sid}-${f}-${CA084_SEQ}.js" "$sid")"
+  done
+  printf '%s\n' "$out"
+}
+
+CA084_DIR=""
+p2g1_gg_env CA084_DIR
+check "CA-084 -- session A spends its own budget: deny, deny, deny, then the advisory allow" \
+  " 2 2 2 0" "$(ca084_rcs "$GATEGUARD" "$CA084_DIR" sessA)"
+check "CA-084 -- session B, in the SAME project and the same state directory, gets its OWN budget" \
+  " 2 2 2 0" "$(ca084_rcs "$GATEGUARD" "$CA084_DIR" sessB)"
+
+# --- NEGATIVE CONTROL: force the pre-fix per-project key (ignore the payload's session_id and the
+# --- marker's started_at, so every session collapses onto one literal) and prove session B is
+# --- starved. Without this, "session B got 2 2 2 0" could just mean the budget never worked.
+CA084_MUTANT=""
+p2g1_mutant_bin CA084_MUTANT "$GATEGUARD" \
+  's#^GG_SESSION_KEY="\$(printf .*jq -r .*session_id.*$#GG_SESSION_KEY="project-wide"#'
+CA084_MUT_DIR=""
+p2g1_gg_env CA084_MUT_DIR
+check "CA-084 negative control setup -- with the key forced project-wide, session A still spends the budget normally" \
+  " 2 2 2 0" "$(ca084_rcs "$CA084_MUTANT" "$CA084_MUT_DIR" sessA)"
+check "CA-084 negative control -- ...and session B is STARVED (0 0 0 0), never once asked for facts: exactly the defect, so the per-session result above is attributable to the fix" \
+  " 0 0 0 0" "$(ca084_rcs "$CA084_MUTANT" "$CA084_MUT_DIR" sessB)"
+
+# ---- CA-085: gg_fresh_lines re-reads the mtime immediately before unlinking ----------------------
+# The pre-fix body decided staleness from one `stat` and then unlinked, so a concurrent writer that
+# refreshed the file in between had its state deleted. The fix re-reads; a file that moved is not
+# stale after all and is read rather than removed.
+#
+# Driven against the REAL extracted function text (the same extraction technique EDMV4-T13/T44's
+# bands use), with `gg_mtime` stubbed to return an old value first and a fresh value second -- which
+# is precisely the interleaving the finding describes, made deterministic instead of raced for.
+echo
+echo "--- CA-085: a concurrent refresh between the staleness read and the unlink is not deleted ---"
+
+CA085_DIR="$(mktemp -d "${P2G1_TMP}/ca085.XXXXXX")"
+
+# p2g1_extract_fn <file> <name> -- the text of a top-level `name() { ... }` definition, from its
+# opening line to the first line that is exactly "}" (this file's own functions all close that way).
+p2g1_extract_fn() {
+  awk -v fn="$2" '
+    $0 == fn "() {" {inside=1}
+    inside {print}
+    inside && $0 == "}" {exit}
+  ' "$1"
+}
+
+CA085_FRESH_FN="$(p2g1_extract_fn "$GATEGUARD" gg_fresh_lines)"
+if [[ -n "$CA085_FRESH_FN" ]]; then
+  pass "CA-085 setup -- gg_fresh_lines' real function text was extracted from bin/edm-gateguard (non-empty)"
+else
+  fail "CA-085 setup -- could not extract gg_fresh_lines from bin/edm-gateguard; the harness below would test nothing"
+fi
+
+# ca085_harness <mode> -- build a runnable harness around the extracted function. `gg_mtime` is
+# stubbed to hand back an OLD epoch on its FIRST call and a fresh one on every later call, so the
+# staleness branch is entered and the re-read then disagrees -- the exact interleaving the finding
+# describes, made deterministic instead of raced for. The call counter lives in a FILE, not a
+# variable: gg_fresh_lines calls gg_mtime inside `$( )`, a subshell, so a variable counter would
+# reset on every call and the stub would answer "old" forever.
+#
+# The `pre-fix` body is derived MECHANICALLY from the same real text -- the `mtime2` comparison is
+# rewritten to `if true`, then the now-unused `mtime2` lines and the comments are dropped -- so the
+# negative control is the shipped function minus its re-read, never a hand-retyped approximation
+# that could drift from what the file actually does.
+ca085_harness() {
+  local mode="$1" h="${CA085_DIR}/harness-${1}.sh"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf '%s\n' 'set -uo pipefail'
+    printf '%s\n' 'GG_STALE_SECONDS=1800'
+    printf '%s\n' 'gg_mtime() {'
+    printf '%s\n' '  local n'
+    printf '%s\n' '  n="$(cat "$CA085_COUNTER" 2>/dev/null || echo 0)"'
+    printf '%s\n' '  n=$((n + 1))'
+    printf '%s\n' '  echo "$n" > "$CA085_COUNTER"'
+    printf '%s\n' '  if [[ "$n" -eq 1 ]]; then echo 1; else date +%s; fi'
+    printf '%s\n' '}'
+    if [[ "$mode" == "pre-fix" ]]; then
+      printf '%s\n' "$CA085_FRESH_FN" \
+        | sed -e 's/if \[\[ "\$mtime2" == "\$mtime" \]\]; then/if true; then/' \
+              -e '/mtime2/d' -e '/^[[:space:]]*#/d'
+    else
+      printf '%s\n' "$CA085_FRESH_FN"
+    fi
+    printf '%s\n' 'gg_fresh_lines "$1"'
+  } > "$h"
+  printf '%s\n' "$h"
+}
+
+CA085_FIXED_H="$(ca085_harness fixed)"
+CA085_PREFIX_H="$(ca085_harness pre-fix)"
+bash -n "$CA085_FIXED_H" 2>/dev/null \
+  && pass "CA-085 setup -- the fixed harness parses" \
+  || fail "CA-085 setup -- the fixed harness does not parse; its result below would be meaningless"
+bash -n "$CA085_PREFIX_H" 2>/dev/null \
+  && pass "CA-085 setup -- the pre-fix harness parses" \
+  || fail "CA-085 setup -- the pre-fix harness does not parse; the negative control below would be meaningless"
+
+CA085_TARGET="${CA085_DIR}/state.txt"
+export CA085_COUNTER="${CA085_DIR}/mtime-calls"
+printf 'still-checked.js\n' > "$CA085_TARGET"
+rm -f "$CA085_COUNTER"
+CA085_OUT="$(bash "$CA085_FIXED_H" "$CA085_TARGET" 2>/dev/null || true)"
+CA085_CALLS="$({ cat "$CA085_COUNTER" 2>/dev/null || echo 0; } | tr -d ' ')"
+check_num "CA-085 setup -- the fixed body read the mtime TWICE (the stub's own call counter), so the re-read really executed" \
+  "2" "${CA085_CALLS:-0}"
+[[ -f "$CA085_TARGET" ]] \
+  && pass "CA-085 -- a file refreshed between the staleness read and the unlink SURVIVES (the concurrent writer's state is not deleted)" \
+  || fail "CA-085 -- the file was deleted despite its mtime having moved between the two reads"
+check "CA-085 -- ...and its content is returned rather than swallowed as stale" "still-checked.js" "$CA085_OUT"
+
+# --- NEGATIVE CONTROL: the pre-fix single-stat body deletes the same file. Without this, "the file
+# --- survived" could be an artifact of the stub rather than of the re-read.
+printf 'still-checked.js\n' > "$CA085_TARGET"
+rm -f "$CA085_COUNTER"
+bash "$CA085_PREFIX_H" "$CA085_TARGET" >/dev/null 2>&1 || true
+[[ -f "$CA085_TARGET" ]] \
+  && fail "CA-085 negative control FAILED -- the pre-fix body ALSO left the file in place; the assertion above does not discriminate" \
+  || pass "CA-085 negative control -- the pre-fix single-stat body DELETES the concurrently-refreshed file: the survival above is attributable to the re-read"
+
+# ---- CA-101: no predictable staging path anywhere in the gate ------------------------------------
+echo
+echo "--- CA-101: staging goes through mktemp, never a PID-derived name ---"
+
+# Comment lines are stripped before counting, the same way EDMV4-T11 AC5's own scan does it: this
+# fix's explanatory comments necessarily QUOTE the banned form, and a scan that matches the text
+# describing the thing it hunts is the self-matching-scan class this initiative has already filed
+# several findings against.
+CA101_BODY="$({ grep -v '^[[:space:]]*#' "$GATEGUARD" || true; })"
+CA101_PID_HITS="$(printf '%s\n' "$CA101_BODY" | count_matches -F '.tmp.$$')"
+check_num "CA-101 -- bin/edm-gateguard builds no \`.tmp.\$\$\` staging path on any code line" "0" "$CA101_PID_HITS"
+CA101_CONTROL="$(printf '%s\ntmp="${GG_CHECKED_FILE}.tmp.$$"\n' "$CA101_BODY" | count_matches -F '.tmp.$$')"
+[[ "$CA101_CONTROL" -ge 1 ]] \
+  && pass "CA-101 positive control -- an injected PID-derived staging path on a CODE line IS counted (${CA101_CONTROL} hit(s)): the zero above is a real zero" \
+  || fail "CA-101 positive control FAILED -- the comment-stripped scan did not count an injected \`.tmp.\$\$\`; the assertion above is vacuous"
+CA101_MKTEMP_HITS="$(count_matches -F 'mktemp "${GG_CHECKED_FILE}.tmp.XXXXXX"' "$GATEGUARD")"
+check_num "CA-101 -- the checked-file stages through mktemp's template form (no suffix after the X run -- BSD mktemp rejects one)" \
+  "1" "$CA101_MKTEMP_HITS"
+
+# --- The primitive this fix rests on, demonstrated directly. This is deliberately labelled as a
+# --- MECHANISM demonstration, not a gate-level exploit: a gate-level symlink plant would require
+# --- predicting the hook process's PID, and removing exactly that predictability is what the fix
+# --- does -- so a test able to plant the symlink would be evidence the fix is absent.
+CA101_LAB="$(mktemp -d "${P2G1_TMP}/ca101.XXXXXX")"
+printf 'canary\n' > "${CA101_LAB}/canary"
+ln -s "${CA101_LAB}/canary" "${CA101_LAB}/state.tmp.9999"
+printf 'attacker-controlled\n' > "${CA101_LAB}/state.tmp.9999" 2>/dev/null || true
+check "CA-101 mechanism -- a truncating \`>\` onto a planted symlink DOES write through it to the canary (the pre-fix exposure)" \
+  "attacker-controlled" "$(cat "${CA101_LAB}/canary" 2>/dev/null || true)"
+printf 'canary\n' > "${CA101_LAB}/canary"
+CA101_MKTEMP_OUT="$(mktemp "${CA101_LAB}/state.tmp.XXXXXX" 2>/dev/null || true)"
+[[ -n "$CA101_MKTEMP_OUT" && -f "$CA101_MKTEMP_OUT" && ! -L "$CA101_MKTEMP_OUT" ]] \
+  && pass "CA-101 mechanism -- mktemp's template form returns a fresh REGULAR file, never an existing symlink" \
+  || fail "CA-101 mechanism -- mktemp returned '${CA101_MKTEMP_OUT}', which is not a fresh regular file"
+printf 'staged\n' > "$CA101_MKTEMP_OUT"
+check "CA-101 mechanism -- ...and the canary is untouched by the staged write" \
+  "canary" "$(cat "${CA101_LAB}/canary" 2>/dev/null || true)"
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
 
