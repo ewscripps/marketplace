@@ -3756,11 +3756,21 @@ fi
 # marker-absent fast path must stay cheap. 500 leaves headroom for the two GateGuard tickets not
 # yet written without licensing unbounded growth; the next ticket that needs more must justify it
 # here rather than nudge the number.
+#
+# Ceiling raised 500 -> 620 by the P2 group-1 concurrency remediation, justified here as the
+# paragraph above requires rather than nudged. Six findings landed AC-mandated code in this one
+# file, and every line of it sits BELOW the marker-absent fast path, which is unchanged and still
+# costs one exec plus one `test -f`: CA-081 (resolve a relative recorded initiative directory
+# instead of failing open), CA-083/CA-084/CA-085 (a mkdir lock plus an append-only, session-keyed
+# denial budget, so parallel Edit hooks stop losing one another's entries), CA-073 (`set -f` around
+# the exempt-glob split), CA-077 (four guarded `jq` captures), CA-101 (mktemp staging plus a
+# four-arm trap). The p95 claim the original bound protects is a property of the ALLOW path, which
+# none of these touch -- see the AC10/AC11 note further down for how that figure is measured.
 t11_lines="$(wc -l < "$GATEGUARD" | tr -d ' ')"
-if [[ "$t11_lines" -ge 200 && "$t11_lines" -le 500 ]]; then
-  pass "EDMV4-T11 AC1 -- edm-gateguard is ${t11_lines} lines (within the closed range 200-500, D42)"
+if [[ "$t11_lines" -ge 200 && "$t11_lines" -le 620 ]]; then
+  pass "EDMV4-T11 AC1 -- edm-gateguard is ${t11_lines} lines (within the closed range 200-620, D42 as widened by the P2 group-1 remediation)"
 else
-  fail "EDMV4-T11 AC1 -- edm-gateguard is ${t11_lines} lines (expected 200-500 per D42)"
+  fail "EDMV4-T11 AC1 -- edm-gateguard is ${t11_lines} lines (expected 200-620 per D42 as widened by the P2 group-1 remediation)"
 fi
 
 # ---- AC2: sources _edm-cli-lib.sh; usage() calls the shared print_help() sentinel extractor; no
@@ -9736,6 +9746,213 @@ _ca088_live_case() {
   w8_check_empty "CA-088 -- no with_state_lock lockdir was left behind" "$straylock"
 }
 with_scratch_repo _ca088_live_case
+
+# ---- CA-086: the Phase-6 marker is written atomically, not through a truncating redirect --------
+# edm-gateguard reads this file on every Edit/Write while 6-10 implementers run in parallel. A
+# truncating `>` exposes a window in which the reader sees zero bytes (which CA-045 classifies as a
+# malformed marker) or a half-written line (which can name a directory that does not exist and so
+# take the stale-marker allow -- i.e. silently disable the gate).
+#
+# The discriminator here is deterministic rather than timing-dependent: `write_atomic` stages to a
+# mktemp file and RENAMES it over the destination, so a rewrite installs a NEW inode; a truncating
+# `>` reuses the destination inode in place. Comparing the marker's inode across two writes
+# therefore separates atomic from non-atomic with no race to lose and no flake to chase.
+echo
+echo "--- CA-086: the Phase-6 marker write is atomic (rename), not a truncating redirect ---"
+
+# CA-027: this band deliberately uses plain `mktemp -d` plus its own `rm -rf`, never
+# w8_scratch_dir. That helper's registry length is compared against a STATIC grep of its call
+# sites by the CA-027 assertion far above, so a call added below that assertion fails the count.
+P2G1_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-p2g1.XXXXXX")"
+
+# p2g1_mutant_bin <outvar> <src> <sed-script> -- like w8_mutant_bin, but copies EVERY sibling
+# `_edm-*.sh` library beside the mutant instead of only `_edm-cli-lib.sh` and
+# `_edm-datadir-lib.sh`. `bin/edm-state` also sources `_edm-lint-lib.sh`, so a two-library copy
+# yields a mutant that dies at its own `source` line under `set -e` -- and a control built on it
+# then reports "the mutant produced no output", which reads like a discriminating negative result
+# while actually proving nothing about the mutation. Every mutant this helper returns is
+# additionally smoke-checked (`--help` must exit 0) before any control is built on it, so an
+# inconclusive control can never masquerade as a discriminating one.
+p2g1_mutant_bin() {
+  local __p2m_outvar="$1" src="$2" script="$3"
+  local dir base rc=0
+  dir="$(mktemp -d "${P2G1_TMP}/mutant.XXXXXX")"
+  base="$(basename "$src")"
+  cp "${PLUGIN_DIR}"/bin/_edm-*.sh "${dir}/"
+  sed "$script" "$src" > "${dir}/${base}"
+  chmod +x "${dir}/${base}"
+  if cmp -s "$src" "${dir}/${base}"; then
+    fail "p2g1_mutant_bin: the mutation [${script}] changed nothing in ${base} -- the control it backs would be vacuous"
+  fi
+  bash "${dir}/${base}" --help >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    fail "p2g1_mutant_bin: the mutant ${base} does not run (--help exited ${rc}) -- any control built on it would be inconclusive, not discriminating"
+  fi
+  printf -v "$__p2m_outvar" '%s' "${dir}/${base}"
+}
+
+# p2g1_inode <path> -- portable inode number: GNU `stat -c %i`, BSD `stat -f %i` (the same
+# two-branch shape bin/edm-gateguard's own mtime read already uses).
+p2g1_inode() {
+  stat -c %i "$1" 2>/dev/null || stat -f %i "$1" 2>/dev/null || true
+}
+
+# p2g1_seed_repo <dir> -- a committed git repository at <dir>, the minimum `edm-state init` needs.
+p2g1_seed_repo() {
+  ( cd "$1" && git init -q . >/dev/null 2>&1 \
+    && git config user.email edm@example.com && git config user.name EDM \
+    && git config commit.gpgsign false \
+    && echo seed > SEED.md && git add SEED.md && git commit -q -m init ) >/dev/null 2>&1
+}
+
+# p2g1_phase6_env <bin> <prefix> <dir> -- initialize an initiative at <dir>/proj, approve gates
+# 1-3 (phase-start 6 refuses without gate 3), and drive `phase-start <prefix> 6` once. Echoes
+# nothing; the caller reads <dir>/data/run/<key>.phase6 itself.
+p2g1_phase6_env() {
+  local bin="$1" prefix="$2" dir="$3" g
+  mkdir -p "${dir}/proj" "${dir}/data"
+  p2g1_seed_repo "${dir}/proj"
+  ( cd "${dir}/proj" && CLAUDE_PROJECT_DIR="${dir}/proj" CLAUDE_PLUGIN_DATA="${dir}/data" \
+      bash "$bin" init "$prefix" ) >/dev/null 2>&1 || true
+  for g in 1 2 3; do
+    ( cd "${dir}/proj" && CLAUDE_PROJECT_DIR="${dir}/proj" CLAUDE_PLUGIN_DATA="${dir}/data" \
+        bash "$bin" approve-gate "$prefix" "$g" ) >/dev/null 2>&1 || true
+  done
+  p2g1_phase6_start "$bin" "$prefix" "$dir"
+}
+
+# p2g1_phase6_start <bin> <prefix> <dir> -- one more `phase-start <prefix> 6` against an
+# already-initialized fixture, so a caller can rewrite the marker without re-seeding.
+p2g1_phase6_start() {
+  local bin="$1" prefix="$2" dir="$3"
+  ( cd "${dir}/proj" && CLAUDE_PROJECT_DIR="${dir}/proj" CLAUDE_PLUGIN_DATA="${dir}/data" \
+      bash "$bin" phase-start "$prefix" 6 ) >/dev/null 2>&1 || true
+}
+
+# p2g1_marker_path <dir> -- where p2g1_phase6_env's fixture puts its Phase-6 marker.
+p2g1_marker_path() {
+  local dir="$1" key
+  key="$(CLAUDE_PROJECT_DIR="${dir}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+  printf '%s\n' "${dir}/data/run/${key}.phase6"
+}
+
+# ca086_case <edm-state-binary> <label> -- drive `phase-start 6` twice and publish the marker path
+# plus the inode it carried after each write.
+ca086_case() {
+  local bin="$1" tag="$2"
+  local dir
+  dir="$(mktemp -d "${P2G1_TMP}/ca086.XXXXXX")"
+  p2g1_phase6_env "$bin" CA086 "$dir"
+  CA086_MARKER="$(p2g1_marker_path "$dir")"
+  CA086_I1="$(p2g1_inode "$CA086_MARKER")"
+  p2g1_phase6_start "$bin" CA086 "$dir"
+  CA086_I2="$(p2g1_inode "$CA086_MARKER")"
+  if [[ -z "$CA086_I1" || -z "$CA086_I2" ]]; then
+    fail "CA-086 (${tag}) -- setup: the marker was never written (inodes '${CA086_I1}'/'${CA086_I2}'); every assertion on this fixture would be vacuous"
+    return 1
+  fi
+  pass "CA-086 (${tag}) -- setup: the marker exists after both phase-start calls (inodes ${CA086_I1} then ${CA086_I2})"
+  return 0
+}
+
+if ca086_case "$P2G1_EDM_STATE" "fixed"; then
+  [[ "$CA086_I1" != "$CA086_I2" ]] \
+    && pass "CA-086 -- the second marker write installed a NEW inode (${CA086_I1} -> ${CA086_I2}): the write is a rename, so no concurrent reader can observe a truncated marker" \
+    || fail "CA-086 -- the marker kept inode ${CA086_I1} across two writes; it is still being truncated in place"
+  CA086_FIELDS="$(awk -F'\t' 'NR==1{print NF}' "$CA086_MARKER" 2>/dev/null || true)"
+  check_num "CA-086 -- the marker still carries exactly three tab-separated fields after the atomic write" "3" "${CA086_FIELDS:-0}"
+  CA086_STRAY="$(find "$(dirname "$CA086_MARKER")" -name '*.phase6.tmp.*' -print 2>/dev/null | head -1)"
+  w8_check_empty "CA-086 -- write_atomic left no marker staging file behind" "$CA086_STRAY"
+fi
+
+# --- NEGATIVE CONTROL: restore the truncating redirect and prove the inode STOPS changing. Without
+# --- this, "the inode changed" could be an artifact of the fixture rather than of the fix.
+CA086_MUTANT=""
+p2g1_mutant_bin CA086_MUTANT "$P2G1_EDM_STATE" \
+  's#^  if ! write_atomic "\$marker" \(printf .*\) 2>/dev/null; then$#  if ! \1 > "$marker" 2>/dev/null; then#'
+if ca086_case "$CA086_MUTANT" "negative control"; then
+  [[ "$CA086_I1" == "$CA086_I2" ]] \
+    && pass "CA-086 negative control -- with the truncating redirect restored, the marker keeps inode ${CA086_I1} across both writes: the inode assertion above is a real discriminator" \
+    || fail "CA-086 negative control FAILED -- the mutant ALSO changed the inode (${CA086_I1} -> ${CA086_I2}); the assertion above does not distinguish atomic from truncating"
+fi
+
+# ---- CA-081: the marker records an ABSOLUTE initiative directory, and the gate resolves a --------
+# ---- relative one instead of reading it as stale. -----------------------------------------------
+# edm-gateguard re-resolves the marker's second field from the HOOK process's cwd, which is the
+# host's -- not the cwd `phase-start 6` ran in. A relative recorded path therefore failed `[[ -d ]]`
+# from any other directory or worktree, the marker read as stale, and the gate exited 0: the whole
+# gated path silently disabled, indistinguishable from a legitimate branch switch.
+echo
+echo "--- CA-081: absolute initiative_dir in the marker; a relative one is resolved, not failed open ---"
+
+# ca081_marker_field2 <edm-state-binary> -- write a marker via a real `phase-start 6` and echo its
+# second field. SRD_ROOT defaults to the relative "./SRD", so before the fix this field was relative.
+ca081_marker_field2() {
+  local bin="$1" dir
+  dir="$(mktemp -d "${P2G1_TMP}/ca081.XXXXXX")"
+  p2g1_phase6_env "$bin" CA081 "$dir"
+  awk -F'\t' 'NR==1{print $2}' "$(p2g1_marker_path "$dir")" 2>/dev/null || true
+}
+
+CA081_FIELD2="$(ca081_marker_field2 "$P2G1_EDM_STATE")"
+case "${CA081_FIELD2:-}" in
+  /*) pass "CA-081 -- phase-start 6 records an ABSOLUTE initiative_dir in the marker (${CA081_FIELD2})" ;;
+  "") fail "CA-081 -- setup: the marker's second field is empty; the fixture never produced a marker" ;;
+  *)  fail "CA-081 -- the marker's second field is still relative: '${CA081_FIELD2}'" ;;
+esac
+
+# --- NEGATIVE CONTROL: strip the absolutization and prove the field goes back to relative. This is
+# --- what makes the `/*` match above a real assertion rather than a property of the fixture's cwd.
+CA081_MUTANT=""
+p2g1_mutant_bin CA081_MUTANT "$P2G1_EDM_STATE" \
+  's#^    \*) dir="\$(cd "\$dir" 2>/dev/null && pwd)" || dir="\$2"$#    *) dir="$dir"#'
+CA081_MUTANT_FIELD2="$(ca081_marker_field2 "$CA081_MUTANT")"
+case "${CA081_MUTANT_FIELD2:-}" in
+  /*) fail "CA-081 negative control FAILED -- the mutant ALSO recorded an absolute path ('${CA081_MUTANT_FIELD2}'); the assertion above proves nothing about the fix" ;;
+  "") fail "CA-081 negative control -- the mutant produced no marker at all; the control is inconclusive rather than discriminating" ;;
+  *)  pass "CA-081 negative control -- with the absolutization removed the field is relative again ('${CA081_MUTANT_FIELD2}'): the absolute-path assertion is a real discriminator" ;;
+esac
+
+# --- The consumer half: a marker carrying a RELATIVE directory, read by edm-gateguard from a
+# --- DIFFERENT cwd, must NOT read as stale. Driven through the real binary, end to end.
+CA081_GG_TMP="$(mktemp -d "${P2G1_TMP}/ca081gg.XXXXXX")"
+mkdir -p "${CA081_GG_TMP}/proj/SRD/live-initiative" "${CA081_GG_TMP}/data/run" "${CA081_GG_TMP}/elsewhere"
+CA081_GG_KEY="$(CLAUDE_PROJECT_DIR="${CA081_GG_TMP}/proj" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+# The second field is deliberately relative -- exactly the shape a pre-fix marker carries.
+printf 'CA81PFX\tSRD/live-initiative\t2026-09-02T00:00:00Z\n' \
+  > "${CA081_GG_TMP}/data/run/${CA081_GG_KEY}.phase6"
+
+# ca081_gg_run <gateguard-binary> -- one first-touch Edit from a cwd that is NOT the project root
+# (the host's own situation), with CLAUDE_PROJECT_DIR set the way the host sets it.
+ca081_gg_run() {
+  local bin="$1" rc=0
+  ( cd "${CA081_GG_TMP}/elsewhere" && printf '{"tool_name":"Edit","tool_input":{"file_path":"src/a.js"}}' | \
+    CLAUDE_PROJECT_DIR="${CA081_GG_TMP}/proj" CLAUDE_PLUGIN_DATA="${CA081_GG_TMP}/data" \
+    EDM_GATEGUARD_STATE_DIR="${CA081_GG_TMP}/ggstate" EDM_GATEGUARD_DENY_MODE=exit-code \
+    bash "$bin" >/dev/null 2>&1 ) || rc=$?
+  printf '%s\n' "$rc"
+}
+
+CA081_GG_RC="$(ca081_gg_run "$GATEGUARD")"
+check_num "CA-081 -- a marker with a RELATIVE initiative_dir, read from another cwd, still ENFORCES the gate (deny = 2) rather than failing open" "2" "$CA081_GG_RC"
+
+# --- NEGATIVE CONTROL: neutralize the resolution arm and prove the identical fixture silently
+# --- allows. That exit 0 is the defect CA-081 names, reproduced here so the exit 2 above is
+# --- attributable to the fix rather than to some other property of the fixture.
+CA081_GG_MUTANT=""
+p2g1_mutant_bin CA081_GG_MUTANT "$GATEGUARD" \
+  's#^        MARKER_INITIATIVE_DIR="\${CLAUDE_PROJECT_DIR%/}/\${MARKER_INITIATIVE_DIR}"$#        MARKER_INITIATIVE_DIR="$MARKER_INITIATIVE_DIR"#'
+rm -rf "${CA081_GG_TMP}/ggstate"
+CA081_GG_MUT_RC="$(ca081_gg_run "$CA081_GG_MUTANT")"
+check_num "CA-081 negative control -- with the resolution arm neutralized, the identical fixture silently ALLOWS (exit 0): the gate was disabled by a relative path" "0" "$CA081_GG_MUT_RC"
+
+# --- ...and an ABSOLUTE marker naming a genuinely deleted directory still takes the stale allow,
+# --- so the new arm did not swallow the legitimate branch-switch case (EDMV4-T15 AC11's contract).
+rm -rf "${CA081_GG_TMP}/ggstate"
+printf 'CA81PFX\t%s/proj/SRD/deleted-initiative\t2026-09-02T00:00:00Z\n' "$CA081_GG_TMP" \
+  > "${CA081_GG_TMP}/data/run/${CA081_GG_KEY}.phase6"
+CA081_GG_STALE_RC="$(ca081_gg_run "$GATEGUARD")"
+check_num "CA-081 -- an ABSOLUTE marker naming a deleted initiative dir still allows (exit 0): the stale-marker contract is intact" "0" "$CA081_GG_STALE_RC"
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
 

@@ -138,6 +138,25 @@ if [[ "$MARKER_MALFORMED" -eq 1 ]]; then
 else
   MARKER_REST="${MARKER_LINE#*$'\t'}"
   MARKER_INITIATIVE_DIR="${MARKER_REST%%$'\t'*}"
+  # CA-081: only an ABSOLUTE recorded directory can be tested from here. This hook runs with the
+  # host's cwd, which is not the cwd `phase-start 6` ran in, so a RELATIVE second field re-resolved
+  # against this process's cwd appeared missing from any other directory or git worktree -- the
+  # marker read as stale and the gate exited 0, silently disabling the whole gated path.
+  # bin/edm-state now records an absolute path; this arm handles a marker written before that fix
+  # (or by hand) by resolving it against CLAUDE_PROJECT_DIR when the host supplied one, and
+  # otherwise declining to test it at all. Declining fails CLOSED (the gate continues to its
+  # ordinary allow/deny below) -- treating an untestable path as missing is the fail-OPEN direction
+  # this finding is about.
+  case "$MARKER_INITIATIVE_DIR" in
+    ""|/*) ;;
+    *)
+      if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
+        MARKER_INITIATIVE_DIR="${CLAUDE_PROJECT_DIR%/}/${MARKER_INITIATIVE_DIR}"
+      else
+        MARKER_INITIATIVE_DIR=""
+      fi
+      ;;
+  esac
   if [[ -n "$MARKER_INITIATIVE_DIR" ]] && [[ ! -d "$MARKER_INITIATIVE_DIR" ]]; then
     exit 0
   fi

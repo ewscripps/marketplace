@@ -99,7 +99,28 @@ _edm_marker_write() {
     echo "edm-state: [warn] could not create Phase-6 marker directory for ${prefix}; marker not written (gate degrades to no-op)" >&2
     return 0
   fi
-  if ! printf '%s\t%s\t%s\n' "$prefix" "$dir" "$(now_utc)" > "$marker" 2>/dev/null; then
+  # CA-081: record an ABSOLUTE initiative directory. edm-gateguard re-resolves this field to
+  # decide whether the marker is stale, and it does so from the HOOK process's cwd -- which is the
+  # host's, not this process's. A relative path recorded here therefore failed `[[ -d ]]` from any
+  # other cwd or git worktree, the marker read as stale, and the gate exited 0: Phase 6
+  # fact-forcing silently disabled for the whole session, indistinguishable from a branch switch.
+  # A directory that cannot be resolved (already deleted, or unreadable) keeps the caller's own
+  # string rather than becoming empty -- the gate's malformed/stale handling covers that case and
+  # an empty second field would instead read as a well-formed marker naming nothing.
+  case "$dir" in
+    /*) ;;
+    *) dir="$(cd "$dir" 2>/dev/null && pwd)" || dir="$2"
+       [[ -n "$dir" ]] || dir="$2" ;;
+  esac
+  # CA-086: route the marker write through write_atomic rather than a truncating `>`. edm-gateguard
+  # reads this file on every Edit/Write while Phase 6 is running 6-10 implementers in parallel, so
+  # a plain redirect exposes a window in which the reader observes a zero-byte or half-written
+  # marker. Zero fields parses as malformed (CA-045's fail-closed branch, a spurious diagnostic) and
+  # a torn line can name a directory that does not exist (a spurious stale-marker allow, which
+  # disables the gate). write_atomic's mktemp+rename makes the reader see the old marker or the new
+  # one, never a partial one. Its own preconditions are already satisfied: the parent directory was
+  # created and proven writable by the `mkdir -p` above.
+  if ! write_atomic "$marker" printf '%s\t%s\t%s\n' "$prefix" "$dir" "$(now_utc)" 2>/dev/null; then
     echo "edm-state: [warn] could not write Phase-6 marker for ${prefix} at ${marker} (gate degrades to no-op)" >&2
   fi
   return 0
