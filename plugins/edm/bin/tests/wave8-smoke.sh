@@ -9653,6 +9653,89 @@ check "CA-215 -- and its value is the literal text, not parsed" \
   "chose option B" "$(jq -r '.last_decision' "$CA215_STATE_JSON" 2>/dev/null)"
 
 rm -rf "$CA215_TMP"
+
+# =================================================================================
+# P2 remediation group 1 -- concurrency and filesystem safety.
+# CA-073, CA-077, CA-081, CA-082, CA-083, CA-084, CA-085, CA-086, CA-087, CA-088,
+# CA-092, CA-101 (SRD/edm/EDMV4__ecc-integration/code-audit/pass-1_2026-09-04/
+# REMEDIATION.md; selected by code-audit/p2-triage.md's group 1).
+#
+# House rule for this whole band: every assertion carries a control that proves it CAN fail --
+# either a mutant binary restoring the pre-fix behaviour, or an injected positive probe. Where a
+# finding is about a RACE, the assertion is driven by real concurrent writers (background
+# subshells plus `wait`) and asserts that no entry was LOST -- never merely that the command
+# exited 0, which a serialized single run would satisfy while proving nothing about contention.
+# =================================================================================
+echo
+echo "=== P2 group 1: concurrency and filesystem safety ==="
+
+P2G1_EDM_STATE="${PLUGIN_DIR}/bin/edm-state"
+
+# ---- CA-088: write_atomic's (and with_state_lock's) trap-referenced cleanup variables ------------
+# The four traps each function installs name their variable INSIDE single quotes, so the body
+# expands it when the signal fires -- which may be after the declaring function has returned and
+# its locals have been popped. bin/tests/_harness.sh's harness_scratch_dir comment documents this
+# exact hazard: "this trap must still fire after this function returns, so it cannot reference a
+# local, which is popped off the local stack the instant the function returns".
+#
+# HONESTY NOTE, recorded here and not only in the remediation report: this is a LATENT hazard, not
+# a currently-firing defect. Every return path in both functions calls _restore_traps before
+# returning, so no signal can today reach a trap body whose local has already been popped. A
+# behavioural reproduction therefore cannot discriminate fixed from unfixed code, and none is
+# offered below -- what is asserted is the invariant the fix establishes, with a positive control
+# proving the scan detects a violation, plus a live end-to-end run proving the variables still
+# work in their actual use.
+echo
+echo "--- CA-088: no local declaration names a trap-referenced cleanup variable ---"
+
+# p2g1_local_decl_hits <file> <var> -- how many `local ...` declaration lines name <var>.
+# Substring match scoped to lines that ARE local declarations, rather than a word-boundary regex:
+# BSD grep has no \b and GNU grep has no [[:<:]], so no portable word-boundary form exists under
+# this plugin's required-binary floor. Both variable names are unique enough in this file that a
+# substring hit on a `local` line is unambiguous.
+p2g1_local_decl_hits() {
+  { grep -E '^[[:space:]]*local[[:space:]]' "$1" 2>/dev/null || true; } | { grep -cF "$2" || true; }
+}
+
+for _p2g1_var in _WRITE_ATOMIC_TMP _STATE_LOCKDIR; do
+  check_num "CA-088 -- no local declaration in bin/edm-state names ${_p2g1_var}" \
+    "0" "$(p2g1_local_decl_hits "$P2G1_EDM_STATE" "$_p2g1_var")"
+done
+
+# --- POSITIVE CONTROL: re-add the `local` the fix removed and prove the scan catches it. Without
+# --- this, a scan whose pattern silently stopped matching declaration lines reports 0 forever.
+CA088_MUTANT=""
+w8_mutant_bin CA088_MUTANT "$P2G1_EDM_STATE" 's/^  local dest_dir tmp ec=0$/  local dest_dir tmp ec=0 _WRITE_ATOMIC_TMP/'
+CA088_MUTANT_HITS="$(p2g1_local_decl_hits "$CA088_MUTANT" "_WRITE_ATOMIC_TMP")"
+[[ "$CA088_MUTANT_HITS" -ge 1 ]] \
+  && pass "CA-088 positive control -- with the local re-injected, the scan reports ${CA088_MUTANT_HITS} hit(s) for _WRITE_ATOMIC_TMP: the zero above is a real zero" \
+  || fail "CA-088 positive control FAILED -- the scan reported 0 hits on a file that DOES carry the local declaration; the assertion above is vacuous"
+
+CA088_MUTANT2=""
+w8_mutant_bin CA088_MUTANT2 "$P2G1_EDM_STATE" 's/^    local tries=0 holder_pid=""$/    local tries=0 holder_pid="" _STATE_LOCKDIR/'
+CA088_MUTANT2_HITS="$(p2g1_local_decl_hits "$CA088_MUTANT2" "_STATE_LOCKDIR")"
+[[ "$CA088_MUTANT2_HITS" -ge 1 ]] \
+  && pass "CA-088 positive control -- with the local re-injected, the scan reports ${CA088_MUTANT2_HITS} hit(s) for _STATE_LOCKDIR" \
+  || fail "CA-088 positive control FAILED -- the scan reported 0 hits on a file that DOES carry the local declaration"
+
+# --- ...and the un-mutated binary still works end to end: one real locked write drives BOTH
+# --- functions, so dropping the two `local` keywords did not break the variables' actual use.
+_ca088_live_case() {
+  local rc=0 state stray straylock
+  CLAUDE_PROJECT_DIR="$(pwd)" bash "$P2G1_EDM_STATE" init CA088 >/dev/null 2>&1 || rc=$?
+  check_num "CA-088 -- edm-state init still completes with both variables non-local (write_atomic and with_state_lock both exercised)" "0" "$rc"
+  state="$(find SRD -name '.edm-state.json' -print 2>/dev/null | head -1)"
+  if [[ -n "$state" && -s "$state" ]]; then
+    pass "CA-088 -- the state file write_atomic produced is present and non-empty"
+  else
+    fail "CA-088 -- no non-empty .edm-state.json was produced; the locked write path is broken"
+  fi
+  stray="$(find SRD -name '*.tmp.*' -print 2>/dev/null | head -1)"
+  w8_check_empty "CA-088 -- no write_atomic staging file was left behind" "$stray"
+  straylock="$(find SRD -name '*.lockd' -print 2>/dev/null | head -1)"
+  w8_check_empty "CA-088 -- no with_state_lock lockdir was left behind" "$straylock"
+}
+with_scratch_repo _ca088_live_case
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
 

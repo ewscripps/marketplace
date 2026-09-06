@@ -722,7 +722,17 @@ _EDM_TRAP_DEPTH=0
 write_atomic() {
   [[ $# -ge 2 ]] || { echo "write_atomic: usage: write_atomic <dest> <command> [args...]" >&2; return 2; }
   local dest="$1"; shift
-  local dest_dir tmp ec=0 _WRITE_ATOMIC_TMP
+  # CA-088: _WRITE_ATOMIC_TMP is deliberately NOT `local`. The four traps installed below name it
+  # inside single quotes, so their bodies expand it at SIGNAL time -- and a signal delivered after
+  # write_atomic has returned (or during its own unwind) runs the trap body in a scope where a
+  # function-local of that name no longer exists, leaving `rm -f ""` and the staging file on disk.
+  # bin/tests/_harness.sh's `harness_scratch_dir` cleanup-trap comment documents exactly this
+  # class in as many words ("this trap must still fire after this function returns, so it cannot
+  # reference a `local`, which is popped off the local stack the instant the function returns").
+  # Correction to CA-088's own prescription, which said with_state_lock's sibling `_STATE_LOCKDIR`
+  # was already non-local: it was NOT -- it carried the identical defect and is fixed in the same
+  # commit. Keep both non-local; do not re-add the `local` at either site.
+  local dest_dir tmp ec=0
   dest_dir="$(dirname "$dest")"
   [[ -d "$dest_dir" ]] || { echo "write_atomic: destination directory does not exist: ${dest_dir}" >&2; return 1; }
   [[ -w "$dest_dir" ]] || { echo "write_atomic: destination directory is not writable: ${dest_dir}" >&2; return 1; }
@@ -1461,7 +1471,11 @@ with_state_lock() {
     # succeeds -- so a pidfile containing "0" would be classified live forever (50 retries then a
     # hard die, with no reclamation ever possible). Reject "0" alongside non-numeric/empty values
     # so it is routed through the same atomic reclaim as any other invalid PID.
-    local tries=0 holder_pid="" _STATE_LOCKDIR
+    # CA-088 (sibling site): `_STATE_LOCKDIR` is deliberately NOT `local` -- see write_atomic's
+    # own CA-088 comment. The four traps below expand it at SIGNAL time, and a signal arriving
+    # after this function returns would find a function-local of that name already popped,
+    # turning the lock release into `rm -rf ""` and orphaning the lockdir permanently.
+    local tries=0 holder_pid=""
     local _mkdir_err
     # G22: capture mkdir's own stderr on this (and every) failed attempt. On the very
     # first failed attempt, if the lockdir still doesn't exist AND the failure wasn't
