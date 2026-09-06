@@ -365,7 +365,7 @@ which runs after every wave that writes a prompt, script or artifact.
 | Size | M |
 | SRD Refs | EDMV4-58 |
 | Depends On | EDMV4-T13, EDMV4-T15, EDMV4-T20, EDMV4-T28, EDMV4-T30, EDMV4-T33, EDMV4-T41, EDMV4-T44, EDMV4-T47, EDMV4-T04, EDMV4-T05, EDMV4-T49 |
-| Target Components | `plugins/edm/bin/tests/wave8-smoke.sh`, `plugins/edm/bin/tests/run-all.sh` (`:39` `_PREFERRED_ORDER`, `:75-86` the tripwire, `:87` `_MIN_SUITE_COUNT`), `plugins/edm/bin/tests/wave6-smoke.sh` (`:4087-4099`), `plugins/edm/bin/tests/harness-smoke.sh`, `plugins/edm/bin/tests/wave7-smoke.sh`, `plugins/edm/CLAUDE.md` Sec."Testing changes", `SRD/edm/EDMV4__ecc-integration/decisions.md` |
+| Target Components | `plugins/edm/bin/tests/wave8-smoke.sh`, `plugins/edm/bin/tests/run-all.sh` (`:39` `_PREFERRED_ORDER`, `:75-86` the tripwire, `:87` `_MIN_SUITE_COUNT`), `plugins/edm/bin/tests/wave6-smoke.sh` (`:4087-4099`), `plugins/edm/bin/tests/harness-smoke.sh`, `plugins/edm/bin/tests/wave7-smoke.sh`, `plugins/edm/CLAUDE.md` Sec."Testing changes", `plugins/edm/CHANGELOG.md` (**CA-117**: added so AC13 below is assignable at all -- this ticket already owns the Definition-of-Done pass and its evidence, and DoD item 8 is the changelog entry), `SRD/edm/EDMV4__ecc-integration/decisions.md` |
 
 ### Description
 
@@ -451,6 +451,18 @@ initiative.
       still passes.
 - [ ] AC12: `plugins/edm/CLAUDE.md` Sec."Testing changes" is updated wherever it states a suite
       count or the run procedure, so the documented procedure matches the eight-suite reality.
+- [ ] AC13 (**CA-117**): DoD item 8 -- the initiative CHANGELOG entry -- is discharged HERE, by
+      this ticket, and `CHANGELOG.md` is in its Target Components above so it can be. The
+      cross-cutting "Changelog entry written if initiative has a CHANGELOG" AC that every epic
+      ticket carries is **unassignable by every ticket that does not name `CHANGELOG.md`**: an
+      implementer satisfying it would be writing outside its own Target Components, which `D34`
+      records as a contract violation and correctly praises an implementer for refusing. The AC
+      therefore read as satisfied because no single ticket ever failed on it, which is the direct
+      mechanism behind CA-025 (`[3.3.0]` shipped omitting every new executable and blocking hook).
+      Verify by reading `CHANGELOG.md`'s entry for this release against the set of new or changed
+      user-visible surfaces in the initiative -- new `bin/` executables, new hook registrations,
+      new environment knobs -- rather than against any list restated in a ticket.
+      `tickets/README.md`'s cross-cutting AC block carries the general rule.
 
 ### Technical Notes
 
@@ -543,8 +555,17 @@ open.
 - [ ] AC6: `bash plugins/edm/bin/tests/wave7-smoke.sh` reports zero failures except those owned by
       a named, still-open ticket, and every remaining failure names its owning ticket in its
       message or an adjacent comment.
-- [ ] AC7: `bash plugins/edm/bin/tests/wave6-smoke.sh` and `wave8-smoke.sh` are unaffected -- 795/0
-      and 515/0 respectively still hold.
+- [ ] AC7: `bash plugins/edm/bin/tests/wave6-smoke.sh` and `wave8-smoke.sh` are unaffected by
+      **this** ticket: both still report zero failures, and this ticket's own commits change
+      neither file (`git diff --stat <base>..<head> -- plugins/edm/bin/tests/wave6-smoke.sh
+      plugins/edm/bin/tests/wave8-smoke.sh` is empty). **CA-067: this AC pinned an absolute
+      515/0 for `wave8` and 795/0 for `wave6`.** Both figures were already invalidated by
+      `EDMV4-T14`, `T15`, `T28`, `T45` and `T53`, each of which legitimately appended banded
+      sections afterwards; `wave8` alone has since passed 500, 735 and 1234. An absolute suite
+      count is wrong by construction as an AC for a ticket that does not own the suite -- it can
+      never be re-verified, because any later ticket touching that suite falsifies it without
+      doing anything wrong. **Convention for any successor AC: pin a DELTA or a touched-files
+      claim, never an absolute total.** "Zero failures" is stable; "515 passed" is not.
 - [ ] AC8: `bash plugins/edm/bin/tests/run-all.sh` passes with zero failures, so
       `/edm:verify-runtime` can close the `EDMV4-T19` and `EDMV4-T20` PARTIALs.
 

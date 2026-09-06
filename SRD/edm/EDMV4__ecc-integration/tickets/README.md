@@ -82,6 +82,29 @@ Every ticket in the pack MUST include these acceptance criteria where applicable
 Source: `docs/templates/cross-cutting-ac.md`
 Authority: EDMV2-77 (WS-K) -- single source of truth; do not copy inline
 
+**Initiative-specific note on the Changelog AC (CA-117).** "Changelog entry written if initiative
+has a CHANGELOG" is a **cross-cutting** AC, but a ticket can only satisfy it by writing to
+`CHANGELOG.md`, and an implementer writing outside its own Target Components is a contract
+violation this initiative already recorded and upheld (`decisions.md` D34 -- an implementer that
+refused to do so was correct to refuse). So the AC was **unassignable by construction** for every
+ticket that does not name `CHANGELOG.md`: it could not be satisfied, and it read as satisfied
+anyway because no single ticket failed on it. That is the mechanism behind CA-025, where the
+`[3.3.0]` entry omitted every new executable and blocking hook.
+
+Ownership is therefore explicit, and stated as a **rule rather than a ticket list** so it cannot
+go stale the way a pinned list would:
+
+- A ticket whose Target Components name `CHANGELOG.md` owns its own changelog entry, and its
+  Changelog AC is a real, checkable obligation.
+- For **every other ticket**, the Changelog AC is **not the implementer's**. It is a coordinator
+  obligation discharged at wave close, on the D34 precedent: the coordinator merging the wave
+  writes the entry covering that wave's user-visible changes. An implementer must not write to
+  `CHANGELOG.md` to satisfy it, and must not mark it satisfied either -- it is out of scope for
+  that ticket, and saying so is the correct outcome.
+
+To find which tickets own an entry, grep the epic files for `CHANGELOG.md` in Target Components;
+do not rely on any list written down here.
+
 **Initiative-specific note on the CI block.** Constraint C8 records that **no CI pipeline exists**
 for this plugin. `bash plugins/edm/bin/tests/run-all.sh` plus the `PreToolUse` git-commit hook are
 the entire enforcement surface. Read "CI passes with the change" as "the local smoke suite passes",
