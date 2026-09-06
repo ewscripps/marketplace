@@ -3951,16 +3951,28 @@ cmd_metrics_report() {
         echo
         printf "  %-8s  %-6s  %-8s  %-10s  %-10s  %-12s\n" "Type" "Round" "Lenses" "Duration" "Cost" "Model"
         printf "  %-8s  %-6s  %-8s  %-10s  %-10s  %-12s\n" "----" "-----" "------" "--------" "----" "-----"
+        # CA-120: the Lenses column reads the round's lens set through LENS_READ_JQ_DEF's shared
+        # `read_round_lenses($all)`, never `.lenses` inline. A C-4 legacy full round (recorded
+        # before EDMV4-T22 materialized the set) carries `lenses: []` with `round_type: "full"`,
+        # so the inline read rendered `Lenses=0` for a round that used every lens there was --
+        # against this section's own caption saying a full round is all of them. The whole point
+        # of that shared def is that the substitution happens in exactly one place.
+        # shellcheck disable=SC2086 # deliberate word-splitting; bash 3.2 has no arrays-as-constants
+        local _mr_all_lens_json
+        _mr_all_lens_json="$(printf '%s\n' $ALL_LENS_IDS | jq -R . | jq -s .)"
         while IFS=$'\t' read -r ar_type ar_round ar_lenses ar_dur ar_cost ar_model; do
           [[ -n "$ar_type" ]] || continue
           printf "  %-8s  %-6s  %-8s  %-10s  %-10s  %-12s\n" "$ar_type" "$ar_round" "$ar_lenses" "${ar_dur}s" "\$${ar_cost}" "$ar_model"
-        done < <(jq -r "${AUDIT_ROUND_COERCE_JQ_DEF}"'
+        done < <(jq -r --argjson all "$_mr_all_lens_json" "${AUDIT_ROUND_COERCE_JQ_DEF} ${LENS_READ_JQ_DEF}"'
           (.audit_rounds // {}) | to_entries[] |
           .key as $t | (.value | coerce_round_entry).rounds[] |
           select(.completed_at != null) |
-          [$t, (.round|tostring), ((.lenses // []) | length | tostring), ((.duration_seconds // 0)|tostring), ((.estimated_cost_usd // 0)|tostring), (.model_used // "?")] | @tsv
+          [$t, (.round|tostring), (read_round_lenses($all) | length | tostring), ((.duration_seconds // 0)|tostring), ((.estimated_cost_usd // 0)|tostring), (.model_used // "?")] | @tsv
         ' "$state" 2>/dev/null)
-        echo "  (lenses per round shown in the Lenses column above; round_type full = all 14 lenses)"
+        # The lens count in this caption is DERIVED from ALL_LENS_IDS, never re-typed: the last
+        # two times a lens count was written down in prose it went stale (CA-021, CA-024).
+        # shellcheck disable=SC2086 # deliberate word-splitting to count space-separated members
+        echo "  (lenses per round shown in the Lenses column above; round_type full = all $(printf '%s\n' $ALL_LENS_IDS | grep -c '.') lenses)"
         echo
       fi
       # ---- Tiered vs untiered lens cost (EDMV3-T53 AC9) ------------------------------------
@@ -4910,6 +4922,12 @@ _normalize_lens_csv() {
 # lens that existed when it ran. Any future consumer that inspects a round's lens set (chiefly
 # EDMV4-T23's completeness backstop) pipes the round object through `read_round_lenses($all)`
 # rather than reading `.lenses` directly, so the substitution happens in exactly one place.
+# CA-120: `metrics-report`'s per-round Lenses column was the one reader that did NOT, so a C-4
+# legacy full round rendered `Lenses=0` against that section's own "full = all N lenses" caption;
+# it routes through this def now. Exactly ONE inline `.lenses` read survives -- cmd_audit_converged
+# builds `latest_lenses_csv` for a DIAGNOSTIC message only, and CA-199 recorded it as provably
+# equivalent there (the substitution cannot change the refuse/allow decision it accompanies).
+# Treat any NEW inline `.lenses` read as a defect, not a precedent.
 # `read_round_lenses_na` is the sibling AC10(b) rule: a round record with no `lenses_na` key at
 # all (every round recorded before this ticket) reads as `[]` via a jq `//` default.
 LENS_READ_JQ_DEF='def read_round_lenses($all): if ((.lenses // []) | length) == 0 and .round_type == "full" then $all else (.lenses // []) end; def read_round_lenses_na: (.lenses_na // []);'

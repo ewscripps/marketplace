@@ -506,6 +506,17 @@ responses:
    initiative, using the D14 scope-boundary framing -- a decision made on its own merits, not a
    postponed finding.
 
+**A second, distinct unverifiability: an AC that pins an absolute figure another ticket may
+legitimately move (CA-067).** `EDMV4-T57` AC7 pinned a smoke suite at `515/0`; five later tickets
+each appended a banded section to that suite, and the real figure had more than doubled before the
+same initiative closed. Nothing was done wrong -- the AC was simply not re-verifiable after the first
+legitimate change by anyone else. It is verifiable the day it is written and never again, which is
+worse than an openly unverifiable AC because it reads as green until someone re-runs it. **Write
+the delta, not the total**: "this ticket's commits touch neither suite file", or "both suites
+still report zero failures", both of which stay true across every later append. The same rule
+applies to any count an AC does not itself own -- lens counts, file counts, subcommand counts.
+Derive it at read time or assert a property of it; never write today's number into an AC.
+
 Both routes are a scope change to an approved ticket, so both go through gate change control:
 presented at the relevant gate with the rationale, approved or rejected by the human via the
 canonical `skills/orchestrator/SKILL.md Sec."Gate PROTOCOL"`, and recorded in `decisions.md` and
@@ -931,9 +942,31 @@ EDM's enforcement was, before this section, entirely hardcoded bash (`edm-lint-a
 `edm-check-grants`, `edm-check-vocabulary`, the gate hooks). A team with its own conventions had
 no way to add enforcement without editing the plugin and carrying a fork. This section is the
 **format half** of a rules-as-data layer that closes that gap: the schema, the rule directory, the
-naming convention and the documented failure modes. It is deliberately format-only -- no evaluator
-reads these files yet, no subcommand consumes them, and no hook fires because of them. A later
-initiative wires an `eval` consumer against this exact schema.
+naming convention and the documented failure modes.
+
+**This layer is LIVE, and a `"action": "block"` rule really does block (CA-123).** Until
+`EDMV4-T43`/`EDMV4-T45` shipped, this section said the format was inert -- "no evaluator reads
+these files yet, no subcommand consumes them, and no hook fires because of them" -- and that
+sentence survived the tickets that made it false. A reader trusting it would conclude a committed
+rule file cannot break anything, then find it denying `Edit` calls and refusing `Stop`. What
+actually ships today:
+
+| Reader | Event | What a matched `block` rule does |
+|---|---|---|
+| `bin/edm-hookify` | all three | the evaluator itself: prints the match line, exits **2** |
+| `bin/edm-gateguard` | `file` | denies through `emit_decision deny` on the `PreToolUse Edit\|Write\|MultiEdit` matcher |
+| `bin/edm-bash-gate` | `bash` | exits **2** on the `PreToolUse Bash` matcher, refusing the command |
+| `bin/edm-stop-gate` | `stop` | exits **2** on the `Stop` hook, refusing to end the turn |
+
+See "`edm-hookify`'s two-tier exit contract (EDMV4-T44)" below for the exit contract all three
+consumers translate, and the "Hooks behavior" table below it for each consumer's registration.
+Two scoping facts a rule author needs before writing a `block` rule: the `file` event is evaluated
+by `edm-gateguard` **only on its allow path, and only while a Phase-6 marker is present** -- a
+repository with no active Phase 6 initiative evaluates no `file` rule at all (CA-122); and
+`edm-bash-gate` sees **every** bash command in the session, which makes an over-broad `bash` rule
+the widest-blast-radius rule this format can express. Both `edm-gateguard` and `edm-bash-gate`
+ship environment-variable kill switches for exactly that case (`EDM_GATEGUARD*`, `EDM_HOOKIFY*`
+under "Testing changes"); `edm-stop-gate` does not yet (CA-115).
 
 **JSON, read with `jq` only.** This plugin's required binaries are `bash`, `jq`, and `git` and
 nothing else. There is no YAML parser anywhere in `bin/`, so a YAML-based rule format would need
@@ -946,7 +979,7 @@ tooling is part of this format.
 Rule files live at `.claude/edm-hookify/*.json`, relative to the **project root** -- not the
 plugin root, and not the caller's working directory. The project root is resolved exactly the way
 `check_permission_rules()` already resolves it for the permission-rule scan (CA-448 precedent), so
-a future consumer never has to invent a second resolution procedure:
+`bin/edm-hookify` -- and any future consumer -- never invents a second resolution procedure:
 
 1. `CLAUDE_PROJECT_DIR`, when it names a real directory.
 2. Otherwise, `git rev-parse --show-toplevel`.
@@ -957,9 +990,12 @@ is a deliberate divergence from a `.local.md`-plus-gitignore convention: a rule 
 gets enforced for every teammate, so it is reviewed in a merge request the same way an SRD is --
 source control IS the
 feature (see "Artifacts live in the project's `SRD/` directory and are committed to git" above,
-the same principle applied to a second artifact class). The plugin ships the format and (in a
-later initiative) the reader; it does not ship any default rule file. `.claude/edm-hookify/` is a
-project-owned directory that does not exist until a project's own team adds a rule to it.
+the same principle applied to a second artifact class). The plugin ships the format **and the
+reader** (`bin/edm-hookify`, plus the three hook consumers tabulated at the top of this section --
+CA-123: this sentence used to place the reader in "a later initiative", which stopped being true
+when `EDMV4-T43`/`EDMV4-T45` landed); it does not ship any default rule file.
+`.claude/edm-hookify/` is a project-owned directory that does not exist until a project's own team
+adds a rule to it -- so a repository that has adopted nothing evaluates nothing, at zero cost.
 
 **Precision on "not gitignored" (wave-1 QC, `EDMV4-T42` AC6).** The obligation binds the
 **consuming** project, which is where rule files actually live and where losing one to
@@ -979,18 +1015,21 @@ it were a recognized field, and it never silently disables the rest of the rule 
 | Key | Type | Required | Notes |
 |---|---|---|---|
 | `name` | string | yes | Human-readable rule identifier, referenced in evaluator output |
-| `enabled` | boolean | yes | `false` skips the rule entirely -- it is neither evaluated nor counted |
+| `enabled` | boolean | yes | `false` skips the rule entirely -- it is neither evaluated nor counted. The **type is enforced** (CA-076): a quoted `"true"` is a setup error naming the file, not a silently disabled rule |
 | `event` | string | yes | Exactly one of `file`, `stop`, `bash` |
-| `action` | string | no | `warn` or `block`; **defaults to `warn` when the key is absent** |
+| `action` | string | no | `warn` or `block`; **defaults to `warn` when the key is absent**. Any other value is a setup error naming the file and the offending value (CA-076) -- a mistyped `"Block"` used to degrade a blocking rule to a warning with no diagnostic at all |
 | `conditions` | array | yes | See "Conditions" below; may be empty (an empty array matches unconditionally) |
 | `message` | string | yes | Shown when the rule fires |
 
 **`action` defaulting to `warn` on absence is a property of the format, not of any evaluator.**
-Any consumer that reads a rule file -- today's format reader, and any future one -- treats an
+Any consumer that reads a rule file -- `bin/edm-hookify` today, and any future one -- treats an
 absent `action` key identically: as `warn`. A rule blocks only when it carries the literal
-`"action": "block"` explicitly. This is load-bearing for the two-tier exit contract a later
-initiative pins: a rules layer that could block by default would hand every contributor the
-ability to wedge every other contributor's edits with one committed file.
+`"action": "block"` explicitly, and any OTHER value is a setup error rather than a silent
+downgrade to `warn` (CA-076). This is load-bearing for the two-tier exit contract pinned by
+`EDMV4-T44` and honoured by all three shipped hook consumers (CA-123 -- this sentence said
+"a later initiative pins" until those consumers landed): a rules layer that could block by
+default would hand every contributor the ability to wedge every other contributor's edits with
+one committed file.
 
 ### Conditions
 
@@ -1099,8 +1138,10 @@ way:
 
 ### Malformed rule files are a setup error, never a block
 
-A malformed rule file -- invalid JSON, a missing required key, an unknown operator, or an
-out-of-event field -- is a **setup error**: its path is named on stderr, that file alone is
+A malformed rule file -- invalid JSON, a missing required key, a non-boolean `enabled`, an
+`action` outside `{warn, block}` (both CA-076), an unknown operator, an
+out-of-event field, a NUL byte anywhere in the file, or a file that vanished between discovery
+and read (both CA-093) -- is a **setup error**: its path is named on stderr, that file alone is
 skipped, every other valid rule file in the directory is still loaded, and a consumer that reads
 the rule set exits non-zero for the setup condition. A malformed file must never block anything
 (setup errors are never blocking, by the same two-tier reasoning `edm-lint-staged-artifacts`
@@ -1118,7 +1159,7 @@ contributor's rules.
 | `UserPromptExpansion` matching `edm:(srd\|audit-srd\|tickets\|audit-tickets\|implement)` | Block expansion if the prerequisite HITL gate isn't approved. Exit-code contract (CA-298, G1): a missing `edm-state` binary or an unresolvable prefix (no state file yet -- the legitimate first-invocation case) exits **0**, non-blocking; an invalid prefix argument or an actual `edm-state gate-check` refusal exits **2**, blocking. Only a real gate refusal blocks -- a setup condition never does |
 | `PreToolUse` matching `Bash`, entry 2, gated on `"if": "Bash(git commit*)"`             | **CA-007: this hook never fired until now.** It was registered with `"matcher": "git commit"` -- but a `PreToolUse` matcher filters on **tool name**, and no tool is named `git commit`, so every commit-time artifact-lint guarantee this methodology claims was unenforced from the day the block was written. It is now the second entry in the `Bash` block's own `hooks` array, gated per-entry by the `if` field (permission-rule syntax, tool events only), which is the documented way to filter a `PreToolUse` hook on the command text rather than the tool name. **Verified at runtime on Claude Code 2.1.261** in disposable `mktemp -d` repositories with from-scratch `.claude/settings.json` files (Spike A's own methodology, decisions.md D25): a non-`git commit` Bash call ran the unconditional sibling entry and NOT the `if`-gated one; a real `git commit` ran BOTH; and the old `"matcher": "git commit"` shape, driven against a real `git commit` in the same way, fired nothing at all. Co-registration with `edm-bash-gate` in one array is safe in both directions per D25 AC5 (a homogeneous command-plus-command pair both run, and a deny from either is honoured even when the other exits 0). Delegates to `bin/edm-lint-staged-artifacts` (extracted from the former inline one-liner -- CA-436/CA-413/CA-414; the hook itself only degrades to exit 0 when the delegate is off PATH). The script: for staged paths under the derived `srd_root` (`EDM_SRD_ROOT` / `CLAUDE_PLUGIN_OPTION_SRD_ROOT`, default `./SRD`, physically normalized so a symlinked repo path still relativizes), resolve a prefix per discovered initiative and skip it if it has no resolvable state (CA-011); run `edm-lint-artifacts <PREFIX>` for each survivor. `edm-lint-artifacts` exit 1 (a real violation) makes the script exit **2**, the code that actually blocks the commit; `edm-lint-artifacts` exit 2 (a setup/usage error, e.g. no initiative for that prefix) is reported to stderr but not blocking (CA-011). **CA-521 (known gap):** which prefixes to scan is decided from the git INDEX (`git diff --cached`), but `edm-lint-artifacts` itself reads the WORKING TREE -- a file staged with a violation and then fixed unstaged commits clean, and an unstaged violation elsewhere in the same initiative's tree can block an otherwise-clean staged commit. This is a fast local gate with a known worktree/index gap; `edm-lint-artifacts --all` remains available as a manual full-repo sweep (`edm-lint-artifacts --all` or `--path <dir>`) if the escaped case is ever suspected |
 | `PreToolUse` matching `Edit\|Write\|MultiEdit`                                          | Delegates to `bin/edm-gateguard` (guarded the same way as the git-commit block: `command -v edm-gateguard >/dev/null 2>&1 \|\| exit 0` before exec, `EDMV4-T11`). A repository with no active Phase 6 marker allows immediately -- one process exec, one marker file test, zero `jq` subprocesses (`EDMV4-T07` AC8). Once a marker is present, every decision -- deny and allow alike -- is emitted by the single `emit_decision` function (`EDMV4-T13`), never by a second call site: `EDM_GATEGUARD_DENY_MODE` selects one of two back-ends, defaulting to `json` per Spike B's recorded outcome (decisions.md D26, evidence-backed for `Edit`/`Write`; `MultiEdit` was untestable on that host). The `json` back-end prints `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"<facts>"}}` on stdout and exits **0** for a denial, and writes nothing to stdout for an allow. The `exit-code` back-end writes the fact list to stderr and exits **2** for a denial -- the same code `edm-lint-staged-artifacts:7-10,150-158` already spends to mean "block" -- and writes nothing for an allow. Any other value of `EDM_GATEGUARD_DENY_MODE` is a setup error (stderr warning naming both legal values, exit **1**, never blocking), matching this file's own CA-298 convention: a setup condition never blocks, only a real refusal does. **CA-077 -- no `jq` exit status escapes that 0/1/2 contract any more.** Four `jq` captures on the gated path were unguarded, so under `set -euo pipefail` a jq exiting non-zero (5 on an internal error) aborted the hook with **that** status, with jq's own message swallowed by `2>/dev/null` -- zero bytes on both streams, and the gate failed OPEN invisibly. The three captures feeding this gate's own decision now `die` (exit **1**, the documented setup code, never blocking) naming the failed projection; the fourth, the hookify field projection, degrades to **allow** with one stderr line instead, because rule evaluation is an additive layer on a call this gate has already decided to allow and losing it must not convert that allow into a setup error. `bin/edm-bash-gate` already guarded the structurally identical projection -- this file was the family's one divergence. `EDMV4-T14` wired the four-fact `Edit`/swapped-fact `Write` denial content and the per-file `MultiEdit` loop; `EDMV4-T15` added the kill switches (`EDM_GATEGUARD`, `EDM_GATEGUARD_DISABLED`), exempt-glob matching (`EDM_GATEGUARD_EXEMPT_GLOBS`), the capped/stale session-state checked-file, and the per-session denial budget (`EDM_GATEGUARD_MAX_DENIALS`) that together decide whether a first-touch denial fires at all. `EDMV4-T45` additionally evaluates enabled `file`-event hookify rules exactly once, on the allow path only (after this gate's own decision, reusing the payload already parsed) -- a matched `block` rule denies through the same `emit_decision` function, while a matched `warn` rule and hookify's own setup-error exit 1 BOTH still allow (exit 0, empty stdout, hookify's line on stderr; CA-043 covers both through the real binary rather than a re-typed translation harness). **CA-045 -- malformed marker:** the Phase 6 marker's contract is exactly three tab-separated fields (`PREFIX<TAB>initiative_dir<TAB>started_at`). A line that does not parse into that shape is a **setup condition, not a stale marker**: it fails CLOSED (the gate continues to its gated path and applies the ordinary allow/deny) and names itself on stderr. Before this, `${MARKER_LINE#*$'\t'}` returned the whole line unchanged when there was no tab, the whole line then failed the `[[ -d ]]` stale test, and the stale-marker branch exited 0 -- a truncated or corrupted marker silently disabled Phase 6 fact-forcing for the entire session and read identically to a legitimate branch switch. A zero-byte marker file lands in the same branch (zero fields), so its pre-existing deny is now the deliberate, diagnosed outcome. A WELL-FORMED marker naming a deleted initiative directory still takes the stale-marker allow, unchanged. **CA-081 -- the recorded `initiative_dir` is ABSOLUTE, and a relative one is resolved rather than read as stale:** the stale test runs in the HOOK process, whose cwd is the host's, not the cwd `phase-start 6` ran in -- so the pre-fix relative field (`./SRD/<PREFIX>`, the default `srd_root` shape) failed `[[ -d ]]` from any other directory or git worktree, the marker read as stale, and the gate exited 0. The whole gated path was silently disabled, reading identically to the legitimate branch-switch case. `bin/edm-state`'s `_edm_marker_write` now records an absolute path; `bin/edm-gateguard` resolves a relative one (a marker written before this fix, or by hand) against `CLAUDE_PROJECT_DIR` when the host supplied one, and otherwise declines to run the stale test at all -- declining fails CLOSED, because treating an untestable path as missing is the fail-open direction this closes. **CA-086 -- the marker write is atomic:** `_edm_marker_write` routes through `write_atomic` (mktemp plus rename) rather than a truncating `>`, so a reader on any of the 6-10 parallel implementers sees the old marker or the new one, never a zero-byte or half-written one -- the former would take the CA-045 malformed branch, the latter could name a directory that does not exist and take the stale allow |
-| `PreToolUse` matching `Bash`, entry 1 (ungated)                                         | Delegates to `bin/edm-bash-gate` (`EDMV4-T45`, guarded the same way: `command -v edm-bash-gate >/dev/null 2>&1 \|\| exit 0` before exec). Runs on every `Bash` call; the artifact-lint entry beside it in the same array carries an `if` and runs only on a `git commit`. Neither suppresses the other (D25, re-verified at runtime under CA-007 on host `2.1.261`). Absent `edm-hookify`, absent `jq`, or no payload all allow (exit **0**) silently; otherwise the command projects into hookify's `bash`-event field shape and evaluates via `edm-hookify eval bash`. A matched `block` rule prints the match line to stderr and exits **2**; exit 1 (a hookify setup error) never escalates. **CA-039:** the projection no longer carries a `// ""` default. `.tool_input.command` must be present AND of jq type `string`; an unparseable payload, and a payload where that field is absent (renamed, re-nested, or no `tool_input` at all), each print ONE stderr line naming what was seen and then allow. The old default made every shape drift read as the empty string, so the non-empty guard behind it could never fire and the gate disabled every bash-event rule while saying nothing -- a setup condition still never blocks, but it is no longer silent. A present-but-empty command (`""`) is NOT drift and evaluates normally. This block ships only because Spike A (decisions.md D25) recorded a positive multi-hook-per-event result |
+| `PreToolUse` matching `Bash`, entry 1 (ungated)                                         | Delegates to `bin/edm-bash-gate` (`EDMV4-T45`, guarded the same way: `command -v edm-bash-gate >/dev/null 2>&1 \|\| exit 0` before exec). Runs on every `Bash` call; the artifact-lint entry beside it in the same array carries an `if` and runs only on a `git commit`. Neither suppresses the other (D25, re-verified at runtime under CA-007 on host `2.1.261`). Absent `edm-hookify`, absent `jq`, or no payload all allow (exit **0**) silently; otherwise the command projects into hookify's `bash`-event field shape and evaluates via `edm-hookify eval bash`. A matched `block` rule prints the match line to stderr and exits **2**; exit 1 (a hookify setup error) never escalates. **CA-039:** the projection no longer carries a `// ""` default. `.tool_input.command` must be present AND of jq type `string`; an unparseable payload, and a payload where that field is absent (renamed, re-nested, or no `tool_input` at all), each print ONE stderr line naming what was seen and then allow. The old default made every shape drift read as the empty string, so the non-empty guard behind it could never fire and the gate disabled every bash-event rule while saying nothing -- a setup condition still never blocks, but it is no longer silent. A present-but-empty command (`""`) is NOT drift and evaluates normally. **CA-115:** two kill switches now sit ahead of everything else in this script -- `EDM_HOOKIFY=0\|false\|off\|disabled\|disable` and `EDM_HOOKIFY_DISABLED=1` -- so an over-blocking rule set on the highest-privilege tool surface has an environment-variable escape instead of requiring an edit through the very gate that is refusing (see the `EDM_HOOKIFY_*` pair under "Testing changes"). **CA-108:** an unexpected positional argument is a usage error (exit **1**, non-blocking, never 2), so a typo'd flag no longer reads as an ordinary hook invocation; the host passes no arguments, so no hook path reaches it. This block ships only because Spike A (decisions.md D25) recorded a positive multi-hook-per-event result |
 | `Stop`                                                                                 | Two entries in one `hooks` array (AD4; two `"type": "command"` entries in one array, confirmed on the live host by Spike A / decisions.md D25 -- both run regardless of ordering, and a deny from either is honored even when the other exits 0). Entry 1 (unmodified, byte-identical): checkpoint state via `edm-state checkpoint-if-active`. Entry 2 (`EDMV4-T46`): `edm-stop-gate` -- resolves every active initiative via `edm-state active-initiatives`, runs `edm-state validate <PREFIX>` for each, and exits **2** if any returns a blocking-class anomaly (`validate` itself exits **3** for that condition, never 1); does not classify which anomalies block beyond what `edm-state` already emits (`EDMV4-T47`). When at least one initiative is active, `EDMV4-T45` additionally evaluates enabled `stop`-event hookify rules exactly once per invocation (not once per initiative -- the `stop` event defines no per-initiative field), translating a matched `block` rule into the same exit **2**. Every internal/setup condition (edm-state or jq absent, no resolvable initiative, `validate` itself dying) exits **0**, never blocking -- but **CA-040:** a per-prefix `edm-state validate` that dies with a setup code (anything other than 0 or the blocking-class 3) is no longer skipped in silence. It emits one stderr line naming the prefix and the status it exited with, so a SYSTEMATIC validate failure -- one that dies for every prefix -- can no longer make this gate exit 0 on every Stop reading exactly like "everything is fine". The decision is unchanged: that prefix is skipped and the healthy siblings' verdicts still govern. **CA-008:** the `edm-hookify eval stop` call no longer captures with `2>&1`. It captured stdout and stderr together and printed the capture only on the block path, so every `warn` match line AND every malformed-rule-file setup error was discarded -- a contributor whose stop rule was a typo got no diagnostic at all, and this file's own two-tier-contract claim that a warn line reaches stderr was untrue through this consumer. The streams are split now, matching what `edm-bash-gate` and `edm-gateguard` already did. Zero active initiatives is silent (zero bytes on both streams, and hookify is not evaluated either); an informational-only result collapses to one `[EDM] <N> informational anomalies (run: edm-state validate <PREFIX>)` line per initiative rather than printing each anomaly |
 | `PreCompact`                                                                           | Checkpoint state via `edm-state checkpoint-if-active` (single entry, unchanged)         |
 | `SubagentStop` matching `edm-implementer`                                              | Auto-spawn `edm-qc-auditor`; write a per-implementer verdict shard to `qc/qc-shard-impl-w{WW}-{NN}.md` ({WW} = the wave the implementer ran in, {NN} = lowest ticket number in its range, both 1-based and zero-padded -- never `qc-summary.md` directly, CA-440: concurrent auditors on one shared file silently overwrite each other's FAIL verdicts). **The wave component is mandatory (CA-010).** CA-515's fix reached only the sibling `qc-shard-pass-w{WW}-{NN}` namespace, so this one stayed wave-less: a Step 5 remediation loop re-runs an implementer over the SAME ticket range, and the later run's shard overwrote the original wave's, taking its PASS/FAIL verdicts with it -- those live ONLY in these markdown files (only PARTIAL survives elsewhere, via the locked `record-partial-verdict`). When the wave number is genuinely unrecoverable the auditor uses the lowest {WW} for which the file does not already exist, which preserves the same no-overwrite guarantee. The `qc-shard-impl-w` prefix is mandatory and must stay disjoint from `qc-shard-pass-w{WW}-{NN}.md`, the namespace `/edm:implement`'s own post-wave threshold shards use ({WW} = wave number, {NN} = shard ordinal within that wave) -- CA-473: a shared `qc-shard-{NN}.md` key space collides deterministically (threshold shard 1 vs the implementer starting at T01) and the losing writer's FAIL verdicts vanish. `/edm:implement` merges all `qc-shard-impl-*.md` **and** `qc-shard-pass-*.md` into `qc/qc-summary.md` after the wave drains -- the existing glob matches the wave-bearing name unchanged, so the merge step needs no edit; persist PARTIAL verdicts via `edm-state record-partial-verdict` |
@@ -1684,7 +1725,9 @@ plugin takes, and they answer different questions -- do not collapse them into o
 
 **`EDM_GATEGUARD_*` knob family (EDMV4-T15).** Six environment variables tune `bin/edm-gateguard`'s
 operational safety controls, distinct from both families above (these are plugin-runtime knobs,
-not test-harness knobs). Each is genuinely optional -- leaving it unset means the shipped default
+not test-harness knobs). **They bind `edm-gateguard` only, and never covered the rest of the hook
+family** -- see the `EDM_HOOKIFY_*` pair immediately below for `edm-bash-gate`'s own escape hatch
+(CA-115). Each is genuinely optional -- leaving it unset means the shipped default
 below applies, not that the corresponding control is absent:
 
 - `EDM_GATEGUARD` -- kill switch; any of `0`, `false`, `off`, `disabled`, `disable` exits the gate
@@ -1755,6 +1798,22 @@ below applies, not that the corresponding control is absent:
   arithmetic context raw, so `EDM_GATEGUARD_MAX_DENIALS=none` evaluated as `0` in the `-ge`
   comparison and made the gate allow **every** edit while printing "denial budget reached" -- the
   exact inverse of the fail-closed default, announced as if it were working.
+
+**`EDM_HOOKIFY_*` pair (CA-115, plugin-runtime).** `bin/edm-bash-gate` is registered on the `Bash`
+`PreToolUse` matcher, so it sees -- and an `"action": "block"` rule can refuse -- **every** bash
+command in the session. It shipped with no kill switch at all, which left an operator whose rule
+set is over-blocking with no environment-variable escape: the only recovery was editing the rule
+file through tooling the gate may itself have been refusing. Two switches now sit at the very top
+of that script, checked before any `command -v`, any stdin read and any rule evaluation, mirroring
+the `EDM_GATEGUARD`/`EDM_GATEGUARD_DISABLED` shape exactly:
+
+- `EDM_HOOKIFY` -- any of `0`, `false`, `off`, `disabled`, `disable` exits the gate (0, allow)
+  before anything else runs. Unset (the default) leaves the gate active.
+- `EDM_HOOKIFY_DISABLED` -- a second, independent switch recognizing the literal `1` only
+  (`true`/`yes` do NOT disable it). Unset (the default) leaves the gate active.
+
+`bin/edm-stop-gate`, the family's third consumer, does **not** yet honour this pair -- that half
+of CA-115 is outstanding, and a `stop`-event block rule therefore still has no environment escape.
 
 ## Related documentation
 

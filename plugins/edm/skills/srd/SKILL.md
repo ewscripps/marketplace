@@ -169,6 +169,15 @@ rather than the agent calling `get-patterns` itself):
 SRD_PATTERN_PATHS="$(edm-state get-patterns srd --paths)"
 SRD_PATTERN_SEED="$(printf '%s\n' "$SRD_PATTERN_PATHS" | sed -n '1p')"
 SRD_PATTERN_DELTA="$(printf '%s\n' "$SRD_PATTERN_PATHS" | sed -n '2p')"
+# CA-124: an unresolved SEED is a setup error, not an empty string to interpolate into the prompt.
+# Without this check a failed `get-patterns` (a missing plugin data directory, a resolution that
+# fell through) produced `Read  first` in the spawn prompt and the agent wrote an UNGROUNDED SRD
+# with no signal anywhere that the pattern library had been skipped. The DELTA path is
+# legitimately empty when no delta has been harvested yet -- only the SEED is always expected.
+if [[ -z "$SRD_PATTERN_SEED" ]]; then
+  echo "edm:srd: pattern-library seed unresolved -- 'edm-state get-patterns srd --paths' returned no seed path. Refusing to spawn edm-srd-writer ungrounded; fix pattern-library resolution first." >&2
+  exit 1
+fi
 ```
 
 ```

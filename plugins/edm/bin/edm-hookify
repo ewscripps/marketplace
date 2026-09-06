@@ -18,7 +18,9 @@
 #                                        # payload object on stdin (fields per CLAUDE.md's
 #                                        # per-event field table: file_path/new_text/old_text/
 #                                        # content for `file`, command for `bash`, none for `stop`)
-#   edm-hookify -h|--help                # show this help
+#   edm-hookify -h|--help|help           # show this help (CA-107: this documented alias set is
+#                                        # exactly what the `case` below accepts, and is the same
+#                                        # set the whole hook-consumer family accepts)
 #
 # Rule discovery: .claude/edm-hookify/*.json under the project root, resolved the same way
 # check_permission_rules() resolves it in bin/edm-state (CA-448 baseline): CLAUDE_PROJECT_DIR
@@ -60,7 +62,9 @@
 #      set was enumerated), including the case where zero rule files exist at all (an absent
 #      .claude/edm-hookify/ directory).
 #   1  setup error -- malformed rule file (invalid JSON, a non-object top-level value, missing
-#      required key, wrongly-typed `conditions`, unknown operator, out-of-event field, or a
+#      required key, a non-boolean `enabled` or an `action` outside {warn, block} (CA-076),
+#      wrongly-typed `conditions`, unknown operator, out-of-event field, a NUL byte in the file
+#      (CA-093), a file that vanished between discovery and read (CA-093), or a
 #      pattern the regex engine refuses), a missing or unparseable `eval` payload on stdin, or a
 #      required binary (jq) not found on PATH. A malformed rule file never blocks and never
 #      disables the rest of the rule set: its path and reason are named on stderr, that file
@@ -111,7 +115,7 @@ usage() {
 }
 
 case "${1:-}" in
-  -h|--help) usage ;;
+  -h|--help|help) usage ;;
 esac
 
 SUBCOMMAND="${1:-}"
@@ -209,11 +213,65 @@ build_rule_stream() {
   done
 }
 
+# hookify_scrub <text> -- the ONE ASCII filter this script owns (CA-056). Every byte outside
+# tab/CR/LF and the printable ASCII range 0x20-0x7E is replaced with '?'. Extracted from
+# hookify_emit_match so the three emission arms below share one filter rather than one arm
+# carrying a filter and the other two carrying none: before this, EDMV4-T52 AC6's stated
+# single-emit-point premise was false as written -- the `L)` list arm printed the rule's own
+# `name` raw (a non-ASCII byte in a rule name reached stdout unmodified, reproduced live by
+# wave-5 QC), and the setup-error arm interpolated raw rule-file JSON values into stderr, so an
+# ESC in an unknown top-level key survived far enough to rewrite an operator terminal title.
+# Defined here, ahead of the pre-scan below, because that pre-scan is the first emitter.
+hookify_scrub() {
+  printf '%s' "$1" | LC_ALL=C tr -c '\011\012\015\040-\176' '?'
+}
+
+# ---- CA-093: pre-scan the discovered rule files before their bytes ever enter the NUL-joined
+# stream. Two distinct desynchronization hazards, both of which silently misattribute every LATER
+# rule's content to a NEIGHBOUR's path once they fire:
+#
+#   (a) A rule file containing a literal NUL byte adds an extra element when jq re-splits the
+#       stream on the NUL joiner, so from that index on `$raws[$i]` is paired with the wrong
+#       `$ps[$i]`. Valid enabled rules were reported as invalid JSON against another file's
+#       path, and the path the operator was told to fix was not the broken one.
+#   (b) The find-then-cat window: a rule file removed between discovery and `cat` contributes
+#       zero bytes and no NUL, shortening the stream by one element with the same effect. It
+#       previously surfaced as the generic "jq evaluation failed" die below, which names nothing.
+#
+# A rejected file is a per-file SETUP ERROR on the established contract -- named on stderr, that
+# file alone skipped, every other valid enabled rule still evaluated -- never a block, and never
+# a reason to disable the rest of the rule set.
+HOOKIFY_PRESCAN_ERROR=0
+_hk_kept=()
+for _hk_rf in "${RULE_FILES[@]}"; do
+  if [[ ! -r "$_hk_rf" ]]; then
+    printf '%s\n' "edm-hookify: setup error: $(hookify_scrub "$_hk_rf"): rule file vanished or became unreadable between discovery and read -- skipped" >&2
+    HOOKIFY_PRESCAN_ERROR=1
+    continue
+  fi
+  _hk_bytes="$(LC_ALL=C wc -c < "$_hk_rf" | tr -d ' ')"
+  _hk_nonnul="$(LC_ALL=C tr -d '\000' < "$_hk_rf" | LC_ALL=C wc -c | tr -d ' ')"
+  if [[ "$_hk_bytes" != "$_hk_nonnul" ]]; then
+    printf '%s\n' "edm-hookify: setup error: $(hookify_scrub "$_hk_rf"): rule file contains a NUL byte, which is not legal JSON and would desynchronize the rule stream -- skipped" >&2
+    HOOKIFY_PRESCAN_ERROR=1
+    continue
+  fi
+  _hk_kept[${#_hk_kept[@]}]="$_hk_rf"
+done
+if [[ ${#_hk_kept[@]} -eq 0 ]]; then
+  # Every discovered file was rejected. Exit on the two-tier contract: 1 when a setup error was
+  # reported, 0 otherwise (unreachable today -- RULE_FILES is non-empty by the guard above).
+  [[ "$HOOKIFY_PRESCAN_ERROR" -eq 1 ]] && exit 1
+  exit 0
+fi
+RULE_FILES=("${_hk_kept[@]}")
+
 # shellcheck disable=SC2016 # the single-quoted jq program below intentionally holds literal $vars
 JQ_PROGRAM='
 def allowed_keys: ["name","enabled","event","action","conditions","message"];
 def allowed_events: ["file","stop","bash"];
 def allowed_ops: ["regex_match","contains","equals","not_contains","starts_with","ends_with"];
+def allowed_actions: ["warn","block"];
 def fields_for_event($e):
   if $e == "file" then ["file_path","new_text","old_text","content"]
   elif $e == "bash" then ["command"]
@@ -234,6 +292,18 @@ def validate($r):
   | if ($unknown|length) > 0 then {ok:false, error:("unknown top-level key: " + ($unknown[0]|tostring))}
     elif (([$r|has("name"),has("enabled"),has("event"),has("conditions"),has("message")]) | all) | not
       then {ok:false, error:"missing required key"}
+    elif ($r.enabled|type) != "boolean"
+      # CA-076: `enabled` is documented `boolean` in the rule-schema table of CLAUDE.md, and the
+      # projection below compares it against the literal `true`. A STRING "true" therefore
+      # silently disabled the rule -- a rule author who quoted the value got no rule and no
+      # diagnostic, which reads identically to "my rule is fine and nothing violated it".
+      then {ok:false, error:("enabled must be a boolean, got " + ($r.enabled|type))}
+    elif ($r|has("action")) and ((allowed_actions | index($r.action)) == null)
+      # CA-076: the projection treats anything that is not the literal "block" as `warn`
+      # (fail-safe toward non-blocking, EDMV4-T42 AC2), so a mistyped "Block", "deny" or `true`
+      # degraded a blocking rule to a warning with no signal. An absent `action` key is still
+      # legal and still defaults to warn -- that is a rule OF the format, not a mistake.
+      then {ok:false, error:("action must be \"warn\" or \"block\", got " + ($r.action|tojson))}
     elif (allowed_events | index($r.event)) == null
       then {ok:false, error:("unknown event: " + ($r.event|tostring))}
     elif ($r.conditions|type) != "array"
@@ -305,11 +375,22 @@ def project_rule($path; $raw; $payload):
 | $raw_all[0:-1] as $raws
 | ($ARGS.positional) as $ps
 | ($payload_raw | try fromjson catch {}) as $payload
-| range(0; ($ps|length)) as $i
-| ($ps[$i]) as $path
-| ($raws[$i]) as $raw
-| (try project_rule($path; $raw; $payload)
-   catch ("E\t" + scrub($path) + "\trule evaluation error: " + scrub(.)))
+# CA-093 backstop: the positional-index pairing below is sound only while the split element count
+# equals the rule-file count. The bash-side pre-scan rejects the two known ways they diverge (a
+# NUL inside a rule file, a file that vanished between find and cat), so neither can reach here
+# any more -- this exists so any FUTURE divergence fails loudly instead of silently reporting one
+# file content against another file path from the divergence index onward.
+| if ($raws|length) != ($ps|length) then
+    ("E\t(rule stream)\trule stream desynchronized: " + ($raws|length|tostring)
+     + " content block(s) for " + ($ps|length|tostring)
+     + " rule file(s); no rule was evaluated, because every path-to-content pairing after the divergence would be wrong")
+  else
+    range(0; ($ps|length)) as $i
+    | ($ps[$i]) as $path
+    | ($raws[$i]) as $raw
+    | (try project_rule($path; $raw; $payload)
+       catch ("E\t" + scrub($path) + "\trule evaluation error: " + scrub(.)))
+  end
 '
 
 RESULT="$(build_rule_stream | jq -R -s -r \
@@ -318,19 +399,7 @@ RESULT="$(build_rule_stream | jq -R -s -r \
   --arg event "$EVENT" \
   --arg mode "$SUBCOMMAND" \
   "$JQ_PROGRAM" \
-  --args "${RULE_FILES[@]}")" || die "jq evaluation failed"
-
-# hookify_scrub <text> -- the ONE ASCII filter this script owns (CA-056). Every byte outside
-# tab/CR/LF and the printable ASCII range 0x20-0x7E is replaced with '?'. Extracted from
-# hookify_emit_match so the three emission arms below share one filter rather than one arm
-# carrying a filter and the other two carrying none: before this, EDMV4-T52 AC6's stated
-# single-emit-point premise was false as written -- the `L)` list arm printed the rule's own
-# `name` raw (a non-ASCII byte in a rule name reached stdout unmodified, reproduced live by
-# wave-5 QC), and the setup-error arm interpolated raw rule-file JSON values into stderr, so an
-# ESC in an unknown top-level key survived far enough to rewrite an operator terminal title.
-hookify_scrub() {
-  printf '%s' "$1" | LC_ALL=C tr -c '\011\012\015\040-\176' '?'
-}
+  --args "${RULE_FILES[@]}")" || die "the jq classify pass over ${#RULE_FILES[@]} rule file(s) failed; no rule was evaluated (this is the jq program's own failure, not a malformed individual rule file -- a malformed file is reported per-file above and never reaches here)"
 
 # hookify_emit_match <rule_id> <action> <message> -- the single point this evaluator prints a
 # matched-rule line (EDMV4-T52 AC6). All three fields are rule-author-supplied content read
@@ -355,7 +424,9 @@ hookify_emit_match() {
   fi
 }
 
-HAD_ERROR=0
+# CA-093: a rule file rejected by the pre-scan above is a setup error like any other, so it must
+# carry into the exit code rather than being printed and forgotten.
+HAD_ERROR="$HOOKIFY_PRESCAN_ERROR"
 HAD_BLOCK=0
 while IFS= read -r _line; do
   [[ -z "$_line" ]] && continue

@@ -653,11 +653,24 @@ done < "$SKILL_TSV"
 CANON_DOC="${PLUGIN_ROOT}/docs/canonical-sections.md"
 CITATION_EXEMPT_SECTIONS="Verifier completion sentinel"
 
-if [[ -f "$CANON_DOC" ]]; then
-  _canon_headings="$(grep -E '^## ' "$CANON_DOC" 2>/dev/null | sed -E 's/^## //; s/ \(canonical\)$//' || true)"
-  _cite_files="$(ls "${PLUGIN_ROOT}"/agents/*.md "${PLUGIN_ROOT}"/skills/*/SKILL.md 2>/dev/null || true)"
-  for _cf in $_cite_files; do
+# CA-125: a missing canonical document is a SETUP ERROR, not a pass. The check used to be wrapped
+# in `if [[ -f "$CANON_DOC" ]]` with no `else`, so an absent docs/canonical-sections.md made the
+# whole EDMV4-T04 citation-orphan check silently not run and this script exit 0 clean. Combined
+# with CA-078 below, the check had two independent ways to report clean while scanning nothing.
+# `die` with the family-standard code 2 here, matching the AGENTS_DIR/SKILLS_DIR/HOOKS_FILE
+# preconditions at the top of this file -- the exit contract already reserves 2 for exactly this.
+[[ -f "$CANON_DOC" ]] || die "canonical sections document not found: ${CANON_DOC} -- the EDMV4-T04 citation-orphan check cannot run, and reporting clean without it would be vacuous" 2
+
+# CA-078: iterate the globs DIRECTLY. The previous form captured `ls` output into a variable and
+# then word-split it unquoted, so a PLUGIN_ROOT containing a space (routine on macOS) fragmented
+# every path, `[[ -f ]]` skipped all of them, and the whole check reported clean having scanned
+# ZERO files. The scanned-file counter below makes that outcome impossible to reach silently
+# again: zero scanned files is itself a setup error, whatever the reason.
+_cite_scanned=0
+_canon_headings="$(grep -E '^## ' "$CANON_DOC" 2>/dev/null | sed -E 's/^## //; s/ \(canonical\)$//' || true)"
+for _cf in "${PLUGIN_ROOT}"/agents/*.md "${PLUGIN_ROOT}"/skills/*/SKILL.md; do
     [[ -f "$_cf" ]] || continue
+    _cite_scanned=$((_cite_scanned + 1))
     _cf_has_anchor=0
     grep -q 'docs/canonical-sections\.md' "$_cf" 2>/dev/null && _cf_has_anchor=1
     # Every Sec."X" on any line, minus the three-dot placeholder (trap 1).
@@ -682,8 +695,12 @@ if [[ -f "$CANON_DOC" ]]; then
         violations=$((violations + 1))
       fi
     done <<< "$_cf_secs"
-  done
-fi
+done
+
+# CA-078: zero scanned files can never read as "clean". Any cause -- a relocated PLUGIN_ROOT, a
+# glob that matched nothing, a future refactor that breaks the iteration the way the `ls`
+# word-split did -- lands here as a named setup error instead of a silent pass.
+[[ "$_cite_scanned" -gt 0 ]] || die "the EDMV4-T04 citation-orphan check scanned ZERO files under ${PLUGIN_ROOT} (agents/*.md, skills/*/SKILL.md) -- reporting clean would be vacuous" 2
 
 # ---- Exit contract (EDMV3-100): 0 clean, 1 unsatisfied grant(s) found, 2 usage/env error -------
 if [[ "$violations" -eq 0 ]]; then
