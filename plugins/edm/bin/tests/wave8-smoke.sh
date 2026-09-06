@@ -10465,6 +10465,226 @@ CA082_STRUCT_CONTROL="$(printf '%s\nmv "${_ppr_file}.tmp" "$_ppr_file"\n' "$CA08
   && pass "CA-082 positive control -- an injected fixed-name staging path IS counted (${CA082_STRUCT_CONTROL} hit(s)): the zero above is a real zero" \
   || fail "CA-082 positive control FAILED -- the scan did not count an injected fixed-name staging path; the assertion above is vacuous"
 
+# ---- CA-087 / CA-092: state-lock robustness -----------------------------------------------------
+# CA-087: with_state_lock's mkdir branch had an age cap on its two RECLAIM branches (invalid PID,
+# dead PID) but none on its LIVE-holder branch. A holder killed with SIGKILL leaves its lockdir
+# behind -- its trap layer never runs -- and once the kernel recycles that PID, `kill -0` succeeds
+# forever: every mutator on that initiative dies on timeout, permanently, with no recovery path.
+# CA-092: the spin slept a flat 0.1s with no jitter, so at 6-10 way contention every waiter woke on
+# the same tick and one auditor could be starved right through its budget -- and its PARTIAL then
+# never reached partial_verdict_map, so `archive` stopped blocking on a ticket nobody had closed.
+echo
+echo "--- CA-087/CA-092: state-lock age cap, backoff, jitter and the unlock escape hatch ---"
+
+CA087_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-p2g1b.XXXXXX")"
+
+# ca087_env <outvar> <edm-state-binary> -- an initialized initiative with a lockdir whose recorded
+# holder PID is THIS test process, so `kill -0` genuinely succeeds and the live-holder branch (not
+# either reclaim branch) is the one under test.
+ca087_env() {
+  local __c7_outvar="$1" bin="$2" d
+  d="$(mktemp -d "${CA087_TMP}/env.XXXXXX")"
+  mkdir -p "${d}/proj"
+  ( cd "${d}/proj" && git init -q . >/dev/null 2>&1 \
+    && git config user.email edm@example.com && git config user.name EDM \
+    && git config commit.gpgsign false \
+    && echo seed > SEED.md && git add SEED.md && git commit -q -m init ) >/dev/null 2>&1
+  ( cd "${d}/proj" && CLAUDE_PROJECT_DIR="${d}/proj" CLAUDE_PLUGIN_DATA="${d}/data" \
+      bash "$bin" init CA087 ) >/dev/null 2>&1
+  mkdir -p "${d}/proj/SRD/CA087/.edm-state.lockd"
+  echo $$ > "${d}/proj/SRD/CA087/.edm-state.lockd/pid"
+  printf -v "$__c7_outvar" '%s' "$d"
+}
+
+# ca087_backdate <lockdir> <seconds-ago> -- age a lock directory. Returns non-zero when this host's
+# `date` accepts neither the BSD nor the GNU relative form, so the caller can skip rather than
+# assert against an un-aged fixture (which would pass for the wrong reason).
+ca087_backdate() {
+  local ld="$1" secs="$2" stamp
+  stamp="$(date -v-"${secs}"S +%Y%m%d%H%M.%S 2>/dev/null || date -d "-${secs} seconds" +%Y%m%d%H%M.%S 2>/dev/null || true)"
+  [[ -n "$stamp" ]] || return 1
+  touch -t "$stamp" "$ld" 2>/dev/null || return 1
+  return 0
+}
+
+# ca087_mutate <dir> <bin> <stale-cap> -- one `set` against the wedged fixture. Publishes rc,
+# stderr and whether the lockdir survived.
+ca087_mutate() {
+  local d="$1" bin="$2" cap="$3"
+  CA087_RC=0
+  ( cd "${d}/proj" && CLAUDE_PROJECT_DIR="${d}/proj" CLAUDE_PLUGIN_DATA="${d}/data" \
+      EDM_STATE_LOCK_WAIT_S=1 EDM_STATE_LOCK_STALE_S="$cap" \
+      bash "$bin" set CA087 last_decision probe ) >/dev/null 2>"${d}/err" || CA087_RC=$?
+  CA087_ERR="$(cat "${d}/err" 2>/dev/null || true)"
+  CA087_LOCK_LEFT=no
+  [[ -d "${d}/proj/SRD/CA087/.edm-state.lockd" ]] && CA087_LOCK_LEFT=yes
+  # Explicit: without it this function's status is the `[[ -d ]]` test's, so the SUCCESS case
+  # (the lock was broken, so the directory is gone) returns 1 and aborts the suite under `set -e`.
+  return 0
+}
+
+CA087_DIR=""
+ca087_env CA087_DIR "$P2G1_EDM_STATE"
+if ca087_backdate "${CA087_DIR}/proj/SRD/CA087/.edm-state.lockd" 2000; then
+  ca087_mutate "$CA087_DIR" "$P2G1_EDM_STATE" 60
+  check_num "CA-087 -- a lockdir whose recorded PID is genuinely LIVE, aged past the cap, is broken and the mutator SUCCEEDS (exit 0)" \
+    "0" "$CA087_RC"
+  check "CA-087 -- ...loudly, naming the directory and the cap it exceeded" "BROKE state lock" "$CA087_ERR"
+  check "CA-087 -- ...and naming the explicit escape hatch for the recurring case" "unlock <PREFIX>" "$CA087_ERR"
+  check "CA-087 -- the lock directory is gone afterwards" "no" "$CA087_LOCK_LEFT"
+
+  # --- NEGATIVE CONTROL: the IDENTICAL fixture with the cap raised above the lock's age. Nothing
+  # --- else differs, so a timeout here isolates the cap as the thing that made the run above
+  # --- succeed -- and it reproduces the pre-fix outcome exactly: a permanently wedged initiative.
+  CA087_CTRL_DIR=""
+  ca087_env CA087_CTRL_DIR "$P2G1_EDM_STATE"
+  if ca087_backdate "${CA087_CTRL_DIR}/proj/SRD/CA087/.edm-state.lockd" 2000; then
+    ca087_mutate "$CA087_CTRL_DIR" "$P2G1_EDM_STATE" 100000
+    [[ "$CA087_RC" -ne 0 ]] \
+      && pass "CA-087 negative control -- with the cap above the lock's age, the same fixture times out (exit ${CA087_RC}): the success above is attributable to the cap" \
+      || fail "CA-087 negative control FAILED -- the run ALSO succeeded with the cap raised; the assertion above does not discriminate"
+    check "CA-087 negative control -- ...and the failure is a named lock timeout, not some other error" "state lock timeout" "$CA087_ERR"
+    check "CA-087 negative control -- ...with the lock directory still wedged in place" "yes" "$CA087_LOCK_LEFT"
+    check_absent "CA-087 negative control -- ...and nothing was broken" "BROKE state lock" "$CA087_ERR"
+  else
+    fail "CA-087 negative control -- this host's date(1) accepts neither the BSD nor the GNU relative form, so the fixture could not be aged; reported as unrun rather than passed"
+  fi
+else
+  fail "CA-087 -- this host's date(1) accepts neither the BSD nor the GNU relative form, so the lockdir could not be aged; reported as unrun rather than passed"
+fi
+
+# ---- CA-092: the retry sleep backs off, jitters, and is bounded on wall clock -------------------
+CA092_H="${CA087_TMP}/backoff.sh"
+{
+  printf '%s\n' '#!/usr/bin/env bash'
+  printf '%s\n' 'set -euo pipefail'
+  p2g1_extract_fn "$P2G1_EDM_STATE" _lock_backoff_seconds
+  printf '%s\n' 'for _i in $(seq 1 "$2"); do _lock_backoff_seconds "$1"; done'
+} > "$CA092_H"
+bash -n "$CA092_H" 2>/dev/null \
+  && pass "CA-092 setup -- the extracted _lock_backoff_seconds harness parses" \
+  || fail "CA-092 setup -- the harness does not parse; every assertion below would be meaningless"
+
+# Retries 1 and 2 sit in the slot-1 bucket, where the jitter range is 0..0, so both sleep exactly
+# 0.1s -- byte-identical to the pre-fix constant. This is what keeps an uncontended or lightly
+# contended acquisition exactly as fast as it was.
+for _ca092_t in 1 2; do
+  check "CA-092 -- retry ${_ca092_t} still sleeps exactly 0.1s (pre-fix parity for the light-contention case)" \
+    "0.1" "$(bash "$CA092_H" "$_ca092_t" 1 | { sort -u || true; } | tr '\n' ' ' | sed 's/ $//')"
+done
+
+# Jitter: 40 samples at one high try count must produce MORE THAN ONE distinct value. A fixed
+# backoff -- the pre-fix behaviour, and the thing that made starvation systematic rather than
+# merely unlucky -- produces exactly one.
+CA092_DISTINCT="$(bash "$CA092_H" 9 40 | sort -u | { grep -c . || true; })"
+[[ "$CA092_DISTINCT" -gt 1 ]] \
+  && pass "CA-092 -- 40 samples at retry 9 produced ${CA092_DISTINCT} distinct sleep values: the jitter is real, so contenders do not wake in lockstep" \
+  || fail "CA-092 -- 40 samples at retry 9 produced ${CA092_DISTINCT} distinct value(s); there is no jitter and contenders still wake in lockstep"
+# --- Positive control for that counter: a constant stream must collapse to exactly one value, so
+# --- the ">1" test above is a real discriminator rather than a property of `sort -u`.
+CA092_FIXED_DISTINCT="$(for _ca092_i in $(seq 1 40); do echo 0.1; done | sort -u | { grep -c . || true; })"
+check_num "CA-092 positive control -- a constant (pre-fix) sleep stream collapses to exactly 1 distinct value" \
+  "1" "$CA092_FIXED_DISTINCT"
+
+# Backoff: the value grows with the retry count and is capped. Compared bucket to bucket (the
+# jitter makes any single-sample comparison meaningless), using the maximum of 40 samples.
+ca092_max() {
+  bash "$CA092_H" "$1" 40 | sort -n | tail -1
+}
+CA092_MAX1="$(ca092_max 1)"
+CA092_MAX9="$(ca092_max 9)"
+CA092_MAX40="$(ca092_max 40)"
+awk -v a="$CA092_MAX1" -v b="$CA092_MAX9" 'BEGIN{exit !(b > a)}' \
+  && pass "CA-092 -- the sleep grows with the retry count (max at retry 1 = ${CA092_MAX1}s, at retry 9 = ${CA092_MAX9}s)" \
+  || fail "CA-092 -- the sleep did not grow (max at retry 1 = ${CA092_MAX1}s, at retry 9 = ${CA092_MAX9}s); there is no backoff"
+awk -v b="$CA092_MAX9" -v c="$CA092_MAX40" 'BEGIN{exit !(c <= b)}' \
+  && pass "CA-092 -- and it is CAPPED: retry 40's maximum (${CA092_MAX40}s) is no larger than retry 9's (${CA092_MAX9}s), so a long wait cannot degrade into minute-long sleeps" \
+  || fail "CA-092 -- the backoff is uncapped: retry 40 reached ${CA092_MAX40}s against retry 9's ${CA092_MAX9}s"
+
+# The wall-clock deadline: with sleeps that vary, a try count is no longer a proxy for elapsed
+# time, so EDM_STATE_LOCK_WAIT_S is enforced directly. Measured against a genuinely held lock.
+CA092_DIR=""
+ca087_env CA092_DIR "$P2G1_EDM_STATE"
+CA092_T0="$(date +%s)"
+ca087_mutate "$CA092_DIR" "$P2G1_EDM_STATE" 100000
+CA092_T1="$(date +%s)"
+CA092_ELAPSED=$(( CA092_T1 - CA092_T0 ))
+[[ "$CA092_ELAPSED" -le 3 ]] \
+  && pass "CA-092 -- a 1-second lock budget times out in ${CA092_ELAPSED}s: the wall-clock deadline, not the try count, is what bounds the spin" \
+  || fail "CA-092 -- a 1-second lock budget took ${CA092_ELAPSED}s; the documented EDM_STATE_LOCK_WAIT_S budget is not being enforced"
+
+# --- NEGATIVE CONTROL: disable the deadline check and prove the same 1-second budget overruns,
+# --- because the try count alone now spans several seconds of backed-off sleeps.
+CA092_MUTANT=""
+p2g1_mutant_bin CA092_MUTANT "$P2G1_EDM_STATE" \
+  's#^  if \[\[ -n "\${_EDM_LOCK_SPIN_DEADLINE:-}" && -n "\$_now" \]\] && (( _now >= _EDM_LOCK_SPIN_DEADLINE )); then$#  if false; then#'
+CA092_MUT_DIR=""
+ca087_env CA092_MUT_DIR "$CA092_MUTANT"
+CA092_MT0="$(date +%s)"
+ca087_mutate "$CA092_MUT_DIR" "$CA092_MUTANT" 100000
+CA092_MT1="$(date +%s)"
+CA092_MUT_ELAPSED=$(( CA092_MT1 - CA092_MT0 ))
+[[ "$CA092_MUT_ELAPSED" -gt "$CA092_ELAPSED" && "$CA092_MUT_ELAPSED" -ge 4 ]] \
+  && pass "CA-092 negative control -- without the deadline the same 1-second budget ran ${CA092_MUT_ELAPSED}s against the fixed build's ${CA092_ELAPSED}s: the deadline is what holds the budget" \
+  || fail "CA-092 negative control INCONCLUSIVE -- the deadline-less build ran ${CA092_MUT_ELAPSED}s against ${CA092_ELAPSED}s; this host did not separate the two, so the timing assertion above is unproven rather than passing"
+
+# ---- CA-087's escape hatch: edm-state unlock <PREFIX> -------------------------------------------
+echo
+echo "--- CA-087: the unlock escape hatch ---"
+
+CA087U_USAGE="$(bash "$P2G1_EDM_STATE" unlock 2>&1 || true)"
+check "CA-087 -- 'unlock' with no argument emits a usage line (the T61 zero-argument contract)" \
+  "usage: edm-state unlock <PREFIX>" "$CA087U_USAGE"
+CA087U_UNKNOWN="$(bash "$P2G1_EDM_STATE" unlock NOSUCHPFX 2>&1 || true)"
+check "CA-087 -- 'unlock' on an unknown prefix refuses rather than pretending to release something" \
+  "no initiative for prefix" "$CA087U_UNKNOWN"
+
+CA087U_DIR=""
+ca087_env CA087U_DIR "$P2G1_EDM_STATE"
+CA087U_LOCKD="${CA087U_DIR}/proj/SRD/CA087/.edm-state.lockd"
+# A flock-branch lock FILE beside it, which unlock must leave alone (CA-169).
+: > "${CA087U_DIR}/proj/SRD/CA087/.edm-state.lock"
+# ...and a staged-aside copy from a reclaim that won its race but died before the follow-up rm.
+mkdir -p "${CA087U_LOCKD}.stale.99999"
+
+# The wedged state really does block a mutator BEFORE unlock runs -- otherwise "it works after
+# unlock" would say nothing about unlock.
+ca087_mutate "$CA087U_DIR" "$P2G1_EDM_STATE" 100000
+[[ "$CA087_RC" -ne 0 ]] \
+  && pass "CA-087 unlock setup -- the wedged lock really does block a mutator first (exit ${CA087_RC})" \
+  || fail "CA-087 unlock setup -- the mutator succeeded against a wedged lock, so the post-unlock success below would prove nothing"
+
+CA087U_OUT="$( cd "${CA087U_DIR}/proj" && CLAUDE_PROJECT_DIR="${CA087U_DIR}/proj" \
+  CLAUDE_PLUGIN_DATA="${CA087U_DIR}/data" bash "$P2G1_EDM_STATE" unlock CA087 2>&1 || true )"
+check "CA-087 -- unlock reports the recorded holder PID it found" "recorded holder PID: $$" "$CA087U_OUT"
+check "CA-087 -- unlock removes the lock directory" "removed" "$CA087U_OUT"
+check "CA-087 -- unlock also removes a staged-aside copy left by an interrupted reclaim" "staged-aside copy" "$CA087U_OUT"
+[[ ! -d "$CA087U_LOCKD" ]] \
+  && pass "CA-087 -- the lock directory is gone from disk" \
+  || fail "CA-087 -- the lock directory is still on disk after unlock"
+[[ ! -d "${CA087U_LOCKD}.stale.99999" ]] \
+  && pass "CA-087 -- the staged-aside copy is gone from disk" \
+  || fail "CA-087 -- the staged-aside copy is still on disk after unlock"
+
+# CA-169: the flock file must SURVIVE. flock's mutual exclusion is keyed on that file's inode, so
+# unlinking it would let a later contender lock a fresh inode at the same path while an earlier
+# holder that still has the old one open believes it still holds the lock.
+[[ -f "${CA087U_DIR}/proj/SRD/CA087/.edm-state.lock" ]] \
+  && pass "CA-087/CA-169 -- unlock left the flock lock FILE in place (its inode is the mutual exclusion)" \
+  || fail "CA-087/CA-169 -- unlock removed the flock lock file, which silently breaks flock's mutual exclusion"
+check "CA-087/CA-169 -- ...and says why, rather than leaving it silently" "keyed on that file's inode" "$CA087U_OUT"
+
+# ...and the previously-wedged mutator now succeeds.
+ca087_mutate "$CA087U_DIR" "$P2G1_EDM_STATE" 100000
+check_num "CA-087 -- the mutator that was wedged before unlock now succeeds (exit 0)" "0" "$CA087_RC"
+
+CA087U_EMPTY="$( cd "${CA087U_DIR}/proj" && CLAUDE_PROJECT_DIR="${CA087U_DIR}/proj" \
+  CLAUDE_PLUGIN_DATA="${CA087U_DIR}/data" bash "$P2G1_EDM_STATE" unlock CA087 2>&1 || true )"
+check "CA-087 -- a second unlock is a clean no-op that says so rather than reporting a release it did not make" \
+  "nothing to release" "$CA087U_EMPTY"
+
+rm -rf "$CA087_TMP"
+
 # ---- P2 group 1 teardown ------------------------------------------------------------------------
 rm -rf "$P2G1_TMP"
 echo "Results: ${PASS} passed, ${FAIL} failed"

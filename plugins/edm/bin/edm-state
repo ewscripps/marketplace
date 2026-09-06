@@ -47,6 +47,7 @@
 #   edm-state set-supersedes <PREFIX> <other-prefix>                  # record which initiative this supersedes
 #   edm-state set-forked-from <PREFIX> <other-prefix>                 # record which initiative this forked from
 #   edm-state resolve-dir <PREFIX>                                    # resolve bare prefix to initiative directory (read-only)
+#   edm-state unlock <PREFIX>                                         # release an orphaned state lock directory (CA-087 escape hatch); never touches the flock file (CA-169)
 #   edm-state set-parent <PREFIX> <PARENT>                           # set parent_prefix (validates PARENT exists)
 #   edm-state add-related <PREFIX> <RELATED>                         # append to related_prefixes (idempotent)
 #   edm-state update-patterns <PREFIX> <srd|ticket|qc|code|test-coverage>  # append novel audit findings to pattern library (T121)
@@ -1336,15 +1337,60 @@ EDM_STATE_LOCK_STALE_S="${EDM_STATE_LOCK_STALE_S:-900}"
 # this comment now warns against. Returns 1 (echoing nothing) on the terminal case instead; the
 # caller checks that and calls `die` itself, in its own non-subshell shell context. Otherwise
 # sleeps 0.1s so the caller's next loop iteration is rate-limited.
+#
+# CA-092: the spin now backs off, jitters, and is bounded on WALL CLOCK as well as on try count.
+# The old form slept a flat 0.1s, so at 6-10 way contention every contender woke on the same tick
+# forever and one unlucky process could be starved right through its budget -- its PARTIAL verdict
+# then never reached `partial_verdict_map`, and `archive` stopped blocking on a ticket nobody had
+# actually closed. Backoff alone reduces the collision rate; the JITTER is what provides fairness,
+# by breaking the lockstep that made starvation systematic rather than merely unlucky.
 _lock_retry_or_die() {
   local _tries="$1"
   _tries=$(( _tries + 1 ))
+  # The try count stops being a proxy for elapsed time once the sleeps vary, so the documented
+  # EDM_STATE_LOCK_WAIT_S budget is enforced directly, as a deadline. The try count stays as a
+  # secondary bound so no loop can spin unboundedly if the clock misbehaves. The deadline is set by
+  # with_state_lock before it enters its spin loop -- it cannot be set here, because every call
+  # site invokes this function inside a `$( )` command substitution, whose assignments are lost
+  # with the subshell (the same constraint that makes this function echo its count back instead of
+  # mutating the caller's).
+  local _now=""
+  _now="$(date +%s 2>/dev/null)" || _now=""
+  if [[ -n "${_EDM_LOCK_SPIN_DEADLINE:-}" && -n "$_now" ]] && (( _now >= _EDM_LOCK_SPIN_DEADLINE )); then
+    return 1
+  fi
   if [[ $_tries -ge $EDM_STATE_LOCK_MAX_TRIES ]]; then
     return 1
   fi
-  sleep 0.1
+  sleep "$(_lock_backoff_seconds "$_tries")"
   echo "$_tries"
 }
+
+# _lock_backoff_seconds <tries> -- CA-092: capped exponential backoff with uniform jitter, printed
+# as a fractional-second string `sleep` accepts. Computed in DECISECONDS because bash 3.2 has
+# integer arithmetic only. The slot doubles every two tries from 1 ds to a cap of 8 ds, and a
+# uniform jitter of 0..slot-1 ds is added on top. At tries 1-2 the slot is 1 and the jitter is
+# necessarily 0, so the first two retries sleep exactly 0.1s -- byte-identical to the pre-fix
+# behaviour, which keeps the uncontended and lightly-contended cases exactly as fast as they were.
+_lock_backoff_seconds() {
+  local _t="$1" _slot=1 _step _ds
+  # (_t - 1) / 2, not _t / 2: retries 1 AND 2 must both land in the slot-1 bucket, where the
+  # jitter range is 0..0 and the sleep is therefore exactly 0.1s. `_t / 2` puts retry 2 in the
+  # slot-2 bucket and makes the pre-fix-parity claim above false for it.
+  _step=$(( (_t - 1) / 2 ))
+  [[ $_step -lt 0 ]] && _step=0
+  [[ $_step -gt 3 ]] && _step=3
+  while [[ $_step -gt 0 ]]; do
+    _slot=$(( _slot * 2 ))
+    _step=$(( _step - 1 ))
+  done
+  _ds=$(( _slot + (RANDOM % _slot) ))
+  printf '%d.%d\n' $(( _ds / 10 )) $(( _ds % 10 ))
+}
+
+# Set by with_state_lock's mkdir branch immediately before its spin loop and cleared immediately
+# after, so a second acquisition in the same process never inherits the first one's deadline.
+_EDM_LOCK_SPIN_DEADLINE=""
 
 # ---- Advisory file locking (T24) -------------------------------------------
 # with_state_lock <lockbase> <command...>
@@ -1490,12 +1536,19 @@ with_state_lock() {
     # `kill -0` (EPERM). bash does not expose errno directly, so the error text distinguishes the
     # two -- "not permitted" means alive-but-not-ours-to-signal (never reclaim), anything else
     # (typically "no such process") means genuinely dead (safe to reclaim). PID reuse / PID
-    # namespaces can still make a genuinely dead holder look alive (kill -0 succeeds) -- that
-    # direction is benign (it only means the lock is not reclaimed when it safely could be), so
-    # it is not handled here. Every path below now falls through to the shared
-    # `_lock_retry_or_die` tail (G47/CA-278), so the documented "50 tries" bound is a single,
-    # actual bound on wall-clock retries rather than three separately-maintained copies, and
-    # neither reclaim path tight-loops.
+    # namespaces can still make a genuinely dead holder look alive (kill -0 succeeds). CA-087
+    # correction: this comment used to call that direction "benign (it only means the lock is not
+    # reclaimed when it safely could be)" and left it unhandled. That is true only while the holder
+    # is genuinely ALIVE. For a holder killed with SIGKILL -- whose trap layer never runs, so the
+    # lockdir survives -- a later recycled PID makes `kill -0` succeed forever, and every mutator
+    # on that initiative dies on timeout with no recovery path: a permanently unusable initiative,
+    # not a transient wait. The live-holder branch below is therefore age-capped at
+    # EDM_STATE_LOCK_STALE_S, and `unlock <PREFIX>` is the explicit escape hatch. Every path below
+    # falls through to the shared `_lock_retry_or_die` tail (G47/CA-278), so the retry bound is a
+    # single, actual bound rather than three separately-maintained copies, and neither reclaim path
+    # tight-loops. CA-092: that bound is now enforced as a WALL-CLOCK deadline of
+    # EDM_STATE_LOCK_WAIT_S seconds (with the try count as a secondary cap), because the sleep
+    # between tries is no longer a constant 0.1s -- it backs off and jitters.
     #
     # The numeric-PID regex `^[0-9]+$` alone would accept the literal string "0" as "valid", but
     # `kill -0 0` targets the WHOLE PROCESS GROUP (not PID 0, which does not exist) and always
@@ -1508,6 +1561,11 @@ with_state_lock() {
     # turning the lock release into `rm -rf ""` and orphaning the lockdir permanently.
     local tries=0 holder_pid=""
     local _mkdir_err
+    # CA-092: arm the wall-clock deadline _lock_retry_or_die enforces. It is set HERE, not inside
+    # that helper, because every call site invokes it in a `$( )` command substitution whose
+    # assignments die with the subshell. Cleared immediately after the loop so a second acquisition
+    # in this process never inherits a spent deadline.
+    _EDM_LOCK_SPIN_DEADLINE=$(( $(date +%s) + EDM_STATE_LOCK_WAIT_S ))
     # G22: capture mkdir's own stderr on this (and every) failed attempt. On the very
     # first failed attempt, if the lockdir still doesn't exist AND the failure wasn't
     # the expected "File exists" (i.e. some other process already holds the lock), the
@@ -1562,7 +1620,7 @@ with_state_lock() {
           echo "edm-state: state lock ${lockdir} has an invalid PID '${holder_pid:-missing}' but is less than 1 second old -- not reclaiming yet (may be mid-acquisition)" >&2
         fi
         tries="$(_lock_retry_or_die "$tries")" \
-          || die "state lock timeout after ${EDM_STATE_LOCK_WAIT_S}s (${EDM_STATE_LOCK_MAX_TRIES} tries x 0.1s) on ${lockdir} (invalid PID)"
+          || die "state lock timeout after ${EDM_STATE_LOCK_WAIT_S}s on ${lockdir} (invalid PID)"
         continue
       fi
       if ! kill -0 "$holder_pid" 2>/dev/null; then
@@ -1577,12 +1635,30 @@ with_state_lock() {
           # to the shared retry accounting below instead of an unaccounted-for `continue`.
         fi
         tries="$(_lock_retry_or_die "$tries")" \
-          || die "state lock timeout after ${EDM_STATE_LOCK_WAIT_S}s (${EDM_STATE_LOCK_MAX_TRIES} tries x 0.1s) on ${lockdir} (held by PID ${holder_pid})"
+          || die "state lock timeout after ${EDM_STATE_LOCK_WAIT_S}s on ${lockdir} (held by PID ${holder_pid})"
         continue
       fi
+      # CA-087: the live-holder branch had NO age cap, so a holder killed with SIGKILL -- which
+      # leaves the lockdir behind, its trap layer never running -- wedged this lock permanently as
+      # soon as its PID was recycled by any unrelated process: `kill -0` then succeeds forever and
+      # every mutator on that initiative dies on timeout with no recovery path at all. The comment
+      # above dismissed PID reuse as "benign (it only means the lock is not reclaimed when it
+      # safely could be)", which is true only while the holder is actually alive; for a dead
+      # holder whose PID has been recycled it is the difference between a transient wait and a
+      # permanently unusable initiative. Cap it: past EDM_STATE_LOCK_STALE_S the lock is broken
+      # through the same atomic mv-aside reclaim the two sibling branches use (never a bare
+      # `rm -rf`, which has the TOCTOU window G29/CA-141 closed), with a loud diagnostic naming
+      # the escape hatch. Falls through to the shared retry tail either way.
+      local _live_age=""
+      _live_age="$(_git_lock_age_seconds "$lockdir")" || _live_age=""
+      if [[ -n "$_live_age" ]] && (( _live_age > EDM_STATE_LOCK_STALE_S )); then
+        _edm_reclaim_stale_lockdir "$lockdir" \
+          "BROKE state lock ${lockdir}: PID ${holder_pid} answers kill -0, but the lock has been held for ${_live_age}s (cap: ${EDM_STATE_LOCK_STALE_S}s). A holder killed with SIGKILL leaves this directory behind, and a recycled PID makes it read as live forever. If this recurs, release it explicitly with 'unlock <PREFIX>'"
+      fi
       tries="$(_lock_retry_or_die "$tries")" \
-        || die "state lock timeout after ${EDM_STATE_LOCK_WAIT_S}s (${EDM_STATE_LOCK_MAX_TRIES} tries x 0.1s) on ${lockdir}${holder_pid:+ (held by PID ${holder_pid})}"
+        || die "state lock timeout after ${EDM_STATE_LOCK_WAIT_S}s on ${lockdir}${holder_pid:+ (held by PID ${holder_pid})} -- if the holder is gone, release it with 'unlock <PREFIX>'"
     done
+    _EDM_LOCK_SPIN_DEADLINE=""
     # CA-480: this write used to silence its own failure (`|| true`), which held the lock with
     # no pidfile for the rest of this process's lifetime -- EROFS, ENOSPC and quota all land
     # here -- so the first ungraceful exit (before the trap layer below is even installed)
@@ -5609,6 +5685,54 @@ cmd_set_forked_from() { _cmd_set_provenance_field set-forked-from forked_from "$
 # resolve-dir <PREFIX> -- resolve bare prefix to initiative directory (read-only).
 # Returns a non-zero exit and a message when no initiative exists for the prefix.
 
+# cmd_unlock <PREFIX> -- CA-087's explicit escape hatch. Removes the mkdir-branch lock directory
+# (and any `.stale.<pid>` copy a reclaim staged aside and then failed to remove) for one
+# initiative's state lockbase, reporting exactly what it found and what it did.
+#
+# It NEVER touches `${lockbase}.lock`, the flock-branch file. CA-169: flock(1)'s mutual exclusion
+# is keyed on the file's INODE, so unlinking a released lock file lets a later contender
+# open()+flock() a freshly created inode at the same path while an earlier holder that still has
+# the old inode open believes it still holds the lock -- silently breaking mutual exclusion. The
+# flock backend needs no escape hatch anyway: its lock is released by the kernel when the holding
+# process dies, however it dies, so it cannot be orphaned the way a lock DIRECTORY can.
+#
+# Deliberately does not try to decide whether the holder is alive: this subcommand exists for the
+# case where the automatic age cap in with_state_lock has not yet fired (or the operator does not
+# want to wait EDM_STATE_LOCK_STALE_S for it), and a human running it by name has already made
+# that judgement. It prints the holder PID and the lock's age so the judgement is an informed one.
+cmd_unlock() {
+  [[ $# -eq 1 ]] || die "usage: edm-state unlock <PREFIX>"
+  require_jq
+  local prefix="$1" state_file lockbase lockdir holder age removed=0 stale
+  state_file="$(state_file_for "$prefix")"
+  [[ -f "$state_file" ]] || die "no initiative for prefix $prefix"
+  lockbase="${state_file%.json}"
+  lockdir="${lockbase}.lockd"
+  if [[ -d "$lockdir" ]]; then
+    holder="$(cat "${lockdir}/pid" 2>/dev/null || true)"
+    age="$(_git_lock_age_seconds "$lockdir")" || age="unknown"
+    echo "unlock: ${lockdir} exists (recorded holder PID: ${holder:-none}, age: ${age}s)"
+    if rm -rf "$lockdir" 2>/dev/null; then
+      echo "unlock: removed ${lockdir}"
+      removed=$(( removed + 1 ))
+    else
+      die "unlock: could not remove ${lockdir} (check its permissions and ownership)"
+    fi
+  else
+    echo "unlock: no lock directory at ${lockdir}"
+  fi
+  # A reclaim that won its mv-aside race but died before the follow-up rm leaves one of these.
+  for stale in "${lockdir}".stale.*; do
+    [[ -e "$stale" ]] || continue
+    rm -rf "$stale" 2>/dev/null && { echo "unlock: removed staged-aside copy ${stale}"; removed=$(( removed + 1 )); }
+  done
+  if [[ -e "${lockbase}.lock" ]]; then
+    echo "unlock: leaving ${lockbase}.lock in place -- flock's mutual exclusion is keyed on that file's inode, so removing it would break locking for a holder that still has it open (CA-169); the kernel releases a flock when its holder dies, so it never needs releasing by hand"
+  fi
+  [[ "$removed" -gt 0 ]] || echo "unlock: nothing to release for ${prefix}"
+  return 0
+}
+
 cmd_resolve_dir() {
   [[ $# -eq 1 ]] || die "usage: edm-state resolve-dir <PREFIX>"
   # G12/CA-345: require_jq added for consistency with every other read/write subcommand -- this
@@ -6952,6 +7076,7 @@ case "$cmd" in
   set-supersedes)       cmd_set_supersedes "$@" ;;
   set-forked-from)      cmd_set_forked_from "$@" ;;
   resolve-dir)          cmd_resolve_dir "$@" ;;
+  unlock)               cmd_unlock "$@" ;;
   set-parent)           cmd_set_parent "$@" ;;
   add-related)          cmd_add_related "$@" ;;
   update-patterns)      cmd_update_patterns "$@" ;;
