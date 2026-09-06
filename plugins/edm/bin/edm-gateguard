@@ -138,6 +138,25 @@ if [[ "$MARKER_MALFORMED" -eq 1 ]]; then
 else
   MARKER_REST="${MARKER_LINE#*$'\t'}"
   MARKER_INITIATIVE_DIR="${MARKER_REST%%$'\t'*}"
+  # CA-081: only an ABSOLUTE recorded directory can be tested from here. This hook runs with the
+  # host's cwd, which is not the cwd `phase-start 6` ran in, so a RELATIVE second field re-resolved
+  # against this process's cwd appeared missing from any other directory or git worktree -- the
+  # marker read as stale and the gate exited 0, silently disabling the whole gated path.
+  # bin/edm-state now records an absolute path; this arm handles a marker written before that fix
+  # (or by hand) by resolving it against CLAUDE_PROJECT_DIR when the host supplied one, and
+  # otherwise declining to test it at all. Declining fails CLOSED (the gate continues to its
+  # ordinary allow/deny below) -- treating an untestable path as missing is the fail-OPEN direction
+  # this finding is about.
+  case "$MARKER_INITIATIVE_DIR" in
+    ""|/*) ;;
+    *)
+      if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
+        MARKER_INITIATIVE_DIR="${CLAUDE_PROJECT_DIR%/}/${MARKER_INITIATIVE_DIR}"
+      else
+        MARKER_INITIATIVE_DIR=""
+      fi
+      ;;
+  esac
   if [[ -n "$MARKER_INITIATIVE_DIR" ]] && [[ ! -d "$MARKER_INITIATIVE_DIR" ]]; then
     exit 0
   fi
@@ -268,19 +287,110 @@ case "$GG_MAX_DENIALS_RAW" in
 esac
 GG_STALE_SECONDS=1800
 
+# CA-084: the denial budget is keyed per SESSION -- which is what EDMV4-T15 AC8 and CLAUDE.md's
+# EDM_GATEGUARD_MAX_DENIALS bullet have always claimed, and what a per-PROJECT key made untrue the
+# moment a wave ran 6-10 implementers against one 3-denial budget. The host stamps session_id on
+# every PreToolUse payload; absent it (a hand-driven invocation, a fixture) the marker's own
+# started_at field is the fallback session identity, so one Phase-6 run shares one budget and a
+# later `phase-start 6` starts a fresh one. The key is written as a whole line into the denials
+# file, so every byte outside a conservative set is folded to `_` -- a newline inside it would
+# otherwise split into two records and inflate the count.
+GG_SESSION_KEY=""
+GG_SESSION_KEY="$(printf '%s' "$PAYLOAD" | jq -r '.session_id // empty' 2>/dev/null)" || GG_SESSION_KEY=""
+[[ -n "$GG_SESSION_KEY" ]] || GG_SESSION_KEY="${MARKER_LINE##*$'\t'}"
+[[ -n "$GG_SESSION_KEY" ]] || GG_SESSION_KEY="default"
+GG_SESSION_KEY="${GG_SESSION_KEY//[^A-Za-z0-9._:-]/_}"
+
+# ---- CA-083/CA-084/CA-085/CA-101: session-state concurrency. This hook fires on every Edit and
+# Write, and Phase 6 runs 6-10 implementers in parallel, so concurrent invocation is this gate's
+# NORMAL operating mode, not a corner case. gg_mark_checked was an unlocked read-modify-write, so
+# two parallel hooks lost one another's entry and a file already investigated was denied a second
+# time; gg_record_denial had the same shape plus the per-project key above; and both staged through
+# a fully predictable `${file}.tmp.$$` written with a truncating `>` and no trap.
+GG_LOCK_STALE_SECONDS=60
+GG_LOCK_TRIES=60
+GG_LOCKDIR="" GG_TMPFILE=""
+
+# gg_mtime <path> -- portable mtime: GNU `stat -c %Y`, BSD `stat -f %m` (`find` is outside the
+# required-binary set). Sole owner of that fallback pair in this file.
+gg_mtime() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || true
+}
+
+# CA-101: the trap layer both the lock and the staging file rely on. Non-local variables on
+# purpose -- the bodies expand them at SIGNAL time, when a function-local would already be popped
+# (the hazard bin/tests/_harness.sh documents and bin/edm-state's CA-088 fix closes on its side).
+gg_cleanup() {
+  [[ -n "$GG_TMPFILE" ]] && rm -f "$GG_TMPFILE" 2>/dev/null
+  [[ -n "$GG_LOCKDIR" ]] && rm -rf "$GG_LOCKDIR" 2>/dev/null
+  return 0
+}
+gg_arm_traps() {
+  trap 'gg_cleanup' EXIT
+  trap 'gg_cleanup; exit 130' INT
+  trap 'gg_cleanup; exit 143' TERM
+  trap 'gg_cleanup; exit 129' HUP
+}
+
+# gg_lock <lockdir> -- best-effort mkdir spin lock (atomic on every local filesystem; the same
+# primitive bin/edm-state's with_state_lock falls back to when flock is absent). Returns non-zero
+# rather than blocking forever: a gate that cannot take the lock still must not deny an edit, so
+# every caller proceeds UNLOCKED on failure -- which is exactly the pre-fix behaviour, never worse.
+# A holder killed mid-write would otherwise wedge every later hook, so a lockdir older than
+# GG_LOCK_STALE_SECONDS is broken once, loudly, and the acquisition retried exactly once more.
+gg_lock() {
+  local d="$1" i=0 broke=0 age now
+  while ! mkdir "$d" 2>/dev/null; do
+    i=$((i + 1))
+    if [[ $i -ge $GG_LOCK_TRIES ]]; then
+      [[ $broke -eq 0 ]] || return 1
+      age="$(gg_mtime "$d")"
+      now="$(date +%s)"
+      if [[ -n "$age" ]] && (( now - age > GG_LOCK_STALE_SECONDS )); then
+        echo "edm-gateguard: breaking session-state lock ${d}, held longer than ${GG_LOCK_STALE_SECONDS}s (its holder is gone)" >&2
+        rm -rf "$d" 2>/dev/null || true
+        broke=1
+        i=0
+        continue
+      fi
+      return 1
+    fi
+    sleep 0.02
+  done
+  GG_LOCKDIR="$d"
+  gg_arm_traps
+  return 0
+}
+
+gg_unlock() {
+  [[ -n "$GG_LOCKDIR" ]] || return 0
+  rm -rf "$GG_LOCKDIR" 2>/dev/null || true
+  GG_LOCKDIR=""
+  return 0
+}
+
 # gg_fresh_lines <path> -- prints <path>'s lines within the last 30 minutes' mtime; otherwise
-# prints nothing (stale reads as empty) and best-effort removes it (EDMV4-T15 AC6). Portable
-# mtime: GNU `stat -c %Y`, falling back to BSD `stat -f %m` (`find` is outside the required set).
+# prints nothing (stale reads as empty) and best-effort removes it (EDMV4-T15 AC6).
 gg_fresh_lines() {
   local path="$1"
   [[ -n "$path" && -f "$path" ]] || return 0
   local mtime=""
-  mtime="$(stat -c %Y "$path" 2>/dev/null)" || mtime="$(stat -f %m "$path" 2>/dev/null)" || mtime=""
+  mtime="$(gg_mtime "$path")"
   [[ -n "$mtime" ]] || return 0
   local now; now="$(date +%s)"
   if (( now - mtime > GG_STALE_SECONDS )); then
-    rm -f "$path" 2>/dev/null || true
-    return 0
+    # CA-085: re-read the mtime immediately before the unlink. A concurrent writer that refreshed
+    # this file between the read above and the removal had its state deleted outright. Re-reading
+    # narrows that window to the gap between two syscalls, and a file that turns out to have moved
+    # is not stale after all -- fall through and read it. The window is NARROWED, not closed: an
+    # unlink cannot be made atomic against a separate stat under this plugin's required-binary set.
+    # The residual costs at most one extra denial (a re-forced fact list), never a wrong allow.
+    local mtime2=""
+    mtime2="$(gg_mtime "$path")"
+    if [[ "$mtime2" == "$mtime" ]]; then
+      rm -f "$path" 2>/dev/null || true
+      return 0
+    fi
   fi
   cat "$path" 2>/dev/null || true
 }
@@ -306,23 +416,48 @@ gg_mark_checked() {
     echo "edm-gateguard: could not create the session-state directory (EDM_GATEGUARD_STATE_DIR=${EDM_GATEGUARD_STATE_DIR:-<unset>}) -- allowing this call rather than denying with nothing recorded" >&2
     return 1
   fi
+  # CA-083: the read-modify-write below runs under a lock. Two parallel Edit hooks previously lost
+  # one another's entry, so a path one of them had already forced facts for was denied a second
+  # time -- the common case at 6-10 implementers, not the corner case. A lock that cannot be taken
+  # is NOT a reason to deny (AC7/CA-001): fall through unlocked, i.e. the pre-fix behaviour.
+  gg_lock "${GG_CHECKED_FILE}.lockd" || true
   local existing tmp
   existing="$(gg_fresh_lines "$GG_CHECKED_FILE")"
-  tmp="${GG_CHECKED_FILE}.tmp.$$"
+  # CA-101: mktemp, never `${file}.tmp.$$`. The PID-derived name is fully predictable, and
+  # EDM_GATEGUARD_STATE_DIR, CLAUDE_PLUGIN_DATA and XDG_DATA_HOME can each steer this directory
+  # into a shared /tmp where another local user pre-plants a symlink at that name -- which the old
+  # truncating `>` followed and truncated. Template form with no suffix after the X run: BSD mktemp
+  # rejects a suffix. This is bin/edm-state's write_atomic shape, the family standard this file
+  # diverged from; gg_arm_traps covers the staging file on INT/TERM/HUP/EXIT.
+  tmp=""
+  tmp="$(mktemp "${GG_CHECKED_FILE}.tmp.XXXXXX" 2>/dev/null)" || tmp=""
+  if [[ -z "$tmp" ]]; then
+    gg_unlock
+    echo "edm-gateguard: could not stage session state (EDM_GATEGUARD_STATE_DIR=${EDM_GATEGUARD_STATE_DIR:-<unset>}) -- allowing this call rather than denying with nothing recorded" >&2
+    return 1
+  fi
+  GG_TMPFILE="$tmp"
+  gg_arm_traps
   if { printf '%s\n' "$existing"; printf '%s\n' "$target"; } | grep -v '^$' | tail -n 500 > "$tmp" 2>/dev/null \
       && mv "$tmp" "$GG_CHECKED_FILE" 2>/dev/null; then
-    :
+    GG_TMPFILE=""
+    gg_unlock
   else
     rm -f "$tmp" 2>/dev/null || true
+    GG_TMPFILE=""
+    gg_unlock
     echo "edm-gateguard: could not write session state (EDM_GATEGUARD_STATE_DIR=${EDM_GATEGUARD_STATE_DIR:-<unset>}) -- allowing this call rather than denying with nothing recorded" >&2
     return 1
   fi
 }
 
-# gg_denial_count -- number of fresh (non-stale) full-denial records for this session.
+# gg_denial_count -- number of fresh (non-stale) full-denial records for THIS session (CA-084).
+# Each record is the session key on its own line, so counting exact matches scopes the budget to
+# one session while leaving sibling sessions' records in the same file untouched -- which is what
+# keeps EDM_GATEGUARD_STATE_DIR's documented `<override>/<project-key>.denials` path unchanged.
 gg_denial_count() {
   [[ -n "$GG_DENIALS_FILE" ]] || { echo 0; return 0; }
-  gg_fresh_lines "$GG_DENIALS_FILE" | grep -c . || true
+  gg_fresh_lines "$GG_DENIALS_FILE" | grep -cFx -- "$GG_SESSION_KEY" || true
 }
 
 # gg_record_denial -- appends one denial record, best-effort (AC8's budget counter). Shares the
@@ -336,12 +471,15 @@ gg_record_denial() {
     echo "edm-gateguard: could not create the session-state directory (EDM_GATEGUARD_STATE_DIR=${EDM_GATEGUARD_STATE_DIR:-<unset>}) -- the denial budget will not be counted for this call" >&2
     return 0
   fi
-  local tmp="${GG_DENIALS_FILE}.tmp.$$"
-  if { gg_fresh_lines "$GG_DENIALS_FILE"; printf 'x\n'; } > "$tmp" 2>/dev/null \
-      && mv "$tmp" "$GG_DENIALS_FILE" 2>/dev/null; then
-    :
-  else
-    rm -f "$tmp" 2>/dev/null || true
+  # CA-084/CA-101: one atomic APPEND, not a read-modify-write through a predictable temp file. A
+  # single short write through an O_APPEND descriptor is not interleaved with a concurrent
+  # appender's on a local filesystem, so this needs no lock and cannot lose a sibling hook's record
+  # the way the old read-then-rewrite did -- and with no staging file there is no symlink-plant
+  # target either. gg_fresh_lines first so a file past the 30-minute staleness cap is dropped
+  # rather than resurrected by the append refreshing its mtime; that function stays the single
+  # owner of the staleness decision (AC8's "the budget cannot outlive the wave it bounds").
+  gg_fresh_lines "$GG_DENIALS_FILE" >/dev/null
+  if ! printf '%s\n' "$GG_SESSION_KEY" >> "$GG_DENIALS_FILE" 2>/dev/null; then
     echo "edm-gateguard: could not write session state (EDM_GATEGUARD_STATE_DIR=${EDM_GATEGUARD_STATE_DIR:-<unset>}) -- the denial budget will not be counted for this call" >&2
   fi
 }
@@ -358,8 +496,24 @@ gg_is_exempt() {
   local saved_ifs="$IFS"
   IFS=','
   local -a glob_list
-  # shellcheck disable=SC2206 # intentional word-split on IFS=, -- see the comment above this array
+  # CA-073: `set -f` around the split. An unquoted array assignment applies BOTH word splitting
+  # (wanted here, on IFS=,) and PATHNAME EXPANSION (never wanted). With globstar off, `**/SRD/**`
+  # behaves as `*/SRD/*`, so in any repository where a matching path exists relative to this hook's
+  # cwd the glob EXPANDED against the filesystem and stopped being a pattern -- the `case "$path" in
+  # $gg)` below could then only ever match that one literal filename, and the SRD/, test-tree,
+  # dist/build, node_modules and .git exemptions silently stopped working. The gate denied edits to
+  # exactly the trees it was configured to leave alone. The previous shellcheck-disable justified
+  # only the word-splitting half. The prior state of `-f` is restored rather than assumed off, so
+  # this is safe if a caller ever sources or wraps this script with globbing already disabled.
+  local saved_f="$-"
+  set -f
+  # shellcheck disable=SC2206 # intentional word-split on IFS=, ; `set -f` above suppresses the
+  # pathname-expansion half, which is NOT wanted (CA-073).
   glob_list=($globs)
+  case "$saved_f" in
+    *f*) ;;
+    *) set +f ;;
+  esac
   IFS="$saved_ifs"
   local g gg stripped
   for g in "${glob_list[@]}"; do
@@ -421,13 +575,23 @@ gg_maybe_deny() {
 
 # ---- Dispatch on tool name. Bash 3.2 floor (C1): a `case` over a small, fixed name set is the
 # portable form here, not an associative array keyed by tool name. -------------------------------
+#
+# CA-077: every `jq` capture on this gated path is GUARDED. Under `set -euo pipefail` an unguarded
+# command substitution whose jq exits non-zero (exit 5 on an internal error) aborted this script
+# outright -- outside the documented 0/1/2 exit contract, and with jq's own message discarded by
+# `2>/dev/null`, so the hook produced zero bytes on both streams and the gate failed OPEN
+# invisibly. `bin/edm-bash-gate` already guards the structurally identical projection, so the
+# family had the right shape; this file diverged. `die` here is in-contract: exit 1 is this hook's
+# documented setup-error code and never blocks (see the EDM-HELP block above).
 case "$TOOL_NAME" in
   Edit)
-    GG_TARGET="$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.file_path // empty' 2>/dev/null)"
+    GG_TARGET="$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.file_path // empty' 2>/dev/null)" \
+      || die "the JSON parser failed while reading .tool_input.file_path from the payload"
     gg_maybe_deny edit "$GG_TARGET"
     ;;
   Write)
-    GG_TARGET="$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.file_path // empty' 2>/dev/null)"
+    GG_TARGET="$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.file_path // empty' 2>/dev/null)" \
+      || die "the JSON parser failed while reading .tool_input.file_path from the payload"
     gg_maybe_deny write "$GG_TARGET"
     ;;
   MultiEdit)
@@ -441,7 +605,8 @@ case "$TOOL_NAME" in
       ([.tool_input.file_path] + [.tool_input.edits[]?.file_path?])
       | map(select(. != null and . != ""))
       | unique[]
-    ' 2>/dev/null)"
+    ' 2>/dev/null)" \
+      || die "the JSON parser failed while projecting the MultiEdit file list from the payload"
     while IFS= read -r GG_TARGET; do
       gg_maybe_deny edit "$GG_TARGET"
     done <<< "$GG_MULTI_FILES"
@@ -461,13 +626,23 @@ if command -v edm-hookify >/dev/null 2>&1; then
     old_text: (.tool_input.old_string // ([.tool_input.edits[]?.old_string?] | map(select(.!=null)) | join("\n"))),
     new_text: (.tool_input.new_string // .tool_input.content // ([.tool_input.edits[]?.new_string?] | map(select(.!=null)) | join("\n"))),
     content: (.tool_input.content // "")
-  }' 2>/dev/null)"
-  GG_HOOKIFY_RC=0
-  GG_HOOKIFY_OUT="$(printf '%s' "$GG_HOOKIFY_PAYLOAD" | edm-hookify eval file)" || GG_HOOKIFY_RC=$?
-  # T44 AC4/AC5: hookify's block code becomes a refusal through THIS script's own emit_decision
-  # (AD2); hookify's setup-error code never escalates (it already warned on stderr); a clean run
-  # falls through unchanged.
-  [[ "$GG_HOOKIFY_RC" -eq 2 ]] && emit_decision deny "$GG_HOOKIFY_OUT"
+  }' 2>/dev/null)" || GG_HOOKIFY_PAYLOAD=""
+  # CA-077, fourth site: this one degrades to allow rather than to `die`. The three captures above
+  # feed THIS gate's own decision, so a parser failure there is a setup condition worth naming and
+  # exiting on; hookify rule evaluation is an additive layer on the allow path, and losing it must
+  # not turn a call this gate has already decided to allow into an exit-1 setup error. One stderr
+  # line, then skip -- never silence, which is what the pre-fix `2>/dev/null` plus an aborted
+  # process produced.
+  if [[ -z "$GG_HOOKIFY_PAYLOAD" ]]; then
+    echo "edm-gateguard: the JSON parser failed to project the file-event payload -- skipping hookify rule evaluation for this call" >&2
+  else
+    GG_HOOKIFY_RC=0
+    GG_HOOKIFY_OUT="$(printf '%s' "$GG_HOOKIFY_PAYLOAD" | edm-hookify eval file)" || GG_HOOKIFY_RC=$?
+    # T44 AC4/AC5: hookify's block code becomes a refusal through THIS script's own emit_decision
+    # (AD2); hookify's setup-error code never escalates (it already warned on stderr); a clean run
+    # falls through unchanged.
+    [[ "$GG_HOOKIFY_RC" -eq 2 ]] && emit_decision deny "$GG_HOOKIFY_OUT"
+  fi
 fi
 
 # Every branch above allows silently once every path in scope is already checked (or exempt, or
