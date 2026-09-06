@@ -62,8 +62,18 @@ which is a cycle and unschedulable.
 ### Acceptance Criteria
 
 - [ ] AC1: `plugins/edm/bin/edm-gateguard` exists, `test -x` succeeds on it, and `wc -l` reports a
-      count in the closed range 200 to 400 (AD1's estimate is 250-350; the band allows for house
-      boilerplate). `bin/tests/wave8-smoke.sh` asserts both bounds.
+      count in the closed range 200 to 660. `bin/tests/wave8-smoke.sh` asserts both bounds.
+      *(Amended twice. Originally 200-400, from AD1's 250-350 estimate for the initial bash port
+      plus house boilerplate. Widened to 500 at Gate 3 as decision D42, after five later tickets --
+      `EDMV4-T13`, `T14`, `T15`, `T45`, `T52` -- each added AC-mandated code to this one file that
+      the Phase-2 estimate never scoped. Widened again to 660 as decision D47, for the seven
+      group-1 concurrency findings (CA-073, CA-077, CA-081, CA-083, CA-084, CA-085, CA-101), all of
+      which land below the marker-absent fast path. The bound stays CLOSED at every revision: an
+      upper limit still catches a hook ballooning, which matters because this fires on every Edit
+      and Write in Phase 6 and its marker-absent fast path must stay cheap. The next ticket needing
+      more justifies it at the assertion AND records a decision -- D45 records that resolving this
+      exact drift on a sibling AC with an inline comment alone is why that sibling went on
+      asserting a bound it could not fail.)*
 - [ ] AC2: The script sources `_edm-cli-lib.sh` and its `usage()` calls
       `print_help "${BASH_SOURCE[0]:-$0}"` against a `# EDM-HELP-BEGIN` / `# EDM-HELP-END`
       sentinel block, following `edm-lint-artifacts:1-70` and `edm-compare-eval:2-33`. A smoke
