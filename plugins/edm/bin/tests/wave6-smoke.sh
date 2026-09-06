@@ -4440,8 +4440,22 @@ fi
 t24ac11_claude="$(cat "$t22ac12_claude")"
 check "EDMV4-T24 AC11 -- CLAUDE.md documents detect-conditional-lenses in the bin/ table" \
   "detect-conditional-lenses" "$t24ac11_claude"
-check "EDMV4-T24 AC11 -- CLAUDE.md's edm-state subcommand count is updated to 41" \
-  "41 subcommands" "$t24ac11_claude"
+# CA-087 (P2 group 1): this assertion pinned the literal string "41 subcommands", so it broke the
+# moment a subcommand was added -- and the only way to make it green again was to retype a number,
+# which is how a documented count drifts from the dispatch table in the first place. It is computed
+# now, the same way `wave7-smoke.sh`'s EDMV3-T66 AC3 case already computes it: CLAUDE.md's stated
+# count must equal the LIVE dispatch-table count. Both sides are floored numeric-non-empty before
+# comparing, so a CLAUDE.md that lost the "N subcommands" text entirely fails loudly instead of
+# passing as "count () matches ()".
+t24ac11_dispatch_count="$({ grep -cE '^  [a-z][a-z0-9_-]*\)[[:space:]]+cmd_' "$EDM_STATE" || true; })"
+t24ac11_doc_count="$({ printf '%s\n' "$t24ac11_claude" | grep -oE '[0-9]+ subcommands' || true; } | head -1 | { grep -oE '^[0-9]+' || true; })"
+if [[ ! "$t24ac11_dispatch_count" =~ ^[1-9][0-9]*$ || ! "$t24ac11_doc_count" =~ ^[1-9][0-9]*$ ]]; then
+  fail "EDMV4-T24 AC11 -- extraction floor: dispatch count '$t24ac11_dispatch_count' / CLAUDE.md count '$t24ac11_doc_count' (one side is empty or non-numeric; the comparison would be vacuous)"
+elif [[ "$t24ac11_dispatch_count" == "$t24ac11_doc_count" ]]; then
+  pass "EDMV4-T24 AC11 -- CLAUDE.md's edm-state subcommand count (${t24ac11_doc_count}) matches the live dispatch table (${t24ac11_dispatch_count})"
+else
+  fail "EDMV4-T24 AC11 -- CLAUDE.md says ${t24ac11_doc_count} subcommands, the dispatch table has ${t24ac11_dispatch_count}"
+fi
 check "EDMV4-T24 AC12 -- CLAUDE.md cross-references the N/A-determination precedent section" \
   "Layers that are N/A and per-epic test plans" "$t24ac11_claude"
 
