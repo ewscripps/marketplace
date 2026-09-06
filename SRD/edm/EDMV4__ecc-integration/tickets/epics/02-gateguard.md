@@ -412,10 +412,23 @@ its own investigation.
 - [ ] AC6: The denial text is plain ASCII: `LC_ALL=C grep -n '[^ -~]'` over the emitted reason
       returns nothing, so no em dash, arrow, smart quote or emoji can reach the operator
       (`EDMV4-57`).
-- [ ] AC7: No text is copied verbatim from `gateguard-fact-force.js` or ECC's
+- [ ] AC7: **RETIRED and replaced, 2026-09-06 per CA-061 and decision D49.** This AC originally
+      read: "No text is copied verbatim from `gateguard-fact-force.js` or ECC's
       `skills/gateguard/SKILL.md`. The fact list is re-expressed in EDM's own register, and the
       clean-room posture recorded in `CLAUDE.md Sec."Prompt conventions (house style)"` for
-      `caveman` and `ponytail` is the standard applied.
+      `caveman` and `ponytail` is the standard applied."
+      It was **unsatisfiable as written**: AC2 above dictates the Write facts word-for-word, and
+      that wording is GateGuard's. An implementer could satisfy AC2 or AC7 but not both, and the
+      audit found AC7 was never asserted anywhere -- so the contradiction shipped undetected and
+      propagated into `CLAUDE.md`'s clean-room claim and its MIT NOTICE dormancy argument, both of
+      which rested on a premise a diff disproves.
+      **The replacement obligation**: the reuse is permitted -- GateGuard and ECC are both MIT --
+      so it is attributed rather than avoided. `plugins/edm/NOTICE` reproduces both copyright and
+      permission notices and states precisely which strings are reused and how closely.
+      `bin/tests/wave8-smoke.sh` asserts that file exists and names both copyright holders, so the
+      attribution cannot be deleted without failing a test. A future contributor who genuinely
+      re-authors the fact text may retire the GateGuard half of NOTICE, but must do so by changing
+      the text first and the claim second -- never the reverse, which is how this defect arose.
 - [ ] AC8: `bin/tests/wave8-smoke.sh` asserts each of the four `Edit` facts and each of the two
       swapped `Write` facts appears in the corresponding denial output, matching on a distinctive
       substring per fact rather than on the whole block.

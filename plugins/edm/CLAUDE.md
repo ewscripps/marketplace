@@ -636,20 +636,29 @@ kind of clause) and never verbatim text lifted from a source.
   `metadata: origin: community`. Licence verified 2026-08-31 by direct inspection of
   `https://raw.githubusercontent.com/zunoworks/gateguard/main/LICENSE` -- a fetched URL, not a
   local clone -- which reads "MIT License / Copyright (c) 2026 Hirokazu Seto / ZUNO WORKS K.K."
-  (decisions.md D13). Clean-room note: per AD1 as ratified at Gate 2 (decisions.md D14,
-  2026-09-02), EDM's `bin/edm-gateguard` is a bash rewrite, not a vendoring of either upstream --
-  what carries over is the mechanism (deny first touch, demand facts, allow on retry), the same
-  pattern-level adoption posture recorded above for `caveman` and `ponytail`; no text was copied
-  from either the Python upstream or ECC's JavaScript port.
+  (decisions.md D13). **Reuse note, corrected by CA-061 (decisions.md D49): the earlier
+  clean-room claim here was factually wrong and is retracted.** `bin/edm-gateguard` IS an
+  independent bash rewrite rather than a vendoring -- AD1 as ratified at Gate 2 (decisions.md D14,
+  2026-09-02) holds for the *mechanism* (deny first touch, demand facts, allow on retry). But the
+  fact-prompt TEXT that gate presents was carried over, not re-authored: in `gg_build_facts()` the
+  Write variant's fact 1 is verbatim apart from an appended path, the Edit variant's fact 2 and
+  the shared fact 3 are near-verbatim, and two more are close paraphrases retaining long verbatim
+  runs. Only fact 4 (quote the ticket's acceptance criteria by `{PREFIX}-T{NN}` ID) is EDM's own.
+  The prior sentence asserting "no text was copied from either the Python upstream or ECC's
+  JavaScript port" did not survive contact with a diff, and is replaced rather than softened.
 
-The strict MIT NOTICE obligation these two entries would otherwise carry is **dormant**: it binds
-only on verbatim reuse, and AD1's ratified bash rewrite produces none. It is re-raised to Must
-Have if AD1 is ever reversed to vendoring **by any route** -- `EDMV4-59` rejected at a later gate,
-or any subsequent decision directing vendoring -- and on that reversal three things bind together:
-the vendored files retain their original copyright headers unmodified; a new `plugins/edm/NOTICE`
-file names ZUNO WORKS K.K. and Affaan Mustafa with their MIT licence texts; and `EDMV4-56`'s
-required-binary set is re-presented at the gate as an explicit dependency addition.
+The strict MIT NOTICE obligation is therefore **live, not dormant, and is satisfied** by
+`plugins/edm/NOTICE` (decisions.md D49). MIT permits this reuse outright -- what it requires is
+that the copyright and permission notices travel with it, which is exactly what that file does.
+Nothing about the reuse was impermissible; the defect CA-061 found was a false statement in this
+document, not a licence breach. `bin/tests/wave8-smoke.sh` asserts the file exists and names both
+copyright holders, so the notice cannot be deleted without failing a test.
 
+The pattern-level posture recorded above for `caveman` and `ponytail` is unaffected and remains
+accurate for those two: their adoption really is structural, and no notice obligation arises. ECC's
+other two adoptions -- `silent-failure-hunter.md`'s five-category taxonomy for L12, and
+`homunculus-dir.sh`'s resolution chain for `_edm-datadir-lib.sh` -- are likewise genuinely
+text-free; ECC appears in NOTICE only because the GateGuard text reached EDM through its port.
 The clean-room posture on `caveman`, `ponytail`, ECC and GateGuard is deliberately unchanged now
 that all four licences are known: MIT would have permitted verbatim reuse with attribution, but
 structural adoption was what this initiative actually did, and restating it as a licence

@@ -11323,6 +11323,71 @@ check_num "CA-120 -- negative control: an explicit two-lens PARTIAL round still 
   "2" "$P2G34_C120P_LENSCOL"
 
 rm -rf "$P2G34_TMP"
+
+# =====================================================================================
+# CA-061 / D49: the MIT NOTICE obligation is live, and must stay satisfied
+# =====================================================================================
+# EDMV4-T14 AC7 originally required that no text be copied verbatim from GateGuard, while AC2
+# dictated the Write facts word-for-word IN GATEGUARD'S OWN WORDING. The two could not both hold,
+# and nothing asserted AC7 -- so the contradiction shipped, and CLAUDE.md's clean-room claim and
+# its MIT NOTICE dormancy argument both came to rest on a premise a diff disproves.
+#
+# AC7 is retired (D49). The reuse is permitted -- both upstreams are MIT -- so it is ATTRIBUTED
+# rather than avoided, and these assertions are what stop the attribution being quietly dropped
+# the next time someone tidies the tree.
+echo
+echo "-- CA-061/D49: plugins/edm/NOTICE exists and attributes both upstreams --"
+
+CA061_NOTICE="${PLUGIN_DIR}/NOTICE"
+if [[ -f "$CA061_NOTICE" ]]; then
+  pass "CA-061 -- plugins/edm/NOTICE exists"
+  CA061_BODY="$(cat "$CA061_NOTICE")"
+  check "CA-061 -- NOTICE names GateGuard's copyright holder" "ZUNO WORKS K.K." "$CA061_BODY"
+  check "CA-061 -- NOTICE names ECC's copyright holder" "Affaan Mustafa" "$CA061_BODY"
+  check "CA-061 -- NOTICE carries the MIT permission notice, not just a licence name" \
+    "The above copyright notice and this permission notice shall be included" "$CA061_BODY"
+  check "CA-061 -- NOTICE points at the file the reused text actually lives in" \
+    "gg_build_facts" "$CA061_BODY"
+  CA061_NONASCII="$(LC_ALL=C grep -c '[^ -~	]' "$CA061_NOTICE" || true)"
+  check_num "CA-061 -- NOTICE is ASCII-only like every other artifact this plugin ships" \
+    "0" "$CA061_NONASCII"
+else
+  fail "CA-061 -- plugins/edm/NOTICE is missing; the MIT attribution D49 recorded has been deleted"
+fi
+
+# NEGATIVE CONTROL: the predicate must fail on a NOTICE stripped of one holder. Without this, a
+# check that merely greps a file nobody deletes proves nothing about what the file must contain.
+CA061_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca061.XXXXXX")"
+sed 's/ZUNO WORKS K.K./REDACTED/g' "$CA061_NOTICE" > "${CA061_TMP}/stripped" 2>/dev/null || true
+CA061_STRIPPED="$(cat "${CA061_TMP}/stripped" 2>/dev/null || true)"
+case "$CA061_STRIPPED" in
+  *"ZUNO WORKS K.K."*)
+    fail "CA-061 negative control -- a NOTICE with the GateGuard holder removed still matched; the assertion above cannot fail" ;;
+  *)
+    pass "CA-061 negative control -- removing a copyright holder makes the same predicate fail, so the assertions above discriminate" ;;
+esac
+
+# The claim CA-061 falsified must not creep back into CLAUDE.md. Matching on the exact retracted
+# sentence rather than on a keyword, so an accurate future discussion of clean-room posture for
+# caveman/ponytail (which IS true) does not trip this.
+CA061_CM="$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+case "$CA061_CM" in
+  *"no text was copied from either the Python upstream or ECC's JavaScript port"*)
+    fail "CA-061 -- CLAUDE.md has regained the retracted clean-room claim; it is false, and NOTICE exists precisely because it is" ;;
+  *)
+    pass "CA-061 -- CLAUDE.md no longer asserts the retracted clean-room claim about the GateGuard text" ;;
+esac
+# Positive control for the check immediately above: the same predicate must FIRE on text that does
+# carry the retracted sentence, or its absence proves only that the grep is broken.
+CA061_PLANT="prefix no text was copied from either the Python upstream or ECC's JavaScript port suffix"
+case "$CA061_PLANT" in
+  *"no text was copied from either the Python upstream or ECC's JavaScript port"*)
+    pass "CA-061 positive control -- the retracted-claim predicate fires on planted text, so its absence above is meaningful" ;;
+  *)
+    fail "CA-061 positive control -- the retracted-claim predicate did not match planted text; the check above is vacuous" ;;
+esac
+
+rm -rf "$CA061_TMP"
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
 

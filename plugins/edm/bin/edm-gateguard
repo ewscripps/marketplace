@@ -533,7 +533,13 @@ gg_is_exempt() {
 
 # gg_build_facts <edit|write> <path> -- the four numbered facts a denial forces (T14 AC1/AC2).
 # Facts 3/4 are byte-identical between variants; only 1/2 swap. Fact 4 asks for the ticket's own
-# AC, by ID, never the user's current instruction (AC3). Wording is EDM's own (AC7).
+# AC, by ID, never the user's current instruction (AC3).
+#
+# PROVENANCE (CA-061, decisions.md D49): facts 1-3 are NOT EDM's own wording -- they are carried
+# over from GateGuard via ECC's JavaScript port, Write fact 1 verbatim apart from the appended
+# path. Only fact 4 is original. This comment previously claimed the opposite, which propagated
+# into CLAUDE.md's clean-room claim. Reuse is MIT-permitted and attributed in plugins/edm/NOTICE.
+# Do not restore a clean-room claim here without first re-authoring the text.
 gg_build_facts() {
   local kind="$1" path="$2"
   local fact1 fact2
