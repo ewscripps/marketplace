@@ -10214,6 +10214,148 @@ CA101_MKTEMP_OUT="$(mktemp "${CA101_LAB}/state.tmp.XXXXXX" 2>/dev/null || true)"
 printf 'staged\n' > "$CA101_MKTEMP_OUT"
 check "CA-101 mechanism -- ...and the canary is untouched by the staged write" \
   "canary" "$(cat "${CA101_LAB}/canary" 2>/dev/null || true)"
+
+# ---- CA-073: the exempt-glob split must not apply PATHNAME EXPANSION ----------------------------
+# `glob_list=($globs)` unquoted applies BOTH word splitting (wanted, on IFS=,) and pathname
+# expansion (never wanted). With globstar off, `**/SRD/**` behaves as `*/SRD/*`: in any repository
+# where a matching path exists relative to the hook's cwd, the glob EXPANDS to that literal filename
+# and stops being a pattern -- so the SRD/, test-tree, dist/build, node_modules and .git exemptions
+# silently stop working and the gate denies edits to exactly the trees it was configured to leave
+# alone. Driven end to end against the real binary, from a cwd that carries the expansion bait.
+echo
+echo "--- CA-073: exempt globs survive a cwd that would expand them ---"
+
+CA073_DIR=""
+p2g1_gg_env CA073_DIR
+# The bait: a path that `*/SRD/*` matches relative to the gate's cwd. Its mere existence is what
+# collapses the default `**/SRD/**` entry from a pattern into this one filename.
+mkdir -p "${CA073_DIR}/proj/docs/SRD"
+printf 'bait\n' > "${CA073_DIR}/proj/docs/SRD/design.md"
+
+# ca073_run <gateguard-binary> -- one Edit on a path the SHIPPED default exempt list covers,
+# executed with the gate's cwd inside the baited tree. Echoes the exit code.
+ca073_run() {
+  local bin="$1" rc=0
+  ( cd "${CA073_DIR}/proj" && printf '{"tool_name":"Edit","session_id":"ca073","tool_input":{"file_path":"SRD/artifact.md"}}' | \
+      CLAUDE_PROJECT_DIR="${CA073_DIR}/proj" CLAUDE_PLUGIN_DATA="${CA073_DIR}/data" \
+      EDM_GATEGUARD_STATE_DIR="${CA073_DIR}/ggstate" EDM_GATEGUARD_DENY_MODE=exit-code \
+      bash "$bin" >/dev/null 2>&1 ) || rc=$?
+  printf '%s\n' "$rc"
+}
+
+rm -rf "${CA073_DIR}/ggstate"
+check_num "CA-073 -- 'SRD/artifact.md' stays exempt (exit 0) even from a cwd where '*/SRD/*' has a real match to expand to" \
+  "0" "$(ca073_run "$GATEGUARD")"
+
+# --- NEGATIVE CONTROL: drop the `set -f` and prove the identical call DENIES, because the default
+# --- `**/SRD/**` entry expanded into the bait filename and stopped matching anything else.
+CA073_MUTANT=""
+p2g1_mutant_bin CA073_MUTANT "$GATEGUARD" 's#^  set -f$#  set +f#'
+rm -rf "${CA073_DIR}/ggstate"
+check_num "CA-073 negative control -- with globbing left ON, the same exempt path is DENIED (exit 2): the exemption had been expanded away" \
+  "2" "$(ca073_run "$CA073_MUTANT")"
+
+# --- ...and the exemption still DISCRIMINATES: a non-exempt path in the same baited cwd denies,
+# --- so the exit 0 above is an exemption match rather than the gate having stopped working.
+rm -rf "${CA073_DIR}/ggstate"
+CA073_NONEXEMPT_RC=0
+( cd "${CA073_DIR}/proj" && printf '{"tool_name":"Edit","session_id":"ca073b","tool_input":{"file_path":"src/main.js"}}' | \
+    CLAUDE_PROJECT_DIR="${CA073_DIR}/proj" CLAUDE_PLUGIN_DATA="${CA073_DIR}/data" \
+    EDM_GATEGUARD_STATE_DIR="${CA073_DIR}/ggstate" EDM_GATEGUARD_DENY_MODE=exit-code \
+    bash "$GATEGUARD" >/dev/null 2>&1 ) || CA073_NONEXEMPT_RC=$?
+check_num "CA-073 -- 'src/main.js' in the same baited cwd still DENIES (exit 2): the matcher discriminates, so the exemption above is real" \
+  "2" "$CA073_NONEXEMPT_RC"
+
+# ---- CA-077: no jq exit status escapes the documented 0/1/2 contract ----------------------------
+# Four `jq` captures on the gated path were unguarded. Under `set -euo pipefail` a jq that exits
+# non-zero (5 on an internal error) aborted the script with THAT status -- outside the documented
+# contract -- and `2>/dev/null` swallowed jq's own message, so the hook produced zero bytes on both
+# streams and the gate failed OPEN invisibly. Driven with a jq shim that fails on one specific
+# filter and forwards every other call to the real binary, so the rest of the run is untouched.
+echo
+echo "--- CA-077: a failing jq is named and stays inside the 0/1/2 exit contract ---"
+
+CA077_DIR=""
+p2g1_gg_env CA077_DIR
+CA077_REAL_JQ="$(command -v jq)"
+CA077_BIN="${CA077_DIR}/shim"
+mkdir -p "$CA077_BIN"
+ln -s "${PLUGIN_DIR}/bin/edm-hookify" "${CA077_BIN}/edm-hookify" 2>/dev/null || true
+
+# ca077_shim <needle> -- a jq shim that exits 5 when any argument contains <needle>, and otherwise
+# execs the real jq. Exit 5 is jq's own internal-error code, the one the finding names.
+ca077_shim() {
+  {
+    printf '%s\n' '#!/bin/sh'
+    printf '%s\n' 'for a in "$@"; do'
+    printf '  case "$a" in *%s*) exit 5 ;; esac\n' "$1"
+    printf '%s\n' 'done'
+    printf 'exec %s "$@"\n' "$CA077_REAL_JQ"
+  } > "${CA077_BIN}/jq"
+  chmod +x "${CA077_BIN}/jq"
+}
+
+# ca077_run <gateguard-binary> <file-path> -- one Edit with the shim first on PATH. Publishes the
+# exit code in CA077_RC and stderr in CA077_ERR.
+ca077_run() {
+  local bin="$1" f="$2"
+  CA077_RC=0
+  CA077_OUT="$(printf '{"tool_name":"Edit","session_id":"ca077","tool_input":{"file_path":"%s","new_string":"x"}}' "$f" | \
+    PATH="${CA077_BIN}:${PATH}" CLAUDE_PROJECT_DIR="${CA077_DIR}/proj" CLAUDE_PLUGIN_DATA="${CA077_DIR}/data" \
+    EDM_GATEGUARD_STATE_DIR="${CA077_DIR}/ggstate" EDM_GATEGUARD_DENY_MODE=exit-code \
+    bash "$bin" 2>"${CA077_DIR}/err")" || CA077_RC=$?
+  CA077_ERR="$(cat "${CA077_DIR}/err" 2>/dev/null || true)"
+}
+
+# --- Site 1-3: the captures that feed THIS gate's own decision. A parser failure there is a setup
+# --- condition: exit 1 (documented, never blocking), named on stderr -- never a bare abort.
+ca077_shim 'tool_input.file_path'
+rm -rf "${CA077_DIR}/ggstate"
+ca077_run "$GATEGUARD" "src/a.js"
+check_num "CA-077 -- a jq that fails on the target projection exits 1, the documented setup code (never 2, never jq's own status)" \
+  "1" "$CA077_RC"
+check "CA-077 -- ...and says so on stderr rather than dying silently" "JSON parser failed" "$CA077_ERR"
+w8_check_empty "CA-077 -- ...with nothing on stdout" "$CA077_OUT"
+
+# --- NEGATIVE CONTROL: reproduce the pre-fix OUTCOME -- jq's own exit status, zero bytes on both
+# --- streams -- and prove the identical shim produces it. The mutation swaps `die` for a bare
+# --- re-exit of the failed status rather than deleting the guard outright, because the guard spans
+# --- a line continuation and a line-oriented sed cannot remove a continuation pair; the observable
+# --- behaviour is identical to what `set -e` did before the guard existed, which is the thing
+# --- being discriminated against.
+CA077_MUTANT=""
+p2g1_mutant_bin CA077_MUTANT "$GATEGUARD" \
+  's#^      || die "the JSON parser failed while reading .tool_input.file_path from the payload"$#      || exit "$?"#'
+rm -rf "${CA077_DIR}/ggstate"
+ca077_run "$CA077_MUTANT" "src/a.js"
+[[ "$CA077_RC" -ne 0 && "$CA077_RC" -ne 1 && "$CA077_RC" -ne 2 ]] \
+  && pass "CA-077 negative control -- unguarded, the same shim makes the gate exit ${CA077_RC} -- jq's own status, outside the documented 0/1/2 contract" \
+  || fail "CA-077 negative control FAILED -- the unguarded binary exited ${CA077_RC}, which is inside the contract; the assertion above does not discriminate"
+w8_check_empty "CA-077 negative control -- ...and it printed nothing at all on stderr: the silent, invisible failure this fix ends" "$CA077_ERR"
+w8_check_empty "CA-077 negative control -- ...nor on stdout" "$CA077_OUT"
+
+# --- Site 4: the hookify projection. This one degrades to ALLOW, not to a setup error -- rule
+# --- evaluation is an additive layer on a call the gate has already decided to allow, so losing it
+# --- must not turn that allow into an exit 1. Driven on an exempt path so the allow path is reached.
+ca077_shim 'old_text'
+rm -rf "${CA077_DIR}/ggstate"
+ca077_run "$GATEGUARD" "SRD/exempt.md"
+check_num "CA-077 -- a jq that fails on the hookify projection still ALLOWS (exit 0): an additive layer's parser failure never becomes a setup error" \
+  "0" "$CA077_RC"
+check "CA-077 -- ...and names the skipped evaluation on stderr rather than passing in silence" \
+  "skipping hookify rule evaluation" "$CA077_ERR"
+
+# --- PAIRED CONTROL: the identical fixture with jq NOT sabotaged reaches the same allow with NO
+# --- skip line, proving the line above is attributable to the induced failure.
+ca077_shim '@@never-matches-any-jq-filter@@'
+rm -rf "${CA077_DIR}/ggstate"
+ca077_run "$GATEGUARD" "SRD/exempt.md"
+check_num "CA-077 paired control -- with jq working, the same exempt path allows (exit 0)" "0" "$CA077_RC"
+check_absent "CA-077 paired control -- ...and prints no skip line, so the skip above came from the induced jq failure" \
+  "skipping hookify rule evaluation" "$CA077_ERR"
+
+# ---- P2 group 1 teardown ------------------------------------------------------------------------
+rm -rf "$P2G1_TMP"
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
 

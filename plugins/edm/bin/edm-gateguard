@@ -496,8 +496,24 @@ gg_is_exempt() {
   local saved_ifs="$IFS"
   IFS=','
   local -a glob_list
-  # shellcheck disable=SC2206 # intentional word-split on IFS=, -- see the comment above this array
+  # CA-073: `set -f` around the split. An unquoted array assignment applies BOTH word splitting
+  # (wanted here, on IFS=,) and PATHNAME EXPANSION (never wanted). With globstar off, `**/SRD/**`
+  # behaves as `*/SRD/*`, so in any repository where a matching path exists relative to this hook's
+  # cwd the glob EXPANDED against the filesystem and stopped being a pattern -- the `case "$path" in
+  # $gg)` below could then only ever match that one literal filename, and the SRD/, test-tree,
+  # dist/build, node_modules and .git exemptions silently stopped working. The gate denied edits to
+  # exactly the trees it was configured to leave alone. The previous shellcheck-disable justified
+  # only the word-splitting half. The prior state of `-f` is restored rather than assumed off, so
+  # this is safe if a caller ever sources or wraps this script with globbing already disabled.
+  local saved_f="$-"
+  set -f
+  # shellcheck disable=SC2206 # intentional word-split on IFS=, ; `set -f` above suppresses the
+  # pathname-expansion half, which is NOT wanted (CA-073).
   glob_list=($globs)
+  case "$saved_f" in
+    *f*) ;;
+    *) set +f ;;
+  esac
   IFS="$saved_ifs"
   local g gg stripped
   for g in "${glob_list[@]}"; do
@@ -559,13 +575,23 @@ gg_maybe_deny() {
 
 # ---- Dispatch on tool name. Bash 3.2 floor (C1): a `case` over a small, fixed name set is the
 # portable form here, not an associative array keyed by tool name. -------------------------------
+#
+# CA-077: every `jq` capture on this gated path is GUARDED. Under `set -euo pipefail` an unguarded
+# command substitution whose jq exits non-zero (exit 5 on an internal error) aborted this script
+# outright -- outside the documented 0/1/2 exit contract, and with jq's own message discarded by
+# `2>/dev/null`, so the hook produced zero bytes on both streams and the gate failed OPEN
+# invisibly. `bin/edm-bash-gate` already guards the structurally identical projection, so the
+# family had the right shape; this file diverged. `die` here is in-contract: exit 1 is this hook's
+# documented setup-error code and never blocks (see the EDM-HELP block above).
 case "$TOOL_NAME" in
   Edit)
-    GG_TARGET="$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.file_path // empty' 2>/dev/null)"
+    GG_TARGET="$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.file_path // empty' 2>/dev/null)" \
+      || die "the JSON parser failed while reading .tool_input.file_path from the payload"
     gg_maybe_deny edit "$GG_TARGET"
     ;;
   Write)
-    GG_TARGET="$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.file_path // empty' 2>/dev/null)"
+    GG_TARGET="$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.file_path // empty' 2>/dev/null)" \
+      || die "the JSON parser failed while reading .tool_input.file_path from the payload"
     gg_maybe_deny write "$GG_TARGET"
     ;;
   MultiEdit)
@@ -579,7 +605,8 @@ case "$TOOL_NAME" in
       ([.tool_input.file_path] + [.tool_input.edits[]?.file_path?])
       | map(select(. != null and . != ""))
       | unique[]
-    ' 2>/dev/null)"
+    ' 2>/dev/null)" \
+      || die "the JSON parser failed while projecting the MultiEdit file list from the payload"
     while IFS= read -r GG_TARGET; do
       gg_maybe_deny edit "$GG_TARGET"
     done <<< "$GG_MULTI_FILES"
@@ -599,13 +626,23 @@ if command -v edm-hookify >/dev/null 2>&1; then
     old_text: (.tool_input.old_string // ([.tool_input.edits[]?.old_string?] | map(select(.!=null)) | join("\n"))),
     new_text: (.tool_input.new_string // .tool_input.content // ([.tool_input.edits[]?.new_string?] | map(select(.!=null)) | join("\n"))),
     content: (.tool_input.content // "")
-  }' 2>/dev/null)"
-  GG_HOOKIFY_RC=0
-  GG_HOOKIFY_OUT="$(printf '%s' "$GG_HOOKIFY_PAYLOAD" | edm-hookify eval file)" || GG_HOOKIFY_RC=$?
-  # T44 AC4/AC5: hookify's block code becomes a refusal through THIS script's own emit_decision
-  # (AD2); hookify's setup-error code never escalates (it already warned on stderr); a clean run
-  # falls through unchanged.
-  [[ "$GG_HOOKIFY_RC" -eq 2 ]] && emit_decision deny "$GG_HOOKIFY_OUT"
+  }' 2>/dev/null)" || GG_HOOKIFY_PAYLOAD=""
+  # CA-077, fourth site: this one degrades to allow rather than to `die`. The three captures above
+  # feed THIS gate's own decision, so a parser failure there is a setup condition worth naming and
+  # exiting on; hookify rule evaluation is an additive layer on the allow path, and losing it must
+  # not turn a call this gate has already decided to allow into an exit-1 setup error. One stderr
+  # line, then skip -- never silence, which is what the pre-fix `2>/dev/null` plus an aborted
+  # process produced.
+  if [[ -z "$GG_HOOKIFY_PAYLOAD" ]]; then
+    echo "edm-gateguard: the JSON parser failed to project the file-event payload -- skipping hookify rule evaluation for this call" >&2
+  else
+    GG_HOOKIFY_RC=0
+    GG_HOOKIFY_OUT="$(printf '%s' "$GG_HOOKIFY_PAYLOAD" | edm-hookify eval file)" || GG_HOOKIFY_RC=$?
+    # T44 AC4/AC5: hookify's block code becomes a refusal through THIS script's own emit_decision
+    # (AD2); hookify's setup-error code never escalates (it already warned on stderr); a clean run
+    # falls through unchanged.
+    [[ "$GG_HOOKIFY_RC" -eq 2 ]] && emit_decision deny "$GG_HOOKIFY_OUT"
+  fi
 fi
 
 # Every branch above allows silently once every path in scope is already checked (or exempt, or
