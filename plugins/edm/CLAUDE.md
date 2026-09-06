@@ -1666,6 +1666,22 @@ See `CHANGELOG.md`'s `[3.1.0]` entry (G44/CA-275, G30/CA-275) for the full recor
 under "Hooks behavior" and "Artifact content conventions") rather than a member of either family
 here.
 
+**`EDM_STATE_LOCK_*` pair (plugin-runtime, `bin/edm-state`).** Two constants govern every lock this
+plugin takes, and they answer different questions -- do not collapse them into one number:
+
+- `EDM_STATE_LOCK_WAIT_S` (default `10`, positive whole seconds) -- how long ONE acquisition waits
+  before declaring a timeout, on either lock backend. `EDM_STATE_LOCK_MAX_TRIES` is derived from it
+  (`x10`, the 0.1s poll interval), so the two backends can never disagree about the same logical
+  timeout. Validated beside its default: a fractional or non-numeric value exits 2 rather than
+  aborting every subcommand with a raw arithmetic error or fabricating an instant lock timeout
+  (CA-432).
+- `EDM_STATE_LOCK_STALE_S` (default `900`, positive whole seconds, CA-082/CA-087) -- how old a lock
+  DIRECTORY must be before a contender may break it. A holder killed with SIGKILL leaves its
+  lockdir behind, and (for the mkdir backend) a PID later recycled by an unrelated process makes
+  that lockdir read as live forever, so an age cap is the only recovery a contender has. Kept
+  generously above the wait so a legitimately slow mutator is never broken out from under itself.
+  Breaking a lock always prints a diagnostic naming the directory -- it is never silent.
+
 **`EDM_GATEGUARD_*` knob family (EDMV4-T15).** Six environment variables tune `bin/edm-gateguard`'s
 operational safety controls, distinct from both families above (these are plugin-runtime knobs,
 not test-harness knobs). Each is genuinely optional -- leaving it unset means the shipped default

@@ -1312,6 +1312,16 @@ EDM_STATE_LOCK_WAIT_S="${EDM_STATE_LOCK_WAIT_S:-10}"
   || { echo "edm-state: invalid EDM_STATE_LOCK_WAIT_S: '${EDM_STATE_LOCK_WAIT_S}' (expected a positive whole number of seconds)" >&2; exit 2; }
 EDM_STATE_LOCK_MAX_TRIES=$(( EDM_STATE_LOCK_WAIT_S * 10 ))
 
+# EDM_STATE_LOCK_STALE_S (CA-082/CA-087): how old a lock directory must be before a contender is
+# allowed to break it. This is a different question from EDM_STATE_LOCK_WAIT_S above -- that one
+# bounds how long ONE acquisition waits; this one bounds how long a lock may plausibly be held by a
+# LIVE holder before its continued existence is evidence the holder is gone. Kept generously above
+# the wait so a legitimately slow mutator is never broken out from under itself. Validated beside
+# its default, per CA-160's standing rule.
+EDM_STATE_LOCK_STALE_S="${EDM_STATE_LOCK_STALE_S:-900}"
+[[ "$EDM_STATE_LOCK_STALE_S" =~ ^[1-9][0-9]*$ ]] \
+  || { echo "edm-state: invalid EDM_STATE_LOCK_STALE_S: '${EDM_STATE_LOCK_STALE_S}' (expected a positive whole number of seconds)" >&2; exit 2; }
+
 # _lock_retry_or_die <tries> -- shared retry-accounting check for with_state_lock's mkdir-based
 # spin loop below (G47/CA-278). Takes the caller's current try count as an explicit argument and
 # echoes the incremented count back on success (CA-398): the previous form mutated a same-named
@@ -6037,22 +6047,85 @@ _pattern_collect_normalized_headings() {
   done < <(grep -n '^### ' "$_pch_file" 2>/dev/null || true)
 }
 
+# _pattern_provenance_cleanup -- CA-082's trap body. Both variables are deliberately NON-local for
+# the reason CA-088 records at write_atomic: a trap body expands its variables at SIGNAL time, when
+# a function-local of that name has already been popped off the local stack.
+_PPR_LOCKDIR="" _PPR_TMP=""
+_pattern_provenance_cleanup() {
+  [[ -n "$_PPR_TMP" ]] && rm -f "$_PPR_TMP" 2>/dev/null
+  [[ -n "$_PPR_LOCKDIR" ]] && rm -rf "$_PPR_LOCKDIR" 2>/dev/null
+  return 0
+}
+
 # _pattern_record_provenance <provenance-dir> <pattern-filename>
 # Updates <provenance-dir>/harvest-provenance.json's entry for <pattern-filename>: increments
 # write_count by one and sets first_write_at (ISO-8601 UTC) ONCE, on the entry's first-ever
-# write -- never overwritten afterwards. Always called from inside the caller's with_state_lock
-# hold (the same lock guarding the splice this always follows in _cmd_update_patterns_body), so
-# this takes no lock of its own (EDMV4-T18 AC5). Best-effort: a provenance-write failure is
-# warned on stderr and never aborts update-patterns -- provenance is an observability aid for
-# R3, not a correctness requirement of the splice it documents.
+# write -- never overwritten afterwards. Best-effort: a provenance-write failure is warned on
+# stderr and never aborts update-patterns -- provenance is an observability aid for R3, not a
+# correctness requirement of the splice it documents.
+#
+# CA-082, three defects in one read-modify-write:
+#
+#  1. **The lock was keyed on the wrong file.** This runs inside the caller's `with_state_lock`
+#     hold, but that lock is keyed on the INITIATIVE's `.edm-state` lockbase, while
+#     harvest-provenance.json is SHARED across every initiative and every audit type in one data
+#     directory. Two initiatives (or two audit types) running `update-patterns` concurrently held
+#     two different locks and read-modify-wrote one file: entries were lost or the JSON corrupted.
+#     The fix takes a second lock keyed on the provenance file itself. It cannot be another
+#     `with_state_lock` -- that function is not reentrant and its own guard would `die` on the
+#     nested call -- so this is the same `mkdir` primitive with_state_lock's fallback branch uses,
+#     scoped to this one file. A lock that cannot be taken warns and SKIPS the provenance write
+#     rather than corrupting the file or aborting the splice that already succeeded.
+#  2. **A fixed-name `.tmp` staging path with no trap.** Killed between `jq` and `mv`, the staging
+#     file persisted; and `${file}.tmp` (no dot-suffix) is matched by no glob in `.gitignore`,
+#     while `plugins/edm/docs/audit-patterns/*.tmp.*` already covers the `.tmp.XXXXXX` shape the
+#     mktemp template below produces. Staging now goes through `mktemp "${dest}.tmp.XXXXXX"` --
+#     `write_atomic`'s own shape, the family standard -- under a four-arm EXIT/INT/TERM/HUP trap.
+#  3. **The `mv` was unguarded**, so a failed rename left the caller believing provenance landed.
 _pattern_record_provenance() {
-  local _ppr_dir="$1" _ppr_name="$2" _ppr_file _ppr_ts _ppr_existing
+  local _ppr_dir="$1" _ppr_name="$2" _ppr_file _ppr_ts _ppr_existing _ppr_lock _ppr_tries=0 _ppr_age
   _ppr_file="${_ppr_dir}/harvest-provenance.json"
   _ppr_ts="$(now_utc)"
   mkdir -p "$_ppr_dir" 2>/dev/null || {
     echo "update-patterns: WARNING -- could not create ${_ppr_dir} to record harvest-provenance.json" >&2
     return 0
   }
+  _ppr_lock="${_ppr_file}.lockd"
+  until mkdir "$_ppr_lock" 2>/dev/null; do
+    _ppr_tries=$(( _ppr_tries + 1 ))
+    if [[ $_ppr_tries -ge $EDM_STATE_LOCK_MAX_TRIES ]]; then
+      # Cap the wait the same way with_state_lock's own mkdir branch does (CA-087): a holder
+      # killed mid-write would otherwise make every later run skip provenance forever.
+      _ppr_age="$(_git_lock_age_seconds "$_ppr_lock")" || _ppr_age=""
+      if [[ -n "$_ppr_age" ]] && (( _ppr_age > EDM_STATE_LOCK_STALE_S )); then
+        echo "update-patterns: WARNING -- breaking provenance lock ${_ppr_lock}, held longer than ${EDM_STATE_LOCK_STALE_S}s (its holder is gone)" >&2
+        rm -rf "$_ppr_lock" 2>/dev/null || true
+        _ppr_tries=0
+        continue
+      fi
+      echo "update-patterns: WARNING -- could not acquire ${_ppr_lock} within ${EDM_STATE_LOCK_WAIT_S}s; skipping the provenance record for ${_ppr_name} (the pattern splice itself already succeeded)" >&2
+      return 0
+    fi
+    sleep 0.1
+  done
+  _PPR_LOCKDIR="$_ppr_lock"
+  _save_traps
+  trap '_pattern_provenance_cleanup' EXIT
+  trap '_pattern_provenance_cleanup; exit 130' INT
+  trap '_pattern_provenance_cleanup; exit 143' TERM
+  trap '_pattern_provenance_cleanup; exit 129' HUP
+
+  local _ppr_tmp=""
+  _ppr_tmp="$(mktemp "${_ppr_file}.tmp.XXXXXX" 2>/dev/null)" || _ppr_tmp=""
+  if [[ -z "$_ppr_tmp" ]]; then
+    echo "update-patterns: WARNING -- could not stage a temporary file beside ${_ppr_file}" >&2
+    _pattern_provenance_cleanup
+    _PPR_LOCKDIR=""
+    _restore_traps
+    return 0
+  fi
+  _PPR_TMP="$_ppr_tmp"
+
   _ppr_existing="{}"
   [[ -f "$_ppr_file" ]] && _ppr_existing="$(cat "$_ppr_file" 2>/dev/null || echo '{}')"
   if printf '%s' "$_ppr_existing" | jq --arg n "$_ppr_name" --arg ts "$_ppr_ts" '
@@ -6060,12 +6133,15 @@ _pattern_record_provenance() {
       write_count: (($e.write_count // 0) + 1),
       first_write_at: ($e.first_write_at // $ts)
     })
-  ' > "${_ppr_file}.tmp" 2>/dev/null; then
-    mv "${_ppr_file}.tmp" "$_ppr_file"
+  ' > "$_ppr_tmp" 2>/dev/null && mv -f "$_ppr_tmp" "$_ppr_file" 2>/dev/null; then
+    _PPR_TMP=""
   else
     echo "update-patterns: WARNING -- could not update ${_ppr_file}" >&2
-    rm -f "${_ppr_file}.tmp"
   fi
+  _pattern_provenance_cleanup
+  _PPR_TMP="" _PPR_LOCKDIR=""
+  _restore_traps
+  return 0
 }
 
 _cmd_update_patterns_body() {

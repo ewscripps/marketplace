@@ -10354,6 +10354,117 @@ check_num "CA-077 paired control -- with jq working, the same exempt path allows
 check_absent "CA-077 paired control -- ...and prints no skip line, so the skip above came from the induced jq failure" \
   "skipping hookify rule evaluation" "$CA077_ERR"
 
+# ---- CA-082: _pattern_record_provenance -- shared file, wrong lock key, fixed-name staging -------
+# harvest-provenance.json is SHARED across every initiative and every audit type in one data
+# directory, but the only lock held while it was read-modify-written was the CALLER's, keyed on one
+# initiative's `.edm-state` lockbase. Two initiatives (or two audit types) running update-patterns
+# concurrently held two different locks over one file: entries lost, or the JSON corrupted outright.
+#
+# Driven by extracting the REAL function text (plus the real trap/age helpers and lock constants it
+# depends on) into a runnable harness, then firing N recorders CONCURRENTLY at one shared file and
+# asserting the summed write_count -- the count is the assertion, because a lost update is invisible
+# to any check that only looks at exit statuses.
+echo
+echo "--- CA-082: concurrent provenance recorders lose no write_count ---"
+
+CA082_N=10
+CA082_DIR="$(mktemp -d "${P2G1_TMP}/ca082.XXXXXX")"
+
+# ca082_harness <edm-state-binary> -- build a runnable harness around the real function text.
+# The libraries are sourced from the binary's OWN directory, so a mutant built by p2g1_mutant_bin
+# (which copies every sibling `_edm-*.sh` beside it) works exactly as the real binary does.
+ca082_harness() {
+  local bin="$1" tag="$2" fn h
+  h="${CA082_DIR}/harness-${tag}.sh"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf '%s\n' 'set -euo pipefail'
+    printf 'SCRIPT_DIR="%s"\n' "$(dirname "$bin")"
+    printf '%s\n' 'source "${SCRIPT_DIR}/_edm-cli-lib.sh"'
+    printf '%s\n' 'source "${SCRIPT_DIR}/_edm-lint-lib.sh"'
+    for fn in now_utc _restore_trap _save_traps _restore_traps _git_lock_age_seconds \
+              _pattern_provenance_cleanup _pattern_record_provenance; do
+      p2g1_extract_fn "$bin" "$fn"
+    done
+    { grep -E '^EDM_STATE_LOCK_(WAIT_S|MAX_TRIES|STALE_S)=' "$bin" || true; }
+    { grep -E '^_PPR_LOCKDIR=' "$bin" || true; }
+    printf '%s\n' '_pattern_record_provenance "$1" "$2"'
+  } > "$h"
+  printf '%s\n' "$h"
+}
+
+# ca082_storm <harness> <provenance-dir> -- fire CA082_N recorders concurrently at one shared file
+# and echo the recorded write_count (or the literal LOST when the file will not parse at all).
+ca082_storm() {
+  local h="$1" pd="$2" i=1
+  mkdir -p "$pd"
+  while [[ "$i" -le "$CA082_N" ]]; do
+    ( bash "$h" "$pd" "code-audit.md" >/dev/null 2>&1 ) &
+    i=$((i + 1))
+  done
+  wait
+  jq -r '."code-audit.md".write_count // "LOST"' "${pd}/harvest-provenance.json" 2>/dev/null || printf 'LOST\n'
+}
+
+CA082_H="$(ca082_harness "$P2G1_EDM_STATE" fixed)"
+bash -n "$CA082_H" 2>/dev/null \
+  && pass "CA-082 setup -- the harness built from bin/edm-state's real function text parses" \
+  || fail "CA-082 setup -- the harness does not parse; every assertion below would be meaningless"
+
+CA082_PROV="${CA082_DIR}/prov"
+CA082_COUNT="$(ca082_storm "$CA082_H" "$CA082_PROV")"
+check_num "CA-082 -- ${CA082_N} CONCURRENT provenance recorders all counted (no write_count lost to a racing read-modify-write)" \
+  "$CA082_N" "$( [[ "$CA082_COUNT" =~ ^[0-9]+$ ]] && printf '%s' "$CA082_COUNT" || printf '0' )"
+CA082_FIRST="$(jq -r '."code-audit.md".first_write_at // ""' "${CA082_PROV}/harvest-provenance.json" 2>/dev/null || true)"
+[[ -n "$CA082_FIRST" ]] \
+  && pass "CA-082 -- first_write_at survived the storm (${CA082_FIRST}): the document is well-formed, not merely present" \
+  || fail "CA-082 -- first_write_at is missing after the storm; the shared document did not survive"
+CA082_RESIDUE="$({ ls -1 "$CA082_PROV" 2>/dev/null || true; } | { grep -c '\.tmp\.\|\.lockd' || true; })"
+check_num "CA-082 -- the storm left no staging file and no lock directory behind" "0" "$CA082_RESIDUE"
+
+# --- NEGATIVE CONTROL: give every recorder its OWN lock directory, which is mutual exclusion in
+# --- name only, and prove the identical storm loses updates. The mutation is a one-line change to
+# --- the lock PATH rather than a removal of the spin loop -- a line-oriented sed cannot delete a
+# --- multi-line `until ... done` -- so everything else about the run (traps, mktemp staging, the
+# --- guarded mv) stays byte-identical and the count is attributable to the lock alone.
+# --- The race is real but not certain per attempt, so this retries a bounded number of times and
+# --- FAILS as INCONCLUSIVE rather than passing if no attempt ever lost an update.
+CA082_MUTANT=""
+p2g1_mutant_bin CA082_MUTANT "$P2G1_EDM_STATE" \
+  's#^  _ppr_lock="\${_ppr_file}.lockd"$#  _ppr_lock="${_ppr_file}.lockd.$$"#'
+CA082_MUT_H="$(ca082_harness "$CA082_MUTANT" unlocked)"
+CA082_MUT_ATTEMPTS=0
+CA082_MUT_WORST="$CA082_N"
+while [[ "$CA082_MUT_ATTEMPTS" -lt 6 ]]; do
+  CA082_MUT_ATTEMPTS=$((CA082_MUT_ATTEMPTS + 1))
+  CA082_MUT_COUNT="$(ca082_storm "$CA082_MUT_H" "${CA082_DIR}/prov-mut-${CA082_MUT_ATTEMPTS}")"
+  if [[ ! "$CA082_MUT_COUNT" =~ ^[0-9]+$ ]]; then
+    CA082_MUT_WORST=-1
+    break
+  fi
+  [[ "$CA082_MUT_COUNT" -lt "$CA082_MUT_WORST" ]] && CA082_MUT_WORST="$CA082_MUT_COUNT"
+  [[ "$CA082_MUT_WORST" -lt "$CA082_N" ]] && break
+done
+if [[ "$CA082_MUT_WORST" -lt "$CA082_N" ]]; then
+  pass "CA-082 negative control -- with the lock keyed per PROCESS instead of per FILE, the identical storm recorded ${CA082_MUT_WORST}/${CA082_N} (attempt ${CA082_MUT_ATTEMPTS}; -1 means the document did not even parse): the locked result above is a real contention result"
+else
+  fail "CA-082 negative control INCONCLUSIVE -- ${CA082_MUT_ATTEMPTS} unlocked storms all recorded ${CA082_N}/${CA082_N}; this host did not reproduce the race, so the locked assertion above is unproven rather than passing"
+fi
+
+# --- Structural: the lock is keyed on the provenance FILE, and staging goes through mktemp's
+# --- template form rather than the fixed `${file}.tmp` name no .gitignore glob matched.
+CA082_BODY="$({ grep -v '^[[:space:]]*#' "$P2G1_EDM_STATE" || true; })"
+check_num "CA-082 -- the provenance lock is keyed on the provenance file itself" \
+  "1" "$(printf '%s\n' "$CA082_BODY" | count_matches -F '_ppr_lock="${_ppr_file}.lockd"')"
+check_num "CA-082 -- staging goes through mktemp's template form beside the destination" \
+  "1" "$(printf '%s\n' "$CA082_BODY" | count_matches -F 'mktemp "${_ppr_file}.tmp.XXXXXX"')"
+check_num "CA-082 -- the fixed-name \`\${_ppr_file}.tmp\` staging path is gone from every code line" \
+  "0" "$(printf '%s\n' "$CA082_BODY" | count_matches -F '"${_ppr_file}.tmp"')"
+CA082_STRUCT_CONTROL="$(printf '%s\nmv "${_ppr_file}.tmp" "$_ppr_file"\n' "$CA082_BODY" | count_matches -F '"${_ppr_file}.tmp"')"
+[[ "$CA082_STRUCT_CONTROL" -ge 1 ]] \
+  && pass "CA-082 positive control -- an injected fixed-name staging path IS counted (${CA082_STRUCT_CONTROL} hit(s)): the zero above is a real zero" \
+  || fail "CA-082 positive control FAILED -- the scan did not count an injected fixed-name staging path; the assertion above is vacuous"
+
 # ---- P2 group 1 teardown ------------------------------------------------------------------------
 rm -rf "$P2G1_TMP"
 echo "Results: ${PASS} passed, ${FAIL} failed"
