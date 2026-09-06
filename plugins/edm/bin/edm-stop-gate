@@ -15,7 +15,7 @@
 #
 # Usage:
 #   edm-stop-gate            # run from a Stop hook; no arguments
-#   edm-stop-gate -h|--help  # show this help
+#   edm-stop-gate -h|--help|help  # show this help
 #
 # Prefix resolution: this gate calls `edm-state active-initiatives` (no argument, lists every
 # initiative with current_phase in 1-6) rather than guessing a prefix from the working directory
@@ -53,6 +53,11 @@
 #      either).
 # All operator-facing text goes to stderr, never stdout -- a raw JSON echo to stdout is the
 # documented failure mode for a Stop hook.
+#
+# Environment (CA-115):
+#   EDM_HOOKIFY=0|false|off|disabled|disable   -- disable hookify evaluation in every consumer
+#   EDM_HOOKIFY_DISABLED=1                     -- second, independent switch; literal "1" only
+# Neither disables this gate's `edm-state validate` enforcement, which is not a hookify concern.
 # EDM-HELP-END
 set -uo pipefail
 
@@ -65,8 +70,34 @@ usage() {
 }
 
 case "${1:-}" in
-  -h|--help) usage ;;
+  -h|--help|help) usage ;;
 esac
+
+# CA-108 (co-site): an unexpected positional is a usage error, not a hook invocation. This gate is
+# invoked by the host with its payload on STDIN and no arguments, so anything positional here came
+# from a hand-typed CLI -- and silently ignoring it means a typo'd flag reads as a successful,
+# fully-enforcing run. Exit 1, never 2: 2 is this gate's BLOCK code, and a typo must never block a
+# session. Mirrors the same guard in bin/edm-bash-gate (cited by name, not line: G10/CA-340).
+if [[ $# -gt 0 ]]; then
+  echo "edm-stop-gate: unexpected argument: '$1' -- edm-stop-gate takes no positional arguments; its payload arrives on stdin as the host's Stop JSON" >&2
+  exit 1
+fi
+
+# CA-115 (co-site): the hookify kill switches. edm-gateguard and edm-bash-gate both honour these;
+# this gate did not, so a `stop`-event block rule had NO environment escape -- a contributor whose
+# committed rule wedged their own session had to edit or delete the rule file to get out. Both
+# switches are independent and deliberately differ in what they accept, matching the family:
+#   EDM_HOOKIFY=0|false|off|disabled|disable  -- disables every hookify consumer
+#   EDM_HOOKIFY_DISABLED=1                    -- second switch, the literal "1" ONLY
+# Neither disables this gate's `edm-state validate` enforcement, which is not a hookify concern
+# and has its own contract; they gate only the hookify evaluation below.
+EDM_STOP_GATE_HOOKIFY_ON=1
+case "${EDM_HOOKIFY:-}" in
+  0|false|off|disabled|disable) EDM_STOP_GATE_HOOKIFY_ON=0 ;;
+esac
+if [[ "${EDM_HOOKIFY_DISABLED:-}" == "1" ]]; then
+  EDM_STOP_GATE_HOOKIFY_ON=0
+fi
 
 # soft_exit: every internal/setup-error path exits 0 -- this gate's own contract has no
 # non-blocking failure code other than 0 (unlike bin/'s usual two-code die(), which defaults to a
@@ -194,7 +225,9 @@ done
 # initiative -- the `stop` event defines no per-initiative field to vary the payload on). Only
 # reached when at least one initiative was active above; a repository with none already exited 0
 # silently at AC3's own check, and hookify's own overhead is skipped for the identical reason.
-if command -v edm-hookify >/dev/null 2>&1; then
+# CA-115 (co-site): the kill switches resolved at the top of this file gate the hookify half only.
+# A `stop`-event block rule previously had no environment escape here, unlike its two siblings.
+if [[ "$EDM_STOP_GATE_HOOKIFY_ON" -eq 1 ]] && command -v edm-hookify >/dev/null 2>&1; then
   _hookify_rc=0
   # CA-008: capture ONLY stdout. The `2>&1` this used to carry folded hookify's stderr into the
   # capture, and the capture is printed only on the block path -- so every `warn` line and every

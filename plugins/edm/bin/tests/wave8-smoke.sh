@@ -11388,6 +11388,115 @@ case "$CA061_PLANT" in
 esac
 
 rm -rf "$CA061_TMP"
+
+# =====================================================================================
+# CA-107 / CA-108 / CA-115 / CA-124 co-sites: the same defect at call sites the findings
+# did not name
+# =====================================================================================
+# Each of these findings was fixed at the file its ledger entry names, leaving the identical
+# defect live elsewhere. CA-107/108/115 were fixed in edm-gateguard and edm-bash-gate but not in
+# edm-stop-gate, which I omitted from the remediating agent's file list while naming its three
+# siblings. CA-124 was fixed in skills/srd/ while three other skills carried the same unchecked
+# `get-patterns | sed -n 1p`. A finding closed at one co-site and open at three is worse than an
+# open finding, because the ledger says it is done.
+echo
+echo "-- CA-107/108/115/124 co-sites --"
+
+CACO_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-caco.XXXXXX")"
+CACO_SG="${PLUGIN_DIR}/bin/edm-stop-gate"
+
+# ---- CA-107: the `help` bare alias, which the two siblings accept and this gate did not --------
+CACO_HELP_RC=0
+printf '{}' | bash "$CACO_SG" help >/dev/null 2>&1 || CACO_HELP_RC=$?
+check_num "CA-107 co-site -- edm-stop-gate accepts the bare 'help' alias its siblings accept" \
+  "0" "$CACO_HELP_RC"
+# Negative control: an unknown flag must NOT be swallowed as help.
+CACO_BADFLAG_RC=0
+printf '{}' | bash "$CACO_SG" --not-a-flag >/dev/null 2>&1 || CACO_BADFLAG_RC=$?
+[[ "$CACO_BADFLAG_RC" -ne 0 ]] \
+  && pass "CA-107 co-site negative control -- an unknown flag is not treated as help (exit ${CACO_BADFLAG_RC})" \
+  || fail "CA-107 co-site negative control -- an unknown flag exited 0; the help matcher is too broad"
+
+# ---- CA-108: an unexpected positional is a USAGE error (1), never the BLOCK code (2) -----------
+CACO_POS_RC=0
+CACO_POS_ERR="$(printf '{}' | bash "$CACO_SG" --frobnicate 2>&1 >/dev/null)" || CACO_POS_RC=$?
+check_num "CA-108 co-site -- an unexpected positional exits 1 (usage), not 2 (block)" \
+  "1" "$CACO_POS_RC"
+check "CA-108 co-site -- and names the offending argument on stderr" "--frobnicate" "$CACO_POS_ERR"
+# This distinction is the whole point: 2 is this gate's block code, so a typo must never wedge a
+# session. Asserted as a distinct claim so a regression to 2 fails loudly rather than reading as
+# "still non-zero, still fine".
+[[ "$CACO_POS_RC" -ne 2 ]] \
+  && pass "CA-108 co-site -- a typo'd flag cannot block a session (exit is not 2)" \
+  || fail "CA-108 co-site -- a typo'd flag exited 2 and would BLOCK the session"
+
+# ---- CA-115: the hookify kill switch, isolated from the validate enforcement -------------------
+# Isolation matters: on a repo with a blocking validate anomaly the gate exits 2 regardless, so a
+# naive test would pass whether or not the switch exists. This fixture has a CLEAN initiative and
+# a stop-event BLOCK rule, so exit 2 can only come from hookify -- and the switch must flip it.
+CACO_PROJ="${CACO_TMP}/proj"
+mkdir -p "${CACO_PROJ}/.claude/edm-hookify"
+( cd "$CACO_PROJ" && git init -q . && git config user.email edm@example.com && git config user.name EDM ) >/dev/null 2>&1
+cat > "${CACO_PROJ}/.claude/edm-hookify/block-everything.json" <<'RULE'
+{
+  "name": "block-everything",
+  "enabled": true,
+  "event": "stop",
+  "action": "block",
+  "conditions": [],
+  "message": "CA-115 co-site fixture: this stop rule always blocks."
+}
+RULE
+( cd "$CACO_PROJ" && CLAUDE_PROJECT_DIR="$CACO_PROJ" bash "${PLUGIN_DIR}/bin/edm-init" CACO ) >/dev/null 2>&1
+( cd "$CACO_PROJ" && CLAUDE_PROJECT_DIR="$CACO_PROJ" bash "${PLUGIN_DIR}/bin/edm-state" phase-start CACO 1 ) >/dev/null 2>&1
+
+caco_stop_rc() {
+  local _rc=0
+  ( cd "$CACO_PROJ" && CLAUDE_PROJECT_DIR="$CACO_PROJ" PATH="${PLUGIN_DIR}/bin:$PATH" \
+      env "$@" bash "$CACO_SG" </dev/null ) >/dev/null 2>&1 || _rc=$?
+  printf '%s' "$_rc"
+}
+
+CACO_ON="$(caco_stop_rc EDM_HOOKIFY_UNSET=1)"
+if [[ "$CACO_ON" -eq 2 ]]; then
+  pass "CA-115 co-site precondition -- the fixture's stop-event block rule does make the gate exit 2"
+  check_num "CA-115 co-site -- EDM_HOOKIFY=off disables the hookify evaluation and the gate allows" \
+    "0" "$(caco_stop_rc EDM_HOOKIFY=off)"
+  check_num "CA-115 co-site -- EDM_HOOKIFY_DISABLED=1 does the same, independently" \
+    "0" "$(caco_stop_rc EDM_HOOKIFY_DISABLED=1)"
+  # Negative control on the SWITCH ITSELF: the family contract says EDM_HOOKIFY_DISABLED honours
+  # the literal "1" only. A switch that disabled on any truthy-looking string would be a different
+  # (and undocumented) contract, and this is what catches that.
+  check_num "CA-115 co-site negative control -- EDM_HOOKIFY_DISABLED=true does NOT disable (literal 1 only)" \
+    "2" "$(caco_stop_rc EDM_HOOKIFY_DISABLED=true)"
+else
+  fail "CA-115 co-site precondition -- the fixture did not reach the hookify block path (gate exited ${CACO_ON}, expected 2); the switch assertions below would be vacuous, so they are not run"
+fi
+
+# ---- CA-124: all four remaining get-patterns call sites carry the seed guard -------------------
+# Counted across the skills, not asserted per-file, so a fifth call site added later without a
+# guard fails this rather than escaping it.
+CACO_CALLS="$({ grep -rl 'edm-state get-patterns' "${PLUGIN_DIR}/skills" || true; } | sort)"
+CACO_MISSING=""
+for _f in $CACO_CALLS; do
+  _n_calls="$({ grep -c 'PATTERN_PATHS="\$(edm-state get-patterns' "$_f" || true; } | tr -d ' ')"
+  _n_guards="$({ grep -c 'pattern-library seed unresolved' "$_f" || true; } | tr -d ' ')"
+  [[ "$_n_calls" -eq "$_n_guards" ]] || CACO_MISSING="${CACO_MISSING} $(basename "$(dirname "$_f")")(${_n_guards}/${_n_calls})"
+done
+[[ -z "${CACO_MISSING// /}" ]] \
+  && pass "CA-124 co-site -- every get-patterns call site in skills/ carries a seed guard" \
+  || fail "CA-124 co-site -- call sites without a seed guard:${CACO_MISSING}"
+
+# Negative control: strip a guard from a scratch copy and confirm the same predicate reports it.
+CACO_STRIP="${CACO_TMP}/stripped.md"
+sed '/pattern-library seed unresolved/d' "${PLUGIN_DIR}/skills/tickets/SKILL.md" > "$CACO_STRIP"
+CACO_SC="$({ grep -c 'PATTERN_PATHS="\$(edm-state get-patterns' "$CACO_STRIP" || true; } | tr -d ' ')"
+CACO_SG_N="$({ grep -c 'pattern-library seed unresolved' "$CACO_STRIP" || true; } | tr -d ' ')"
+[[ "$CACO_SC" -ne "$CACO_SG_N" ]] \
+  && pass "CA-124 co-site negative control -- a guard-stripped copy is detected (${CACO_SG_N}/${CACO_SC}), so the check above discriminates" \
+  || fail "CA-124 co-site negative control -- a guard-stripped copy compared equal; the check above is vacuous"
+
+rm -rf "$CACO_TMP"
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
 

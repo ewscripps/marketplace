@@ -121,6 +121,16 @@ the agent carries no `Bash` grant):
 TICKET_PATTERN_PATHS="$(edm-state get-patterns ticket --paths)"
 TICKET_PATTERN_SEED="$(printf '%s\n' "$TICKET_PATTERN_PATHS" | sed -n '1p')"
 TICKET_PATTERN_DELTA="$(printf '%s\n' "$TICKET_PATTERN_PATHS" | sed -n '2p')"
+# CA-124 (co-site): an unresolved SEED is a setup error, not an empty string to interpolate into
+# the prompt. Without this check a failed `get-patterns` -- a missing plugin data directory, or a
+# resolution that fell through -- yields an empty path, the spawn prompt reads `Read  first`, and
+# the agent works UNGROUNDED with no signal anywhere that the pattern library was skipped. The
+# DELTA path is legitimately empty until a delta has been harvested; only the SEED is always
+# expected.
+if [[ -z "$TICKET_PATTERN_SEED" ]]; then
+  echo "edm:tickets: pattern-library seed unresolved -- 'edm-state get-patterns ticket --paths' returned no seed path. Refusing to spawn ungrounded; fix pattern-library resolution first." >&2
+  exit 2
+fi
 ```
 
 ```

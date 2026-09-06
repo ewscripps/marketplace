@@ -975,7 +975,10 @@ repository with no active Phase 6 initiative evaluates no `file` rule at all (CA
 `edm-bash-gate` sees **every** bash command in the session, which makes an over-broad `bash` rule
 the widest-blast-radius rule this format can express. Both `edm-gateguard` and `edm-bash-gate`
 ship environment-variable kill switches for exactly that case (`EDM_GATEGUARD*`, `EDM_HOOKIFY*`
-under "Testing changes"); `edm-stop-gate` does not yet (CA-115).
+under "Testing changes"), and `edm-stop-gate` now does too -- the `EDM_HOOKIFY*` pair gates its
+hookify evaluation as well (CA-115 co-site). All three hookify consumers therefore have the same
+environment escape. Note the switches gate the HOOKIFY half only: `edm-stop-gate`'s own
+`edm-state validate` enforcement is not a hookify concern and has its own contract.
 
 **JSON, read with `jq` only.** This plugin's required binaries are `bash`, `jq`, and `git` and
 nothing else. There is no YAML parser anywhere in `bin/`, so a YAML-based rule format would need
@@ -1808,7 +1811,12 @@ below applies, not that the corresponding control is absent:
   comparison and made the gate allow **every** edit while printing "denial budget reached" -- the
   exact inverse of the fail-closed default, announced as if it were working.
 
-**`EDM_HOOKIFY_*` pair (CA-115, plugin-runtime).** `bin/edm-bash-gate` is registered on the `Bash`
+**`EDM_HOOKIFY_*` pair (CA-115, plugin-runtime).** Honoured by ALL THREE hookify consumers --
+`bin/edm-bash-gate`, `bin/edm-gateguard` and `bin/edm-stop-gate` (the last added as a CA-115
+co-site: it was the one consumer left with no escape, so a `stop`-event block rule could wedge a
+session with no way out but editing the rule file). In `edm-stop-gate` the switches gate the
+hookify evaluation ONLY -- its `edm-state validate` enforcement is a separate contract and is not
+disabled by them. `bin/edm-bash-gate` is registered on the `Bash`
 `PreToolUse` matcher, so it sees -- and an `"action": "block"` rule can refuse -- **every** bash
 command in the session. It shipped with no kill switch at all, which left an operator whose rule
 set is over-blocking with no environment-variable escape: the only recovery was editing the rule
