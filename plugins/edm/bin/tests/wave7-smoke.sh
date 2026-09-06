@@ -189,6 +189,11 @@ neg_case_bogus_key() {
   cp -R "$PLUGIN_DIR/skills" "$scratch/skills"
   cp -R "$PLUGIN_DIR/agents" "$scratch/agents"
   cp -R "$PLUGIN_DIR/hooks" "$scratch/hooks"
+  # CA-125: docs/ must come along. edm-check-grants now DIES (exit 2) when
+  # docs/canonical-sections.md is absent, rather than silently skipping the EDMV4-T04
+  # citation-orphan check and exiting 0 clean -- so a scratch plugin without docs/ exercises the
+  # setup-error path instead of the grant violation this fixture is about.
+  cp -R "$PLUGIN_DIR/docs" "$scratch/docs"
   local bf
   while IFS= read -r bf; do cp "$bf" "$scratch/bin/"; done \
     < <(find "$PLUGIN_DIR/bin" -maxdepth 1 -type f 2>/dev/null)
@@ -374,6 +379,11 @@ t03_ac6_case() {
   cp -R "$PLUGIN_DIR/agents" "$scratch/agents"
   cp -R "$PLUGIN_DIR/skills" "$scratch/skills"
   cp -R "$PLUGIN_DIR/hooks" "$scratch/hooks"
+  # CA-125: docs/ must come along. edm-check-grants now DIES (exit 2) when
+  # docs/canonical-sections.md is absent, rather than silently skipping the EDMV4-T04
+  # citation-orphan check and exiting 0 clean -- so a scratch plugin without docs/ exercises the
+  # setup-error path instead of the grant violation this fixture is about.
+  cp -R "$PLUGIN_DIR/docs" "$scratch/docs"
   cp "$EDM_CHECK_GRANTS" "$scratch/bin/edm-check-grants"
   cp "${SCRIPT_DIR}/../_edm-lint-lib.sh" "$scratch/bin/_edm-lint-lib.sh"
   cp "${SCRIPT_DIR}/../_edm-cli-lib.sh" "$scratch/bin/_edm-cli-lib.sh"
@@ -419,6 +429,11 @@ ca498_case() {
   cp -R "$PLUGIN_DIR/agents" "$scratch/agents"
   cp -R "$PLUGIN_DIR/skills" "$scratch/skills"
   cp -R "$PLUGIN_DIR/hooks" "$scratch/hooks"
+  # CA-125: docs/ must come along. edm-check-grants now DIES (exit 2) when
+  # docs/canonical-sections.md is absent, rather than silently skipping the EDMV4-T04
+  # citation-orphan check and exiting 0 clean -- so a scratch plugin without docs/ exercises the
+  # setup-error path instead of the grant violation this fixture is about.
+  cp -R "$PLUGIN_DIR/docs" "$scratch/docs"
   cp "$EDM_CHECK_GRANTS" "$scratch/bin/edm-check-grants"
   cp "${SCRIPT_DIR}/../_edm-lint-lib.sh" "$scratch/bin/_edm-lint-lib.sh"
   cp "${SCRIPT_DIR}/../_edm-cli-lib.sh" "$scratch/bin/_edm-cli-lib.sh"
@@ -3661,14 +3676,17 @@ echo
 echo "=== EDMV3-T56: four-'##' Living-Library contract as a CI regression guard ==="
 DOCS_DIR_T56="${PLUGIN_DIR}/docs/audit-patterns"
 
-# NEEDS-NEW-TICKET (found while implementing EDMV4-T57, out of that ticket's Target Components):
-# if the block below reports CONTRACT-FAIL against docs/audit-patterns/code-audit.md, that is a
-# genuine, currently-shipped defect in the committed file itself (a "### " entry landed after the
-# 4th "## What Passing Code Looks Like" heading) -- NOT an EDMV4-T18 delta-relocation issue, since
-# this check reads the real shipped tree directly and update-patterns has not touched that file
-# since T18 landed. EDMV4-T57's Target Components is bin/tests/wave7-smoke.sh only, so the doc
-# content fix belongs to a new, not-yet-filed ticket; this comment exists so a reader does not
-# mistake it for one of T57's ~35 stale-location assertions.
+# CA-062 (closed): this block used to carry a marker claiming the assertion below guarded a
+# genuine, currently-shipped defect in docs/audit-patterns/code-audit.md (a "### " entry that had
+# landed after the 4th "## What Passing Code Looks Like" heading). That defect was CLOSED by
+# commit b697142 ("Move a harvested pattern entry into the section it belongs in"), which moved
+# the offending entry; wave-4 QC then re-derived the contract by hand over all five
+# docs/audit-patterns/*.md files and found every one carrying exactly 4 "## " headings and no
+# orphan "### ". The assertion below passes against the live tree and has done since b697142.
+# The marker is dropped rather than re-pointed: no residual obligation remains, so there is
+# nothing to reserve a follow-on prefix for (contrast EVALB, CAMGAP, LINUXV and EDMRT, which this
+# initiative did reserve because real work remained behind each). Left as a marker, it would send
+# a future reader hunting for a defect that no longer exists.
 echo "T56 AC1/AC7 -- five pattern docs carry four headings in contract order (also re-verifies"
 echo "  this initiative's own T42 Mermaid entries and T33 D15 entries did not break it)"
 set +e
@@ -4796,10 +4814,11 @@ ca476_library_hygiene_case() {
   # expose per entry); the drain mechanism itself (three-per-gate, oldest-by-date-first) is what
   # bounds that, per skills/code-audit/SKILL.md's own "drain is only as good as what enters it".
 
-  # NEEDS-NEW-TICKET (see the identical note above T56 AC1/AC7): this reads the real shipped
-  # docs/audit-patterns/ tree, so a CONTRACT-FAIL here is the same genuine, pre-existing
-  # code-audit.md defect T56 AC1/AC4 already name -- not an EDMV4-T18 relocation issue, and out of
-  # EDMV4-T57's Target Components (bin/tests/wave7-smoke.sh only).
+  # CA-062 (closed): this reads the real shipped docs/audit-patterns/ tree, so a CONTRACT-FAIL
+  # here would be the same code-audit.md defect the T56 AC1/AC7 block above describes -- and that
+  # defect was closed by commit b697142. See that block for the full record; this site carried
+  # the same now-stale marker and is corrected with it, in the same commit, so the two cannot
+  # drift apart.
   local ca476_contract_out ca476_contract_ec
   set +e
   ca476_contract_ec=0
@@ -5468,7 +5487,8 @@ done
 
 echo
 echo "G46/CA-311 -- timing.sh --self-test is wired into a suite run-all.sh actually discovers"
-# G46/CA-311: self_test() (timing.sh:102-173) carries five correct assertions covering the
+# G46/CA-311: self_test() in timing.sh (cited by function name, not by line range, per CA-060)
+# carries five correct assertions covering the
 # perl-less awk fallback, _p95's nearest-rank formula (CA-196) and the shipped sample count
 # (_P95_SAMPLE_COUNT=20, CA-280), but nothing invoked --self-test anywhere -- not run-all.sh
 # (timing.sh is deliberately excluded from *-smoke.sh discovery per CA-328), not this suite's own
@@ -9075,11 +9095,46 @@ echo "=== G10/CA-340: shape-restricted ban on new file-and-line citations (durab
 # this round: every new stale-citation instance was a citation of this plugin's own bin/tests/
 # evals script by relative name plus digits, inside a comment line -- a shape narrow enough to
 # ban directly. Scoped to exactly that shape (this plugin's own bin/tests/evals scripts).
-g10_citation_regex='\b(edm-state|edm-init|edm-lint-artifacts|edm-check-[A-Za-z0-9_-]+|run-eval\.sh|score-artifacts\.sh|_edm-[A-Za-z0-9_-]+\.sh|wave[0-9][A-Za-z0-9_-]*-smoke\.sh|run-all\.sh):[0-9]+'
+#
+# CA-060: the comment above claims that scope, and the regex used to be a HAND-WRITTEN alternation
+# of nine name patterns that covered a subset of it -- twelve shipped scripts were outside the ban
+# entirely, and a live stale citation was sitting in one of them. Rather than extend the literal
+# (which is how it fell behind in the first place, and would fall behind again on the next new
+# script), the alternation is DERIVED from the tree the comment describes: every `edm-*` or `*.sh`
+# file under plugins/edm/bin and plugins/edm/evals, at any depth. A script added tomorrow is
+# covered the day it lands, with no edit here.
+g10_derive_script_alternation() {
+  ( cd "$_HARNESS_REPO_ROOT" && find plugins/edm/bin plugins/edm/evals -type f \
+      \( -name 'edm-*' -o -name '*.sh' \) 2>/dev/null ) \
+    | sed -e 's#.*/##' | sort -u | sed -e 's/\./\\./g' | tr '\n' '|' | sed -e 's/|$//'
+}
+g10_script_alternation="$(g10_derive_script_alternation)"
+g10_citation_regex="(${g10_script_alternation}):[0-9]+"
 
 g10_scan_tree() {
   grep -rnE "$g10_citation_regex" "$@" 2>/dev/null | grep -E '^[^:]+:[0-9]+:[[:space:]]*#' || true
 }
+
+# The derivation must actually find scripts, and must cover at least what the retired hand-written
+# alternation covered -- otherwise a broken `find` would narrow the ban to nothing and the clean
+# scan below would be vacuous. The retired names are listed HERE, once, as a coverage floor rather
+# than as the ban itself.
+g10_alternation_count="$(printf '%s' "$g10_script_alternation" | tr '|' '\n' | grep -c '.')"
+if [[ "$g10_alternation_count" -ge 20 ]]; then
+  pass "G10/CA-340 / CA-060 -- the citation-ban name set is derived live from the tree (${g10_alternation_count} scripts), not a hand-written alternation"
+else
+  fail "G10/CA-340 / CA-060 -- the derived name set holds only ${g10_alternation_count} scripts, too few to be a real derivation: the scan below would be near-vacuous"
+fi
+g10_floor_missing=""
+for g10_floor_name in edm-state edm-init edm-lint-artifacts edm-check-grants run-eval.sh score-artifacts.sh _edm-cli-lib.sh wave7-smoke.sh run-all.sh; do
+  case "|${g10_script_alternation}|" in
+    *"|$(printf '%s' "$g10_floor_name" | sed -e 's/\./\\./g')|"*) ;;
+    *) g10_floor_missing="${g10_floor_missing}${g10_floor_name} " ;;
+  esac
+done
+[[ -z "$(printf '%s' "$g10_floor_missing" | tr -d '[:space:]')" ]] \
+  && pass "G10/CA-340 / CA-060 -- the derived set still covers every name the retired hand-written alternation covered" \
+  || fail "G10/CA-340 / CA-060 -- the derived set LOST coverage of: ${g10_floor_missing}"
 
 g10_raw_hits="$(cd "$_HARNESS_REPO_ROOT" && g10_scan_tree plugins/edm/bin plugins/edm/evals plugins/edm/CLAUDE.md plugins/edm/README.md)"
 [[ -z "$(printf '%s' "$g10_raw_hits" | tr -d '[:space:]')" ]] \
@@ -9096,6 +9151,23 @@ g10_control_hits="$(cd "$g10_control_dir" && g10_scan_tree plugins/edm/bin)"
 [[ -n "$(printf '%s' "$g10_control_hits" | tr -d '[:space:]')" ]] \
   && pass "G10/CA-340 -- positive control: a deliberately-added 'edm-state:1234' comment is caught by the ban" \
   || fail "G10/CA-340 -- positive control broken: a deliberately-added 'edm-state:1234' comment was NOT caught"
+
+# CA-060 positive control for the WIDENING specifically: a citation of a script the retired
+# hand-written alternation did NOT name must now be caught. Without this, the derivation could be
+# returning the same nine names it replaced and the widening would be cosmetic. The fixture name
+# and its digits are concatenated at runtime, so this explanatory comment cannot itself trip the
+# ban it describes.
+g10_wide_needle_name='edm-repo-readiness'
+g10_wide_needle_line=':48'
+printf '#!/usr/bin/env bash\n# see %s%s for details\n' "$g10_wide_needle_name" "$g10_wide_needle_line" \
+  > "${g10_control_dir}/plugins/edm/bin/widened.sh"
+g10_wide_hits="$(cd "$g10_control_dir" && g10_scan_tree plugins/edm/bin)"
+case "$g10_wide_hits" in
+  *"${g10_wide_needle_name}${g10_wide_needle_line}"*)
+    pass "G10/CA-340 / CA-060 -- positive control: a citation of a script the retired alternation never named is now caught, so the widening is real" ;;
+  *)
+    fail "G10/CA-340 / CA-060 -- positive control BROKEN: a '${g10_wide_needle_name}${g10_wide_needle_line}' comment was NOT caught, so the derived scope is no wider than the literal it replaced" ;;
+esac
 rm -rf "$g10_control_dir"
 
 echo
