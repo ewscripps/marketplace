@@ -61,7 +61,7 @@
 | CA-055 | P1 | fixed | QC-W05 | plugins/edm/bin/tests/wave8-smoke.sh:5330-5338,5382 | EDMV4-T52 AC4: the four new fixtures/code-audit files fall under neither ASCII mechanism, and edm-repo-readiness is missing from the coverage assignment | 1 | 1 |
 | CA-056 | P1 | fixed | QC-W05+L8 | plugins/edm/bin/edm-hookify:282,285-287 | EDMV4-T52 AC6: the L) list arm and the setup-error emission bypass hookify_emit_match entirely -- reproduced live, a rule name carrying a non-ASCII byte reaches stdout unmodified | 1 | 1 |
 | CA-057 | P1 | fixed | QC-W05 | plugins/edm/bin/tests/wave8-smoke.sh:3332-3341,4584,2234 | EDMV4-T53 AC4: no hook guard is ever executed -- all three assertions are jq-extract-then-string-compare, so a typo'd command -v guard passes every one and then fails open at runtime | 1 | 1 |
-| CA-058 | P1 | open | QC-W05 | plugins/edm/bin/tests/wave8-smoke.sh (AC7/AC8 runtime checks) | EDMV4-T53's two runtime Definition-of-Done checks were never performed; the recorded 3241-passed evidence binds the aggregate but not the /bin/bash 3.2 interpreter AC8 names | 1 |  |
+| CA-058 | P1 | fixed | QC-W05 | plugins/edm/bin/tests/wave8-smoke.sh (AC7/AC8 runtime checks) | EDMV4-T53's two runtime Definition-of-Done checks were never performed; the recorded 3241-passed evidence binds the aggregate but not the /bin/bash 3.2 interpreter AC8 names | 1 | 1 |
 | CA-134 | P1 | fixed | ORCH | plugins/edm/CLAUDE.md:0 | EDM inherits another plugin's CLAUDE_PLUGIN_DATA when invoked by explicit path rather than as a plugin, so update-patterns writes its pattern library into a directory it does not own | 1 | 1 |
 | CA-215 | P1 | fixed | QC-W05 | plugins/edm/bin/edm-state cmd_set generic *) arm; get-coverage Detected Frameworks renderer | edm-state set stores object-valued SETTABLE_KEYS as a JSON string (--arg not --argjson), and get-coverage's renderer silently prints nothing rather than failing | 1 | 1 |
 | CA-059 | P2 | fixed | L6 | plugins/edm/CLAUDE.md:1309; docs/ecc-integration-analysis.md:364,372,1026 | Stale file:line citations in prose -- timing.sh:419-423 is now :429-433, and Part 8.2's own citation correction cites :5607/:5640 for symbols now at edm-state:6070 and :6113 | 1 | 1 |
@@ -138,7 +138,7 @@
 | CA-130 | P2 | open | L14 | plugins/edm/bin/edm-gateguard:375 | MultiEdit tolerant extraction is only driven with the edits[].file_path shape; Claude Code's own single-file shape and the unique de-duplication across both shapes are untested | 1 |  |
 | CA-131 | P2 | open | L14 | plugins/edm/bin/edm-gateguard:293 | gg_is_exempt is only driven with a single-entry glob value and the shipped default; the comma-split, empty-element skip, non-** glob form and explicitly-empty value are untested | 1 |  |
 | CA-132 | P2 | open | L14 | plugins/edm/bin/edm-stop-gate:120 | The per-prefix validate-died continue branch is untested; T46 AC9's two internal-error cases both fail active-initiatives and soft_exit before the loop is reached | 1 |  |
-| CA-133 | P2 | open | QC-W05 | SRD/edm/EDMV4__ecc-integration/ (absent) | EDMV4-T53 AC10: the five Definition-of-Done command results are recorded nowhere; wave-5 QC ran all five and all pass, but the record did not exist until that report | 1 |  |
+| CA-133 | P2 | fixed | QC-W05 | SRD/edm/EDMV4__ecc-integration/ (absent) | EDMV4-T53 AC10: the five Definition-of-Done command results are recorded nowhere; wave-5 QC ran all five and all pass, but the record did not exist until that report | 1 | 1 |
 
 ## Decisions / Non-Findings
 

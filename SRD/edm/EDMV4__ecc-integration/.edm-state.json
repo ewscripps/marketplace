@@ -35,9 +35,9 @@
       "recorded_at": "2026-09-02T13:25:31Z"
     },
     "findings_ledger": {
-      "hash": "274ed440251e5b31250d830f5d3d6f6e9c0e4ee20a261b0e5b91b2987424be32",
+      "hash": "fda7bc8852851b30bedecf802c879205ed5dd1d8e6657e75a98ce08a2972ca86",
       "path": "./SRD/edm/EDMV4__ecc-integration/code-audit/findings-ledger.md",
-      "recorded_at": "2026-09-04T05:00:29Z"
+      "recorded_at": "2026-09-06T23:24:11Z"
     }
   },
   "srd_version": "1.5.0",
@@ -284,9 +284,14 @@
       "verification_ref": "NOT RUNTIME-VERIFIED (D44) -- deferred to follow-on initiative EDMRT. Blocked by EDMV4-62: neither /plugin update nor /reload-plugins reads the working tree, so the plugin under development never executed this session. Needs a live /edm:orchestrator run with the built plugin installed."
     },
     "EDMV4-T45": {
-      "verdict": "PARTIAL",
-      "note": "runtime-check: AC9 first clause -- run `bash plugins/edm/bin/tests/run-all.sh` on a quiet tree and confirm zero failures with the Bash matcher block registered in hooks/hooks.json. Every other clause of AC9 is statically verified (edm-check-vocabulary exits 0; hooks.json is SCOPE_ROOTS[4] at bin/edm-check-vocabulary:99-107 and is jq -e validated with a hard die at :121-125). Not re-run by this audit: a concurrent code audit held the tree, and this initiative recorded eleven set -e aborts that ended a suite green with no failing assertion, so a reported green figure is not self-evidencing here.",
-      "recorded_at": "2026-09-04T02:09:42Z"
+      "prior": {
+        "verdict": "PARTIAL",
+        "note": "runtime-check: AC9 first clause -- run `bash plugins/edm/bin/tests/run-all.sh` on a quiet tree and confirm zero failures with the Bash matcher block registered in hooks/hooks.json. Every other clause of AC9 is statically verified (edm-check-vocabulary exits 0; hooks.json is SCOPE_ROOTS[4] at bin/edm-check-vocabulary:99-107 and is jq -e validated with a hard die at :121-125). Not re-run by this audit: a concurrent code audit held the tree, and this initiative recorded eleven set -e aborts that ended a suite green with no failing assertion, so a reported green figure is not self-evidencing here.",
+        "recorded_at": "2026-09-04T02:09:42Z"
+      },
+      "closing_verdict": "PASS",
+      "closed_at": "2026-09-06T23:22:26Z",
+      "verification_ref": "AC9 first clause verified 2026-09-06: /bin/bash plugins/edm/bin/tests/run-all.sh on a quiet tree (git status empty) under GNU bash 3.2.57(1)-release arm64-apple-darwin25 -- exit 0, Total: 3870 passed, 0 failed across 8 suites, Bash matcher block registered in hooks/hooks.json. Per-suite counts cross-checked against standalone runs (wave6 799, wave7 1452, wave8 1336, harness 59) to rule out a set -e abort ending a suite green with fewer assertions; 3866 + run-all four own checks = 3870 reconciles exactly."
     }
   },
   "mode": "standard",
@@ -298,7 +303,7 @@
   "forked_from": "",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-09-04T05:00:29Z",
+  "last_updated": "2026-09-06T23:24:11Z",
   "current_step": 6,
   "patterns_last_updated": "2026-09-04T04:59:40Z",
   "patterns_updates": {
