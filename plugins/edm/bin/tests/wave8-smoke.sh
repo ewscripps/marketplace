@@ -5723,6 +5723,123 @@ T28_ALL_LENS_COUNT="$(printf '%s\n' $T28_ALL_LENS_IDS | grep -c '.')" || true
   && pass "EDMV4-T28 -- agents/edm-audit-*.md file count (${T28_LENS_COUNT}, live glob) matches ALL_LENS_IDS's own count (${T28_ALL_LENS_COUNT})" \
   || fail "EDMV4-T28 -- agents/edm-audit-*.md file count (${T28_LENS_COUNT}) disagrees with ALL_LENS_IDS (${T28_ALL_LENS_COUNT})"
 
+# ---- CA-080: assert the SET of lens IDs, not its cardinality ------------------------------------
+# The cross-check immediately above compares two independently derived COUNTS, which is worth
+# having but is not what its neighbourhood claims. "There are fourteen IDs" and "the IDs are
+# exactly L1 through L14" come apart at precisely the realistic drift: one ID duplicated and
+# another dropped leaves the count reading fourteen while the set is wrong. Both are asserted
+# below, on both sides of the cross-check -- the IDs edm-state declares, and the IDs the live lens
+# files declare in their own opening frames.
+#
+# Pure shell throughout: no pipeline (a failing element under this file's `set -o pipefail` aborts
+# the suite mid-run instead of failing an assertion), no associative array and no sort -u (bash 3.2
+# floor, and set equality does not need an ordering).
+T28_EXPECTED_LENS_IDS="L1 L2 L3 L4 L5 L6 L7 L8 L9 L10 L11 L12 L13 L14"
+
+# t28_lens_set_defects <declared-ids> <expected-ids> -- prints one defect token per problem and
+# nothing at all when <declared-ids> is exactly <expected-ids> as a SET with no repeats. Three
+# independent conditions, because three different drifts are being ruled out: a gap
+# (MISSING), a stray (UNEXPECTED), and a repeat (DUPLICATE, which a count check can never see).
+t28_lens_set_defects() {
+  local declared="$1" expected="$2"
+  local id other count reported=""
+  for id in $expected; do
+    case " ${declared} " in
+      *" ${id} "*) ;;
+      *) echo "MISSING:${id}" ;;
+    esac
+  done
+  for id in $declared; do
+    case " ${expected} " in
+      *" ${id} "*) ;;
+      *) echo "UNEXPECTED:${id}" ;;
+    esac
+  done
+  for id in $declared; do
+    case " ${reported} " in
+      *" ${id} "*) continue ;;
+    esac
+    count=0
+    for other in $declared; do
+      if [[ "$other" == "$id" ]]; then count=$((count+1)); fi
+    done
+    if [[ "$count" -gt 1 ]]; then
+      echo "DUPLICATE:${id}"
+      reported="${reported} ${id}"
+    fi
+  done
+  return 0
+}
+
+# t28_token_count <space-separated-list> -- member count, computed without a pipeline so the
+# duplicate-plus-gap controls below can show a wrong SET still yielding the right COUNT.
+t28_token_count() {
+  local t n=0
+  for t in $1; do n=$((n+1)); done
+  echo "$n"
+}
+
+T28_DECLARED_SET_DEFECTS="$(t28_lens_set_defects "$T28_ALL_LENS_IDS" "$T28_EXPECTED_LENS_IDS")"
+if [[ -z "$T28_DECLARED_SET_DEFECTS" ]]; then
+  pass "EDMV4-T28 / CA-080 -- ALL_LENS_IDS is exactly the SET L1..L14: no gap, no stray, no repeat (set equality, not cardinality)"
+else
+  fail "EDMV4-T28 / CA-080 -- ALL_LENS_IDS is not the set L1..L14: ${T28_DECLARED_SET_DEFECTS}"
+fi
+
+# The other side of the cross-check: the ID each live lens file declares in its own opening frame.
+# Two files both claiming L3 is invisible to a file COUNT and fatal to a lens run.
+# t28_file_lens_id <file> -- the numeric lens ID from the opening frame, or nothing.
+t28_file_lens_id() {
+  awk 'match($0, /\*\*EDM Code Audit Lens L[0-9]+/) { s = substr($0, RSTART, RLENGTH); sub(/.*Lens /, "", s); print s; exit }' "$1"
+}
+T28_FILE_LENS_IDS=""
+for t28_id_f in $T28_LENS_FILES; do
+  t28_one_id="$(t28_file_lens_id "${T28_AGENTS_DIR}/${t28_id_f}")"
+  if [[ -n "$t28_one_id" ]]; then
+    T28_FILE_LENS_IDS="${T28_FILE_LENS_IDS} ${t28_one_id}"
+  else
+    T28_FILE_LENS_IDS="${T28_FILE_LENS_IDS} UNRESOLVED_${t28_id_f}"
+  fi
+done
+T28_FILE_SET_DEFECTS="$(t28_lens_set_defects "$T28_FILE_LENS_IDS" "$T28_EXPECTED_LENS_IDS")"
+if [[ -z "$T28_FILE_SET_DEFECTS" ]]; then
+  pass "EDMV4-T28 / CA-080 -- the live lens files declare exactly the SET L1..L14 in their opening frames: no two files claim the same ID and none is unclaimed"
+else
+  fail "EDMV4-T28 / CA-080 -- the live lens files' declared IDs are not the set L1..L14: ${T28_FILE_SET_DEFECTS}"
+fi
+
+# CC1 controls. Each mutant below has exactly FOURTEEN members, so the count cross-check above
+# accepts every one of them -- that is the whole point: these are the defects a cardinality
+# assertion is structurally unable to see.
+# (a) duplicate plus gap: L13 twice, L14 gone.
+T28_CTRL_DUP="L1 L2 L3 L4 L5 L6 L7 L8 L9 L10 L11 L12 L13 L13"
+T28_CTRL_DUP_COUNT="$(t28_token_count "$T28_CTRL_DUP")"
+T28_CTRL_DUP_DEFECTS="$(t28_lens_set_defects "$T28_CTRL_DUP" "$T28_EXPECTED_LENS_IDS")"
+check_num "EDMV4-T28 / CA-080 control (a) -- the duplicated-ID mutant still has fourteen members, so the count cross-check above cannot reject it" \
+  "$T28_ALL_LENS_COUNT" "$T28_CTRL_DUP_COUNT"
+check "EDMV4-T28 / CA-080 control (a) -- the set check DOES reject it, naming the repeat" \
+  "DUPLICATE:L13" "$T28_CTRL_DUP_DEFECTS"
+check "EDMV4-T28 / CA-080 control (a) -- and names the ID that went missing behind it" \
+  "MISSING:L14" "$T28_CTRL_DUP_DEFECTS"
+# (b) gap plus stray: L7 dropped, L15 invented.
+T28_CTRL_GAP="L1 L2 L3 L4 L5 L6 L8 L9 L10 L11 L12 L13 L14 L15"
+T28_CTRL_GAP_COUNT="$(t28_token_count "$T28_CTRL_GAP")"
+T28_CTRL_GAP_DEFECTS="$(t28_lens_set_defects "$T28_CTRL_GAP" "$T28_EXPECTED_LENS_IDS")"
+check_num "EDMV4-T28 / CA-080 control (b) -- the L7-missing/L15-present mutant also has fourteen members, so the count cross-check cannot reject it either" \
+  "$T28_ALL_LENS_COUNT" "$T28_CTRL_GAP_COUNT"
+check "EDMV4-T28 / CA-080 control (b) -- the set check reports the gap" \
+  "MISSING:L7" "$T28_CTRL_GAP_DEFECTS"
+check "EDMV4-T28 / CA-080 control (b) -- the set check reports the stray" \
+  "UNEXPECTED:L15" "$T28_CTRL_GAP_DEFECTS"
+# (c) the predicate is not simply always-noisy: the true set must produce no defect at all, which
+# is what makes the two clean results above assertions rather than a constant.
+T28_CTRL_CLEAN_DEFECTS="$(t28_lens_set_defects "$T28_EXPECTED_LENS_IDS" "$T28_EXPECTED_LENS_IDS")"
+if [[ -z "$T28_CTRL_CLEAN_DEFECTS" ]]; then
+  pass "EDMV4-T28 / CA-080 control (c) -- the predicate reports NOTHING on the correct set, so it discriminates rather than flagging unconditionally"
+else
+  fail "EDMV4-T28 / CA-080 control (c) -- the predicate flagged the correct set (${T28_CTRL_CLEAN_DEFECTS}), so its clean verdicts above mean nothing"
+fi
+
 # ---- t28_contract_violations <file> -- prints one tag per violated contract element, or nothing
 # when <file> fully conforms. Every tag traces to one AC of EDMV4-T28. ---------------------------
 t28_contract_violations() {
