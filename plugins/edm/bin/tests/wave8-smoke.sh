@@ -12573,6 +12573,211 @@ rm -rf "$T05_CA132_TMP"
 
 echo
 # =================================================================================================
+# EDMTC-T03 (CA-104 + CA-118) -- ONE extractor implementation, ONE scratch-directory rule
+# =================================================================================================
+# Both properties are DERIVED by scanning this file, never pinned as a literal count that a later
+# append silently falsifies. Both scans read the very file they live in, which is the highest
+# self-match risk in this suite, so three precautions are taken uniformly:
+#   1. Every needle is assembled at RUNTIME from halves that are inert on their own, so no source
+#      line of these scans spells what the scans look for.
+#   2. Every scan skips comment lines, so the prose explaining a needle cannot satisfy it.
+#   3. Every scan is exercised against a scratch COPY of this file carrying a deliberately
+#      re-introduced defect, so "clean" is proven to be a result and not a blind spot.
+echo "=== EDMTC-T03: one function extractor, one scratch-directory rule (derived by scanning this file) ==="
+
+_w8_fo_a='()'
+_w8_fo_b=' {'
+W8_FN_OPEN="${_w8_fo_a}${_w8_fo_b}"
+_w8_fe_a='\(\)'
+_w8_fe_b=' \{'
+W8_FN_OPEN_ESC="${_w8_fe_a}${_w8_fe_b}"
+_w8_fd_a='\\(\\)'
+_w8_fd_b=' \\{'
+W8_FN_OPEN_ESCD="${_w8_fd_a}${_w8_fd_b}"
+_w8_mk_a='mkt'
+_w8_mk_b='emp -d'
+W8_MKTEMP_ANY="${_w8_mk_a}${_w8_mk_b}"
+W8_MKTEMP_Q="${_w8_mk_a}${_w8_mk_b} \""
+_w8_sr_a='${TMP'
+_w8_sr_b='DIR:-/tmp}'
+W8_SYSROOT="${_w8_sr_a}${_w8_sr_b}"
+
+w8_scratch_dir T03_TMP
+
+# ---- CA-118: exactly one awk program in this file recognises a shell function's opening line ----
+# w8_t03_extractor_sites <file> -- prints the line number of every awk invocation in <file> whose
+# program recognises a shell function's own opening line. A shell function DEFINITION line is
+# never a needle (it is the thing being defined, not a search for one), and an awk invocation is
+# credited only when a needle appears on it or within the next five code lines, which is the span
+# a multi-line awk program occupies in this file. Validated against the pre-consolidation file: it
+# reported all eight implementations EDMTC-T03 removed and nothing else.
+w8_t03_extractor_sites() {
+  W8_A="$W8_FN_OPEN" W8_B="$W8_FN_OPEN_ESC" W8_C="$W8_FN_OPEN_ESCD" awk '
+    { if ($0 ~ /^[[:space:]]*#/) next; n++; code[n] = $0; ln[n] = NR }
+    END {
+      a = ENVIRON["W8_A"]; b = ENVIRON["W8_B"]; c = ENVIRON["W8_C"]
+      for (i = 1; i <= n; i++) {
+        if (index(code[i], "awk") == 0) continue
+        for (j = i; j <= i + 5 && j <= n; j++) {
+          l = code[j]
+          if (l ~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*\(\)[[:space:]]*\{/) continue
+          if (index(l, a) > 0 || index(l, b) > 0 || index(l, c) > 0) { print ln[i]; break }
+        }
+      }
+    }
+  ' "$1"
+}
+
+T03_XFN_SITES="${T03_TMP}/extractor-sites.txt"
+w8_t03_extractor_sites "$T50_SELF" > "$T03_XFN_SITES"
+T03_XFN_COUNT="$(grep -c '.' "$T03_XFN_SITES" || true)"
+T03_XFN_LIST="$(tr '\n' ' ' < "$T03_XFN_SITES")"
+if [[ "${T03_XFN_COUNT:-0}" -eq 1 ]]; then
+  pass "EDMTC-T03 / CA-118 -- exactly ONE by-name function extractor survives in this file (line ${T03_XFN_LIST% })"
+else
+  fail "EDMTC-T03 / CA-118 -- expected exactly one by-name function extractor, found ${T03_XFN_COUNT} (lines: ${T03_XFN_LIST})"
+fi
+
+# The surviving one must be _w8_extract_fn's own, located by its definition's line range rather
+# than by a pinned line number: a scan that found some OTHER single extractor would satisfy the
+# count above and nothing else.
+T03_XFN_DEF_START="$(W8_D="_w8_extract_fn${W8_FN_OPEN}" awk 'index($0, ENVIRON["W8_D"]) == 1 { print NR; exit }' "$T50_SELF")"
+T03_XFN_DEF_END="$(W8_S="${T03_XFN_DEF_START:-0}" awk 'NR > (ENVIRON["W8_S"] + 0) && /^}/ { print NR; exit }' "$T50_SELF")"
+T03_XFN_LN="$(head -1 "$T03_XFN_SITES" || true)"
+if [[ -n "$T03_XFN_LN" && "${T03_XFN_DEF_START:-0}" -ge 1 && "${T03_XFN_DEF_END:-0}" -gt "${T03_XFN_DEF_START:-0}" \
+      && "$T03_XFN_LN" -gt "$T03_XFN_DEF_START" && "$T03_XFN_LN" -lt "$T03_XFN_DEF_END" ]]; then
+  pass "EDMTC-T03 / CA-118 -- and that one implementation lies inside _w8_extract_fn's own definition (lines ${T03_XFN_DEF_START}-${T03_XFN_DEF_END})"
+else
+  fail "EDMTC-T03 / CA-118 -- the surviving extractor at line '${T03_XFN_LN}' is not inside _w8_extract_fn (definition ${T03_XFN_DEF_START}-${T03_XFN_DEF_END})"
+fi
+
+# Positive control for both assertions above (AC5): a scratch copy of this file with a second
+# extractor appended must report TWO. Without this, a scan narrowed until it matched nothing would
+# report "exactly one" for the wrong reason -- and a scan that matched nothing at all would report
+# zero, which the -eq 1 test above already rejects, so the two together exclude both blind shapes.
+T03_DUP_COPY="${T03_TMP}/wave8-with-duplicate.sh"
+cp "$T50_SELF" "$T03_DUP_COPY"
+{
+  printf '%s\n' "_t03_reintroduced_extractor${W8_FN_OPEN}"
+  printf '%s\n' "  awk -v needle=\"\${2}${W8_FN_OPEN}\" '"
+  printf '%s\n' '    index($0, needle) == 1 { found = 1 }'
+  printf '%s\n' '    found { print }'
+  printf '%s\n' '    found && /^}/ { exit }'
+  printf '%s\n' "  ' \"\$1\""
+  printf '%s\n' '}'
+} >> "$T03_DUP_COPY"
+T03_DUP_SITES="${T03_TMP}/duplicate-sites.txt"
+w8_t03_extractor_sites "$T03_DUP_COPY" > "$T03_DUP_SITES"
+T03_DUP_COUNT="$(grep -c '.' "$T03_DUP_SITES" || true)"
+if [[ "${T03_DUP_COUNT:-0}" -eq 2 ]]; then
+  pass "EDMTC-T03 / CA-118 positive control -- a re-introduced duplicate extractor appended to a scratch copy is detected (${T03_DUP_COUNT} found there against ${T03_XFN_COUNT} here)"
+else
+  fail "EDMTC-T03 / CA-118 positive control broken -- the scan found ${T03_DUP_COUNT} implementations in a copy carrying a deliberately re-introduced duplicate; the 'exactly one' assertion above proves nothing"
+fi
+
+# ---- CA-104: every scratch directory is one of the two sanctioned forms -------------------------
+# The registry-owned names are read out of this file rather than listed: FORM 2's parent must be a
+# variable FORM 1 actually hands out. The pattern below is anchored to start-of-line, so this
+# derivation's own source line (which begins with awk) is outside it by construction.
+T03_OWNED_RAW="${T03_TMP}/owned.raw"
+awk '/^[[:space:]]*w8_scratch_dir[[:space:]]+[A-Za-z_]/ { print $2 }' "$T50_SELF" > "$T03_OWNED_RAW"
+T03_OWNED_SORTED="${T03_TMP}/owned.txt"
+sort -u "$T03_OWNED_RAW" > "$T03_OWNED_SORTED"
+T03_OWNED=" $(tr '\n' ' ' < "$T03_OWNED_SORTED")"
+
+# w8_t03_scratch_scan <file> <owned-name-list> -- classifies every code-line scratch creation in
+# <file>. Emits one line per violation (BARE / SHAPE / UNOWNED, with the line number) plus three
+# tallies. BARE is the third idiom CA-104 named; UNOWNED is a FORM 2 whose parent is not a
+# registered directory; SHAPE is a creation this scan cannot read at all, which is a violation
+# rather than a pass, because a form the rule's own check cannot classify is not a sanctioned form.
+w8_t03_scratch_scan() {
+  W8_MKA="$W8_MKTEMP_ANY" W8_MKQ="$W8_MKTEMP_Q" W8_SYS="$W8_SYSROOT" W8_OWNED="$2" awk '
+    BEGIN { mka = ENVIRON["W8_MKA"]; mkq = ENVIRON["W8_MKQ"]; sys = ENVIRON["W8_SYS"]; owned = ENVIRON["W8_OWNED"] }
+    /^[[:space:]]*#/ { next }
+    {
+      if (index($0, mka) == 0) next
+      total++
+      k = index($0, mkq)
+      if (k == 0) { print "SHAPE " NR; next }
+      rest = substr($0, k + length(mkq))
+      if (index(rest, sys) == 1) {
+        if (index($0, "_w8_new") > 0) { helper++ } else { print "BARE " NR }
+        next
+      }
+      if (substr(rest, 1, 2) != "${") { print "SHAPE " NR; next }
+      root = substr(rest, 3)
+      p = index(root, "}")
+      if (p < 2) { print "SHAPE " NR; next }
+      root = substr(root, 1, p - 1)
+      if (index(owned, " " root " ") == 0) { print "UNOWNED " NR " " root; next }
+      nested++
+    }
+    END { print "TOTAL " total + 0; print "HELPER " helper + 0; print "NESTED " nested + 0 }
+  ' "$1"
+}
+
+T03_MK_REPORT="${T03_TMP}/scratch-scan.txt"
+w8_t03_scratch_scan "$T50_SELF" "$T03_OWNED" > "$T03_MK_REPORT"
+T03_MK_TOTAL="$(awk '$1 == "TOTAL" { print $2 }' "$T03_MK_REPORT")"
+T03_MK_HELPER="$(awk '$1 == "HELPER" { print $2 }' "$T03_MK_REPORT")"
+T03_MK_NESTED="$(awk '$1 == "NESTED" { print $2 }' "$T03_MK_REPORT")"
+T03_MK_VIOL="$(grep -c -E '^(BARE|SHAPE|UNOWNED) ' "$T03_MK_REPORT" || true)"
+T03_MK_VIOL_LIST="$(grep -E '^(BARE|SHAPE|UNOWNED) ' "$T03_MK_REPORT" > "${T03_TMP}/viol.txt" || true; tr '\n' ' ' < "${T03_TMP}/viol.txt")"
+
+# Denominator guard, stated first: a scan that matched nothing would report zero violations, which
+# is indistinguishable from a clean file by the violation count alone. This file creates scratch in
+# dozens of places, so a total in single digits means the scan stopped seeing the file.
+if [[ "${T03_MK_TOTAL:-0}" -ge 10 ]]; then
+  pass "EDMTC-T03 / CA-104 -- the scratch scan observes ${T03_MK_TOTAL} real scratch creations in this file, so a zero violation count below is a result rather than an empty scan"
+else
+  fail "EDMTC-T03 / CA-104 -- the scratch scan observed only ${T03_MK_TOTAL} scratch creations; it is no longer reading this file and every verdict below is vacuous"
+fi
+
+if [[ "${T03_MK_HELPER:-0}" -eq 1 ]]; then
+  pass "EDMTC-T03 / CA-104 -- exactly ONE system-temp-rooted scratch creation remains, and it is w8_scratch_dir's own (identified by its _w8_new assignment, never by line number)"
+else
+  fail "EDMTC-T03 / CA-104 -- expected exactly one system-temp-rooted creation (w8_scratch_dir's own), found ${T03_MK_HELPER}"
+fi
+
+if [[ "${T03_MK_VIOL:-0}" -eq 0 ]]; then
+  pass "EDMTC-T03 / CA-104 -- every other scratch creation is a sanctioned form: ${T03_MK_NESTED} nested under a registry-owned parent, and no untrapped third idiom anywhere"
+else
+  fail "EDMTC-T03 / CA-104 -- ${T03_MK_VIOL} scratch creation(s) match neither sanctioned form: ${T03_MK_VIOL_LIST}"
+fi
+
+# Positive control for the three assertions above (AC5): a scratch copy carrying BOTH re-introduced
+# defects -- an untrapped system-temp creation, and a nested one whose parent was never registered
+# -- must report exactly those two, by class. This is what makes "no violations" above a finding.
+T03_MK_COPY="${T03_TMP}/wave8-third-idiom.sh"
+cp "$T50_SELF" "$T03_MK_COPY"
+printf '%s\n' "T03_INJECTED_BARE=\"\$(${W8_MKTEMP_Q}${W8_SYSROOT}/t03-bare.XXXXXX\")\"" >> "$T03_MK_COPY"
+printf '%s\n' "T03_INJECTED_UNOWNED=\"\$(${W8_MKTEMP_Q}\${T03_NEVER_REGISTERED}/t03-unowned.XXXXXX\")\"" >> "$T03_MK_COPY"
+T03_MK_CTRL_REPORT="${T03_TMP}/scratch-scan-injected.txt"
+w8_t03_scratch_scan "$T03_MK_COPY" "$T03_OWNED" > "$T03_MK_CTRL_REPORT"
+T03_CTRL_BARE="$(grep -c '^BARE ' "$T03_MK_CTRL_REPORT" || true)"
+T03_CTRL_UNOWNED="$(grep -c '^UNOWNED ' "$T03_MK_CTRL_REPORT" || true)"
+if [[ "${T03_CTRL_BARE:-0}" -eq 1 && "${T03_CTRL_UNOWNED:-0}" -eq 1 ]]; then
+  pass "EDMTC-T03 / CA-104 positive control -- a re-introduced untrapped creation and a re-introduced unregistered parent are BOTH detected in a scratch copy (BARE=${T03_CTRL_BARE}, UNOWNED=${T03_CTRL_UNOWNED}), so the clean verdict above discriminates"
+else
+  fail "EDMTC-T03 / CA-104 positive control broken -- the injected copy reported BARE=${T03_CTRL_BARE} UNOWNED=${T03_CTRL_UNOWNED}, expected 1 and 1; the clean verdict above proves nothing"
+fi
+
+# And the owned-name derivation must itself be real. An empty derivation would make every FORM 2
+# parent read as unregistered -- so it would fail loudly rather than silently pass -- but a
+# derivation that returned one junk name would not, and the UNOWNED verdict would then rest on a
+# set nobody checked. It is asserted to be plural AND to contain the name this band itself
+# registered a few lines above, which is a live cross-check rather than a re-typed expectation.
+T03_OWNED_COUNT="$(grep -c '.' "$T03_OWNED_SORTED" || true)"
+T03_OWNED_HAS_SELF=0
+case "$T03_OWNED" in *" T03_TMP "*) T03_OWNED_HAS_SELF=1 ;; esac
+if [[ "${T03_OWNED_COUNT:-0}" -ge 10 && "$T03_OWNED_HAS_SELF" -eq 1 ]]; then
+  pass "EDMTC-T03 / CA-104 -- the registry-owned name set is derived live from this file (${T03_OWNED_COUNT} distinct names) and contains T03_TMP, the directory this band itself registered"
+else
+  fail "EDMTC-T03 / CA-104 -- the owned-name derivation returned ${T03_OWNED_COUNT} names and self-membership ${T03_OWNED_HAS_SELF}; the FORM 2 parent check above is not reading a real set"
+fi
+
+echo
+# =================================================================================================
 # CA-027 -- scratch-directory registry: every scratch tree is registered, and one trap set clears
 # all of them
 # =================================================================================================
