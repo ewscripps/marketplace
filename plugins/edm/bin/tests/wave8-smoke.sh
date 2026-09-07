@@ -180,10 +180,32 @@ check "CA-016 negative control -- check_num rejects 10 (and an empty capture) wh
 # genuine zero -- grep -c prints its own "0" AND exits 1, so the `||` arm fires too. The substring
 # check() those counts fed accepted the two-line value silently; converting the call sites to
 # check_num surfaced it immediately at EDMV4-T20 AC4. A count is one integer, never two.
+#
+# CA-098: the signature now takes OPTIONAL leading grep flags -- `w8_count_lines -i <pat> <file>`,
+# `w8_count_lines -E <pat> <file>` -- so a flagged count site can route through this one helper
+# instead of hand-rolling `grep -c<flags> ... || true` beside it. That hand-rolled form is the
+# whole finding: it cannot tell a real zero from a file that was never opened, and every one of
+# this suite's expect-zero assertions reads the second as a pass.
 w8_count_lines() {
-  local pattern="$1" file="$2" out
+  local out
+  local -a flags
+  flags=()
+  # Everything before the last two arguments is a grep flag. Plain indexed array, integer
+  # indexing, no shift-based parsing of "--" (bash 3.2 floor).
+  while [[ "$#" -gt 2 ]]; do
+    flags[${#flags[@]}]="$1"
+    shift
+  done
+  local pattern="$1" file="$2"
   [[ -f "$file" ]] || { printf '%s' "ERROR"; return 0; }
-  out="$(count_matches_strict -- "$pattern" "$file")" || { printf '%s' "ERROR"; return 0; }
+  # The two shapes are spelled out rather than expanded through a "${flags[@]:-}" default: under
+  # bash 3.2 that default injects one EMPTY argument for an empty array, which grep would take as
+  # a second pattern and silently match every line.
+  if [[ "${#flags[@]}" -gt 0 ]]; then
+    out="$(count_matches_strict "${flags[@]}" -- "$pattern" "$file")" || { printf '%s' "ERROR"; return 0; }
+  else
+    out="$(count_matches_strict -- "$pattern" "$file")" || { printf '%s' "ERROR"; return 0; }
+  fi
   printf '%s' "$out"
 }
 
@@ -202,6 +224,30 @@ check_num "CA-016 control -- w8_count_lines returns a single 0 (never a two-line
   "0" "$(w8_count_lines '^#### ' "${W8_COUNT_TMP}/probe.md")"
 check "CA-016 control -- w8_count_lines reports ERROR for a missing file instead of a passing zero" \
   "ERROR" "$(w8_count_lines '^### ' "${W8_COUNT_TMP}/absent.md")"
+
+# CA-098 controls. The three outcomes a count over a FILE must keep apart, asserted as three
+# distinct values rather than inferred from each other: a present file reports its true count, a
+# present-but-EMPTY file reports a real 0, and an ABSENT file is an error. Collapsing the last two
+# is the defect -- an expect-zero assertion then passes just as happily on a path that was deleted,
+# renamed, or never written as on one that is genuinely clean.
+: > "${W8_COUNT_TMP}/empty.md"
+check_num "CA-098 control -- a present but EMPTY file reports a real 0, distinct from the absent case below" \
+  "0" "$(w8_count_lines '^### ' "${W8_COUNT_TMP}/empty.md")"
+check "CA-098 control -- ...while an ABSENT file at the same kind of path reports ERROR, so the two can never be confused" \
+  "ERROR" "$(w8_count_lines '^### ' "${W8_COUNT_TMP}/never-written.md")"
+
+# The same three outcomes through the flagged signature, so the flagged call sites converted to
+# this helper are covered by controls of their own rather than by the unflagged ones above.
+printf 'ALPHA one\nbeta two\nALPHA three\n' > "${W8_COUNT_TMP}/flagged.md"
+check_num "CA-098 control -- the flagged signature counts case-insensitively (-i) and returns the true count" \
+  "2" "$(w8_count_lines -i '^alpha ' "${W8_COUNT_TMP}/flagged.md")"
+check_num "CA-098 control -- ...is case-SENSITIVE without the flag, so -i is really being passed through" \
+  "0" "$(w8_count_lines '^alpha ' "${W8_COUNT_TMP}/flagged.md")"
+check_num "CA-098 control -- the flagged signature honours -E (an alternation that BRE would not match)" \
+  "3" "$(w8_count_lines -E '^(ALPHA|beta) ' "${W8_COUNT_TMP}/flagged.md")"
+check "CA-098 control -- the flagged signature reports ERROR for a missing file too, not a passing zero" \
+  "ERROR" "$(w8_count_lines -i '^alpha ' "${W8_COUNT_TMP}/no-such-flagged.md")"
+
 rm -rf "$W8_COUNT_TMP"
 
 echo "wave8 smoke check -- EDMV4-T05 / EDMV4-T34 / EDMV4-T48"
@@ -1222,7 +1268,10 @@ else
 fi
 
 # ---- AC7: format documented once, naming convention + worked example --------------------------
-hookify_section_count="$(grep -c '^## Hookify rule format (canonical)$' "$CLAUDE_MD")"
+# CA-098: bare `grep -c` under `set -e`. A zero count made grep exit 1 and aborted the whole suite
+# mid-run instead of failing one assertion -- and a missing CLAUDE.md aborted it too, both without
+# a countable verdict. Routed through the one counting helper, which reports 0 and ERROR distinctly.
+hookify_section_count="$(w8_count_lines '^## Hookify rule format (canonical)$' "$CLAUDE_MD")"
 check_num "AC7 -- hookify format section appears exactly once" "1" "$hookify_section_count"
 check "AC7 -- verb-first naming convention documented (warn-*)" '`warn-*.json`' "$CLAUDE_MD_TEXT"
 check "AC7 -- verb-first naming convention documented (block-*)" '`block-*.json`' "$CLAUDE_MD_TEXT"
@@ -3214,8 +3263,20 @@ else
 fi
 
 # ---- AC1(a)/AC2: writing with a resolvable data directory creates a disjoint stub delta ---------
-T18_SEED_HEADINGS="$(grep -c '^### ' "$T18_BEFORE_SEED" 2>/dev/null || true)"
-[[ "$T18_SEED_HEADINGS" -gt 0 ]] || fail "EDMV4-T18 AC2 positive control -- shipped qc-audit.md seed has zero ### headings; the disjointness assertion below would pass vacuously"
+# CA-098: the delta/seed site. `grep -c ... 2>/dev/null || true` prints NOTHING when the file is
+# absent (grep exits 2 with no stdout), and the bare arithmetic below then read that empty value as
+# zero -- so a seed path that had moved, or a get-patterns run that returned a path to nothing at
+# all, arrived here indistinguishable from a seed that genuinely carried no headings. The helper
+# reports ERROR for that case instead, and the guard below refuses any non-integer outright.
+# The verdict is also COUNTED on success now: the old form called `fail` on failure and returned
+# silently on success, so a satisfied precondition contributed nothing to the tally and its loss
+# would have been invisible.
+T18_SEED_HEADINGS="$(w8_count_lines '^### ' "$T18_BEFORE_SEED")"
+if [[ "$T18_SEED_HEADINGS" =~ ^[0-9]+$ ]] && [[ "$T18_SEED_HEADINGS" -gt 0 ]]; then
+  pass "EDMV4-T18 AC2 positive control -- the shipped qc-audit.md seed carries ${T18_SEED_HEADINGS} '### ' heading(s), so the disjointness assertion below is not vacuous"
+else
+  fail "EDMV4-T18 AC2 positive control -- expected a positive '### ' heading count from the shipped qc-audit.md seed, got [${T18_SEED_HEADINGS}] (an absent or unreadable seed reports ERROR here rather than a passing zero)"
+fi
 
 T18_UPDATE_OUT="$(t18_run_update_patterns EDMV4T18 qc)"
 check "EDMV4-T18 AC1(a) -- update-patterns reports a new finding appended when the data dir is resolvable" \
@@ -4077,11 +4138,15 @@ t11_ac5_probe="$({ printf '%s\n' "$t11_ac5_body" | sed '1a\
   || fail "EDMV4-T11 AC5 -- positive control FAILED: the comment-stripped scan no longer detects a real invocation"
 
 # ---- AC6: no shell-command-inspection detection (D15 descope). ----------------------------------
-t11_ac6_count="$(grep -ci 'destructive\|heredoc\|subshell' "$GATEGUARD" || true)"
+# CA-098: expect-zero. `grep -ci ... || true` prints nothing at all when the file is missing, so
+# an unreadable or renamed edm-gateguard satisfied "carries no destructive/heredoc/subshell
+# detection" exactly as well as a clean one did.
+t11_ac6_count="$(w8_count_lines -i 'destructive\|heredoc\|subshell' "$GATEGUARD")"
 check_num "EDMV4-T11 AC6 -- edm-gateguard carries no destructive/heredoc/subshell detection" "0" "$t11_ac6_count"
 
 # ---- AC7: required-binary set unchanged -- no node/python/npx/pip. -------------------------------
-t11_ac7_count="$(grep -cE '\b(node|python3?|npx|pip)\b' "$GATEGUARD" || true)"
+# CA-098: expect-zero, same shape as AC6 above.
+t11_ac7_count="$(w8_count_lines -E '\b(node|python3?|npx|pip)\b' "$GATEGUARD")"
 check_num "EDMV4-T11 AC7 -- edm-gateguard references no node/python/npx/pip" "0" "$t11_ac7_count"
 
 # ---- AC8: the marker `test -f` check precedes the first jq reference, by line number. ------------
@@ -7569,7 +7634,7 @@ t52_raw_var_only_via_func() {
 
 # ---- edm-gateguard: emit_decision is the sole function (grep -c == 1), and every emission of
 # "$reason" inside it occurs strictly after the one sanitizer line. -------------------------------
-T52_GG_FUNC_COUNT="$(grep -c '^emit_decision() {' "$GATEGUARD" || true)"
+T52_GG_FUNC_COUNT="$(w8_count_lines '^emit_decision() {' "$GATEGUARD")"
 check_num "EDMV4-T52 AC6 -- edm-gateguard: emit_decision is defined exactly once" "1" "$T52_GG_FUNC_COUNT"
 
 T52_GG_ORDER_RC=0
@@ -7595,7 +7660,7 @@ fi
 
 # ---- edm-hookify: hookify_emit_match is the sole function, and the three raw fields it sanitizes
 # are never referenced anywhere else in the file except as arguments passed INTO it. -------------
-T52_HF_FUNC_COUNT="$(grep -c '^hookify_emit_match() {' "$EDM_HOOKIFY" || true)"
+T52_HF_FUNC_COUNT="$(w8_count_lines '^hookify_emit_match() {' "$EDM_HOOKIFY")"
 check_num "EDMV4-T52 AC6 -- edm-hookify: hookify_emit_match is defined exactly once" "1" "$T52_HF_FUNC_COUNT"
 
 T52_HF_RAW_HITS="$(t52_raw_var_only_via_func "$EDM_HOOKIFY" "hookify_emit_match" _mname _maction _mmessage)"
@@ -7620,7 +7685,7 @@ fi
 
 # ---- edm-stop-gate: stop_gate_emit_blocking is the sole function, and the two untrusted-text
 # variables it sanitizes are never referenced anywhere else except as call arguments. -------------
-T52_SG_FUNC_COUNT="$(grep -c '^stop_gate_emit_blocking() {' "$EDM_STOP_GATE" || true)"
+T52_SG_FUNC_COUNT="$(w8_count_lines '^stop_gate_emit_blocking() {' "$EDM_STOP_GATE")"
 check_num "EDMV4-T52 AC6 -- edm-stop-gate: stop_gate_emit_blocking is defined exactly once" "1" "$T52_SG_FUNC_COUNT"
 
 T52_SG_RAW_HITS="$(t52_raw_var_only_via_func "$EDM_STOP_GATE" "stop_gate_emit_blocking" _blocking_text _hookify_out)"
@@ -11509,9 +11574,10 @@ fi
 # ---- CA-111: both _edm-datadir-lib.sh consumers guard with [[ -r ]] -----------------------------
 echo
 echo "CA-111 -- edm-gateguard and edm-state guard the datadir-lib source with the same readable-file predicate"
-P2G34_C111_GG="$(grep -c 'if \[\[ -r "\${SCRIPT_DIR}/_edm-datadir-lib.sh" \]\]; then' "$P2G34_GATEGUARD" || true)"
+P2G34_C111_GG="$(w8_count_lines 'if \[\[ -r "\${SCRIPT_DIR}/_edm-datadir-lib.sh" \]\]; then' "$P2G34_GATEGUARD")"
 check_num "CA-111 -- edm-gateguard guards the datadir-lib source with [[ -r ]], not [[ -f ]]" "1" "$P2G34_C111_GG"
-P2G34_C111_FGG="$(grep -c 'if \[\[ -f "\${SCRIPT_DIR}/_edm-datadir-lib.sh" \]\]; then' "$P2G34_GATEGUARD" || true)"
+# CA-098: expect-zero -- an absent scratch copy would have read as "the old form is gone".
+P2G34_C111_FGG="$(w8_count_lines 'if \[\[ -f "\${SCRIPT_DIR}/_edm-datadir-lib.sh" \]\]; then' "$P2G34_GATEGUARD")"
 check_num "CA-111 -- ...and the old [[ -f ]] form is gone from edm-gateguard" "0" "$P2G34_C111_FGG"
 
 # Behavioural half: a datadir-lib that EXISTS but is unreadable must degrade to no gate (exit 0),
@@ -11587,7 +11653,8 @@ else
 fi
 
 # The static half of CA-078: the unquoted `ls` iteration is gone for good.
-P2G34_C078_LS="$(grep -c '_cite_files' "$P2G34_GRANTS" || true)"
+# CA-098: expect-zero -- an absent scratch copy would have read as "the capture is gone entirely".
+P2G34_C078_LS="$(w8_count_lines '_cite_files' "$P2G34_GRANTS")"
 check_num "CA-078 -- the intermediate \`ls\` capture the word-split came from is gone entirely" "0" "$P2G34_C078_LS"
 
 # ---- CA-120: metrics-report reads the round lens set through read_round_lenses ------------------
