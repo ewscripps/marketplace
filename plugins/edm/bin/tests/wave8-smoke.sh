@@ -862,14 +862,56 @@ else
 fi
 
 # ---- AC9: with CLAUDE_PLUGIN_DATA unset, no call writes inside the repository working tree. ----
-T17_AC9_BEFORE="$(git -C "$REPO_ROOT" status --porcelain)"
-/bin/bash -c "unset CLAUDE_PLUGIN_DATA; source '$DATADIR_LIB'; edm_data_dir >/dev/null; edm_marker_path >/dev/null"
-T17_AC9_AFTER="$(git -C "$REPO_ROOT" status --porcelain)"
-if [[ "$T17_AC9_BEFORE" == "$T17_AC9_AFTER" ]]; then
-  pass "EDMV4-T17 AC9 -- edm_data_dir()/edm_marker_path() write nothing inside the repository working tree"
+#
+# CA-095: this window used to span the SHARED worktree. It is a before/after diff of live state
+# taken either side of the code under test, so any concurrent writer -- another agent, an editor
+# autosave, a sibling suite in the same run -- landed in the diff and was reported as the library
+# writing into the repository. The window is now a scratch repository this block owns and nothing
+# else can reach, ENTERED as the cwd: the library discovers its repository from cwd
+# (`git rev-parse --show-toplevel`), so the tree a leak would land in is exactly the tree watched.
+#
+# Self-contained mktemp/rm pair rather than the w8_scratch_dir registry (CA-027): the tree never
+# outlives this block, and that registry's own assertion counts its call sites by static scan.
+T17_AC9_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t17ac9.XXXXXX")"
+T17_AC9_REPO="${T17_AC9_TMP}/repo"
+mkdir -p "$T17_AC9_REPO"
+( cd "$T17_AC9_REPO" && git init -q . && git config user.email edm-harness@example.com \
+    && git config user.name "EDM Test Harness" && git config commit.gpgsign false \
+    && echo seed > SEED.md && git add SEED.md && git commit -q -m seed ) >/dev/null 2>&1
+
+# t17_ac9_window <snippet> -- run <snippet> with the scratch repository as cwd and print "SAME"
+# when that repository's porcelain is byte-identical either side of it, or both snapshots when it
+# is not. Both snapshots come from the same repository, in one pass, from one cwd.
+t17_ac9_window() {
+  local _before _after
+  _before="$(git -C "$T17_AC9_REPO" status --porcelain)"
+  ( cd "$T17_AC9_REPO" && /bin/bash -c "$1" ) >/dev/null 2>&1
+  _after="$(git -C "$T17_AC9_REPO" status --porcelain)"
+  if [[ "$_before" == "$_after" ]]; then
+    printf '%s' "SAME"
+  else
+    printf 'before=[%s] after=[%s]' "$_before" "$_after"
+  fi
+}
+
+T17_AC9_RESULT="$(t17_ac9_window "unset CLAUDE_PLUGIN_DATA; source '$DATADIR_LIB'; edm_data_dir >/dev/null; edm_marker_path >/dev/null")"
+if [[ "$T17_AC9_RESULT" == "SAME" ]]; then
+  pass "EDMV4-T17 AC9 -- edm_data_dir()/edm_marker_path() write nothing inside the repository working tree they resolve against"
 else
-  fail "EDMV4-T17 AC9 -- git status --porcelain changed: before=[${T17_AC9_BEFORE}] after=[${T17_AC9_AFTER}]"
+  fail "EDMV4-T17 AC9 -- the scratch repository's porcelain changed across the call: ${T17_AC9_RESULT}"
 fi
+
+# AC6 control: the identical window, around a snippet that genuinely DOES write inside the scratch
+# repository, must report the change. An isolated window that can no longer see a write says
+# nothing about the verdict above. Run after that verdict, and the whole tree is removed below.
+T17_AC9_CONTROL="$(t17_ac9_window "printf 'leaked\n' > 'leaked-into-the-worktree.txt'")"
+if [[ "$T17_AC9_CONTROL" != "SAME" ]]; then
+  pass "EDMV4-T17 AC9 AC6 control -- the same window DOES report a write planted inside its own scratch repository (${T17_AC9_CONTROL})"
+else
+  fail "EDMV4-T17 AC9 AC6 control -- a planted write inside the scratch repository went unnoticed; the assertion above is vacuous"
+fi
+
+rm -rf "$T17_AC9_TMP"
 
 echo
 
@@ -3328,7 +3370,25 @@ echo "-- EDMV4-T20: regression coverage over every branch of the 4.2 write and r
 # fail on every uncommitted-but-legitimate tree, which is not what AC9 is checking. Capture a
 # BEFORE snapshot here and diff against an AFTER snapshot at the end of this section instead, the
 # same before/after idiom EDMV4-T17 AC9 already uses above.
-T20_GIT_BEFORE="$(git -C "$REPO_ROOT" status --porcelain)"
+# CA-095: this window used to span the SHARED worktree for the entire length of the T20 section --
+# hundreds of lines, during which any concurrent writer landed in the diff and was misreported as
+# scratch state leaking out of these tests. The window is a scratch repository this section owns
+# instead, and the section runs with it as the cwd: edm-state discovers its repository from cwd
+# (`git rev-parse --show-toplevel`) and every sub-test below already pins EDM_SRD_ROOT,
+# CLAUDE_PROJECT_DIR and CLAUDE_PLUGIN_DATA at its own absolute scratch paths -- so the tree a leak
+# would land in is exactly the tree being watched, and nothing else can write to it.
+#
+# Self-contained mktemp/rm pair rather than the w8_scratch_dir registry (CA-027): the tree never
+# outlives this section, and that registry's own assertion counts its call sites by static scan.
+T20_GIT_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t20ac9.XXXXXX")"
+T20_GIT_REPO="${T20_GIT_TMP}/repo"
+mkdir -p "$T20_GIT_REPO"
+( cd "$T20_GIT_REPO" && git init -q . && git config user.email edm-harness@example.com \
+    && git config user.name "EDM Test Harness" && git config commit.gpgsign false \
+    && echo seed > SEED.md && git add SEED.md && git commit -q -m seed ) >/dev/null 2>&1
+T20_GIT_PREV_CWD="$(pwd)"
+cd "$T20_GIT_REPO"
+T20_GIT_BEFORE="$(git -C "$T20_GIT_REPO" status --porcelain)"
 
 T20_PATTERNS_FIXTURES="${PLUGIN_DIR}/bin/tests/fixtures/patterns"
 
@@ -3617,12 +3677,26 @@ check "EDMV4-T20 AC8 -- wave8-smoke.sh is discovered by run-all.sh's own *-smoke
 # ---- AC9: every case above ran against a scratch HOME/CLAUDE_PLUGIN_DATA/XDG_DATA_HOME, and the
 # real repository's working tree is untouched BY THIS SECTION (before/after diff, not a bare
 # emptiness check -- this ticket's own not-yet-committed changes are legitimately present). -------
-T20_GIT_AFTER="$(git -C "$REPO_ROOT" status --porcelain)"
+T20_GIT_AFTER="$(git -C "$T20_GIT_REPO" status --porcelain)"
 if [[ "$T20_GIT_BEFORE" == "$T20_GIT_AFTER" ]]; then
-  pass "EDMV4-T20 AC9 -- git status --porcelain is unchanged across the full EDMV4-T20 section (no scratch state leaked into the real repo)"
+  pass "EDMV4-T20 AC9 -- the porcelain of the repository this whole section ran inside is unchanged across it (no scratch state leaked into the enclosing worktree)"
 else
-  fail "EDMV4-T20 AC9 -- git status --porcelain changed during the EDMV4-T20 section: before=[${T20_GIT_BEFORE}] after=[${T20_GIT_AFTER}]"
+  fail "EDMV4-T20 AC9 -- the section's own scratch repository changed across it: before=[${T20_GIT_BEFORE}] after=[${T20_GIT_AFTER}]"
 fi
+
+# AC6 control: the same window, around a write planted inside its own scratch repository, must
+# report it. Without this, scoping the window down could have made it blind rather than isolated.
+T20_GIT_CTRL_BEFORE="$(git -C "$T20_GIT_REPO" status --porcelain)"
+printf 'leaked\n' > "${T20_GIT_REPO}/leaked-into-the-worktree.txt"
+T20_GIT_CTRL_AFTER="$(git -C "$T20_GIT_REPO" status --porcelain)"
+if [[ "$T20_GIT_CTRL_BEFORE" != "$T20_GIT_CTRL_AFTER" ]]; then
+  pass "EDMV4-T20 AC9 AC6 control -- the same window DOES report a write planted inside its own scratch repository, so the verdict above discriminates"
+else
+  fail "EDMV4-T20 AC9 AC6 control -- a planted write inside the section's scratch repository went unnoticed; the assertion above is vacuous"
+fi
+
+cd "$T20_GIT_PREV_CWD"
+rm -rf "$T20_GIT_TMP"
 
 echo
 
