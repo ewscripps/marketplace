@@ -353,18 +353,7 @@ fi
 
 ORCH_SKILL="${PLUGIN_DIR}/skills/orchestrator/SKILL.md"
 
-# _t34_extract_between <file> <start-regex> <end-regex> -- prints lines strictly between the
-# first line matching <start-regex> (exclusive) and the next line matching <end-regex> (exclusive).
-_t34_extract_between() {
-  local file="$1"
-  T34_START="$2" T34_END="$3" awk '
-    $0 ~ ENVIRON["T34_START"] { found=1; next }
-    found && $0 ~ ENVIRON["T34_END"] { exit }
-    found { print }
-  ' "$file"
-}
-
-T34_BLOCK="$(_t34_extract_between "$ORCH_SKILL" '^\*\*Step 1b\.5' '^\*\*Step 1c')"
+T34_BLOCK="$(_wave7_extract_between "$ORCH_SKILL" '^\*\*Step 1b\.5' '^\*\*Step 1c')"
 
 if [[ -n "$T34_BLOCK" ]]; then
   pass "EDMV4-T34 AC1 -- Step 1b.5 section exists between Step 1b and Step 1c"
@@ -416,7 +405,7 @@ else
 fi
 
 # ---- Step 1c AC6/AC7/AC8/AC11: lifecycle_mode question and recording step ----------------------
-T34_STEP1C="$(_t34_extract_between "$ORCH_SKILL" '^\*\*Step 1c' '^\*\*Step 1d')"
+T34_STEP1C="$(_wave7_extract_between "$ORCH_SKILL" '^\*\*Step 1c' '^\*\*Step 1d')"
 
 check 'EDMV4-T34 AC6 -- Step 1c gains a "Lifecycle" AskUserQuestion header (<=12 chars)' \
   '`AskUserQuestion` header `"Lifecycle"`' "$T34_STEP1C"
@@ -2059,8 +2048,8 @@ echo "EDMV4-T36 -- Security-trigger tie-breaker and compliance dialog pre-select
 echo "================================================================================================="
 echo
 
-T36_BLOCK="$(_t34_extract_between "$ORCH_SKILL" '^\*\*Step 1b\.5' '^\*\*Step 1c')"
-T36_STEP1C="$(_t34_extract_between "$ORCH_SKILL" '^\*\*Step 1c' '^\*\*Step 1d')"
+T36_BLOCK="$(_wave7_extract_between "$ORCH_SKILL" '^\*\*Step 1b\.5' '^\*\*Step 1c')"
+T36_STEP1C="$(_wave7_extract_between "$ORCH_SKILL" '^\*\*Step 1c' '^\*\*Step 1d')"
 
 check "EDMV4-T36 AC1 -- tie-breaker forces at least standard on a trigger or public API/contract hit" \
   'forces the recommendation to **at least** `standard`' "$T36_BLOCK"
@@ -2122,7 +2111,7 @@ check_absent "EDMV4-T36 AC7 -- no new write path introduced (no compliance_enabl
 # D15 rework, because the runtime environment DOES exist (evals/run-eval.sh drives claude -p, and
 # /edm:verify-runtime is the sanctioned closer). So: assert the specification clause that IS
 # checkable, and leave the behaviour to /edm:verify-runtime.
-T36_AC8_BLOCK="$(_t34_extract_between "$ORCH_SKILL" '^\*\*Step 1b\.5' '^\*\*Step 1c')"
+T36_AC8_BLOCK="$(_wave7_extract_between "$ORCH_SKILL" '^\*\*Step 1b\.5' '^\*\*Step 1c')"
 if printf '%s\n' "$T36_AC8_BLOCK" | command grep -q "overrides the trivial tier's"; then
   pass "EDMV4-T36 AC8 -- Step 1b.5 pins the trigger-hit-overrides-trivial-tier rule in prose (behaviour itself is runtime-only; closed by /edm:verify-runtime)"
 else
@@ -2147,7 +2136,7 @@ T37_D6_PHRASES="Phases 1, 2, 3, 5 recorded|fuse into one audited file|Tickets ge
 # assertion silently stops checking anything -- see this file's own EDMV4 anti-pattern entry).
 t37_d6_scoped_check() {
   local file="$1" block
-  block="$(_t34_extract_between "$file" '^\*\*Step 1b\.5' '^\*\*Step 1c')"
+  block="$(_wave7_extract_between "$file" '^\*\*Step 1b\.5' '^\*\*Step 1c')"
   [[ -n "$block" ]] || return 2
   printf '%s\n' "$block" | grep -qE "$T37_D6_PHRASES" && return 1
   return 0
@@ -4274,20 +4263,7 @@ T41_PLAN_SKILL="${PLUGIN_DIR}/skills/plan/SKILL.md"
 T41_ORCH_SKILL="${PLUGIN_DIR}/skills/orchestrator/SKILL.md"
 T41_CLAUDE_MD="${PLUGIN_DIR}/CLAUDE.md"
 
-# _t41_extract_between <file> <start-regex> <end-regex> -- same sentinel-delimited extraction
-# EDMV4-T34/T37 already use (bin/_edm-cli-lib.sh's print_help precedent), applied here to
-# Step 1b.5's block so this ticket's own assertions never drift from the block those tickets
-# already extract.
-_t41_extract_between() {
-  local file="$1"
-  T41_START="$2" T41_END="$3" awk '
-    $0 ~ ENVIRON["T41_START"] { found=1; next }
-    found && $0 ~ ENVIRON["T41_END"] { exit }
-    found { print }
-  ' "$file"
-}
-
-T41_STEP1B5="$(_t41_extract_between "$T41_ORCH_SKILL" '^\*\*Step 1b\.5' '^\*\*Step 1c')"
+T41_STEP1B5="$(_wave7_extract_between "$T41_ORCH_SKILL" '^\*\*Step 1b\.5' '^\*\*Step 1c')"
 
 if [[ -n "$T41_STEP1B5" ]]; then
   pass "EDMV4-T41 -- Step 1b.5's block extracted non-empty (extraction not silently vacuous)"
@@ -9736,7 +9712,7 @@ fi
 # =================================================================================================
 # CA-034: Step 1b.5's readiness coupling states its own ordering instead of dangling
 # =================================================================================================
-CA034_STEP="$(_t41_extract_between "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" '^\*\*Step 1b\.5' '^\*\*Step 1c')"
+CA034_STEP="$(_wave7_extract_between "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" '^\*\*Step 1b\.5' '^\*\*Step 1c')"
 if [[ -n "$CA034_STEP" ]]; then
   pass "CA-034 -- Step 1b.5's block extracted non-empty"
 else
@@ -9771,7 +9747,7 @@ fi
 # checks above would fail on it -- they are content checks, not "the section is non-empty" checks.
 CA034_TMP="$(mktemp -d "${TMP}/ca034.XXXXXX")"
 sed '/no readiness score exists at this point/d' "${PLUGIN_DIR}/skills/orchestrator/SKILL.md" > "${CA034_TMP}/SKILL.md"
-CA034_CTRL="$(_t41_extract_between "${CA034_TMP}/SKILL.md" '^\*\*Step 1b\.5' '^\*\*Step 1c')"
+CA034_CTRL="$(_wave7_extract_between "${CA034_TMP}/SKILL.md" '^\*\*Step 1b\.5' '^\*\*Step 1c')"
 if printf '%s' "$CA034_CTRL" | grep -qF 'no readiness score exists at this point on any run that reaches this step'; then
   fail "CA-034 negative control -- the ordering check did not discriminate against a copy with the paragraph removed"
 else
