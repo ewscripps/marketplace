@@ -1,5 +1,27 @@
 # Code Audit Remediation Plan: EDMV4 -- ECC Integration
 
+## Post-Remediation Closure (2026-09-06)
+
+39 P2 finding(s) accepted as documented debt; all P0/P1 findings resolved. Convergence reached
+2026-09-06. The cross-round ledger at `code-audit/findings-ledger.jsonl` is the authoritative
+record; `findings-ledger.md` is its deterministic render, produced by `edm-state render-ledger`.
+
+The 39 accepted P2s remain OPEN in the ledger by design -- acceptance unblocks the gate, it does
+not close findings. Their split and the reasoning behind carrying rather than fixing them is in
+`code-audit/p2-triage.md`; the naming of `EDMTC` as owner of the 21 test-coverage gaps, and the
+deliberate decision to leave the 18 structural findings unnamed, is decision D51 in
+`decisions.md`.
+
+Of the 96 findings resolved in this round (215 total: 96 fixed, 80 NOTED, 39 accepted as debt),
+two corrected the audit's own prescriptions rather
+than the code: CA-088's prescription named `with_state_lock` as the correct example to copy when
+that example carried the identical defect, and CA-061 established that `EDMV4-T14` AC7 was
+unsatisfiable as written -- it forbade the exact wording AC2 mandated.
+
+The original audit snapshot is preserved below.
+
+---
+
 ## Context
 
 - Audit date: 2026-09-04

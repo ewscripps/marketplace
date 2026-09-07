@@ -37,7 +37,7 @@
     "findings_ledger": {
       "hash": "fda7bc8852851b30bedecf802c879205ed5dd1d8e6657e75a98ce08a2972ca86",
       "path": "./SRD/edm/EDMV4__ecc-integration/code-audit/findings-ledger.md",
-      "recorded_at": "2026-09-06T23:24:11Z"
+      "recorded_at": "2026-09-06T23:24:36Z"
     }
   },
   "srd_version": "1.5.0",
@@ -152,11 +152,11 @@
   "test_frameworks_detected": {},
   "coverage_by_layer": {},
   "coverage_by_epic": {},
-  "code_audit_converged": false,
-  "code_audit_gate_approved_at": "",
-  "code_audit_gate_approver": "",
-  "code_audit_gate_enforcement": "",
-  "code_audit_gate_ledger": "",
+  "code_audit_converged": true,
+  "code_audit_gate_approved_at": "2026-09-07T00:47:15Z",
+  "code_audit_gate_approver": "darryl.porter",
+  "code_audit_gate_enforcement": "permission-ask",
+  "code_audit_gate_ledger": "./SRD/edm/EDMV4__ecc-integration/code-audit/findings-ledger.jsonl",
   "compliance_gate_approved": false,
   "last_decision": "architecture.md written by edm-architect",
   "audit_rounds": {
@@ -303,7 +303,7 @@
   "forked_from": "",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-09-06T23:24:11Z",
+  "last_updated": "2026-09-07T00:47:15Z",
   "current_step": 6,
   "patterns_last_updated": "2026-09-04T04:59:40Z",
   "patterns_updates": {
@@ -325,5 +325,10 @@
       "extracted_titles": 133,
       "extraction_status": "ok"
     }
-  }
+  },
+  "code_audit_p2_debt_accepted": true,
+  "code_audit_p2_debt_count": 39,
+  "code_audit_p2_debt_round": 1,
+  "code_audit_p2_debt_accepted_at": "2026-09-07T00:47:15Z",
+  "code_audit_p2_debt_accepted_by": "darryl.porter"
 }

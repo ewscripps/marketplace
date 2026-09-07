@@ -35,7 +35,7 @@ blocking set is P0=0, P1=0 and P2>0, `skills/code-audit/SKILL.md`'s convergence 
 Convergence gate") offers **Converge now**, which runs `edm-state approve-gate <PREFIX>
 code-audit --accept-p2-debt`. That command hard-refuses if any P0 or P1 is open -- the override
 is P2-only, never P0/P1 -- and otherwise records `code_audit_converged=true` plus
-`code_audit_p2_debt_accepted`/`_count`/`_round`/`_accepted_at`/`_accepted_by` in state. The
+`code_audit_p2_debt_accepted`, `code_audit_p2_debt_count`, `code_audit_p2_debt_round`, `code_audit_p2_debt_accepted_at` and `code_audit_p2_debt_accepted_by` in state (note the count and round carry no `accepted` infix; see the state-field table). The
 ledger itself is left unchanged: accepted P2s still show as open findings in
 `findings-ledger.md`/`.jsonl`, and HANDOFF's code-audit gate row names the accepted count and
 round so a teammate sees debt was knowingly carried, not silently missed. `edm-state archive`
