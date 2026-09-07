@@ -5259,8 +5259,42 @@ T15_AC9_RC=0
 printf '{"tool_name":"Edit"}' | CLAUDE_PROJECT_DIR="$T15_AC9_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC9_DATA" PATH="$T15_AC9_FAKEBIN" bash "$GATEGUARD" >/dev/null 2>&1 || T15_AC9_RC=$?
 check_num "EDMV4-T15 AC9 -- jq missing on the GATED path (marker present) exits 1, never 2" "1" "$T15_AC9_RC"
 
+# CA-068: this greped the WHOLE of edm-gateguard for the sentence while its label named the
+# EDM-HELP block. The sentence does live in the block today, so the assertion passed -- but it
+# would go on passing if the sentence were relocated into an ordinary code comment, which is the
+# exact drift the label promises to catch. Scope the match to the block, extracted with the very
+# awk program _edm-cli-lib.sh's print_help uses to render `--help`, so the assertion tracks the
+# text an operator is actually shown rather than the file's whole byte range.
+t15_help_block() {
+  awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$1"
+}
+T15_AC9_HELP="$(t15_help_block "$GATEGUARD")"
 check "EDMV4-T15 AC9 -- the EDM-HELP block states the jq-missing distinction" \
-  "once a marker is present" "$(cat "$GATEGUARD")"
+  "once a marker is present" "$T15_AC9_HELP"
+
+# CC1 control: a scratch copy with that one sentence lifted out of the block and re-emitted after
+# EDM-HELP-END -- the file still contains it, the help text no longer does. The scoped assertion
+# above must reject that copy, and the whole-file view must still accept it: the second half is
+# what shows the old, unscoped form could not have seen the move at all. T15_AC9_TMP is the scratch
+# tree this AC's band already registered; no new w8_scratch_dir call site is introduced, because
+# CA-027's registry assertion compares a static grep of those call sites against the registry's
+# runtime length.
+T15_AC9_MOVED="${T15_AC9_TMP}/gateguard-sentence-moved"
+awk '/once a marker is present/ && !moved { moved=1; lifted=$0; next } { print }
+     END { if (moved) print lifted }' "$GATEGUARD" > "$T15_AC9_MOVED"
+T15_AC9_MOVED_HELP="$(t15_help_block "$T15_AC9_MOVED")"
+T15_AC9_MOVED_ALL="$(cat "$T15_AC9_MOVED")"
+check_absent "EDMV4-T15 AC9 control (CA-068) -- on a scratch copy with the sentence relocated below EDM-HELP-END, the help block no longer carries it, so the scoped assertion can fail" \
+  "once a marker is present" "$T15_AC9_MOVED_HELP"
+check "EDMV4-T15 AC9 control (CA-068) -- that same scratch copy still carries the sentence somewhere in the file, which is all the pre-CA-068 whole-file grep ever asked for" \
+  "once a marker is present" "$T15_AC9_MOVED_ALL"
+# A guard against the control going hollow the other way: an extraction that returned nothing at
+# all would make the check_absent above pass for the wrong reason. The block must be non-empty.
+if [[ -n "$T15_AC9_MOVED_HELP" ]]; then
+  pass "EDMV4-T15 AC9 control (CA-068) -- the relocated-sentence copy still has a non-empty EDM-HELP block, so the absence above is a real absence and not an empty extraction"
+else
+  fail "EDMV4-T15 AC9 control (CA-068) -- the relocated-sentence copy extracted an EMPTY help block, so the absence check above proves nothing"
+fi
 
 # ---- AC10: an unparseable stdin payload exits 1 with empty stdout, never blocks. -----------------
 T15_AC10_PROJ="" T15_AC10_DATA=""
