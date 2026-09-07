@@ -29,6 +29,48 @@ trap 'rm -rf "$TMP"; exit 143' TERM
 trap 'rm -rf "$TMP"; exit 129' HUP
 PATH="${PLUGIN_DIR}/bin:$PATH"
 
+# ---- CA-102: the REAL host data directory must be untouched by a suite run -------------------
+# Two cases in this file used to invoke `edm-state update-patterns` with no
+# CLAUDE_PLUGIN_DATA/HOME/XDG_DATA_HOME isolation. That command creates
+# <data>/patterns/<type>-audit.md, and drops the `.edm-owned` claim beside it, BEFORE it decides
+# whether any finding is novel -- so running this suite on a machine that had not run it before
+# left files behind in whatever bin/_edm-datadir-lib.sh resolves. Both call sites are isolated
+# now; the snapshot taken here and compared at the very bottom of this file is what stops a THIRD
+# one reintroducing the side effect silently.
+#
+# Scope: the recursive path listing covers the whole resolved root (pruned at node_modules, which
+# belongs to whatever foreign plugin owns the directory when CLAUDE_PLUGIN_DATA points at one and
+# which EDM never writes into), so a new file anywhere is caught; content hashes cover the root's
+# own files plus patterns/ and run/, the three places EDM itself writes, so an in-place rewrite of
+# a harvested pattern delta is caught too.
+_wave7_datadir_snapshot() {
+  local _w7ds_root="$1" _w7ds_f
+  if [[ -z "$_w7ds_root" || ! -d "$_w7ds_root" ]]; then
+    printf '%s\n' "(no resolvable host data directory)"
+    return 0
+  fi
+  { find "$_w7ds_root" -name node_modules -prune -o -print 2>/dev/null || true; } | LC_ALL=C sort
+  for _w7ds_f in "$_w7ds_root"/* "$_w7ds_root"/.edm-owned "$_w7ds_root"/patterns/* "$_w7ds_root"/run/*; do
+    [[ -f "$_w7ds_f" ]] || continue
+    printf '%s %s\n' "$_w7ds_f" "$(_harness_hash_file "$_w7ds_f" || echo unhashable)"
+  done
+}
+
+WAVE7_HOST_DATA_DIR=""
+if [[ -r "${PLUGIN_DIR}/bin/_edm-datadir-lib.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "${PLUGIN_DIR}/bin/_edm-datadir-lib.sh"
+  WAVE7_HOST_DATA_DIR="$(edm_data_dir)"
+fi
+# The control file this suite plants at the bottom is named here, and any copy left behind by an
+# earlier aborted run is removed BEFORE the baseline is taken -- so a stale control file is
+# cleaned up rather than becoming part of the baseline and hiding a real write.
+WAVE7_HOST_DATA_CONTROL_NAME=".edm-wave7-ca102-positive-control"
+if [[ -n "$WAVE7_HOST_DATA_DIR" && -d "$WAVE7_HOST_DATA_DIR" ]]; then
+  rm -f "${WAVE7_HOST_DATA_DIR}/${WAVE7_HOST_DATA_CONTROL_NAME}"
+fi
+WAVE7_HOST_DATA_BEFORE="$(_wave7_datadir_snapshot "$WAVE7_HOST_DATA_DIR")"
+
 echo "wave7 smoke check -- EDMV3-T09 cmd_set caller-contract and no-override-flag guard"
 echo
 
@@ -2364,7 +2406,17 @@ t42_ac9_case() {
     echo "[Diagram Errors] [P2] Section 5.1 | literal semicolon inside a mermaid label | Escape or remove it"
   } > "SRD/ZMER/audit-srd.md"
 
-  out="$(edm-state update-patterns ZMER srd 2>&1)"
+  # CA-102 (EDMTC-T06 AC3): this ran `update-patterns` with no data-directory isolation.
+  # `update-patterns` creates <data>/patterns/<type>-audit.md -- and the `.edm-owned` claim beside
+  # it -- BEFORE it decides whether any finding is novel, so on a machine that had never run this
+  # suite the case left three files behind in whatever _edm-datadir-lib.sh resolves (typically
+  # ~/.local/share/edm, or another plugin's directory when the host has pointed CLAUDE_PLUGIN_DATA
+  # at one). Isolate all three variables the resolver reads, the same way the CA-476 positive
+  # control further down this file already does.
+  local t42_ac9_data="${TMP}/t42-ac9-datadir"
+  mkdir -p "${t42_ac9_data}/plugin-data" "${t42_ac9_data}/home"
+  out="$(CLAUDE_PLUGIN_DATA="${t42_ac9_data}/plugin-data" HOME="${t42_ac9_data}/home" XDG_DATA_HOME="" \
+    edm-state update-patterns ZMER srd 2>&1)"
   after_hash="$(_harness_hash_file "${PLUGIN_DIR}/docs/audit-patterns/srd-audit.md")"
 
   [[ "$out" == *"no novel findings to append"* ]] \
@@ -4714,7 +4766,12 @@ ca476_loud_diagnostic_case() {
   local before_hash after_hash out status
   before_hash="$(_harness_hash_file "$scratch_ticket")"
   status=0
-  out="$(EDM_SRD_ROOT="$scratch_srd_root" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZC476 ticket 2>&1)" || status=$?
+  # CA-102 (EDMTC-T06 AC3): this call carried EDM_SRD_ROOT but none of the three variables
+  # _edm-datadir-lib.sh actually resolves the data directory from, so it created
+  # <real host data dir>/patterns/ticket-audit.md (and the .edm-owned claim) on any machine where
+  # they did not already exist. The positive control 40 lines below was isolated from the day it
+  # was written; this one was not. Both are isolated now, to the same scratch root.
+  out="$(CLAUDE_PLUGIN_DATA="$scratch/data" HOME="$scratch/home" XDG_DATA_HOME="" EDM_SRD_ROOT="$scratch_srd_root" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZC476 ticket 2>&1)" || status=$?
   after_hash="$(_harness_hash_file "$scratch_ticket")"
 
   [[ "$status" -eq 0 ]] \
@@ -10079,6 +10136,54 @@ if verif_t09_has_maxturns_50 "$verif_t09_revert_copy"; then
   fail "VERIF-T09 AC8 -- revert self-test: a copy of edm-qc-auditor.md rewritten to maxTurns: 25 was still accepted by the AC1 assertion function -- the assertion is not load-bearing"
 else
   pass "VERIF-T09 AC8 -- revert self-test: a copy of edm-qc-auditor.md rewritten to maxTurns: 25 is correctly rejected by the AC1 assertion function"
+fi
+
+
+# =================================================================================================
+# CA-102 (EDMTC-T06 AC4): the real host data directory is untouched by this suite run
+# =================================================================================================
+# Deliberately the LAST thing this file does, so it observes every case above it. Three assertions
+# in either arm, so the suite total does not move with the host's data-directory situation.
+echo
+echo "=== CA-102: the real host data directory is untouched by this suite run ==="
+if [[ -z "$WAVE7_HOST_DATA_DIR" || ! -d "$WAVE7_HOST_DATA_DIR" ]]; then
+  # No resolvable data root means there is nothing this suite could have polluted. Stated as
+  # three passes rather than a silent skip, so the count is stable and the reason is visible.
+  pass "CA-102 -- no host data directory resolves on this machine (edm_data_dir printed nothing, or the path does not exist), so no case could have written into one"
+  pass "CA-102 positive control -- not applicable: a control write needs a directory to write into"
+  pass "CA-102 -- nothing to restore: no control file was planted"
+else
+  wave7_hostdata_after="$(_wave7_datadir_snapshot "$WAVE7_HOST_DATA_DIR")"
+  if [[ "$WAVE7_HOST_DATA_BEFORE" == "$wave7_hostdata_after" ]]; then
+    pass "CA-102 -- ${WAVE7_HOST_DATA_DIR} is unchanged across the whole suite run: no case wrote into the real host data directory"
+  else
+    fail "CA-102 -- this suite wrote into the real host data directory ${WAVE7_HOST_DATA_DIR}; isolate the offending case's CLAUDE_PLUGIN_DATA/HOME/XDG_DATA_HOME. Difference:
+$(diff <(printf '%s\n' "$WAVE7_HOST_DATA_BEFORE") <(printf '%s\n' "$wave7_hostdata_after") | head -20)"
+  fi
+
+  # Positive control -- AC4's second half. Write into the real directory ON PURPOSE and prove the
+  # SAME comparison detects it, then remove it and prove the directory is back where it started.
+  # Without this, a clean verdict above could equally mean the snapshot function was broken, the
+  # root resolved somewhere nothing ever writes, or the two snapshots were equal-and-empty.
+  wave7_hostdata_control="${WAVE7_HOST_DATA_DIR}/${WAVE7_HOST_DATA_CONTROL_NAME}"
+  if printf '%s\n' "wave7-smoke.sh CA-102 positive control -- written and removed within one assertion" \
+       > "$wave7_hostdata_control" 2>/dev/null; then
+    wave7_hostdata_ctl="$(_wave7_datadir_snapshot "$WAVE7_HOST_DATA_DIR")"
+    rm -f "$wave7_hostdata_control"
+    if [[ "$wave7_hostdata_ctl" != "$wave7_hostdata_after" \
+          && "$wave7_hostdata_ctl" == *"$WAVE7_HOST_DATA_CONTROL_NAME"* ]]; then
+      pass "CA-102 positive control -- a file deliberately written into ${WAVE7_HOST_DATA_DIR} IS detected by the same comparison, so the clean verdict above is a real absence"
+    else
+      fail "CA-102 positive control -- a file deliberately written into ${WAVE7_HOST_DATA_DIR} was NOT detected by the comparison; the untouched assertion above verifies nothing"
+    fi
+    wave7_hostdata_restored="$(_wave7_datadir_snapshot "$WAVE7_HOST_DATA_DIR")"
+    [[ "$wave7_hostdata_restored" == "$wave7_hostdata_after" ]] \
+      && pass "CA-102 positive control -- the control file was removed; ${WAVE7_HOST_DATA_DIR} is back to the state the assertion above observed" \
+      || fail "CA-102 positive control -- the control file was not fully removed; ${WAVE7_HOST_DATA_DIR} is left dirty by this suite"
+  else
+    fail "CA-102 positive control -- could not write ${wave7_hostdata_control}; the untouched assertion above cannot be shown capable of detecting a write"
+    fail "CA-102 positive control -- no control file was planted, so nothing was restored"
+  fi
 fi
 
 echo "Results: ${PASS} passed, ${FAIL} failed"
