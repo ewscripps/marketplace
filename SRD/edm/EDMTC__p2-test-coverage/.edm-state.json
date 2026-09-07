@@ -1,16 +1,50 @@
 {
   "prefix": "EDMTC",
   "schema_version": 1,
-  "current_phase": 0,
-  "gates_approved": [],
+  "current_phase": 6,
+  "gates_approved": [
+    {
+      "gate": 3,
+      "approved_at": "2026-09-07T20:25:19Z",
+      "approver": "darryl.porter",
+      "enforcement": "permission-ask"
+    }
+  ],
   "artifacts": {},
-  "artifact_hashes": {},
+  "artifact_hashes": {
+    "tickets": {
+      "hash": "3768a974f74c3c949597a228cde2293ec7e7bb95956ae3fba17e06b154162af0",
+      "path": "./SRD/edm/EDMTC__p2-test-coverage/tickets/README.md",
+      "recorded_at": "2026-09-07T20:25:03Z"
+    }
+  },
   "srd_version": "0.0.0",
   "estimated_size": "Unknown",
   "initiative_branch": "edm/edmtc-p2-test-coverage",
   "product_name": "edm",
   "initiative_description": "p2-test-coverage",
-  "phase_durations": {},
+  "phase_durations": {
+    "4_phase": {
+      "started_at": "2026-09-07T20:22:50Z",
+      "completed_at": "2026-09-07T20:25:03Z",
+      "duration_seconds": 133,
+      "tokens": {
+        "input": 8,
+        "output": 8370,
+        "cache_read": 2891677,
+        "cache_write_5m": 0,
+        "cache_write_1h": 12618
+      },
+      "model_used": "claude-opus-5",
+      "estimated_cost_usd": 2.1376,
+      "human_baseline_usd": 0.00,
+      "attribution_mode": "scoped",
+      "unparseable_lines": 0
+    },
+    "6_phase": {
+      "started_at": "2026-09-07T20:25:32Z"
+    }
+  },
   "test_frameworks_detected": {},
   "coverage_by_layer": {},
   "coverage_by_epic": {},
@@ -53,5 +87,5 @@
   "forked_from": "EDMV4",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-09-07T18:05:08Z"
+  "last_updated": "2026-09-07T20:25:33Z"
 }

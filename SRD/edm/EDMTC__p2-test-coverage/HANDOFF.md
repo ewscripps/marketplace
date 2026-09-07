@@ -1,24 +1,24 @@
 # EDMTC - Session Handoff
 
-> **Last updated**: 2026-09-07T18:05:54Z by darryl.porter  
+> **Last updated**: 2026-09-07T20:25:33Z by darryl.porter  
 > **To resume**: `/edm:orchestrator EDMTC`
 
 ## Current Status
 
-- **Phase**: Not started
-- **Gates approved**: 0 of 0
-- **Last gate**: none yet
+- **Phase**: Phase 6 - Implementation
+- **Gates approved**: 1 of 0
+- **Last gate**: Gate 3 - approved 2026-09-07T20:25:19Z by darryl.porter
 - **Product**: edm
 - **Description**: p2-test-coverage
-- **Next action**: Phase 1 skipped -- run `/edm:orchestrator EDMTC` to continue
+- **Next action**: Phase 6 in progress - run `/edm:orchestrator EDMTC` to continue, then `/edm:test EDMTC` when all tickets pass QC
 
 ## Resume Point
 
-- **Phase**: Not started
+- **Phase**: Phase 6 - Implementation
 
-**Pending artifacts for Not started**:
+**Pending artifacts for Phase 6 - Implementation**:
 
-_(all phase artifacts present)_
+_(implementation in progress -- track individual ticket status)_
 
 > Copy-paste to resume: `/edm:orchestrator EDMTC`
 
@@ -42,7 +42,7 @@ _(no code audit is required for this mode (standard/fix-pack))_
 
 ## Gates
 
-_(none yet)_
+- Gate 3 - approved 2026-09-07T20:25:19Z by darryl.porter [enforcement: permission-ask]
 
 ## Artifact Checklist
 
@@ -51,7 +51,7 @@ _(none yet)_
 | `./SRD/edm/EDMTC__p2-test-coverage/planning.md` | [absent] |
 | `./SRD/edm/EDMTC__p2-test-coverage/srd.md` | [absent] |
 | `./SRD/edm/EDMTC__p2-test-coverage/audit-srd.md` | [absent] |
-| `./SRD/edm/EDMTC__p2-test-coverage/tickets/README.md` | [absent] |
+| `./SRD/edm/EDMTC__p2-test-coverage/tickets/README.md` | [present] |
 | `./SRD/edm/EDMTC__p2-test-coverage/tickets/audit.md` | [absent] |
 | `./SRD/edm/EDMTC__p2-test-coverage/architecture.md` | [absent] |
 | `./SRD/edm/EDMTC__p2-test-coverage/decisions.md` | [present] |
@@ -69,7 +69,7 @@ _(none recorded yet - decisions are captured at Gate 1)_
 1. Pull the latest branch - all EDM artifacts are committed
 2. Open Claude Code in the project root
 3. Run: `/edm:orchestrator EDMTC`
-4. The orchestrator detects the existing initiative and resumes from **Not started**
+4. The orchestrator detects the existing initiative and resumes from **Phase 6 - Implementation**
 
 ## Notes
 
