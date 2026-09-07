@@ -551,29 +551,106 @@ else
 fi
 
 # ---- AC2: guarded sourcing -- deleting the library degrades edm-state to today's behaviour. ----
-T17_AC2_PRESENT_LIST_RC=0
-"$EDM_STATE" list --paths >/dev/null 2>&1 || T17_AC2_PRESENT_LIST_RC=$?
-T17_AC2_PRESENT_VALIDATE_RC=0
-"$EDM_STATE" validate EDMV4 >/dev/null 2>&1 || T17_AC2_PRESENT_VALIDATE_RC=$?
+#
+# CA-094: the two observations this compares used to be taken from the LIVE repository, at
+# different times and from DIFFERENT working directories, with every difference between them
+# attributed to the removed library. Any concurrent writer changed one side; so did `list --paths`
+# printing repository-relative paths from two different cwds. And when the initiative being
+# validated was finally archived, BOTH arms started returning the same "unknown prefix" error --
+# the comparison went on passing for a reason that had nothing whatever to do with guarded
+# sourcing. Three defects, one root cause: comparing live shared state against itself across time.
+#
+# Both observations are now taken in ONE pass, from ONE cwd, against a scratch initiative this
+# block builds -- and the fixture's own resolvability is asserted FIRST, so "the two agree" can
+# never again silently mean "they both failed".
+#
+# Self-contained mktemp/rm pair rather than the w8_scratch_dir registry (CA-027): the tree never
+# outlives this block, and that registry's own assertion counts its call sites by static scan.
+T17_AC2_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t17ac2.XXXXXX")"
+T17_AC2_REPO="${T17_AC2_TMP}/repo"
+mkdir -p "$T17_AC2_REPO"
+( cd "$T17_AC2_REPO" && git init -q . && git config user.email edm-harness@example.com \
+    && git config user.name "EDM Test Harness" && git config commit.gpgsign false ) >/dev/null 2>&1
+( cd "$T17_AC2_REPO" && CLAUDE_PROJECT_DIR="$T17_AC2_REPO" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+    bash "${PLUGIN_DIR}/bin/edm-init" T17AC2 ) >/dev/null 2>&1
 
-T17_AC2_BINDIR="${TMP}/t17-ac2-bin"
-mkdir -p "$T17_AC2_BINDIR"
-cp "${PLUGIN_DIR}/bin/edm-state" "${T17_AC2_BINDIR}/edm-state"
-cp "${PLUGIN_DIR}/bin/_edm-cli-lib.sh" "${T17_AC2_BINDIR}/_edm-cli-lib.sh"
-cp "${PLUGIN_DIR}/bin/_edm-lint-lib.sh" "${T17_AC2_BINDIR}/_edm-lint-lib.sh"
-chmod +x "${T17_AC2_BINDIR}/edm-state"
-# Deliberately NOT copying _edm-datadir-lib.sh -- this is the "library removed" scenario.
+# t17_ac2_bindir <dest> <with|without|unguarded> -- assemble one bin/ tree to observe.
+#   with       the shipped tree, library present
+#   without    the library-removed scenario AC2 is about; the guard must absorb it
+#   unguarded  AC6 control: library removed AND the guard stripped, so the missing library really
+#              does break every subcommand. This is the defect AC2 exists to prevent, planted
+#              inside this block's own fixture.
+t17_ac2_bindir() {
+  local _dest="$1" _mode="$2"
+  mkdir -p "$_dest"
+  cp "${PLUGIN_DIR}/bin/_edm-cli-lib.sh" "${_dest}/_edm-cli-lib.sh"
+  cp "${PLUGIN_DIR}/bin/_edm-lint-lib.sh" "${_dest}/_edm-lint-lib.sh"
+  if [[ "$_mode" == "unguarded" ]]; then
+    sed 's#^\[\[ -r .*_edm-datadir-lib.sh.*$#source "${SCRIPT_DIR}/_edm-datadir-lib.sh"#' \
+      "${PLUGIN_DIR}/bin/edm-state" > "${_dest}/edm-state"
+  else
+    cp "${PLUGIN_DIR}/bin/edm-state" "${_dest}/edm-state"
+  fi
+  if [[ "$_mode" == "with" ]]; then
+    cp "${PLUGIN_DIR}/bin/_edm-datadir-lib.sh" "${_dest}/_edm-datadir-lib.sh"
+  fi
+  chmod +x "${_dest}/edm-state"
+}
+t17_ac2_bindir "${T17_AC2_TMP}/bin-with" with
+t17_ac2_bindir "${T17_AC2_TMP}/bin-without" without
+t17_ac2_bindir "${T17_AC2_TMP}/bin-unguarded" unguarded
 
-T17_AC2_ABSENT_LIST_RC=0
-(cd "$REPO_ROOT" && "${T17_AC2_BINDIR}/edm-state" list --paths >/dev/null 2>&1) || T17_AC2_ABSENT_LIST_RC=$?
-T17_AC2_ABSENT_VALIDATE_RC=0
-(cd "$REPO_ROOT" && "${T17_AC2_BINDIR}/edm-state" validate EDMV4 >/dev/null 2>&1) || T17_AC2_ABSENT_VALIDATE_RC=$?
+# Control on the mutation itself: an AC6 control that silently failed to apply would leave the
+# "diverges" assertion below comparing two identical trees and passing for nothing.
+T17_AC2_MUT="${T17_AC2_TMP}/bin-unguarded/edm-state"
+check "EDMV4-T17 AC2 -- AC6 control precondition: the mutant really does source the library unguarded" \
+  'source "${SCRIPT_DIR}/_edm-datadir-lib.sh"' "$(cat "$T17_AC2_MUT")"
+check_absent "EDMV4-T17 AC2 -- AC6 control precondition: ...and the guarded form is gone from the mutant" \
+  '[[ -r "${SCRIPT_DIR}/_edm-datadir-lib.sh" ]] && source' "$(cat "$T17_AC2_MUT")"
 
-if [[ "$T17_AC2_PRESENT_LIST_RC" -eq "$T17_AC2_ABSENT_LIST_RC" && "$T17_AC2_PRESENT_VALIDATE_RC" -eq "$T17_AC2_ABSENT_VALIDATE_RC" ]]; then
-  pass "EDMV4-T17 AC2 -- edm-state list/validate exit identically with the library removed (list rc=${T17_AC2_PRESENT_LIST_RC}, validate rc=${T17_AC2_PRESENT_VALIDATE_RC})"
+# t17_ac2_observe <bindir> -- ONE observation: both subcommands, one cwd, one moment, printed as
+# "<list-rc>|<validate-rc>|<validate-output>". Every arm below goes through exactly this, so two
+# observations can differ in nothing but the bin directory under test.
+t17_ac2_observe() {
+  (
+    cd "$T17_AC2_REPO" || exit 99
+    export CLAUDE_PROJECT_DIR="$T17_AC2_REPO"
+    _t17o_lrc=0
+    "${1}/edm-state" list --paths >/dev/null 2>&1 || _t17o_lrc=$?
+    _t17o_vrc=0
+    _t17o_vout="$("${1}/edm-state" validate T17AC2 2>&1)" || _t17o_vrc=$?
+    printf '%s|%s|%s' "$_t17o_lrc" "$_t17o_vrc" "$_t17o_vout"
+  )
+}
+
+T17_AC2_WITH="$(t17_ac2_observe "${T17_AC2_TMP}/bin-with")"
+T17_AC2_WITHOUT="$(t17_ac2_observe "${T17_AC2_TMP}/bin-without")"
+T17_AC2_UNGUARDED="$(t17_ac2_observe "${T17_AC2_TMP}/bin-unguarded")"
+
+# Precondition: the fixture is genuinely resolvable and valid with the library present. This is the
+# arm whose absence let the archived-prefix error pass as agreement for as long as it did.
+T17_AC2_WITH_REST="${T17_AC2_WITH#*|}"
+check_num "EDMV4-T17 AC2 precondition -- the scratch initiative's list --paths succeeds with the library present" \
+  "0" "${T17_AC2_WITH%%|*}"
+check_num "EDMV4-T17 AC2 precondition -- ...and validate succeeds too, so an agreeing pair below cannot mean both arms merely errored" \
+  "0" "${T17_AC2_WITH_REST%%|*}"
+
+if [[ "$T17_AC2_WITH" == "$T17_AC2_WITHOUT" ]]; then
+  pass "EDMV4-T17 AC2 -- edm-state list/validate behave identically with _edm-datadir-lib.sh removed (observed in one pass from one cwd: ${T17_AC2_WITH})"
 else
-  fail "EDMV4-T17 AC2 -- exit codes diverged with library removed: list present=${T17_AC2_PRESENT_LIST_RC} absent=${T17_AC2_ABSENT_LIST_RC}; validate present=${T17_AC2_PRESENT_VALIDATE_RC} absent=${T17_AC2_ABSENT_VALIDATE_RC}"
+  fail "EDMV4-T17 AC2 -- behaviour diverged with the library removed: with=[${T17_AC2_WITH}] without=[${T17_AC2_WITHOUT}]"
 fi
+
+# AC6 control: the very same comparison, against a tree where the property genuinely IS violated
+# inside this block's own fixture, must report the divergence. An isolated assertion that can no
+# longer see the defect it guards is worse than the flaky one it replaced.
+if [[ "$T17_AC2_WITH" != "$T17_AC2_UNGUARDED" ]]; then
+  pass "EDMV4-T17 AC2 AC6 control -- the same comparison DOES report divergence when the guard is stripped and the library is genuinely missing (unguarded=[${T17_AC2_UNGUARDED}])"
+else
+  fail "EDMV4-T17 AC2 AC6 control -- stripping the guard changed nothing the comparison can see; the assertion above is vacuous"
+fi
+
+rm -rf "$T17_AC2_TMP"
 
 # ---- AC3: exactly three public functions plus underscore-prefixed helpers, no global vars, no
 # redefinition against edm-state's own constant block. -------------------------------------------
