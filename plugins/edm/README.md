@@ -275,9 +275,124 @@ for any initiative whose audit result is going to be relied on. A subset round i
 gate and `edm-state archive` still require one full round no matter how many partial rounds
 preceded it. See `skills/code-audit/SKILL.md` for the lens inventory and the round-type rules.
 
+## Hooks -- what this plugin does without being asked
+
+Installing EDM registers six hook events. **Three of them can block**, so read this section before
+your first initiative: two of the three fire on ordinary editing, not only inside an EDM command.
+
+| Event | Matcher | Blocks? | What happens |
+|---|---|---|---|
+| `SessionStart` | -- | no | Prints any in-progress initiative and its next action (`edm-state session-start`). |
+| `UserPromptExpansion` | `edm:(srd\|audit-srd\|tickets\|audit-tickets\|implement)` | **yes** | Refuses to expand a phase command whose prerequisite HITL gate is not approved. Only a real gate refusal blocks (exit 2); a missing binary or an unknown prefix -- the legitimate first-run case -- exits 0. |
+| `PreToolUse` | `Edit\|Write\|MultiEdit` | **yes** | `edm-gateguard`. See below. |
+| `PreToolUse` | `Bash` (two entries) | **yes** | Entry 1 `edm-bash-gate` runs on every Bash call and evaluates `bash`-event hookify rules. Entry 2 is gated by `"if": "Bash(git commit*)"` and runs `edm-lint-staged-artifacts`, which blocks a commit carrying artifact-lint violations. Neither entry suppresses the other. |
+| `Stop` | -- (two entries) | **yes** | Entry 1 checkpoints state. Entry 2 `edm-stop-gate` refuses to end the session while any active initiative has a blocking `edm-state validate` anomaly, or a `stop`-event hookify rule matches with `"action": "block"`. |
+| `SubagentStop` | `edm-implementer` | no | Auto-spawns `edm-qc-auditor` to verify the finished implementer's acceptance criteria. |
+| `PreCompact` | -- | no | Checkpoints state before context compaction. |
+
+### `edm-gateguard` -- the one most likely to surprise you
+
+While an initiative is in **Phase 6**, the first `Edit` or `Write` to any given file is **denied**,
+and the denial asks for four facts: who calls the file, what else already does its job, what data
+shapes it touches, and the acceptance criteria of the ticket being implemented. Answer them and the
+retry is allowed. The intent is to stop an agent editing a file it has not read.
+
+Outside Phase 6 there is no marker on disk and the gate allows immediately -- one process exec, one
+file test, zero `jq` calls.
+
+If it gets in your way:
+
+```bash
+export EDM_GATEGUARD=off          # or 0, false, disabled, disable
+export EDM_GATEGUARD_DISABLED=1   # second, independent switch -- literal "1" only
+```
+
+`SRD/`, common test trees, and generated output (`dist`, `build`, `node_modules`, `.git`) are
+exempt by default; override with `EDM_GATEGUARD_EXEMPT_GLOBS`. Denials are capped per session
+(`EDM_GATEGUARD_MAX_DENIALS`, default 3) -- past the cap the gate advises on stderr and allows
+rather than denying forever.
+
+### Rules as data -- `.claude/edm-hookify/*.json`
+
+Your project can add its own enforcement without forking the plugin. Drop JSON rule files in
+`.claude/edm-hookify/` (project root, source-controlled -- a rule changes what is enforced for
+every teammate, so it belongs in review). Each rule names an `event` (`file`, `bash`, or `stop`),
+a list of `conditions` (all must match), a `message`, and an `action`.
+
+**`action` defaults to `warn`.** A rule blocks only if it carries the literal `"action": "block"`.
+A malformed rule file is a setup error: it is named on stderr and skipped, it never blocks, and it
+never disables the rest of your rules.
+
+```json
+{
+  "name": "warn-no-console-log",
+  "enabled": true,
+  "event": "file",
+  "action": "warn",
+  "conditions": [
+    { "field": "new_text", "operator": "contains", "pattern": "console.log" },
+    { "field": "file_path", "operator": "not_contains", "pattern": "/tests/" }
+  ],
+  "message": "Avoid leaving console.log statements in non-test source files."
+}
+```
+
+Six operators: `regex_match`, `contains`, `not_contains`, `equals`, `starts_with`, `ends_with`.
+`regex_match` uses `jq`'s Oniguruma engine, not POSIX ERE -- test a pattern with `jq -r 'test("...")'`
+rather than `grep -E`. Kill switches for all three consumers:
+
+```bash
+export EDM_HOOKIFY=off            # or 0, false, disabled, disable
+export EDM_HOOKIFY_DISABLED=1     # literal "1" only
+```
+
+Full schema, valid `field` values per event, and the documented failure modes are in `CLAUDE.md`'s
+"Hookify rule format (canonical)" section.
+
+## Command-line tools (`bin/`)
+
+Every script below is on `PATH` while the plugin is enabled, and each supports `--help`. When
+developing the plugin itself, invoke them by explicit path (`bash plugins/edm/bin/edm-state ...`) --
+neither `/plugin update` nor `/reload-plugins` reads your working tree, so a bare name runs
+whatever last reached the marketplace clone.
+
+| Script | Purpose |
+|---|---|
+| `edm-init` | Scaffold a new initiative directory (flat or `--product`/`--description` scoped). |
+| `edm-validate-prefix` | Check a proposed PREFIX is free across every product subdirectory. |
+| `edm-state` | Read/write `.edm-state.json`; 42 subcommands covering phases, gates, audit rounds, metrics, PARTIAL closure, pattern harvest, and `unlock`. |
+| `edm-gateguard` | `PreToolUse` Edit/Write/MultiEdit gate (see Hooks above). |
+| `edm-hookify` | Evaluator for the rule format above. `list` and `eval <file\|bash\|stop>`. |
+| `edm-bash-gate` | `PreToolUse` Bash consumer for `bash`-event rules. |
+| `edm-stop-gate` | `Stop` completion gate -- blocking-anomaly and `stop`-event rule enforcement. |
+| `edm-lint-artifacts` | Scan artifact markdown for attribution trailers, non-ASCII bytes, leaked tool tags, and raw semicolons in Mermaid labels. `--all` or `--path <dir>` for a manual sweep. |
+| `edm-lint-staged-artifacts` | The commit-time body of the git-commit hook: maps staged paths to prefixes and lints each. |
+| `edm-repo-readiness` | Score the repository EDM is about to work in across six categories. A category whose probe could not be read is reported `UNMEASURED` and still counts against the score, so the total is a floor rather than a flattering average. |
+| `edm-check-verifier-sentinel` | Verify a read-only verifier finished rather than hitting its turn ceiling: reads only the artifact's last line and refuses on a missing sentinel or a short `audited=` count. |
+| `edm-check-grants` | Four-source grant/instruction contract check across agent bodies, skill launch templates, hook prompts and tool grants. |
+| `edm-check-vocabulary` | Backstop for the abolished-severity-vocabulary policy. |
+| `edm-check-skill-sync` | Tripwire: the dispatcher holds no phase procedure, every phase skill owns its own, and no skill sets `disable-model-invocation`. |
+| `edm-sync-canonical-sections` | Regenerate `docs/canonical-sections.md` from `CLAUDE.md`'s seven canonical sections; `--check` exits 1 on drift. |
+| `edm-compare-eval` | Compare an eval run against the committed baseline, refusing on a scorer-version or dimension mismatch. |
+
+`_edm-cli-lib.sh`, `_edm-datadir-lib.sh` and `_edm-lint-lib.sh` are **sourced, never executed** --
+the leading underscore marks them as libraries even though `bin/` is on `PATH`.
+
+### Where plugin data lives
+
+`_edm-datadir-lib.sh` resolves a writable data root for the Phase-6 marker, gate session state and
+the harvested pattern delta: `$CLAUDE_PLUGIN_DATA` if it is absolute and **EDM-owned**, else
+`$XDG_DATA_HOME/edm`, else `~/.local/share/edm`. None of this lives in your repository.
+
+"EDM-owned" means the directory does not exist yet, is empty, carries EDM's own `run/` or
+`patterns/`, or carries an `.edm-owned` sentinel. A populated directory belonging to another
+plugin is skipped. This matters because EDM is often invoked by explicit path, where the host has
+no reason to have pointed `$CLAUDE_PLUGIN_DATA` at EDM -- without the ownership test, EDM wrote its
+pattern library into whichever plugin happened to be active.
+
 ## Plugin features
 
-- **Hooks** (`hooks/hooks.json`): SessionStart prints in-progress initiatives; UserPromptExpansion enforces gate approval; PreToolUse blocks `git commit` on artifact violations; Stop/PreCompact checkpoint state; SubagentStop auto-fires `edm-qc-auditor` after every implementer.
+- **Hooks** (`hooks/hooks.json`): six events, three of which can block -- see "Hooks -- what this plugin does without being asked" above for the full table, `edm-gateguard`'s Phase-6 fact-forcing behaviour, and every kill switch.
 - **Background monitor** (`monitors/monitors.json`): during Phase 6, tails `git log` and reports each ticket commit as a notification.
 - **Worktree isolation**: parallel `edm-implementer` agents each get their own git worktree automatically -- no manual setup, no merge conflicts mid-wave.
 - **State persistence**: `bin/edm-state` tracks each initiative's phase, gate approvals, timing, cost, and test coverage in `SRD/{PREFIX}/.edm-state.json`. Survives across sessions.
@@ -291,4 +406,5 @@ preceded it. See `skills/code-audit/SKILL.md` for the lens inventory and the rou
 
 - `CLAUDE.md` -- plugin conventions for contributors
 - `CHANGELOG.md` -- version history
+- `NOTICE` -- third-party attribution (GateGuard and everything-claude-code, both MIT); the fact-prompt text in `edm-gateguard` is reused from GateGuard rather than re-authored
 - The Claude Code plugin docs: `code.claude.com/docs/en/plugins`
