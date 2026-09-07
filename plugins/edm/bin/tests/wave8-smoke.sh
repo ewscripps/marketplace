@@ -3661,9 +3661,9 @@ check_absent 'EDMV4-T40 -- edm-repo-readiness never sources edm-state' \
 # ---- EDMV4-T40 AC8: the script never writes to .edm-state.json -- hash an initiative's state file
 # before and after a full run and assert it is byte-unchanged.
 #
-# CA-019: this used to hash a PINNED live-initiative path
-# (SRD/edm/EDMV4__ecc-integration/.edm-state.json) and, when that path was absent, print an
-# uncounted soft `NOTE` and return. The precondition is precisely the thing that disappears on
+# CA-019: this used to hash a PINNED live-initiative path (the `.edm-state.json` of whichever
+# initiative happened to be authoring this suite at the time) and, when that path was absent,
+# print an uncounted soft `NOTE` and return. The precondition is precisely the thing that disappears on
 # archive, so AC8 stopped being checked exactly when the tree changed underneath it -- with no
 # failure, no count, and nothing in the totals to show coverage had been lost. The fixture is now
 # BUILT here instead of pinned, so the assertion always runs and never depends on the state of the
@@ -5271,19 +5271,69 @@ echo "=== EDMV4-T45: hookify event wiring (file/stop/bash), bash gated on Spike 
 echo
 
 EDM_BASH_GATE="${PLUGIN_DIR}/bin/edm-bash-gate"
-BASH_DECISIONS_MD="${PLUGIN_DIR}/../../SRD/edm/EDMV4__ecc-integration/decisions.md"
 
-# ---- AC3: bash-event rules ship only because decisions.md records a positive Spike A result --
-# checked before anything else in this section, matching the AC's own reading-order requirement. -
-if [[ -f "$BASH_DECISIONS_MD" ]]; then
-  T45_D25_TEXT="$(grep -A2 '| D25 |' "$BASH_DECISIONS_MD" 2>/dev/null || true)"
-  check "EDMV4-T45 AC3 -- decisions.md D25 records that every registered PreToolUse block runs" \
-    "every registered command runs" "$T45_D25_TEXT"
-  check "EDMV4-T45 AC3 -- decisions.md D25 records a deny always wins regardless of order" \
-    "a deny always wins" "$T45_D25_TEXT"
-else
-  fail "EDMV4-T45 AC3 -- decisions.md not found at the expected path; cannot verify the Spike A precondition"
-fi
+# ---- AC3: bash-event rules ship only because a decisions table records a positive Spike A result
+# -- checked before anything else in this section, matching the AC's own reading-order requirement.
+#
+# CA-096: this used to grep a PINNED `decisions.md` inside the live SRD initiative that authored
+# this suite. That is precisely the path that vanishes when an initiative is archived -- and one
+# that never exists at all in any other repository this plugin is installed into -- so the
+# assertion degraded into an unconditional `fail` the moment the tree moved underneath it. What is
+# actually under test is the D25 EXTRACTION predicate: does reading the Spike A row out of a
+# decisions table find a positive collision result, and does it decline to when the row records
+# the opposite? Both arms now run against scratch tables this block writes itself.
+#
+# Self-contained mktemp/rm pair rather than the w8_scratch_dir registry (CA-027): the directory
+# never outlives this block, and the registry's own call-site count assertion is derived from a
+# static scan of that helper's call sites.
+T45_AC3_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t45ac3.XXXXXX")"
+T45_AC3_POS="${T45_AC3_TMP}/decisions-positive.md"
+T45_AC3_NEG="${T45_AC3_TMP}/decisions-negative.md"
+
+cat > "$T45_AC3_POS" <<'EOF'
+| ID | Decision | Outcome | Rationale | Date |
+|---|---|---|---|---|
+| D24 | An earlier, unrelated row the D25 extraction must not pick up | none | none | 2026-09-02 |
+| D25 | Spike A: what does the host do when two blocking hooks match the same tool call on the same event? | **Order is not load-bearing for either event; a deny always wins; every registered command runs.** | One host version's behaviour, not a documented contract | 2026-09-02 |
+| D26 | A later, unrelated row | none | none | 2026-09-02 |
+EOF
+
+# The negative fixture is the positive one with exactly one thing changed: the D25 row records the
+# OPPOSITE Spike A result. Same table shape, same row id, same neighbours -- so a control failure
+# can only mean the predicate is reading the outcome text, which is the thing AC3 rests on.
+cat > "$T45_AC3_NEG" <<'EOF'
+| ID | Decision | Outcome | Rationale | Date |
+|---|---|---|---|---|
+| D24 | An earlier, unrelated row the D25 extraction must not pick up | none | none | 2026-09-02 |
+| D25 | Spike A: what does the host do when two blocking hooks match the same tool call on the same event? | **Order IS load-bearing: the first-registered block wins and later blocks never execute.** | One host version's behaviour, not a documented contract | 2026-09-02 |
+| D26 | A later, unrelated row | none | none | 2026-09-02 |
+EOF
+
+# The one extraction predicate, defined once so both the assertion and its controls exercise the
+# same code path rather than two hand-rolled greps that could drift.
+t45_ac3_d25() { grep -A2 -- '| D25 |' "$1" 2>/dev/null || true; }
+
+T45_D25_TEXT="$(t45_ac3_d25 "$T45_AC3_POS")"
+check "EDMV4-T45 AC3 -- the D25 extraction reads that every registered PreToolUse block runs" \
+  "every registered command runs" "$T45_D25_TEXT"
+check "EDMV4-T45 AC3 -- the D25 extraction reads that a deny always wins regardless of order" \
+  "a deny always wins" "$T45_D25_TEXT"
+
+# Negative control: against a table whose D25 row records the opposite result, the same predicate
+# must report NEITHER clause. Without this the two checks above would pass against any file that
+# happened to carry those words anywhere at all.
+T45_D25_NEG_TEXT="$(t45_ac3_d25 "$T45_AC3_NEG")"
+check_absent "EDMV4-T45 AC3 negative control -- a D25 row recording the opposite Spike A result does not report every-command-runs" \
+  "every registered command runs" "$T45_D25_NEG_TEXT"
+check_absent "EDMV4-T45 AC3 negative control -- ...nor deny-always-wins, so both assertions above discriminate on the recorded outcome" \
+  "a deny always wins" "$T45_D25_NEG_TEXT"
+
+# Negative control: an ABSENT decisions table yields no D25 text at all, so a missing precondition
+# can never be mistaken for a satisfied one.
+w8_check_empty "EDMV4-T45 AC3 negative control -- an absent decisions table yields no D25 row (a missing precondition cannot read as a satisfied one)" \
+  "$(t45_ac3_d25 "${T45_AC3_TMP}/no-such-decisions.md")"
+
+rm -rf "$T45_AC3_TMP"
 if [[ -x "$EDM_BASH_GATE" ]]; then
   pass "EDMV4-T45 AC3/AC4 -- bash events shipped: bin/edm-bash-gate exists and is executable, matching the positive Spike A result above"
 else
@@ -7089,19 +7139,113 @@ else
   fail "EDMV4-T52 AC1 -- unexpected violation(s) outside the recorded exclusions: ${T52_AC1_REAL_HITS}"
 fi
 
-# ---- AC5/AC9: edm-lint-artifacts EDMV4 (prefix mode, the real repository's own initiative
-# directory) reports zero violations across every artifact this initiative writes, including every
-# Mermaid diagram it added or edited (class 4, mermaid-semicolon, is one of the five classes this
-# same invocation runs). -----------------------------------------------------------------------
-T52_AC5_OUT=""
-T52_AC5_RC=0
-T52_AC5_OUT="$(EDM_SRD_ROOT="${_HARNESS_REPO_ROOT}/SRD" PATH="${PLUGIN_DIR}/bin:${PATH}" \
-  bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" EDMV4 2>&1)" || T52_AC5_RC=$?
-if [[ "$T52_AC5_RC" -eq 0 ]]; then
-  pass "EDMV4-T52 AC5/AC9 -- edm-lint-artifacts EDMV4 reports zero violations across the initiative's own artifacts (mermaid-semicolon class included)"
+# ---- AC5/AC9: edm-lint-artifacts in PREFIX mode reports zero violations across a clean
+# initiative's artifacts -- including a Mermaid diagram (class 4, mermaid-semicolon, is one of the
+# five classes this same invocation runs) -- and reports them when they really are there.
+#
+# CA-096: this used to name the live SRD initiative that authored this suite by prefix and lint the
+# real tree. Prefix mode resolves through `edm-state resolve-dir`, so the moment that initiative
+# was archived the resolution failed and the assertion collapsed into "rc=2: no initiative for
+# prefix" -- a setup error reported as a lint violation, in a repository where nothing was wrong.
+# It could never have passed in any other consuming repository either: no other repository has
+# ever carried that prefix.
+#
+# The initiative is BUILT here instead. That also turns the AC9 half (a direct invocation honors
+# EDM_SRD_ROOT) into a real, independently-anchored assertion rather than a coincidence of this
+# repository's own layout -- the scratch root sits somewhere no default could ever reach.
+#
+# Self-contained mktemp/rm pair rather than the w8_scratch_dir registry (CA-027): the tree never
+# outlives this block, and that registry's own assertion counts its call sites by static scan.
+T52_AC5_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t52ac5.XXXXXX")"
+T52_AC5_SRD="${T52_AC5_TMP}/SRD"
+T52_AC5_DIR="${T52_AC5_SRD}/edm/T52AC5__scratch"
+mkdir -p "${T52_AC5_DIR}/code-audit"
+cat > "${T52_AC5_DIR}/.edm-state.json" <<'EOF'
+{"prefix":"T52AC5","current_phase":6,"product_name":"edm","initiative_description":"scratch"}
+EOF
+# A clean artifact set that exercises the classes prefix mode runs: ordinary prose (attribution,
+# unicode, leaked-tool-tag), closed fences (unterminated-fence), and two Mermaid diagrams whose
+# label and message text carry no semicolon (mermaid-semicolon).
+cat > "${T52_AC5_DIR}/srd.md" <<'EOF'
+# Scratch SRD
+
+A paragraph of ordinary ASCII prose, with no attribution trailer and no leaked tool tag.
+
+```mermaid
+flowchart TD
+  A[Gate 1 approved] --> B[Phase 2 starts]
+  B --> C[Phase 3 audit]
+```
+EOF
+cat > "${T52_AC5_DIR}/code-audit/REMEDIATION.md" <<'EOF'
+# Remediation
+
+```mermaid
+sequenceDiagram
+  participant Auditor
+  participant Implementer
+  Auditor->>Implementer: finding raised
+  Implementer-->>Auditor: fix landed
+```
+EOF
+
+# t52_ac5_lint -- run prefix mode against the scratch root and print "<rc>|<output>". Defined once
+# so the clean run and every control below go through a byte-identical invocation.
+t52_ac5_lint() {
+  local _rc=0 _out
+  _out="$(EDM_SRD_ROOT="$T52_AC5_SRD" CLAUDE_PROJECT_DIR="$T52_AC5_TMP" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+    bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" T52AC5 2>&1)" || _rc=$?
+  printf '%s|%s' "$_rc" "$_out"
+}
+
+T52_AC5_CLEAN="$(t52_ac5_lint)"
+if [[ "${T52_AC5_CLEAN%%|*}" == "0" ]]; then
+  pass "EDMV4-T52 AC5/AC9 -- edm-lint-artifacts in prefix mode reports zero violations across a clean initiative's artifacts (mermaid-semicolon class included), resolved entirely through EDM_SRD_ROOT"
 else
-  fail "EDMV4-T52 AC5/AC9 -- edm-lint-artifacts EDMV4 reported violations (rc=${T52_AC5_RC}): ${T52_AC5_OUT}"
+  fail "EDMV4-T52 AC5/AC9 -- prefix mode reported violations on a clean scratch initiative: ${T52_AC5_CLEAN}"
 fi
+
+# Negative control (class 4): a semicolon inside a Mermaid label must be reported, and the run must
+# exit 1 (a violation) rather than 2 (a setup error). Without this arm the clean verdict above
+# would be satisfied just as well by a scan that never opened a single file.
+cp "${T52_AC5_DIR}/srd.md" "${T52_AC5_TMP}/srd.md.clean"
+cat > "${T52_AC5_DIR}/srd.md" <<'EOF'
+# Scratch SRD
+
+```mermaid
+flowchart TD
+  A[Gate 1 approved; then phase 2 starts] --> B[Phase 2]
+```
+EOF
+T52_AC5_DIRTY="$(t52_ac5_lint)"
+check_num "EDMV4-T52 AC5 negative control -- a Mermaid label semicolon makes the same prefix-mode run exit 1 (a violation), neither 0 nor 2 (a setup error)" \
+  "1" "${T52_AC5_DIRTY%%|*}"
+check "EDMV4-T52 AC5 negative control -- ...and names the mermaid-semicolon class, so the clean verdict above came from a scan that really read the diagrams" \
+  "mermaid-semicolon" "${T52_AC5_DIRTY#*|}"
+
+# Negative control (class 2): a non-ASCII byte, assembled through a printf hex escape so this
+# suite's own source stays ASCII (CC5), must be reported by the same invocation.
+cp "${T52_AC5_TMP}/srd.md.clean" "${T52_AC5_DIR}/srd.md"
+printf 'A line carrying a caf\xc3\xa9 byte.\n' >> "${T52_AC5_DIR}/srd.md"
+T52_AC5_UNI="$(t52_ac5_lint)"
+check_num "EDMV4-T52 AC5 negative control -- a non-ASCII byte in initiative prose makes the same run exit 1" \
+  "1" "${T52_AC5_UNI%%|*}"
+check "EDMV4-T52 AC5 negative control -- ...and names the unicode class" \
+  "unicode" "${T52_AC5_UNI#*|}"
+cp "${T52_AC5_TMP}/srd.md.clean" "${T52_AC5_DIR}/srd.md"
+
+# AC9 control: with EDM_SRD_ROOT pointed somewhere the scratch initiative is NOT, the same prefix
+# stops resolving and the run exits 2 (setup) rather than 0 (clean). That is what proves the clean
+# verdict above was produced BY the EDM_SRD_ROOT value rather than by some ambient default.
+T52_AC9_ELSEWHERE_RC=0
+T52_AC9_ELSEWHERE_OUT="$(EDM_SRD_ROOT="${T52_AC5_TMP}/empty-srd" CLAUDE_PROJECT_DIR="$T52_AC5_TMP" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+  bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" T52AC5 2>&1)" || T52_AC9_ELSEWHERE_RC=$?
+check_num "EDMV4-T52 AC9 control -- pointing EDM_SRD_ROOT away from the scratch initiative makes the prefix unresolvable (exit 2, a setup error), proving the clean run above resolved through that variable" \
+  "2" "$T52_AC9_ELSEWHERE_RC"
+check "EDMV4-T52 AC9 control -- ...and says the prefix could not be resolved rather than reporting clean" \
+  "no initiative for prefix" "$T52_AC9_ELSEWHERE_OUT"
+
+rm -rf "$T52_AC5_TMP"
 
 # ---- AC8: edm-check-vocabulary exits 0 over its full scan set (skills/, agents/, docs/,
 # hooks/hooks.json, monitors/monitors.json, CLAUDE.md, README.md, bin/). ---------------------------
@@ -9843,27 +9987,65 @@ echo
 echo
 echo "-- Ledger integrity: no duplicate CA-NNN ids --"
 
-CA134_LEDGER="${PLUGIN_DIR}/../../SRD/edm/EDMV4__ecc-integration/code-audit/findings-ledger.jsonl"
-if [[ -f "$CA134_LEDGER" ]]; then
-  CA134_DUPES="$(jq -r '.id' "$CA134_LEDGER" 2>/dev/null | sort | uniq -d | tr '\n' ' ')"
-  [[ -z "${CA134_DUPES// /}" ]] \
-    && pass "CA-134 fallout -- findings-ledger.jsonl carries no duplicate finding id" \
-    || fail "CA-134 fallout -- duplicate finding id(s) in findings-ledger.jsonl: ${CA134_DUPES}"
+# CA-096: this used to run against a PINNED ledger inside the live SRD initiative that authored
+# this suite -- the one path guaranteed to disappear the day that initiative is archived, and one
+# that never existed in any other consuming repository. It duly turned into an unconditional
+# `fail` on archive. What is durable here is the PREDICATE, not one frozen ledger file: the
+# duplicate-id scan every downstream consumer (audit-converged's blocking set, render-ledger, the
+# synthesizer's fixed/re-opened merge) implicitly relies on. It is driven against three scratch
+# ledgers this block writes itself, covering all three outcomes the predicate must distinguish.
+#
+# Self-contained mktemp/rm pair rather than the w8_scratch_dir registry (CA-027): the tree never
+# outlives this block, and that registry's own assertion counts its call sites by static scan.
+CA134_TMP_LEDGER="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca134led.XXXXXX")"
+CA134_CLEAN_LEDGER="${CA134_TMP_LEDGER}/clean.jsonl"
+CA134_DUP_LEDGER="${CA134_TMP_LEDGER}/duplicate.jsonl"
+CA134_ABSENT_LEDGER="${CA134_TMP_LEDGER}/no-such-ledger.jsonl"
 
-  # Negative control: the same predicate MUST report a duplicate when one is present. Without it
-  # a jq failure (or an empty file) would satisfy the assertion above by producing no output --
-  # exactly the absent-renders-as-clean shape this initiative has now fixed fifteen times.
-  CA134_DUP_FIXTURE="$(mktemp "${TMPDIR:-/tmp}/edm-ledger-dup.XXXXXX")"
-  head -1 "$CA134_LEDGER" > "$CA134_DUP_FIXTURE"
-  head -1 "$CA134_LEDGER" >> "$CA134_DUP_FIXTURE"
-  CA134_CTRL="$(jq -r '.id' "$CA134_DUP_FIXTURE" 2>/dev/null | sort | uniq -d | tr -d '[:space:]')"
-  rm -f "$CA134_DUP_FIXTURE"
-  [[ -n "$CA134_CTRL" ]] \
-    && pass "CA-134 fallout -- negative control: the duplicate-id predicate reports a planted duplicate (${CA134_CTRL}), so the assertion above can genuinely fail" \
-    || fail "CA-134 fallout -- negative control: the duplicate-id predicate reported nothing on a file with a planted duplicate; the check above is vacuous"
-else
-  fail "CA-134 fallout -- findings-ledger.jsonl not found at ${CA134_LEDGER}; the duplicate-id check could not run"
-fi
+# Same row shape the real ledger writes, so the predicate is exercised against the schema it will
+# actually meet: distinct ids, and the CA-134 shape itself (one NOTED row, one open P1 row) present
+# under two DIFFERENT ids so a correct ledger with contradictory-looking severities still passes.
+cat > "$CA134_CLEAN_LEDGER" <<'EOF'
+{"schema":1,"id":"CA-9001","sev":"P1","status":"open","confidence":"high","title":"a first finding","raised_round":1}
+{"schema":1,"id":"CA-9002","sev":"NOTED","status":"noted","confidence":"low","title":"a second finding","raised_round":1}
+{"schema":1,"id":"CA-9003","sev":"P2","status":"fixed","confidence":"high","title":"a third finding","raised_round":2}
+EOF
+# The duplicate fixture is the clean one with a single id repeated under a contradictory severity
+# -- byte-for-byte the defect CA-134 was: one NOTED/noted row and one P1/open row sharing an id.
+cat > "$CA134_DUP_LEDGER" <<'EOF'
+{"schema":1,"id":"CA-9001","sev":"P1","status":"open","confidence":"high","title":"a first finding","raised_round":1}
+{"schema":1,"id":"CA-9002","sev":"NOTED","status":"noted","confidence":"low","title":"a second finding","raised_round":1}
+{"schema":1,"id":"CA-9001","sev":"NOTED","status":"noted","confidence":"low","title":"the same id again, contradicting the row above","raised_round":2}
+EOF
+
+# ca134_dupes <ledger> -- the one duplicate-id predicate, printing the duplicated ids (space
+# separated), or the literal "ERROR" when the ledger is absent or unreadable. Distinguishing those
+# two is the whole point: "no duplicates" and "no file" must never render as the same verdict.
+ca134_dupes() {
+  local _ledger="$1" _ids
+  [[ -f "$_ledger" ]] || { printf '%s' "ERROR"; return 0; }
+  _ids="$(jq -r '.id' "$_ledger" 2>/dev/null)" || { printf '%s' "ERROR"; return 0; }
+  printf '%s' "$_ids" | sort | uniq -d | tr '\n' ' '
+}
+
+CA134_DUPES="$(ca134_dupes "$CA134_CLEAN_LEDGER")"
+[[ -z "${CA134_DUPES// /}" ]] \
+  && pass "CA-134 fallout -- a well-formed findings ledger carries no duplicate finding id" \
+  || fail "CA-134 fallout -- duplicate finding id(s) reported on a ledger that has none: ${CA134_DUPES}"
+
+# Negative control: the same predicate MUST report the duplicate when one is present. Without it a
+# jq failure (or an empty file) would satisfy the assertion above by producing no output -- exactly
+# the absent-renders-as-clean shape this suite has now closed fifteen times over.
+CA134_CTRL="$(ca134_dupes "$CA134_DUP_LEDGER")"
+check "CA-134 fallout -- negative control: the duplicate-id predicate names a planted duplicate id, so the assertion above can genuinely fail" \
+  "CA-9001" "$CA134_CTRL"
+
+# Negative control: an ABSENT ledger is an error, never a clean pass. This is the arm whose absence
+# let the archived-away pinned path read as "nothing to report" for as long as it did.
+check "CA-134 fallout -- negative control: an absent ledger reports ERROR rather than a passing empty result" \
+  "ERROR" "$(ca134_dupes "$CA134_ABSENT_LEDGER")"
+
+rm -rf "$CA134_TMP_LEDGER"
 
 # =====================================================================================
 # CA-215: edm-state set must store object-typed keys as objects, not as JSON strings
@@ -9941,8 +10123,8 @@ rm -rf "$CA215_TMP"
 # =================================================================================
 # P2 remediation group 1 -- concurrency and filesystem safety.
 # CA-073, CA-077, CA-081, CA-082, CA-083, CA-084, CA-085, CA-086, CA-087, CA-088,
-# CA-092, CA-101 (SRD/edm/EDMV4__ecc-integration/code-audit/pass-1_2026-09-04/
-# REMEDIATION.md; selected by code-audit/p2-triage.md's group 1).
+# CA-092, CA-101 (filed by the pass-1 code audit of the initiative that authored this suite;
+# selected by that audit's own `code-audit/p2-triage.md` group 1).
 #
 # House rule for this whole band: every assertion carries a control that proves it CAN fail --
 # either a mutant binary restoring the pre-fix behaviour, or an injected positive probe. Where a
@@ -11497,6 +11679,97 @@ CACO_SG_N="$({ grep -c 'pattern-library seed unresolved' "$CACO_STRIP" || true; 
   || fail "CA-124 co-site negative control -- a guard-stripped copy compared equal; the check above is vacuous"
 
 rm -rf "$CACO_TMP"
+
+echo
+# =================================================================================================
+# CA-096 -- this suite may not depend on any live SRD initiative, here or in any consuming repo
+# =================================================================================================
+# Every fixture this suite needs is now built in a scratch tree it owns, so what remains is a
+# standing guard against the dependence coming back: a scan of this file's own source for the
+# shapes that reach out of bin/tests into a repository's live SRD tree. Four assertions were lost
+# in one stroke when the authoring initiative was archived -- not one of them noticed by anything
+# except the suite going red -- and every one of them had been failing in every OTHER repository
+# since the day it was written.
+#
+# CC2: each needle is ASSEMBLED at runtime from halves that are inert apart, so no line of this
+# band -- comment or code -- can become a match for the scan it configures. The six recorded
+# self-matching scans in this plugin all read their own explanatory prose as a hit.
+echo "=== CA-096: no live-initiative dependence anywhere in this suite ==="
+
+CA096_SELF="${SCRIPT_DIR}/wave8-smoke.sh"
+
+# Needle 1: the directory name of the initiative that authored this suite -- the one archived out
+# from under it.
+CA096_N1="EDMV4__ecc"
+CA096_N1="${CA096_N1}-integration"
+# Needle 2: any plugin-relative climb out of bin/tests into a repository's own SRD tree.
+CA096_N2=".."
+CA096_N2="${CA096_N2}/${CA096_N2}/SRD"
+# Needle 3: the same reach spelled through the harness's repository-root export.
+CA096_N3='${_HARNESS_REPO_ROOT'
+CA096_N3="${CA096_N3}}/SRD"
+
+# ca096_hits <needle> <file> -- every "<lineno>:<content>" line of <file> containing <needle> as a
+# FIXED string, empty when there are none. A missing file or a failed scan prints a distinct ERROR
+# sentinel and never the empty string: "nothing found" and "nothing looked at" are the two verdicts
+# this whole ticket exists to keep apart.
+ca096_hits() {
+  local _needle="$1" _file="$2" _out _rc=0
+  [[ -f "$_file" ]] || { printf '%s' "ERROR-FILE-ABSENT"; return 0; }
+  _out="$(grep -nF -- "$_needle" "$_file")" || _rc=$?
+  if [[ "$_rc" -eq 2 ]]; then printf '%s' "ERROR-SCAN-FAILED"; return 0; fi
+  printf '%s' "$_out"
+}
+
+# ---- AC2: no live-initiative path literal survives anywhere in the suite -----------------------
+for _ca096_n in "$CA096_N1" "$CA096_N2" "$CA096_N3"; do
+  _ca096_found="$(ca096_hits "$_ca096_n" "$CA096_SELF")"
+  if [[ -z "$_ca096_found" ]]; then
+    pass "CA-096 AC2 -- no occurrence of the live-SRD dependence shape [${_ca096_n}] survives in this suite"
+  else
+    fail "CA-096 AC2 -- live-SRD dependence shape [${_ca096_n}] is back at: ${_ca096_found}"
+  fi
+done
+
+# ---- AC2 positive control: inject each needle on a real code line of a scratch COPY of this very
+# file and confirm the identical scan finds exactly that line. Without this, narrowing a needle
+# until it matched nothing would read as a clean suite. The copy is of this file rather than of a
+# synthetic stand-in, so the control is run against the exact shape and size the scan meets.
+CA096_CTRL_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca096.XXXXXX")"
+for _ca096_n in "$CA096_N1" "$CA096_N2" "$CA096_N3"; do
+  _ca096_copy="${CA096_CTRL_TMP}/injected.sh"
+  cp "$CA096_SELF" "$_ca096_copy"
+  # A code line, not a comment: a needle that only ever appeared in prose would prove nothing
+  # about the scan's ability to catch a real dereference.
+  printf 'CA096_PLANTED_PATH="%s/decisions.md"\n' "$_ca096_n" >> "$_ca096_copy"
+  _ca096_ctrl="$(ca096_hits "$_ca096_n" "$_ca096_copy")"
+  # Anchor past grep's own "<lineno>:" prefix rather than substring-matching the whole hit line,
+  # so a needle that merely appeared in some line number could not satisfy this.
+  if [[ "$_ca096_ctrl" == *":CA096_PLANTED_PATH="* ]]; then
+    pass "CA-096 AC2 positive control -- the scan reports a planted [${_ca096_n}] dereference on a code line, so the clean verdict above is a real one"
+  else
+    fail "CA-096 AC2 positive control -- a planted [${_ca096_n}] dereference was NOT reported (got: ${_ca096_ctrl}); the AC2 scan is vacuous"
+  fi
+  rm -f "$_ca096_copy"
+done
+
+# ---- AC2 positive control (error arm): the scan must distinguish "no hits" from "never ran". ----
+check "CA-096 AC2 control -- scanning an absent file reports an error rather than a clean zero hits" \
+  "ERROR-FILE-ABSENT" "$(ca096_hits "$CA096_N1" "${CA096_CTRL_TMP}/no-such-file.sh")"
+rm -rf "$CA096_CTRL_TMP"
+
+# ---- AC3: the run above was taken with the authoring initiative's own directory ABSENT ----------
+# The archived-away location, not a moved copy: the point is that nothing here resolves through the
+# original path any more. In any other consuming repository this directory has never existed, so
+# this assertion holds there for the same reason it holds here.
+CA096_LIVE_DIR="${_HARNESS_REPO_ROOT}"
+CA096_LIVE_DIR="${CA096_LIVE_DIR}/SRD/edm/${CA096_N1}"
+if [[ ! -d "$CA096_LIVE_DIR" ]]; then
+  pass "CA-096 AC3 -- the authoring initiative's live directory is absent from this tree, so every assertion in this run completed without it"
+else
+  fail "CA-096 AC3 -- the authoring initiative's live directory is present again at ${CA096_LIVE_DIR}; re-derive AC3, this run is no longer evidence for it"
+fi
+
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
 
