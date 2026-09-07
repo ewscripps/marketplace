@@ -29,6 +29,48 @@ trap 'rm -rf "$TMP"; exit 143' TERM
 trap 'rm -rf "$TMP"; exit 129' HUP
 PATH="${PLUGIN_DIR}/bin:$PATH"
 
+# ---- CA-102: the REAL host data directory must be untouched by a suite run -------------------
+# Two cases in this file used to invoke `edm-state update-patterns` with no
+# CLAUDE_PLUGIN_DATA/HOME/XDG_DATA_HOME isolation. That command creates
+# <data>/patterns/<type>-audit.md, and drops the `.edm-owned` claim beside it, BEFORE it decides
+# whether any finding is novel -- so running this suite on a machine that had not run it before
+# left files behind in whatever bin/_edm-datadir-lib.sh resolves. Both call sites are isolated
+# now; the snapshot taken here and compared at the very bottom of this file is what stops a THIRD
+# one reintroducing the side effect silently.
+#
+# Scope: the recursive path listing covers the whole resolved root (pruned at node_modules, which
+# belongs to whatever foreign plugin owns the directory when CLAUDE_PLUGIN_DATA points at one and
+# which EDM never writes into), so a new file anywhere is caught; content hashes cover the root's
+# own files plus patterns/ and run/, the three places EDM itself writes, so an in-place rewrite of
+# a harvested pattern delta is caught too.
+_wave7_datadir_snapshot() {
+  local _w7ds_root="$1" _w7ds_f
+  if [[ -z "$_w7ds_root" || ! -d "$_w7ds_root" ]]; then
+    printf '%s\n' "(no resolvable host data directory)"
+    return 0
+  fi
+  { find "$_w7ds_root" -name node_modules -prune -o -print 2>/dev/null || true; } | LC_ALL=C sort
+  for _w7ds_f in "$_w7ds_root"/* "$_w7ds_root"/.edm-owned "$_w7ds_root"/patterns/* "$_w7ds_root"/run/*; do
+    [[ -f "$_w7ds_f" ]] || continue
+    printf '%s %s\n' "$_w7ds_f" "$(_harness_hash_file "$_w7ds_f" || echo unhashable)"
+  done
+}
+
+WAVE7_HOST_DATA_DIR=""
+if [[ -r "${PLUGIN_DIR}/bin/_edm-datadir-lib.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "${PLUGIN_DIR}/bin/_edm-datadir-lib.sh"
+  WAVE7_HOST_DATA_DIR="$(edm_data_dir)"
+fi
+# The control file this suite plants at the bottom is named here, and any copy left behind by an
+# earlier aborted run is removed BEFORE the baseline is taken -- so a stale control file is
+# cleaned up rather than becoming part of the baseline and hiding a real write.
+WAVE7_HOST_DATA_CONTROL_NAME=".edm-wave7-ca102-positive-control"
+if [[ -n "$WAVE7_HOST_DATA_DIR" && -d "$WAVE7_HOST_DATA_DIR" ]]; then
+  rm -f "${WAVE7_HOST_DATA_DIR}/${WAVE7_HOST_DATA_CONTROL_NAME}"
+fi
+WAVE7_HOST_DATA_BEFORE="$(_wave7_datadir_snapshot "$WAVE7_HOST_DATA_DIR")"
+
 echo "wave7 smoke check -- EDMV3-T09 cmd_set caller-contract and no-override-flag guard"
 echo
 
@@ -2364,7 +2406,17 @@ t42_ac9_case() {
     echo "[Diagram Errors] [P2] Section 5.1 | literal semicolon inside a mermaid label | Escape or remove it"
   } > "SRD/ZMER/audit-srd.md"
 
-  out="$(edm-state update-patterns ZMER srd 2>&1)"
+  # CA-102 (EDMTC-T06 AC3): this ran `update-patterns` with no data-directory isolation.
+  # `update-patterns` creates <data>/patterns/<type>-audit.md -- and the `.edm-owned` claim beside
+  # it -- BEFORE it decides whether any finding is novel, so on a machine that had never run this
+  # suite the case left three files behind in whatever _edm-datadir-lib.sh resolves (typically
+  # ~/.local/share/edm, or another plugin's directory when the host has pointed CLAUDE_PLUGIN_DATA
+  # at one). Isolate all three variables the resolver reads, the same way the CA-476 positive
+  # control further down this file already does.
+  local t42_ac9_data="${TMP}/t42-ac9-datadir"
+  mkdir -p "${t42_ac9_data}/plugin-data" "${t42_ac9_data}/home"
+  out="$(CLAUDE_PLUGIN_DATA="${t42_ac9_data}/plugin-data" HOME="${t42_ac9_data}/home" XDG_DATA_HOME="" \
+    edm-state update-patterns ZMER srd 2>&1)"
   after_hash="$(_harness_hash_file "${PLUGIN_DIR}/docs/audit-patterns/srd-audit.md")"
 
   [[ "$out" == *"no novel findings to append"* ]] \
@@ -4714,7 +4766,12 @@ ca476_loud_diagnostic_case() {
   local before_hash after_hash out status
   before_hash="$(_harness_hash_file "$scratch_ticket")"
   status=0
-  out="$(EDM_SRD_ROOT="$scratch_srd_root" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZC476 ticket 2>&1)" || status=$?
+  # CA-102 (EDMTC-T06 AC3): this call carried EDM_SRD_ROOT but none of the three variables
+  # _edm-datadir-lib.sh actually resolves the data directory from, so it created
+  # <real host data dir>/patterns/ticket-audit.md (and the .edm-owned claim) on any machine where
+  # they did not already exist. The positive control 40 lines below was isolated from the day it
+  # was written; this one was not. Both are isolated now, to the same scratch root.
+  out="$(CLAUDE_PLUGIN_DATA="$scratch/data" HOME="$scratch/home" XDG_DATA_HOME="" EDM_SRD_ROOT="$scratch_srd_root" bash "$scratch/plugins/edm/bin/edm-state" update-patterns ZC476 ticket 2>&1)" || status=$?
   after_hash="$(_harness_hash_file "$scratch_ticket")"
 
   [[ "$status" -eq 0 ]] \
@@ -5512,11 +5569,54 @@ check "G46 -- self-test proves _p95 of 10 samples still returns the maximum" \
   "self-test PASS: _p95 of 10 samples (1..10) still returns the maximum (10)" "$t67_self_out"
 check "G46 -- self-test pins _P95_SAMPLE_COUNT at the shipped value (20)" \
   "self-test PASS: _P95_SAMPLE_COUNT is the shipped value (20)" "$t67_self_out"
+# CA-126 (EDMTC-T06 AC5/AC6): the gateguard correctness probe and the verdict rule it feeds are
+# named individually here for the same reason the five above are -- deleting either from
+# self_test() must fail a named check, not shrink an aggregate.
+check "G46/CA-126 -- self-test proves an aborting gateguard is classified as an error, not a decision" \
+  "self-test PASS: _gg_decision classifies an aborting gateguard as 'error:1', not a decision" "$t67_self_out"
+check "G46/CA-126 -- self-test proves a 0ms abort yields INVALID, not MET" \
+  "self-test PASS: _gg_budget_status reports INVALID for an aborting gateguard measured at 0ms" "$t67_self_out"
+
 # Pin the assertion COUNT itself (not just each line's presence), so a deleted assertion inside
-# self_test() -- which would also shrink this denominator -- cannot hide behind the five checks
-# above still matching whatever PASS lines remain.
-check "G46 -- self-test summary reports all 5 timing-harness assertions verified" \
-  "self-test: PASS (5/5" "$t67_self_out"
+# self_test() -- which would also shrink this denominator -- cannot hide behind the checks above
+# still matching whatever PASS lines remain.
+#
+# CA-067 shape: this used to assert the literal "self-test: PASS (5/5", which stopped being true
+# the first time another ticket legitimately added an assertion to self_test() (CA-126 added
+# five). Today's number is no longer written here. Instead the expected count is DERIVED from the
+# PASS lines the run actually printed and compared against the summary the same run reported, so
+# the two can never silently disagree; a floor equal to the number of lines THIS block names
+# individually catches a deletion, and only moves when this block itself does.
+_t67_count_pass_lines() {
+  local _t67c_n=0 _t67c_line
+  while IFS= read -r _t67c_line; do
+    case "$_t67c_line" in
+      "self-test PASS: "*) _t67c_n=$((_t67c_n + 1)) ;;
+    esac
+  done <<< "$1"
+  printf '%s\n' "$_t67c_n"
+}
+t67_self_pass_count="$(_t67_count_pass_lines "$t67_self_out")"
+check "G46 -- the self-test summary's assertion count matches the ${t67_self_pass_count} PASS lines the same run actually printed" \
+  "self-test: PASS (${t67_self_pass_count}/${t67_self_pass_count}" "$t67_self_out"
+# Floor: the seven PASS lines this block names by their exact text above. A self_test() assertion
+# deleted alongside its named check here would shrink both the count and the summary consistently,
+# so the derived comparison alone cannot see it -- this can.
+[[ "$t67_self_pass_count" -ge 7 ]] \
+  && pass "G46 -- self_test() still carries at least the seven assertions this block names individually (${t67_self_pass_count} present)" \
+  || fail "G46 -- self_test() printed only ${t67_self_pass_count} PASS lines; this block names seven individually, so at least one assertion was deleted"
+# Negative control for the derived comparison: a synthetic output whose summary disagrees with its
+# own PASS-line count must be rejected by the SAME two-step (count, then substring) the check
+# above performs. Without this, the derived comparison could be self-fulfilling.
+t67_self_ctl_out="self-test PASS: synthetic alpha
+self-test PASS: synthetic beta
+self-test: PASS (5/5 timing-harness assertions verified)"
+t67_self_ctl_count="$(_t67_count_pass_lines "$t67_self_ctl_out")"
+if [[ "$t67_self_ctl_count" -eq 2 && "$t67_self_ctl_out" != *"self-test: PASS (${t67_self_ctl_count}/${t67_self_ctl_count}"* ]]; then
+  pass "G46 negative control -- a summary claiming 5/5 over 2 PASS lines is rejected by the same derived comparison, so the check above discriminates"
+else
+  fail "G46 negative control -- a summary claiming 5/5 over 2 PASS lines was accepted (counted ${t67_self_ctl_count}); the derived comparison above cannot fail"
+fi
 
 echo
 echo "T67 AC14 (CA-147) -- a single cheap mode actually measures against a real fixture"
@@ -5793,9 +5893,47 @@ T48_EXPECTED_TOTAL=$((WAVE7_STATE_LENS_COUNT + 4))
 [[ "$t48_contested_count" -eq "$T48_EXPECTED_TOTAL" ]] \
   && pass "T48 AC1 -- exactly ${t48_contested_count} contested agents enumerated (14 lenses + synthesizer + 3 auditors, anchored to ALL_LENS_IDS)" \
   || fail "T48 AC1 -- enumerated ${t48_contested_count} contested agents, expected ${T48_EXPECTED_TOTAL} (bin/edm-state declares ${WAVE7_STATE_LENS_COUNT} lenses; T48_CONTESTED_AGENTS has drifted)"
-[[ "$T48_CONTESTED_TOTAL" -ne $((T48_EXPECTED_TOTAL + 1)) ]] \
-  && pass "T48 AC1 -- positive control: a T48_CONTESTED_AGENTS one name longer than the anchor would be caught" \
-  || fail "T48 AC1 -- positive control FAILED: the anchor does not discriminate on list length"
+# CA-097 (EDMTC-T06 AC1/AC2): the positive control here used to read
+#   [[ "$T48_CONTESTED_TOTAL" -ne $((T48_EXPECTED_TOTAL + 1)) ]]
+# -- the REAL list's own member count compared against anchor+1. The assertion immediately above
+# already pins that same count EQUAL to the anchor, so "not equal to anchor+1" holds by
+# construction for every possible value the list could ever take: the control could not fail, and
+# it never varied the list it claimed to vary. It is replaced below by a control that varies the
+# LIST and asserts the count follows it.
+#
+# _t48_count_names <space-separated-list> -- the counting rule the enumeration loop above applies,
+# expressed once so the varied lists below are counted the same way the real list is. Pure bash
+# word-splitting rather than `printf | grep -c`: this suite runs under `set -euo pipefail`, where a
+# piped command substitution aborts the whole run instead of failing one assertion.
+_t48_count_names() {
+  local _t48c_n=0 _t48c_w
+  # shellcheck disable=SC2086 # deliberate word-splitting: the argument IS a space-separated list
+  for _t48c_w in $1; do
+    _t48c_n=$((_t48c_n + 1))
+  done
+  printf '%s\n' "$_t48c_n"
+}
+t48_ctl_real="$(_t48_count_names "$T48_CONTESTED_AGENTS")"
+t48_ctl_longer="$(_t48_count_names "${T48_CONTESTED_AGENTS} edm-audit-ca097-synthetic")"
+t48_ctl_shorter="$(_t48_count_names "${T48_CONTESTED_AGENTS% *}")"
+# The counting rule reproduces the loop's own enumeration on the unmodified list, so the two
+# varied lists below are measured by the same mechanism the real assertion uses -- not by a
+# second, independently-authored counter that could agree with the anchor for the wrong reason.
+check_num "CA-097 -- the counting rule reproduces the enumeration loop's own count on the real list" \
+  "$t48_contested_count" "$t48_ctl_real"
+check_num "CA-097 -- a T48_CONTESTED_AGENTS one name LONGER counts one higher" \
+  "$((T48_EXPECTED_TOTAL + 1))" "$t48_ctl_longer"
+check_num "CA-097 -- a T48_CONTESTED_AGENTS one name SHORTER counts one lower" \
+  "$((T48_EXPECTED_TOTAL - 1))" "$t48_ctl_shorter"
+# Negative controls: the anchor comparison the real assertion performs must REJECT both varied
+# lists. Without these two, the three counts above could all be right while the comparison that
+# consumes them was blind to the difference.
+[[ "$t48_ctl_longer" -ne "$T48_EXPECTED_TOTAL" ]] \
+  && pass "CA-097 negative control -- the anchor comparison rejects a list one name longer (${t48_ctl_longer} vs ${T48_EXPECTED_TOTAL})" \
+  || fail "CA-097 negative control -- a list one name longer still compared equal to the anchor; the length assertion above cannot fail"
+[[ "$t48_ctl_shorter" -ne "$T48_EXPECTED_TOTAL" ]] \
+  && pass "CA-097 negative control -- the anchor comparison rejects a list one name shorter (${t48_ctl_shorter} vs ${T48_EXPECTED_TOTAL})" \
+  || fail "CA-097 negative control -- a list one name shorter still compared equal to the anchor; the length assertion above cannot fail"
 [[ -z "$t48_bad" ]] && pass "T48 AC1 -- all ${T48_CONTESTED_TOTAL} contested agents are opus/max (no hand-tiering slipped in)" \
   || fail "T48 AC1 -- non-opus/max contested agent(s) found, D16 violation:${t48_bad}"
 
@@ -10041,6 +10179,54 @@ if verif_t09_has_maxturns_50 "$verif_t09_revert_copy"; then
   fail "VERIF-T09 AC8 -- revert self-test: a copy of edm-qc-auditor.md rewritten to maxTurns: 25 was still accepted by the AC1 assertion function -- the assertion is not load-bearing"
 else
   pass "VERIF-T09 AC8 -- revert self-test: a copy of edm-qc-auditor.md rewritten to maxTurns: 25 is correctly rejected by the AC1 assertion function"
+fi
+
+
+# =================================================================================================
+# CA-102 (EDMTC-T06 AC4): the real host data directory is untouched by this suite run
+# =================================================================================================
+# Deliberately the LAST thing this file does, so it observes every case above it. Three assertions
+# in either arm, so the suite total does not move with the host's data-directory situation.
+echo
+echo "=== CA-102: the real host data directory is untouched by this suite run ==="
+if [[ -z "$WAVE7_HOST_DATA_DIR" || ! -d "$WAVE7_HOST_DATA_DIR" ]]; then
+  # No resolvable data root means there is nothing this suite could have polluted. Stated as
+  # three passes rather than a silent skip, so the count is stable and the reason is visible.
+  pass "CA-102 -- no host data directory resolves on this machine (edm_data_dir printed nothing, or the path does not exist), so no case could have written into one"
+  pass "CA-102 positive control -- not applicable: a control write needs a directory to write into"
+  pass "CA-102 -- nothing to restore: no control file was planted"
+else
+  wave7_hostdata_after="$(_wave7_datadir_snapshot "$WAVE7_HOST_DATA_DIR")"
+  if [[ "$WAVE7_HOST_DATA_BEFORE" == "$wave7_hostdata_after" ]]; then
+    pass "CA-102 -- ${WAVE7_HOST_DATA_DIR} is unchanged across the whole suite run: no case wrote into the real host data directory"
+  else
+    fail "CA-102 -- this suite wrote into the real host data directory ${WAVE7_HOST_DATA_DIR}; isolate the offending case's CLAUDE_PLUGIN_DATA/HOME/XDG_DATA_HOME. Difference:
+$(diff <(printf '%s\n' "$WAVE7_HOST_DATA_BEFORE") <(printf '%s\n' "$wave7_hostdata_after") | head -20)"
+  fi
+
+  # Positive control -- AC4's second half. Write into the real directory ON PURPOSE and prove the
+  # SAME comparison detects it, then remove it and prove the directory is back where it started.
+  # Without this, a clean verdict above could equally mean the snapshot function was broken, the
+  # root resolved somewhere nothing ever writes, or the two snapshots were equal-and-empty.
+  wave7_hostdata_control="${WAVE7_HOST_DATA_DIR}/${WAVE7_HOST_DATA_CONTROL_NAME}"
+  if printf '%s\n' "wave7-smoke.sh CA-102 positive control -- written and removed within one assertion" \
+       > "$wave7_hostdata_control" 2>/dev/null; then
+    wave7_hostdata_ctl="$(_wave7_datadir_snapshot "$WAVE7_HOST_DATA_DIR")"
+    rm -f "$wave7_hostdata_control"
+    if [[ "$wave7_hostdata_ctl" != "$wave7_hostdata_after" \
+          && "$wave7_hostdata_ctl" == *"$WAVE7_HOST_DATA_CONTROL_NAME"* ]]; then
+      pass "CA-102 positive control -- a file deliberately written into ${WAVE7_HOST_DATA_DIR} IS detected by the same comparison, so the clean verdict above is a real absence"
+    else
+      fail "CA-102 positive control -- a file deliberately written into ${WAVE7_HOST_DATA_DIR} was NOT detected by the comparison; the untouched assertion above verifies nothing"
+    fi
+    wave7_hostdata_restored="$(_wave7_datadir_snapshot "$WAVE7_HOST_DATA_DIR")"
+    [[ "$wave7_hostdata_restored" == "$wave7_hostdata_after" ]] \
+      && pass "CA-102 positive control -- the control file was removed; ${WAVE7_HOST_DATA_DIR} is back to the state the assertion above observed" \
+      || fail "CA-102 positive control -- the control file was not fully removed; ${WAVE7_HOST_DATA_DIR} is left dirty by this suite"
+  else
+    fail "CA-102 positive control -- could not write ${wave7_hostdata_control}; the untouched assertion above cannot be shown capable of detecting a write"
+    fail "CA-102 positive control -- no control file was planted, so nothing was restored"
+  fi
 fi
 
 echo "Results: ${PASS} passed, ${FAIL} failed"

@@ -12242,6 +12242,452 @@ else
   fail "CA-096 AC3 -- the authoring initiative's live directory is present again at ${CA096_LIVE_DIR}; re-derive AC3, this run is no longer evidence for it"
 fi
 
+# =================================================================================================
+# EDMTC-T05: CA-128 / CA-129 / CA-132 -- rubric signals at values other than this repository's,
+#            the `edm-hookify list` contract, and edm-stop-gate's "validate died" continue branch
+# =================================================================================================
+# Three binaries with an unexercised contract each. Every fixture below is built here and isolated
+# from the host (its own HOME, CLAUDE_PROJECT_DIR, CLAUDE_PLUGIN_DATA, XDG_DATA_HOME and
+# EDM_SRD_ROOT), so nothing in this section reads, scores, or writes into the repository it ships
+# in or the developer's own data directory.
+#
+# CA-027 note: each of the three sub-sections owns a self-contained `mktemp -d` / `rm -rf` pair
+# rather than routing through w8_scratch_dir. The registry assertion for that helper compares a
+# STATIC grep of its call sites against the registry's RUNTIME length, so a call added after that
+# assertion has already run makes the count disagree with itself.
+echo
+echo "=== EDMTC-T05 / CA-128: readiness rubric signals driven at values other than this repository's ==="
+
+# `bin/edm-repo-readiness`'s rubric signals were only ever observed at whatever this repository
+# happens to be: `_rr_any_other_blocking_anomaly` returns false here and was never driven true;
+# CH_CALIBRATION_AVAILABLE, CH_COST_HISTORY and `_rr_archived_count` are all true/non-zero here and
+# were never driven the other way. The single score assertion re-derived the mean from the script's
+# own reported category scores -- an identity that holds for any values whatsoever, including a
+# grep that never matches. The fixtures below drive each named signal to its OTHER value, assert
+# the named check's `pass` flag flips and its category's `raw_earned` moves by that check's own
+# declared `points`, and pin four KNOWN scores produced by four KNOWN fixtures.
+T05_CA128_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-w8-t05-ca128.XXXXXX")"
+mkdir -p "${T05_CA128_TMP}/home" "${T05_CA128_TMP}/repo/.claude" "${T05_CA128_TMP}/data"
+( cd "${T05_CA128_TMP}/repo" \
+    && git init -q . \
+    && git config user.email edm-harness@example.com \
+    && git config user.name "EDM Test Harness" \
+    && git config commit.gpgsign false ) >/dev/null 2>&1
+# The permission-ask block, so Methodology setup's permission check is a property of THIS fixture
+# rather than of the developer's own ~/.claude/settings.json -- HOME is scratch here for the same
+# reason, since check_permission_rules() scans it as its third source.
+printf '%s\n' '{"permissions":{"ask":["Bash(edm-state approve-gate*)","Bash(edm-state archive*)"]}}' \
+  > "${T05_CA128_TMP}/repo/.claude/settings.json"
+T05_CA128_SRD="${T05_CA128_TMP}/repo/SRD"
+mkdir -p "${T05_CA128_SRD}/edm/T5RDY__fixture"
+T05_CA128_STATE="${T05_CA128_SRD}/edm/T5RDY__fixture/.edm-state.json"
+
+# _t05_ca128_write_state <estimated_size> <estimated_cost_usd> <time-order yes|no>
+#   estimated_size "Unknown" keeps `metrics-report --calibrate` at "insufficient data", which is
+#   what drives CH_CALIBRATION_AVAILABLE false; any real size gives it a median row.
+#   estimated_cost_usd 0 keeps `metrics-report --all`'s row at $0, which drives CH_COST_HISTORY
+#   false; a positive figure drives it true.
+#   "yes" adds a completed_at earlier than its started_at -- the TIME_ORDER blocking anomaly, the
+#   blocking class that is neither OPEN_PARTIALS nor CONVERGED_NO_APPROVAL and therefore exactly
+#   what `_rr_any_other_blocking_anomaly` exists to catch.
+_t05_ca128_write_state() {
+  local _t5c_extra='{}'
+  if [[ "$3" == "yes" ]]; then
+    _t5c_extra='{"started_at":"2026-02-02T00:00:00Z","completed_at":"2026-01-01T00:00:00Z"}'
+  fi
+  jq -n --arg sz "$1" --argjson cost "$2" --argjson extra "$_t5c_extra" '
+    {prefix:"T5RDY", product_name:"edm", initiative_description:"fixture",
+     current_phase:1, schema_version:1, estimated_size:$sz,
+     phase_durations:{planning_phase:({duration_seconds:60, estimated_cost_usd:$cost} + $extra)}}
+  ' > "$T05_CA128_STATE"
+}
+
+# _t05_ca128_add_archived <PREFIX> -- one more archived initiative under the fixture's own
+# .archived/, which is the only thing `_rr_archived_count` counts.
+_t05_ca128_add_archived() {
+  mkdir -p "${T05_CA128_SRD}/.archived/edm/${1}__done"
+  jq -n --arg p "$1" '
+    {prefix:$p, product_name:"edm", initiative_description:"done", current_phase:1,
+     schema_version:1, estimated_size:"Unknown",
+     phase_durations:{planning_phase:{duration_seconds:60, estimated_cost_usd:0}}}
+  ' > "${T05_CA128_SRD}/.archived/edm/${1}__done/.edm-state.json"
+}
+
+# _t05_ca128_run <out-json> -- score the FIXTURE, never this repository.
+_t05_ca128_run() {
+  local _t5r_rc=0
+  ( cd "${T05_CA128_TMP}/repo" \
+      && HOME="${T05_CA128_TMP}/home" \
+         CLAUDE_PROJECT_DIR="${T05_CA128_TMP}/repo" \
+         CLAUDE_PLUGIN_DATA="${T05_CA128_TMP}/data" \
+         XDG_DATA_HOME="" \
+         EDM_SRD_ROOT="$T05_CA128_SRD" \
+         "$REPO_READINESS" --json "$1" >/dev/null 2>&1 ) || _t5r_rc=$?
+  return "$_t5r_rc"
+}
+_t05_ca128_score()      { jq -r '.score' "$1"; }
+_t05_ca128_check_pass() { jq -r --arg id "$2" '.checks[] | select(.id == $id) | .pass' "$1"; }
+_t05_ca128_points()     { jq -r --arg id "$2" '.checks[] | select(.id == $id) | .points' "$1"; }
+_t05_ca128_earned()     { jq -r --arg n "$2"  '.categories[] | select(.name == $n) | .raw_earned' "$1"; }
+_t05_ca128_applicable() { jq -r --arg n "$2"  '.categories[] | select(.name == $n) | .applicable' "$1"; }
+
+# ---- Fixture A (baseline): no archived initiative, no recorded cost, no calibration data, no
+# blocking anomaly. A KNOWN fixture with a KNOWN score, not a re-derivation of the script's own
+# reported category scores.
+_t05_ca128_write_state Unknown 0 no
+T05_CA128_A="${T05_CA128_TMP}/a.json"
+t05_ca128_rc=0
+_t05_ca128_run "$T05_CA128_A" || t05_ca128_rc=$?
+check_num "CA-128 -- edm-repo-readiness scores the scratch fixture and exits 0" "0" "$t05_ca128_rc"
+check "CA-128 baseline -- the known fixture (0 archived, no cost, no calibration data, no blocking anomaly) scores exactly 10.0" \
+  "10.0" "$(_t05_ca128_score "$T05_CA128_A")"
+check "CA-128 baseline -- state-health-no-other-blocking-anomalies passes when no blocking anomaly exists" \
+  "true" "$(_t05_ca128_check_pass "$T05_CA128_A" state-health-no-other-blocking-anomalies)"
+check "CA-128 baseline -- an archive count of 0 makes Convergence history N/A (applicable:false), the value this repository never drives" \
+  "false" "$(_t05_ca128_applicable "$T05_CA128_A" "Convergence history")"
+check "CA-128 baseline -- CH_COST_HISTORY is driven FALSE (a state with no recorded cost)" \
+  "false" "$(_t05_ca128_check_pass "$T05_CA128_A" convergence-cost-history-recorded)"
+check "CA-128 baseline -- CH_CALIBRATION_AVAILABLE is driven FALSE (no (size, phase) median row)" \
+  "false" "$(_t05_ca128_check_pass "$T05_CA128_A" convergence-calibration-data-available)"
+check "CA-128 baseline -- CH_MULTIPLE_ARCHIVED is driven FALSE" \
+  "false" "$(_t05_ca128_check_pass "$T05_CA128_A" convergence-multiple-archived-initiatives)"
+t05_ca128_sh_base="$(_t05_ca128_earned "$T05_CA128_A" "State health")"
+t05_ca128_cv_base="$(_t05_ca128_earned "$T05_CA128_A" "Convergence history")"
+check_num "CA-128 baseline -- State health earns its full 10 raw points" "10" "$t05_ca128_sh_base"
+check_num "CA-128 baseline -- Convergence history earns 0 raw points" "0" "$t05_ca128_cv_base"
+
+# ---- Fixture B: the SAME fixture with a recorded cost. CH_COST_HISTORY flips, and its category's
+# raw_earned rises by exactly that check's own declared points -- read from the report, not typed.
+_t05_ca128_write_state Unknown 12.5 no
+T05_CA128_B="${T05_CA128_TMP}/b.json"
+_t05_ca128_run "$T05_CA128_B" || true
+check "CA-128 signal -- a recorded nonzero cost flips convergence-cost-history-recorded to pass" \
+  "true" "$(_t05_ca128_check_pass "$T05_CA128_B" convergence-cost-history-recorded)"
+t05_ca128_cost_points="$(_t05_ca128_points "$T05_CA128_B" convergence-cost-history-recorded)"
+check_num "CA-128 signal -- Convergence history's raw_earned rises by exactly convergence-cost-history-recorded's declared ${t05_ca128_cost_points} points" \
+  "$((t05_ca128_cv_base + t05_ca128_cost_points))" "$(_t05_ca128_earned "$T05_CA128_B" "Convergence history")"
+
+# ---- Fixture C: the SAME fixture with an estimated_size, so --calibrate produces a median row.
+_t05_ca128_write_state Medium 0 no
+T05_CA128_C="${T05_CA128_TMP}/c.json"
+_t05_ca128_run "$T05_CA128_C" || true
+check "CA-128 signal -- a completed phase with estimated_size set flips convergence-calibration-data-available to pass" \
+  "true" "$(_t05_ca128_check_pass "$T05_CA128_C" convergence-calibration-data-available)"
+t05_ca128_calib_points="$(_t05_ca128_points "$T05_CA128_C" convergence-calibration-data-available)"
+check_num "CA-128 signal -- Convergence history's raw_earned rises by exactly convergence-calibration-data-available's declared ${t05_ca128_calib_points} points" \
+  "$((t05_ca128_cv_base + t05_ca128_calib_points))" "$(_t05_ca128_earned "$T05_CA128_C" "Convergence history")"
+
+# ---- Fixture D: a TIME_ORDER-class blocking anomaly -- the arm of _rr_any_other_blocking_anomaly
+# that returns "true", which this repository never reaches.
+_t05_ca128_write_state Unknown 0 yes
+T05_CA128_D="${T05_CA128_TMP}/d.json"
+_t05_ca128_run "$T05_CA128_D" || true
+check "CA-128 signal -- a TIME_ORDER blocking anomaly flips state-health-no-other-blocking-anomalies to FAIL" \
+  "false" "$(_t05_ca128_check_pass "$T05_CA128_D" state-health-no-other-blocking-anomalies)"
+t05_ca128_blk_points="$(_t05_ca128_points "$T05_CA128_D" state-health-no-other-blocking-anomalies)"
+check_num "CA-128 signal -- State health's raw_earned drops by exactly that check's declared ${t05_ca128_blk_points} points" \
+  "$((t05_ca128_sh_base - t05_ca128_blk_points))" "$(_t05_ca128_earned "$T05_CA128_D" "State health")"
+t05_ca128_score_d="$(_t05_ca128_score "$T05_CA128_D")"
+check "CA-128 direction -- the same fixture plus one blocking anomaly scores 9.3, DOWN from the baseline 10.0" \
+  "9.3" "$t05_ca128_score_d"
+
+# ---- Fixture E: back to the clean state, plus ONE archived initiative. Convergence history stops
+# being N/A and joins the denominator at 0/10, so the overall score falls.
+_t05_ca128_write_state Unknown 0 no
+_t05_ca128_add_archived T5OLDA
+T05_CA128_E="${T05_CA128_TMP}/e.json"
+_t05_ca128_run "$T05_CA128_E" || true
+check "CA-128 signal -- one archived initiative flips Convergence history to applicable:true" \
+  "true" "$(_t05_ca128_applicable "$T05_CA128_E" "Convergence history")"
+t05_ca128_score_e="$(_t05_ca128_score "$T05_CA128_E")"
+check "CA-128 direction -- an archive count of 1 scores 7.5, DOWN from the baseline 10.0 (the category joins the mean at 0/10)" \
+  "7.5" "$t05_ca128_score_e"
+
+# ---- Fixture F: a SECOND archived initiative. CH_MULTIPLE_ARCHIVED flips and the score rises.
+_t05_ca128_add_archived T5OLDB
+T05_CA128_F="${T05_CA128_TMP}/f.json"
+_t05_ca128_run "$T05_CA128_F" || true
+check "CA-128 signal -- a second archived initiative flips convergence-multiple-archived-initiatives to pass" \
+  "true" "$(_t05_ca128_check_pass "$T05_CA128_F" convergence-multiple-archived-initiatives)"
+t05_ca128_multi_points="$(_t05_ca128_points "$T05_CA128_F" convergence-multiple-archived-initiatives)"
+check_num "CA-128 signal -- Convergence history's raw_earned rises by exactly convergence-multiple-archived-initiatives' declared ${t05_ca128_multi_points} points" \
+  "$((t05_ca128_cv_base + t05_ca128_multi_points))" "$(_t05_ca128_earned "$T05_CA128_F" "Convergence history")"
+t05_ca128_score_f="$(_t05_ca128_score "$T05_CA128_F")"
+check "CA-128 direction -- an archive count of 2 scores 8.3, UP from 7.5 at an archive count of 1" \
+  "8.3" "$t05_ca128_score_f"
+
+# ---- Negative control for the score assertions themselves. The finding this section closes is a
+# score check that held for ANY values, so the four scores above are only meaningful if the same
+# extractor, run over four fixtures, actually returns four different numbers. If the extractor were
+# blind, or every run scored the same tree (the exact defect: scoring the repository the suite
+# ships in rather than a fixture), all four would be identical and this control would fail.
+t05_ca128_score_a="$(_t05_ca128_score "$T05_CA128_A")"
+if [[ "$t05_ca128_score_a" != "$t05_ca128_score_d" \
+      && "$t05_ca128_score_a" != "$t05_ca128_score_e" \
+      && "$t05_ca128_score_e" != "$t05_ca128_score_f" ]]; then
+  pass "CA-128 negative control -- the four fixtures produce four DIFFERENT scores (${t05_ca128_score_a}, ${t05_ca128_score_d}, ${t05_ca128_score_e}, ${t05_ca128_score_f}), so the score assertions above respond to the fixture rather than holding for any values"
+else
+  fail "CA-128 negative control -- fixtures that differ in a scored signal produced the same score (A=${t05_ca128_score_a} D=${t05_ca128_score_d} E=${t05_ca128_score_e} F=${t05_ca128_score_f}); the score assertions above are not sensitive to the fixture"
+fi
+
+rm -rf "$T05_CA128_TMP"
+
+echo
+echo "=== EDMTC-T05 / CA-129: the edm-hookify list contract is asserted, not discarded to /dev/null ==="
+
+# The only `edm-hookify list` invocation in this suite redirected its output to /dev/null inside
+# the writes-no-files snapshot, so nothing covered what `list` PRINTS: the one-identifier-per-line
+# contract, the `$parsed.name // $path` fallback, or the omission of `enabled:false` rules.
+T05_CA129_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-w8-t05-ca129.XXXXXX")"
+T05_CA129_RULES="${T05_CA129_TMP}/proj/.claude/edm-hookify"
+mkdir -p "$T05_CA129_RULES"
+cp "${HOOKIFY_FIXTURES}/warn-no-console-log.json" "$T05_CA129_RULES/"
+cp "${HOOKIFY_FIXTURES}/block-rm-rf-bash.json" "$T05_CA129_RULES/"
+# A rule valid in every other respect but DISABLED -- it must not be listed.
+jq '.enabled = false' "${HOOKIFY_FIXTURES}/warn-stop-placeholder.json" \
+  > "${T05_CA129_RULES}/disabled-stop-placeholder.json"
+# A rule whose `name` key is present (validate() requires the key) but null, which is what actually
+# reaches the `// $path` fallback -- a rule with the key removed entirely is a setup error instead.
+jq '.name = null' "${HOOKIFY_FIXTURES}/warn-no-console-log.json" \
+  > "${T05_CA129_RULES}/nameless.json"
+
+# _t05_ca129_list <project-dir> -- sets t05_ca129_out (stdout, sorted) and t05_ca129_rc. Sets
+# globals rather than printing, because a `$(...)` capture would run the whole body in a subshell
+# and the exit code assigned inside it would never reach the caller. Sorted because the listing
+# order follows rule-file discovery order, which the contract does not state; the SET is what it
+# states.
+_t05_ca129_list() {
+  local _t5l_raw _t5l_rc=0
+  _t5l_raw="$( cd "$1" && CLAUDE_PROJECT_DIR="$1" "$EDM_HOOKIFY" list 2>/dev/null )" || _t5l_rc=$?
+  t05_ca129_rc="$_t5l_rc"
+  t05_ca129_out="$(LC_ALL=C sort <<< "$_t5l_raw")"
+}
+_t05_ca129_count_lines() {
+  local _t5n=0 _t5line
+  while IFS= read -r _t5line; do
+    [[ -n "$_t5line" ]] && _t5n=$((_t5n + 1))
+  done <<< "$1"
+  printf '%s\n' "$_t5n"
+}
+_t05_ca129_has_line() {
+  local _t5needle="$1" _t5line
+  while IFS= read -r _t5line; do
+    [[ "$_t5line" == "$_t5needle" ]] && return 0
+  done <<< "$2"
+  return 1
+}
+
+_t05_ca129_list "${T05_CA129_TMP}/proj"
+check_num "CA-129 -- edm-hookify list exits 0 over a directory of valid rules" "0" "$t05_ca129_rc"
+t05_ca129_expected="$(LC_ALL=C sort <<< "block-rm-rf-bash
+warn-no-console-log
+${T05_CA129_RULES}/nameless.json")"
+if [[ "$t05_ca129_out" == "$t05_ca129_expected" ]]; then
+  pass "CA-129 -- list prints exactly the expected set of enabled rule identifiers, one per line"
+else
+  fail "CA-129 -- list output does not match the expected set.
+expected:
+${t05_ca129_expected}
+actual:
+${t05_ca129_out}"
+fi
+check_num "CA-129 -- exactly one line per enabled rule (3 enabled of 4 rule files)" \
+  "3" "$(_t05_ca129_count_lines "$t05_ca129_out")"
+check "CA-129 name fallback -- a rule whose name is null is listed by its own path (the \$parsed.name // \$path arm)" \
+  "${T05_CA129_RULES}/nameless.json" "$t05_ca129_out"
+if _t05_ca129_has_line "null" "$t05_ca129_out"; then
+  fail "CA-129 name fallback -- the null name was printed as the literal 'null' instead of falling back to the rule file's path"
+else
+  pass "CA-129 name fallback -- no line is the literal 'null'; the fallback substitutes the path rather than rendering the null"
+fi
+check_absent "CA-129 -- a disabled rule is omitted from the listing" \
+  "warn-stop-placeholder" "$t05_ca129_out"
+
+# ---- Negative control 1: the SAME rule file, enabled, IS listed. Without this, the omission
+# assertion above could equally mean the scan never saw the file at all.
+T05_CA129_ON="${T05_CA129_TMP}/proj-enabled"
+mkdir -p "${T05_CA129_ON}/.claude/edm-hookify"
+cp "${T05_CA129_RULES}"/*.json "${T05_CA129_ON}/.claude/edm-hookify/"
+jq '.enabled = true' "${T05_CA129_RULES}/disabled-stop-placeholder.json" \
+  > "${T05_CA129_ON}/.claude/edm-hookify/disabled-stop-placeholder.json"
+_t05_ca129_list "$T05_CA129_ON"
+check "CA-129 negative control -- the same rule file with enabled:true IS listed, so the omission above tracks the enabled flag rather than a blind scan" \
+  "warn-stop-placeholder" "$t05_ca129_out"
+check_num "CA-129 negative control -- enabling the fourth rule makes the listing four lines, not three" \
+  "4" "$(_t05_ca129_count_lines "$t05_ca129_out")"
+
+# ---- Negative control 2: the same rule carrying a REAL name is listed by that name and not by its
+# path, so the fallback assertion above is about the fallback rather than about "list always prints
+# paths".
+T05_CA129_NAMED="${T05_CA129_TMP}/proj-named"
+mkdir -p "${T05_CA129_NAMED}/.claude/edm-hookify"
+jq '.name = "ca129-named-rule"' "${T05_CA129_RULES}/nameless.json" \
+  > "${T05_CA129_NAMED}/.claude/edm-hookify/nameless.json"
+_t05_ca129_list "$T05_CA129_NAMED"
+check "CA-129 negative control -- the same rule carrying a real name is listed by that name" \
+  "ca129-named-rule" "$t05_ca129_out"
+check_absent "CA-129 negative control -- and its path is then NOT printed, so the fallback really is a fallback" \
+  "${T05_CA129_NAMED}/.claude/edm-hookify/nameless.json" "$t05_ca129_out"
+
+# ---- Negative control 3: an empty rule directory lists nothing and still exits 0, so the listing
+# above is produced by the rules rather than printed unconditionally.
+T05_CA129_EMPTY="${T05_CA129_TMP}/proj-empty"
+mkdir -p "${T05_CA129_EMPTY}/.claude/edm-hookify"
+_t05_ca129_list "$T05_CA129_EMPTY"
+check_num "CA-129 negative control -- an empty rule directory lists zero rules" \
+  "0" "$(_t05_ca129_count_lines "$t05_ca129_out")"
+check_num "CA-129 negative control -- and still exits 0" "0" "$t05_ca129_rc"
+
+rm -rf "$T05_CA129_TMP"
+
+echo
+echo "=== EDMTC-T05 / CA-132: edm-stop-gate's per-prefix validate-died continue branch ==="
+
+# `edm-stop-gate`'s loop carries `case "$_validate_rc" in 0|3) ;; *) continue ;;` -- the arm that
+# guarantees a single broken initiative never blocks Stop and never suppresses its healthy
+# siblings. T46 AC9's two internal-error cases both fail `active-initiatives` and take `soft_exit`
+# BEFORE the loop, so neither ever reaches it. The fixture below has TWO resolvable ACTIVE
+# initiatives and a shim `edm-state` earlier on PATH that makes `validate` DIE (exit 4, outside the
+# documented 0/3 contract) for one of them while passing everything else through to the real
+# binary -- the only reliable way to reach that arm with a prefix that resolved successfully.
+T05_CA132_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-w8-t05-ca132.XXXXXX")"
+mkdir -p "${T05_CA132_TMP}/home" "${T05_CA132_TMP}/repo" "${T05_CA132_TMP}/data" \
+         "${T05_CA132_TMP}/shim-one" "${T05_CA132_TMP}/shim-none" "${T05_CA132_TMP}/shim-all"
+( cd "${T05_CA132_TMP}/repo" \
+    && git init -q . \
+    && git config user.email edm-harness@example.com \
+    && git config user.name "EDM Test Harness" \
+    && git config commit.gpgsign false ) >/dev/null 2>&1
+T05_CA132_SRD="${T05_CA132_TMP}/repo/SRD"
+
+# _t05_ca132_state <edm-state args...> -- the REAL edm-state, inside the fixture's environment.
+_t05_ca132_state() {
+  ( cd "${T05_CA132_TMP}/repo" \
+      && HOME="${T05_CA132_TMP}/home" \
+         CLAUDE_PROJECT_DIR="${T05_CA132_TMP}/repo" \
+         CLAUDE_PLUGIN_DATA="${T05_CA132_TMP}/data" \
+         XDG_DATA_HOME="" \
+         EDM_SRD_ROOT="$T05_CA132_SRD" \
+         PATH="${PLUGIN_DIR}/bin:${PATH}" \
+         "$EDM_STATE" "$@" )
+}
+# _t05_ca132_gate <shim-dir> -- edm-stop-gate with <shim-dir> ahead of the real bin/ on PATH, so
+# the gate's own bare-name `edm-state` lookups resolve to the shim. Sets t05_ca132_out (combined
+# streams) and t05_ca132_rc; globals rather than a printed value, because the exit code assigned
+# inside a `$(...)` subshell would never reach the caller.
+_t05_ca132_gate() {
+  local _t5g_rc=0 _t5g_out
+  _t5g_out="$( cd "${T05_CA132_TMP}/repo" \
+      && HOME="${T05_CA132_TMP}/home" \
+         CLAUDE_PROJECT_DIR="${T05_CA132_TMP}/repo" \
+         CLAUDE_PLUGIN_DATA="${T05_CA132_TMP}/data" \
+         XDG_DATA_HOME="" \
+         EDM_SRD_ROOT="$T05_CA132_SRD" \
+         PATH="${1}:${PLUGIN_DIR}/bin:${PATH}" \
+         "$EDM_STOP_GATE" </dev/null 2>&1 )" || _t5g_rc=$?
+  t05_ca132_rc="$_t5g_rc"
+  t05_ca132_out="$_t5g_out"
+}
+# _t05_ca132_gate_stdout <shim-dir> -- the same run with stderr discarded, for the stdout-stays-
+# empty half of the gate's own contract.
+_t05_ca132_gate_stdout() {
+  ( cd "${T05_CA132_TMP}/repo" \
+      && HOME="${T05_CA132_TMP}/home" \
+         CLAUDE_PROJECT_DIR="${T05_CA132_TMP}/repo" \
+         CLAUDE_PLUGIN_DATA="${T05_CA132_TMP}/data" \
+         XDG_DATA_HOME="" \
+         EDM_SRD_ROOT="$T05_CA132_SRD" \
+         PATH="${1}:${PLUGIN_DIR}/bin:${PATH}" \
+         "$EDM_STOP_GATE" </dev/null 2>/dev/null ) || true
+}
+
+# T5LIVE is healthy apart from one open PARTIAL -- a blocking OPEN_PARTIALS anomaly, so its own
+# verdict is "block". T5DEAD is a perfectly ordinary initiative; only the shim makes its validate
+# die.
+_t05_ca132_state init T5LIVE >/dev/null
+_t05_ca132_state set T5LIVE current_phase 1 >/dev/null
+_t05_ca132_state record-partial-verdict T5LIVE T5LIVE-T01 PARTIAL "needs runtime check" >/dev/null
+_t05_ca132_state init T5DEAD >/dev/null
+_t05_ca132_state set T5DEAD current_phase 1 >/dev/null
+
+# Precondition: both prefixes really are active and resolvable, so the loop is genuinely entered
+# for both. Without this the died branch could be unreached for the ordinary AC3 reason -- which is
+# precisely how T46 AC9's two cases miss it.
+t05_ca132_active="$(_t05_ca132_state active-initiatives 2>/dev/null || true)"
+check "CA-132 precondition -- T5LIVE is an active, resolvable initiative (the per-prefix loop is entered)" \
+  "T5LIVE" "$t05_ca132_active"
+check "CA-132 precondition -- T5DEAD is an active, resolvable initiative (the per-prefix loop is entered)" \
+  "T5DEAD" "$t05_ca132_active"
+
+# shim-none passes everything through; shim-one dies for T5DEAD's validate only; shim-all dies for
+# every validate. All three are the same script apart from the prefix they intercept.
+{
+  echo '#!/usr/bin/env bash'
+  echo "exec \"${PLUGIN_DIR}/bin/edm-state\" \"\$@\""
+} > "${T05_CA132_TMP}/shim-none/edm-state"
+{
+  echo '#!/usr/bin/env bash'
+  echo 'if [ "${1:-}" = "validate" ] && [ "${2:-}" = "T5DEAD" ]; then'
+  echo '  echo "shim edm-state: simulated setup failure for T5DEAD" >&2'
+  echo '  exit 4'
+  echo 'fi'
+  echo "exec \"${PLUGIN_DIR}/bin/edm-state\" \"\$@\""
+} > "${T05_CA132_TMP}/shim-one/edm-state"
+{
+  echo '#!/usr/bin/env bash'
+  echo 'if [ "${1:-}" = "validate" ]; then'
+  echo '  echo "shim edm-state: simulated setup failure for ${2:-}" >&2'
+  echo '  exit 4'
+  echo 'fi'
+  echo "exec \"${PLUGIN_DIR}/bin/edm-state\" \"\$@\""
+} > "${T05_CA132_TMP}/shim-all/edm-state"
+chmod +x "${T05_CA132_TMP}/shim-one/edm-state" "${T05_CA132_TMP}/shim-none/edm-state" \
+         "${T05_CA132_TMP}/shim-all/edm-state"
+
+# ---- Case 1: one prefix's validate dies while a healthy sibling still blocks. Both halves of
+# CA-040's fix are asserted here -- the branch emits its stderr diagnostic NAMING the prefix, and
+# it does not block on its own account.
+_t05_ca132_gate "${T05_CA132_TMP}/shim-one"
+check "CA-132 -- the died-validate branch emits a stderr diagnostic naming the prefix and its exit status" \
+  "edm-state validate T5DEAD exited 4 (a setup error, not the blocking-class 3) -- T5DEAD was NOT checked this Stop" \
+  "$t05_ca132_out"
+check "CA-132 -- the broken prefix does not suppress its healthy sibling: T5LIVE's blocking anomaly is still reported" \
+  "[EDM] blocking anomaly for initiative T5LIVE:" "$t05_ca132_out"
+check "CA-132 -- and the sibling's full anomaly text survives the skip" \
+  "blocking  OPEN_PARTIALS" "$t05_ca132_out"
+check_num "CA-132 -- the gate exits on the healthy sibling's verdict alone (2), never on the broken prefix" \
+  "2" "$t05_ca132_rc"
+t05_ca132_stdout="$(_t05_ca132_gate_stdout "${T05_CA132_TMP}/shim-one")"
+if [[ -z "$t05_ca132_stdout" ]]; then
+  pass "CA-132 -- stdout stays empty across the died-validate path (the gate's own stdout contract)"
+else
+  fail "CA-132 -- stdout carried output on the died-validate path: [${t05_ca132_stdout}]"
+fi
+
+# ---- Case 2 (the never-block half): validate dies for EVERY prefix and no initiative reports a
+# blocking anomaly. The gate must exit 0 and still name each skipped prefix -- the systematic
+# failure CA-040's diagnostic exists for, which used to be total silence reading as "all fine".
+_t05_ca132_gate "${T05_CA132_TMP}/shim-all"
+check_num "CA-132 -- a validate that dies for every prefix never blocks Stop (exit 0)" \
+  "0" "$t05_ca132_rc"
+check "CA-132 -- and each skipped prefix is named individually (T5LIVE)" \
+  "edm-state validate T5LIVE exited 4" "$t05_ca132_out"
+check "CA-132 -- and each skipped prefix is named individually (T5DEAD)" \
+  "edm-state validate T5DEAD exited 4" "$t05_ca132_out"
+
+# ---- Negative control: the identical fixture with a pass-through shim. The diagnostic must be
+# ABSENT, and the gate must still exit 2 on T5LIVE. Without this the diagnostic assertions above
+# could be matching a line the gate emits unconditionally, and the exit-2 assertion could be
+# reading a block the dying prefix caused rather than the healthy sibling's.
+_t05_ca132_gate "${T05_CA132_TMP}/shim-none"
+check_absent "CA-132 negative control -- with no dying validate the skip diagnostic is absent, so the assertions above respond to the failure rather than to every run" \
+  "was NOT checked this Stop" "$t05_ca132_out"
+check_num "CA-132 negative control -- the pass-through run still exits 2 on T5LIVE's own blocking anomaly" \
+  "2" "$t05_ca132_rc"
+check "CA-132 negative control -- and T5DEAD is reported normally rather than skipped" \
+  "informational anomalies (run: edm-state validate T5DEAD)" "$t05_ca132_out"
+
+rm -rf "$T05_CA132_TMP"
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
 
