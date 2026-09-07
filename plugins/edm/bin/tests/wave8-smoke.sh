@@ -180,10 +180,32 @@ check "CA-016 negative control -- check_num rejects 10 (and an empty capture) wh
 # genuine zero -- grep -c prints its own "0" AND exits 1, so the `||` arm fires too. The substring
 # check() those counts fed accepted the two-line value silently; converting the call sites to
 # check_num surfaced it immediately at EDMV4-T20 AC4. A count is one integer, never two.
+#
+# CA-098: the signature now takes OPTIONAL leading grep flags -- `w8_count_lines -i <pat> <file>`,
+# `w8_count_lines -E <pat> <file>` -- so a flagged count site can route through this one helper
+# instead of hand-rolling `grep -c<flags> ... || true` beside it. That hand-rolled form is the
+# whole finding: it cannot tell a real zero from a file that was never opened, and every one of
+# this suite's expect-zero assertions reads the second as a pass.
 w8_count_lines() {
-  local pattern="$1" file="$2" out
+  local out
+  local -a flags
+  flags=()
+  # Everything before the last two arguments is a grep flag. Plain indexed array, integer
+  # indexing, no shift-based parsing of "--" (bash 3.2 floor).
+  while [[ "$#" -gt 2 ]]; do
+    flags[${#flags[@]}]="$1"
+    shift
+  done
+  local pattern="$1" file="$2"
   [[ -f "$file" ]] || { printf '%s' "ERROR"; return 0; }
-  out="$(count_matches_strict -- "$pattern" "$file")" || { printf '%s' "ERROR"; return 0; }
+  # The two shapes are spelled out rather than expanded through a "${flags[@]:-}" default: under
+  # bash 3.2 that default injects one EMPTY argument for an empty array, which grep would take as
+  # a second pattern and silently match every line.
+  if [[ "${#flags[@]}" -gt 0 ]]; then
+    out="$(count_matches_strict "${flags[@]}" -- "$pattern" "$file")" || { printf '%s' "ERROR"; return 0; }
+  else
+    out="$(count_matches_strict -- "$pattern" "$file")" || { printf '%s' "ERROR"; return 0; }
+  fi
   printf '%s' "$out"
 }
 
@@ -202,6 +224,30 @@ check_num "CA-016 control -- w8_count_lines returns a single 0 (never a two-line
   "0" "$(w8_count_lines '^#### ' "${W8_COUNT_TMP}/probe.md")"
 check "CA-016 control -- w8_count_lines reports ERROR for a missing file instead of a passing zero" \
   "ERROR" "$(w8_count_lines '^### ' "${W8_COUNT_TMP}/absent.md")"
+
+# CA-098 controls. The three outcomes a count over a FILE must keep apart, asserted as three
+# distinct values rather than inferred from each other: a present file reports its true count, a
+# present-but-EMPTY file reports a real 0, and an ABSENT file is an error. Collapsing the last two
+# is the defect -- an expect-zero assertion then passes just as happily on a path that was deleted,
+# renamed, or never written as on one that is genuinely clean.
+: > "${W8_COUNT_TMP}/empty.md"
+check_num "CA-098 control -- a present but EMPTY file reports a real 0, distinct from the absent case below" \
+  "0" "$(w8_count_lines '^### ' "${W8_COUNT_TMP}/empty.md")"
+check "CA-098 control -- ...while an ABSENT file at the same kind of path reports ERROR, so the two can never be confused" \
+  "ERROR" "$(w8_count_lines '^### ' "${W8_COUNT_TMP}/never-written.md")"
+
+# The same three outcomes through the flagged signature, so the flagged call sites converted to
+# this helper are covered by controls of their own rather than by the unflagged ones above.
+printf 'ALPHA one\nbeta two\nALPHA three\n' > "${W8_COUNT_TMP}/flagged.md"
+check_num "CA-098 control -- the flagged signature counts case-insensitively (-i) and returns the true count" \
+  "2" "$(w8_count_lines -i '^alpha ' "${W8_COUNT_TMP}/flagged.md")"
+check_num "CA-098 control -- ...is case-SENSITIVE without the flag, so -i is really being passed through" \
+  "0" "$(w8_count_lines '^alpha ' "${W8_COUNT_TMP}/flagged.md")"
+check_num "CA-098 control -- the flagged signature honours -E (an alternation that BRE would not match)" \
+  "3" "$(w8_count_lines -E '^(ALPHA|beta) ' "${W8_COUNT_TMP}/flagged.md")"
+check "CA-098 control -- the flagged signature reports ERROR for a missing file too, not a passing zero" \
+  "ERROR" "$(w8_count_lines -i '^alpha ' "${W8_COUNT_TMP}/no-such-flagged.md")"
+
 rm -rf "$W8_COUNT_TMP"
 
 echo "wave8 smoke check -- EDMV4-T05 / EDMV4-T34 / EDMV4-T48"
@@ -551,29 +597,106 @@ else
 fi
 
 # ---- AC2: guarded sourcing -- deleting the library degrades edm-state to today's behaviour. ----
-T17_AC2_PRESENT_LIST_RC=0
-"$EDM_STATE" list --paths >/dev/null 2>&1 || T17_AC2_PRESENT_LIST_RC=$?
-T17_AC2_PRESENT_VALIDATE_RC=0
-"$EDM_STATE" validate EDMV4 >/dev/null 2>&1 || T17_AC2_PRESENT_VALIDATE_RC=$?
+#
+# CA-094: the two observations this compares used to be taken from the LIVE repository, at
+# different times and from DIFFERENT working directories, with every difference between them
+# attributed to the removed library. Any concurrent writer changed one side; so did `list --paths`
+# printing repository-relative paths from two different cwds. And when the initiative being
+# validated was finally archived, BOTH arms started returning the same "unknown prefix" error --
+# the comparison went on passing for a reason that had nothing whatever to do with guarded
+# sourcing. Three defects, one root cause: comparing live shared state against itself across time.
+#
+# Both observations are now taken in ONE pass, from ONE cwd, against a scratch initiative this
+# block builds -- and the fixture's own resolvability is asserted FIRST, so "the two agree" can
+# never again silently mean "they both failed".
+#
+# Self-contained mktemp/rm pair rather than the w8_scratch_dir registry (CA-027): the tree never
+# outlives this block, and that registry's own assertion counts its call sites by static scan.
+T17_AC2_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t17ac2.XXXXXX")"
+T17_AC2_REPO="${T17_AC2_TMP}/repo"
+mkdir -p "$T17_AC2_REPO"
+( cd "$T17_AC2_REPO" && git init -q . && git config user.email edm-harness@example.com \
+    && git config user.name "EDM Test Harness" && git config commit.gpgsign false ) >/dev/null 2>&1
+( cd "$T17_AC2_REPO" && CLAUDE_PROJECT_DIR="$T17_AC2_REPO" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+    bash "${PLUGIN_DIR}/bin/edm-init" T17AC2 ) >/dev/null 2>&1
 
-T17_AC2_BINDIR="${TMP}/t17-ac2-bin"
-mkdir -p "$T17_AC2_BINDIR"
-cp "${PLUGIN_DIR}/bin/edm-state" "${T17_AC2_BINDIR}/edm-state"
-cp "${PLUGIN_DIR}/bin/_edm-cli-lib.sh" "${T17_AC2_BINDIR}/_edm-cli-lib.sh"
-cp "${PLUGIN_DIR}/bin/_edm-lint-lib.sh" "${T17_AC2_BINDIR}/_edm-lint-lib.sh"
-chmod +x "${T17_AC2_BINDIR}/edm-state"
-# Deliberately NOT copying _edm-datadir-lib.sh -- this is the "library removed" scenario.
+# t17_ac2_bindir <dest> <with|without|unguarded> -- assemble one bin/ tree to observe.
+#   with       the shipped tree, library present
+#   without    the library-removed scenario AC2 is about; the guard must absorb it
+#   unguarded  AC6 control: library removed AND the guard stripped, so the missing library really
+#              does break every subcommand. This is the defect AC2 exists to prevent, planted
+#              inside this block's own fixture.
+t17_ac2_bindir() {
+  local _dest="$1" _mode="$2"
+  mkdir -p "$_dest"
+  cp "${PLUGIN_DIR}/bin/_edm-cli-lib.sh" "${_dest}/_edm-cli-lib.sh"
+  cp "${PLUGIN_DIR}/bin/_edm-lint-lib.sh" "${_dest}/_edm-lint-lib.sh"
+  if [[ "$_mode" == "unguarded" ]]; then
+    sed 's#^\[\[ -r .*_edm-datadir-lib.sh.*$#source "${SCRIPT_DIR}/_edm-datadir-lib.sh"#' \
+      "${PLUGIN_DIR}/bin/edm-state" > "${_dest}/edm-state"
+  else
+    cp "${PLUGIN_DIR}/bin/edm-state" "${_dest}/edm-state"
+  fi
+  if [[ "$_mode" == "with" ]]; then
+    cp "${PLUGIN_DIR}/bin/_edm-datadir-lib.sh" "${_dest}/_edm-datadir-lib.sh"
+  fi
+  chmod +x "${_dest}/edm-state"
+}
+t17_ac2_bindir "${T17_AC2_TMP}/bin-with" with
+t17_ac2_bindir "${T17_AC2_TMP}/bin-without" without
+t17_ac2_bindir "${T17_AC2_TMP}/bin-unguarded" unguarded
 
-T17_AC2_ABSENT_LIST_RC=0
-(cd "$REPO_ROOT" && "${T17_AC2_BINDIR}/edm-state" list --paths >/dev/null 2>&1) || T17_AC2_ABSENT_LIST_RC=$?
-T17_AC2_ABSENT_VALIDATE_RC=0
-(cd "$REPO_ROOT" && "${T17_AC2_BINDIR}/edm-state" validate EDMV4 >/dev/null 2>&1) || T17_AC2_ABSENT_VALIDATE_RC=$?
+# Control on the mutation itself: an AC6 control that silently failed to apply would leave the
+# "diverges" assertion below comparing two identical trees and passing for nothing.
+T17_AC2_MUT="${T17_AC2_TMP}/bin-unguarded/edm-state"
+check "EDMV4-T17 AC2 -- AC6 control precondition: the mutant really does source the library unguarded" \
+  'source "${SCRIPT_DIR}/_edm-datadir-lib.sh"' "$(cat "$T17_AC2_MUT")"
+check_absent "EDMV4-T17 AC2 -- AC6 control precondition: ...and the guarded form is gone from the mutant" \
+  '[[ -r "${SCRIPT_DIR}/_edm-datadir-lib.sh" ]] && source' "$(cat "$T17_AC2_MUT")"
 
-if [[ "$T17_AC2_PRESENT_LIST_RC" -eq "$T17_AC2_ABSENT_LIST_RC" && "$T17_AC2_PRESENT_VALIDATE_RC" -eq "$T17_AC2_ABSENT_VALIDATE_RC" ]]; then
-  pass "EDMV4-T17 AC2 -- edm-state list/validate exit identically with the library removed (list rc=${T17_AC2_PRESENT_LIST_RC}, validate rc=${T17_AC2_PRESENT_VALIDATE_RC})"
+# t17_ac2_observe <bindir> -- ONE observation: both subcommands, one cwd, one moment, printed as
+# "<list-rc>|<validate-rc>|<validate-output>". Every arm below goes through exactly this, so two
+# observations can differ in nothing but the bin directory under test.
+t17_ac2_observe() {
+  (
+    cd "$T17_AC2_REPO" || exit 99
+    export CLAUDE_PROJECT_DIR="$T17_AC2_REPO"
+    _t17o_lrc=0
+    "${1}/edm-state" list --paths >/dev/null 2>&1 || _t17o_lrc=$?
+    _t17o_vrc=0
+    _t17o_vout="$("${1}/edm-state" validate T17AC2 2>&1)" || _t17o_vrc=$?
+    printf '%s|%s|%s' "$_t17o_lrc" "$_t17o_vrc" "$_t17o_vout"
+  )
+}
+
+T17_AC2_WITH="$(t17_ac2_observe "${T17_AC2_TMP}/bin-with")"
+T17_AC2_WITHOUT="$(t17_ac2_observe "${T17_AC2_TMP}/bin-without")"
+T17_AC2_UNGUARDED="$(t17_ac2_observe "${T17_AC2_TMP}/bin-unguarded")"
+
+# Precondition: the fixture is genuinely resolvable and valid with the library present. This is the
+# arm whose absence let the archived-prefix error pass as agreement for as long as it did.
+T17_AC2_WITH_REST="${T17_AC2_WITH#*|}"
+check_num "EDMV4-T17 AC2 precondition -- the scratch initiative's list --paths succeeds with the library present" \
+  "0" "${T17_AC2_WITH%%|*}"
+check_num "EDMV4-T17 AC2 precondition -- ...and validate succeeds too, so an agreeing pair below cannot mean both arms merely errored" \
+  "0" "${T17_AC2_WITH_REST%%|*}"
+
+if [[ "$T17_AC2_WITH" == "$T17_AC2_WITHOUT" ]]; then
+  pass "EDMV4-T17 AC2 -- edm-state list/validate behave identically with _edm-datadir-lib.sh removed (observed in one pass from one cwd: ${T17_AC2_WITH})"
 else
-  fail "EDMV4-T17 AC2 -- exit codes diverged with library removed: list present=${T17_AC2_PRESENT_LIST_RC} absent=${T17_AC2_ABSENT_LIST_RC}; validate present=${T17_AC2_PRESENT_VALIDATE_RC} absent=${T17_AC2_ABSENT_VALIDATE_RC}"
+  fail "EDMV4-T17 AC2 -- behaviour diverged with the library removed: with=[${T17_AC2_WITH}] without=[${T17_AC2_WITHOUT}]"
 fi
+
+# AC6 control: the very same comparison, against a tree where the property genuinely IS violated
+# inside this block's own fixture, must report the divergence. An isolated assertion that can no
+# longer see the defect it guards is worse than the flaky one it replaced.
+if [[ "$T17_AC2_WITH" != "$T17_AC2_UNGUARDED" ]]; then
+  pass "EDMV4-T17 AC2 AC6 control -- the same comparison DOES report divergence when the guard is stripped and the library is genuinely missing (unguarded=[${T17_AC2_UNGUARDED}])"
+else
+  fail "EDMV4-T17 AC2 AC6 control -- stripping the guard changed nothing the comparison can see; the assertion above is vacuous"
+fi
+
+rm -rf "$T17_AC2_TMP"
 
 # ---- AC3: exactly three public functions plus underscore-prefixed helpers, no global vars, no
 # redefinition against edm-state's own constant block. -------------------------------------------
@@ -785,14 +908,56 @@ else
 fi
 
 # ---- AC9: with CLAUDE_PLUGIN_DATA unset, no call writes inside the repository working tree. ----
-T17_AC9_BEFORE="$(git -C "$REPO_ROOT" status --porcelain)"
-/bin/bash -c "unset CLAUDE_PLUGIN_DATA; source '$DATADIR_LIB'; edm_data_dir >/dev/null; edm_marker_path >/dev/null"
-T17_AC9_AFTER="$(git -C "$REPO_ROOT" status --porcelain)"
-if [[ "$T17_AC9_BEFORE" == "$T17_AC9_AFTER" ]]; then
-  pass "EDMV4-T17 AC9 -- edm_data_dir()/edm_marker_path() write nothing inside the repository working tree"
+#
+# CA-095: this window used to span the SHARED worktree. It is a before/after diff of live state
+# taken either side of the code under test, so any concurrent writer -- another agent, an editor
+# autosave, a sibling suite in the same run -- landed in the diff and was reported as the library
+# writing into the repository. The window is now a scratch repository this block owns and nothing
+# else can reach, ENTERED as the cwd: the library discovers its repository from cwd
+# (`git rev-parse --show-toplevel`), so the tree a leak would land in is exactly the tree watched.
+#
+# Self-contained mktemp/rm pair rather than the w8_scratch_dir registry (CA-027): the tree never
+# outlives this block, and that registry's own assertion counts its call sites by static scan.
+T17_AC9_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t17ac9.XXXXXX")"
+T17_AC9_REPO="${T17_AC9_TMP}/repo"
+mkdir -p "$T17_AC9_REPO"
+( cd "$T17_AC9_REPO" && git init -q . && git config user.email edm-harness@example.com \
+    && git config user.name "EDM Test Harness" && git config commit.gpgsign false \
+    && echo seed > SEED.md && git add SEED.md && git commit -q -m seed ) >/dev/null 2>&1
+
+# t17_ac9_window <snippet> -- run <snippet> with the scratch repository as cwd and print "SAME"
+# when that repository's porcelain is byte-identical either side of it, or both snapshots when it
+# is not. Both snapshots come from the same repository, in one pass, from one cwd.
+t17_ac9_window() {
+  local _before _after
+  _before="$(git -C "$T17_AC9_REPO" status --porcelain)"
+  ( cd "$T17_AC9_REPO" && /bin/bash -c "$1" ) >/dev/null 2>&1
+  _after="$(git -C "$T17_AC9_REPO" status --porcelain)"
+  if [[ "$_before" == "$_after" ]]; then
+    printf '%s' "SAME"
+  else
+    printf 'before=[%s] after=[%s]' "$_before" "$_after"
+  fi
+}
+
+T17_AC9_RESULT="$(t17_ac9_window "unset CLAUDE_PLUGIN_DATA; source '$DATADIR_LIB'; edm_data_dir >/dev/null; edm_marker_path >/dev/null")"
+if [[ "$T17_AC9_RESULT" == "SAME" ]]; then
+  pass "EDMV4-T17 AC9 -- edm_data_dir()/edm_marker_path() write nothing inside the repository working tree they resolve against"
 else
-  fail "EDMV4-T17 AC9 -- git status --porcelain changed: before=[${T17_AC9_BEFORE}] after=[${T17_AC9_AFTER}]"
+  fail "EDMV4-T17 AC9 -- the scratch repository's porcelain changed across the call: ${T17_AC9_RESULT}"
 fi
+
+# AC6 control: the identical window, around a snippet that genuinely DOES write inside the scratch
+# repository, must report the change. An isolated window that can no longer see a write says
+# nothing about the verdict above. Run after that verdict, and the whole tree is removed below.
+T17_AC9_CONTROL="$(t17_ac9_window "printf 'leaked\n' > 'leaked-into-the-worktree.txt'")"
+if [[ "$T17_AC9_CONTROL" != "SAME" ]]; then
+  pass "EDMV4-T17 AC9 AC6 control -- the same window DOES report a write planted inside its own scratch repository (${T17_AC9_CONTROL})"
+else
+  fail "EDMV4-T17 AC9 AC6 control -- a planted write inside the scratch repository went unnoticed; the assertion above is vacuous"
+fi
+
+rm -rf "$T17_AC9_TMP"
 
 echo
 
@@ -1103,7 +1268,10 @@ else
 fi
 
 # ---- AC7: format documented once, naming convention + worked example --------------------------
-hookify_section_count="$(grep -c '^## Hookify rule format (canonical)$' "$CLAUDE_MD")"
+# CA-098: bare `grep -c` under `set -e`. A zero count made grep exit 1 and aborted the whole suite
+# mid-run instead of failing one assertion -- and a missing CLAUDE.md aborted it too, both without
+# a countable verdict. Routed through the one counting helper, which reports 0 and ERROR distinctly.
+hookify_section_count="$(w8_count_lines '^## Hookify rule format (canonical)$' "$CLAUDE_MD")"
 check_num "AC7 -- hookify format section appears exactly once" "1" "$hookify_section_count"
 check "AC7 -- verb-first naming convention documented (warn-*)" '`warn-*.json`' "$CLAUDE_MD_TEXT"
 check "AC7 -- verb-first naming convention documented (block-*)" '`block-*.json`' "$CLAUDE_MD_TEXT"
@@ -3095,8 +3263,20 @@ else
 fi
 
 # ---- AC1(a)/AC2: writing with a resolvable data directory creates a disjoint stub delta ---------
-T18_SEED_HEADINGS="$(grep -c '^### ' "$T18_BEFORE_SEED" 2>/dev/null || true)"
-[[ "$T18_SEED_HEADINGS" -gt 0 ]] || fail "EDMV4-T18 AC2 positive control -- shipped qc-audit.md seed has zero ### headings; the disjointness assertion below would pass vacuously"
+# CA-098: the delta/seed site. `grep -c ... 2>/dev/null || true` prints NOTHING when the file is
+# absent (grep exits 2 with no stdout), and the bare arithmetic below then read that empty value as
+# zero -- so a seed path that had moved, or a get-patterns run that returned a path to nothing at
+# all, arrived here indistinguishable from a seed that genuinely carried no headings. The helper
+# reports ERROR for that case instead, and the guard below refuses any non-integer outright.
+# The verdict is also COUNTED on success now: the old form called `fail` on failure and returned
+# silently on success, so a satisfied precondition contributed nothing to the tally and its loss
+# would have been invisible.
+T18_SEED_HEADINGS="$(w8_count_lines '^### ' "$T18_BEFORE_SEED")"
+if [[ "$T18_SEED_HEADINGS" =~ ^[0-9]+$ ]] && [[ "$T18_SEED_HEADINGS" -gt 0 ]]; then
+  pass "EDMV4-T18 AC2 positive control -- the shipped qc-audit.md seed carries ${T18_SEED_HEADINGS} '### ' heading(s), so the disjointness assertion below is not vacuous"
+else
+  fail "EDMV4-T18 AC2 positive control -- expected a positive '### ' heading count from the shipped qc-audit.md seed, got [${T18_SEED_HEADINGS}] (an absent or unreadable seed reports ERROR here rather than a passing zero)"
+fi
 
 T18_UPDATE_OUT="$(t18_run_update_patterns EDMV4T18 qc)"
 check "EDMV4-T18 AC1(a) -- update-patterns reports a new finding appended when the data dir is resolvable" \
@@ -3251,7 +3431,25 @@ echo "-- EDMV4-T20: regression coverage over every branch of the 4.2 write and r
 # fail on every uncommitted-but-legitimate tree, which is not what AC9 is checking. Capture a
 # BEFORE snapshot here and diff against an AFTER snapshot at the end of this section instead, the
 # same before/after idiom EDMV4-T17 AC9 already uses above.
-T20_GIT_BEFORE="$(git -C "$REPO_ROOT" status --porcelain)"
+# CA-095: this window used to span the SHARED worktree for the entire length of the T20 section --
+# hundreds of lines, during which any concurrent writer landed in the diff and was misreported as
+# scratch state leaking out of these tests. The window is a scratch repository this section owns
+# instead, and the section runs with it as the cwd: edm-state discovers its repository from cwd
+# (`git rev-parse --show-toplevel`) and every sub-test below already pins EDM_SRD_ROOT,
+# CLAUDE_PROJECT_DIR and CLAUDE_PLUGIN_DATA at its own absolute scratch paths -- so the tree a leak
+# would land in is exactly the tree being watched, and nothing else can write to it.
+#
+# Self-contained mktemp/rm pair rather than the w8_scratch_dir registry (CA-027): the tree never
+# outlives this section, and that registry's own assertion counts its call sites by static scan.
+T20_GIT_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t20ac9.XXXXXX")"
+T20_GIT_REPO="${T20_GIT_TMP}/repo"
+mkdir -p "$T20_GIT_REPO"
+( cd "$T20_GIT_REPO" && git init -q . && git config user.email edm-harness@example.com \
+    && git config user.name "EDM Test Harness" && git config commit.gpgsign false \
+    && echo seed > SEED.md && git add SEED.md && git commit -q -m seed ) >/dev/null 2>&1
+T20_GIT_PREV_CWD="$(pwd)"
+cd "$T20_GIT_REPO"
+T20_GIT_BEFORE="$(git -C "$T20_GIT_REPO" status --porcelain)"
 
 T20_PATTERNS_FIXTURES="${PLUGIN_DIR}/bin/tests/fixtures/patterns"
 
@@ -3540,12 +3738,26 @@ check "EDMV4-T20 AC8 -- wave8-smoke.sh is discovered by run-all.sh's own *-smoke
 # ---- AC9: every case above ran against a scratch HOME/CLAUDE_PLUGIN_DATA/XDG_DATA_HOME, and the
 # real repository's working tree is untouched BY THIS SECTION (before/after diff, not a bare
 # emptiness check -- this ticket's own not-yet-committed changes are legitimately present). -------
-T20_GIT_AFTER="$(git -C "$REPO_ROOT" status --porcelain)"
+T20_GIT_AFTER="$(git -C "$T20_GIT_REPO" status --porcelain)"
 if [[ "$T20_GIT_BEFORE" == "$T20_GIT_AFTER" ]]; then
-  pass "EDMV4-T20 AC9 -- git status --porcelain is unchanged across the full EDMV4-T20 section (no scratch state leaked into the real repo)"
+  pass "EDMV4-T20 AC9 -- the porcelain of the repository this whole section ran inside is unchanged across it (no scratch state leaked into the enclosing worktree)"
 else
-  fail "EDMV4-T20 AC9 -- git status --porcelain changed during the EDMV4-T20 section: before=[${T20_GIT_BEFORE}] after=[${T20_GIT_AFTER}]"
+  fail "EDMV4-T20 AC9 -- the section's own scratch repository changed across it: before=[${T20_GIT_BEFORE}] after=[${T20_GIT_AFTER}]"
 fi
+
+# AC6 control: the same window, around a write planted inside its own scratch repository, must
+# report it. Without this, scoping the window down could have made it blind rather than isolated.
+T20_GIT_CTRL_BEFORE="$(git -C "$T20_GIT_REPO" status --porcelain)"
+printf 'leaked\n' > "${T20_GIT_REPO}/leaked-into-the-worktree.txt"
+T20_GIT_CTRL_AFTER="$(git -C "$T20_GIT_REPO" status --porcelain)"
+if [[ "$T20_GIT_CTRL_BEFORE" != "$T20_GIT_CTRL_AFTER" ]]; then
+  pass "EDMV4-T20 AC9 AC6 control -- the same window DOES report a write planted inside its own scratch repository, so the verdict above discriminates"
+else
+  fail "EDMV4-T20 AC9 AC6 control -- a planted write inside the section's scratch repository went unnoticed; the assertion above is vacuous"
+fi
+
+cd "$T20_GIT_PREV_CWD"
+rm -rf "$T20_GIT_TMP"
 
 echo
 
@@ -3661,9 +3873,9 @@ check_absent 'EDMV4-T40 -- edm-repo-readiness never sources edm-state' \
 # ---- EDMV4-T40 AC8: the script never writes to .edm-state.json -- hash an initiative's state file
 # before and after a full run and assert it is byte-unchanged.
 #
-# CA-019: this used to hash a PINNED live-initiative path
-# (SRD/edm/EDMV4__ecc-integration/.edm-state.json) and, when that path was absent, print an
-# uncounted soft `NOTE` and return. The precondition is precisely the thing that disappears on
+# CA-019: this used to hash a PINNED live-initiative path (the `.edm-state.json` of whichever
+# initiative happened to be authoring this suite at the time) and, when that path was absent,
+# print an uncounted soft `NOTE` and return. The precondition is precisely the thing that disappears on
 # archive, so AC8 stopped being checked exactly when the tree changed underneath it -- with no
 # failure, no count, and nothing in the totals to show coverage had been lost. The fixture is now
 # BUILT here instead of pinned, so the assertion always runs and never depends on the state of the
@@ -3926,11 +4138,15 @@ t11_ac5_probe="$({ printf '%s\n' "$t11_ac5_body" | sed '1a\
   || fail "EDMV4-T11 AC5 -- positive control FAILED: the comment-stripped scan no longer detects a real invocation"
 
 # ---- AC6: no shell-command-inspection detection (D15 descope). ----------------------------------
-t11_ac6_count="$(grep -ci 'destructive\|heredoc\|subshell' "$GATEGUARD" || true)"
+# CA-098: expect-zero. `grep -ci ... || true` prints nothing at all when the file is missing, so
+# an unreadable or renamed edm-gateguard satisfied "carries no destructive/heredoc/subshell
+# detection" exactly as well as a clean one did.
+t11_ac6_count="$(w8_count_lines -i 'destructive\|heredoc\|subshell' "$GATEGUARD")"
 check_num "EDMV4-T11 AC6 -- edm-gateguard carries no destructive/heredoc/subshell detection" "0" "$t11_ac6_count"
 
 # ---- AC7: required-binary set unchanged -- no node/python/npx/pip. -------------------------------
-t11_ac7_count="$(grep -cE '\b(node|python3?|npx|pip)\b' "$GATEGUARD" || true)"
+# CA-098: expect-zero, same shape as AC6 above.
+t11_ac7_count="$(w8_count_lines -E '\b(node|python3?|npx|pip)\b' "$GATEGUARD")"
 check_num "EDMV4-T11 AC7 -- edm-gateguard references no node/python/npx/pip" "0" "$t11_ac7_count"
 
 # ---- AC8: the marker `test -f` check precedes the first jq reference, by line number. ------------
@@ -5271,19 +5487,69 @@ echo "=== EDMV4-T45: hookify event wiring (file/stop/bash), bash gated on Spike 
 echo
 
 EDM_BASH_GATE="${PLUGIN_DIR}/bin/edm-bash-gate"
-BASH_DECISIONS_MD="${PLUGIN_DIR}/../../SRD/edm/EDMV4__ecc-integration/decisions.md"
 
-# ---- AC3: bash-event rules ship only because decisions.md records a positive Spike A result --
-# checked before anything else in this section, matching the AC's own reading-order requirement. -
-if [[ -f "$BASH_DECISIONS_MD" ]]; then
-  T45_D25_TEXT="$(grep -A2 '| D25 |' "$BASH_DECISIONS_MD" 2>/dev/null || true)"
-  check "EDMV4-T45 AC3 -- decisions.md D25 records that every registered PreToolUse block runs" \
-    "every registered command runs" "$T45_D25_TEXT"
-  check "EDMV4-T45 AC3 -- decisions.md D25 records a deny always wins regardless of order" \
-    "a deny always wins" "$T45_D25_TEXT"
-else
-  fail "EDMV4-T45 AC3 -- decisions.md not found at the expected path; cannot verify the Spike A precondition"
-fi
+# ---- AC3: bash-event rules ship only because a decisions table records a positive Spike A result
+# -- checked before anything else in this section, matching the AC's own reading-order requirement.
+#
+# CA-096: this used to grep a PINNED `decisions.md` inside the live SRD initiative that authored
+# this suite. That is precisely the path that vanishes when an initiative is archived -- and one
+# that never exists at all in any other repository this plugin is installed into -- so the
+# assertion degraded into an unconditional `fail` the moment the tree moved underneath it. What is
+# actually under test is the D25 EXTRACTION predicate: does reading the Spike A row out of a
+# decisions table find a positive collision result, and does it decline to when the row records
+# the opposite? Both arms now run against scratch tables this block writes itself.
+#
+# Self-contained mktemp/rm pair rather than the w8_scratch_dir registry (CA-027): the directory
+# never outlives this block, and the registry's own call-site count assertion is derived from a
+# static scan of that helper's call sites.
+T45_AC3_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t45ac3.XXXXXX")"
+T45_AC3_POS="${T45_AC3_TMP}/decisions-positive.md"
+T45_AC3_NEG="${T45_AC3_TMP}/decisions-negative.md"
+
+cat > "$T45_AC3_POS" <<'EOF'
+| ID | Decision | Outcome | Rationale | Date |
+|---|---|---|---|---|
+| D24 | An earlier, unrelated row the D25 extraction must not pick up | none | none | 2026-09-02 |
+| D25 | Spike A: what does the host do when two blocking hooks match the same tool call on the same event? | **Order is not load-bearing for either event; a deny always wins; every registered command runs.** | One host version's behaviour, not a documented contract | 2026-09-02 |
+| D26 | A later, unrelated row | none | none | 2026-09-02 |
+EOF
+
+# The negative fixture is the positive one with exactly one thing changed: the D25 row records the
+# OPPOSITE Spike A result. Same table shape, same row id, same neighbours -- so a control failure
+# can only mean the predicate is reading the outcome text, which is the thing AC3 rests on.
+cat > "$T45_AC3_NEG" <<'EOF'
+| ID | Decision | Outcome | Rationale | Date |
+|---|---|---|---|---|
+| D24 | An earlier, unrelated row the D25 extraction must not pick up | none | none | 2026-09-02 |
+| D25 | Spike A: what does the host do when two blocking hooks match the same tool call on the same event? | **Order IS load-bearing: the first-registered block wins and later blocks never execute.** | One host version's behaviour, not a documented contract | 2026-09-02 |
+| D26 | A later, unrelated row | none | none | 2026-09-02 |
+EOF
+
+# The one extraction predicate, defined once so both the assertion and its controls exercise the
+# same code path rather than two hand-rolled greps that could drift.
+t45_ac3_d25() { grep -A2 -- '| D25 |' "$1" 2>/dev/null || true; }
+
+T45_D25_TEXT="$(t45_ac3_d25 "$T45_AC3_POS")"
+check "EDMV4-T45 AC3 -- the D25 extraction reads that every registered PreToolUse block runs" \
+  "every registered command runs" "$T45_D25_TEXT"
+check "EDMV4-T45 AC3 -- the D25 extraction reads that a deny always wins regardless of order" \
+  "a deny always wins" "$T45_D25_TEXT"
+
+# Negative control: against a table whose D25 row records the opposite result, the same predicate
+# must report NEITHER clause. Without this the two checks above would pass against any file that
+# happened to carry those words anywhere at all.
+T45_D25_NEG_TEXT="$(t45_ac3_d25 "$T45_AC3_NEG")"
+check_absent "EDMV4-T45 AC3 negative control -- a D25 row recording the opposite Spike A result does not report every-command-runs" \
+  "every registered command runs" "$T45_D25_NEG_TEXT"
+check_absent "EDMV4-T45 AC3 negative control -- ...nor deny-always-wins, so both assertions above discriminate on the recorded outcome" \
+  "a deny always wins" "$T45_D25_NEG_TEXT"
+
+# Negative control: an ABSENT decisions table yields no D25 text at all, so a missing precondition
+# can never be mistaken for a satisfied one.
+w8_check_empty "EDMV4-T45 AC3 negative control -- an absent decisions table yields no D25 row (a missing precondition cannot read as a satisfied one)" \
+  "$(t45_ac3_d25 "${T45_AC3_TMP}/no-such-decisions.md")"
+
+rm -rf "$T45_AC3_TMP"
 if [[ -x "$EDM_BASH_GATE" ]]; then
   pass "EDMV4-T45 AC3/AC4 -- bash events shipped: bin/edm-bash-gate exists and is executable, matching the positive Spike A result above"
 else
@@ -7089,19 +7355,113 @@ else
   fail "EDMV4-T52 AC1 -- unexpected violation(s) outside the recorded exclusions: ${T52_AC1_REAL_HITS}"
 fi
 
-# ---- AC5/AC9: edm-lint-artifacts EDMV4 (prefix mode, the real repository's own initiative
-# directory) reports zero violations across every artifact this initiative writes, including every
-# Mermaid diagram it added or edited (class 4, mermaid-semicolon, is one of the five classes this
-# same invocation runs). -----------------------------------------------------------------------
-T52_AC5_OUT=""
-T52_AC5_RC=0
-T52_AC5_OUT="$(EDM_SRD_ROOT="${_HARNESS_REPO_ROOT}/SRD" PATH="${PLUGIN_DIR}/bin:${PATH}" \
-  bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" EDMV4 2>&1)" || T52_AC5_RC=$?
-if [[ "$T52_AC5_RC" -eq 0 ]]; then
-  pass "EDMV4-T52 AC5/AC9 -- edm-lint-artifacts EDMV4 reports zero violations across the initiative's own artifacts (mermaid-semicolon class included)"
+# ---- AC5/AC9: edm-lint-artifacts in PREFIX mode reports zero violations across a clean
+# initiative's artifacts -- including a Mermaid diagram (class 4, mermaid-semicolon, is one of the
+# five classes this same invocation runs) -- and reports them when they really are there.
+#
+# CA-096: this used to name the live SRD initiative that authored this suite by prefix and lint the
+# real tree. Prefix mode resolves through `edm-state resolve-dir`, so the moment that initiative
+# was archived the resolution failed and the assertion collapsed into "rc=2: no initiative for
+# prefix" -- a setup error reported as a lint violation, in a repository where nothing was wrong.
+# It could never have passed in any other consuming repository either: no other repository has
+# ever carried that prefix.
+#
+# The initiative is BUILT here instead. That also turns the AC9 half (a direct invocation honors
+# EDM_SRD_ROOT) into a real, independently-anchored assertion rather than a coincidence of this
+# repository's own layout -- the scratch root sits somewhere no default could ever reach.
+#
+# Self-contained mktemp/rm pair rather than the w8_scratch_dir registry (CA-027): the tree never
+# outlives this block, and that registry's own assertion counts its call sites by static scan.
+T52_AC5_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t52ac5.XXXXXX")"
+T52_AC5_SRD="${T52_AC5_TMP}/SRD"
+T52_AC5_DIR="${T52_AC5_SRD}/edm/T52AC5__scratch"
+mkdir -p "${T52_AC5_DIR}/code-audit"
+cat > "${T52_AC5_DIR}/.edm-state.json" <<'EOF'
+{"prefix":"T52AC5","current_phase":6,"product_name":"edm","initiative_description":"scratch"}
+EOF
+# A clean artifact set that exercises the classes prefix mode runs: ordinary prose (attribution,
+# unicode, leaked-tool-tag), closed fences (unterminated-fence), and two Mermaid diagrams whose
+# label and message text carry no semicolon (mermaid-semicolon).
+cat > "${T52_AC5_DIR}/srd.md" <<'EOF'
+# Scratch SRD
+
+A paragraph of ordinary ASCII prose, with no attribution trailer and no leaked tool tag.
+
+```mermaid
+flowchart TD
+  A[Gate 1 approved] --> B[Phase 2 starts]
+  B --> C[Phase 3 audit]
+```
+EOF
+cat > "${T52_AC5_DIR}/code-audit/REMEDIATION.md" <<'EOF'
+# Remediation
+
+```mermaid
+sequenceDiagram
+  participant Auditor
+  participant Implementer
+  Auditor->>Implementer: finding raised
+  Implementer-->>Auditor: fix landed
+```
+EOF
+
+# t52_ac5_lint -- run prefix mode against the scratch root and print "<rc>|<output>". Defined once
+# so the clean run and every control below go through a byte-identical invocation.
+t52_ac5_lint() {
+  local _rc=0 _out
+  _out="$(EDM_SRD_ROOT="$T52_AC5_SRD" CLAUDE_PROJECT_DIR="$T52_AC5_TMP" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+    bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" T52AC5 2>&1)" || _rc=$?
+  printf '%s|%s' "$_rc" "$_out"
+}
+
+T52_AC5_CLEAN="$(t52_ac5_lint)"
+if [[ "${T52_AC5_CLEAN%%|*}" == "0" ]]; then
+  pass "EDMV4-T52 AC5/AC9 -- edm-lint-artifacts in prefix mode reports zero violations across a clean initiative's artifacts (mermaid-semicolon class included), resolved entirely through EDM_SRD_ROOT"
 else
-  fail "EDMV4-T52 AC5/AC9 -- edm-lint-artifacts EDMV4 reported violations (rc=${T52_AC5_RC}): ${T52_AC5_OUT}"
+  fail "EDMV4-T52 AC5/AC9 -- prefix mode reported violations on a clean scratch initiative: ${T52_AC5_CLEAN}"
 fi
+
+# Negative control (class 4): a semicolon inside a Mermaid label must be reported, and the run must
+# exit 1 (a violation) rather than 2 (a setup error). Without this arm the clean verdict above
+# would be satisfied just as well by a scan that never opened a single file.
+cp "${T52_AC5_DIR}/srd.md" "${T52_AC5_TMP}/srd.md.clean"
+cat > "${T52_AC5_DIR}/srd.md" <<'EOF'
+# Scratch SRD
+
+```mermaid
+flowchart TD
+  A[Gate 1 approved; then phase 2 starts] --> B[Phase 2]
+```
+EOF
+T52_AC5_DIRTY="$(t52_ac5_lint)"
+check_num "EDMV4-T52 AC5 negative control -- a Mermaid label semicolon makes the same prefix-mode run exit 1 (a violation), neither 0 nor 2 (a setup error)" \
+  "1" "${T52_AC5_DIRTY%%|*}"
+check "EDMV4-T52 AC5 negative control -- ...and names the mermaid-semicolon class, so the clean verdict above came from a scan that really read the diagrams" \
+  "mermaid-semicolon" "${T52_AC5_DIRTY#*|}"
+
+# Negative control (class 2): a non-ASCII byte, assembled through a printf hex escape so this
+# suite's own source stays ASCII (CC5), must be reported by the same invocation.
+cp "${T52_AC5_TMP}/srd.md.clean" "${T52_AC5_DIR}/srd.md"
+printf 'A line carrying a caf\xc3\xa9 byte.\n' >> "${T52_AC5_DIR}/srd.md"
+T52_AC5_UNI="$(t52_ac5_lint)"
+check_num "EDMV4-T52 AC5 negative control -- a non-ASCII byte in initiative prose makes the same run exit 1" \
+  "1" "${T52_AC5_UNI%%|*}"
+check "EDMV4-T52 AC5 negative control -- ...and names the unicode class" \
+  "unicode" "${T52_AC5_UNI#*|}"
+cp "${T52_AC5_TMP}/srd.md.clean" "${T52_AC5_DIR}/srd.md"
+
+# AC9 control: with EDM_SRD_ROOT pointed somewhere the scratch initiative is NOT, the same prefix
+# stops resolving and the run exits 2 (setup) rather than 0 (clean). That is what proves the clean
+# verdict above was produced BY the EDM_SRD_ROOT value rather than by some ambient default.
+T52_AC9_ELSEWHERE_RC=0
+T52_AC9_ELSEWHERE_OUT="$(EDM_SRD_ROOT="${T52_AC5_TMP}/empty-srd" CLAUDE_PROJECT_DIR="$T52_AC5_TMP" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+  bash "${PLUGIN_DIR}/bin/edm-lint-artifacts" T52AC5 2>&1)" || T52_AC9_ELSEWHERE_RC=$?
+check_num "EDMV4-T52 AC9 control -- pointing EDM_SRD_ROOT away from the scratch initiative makes the prefix unresolvable (exit 2, a setup error), proving the clean run above resolved through that variable" \
+  "2" "$T52_AC9_ELSEWHERE_RC"
+check "EDMV4-T52 AC9 control -- ...and says the prefix could not be resolved rather than reporting clean" \
+  "no initiative for prefix" "$T52_AC9_ELSEWHERE_OUT"
+
+rm -rf "$T52_AC5_TMP"
 
 # ---- AC8: edm-check-vocabulary exits 0 over its full scan set (skills/, agents/, docs/,
 # hooks/hooks.json, monitors/monitors.json, CLAUDE.md, README.md, bin/). ---------------------------
@@ -7274,7 +7634,7 @@ t52_raw_var_only_via_func() {
 
 # ---- edm-gateguard: emit_decision is the sole function (grep -c == 1), and every emission of
 # "$reason" inside it occurs strictly after the one sanitizer line. -------------------------------
-T52_GG_FUNC_COUNT="$(grep -c '^emit_decision() {' "$GATEGUARD" || true)"
+T52_GG_FUNC_COUNT="$(w8_count_lines '^emit_decision() {' "$GATEGUARD")"
 check_num "EDMV4-T52 AC6 -- edm-gateguard: emit_decision is defined exactly once" "1" "$T52_GG_FUNC_COUNT"
 
 T52_GG_ORDER_RC=0
@@ -7300,7 +7660,7 @@ fi
 
 # ---- edm-hookify: hookify_emit_match is the sole function, and the three raw fields it sanitizes
 # are never referenced anywhere else in the file except as arguments passed INTO it. -------------
-T52_HF_FUNC_COUNT="$(grep -c '^hookify_emit_match() {' "$EDM_HOOKIFY" || true)"
+T52_HF_FUNC_COUNT="$(w8_count_lines '^hookify_emit_match() {' "$EDM_HOOKIFY")"
 check_num "EDMV4-T52 AC6 -- edm-hookify: hookify_emit_match is defined exactly once" "1" "$T52_HF_FUNC_COUNT"
 
 T52_HF_RAW_HITS="$(t52_raw_var_only_via_func "$EDM_HOOKIFY" "hookify_emit_match" _mname _maction _mmessage)"
@@ -7325,7 +7685,7 @@ fi
 
 # ---- edm-stop-gate: stop_gate_emit_blocking is the sole function, and the two untrusted-text
 # variables it sanitizes are never referenced anywhere else except as call arguments. -------------
-T52_SG_FUNC_COUNT="$(grep -c '^stop_gate_emit_blocking() {' "$EDM_STOP_GATE" || true)"
+T52_SG_FUNC_COUNT="$(w8_count_lines '^stop_gate_emit_blocking() {' "$EDM_STOP_GATE")"
 check_num "EDMV4-T52 AC6 -- edm-stop-gate: stop_gate_emit_blocking is defined exactly once" "1" "$T52_SG_FUNC_COUNT"
 
 T52_SG_RAW_HITS="$(t52_raw_var_only_via_func "$EDM_STOP_GATE" "stop_gate_emit_blocking" _blocking_text _hookify_out)"
@@ -9843,27 +10203,65 @@ echo
 echo
 echo "-- Ledger integrity: no duplicate CA-NNN ids --"
 
-CA134_LEDGER="${PLUGIN_DIR}/../../SRD/edm/EDMV4__ecc-integration/code-audit/findings-ledger.jsonl"
-if [[ -f "$CA134_LEDGER" ]]; then
-  CA134_DUPES="$(jq -r '.id' "$CA134_LEDGER" 2>/dev/null | sort | uniq -d | tr '\n' ' ')"
-  [[ -z "${CA134_DUPES// /}" ]] \
-    && pass "CA-134 fallout -- findings-ledger.jsonl carries no duplicate finding id" \
-    || fail "CA-134 fallout -- duplicate finding id(s) in findings-ledger.jsonl: ${CA134_DUPES}"
+# CA-096: this used to run against a PINNED ledger inside the live SRD initiative that authored
+# this suite -- the one path guaranteed to disappear the day that initiative is archived, and one
+# that never existed in any other consuming repository. It duly turned into an unconditional
+# `fail` on archive. What is durable here is the PREDICATE, not one frozen ledger file: the
+# duplicate-id scan every downstream consumer (audit-converged's blocking set, render-ledger, the
+# synthesizer's fixed/re-opened merge) implicitly relies on. It is driven against three scratch
+# ledgers this block writes itself, covering all three outcomes the predicate must distinguish.
+#
+# Self-contained mktemp/rm pair rather than the w8_scratch_dir registry (CA-027): the tree never
+# outlives this block, and that registry's own assertion counts its call sites by static scan.
+CA134_TMP_LEDGER="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca134led.XXXXXX")"
+CA134_CLEAN_LEDGER="${CA134_TMP_LEDGER}/clean.jsonl"
+CA134_DUP_LEDGER="${CA134_TMP_LEDGER}/duplicate.jsonl"
+CA134_ABSENT_LEDGER="${CA134_TMP_LEDGER}/no-such-ledger.jsonl"
 
-  # Negative control: the same predicate MUST report a duplicate when one is present. Without it
-  # a jq failure (or an empty file) would satisfy the assertion above by producing no output --
-  # exactly the absent-renders-as-clean shape this initiative has now fixed fifteen times.
-  CA134_DUP_FIXTURE="$(mktemp "${TMPDIR:-/tmp}/edm-ledger-dup.XXXXXX")"
-  head -1 "$CA134_LEDGER" > "$CA134_DUP_FIXTURE"
-  head -1 "$CA134_LEDGER" >> "$CA134_DUP_FIXTURE"
-  CA134_CTRL="$(jq -r '.id' "$CA134_DUP_FIXTURE" 2>/dev/null | sort | uniq -d | tr -d '[:space:]')"
-  rm -f "$CA134_DUP_FIXTURE"
-  [[ -n "$CA134_CTRL" ]] \
-    && pass "CA-134 fallout -- negative control: the duplicate-id predicate reports a planted duplicate (${CA134_CTRL}), so the assertion above can genuinely fail" \
-    || fail "CA-134 fallout -- negative control: the duplicate-id predicate reported nothing on a file with a planted duplicate; the check above is vacuous"
-else
-  fail "CA-134 fallout -- findings-ledger.jsonl not found at ${CA134_LEDGER}; the duplicate-id check could not run"
-fi
+# Same row shape the real ledger writes, so the predicate is exercised against the schema it will
+# actually meet: distinct ids, and the CA-134 shape itself (one NOTED row, one open P1 row) present
+# under two DIFFERENT ids so a correct ledger with contradictory-looking severities still passes.
+cat > "$CA134_CLEAN_LEDGER" <<'EOF'
+{"schema":1,"id":"CA-9001","sev":"P1","status":"open","confidence":"high","title":"a first finding","raised_round":1}
+{"schema":1,"id":"CA-9002","sev":"NOTED","status":"noted","confidence":"low","title":"a second finding","raised_round":1}
+{"schema":1,"id":"CA-9003","sev":"P2","status":"fixed","confidence":"high","title":"a third finding","raised_round":2}
+EOF
+# The duplicate fixture is the clean one with a single id repeated under a contradictory severity
+# -- byte-for-byte the defect CA-134 was: one NOTED/noted row and one P1/open row sharing an id.
+cat > "$CA134_DUP_LEDGER" <<'EOF'
+{"schema":1,"id":"CA-9001","sev":"P1","status":"open","confidence":"high","title":"a first finding","raised_round":1}
+{"schema":1,"id":"CA-9002","sev":"NOTED","status":"noted","confidence":"low","title":"a second finding","raised_round":1}
+{"schema":1,"id":"CA-9001","sev":"NOTED","status":"noted","confidence":"low","title":"the same id again, contradicting the row above","raised_round":2}
+EOF
+
+# ca134_dupes <ledger> -- the one duplicate-id predicate, printing the duplicated ids (space
+# separated), or the literal "ERROR" when the ledger is absent or unreadable. Distinguishing those
+# two is the whole point: "no duplicates" and "no file" must never render as the same verdict.
+ca134_dupes() {
+  local _ledger="$1" _ids
+  [[ -f "$_ledger" ]] || { printf '%s' "ERROR"; return 0; }
+  _ids="$(jq -r '.id' "$_ledger" 2>/dev/null)" || { printf '%s' "ERROR"; return 0; }
+  printf '%s' "$_ids" | sort | uniq -d | tr '\n' ' '
+}
+
+CA134_DUPES="$(ca134_dupes "$CA134_CLEAN_LEDGER")"
+[[ -z "${CA134_DUPES// /}" ]] \
+  && pass "CA-134 fallout -- a well-formed findings ledger carries no duplicate finding id" \
+  || fail "CA-134 fallout -- duplicate finding id(s) reported on a ledger that has none: ${CA134_DUPES}"
+
+# Negative control: the same predicate MUST report the duplicate when one is present. Without it a
+# jq failure (or an empty file) would satisfy the assertion above by producing no output -- exactly
+# the absent-renders-as-clean shape this suite has now closed fifteen times over.
+CA134_CTRL="$(ca134_dupes "$CA134_DUP_LEDGER")"
+check "CA-134 fallout -- negative control: the duplicate-id predicate names a planted duplicate id, so the assertion above can genuinely fail" \
+  "CA-9001" "$CA134_CTRL"
+
+# Negative control: an ABSENT ledger is an error, never a clean pass. This is the arm whose absence
+# let the archived-away pinned path read as "nothing to report" for as long as it did.
+check "CA-134 fallout -- negative control: an absent ledger reports ERROR rather than a passing empty result" \
+  "ERROR" "$(ca134_dupes "$CA134_ABSENT_LEDGER")"
+
+rm -rf "$CA134_TMP_LEDGER"
 
 # =====================================================================================
 # CA-215: edm-state set must store object-typed keys as objects, not as JSON strings
@@ -9941,8 +10339,8 @@ rm -rf "$CA215_TMP"
 # =================================================================================
 # P2 remediation group 1 -- concurrency and filesystem safety.
 # CA-073, CA-077, CA-081, CA-082, CA-083, CA-084, CA-085, CA-086, CA-087, CA-088,
-# CA-092, CA-101 (SRD/edm/EDMV4__ecc-integration/code-audit/pass-1_2026-09-04/
-# REMEDIATION.md; selected by code-audit/p2-triage.md's group 1).
+# CA-092, CA-101 (filed by the pass-1 code audit of the initiative that authored this suite;
+# selected by that audit's own `code-audit/p2-triage.md` group 1).
 #
 # House rule for this whole band: every assertion carries a control that proves it CAN fail --
 # either a mutant binary restoring the pre-fix behaviour, or an injected positive probe. Where a
@@ -11176,9 +11574,10 @@ fi
 # ---- CA-111: both _edm-datadir-lib.sh consumers guard with [[ -r ]] -----------------------------
 echo
 echo "CA-111 -- edm-gateguard and edm-state guard the datadir-lib source with the same readable-file predicate"
-P2G34_C111_GG="$(grep -c 'if \[\[ -r "\${SCRIPT_DIR}/_edm-datadir-lib.sh" \]\]; then' "$P2G34_GATEGUARD" || true)"
+P2G34_C111_GG="$(w8_count_lines 'if \[\[ -r "\${SCRIPT_DIR}/_edm-datadir-lib.sh" \]\]; then' "$P2G34_GATEGUARD")"
 check_num "CA-111 -- edm-gateguard guards the datadir-lib source with [[ -r ]], not [[ -f ]]" "1" "$P2G34_C111_GG"
-P2G34_C111_FGG="$(grep -c 'if \[\[ -f "\${SCRIPT_DIR}/_edm-datadir-lib.sh" \]\]; then' "$P2G34_GATEGUARD" || true)"
+# CA-098: expect-zero -- an absent scratch copy would have read as "the old form is gone".
+P2G34_C111_FGG="$(w8_count_lines 'if \[\[ -f "\${SCRIPT_DIR}/_edm-datadir-lib.sh" \]\]; then' "$P2G34_GATEGUARD")"
 check_num "CA-111 -- ...and the old [[ -f ]] form is gone from edm-gateguard" "0" "$P2G34_C111_FGG"
 
 # Behavioural half: a datadir-lib that EXISTS but is unreadable must degrade to no gate (exit 0),
@@ -11254,7 +11653,8 @@ else
 fi
 
 # The static half of CA-078: the unquoted `ls` iteration is gone for good.
-P2G34_C078_LS="$(grep -c '_cite_files' "$P2G34_GRANTS" || true)"
+# CA-098: expect-zero -- an absent scratch copy would have read as "the capture is gone entirely".
+P2G34_C078_LS="$(w8_count_lines '_cite_files' "$P2G34_GRANTS")"
 check_num "CA-078 -- the intermediate \`ls\` capture the word-split came from is gone entirely" "0" "$P2G34_C078_LS"
 
 # ---- CA-120: metrics-report reads the round lens set through read_round_lenses ------------------
@@ -11497,6 +11897,97 @@ CACO_SG_N="$({ grep -c 'pattern-library seed unresolved' "$CACO_STRIP" || true; 
   || fail "CA-124 co-site negative control -- a guard-stripped copy compared equal; the check above is vacuous"
 
 rm -rf "$CACO_TMP"
+
+echo
+# =================================================================================================
+# CA-096 -- this suite may not depend on any live SRD initiative, here or in any consuming repo
+# =================================================================================================
+# Every fixture this suite needs is now built in a scratch tree it owns, so what remains is a
+# standing guard against the dependence coming back: a scan of this file's own source for the
+# shapes that reach out of bin/tests into a repository's live SRD tree. Four assertions were lost
+# in one stroke when the authoring initiative was archived -- not one of them noticed by anything
+# except the suite going red -- and every one of them had been failing in every OTHER repository
+# since the day it was written.
+#
+# CC2: each needle is ASSEMBLED at runtime from halves that are inert apart, so no line of this
+# band -- comment or code -- can become a match for the scan it configures. The six recorded
+# self-matching scans in this plugin all read their own explanatory prose as a hit.
+echo "=== CA-096: no live-initiative dependence anywhere in this suite ==="
+
+CA096_SELF="${SCRIPT_DIR}/wave8-smoke.sh"
+
+# Needle 1: the directory name of the initiative that authored this suite -- the one archived out
+# from under it.
+CA096_N1="EDMV4__ecc"
+CA096_N1="${CA096_N1}-integration"
+# Needle 2: any plugin-relative climb out of bin/tests into a repository's own SRD tree.
+CA096_N2=".."
+CA096_N2="${CA096_N2}/${CA096_N2}/SRD"
+# Needle 3: the same reach spelled through the harness's repository-root export.
+CA096_N3='${_HARNESS_REPO_ROOT'
+CA096_N3="${CA096_N3}}/SRD"
+
+# ca096_hits <needle> <file> -- every "<lineno>:<content>" line of <file> containing <needle> as a
+# FIXED string, empty when there are none. A missing file or a failed scan prints a distinct ERROR
+# sentinel and never the empty string: "nothing found" and "nothing looked at" are the two verdicts
+# this whole ticket exists to keep apart.
+ca096_hits() {
+  local _needle="$1" _file="$2" _out _rc=0
+  [[ -f "$_file" ]] || { printf '%s' "ERROR-FILE-ABSENT"; return 0; }
+  _out="$(grep -nF -- "$_needle" "$_file")" || _rc=$?
+  if [[ "$_rc" -eq 2 ]]; then printf '%s' "ERROR-SCAN-FAILED"; return 0; fi
+  printf '%s' "$_out"
+}
+
+# ---- AC2: no live-initiative path literal survives anywhere in the suite -----------------------
+for _ca096_n in "$CA096_N1" "$CA096_N2" "$CA096_N3"; do
+  _ca096_found="$(ca096_hits "$_ca096_n" "$CA096_SELF")"
+  if [[ -z "$_ca096_found" ]]; then
+    pass "CA-096 AC2 -- no occurrence of the live-SRD dependence shape [${_ca096_n}] survives in this suite"
+  else
+    fail "CA-096 AC2 -- live-SRD dependence shape [${_ca096_n}] is back at: ${_ca096_found}"
+  fi
+done
+
+# ---- AC2 positive control: inject each needle on a real code line of a scratch COPY of this very
+# file and confirm the identical scan finds exactly that line. Without this, narrowing a needle
+# until it matched nothing would read as a clean suite. The copy is of this file rather than of a
+# synthetic stand-in, so the control is run against the exact shape and size the scan meets.
+CA096_CTRL_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca096.XXXXXX")"
+for _ca096_n in "$CA096_N1" "$CA096_N2" "$CA096_N3"; do
+  _ca096_copy="${CA096_CTRL_TMP}/injected.sh"
+  cp "$CA096_SELF" "$_ca096_copy"
+  # A code line, not a comment: a needle that only ever appeared in prose would prove nothing
+  # about the scan's ability to catch a real dereference.
+  printf 'CA096_PLANTED_PATH="%s/decisions.md"\n' "$_ca096_n" >> "$_ca096_copy"
+  _ca096_ctrl="$(ca096_hits "$_ca096_n" "$_ca096_copy")"
+  # Anchor past grep's own "<lineno>:" prefix rather than substring-matching the whole hit line,
+  # so a needle that merely appeared in some line number could not satisfy this.
+  if [[ "$_ca096_ctrl" == *":CA096_PLANTED_PATH="* ]]; then
+    pass "CA-096 AC2 positive control -- the scan reports a planted [${_ca096_n}] dereference on a code line, so the clean verdict above is a real one"
+  else
+    fail "CA-096 AC2 positive control -- a planted [${_ca096_n}] dereference was NOT reported (got: ${_ca096_ctrl}); the AC2 scan is vacuous"
+  fi
+  rm -f "$_ca096_copy"
+done
+
+# ---- AC2 positive control (error arm): the scan must distinguish "no hits" from "never ran". ----
+check "CA-096 AC2 control -- scanning an absent file reports an error rather than a clean zero hits" \
+  "ERROR-FILE-ABSENT" "$(ca096_hits "$CA096_N1" "${CA096_CTRL_TMP}/no-such-file.sh")"
+rm -rf "$CA096_CTRL_TMP"
+
+# ---- AC3: the run above was taken with the authoring initiative's own directory ABSENT ----------
+# The archived-away location, not a moved copy: the point is that nothing here resolves through the
+# original path any more. In any other consuming repository this directory has never existed, so
+# this assertion holds there for the same reason it holds here.
+CA096_LIVE_DIR="${_HARNESS_REPO_ROOT}"
+CA096_LIVE_DIR="${CA096_LIVE_DIR}/SRD/edm/${CA096_N1}"
+if [[ ! -d "$CA096_LIVE_DIR" ]]; then
+  pass "CA-096 AC3 -- the authoring initiative's live directory is absent from this tree, so every assertion in this run completed without it"
+else
+  fail "CA-096 AC3 -- the authoring initiative's live directory is present again at ${CA096_LIVE_DIR}; re-derive AC3, this run is no longer evidence for it"
+fi
+
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
 
