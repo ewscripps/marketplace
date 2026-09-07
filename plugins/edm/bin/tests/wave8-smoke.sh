@@ -483,9 +483,59 @@ check "EDMV4-T48 AC3 -- instruction states the codemap lives at the srd_root roo
 check "EDMV4-T48 AC4 -- instruction directs reading and refreshing rather than rewriting from scratch" \
   'rather than rewriting it from scratch' \
   "$(cat "$EXPLORER_AGENT")"
-check 'EDMV4-T48 AC4 -- instruction requires a "Refreshed" note naming touched sections and the prefix' \
-  'append a' \
-  "$(cat "$EXPLORER_AGENT")"
+# CA-099: this asserted the substring `append a` -- generic English that matches any number of
+# unrelated sentences -- while its label named THREE properties and tested none of them: that a
+# "Refreshed" note must be appended, that the note names the sections touched, and that it names
+# the initiative prefix. The three are now asserted separately, so the label and the checks agree
+# and a drop of any one of them fails on its own line.
+#
+# The properties are matched against a whitespace-normalized copy of the agent rather than the raw
+# file: the sentence genuinely hard-wraps between "append a" and "short" in edm-explorer.md:84-85,
+# so a raw substring match would have to encode the wrap column and would fail on a rewrap that
+# changes nothing about the requirement. `tr` is invoked once with an input redirect, never as the
+# tail of a pipeline inside the substitution: under this file's `set -o pipefail` a failing pipe
+# element aborts the suite mid-run instead of failing an assertion.
+T48_AGENT_JOINED="$(tr -s ' \n' ' ' < "$EXPLORER_AGENT")"
+T48_AC4_P1='append a short "Refreshed" note'
+T48_AC4_P2='naming which sections you touched'
+T48_AC4_P3="and this initiative's prefix"
+
+check 'EDMV4-T48 AC4 (CA-099) property 1/3 -- the instruction directs APPENDING a "Refreshed" note, not merely mentioning the word somewhere' \
+  "$T48_AC4_P1" "$T48_AGENT_JOINED"
+check 'EDMV4-T48 AC4 (CA-099) property 2/3 -- the note must name WHICH SECTIONS were touched' \
+  "$T48_AC4_P2" "$T48_AGENT_JOINED"
+check "EDMV4-T48 AC4 (CA-099) property 3/3 -- the note must name this initiative's PREFIX" \
+  "$T48_AC4_P3" "$T48_AGENT_JOINED"
+
+# Controls: three scratch copies of the normalized text, each breaking exactly ONE property. Each
+# copy must fail its own property AND still satisfy the other two -- that second half is what
+# proves the three checks are independently falsifiable rather than three names for one match.
+# Pure bash parameter substitution (no external tool, no temp file); patterns come from the same
+# variables the assertions use, so a control cannot drift away from the check it backs.
+T48_AC4_C1="${T48_AGENT_JOINED/$T48_AC4_P1/CA099_PROPERTY_1_REMOVED}"
+T48_AC4_C2="${T48_AGENT_JOINED/$T48_AC4_P2/CA099_PROPERTY_2_REMOVED}"
+T48_AC4_C3="${T48_AGENT_JOINED/$T48_AC4_P3/CA099_PROPERTY_3_REMOVED}"
+
+check_absent 'EDMV4-T48 AC4 control 1/3 (CA-099) -- a copy with the append-a-note directive broken fails property 1' \
+  "$T48_AC4_P1" "$T48_AC4_C1"
+check 'EDMV4-T48 AC4 control 1/3 (CA-099) -- that same copy still satisfies property 2, so property 1 is falsifiable on its own' \
+  "$T48_AC4_P2" "$T48_AC4_C1"
+check 'EDMV4-T48 AC4 control 1/3 (CA-099) -- that same copy still satisfies property 3, so property 1 is falsifiable on its own' \
+  "$T48_AC4_P3" "$T48_AC4_C1"
+
+check_absent 'EDMV4-T48 AC4 control 2/3 (CA-099) -- a copy with the sections-touched clause broken fails property 2' \
+  "$T48_AC4_P2" "$T48_AC4_C2"
+check 'EDMV4-T48 AC4 control 2/3 (CA-099) -- that same copy still satisfies property 1, so property 2 is falsifiable on its own' \
+  "$T48_AC4_P1" "$T48_AC4_C2"
+check 'EDMV4-T48 AC4 control 2/3 (CA-099) -- that same copy still satisfies property 3, so property 2 is falsifiable on its own' \
+  "$T48_AC4_P3" "$T48_AC4_C2"
+
+check_absent 'EDMV4-T48 AC4 control 3/3 (CA-099) -- a copy with the initiative-prefix clause broken fails property 3' \
+  "$T48_AC4_P3" "$T48_AC4_C3"
+check 'EDMV4-T48 AC4 control 3/3 (CA-099) -- that same copy still satisfies property 1, so property 3 is falsifiable on its own' \
+  "$T48_AC4_P1" "$T48_AC4_C3"
+check 'EDMV4-T48 AC4 control 3/3 (CA-099) -- that same copy still satisfies property 2, so property 3 is falsifiable on its own' \
+  "$T48_AC4_P2" "$T48_AC4_C3"
 # CA-012: this asserted the ABSENCE of an invented sentinel
 # ('MISSING_REFRESHED_NOTE_SENTINEL_NEVER_PRESENT') that appears nowhere by construction, so it
 # could never fail -- while its label claimed the opposite property, that the "Refreshed"
@@ -5425,8 +5475,42 @@ T15_AC9_RC=0
 printf '{"tool_name":"Edit"}' | CLAUDE_PROJECT_DIR="$T15_AC9_PROJ" CLAUDE_PLUGIN_DATA="$T15_AC9_DATA" PATH="$T15_AC9_FAKEBIN" bash "$GATEGUARD" >/dev/null 2>&1 || T15_AC9_RC=$?
 check_num "EDMV4-T15 AC9 -- jq missing on the GATED path (marker present) exits 1, never 2" "1" "$T15_AC9_RC"
 
+# CA-068: this greped the WHOLE of edm-gateguard for the sentence while its label named the
+# EDM-HELP block. The sentence does live in the block today, so the assertion passed -- but it
+# would go on passing if the sentence were relocated into an ordinary code comment, which is the
+# exact drift the label promises to catch. Scope the match to the block, extracted with the very
+# awk program _edm-cli-lib.sh's print_help uses to render `--help`, so the assertion tracks the
+# text an operator is actually shown rather than the file's whole byte range.
+t15_help_block() {
+  awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$1"
+}
+T15_AC9_HELP="$(t15_help_block "$GATEGUARD")"
 check "EDMV4-T15 AC9 -- the EDM-HELP block states the jq-missing distinction" \
-  "once a marker is present" "$(cat "$GATEGUARD")"
+  "once a marker is present" "$T15_AC9_HELP"
+
+# CC1 control: a scratch copy with that one sentence lifted out of the block and re-emitted after
+# EDM-HELP-END -- the file still contains it, the help text no longer does. The scoped assertion
+# above must reject that copy, and the whole-file view must still accept it: the second half is
+# what shows the old, unscoped form could not have seen the move at all. T15_AC9_TMP is the scratch
+# tree this AC's band already registered; no new w8_scratch_dir call site is introduced, because
+# CA-027's registry assertion compares a static grep of those call sites against the registry's
+# runtime length.
+T15_AC9_MOVED="${T15_AC9_TMP}/gateguard-sentence-moved"
+awk '/once a marker is present/ && !moved { moved=1; lifted=$0; next } { print }
+     END { if (moved) print lifted }' "$GATEGUARD" > "$T15_AC9_MOVED"
+T15_AC9_MOVED_HELP="$(t15_help_block "$T15_AC9_MOVED")"
+T15_AC9_MOVED_ALL="$(cat "$T15_AC9_MOVED")"
+check_absent "EDMV4-T15 AC9 control (CA-068) -- on a scratch copy with the sentence relocated below EDM-HELP-END, the help block no longer carries it, so the scoped assertion can fail" \
+  "once a marker is present" "$T15_AC9_MOVED_HELP"
+check "EDMV4-T15 AC9 control (CA-068) -- that same scratch copy still carries the sentence somewhere in the file, which is all the pre-CA-068 whole-file grep ever asked for" \
+  "once a marker is present" "$T15_AC9_MOVED_ALL"
+# A guard against the control going hollow the other way: an extraction that returned nothing at
+# all would make the check_absent above pass for the wrong reason. The block must be non-empty.
+if [[ -n "$T15_AC9_MOVED_HELP" ]]; then
+  pass "EDMV4-T15 AC9 control (CA-068) -- the relocated-sentence copy still has a non-empty EDM-HELP block, so the absence above is a real absence and not an empty extraction"
+else
+  fail "EDMV4-T15 AC9 control (CA-068) -- the relocated-sentence copy extracted an EMPTY help block, so the absence check above proves nothing"
+fi
 
 # ---- AC10: an unparseable stdin payload exits 1 with empty stdout, never blocks. -----------------
 T15_AC10_PROJ="" T15_AC10_DATA=""
@@ -5905,6 +5989,123 @@ T28_ALL_LENS_COUNT="$(printf '%s\n' $T28_ALL_LENS_IDS | grep -c '.')" || true
   && pass "EDMV4-T28 -- agents/edm-audit-*.md file count (${T28_LENS_COUNT}, live glob) matches ALL_LENS_IDS's own count (${T28_ALL_LENS_COUNT})" \
   || fail "EDMV4-T28 -- agents/edm-audit-*.md file count (${T28_LENS_COUNT}) disagrees with ALL_LENS_IDS (${T28_ALL_LENS_COUNT})"
 
+# ---- CA-080: assert the SET of lens IDs, not its cardinality ------------------------------------
+# The cross-check immediately above compares two independently derived COUNTS, which is worth
+# having but is not what its neighbourhood claims. "There are fourteen IDs" and "the IDs are
+# exactly L1 through L14" come apart at precisely the realistic drift: one ID duplicated and
+# another dropped leaves the count reading fourteen while the set is wrong. Both are asserted
+# below, on both sides of the cross-check -- the IDs edm-state declares, and the IDs the live lens
+# files declare in their own opening frames.
+#
+# Pure shell throughout: no pipeline (a failing element under this file's `set -o pipefail` aborts
+# the suite mid-run instead of failing an assertion), no associative array and no sort -u (bash 3.2
+# floor, and set equality does not need an ordering).
+T28_EXPECTED_LENS_IDS="L1 L2 L3 L4 L5 L6 L7 L8 L9 L10 L11 L12 L13 L14"
+
+# t28_lens_set_defects <declared-ids> <expected-ids> -- prints one defect token per problem and
+# nothing at all when <declared-ids> is exactly <expected-ids> as a SET with no repeats. Three
+# independent conditions, because three different drifts are being ruled out: a gap
+# (MISSING), a stray (UNEXPECTED), and a repeat (DUPLICATE, which a count check can never see).
+t28_lens_set_defects() {
+  local declared="$1" expected="$2"
+  local id other count reported=""
+  for id in $expected; do
+    case " ${declared} " in
+      *" ${id} "*) ;;
+      *) echo "MISSING:${id}" ;;
+    esac
+  done
+  for id in $declared; do
+    case " ${expected} " in
+      *" ${id} "*) ;;
+      *) echo "UNEXPECTED:${id}" ;;
+    esac
+  done
+  for id in $declared; do
+    case " ${reported} " in
+      *" ${id} "*) continue ;;
+    esac
+    count=0
+    for other in $declared; do
+      if [[ "$other" == "$id" ]]; then count=$((count+1)); fi
+    done
+    if [[ "$count" -gt 1 ]]; then
+      echo "DUPLICATE:${id}"
+      reported="${reported} ${id}"
+    fi
+  done
+  return 0
+}
+
+# t28_token_count <space-separated-list> -- member count, computed without a pipeline so the
+# duplicate-plus-gap controls below can show a wrong SET still yielding the right COUNT.
+t28_token_count() {
+  local t n=0
+  for t in $1; do n=$((n+1)); done
+  echo "$n"
+}
+
+T28_DECLARED_SET_DEFECTS="$(t28_lens_set_defects "$T28_ALL_LENS_IDS" "$T28_EXPECTED_LENS_IDS")"
+if [[ -z "$T28_DECLARED_SET_DEFECTS" ]]; then
+  pass "EDMV4-T28 / CA-080 -- ALL_LENS_IDS is exactly the SET L1..L14: no gap, no stray, no repeat (set equality, not cardinality)"
+else
+  fail "EDMV4-T28 / CA-080 -- ALL_LENS_IDS is not the set L1..L14: ${T28_DECLARED_SET_DEFECTS}"
+fi
+
+# The other side of the cross-check: the ID each live lens file declares in its own opening frame.
+# Two files both claiming L3 is invisible to a file COUNT and fatal to a lens run.
+# t28_file_lens_id <file> -- the numeric lens ID from the opening frame, or nothing.
+t28_file_lens_id() {
+  awk 'match($0, /\*\*EDM Code Audit Lens L[0-9]+/) { s = substr($0, RSTART, RLENGTH); sub(/.*Lens /, "", s); print s; exit }' "$1"
+}
+T28_FILE_LENS_IDS=""
+for t28_id_f in $T28_LENS_FILES; do
+  t28_one_id="$(t28_file_lens_id "${T28_AGENTS_DIR}/${t28_id_f}")"
+  if [[ -n "$t28_one_id" ]]; then
+    T28_FILE_LENS_IDS="${T28_FILE_LENS_IDS} ${t28_one_id}"
+  else
+    T28_FILE_LENS_IDS="${T28_FILE_LENS_IDS} UNRESOLVED_${t28_id_f}"
+  fi
+done
+T28_FILE_SET_DEFECTS="$(t28_lens_set_defects "$T28_FILE_LENS_IDS" "$T28_EXPECTED_LENS_IDS")"
+if [[ -z "$T28_FILE_SET_DEFECTS" ]]; then
+  pass "EDMV4-T28 / CA-080 -- the live lens files declare exactly the SET L1..L14 in their opening frames: no two files claim the same ID and none is unclaimed"
+else
+  fail "EDMV4-T28 / CA-080 -- the live lens files' declared IDs are not the set L1..L14: ${T28_FILE_SET_DEFECTS}"
+fi
+
+# CC1 controls. Each mutant below has exactly FOURTEEN members, so the count cross-check above
+# accepts every one of them -- that is the whole point: these are the defects a cardinality
+# assertion is structurally unable to see.
+# (a) duplicate plus gap: L13 twice, L14 gone.
+T28_CTRL_DUP="L1 L2 L3 L4 L5 L6 L7 L8 L9 L10 L11 L12 L13 L13"
+T28_CTRL_DUP_COUNT="$(t28_token_count "$T28_CTRL_DUP")"
+T28_CTRL_DUP_DEFECTS="$(t28_lens_set_defects "$T28_CTRL_DUP" "$T28_EXPECTED_LENS_IDS")"
+check_num "EDMV4-T28 / CA-080 control (a) -- the duplicated-ID mutant still has fourteen members, so the count cross-check above cannot reject it" \
+  "$T28_ALL_LENS_COUNT" "$T28_CTRL_DUP_COUNT"
+check "EDMV4-T28 / CA-080 control (a) -- the set check DOES reject it, naming the repeat" \
+  "DUPLICATE:L13" "$T28_CTRL_DUP_DEFECTS"
+check "EDMV4-T28 / CA-080 control (a) -- and names the ID that went missing behind it" \
+  "MISSING:L14" "$T28_CTRL_DUP_DEFECTS"
+# (b) gap plus stray: L7 dropped, L15 invented.
+T28_CTRL_GAP="L1 L2 L3 L4 L5 L6 L8 L9 L10 L11 L12 L13 L14 L15"
+T28_CTRL_GAP_COUNT="$(t28_token_count "$T28_CTRL_GAP")"
+T28_CTRL_GAP_DEFECTS="$(t28_lens_set_defects "$T28_CTRL_GAP" "$T28_EXPECTED_LENS_IDS")"
+check_num "EDMV4-T28 / CA-080 control (b) -- the L7-missing/L15-present mutant also has fourteen members, so the count cross-check cannot reject it either" \
+  "$T28_ALL_LENS_COUNT" "$T28_CTRL_GAP_COUNT"
+check "EDMV4-T28 / CA-080 control (b) -- the set check reports the gap" \
+  "MISSING:L7" "$T28_CTRL_GAP_DEFECTS"
+check "EDMV4-T28 / CA-080 control (b) -- the set check reports the stray" \
+  "UNEXPECTED:L15" "$T28_CTRL_GAP_DEFECTS"
+# (c) the predicate is not simply always-noisy: the true set must produce no defect at all, which
+# is what makes the two clean results above assertions rather than a constant.
+T28_CTRL_CLEAN_DEFECTS="$(t28_lens_set_defects "$T28_EXPECTED_LENS_IDS" "$T28_EXPECTED_LENS_IDS")"
+if [[ -z "$T28_CTRL_CLEAN_DEFECTS" ]]; then
+  pass "EDMV4-T28 / CA-080 control (c) -- the predicate reports NOTHING on the correct set, so it discriminates rather than flagging unconditionally"
+else
+  fail "EDMV4-T28 / CA-080 control (c) -- the predicate flagged the correct set (${T28_CTRL_CLEAN_DEFECTS}), so its clean verdicts above mean nothing"
+fi
+
 # ---- t28_contract_violations <file> -- prints one tag per violated contract element, or nothing
 # when <file> fully conforms. Every tag traces to one AC of EDMV4-T28. ---------------------------
 t28_contract_violations() {
@@ -6104,6 +6305,59 @@ t28_neg_case "model downgraded off opus" "MODEL" 's/^model: opus$/model: sonnet/
 t28_neg_case "color changed off cyan" "COLOR" 's/^color: cyan$/color: green/'
 t28_neg_case "mandate-narrowing sentence removed" "MANDATE_SENTENCE" '/^Your mandate is ONLY this lens/d'
 t28_neg_case "house Scope paragraph removed" "SCOPE_PARAGRAPH" '/^deliver what was asked at the scope intended/d'
+# ---- CA-069: pin the Scope-paragraph check's anchored whole-line form ---------------------------
+# This contract element used to be TWO substring greps with forty-four characters of the sentence
+# between them that nothing looked at, so a lens could rewrite that middle clause and still pass.
+# The group-3 remediation collapsed it to a single `grep -qxF` of the whole line (which has no
+# interior at all) when it unwrapped edm-audit-security.md; the fixture below is what verifies that
+# collapse HOLDS and pins it in place. The removal case above cannot do that job: deleting the
+# whole line fails the retired two-grep form just as readily, so it would keep passing after a
+# regression to any two-sided approximation. This one alters ONLY the middle clause and leaves
+# both retired needles standing, which is exactly the edit the old form could not see.
+T28_CA069_FIXTURE="${T28_TMP}/ca069-middle-clause-rewritten.md"
+sed 's/ sentence and continue with the task as asked / sentence and instead do whatever seems best /' \
+  "$T28_REF" > "$T28_CA069_FIXTURE"
+
+# The retired form, reconstructed here solely so the fixture can be shown to slip through it.
+# It reads the FIXTURE, never this file, so nothing in the prose above can satisfy it.
+t28_ca069_retired_two_grep_form() {
+  local f="$1"
+  grep -qF 'say so in a' "$f" || return 1
+  grep -qF 'rather than quietly narrowing, widening or transforming it.' "$f" || return 1
+  return 0
+}
+
+if t28_ca069_retired_two_grep_form "$T28_CA069_FIXTURE"; then
+  pass "EDMV4-T28 / CA-069 -- the middle-clause fixture still satisfies the RETIRED two-grep form, so it is a genuine test of the tightening and not just another removal case"
+else
+  fail "EDMV4-T28 / CA-069 -- the middle-clause fixture no longer satisfies the retired two-grep form, so it no longer isolates the forty-four-character hole the tightening closed"
+fi
+
+# The current anchored form must reject that same fixture. Compared without a pipeline: under this
+# file's `set -o pipefail` a failing element inside the substitution aborts the whole suite instead
+# of failing this assertion.
+T28_CA069_V="$(t28_contract_violations "$T28_CA069_FIXTURE")"
+case "
+${T28_CA069_V}
+" in
+  *"
+SCOPE_PARAGRAPH
+"*)
+    pass "EDMV4-T28 / CA-069 -- the anchored whole-line check REJECTS a lens whose Scope paragraph differs only in its middle clause" ;;
+  *)
+    fail "EDMV4-T28 / CA-069 -- a middle-clause-only rewrite passed the contract check, so the Scope element has regressed to a two-sided approximation (violations: ${T28_CA069_V})" ;;
+esac
+
+# And the fixture must trip SCOPE_PARAGRAPH and nothing else: a mutation that flagged half the
+# contract would make the assertion above true for reasons unrelated to the Scope element.
+# Stated as an EQUALITY rather than "no other tag present" -- the latter reads PASS on an empty
+# violation list, which is exactly the state a regressed checker produces, so it would report
+# clean at the very moment the band exists to catch.
+if [[ "$T28_CA069_V" == "SCOPE_PARAGRAPH" ]]; then
+  pass "EDMV4-T28 / CA-069 -- that fixture's violation list is exactly SCOPE_PARAGRAPH, so the rejection is attributable to the middle clause alone"
+else
+  fail "EDMV4-T28 / CA-069 -- that fixture's violation list is not exactly SCOPE_PARAGRAPH but '${T28_CA069_V}', so its rejection is not attributable to the middle clause alone"
+fi
 t28_neg_case "False Alarm Filter framing sentence removed" "FAF_FRAMING" '/^Report every finding at your best-effort confidence level/d'
 t28_neg_case "False Alarm Filter dropped to two criteria" "FAF_CRITERIA_COUNT" \
   '/^3\. Is this pattern used consistently everywhere in the project?$/d'
