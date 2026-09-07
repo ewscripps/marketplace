@@ -50,6 +50,39 @@ w8_scratch_dir() {
   printf -v "$__w8_outvar" '%s' "$_w8_new"
 }
 
+# ---- CA-118: the ONE by-name function extractor -------------------------------------------------
+# This file had grown EIGHT separate awk programs that all did the same thing -- locate a top-level
+# shell function definition by name and work out where that function ends. Three were byte-identical,
+# two more differed only in argument spelling or in exact-match-versus-prefix anchoring, one wrapped
+# the same program in a `grep -c', one hardcoded its target's name, and one inverted the result.
+# They are one implementation now, with the three behaviours selected by a mode argument.
+#
+# _w8_extract_fn <file> <name> [--body|--outside]
+#   (default)  the function's full text: its opening line through the first following line that
+#              begins with a closing brace, inclusive.
+#   --body     the same span with the opening and closing lines omitted.
+#   --outside  the complement: every line of <file> EXCEPT that span.
+#
+# The needle travels through the environment rather than through an awk -v assignment, for the
+# reason _harness.sh's _wave7_extract_between documents at length: POSIX awk applies string-literal
+# backslash processing to a -v assignment, so a needle carrying a backslash reaches the program
+# altered. ENVIRON[] carries it byte-for-byte.
+_w8_extract_fn() {
+  local _file="$1" _name="$2" _mode="${3:-full}"
+  W8_XFN_NEEDLE="${_name}() {" W8_XFN_MODE="$_mode" awk '
+    BEGIN { _n = ENVIRON["W8_XFN_NEEDLE"]; _m = ENVIRON["W8_XFN_MODE"] }
+    _m == "--outside" {
+      if (index($0, _n) == 1) { _skip = 1 }
+      if (_skip && /^}/) { _skip = 0; next }
+      if (!_skip) { print }
+      next
+    }
+    index($0, _n) == 1 && !_seen { _seen = 1; if (_m == "--body") next }
+    _seen && /^}/ { if (_m != "--body") print; exit }
+    _seen { print }
+  ' "$_file"
+}
+
 # ---- AC2/AC3 shared non-ASCII byte scanner (EDMV4-T52), hoisted here from that section so the
 # EDMV4-T32 band far above can reuse it too (CA-017). ----------------------------------------------
 # Mirrors edm-lint-artifacts' own PCRE-vs-fallback split rather than assuming `-P` is available:
@@ -1960,7 +1993,7 @@ fi
 # new arms -- arm count is the number of ';;' terminators inside each function's body -----------
 _t35_count_case_arms() {
   local file="$1" fn="$2"
-  awk -v fn="$fn" '$0 ~ ("^" fn "\\(\\) \\{") {f=1} f{print} f && /^}/{exit}' "$file" | grep -c ';;'
+  _w8_extract_fn "$file" "$fn" | grep -c ';;'
 }
 
 T35_TERMINAL_ARMS="$(_t35_count_case_arms "${PLUGIN_DIR}/bin/edm-state" terminal_phase_for_mode)"
@@ -2231,16 +2264,7 @@ T12_DATADIR_LIB="${SCRIPT_DIR}/../_edm-datadir-lib.sh"
 # inside edm_marker_path() -- exactly what this ticket's own Technical Notes forbid ("Do not fork
 # a second resolution chain"). This check is anchored to the function's own body text (extracted
 # below), never to prose describing it, so it cannot self-match its own documentation.
-_t12_extract_fn_body() {
-  local file="$1" name="$2"
-  awk -v needle="${name}() {" '
-    index($0, needle) == 1 { found=1; next }
-    found && /^}/ { exit }
-    found { print }
-  ' "$file"
-}
-
-T12_MARKER_BODY="$(_t12_extract_fn_body "$T12_DATADIR_LIB" edm_marker_path)"
+T12_MARKER_BODY="$(_w8_extract_fn "$T12_DATADIR_LIB" edm_marker_path --body)"
 if [[ -n "$T12_MARKER_BODY" ]]; then
   pass "EDMV4-T12 AC1 -- edm_marker_path()'s function body was extracted (non-empty)"
 else
@@ -3140,15 +3164,7 @@ check "EDMV4-T44 AC4 -- CLAUDE.md documents edm-stop-gate translating into its o
 # it for real is not a new technique in this file. This section runs before EDMV4-T13's own
 # (GATEGUARD/count_matches setup happens there), so it extracts independently rather than reusing
 # variables not yet in scope. ---------------------------------------------------------------------
-_t44_extract_emit_decision() {
-  local file="$1"
-  awk -v needle="emit_decision() {" '
-    index($0, needle) == 1 { found=1 }
-    found { print }
-    found && /^}/ { exit }
-  ' "$file"
-}
-T44_EMIT_FN_TEXT="$(_t44_extract_emit_decision "${PLUGIN_DIR}/bin/edm-gateguard")"
+T44_EMIT_FN_TEXT="$(_w8_extract_fn "${PLUGIN_DIR}/bin/edm-gateguard" emit_decision)"
 if [[ -n "$T44_EMIT_FN_TEXT" ]]; then
   pass "EDMV4-T44 AC4 setup -- emit_decision()'s function text was extracted from edm-gateguard (non-empty)"
 else
@@ -4360,19 +4376,10 @@ echo
 # GATEGUARD/HOOKS_JSON are already set by the EDMV4-T11 section above.
 
 # ---- Shared extraction: emit_decision()'s own function text, and the rest of the script with
-# that function's lines removed (line-range removal, not content-based, so this cannot self-match
-# whatever the body happens to contain). Mirrors the proven awk idiom EDMV4-T12 uses for
-# edm_marker_path() above -- same start/end anchor shape, applied to a different function. --------
-_t13_extract_fn() {
-  local file="$1" name="$2"
-  awk -v needle="${name}() {" '
-    index($0, needle) == 1 { found=1 }
-    found { print }
-    found && /^}/ { exit }
-  ' "$file"
-}
-
-T13_EMIT_FN_TEXT="$(_t13_extract_fn "$GATEGUARD" emit_decision)"
+# that function's lines removed (span removal, not content-based, so this cannot self-match
+# whatever the body happens to contain). Both come from _w8_extract_fn, the file's one by-name
+# function extractor (CA-118) -- the same helper EDMV4-T12 uses for edm_marker_path() above. -----
+T13_EMIT_FN_TEXT="$(_w8_extract_fn "$GATEGUARD" emit_decision)"
 if [[ -n "$T13_EMIT_FN_TEXT" ]]; then
   pass "EDMV4-T13 setup -- emit_decision()'s function text was extracted from edm-gateguard (non-empty)"
 else
@@ -4382,11 +4389,7 @@ fi
 T13_DEFINE_COUNT="$(count_matches '^emit_decision() {' "$GATEGUARD")"
 check_num "EDMV4-T13 -- edm-gateguard defines emit_decision exactly once" "1" "$T13_DEFINE_COUNT"
 
-T13_OUTSIDE_TEXT="$({ awk -v needle="emit_decision() {" '
-  index($0, needle) == 1 { skipping=1 }
-  skipping && /^}/ { skipping=0; next }
-  !skipping { print }
-' "$GATEGUARD"; } 2>/dev/null || true)"
+T13_OUTSIDE_TEXT="$({ _w8_extract_fn "$GATEGUARD" emit_decision --outside; } 2>/dev/null || true)"
 
 # ---- AC1: every deny and allow decision is emitted by one function -- no printf/echo/exit
 # producing a decision outside emit_decision's body. Anchored to the two literal artifacts a real
@@ -6455,7 +6458,7 @@ echo "EDMV4-T28 / CA-071 -- every tag the checker can emit is proven to fire, de
 # proves the extraction is finding real tags rather than silently returning nothing.
 T28_SELF="${BASH_SOURCE[0]:-$0}"
 t28_tag_universe() {
-  awk '/^t28_contract_violations\(\) \{$/{f=1} f{print} f&&/^\}$/{exit}' "$1" \
+  _w8_extract_fn "$1" t28_contract_violations \
     | grep -oE 'echo "[A-Z][A-Z0-9_]+"' | sed -e 's/^echo "//' -e 's/"$//' | sort -u
 }
 T28_TAG_UNIVERSE="$(t28_tag_universe "$T28_SELF")"
@@ -7084,16 +7087,8 @@ T51_PERL_CONTROL="$(printf '%s\n' 'perl -e 1' | grep -cE "$T51_PERL_RE" || true)
   || fail "EDMV4-T51 -- positive control broken: a synthetic perl invocation was not caught"
 
 # timing.sh's two guarded sites, resolved by function body CONTENT.
-t51_extract_fn() {
-  local file="$1" name="$2"
-  awk -v needle="${name}() {" '
-    index($0, needle) == 1 { found=1 }
-    found { print }
-    found && /^}/ { exit }
-  ' "$file"
-}
-T51_NOW_BODY="$(t51_extract_fn "$T51_TIMING_SH" _now)"
-T51_MSBETWEEN_BODY="$(t51_extract_fn "$T51_TIMING_SH" _ms_between)"
+T51_NOW_BODY="$(_w8_extract_fn "$T51_TIMING_SH" _now)"
+T51_MSBETWEEN_BODY="$(_w8_extract_fn "$T51_TIMING_SH" _ms_between)"
 
 # t51_check_guarded_perl <body> <label> -- fails unless: a `command -v perl` guard line precedes a
 # real perl invocation line, which precedes an `else` line, which precedes a `fi` line (relative
@@ -10995,17 +10990,7 @@ echo "--- CA-085: a concurrent refresh between the staleness read and the unlink
 
 CA085_DIR="$(mktemp -d "${P2G1_TMP}/ca085.XXXXXX")"
 
-# p2g1_extract_fn <file> <name> -- the text of a top-level `name() { ... }` definition, from its
-# opening line to the first line that is exactly "}" (this file's own functions all close that way).
-p2g1_extract_fn() {
-  awk -v fn="$2" '
-    $0 == fn "() {" {inside=1}
-    inside {print}
-    inside && $0 == "}" {exit}
-  ' "$1"
-}
-
-CA085_FRESH_FN="$(p2g1_extract_fn "$GATEGUARD" gg_fresh_lines)"
+CA085_FRESH_FN="$(_w8_extract_fn "$GATEGUARD" gg_fresh_lines)"
 if [[ -n "$CA085_FRESH_FN" ]]; then
   pass "CA-085 setup -- gg_fresh_lines' real function text was extracted from bin/edm-gateguard (non-empty)"
 else
@@ -11286,7 +11271,7 @@ ca082_harness() {
     printf '%s\n' 'source "${SCRIPT_DIR}/_edm-lint-lib.sh"'
     for fn in now_utc _restore_trap _save_traps _restore_traps _git_lock_age_seconds \
               _pattern_provenance_cleanup _pattern_record_provenance; do
-      p2g1_extract_fn "$bin" "$fn"
+      _w8_extract_fn "$bin" "$fn"
     done
     { grep -E '^EDM_STATE_LOCK_(WAIT_S|MAX_TRIES|STALE_S)=' "$bin" || true; }
     { grep -E '^_PPR_LOCKDIR=' "$bin" || true; }
@@ -11460,7 +11445,7 @@ CA092_H="${CA087_TMP}/backoff.sh"
 {
   printf '%s\n' '#!/usr/bin/env bash'
   printf '%s\n' 'set -euo pipefail'
-  p2g1_extract_fn "$P2G1_EDM_STATE" _lock_backoff_seconds
+  _w8_extract_fn "$P2G1_EDM_STATE" _lock_backoff_seconds
   printf '%s\n' 'for _i in $(seq 1 "$2"); do _lock_backoff_seconds "$1"; done'
 } > "$CA092_H"
 bash -n "$CA092_H" 2>/dev/null \
