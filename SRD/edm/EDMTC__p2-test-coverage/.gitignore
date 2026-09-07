@@ -1,0 +1,6 @@
+.edm-state.json.bak
+.edm-state.json.tmp.*
+.edm-state.lock*
+*.lock
+*.lockd*
+*.md.tmp.*

@@ -1,0 +1,57 @@
+{
+  "prefix": "EDMTC",
+  "schema_version": 1,
+  "current_phase": 0,
+  "gates_approved": [],
+  "artifacts": {},
+  "artifact_hashes": {},
+  "srd_version": "0.0.0",
+  "estimated_size": "Unknown",
+  "initiative_branch": "edm/edmtc-p2-test-coverage",
+  "product_name": "edm",
+  "initiative_description": "p2-test-coverage",
+  "phase_durations": {},
+  "test_frameworks_detected": {},
+  "coverage_by_layer": {},
+  "coverage_by_epic": {},
+  "code_audit_converged": false,
+  "code_audit_gate_approved_at": "",
+  "code_audit_gate_approver": "",
+  "code_audit_gate_enforcement": "",
+  "code_audit_gate_ledger": "",
+  "compliance_gate_approved": false,
+  "last_decision": "",
+  "audit_rounds": {},
+  "partial_verdict_map": {},
+  "mode": "standard",
+  "lifecycle_mode": "fix-pack",
+  "compliance_enabled": false,
+  "implementation_mode": "standard",
+  "skipped_phases": [
+    {
+      "phase": 1,
+      "rationale": "fix-pack: planning skipped -- the analysis is EDMV4's audit output (findings-ledger.jsonl, REMEDIATION.md, p2-triage.md)",
+      "skipped_at": "2026-09-07T18:04:59Z"
+    },
+    {
+      "phase": 2,
+      "rationale": "fix-pack: SRD skipped -- tickets generated from the finding prescriptions",
+      "skipped_at": "2026-09-07T18:04:59Z"
+    },
+    {
+      "phase": 3,
+      "rationale": "fix-pack: SRD audit skipped -- no SRD to audit",
+      "skipped_at": "2026-09-07T18:04:59Z"
+    },
+    {
+      "phase": 5,
+      "rationale": "fix-pack: ticket audit skipped -- Gate 3 ticket-pack review stands in for it",
+      "skipped_at": "2026-09-07T18:04:59Z"
+    }
+  ],
+  "supersedes": "",
+  "forked_from": "EDMV4",
+  "parent_prefix": "",
+  "related_prefixes": [],
+  "last_updated": "2026-09-07T18:05:08Z"
+}
