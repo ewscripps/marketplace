@@ -5793,9 +5793,47 @@ T48_EXPECTED_TOTAL=$((WAVE7_STATE_LENS_COUNT + 4))
 [[ "$t48_contested_count" -eq "$T48_EXPECTED_TOTAL" ]] \
   && pass "T48 AC1 -- exactly ${t48_contested_count} contested agents enumerated (14 lenses + synthesizer + 3 auditors, anchored to ALL_LENS_IDS)" \
   || fail "T48 AC1 -- enumerated ${t48_contested_count} contested agents, expected ${T48_EXPECTED_TOTAL} (bin/edm-state declares ${WAVE7_STATE_LENS_COUNT} lenses; T48_CONTESTED_AGENTS has drifted)"
-[[ "$T48_CONTESTED_TOTAL" -ne $((T48_EXPECTED_TOTAL + 1)) ]] \
-  && pass "T48 AC1 -- positive control: a T48_CONTESTED_AGENTS one name longer than the anchor would be caught" \
-  || fail "T48 AC1 -- positive control FAILED: the anchor does not discriminate on list length"
+# CA-097 (EDMTC-T06 AC1/AC2): the positive control here used to read
+#   [[ "$T48_CONTESTED_TOTAL" -ne $((T48_EXPECTED_TOTAL + 1)) ]]
+# -- the REAL list's own member count compared against anchor+1. The assertion immediately above
+# already pins that same count EQUAL to the anchor, so "not equal to anchor+1" holds by
+# construction for every possible value the list could ever take: the control could not fail, and
+# it never varied the list it claimed to vary. It is replaced below by a control that varies the
+# LIST and asserts the count follows it.
+#
+# _t48_count_names <space-separated-list> -- the counting rule the enumeration loop above applies,
+# expressed once so the varied lists below are counted the same way the real list is. Pure bash
+# word-splitting rather than `printf | grep -c`: this suite runs under `set -euo pipefail`, where a
+# piped command substitution aborts the whole run instead of failing one assertion.
+_t48_count_names() {
+  local _t48c_n=0 _t48c_w
+  # shellcheck disable=SC2086 # deliberate word-splitting: the argument IS a space-separated list
+  for _t48c_w in $1; do
+    _t48c_n=$((_t48c_n + 1))
+  done
+  printf '%s\n' "$_t48c_n"
+}
+t48_ctl_real="$(_t48_count_names "$T48_CONTESTED_AGENTS")"
+t48_ctl_longer="$(_t48_count_names "${T48_CONTESTED_AGENTS} edm-audit-ca097-synthetic")"
+t48_ctl_shorter="$(_t48_count_names "${T48_CONTESTED_AGENTS% *}")"
+# The counting rule reproduces the loop's own enumeration on the unmodified list, so the two
+# varied lists below are measured by the same mechanism the real assertion uses -- not by a
+# second, independently-authored counter that could agree with the anchor for the wrong reason.
+check_num "CA-097 -- the counting rule reproduces the enumeration loop's own count on the real list" \
+  "$t48_contested_count" "$t48_ctl_real"
+check_num "CA-097 -- a T48_CONTESTED_AGENTS one name LONGER counts one higher" \
+  "$((T48_EXPECTED_TOTAL + 1))" "$t48_ctl_longer"
+check_num "CA-097 -- a T48_CONTESTED_AGENTS one name SHORTER counts one lower" \
+  "$((T48_EXPECTED_TOTAL - 1))" "$t48_ctl_shorter"
+# Negative controls: the anchor comparison the real assertion performs must REJECT both varied
+# lists. Without these two, the three counts above could all be right while the comparison that
+# consumes them was blind to the difference.
+[[ "$t48_ctl_longer" -ne "$T48_EXPECTED_TOTAL" ]] \
+  && pass "CA-097 negative control -- the anchor comparison rejects a list one name longer (${t48_ctl_longer} vs ${T48_EXPECTED_TOTAL})" \
+  || fail "CA-097 negative control -- a list one name longer still compared equal to the anchor; the length assertion above cannot fail"
+[[ "$t48_ctl_shorter" -ne "$T48_EXPECTED_TOTAL" ]] \
+  && pass "CA-097 negative control -- the anchor comparison rejects a list one name shorter (${t48_ctl_shorter} vs ${T48_EXPECTED_TOTAL})" \
+  || fail "CA-097 negative control -- a list one name shorter still compared equal to the anchor; the length assertion above cannot fail"
 [[ -z "$t48_bad" ]] && pass "T48 AC1 -- all ${T48_CONTESTED_TOTAL} contested agents are opus/max (no hand-tiering slipped in)" \
   || fail "T48 AC1 -- non-opus/max contested agent(s) found, D16 violation:${t48_bad}"
 
