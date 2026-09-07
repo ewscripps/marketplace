@@ -6039,6 +6039,62 @@ t28_neg_case "model downgraded off opus" "MODEL" 's/^model: opus$/model: sonnet/
 t28_neg_case "color changed off cyan" "COLOR" 's/^color: cyan$/color: green/'
 t28_neg_case "mandate-narrowing sentence removed" "MANDATE_SENTENCE" '/^Your mandate is ONLY this lens/d'
 t28_neg_case "house Scope paragraph removed" "SCOPE_PARAGRAPH" '/^deliver what was asked at the scope intended/d'
+# ---- CA-069: pin the Scope-paragraph check's anchored whole-line form ---------------------------
+# This contract element used to be TWO substring greps with forty-four characters of the sentence
+# between them that nothing looked at, so a lens could rewrite that middle clause and still pass.
+# The group-3 remediation collapsed it to a single `grep -qxF` of the whole line (which has no
+# interior at all) when it unwrapped edm-audit-security.md; the fixture below is what verifies that
+# collapse HOLDS and pins it in place. The removal case above cannot do that job: deleting the
+# whole line fails the retired two-grep form just as readily, so it would keep passing after a
+# regression to any two-sided approximation. This one alters ONLY the middle clause and leaves
+# both retired needles standing, which is exactly the edit the old form could not see.
+T28_CA069_FIXTURE="${T28_TMP}/ca069-middle-clause-rewritten.md"
+sed 's/ sentence and continue with the task as asked / sentence and instead do whatever seems best /' \
+  "$T28_REF" > "$T28_CA069_FIXTURE"
+
+# The retired form, reconstructed here solely so the fixture can be shown to slip through it.
+# It reads the FIXTURE, never this file, so nothing in the prose above can satisfy it.
+t28_ca069_retired_two_grep_form() {
+  local f="$1"
+  grep -qF 'say so in a' "$f" || return 1
+  grep -qF 'rather than quietly narrowing, widening or transforming it.' "$f" || return 1
+  return 0
+}
+
+if t28_ca069_retired_two_grep_form "$T28_CA069_FIXTURE"; then
+  pass "EDMV4-T28 / CA-069 -- the middle-clause fixture still satisfies the RETIRED two-grep form, so it is a genuine test of the tightening and not just another removal case"
+else
+  fail "EDMV4-T28 / CA-069 -- the middle-clause fixture no longer satisfies the retired two-grep form, so it no longer isolates the forty-four-character hole the tightening closed"
+fi
+
+# The current anchored form must reject that same fixture. Compared without a pipeline: under this
+# file's `set -o pipefail` a failing element inside the substitution aborts the whole suite instead
+# of failing this assertion.
+T28_CA069_V="$(t28_contract_violations "$T28_CA069_FIXTURE")"
+case "
+${T28_CA069_V}
+" in
+  *"
+SCOPE_PARAGRAPH
+"*)
+    pass "EDMV4-T28 / CA-069 -- the anchored whole-line check REJECTS a lens whose Scope paragraph differs only in its middle clause" ;;
+  *)
+    fail "EDMV4-T28 / CA-069 -- a middle-clause-only rewrite passed the contract check, so the Scope element has regressed to a two-sided approximation (violations: ${T28_CA069_V})" ;;
+esac
+
+# And the fixture must trip nothing ELSE: a mutation that flagged half the contract would make the
+# assertion above true for reasons unrelated to the Scope element.
+T28_CA069_OTHER=""
+for t28_ca069_tag in $T28_CA069_V; do
+  if [[ "$t28_ca069_tag" != "SCOPE_PARAGRAPH" ]]; then
+    T28_CA069_OTHER="${T28_CA069_OTHER} ${t28_ca069_tag}"
+  fi
+done
+if [[ -z "$T28_CA069_OTHER" ]]; then
+  pass "EDMV4-T28 / CA-069 -- that fixture trips SCOPE_PARAGRAPH and nothing else, so the rejection is attributable to the middle clause alone"
+else
+  fail "EDMV4-T28 / CA-069 -- that fixture also tripped${T28_CA069_OTHER}, so its rejection is not attributable to the middle clause alone"
+fi
 t28_neg_case "False Alarm Filter framing sentence removed" "FAF_FRAMING" '/^Report every finding at your best-effort confidence level/d'
 t28_neg_case "False Alarm Filter dropped to two criteria" "FAF_CRITERIA_COUNT" \
   '/^3\. Is this pattern used consistently everywhere in the project?$/d'
