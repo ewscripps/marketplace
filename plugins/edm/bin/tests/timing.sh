@@ -181,6 +181,68 @@ self_test() {
     failures=$((failures + 1))
   fi
 
+  # (4) CA-126: the gateguard correctness probe and the verdict rule it feeds. --gateguard is
+  # manual-only by design, so these pin the two helpers directly against synthetic stubs rather
+  # than relying on a human having run that mode. Three stubs cover the three outcomes that
+  # matter: the allow contract, an abort, and the deny payload.
+  local st_stub_dir st_dec st_status
+  st_stub_dir="$(mktemp -d "${TMPDIR:-/tmp}/edm-timing-st.XXXXXX")"
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "${st_stub_dir}/allowing"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "boom" >&2' 'exit 1' > "${st_stub_dir}/aborting"
+  printf '%s\n' '#!/usr/bin/env bash' \
+    'printf %s "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"x\"}}"' \
+    > "${st_stub_dir}/denying"
+  chmod +x "${st_stub_dir}/allowing" "${st_stub_dir}/aborting" "${st_stub_dir}/denying"
+
+  assertions_run=$((assertions_run + 1))
+  st_dec="$(_gg_decision "${st_stub_dir}/allowing")"
+  if [[ "$st_dec" == "allow" ]]; then
+    echo "self-test PASS: _gg_decision classifies exit 0 with empty stdout as 'allow'"
+  else
+    echo "self-test FAIL: _gg_decision returned '${st_dec}' for the allow stub, expected 'allow'" >&2
+    failures=$((failures + 1))
+  fi
+
+  assertions_run=$((assertions_run + 1))
+  st_dec="$(_gg_decision "${st_stub_dir}/denying")"
+  if [[ "$st_dec" == "deny" ]]; then
+    echo "self-test PASS: _gg_decision classifies a PreToolUse deny payload as 'deny'"
+  else
+    echo "self-test FAIL: _gg_decision returned '${st_dec}' for the deny stub, expected 'deny'" >&2
+    failures=$((failures + 1))
+  fi
+
+  # The negative control for (4): the aborting stub is exactly the CA-126 defect. It must NOT be
+  # classified as a decision, and the verdict rule must refuse to call a 0ms abort MET.
+  assertions_run=$((assertions_run + 1))
+  st_dec="$(_gg_decision "${st_stub_dir}/aborting")"
+  if [[ "$st_dec" == error:* ]]; then
+    echo "self-test PASS: _gg_decision classifies an aborting gateguard as '${st_dec}', not a decision"
+  else
+    echo "self-test FAIL: _gg_decision returned '${st_dec}' for the aborting stub, expected an error:<rc> token" >&2
+    failures=$((failures + 1))
+  fi
+
+  assertions_run=$((assertions_run + 1))
+  st_status="$(_gg_budget_status "$st_dec" allow 0 50)"
+  if [[ "$st_status" == "INVALID" ]]; then
+    echo "self-test PASS: _gg_budget_status reports INVALID for an aborting gateguard measured at 0ms -- a fast failure is not a met budget (CA-126)"
+  else
+    echo "self-test FAIL: _gg_budget_status reported '${st_status}' for an aborting gateguard measured at 0ms, expected INVALID" >&2
+    failures=$((failures + 1))
+  fi
+
+  assertions_run=$((assertions_run + 1))
+  st_status="$(_gg_budget_status allow allow 0 50)"
+  if [[ "$st_status" == "MET" ]]; then
+    echo "self-test PASS: _gg_budget_status still reports MET for a genuine allow inside the budget -- the probe rejects aborts, not everything"
+  else
+    echo "self-test FAIL: _gg_budget_status reported '${st_status}' for a verified allow at 0ms, expected MET" >&2
+    failures=$((failures + 1))
+  fi
+
+  rm -rf "$st_stub_dir"
+
   echo
   if [[ "$failures" -eq 0 ]]; then
     echo "self-test: PASS (${assertions_run}/${assertions_run} timing-harness assertions verified)"
@@ -210,6 +272,51 @@ _measure_p95() {
   done
   printf -v "$_mp95_var" '%s' "$(_p95 "${_mp95_samples[@]}")"
   eval "${_mp95_var}_samples=(\"\${_mp95_samples[@]}\")"
+}
+
+# ---- CA-126: correctness probe for the gateguard budget --------------------------------------
+# _measure_p95 above deliberately tolerates a non-zero exit from the command it times ("these are
+# latency probes, not correctness checks"). For every other mode that tolerance is harmless -- a
+# failing edm-state still did the work being timed. For --gateguard it was not: a gateguard that
+# ABORTS on every call does no work at all, measures a handful of milliseconds, and the mode then
+# printed `budget_status=MET` on the strength of twenty failed runs. A fast failure read as
+# excellent performance. The two functions below are what the budget verdict is now conditioned
+# on: the measured command must have SUCCEEDED and produced the EXPECTED decision.
+
+# _gg_decision <cmd...> -- run <cmd...> once and print a single token naming what it actually did:
+#   allow            exit 0, nothing on stdout -- edm-gateguard's silent allow contract
+#   deny             exit 0, stdout carries the PreToolUse deny payload (the `json` back-end)
+#   deny-exit-code   exit 2 -- the `exit-code` back-end's deny
+#   error:<rc>       any other exit status: an ABORT, not a decision
+#   unexpected-output exit 0 with stdout this contract does not recognize
+# Never aborts and never returns non-zero, so it is safe to call under this script's `set -e`.
+_gg_decision() {
+  local _ggd_out _ggd_rc=0
+  _ggd_out="$("$@" 2>/dev/null)" || _ggd_rc=$?
+  if [[ "$_ggd_rc" -eq 2 ]]; then printf '%s\n' "deny-exit-code"; return 0; fi
+  if [[ "$_ggd_rc" -ne 0 ]]; then printf '%s\n' "error:${_ggd_rc}"; return 0; fi
+  case "$_ggd_out" in
+    *'"permissionDecision":"deny"'*) printf '%s\n' "deny" ;;
+    "")                              printf '%s\n' "allow" ;;
+    *)                               printf '%s\n' "unexpected-output" ;;
+  esac
+}
+
+# _gg_budget_status <observed-decision> <expected-decision> <p95-ms> [<budget-ms>] -- the verdict
+# rule, in one place so the real report and the negative control below exercise the same code.
+# A decision mismatch is INVALID, never NOT_MET: the run measured nothing, so it is not evidence
+# that the budget was missed either.
+_gg_budget_status() {
+  local _ggb_observed="$1" _ggb_expected="$2" _ggb_p95="$3" _ggb_budget="${4:-50}"
+  if [[ "$_ggb_observed" != "$_ggb_expected" ]]; then
+    printf '%s\n' "INVALID"
+    return 0
+  fi
+  if [[ "$_ggb_p95" -le "$_ggb_budget" ]]; then
+    printf '%s\n' "MET"
+  else
+    printf '%s\n' "NOT_MET"
+  fi
 }
 
 MODE="${1:-}"
@@ -493,6 +600,15 @@ case "$MODE" in
     # Branch 1: marker absent (the fast exit) -- no marker file exists anywhere under
     # CLAUDE_PLUGIN_DATA yet, so this is the SRD table's own "GateGuard allow path (marker
     # absent)" row.
+    # CA-126: sample the DECISION before sampling the latency. Marker absent is edm-gateguard's
+    # allow path: exit 0, nothing on stdout.
+    GG_ABSENT_DECISION="$(_gg_decision _gg_probe)"
+    if [[ "$GG_ABSENT_DECISION" == "allow" ]]; then
+      echo "TIMING gateguard_correctness marker_absent decision=allow expected=allow (the measured command succeeded and produced the expected decision)"
+    else
+      echo "TIMING gateguard_correctness marker_absent decision=${GG_ABSENT_DECISION} expected=allow -- the measured command did NOT produce the expected decision; any latency below is not a measurement of the allow path" >&2
+    fi
+
     _measure_p95 "$_P95_SAMPLE_COUNT" p95_absent -- _gg_probe
     echo "TIMING gateguard_allow_absent p95_ms=${p95_absent} samples_ms=${p95_absent_samples[*]} (marker absent, payload=${GG_PAYLOAD_BYTES} bytes, 20 samples, this host)"
 
@@ -508,16 +624,67 @@ case "$MODE" in
     mkdir -p "$GG_INIT_DIR"
     printf 'TIMGG\t%s\t%s\n' "$GG_INIT_DIR" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$GG_MARKER_PATH"
 
+    # CA-126: the marker-present branch runs the full gate against a payload naming a path outside
+    # the initiative directory, so its expected decision is a DENY -- a first-touch fact demand.
+    GG_PRESENT_DECISION="$(_gg_decision _gg_probe)"
+    if [[ "$GG_PRESENT_DECISION" == "deny" || "$GG_PRESENT_DECISION" == "deny-exit-code" ]]; then
+      echo "TIMING gateguard_correctness marker_present decision=${GG_PRESENT_DECISION} expected=deny (the measured command succeeded and produced the expected decision)"
+    else
+      echo "TIMING gateguard_correctness marker_present decision=${GG_PRESENT_DECISION} expected=deny -- the measured command did NOT produce the expected decision; the marker-present figure below is not a measurement of the full gate" >&2
+    fi
+
     _measure_p95 "$_P95_SAMPLE_COUNT" p95_present -- _gg_probe
     echo "TIMING gateguard_allow_present p95_ms=${p95_present} samples_ms=${p95_present_samples[*]} (marker present, payload=${GG_PAYLOAD_BYTES} bytes, 20 samples, this host)"
 
-    if [[ "$p95_absent" -le 50 ]]; then
-      echo "TIMING gateguard budget_status=MET (allow-path, marker-absent, p95 ${p95_absent}ms <= 50ms design target, SRD Sec.9.1/9.3)"
+    # CA-126: the budget verdict is now conditioned on the marker-absent correctness probe. A
+    # decision mismatch prints INVALID rather than MET or NOT_MET -- an aborting gateguard measures
+    # nothing, so its speed is not evidence the budget was met AND not evidence it was missed.
+    GG_BUDGET_STATUS="$(_gg_budget_status "$GG_ABSENT_DECISION" allow "$p95_absent" 50)"
+    case "$GG_BUDGET_STATUS" in
+      MET)
+        echo "TIMING gateguard budget_status=MET (allow-path, marker-absent, decision=allow verified, p95 ${p95_absent}ms <= 50ms design target, SRD Sec.9.1/9.3)"
+        ;;
+      NOT_MET)
+        echo "TIMING gateguard budget_status=NOT_MET (allow-path, marker-absent, decision=allow verified, p95 ${p95_absent}ms > 50ms design target, SRD Sec.9.1/9.3) -- a real measured number, recorded per CLAUDE.md's edm-lint-artifacts latency budgets precedent rather than inlining logic into the hook's JSON string (CA-436)"
+        ;;
+      *)
+        echo "TIMING gateguard budget_status=INVALID (allow-path, marker-absent, decision=${GG_ABSENT_DECISION}, expected=allow) -- the sampled call did not produce the allow decision, so the ${p95_absent}ms figure measures a failing command and certifies nothing against the 50ms design target (CA-126)"
+        ;;
+    esac
+
+    # ---- CA-126 negative control (EDMTC-T06 AC6) -----------------------------------------------
+    # Prove the probe above can actually fail. A deliberately broken gateguard -- one that aborts
+    # before emitting any decision -- is measured by the SAME helpers, is far FASTER than the real
+    # one, and must still yield a non-MET status. Before this ticket the identical run printed
+    # budget_status=MET.
+    GG_BROKEN="${TMP_GG}/broken-gateguard"
+    {
+      echo '#!/usr/bin/env bash'
+      echo 'echo "broken-gateguard: simulated abort before any decision was emitted" >&2'
+      echo 'exit 1'
+    } > "$GG_BROKEN"
+    chmod +x "$GG_BROKEN"
+    _gg_broken_probe() { "$GG_BROKEN" < "$GG_PAYLOAD"; }
+
+    GG_BROKEN_DECISION="$(_gg_decision _gg_broken_probe)"
+    _measure_p95 "$_P95_SAMPLE_COUNT" p95_broken -- _gg_broken_probe
+    GG_BROKEN_STATUS="$(_gg_budget_status "$GG_BROKEN_DECISION" allow "$p95_broken" 50)"
+    GG_CONTROL_RC=0
+    if [[ "$GG_BROKEN_DECISION" != error:* ]]; then
+      echo "TIMING gateguard_control FAILED: a gateguard that exits 1 without emitting a decision was classified '${GG_BROKEN_DECISION}', not an error -- _gg_decision does not discriminate" >&2
+      GG_CONTROL_RC=1
+    elif [[ "$p95_broken" -gt 50 ]]; then
+      echo "TIMING gateguard_control INCONCLUSIVE: the broken gateguard measured ${p95_broken}ms, outside the 50ms budget, so a non-MET verdict here would not prove the CORRECTNESS probe caused it" >&2
+      GG_CONTROL_RC=1
+    elif [[ "$GG_BROKEN_STATUS" == "MET" ]]; then
+      echo "TIMING gateguard_control FAILED: a deliberately broken gateguard measured ${p95_broken}ms and still reported budget_status=MET -- the correctness probe is not load-bearing (CA-126)" >&2
+      GG_CONTROL_RC=1
     else
-      echo "TIMING gateguard budget_status=NOT_MET (allow-path, marker-absent, p95 ${p95_absent}ms > 50ms design target, SRD Sec.9.1/9.3) -- a real measured number, recorded per CLAUDE.md's edm-lint-artifacts latency budgets precedent rather than inlining logic into the hook's JSON string (CA-436)"
+      echo "TIMING gateguard_control PASS: a deliberately broken gateguard measured ${p95_broken}ms (well inside the 50ms budget) and still yields budget_status=${GG_BROKEN_STATUS}, not MET -- the correctness probe discriminates (CA-126)"
     fi
 
     rm -rf "$TMP_GG"
+    [[ "$GG_CONTROL_RC" -eq 0 ]] || exit 1
     ;;
 
   *)

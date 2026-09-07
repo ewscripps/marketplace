@@ -5569,11 +5569,54 @@ check "G46 -- self-test proves _p95 of 10 samples still returns the maximum" \
   "self-test PASS: _p95 of 10 samples (1..10) still returns the maximum (10)" "$t67_self_out"
 check "G46 -- self-test pins _P95_SAMPLE_COUNT at the shipped value (20)" \
   "self-test PASS: _P95_SAMPLE_COUNT is the shipped value (20)" "$t67_self_out"
+# CA-126 (EDMTC-T06 AC5/AC6): the gateguard correctness probe and the verdict rule it feeds are
+# named individually here for the same reason the five above are -- deleting either from
+# self_test() must fail a named check, not shrink an aggregate.
+check "G46/CA-126 -- self-test proves an aborting gateguard is classified as an error, not a decision" \
+  "self-test PASS: _gg_decision classifies an aborting gateguard as 'error:1', not a decision" "$t67_self_out"
+check "G46/CA-126 -- self-test proves a 0ms abort yields INVALID, not MET" \
+  "self-test PASS: _gg_budget_status reports INVALID for an aborting gateguard measured at 0ms" "$t67_self_out"
+
 # Pin the assertion COUNT itself (not just each line's presence), so a deleted assertion inside
-# self_test() -- which would also shrink this denominator -- cannot hide behind the five checks
-# above still matching whatever PASS lines remain.
-check "G46 -- self-test summary reports all 5 timing-harness assertions verified" \
-  "self-test: PASS (5/5" "$t67_self_out"
+# self_test() -- which would also shrink this denominator -- cannot hide behind the checks above
+# still matching whatever PASS lines remain.
+#
+# CA-067 shape: this used to assert the literal "self-test: PASS (5/5", which stopped being true
+# the first time another ticket legitimately added an assertion to self_test() (CA-126 added
+# five). Today's number is no longer written here. Instead the expected count is DERIVED from the
+# PASS lines the run actually printed and compared against the summary the same run reported, so
+# the two can never silently disagree; a floor equal to the number of lines THIS block names
+# individually catches a deletion, and only moves when this block itself does.
+_t67_count_pass_lines() {
+  local _t67c_n=0 _t67c_line
+  while IFS= read -r _t67c_line; do
+    case "$_t67c_line" in
+      "self-test PASS: "*) _t67c_n=$((_t67c_n + 1)) ;;
+    esac
+  done <<< "$1"
+  printf '%s\n' "$_t67c_n"
+}
+t67_self_pass_count="$(_t67_count_pass_lines "$t67_self_out")"
+check "G46 -- the self-test summary's assertion count matches the ${t67_self_pass_count} PASS lines the same run actually printed" \
+  "self-test: PASS (${t67_self_pass_count}/${t67_self_pass_count}" "$t67_self_out"
+# Floor: the seven PASS lines this block names by their exact text above. A self_test() assertion
+# deleted alongside its named check here would shrink both the count and the summary consistently,
+# so the derived comparison alone cannot see it -- this can.
+[[ "$t67_self_pass_count" -ge 7 ]] \
+  && pass "G46 -- self_test() still carries at least the seven assertions this block names individually (${t67_self_pass_count} present)" \
+  || fail "G46 -- self_test() printed only ${t67_self_pass_count} PASS lines; this block names seven individually, so at least one assertion was deleted"
+# Negative control for the derived comparison: a synthetic output whose summary disagrees with its
+# own PASS-line count must be rejected by the SAME two-step (count, then substring) the check
+# above performs. Without this, the derived comparison could be self-fulfilling.
+t67_self_ctl_out="self-test PASS: synthetic alpha
+self-test PASS: synthetic beta
+self-test: PASS (5/5 timing-harness assertions verified)"
+t67_self_ctl_count="$(_t67_count_pass_lines "$t67_self_ctl_out")"
+if [[ "$t67_self_ctl_count" -eq 2 && "$t67_self_ctl_out" != *"self-test: PASS (${t67_self_ctl_count}/${t67_self_ctl_count}"* ]]; then
+  pass "G46 negative control -- a summary claiming 5/5 over 2 PASS lines is rejected by the same derived comparison, so the check above discriminates"
+else
+  fail "G46 negative control -- a summary claiming 5/5 over 2 PASS lines was accepted (counted ${t67_self_ctl_count}); the derived comparison above cannot fail"
+fi
 
 echo
 echo "T67 AC14 (CA-147) -- a single cheap mode actually measures against a real fixture"
