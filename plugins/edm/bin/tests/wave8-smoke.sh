@@ -437,9 +437,59 @@ check "EDMV4-T48 AC3 -- instruction states the codemap lives at the srd_root roo
 check "EDMV4-T48 AC4 -- instruction directs reading and refreshing rather than rewriting from scratch" \
   'rather than rewriting it from scratch' \
   "$(cat "$EXPLORER_AGENT")"
-check 'EDMV4-T48 AC4 -- instruction requires a "Refreshed" note naming touched sections and the prefix' \
-  'append a' \
-  "$(cat "$EXPLORER_AGENT")"
+# CA-099: this asserted the substring `append a` -- generic English that matches any number of
+# unrelated sentences -- while its label named THREE properties and tested none of them: that a
+# "Refreshed" note must be appended, that the note names the sections touched, and that it names
+# the initiative prefix. The three are now asserted separately, so the label and the checks agree
+# and a drop of any one of them fails on its own line.
+#
+# The properties are matched against a whitespace-normalized copy of the agent rather than the raw
+# file: the sentence genuinely hard-wraps between "append a" and "short" in edm-explorer.md:84-85,
+# so a raw substring match would have to encode the wrap column and would fail on a rewrap that
+# changes nothing about the requirement. `tr` is invoked once with an input redirect, never as the
+# tail of a pipeline inside the substitution: under this file's `set -o pipefail` a failing pipe
+# element aborts the suite mid-run instead of failing an assertion.
+T48_AGENT_JOINED="$(tr -s ' \n' ' ' < "$EXPLORER_AGENT")"
+T48_AC4_P1='append a short "Refreshed" note'
+T48_AC4_P2='naming which sections you touched'
+T48_AC4_P3="and this initiative's prefix"
+
+check 'EDMV4-T48 AC4 (CA-099) property 1/3 -- the instruction directs APPENDING a "Refreshed" note, not merely mentioning the word somewhere' \
+  "$T48_AC4_P1" "$T48_AGENT_JOINED"
+check 'EDMV4-T48 AC4 (CA-099) property 2/3 -- the note must name WHICH SECTIONS were touched' \
+  "$T48_AC4_P2" "$T48_AGENT_JOINED"
+check "EDMV4-T48 AC4 (CA-099) property 3/3 -- the note must name this initiative's PREFIX" \
+  "$T48_AC4_P3" "$T48_AGENT_JOINED"
+
+# Controls: three scratch copies of the normalized text, each breaking exactly ONE property. Each
+# copy must fail its own property AND still satisfy the other two -- that second half is what
+# proves the three checks are independently falsifiable rather than three names for one match.
+# Pure bash parameter substitution (no external tool, no temp file); patterns come from the same
+# variables the assertions use, so a control cannot drift away from the check it backs.
+T48_AC4_C1="${T48_AGENT_JOINED/$T48_AC4_P1/CA099_PROPERTY_1_REMOVED}"
+T48_AC4_C2="${T48_AGENT_JOINED/$T48_AC4_P2/CA099_PROPERTY_2_REMOVED}"
+T48_AC4_C3="${T48_AGENT_JOINED/$T48_AC4_P3/CA099_PROPERTY_3_REMOVED}"
+
+check_absent 'EDMV4-T48 AC4 control 1/3 (CA-099) -- a copy with the append-a-note directive broken fails property 1' \
+  "$T48_AC4_P1" "$T48_AC4_C1"
+check 'EDMV4-T48 AC4 control 1/3 (CA-099) -- that same copy still satisfies property 2, so property 1 is falsifiable on its own' \
+  "$T48_AC4_P2" "$T48_AC4_C1"
+check 'EDMV4-T48 AC4 control 1/3 (CA-099) -- that same copy still satisfies property 3, so property 1 is falsifiable on its own' \
+  "$T48_AC4_P3" "$T48_AC4_C1"
+
+check_absent 'EDMV4-T48 AC4 control 2/3 (CA-099) -- a copy with the sections-touched clause broken fails property 2' \
+  "$T48_AC4_P2" "$T48_AC4_C2"
+check 'EDMV4-T48 AC4 control 2/3 (CA-099) -- that same copy still satisfies property 1, so property 2 is falsifiable on its own' \
+  "$T48_AC4_P1" "$T48_AC4_C2"
+check 'EDMV4-T48 AC4 control 2/3 (CA-099) -- that same copy still satisfies property 3, so property 2 is falsifiable on its own' \
+  "$T48_AC4_P3" "$T48_AC4_C2"
+
+check_absent 'EDMV4-T48 AC4 control 3/3 (CA-099) -- a copy with the initiative-prefix clause broken fails property 3' \
+  "$T48_AC4_P3" "$T48_AC4_C3"
+check 'EDMV4-T48 AC4 control 3/3 (CA-099) -- that same copy still satisfies property 1, so property 3 is falsifiable on its own' \
+  "$T48_AC4_P1" "$T48_AC4_C3"
+check 'EDMV4-T48 AC4 control 3/3 (CA-099) -- that same copy still satisfies property 2, so property 3 is falsifiable on its own' \
+  "$T48_AC4_P2" "$T48_AC4_C3"
 # CA-012: this asserted the ABSENCE of an invented sentinel
 # ('MISSING_REFRESHED_NOTE_SENTINEL_NEVER_PRESENT') that appears nowhere by construction, so it
 # could never fail -- while its label claimed the opposite property, that the "Refreshed"
