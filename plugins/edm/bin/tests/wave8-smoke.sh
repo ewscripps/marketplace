@@ -50,6 +50,39 @@ w8_scratch_dir() {
   printf -v "$__w8_outvar" '%s' "$_w8_new"
 }
 
+# ---- CA-104: the scratch-directory RULE (exactly two sanctioned forms) --------------------------
+# Every scratch directory this suite creates is reachable from a trap, and there are exactly two
+# ways to make one. A third form -- a bare mktemp under the system temp root with no trap over it
+# -- is what CA-104 found five of, and no code path here may create one. The EDMTC-T03 band the
+# same ticket adds at the end of this file enforces that, by scanning this file.
+#
+#   FORM 1 (registered).  w8_scratch_dir <VAR>
+#     For any directory created at the TOP LEVEL of this script: it outlives the statement that
+#     made it and lives until the band that owns it is done. The registry's cumulative
+#     EXIT/INT/TERM/HUP trap set removes it however the run ends. A band may still remove its own
+#     tree eagerly once it is finished with it -- that bounds peak disk use; the registry is the
+#     backstop, not the primary.
+#
+#   FORM 2 (nested).  <VAR>="$(mktemp -d "${<PARENT>}/<tag>.XXXXXX")"
+#     For scratch created INSIDE a function body, and for sub-trees of a band's own registered
+#     root, where <PARENT> is a variable FORM 1 already handed out. Removing the registered
+#     ancestor removes these, so the same trap set already covers them. Registering them instead
+#     would be wrong rather than merely redundant: a function called N times would add N registry
+#     entries against ONE static call site, which is exactly the quantity the CA-027 band compares.
+#
+# The nesting is one level deep by rule: FORM 2's <PARENT> must be a name FORM 1 handed out
+# directly, never another FORM 2 directory. Deeper nesting is legal bash but is not sanctioned
+# here, because the scan that enforces this rule resolves exactly one level -- a two-level chain
+# would have to be traced rather than read, and a rule whose check cannot see it is not a rule.
+#
+# Why bands used to reach for the third form, and why they no longer need to: CA-027's registry
+# assertion compared a STATIC grep of w8_scratch_dir call sites against the registry's RUNTIME
+# length, so a call site added AFTER that assertion made the two sides disagree and anything
+# appended to this file had to avoid the registry to stay green. That is fixed at the source --
+# the assertion now counts only the call sites that lexically PRECEDE it, which is exactly the set
+# that has executed by the time it runs -- and the band is placed last besides. A new section
+# appended to this file uses FORM 1 like any other.
+
 # ---- CA-118: the ONE by-name function extractor -------------------------------------------------
 # This file had grown EIGHT separate awk programs that all did the same thing -- locate a top-level
 # shell function definition by name and work out where that function ends. Three were byte-identical,
@@ -244,12 +277,7 @@ w8_count_lines() {
 
 # w8_count_lines controls: a real zero is the single character "0" (not "0\n0"), a real count is
 # the count, and a missing file is a named ERROR rather than a passing zero.
-# Scratch here is a self-contained mktemp/rm pair, created and removed within these few lines. It
-# predates CA-027's w8_scratch_dir registry above and does not need it: the directory never
-# outlives this block, so there is nothing for a trap to clean up. (The original rationale here
-# cited harness_scratch_dir's trap-clobbering as the reason -- true of that helper, but CA-027
-# replaced it with an additive registry, so that reason no longer applies and is not restated.)
-W8_COUNT_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-count.XXXXXX")"
+w8_scratch_dir W8_COUNT_TMP
 printf '### one\nplain\n### two\n' > "${W8_COUNT_TMP}/probe.md"
 check_num "CA-016 control -- w8_count_lines returns the true count for a matching file" \
   "2" "$(w8_count_lines '^### ' "${W8_COUNT_TMP}/probe.md")"
@@ -568,7 +596,7 @@ check 'EDMV4-T48 AC4 -- refresh note requirement is not silently dropped ("Refre
   "$T48_REFRESHED_LITERAL" \
   "$(cat "$EXPLORER_AGENT")"
 
-T48_CTRL_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t48.XXXXXX")"
+w8_scratch_dir T48_CTRL_TMP
 sed "s/${T48_REFRESHED_LITERAL}/REDACTED/g" "$EXPLORER_AGENT" > "${T48_CTRL_TMP}/stripped.md"
 T48_REFRESHED_CTRL="$(
   PASS=0; FAIL=0
@@ -681,10 +709,7 @@ fi
 # Both observations are now taken in ONE pass, from ONE cwd, against a scratch initiative this
 # block builds -- and the fixture's own resolvability is asserted FIRST, so "the two agree" can
 # never again silently mean "they both failed".
-#
-# Self-contained mktemp/rm pair rather than the w8_scratch_dir registry (CA-027): the tree never
-# outlives this block, and that registry's own assertion counts its call sites by static scan.
-T17_AC2_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t17ac2.XXXXXX")"
+w8_scratch_dir T17_AC2_TMP
 T17_AC2_REPO="${T17_AC2_TMP}/repo"
 mkdir -p "$T17_AC2_REPO"
 ( cd "$T17_AC2_REPO" && git init -q . && git config user.email edm-harness@example.com \
@@ -898,7 +923,7 @@ fi
 # the probe DISTINGUISHES them. Each broken copy is the real library plus one appended function
 # override (a later definition wins), so every control exercises the same source-and-call path the
 # real assertion does rather than a hand-built stand-in.
-T17_AC5_CTRL_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t17ac5.XXXXXX")"
+w8_scratch_dir T17_AC5_CTRL_TMP
 
 # 90: the library cannot be sourced at all.
 check_num "EDMV4-T17 AC5 control -- an unsourceable library is reported as 90, not as a pass" \
@@ -987,10 +1012,7 @@ fi
 # writing into the repository. The window is now a scratch repository this block owns and nothing
 # else can reach, ENTERED as the cwd: the library discovers its repository from cwd
 # (`git rev-parse --show-toplevel`), so the tree a leak would land in is exactly the tree watched.
-#
-# Self-contained mktemp/rm pair rather than the w8_scratch_dir registry (CA-027): the tree never
-# outlives this block, and that registry's own assertion counts its call sites by static scan.
-T17_AC9_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t17ac9.XXXXXX")"
+w8_scratch_dir T17_AC9_TMP
 T17_AC9_REPO="${T17_AC9_TMP}/repo"
 mkdir -p "$T17_AC9_REPO"
 ( cd "$T17_AC9_REPO" && git init -q . && git config user.email edm-harness@example.com \
@@ -1476,7 +1498,7 @@ check "CA-014 control (1c) -- the guarded form survives and carries the real non
 # not itself testing the unicode class).
 w8_ca014_lint_violation_rc() {
   local dir rc=0
-  dir="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca014.XXXXXX")"
+  dir="$(mktemp -d "${TMP}/ca014.XXXXXX")"
   {
     printf '%s\n' '# CA-014 control fixture'
     printf '%s\n' ''
@@ -3493,10 +3515,7 @@ echo "-- EDMV4-T20: regression coverage over every branch of the 4.2 write and r
 # (`git rev-parse --show-toplevel`) and every sub-test below already pins EDM_SRD_ROOT,
 # CLAUDE_PROJECT_DIR and CLAUDE_PLUGIN_DATA at its own absolute scratch paths -- so the tree a leak
 # would land in is exactly the tree being watched, and nothing else can write to it.
-#
-# Self-contained mktemp/rm pair rather than the w8_scratch_dir registry (CA-027): the tree never
-# outlives this section, and that registry's own assertion counts its call sites by static scan.
-T20_GIT_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t20ac9.XXXXXX")"
+w8_scratch_dir T20_GIT_TMP
 T20_GIT_REPO="${T20_GIT_TMP}/repo"
 mkdir -p "$T20_GIT_REPO"
 ( cd "$T20_GIT_REPO" && git init -q . && git config user.email edm-harness@example.com \
@@ -5470,10 +5489,9 @@ check "EDMV4-T15 AC9 -- the EDM-HELP block states the jq-missing distinction" \
 # CC1 control: a scratch copy with that one sentence lifted out of the block and re-emitted after
 # EDM-HELP-END -- the file still contains it, the help text no longer does. The scoped assertion
 # above must reject that copy, and the whole-file view must still accept it: the second half is
-# what shows the old, unscoped form could not have seen the move at all. T15_AC9_TMP is the scratch
-# tree this AC's band already registered; no new w8_scratch_dir call site is introduced, because
-# CA-027's registry assertion compares a static grep of those call sites against the registry's
-# runtime length.
+# what shows the old, unscoped form could not have seen the move at all. The copy is written into
+# T15_AC9_TMP, the scratch tree this AC's band already registered, rather than into a second one of
+# its own: one tree per band is enough, and both files belong to the same assertion.
 T15_AC9_MOVED="${T15_AC9_TMP}/gateguard-sentence-moved"
 awk '/once a marker is present/ && !moved { moved=1; lifted=$0; next } { print }
      END { if (moved) print lifted }' "$GATEGUARD" > "$T15_AC9_MOVED"
@@ -5561,11 +5579,7 @@ EDM_BASH_GATE="${PLUGIN_DIR}/bin/edm-bash-gate"
 # actually under test is the D25 EXTRACTION predicate: does reading the Spike A row out of a
 # decisions table find a positive collision result, and does it decline to when the row records
 # the opposite? Both arms now run against scratch tables this block writes itself.
-#
-# Self-contained mktemp/rm pair rather than the w8_scratch_dir registry (CA-027): the directory
-# never outlives this block, and the registry's own call-site count assertion is derived from a
-# static scan of that helper's call sites.
-T45_AC3_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t45ac3.XXXXXX")"
+w8_scratch_dir T45_AC3_TMP
 T45_AC3_POS="${T45_AC3_TMP}/decisions-positive.md"
 T45_AC3_NEG="${T45_AC3_TMP}/decisions-negative.md"
 
@@ -7594,10 +7608,7 @@ fi
 # The initiative is BUILT here instead. That also turns the AC9 half (a direct invocation honors
 # EDM_SRD_ROOT) into a real, independently-anchored assertion rather than a coincidence of this
 # repository's own layout -- the scratch root sits somewhere no default could ever reach.
-#
-# Self-contained mktemp/rm pair rather than the w8_scratch_dir registry (CA-027): the tree never
-# outlives this block, and that registry's own assertion counts its call sites by static scan.
-T52_AC5_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-t52ac5.XXXXXX")"
+w8_scratch_dir T52_AC5_TMP
 T52_AC5_SRD="${T52_AC5_TMP}/SRD"
 T52_AC5_DIR="${T52_AC5_SRD}/edm/T52AC5__scratch"
 mkdir -p "${T52_AC5_DIR}/code-audit"
@@ -7989,11 +8000,13 @@ else
   fail "EDMV4-T53 AC2b -- positive control broken: wrong default equalled live count"
 fi
 
+# CA-104: this band used to follow its w8_scratch_dir call with a four-arm trap set of its own and
+# then clear ALL traps with `trap -` when it was done. Both halves were actively harmful: the first
+# REPLACED the registry's cumulative cleanup with one that removed only this band's tree, and the
+# second left the process with no scratch cleanup at all until the next w8_scratch_dir call
+# reinstalled it. The registry already removes T53_TMP on every exit path; the eager `rm -rf` at the
+# end of the band is kept, because it bounds peak disk use and the registry is the backstop.
 w8_scratch_dir T53_TMP
-trap 'rm -rf "$T53_TMP"' EXIT
-trap 'rm -rf "$T53_TMP"; exit 130' INT
-trap 'rm -rf "$T53_TMP"; exit 143' TERM
-trap 'rm -rf "$T53_TMP"; exit 129' HUP
 
 # ---- AC2 load-bearing proof (1 of 2): the real _PREFERRED_ORDER registration actually catches
 # wave8-smoke.sh's disappearance. Built from the REAL extracted order minus wave8-smoke.sh, so
@@ -8054,7 +8067,6 @@ else
 fi
 
 rm -rf "$T53_TMP"
-trap - EXIT INT TERM HUP
 
 # ---- AC3 gap closure: edm-gateguard, edm-hookify and edm-stop-gate already implement -h/--help
 # (each sources _edm-cli-lib.sh's print_help via its own `usage()`, confirmed by reading each
@@ -8243,7 +8255,7 @@ T53_NET_PATTERN='^[^#]*\b(curl|wget|git[[:space:]]+fetch|git[[:space:]]+push|git
 # code-audit patterns doc records having bitten five times already).
 T53_AC6_BIN="cla""ude"
 T53_AC6_FLAG="-"; T53_AC6_FLAG="${T53_AC6_FLAG}p"
-T53_AC6_FIXTURE="${TMPDIR:-/tmp}/edm-wave8-t53-ac6-fixture.$$"
+T53_AC6_FIXTURE="${TMP}/edm-wave8-t53-ac6-fixture.$$"
 printf 'echo before\nOUT="$(%s %s "do something")"\necho after\n' "$T53_AC6_BIN" "$T53_AC6_FLAG" > "$T53_AC6_FIXTURE"
 T53_AC6_CONTROL="$(grep -nE "$T53_NET_PATTERN" "$T53_AC6_FIXTURE" || true)"
 rm -f "$T53_AC6_FIXTURE"
@@ -10243,77 +10255,6 @@ CA040SHIM
 }
 t46_isolate_and_run ca040_case
 
-echo
-# =================================================================================================
-# CA-027 -- scratch-directory registry: every scratch tree is registered, and one trap set clears
-# all of them
-# =================================================================================================
-# Placed last so the live registry is complete by the time it is counted. Three properties, each
-# with a control that proves it can fail.
-echo "=== CA-027: scratch-directory registry (multi-call-safe, one cumulative trap set) ==="
-
-# (a) Nothing in this file may call the once-per-process helper any more. Anchored to start-of-line
-# so this assertion's own grep argument (which is not at start-of-line) and every comment naming
-# the helper are outside the pattern by construction, not by a filename or line-number exclusion.
-CA027_LEGACY_CALLS="$(grep -nE '^[[:space:]]*harness_scratch_dir[[:space:]]+[A-Za-z_]' "$T50_SELF" || true)"
-[[ -z "$CA027_LEGACY_CALLS" ]] \
-  && pass "CA-027 -- wave8-smoke.sh no longer calls the once-per-process harness_scratch_dir helper anywhere" \
-  || fail "CA-027 -- harness_scratch_dir call site(s) survive, each of which voids every trap installed before it:\n${CA027_LEGACY_CALLS}"
-
-# Positive control for (a): the same pattern against a real call line proves it can still fire --
-# without this, narrowing the pattern to dodge a self-match would silently make (a) unfailable.
-CA027_LEGACY_CONTROL="$(printf '%s\n' 'harness_scratch_dir SOME_TMP' | grep -cE '^[[:space:]]*harness_scratch_dir[[:space:]]+[A-Za-z_]' || true)"
-[[ "${CA027_LEGACY_CONTROL:-0}" -ge 1 ]] \
-  && pass "CA-027 -- positive control: the legacy-call detector fires on a real call line" \
-  || fail "CA-027 -- positive control broken: the legacy-call detector matched nothing, so (a) proves nothing"
-
-# (b) The registry holds one entry per w8_scratch_dir call site actually reached this run. The
-# expected count is DERIVED from the file (never re-pinned as a literal that drifts).
-CA027_CALL_SITES="$(grep -cE '^[[:space:]]*w8_scratch_dir[[:space:]]+[A-Z]' "$T50_SELF" || true)"
-if [[ "${CA027_CALL_SITES:-0}" -lt 1 ]]; then
-  fail "CA-027 -- could not derive the w8_scratch_dir call-site count from this file"
-elif [[ "${#W8_SCRATCH_DIRS[@]}" -eq "$CA027_CALL_SITES" ]]; then
-  pass "CA-027 -- the registry holds one live entry per w8_scratch_dir call site (${CA027_CALL_SITES}), so no call displaced an earlier one"
-else
-  fail "CA-027 -- registry holds ${#W8_SCRATCH_DIRS[@]} entries against ${CA027_CALL_SITES} call sites"
-fi
-
-# (c) Behavioural control, in a subshell so the real registry and the real traps are untouched:
-# two consecutive calls must both stay live, and one w8_scratch_cleanup must remove both.
-CA027_ADDITIVE="$(
-  W8_SCRATCH_DIRS=()
-  w8_scratch_dir _CA027_A
-  w8_scratch_dir _CA027_B
-  if [[ -d "$_CA027_A" && -d "$_CA027_B" && "${#W8_SCRATCH_DIRS[@]}" -eq 2 ]]; then
-    w8_scratch_cleanup
-    if [[ ! -d "$_CA027_A" && ! -d "$_CA027_B" ]]; then printf 'ADDITIVE_AND_CLEARED'; else printf 'RESIDUE'; fi
-  else
-    printf 'SECOND_CALL_DISPLACED_FIRST'
-  fi
-)"
-[[ "$CA027_ADDITIVE" == "ADDITIVE_AND_CLEARED" ]] \
-  && pass "CA-027 -- two consecutive w8_scratch_dir calls both stay live and a single cleanup removes both" \
-  || fail "CA-027 -- registry is not additive or does not clear fully: got '${CA027_ADDITIVE}'"
-
-# Negative control for (c): the identical predicate against the SINGLE-SLOT semantics
-# harness_scratch_dir has -- the second call overwrites the one variable the cleanup body reads, so
-# nothing ever removes the first directory. This must report the leak; if it did not, (c) would be
-# passing against a predicate incapable of seeing the defect it exists to catch.
-CA027_SINGLE_SLOT="$(
-  _ca027_slot=""
-  _ca027_single_cleanup() { if [[ -n "$_ca027_slot" ]]; then rm -rf "$_ca027_slot"; fi; return 0; }
-  _ca027_x="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca027a.XXXXXX")"
-  _ca027_slot="$_ca027_x"
-  _ca027_y="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca027b.XXXXXX")"
-  _ca027_slot="$_ca027_y"
-  _ca027_single_cleanup
-  if [[ -d "$_ca027_x" && ! -d "$_ca027_y" ]]; then printf 'FIRST_LEAKED'; else printf 'NO_LEAK'; fi
-  rm -rf "$_ca027_x" "$_ca027_y"
-)"
-[[ "$CA027_SINGLE_SLOT" == "FIRST_LEAKED" ]] \
-  && pass "CA-027 -- negative control: the same predicate reports the leak under single-slot (harness_scratch_dir) semantics, so the additive check discriminates" \
-  || fail "CA-027 -- negative control broken: single-slot semantics reported '${CA027_SINGLE_SLOT}', expected FIRST_LEAKED"
-
 # =====================================================================================
 # CA-134 / D46: edm_data_dir() must not adopt another plugin's data directory
 # =====================================================================================
@@ -10324,12 +10265,7 @@ CA027_SINGLE_SLOT="$(
 echo
 echo "-- CA-134/D46: edm_data_dir() ownership test --"
 
-# Self-contained mktemp/rm pair rather than w8_scratch_dir, and the reason is structural:
-# CA-027's registry assertion compares a STATIC grep of w8_scratch_dir call sites against
-# the registry's RUNTIME length at the point it runs, so any call site appearing after it
-# fails the count. This band is appended at the tail, which is after it. Removed explicitly
-# at the end of the band.
-CA134_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca134.XXXXXX")"
+w8_scratch_dir CA134_TMP
 CA134_LIB="${PLUGIN_DIR}/bin/_edm-datadir-lib.sh"
 
 # ca134_resolve <plugin-data> -- resolve edm_data_dir() in a CHILD shell with a controlled
@@ -10435,10 +10371,7 @@ echo "-- Ledger integrity: no duplicate CA-NNN ids --"
 # duplicate-id scan every downstream consumer (audit-converged's blocking set, render-ledger, the
 # synthesizer's fixed/re-opened merge) implicitly relies on. It is driven against three scratch
 # ledgers this block writes itself, covering all three outcomes the predicate must distinguish.
-#
-# Self-contained mktemp/rm pair rather than the w8_scratch_dir registry (CA-027): the tree never
-# outlives this block, and that registry's own assertion counts its call sites by static scan.
-CA134_TMP_LEDGER="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca134led.XXXXXX")"
+w8_scratch_dir CA134_TMP_LEDGER
 CA134_CLEAN_LEDGER="${CA134_TMP_LEDGER}/clean.jsonl"
 CA134_DUP_LEDGER="${CA134_TMP_LEDGER}/duplicate.jsonl"
 CA134_ABSENT_LEDGER="${CA134_TMP_LEDGER}/no-such-ledger.jsonl"
@@ -10501,7 +10434,7 @@ rm -rf "$CA134_TMP_LEDGER"
 echo
 echo "-- CA-215: object-typed SETTABLE_KEYS round-trip as objects --"
 
-CA215_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca215.XXXXXX")"
+w8_scratch_dir CA215_TMP
 CA215_REPO="${CA215_TMP}/repo"
 mkdir -p "$CA215_REPO"
 ( cd "$CA215_REPO" && git init -q . && git config user.email edm@example.com && git config user.name EDM ) >/dev/null 2>&1
@@ -10657,10 +10590,7 @@ with_scratch_repo _ca088_live_case
 echo
 echo "--- CA-086: the Phase-6 marker write is atomic (rename), not a truncating redirect ---"
 
-# CA-027: this band deliberately uses plain `mktemp -d` plus its own `rm -rf`, never
-# w8_scratch_dir. That helper's registry length is compared against a STATIC grep of its call
-# sites by the CA-027 assertion far above, so a call added below that assertion fails the count.
-P2G1_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-p2g1.XXXXXX")"
+w8_scratch_dir P2G1_TMP
 
 # p2g1_mutant_bin <outvar> <src> <sed-script> -- like w8_mutant_bin, but copies EVERY sibling
 # `_edm-*.sh` library beside the mutant instead of only `_edm-cli-lib.sh` and
@@ -11363,7 +11293,7 @@ CA082_STRUCT_CONTROL="$(printf '%s\nmv "${_ppr_file}.tmp" "$_ppr_file"\n' "$CA08
 echo
 echo "--- CA-087/CA-092: state-lock age cap, backoff, jitter and the unlock escape hatch ---"
 
-CA087_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-p2g1b.XXXXXX")"
+w8_scratch_dir CA087_TMP
 
 # ca087_env <outvar> <edm-state-binary> -- an initialized initiative with a lockdir whose recorded
 # holder PID is THIS test process, so `kill -0` genuinely succeeds and the live-holder branch (not
@@ -11587,11 +11517,7 @@ rm -rf "$P2G1_TMP"
 echo
 echo "=== P2 groups 3+4: stale-claim corrections and hardening one-liners ==="
 
-# Self-contained mktemp/rm pair rather than w8_scratch_dir: CA-027's registry assertion above
-# compares a STATIC grep of w8_scratch_dir call sites against the registry's RUNTIME length, so a
-# new call placed after that assertion inflates one side only and fails a check that has nothing
-# to do with this band.
-P2G34_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-w8-p2g34.XXXXXX")"
+w8_scratch_dir P2G34_TMP
 P2G34_GATEGUARD="${PLUGIN_DIR}/bin/edm-gateguard"
 P2G34_BASHGATE="${PLUGIN_DIR}/bin/edm-bash-gate"
 P2G34_HOOKIFY="${PLUGIN_DIR}/bin/edm-hookify"
@@ -11972,7 +11898,7 @@ fi
 
 # NEGATIVE CONTROL: the predicate must fail on a NOTICE stripped of one holder. Without this, a
 # check that merely greps a file nobody deletes proves nothing about what the file must contain.
-CA061_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca061.XXXXXX")"
+w8_scratch_dir CA061_TMP
 sed 's/ZUNO WORKS K.K./REDACTED/g' "$CA061_NOTICE" > "${CA061_TMP}/stripped" 2>/dev/null || true
 CA061_STRIPPED="$(cat "${CA061_TMP}/stripped" 2>/dev/null || true)"
 case "$CA061_STRIPPED" in
@@ -12017,7 +11943,7 @@ rm -rf "$CA061_TMP"
 echo
 echo "-- CA-107/108/115/124 co-sites --"
 
-CACO_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-caco.XXXXXX")"
+w8_scratch_dir CACO_TMP
 CACO_SG="${PLUGIN_DIR}/bin/edm-stop-gate"
 
 # ---- CA-107: the `help` bare alias, which the two siblings accept and this gate did not --------
@@ -12168,7 +12094,7 @@ done
 # file and confirm the identical scan finds exactly that line. Without this, narrowing a needle
 # until it matched nothing would read as a clean suite. The copy is of this file rather than of a
 # synthetic stand-in, so the control is run against the exact shape and size the scan meets.
-CA096_CTRL_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-wave8-ca096.XXXXXX")"
+w8_scratch_dir CA096_CTRL_TMP
 for _ca096_n in "$CA096_N1" "$CA096_N2" "$CA096_N3"; do
   _ca096_copy="${CA096_CTRL_TMP}/injected.sh"
   cp "$CA096_SELF" "$_ca096_copy"
@@ -12211,11 +12137,6 @@ fi
 # from the host (its own HOME, CLAUDE_PROJECT_DIR, CLAUDE_PLUGIN_DATA, XDG_DATA_HOME and
 # EDM_SRD_ROOT), so nothing in this section reads, scores, or writes into the repository it ships
 # in or the developer's own data directory.
-#
-# CA-027 note: each of the three sub-sections owns a self-contained `mktemp -d` / `rm -rf` pair
-# rather than routing through w8_scratch_dir. The registry assertion for that helper compares a
-# STATIC grep of its call sites against the registry's RUNTIME length, so a call added after that
-# assertion has already run makes the count disagree with itself.
 echo
 echo "=== EDMTC-T05 / CA-128: readiness rubric signals driven at values other than this repository's ==="
 
@@ -12227,7 +12148,7 @@ echo "=== EDMTC-T05 / CA-128: readiness rubric signals driven at values other th
 # grep that never matches. The fixtures below drive each named signal to its OTHER value, assert
 # the named check's `pass` flag flips and its category's `raw_earned` moves by that check's own
 # declared `points`, and pin four KNOWN scores produced by four KNOWN fixtures.
-T05_CA128_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-w8-t05-ca128.XXXXXX")"
+w8_scratch_dir T05_CA128_TMP
 mkdir -p "${T05_CA128_TMP}/home" "${T05_CA128_TMP}/repo/.claude" "${T05_CA128_TMP}/data"
 ( cd "${T05_CA128_TMP}/repo" \
     && git init -q . \
@@ -12399,7 +12320,7 @@ echo "=== EDMTC-T05 / CA-129: the edm-hookify list contract is asserted, not dis
 # The only `edm-hookify list` invocation in this suite redirected its output to /dev/null inside
 # the writes-no-files snapshot, so nothing covered what `list` PRINTS: the one-identifier-per-line
 # contract, the `$parsed.name // $path` fallback, or the omission of `enabled:false` rules.
-T05_CA129_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-w8-t05-ca129.XXXXXX")"
+w8_scratch_dir T05_CA129_TMP
 T05_CA129_RULES="${T05_CA129_TMP}/proj/.claude/edm-hookify"
 mkdir -p "$T05_CA129_RULES"
 cp "${HOOKIFY_FIXTURES}/warn-no-console-log.json" "$T05_CA129_RULES/"
@@ -12511,7 +12432,7 @@ echo "=== EDMTC-T05 / CA-132: edm-stop-gate's per-prefix validate-died continue 
 # initiatives and a shim `edm-state` earlier on PATH that makes `validate` DIE (exit 4, outside the
 # documented 0/3 contract) for one of them while passing everything else through to the real
 # binary -- the only reliable way to reach that arm with a prefix that resolved successfully.
-T05_CA132_TMP="$(mktemp -d "${TMPDIR:-/tmp}/edm-w8-t05-ca132.XXXXXX")"
+w8_scratch_dir T05_CA132_TMP
 mkdir -p "${T05_CA132_TMP}/home" "${T05_CA132_TMP}/repo" "${T05_CA132_TMP}/data" \
          "${T05_CA132_TMP}/shim-one" "${T05_CA132_TMP}/shim-none" "${T05_CA132_TMP}/shim-all"
 ( cd "${T05_CA132_TMP}/repo" \
@@ -12649,6 +12570,126 @@ check "CA-132 negative control -- and T5DEAD is reported normally rather than sk
   "informational anomalies (run: edm-state validate T5DEAD)" "$t05_ca132_out"
 
 rm -rf "$T05_CA132_TMP"
+
+echo
+# =================================================================================================
+# CA-027 -- scratch-directory registry: every scratch tree is registered, and one trap set clears
+# all of them
+# =================================================================================================
+# Placed last so the live registry is complete by the time it is counted -- and, since EDMTC-T03,
+# no longer DEPENDENT on being placed last. Check (b) below counts only the call sites that
+# lexically PRECEDE this band, which is exactly the set that has executed when it runs, so a call
+# site added after it no longer makes the two sides disagree. That position-sensitivity was the
+# reason five bands reached for an untrapped scratch idiom instead of the registry (CA-104); with
+# it gone, the rule stated beside w8_scratch_dir at the top of this file has no exception.
+# Three properties, each with a control that proves it can fail.
+echo "=== CA-027: scratch-directory registry (multi-call-safe, one cumulative trap set) ==="
+
+# (a) Nothing in this file may call the once-per-process helper any more. Anchored to start-of-line
+# so this assertion's own grep argument (which is not at start-of-line) and every comment naming
+# the helper are outside the pattern by construction, not by a filename or line-number exclusion.
+CA027_LEGACY_CALLS="$(grep -nE '^[[:space:]]*harness_scratch_dir[[:space:]]+[A-Za-z_]' "$T50_SELF" || true)"
+[[ -z "$CA027_LEGACY_CALLS" ]] \
+  && pass "CA-027 -- wave8-smoke.sh no longer calls the once-per-process harness_scratch_dir helper anywhere" \
+  || fail "CA-027 -- harness_scratch_dir call site(s) survive, each of which voids every trap installed before it:\n${CA027_LEGACY_CALLS}"
+
+# Positive control for (a): the same pattern against a real call line proves it can still fire --
+# without this, narrowing the pattern to dodge a self-match would silently make (a) unfailable.
+CA027_LEGACY_CONTROL="$(printf '%s\n' 'harness_scratch_dir SOME_TMP' | grep -cE '^[[:space:]]*harness_scratch_dir[[:space:]]+[A-Za-z_]' || true)"
+[[ "${CA027_LEGACY_CONTROL:-0}" -ge 1 ]] \
+  && pass "CA-027 -- positive control: the legacy-call detector fires on a real call line" \
+  || fail "CA-027 -- positive control broken: the legacy-call detector matched nothing, so (a) proves nothing"
+
+# Scratch for this band's own file-derivation control. Registered like everything else, and placed
+# ABOVE the marker line below so it is counted on both sides of (b) rather than on one.
+w8_scratch_dir CA027_SCRATCH
+
+# (b) The registry holds one entry per w8_scratch_dir call site that HAS RUN. The expected count is
+# DERIVED from the file (never re-pinned as a literal that drifts), and it is derived
+# POSITION-INDEPENDENTLY: only call sites lexically above this band's own marker line are counted,
+# because those -- and only those -- have executed by the time this check runs. A section appended
+# to this file below can therefore call w8_scratch_dir freely without breaking a count that has
+# nothing to do with it.
+#
+# The marker token is assembled from two halves that are inert on their own, so the two lines that
+# build it are invisible to the search that uses it; the single line that spells the whole token is
+# the one being located.
+_w8_gm_a='W8_REGISTRY_'
+_w8_gm_b='COUNT_GUARD'
+CA027_GUARD_MARK="${_w8_gm_a}${_w8_gm_b}"
+W8_REGISTRY_COUNT_GUARD=1
+CA027_GUARD_LN="$(W8_MARK="$CA027_GUARD_MARK" awk 'index($0, ENVIRON["W8_MARK"]) > 0 { last = NR } END { print last + 0 }' "$T50_SELF")"
+CA027_CALL_SITES="$(W8_LIM="${CA027_GUARD_LN:-0}" awk 'NR < (ENVIRON["W8_LIM"] + 0) && /^[[:space:]]*w8_scratch_dir[[:space:]]+[A-Z]/ { n++ } END { print n + 0 }' "$T50_SELF")"
+if [[ "${CA027_GUARD_LN:-0}" -lt 1 ]]; then
+  fail "CA-027 -- could not locate this band's own marker line in ${T50_SELF}; the call-site count would be derived from nothing"
+elif [[ "${CA027_CALL_SITES:-0}" -lt 1 ]]; then
+  fail "CA-027 -- could not derive the w8_scratch_dir call-site count from this file"
+elif [[ "${#W8_SCRATCH_DIRS[@]}" -eq "$CA027_CALL_SITES" ]]; then
+  pass "CA-027 -- the registry holds one live entry per w8_scratch_dir call site that has run (${CA027_CALL_SITES}), so no call displaced an earlier one"
+else
+  fail "CA-027 -- registry holds ${#W8_SCRATCH_DIRS[@]} entries against ${CA027_CALL_SITES} call sites above line ${CA027_GUARD_LN}"
+fi
+
+# Positive control for (b): the identical derivation, run over a scratch COPY of this file with ONE
+# extra call site injected immediately above the marker, must return exactly one more. Without it
+# the "derived from the file" claim would hold for any expression that happened to equal the
+# registry's length, including a constant.
+CA027_DERIV_COPY="${CA027_SCRATCH}/wave8-plus-one-call-site.sh"
+W8_MARK="$CA027_GUARD_MARK" awk 'index($0, ENVIRON["W8_MARK"]) > 0 && !injected { print "w8_scratch_dir CA027_INJECTED_TMP"; injected = 1 } { print }' "$T50_SELF" > "$CA027_DERIV_COPY"
+CA027_COPY_GUARD_LN="$(W8_MARK="$CA027_GUARD_MARK" awk 'index($0, ENVIRON["W8_MARK"]) > 0 { last = NR } END { print last + 0 }' "$CA027_DERIV_COPY")"
+CA027_COPY_SITES="$(W8_LIM="${CA027_COPY_GUARD_LN:-0}" awk 'NR < (ENVIRON["W8_LIM"] + 0) && /^[[:space:]]*w8_scratch_dir[[:space:]]+[A-Z]/ { n++ } END { print n + 0 }' "$CA027_DERIV_COPY")"
+if [[ "${CA027_COPY_SITES:-0}" -eq $(( ${CA027_CALL_SITES:-0} + 1 )) ]]; then
+  pass "CA-027 -- positive control: injecting ONE extra call site above the marker moves the derived count from ${CA027_CALL_SITES} to ${CA027_COPY_SITES}, so the expected count is read out of the file rather than fixed"
+else
+  fail "CA-027 -- positive control broken: a copy carrying one extra call site derived ${CA027_COPY_SITES} against ${CA027_CALL_SITES} here; the derivation is not reading the file"
+fi
+
+# Negative control for (b)'s comparison itself: the identical equality test, fed a registry length
+# one entry short, must report a mismatch. This is what shows the test discriminates rather than
+# comparing a number against itself.
+CA027_SHORT_VERDICT="$(
+  _ca027_short=$(( ${#W8_SCRATCH_DIRS[@]} - 1 ))
+  if [[ "$_ca027_short" -eq "${CA027_CALL_SITES:-0}" ]]; then printf 'AGREED'; else printf 'MISMATCH'; fi
+)"
+[[ "$CA027_SHORT_VERDICT" == "MISMATCH" ]] \
+  && pass "CA-027 -- negative control: the same equality test reports a mismatch when the registry is one entry short, so the check above is not comparing a value against itself" \
+  || fail "CA-027 -- negative control broken: a registry one entry short still AGREED with the derived call-site count"
+
+# (c) Behavioural control, in a subshell so the real registry and the real traps are untouched:
+# two consecutive calls must both stay live, and one w8_scratch_cleanup must remove both.
+CA027_ADDITIVE="$(
+  W8_SCRATCH_DIRS=()
+  w8_scratch_dir _CA027_A
+  w8_scratch_dir _CA027_B
+  if [[ -d "$_CA027_A" && -d "$_CA027_B" && "${#W8_SCRATCH_DIRS[@]}" -eq 2 ]]; then
+    w8_scratch_cleanup
+    if [[ ! -d "$_CA027_A" && ! -d "$_CA027_B" ]]; then printf 'ADDITIVE_AND_CLEARED'; else printf 'RESIDUE'; fi
+  else
+    printf 'SECOND_CALL_DISPLACED_FIRST'
+  fi
+)"
+[[ "$CA027_ADDITIVE" == "ADDITIVE_AND_CLEARED" ]] \
+  && pass "CA-027 -- two consecutive w8_scratch_dir calls both stay live and a single cleanup removes both" \
+  || fail "CA-027 -- registry is not additive or does not clear fully: got '${CA027_ADDITIVE}'"
+
+# Negative control for (c): the identical predicate against the SINGLE-SLOT semantics
+# harness_scratch_dir has -- the second call overwrites the one variable the cleanup body reads, so
+# nothing ever removes the first directory. This must report the leak; if it did not, (c) would be
+# passing against a predicate incapable of seeing the defect it exists to catch.
+CA027_SINGLE_SLOT="$(
+  _ca027_slot=""
+  _ca027_single_cleanup() { if [[ -n "$_ca027_slot" ]]; then rm -rf "$_ca027_slot"; fi; return 0; }
+  _ca027_x="$(mktemp -d "${CA027_SCRATCH}/ca027a.XXXXXX")"
+  _ca027_slot="$_ca027_x"
+  _ca027_y="$(mktemp -d "${CA027_SCRATCH}/ca027b.XXXXXX")"
+  _ca027_slot="$_ca027_y"
+  _ca027_single_cleanup
+  if [[ -d "$_ca027_x" && ! -d "$_ca027_y" ]]; then printf 'FIRST_LEAKED'; else printf 'NO_LEAK'; fi
+  rm -rf "$_ca027_x" "$_ca027_y"
+)"
+[[ "$CA027_SINGLE_SLOT" == "FIRST_LEAKED" ]] \
+  && pass "CA-027 -- negative control: the same predicate reports the leak under single-slot (harness_scratch_dir) semantics, so the additive check discriminates" \
+  || fail "CA-027 -- negative control broken: single-slot semantics reported '${CA027_SINGLE_SLOT}', expected FIRST_LEAKED"
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
 
