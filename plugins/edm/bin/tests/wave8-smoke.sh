@@ -6082,18 +6082,15 @@ SCOPE_PARAGRAPH
     fail "EDMV4-T28 / CA-069 -- a middle-clause-only rewrite passed the contract check, so the Scope element has regressed to a two-sided approximation (violations: ${T28_CA069_V})" ;;
 esac
 
-# And the fixture must trip nothing ELSE: a mutation that flagged half the contract would make the
-# assertion above true for reasons unrelated to the Scope element.
-T28_CA069_OTHER=""
-for t28_ca069_tag in $T28_CA069_V; do
-  if [[ "$t28_ca069_tag" != "SCOPE_PARAGRAPH" ]]; then
-    T28_CA069_OTHER="${T28_CA069_OTHER} ${t28_ca069_tag}"
-  fi
-done
-if [[ -z "$T28_CA069_OTHER" ]]; then
-  pass "EDMV4-T28 / CA-069 -- that fixture trips SCOPE_PARAGRAPH and nothing else, so the rejection is attributable to the middle clause alone"
+# And the fixture must trip SCOPE_PARAGRAPH and nothing else: a mutation that flagged half the
+# contract would make the assertion above true for reasons unrelated to the Scope element.
+# Stated as an EQUALITY rather than "no other tag present" -- the latter reads PASS on an empty
+# violation list, which is exactly the state a regressed checker produces, so it would report
+# clean at the very moment the band exists to catch.
+if [[ "$T28_CA069_V" == "SCOPE_PARAGRAPH" ]]; then
+  pass "EDMV4-T28 / CA-069 -- that fixture's violation list is exactly SCOPE_PARAGRAPH, so the rejection is attributable to the middle clause alone"
 else
-  fail "EDMV4-T28 / CA-069 -- that fixture also tripped${T28_CA069_OTHER}, so its rejection is not attributable to the middle clause alone"
+  fail "EDMV4-T28 / CA-069 -- that fixture's violation list is not exactly SCOPE_PARAGRAPH but '${T28_CA069_V}', so its rejection is not attributable to the middle clause alone"
 fi
 t28_neg_case "False Alarm Filter framing sentence removed" "FAF_FRAMING" '/^Report every finding at your best-effort confidence level/d'
 t28_neg_case "False Alarm Filter dropped to two criteria" "FAF_CRITERIA_COUNT" \
