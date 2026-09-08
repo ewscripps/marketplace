@@ -13210,6 +13210,158 @@ check "EDMTC-T04 / CA-127 control -- and it announces an exhausted budget while 
   "denial budget (-1) reached" "$T04_CA009_ERR"
 check_absent "EDMTC-T04 / CA-127 control -- the unvalidated mutant emits no fact list at all, so the guard is what keeps '-1' enforcing" \
   "acceptance criteria of the ticket being implemented" "$T04_CA009_ERR"
+
+echo
+# ---- CA-130: MultiEdit's two tolerated payload shapes, and the de-duplication across them ------
+# EDMV4-T14 AC4/AC5 drive only the multi-file `edits[].file_path` shape. Claude Code's own
+# single-file shape -- `tool_input.file_path` alongside an edits[] of old_string/new_string with no
+# per-edit path, the shape the tolerance comment at the MultiEdit arm exists for -- was never sent.
+echo "--- CA-130: MultiEdit's single-file payload shape, and de-duplication across a batch ---"
+
+T04_ME_SOLO='{"tool_name":"MultiEdit","tool_input":{"file_path":"solo.js","edits":[{"old_string":"a","new_string":"b"}]}}'
+T04_ME_NOPATH='{"tool_name":"MultiEdit","tool_input":{"edits":[{"old_string":"a","new_string":"b"}]}}'
+T04_ME_PROJ="" T04_ME_DATA=""
+t14_fresh_marker_env T04_ME_PROJ T04_ME_DATA
+t14_run "$T04_ME_PROJ" "$T04_ME_DATA" "$T04_ME_SOLO"
+if [[ "$T14_RUN_RC" -eq 2 && "$T14_RUN_ERR" == *"(solo.js)"* ]]; then
+  pass "EDMTC-T04 / CA-130 AC5 -- the single-file MultiEdit shape denies, and the fact list names tool_input.file_path's value (solo.js)"
+else
+  fail "EDMTC-T04 / CA-130 AC5 -- expected a denial naming solo.js from the single-file shape, got rc=${T14_RUN_RC} stderr=[${T14_RUN_ERR}]"
+fi
+check "EDMTC-T04 / CA-130 AC5 -- and it is the Edit fact set, which is what the MultiEdit arm reuses" \
+  "import or require this file (solo.js)" "$T14_RUN_ERR"
+
+# The control that makes the case above about tool_input.file_path specifically: the SAME payload
+# with that one field removed -- edits[] alone, carrying no path of any kind -- must allow. Without
+# it, a denial naming solo.js would be equally consistent with the path having been read from
+# somewhere else entirely.
+T04_MEN_PROJ="" T04_MEN_DATA=""
+t14_fresh_marker_env T04_MEN_PROJ T04_MEN_DATA
+t14_run "$T04_MEN_PROJ" "$T04_MEN_DATA" "$T04_ME_NOPATH"
+if [[ "$T14_RUN_RC" -eq 0 && -z "$T14_RUN_OUT" && -z "$T14_RUN_ERR" ]]; then
+  pass "EDMTC-T04 / CA-130 AC5 control -- the identical payload with tool_input.file_path removed yields no denial at all, so the denial above came from that field and nowhere else"
+else
+  fail "EDMTC-T04 / CA-130 AC5 control -- a MultiEdit payload naming no path anywhere still produced rc=${T14_RUN_RC} stdout=[${T14_RUN_OUT}] stderr=[${T14_RUN_ERR}]"
+fi
+
+# AC6: de-duplication. The batch below names four paths across BOTH shapes, one of them twice.
+# Deliberately chosen so payload order and sorted order differ: `unique` both sorts and dedups, so
+# a list that has been through it starts at aa.js while the raw concatenation starts at the
+# duplicated zz.js.
+T04_DUP_PAYLOAD='{"tool_name":"MultiEdit","tool_input":{"file_path":"zz.js","edits":[{"file_path":"zz.js"},{"file_path":"aa.js"},{"file_path":"mm.js"}]}}'
+
+# t04_multi_projection <outvar> <file> -- lifts the MultiEdit file-list jq program out of <file>
+# and returns it by name, so the projection can be exercised on a payload directly without any
+# part of it being re-typed here. A re-typed copy would go on reporting three entries long after
+# the real projection stopped producing them, which is the class of defect this whole pack exists
+# to remove. The program is the text between the `jq -r '` that opens the MultiEdit capture and
+# the line that closes the quote; returns non-zero if either boundary is missing.
+t04_multi_projection() {
+  local __t04_out="$1" _t04_file="$2" _t04_line _t04_state=0 _t04_acc=""
+  while IFS= read -r _t04_line || [[ -n "$_t04_line" ]]; do
+    if [[ "$_t04_state" -eq 0 ]]; then
+      case "$_t04_line" in
+        *"GG_MULTI_FILES="*"jq -r '"*) _t04_state=1 ;;
+      esac
+      continue
+    fi
+    case "$_t04_line" in
+      *"' 2>/dev/null)"*) _t04_state=2; break ;;
+    esac
+    _t04_acc="${_t04_acc}${_t04_line}"$'\n'
+  done < "$_t04_file"
+  printf -v "$__t04_out" '%s' "$_t04_acc"
+  [[ "$_t04_state" -eq 2 && -n "$_t04_acc" ]]
+}
+
+# t04_project_dup <outvar_count> <outvar_zz> <gateguard-file> -- runs <gateguard-file>'s own
+# MultiEdit projection over the duplicating payload and reports how many paths it yields and how
+# many times the duplicated one appears.
+t04_project_dup() {
+  local __t04_n="$1" __t04_zz="$2" _t04_src="$3"
+  local _t04_prog="" _t04_out_file
+  _t04_out_file="$(mktemp "${T04_TMP}/projection.XXXXXX")"
+  if ! t04_multi_projection _t04_prog "$_t04_src"; then
+    printf 'EXTRACTION_FAILED\n' > "$_t04_out_file"
+  elif ! printf '%s' "$T04_DUP_PAYLOAD" | jq -r "$_t04_prog" > "$_t04_out_file" 2>/dev/null; then
+    printf 'PROJECTION_FAILED\n' > "$_t04_out_file"
+  fi
+  printf -v "$__t04_n" '%s' "$(grep -c '.' "$_t04_out_file" || true)"
+  printf -v "$__t04_zz" '%s' "$(grep -c '^zz\.js$' "$_t04_out_file" || true)"
+}
+
+T04_DUP_N="" T04_DUP_ZZ=""
+t04_project_dup T04_DUP_N T04_DUP_ZZ "$GATEGUARD"
+if [[ "${T04_DUP_N:-0}" -eq 3 && "${T04_DUP_ZZ:-0}" -eq 1 ]]; then
+  pass "EDMTC-T04 / CA-130 AC6 -- edm-gateguard's own MultiEdit projection turns a four-entry batch naming zz.js twice into ${T04_DUP_N} paths, with zz.js appearing ${T04_DUP_ZZ} time"
+else
+  fail "EDMTC-T04 / CA-130 AC6 -- the projection yielded ${T04_DUP_N} paths with zz.js ${T04_DUP_ZZ} time(s), expected 3 and 1"
+fi
+
+# AC6's control: the identical extraction and the identical count, run against a mutant whose
+# `unique` has been replaced by a plain iteration, must report the un-deduplicated four. Both
+# numbers are read out of the binary under test, so neither side is a re-typed expectation.
+T04_NOUNIQ_MUTANT=""
+T04_NOUNIQ_OK=1
+t04_mutant_gateguard T04_NOUNIQ_MUTANT 'unique[]' '      | .[]' || T04_NOUNIQ_OK=0
+if [[ "$T04_NOUNIQ_OK" -eq 1 && -x "$T04_NOUNIQ_MUTANT" ]]; then
+  pass "EDMTC-T04 / CA-130 AC6 control -- a runnable copy of edm-gateguard was built with the de-duplicating step replaced by a plain iteration"
+else
+  fail "EDMTC-T04 / CA-130 AC6 control -- could not build the no-dedup mutant; the counts above prove nothing"
+fi
+T04_NODUP_N="" T04_NODUP_ZZ=""
+t04_project_dup T04_NODUP_N T04_NODUP_ZZ "$T04_NOUNIQ_MUTANT"
+if [[ "${T04_NODUP_N:-0}" -eq 4 && "${T04_NODUP_ZZ:-0}" -eq 2 ]]; then
+  pass "EDMTC-T04 / CA-130 AC6 control -- without the de-duplicating step the same batch yields ${T04_NODUP_N} paths with zz.js twice, so the three-and-one above is that step's doing"
+else
+  fail "EDMTC-T04 / CA-130 AC6 control BROKEN -- the no-dedup mutant yielded ${T04_NODUP_N} paths with zz.js ${T04_NODUP_ZZ} time(s), expected 4 and 2"
+fi
+
+# And end-to-end, through the gate itself. The budget is raised to 10 for this case on purpose: at
+# the default of 3 the fourth call would allow because the budget was spent, which is
+# indistinguishable from allowing because the batch is drained -- the fourth call's EMPTY stderr is
+# what separates them.
+T04_DUP_PROJ="" T04_DUP_DATA=""
+t14_fresh_marker_env T04_DUP_PROJ T04_DUP_DATA
+T04_DUP_SEQ="" T04_DUP_NAMES=""
+for _t04_i in 1 2 3 4; do
+  t04_with_env EDM_GATEGUARD_MAX_DENIALS 10 "$T04_DUP_PROJ" "$T04_DUP_DATA" "$T04_DUP_PAYLOAD"
+  T04_DUP_SEQ="${T04_DUP_SEQ} ${T14_RUN_RC}"
+  for _t04_p in aa.js mm.js zz.js; do
+    case "$T14_RUN_ERR" in
+      *"(${_t04_p})"*) T04_DUP_NAMES="${T04_DUP_NAMES} ${_t04_p}" ;;
+    esac
+  done
+  T04_DUP_LAST_ERR="$T14_RUN_ERR"
+done
+check "EDMTC-T04 / CA-130 AC6 -- the four-entry batch drains in exactly THREE denials and the fourth call allows: exit sequence" \
+  " 2 2 2 0" "$T04_DUP_SEQ"
+check "EDMTC-T04 / CA-130 AC6 -- and the three denials name the three DISTINCT paths, in the projection's own order" \
+  " aa.js mm.js zz.js" "$T04_DUP_NAMES"
+if [[ -z "$T04_DUP_LAST_ERR" ]]; then
+  pass "EDMTC-T04 / CA-130 AC6 -- the fourth call's stderr is empty, so it allowed because every distinct path is checked and NOT because a denial budget ran out"
+else
+  fail "EDMTC-T04 / CA-130 AC6 -- the fourth call carried stderr, so the batch did not simply drain: [${T04_DUP_LAST_ERR}]"
+fi
+
+# The end-to-end control: the same four calls against the no-dedup mutant deny in payload order,
+# starting at the duplicated zz.js rather than at aa.js. Ordering is the only externally visible
+# consequence of `unique` -- the first denial exits the process, so a duplicate later in the list
+# is never reached in the same call -- which is why the projection-level counts above carry the
+# de-duplication claim and this case carries only the ordering half of it.
+T04_NODUP_PROJ="" T04_NODUP_DATA=""
+t14_fresh_marker_env T04_NODUP_PROJ T04_NODUP_DATA
+T04_NODUP_FIRST=""
+export EDM_GATEGUARD_MAX_DENIALS=10
+printf '%s' "$T04_DUP_PAYLOAD" | CLAUDE_PROJECT_DIR="$T04_NODUP_PROJ" CLAUDE_PLUGIN_DATA="$T04_NODUP_DATA" \
+  EDM_GATEGUARD_DENY_MODE=exit-code bash "$T04_NOUNIQ_MUTANT" >/dev/null 2>"${T04_TMP}/nodup.stderr" || true
+unset EDM_GATEGUARD_MAX_DENIALS
+T04_NODUP_FIRST="$(cat "${T04_TMP}/nodup.stderr" 2>/dev/null || true)"
+if [[ "$T04_NODUP_FIRST" == *"(zz.js)"* ]]; then
+  pass "EDMTC-T04 / CA-130 AC6 control -- the no-dedup mutant's first denial names zz.js (payload order) where the shipped binary named aa.js, so the ordering asserted above is the de-duplicating step's output and not the payload's"
+else
+  fail "EDMTC-T04 / CA-130 AC6 control BROKEN -- the no-dedup mutant's first denial did not name zz.js: [${T04_NODUP_FIRST}]"
+fi
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
 
