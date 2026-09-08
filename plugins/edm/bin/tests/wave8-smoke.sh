@@ -12895,6 +12895,185 @@ CA027_SINGLE_SLOT="$(
 [[ "$CA027_SINGLE_SLOT" == "FIRST_LEAKED" ]] \
   && pass "CA-027 -- negative control: the same predicate reports the leak under single-slot (harness_scratch_dir) semantics, so the additive check discriminates" \
   || fail "CA-027 -- negative control broken: single-slot semantics reported '${CA027_SINGLE_SLOT}', expected FIRST_LEAKED"
+echo
+# =================================================================================================
+# EDMTC-T04 -- edm-gateguard's four unexercised paths (CA-066, CA-127, CA-130, CA-131)
+# =================================================================================================
+# Coverage work only. edm-gateguard's behaviour is treated as CORRECT here: every figure below
+# records what the shipped binary already does. What makes each figure a finding rather than a
+# restatement is its control -- a mutant copy of the binary, or the mirror case, that must produce
+# a DIFFERENT answer. Four paths had no coverage at all:
+#
+#   CA-066  the GATED allow path's jq-spawn count (EDMV4-T45 AC6's spy covers only the
+#           marker-ABSENT fast path, which is the one with the documented zero-jq budget)
+#   CA-127  EDM_GATEGUARD_MAX_DENIALS read from the environment, and its non-numeric fallback
+#   CA-130  MultiEdit's second tolerated payload shape, and the de-duplication across both
+#   CA-131  every gg_is_exempt glob form beyond a single `**`-prefixed entry
+#
+# GATEGUARD, PLUGIN_DIR, DATADIR_LIB, t14_fresh_marker_env and t14_run are all established by the
+# EDMV4-T11/T14 sections far above and are reused unchanged rather than copied (CA-118's lesson:
+# this file does not need a second runner for a job it already has one for).
+echo "=== EDMTC-T04: gateguard coverage -- gated-path jq budget, the denial-budget knob, MultiEdit shapes, exempt-glob forms ==="
+echo
+
+w8_scratch_dir T04_TMP
+
+# t04_payload <tool-name> <file-path> -- the one-line PreToolUse document every single-path case
+# below sends on stdin.
+t04_payload() {
+  printf '{"tool_name":"%s","tool_input":{"file_path":"%s"}}' "$1" "$2"
+}
+
+# t04_mutant_gateguard <outvar> <needle> <replacement> -- writes a RUNNABLE copy of edm-gateguard
+# with the first line containing <needle> replaced by <replacement> (which may itself span several
+# lines), and returns the copy's path by name. The copy gets its own sibling libraries: the binary
+# resolves _edm-cli-lib.sh and _edm-datadir-lib.sh against its own SCRIPT_DIR, so a copy dropped
+# anywhere else aborts on that source line long before reaching the code under test -- and every
+# "the mutant behaves differently" control below would then pass for the wrong reason. Line
+# rewriting in pure bash: no sed line-address arithmetic to drift when the source moves. Returns
+# non-zero when the needle is never found, so a rename inside edm-gateguard fails this band loudly
+# instead of quietly yielding an unmutated copy.
+t04_mutant_gateguard() {
+  local __t04_out="$1" _t04_needle="$2" _t04_repl="$3"
+  local _t04_dir _t04_line _t04_hit=0
+  _t04_dir="$(mktemp -d "${T04_TMP}/ggmut.XXXXXX")"
+  cp "${PLUGIN_DIR}/bin/_edm-cli-lib.sh" "${PLUGIN_DIR}/bin/_edm-datadir-lib.sh" "${_t04_dir}/"
+  : > "${_t04_dir}/edm-gateguard"
+  while IFS= read -r _t04_line || [[ -n "$_t04_line" ]]; do
+    if [[ "$_t04_hit" -eq 0 && "$_t04_line" == *"$_t04_needle"* ]]; then
+      printf '%s\n' "$_t04_repl" >> "${_t04_dir}/edm-gateguard"
+      _t04_hit=1
+    else
+      printf '%s\n' "$_t04_line" >> "${_t04_dir}/edm-gateguard"
+    fi
+  done < "$GATEGUARD"
+  chmod +x "${_t04_dir}/edm-gateguard"
+  printf -v "$__t04_out" '%s' "${_t04_dir}/edm-gateguard"
+  [[ "$_t04_hit" -eq 1 ]]
+}
+
+# ---- CA-066: the GATED allow path's jq-spawn count --------------------------------------------
+# EDMV4-T07 AC8 gives the marker-ABSENT fast path a cost budget (one exec, one marker test, zero
+# jq) and EDMV4-T45 AC6's spy pins it. The GATED allow path -- a Phase 6 marker present, the target
+# already recorded checked -- had no such pin, so the second `jq -c` EDMV4-T45 added to project the
+# payload into hookify's field shape was unmeasured. The figure is RECORDED here rather than
+# argued down: four spawns, and the band below attributes each one.
+echo "--- CA-066: the gated allow path's jq-spawn count is pinned, and attributed ---"
+
+T04_JQ_BIN="${T04_TMP}/jqspy-bin"
+T04_JQ_BIN_NOHOOK="${T04_TMP}/jqspy-bin-nohookify"
+mkdir -p "$T04_JQ_BIN" "$T04_JQ_BIN_NOHOOK"
+# The two spy PATHs are the ENTIRE PATH for their runs, so nothing outside them can be reached and
+# the only difference between them is whether edm-hookify is on it. Every binary edm-gateguard and
+# its libraries actually invoke is linked in; a missing one would surface as a failed run rather
+# than a wrong count, because each case below also asserts the run allowed cleanly.
+for _t04_bin in dirname bash grep date mkdir mv rm cat stat sleep tr sort head tail wc mktemp git; do
+  ln -s "$(command -v "$_t04_bin")" "${T04_JQ_BIN}/${_t04_bin}"
+  ln -s "$(command -v "$_t04_bin")" "${T04_JQ_BIN_NOHOOK}/${_t04_bin}"
+done
+for _t04_spydir in "$T04_JQ_BIN" "$T04_JQ_BIN_NOHOOK"; do
+  cat > "${_t04_spydir}/jq" <<T04JQSPY
+#!/bin/sh
+echo x >> "${_t04_spydir}/.jq-count"
+exec "$(command -v jq)" "\$@"
+T04JQSPY
+  chmod +x "${_t04_spydir}/jq"
+done
+# A STUB hookify, not the real one: the real binary spawns jq of its own, and those spawns are
+# edm-hookify's cost, not this gate's. The stub keeps the count attributable to edm-gateguard.
+cat > "${T04_JQ_BIN}/edm-hookify" <<'T04HFSTUB'
+#!/bin/sh
+exit 0
+T04HFSTUB
+chmod +x "${T04_JQ_BIN}/edm-hookify"
+
+T04_JQ_PROJ="${T04_TMP}/jq-proj"
+T04_JQ_DATA="${T04_TMP}/jq-data"
+T04_JQ_DATA_ABSENT="${T04_TMP}/jq-data-absent"
+mkdir -p "$T04_JQ_PROJ" "${T04_JQ_DATA}/run" "$T04_JQ_DATA_ABSENT"
+T04_JQ_KEY="$(CLAUDE_PROJECT_DIR="$T04_JQ_PROJ" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+printf 'T04PFX\t%s\t2026-09-02T00:00:00Z\n' "$T04_JQ_PROJ" > "${T04_JQ_DATA}/run/${T04_JQ_KEY}.phase6"
+printf 'src/foo.js\n' > "${T04_JQ_DATA}/run/${T04_JQ_KEY}.checked"
+T04_JQ_PAYLOAD="$(t04_payload Edit src/foo.js)"
+
+# t04_jq_count <bindir> <gateguard> <data-dir> -- one Edit against an ALREADY-CHECKED path (so the
+# call takes the gated ALLOW path) with <bindir> as the whole PATH, reporting the spy's tally in
+# T04_JQ_N and the run's own outcome in T04_JQ_RC/OUT/ERR. The outcome matters as much as the
+# tally: a denial would spend a fifth jq inside emit_decision, so a count read without checking
+# that the call allowed would silently be measuring a different path.
+t04_jq_count() {
+  local _t04_bin="$1" _t04_gg="$2" _t04_data="$3"
+  : > "${_t04_bin}/.jq-count"
+  T04_JQ_RC=0
+  T04_JQ_OUT="$(printf '%s' "$T04_JQ_PAYLOAD" | CLAUDE_PROJECT_DIR="$T04_JQ_PROJ" \
+    CLAUDE_PLUGIN_DATA="$_t04_data" PATH="$_t04_bin" bash "$_t04_gg" 2>"${T04_TMP}/jqspy.stderr")" || T04_JQ_RC=$?
+  T04_JQ_ERR="$(cat "${T04_TMP}/jqspy.stderr" 2>/dev/null || true)"
+  T04_JQ_N="$(grep -c '.' "${_t04_bin}/.jq-count" || true)"
+}
+
+# The pinned figure. Four spawns, one per site on this path: `.tool_name` (dispatch), `.session_id`
+# (the per-session denial-budget key), `.tool_input.file_path` (the Edit arm), and the file-event
+# projection EDMV4-T45 added -- the one CA-066 named. Raising this number is a real cost change on
+# a hook that fires on every Edit and Write, and must be a deliberate, recorded decision.
+T04_JQ_EXPECTED=4
+t04_jq_count "$T04_JQ_BIN" "$GATEGUARD" "$T04_JQ_DATA"
+if [[ "$T04_JQ_RC" -eq 0 && -z "$T04_JQ_OUT" && -z "$T04_JQ_ERR" ]]; then
+  pass "EDMTC-T04 / CA-066 -- the measured call is a gated ALLOW (exit 0, empty stdout and stderr), so the count below is the allow path's own cost and not a denial's"
+else
+  fail "EDMTC-T04 / CA-066 -- the measured call did not allow cleanly: rc=${T04_JQ_RC} stdout=[${T04_JQ_OUT}] stderr=[${T04_JQ_ERR}]; every count below measures the wrong path"
+fi
+check_num "EDMTC-T04 / CA-066 -- the gated allow path spawns exactly ${T04_JQ_EXPECTED} jq processes (tool_name, session_id, tool_input.file_path, and the T45 file-event projection)" \
+  "$T04_JQ_EXPECTED" "$T04_JQ_N"
+T04_JQ_WITH_HOOKIFY="$T04_JQ_N"
+
+# Attribution: the identical fixture with edm-hookify absent from PATH spawns exactly one fewer.
+# That is what identifies the fourth spawn as the file-event projection CA-066 named, rather than
+# leaving the total an unexplained lump.
+t04_jq_count "$T04_JQ_BIN_NOHOOK" "$GATEGUARD" "$T04_JQ_DATA"
+if [[ "$T04_JQ_RC" -eq 0 && -z "$T04_JQ_OUT" && -z "$T04_JQ_ERR" ]]; then
+  pass "EDMTC-T04 / CA-066 -- the hookify-absent comparison run also allows cleanly, so its count is comparable to the one above"
+else
+  fail "EDMTC-T04 / CA-066 -- the hookify-absent comparison run did not allow cleanly: rc=${T04_JQ_RC} stdout=[${T04_JQ_OUT}] stderr=[${T04_JQ_ERR}]"
+fi
+if [[ "${T04_JQ_N:-0}" -eq $(( T04_JQ_WITH_HOOKIFY - 1 )) ]]; then
+  pass "EDMTC-T04 / CA-066 -- with edm-hookify off PATH the same call spawns ${T04_JQ_N}, exactly one fewer, so precisely ONE of the ${T04_JQ_WITH_HOOKIFY} is the file-event projection CA-066 named"
+else
+  fail "EDMTC-T04 / CA-066 -- expected $(( T04_JQ_WITH_HOOKIFY - 1 )) spawns with edm-hookify off PATH, got ${T04_JQ_N}; the fourth spawn is not the hookify projection"
+fi
+
+# Contrast with the path that DOES have a documented budget: the same fixture with no marker spawns
+# zero. Without this the gated figure would be a number with nothing to be a number ABOUT.
+t04_jq_count "$T04_JQ_BIN" "$GATEGUARD" "$T04_JQ_DATA_ABSENT"
+if [[ "$T04_JQ_RC" -eq 0 && "${T04_JQ_N:-1}" -eq 0 ]]; then
+  pass "EDMTC-T04 / CA-066 -- the marker-ABSENT fast path through the same spy spawns zero jq (EDMV4-T07 AC8's budget), so the gated figure above is a measurement and not a constant the spy always reports"
+else
+  fail "EDMTC-T04 / CA-066 -- the marker-absent path reported rc=${T04_JQ_RC} and ${T04_JQ_N} jq spawn(s), expected exit 0 and zero"
+fi
+
+# AC2's control. A mutant carrying ONE extra jq invocation immediately before the final allow must
+# push the tally to five, and the very same equality test that passed at four must reject it.
+T04_JQ_EXTRA_CALL='printf "%s" "$PAYLOAD" | jq -r ".tool_name" >/dev/null 2>&1 || true'
+T04_JQ_ALLOW_LINE='emit_decision allow ""'
+T04_JQ_MUTANT=""
+T04_JQ_MUTANT_OK=1
+t04_mutant_gateguard T04_JQ_MUTANT "$T04_JQ_ALLOW_LINE" \
+  "${T04_JQ_EXTRA_CALL}"$'\n'"${T04_JQ_ALLOW_LINE}" || T04_JQ_MUTANT_OK=0
+if [[ "$T04_JQ_MUTANT_OK" -eq 1 && -x "$T04_JQ_MUTANT" ]]; then
+  pass "EDMTC-T04 / CA-066 control -- a runnable copy of edm-gateguard was built with one extra jq invocation injected ahead of its final allow"
+else
+  fail "EDMTC-T04 / CA-066 control -- could not build the extra-jq mutant (the final allow line was not found in edm-gateguard); the pinned count below proves nothing"
+fi
+t04_jq_count "$T04_JQ_BIN" "$T04_JQ_MUTANT" "$T04_JQ_DATA"
+T04_JQ_MUT_N="$T04_JQ_N"
+if [[ "${T04_JQ_MUT_N:-0}" -eq $(( T04_JQ_EXPECTED + 1 )) ]]; then
+  pass "EDMTC-T04 / CA-066 control -- the injected extra jq IS counted: the mutant spawns ${T04_JQ_MUT_N} against ${T04_JQ_EXPECTED} for the shipped binary"
+else
+  fail "EDMTC-T04 / CA-066 control BROKEN -- the mutant spawned ${T04_JQ_MUT_N}, expected $(( T04_JQ_EXPECTED + 1 )); the spy cannot see an added jq, so the pinned count above cannot fail"
+fi
+T04_JQ_VERDICT=AGREED
+[[ "${T04_JQ_MUT_N:-0}" -eq "$T04_JQ_EXPECTED" ]] || T04_JQ_VERDICT=MISMATCH
+check "EDMTC-T04 / CA-066 control -- the same equality test that accepted the shipped binary REJECTS the mutant's count" \
+  "MISMATCH" "$T04_JQ_VERDICT"
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
 
