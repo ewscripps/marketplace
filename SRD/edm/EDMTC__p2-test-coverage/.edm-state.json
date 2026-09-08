@@ -42,7 +42,21 @@
       "unparseable_lines": 0
     },
     "6_phase": {
-      "started_at": "2026-09-07T20:25:32Z"
+      "started_at": "2026-09-07T20:25:32Z",
+      "completed_at": "2026-09-08T01:47:39Z",
+      "duration_seconds": 19327,
+      "tokens": {
+        "input": 160,
+        "output": 79539,
+        "cache_read": 59353811,
+        "cache_write_5m": 0,
+        "cache_write_1h": 2256043
+      },
+      "model_used": "claude-opus-5",
+      "estimated_cost_usd": 65.0719,
+      "human_baseline_usd": 0.00,
+      "attribution_mode": "scoped",
+      "unparseable_lines": 0
     }
   },
   "test_frameworks_detected": {},
@@ -87,5 +101,14 @@
   "forked_from": "EDMV4",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-09-07T20:25:33Z"
+  "last_updated": "2026-09-08T01:47:39Z",
+  "patterns_last_updated": "2026-09-08T01:47:27Z",
+  "patterns_updates": {
+    "qc": {
+      "updated_at": "2026-09-08T01:47:27Z",
+      "new_findings": 0,
+      "extracted_titles": 0,
+      "extraction_status": "no-recognized-findings"
+    }
+  }
 }

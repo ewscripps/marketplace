@@ -1,6 +1,6 @@
 # EDMTC - Session Handoff
 
-> **Last updated**: 2026-09-07T20:25:33Z by darryl.porter  
+> **Last updated**: 2026-09-08T01:48:08Z by darryl.porter  
 > **To resume**: `/edm:orchestrator EDMTC`
 
 ## Current Status
@@ -10,7 +10,7 @@
 - **Last gate**: Gate 3 - approved 2026-09-07T20:25:19Z by darryl.porter
 - **Product**: edm
 - **Description**: p2-test-coverage
-- **Next action**: Phase 6 in progress - run `/edm:orchestrator EDMTC` to continue, then `/edm:test EDMTC` when all tickets pass QC
+- **Next action**: Awaiting the convergence gate - run `/edm:code-audit EDMTC`, then `edm-state approve-gate EDMTC code-audit`
 
 ## Resume Point
 
@@ -56,7 +56,7 @@ _(no code audit is required for this mode (standard/fix-pack))_
 | `./SRD/edm/EDMTC__p2-test-coverage/architecture.md` | [absent] |
 | `./SRD/edm/EDMTC__p2-test-coverage/decisions.md` | [present] |
 | `./SRD/edm/EDMTC__p2-test-coverage/ROLLBACK.md` | [absent] (on-demand) |
-| `./SRD/edm/EDMTC__p2-test-coverage/exec-report.md` | [absent] (on-demand) |
+| `./SRD/edm/EDMTC__p2-test-coverage/exec-report.md` | [present] (on-demand) |
 
 ## Key Decisions Made
 
