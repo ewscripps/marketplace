@@ -13074,6 +13074,142 @@ T04_JQ_VERDICT=AGREED
 [[ "${T04_JQ_MUT_N:-0}" -eq "$T04_JQ_EXPECTED" ]] || T04_JQ_VERDICT=MISMATCH
 check "EDMTC-T04 / CA-066 control -- the same equality test that accepted the shipped binary REJECTS the mutant's count" \
   "MISMATCH" "$T04_JQ_VERDICT"
+
+echo
+# ---- CA-127: EDM_GATEGUARD_MAX_DENIALS, read from the environment ------------------------------
+# Only the hardcoded default of 3 was ever exercised (EDMV4-T15 AC8), so the env-reading half of
+# the knob was unproven: misspelling the variable name inside edm-gateguard would have left every
+# assertion in this suite green. Each case drives the SAME four-unchecked-path loop AC8 uses, so
+# the only variable is the setting.
+echo "--- CA-127: the denial budget is read from the environment, and a bad value falls back ---"
+
+# t04_with_env <VAR> <value> <proj> <data> <payload> -- t14_run with ONE extra environment variable
+# in scope for the duration of the call and removed again afterwards, so nothing downstream
+# inherits it. `export` rather than a `VAR=value bash ...` prefix because the variable NAME is a
+# parameter here; the value may legitimately be the empty string, which is a distinct state from
+# unset and is exactly what CA-131's explicitly-empty exempt-list case turns on.
+t04_with_env() {
+  local _t04_var="$1"
+  export "${_t04_var}=${2}"
+  t14_run "$3" "$4" "$5"
+  unset "$_t04_var"
+}
+
+# t04_budget_seq <outvar_seq> <outvar_lasterr> <value> -- runs four distinct unchecked paths
+# through one fresh session with EDM_GATEGUARD_MAX_DENIALS=<value> and returns the exit-code
+# sequence plus the last call's stderr. <value> of "-" means the variable is left UNSET, which is
+# how the default-of-3 comparison run below is produced from the identical fixture.
+t04_budget_seq() {
+  local __t04_seq="$1" __t04_err="$2" _t04_val="$3"
+  local _t04_proj="" _t04_data="" _t04_f _t04_acc="" _t04_pl
+  T04_BUDGET_FIRST_ERR=""
+  t14_fresh_marker_env _t04_proj _t04_data
+  for _t04_f in budget-w.js budget-x.js budget-y.js budget-z.js; do
+    _t04_pl="$(t04_payload Edit "$_t04_f")"
+    if [[ "$_t04_val" == "-" ]]; then
+      t14_run "$_t04_proj" "$_t04_data" "$_t04_pl"
+    else
+      t04_with_env EDM_GATEGUARD_MAX_DENIALS "$_t04_val" "$_t04_proj" "$_t04_data" "$_t04_pl"
+    fi
+    if [[ "$_t04_f" == "budget-w.js" ]]; then T04_BUDGET_FIRST_ERR="$T14_RUN_ERR"; fi
+    _t04_acc="${_t04_acc} ${T14_RUN_RC}"
+  done
+  printf -v "$__t04_seq" '%s' "$_t04_acc"
+  printf -v "$__t04_err" '%s' "$T14_RUN_ERR"
+}
+
+# AC3, explicit value 1: the budget is spent by the first denial, so calls two through four allow
+# with the advisory naming 1 -- not 3.
+T04_B1_SEQ="" T04_B1_ERR=""
+t04_budget_seq T04_B1_SEQ T04_B1_ERR 1
+check "EDMTC-T04 / CA-127 -- EDM_GATEGUARD_MAX_DENIALS=1 denies once and then allows: exit sequence" " 2 0 0 0" "$T04_B1_SEQ"
+check "EDMTC-T04 / CA-127 -- the advisory names the value the ENVIRONMENT supplied" "denial budget (1) reached" "$T04_B1_ERR"
+check_absent "EDMTC-T04 / CA-127 -- and never the hardcoded default it replaced" "denial budget (3) reached" "$T04_B1_ERR"
+
+# The control for AC3, and the reason the sequence above is a finding: the identical fixture with
+# the variable UNSET must produce the default's sequence instead. If edm-gateguard read a
+# misspelled variable name, both runs would return this same sequence and the assertion above
+# would fail -- which is exactly the failure CA-127 says was impossible before.
+T04_BD_SEQ="" T04_BD_ERR=""
+t04_budget_seq T04_BD_SEQ T04_BD_ERR -
+check "EDMTC-T04 / CA-127 control -- the same four-path fixture with the variable UNSET falls to the default of 3: exit sequence" " 2 2 2 0" "$T04_BD_SEQ"
+check "EDMTC-T04 / CA-127 control -- and its advisory names 3, so the value read above came from the environment rather than from the default" \
+  "denial budget (3) reached" "$T04_BD_ERR"
+if [[ "$T04_B1_SEQ" != "$T04_BD_SEQ" ]]; then
+  pass "EDMTC-T04 / CA-127 -- the set and unset runs of one fixture disagree ('${T04_B1_SEQ}' against '${T04_BD_SEQ}'), which is the whole claim: the environment half of the knob is live"
+else
+  fail "EDMTC-T04 / CA-127 -- the set and unset runs produced the SAME sequence '${T04_B1_SEQ}'; EDM_GATEGUARD_MAX_DENIALS is not being read"
+fi
+
+# The boundary the remediation asks for: a budget of 0 is already spent before the first call, so
+# nothing is ever denied -- and nothing is recorded checked either, because budget exhaustion is
+# deliberately not treated as an earned investigation pass.
+T04_B0_SEQ="" T04_B0_ERR=""
+t04_budget_seq T04_B0_SEQ T04_B0_ERR 0
+check "EDMTC-T04 / CA-127 -- EDM_GATEGUARD_MAX_DENIALS=0 is already spent at the first call: exit sequence" " 0 0 0 0" "$T04_B0_SEQ"
+check "EDMTC-T04 / CA-127 -- and the advisory names 0, the boundary value" "denial budget (0) reached" "$T04_B0_ERR"
+T04_B0_PROJ="" T04_B0_DATA=""
+t14_fresh_marker_env T04_B0_PROJ T04_B0_DATA
+T04_B0_KEY="$(CLAUDE_PROJECT_DIR="$T04_B0_PROJ" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+t04_with_env EDM_GATEGUARD_MAX_DENIALS 0 "$T04_B0_PROJ" "$T04_B0_DATA" "$(t04_payload Edit budget-zero.js)"
+if [[ ! -f "${T04_B0_DATA}/run/${T04_B0_KEY}.checked" ]]; then
+  pass "EDMTC-T04 / CA-127 -- a call allowed only because the budget was spent records NOTHING checked, so the next call still advises rather than treating exhaustion as an investigation pass"
+else
+  fail "EDMTC-T04 / CA-127 -- a budget-exhausted allow wrote a checked-file entry: $(cat "${T04_B0_DATA}/run/${T04_B0_KEY}.checked")"
+fi
+
+# AC4: the documented non-numeric fallback. Two values are driven, both rejected by the same
+# `''|*[!0-9]*` guard: a plainly non-numeric token, and a NEGATIVE integer -- the guard's contract
+# is a non-negative integer, and the negative case is the one that reproduces CA-009's inversion
+# when the guard is removed (see the control below).
+for _t04_bad in none -1; do
+  T04_BAD_SEQ="" T04_BAD_ERR=""
+  t04_budget_seq T04_BAD_SEQ T04_BAD_ERR "$_t04_bad"
+  check "EDMTC-T04 / CA-127 AC4 -- '${_t04_bad}' warns on stderr naming the rejected value" \
+    "EDM_GATEGUARD_MAX_DENIALS must be a non-negative integer (got: '${_t04_bad}')" "$T04_BUDGET_FIRST_ERR"
+  check "EDMTC-T04 / CA-127 AC4 -- '${_t04_bad}' says on stderr that it fell back to the default" \
+    "falling back to the default of 3" "$T04_BUDGET_FIRST_ERR"
+  check "EDMTC-T04 / CA-127 AC4 -- '${_t04_bad}' behaves as the default of 3, NOT as an allow-everything gate: exit sequence" \
+    " 2 2 2 0" "$T04_BAD_SEQ"
+  check_absent "EDMTC-T04 / CA-127 AC4 -- and the FIRST call is a real denial, carrying no budget advisory (the CA-009 inversion, in which the gate allowed everything while announcing an exhausted budget)" \
+    "denial budget" "$T04_BUDGET_FIRST_ERR"
+  check "EDMTC-T04 / CA-127 AC4 -- the first call's stderr is the fact list, so '${_t04_bad}' left the gate enforcing" \
+    "acceptance criteria of the ticket being implemented" "$T04_BUDGET_FIRST_ERR"
+done
+
+# AC4's control, and the reason those four assertions are not restatements: a mutant with the
+# validating `case` arm's assignment replaced by the raw value -- the pre-CA-009 code -- must fail
+# in exactly the way the guard exists to prevent. Driven with -1: the raw value reaches
+# `[[ "$(gg_denial_count)" -ge "$GG_MAX_DENIALS" ]]` as `[[ 0 -ge -1 ]]`, which is TRUE on the very
+# first call, so the gate allows every edit while printing "denial budget (-1) reached" -- the
+# fail-OPEN inversion, the opposite of the fail-closed default.
+T04_CA009_MUTANT=""
+T04_CA009_OK=1
+t04_mutant_gateguard T04_CA009_MUTANT 'GG_MAX_DENIALS=3' '    GG_MAX_DENIALS="$GG_MAX_DENIALS_RAW"' || T04_CA009_OK=0
+if [[ "$T04_CA009_OK" -eq 1 && -x "$T04_CA009_MUTANT" ]]; then
+  pass "EDMTC-T04 / CA-127 control -- a runnable copy of edm-gateguard was built with the non-numeric guard's fallback replaced by the raw value (the pre-CA-009 code)"
+else
+  fail "EDMTC-T04 / CA-127 control -- could not build the unvalidated mutant; the AC4 assertions above prove nothing"
+fi
+T04_CA009_PROJ="" T04_CA009_DATA=""
+t14_fresh_marker_env T04_CA009_PROJ T04_CA009_DATA
+T04_CA009_RC=0
+export EDM_GATEGUARD_MAX_DENIALS=-1
+T04_CA009_PAYLOAD="$(t04_payload Edit ca009-probe.js)"
+T04_CA009_OUT="$(printf '%s' "$T04_CA009_PAYLOAD" | CLAUDE_PROJECT_DIR="$T04_CA009_PROJ" \
+  CLAUDE_PLUGIN_DATA="$T04_CA009_DATA" EDM_GATEGUARD_DENY_MODE=exit-code bash "$T04_CA009_MUTANT" \
+  2>"${T04_TMP}/ca009.stderr")" || T04_CA009_RC=$?
+unset EDM_GATEGUARD_MAX_DENIALS
+T04_CA009_ERR="$(cat "${T04_TMP}/ca009.stderr" 2>/dev/null || true)"
+if [[ "$T04_CA009_RC" -eq 0 ]]; then
+  pass "EDMTC-T04 / CA-127 control -- without the guard, '-1' makes the gate ALLOW its very first unchecked edit (exit 0) where the shipped binary denies it (exit 2)"
+else
+  fail "EDMTC-T04 / CA-127 control BROKEN -- the unvalidated mutant exited ${T04_CA009_RC} on its first unchecked edit; it does not reproduce CA-009's inversion, so the AC4 assertions above are unproven"
+fi
+check "EDMTC-T04 / CA-127 control -- and it announces an exhausted budget while doing so, naming the raw value: the exact fail-open shape CA-009 recorded" \
+  "denial budget (-1) reached" "$T04_CA009_ERR"
+check_absent "EDMTC-T04 / CA-127 control -- the unvalidated mutant emits no fact list at all, so the guard is what keeps '-1' enforcing" \
+  "acceptance criteria of the ticket being implemented" "$T04_CA009_ERR"
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
 
