@@ -1,7 +1,7 @@
 {
   "prefix": "EDMDS",
   "schema_version": 1,
-  "current_phase": 2,
+  "current_phase": 3,
   "gates_approved": [
     {
       "gate": 1,
@@ -11,7 +11,13 @@
     }
   ],
   "artifacts": {},
-  "artifact_hashes": {},
+  "artifact_hashes": {
+    "srd": {
+      "hash": "e6c29484dc17744294b982a307ee1ae4858401c76488387ff47a8205c60cea9d",
+      "path": "./SRD/edm/EDMDS__design-docket/srd.md",
+      "recorded_at": "2026-09-08T16:58:14Z"
+    }
+  },
   "srd_version": "1.0.0",
   "estimated_size": "Unknown",
   "initiative_branch": "edm/edmds-design-docket",
@@ -36,7 +42,24 @@
       "unparseable_lines": 0
     },
     "2_phase": {
-      "started_at": "2026-09-08T16:54:58Z"
+      "started_at": "2026-09-08T16:54:58Z",
+      "completed_at": "2026-09-08T16:58:14Z",
+      "duration_seconds": 196,
+      "tokens": {
+        "input": 10,
+        "output": 16471,
+        "cache_read": 4359034,
+        "cache_write_5m": 0,
+        "cache_write_1h": 14843
+      },
+      "model_used": "claude-opus-5",
+      "estimated_cost_usd": 3.2877,
+      "human_baseline_usd": 0.00,
+      "attribution_mode": "scoped",
+      "unparseable_lines": 0
+    },
+    "3_phase": {
+      "started_at": "2026-09-08T16:58:15Z"
     }
   },
   "test_frameworks_detected": {},
@@ -75,6 +98,8 @@
   "supersedes": "",
   "forked_from": "EDMV4",
   "parent_prefix": "",
-  "related_prefixes": [],
-  "last_updated": "2026-09-08T16:57:38Z"
+  "related_prefixes": [
+    "EDMTC"
+  ],
+  "last_updated": "2026-09-08T18:18:11Z"
 }
