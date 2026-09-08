@@ -12895,6 +12895,543 @@ CA027_SINGLE_SLOT="$(
 [[ "$CA027_SINGLE_SLOT" == "FIRST_LEAKED" ]] \
   && pass "CA-027 -- negative control: the same predicate reports the leak under single-slot (harness_scratch_dir) semantics, so the additive check discriminates" \
   || fail "CA-027 -- negative control broken: single-slot semantics reported '${CA027_SINGLE_SLOT}', expected FIRST_LEAKED"
+echo
+# =================================================================================================
+# EDMTC-T04 -- edm-gateguard's four unexercised paths (CA-066, CA-127, CA-130, CA-131)
+# =================================================================================================
+# Coverage work only. edm-gateguard's behaviour is treated as CORRECT here: every figure below
+# records what the shipped binary already does. What makes each figure a finding rather than a
+# restatement is its control -- a mutant copy of the binary, or the mirror case, that must produce
+# a DIFFERENT answer. Four paths had no coverage at all:
+#
+#   CA-066  the GATED allow path's jq-spawn count (EDMV4-T45 AC6's spy covers only the
+#           marker-ABSENT fast path, which is the one with the documented zero-jq budget)
+#   CA-127  EDM_GATEGUARD_MAX_DENIALS read from the environment, and its non-numeric fallback
+#   CA-130  MultiEdit's second tolerated payload shape, and the de-duplication across both
+#   CA-131  every gg_is_exempt glob form beyond a single `**`-prefixed entry
+#
+# GATEGUARD, PLUGIN_DIR, DATADIR_LIB, t14_fresh_marker_env and t14_run are all established by the
+# EDMV4-T11/T14 sections far above and are reused unchanged rather than copied (CA-118's lesson:
+# this file does not need a second runner for a job it already has one for).
+echo "=== EDMTC-T04: gateguard coverage -- gated-path jq budget, the denial-budget knob, MultiEdit shapes, exempt-glob forms ==="
+echo
+
+w8_scratch_dir T04_TMP
+
+# t04_payload <tool-name> <file-path> -- the one-line PreToolUse document every single-path case
+# below sends on stdin.
+t04_payload() {
+  printf '{"tool_name":"%s","tool_input":{"file_path":"%s"}}' "$1" "$2"
+}
+
+# t04_mutant_gateguard <outvar> <needle> <replacement> -- writes a RUNNABLE copy of edm-gateguard
+# with the first line containing <needle> replaced by <replacement> (which may itself span several
+# lines), and returns the copy's path by name. The copy gets its own sibling libraries: the binary
+# resolves _edm-cli-lib.sh and _edm-datadir-lib.sh against its own SCRIPT_DIR, so a copy dropped
+# anywhere else aborts on that source line long before reaching the code under test -- and every
+# "the mutant behaves differently" control below would then pass for the wrong reason. Line
+# rewriting in pure bash: no sed line-address arithmetic to drift when the source moves. Returns
+# non-zero when the needle is never found, so a rename inside edm-gateguard fails this band loudly
+# instead of quietly yielding an unmutated copy.
+t04_mutant_gateguard() {
+  local __t04_out="$1" _t04_needle="$2" _t04_repl="$3"
+  local _t04_dir _t04_line _t04_hit=0
+  _t04_dir="$(mktemp -d "${T04_TMP}/ggmut.XXXXXX")"
+  cp "${PLUGIN_DIR}/bin/_edm-cli-lib.sh" "${PLUGIN_DIR}/bin/_edm-datadir-lib.sh" "${_t04_dir}/"
+  : > "${_t04_dir}/edm-gateguard"
+  while IFS= read -r _t04_line || [[ -n "$_t04_line" ]]; do
+    if [[ "$_t04_hit" -eq 0 && "$_t04_line" == *"$_t04_needle"* ]]; then
+      printf '%s\n' "$_t04_repl" >> "${_t04_dir}/edm-gateguard"
+      _t04_hit=1
+    else
+      printf '%s\n' "$_t04_line" >> "${_t04_dir}/edm-gateguard"
+    fi
+  done < "$GATEGUARD"
+  chmod +x "${_t04_dir}/edm-gateguard"
+  printf -v "$__t04_out" '%s' "${_t04_dir}/edm-gateguard"
+  [[ "$_t04_hit" -eq 1 ]]
+}
+
+# ---- CA-066: the GATED allow path's jq-spawn count --------------------------------------------
+# EDMV4-T07 AC8 gives the marker-ABSENT fast path a cost budget (one exec, one marker test, zero
+# jq) and EDMV4-T45 AC6's spy pins it. The GATED allow path -- a Phase 6 marker present, the target
+# already recorded checked -- had no such pin, so the second `jq -c` EDMV4-T45 added to project the
+# payload into hookify's field shape was unmeasured. The figure is RECORDED here rather than
+# argued down: four spawns, and the band below attributes each one.
+echo "--- CA-066: the gated allow path's jq-spawn count is pinned, and attributed ---"
+
+T04_JQ_BIN="${T04_TMP}/jqspy-bin"
+T04_JQ_BIN_NOHOOK="${T04_TMP}/jqspy-bin-nohookify"
+mkdir -p "$T04_JQ_BIN" "$T04_JQ_BIN_NOHOOK"
+# The two spy PATHs are the ENTIRE PATH for their runs, so nothing outside them can be reached and
+# the only difference between them is whether edm-hookify is on it. Every binary edm-gateguard and
+# its libraries actually invoke is linked in; a missing one would surface as a failed run rather
+# than a wrong count, because each case below also asserts the run allowed cleanly.
+for _t04_bin in dirname bash grep date mkdir mv rm cat stat sleep tr sort head tail wc mktemp git; do
+  ln -s "$(command -v "$_t04_bin")" "${T04_JQ_BIN}/${_t04_bin}"
+  ln -s "$(command -v "$_t04_bin")" "${T04_JQ_BIN_NOHOOK}/${_t04_bin}"
+done
+for _t04_spydir in "$T04_JQ_BIN" "$T04_JQ_BIN_NOHOOK"; do
+  cat > "${_t04_spydir}/jq" <<T04JQSPY
+#!/bin/sh
+echo x >> "${_t04_spydir}/.jq-count"
+exec "$(command -v jq)" "\$@"
+T04JQSPY
+  chmod +x "${_t04_spydir}/jq"
+done
+# A STUB hookify, not the real one: the real binary spawns jq of its own, and those spawns are
+# edm-hookify's cost, not this gate's. The stub keeps the count attributable to edm-gateguard.
+cat > "${T04_JQ_BIN}/edm-hookify" <<'T04HFSTUB'
+#!/bin/sh
+exit 0
+T04HFSTUB
+chmod +x "${T04_JQ_BIN}/edm-hookify"
+
+T04_JQ_PROJ="${T04_TMP}/jq-proj"
+T04_JQ_DATA="${T04_TMP}/jq-data"
+T04_JQ_DATA_ABSENT="${T04_TMP}/jq-data-absent"
+mkdir -p "$T04_JQ_PROJ" "${T04_JQ_DATA}/run" "$T04_JQ_DATA_ABSENT"
+T04_JQ_KEY="$(CLAUDE_PROJECT_DIR="$T04_JQ_PROJ" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+printf 'T04PFX\t%s\t2026-09-02T00:00:00Z\n' "$T04_JQ_PROJ" > "${T04_JQ_DATA}/run/${T04_JQ_KEY}.phase6"
+printf 'src/foo.js\n' > "${T04_JQ_DATA}/run/${T04_JQ_KEY}.checked"
+T04_JQ_PAYLOAD="$(t04_payload Edit src/foo.js)"
+
+# t04_jq_count <bindir> <gateguard> <data-dir> -- one Edit against an ALREADY-CHECKED path (so the
+# call takes the gated ALLOW path) with <bindir> as the whole PATH, reporting the spy's tally in
+# T04_JQ_N and the run's own outcome in T04_JQ_RC/OUT/ERR. The outcome matters as much as the
+# tally: a denial would spend a fifth jq inside emit_decision, so a count read without checking
+# that the call allowed would silently be measuring a different path.
+t04_jq_count() {
+  local _t04_bin="$1" _t04_gg="$2" _t04_data="$3"
+  : > "${_t04_bin}/.jq-count"
+  T04_JQ_RC=0
+  T04_JQ_OUT="$(printf '%s' "$T04_JQ_PAYLOAD" | CLAUDE_PROJECT_DIR="$T04_JQ_PROJ" \
+    CLAUDE_PLUGIN_DATA="$_t04_data" PATH="$_t04_bin" bash "$_t04_gg" 2>"${T04_TMP}/jqspy.stderr")" || T04_JQ_RC=$?
+  T04_JQ_ERR="$(cat "${T04_TMP}/jqspy.stderr" 2>/dev/null || true)"
+  T04_JQ_N="$(grep -c '.' "${_t04_bin}/.jq-count" || true)"
+}
+
+# The pinned figure. Four spawns, one per site on this path: `.tool_name` (dispatch), `.session_id`
+# (the per-session denial-budget key), `.tool_input.file_path` (the Edit arm), and the file-event
+# projection EDMV4-T45 added -- the one CA-066 named. Raising this number is a real cost change on
+# a hook that fires on every Edit and Write, and must be a deliberate, recorded decision.
+T04_JQ_EXPECTED=4
+t04_jq_count "$T04_JQ_BIN" "$GATEGUARD" "$T04_JQ_DATA"
+if [[ "$T04_JQ_RC" -eq 0 && -z "$T04_JQ_OUT" && -z "$T04_JQ_ERR" ]]; then
+  pass "EDMTC-T04 / CA-066 -- the measured call is a gated ALLOW (exit 0, empty stdout and stderr), so the count below is the allow path's own cost and not a denial's"
+else
+  fail "EDMTC-T04 / CA-066 -- the measured call did not allow cleanly: rc=${T04_JQ_RC} stdout=[${T04_JQ_OUT}] stderr=[${T04_JQ_ERR}]; every count below measures the wrong path"
+fi
+check_num "EDMTC-T04 / CA-066 -- the gated allow path spawns exactly ${T04_JQ_EXPECTED} jq processes (tool_name, session_id, tool_input.file_path, and the T45 file-event projection)" \
+  "$T04_JQ_EXPECTED" "$T04_JQ_N"
+T04_JQ_WITH_HOOKIFY="$T04_JQ_N"
+
+# Attribution: the identical fixture with edm-hookify absent from PATH spawns exactly one fewer.
+# That is what identifies the fourth spawn as the file-event projection CA-066 named, rather than
+# leaving the total an unexplained lump.
+t04_jq_count "$T04_JQ_BIN_NOHOOK" "$GATEGUARD" "$T04_JQ_DATA"
+if [[ "$T04_JQ_RC" -eq 0 && -z "$T04_JQ_OUT" && -z "$T04_JQ_ERR" ]]; then
+  pass "EDMTC-T04 / CA-066 -- the hookify-absent comparison run also allows cleanly, so its count is comparable to the one above"
+else
+  fail "EDMTC-T04 / CA-066 -- the hookify-absent comparison run did not allow cleanly: rc=${T04_JQ_RC} stdout=[${T04_JQ_OUT}] stderr=[${T04_JQ_ERR}]"
+fi
+if [[ "${T04_JQ_N:-0}" -eq $(( T04_JQ_WITH_HOOKIFY - 1 )) ]]; then
+  pass "EDMTC-T04 / CA-066 -- with edm-hookify off PATH the same call spawns ${T04_JQ_N}, exactly one fewer, so precisely ONE of the ${T04_JQ_WITH_HOOKIFY} is the file-event projection CA-066 named"
+else
+  fail "EDMTC-T04 / CA-066 -- expected $(( T04_JQ_WITH_HOOKIFY - 1 )) spawns with edm-hookify off PATH, got ${T04_JQ_N}; the fourth spawn is not the hookify projection"
+fi
+
+# Contrast with the path that DOES have a documented budget: the same fixture with no marker spawns
+# zero. Without this the gated figure would be a number with nothing to be a number ABOUT.
+t04_jq_count "$T04_JQ_BIN" "$GATEGUARD" "$T04_JQ_DATA_ABSENT"
+if [[ "$T04_JQ_RC" -eq 0 && "${T04_JQ_N:-1}" -eq 0 ]]; then
+  pass "EDMTC-T04 / CA-066 -- the marker-ABSENT fast path through the same spy spawns zero jq (EDMV4-T07 AC8's budget), so the gated figure above is a measurement and not a constant the spy always reports"
+else
+  fail "EDMTC-T04 / CA-066 -- the marker-absent path reported rc=${T04_JQ_RC} and ${T04_JQ_N} jq spawn(s), expected exit 0 and zero"
+fi
+
+# AC2's control. A mutant carrying ONE extra jq invocation immediately before the final allow must
+# push the tally to five, and the very same equality test that passed at four must reject it.
+T04_JQ_EXTRA_CALL='printf "%s" "$PAYLOAD" | jq -r ".tool_name" >/dev/null 2>&1 || true'
+T04_JQ_ALLOW_LINE='emit_decision allow ""'
+T04_JQ_MUTANT=""
+T04_JQ_MUTANT_OK=1
+t04_mutant_gateguard T04_JQ_MUTANT "$T04_JQ_ALLOW_LINE" \
+  "${T04_JQ_EXTRA_CALL}"$'\n'"${T04_JQ_ALLOW_LINE}" || T04_JQ_MUTANT_OK=0
+if [[ "$T04_JQ_MUTANT_OK" -eq 1 && -x "$T04_JQ_MUTANT" ]]; then
+  pass "EDMTC-T04 / CA-066 control -- a runnable copy of edm-gateguard was built with one extra jq invocation injected ahead of its final allow"
+else
+  fail "EDMTC-T04 / CA-066 control -- could not build the extra-jq mutant (the final allow line was not found in edm-gateguard); the pinned count below proves nothing"
+fi
+t04_jq_count "$T04_JQ_BIN" "$T04_JQ_MUTANT" "$T04_JQ_DATA"
+T04_JQ_MUT_N="$T04_JQ_N"
+if [[ "${T04_JQ_MUT_N:-0}" -eq $(( T04_JQ_EXPECTED + 1 )) ]]; then
+  pass "EDMTC-T04 / CA-066 control -- the injected extra jq IS counted: the mutant spawns ${T04_JQ_MUT_N} against ${T04_JQ_EXPECTED} for the shipped binary"
+else
+  fail "EDMTC-T04 / CA-066 control BROKEN -- the mutant spawned ${T04_JQ_MUT_N}, expected $(( T04_JQ_EXPECTED + 1 )); the spy cannot see an added jq, so the pinned count above cannot fail"
+fi
+T04_JQ_VERDICT=AGREED
+[[ "${T04_JQ_MUT_N:-0}" -eq "$T04_JQ_EXPECTED" ]] || T04_JQ_VERDICT=MISMATCH
+check "EDMTC-T04 / CA-066 control -- the same equality test that accepted the shipped binary REJECTS the mutant's count" \
+  "MISMATCH" "$T04_JQ_VERDICT"
+
+echo
+# ---- CA-127: EDM_GATEGUARD_MAX_DENIALS, read from the environment ------------------------------
+# Only the hardcoded default of 3 was ever exercised (EDMV4-T15 AC8), so the env-reading half of
+# the knob was unproven: misspelling the variable name inside edm-gateguard would have left every
+# assertion in this suite green. Each case drives the SAME four-unchecked-path loop AC8 uses, so
+# the only variable is the setting.
+echo "--- CA-127: the denial budget is read from the environment, and a bad value falls back ---"
+
+# t04_with_env <VAR> <value> <proj> <data> <payload> -- t14_run with ONE extra environment variable
+# in scope for the duration of the call and removed again afterwards, so nothing downstream
+# inherits it. `export` rather than a `VAR=value bash ...` prefix because the variable NAME is a
+# parameter here; the value may legitimately be the empty string, which is a distinct state from
+# unset and is exactly what CA-131's explicitly-empty exempt-list case turns on.
+t04_with_env() {
+  local _t04_var="$1"
+  export "${_t04_var}=${2}"
+  t14_run "$3" "$4" "$5"
+  unset "$_t04_var"
+}
+
+# t04_budget_seq <outvar_seq> <outvar_lasterr> <value> -- runs four distinct unchecked paths
+# through one fresh session with EDM_GATEGUARD_MAX_DENIALS=<value> and returns the exit-code
+# sequence plus the last call's stderr. <value> of "-" means the variable is left UNSET, which is
+# how the default-of-3 comparison run below is produced from the identical fixture.
+t04_budget_seq() {
+  local __t04_seq="$1" __t04_err="$2" _t04_val="$3"
+  local _t04_proj="" _t04_data="" _t04_f _t04_acc="" _t04_pl
+  T04_BUDGET_FIRST_ERR=""
+  t14_fresh_marker_env _t04_proj _t04_data
+  for _t04_f in budget-w.js budget-x.js budget-y.js budget-z.js; do
+    _t04_pl="$(t04_payload Edit "$_t04_f")"
+    if [[ "$_t04_val" == "-" ]]; then
+      t14_run "$_t04_proj" "$_t04_data" "$_t04_pl"
+    else
+      t04_with_env EDM_GATEGUARD_MAX_DENIALS "$_t04_val" "$_t04_proj" "$_t04_data" "$_t04_pl"
+    fi
+    if [[ "$_t04_f" == "budget-w.js" ]]; then T04_BUDGET_FIRST_ERR="$T14_RUN_ERR"; fi
+    _t04_acc="${_t04_acc} ${T14_RUN_RC}"
+  done
+  printf -v "$__t04_seq" '%s' "$_t04_acc"
+  printf -v "$__t04_err" '%s' "$T14_RUN_ERR"
+}
+
+# AC3, explicit value 1: the budget is spent by the first denial, so calls two through four allow
+# with the advisory naming 1 -- not 3.
+T04_B1_SEQ="" T04_B1_ERR=""
+t04_budget_seq T04_B1_SEQ T04_B1_ERR 1
+check "EDMTC-T04 / CA-127 -- EDM_GATEGUARD_MAX_DENIALS=1 denies once and then allows: exit sequence" " 2 0 0 0" "$T04_B1_SEQ"
+check "EDMTC-T04 / CA-127 -- the advisory names the value the ENVIRONMENT supplied" "denial budget (1) reached" "$T04_B1_ERR"
+check_absent "EDMTC-T04 / CA-127 -- and never the hardcoded default it replaced" "denial budget (3) reached" "$T04_B1_ERR"
+
+# The control for AC3, and the reason the sequence above is a finding: the identical fixture with
+# the variable UNSET must produce the default's sequence instead. If edm-gateguard read a
+# misspelled variable name, both runs would return this same sequence and the assertion above
+# would fail -- which is exactly the failure CA-127 says was impossible before.
+T04_BD_SEQ="" T04_BD_ERR=""
+t04_budget_seq T04_BD_SEQ T04_BD_ERR -
+check "EDMTC-T04 / CA-127 control -- the same four-path fixture with the variable UNSET falls to the default of 3: exit sequence" " 2 2 2 0" "$T04_BD_SEQ"
+check "EDMTC-T04 / CA-127 control -- and its advisory names 3, so the value read above came from the environment rather than from the default" \
+  "denial budget (3) reached" "$T04_BD_ERR"
+if [[ "$T04_B1_SEQ" != "$T04_BD_SEQ" ]]; then
+  pass "EDMTC-T04 / CA-127 -- the set and unset runs of one fixture disagree ('${T04_B1_SEQ}' against '${T04_BD_SEQ}'), which is the whole claim: the environment half of the knob is live"
+else
+  fail "EDMTC-T04 / CA-127 -- the set and unset runs produced the SAME sequence '${T04_B1_SEQ}'; EDM_GATEGUARD_MAX_DENIALS is not being read"
+fi
+
+# The boundary the remediation asks for: a budget of 0 is already spent before the first call, so
+# nothing is ever denied -- and nothing is recorded checked either, because budget exhaustion is
+# deliberately not treated as an earned investigation pass.
+T04_B0_SEQ="" T04_B0_ERR=""
+t04_budget_seq T04_B0_SEQ T04_B0_ERR 0
+check "EDMTC-T04 / CA-127 -- EDM_GATEGUARD_MAX_DENIALS=0 is already spent at the first call: exit sequence" " 0 0 0 0" "$T04_B0_SEQ"
+check "EDMTC-T04 / CA-127 -- and the advisory names 0, the boundary value" "denial budget (0) reached" "$T04_B0_ERR"
+T04_B0_PROJ="" T04_B0_DATA=""
+t14_fresh_marker_env T04_B0_PROJ T04_B0_DATA
+T04_B0_KEY="$(CLAUDE_PROJECT_DIR="$T04_B0_PROJ" bash -c ". '${DATADIR_LIB}'; edm_project_key" 2>/dev/null)"
+t04_with_env EDM_GATEGUARD_MAX_DENIALS 0 "$T04_B0_PROJ" "$T04_B0_DATA" "$(t04_payload Edit budget-zero.js)"
+if [[ ! -f "${T04_B0_DATA}/run/${T04_B0_KEY}.checked" ]]; then
+  pass "EDMTC-T04 / CA-127 -- a call allowed only because the budget was spent records NOTHING checked, so the next call still advises rather than treating exhaustion as an investigation pass"
+else
+  fail "EDMTC-T04 / CA-127 -- a budget-exhausted allow wrote a checked-file entry: $(cat "${T04_B0_DATA}/run/${T04_B0_KEY}.checked")"
+fi
+
+# AC4: the documented non-numeric fallback. Two values are driven, both rejected by the same
+# `''|*[!0-9]*` guard: a plainly non-numeric token, and a NEGATIVE integer -- the guard's contract
+# is a non-negative integer, and the negative case is the one that reproduces CA-009's inversion
+# when the guard is removed (see the control below).
+for _t04_bad in none -1; do
+  T04_BAD_SEQ="" T04_BAD_ERR=""
+  t04_budget_seq T04_BAD_SEQ T04_BAD_ERR "$_t04_bad"
+  check "EDMTC-T04 / CA-127 AC4 -- '${_t04_bad}' warns on stderr naming the rejected value" \
+    "EDM_GATEGUARD_MAX_DENIALS must be a non-negative integer (got: '${_t04_bad}')" "$T04_BUDGET_FIRST_ERR"
+  check "EDMTC-T04 / CA-127 AC4 -- '${_t04_bad}' says on stderr that it fell back to the default" \
+    "falling back to the default of 3" "$T04_BUDGET_FIRST_ERR"
+  check "EDMTC-T04 / CA-127 AC4 -- '${_t04_bad}' behaves as the default of 3, NOT as an allow-everything gate: exit sequence" \
+    " 2 2 2 0" "$T04_BAD_SEQ"
+  check_absent "EDMTC-T04 / CA-127 AC4 -- and the FIRST call is a real denial, carrying no budget advisory (the CA-009 inversion, in which the gate allowed everything while announcing an exhausted budget)" \
+    "denial budget" "$T04_BUDGET_FIRST_ERR"
+  check "EDMTC-T04 / CA-127 AC4 -- the first call's stderr is the fact list, so '${_t04_bad}' left the gate enforcing" \
+    "acceptance criteria of the ticket being implemented" "$T04_BUDGET_FIRST_ERR"
+done
+
+# AC4's control, and the reason those four assertions are not restatements: a mutant with the
+# validating `case` arm's assignment replaced by the raw value -- the pre-CA-009 code -- must fail
+# in exactly the way the guard exists to prevent. Driven with -1: the raw value reaches
+# `[[ "$(gg_denial_count)" -ge "$GG_MAX_DENIALS" ]]` as `[[ 0 -ge -1 ]]`, which is TRUE on the very
+# first call, so the gate allows every edit while printing "denial budget (-1) reached" -- the
+# fail-OPEN inversion, the opposite of the fail-closed default.
+T04_CA009_MUTANT=""
+T04_CA009_OK=1
+t04_mutant_gateguard T04_CA009_MUTANT 'GG_MAX_DENIALS=3' '    GG_MAX_DENIALS="$GG_MAX_DENIALS_RAW"' || T04_CA009_OK=0
+if [[ "$T04_CA009_OK" -eq 1 && -x "$T04_CA009_MUTANT" ]]; then
+  pass "EDMTC-T04 / CA-127 control -- a runnable copy of edm-gateguard was built with the non-numeric guard's fallback replaced by the raw value (the pre-CA-009 code)"
+else
+  fail "EDMTC-T04 / CA-127 control -- could not build the unvalidated mutant; the AC4 assertions above prove nothing"
+fi
+T04_CA009_PROJ="" T04_CA009_DATA=""
+t14_fresh_marker_env T04_CA009_PROJ T04_CA009_DATA
+T04_CA009_RC=0
+export EDM_GATEGUARD_MAX_DENIALS=-1
+T04_CA009_PAYLOAD="$(t04_payload Edit ca009-probe.js)"
+T04_CA009_OUT="$(printf '%s' "$T04_CA009_PAYLOAD" | CLAUDE_PROJECT_DIR="$T04_CA009_PROJ" \
+  CLAUDE_PLUGIN_DATA="$T04_CA009_DATA" EDM_GATEGUARD_DENY_MODE=exit-code bash "$T04_CA009_MUTANT" \
+  2>"${T04_TMP}/ca009.stderr")" || T04_CA009_RC=$?
+unset EDM_GATEGUARD_MAX_DENIALS
+T04_CA009_ERR="$(cat "${T04_TMP}/ca009.stderr" 2>/dev/null || true)"
+if [[ "$T04_CA009_RC" -eq 0 ]]; then
+  pass "EDMTC-T04 / CA-127 control -- without the guard, '-1' makes the gate ALLOW its very first unchecked edit (exit 0) where the shipped binary denies it (exit 2)"
+else
+  fail "EDMTC-T04 / CA-127 control BROKEN -- the unvalidated mutant exited ${T04_CA009_RC} on its first unchecked edit; it does not reproduce CA-009's inversion, so the AC4 assertions above are unproven"
+fi
+check "EDMTC-T04 / CA-127 control -- and it announces an exhausted budget while doing so, naming the raw value: the exact fail-open shape CA-009 recorded" \
+  "denial budget (-1) reached" "$T04_CA009_ERR"
+check_absent "EDMTC-T04 / CA-127 control -- the unvalidated mutant emits no fact list at all, so the guard is what keeps '-1' enforcing" \
+  "acceptance criteria of the ticket being implemented" "$T04_CA009_ERR"
+
+echo
+# ---- CA-130: MultiEdit's two tolerated payload shapes, and the de-duplication across them ------
+# EDMV4-T14 AC4/AC5 drive only the multi-file `edits[].file_path` shape. Claude Code's own
+# single-file shape -- `tool_input.file_path` alongside an edits[] of old_string/new_string with no
+# per-edit path, the shape the tolerance comment at the MultiEdit arm exists for -- was never sent.
+echo "--- CA-130: MultiEdit's single-file payload shape, and de-duplication across a batch ---"
+
+T04_ME_SOLO='{"tool_name":"MultiEdit","tool_input":{"file_path":"solo.js","edits":[{"old_string":"a","new_string":"b"}]}}'
+T04_ME_NOPATH='{"tool_name":"MultiEdit","tool_input":{"edits":[{"old_string":"a","new_string":"b"}]}}'
+T04_ME_PROJ="" T04_ME_DATA=""
+t14_fresh_marker_env T04_ME_PROJ T04_ME_DATA
+t14_run "$T04_ME_PROJ" "$T04_ME_DATA" "$T04_ME_SOLO"
+if [[ "$T14_RUN_RC" -eq 2 && "$T14_RUN_ERR" == *"(solo.js)"* ]]; then
+  pass "EDMTC-T04 / CA-130 AC5 -- the single-file MultiEdit shape denies, and the fact list names tool_input.file_path's value (solo.js)"
+else
+  fail "EDMTC-T04 / CA-130 AC5 -- expected a denial naming solo.js from the single-file shape, got rc=${T14_RUN_RC} stderr=[${T14_RUN_ERR}]"
+fi
+check "EDMTC-T04 / CA-130 AC5 -- and it is the Edit fact set, which is what the MultiEdit arm reuses" \
+  "import or require this file (solo.js)" "$T14_RUN_ERR"
+
+# The control that makes the case above about tool_input.file_path specifically: the SAME payload
+# with that one field removed -- edits[] alone, carrying no path of any kind -- must allow. Without
+# it, a denial naming solo.js would be equally consistent with the path having been read from
+# somewhere else entirely.
+T04_MEN_PROJ="" T04_MEN_DATA=""
+t14_fresh_marker_env T04_MEN_PROJ T04_MEN_DATA
+t14_run "$T04_MEN_PROJ" "$T04_MEN_DATA" "$T04_ME_NOPATH"
+if [[ "$T14_RUN_RC" -eq 0 && -z "$T14_RUN_OUT" && -z "$T14_RUN_ERR" ]]; then
+  pass "EDMTC-T04 / CA-130 AC5 control -- the identical payload with tool_input.file_path removed yields no denial at all, so the denial above came from that field and nowhere else"
+else
+  fail "EDMTC-T04 / CA-130 AC5 control -- a MultiEdit payload naming no path anywhere still produced rc=${T14_RUN_RC} stdout=[${T14_RUN_OUT}] stderr=[${T14_RUN_ERR}]"
+fi
+
+# AC6: de-duplication. The batch below names four paths across BOTH shapes, one of them twice.
+# Deliberately chosen so payload order and sorted order differ: `unique` both sorts and dedups, so
+# a list that has been through it starts at aa.js while the raw concatenation starts at the
+# duplicated zz.js.
+T04_DUP_PAYLOAD='{"tool_name":"MultiEdit","tool_input":{"file_path":"zz.js","edits":[{"file_path":"zz.js"},{"file_path":"aa.js"},{"file_path":"mm.js"}]}}'
+
+# t04_multi_projection <outvar> <file> -- lifts the MultiEdit file-list jq program out of <file>
+# and returns it by name, so the projection can be exercised on a payload directly without any
+# part of it being re-typed here. A re-typed copy would go on reporting three entries long after
+# the real projection stopped producing them, which is the class of defect this whole pack exists
+# to remove. The program is the text between the `jq -r '` that opens the MultiEdit capture and
+# the line that closes the quote; returns non-zero if either boundary is missing.
+t04_multi_projection() {
+  local __t04_out="$1" _t04_file="$2" _t04_line _t04_state=0 _t04_acc=""
+  while IFS= read -r _t04_line || [[ -n "$_t04_line" ]]; do
+    if [[ "$_t04_state" -eq 0 ]]; then
+      case "$_t04_line" in
+        *"GG_MULTI_FILES="*"jq -r '"*) _t04_state=1 ;;
+      esac
+      continue
+    fi
+    case "$_t04_line" in
+      *"' 2>/dev/null)"*) _t04_state=2; break ;;
+    esac
+    _t04_acc="${_t04_acc}${_t04_line}"$'\n'
+  done < "$_t04_file"
+  printf -v "$__t04_out" '%s' "$_t04_acc"
+  [[ "$_t04_state" -eq 2 && -n "$_t04_acc" ]]
+}
+
+# t04_project_dup <outvar_count> <outvar_zz> <gateguard-file> -- runs <gateguard-file>'s own
+# MultiEdit projection over the duplicating payload and reports how many paths it yields and how
+# many times the duplicated one appears.
+t04_project_dup() {
+  local __t04_n="$1" __t04_zz="$2" _t04_src="$3"
+  local _t04_prog="" _t04_out_file
+  _t04_out_file="$(mktemp "${T04_TMP}/projection.XXXXXX")"
+  if ! t04_multi_projection _t04_prog "$_t04_src"; then
+    printf 'EXTRACTION_FAILED\n' > "$_t04_out_file"
+  elif ! printf '%s' "$T04_DUP_PAYLOAD" | jq -r "$_t04_prog" > "$_t04_out_file" 2>/dev/null; then
+    printf 'PROJECTION_FAILED\n' > "$_t04_out_file"
+  fi
+  printf -v "$__t04_n" '%s' "$(grep -c '.' "$_t04_out_file" || true)"
+  printf -v "$__t04_zz" '%s' "$(grep -c '^zz\.js$' "$_t04_out_file" || true)"
+}
+
+T04_DUP_N="" T04_DUP_ZZ=""
+t04_project_dup T04_DUP_N T04_DUP_ZZ "$GATEGUARD"
+if [[ "${T04_DUP_N:-0}" -eq 3 && "${T04_DUP_ZZ:-0}" -eq 1 ]]; then
+  pass "EDMTC-T04 / CA-130 AC6 -- edm-gateguard's own MultiEdit projection turns a four-entry batch naming zz.js twice into ${T04_DUP_N} paths, with zz.js appearing ${T04_DUP_ZZ} time"
+else
+  fail "EDMTC-T04 / CA-130 AC6 -- the projection yielded ${T04_DUP_N} paths with zz.js ${T04_DUP_ZZ} time(s), expected 3 and 1"
+fi
+
+# AC6's control: the identical extraction and the identical count, run against a mutant whose
+# `unique` has been replaced by a plain iteration, must report the un-deduplicated four. Both
+# numbers are read out of the binary under test, so neither side is a re-typed expectation.
+T04_NOUNIQ_MUTANT=""
+T04_NOUNIQ_OK=1
+t04_mutant_gateguard T04_NOUNIQ_MUTANT 'unique[]' '      | .[]' || T04_NOUNIQ_OK=0
+if [[ "$T04_NOUNIQ_OK" -eq 1 && -x "$T04_NOUNIQ_MUTANT" ]]; then
+  pass "EDMTC-T04 / CA-130 AC6 control -- a runnable copy of edm-gateguard was built with the de-duplicating step replaced by a plain iteration"
+else
+  fail "EDMTC-T04 / CA-130 AC6 control -- could not build the no-dedup mutant; the counts above prove nothing"
+fi
+T04_NODUP_N="" T04_NODUP_ZZ=""
+t04_project_dup T04_NODUP_N T04_NODUP_ZZ "$T04_NOUNIQ_MUTANT"
+if [[ "${T04_NODUP_N:-0}" -eq 4 && "${T04_NODUP_ZZ:-0}" -eq 2 ]]; then
+  pass "EDMTC-T04 / CA-130 AC6 control -- without the de-duplicating step the same batch yields ${T04_NODUP_N} paths with zz.js twice, so the three-and-one above is that step's doing"
+else
+  fail "EDMTC-T04 / CA-130 AC6 control BROKEN -- the no-dedup mutant yielded ${T04_NODUP_N} paths with zz.js ${T04_NODUP_ZZ} time(s), expected 4 and 2"
+fi
+
+# And end-to-end, through the gate itself. The budget is raised to 10 for this case on purpose: at
+# the default of 3 the fourth call would allow because the budget was spent, which is
+# indistinguishable from allowing because the batch is drained -- the fourth call's EMPTY stderr is
+# what separates them.
+T04_DUP_PROJ="" T04_DUP_DATA=""
+t14_fresh_marker_env T04_DUP_PROJ T04_DUP_DATA
+T04_DUP_SEQ="" T04_DUP_NAMES=""
+for _t04_i in 1 2 3 4; do
+  t04_with_env EDM_GATEGUARD_MAX_DENIALS 10 "$T04_DUP_PROJ" "$T04_DUP_DATA" "$T04_DUP_PAYLOAD"
+  T04_DUP_SEQ="${T04_DUP_SEQ} ${T14_RUN_RC}"
+  for _t04_p in aa.js mm.js zz.js; do
+    case "$T14_RUN_ERR" in
+      *"(${_t04_p})"*) T04_DUP_NAMES="${T04_DUP_NAMES} ${_t04_p}" ;;
+    esac
+  done
+  T04_DUP_LAST_ERR="$T14_RUN_ERR"
+done
+check "EDMTC-T04 / CA-130 AC6 -- the four-entry batch drains in exactly THREE denials and the fourth call allows: exit sequence" \
+  " 2 2 2 0" "$T04_DUP_SEQ"
+check "EDMTC-T04 / CA-130 AC6 -- and the three denials name the three DISTINCT paths, in the projection's own order" \
+  " aa.js mm.js zz.js" "$T04_DUP_NAMES"
+if [[ -z "$T04_DUP_LAST_ERR" ]]; then
+  pass "EDMTC-T04 / CA-130 AC6 -- the fourth call's stderr is empty, so it allowed because every distinct path is checked and NOT because a denial budget ran out"
+else
+  fail "EDMTC-T04 / CA-130 AC6 -- the fourth call carried stderr, so the batch did not simply drain: [${T04_DUP_LAST_ERR}]"
+fi
+
+# The end-to-end control: the same four calls against the no-dedup mutant deny in payload order,
+# starting at the duplicated zz.js rather than at aa.js. Ordering is the only externally visible
+# consequence of `unique` -- the first denial exits the process, so a duplicate later in the list
+# is never reached in the same call -- which is why the projection-level counts above carry the
+# de-duplication claim and this case carries only the ordering half of it.
+T04_NODUP_PROJ="" T04_NODUP_DATA=""
+t14_fresh_marker_env T04_NODUP_PROJ T04_NODUP_DATA
+T04_NODUP_FIRST=""
+export EDM_GATEGUARD_MAX_DENIALS=10
+printf '%s' "$T04_DUP_PAYLOAD" | CLAUDE_PROJECT_DIR="$T04_NODUP_PROJ" CLAUDE_PLUGIN_DATA="$T04_NODUP_DATA" \
+  EDM_GATEGUARD_DENY_MODE=exit-code bash "$T04_NOUNIQ_MUTANT" >/dev/null 2>"${T04_TMP}/nodup.stderr" || true
+unset EDM_GATEGUARD_MAX_DENIALS
+T04_NODUP_FIRST="$(cat "${T04_TMP}/nodup.stderr" 2>/dev/null || true)"
+if [[ "$T04_NODUP_FIRST" == *"(zz.js)"* ]]; then
+  pass "EDMTC-T04 / CA-130 AC6 control -- the no-dedup mutant's first denial names zz.js (payload order) where the shipped binary named aa.js, so the ordering asserted above is the de-duplicating step's output and not the payload's"
+else
+  fail "EDMTC-T04 / CA-130 AC6 control BROKEN -- the no-dedup mutant's first denial did not name zz.js: [${T04_NODUP_FIRST}]"
+fi
+
+echo
+# ---- CA-131: every exempt-glob form beyond a single `**`-prefixed entry ------------------------
+# EDMV4-T15 AC4 drives one entry (`**/tests/**`) and AC5 the shipped default. Untested: the IFS=,
+# split across several entries, the empty-element `continue`, a glob written without the `**`
+# prefix (which is what the second, `*/`-stripped attempt exists for), and an explicitly EMPTY
+# value.
+#
+# Reading an exempt result honestly is the trap here: "exempt" and "the fixture never ran" both
+# look like exit 0 with no output. So every form below is driven in BOTH directions through one
+# helper -- an exempt case and a gated case built identically -- and the gated case, which demands
+# exit 2 AND a fact list that NAMES the path, is what proves the fixture was alive for the exempt
+# case beside it.
+echo "--- CA-131: exempt-glob forms, each asserted in both directions ---"
+
+# t04_exempt_case <exempt|gated> <form-label> <globs> <path>
+t04_exempt_case() {
+  local _t04_expect="$1" _t04_label="$2" _t04_globs="$3" _t04_path="$4"
+  local _t04_proj="" _t04_data=""
+  t14_fresh_marker_env _t04_proj _t04_data
+  t04_with_env EDM_GATEGUARD_EXEMPT_GLOBS "$_t04_globs" "$_t04_proj" "$_t04_data" "$(t04_payload Edit "$_t04_path")"
+  if [[ "$_t04_expect" == "exempt" ]]; then
+    if [[ "$T14_RUN_RC" -eq 0 && -z "$T14_RUN_OUT" && -z "$T14_RUN_ERR" ]]; then
+      pass "EDMTC-T04 / CA-131 -- ${_t04_label}: '${_t04_path}' is EXEMPT (exit 0, no output)"
+    else
+      fail "EDMTC-T04 / CA-131 -- ${_t04_label}: expected '${_t04_path}' exempt, got rc=${T14_RUN_RC} stdout=[${T14_RUN_OUT}] stderr=[${T14_RUN_ERR}]"
+    fi
+  else
+    if [[ "$T14_RUN_RC" -eq 2 && "$T14_RUN_ERR" == *"(${_t04_path})"* ]]; then
+      pass "EDMTC-T04 / CA-131 -- ${_t04_label}: '${_t04_path}' is still GATED (exit 2, and the fact list names it)"
+    else
+      fail "EDMTC-T04 / CA-131 -- ${_t04_label}: expected '${_t04_path}' gated with a fact list naming it, got rc=${T14_RUN_RC} stderr=[${T14_RUN_ERR}]"
+    fi
+  fi
+}
+
+# FORM 1 -- a three-entry comma list whose middle element is EMPTY. Two of the three are real
+# globs and both must exempt; the empty element must exempt nothing, which is what the unrelated
+# path's denial shows. This is the case that exercises the IFS=, split, the array build, and the
+# empty-element `continue`.
+T04_GLOBS_LIST='**/vendor/**,,**/generated/**'
+t04_exempt_case exempt "comma list, empty middle element" "$T04_GLOBS_LIST" "/repo/vendor/lib.js"
+t04_exempt_case exempt "comma list, empty middle element" "$T04_GLOBS_LIST" "/repo/generated/api.js"
+t04_exempt_case gated  "comma list, empty middle element (AC8 mirror)" "$T04_GLOBS_LIST" "/repo/src/app.js"
+# ...and the per-case control: the SAME path under a list that matches nothing must be gated. That
+# is what attributes the exemption above to the glob rather than to the run having gone missing.
+t04_exempt_case gated  "comma list control, non-matching list" '**/nowhere/**' "/repo/vendor/lib.js"
+
+# FORM 2 -- a glob written WITHOUT the `**` prefix. `**` is rewritten to a plain `*` and the
+# pattern is tried twice, as-is and with a leading `*/` stripped; a bare relative glob has no
+# leading segment to consume, so it matches the relative path only. The absolute form of the very
+# same file is therefore NOT exempt -- which is the reason the shipped default spells every entry
+# with `**`, and is asserted here rather than left as folklore.
+T04_GLOBS_BARE='src/generated/*'
+t04_exempt_case exempt "bare glob, no ** prefix" "$T04_GLOBS_BARE" "src/generated/api.js"
+t04_exempt_case gated  "bare glob, no ** prefix (AC8 mirror)" "$T04_GLOBS_BARE" "src/handwritten/api.js"
+t04_exempt_case gated  "bare glob, no ** prefix -- the ABSOLUTE form of the same file" "$T04_GLOBS_BARE" "/repo/src/generated/api.js"
+t04_exempt_case gated  "bare glob control, non-matching glob" 'src/elsewhere/*' "src/generated/api.js"
+
+# FORM 3 -- an explicitly EMPTY value. Stating the behaviour, since CLAUDE.md's bullet does not:
+# the lookup is `${EDM_GATEGUARD_EXEMPT_GLOBS:-<default>}`, and `:-` treats empty exactly as unset,
+# so an empty value RE-SELECTS the shipped default list. It does not disable exemptions, and it
+# does not exempt everything. The three cases below pin all three readings at once: an SRD path and
+# a node_modules path (two separate default entries) are exempt, and an ordinary source path is
+# not. If empty meant "exempt nothing" the first two would deny; if it meant "exempt everything"
+# the third would allow.
+t04_exempt_case exempt "explicitly empty value (re-selects the shipped default)" '' "/repo/SRD/edm/EDMTC__x/srd.md"
+t04_exempt_case exempt "explicitly empty value (re-selects the shipped default)" '' "/repo/node_modules/pkg/index.js"
+t04_exempt_case gated  "explicitly empty value (AC8 mirror: not an exempt-everything switch)" '' "/repo/src/main.js"
+
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
 
