@@ -1,16 +1,44 @@
 {
   "prefix": "EDMDS",
   "schema_version": 1,
-  "current_phase": 0,
-  "gates_approved": [],
+  "current_phase": 2,
+  "gates_approved": [
+    {
+      "gate": 1,
+      "approved_at": "2026-09-08T16:54:57Z",
+      "approver": "darryl.porter",
+      "enforcement": "permission-ask"
+    }
+  ],
   "artifacts": {},
   "artifact_hashes": {},
-  "srd_version": "0.0.0",
+  "srd_version": "1.0.0",
   "estimated_size": "Unknown",
   "initiative_branch": "edm/edmds-design-docket",
   "product_name": "edm",
   "initiative_description": "design-docket",
-  "phase_durations": {},
+  "phase_durations": {
+    "1_phase": {
+      "started_at": "2026-09-08T13:09:09Z",
+      "completed_at": "2026-09-08T13:35:11Z",
+      "duration_seconds": 1562,
+      "tokens": {
+        "input": 80,
+        "output": 57393,
+        "cache_read": 33557332,
+        "cache_write_5m": 0,
+        "cache_write_1h": 67945
+      },
+      "model_used": "claude-opus-5",
+      "estimated_cost_usd": 22.6720,
+      "human_baseline_usd": 0.00,
+      "attribution_mode": "scoped",
+      "unparseable_lines": 0
+    },
+    "2_phase": {
+      "started_at": "2026-09-08T16:54:58Z"
+    }
+  },
   "test_frameworks_detected": {},
   "coverage_by_layer": {},
   "coverage_by_epic": {},
@@ -48,5 +76,5 @@
   "forked_from": "EDMV4",
   "parent_prefix": "",
   "related_prefixes": [],
-  "last_updated": "2026-09-08T03:37:51Z"
+  "last_updated": "2026-09-08T16:57:38Z"
 }
