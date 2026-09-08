@@ -2,13 +2,19 @@
 
 **SRD Version Audited**: 1.0.0
 **Audit Date**: 2026-09-08
-**Lanes**: section 5 (Requirements, 18 requirements / 75 AC) complete. Sections 1-4 and 6 lane
-still running at time of writing; its findings append below when it lands.
+**Lanes**: both complete. Section 5 (Requirements, 18 requirements / 75 AC), and sections 1-4
+plus 6 (Document Info, Executive Summary, Goals and Scope, Architecture Decisions, Risks).
 
 ## Summary
 
 - Section 5: **P0: 5 | P1: 14 | P2: 11 | NOTED: 6**
+- Sections 1-4, 6: **P0: 3 | P1: 18 | P2: 15**
+- Combined: **P0: 8 | P1: 32 | P2: 26**
 - **Verdict: FAIL**
+
+Both lanes reached FAIL independently. The two lanes agree on the single most consequential
+finding -- AD1/EDMDS-02's trust-boundary premise is false -- having reached it by different routes,
+which is the strongest signal in the report.
 
 Five P0s are hard blockers. Three requirements are unimplementable as written against verified
 live code, one falsifies two shipped smoke assertions the SRD's own Definition of Done requires to
@@ -199,3 +205,186 @@ none needed") in an AC whose stated purpose is that the answer be stated rather 
 Diagram errors are vacuously clean for section 5 -- it contains no diagrams.
 
 <!-- SRD-AUDIT-COMPLETE range=S5 assigned=18 audited=18 -->
+
+---
+
+# Lane 2 -- Sections 1-4 and 6
+
+**P0: 3 | P1: 18 | P2: 15. Verdict: FAIL.**
+
+## P0 -- Critical
+
+### L2-P0-1 [FACTUAL MISTAKE] AD1 with R1 -- the trust boundary is not closed by the decision that exists to close it
+
+Independent confirmation of lane 1's P0-2, reached from the architecture decision rather than the
+requirement. `edm-gateguard:236-240`'s `exit-code` arm is `printf '%s\n' "$reason" >&2; exit 2`, and
+for a `PreToolUse` hook that IS the model-facing refusal -- which is exactly why `edm-bash-gate` and
+`edm-stop-gate` use it. Consequences the SRD does not state:
+
+- Under `EDM_GATEGUARD_DENY_MODE=exit-code`, a documented supported value, EDMDS-02 AC1 is vacuous
+  (`permissionDecisionReason` is never emitted) and AC2 puts the author's text into the refusal the
+  model reads. AC3's assertion passes while the channel is wide open.
+- AC5 asks that the other two consumers be "brought into line". Both refuse only via exit 2 plus
+  stderr, so "in line with message-on-stderr" means ENTRENCHING the channel at both sites -- the
+  opposite of AD1's posture and of the multi-site argument EDMDS-02 uses to reject option 4.
+
+### L2-P0-2 [FEATURE GAP] Sec.1 Mode row and Sec.3.4 -- the fused file is missing its entire Phase-4 half
+
+`skills/srd/SKILL.md:126-142` prescribes the mini-srd layout verbatim: a `## --- Ticket List ---`
+section with `{PREFIX}-T{NN}` entries carrying Size, ACs and Target Components, plus a
+`Generated From: srd.md vX.Y.Z` line. `srd.md` contains zero occurrences of `EDMDS-T`,
+`Ticket List`, `Size:`, `Target Components` or `Generated From:`.
+
+`EDMDS-01`..`EDMDS-18` are REQUIREMENT ids per CLAUDE.md's own distinction; they are not ticket ids.
+Since the merged Gate 2+3 discharges Gate 3 and enters Phase 6 directly off this file
+(`skills/audit-srd/SKILL.md:190-206`), the downstream breakage is mechanical:
+
+- `/edm:implement` takes an audited ticket pack as Input and groups TICKETS into waves. It has
+  nothing to enumerate and no dependency graph.
+- Commit subjects carry no `{PREFIX}-T{NN}`, so `edm-impl-progress` sees nothing -- the exact cost
+  D48 verified against commit `b697142`.
+- `record-partial-verdict <PREFIX> <ticket>` and `archive`'s `OPEN_PARTIALS` block key on a ticket
+  id that does not exist. QC shard names and `edm-check-verifier-sentinel`'s `T{a}-T{b}` parse both
+  assume ticket numbering.
+- The `Generated From:` line is a P0 in the ticket-auditor's own Dimension 8, and under mini-srd
+  Phase 5 is skipped, so nothing catches its absence -- silent rather than harmless.
+
+Noted sharply by the auditor: EDMDS-05 exists to fix CA-063, a deliverable omitted from a ticket's
+Target Components. This document has no Target Components anywhere, so it reproduces the defect it
+is chartered to close.
+
+### L2-P0-3 [COMPETING REQUIREMENTS] Sec.3.1 Goal 1, Sec.3.3, Sec.5 legend -- the closure model uses statuses the vocabulary does not admit
+
+Against `docs/canonical-sections.md:14-23`: "Every P0, P1 and P2 finding is remediated before
+convergence; `NOTED` is the only status that closes a finding without a fix", and "deferral does not
+exist in this methodology".
+
+- Goal 1's "or record an explicit, reasoned decision not to [close]" is a fifth status. EDMDS-17
+  AC3's "descoped" is a sixth. Neither exists.
+- Section 5's legend reads "**Should** = expected, may be descoped with a recorded reason", and
+  Sec.3.4 item 1 binds only `Must`. That puts CA-063, CA-089, CA-112, CA-072, CA-121 and CA-106 --
+  six of eighteen, a third of the docket -- behind an escape the vocabulary does not permit for a P2.
+- CA-114 concretely: EDMDS-01 leaves the finding an open P2 with no fix, which is the deferral the
+  methodology forbids. "Do nothing" IS defensible on explorer 04's measurement; closing CA-114
+  without reclassifying it is not.
+
+## P1 -- Significant (18)
+
+**AD1's central factual claim is false.** AD1 asserts "this plugin has no existing mechanism for
+labelling untrusted content" and uses it to justify REMOVING a feature. Two in-tree precedents
+contradict it, one machine-enforced: `edm-stop-gate:113-124`'s `stop_gate_emit_blocking <label>
+<text>`, whose header states "`<label>` is this script's own literal text and is never sanitized;
+`<text>` is the untrusted half" -- pinned under `EDMV4-T52 AC6` at `wave8-smoke.sh:7922-7929`. And
+`docs/ecc-integration-analysis.md:95-97` records ECC's assessed "Prompt Defense Baseline". AD1
+conflates two claims: that no mechanism can bind a model's willingness to respect a frame (true,
+unfixable) and that the plugin has no labelling mechanism (false). The decision turns on the false one.
+
+**AD1 omits the second site EDMDS-02 cites to reject accepting the risk**, and that site --
+`edm-lint-staged-artifacts:151`, CA-196 -- is recorded in EDMV4's ledger as `NOTED`, already
+accepted. So the SRD invokes a site to refuse acceptance and leaves it unaddressed, while using an
+already-accepted finding as grounds for refusing to accept.
+
+**R6's mitigation rests on a false claim.** Sec.2 says "every requirement states what was chosen,
+what was rejected, and why". Six of eighteen requirements carry a Rejected block; twelve do not, and
+none of the four ADs does. R6's count is also low: the gate is asked to ratify 4 ADs + 18
+requirements + at least six sub-decisions embedded in ACs.
+
+**Eight ACs are unfalsifiable disjunctions** -- EDMDS-01 AC6, -03 AC3, -10 AC4, -11 AC2, -13 AC7,
+-14 AC4, -15 AC4, -16 AC1 -- each satisfiable by writing a sentence. This hands the implementer the
+descope authority `canonical-sections.md:118-123` reserves to a human at a gate. It is Goal 3's
+defect one level up, in the ACs meant to enforce Goal 3.
+
+**The single-author chain is absent from the risk table.** `planning.md`'s synthesis, explorer 04's
+measurement (which states its own author is the orchestrator), the go/no-go, the Gate 1 record and
+all eighteen proposed decisions share one author, with no writer/verifier separation anywhere in the
+chain. This is precisely what CLAUDE.md's guard **D1** names as the plugin's core quality mechanism.
+R6 addresses only the human reviewer's exposure, not the chain producing what the human ratifies.
+Sec.2's "the explorers deliberately withheld recommendations" is true of explorers 01-03 and false
+of explorer 04, which is both measurement and recommendation by the SRD's author.
+
+**Six of eight carried constraints are missing from the DoD** -- CC2 (self-matching scans, which
+binds hardest exactly where EDMDS-14 AC2 lands), CC3, CC5's operational half, CC8 -- and Sec.1's
+Inputs omits `analysis.md`, where they are defined, so a reader of the SRD has no path to them.
+
+**Four live wave8 sites depend on the sanitizer literal existing in place** --
+`wave8-smoke.sh:7877`, `:7891` (EDMV4-T52 AC6 ordering checks against `edm-gateguard` specifically)
+and `:8996`, `:9027` (sed mutants driving negative controls). EDMDS-14's extraction breaks the first
+two and turns the second two into no-ops -- negative controls passing for the wrong reason.
+Explorer 03 found two of four; lane 1 found four; this lane identifies which.
+
+**AD2 overstates its asymmetry.** The canonical resolver also accepts `CLAUDE_PROJECT_DIR`
+unchecked in one sub-case (`edm-state:1191-1193`, no git toplevel at all), and the third resolver
+returns an encoded key with a different fallback (`pwd`, not `.`). EDMDS-11 AC3/AC4 drive only the
+in-git pair, so the one sub-case where all three still diverge goes untested.
+
+**AD2's own premise is contradicted by CLAUDE.md**, which still records CA-500 as open at `:1345`
+while the code carries the fix. No requirement sweeps it, so EDMDS-11 would ship leaving CLAUDE.md
+asserting the opposite of AD2 -- a direct Goal 2 violation.
+
+**AD3 lacks the `audit_type` qualifier** that D40 named as the precondition for closing this gap at
+all, and never states its residual: option B checks two of eleven schema fields, and nothing checks
+`round`/`round_type` agreement, so a lens JSONL copied verbatim from a PREVIOUS round passes the new
+gate. Option C's drift-surface rejection does not apply to those two fields, which are already in state.
+
+**AD4 names only `patterns/` as the ownership footprint.** The clause is `run/` OR `patterns/`
+(`_edm-datadir-lib.sh:127`) -- and the omitted half is exactly what EDMDS-13 AC5's sweep operates
+on. A pre-D46 install whose only footprint is `run/` markers loses ownership the moment the sweep
+removes the last entry, silently relocating that user's data root: the failure class AD4 exists to
+prevent, created by the requirement AD4 constrains.
+
+**AD4 binds only Decision B**, while AD2's change has an equal or worse compatibility consequence.
+Adopting `edm-state`'s semantics inside `edm_project_key()` renames `<key>.phase6`, `<key>.checked`
+and `<key>.denials` for any project where the resolvers disagree -- so EDMDS-11 can trigger, on
+upgrade, the exact marker-absent failure EDMDS-10 exists to fix, and nothing addresses it.
+
+**R5's mitigation is wrong in the branch that matters.** If a future Oniguruma REMOVES the retry
+limit, EDMDS-01 AC2 does not fail -- it hangs, synchronously, inside `run-all.sh`, with no
+`timeout` available and no wall-clock guard by AC6's design. Detection is converted into a suite
+wedge. And AC2 does not specify its fixture's input length, so a modest raise leaves it green while
+the exposure returns at larger inputs.
+
+**Also**: EDMDS's AD1-AD4 numbering collides with EDMV4's `architecture.md` AD1-AD6, all six still
+cited bare in CLAUDE.md inside sections five EDMDS requirements must edit; no `architecture.md`
+exists for this initiative although the canonical layout marks it Must/always-present and
+`skills/srd/SKILL.md:211` says "Always run `edm-architect` separately"; the two flow/state decisions
+(AD2's three-into-one chain, AD3's round-record transitions with three existing downgrade paths plus
+a proposed fourth and a proposed reverse edge) are expressed only in prose; Sec.3.3's "EDMDS is the
+record of closure" has no mechanical backing -- no ledger, no `resolved_commit`, no `spec_swept`, no
+DoD closure item; and the reserved-prefix scope conflict appears in three requirements.
+
+## P2 -- Minor (15)
+
+The 58-figure is real (D46) but uncited and merges a measurement with a generalisation -- no install
+was ever abandoned, the change was caught pre-ship. Goal 3's "two predecessors fixed fifteen"
+misattributes a figure D51 records for EDMV4 alone, and the "sixteenth" claim traces only to this
+initiative's own `analysis.md` -- no record of it was found in EDMTC's artifacts. "Decision B" is a
+dangling reference defined only in `planning.md`. The 4048 baseline is verified against EDMTC's
+exec-report but anchored to no commit, and two `bin/`-touching commits have landed since with no
+re-measurement. DoD item 5's command reports wider than its claim and exits 1 on a clean tree while
+item 3 says "exit 0". Item 7 is circular -- discharged by the gate that ratifies the document, and
+textually identical to EDMDS-17 AC1. Amending `EDMV4-T11` AC1 edits a file under `.archived/`,
+which the artifact lint excludes from every scan. `README.md:342` carries a second live falsehood
+("Kill switches for all three consumers") and CLAUDE.md contradicts itself on the same point.
+R1's Likelihood "Certain" describes a design consequence, not a risk. R3's Impact "Low" is
+inconsistent with its own DoD-gating status and "High" likelihood, and its Mitigation column holds
+a change-control procedure rather than a mitigation. Risk rows reference bare AC numbers ambiguous
+across eighteen requirements. Two further risks with concrete triggers are absent, including that
+EDMDS-08's promotion is INERT when the downgraded round is not the latest -- `audit-converged` keys
+on the latest round's type, the very fact EDMDS-08's rationale uses to rule out a repair round.
+Sec.1's Branch row disagrees with the working tree, and no `related_prefixes` link to EDMTC exists
+although Sec.2's framing and the 4048 baseline both depend on it. And EDMDS-02 rewrites text whose
+provenance is an attributed MIT reuse pinned by tests -- D49's order (text first, claim second) is
+named in neither the DoD nor the risks.
+
+## NOTED (lane 2)
+
+Sec.1's mode-row quote is verbatim from the canonical matrix, so not a defect in the SRD. Diagram
+errors are clean by absence -- filed instead as a P1 for the absence itself. Sec.2's finding
+arithmetic is correct and verified against D51 element by element: 39 - 21 = 18, and the eighteen
+match D51's group-5 list exactly. Requirement-to-finding coverage is complete and non-overlapping,
+no orphan and no double-owner. Sec.3.3's refusal to rewrite the archived ledger matches EDMTC's
+precedent. AD2's designation of `_resolve_permcheck_project_root` as canonical is correct against
+the code -- the findings concern its overstatement and unswept documentation, not the choice. No
+i18n or WCAG obligation arises. DoD items 3 and 4 are satisfiable as written, per D50.
+
+<!-- SRD-AUDIT-COMPLETE range=S1-S6 assigned=23 audited=23 -->
