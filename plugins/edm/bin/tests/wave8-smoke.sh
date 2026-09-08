@@ -13362,6 +13362,76 @@ if [[ "$T04_NODUP_FIRST" == *"(zz.js)"* ]]; then
 else
   fail "EDMTC-T04 / CA-130 AC6 control BROKEN -- the no-dedup mutant's first denial did not name zz.js: [${T04_NODUP_FIRST}]"
 fi
+
+echo
+# ---- CA-131: every exempt-glob form beyond a single `**`-prefixed entry ------------------------
+# EDMV4-T15 AC4 drives one entry (`**/tests/**`) and AC5 the shipped default. Untested: the IFS=,
+# split across several entries, the empty-element `continue`, a glob written without the `**`
+# prefix (which is what the second, `*/`-stripped attempt exists for), and an explicitly EMPTY
+# value.
+#
+# Reading an exempt result honestly is the trap here: "exempt" and "the fixture never ran" both
+# look like exit 0 with no output. So every form below is driven in BOTH directions through one
+# helper -- an exempt case and a gated case built identically -- and the gated case, which demands
+# exit 2 AND a fact list that NAMES the path, is what proves the fixture was alive for the exempt
+# case beside it.
+echo "--- CA-131: exempt-glob forms, each asserted in both directions ---"
+
+# t04_exempt_case <exempt|gated> <form-label> <globs> <path>
+t04_exempt_case() {
+  local _t04_expect="$1" _t04_label="$2" _t04_globs="$3" _t04_path="$4"
+  local _t04_proj="" _t04_data=""
+  t14_fresh_marker_env _t04_proj _t04_data
+  t04_with_env EDM_GATEGUARD_EXEMPT_GLOBS "$_t04_globs" "$_t04_proj" "$_t04_data" "$(t04_payload Edit "$_t04_path")"
+  if [[ "$_t04_expect" == "exempt" ]]; then
+    if [[ "$T14_RUN_RC" -eq 0 && -z "$T14_RUN_OUT" && -z "$T14_RUN_ERR" ]]; then
+      pass "EDMTC-T04 / CA-131 -- ${_t04_label}: '${_t04_path}' is EXEMPT (exit 0, no output)"
+    else
+      fail "EDMTC-T04 / CA-131 -- ${_t04_label}: expected '${_t04_path}' exempt, got rc=${T14_RUN_RC} stdout=[${T14_RUN_OUT}] stderr=[${T14_RUN_ERR}]"
+    fi
+  else
+    if [[ "$T14_RUN_RC" -eq 2 && "$T14_RUN_ERR" == *"(${_t04_path})"* ]]; then
+      pass "EDMTC-T04 / CA-131 -- ${_t04_label}: '${_t04_path}' is still GATED (exit 2, and the fact list names it)"
+    else
+      fail "EDMTC-T04 / CA-131 -- ${_t04_label}: expected '${_t04_path}' gated with a fact list naming it, got rc=${T14_RUN_RC} stderr=[${T14_RUN_ERR}]"
+    fi
+  fi
+}
+
+# FORM 1 -- a three-entry comma list whose middle element is EMPTY. Two of the three are real
+# globs and both must exempt; the empty element must exempt nothing, which is what the unrelated
+# path's denial shows. This is the case that exercises the IFS=, split, the array build, and the
+# empty-element `continue`.
+T04_GLOBS_LIST='**/vendor/**,,**/generated/**'
+t04_exempt_case exempt "comma list, empty middle element" "$T04_GLOBS_LIST" "/repo/vendor/lib.js"
+t04_exempt_case exempt "comma list, empty middle element" "$T04_GLOBS_LIST" "/repo/generated/api.js"
+t04_exempt_case gated  "comma list, empty middle element (AC8 mirror)" "$T04_GLOBS_LIST" "/repo/src/app.js"
+# ...and the per-case control: the SAME path under a list that matches nothing must be gated. That
+# is what attributes the exemption above to the glob rather than to the run having gone missing.
+t04_exempt_case gated  "comma list control, non-matching list" '**/nowhere/**' "/repo/vendor/lib.js"
+
+# FORM 2 -- a glob written WITHOUT the `**` prefix. `**` is rewritten to a plain `*` and the
+# pattern is tried twice, as-is and with a leading `*/` stripped; a bare relative glob has no
+# leading segment to consume, so it matches the relative path only. The absolute form of the very
+# same file is therefore NOT exempt -- which is the reason the shipped default spells every entry
+# with `**`, and is asserted here rather than left as folklore.
+T04_GLOBS_BARE='src/generated/*'
+t04_exempt_case exempt "bare glob, no ** prefix" "$T04_GLOBS_BARE" "src/generated/api.js"
+t04_exempt_case gated  "bare glob, no ** prefix (AC8 mirror)" "$T04_GLOBS_BARE" "src/handwritten/api.js"
+t04_exempt_case gated  "bare glob, no ** prefix -- the ABSOLUTE form of the same file" "$T04_GLOBS_BARE" "/repo/src/generated/api.js"
+t04_exempt_case gated  "bare glob control, non-matching glob" 'src/elsewhere/*' "src/generated/api.js"
+
+# FORM 3 -- an explicitly EMPTY value. Stating the behaviour, since CLAUDE.md's bullet does not:
+# the lookup is `${EDM_GATEGUARD_EXEMPT_GLOBS:-<default>}`, and `:-` treats empty exactly as unset,
+# so an empty value RE-SELECTS the shipped default list. It does not disable exemptions, and it
+# does not exempt everything. The three cases below pin all three readings at once: an SRD path and
+# a node_modules path (two separate default entries) are exempt, and an ordinary source path is
+# not. If empty meant "exempt nothing" the first two would deny; if it meant "exempt everything"
+# the third would allow.
+t04_exempt_case exempt "explicitly empty value (re-selects the shipped default)" '' "/repo/SRD/edm/EDMTC__x/srd.md"
+t04_exempt_case exempt "explicitly empty value (re-selects the shipped default)" '' "/repo/node_modules/pkg/index.js"
+t04_exempt_case gated  "explicitly empty value (AC8 mirror: not an exempt-everything switch)" '' "/repo/src/main.js"
+
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
 
