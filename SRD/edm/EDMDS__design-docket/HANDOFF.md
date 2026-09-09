@@ -100,7 +100,14 @@ inputs it already accounts for.
 4. **Resolve EDMDS-11's self-contradiction.** AC1 and AC5 are mutually exclusive (the CA-500
    cross-check IS a `git rev-parse`), and AC1 spends the `EDMV4-T07` AC8 fast-path budget that
    EDMDS-04's own rationale invokes to reject a change.
-5. Then the remaining P1s, then re-audit, then Gate 2+3.
+5. **Add a nineteenth requirement for already-polluted installs.** See `upgrade-path.md`,
+   written 2026-09-08 after cleaning this host by hand. CA-134's shipped fix does nothing for a
+   directory it already polluted -- the C-4 footprint clause that makes the fix safe for legitimate
+   installs is what keeps a polluted one claimed. The document carries the discriminator (EDM names
+   AND nothing else), the compatibility check against `wave8-smoke.sh:10302-10308`, and the
+   detect/migrate/tighten ordering. This is not a variation on EDMDS-13: that one decides where data
+   should live, this one what to do about where it already is.
+6. Then the remaining P1s, then re-audit, then Gate 2+3.
 
 ### Two audit P2s already fixed
 
