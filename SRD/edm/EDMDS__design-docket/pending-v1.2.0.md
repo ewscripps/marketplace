@@ -9,34 +9,57 @@ Source: the `edm-architect` agent's verification pass while writing `architectur
 It re-derived every citation the brief gave it and found four that were wrong. Treated here as audit
 findings, because that is what they are.
 
-## A1 (P1) -- EDMDS-14's extraction target does not exist as assumed
+## A1 (P1) -- EDMDS-14's extraction target is wrong, but not for the reason first recorded
 
 `EDMDS-14 AC1` and `EDMDS-T21`'s Target Components name `bin/_edm-datadir-lib.sh` "or a new shared
-lib" as the sanitizer's new home. **Only two of the six `bin/` scripts source that library** --
-`bin/edm-gateguard:89-91` and `bin/edm-state:74`. `bin/edm-hookify`, `bin/edm-bash-gate` and
-`bin/edm-stop-gate` source nothing at all. Two of those three hold sanitizer copies
-(`edm-hookify:226`, `edm-stop-gate:123`), so the named home cannot reach them.
+lib" as the sanitizer's new home. That is the wrong home, and the disjunction should go.
 
-**Fix**: name a new `bin/_edm-sanitize-lib.sh` outright and drop the disjunction, which the ticket
-auditor was independently asked to judge as a Target Components defect. Add an AC for the three
-scripts that currently source nothing: each gains a source line, which is a real change to each
-file's preamble and not a detail of the extraction.
+**Corrected by direct verification.** The `edm-architect` agent reported that only
+`bin/edm-gateguard:89-91` and `bin/edm-state:74` source `_edm-datadir-lib.sh`, and concluded that a
+NEW library was therefore needed. The first half is true. The conclusion is false: it generalised
+from one library without checking the one every consumer already shares.
 
-## A2 (P0) -- the 660-line bound breaks arithmetically, and earlier than R3 assumes
+`bin/_edm-cli-lib.sh` is sourced by **all four hook consumers and `edm-state`** --
+`edm-gateguard:52`, `edm-hookify:104`, `edm-bash-gate:69`, `edm-stop-gate:65`, `edm-state:65` --
+and by fourteen other `bin/` scripts besides. It is the existing, already-universal home. No new
+library, and **no consumer needs a new `source` line**.
 
-The sanitizer is used inline in a pipeline, so extraction does not remove a line from GateGuard --
-it replaces one line with a call and **adds** a source line. Net **+1** on a file at 659 against
-`EDMV4-T11 AC1`'s CLOSED 200-660 range (CC7).
+Lane B of the v1.1.0 audit reached the same place independently, as a Reuse Opportunity finding
+against `EDMDS-02 AC6`, and drew the further consequence recorded as A2 below.
 
-So the breach is not R3's "High likelihood" contingency to be handled if it arises. It is certain,
-it happens at `EDMDS-T21`, and it happens **before** `EDMDS-02` -- which R3 lists first -- has
-written a line. v1.1.0 sequences the three touching requirements to measure after each, which is
-the right instinct applied to a case that no sequencing can avoid.
+**Fix**: name `bin/_edm-cli-lib.sh` outright in `EDMDS-14 AC1` and in `EDMDS-T21`'s Target
+Components, and drop the "or a new shared lib" disjunction. Lane D independently flagged that
+disjunction as a Target Components defect (P1-CN1), along with the separate error that T21 names
+`bin/edm-bash-gate` (which holds no existing copy) and omits `bin/edm-hookify:226` (which holds one
+that must change).
 
-**Fix**: rewrite R3 to state the breach as certain with its trigger named, and move the bound
-amendment out of the risk column into `EDMDS-T21`'s own AC, so the amending decision is recorded
-work rather than a contingency nobody owns. `EDMDS-T05`, `T06` and `T24`'s "record the line count
-after this ticket" AC stay -- they remain the right check once the bound has been amended.
+## A2 (WITHDRAWN) -- the 660-line bound does not break from EDMDS-14; extraction helps it
+
+**This entry was wrong and is retained rather than deleted, because the error is instructive.**
+
+It claimed the sanitizer extraction adds a `source` line to `bin/edm-gateguard`, making the file net
+`+1` at 659 of a CLOSED 660 bound, and that the breach was therefore arithmetic rather than a risk.
+It rested on A1's discarded premise that a new library was needed.
+
+`edm-gateguard` already sources `_edm-cli-lib.sh` at `:52`. Extraction removes the definition at
+`:213` and adds nothing, so `EDMDS-14` is net **negative** on the line count. R3 stands as written:
+the breach remains a risk driven by `EDMDS-02`'s and `EDMDS-16`'s additions, not a certainty, and
+`EDMDS-14` is the one requirement of the three that buys headroom rather than spending it.
+
+Two real findings survive from this entry and are owned elsewhere:
+
+- **Lane D P1-A1**: the four line-count acceptance criteria (`EDMDS-T05 AC6`, `T06 AC5`, `T21 AC5`,
+  `T24 AC6`) are verbatim duplicates that cannot fail, because "recorded" asserts nothing. They must
+  assert `<= 660`. That finding is independent of this withdrawal and is the more valuable half.
+- **Lane B**: `EDMDS-02 AC6` must consume the labelling shape FROM the shared owner rather than
+  re-typing it, or it creates sanitizer copies four and five and `EDMDS-14 AC2`'s
+  "only one definition exists" scan fails. `EDMDS-02` is a `Must` and `EDMDS-14` a `Should` with no
+  stated ordering, so the ordering must be recorded -- or the extraction folded into `EDMDS-02`.
+
+**Lesson worth carrying**: a verification pass that corrects four citations can still ship a fifth
+error of its own, and its conclusions deserve the same scepticism as the text it corrected. This one
+was caught only because a second lane reached the opposite conclusion and the conflict was resolved
+by reading the code rather than by preferring an agent.
 
 ## A3 (P2) -- AD-DS2's exec argument is right but imprecisely stated
 
