@@ -1,6 +1,6 @@
 # EDMDS - Session Handoff
 
-> **Last updated**: 2026-09-08T18:18:11Z by darryl.porter  
+> **Last updated**: 2026-09-10T22:18:29Z by darryl.porter  
 > **To resume**: `/edm:orchestrator EDMDS`
 
 ## Current Status
@@ -48,7 +48,7 @@ _(all phase artifacts present)_
 | `./SRD/edm/EDMDS__design-docket/audit-srd.md` | [present] |
 | `./SRD/edm/EDMDS__design-docket/tickets/README.md` | [absent] |
 | `./SRD/edm/EDMDS__design-docket/tickets/audit.md` | [absent] |
-| `./SRD/edm/EDMDS__design-docket/architecture.md` | [absent] |
+| `./SRD/edm/EDMDS__design-docket/architecture.md` | [present] |
 | `./SRD/edm/EDMDS__design-docket/decisions.md` | [present] |
 | `./SRD/edm/EDMDS__design-docket/ROLLBACK.md` | [absent] (on-demand) |
 | `./SRD/edm/EDMDS__design-docket/exec-report.md` | [absent] (on-demand) |
@@ -74,7 +74,6 @@ _(none recorded yet - decisions are captured at Gate 1)_
 
 _(Add anything a teammate should know before resuming - context, blockers, preferences)_
 
-## Notes -- resume point (2026-09-08)
 
 **State: Phase 3 complete, SRD v1.0.0 FAILED audit. Do not enter Gate 2+3.**
 

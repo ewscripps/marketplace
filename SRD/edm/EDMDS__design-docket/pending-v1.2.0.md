@@ -1,5 +1,20 @@
 # Pending remediation for srd.md v1.2.0
 
+**STATUS: DISCHARGED 2026-09-10.** All five entries are resolved in `srd.md` v1.2.0 and this file
+is retained as the record of what was held and why, because `audit-srd.md` and two commit messages
+cite it. Do not add new items here -- the holding rationale below applied to one specific window
+(three audit lanes reading v1.1.0), and that window is closed.
+
+| Entry | Disposition in v1.2.0 |
+|---|---|
+| A1 -- EDMDS-14's extraction target | **Applied, corrected twice.** The target is `bin/_edm-cli-lib.sh`, which all four hook consumers already source. Recorded in `EDMDS-14`'s Decision block and `EDMDS-T22 AC6` |
+| A2 -- the 660-line breach | **Withdrawn, then re-derived.** The breach is real but lands at `EDMDS-02`, not `EDMDS-14`, which now buys headroom. `R3` carries the settled arithmetic and `EDMDS-T05` owns the two-file amendment |
+| A3 -- AD-DS2's exec argument | **Applied and extended.** `AD-DS2` now states the budget as external binaries, which is what makes the three-way split in `EDMDS-11` possible rather than the two-way one v1.1.0 had |
+| A4 -- EDMDS-08's inertness citation | **Applied.** `R9` cites `bin/edm-state:5330` and `:5354`; `EDMDS-08 AC6` owns the refusal |
+| A5 -- the `:5144` mis-citation | **No change needed, as recorded.** `srd.md` never cited it. v1.2.0 cites `:5144` correctly, as the manifest-existence trigger, in `EDMDS-07` |
+
+---
+
 Held deliberately, not forgotten. Three audit lanes are reading v1.1.0 as this is written; editing
 `srd.md` under them would make their findings unreproducible and drift the version they audited from
 the version on disk -- the defect the ticket auditor's Dimension 8 exists to catch. These land in
