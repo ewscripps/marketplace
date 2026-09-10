@@ -125,3 +125,85 @@ outstanding.
 
 Nothing here depends on information we lack. Every P0 and P1 is actionable from `audit-srd.md`
 alone.
+
+## Notes -- resume point (2026-09-10, after round three)
+
+**State: Phase 3 run three times. srd.md is at v1.2.0 and FAILED again -- 10 P0, 48 P1, 41 P2
+across three delivered lanes. Do not enter Gate 2+3.**
+
+Full report in `audit-srd.md`; prior rounds preserved as `audit-srd-v1.1.0.md` and
+`audit-srd-v1.0.0.md`. Held findings in `pending-v1.3.0.md`.
+
+### Read this before doing anything else
+
+`pending-v1.3.0.md` **B3 is a security regression** in `EDMDS-02 AC6`. It specifies writing
+project-authored rule text to stdout at the three exit-2 surfaces, and stdout on those events is the
+channel the host parses as control (`bin/edm-gateguard:232-234` uses it that way;
+`bin/edm-stop-gate:54-55` documents a raw stdout JSON echo as the failure mode). `D52`'s spike
+measured plain-text markers on the `Bash` matcher only. **Do not implement `EDMDS-02` until the spike
+is extended** to `Stop`, `Edit|Write|MultiEdit`, and a JSON-shaped payload.
+
+### The recommendation on the table, not yet decided by a human
+
+**Split the initiative.** Three of four lanes agree v1.2.0 is mechanically sound -- all 22 AC-range
+unions verified, all 40 Target Components paths exist, the D-block allocation collision-free, the
+diagram clean, and roughly 65 line citations verified across two lanes with the citations named the
+document's strongest feature. Lane D's explicit judgement is that the ticket list is implementable
+after four one-line dependency edits.
+
+But four items cannot be fixed by another document pass:
+
+1. `EDMDS-02` -- blocked on the spike above.
+2. `EDMDS-15` -- `D54`'s premise is false. Extraction breaks about twenty shipped assertions
+   (`wave6-smoke.sh:1440-1446` requires exactly ten `gate-check` occurrences and extraction leaves
+   five; `wave7-smoke.sh:7757-7773` checks the command body's literals; `:7790+` executes it in a
+   scratch `bin/`). A `type: "prompt"` hook has no include mechanism, so only the command half can
+   be extracted at all. **The decision needs re-making by a human, with the real assertion set.**
+3. `EDMDS-19` -- `AC7` hard-falsifies `wave8-smoke.sh:10291-10298` while `AC9` requires its inverse
+   in the same file, and `AC10`'s operator gating makes `AC7` a no-op on its own migrated branch.
+4. `AD-DS6` -- withdraw it. Three lanes independently measured the derivation as narrower than the
+   prose it replaced.
+
+The proposal is to take the remaining requirements forward and pull these four, so the sound
+two-thirds is not held hostage to items that need runtime evidence rather than more drafting.
+
+### If the split is approved, do this
+
+1. The four dependency edits, which are one line each: `T05 Depends On: T22`; `T30` after `T08` plus
+   the line-count AC its five siblings carry; the 13 missing sinks added to `T37`; `T38`/`T39`/`T40`
+   before `T36`.
+2. The two prose corrections: the critical path is **8** deep, not 6
+   (`T01 -> T04 -> T06 -> T07 -> T08 -> T09 -> T37 -> T38`), and the diagram omits the declared edge
+   `T17 --> T39`.
+3. Fix DoD items 8 and 9. Item 8 is mechanically unsatisfiable -- drift is certain, `--check` exits 2,
+   nothing owns refreshing the baseline, and the check is dischargeable by editing the baseline
+   inside the script. Item 9 measures `timing.sh --gateguard` before five of the six tickets that
+   modify the file it measures.
+4. Apply `pending-v1.3.0.md` B1, B2, B4, B5. **B5 matters most**: `EDMDS-05` specifies work that is
+   already shipped -- `wave8-smoke.sh:6605` lists six scripts including `edm-bash-gate` and cites
+   CA-063 by ID, and `t50_bin_membership_set` at `:6611-6619` already derives the set live. The
+   premise came from the v1.1.0 audit and was adopted without re-deriving it.
+5. Audit `architecture.md`, which has never been audited in its current 905-line state -- but only
+   **after** `AD-DS1` and `AD-DS6` settle, since Section 4 is what it documents.
+
+### What NOT to repeat
+
+The orchestrator's failure mode across all three rounds is **generalising from a partial check**: the
+spike measured plain text and the conclusion covered JSON; one library was read and the conclusion
+covered all of them; an audit claim was adopted as fact; an assertion set was asserted rather than
+derived. `AD-DS6` was that mistake automated instead of fixed.
+
+The remedy that demonstrably worked is slower and duller -- verify each citation, derive each set,
+check each path. And a check that returns nothing is not a clean result until you have proven the
+check can fire: a grep run this round to find surviving AC disjunctions returned nothing and was
+wrong, because acceptance criteria wrap and the pattern only matched their first line.
+
+### Constraints that still bind
+
+- `run-all.sh` at or above **4048 passed / 0 failed across 8 suites on a quiet tree**, still anchored
+  to no commit. `EDMDS-T01` exists to fix that and has not run.
+- `bin/edm-gateguard` at **659** lines against a CLOSED 200-660 bound. Amending it edits **two**
+  places -- the live assertion at `bin/tests/wave8-smoke.sh:4056` and `EDMV4-T11` AC1 under
+  `.archived/`. D42 and D47 are the precedent; **D49 is not** and amended no bound.
+- CC1-CC8 in `analysis.md`. Measurements are grep-independent: `/usr/bin/grep` and `ugrep` agree on
+  every load-bearing count.
