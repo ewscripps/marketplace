@@ -95,7 +95,19 @@ R3	wc -l < "\$GATEGUARD"	1
 BASE
 }
 
-count_for() { grep -rEc -- "$1" "$SUITES"/*.sh 2>/dev/null | awk -F: '{s+=$2} END{print s+0}'; }
+# -H is defensive, not a bug fix. An audit lane reported that without it grep prints a BARE
+# count when exactly one file matches, `$2` is then empty, and this returns 0 -- the same
+# silent-zero shape as the field-separator bug above. Checked before believing it: on this
+# host `-r` already forces the filename prefix, under BOTH /usr/bin/grep and the ugrep shim
+# on an interactive PATH, so the reported bug does NOT fire and the lane was wrong on the
+# facts. `-H` stays because POSIX does not guarantee that `-r` implies it, and the cost is
+# one character. Recorded this way round because a right change shipped with a wrong reason
+# is how a document accumulates claims nobody can check.
+#
+# Verified while checking it: /usr/bin/grep and ugrep agree exactly on every load-bearing
+# count in this baseline (emit_decision 44, "schema":"lens" 50, set -euo pipefail 47,
+# CLAUDE_PLUGIN_DATA 115), so the recorded figures do not depend on which grep is on PATH.
+count_for() { grep -rHEc -- "$1" "$SUITES"/*.sh 2>/dev/null | awk -F: '{s+=$2} END{print s+0}'; }
 sites_for() { grep -rEn -- "$1" "$SUITES"/*.sh 2>/dev/null | sed "s|^${SUITES}/||"; }
 
 MODE="${1:-all}"
