@@ -33,7 +33,7 @@ INTAKE (creates Jira cards)          EXECUTION (works Jira cards)
                                          Standalone -- independently runs test-reviewer and documentation-reviewer; skips TD0 when no Jira key is provided
 
                                        /manual-qa-plan PROJ-123 (Q0-Q4)
-                                         Standalone -- reviews Jira context plus related branch diff, generates manual QA steps, and appends the plan to the issue description
+                                         Standalone -- reviews Jira context plus related branch diff, generates a capped, numbered manual test-case checklist with screenshot requests (excluding any deprecated features the repo declares), and writes it to the issue description
 
                                        /document-card PROJ-123 (DC0-DC8)
                                          Standalone -- documents completed work
@@ -80,7 +80,7 @@ The Jira card description is the interface between intake and execution:
 | **implementation-discovery** | `/implementation-discovery` | D0-D5 | User's build/change goal | codebase-explorer, area-mapper |
 | **mr-creation** | `/mr-creation` | M0-M8 | User input + repo state | code-review-responder (M7) |
 | **test-doc-review** | `/test-doc-review [PROJ-123]` | TD0-TD5 | Optional Task/Bug Jira context + current repo state | test-reviewer, documentation-reviewer |
-| **manual-qa-plan** | `/manual-qa-plan PROJ-123` | Q0-Q4 | Task/Bug/Epic Jira context + related branch diff | manual-qa-reviewer |
+| **manual-qa-plan** | `/manual-qa-plan PROJ-123` | Q0-Q4 | Task/Bug/Epic Jira context + related branch diff | manual-qa-reviewer, comment-reviewer |
 | **document-card** | `/document-card PROJ-123` | DC0-DC8 | Completed Task/Epic/Bug card | comment-reviewer |
 | **project-onboarding** | `/project-onboarding [path]` | O0-O6 | Target project repo state | codebase-explorer, area-mapper |
 | **compact-context** | `/compact-context` | — | Active work item's file memory | None |
@@ -98,8 +98,8 @@ The Jira card description is the interface between intake and execution:
 | **documentation-reviewer** | Completes inline and repository documentation and flags `/document-card` follow-up when needed | Bash, Read, Write, Edit, Glob, Grep, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena symbol-aware writes (`insert_after_symbol`, `insert_before_symbol`, `replace_content`), Serena project memory (`documentation-conventions.md`) | task-card T8, bug-card B10, test-doc-review TD4 |
 | **plan-reviewer** | Reviews implementation/fix plans and epic breakdown plans before execution, including testing and documentation strategy | Bash, Read, Glob, Grep, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`) | task-card T4, bug-card B5, epic-card E4 |
 | **review-analyst** | Specialist review for one category (4 or 5 parallel, depending on review type) | Read, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`), Serena project memory (`review-checklist-<category>.md`) | code-review CR4 |
-| **manual-qa-reviewer** | Translates Jira context and branch diffs into tester-friendly manual QA scenarios, prerequisites, expected results, regressions, and edge cases | Read, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`) | manual-qa-plan Q3 |
-| **comment-reviewer** | Reviews every drafted Jira comment against the phase's required heading and field outline before `jira_add_comment` is called | Bash, Read, Glob, Grep | every gated `jira_add_comment` (task-card T4/T5, T10, T12; bug-card B5/B6, B12, B14; epic-card E4/E5, E9, E10; code-review CR8; document-card DC8) |
+| **manual-qa-reviewer** | Translates Jira context and branch diffs into a capped, sequentially numbered set of tester-executable manual test cases with pass conditions, `[Core]`/`[Edge]`/`[Regression]` tags, and per-step screenshot and example-input requests to the developer | Read, Glob, Grep, Bash, Serena read tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`) | manual-qa-plan Q3 |
+| **comment-reviewer** | Reviews every drafted Jira comment -- and the one drafted Jira description section -- against the phase's required heading, field outline, and (for the QA plan) concision budget before the write is issued | Bash, Read, Glob, Grep | every gated `jira_add_comment` (task-card T4/T5, T10, T12; bug-card B5/B6, B12, B14; epic-card E4/E5, E9, E10; code-review CR8; document-card DC8) plus the gated `jira_update_issue` at manual-qa-plan Q4 |
 | **verification-runner** | Runs the full build, all tests, and all linters against the working tree; returns a per-category pass/fail verdict with failing-test excerpts | Bash, Read, Glob, Grep | task-card T7/T9 (and T11 in epic child mode), bug-card B8/B11, epic-card E8 (integration branch after each child merge) |
 | **code-review-responder** | Verifies an automated GitLab code-review bot's findings against the actual code, applies the fixes that are genuinely legitimate (symbol-aware edits; runs tests), and returns per-finding verdicts, evidence-backed rebuttals for false positives, and a ready-to-post response comment. Never commits, pushes, or touches GitLab/Jira | Read, Write, Edit, Glob, Grep, Bash, Serena read tools, Serena symbol-aware writes (`replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol`, `rename_symbol`, `safe_delete_symbol`, `replace_content`), Serena memory read (`list_memories`, `read_memory`) | mr-creation M7 |
 
@@ -153,7 +153,8 @@ The Jira card description is the interface between intake and execution:
    M0-M8: Create GitLab MR for the integration branch, then respond to the code review bot
 
 4. User invokes /manual-qa-plan PROJ-123
-   Q0-Q4: Read Jira context and related branch diff, then generate tester-friendly manual QA verification steps
+   Q0-Q4: Read Jira context and related branch diff, then generate a capped, numbered
+          manual test-case checklist with developer screenshot requests
 ```
 
 ## Card Description Section Headers
@@ -231,6 +232,14 @@ sections are additive context for frontend implementation.
 ### Code Review Cards (from code-review-intake)
 
 - `## Review Details` -- review type, branch, goals, work items, risks
+
+### Appended by /manual-qa-plan
+
+- `## Final QA Plan` -- tester-facing manual test-case checklist at the bottom of a Task, Bug, or
+  Epic description. Owned by `manual-qa-plan` Q4 and rewritten wholesale on every run: an existing
+  section is replaced in place, bounded at the next `## ` heading so other sections survive. Other
+  skills must not read it as card requirements or modify it. It is the plugin's only Jira artifact
+  that uses an `##` heading -- every gated comment uses a `**bold**` first line instead.
 
 ## File-Based Memory
 

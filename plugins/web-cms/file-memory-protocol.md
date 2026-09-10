@@ -84,6 +84,8 @@ mode: null                       # define | fill_out (intake) | null
 existing_issue_type: null        # Epic | Task (intake fill-out) | null
 epic_integration_branch: null    # set for epic child tasks
 related_items: null              # optional — related Jira issue keys (read by mr-creation)
+mr_assignee: null                # optional — mr-creation M4: {name, username, user_id} or null when unassigned
+mr_reviewers: null                # optional — mr-creation M4: list of {name, username, user_id}
 requested_by: null
 created_at: 2026-06-03
 updated_at: 2026-06-03

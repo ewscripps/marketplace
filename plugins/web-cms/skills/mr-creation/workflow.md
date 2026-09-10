@@ -39,7 +39,7 @@
 - M1 — Branch Sync
 - M2 — Context Classification
 - M3 — Diff & Commit Review
-- M4 — Pre-Creation Confirmation
+- M4 — Assignee & Reviewers
 - M5 — Description Generation & Review Gate
 - M6 — MR Creation
 - M7 — Code Review Bot Response
@@ -151,9 +151,30 @@ Use `AskUserQuestion` with header `MR Type`, options: `Release` (description: "T
 
 ---
 
-### M4 — Pre-Creation Confirmation
+### M4 — Assignee & Reviewers
 
-**Agent confirms automatically:** Verify that all context from M0–M3 (branches, sync status, Jira items, diff summary) is complete and ready for description generation. If anything is missing, stop and resolve before proceeding.
+**Step 1 — Readiness (automatic).** Verify that all context from M0–M3 (branches, sync status, Jira items, diff summary) is complete and ready for description generation. If anything is missing, stop and resolve before proceeding.
+
+**Step 2 — Assignee.** Call `mcp__plugin_web-cms_gitlab__gitlab_whoami` to get the current user's username and numeric id. Use `AskUserQuestion` with header `MR Assignee`, options: `Me — <username> (Recommended)` (description: "Assign the MR to yourself") / `Someone else` (description: "Type the person's name or GitLab username in the Other field") / `Leave unassigned` (description: "Create the MR with no assignee"). If `gitlab_whoami` fails, drop the `Me` option, note the failure in the chat, and continue with the remaining options — do not block on it.
+
+If the user picks `Someone else` or types a name, run the **Resolution procedure** below for that one entry.
+
+**Step 3 — Reviewers.** Use `AskUserQuestion` with header `MR Reviewers`, options: `Add reviewers` (description: "Type one or more names or usernames in the Other field, comma-separated") / `No reviewers` (description: "Create the MR without reviewers"). Reviewers are optional — never block MR creation on an empty list.
+
+If the user adds reviewers, split the typed answer on commas, trim whitespace from each entry, and run the **Resolution procedure** below for each one. If a resolved reviewer is the same person as the resolved assignee, drop them from the reviewer list and say so in the chat — some GitLab configurations reject a user who is both assignee and reviewer.
+
+**Resolution procedure** (shared by Steps 2 and 3, run once per typed entry):
+
+1. If the entry contains no whitespace, try `mcp__plugin_web-cms_gitlab__gitlab_get_users` with `username: <entry>` for an exact match.
+2. Otherwise, or if step 1 finds nothing, try `gitlab_get_users` with `search: <entry>` (matches display name, username, and email).
+3. If both attempts return zero results or the tool call fails, fall back to `mcp__plugin_web-cms_gitlab__gitlab_list_project_members` with `query: <entry>`, using the project path derived from the git remote (same derivation used in M7, e.g. `scripps/sdp/web/brightspot`).
+4. **Exactly one match:** record its `id`, `username`, and display `name`.
+5. **Multiple matches:** use `AskUserQuestion` with header `Resolve <entry>`, presenting up to 3 candidates as `<name> (@<username>)` plus a `None of these` option. If more than 3 candidates were found, state the total count in the chat before presenting the first 3 — do not silently truncate the list.
+6. **Zero matches after all resolvers:** report in the chat that `<entry>` could not be found and re-ask for that one person. Never guess or fabricate a user id.
+
+**WRITE work-item.md:** Update `$MEM/work-item.md` frontmatter with the resolved selections — `mr_assignee: {name, username, user_id}` or `null`, and `mr_reviewers:` a list of `{name, username, user_id}` (empty list if none). Set `phase: M4`. This lets a resumed session skip re-asking.
+
+> **REQUIRED:** Present the resolved assignee and reviewer list in the chat as `<name> (@<username>, id <n>)` each, or explicitly `Unassigned` / `No reviewers`, before proceeding to M5.
 
 ---
 
@@ -205,12 +226,14 @@ Present the full MR preview in the chat:
 TITLE:         <[PROJ-123] Short description — per title convention in Notes>
 SOURCE:        <source branch>
 DESTINATION:   <destination branch>
+ASSIGNEE:      <name (@username)>  |  Unassigned
+REVIEWERS:     <name (@username), name (@username)>  |  None
 
 DESCRIPTION:
 <full generated description>
 ```
 
-Then use `AskUserQuestion` with header `M5 Approval`, options: `Approve and create MR (Recommended)` (description: "The title and description are accurate — create the MR") / `Request changes` (description: "Update the title or description before creating"). Do not create the MR until "Approve and create MR" is selected. If the user selects "Request changes", apply the changes and re-present the full preview before asking again.
+Then use `AskUserQuestion` with header `M5 Approval`, options: `Approve and create MR (Recommended)` (description: "The title, description, assignee, and reviewers are accurate — create the MR") / `Request changes` (description: "Update the title, description, assignee, or reviewers before creating"). Do not create the MR until "Approve and create MR" is selected. If the user selects "Request changes", apply the changes — re-running M4's resolution procedure if the assignee or reviewers are what changed — and re-present the full preview before asking again.
 
 ---
 
@@ -220,12 +243,14 @@ Once the user confirms:
 
 1. Create the MR on GitLab using the confirmed title and description. **Critical: pass the description with real newlines, not escaped `\n` sequences.**
    - **Preferred:** Use the `mcp__plugin_web-cms_gitlab__gitlab_create_merge_request` tool. Pass the source branch, destination branch, title, and description. The description string must contain actual newline characters so the markdown renders correctly in the MR — verify the tool call does not serialize newlines as literal `\n` or `\\n` text.
-   - **Fallback:** If the MCP tool is unavailable or fails, use the `glab` CLI with a heredoc to preserve formatting (e.g. `glab mr create --source-branch ... --target-branch ... --title "..." --description "$(cat <<'EOF' ... EOF)"`).
-   - Do not set reviewers, assignees, labels, or draft status — these are not reliably supported via the API and should be set manually after creation.
-2. Report back in the chat with:
+   - Pass `assignee_ids` and `reviewer_ids` from the M4 selections (`user_id` values), omitting either when the user chose unassigned / no reviewers. Do not set labels or draft status — those are still handled manually after creation.
+   - **Fallback:** If the MCP tool is unavailable or fails, use the `glab` CLI with a heredoc to preserve formatting (e.g. `glab mr create --source-branch ... --target-branch ... --title "..." --assignee <username> --reviewer <user1,user2> --description "$(cat <<'EOF' ... EOF)"`), using the resolved `username` values from M4 rather than IDs.
+2. **Verify assignee and reviewers stuck.** Read them back from the create response (or `mcp__plugin_web-cms_gitlab__gitlab_get_merge_request` if the response omits them). If either does not match the M4 selections, retry once with `mcp__plugin_web-cms_gitlab__gitlab_update_merge_request` (`merge_request_iid`, `assignee_ids`, `reviewer_ids`). If it still does not stick (commonly because that user lacks project access), report exactly who could not be set and why, and tell the user to set them manually — this is not a reason to fail or roll back an otherwise-successfully-created MR.
+3. Report back in the chat with:
     - The MR URL
     - The MR ID
-3. If any step fails (e.g. branch protection rules, missing permissions), stop immediately, report the specific error in the chat, and suggest corrective action. Do not silently retry or proceed past a failure.
+    - The assignee (or `Unassigned`) and reviewers (or `None`) actually set on the MR
+4. If any step fails (e.g. branch protection rules, missing permissions), stop immediately, report the specific error in the chat, and suggest corrective action. Do not silently retry or proceed past a failure.
 
 ---
 
@@ -297,6 +322,7 @@ This workflow is complete when **all** of the following are true:
 - Source branch confirmed up to date with destination branch (merged if needed, conflicts resolved or workflow stopped)
 - Jira context retrieved and verified, or explicitly confirmed as none
 - Diff summary presented and acknowledged before description generation
+- Assignee and reviewers selected in M4 and verified as set on the created MR, or explicitly confirmed as unassigned / no reviewers
 - Full MR preview explicitly confirmed in the chat
 - MR created successfully and URL reported in the chat
 - Code review bot response round completed: the bot's findings were evaluated and a response comment posted (fixes committed and pushed, false positives rebutted), OR the 10-minute poll window elapsed with no bot comment and that was reported in the chat

@@ -1,6 +1,6 @@
 ---
 name: manual-qa-plan
-description: Generate a manual QA verification plan for a Jira task, bug, or epic. Use when implementation is complete and a tester-friendly QA plan is needed — invoke with the Jira issue key whenever a task or bug has been implemented and needs verification steps before or during QA. Reviews the work item context and the related branch diff to produce prerequisites, expected results, regression scenarios, and edge cases, then appends the final QA plan to the Jira issue description.
+description: Generate a manual QA verification plan for a Jira task, bug, or epic. Use when implementation is complete and a tester-friendly QA plan is needed — invoke with the Jira issue key whenever a task or bug has been implemented and needs verification steps before or during QA. Reviews the work item context and the related branch diff to produce a concise, numbered manual test-case checklist with pass conditions and developer requests for screenshots and sample inputs, excluding any features the repository declares deprecated or unsupported, then writes it to the Jira issue description as the `## Final QA Plan` section.
 user-invocable: true
 argument-hint: "[PROJ-123]"
 disable-model-invocation: true
