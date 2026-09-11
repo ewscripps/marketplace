@@ -24,7 +24,7 @@
 - `$MEM/clarifications.md` — O3 interview answers (schema §3.5).
 - `$MEM/checkpoint.md` — overwritten after every phase (schema §3.2); the recall surface.
 
-See `file-memory-protocol.md` for the path recipe, the `checkpoint.md`/`clarifications.md`/`exploration` schemas, and the checkpoint/compaction contract. This workflow does not participate in `work-item.md` enumeration, so `/compact-context` will not auto-discover it — instead this workflow carries its own compaction gate at O2.
+See `file-memory-protocol.md` for the path recipe, the `checkpoint.md`/`clarifications.md`/`exploration` schemas, and the checkpoint/compaction contract. See **`deprecated-scope-protocol.md`** for the deprecated/unsupported-feature contract — this workflow is that protocol's **producer** (§5), and the headings it specifies are matched verbatim by every consumer. This workflow does not participate in `work-item.md` enumeration, so `/compact-context` will not auto-discover it — instead this workflow carries its own compaction gate at O2.
 
 **SUB-AGENT NAME RESOLUTION:** This workflow refers to sub-agents by short name (`codebase-explorer`, `area-mapper`). The runtime registers them under different identifiers depending on how they are installed. Before the first sub-agent invocation, resolve each short name against the runtime's available-agents list and use the exact registered identifier:
 
@@ -116,9 +116,20 @@ See `file-memory-protocol.md` for the path recipe, the `checkpoint.md`/`clarific
 
 8. **Read Serena project memory as hints.** `list_memories` and `read_memory` for any `codebase-map-*`, `test-commands`, `documentation-conventions` entries — treat as starting context to verify, not ground truth.
 
-9. **Write findings** to `$MEM/discovery.md`: stack, versions, commands (verbatim), CI/deploy signals, structure map, inferred VCS conventions, code-style facts, available skills, and — importantly — an explicit list of **open gaps** (facts the docs need that the codebase did not reveal), which seeds O3.
+9. **Deprecated / unsupported feature candidates.** Some projects carry features that still execute but are no longer supported — the code looks alive because it *is* alive, so nothing in O1's normal signals surfaces it. Gather **candidates only** here; per `deprecated-scope-protocol.md` §3 a candidate is never a declaration, and the user declares at O3. Signals, strongest first:
 
-> **REQUIRED:** Present a concise discovery summary: stack & versions; canonical commands (build/test/lint/run); structure map; inferred VCS conventions; available skills (or "none"); and the list of open gaps to resolve with the user. Label any low-confidence inference as `[INFERRED]`.
+   - **Sibling-implementation asymmetry — the strongest signal.** Where the project has parallel implementations (themes, apps, packages, API versions, platform targets), a whole file-class or subtree present in the older one and **absent from the newer** is strong evidence the newer one was built ignoring it. Compare per-implementation file counts by extension and subtree.
+   - **Deprecation markers** — `@Deprecated`, Javadoc/JSDoc `@deprecated`, `#[deprecated]`, `DeprecationWarning`, `Obsolete`, UI-hidden annotations. Note whether each sits at type level or only on members; a type-level marker is the stronger candidate.
+   - **Feature-flag or toggle types that gate a whole feature** — a settings class or feature type whose `isEnabled()`-style check guards an entire subtree. Record the switch: a feature can be unsupported and still switched on somewhere.
+   - **Naming clusters** — a dedicated package/subtree or a filename family (for example `*.amp.hbs`) that names one feature.
+   - **Subtree staleness** — `git log -1 --format=%as -- <path>` per candidate subtree, compared against the repository's median. Staleness alone is weak; it corroborates, it does not establish.
+   - **Doc prose** — "no longer", "legacy", "do not use", "unsupported", "superseded by" in existing docs and comments.
+
+   For each candidate record the evidence and the **concrete markers** that identify its surface per `deprecated-scope-protocol.md` §2 — directory paths, filename patterns, class/package prefixes, query parameters, settings fields. Add every candidate to the open-gaps list so it reaches O3.
+
+10. **Write findings** to `$MEM/discovery.md`: stack, versions, commands (verbatim), CI/deploy signals, structure map, inferred VCS conventions, code-style facts, available skills, deprecated-feature candidates with their evidence and markers, and — importantly — an explicit list of **open gaps** (facts the docs need that the codebase did not reveal), which seeds O3.
+
+> **REQUIRED:** Present a concise discovery summary: stack & versions; canonical commands (build/test/lint/run); structure map; inferred VCS conventions; available skills (or "none"); **deprecated-feature candidates (or "none detected")**; and the list of open gaps to resolve with the user. Label any low-confidence inference as `[INFERRED]`. Present deprecation candidates explicitly as candidates awaiting confirmation — never as established fact.
 
 > **CHECKPOINT (O1):** Per-phase checkpoint. `phase: O1`, `next_phase: O2`, `references: [discovery.md]`. No user prompt.
 
@@ -132,6 +143,12 @@ See `file-memory-protocol.md` for the path recipe, the `checkpoint.md`/`clarific
 
 1. From O1, identify the distinct areas worth exploring (e.g. core domain modules, API/service layer, data layer, frontend, build/tooling, test harness). Limit scope to the target project directory.
 
+   **If O1 recorded any deprecated-feature candidate, add a dedicated area with `area_slug: deprecated-features`.** Its `question` is:
+
+   > "For each candidate feature: what is the full footprint (entry points, file and class counts, generated code, templates), does it still execute and by what trigger, is there a runtime switch that disables it and what does toggling it actually change, how does the newest sibling implementation treat it, and — critically — what are the **concrete markers** that identify its surface (directory paths, filename patterns, class/package prefixes, query parameters, settings fields)?"
+
+   This area answers *what the footprint is*, not *whether the feature is supported* — that is the user's call at O3.
+
 2. Invoke a `codebase-explorer` sub-agent in **parallel** for each distinct area, providing:
    - **target_area** — the area/module/path.
    - **question** — "What are the architecture, key modules and responsibilities, conventions (naming, directory organization, file naming, error handling), reusable patterns/utilities, integration points, and gotchas an AI agent must know to contribute to this area?"
@@ -144,11 +161,11 @@ See `file-memory-protocol.md` for the path recipe, the `checkpoint.md`/`clarific
 
 4. `Read` each `$MEM/explorations/<area_slug>.md`. Re-spawn any missing/empty file. Surface `open_questions`. If a finding reveals a connected area not yet explored, dispatch a follow-up `codebase-explorer` (same `memory_dir`) before proceeding.
 
-5. **Synthesize** across all explorations: architecture & module map, domain concepts, data models, external integrations, code conventions (naming/directory/file-naming/style), reusable patterns, risks, and known gotchas. In **refresh mode**, additionally **diff the synthesis against the existing docs loaded in O0** and record concrete drift items (commands/paths that no longer exist, moved directories, new integrations, changed conventions, newly available skills).
+5. **Synthesize** across all explorations: architecture & module map, domain concepts, data models, external integrations, code conventions (naming/directory/file-naming/style), reusable patterns, risks, and known gotchas. **Classify every deprecation candidate into exactly one of the three states in `deprecated-scope-protocol.md` §5** — `dead` (never executes), `deprecated / unsupported` (executes, must not be extended), or `dormant` (executes but does nothing) — with the evidence for the classification and the concrete markers for each. Conflating these is what lets a deprecated feature hide: it is not dead, so a dead-code list never catches it. In **refresh mode**, additionally **diff the synthesis against the existing docs loaded in O0** and record concrete drift items (commands/paths that no longer exist, moved directories, new integrations, changed conventions, newly available skills).
 
-6. **Identify diagram inputs and nested-doc targets.** From the synthesis, capture the component relationships and a representative data-flow/request lifecycle needed for the **CONTEXT.md mermaid diagrams** (real modules and edges only). Also flag the **large/complex subdirectories that warrant a nested per-module doc** — those with substantial size, distinct concern, or non-obvious local conventions; skip small/leaf directories. Record the proposed nested-doc target list in `discovery.md` for the O4 gate.
+6. **Identify diagram inputs and nested-doc targets.** From the synthesis, capture the component relationships and a representative data-flow/request lifecycle needed for the **CONTEXT.md mermaid diagrams** (real modules and edges only). Also flag the **large/complex subdirectories that warrant a nested per-module doc** — those with substantial size, distinct concern, or non-obvious local conventions; skip small/leaf directories. **Additionally flag any module containing deprecated surface**, which warrants a nested doc carrying a one-line local rule even when the module would not otherwise qualify — proximity is how deprecated surface gets extended by accident. Record the proposed nested-doc target list in `discovery.md` for the O4 gate.
 
-> **REQUIRED:** Present the synthesized investigation: architecture/module map; domain concepts & data models; external integrations; code conventions with evidence; patterns to reuse; risks/gotchas; the planned CONTEXT.md diagrams; and the proposed nested-doc target subdirectories. In refresh mode, also present the per-file **drift list**. Label `inferred: true` items as `[INFERRED]`.
+> **REQUIRED:** Present the synthesized investigation: architecture/module map; domain concepts & data models; external integrations; code conventions with evidence; patterns to reuse; risks/gotchas; **each deprecation candidate with its proposed state, footprint, and markers**; the planned CONTEXT.md diagrams; and the proposed nested-doc target subdirectories. In refresh mode, also present the per-file **drift list**. Label `inferred: true` items as `[INFERRED]`.
 
 > **APPROVAL GATE — FULL STOP.** Use `AskUserQuestion` (Header: `O2 Approval`, Question: `Does the codebase investigation look accurate and complete?`, Options: `Approve and proceed (Recommended)` — investigation is accurate, `Request changes` — something needs correction). Do not proceed to O3 until the user approves.
 
@@ -179,7 +196,9 @@ See `file-memory-protocol.md` for the path recipe, the `checkpoint.md`/`clarific
    - **Code style specifics** — any conventions not captured by config or inferable from code.
    - **Logging conventions** — logger/framework, log levels and when to use each, structured vs. plain format, correlation/trace IDs, and what must never be logged (if not inferable from the code).
    - **Domain/context** — domain glossary terms or non-obvious design decisions an agent should know.
-   - **Danger zones** — what an agent must NOT touch (generated code, vendored dirs, lockfiles, sensitive modules).
+   - **Deprecated / unsupported features** — what the project no longer supports but has not removed. Present the O1/O2 candidates with their evidence and proposed state; ask which are genuinely frozen versus still actively maintained, whether any is scheduled for removal (freeze and remove produce different doc wording), and whether detection missed one. **This is the only way this fact can be established** — a deprecated feature's code looks identical to a supported one's, so `deprecate-by-inference` is forbidden (`deprecated-scope-protocol.md` §3). Mark `[BLOCKING]` when candidates exist: a wrong "still supported" assumption propagates into every future feature and every QA plan. Mark `[NICE TO HAVE]` when none were detected, and ask once whether anything is unsupported that detection would not see.
+     **Ask this as ONE consolidated question**, never one per candidate. Offer the detected list as the first option (`Confirm this list`) per step 4's detected-value rule. With more than three candidates, enumerate them in the question text and offer `Confirm all` / `Provide answer` rather than exceeding the four-option limit. Also confirm the **markers** for each — an over-broad marker silently strips legitimate work downstream (§2).
+   - **Danger zones** — what an agent must NOT touch (generated code, vendored dirs, lockfiles, sensitive modules). Distinct from deprecated features: *do not touch* means do not modify; *deprecated* means do not build on. A feature can be one, the other, or both.
    - **Ownership/contacts** — maintainers, teams, or contacts for the README.
 
 4. Ask each question via a separate `AskUserQuestion` call, one per call, short Header (≤12 chars), with the `[BLOCKING]`/`[NICE TO HAVE]` tag in the question text. For open-ended answers use options `Provide answer` (description: "Type your response in the Other field") and, for non-blocking questions only, `Skip` (description: "Skip this non-blocking question"). For closed-enum questions use specific options. If a detected value needs only confirmation, offer it as the first option (e.g. `Yes, develop`).
@@ -202,7 +221,7 @@ See `file-memory-protocol.md` for the path recipe, the `checkpoint.md`/`clarific
 
 1. Assemble the planned content for each of the five root docs **plus `AGENTS.md`** from O1/O2/O3, following the **file responsibilities** below. Respect the single-source-of-truth rules (no duplication; cross-links instead).
 
-2. **Initial mode:** present a concise **outline** per file — the section headings and the key facts each will contain — including the planned **CONTEXT.md mermaid diagrams** and the **proposed list of nested per-module docs** (which subdirectories get one, and whether each is `CLAUDE.md` or `README.md` to match the repo's convention).
+2. **Initial mode:** present a concise **outline** per file — the section headings and the key facts each will contain — including the planned **CONTEXT.md mermaid diagrams**, the **proposed list of nested per-module docs** (which subdirectories get one, and whether each is `CLAUDE.md` or `README.md` to match the repo's convention), and the **classified deprecated inventory with its markers**, so the user can correct a misclassification or an over-broad marker before anything is written.
    **Refresh mode:** present a **drift report** per file — what's stale (to fix), what's missing (to add), what's outdated (to update), and which human-authored content will be **preserved untouched** — and reconcile any existing nested docs / diagrams. For an existing content-bearing `AGENTS.md`, only ensure the CLAUDE.md pointer is present; do not rewrite its content. Show it as a per-file change list, not a full rewrite.
 
 3. Never propose a blind overwrite. Honor any per-file handling the user set at O0.
@@ -226,6 +245,7 @@ See `file-memory-protocol.md` for the path recipe, the `checkpoint.md`/`clarific
   - **Testing conventions** — where tests live, naming, coverage thresholds; a **Definition of Done**.
   - **Dependency-management rules** — how to add/update deps, lockfile discipline.
   - **Secrets handling** — never commit secrets; how config/secrets are managed.
+  - **Deprecating a feature** — when the project declares any, the policy for adding to the inventory: annotate the code, record the footprint in CONTEXT.md, state the rule in CLAUDE.md, and cite an in-repo precedent for the annotation style where one exists. Deprecating is not deleting — leave working code in place unless removal is the task.
   - **PR/MR description/template + CODEOWNERS/reviewer-selection** expectations.
   - Local dev setup specifics.
   These are sourced primarily from O2 explorer findings (evidence-backed) and confirmed/supplemented in O3 — not invented.
@@ -242,7 +262,8 @@ See `file-memory-protocol.md` for the path recipe, the `checkpoint.md`/`clarific
   - **Environment topology** — dev/staging/prod and how they differ.
   - **Auth/security model** — how authentication and authorization work.
   - **Observability** — logging, metrics, and tracing **architecture** (where logs/metrics go, aggregation, correlation/trace IDs). Developer-facing logging *conventions* live in CONTRIBUTING.md.
-  - **Known gaps & constraints** — explicitly call out what is mocked, stubbed, missing, or deliberately deferred (e.g. "auth is mocked in dev", "no service layer yet"), plus notable design decisions and known tech debt/limitations.
+  - **Known gaps & constraints** — explicitly call out what is mocked, stubbed, missing, or deliberately deferred (e.g. "auth is mocked in dev", "no service layer yet"), plus notable design decisions and known tech debt/limitations. Separate the three states in `deprecated-scope-protocol.md` §5 — **dead** (never executes), **deprecated / unsupported** (executes, must not be extended), **dormant** (executes but does nothing). A single "dead code" list is what lets a deprecated feature hide, because it is not dead.
+  - **Deprecated / unsupported** — when the project declares any, a section under this **exact heading** (it is matched by `deprecated-scope-protocol.md` §1 and is a machine-readable contract, not a style choice). Carry the three-state table, then one subsection per feature with: entry points, footprint counts, generated code, the runtime switch and what toggling it actually changes, how the newest sibling implementation treats it, **a markers row** per §2, and the paths of any nested deprecation notes. State plainly what still executes — "unsupported" does not mean "inert". Omit the section entirely when nothing is declared; never emit an empty one.
   - **Pointers (no duplication)** — build/run/test **commands** live in README.md and the CLAUDE.md golden path; **environment variables** in README.md; **testing strategy** in CONTRIBUTING.md — CONTEXT.md links to these rather than restating them.
 
   Embed **mermaid diagrams** in ` ```mermaid ` fences — at minimum a component/architecture diagram, plus a data-flow / request-lifecycle diagram (and an ERD where a data model exists) — reflecting real modules and edges from the O2 investigation, not decorative placeholders. Follow the source guidance ([github.com/orgs/community/discussions/191257](https://github.com/orgs/community/discussions/191257)): keep it a **living document**, prefer **structured data** (tables, ERDs) for efficient parsing, and focus on **constraints and anti-patterns** over generic positive advice.
@@ -251,6 +272,7 @@ See `file-memory-protocol.md` for the path recipe, the `checkpoint.md`/`clarific
   - A copy-pasteable **golden-path** block (setup → build → test → lint → run), using the verbatim commands from O1.
   - Critical conventions (one-liners) and the exact **verification loop** to confirm a change works.
   - Known gotchas and an explicit **do-not-touch** list (generated code, vendored dirs, lockfiles, danger zones from O3).
+  - When the project declares any deprecated feature, a **separate** section headed exactly `Deprecated — do not extend` (matched by `deprecated-scope-protocol.md` §1 — a contract, not a style choice), holding a `| Feature | Do not |` table whose rows are phrased as **instructions** ("Do not create `.amp.hbs` templates"), plus a link to the CONTEXT.md footprint. Keep it separate from do-not-touch: *don't modify* and *don't build on* are different rules, and merging them loses one. Name the accident that makes it easy to extend by mistake — usually that the deprecated surface sits directly beside its supported counterpart.
   - A **"when unsure, ask/escalate"** rule and a note of available tooling (MCP servers, Serena) the agent can use.
   - A one-line **Jira project key(s)** pointer (authoritative list lives in CONTRIBUTING.md).
   - **Skill-suggestion behavior:** instruct the agent that when a user's request matches a documented skill's trigger (e.g. "start a new feature" → `/requirements-intake`, "implement PROJ-123" → `/task-card`, "fix this bug" → `/bug-card`), it should *suggest running that skill* rather than doing the work ad hoc, and consult WORKFLOWS.md for the mapping.
@@ -266,7 +288,7 @@ See `file-memory-protocol.md` for the path recipe, the `checkpoint.md`/`clarific
 
 - **AGENTS.md** — a thin **cross-agent pointer**, not a content file. A short intro line plus a directive to read `CLAUDE.md` as the authoritative agent operating guide, and README / CONTEXT / CONTRIBUTING / WORKFLOWS for detail. It exists so non-Claude tools (Cursor, Codex, Aider, etc.) land on the same golden path and guardrails. Keep it to a few lines; do not duplicate CLAUDE.md content. If the project already has a content-bearing `AGENTS.md`, leave that content intact and only ensure the pointer to `CLAUDE.md` is present.
 
-- **Nested per-module docs** — for the large/complex subdirectories flagged in O2, a short doc placed *in that subdirectory* named to match the repo's existing convention (`CLAUDE.md`, or `README.md` if the repo already uses per-directory READMEs): what the module does, its key files/entry points, local conventions, and gotchas. Keep each brief and **link up to the root `CONTEXT.md`** rather than duplicating it. Only create these for directories that genuinely warrant local context; skip small/leaf directories. The target set is proposed and approved at O4.
+- **Nested per-module docs** — for the large/complex subdirectories flagged in O2, a short doc placed *in that subdirectory* named to match the repo's existing convention (`CLAUDE.md`, or `README.md` if the repo already uses per-directory READMEs): what the module does, its key files/entry points, local conventions, and gotchas. Where the module contains deprecated surface, add a one-line local rule and record that doc's path in the CONTEXT.md footprint, so a consumer following `deprecated-scope-protocol.md` §1 step 3 finds it without guessing which filename convention this repo uses. Keep each brief and **link up to the root `CONTEXT.md`** rather than duplicating it. Only create these for directories that genuinely warrant local context; skip small/leaf directories. The target set is proposed and approved at O4.
 
 ---
 
@@ -300,8 +322,14 @@ See `file-memory-protocol.md` for the path recipe, the `checkpoint.md`/`clarific
 2. Verify cross-links resolve (each referenced doc exists, AGENTS.md → CLAUDE.md, nested docs → root CONTEXT.md).
 3. Confirm the `CONTEXT.md` **mermaid fences are well-formed** (opened/closed ` ```mermaid ` blocks, valid node/edge syntax) and reference real modules.
 4. **No invented commands/paths:** for every command and path written into the docs, confirm it actually exists in the project (a real script/target/config from O1, or a real directory). Flag and fix any that don't.
-5. Present a **summary table**: per file (incl. `AGENTS.md` and nested docs) — created / enhanced / refreshed, and the key facts captured; plus, in refresh mode, the drift items resolved.
+5. **Deprecated inventory checks** — skip entirely if nothing was declared:
+   - Every entry traces to O2 evidence or an explicit O3 answer. Nothing inferred survives as a declaration (`deprecated-scope-protocol.md` §3).
+   - The headings are **verbatim** `Deprecated — do not extend` in CLAUDE.md and `Deprecated / unsupported` in CONTEXT.md. These are matched by §1; a near-miss silently breaks every consumer, so compare character-for-character rather than by eye.
+   - CLAUDE.md rows are phrased as **instructions**, not facts — "Do not create X", not "X is deprecated".
+   - Every feature carries at least one **concrete marker** specific enough that it cannot match supported code (§2). Grep each marker against the repo and confirm it does not hit supported surface; report the counts.
+   - **Refresh mode:** every previously documented deprecated feature still exists. One that has since been removed is **dropped**, not carried forward as a phantom entry that would make consumers exclude surface that is gone.
+6. Present a **summary table**: per file (incl. `AGENTS.md` and nested docs) — created / enhanced / refreshed, and the key facts captured; plus, in refresh mode, the drift items resolved.
 
-> **REQUIRED:** Present the verification results and the summary table. Note that the session memory under `$MEM` can be discarded (it holds only transient onboarding state); offer to remove it with `rm -rf "$MEM"` on the user's confirmation, or leave it for a future refresh run.
+> **REQUIRED:** Present the verification results and the summary table. When an inventory was declared, state that downstream skills (`/manual-qa-plan`, `/task-card`, `/bug-card`, `/epic-card`) will now find and honor it — this is the point of declaring it. Note that the session memory under `$MEM` can be discarded (it holds only transient onboarding state); offer to remove it with `rm -rf "$MEM"` on the user's confirmation, or leave it for a future refresh run.
 
 > **CHECKPOINT (O6):** Per-phase checkpoint. `phase: O6`, `next_phase: done`. The workflow is complete.

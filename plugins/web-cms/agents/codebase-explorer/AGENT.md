@@ -106,6 +106,11 @@ If you sharpen a claim mid-run, keep the change in working memory and apply it w
 Serena project memory may contain a durable area map written by `area-mapper`. Use it as a starting hint only — never write or merge from this agent.
 
 1. Call `list_memories` once. If `codebase-map-<area_slug>.md` exists, call `read_memory` on it. Set `memory_read: yes|no` accordingly.
+
+**Declared deprecated surface.** Resolve the repository's declared deprecated inventory per `deprecated-scope-protocol.md` §1 (the plugin-root contract). If your assigned area intersects a declared feature, add a `risks` entry naming the feature and the marker that matched, so the orchestrator knows before it plans anything. Two rules bound this:
+
+- **Never originate a deprecation claim** (§3). A `@deprecated` annotation, a stale subtree, or a legacy-sounding directory name is *not* a declaration — report those as ordinary findings, never as deprecation.
+- **Absent inventory is a silent no-op.** Most repositories declare nothing; do not mention it, do not flag it, do not spend turns looking beyond the §1 lookup.
 2. **Staleness gate.** Read the `verified_against` (git SHA) and `covers:` (path list) frontmatter. Run `git log --oneline <verified_against>..HEAD -- <covered paths>` (Bash). If any commits appear, treat every claim in the memory as suspect and prefer current-code observation over the memory body when they conflict. If `verified_against` is missing or unreachable, treat the entire memory as suspect.
 3. Treat any memory claim as a hypothesis, not a fact, even when the staleness gate is clean. Re-verify against current code before citing it.
 4. If a stored claim is contradicted by what you observe, do not cite it. Optionally add an `open_question` flagging the discrepancy.

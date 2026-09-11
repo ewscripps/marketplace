@@ -104,16 +104,13 @@ Omitting the heading is a failure. Silence is ambiguous about whether the questi
 
 **DEPRECATED SCOPE RULE:** Some repositories declare features that still execute but are no longer supported. A QA tester must never be asked to verify one. Before writing any test case, build the deprecated inventory and exclude it.
 
-- **Where to look**, in this order, at the git worktree root:
-    1. `CLAUDE.md` -- a section whose heading matches `Deprecated`, `Do not extend`, `Unsupported`, `Legacy`, or `Do not touch` (case-insensitive). This is the authoritative rule, and it usually names each feature in a `| Feature | Do not |` table.
-    2. Any document that section points to -- commonly a `CONTEXT.md` section headed `Deprecated / unsupported`, which carries the full footprint per feature: entry-point classes, directory paths, template filename patterns, generated-code packages, query parameters, and runtime switches.
-    3. A nested `CLAUDE.md` in any directory the diff touches.
-- **Extract concrete markers**, not just feature names -- the strings that let you recognize the surface in the diff and in a tester instruction: directory paths, filename patterns (for example `*.amp.hbs`), class or package prefixes, query parameters (for example `?_amp=true`), field and settings names.
-- **Keep markers specific.** A marker must be distinctive enough that it cannot match supported code -- a filename pattern, a class or package prefix, a query parameter, a settings field. Never reduce a feature to a common word that also appears in supported behavior, because an over-broad marker silently strips legitimate coverage, and missing coverage is a worse failure than a verbose plan.
-- **Exclude absolutely.** No case, step, pass condition, screenshot request, or prerequisite may target a deprecated surface. This holds even when the change sits directly beside one, and even when the deprecated feature is still switched on somewhere: "unsupported" and "not currently serving traffic" are separate questions, and resolving the second is not the tester's job.
-- **Never write a regression case for a deprecated feature.** Proximity to changed code does not justify one. If the risk is real it is a developer concern, not a QA step.
-- **Flag, do not test.** If the diff itself adds to or modifies a deprecated surface, that is usually accidental -- deprecated code commonly sits next to its supported counterpart, so copying a neighbouring file pulls it along. Report it in the Q2 and Q4 **chat output** as `Deprecated surfaces touched by this diff`, naming the file and the feature, so the developer can remove it before QA reaches it. Never convert it into a tester-facing case.
-- If the repository declares no such inventory, record `no deprecated inventory declared` and continue. Do not infer deprecation from code comments, `@deprecated` annotations, or directory names -- a `@deprecated` symbol is often still supported product behavior. The declared inventory is the only authority.
+The full contract lives in **`deprecated-scope-protocol.md`** at the plugin root -- read it and apply it. In this workflow specifically:
+
+- Build the inventory per protocol **§1** (lookup order) and **§2** (extract concrete markers, keep them specific).
+- Apply **§3**: never infer deprecation yourself from code comments, `@deprecated` annotations, or directory names. The declared inventory is the only authority.
+- Apply **§4** (consumer obligations): exclude absolutely -- no case, step, pass condition, screenshot request, or prerequisite may target a deprecated surface, even when the change sits directly beside one and even when the feature is still switched on somewhere. Never write a regression case for a deprecated feature.
+- **Flag, do not test.** If the diff itself adds to or modifies a deprecated surface, report it in the Q2 and Q4 **chat output** as `Deprecated surfaces touched by this diff`, naming the file and the feature, so the developer can remove it before QA reaches it. Never convert it into a tester-facing case.
+- If the repository declares no such inventory, record `no deprecated inventory declared` and continue.
 
 **BRANCH CONTEXT RULE:** Review the actual branch diff whenever possible. If the target branch cannot be resolved from Jira context or repository state, stop and use `AskUserQuestion` to ask the user how to proceed:
 - Header: `Branch Context`

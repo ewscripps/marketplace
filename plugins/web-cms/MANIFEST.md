@@ -41,7 +41,9 @@ INTAKE (creates Jira cards)          EXECUTION (works Jira cards)
                                        /project-onboarding [path] (O0-O6)
                                          Standalone -- generates or refreshes
                                          README, CONTRIBUTING, CONTEXT, CLAUDE,
-                                         and WORKFLOWS docs for AI-agent use
+                                         and WORKFLOWS docs for AI-agent use;
+                                         declares the deprecated-feature
+                                         inventory the other skills consume
 
                                        /compact-context
                                          Standalone utility -- checkpoint the active
@@ -84,6 +86,12 @@ The Jira card description is the interface between intake and execution:
 | **document-card** | `/document-card PROJ-123` | DC0-DC8 | Completed Task/Epic/Bug card | comment-reviewer |
 | **project-onboarding** | `/project-onboarding [path]` | O0-O6 | Target project repo state | codebase-explorer, area-mapper |
 | **compact-context** | `/compact-context` | — | Active work item's file memory | None |
+
+`project-onboarding` additionally **produces** the repository's declared deprecated-feature inventory
+(`deprecated-scope-protocol.md` §5). Every other skill and agent consumes it: `manual-qa-plan` excludes it
+from QA coverage, `task-card` / `bug-card` / `epic-card` refuse to plan extensions to it, `codebase-explorer`
+flags areas that intersect it, and `code-quality-reviewer` flags diffs that extend it. Until a repository is
+onboarded, no inventory is declared and every one of those behaviors is a silent no-op.
 
 ## Agents
 
@@ -243,7 +251,7 @@ sections are additive context for frontend implementation.
 
 ## File-Based Memory
 
-Most intake and execution workflows accumulate structured state across phases in a **per-work-item file-memory directory** at `<project-root>/.claude/web-cms-memory/<WORK-ITEM-KEY>/` (the git worktree root's `.claude/` folder, git-ignored) (markdown + YAML frontmatter). This replaces the former knowledge-graph MCP server. The full specification — path-resolution recipe, file schemas, the checkpoint/compaction contract, the full-context-load rule, the codebase-explorer → area-mapper file flow, and the generated `work-item.html` dashboard — lives in **`file-memory-protocol.md`** at the plugin root. Key rules:
+Most intake and execution workflows accumulate structured state across phases in a **per-work-item file-memory directory** at `<project-root>/.claude/web-cms-memory/<WORK-ITEM-KEY>/` (the git worktree root's `.claude/` folder, git-ignored) (markdown + YAML frontmatter). This replaces the former knowledge-graph MCP server. The full specification — path-resolution recipe, file schemas, the checkpoint/compaction contract, the full-context-load rule, the codebase-explorer → area-mapper file flow, and the generated `work-item.html` dashboard — lives in **`file-memory-protocol.md`** at the plugin root. A second plugin-root contract, **`deprecated-scope-protocol.md`**, governs features that still execute but are no longer supported: `project-onboarding` is its producer (§5) and every other skill and agent is a consumer (§1-§4). Key rules:
 
 - **Intake workflows:** file content must be fully materialized into the Jira card description before cleanup
 - **Execution workflows:** the directory tracks state within and across sessions; if resumed and the directory is absent, reconstruct state from the Jira issue description and comment history before continuing
