@@ -133,6 +133,7 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 > **USE SEQUENTIAL THINKING:** Before synthesizing the explorer findings, invoke the `sequentialthinking` tool. Use it to integrate the evidence across all explorer reports, reconcile any conflicting signals between areas, identify the patterns and constraints most relevant to this task's implementation, and build a coherent mental model of the affected codebase. Synthesis that skips this step tends to miss cross-area coupling and architectural constraints that only appear when findings are read together. Do not proceed to the synthesis bullets until the reasoning is complete.
 
+- **Build the declared deprecated inventory** per `deprecated-scope-protocol.md` §1-§2 (the plugin-root contract): resolve the repository's declared deprecated/unsupported sections and extract each feature's concrete markers. Then check the affected areas against those markers and record whether this work intersects any deprecated surface. Record `no deprecated inventory declared` when there is none, and continue — absence is normal. Never infer deprecation from `@deprecated` annotations or directory names (§3); the declared inventory is the only authority.
 - Synthesize the findings from the exploration files. Read across all `$MEM/explorations/*.md` and aggregate:
     - **Patterns, abstractions, and utilities in use** — from each file's `patterns` array; cite `evidence_files` when present.
     - **Existing test coverage and testing patterns** — from `patterns`/`evidence` entries with `evidence_type: convention` covering tests.
@@ -163,12 +164,14 @@ Do not guess transition IDs. Always retrieve them first via tool call 1.
 
 > **THINK HARD:** Before finalizing the plan, think hard about whether every acceptance criterion maps to a specific, concrete code change, and whether the ordering and scope of those changes is minimal and safe. This is the highest-leverage decision point in the workflow — a vague or over-scoped plan produces an implementation that cannot be cleanly reviewed or verified.
 
-> **SELF-INTERROGATION — REQUIRED before finalizing the plan.** Answer these two questions explicitly, and route each answer into an artifact (an answer that lives only in your reasoning is wasted):
+> **SELF-INTERROGATION — REQUIRED before finalizing the plan.** Answer these three questions explicitly, and route each answer into an artifact (an answer that lives only in your reasoning is wasted):
 >
 > 1. **What am I least confident about in this plan right now?** Name the specific assumption, file, or approach — an unverified integration point, an inferred convention, a criterion whose mapping to code is indirect. Route: record each item under the plan's risks/open items. If an item is answerable by the user, ask it via `AskUserQuestion` now, before the plan is posted — do not carry a user-answerable uncertainty silently into T5.
 > 2. **What potential bugs or problems could arise from this change?** Reason about edge cases, error paths, callers, and state the plan does not explicitly cover. Route: fold every concrete failure scenario into the plan's **Testing expectations** so `test-reviewer` inherits them as required scenarios.
 >
-> "Nothing" is almost never the true answer to either question. If it genuinely is, state why in one line.
+> 3. **Does this plan extend anything deprecated?** Check the affected areas against the declared deprecated inventory built in T2. If any step adds to a deprecated surface — a new file in a deprecated subtree, a new member on a deprecated type, a new counterpart to a deprecated file family — say so explicitly and either justify it or replace that step. Deprecated code sits beside its supported counterpart, so mirroring a neighbouring file is the usual way this happens by accident. Route: record the decision under the plan's risks/open items so it is visible at T5. If no inventory is declared, answer "none declared" in one line.
+>
+> "Nothing" is almost never the true answer to the first two questions. If it genuinely is, state why in one line.
 
 > **REUSE EXISTING DIAGRAM:** Before generating a flowgraph, `Read $MEM/work-item.md` and check for a `## Architecture` ` ```mermaid ` block (carried over from `/requirements-intake` or `/implementation-discovery` if those ran first). If one exists, use it as the starting point and refine it to implementation-level detail — do not start from scratch.
 

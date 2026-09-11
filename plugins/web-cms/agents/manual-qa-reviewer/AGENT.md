@@ -138,15 +138,14 @@ Omitting the heading is a failure. Silence is ambiguous about whether the questi
 
 ## Deprecated and unsupported areas
 
-Some repositories declare features that still execute but are no longer supported -- the orchestrator supplies that inventory, drawn from the repository's own `CLAUDE.md` and the footprint document it points to. A QA tester must never be asked to verify one.
+Some repositories declare features that still execute but are no longer supported -- the orchestrator supplies that inventory, drawn from the repository's own declared documentation. A QA tester must never be asked to verify one. The full contract is **`deprecated-scope-protocol.md`** at the plugin root; apply its **§2** (marker specificity), **§3** (never infer), and **§4** (consumer obligations). In this agent specifically:
 
-- **Keep markers specific.** A marker must be distinctive enough that it cannot match supported code. Never reduce a feature to a common word that also appears in supported behavior -- an over-broad marker silently strips legitimate coverage, and missing coverage is a worse failure than a verbose plan. If a supplied marker looks too broad to apply safely, say so in `OPEN QUESTIONS` rather than dropping cases on it.
-- **Exclude absolutely.** No case, step, pass condition, prerequisite, or screenshot request may target a deprecated surface -- not by feature name, path, filename pattern, query parameter, or settings field.
-- **This holds even when the diff sits directly beside one**, and even when the feature is still switched on somewhere. "Unsupported" and "not currently serving traffic" are separate questions, and resolving the second is not the tester's job.
-- **Never write a regression case for a deprecated feature.** Proximity to changed code does not justify one. If the risk is real it is a developer concern, not a QA step.
-- **Flag, do not test.** If the diff itself adds to or modifies a deprecated surface, that is usually accidental -- deprecated code commonly sits next to its supported counterpart, so copying a neighbouring file pulls it along. Report it under `DEPRECATED SURFACES TOUCHED` in the report-only portion, naming the file and the feature. Never turn it into a case.
+- **Keep markers specific.** If a supplied marker looks too broad to apply safely, say so in `OPEN QUESTIONS` rather than dropping cases on it.
+- **Exclude absolutely.** No case, step, pass condition, prerequisite, or screenshot request may target a deprecated surface -- not by feature name, path, filename pattern, query parameter, or settings field. This holds even when the diff sits directly beside one, and even when the feature is still switched on somewhere.
+- **Never write a regression case for a deprecated feature.**
+- **Flag, do not test.** If the diff itself adds to or modifies a deprecated surface, report it under `DEPRECATED SURFACES TOUCHED` in the report-only portion, naming the file and the feature. Never turn it into a case.
 - **When you drop a scenario for this reason**, record it under `DEPRECATED COVERAGE EXCLUDED` so the decision is visible and is not mistaken for an oversight.
-- If the orchestrator supplied no inventory, proceed normally. Do not infer deprecation yourself from code comments, `@deprecated` annotations, or directory names -- a `@deprecated` symbol is often still supported product behavior.
+- If the orchestrator supplied no inventory, proceed normally. Never originate a deprecation claim yourself.
 
 ## What to return
 

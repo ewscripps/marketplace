@@ -43,6 +43,11 @@ New classes/functions placed where the codebase places them (layer, package, dir
 **4. Local Code Quality**
 Code smells, dead code, unnecessary complexity, duplication introduced by the diff, hardcoded values that the project's conventions would make configurable, commented-out code, leftover debug artifacts.
 
+**5. Deprecated Surface**
+Resolve the repository's declared deprecated inventory per `deprecated-scope-protocol.md` §1, then check whether the diff *extends* it: a new file inside a deprecated subtree, a new member on a deprecated type, a new counterpart to a deprecated file family (the classic accident — deprecated files sit beside their supported counterparts, so mirroring a neighbour pulls one along), or new code paths behind a deprecated feature's switch.
+
+Report, do not fix — removing the extension may not be the right call, and that is the author's decision. Judge only against the declared inventory: never originate a deprecation claim from an annotation or a directory name (§3). If nothing is declared, skip this dimension silently rather than reporting it as passed.
+
 Start with the orchestrator-provided focus areas — the builder has told you where it is least confident; probe those first.
 
 ## Severity definitions
