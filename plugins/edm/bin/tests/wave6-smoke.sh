@@ -41,6 +41,43 @@ trap 'cleanup_wave6; exit 129' HUP
 export EDM_SRD_ROOT="$TMP/SRD"
 mkdir -p "$TMP/SRD"
 
+# =================================================================================
+# EDMDS-T35 (EDMDS-21 AC1): isolate CLAUDE_PLUGIN_DATA, XDG_DATA_HOME and HOME for the WHOLE
+# suite, here at the top of the file rather than inside the EDMV3-T06 permission-rule band
+# (:1575-:1783 in this file's un-banded line numbering) -- none of this suite's nine
+# `phase-start ... 6` call sites (each of which triggers edm-state's `_edm_marker_write` helper
+# when the target phase is 6, which resolves and writes into edm_data_dir()'s real host root
+# unless these three variables are pointed at scratch first) falls inside that band: one
+# precedes it (:1404) and eight follow it (:1823, :1999, :5264, :5289, :5462, :5513, :5597,
+# :5883). A band isolating
+# HOME only inside T06 -- what an earlier pass tried -- would still leak every one of the nine
+# writes: none of them sits in that band, and the two variables T06 never isolates
+# (CLAUDE_PLUGIN_DATA, XDG_DATA_HOME) are the ones edm_data_dir() checks first.
+#
+# EDMDS-21 AC1b -- per-site audit (all nine need this scratch root; none is exempted):
+#   :1404 (G23MIN)     -- isolates nothing of its own; needs the file-wide scratch.
+#   :1823 (T17NEXT)    -- isolates nothing of its own; needs the file-wide scratch.
+#   :1999 (T17ASCII6)  -- isolates nothing of its own; needs the file-wide scratch.
+#   :5264 (T50ORDER)   -- isolates nothing of its own; needs the file-wide scratch.
+#   :5289 (T50PH6)     -- locally re-exports HOME only, to a DIFFERENT scratch dir, for an
+#                         unrelated reason (session_dir_for_test_cwd's own ~/.claude/projects/
+#                         encoding). That block never touches CLAUDE_PLUGIN_DATA or
+#                         XDG_DATA_HOME, so without this file-wide export those two would still
+#                         resolve to the real host root at this site.
+#   :5462 (T52ATTR)    -- same shape as :5289; same two-variable gap.
+#   :5513 (G10TORN)    -- same shape as :5289; same two-variable gap.
+#   :5597 (T52PREVGEN) -- same shape as :5289; same two-variable gap.
+#   :5883 (T53CALIB)   -- isolates nothing of its own; needs the file-wide scratch.
+#
+# Nested under $TMP (this file's one registered scratch root, from the mktemp above) rather
+# than a second bare ${TMPDIR:-/tmp}-rooted mktemp -- EDMTC-T03's "nested under a
+# registry-owned parent" sanctioned form, not a new system-temp-rooted creation of its own.
+WAVE6_DATADIR="$(mktemp -d "${TMP}/datadir.XXXXXX")"
+export CLAUDE_PLUGIN_DATA="${WAVE6_DATADIR}/plugin-data"
+export XDG_DATA_HOME="${WAVE6_DATADIR}/xdg-data"
+export HOME="${WAVE6_DATADIR}/home"
+mkdir -p "$CLAUDE_PLUGIN_DATA" "$XDG_DATA_HOME" "$HOME"
+
 echo "wave6 smoke check -- EDMV3-T05 anomaly classes, EDMV3-T07 mode helpers"
 echo
 
@@ -1405,6 +1442,52 @@ g23_ps_ec=0
 [[ "$g23_ps_ec" -eq 0 ]] \
   && pass "G23/CA-343 -- phase-start agrees gate 3 is not required for mini-srd (phase 6 starts without approval)" \
   || fail "G23/CA-343 -- phase-start refused into phase 6 for mini-srd despite gate 3 not being required (exit ${g23_ps_ec})"
+
+# ---- EDMDS-21 AC2/AC3: the Phase-6 marker phase-start G23MIN 6 (immediately above) just wrote
+# lands under this file's scratch CLAUDE_PLUGIN_DATA, not the real host data directory ----------
+t35_marker_hit="$(find "${CLAUDE_PLUGIN_DATA}/run" -maxdepth 1 -type f -name '*.phase6' 2>/dev/null | head -1 || true)"
+[[ -n "$t35_marker_hit" ]] \
+  && pass "EDMDS-21 AC2 -- phase-start G23MIN 6's Phase-6 marker lands under the scratch CLAUDE_PLUGIN_DATA (${t35_marker_hit})" \
+  || fail "EDMDS-21 AC2 -- no Phase-6 marker found under scratch CLAUDE_PLUGIN_DATA (${CLAUDE_PLUGIN_DATA}/run) after phase-start G23MIN 6"
+
+# AC3 control: re-point isolation at a SECOND, independent scratch root (never the real host
+# data directory) in a subshell, then drive a fresh phase-start into 6 there for a different
+# initiative (T35CTRL). The subshell's export is gone the instant it exits, so this file's own
+# CLAUDE_PLUGIN_DATA/XDG_DATA_HOME/HOME are untouched afterwards. If the AC2 assertion above
+# could never fail, T35CTRL's marker would show up under the ORIGINAL CLAUDE_PLUGIN_DATA too (or
+# would overwrite the original marker's content with T35CTRL's own prefix); proving instead that
+# it lands under the SECOND root only is what makes the AC2 check a real assertion rather than
+# one that always passes regardless of which root isolation actually points at.
+T35_CTRL_DATADIR="$(mktemp -d "${TMP}/t35-ctrl-datadir.XXXXXX")"
+(
+  export CLAUDE_PLUGIN_DATA="${T35_CTRL_DATADIR}/plugin-data"
+  export XDG_DATA_HOME="${T35_CTRL_DATADIR}/xdg-data"
+  export HOME="${T35_CTRL_DATADIR}/home"
+  mkdir -p "$CLAUDE_PLUGIN_DATA" "$XDG_DATA_HOME" "$HOME"
+  "$EDM_STATE" init T35CTRL >/dev/null
+  "$EDM_STATE" approve-gate T35CTRL 1 >/dev/null
+  "$EDM_STATE" approve-gate T35CTRL 2 >/dev/null
+  "$EDM_STATE" approve-gate T35CTRL 3 >/dev/null
+  "$EDM_STATE" phase-start T35CTRL 6 >/dev/null
+)
+t35_orig_marker_after="$(find "${CLAUDE_PLUGIN_DATA}/run" -maxdepth 1 -type f -name '*.phase6' 2>/dev/null | head -1 || true)"
+t35_orig_content_after=""
+[[ -n "$t35_orig_marker_after" ]] && t35_orig_content_after="$(cat "$t35_orig_marker_after" 2>/dev/null || true)"
+t35_second_marker="$(find "${T35_CTRL_DATADIR}/plugin-data/run" -maxdepth 1 -type f -name '*.phase6' 2>/dev/null | head -1 || true)"
+t35_second_content=""
+[[ -n "$t35_second_marker" ]] && t35_second_content="$(cat "$t35_second_marker" 2>/dev/null || true)"
+t35_leaked=0
+case "$t35_orig_content_after" in
+  *"T35CTRL"*) t35_leaked=1 ;;
+esac
+t35_landed=0
+case "$t35_second_content" in
+  T35CTRL*) t35_landed=1 ;;
+esac
+[[ "$t35_leaked" -eq 0 && "$t35_landed" -eq 1 ]] \
+  && pass "EDMDS-21 AC3 -- control: re-pointing isolation at a second scratch root sends T35CTRL's marker there (not the original), proving the AC2 assertion discriminates" \
+  || fail "EDMDS-21 AC3 -- control broken: expected T35CTRL's marker under the second scratch root only, got original-content='${t35_orig_content_after}' second-content='${t35_second_content}'"
+rm -rf "$T35_CTRL_DATADIR"
 
 # archive: its per-gate loop must also agree -- whatever else archive refuses on (terminal
 # phase, convergence), its gate-approval check must never name gate 3 among the missing gates.
