@@ -83,6 +83,16 @@ EOF
 }
 
 # requirement <TAB> root <TAB> label <TAB> grep -E pattern
+#
+# Requirements with NO target, and why -- recorded because an audit lane observed that --check
+# reports a target with no baseline but has no way to report a REQUIREMENT with no target:
+#   EDMDS-01  changes bin/edm-hookify's header only, inside the --help region; its assertions
+#             are new bands, not amendments to existing ones.
+#   EDMDS-03  records-only (decisions.md).
+#   EDMDS-17  records-only plus a check script this initiative owns.
+#   EDMDS-18  records-only plus a scan its own AC2 defines.
+# Every other requirement carries at least one target. EDMDS-04 and EDMDS-22 gained targets
+# once later revisions gave them bin/ changes.
 targets() {
   cat <<'TARGETS'
 EDMDS-02	suites	emit_decision, the function restructured	emit_decision
@@ -99,14 +109,22 @@ EDMDS-10	product	marker-mutation sites in product code	_edm_marker_write|_edm_ma
 EDMDS-10	suites	marker assertions	phase-start [A-Z0-9$"{}]+ 6|edm_marker_path
 EDMDS-11	suites	CA-500 cross-check and resolver assertions	CA-500|_resolve_permcheck_project_root|edm_project_key
 EDMDS-12	suites	active-initiatives consumers and the edm-state shim	active-initiatives|phase=
-EDMDS-13	product	the harvested-delta writer	cmd_update_patterns|update-patterns
+EDMDS-13	product	the harvested-delta writer (the SUBJECT)	cmd_update_patterns|update-patterns
+EDMDS-13	suites	assertions over the delta and its two-line paths contract	get-patterns|pattern_delta|update-patterns
+EDMDS-13	docs	skill call sites parsing the paths contract positionally	PATTERN_PATHS|sed -n '2p'
 EDMDS-14	suites	the sanitizer MARKER the assertions key on	LC_ALL=C tr -c
 EDMDS-14	product	the sanitizer character set itself	011.012.015.040-.176
 EDMDS-14	suites	mutant helpers that stage a consumer	cahk_mutant|w8_mutant_bin|p2g1_mutant_bin
 EDMDS-15	suites	the gate-check command body the assertions match on	edm-state gate-check
 EDMDS-15	hooks	the five matcher-keyed entries	UserPromptExpansion|gate-check
-EDMDS-16	product	the set -e posture under change	set -euo pipefail
+EDMDS-16	product	the set -e posture under change (the SUBJECT)	set -euo pipefail
+EDMDS-16	suites	suite copies of the posture that drift when it changes	set -euo pipefail
 EDMDS-16	suites	assertions on consumer error behaviour	CA-077
+EDMDS-04	product	the kill-switch pair EDMDS-04 AC4 adds	EDM_HOOKIFY
+EDMDS-04	suites	assertions over kill-switch honouring	EDM_HOOKIFY
+EDMDS-04	docs	the four claims about which consumers honour the pair	EDM_HOOKIFY
+EDMDS-22	product	the lint relay CA-196 supersedes	edm-lint-artifacts
+EDMDS-22	suites	assertions over the staged-artifact lint	lint-staged-artifacts|CA-196
 EDMDS-19	suites	the CA-134 ownership band, via its fixture helper	ca134_resolve|CA134_
 EDMDS-19	docs	the bin/ subcommand count and table	subcommands
 EDMDS-19	suites	the derived subcommand-count checks	subcommands
@@ -138,13 +156,21 @@ EDMDS-10	suites	phase-start [A-Z0-9$"{}]+ 6|edm_marker_path	51
 EDMDS-11	suites	CA-500|_resolve_permcheck_project_root|edm_project_key	37
 EDMDS-12	suites	active-initiatives|phase=	15
 EDMDS-13	product	cmd_update_patterns|update-patterns	40
+EDMDS-13	suites	get-patterns|pattern_delta|update-patterns	84
+EDMDS-13	docs	PATTERN_PATHS|sed -n '2p'	15
 EDMDS-14	suites	LC_ALL=C tr -c	4
 EDMDS-14	product	011.012.015.040-.176	3
 EDMDS-14	suites	cahk_mutant|w8_mutant_bin|p2g1_mutant_bin	38
 EDMDS-15	suites	edm-state gate-check	7
 EDMDS-15	hooks	UserPromptExpansion|gate-check	11
 EDMDS-16	product	set -euo pipefail	22
+EDMDS-16	suites	set -euo pipefail	47
 EDMDS-16	suites	CA-077	15
+EDMDS-04	product	EDM_HOOKIFY	10
+EDMDS-04	suites	EDM_HOOKIFY	34
+EDMDS-04	docs	EDM_HOOKIFY	9
+EDMDS-22	product	edm-lint-artifacts	55
+EDMDS-22	suites	lint-staged-artifacts|CA-196	33
 EDMDS-19	suites	ca134_resolve|CA134_	60
 EDMDS-19	docs	subcommands	6
 EDMDS-19	suites	subcommands	33
