@@ -488,19 +488,22 @@ contract explicitly -- neither downstream consumer sanitizes a second time.
 `:444`; `bin/edm-hookify:479` exits 1 when it is set. Block (2) outranks error (1) outranks clean
 (0).
 
-**Output, per deny surface.** One entry point, four exits, and **every one of the four has two
-streams** -- the fact D52 established, and the fact the previous two revisions of this table each
-got wrong in a different direction. The column that matters is not "how many channels" but "which
-stream the model reads", so it is split that way here. The decision is now **uniform Separate** at
-all four surfaces: EDM-authored text on the model-facing stream, the author's `message` on the
-non-model-facing one.
+**Output, per deny surface.** One entry point, four exits. The column that matters is not "how many
+streams exist" but "which streams the model reads" -- and **D89 measured that at exit 2 the model
+reads BOTH, with stdout outranking stderr.** So the three exit-2 surfaces have no non-model-facing
+stream at all, and the decision there is **label**, not separate. Only `json` mode separates, because
+its stdout carries the decision object itself.
+
+Three revisions of this table got this wrong in three different directions -- v1.1.0 reasoned to the
+right shape without measuring, v1.2.0 overturned it on a plain-text spike that did not support the
+overturning, v1.3.0 restored it at one surface on a contract reading. The measurement is D89.
 
 | Surface | Site | Model-facing stream | Non-model-facing stream | What the model sees today | EDMDS-02 target |
 |---|---|---|---|---|---|
 | GateGuard, `json` (default), exits 0 | `bin/edm-gateguard:229-234` | **stdout** -- the decision JSON, parsed by the host | stderr. **D52 found neither stream in `-p` output nor in `--output-format stream-json --verbose` on exit 0, so operator visibility here is UNESTABLISHED and is not claimed** | the author's `message` verbatim inside `permissionDecisionReason`, via the capture at `bin/edm-gateguard:647` and `emit_decision deny` at `:651` | AC5 -- both halves: `permissionDecisionReason` carries EDM-authored text plus rule id plus rule file path and zero bytes of `message`, and the `message` goes to stderr **sanitized** (v1.1.0 required the separation but never required this stderr write to be sanitized). **This surface is genuinely different from the other three**: its stdout is the host's decision channel and is consumed, leaving stderr as the only stream, so the message may be invisible to everyone (R1) |
-| GateGuard, `exit-code`, exits 2 | `bin/edm-gateguard:236-240` | **stderr -- MEASURED** (D52) | **stdout -- MEASURED IGNORED BY THE HOST** (D87: a control-shaped `permissionDecision:"allow"` written to stdout while exiting 2 did NOT override the deny, verified on two matchers with a sentinel file proving the hook fired and every tool hooked so no escape route existed) | the author's `message`, unlabelled, indistinguishable from EDM's own prose | AC6 -- Separate: EDM-authored reason to stderr, author's `message` to stdout, sanitized, behind an EDM-authored prefix naming rule id and file |
-| BashGate, exits 2 | `bin/edm-bash-gate:136-137` | **stderr -- MEASURED on this exact matcher** (D52, D87) | **stdout -- MEASURED IGNORED** on this exact matcher | same | AC6, same Separate shape. EDMDS-14 AC6 gives this script the sanitizer it lacks |
-| StopGate, exits 2 | `bin/edm-stop-gate:216` and `:244` | stderr -- **NOT measured** (R12) | **stdout NOT USED, and deliberately so.** D87's `Stop` test was inconclusive, and `:54-55` states "All operator-facing text goes to stderr, never stdout -- a raw JSON echo to stdout is the documented failure mode for a Stop hook" | already labelled -- `stop_gate_emit_blocking "[EDM] a stop-event hookify rule matched:" "$_hookify_out"` at `:244` | **AC2 + AC6b.** AC2 updates what `:238`/`:244` relay; **AC6b keeps the message on stderr under its label** rather than moving it to stdout, and AC9 is a recorded spike. This is the one row where the four surfaces diverge, and it diverges because its own file says so -- generalising `PreToolUse`'s measurement here is what produced a security regression in v1.2.0 |
+| GateGuard, `exit-code`, exits 2 | `bin/edm-gateguard:236-240` | **BOTH streams -- MEASURED, stdout outranking stderr** (D89: a `deny` on stdout with its own distinctly worded reason, a different marker on stderr, exit 2 -- the model quoted the stdout reason, twice, and reported seeing only that one) | **none** | the author's `message`, unlabelled, indistinguishable from EDM's own prose | AC6 -- **Label**: EDM-authored line carrying the rule ordinal, sanitized `message` beneath it, on stderr. Nothing written to stdout |
+| BashGate, exits 2 | `bin/edm-bash-gate:136-137` | **BOTH -- MEASURED on this exact matcher** (D52, D87, D89) | **none** | same | AC6, same **Label** shape. EDMDS-14 AC6 gives this script the sanitizer it lacks |
+| StopGate, exits 2 | `bin/edm-stop-gate:216` and `:244` | stderr; stdout not measured at this event | **none established** | already labelled -- `stop_gate_emit_blocking "[EDM] a stop-event hookify rule matched:" "$_hookify_out"` at `:244` | **AC2 only.** This surface already implements AC6's label shape, and `:54-55` independently corroborates D89 at a second event. The other two consumers adopt this shape; it adopts nothing |
 
 **The mechanism all four adopt.** `stop_gate_emit_blocking`
 (`bin/edm-stop-gate:120-124`) is three lines: `echo "$label" >&2` with the label never sanitized
@@ -508,9 +511,10 @@ because it is this script's own literal, then the untrusted half piped through
 `LC_ALL=C tr -c '\011\012\015\040-\176' '?'`. The sentence stating which half is which spans
 `bin/edm-stop-gate:116-119` -- it begins mid-line at `:116` ("... so the sanitization has exactly
 one site.") and runs to `:119`. Both existing call sites use the shape `[EDM] <what happened>:`.
-Under EDMDS-02 AC6 the label/untrusted split is retained and the untrusted half's redirection
-changes from `>&2` to stdout, which is the only edit this function needs; the `tr` pipeline itself
-becomes a call into `_edm-cli-lib.sh`'s owner (EDMDS-14 AC1).
+Under EDMDS-02 AC6 this function is **unchanged in shape**: D89 measured stdout on exit 2 reaching
+the model and outranking stderr, so the redirection stays `>&2`, and the other two consumers adopt
+this form rather than it adopting theirs. The only edit is that the `tr` pipeline becomes a call into
+`_edm-cli-lib.sh`'s owner (EDMDS-14 AC1).
 
 **Error paths.**
 
@@ -600,7 +604,7 @@ CC7 and Definition of Done item 6. Three requirements touch the file:
   new home is `bin/_edm-cli-lib.sh`, which `bin/edm-gateguard:52` **already sources, unguarded**, so
   `:213` is replaced by a call and **no `source` statement and no guard are added**. A prior revision
   of this section costed a second guarded source plus a `declare -F` fallback at four to six lines;
-  that cost does not exist, because it was derived from the false premise that the hook consumers
+  that cost does not exist **for the source statement**. The `declare -F` layer is a separate mechanism this document still requires (Architecture Decision, Component Design, Build Sequence item 15) and it is not costed anywhere, nor owned by any EDMDS-14 acceptance criterion -- both gaps are open, because it was derived from the false premise that the hook consumers
   source nothing (see the Architecture Decision section). If the replacement call is shorter than
   the line it replaces the file shrinks, and at worst it is net zero. Either way this requirement
   **buys headroom rather than spending it**. AC7's four dependent sites
@@ -903,7 +907,7 @@ because EDMDS-07 adds a fourth message that must be worded consistently with the
 | Full JSON-schema validation of `lens-L{N}.jsonl` (AD-DS3 option C) | Acquires a drift surface tracking a schema every lens prompt carries verbatim, across 14 files on every round close. The `round` field alone is exempt -- it is already in state. |
 | Status quo on the completeness gate (AD-DS3 option A) | A file of `{}` converges a round. A gate whose only check is "the file parses" is a gate in name only. |
 | Route the author's `message` to stderr at all four surfaces (SRD v1.0.0's choice) | For a `PreToolUse` hook, exit 2 plus stderr IS the model-facing refusal channel -- **now measured, not reasoned** (D52; `bin/edm-gateguard:236-240`, `bin/edm-bash-gate:136-137`). At three of four surfaces that relocates the text *within* the model-facing channel while reporting the boundary closed. |
-| Label-and-sanitize in place at the three exit-2 surfaces, separating only in `json` mode (SRD v1.1.0's choice) | It rested on those surfaces having only ONE usable stream, which D52 disproved by measuring stdout free on the same exit-2 invocation. A label tells the model which text is untrusted and then hands it to the model anyway -- AD-DS1's own principle is *where two channels exist, reduce the channel*, and two do exist. The two-branch table collapses into one uniform Separate decision, which is also one plugin shape instead of two. |
+| Label-and-sanitize in place at the three exit-2 surfaces, separating only in `json` mode (SRD v1.1.0's choice) | It rested on those surfaces having only ONE usable stream, which D52 disproved by measuring stdout free on the same exit-2 invocation. A label tells the model which text is untrusted and then hands it to the model anyway -- **which D89 establishes is unavoidable at exit 2**, since both streams reach the model there and stdout outranks stderr. The objection stands as a statement of the residual cost; it is no longer a reason to prefer separation, because separation is not available at those surfaces -- AD-DS1's own principle is *where two channels exist, reduce the channel*, and two do exist. **Superseded by D89.** The table is one shape -- label -- at every exit-2 surface, and separation only in `json` mode where stdout carries the decision object itself. |
 | Accept the `message`-injection risk as `NOTED` (EDMDS-02 option 4) | Would make a two-site pattern with `bin/edm-lint-staged-artifacts:151` (CA-196), whose own acceptance was never revisited. EDMDS-02 AC8 revisits it instead. |
 | An EDM-side time or complexity bound on `regex_match` | A pattern-complexity heuristic rejects legitimate patterns -- a worse failure than the one it prevents -- and a `sleep`-plus-`kill` watchdog puts asynchronous process management in three hook consumers, one with a zero-exec fast path. Both solve a hang that does not occur on the pinned engine. |
 | **Extracting the sanitizer into `bin/_edm-cli-lib.sh` -- CHOSEN, listed here so the four candidates sit in one place** | **Not rejected.** All four hook consumers and `edm-state` already source it, unguarded (`edm-gateguard:52`, `edm-hookify:104`, `edm-bash-gate:69`, `edm-stop-gate:65`, `edm-state:65`), so this is the only candidate that adds no file and no `source` line, and the only one that is net negative on `bin/edm-gateguard`'s line budget. Its precondition -- that these scripts source it -- was verified by direct grep rather than inferred from a sibling library. |

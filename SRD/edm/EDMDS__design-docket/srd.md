@@ -1,12 +1,12 @@
 # SRD: EDMDS -- EDMV4's Structural Design Docket
 
-**Generated From**: srd.md v1.4.0
+**Generated From**: srd.md v1.5.0
 
 ## 1. Document Info
 
 | Field | Value |
 |---|---|
-| Version | 1.4.0 |
+| Version | 1.5.0 |
 | Mode | `mini-srd` -- phases 2 through 5 fuse into this one audited file; a merged Gate 2+3 replaces Gate 2 and Gate 3 |
 | Forked from | `EDMV4` |
 | Branch | `edm/edmds-design-docket` |
@@ -22,6 +22,7 @@
 | 1.0.0 | 2026-09-08 | orchestrator | Initial fused SRD. Proposed a decision for each of the eighteen findings. |
 | 1.1.0 | 2026-09-09 | orchestrator | Phase 3 remediation of a FAIL (8 P0, 32 P1, 26 P2, two lanes). Reversed AD1 into AD-DS1; rewrote EDMDS-02 per deny mechanism; conformed the closure model to the canonical vocabulary; resolved EDMDS-11's two mutually exclusive AC; split EDMDS-13 three ways; added EDMDS-19; added the missing Phase-4 half as 31 tickets. Eighteen requirements became twenty-one. |
 | 1.2.0 | 2026-09-10 | orchestrator | Second Phase 3 remediation, of a second FAIL: **14 P0, 73 P1, 63 P2 across four lanes**, plus five findings from the `architecture.md` verification pass. Every lane also found v1.1.0 a genuine repair -- 11 of 16 in-scope findings fixed in one lane, 14 of 18 in another, all three P0s in a third, the structural P0 closed in the fourth -- so this revision addresses a defect CLASS that recurred where the rewrite did not sweep, not a document that was wrong throughout. Structural changes: AD-DS1's two-branch table collapses into one uniform decision on **measured** channel facts (D52); AD-DS6 added, making every affected-assertion set derived rather than enumerated (D55); EDMDS-15 becomes extract-and-keep-five-matchers (D54); EDMDS-19's tightening extended to the `.edm-owned` arm, without which it was inert for its own target population; EDMDS-21 rescoped from the T06 band, which contains none of the writes it was meant to stop; the live 200-660 bound assertion given an owner. Two runtime spikes (D52, D53) settled three findings that reading could not. |
+| 1.5.0 | 2026-09-13 | orchestrator | Fifth Phase 3 remediation, and the one that reverses `AD-DS1` back to where v1.1.0 had it. Three more round-four lanes delivered: the Ticket List (**8 P0, 31 P1, 24 P2**), Sections 4/6 plus `architecture.md` (**3 P0, 16 P1, 14 P2**), and the Epics 1-2 lane already folded into 1.4.0. **The decisive finding was a challenge to my own measurement.** A lane observed that D87 had established only that a stdout `allow` failed to OVERRIDE an exit-2 deny -- consistent both with stdout being unread and with stdout being read but outranked -- while D87 asserted the stronger claim. The discriminating test it proposed was run twice (D89): **the model quoted the stdout reason both times and saw only that one.** So on exit 2 the host reads stdout, surfaces its reason to the model, and that reason OUTRANKS stderr. There is no non-model-facing channel at any exit-2 surface, `EDMDS-02 AC6`'s move to stdout was a worse regression than the one it replaced, and the label shape is correct at all three -- which is what v1.1.0 said before v1.2.0 overturned it on a spike that did not support the overturning. **The second finding was a method defect, found in two documents at once**: v1.3.0 rewrote seven requirements and propagated almost none into the Ticket List, and the same pass updated `architecture.md`'s tables while leaving the prose around them -- including a passage instructing the implementer to make the exact stdout edit the reversal forbids. Ten orphaned lettered ACs were written into their owning tickets, the subcommand-count contradiction `EDMDS-19 AC11b` promised to reconcile was reconciled, and `T05` gained its second unbanked gateguard grower. |
 | 1.4.0 | 2026-09-13 | orchestrator | Fourth Phase 3 remediation. Two of five round-four lanes delivered before this revision: Epics 1-2 (**7 P0, 13 P1, 12 P2**) and Sections 1-3 (**1 P0, 7 P1, 8 P2**). The diagnosis that mattered was of the remediation METHOD, not the content: **three of the seven P0s were contradictions created by rewriting an acceptance criterion without sweeping the prose above it** -- EDMDS-02's Decision block still claimed "all four surfaces" after AC6b split them, EDMDS-04 AC3 mandated documenting the opposite of what AC4 implements, and EDMDS-07's target still named the pattern D88 had replaced in the script. A genuine security gap was also found and closed: **every revision through v1.3.0 routed the rule id and rule file path onto the model-facing channel**, and both are project-authored (`bin/edm-hookify:369` builds the id from `scrub($parsed.name)`, the path is whatever filename the author commits), so the requirement that exists to keep project-authored text off that channel was putting project-authored text on it, unargued, for four revisions. The marker-mutation site count reached **six** -- `bin/edm-state:4780`'s bare `rm -f` is the exact deletion EDMDS-10 AC5's own race turns on -- and is now stated as a property rather than a number, the count having read two, two, four, five and six. DoD item 8's owner (`EDMDS-T38 AC6`) was a dangling reference written before the AC existed; it now exists, along with AC7 for the DoD close-out commands that D50 records EDMV4 losing the same way. |
 | 1.3.0 | 2026-09-12 | orchestrator | Third Phase 3 remediation, of a third FAIL: **10 P0, 48 P1, 41 P2** across three delivered lanes (a fourth exhausted its budget on reading and returned nothing). The round was dispatched to answer one question -- did `AD-DS6` fix the recurring class? It did not, and three lanes reached that independently, so `AD-DS6`'s mechanism was rewritten rather than patched: per-target search roots, callee-name anchoring, and a reproducible baseline (D88). Measured effect: EDMDS-07 derives 64 not 26, EDMDS-14's marker 4 not 0, EDMDS-19 60 not 6, and EDMDS-05 and EDMDS-13 gained targets they never had. The security finding against `EDMDS-02 AC6` was settled by extending the spike (D87): stdout at `PreToolUse` exit 2 is ignored by the host, verified on two matchers with a sentinel proving the hook fired and every escape route closed -- but `Stop` is carved out, because its test was inconclusive and `edm-stop-gate:54-55` forbids stdout there. Two prior spike results were produced and discarded as invalid before that one. `EDMDS-05` was rewritten after the tree showed its premise false -- `wave8-smoke.sh:6605` already lists six scripts and already derives the set live -- a premise adopted verbatim from an audit finding without re-deriving it. `EDMDS-15 AC5`'s claim that extraction leaves the shipped assertions intact was false and now owns the amendment. `EDMDS-22` rose from `Should` to `Must` with its decision made. `AD-DS5` regained the observable-outcome clause the v1.2.0 narrowing dropped. The critical path was recomputed twice -- it is nine waves, not the six v1.2.0 claimed nor the eight this revision first wrote. Twenty-two requirements, forty tickets. |
 
@@ -201,19 +202,23 @@ Claude Code 2.1.263, following D25/D26's disposable-repository methodology:
 | Surface | Model-facing channel | Non-model-facing channel | Decision |
 |---|---|---|---|
 | `edm-gateguard`, `EDM_GATEGUARD_DENY_MODE=json` (default), exits 0 | stdout -- the decision JSON, parsed by the host | stderr, **operator visibility UNESTABLISHED** | EDM-authored reason in `permissionDecisionReason`; author's `message` to stderr, with the cost stated below |
-| `edm-gateguard`, `exit-code` mode (`:236-240`), exits 2 | **stderr -- measured** | **stdout -- measured ignored by the host** | Separate: EDM-authored reason to stderr, author's `message` to stdout |
-| `edm-bash-gate` (`:136`), exits 2 -- `PreToolUse`/`Bash` | **stderr -- measured on this exact matcher** | **stdout -- measured ignored** | Separate, same shape |
-| `edm-stop-gate` (`:216`, `:244`), exits 2 -- `Stop` | stderr | **NOT ESTABLISHED -- stdout is not used here** | **Label, not separate.** EDM-authored label line then the sanitized message, both on stderr, per `stop_gate_emit_blocking` |
+| `edm-gateguard`, `exit-code` mode (`:236-240`), exits 2 | **stderr AND stdout -- both measured model-facing, stdout taking precedence** | **none** | **Label.** EDM-authored line naming the rule, then the sanitized `message` beneath it, on one channel |
+| `edm-bash-gate` (`:136`), exits 2 -- `PreToolUse`/`Bash` | same, measured on this exact matcher | **none** | **Label**, same shape |
+| `edm-stop-gate` (`:216`, `:244`), exits 2 -- `Stop` | stderr; stdout not measured here and not used | **none established** | **Label**, per `stop_gate_emit_blocking`, which is the in-tree precedent |
 
-**What was measured, at each surface separately (D52, extended by D87).** On `PreToolUse` exit 2 the
+**What was measured, at each surface separately (D52, D87, corrected by D89).** On `PreToolUse` exit 2 the
 model received the stderr marker and quoted it back verbatim, while the stdout marker reached it only
-inside the echoed command string. D87 then tested the harder question an audit lane raised -- whether
-stdout is the channel the host PARSES, since `edm-gateguard:232-234` uses it that way on exit 0 --
-by emitting a control-shaped `{"hookSpecificOutput":{"permissionDecision":"allow"}}` on stdout while
-exiting 2. **The deny held.** Measured on the `Bash` matcher and on `Write` independently, with a
-sentinel file proving the hook fired and with every tool hooked so no unhooked escape route existed.
-So on `PreToolUse` exit 2, stdout is ignored by the host: not model-facing, and not control. On exit 0
-neither stream appeared in `-p` output or in `--output-format stream-json --verbose`.
+inside the echoed command string. D87 then tested whether stdout is PARSED, by emitting a
+control-shaped `allow` on stdout while exiting 2. The deny held -- so exit 2 outranks stdout for the
+*decision*. **D87 concluded from that that stdout is ignored entirely, and D89 proves that conclusion
+false.** An audit lane pointed out the result was equally consistent with "stdout is read but
+outranked", and proposed the discriminating test: put a `deny` on stdout with its own distinctly
+worded reason, a different marker on stderr, and exit 2. **Run twice, the model quoted the STDOUT
+reason both times, and reported seeing only that one.**
+
+**So there is no non-model-facing channel at any exit-2 surface.** Both streams reach the model and
+stdout takes precedence. On exit 0 neither stream appeared in `-p` output or in
+`--output-format stream-json --verbose`.
 
 **`Stop` is deliberately excluded from that result.** The equivalent test was inconclusive, and
 `bin/edm-stop-gate:54-55` states its own contract -- "All operator-facing text goes to stderr, never
@@ -222,12 +227,17 @@ does NOT inherit a measurement taken on `PreToolUse`; it keeps the labelling sha
 surface's measurement to the others is the error that made this decision wrong in v1.1.0 and produced
 a security regression in v1.2.0, and the table above is the first version that does not do it.
 
-**What follows.** The principle -- *where two channels exist, reduce the channel; where one exists,
-label the text* -- now applies with the channels actually known per surface. Three surfaces separate
-(two `PreToolUse` exit-2 paths plus `json` mode); one labels (`Stop`). v1.2.0 applied separation
-uniformly on a measurement taken at one matcher, which put project-authored text on a channel the
-`Stop` surface's own contract forbids. Two shapes, each justified by its own surface's evidence, is
-the correct outcome -- not the tidier one.
+**What follows.** The principle is unchanged -- *where two channels exist, reduce the channel; where
+one exists, label the text* -- and the measurement now says the three exit-2 surfaces have **one**
+channel. So all three **label**, and only `json` mode separates.
+
+**This decision has been made four times and the answer is the one v1.1.0 gave.** v1.1.0 reasoned to
+the label shape without measuring. v1.2.0 overturned it on a plain-text spike that did not support
+the overturning. v1.3.0 restored the label at `Stop` only, on a contract reading rather than a
+measurement. D89 measures it and the label shape is right everywhere exit 2 is used. What the four
+rounds bought was not a better answer but a measured one -- and the record of three wrong turns is
+kept in this section deliberately, because the failure each time was asserting a host property the
+experiment did not isolate.
 
 `bin/edm-stop-gate:113-124`'s `stop_gate_emit_blocking <label> <text>` remains the in-tree
 precedent for splitting EDM's own label from untrusted text, and its sanitizer is still what the
@@ -555,17 +565,17 @@ hookify match-record consumers. Derive with `./affected-assertions.sh EDMDS-02`.
 - [ ] AC5b: AC7's positive control is extended to a **hostile `name` and a hostile filename**, not
       only a hostile `message`. A control exercising one field of three while the other two ride the
       same channel unsanitized is the class Goal 3 forbids.
-- [ ] AC6: at the two **`PreToolUse`** exit-2 surfaces (`edm-gateguard`'s `exit-code` mode and
-      `bin/edm-bash-gate`), the EDM-authored reason goes to **stderr** and the author's `message` to
-      **stdout**, sanitized, with the EDM-authored prefix naming rule id and file placed on stdout
-      alongside the message rather than on the model-facing stderr (AC5). D87 measured stdout
-      ignored by the host on both matchers, so it is neither model-facing nor control.
-- [ ] AC6b: `bin/edm-stop-gate` does **not** move its message to stdout. It keeps the
-      `stop_gate_emit_blocking <label> <text>` shape on stderr, because `bin/edm-stop-gate:54-55`
-      states "a raw JSON echo to stdout is the documented failure mode for a Stop hook" and D87's
-      `Stop` test was inconclusive. An AC that contradicts the file's own contract on an unmeasured
-      surface is how v1.2.0 shipped a security regression; this AC exists so the asymmetry is a
-      decision rather than an oversight.
+- [ ] AC6: at **all three exit-2 surfaces** -- `edm-gateguard`'s `exit-code` mode,
+      `bin/edm-bash-gate` and `bin/edm-stop-gate` -- the emission uses the **label shape**: an
+      EDM-authored line carrying the rule ordinal, then the sanitized `message` beneath it, on
+      stderr. **Not stdout.** D89 measured that stdout on exit 2 reaches the model and *outranks*
+      stderr, so no non-model-facing channel exists at these surfaces and separation is unavailable.
+      This is `stop_gate_emit_blocking`'s existing shape (`bin/edm-stop-gate:113-124`) extended to
+      the other two consumers, not replaced.
+- [ ] AC6b: `bin/edm-stop-gate` is **unchanged in shape** -- it already implements AC6's label form,
+      and `bin/edm-stop-gate:54-55`'s "a raw JSON echo to stdout is the documented failure mode for a
+      Stop hook" is independent corroboration of D89's measurement at a second event. The other two
+      consumers adopt its shape; it adopts nothing.
 - [ ] AC7: an assertion proves a `message` mimicking EDM's own fact-list prose reaches neither
       `permissionDecisionReason` nor the model-facing stderr **at the two `PreToolUse` exit-2 surfaces and in `json` mode**, with a control proving
       it IS present on its intended channel -- so the test distinguishes "suppressed everywhere"
@@ -906,8 +916,11 @@ the concession adequate rather than evasive.
 - [ ] AC7: every promotion is recorded in state with a timestamp and the checks that passed.
 - [ ] AC8: `CLAUDE.md`'s `bin/` table is swept -- its `edm-state` row reads "**42 subcommands**" and
       enumerates them, and both go stale. The count is replaced by a derived statement rather than
-      incremented: a literal count here is the CA-021/CA-022 class the plugin has been burned by
-      twice, and a live assertion derives it (see EDMDS-19's target).
+      incremented -- **superseded by EDMDS-19 AC11, which keeps and increments it**. Removing the
+      literal hard-fails two shipped extraction floors (`wave7-smoke.sh:1444-1446`,
+      `wave6-smoke.sh:4451-4459`) that require a numeric figure on CLAUDE.md's side; keeping it is safe
+      because a live assertion already derives the comparison, so it cannot go stale silently. This AC
+      is the amendment `EDMDS-19 AC11b` promised and v1.3.0 did not make.
 - [ ] AC9: AC7's new state field gets a row in `CLAUDE.md`'s state-field table **including its C-4
       rule when absent**, which that table requires of every row, plus an explicit decision that
       `schema_version` does not bump -- following the `spec_swept` precedent for an additive field
@@ -1287,8 +1300,8 @@ absent output as no decision -- **fail-open**, on the one consumer whose job is 
 for the gate that matters most, and the split was accidental rather than reasoned.
 
 **Affected-assertion target** (AD-DS6): `set -euo pipefail`. Derive with
-`./affected-assertions.sh EDMDS-16`; the count at time of writing is **47**, against the zero sites
-v1.1.0 owned.
+`./affected-assertions.sh EDMDS-16`; no count is written here (D15). The v1.2.0 prose quoted 47,
+which was the `suites` root's `set -euo pipefail` count before D88 moved this target to `product`.
 
 - [ ] AC1: all four run `set -uo pipefail` and none runs `set -e`.
 - [ ] AC2: **the gated path's non-zero-capable commands are enumerated and each carries explicit
@@ -1655,7 +1668,7 @@ owning AC or DoD item, which v1.1.0's R7 did not.
 
 ## --- Ticket List ---
 
-**Generated From**: srd.md v1.4.0
+**Generated From**: srd.md v1.5.0
 
 Sizes: **XS** under a day, **S** one to three days, **M** three to five days, **L** one to two
 weeks. No XL -- an XL ticket is decomposed before work starts, and none here is.
@@ -1741,9 +1754,11 @@ flowchart TD
 
   T01 --> T02 --> T03
   T01 --> T04 --> T06
-  T22 --> T05 --> T06 --> T07 --> T08 --> T09
+  T22 --> T05 --> T06 --> T07 --> T08 --> T30
+  T04 --> T05
+  T08 --> T09
   T01 --> T10
-  T01 --> T11
+  T05 --> T11
   T01 --> T12
   T01 --> T13 --> T14
   T13 --> T15
@@ -1864,8 +1879,10 @@ hand and found it complete, and this table makes it re-checkable rather than re-
   - [ ] AC2: `CLAUDE.md`'s hookify section records the dependency and the residual.
   - [ ] AC3: `decisions.md` records CA-114's split, including explorer 04's "absence of a
         counterexample is not proof of its impossibility" caveat (R14).
-  - [ ] AC4: the decision to add no guard -- neither product-side nor test-side -- is recorded as
-        decided, with the test-side rejection on its own merits.
+  - [ ] AC4: the decision to add no **product-side** guard is recorded as decided, **and the adoption
+        of a test-side watchdog is recorded with it** (EDMDS-01's Rejected/Adopted block). v1.3.0's
+        ticket recorded "neither product-side nor test-side", which is the v1.2.0 decision the
+        requirement reversed.
 
 ### EDMDS-T03: Assert the catastrophic-pattern path through evaluator and consumer
 
@@ -1881,6 +1898,10 @@ hand and found it complete, and this table makes it re-checkable rather than re-
   - [ ] AC4: the fixture input length is a named constant (30 characters, measured) with an inline
         comment naming R6.
   - [ ] AC5: a benign sibling rule with `"action": "warn"` still fires (CA-030 isolation).
+  - [ ] AC5b: **AC1's invocation is bounded by a pure-bash watchdog** -- background, poll, kill on
+        expiry, no `timeout(1)` (CC4) -- **and an assertion proves the watchdog itself fires against a
+        deliberately wedged control** (EDMDS-01 AC4b). Without it, a future engine that removes the
+        retry limit wedges `run-all.sh` with no summary, which is R6.
   - [ ] AC6: a control in a separate invocation, against a benign-only directory, proves AC1
         discriminates.
 
@@ -1902,7 +1923,7 @@ hand and found it complete, and this table makes it re-checkable rather than re-
 
 ### EDMDS-T05: Amend the GateGuard line bound in both places
 
-- **Requirement**: DoD item 6, R3 | **Size**: S | **Depends On**: EDMDS-T22 | **D-block**: D59
+- **Requirement**: DoD item 6, R3 | **Size**: S | **Depends On**: EDMDS-T22, EDMDS-T04 | **D-block**: D59
 - **Target Components**: `bin/tests/wave8-smoke.sh`,
   `SRD/.archived/edm/EDMV4__ecc-integration/tickets/epics/02-gateguard.md`,
   `SRD/edm/EDMDS__design-docket/decisions.md`
@@ -1952,16 +1973,25 @@ hand and found it complete, and this table makes it re-checkable rather than re-
   - [ ] AC6: `CLAUDE.md` and `README.md` state the per-deny-mode channel behaviour.
   - [ ] AC7: `bin/edm-gateguard` is at or below the bound T05 set.
 
-### EDMDS-T08: Separate the channels at the three exit-2 surfaces
+### EDMDS-T08: Label the untrusted half at all three exit-2 surfaces
 
 - **Requirement**: EDMDS-02 AC6, AC8 | **Size**: M | **Depends On**: T07 | **D-block**: none
 - **Target Components**: `bin/edm-gateguard`, `bin/edm-bash-gate`, `bin/edm-stop-gate`,
   `bin/tests/wave8-smoke.sh`
 - **AC**:
-  - [ ] AC1: the EDM-authored reason goes to stderr and the author's `message` to stdout, sanitized,
-        with an EDM-authored prefix naming rule id and file.
-  - [ ] AC2: an assertion proves the message is absent from the model-facing stderr at each of the
-        three surfaces, with a control proving it is present on stdout.
+  - [ ] AC1: at **all three exit-2 surfaces**, the emission uses the label shape -- an EDM-authored
+        line carrying the rule ordinal, then the sanitized `message` beneath it, on **stderr**
+        (EDMDS-02 AC6). Not stdout: D89 measured stdout on exit 2 reaching the model and outranking
+        stderr, so separation is unavailable here.
+  - [ ] AC1b: **`bin/edm-stop-gate` is unchanged in shape** -- it already implements AC1's label
+        form, and the other two adopt it. `bin/edm-stop-gate:54-55` independently corroborates D89 at
+        a second event.
+  - [ ] AC2: an assertion proves, at each of the three surfaces, that the EDM-authored label line is
+        present and unsanitized and the `message` beneath it is sanitized -- with a control proving
+        the assertion fails when the two halves are concatenated into one unlabelled string.
+  - [ ] AC2b: an assertion proves **nothing is written to stdout** at any exit-2 surface, with a
+        control proving it fires when a write is introduced. D89 makes stdout a model-facing channel
+        that outranks stderr, so a stray write there is the defect this requirement exists to stop.
   - [ ] AC3: multiple matched rules produce one prefixed message per rule, split per hookify output
         line.
   - [ ] AC4: AC3's control -- a two-rule fixture yields two prefixed messages, not one merged blob.
@@ -1999,8 +2029,8 @@ hand and found it complete, and this table makes it re-checkable rather than re-
 
 ### EDMDS-T11: Fix the README and both kill-switch falsehoods
 
-- **Requirement**: EDMDS-04 | **Size**: M | **Depends On**: T01 | **D-block**: D62
-- **Target Components**: `README.md`, `CLAUDE.md`, `bin/tests/wave8-smoke.sh`,
+- **Requirement**: EDMDS-04 | **Size**: M | **Depends On**: T05 | **D-block**: D62
+- **Target Components**: `bin/edm-gateguard`, `README.md`, `CLAUDE.md`, `bin/tests/wave8-smoke.sh`,
   `SRD/edm/EDMDS__design-docket/decisions.md`
 - **AC**:
   - [ ] AC1: the rule-format section states `file`-event rules evaluate only in Phase 6, and why.
@@ -2014,7 +2044,11 @@ hand and found it complete, and this table makes it re-checkable rather than re-
   - [ ] AC5: CLAUDE.md's scoping statement is cited by section-heading string, never by line (CA-059).
   - [ ] AC6: an assertion pins the scoping, with a control proving the marker changes the outcome.
   - [ ] AC7: an assertion derives the kill-switch honouring set live, so the documentation cannot
-        drift from the code again.
+        drift from the code again, **with a control proving it fails when one consumer does not**
+        (EDMDS-04 AC4b).
+  - [ ] AC8: `bin/edm-gateguard` is at or below the bound T05 set. AC4 adds roughly twelve lines to a
+        file with one line of headroom, and v1.3.0 gave this guard to four of the seven tickets that
+        touch it.
 
 ### EDMDS-T12: Close CA-063's documentation half and the --help gap
 
@@ -2039,13 +2073,18 @@ hand and found it complete, and this table makes it re-checkable rather than re-
 ### EDMDS-T13: Require lens-shaped, current-round content
 
 - **Requirement**: EDMDS-06 AC1-AC3, AC5-AC7, AC11 | **Size**: M | **Depends On**: T01 | **D-block**: D64
-- **Target Components**: `bin/edm-state`, `bin/tests/wave6-smoke.sh`,
-  `SRD/edm/EDMDS__design-docket/decisions.md`
+- **Target Components**: `bin/edm-state`, `agents/edm-audit-synthesizer.md`,
+  `bin/tests/wave6-smoke.sh`, `SRD/edm/EDMDS__design-docket/decisions.md`
 - **AC**:
   - [ ] AC1: each line must be a JSON object whose `lens` equals the literal string `L{N}` and whose
         `sev` is in the closed set.
   - [ ] AC2: each line's `round` must equal the round being completed.
-  - [ ] AC3: the no-findings artifact is defined and a clean lens does not downgrade its round.
+  - [ ] AC3: the no-findings artifact is defined -- a **reserved `title` literal** plus the mandatory
+        `confidence` field (`agents/edm-audit-logic.md:99-100`) -- and a clean lens does not downgrade
+        its round.
+  - [ ] AC3b: **`agents/edm-audit-synthesizer.md` recognises the reserved title and drops the line**,
+        with an assertion that a clean lens adds no `findings-ledger.jsonl` entry (EDMDS-06 AC3b).
+        Without it every clean lens deposits one fabricated NOTED finding per round, permanently.
   - [ ] AC4: one bad line among good ones fails the file, recorded as D64 with EDMDS-08 named as the
         recovery path.
   - [ ] AC5: `{}` fails; valid lines pass; the empty-file arm is retained as a regression guard and
@@ -2057,7 +2096,7 @@ hand and found it complete, and this table makes it re-checkable rather than re-
 ### EDMDS-T14: Amend every lens JSONL fixture
 
 - **Requirement**: EDMDS-06 AC4 | **Size**: M | **Depends On**: T13 | **D-block**: D65
-- **Target Components**: `bin/tests/wave6-smoke.sh`,
+- **Target Components**: `bin/tests/wave6-smoke.sh`, `bin/tests/fixtures/code-audit/`,
   `SRD/edm/EDMDS__design-docket/decisions.md`
 - **Affected set**: `./affected-assertions.sh EDMDS-06`
 - **AC**:
@@ -2083,7 +2122,12 @@ hand and found it complete, and this table makes it re-checkable rather than re-
   - [ ] AC3: `agents/edm-audit-logic.md:91`'s claim that such an assertion already exists is
         corrected, and D66 records that it did not.
   - [ ] AC4: all lens prompts state the required fields and the no-findings artifact, in one atomic
-        change.
+        change, **with the not-applicable case carved out**: found-nothing writes the sentinel, N/A
+        writes no file at all (EDMDS-06 AC10). `bin/edm-state:5167-5179`'s check (2) downgrades the
+        round if any file exists for a lens in `lenses_na`, so without the carve-out an N/A lens
+        obeying this AC downgrades its own round.
+  - [ ] AC5: an assertion pins both halves, each with a control proving it fails if the other's
+        behaviour is substituted (EDMDS-06 AC10b).
 
 ### EDMDS-T16: Downgrade a manifest-less code round
 
@@ -2097,8 +2141,10 @@ hand and found it complete, and this table makes it re-checkable rather than re-
   - [ ] AC3: the control restores the manifest AND a valid `lens-L{N}.jsonl` per recorded lens, and
         asserts AC1's message is absent specifically.
   - [ ] AC4: `CLAUDE.md`'s round-type table records D40's gap closed as D67.
-  - [ ] AC5: an assertion proves `--na-lenses` naming a non-conditional lens dies at round-start,
-        which is what makes an all-lenses-N/A round impossible.
+  - [ ] AC5: **no new assertion is added** (EDMDS-07 AC7). The pin already ships at
+        `wave6-smoke.sh:3846-3848`, and this requirement changes nothing in `audit-round-start`'s
+        validation, so a new assertion would be invariant under its own change and could carry no
+        control. Discharged by citing the existing assertion in `decisions.md`.
 
 ### EDMDS-T17: Amend every affected round-completion site
 
@@ -2108,7 +2154,7 @@ hand and found it complete, and this table makes it re-checkable rather than re-
 - **Affected set**: `./affected-assertions.sh EDMDS-07`
 - **AC**:
   - [ ] AC1: every site the derivation names is amended or demonstrated unaffected by a named
-        assertion that runs. The derived count at writing is 26 against the seven v1.1.0 listed.
+        assertion that runs. No count is written here (D15) -- run `./affected-assertions.sh EDMDS-07`.
   - [ ] AC2: `wave7-smoke.sh:9566-9573`'s `ca416_fixture()` is amended at the **helper**, teaching it
         to build a manifest, so the band's 73 `ca416_*` references keep their intent.
   - [ ] AC3: `wave6-smoke.sh:5343` (T51ROUND) and `:5864` (T53DEFAULT) are amended.
@@ -2134,8 +2180,19 @@ hand and found it complete, and this table makes it re-checkable rather than re-
 - **AC**:
   - [ ] AC1: a named subcommand with a `--help` line re-evaluates a downgraded round and restores
         `full` only if every failed check now passes.
+  - [ ] AC1b: the three completeness checks at `bin/edm-state:5115-5198` are **extracted into one
+        function** called by both `_cmd_audit_round_complete_body` and the repair verb, proven by a
+        single-definition scan (EDMDS-08 AC1b). Without extraction the obvious implementation copies
+        ~85 lines and "the same checks" becomes false by construction -- which is the argument that
+        justifies this requirement at all.
   - [ ] AC2: it refuses if any check still fails, naming which.
-  - [ ] AC3: it cannot promote a never-downgraded round or alter another round.
+  - [ ] AC3: it cannot promote a never-downgraded round or alter another round. **The predicate is
+        `(lenses UNION lenses_na) == ALL_LENS_IDS` AND recorded `round_type == "partial"`**
+        (EDMDS-08 AC3) -- `bin/edm-state:5214` overwrites `round_type`, so no field distinguishes a
+        downgraded round from a legitimately partial one.
+  - [ ] AC3b: a control proves a `--lenses L1,L9,L11` round is **refused** even when every
+        completeness check passes, so the union conjunct is proven load-bearing (EDMDS-08 AC3b).
+        Without it `audit-converged` can converge on a three-lens audit.
   - [ ] AC4: it is a separate verb, so `cmd_audit_round_complete:5073`'s double-completion refusal is
         untouched; D69 records that decision and why no narrowing is needed.
   - [ ] AC5: the three downgrade messages at `:5163`, `:5177`, `:5193` are swept.
@@ -2174,6 +2231,10 @@ hand and found it complete, and this table makes it re-checkable rather than re-
   - [ ] AC2: an assertion drives the stale-plus-active case and requires a marker afterwards.
   - [ ] AC3: a control proves the unfixed branches end with no marker and `edm-gateguard` allows a
         first-touch edit.
+  - [ ] AC4: **a test seam makes the interleaving deterministic** (EDMDS-10 AC7) -- read-check-delete
+        is refactored into one testable function rather than shipping an `EDM_TEST_*` delay on a hook
+        path. Without it the concurrency assertion is a race the suite loses at random, which DoD
+        item 2's zero-failure requirement cannot tolerate.
 
 ### EDMDS-T21: Build the project-scoped lock
 
@@ -2186,8 +2247,13 @@ hand and found it complete, and this table makes it re-checkable rather than re-
         the data directory's `run/`. D71 records the choice.
   - [ ] AC2: if built on `with_state_lock`, every marker-mutation site is proven outside an existing
         acquisition (`:1419-1430` dies on any nesting).
-  - [ ] AC3: all four sites are covered -- `_edm_marker_write` at `:2883`,
-        `_edm_marker_remove_if_matches` at `:3056` and `:3655`.
+  - [ ] AC3: **every write or unlink of the path `edm_marker_path()` returns is covered** -- stated as
+        a property, never a count (EDMDS-10 AC4). The six today: `_edm_marker_write` at
+        `bin/edm-state:2883` and `:4784`; `_edm_marker_remove_if_matches` at `:3056`, `:3655` and
+        `:5669`; and `:4780`'s bare `rm -f "$_ss_marker"`, which calls neither helper and is the exact
+        deletion AC4's race turns on. v1.3.0's ticket claimed four and listed three.
+  - [ ] AC3b: the `affected-assertions.sh` target for EDMDS-10 is widened to reach a bare `rm -f` on
+        the marker path, since a callee-anchored target cannot see `:4780` (EDMDS-10 AC4b).
   - [ ] AC4: an assertion drives reconciliation against a concurrent `phase-start 6` **on a different
         initiative** and asserts the surviving marker's **content** names an initiative genuinely at
         Phase 6.
@@ -2256,8 +2322,14 @@ hand and found it complete, and this table makes it re-checkable rather than re-
         authoring a new one, naming the observable outcome per binary (prefer-and-warn, not reject).
   - [ ] AC5: a control proves a legitimate value is accepted by both.
   - [ ] AC6: the no-git-toplevel sub-case is pinned for both; D73 records it `NOTED`.
-  - [ ] AC7: an assertion proves no marker name changes, with a **mutant control** that patches the
-        resolver and proves the assertion fires.
+  - [ ] AC7: an assertion proves no marker name changes, **driven through a fixture whose project root
+        is reached via a SYMLINK** (`ln -s`, both spellings driven, same key required), with a mutant
+        control that patches the resolver and proves the assertion fires (EDMDS-11 AC8). On macOS
+        `/tmp`, `/var` and `TMPDIR` are all symlinked, so a symlink-free fixture goes green while a
+        real upgrade renames live keys.
+  - [ ] AC7b: a marker written under the pre-change key is **migrated, not orphaned** (EDMDS-11 AC8b).
+        An orphaned marker is unreachable by EDMDS-20's sweep, whose `initiative_dir` still exists,
+        so the pair would leave litter plus a disabled gate.
   - [ ] AC8: both CLAUDE.md passages are swept -- `:1345` and "Rule directory and discovery".
   - [ ] AC9: `EDMV4-T17 AC7`'s failing-`git` stub still passes.
   - [ ] AC10: D74 records the three-way split with each disposition and its reason.
@@ -2270,8 +2342,10 @@ hand and found it complete, and this table makes it re-checkable rather than re-
 - **Target Components**: `bin/edm-hookify`, `bin/tests/timing.sh`, `CLAUDE.md`,
   `SRD/edm/EDMDS__design-docket/decisions.md`
 - **AC**:
-  - [ ] AC1: either resolution short-circuits when the rule directory is absent, or the per-call cost
-        is measured on the `edm-bash-gate` path and recorded as D75. The choice is made, not left.
+  - [ ] AC1: **the per-call cost is measured** on the `edm-bash-gate` path and recorded as D75
+        (EDMDS-11 AC7). The short-circuit branch is not implementable -- `RULE_DIR` is derived FROM
+        `PROJECT_ROOT` at `bin/edm-hookify:155-156`, so "short-circuit when the rule directory is
+        absent" cannot be evaluated before resolution completes. v1.3.0's ticket offered both.
   - [ ] AC2: whichever is chosen is pinned by an assertion.
   - [ ] AC3: `CLAUDE.md`'s claim that a repository with no rule files evaluates nothing at zero cost
         is made true or corrected.
@@ -2284,7 +2358,9 @@ hand and found it complete, and this table makes it re-checkable rather than re-
 - **Target Components**: `bin/edm-state`, `bin/edm-repo-readiness`, `bin/edm-stop-gate`,
   `bin/tests/wave7-smoke.sh`
 - **AC**:
-  - [ ] AC1: `active-initiatives` gains a bare-prefix emission with no sentinel line.
+  - [ ] AC1: `active-initiatives` gains a bare-prefix emission behind a **`--porcelain` flag**, not a
+        change to the default output (EDMDS-12 AC1) -- `bin/edm-stop-gate:153-165` parses the
+        human-readable lines and a default change breaks it silently.
   - [ ] AC2: `edm-repo-readiness` and `edm-stop-gate` both consume it.
   - [ ] AC3: neither parses a human-readable listing.
   - [ ] AC4: an assertion proves agreement on a fixture with phase-0, phase-7 **and in-range**
@@ -2387,7 +2463,7 @@ hand and found it complete, and this table makes it re-checkable rather than re-
   - [ ] AC5: the EDM name set (`.edm-owned`, `run`, `patterns`, `edm`) is enumerated in code and the
         test stated as top-level only.
   - [ ] AC6: `CLAUDE.md`'s `bin/` table and `README.md:363` are swept for the new subcommand, with
-        the count derived rather than incremented (EDMDS-08 AC8's mechanism).
+        the count **incremented**, per EDMDS-19 AC11 as amended into EDMDS-08 AC8.
 
 ### EDMDS-T33: Tighten ownership, behind operator action
 
@@ -2400,6 +2476,15 @@ hand and found it complete, and this table makes it re-checkable rather than re-
         is not EDM's. Without the sentinel arm the change is inert for its own population.
   - [ ] AC2: it takes effect only after explicit operator action, so an upgrade alone never
         relocates a data root; D80 records the gating mechanism.
+  - [ ] AC2b: **`wave8-smoke.sh:10291-10298` is amended** (EDMDS-19 AC7b). That shipped control
+        `touch`es `.edm-owned` onto a foreign-content directory and requires it ADOPTED, with the fail
+        text "the check refuses everything and proves nothing". AC1 makes it refused, and AC4 demands
+        the opposite verdict on the same shape in the same file, so without this amendment the two
+        contradict and one fails whichever way the code goes.
+  - [ ] AC2c: the gate's **three branches each have a named fixture arm** -- migrated (tightening is a
+        no-op, the untightened rule already refuses), acknowledged (`.edm-migrated` present, refusal
+        active), neither (pre-tightening verdict stands, AC1's report keeps firing) -- per
+        EDMDS-19 AC10b. This is what stops the requirement being inert for a third time.
   - [ ] AC3: the C-4 fixture at `:10302-10308` passes unchanged.
   - [ ] AC4: the fixture matrix includes the **sentinel-bearing polluted** arm alongside the
         sentinel-free one.
@@ -2413,8 +2498,13 @@ hand and found it complete, and this table makes it re-checkable rather than re-
   `bin/tests/wave8-smoke.sh`, `SRD/edm/EDMDS__design-docket/decisions.md`
 - **Affected set**: `./affected-assertions.sh EDMDS-20`
 - **AC**:
-  - [ ] AC1: `.phase6` markers whose recorded `initiative_dir` no longer exists are removed, on a
-        stated trigger, reusing `edm-gateguard:106-110`'s existing existence test.
+  - [ ] AC1: `.phase6` markers whose recorded `initiative_dir` no longer exists are removed **during
+        `cmd_session_start`'s existing Phase-6 reconciliation pass** (`bin/edm-state:4707-4709`) --
+        the same pass EDMDS-10 makes atomic, not a second unsequenced writer over `run/` -- reusing
+        `edm-gateguard:151-163`'s existence test. The trigger is named here because "a stated trigger"
+        left it to implementation time (EDMDS-20 AC1).
+  - [ ] AC1b: this ticket shares T21's project-scoped lock rather than introducing a second
+        concurrency posture (EDMDS-20 AC1b).
   - [ ] AC2: `.checked` and `.denials` are explicitly out of scope, with the reason -- they are live
         session state and the key is not invertible (`:182-183`).
   - [ ] AC3: an assertion proves a deleted-directory marker is swept and a live one is not,
@@ -2436,6 +2526,10 @@ hand and found it complete, and this table makes it re-checkable rather than re-
   - [ ] AC1: `CLAUDE_PLUGIN_DATA`, `XDG_DATA_HOME` and `HOME` are isolated into a scratch location
         at the **top of the file**, not inside the T06 band -- none of the nine `phase-start ... 6`
         sites falls within `:1575-:1783`.
+  - [ ] AC1b: each of the nine `phase-start ... 6` sites is confirmed to need the scratch root, and any
+        case legitimately needing the ambient value is named and exempted (EDMDS-21 AC1b). A file-wide
+        export is a behavioural change to every case above it, so the audit is the work that makes it
+        safe.
   - [ ] AC2: an assertion proves a marker written by any of the nine sites lands in the scratch
         location.
   - [ ] AC3: a control proves the assertion fails when the isolation is removed.
@@ -2454,6 +2548,9 @@ hand and found it complete, and this table makes it re-checkable rather than re-
   - [ ] AC3: the end call sits immediately before each suite's own `Results:`/`exit` lines (CC5).
   - [ ] AC4: a self-contained control writes to the real host data directory during `run-all.sh` and
         is detected.
+  - [ ] AC5b: the guard binds **every `*-smoke.sh` suite plus `timing.sh`**, not two (EDMDS-21 AC3b).
+        All of them already source `_harness.sh`, and `wave8` carries 93 `CLAUDE_PLUGIN_DATA` sites
+        and the only band driving the live resolver against real environment variables.
   - [ ] AC5: the relocated end-call is the **documented insertion anchor** for every later band, and
         `bin/tests/_harness.sh` says so at the call site. Sequencing alone cannot fix this: T38, T39
         and T40 all add `wave7-smoke.sh` bands and all land strictly after T36 (T36 -> T37 -> T38),
@@ -2521,7 +2618,12 @@ hand and found it complete, and this table makes it re-checkable rather than re-
 - **AC**:
   - [ ] AC1: `CAMGAP`, `LINUXV` and `EVALB` are each released or retained with a reason, recorded as
         D83 in `decisions.md`, named as the authoritative record.
-  - [ ] AC2: an assertion proves no released prefix remains referenced in `CLAUDE.md` or `docs/`.
+  - [ ] AC2: an assertion proves no released prefix remains referenced **anywhere in the plugin tree**
+        -- `CLAUDE.md`, `README.md`, `docs/`, `bin/` and `bin/tests/` -- **with a control that plants a
+        released prefix and proves the scan fires**. Scoped to `CLAUDE.md` and `docs/` alone it cannot
+        fail: `CAMGAP`, `LINUXV` and `EVALB` occur exactly once in the whole plugin, at
+        `bin/tests/wave7-smoke.sh:3739`, and zero times in either location -- so it would be green
+        before any work, after any release, and after none (EDMDS-18 AC2).
   - [ ] AC3: `bin/tests/wave7-smoke.sh:3739`'s comment is swept -- it asserts real work remained
         behind each of the four, which becomes false on release, and nothing fails when it is stale.
 - **Depends-on note**: T16 **and** T17. EDMDS-07 lands across both, and releasing `CAMGAP` while

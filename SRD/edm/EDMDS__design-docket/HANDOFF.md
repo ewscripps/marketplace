@@ -1,6 +1,6 @@
 # EDMDS - Session Handoff
 
-> **Last updated**: 2026-09-10T22:18:29Z by darryl.porter  
+> **Last updated**: 2026-09-13T04:12:48Z by darryl.porter  
 > **To resume**: `/edm:orchestrator EDMDS`
 
 ## Current Status
@@ -126,7 +126,6 @@ outstanding.
 Nothing here depends on information we lack. Every P0 and P1 is actionable from `audit-srd.md`
 alone.
 
-## Notes -- resume point (2026-09-10, after round three)
 
 **State: Phase 3 run three times. srd.md is at v1.2.0 and FAILED again -- 10 P0, 48 P1, 41 P2
 across three delivered lanes. Do not enter Gate 2+3.**
