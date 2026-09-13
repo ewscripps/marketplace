@@ -1,4 +1,5 @@
-.claude/
+.claude/*
+!.claude/settings.json
 .serena/
 .DS_Store
 plugins/.DS_Store

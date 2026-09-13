@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "ask": [
+      "Bash(edm-state approve-gate*)",
+      "Bash(edm-state archive*)"
+    ]
+  },
+  "worktree": {
+    "baseRef": "head"
+  }
+}
