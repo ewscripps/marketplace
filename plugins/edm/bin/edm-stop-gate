@@ -62,7 +62,9 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-source "${SCRIPT_DIR}/_edm-cli-lib.sh"
+# EDMDS-14 AC2: explicit guard, exit 1 -- under this file's `set -uo pipefail` (no -e) a failed
+# implicit source continues, silently disabling stop_gate_emit_blocking's sanitizer below.
+source "${SCRIPT_DIR}/_edm-cli-lib.sh" || { printf 'edm-stop-gate: fatal: cannot source _edm-cli-lib.sh\n' >&2; exit 1; }
 
 usage() {
   print_help "${BASH_SOURCE[0]:-$0}"
@@ -114,13 +116,12 @@ soft_exit() {
 # interpolated text to stderr (EDMV4-T52 AC6). Both call sites below (a blocking `edm-state
 # validate` anomaly line, which can name a repository path, and a matched stop-event hookify
 # rule's own message text) route through here, so the sanitization has exactly one site. <label>
-# is this script's own literal text and is never sanitized; <text> is the untrusted half. Every
-# byte outside tab/CR/LF and the printable ASCII range 0x20-0x7E is replaced with '?' rather than
-# dropped, preserving <text>'s line structure.
+# is this script's own literal text and is never sanitized; <text> is the untrusted half, filtered
+# through the shared sanitize_ascii() (_edm-cli-lib.sh, EDMDS-14).
 stop_gate_emit_blocking() {
   local label="$1" text="$2"
   echo "$label" >&2
-  printf '%s\n' "$text" | LC_ALL=C tr -c '\011\012\015\040-\176' '?' >&2
+  printf '%s\n' "$(sanitize_ascii "$text")" >&2
 }
 
 # CA-003: read the Stop payload on stdin using the same idiom edm-bash-gate already uses, BEFORE

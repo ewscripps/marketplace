@@ -66,7 +66,9 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-source "${SCRIPT_DIR}/_edm-cli-lib.sh"
+# EDMDS-14 AC2: explicit guard, exit 1 -- under this file's `set -uo pipefail` (no -e) a failed
+# implicit source continues, leaving the block-path output below unsanitized.
+source "${SCRIPT_DIR}/_edm-cli-lib.sh" || { printf 'edm-bash-gate: fatal: cannot source _edm-cli-lib.sh\n' >&2; exit 1; }
 
 usage() {
   print_help "${BASH_SOURCE[0]:-$0}"
@@ -133,7 +135,10 @@ HOOKIFY_OUT="$(printf '%s' "$BASH_PAYLOAD" | edm-hookify eval bash)" || HOOKIFY_
 # T44 AC4/AC5: exit 2 -> this gate's own exit 2 (the block message on stderr, exit-code
 # convention); exit 1 (setup error) and exit 0 (clean/warn-only) both allow.
 if [[ "$HOOKIFY_RC" -eq 2 ]]; then
-  printf '%s\n' "$HOOKIFY_OUT" >&2
+  # EDMDS-14 AC6: $HOOKIFY_OUT carries a matched rule's own message text (rule-author-controlled,
+  # untrusted) -- this consumer had no sanitizer of any kind before this requirement; every other
+  # hook consumer's block/deny path already filters through sanitize_ascii (_edm-cli-lib.sh).
+  printf '%s\n' "$(sanitize_ascii "$HOOKIFY_OUT")" >&2
   exit 2
 fi
 exit 0

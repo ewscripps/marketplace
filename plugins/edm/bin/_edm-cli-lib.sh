@@ -29,3 +29,25 @@
 print_help() {
   awk '/^# EDM-HELP-BEGIN/{f=1;next} /^# EDM-HELP-END/{f=0} f' "$1"
 }
+
+# sanitize_ascii <text> -- print <text> with every byte outside tab/CR/LF and the printable ASCII
+# range 0x20-0x7E replaced with '?' (never dropped, so line count and fact-list structure survive
+# unchanged). EDMDS-14 (CA-072): this was hand-copied three times -- edm-gateguard's
+# emit_decision (a denial reason built from a repository path or a matched hookify rule's own
+# message), edm-hookify's hookify_scrub (matched-rule fields: name/action/message, plus setup-
+# error path text), and edm-stop-gate's stop_gate_emit_blocking (a validate anomaly line or a
+# matched stop-event rule's message) -- all three interpolate text this plugin does not control
+# (a rule author, a repository path) into a model-facing or JSON-bound channel (EDMV4-T52 AC6/
+# AC7). One owner now; every consumer calls this instead of re-typing the `tr` invocation, so a
+# future fourth copy (the exact defect that put a copy at edm-bash-gate's only sanitizer-less
+# emit site, closed by this same requirement's AC6) cannot happen by construction.
+#
+# Deliberately NOT guarded the way this file's sibling `_edm-datadir-lib.sh` is (source wrapped in
+# `[[ -r ... ]]` at every consumer, degrading a missing file to "no gate at all"): a missing
+# datadir lib disables an optional marker/gate feature, which is an acceptable degradation, but a
+# missing sanitizer would mean untrusted text reaches a model-facing or JSON control channel with
+# no filter at all -- a strictly worse failure mode than refusing to run. Every consumer therefore
+# sources this file with an explicit `|| { ...; exit 1; }` guard instead (EDMDS-14 AC2).
+sanitize_ascii() {
+  printf '%s' "$1" | LC_ALL=C tr -c '\011\012\015\040-\176' '?'
+}

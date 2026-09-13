@@ -3198,6 +3198,9 @@ T44_HARNESS="${T44_HARNESS_TMP}/gateguard-hookify-translation.sh"
 {
   printf '%s\n' '#!/usr/bin/env bash'
   printf '%s\n' 'set -euo pipefail'
+  # EDMDS-14: same library dependency as the T13 harness above -- emit_decision calls the shared
+  # sanitize_ascii() now, so this isolated harness must source it too.
+  printf 'source "%s/_edm-cli-lib.sh"\n' "${PLUGIN_DIR}/bin"
   printf '%s\n' 'die() { local msg="$1" code="${2:-1}"; echo "edm-gateguard: $msg" >&2; exit "$code"; }'
   printf '%s\n' 'EDM_GATEGUARD_DENY_MODE_DEFAULT="json"'
   printf '%s\n' "$T44_EMIT_FN_TEXT"
@@ -4461,6 +4464,10 @@ T13_HARNESS="${T13_TMP}/emit-decision-harness.sh"
 {
   printf '%s\n' '#!/usr/bin/env bash'
   printf '%s\n' 'set -euo pipefail'
+  # EDMDS-14: emit_decision now calls the shared sanitize_ascii() (_edm-cli-lib.sh) instead of
+  # hand-rolling the tr invocation, so this isolated-function harness must source the same
+  # library edm-gateguard itself does, or the extracted body dies at its first call (rc 127).
+  printf 'source "%s/_edm-cli-lib.sh"\n' "${PLUGIN_DIR}/bin"
   printf '%s\n' 'die() { local msg="$1" code="${2:-1}"; echo "edm-gateguard: $msg" >&2; exit "$code"; }'
   printf '%s\n' 'EDM_GATEGUARD_DENY_MODE_DEFAULT="json"'
   printf '%s\n' "$T13_EMIT_FN_TEXT"
@@ -7874,7 +7881,7 @@ T52_GG_FUNC_COUNT="$(w8_count_lines '^emit_decision() {' "$GATEGUARD")"
 check_num "EDMV4-T52 AC6 -- edm-gateguard: emit_decision is defined exactly once" "1" "$T52_GG_FUNC_COUNT"
 
 T52_GG_ORDER_RC=0
-T52_GG_ORDER_MSG="$(t52_ordering_ok "$GATEGUARD" "emit_decision" "LC_ALL=C tr -c" '"$reason"')" || T52_GG_ORDER_RC=$?
+T52_GG_ORDER_MSG="$(t52_ordering_ok "$GATEGUARD" "emit_decision" "sanitize_ascii" '"$reason"')" || T52_GG_ORDER_RC=$?
 if [[ "$T52_GG_ORDER_RC" -eq 0 ]]; then
   pass "EDMV4-T52 AC6 -- edm-gateguard: every emission of \$reason inside emit_decision occurs after the one sanitizer line (single-site property holds)"
 else
@@ -7888,7 +7895,7 @@ T52_GG_BYPASS="${T52_SCRATCH}/edm-gateguard-bypass"
 awk -v marker='local reason="${2:-}"' \
   '{print; if (index($0, marker) > 0) print "  echo \"$reason\" >&2  # BYPASS-LEAK injected for EDMV4-T52 AC6 positive control"}' \
   "$GATEGUARD" > "$T52_GG_BYPASS"
-if ! t52_ordering_ok "$T52_GG_BYPASS" "emit_decision" "LC_ALL=C tr -c" '"$reason"' >/dev/null; then
+if ! t52_ordering_ok "$T52_GG_BYPASS" "emit_decision" "sanitize_ascii" '"$reason"' >/dev/null; then
   pass "EDMV4-T52 AC6 -- positive control: an injected second, unsanitized \$reason emission (before the sanitizer) IS detected"
 else
   fail "EDMV4-T52 AC6 -- positive control FAILED: an injected bypass was not detected, so the single-site pass above proves nothing"
@@ -8380,6 +8387,10 @@ t_ca003_no_shortcircuit_case() {
   sed '/\[\[ "\$STOP_HOOK_ACTIVE" == "true" \]\] && exit 0/d' \
     "${PLUGIN_DIR}/bin/edm-stop-gate" > "$scratch_gate"
   chmod +x "$scratch_gate"
+  # EDMDS-14: this scratch copy resolves SCRIPT_DIR to $TMP, so the library it now explicitly
+  # guards on (AC2) must sit alongside it, or every invocation dies at the guard before this
+  # control ever reaches the removed short-circuit.
+  cp "${PLUGIN_DIR}/bin/_edm-cli-lib.sh" "${TMP}/_edm-cli-lib.sh"
 
   local rc=0 out
   out="$(printf '{"stop_hook_active": true}' | "$scratch_gate" 2>&1)" || rc=$?
@@ -8993,7 +9004,7 @@ fi
 
 # Control B: neutralise hookify_scrub (the bash-side ASCII filter) and confirm the UTF-8 byte
 # reaches the list arm again. This is the filter CA-056 found the `L)` arm bypassing.
-CAHK_MUT_NOHFSCRUB="$(cahk_mutant nohookifyscrub -e "s@| LC_ALL=C tr -c .*@| cat@")"
+CAHK_MUT_NOHFSCRUB="$(cahk_mutant nohookifyscrub -e 's@sanitize_ascii "$1"@printf %s "$1"@')"
 cahk_list "$CAHK_MUT_NOHFSCRUB" "$CAHK_P56"
 printf '%s\n' "$CAHK_OUT" > "${CAHK_TMP}/ca056-list-mut.out"
 if cahk_nonascii "${CAHK_TMP}/ca056-list-mut.out"; then
@@ -9024,7 +9035,7 @@ fi
 CAHK_ESC="$(printf '\033')"
 CAHK_MUT_NOFILTER="$(cahk_mutant nofilter \
   -e 's@^def scrub($s):.*@def scrub($s): ($s|tostring);@' \
-  -e 's@| LC_ALL=C tr -c .*@| cat@')"
+  -e 's@sanitize_ascii "$1"@printf %s "$1"@')"
 cahk_list "$CAHK_MUT_NOFILTER" "$CAHK_P56"
 printf '%s\n' "$CAHK_OUT" > "${CAHK_TMP}/ca056-list-nofilter.out"
 if LC_ALL=C grep -qF -- "$CAHK_ESC" "${CAHK_TMP}/ca056-list-nofilter.out"; then
@@ -9055,6 +9066,225 @@ if [[ -n "$CAHK_BYPASS_HITS" ]]; then
 else
   fail "CA-056 -- positive control FAILED: an injected bypass was not detected, so the scan above proves nothing"
 fi
+
+# =================================================================================================
+# EDMDS-T22 (EDMDS-14 AC1-AC4, AC6, AC8): one owner for the ASCII sanitizer, sanitize_ascii() in
+# _edm-cli-lib.sh -- extracted from the three hand-copies in edm-gateguard's emit_decision,
+# edm-hookify's hookify_scrub and edm-stop-gate's stop_gate_emit_blocking, and a fourth sanitizer
+# added at edm-bash-gate (its only emit site had
+# none of any kind). CC2: the character-set scan below is built from two parts assigned on
+# separate lines so the contiguous literal never appears in this suite's own source, and is
+# scoped away from bin/tests/ regardless.
+# =================================================================================================
+echo
+echo "=== EDMDS-T22 (EDMDS-14): shared ASCII sanitizer -- one owner, explicit source guard ==="
+echo
+
+CC14_LIB="${PLUGIN_DIR}/bin/_edm-cli-lib.sh"
+CC14_CONSUMERS_BIN="edm-gateguard edm-hookify edm-stop-gate edm-bash-gate"
+
+# ---- AC1: one definition in _edm-cli-lib.sh; every one of the four consumers calls it -- derived
+# live (membership checks against the fixed four-name list above) rather than a hardcoded total
+# call-site count, since v1.1.0's own "all three call sites" AC was falsified by its own AC6
+# (which created a fourth copy at edm-bash-gate).
+CC14_DEF_COUNT="$(count_matches '^sanitize_ascii() {' "$CC14_LIB")"
+check_num "EDMDS-T22 AC1 -- sanitize_ascii is defined exactly once, in _edm-cli-lib.sh" "1" "$CC14_DEF_COUNT"
+
+CC14_MISSING_CALL=""
+for CC14_BIN_NAME in $CC14_CONSUMERS_BIN; do
+  if ! grep -qF 'sanitize_ascii' "${PLUGIN_DIR}/bin/${CC14_BIN_NAME}" 2>/dev/null; then
+    CC14_MISSING_CALL="${CC14_MISSING_CALL} ${CC14_BIN_NAME}"
+  fi
+done
+if [[ -z "$CC14_MISSING_CALL" ]]; then
+  pass "EDMDS-T22 AC1 -- every one of the four hook consumers (edm-gateguard, edm-hookify, edm-stop-gate, edm-bash-gate) calls the shared sanitize_ascii rather than hand-rolling the filter"
+else
+  fail "EDMDS-T22 AC1 -- consumer(s) with no call into sanitize_ascii:${CC14_MISSING_CALL}"
+fi
+# Negative control (CC1): a consumer that still hand-rolled the tr invocation would NOT match
+# this grep -- prove it by scanning the ORIGINAL pre-extraction shape (this exact three-line
+# invocation), which none of the four should carry any more now that all four delegate.
+CC14_STILL_INLINE=""
+for CC14_BIN_NAME in $CC14_CONSUMERS_BIN; do
+  if grep -qF 'LC_ALL=C tr -c' "${PLUGIN_DIR}/bin/${CC14_BIN_NAME}" 2>/dev/null; then
+    CC14_STILL_INLINE="${CC14_STILL_INLINE} ${CC14_BIN_NAME}"
+  fi
+done
+if [[ -z "$CC14_STILL_INLINE" ]]; then
+  pass "EDMDS-T22 AC1 control -- none of the four consumers still hand-rolls the tr invocation locally (the grep this control uses is proven live at AC3/AC4 below, where it DOES fire against a reintroduced copy)"
+else
+  fail "EDMDS-T22 AC1 control FAILED -- still hand-rolling the filter:${CC14_STILL_INLINE}"
+fi
+
+# ---- AC2: the library is sourced with an explicit `|| { ...; exit 1; }` guard at every consumer,
+# so a missing library aborts (exit 1) rather than degrading to unsanitized output. Each consumer
+# is copied ALONE into an empty scratch dir (no _edm-cli-lib.sh alongside it) and run with no
+# stdin/args -- the guard fires before any payload read in all four files, verified by reading
+# each source above the fold.
+w8_scratch_dir CC14_AC2_SCRATCH
+for CC14_BIN_NAME in $CC14_CONSUMERS_BIN; do
+  CC14_AC2_DIR="${CC14_AC2_SCRATCH}/${CC14_BIN_NAME}-missing"
+  mkdir -p "$CC14_AC2_DIR"
+  cp "${PLUGIN_DIR}/bin/${CC14_BIN_NAME}" "${CC14_AC2_DIR}/${CC14_BIN_NAME}"
+  chmod +x "${CC14_AC2_DIR}/${CC14_BIN_NAME}"
+  CC14_AC2_RC=0
+  CC14_AC2_ERR="$(bash "${CC14_AC2_DIR}/${CC14_BIN_NAME}" </dev/null 2>&1)" || CC14_AC2_RC=$?
+  if [[ "$CC14_AC2_RC" -eq 1 && "$CC14_AC2_ERR" == *"cannot source _edm-cli-lib.sh"* ]]; then
+    pass "EDMDS-T22 AC2 -- ${CC14_BIN_NAME}: a missing _edm-cli-lib.sh aborts with exit 1 and names the failure, not a silent unsanitized continuation"
+  else
+    fail "EDMDS-T22 AC2 -- ${CC14_BIN_NAME}: expected exit 1 with the guard message on a missing library, got rc=${CC14_AC2_RC} err=[${CC14_AC2_ERR}]"
+  fi
+
+  # Negative control (CC1): the SAME invocation with the library PRESENT alongside the consumer
+  # must NOT produce the guard message -- proving the check above discriminates on the library's
+  # presence rather than always matching regardless.
+  CC14_AC2_PRESENT_DIR="${CC14_AC2_SCRATCH}/${CC14_BIN_NAME}-present"
+  mkdir -p "$CC14_AC2_PRESENT_DIR"
+  cp "${PLUGIN_DIR}/bin/${CC14_BIN_NAME}" "${CC14_AC2_PRESENT_DIR}/${CC14_BIN_NAME}"
+  cp "$CC14_LIB" "${CC14_AC2_PRESENT_DIR}/_edm-cli-lib.sh"
+  chmod +x "${CC14_AC2_PRESENT_DIR}/${CC14_BIN_NAME}"
+  CC14_AC2_PRESENT_ERR="$(bash "${CC14_AC2_PRESENT_DIR}/${CC14_BIN_NAME}" </dev/null 2>&1)" || true
+  if [[ "$CC14_AC2_PRESENT_ERR" != *"cannot source _edm-cli-lib.sh"* ]]; then
+    pass "EDMDS-T22 AC2 control -- ${CC14_BIN_NAME}: with the library PRESENT the guard message does NOT fire (the exit-1 case above is a real discrimination, not a permanent match)"
+  else
+    fail "EDMDS-T22 AC2 control FAILED -- ${CC14_BIN_NAME}: the guard message fired even with the library present"
+  fi
+done
+
+# ---- AC3/AC4: exactly one file in bin/ (excluding bin/tests/) carries the ASCII sanitizer
+# character-set literal, and a re-introduced copy is detected. Needle built from two parts so this
+# scan's own source line can never register as a hit (CC2) -- the split-needle technique
+# technique.
+cc14_needle_a='\011\012\015'
+cc14_needle_b='\040-\176'
+cc14_scan_literal() {
+  local root="$1"
+  grep -rlF -- "${cc14_needle_a}${cc14_needle_b}" "$root" 2>/dev/null | grep -v '/tests/' | sort || true
+}
+
+CC14_HITS="$(cc14_scan_literal "${PLUGIN_DIR}/bin")"
+if [[ "$CC14_HITS" == "$CC14_LIB" ]]; then
+  pass "EDMDS-T22 AC3 -- exactly one file in bin/ (excluding bin/tests/) carries the ASCII sanitizer character-set literal: _edm-cli-lib.sh"
+else
+  fail "EDMDS-T22 AC3 -- expected exactly _edm-cli-lib.sh to carry the character-set literal, got: [${CC14_HITS}]"
+fi
+
+w8_scratch_dir CC14_AC4_SCRATCH
+mkdir -p "${CC14_AC4_SCRATCH}/bin"
+cp "$CC14_LIB" "${CC14_AC4_SCRATCH}/bin/_edm-cli-lib.sh"
+cat > "${CC14_AC4_SCRATCH}/bin/edm-bogus-reintroduced.sh" <<'CC14EOF'
+#!/usr/bin/env bash
+bogus_reintroduced_scrub() {
+  printf '%s' "$1" | LC_ALL=C tr -c '\011\012\015\040-\176' '?'
+}
+CC14EOF
+CC14_CONTROL_HITS="$(cc14_scan_literal "${CC14_AC4_SCRATCH}/bin")"
+CC14_CONTROL_EXPECTED="$(printf '%s\n%s' "${CC14_AC4_SCRATCH}/bin/_edm-cli-lib.sh" "${CC14_AC4_SCRATCH}/bin/edm-bogus-reintroduced.sh")"
+if [[ "$CC14_CONTROL_HITS" == "$CC14_CONTROL_EXPECTED" ]]; then
+  pass "EDMDS-T22 AC4 -- control: a re-introduced copy of the character-set literal in a scratch consumer IS detected by the same scan"
+else
+  fail "EDMDS-T22 AC4 -- control FAILED: a re-introduced copy was not detected (got: [${CC14_CONTROL_HITS}]), so the AC3 pass above proves nothing"
+fi
+
+# ---- EDMDS-14 AC6 (T22's own AC5): edm-bash-gate gains a sanitizer -- it emits a matched
+# hookify rule's own (untrusted) message text on its block path and had none before this ticket.
+CC14_BG="${PLUGIN_DIR}/bin/edm-bash-gate"
+if grep -qF 'sanitize_ascii "$HOOKIFY_OUT"' "$CC14_BG"; then
+  pass "EDMDS-14 AC6 -- edm-bash-gate's block-path emission of \$HOOKIFY_OUT is sanitized"
+else
+  fail "EDMDS-14 AC6 -- edm-bash-gate does not route \$HOOKIFY_OUT through sanitize_ascii"
+fi
+
+# Functional end-to-end control: a stop-event... no, a bash-event hookify rule whose own message
+# text carries a non-ASCII byte must reach edm-bash-gate's stderr as pure ASCII, and a mutant with
+# sanitize_ascii's call site neutralised must leak the raw byte -- proving the assertion above is
+# not merely a grep of the source but a real behavioral property (CC1).
+w8_scratch_dir CC14_BG_SCRATCH
+CC14_BG_PROJ="${CC14_BG_SCRATCH}/proj"
+mkdir -p "${CC14_BG_PROJ}/.claude/edm-hookify"
+CC14_NONASCII_BYTE="$(printf '\303\251')"
+cat > "${CC14_BG_PROJ}/.claude/edm-hookify/block-cc14.json" <<CC14RULEEOF
+{
+  "name": "cc14-nonascii-${CC14_NONASCII_BYTE}",
+  "enabled": true,
+  "event": "bash",
+  "action": "block",
+  "conditions": [{"field": "command", "operator": "contains", "pattern": "cc14marker"}],
+  "message": "cc14 blocked ${CC14_NONASCII_BYTE} byte"
+}
+CC14RULEEOF
+CC14_BG_PAYLOAD='{"tool_input":{"command":"echo cc14marker"}}'
+CC14_BG_RC=0
+CC14_BG_ERR="$( ( cd "$CC14_BG_PROJ" && CLAUDE_PROJECT_DIR="$CC14_BG_PROJ" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+  bash -c 'printf "%s" "$1" | bash "$2"' _ "$CC14_BG_PAYLOAD" "$CC14_BG" 2>&1 1>/dev/null ) )" || CC14_BG_RC=$?
+if [[ "$CC14_BG_RC" -eq 2 ]] && ! LC_ALL=C grep -q '[^[:print:][:space:]]' <<< "$CC14_BG_ERR"; then
+  pass "EDMDS-14 AC6 -- edm-bash-gate: a non-ASCII byte in a matched block rule's message reaches stderr as pure ASCII"
+else
+  fail "EDMDS-14 AC6 -- edm-bash-gate: expected exit 2 with ASCII-only stderr, got rc=${CC14_BG_RC} stderr=[${CC14_BG_ERR}]"
+fi
+
+# The control has to discriminate, and a naive one here CANNOT: $HOOKIFY_OUT is produced by
+# edm-hookify, whose own hookify_scrub already sanitizes the rule message upstream. Neutralising
+# ONLY edm-bash-gate's call therefore leaks nothing -- the byte is already `?` before bash-gate
+# sees it -- so that mutant passes clean and proves exactly nothing (measured: it did, and this
+# band failed as a control-FAILED rather than silently passing). bash-gate's sanitizer is
+# defence-in-depth, so the control is staged:
+#   (A) neutralise ONLY the UPSTREAM scrub -> bash-gate's own filter must still emit pure ASCII,
+#       which is what proves bash-gate's call is load-bearing rather than redundant.
+#   (B) neutralise BOTH -> the raw byte MUST leak, which proves the payload really carries one and
+#       the pipeline is capable of leaking it, so (A)'s clean result is a real filter and not an
+#       artifact of a fixture that never had a non-ASCII byte in the first place.
+CC14_BG_MUTANT="${CC14_BG_SCRATCH}/edm-bash-gate-mutant"
+sed 's@sanitize_ascii "\$HOOKIFY_OUT"@printf %s "$HOOKIFY_OUT"@' "$CC14_BG" > "$CC14_BG_MUTANT"
+chmod +x "$CC14_BG_MUTANT"
+# The mutant resolves SCRIPT_DIR to its own directory, so the (unmutated) library must sit
+# alongside it -- this control is about neutralising the sanitize_ascii CALL, not about a missing
+# library (that is AC2's own control above).
+cp "$CC14_LIB" "${CC14_BG_SCRATCH}/_edm-cli-lib.sh"
+if cmp -s "$CC14_BG" "$CC14_BG_MUTANT"; then
+  fail "EDMDS-14 AC6 control setup FAILED: the mutation changed nothing in edm-bash-gate -- the control below would be vacuous"
+fi
+# Upstream mutant: edm-hookify with hookify_scrub's sanitize_ascii call neutralised. Placed in its
+# own bin/ dir FIRST on PATH so edm-bash-gate's `edm-hookify` lookup resolves to it.
+CC14_HK_BIN="${CC14_BG_SCRATCH}/mutbin"
+mkdir -p "$CC14_HK_BIN"
+sed 's@^  sanitize_ascii "\$1"@  printf '"'"'%s'"'"' "$1"@' "${PLUGIN_DIR}/bin/edm-hookify" > "${CC14_HK_BIN}/edm-hookify"
+chmod +x "${CC14_HK_BIN}/edm-hookify"
+cp "$CC14_LIB" "${CC14_HK_BIN}/_edm-cli-lib.sh"
+if cmp -s "${PLUGIN_DIR}/bin/edm-hookify" "${CC14_HK_BIN}/edm-hookify"; then
+  fail "EDMDS-14 AC6 control setup FAILED: the upstream edm-hookify mutation changed nothing -- controls A and B below would both be vacuous"
+fi
+
+# (A) upstream scrub neutralised, real edm-bash-gate: its own sanitizer must still clean the byte.
+CC14_BGA_RC=0
+CC14_BGA_ERR="$( ( cd "$CC14_BG_PROJ" && CLAUDE_PROJECT_DIR="$CC14_BG_PROJ" PATH="${CC14_HK_BIN}:${PLUGIN_DIR}/bin:${PATH}" \
+  bash -c 'printf "%s" "$1" | bash "$2"' _ "$CC14_BG_PAYLOAD" "$CC14_BG" 2>&1 1>/dev/null ) )" || CC14_BGA_RC=$?
+if [[ "$CC14_BGA_RC" -eq 2 ]] && ! LC_ALL=C grep -q '[^[:print:][:space:]]' <<< "$CC14_BGA_ERR"; then
+  pass "EDMDS-14 AC6 -- control A: with the UPSTREAM hookify scrub neutralised, edm-bash-gate's own sanitize_ascii still emits pure ASCII, so its call is load-bearing and not redundant"
+else
+  fail "EDMDS-14 AC6 -- control A FAILED: rc=${CC14_BGA_RC} stderr=[${CC14_BGA_ERR}] -- edm-bash-gate did not clean a byte its upstream no longer cleans"
+fi
+
+# (B) both neutralised: the raw byte MUST leak, or (A) proves nothing about a real non-ASCII byte.
+CC14_BGM_RC=0
+CC14_BGM_ERR="$( ( cd "$CC14_BG_PROJ" && CLAUDE_PROJECT_DIR="$CC14_BG_PROJ" PATH="${CC14_HK_BIN}:${PLUGIN_DIR}/bin:${PATH}" \
+  bash -c 'printf "%s" "$1" | bash "$2"' _ "$CC14_BG_PAYLOAD" "$CC14_BG_MUTANT" 2>&1 1>/dev/null ) )" || CC14_BGM_RC=$?
+if [[ "$CC14_BGM_RC" -eq 2 ]] && LC_ALL=C grep -q '[^[:print:][:space:]]' <<< "$CC14_BGM_ERR"; then
+  pass "EDMDS-14 AC6 -- control B: with BOTH sanitizers neutralised the raw non-ASCII byte DOES leak, so control A's clean result is a real filter and the fixture genuinely carries the byte"
+else
+  fail "EDMDS-14 AC6 -- control B FAILED: neutralising both sanitizers did not reproduce the leak (rc=${CC14_BGM_RC}, stderr=[${CC14_BGM_ERR}]) -- control A proves nothing"
+fi
+
+# ---- EDMDS-14 AC7 (gateguard line-count regression check, T22 AC7): the extraction is net
+# negative on edm-gateguard's own line count -- recorded live, never a hardcoded before/after pair
+# (CA-067's own rule: write the delta, not the total).
+CC14_GG_LINES="$(wc -l < "$GATEGUARD" | tr -d ' ')"
+if [[ "$CC14_GG_LINES" -lt 659 ]]; then
+  pass "EDMDS-T22 AC7 -- edm-gateguard is ${CC14_GG_LINES} lines, lower than its pre-extraction 659 (still within the closed 200-660 bound asserted above)"
+else
+  fail "EDMDS-T22 AC7 -- edm-gateguard is ${CC14_GG_LINES} lines, expected fewer than the pre-extraction 659"
+fi
+
 
 echo
 # =================================================================================================
