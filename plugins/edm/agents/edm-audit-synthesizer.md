@@ -28,6 +28,18 @@ Given:
 Steps:
 1. Read all lens reports (prose and JSONL) that exist in the pass directory. The JSONL is authoritative on conflict with the prose.
 2. Read the prior `findings-ledger.jsonl` if it exists. If only a legacy `findings-ledger.md` exists, read that instead. Any prior-round line or row carrying a `status` value outside `open`, `fixed`, `noted` is out of date; `edm-state audit-converged` normalizes such a line to `open` at its recorded severity on read (EDMV3-T28) -- never skipped.
+2b. **Drop every no-findings sentinel line before building anything else (EDMDS-06 AC3b).** A
+    lens that found nothing this round writes exactly one line whose `title` is the exact reserved
+    string `No findings this round` -- this is the defined no-findings artifact
+    (`bin/edm-state`'s `LENS_NO_FINDINGS_TITLE`), not a real finding. Recognize any JSONL line
+    carrying that exact title and exclude it from the finding inventory entirely: it is never
+    deduplicated, never assigned a `CA-NNN` ID, and never written to `findings-ledger.jsonl`. This
+    is deliberately distinct from the False Alarm Filter's low-confidence NOTED demotion below --
+    that filter demotes a real finding to `sev: "NOTED"` and still records it; this step drops a
+    line that was never a finding at all. Without this distinction the sentinel is
+    indistinguishable from a genuine low-confidence demotion, and because this agent never removes
+    an existing ledger entry once written, every clean lens would deposit one fabricated NOTED
+    finding per round, permanently.
 3. Apply the second-pass False Alarm Filter to each new finding -- this ranks by confidence and corroboration; it never discards a finding for being single-lens.
 4. Deduplicate findings flagged by multiple lenses -- a single underlying issue appears once, with all contributing lenses listed in `lenses` (multi-lens = higher confidence).
 5. Merge with ledger: assign stable IDs (`CA-001`, `CA-002`, ...) to genuinely new findings, preserved across rounds; mark prior open findings as `fixed` (record `resolved_round = N`) if they no longer appear in this round; re-open any that reappear under their original ID.
@@ -208,7 +220,10 @@ Matching across rounds uses component + summary similarity (not literal text).
    stall/truncation caveats, so degraded delivery is visible at the convergence gate rather than
    only in a file nobody is pointed at. When absent, say nothing -- absence means clean delivery.
 3. Read the prior `findings-ledger.jsonl` (if present); extract all open and noted findings. If only a legacy `findings-ledger.md` exists, read that instead; any row carrying a status value outside `open`/`fixed`/`noted` is out of date and is normalized to `open` on read, never skipped.
-4. Build a new finding inventory from this round's lens JSONL lines.
+4. Build a new finding inventory from this round's lens JSONL lines, EXCLUDING any line whose
+   `title` is the exact reserved string `No findings this round` (EDMDS-06 AC3b) -- that line is
+   the no-findings sentinel, not a finding; drop it here, before dedup, before the False Alarm
+   Filter, and before ID assignment, so it never reaches `findings-ledger.jsonl`.
 5. Apply the False Alarm Filter -- rank by confidence and corroboration. A single-lens finding is never discarded for being single-lens: `high`/`medium` confidence is retained at its reported severity; `low` confidence is retained but demoted to `sev: "NOTED"` / `status: "noted"` with its rationale recorded. No finding is removed from the ledger by this step.
 6. Group findings by underlying issue. If two findings reference the same file:line and describe the same root cause, merge them into one ledger line. List all contributing lenses in `lenses`; aggregate `confidence` to `high` whenever more than one lens corroborates.
 7. **Ledger merge**:

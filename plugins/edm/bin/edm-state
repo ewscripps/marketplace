@@ -1821,6 +1821,22 @@ for _cond_lens_id in $CONDITIONAL_LENS_IDS; do
 done
 unset _cond_lens_id
 
+# LENS_NO_FINDINGS_TITLE -- the reserved `title` literal defining the no-findings artifact
+# (EDMDS-06 AC3/EDMDS-T13). Requiring at least one lens-shaped line per lens (below) would
+# otherwise force a lens that genuinely found nothing to either fabricate a finding or downgrade
+# its round, and EDMDS-08 cannot repair that downgrade because restoring `full` requires passing
+# the check that failed. A lens with nothing to report writes exactly one line carrying this
+# exact title, `sev: "NOTED"`, and a non-null `confidence` -- the CA-471 completeness check below
+# accepts it like any other valid line, so a clean lens does not downgrade its round.
+# `agents/edm-audit-synthesizer.md` recognises this exact string and drops the line rather than
+# carrying it into `findings-ledger.jsonl` (EDMDS-06 AC3b) -- without that, the sentinel would be
+# indistinguishable from a real single-lens-low-confidence demotion (`agents/edm-audit-logic.md`'s
+# own NOTED-demotion convention), and the synthesizer is forbidden from ever removing a ledger
+# entry once written, so every clean lens would deposit one fabricated NOTED finding per round,
+# permanently. Both files must agree on this literal byte-for-byte; it is never reconstructed
+# from a substring or a prefix match.
+LENS_NO_FINDINGS_TITLE="No findings this round"
+
 # ---- detect-conditional-lenses (EDMV4-T24) ----------------------------------------------------
 # Step 1 of skills/code-audit/SKILL.md is the SOLE authority for a conditional lens's
 # applicability (guard D2: conditionality means genuine inapplicability, never a way to skip a
@@ -5150,12 +5166,37 @@ _cmd_audit_round_complete_body() {
       _state_lenses_na="$(echo "$last_round" | jq -r "${LENS_READ_JQ_DEF} read_round_lenses_na | .[]")"
       _recorded_round_type="$(echo "$last_round" | jq -r '.round_type // "unknown"')"
 
-      # ---- (1) every state-recorded `lenses` member requires a landed, valid JSONL -----------
+      # ---- (1) every state-recorded `lenses` member requires lens-shaped, current-round
+      #      content (EDMDS-06 AC1/AC2/AC3/AC5/AC6/AC7/AC11 -- EDMDS-T13). This replaces the
+      #      original "non-empty, parseable JSON" test with a stricter one: each top-level value
+      #      in lens-L{N}.jsonl must be a JSON object whose `lens` equals the literal string
+      #      "L{N}", whose `sev` is in the closed P0/P1/P2/NOTED set (CLAUDE.md
+      #      Sec."Severity vocabulary"), and whose `round` equals the round being completed
+      #      (round_num, closing AD-DS3's copied-artifact residual). The one line carrying the
+      #      reserved title LENS_NO_FINDINGS_TITLE (the no-findings artifact defined above)
+      #      additionally requires a non-null `confidence` field; it otherwise satisfies this
+      #      check like any other valid line, so a lens that legitimately found nothing does not
+      #      downgrade its round. One bad line among otherwise-good lines fails the WHOLE file --
+      #      `all()` runs over every top-level value, not a short-circuiting per-line loop -- and
+      #      this is one jq invocation per lens file (AC11), never one per line. A genuinely
+      #      empty file is still caught by the `-s` bash test below: `all()` over zero elements is
+      #      vacuously true, so that arm remains a regression guard rather than a discriminator of
+      #      this jq check (AC6).
       local _lens _lens_file _missing_run=""
       while IFS= read -r _lens; do
         [[ -n "$_lens" ]] || continue
         _lens_file="${_pass_dir}/lens-${_lens}.jsonl"
-        if [[ ! -s "$_lens_file" ]] || ! jq empty "$_lens_file" >/dev/null 2>&1; then
+        if [[ ! -s "$_lens_file" ]] || ! jq -s -e \
+            --arg lens "$_lens" --argjson round "$round_num" --arg reserved "$LENS_NO_FINDINGS_TITLE" '
+              length > 0
+              and all(.[];
+                  (type == "object")
+                  and (.lens == $lens)
+                  and (.sev == "P0" or .sev == "P1" or .sev == "P2" or .sev == "NOTED")
+                  and (.round == $round)
+                  and (if .title == $reserved then (has("confidence") and .confidence != null) else true end)
+                )
+            ' "$_lens_file" >/dev/null 2>&1; then
           _missing_run="${_missing_run:+$_missing_run }${_lens}"
         fi
       done <<< "$_state_lenses"

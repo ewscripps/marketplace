@@ -911,9 +911,9 @@ echo "CA-471 -- lens JSONL completeness gate at audit-round-complete"
 "$EDM_STATE" init CA471OK >/dev/null
 mkdir -p "$TMP/SRD/CA471OK/code-audit/pass-1_2026-08-16"
 printf 'Round type: partial\nL1\nL2\n' > "$TMP/SRD/CA471OK/code-audit/pass-1_2026-08-16/lenses-run.txt"
-printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L1","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA471OK/code-audit/pass-1_2026-08-16/lens-L1.jsonl"
-printf '{"schema":"lens","lens":"L2","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L2","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA471OK/code-audit/pass-1_2026-08-16/lens-L2.jsonl"
 "$EDM_STATE" audit-round-start CA471OK code --lenses L1,L2 >/dev/null
 ca471ok_out="$("$EDM_STATE" audit-round-complete CA471OK code 2>&1)"
@@ -931,59 +931,59 @@ check_absent "CA-471 -- a fully-backed manifest completes with no warn" "CA-471"
 mkdir -p "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15" "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16"
 printf 'Round type: full\nLenses N/A: L13\nL1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12\nL14\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lenses-run.txt"
-printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L1","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L1.jsonl"
 # CA479AMBIG's stale copy deliberately has NO lens-L2.jsonl -- if this were selected, the round
 # would downgrade to partial.
-printf '{"schema":"lens","lens":"L3","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L3","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L3.jsonl"
-printf '{"schema":"lens","lens":"L4","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L4","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L4.jsonl"
-printf '{"schema":"lens","lens":"L5","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L5","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L5.jsonl"
-printf '{"schema":"lens","lens":"L6","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L6","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L6.jsonl"
-printf '{"schema":"lens","lens":"L7","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L7","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L7.jsonl"
-printf '{"schema":"lens","lens":"L8","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L8","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L8.jsonl"
-printf '{"schema":"lens","lens":"L9","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L9","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L9.jsonl"
-printf '{"schema":"lens","lens":"L10","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L10","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L10.jsonl"
-printf '{"schema":"lens","lens":"L11","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L11","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L11.jsonl"
-printf '{"schema":"lens","lens":"L12","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L12","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L12.jsonl"
-printf '{"schema":"lens","lens":"L14","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L14","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15/lens-L14.jsonl"
 printf 'Round type: full\nLenses N/A: L13\nL1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12\nL14\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lenses-run.txt"
-printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L1","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L1.jsonl"
-printf '{"schema":"lens","lens":"L2","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L2","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L2.jsonl"
-printf '{"schema":"lens","lens":"L3","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L3","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L3.jsonl"
-printf '{"schema":"lens","lens":"L4","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L4","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L4.jsonl"
-printf '{"schema":"lens","lens":"L5","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L5","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L5.jsonl"
-printf '{"schema":"lens","lens":"L6","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L6","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L6.jsonl"
-printf '{"schema":"lens","lens":"L7","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L7","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L7.jsonl"
-printf '{"schema":"lens","lens":"L8","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L8","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L8.jsonl"
-printf '{"schema":"lens","lens":"L9","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L9","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L9.jsonl"
-printf '{"schema":"lens","lens":"L10","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L10","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L10.jsonl"
-printf '{"schema":"lens","lens":"L11","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L11","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L11.jsonl"
-printf '{"schema":"lens","lens":"L12","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L12","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L12.jsonl"
-printf '{"schema":"lens","lens":"L14","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L14","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16/lens-L14.jsonl"
 touch -t 202608150000 "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-15"
 touch -t 202608160000 "$TMP/SRD/CA479AMBIG/code-audit/pass-1_2026-08-16"
@@ -1011,31 +1011,31 @@ ca479_round_type="$("$EDM_STATE" get CA479AMBIG | jq -r '.audit_rounds.code.roun
 mkdir -p "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16"
 printf 'Round type: full\nLenses N/A: L13\nL1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12\nL14\n' \
   > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lenses-run.txt"
-printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L1","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L1.jsonl"
-printf '{"schema":"lens","lens":"L2","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L2","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L2.jsonl"
-printf '{"schema":"lens","lens":"L3","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L3","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L3.jsonl"
-printf '{"schema":"lens","lens":"L4","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L4","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L4.jsonl"
-printf '{"schema":"lens","lens":"L5","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L5","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L5.jsonl"
-printf '{"schema":"lens","lens":"L6","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L6","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L6.jsonl"
-printf '{"schema":"lens","lens":"L7","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L7","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L7.jsonl"
-printf '{"schema":"lens","lens":"L8","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L8","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L8.jsonl"
-printf '{"schema":"lens","lens":"L9","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L9","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L9.jsonl"
-printf '{"schema":"lens","lens":"L10","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L10","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L10.jsonl"
-printf '{"schema":"lens","lens":"L11","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L11","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L11.jsonl"
-printf '{"schema":"lens","lens":"L12","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L12","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L12.jsonl"
-printf '{"schema":"lens","lens":"L14","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L14","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA477FULL/code-audit/pass-1_2026-08-16/lens-L14.jsonl"
 "$EDM_STATE" audit-round-start CA477FULL code \
   --lenses L1,L2,L3,L4,L5,L6,L7,L8,L9,L10,L11,L12,L14 --na-lenses L13 >/dev/null
@@ -1059,7 +1059,7 @@ ca477full_rn="$(jq -r '.audit_rounds.code.rounds | length' "$TMP/SRD/CA477FULL/.
 "$EDM_STATE" init CA477CLASS >/dev/null
 mkdir -p "$TMP/SRD/CA477CLASS/code-audit/pass-1_2026-08-16"
 printf 'Round type: full\nL1\nL2\nL3\nL4\n' > "$TMP/SRD/CA477CLASS/code-audit/pass-1_2026-08-16/lenses-run.txt"
-printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L1","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA477CLASS/code-audit/pass-1_2026-08-16/lens-L1.jsonl"
 # L2: absent entirely (the pass-7 regression class). L3: empty. L4: present but not JSON.
 : > "$TMP/SRD/CA477CLASS/code-audit/pass-1_2026-08-16/lens-L3.jsonl"
@@ -1097,7 +1097,7 @@ ca477class_rn="$(jq -r '.audit_rounds.code.rounds | length' "$TMP/SRD/CA477CLASS
 "$EDM_STATE" init CA478NONL >/dev/null
 mkdir -p "$TMP/SRD/CA478NONL/code-audit/pass-1_2026-08-16"
 printf 'Round type: full\nL1\nL2' > "$TMP/SRD/CA478NONL/code-audit/pass-1_2026-08-16/lenses-run.txt"
-printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L1","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA478NONL/code-audit/pass-1_2026-08-16/lens-L1.jsonl"
 "$EDM_STATE" audit-round-start CA478NONL code >/dev/null
 ca478nonl_out="$("$EDM_STATE" audit-round-complete CA478NONL code 2>&1)"
@@ -1113,7 +1113,7 @@ ca478nonl_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$TMP/SRD/CA478
 "$EDM_STATE" init CA478CRLF >/dev/null
 mkdir -p "$TMP/SRD/CA478CRLF/code-audit/pass-1_2026-08-16"
 printf 'Round type: full\r\nL1\r\nL2\r\n' > "$TMP/SRD/CA478CRLF/code-audit/pass-1_2026-08-16/lenses-run.txt"
-printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L1","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA478CRLF/code-audit/pass-1_2026-08-16/lens-L1.jsonl"
 "$EDM_STATE" audit-round-start CA478CRLF code >/dev/null
 ca478crlf_out="$("$EDM_STATE" audit-round-complete CA478CRLF code 2>&1)"
@@ -1126,7 +1126,7 @@ ca478crlf_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$TMP/SRD/CA478
 "$EDM_STATE" init CA471MISS >/dev/null
 mkdir -p "$TMP/SRD/CA471MISS/code-audit/pass-1_2026-08-16"
 printf 'Round type: full\nL1\nL2\n' > "$TMP/SRD/CA471MISS/code-audit/pass-1_2026-08-16/lenses-run.txt"
-printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L1","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "$TMP/SRD/CA471MISS/code-audit/pass-1_2026-08-16/lens-L1.jsonl"
 : > "$TMP/SRD/CA471MISS/code-audit/pass-1_2026-08-16/lens-L2.jsonl"   # empty = not landed
 "$EDM_STATE" audit-round-start CA471MISS code >/dev/null
@@ -4152,7 +4152,7 @@ jq '.audit_rounds.code.rounds[-1].lenses = [] | .audit_rounds.code.rounds[-1].ro
 mkdir -p "${T23AC2CTRL_DIR}/code-audit/pass-1_2026-09-02"
 printf 'Round type: full\n' > "${T23AC2CTRL_DIR}/code-audit/pass-1_2026-09-02/lenses-run.txt"
 for _t23ctrl_lens in L1 L2 L3 L4 L5 L6 L7 L8 L9 L10 L11 L12 L13 L14; do
-  printf '{"schema":"lens","lens":"%s","sev":"P2","status":"open","id":null}\n' "$_t23ctrl_lens" \
+  printf '{"schema":1,"lens":"%s","round":1,"sev":"P2","status":"open","id":null}\n' "$_t23ctrl_lens" \
     > "${T23AC2CTRL_DIR}/code-audit/pass-1_2026-09-02/lens-${_t23ctrl_lens}.jsonl"
 done
 t23ac2_ctrl_out="$("$EDM_STATE" audit-round-complete T23AC2CTRL code 2>&1)"
@@ -4215,11 +4215,11 @@ T23AC6B_DIR="$TMP/SRD/T23AC6"
 "$EDM_STATE" audit-round-start T23AC6 code --lenses L1,L9,L11 >/dev/null
 mkdir -p "${T23AC6B_DIR}/code-audit/pass-1_2026-09-02"
 printf 'Round type: partial\nL1\nL9\nL11\n' > "${T23AC6B_DIR}/code-audit/pass-1_2026-09-02/lenses-run.txt"
-printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L1","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "${T23AC6B_DIR}/code-audit/pass-1_2026-09-02/lens-L1.jsonl"
-printf '{"schema":"lens","lens":"L9","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L9","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "${T23AC6B_DIR}/code-audit/pass-1_2026-09-02/lens-L9.jsonl"
-printf '{"schema":"lens","lens":"L11","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L11","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "${T23AC6B_DIR}/code-audit/pass-1_2026-09-02/lens-L11.jsonl"
 t23ac6_out="$("$EDM_STATE" audit-round-complete T23AC6 code 2>&1)"
 check_absent "EDMV4-T23 AC6 -- a legitimate --lenses L1,L9,L11 partial round emits no coverage warning" \
@@ -4254,9 +4254,9 @@ t23ac7r3_patched_lenses="$(jq -c '.audit_rounds.code.rounds[-1].lenses' "${T23AC
   || fail "EDMV4-T23 AC7 reason-3 setup -- lenses = '$t23ac7r3_patched_lenses', expected [\"L1\",\"L2\"]"
 mkdir -p "${T23AC7R3_DIR}/code-audit/pass-1_2026-09-02"
 printf 'Round type: full\nL1\nL2\n' > "${T23AC7R3_DIR}/code-audit/pass-1_2026-09-02/lenses-run.txt"
-printf '{"schema":"lens","lens":"L1","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L1","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "${T23AC7R3_DIR}/code-audit/pass-1_2026-09-02/lens-L1.jsonl"
-printf '{"schema":"lens","lens":"L2","sev":"P2","status":"open","id":null}\n' \
+printf '{"schema":1,"lens":"L2","round":1,"sev":"P2","status":"open","id":null}\n' \
   > "${T23AC7R3_DIR}/code-audit/pass-1_2026-09-02/lens-L2.jsonl"
 t23ac7r3_out="$("$EDM_STATE" audit-round-complete T23AC7R3 code 2>&1)"
 check "EDMV4-T23 AC7/AC11 -- reason 3 (coverage incomplete) is fired by a REAL executing case, not just present in source" \
@@ -6316,6 +6316,229 @@ with_scratch_repo ca061_case
 t_ca061_body="$(awk '/^record_degraded_check\(\)/{f=1} f{print} f && /^}/{exit}' "$EDM_STATE")"
 check "CA-061 -- record_degraded_check short-circuits (reads and compares) before its rmw_state call" \
   "read_state" "$t_ca061_body"
+
+# =================================================================================
+# EDMDS-T13 (EDMDS-06 AC1/AC2/AC3/AC3b/AC5/AC6/AC7/AC11): the CA-471 completeness check now
+# requires lens-shaped, current-round content, not merely non-empty parseable JSON. Every fixture
+# below is scoped to a single lens (`--lenses L3`, or a full 14-lens round for the sentinel
+# cases) so the "for: " warn list names exactly the lens under test -- CA-526's own lesson about
+# over-reporting applies here too.
+#
+# Known, DESIGN-COUPLED consequence of landing this ticket alone (recorded as D64, EDMDS-08
+# named as the recovery path): every pre-existing CA-471/EDMV4-T23 fixture earlier in this file
+# was written before this AC2 round-field requirement existed and carries no `round` field at
+# all, so those fixtures now fail this stricter check and their rounds downgrade to `partial`.
+# EDMDS-T14 (Depends On: T13) amends all of them; this ticket does not, by design -- fixing them
+# here would be scope creep into a ticket whose own AC1 names the derived count precisely so it
+# can be swept in one pass.
+# =================================================================================
+echo
+echo "EDMDS-T13 -- lens-shaped, current-round content for the CA-471 completeness gate"
+
+# ---- AC1/AC6: a fully valid four-line lens file passes with no warn (the shared positive
+#      control every bad variant below is a one-field mutation of). --------------------------
+"$EDM_STATE" init T13VALID >/dev/null
+mkdir -p "$TMP/SRD/T13VALID/code-audit/pass-1_2026-09-13"
+printf 'Round type: partial (lenses: L3)\nL3\n' \
+  > "$TMP/SRD/T13VALID/code-audit/pass-1_2026-09-13/lenses-run.txt"
+{
+  printf '{"lens":"L3","sev":"P0","round":1,"title":"a"}\n'
+  printf '{"lens":"L3","sev":"P1","round":1,"title":"b"}\n'
+  printf '{"lens":"L3","sev":"P2","round":1,"title":"c"}\n'
+  printf '{"lens":"L3","sev":"NOTED","round":1,"title":"d"}\n'
+} > "$TMP/SRD/T13VALID/code-audit/pass-1_2026-09-13/lens-L3.jsonl"
+"$EDM_STATE" audit-round-start T13VALID code --lenses L3 >/dev/null
+t13valid_out="$("$EDM_STATE" audit-round-complete T13VALID code 2>&1)"
+check_absent "EDMDS-T13 AC1/AC6 -- four lens-shaped, current-round lines pass with no CA-471 warn" \
+  "CA-471" "$t13valid_out"
+
+# ---- AC6 (EDMDS-06)/ticket AC5: a lone `{}` line fails -- it has no `lens`/`sev`/`round` at all.
+"$EDM_STATE" init T13EMPTYOBJ >/dev/null
+mkdir -p "$TMP/SRD/T13EMPTYOBJ/code-audit/pass-1_2026-09-13"
+printf 'Round type: partial (lenses: L3)\nL3\n' \
+  > "$TMP/SRD/T13EMPTYOBJ/code-audit/pass-1_2026-09-13/lenses-run.txt"
+printf '{}\n' > "$TMP/SRD/T13EMPTYOBJ/code-audit/pass-1_2026-09-13/lens-L3.jsonl"
+"$EDM_STATE" audit-round-start T13EMPTYOBJ code --lenses L3 >/dev/null
+t13emptyobj_out="$("$EDM_STATE" audit-round-complete T13EMPTYOBJ code 2>&1)"
+check "EDMDS-T13 AC6 -- a lone '{}' line fails the file (for: L3)" "for: L3" "$t13emptyobj_out"
+
+# ---- AC1: a line whose `lens` field names a DIFFERENT lens than the file it lives in fails.
+"$EDM_STATE" init T13BADLENS >/dev/null
+mkdir -p "$TMP/SRD/T13BADLENS/code-audit/pass-1_2026-09-13"
+printf 'Round type: partial (lenses: L3)\nL3\n' \
+  > "$TMP/SRD/T13BADLENS/code-audit/pass-1_2026-09-13/lenses-run.txt"
+printf '{"lens":"L4","sev":"P1","round":1,"title":"wrong lens id"}\n' \
+  > "$TMP/SRD/T13BADLENS/code-audit/pass-1_2026-09-13/lens-L3.jsonl"
+"$EDM_STATE" audit-round-start T13BADLENS code --lenses L3 >/dev/null
+t13badlens_out="$("$EDM_STATE" audit-round-complete T13BADLENS code 2>&1)"
+check "EDMDS-T13 AC1 -- a line whose lens id does not match its own file fails (for: L3)" \
+  "for: L3" "$t13badlens_out"
+
+# ---- AC1: a line whose `sev` is outside the closed P0/P1/P2/NOTED set fails.
+"$EDM_STATE" init T13BADSEV >/dev/null
+mkdir -p "$TMP/SRD/T13BADSEV/code-audit/pass-1_2026-09-13"
+printf 'Round type: partial (lenses: L3)\nL3\n' \
+  > "$TMP/SRD/T13BADSEV/code-audit/pass-1_2026-09-13/lenses-run.txt"
+printf '{"lens":"L3","sev":"CRITICAL","round":1,"title":"illegal sev"}\n' \
+  > "$TMP/SRD/T13BADSEV/code-audit/pass-1_2026-09-13/lens-L3.jsonl"
+"$EDM_STATE" audit-round-start T13BADSEV code --lenses L3 >/dev/null
+t13badsev_out="$("$EDM_STATE" audit-round-complete T13BADSEV code 2>&1)"
+check "EDMDS-T13 AC1 -- a line carrying an illegal sev outside P0/P1/P2/NOTED fails (for: L3)" \
+  "for: L3" "$t13badsev_out"
+
+# ---- AC5 (EDMDS-06)/ticket AC4: one bad line among four otherwise-good lines fails the WHOLE
+#      file -- not a partial credit per line.
+"$EDM_STATE" init T13ONEOFFOUR >/dev/null
+mkdir -p "$TMP/SRD/T13ONEOFFOUR/code-audit/pass-1_2026-09-13"
+printf 'Round type: partial (lenses: L3)\nL3\n' \
+  > "$TMP/SRD/T13ONEOFFOUR/code-audit/pass-1_2026-09-13/lenses-run.txt"
+{
+  printf '{"lens":"L3","sev":"P0","round":1,"title":"a"}\n'
+  printf '{"lens":"L3","sev":"P1","round":1,"title":"b"}\n'
+  printf '{"lens":"L3","sev":"BOGUS","round":1,"title":"bad one among good"}\n'
+  printf '{"lens":"L3","sev":"NOTED","round":1,"title":"d"}\n'
+} > "$TMP/SRD/T13ONEOFFOUR/code-audit/pass-1_2026-09-13/lens-L3.jsonl"
+"$EDM_STATE" audit-round-start T13ONEOFFOUR code --lenses L3 >/dev/null
+t13oneoffour_out="$("$EDM_STATE" audit-round-complete T13ONEOFFOUR code 2>&1)"
+check "EDMDS-T13 AC5 -- one illegal-sev line among three good ones fails the whole file (for: L3)" \
+  "for: L3" "$t13oneoffour_out"
+
+# ---- AC2: a line whose `round` names a PREVIOUS round (the copied-artifact residual AD-DS3
+#      describes) fails when completing a LATER round, even though the file otherwise parses,
+#      is a JSON object, names the right lens, and carries a legal sev.
+"$EDM_STATE" init T13BADROUND >/dev/null
+mkdir -p "$TMP/SRD/T13BADROUND/code-audit/pass-1_2026-09-13"
+printf 'Round type: partial (lenses: L3)\nL3\n' \
+  > "$TMP/SRD/T13BADROUND/code-audit/pass-1_2026-09-13/lenses-run.txt"
+printf '{"lens":"L3","sev":"P1","round":1,"title":"round1 finding"}\n' \
+  > "$TMP/SRD/T13BADROUND/code-audit/pass-1_2026-09-13/lens-L3.jsonl"
+"$EDM_STATE" audit-round-start T13BADROUND code --lenses L3 >/dev/null
+"$EDM_STATE" audit-round-complete T13BADROUND code >/dev/null 2>&1
+mkdir -p "$TMP/SRD/T13BADROUND/code-audit/pass-2_2026-09-14"
+printf 'Round type: partial (lenses: L3)\nL3\n' \
+  > "$TMP/SRD/T13BADROUND/code-audit/pass-2_2026-09-14/lenses-run.txt"
+# Round 2's file still carries round:1 -- a copy-forward that never updated the field.
+printf '{"lens":"L3","sev":"P1","round":1,"title":"stale copied-from-round-1 finding"}\n' \
+  > "$TMP/SRD/T13BADROUND/code-audit/pass-2_2026-09-14/lens-L3.jsonl"
+"$EDM_STATE" audit-round-start T13BADROUND code --lenses L3 >/dev/null
+t13badround_out="$("$EDM_STATE" audit-round-complete T13BADROUND code 2>&1)"
+check "EDMDS-T13 AC2 -- a line copied forward with round 1's number fails round 2's completion (for: L3)" \
+  "for: L3" "$t13badround_out"
+check "EDMDS-T13 AC2 -- the warn names round 2, the round actually being completed" \
+  "round 2" "$t13badround_out"
+
+# ---- AC3/AC3b: the no-findings artifact. A full 14-lens round where L5 legitimately found
+#      nothing writes exactly one sentinel line; every other lens carries one ordinary finding.
+_edmds_t13_full_manifest() {
+  local dir="$1"
+  {
+    echo "Round type: full"
+    local n
+    for n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do echo "L${n}"; done
+  } > "${dir}/lenses-run.txt"
+  local n
+  for n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do
+    if [[ "$n" != "5" ]]; then
+      printf '{"lens":"L%s","sev":"P2","round":1,"title":"finding on L%s"}\n' "$n" "$n" \
+        > "${dir}/lens-L${n}.jsonl"
+    fi
+  done
+}
+
+# ---- AC3 positive: the sentinel (reserved title + confidence) satisfies the check, so a clean
+#      lens does NOT downgrade an otherwise-full round.
+"$EDM_STATE" init T13SENTFULL >/dev/null
+T13SENTFULL_DIR="$TMP/SRD/T13SENTFULL/code-audit/pass-1_2026-09-13"
+mkdir -p "$T13SENTFULL_DIR"
+_edmds_t13_full_manifest "$T13SENTFULL_DIR"
+printf '{"lens":"L5","sev":"NOTED","round":1,"title":"No findings this round","confidence":"high"}\n' \
+  > "${T13SENTFULL_DIR}/lens-L5.jsonl"
+"$EDM_STATE" audit-round-start T13SENTFULL code >/dev/null
+t13sentfull_out="$("$EDM_STATE" audit-round-complete T13SENTFULL code 2>&1)"
+check_absent "EDMDS-T13 AC3 -- a lens carrying only the no-findings sentinel triggers no CA-471 warn" \
+  "CA-471" "$t13sentfull_out"
+t13sentfull_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$TMP/SRD/T13SENTFULL/.edm-state.json")"
+[[ "$t13sentfull_rt" == "full" ]] \
+  && pass "EDMDS-T13 AC3 -- a clean lens (sentinel present) does not downgrade its round (stays full)" \
+  || fail "EDMDS-T13 AC3 -- round_type='${t13sentfull_rt}', expected full (the sentinel should have prevented a downgrade)"
+
+# ---- AC3 negative control: the IDENTICAL round, but L5 has NO sentinel at all (an empty file,
+#      i.e. found-nothing was never recorded) -- this is what proves the pass above is not
+#      vacuous: an implementation that never downgrades anything would also pass AC3's positive
+#      assertion, so this control -- the round IS downgraded when the sentinel is absent -- is
+#      required by EDMDS-06 AC3 itself, not merely good practice.
+"$EDM_STATE" init T13SENTMISS >/dev/null
+T13SENTMISS_DIR="$TMP/SRD/T13SENTMISS/code-audit/pass-1_2026-09-13"
+mkdir -p "$T13SENTMISS_DIR"
+_edmds_t13_full_manifest "$T13SENTMISS_DIR"
+: > "${T13SENTMISS_DIR}/lens-L5.jsonl"
+"$EDM_STATE" audit-round-start T13SENTMISS code >/dev/null
+t13sentmiss_out="$("$EDM_STATE" audit-round-complete T13SENTMISS code 2>&1)"
+check "EDMDS-T13 AC3 control -- the SAME round with NO sentinel for L5 DOES fire the CA-471 warn (for: L5)" \
+  "for: L5" "$t13sentmiss_out"
+t13sentmiss_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$TMP/SRD/T13SENTMISS/.edm-state.json")"
+[[ "$t13sentmiss_rt" == "partial" ]] \
+  && pass "EDMDS-T13 AC3 control -- an absent sentinel DOES downgrade the round to partial" \
+  || fail "EDMDS-T13 AC3 control -- round_type='${t13sentmiss_rt}', expected partial (a downgrade-never implementation would leave this full)"
+
+# ---- AC3 second control: the sentinel's reserved title WITHOUT the mandatory confidence field
+#      also fails -- proving the confidence requirement is actually enforced, not merely
+#      documented.
+"$EDM_STATE" init T13SENTNOCONF >/dev/null
+T13SENTNOCONF_DIR="$TMP/SRD/T13SENTNOCONF/code-audit/pass-1_2026-09-13"
+mkdir -p "$T13SENTNOCONF_DIR"
+_edmds_t13_full_manifest "$T13SENTNOCONF_DIR"
+printf '{"lens":"L5","sev":"NOTED","round":1,"title":"No findings this round"}\n' \
+  > "${T13SENTNOCONF_DIR}/lens-L5.jsonl"
+"$EDM_STATE" audit-round-start T13SENTNOCONF code >/dev/null
+t13sentnoconf_out="$("$EDM_STATE" audit-round-complete T13SENTNOCONF code 2>&1)"
+check "EDMDS-T13 AC3 control -- the sentinel title with NO confidence field still fires the warn (for: L5)" \
+  "for: L5" "$t13sentnoconf_out"
+
+# ---- AC11: one jq invocation per lens file, not one per line. Extract check (1)'s own code
+#      block (by its comment anchor, never by a line-number citation -- G10/CA-340) and count the
+#      jq invocations textually present in it.
+t13_check1_block="$(awk '
+  /every state-recorded `lenses` member requires lens-shaped/ { f=1 }
+  f { print }
+  f && /done <<< "\$_state_lenses"/ { exit }
+' "$EDM_STATE")"
+t13_check1_jq_count="$(printf '%s\n' "$t13_check1_block" | grep -c 'jq -s -e')"
+[[ "$t13_check1_jq_count" -eq 1 ]] \
+  && pass "EDMDS-T13 AC11 -- check (1)'s own code carries exactly one jq invocation, not one per line" \
+  || fail "EDMDS-T13 AC11 -- found ${t13_check1_jq_count} 'jq -s -e' invocation(s) in check (1), expected exactly 1"
+# Control: an in-memory copy with a second invocation appended must be counted as 2, proving the
+# count above is not a tautological "grep found something" -- it actually discriminates.
+t13_check1_block_mutated="$(printf '%s\njq -s -e '"'"'.'"'"' /dev/null\n' "$t13_check1_block")"
+t13_check1_jq_count_mutated="$(printf '%s\n' "$t13_check1_block_mutated" | grep -c 'jq -s -e')"
+[[ "$t13_check1_jq_count_mutated" -eq 2 ]] \
+  && pass "EDMDS-T13 AC11 control -- a second appended invocation IS counted (proves the count above discriminates)" \
+  || fail "EDMDS-T13 AC11 control -- mutated count was ${t13_check1_jq_count_mutated}, expected 2"
+# AC11's "no new required binary" half: the block invokes no executable outside this plugin's
+# jq/bash contract (CC4) -- assembled here as two concatenated halves so this very check line
+# can never match itself (EDMV4's own self-match lesson, CLAUDE.md's code-audit patterns doc).
+t13_forbidden_needle="pyth""on3"
+check_absent "EDMDS-T13 AC11 -- check (1) invokes no binary outside the jq/bash contract" \
+  "$t13_forbidden_needle" "$t13_check1_block"
+t13_check1_block_with_forbidden="$(printf '%s\n%s -c "pass"\n' "$t13_check1_block" "$t13_forbidden_needle")"
+check "EDMDS-T13 AC11 control -- a copy WITH a forbidden binary added is detected" \
+  "$t13_forbidden_needle" "$t13_check1_block_with_forbidden"
+
+# ---- AC3b: agents/edm-audit-synthesizer.md recognises the reserved title and drops the line
+#      before it ever reaches findings-ledger.jsonl. This is a prompt-text assertion (the
+#      synthesizer is an LLM agent, not deterministic bash) -- the same pattern CA-525 uses above
+#      for the lens-manifest-writing instruction.
+t13_synth_md="${_HARNESS_PLUGIN_DIR}/agents/edm-audit-synthesizer.md"
+t13_synth_dropinstr="$(grep -A2 'No findings this round' "$t13_synth_md" 2>/dev/null || true)"
+check "EDMDS-T13 AC3b -- the synthesizer prompt names the exact reserved title" \
+  "No findings this round" "$t13_synth_dropinstr"
+check "EDMDS-T13 AC3b -- the synthesizer prompt instructs excluding/dropping the sentinel line" \
+  "exclude" "$t13_synth_dropinstr"
+# Positive control: a mutated copy with the drop instruction stripped must NOT satisfy the
+# second check above -- proves it pins real text rather than an always-true tautology.
+t13_synth_control="$(printf '%s\n' "$t13_synth_dropinstr" | sed 's/exclude/include/g')"
+check_absent "EDMDS-T13 AC3b control -- a mutated instruction missing 'exclude' is detected as missing" \
+  "exclude" "$t13_synth_control"
 
 # ---- Summary -----------------------------------------------------------------
 echo
