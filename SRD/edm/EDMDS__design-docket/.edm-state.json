@@ -1,7 +1,7 @@
 {
   "prefix": "EDMDS",
   "schema_version": 1,
-  "current_phase": 3,
+  "current_phase": 6,
   "gates_approved": [
     {
       "gate": 1,
@@ -80,6 +80,9 @@
       "human_baseline_usd": 0.00,
       "attribution_mode": "scoped",
       "unparseable_lines": 0
+    },
+    "6_phase": {
+      "started_at": "2026-09-13T05:10:57Z"
     }
   },
   "test_frameworks_detected": {},
@@ -121,7 +124,7 @@
   "related_prefixes": [
     "EDMTC"
   ],
-  "last_updated": "2026-09-13T05:10:36Z",
+  "last_updated": "2026-09-13T05:10:57Z",
   "patterns_last_updated": "2026-09-13T04:45:48Z",
   "patterns_updates": {
     "srd": {
