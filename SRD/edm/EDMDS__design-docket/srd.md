@@ -185,20 +185,33 @@ Claude Code 2.1.263, following D25/D26's disposable-repository methodology:
 | Surface | Model-facing channel | Non-model-facing channel | Decision |
 |---|---|---|---|
 | `edm-gateguard`, `EDM_GATEGUARD_DENY_MODE=json` (default), exits 0 | stdout -- the decision JSON, parsed by the host | stderr, **operator visibility UNESTABLISHED** | EDM-authored reason in `permissionDecisionReason`; author's `message` to stderr, with the cost stated below |
-| `edm-gateguard`, `exit-code` mode (`:236-240`), exits 2 | **stderr -- measured** | **stdout -- measured free** | Separate: EDM-authored reason to stderr, author's `message` to stdout |
-| `edm-bash-gate` (`:136`), exits 2 | stderr | stdout | Separate, same shape |
-| `edm-stop-gate` (`:216`, `:244`), exits 2 | stderr | stdout | Separate, same shape -- **`Stop` not directly measured**, see the residual |
+| `edm-gateguard`, `exit-code` mode (`:236-240`), exits 2 | **stderr -- measured** | **stdout -- measured ignored by the host** | Separate: EDM-authored reason to stderr, author's `message` to stdout |
+| `edm-bash-gate` (`:136`), exits 2 -- `PreToolUse`/`Bash` | **stderr -- measured on this exact matcher** | **stdout -- measured ignored** | Separate, same shape |
+| `edm-stop-gate` (`:216`, `:244`), exits 2 -- `Stop` | stderr | **NOT ESTABLISHED -- stdout is not used here** | **Label, not separate.** EDM-authored label line then the sanitized message, both on stderr, per `stop_gate_emit_blocking` |
 
-**What was measured.** A `PreToolUse` hook exiting 2 with distinct markers on both streams: the
-model received the stderr marker and quoted it back verbatim as the refusal it was given, and
-explicitly reported that the stdout marker reached it only inside the echoed command string, not as
-captured output. So stderr is model-facing and stdout is not. On exit 0 neither stream appeared in
-`-p` output or in `--output-format stream-json --verbose`.
+**What was measured, at each surface separately (D52, extended by D87).** On `PreToolUse` exit 2 the
+model received the stderr marker and quoted it back verbatim, while the stdout marker reached it only
+inside the echoed command string. D87 then tested the harder question an audit lane raised -- whether
+stdout is the channel the host PARSES, since `edm-gateguard:232-234` uses it that way on exit 0 --
+by emitting a control-shaped `{"hookSpecificOutput":{"permissionDecision":"allow"}}` on stdout while
+exiting 2. **The deny held.** Measured on the `Bash` matcher and on `Write` independently, with a
+sentinel file proving the hook fired and with every tool hooked so no unhooked escape route existed.
+So on `PreToolUse` exit 2, stdout is ignored by the host: not model-facing, and not control. On exit 0
+neither stream appeared in `-p` output or in `--output-format stream-json --verbose`.
 
-**What follows.** v1.1.0's two-branch table collapses. AD-DS1's own principle -- *where two channels
-exist, reduce the channel* -- applies at all four surfaces once stdout is known to be free, so the
-labelling compromise v1.1.0 adopted at three surfaces is withdrawn in favour of one uniform
-separation. That is simpler, and it means the plugin has one shape rather than two.
+**`Stop` is deliberately excluded from that result.** The equivalent test was inconclusive, and
+`bin/edm-stop-gate:54-55` states its own contract -- "All operator-facing text goes to stderr, never
+stdout -- a raw JSON echo to stdout is the documented failure mode for a Stop hook." So that surface
+does NOT inherit a measurement taken on `PreToolUse`; it keeps the labelling shape. Generalising one
+surface's measurement to the others is the error that made this decision wrong in v1.1.0 and produced
+a security regression in v1.2.0, and the table above is the first version that does not do it.
+
+**What follows.** The principle -- *where two channels exist, reduce the channel; where one exists,
+label the text* -- now applies with the channels actually known per surface. Three surfaces separate
+(two `PreToolUse` exit-2 paths plus `json` mode); one labels (`Stop`). v1.2.0 applied separation
+uniformly on a measurement taken at one matcher, which put project-authored text on a channel the
+`Stop` surface's own contract forbids. Two shapes, each justified by its own surface's evidence, is
+the correct outcome -- not the tidier one.
 
 `bin/edm-stop-gate:113-124`'s `stop_gate_emit_blocking <label> <text>` remains the in-tree
 precedent for splitting EDM's own label from untrusted text, and its sanitizer is still what the
@@ -211,11 +224,11 @@ operator-visibility on exit 0 was not established by the spike. v1.1.0 described
 honest statement is that in `json` mode the message may be invisible to everyone, and that is the
 price of not putting rule-authored text where the model reads it.
 
-**Two residuals, both stated rather than hidden.** The `Stop` event was not directly measured -- the
-three exit-2 rows above rest on a `PreToolUse` measurement, and symmetry is an assumption; EDMDS-02
-carries an AC that verifies it rather than assuming it. And the host echoes a blocking hook's whole
-command line into the model-facing refusal, which for these consumers is the gate's own invocation
-and not rule text, so it adds no exposure -- recorded because it was observed.
+**One residual, and one observation.** The residual: `json` mode's exit-0 stderr visibility to the
+operator remains unestablished, so the author's `message` there may reach nobody -- the cost R1
+records. The observation: the host echoes a blocking hook's whole command line into the model-facing
+refusal. For these consumers that is the gate's own invocation and not rule text, so it adds no
+exposure, but it is recorded because it was observed rather than predicted.
 
 ### AD-DS2 -- Converge the resolvers where the budget allows, and name what the budget forbids
 
@@ -487,9 +500,16 @@ hookify match-record consumers. Derive with `./affected-assertions.sh EDMDS-02`.
       character set as every other untrusted emission in this family (`EDMV4-T52 AC6`'s reason for
       existing). v1.1.0 required the separation but never required the json-mode stderr write to be
       sanitized.
-- [ ] AC6: at the three exit-2 surfaces, the EDM-authored reason goes to **stderr** and the author's
-      `message` to **stdout**, sanitized. An EDM-authored prefix identifies the message's origin by
-      rule id and file, following `stop_gate_emit_blocking`'s label shape.
+- [ ] AC6: at the two **`PreToolUse`** exit-2 surfaces (`edm-gateguard`'s `exit-code` mode and
+      `bin/edm-bash-gate`), the EDM-authored reason goes to **stderr** and the author's `message` to
+      **stdout**, sanitized, with an EDM-authored prefix naming rule id and file. D87 measured stdout
+      ignored by the host on both matchers, so it is neither model-facing nor control.
+- [ ] AC6b: `bin/edm-stop-gate` does **not** move its message to stdout. It keeps the
+      `stop_gate_emit_blocking <label> <text>` shape on stderr, because `bin/edm-stop-gate:54-55`
+      states "a raw JSON echo to stdout is the documented failure mode for a Stop hook" and D87's
+      `Stop` test was inconclusive. An AC that contradicts the file's own contract on an unmeasured
+      surface is how v1.2.0 shipped a security regression; this AC exists so the asymmetry is a
+      decision rather than an oversight.
 - [ ] AC7: an assertion proves a `message` mimicking EDM's own fact-list prose reaches neither
       `permissionDecisionReason` nor the model-facing stderr at any surface, with a control proving
       it IS present on its intended channel -- so the test distinguishes "suppressed everywhere"
@@ -500,9 +520,13 @@ hookify match-record consumers. Derive with `./affected-assertions.sh EDMDS-02`.
 - [ ] AC8: behaviour for **more than one matched rule** is specified and asserted: hookify emits one
       line per match, so the consumer splits per line and each message carries its own prefix. AC6's
       "naming the rule id and file" is singular and cannot name two rules.
-- [ ] AC9: the `Stop` event is verified rather than assumed -- an assertion confirms that
-      `edm-stop-gate`'s stdout is not returned to the model on exit 2, the one row of AD-DS1's table
-      that D52 measured only by symmetry with `PreToolUse`.
+- [ ] AC9: **a recorded spike, not a suite assertion.** Whether a `Stop` hook's stdout is parsed or
+      returned to the model cannot be observed by any bash assertion -- only by a live nested session,
+      which is D52/D87's method. This AC is discharged by running that spike and recording the result
+      in `decisions.md` with its methodology, and its Target Components are `decisions.md` alone.
+      v1.2.0 specified it as a wave8 assertion, which is unverifiable in the harness that exists and
+      degenerates into restating AC6b's own write. If the spike shows `Stop` stdout is ignored like
+      `PreToolUse`'s, AC6b may be revisited by a recorded decision -- never silently.
 - [ ] AC10: `CLAUDE.md`'s hookify section and `README.md`'s rule-format section state, per deny
       mode, which channel carries the author's message. `bin/edm-hookify:39-40`'s own header is
       swept too -- it documents the field shape a third time, which v1.1.0's "two places"
