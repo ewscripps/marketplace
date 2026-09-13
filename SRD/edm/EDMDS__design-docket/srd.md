@@ -126,7 +126,9 @@ belong here:
    suite count and the quiet-tree condition, and seven suites exceeding a total while the eighth
    aborts green is exactly what D50 records reconciling per-suite). The **binding threshold is the
    figure `EDMDS-T01` measures and anchors to a sha**; 4048 is the regression floor beneath which
-   the initiative stops for a gate decision rather than for an explanation. v1.1.0 required "4048 or
+   the initiative stops for a gate decision rather than for an explanation. **Measured and anchored
+   (D56): 4048 passed, 0 failed across 8 suites at `2963301`, quiet tree.** Threshold and floor
+   coincide at this sha, which is why four audit rounds could not see the distinction. v1.1.0 required "4048 or
    above" *and* a re-measurement, leaving two developers to disagree about which number bound them.
 3. `edm-check-grants`, `edm-check-vocabulary`, `edm-check-skill-sync` and
    `edm-sync-canonical-sections --check` all exit 0.
@@ -2004,14 +2006,14 @@ hand and found it complete, and this table makes it re-checkable rather than re-
 - **Requirement**: DoD item 2, R11 | **Size**: XS | **Depends On**: none | **D-block**: D56
 - **Target Components**: `SRD/edm/EDMDS__design-docket/decisions.md`
 - **AC**:
-  - [ ] AC1: `run-all.sh` is run on the current HEAD and the passed and failed counts, the suite
+  - [x] AC1: `run-all.sh` is run on the current HEAD and the passed and failed counts, the suite
         count, and the sha are recorded in `decisions.md` as D56.
-  - [ ] AC2: the recorded figure becomes the binding DoD threshold; 4048 is recorded as the
+  - [x] AC2: the recorded figure becomes the binding DoD threshold; 4048 is recorded as the
         regression floor.
-  - [ ] AC3: if the measured figure is **below 4048**, the initiative stops and the shortfall is
+  - [x] AC3: if the measured figure is **below 4048**, the initiative stops and the shortfall is
         presented at a gate. `decisions.md` names each missing assertion band and the commit that
         removed or changed it -- not an explanation, a named set.
-  - [ ] AC4: `./affected-assertions.sh --check` is run and its result recorded, establishing the
+  - [x] AC4: `./affected-assertions.sh --check` is run and its result recorded, establishing the
         derivation baseline the later tickets rely on.
 
 ### EDMDS-T02: Correct the hookify cost-bounding header
