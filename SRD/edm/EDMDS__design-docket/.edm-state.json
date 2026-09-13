@@ -8,6 +8,12 @@
       "approved_at": "2026-09-08T16:54:57Z",
       "approver": "darryl.porter",
       "enforcement": "permission-ask"
+    },
+    {
+      "gate": 2,
+      "approved_at": "2026-09-13T05:10:16Z",
+      "approver": "darryl.porter",
+      "enforcement": "permission-ask"
     }
   ],
   "artifacts": {},
@@ -100,13 +106,13 @@
     },
     {
       "phase": 4,
-      "rationale": "mini-srd: ticket pack fused into SRD file (mode phase graph)",
-      "skipped_at": "2026-09-08T03:37:51Z"
+      "rationale": "mini-SRD: ticket pack fused into SRD file",
+      "skipped_at": "2026-09-13T05:10:36Z"
     },
     {
       "phase": 5,
-      "rationale": "mini-srd: ticket audit fused into SRD audit (mode phase graph)",
-      "skipped_at": "2026-09-08T03:37:51Z"
+      "rationale": "mini-SRD: ticket audit fused into SRD audit",
+      "skipped_at": "2026-09-13T05:10:36Z"
     }
   ],
   "supersedes": "",
@@ -115,7 +121,7 @@
   "related_prefixes": [
     "EDMTC"
   ],
-  "last_updated": "2026-09-13T04:45:48Z",
+  "last_updated": "2026-09-13T05:10:36Z",
   "patterns_last_updated": "2026-09-13T04:45:48Z",
   "patterns_updates": {
     "srd": {
