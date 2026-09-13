@@ -101,7 +101,10 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-source "${SCRIPT_DIR}/_edm-cli-lib.sh"
+# EDMDS-14 AC2: explicit guard -- exit 1 (this file's own documented setup code) rather than the
+# implicit form, which under this file's `set -uo pipefail` (no -e) continues past a failed
+# source entirely, silently disabling hookify_scrub below.
+source "${SCRIPT_DIR}/_edm-cli-lib.sh" || { printf 'edm-hookify: fatal: cannot source _edm-cli-lib.sh\n' >&2; exit 1; }
 
 die() {
   local msg="$1" code="${2:-1}"
@@ -213,17 +216,13 @@ build_rule_stream() {
   done
 }
 
-# hookify_scrub <text> -- the ONE ASCII filter this script owns (CA-056). Every byte outside
-# tab/CR/LF and the printable ASCII range 0x20-0x7E is replaced with '?'. Extracted from
-# hookify_emit_match so the three emission arms below share one filter rather than one arm
-# carrying a filter and the other two carrying none: before this, EDMV4-T52 AC6's stated
-# single-emit-point premise was false as written -- the `L)` list arm printed the rule's own
-# `name` raw (a non-ASCII byte in a rule name reached stdout unmodified, reproduced live by
-# wave-5 QC), and the setup-error arm interpolated raw rule-file JSON values into stderr, so an
-# ESC in an unknown top-level key survived far enough to rewrite an operator terminal title.
-# Defined here, ahead of the pre-scan below, because that pre-scan is the first emitter.
+# hookify_scrub <text> -- the ONE ASCII filter this script owns (CA-056), now a call into the
+# shared sanitize_ascii() (_edm-cli-lib.sh, EDMDS-14) instead of hand-rolling the tr invocation.
+# Extracted from hookify_emit_match so the three emission arms below share one filter rather than
+# one arm carrying a filter and the other two carrying none (EDMV4-T52 AC6). Defined here, ahead
+# of the pre-scan below, because that pre-scan is the first emitter.
 hookify_scrub() {
-  printf '%s' "$1" | LC_ALL=C tr -c '\011\012\015\040-\176' '?'
+  sanitize_ascii "$1"
 }
 
 # ---- CA-093: pre-scan the discovered rule files before their bytes ever enter the NUL-joined
