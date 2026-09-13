@@ -73,6 +73,24 @@ whether a NEW assertion can fail. It is controlled by the rule it enforces: stri
 `EDMDS-09 AC3`'s control language makes it report `EDMDS-09 AC2`. Recorded as D90, bound by
 Definition of Done item 10, owned by `EDMDS-T38 AC8`/`AC9`.
 
+## Findings
+
+Round four's durable findings, in the documented finding format. These are the class-level ones
+worth carrying into the pattern library; the instance-level corrections are recorded in `srd.md`'s
+revision history for v1.4.0 through v1.7.0.
+
+[SPECIFICATION QUALITY] [P0] Section 3.4 | An acceptance criterion promised an assertion and named no negative control, so the assertion it specifies cannot fail and proves nothing once implemented | Derive the set mechanically rather than reading for it -- an AC is controlled only if it names a control in its own text, in the adjacent AC, or in any AC of the same requirement that names it back
+[SPECIFICATION QUALITY] [P0] Section 5 | A mechanism was rewritten in one acceptance criterion while the prose above it continued to describe the superseded mechanism, producing a document that contradicts itself in the same section | Sweep every paragraph that describes a mechanism in the same edit that changes it, and treat the Decision block above a requirement as part of the AC's blast radius
+[FACTUAL MISTAKES] [P0] Section 4 | A spike measured one behaviour and the conclusion drawn from it covered a strictly stronger claim the experiment had not isolated | Name what the experiment did NOT distinguish before recording its conclusion, and run the discriminating test when a weaker reading remains consistent with the result
+[ADDITIONAL CONCERNS] [P0] Section 5 | Project-authored content rode a model-facing channel for four revisions because each revision audited the field that had been flagged and not the record it travels in | Enumerate every field crossing the boundary when any one of them is reclassified, since the channel is a property of the record and not of the field
+[COMPETING REQUIREMENTS] [P0] Section 5 | Two requirements were individually consistent and jointly contradictory, because one removed the shell option the other depended on for its failure behaviour | Audit requirement PAIRS that touch a shared file for the assumptions each makes about the other's end state, not each requirement against the codebase alone
+[COMPETING REQUIREMENTS] [P1] Section 5 | A re-keying requirement had no reader -- the emitting command's consumers index its output positionally, so the new key had nowhere to be read from | Trace the read path of every field before specifying a change to how it is written, and retire the positional contract explicitly when one exists
+[SPECIFICATION QUALITY] [P1] Section 3.4 | A Definition-of-Done item named an acceptance criterion as its owner before that criterion existed, leaving the item unowned for three consecutive rounds by the very mechanism cited as its fix | Verify the named owner exists at the moment the reference is written, and treat a DoD item with no owning ticket as a finding rather than as a convention
+[SPECIFICATION QUALITY] [P1] Section 3.4 | A close-out check was mechanically unsatisfiable -- it exits non-zero on drift that is certain to occur, nothing owned refreshing its baseline, and it was dischargeable by editing the baseline inside the script being checked | Put the obligation on HOW the check reaches exit 0, name the ticket that re-emits the baseline in the same commit as the drift, and record the drifted figures
+[FACTUAL MISTAKES] [P1] Section 6 | A risk row booked three line-adding requirements at zero because each was assessed against the file's current state rather than against the state its predecessors leave | Recompute a cumulative figure whenever any contributing requirement changes, and record which requirements were counted
+[SPECIFICATION QUALITY] [P1] Section 5 | An acceptance criterion required a non-blocking exit status from three scripts whose documented statuses are different from each other and from the one specified | Read each named script's documented exit contract individually rather than generalising from the one that motivated the requirement
+[ADDITIONAL CONCERNS] [P2] Section 1 | Audit lane reports were consumed as they arrived and never persisted, so two lanes' severity splits are recoverable only by reconstruction from the revision history | Persist every lane report to disk as it returns, before folding its findings into the document
+
 ## Close-out state at v1.7.0
 
 | Check | Result |

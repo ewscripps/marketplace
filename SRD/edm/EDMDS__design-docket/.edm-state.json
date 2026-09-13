@@ -13,9 +13,9 @@
   "artifacts": {},
   "artifact_hashes": {
     "srd": {
-      "hash": "e6c29484dc17744294b982a307ee1ae4858401c76488387ff47a8205c60cea9d",
+      "hash": "d2f52758591592a5a38f6c8cf6d0ffbe9af382c84f5990caf75c7c3281d7d97d",
       "path": "./SRD/edm/EDMDS__design-docket/srd.md",
-      "recorded_at": "2026-09-08T16:58:14Z"
+      "recorded_at": "2026-09-13T04:45:01Z"
     }
   },
   "srd_version": "1.7.0",
@@ -59,7 +59,21 @@
       "unparseable_lines": 0
     },
     "3_phase": {
-      "started_at": "2026-09-08T16:58:15Z"
+      "started_at": "2026-09-08T16:58:15Z",
+      "completed_at": "2026-09-13T04:45:01Z",
+      "duration_seconds": 388006,
+      "tokens": {
+        "input": 1156,
+        "output": 1396038,
+        "cache_read": 307339857,
+        "cache_write_5m": 0,
+        "cache_write_1h": 12499185
+      },
+      "model_used": "claude-opus-5",
+      "estimated_cost_usd": 376.2822,
+      "human_baseline_usd": 0.00,
+      "attribution_mode": "scoped",
+      "unparseable_lines": 0
     }
   },
   "test_frameworks_detected": {},
@@ -101,5 +115,14 @@
   "related_prefixes": [
     "EDMTC"
   ],
-  "last_updated": "2026-09-13T04:42:51Z"
+  "last_updated": "2026-09-13T04:45:48Z",
+  "patterns_last_updated": "2026-09-13T04:45:48Z",
+  "patterns_updates": {
+    "srd": {
+      "updated_at": "2026-09-13T04:45:48Z",
+      "new_findings": 11,
+      "extracted_titles": 11,
+      "extraction_status": "ok"
+    }
+  }
 }
