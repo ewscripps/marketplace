@@ -1,12 +1,12 @@
 # SRD: EDMDS -- EDMV4's Structural Design Docket
 
-**Generated From**: srd.md v1.6.0
+**Generated From**: srd.md v1.7.0
 
 ## 1. Document Info
 
 | Field | Value |
 |---|---|
-| Version | 1.6.0 |
+| Version | 1.7.0 |
 | Mode | `mini-srd` -- phases 2 through 5 fuse into this one audited file; a merged Gate 2+3 replaces Gate 2 and Gate 3 |
 | Forked from | `EDMV4` |
 | Branch | `edm/edmds-design-docket` |
@@ -22,6 +22,7 @@
 | 1.0.0 | 2026-09-08 | orchestrator | Initial fused SRD. Proposed a decision for each of the eighteen findings. |
 | 1.1.0 | 2026-09-09 | orchestrator | Phase 3 remediation of a FAIL (8 P0, 32 P1, 26 P2, two lanes). Reversed AD1 into AD-DS1; rewrote EDMDS-02 per deny mechanism; conformed the closure model to the canonical vocabulary; resolved EDMDS-11's two mutually exclusive AC; split EDMDS-13 three ways; added EDMDS-19; added the missing Phase-4 half as 31 tickets. Eighteen requirements became twenty-one. |
 | 1.2.0 | 2026-09-10 | orchestrator | Second Phase 3 remediation, of a second FAIL: **14 P0, 73 P1, 63 P2 across four lanes**, plus five findings from the `architecture.md` verification pass. Every lane also found v1.1.0 a genuine repair -- 11 of 16 in-scope findings fixed in one lane, 14 of 18 in another, all three P0s in a third, the structural P0 closed in the fourth -- so this revision addresses a defect CLASS that recurred where the rewrite did not sweep, not a document that was wrong throughout. Structural changes: AD-DS1's two-branch table collapses into one uniform decision on **measured** channel facts (D52); AD-DS6 added, making every affected-assertion set derived rather than enumerated (D55); EDMDS-15 becomes extract-and-keep-five-matchers (D54); EDMDS-19's tightening extended to the `.edm-owned` arm, without which it was inert for its own target population; EDMDS-21 rescoped from the T06 band, which contains none of the writes it was meant to stop; the live 200-660 bound assertion given an owner. Two runtime spikes (D52, D53) settled three findings that reading could not. |
+| 1.7.0 | 2026-09-13 | orchestrator | **Goal 3 mechanized.** Round four's remaining P1s closed and, more consequentially, the defect class behind five of them automated. `control-coverage.sh` is added to this directory as the Goal 3 analogue of `AD-DS6`: `affected-assertions.sh` derives which existing assertions an edit disturbs, and nothing derived whether a NEW assertion can fail -- which is Goal 3 and CC1. Seven ACs promised an assertion and named no control (`EDMDS-03 AC4`, `EDMDS-05 AC1`, `EDMDS-06 AC3` and `AC3b`, `EDMDS-17 AC5`, `EDMDS-18 AC3`, `EDMDS-20 AC2`); three had been found by audit lanes reading, which is how the other four survived five revisions. All seven now name their control. The script is controlled by the rule it enforces -- stripping `EDMDS-09 AC3`'s control language makes it report `EDMDS-09 AC2`. Definition of Done gains item 10 and `EDMDS-T38` gains `AC8`/`AC9` to own it, so the item is not unowned the way item 8 was for three rounds. Recorded as `D90`. |
 | 1.6.0 | 2026-09-13 | orchestrator | Round-four remediation completed across the remaining two lanes. **Four P0s, each a contradiction between requirements rather than within one.** `EDMDS-14 AC2` required an unguarded `source` to abort on a missing library -- verified empirically false: a failed `source` continues under `set -uo pipefail` and aborts only under `-e`, which only `bin/edm-gateguard` has and which `EDMDS-16 AC1` removes. AC2 now specifies an explicit guard and EDMDS-14 is ordered before EDMDS-16 as well as before EDMDS-02. `EDMDS-13`'s re-keying had no reader: `cmd_get_patterns` emits two lines and four skill call sites index them positionally with `sed -n '2p'`, so a second delta file had nowhere to go -- AC1b names the read path and retires the positional contract. `EDMDS-16 AC7` required exit 2 from three scripts whose documented non-blocking status is 1, 0 and 0, which would have shipped a gate blocking every Bash call on any internal error. `EDMDS-11 AC8b`'s disjunction is resolved to the branch that satisfies its own first sentence. Section 6 gained R15 and R16 -- the `--emit-baseline` self-discharge route and the unowned 50 ms latency budget -- and R3's arithmetic now counts four line-adding requirements where v1.3.0 booked three at zero. The `Stop` residual is `NOTED` with its bounds rather than statusless. `affected-assertions.sh` gained targets for `EDMDS-04` and `EDMDS-22`, paired subject-roots with dependent-roots for `EDMDS-13` and `EDMDS-16`, and records in-file which four requirements legitimately carry none. |
 | 1.5.0 | 2026-09-13 | orchestrator | Fifth Phase 3 remediation, and the one that reverses `AD-DS1` back to where v1.1.0 had it. Three more round-four lanes delivered: the Ticket List (**8 P0, 31 P1, 24 P2**), Sections 4/6 plus `architecture.md` (**3 P0, 16 P1, 14 P2**), and the Epics 1-2 lane already folded into 1.4.0. **The decisive finding was a challenge to my own measurement.** A lane observed that D87 had established only that a stdout `allow` failed to OVERRIDE an exit-2 deny -- consistent both with stdout being unread and with stdout being read but outranked -- while D87 asserted the stronger claim. The discriminating test it proposed was run twice (D89): **the model quoted the stdout reason both times and saw only that one.** So on exit 2 the host reads stdout, surfaces its reason to the model, and that reason OUTRANKS stderr. There is no non-model-facing channel at any exit-2 surface, `EDMDS-02 AC6`'s move to stdout was a worse regression than the one it replaced, and the label shape is correct at all three -- which is what v1.1.0 said before v1.2.0 overturned it on a spike that did not support the overturning. **The second finding was a method defect, found in two documents at once**: v1.3.0 rewrote seven requirements and propagated almost none into the Ticket List, and the same pass updated `architecture.md`'s tables while leaving the prose around them -- including a passage instructing the implementer to make the exact stdout edit the reversal forbids. Ten orphaned lettered ACs were written into their owning tickets, the subcommand-count contradiction `EDMDS-19 AC11b` promised to reconcile was reconciled, and `T05` gained its second unbanked gateguard grower. |
 | 1.4.0 | 2026-09-13 | orchestrator | Fourth Phase 3 remediation. Two of five round-four lanes delivered before this revision: Epics 1-2 (**7 P0, 13 P1, 12 P2**) and Sections 1-3 (**1 P0, 7 P1, 8 P2**). The diagnosis that mattered was of the remediation METHOD, not the content: **three of the seven P0s were contradictions created by rewriting an acceptance criterion without sweeping the prose above it** -- EDMDS-02's Decision block still claimed "all four surfaces" after AC6b split them, EDMDS-04 AC3 mandated documenting the opposite of what AC4 implements, and EDMDS-07's target still named the pattern D88 had replaced in the script. A genuine security gap was also found and closed: **every revision through v1.3.0 routed the rule id and rule file path onto the model-facing channel**, and both are project-authored (`bin/edm-hookify:369` builds the id from `scrub($parsed.name)`, the path is whatever filename the author commits), so the requirement that exists to keep project-authored text off that channel was putting project-authored text on it, unargued, for four revisions. The marker-mutation site count reached **six** -- `bin/edm-state:4780`'s bare `rm -f` is the exact deletion EDMDS-10 AC5's own race turns on -- and is now stated as a property rather than a number, the count having read two, two, four, five and six. DoD item 8's owner (`EDMDS-T38 AC6`) was a dangling reference written before the AC existed; it now exists, along with AC7 for the DoD close-out commands that D50 records EDMV4 losing the same way. |
@@ -178,6 +179,18 @@ belong here:
    it land before five of the six, so the recorded figure would have described a gateguard that had
    not yet received the `emit_decision` restructuring, the sanitizer extraction or the `set -e` drop.
    `EDMDS-T37 AC5` owns it instead, and `T37` sits after all six.
+
+10. **`./control-coverage.sh` exits 0 at close.** CC1 requires a negative control for every new
+   assertion, and items 7 and 8 above both assume it holds without anything checking it: item 7
+   states the constraint in prose and item 8's `affected-assertions.sh` derives which EXISTING
+   assertions an edit disturbs, which is the opposite direction. The gap it leaves is the one this
+   document kept re-opening -- an AC that promises an assertion and names no control, which cannot
+   fail and therefore proves nothing. Five consecutive revisions shipped at least one; three were
+   found by audit lanes reading, which does not scale and did not catch the other four. The script
+   reads the requirement bodies, flags every AC whose text promises an assertion but which names no
+   control here, in the adjacent AC, or in any AC of the same requirement that names it back, and is
+   itself controlled: stripping `EDMDS-09 AC3`'s control language makes it report `EDMDS-09 AC2`.
+   D90 records it.
 
 ## 4. Architecture Decisions
 
@@ -640,6 +653,8 @@ since driven the arm end to end against both payload shapes with de-duplication 
 - [ ] AC4: an assertion confirms `decisions.md` contains the identifiers `D26` and `EDMTC-T04`.
       Per AD-DS5 a records-only requirement is legitimate, and this is the mechanical half that
       keeps it from being discharged by any sentence at all.
+      A control proves it fails against a `decisions.md` from which those identifiers are absent --
+      a records check with no control is itself a check that cannot fail.
 
 #### EDMDS-04 (Must) -- Ratify `file`-event scoping, and fix a kill-switch claim that is false in both directions
 
@@ -718,6 +733,8 @@ the scepticism the initiative applies to its own text.
       that CA-063's assertion half was **already closed** by `T50`'s live derivation -- naming
       `wave8-smoke.sh:6605` and `:6611-6619` -- so the finding's remaining surface is documentation
       and one `--help` band, not three assertions.
+      An assertion confirms `CA-063` appears in `decisions.md`, with a control proving it fails when
+      the identifier is absent.
 - [ ] AC2: `T53 AC3`'s `--help` band, which genuinely omits `bin/edm-bash-gate`, consumes the set
       **filtered to invocable scripts** -- files whose first line is a `#!` shebang. The filter is
       load-bearing: the helper returns every top-level regular file under `bin/`, which is **23**, and
@@ -773,12 +790,16 @@ lane's P0 and is the same class the prior round raised as its own P0-5.
       carries a **reserved `title` literal** and the mandatory `confidence` field
       (`agents/edm-audit-logic.md:99-100` makes a finding without one a contract violation). An
       assertion proves a clean lens does not downgrade its round.
+      A control proves the round IS downgraded when the sentinel line is absent, so the assertion is
+      not passing on an implementation that never downgrades at all.
 - [ ] AC3b: `agents/edm-audit-synthesizer.md` recognises the reserved title and drops the line, and
       an assertion proves a clean lens adds **no** entry to `findings-ledger.jsonl`. Without this the
       sentinel is indistinguishable from a real demoted finding -- `agents/edm-audit-logic.md:88-89`
       already assigns `sev: "NOTED"` to genuine demotions -- and the synthesizer is forbidden from
       removing entries (`:68-69`), so every clean lens would deposit one fabricated NOTED finding per
       round, permanently, rendered into `findings-ledger.md`.
+      A control proves the assertion fires when the synthesizer's drop is removed -- an
+      entry-count-is-zero check passes trivially against a synthesizer that writes nothing.
 - [ ] AC4: every lens JSONL fixture is amended to the new shape, derived per AD-DS6 -- which now
       searches the `fixtures` root as well as the suites. This matters: roughly 41 on-disk
       `lens-L{N}.jsonl` files under `bin/tests/fixtures/code-audit/` are copied into a pass directory
@@ -1331,7 +1352,9 @@ carefully rather than pick one copy.
       `wave7-smoke.sh:7757-7773` runs six per-matcher checks against the extracted command text,
       three of them positive containment on literals that exist only inside the body; and
       `ca298_gate_hooks_case` at `:7790+` extracts the command to a scratch file and **executes** it
-      against stub binaries in a scratch `bin/`, so a delegating body must find its owner there.
+      against stub binaries in a scratch `bin/`, so a delegating body must find its owner there. Each
+      amended assertion carries a control proving it still fails when its expectation is violated --
+      an amendment that makes a band permanently green is indistinguishable from one that restores it.
 - [ ] AC5b: `ca298_gate_hooks_case`'s scratch `bin/` stages the new shared owner, so the executed
       command does not die at its own dispatch. **`g12_lock_contention_case`
       (`wave7-smoke.sh:7913-7929`) is the fourth extracting-and-executing site** and is covered too:
@@ -1456,8 +1479,16 @@ test. Derive with `./affected-assertions.sh EDMDS-19`.
       afterwards, and it is never invoked automatically.
 - [ ] AC5: on a destination collision it refuses and names both paths; a control proves a
       non-colliding migration succeeds, so the refusal is not vacuous.
-- [ ] AC6: the **EDM name set is enumerated normatively** -- `.edm-owned`, `run`, `patterns`, `edm`
-      -- and the test is stated as **top-level only**. `upgrade-path.md:52` omitted `edm` while AC4
+- [ ] AC6: the **EDM name set is enumerated normatively** -- `.edm-owned`, `.edm-migrated`, `run`,
+      `patterns`, `edm` -- and the test is stated as **top-level only**. **`.edm-migrated` is in the
+      set and that is load-bearing**: AC10 writes it into the directory, AC7 tightens ownership to
+      "nothing that is not EDM's", so omitting it means an operator who acknowledges a legitimate EDM
+      root makes it contain a name outside the set -- arm 2 declines, tightened arm 3 declines, arm 4
+      fails on non-emptiness, and `edm_data_dir()` falls through to `${XDG_DATA_HOME}/edm`,
+      abandoning the harvested library. That is D46's 58-assertion failure reached through the
+      mechanism AC10 added to prevent it.
+- [ ] AC6b: a named fixture arm asserts that an **acknowledged, otherwise-clean EDM root is still
+      adopted**, with a control proving the arm fails if `.edm-migrated` is dropped from the set. `upgrade-path.md:52` omitted `edm` while AC4
       treats it as EDM's, and depth was never stated.
 - [ ] AC7: **the tightening covers the `.edm-owned` arm as well as the footprint clause**: the
       sentinel is honoured only when the directory otherwise contains nothing that is not EDM's.
@@ -1475,8 +1506,12 @@ test. Derive with `./affected-assertions.sh EDMDS-19`.
       matrix includes **the sentinel-bearing polluted case as a named arm** alongside the
       sentinel-free one -- the arm v1.1.0's assertion omitted, and the one the real population is in.
 - [ ] AC9: a control proves a directory carrying EDM's footprint alongside foreign content is
-      refused, and the same directory without the foreign content accepted, in both the
-      sentinel-bearing and sentinel-free arms.
+      refused **with `.edm-migrated` present**, and the same directory without the foreign content
+      accepted, in both the sentinel-bearing and sentinel-free arms -- plus a third arm where
+      **`.edm-migrated` is absent and the pre-tightening verdict stands (adopted)**. The gate file is
+      named in every arm: AC10 makes the tightening conditional on it, so a fixture built without it
+      exercises the ungated path and contradicts AC10 rather than testing AC7. The arity matches
+      AC10b's three branches deliberately.
 - [ ] AC10: **the tightening is gated behind a named mechanism**: a second sentinel,
       `.edm-migrated`, written by `edm-state migrate-data-dir` (AC4) and by an explicit
       `edm-state ack-data-dir`, tested with one `[[ -e ]]` alongside `.edm-owned`. Absent it, the
@@ -1540,24 +1575,47 @@ requirement therefore owns `.phase6` only, gateguard keeps `.checked`, and the d
 **existence**, not entry count, so emptying `run/` preserves ownership. AC3 is right and v1.1.0's
 reason for it was not.
 
-- [ ] AC1: `.phase6` markers whose recorded `initiative_dir` no longer exists are removed **during
-      `cmd_session_start`'s existing Phase-6 reconciliation pass** (`bin/edm-state:4707-4709`,
-      `_ss_phase6_prefixes`, EDMV4-T12 AC5) -- the same pass EDMDS-10 makes atomic, not a second
-      unsequenced writer over the same directory. The trigger and the policy are both recorded in
+- [ ] AC1: `.phase6` markers whose recorded `initiative_dir` no longer exists are removed by a
+      **`run/*.phase6` enumeration** added inside `cmd_session_start`'s Phase-6 reconciliation
+      (`bin/edm-state:4762-4787`) -- stated explicitly because that pass today resolves exactly one
+      path, `_ss_marker="$(edm_marker_path)"` at `:4769`, the current project's key, and never
+      enumerates the directory. CA-105's population is markers under every project key ever used, so
+      extending the single-marker branch would be inert. The prohibition is on a second *unsequenced
+      writer*, not on enumeration: one pass, one lock. The trigger and the policy are both recorded in
       `CLAUDE.md`. `.checked` and `.denials` are explicitly out of scope: they are live session state
       under `EDM_GATEGUARD_STATE_DIR`, sweeping them re-arms first-touch denials and resets the
       per-session budget, and the project key is not invertible
       (`bin/_edm-datadir-lib.sh:182-183` maps both `/` and `.` to `-`), so the existence test is
       available only for `.phase6`, whose content carries its path.
-- [ ] AC1b: this requirement therefore lands **after** EDMDS-10, and shares its project-scoped lock
-      rather than introducing a second concurrency posture over `run/`.
+- [ ] AC1b: this requirement lands **after** EDMDS-10 and takes a lock **over `run/` itself**, not
+      EDMDS-10's project-scoped lock. A project-scoped lock cannot serialize a cross-project sweep:
+      the sweep unlinks markers belonging to other projects, whose live sessions hold a *different*
+      project's lock, so the two never exclude each other and the sweep can delete a marker a live
+      session just wrote -- after which `bin/edm-gateguard:102-104` allows every Edit and Write, the
+      exact fail-open this requirement rejected an age policy to avoid. EDMDS-10 AC4's coverage
+      property is correspondingly widened to every marker path under `run/`, and both requirements
+      state the split rather than one implying it.
 - [ ] AC2: an assertion proves a marker for a deleted initiative directory is swept and a marker for
-      a live one is not -- including a live one older than any age threshold, which is the case an
-      age policy would have destroyed.
+      a live one is not -- including a live one older than any age threshold, which is the case an age
+      policy would have destroyed. **The swept fixture is planted under a project key that is NOT the
+      running project's**, since a fixture keyed on the current project passes under an inert
+      single-marker implementation too, which is AD-DS4's own diagnosis of EDMDS-19 recurring.
+      A control proves the assertion fails when the sweep is disabled, so a delta over a fixture the
+      test planted cannot pass by nothing running.
+- [ ] AC2b: a marker whose recorded `initiative_dir` is **relative** is left alone.
+      `bin/edm-gateguard:151-160` resolves a relative path against the *current* session's
+      `CLAUDE_PROJECT_DIR`, so reusing that arm cross-project would resolve another project's path
+      against this root, find nothing, and delete a live marker as stale. Pre-CA-081 markers carry
+      relative paths and are exactly the aged ones this sweeps. A control proves the relative-path
+      marker is swept when the guard is removed, so the protection is shown to be doing work.
 - [ ] AC3: `run/` itself is never removed, only its contents, proven by an assertion that the
-      directory survives a sweep emptying it.
+      directory survives a sweep emptying it -- **with a mutation control**: a sweep variant that
+      `rmdir`s on empty must be detected. Without the control no AC in this requirement asks for code
+      that could remove `run/`, so the assertion passes either way, and AD-DS4 binds this requirement
+      to "a test that fails without the compatibility path".
 - [ ] AC4: the fixture asserts a **delta** -- markers the fixture created are gone -- never a total
-      count (D15). v1.1.0's predecessor wrote this host's 85 into an AC, which running the DoD suite
+      count (D15), **with a control proving the assertion fails when the sweep is disabled**. A
+      delta assertion over a fixture the test itself planted passes trivially if nothing ever runs. v1.1.0's predecessor wrote this host's 85 into an AC, which running the DoD suite
       makes stale by construction.
 - [ ] AC5: a control proves the sweep is discriminating, using a fixture carrying EDM's footprint
       plus one foreign entry, with the expected verdict pinned against **both** the pre- and
@@ -1654,6 +1712,9 @@ in `wave6-smoke.sh` -- against 93 in wave8, 19 in wave7 and 3 in the timing suit
       band.** `wave8-smoke.sh:10367-10373` records exactly why: a band pinned to a live initiative's
       ledger "duly turned into an unconditional `fail` on archive" (CA-096). The durable predicate may
       be exercised against scratch fixtures in the suite; the real-file check runs from here.
+      **Controls**: one entry with `status: fixed` and an absent `resolved_commit`, and one whose
+      commit does not resolve, each proving refusal. Without them the check is vacuous today, since
+      all eighteen entries read `status: open`, and vacuous again if every finding closes `noted`.
 - [ ] AC6: the check quantifies over **every finding in scope per 3.2**, not "every inherited
       finding". `inherited-findings.jsonl` holds exactly the eighteen (CA-063, 072, 074, 075, 089,
       090, 091, 100, 103, 105, 106, 109, 112, 113, 114, 116, 121, 122) -- **CA-134 is not among
@@ -1665,8 +1726,16 @@ in `wave6-smoke.sh` -- against 93 in wave8, 19 in wave7 and 3 in the timing suit
 
 `CAMGAP` was reserved by D40 for the gap EDMDS-07 closes. `EDMRT` is EDMDS-03's.
 
-- [ ] AC1: `CAMGAP`, `LINUXV` and `EVALB` are each released or retained with a stated reason,
-      recorded in `decisions.md`, which AC2 names as the authoritative record of a reservation.
+**Decision**: **all three are released.** `CAMGAP` was reserved by D40 for the gap EDMDS-07 closes;
+the other two were reserved against work no initiative has taken up across four rounds. Retaining a
+prefix indefinitely is the reservation equivalent of deferral. The call is made here because leaving
+it open is an AD-DS5 clause-2 disjunction with two materially different outcomes -- released engages
+AC2's scan and AC3's sweep, retained engages neither, and three retentions would leave AC2
+quantifying over an empty set, unable to fail.
+
+- [ ] AC1: the release of `CAMGAP`, `LINUXV` and `EVALB` is recorded in `decisions.md`, which AC2
+      names as the authoritative record of a reservation, with an assertion confirming all three
+      identifiers appear there.
 - [ ] AC2: an assertion proves no released prefix remains referenced **anywhere in the plugin tree**
       -- `CLAUDE.md`, `README.md`, `docs/`, `bin/` and `bin/tests/` -- with a control that plants a
       released prefix and proves the scan fires. Scoped to `CLAUDE.md` and `docs/` alone it cannot
@@ -1677,6 +1746,8 @@ in `wave6-smoke.sh` -- against 93 in wave8, 19 in wave7 and 3 in the timing suit
       and EDMRT, which this initiative did reserve because real work remained behind each", which
       becomes false on release. It is a comment, not an assertion, so nothing fails -- which is
       exactly why it would be missed.
+      Only released names are removed -- `EDMRT` stays per EDMDS-03 AC3 -- and AC2's scan is the
+      control: it fails if a released name survives anywhere, including on this line.
 
 #### EDMDS-22 (Must) -- Supersede CA-196's NOTED status
 
@@ -1744,7 +1815,7 @@ owning AC or DoD item, which v1.1.0's R7 did not.
 
 ## --- Ticket List ---
 
-**Generated From**: srd.md v1.6.0
+**Generated From**: srd.md v1.7.0
 
 Sizes: **XS** under a day, **S** one to three days, **M** three to five days, **L** one to two
 weeks. No XL -- an XL ticket is decomposed before work starts, and none here is.
@@ -2583,8 +2654,7 @@ hand and found it complete, and this table makes it re-checkable rather than re-
         the same pass EDMDS-10 makes atomic, not a second unsequenced writer over `run/` -- reusing
         `edm-gateguard:151-163`'s existence test. The trigger is named here because "a stated trigger"
         left it to implementation time (EDMDS-20 AC1).
-  - [ ] AC1b: this ticket shares T21's project-scoped lock rather than introducing a second
-        concurrency posture (EDMDS-20 AC1b).
+          - [ ] AC1b: **the sweep takes a lock over `run/` itself, not the project-scoped lock.**
   - [ ] AC2: `.checked` and `.denials` are explicitly out of scope, with the reason -- they are live
         session state and the key is not invertible (`:182-183`).
   - [ ] AC3: an assertion proves a deleted-directory marker is swept and a live one is not,
@@ -2667,7 +2737,7 @@ hand and found it complete, and this table makes it re-checkable rather than re-
 
 - **Requirement**: EDMDS-17 AC4-AC6 | **Size**: M | **Depends On**: T37 | **D-block**: none
 - **Target Components**: `SRD/edm/EDMDS__design-docket/inherited-findings.jsonl`,
-  `bin/edm-state`, `bin/tests/wave7-smoke.sh`
+  `SRD/edm/EDMDS__design-docket/control-coverage.sh`, `bin/edm-state`, `bin/tests/wave7-smoke.sh`
 - **AC**:
   - [ ] AC1: `inherited-findings.jsonl` gains `resolved_commit`, read through a `//` default per the
         `spec_swept` precedent, with `schema:1` unchanged.
@@ -2689,6 +2759,13 @@ hand and found it complete, and this table makes it re-checkable rather than re-
         EDMV4 deleting exactly this AC and then finding no record anywhere -- "grepping
         `decisions.md`, `HANDOFF.md` and `qc/` returned nothing" -- so the recorded format follows
         D50's.
+  - [ ] AC8: **`./control-coverage.sh` is run at close, exits 0, and its output plus the sha are
+        recorded.** DoD item 10 names this AC as its owner. The run covers the SRD as it stands at
+        close, so any AC added during implementation is checked too -- which is the point, since
+        every one of the five prior escapes was written after the round that would have caught it.
+  - [ ] AC9: AC8's control -- `control-coverage.sh` is proven able to fail by stripping the control
+        language from `EDMDS-09 AC3` on a scratch copy and confirming the script reports
+        `EDMDS-09 AC2`. A close-out check with no control is the exact defect AC8 exists to find.
 
 ### EDMDS-T39: Decide the three remaining reserved prefixes
 
@@ -2700,7 +2777,12 @@ hand and found it complete, and this table makes it re-checkable rather than re-
         D83 in `decisions.md`, named as the authoritative record.
   - [ ] AC2: an assertion proves no released prefix remains referenced **anywhere in the plugin tree**
         -- `CLAUDE.md`, `README.md`, `docs/`, `bin/` and `bin/tests/` -- **with a control that plants a
-        released prefix and proves the scan fires**. Scoped to `CLAUDE.md` and `docs/` alone it cannot
+        released prefix and proves the scan fires**. **The needle is built from parts** so the scan does
+      not match its own source (CC2) -- `wave6-smoke.sh:1463-1464` is the in-tree precedent EDMDS-14
+      AC3 already names. This matters concretely: all three prefixes occur exactly once in the whole
+      plugin, on the single line `bin/tests/wave7-smoke.sh:3739` that AC3 sweeps, so after the work
+      the only occurrence left would be inside the scanning assertion itself. Scoped to `CLAUDE.md`
+      and `docs/` alone it cannot
         fail: `CAMGAP`, `LINUXV` and `EVALB` occur exactly once in the whole plugin, at
         `bin/tests/wave7-smoke.sh:3739`, and zero times in either location -- so it would be green
         before any work, after any release, and after none (EDMDS-18 AC2).
