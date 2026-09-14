@@ -2650,10 +2650,12 @@ t43_run() {
   )
 }
 
-# ---- AC4: exact "rule_id action message" line for a matched rule ------------------------------
+# ---- AC4: exact "rule_id action rule_file message" line for a matched rule --------------------
+# EDMDS-T04 AC1: the M record now carries the discovered rule file's own path as a third field,
+# between `action` and `message` -- `message` stays last so it may itself contain spaces.
 T43_AC4_OUT="$(t43_run file '{"file_path":"src/foo.js","new_text":"console.log(1)"}')"
-check "EDMV4-T43 AC4 -- matched-rule line is exactly 'rule_id action message'" \
-  "warn-no-console-log warn Avoid leaving console.log statements in non-test source files." "$T43_AC4_OUT"
+check "EDMV4-T43 AC4 -- matched-rule line is exactly 'rule_id action rule_file message'" \
+  "warn-no-console-log warn ${T43_PROJ}/.claude/edm-hookify/warn-no-console-log.json Avoid leaving console.log statements in non-test source files." "$T43_AC4_OUT"
 
 # ---- AC5: enabled:false is skipped even though its condition would otherwise match -------------
 T43_DISABLED_DIR="${TMP}/t43-disabled-project"
@@ -3052,7 +3054,7 @@ T44_AC1_RC=0
 [[ "$T44_AC1_RC" -eq 0 ]] && pass "EDMV4-T44 AC1 -- a rule with no action key, matching, exits 0 (defaults to warn)" \
   || fail "EDMV4-T44 AC1 -- expected exit 0 for a default (absent-action) match, got ${T44_AC1_RC}"
 check "EDMV4-T44 AC1 -- the default-to-warn match reports action 'warn' by name" \
-  "warn-no-console-log warn Avoid leaving console.log statements in non-test source files." "$(cat "$T44_AC1_ERR")"
+  "warn-no-console-log warn ${T44_AC1_DIR}/.claude/edm-hookify/warn-no-console-log.json Avoid leaving console.log statements in non-test source files." "$(cat "$T44_AC1_ERR")"
 
 # ---- AC3: a warn match writes to stderr and leaves the exit code at 0 (isolated, no block rule) -
 T44_AC3_DIR="${TMP}/t44-ac3"
@@ -3070,8 +3072,8 @@ T44_AC3_RC=0
   || fail "EDMV4-T44 AC3 -- expected exit 0 for a lone warn match, got ${T44_AC3_RC}"
 check_absent "EDMV4-T44 AC3 -- stdout carries no matched-rule text for a warn-only run" \
   "warn-no-console-log" "$(cat "$T44_AC3_OUT")"
-check "EDMV4-T44 AC3 -- stderr carries the warn match's rule_id/action/message line" \
-  "warn-no-console-log warn Avoid leaving console.log statements in non-test source files." "$(cat "$T44_AC3_ERR")"
+check "EDMV4-T44 AC3 -- stderr carries the warn match's rule_id/action/rule_file/message line" \
+  "warn-no-console-log warn ${T44_AC3_DIR}/.claude/edm-hookify/warn-no-console-log.json Avoid leaving console.log statements in non-test source files." "$(cat "$T44_AC3_ERR")"
 
 # ---- AC2 (clean): an enabled rule present but not matching the payload exits 0 -----------------
 T44_AC2CLEAN_DIR="${TMP}/t44-ac2-clean"
@@ -3101,9 +3103,9 @@ T44_AC6_RC=0
 [[ "$T44_AC6_RC" -eq 2 ]] && pass "EDMV4-T44 AC2/AC6 -- a matching warn rule together with a matching block rule exits 2" \
   || fail "EDMV4-T44 AC2/AC6 -- expected exit 2, got ${T44_AC6_RC}"
 check "EDMV4-T44 AC6 -- the block match's line reaches stdout" \
-  "block-no-console-log block Blocking a console.log left in non-test source." "$(cat "$T44_AC6_OUT")"
+  "block-no-console-log block ${T44_AC6_DIR}/.claude/edm-hookify/block-no-console-log.json Blocking a console.log left in non-test source." "$(cat "$T44_AC6_OUT")"
 check "EDMV4-T44 AC6 -- the concurrent warn match's line is STILL present, on stderr (a block never suppresses a warn)" \
-  "warn-no-console-log warn Avoid leaving console.log statements in non-test source files." "$(cat "$T44_AC6_ERR")"
+  "warn-no-console-log warn ${T44_AC6_DIR}/.claude/edm-hookify/warn-no-console-log.json Avoid leaving console.log statements in non-test source files." "$(cat "$T44_AC6_ERR")"
 check_absent "EDMV4-T44 AC3 -- the warn line does not also leak onto stdout in the combined case" \
   "warn-no-console-log" "$(cat "$T44_AC6_OUT")"
 
@@ -5837,7 +5839,7 @@ ca004_bash_gate_run "$CA004_C1_DIR" '{"tool_name":"Bash","tool_input":{"command"
 [[ "$CA004_RUN_RC" -eq 2 ]] && pass "CA-004 case 1 -- a matching block bash rule (rm -rf) makes edm-bash-gate exit 2" \
   || fail "CA-004 case 1 -- expected exit 2 for a matching block rule, got ${CA004_RUN_RC}"
 check "CA-004 case 1 -- the matched block rule's line reaches stderr" \
-  "block-rm-rf-bash block Refusing a bash command matching rm -rf" "$CA004_RUN_ERR"
+  "block-rm-rf-bash block ${CA004_C1_DIR}/.claude/edm-hookify/block-rm-rf-bash.json Refusing a bash command matching rm -rf" "$CA004_RUN_ERR"
 if [[ -z "$CA004_RUN_OUT" ]]; then
   pass "CA-004 case 1 -- stdout is empty on a block (the matched line goes to stderr, never stdout)"
 else
@@ -5863,7 +5865,7 @@ ca004_bash_gate_run "$CA004_C3_DIR" '{"tool_name":"Bash","tool_input":{"command"
 [[ "$CA004_RUN_RC" -eq 0 ]] && pass "CA-004 case 3 -- a matching WARN bash rule leaves edm-bash-gate at exit 0 (never 2)" \
   || fail "CA-004 case 3 -- expected exit 0 for a warn-only match, got ${CA004_RUN_RC}"
 check "CA-004 case 3 -- the warn match's line still reaches stderr, proving the rule fired rather than no-op'd" \
-  "warn-rm-rf-bash warn Refusing a bash command matching rm -rf" "$CA004_RUN_ERR"
+  "warn-rm-rf-bash warn ${CA004_C3_DIR}/.claude/edm-hookify/warn-rm-rf-bash.json Refusing a bash command matching rm -rf" "$CA004_RUN_ERR"
 
 # ---- Case 4: a malformed rule file (edm-hookify's own setup-error exit 1) must never escalate ----
 # to a block -- exit 0, with the setup-error diagnostic still visible on stderr.
@@ -7916,7 +7918,10 @@ fi
 # Positive control: a scratch copy with a rogue direct echo of $_mmessage (bypassing the function)
 # injected right after its own assignment must make the identical scan report a hit.
 T52_HF_BYPASS="${T52_SCRATCH}/edm-hookify-bypass"
-awk -v marker='_mmessage="${_mrest#*$'"'"'\\t'"'"'}"' \
+# EDMDS-T04 AC1: the message extraction line now reads off `_mrest2` (the remainder after the
+# rule_file field), not `_mrest` -- the marker below is updated to match, or the injection point
+# would never fire and this positive control would fail vacuously (proving nothing).
+awk -v marker='_mmessage="${_mrest2#*$'"'"'\\t'"'"'}"' \
   '{print; if (index($0, marker) > 0) print "      echo \"$_mmessage\" >&2  # BYPASS-LEAK injected for EDMV4-T52 AC6 positive control"}' \
   "$EDM_HOOKIFY" > "$T52_HF_BYPASS"
 T52_HF_BYPASS_HITS="$(t52_raw_var_only_via_func "$T52_HF_BYPASS" "hookify_emit_match" _mname _maction _mmessage)"
@@ -8904,7 +8909,8 @@ jq '.name = "ca042-stop-block" | .action = "block" | .message = "stop-event bloc
   > "${CAHK_P42SB}/.claude/edm-hookify/ca042-stop-block.json"
 cahk_run "$CAHK_HOOKIFY" "$CAHK_P42SB" stop '{}'
 cahk_rc_is "CA-042 -- eval stop with a zero-condition block rule exits 2" 2
-check "CA-042 -- the stop block line is on stdout" "ca042-stop-block block stop-event block probe" "$CAHK_OUT"
+check "CA-042 -- the stop block line is on stdout" \
+  "ca042-stop-block block ${CAHK_P42SB}/.claude/edm-hookify/ca042-stop-block.json stop-event block probe" "$CAHK_OUT"
 
 # The warn/block pair above is one discriminating control (same rule shape, only `action` differs).
 # This mutant is the second: it forces conds_match to return false, so the zero-condition rule
@@ -8949,8 +8955,10 @@ cahk_stopgate_case() {
       || fail "CA-042 -- edm-stop-gate exited ${rc} with a matching stop block rule (expected 2): [${out}]"
     check "CA-042 -- edm-stop-gate prints its own hookify label" \
       "[EDM] a stop-event hookify rule matched:" "$out"
-    check "CA-042 -- edm-stop-gate carries the matched rule's own line" \
-      "ca042-stop-rule block CA-042 stop-gate probe" "$out"
+    check "CA-042 -- edm-stop-gate carries the matched rule's own name and action" \
+      "ca042-stop-rule block" "$out"
+    check "CA-042 -- edm-stop-gate carries the matched rule's own message" \
+      "CA-042 stop-gate probe" "$out"
   else
     [[ "$rc" -eq 0 ]] \
       && pass "CA-042 -- control: the identical setup with action=warn exits 0, so the exit-2 above is carried by the block action alone" \
@@ -11811,7 +11819,8 @@ cat > "${P2G34_C76_ABS}/.claude/edm-hookify/warn-noaction.json" <<'CA076ABS'
 CA076ABS
 p2g34_hookify_eval "$P2G34_C76_ABS" bash
 check_num "CA-076 -- an ABSENT action key is still legal and still defaults to warn (exit 0)" "0" "$P2G34_RC"
-check "CA-076 -- ...and the warn line still reaches stderr" "ca076-noaction warn warned" "$P2G34_ERR"
+check "CA-076 -- ...and the warn line still reaches stderr" \
+  "ca076-noaction warn ${P2G34_C76_ABS}/.claude/edm-hookify/warn-noaction.json warned" "$P2G34_ERR"
 
 # ---- CA-093: a NUL byte cannot desynchronize the rule stream ------------------------------------
 echo
@@ -11828,7 +11837,8 @@ cat > "${P2G34_C93}/.claude/edm-hookify/zzz-block.json" <<'CA093OK'
 CA093OK
 p2g34_hookify_eval "$P2G34_C93" bash
 check_num "CA-093 -- a block in a SIBLING rule file still wins the exit code (2) despite the NUL-bearing file beside it" "2" "$P2G34_RC"
-check "CA-093 -- ...the surviving rule still fires by name" "ca093-survivor block still blocking" "$P2G34_OUT"
+check "CA-093 -- ...the surviving rule still fires by name" \
+  "ca093-survivor block ${P2G34_C93}/.claude/edm-hookify/zzz-block.json still blocking" "$P2G34_OUT"
 check "CA-093 -- ...and the NUL-bearing file is named as ITSELF, not as its neighbour" "aaa-nul.json: rule file contains a NUL byte" "$P2G34_ERR"
 check_absent "CA-093 -- ...and the innocent neighbour is never blamed" "zzz-block.json: rule file contains a NUL byte" "$P2G34_ERR"
 
@@ -13661,6 +13671,42 @@ t04_exempt_case gated  "bare glob control, non-matching glob" 'src/elsewhere/*' 
 t04_exempt_case exempt "explicitly empty value (re-selects the shipped default)" '' "/repo/SRD/edm/EDMTC__x/srd.md"
 t04_exempt_case exempt "explicitly empty value (re-selects the shipped default)" '' "/repo/node_modules/pkg/index.js"
 t04_exempt_case gated  "explicitly empty value (AC8 mirror: not an exempt-everything switch)" '' "/repo/src/main.js"
+
+# =================================================================================================
+# EDMDS-T04: the hookify M record carries the rule file path (EDMDS-02 AC1)
+# =================================================================================================
+# AC1 inserts `rule_file` between `action` and `message` in the matched-rule line -- `message`
+# stays last so it may itself carry spaces. The assertion below proves the path is genuinely
+# present in the REAL evaluator's output; the mutant control proves it was genuinely ABSENT before
+# this ticket's fix, by reverting the jq M-record projection to its pre-fix three-field shape in a
+# scratch copy and re-running the identical fixture and payload against it (w8_mutant_bin's own
+# cmp guard already refuses a no-op mutation, so this could not silently pass on an unmodified
+# copy).
+echo
+echo "=== EDMDS-T04: hookify M-record rule_file field ==="
+echo
+
+EDMDS04_PROJ="$(cahk_newproj edmds04)"
+cp "${CAHK_FIX}/warn-no-console-log.json" "${EDMDS04_PROJ}/.claude/edm-hookify/"
+EDMDS04_RULE_FILE="${EDMDS04_PROJ}/.claude/edm-hookify/warn-no-console-log.json"
+
+cahk_run "$CAHK_HOOKIFY" "$EDMDS04_PROJ" file "$CAHK_CONSOLE_PAYLOAD"
+cahk_rc_is "EDMDS-T04 AC1 -- a lone warn match against the real evaluator still exits 0" 0
+check "EDMDS-T04 AC1 -- the matched-rule line's third field is the rule file's own path, between action and message" \
+  "warn-no-console-log warn ${EDMDS04_RULE_FILE} Avoid leaving console.log statements in non-test source files." \
+  "$CAHK_ERR"
+
+# Negative control (CC1/AC5): a scratch mutant with ONLY the jq-side M-record projection reverted
+# to its pre-fix shape (no scrub($path) term) -- the bash-side parser still expects four
+# tab-separated fields, so the mutant's three-field line does not cleanly reproduce the historic
+# three-field OUTPUT text (the parser's blind `%%`/`#*` splits shift downstream), but the property
+# under test -- whether the rule file path reaches the emitted line at all -- still fails cleanly:
+# with the jq-side path term gone, the path can never appear in either stream, by construction.
+EDMDS04_MUT_NOPATH="$(cahk_mutant edmds04-nopath \
+  -e 's@ + scrub($path) + "\\t" + scrub($parsed.message // "")@ + scrub($parsed.message // "")@')"
+cahk_run "$EDMDS04_MUT_NOPATH" "$EDMDS04_PROJ" file "$CAHK_CONSOLE_PAYLOAD"
+check_absent "EDMDS-T04 AC1 -- mutant control: reverting the jq-side M-record projection to drop scrub(\$path) makes the rule file path disappear from the line entirely (proves the path in the assertion above is carried by that real jq term, not incidental output)" \
+  "$EDMDS04_RULE_FILE" "$CAHK_ERR"
 
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

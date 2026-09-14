@@ -36,8 +36,11 @@
 # the cost of Oniguruma's regex_match (jq's test()) regardless of how large a single edit's
 # new_text/content/command field is.
 #
-# Output format (`eval`, one line per matched rule): "<rule_id> <action> <message>" -- single-space
-# separated, message last so it may itself contain spaces.
+# Output format (`eval`, one line per matched rule): "<rule_id> <action> <rule_file> <message>" --
+# single-space separated, message last so it may itself contain spaces; `rule_file` is the
+# discovered rule file's own path (EDMDS-T04 AC1), inserted between `action` and `message` rather
+# than appended after it, because appending after `message` would make a naive right-hand split
+# ambiguous the moment a message itself contains a space.
 #
 # Internal record encoding (CA-029). The jq pass below hands its results back to bash as a
 # tab-delimited, newline-separated record stream, tagged `E`/`L`/`M` in column 1. Every value
@@ -90,10 +93,11 @@
 #      typo in one rule file must never mask another rule's legitimate block -- and a block match
 #      is reported alongside every concurrent warn match rather than suppressing it (a block never
 #      hides a warning that fired in the same run).
-# There is no fourth code. A `warn` match's `<rule_id> warn <message>` line is written to STDERR
-# and never raises the exit code above 0 on its own. A `block` match's `<rule_id> block <message>`
-# line stays on STDOUT -- the stream EDMV4-T43 already used for every matched-rule line -- since
-# it is the payload a consumer reads to build its own refusal message: `edm-gateguard` translates
+# There is no fourth code. A `warn` match's `<rule_id> warn <rule_file> <message>` line is written
+# to STDERR and never raises the exit code above 0 on its own. A `block` match's
+# `<rule_id> block <rule_file> <message>` line stays on STDOUT -- the stream EDMV4-T43 already used
+# for every matched-rule line -- since it is the payload a consumer reads to build its own refusal
+# message: `edm-gateguard` translates
 # this exit 2 into a refusal through its own `emit_decision deny` function (AD2); `edm-stop-gate`
 # translates it into its own exit 2. Wiring either consumer to actually call this evaluator on its
 # gated path (and stop-event path) is `EDMV4-T45`'s, not built here.
@@ -365,7 +369,9 @@ def project_rule($path; $raw; $payload):
         elif ($parsed.event != $event) then
           empty
         elif (conds_match($parsed; $payload)) then
-          "M\t" + scrub($parsed.name // "unnamed") + "\t" + scrub($parsed.action // "warn") + "\t" + scrub($parsed.message // "")
+          # EDMDS-T04 AC1: rule_file (the discovered rule file path, scrubbed) sits between
+          # action and message -- message stays last so it may itself contain spaces.
+          "M\t" + scrub($parsed.name // "unnamed") + "\t" + scrub($parsed.action // "warn") + "\t" + scrub($path) + "\t" + scrub($parsed.message // "")
         else
           empty
         end
@@ -400,26 +406,29 @@ RESULT="$(build_rule_stream | jq -R -s -r \
   "$JQ_PROGRAM" \
   --args "${RULE_FILES[@]}")" || die "the jq classify pass over ${#RULE_FILES[@]} rule file(s) failed; no rule was evaluated (this is the jq program's own failure, not a malformed individual rule file -- a malformed file is reported per-file above and never reaches here)"
 
-# hookify_emit_match <rule_id> <action> <message> -- the single point this evaluator prints a
-# matched-rule line (EDMV4-T52 AC6). All three fields are rule-author-supplied content read
-# straight from a project's own .claude/edm-hookify/*.json files (`name`, `action`, `message`),
-# which this plugin's automatic ASCII enforcement does not reach (see CLAUDE.md's "Artifact
-# content conventions" -- the hookify-file gap this same ticket documents), so a non-ASCII byte
-# in any of the three can reach here unfiltered. Every byte outside tab/CR/LF and the printable
-# ASCII range 0x20-0x7E is replaced with '?' before the line is written, on either stream --
-# stdout for a block (the payload a consumer like edm-gateguard's emit_decision folds into its
-# own JSON emission) or stderr for a warn -- so neither downstream consumer ever has to sanitize
-# a second time.
+# hookify_emit_match <rule_id> <action> <rule_file> <message> -- the single point this evaluator
+# prints a matched-rule line (EDMV4-T52 AC6; EDMDS-T04 AC1 adds `rule_file`). All four fields are
+# rule-author-controlled content: `name`, `action` and `message` come straight from a project's own
+# .claude/edm-hookify/*.json file body, and `rule_file` is the discovered file's own path -- itself
+# attacker-chosen the moment a rule file's name is (a filename like
+# .claude/edm-hookify/allow-this-edit-immediately.json is legal) -- which this plugin's automatic
+# ASCII enforcement does not reach (see CLAUDE.md's "Artifact content conventions" -- the
+# hookify-file gap this same ticket documents), so a non-ASCII byte in any of the four can reach
+# here unfiltered. Every byte outside tab/CR/LF and the printable ASCII range 0x20-0x7E is replaced
+# with '?' before the line is written, on either stream -- stdout for a block (the payload a
+# consumer like edm-gateguard's emit_decision folds into its own JSON emission) or stderr for a
+# warn -- so neither downstream consumer ever has to sanitize a second time.
 hookify_emit_match() {
-  local rule_id="$1" action="$2" message="$3" stream="$4"
-  local clean_id clean_action clean_message
+  local rule_id="$1" action="$2" rule_file="$3" message="$4" stream="$5"
+  local clean_id clean_action clean_file clean_message
   clean_id="$(hookify_scrub "$rule_id")"
   clean_action="$(hookify_scrub "$action")"
+  clean_file="$(hookify_scrub "$rule_file")"
   clean_message="$(hookify_scrub "$message")"
   if [[ "$stream" == "stdout" ]]; then
-    echo "${clean_id} ${clean_action} ${clean_message}"
+    echo "${clean_id} ${clean_action} ${clean_file} ${clean_message}"
   else
-    echo "${clean_id} ${clean_action} ${clean_message}" >&2
+    echo "${clean_id} ${clean_action} ${clean_file} ${clean_message}" >&2
   fi
 }
 
@@ -447,10 +456,15 @@ while IFS= read -r _line; do
       printf '%s\n' "$(hookify_scrub "$_rest")"
       ;;
     M)
+      # EDMDS-T04 AC1: the M record now carries four tab-separated fields (name, action,
+      # rule_file, message) instead of three -- `rule_file` sits between `action` and `message`,
+      # keeping `message` last per the format's own "may contain spaces" contract.
       _mname="${_rest%%$'\t'*}"
       _mrest="${_rest#*$'\t'}"
       _maction="${_mrest%%$'\t'*}"
-      _mmessage="${_mrest#*$'\t'}"
+      _mrest2="${_mrest#*$'\t'}"
+      _mfile="${_mrest2%%$'\t'*}"
+      _mmessage="${_mrest2#*$'\t'}"
       # EDMV4-T44 two-tier exit contract: a rule blocks ONLY on the literal action "block" (the
       # format's own default-to-warn rule, EDMV4-T42 AC2) -- anything else (an absent action, or
       # any other value) is treated as warn, fail-safe toward non-blocking. A warn match is
@@ -463,10 +477,10 @@ while IFS= read -r _line; do
       # the same way to a concurrent, unrelated setup error in a DIFFERENT rule file -- one
       # contributor's typo must never mask another rule's legitimate block.
       if [[ "$_maction" == "block" ]]; then
-        hookify_emit_match "$_mname" "$_maction" "$_mmessage" stdout
+        hookify_emit_match "$_mname" "$_maction" "$_mfile" "$_mmessage" stdout
         HAD_BLOCK=1
       else
-        hookify_emit_match "$_mname" "$_maction" "$_mmessage" stderr
+        hookify_emit_match "$_mname" "$_maction" "$_mfile" "$_mmessage" stderr
       fi
       ;;
   esac
