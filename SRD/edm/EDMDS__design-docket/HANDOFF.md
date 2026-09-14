@@ -1,6 +1,6 @@
 # EDMDS - Session Handoff
 
-> **Last updated**: 2026-09-13T05:10:57Z by darryl.porter  
+> **Last updated**: 2026-09-14T04:08:43Z by darryl.porter  
 > **To resume**: `/edm:orchestrator EDMDS`
 
 ## Current Status
@@ -76,56 +76,61 @@ _(none recorded yet - decisions are captured at Gate 1)_
 _(Add anything a teammate should know before resuming - context, blockers, preferences)_
 
 
-**State: Phase 3 run four times. srd.md is at v1.7.0 and every P0 and P1 from all four rounds is
-remediated. Gate 2+3 is the next action and it is a human's to give.**
+**State: Phase 6 implementation, 9 of 40 tickets landed. Gate 2+3 was approved 2026-09-13. The
+`run-all.sh` baseline is anchored and green: 4121 passed / 0 failed across 8 suites.**
 
-The two prior notes in this position (v1.0.0 and v1.2.0 resume plans) are superseded and were
-removed; the rounds they describe are preserved in full as `audit-srd-v1.0.0.md`,
-`audit-srd-v1.1.0.md` and `audit-srd-v1.2.0.md`. Round four is `audit-srd.md`.
+Landed: `T01`, `T02`, `T04`, `T05`, `T13`, `T14`, `T19`, `T22`, `T35`. In flight at this writing:
+`T06`, `T16`, `T25`.
 
-### Where this stands
+The v1.0.0 / v1.2.0 resume plans that used to sit here are superseded and were removed; those
+rounds survive in full as `audit-srd-v1.0.0.md`, `audit-srd-v1.1.0.md` and `audit-srd-v1.2.0.md`.
+Round four is `audit-srd.md`. The Gate 2+3 plan that stood here until 2026-09-14 is spent -- the
+gate was given, and Phase 6 is well past it.
 
-Four audit rounds, six lanes in the last one, all six delivering. The document is 22 requirements
-and 40 tickets in one fused mini-SRD file. Nothing is blocked: the round-three proposal to SPLIT the
-initiative and pull four requirements was overtaken -- all four were resolved rather than deferred,
-`EDMDS-02` by measurement (D89), `EDMDS-15` by re-deciding on the real assertion set (D54),
-`EDMDS-19` by resolving AC7/AC9/AC10, and `AD-DS6` by rewriting its mechanism (D88) rather than
-withdrawing it.
+### Constraints that still bind, with their CURRENT figures
 
-### What to do next
-
-1. **Present Gate 2+3.** `mode=mini-srd`, so it is the merged gate. Only an explicit `AskUserQuestion`
-   Approve selection records it -- free text is not approval. On Approve: `edm-state approve-gate
-   EDMDS 2`, record the skip-phases for 4 and 5, append the Gate 2+3 rows to `decisions.md`, then
-   Phase 6.
-2. **Phase 6 implements all 40 tickets.** `EDMDS-T01` runs first and anchors the `run-all.sh` figure
-   to a sha -- 4048 is a floor with no commit behind it, which four rounds have flagged and no round
-   has fixed.
+- `run-all.sh` at or above **4048 passed / 0 failed across 8 suites**, GNU bash 3.2.57, anchored by
+  `EDMDS-T01` to commit `2963301456abe1f9bb984457096aa36f2c9d68f1` (D56). Measured **4121 / 0** at
+  the close of wave 3. The floor and the measurement are different numbers and always were --
+  4048 is the floor, the measurement is whatever the tree currently yields.
+- `bin/edm-gateguard` at **656** against a CLOSED **200-736** bound, widened from 660 by
+  `EDMDS-T05` as **D59** and now single-sourced in `wave8-smoke.sh` as `T11_LINE_MIN`/`T11_LINE_MAX`
+  with an assertion pinning the archived ticket text to it. Amending it still edits **two** places.
+  D42 and D47 are precedent; **D49 is not** and amended no bound. D59 budgeted the remaining
+  headroom: +30 for `T06`/`T07`/`T08` together, +12 for `T11` AC4, +19 for `T30` AC2.
+- `CC1-CC8` in `analysis.md`, carried individually into DoD item 7.
 
 ### Two checks own the recurring defect classes -- run both, do not skip them
 
-- `./affected-assertions.sh --check` (DoD item 8, owned by `EDMDS-T38 AC6`) -- which EXISTING
-  assertions an edit disturbs. Drift is CERTAIN during Phase 6; the obligation is on HOW exit 0 is
-  reached: re-read the sites, confirm ownership, re-emit with `--emit-baseline` in the same commit.
-  Editing the baseline to silence it discharges nothing.
-- `./control-coverage.sh` (DoD item 10, owned by `EDMDS-T38 AC8`/`AC9`, D90) -- whether a NEW
-  assertion can fail. Seven ACs had no control; five revisions shipped at least one.
+- `./affected-assertions.sh --check` (DoD item 8, `EDMDS-T38 AC6`) -- which EXISTING assertions an
+  edit disturbs. **Both checks exit 0 as of the wave-3 close.** Drift is CERTAIN during Phase 6;
+  the obligation is on HOW exit 0 is reached: re-read the sites and confirm ownership. Editing the
+  baseline to silence it discharges nothing. **Per D92 the ORCHESTRATOR re-emits once per merged
+  wave, not each implementer per commit** -- the baseline is inline in one script and concurrent
+  implementers cannot each rewrite it. Know also that `--emit-baseline` only PRINTS rows to stdout;
+  it does not rewrite `baseline_for()`. That is a half-mechanism and it belongs to `EDMDS-T38`.
+- `./control-coverage.sh` (DoD item 10, `EDMDS-T38 AC8`/`AC9`, D90) -- whether a NEW assertion can
+  fail. Seven ACs had no control; five revisions shipped at least one.
 
-Both exit 0 at v1.7.0.
+### Operational facts that cost real time to learn
 
-### Constraints that still bind
-
-- `run-all.sh` at or above **4048 passed / 0 failed across 8 suites on a quiet tree**, GNU bash
-  3.2.57. Still anchored to no commit until `EDMDS-T01` runs.
-- `bin/edm-gateguard` at **659** against a CLOSED 200-660 bound. Amending it edits **two** places --
-  `bin/tests/wave8-smoke.sh:4056` live and `EDMV4-T11` AC1 under `.archived/`. D47 is the precedent
-  that edited both; D42 edited one and is the recorded instance of the failure; **D49 is not
-  precedent** and amended no bound.
-- CC1-CC8 in `analysis.md`, carried individually into DoD item 7.
+- **Run every suite from the repository ROOT.** Two `edm-lint-artifacts --all` assertions resolve
+  `./SRD` relative to cwd and fail spuriously from `bin/tests/`. One full run was lost to this.
+- **Redirect stdin from `/dev/null` for `run-all.sh`.** The suite invokes `bin/edm-stop-gate`,
+  which blocks forever reading an inherited stdin that never delivers EOF -- 58 minutes with no
+  output and no summary. This is R6's shape inside the harness itself.
+- **Implementers stop at roughly 60 turns regardless of the declared `maxTurns: 200`** (D94, open
+  for investigation). Resumption is lossless; brief `L` tickets expecting one.
+- **Never touch a live agent's worktree, never abandon a dead one's** (D86b, D86c). `ListAgents`
+  separates the two cases for one tool call.
+- **A mutation harness takes its backup FIRST and `cmp`s it** (D96). T19's backup `cp` failed
+  silently and four mutations compounded onto the real `bin/edm-state`.
 
 ### What NOT to repeat
 
-The failure mode across four rounds is **generalising from a partial check**, and its sibling,
-**changing a mechanism without sweeping the prose that describes it**. Round four's own P0s were
-three of the second and one of the first. A check that returns nothing is not a clean result until
-the check is proven able to fire.
+The failure mode across four audit rounds is **generalising from a partial check**, and its
+sibling, **changing a mechanism without sweeping the prose that describes it**. Round four's own
+P0s were three of the second and one of the first, and both shapes recurred during Phase 6 --
+`T19` falsified two shipped doc claims outside its own Target Components, and `T04`'s sweep needed
+a scope decision recorded (D91). A check that returns nothing is not a clean result until the
+check is proven able to fire.
