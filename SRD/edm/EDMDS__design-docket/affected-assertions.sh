@@ -134,49 +134,49 @@ R3	suites	the live 200-660 line bound	wc -l < "\$GATEGUARD"
 TARGETS
 }
 
-# Recorded baseline, measured 2026-09-12. Keyed by requirement and pattern so `--check` can report
+# Recorded baseline, re-emitted 2026-09-13 at the close of Phase 6 wave 3 (D92). Keyed by requirement and pattern so `--check` can report
 # a target that has NO baseline rather than skipping it silently.
 baseline_for() {
   local req="$1" root="$2" pat="$3" r rt p n
   while IFS=$'\t' read -r r rt p n; do
     [[ "$r" == "$req" && "$rt" == "$root" && "$p" == "$pat" ]] && { printf '%s' "$n"; return 0; }
   done <<'BASE'
-EDMDS-02	suites	emit_decision	44
-EDMDS-02	suites	stop_gate_emit_blocking	8
+EDMDS-02	suites	emit_decision	49
+EDMDS-02	suites	stop_gate_emit_blocking	9
 EDMDS-02	suites	hookify_emit_match|eval file	24
 EDMDS-05	suites	T50_REQUIRED_BIN_FILES|t50_bin_membership_set	9
-EDMDS-06	suites	"schema":"lens"	50
+EDMDS-06	suites	"schema":"lens"	0
 EDMDS-06	fixtures	"schema"	95
 EDMDS-06	docs	JSONL Line Format	31
-EDMDS-07	suites	audit-round-complete	64
+EDMDS-07	suites	audit-round-complete	74
 EDMDS-08	suites	re-completed|irreversib	2
-EDMDS-09	suites	lenses_na	40
+EDMDS-09	suites	lenses_na	53
 EDMDS-10	product	_edm_marker_write|_edm_marker_remove_if_matches	10
-EDMDS-10	suites	phase-start [A-Z0-9$"{}]+ 6|edm_marker_path	51
+EDMDS-10	suites	phase-start [A-Z0-9$"{}]+ 6|edm_marker_path	55
 EDMDS-11	suites	CA-500|_resolve_permcheck_project_root|edm_project_key	37
 EDMDS-12	suites	active-initiatives|phase=	15
 EDMDS-13	product	cmd_update_patterns|update-patterns	40
 EDMDS-13	suites	get-patterns|pattern_delta|update-patterns	84
 EDMDS-13	docs	PATTERN_PATHS|sed -n '2p'	15
-EDMDS-14	suites	LC_ALL=C tr -c	4
-EDMDS-14	product	011.012.015.040-.176	3
-EDMDS-14	suites	cahk_mutant|w8_mutant_bin|p2g1_mutant_bin	38
+EDMDS-14	suites	LC_ALL=C tr -c	2
+EDMDS-14	product	011.012.015.040-.176	1
+EDMDS-14	suites	cahk_mutant|w8_mutant_bin|p2g1_mutant_bin	41
 EDMDS-15	suites	edm-state gate-check	7
 EDMDS-15	hooks	UserPromptExpansion|gate-check	11
 EDMDS-16	product	set -euo pipefail	22
 EDMDS-16	suites	set -euo pipefail	47
 EDMDS-16	suites	CA-077	15
 EDMDS-04	product	EDM_HOOKIFY	10
-EDMDS-04	suites	EDM_HOOKIFY	34
+EDMDS-04	suites	EDM_HOOKIFY	35
 EDMDS-04	docs	EDM_HOOKIFY	9
 EDMDS-22	product	edm-lint-artifacts	55
 EDMDS-22	suites	lint-staged-artifacts|CA-196	33
 EDMDS-19	suites	ca134_resolve|CA134_	60
 EDMDS-19	docs	subcommands	6
 EDMDS-19	suites	subcommands	33
-EDMDS-20	suites	\.phase6|\.checked|\.denials	45
-EDMDS-21	suites	CLAUDE_PLUGIN_DATA	115
-R3	suites	wc -l < "\$GATEGUARD"	1
+EDMDS-20	suites	\.phase6|\.checked|\.denials	48
+EDMDS-21	suites	CLAUDE_PLUGIN_DATA	129
+R3	suites	wc -l < "\$GATEGUARD"	2
 BASE
   printf ''
 }
