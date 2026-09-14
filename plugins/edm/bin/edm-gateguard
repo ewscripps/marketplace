@@ -197,17 +197,29 @@ fi
 # not evidence either way. This one constant is the whole lever if that evidence is superseded.
 EDM_GATEGUARD_DENY_MODE_DEFAULT="json"
 
-# emit_decision <allow|deny> [<reason>] -- the ONLY place that prints a decision payload or exits
-# with a decision-carrying status (0 for allow and for a json-mode deny; 2 for an exit-code-mode
-# deny, the code `edm-lint-staged-artifacts` already spends to mean "block"). EDM_GATEGUARD_DENY_MODE
-# selects the back-end; any other value is a setup error (CA-298), regardless of the decision.
+# emit_decision <allow|deny> [<reason>] [<untrusted_text>] -- the ONLY place that prints a decision
+# payload or exits with a decision-carrying status (0 for allow and for a json-mode deny; 2 for an
+# exit-code-mode deny, the code `edm-lint-staged-artifacts` already spends to mean "block").
+# EDM_GATEGUARD_DENY_MODE selects the back-end; any other value is a setup error (CA-298),
+# regardless of the decision. EDMDS-T06 AC1: the EDM-authored reason and the untrusted text (a rule
+# author's `message`, plus the project-authored rule id and file path beside it) are SEPARATE
+# arguments, so each can be routed to its own stream; a caller holding one half passes one half.
 emit_decision() {
   local decision="$1"
   local reason="${2:-}"
-  # EDMV4-T52 AC6/AC7, EDMDS-14: sanitize BEFORE anything else touches $reason (the jq -cn --arg
-  # call below included) via the shared sanitize_ascii() (_edm-cli-lib.sh) -- see its docstring
-  # for the full untrusted-input rationale and the character-set literal this now owns alone.
+  local untrusted_text="${3:-}"
+  # EDMV4-T52 AC6/AC7, EDMDS-14: sanitize BEFORE anything else touches either argument (the jq -cn
+  # --arg call below included) via the shared sanitize_ascii() (_edm-cli-lib.sh), whose docstring
+  # owns the untrusted-input rationale and the character-set literal. EDMDS-T06 AC2/EDMDS-02 AC4b:
+  # both sanitizer lines stay ABOVE the mode split below -- that is what protects the json arm's
+  # control channel -- and each argument carries its OWN line, so each is watched against the line
+  # covering it rather than whichever line happens to be last.
   reason="$(sanitize_ascii "$reason")"
+  untrusted_text="$(sanitize_ascii "$untrusted_text")"
+  # Until EDMDS-T07/T08 split the channels per deny mode, both halves travel the one channel each
+  # back-end already used, newline-joined only when BOTH are non-empty (nested `:+`, checked on the
+  # bash 3.2 floor) -- so a caller passing one half emits the bytes it did before this restructure.
+  local deny_text="${reason}${reason:+${untrusted_text:+$'\n'}}${untrusted_text}"
   local mode="${EDM_GATEGUARD_DENY_MODE:-$EDM_GATEGUARD_DENY_MODE_DEFAULT}"
 
   case "$mode" in
@@ -225,14 +237,14 @@ emit_decision() {
       case "$mode" in
         json)
           # AC8: built with `jq -cn`, never string concatenation, so embedded quotes/backslashes/
-          # newlines in $reason are escaped correctly. `-c` (compact) matches AC2's single-line form.
-          jq -cn --arg reason "$reason" \
-            '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":$reason}}'
+          # newlines in the text are escaped correctly. `-c` (compact) matches AC2's single-line form.
+          jq -cn --arg deny_text "$deny_text" \
+            '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":$deny_text}}'
           exit 0
           ;;
         exit-code)
           # AC3: the fact list goes to stderr as plain text -- no JSON, no escaping concern.
-          printf '%s\n' "$reason" >&2
+          printf '%s\n' "$deny_text" >&2
           exit 2
           ;;
       esac
@@ -644,8 +656,10 @@ if command -v edm-hookify >/dev/null 2>&1; then
     GG_HOOKIFY_OUT="$(printf '%s' "$GG_HOOKIFY_PAYLOAD" | edm-hookify eval file)" || GG_HOOKIFY_RC=$?
     # T44 AC4/AC5: hookify's block code becomes a refusal through THIS script's own emit_decision
     # (AD2); hookify's setup-error code never escalates (it already warned on stderr); a clean run
-    # falls through unchanged.
-    [[ "$GG_HOOKIFY_RC" -eq 2 ]] && emit_decision deny "$GG_HOOKIFY_OUT"
+    # falls through unchanged. EDMDS-T06 AC1: every field of hookify's matched-rule line is project-
+    # or author-owned, so the whole line is the UNTRUSTED argument; the EDM-authored half stays empty
+    # here until EDMDS-T07 writes the ordinal naming which rule fired.
+    [[ "$GG_HOOKIFY_RC" -eq 2 ]] && emit_decision deny "" "$GG_HOOKIFY_OUT"
   fi
 fi
 
