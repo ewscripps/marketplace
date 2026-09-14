@@ -62,18 +62,28 @@ which is a cycle and unschedulable.
 ### Acceptance Criteria
 
 - [ ] AC1: `plugins/edm/bin/edm-gateguard` exists, `test -x` succeeds on it, and `wc -l` reports a
-      count in the closed range 200 to 660. `bin/tests/wave8-smoke.sh` asserts both bounds.
-      *(Amended twice. Originally 200-400, from AD1's 250-350 estimate for the initial bash port
-      plus house boilerplate. Widened to 500 at Gate 3 as decision D42, after five later tickets --
-      `EDMV4-T13`, `T14`, `T15`, `T45`, `T52` -- each added AC-mandated code to this one file that
-      the Phase-2 estimate never scoped. Widened again to 660 as decision D47, for the seven
-      group-1 concurrency findings (CA-073, CA-077, CA-081, CA-083, CA-084, CA-085, CA-101), all of
-      which land below the marker-absent fast path. The bound stays CLOSED at every revision: an
-      upper limit still catches a hook ballooning, which matters because this fires on every Edit
-      and Write in Phase 6 and its marker-absent fast path must stay cheap. The next ticket needing
-      more justifies it at the assertion AND records a decision -- D45 records that resolving this
-      exact drift on a sibling AC with an inline comment alone is why that sibling went on
-      asserting a bound it could not fail.)*
+      count in the closed range 200 to 736. `bin/tests/wave8-smoke.sh` asserts both bounds.
+      *(Amended three times. Originally 200-400, from AD1's 250-350 estimate for the initial bash
+      port plus house boilerplate. Widened to 500 at Gate 3 as decision D42, after five later
+      tickets -- `EDMV4-T13`, `T14`, `T15`, `T45`, `T52` -- each added AC-mandated code to this one
+      file that the Phase-2 estimate never scoped. Widened again to 660 as decision D47, for the
+      seven group-1 concurrency findings (CA-073, CA-077, CA-081, CA-083, CA-084, CA-085, CA-101),
+      all of which land below the marker-absent fast path. Widened a third time to 736 as decision
+      D59, by `EDMDS-T05` in the EDMDS initiative, and this one was taken BEFORE the work that
+      needs it rather than at the moment of a breach: the file measured 656 once `EDMDS-T22` banked
+      its sanitizer extraction, and the five EDMDS tickets still to touch it cost a counted worst
+      case of +61 (`EDMDS-T06`/`T07`/`T08` at the top of architecture.md R-A1's +10..30 range,
+      `EDMDS-T11` AC4's kill-switch pair at +12, `EDMDS-T30` AC2's explicit error handling at +19),
+      reaching 717, plus one further T30-sized contingency term because that AC is the only one in
+      the sum with no prior owner. The arithmetic is restated in full at the assertion itself. The
+      bound stays CLOSED at every revision: an upper limit still catches a hook ballooning, which
+      matters because this fires on every Edit and Write in Phase 6 and its marker-absent fast path
+      must stay cheap. The next ticket needing more justifies it at the assertion AND records a
+      decision -- D45 records that resolving this exact drift on a sibling AC with an inline
+      comment alone is why that sibling went on asserting a bound it could not fail. D59 also adds
+      the assertion that was missing at D42 and D47: the suite now reads this criterion's own
+      figure back out of this file and fails if it and the assertion disagree, so the two-place
+      amendment this AC has needed three times can no longer be half-done silently.)*
 - [ ] AC2: The script sources `_edm-cli-lib.sh` and its `usage()` calls
       `print_help "${BASH_SOURCE[0]:-$0}"` against a `# EDM-HELP-BEGIN` / `# EDM-HELP-END`
       sentinel block, following `edm-lint-artifacts:1-70` and `edm-compare-eval:2-33`. A smoke
