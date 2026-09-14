@@ -76,8 +76,8 @@ using `<gated-command>` = `code-audit` and `<phase-num>` = `6`.
    `--lenses` is not optional here even on a full round. `cmd_audit_round_start` derives
    `round_type` from the union rule: `full` when the union of `lenses` and any lens legitimately
    recorded as N/A (`lenses_na`) covers all 14 lens IDs and `lenses_na` is a subset of the
-   conditional lens set, `partial` otherwise. Omitting `--lenses` materializes `lenses` as the full
-   14-lens set rather than recording an empty array, so a call that omits the flag still records
+   conditional lens set, `partial` otherwise. Omitting `--lenses` materializes `lenses` as the
+   14-lens set minus `lenses_na` (EDMDS-T19, CA-074) rather than recording an empty array, so a call that omits the flag still records
    `full` rather than silently satisfying `audit-converged` on a smoke round -- exactly what step
    10's never-convergent rule exists to prevent. Passing all fourteen explicitly on a full round
    is deliberate and self-documenting. `lenses_na` is committed to state under lock here, before
