@@ -4057,11 +4057,126 @@ fi
 # the exempt-glob split), CA-077 (four guarded `jq` captures), CA-101 (mktemp staging plus a
 # four-arm trap). The p95 claim the original bound protects is a property of the ALLOW path, which
 # none of these touch -- see the AC10/AC11 note further down for how that figure is measured.
+#
+# Ceiling raised 660 -> 736 as decision D59 (EDMDS-T05), and this amendment differs from both
+# above it in being taken ONCE, IN ADVANCE, against an estimate -- not at the moment a breach
+# forced it. The precedent for amending is D42 and D47, each of which edited this assertion AND
+# EDMV4-T11 AC1's own text in the same change; D49 is NOT precedent here, it amended no bound and
+# worked within one. The figure is the counted worst case of the GateGuard work still to land,
+# plus one contingency term:
+#
+#   656  measured now, after EDMDS-T22 banked its extraction (D72c records 659 -> 656, net -3).
+#   +30  EDMDS-T06/T07/T08, the emit_decision restructure -- architecture.md R-A1 costs that group
+#        at +10..30 lines; taken here at the TOP of its own range, not its midpoint.
+#   +12  EDMDS-T11 AC4's EDM_HOOKIFY / EDM_HOOKIFY_DISABLED pair, sized against the block
+#        edm-stop-gate already ships for that same pair (seven code lines under an eight-line
+#        comment); EDMDS-T11 AC8 independently states "roughly twelve lines".
+#   +19  EDMDS-T30 AC2's explicit error handling. 19 non-zero-capable commands on and below this
+#        gate's dispatch path carry no explicit handling today -- command substitutions inside
+#        emit_decision, gg_state_dir, gg_lock, gg_mtime, gg_fresh_lines, gg_mark_checked and the
+#        tool-name dispatch itself; one added handling line each is that AC's worst case.
+#   ---
+#   717  worst case, + 19 contingency = 736. The contingency is one more T30-sized term because
+#        EDMDS-T30 AC8 records AC2 as "not credibly net zero and was nowhere pinned" -- it is the
+#        one estimate in this sum with no prior owner, so it is the one budgeted twice.
+#
+# The bound stays CLOSED, for the same reason every revision above kept it closed: an upper limit
+# still catches a hook ballooning, and this one fires on every Edit and Write in Phase 6. Each of
+# the five tickets costed above carries its own "at or below the bound T05 set" criterion, so the
+# headroom is spent against a measured ceiling rather than rediscovered at each breach. The next
+# ticket needing more justifies it here AND records a decision -- D45's lesson, restated at every
+# revision since.
+#
+# The pair is held in variables because two assertions in this file quote it (this one and the
+# EDMDS-T22 AC7 line-count band further down) and EDMV4-T11 AC1's own text carries it a third
+# time. One definition here, and an assertion immediately below that pins the ticket text to it,
+# is what stops the three from drifting apart the way D47 found them.
+T11_LINE_MIN=200
+T11_LINE_MAX=736
 t11_lines="$(wc -l < "$GATEGUARD" | tr -d ' ')"
-if [[ "$t11_lines" -ge 200 && "$t11_lines" -le 660 ]]; then
-  pass "EDMV4-T11 AC1 -- edm-gateguard is ${t11_lines} lines (within the closed range 200-660, D42 as widened by the P2 group-1 remediation)"
+if [[ "$t11_lines" -ge "$T11_LINE_MIN" && "$t11_lines" -le "$T11_LINE_MAX" ]]; then
+  pass "EDMV4-T11 AC1 -- edm-gateguard is ${t11_lines} lines (within the closed range ${T11_LINE_MIN}-${T11_LINE_MAX}, D42 as widened by the P2 group-1 remediation and again by D59)"
 else
-  fail "EDMV4-T11 AC1 -- edm-gateguard is ${t11_lines} lines (expected 200-660 per D42 as widened by the P2 group-1 remediation)"
+  fail "EDMV4-T11 AC1 -- edm-gateguard is ${t11_lines} lines (expected ${T11_LINE_MIN}-${T11_LINE_MAX} per D42 as widened by the P2 group-1 remediation and again by D59)"
+fi
+
+# ---- EDMDS-T05 AC4: the assertion above and the ticket text that states the same bound may not
+# drift apart. --------------------------------------------------------------------------------
+# Amending this bound edits two places. D42's amendment reached only one of them, and EDMV4-T11
+# AC1's own text then sat two revisions stale -- stating a range the suite had already moved past,
+# which is a criterion nothing can fail. D47 edited both and is the precedent D59 follows. Until
+# now nothing mechanical linked the two: `edm-lint-artifacts` excludes `.archived/` from every
+# scan in every mode, so a ticket pack that has been archived is read by no other check at all.
+#
+# The check is deliberately shaped to NOT reintroduce what CA-096 removed from this suite. It
+# names no initiative, resolves no pinned artifact path, and is a clean no-op in a repository that
+# has no SRD tree or no ticket pack stating a bound -- so it cannot rot the way the four
+# assertions CA-096 found had rotted, each of which had been failing in every consuming repository
+# since the day it was written. What it asserts here is a property of whatever ticket packs the
+# repository happens to carry, not the continued existence of one file.
+#
+# Scoped to `*/tickets/epics/*` on principle rather than by tuning: an acceptance criterion is the
+# only artifact that BINDS this bound, so it is the only one that can disagree with it. A QC shard
+# or an audit report quoting a superseded figure in prose is a record of what was once true; it
+# must not be rewritten to match, and must not be read as a disagreement.
+t05_bound_statements() {
+  # One "<file>|<min> <max>" record per closed-range statement in a ticket-pack epic under <root>.
+  # No output means no ticket pack states one -- which the caller reports as its own distinct
+  # verdict rather than folding into a clean pass, since "nothing disagreed" and "nothing was
+  # examined" are the two outcomes this whole criterion exists to keep apart.
+  local _root="$1" _f _stated
+  [[ -d "$_root" ]] || return 0
+  find "$_root" -type f -name '*.md' -path '*/tickets/epics/*' -print 2>/dev/null | while IFS= read -r _f; do
+    sed -n 's/.*count in the closed range \([0-9][0-9]*\) to \([0-9][0-9]*\).*/\1 \2/p' "$_f" \
+      | while IFS= read -r _stated; do printf '%s|%s\n' "$_f" "$_stated"; done
+  done
+}
+t05_bound_disagreements() {
+  # Every record from t05_bound_statements whose stated range is not <want>.
+  local _root="$1" _want="$2" _rec
+  t05_bound_statements "$_root" | while IFS= read -r _rec; do
+    [[ "${_rec#*|}" == "$_want" ]] || printf '%s\n' "$_rec"
+  done
+}
+
+T05GG_WANT="${T11_LINE_MIN} ${T11_LINE_MAX}"
+T05GG_ROOT="${REPO_ROOT}/SRD"
+T05GG_SEEN="$(t05_bound_statements "$T05GG_ROOT" | wc -l | tr -d ' ')"
+T05GG_BAD="$(t05_bound_disagreements "$T05GG_ROOT" "$T05GG_WANT")"
+if [[ "${T05GG_SEEN:-0}" -eq 0 ]]; then
+  pass "EDMDS-T05 AC4 -- no ticket pack in this repository states a closed range for edm-gateguard, so there is no second figure here to drift (the control below proves this scan finds one when it is present)"
+elif [[ -z "$T05GG_BAD" ]]; then
+  pass "EDMDS-T05 AC4 -- all ${T05GG_SEEN} ticket-pack statement(s) of this bound agree with the assertion above (${T05GG_WANT})"
+else
+  fail "EDMDS-T05 AC4 -- ticket text disagrees with the assertion above (${T05GG_WANT}); amend BOTH places as D47 did, never one: ${T05GG_BAD}"
+fi
+
+# Control for AC4: the identical scan over a scratch ticket pack whose criterion states a
+# DIFFERENT range must report exactly that record. Both halves are required -- a scan that had
+# been narrowed until it matched nothing would report no disagreement too, which is
+# indistinguishable from agreement from the outside.
+w8_scratch_dir T05GG_CTL_DIR
+T05GG_CTL_EPICS="${T05GG_CTL_DIR}/SRD/x/TCTL__f/tickets/epics"
+mkdir -p "$T05GG_CTL_EPICS"
+printf '%s\n' "- [ ] AC1: \`wc -l\` reports a count in the closed range ${T11_LINE_MIN} to 999." \
+  > "${T05GG_CTL_EPICS}/01-fixture.md"
+T05GG_CTL_SEEN="$(t05_bound_statements "${T05GG_CTL_DIR}/SRD" | wc -l | tr -d ' ')"
+T05GG_CTL_BAD="$(t05_bound_disagreements "${T05GG_CTL_DIR}/SRD" "$T05GG_WANT")"
+if [[ "${T05GG_CTL_SEEN:-0}" -eq 1 && "$T05GG_CTL_BAD" == *"|${T11_LINE_MIN} 999" ]]; then
+  pass "EDMDS-T05 AC4 control -- a ticket-pack criterion stating ${T11_LINE_MIN}-999 is both SEEN by the scan and reported as a disagreement, so the verdict above is a real comparison rather than an empty one"
+else
+  fail "EDMDS-T05 AC4 control FAILED -- the scan saw ${T05GG_CTL_SEEN:-0} statement(s) and reported [${T05GG_CTL_BAD}] against a fixture stating ${T11_LINE_MIN}-999; the check above proves nothing"
+fi
+
+# Control, second arm: the same scan over a scratch tree whose ticket pack AGREES must report no
+# disagreement -- otherwise the arm above would be satisfied by a function that flags everything.
+printf '%s\n' "- [ ] AC1: \`wc -l\` reports a count in the closed range ${T05GG_WANT% *} to ${T05GG_WANT#* }." \
+  > "${T05GG_CTL_EPICS}/01-fixture.md"
+T05GG_CTL_OK="$(t05_bound_disagreements "${T05GG_CTL_DIR}/SRD" "$T05GG_WANT")"
+if [[ -z "$T05GG_CTL_OK" ]]; then
+  pass "EDMDS-T05 AC4 control -- the same scan over a ticket pack that AGREES reports nothing, so it discriminates on the figure rather than flagging every statement it finds"
+else
+  fail "EDMDS-T05 AC4 control FAILED -- an agreeing ticket pack was still reported as a disagreement: ${T05GG_CTL_OK}"
 fi
 
 # ---- AC2: sources _edm-cli-lib.sh; usage() calls the shared print_help() sentinel extractor; no
@@ -9288,7 +9403,7 @@ fi
 # (CA-067's own rule: write the delta, not the total).
 CC14_GG_LINES="$(wc -l < "$GATEGUARD" | tr -d ' ')"
 if [[ "$CC14_GG_LINES" -lt 659 ]]; then
-  pass "EDMDS-T22 AC7 -- edm-gateguard is ${CC14_GG_LINES} lines, lower than its pre-extraction 659 (still within the closed 200-660 bound asserted above)"
+  pass "EDMDS-T22 AC7 -- edm-gateguard is ${CC14_GG_LINES} lines, lower than its pre-extraction 659 (still within the closed ${T11_LINE_MIN}-${T11_LINE_MAX} bound asserted above)"
 else
   fail "EDMDS-T22 AC7 -- edm-gateguard is ${CC14_GG_LINES} lines, expected fewer than the pre-extraction 659"
 fi
