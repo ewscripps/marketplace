@@ -6540,6 +6540,177 @@ t13_synth_control="$(printf '%s\n' "$t13_synth_dropinstr" | sed 's/exclude/inclu
 check_absent "EDMDS-T13 AC3b control -- a mutated instruction missing 'exclude' is detected as missing" \
   "exclude" "$t13_synth_control"
 
+# =================================================================================
+# EDMDS-T19 (EDMDS-09 AC1-AC6, finding CA-074): audit-round-start subtracts lenses_na from the
+# materialised lens set, and refuses a hand-passed non-disjoint pair naming the overlap.
+#
+# Why every assertion below reads the `lenses` ARRAY and never `round_type`: the union rule is
+# ((ALL_LENS_IDS - lenses_na) UNION lenses_na) == ALL_LENS_IDS, which is ALL_LENS_IDS both with
+# and without the subtraction. `round_type` therefore reads `full` on the fixed and the unfixed
+# code alike, so a round_type assertion is invariant under this ticket's own fix -- the exact
+# shape v1.0.0 of this requirement specified and the reason it was rewritten. The array length
+# (14 unfixed, 13 fixed) is the only observable that moves, and the AC3 control below proves it
+# moves by running the identical call against a mutant binary with the subtraction removed.
+#
+# The defect was MASKED rather than absent: skills/code-audit/SKILL.md Step 1 subtracts the N/A
+# set before it calls audit-round-start, so no production caller and no pre-existing fixture in
+# this suite ever passed --na-lenses without a pre-subtracted explicit --lenses. Every call
+# below deliberately does not pre-subtract.
+# =================================================================================
+echo
+echo "EDMDS-T19 -- lenses_na is subtracted from the materialised set; a non-disjoint pair is refused"
+
+# ---- AC1/AC2: --lenses OMITTED plus --na-lenses L13, asserting the lenses array itself --------
+"$EDM_STATE" init T19SUB >/dev/null
+STATE_T19SUB="$TMP/SRD/T19SUB/.edm-state.json"
+"$EDM_STATE" audit-round-start T19SUB code --na-lenses L13 >/dev/null
+t19_sub_lenses="$(jq -r '.audit_rounds.code.rounds[-1].lenses | join(",")' "$STATE_T19SUB")"
+t19_sub_len="$(jq '.audit_rounds.code.rounds[-1].lenses | length' "$STATE_T19SUB")"
+check_num "EDMDS-T19 AC1/AC2 -- --lenses omitted with --na-lenses L13 materialises 13 lenses, not 14" \
+  13 "$t19_sub_len"
+[[ "$t19_sub_lenses" == "L1,L2,L3,L4,L5,L6,L7,L8,L9,L10,L11,L12,L14" ]] \
+  && pass "EDMDS-T19 AC1/AC2 -- the materialised array is ALL_LENS_IDS minus L13, in ALL_LENS_IDS order" \
+  || fail "EDMDS-T19 AC1/AC2 -- materialised lenses = '$t19_sub_lenses', expected L1..L12,L14"
+check_absent "EDMDS-T19 AC1/AC2 -- the subtracted lens does not appear in both arrays at once" \
+  "L13" "$t19_sub_lenses"
+t19_sub_na="$(jq -c '.audit_rounds.code.rounds[-1].lenses_na' "$STATE_T19SUB")"
+[[ "$t19_sub_na" == '["L13"]' ]] \
+  && pass "EDMDS-T19 AC1 -- lenses_na still records [\"L13\"] (the subtraction moves lenses, not lenses_na)" \
+  || fail "EDMDS-T19 AC1 -- lenses_na = '$t19_sub_na', expected [\"L13\"]"
+# Recorded, not asserted as the ticket's evidence: round_type is INVARIANT under the fix. This
+# assertion exists to document that invariance holds (the union still covers ALL_LENS_IDS after
+# the subtraction, so nothing else in the enforcement kernel shifts), never as proof of AC1.
+t19_sub_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$STATE_T19SUB")"
+[[ "$t19_sub_rt" == "full" ]] \
+  && pass "EDMDS-T19 AC1 -- the union still covers ALL_LENS_IDS after subtraction, so round_type stays full" \
+  || fail "EDMDS-T19 AC1 -- round_type = '$t19_sub_rt', expected full"
+# --na-lenses omitted is unaffected: subtracting the empty set leaves all 14 (the EDMV4-T22 AC1
+# shape). Without this, a mutation that subtracted unconditionally would go unnoticed here.
+"$EDM_STATE" audit-round-start T19SUB code >/dev/null
+check_num "EDMDS-T19 AC1 -- --na-lenses omitted still materialises all 14 (subtracting the empty set is a no-op)" \
+  14 "$(jq '.audit_rounds.code.rounds[-1].lenses | length' "$STATE_T19SUB")"
+
+# ---- AC3: the control. Run the IDENTICAL call against a scratch copy of bin/edm-state with the
+#      subtraction removed from the materialisation filter (`. - $na` -> `.`), and prove the
+#      array length differs (14 vs 13) while round_type reads `full` on both. ------------------
+t19_mut_dir="$(mktemp -d "${TMP}/t19-mutant.XXXXXX")"
+# Vacuity guard, two parts. First: the mutation target must occur exactly once in the real
+# binary, so the sed below cannot silently over-mutate if a second `. - $na` filter is added
+# later. Second: cmp proves the copy actually differs, so a sed script that matched nothing
+# cannot turn this control into a tautology (the w8_mutant_bin precedent in wave8-smoke.sh).
+t19_mut_targets="$(command grep -c -- '\. - \$na' "$EDM_STATE" 2>/dev/null || printf 0)"
+check_num "EDMDS-T19 AC3 -- the subtraction filter occurs exactly once in bin/edm-state (mutation is unambiguous)" \
+  1 "$t19_mut_targets"
+cp "${_HARNESS_BIN_DIR}/_edm-cli-lib.sh" "${_HARNESS_BIN_DIR}/_edm-lint-lib.sh" \
+   "${_HARNESS_BIN_DIR}/_edm-datadir-lib.sh" "${t19_mut_dir}/"
+sed 's/\. - \$na/./' "$EDM_STATE" > "${t19_mut_dir}/edm-state"
+chmod +x "${t19_mut_dir}/edm-state"
+T19_MUTANT="${t19_mut_dir}/edm-state"
+cmp -s "$EDM_STATE" "$T19_MUTANT" \
+  && fail "EDMDS-T19 AC3 -- the mutation changed nothing in edm-state; this control would be vacuous" \
+  || pass "EDMDS-T19 AC3 -- the mutant binary really does differ from the shipped one"
+"$T19_MUTANT" init T19UNFIXED >/dev/null
+STATE_T19UNFIXED="$TMP/SRD/T19UNFIXED/.edm-state.json"
+"$T19_MUTANT" audit-round-start T19UNFIXED code --na-lenses L13 >/dev/null
+t19_unfixed_len="$(jq '.audit_rounds.code.rounds[-1].lenses | length' "$STATE_T19UNFIXED")"
+check_num "EDMDS-T19 AC3 control -- against the unfixed logic the identical call records 14, so the AC2 assertion can fail" \
+  14 "$t19_unfixed_len"
+t19_unfixed_lenses="$(jq -r '.audit_rounds.code.rounds[-1].lenses | join(",")' "$STATE_T19UNFIXED")"
+check "EDMDS-T19 AC3 control -- the unfixed array double-counts L13 (present in lenses AND lenses_na)" \
+  "L13" "$t19_unfixed_lenses"
+# The other half of the control, and the whole reason AC2 asserts the array: round_type is
+# identical on both binaries, so an assertion keyed on it would have passed against the defect.
+t19_unfixed_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$STATE_T19UNFIXED")"
+[[ "$t19_unfixed_rt" == "$t19_sub_rt" ]] \
+  && pass "EDMDS-T19 AC3 control -- round_type is identical ('$t19_unfixed_rt') on fixed and unfixed, which is why the array is what AC2 asserts" \
+  || fail "EDMDS-T19 AC3 control -- round_type differed (fixed '$t19_sub_rt', unfixed '$t19_unfixed_rt'); the AC2 rationale needs re-deriving"
+
+# ---- AC4: a hand-passed non-disjoint pair is refused at round-start, naming the overlap, and
+#      writes no round record (die fires before with_state_lock is acquired). -----------------
+"$EDM_STATE" init T19OVERLAP >/dev/null
+STATE_T19OVERLAP="$TMP/SRD/T19OVERLAP/.edm-state.json"
+"$EDM_STATE" audit-round-start T19OVERLAP code --lenses L1,L2 >/dev/null
+t19_overlap_pre_count="$(jq '.audit_rounds.code.count' "$STATE_T19OVERLAP")"
+_t19_overlap_call() {
+  "$EDM_STATE" audit-round-start T19OVERLAP code --lenses L1,L13 --na-lenses L13
+}
+check_refuses_and_leaves_state "EDMDS-T19 AC4 -- a non-disjoint --lenses/--na-lenses pair is refused and writes no round record" \
+  "both name L13" "$STATE_T19OVERLAP" _t19_overlap_call
+t19_overlap_post_count="$(jq '.audit_rounds.code.count' "$STATE_T19OVERLAP")"
+check_num "EDMDS-T19 AC4 -- the refused call left the round counter where it was" \
+  "$t19_overlap_pre_count" "$t19_overlap_post_count"
+# The message must NAME the overlap, not merely report that one exists -- an operator who is
+# told "the sets overlap" over a 14-element pair still has to find which element.
+t19_overlap_msg="$("$EDM_STATE" audit-round-start T19OVERLAP code --lenses L1,L13 --na-lenses L13 2>&1 || true)"
+check "EDMDS-T19 AC4 -- the refusal names the overlapping lens ID" "L13" "$t19_overlap_msg"
+check "EDMDS-T19 AC4 -- the refusal names both flags so the operator knows which pair collided" \
+  "--lenses and --na-lenses" "$t19_overlap_msg"
+# Control for the naming half: a refusal that merely said "the sets overlap" would not satisfy
+# the assertion above. Proven by stripping the ID from a copy of the real message.
+t19_overlap_msg_stripped="$(printf '%s' "$t19_overlap_msg" | sed 's/L13/the same lens/g')"
+check_absent "EDMDS-T19 AC4 control -- a refusal with the ID stripped out fails the naming assertion" \
+  "L13" "$t19_overlap_msg_stripped"
+
+# ---- AC5: the control for AC4 -- a DISJOINT pair is accepted unchanged. ----------------------
+t19_disjoint_ec=0
+"$EDM_STATE" audit-round-start T19OVERLAP code \
+  --lenses L1,L2,L3,L4,L5,L6,L7,L8,L9,L10,L11,L12,L14 --na-lenses L13 >/dev/null 2>&1 \
+  || t19_disjoint_ec=$?
+check_num "EDMDS-T19 AC5 control -- a disjoint pair is accepted (exit 0), so the AC4 refusal is not firing on every pair" \
+  0 "$t19_disjoint_ec"
+t19_disjoint_count="$(jq '.audit_rounds.code.count' "$STATE_T19OVERLAP")"
+check_num "EDMDS-T19 AC5 control -- the accepted call did write a round record" \
+  $((t19_overlap_pre_count + 1)) "$t19_disjoint_count"
+t19_disjoint_lenses="$(jq -r '.audit_rounds.code.rounds[-1].lenses | join(",")' "$STATE_T19OVERLAP")"
+[[ "$t19_disjoint_lenses" == "L1,L2,L3,L4,L5,L6,L7,L8,L9,L10,L11,L12,L14" ]] \
+  && pass "EDMDS-T19 AC5 control -- an explicit disjoint list is recorded exactly as passed, unchanged" \
+  || fail "EDMDS-T19 AC5 control -- lenses = '$t19_disjoint_lenses', expected the 13 IDs as passed"
+t19_disjoint_na="$(jq -c '.audit_rounds.code.rounds[-1].lenses_na' "$STATE_T19OVERLAP")"
+[[ "$t19_disjoint_na" == '["L13"]' ]] \
+  && pass "EDMDS-T19 AC5 control -- lenses_na on the accepted disjoint round is unchanged too" \
+  || fail "EDMDS-T19 AC5 control -- lenses_na = '$t19_disjoint_na', expected [\"L13\"]"
+
+# ---- AC6: EDMV4's recorded round-1 shape still reads full. Archived state, frozen data --
+#      READ ONLY: the file is hashed before and after this block and asserted byte-identical,
+#      so this band can never become a mutator of a committed archive. ------------------------
+T19_EDMV4_STATE="${REPO_ROOT}/SRD/.archived/edm/EDMV4__ecc-integration/.edm-state.json"
+if [[ ! -f "$T19_EDMV4_STATE" ]]; then
+  fail "EDMDS-T19 AC6 -- archived EDMV4 state file not found at $T19_EDMV4_STATE"
+else
+  pass "EDMDS-T19 AC6 -- archived EDMV4 state file is present and readable"
+  t19_edmv4_hash_before=""
+  t19_edmv4_hash_before="$(_harness_hash_file "$T19_EDMV4_STATE")" \
+    || fail "EDMDS-T19 AC6 -- no hash utility available; cannot prove the archived file is left untouched"
+  # The round is selected by its `round` field, never by a line range -- a line citation into a
+  # file this suite does not own drifts the moment anything above it changes.
+  t19_edmv4_round1="$(jq -c '.audit_rounds.code.rounds[] | select(.round == 1)' "$T19_EDMV4_STATE")"
+  [[ -n "$t19_edmv4_round1" ]] \
+    && pass "EDMDS-T19 AC6 -- EDMV4's code round 1 record is present in the archived state" \
+    || fail "EDMDS-T19 AC6 -- no code round with round==1 found in $T19_EDMV4_STATE"
+  check_num "EDMDS-T19 AC6 -- EDMV4 round 1 recorded 13 lenses" \
+    13 "$(printf '%s' "$t19_edmv4_round1" | jq '.lenses | length')"
+  t19_edmv4_na="$(printf '%s' "$t19_edmv4_round1" | jq -c '.lenses_na')"
+  [[ "$t19_edmv4_na" == '["L13"]' ]] \
+    && pass "EDMDS-T19 AC6 -- EDMV4 round 1 recorded lenses_na [\"L13\"]" \
+    || fail "EDMDS-T19 AC6 -- EDMV4 round 1 lenses_na = '$t19_edmv4_na', expected [\"L13\"]"
+  t19_edmv4_rt="$(printf '%s' "$t19_edmv4_round1" | jq -r '.round_type')"
+  [[ "$t19_edmv4_rt" == "full" ]] \
+    && pass "EDMDS-T19 AC6 -- EDMV4 round 1 still reads round_type=full" \
+    || fail "EDMDS-T19 AC6 -- EDMV4 round 1 round_type = '$t19_edmv4_rt', expected full"
+  # The link that makes AC6 more than a restatement of frozen bytes: the FIXED materialisation
+  # reproduces EDMV4's recorded lens list exactly, so the shape this ticket now produces from an
+  # omitted --lenses is the shape the archive already holds from a pre-subtracted explicit one.
+  t19_edmv4_lenses="$(printf '%s' "$t19_edmv4_round1" | jq -r '.lenses | join(",")')"
+  [[ "$t19_edmv4_lenses" == "$t19_sub_lenses" ]] \
+    && pass "EDMDS-T19 AC6 -- the fixed materialisation reproduces EDMV4's recorded lens list exactly" \
+    || fail "EDMDS-T19 AC6 -- fixed materialisation gave '$t19_sub_lenses', EDMV4 recorded '$t19_edmv4_lenses'"
+  t19_edmv4_hash_after="$(_harness_hash_file "$T19_EDMV4_STATE")" \
+    || fail "EDMDS-T19 AC6 -- no hash utility available after the read-only block"
+  [[ -n "$t19_edmv4_hash_before" && "$t19_edmv4_hash_before" == "$t19_edmv4_hash_after" ]] \
+    && pass "EDMDS-T19 AC6 -- the archived EDMV4 state file is byte-identical after this block (read only, never mutated)" \
+    || fail "EDMDS-T19 AC6 -- archived EDMV4 state file changed (before '$t19_edmv4_hash_before', after '$t19_edmv4_hash_after')"
+fi
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

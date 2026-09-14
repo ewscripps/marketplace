@@ -37,6 +37,7 @@
 #   edm-state current-step <PREFIX> [<step>]                          # read/write orchestrator step (compaction resume)
 #   edm-state session-start                                           # emit resume points for active initiatives (SessionStart hook)
 #   edm-state audit-round-start <PREFIX> <code|srd|tickets> [--lenses L1,L3] [--na-lenses L13]  # increment audit-round counter (also records lens set + N/A lens set + round_type via the lenses-union-lenses_na rule), echo new value
+#                                                                     # the two sets must be disjoint: --lenses omitted records ALL_LENS_IDS minus --na-lenses, and an explicit --lenses overlapping --na-lenses is refused naming the overlap
 #   edm-state audit-round-complete <PREFIX> <code|srd|tickets>        # record completion timestamp, duration, tokens and cost for the current round
 #   edm-state render-ledger <PREFIX>                                   # deterministically render findings-ledger.md from findings-ledger.jsonl
 #   edm-state audit-converged <PREFIX>                                 # query code-audit convergence over findings-ledger.jsonl (read-only); exit 0 converged, exit 3 no ledger yet / legacy markdown-only, exit 1 otherwise -- refusal reasons: blocking P0/P1/P2 findings open, invalid JSONL or finding status, latest round unknown/partial round_type, or spec_swept="no" sweep-debt outstanding on a fixed finding
@@ -4917,7 +4918,10 @@ cmd_render_ledger() {
 # (unchanged external contract: `N=$(edm-state audit-round-start <PREFIX> code)`). Additively
 # (EDMV3-T27 AC1) records the round's lens set and derived round_type. EDMV4-T22 replaces the
 # old set-equality derivation with a union rule (AD5): full iff (lenses UNION lenses_na) ==
-# ALL_LENS_IDS, partial otherwise -- inside audit_rounds.<type>, which EDMV3-T27 widened from a
+# ALL_LENS_IDS, partial otherwise. EDMDS-T19 (CA-074) makes the two sets DISJOINT by
+# construction: the omitted-`--lenses` branch materializes ALL_LENS_IDS minus lenses_na, and an
+# explicit `--lenses` that overlaps `--na-lenses` is refused at round-start naming the overlap
+# rather than silently corrected -- inside audit_rounds.<type>, which EDMV3-T27 widened from a
 # bare integer to {count, rounds: [...]} (AC1a, the sanctioned C-4 type widening; see
 # AUDIT_ROUND_COERCE_JQ_DEF above). No existing file is rewritten by either widening -- every
 # reader coerces at read time, including this command's own read of a pre-existing bare-integer
@@ -4998,34 +5002,17 @@ cmd_audit_round_start() {
     esac
   done
 
-  # ---- Materialize `lenses` (EDMV4-T22 AC1/AC2 -- the epic's load-bearing P0) ----------------
-  # `--lenses` omitted used to record lenses_json="[]" and hardcode round_type="full" without
-  # ever evaluating a derivation rule. Stating the union rule below unconditionally over that
-  # shape is incoherent: with `lenses` recorded as `[]`, the empty union never equals
-  # ALL_LENS_IDS, so every srd/tickets round (neither of which has a lens concept and neither of
-  # which ever passes --lenses) would wrongly compute `partial`, and `audit-converged` would
-  # refuse forever because a partial round is never convergent. Materializing
-  # `lenses = ALL_LENS_IDS`, in ALL_LENS_IDS order, makes the union derivation correct in both
-  # branches and keeps EDMV4-T23's state-authoritative backstop meaningful -- an empty `lenses`
-  # array would otherwise let that backstop require zero JSONL files, precisely the pass-7
-  # incident CA-471 was built to catch.
-  local lenses_json
-  if [[ -z "$lenses_arg" ]]; then
-    # shellcheck disable=SC2086 # deliberate word-splitting; bash 3.2 has no arrays-as-constants
-    lenses_json="$(printf '%s\n' $ALL_LENS_IDS | jq -R . | jq -s .)"
-  else
-    local normalized_lenses
-    normalized_lenses="$(_normalize_lens_csv "$lenses_arg")"
-    [[ -n "$normalized_lenses" ]] || die "audit-round-start: --lenses must contain at least one non-empty lens ID"
-    lenses_json="$(printf '%s\n' "$normalized_lenses" | jq -R . | jq -s .)"
-  fi
-
   # ---- Parse and validate `lenses_na` (EDMV4-T22 AC3/AC5/AC7/AC9) ---------------------------
   # audit-round-start is the SOLE writer of lenses_na anywhere in this file -- no other code
   # path writes, appends to, or mutates it afterwards. The subset check below runs, and can
   # `die`, entirely BEFORE any state write (with_state_lock is only acquired further down), so
   # an invalid --na-lenses ID never reaches disk and a lens cannot retroactively excuse its own
   # non-delivery.
+  # EDMDS-T19 (CA-074): this block now runs BEFORE the `lenses` materialization below rather
+  # than after it, because the materialized set is ALL_LENS_IDS MINUS this one -- a subtraction
+  # cannot run before its subtrahend exists. Nothing else about the block's contract moves: it
+  # still parses with the same normalization, still enforces the CONDITIONAL_LENS_IDS subset
+  # rule, and still dies entirely ahead of with_state_lock.
   local lenses_na_json="[]"
   if [[ -n "$na_lenses_arg" ]]; then
     local normalized_na_lenses
@@ -5039,6 +5026,60 @@ cmd_audit_round_start() {
       esac
     done
     lenses_na_json="$(printf '%s\n' "$normalized_na_lenses" | jq -R . | jq -s .)"
+  fi
+
+  # ---- Materialize `lenses` (EDMV4-T22 AC1/AC2 -- the epic's load-bearing P0) ----------------
+  # `--lenses` omitted used to record lenses_json="[]" and hardcode round_type="full" without
+  # ever evaluating a derivation rule. Stating the union rule below unconditionally over that
+  # shape is incoherent: with `lenses` recorded as `[]`, the empty union never equals
+  # ALL_LENS_IDS, so every srd/tickets round (neither of which has a lens concept and neither of
+  # which ever passes --lenses) would wrongly compute `partial`, and `audit-converged` would
+  # refuse forever because a partial round is never convergent. Materializing `lenses` from
+  # `ALL_LENS_IDS`, in ALL_LENS_IDS order (minus `lenses_na`, per the EDMDS-T19 paragraph
+  # below), makes the union derivation correct in both
+  # branches and keeps EDMV4-T23's state-authoritative backstop meaningful -- an empty `lenses`
+  # array would otherwise let that backstop require zero JSONL files, precisely the pass-7
+  # incident CA-471 was built to catch.
+  #
+  # EDMDS-T19 (CA-074) -- the two branches are deliberately NOT symmetrical:
+  #
+  #   omitted `--lenses`: the materialized set is ALL_LENS_IDS MINUS lenses_na. It is this
+  #   command's own set to construct, so it constructs a coherent one. Materializing all
+  #   fourteen and then recording L13 in lenses_na too puts one lens in BOTH arrays, and
+  #   audit-round-complete's completeness backstop reads them as contradictory obligations:
+  #   check (1) demands a non-empty lens-L13.jsonl because L13 is in `lenses`, check (2) demands
+  #   that same file be ABSENT because L13 is in `lenses_na`. No round in that shape can close
+  #   `full`, whichever way the agent behaves. The union is unchanged by the subtraction
+  #   ((ALL - na) UNION na == ALL), so `round_type` reads `full` before and after -- which is
+  #   precisely why a round_type-only assertion could not see this and the `lenses` ARRAY is
+  #   what has to be asserted.
+  #
+  #   explicit `--lenses`: an overlapping pair is REFUSED below, never silently corrected. The
+  #   caller stated both sets by hand, and the two statements contradict each other; correcting
+  #   one of them would be this command guessing which the caller meant.
+  #
+  # The defect was masked in production, not absent: skills/code-audit/SKILL.md's Step 1
+  # subtracts the N/A set before it ever calls this command, so every shipped call passed a
+  # pre-subtracted explicit list. A caller that did not pre-subtract got a double-counted set
+  # back with no signal at all.
+  local lenses_json
+  if [[ -z "$lenses_arg" ]]; then
+    # shellcheck disable=SC2086 # deliberate word-splitting; bash 3.2 has no arrays-as-constants
+    lenses_json="$(printf '%s\n' $ALL_LENS_IDS | jq -R . | jq -s --argjson na "$lenses_na_json" '. - $na')"
+  else
+    local normalized_lenses
+    normalized_lenses="$(_normalize_lens_csv "$lenses_arg")"
+    [[ -n "$normalized_lenses" ]] || die "audit-round-start: --lenses must contain at least one non-empty lens ID"
+    lenses_json="$(printf '%s\n' "$normalized_lenses" | jq -R . | jq -s .)"
+    # Disjointness refusal, explicit branch only. Computed as set intersection in jq
+    # (`$l - ($l - $na)`) so duplicates and ordering are handled the same way the union
+    # derivation below handles them, and reported as a comma-joined list so the message names
+    # every overlapping ID rather than only the first. This fires before with_state_lock, so a
+    # refused pair writes no round record -- the same die-at-round-start contract the
+    # CONDITIONAL_LENS_IDS check above already has.
+    local _lens_overlap
+    _lens_overlap="$(jq -nr --argjson l "$lenses_json" --argjson na "$lenses_na_json" '($l - ($l - $na)) | unique | join(",")')"
+    [[ -z "$_lens_overlap" ]] || die "audit-round-start: --lenses and --na-lenses both name ${_lens_overlap} -- a lens is either run for this round or declared inapplicable to it, never both, and recording it twice makes the round's completeness check demand that lens's JSONL be present and absent at once. Drop ${_lens_overlap} from --lenses if it was genuinely N/A, or from --na-lenses if it was genuinely audited"
   fi
 
   # ---- Derive round_type from the union rule (EDMV4-T22 AC4) --------------------------------
