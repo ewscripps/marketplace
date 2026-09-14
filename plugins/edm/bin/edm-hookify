@@ -32,9 +32,41 @@
 # CAP, not a timeout -- `timeout(1)` is a GNU coreutils binary absent from stock macOS, this
 # plugin's primary development platform, so depending on it would either add a required binary
 # outside the bash/jq/git set this plugin pins, or silently do nothing on the platform where a
-# runaway regex_match against a multi-megabyte payload is most likely. Bounding the INPUT bounds
-# the cost of Oniguruma's regex_match (jq's test()) regardless of how large a single edit's
-# new_text/content/command field is.
+# runaway regex_match against a multi-megabyte payload is most likely.
+#
+# What the cap does NOT do (EDMDS-01 AC1, correcting finding CA-114's subject): it does not bound
+# EVALUATION COST, and this block used to claim exactly that -- that bounding the INPUT bounds the
+# cost of Oniguruma's regex_match regardless of how large a single edit's field is. That sentence
+# was false and is retracted rather than softened. The cap bounds SIZE only; a
+# catastrophic-backtracking pattern is superlinear in whatever input it is handed, so a 64 KiB
+# ceiling is not a time bound at 64 KiB, and is not one at any smaller size either.
+#
+# What actually bounds the cost is `retry-limit-in-match`, a property of the ONIGURUMA engine that
+# jq's test() is built on -- a property of JQ, not of EDM and not of this script. Past that limit
+# jq fails the match with `Regex failure: retry-limit-in-match over`; the per-rule try/catch around
+# project_rule below turns that failure into an `E` record, so the offending rule FILE is named on
+# stderr, every sibling rule in the same directory still evaluates (CA-030), and the run ends at
+# exit 1 -- a setup error, which never blocks -- instead of hanging. Measured on jq-1.8.1: `(a+)+$`
+# and `^(a|a?)+$` stay flat at 139/144/147 ms across inputs of 100, 1,000 and 10,000 characters,
+# and the limit trips at 30 `a` characters against a non-matching suffix.
+#
+# EDM depends on that engine bound deliberately (EDMDS-01), and the dependency carries two
+# residuals, stated here rather than left for a reader to discover:
+#   - The bound is a DEFAULT of a dependency EDM does not pin. This plugin's CLAUDE.md names the
+#     required binaries with NO VERSION FLOOR on any of them, so a jq built against an engine that
+#     raises or removes the retry limit would reintroduce the exposure with no signal from this
+#     file. The assertions in bin/tests/wave8-smoke.sh are what catch that.
+#   - The limit is NOT SETTABLE per invocation (measured on jq-1.8.1; EDMDS decisions.md D53):
+#     `jq --help` carries no limit, regex or Oniguruma flag; `ONIG_RETRY_LIMIT_IN_MATCH` in the
+#     environment has no effect, the limit firing identically with and without it; and test()
+#     accepts regex FLAGS only, never engine limits. EDM therefore cannot pin the bound even if it
+#     wanted to -- depending on the engine default is the only option available, not the preferred
+#     one.
+# No PRODUCT-side guard is added, by decision: a pattern-complexity heuristic rejects legitimate
+# patterns, a worse failure than the one it prevents, and a sleep-plus-kill watchdog would add
+# asynchronous process management to three hook consumers, one of which has a zero-exec fast path.
+# The guard adopted instead is TEST-side -- a pure-bash watchdog bounding the assertion that drives
+# a catastrophic pattern through this evaluator, in bin/tests/wave8-smoke.sh.
 #
 # Output format (`eval`, one line per matched rule): "<rule_id> <action> <rule_file> <message>" --
 # single-space separated, message last so it may itself contain spaces; `rule_file` is the
@@ -203,7 +235,9 @@ if [[ "$SUBCOMMAND" == "eval" ]]; then
 fi
 
 # 65536 chars (64 KiB for single-byte/ASCII content -- see the EDM-HELP block above for the
-# rationale and its documented approximation for multi-byte UTF-8 text).
+# rationale and its documented approximation for multi-byte UTF-8 text). This constant caps input
+# SIZE and nothing else: what bounds the TIME a regex_match may spend is Oniguruma's own
+# retry-limit-in-match, a jq property EDM cannot set (EDMDS-01 AC1, header block above).
 HOOKIFY_MAX_FIELD_CHARS=65536
 
 # ---- One classify pass (AC2/AC3): every rule file's raw bytes, NUL-joined, stream into exactly
