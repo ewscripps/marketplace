@@ -9563,13 +9563,40 @@ mkdir -p "$CA416_ROOT"
 # ca416_fixture <prefix> -- create a scratch initiative under $CA416_ROOT whose
 # findings-ledger.jsonl is read from stdin, then record one full code-audit round so the
 # round-type gate in cmd_audit_converged is satisfied and the sweep check is actually reached.
+#
+# EDMDS-T16 (EDMDS-07): "one full code-audit round" now requires the round to have DELIVERED --
+# a `code` round with no pass directory, or a pass directory carrying no lenses-run.txt, is
+# non-delivery and audit-round-complete records it `partial`. A partial round is never
+# convergent, so without the delivery below every assertion in this band would refuse for a
+# round-type reason before reaching the spec-sweep check it exists to exercise. The fix is
+# taught to the shared HELPER rather than to each of this band's call sites, so the band's
+# ca416_* references keep their original intent with no per-site edit.
 ca416_fixture() {
   local prefix="$1"
   EDM_SRD_ROOT="$CA416_ROOT" "$EDM_STATE" init "$prefix" >/dev/null 2>&1
   mkdir -p "$CA416_ROOT/$prefix/code-audit"
   cat > "$CA416_ROOT/$prefix/code-audit/findings-ledger.jsonl"
   EDM_SRD_ROOT="$CA416_ROOT" "$EDM_STATE" audit-round-start "$prefix" code >/dev/null 2>&1
+  ca416_deliver_round "$prefix" 1
   EDM_SRD_ROOT="$CA416_ROOT" "$EDM_STATE" audit-round-complete "$prefix" code >/dev/null 2>&1
+}
+
+# ca416_deliver_round <prefix> <round> -- materialize the on-disk artifacts a delivered code
+# round produces: the pass directory, its lenses-run.txt manifest, and one canonical lens JSONL
+# line per lens the round record actually recorded in `lenses` (read back from state rather than
+# assumed, so this keeps working if ALL_LENS_IDS grows). Each line carries the four properties
+# the completeness check requires: schema 1, a `lens` matching its own filename, a `sev` from
+# the closed severity set, and a `round` matching the round being completed.
+ca416_deliver_round() {
+  local prefix="$1" round="$2"
+  local dir="$CA416_ROOT/$prefix/code-audit/pass-${round}_2026-08-16"
+  mkdir -p "$dir"
+  printf 'Round type: full\n' > "${dir}/lenses-run.txt"
+  local lens
+  for lens in $(jq -r '.audit_rounds.code.rounds[-1].lenses[]' "$CA416_ROOT/$prefix/.edm-state.json" 2>/dev/null); do
+    printf '{"schema":1,"lens":"%s","round":%s,"sev":"P2","status":"open","id":null,"title":"ca416_deliver_round fixture"}\n' \
+      "$lens" "$round" > "${dir}/lens-${lens}.jsonl"
+  done
 }
 
 # ca416_converged <prefix> -- run audit-converged against a fixture, printing "<exit>\t<stdout>"

@@ -78,6 +78,48 @@ export XDG_DATA_HOME="${WAVE6_DATADIR}/xdg-data"
 export HOME="${WAVE6_DATADIR}/home"
 mkdir -p "$CLAUDE_PLUGIN_DATA" "$XDG_DATA_HOME" "$HOME"
 
+# =================================================================================
+# EDMDS-T16 (EDMDS-07): a `code` round that produces no pass directory, or a pass directory
+# carrying no lenses-run.txt, is non-delivery -- audit-round-complete records it `partial`.
+# Before this, that case escaped the completeness backstop entirely and the round kept whatever
+# round_type it was recorded with at round-start.
+#
+# Every fixture in this suite that needs a DELIVERED code round -- one that is still
+# round_type=full after audit-round-complete -- materializes one through this helper rather than
+# restating the manifest-plus-JSONL shape inline, so a later change to what "delivered" means
+# has one site to amend instead of N. wave7-smoke.sh's own ca416_fixture() is the sibling
+# precedent for teaching a shared fixture builder rather than patching call sites.
+#
+#   deliver_code_round <PREFIX> [<ROUND>] [<LENS_ID>...]
+#
+# With no lens arguments it delivers every lens the round-start default materializes (the
+# ALL_LENS_IDS set minus whatever it declared N/A), which is what keeps a default round `full`.
+# With explicit
+# lens arguments it delivers exactly those, for a fixture whose round was started with an
+# explicit --lenses list. Each lens file carries the canonical EDMDS-T14 line shape: schema 1,
+# a `lens` matching its own filename, a `sev` from the closed severity set, and a `round`
+# matching the round being completed -- the four properties EDMDS-T13's check (1) requires.
+deliver_code_round() {
+  local _prefix="$1"
+  local _round="${2:-1}"
+  if [[ $# -ge 2 ]]; then shift 2; else shift 1; fi
+  local _dir="$TMP/SRD/${_prefix}/code-audit/pass-${_round}_2026-08-16"
+  mkdir -p "$_dir"
+  printf 'Round type: full\n' > "${_dir}/lenses-run.txt"
+  local _n _lens
+  if [[ $# -gt 0 ]]; then
+    for _lens in "$@"; do
+      printf '{"schema":1,"lens":"%s","round":%s,"sev":"P2","status":"open","id":null,"title":"deliver_code_round fixture"}\n' \
+        "$_lens" "$_round" > "${_dir}/lens-${_lens}.jsonl"
+    done
+  else
+    for _n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do
+      printf '{"schema":1,"lens":"L%s","round":%s,"sev":"P2","status":"open","id":null,"title":"deliver_code_round fixture"}\n' \
+        "$_n" "$_round" > "${_dir}/lens-L${_n}.jsonl"
+    done
+  fi
+}
+
 echo "wave6 smoke check -- EDMV3-T05 anomaly classes, EDMV3-T07 mode helpers"
 echo
 
@@ -715,6 +757,10 @@ cat > "$TMP/SRD/PDEBT1/code-audit/findings-ledger.jsonl" <<'EOF'
 {"id":"CA-D02","status":"open","sev":"P2","title":"open p2 one"}
 EOF
 "$EDM_STATE" audit-round-start PDEBT1 code >/dev/null
+# EDMDS-T16: deliver the round. Without it audit-round-complete now downgrades to partial and
+# the refusal below becomes a round-type refusal, which would satisfy the "code-audit gate
+# refused" expectation for the wrong reason -- this case exists to pin the OPEN-P1 refusal.
+deliver_code_round PDEBT1
 "$EDM_STATE" audit-round-complete PDEBT1 code >/dev/null
 STATE_PDEBT1="$TMP/SRD/PDEBT1/.edm-state.json"
 check_refuses_and_leaves_state "accept-p2-debt still refuses with an open P1" \
@@ -731,6 +777,9 @@ cat > "$TMP/SRD/PDEBT2/code-audit/findings-ledger.jsonl" <<'EOF'
 {"id":"CA-D12","status":"fixed","sev":"P1","title":"fixed p1"}
 EOF
 "$EDM_STATE" audit-round-start PDEBT2 code >/dev/null
+# EDMDS-T16: --accept-p2-debt applies only to a severity refusal, so the round it converges on
+# must be a delivered, full one.
+deliver_code_round PDEBT2
 "$EDM_STATE" audit-round-complete PDEBT2 code >/dev/null
 STATE_PDEBT2="$TMP/SRD/PDEBT2/.edm-state.json"
 pdebt2_out="$("$EDM_STATE" approve-gate PDEBT2 code-audit --accept-p2-debt)"
@@ -772,6 +821,10 @@ cat > "$TMP/SRD/PDEBT3/code-audit/findings-ledger.jsonl" <<'EOF'
 {"id":"CA-D20","status":"open","sev":"P2","title":"open p2"}
 EOF
 "$EDM_STATE" audit-round-start PDEBT3 code >/dev/null
+# EDMDS-T16: both of this case's rounds are delivered -- the first so --accept-p2-debt sees a
+# severity refusal, the second so the staleness guard fires on a NEW round rather than on a
+# round the completeness gate downgraded.
+deliver_code_round PDEBT3 1
 "$EDM_STATE" audit-round-complete PDEBT3 code >/dev/null
 "$EDM_STATE" approve-gate PDEBT3 code-audit --accept-p2-debt >/dev/null
 "$EDM_STATE" set PDEBT3 product_name testprod >/dev/null
@@ -784,6 +837,7 @@ jq '.current_phase = 6 | .phase_durations["6_phase"] = {started_at: "2026-01-01T
 # A new full round runs after debt acceptance -- the round counter advances even though the
 # same P2 is still the only open finding, which is enough to make the acceptance stale.
 "$EDM_STATE" audit-round-start PDEBT3 code >/dev/null
+deliver_code_round PDEBT3 2
 "$EDM_STATE" audit-round-complete PDEBT3 code >/dev/null
 pdebt3_archive_ec=0
 pdebt3_archive_out="$("$EDM_STATE" archive PDEBT3 2>&1)" || pdebt3_archive_ec=$?
@@ -812,6 +866,11 @@ cat > "$TMP/SRD/PDEBT4/code-audit/findings-ledger.jsonl" <<'EOF'
 {"id":"CA-D30","status":"open","sev":"P2","title":"open p2 only"}
 EOF
 "$EDM_STATE" audit-round-start PDEBT4 code --lenses L1 >/dev/null
+# EDMDS-T16: deliver exactly the one lens this round declared, so the ONLY thing making it
+# partial is the deliberately narrow --lenses list -- which is what this case pins. Leaving it
+# undelivered would make it partial for the non-delivery reason too, and the case would no
+# longer discriminate.
+deliver_code_round PDEBT4 1 L1
 "$EDM_STATE" audit-round-complete PDEBT4 code >/dev/null
 STATE_PDEBT4="$TMP/SRD/PDEBT4/.edm-state.json"
 check_refuses_and_leaves_state "accept-p2-debt refuses when the latest round is partial" \
@@ -824,6 +883,9 @@ echo "CA-425 -- accept-p2-debt refuses on an invalid (unparseable) findings ledg
 mkdir -p "$TMP/SRD/PDEBT5/code-audit"
 printf 'this is not json\n' > "$TMP/SRD/PDEBT5/code-audit/findings-ledger.jsonl"
 "$EDM_STATE" audit-round-start PDEBT5 code >/dev/null
+# EDMDS-T16: deliver the round so the refusal below is about the unparseable LEDGER, not about
+# a round downgraded for non-delivery.
+deliver_code_round PDEBT5
 "$EDM_STATE" audit-round-complete PDEBT5 code >/dev/null
 STATE_PDEBT5="$TMP/SRD/PDEBT5/.edm-state.json"
 check_refuses_and_leaves_state "accept-p2-debt refuses when the ledger is invalid JSONL" \
@@ -1166,15 +1228,113 @@ ca525_control="$(printf '%s\n' "$ca525_manifest_instr" | sed 's/Round type://g')
 check_absent "CA-525 -- positive control: a mutated instruction missing 'Round type:' is detected as missing" \
   "Round type: full" "$ca525_control"
 
+# =================================================================================
+# EDMDS-T16 (EDMDS-07 AC1/AC2/AC3, finding CA-091): a `code` round that produces no pass
+# directory, or a pass directory carrying no lenses-run.txt, is NON-DELIVERY and is recorded
+# round_type=partial.
+#
+# This band replaces, rather than sits beside, the two assertions that used to stand here --
+# "no pass directory means the gate stays silent (C-4)" and "a manifest-less round keeps its
+# recorded round_type (full)". Both pinned the residual gap EDMV4's D40 accepted and reserved
+# the unused ID `CAMGAP` for; EDMDS-07 decided that gap closed, so their expectations are
+# inverted here rather than deleted (the old expectations are recorded as D67). Note the first
+# of the two would have gone on PASSING vacuously after this change, because the new warn
+# carries the `CA-091` prefix and it searched for `CA-471` -- an inert green, which is why it is
+# rewritten to assert the new cause by name instead of being left alone.
+# =================================================================================
+echo
+echo "EDMDS-T16 -- an absent pass directory or manifest is non-delivery (CA-091)"
+
+# ---- AC1 (sub-cause a): no pass directory at all --------------------------------------------
 "$EDM_STATE" init CA471NODIR >/dev/null
 mkdir -p "$TMP/SRD/CA471NODIR/code-audit"
 "$EDM_STATE" audit-round-start CA471NODIR code >/dev/null
 ca471nodir_out="$("$EDM_STATE" audit-round-complete CA471NODIR code 2>&1)"
-check_absent "CA-471 -- no pass directory means the gate stays silent (C-4)" "CA-471" "$ca471nodir_out"
+check "EDMDS-T16 AC1 -- a round with no pass directory warns under the CA-091 prefix" \
+  "CA-091" "$ca471nodir_out"
+check "EDMDS-T16 AC1 -- the warn names the no-pass-directory sub-cause specifically" \
+  "produced no pass directory" "$ca471nodir_out"
+# AC1's "distinguishing this cause from the other three": the other three all carry CA-471.
+check_absent "EDMDS-T16 AC1 -- the non-delivery warn is distinguishable from the three CA-471 causes" \
+  "CA-471" "$ca471nodir_out"
 ca471nodir_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$TMP/SRD/CA471NODIR/.edm-state.json")"
-[[ "$ca471nodir_rt" == "full" ]] \
-  && pass "CA-471 -- a manifest-less round keeps its recorded round_type (full)" \
-  || fail "CA-471 -- manifest-less round_type='$ca471nodir_rt', expected full"
+[[ "$ca471nodir_rt" == "partial" ]] \
+  && pass "EDMDS-T16 AC1 -- a round with no pass directory is recorded round_type=partial" \
+  || fail "EDMDS-T16 AC1 -- round_type='$ca471nodir_rt', expected partial"
+# A downgraded round is non-convergent -- the consequence the downgrade exists to produce.
+printf '{"id":"CA-N01","status":"fixed","sev":"P2","title":"all clear"}\n' \
+  > "$TMP/SRD/CA471NODIR/code-audit/findings-ledger.jsonl"
+ca471nodir_conv_ec=0
+"$EDM_STATE" audit-converged CA471NODIR >/dev/null 2>&1 || ca471nodir_conv_ec=$?
+[[ $ca471nodir_conv_ec -eq 1 ]] \
+  && pass "EDMDS-T16 AC1 -- a non-delivered round blocks convergence even with a clean ledger" \
+  || fail "EDMDS-T16 AC1 -- audit-converged exited ${ca471nodir_conv_ec} on a non-delivered round, expected 1"
+
+# ---- AC1 (sub-cause b): a pass directory exists but carries no lenses-run.txt manifest -------
+# Separately named because the two need different operator responses, and because a single
+# fixture covering only sub-cause (a) would leave the manifest half of check (0) unexercised.
+"$EDM_STATE" init T16NOMAN >/dev/null
+mkdir -p "$TMP/SRD/T16NOMAN/code-audit/pass-1_2026-08-16"
+"$EDM_STATE" audit-round-start T16NOMAN code >/dev/null
+t16noman_out="$("$EDM_STATE" audit-round-complete T16NOMAN code 2>&1)"
+check "EDMDS-T16 AC1 -- a pass directory with no manifest warns under the CA-091 prefix" \
+  "CA-091" "$t16noman_out"
+check "EDMDS-T16 AC1 -- the warn names the missing-manifest sub-cause specifically" \
+  "carries no lenses-run.txt manifest" "$t16noman_out"
+t16noman_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$TMP/SRD/T16NOMAN/.edm-state.json")"
+[[ "$t16noman_rt" == "partial" ]] \
+  && pass "EDMDS-T16 AC1 -- a manifest-less pass directory is recorded round_type=partial" \
+  || fail "EDMDS-T16 AC1 -- round_type='$t16noman_rt', expected partial"
+
+# ---- AC2/AC3 (the control): both present, plus a valid lens-L{N}.jsonl for EVERY lens in the
+# round's RECORDED `lenses`, is unaffected -- round_type stays full and AC1's message is absent.
+# The "every recorded lens" half is load-bearing (EDMDS-07 AC3): restoring only the manifest
+# yields partial for a DIFFERENT reason -- check (1) downgrades for any lens with no landed
+# JSONL -- so a bare "not full" expectation would pass for the wrong reason. This control
+# asserts the absence of AC1's CA-091 message specifically rather than of any downgrade.
+"$EDM_STATE" init T16DELIV >/dev/null
+mkdir -p "$TMP/SRD/T16DELIV/code-audit"
+"$EDM_STATE" audit-round-start T16DELIV code >/dev/null
+t16deliv_lenses="$(jq -r '.audit_rounds.code.rounds[-1].lenses | join(" ")' "$TMP/SRD/T16DELIV/.edm-state.json")"
+# shellcheck disable=SC2086 # deliberate word-splitting: the recorded lens list drives the fixture
+deliver_code_round T16DELIV 1 $t16deliv_lenses
+t16deliv_out="$("$EDM_STATE" audit-round-complete T16DELIV code 2>&1)"
+check_absent "EDMDS-T16 AC3 -- a delivered round produces no CA-091 non-delivery warn" \
+  "CA-091" "$t16deliv_out"
+check_absent "EDMDS-T16 AC3 -- a delivered round produces no CA-471 downgrade either" \
+  "CA-471" "$t16deliv_out"
+t16deliv_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$TMP/SRD/T16DELIV/.edm-state.json")"
+[[ "$t16deliv_rt" == "full" ]] \
+  && pass "EDMDS-T16 AC2/AC3 -- a round with pass directory, manifest and every recorded lens JSONL stays round_type=full" \
+  || fail "EDMDS-T16 AC2/AC3 -- round_type='$t16deliv_rt', expected full"
+# AC3's negative control on the control itself: removing ONLY the manifest from that same
+# delivered shape must produce the CA-091 warn. This is what proves the control above passes
+# because the manifest is there, not because the fixture is inert.
+"$EDM_STATE" init T16DELIVCTL >/dev/null
+mkdir -p "$TMP/SRD/T16DELIVCTL/code-audit"
+"$EDM_STATE" audit-round-start T16DELIVCTL code >/dev/null
+deliver_code_round T16DELIVCTL 1
+rm -f "$TMP/SRD/T16DELIVCTL/code-audit/pass-1_2026-08-16/lenses-run.txt"
+t16delivctl_out="$("$EDM_STATE" audit-round-complete T16DELIVCTL code 2>&1)"
+check "EDMDS-T16 AC3 control -- the identical delivered round MINUS the manifest warns CA-091" \
+  "CA-091" "$t16delivctl_out"
+t16delivctl_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$TMP/SRD/T16DELIVCTL/.edm-state.json")"
+[[ "$t16delivctl_rt" == "partial" ]] \
+  && pass "EDMDS-T16 AC3 control -- that round is recorded partial, so the control above is not inert" \
+  || fail "EDMDS-T16 AC3 control -- round_type='$t16delivctl_rt', expected partial"
+
+# ---- AC2 (scope): a non-`code` round never reaches check (0) at all --------------------------
+# srd/tickets rounds never produce a pass directory; they are excluded by the enclosing
+# audit_type test, not by the manifest, and must stay silent and full.
+"$EDM_STATE" init T16SRDR >/dev/null
+"$EDM_STATE" audit-round-start T16SRDR srd >/dev/null
+t16srdr_out="$("$EDM_STATE" audit-round-complete T16SRDR srd 2>&1)"
+check_absent "EDMDS-T16 AC2 -- an srd round with no pass directory produces no CA-091 warn" \
+  "CA-091" "$t16srdr_out"
+t16srdr_rt="$(jq -r '.audit_rounds.srd.rounds[-1].round_type' "$TMP/SRD/T16SRDR/.edm-state.json")"
+[[ "$t16srdr_rt" == "full" ]] \
+  && pass "EDMDS-T16 AC2 -- an srd round is unaffected by the code-round non-delivery check" \
+  || fail "EDMDS-T16 AC2 -- srd round_type='$t16srdr_rt', expected full"
 
 # =================================================================================
 # G1 (round-3 Wave 7b, CA-182 REOPENED): the code-audit gate is unconditionally approvable at
@@ -4275,23 +4435,34 @@ check_refuses_and_leaves_state \
   "${T23AC2_DIR}/.edm-state.json" \
   "$EDM_STATE" audit-round-complete T23AC2 code
 
-# ---- AC9: a round with no pass directory is left unchanged (C-4) -- unaffected by the state-
-# authoritative rewrite, replayed here to pin it post-EDMV4-T23 -------------------------------
+# ---- AC9: SUPERSEDED BY EDMDS-07 (EDMDS-T16). ------------------------------------------------
+# AC9 pinned "a round with no pass directory is left unchanged (C-4)" -- the residual gap
+# EDMV4's D40 accepted. EDMDS-07 decided that gap closed, so this case now pins the inverse:
+# the round is downgraded, and the warn carries the CA-091 prefix rather than CA-471. The
+# assertion is amended in place, not deleted -- the site keeps exercising the same code path
+# with EDMV4-T23's own three checks unreached, which is still the property AC9 was written to
+# hold steady. The old expectation is recorded as D67.
 "$EDM_STATE" init T23AC9 >/dev/null
 "$EDM_STATE" audit-round-start T23AC9 code >/dev/null
 t23ac9_out="$("$EDM_STATE" audit-round-complete T23AC9 code 2>&1)"
-check_absent "EDMV4-T23 AC9 -- a round with no pass directory at all is left unchanged (C-4)" \
+check_absent "EDMV4-T23 AC9 (amended by EDMDS-T16) -- a round with no pass directory never reaches EDMV4-T23's three CA-471 checks" \
   "CA-471" "$t23ac9_out"
+check "EDMV4-T23 AC9 (amended by EDMDS-T16) -- it is caught by EDMDS-07's non-delivery check instead" \
+  "CA-091" "$t23ac9_out"
 t23ac9_rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type' "$TMP/SRD/T23AC9/.edm-state.json")"
-[[ "$t23ac9_rt" == "full" ]] \
-  && pass "EDMV4-T23 AC9 -- the manifest-less round keeps its recorded round_type (full)" \
-  || fail "EDMV4-T23 AC9 -- round_type = '$t23ac9_rt', expected full"
+[[ "$t23ac9_rt" == "partial" ]] \
+  && pass "EDMV4-T23 AC9 (amended by EDMDS-T16) -- the manifest-less round is recorded partial" \
+  || fail "EDMV4-T23 AC9 (amended by EDMDS-T16) -- round_type = '$t23ac9_rt', expected partial"
 
-# ---- AC12: CLAUDE.md's round_type row describes the three-way check and both C-4 read rules --
+# ---- AC12: CLAUDE.md's round_type row describes the completeness check and both C-4 read
+# rules. Amended by EDMDS-T16: the check grew a fourth arm, and the residual gap AC12 required
+# CLAUDE.md to NAME is now required to be recorded as CLOSED. ---------------------------------
 t23ac12_claude="$(cat "${REPO_ROOT}/plugins/edm/CLAUDE.md")"
-check "EDMV4-T23 AC12 -- CLAUDE.md describes the three-way completeness check" \
-  "three-way completeness check" "$t23ac12_claude"
-check "EDMV4-T23 AC12 -- CLAUDE.md names the manifest-trigger residual gap" \
+check "EDMV4-T23 AC12 (amended by EDMDS-T16) -- CLAUDE.md describes the four-way completeness check" \
+  "four-way completeness check" "$t23ac12_claude"
+check "EDMDS-T16 AC4 -- CLAUDE.md records D40's residual gap as closed, keyed to D67" \
+  "D40 residual gap is CLOSED (EDMDS-07, recorded as D67" "$t23ac12_claude"
+check_absent "EDMDS-T16 AC4 -- CLAUDE.md no longer carries the accepted-residual-gap wording" \
   "Known residual gap" "$t23ac12_claude"
 
 # =================================================================================
