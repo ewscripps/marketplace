@@ -170,7 +170,7 @@ pins or silently do nothing exactly where it is most needed.
 - [ ] AC3: A smoke test in `bin/tests/wave8-smoke.sh` runs `eval` against a 1-rule and a 50-rule
       fixture set and asserts the `jq` process count is **identical** for both (counted by wrapping
       `jq` with a counting shim on `PATH` for the duration of the assertion, not by timing).
-- [ ] AC4: `eval` prints one line per matched rule in the exact form `rule_id action message`, with
+- [ ] AC4: `eval` prints one line per matched rule in the exact form `rule_id action rule_file message`, with
       single-space separation and the message last so it may contain spaces.
 - [ ] AC5: The evaluator honours `enabled: false` and skips those rules entirely -- they are neither
       evaluated nor counted, asserted by a fixture in which a disabled rule would otherwise match.
@@ -266,7 +266,7 @@ non-blocking setup error, and `:150-158` is the loop that implements exactly tha
       `warn` rules matched; **1** on a setup error (malformed rule file, unknown operator,
       unreadable rule directory, missing `jq`) which is **never blocking**; **2** when at least one
       `block` rule matched. There is no fourth code.
-- [ ] AC3: A `warn` match writes its `rule_id action message` line to **stderr** and leaves the exit
+- [ ] AC3: A `warn` match writes its `rule_id action rule_file message` line to **stderr** and leaves the exit
       code at 0, asserted by a smoke test that captures stdout and stderr separately.
 - [ ] AC4: `edm-gateguard` translates `edm-hookify` exit 2 into a refusal through its own
       `emit_decision deny` function (AD2), and `edm-stop-gate` translates it into its own exit 2. No
