@@ -9466,13 +9466,23 @@ mkdir -p "$CA036_BIN"
 
 # The scorer resolves edm-state / edm-lint-artifacts as SIBLINGS via SCRIPT_DIR (never via PATH),
 # so a scratch bin/ holding a copy of the scorer plus two shims is the only way to drive its probe
-# failure paths. The shims answer exactly the four subcommands the scorer calls, and each arm's
+# failure paths. The shims answer exactly the subcommands the scorer calls, and each arm's
 # exit status is driven by an env knob so one fixture covers every probe.
+#
+# EDMDS-T27 kept this shim in step with the scorer it stands in for. `_rr_active_prefixes` now
+# calls `active-initiatives --porcelain` instead of scraping `list`, and the phase-scope accounting
+# beside it calls `list --paths`; a shim that answered neither made the scorer probe NOTHING, which
+# turned every assertion in this band into a measurement of the shim's silence rather than of the
+# knob under test. The arms below answer all three shapes for the one fixture initiative, so the
+# knobs stay the only variable.
 cp "$REPO_READINESS" "${PLUGIN_DIR}/bin/_edm-cli-lib.sh" "$CA036_BIN/"
 cat > "${CA036_BIN}/edm-state" <<'CA036_SHIM'
 #!/usr/bin/env bash
 case "$1" in
-  list) printf 'SHIMP          phase=1  gates_approved=0\n'; exit 0 ;;
+  list)
+    if [ "${2:-}" = "--paths" ]; then printf '/ca036-fixture/SRD/SHIMP\n'; else printf 'SHIMP          phase=1  gates_approved=0\n'; fi
+    exit 0 ;;
+  active-initiatives) printf 'SHIMP\n'; exit 0 ;;
   get) exit 0 ;;
   validate)
     case "${EDM_SHIM_VALIDATE_RC:-0}" in

@@ -17,9 +17,11 @@
 #   edm-stop-gate            # run from a Stop hook; no arguments
 #   edm-stop-gate -h|--help|help  # show this help
 #
-# Prefix resolution: this gate calls `edm-state active-initiatives` (no argument, lists every
-# initiative with current_phase in 1-6) rather than guessing a prefix from the working directory
-# or re-implementing the sweep. When more than one initiative is active, `edm-state validate` runs
+# Prefix resolution: this gate calls `edm-state active-initiatives --porcelain` (the
+# machine-readable emission: one bare PREFIX per line, every initiative with current_phase in 1-6)
+# rather than guessing a prefix from the working directory, re-implementing the sweep, or scraping
+# the human-readable listing this command prints without that flag (EDMDS-T27, the form this gate
+# parsed until then). When more than one initiative is active, `edm-state validate` runs
 # for EACH and the gate blocks if ANY returns a blocking-class anomaly, naming the offending
 # initiative. When active-initiatives lists none, this gate exits 0 with zero bytes on stdout and
 # stderr -- a repository with no active initiative has nothing to say at every Stop.
@@ -148,21 +150,21 @@ command -v edm-state >/dev/null 2>&1 || exit 0
 
 ACTIVE_OUTPUT=""
 ACTIVE_RC=0
-ACTIVE_OUTPUT="$(edm-state active-initiatives 2>/dev/null)" || ACTIVE_RC=$?
-[[ "$ACTIVE_RC" -eq 0 ]] || soft_exit "edm-state active-initiatives exited ${ACTIVE_RC}"
+ACTIVE_OUTPUT="$(edm-state active-initiatives --porcelain 2>/dev/null)" || ACTIVE_RC=$?
+[[ "$ACTIVE_RC" -eq 0 ]] || soft_exit "edm-state active-initiatives --porcelain exited ${ACTIVE_RC}"
 
-# AC1: parse the human-readable "  <PREFIX>  phase=N  last_updated=..." lines, ignoring the
-# "(no active initiatives)" / "(no SRD/ directory)" sentinel lines. Bash 3.2 (C1): a plain
-# `while IFS= read -r` loop, no mapfile/readarray.
+# EDMDS-T27 (EDMDS-12 AC2/AC3): read the MACHINE-READABLE emission -- one bare PREFIX per line,
+# no sentinel line to filter and no field position to scrape. The prior form parsed the
+# human-readable "  <PREFIX>  phase=N  last_updated=..." listing and recognized a real entry by
+# the presence of a `phase=` token, which made this gate's prefix resolution depend on the column
+# layout of an emission whose stated audience is a human; the accessor now owns which initiatives
+# are active and this gate owns nothing but the loop over them. Bash 3.2 (C1): a plain
+# `while IFS= read -r` loop, no mapfile/readarray. The empty-line guard is load-bearing -- a
+# here-string over an empty capture still yields one empty line, which must not become a prefix.
 ACTIVE_PREFIXES=()
 while IFS= read -r _line; do
-  case "$_line" in
-    *"phase="*)
-      _prefix="$(awk '{print $1}' <<< "$_line")"
-      [[ -n "$_prefix" ]] && ACTIVE_PREFIXES+=("$_prefix")
-      ;;
-    *) ;;
-  esac
+  [[ -n "$_line" ]] || continue
+  ACTIVE_PREFIXES+=("$_line")
 done <<< "$ACTIVE_OUTPUT"
 
 # AC3: zero active initiatives -- exit 0 silently, zero bytes on stdout and stderr. This also

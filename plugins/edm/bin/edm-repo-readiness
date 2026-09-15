@@ -166,16 +166,33 @@ COVERAGE_TARGET_INTEGRATION_PCT="${EDM_COVERAGE_TARGET_INTEGRATION_PCT:-${CLAUDE
 
 # ---- Shared helpers -----------------------------------------------------------------------------
 
-# _rr_active_prefixes: one active (non-archived) initiative PREFIX per line. Scoped to a single
-# <PREFIX> when one was given on the command line; otherwise every active initiative `edm-state
-# list` itself already resolves, across both the flat and product-scoped layouts (EDMV4-T40
-# AC2/AC7: layout resolution has exactly one owner, edm-state, never re-derived here).
+# _rr_active_prefixes: one active initiative PREFIX per line. Scoped to a single <PREFIX> when one
+# was given on the command line; otherwise every initiative `edm-state active-initiatives
+# --porcelain` reports, across both the flat and product-scoped layouts. EDMV4-T40 AC2/AC7's
+# principle is unchanged and is what this call satisfies -- layout resolution has exactly one
+# owner, edm-state, never re-derived here -- but the CALL is no longer `list` scraped with
+# `awk '/phase=/{print $1}'` (EDMDS-T27, EDMDS-12): that scraped a human-readable listing for a
+# machine purpose, and `cmd_list` prints `phase=` for EVERY non-archived initiative, so this
+# scorecard counted a phase-0 or phase-7 initiative as active. The two commands genuinely
+# disagree; `active-initiatives` is the one that answers the question this function's own name
+# asks, and `--porcelain` is its machine-readable form.
 _rr_active_prefixes() {
   if [[ -n "$PREFIX" ]]; then
     printf '%s\n' "$PREFIX"
     return 0
   fi
-  "$EDM_STATE_BIN" list 2>/dev/null | awk '/phase=/{print $1}'
+  "$EDM_STATE_BIN" active-initiatives --porcelain 2>/dev/null
+}
+
+# _rr_nonarchived_count: how many non-archived initiatives exist at ANY phase, via `list --paths`
+# -- the read-only path emitter edm-lint-artifacts --all already consumes, not a directory walk of
+# our own and not a second human-readable listing. Used for one purpose only: telling "this
+# repository records nothing" apart from "this repository records initiatives, none of which the
+# active-initiatives accessor scopes in" (see the phase-scope reason below).
+_rr_nonarchived_count() {
+  local _rr_paths
+  _rr_paths="$("$EDM_STATE_BIN" list --paths 2>/dev/null || true)"
+  printf '%s' "$_rr_paths" | awk 'NF { n++ } END { print n+0 }'
 }
 
 # _rr_validate_output <prefix>: prints `edm-state validate <prefix>`'s full output and RETURNS its
@@ -249,8 +266,10 @@ _RR_VALIDATE_FAILURES=""      # "PREFIX (exit N)" entries, comma-joined
 _RR_FRAMEWORK_LINES=""
 _RR_COVERAGE_LINES=""
 _RR_COVERAGE_FAILURES=""      # same shape
+_RR_SCANNED_COUNT=0           # prefixes this pass actually probed (EDMDS-12 AC6)
 while IFS= read -r _rr_p; do
   [[ -n "$_rr_p" ]] || continue
+  _RR_SCANNED_COUNT=$(( _RR_SCANNED_COUNT + 1 ))
 
   # --- edm-state validate (CA-036): 0 = no blocking anomaly, 3 = at least one blocking anomaly.
   # Both are real, readable results. Anything else is a setup error and is NEVER scored clean.
@@ -301,12 +320,48 @@ while IFS= read -r _rr_p; do
   [[ -n "$_rr_cv" ]] && _RR_COVERAGE_LINES="${_RR_COVERAGE_LINES}${_RR_COVERAGE_LINES:+$'\n'}${_rr_cv}"
 done < <(_rr_active_prefixes)
 
-# The two probe-failure reasons, in the exact form every affected check carries as its
-# unmeasured_reason (empty string = measured, which is the overwhelmingly common case).
-RR_VALIDATE_UNMEASURED_REASON=""
+# EDMDS-12 AC6: account for the narrowed input set, rather than letting it vanish.
+#
+# `_rr_active_prefixes` above used to scrape EVERY non-archived initiative off `list`; the
+# accessor it now calls scopes to phases 1-6. A repository whose only initiative sits at phase 0
+# or phase 7 therefore goes from one probed initiative to zero -- and with zero probed prefixes,
+# `_rr_any_prefix_validate_has` answers "false" for every anomaly and the validate-derived checks
+# all score CLEAN. That is the CA-036/037/038 class exactly: an unmeasurable category must score
+# UNMEASURED and stay in the denominator, never score full marks because nothing was looked at.
+#
+# The intended behaviour, stated rather than left to inference:
+#   * The SCOPE is the accessor's, not this script's. Phases 1-6 is what "active" means, and this
+#     scorecard does not get a second, wider definition of the word -- that divergence is the
+#     defect EDMDS-12 exists to remove.
+#   * An initiative excluded by that scope is NOT silently dropped. When the scope leaves nothing
+#     to probe while the repository does record non-archived initiatives, every validate- and
+#     coverage-derived check is UNMEASURED with the reason below, so the score is rendered as a
+#     FLOOR with its WARNING line rather than as a clean measurement.
+#   * A repository with NO non-archived initiatives at all is unchanged and stays clean: nothing
+#     recorded is a real, clean health signal (see `_rr_any_prefix_validate_has`), which is a
+#     different fact from "records exist and none was examined". That distinction is the whole
+#     content of this branch, and it is why the count below is taken at all.
+# Deliberately NOT fired when the scope leaves SOME initiative to probe: the checks then rest on
+# real readings of every initiative that is active by the one definition of the word.
+RR_PHASE_SCOPE_UNMEASURED_REASON=""
+if [[ -z "$PREFIX" && "$_RR_SCANNED_COUNT" -eq 0 ]]; then
+  _RR_NONARCHIVED_COUNT="$(_rr_nonarchived_count)"
+  if [[ "$_RR_NONARCHIVED_COUNT" -gt 0 ]]; then
+    RR_PHASE_SCOPE_UNMEASURED_REASON="edm-state active-initiatives reports no initiative in phases 1-6, while ${_RR_NONARCHIVED_COUNT} non-archived initiative(s) exist outside that range, so no per-initiative probe ran"
+  fi
+fi
+
+# The probe-failure reasons, in the exact form every affected check carries as its
+# unmeasured_reason (empty string = measured, which is the overwhelmingly common case). Each is
+# seeded from the phase-scope reason above and then OVERWRITTEN by a probe failure if one was
+# recorded. The two cannot both be non-empty today -- a probe failure names a prefix, and the
+# phase-scope reason fires only when no prefix was probed at all -- so the overwrite is a stated
+# precedence for a case that cannot currently arise, not a live tie-break: a reason naming
+# specific prefixes and statuses is the more actionable of the two if one ever could.
+RR_VALIDATE_UNMEASURED_REASON="$RR_PHASE_SCOPE_UNMEASURED_REASON"
 [[ -n "$_RR_VALIDATE_FAILURES" ]] && \
   RR_VALIDATE_UNMEASURED_REASON="edm-state validate returned a status outside its documented 0/3 contract for: ${_RR_VALIDATE_FAILURES}"
-RR_COVERAGE_UNMEASURED_REASON=""
+RR_COVERAGE_UNMEASURED_REASON="$RR_PHASE_SCOPE_UNMEASURED_REASON"
 [[ -n "$_RR_COVERAGE_FAILURES" ]] && \
   RR_COVERAGE_UNMEASURED_REASON="edm-state get-coverage could not be read for: ${_RR_COVERAGE_FAILURES}"
 

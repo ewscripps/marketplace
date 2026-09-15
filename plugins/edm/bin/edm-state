@@ -13,7 +13,7 @@
 #   edm-state get <PREFIX>                              # print state JSON
 #   edm-state set <PREFIX> <key> <value>                # set a top-level field (typed for known fields)
 #   edm-state list [--paths]                            # list in-progress initiatives (--paths: print resolved initiative directories only, read-only, for edm-lint-artifacts --all)
-#   edm-state active-initiatives                        # list initiatives with current_phase in 1-6
+#   edm-state active-initiatives [--porcelain]          # list initiatives with current_phase in 1-6 (--porcelain: one bare PREFIX per line, no sentinel line, for machine consumers)
 #   edm-state init <PREFIX>                             # write a fresh state file
 #   edm-state approve-gate <PREFIX> <gate-num>|3.5|code-audit [--accept-p2-debt]  # record a gate approval (numeric gate, compliance gate 3.5, or code-audit convergence; --accept-p2-debt converges with P0/P1 clear, carrying open P2s forward as documented debt)
 #   edm-state phase-start <PREFIX> <phase-num>          # record phase start timestamp
@@ -4255,10 +4255,37 @@ cmd_migrate_path() {
 }
 
 # ---- Active initiatives (T35) -----------------------------------------------
-# active-initiatives: list initiatives with current_phase in 1-6
-
+# active-initiatives [--porcelain]: list initiatives with current_phase in 1-6.
+#
+# EDMDS-T27/CA-112: `--porcelain` is the MACHINE-READABLE emission -- one bare PREFIX per line and
+# nothing else: no column padding, no `phase=`/`last_updated=` tokens, and none of the
+# "(no active initiatives)" / "(no SRD/ directory)" sentinel lines, so a consumer reads it with a
+# plain `while IFS= read -r prefix` and never a field-scraping awk.
+#
+# It is a FLAG rather than a change to the default emission because the default IS a parsed
+# interface today: `bin/edm-stop-gate` scraped the human line's first field off it, and a silent
+# shape change to a listing a consumer scrapes is invisible to that consumer until it starts
+# resolving the wrong prefixes. The human form is therefore left byte-identical here.
+#
+# One derivation, two renderings: the phase-1-to-6 predicate below is evaluated ONCE and both
+# emissions render from the same loop iteration, so the machine form is the human form's first
+# column by construction and the two can never disagree about which initiatives are active. That
+# is the point of the requirement -- `cmd_list` prints `phase=` unconditionally, so a consumer
+# scraping IT (as edm-repo-readiness did) scored phase-0 and phase-7 initiatives as active.
 cmd_active_initiatives() {
-  [[ -d "$SRD_ROOT" ]] || { echo "(no SRD/ directory)"; return 0; }
+  local porcelain=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --porcelain) porcelain=1; shift ;;
+      *) die "usage: edm-state active-initiatives [--porcelain]" ;;
+    esac
+  done
+  if [[ ! -d "$SRD_ROOT" ]]; then
+    # Porcelain emits zero bytes rather than a parenthesized sentinel: a consumer reading this
+    # form must be able to treat every line it receives as a prefix.
+    [[ $porcelain -eq 1 ]] || echo "(no SRD/ directory)"
+    return 0
+  fi
   require_jq
   local found=0
   while IFS= read -r state; do
@@ -4268,11 +4295,15 @@ cmd_active_initiatives() {
       found=1
       local prefix last
       prefix="$(jq -r '.prefix' "$state" 2>/dev/null || echo unknown)"
-      last="$(jq -r '.last_updated' "$state" 2>/dev/null || echo unknown)"
-      printf "  %-12s  phase=%d  last_updated=%s\n" "$prefix" "$phase" "$last"
+      if [[ $porcelain -eq 1 ]]; then
+        printf '%s\n' "$prefix"
+      else
+        last="$(jq -r '.last_updated' "$state" 2>/dev/null || echo unknown)"
+        printf "  %-12s  phase=%d  last_updated=%s\n" "$prefix" "$phase" "$last"
+      fi
     fi
   done < <(list_state_files)
-  [[ $found -eq 1 ]] || echo "  (no active initiatives)"
+  [[ $porcelain -eq 1 || $found -eq 1 ]] || echo "  (no active initiatives)"
 }
 
 # ---- Gate enforcement (T27, completed EDMV3-T13) -----------------------------
