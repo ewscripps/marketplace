@@ -10209,6 +10209,304 @@ else
 fi
 
 
+
+# =================================================================================================
+# EDMDS-T27 (EDMDS-12): the machine-readable active-initiatives emission, and its two consumers
+# =================================================================================================
+# CA-112: `edm-repo-readiness` derived its active-initiative set by scraping `edm-state list` --
+# a HUMAN-readable listing -- with an awk keyed on the phase token, while `edm-stop-gate` scraped
+# the equally human-readable `active-initiatives` listing the same way. The two derivations
+# genuinely disagree: `cmd_list` prints that token for EVERY non-archived initiative, and
+# `cmd_active_initiatives` gates to phases 1-6. So this is a reporting-correctness fix, not only
+# deduplication, and the fixture below is built to make that disagreement observable rather than
+# assumed -- three initiatives, one on each side of the boundary and one inside it.
+#
+# `--porcelain` is a FLAG, never a change to the default emission: the default IS a parsed
+# interface today (edm-stop-gate's own prefix loop read it), so a silent shape change there is
+# invisible to a consumer until it starts resolving the wrong prefixes.
+#
+# Every fixture here is BUILT under $TMP. No assertion below names a live initiative or pins an
+# artifact path in this repository's own SRD tree (CA-096 AC2: four assertions were lost when an
+# earlier initiative was archived out from under exactly that dependence).
+
+echo
+echo "=== EDMDS-T27: active-initiatives --porcelain, and the two consumers that read it ==="
+
+T27_TMP="${TMP}/edmds-t27"
+T27_SRD="${T27_TMP}/srd-three"
+T27_SRD_OUT_OF_RANGE="${T27_TMP}/srd-out-of-range"
+T27_STOP_GATE="${PLUGIN_DIR}/bin/edm-stop-gate"
+T27_REPO_READINESS="${PLUGIN_DIR}/bin/edm-repo-readiness"
+mkdir -p "${T27_TMP}/home" "${T27_TMP}/data"
+
+# _t27_write_state <dir> <prefix> <phase> -- one fixture initiative, written directly rather than
+# through `edm-state init` so the phase is the only variable under test and no lifecycle command
+# has to be driven to reach phase 7.
+_t27_write_state() {
+  mkdir -p "$1"
+  printf '{"prefix":"%s","current_phase":%s,"last_updated":"2026-01-01T00:00:00Z"}\n' "$2" "$3" \
+    > "${1}/.edm-state.json"
+}
+
+# The three-entry fixture: phase 0 (never started) and phase 7 (past the last phase) sit on either
+# side of the accessor's 1-6 window; the phase-3 entry is what makes the in-window set NON-EMPTY,
+# since a broken accessor that always emits nothing would satisfy the two exclusions on its own.
+# Flat and product-scoped layouts are both represented so the emission is exercised across the
+# layout resolver it shares with every other subcommand.
+_t27_write_state "${T27_SRD}/T27ZERO"        "T27ZERO" 0
+_t27_write_state "${T27_SRD}/p/T27LIVE__d"   "T27LIVE" 3
+_t27_write_state "${T27_SRD}/p/T27DONE__d"   "T27DONE" 7
+# The out-of-range-only fixture: initiatives exist, none is in the window.
+_t27_write_state "${T27_SRD_OUT_OF_RANGE}/p/T27DONE__d" "T27DONE" 7
+
+# _t27_state <srd-root> <args...> -- edm-state against a fixture root, with the host data
+# directory isolated (CA-102: this suite's own closing assertion fails if any case writes into it).
+_t27_state() {
+  local _t27_root="$1"; shift
+  EDM_SRD_ROOT="$_t27_root" HOME="${T27_TMP}/home" CLAUDE_PLUGIN_DATA="${T27_TMP}/data" \
+    XDG_DATA_HOME="" "$EDM_STATE" "$@"
+}
+# _t27_count_lines <text> -- non-blank line count. awk rather than `grep -c .`, whose exit 1 on a
+# zero count would abort this suite under set -e.
+_t27_count_lines() { printf '%s\n' "$1" | awk 'NF { n++ } END { print n+0 }'; }
+
+# ---- AC1/AC4: the accessor's own contract -------------------------------------------------------
+# The claim under test is the ACCESSOR's, deliberately, not agreement between the two consumers:
+# after AC2/AC3 both consumers read identical bytes from one command, so "both paths agree" would
+# be true by construction and could not fail.
+t27_porcelain="$(_t27_state "$T27_SRD" active-initiatives --porcelain 2>/dev/null || true)"
+if [[ "$t27_porcelain" == "T27LIVE" ]]; then
+  pass "EDMDS-T27 AC1/AC4 -- --porcelain emits the in-range initiative as a bare prefix on its own line, with no padding and no trailing decoration"
+else
+  fail "EDMDS-T27 AC1/AC4 -- --porcelain emitted '${t27_porcelain}', not the bare in-range prefix"
+fi
+check_absent "EDMDS-T27 AC4 -- --porcelain omits the phase-0 initiative (below the 1-6 window)" \
+  "T27ZERO" "$t27_porcelain"
+check_absent "EDMDS-T27 AC4 -- --porcelain omits the phase-7 initiative (above the 1-6 window)" \
+  "T27DONE" "$t27_porcelain"
+check_num "EDMDS-T27 AC4 -- exactly one of the fixture's three initiatives is emitted" \
+  "1" "$(_t27_count_lines "$t27_porcelain")"
+
+# The sentinel half of AC1, which the fixture above cannot show (it has something to emit): on a
+# root where nothing is in range, the human form still prints its parenthesized sentinel and the
+# machine form prints zero bytes, so every line a consumer receives is a prefix.
+t27_porcelain_none="$(_t27_state "$T27_SRD_OUT_OF_RANGE" active-initiatives --porcelain 2>/dev/null || true)"
+t27_human_none="$(_t27_state "$T27_SRD_OUT_OF_RANGE" active-initiatives 2>/dev/null || true)"
+if [[ -z "$t27_porcelain_none" ]]; then
+  pass "EDMDS-T27 AC1 -- with nothing in range, --porcelain emits zero bytes: no sentinel line for a consumer to filter"
+else
+  fail "EDMDS-T27 AC1 -- with nothing in range, --porcelain emitted '${t27_porcelain_none}' instead of zero bytes"
+fi
+check "EDMDS-T27 AC1 -- the DEFAULT emission still prints its human sentinel in that same case, so the flag changed nothing about it" \
+  "(no active initiatives)" "$t27_human_none"
+
+# ---- AC1: a flag, not a default change ----------------------------------------------------------
+t27_human="$(_t27_state "$T27_SRD" active-initiatives 2>/dev/null || true)"
+check "EDMDS-T27 AC1 -- the default emission is unchanged: still the padded human line carrying its phase token" \
+  "phase=3" "$t27_human"
+check "EDMDS-T27 AC1 -- ...and still names the in-range initiative" "T27LIVE" "$t27_human"
+check_absent "EDMDS-T27 AC1 -- ...and still applies the same 1-6 window as the machine form" \
+  "T27DONE" "$t27_human"
+
+# A flag, not a positional: an unrecognized flag is refused with a usage line rather than ignored,
+# so a typo cannot silently return the human form to a machine consumer.
+t27_badflag_out="$(_t27_state "$T27_SRD" active-initiatives --porcelian 2>&1 || true)"
+check "EDMDS-T27 AC1 -- a mistyped flag is refused with a usage line naming the real one, never ignored" \
+  "usage: edm-state active-initiatives [--porcelain]" "$t27_badflag_out"
+t27_help_line="$(bash "$EDM_STATE" --help 2>&1 | grep -E 'active-initiatives' || true)"
+check "EDMDS-T27 AC1 -- --help documents the flag on active-initiatives' own line" \
+  "--porcelain" "$t27_help_line"
+
+# ---- AC5: the control -- this fixture really does distinguish the two derivations ---------------
+# Without this, the three exclusions above could be satisfied by a fixture that never contained an
+# out-of-range entry in the first place, or by an accessor that emits nothing at all. The
+# pre-change derivation is re-run here verbatim (`list`, scraped on the phase token) and REQUIRED
+# to disagree, naming the two entries it includes and --porcelain drops. It fails if the fixture
+# is degenerate, and it fails if `list` ever stops reporting out-of-range initiatives -- in which
+# case the exclusions above would be proving nothing.
+t27_list_scrape="$(_t27_state "$T27_SRD" list 2>/dev/null | awk '/phase=/{print $1}' || true)"
+check "EDMDS-T27 AC5 control -- the pre-change list-scrape DOES include the phase-0 entry --porcelain omits" \
+  "T27ZERO" "$t27_list_scrape"
+check "EDMDS-T27 AC5 control -- ...and the phase-7 entry --porcelain omits" \
+  "T27DONE" "$t27_list_scrape"
+check "EDMDS-T27 AC5 control -- ...and the in-range entry both derivations share, so agreement is non-empty rather than empty-and-vacuous" \
+  "T27LIVE" "$t27_list_scrape"
+check_num "EDMDS-T27 AC5 control -- the pre-change derivation yields all three fixture entries where the accessor yields one" \
+  "3" "$(_t27_count_lines "$t27_list_scrape")"
+if [[ "$t27_list_scrape" != "$t27_porcelain" ]]; then
+  pass "EDMDS-T27 AC5 control -- the two derivations produce DIFFERENT sets on this fixture, which is what makes the assertions above capable of failing"
+else
+  fail "EDMDS-T27 AC5 control -- the two derivations produced identical output on this fixture, so it cannot distinguish them and every assertion above is vacuous"
+fi
+
+# ---- AC2/AC3 (source shape): both consumers call the machine-readable emission, and neither
+# scrapes a human-readable listing any more. ------------------------------------------------------
+# The absence half is scanned over NON-COMMENT lines only, because both files legitimately
+# describe the token in prose explaining what they stopped doing -- a scan that matched its own
+# remediation text is this plugin's most reproducible self-defeating-detector shape. The filter is
+# therefore paired with a positive control per consumer: the same pipeline, over a scratch copy
+# carrying the real pre-change scrape line, must still find it. (This suite file is not itself in
+# the scanned set, so its own use of the literal below cannot self-match.)
+T27_PORCELAIN_CALL="active-initiatives --porcelain"
+T27_PHASE_TOKEN="phase="
+check "EDMDS-T27 AC2 -- edm-stop-gate calls the machine-readable emission" \
+  "$T27_PORCELAIN_CALL" "$(cat "$T27_STOP_GATE")"
+check "EDMDS-T27 AC2 -- edm-repo-readiness calls the machine-readable emission" \
+  "$T27_PORCELAIN_CALL" "$(cat "$T27_REPO_READINESS")"
+
+# _t27_noncomment <file> -- the file's code lines: every line whose first non-blank character is
+# not '#'. This is the pipeline BOTH the real haystack and the control haystack below go through.
+_t27_noncomment() { grep -vE '^[[:space:]]*#' "$1" || true; }
+
+# _t27_control_copy <outvar> <source> <injected-line> -- a scratch copy of <source> with one real
+# pre-change scrape line appended. D96: the copy is taken FIRST and `cmp`-verified against its
+# source before anything is injected, so a control built on a truncated or wrong-file copy fails
+# here by name instead of silently proving nothing.
+_t27_control_copy() {
+  local _t27_outvar="$1" _t27_src="$2" _t27_inject="$3"
+  local _t27_dst="${T27_TMP}/control-$(basename "$_t27_src")"
+  cp "$_t27_src" "$_t27_dst"
+  if ! cmp -s "$_t27_src" "$_t27_dst"; then
+    fail "EDMDS-T27 AC3 -- the control copy of ${_t27_src} does not match its source; no control was built"
+    printf -v "$_t27_outvar" '%s' ""
+    return 1
+  fi
+  printf '%s\n' "$_t27_inject" >> "$_t27_dst"
+  printf -v "$_t27_outvar" '%s' "$_t27_dst"
+}
+
+T27_SG_CONTROL=""
+if _t27_control_copy T27_SG_CONTROL "$T27_STOP_GATE" '    *"phase="*) _prefix="$(awk "{print \$1}" <<< "$_line")" ;;'; then
+  assert_tree_absent "EDMDS-T27 AC3 -- edm-stop-gate parses no human-readable listing: its code carries no phase-token scrape" \
+    "$T27_PHASE_TOKEN" "$(_t27_noncomment "$T27_STOP_GATE")" "$(_t27_noncomment "$T27_SG_CONTROL")" \
+    "$T27_STOP_GATE" "$T27_SG_CONTROL"
+fi
+T27_RR_CONTROL=""
+if _t27_control_copy T27_RR_CONTROL "$T27_REPO_READINESS" '  "$EDM_STATE_BIN" list 2>/dev/null | awk "/phase=/{print \$1}"'; then
+  assert_tree_absent "EDMDS-T27 AC3 -- edm-repo-readiness parses no human-readable listing: its code carries no phase-token scrape" \
+    "$T27_PHASE_TOKEN" "$(_t27_noncomment "$T27_REPO_READINESS")" "$(_t27_noncomment "$T27_RR_CONTROL")" \
+    "$T27_REPO_READINESS" "$T27_RR_CONTROL"
+fi
+
+# ---- AC2 (behavioural): edm-stop-gate really resolves its prefixes through the new emission -----
+# Source shape proves the call; this proves the gate still works through it. The fixture carries an
+# in-range initiative with an open PARTIAL (a blocking-class anomaly, so the gate's verdict is
+# "block") beside an out-of-range sibling, and the control moves the in-range one out of the window
+# so the SAME repository must stop blocking -- which is what attributes the block to prefix
+# resolution rather than to anything unconditional.
+#
+# stdin is redirected from /dev/null on every invocation: this gate reads its Stop payload with a
+# NUL-delimited read, so a run that inherits a stdin which never delivers EOF hangs the suite.
+T27_GATE_REPO="${T27_TMP}/gate-repo"
+mkdir -p "$T27_GATE_REPO"
+( cd "$T27_GATE_REPO" \
+    && git init -q . \
+    && git config user.email edm-harness@example.com \
+    && git config user.name "EDM Test Harness" \
+    && git config commit.gpgsign false ) >/dev/null 2>&1
+T27_GATE_SRD="${T27_GATE_REPO}/SRD"
+
+# _t27_gate_state <args...> / _t27_gate -- the real binaries inside the fixture's environment.
+_t27_gate_state() {
+  ( cd "$T27_GATE_REPO" \
+      && HOME="${T27_TMP}/home" CLAUDE_PROJECT_DIR="$T27_GATE_REPO" \
+         CLAUDE_PLUGIN_DATA="${T27_TMP}/data" XDG_DATA_HOME="" EDM_SRD_ROOT="$T27_GATE_SRD" \
+         PATH="${PLUGIN_DIR}/bin:${PATH}" "$EDM_STATE" "$@" )
+}
+_t27_gate() {
+  t27_gate_rc=0
+  t27_gate_err="$( cd "$T27_GATE_REPO" \
+      && HOME="${T27_TMP}/home" CLAUDE_PROJECT_DIR="$T27_GATE_REPO" \
+         CLAUDE_PLUGIN_DATA="${T27_TMP}/data" XDG_DATA_HOME="" EDM_SRD_ROOT="$T27_GATE_SRD" \
+         PATH="${PLUGIN_DIR}/bin:${PATH}" "$T27_STOP_GATE" </dev/null 2>&1 >/dev/null )" \
+    || t27_gate_rc=$?
+}
+
+_t27_gate_state init T27LIVE >/dev/null 2>&1
+_t27_gate_state set T27LIVE current_phase 3 >/dev/null 2>&1
+_t27_gate_state record-partial-verdict T27LIVE T27LIVE-T01 PARTIAL "needs runtime check" >/dev/null 2>&1
+_t27_gate_state init T27DONE >/dev/null 2>&1
+_t27_gate_state set T27DONE current_phase 7 >/dev/null 2>&1
+
+t27_gate_precondition="$(_t27_gate_state active-initiatives --porcelain 2>/dev/null || true)"
+check "EDMDS-T27 AC2 precondition -- the gate fixture's in-range initiative is what the accessor reports" \
+  "T27LIVE" "$t27_gate_precondition"
+check_absent "EDMDS-T27 AC2 precondition -- ...and its out-of-range sibling is not" \
+  "T27DONE" "$t27_gate_precondition"
+
+t27_gate_rc=0
+t27_gate_err=""
+_t27_gate
+check_num "EDMDS-T27 AC2 -- edm-stop-gate resolves prefixes through the machine-readable emission and blocks on the in-range initiative's blocking anomaly" \
+  "2" "$t27_gate_rc"
+check "EDMDS-T27 AC2 -- ...naming that initiative" "T27LIVE" "$t27_gate_err"
+check_absent "EDMDS-T27 AC2 -- ...and never validating the out-of-range sibling the old list-scrape would have included" \
+  "T27DONE" "$t27_gate_err"
+
+# Control: move the blocking initiative out of the 1-6 window. Nothing else changes -- the open
+# PARTIAL is still there -- so a gate that had kept resolving prefixes from a phase-unaware
+# listing would still block here.
+_t27_gate_state set T27LIVE current_phase 7 >/dev/null 2>&1
+_t27_gate
+check_num "EDMDS-T27 AC2 control -- with the same anomaly moved out of the 1-6 window, the gate exits 0: the block above came from the accessor's scope, not from something unconditional" \
+  "0" "$t27_gate_rc"
+if [[ -z "$t27_gate_err" ]]; then
+  pass "EDMDS-T27 AC2 control -- ...and says nothing on either stream, per the gate's zero-active-initiatives contract"
+else
+  fail "EDMDS-T27 AC2 control -- the gate emitted '${t27_gate_err}' where its zero-active-initiatives contract requires silence"
+fi
+
+# ---- AC2/AC6 (behavioural): edm-repo-readiness consumes it, and its narrowed input set is
+# accounted for rather than vanishing. ------------------------------------------------------------
+# The accessor scopes to phases 1-6; this scorer previously scraped every non-archived initiative.
+# A repository whose only initiative sits outside that window therefore goes from one probed
+# initiative to zero -- and with nothing probed, every validate-derived check would answer "no
+# anomaly" and score FULL MARKS. CA-036/037/038: an unmeasurable category scores UNMEASURED and
+# stays in the denominator, never clean.
+_t27_readiness() {
+  ( cd "$1" && HOME="${T27_TMP}/home" CLAUDE_PROJECT_DIR="$1" CLAUDE_PLUGIN_DATA="${T27_TMP}/data" \
+      XDG_DATA_HOME="" EDM_SRD_ROOT="${1}/SRD" "$T27_REPO_READINESS" 2>/dev/null || true )
+}
+T27_RR_OUT_OF_RANGE_DIR="${T27_TMP}/rr-out-of-range"
+T27_RR_IN_RANGE_DIR="${T27_TMP}/rr-in-range"
+_t27_write_state "${T27_RR_OUT_OF_RANGE_DIR}/SRD/p/T27DONE__d" "T27DONE" 7
+_t27_write_state "${T27_RR_IN_RANGE_DIR}/SRD/p/T27LIVE__d"     "T27LIVE" 3
+
+t27_rr_out_of_range="$(_t27_readiness "$T27_RR_OUT_OF_RANGE_DIR")"
+check "EDMDS-T27 AC6 -- a repository whose only initiative is outside the 1-6 window scores the validate-derived categories UNMEASURED, naming why" \
+  "no initiative in phases 1-6" "$t27_rr_out_of_range"
+check "EDMDS-T27 AC6 -- ...counting the non-archived initiatives that exist but were not probed, so the exclusion is stated rather than silent" \
+  "1 non-archived initiative(s) exist outside that range" "$t27_rr_out_of_range"
+# Corroborating, not discriminating, and labelled as such: this repository would carry the FLOOR
+# warning anyway for an unrelated unmeasurable category, so it confirms the UNMEASURED path
+# reaches the summary renderer without being able to distinguish which category put it there. The
+# assertions above and below it are the ones that discriminate.
+check "EDMDS-T27 AC6 -- ...and the summary renderer presents the result as a FLOOR rather than a measurement (corroborating: this line does not by itself identify which category was unmeasurable)" \
+  "The overall score is a FLOOR, not a measurement." "$t27_rr_out_of_range"
+# The category is named on its own line as UNMEASURED rather than dropped from the report: the
+# score it is kept in the denominator with is asserted as a PROPERTY (unmeasured / measured), never
+# as today's literal figure, which a later ticket adding a State-health check would legitimately
+# move (CA-067).
+t27_rr_state_health_out="$(printf '%s\n' "$t27_rr_out_of_range" | grep -E '^## State health' || true)"
+check "EDMDS-T27 AC6 -- ...with State health kept in the report as UNMEASURED, never dropped out of the denominator" \
+  "UNMEASURED" "$t27_rr_state_health_out"
+
+# Control: one in-range initiative, everything else identical. The reason must NOT fire -- a reason
+# that fired unconditionally would make the assertions above pass on any repository at all, and a
+# scorer that marked State health unmeasurable whenever it looked at anything would be a strictly
+# worse defect than the one this AC closes.
+t27_rr_in_range="$(_t27_readiness "$T27_RR_IN_RANGE_DIR")"
+check_absent "EDMDS-T27 AC6 control -- with one initiative in the window, the phase-scope reason does not fire" \
+  "no initiative in phases 1-6" "$t27_rr_in_range"
+t27_rr_state_health_in="$(printf '%s\n' "$t27_rr_in_range" | grep -E '^## State health' || true)"
+check_absent "EDMDS-T27 AC6 control -- ...and State health is a real measurement of that initiative, not an UNMEASURED floor" \
+  "UNMEASURED" "$t27_rr_state_health_in"
+if [[ -n "$t27_rr_state_health_in" ]]; then
+  pass "EDMDS-T27 AC6 control -- ...and that State health line was actually produced, so the assertion above is not reading an empty string"
+else
+  fail "EDMDS-T27 AC6 control -- no State health line was produced at all; the UNMEASURED check above had nothing to look at"
+fi
+
 # =================================================================================================
 # EDMDS-T17 (EDMDS-07 AC4/AC7): the CA-416 band's round delivery is load-bearing, proven here.
 # =================================================================================================
