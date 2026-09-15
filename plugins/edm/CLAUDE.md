@@ -990,12 +990,32 @@ tooling is part of this format.
 
 Rule files live at `.claude/edm-hookify/*.json`, relative to the **project root** -- not the
 plugin root, and not the caller's working directory. The project root is resolved exactly the way
-`check_permission_rules()` already resolves it for the permission-rule scan (CA-448 precedent), so
-`bin/edm-hookify` -- and any future consumer -- never invents a second resolution procedure:
+`check_permission_rules()` already resolves it for the permission-rule scan, so `bin/edm-hookify`
+-- and any future consumer -- never invents a second resolution procedure. That claim of parity is
+now true; **it was false from CA-500 until EDMDS-11 AC1 made it true** (CA-109). This section, and
+`bin/edm-hookify`'s own help text, both described the pre-CA-500 CA-448 chain -- three steps with
+no cross-check -- while `bin/edm-state` had already adopted one, so a reader was told the two
+agreed when they had not agreed for two initiatives. The chain, stated in full:
 
-1. `CLAUDE_PROJECT_DIR`, when it names a real directory.
-2. Otherwise, `git rev-parse --show-toplevel`.
-3. Otherwise, `.` (the current working directory).
+1. `CLAUDE_PROJECT_DIR`, when it names a real directory **and** it equals, or sits inside, the git
+   toplevel -- both compared as PHYSICAL paths (`pwd -P`), so a symlinked spelling cannot smuggle a
+   path past the comparison.
+2. On disagreement, the **git toplevel wins** and the conflict is reported on stderr naming both
+   paths. The value is never rejected outright: a hook that refuses to run is a hook that has
+   stopped enforcing.
+3. When `CLAUDE_PROJECT_DIR` names a directory and there is **no git toplevel at all**, it is
+   accepted unchecked -- there is no repository boundary for it to have violated. This sub-case is
+   a deliberately retained gap rather than an oversight; EDMDS `decisions.md` D73 records it
+   `NOTED` with its bounds, and `bin/tests/wave6-smoke.sh` pins it for both resolvers so it cannot
+   be closed or widened in only one of them.
+4. Otherwise, `git rev-parse --show-toplevel`.
+5. Otherwise, `.` (the current working directory).
+
+This costs one `git rev-parse` per invocation where the pre-CA-500 chain spent one only when
+`CLAUDE_PROJECT_DIR` was unset -- and `bin/edm-bash-gate` runs on every Bash tool call. The
+short-circuit that would pay for it is not available: `RULE_DIR` is derived FROM the resolved root,
+so "this repository has no rule directory" cannot be evaluated before resolution completes. The
+cost is measured and recorded rather than avoided (EDMDS-11 AC7).
 
 The rule directory is **source-controlled, not gitignored, in the project that adopts it**. This
 is a deliberate divergence from a `.local.md`-plus-gitignore convention: a rule file changes what
@@ -1372,13 +1392,22 @@ approval, and into the informational `PERM_RULES_MISSING` anomaly when absent.
 It scans three files: `<project-root>/.claude/settings.local.json`,
 `<project-root>/.claude/settings.json`, and `${HOME}/.claude/settings.json`. The two project-level
 paths are anchored to the **project root**, not to the caller's working directory (CA-448):
-`CLAUDE_PROJECT_DIR` when the host exports it and it names a directory, else `git rev-parse
---show-toplevel`, else `.` as the pre-CA-448 fallback. Anchoring matters in both directions -- a
-cwd-relative probe from a subdirectory misses a correctly-configured install and downgrades an
-honest approval to `prose-only`, and a cwd inside an unrelated project would let that project's
-settings stamp `permission-ask` on this one's approval. `CLAUDE_PROJECT_DIR` is currently accepted
-on a bare directory test with no cross-check against the git toplevel, so it remains a one-token
-override of the resolved root (CA-500, open).
+`CLAUDE_PROJECT_DIR` when the host exports it, it names a directory, and it survives the CA-500
+cross-check; else `git rev-parse --show-toplevel`; else `.` as the pre-CA-448 fallback. Anchoring
+matters in both directions -- a cwd-relative probe from a subdirectory misses a correctly-configured
+install and downgrades an honest approval to `prose-only`, and a cwd inside an unrelated project
+would let that project's settings stamp `permission-ask` on this one's approval.
+
+**CA-500 is closed, in all three resolvers (EDMDS-11, CA-109).** `CLAUDE_PROJECT_DIR` was once
+accepted here on a bare directory test with no cross-check, making it a one-token override of the
+resolved root; `_resolve_permcheck_project_root()` has cross-checked it against the git toplevel
+since CA-500, and `bin/edm-hookify`'s resolver does too as of EDMDS-11 -- see the identical chain
+spelled out under "Rule directory and discovery" above, including the no-git-toplevel sub-case that
+`decisions.md` D73 records `NOTED`. The third resolver, `edm_project_key()` in
+`bin/_edm-datadir-lib.sh`, adopts the **physical-path half only**: it normalizes through `pwd -P`
+so two spellings of one project cannot key two different Phase-6 markers, but it does not spend a
+`git rev-parse` on containment, because it sits on `bin/edm-gateguard`'s marker-absent fast path.
+That split is three-way and deliberate, not two resolvers fixed and one forgotten.
 
 ## `bin/` helper scripts
 
@@ -1387,7 +1416,7 @@ Scripts in `bin/` are added to PATH while the plugin is enabled. Skills call the
 | Script                | Purpose                                                                                                                                                                                                                                     |
 |-----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `edm-state`           | Read/write `.edm-state.json` files; 42 subcommands: `init`, `get`, `set`, `list`, `active-initiatives`, `migrate-path`, `migrate-schema`, `approve-gate`, `phase-start`, `phase-complete`, `checkpoint-if-active`, `record-test-coverage`, `record-tests-added`, `get-coverage`, `srd-version`, `archive`, `write-handoff`, `watch-impl`, `metrics-report`, `validate`, `gate-check`, `branch-check`, `record-branch`, `git-lock-check`, `current-step`, `session-start`, `audit-round-start`, `audit-round-complete`, `render-ledger`, `audit-converged`, `record-partial-verdict`, `set-mode`, `skip-phase`, `set-supersedes`, `set-forked-from`, `resolve-dir`, `unlock` (`CA-087`: releases an orphaned `${lockbase}.lockd` state-lock DIRECTORY for one initiative and any `.stale.<pid>` copy a reclaim staged aside, printing the recorded holder PID and the lock's age first so the operator's judgement is an informed one. `with_state_lock` breaks such a lock automatically past `EDM_STATE_LOCK_STALE_S`; this exists for the case where that cap has not fired yet, or the operator does not want to wait for it. It NEVER touches `${lockbase}.lock`, the flock-branch file -- CA-169: flock's mutual exclusion is keyed on that file's inode, so unlinking it lets a later contender lock a fresh inode at the same path while an earlier holder that still has the old one open believes it still holds the lock. The flock backend needs no hatch anyway: the kernel releases a flock when its holder dies, however it dies, so unlike a lock directory it cannot be orphaned), `set-parent`, `add-related`, `update-patterns`, `get-patterns`, `detect-conditional-lenses` (`EDMV4-T24`: `detect-conditional-lenses [<PREFIX>]` prints a CSV of `CONDITIONAL_LENS_IDS` members genuinely N/A -- inapplicable, never skipped for cost, guard D2 -- for the current repository's TRACKED files; empty output, exit 0, means none are N/A. A genuinely empty tracked-file set and a FAILED `git ls-files` are not the same fact, so a failed listing **dies** non-zero rather than reading as "nothing is a typed-stack marker" (CA-035a) -- this subcommand's answer gates `round_type=full`, and the pre-fix `|| true` scored every conditional lens N/A on a repository it could not even inspect. Marker predicates match at ANY depth, not only at the repository root (CA-035b): a monorepo carrying only `packages/app/tsconfig.json` is a typed stack, and the pre-fix root-anchored exact match reported it L13 N/A -- coverage loss disguised as an efficiency gain, guard D2's own failure mode. `skills/code-audit/SKILL.md` Step 1 is the sole authority that calls it, per the same N/A-determination precedent this file's "Layers that are N/A and per-epic test plans" section documents for the test layer; the marker list itself lives only in `bin/edm-state`, never restated here) |
-| `_edm-datadir-lib.sh` | Sourced-only shared data-directory resolver (EDMV4-T17, architecture.md AD3), never executed directly. Four functions: `edm_data_dir()` (resolves a writable plugin data root: `${CLAUDE_PLUGIN_DATA}` if absolute, creatable **and EDM-owned**, else `${XDG_DATA_HOME}/edm` if absolute, else `${HOME}/.local/share/edm`, else the empty string), `edm_data_dir_claim()` (creates the resolved root and drops the `.edm-owned` sentinel -- the ONLY writing function in the file; `edm_data_dir()` itself still writes nothing, EDMV4-T17 AC9), `edm_project_key()` (encodes the current project root -- `${CLAUDE_PROJECT_DIR}`, else `git rev-parse --show-toplevel`, else `pwd` -- replacing `/` and `.` with `-`), and `edm_marker_path()` (prints `${data}/run/<key>.phase6`). Sourced by its two consumers, `edm-state` and `edm-gateguard`, guarded so a missing file degrades the sourcing script rather than aborting it. |
+| `_edm-datadir-lib.sh` | Sourced-only shared data-directory resolver (EDMV4-T17, architecture.md AD3), never executed directly. Four functions: `edm_data_dir()` (resolves a writable plugin data root: `${CLAUDE_PLUGIN_DATA}` if absolute, creatable **and EDM-owned**, else `${XDG_DATA_HOME}/edm` if absolute, else `${HOME}/.local/share/edm`, else the empty string), `edm_data_dir_claim()` (creates the resolved root and drops the `.edm-owned` sentinel -- the ONLY writing function in the file; `edm_data_dir()` itself still writes nothing, EDMV4-T17 AC9), `edm_project_key()` (encodes the current project root -- `${CLAUDE_PROJECT_DIR}`, else `git rev-parse --show-toplevel`, else `pwd` -- **normalized through `cd ... && pwd -P` whichever of the three branches supplied it**, then replacing `/` and `.` with `-`), and `edm_marker_path()` (prints `${data}/run/<key>.phase6`). Sourced by its two consumers, `edm-state` and `edm-gateguard`, guarded so a missing file degrades the sourcing script rather than aborting it. **EDMDS-11 AC2 (CA-109) added the `pwd -P` step**, which is this file's half of the three-way resolver convergence described under "Required setup: permission `ask` rules" above: without it a logical (symlinked) and a physical spelling of ONE project produced TWO keys, so a Phase-6 gate armed under one spelling was invisible under the other -- no attacker needed, and on macOS `/tmp`, `/var` and `TMPDIR` are all symlinks. `cd` and `pwd` are builtins, so this added no external binary and `git` is still spawned only when `CLAUDE_PROJECT_DIR` is unset or names no directory (EDMV4-T17 AC7). **AC8b's consequence, stated because it is a write on a read path:** convergence necessarily MOVES the key for the losing spelling, so `edm_marker_path()` first renames any `run/<old-key>.phase6`/`.checked`/`.denials` onto the new key (`_edm_migrate_run_keys()`). It is the one chokepoint both the marker's writer and `edm-gateguard`'s reader traverse, it writes nothing when the two spellings already agree or no legacy entry exists, and it never overwrites an entry already under the new key. Without it an upgrade would leave a marker unreachable under its old name and `edm-gateguard` would find none under the new one and allow every edit -- litter plus a silently disabled gate. |
 | `edm-init`            | Scaffold a new initiative directory (`SRD/{PREFIX}/` or `SRD/{PRODUCT}/{PREFIX}__{desc}/`) with empty state file |
 | `edm-validate-prefix` | Verify a proposed prefix doesn't collide with existing initiatives across all product subdirectories |
 | `edm-lint-artifacts`  | Scan initiative artifact markdown for violation classes including attribution trailers, non-ASCII bytes, leaked tool-invocation tags, and a literal `;` inside Mermaid label/edge/message text; run `edm-lint-artifacts --help` for the authoritative, current class list rather than a count hardcoded here (a count drifts as classes are added). Called per resolved prefix by `edm-lint-staged-artifacts` |

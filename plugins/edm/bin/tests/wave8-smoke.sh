@@ -5936,11 +5936,18 @@ echo
 # <payload> on stdin with CLAUDE_PROJECT_DIR=<proj-dir> and plugins/edm/bin prepended to PATH (so
 # the real edm-hookify and jq resolve exactly as they would for a live host invocation), capturing
 # stdout/stderr/rc into the CA004_RUN_* globals.
+#
+# EDMDS-T25 (CA-109): the run happens WITH <proj-dir> AS THE CWD, which is what a live host
+# invocation actually looks like -- the host opens a project and the hook inherits that cwd. It
+# used to run from wherever the suite was started, which is inside this marketplace repository, so
+# once edm-hookify adopted CA-500's cross-check the resolver correctly saw a CLAUDE_PROJECT_DIR
+# outside the enclosing git toplevel and preferred the toplevel, discovering none of this
+# fixture's rules. The same cd is what cahk_run and t43_run in this file already do.
 ca004_bash_gate_run() {
   local proj="$1" payload="$2"
   CA004_RUN_RC=0
-  CA004_RUN_OUT="$(printf '%s' "$payload" | CLAUDE_PROJECT_DIR="$proj" PATH="${PLUGIN_DIR}/bin:${PATH}" \
-    bash "$EDM_BASH_GATE" 2>"${TMP}/ca004-run.stderr")" || CA004_RUN_RC=$?
+  CA004_RUN_OUT="$(printf '%s' "$payload" | ( cd "$proj" && CLAUDE_PROJECT_DIR="$proj" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+    bash "$EDM_BASH_GATE" 2>"${TMP}/ca004-run.stderr" ))" || CA004_RUN_RC=$?
   CA004_RUN_ERR="$(cat "${TMP}/ca004-run.stderr" 2>/dev/null || true)"
 }
 
@@ -7446,13 +7453,18 @@ mkdir -p "${T51_AC8_HK_PROJ}/.claude/edm-hookify"
 cp "${PLUGIN_DIR}/bin/tests/fixtures/hookify/warn-no-console-log.json" \
    "${T51_AC8_HK_PROJ}/.claude/edm-hookify/"
 t51_ac8_run_hookify() {
-  # <script-path> -- runs `eval file` with a well-formed payload on the jq-less PATH.
+  # <script-path> -- runs `eval file` with a well-formed payload on the jq-less PATH, FROM the
+  # fixture project as cwd. EDMDS-T25 (CA-109): `git` is deliberately on this isolated PATH, so
+  # once edm-hookify adopted CA-500's cross-check, running from the suite's own cwd (inside this
+  # marketplace repository) made the resolver correctly prefer the enclosing toplevel -- whose
+  # rule directory is empty, which sends the run down AC10's exit-0-before-jq path and defeats the
+  # non-empty-rule-set precondition the comment above states this case depends on.
   # Sets T51_AC8_RC / T51_AC8_ERR.
   local script="$1"
   T51_AC8_RC=0
   printf '%s' '{"tool_name":"Edit","tool_input":{"file_path":"x.js","new_text":"console.log(1)"}}' \
-    | CLAUDE_PROJECT_DIR="$T51_AC8_HK_PROJ" PATH="$T51_AC8_FAKEBIN" \
-      /bin/bash "$script" eval file >/dev/null 2>"${T51_AC8_TMP}/hk.err" || T51_AC8_RC=$?
+    | ( cd "$T51_AC8_HK_PROJ" && CLAUDE_PROJECT_DIR="$T51_AC8_HK_PROJ" PATH="$T51_AC8_FAKEBIN" \
+      /bin/bash "$script" eval file >/dev/null 2>"${T51_AC8_TMP}/hk.err" ) || T51_AC8_RC=$?
   T51_AC8_ERR="$(cat "${T51_AC8_TMP}/hk.err" 2>/dev/null || true)"
 }
 t51_ac8_run_hookify "$EDM_HOOKIFY"
@@ -7877,9 +7889,13 @@ printf 'T52PFX\t%s\t2026-09-02T00:00:00Z\n' "${T52_AC7B_TMP}/proj" > "${T52_AC7B
 printf 'safe.js\n' > "${T52_AC7B_TMP}/data/run/${T52_AC7B_KEY}.checked"
 
 T52_AC7B_RC=0
+# EDMDS-T25 (CA-109): run with the fixture project as cwd. edm-gateguard shells out to the real
+# edm-hookify, whose resolver now applies CA-500's cross-check, so a run started from inside this
+# marketplace repository correctly preferred the enclosing toplevel and found no rule to match --
+# an empty allow that reads identically to "the sanitizer worked".
 T52_AC7B_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"safe.js"}}' | \
-  CLAUDE_PROJECT_DIR="${T52_AC7B_TMP}/proj" CLAUDE_PLUGIN_DATA="${T52_AC7B_TMP}/data" \
-  EDM_GATEGUARD_DENY_MODE=json PATH="${PLUGIN_DIR}/bin:${PATH}" bash "$GATEGUARD" 2>"${TMP}/t52-ac7b.stderr")" || T52_AC7B_RC=$?
+  ( cd "${T52_AC7B_TMP}/proj" && CLAUDE_PROJECT_DIR="${T52_AC7B_TMP}/proj" CLAUDE_PLUGIN_DATA="${T52_AC7B_TMP}/data" \
+  EDM_GATEGUARD_DENY_MODE=json PATH="${PLUGIN_DIR}/bin:${PATH}" bash "$GATEGUARD" 2>"${TMP}/t52-ac7b.stderr" ))" || T52_AC7B_RC=$?
 printf '%s' "$T52_AC7B_OUT" > "${T52_SCRATCH}/ac7b-hookify.out"
 T52_AC7B_ASCII_HITS="$(t52_ascii_scan "${T52_SCRATCH}/ac7b-hookify.out" || true)"
 check "EDMV4-T52 AC7 -- the fixture genuinely matched the hookify rule (a real denial, not an empty allow)" \
@@ -10472,9 +10488,12 @@ ca043_gateguard_case() {
   cp "$fixture" "${dir}/proj/.claude/edm-hookify/"
 
   CA043_RC=0
+  # EDMDS-T25 (CA-109): the fixture project is the cwd, matching a live hook invocation. edm-hookify
+  # applies CA-500's cross-check now, so running from the suite's own cwd inside this marketplace
+  # repository made it prefer the enclosing toplevel and evaluate none of these fixtures.
   CA043_OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"safe.js","new_string":"console.log(1)"}}' | \
-    CLAUDE_PROJECT_DIR="${dir}/proj" CLAUDE_PLUGIN_DATA="${dir}/data" EDM_GATEGUARD_DENY_MODE=json \
-    PATH="${PLUGIN_DIR}/bin:${PATH}" bash "$gate" 2>"${dir}/stderr")" || CA043_RC=$?
+    ( cd "${dir}/proj" && CLAUDE_PROJECT_DIR="${dir}/proj" CLAUDE_PLUGIN_DATA="${dir}/data" EDM_GATEGUARD_DENY_MODE=json \
+    PATH="${PLUGIN_DIR}/bin:${PATH}" bash "$gate" 2>"${dir}/stderr" ))" || CA043_RC=$?
   CA043_ERR="$(cat "${dir}/stderr" 2>/dev/null || true)"
 }
 
@@ -11908,11 +11927,16 @@ p2g34_hookify_project() {
 
 # p2g34_hookify_eval <proj> <event> -- runs the REAL edm-hookify against <proj>, capturing
 # stdout/stderr/rc into P2G34_OUT / P2G34_ERR / P2G34_RC.
+#
+# EDMDS-T25 (CA-109): <proj> is the cwd for the run, matching a live invocation and matching what
+# cahk_run and t43_run in this file already do. Started from the suite's own cwd, edm-hookify's
+# CA-500 cross-check correctly preferred this marketplace repository's toplevel over a scratch
+# CLAUDE_PROJECT_DIR outside it, so none of the rule files below were ever read.
 p2g34_hookify_eval() {
   local proj="$1" ev="$2"
   P2G34_RC=0
-  P2G34_OUT="$(printf '%s' '{"command":"true"}' | CLAUDE_PROJECT_DIR="$proj" \
-    bash "$P2G34_HOOKIFY" eval "$ev" 2>"${P2G34_TMP}/hookify.stderr")" || P2G34_RC=$?
+  P2G34_OUT="$(printf '%s' '{"command":"true"}' | ( cd "$proj" && CLAUDE_PROJECT_DIR="$proj" \
+    bash "$P2G34_HOOKIFY" eval "$ev" 2>"${P2G34_TMP}/hookify.stderr" ))" || P2G34_RC=$?
   P2G34_ERR="$(cat "${P2G34_TMP}/hookify.stderr" 2>/dev/null || true)"
 }
 
@@ -12046,15 +12070,21 @@ P2G34_C115_PAYLOAD='{"tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/scr
 
 # Positive control FIRST: with no switch set, this fixture really does block. Without this the
 # exit-0 results below would be indistinguishable from a fixture that never blocked at all.
+#
+# EDMDS-T25 (CA-109): every run in this case uses the fixture project as its cwd. edm-hookify's
+# CA-500 cross-check otherwise prefers this marketplace repository's toplevel over the scratch
+# CLAUDE_PROJECT_DIR, which silently emptied the rule set -- and that would have disguised itself
+# as "the kill switch worked" on every assertion below except this positive control, which is
+# precisely why the positive control is here.
 P2G34_C115_BASE_RC=0
-printf '%s' "$P2G34_C115_PAYLOAD" | CLAUDE_PROJECT_DIR="$P2G34_C115_DIR" PATH="${PLUGIN_DIR}/bin:${PATH}" \
-  /bin/bash "$P2G34_BASHGATE" >/dev/null 2>&1 || P2G34_C115_BASE_RC=$?
+printf '%s' "$P2G34_C115_PAYLOAD" | ( cd "$P2G34_C115_DIR" && CLAUDE_PROJECT_DIR="$P2G34_C115_DIR" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+  /bin/bash "$P2G34_BASHGATE" >/dev/null 2>&1 ) || P2G34_C115_BASE_RC=$?
 check_num "CA-115 positive control -- with no kill switch set, the fixture rule DOES block (exit 2)" "2" "$P2G34_C115_BASE_RC"
 
 for p2g34_sw in 0 false off disabled disable; do
   P2G34_C115_RC=0
-  P2G34_C115_OUT="$(printf '%s' "$P2G34_C115_PAYLOAD" | CLAUDE_PROJECT_DIR="$P2G34_C115_DIR" \
-    PATH="${PLUGIN_DIR}/bin:${PATH}" EDM_HOOKIFY="$p2g34_sw" /bin/bash "$P2G34_BASHGATE" 2>&1)" || P2G34_C115_RC=$?
+  P2G34_C115_OUT="$(printf '%s' "$P2G34_C115_PAYLOAD" | ( cd "$P2G34_C115_DIR" && CLAUDE_PROJECT_DIR="$P2G34_C115_DIR" \
+    PATH="${PLUGIN_DIR}/bin:${PATH}" EDM_HOOKIFY="$p2g34_sw" /bin/bash "$P2G34_BASHGATE" 2>&1 ))" || P2G34_C115_RC=$?
   if [[ "$P2G34_C115_RC" -eq 0 && -z "$P2G34_C115_OUT" ]]; then
     pass "CA-115 -- EDM_HOOKIFY=${p2g34_sw} disables the gate silently (exit 0, no output) against a rule that otherwise blocks"
   else
@@ -12063,16 +12093,16 @@ for p2g34_sw in 0 false off disabled disable; do
 done
 
 P2G34_C115D_RC=0
-printf '%s' "$P2G34_C115_PAYLOAD" | CLAUDE_PROJECT_DIR="$P2G34_C115_DIR" PATH="${PLUGIN_DIR}/bin:${PATH}" \
-  EDM_HOOKIFY_DISABLED=1 /bin/bash "$P2G34_BASHGATE" >/dev/null 2>&1 || P2G34_C115D_RC=$?
+printf '%s' "$P2G34_C115_PAYLOAD" | ( cd "$P2G34_C115_DIR" && CLAUDE_PROJECT_DIR="$P2G34_C115_DIR" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+  EDM_HOOKIFY_DISABLED=1 /bin/bash "$P2G34_BASHGATE" >/dev/null 2>&1 ) || P2G34_C115D_RC=$?
 check_num "CA-115 -- EDM_HOOKIFY_DISABLED=1 disables the gate (exit 0)" "0" "$P2G34_C115D_RC"
 
 # Negative control on the SECOND switch's strictness: it recognizes the literal "1" only, matching
 # EDM_GATEGUARD_DISABLED. A truthy-looking value must NOT disable the gate.
 for p2g34_bad in true yes 0 ""; do
   P2G34_C115N_RC=0
-  printf '%s' "$P2G34_C115_PAYLOAD" | CLAUDE_PROJECT_DIR="$P2G34_C115_DIR" PATH="${PLUGIN_DIR}/bin:${PATH}" \
-    EDM_HOOKIFY_DISABLED="$p2g34_bad" /bin/bash "$P2G34_BASHGATE" >/dev/null 2>&1 || P2G34_C115N_RC=$?
+  printf '%s' "$P2G34_C115_PAYLOAD" | ( cd "$P2G34_C115_DIR" && CLAUDE_PROJECT_DIR="$P2G34_C115_DIR" PATH="${PLUGIN_DIR}/bin:${PATH}" \
+    EDM_HOOKIFY_DISABLED="$p2g34_bad" /bin/bash "$P2G34_BASHGATE" >/dev/null 2>&1 ) || P2G34_C115N_RC=$?
   if [[ "$P2G34_C115N_RC" -eq 2 ]]; then
     pass "CA-115 -- negative control: EDM_HOOKIFY_DISABLED='${p2g34_bad}' does NOT disable the gate (literal \"1\" only) -- the block still fires"
   else
@@ -14078,6 +14108,240 @@ if t52_ordering_ok "$EDMDS06_CROSS" "emit_decision" "$T52_GG_SAN_REASON" '"$untr
 else
   fail "EDMDS-02 AC4b control FAILED -- the wrong key also caught the cross-pairing leak, so this pair says nothing about keying"
 fi
+echo
+echo "=== EDMDS-T25 (CA-109 / EDMDS-11): project-key normalization, marker-name stability, key migration ==="
+echo
+
+# The fixture's project root is reached through a SYMLINK, deliberately and load-bearingly. `pwd -P`
+# normalization makes two spellings of one project converge, which by construction moves the key for
+# the losing spelling -- so a symlink-free fixture goes green while a real upgrade renames live keys.
+# On macOS /tmp, /var and TMPDIR are all symlinked, which is how this reaches ordinary users rather
+# than only hostile ones.
+w8_scratch_dir EDMDS25_TMP
+EDMDS25_BASE="$(cd "$EDMDS25_TMP" && pwd -P)"
+mkdir -p "${EDMDS25_BASE}/real" "${EDMDS25_BASE}/data/run"
+ln -s "${EDMDS25_BASE}/real" "${EDMDS25_BASE}/link"
+EDMDS25_PHYS="${EDMDS25_BASE}/real"
+EDMDS25_LOGI="${EDMDS25_BASE}/link"
+
+if [[ -L "$EDMDS25_LOGI" && -d "$EDMDS25_LOGI" ]]; then
+  pass "EDMDS-T25 fixture precondition -- the logical spelling really is a symlink resolving to the physical project root"
+else
+  fail "EDMDS-T25 fixture precondition -- the logical spelling is not a symlink to a directory, so every assertion below is testing the symlink-free case it exists to avoid"
+fi
+
+# ---- The pre-change library, as a scratch mutant, is what "before" means below -------------------
+#
+# EDMDS decisions.md D96: the backup is taken FIRST and cmp'd against the source BEFORE anything is
+# mutated, and the mutation is then proven to have changed something. A harness whose copy silently
+# failed would mutate the real library and make every restore a no-op -- which is exactly what
+# happened once already in this initiative, compounding four mutations onto a shipped binary. The
+# real library is never written to here at all; only scratch copies are.
+EDMDS25_MUTDIR="${EDMDS25_BASE}/mutants"
+mkdir -p "$EDMDS25_MUTDIR"
+EDMDS25_PRISTINE="${EDMDS25_MUTDIR}/lib.pristine.sh"
+EDMDS25_NONORM="${EDMDS25_MUTDIR}/lib.nonorm.sh"
+cp "$DATADIR_LIB" "$EDMDS25_PRISTINE"
+if cmp -s "$DATADIR_LIB" "$EDMDS25_PRISTINE"; then
+  pass "EDMDS-T25 control harness -- the scratch copy of _edm-datadir-lib.sh is byte-identical to the source before any mutation (D96)"
+else
+  fail "EDMDS-T25 control harness -- the scratch copy diverges from the source; every control verdict below would be unfalsifiable"
+fi
+# The mutation reverts exactly one thing: the pwd -P normalization. The `if [[ -z "$phys" ]]` arm
+# below it then restores the unnormalized value, so the mutant reproduces the PRE-EDMDS-11 resolver
+# rather than a broken one -- which is what makes it a legitimate "before" rather than a straw man.
+sed -e 's@^  phys="$(cd "$dir" 2>/dev/null \&\& pwd -P)" || phys=""@  phys=""@' \
+  "$EDMDS25_PRISTINE" > "$EDMDS25_NONORM"
+if cmp -s "$EDMDS25_PRISTINE" "$EDMDS25_NONORM"; then
+  fail "EDMDS-T25 control harness -- the de-normalization mutation changed nothing, so every control below proves nothing"
+else
+  pass "EDMDS-T25 control harness -- the de-normalization mutation genuinely altered the scratch copy"
+fi
+
+# edmds25_key <lib> <claude-project-dir> -- the key that <lib> derives for <claude-project-dir>,
+# driven through the CLAUDE_PROJECT_DIR BRANCH specifically (EDMDS-11 AC8): that is the branch a
+# host-set value actually takes, and the one a fixture driving only the `pwd` fallback would miss.
+edmds25_key() {
+  CLAUDE_PROJECT_DIR="$2" /bin/bash -c ". '$1'; edm_project_key" 2>/dev/null
+}
+
+# ---- EDMDS-11 AC2: a logical and a physical path for ONE project yield the SAME key --------------
+EDMDS25_K_PHYS="$(edmds25_key "$DATADIR_LIB" "$EDMDS25_PHYS")"
+EDMDS25_K_LOGI="$(edmds25_key "$DATADIR_LIB" "$EDMDS25_LOGI")"
+if [[ -n "$EDMDS25_K_PHYS" && "$EDMDS25_K_PHYS" == "$EDMDS25_K_LOGI" ]]; then
+  pass "EDMDS-11 AC2 -- a logical (symlinked) and a physical spelling of one project yield the SAME project key (${EDMDS25_K_PHYS})"
+else
+  fail "EDMDS-11 AC2 -- the two spellings diverge: physical=[${EDMDS25_K_PHYS}] logical=[${EDMDS25_K_LOGI}]"
+fi
+
+EDMDS25_K_PHYS_BEFORE="$(edmds25_key "$EDMDS25_NONORM" "$EDMDS25_PHYS")"
+EDMDS25_K_LOGI_BEFORE="$(edmds25_key "$EDMDS25_NONORM" "$EDMDS25_LOGI")"
+if [[ -n "$EDMDS25_K_LOGI_BEFORE" && "$EDMDS25_K_PHYS_BEFORE" != "$EDMDS25_K_LOGI_BEFORE" ]]; then
+  pass "EDMDS-11 AC2 control -- with the pwd -P normalization reverted the two spellings DO diverge, so the assertion above discriminates"
+else
+  fail "EDMDS-11 AC2 control -- the de-normalized library agreed on both spellings, so the assertion above would pass with or without the fix"
+fi
+
+# ---- EDMDS-11 AC8: no marker NAME changes, for the spelling that was already physical ------------
+#
+# "No marker name changes" and "the two spellings converge on one key" cannot both hold literally,
+# since convergence necessarily moves the losing spelling. The property that IS asserted is the one
+# that matters to a live install: the key derived from the PHYSICAL spelling is byte-identical
+# before and after, and the logical spelling now converges onto it rather than onto a third value.
+if [[ -n "$EDMDS25_K_PHYS_BEFORE" && "$EDMDS25_K_PHYS_BEFORE" == "$EDMDS25_K_PHYS" ]]; then
+  pass "EDMDS-11 AC8 -- the key derived from the PHYSICAL spelling is byte-identical before and after the change, so no already-correct marker is renamed"
+else
+  fail "EDMDS-11 AC8 -- the physical spelling's key moved: before=[${EDMDS25_K_PHYS_BEFORE}] after=[${EDMDS25_K_PHYS}]"
+fi
+if [[ "$EDMDS25_K_LOGI" == "$EDMDS25_K_PHYS_BEFORE" ]]; then
+  pass "EDMDS-11 AC8 -- the logical spelling converges onto the physical spelling's existing key rather than onto a third value"
+else
+  fail "EDMDS-11 AC8 -- the logical spelling resolved to [${EDMDS25_K_LOGI}], which is neither its own old key nor the physical spelling's [${EDMDS25_K_PHYS_BEFORE}]"
+fi
+
+# The same property through the whole marker PATH rather than the bare key, since the marker name is
+# what edm-gateguard actually tests for.
+EDMDS25_M_PHYS="$(CLAUDE_PLUGIN_DATA="${EDMDS25_BASE}/data" CLAUDE_PROJECT_DIR="$EDMDS25_PHYS" \
+  /bin/bash -c ". '$DATADIR_LIB'; edm_marker_path" 2>/dev/null)"
+EDMDS25_M_PHYS_BEFORE="$(CLAUDE_PLUGIN_DATA="${EDMDS25_BASE}/data" CLAUDE_PROJECT_DIR="$EDMDS25_PHYS" \
+  /bin/bash -c ". '$EDMDS25_NONORM'; edm_marker_path" 2>/dev/null)"
+if [[ -n "$EDMDS25_M_PHYS" && "$EDMDS25_M_PHYS" == "$EDMDS25_M_PHYS_BEFORE" ]]; then
+  pass "EDMDS-11 AC8 -- the full marker PATH for the physical spelling is byte-identical before and after"
+else
+  fail "EDMDS-11 AC8 -- the marker path moved: before=[${EDMDS25_M_PHYS_BEFORE}] after=[${EDMDS25_M_PHYS}]"
+fi
+
+# ---- EDMDS-11 AC8b: a marker under the PRE-CHANGE key is MIGRATED, not orphaned ------------------
+#
+# The fixture plants all three per-key run/ entries under the key the PRE-CHANGE library derived for
+# the LOGICAL spelling -- the exact state a live mid-Phase-6 install is in the moment it upgrades.
+# Two things must then hold, and the second is the one that matters: the old names are gone (no
+# litter EDMDS-20's sweep can never reach, because the recorded initiative_dir still exists), and
+# the marker is READABLE at the new name (the gate is still armed rather than allowing every edit).
+edmds25_plant() {
+  local key="$1" s
+  rm -f "${EDMDS25_BASE}/data/run/"*.phase6 "${EDMDS25_BASE}/data/run/"*.checked "${EDMDS25_BASE}/data/run/"*.denials
+  for s in phase6 checked denials; do
+    printf 'EDMDS25\t%s\t2026-09-13T00:00:00Z\n' "$EDMDS25_PHYS" > "${EDMDS25_BASE}/data/run/${key}.${s}"
+  done
+}
+edmds25_plant "$EDMDS25_K_LOGI_BEFORE"
+EDMDS25_MIGRATED="$(CLAUDE_PLUGIN_DATA="${EDMDS25_BASE}/data" CLAUDE_PROJECT_DIR="$EDMDS25_LOGI" \
+  /bin/bash -c ". '$DATADIR_LIB'; edm_marker_path" 2>/dev/null)"
+
+EDMDS25_LEFTOVERS=""
+for edmds25_s in phase6 checked denials; do
+  if [[ -e "${EDMDS25_BASE}/data/run/${EDMDS25_K_LOGI_BEFORE}.${edmds25_s}" ]]; then
+    EDMDS25_LEFTOVERS="${EDMDS25_LEFTOVERS} ${edmds25_s}"
+  fi
+done
+if [[ -z "$EDMDS25_LEFTOVERS" ]]; then
+  pass "EDMDS-11 AC8b -- all three run/ entries under the pre-change key are gone: nothing is orphaned under a name no post-change code can reach"
+else
+  fail "EDMDS-11 AC8b -- entries left orphaned under the pre-change key:${EDMDS25_LEFTOVERS}"
+fi
+
+EDMDS25_MISSING=""
+for edmds25_s in phase6 checked denials; do
+  if [[ ! -e "${EDMDS25_BASE}/data/run/${EDMDS25_K_PHYS}.${edmds25_s}" ]]; then
+    EDMDS25_MISSING="${EDMDS25_MISSING} ${edmds25_s}"
+  fi
+done
+if [[ -z "$EDMDS25_MISSING" ]]; then
+  pass "EDMDS-11 AC8b -- all three run/ entries now exist under the post-change key (.phase6, .checked and .denials move together)"
+else
+  fail "EDMDS-11 AC8b -- entries missing under the post-change key:${EDMDS25_MISSING}"
+fi
+if [[ -n "$EDMDS25_MIGRATED" && -f "$EDMDS25_MIGRATED" ]]; then
+  pass "EDMDS-11 AC8b -- edm_marker_path() returns a marker that EXISTS after the migration, so the Phase-6 gate stays armed across the upgrade"
+else
+  fail "EDMDS-11 AC8b -- the returned marker [${EDMDS25_MIGRATED}] does not exist; edm-gateguard would find no marker and allow every edit"
+fi
+check "EDMDS-11 AC8b -- the migrated marker's CONTENT is carried across intact, not recreated empty" \
+  "EDMDS25" "$(cat "$EDMDS25_MIGRATED" 2>/dev/null || true)"
+
+# Control (CC1). The mutant here is a SECOND one, and the distinction is the whole point: the
+# de-normalized copy above would also leave the legacy entry in place, but only because it never
+# derives the new key at all -- it reproduces the world before the change rather than the world this
+# AC is about. What AC8b guards is the window in between: normalization SHIPPED, migration ABSENT.
+# So this mutant keeps pwd -P and disables only the rename, which is the upgrade a user would
+# actually have experienced -- litter under a name no post-change code can reach, plus edm-gateguard
+# finding no marker under the new one and allowing every edit.
+EDMDS25_NOMIG="${EDMDS25_MUTDIR}/lib.nomig.sh"
+sed -e 's@^  if \[\[ "$legacy" != "$current" \&\& -n "$data" \&\& -d "${data}/run" \]\]; then@  if false; then@' \
+  "$EDMDS25_PRISTINE" > "$EDMDS25_NOMIG"
+if cmp -s "$EDMDS25_PRISTINE" "$EDMDS25_NOMIG"; then
+  fail "EDMDS-11 AC8b control harness -- the migration-disabling mutation changed nothing, so the two controls below prove nothing"
+else
+  pass "EDMDS-11 AC8b control harness -- the migration-disabling mutation genuinely altered the scratch copy, and normalization is left intact in it"
+fi
+
+edmds25_plant "$EDMDS25_K_LOGI_BEFORE"
+EDMDS25_UNMIGRATED="$(CLAUDE_PLUGIN_DATA="${EDMDS25_BASE}/data" CLAUDE_PROJECT_DIR="$EDMDS25_LOGI" \
+  /bin/bash -c ". '$EDMDS25_NOMIG'; edm_marker_path" 2>/dev/null)"
+if [[ -e "${EDMDS25_BASE}/data/run/${EDMDS25_K_LOGI_BEFORE}.phase6" \
+   && ! -e "${EDMDS25_BASE}/data/run/${EDMDS25_K_PHYS}.phase6" ]]; then
+  pass "EDMDS-11 AC8b control -- with the migration disabled the pre-change entry is orphaned and NO entry appears under the post-change key, so the three assertions above discriminate"
+else
+  fail "EDMDS-11 AC8b control -- the migration-disabled copy already produced the migrated layout, so the assertions above would pass with or without the migration"
+fi
+if [[ "$EDMDS25_UNMIGRATED" == "${EDMDS25_BASE}/data/run/${EDMDS25_K_PHYS}.phase6" && ! -f "$EDMDS25_UNMIGRATED" ]]; then
+  pass "EDMDS-11 AC8b control -- and the marker it reports is the POST-change name, which does not exist: the silently disabled gate in full"
+else
+  fail "EDMDS-11 AC8b control -- expected a non-existent post-change marker name, got [${EDMDS25_UNMIGRATED}]"
+fi
+
+# The never-clobber rule, and its stated residual: with BOTH names populated the entry already under
+# the post-change key wins untouched, because that is the one a running edm-gateguard is reading.
+rm -f "${EDMDS25_BASE}/data/run/"*.phase6 "${EDMDS25_BASE}/data/run/"*.checked "${EDMDS25_BASE}/data/run/"*.denials
+printf 'LEGACY\t%s\t2026-09-13T00:00:00Z\n' "$EDMDS25_PHYS" > "${EDMDS25_BASE}/data/run/${EDMDS25_K_LOGI_BEFORE}.phase6"
+printf 'CURRENT\t%s\t2026-09-13T00:00:00Z\n' "$EDMDS25_PHYS" > "${EDMDS25_BASE}/data/run/${EDMDS25_K_PHYS}.phase6"
+CLAUDE_PLUGIN_DATA="${EDMDS25_BASE}/data" CLAUDE_PROJECT_DIR="$EDMDS25_LOGI" \
+  /bin/bash -c ". '$DATADIR_LIB'; edm_marker_path" >/dev/null 2>&1 || true
+check "EDMDS-11 AC8b -- an entry already under the post-change key is never overwritten by the migration" \
+  "CURRENT" "$(cat "${EDMDS25_BASE}/data/run/${EDMDS25_K_PHYS}.phase6" 2>/dev/null || true)"
+
+# ---- EDMDS-11 AC10: the two CLAUDE.md passages the change falsified are swept --------------------
+#
+# The needles are anchored to shapes only a STALE claim has, never to the words a correction uses,
+# so this cannot be defeated by the very prose that fixes it (the self-matching-scan class).
+EDMDS25_CLAUDEMD="$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+check_absent "EDMDS-11 AC10 -- CLAUDE.md no longer carries the open-finding tag on CA-500 while the code carries the fix" \
+  "(CA-500, open)" "$EDMDS25_CLAUDEMD"
+check_absent "EDMDS-11 AC10 -- the 'Rule directory and discovery' section no longer presents the unchecked three-step chain" \
+  "1. \`CLAUDE_PROJECT_DIR\`, when it names a real directory." "$EDMDS25_CLAUDEMD"
+check "EDMDS-11 AC10 -- ...and states the cross-check it was attributing to the CA-448 precedent instead" \
+  "both compared as PHYSICAL paths" "$EDMDS25_CLAUDEMD"
+
+# Control (CC1): the same two scans against a scratch copy carrying the stale sentences must FIND
+# them. A check that returns nothing is not a clean result until it has been proven able to fire.
+EDMDS25_STALE_MD="$(printf '%s\n%s\n' \
+  'override of the resolved root (CA-500, open).' \
+  '1. `CLAUDE_PROJECT_DIR`, when it names a real directory.')"
+check "EDMDS-11 AC10 control -- the CA-500 needle DOES match a fixture carrying the stale sentence" \
+  "(CA-500, open)" "$EDMDS25_STALE_MD"
+check "EDMDS-11 AC10 control -- the unchecked-chain needle DOES match a fixture carrying the stale numbered step" \
+  "1. \`CLAUDE_PROJECT_DIR\`, when it names a real directory." "$EDMDS25_STALE_MD"
+
+# ---- EDMDS-11 AC11: normalization added no external binary --------------------------------------
+#
+# EDMV4-T17 AC7's own failing-git stub assertion, above in this file, is the authority and is
+# untouched. This re-drives the same property against the fixture THIS band uses, because AC11 is a
+# claim about the change made here: `cd` and `pwd` are builtins, so all three functions must still
+# succeed with a git that always fails, on the CLAUDE_PROJECT_DIR branch.
+EDMDS25_FAKEBIN="${EDMDS25_BASE}/fakebin"
+mkdir -p "$EDMDS25_FAKEBIN"
+printf '#!/bin/sh\necho "fake git" >&2\nexit 1\n' > "${EDMDS25_FAKEBIN}/git"
+chmod +x "${EDMDS25_FAKEBIN}/git"
+EDMDS25_NOGIT_KEY="$(PATH="${EDMDS25_FAKEBIN}:${PATH}" CLAUDE_PROJECT_DIR="$EDMDS25_LOGI" \
+  /bin/bash -c ". '$DATADIR_LIB'; edm_project_key" 2>/dev/null)"
+if [[ "$EDMDS25_NOGIT_KEY" == "$EDMDS25_K_PHYS" ]]; then
+  pass "EDMDS-11 AC11 -- the normalized key is derived identically with a failing git stub on PATH, proving pwd -P added no external binary"
+else
+  fail "EDMDS-11 AC11 -- with a failing git stub the key became [${EDMDS25_NOGIT_KEY}], expected [${EDMDS25_K_PHYS}]"
+fi
+
+rm -rf "${EDMDS25_BASE}/data" "$EDMDS25_MUTDIR" "$EDMDS25_FAKEBIN"
 
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

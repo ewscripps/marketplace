@@ -1944,7 +1944,230 @@ check "CA-500 -- the disagreement is reported naming the rejected CLAUDE_PROJECT
   "$ca500_attacker" "$(cat "$ca500_repo/stderr.log")"
 check "CA-500 -- the disagreement is reported naming the git toplevel used instead" \
   "$ca500_repo" "$(cat "$ca500_repo/stderr.log")"
+
+# ---- EDMDS-T25 (CA-109): the SAME hostile value, through the SECOND resolver -------------------
+#
+# This extends the band above rather than opening a new one, because the claim under test is a
+# claim about AGREEMENT: edm-state and edm-hookify must reach the same observable outcome on one
+# fixture. The outcome is named per binary rather than as a shared abstraction, because they are
+# not identical -- neither binary REJECTS the hostile value. edm-state prefers the toplevel for
+# permission-rule resolution and warns naming both paths (asserted immediately above, with
+# enforcement landing on prose-only); edm-hookify prefers the toplevel for RULE DISCOVERY and
+# warns naming both paths. Same preference, same warning, two different things being resolved.
+ca500_hookify="${SCRIPT_DIR}/../edm-hookify"
+mkdir -p "${ca500_repo}/.claude/edm-hookify" "${ca500_attacker}/.claude/edm-hookify"
+cat > "${ca500_attacker}/.claude/edm-hookify/warn-attacker.json" <<'JSON'
+{
+  "name": "ca500-attacker-rule-must-never-load",
+  "enabled": true,
+  "event": "bash",
+  "action": "warn",
+  "conditions": [],
+  "message": "This rule lives in the attacker-controlled directory."
+}
+JSON
+cat > "${ca500_repo}/.claude/edm-hookify/warn-repo.json" <<'JSON'
+{
+  "name": "ca500-repo-rule-is-the-one-that-loads",
+  "enabled": true,
+  "event": "bash",
+  "action": "warn",
+  "conditions": [],
+  "message": "This rule lives in the real repository."
+}
+JSON
+
+# ca500_hookify_list <binary> <claude-project-dir> -- run `list` from INSIDE the real repository
+# with the given CLAUDE_PROJECT_DIR, capturing both streams separately. cwd is the repository, so
+# the git toplevel the resolver finds is a genuine one rather than an artifact of the harness.
+ca500_hk_out="" ca500_hk_err=""
+ca500_hookify_list() {
+  ca500_hk_out="$( ( cd "$ca500_repo" && CLAUDE_PROJECT_DIR="$2" "$1" list 2>"${ca500_repo}/hk.err" ) || true )"
+  ca500_hk_err="$(cat "${ca500_repo}/hk.err" 2>/dev/null || true)"
+}
+
+ca500_hookify_list "$ca500_hookify" "$ca500_attacker"
+check_absent "CA-500/EDMDS-11 AC4 -- edm-hookify does not discover rules from a CLAUDE_PROJECT_DIR outside the git toplevel" \
+  "ca500-attacker-rule-must-never-load" "$ca500_hk_out"
+check "CA-500/EDMDS-11 AC4 -- edm-hookify PREFERS the toplevel rather than rejecting: the repository's own rule still loads" \
+  "ca500-repo-rule-is-the-one-that-loads" "$ca500_hk_out"
+check "CA-500/EDMDS-11 AC4 -- edm-hookify reports the disagreement naming the rejected CLAUDE_PROJECT_DIR value" \
+  "$ca500_attacker" "$ca500_hk_err"
+check "CA-500/EDMDS-11 AC4 -- edm-hookify reports the disagreement naming the git toplevel used instead" \
+  "$ca500_repo" "$ca500_hk_err"
+
+# Negative control (CC1). A scratch COPY of the binary with the toplevel discovery neutralised --
+# which is exactly the pre-EDMDS-11 behaviour for this branch, accept-CLAUDE_PROJECT_DIR-unchecked
+# -- must load the attacker's rule and warn about nothing. Without this, all four assertions above
+# are equally satisfied by a resolver that discovers no rules at all, anywhere, for any reason.
+#
+# The copy is taken FIRST and cmp'd against the source before it is used (EDMDS decisions.md D96):
+# a mutation harness whose copy silently failed would leave every "the control fired" result
+# unfalsifiable, and on one earlier ticket in this initiative it mutated the real binary instead.
+ca500_mut_dir="${TMP}/ca500-mutants/unchecked"
+mkdir -p "$ca500_mut_dir"
+cp "${SCRIPT_DIR}/../_edm-cli-lib.sh" "${ca500_mut_dir}/_edm-cli-lib.sh"
+cp "$ca500_hookify" "${ca500_mut_dir}/edm-hookify.pristine"
+if cmp -s "$ca500_hookify" "${ca500_mut_dir}/edm-hookify.pristine"; then
+  pass "CA-500/EDMDS-11 AC4 control harness -- the scratch copy of edm-hookify is byte-identical to the source before any mutation is applied"
+else
+  fail "CA-500/EDMDS-11 AC4 control harness -- the scratch copy diverges from the source; every control verdict below would be unfalsifiable"
+fi
+sed -e 's@^  git_toplevel="$(git rev-parse --show-toplevel 2>/dev/null)" || git_toplevel=""@  git_toplevel=""@' \
+  "${ca500_mut_dir}/edm-hookify.pristine" > "${ca500_mut_dir}/edm-hookify"
+chmod +x "${ca500_mut_dir}/edm-hookify"
+if cmp -s "${ca500_mut_dir}/edm-hookify.pristine" "${ca500_mut_dir}/edm-hookify"; then
+  fail "CA-500/EDMDS-11 AC4 control harness -- the mutation changed nothing, so the control below proves nothing"
+else
+  pass "CA-500/EDMDS-11 AC4 control harness -- the mutation genuinely altered the scratch copy"
+fi
+
+ca500_hookify_list "${ca500_mut_dir}/edm-hookify" "$ca500_attacker"
+check "CA-500/EDMDS-11 AC4 control -- with the cross-check neutralised the attacker directory's rule DOES load, so the four assertions above discriminate" \
+  "ca500-attacker-rule-must-never-load" "$ca500_hk_out"
+check_absent "CA-500/EDMDS-11 AC4 control -- the neutralised copy never reaches the repository's own rule directory" \
+  "ca500-repo-rule-is-the-one-that-loads" "$ca500_hk_out"
+check_absent "CA-500/EDMDS-11 AC4 control -- the neutralised copy reports no disagreement at all" \
+  "disagrees with the git repository toplevel" "$ca500_hk_err"
+
+# ---- EDMDS-11 AC5: the same two binaries accept a LEGITIMATE CLAUDE_PROJECT_DIR ---------------
+#
+# The control for AC4 in the other direction: a value that AGREES with the toplevel must be
+# accepted by both, silently. Without this, "prefers the toplevel" is indistinguishable from
+# "ignores CLAUDE_PROJECT_DIR entirely", and a resolver that warned on every invocation would
+# still satisfy every assertion above.
+ca500_hookify_list "$ca500_hookify" "$ca500_repo"
+check "CA-500/EDMDS-11 AC5 -- a legitimate CLAUDE_PROJECT_DIR is accepted by edm-hookify: the repository's rule loads" \
+  "ca500-repo-rule-is-the-one-that-loads" "$ca500_hk_out"
+check_absent "CA-500/EDMDS-11 AC5 -- a legitimate CLAUDE_PROJECT_DIR produces no disagreement warning from edm-hookify" \
+  "disagrees with the git repository toplevel" "$ca500_hk_err"
+
+# edm-state's half. HOME is $T06_HOME throughout this band and carries no ask rules -- proven by
+# the prose-only verdict above, which came from the same HOME -- so a permission-ask verdict here
+# can only have been read out of the repository's OWN settings file via the accepted value.
+cat > "$ca500_repo/.claude/settings.json" <<'JSON'
+{"permissions": {"ask": ["Bash(edm-state approve-gate*)", "Bash(edm-state archive*)"]}}
+JSON
+(
+  cd "$ca500_repo"
+  export HOME="$T06_HOME"
+  export CLAUDE_PROJECT_DIR="$ca500_repo"
+  "$EDM_STATE" init CA500OK >/dev/null
+  "$EDM_STATE" approve-gate CA500OK 1 >"${ca500_repo}/ok.stdout.log" 2>"${ca500_repo}/ok.stderr.log"
+)
+ca500_ok_enf="$(jq -r '.gates_approved[0].enforcement' "$TMP/SRD/CA500OK/.edm-state.json")"
+[[ "$ca500_ok_enf" == "permission-ask" ]] \
+  && pass "CA-500/EDMDS-11 AC5 -- a legitimate CLAUDE_PROJECT_DIR is accepted by edm-state: its own settings stamp permission-ask" \
+  || fail "CA-500/EDMDS-11 AC5 -- enforcement='$ca500_ok_enf', expected permission-ask (the agreeing value must be accepted, not discarded)"
+check_absent "CA-500/EDMDS-11 AC5 -- a legitimate CLAUDE_PROJECT_DIR produces no disagreement warning from edm-state" \
+  "disagrees with the git repository toplevel" "$(cat "$ca500_repo/ok.stderr.log")"
+rm -f "$ca500_repo/.claude/settings.json"
 rm -rf "$ca500_repo" "$ca500_attacker"
+
+# ---- EDMDS-11 AC6: the no-git-toplevel sub-case, pinned for BOTH resolvers ---------------------
+#
+# Neither resolver cross-checks CLAUDE_PROJECT_DIR when there is no git toplevel at all: there is
+# no repository boundary for the value to have violated, so it is accepted exactly as it was
+# before CA-500. That is a deliberately retained gap, not an oversight -- EDMDS decisions.md D73
+# records it NOTED with its bounds -- and it is pinned here so a later change cannot close or
+# widen it silently in only one of the two binaries.
+echo
+echo "EDMDS-11 AC6 -- the no-git-toplevel sub-case: CLAUDE_PROJECT_DIR accepted unchecked by both resolvers"
+ca500_nogit="$(mktemp -d "${TMP}/ca500-nogit.XXXXXX")"
+ca500_nogit="$(cd "$ca500_nogit" && pwd -P)"
+ca500_nogit_cwd="$(mktemp -d "${TMP}/ca500-nogit-cwd.XXXXXX")"
+ca500_nogit_cwd="$(cd "$ca500_nogit_cwd" && pwd -P)"
+mkdir -p "${ca500_nogit}/.claude/edm-hookify"
+# GIT_CEILING_DIRECTORIES stops the upward repository walk at the scratch root, so the sub-case is
+# reached deterministically even on a host whose TMPDIR happens to sit inside a repository. The
+# precondition is then ASSERTED rather than assumed -- if a toplevel is found anyway, every
+# assertion below would be testing the cross-checked branch while claiming to test this one.
+ca500_ceiling="$(cd "$TMP" && pwd -P)"
+ca500_nogit_top="$( ( cd "$ca500_nogit_cwd" && GIT_CEILING_DIRECTORIES="$ca500_ceiling" git rev-parse --show-toplevel 2>/dev/null ) || true )"
+[[ -z "$ca500_nogit_top" ]] \
+  && pass "EDMDS-11 AC6 -- fixture precondition: the scratch cwd genuinely resolves no git toplevel" \
+  || fail "EDMDS-11 AC6 -- fixture precondition failed: a toplevel was found ('$ca500_nogit_top'), so the sub-case below is not the one under test"
+
+cat > "${ca500_nogit}/.claude/edm-hookify/warn-nogit.json" <<'JSON'
+{
+  "name": "ca500-nogit-rule-accepted-unchecked",
+  "enabled": true,
+  "event": "bash",
+  "action": "warn",
+  "conditions": [],
+  "message": "Accepted with no toplevel to cross-check against."
+}
+JSON
+ca500_nogit_out="$( ( cd "$ca500_nogit_cwd" && GIT_CEILING_DIRECTORIES="$ca500_ceiling" CLAUDE_PROJECT_DIR="$ca500_nogit" "$ca500_hookify" list 2>"${ca500_nogit_cwd}/hk.err" ) || true )"
+ca500_nogit_err="$(cat "${ca500_nogit_cwd}/hk.err" 2>/dev/null || true)"
+check "EDMDS-11 AC6 -- edm-hookify accepts CLAUDE_PROJECT_DIR unchecked where there is no git toplevel" \
+  "ca500-nogit-rule-accepted-unchecked" "$ca500_nogit_out"
+check_absent "EDMDS-11 AC6 -- edm-hookify warns about nothing in the no-toplevel sub-case (there is nothing to disagree with)" \
+  "disagrees with the git repository toplevel" "$ca500_nogit_err"
+
+# Negative control (CC1) for the hookify half: a scratch copy whose CLAUDE_PROJECT_DIR arm is
+# disabled falls through to an empty toplevel and then to `.`, so the rule is NOT found. That is
+# what an implementation which had closed this sub-case would look like from the outside, and it
+# proves the assertion above reads the accepted value rather than stumbling onto the rule by cwd.
+ca500_mut_nocpd="${TMP}/ca500-mutants/nocpd"
+mkdir -p "$ca500_mut_nocpd"
+cp "${SCRIPT_DIR}/../_edm-cli-lib.sh" "${ca500_mut_nocpd}/_edm-cli-lib.sh"
+cp "$ca500_hookify" "${ca500_mut_nocpd}/edm-hookify.pristine"
+if cmp -s "$ca500_hookify" "${ca500_mut_nocpd}/edm-hookify.pristine"; then
+  pass "EDMDS-11 AC6 control harness -- the scratch copy of edm-hookify is byte-identical to the source before mutation"
+else
+  fail "EDMDS-11 AC6 control harness -- the scratch copy diverges from the source; the control verdict below would be unfalsifiable"
+fi
+sed -e 's@^  if \[\[ -n "$proj_root" && -d "$proj_root" \]\]; then@  if false; then@' \
+  "${ca500_mut_nocpd}/edm-hookify.pristine" > "${ca500_mut_nocpd}/edm-hookify"
+chmod +x "${ca500_mut_nocpd}/edm-hookify"
+if cmp -s "${ca500_mut_nocpd}/edm-hookify.pristine" "${ca500_mut_nocpd}/edm-hookify"; then
+  fail "EDMDS-11 AC6 control harness -- the mutation changed nothing, so the control below proves nothing"
+else
+  pass "EDMDS-11 AC6 control harness -- the mutation genuinely altered the scratch copy"
+fi
+ca500_nogit_mut_out="$( ( cd "$ca500_nogit_cwd" && GIT_CEILING_DIRECTORIES="$ca500_ceiling" CLAUDE_PROJECT_DIR="$ca500_nogit" "${ca500_mut_nocpd}/edm-hookify" list 2>/dev/null ) || true )"
+check_absent "EDMDS-11 AC6 control -- with the CLAUDE_PROJECT_DIR arm disabled the rule is NOT discovered, so the assertion above discriminates" \
+  "ca500-nogit-rule-accepted-unchecked" "$ca500_nogit_mut_out"
+
+# edm-state's half of the same sub-case, and its control. The ask rules live ONLY in the
+# CLAUDE_PROJECT_DIR, so permission-ask can only come from having accepted that value unchecked;
+# the control removes them from that one file and requires the verdict to change, which is what
+# makes the positive result a reading of that directory rather than of HOME or of cwd.
+mkdir -p "${ca500_nogit}/.claude"
+cat > "${ca500_nogit}/.claude/settings.json" <<'JSON'
+{"permissions": {"ask": ["Bash(edm-state approve-gate*)", "Bash(edm-state archive*)"]}}
+JSON
+(
+  cd "$ca500_nogit_cwd"
+  export HOME="$T06_HOME"
+  export GIT_CEILING_DIRECTORIES="$ca500_ceiling"
+  export CLAUDE_PROJECT_DIR="$ca500_nogit"
+  "$EDM_STATE" init CA500NG >/dev/null
+  "$EDM_STATE" approve-gate CA500NG 1 >/dev/null 2>"${ca500_nogit_cwd}/ng.stderr.log"
+)
+ca500_ng_enf="$(jq -r '.gates_approved[0].enforcement' "$TMP/SRD/CA500NG/.edm-state.json")"
+[[ "$ca500_ng_enf" == "permission-ask" ]] \
+  && pass "EDMDS-11 AC6 -- edm-state accepts CLAUDE_PROJECT_DIR unchecked where there is no git toplevel" \
+  || fail "EDMDS-11 AC6 -- enforcement='$ca500_ng_enf', expected permission-ask from the accepted CLAUDE_PROJECT_DIR's own settings"
+check_absent "EDMDS-11 AC6 -- edm-state warns about nothing in the no-toplevel sub-case" \
+  "disagrees with the git repository toplevel" "$(cat "${ca500_nogit_cwd}/ng.stderr.log")"
+
+rm -f "${ca500_nogit}/.claude/settings.json"
+(
+  cd "$ca500_nogit_cwd"
+  export HOME="$T06_HOME"
+  export GIT_CEILING_DIRECTORIES="$ca500_ceiling"
+  export CLAUDE_PROJECT_DIR="$ca500_nogit"
+  "$EDM_STATE" init CA500NGC >/dev/null
+  "$EDM_STATE" approve-gate CA500NGC 1 >/dev/null 2>&1
+)
+ca500_ngc_enf="$(jq -r '.gates_approved[0].enforcement' "$TMP/SRD/CA500NGC/.edm-state.json")"
+[[ "$ca500_ngc_enf" == "prose-only" ]] \
+  && pass "EDMDS-11 AC6 control -- removing the ask rules from that same CLAUDE_PROJECT_DIR flips the verdict to prose-only, so the assertion above reads that directory" \
+  || fail "EDMDS-11 AC6 control -- enforcement='$ca500_ngc_enf', expected prose-only; the assertion above may be passing without reading the accepted directory at all"
+
+rm -rf "$ca500_nogit" "$ca500_nogit_cwd" "${TMP}/ca500-mutants"
 
 # ---- AC7 -- warning only: validate exit code stays 0 either way ---------------
 echo

@@ -23,8 +23,13 @@
 #                                        # set the whole hook-consumer family accepts)
 #
 # Rule discovery: .claude/edm-hookify/*.json under the project root, resolved the same way
-# check_permission_rules() resolves it in bin/edm-state (CA-448 baseline): CLAUDE_PROJECT_DIR
-# when it names a directory, else `git rev-parse --show-toplevel`, else `.`.
+# check_permission_rules() resolves it in bin/edm-state -- including the CA-500 cross-check, which
+# this script did NOT carry until EDMDS-11 AC1 while this very paragraph claimed it did (CA-109).
+# The chain, stated in full rather than as a claim of parity with another file: CLAUDE_PROJECT_DIR
+# when it names a directory AND it equals or sits inside the git toplevel, both compared as
+# PHYSICAL paths; on disagreement the toplevel wins and the conflict is named on stderr; with no
+# git toplevel at all, CLAUDE_PROJECT_DIR is accepted unchecked (nothing to cross-check against --
+# EDMDS decisions.md D73 records that sub-case NOTED); otherwise the git toplevel, else `.`.
 #
 # Payload field truncation (AC6): each field value a rule's conditions are matched against is
 # truncated to 65536 characters (64 KiB for single-byte/ASCII content, which is the overwhelming
@@ -175,20 +180,60 @@ case "$SUBCOMMAND" in
     ;;
 esac
 
-# ---- Resolve project root and rule directory (CA-448 baseline; CLAUDE.md "Rule directory and
-# discovery"): CLAUDE_PROJECT_DIR when it names a directory, else git toplevel, else `.`. -------
+# ---- Resolve project root and rule directory (CLAUDE.md "Rule directory and discovery"). --------
+#
+# CA-109 / EDMDS-11 AC1: this resolver applies the CA-500 physical-path cross-check, matching the
+# semantics of _resolve_permcheck_project_root() in bin/edm-state. It used to copy the pre-CA-500
+# CA-448 chain -- CLAUDE_PROJECT_DIR on a bare `-d` test, else the git toplevel, else `.` -- while
+# the comment here claimed parity with edm-state, which had already moved on. That claim was false,
+# and what it hid is a bypass rather than a tidiness problem: CLAUDE_PROJECT_DIR is a single
+# environment token, RULE_DIR below is derived entirely from what this function returns, and an
+# env-prefixed invocation therefore redirected rule discovery at any directory on the host --
+# reached through the hook family that can refuse a tool call.
+#
+# Semantics, matching that function branch for branch:
+#   - CLAUDE_PROJECT_DIR names a directory AND a git toplevel exists: resolve both PHYSICALLY
+#     (`pwd -P`, which defeats a symlinked spelling) and accept CLAUDE_PROJECT_DIR only when it
+#     equals, or is contained within, the toplevel. On disagreement, PREFER THE TOPLEVEL and say so
+#     on stderr naming both paths -- prefer-and-warn, never reject. A hook that refuses to run is a
+#     hook that has stopped enforcing, which is the direction this family must never fail in.
+#   - CLAUDE_PROJECT_DIR names a directory and there is NO git toplevel at all: accepted as-is.
+#     There is no repository boundary here for it to have violated, so there is nothing to
+#     cross-check it against. EDMDS decisions.md D73 records this sub-case NOTED on AD-DS2's two
+#     bounds rather than pretending it is closed.
+#   - Otherwise the git toplevel, else `.` as the pre-CA-448 fallback.
+#
+# Cost, stated because it is not free: `git rev-parse` now runs on EVERY invocation, where it
+# previously ran only when CLAUDE_PROJECT_DIR was unset -- including bin/edm-bash-gate's path,
+# which evaluates on every Bash tool call. A short-circuit on "this repository has no rule
+# directory" is not available to pay for it, because RULE_DIR is derived FROM this function's
+# result and so cannot be tested before resolution completes. EDMDS-11 AC7 measures and records the
+# per-call cost instead.
 resolve_project_root() {
-  if [[ -n "${CLAUDE_PROJECT_DIR:-}" && -d "${CLAUDE_PROJECT_DIR}" ]]; then
-    printf '%s\n' "$CLAUDE_PROJECT_DIR"
-    return 0
+  local proj_root="${CLAUDE_PROJECT_DIR:-}"
+  local git_toplevel
+  git_toplevel="$(git rev-parse --show-toplevel 2>/dev/null)" || git_toplevel=""
+  if [[ -n "$proj_root" && -d "$proj_root" ]]; then
+    if [[ -n "$git_toplevel" ]]; then
+      local phys_proj_root phys_git_toplevel
+      phys_proj_root="$(cd "$proj_root" 2>/dev/null && pwd -P)" || phys_proj_root="$proj_root"
+      phys_git_toplevel="$(cd "$git_toplevel" 2>/dev/null && pwd -P)" || phys_git_toplevel="$git_toplevel"
+      case "$phys_proj_root" in
+        "$phys_git_toplevel"|"$phys_git_toplevel"/*)
+          proj_root="$phys_proj_root"
+          ;;
+        *)
+          echo "edm-hookify: CLAUDE_PROJECT_DIR (${proj_root}) disagrees with the git repository toplevel (${git_toplevel}) -- using the toplevel for rule discovery" >&2
+          proj_root="$phys_git_toplevel"
+          ;;
+      esac
+    fi
+    # No git toplevel at all: the third bullet above -- accepted unchanged, NOTED not closed.
+  else
+    proj_root="$git_toplevel"
   fi
-  local gt
-  gt="$(git rev-parse --show-toplevel 2>/dev/null)" || gt=""
-  if [[ -n "$gt" ]]; then
-    printf '%s\n' "$gt"
-    return 0
-  fi
-  printf '%s\n' "."
+  [[ -n "$proj_root" ]] || proj_root="."
+  printf '%s\n' "$proj_root"
 }
 
 PROJECT_ROOT="$(resolve_project_root)"
